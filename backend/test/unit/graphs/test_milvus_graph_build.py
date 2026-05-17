@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from yuxi.knowledge.graphs.extractors import normalize_extraction_result
+from yuxi.knowledge.graphs.extractors import LLMGraphExtractor, normalize_extraction_result
 from yuxi.knowledge.graphs.milvus_graph_service import MilvusGraphService
 
 
@@ -63,6 +63,70 @@ def test_normalize_extraction_result_rejects_invalid_payload(payload):
         normalize_extraction_result(payload, "llm")
 
 
+def test_llm_graph_extractor_rejects_custom_prompt():
+    extractor = LLMGraphExtractor({"model_spec": "test/model", "prompt": "custom"})
+
+    with pytest.raises(ValueError, match="不支持自定义完整 Prompt"):
+        extractor.validate_options()
+
+
+def test_llm_graph_extractor_appends_schema_to_fixed_prompt():
+    extractor = LLMGraphExtractor(
+        {
+            "model_spec": "test/model",
+            "schema": "实体类型只能是 Person 或 Organization",
+            "concurrency_count": 5,
+            "model_params": {"temperature": 0.1},
+        }
+    )
+
+    prompt = extractor._build_prompt("张三任职于公司")
+
+    assert "请从下面文本中抽取实体和实体关系" in prompt
+    assert "抽取 Schema 约束" in prompt
+    assert "实体类型只能是 Person 或 Organization" in prompt
+    assert "文本：\n张三任职于公司" in prompt
+
+
+@pytest.mark.asyncio
+async def test_milvus_graph_service_configure_persists_updated_concurrency():
+    kb = SimpleNamespace(
+        kb_type="milvus",
+        additional_params={
+            "graph_build_config": {
+                "locked": True,
+                "extractor_type": "llm",
+                "extractor_options": {"model_spec": "test/model", "concurrency_count": 5},
+            }
+        },
+    )
+
+    class Repo:
+        async def get_by_id(self, db_id):
+            return kb
+
+        async def update(self, db_id, data):
+            kb.additional_params = data["additional_params"]
+            return kb
+
+    chunk_repo = SimpleNamespace(
+        count_by_db_id=AsyncMock(return_value=0),
+        count_graph_pending_by_db_id=AsyncMock(return_value=0),
+        count_graph_indexed_by_db_id=AsyncMock(return_value=0),
+    )
+    service = MilvusGraphService(kb_repo=Repo(), chunk_repo=chunk_repo)
+
+    await service.configure(
+        "kb_test",
+        extractor_type="llm",
+        extractor_options={"model_spec": "test/model", "concurrency_count": 9},
+        created_by="user_1",
+    )
+    status = await service.get_status("kb_test")
+
+    assert status["config"]["extractor_options"]["concurrency_count"] == 9
+
+
 def test_milvus_graph_service_writes_chunk_entity_and_relation():
     tx = MagicMock()
     session = MagicMock()
@@ -82,7 +146,7 @@ def test_milvus_graph_service_writes_chunk_entity_and_relation():
         end_char_pos=8,
     )
 
-    ent_ids, tags = service.write_chunk_graph(
+    entities, triples = service.write_chunk_graph(
         "kb_test",
         chunk,
         normalize_extraction_result(
@@ -104,8 +168,9 @@ def test_milvus_graph_service_writes_chunk_entity_and_relation():
         ),
     )
 
-    assert ent_ids == ["张三", "公司"]
-    assert tags == ["Organization", "Person"]
+    assert [entity["name"] for entity in entities] == ["张三", "公司"]
+    assert {entity["label"] for entity in entities} == {"Person", "Organization"}
+    assert triples[0]["relation_type"] == "WORKS_AT"
     queries = [call.args[0] for call in tx.run.call_args_list]
     assert any("MERGE (c:Chunk:MilvusKB:`kb_test`" in query for query in queries)
     assert any("MERGE (e:Entity:MilvusKB:`kb_test`" in query for query in queries)

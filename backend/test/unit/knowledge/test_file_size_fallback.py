@@ -1,3 +1,4 @@
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -164,3 +165,77 @@ class TestAddFileRecordSizeFallback:
             metadata = await kb.add_file_record("db1", item, params=params)
 
             assert metadata.get("size") is None
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_save_metadata_does_not_overwrite_existing_kb_config():
+    from yuxi.knowledge.base import KnowledgeBase
+
+    class TestKB(KnowledgeBase):
+        @property
+        def kb_type(self):
+            return "test"
+
+        async def _create_kb_instance(self, db_id, config):
+            pass
+
+        async def _initialize_kb_instance(self, instance):
+            pass
+
+        async def index_file(self, db_id, file_id, operator_id=None):
+            return {}
+
+        async def update_content(self, db_id, file_ids, params=None):
+            return []
+
+        async def aquery(self, query_text, db_id, **kwargs):
+            return []
+
+        def get_query_params_config(self, db_id, **kwargs):
+            return {"type": "test", "options": []}
+
+        async def delete_file(self, db_id, file_id):
+            pass
+
+        async def get_file_basic_info(self, db_id, file_id):
+            return {}
+
+        async def get_file_content(self, db_id, file_id):
+            return {}
+
+        async def get_file_info(self, db_id, file_id):
+            return {}
+
+    class ExistingKbRepo:
+        def __init__(self):
+            self.created = []
+            self.updated = []
+
+        async def get_by_id(self, db_id):
+            return SimpleNamespace(db_id=db_id)
+
+        async def create(self, payload):
+            self.created.append(payload)
+
+        async def update(self, db_id, data):
+            self.updated.append((db_id, data))
+
+    kb_repo = ExistingKbRepo()
+    kb = TestKB(work_dir="/tmp/test_kb")
+    kb.databases_meta["db1"] = {
+        "name": "Runtime name",
+        "description": "Runtime description",
+        "kb_type": "test",
+        "metadata": {"graph_build_config": {"extractor_options": {"concurrency_count": 5}}},
+    }
+
+    with (
+        patch("yuxi.repositories.knowledge_base_repository.KnowledgeBaseRepository", return_value=kb_repo),
+        patch("yuxi.repositories.knowledge_file_repository.KnowledgeFileRepository", return_value=SimpleNamespace()),
+        patch("yuxi.repositories.evaluation_repository.EvaluationRepository", return_value=SimpleNamespace()),
+    ):
+        await kb._save_metadata()
+
+    assert kb_repo.created == []
+    assert kb_repo.updated == []

@@ -101,6 +101,7 @@ async def test_query_kb_returns_milvus_chunks_without_sandbox_paths(monkeypatch)
             "metadata": {
                 "file_id": "file-1",
                 "source": "auth-guide.pdf",
+                "resource_id": "db-1",
             },
         }
     ]
@@ -150,6 +151,7 @@ async def test_query_kb_allows_dify_knowledge_base(monkeypatch) -> None:
             "metadata": {
                 "file_id": "dify-doc-1",
                 "source": "Dify Doc",
+                "resource_id": "db-1",
             },
         }
     ]
@@ -219,6 +221,7 @@ async def test_query_kb_normalizes_file_metadata_for_open(monkeypatch) -> None:
 
     assert result[0]["metadata"] == {
         "file_id": "file-1",
+        "resource_id": "db-1",
         "chunk_id": "chunk-1",
         "chunk_index": 3,
     }
