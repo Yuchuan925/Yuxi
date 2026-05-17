@@ -122,8 +122,10 @@ class PostgresManager(metaclass=SingletonMeta):
         """确保知识库 schema 包含所有必要字段"""
         self._check_initialized()
         stmts = [
-            "ALTER TABLE IF EXISTS knowledge_bases ADD COLUMN IF NOT EXISTS embed_info JSONB",
-            "ALTER TABLE IF EXISTS knowledge_bases ADD COLUMN IF NOT EXISTS llm_info JSONB",
+            "ALTER TABLE IF EXISTS knowledge_bases ADD COLUMN IF NOT EXISTS embedding_model_spec VARCHAR(512)",
+            "ALTER TABLE IF EXISTS knowledge_bases ADD COLUMN IF NOT EXISTS llm_model_spec VARCHAR(512)",
+            "ALTER TABLE IF EXISTS knowledge_bases DROP COLUMN IF EXISTS embed_info",
+            "ALTER TABLE IF EXISTS knowledge_bases DROP COLUMN IF EXISTS llm_info",
             "ALTER TABLE IF EXISTS knowledge_bases ADD COLUMN IF NOT EXISTS query_params JSONB",
             "ALTER TABLE IF EXISTS knowledge_bases ADD COLUMN IF NOT EXISTS additional_params JSONB",
             "ALTER TABLE IF EXISTS knowledge_bases ADD COLUMN IF NOT EXISTS share_config JSONB",
@@ -161,6 +163,27 @@ class PostgresManager(metaclass=SingletonMeta):
             "ALTER TABLE IF EXISTS evaluation_result_details ADD COLUMN IF NOT EXISTS generated_answer TEXT",
             "ALTER TABLE IF EXISTS evaluation_result_details ADD COLUMN IF NOT EXISTS retrieved_chunks JSONB",
             "ALTER TABLE IF EXISTS evaluation_result_details ADD COLUMN IF NOT EXISTS metrics JSONB",
+            """
+            CREATE TABLE IF NOT EXISTS knowledge_chunks (
+                id SERIAL PRIMARY KEY,
+                chunk_id VARCHAR(128) NOT NULL UNIQUE,
+                file_id VARCHAR(64) NOT NULL REFERENCES knowledge_files(file_id) ON DELETE CASCADE,
+                db_id VARCHAR(80) NOT NULL REFERENCES knowledge_bases(db_id) ON DELETE CASCADE,
+                chunk_index INTEGER NOT NULL,
+                content TEXT NOT NULL,
+                start_char_pos INTEGER,
+                end_char_pos INTEGER,
+                start_token_pos INTEGER,
+                end_token_pos INTEGER,
+                graph_indexed BOOLEAN DEFAULT FALSE,
+                ent_ids JSONB,
+                tags JSONB,
+                extraction_result JSONB,
+                created_at TIMESTAMPTZ DEFAULT NOW(),
+                updated_at TIMESTAMPTZ DEFAULT NOW()
+            )
+            """,
+            "ALTER TABLE IF EXISTS knowledge_chunks ADD COLUMN IF NOT EXISTS extraction_result JSONB",
             # 扩展 db_id 字段长度以支持最长 75 字符的 ID（kb_private_ + 64字符hash）
             "ALTER TABLE IF EXISTS knowledge_bases ALTER COLUMN db_id TYPE VARCHAR(80)",
             "ALTER TABLE IF EXISTS knowledge_files ALTER COLUMN db_id TYPE VARCHAR(80)",
@@ -177,6 +200,10 @@ class PostgresManager(metaclass=SingletonMeta):
             "CREATE INDEX IF NOT EXISTS idx_er_status ON evaluation_results(status)",
             "CREATE INDEX IF NOT EXISTS idx_er_started ON evaluation_results(started_at DESC)",
             "CREATE INDEX IF NOT EXISTS idx_erd_task ON evaluation_result_details(task_id)",
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_knowledge_chunks_chunk_id ON knowledge_chunks(chunk_id)",
+            "CREATE INDEX IF NOT EXISTS ix_knowledge_chunks_file_id ON knowledge_chunks(file_id)",
+            "CREATE INDEX IF NOT EXISTS ix_knowledge_chunks_db_id ON knowledge_chunks(db_id)",
+            "CREATE INDEX IF NOT EXISTS ix_knowledge_chunks_graph_indexed ON knowledge_chunks(graph_indexed)",
         ]
 
         async with self.async_engine.begin() as conn:
@@ -184,7 +211,7 @@ class PostgresManager(metaclass=SingletonMeta):
                 await conn.execute(text(stmt))
 
     async def ensure_business_schema(self):
-        """确保业务 schema 包含后续新增字段（兼容已存在表）。"""
+        """确保业务 schema 包含后续新增字段（运行时 schema 演进）。"""
         self._check_initialized()
         stmts = [
             "ALTER TABLE IF EXISTS skills ADD COLUMN IF NOT EXISTS tool_dependencies JSONB DEFAULT '[]'::jsonb",
@@ -297,18 +324,6 @@ class PostgresManager(metaclass=SingletonMeta):
             result = await session.execute(select(func.count(User.id)))
             count = result.scalar()
             return count == 0
-
-    async def execute(self, statement):
-        """直接执行 SQL 语句（用于迁移脚本）"""
-        self._check_initialized()
-        async with self.get_async_session_context() as session:
-            return await session.execute(statement)
-
-    async def add(self, instance):
-        """添加实例到会话（用于迁移脚本）"""
-        self._check_initialized()
-        async with self.get_async_session_context() as session:
-            session.add(instance)
 
     async def commit(self):
         """提交当前会话"""

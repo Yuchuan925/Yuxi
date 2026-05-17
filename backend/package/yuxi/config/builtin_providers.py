@@ -25,12 +25,6 @@ BUILTIN_PROVIDERS: list[dict[str, Any]] = [
     #     "models_endpoint": "https://generativelanguage.googleapis.com/v1beta/models",
     # },
     # {
-    #     "provider_id": "ollama-cloud",
-    #     "display_name": "Ollama",
-    #     "base_url": "http://localhost:11434",
-    #     "models_endpoint": "http://localhost:11434/api/tags",
-    # },
-    # {
     #     "provider_id": "lmstudio",
     #     "display_name": "LM Studio",
     #     "base_url": "http://localhost:1234/v1",

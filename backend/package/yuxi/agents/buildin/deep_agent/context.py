@@ -1,7 +1,6 @@
 """Deep Agent Context - 基于BaseContext的深度分析上下文配置"""
 
 from dataclasses import dataclass, field
-from typing import Annotated
 
 from yuxi.agents import BaseContext
 
@@ -15,16 +14,16 @@ class DeepContext(BaseContext):
     专门用于深度分析任务的配置管理
     """
 
-    # 深度分析专用的系统提示词
-    system_prompt: Annotated[str, {"__template_metadata__": {"kind": "prompt"}}] = field(
+    system_prompt: str = field(
         default=DEEP_PROMPT,
-        metadata={"name": "系统提示词", "description": "Deep智能体的角色和行为指导"},
+        metadata={"name": "系统提示词", "description": "Deep智能体的角色和行为指导", "kind": "prompt"},
     )
 
-    subagents_model: Annotated[str, {"__template_metadata__": {"kind": "llm"}}] = field(
+    subagents_model: str = field(
         default="siliconflow-cn:deepseek-ai/DeepSeek-V4-Flash",
         metadata={
             "name": "Sub-agent Model",
             "description": "子智能体的默认模型，会被子智能体的配置覆盖。",
+            "kind": "llm",
         },
     )

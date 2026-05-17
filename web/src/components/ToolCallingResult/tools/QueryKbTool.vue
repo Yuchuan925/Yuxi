@@ -159,7 +159,7 @@ const parseResult = (content) => {
     return lastParsedResult
   }
 
-  // 兼容 Milvus chunks 与 LightRAG graph/all 结构。
+  // 兼容 Milvus chunks 与对象包装结构。
   const nextResult = {
     chunks: normalizeChunks(payload),
     entities: Array.isArray(payload.entities)

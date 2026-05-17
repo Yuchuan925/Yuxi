@@ -38,7 +38,6 @@ dependencies = [
     "langgraph-checkpoint-sqlite>=3.0",
     "langgraph-cli[inmem]>=0.4",
     "langsmith>=0.4",
-    "lightrag-hku>=1.4.6",
     "llama-index>=0.14",
     "llama-index-readers-file>=0.4.7",
     "loguru>=0.7.3",

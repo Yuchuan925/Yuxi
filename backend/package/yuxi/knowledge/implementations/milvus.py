@@ -19,11 +19,11 @@ from pymilvus import (
     utility,
 )
 
-from yuxi import config
 from yuxi.knowledge.base import FileStatus, KnowledgeBase
 from yuxi.knowledge.chunking.ragflow_like.dispatcher import chunk_markdown
-from yuxi.knowledge.utils.kb_utils import get_embedding_config, resolve_processing_params
-from yuxi.models.embed import OtherEmbedding
+from yuxi.knowledge.utils.kb_utils import resolve_processing_params
+from yuxi.repositories.knowledge_chunk_repository import KnowledgeChunkRepository
+from yuxi.services.model_cache import model_cache
 from yuxi.plugins.parser.unified import Parser
 from yuxi.utils import hashstr, logger
 from yuxi.utils.datetime_utils import utc_isoformat
@@ -103,10 +103,13 @@ class MilvusKB(KnowledgeBase):
         if not (metadata := self.databases_meta.get(db_id)):
             raise ValueError(f"Database {db_id} not found")
 
-        # 获取嵌入模型信息
-        if not (embed_info := metadata.get("embed_info")):
-            logger.error(f"Embedding info not found for database {db_id}, using default model")
-            embed_info = config.embed_model_names[config.embed_model]
+        embedding_model_spec = metadata.get("embedding_model_spec")
+        if not embedding_model_spec:
+            raise ValueError(f"Embedding model spec not found for database {db_id}")
+
+        embedding_info = model_cache.get_model_info(embedding_model_spec)
+        if not embedding_info or embedding_info.model_type != "embedding":
+            raise ValueError(f"Unsupported embedding model: {embedding_model_spec}")
 
         collection_name = db_id
 
@@ -117,7 +120,7 @@ class MilvusKB(KnowledgeBase):
 
                 # 检查嵌入模型是否匹配
                 description = collection.description
-                expected_model = embed_info["name"] if embed_info else "default"
+                expected_model = embedding_info.model_id
 
                 if expected_model not in description:
                     logger.warning(
@@ -125,18 +128,18 @@ class MilvusKB(KnowledgeBase):
                         f"expected='{expected_model}', found_in_description='{description}'"
                     )
                     utility.drop_collection(collection_name, using=self.connection_alias)
-                    return self._create_new_collection(collection_name, embed_info, db_id)
+                    return self._create_new_collection(collection_name, embedding_info, db_id)
 
                 if not self._collection_supports_bm25(collection):
                     logger.warning(f"Collection {collection_name} schema does not support BM25, recreating")
                     utility.drop_collection(collection_name, using=self.connection_alias)
-                    return self._create_new_collection(collection_name, embed_info, db_id)
+                    return self._create_new_collection(collection_name, embedding_info, db_id)
 
                 logger.info(f"Retrieved existing collection: {collection_name}")
                 return collection
             else:
                 logger.info(f"Collection {collection_name} not found, creating new one")
-                return self._create_new_collection(collection_name, embed_info, db_id)
+                return self._create_new_collection(collection_name, embedding_info, db_id)
 
         except (connections.MilvusException, RuntimeError) as e:
             logger.error(f"Error checking collection {collection_name}: {e}")
@@ -146,10 +149,10 @@ class MilvusKB(KnowledgeBase):
             logger.debug(f"Traceback: {traceback.format_exc()}")
             raise
 
-    def _create_new_collection(self, collection_name: str, embed_info: Any, db_id: str) -> Collection:
+    def _create_new_collection(self, collection_name: str, embedding_info: Any, db_id: str) -> Collection:
         """创建新的 Milvus 集合"""
-        embedding_dim = embed_info.get("dimension", 1024)
-        model_name = embed_info.get("name", "default")
+        embedding_dim = embedding_info.dimension or 1024
+        model_name = embedding_info.model_id
 
         # 定义集合Schema
         fields = [
@@ -161,7 +164,6 @@ class MilvusKB(KnowledgeBase):
                 enable_analyzer=True,
                 analyzer_params=CONTENT_ANALYZER_PARAMS,
             ),
-            FieldSchema(name="source", dtype=DataType.VARCHAR, max_length=500),
             FieldSchema(name="chunk_id", dtype=DataType.VARCHAR, max_length=100),
             FieldSchema(name="file_id", dtype=DataType.VARCHAR, max_length=100),
             FieldSchema(name="chunk_index", dtype=DataType.INT64),
@@ -227,33 +229,14 @@ class MilvusKB(KnowledgeBase):
         except Exception as e:
             logger.warning(f"Failed to load collection into memory: {e}")
 
-    def _get_async_embedding(self, embed_info: dict):
-        """获取 embedding 函数"""
-        # 检查是否有 model_id 字段，优先使用 select_embedding_model
-        if embed_info and "model_id" in embed_info:
-            from yuxi.models.embed import select_embedding_model
+    def _get_embedding_function(self, embedding_model_spec: str, *, sync: bool = False):
+        """获取 embedding 编码函数。sync=True 返回同步版本，否则返回异步版本。"""
+        from yuxi.models.embed import select_embedding_model
 
-            return select_embedding_model(embed_info["model_id"])
-
-        # 使用原有的逻辑（兼容模式））
-        config_dict = get_embedding_config(embed_info)
-        return OtherEmbedding(
-            model=config_dict.get("model"),
-            base_url=config_dict.get("base_url"),
-            api_key=config_dict.get("api_key"),
-        )
-
-    def _get_async_embedding_function(self, embed_info: dict):
-        """获取 embedding 函数"""
-        embedding_model = self._get_async_embedding(embed_info)
-        batch_size = int(getattr(embedding_model, "batch_size", 40) or 40)
-        return partial(embedding_model.abatch_encode, batch_size=batch_size)
-
-    def _get_embedding_function(self, embed_info: dict):
-        """获取 embedding 函数"""
-        embedding_model = self._get_async_embedding(embed_info)
-        batch_size = int(getattr(embedding_model, "batch_size", 40) or 40)
-        return partial(embedding_model.batch_encode, batch_size=batch_size)
+        model = select_embedding_model(embedding_model_spec)
+        batch_size = int(getattr(model, "batch_size", 40) or 40)
+        method = model.batch_encode if sync else model.abatch_encode
+        return partial(method, batch_size=batch_size)
 
     async def _get_milvus_collection(self, db_id: str):
         """获取或创建 Milvus 集合"""
@@ -280,6 +263,105 @@ class MilvusKB(KnowledgeBase):
         """将文本分割成块"""
         return chunk_markdown(text, file_id, filename, params)
 
+    def _build_chunk_pg_records(self, db_id: str, chunks: list[dict]) -> list[dict[str, Any]]:
+        return [
+            {
+                "chunk_id": chunk["chunk_id"],
+                "file_id": chunk["file_id"],
+                "db_id": db_id,
+                "chunk_index": chunk["chunk_index"],
+                "content": chunk["content"],
+                "start_char_pos": chunk.get("start_char_pos"),
+                "end_char_pos": chunk.get("end_char_pos"),
+                "start_token_pos": chunk.get("start_token_pos"),
+                "end_token_pos": chunk.get("end_token_pos"),
+                "graph_indexed": bool(chunk.get("graph_indexed", False)),
+                "ent_ids": chunk.get("ent_ids"),
+                "tags": chunk.get("tags"),
+                "extraction_result": chunk.get("extraction_result"),
+            }
+            for chunk in chunks
+        ]
+
+    async def _insert_chunks_to_stores(
+        self,
+        db_id: str,
+        file_id: str,
+        collection: Collection,
+        chunks: list[dict],
+        embeddings: list,
+    ) -> None:
+        if not chunks:
+            return
+
+        entities = [
+            [chunk["id"] for chunk in chunks],
+            [chunk["content"] for chunk in chunks],
+            [chunk["chunk_id"] for chunk in chunks],
+            [chunk["file_id"] for chunk in chunks],
+            [chunk["chunk_index"] for chunk in chunks],
+            embeddings,
+        ]
+        chunk_repo = KnowledgeChunkRepository()
+
+        def _insert_milvus_records():
+            collection.insert(entities)
+
+        pg_task = chunk_repo.batch_upsert(self._build_chunk_pg_records(db_id, chunks))
+        milvus_task = asyncio.to_thread(_insert_milvus_records)
+        results = await asyncio.gather(pg_task, milvus_task, return_exceptions=True)
+        errors = [result for result in results if isinstance(result, Exception)]
+        if not errors:
+            return
+
+        logger.error(f"Chunk double-write failed for file {file_id}, rolling back PostgreSQL and Milvus chunks")
+        try:
+            await chunk_repo.delete_by_file_id(file_id)
+        except Exception as cleanup_error:
+            logger.error(f"Failed to rollback PostgreSQL chunks for {file_id}: {cleanup_error}")
+        try:
+            await self._delete_file_chunks_from_milvus(collection, file_id)
+        except Exception as cleanup_error:
+            logger.error(f"Failed to rollback Milvus chunks for {file_id}: {cleanup_error}")
+        raise errors[0]
+
+    async def _delete_file_chunks_from_milvus(self, collection: Collection, file_id: str) -> None:
+        expr = f'file_id == "{file_id}"'
+        results = collection.query(expr=expr, output_fields=["id"], limit=1)
+
+        if not results:
+            logger.info(f"File {file_id} not found in Milvus, skipping delete operation")
+            return
+
+        def _delete_from_milvus():
+            collection.delete(expr)
+            logger.info(f"Deleted chunks for file {file_id} from Milvus")
+
+        await asyncio.to_thread(_delete_from_milvus)
+
+    def _get_filename_for_file_id(self, file_id: str | None) -> str:
+        if not file_id:
+            return "未知来源"
+        return self.files_meta.get(file_id, {}).get("filename") or "未知来源"
+
+    def _build_file_name_expr(self, db_id: str, file_name: str | None) -> str | None:
+        if not file_name:
+            return None
+
+        file_name_pattern = file_name.replace("%", "")
+        matched_file_ids = [
+            file_id
+            for file_id, file_meta in self.files_meta.items()
+            if file_meta.get("database_id") == db_id and file_name_pattern in (file_meta.get("filename") or "")
+        ]
+        if not matched_file_ids:
+            return 'file_id == "__no_matching_file__"'
+        escaped_ids = [file_id.replace('"', '\\"') for file_id in matched_file_ids]
+        if len(escaped_ids) == 1:
+            return f'file_id == "{escaped_ids[0]}"'
+        joined_ids = '", "'.join(escaped_ids)
+        return f'file_id in ["{joined_ids}"]'
+
     async def index_file(
         self, db_id: str, file_id: str, operator_id: str | None = None, params: dict | None = None
     ) -> dict:
@@ -303,8 +385,8 @@ class MilvusKB(KnowledgeBase):
         if not collection:
             raise ValueError(f"Failed to get Milvus collection for {db_id}")
 
-        embed_info = self.databases_meta[db_id].get("embed_info", {})
-        embedding_function = self._get_async_embedding_function(embed_info)
+        embedding_model_spec = self.databases_meta[db_id].get("embedding_model_spec")
+        embedding_function = self._get_embedding_function(embedding_model_spec)
 
         # Get file meta
         async with self._metadata_lock:
@@ -372,23 +454,9 @@ class MilvusKB(KnowledgeBase):
                 texts = [chunk["content"] for chunk in chunks]
                 embeddings = await embedding_function(texts)
 
-                entities = [
-                    [chunk["id"] for chunk in chunks],
-                    [chunk["content"] for chunk in chunks],
-                    [chunk["source"] for chunk in chunks],
-                    [chunk["chunk_id"] for chunk in chunks],
-                    [chunk["file_id"] for chunk in chunks],
-                    [chunk["chunk_index"] for chunk in chunks],
-                    embeddings,
-                ]
-
                 # Clean up existing chunks if any (for re-indexing)
                 await self.delete_file_chunks_only(db_id, file_id)
-
-                def _insert_records():
-                    collection.insert(entities)
-
-                await asyncio.to_thread(_insert_records)
+                await self._insert_chunks_to_stores(db_id, file_id, collection, chunks, embeddings)
 
             logger.info(f"Indexed file {file_id} into Milvus")
 
@@ -425,8 +493,8 @@ class MilvusKB(KnowledgeBase):
         if not collection:
             raise ValueError(f"Failed to get Milvus collection for {db_id}")
 
-        embed_info = self.databases_meta[db_id].get("embed_info", {})
-        embedding_function = self._get_async_embedding_function(embed_info)
+        embedding_model_spec = self.databases_meta[db_id].get("embedding_model_spec")
+        embedding_function = self._get_embedding_function(embedding_model_spec)
 
         # 处理默认参数
         if params is None:
@@ -460,38 +528,24 @@ class MilvusKB(KnowledgeBase):
                         request_params=params,
                     )
                     self.files_meta[file_id]["processing_params"] = resolved_params
-                    self.files_meta[file_id]["status"] = "processing"
+                    self.files_meta[file_id]["status"] = FileStatus.INDEXING
                     await self._persist_file(file_id)
 
                 # 重新解析文件为 markdown
                 parse_params = {**resolved_params, "image_bucket": "public", "image_prefix": f"{db_id}/kb-images"}
                 markdown_content = await Parser.aparse(source=file_path, params=parse_params)
 
-                # 先删除现有的 Milvus 数据（仅删除chunks，保留元数据）
-                await self.delete_file_chunks_only(db_id, file_id)
-
                 # 重新生成 chunks
                 chunks = self._split_text_into_chunks(markdown_content, file_id, filename, resolved_params)
                 logger.info(f"Split {filename} into {len(chunks)} chunks")
 
+                # 先删除现有 chunks，保留文件元数据
+                await self.delete_file_chunks_only(db_id, file_id)
+
                 if chunks:
                     texts = [chunk["content"] for chunk in chunks]
                     embeddings = await embedding_function(texts)
-
-                    entities = [
-                        [chunk["id"] for chunk in chunks],
-                        [chunk["content"] for chunk in chunks],
-                        [chunk["source"] for chunk in chunks],
-                        [chunk["chunk_id"] for chunk in chunks],
-                        [chunk["file_id"] for chunk in chunks],
-                        [chunk["chunk_index"] for chunk in chunks],
-                        embeddings,
-                    ]
-
-                    def _insert_records():
-                        collection.insert(entities)
-
-                    await asyncio.to_thread(_insert_records)
+                    await self._insert_chunks_to_stores(db_id, file_id, collection, chunks, embeddings)
 
                 logger.info(f"Updated file {file_path} in Milvus. Done.")
 
@@ -535,10 +589,11 @@ class MilvusKB(KnowledgeBase):
     ) -> dict:
         """将 Milvus Hit 转成知识库统一返回的 Chunk 结构。"""
         entity = hit.entity
+        file_id = entity.get("file_id")
         metadata = {
-            "source": entity.get("source", "未知来源"),
+            "source": self._get_filename_for_file_id(file_id),
             "chunk_id": entity.get("chunk_id"),
-            "file_id": entity.get("file_id"),
+            "file_id": file_id,
             "chunk_index": entity.get("chunk_index"),
         }
         chunk = {"content": entity.get("content", ""), "metadata": metadata, "score": float(score or 0.0)}
@@ -578,21 +633,15 @@ class MilvusKB(KnowledgeBase):
             else:
                 recall_top_k = final_top_k
 
-            # 构建过滤表达式（文件名）
-            file_expr = None
-            if file_name := merged_kwargs.get("file_name"):
-                safe_file_name = file_name.replace('"', '\\"')
-                if "%" not in safe_file_name:
-                    file_expr = f'source like "%{safe_file_name}%"'
-                else:
-                    file_expr = f'source like "{safe_file_name}"'
+            file_expr = self._build_file_name_expr(db_id, merged_kwargs.get("file_name"))
+            if file_expr:
                 logger.debug(f"Using filter expression: {file_expr}")
 
-            output_fields = ["content", "source", "chunk_id", "file_id", "chunk_index"]
+            output_fields = ["content", "chunk_id", "file_id", "chunk_index"]
             retrieved_chunks: list[dict] = []
             if search_mode == "vector":
-                embed_info = self.databases_meta[db_id].get("embed_info", {})
-                embedding_function = self._get_embedding_function(embed_info)
+                embedding_model_spec = self.databases_meta[db_id].get("embedding_model_spec")
+                embedding_function = self._get_embedding_function(embedding_model_spec, sync=True)
                 query_embedding = embedding_function([query_text])
 
                 search_params = {"metric_type": metric_type, "params": {"nprobe": 10}}
@@ -644,8 +693,8 @@ class MilvusKB(KnowledgeBase):
 
                 logger.debug(f"Milvus BM25 query response: {len(retrieved_chunks)} chunks found")
             else:
-                embed_info = self.databases_meta[db_id].get("embed_info", {})
-                embedding_function = self._get_embedding_function(embed_info)
+                embedding_model_spec = self.databases_meta[db_id].get("embedding_model_spec")
+                embedding_function = self._get_embedding_function(embedding_model_spec, sync=True)
                 query_embedding = embedding_function([query_text])
                 bm25_top_k = int(merged_kwargs.get("bm25_top_k", recall_top_k))
                 bm25_top_k = max(bm25_top_k, 1)
@@ -733,26 +782,13 @@ class MilvusKB(KnowledgeBase):
 
     async def delete_file_chunks_only(self, db_id: str, file_id: str) -> None:
         """仅删除文件的chunks数据，保留元数据（用于更新操作）"""
+        await KnowledgeChunkRepository().delete_by_file_id(file_id)
         collection = await self._get_milvus_collection(db_id)
 
         if collection:
             # 先查询文件是否存在，避免不必要的删除操作
             try:
-                expr = f'file_id == "{file_id}"'
-                results = collection.query(expr=expr, output_fields=["id"], limit=1)
-
-                if not results:
-                    logger.info(f"File {file_id} not found in Milvus, skipping delete operation")
-                else:
-                    # 只有在文件确实存在时才执行删除
-                    def _delete_from_milvus():
-                        try:
-                            collection.delete(expr)
-                            logger.info(f"Deleted chunks for file {file_id} from Milvus")
-                        except Exception as e:
-                            logger.error(f"Error deleting file {file_id} from Milvus: {e}")
-
-                    await asyncio.to_thread(_delete_from_milvus)
+                await self._delete_file_chunks_from_milvus(collection, file_id)
             except Exception as e:
                 logger.error(f"Error checking file existence in Milvus: {e}")
         # 注意：这里不删除 files_meta[file_id]，保留元数据用于后续操作
@@ -782,36 +818,30 @@ class MilvusKB(KnowledgeBase):
         if file_id not in self.files_meta:
             raise Exception(f"File not found: {file_id}")
 
-        # 使用 Milvus 获取chunks
         content_info = {"lines": []}
-        collection = await self._get_milvus_collection(db_id)
-        if collection:
-            try:
-                # 查询文档的所有chunks
-                expr = f'file_id == "{file_id}"'
-                results = collection.query(
-                    expr=expr,
-                    output_fields=["content", "chunk_id", "chunk_index"],
-                    limit=10000,  # 假设单个文件不会超过10000个chunks
-                )
+        try:
+            chunks = await KnowledgeChunkRepository().list_by_file_id(file_id)
+            content_info["lines"] = [
+                {
+                    "id": chunk.chunk_id,
+                    "content": chunk.content,
+                    "chunk_order_index": chunk.chunk_index,
+                    "start_char_pos": chunk.start_char_pos,
+                    "end_char_pos": chunk.end_char_pos,
+                    "start_token_pos": chunk.start_token_pos,
+                    "end_token_pos": chunk.end_token_pos,
+                    "graph_indexed": chunk.graph_indexed,
+                    "ent_ids": chunk.ent_ids,
+                    "tags": chunk.tags,
+                    "extraction_result": chunk.extraction_result,
+                }
+                for chunk in chunks
+            ]
+        except Exception as e:
+            logger.error(f"Failed to get file content from PostgreSQL: {e}")
 
-                # 构建chunks数据
-                doc_chunks = []
-                for result in results:
-                    chunk_data = {
-                        "id": result.get("chunk_id", ""),
-                        "content": result.get("content", ""),
-                        "chunk_order_index": result.get("chunk_index", 0),
-                    }
-                    doc_chunks.append(chunk_data)
-
-                # 按 chunk_order_index 排序
-                doc_chunks.sort(key=lambda x: x.get("chunk_order_index", 0))
-                content_info["lines"] = doc_chunks
-
-            except Exception as e:
-                logger.error(f"Failed to get file content from Milvus: {e}")
-                content_info["lines"] = []
+        if not content_info["lines"]:
+            logger.warning(f"No chunks found in PostgreSQL for file {file_id}, file may not have been indexed")
 
         # Try to read markdown content if available
         file_meta = self.files_meta[file_id]
@@ -825,7 +855,7 @@ class MilvusKB(KnowledgeBase):
         return content_info
 
     async def get_file_info(self, db_id: str, file_id: str) -> dict:
-        """获取文件完整信息（基本信息+内容信息）- 保持向后兼容"""
+        """获取文件完整信息（基本信息+内容信息）"""
         if file_id not in self.files_meta:
             raise Exception(f"File not found: {file_id}")
 
@@ -852,7 +882,8 @@ class MilvusKB(KnowledgeBase):
 
     def get_query_params_config(self, db_id: str, **kwargs) -> dict:
         """获取 Milvus 知识库的查询参数配置"""
-        # 构建 Milvus 特定参数（不再从 reranker_config 读取）
+        # 构建 Milvus 特定查询参数
+        # TODO 使用 dataclass 重新配置并解析
         options = [
             {
                 "key": "search_mode",
@@ -944,8 +975,7 @@ class MilvusKB(KnowledgeBase):
                 "type": "select",
                 "default": "",
                 "options": [
-                    {"label": info.name, "value": model_id}
-                    for model_id, info in kwargs.get("reranker_names", {}).items()
+                    {"label": info.display_name, "value": info.spec} for info in model_cache.get_all_specs("rerank")
                 ],
                 "description": "选择用于本次查询的重排序模型",
             },

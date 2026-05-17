@@ -95,14 +95,14 @@ class MyAgent(BaseAgent):
 
 1. `BaseAgent.get_info()` 暴露 `configurable_items`
 2. 前端读取 Agent 详情
-3. `AgentConfigSidebar` 按 `template_metadata.kind` 渲染不同控件
+3. `AgentConfigSidebar` 按 `kind` 渲染不同控件
 
 也就是说，`AgentConfigSidebar` 不是手写每个字段，而是直接消费 `context_schema` 生成的配置描述。
 
 这也是为什么：
 
 - 新增一个 Context 字段，往往会直接影响侧边栏
-- 字段的 `metadata`、`Annotated` 类型信息，会直接影响展示方式
+- 字段的 `metadata` 信息会直接影响展示方式
 
 ### 3.3 `AgentConfigSidebar` 与 AgentConfig 的联动关系
 

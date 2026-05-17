@@ -117,21 +117,6 @@ export const agentApi = {
    */
   getMessageFeedback: (messageId) => apiGet(`/api/chat/message/${messageId}/feedback`),
 
-  /**
-   * 获取模型提供商的模型列表
-   * @param {string} provider - 模型提供商
-   * @returns {Promise} - 模型列表
-   */
-  getProviderModels: (provider) => apiGet(`/api/chat/models?model_provider=${provider}`),
-
-  /**
-   * 更新模型提供商的模型列表
-   * @param {string} provider - 模型提供商
-   * @param {Array} models - 选中的模型列表
-   * @returns {Promise} - 更新结果
-   */
-  updateProviderModels: (provider, models) =>
-    apiPost(`/api/chat/models/update?model_provider=${provider}`, models),
 
   getAgentConfigs: (agentId) => apiGet(`/api/chat/agent/${agentId}/configs`),
 

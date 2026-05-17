@@ -38,13 +38,6 @@ class DepartmentCreate(BaseModel):
     admin_phone: str | None = None
 
 
-class DepartmentCreateWithoutAdmin(BaseModel):
-    """创建部门请求（无管理员，用于兼容）"""
-
-    name: str
-    description: str | None = None
-
-
 class DepartmentUpdate(BaseModel):
     """更新部门请求"""
 
@@ -235,7 +228,7 @@ async def delete_department(
 
     if department_users:
         for user in department_users:
-            user.department_id = 1  # 将用户迁移到默认部门
+            user.department_id = 1  # 将被删除部门的用户移至默认部门
 
     await db.execute(sqlalchemy_delete(AgentConfig).where(AgentConfig.department_id == department_id))
     await db.execute(sqlalchemy_delete(APIKey).where(APIKey.department_id == department_id))

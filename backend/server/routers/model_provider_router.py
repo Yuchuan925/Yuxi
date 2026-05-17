@@ -230,8 +230,6 @@ async def get_v2_models(
     return {"success": True, "data": result}
 
 
-
-
 @model_providers.get("/models/status")
 async def get_model_status_by_spec(
     spec: str,

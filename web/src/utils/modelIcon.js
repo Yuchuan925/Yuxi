@@ -16,8 +16,6 @@ export const modelIcons = {
   modelscope: `${ICON_BASE}/modelscope-color.svg`,
   moonshotai: `${ICON_BASE}/moonshot.svg`,
   'moonshotai-cn': `${ICON_BASE}/moonshot.svg`,
-  ollama: `${ICON_BASE}/ollama.svg`,
-  'ollama-cloud': `${ICON_BASE}/ollama.svg`,
   opencode: `${ICON_BASE}/opencode.svg`,
   openai: `${ICON_BASE}/openai.svg`,
   openrouter: `${ICON_BASE}/openrouter.svg`,

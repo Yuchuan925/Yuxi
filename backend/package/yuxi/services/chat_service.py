@@ -359,19 +359,19 @@ def _build_ask_user_question_payload(info: Any, thread_id: str) -> dict[str, Any
 
     questions = _normalize_interrupt_questions(payload.get("questions"))
     if not questions:
-        legacy_question = str(payload.get("question") or "").strip()
-        if legacy_question:
-            legacy_item: dict[str, Any] = {
+        single_question = str(payload.get("question") or "").strip()
+        if single_question:
+            single_item: dict[str, Any] = {
                 "question_id": str(payload.get("question_id") or uuid.uuid4()),
-                "question": legacy_question,
+                "question": single_question,
                 "options": _normalize_interrupt_options(payload.get("options")),
                 "multi_select": bool(payload.get("multi_select", False)),
                 "allow_other": bool(payload.get("allow_other", True)),
             }
-            legacy_operation = payload.get("operation")
-            if isinstance(legacy_operation, str) and legacy_operation.strip():
-                legacy_item["operation"] = legacy_operation.strip()
-            questions = [legacy_item]
+            single_operation = payload.get("operation")
+            if isinstance(single_operation, str) and single_operation.strip():
+                single_item["operation"] = single_operation.strip()
+            questions = [single_item]
 
     if not questions:
         questions = [

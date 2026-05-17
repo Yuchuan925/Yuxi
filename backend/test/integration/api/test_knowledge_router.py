@@ -46,7 +46,7 @@ async def test_create_database_with_chunk_preset(test_client, admin_headers):
     payload = {
         "database_name": db_name,
         "description": "Chunk preset create test",
-        "embed_model_name": "siliconflow/BAAI/bge-m3",
+        "embedding_model_spec": "siliconflow-cn:Pro/BAAI/bge-m3",
         "kb_type": "milvus",
         "additional_params": {"chunk_preset_id": "book"},
     }
@@ -102,7 +102,7 @@ async def test_knowledge_routes_enforce_permissions(test_client, standard_user, 
         json={
             "database_name": "unauthorized_db",
             "description": "Should not succeed",
-            "embed_model_name": "siliconflow/BAAI/bge-m3",
+            "embedding_model_spec": "siliconflow-cn:Pro/BAAI/bge-m3",
         },
         headers=standard_user["headers"],
     )
@@ -124,7 +124,7 @@ async def test_admin_can_create_vector_db_with_reranker(test_client, admin_heade
     payload = {
         "database_name": db_name,
         "description": "Vector DB with reranker",
-        "embed_model_name": "siliconflow/BAAI/bge-m3",
+        "embedding_model_spec": "siliconflow-cn:Pro/BAAI/bge-m3",
         "kb_type": "milvus",
         "additional_params": {},
     }
@@ -449,14 +449,31 @@ async def test_duplicate_database_name(test_client, admin_headers, knowledge_dat
         json={
             "database_name": db_name,
             "description": "Duplicate name test",
-            "embed_model_name": "siliconflow/BAAI/bge-m3",
-            "kb_type": "lightrag",
+            "embedding_model_spec": "siliconflow-cn:Pro/BAAI/bge-m3",
+            "kb_type": "milvus",
             "additional_params": {},
         },
         headers=admin_headers,
     )
     assert response.status_code == 409
     assert "已存在" in response.json()["detail"]
+
+
+async def test_create_lightrag_knowledge_base_is_unsupported(test_client, admin_headers):
+    db_name = f"pytest_lightrag_{uuid.uuid4().hex[:6]}"
+    response = await test_client.post(
+        "/api/knowledge/databases",
+        json={
+            "database_name": db_name,
+            "description": "Unsupported LightRAG knowledge base",
+            "embedding_model_spec": "siliconflow-cn:Pro/BAAI/bge-m3",
+            "kb_type": "lightrag",
+            "additional_params": {},
+        },
+        headers=admin_headers,
+    )
+    assert response.status_code == 400
+    assert "Unsupported knowledge base type: lightrag" in response.json()["detail"]
 
 
 async def test_create_milvus_knowledge_base(test_client, admin_headers):
@@ -468,7 +485,7 @@ async def test_create_milvus_knowledge_base(test_client, admin_headers):
     payload = {
         "database_name": db_name,
         "description": "Pytest Milvus knowledge base",
-        "embed_model_name": "siliconflow/BAAI/bge-m3",
+        "embedding_model_spec": "siliconflow-cn:Pro/BAAI/bge-m3",
         "kb_type": "milvus",
         "additional_params": {},
     }

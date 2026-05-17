@@ -54,15 +54,7 @@ def tool(
     def calculator(a: float, b: float, operation: str) -> float:
         ...
 
-    或者保留原有的 name_or_callable 和 description:
-    @tool(
-        category="buildin",
-        display_name="查询知识图谱",
-        name_or_callable="查询知识图谱",
-        description=KG_QUERY_DESCRIPTION,
-    )
-    def query_knowledge_graph(query: str) -> str:
-        ...
+    或者保留原有的 name_or_callable 和 description 参数来自定义工具名称和说明。
     """
     from langchain.tools import tool as langchain_tool
 

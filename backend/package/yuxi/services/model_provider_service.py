@@ -15,12 +15,11 @@ from yuxi.repositories.model_provider_repository import (
     list_model_providers,
     update_model_provider,
 )
-from yuxi.services.model_cache import is_v2_spec_format
 from yuxi.storage.postgres.models_business import ModelProvider
 
 VALID_MODEL_TYPES = {"chat", "embedding", "rerank"}
 VALID_MODEL_SOURCES = {"manual", "remote"}
-VALID_PROVIDER_TYPES = {"openai", "anthropic", "gemini", "ollama", "openrouter", "lmstudio"}
+VALID_PROVIDER_TYPES = {"openai", "anthropic", "gemini", "openrouter", "lmstudio"}
 _PROVIDER_ID_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_-]{1,99}$")
 
 
@@ -368,47 +367,40 @@ async def fetch_remote_models(provider: ModelProvider) -> list[dict[str, Any]]:
 
 
 async def test_model_status_by_spec(spec: str) -> dict:
-    """根据 full spec 测试模型连接状态（自动识别 Chat/Embedding）。
-
-    V2 spec 格式: provider_id:model_id（冒号分隔）
-    V1 spec 格式: provider/model_name（斜杠分隔）
-    """
+    """根据 spec 测试模型连接状态。"""
     from yuxi.services.model_cache import model_cache
 
-    # V2: 从缓存识别模型类型并分派
-    if is_v2_spec_format(spec):
-        info = model_cache.get_model_info(spec)
-        if info:
-            if info.model_type == "embedding":
-                from yuxi.models.embed import select_embedding_model_v2
-
-                model = select_embedding_model_v2(spec)
-                success, message = await model.test_connection()
-                return {
-                    "spec": spec,
-                    "status": "available" if success else "unavailable",
-                    "message": "连接正常" if success else message,
-                    "model_type": "embedding",
-                }
-            # chat 或其他类型走 chat 测试
-            from yuxi.models.chat import select_model_v2
-
-            model = select_model_v2(spec)
-            test_messages = [{"role": "user", "content": "Say 1"}]
-            response = await model.call(test_messages, stream=False)
-            if response and response.content:
-                return {"spec": spec, "status": "available", "message": "连接正常", "model_type": "chat"}
-            return {"spec": spec, "status": "unavailable", "message": "响应无效", "model_type": "chat"}
-
-    # V1 兼容：尝试旧的模型选择逻辑
-    from yuxi.models.chat import select_model
+    info = model_cache.get_model_info(spec)
+    if not info:
+        return {"spec": spec, "status": "error", "message": f"未找到模型: {spec}"}
 
     try:
+        if info.model_type == "embedding":
+            from yuxi.models.embed import select_embedding_model
+
+            model = select_embedding_model(spec)
+            success, message = await model.test_connection()
+            return {
+                "spec": spec,
+                "status": "available" if success else "unavailable",
+                "message": "连接正常" if success else message,
+                "model_type": "embedding",
+            }
+        if info.model_type == "rerank":
+            return {
+                "spec": spec,
+                "status": "unsupported",
+                "message": "暂不支持 rerank 模型在线连接测试",
+                "model_type": "rerank",
+            }
+
+        from yuxi.models.chat import select_model
+
         model = select_model(model_spec=spec)
         test_messages = [{"role": "user", "content": "Say 1"}]
         response = await model.call(test_messages, stream=False)
         if response and response.content:
-            return {"spec": spec, "status": "available", "message": "连接正常"}
-        return {"spec": spec, "status": "unavailable", "message": "响应无效"}
+            return {"spec": spec, "status": "available", "message": "连接正常", "model_type": "chat"}
+        return {"spec": spec, "status": "unavailable", "message": "响应无效", "model_type": "chat"}
     except Exception as e:
-        return {"spec": spec, "status": "error", "message": str(e)}
+        return {"spec": spec, "status": "error", "message": str(e), "model_type": info.model_type}

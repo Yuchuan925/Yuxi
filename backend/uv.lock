@@ -282,18 +282,6 @@ wheels = [
 ]
 
 [[package]]
-name = "ascii-colors"
-version = "0.11.21"
-source = { registry = "https://pypi.tuna.tsinghua.edu.cn/simple" }
-dependencies = [
-    { name = "wcwidth" },
-]
-sdist = { url = "https://pypi.tuna.tsinghua.edu.cn/packages/a7/2c/e934131e0e7e11411e0ca4e456174715d963e521c78a6bb81706501b4e71/ascii_colors-0.11.21.tar.gz", hash = "sha256:b85323e08921ba978445198ab5815af08fb0153cec706ff3e6e69cf8b8d9700b", size = 101318, upload-time = "2026-03-15T00:49:59.694Z" }
-wheels = [
-    { url = "https://pypi.tuna.tsinghua.edu.cn/packages/7e/0b/2347b19759b3b9b1ba4182793fd6674e691b29adc24ab8de9e25b643215b/ascii_colors-0.11.21-py3-none-any.whl", hash = "sha256:6923e67ea15e6cc00fd95b403c646d2a26a271650306500905faf219e84a98e6", size = 84879, upload-time = "2026-03-15T00:49:57.277Z" },
-]
-
-[[package]]
 name = "asyncpg"
 version = "0.31.0"
 source = { registry = "https://pypi.tuna.tsinghua.edu.cn/simple" }
@@ -621,15 +609,6 @@ source = { registry = "https://pypi.tuna.tsinghua.edu.cn/simple" }
 sdist = { url = "https://pypi.tuna.tsinghua.edu.cn/packages/ca/65/efd0fe8a936fc8ca2978cb7b82581fb20d901c6039e746a808f746b7647b/confection-1.3.3.tar.gz", hash = "sha256:f0f6810d567ff73993fe74d218ca5e1ffb6a44fb03f391257fc5d033546cbfaa", size = 54895, upload-time = "2026-03-24T18:45:24.331Z" }
 wheels = [
     { url = "https://pypi.tuna.tsinghua.edu.cn/packages/8d/e4/d66708bdf0d92fb4d49b22cdff4b10cec38aca5dcd7e81d909bb55c65cd7/confection-1.3.3-py3-none-any.whl", hash = "sha256:b9fef9ee84b237ef4611ec3eb5797b70e13063e6310ad9f15536373f5e313c82", size = 35902, upload-time = "2026-03-24T18:45:22.664Z" },
-]
-
-[[package]]
-name = "configparser"
-version = "7.2.0"
-source = { registry = "https://pypi.tuna.tsinghua.edu.cn/simple" }
-sdist = { url = "https://pypi.tuna.tsinghua.edu.cn/packages/8b/ac/ea19242153b5e8be412a726a70e82c7b5c1537c83f61b20995b2eda3dcd7/configparser-7.2.0.tar.gz", hash = "sha256:b629cc8ae916e3afbd36d1b3d093f34193d851e11998920fdcfc4552218b7b70", size = 51273, upload-time = "2025-03-08T16:04:09.339Z" }
-wheels = [
-    { url = "https://pypi.tuna.tsinghua.edu.cn/packages/09/fe/f61e7129e9e689d9e40bbf8a36fb90f04eceb477f4617c02c6a18463e81f/configparser-7.2.0-py3-none-any.whl", hash = "sha256:fee5e1f3db4156dcd0ed95bc4edfa3580475537711f67a819c966b389d09ce62", size = 17232, upload-time = "2025-03-08T16:04:07.743Z" },
 ]
 
 [[package]]
@@ -1168,22 +1147,6 @@ source = { registry = "https://pypi.tuna.tsinghua.edu.cn/simple" }
 sdist = { url = "https://pypi.tuna.tsinghua.edu.cn/packages/e1/cf/b50ddf667c15276a9ab15a70ef5f257564de271957933ffea49d2cdbcdfb/fsspec-2026.3.0.tar.gz", hash = "sha256:1ee6a0e28677557f8c2f994e3eea77db6392b4de9cd1f5d7a9e87a0ae9d01b41", size = 313547, upload-time = "2026-03-27T19:11:14.892Z" }
 wheels = [
     { url = "https://pypi.tuna.tsinghua.edu.cn/packages/d5/1f/5f4a3cd9e4440e9d9bc78ad0a91a1c8d46b4d429d5239ebe6793c9fe5c41/fsspec-2026.3.0-py3-none-any.whl", hash = "sha256:d2ceafaad1b3457968ed14efa28798162f1638dbb5d2a6868a2db002a5ee39a4", size = 202595, upload-time = "2026-03-27T19:11:13.595Z" },
-]
-
-[[package]]
-name = "google-api-core"
-version = "2.30.2"
-source = { registry = "https://pypi.tuna.tsinghua.edu.cn/simple" }
-dependencies = [
-    { name = "google-auth" },
-    { name = "googleapis-common-protos" },
-    { name = "proto-plus" },
-    { name = "protobuf" },
-    { name = "requests" },
-]
-sdist = { url = "https://pypi.tuna.tsinghua.edu.cn/packages/1a/2e/83ca41eb400eb228f9279ec14ed66f6475218b59af4c6daec2d5a509fe83/google_api_core-2.30.2.tar.gz", hash = "sha256:9a8113e1a88bdc09a7ff629707f2214d98d61c7f6ceb0ea38c42a095d02dc0f9", size = 176862, upload-time = "2026-04-02T21:23:44.876Z" }
-wheels = [
-    { url = "https://pypi.tuna.tsinghua.edu.cn/packages/84/e1/ebd5100cbb202e561c0c8b59e485ef3bd63fa9beb610f3fdcaea443f0288/google_api_core-2.30.2-py3-none-any.whl", hash = "sha256:a4c226766d6af2580577db1f1a51bf53cd262f722b49731ce7414c43068a9594", size = 173236, upload-time = "2026-04-02T21:23:06.395Z" },
 ]
 
 [[package]]
@@ -2152,35 +2115,6 @@ wheels = [
 ]
 
 [[package]]
-name = "lightrag-hku"
-version = "1.4.13"
-source = { registry = "https://pypi.tuna.tsinghua.edu.cn/simple" }
-dependencies = [
-    { name = "aiohttp" },
-    { name = "configparser" },
-    { name = "google-api-core" },
-    { name = "google-genai" },
-    { name = "json-repair" },
-    { name = "nano-vectordb" },
-    { name = "networkx" },
-    { name = "numpy" },
-    { name = "packaging" },
-    { name = "pandas" },
-    { name = "pipmaster" },
-    { name = "pydantic" },
-    { name = "pypinyin" },
-    { name = "python-dotenv" },
-    { name = "setuptools" },
-    { name = "tenacity" },
-    { name = "tiktoken" },
-    { name = "xlsxwriter" },
-]
-sdist = { url = "https://pypi.tuna.tsinghua.edu.cn/packages/b1/c9/6dc760199eca1a80358e14a46f36502d7bcefef8a8ec1017bae5a89129c3/lightrag_hku-1.4.13.tar.gz", hash = "sha256:53873bd0a2aa29509692f9bddf15f9338bdede5acd27339a69f9726d2a7d0ea5", size = 3757456, upload-time = "2026-04-02T17:01:53.985Z" }
-wheels = [
-    { url = "https://pypi.tuna.tsinghua.edu.cn/packages/f2/7a/caaeb5634db84e3f5b72e16a2b906f49fd01825655ebfc685566d6af848c/lightrag_hku-1.4.13-py3-none-any.whl", hash = "sha256:44d356dc9c61a867a0d209be432fcbf31a4aef010ba4de348271f1343d8692c5", size = 3651157, upload-time = "2026-04-02T17:01:50.782Z" },
-]
-
-[[package]]
 name = "llama-index"
 version = "0.14.19"
 source = { registry = "https://pypi.tuna.tsinghua.edu.cn/simple" }
@@ -2707,18 +2641,6 @@ wheels = [
 ]
 
 [[package]]
-name = "nano-vectordb"
-version = "0.0.4.3"
-source = { registry = "https://pypi.tuna.tsinghua.edu.cn/simple" }
-dependencies = [
-    { name = "numpy" },
-]
-sdist = { url = "https://pypi.tuna.tsinghua.edu.cn/packages/cb/ff/ed9ff1c4e5b0418687c17d02fdc453c212e7550c62622914ba0243c106bc/nano_vectordb-0.0.4.3.tar.gz", hash = "sha256:3d13074476f2b739e51261974ed44aa467725579966219734c03502c929ed3b5", size = 6332, upload-time = "2024-11-11T12:50:50.584Z" }
-wheels = [
-    { url = "https://pypi.tuna.tsinghua.edu.cn/packages/9b/d8/f1876f59916da0a2147e63066650c46bf7992828a9e92f1b4e3b695f1fb0/nano_vectordb-0.0.4.3-py3-none-any.whl", hash = "sha256:1b70401a54c02fabf76515b5dfb630076434547ed3c6861828ee8771b6dd7c19", size = 5590, upload-time = "2024-11-11T12:50:48.9Z" },
-]
-
-[[package]]
 name = "neo4j"
 version = "6.1.0"
 source = { registry = "https://pypi.tuna.tsinghua.edu.cn/simple" }
@@ -3185,19 +3107,6 @@ wheels = [
 ]
 
 [[package]]
-name = "pipmaster"
-version = "1.1.2"
-source = { registry = "https://pypi.tuna.tsinghua.edu.cn/simple" }
-dependencies = [
-    { name = "ascii-colors" },
-    { name = "packaging" },
-]
-sdist = { url = "https://pypi.tuna.tsinghua.edu.cn/packages/2b/d3/73e9e577c70ac72008731eb857eb4245256e1604a83d1d5bdc2212405e01/pipmaster-1.1.2.tar.gz", hash = "sha256:ff130ef5c76f9b5b2fa9ce8031c2df99c33f937b2d8635b185ab3ab56ded5a3f", size = 39771, upload-time = "2026-03-18T09:24:46.444Z" }
-wheels = [
-    { url = "https://pypi.tuna.tsinghua.edu.cn/packages/34/d6/c9f284e14a321b6dae3ae1df9a83f5fbd2186fb7be0fb2c848c3b82f381b/pipmaster-1.1.2-py3-none-any.whl", hash = "sha256:9180fcb987510bdc7f70aaa601dadcec8b6f44e4414ff03c15250e2bf0900442", size = 32992, upload-time = "2026-03-18T09:24:45.224Z" },
-]
-
-[[package]]
 name = "platformdirs"
 version = "4.9.4"
 source = { registry = "https://pypi.tuna.tsinghua.edu.cn/simple" }
@@ -3308,18 +3217,6 @@ wheels = [
     { url = "https://pypi.tuna.tsinghua.edu.cn/packages/48/f0/615c30622316496d2cbbc29f5985f7777d3ada70f23370608c1d3e081c1f/propcache-0.4.1-cp313-cp313t-win_amd64.whl", hash = "sha256:f7ee0e597f495cf415bcbd3da3caa3bd7e816b74d0d52b8145954c5e6fd3ff37", size = 44897, upload-time = "2025-10-08T19:47:48.336Z" },
     { url = "https://pypi.tuna.tsinghua.edu.cn/packages/fd/ca/6002e46eccbe0e33dcd4069ef32f7f1c9e243736e07adca37ae8c4830ec3/propcache-0.4.1-cp313-cp313t-win_arm64.whl", hash = "sha256:929d7cbe1f01bb7baffb33dc14eb5691c95831450a26354cd210a8155170c93a", size = 39789, upload-time = "2025-10-08T19:47:49.876Z" },
     { url = "https://pypi.tuna.tsinghua.edu.cn/packages/5b/5a/bc7b4a4ef808fa59a816c17b20c4bef6884daebbdf627ff2a161da67da19/propcache-0.4.1-py3-none-any.whl", hash = "sha256:af2a6052aeb6cf17d3e46ee169099044fd8224cbaf75c76a2ef596e8163e2237", size = 13305, upload-time = "2025-10-08T19:49:00.792Z" },
-]
-
-[[package]]
-name = "proto-plus"
-version = "1.27.2"
-source = { registry = "https://pypi.tuna.tsinghua.edu.cn/simple" }
-dependencies = [
-    { name = "protobuf" },
-]
-sdist = { url = "https://pypi.tuna.tsinghua.edu.cn/packages/81/0d/94dfe80193e79d55258345901acd2917523d56e8381bc4dee7fd38e3868a/proto_plus-1.27.2.tar.gz", hash = "sha256:b2adde53adadf75737c44d3dcb0104fde65250dfc83ad59168b4aa3e574b6a24", size = 57204, upload-time = "2026-03-26T22:18:57.174Z" }
-wheels = [
-    { url = "https://pypi.tuna.tsinghua.edu.cn/packages/84/f3/1fba73eeffafc998a25d59703b63f8be4fe8a5cb12eaff7386a0ba0f7125/proto_plus-1.27.2-py3-none-any.whl", hash = "sha256:6432f75893d3b9e70b9c412f1d2f03f65b11fb164b793d14ae2ca01821d22718", size = 50450, upload-time = "2026-03-26T22:13:42.927Z" },
 ]
 
 [[package]]
@@ -5396,15 +5293,6 @@ wheels = [
 ]
 
 [[package]]
-name = "wcwidth"
-version = "0.6.0"
-source = { registry = "https://pypi.tuna.tsinghua.edu.cn/simple" }
-sdist = { url = "https://pypi.tuna.tsinghua.edu.cn/packages/35/a2/8e3becb46433538a38726c948d3399905a4c7cabd0df578ede5dc51f0ec2/wcwidth-0.6.0.tar.gz", hash = "sha256:cdc4e4262d6ef9a1a57e018384cbeb1208d8abbc64176027e2c2455c81313159", size = 159684, upload-time = "2026-02-06T19:19:40.919Z" }
-wheels = [
-    { url = "https://pypi.tuna.tsinghua.edu.cn/packages/68/5a/199c59e0a824a3db2b89c5d2dade7ab5f9624dbf6448dc291b46d5ec94d3/wcwidth-0.6.0-py3-none-any.whl", hash = "sha256:1a3a1e510b553315f8e146c54764f4fb6264ffad731b3d78088cdb1478ffbdad", size = 94189, upload-time = "2026-02-06T19:19:39.646Z" },
-]
-
-[[package]]
 name = "weasel"
 version = "1.0.0"
 source = { registry = "https://pypi.tuna.tsinghua.edu.cn/simple" }
@@ -5672,7 +5560,6 @@ dependencies = [
     { name = "langgraph-checkpoint-sqlite" },
     { name = "langgraph-cli", extra = ["inmem"] },
     { name = "langsmith" },
-    { name = "lightrag-hku" },
     { name = "llama-index" },
     { name = "llama-index-readers-file" },
     { name = "loguru" },
@@ -5751,7 +5638,6 @@ requires-dist = [
     { name = "langgraph-checkpoint-sqlite", specifier = ">=3.0" },
     { name = "langgraph-cli", extras = ["inmem"], specifier = ">=0.4" },
     { name = "langsmith", specifier = ">=0.4" },
-    { name = "lightrag-hku", specifier = ">=1.4.6" },
     { name = "llama-index", specifier = ">=0.14" },
     { name = "llama-index-readers-file", specifier = ">=0.4.7" },
     { name = "loguru", specifier = ">=0.7.3" },

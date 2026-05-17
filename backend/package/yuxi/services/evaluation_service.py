@@ -445,9 +445,6 @@ class EvaluationService:
             if not kb_instance:
                 raise ValueError(f"Knowledge Base {db_id} not found")
 
-            if kb_instance.kb_type == "lightrag":
-                raise ValueError("暂不支持对 LightRAG 类型的知识库进行 RAG 评估")
-
             # 初始化 Judge LLM
             judge_llm = None
             if benchmark_row.has_gold_answers:

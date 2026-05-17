@@ -63,7 +63,7 @@
                 <!-- <div>{{ value }}</div> -->
                 <!-- 模型选择 -->
                 <div
-                  v-if="value.template_metadata.kind === 'llm'"
+                  v-if="value.kind === 'llm'"
                   class="model-selector"
                   :class="{ 'is-readonly': isReadOnlyConfig }"
                 >
@@ -75,7 +75,7 @@
 
                 <!-- 系统提示词 -->
                 <div
-                  v-else-if="value.template_metadata.kind === 'prompt'"
+                  v-else-if="value.kind === 'prompt'"
                   class="system-prompt-container"
                 >
                   <div class="system-prompt-display" @click="openSystemPromptModal(key)">
@@ -133,12 +133,12 @@
                         >
                           清空
                         </a-button>
-                        <template v-if="isToolsKind(value.template_metadata?.kind)">
+                        <template v-if="isToolsKind(value.kind)">
                           <a-divider type="vertical" />
                           <a-button
                             type="link"
                             size="small"
-                            @click="refreshConfigOptions(key, value.template_metadata.kind)"
+                            @click="refreshConfigOptions(key, value.kind)"
                             class="inline-action-btn lucide-icon-btn"
                           >
                             <RotateCw :size="12" />
@@ -147,7 +147,7 @@
                           <a-button
                             type="link"
                             size="small"
-                            @click="navigateToConfigPage(value.template_metadata.kind)"
+                            @click="navigateToConfigPage(value.kind)"
                             class="inline-action-btn lucide-icon-btn"
                           >
                             <Settings :size="12" />
@@ -527,15 +527,15 @@ const segmentConfigKeys = computed(() => {
   const keys = Object.keys(configurableItems.value)
   return {
     model: keys.filter((key) => {
-      const meta = configurableItems.value[key]?.template_metadata?.kind
+      const meta = configurableItems.value[key]?.kind
       return meta === 'llm' || meta === 'prompt'
     }),
     tools: keys.filter((key) => {
-      const meta = configurableItems.value[key]?.template_metadata?.kind
+      const meta = configurableItems.value[key]?.kind
       return ['tools', 'knowledges', 'mcps', 'skills', 'subagents'].includes(meta)
     }),
     other: keys.filter((key) => {
-      const meta = configurableItems.value[key]?.template_metadata?.kind
+      const meta = configurableItems.value[key]?.kind
       return !['llm', 'prompt', 'tools', 'knowledges', 'mcps', 'skills', 'subagents'].includes(meta)
     })
   }
@@ -713,26 +713,26 @@ const resolveOptionValue = (option) => {
 }
 
 const getConfigOptions = (value) => {
-  if (value?.template_metadata?.kind === 'tools') {
+  if (value?.kind === 'tools') {
     return toolOptionsFromApi.value || []
   }
-  if (value?.template_metadata?.kind === 'knowledges') {
+  if (value?.kind === 'knowledges') {
     return databaseStore.databases || []
   }
-  if (value?.template_metadata?.kind === 'mcps') {
+  if (value?.kind === 'mcps') {
     return liveMcpOptions.value || []
   }
-  if (value?.template_metadata?.kind === 'skills') {
+  if (value?.kind === 'skills') {
     return liveSkillOptions.value.length > 0 ? liveSkillOptions.value : value?.options || []
   }
-  if (value?.template_metadata?.kind === 'subagents') {
+  if (value?.kind === 'subagents') {
     return liveSubagentOptions.value || []
   }
   return value?.options || []
 }
 
 const isListConfig = (key, value) => {
-  const isTools = value?.template_metadata?.kind === 'tools'
+  const isTools = value?.kind === 'tools'
   const isList = value?.type === 'list'
   return isTools || isList || key === 'skills' || key === 'subagents'
 }
@@ -757,7 +757,7 @@ const getOptionDescription = (option) => {
 
 const currentConfigKind = computed(() => {
   if (!currentConfigKey.value) return null
-  return configurableItems.value[currentConfigKey.value]?.template_metadata?.kind
+  return configurableItems.value[currentConfigKey.value]?.kind
 })
 
 const systemPromptModalTitle = computed(() => {
@@ -824,7 +824,7 @@ const handleModelChange = (key, spec) => {
 // 多选相关方法
 const ensureArray = (key) => {
   const config = agentConfig.value || {}
-  if (config[key] === null && configurableItems.value[key]?.template_metadata?.kind === 'knowledges') {
+  if (config[key] === null && configurableItems.value[key]?.kind === 'knowledges') {
     return getConfigOptions(configurableItems.value[key]).map((option) => getOptionValue(option))
   }
   if (!config[key] || !Array.isArray(config[key])) {
@@ -877,21 +877,21 @@ const openSelectionModal = async (key) => {
   if (isReadOnlyConfig.value) return
   currentConfigKey.value = key
   // 如果是工具，从 API 刷新工具列表
-  if (configurableItems.value[key]?.template_metadata?.kind === 'tools') {
+  if (configurableItems.value[key]?.kind === 'tools') {
     await loadToolOptions()
   }
   // 如果是知识库，需要获取知识库列表
-  if (configurableItems.value[key]?.template_metadata?.kind === 'knowledges') {
+  if (configurableItems.value[key]?.kind === 'knowledges') {
     try {
       await databaseStore.loadDatabases()
     } catch (error) {
       console.error('加载知识库列表失败:', error)
     }
   }
-  if (configurableItems.value[key]?.template_metadata?.kind === 'skills') {
+  if (configurableItems.value[key]?.kind === 'skills') {
     await loadLiveSkillOptions()
   }
-  if (configurableItems.value[key]?.template_metadata?.kind === 'subagents') {
+  if (configurableItems.value[key]?.kind === 'subagents') {
     await loadSubagentOptions()
   }
   tempSelectedValues.value = [...ensureArray(key)]
@@ -962,7 +962,7 @@ const validateAndFilterConfig = () => {
 
     if (
       Array.isArray(currentValue) &&
-      (configItem.template_metadata?.kind === 'tools' || configItem.type === 'list')
+      (configItem.kind === 'tools' || configItem.type === 'list')
     ) {
       const options = getConfigOptions(configItem)
       const validValues = new Set(options.map((opt) => String(getOptionValue(opt))))

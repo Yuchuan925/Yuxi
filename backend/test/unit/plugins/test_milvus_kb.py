@@ -1,6 +1,11 @@
 from pymilvus import CollectionSchema, DataType, FieldSchema, Function, FunctionType
 
-from yuxi.knowledge.implementations.milvus import CONTENT_ANALYZER_PARAMS, CONTENT_SPARSE_FIELD, MilvusKB, VECTOR_METRIC_TYPE
+from yuxi.knowledge.implementations.milvus import (
+    CONTENT_ANALYZER_PARAMS,
+    CONTENT_SPARSE_FIELD,
+    VECTOR_METRIC_TYPE,
+    MilvusKB,
+)
 
 
 class FakeHit:
@@ -8,7 +13,6 @@ class FakeHit:
         self.distance = distance
         self.entity = {
             "content": content,
-            "source": "demo.md",
             "chunk_id": "chunk-1",
             "file_id": "file-1",
             "chunk_index": 0,
@@ -32,15 +36,35 @@ class FakeCollection:
 
 def make_kb(collection: FakeCollection) -> MilvusKB:
     kb = MilvusKB.__new__(MilvusKB)
-    kb.databases_meta = {"db": {"embed_info": {}}}
+    kb.databases_meta = {"db": {"embedding_model_spec": "test-provider:test-embedding"}}
+    kb.files_meta = {"file-1": {"filename": "demo.md", "database_id": "db"}}
     kb._get_query_params = lambda db_id: {}
-    kb._get_embedding_function = lambda embed_info: lambda texts: [[0.1, 0.2] for _ in texts]
+    kb._get_embedding_function = lambda embedding_model_spec, **kwargs: lambda texts: [[0.1, 0.2] for _ in texts]
 
     async def get_collection(db_id: str):
         return collection
 
     kb._get_milvus_collection = get_collection
     return kb
+
+
+def test_build_chunk_pg_records_preserves_extraction_result():
+    kb = MilvusKB.__new__(MilvusKB)
+
+    records = kb._build_chunk_pg_records(
+        "db",
+        [
+            {
+                "chunk_id": "chunk-1",
+                "file_id": "file-1",
+                "chunk_index": 0,
+                "content": "content",
+                "extraction_result": {"entities": ["alpha"]},
+            }
+        ],
+    )
+
+    assert records[0]["extraction_result"] == {"entities": ["alpha"]}
 
 
 async def test_keyword_mode_uses_milvus_bm25_search():

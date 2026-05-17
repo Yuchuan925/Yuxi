@@ -165,7 +165,7 @@ const isDify = computed(() => database.value.kb_type?.toLowerCase() === 'dify')
 // 计算属性：是否支持知识图谱
 const isGraphSupported = computed(() => {
   const kbType = database.value.kb_type?.toLowerCase()
-  return kbType === 'lightrag'
+  return kbType === 'milvus'
 })
 
 // 计算属性：是否支持评估功能
@@ -183,12 +183,8 @@ const pendingParseCount = computed(() => {
 // 计算待入库文件数量（status: 'parsed' 或 'error_indexing'）
 const pendingIndexCount = computed(() => {
   const files = store.database.files || {}
-  const isLightRAG = database.value?.kb_type?.toLowerCase() === 'lightrag'
   return Object.values(files).filter((f) => {
     if (f.is_folder) return false
-    if (isLightRAG) {
-      return f.status === 'parsed'
-    }
     return f.status === 'parsed' || f.status === 'error_indexing'
   }).length
 })
@@ -212,11 +208,9 @@ const confirmBatchParse = () => {
 
 // 确认批量入库
 const confirmBatchIndex = () => {
-  const isLightRAG = database.value?.kb_type?.toLowerCase() === 'lightrag'
   const fileIds = Object.values(store.database.files || {})
     .filter((f) => {
       if (f.is_folder) return false
-      if (isLightRAG) return f.status === 'parsed'
       return f.status === 'parsed' || f.status === 'error_indexing'
     })
     .map((f) => f.file_id)
@@ -225,17 +219,6 @@ const confirmBatchIndex = () => {
     return
   }
 
-  if (isLightRAG) {
-    Modal.confirm({
-      title: '批量入库',
-      content: `确定要入库 ${fileIds.length} 个文件吗？`,
-      onOk: () => store.indexFiles(fileIds)
-    })
-    return
-  }
-
-  // 非 LightRAG：触发 FileTable 的入库流程
-  // 暂时简单处理，直接调用 store.indexFiles
   Modal.confirm({
     title: '批量入库',
     content: `确定要入库 ${fileIds.length} 个文件吗？`,
@@ -262,7 +245,6 @@ const resetGraphStats = () => {
   }
 }
 
-// LightRAG 默认展示知识图谱
 watch(
   () => [databaseId.value, isGraphSupported.value, isEvaluationSupported.value, isDify.value],
   ([newDbId, supported, , difyMode], oldValue = []) => {

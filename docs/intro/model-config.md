@@ -66,9 +66,15 @@
 
 在供应商详情的已启用模型列表中移除不需要的模型。
 
-## 旧版配置兼容性
+## 模型标识格式
 
-本次更新前通过环境变量配置的模型（如 `SILICONFLOW_API_KEY`）依然有效，系统自动适配。旧配置不受影响，新增或修改模型时请使用新版界面。
+运行时模型统一使用 `provider_id:model_id` 格式，例如 `siliconflow-cn:Pro/BAAI/bge-m3`。`model_id` 可以包含 `/`，系统只按第一个 `:` 区分供应商与模型 ID。
+
+旧版 `provider/model`、旧版知识库 JSON 模型字段、配置文件中的 `model_names` / `embed_model_names` / `reranker_names` 不再作为运行时模型来源。历史知识库或 Agent 配置如果仍保存旧格式，需要在界面中重新选择新版模型后保存。
+
+## Ollama 支持
+
+当前版本不再内置 Ollama provider type，也不再提供 Ollama embedding 运行时适配。已有 Ollama embedding 知识库需要管理员选择新的 embedding 模型并重建索引，避免不同向量空间混用。
 
 ## 常见问题
 

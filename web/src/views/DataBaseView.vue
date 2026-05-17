@@ -71,7 +71,7 @@
           <div class="form-section compact-section">
             <h3 class="section-title">嵌入模型</h3>
             <EmbeddingModelSelector
-              v-model:value="newDatabase.embed_model_name"
+              v-model:value="newDatabase.embedding_model_spec"
               class="full-width"
               placeholder="请选择嵌入模型"
             />
@@ -88,29 +88,6 @@
               v-model:value="newDatabase.chunk_preset_id"
               :options="chunkPresetOptions"
               class="full-width"
-            />
-          </div>
-        </div>
-
-        <!-- 仅对 LightRAG 提供语言选择和LLM选择 -->
-        <div v-if="newDatabase.kb_type === 'lightrag'" class="form-grid two-columns">
-          <div class="form-section compact-section">
-            <h3 class="section-title">语言</h3>
-            <a-select
-              v-model:value="newDatabase.language"
-              :options="languageOptions"
-              class="full-width"
-              :dropdown-match-select-width="false"
-            />
-          </div>
-
-          <div class="form-section compact-section">
-            <h3 class="section-title">语言模型 (LLM)</h3>
-            <ModelSelectorComponent
-              :model_spec="llmModelSpec"
-              placeholder="请选择模型"
-              @select-model="handleLLMSelect"
-              class="full-width compact-model-selector"
             />
           </div>
         </div>
@@ -153,24 +130,6 @@
             :auto-size="{ minRows: 3, maxRows: 10 }"
           />
         </div>
-
-        <!-- 隐私设置（暂时隐藏）
-      <h3 style="margin-top: 20px">隐私设置</h3>
-      <div class="privacy-config">
-        <a-switch
-          v-model:checked="newDatabase.is_private"
-          checked-children="私有"
-          un-checked-children="公开"
-          size="default"
-        />
-        <span style="margin-left: 12px">设置为私有知识库</span>
-        <a-tooltip
-          title="当前未使用此属性。在部分智能体的设计中，可以根据隐私标志来决定启用什么模型和策略。例如，对于私有知识库，可以选择更严格的数据处理和访问控制策略，以保护敏感信息的安全性和隐私性。"
-        >
-          <InfoCircleOutlined style="margin-left: 8px; color: var(--gray-500); cursor: help" />
-        </a-tooltip>
-      </div>
-      -->
 
         <!-- 共享配置 -->
         <div class="form-section compact-section">
@@ -220,11 +179,9 @@
         @click="navigateToDatabase(database.db_id)"
       >
         <template #icon>
-          <component :is="getKbTypeIcon(database.kb_type || 'lightrag')" :size="20" />
+          <component :is="getKbTypeIcon(database.kb_type || 'milvus')" :size="20" />
         </template>
-        <template #status>
-          <LockOutlined v-if="database.metadata?.is_private" title="私有知识库" />
-        </template>
+        <template #status />
       </InfoCard>
     </ExtensionCardGrid>
   </div>
@@ -236,26 +193,18 @@ import { useRouter, useRoute } from 'vue-router'
 import { storeToRefs } from 'pinia'
 import { useConfigStore } from '@/stores/config'
 import { useDatabaseStore } from '@/stores/database'
-import { LockOutlined, PlusOutlined, QuestionCircleOutlined } from '@ant-design/icons-vue'
+import { PlusOutlined, QuestionCircleOutlined } from '@ant-design/icons-vue'
 import { message } from 'ant-design-vue'
 import { typeApi } from '@/apis/knowledge_api'
 import PageHeader from '@/components/shared/PageHeader.vue'
 import PageShoulder from '@/components/shared/PageShoulder.vue'
-import ModelSelectorComponent from '@/components/ModelSelectorComponent.vue'
 import EmbeddingModelSelector from '@/components/EmbeddingModelSelector.vue'
 import ShareConfigForm from '@/components/ShareConfigForm.vue'
 import ExtensionCardGrid from '@/components/extensions/ExtensionCardGrid.vue'
 import InfoCard from '@/components/shared/InfoCard.vue'
 import dayjs, { parseToShanghai } from '@/utils/time'
 import AiTextarea from '@/components/AiTextarea.vue'
-import {
-  getKbTypeLabel,
-  getKbTypeIcon,
-  getKbTypeColor,
-  parseModelSpec,
-  buildDisplaySpec,
-  buildLlmInfoPayload
-} from '@/utils/kb_utils'
+import { getKbTypeLabel, getKbTypeIcon, getKbTypeColor } from '@/utils/kb_utils'
 import { CHUNK_PRESET_OPTIONS, getChunkPresetDescription } from '@/utils/chunk_presets'
 
 const route = useRoute()
@@ -267,12 +216,9 @@ const databaseStore = useDatabaseStore()
 const { databases, state: dbState } = storeToRefs(databaseStore)
 
 const knowledgeActiveView = 'documents'
-const knowledgeViewItems = [
-  { key: 'documents', label: '文档知识库', path: '/database' },
-  { key: 'graph', label: '知识图谱', path: '/graph' }
-]
+const knowledgeViewItems = [{ key: 'documents', label: '文档知识库', path: '/database' }]
 
-const kbTypes = ['lightrag', 'milvus', 'dify']
+const kbTypes = ['milvus', 'dify']
 const searchQuery = ref('')
 const typeFilter = ref(null)
 
@@ -287,7 +233,7 @@ const filteredDatabases = computed(() => {
     )
   }
   if (typeFilter.value) {
-    list = list.filter((db) => (db.kb_type || 'lightrag') === typeFilter.value)
+    list = list.filter((db) => (db.kb_type || 'milvus') === typeFilter.value)
   }
   return list
 })
@@ -302,37 +248,15 @@ const shareConfig = ref({
   accessible_department_ids: []
 })
 
-// 语言选项（值使用英文，以保证后端/LightRAG 兼容；标签为中英文方便理解）
-const languageOptions = [
-  { label: '中文 Chinese', value: 'Chinese' },
-  { label: '英语 English', value: 'English' },
-  { label: '日语 Japanese', value: 'Japanese' },
-  { label: '韩语 Korean', value: 'Korean' },
-  { label: '德语 German', value: 'German' },
-  { label: '法语 French', value: 'French' },
-  { label: '西班牙语 Spanish', value: 'Spanish' },
-  { label: '葡萄牙语 Portuguese', value: 'Portuguese' },
-  { label: '俄语 Russian', value: 'Russian' },
-  { label: '阿拉伯语 Arabic', value: 'Arabic' },
-  { label: '印地语 Hindi', value: 'Hindi' }
-]
-
 const chunkPresetOptions = CHUNK_PRESET_OPTIONS.map(({ label, value }) => ({ label, value }))
 
 const createEmptyDatabaseForm = () => ({
   name: '',
   description: '',
-  embed_model_name: configStore.config?.embed_model,
+  embedding_model_spec: configStore.config?.embed_model,
   kb_type: 'milvus',
-  is_private: false,
   storage: '',
   chunk_preset_id: 'general',
-  language: 'Chinese',
-  llm_info: {
-    model_spec: '',
-    provider: '',
-    model_name: ''
-  },
   dify_api_url: '',
   dify_token: '',
   dify_dataset_id: ''
@@ -343,8 +267,6 @@ const newDatabase = reactive(createEmptyDatabaseForm())
 const selectedPresetDescription = computed(() =>
   getChunkPresetDescription(newDatabase.chunk_preset_id)
 )
-
-const llmModelSpec = computed(() => buildDisplaySpec(newDatabase.llm_info))
 
 // 支持的知识库类型
 const supportedKbTypes = ref({})
@@ -362,15 +284,13 @@ const loadSupportedKbTypes = async () => {
     console.error('加载知识库类型失败:', error)
     // 如果加载失败，设置默认类型
     supportedKbTypes.value = {
-      lightrag: {
-        description: '基于图检索的知识库，支持实体关系构建和复杂查询',
-        class_name: 'LightRagKB'
+      milvus: {
+        description: '基于 Milvus 的生产级向量知识库，支持文档检索和图谱构建',
+        class_name: 'MilvusKB'
       }
     }
   }
 }
-
-// 重排序模型信息现在直接从 configStore.config.reranker_names 获取，无需单独加载
 
 const resetNewDatabase = () => {
   Object.assign(newDatabase, createEmptyDatabaseForm())
@@ -424,13 +344,6 @@ const handleKbTypeChange = (type) => {
   newDatabase.kb_type = type
 }
 
-// 处理LLM选择
-const handleLLMSelect = (spec) => {
-  const parsed = parseModelSpec(spec)
-  if (!parsed) return
-  Object.assign(newDatabase.llm_info, parsed)
-}
-
 // 构建请求数据（只负责表单数据转换）
 const buildRequestData = () => {
   const requestData = {
@@ -441,8 +354,7 @@ const buildRequestData = () => {
   }
 
   if (newDatabase.kb_type !== 'dify') {
-    requestData.embed_model_name = newDatabase.embed_model_name || configStore.config.embed_model
-    requestData.additional_params.is_private = newDatabase.is_private || false
+    requestData.embedding_model_spec = newDatabase.embedding_model_spec || configStore.config.embed_model
     requestData.additional_params.chunk_preset_id = newDatabase.chunk_preset_id || 'general'
   }
 
@@ -458,16 +370,6 @@ const buildRequestData = () => {
   if (['milvus'].includes(newDatabase.kb_type)) {
     if (newDatabase.storage) {
       requestData.additional_params.storage = newDatabase.storage
-    }
-  }
-
-  if (newDatabase.kb_type === 'lightrag') {
-    requestData.additional_params.language = newDatabase.language || 'English'
-    if (
-      newDatabase.llm_info.model_spec ||
-      (newDatabase.llm_info.provider && newDatabase.llm_info.model_name)
-    ) {
-      requestData.llm_info = buildLlmInfoPayload(newDatabase.llm_info)
     }
   }
 
@@ -518,13 +420,13 @@ const cardSubtitle = (database) => {
 const cardTags = (database) => {
   const tags = [
     {
-      name: getKbTypeLabel(database.kb_type || 'lightrag'),
-      color: getKbTypeColor(database.kb_type || 'lightrag')
+      name: getKbTypeLabel(database.kb_type || 'milvus'),
+      color: getKbTypeColor(database.kb_type || 'milvus')
     }
   ]
-  if (database.embed_info?.name) {
+  if (database.embedding_model_spec) {
     tags.push({
-      name: database.embed_info.name.split('/').slice(-1)[0],
+      name: database.embedding_model_spec.split('/').slice(-1)[0],
       color: 'blue'
     })
   }

@@ -17,9 +17,6 @@ class FileStatus:
     INDEXING = "indexing"
     INDEXED = "indexed"
     ERROR_INDEXING = "error_indexing"
-    # Legacy status mapping
-    DONE = "done"  # Map to INDEXED
-    FAILED = "failed"  # Generic failure
 
 
 class KnowledgeBaseException(Exception):
@@ -83,8 +80,8 @@ class KnowledgeBase(ABC):
                     "name": meta.get("name"),
                     "description": meta.get("description"),
                     "kb_type": meta.get("kb_type"),
-                    "embed_info": meta.get("embed_info"),
-                    "llm_info": meta.get("llm_info"),
+                    "embedding_model_spec": meta.get("embedding_model_spec"),
+                    "llm_model_spec": meta.get("llm_model_spec"),
                     "query_params": meta.get("query_params"),
                     "metadata": normalized_additional_params,
                     "created_at": meta.get("created_at"),
@@ -450,8 +447,8 @@ class KnowledgeBase(ABC):
         self,
         database_name: str,
         description: str,
-        embed_info: dict | None = None,
-        llm_info: dict | None = None,
+        embedding_model_spec: str | None = None,
+        llm_model_spec: str | None = None,
         **kwargs,
     ) -> dict:
         """
@@ -460,8 +457,8 @@ class KnowledgeBase(ABC):
         Args:
             database_name: 数据库名称
             description: 数据库描述
-            embed_info: 嵌入模型信息
-            llm_info: LLM配置信息
+            embedding_model_spec: 嵌入模型 spec
+            llm_model_spec: LLM 模型 spec
             **kwargs: 其他配置参数
 
         Returns:
@@ -471,20 +468,14 @@ class KnowledgeBase(ABC):
 
         kwargs = ensure_chunk_defaults_in_additional_params(kwargs)
 
-        # 从 kwargs 中获取 is_private 配置
-        is_private = kwargs.get("is_private", False)
-        prefix = "kb_private_" if is_private else "kb_"
-        db_id = f"{prefix}{hashstr(database_name, with_salt=True, length=32)}"
+        db_id = f"kb_{hashstr(database_name, with_salt=True, length=32)}"
 
-        # 创建数据库记录
-        # 确保 Pydantic 模型被转换为字典，以便 JSON 序列化
-        embed_info_dump = embed_info.model_dump() if hasattr(embed_info, "model_dump") else embed_info
         self.databases_meta[db_id] = {
             "name": database_name,
             "description": description,
             "kb_type": self.kb_type,
-            "embed_info": embed_info_dump,
-            "llm_info": llm_info.model_dump() if hasattr(llm_info, "model_dump") else llm_info,
+            "embedding_model_spec": embedding_model_spec,
+            "llm_model_spec": llm_model_spec,
             "metadata": kwargs,
             "created_at": utc_isoformat(),
             "query_params": self._get_default_query_params(db_id),
@@ -623,7 +614,7 @@ class KnowledgeBase(ABC):
 
         Args:
             db_id: 数据库ID
-            **kwargs: 额外参数(如 reranker_names 等)
+            **kwargs: 额外参数
 
         Returns:
             dict: {
@@ -649,27 +640,6 @@ class KnowledgeBase(ABC):
     async def export_data(self, db_id: str, format: str = "zip", **kwargs) -> str:
         pass
 
-    def query(self, query_text: str, db_id: str, **kwargs) -> list[dict]:
-        """
-        同步查询知识库（兼容性方法）
-
-        Args:
-            query_text: 查询文本
-            db_id: 数据库ID
-            **kwargs: 查询参数
-
-        Returns:
-            一个包含字典的列表，每个字典代表一个检索到的文档块。
-        """
-        import asyncio
-
-        logger.warning("query is deprecated, use aquery instead")
-        try:
-            loop = asyncio.get_running_loop()
-            return loop.run_until_complete(self.aquery(query_text, db_id, **kwargs))
-        except RuntimeError:
-            return asyncio.run(self.aquery(query_text, db_id, **kwargs))
-
     def _get_query_params(self, db_id: str) -> dict:
         """从实例元数据中加载查询参数"""
         if db_id in self.databases_meta:
@@ -692,7 +662,7 @@ class KnowledgeBase(ABC):
 
         Args:
             db_id: 数据库ID
-            include_files: 是否包含文件信息，默认为True（保持向后兼容）
+            include_files: 是否包含文件信息，默认为True
 
         Returns:
             数据库信息或None
@@ -854,7 +824,6 @@ class KnowledgeBase(ABC):
             intermediate_states = {
                 FileStatus.PARSING: FileStatus.ERROR_PARSING,
                 FileStatus.INDEXING: FileStatus.ERROR_INDEXING,
-                "processing": "failed",  # 兼容旧状态
             }
 
             # 检查该数据库下所有中间状态的文件
@@ -992,7 +961,7 @@ class KnowledgeBase(ABC):
     @abstractmethod
     async def get_file_info(self, db_id: str, file_id: str) -> dict:
         """
-        获取文件完整信息（基本信息+内容信息）- 保持向后兼容
+        获取文件完整信息（基本信息+内容信息）
 
         Args:
             db_id: 数据库ID
@@ -1003,7 +972,14 @@ class KnowledgeBase(ABC):
         """
         pass
 
-    def update_database(self, db_id: str, name: str, description: str, llm_info: dict = None) -> dict:
+    def update_database(
+        self,
+        db_id: str,
+        name: str,
+        description: str,
+        llm_model_spec: str | None = None,
+        update_llm_model_spec: bool = False,
+    ) -> dict:
         """
         更新数据库
 
@@ -1011,7 +987,7 @@ class KnowledgeBase(ABC):
             db_id: 数据库ID
             name: 新名称
             description: 新描述
-            llm_info: LLM配置信息（可选，仅用于 LightRAG 类型知识库）
+            llm_model_spec: LLM 模型 spec（可选）
 
         Returns:
             更新后的数据库信息
@@ -1021,10 +997,8 @@ class KnowledgeBase(ABC):
 
         self.databases_meta[db_id]["name"] = name
         self.databases_meta[db_id]["description"] = description
-
-        # 如果提供了 llm_info，则更新（仅针对 LightRAG 类型）
-        if llm_info is not None:
-            self.databases_meta[db_id]["llm_info"] = llm_info
+        if update_llm_model_spec:
+            self.databases_meta[db_id]["llm_model_spec"] = llm_model_spec
 
         asyncio.create_task(self._save_metadata())
 
@@ -1069,8 +1043,8 @@ class KnowledgeBase(ABC):
                 "name": kb.name,
                 "description": kb.description,
                 "kb_type": kb.kb_type,
-                "embed_info": kb.embed_info,
-                "llm_info": kb.llm_info,
+                "embedding_model_spec": kb.embedding_model_spec,
+                "llm_model_spec": kb.llm_model_spec,
                 "query_params": kb.query_params or self._get_default_query_params(kb.db_id),
                 "metadata": ensure_chunk_defaults_in_additional_params(kb.additional_params),
                 "created_at": utc_isoformat(kb.created_at) if kb.created_at else utc_isoformat(),
@@ -1152,8 +1126,8 @@ class KnowledgeBase(ABC):
                 "name": meta.get("name") or db_id,
                 "description": meta.get("description"),
                 "kb_type": meta.get("kb_type") or self.kb_type,
-                "embed_info": meta.get("embed_info"),
-                "llm_info": meta.get("llm_info"),
+                "embedding_model_spec": meta.get("embedding_model_spec"),
+                "llm_model_spec": meta.get("llm_model_spec"),
                 "query_params": meta.get("query_params"),
                 "additional_params": meta.get("metadata") or {},
             }
@@ -1166,8 +1140,8 @@ class KnowledgeBase(ABC):
                         "name": payload["name"],
                         "description": payload["description"],
                         "kb_type": payload["kb_type"],
-                        "embed_info": payload["embed_info"],
-                        "llm_info": payload["llm_info"],
+                        "embedding_model_spec": payload["embedding_model_spec"],
+                        "llm_model_spec": payload["llm_model_spec"],
                         "query_params": payload["query_params"],
                         "additional_params": payload["additional_params"],
                     },
@@ -1270,8 +1244,8 @@ class KnowledgeBase(ABC):
             "name": meta.get("name") or db_id,
             "description": meta.get("description"),
             "kb_type": meta.get("kb_type") or self.kb_type,
-            "embed_info": meta.get("embed_info"),
-            "llm_info": meta.get("llm_info"),
+            "embedding_model_spec": meta.get("embedding_model_spec"),
+            "llm_model_spec": meta.get("llm_model_spec"),
             "query_params": meta.get("query_params"),
             "additional_params": meta.get("metadata") or {},
         }
@@ -1285,8 +1259,8 @@ class KnowledgeBase(ABC):
                     "name": payload["name"],
                     "description": payload["description"],
                     "kb_type": payload["kb_type"],
-                    "embed_info": payload["embed_info"],
-                    "llm_info": payload["llm_info"],
+                    "embedding_model_spec": payload["embedding_model_spec"],
+                    "llm_model_spec": payload["llm_model_spec"],
                     "query_params": payload["query_params"],
                     "additional_params": payload["additional_params"],
                 },

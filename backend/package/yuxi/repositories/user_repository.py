@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from yuxi.storage.postgres.manager import pg_manager
 from yuxi.storage.postgres.models_business import User
 
-# 使用 naive datetime 以兼容 PostgreSQL TIMESTAMP WITHOUT TIME ZONE 列
+# 使用 naive datetime 以匹配 PostgreSQL TIMESTAMP WITHOUT TIME ZONE 列
 _utc_now = dt.now(UTC).replace(tzinfo=None)
 
 

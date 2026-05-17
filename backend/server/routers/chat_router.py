@@ -48,6 +48,7 @@ from yuxi.utils.paths import VIRTUAL_PATH_PREFIX
 
 # TODO：当前文件的功能过于庞杂，路由标签混乱
 
+
 # 图片上传响应模型
 class ImageUploadResponse(BaseModel):
     success: bool
@@ -157,11 +158,7 @@ async def call(query: str = Body(...), meta: dict = Body(None), current_user: Us
     if "request_id" not in meta or not meta.get("request_id"):
         meta["request_id"] = str(uuid.uuid4())
 
-    model = select_model(
-        model_provider=meta.get("model_provider"),
-        model_name=meta.get("model_name"),
-        model_spec=meta.get("model_spec") or meta.get("model"),
-    )
+    model = select_model(model_spec=meta.get("model_spec") or meta.get("model") or conf.default_model)
 
     response = await model.call(query)
     logger.debug({"query": query, "response": response.content})
@@ -454,26 +451,6 @@ async def stream_run_events(
             "X-Accel-Buffering": "no",
         },
     )
-
-# =============================================================================
-# > === 模型管理分组 ===
-# =============================================================================
-
-
-@chat.get("/models")
-async def get_chat_models(model_provider: str, current_user: User = Depends(get_admin_user)):
-    """获取指定模型提供商的模型列表（需要登录）"""
-    model = select_model(model_provider=model_provider)
-    models = await model.get_models()
-    return {"models": models}
-
-
-@chat.post("/models/update")
-async def update_chat_models(model_provider: str, model_names: list[str], current_user=Depends(get_admin_user)):
-    """更新指定模型提供商的模型列表 (仅管理员)"""
-    conf.model_names[model_provider].models = model_names
-    conf._save_models_to_file(model_provider)
-    return {"models": conf.model_names[model_provider].models}
 
 
 @chat.post("/thread/{thread_id}/resume")

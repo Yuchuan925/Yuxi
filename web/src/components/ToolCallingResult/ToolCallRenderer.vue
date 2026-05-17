@@ -23,7 +23,6 @@ import WebSearchTool from './tools/WebSearchTool.vue'
 import ListKbsTool from './tools/ListKbsTool.vue'
 import GetMindmapTool from './tools/GetMindmapTool.vue'
 import QueryKbTool from './tools/QueryKbTool.vue'
-import KnowledgeGraphTool from './tools/KnowledgeGraphTool.vue'
 import CalculatorTool from './tools/CalculatorTool.vue'
 import TodoListTool from './tools/TodoListTool.vue'
 import TaskTool from './tools/TaskTool.vue'
@@ -76,7 +75,6 @@ const TOOL_RENDERERS = {
   mysql_list_tables: MysqlListTablesTool,
   mysql_query: MysqlQueryTool,
   query_kb: QueryKbTool,
-  query_knowledge_graph: KnowledgeGraphTool,
   read_file: ReadFileTool,
   replace: EditFileTool,
   run_shell_command: ExecuteTool,

@@ -8,6 +8,7 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
@@ -31,8 +32,8 @@ class KnowledgeBase(Base):
     name = Column(String(255), nullable=False, index=True)
     description = Column(Text)
     kb_type = Column(String(32), nullable=False, index=True)
-    embed_info = Column(JSON_VALUE)
-    llm_info = Column(JSON_VALUE)
+    embedding_model_spec = Column(String(512))
+    llm_model_spec = Column(String(512))
     query_params = Column(JSON_VALUE)
     additional_params = Column(JSON_VALUE)
     share_config = Column(JSON_VALUE)
@@ -67,6 +68,35 @@ class KnowledgeFile(Base):
     error_message = Column(Text)
     created_by = Column(String(64))
     updated_by = Column(String(64))
+    created_at = Column(DateTime(timezone=True), default=utc_now_naive)
+    updated_at = Column(DateTime(timezone=True), default=utc_now_naive, onupdate=utc_now_naive)
+
+
+class KnowledgeChunk(Base):
+    """知识库 Chunk 模型"""
+
+    __tablename__ = "knowledge_chunks"
+    __table_args__ = (
+        UniqueConstraint("chunk_id", name="uq_knowledge_chunks_chunk_id"),
+        Index("ix_knowledge_chunks_file_id", "file_id"),
+        Index("ix_knowledge_chunks_db_id", "db_id"),
+        Index("ix_knowledge_chunks_graph_indexed", "graph_indexed"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    chunk_id = Column(String(128), nullable=False)
+    file_id = Column(String(64), ForeignKey("knowledge_files.file_id", ondelete="CASCADE"), nullable=False)
+    db_id = Column(String(80), ForeignKey("knowledge_bases.db_id", ondelete="CASCADE"), nullable=False)
+    chunk_index = Column(Integer, nullable=False)
+    content = Column(Text, nullable=False)
+    start_char_pos = Column(Integer)
+    end_char_pos = Column(Integer)
+    start_token_pos = Column(Integer)
+    end_token_pos = Column(Integer)
+    graph_indexed = Column(Boolean, default=False)
+    ent_ids = Column(JSON_VALUE)
+    tags = Column(JSON_VALUE)
+    extraction_result = Column(JSON_VALUE)
     created_at = Column(DateTime(timezone=True), default=utc_now_naive)
     updated_at = Column(DateTime(timezone=True), default=utc_now_naive, onupdate=utc_now_naive)
 

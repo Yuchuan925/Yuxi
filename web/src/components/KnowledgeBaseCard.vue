@@ -36,10 +36,10 @@
 
       <!-- Tags -->
       <div class="tags-section">
-        <span class="card-tag" :class="'tag-' + getKbTypeColor(database.kb_type || 'lightrag')">
-          {{ getKbTypeLabel(database.kb_type || 'lightrag') }}
+        <span class="card-tag" :class="'tag-' + getKbTypeColor(database.kb_type || 'milvus')">
+          {{ getKbTypeLabel(database.kb_type || 'milvus') }}
         </span>
-        <span class="card-tag tag-blue">{{ database.embed_info?.name || 'N/A' }}</span>
+        <span class="card-tag tag-blue">{{ database.embedding_model_spec || 'N/A' }}</span>
         <span class="card-tag tag-cyan">{{
           chunkPresetLabelMap[database.additional_params?.chunk_preset_id || 'general'] || 'General'
         }}</span>
@@ -118,16 +118,6 @@
         </a-form-item>
       </template>
 
-      <!-- 仅对 LightRAG 类型显示 LLM 配置 -->
-      <a-form-item v-if="database.kb_type === 'lightrag'" label="语言模型 (LLM)" name="llm_info">
-        <ModelSelectorComponent
-          :model_spec="llmModelSpec"
-          placeholder="请选择模型"
-          @select-model="handleLLMSelect"
-          style="width: 100%"
-        />
-      </a-form-item>
-
       <!-- 共享配置（超级管理员可编辑，非共享时本部门管理员也可编辑） -->
       <a-form-item v-if="canEditShareConfig" label="共享设置" name="share_config">
         <a-form-item-rest>
@@ -158,13 +148,7 @@ import { ref, reactive, computed, h, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useDatabaseStore } from '@/stores/database'
 import { useUserStore } from '@/stores/user'
-import {
-  getKbTypeLabel,
-  getKbTypeColor,
-  parseModelSpec,
-  buildDisplaySpec,
-  buildLlmInfoPayload
-} from '@/utils/kb_utils'
+import { getKbTypeLabel, getKbTypeColor } from '@/utils/kb_utils'
 import {
   CHUNK_PRESET_OPTIONS,
   CHUNK_PRESET_LABEL_MAP,
@@ -174,7 +158,6 @@ import { message } from 'ant-design-vue'
 import { LeftOutlined, QuestionCircleOutlined } from '@ant-design/icons-vue'
 import { Pencil, Trash2, Copy } from 'lucide-vue-next'
 import { departmentApi } from '@/apis/department_api'
-import ModelSelectorComponent from '@/components/ModelSelectorComponent.vue'
 import AiTextarea from '@/components/AiTextarea.vue'
 import ShareConfigForm from '@/components/ShareConfigForm.vue'
 
@@ -269,11 +252,6 @@ const editForm = reactive({
   description: '',
   auto_generate_questions: false,
   chunk_preset_id: 'general',
-  llm_info: {
-    model_spec: '',
-    provider: '',
-    model_name: ''
-  },
   dify_api_url: '',
   dify_token: '',
   dify_dataset_id: ''
@@ -299,14 +277,6 @@ const showEditModal = () => {
   editForm.dify_api_url = database.value.additional_params?.dify_api_url || ''
   editForm.dify_token = database.value.additional_params?.dify_token || ''
   editForm.dify_dataset_id = database.value.additional_params?.dify_dataset_id || ''
-
-  // 如果是 LightRAG 类型，加载当前的 LLM 配置
-  if (database.value.kb_type === 'lightrag') {
-    const llmInfo = database.value.llm_info || {}
-    editForm.llm_info.model_spec = llmInfo.model_spec || ''
-    editForm.llm_info.provider = llmInfo.provider || ''
-    editForm.llm_info.model_name = llmInfo.model_name || ''
-  }
 
   editModalVisible.value = true
 }
@@ -381,26 +351,12 @@ const handleEditSubmit = () => {
         JSON.stringify(updateData.share_config)
       )
 
-      // 如果是 LightRAG 类型，包含 llm_info
-      if (database.value.kb_type === 'lightrag') {
-        updateData.llm_info = buildLlmInfoPayload(editForm.llm_info)
-      }
-
       await store.updateDatabaseInfo(updateData)
       editModalVisible.value = false
     })
     .catch((err) => {
       console.error('表单验证失败:', err)
     })
-}
-
-// LLM 模型选择处理
-const llmModelSpec = computed(() => buildDisplaySpec(editForm.llm_info))
-
-const handleLLMSelect = (spec) => {
-  const parsed = parseModelSpec(spec)
-  if (!parsed) return
-  Object.assign(editForm.llm_info, parsed)
 }
 
 const deleteDatabase = () => {

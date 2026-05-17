@@ -446,7 +446,6 @@ async def get_knowledge_stats(
         for kb in kb_rows:
             kb_type = (kb.kb_type or "unknown").lower()
             display_type = {
-                "lightrag": "LightRAG",
                 "faiss": "FAISS",
                 "milvus": "Milvus",
                 "dify": "Dify",

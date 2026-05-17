@@ -30,15 +30,6 @@
           </div>
           <div
             class="sider-item"
-            :class="{ activesec: activeTab === 'model' }"
-            @click="activeTab = 'model'"
-            v-if="userStore.isSuperAdmin"
-          >
-            <SquareCode class="icon" :size="18" />
-            <span>模型配置</span>
-          </div>
-          <div
-            class="sider-item"
             :class="{ activesec: activeTab === 'user' }"
             @click="activeTab = 'user'"
             v-if="userStore.isAdmin"
@@ -112,14 +103,6 @@
         </div>
         <div
           class="nav-item"
-          :class="{ active: activeTab === 'model' }"
-          @click="activeTab = 'model'"
-          v-if="userStore.isSuperAdmin"
-        >
-          模型配置
-        </div>
-        <div
-          class="nav-item"
           :class="{ active: activeTab === 'user' }"
           @click="activeTab = 'user'"
           v-if="userStore.isAdmin"
@@ -151,10 +134,6 @@
             <BasicSettingsSection />
           </div>
 
-          <div v-show="activeTab === 'model'" v-if="userStore.isSuperAdmin">
-            <ModelProvidersComponent />
-          </div>
-
           <div v-show="activeTab === 'user'" v-if="userStore.isAdmin">
             <UserManagementComponent />
           </div>
@@ -179,14 +158,12 @@ import {
   ExternalLink,
   Key as KeyIcon,
   Settings,
-  SquareCode,
   Star,
   User,
   Users,
   X
 } from 'lucide-vue-next'
 import BasicSettingsSection from '@/components/BasicSettingsSection.vue'
-import ModelProvidersComponent from '@/components/ModelProvidersComponent.vue'
 import UserManagementComponent from '@/components/UserManagementComponent.vue'
 import DepartmentManagementComponent from '@/components/DepartmentManagementComponent.vue'
 import ApiKeyManagementComponent from '@/components/ApiKeyManagementComponent.vue'

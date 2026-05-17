@@ -1,8 +1,4 @@
-"""Provider DB runtime selector connectivity tests.
-
-These tests intentionally exercise the new provider service path instead of the legacy
-``config.static.models`` registry. They are opt-in because they call external model APIs.
-"""
+"""Provider DB runtime selector connectivity tests."""
 
 from __future__ import annotations
 
@@ -12,10 +8,10 @@ from typing import Any
 import pytest
 
 from yuxi.models.chat import OpenAIBase
-from yuxi.models.embed import OllamaEmbedding, OtherEmbedding
+from yuxi.models.embed import OtherEmbedding
 from yuxi.models.rerank import DashscopeReranker, OpenAIReranker
 from yuxi.services.model_provider_service import (
-    _resolve_api_key,
+    resolve_api_key,
     ensure_builtin_model_providers_in_db,
     get_model_provider_by_id,
 )
@@ -34,7 +30,7 @@ pytestmark = [
 
 def _model_spec(provider: ModelProvider, model: dict[str, Any]) -> dict[str, Any]:
     """Turn an enabled model item into runtime parameters for existing model clients."""
-    api_key = _resolve_api_key(provider)
+    api_key = resolve_api_key(provider)
     if api_key is None:
         api_key = "no_api_key"
     return {
@@ -105,8 +101,7 @@ async def test_provider_db_embedding_model_connectivity():
     provider = await _load_provider()
     spec = _select_provider_model(provider, "embedding", "TEST_PROVIDER_EMBEDDING_MODEL")
 
-    embed_class = OllamaEmbedding if provider.provider_id.startswith("ollama") else OtherEmbedding
-    model = embed_class(
+    model = OtherEmbedding(
         name=spec["model_id"],
         dimension=spec["dimension"],
         base_url=spec["base_url"],

@@ -7,7 +7,6 @@
 
 from .kb_utils import (
     calculate_content_hash,
-    get_embedding_config,
     merge_processing_params,
     prepare_item_metadata,
     resolve_processing_params,
@@ -16,7 +15,6 @@ from .kb_utils import (
 
 __all__ = [
     "calculate_content_hash",
-    "get_embedding_config",
     "prepare_item_metadata",
     "resolve_processing_params",
     "sanitize_processing_params",

@@ -864,6 +864,7 @@ async def impersonate_user(
 # === OIDC 认证分组 ===
 # =============================================================================
 
+
 @auth.get("/oidc/config", response_model=OIDCConfigResponse)
 async def get_oidc_config():
     """获取 OIDC 配置（供前端使用）"""
@@ -877,12 +878,7 @@ async def get_oidc_login_url(redirect_path: str = "/"):
 
 
 @auth.get("/oidc/callback", response_class=RedirectResponse)
-async def oidc_callback(
-    request: Request,
-    code: str,
-    state: str,
-    db: AsyncSession = Depends(get_db)
-):
+async def oidc_callback(request: Request, code: str, state: str, db: AsyncSession = Depends(get_db)):
     """处理 OIDC 回调 - 重定向到前端 Vue 路由"""
     return await oidc_callback_handler(code, state, db, request)
 

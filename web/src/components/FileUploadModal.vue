@@ -107,16 +107,13 @@
               <ChunkParamsConfig
                 :temp-chunk-params="indexParams"
                 :show-qa-split="true"
-                :show-chunk-size-overlap="!isGraphBased"
+                :show-chunk-size-overlap="true"
                 :show-preset="true"
                 :allow-preset-follow-default="true"
                 :database-preset-id="
                   store.database?.additional_params?.chunk_preset_id || 'general'
                 "
               />
-              <p v-if="isGraphBased" class="param-description">
-                LightRAG 按分隔符预切分，超长片段仍会按 token 大小继续切分。
-              </p>
             </div>
           </div>
         </div>
@@ -453,7 +450,6 @@ const visible = computed({
 })
 
 const databaseId = computed(() => store.databaseId)
-const kbType = computed(() => store.database.kb_type)
 const chunkLoading = computed(() => store.state.chunkLoading)
 
 // 上传模式
@@ -702,14 +698,9 @@ const indexParams = ref({
 
 const buildAutoIndexParams = () => {
   return buildChunkParamsPayload(indexParams.value, {
-    includeSizeOverlap: !isGraphBased.value
+    includeSizeOverlap: true
   })
 }
-
-const isGraphBased = computed(() => {
-  const type = kbType.value?.toLowerCase()
-  return type === 'lightrag'
-})
 
 const isFolderUpload = ref(false)
 

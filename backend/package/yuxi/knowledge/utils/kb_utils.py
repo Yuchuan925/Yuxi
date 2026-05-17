@@ -1,10 +1,6 @@
 import hashlib
-import os
 import time
-import traceback
 
-from yuxi import config
-from yuxi.config.static.models import EmbedModelInfo
 from yuxi.knowledge.chunking.ragflow_like.presets import resolve_chunk_processing_params
 from yuxi.utils import hashstr, logger
 from yuxi.utils.datetime_utils import utc_isoformat
@@ -88,7 +84,7 @@ async def prepare_item_metadata(item: str, content_type: str, db_id: str, params
             "filename": filename_display,
             "path": item_path,
             "file_type": file_type,
-            "status": "processing",
+            "status": "indexing",
             "created_at": utc_isoformat(),
             "file_id": file_id,
             "content_hash": content_hash,
@@ -148,7 +144,7 @@ async def prepare_item_metadata(item: str, content_type: str, db_id: str, params
         "filename": filename_display,  # 使用显示用的文件名
         "path": item_path,
         "file_type": file_type,
-        "status": "processing",
+        "status": "indexing",
         "created_at": utc_isoformat(),
         "file_id": file_id,
         "content_hash": content_hash,
@@ -186,55 +182,6 @@ def merge_processing_params(metadata_params: dict | None, request_params: dict |
     logger.debug(f"Merged processing params: {metadata_params=}, {request_params=}, {merged_params=}")
     return merged_params
 
-
-def get_embedding_config(embed_info: dict) -> dict:
-    """
-    获取嵌入模型配置（兼容性入口，新代码请直接使用 get_embedding_model_info_by_id）。
-
-    Args:
-        embed_info: 嵌入信息字典
-
-    Returns:
-        dict: 标准化的嵌入配置
-    """
-    try:
-        assert isinstance(embed_info, dict), f"embed_info must be a dict, got {type(embed_info)}"
-        assert "model_id" in embed_info, f"embed_info must contain 'model_id', got {embed_info}"
-        logger.warning(f"Using model_id: {embed_info['model_id']}")
-        from yuxi.models.embed import get_embedding_model_info_by_id
-
-        return get_embedding_model_info_by_id(embed_info["model_id"])
-
-    except AssertionError as e:
-        logger.error(f"AssertionError in get_embedding_config: {e}, embed_info={embed_info}")
-
-    # 兼容性检查：旧版配置字段
-    try:
-        # 1. 检查 embed_info 是否有效
-        if not embed_info or ("model" not in embed_info and "name" not in embed_info):
-            logger.error(f"Invalid embed_info: {embed_info}, using default embedding model config")
-            raise ValueError("Invalid embed_info: must be a non-empty dictionary")
-
-        # 2. 检查是否是 EmbedModelInfo 对象（在某些情况下可能直接传入对象）
-        if hasattr(embed_info, "name") and isinstance(embed_info, EmbedModelInfo):
-            logger.debug(f"Using EmbedModelInfo object: {embed_info.name}, {traceback.format_exc()}")
-            config_dict = embed_info.model_dump()
-            config_dict["api_key"] = os.getenv(config_dict["api_key"]) or config_dict["api_key"]
-            return config_dict
-
-        raise ValueError(f"Unsupported embed_info format: {embed_info}")
-
-    except Exception as e:
-        logger.error(f"Error in get_embedding_config: {e}, embed_info={embed_info}")
-        # 返回默认配置作为fallback
-        logger.warning("Falling back to default embedding model config")
-        try:
-            config_dict = config.embed_model_names[config.embed_model].model_dump()
-            config_dict["api_key"] = os.getenv(config_dict["api_key"]) or config_dict["api_key"]
-            return config_dict
-        except Exception as fallback_error:
-            logger.error(f"Failed to get default embedding config: {fallback_error}")
-            raise ValueError(f"Failed to get embedding config and fallback failed: {e}")
 
 
 def is_minio_url(file_path: str) -> bool:

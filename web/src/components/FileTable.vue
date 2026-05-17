@@ -164,7 +164,7 @@
         <ChunkParamsConfig
           :temp-chunk-params="indexParams"
           :show-qa-split="true"
-          :show-chunk-size-overlap="!isLightRAG"
+          :show-chunk-size-overlap="true"
           :show-preset="true"
           :allow-preset-follow-default="true"
           :database-preset-id="store.database?.additional_params?.chunk_preset_id || 'general'"
@@ -362,7 +362,7 @@
 
                   <!-- Reindex Action -->
                   <a-button
-                    v-if="!isLightRAG && (record.status === 'done' || record.status === 'indexed')"
+                    v-if="record.status === 'done' || record.status === 'indexed'"
                     type="text"
                     block
                     @click="handleReindexFile(record)"
@@ -475,7 +475,6 @@ const props = defineProps({
 const emit = defineEmits(['showAddFilesModal', 'toggleRightPanel'])
 
 const files = computed(() => Object.values(store.database.files || {}))
-const isLightRAG = computed(() => store.database?.kb_type?.toLowerCase() === 'lightrag')
 const refreshing = computed(() => store.state.refrashing)
 const lock = computed(() => store.state.lock)
 const batchDeleting = computed(() => store.state.batchDeleting)
@@ -681,7 +680,7 @@ const indexParams = ref(createDefaultIndexParams())
 
 const buildIndexParamsPayload = () => {
   return buildChunkParamsPayload(indexParams.value, {
-    includeSizeOverlap: !isLightRAG.value
+    includeSizeOverlap: true
   })
 }
 const currentIndexFileIds = ref([])
@@ -966,7 +965,8 @@ const canBatchIndex = computed(() => {
       !lock.value &&
       (file.status === 'parsed' ||
         file.status === 'error_indexing' ||
-        (!isLightRAG.value && (file.status === 'done' || file.status === 'indexed')))
+        file.status === 'done' ||
+        file.status === 'indexed')
     )
   })
 })
@@ -1053,7 +1053,8 @@ const handleBatchIndex = async () => {
       file &&
       (file.status === 'parsed' ||
         file.status === 'error_indexing' ||
-        (!isLightRAG.value && (file.status === 'done' || file.status === 'indexed')))
+        file.status === 'done' ||
+        file.status === 'indexed')
     )
   })
 

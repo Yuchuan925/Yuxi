@@ -97,7 +97,7 @@ async def test_iter_generated_benchmark_items_with_one_chunk_does_not_query(monk
             db_id="db_1",
             count=1,
             neighbors_count=1,
-            llm_model_spec="test-model",
+            llm_model_spec="test-provider:test-model",
         )
     ]
 
@@ -160,7 +160,7 @@ async def test_iter_generated_benchmark_items_uses_query_neighbor(monkeypatch):
             db_id="db_1",
             count=1,
             neighbors_count=2,
-            llm_model_spec="test-model",
+            llm_model_spec="test-provider:test-model",
         )
     ]
 
@@ -182,7 +182,7 @@ async def test_iter_generated_benchmark_items_falls_back_to_anchor_when_query_em
             db_id="db_1",
             count=1,
             neighbors_count=2,
-            llm_model_spec="test-model",
+            llm_model_spec="test-provider:test-model",
         )
     ]
 

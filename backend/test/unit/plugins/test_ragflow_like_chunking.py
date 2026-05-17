@@ -82,6 +82,26 @@ def test_qa_chunking_from_markdown_headings() -> None:
     assert "回答：" in chunks[0]["content"]
 
 
+def test_chunk_records_include_reserved_position_fields() -> None:
+    content = "第一段内容。\n\n第二段内容。"
+
+    chunks = chunk_markdown(
+        markdown_content=content,
+        file_id="file_pos",
+        filename="pos.md",
+        processing_params={
+            "chunk_preset_id": "separator",
+            "chunk_parser_config": {"delimiter": "\\n\\n"},
+        },
+    )
+
+    assert chunks[0]["start_char_pos"] == 0
+    assert chunks[0]["end_char_pos"] == len("第一段内容。")
+    assert chunks[0]["start_token_pos"] is None
+    assert chunks[0]["end_token_pos"] is None
+    assert "start_char_pos" in chunks[1]
+
+
 def test_book_chunking_hierarchical_merge() -> None:
     content = """
 第一章 总则

@@ -146,7 +146,7 @@ const mainList = computed(() => {
       items.push({
         name: '知识库',
         path: '/database',
-        activePaths: ['/database', '/graph'],
+        activePaths: ['/database'],
         icon: LibraryBig,
         activeIcon: LibraryBig
       })

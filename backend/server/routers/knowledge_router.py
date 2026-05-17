@@ -7,6 +7,7 @@ from urllib.parse import quote, unquote
 
 import aiofiles
 from fastapi import APIRouter, Body, Depends, File, HTTPException, Query, Request, UploadFile
+from pydantic import BaseModel
 from fastapi.responses import FileResponse
 from starlette.responses import StreamingResponse
 
@@ -14,11 +15,11 @@ from yuxi.services.task_service import TaskContext, tasker
 from server.utils.auth_middleware import get_admin_user, get_required_user
 from yuxi import config, knowledge_base
 from yuxi.knowledge.chunking.ragflow_like.presets import ensure_chunk_defaults_in_additional_params
+from yuxi.knowledge.graphs.milvus_graph_service import GRAPH_TASK_TYPE, MilvusGraphService
 from yuxi.plugins.parser import Parser, SUPPORTED_FILE_EXTENSIONS, is_supported_file_extension
 from yuxi.knowledge.utils import calculate_content_hash
 from yuxi.knowledge.utils.kb_utils import is_minio_url, parse_minio_url
-from yuxi.models.embed import test_all_embedding_models_status, test_embedding_model_status
-from yuxi.services.model_cache import is_v2_spec_format
+from yuxi.services.model_cache import model_cache
 from yuxi.storage.postgres.models_business import User
 from yuxi.storage.minio.client import MinIOClient, StorageError, aupload_file_to_minio, get_minio_client
 from yuxi.utils import logger
@@ -26,6 +27,16 @@ from yuxi.utils import logger
 knowledge = APIRouter(prefix="/knowledge", tags=["knowledge"])
 
 DIFY_REQUIRED_PARAMS = ("dify_api_url", "dify_token", "dify_dataset_id")
+ACTIVE_GRAPH_BUILD_STATUSES = {"pending", "running"}
+
+
+class UpdateDatabaseRequest(BaseModel):
+    name: str
+    description: str
+    llm_model_spec: str | None = None
+    additional_params: dict | None = None
+    share_config: dict | None = None
+
 
 media_types = {
     ".pdf": "application/pdf",
@@ -99,6 +110,17 @@ async def _ensure_database_not_dify(db_id: str, operation: str) -> None:
         raise HTTPException(status_code=400, detail=f"Dify 知识库只支持检索，不支持{operation}")
 
 
+async def _has_running_graph_build_task(db_id: str) -> bool:
+    return (
+        await tasker.find_task_by_payload(
+            task_type=GRAPH_TASK_TYPE,
+            payload_match={"db_id": db_id},
+            statuses=ACTIVE_GRAPH_BUILD_STATUSES,
+        )
+        is not None
+    )
+
+
 # =============================================================================
 # === 知识库管理分组 ===
 # =============================================================================
@@ -118,18 +140,18 @@ async def get_databases(current_user: User = Depends(get_admin_user)):
 async def create_database(
     database_name: str = Body(...),
     description: str = Body(...),
-    embed_model_name: str | None = Body(None),
-    kb_type: str = Body("lightrag"),
+    embedding_model_spec: str | None = Body(None),
+    kb_type: str = Body("milvus"),
     additional_params: dict = Body({}),
-    llm_info: dict = Body(None),
+    llm_model_spec: str | None = Body(None),
     share_config: dict = Body(None),
     current_user: User = Depends(get_admin_user),
 ):
     """创建知识库"""
     logger.debug(
         f"Create database {database_name} with kb_type {kb_type}, "
-        f"additional_params {additional_params}, llm_info {llm_info}, "
-        f"embed_model_name {embed_model_name}, share_config {share_config}"
+        f"additional_params {additional_params}, llm_model_spec {llm_model_spec}, "
+        f"embedding_model_spec {embedding_model_spec}, share_config {share_config}"
     )
     try:
         # 先检查名称是否已存在
@@ -142,57 +164,29 @@ async def create_database(
         additional_params = {**(additional_params or {})}
         additional_params["auto_generate_questions"] = False  # 默认不生成问题
 
-        def remove_reranker_config(kb: str, params: dict) -> None:
-            """
-            移除 reranker_config（已废弃）
-            所有 reranker 参数现在通过 query_params.options 配置
-            """
-            reranker_cfg = params.get("reranker_config")
-            if reranker_cfg:
-                if kb == "milvus":
-                    logger.info("reranker_config is deprecated, please use query_params.options instead")
-                else:
-                    logger.warning(f"{kb} does not support reranker, ignoring reranker_config")
-                # 移除 reranker_config，不再保存
-                params.pop("reranker_config", None)
-
-        remove_reranker_config(kb_type, additional_params)
+        if "reranker_config" in additional_params:
+            raise HTTPException(
+                status_code=400,
+                detail="reranker_config 已移除，请在查询参数中使用 reranker_model spec",
+            )
         additional_params = ensure_chunk_defaults_in_additional_params(additional_params)
 
-        embed_info_dict = None
         if kb_type == "dify":
             additional_params = _validate_dify_additional_params(additional_params)
         else:
-            if not embed_model_name:
-                raise HTTPException(status_code=400, detail="embed_model_name 不能为空")
+            if not embedding_model_spec:
+                raise HTTPException(status_code=400, detail="embedding_model_spec 不能为空")
 
-            # V2 embedding model (spec 格式: provider_id:model_id，第一个特殊字符为冒号)
-            if is_v2_spec_format(embed_model_name):
-                from yuxi.services.model_cache import model_cache
-
-                info = model_cache.get_model_info(embed_model_name)
-                if not info or info.model_type != "embedding":
-                    raise HTTPException(status_code=400, detail=f"不支持的 embedding 模型: {embed_model_name}")
-                embed_info_dict = {
-                    "name": info.display_name,
-                    "dimension": info.dimension,
-                    "base_url": info.base_url,
-                    "api_key": info.api_key,
-                    "model_id": info.spec,
-                    "batch_size": info.batch_size,
-                }
-            else:
-                if embed_model_name not in config.embed_model_names:
-                    raise HTTPException(status_code=400, detail=f"不支持的 embedding 模型: {embed_model_name}")
-                embed_info = config.embed_model_names[embed_model_name]
-                embed_info_dict = embed_info.model_dump() if hasattr(embed_info, "model_dump") else embed_info.dict()
+            info = model_cache.get_model_info(embedding_model_spec)
+            if not info or info.model_type != "embedding":
+                raise HTTPException(status_code=400, detail=f"不支持的 embedding 模型: {embedding_model_spec}")
 
         database_info = await knowledge_base.create_database(
             database_name,
             description,
             kb_type=kb_type,
-            embed_info=embed_info_dict,
-            llm_info=llm_info,
+            embedding_model_spec=embedding_model_spec,
+            llm_model_spec=llm_model_spec,
             share_config=share_config,
             **additional_params,
         )
@@ -243,19 +237,18 @@ async def get_database_info(db_id: str, current_user: User = Depends(get_admin_u
 @knowledge.put("/databases/{db_id}")
 async def update_database_info(
     db_id: str,
-    name: str = Body(...),
-    description: str = Body(...),
-    llm_info: dict = Body(None),
-    additional_params: dict | None = Body(None),
-    share_config: dict = Body(None),
+    data: UpdateDatabaseRequest,
     current_user: User = Depends(get_admin_user),
 ):
     """更新知识库信息"""
     logger.debug(
-        f"[update_database_info] 接收到的参数: name={name}, llm_info={llm_info}, "
-        f"additional_params={additional_params}, share_config={share_config}"
+        f"[update_database_info] 接收到的参数: name={data.name}, llm_model_spec={data.llm_model_spec}, "
+        f"additional_params={data.additional_params}, share_config={data.share_config}"
     )
     try:
+        update_llm_model_spec = "llm_model_spec" in data.model_fields_set
+
+        additional_params = data.additional_params
         if additional_params is not None:
             additional_params = ensure_chunk_defaults_in_additional_params(additional_params)
 
@@ -271,11 +264,12 @@ async def update_database_info(
 
         database = await knowledge_base.update_database(
             db_id,
-            name,
-            description,
-            llm_info,
+            data.name,
+            data.description,
+            data.llm_model_spec,
+            update_llm_model_spec=update_llm_model_spec,
             additional_params=additional_params,
-            share_config=share_config,
+            share_config=data.share_config,
         )
         return {"message": "更新成功", "database": database}
     except Exception as e:
@@ -299,6 +293,111 @@ async def delete_database(db_id: str, current_user: User = Depends(get_admin_use
     except Exception as e:
         logger.error(f"删除数据库失败 {e}, {traceback.format_exc()}")
         raise HTTPException(status_code=400, detail=f"删除数据库失败: {e}")
+
+
+@knowledge.get("/databases/{db_id}/graph-build/status")
+async def get_graph_build_status(db_id: str, current_user: User = Depends(get_admin_user)):
+    try:
+        return await MilvusGraphService().get_status(db_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"获取图谱构建状态失败 {e}, {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"获取图谱构建状态失败: {e}")
+
+
+@knowledge.post("/databases/{db_id}/graph-build/config")
+async def configure_graph_build(
+    db_id: str,
+    data: dict = Body(...),
+    current_user: User = Depends(get_admin_user),
+):
+    try:
+        config = await MilvusGraphService().configure(
+            db_id,
+            extractor_type=data.get("extractor_type"),
+            extractor_options=data.get("extractor_options") or {},
+            created_by=current_user.user_id,
+        )
+        return {"message": "图谱抽取配置已锁定", "status": "success", "config": config}
+    except ValueError as e:
+        status_code = 409 if "已锁定" in str(e) else 400
+        raise HTTPException(status_code=status_code, detail=str(e))
+    except Exception as e:
+        logger.error(f"配置图谱构建失败 {e}, {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"配置图谱构建失败: {e}")
+
+
+@knowledge.post("/databases/{db_id}/graph-build/index")
+async def index_graph_build(
+    db_id: str,
+    data: dict = Body(default={}),
+    current_user: User = Depends(get_admin_user),
+):
+    try:
+        if await _has_running_graph_build_task(db_id):
+            raise HTTPException(status_code=409, detail="该知识库已有正在运行的图谱构建任务")
+
+        database = await knowledge_base.get_database_info(db_id)
+        if not database:
+            raise HTTPException(status_code=404, detail=f"知识库 {db_id} 不存在")
+
+        batch_size = max(1, min(int(data.get("batch_size") or 20), 200))
+        service = MilvusGraphService()
+        graph_status = await service.get_status(db_id)
+        if not graph_status.get("locked"):
+            raise HTTPException(status_code=400, detail="请先确认并锁定图谱抽取配置")
+
+        async def run_graph_index(context: TaskContext):
+            await context.set_message("任务初始化")
+            await context.set_progress(5.0, "准备构建图谱")
+            result = await service.build_pending_chunks(db_id, batch_size=batch_size, context=context)
+            await context.set_result(result)
+            await context.set_progress(100.0, f"图谱构建完成，成功 {result['success']} 个，失败 {result['failed']} 个")
+            return result
+
+        task, created = await tasker.enqueue_unique_by_payload(
+            name=f"图谱构建 ({database['name']})",
+            task_type=GRAPH_TASK_TYPE,
+            payload={"db_id": db_id, "batch_size": batch_size},
+            coroutine=run_graph_index,
+            payload_match={"db_id": db_id},
+            statuses=ACTIVE_GRAPH_BUILD_STATUSES,
+        )
+        if not created:
+            raise HTTPException(status_code=409, detail="该知识库已有正在运行的图谱构建任务")
+        return {"message": "图谱构建任务已提交", "status": "queued", "task_id": task.id}
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"提交图谱构建任务失败 {e}, {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"提交图谱构建任务失败: {e}")
+
+
+@knowledge.post("/databases/{db_id}/graph-build/reset")
+async def reset_graph_build(
+    db_id: str,
+    data: dict = Body(default={}),
+    current_user: User = Depends(get_admin_user),
+):
+    try:
+        if await _has_running_graph_build_task(db_id):
+            raise HTTPException(status_code=409, detail="该知识库存在正在运行的图谱构建任务，无法重置")
+
+        return await MilvusGraphService().reset(
+            db_id,
+            clear_extraction_result=bool(data.get("clear_extraction_result", True)),
+            clear_config=bool(data.get("clear_config", False)),
+        )
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"重置图谱构建状态失败 {e}, {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"重置图谱构建状态失败: {e}")
 
 
 @knowledge.get("/databases/{db_id}/export")
@@ -924,10 +1023,7 @@ async def get_knowledge_base_query_params(db_id: str, current_user: User = Depen
         kb_instance = await knowledge_base._get_kb_for_database(db_id)
 
         # 调用知识库实例的方法获取配置
-        params = kb_instance.get_query_params_config(
-            db_id=db_id,
-            reranker_names=config.reranker_names,  # 传递动态配置
-        )
+        params = kb_instance.get_query_params_config(db_id=db_id)
 
         # 获取用户保存的配置并合并（从实例 metadata 读取）
         saved_options = kb_instance._get_query_params(db_id)
@@ -1386,38 +1482,6 @@ async def get_knowledge_base_statistics(current_user: User = Depends(get_admin_u
     except Exception as e:
         logger.error(f"获取知识库统计失败 {e}, {traceback.format_exc()}")
         return {"message": f"获取知识库统计失败 {e}", "stats": {}}
-
-
-# =============================================================================
-# === Embedding模型状态检查分组 ===
-# =============================================================================
-
-
-@knowledge.get("/embedding-models/{model_id}/status")
-async def get_embedding_model_status(model_id: str, current_user: User = Depends(get_admin_user)):
-    """获取指定embedding模型的状态"""
-    logger.debug(f"Checking embedding model status: {model_id}")
-    try:
-        status = await test_embedding_model_status(model_id)
-        return {"status": status, "message": "success"}
-    except Exception as e:
-        logger.error(f"获取embedding模型状态失败 {model_id}: {e}, {traceback.format_exc()}")
-        return {
-            "message": f"获取embedding模型状态失败: {e}",
-            "status": {"model_id": model_id, "status": "error", "message": str(e)},
-        }
-
-
-@knowledge.get("/embedding-models/status")
-async def get_all_embedding_models_status(current_user: User = Depends(get_admin_user)):
-    """获取所有embedding模型的状态"""
-    logger.debug("Checking all embedding models status")
-    try:
-        status = await test_all_embedding_models_status()
-        return {"status": status, "message": "success"}
-    except Exception as e:
-        logger.error(f"获取所有embedding模型状态失败: {e}, {traceback.format_exc()}")
-        return {"message": f"获取所有embedding模型状态失败: {e}", "status": {"models": {}, "total": 0, "available": 0}}
 
 
 # =============================================================================

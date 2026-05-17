@@ -267,8 +267,8 @@ async def knowledge_database(
             json={
                 "database_name": db_name,
                 "description": "Pytest managed knowledge base",
-                "embed_model_name": "siliconflow/BAAI/bge-m3",
-                "kb_type": "lightrag",
+                "embedding_model_spec": "siliconflow-cn:Pro/BAAI/bge-m3",
+                "kb_type": "milvus",
                 "additional_params": {},
             },
             headers=admin_headers,
