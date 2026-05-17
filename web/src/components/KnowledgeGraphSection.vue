@@ -47,10 +47,12 @@
                 <a-button
                   v-if="isMilvus"
                   class="action-btn"
+                  :class="{ 'has-active-dot': isBuildActive }"
                   @click="showBuildPanel = !showBuildPanel; showSettings = false"
                   title="索引管理"
                 >
                   <Database :size="16" />
+                  <span v-if="isBuildActive" class="status-dot"></span>
                 </a-button>
                 <a-button
                   class="action-btn"
@@ -63,6 +65,13 @@
             </div>
           </template>
         </GraphCanvas>
+        <div v-if="isMilvus && !graphBuildStatus?.locked && !graphBuildLoading" class="graph-config-empty">
+          <div class="empty-title">尚未配置图谱抽取器</div>
+          <div class="empty-description">配置抽取器后才能从知识库 Chunk 构建实体与关系。</div>
+          <a-button type="primary" @click="openGraphConfig">
+            配置抽取器
+          </a-button>
+        </div>
 
         <!-- 详情浮动卡片 -->
         <GraphDetailPanel
@@ -112,9 +121,12 @@
         <!-- 索引管理浮动面板 -->
         <transition name="slide-fade">
           <div v-if="isMilvus && showBuildPanel" class="floating-panel build-panel">
-            <div class="panel-header">
-              <span class="panel-title">索引管理</span>
-            </div>
+<div class="panel-header">
+                <span class="panel-title">索引管理</span>
+                <a-button size="small" type="text" :disabled="graphBuildLoading" @click="loadGraphBuildStatus" class="panel-refresh-btn">
+                  <RefreshCw :size="14" :class="{ spin: graphBuildLoading }" />
+                </a-button>
+              </div>
             <div class="panel-body">
               <div class="status-row">
                 <span class="status-label">状态</span>
@@ -149,7 +161,7 @@
                   v-if="!graphBuildStatus?.locked"
                   type="primary"
                   block
-                  @click="showGraphConfig = true"
+                  @click="openGraphConfig"
                 >
                   配置抽取器
                 </a-button>
@@ -180,8 +192,13 @@
                   开始索引
                 </a-button>
                 <div class="actions-secondary">
-                  <a-button size="small" type="text" :loading="graphBuildLoading" @click="loadGraphBuildStatus">
-                    刷新
+                  <a-button
+                    v-if="graphBuildStatus?.locked && !isBuildActive"
+                    size="small"
+                    type="text"
+                    @click="openGraphConfig"
+                  >
+                    修改配置
                   </a-button>
                   <a-button size="small" type="text" danger @click="confirmResetGraph">重置</a-button>
                 </div>
@@ -192,13 +209,32 @@
       </div>
     </div>
 
-    <a-modal v-model:open="showGraphConfig" title="配置图谱抽取器" width="520px" @ok="configureGraphBuild">
+    <a-modal v-model:open="showGraphConfig" :title="graphConfigTitle" width="640px" @ok="configureGraphBuild">
       <a-form layout="vertical">
+        <a-alert
+          v-if="isEditingGraphConfig"
+          class="config-warning"
+          type="warning"
+          show-icon
+          message="修改抽取配置会影响后续图谱构建质量"
+          description="已经构建的图谱不会自动按新配置重算。如果希望整体一致，建议先重置图谱并重新抽取。抽取器类型创建后不可修改。"
+        />
         <a-form-item label="抽取器类型">
-          <a-radio-group v-model:value="graphConfigForm.extractor_type">
-            <a-radio-button value="llm">LLM</a-radio-button>
-            <a-radio-button value="spacy">spaCy</a-radio-button>
-          </a-radio-group>
+          <div class="extractor-type-cards">
+            <div
+              v-for="option in extractorTypeOptions"
+              :key="option.value"
+              class="extractor-type-card"
+              :class="{ active: graphConfigForm.extractor_type === option.value, disabled: isEditingGraphConfig }"
+              @click="selectExtractorType(option.value)"
+            >
+              <div class="card-header">
+                <component :is="option.icon" class="type-icon" />
+                <span class="type-title">{{ option.label }}</span>
+              </div>
+              <div class="card-description">{{ option.description }}</div>
+            </div>
+          </div>
         </a-form-item>
         <template v-if="graphConfigForm.extractor_type === 'llm'">
           <a-form-item label="模型">
@@ -208,13 +244,27 @@
               @select-model="(spec) => (graphConfigForm.model_spec = spec)"
             />
           </a-form-item>
-          <a-form-item label="自定义 Prompt">
+          <a-form-item label="Schema">
             <a-textarea
-              v-model:value="graphConfigForm.prompt"
+              v-model:value="graphConfigForm.schema"
               :rows="6"
-              placeholder="留空使用默认抽取 Prompt，可在自定义 Prompt 中加入 schema 约束"
+              placeholder="描述实体类型、关系类型和属性约束。后端会把 Schema 拼接到固定抽取 Prompt 中。"
             />
           </a-form-item>
+          <div class="form-grid two-columns">
+            <a-form-item label="并发队列数">
+              <a-input-number
+                v-model:value="graphConfigForm.concurrency_count"
+                :min="1"
+                :max="20"
+                :step="1"
+                style="width: 100%"
+              />
+            </a-form-item>
+            <a-form-item label="模型参数 JSON">
+              <a-input v-model:value="graphConfigForm.model_params_text" placeholder='例如 {"temperature":0.1}' />
+            </a-form-item>
+          </div>
         </template>
         <template v-else>
           <a-form-item label="spaCy 模型">
@@ -238,7 +288,9 @@ import {
   Settings,
   Search,
   Loader2,
-  Database
+  Database,
+  BrainCircuit,
+  ScanText
 } from 'lucide-vue-next'
 import GraphCanvas from '@/components/GraphCanvas.vue'
 import GraphDetailPanel from '@/components/GraphDetailPanel.vue'
@@ -272,15 +324,30 @@ const graphRef = ref(null)
 const showSettings = ref(false)
 const showBuildPanel = ref(false)
 const subgraphParams = reactive({
-  maxNodes: 50,
+  maxNodes: 100,
   maxDepth: 2,
-  excludeChunk: false,
+  excludeChunk: true,
 })
 const searchInput = ref('')
 const graphBuildStatus = ref(null)
 const graphBuildLoading = ref(false)
 const showGraphConfig = ref(false)
 let buildStatusPollTimer = null
+
+const extractorTypeOptions = [
+  {
+    value: 'llm',
+    label: 'LLM',
+    description: '使用大模型按 Schema 抽取实体和关系',
+    icon: BrainCircuit
+  },
+  {
+    value: 'spacy',
+    label: 'spaCy',
+    description: '使用本地 NER 模型抽取实体',
+    icon: ScanText
+  }
+]
 
 const isBuildActive = computed(() => {
   const s = graphBuildStatus.value?.build_task_status
@@ -290,6 +357,10 @@ const isBuildActive = computed(() => {
 const isBuildFailed = computed(() => {
   return graphBuildStatus.value?.build_task_status === 'failed'
 })
+
+const isEditingGraphConfig = computed(() => Boolean(graphBuildStatus.value?.locked))
+
+const graphConfigTitle = computed(() => (isEditingGraphConfig.value ? '修改图谱抽取配置' : '配置图谱抽取器'))
 
 const stopBuildStatusPoll = () => {
   if (buildStatusPollTimer) {
@@ -315,7 +386,9 @@ watch(isBuildActive, (active) => {
 const graphConfigForm = reactive({
   extractor_type: 'llm',
   model_spec: '',
-  prompt: '',
+  schema: '',
+  concurrency_count: 5,
+  model_params_text: '',
   spacy_model: 'zh_core_web_sm',
   entity_labels_text: ''
 })
@@ -360,6 +433,44 @@ const parseCommaSeparatedValues = (value) => {
     .filter(Boolean)
 }
 
+const parseModelParams = () => {
+  const text = graphConfigForm.model_params_text.trim()
+  if (!text) return {}
+  let params = null
+  try {
+    params = JSON.parse(text)
+  } catch {
+    throw new Error('模型参数必须是合法 JSON 对象')
+  }
+  if (!params || Array.isArray(params) || typeof params !== 'object') {
+    throw new Error('模型参数必须是 JSON 对象')
+  }
+  return params
+}
+
+const fillGraphConfigForm = () => {
+  const config = graphBuildStatus.value?.config
+  if (!config) return
+  const options = config.extractor_options || {}
+  graphConfigForm.extractor_type = config.extractor_type || 'llm'
+  graphConfigForm.model_spec = options.model_spec || ''
+  graphConfigForm.schema = options.schema || ''
+  graphConfigForm.concurrency_count = Number(options.concurrency_count || 5)
+  graphConfigForm.model_params_text = options.model_params ? JSON.stringify(options.model_params) : ''
+  graphConfigForm.spacy_model = options.model || 'zh_core_web_sm'
+  graphConfigForm.entity_labels_text = Array.isArray(options.entity_labels) ? options.entity_labels.join(', ') : ''
+}
+
+const openGraphConfig = () => {
+  fillGraphConfigForm()
+  showGraphConfig.value = true
+}
+
+const selectExtractorType = (type) => {
+  if (isEditingGraphConfig.value) return
+  graphConfigForm.extractor_type = type
+}
+
 const buildExtractorOptions = () => {
   if (graphConfigForm.extractor_type === 'spacy') {
     return {
@@ -369,10 +480,10 @@ const buildExtractorOptions = () => {
   }
 
   const result = {
-    model_spec: graphConfigForm.model_spec
-  }
-  if (graphConfigForm.prompt.trim()) {
-    result.prompt = graphConfigForm.prompt
+    model_spec: graphConfigForm.model_spec,
+    schema: graphConfigForm.schema.trim(),
+    concurrency_count: graphConfigForm.concurrency_count || 1,
+    model_params: parseModelParams()
   }
   return result
 }
@@ -383,7 +494,7 @@ const configureGraphBuild = async () => {
       extractor_type: graphConfigForm.extractor_type,
       extractor_options: buildExtractorOptions()
     })
-    message.success('图谱抽取配置已锁定')
+    message.success(isEditingGraphConfig.value ? '图谱抽取配置已更新' : '图谱抽取配置已保存')
     showGraphConfig.value = false
     await loadGraphBuildStatus()
   } catch (e) {
@@ -560,6 +671,34 @@ onUnmounted(() => {
   position: relative;
 }
 
+.graph-config-empty {
+  position: absolute;
+  inset: 0;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  pointer-events: none;
+  text-align: center;
+
+  .empty-title {
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--gray-1000);
+  }
+
+  .empty-description {
+    font-size: 13px;
+    color: var(--gray-600);
+  }
+
+  :deep(.ant-btn) {
+    pointer-events: auto;
+  }
+}
+
 .compact-actions {
   position: absolute;
   top: 10px;
@@ -614,11 +753,23 @@ onUnmounted(() => {
     color: var(--gray-600);
     border-radius: 6px;
     box-shadow: none;
+    position: relative;
 
     &:hover {
       background: var(--shadow-1);
       color: var(--primary-color);
     }
+  }
+
+  .status-dot {
+    position: absolute;
+    bottom: 4px;
+    right: 4px;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: #52c41a;
+    animation: blink 1.2s ease-in-out infinite;
   }
 
   .search-suffix-icon {
@@ -628,6 +779,11 @@ onUnmounted(() => {
   .spin {
     animation: spin 1s linear infinite;
   }
+}
+
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.2; }
 }
 
 .graph-disabled {
@@ -664,6 +820,7 @@ onUnmounted(() => {
   .panel-header {
     display: flex;
     align-items: center;
+    justify-content: space-between;
     padding: 10px 14px;
     border-bottom: 1px solid var(--gray-200);
 
@@ -671,6 +828,10 @@ onUnmounted(() => {
       font-size: 13px;
       font-weight: 600;
       color: var(--gray-1000);
+    }
+
+    .panel-refresh-btn {
+      padding: 2px 6px;
     }
   }
 
@@ -730,6 +891,80 @@ onUnmounted(() => {
   .actions-secondary {
     display: flex;
     justify-content: space-between;
+  }
+}
+
+.config-warning {
+  margin-bottom: 16px;
+}
+
+.extractor-type-cards {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+
+  .extractor-type-card {
+    border: 1px solid var(--gray-150);
+    border-radius: 8px;
+    padding: 14px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    background: var(--gray-0);
+
+    &:hover {
+      border-color: var(--main-color);
+    }
+
+    &.active {
+      border-color: var(--main-color);
+      background: var(--main-10);
+      box-shadow: 0 0 0 1px var(--main-20);
+
+      .type-icon {
+        color: var(--main-color);
+      }
+    }
+
+    &.disabled {
+      cursor: not-allowed;
+      opacity: 0.78;
+    }
+
+    .card-header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 10px;
+    }
+
+    .type-icon {
+      width: 20px;
+      height: 20px;
+      color: var(--main-color);
+      flex-shrink: 0;
+    }
+
+    .type-title {
+      font-size: 15px;
+      font-weight: 600;
+      color: var(--gray-800);
+    }
+
+    .card-description {
+      font-size: 13px;
+      color: var(--gray-600);
+      line-height: 1.5;
+    }
+  }
+}
+
+.form-grid.two-columns {
+  display: grid;
+  grid-template-columns: 180px 1fr;
+  gap: 12px;
+
+  @media (max-width: 640px) {
+    grid-template-columns: 1fr;
   }
 }
 

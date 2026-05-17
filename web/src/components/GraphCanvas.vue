@@ -63,6 +63,7 @@ let graphInstance = null
 let resizeObserver = null
 let renderTimeout = null
 let retryCount = 0
+let resizeTimer = null
 const MAX_RETRIES = 5
 
 const defaultLayout = {
@@ -441,7 +442,14 @@ onMounted(() => {
       if (!container.value || !graphInstance) return
       const width = container.value.offsetWidth
       const height = container.value.offsetHeight
-      graphInstance.changeSize(width, height)
+      if (width === 0 && height === 0) return
+      graphInstance.setSize(width, height)
+      clearTimeout(resizeTimer)
+      resizeTimer = setTimeout(() => {
+        if (graphInstance) {
+          graphInstance.fitView()
+        }
+      }, 150)
     })
     if (container.value) resizeObserver.observe(container.value)
   }
@@ -458,6 +466,7 @@ onUnmounted(() => {
   window.removeEventListener('resize', refreshGraph)
   if (resizeObserver && container.value) resizeObserver.unobserve(container.value)
   clearTimeout(renderTimeout)
+  clearTimeout(resizeTimer)
   try {
     graphInstance?.destroy()
   } catch {
