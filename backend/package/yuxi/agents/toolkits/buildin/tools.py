@@ -56,7 +56,7 @@ def _register_tavily_tool():
 
 
 # 模块加载时注册
-if config.enable_web_search:
+if os.getenv("TAVILY_API_KEY"):
     try:
         _register_tavily_tool()
     except Exception as e:

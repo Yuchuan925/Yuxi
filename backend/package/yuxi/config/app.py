@@ -17,13 +17,9 @@ class Config(BaseModel):
     """应用配置类。"""
 
     save_dir: str = Field(default="saves", description="保存目录")
-    model_dir: str = Field(default="", description="本地模型目录")
-
     enable_reranker: bool = Field(default=False, description="是否开启重排序")
     enable_content_guard: bool = Field(default=False, description="是否启用内容审查")
     enable_content_guard_llm: bool = Field(default=False, description="是否启用LLM内容审查")
-    enable_web_search: bool = Field(default=False, description="是否启用网络搜索")
-
     default_model: str = Field(
         default="siliconflow-cn:Pro/MiniMaxAI/MiniMax-M2.5",
         description="默认对话模型",
@@ -92,9 +88,6 @@ class Config(BaseModel):
             logger.error(f"Failed to load config from {self._config_file}: {e}")
 
     def _handle_environment(self) -> None:
-        if os.getenv("TAVILY_API_KEY"):
-            self.enable_web_search = True
-
         self.sandbox_provider = (os.getenv("SANDBOX_PROVIDER") or self.sandbox_provider or "provisioner").strip()
         self.sandbox_provisioner_url = (
             os.getenv("SANDBOX_PROVISIONER_URL") or self.sandbox_provisioner_url or "http://sandbox-provisioner:8002"

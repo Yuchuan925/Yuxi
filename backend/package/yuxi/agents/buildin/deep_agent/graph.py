@@ -1,3 +1,5 @@
+import os
+
 from deepagents.middleware.filesystem import FilesystemMiddleware
 from deepagents.middleware.patch_tool_calls import PatchToolCallsMiddleware
 from deepagents.middleware.subagents import SubAgentMiddleware
@@ -37,10 +39,8 @@ class DeepAgent(BaseAgent):
 
     async def get_tools(self):
         """返回 Deep Agent 的专用工具"""
-        from yuxi import config
-
         tools = []
-        if config.enable_web_search:
+        if os.getenv("TAVILY_API_KEY"):
             tavily = _create_tavily_search()
             if tavily:
                 tools.append(tavily)
