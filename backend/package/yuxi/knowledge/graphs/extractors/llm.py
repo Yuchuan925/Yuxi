@@ -41,8 +41,8 @@ class LLMGraphExtractor(GraphExtractor):
             concurrency_count = int(concurrency_count)
         except (TypeError, ValueError) as exc:
             raise ValueError("LLM 抽取器 concurrency_count 必须是整数") from exc
-        if concurrency_count < 1 or concurrency_count > 20:
-            raise ValueError("LLM 抽取器 concurrency_count 必须在 1 到 20 之间")
+        if concurrency_count < 1 or concurrency_count > 1000:
+            raise ValueError("LLM 抽取器 concurrency_count 必须在 1 到 1000 之间")
         if self.options.get("model_params") is not None and not isinstance(self.options["model_params"], dict):
             raise ValueError("LLM 抽取器 model_params 必须是对象")
 

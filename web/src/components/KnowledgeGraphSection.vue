@@ -121,12 +121,12 @@
         <!-- 索引管理浮动面板 -->
         <transition name="slide-fade">
           <div v-if="isMilvus && showBuildPanel" class="floating-panel build-panel">
-<div class="panel-header">
-                <span class="panel-title">索引管理</span>
-                <a-button size="small" type="text" :disabled="graphBuildLoading" @click="loadGraphBuildStatus" class="panel-refresh-btn">
-                  <RefreshCw :size="14" :class="{ spin: graphBuildLoading }" />
-                </a-button>
-              </div>
+            <div class="panel-header">
+              <span class="panel-title">索引管理</span>
+              <a-button size="small" type="text" :disabled="graphBuildLoading" @click="loadGraphBuildStatus" class="panel-refresh-btn">
+                <RefreshCw :size="14" :class="{ spin: graphBuildLoading }" />
+              </a-button>
+            </div>
             <div class="panel-body">
               <div class="status-row">
                 <span class="status-label">状态</span>
@@ -216,8 +216,7 @@
           class="config-warning"
           type="warning"
           show-icon
-          message="修改抽取配置会影响后续图谱构建质量"
-          description="已经构建的图谱不会自动按新配置重算。如果希望整体一致，建议先重置图谱并重新抽取。抽取器类型创建后不可修改。"
+          message="修改配置仅影响后续构建；已构建的图谱不会自动重算，如需一致请重置后重新抽取。抽取器类型创建后不可修改。"
         />
         <a-form-item label="抽取器类型">
           <div class="extractor-type-cards">
@@ -256,7 +255,7 @@
               <a-input-number
                 v-model:value="graphConfigForm.concurrency_count"
                 :min="1"
-                :max="20"
+                :max="1000"
                 :step="1"
                 style="width: 100%"
               />
@@ -490,6 +489,8 @@ const buildExtractorOptions = () => {
 
 const configureGraphBuild = async () => {
   try {
+    document.activeElement?.blur()
+    await nextTick()
     await graphBuildApi.configure(databaseId.value, {
       extractor_type: graphConfigForm.extractor_type,
       extractor_options: buildExtractorOptions()
@@ -720,6 +721,7 @@ onUnmounted(() => {
     padding: 2px;
     border-radius: 8px;
     box-shadow: 0 0 4px 0px var(--shadow-2);
+    border: 1px solid var(--gray-100);
   }
 
   :deep(.ant-input-affix-wrapper) {
@@ -804,7 +806,7 @@ onUnmounted(() => {
 
 .floating-panel {
   position: absolute;
-  top: 50px;
+  top: 60px;
   right: 10px;
   width: 300px;
   max-height: calc(100% - 60px);
@@ -815,6 +817,7 @@ onUnmounted(() => {
   -webkit-backdrop-filter: blur(12px);
   border-radius: 8px;
   border: 1px solid var(--gray-100);
+  box-shadow: 0 0 4px 0px var(--shadow-2);
   font-size: 13px;
 
   .panel-header {

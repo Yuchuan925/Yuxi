@@ -18,7 +18,7 @@ export const getKbTypeIcon = (type) => {
 
 export const getKbTypeColor = (type) => {
   const colors = {
-    milvus: 'red',
+    milvus: 'blue',
     dify: 'gold'
   }
   return colors[type] || 'blue'

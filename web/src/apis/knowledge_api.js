@@ -322,6 +322,19 @@ export const fileApi = {
   },
 
   /**
+   * 从工作区导入文件到知识库 MinIO 暂存区
+   * @param {string} dbId - 知识库 ID
+   * @param {Array<string>} paths - 工作区文件路径
+   * @returns {Promise} - 导入结果
+   */
+  importWorkspaceFiles: async (dbId, paths) => {
+    return apiAdminPost('/api/knowledge/files/import-workspace', {
+      db_id: dbId,
+      paths
+    })
+  },
+
+  /**
    * 上传文件
    * @param {File} file - 文件对象
    * @param {string} dbId - 知识库ID（可选）

@@ -3,6 +3,7 @@ import json
 import os
 import textwrap
 import traceback
+import time
 from urllib.parse import quote, unquote
 
 import aiofiles
@@ -20,6 +21,7 @@ from yuxi.plugins.parser import Parser, SUPPORTED_FILE_EXTENSIONS, is_supported_
 from yuxi.knowledge.utils import calculate_content_hash
 from yuxi.knowledge.utils.kb_utils import is_minio_url, parse_minio_url
 from yuxi.services.model_cache import model_cache
+from yuxi.services.workspace_service import MAX_WORKSPACE_UPLOAD_SIZE_BYTES, resolve_workspace_file_path
 from yuxi.storage.postgres.models_business import User
 from yuxi.storage.minio.client import MinIOClient, StorageError, aupload_file_to_minio, get_minio_client
 from yuxi.utils import logger
@@ -36,6 +38,11 @@ class UpdateDatabaseRequest(BaseModel):
     llm_model_spec: str | None = None
     additional_params: dict | None = None
     share_config: dict | None = None
+
+
+class WorkspaceImportRequest(BaseModel):
+    db_id: str
+    paths: list[str]
 
 
 media_types = {
@@ -1347,6 +1354,72 @@ async def fetch_url(
     except Exception as e:
         logger.error(f"Failed to fetch URL {url}: {e}, {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=f"Failed to fetch URL: {str(e)}")
+
+
+@knowledge.post("/files/import-workspace")
+async def import_workspace_files(
+    payload: WorkspaceImportRequest,
+    current_user: User = Depends(get_admin_user),
+):
+    """将当前用户工作区文件导入 MinIO，返回与普通文件上传一致的预处理结果。"""
+    db_id = payload.db_id.strip()
+    paths = [path for path in payload.paths if str(path or "").strip()]
+    if not db_id:
+        raise HTTPException(status_code=400, detail="db_id is required")
+    if not paths:
+        raise HTTPException(status_code=400, detail="请选择至少一个工作区文件")
+
+    await _ensure_database_not_dify(db_id, "文档添加/解析/入库")
+
+    bucket_name = MinIOClient.KB_BUCKETS["documents"]
+    results = []
+    for workspace_path in paths:
+        target = resolve_workspace_file_path(path=workspace_path, current_user=current_user)
+
+        filename = target.name
+        ext = os.path.splitext(filename)[1].lower()
+        if ext == ".jsonl" or not (is_supported_file_extension(filename) or ext == ".zip"):
+            raise HTTPException(status_code=400, detail=f"Unsupported file type: {ext}")
+
+        size = target.stat().st_size
+        if size > MAX_WORKSPACE_UPLOAD_SIZE_BYTES:
+            raise HTTPException(status_code=400, detail="文件过大，当前仅支持 100 MB 以内的工作区文件")
+
+        file_bytes = await asyncio.to_thread(target.read_bytes)
+        content_hash = await calculate_content_hash(file_bytes)
+
+        file_exists = await knowledge_base.file_existed_in_db(db_id, content_hash)
+        if file_exists:
+            raise HTTPException(status_code=409, detail=f"数据库中已经存在了相同内容文件: {filename}")
+
+        basename, ext = os.path.splitext(filename)
+        timestamp = int(time.time() * 1000)
+        minio_filename = f"{basename}_{timestamp}{ext}"
+        object_name = f"{db_id}/upload/{minio_filename}"
+        minio_url = await aupload_file_to_minio(bucket_name, object_name, file_bytes)
+
+        normalized_filename = filename.lower()
+        same_name_files = await knowledge_base.get_same_name_files(db_id, normalized_filename)
+        results.append(
+            {
+                "message": "Workspace file successfully imported",
+                "file_path": minio_url,
+                "minio_path": minio_url,
+                "db_id": db_id,
+                "content_hash": content_hash,
+                "filename": normalized_filename,
+                "original_filename": basename,
+                "size": len(file_bytes),
+                "minio_filename": minio_filename,
+                "object_name": object_name,
+                "bucket_name": bucket_name,
+                "workspace_path": workspace_path,
+                "same_name_files": same_name_files,
+                "has_same_name": len(same_name_files) > 0,
+            }
+        )
+
+    return {"status": "success", "items": results}
 
 
 @knowledge.post("/files/upload")

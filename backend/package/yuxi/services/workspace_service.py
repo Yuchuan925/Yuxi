@@ -138,6 +138,15 @@ async def list_workspace_tree(
     return {"entries": entries}
 
 
+def resolve_workspace_file_path(*, path: str, current_user: User) -> Path:
+    target = _resolve_workspace_path(current_user, path)
+    if not target.exists():
+        raise HTTPException(status_code=404, detail=f"工作区文件不存在: {path}")
+    if not target.is_file():
+        raise HTTPException(status_code=400, detail=f"当前路径不是文件: {path}")
+    return target
+
+
 async def read_workspace_file_content(*, path: str, current_user: User) -> dict:
     target = _resolve_workspace_path(current_user, path)
     if not target.exists():

@@ -128,7 +128,7 @@ const filteredEdgeProperties = computed(() => {
 <style scoped lang="less">
 .detail-panel {
   position: absolute;
-  top: 50px;
+  top: 60px;
   left: 10px;
   width: 280px;
   max-height: calc(100% - 60px);
@@ -139,6 +139,7 @@ const filteredEdgeProperties = computed(() => {
   -webkit-backdrop-filter: blur(16px);
   border-radius: 8px;
   border: 1px solid var(--gray-100);
+  box-shadow: 0 0 4px 0px var(--shadow-2);
   font-size: 13px;
 
   .panel-header {
