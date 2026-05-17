@@ -213,6 +213,22 @@ class KnowledgeBase(ABC):
             file_processing_params=metadata.get("processing_params"),
         )
 
+        # Fallback: fetch file size from MinIO if not provided
+        if metadata.get("size") is None and content_type == "file":
+            try:
+                from yuxi.knowledge.utils.kb_utils import is_minio_url, parse_minio_url
+                from yuxi.storage.minio import get_minio_client
+
+                file_path = metadata.get("path") or item
+                if is_minio_url(file_path):
+                    bucket_name, obj_name = parse_minio_url(file_path)
+                    minio_client = get_minio_client()
+                    file_size = await minio_client.astat_file(bucket_name, obj_name)
+                    if file_size is not None:
+                        metadata["size"] = file_size
+            except Exception as exc:
+                logger.warning(f"Failed to stat file size from MinIO for {item}: {exc}")
+
         # Initial status
         metadata["status"] = FileStatus.UPLOADED
         metadata["created_at"] = utc_isoformat()
@@ -1333,6 +1349,52 @@ class KnowledgeBase(ABC):
                 }
 
         logger.info(f"Loaded {self.kb_type} metadata from database for {len(self.databases_meta)} databases")
+        await self._fill_missing_file_sizes()
+
+    async def _fill_missing_file_sizes(self) -> None:
+        """为缺少 size 的已有文件从 MinIO 补全大小信息"""
+        from yuxi.knowledge.utils.kb_utils import is_minio_url, parse_minio_url
+        from yuxi.storage.minio import get_minio_client
+
+        files_to_update: list[str] = []
+        for file_id, meta in self.files_meta.items():
+            if meta.get("is_folder"):
+                continue
+            if meta.get("size") is not None:
+                continue
+            file_path = meta.get("minio_url") or meta.get("path")
+            if not file_path or not is_minio_url(file_path):
+                continue
+            files_to_update.append(file_id)
+
+        if not files_to_update:
+            return
+
+        minio_client = get_minio_client()
+
+        async def _stat_file(file_id: str, file_path: str) -> tuple[str, int | None]:
+            bucket_name, obj_name = parse_minio_url(file_path)
+            try:
+                return file_id, await minio_client.astat_file(bucket_name, obj_name)
+            except Exception as exc:
+                logger.warning(f"Failed to fill size for {file_id}: {exc}")
+                return file_id, None
+
+        results = await asyncio.gather(
+            *(
+                _stat_file(fid, self.files_meta[fid].get("minio_url") or self.files_meta[fid].get("path"))
+                for fid in files_to_update
+            )
+        )
+        updated = 0
+        for file_id, file_size in results:
+            if file_size is not None:
+                self.files_meta[file_id]["size"] = file_size
+                updated += 1
+
+        if updated:
+            logger.info(f"Filled {updated}/{len(files_to_update)} missing file sizes from MinIO for {self.kb_type}")
+            await self._save_metadata()
 
     async def _save_metadata(self) -> None:
         from yuxi.repositories.evaluation_repository import EvaluationRepository

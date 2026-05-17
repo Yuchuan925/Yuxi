@@ -18,83 +18,155 @@
         </a-button>
       </div>
       <div class="panel-actions">
-        <a-input
-          v-model:value="filenameFilter"
-          placeholder="搜索"
-          size="small"
-          class="action-searcher"
-          allow-clear
-          @change="onFilterChange"
-        >
-          <template #prefix>
-            <Search size="14" style="color: var(--gray-400)" />
-          </template>
-        </a-input>
+        <div class="panel-actions-default">
+          <a-input
+            v-model:value="filenameFilter"
+            placeholder="搜索"
+            size="small"
+            class="action-searcher"
+            allow-clear
+            @change="onFilterChange"
+          >
+            <template #prefix>
+              <Search size="14" style="color: var(--gray-400)" />
+            </template>
+          </a-input>
 
-        <a-dropdown trigger="click">
+          <a-dropdown trigger="click">
+            <a-button
+              type="text"
+              class="panel-action-btn"
+              :class="{ active: sortField !== 'filename' }"
+              title="排序"
+            >
+              <template #icon><ArrowUpDown size="16" /></template>
+            </a-button>
+            <template #overlay>
+              <a-menu :selectedKeys="[sortField]" @click="handleSortMenuClick">
+                <a-menu-item v-for="opt in sortOptions" :key="opt.value">
+                  {{ opt.label }}
+                </a-menu-item>
+              </a-menu>
+            </template>
+          </a-dropdown>
+
+          <a-dropdown trigger="click">
+            <a-button
+              type="text"
+              class="panel-action-btn"
+              :class="{ active: statusFilter !== 'all' }"
+              title="筛选状态"
+            >
+              <template #icon><Filter size="16" /></template>
+            </a-button>
+            <template #overlay>
+              <a-menu :selectedKeys="[statusFilter]" @click="handleStatusMenuClick">
+                <a-menu-item key="all">全部状态</a-menu-item>
+                <a-menu-item v-for="opt in statusOptions" :key="opt.value">
+                  {{ opt.label }}
+                </a-menu-item>
+              </a-menu>
+            </template>
+          </a-dropdown>
+
           <a-button
             type="text"
+            @click="handleRefresh"
+            :loading="refreshing"
+            title="刷新"
             class="panel-action-btn"
-            :class="{ active: sortField !== 'filename' }"
-            title="排序"
           >
-            <template #icon><ArrowUpDown size="16" /></template>
+            <template #icon><RotateCw size="16" /></template>
+          </a-button>
+          <a-button
+            type="text"
+            @click="toggleSelectionMode"
+            title="多选"
+            class="panel-action-btn"
+            :class="{ active: isSelectionMode }"
+          >
+            <template #icon><CheckSquare size="16" /></template>
+          </a-button>
+        </div>
+
+        <a-dropdown
+          trigger="click"
+          v-model:open="overflowMenuOpen"
+          :overlayStyle="{ minWidth: '220px' }"
+          overlayClassName="panel-overflow-popover"
+        >
+          <a-button type="text" class="panel-action-btn overflow-trigger" title="更多">
+            <template #icon><MoreHorizontal size="16" /></template>
           </a-button>
           <template #overlay>
-            <a-menu :selectedKeys="[sortField]" @click="handleSortMenuClick">
-              <a-menu-item v-for="opt in sortOptions" :key="opt.value">
-                {{ opt.label }}
-              </a-menu-item>
-            </a-menu>
+            <div class="overflow-menu-panel" @click.stop>
+              <div class="overflow-search">
+                <a-input
+                  v-model:value="filenameFilter"
+                  placeholder="搜索文件名"
+                  size="small"
+                  allow-clear
+                  @change="onFilterChange"
+                >
+                  <template #prefix>
+                    <Search size="14" style="color: var(--gray-400)" />
+                  </template>
+                </a-input>
+              </div>
+              <div class="overflow-actions">
+                <a-dropdown trigger="click" placement="bottomLeft">
+                  <div class="overflow-action-item" :class="{ active: sortField !== 'filename' }">
+                    <ArrowUpDown size="16" />
+                    <span>排序</span>
+                    <span class="overflow-action-hint">{{ currentSortLabel }}</span>
+                  </div>
+                  <template #overlay>
+                    <a-menu :selectedKeys="[sortField]" @click="handleSortMenuClick">
+                      <a-menu-item v-for="opt in sortOptions" :key="opt.value">
+                        {{ opt.label }}
+                      </a-menu-item>
+                    </a-menu>
+                  </template>
+                </a-dropdown>
+
+                <a-dropdown trigger="click" placement="bottomLeft">
+                  <div class="overflow-action-item" :class="{ active: statusFilter !== 'all' }">
+                    <Filter size="16" />
+                    <span>筛选</span>
+                    <span class="overflow-action-hint">{{ currentStatusLabel }}</span>
+                  </div>
+                  <template #overlay>
+                    <a-menu :selectedKeys="[statusFilter]" @click="handleStatusMenuClick">
+                      <a-menu-item key="all">全部状态</a-menu-item>
+                      <a-menu-item v-for="opt in statusOptions" :key="opt.value">
+                        {{ opt.label }}
+                      </a-menu-item>
+                    </a-menu>
+                  </template>
+                </a-dropdown>
+
+                <div
+                  class="overflow-action-item"
+                  :class="{ 'is-loading': refreshing }"
+                  @click="handleRefresh"
+                >
+                  <RotateCw size="16" :class="{ spin: refreshing }" />
+                  <span>刷新</span>
+                </div>
+
+                <div
+                  class="overflow-action-item"
+                  :class="{ active: isSelectionMode }"
+                  @click="toggleSelectionMode"
+                >
+                  <CheckSquare size="16" />
+                  <span>多选</span>
+                </div>
+              </div>
+            </div>
           </template>
         </a-dropdown>
 
-        <a-dropdown trigger="click">
-          <a-button
-            type="text"
-            class="panel-action-btn"
-            :class="{ active: statusFilter !== 'all' }"
-            title="筛选状态"
-          >
-            <template #icon><Filter size="16" /></template>
-          </a-button>
-          <template #overlay>
-            <a-menu :selectedKeys="[statusFilter]" @click="handleStatusMenuClick">
-              <a-menu-item key="all">全部状态</a-menu-item>
-              <a-menu-item v-for="opt in statusOptions" :key="opt.value">
-                {{ opt.label }}
-              </a-menu-item>
-            </a-menu>
-          </template>
-        </a-dropdown>
-
-        <a-button
-          type="text"
-          @click="handleRefresh"
-          :loading="refreshing"
-          title="刷新"
-          class="panel-action-btn"
-        >
-          <template #icon><RotateCw size="16" /></template>
-        </a-button>
-        <a-button
-          type="text"
-          @click="toggleSelectionMode"
-          title="多选"
-          class="panel-action-btn"
-          :class="{ active: isSelectionMode }"
-        >
-          <template #icon><CheckSquare size="16" /></template>
-        </a-button>
-        <!-- <a-button
-          @click="toggleAutoRefresh"
-          size="small"
-          :type="autoRefresh ? 'primary' : 'default'"
-          title="自动刷新文件状态"
-          class="auto-refresh-btn panel-action-btn"
-        >
-          Auto
-        </a-button> -->
         <a-button
           type="text"
           @click="toggleRightPanel"
@@ -423,7 +495,8 @@ import {
   FileUp,
   Search,
   Filter,
-  ArrowUpDown
+  ArrowUpDown,
+  MoreHorizontal
 } from 'lucide-vue-next'
 
 const store = useDatabaseStore()
@@ -486,6 +559,18 @@ const selectedRowKeys = computed({
 })
 
 const isSelectionMode = ref(false)
+const overflowMenuOpen = ref(false)
+
+const currentSortLabel = computed(() => {
+  const opt = sortOptions.find((o) => o.value === sortField.value)
+  return opt ? opt.label : ''
+})
+
+const currentStatusLabel = computed(() => {
+  if (statusFilter.value === 'all') return ''
+  const opt = statusOptions.find((o) => o.value === statusFilter.value)
+  return opt ? opt.label : ''
+})
 
 const allSelectableFiles = computed(() => {
   const nameFilter = filenameFilter.value.trim().toLowerCase()
@@ -1234,7 +1319,8 @@ import ChunkParamsConfig from '@/components/ChunkParamsConfig.vue'
   overflow: hidden;
   border-radius: 12px;
   border: 1px solid var(--gray-150);
-  /* padding-top: 6px; */
+  container-type: inline-size;
+  container-name: file-table;
 }
 
 .panel-header {
@@ -1250,6 +1336,16 @@ import ChunkParamsConfig from '@/components/ChunkParamsConfig.vue'
   align-items: center;
   gap: 6px;
 
+  .panel-actions-default {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .overflow-trigger {
+    display: none;
+  }
+
   .action-searcher {
     width: 120px;
     margin-right: 8px;
@@ -1257,6 +1353,18 @@ import ChunkParamsConfig from '@/components/ChunkParamsConfig.vue'
     padding: 4px 8px;
     border: none;
     box-shadow: 0 0 0 1px var(--shadow-1);
+  }
+}
+
+@container file-table (max-width: 480px) {
+  .panel-actions {
+    .panel-actions-default {
+      display: none;
+    }
+
+    .overflow-trigger {
+      display: flex;
+    }
   }
 }
 
@@ -1611,6 +1719,81 @@ import ChunkParamsConfig from '@/components/ChunkParamsConfig.vue'
         }
       }
     }
+  }
+}
+
+.panel-overflow-popover {
+  .ant-popover-inner {
+    padding: 0;
+    border-radius: 8px;
+    border: 1px solid var(--gray-150);
+    background: var(--gray-0);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+    overflow: hidden;
+  }
+
+  .ant-popover-arrow {
+    display: none;
+  }
+}
+
+.overflow-menu-panel {
+  min-width: 120px;
+  background: var(--gray-0);
+  border: 1px solid var(--gray-150);
+  border-radius: 8px;
+
+  .overflow-search {
+    padding: 10px 12px 8px;
+    border-bottom: 1px solid var(--gray-100);
+  }
+
+  .overflow-actions {
+    display: flex;
+    flex-direction: column;
+    padding: 4px;
+  }
+
+  .overflow-action-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 12px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 13px;
+    color: var(--gray-700);
+    transition: background-color 0.1s ease;
+
+    &:hover {
+      background-color: var(--gray-50);
+      color: var(--main-color);
+    }
+
+    &.active {
+      color: var(--main-color);
+      background-color: var(--main-10);
+      font-weight: 500;
+    }
+
+    .overflow-action-hint {
+      margin-left: auto;
+      font-size: 12px;
+      color: var(--gray-400);
+    }
+
+    .spin {
+      animation: spin 1s linear infinite;
+    }
+  }
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
   }
 }
 </style>

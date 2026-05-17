@@ -1289,6 +1289,7 @@ const chunkData = async () => {
   // 提取已上传的文件信息
   const items = []
   const content_hashes = {}
+  const file_sizes = {}
   for (const file of fileList.value) {
     if (file.status !== 'done') continue
     const file_path = file.response?.file_path
@@ -1297,6 +1298,7 @@ const chunkData = async () => {
 
     items.push(file_path)
     if (content_hash) content_hashes[file_path] = content_hash
+    if (Number.isFinite(file.response?.size)) file_sizes[file_path] = file.response.size
 
     // 检查是否需要OCR
     const ext = file_path.substring(file_path.lastIndexOf('.')).toLowerCase()
@@ -1316,7 +1318,7 @@ const chunkData = async () => {
 
   try {
     store.state.chunkLoading = true
-    const params = { ...processingParams.value, content_hashes }
+    const params = { ...processingParams.value, content_hashes, file_sizes }
     if (autoIndex.value) {
       params.auto_index = true
       Object.assign(params, buildAutoIndexParams())

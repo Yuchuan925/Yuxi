@@ -481,7 +481,7 @@ const handleAvatarChange = async (info) => {
   cursor: pointer;
   position: relative;
   overflow: hidden;
-  box-shadow: 0 2px 8px var(--shadow-2);
+  box-shadow: 0 2px 8px var(--shadow-1);
 
   &:hover {
     opacity: 0.9;

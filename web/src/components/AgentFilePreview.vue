@@ -89,7 +89,7 @@
           @click="openFullscreenPreview"
           title="全屏预览"
         >
-          <Maximize2 :size="18" />
+          <Maximize :size="18" />
         </button>
         <button
           v-if="showClose"
@@ -247,7 +247,7 @@ import {
   Download,
   Eye,
   Globe,
-  Maximize2,
+  Maximize,
   PanelRightClose,
   Pencil,
   Save,

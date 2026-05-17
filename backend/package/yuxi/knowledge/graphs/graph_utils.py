@@ -6,13 +6,40 @@
 
 from __future__ import annotations
 
-import json
 from typing import Any
+
+from yuxi.utils import hashstr
 
 
 def normalize_entity_name(text: str) -> str:
     """统一实体名称：去首尾空白、小写化、压缩内部连续空白。"""
     return " ".join(text.strip().lower().split())
+
+
+def compute_entity_id(db_id: str, normalized_name: str, label: str) -> str:
+    return hashstr(f"{db_id}:{normalized_name}:{label}", length=32)
+
+
+def compute_triple_id(
+    db_id: str,
+    source_normalized_name: str,
+    source_label: str,
+    relation_type: str,
+    target_normalized_name: str,
+    target_label: str,
+) -> str:
+    return hashstr(
+        f"{db_id}:{source_normalized_name}:{source_label}:{relation_type}:{target_normalized_name}:{target_label}",
+        length=32,
+    )
+
+
+def graph_entity_collection_name(db_id: str) -> str:
+    return f"{db_id}_entity"
+
+
+def graph_triple_collection_name(db_id: str) -> str:
+    return f"{db_id}_triple"
 
 
 def build_graph_payload(normalized_result: dict[str, Any]) -> dict[str, Any]:

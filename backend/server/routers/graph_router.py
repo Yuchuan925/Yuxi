@@ -56,13 +56,16 @@ async def get_subgraph(
     node_label: str = Query("*", description="节点标签或查询关键词"),
     max_depth: int = Query(2, description="最大深度", ge=1, le=5),
     max_nodes: int = Query(100, description="最大节点数", ge=1, le=1000),
+    exclude_chunk: bool = Query(False, description="是否排除 Chunk 节点"),
     current_user: User = Depends(get_admin_user),
 ):
     """查询 Milvus 知识库图谱子图"""
     try:
         logger.info(f"Querying subgraph - db_id: {db_id}, label: {node_label}")
         service = await _get_graph_service(db_id)
-        result_data = await service.query_nodes(keyword=node_label, max_depth=max_depth, max_nodes=max_nodes)
+        result_data = await service.query_nodes(
+            keyword=node_label, max_depth=max_depth, max_nodes=max_nodes, exclude_chunk=exclude_chunk,
+        )
         return {"success": True, "data": result_data}
     except HTTPException:
         raise

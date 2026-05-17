@@ -1410,6 +1410,7 @@ async def upload_file(
         "content_hash": content_hash,
         "filename": filename,  # 原始文件名（小写）
         "original_filename": basename,  # 原始文件名（去掉后缀）
+        "size": len(file_bytes),
         "minio_filename": minio_filename,  # MinIO中的文件名（带时间戳）
         "object_name": object_name,
         "bucket_name": bucket_name,  # MinIO存储桶名称

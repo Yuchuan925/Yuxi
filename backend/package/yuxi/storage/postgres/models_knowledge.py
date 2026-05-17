@@ -101,6 +101,91 @@ class KnowledgeChunk(Base):
     updated_at = Column(DateTime(timezone=True), default=utc_now_naive, onupdate=utc_now_naive)
 
 
+class KnowledgeGraphEntity(Base):
+    """知识图谱实体"""
+
+    __tablename__ = "knowledge_graph_entities"
+    __table_args__ = (
+        UniqueConstraint("entity_id", name="uq_knowledge_graph_entities_entity_id"),
+        UniqueConstraint("db_id", "normalized_name", "label", name="uq_knowledge_graph_entities_identity"),
+        Index("ix_knowledge_graph_entities_db_id", "db_id"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    entity_id = Column(String(64), nullable=False)
+    db_id = Column(String(80), ForeignKey("knowledge_bases.db_id", ondelete="CASCADE"), nullable=False)
+    normalized_name = Column(String(512), nullable=False)
+    label = Column(String(128), nullable=False)
+    name = Column(String(512), nullable=False)
+    attributes = Column(JSON_VALUE)
+    created_at = Column(DateTime(timezone=True), default=utc_now_naive)
+    updated_at = Column(DateTime(timezone=True), default=utc_now_naive, onupdate=utc_now_naive)
+
+
+class KnowledgeGraphEntityMention(Base):
+    """知识图谱实体在 chunk 中的引用"""
+
+    __tablename__ = "knowledge_graph_entity_mentions"
+    __table_args__ = (
+        UniqueConstraint("entity_id", "chunk_id", name="uq_knowledge_graph_entity_mentions_entity_chunk"),
+        Index("ix_knowledge_graph_entity_mentions_db_id", "db_id"),
+        Index("ix_knowledge_graph_entity_mentions_file_id", "file_id"),
+        Index("ix_knowledge_graph_entity_mentions_chunk_id", "chunk_id"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    entity_id = Column(String(64), ForeignKey("knowledge_graph_entities.entity_id", ondelete="CASCADE"), nullable=False)
+    db_id = Column(String(80), ForeignKey("knowledge_bases.db_id", ondelete="CASCADE"), nullable=False)
+    file_id = Column(String(64), ForeignKey("knowledge_files.file_id", ondelete="CASCADE"), nullable=False)
+    chunk_id = Column(String(128), ForeignKey("knowledge_chunks.chunk_id", ondelete="CASCADE"), nullable=False)
+    created_at = Column(DateTime(timezone=True), default=utc_now_naive)
+
+
+class KnowledgeGraphTriple(Base):
+    """知识图谱三元组"""
+
+    __tablename__ = "knowledge_graph_triples"
+    __table_args__ = (
+        UniqueConstraint("triple_id", name="uq_knowledge_graph_triples_triple_id"),
+        Index("ix_knowledge_graph_triples_db_id", "db_id"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    triple_id = Column(String(64), nullable=False)
+    db_id = Column(String(80), ForeignKey("knowledge_bases.db_id", ondelete="CASCADE"), nullable=False)
+    source_entity_id = Column(
+        String(64), ForeignKey("knowledge_graph_entities.entity_id", ondelete="CASCADE"), nullable=False
+    )
+    target_entity_id = Column(
+        String(64), ForeignKey("knowledge_graph_entities.entity_id", ondelete="CASCADE"), nullable=False
+    )
+    relation_type = Column(String(256), nullable=False)
+    content = Column(Text, nullable=False)
+    created_at = Column(DateTime(timezone=True), default=utc_now_naive)
+    updated_at = Column(DateTime(timezone=True), default=utc_now_naive, onupdate=utc_now_naive)
+
+
+class KnowledgeGraphTripleMention(Base):
+    """知识图谱三元组在 chunk 中的引用"""
+
+    __tablename__ = "knowledge_graph_triple_mentions"
+    __table_args__ = (
+        UniqueConstraint("triple_id", "chunk_id", name="uq_knowledge_graph_triple_mentions_triple_chunk"),
+        Index("ix_knowledge_graph_triple_mentions_db_id", "db_id"),
+        Index("ix_knowledge_graph_triple_mentions_file_id", "file_id"),
+        Index("ix_knowledge_graph_triple_mentions_chunk_id", "chunk_id"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    triple_id = Column(String(64), ForeignKey("knowledge_graph_triples.triple_id", ondelete="CASCADE"), nullable=False)
+    db_id = Column(String(80), ForeignKey("knowledge_bases.db_id", ondelete="CASCADE"), nullable=False)
+    file_id = Column(String(64), ForeignKey("knowledge_files.file_id", ondelete="CASCADE"), nullable=False)
+    chunk_id = Column(String(128), ForeignKey("knowledge_chunks.chunk_id", ondelete="CASCADE"), nullable=False)
+    text = Column(Text)
+    extractor_type = Column(String(128))
+    created_at = Column(DateTime(timezone=True), default=utc_now_naive)
+
+
 class EvaluationBenchmark(Base):
     """评估基准模型"""
 

@@ -184,6 +184,57 @@ class PostgresManager(metaclass=SingletonMeta):
             )
             """,
             "ALTER TABLE IF EXISTS knowledge_chunks ADD COLUMN IF NOT EXISTS extraction_result JSONB",
+            """
+            CREATE TABLE IF NOT EXISTS knowledge_graph_entities (
+                id SERIAL PRIMARY KEY,
+                entity_id VARCHAR(64) NOT NULL UNIQUE,
+                db_id VARCHAR(80) NOT NULL REFERENCES knowledge_bases(db_id) ON DELETE CASCADE,
+                normalized_name VARCHAR(512) NOT NULL,
+                label VARCHAR(128) NOT NULL,
+                name VARCHAR(512) NOT NULL,
+                attributes JSONB,
+                created_at TIMESTAMPTZ DEFAULT NOW(),
+                updated_at TIMESTAMPTZ DEFAULT NOW(),
+                CONSTRAINT uq_knowledge_graph_entities_identity UNIQUE (db_id, normalized_name, label)
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS knowledge_graph_entity_mentions (
+                id SERIAL PRIMARY KEY,
+                entity_id VARCHAR(64) NOT NULL REFERENCES knowledge_graph_entities(entity_id) ON DELETE CASCADE,
+                db_id VARCHAR(80) NOT NULL REFERENCES knowledge_bases(db_id) ON DELETE CASCADE,
+                file_id VARCHAR(64) NOT NULL REFERENCES knowledge_files(file_id) ON DELETE CASCADE,
+                chunk_id VARCHAR(128) NOT NULL REFERENCES knowledge_chunks(chunk_id) ON DELETE CASCADE,
+                created_at TIMESTAMPTZ DEFAULT NOW(),
+                CONSTRAINT uq_knowledge_graph_entity_mentions_entity_chunk UNIQUE (entity_id, chunk_id)
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS knowledge_graph_triples (
+                id SERIAL PRIMARY KEY,
+                triple_id VARCHAR(64) NOT NULL UNIQUE,
+                db_id VARCHAR(80) NOT NULL REFERENCES knowledge_bases(db_id) ON DELETE CASCADE,
+                source_entity_id VARCHAR(64) NOT NULL REFERENCES knowledge_graph_entities(entity_id) ON DELETE CASCADE,
+                target_entity_id VARCHAR(64) NOT NULL REFERENCES knowledge_graph_entities(entity_id) ON DELETE CASCADE,
+                relation_type VARCHAR(256) NOT NULL,
+                content TEXT NOT NULL,
+                created_at TIMESTAMPTZ DEFAULT NOW(),
+                updated_at TIMESTAMPTZ DEFAULT NOW()
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS knowledge_graph_triple_mentions (
+                id SERIAL PRIMARY KEY,
+                triple_id VARCHAR(64) NOT NULL REFERENCES knowledge_graph_triples(triple_id) ON DELETE CASCADE,
+                db_id VARCHAR(80) NOT NULL REFERENCES knowledge_bases(db_id) ON DELETE CASCADE,
+                file_id VARCHAR(64) NOT NULL REFERENCES knowledge_files(file_id) ON DELETE CASCADE,
+                chunk_id VARCHAR(128) NOT NULL REFERENCES knowledge_chunks(chunk_id) ON DELETE CASCADE,
+                text TEXT,
+                extractor_type VARCHAR(128),
+                created_at TIMESTAMPTZ DEFAULT NOW(),
+                CONSTRAINT uq_knowledge_graph_triple_mentions_triple_chunk UNIQUE (triple_id, chunk_id)
+            )
+            """,
             # 扩展 db_id 字段长度以支持最长 75 字符的 ID（kb_private_ + 64字符hash）
             "ALTER TABLE IF EXISTS knowledge_bases ALTER COLUMN db_id TYPE VARCHAR(80)",
             "ALTER TABLE IF EXISTS knowledge_files ALTER COLUMN db_id TYPE VARCHAR(80)",
@@ -204,6 +255,40 @@ class PostgresManager(metaclass=SingletonMeta):
             "CREATE INDEX IF NOT EXISTS ix_knowledge_chunks_file_id ON knowledge_chunks(file_id)",
             "CREATE INDEX IF NOT EXISTS ix_knowledge_chunks_db_id ON knowledge_chunks(db_id)",
             "CREATE INDEX IF NOT EXISTS ix_knowledge_chunks_graph_indexed ON knowledge_chunks(graph_indexed)",
+            (
+                "CREATE UNIQUE INDEX IF NOT EXISTS uq_knowledge_graph_entities_entity_id "
+                "ON knowledge_graph_entities(entity_id)"
+            ),
+            "CREATE INDEX IF NOT EXISTS ix_knowledge_graph_entities_db_id ON knowledge_graph_entities(db_id)",
+            (
+                "CREATE INDEX IF NOT EXISTS ix_knowledge_graph_entity_mentions_db_id "
+                "ON knowledge_graph_entity_mentions(db_id)"
+            ),
+            (
+                "CREATE INDEX IF NOT EXISTS ix_knowledge_graph_entity_mentions_file_id "
+                "ON knowledge_graph_entity_mentions(file_id)"
+            ),
+            (
+                "CREATE INDEX IF NOT EXISTS ix_knowledge_graph_entity_mentions_chunk_id "
+                "ON knowledge_graph_entity_mentions(chunk_id)"
+            ),
+            (
+                "CREATE UNIQUE INDEX IF NOT EXISTS uq_knowledge_graph_triples_triple_id "
+                "ON knowledge_graph_triples(triple_id)"
+            ),
+            "CREATE INDEX IF NOT EXISTS ix_knowledge_graph_triples_db_id ON knowledge_graph_triples(db_id)",
+            (
+                "CREATE INDEX IF NOT EXISTS ix_knowledge_graph_triple_mentions_db_id "
+                "ON knowledge_graph_triple_mentions(db_id)"
+            ),
+            (
+                "CREATE INDEX IF NOT EXISTS ix_knowledge_graph_triple_mentions_file_id "
+                "ON knowledge_graph_triple_mentions(file_id)"
+            ),
+            (
+                "CREATE INDEX IF NOT EXISTS ix_knowledge_graph_triple_mentions_chunk_id "
+                "ON knowledge_graph_triple_mentions(chunk_id)"
+            ),
         ]
 
         async with self.async_engine.begin() as conn:

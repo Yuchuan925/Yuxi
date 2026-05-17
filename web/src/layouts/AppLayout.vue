@@ -386,7 +386,7 @@ provide('settingsModal', {
 @sidebar-padding: 6px 8px;
 @sidebar-item-height: 36px;
 @sidebar-item-padding-x: 10px;
-@sidebar-icon-size: 18px;
+@sidebar-icon-size: 16px;
 
 .app-layout {
   display: flex;
@@ -471,7 +471,7 @@ div.header,
     text-decoration: none;
     border: 0;
     background: transparent;
-    padding: 0 6px;
+    padding: 0 4px;
     cursor: pointer;
   }
 

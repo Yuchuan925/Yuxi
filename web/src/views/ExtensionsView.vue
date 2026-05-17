@@ -51,7 +51,7 @@ const subagentsRef = ref(null)
 const toolsRef = ref(null)
 
 const extensionTabs = [
-  { key: 'knowledge', label: '知识库管理' },
+  { key: 'knowledge', label: '知识库' },
   { key: 'tools', label: '工具' },
   { key: 'mcp', label: 'MCP' },
   { key: 'subagents', label: 'Subagents' },

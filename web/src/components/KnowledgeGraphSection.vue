@@ -9,37 +9,6 @@
         </div>
       </div>
       <div v-else class="graph-wrapper">
-        <div v-if="isMilvus" class="graph-build-panel">
-          <div class="build-status">
-            <a-tag :color="graphBuildStatus?.locked ? 'green' : 'orange'">
-              {{ graphBuildStatus?.locked ? '已配置' : '未配置' }}
-            </a-tag>
-            <span>总 Chunk：{{ graphBuildStatus?.total_chunks ?? '-' }}</span>
-            <span>待构建：{{ graphBuildStatus?.pending_chunks ?? '-' }}</span>
-            <span>已构建：{{ graphBuildStatus?.indexed_chunks ?? '-' }}</span>
-          </div>
-          <div class="build-actions">
-            <a-button size="small" :loading="graphBuildLoading" @click="loadGraphBuildStatus">刷新状态</a-button>
-            <a-button
-              v-if="!graphBuildStatus?.locked"
-              size="small"
-              type="primary"
-              @click="showGraphConfig = true"
-            >
-              配置抽取器
-            </a-button>
-            <a-button
-              v-else
-              size="small"
-              type="primary"
-              :disabled="!graphBuildStatus?.pending_chunks"
-              @click="startGraphBuild"
-            >
-              开始索引
-            </a-button>
-            <a-button size="small" danger @click="confirmResetGraph">重置</a-button>
-          </div>
-        </div>
         <GraphCanvas
           ref="graphRef"
           :graph-data="graph.graphData"
@@ -59,26 +28,37 @@
                 >
                   <template #suffix>
                     <component
-                      :is="graph.fetching ? LoadingOutlined : SearchOutlined"
+                      :is="graph.fetching ? Loader2 : Search"
+                      :size="14"
+                      class="search-suffix-icon"
                       @click="onSearch"
                     />
                   </template>
                 </a-input>
                 <a-button
                   class="action-btn"
-                  :icon="h(ReloadOutlined)"
-                  :loading="graph.fetching"
                   @click="loadGraph"
                   title="刷新"
-                />
+                >
+                  <RefreshCw :size="16" :class="{ spin: graph.fetching }" />
+                </a-button>
               </div>
               <div class="actions-right">
                 <a-button
+                  v-if="isMilvus"
                   class="action-btn"
-                  :icon="h(SettingOutlined)"
-                  @click="showSettings = true"
+                  @click="showBuildPanel = !showBuildPanel; showSettings = false"
+                  title="索引管理"
+                >
+                  <Database :size="16" />
+                </a-button>
+                <a-button
+                  class="action-btn"
+                  @click="showSettings = !showSettings; showBuildPanel = false"
                   title="设置"
-                />
+                >
+                  <Settings :size="16" />
+                </a-button>
               </div>
             </div>
           </template>
@@ -90,8 +70,100 @@
           :item="graph.selectedItem"
           :type="graph.selectedItemType"
           @close="graph.handleCanvasClick"
-          style="top: 50px; right: 10px"
         />
+
+        <!-- 设置浮动面板 -->
+        <transition name="slide-fade">
+          <div v-if="showSettings" class="floating-panel settings-panel">
+            <div class="panel-header">
+              <span class="panel-title">图谱设置</span>
+            </div>
+            <div class="panel-body">
+              <a-form layout="vertical">
+                <a-form-item label="最大节点数 (limit)">
+                  <a-input-number
+                    v-model:value="subgraphParams.maxNodes"
+                    :min="10"
+                    :max="1000"
+                    :step="10"
+                    style="width: 100%"
+                  />
+                </a-form-item>
+                <a-form-item label="搜索深度 (depth)">
+                  <a-input-number
+                    v-model:value="subgraphParams.maxDepth"
+                    :min="1"
+                    :max="5"
+                    :step="1"
+                    style="width: 100%"
+                  />
+                </a-form-item>
+                <a-form-item label="排除 Chunk 节点">
+                  <a-switch v-model:checked="subgraphParams.excludeChunk" />
+                </a-form-item>
+                <a-form-item>
+                  <a-button type="primary" @click="applySettings" style="width: 100%"> 应用 </a-button>
+                </a-form-item>
+              </a-form>
+            </div>
+          </div>
+        </transition>
+
+        <!-- 索引管理浮动面板 -->
+        <transition name="slide-fade">
+          <div v-if="isMilvus && showBuildPanel" class="floating-panel build-panel">
+            <div class="panel-header">
+              <span class="panel-title">索引管理</span>
+            </div>
+            <div class="panel-body">
+              <div class="status-row">
+                <span class="status-label">状态</span>
+                <a-tag :color="graphBuildStatus?.locked ? 'green' : 'orange'" size="small">
+                  {{ graphBuildStatus?.locked ? '已配置' : '未配置' }}
+                </a-tag>
+              </div>
+              <div class="stats-grid">
+                <div class="stat-item">
+                  <span class="stat-value">{{ graphBuildStatus?.total_chunks ?? '-' }}</span>
+                  <span class="stat-label">总 Chunk</span>
+                </div>
+                <div class="stat-item">
+                  <span class="stat-value">{{ graphBuildStatus?.pending_chunks ?? '-' }}</span>
+                  <span class="stat-label">待构建</span>
+                </div>
+                <div class="stat-item">
+                  <span class="stat-value">{{ graphBuildStatus?.indexed_chunks ?? '-' }}</span>
+                  <span class="stat-label">已构建</span>
+                </div>
+              </div>
+              <div class="build-actions">
+                <a-button
+                  v-if="!graphBuildStatus?.locked"
+                  type="primary"
+                  block
+                  @click="showGraphConfig = true"
+                >
+                  配置抽取器
+                </a-button>
+                <a-button
+                  v-else
+                  type="primary"
+                  block
+                  :disabled="!graphBuildStatus?.pending_chunks"
+                  @click="startGraphBuild"
+                >
+                  开始索引
+                </a-button>
+                <div class="actions-secondary">
+                  <a-button size="small" type="text" :loading="graphBuildLoading" @click="loadGraphBuildStatus">
+                    刷新
+                  </a-button>
+                  <a-button size="small" type="text" danger @click="confirmResetGraph">重置</a-button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </transition>
       </div>
     </div>
 
@@ -129,48 +201,20 @@
         </template>
       </a-form>
     </a-modal>
-
-    <!-- 设置模态框 -->
-    <a-modal v-model:open="showSettings" title="图谱设置" :footer="null" width="300px">
-      <div class="settings-form">
-        <a-form layout="vertical">
-          <a-form-item label="最大节点数 (limit)">
-            <a-input-number
-              v-model:value="graphLimit"
-              :min="10"
-              :max="1000"
-              :step="10"
-              style="width: 100%"
-            />
-          </a-form-item>
-          <a-form-item label="搜索深度 (depth)">
-            <a-input-number
-              v-model:value="graphDepth"
-              :min="1"
-              :max="5"
-              :step="1"
-              style="width: 100%"
-            />
-          </a-form-item>
-          <a-form-item>
-            <a-button type="primary" @click="applySettings" style="width: 100%"> 应用 </a-button>
-          </a-form-item>
-        </a-form>
-      </div>
-    </a-modal>
   </div>
 </template>
 
 <script setup>
-import { ref, computed, watch, nextTick, onUnmounted, reactive, h } from 'vue'
+import { ref, computed, watch, nextTick, onUnmounted, reactive } from 'vue'
 import { useDatabaseStore } from '@/stores/database'
 import { useTaskerStore } from '@/stores/tasker'
 import {
-  ReloadOutlined,
-  SettingOutlined,
-  SearchOutlined,
-  LoadingOutlined
-} from '@ant-design/icons-vue'
+  RefreshCw,
+  Settings,
+  Search,
+  Loader2,
+  Database
+} from 'lucide-vue-next'
 import GraphCanvas from '@/components/GraphCanvas.vue'
 import GraphDetailPanel from '@/components/GraphDetailPanel.vue'
 import { getKbTypeLabel } from '@/utils/kb_utils'
@@ -201,8 +245,12 @@ const isMilvus = computed(() => kbType.value?.toLowerCase() === MILVUS_KB_TYPE)
 
 const graphRef = ref(null)
 const showSettings = ref(false)
-const graphLimit = ref(50)
-const graphDepth = ref(2)
+const showBuildPanel = ref(false)
+const subgraphParams = reactive({
+  maxNodes: 50,
+  maxDepth: 2,
+  excludeChunk: false,
+})
 const searchInput = ref('')
 const graphBuildStatus = ref(null)
 const graphBuildLoading = ref(false)
@@ -342,8 +390,9 @@ const loadGraph = async () => {
     const res = await unifiedApi.getSubgraph({
       db_id: currentDatabaseId,
       node_label: searchInput.value || '*',
-      max_nodes: graphLimit.value,
-      max_depth: graphDepth.value
+      max_nodes: subgraphParams.maxNodes,
+      max_depth: subgraphParams.maxDepth,
+      exclude_chunk: subgraphParams.excludeChunk,
     })
 
     if (requestSeq === graphLoadRequestSeq && currentDatabaseId === databaseId.value && res.success && res.data) {
@@ -453,36 +502,6 @@ onUnmounted(() => {
   position: relative;
 }
 
-.graph-build-panel {
-  position: absolute;
-  left: 10px;
-  right: 10px;
-  top: 52px;
-  z-index: 5;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 12px;
-  padding: 8px 10px;
-  border-radius: 8px;
-  background: var(--color-trans-light);
-  backdrop-filter: blur(4px);
-  box-shadow: 0 0 4px 0 var(--shadow-2);
-
-  .build-status,
-  .build-actions {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    flex-wrap: wrap;
-  }
-
-  .build-status {
-    color: var(--gray-700);
-    font-size: 13px;
-  }
-}
-
 .compact-actions {
   position: absolute;
   top: 10px;
@@ -500,7 +519,7 @@ onUnmounted(() => {
     align-items: center;
     gap: 4px;
     background: var(--color-trans-light);
-    backdrop-filter: blur(4px);
+    backdrop-filter: blur(12px);
     padding: 2px;
     border-radius: 8px;
     box-shadow: 0 0 4px 0px var(--shadow-2);
@@ -543,6 +562,14 @@ onUnmounted(() => {
       color: var(--primary-color);
     }
   }
+
+  .search-suffix-icon {
+    cursor: pointer;
+  }
+
+  .spin {
+    animation: spin 1s linear infinite;
+  }
 }
 
 .graph-disabled {
@@ -559,5 +586,106 @@ onUnmounted(() => {
   h4 {
     margin-bottom: 8px;
   }
+}
+
+.floating-panel {
+  position: absolute;
+  top: 50px;
+  right: 10px;
+  width: 300px;
+  max-height: calc(100% - 60px);
+  overflow-y: auto;
+  z-index: 100;
+  background: var(--color-trans-light);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-radius: 8px;
+  border: 1px solid var(--gray-100);
+  font-size: 13px;
+
+  .panel-header {
+    display: flex;
+    align-items: center;
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--gray-200);
+
+    .panel-title {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--gray-1000);
+    }
+  }
+
+  .panel-body {
+    padding: 10px 14px;
+  }
+}
+
+.build-panel {
+  .status-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 10px;
+
+    .status-label {
+      color: var(--gray-600);
+      font-size: 12px;
+    }
+  }
+
+  .stats-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px;
+    margin-bottom: 12px;
+  }
+
+  .stat-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 6px 4px;
+    border-radius: 4px;
+    background: var(--gray-50);
+
+    .stat-value {
+      font-size: 15px;
+      font-weight: 600;
+      color: var(--gray-1000);
+      line-height: 1.2;
+    }
+
+    .stat-label {
+      font-size: 11px;
+      color: var(--gray-500);
+      margin-top: 2px;
+    }
+  }
+
+  .build-actions {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .actions-secondary {
+    display: flex;
+    justify-content: space-between;
+  }
+}
+
+.slide-fade-enter-active {
+  transition: all 0.25s ease-out;
+}
+
+.slide-fade-leave-active {
+  transition: all 0.2s cubic-bezier(1, 0.5, 0.8, 1);
+}
+
+.slide-fade-enter-from,
+.slide-fade-leave-to {
+  transform: translateX(20px);
+  opacity: 0;
 }
 </style>

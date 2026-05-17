@@ -782,6 +782,14 @@ class MilvusKB(KnowledgeBase):
 
     async def delete_file_chunks_only(self, db_id: str, file_id: str) -> None:
         """仅删除文件的chunks数据，保留元数据（用于更新操作）"""
+        graph_config = (self.databases_meta.get(db_id, {}).get("metadata") or {}).get("graph_build_config")
+        if graph_config:
+            from yuxi.knowledge.graphs.milvus_graph_service import MilvusGraphService
+
+            try:
+                await MilvusGraphService().delete_file_graph(db_id, file_id)
+            except Exception as e:
+                logger.error(f"Failed to delete graph data for file {file_id}: {e}")
         await KnowledgeChunkRepository().delete_by_file_id(file_id)
         collection = await self._get_milvus_collection(db_id)
 
@@ -876,6 +884,10 @@ class MilvusKB(KnowledgeBase):
                 logger.info(f"Milvus collection {db_id} does not exist, skipping")
         except Exception as e:
             logger.error(f"Failed to drop Milvus collection {db_id}: {e}")
+
+        from yuxi.knowledge.graphs.milvus_graph_vector_store import MilvusGraphVectorStore
+
+        MilvusGraphVectorStore().drop_graph_collections(db_id)
 
         # Call base method to delete local files and metadata
         return super().delete_database(db_id)

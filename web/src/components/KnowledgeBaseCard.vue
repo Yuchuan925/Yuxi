@@ -39,7 +39,7 @@
         <span class="card-tag" :class="'tag-' + getKbTypeColor(database.kb_type || 'milvus')">
           {{ getKbTypeLabel(database.kb_type || 'milvus') }}
         </span>
-        <span class="card-tag tag-blue">{{ database.embedding_model_spec || 'N/A' }}</span>
+        <span class="card-tag tag-blue">{{ getModelShortName(database.embedding_model_spec) }}</span>
         <span class="card-tag tag-cyan">{{
           chunkPresetLabelMap[database.additional_params?.chunk_preset_id || 'general'] || 'General'
         }}</span>
@@ -166,6 +166,12 @@ const store = useDatabaseStore()
 const userStore = useUserStore()
 
 const database = computed(() => store.database)
+
+const getModelShortName = (spec) => {
+  if (!spec) return 'N/A'
+  const parts = spec.split('/')
+  return parts[parts.length - 1] || spec
+}
 
 // 部门列表（用于显示部门名称）
 const departments = ref([])

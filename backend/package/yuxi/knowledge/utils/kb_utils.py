@@ -10,6 +10,7 @@ _DROPPED_PROCESSING_PARAM_KEYS = {
     "_preprocessed_map",
     "auto_index",
     "content_hashes",
+    "file_sizes",
     "enable_ocr",
 }
 
@@ -88,6 +89,7 @@ async def prepare_item_metadata(item: str, content_type: str, db_id: str, params
             "created_at": utc_isoformat(),
             "file_id": file_id,
             "content_hash": content_hash,
+            "size": pre_info.get("file_size"),
             "parent_id": params.get("parent_id"),
         }
 
@@ -125,6 +127,10 @@ async def prepare_item_metadata(item: str, content_type: str, db_id: str, params
         if not content_hash:
             raise ValueError(f"Missing content_hash for file: {item}")
 
+        file_sizes = params.get("file_sizes") if params else None
+        if not isinstance(file_sizes, dict):
+            file_sizes = {}
+        file_size = file_sizes.get(item)
         file_id = f"file_{hashstr(str(item_path) + str(time.time()), 6)}"
 
     elif content_type == "url":
@@ -134,6 +140,7 @@ async def prepare_item_metadata(item: str, content_type: str, db_id: str, params
         file_type = "url"
         item_path = item
         content_hash = None  # URL 没有 content_hash
+        file_size = None
         file_id = f"url_{hashstr(item + str(time.time()), 6)}"
 
     else:
@@ -148,6 +155,7 @@ async def prepare_item_metadata(item: str, content_type: str, db_id: str, params
         "created_at": utc_isoformat(),
         "file_id": file_id,
         "content_hash": content_hash,
+        "size": file_size,
         "parent_id": params.get("parent_id") if params else None,
     }
 

@@ -85,8 +85,8 @@
           <Folder v-if="entry.is_dir" :size="17" class="folder-icon" />
           <component
             v-else
-            :is="getFileIcon(entry.path)"
-            :style="{ color: getFileIconColor(entry.path), fontSize: '16px' }"
+            :is="getFileIcon(entry.name || entry.path)"
+            :style="{ color: getFileIconColor(entry.name || entry.path), fontSize: '16px' }"
           />
           <span class="entry-name" :title="entry.name">{{ entry.name }}</span>
         </span>
