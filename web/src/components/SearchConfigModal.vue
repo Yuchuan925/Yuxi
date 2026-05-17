@@ -26,7 +26,7 @@
       <div v-else class="config-forms">
         <a-form layout="vertical">
           <a-row :gutter="16">
-            <a-col :span="12" v-for="param in queryParams" :key="param.key">
+            <a-col :span="12" v-for="param in visibleQueryParams" :key="param.key">
               <a-form-item :label="param.label">
                 <template #extra v-if="param.description">
                   <div class="param-description">{{ param.description }}</div>
@@ -95,6 +95,15 @@ const loading = ref(false)
 const error = ref('')
 const queryParams = ref([])
 const meta = reactive({})
+
+const isDependencySatisfied = (param) => {
+  const dependency = param.depend_on
+  if (!dependency || dependency.length < 2) return true
+  const [key, expectedValue] = dependency
+  return meta[key] === expectedValue
+}
+
+const visibleQueryParams = computed(() => queryParams.value.filter(isDependencySatisfied))
 
 // 计算属性：处理布尔类型的双向绑定
 const computedMeta = computed(() => {

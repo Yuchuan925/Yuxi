@@ -66,7 +66,7 @@ class MilvusGraphService:
     def driver(self):
         return self.connection.driver
 
-    async def get_status(self, db_id: str) -> dict[str, Any]:
+    async def get_status(self, db_id: str, *, tasker: Any = None) -> dict[str, Any]:
         kb = await self._get_milvus_kb(db_id)
         params = dict(kb.additional_params or {})
         config = params.get(GRAPH_CONFIG_KEY) or {}
@@ -75,6 +75,28 @@ class MilvusGraphService:
             self.chunk_repo.count_graph_pending_by_db_id(db_id),
             self.chunk_repo.count_graph_indexed_by_db_id(db_id),
         )
+
+        build_task_status = None
+        build_task_progress = 0
+        if tasker is not None:
+            active_task = await tasker.find_task_by_payload(
+                task_type=GRAPH_TASK_TYPE,
+                payload_match={"db_id": db_id},
+                statuses={"pending", "running"},
+            )
+            if active_task:
+                build_task_status = active_task.status
+                build_task_progress = round(active_task.progress)
+            else:
+                failed_task = await tasker.find_task_by_payload(
+                    task_type=GRAPH_TASK_TYPE,
+                    payload_match={"db_id": db_id},
+                    statuses={"failed", "cancelled"},
+                )
+                if failed_task:
+                    build_task_status = "failed"
+                    build_task_progress = 0
+
         return {
             "db_id": db_id,
             "kb_type": kb.kb_type,
@@ -84,6 +106,8 @@ class MilvusGraphService:
             "total_chunks": total_chunks,
             "pending_chunks": pending_chunks,
             "indexed_chunks": indexed_chunks,
+            "build_task_status": build_task_status,
+            "build_task_progress": build_task_progress,
         }
 
     async def configure(
@@ -228,11 +252,13 @@ class MilvusGraphService:
 
             # 2. MERGE Entity 节点 + Chunk→Entity (MENTIONS)
             for entity in entities:
+                entity_record = entity_record_by_local_id[entity["id"]]
                 tx.run(
                     merge_entity_cypher,
                     chunk_id=chunk.chunk_id,
                     file_id=chunk.file_id,
                     db_id=db_id,
+                    entity_id=entity_record["entity_id"],
                     normalized_name=normalize_entity_name(entity["text"]),
                     entity_label=entity.get("label") or "Entity",
                     name=entity["text"],
@@ -243,6 +269,17 @@ class MilvusGraphService:
             for relation in relations:
                 source = entity_by_id[relation["source"]]
                 target = entity_by_id[relation["target"]]
+                source_record = entity_record_by_local_id[relation["source"]]
+                target_record = entity_record_by_local_id[relation["target"]]
+                relation_type = relation.get("label") or "RELATED_TO"
+                triple_id = compute_triple_id(
+                    db_id,
+                    source_record["normalized_name"],
+                    source_record["label"],
+                    relation_type,
+                    target_record["normalized_name"],
+                    target_record["label"],
+                )
                 tx.run(
                     merge_relation_cypher,
                     db_id=db_id,
@@ -252,7 +289,8 @@ class MilvusGraphService:
                     source_label=source.get("label") or "Entity",
                     target_name=normalize_entity_name(target["text"]),
                     target_label=target.get("label") or "Entity",
-                    relation_type=relation.get("label") or "RELATED_TO",
+                    relation_type=relation_type,
+                    triple_id=triple_id,
                     text=relation["text"],
                     extractor_type=relation_extractor_type,
                 )
@@ -416,6 +454,43 @@ class MilvusGraphService:
             logger.error(f"Milvus graph query failed: {e}")
             return {"nodes": [], "edges": []}
 
+    async def query_seed_subgraph(
+        self,
+        db_id: str,
+        *,
+        entity_ids: list[str],
+        max_nodes: int,
+    ) -> dict[str, Any]:
+        if not entity_ids:
+            return {"nodes": [], "edges": []}
+        label = safe_neo4j_label(db_id)
+        cypher = f"""
+        MATCH (seed:Entity:MilvusKB:`{label}`)
+        WHERE seed.entity_id IN $entity_ids
+        MATCH p = (seed)-[*1..2]-(n:MilvusKB:`{label}`)
+        WITH p LIMIT $path_limit
+        WITH collect(p) AS paths
+        UNWIND paths AS node_path
+        UNWIND nodes(node_path) AS node
+        WITH paths, collect(DISTINCT node) AS graph_nodes
+        UNWIND paths AS rel_path
+        UNWIND relationships(rel_path) AS rel
+        RETURN graph_nodes AS nodes, collect(DISTINCT rel) AS edges
+        """
+        try:
+            with self.driver.session() as session:
+                record = session.run(
+                    cypher,
+                    entity_ids=list(dict.fromkeys(entity_ids)),
+                    path_limit=max(max_nodes, 1) * 4,
+                ).single()
+                if not record:
+                    return {"nodes": [], "edges": []}
+                return self._process_subgraph_record(record, max_nodes, db_id)
+        except Exception as e:
+            logger.error(f"Milvus seed subgraph query failed: {e}")
+            return {"nodes": [], "edges": []}
+
     async def get_labels(self, db_id: str | None = None) -> list[str]:
         effective_db_id = db_id or self.db_id
         if not effective_db_id:
@@ -557,6 +632,32 @@ class MilvusGraphService:
                 break
 
         return {"nodes": nodes[:limit], "edges": edges[: limit * 2]}
+
+    def _process_subgraph_record(self, record: Any, limit: int, db_id: str) -> dict[str, Any]:
+        nodes = []
+        edges = []
+        node_ids = set()
+        edge_ids = set()
+
+        for raw_node in record.get("nodes") or []:
+            node = self._normalize_node(raw_node, db_id)
+            if not node or node["id"] in node_ids:
+                continue
+            nodes.append(node)
+            node_ids.add(node["id"])
+            if len(nodes) >= limit:
+                break
+
+        for raw_edge in record.get("edges") or []:
+            edge = self._normalize_edge(raw_edge)
+            if not edge or edge["id"] in edge_ids:
+                continue
+            if edge["source_id"] not in node_ids or edge["target_id"] not in node_ids:
+                continue
+            edges.append(edge)
+            edge_ids.add(edge["id"])
+
+        return {"nodes": nodes, "edges": edges}
 
     def _normalize_node(self, raw_node: Any, db_id: str | None = None) -> dict[str, Any]:
         if hasattr(raw_node, "element_id"):

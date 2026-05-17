@@ -92,6 +92,44 @@ class MilvusGraphVectorStore:
         if tasks:
             await asyncio.gather(*tasks)
 
+    async def search_entities(
+        self,
+        *,
+        db_id: str,
+        query_text: str,
+        embedding_model_spec: str,
+        top_k: int,
+    ) -> list[dict[str, Any]]:
+        collection_name = graph_entity_collection_name(db_id)
+        if not utility.has_collection(collection_name, using=self.connection_alias):
+            return []
+        return await self._search_graph_collection(
+            collection_name=collection_name,
+            query_text=query_text,
+            embedding_model_spec=embedding_model_spec,
+            top_k=top_k,
+            output_fields=["id", "content"],
+        )
+
+    async def search_triples(
+        self,
+        *,
+        db_id: str,
+        query_text: str,
+        embedding_model_spec: str,
+        top_k: int,
+    ) -> list[dict[str, Any]]:
+        collection_name = graph_triple_collection_name(db_id)
+        if not utility.has_collection(collection_name, using=self.connection_alias):
+            return []
+        return await self._search_graph_collection(
+            collection_name=collection_name,
+            query_text=query_text,
+            embedding_model_spec=embedding_model_spec,
+            top_k=top_k,
+            output_fields=["id", "content", "source_id", "target_id"],
+        )
+
     def drop_graph_collections(self, db_id: str) -> None:
         for collection_name in [graph_entity_collection_name(db_id), graph_triple_collection_name(db_id)]:
             try:
@@ -108,6 +146,54 @@ class MilvusGraphVectorStore:
         model = select_embedding_model(embedding_model_spec)
         batch_size = int(getattr(model, "batch_size", 40) or 40)
         return partial(model.abatch_encode, batch_size=batch_size)
+
+    async def _search_graph_collection(
+        self,
+        *,
+        collection_name: str,
+        query_text: str,
+        embedding_model_spec: str,
+        top_k: int,
+        output_fields: list[str],
+    ) -> list[dict[str, Any]]:
+        if top_k <= 0:
+            return []
+        collection = Collection(name=collection_name, using=self.connection_alias)
+        collection.load()
+        embed = self._get_embedding_function(embedding_model_spec)
+        query_embedding = await embed([query_text])
+        return await asyncio.to_thread(
+            self._search_loaded_collection,
+            collection,
+            query_embedding,
+            max(top_k, 1),
+            output_fields,
+        )
+
+    def _search_loaded_collection(
+        self,
+        collection: Collection,
+        query_embedding: list,
+        top_k: int,
+        output_fields: list[str],
+    ) -> list[dict[str, Any]]:
+        results = collection.search(
+            data=query_embedding,
+            anns_field="embedding",
+            param={"metric_type": VECTOR_METRIC_TYPE, "params": {"nprobe": 10}},
+            limit=top_k,
+            output_fields=output_fields,
+        )
+        if not results or not results[0]:
+            return []
+
+        records = []
+        for hit in results[0]:
+            entity = hit.entity
+            record = {field: entity.get(field) for field in output_fields}
+            record["score"] = float(hit.distance or 0.0)
+            records.append(record)
+        return records
 
     def _get_or_create_entity_collection(self, db_id: str, embedding_info: Any) -> Collection:
         collection_name = graph_entity_collection_name(db_id)

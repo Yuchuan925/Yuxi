@@ -118,10 +118,18 @@
             <div class="panel-body">
               <div class="status-row">
                 <span class="status-label">状态</span>
-                <a-tag :color="graphBuildStatus?.locked ? 'green' : 'orange'" size="small">
-                  {{ graphBuildStatus?.locked ? '已配置' : '未配置' }}
-                </a-tag>
+                <a-tag v-if="isBuildActive" color="blue" size="small">构建中</a-tag>
+                <a-tag v-else-if="isBuildFailed" color="red" size="small">构建失败</a-tag>
+                <a-tag v-else-if="graphBuildStatus?.locked" color="green" size="small">已配置</a-tag>
+                <a-tag v-else color="orange" size="small">未配置</a-tag>
               </div>
+              <a-progress
+                v-if="isBuildActive"
+                :percent="graphBuildStatus?.build_task_progress ?? 0"
+                :stroke-color="{ '0%': '#108ee9', '100%': '#87d068' }"
+                size="small"
+                style="margin-bottom: 10px"
+              />
               <div class="stats-grid">
                 <div class="stat-item">
                   <span class="stat-value">{{ graphBuildStatus?.total_chunks ?? '-' }}</span>
@@ -144,6 +152,23 @@
                   @click="showGraphConfig = true"
                 >
                   配置抽取器
+                </a-button>
+                <a-button
+                  v-else-if="isBuildActive"
+                  type="primary"
+                  block
+                  disabled
+                >
+                  构建中 {{ graphBuildStatus?.build_task_progress ?? 0 }}%
+                </a-button>
+                <a-button
+                  v-else-if="isBuildFailed"
+                  type="primary"
+                  block
+                  :disabled="!graphBuildStatus?.pending_chunks"
+                  @click="startGraphBuild"
+                >
+                  重试索引
                 </a-button>
                 <a-button
                   v-else
@@ -255,6 +280,38 @@ const searchInput = ref('')
 const graphBuildStatus = ref(null)
 const graphBuildLoading = ref(false)
 const showGraphConfig = ref(false)
+let buildStatusPollTimer = null
+
+const isBuildActive = computed(() => {
+  const s = graphBuildStatus.value?.build_task_status
+  return s === 'pending' || s === 'running'
+})
+
+const isBuildFailed = computed(() => {
+  return graphBuildStatus.value?.build_task_status === 'failed'
+})
+
+const stopBuildStatusPoll = () => {
+  if (buildStatusPollTimer) {
+    clearInterval(buildStatusPollTimer)
+    buildStatusPollTimer = null
+  }
+}
+
+const startBuildStatusPoll = () => {
+  stopBuildStatusPoll()
+  buildStatusPollTimer = setInterval(() => {
+    loadGraphBuildStatus()
+  }, 5000)
+}
+
+watch(isBuildActive, (active) => {
+  if (active) {
+    startBuildStatusPoll()
+  } else {
+    stopBuildStatusPoll()
+  }
+}, { immediate: true })
 const graphConfigForm = reactive({
   extractor_type: 'llm',
   model_spec: '',
@@ -477,6 +534,7 @@ onUnmounted(() => {
     clearTimeout(pendingLoadTimer)
     pendingLoadTimer = null
   }
+  stopBuildStatusPoll()
 })
 </script>
 

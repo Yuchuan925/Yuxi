@@ -116,7 +116,8 @@ def cypher_merge_entity_mention(db_label: str) -> str:
         normalized_name: $normalized_name,
         label: $entity_label
     }})
-    SET e.name = $name,
+    SET e.entity_id = $entity_id,
+        e.name = $name,
         e.attributes = $attributes
     MERGE (c)-[m:MENTIONS {{chunk_id: $chunk_id, file_id: $file_id, db_id: $db_id}}]->(e)
     """
@@ -142,7 +143,8 @@ def cypher_merge_relation(db_label: str) -> str:
         target_name: $target_name,
         type: $relation_type
     }}]->(target)
-    SET r.text = $text,
+    SET r.triple_id = $triple_id,
+        r.text = $text,
         r.file_id = $file_id,
         r.extractor_type = $extractor_type
     """

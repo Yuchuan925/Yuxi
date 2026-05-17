@@ -298,7 +298,7 @@ async def delete_database(db_id: str, current_user: User = Depends(get_admin_use
 @knowledge.get("/databases/{db_id}/graph-build/status")
 async def get_graph_build_status(db_id: str, current_user: User = Depends(get_admin_user)):
     try:
-        return await MilvusGraphService().get_status(db_id)
+        return await MilvusGraphService().get_status(db_id, tasker=tasker)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:

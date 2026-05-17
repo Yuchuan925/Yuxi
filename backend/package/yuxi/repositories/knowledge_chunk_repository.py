@@ -46,6 +46,14 @@ class KnowledgeChunkRepository:
             )
             return list(result.scalars().all())
 
+    async def list_by_chunk_ids(self, chunk_ids: list[str]) -> list[KnowledgeChunk]:
+        if not chunk_ids:
+            return []
+        async with pg_manager.get_async_session_context() as session:
+            result = await session.execute(select(KnowledgeChunk).where(KnowledgeChunk.chunk_id.in_(chunk_ids)))
+            chunks_by_id = {chunk.chunk_id: chunk for chunk in result.scalars().all()}
+            return [chunks_by_id[chunk_id] for chunk_id in chunk_ids if chunk_id in chunks_by_id]
+
     async def batch_upsert(self, chunks: list[dict[str, Any]]) -> list[KnowledgeChunk]:
         if not chunks:
             return []

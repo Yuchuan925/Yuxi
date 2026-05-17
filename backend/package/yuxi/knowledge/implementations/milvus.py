@@ -2,6 +2,7 @@ import asyncio
 import os
 import time
 import traceback
+from dataclasses import MISSING, dataclass, field, fields
 from functools import partial
 from typing import Any
 
@@ -32,6 +33,207 @@ MILVUS_AVAILABLE = True
 CONTENT_SPARSE_FIELD = "content_sparse"
 CONTENT_ANALYZER_PARAMS = {"type": "chinese"}
 VECTOR_METRIC_TYPE = "COSINE"
+
+
+@dataclass(kw_only=True)
+class MilvusRetrievalConfig:
+    search_mode: str = field(
+        default="vector",
+        metadata={
+            "label": "检索模式",
+            "type": "select",
+            "options": [
+                {"value": "vector", "label": "向量检索", "description": "仅使用向量相似度检索"},
+                {"value": "keyword", "label": "BM25 全文检索", "description": "仅使用 Milvus BM25 检索"},
+                {"value": "hybrid", "label": "混合检索", "description": "Milvus 向量检索与 BM25 融合检索"},
+            ],
+            "description": "选择检索模式",
+        },
+    )
+    final_top_k: int = field(
+        default=10,
+        metadata={
+            "label": "最终返回 Chunk 数",
+            "type": "number",
+            "min": 1,
+            "max": 100,
+            "description": "重排序后返回给前端的文档数量",
+        },
+    )
+    similarity_threshold: float = field(
+        default=0.0,
+        metadata={
+            "label": "相似度阈值（0-1）",
+            "type": "number",
+            "min": 0.0,
+            "max": 1.0,
+            "step": 0.1,
+            "description": "过滤相似度低于此值的结果",
+        },
+    )
+    bm25_top_k: int = field(
+        default=50,
+        metadata={
+            "label": "BM25 召回数量",
+            "type": "number",
+            "min": 1,
+            "max": 200,
+            "description": "BM25 全文检索和混合检索中的 BM25 候选数量",
+        },
+    )
+    vector_weight: float = field(
+        default=0.7,
+        metadata={
+            "label": "向量检索权重",
+            "type": "number",
+            "min": 0.0,
+            "max": 1.0,
+            "step": 0.1,
+            "description": "混合检索中向量召回结果的融合权重",
+        },
+    )
+    bm25_weight: float = field(
+        default=0.3,
+        metadata={
+            "label": "BM25 权重",
+            "type": "number",
+            "min": 0.0,
+            "max": 1.0,
+            "step": 0.1,
+            "description": "混合检索中 BM25 召回结果的融合权重",
+        },
+    )
+    bm25_drop_ratio_search: float = field(
+        default=0.0,
+        metadata={
+            "label": "BM25 稀疏项丢弃比例",
+            "type": "number",
+            "min": 0.0,
+            "max": 1.0,
+            "step": 0.1,
+            "description": "BM25 检索时丢弃低分稀疏项的比例，数值越大检索越快但可能降低召回",
+        },
+    )
+    include_distances: bool = field(
+        default=True,
+        metadata={"label": "显示相似度", "type": "boolean", "description": "在结果中显示相似度分数"},
+    )
+    use_graph_retrieval: bool = field(
+        default=False,
+        metadata={"label": "启用图检索", "type": "boolean", "description": "是否启用实体和三元组扩散检索"},
+    )
+    graph_entity_top_k: int = field(
+        default=10,
+        metadata={
+            "label": "图实体召回数量",
+            "type": "number",
+            "min": 1,
+            "max": 100,
+            "depend_on": ("use_graph_retrieval", True),
+            "description": "通过 Query 召回的实体数量",
+        },
+    )
+    graph_triple_top_k: int = field(
+        default=10,
+        metadata={
+            "label": "图三元组召回数量",
+            "type": "number",
+            "min": 1,
+            "max": 100,
+            "depend_on": ("use_graph_retrieval", True),
+            "description": "通过 Query 召回的三元组数量",
+        },
+    )
+    graph_max_nodes: int = field(
+        default=10000,
+        metadata={
+            "label": "图检索最大节点数",
+            "type": "number",
+            "min": 100,
+            "max": 50000,
+            "depend_on": ("use_graph_retrieval", True),
+            "description": "2-hop 扩散子图最多读取的节点数量",
+        },
+    )
+    graph_top_k: int = field(
+        default=20,
+        metadata={
+            "label": "图召回 Chunk 数",
+            "type": "number",
+            "min": 1,
+            "max": 200,
+            "depend_on": ("use_graph_retrieval", True),
+            "description": "PPR 后从图谱路径召回的 Chunk 数量",
+        },
+    )
+    graph_weight: float = field(
+        default=1.0,
+        metadata={
+            "label": "图检索融合权重",
+            "type": "number",
+            "min": 0.0,
+            "max": 5.0,
+            "step": 0.1,
+            "depend_on": ("use_graph_retrieval", True),
+            "description": "排名融合时图检索结果的权重",
+        },
+    )
+    ppr_damping: float = field(
+        default=0.85,
+        metadata={
+            "label": "PPR 阻尼系数",
+            "type": "number",
+            "min": 0.1,
+            "max": 0.99,
+            "step": 0.01,
+            "depend_on": ("use_graph_retrieval", True),
+            "description": "Personalized PageRank 的阻尼系数",
+        },
+    )
+    use_reranker: bool = field(
+        default=False,
+        metadata={"label": "启用重排序", "type": "boolean", "description": "是否使用精排模型对检索结果进行重排序"},
+    )
+    reranker_model: str = field(
+        default="",
+        metadata={
+            "label": "重排序模型",
+            "type": "select",
+            "depend_on": ("use_reranker", True),
+            "description": "选择用于本次查询的重排序模型",
+            "options_provider": "rerank_models",
+        },
+    )
+    recall_top_k: int = field(
+        default=50,
+        metadata={
+            "label": "召回数量",
+            "type": "number",
+            "min": 10,
+            "max": 200,
+            "depend_on": ("use_reranker", True),
+            "description": "向量检索或混合检索保留的候选数量（启用重排序时有效）",
+        },
+    )
+
+
+def _retrieval_config_options() -> list[dict[str, Any]]:
+    options = []
+    for config_field in fields(MilvusRetrievalConfig):
+        metadata = dict(config_field.metadata)
+        options_provider = metadata.pop("options_provider", None)
+        default = None if config_field.default is MISSING else config_field.default
+        option = {
+            "key": config_field.name,
+            "default": default,
+            **metadata,
+        }
+        if options_provider == "rerank_models":
+            option["options"] = [
+                {"label": info.display_name, "value": info.spec} for info in model_cache.get_all_specs("rerank")
+            ]
+        options.append(option)
+    return options
 
 
 class MilvusKB(KnowledgeBase):
@@ -627,7 +829,8 @@ class MilvusKB(KnowledgeBase):
                 search_mode = "vector"
 
             use_reranker = bool(merged_kwargs.get("use_reranker", False))
-            if use_reranker:
+            use_graph_retrieval = bool(merged_kwargs.get("use_graph_retrieval", False))
+            if use_reranker or use_graph_retrieval:
                 recall_top_k = int(merged_kwargs.get("recall_top_k", 50))
                 recall_top_k = max(recall_top_k, final_top_k)
             else:
@@ -736,6 +939,12 @@ class MilvusKB(KnowledgeBase):
 
                 logger.debug(f"Milvus hybrid query response: {len(retrieved_chunks)} chunks found")
 
+            if use_graph_retrieval:
+                graph_chunks = await self._retrieve_graph_chunks(query_text, db_id, retrieved_chunks, merged_kwargs)
+                if graph_chunks:
+                    graph_weight = float(merged_kwargs.get("graph_weight", 1.0))
+                    retrieved_chunks = self._fuse_chunk_rankings(retrieved_chunks, graph_chunks, graph_weight)
+
             if not retrieved_chunks:
                 return []
 
@@ -779,6 +988,204 @@ class MilvusKB(KnowledgeBase):
         except Exception as e:
             logger.error(f"Milvus query error: {e}, {traceback.format_exc()}")
             return []
+
+    async def _retrieve_graph_chunks(
+        self,
+        query_text: str,
+        db_id: str,
+        base_chunks: list[dict],
+        query_params: dict[str, Any],
+    ) -> list[dict]:
+        try:
+            from yuxi.knowledge.graphs.milvus_graph_service import MilvusGraphService
+            from yuxi.knowledge.graphs.milvus_graph_vector_store import MilvusGraphVectorStore
+
+            embedding_model_spec = self.databases_meta[db_id].get("embedding_model_spec")
+            if not embedding_model_spec:
+                return []
+
+            entity_top_k = max(int(query_params.get("graph_entity_top_k", 10)), 1)
+            triple_top_k = max(int(query_params.get("graph_triple_top_k", 10)), 1)
+            graph_top_k = max(int(query_params.get("graph_top_k", 20)), 1)
+            graph_max_nodes = max(int(query_params.get("graph_max_nodes", 10000)), 1)
+
+            vector_store = MilvusGraphVectorStore()
+            entity_hits, triple_hits = await asyncio.gather(
+                vector_store.search_entities(
+                    db_id=db_id,
+                    query_text=query_text,
+                    embedding_model_spec=embedding_model_spec,
+                    top_k=entity_top_k,
+                ),
+                vector_store.search_triples(
+                    db_id=db_id,
+                    query_text=query_text,
+                    embedding_model_spec=embedding_model_spec,
+                    top_k=triple_top_k,
+                ),
+            )
+            seed_weights = await self._build_graph_seed_weights(db_id, base_chunks, entity_hits, triple_hits)
+            if not seed_weights:
+                return []
+
+            graph_service = MilvusGraphService()
+            subgraph = await graph_service.query_seed_subgraph(
+                db_id,
+                entity_ids=list(seed_weights.keys()),
+                max_nodes=graph_max_nodes,
+            )
+            graph_scores = self._rank_graph_chunks_by_ppr(
+                subgraph,
+                seed_weights,
+                top_k=graph_top_k,
+                damping=float(query_params.get("ppr_damping", 0.85)),
+            )
+            if not graph_scores:
+                return []
+
+            chunks = await KnowledgeChunkRepository().list_by_chunk_ids([chunk_id for chunk_id, _ in graph_scores])
+            score_by_chunk_id = dict(graph_scores)
+            return [
+                self._build_chunk_from_record(chunk, score_by_chunk_id[chunk.chunk_id], score_field="graph_score")
+                for chunk in chunks
+            ]
+        except Exception as exc:  # noqa: BLE001
+            logger.error(f"Graph retrieval failed for {db_id}: {exc}")
+            return []
+
+    async def _build_graph_seed_weights(
+        self,
+        db_id: str,
+        base_chunks: list[dict],
+        entity_hits: list[dict[str, Any]],
+        triple_hits: list[dict[str, Any]],
+    ) -> dict[str, float]:
+        seed_weights: dict[str, float] = {}
+
+        def add_seed(entity_id: str | None, score: float, weight: float) -> None:
+            if not entity_id:
+                return
+            seed_weights[entity_id] = seed_weights.get(entity_id, 0.0) + max(float(score or 0.0), 0.0) * weight
+
+        for hit in entity_hits:
+            add_seed(hit.get("id"), hit.get("score", 0.0), 1.0)
+
+        for hit in triple_hits:
+            score = float(hit.get("score") or 0.0)
+            add_seed(hit.get("source_id"), score, 0.8)
+            add_seed(hit.get("target_id"), score, 0.8)
+
+        chunk_scores = {
+            chunk.get("metadata", {}).get("chunk_id"): float(chunk.get("score") or 0.0)
+            for chunk in base_chunks
+            if chunk.get("metadata", {}).get("chunk_id")
+        }
+        if chunk_scores:
+            chunks = await KnowledgeChunkRepository().list_by_chunk_ids(list(chunk_scores))
+            for chunk in chunks:
+                for entity_id in chunk.ent_ids or []:
+                    add_seed(entity_id, chunk_scores.get(chunk.chunk_id, 0.0), 0.3)
+
+        total = sum(seed_weights.values())
+        if total <= 0:
+            return {}
+        return {entity_id: weight / total for entity_id, weight in seed_weights.items()}
+
+    def _rank_graph_chunks_by_ppr(
+        self,
+        subgraph: dict[str, Any],
+        seed_weights: dict[str, float],
+        *,
+        top_k: int,
+        damping: float,
+    ) -> list[tuple[str, float]]:
+        nodes = subgraph.get("nodes") or []
+        edges = subgraph.get("edges") or []
+        if not nodes:
+            return []
+
+        try:
+            import igraph as ig
+        except ImportError:
+            logger.error("Graph retrieval requires python-igraph. Please install igraph.")
+            return []
+
+        node_ids = [node["id"] for node in nodes]
+        index_by_id = {node_id: index for index, node_id in enumerate(node_ids)}
+        edge_indices = [
+            (index_by_id[edge["source_id"]], index_by_id[edge["target_id"]])
+            for edge in edges
+            if edge.get("source_id") in index_by_id and edge.get("target_id") in index_by_id
+        ]
+        if not edge_indices:
+            return []
+
+        graph = ig.Graph(n=len(nodes), edges=edge_indices, directed=False)
+        reset = [0.0] * len(nodes)
+        chunk_node_indexes: list[tuple[int, str]] = []
+        for index, node in enumerate(nodes):
+            properties = node.get("properties") or {}
+            if node.get("type") == "Chunk" and properties.get("chunk_id"):
+                chunk_node_indexes.append((index, properties["chunk_id"]))
+                continue
+            entity_id = properties.get("entity_id")
+            if entity_id in seed_weights:
+                reset[index] = seed_weights[entity_id]
+
+        reset_total = sum(reset)
+        if reset_total <= 0 or not chunk_node_indexes:
+            return []
+        reset = [value / reset_total for value in reset]
+        scores = graph.personalized_pagerank(damping=min(max(damping, 0.1), 0.99), reset=reset)
+        ranked = sorted(
+            ((chunk_id, float(scores[index])) for index, chunk_id in chunk_node_indexes),
+            key=lambda item: item[1],
+            reverse=True,
+        )
+        return ranked[:top_k]
+
+    def _build_chunk_from_record(self, chunk: Any, score: float, score_field: str | None = None) -> dict:
+        metadata = {
+            "source": self._get_filename_for_file_id(chunk.file_id),
+            "chunk_id": chunk.chunk_id,
+            "file_id": chunk.file_id,
+            "chunk_index": chunk.chunk_index,
+        }
+        result = {"content": chunk.content, "metadata": metadata, "score": float(score or 0.0)}
+        if score_field:
+            result[score_field] = float(score or 0.0)
+        return result
+
+    def _fuse_chunk_rankings(
+        self,
+        base_chunks: list[dict],
+        graph_chunks: list[dict],
+        graph_weight: float,
+    ) -> list[dict]:
+        fused: dict[str, dict[str, Any]] = {}
+        rrf_k = 60.0
+
+        def merge_chunk(chunk: dict, rank: int, weight: float, source: str) -> None:
+            chunk_id = chunk.get("metadata", {}).get("chunk_id")
+            if not chunk_id:
+                return
+            score = weight / (rrf_k + rank)
+            existing = fused.get(chunk_id)
+            if existing is None:
+                existing = {**chunk, "fusion_score": 0.0, "fusion_sources": []}
+                fused[chunk_id] = existing
+            existing["fusion_score"] += score
+            existing["score"] = existing["fusion_score"]
+            existing["fusion_sources"].append(source)
+            if source == "graph" and "graph_score" in chunk:
+                existing["graph_score"] = chunk["graph_score"]
+
+        for rank, chunk in enumerate(base_chunks, start=1):
+            merge_chunk(chunk, rank, 1.0, "chunk")
+        for rank, chunk in enumerate(graph_chunks, start=1):
+            merge_chunk(chunk, rank, max(graph_weight, 0.0), "graph")
+
+        return sorted(fused.values(), key=lambda item: item.get("fusion_score", 0.0), reverse=True)
 
     async def delete_file_chunks_only(self, db_id: str, file_id: str) -> None:
         """仅删除文件的chunks数据，保留元数据（用于更新操作）"""
@@ -894,115 +1301,7 @@ class MilvusKB(KnowledgeBase):
 
     def get_query_params_config(self, db_id: str, **kwargs) -> dict:
         """获取 Milvus 知识库的查询参数配置"""
-        # 构建 Milvus 特定查询参数
-        # TODO 使用 dataclass 重新配置并解析
-        options = [
-            {
-                "key": "search_mode",
-                "label": "检索模式",
-                "type": "select",
-                "default": "vector",
-                "options": [
-                    {"value": "vector", "label": "向量检索", "description": "仅使用向量相似度检索"},
-                    {"value": "keyword", "label": "BM25 全文检索", "description": "仅使用 Milvus BM25 检索"},
-                    {"value": "hybrid", "label": "混合检索", "description": "Milvus 向量检索与 BM25 融合检索"},
-                ],
-                "description": "选择检索模式",
-            },
-            {
-                "key": "final_top_k",
-                "label": "最终返回 Chunk 数",
-                "type": "number",
-                "default": 10,
-                "min": 1,
-                "max": 100,
-                "description": "重排序后返回给前端的文档数量",
-            },
-            {
-                "key": "similarity_threshold",
-                "label": "相似度阈值（0-1）",
-                "type": "number",
-                "default": 0.0,
-                "min": 0.0,
-                "max": 1.0,
-                "step": 0.1,
-                "description": "过滤相似度低于此值的结果",
-            },
-            {
-                "key": "bm25_top_k",
-                "label": "BM25 召回数量",
-                "type": "number",
-                "default": 50,
-                "min": 1,
-                "max": 200,
-                "description": "BM25 全文检索和混合检索中的 BM25 候选数量",
-            },
-            {
-                "key": "vector_weight",
-                "label": "向量检索权重",
-                "type": "number",
-                "default": 0.7,
-                "min": 0.0,
-                "max": 1.0,
-                "step": 0.1,
-                "description": "混合检索中向量召回结果的融合权重",
-            },
-            {
-                "key": "bm25_weight",
-                "label": "BM25 权重",
-                "type": "number",
-                "default": 0.3,
-                "min": 0.0,
-                "max": 1.0,
-                "step": 0.1,
-                "description": "混合检索中 BM25 召回结果的融合权重",
-            },
-            {
-                "key": "bm25_drop_ratio_search",
-                "label": "BM25 稀疏项丢弃比例",
-                "type": "number",
-                "default": 0.0,
-                "min": 0.0,
-                "max": 1.0,
-                "step": 0.1,
-                "description": "BM25 检索时丢弃低分稀疏项的比例，数值越大检索越快但可能降低召回",
-            },
-            {
-                "key": "include_distances",
-                "label": "显示相似度",
-                "type": "boolean",
-                "default": True,
-                "description": "在结果中显示相似度分数",
-            },
-            {
-                "key": "use_reranker",
-                "label": "启用重排序",
-                "type": "boolean",
-                "default": False,
-                "description": "是否使用精排模型对检索结果进行重排序",
-            },
-            {
-                "key": "reranker_model",
-                "label": "重排序模型",
-                "type": "select",
-                "default": "",
-                "options": [
-                    {"label": info.display_name, "value": info.spec} for info in model_cache.get_all_specs("rerank")
-                ],
-                "description": "选择用于本次查询的重排序模型",
-            },
-            {
-                "key": "recall_top_k",
-                "label": "召回数量",
-                "type": "number",
-                "default": 50,
-                "min": 10,
-                "max": 200,
-                "description": "向量检索或混合检索保留的候选数量（启用重排序时有效）",
-            },
-        ]
-
-        return {"type": "milvus", "options": options}
+        return {"type": "milvus", "options": _retrieval_config_options()}
 
     def __del__(self):
         """清理连接"""
