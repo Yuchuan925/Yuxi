@@ -7,6 +7,7 @@ from yuxi.utils import logger
 
 class OpenAIBase:
     def __init__(self, api_key, base_url, model_name, **kwargs):
+        self.model_params = kwargs.pop("model_params", {}) or {}
         self.api_key = api_key
         self.base_url = base_url
         self.client = AsyncOpenAI(api_key=api_key, base_url=base_url, **kwargs)
@@ -46,6 +47,7 @@ class OpenAIBase:
             model=self.model_name,
             messages=messages,
             stream=True,
+            **self.model_params,
         )
         async for chunk in response:
             if len(chunk.choices) > 0:
@@ -56,6 +58,7 @@ class OpenAIBase:
             model=self.model_name,
             messages=messages,
             stream=False,
+            **self.model_params,
         )
         return response.choices[0].message
 

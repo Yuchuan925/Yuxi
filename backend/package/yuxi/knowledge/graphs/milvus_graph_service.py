@@ -120,17 +120,26 @@ class MilvusGraphService:
         kb = await self._get_milvus_kb(db_id)
         additional_params = dict(kb.additional_params or {})
         existing_config = additional_params.get(GRAPH_CONFIG_KEY) or {}
+        normalized_extractor_type = (extractor_type or "").lower()
         if existing_config.get("locked"):
-            raise ValueError("图谱抽取配置已锁定")
+            existing_extractor_type = (existing_config.get("extractor_type") or "").lower()
+            if normalized_extractor_type != existing_extractor_type:
+                raise ValueError("图谱抽取器类型已锁定，只能修改模型、Schema 等抽取参数")
 
-        GraphExtractorFactory.create(extractor_type, extractor_options)
+        extractor_options = extractor_options or {}
+        if normalized_extractor_type == "llm" and extractor_options.get("prompt"):
+            raise ValueError("LLM 图谱抽取器不支持自定义完整 Prompt，请使用 schema 配置抽取约束")
+        GraphExtractorFactory.create(normalized_extractor_type, extractor_options)
         config = {
             "locked": True,
-            "extractor_type": extractor_type,
+            "extractor_type": normalized_extractor_type,
             "extractor_options": extractor_options or {},
-            "created_at": utc_isoformat(),
-            "created_by": created_by,
+            "created_at": existing_config.get("created_at") or utc_isoformat(),
+            "created_by": existing_config.get("created_by") or created_by,
         }
+        if existing_config.get("locked"):
+            config["updated_at"] = utc_isoformat()
+            config["updated_by"] = created_by
         additional_params[GRAPH_CONFIG_KEY] = config
         await self.kb_repo.update(db_id, {"additional_params": additional_params})
         return config
@@ -138,11 +147,14 @@ class MilvusGraphService:
     async def build_pending_chunks(self, db_id: str, *, batch_size: int, context=None) -> dict[str, Any]:
         kb = await self._get_milvus_kb(db_id)
         config = self._get_locked_config(kb.additional_params or {})
-        extractor = GraphExtractorFactory.create(config["extractor_type"], config.get("extractor_options") or {})
+        extractor_options = self._runtime_extractor_options(config)
+        extractor = GraphExtractorFactory.create(config["extractor_type"], extractor_options)
+        worker_count = self._get_worker_count(config)
         total_pending = await self.chunk_repo.count_graph_pending_by_db_id(db_id)
         processed = 0
         failed = 0
         failed_chunk_ids: set[str] = set()
+        write_lock = asyncio.Lock()
 
         while True:
             if context is not None:
@@ -152,47 +164,85 @@ class MilvusGraphService:
             if not unprocessed:
                 break
 
+            queue: asyncio.Queue[Any] = asyncio.Queue()
             for chunk in unprocessed:
-                if context is not None:
-                    await context.raise_if_cancelled()
-                try:
-                    extraction_result = await self._get_chunk_extraction_result(db_id, chunk, extractor)
-                    entities, triples = await asyncio.to_thread(
-                        self.write_chunk_graph,
-                        db_id,
-                        chunk,
-                        extraction_result,
-                    )
-                    await self.graph_repo.upsert_chunk_graph(
-                        db_id=db_id,
-                        file_id=chunk.file_id,
-                        chunk_id=chunk.chunk_id,
-                        entities=entities,
-                        triples=triples,
-                    )
-                    await self.graph_vector_store.insert_missing_graph_records(
-                        db_id=db_id,
-                        embedding_model_spec=kb.embedding_model_spec,
-                        entities=entities,
-                        triples=triples,
-                    )
-                    await self.chunk_repo.mark_graph_indexed(
-                        chunk.chunk_id,
-                        ent_ids=[entity["entity_id"] for entity in entities],
-                    )
-                    processed += 1
-                except Exception as exc:
-                    logger.error(f"Chunk 图谱构建失败 chunk_id={chunk.chunk_id}: {exc}")
-                    failed_chunk_ids.add(chunk.chunk_id)
-                    failed += 1
+                queue.put_nowait(chunk)
 
-                if context is not None:
-                    completed = processed + failed
-                    progress = 5.0 + min(90.0, completed / max(total_pending, 1) * 90.0)
-                    await context.set_progress(progress, f"图谱构建 {completed}/{total_pending}，失败 {failed}")
+            async def worker() -> None:
+                nonlocal processed, failed
+                while True:
+                    if context is not None:
+                        await context.raise_if_cancelled()
+                    try:
+                        chunk = queue.get_nowait()
+                    except asyncio.QueueEmpty:
+                        return
+                    try:
+                        extraction_result = await self._get_chunk_extraction_result(db_id, chunk, extractor)
+                        async with write_lock:
+                            entities, triples = await asyncio.to_thread(
+                                self.write_chunk_graph,
+                                db_id,
+                                chunk,
+                                extraction_result,
+                            )
+                            await self.graph_repo.upsert_chunk_graph(
+                                db_id=db_id,
+                                file_id=chunk.file_id,
+                                chunk_id=chunk.chunk_id,
+                                entities=entities,
+                                triples=triples,
+                            )
+                            await self.graph_vector_store.insert_missing_graph_records(
+                                db_id=db_id,
+                                embedding_model_spec=kb.embedding_model_spec,
+                                entities=entities,
+                                triples=triples,
+                            )
+                            await self.chunk_repo.mark_graph_indexed(
+                                chunk.chunk_id,
+                                ent_ids=[entity["entity_id"] for entity in entities],
+                            )
+                        processed += 1
+                    except Exception as exc:
+                        logger.error(f"Chunk 图谱构建失败 chunk_id={chunk.chunk_id}: {exc}")
+                        failed_chunk_ids.add(chunk.chunk_id)
+                        failed += 1
+                    finally:
+                        queue.task_done()
+
+                    if context is not None:
+                        completed = processed + failed
+                        progress = 5.0 + min(90.0, completed / max(total_pending, 1) * 90.0)
+                        await context.set_progress(progress, f"图谱构建 {completed}/{total_pending}，失败 {failed}")
+
+            workers = [asyncio.create_task(worker()) for _ in range(min(worker_count, len(unprocessed)))]
+            try:
+                await asyncio.gather(*workers)
+            except Exception:
+                for task in workers:
+                    task.cancel()
+                await asyncio.gather(*workers, return_exceptions=True)
+                raise
 
         remaining = await self.chunk_repo.count_graph_pending_by_db_id(db_id)
         return {"db_id": db_id, "success": processed, "failed": failed, "remaining": remaining}
+
+    @staticmethod
+    def _get_worker_count(config: dict[str, Any]) -> int:
+        if (config.get("extractor_type") or "").lower() != "llm":
+            return 1
+        try:
+            worker_count = int((config.get("extractor_options") or {}).get("concurrency_count") or 1)
+        except (TypeError, ValueError):
+            return 1
+        return max(1, min(worker_count, 20))
+
+    @staticmethod
+    def _runtime_extractor_options(config: dict[str, Any]) -> dict[str, Any]:
+        options = dict(config.get("extractor_options") or {})
+        options.pop("prompt", None)
+        return options
 
     async def _get_chunk_extraction_result(self, db_id: str, chunk, extractor: GraphExtractor) -> dict[str, Any]:
         extractor_type = extractor.extractor_type
@@ -434,7 +484,12 @@ class MilvusGraphService:
         neo4j_write(self.driver, query)
 
     async def query_nodes(
-        self, db_id: str | None = None, *, keyword: str = "", max_depth: int = 1, max_nodes: int = 50,
+        self,
+        db_id: str | None = None,
+        *,
+        keyword: str = "",
+        max_depth: int = 1,
+        max_nodes: int = 50,
         exclude_chunk: bool = False,
     ) -> dict[str, Any]:
         effective_db_id = db_id or self.db_id
@@ -447,7 +502,8 @@ class MilvusGraphService:
             with self.driver.session() as session:
                 result = session.run(
                     self._build_query(label, keyword, limit, max_depth, exclude_chunk),
-                    keyword=keyword, limit=limit,
+                    keyword=keyword,
+                    limit=limit,
                 )
                 return self._process_query_result(result, limit, effective_db_id, exclude_chunk)
         except Exception as e:
@@ -565,9 +621,11 @@ class MilvusGraphService:
         return {
             "locked": bool(config.get("locked")),
             "extractor_type": config.get("extractor_type"),
-            "extractor_options": config.get("extractor_options") or {},
+            "extractor_options": self._runtime_extractor_options(config),
             "created_at": config.get("created_at"),
             "created_by": config.get("created_by"),
+            "updated_at": config.get("updated_at"),
+            "updated_by": config.get("updated_by"),
         }
 
     @staticmethod
