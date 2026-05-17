@@ -61,7 +61,7 @@
                         </span>
                       </div>
                     </div>
-                    <div class="user-id-row">ID: {{ user.user_id || '-' }}</div>
+                    <div class="user-id-row">ID: {{ user.uid || '-' }}</div>
                   </div>
                 </div>
               </div>
@@ -132,17 +132,17 @@
           <a-input
             v-model:value="userManagement.form.username"
             placeholder="请输入用户名（2-20个字符）"
-            @blur="validateAndGenerateUserId"
+            @blur="validateAndGenerateUid"
             :maxlength="20"
           />
           <div v-if="userManagement.form.usernameError" class="error-text">
             {{ userManagement.form.usernameError }}
           </div>
           <div
-            v-if="userManagement.form.generatedUserId && !userManagement.editMode"
+            v-if="userManagement.form.generatedUid && !userManagement.editMode"
             class="help-text"
           >
-            登录ID：{{ userManagement.form.generatedUserId }}，此ID将用于登录，根据用户名自动生成
+            登录ID：{{ userManagement.form.generatedUid }}，此ID将用于登录，根据用户名自动生成
           </div>
         </a-form-item>
 
@@ -235,7 +235,7 @@ const userManagement = reactive({
   editUserId: null,
   form: {
     username: '',
-    generatedUserId: '', // 自动生成的user_id
+    generatedUid: '', // 自动生成的uid
     phoneNumber: '', // 手机号
     password: '',
     confirmPassword: '',
@@ -263,26 +263,26 @@ const fetchDepartments = async () => {
   }
 }
 
-// 添加验证用户名并生成user_id的函数
-const validateAndGenerateUserId = async () => {
+// 添加验证用户名并生成uid的函数
+const validateAndGenerateUid = async () => {
   const username = userManagement.form.username.trim()
 
   // 清空之前的错误和生成的ID
   userManagement.form.usernameError = ''
-  userManagement.form.generatedUserId = ''
+  userManagement.form.generatedUid = ''
 
   if (!username) {
     return
   }
 
-  // 在编辑模式下，不需要重新生成user_id
+  // 在编辑模式下，不需要重新生成uid
   if (userManagement.editMode) {
     return
   }
 
   try {
-    const result = await userStore.validateUsernameAndGenerateUserId(username)
-    userManagement.form.generatedUserId = result.user_id
+    const result = await userStore.validateUsernameAndGenerateUid(username)
+    userManagement.form.generatedUid = result.uid
   } catch (error) {
     userManagement.form.usernameError = error.message || '用户名验证失败'
   }
@@ -348,7 +348,7 @@ const showAddUserModal = () => {
   userManagement.editUserId = null
   userManagement.form = {
     username: '',
-    generatedUserId: '',
+    generatedUid: '',
     phoneNumber: '',
     password: '',
     confirmPassword: '',
@@ -368,7 +368,7 @@ const showEditUserModal = (user) => {
   userManagement.editUserId = user.id
   userManagement.form = {
     username: user.username,
-    generatedUserId: user.user_id || '', // 编辑模式显示现有的user_id
+    generatedUid: user.uid || '', // 编辑模式显示现有的uid
     phoneNumber: user.phone_number || '',
     password: '',
     confirmPassword: '',

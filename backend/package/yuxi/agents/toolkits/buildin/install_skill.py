@@ -35,10 +35,10 @@ class InstallSkillInput(BaseModel):
     )
 
 
-async def _assert_admin(db, user_id: str) -> None:
+async def _assert_admin(db, uid: str) -> None:
     """验证用户是管理员，否则抛出 ValueError。"""
     repo = UserRepository()
-    user = await repo.get_by_id_with_db(db, int(user_id))
+    user = await repo.get_by_uid_with_db(db, uid)
     if user is None:
         raise ValueError("用户不存在")
     if user.role not in ADMIN_ROLES:
@@ -86,7 +86,7 @@ def _download_skill_dir(backend, remote_dir: str, local_dir: Path) -> None:
 
 
 def _prepare_skill_from_sandbox(
-    sandbox_path: str, thread_id: str, user_id: str, staging_root: Path
+    sandbox_path: str, thread_id: str, uid: str, staging_root: Path
 ) -> tuple[Path, str]:
     """从 Sandbox 路径准备 skill 目录。返回 (本地目录, 原始 skill name)。"""
     from yuxi.agents.backends.sandbox import ProvisionerSandboxBackend, resolve_virtual_path
@@ -106,14 +106,14 @@ def _prepare_skill_from_sandbox(
 
     # 优先尝试共享卷路径（性能更好，无需走沙盒 API）
     try:
-        local_path = resolve_virtual_path(thread_id, sandbox_path, user_id=user_id)
+        local_path = resolve_virtual_path(thread_id, sandbox_path, uid=uid)
         if (local_path / "SKILL.md").exists():
             shutil.copytree(local_path, staging)
         else:
             raise FileNotFoundError(f"{local_path} 中未找到 SKILL.md")
     except (ValueError, FileNotFoundError):
         staging.mkdir(parents=True, exist_ok=True)
-        backend = ProvisionerSandboxBackend(thread_id=thread_id, user_id=user_id)
+        backend = ProvisionerSandboxBackend(thread_id=thread_id, uid=uid)
         _download_skill_dir(backend, sandbox_path, staging)
         if not (staging / "SKILL.md").exists():
             raise ValueError(f"沙盒路径 {sandbox_path} 中未找到 SKILL.md")
@@ -150,19 +150,19 @@ async def _run_install_task(
     from yuxi.services.remote_skill_install_service import prepare_remote_skills_batch
     from yuxi.services.skill_service import import_skill_dir, sync_thread_visible_skills
 
-    user_id = getattr(runtime.context, "user_id", None)
+    uid = getattr(runtime.context, "uid", None)
     thread_id = getattr(runtime.context, "thread_id", None)
 
-    logger.info(f"DEBUG: install_skill called with user_id={user_id}, thread_id={thread_id}, source={source}")
+    logger.info(f"DEBUG: install_skill called with uid={uid}, thread_id={thread_id}, source={source}")
 
-    if not user_id or not thread_id:
+    if not uid or not thread_id:
         return Command(
             update={"messages": [ToolMessage(content="错误：无法获取当前会话信息", tool_call_id=tool_call_id)]}
         )
 
     try:
         async with pg_manager.get_async_session_context() as db:
-            await _assert_admin(db, user_id)
+            await _assert_admin(db, uid)
 
         installed_slugs: list[str] = []
         failed_items: list[dict] = []
@@ -171,10 +171,10 @@ async def _run_install_task(
 
         if source.startswith("/"):
             with tempfile.TemporaryDirectory(prefix=".skill-install-") as tmp:
-                source_dir, parsed_name = _prepare_skill_from_sandbox(source, thread_id, user_id, Path(tmp))
+                source_dir, parsed_name = _prepare_skill_from_sandbox(source, thread_id, uid, Path(tmp))
                 async with pg_manager.get_async_session_context() as db:
-                    await _assert_admin(db, user_id)
-                    item = await import_skill_dir(db, source_dir=source_dir, created_by=user_id)
+                    await _assert_admin(db, uid)
+                    item = await import_skill_dir(db, source_dir=source_dir, created_by=uid)
                     installed_slugs = [item.slug]
                     if item.slug != parsed_name:
                         slug_warnings.append(f"⚠️ 技能 slug '{item.slug}' 已存在，已自动重命名安装")
@@ -196,14 +196,14 @@ async def _run_install_task(
             preparation = await prepare_remote_skills_batch(source=source, skills=_skill_names)
             try:
                 async with pg_manager.get_async_session_context() as db:
-                    await _assert_admin(db, user_id)
+                    await _assert_admin(db, uid)
                     for result in preparation.results:
                         if not result.get("success"):
                             failed_items.append(result)
                             continue
 
                         try:
-                            item = await import_skill_dir(db, source_dir=result["source_dir"], created_by=user_id)
+                            item = await import_skill_dir(db, source_dir=result["source_dir"], created_by=uid)
                             installed_slugs.append(item.slug)
                         except Exception as e:
                             await db.rollback()

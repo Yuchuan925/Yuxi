@@ -45,7 +45,7 @@ def validate_username(username: str) -> tuple[bool, str]:
     return True, ""
 
 
-def generate_user_id(username: str) -> str:
+def generate_uid(username: str) -> str:
     """
     根据用户名生成user_id
 
@@ -59,48 +59,48 @@ def generate_user_id(username: str) -> str:
     username = username.strip()
 
     # 2. 转换为拼音（如果包含中文）
-    user_id = to_pinyin(username)
+    uid = to_pinyin(username)
 
     # 3. 处理特殊字符，只保留字母、数字和下划线
-    user_id = re.sub(r"[^a-zA-Z0-9_]", "", user_id)
+    uid = re.sub(r"[^a-zA-Z0-9_]", "", uid)
 
     # 4. 确保不以数字开头
-    if user_id and user_id[0].isdigit():
-        user_id = "u" + user_id
+    if uid and uid[0].isdigit():
+        uid = "u" + uid
 
     # 5. 如果为空或太短，使用默认前缀
-    if len(user_id) < 2:
-        user_id = "user" + str(hash(username) % 10000).zfill(4)
+    if len(uid) < 2:
+        uid = "user" + str(hash(username) % 10000).zfill(4)
 
     # 6. 长度限制
-    if len(user_id) > 20:
-        user_id = user_id[:20]
+    if len(uid) > 20:
+        uid = uid[:20]
 
-    return user_id.lower()
+    return uid.lower()
 
 
-def generate_unique_user_id(username: str, existing_user_ids: list[str]) -> str:
+def generate_unique_uid(username: str, existing_uids: list[str]) -> str:
     """
     生成唯一的user_id，如果重复则添加数字后缀
 
     Args:
         username: 用户名
-        existing_user_ids: 已存在的user_id列表
+        existing_uids: 已存在的user_id列表
 
     Returns:
         str: 唯一的user_id
     """
-    base_user_id = generate_user_id(username)
+    base_uid = generate_uid(username)
 
     # 如果不重复，直接返回
-    if base_user_id not in existing_user_ids:
-        return base_user_id
+    if base_uid not in existing_uids:
+        return base_uid
 
     # 如果重复，添加数字后缀
     counter = 1
     while True:
-        candidate = f"{base_user_id}{counter}"
-        if candidate not in existing_user_ids:
+        candidate = f"{base_uid}{counter}"
+        if candidate not in existing_uids:
             return candidate
         counter += 1
 
@@ -109,7 +109,7 @@ def generate_unique_user_id(username: str, existing_user_ids: list[str]) -> str:
             # 使用时间戳作为后缀
             import time
 
-            candidate = f"{base_user_id}{int(time.time()) % 10000}"
+            candidate = f"{base_uid}{int(time.time()) % 10000}"
             return candidate
 
 

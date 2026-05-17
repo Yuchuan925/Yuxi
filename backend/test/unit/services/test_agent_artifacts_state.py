@@ -9,8 +9,8 @@ from yuxi.agents.toolkits.buildin.tools import _normalize_presented_artifact_pat
 from yuxi.services.chat_service import extract_agent_state
 
 
-def _runtime_with_thread(thread_id: str, user_id: str = "user-1"):
-    context = type("RuntimeContext", (), {"thread_id": thread_id, "user_id": user_id})()
+def _runtime_with_thread(thread_id: str, uid: str = "user-1"):
+    context = type("RuntimeContext", (), {"thread_id": thread_id, "uid": uid})()
     return type("RuntimeStub", (), {"context": context})()
 
 

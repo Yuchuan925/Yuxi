@@ -19,7 +19,7 @@ def sandbox_id_for_thread(thread_id: str) -> str:
 @dataclass(slots=True)
 class SandboxConnection:
     thread_id: str
-    user_id: str
+    uid: str
     sandbox_id: str
     sandbox_url: str
 
@@ -49,10 +49,10 @@ class ProvisionerSandboxProvider:
                 self._thread_locks[thread_id] = lock
             return lock
 
-    def _record_to_connection(self, thread_id: str, user_id: str, record: SandboxRecord) -> SandboxConnection:
+    def _record_to_connection(self, thread_id: str, uid: str, record: SandboxRecord) -> SandboxConnection:
         connection = SandboxConnection(
             thread_id=thread_id,
-            user_id=user_id,
+            uid=uid,
             sandbox_id=record.sandbox_id,
             sandbox_url=record.sandbox_url,
         )
@@ -75,7 +75,7 @@ class ProvisionerSandboxProvider:
         self._last_touch_at[connection.thread_id] = time.time()
         return is_alive
 
-    def acquire(self, thread_id: str, *, user_id: str) -> str:
+    def acquire(self, thread_id: str, *, uid: str) -> str:
         lock = self._thread_lock(thread_id)
         with lock:
             current = self._connections.get(thread_id)
@@ -93,14 +93,14 @@ class ProvisionerSandboxProvider:
             record = self._client.discover(sandbox_id)
             if record is None:
                 logger.info(f"Creating sandbox {sandbox_id} for thread {thread_id}")
-                record = self._client.create(sandbox_id, thread_id, user_id)
+                record = self._client.create(sandbox_id, thread_id, uid)
             else:
                 logger.info(f"Reusing sandbox {sandbox_id} for thread {thread_id}")
 
-            connection = self._record_to_connection(thread_id, user_id, record)
+            connection = self._record_to_connection(thread_id, uid, record)
             return connection.sandbox_id
 
-    def get(self, thread_id: str, *, user_id: str, create_if_missing: bool = False) -> SandboxConnection | None:
+    def get(self, thread_id: str, *, uid: str, create_if_missing: bool = False) -> SandboxConnection | None:
         lock = self._thread_lock(thread_id)
         with lock:
             current = self._connections.get(thread_id)
@@ -113,7 +113,7 @@ class ProvisionerSandboxProvider:
                 except Exception as exc:  # noqa: BLE001
                     logger.warning(f"Failed to touch sandbox {current.sandbox_id} for thread {thread_id}: {exc}")
                     return current
-                if current.user_id == user_id:
+                if current.uid == uid:
                     return current
                 self._connections.pop(thread_id, None)
                 self._last_touch_at.pop(thread_id, None)
@@ -123,9 +123,9 @@ class ProvisionerSandboxProvider:
             if record is None:
                 if not create_if_missing:
                     return None
-                record = self._client.create(sandbox_id, thread_id, user_id)
+                record = self._client.create(sandbox_id, thread_id, uid)
 
-            return self._record_to_connection(thread_id, user_id, record)
+            return self._record_to_connection(thread_id, uid, record)
 
     def shutdown(self) -> None:
         with self._lock:

@@ -340,7 +340,7 @@ class PostgresManager(metaclass=SingletonMeta):
                 id VARCHAR(64) PRIMARY KEY,
                 thread_id VARCHAR(64) NOT NULL,
                 agent_id VARCHAR(64) NOT NULL,
-                user_id VARCHAR(64) NOT NULL,
+                uid VARCHAR(64) NOT NULL,
                 status VARCHAR(32) NOT NULL DEFAULT 'pending',
                 request_id VARCHAR(64) NOT NULL UNIQUE,
                 input_payload JSONB NOT NULL DEFAULT '{}'::jsonb,
@@ -352,7 +352,7 @@ class PostgresManager(metaclass=SingletonMeta):
                 updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
             )
             """,
-            "CREATE INDEX IF NOT EXISTS idx_agent_runs_user_created ON agent_runs(user_id, created_at DESC)",
+            "CREATE INDEX IF NOT EXISTS idx_agent_runs_uid_created ON agent_runs(uid, created_at DESC)",
             "CREATE INDEX IF NOT EXISTS idx_agent_runs_thread_created ON agent_runs(thread_id, created_at DESC)",
             "CREATE INDEX IF NOT EXISTS idx_agent_runs_status_updated ON agent_runs(status, updated_at)",
             "CREATE INDEX IF NOT EXISTS ix_conversations_is_pinned ON conversations(is_pinned)",

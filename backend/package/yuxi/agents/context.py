@@ -28,9 +28,9 @@ class BaseContext:
         metadata={"name": "线程ID", "configurable": False, "description": "用来唯一标识一个对话线程"},
     )
 
-    user_id: str = field(
+    uid: str = field(
         default_factory=lambda: str(uuid.uuid4()),
-        metadata={"name": "用户ID", "configurable": False, "description": "用来唯一标识一个用户"},
+        metadata={"name": "UID", "configurable": False, "description": "用来唯一标识一个用户"},
     )
 
     system_prompt: str = field(
@@ -118,6 +118,7 @@ class BaseContext:
             "name": "上下文摘要触发阈值 (KB)",
             "description": "当上下文大小超过该值时，启用摘要功能以优化上下文使用。单位为 KB，默认值为 100KB。",
             "type": "number",
+            "auth": "admin",
         },
     )
 

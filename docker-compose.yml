@@ -4,7 +4,7 @@ x-api-worker-env: &api-worker-env
   RUNNING_IN_DOCKER: "true"
   YUXI_ENV: development
   # DBs and other services
-  POSTGRES_URL: ${POSTGRES_URL:-postgresql+asyncpg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-yuxi_know}}
+  POSTGRES_URL: ${POSTGRES_URL:-postgresql+asyncpg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-yuxi}}
   REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
   NEO4J_URI: ${NEO4J_URI:-bolt://graph:7687}
   NEO4J_USERNAME: ${NEO4J_USERNAME:-neo4j}
@@ -44,7 +44,8 @@ services:
     volumes:
       - ./backend/server:/app/server
       - ./backend/package:/app/package
-      - ./saves:/app/saves
+      - ./docker/volumes/yuxi:/app/saves
+      - ./docker/volumes/models:/app/models
       - ./backend/test:/app/test
       - ./backend/scripts:/app/scripts
       - ./docker/sandbox_provisioner:/app/docker/sandbox_provisioner:ro
@@ -91,7 +92,8 @@ services:
     volumes:
       - ./backend/server:/app/server
       - ./backend/package:/app/package
-      - ./saves:/app/saves
+      - ./docker/volumes/yuxi:/app/saves
+      - ./docker/volumes/models:/app/models
       - ./backend/test:/app/test
       - ./backend/scripts:/app/scripts
       - ./docker/sandbox_provisioner:/app/docker/sandbox_provisioner:ro
@@ -126,7 +128,7 @@ services:
     image: yuxi-sandbox-provisioner:${YUXI_VERSION:-0.6.2.beta}
     container_name: sandbox-provisioner
     volumes:
-      - ./saves:/app/saves
+      - ./docker/volumes/yuxi:/app/saves
       - ./docker/sandbox_provisioner/app.py:/app/app.py:ro
       - ./docker/sandbox_provisioner/sandbox.env:/app/sandbox.env:ro
       - /var/run/docker.sock:/var/run/docker.sock
@@ -305,12 +307,12 @@ services:
     environment:
       - POSTGRES_USER=${POSTGRES_USER:-postgres}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres}
-      - POSTGRES_DB=${POSTGRES_DB:-yuxi_know}
+      - POSTGRES_DB=${POSTGRES_DB:-yuxi}
       - TZ=${TZ:-Asia/Shanghai}
     volumes:
       - ./docker/volumes/postgresql:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-yuxi_know} || exit 1"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-yuxi} || exit 1"]
       interval: 5s
       timeout: 3s
       retries: 30

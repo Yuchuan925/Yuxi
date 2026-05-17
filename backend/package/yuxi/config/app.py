@@ -62,7 +62,6 @@ class Config(BaseModel):
         self._handle_environment()
 
     def _setup_paths(self) -> None:
-        self.save_dir = os.getenv("SAVE_DIR") or self.save_dir
         self._config_file = Path(self.save_dir) / "config" / "base.toml"
         self._config_file.parent.mkdir(parents=True, exist_ok=True)
 

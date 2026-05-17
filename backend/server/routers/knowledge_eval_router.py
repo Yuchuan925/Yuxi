@@ -152,7 +152,7 @@ async def upload_evaluation_benchmark(
             filename=file.filename,
             name=name,
             description=description,
-            created_by=current_user.user_id,
+            created_by=current_user.uid,
         )
 
         return {"message": "success", "data": result}
@@ -186,7 +186,7 @@ async def generate_evaluation_benchmark(
 
     try:
         service = EvaluationService()
-        result = await service.generate_benchmark(db_id=db_id, params=params, created_by=current_user.user_id)
+        result = await service.generate_benchmark(db_id=db_id, params=params, created_by=current_user.uid)
         return {"message": "success", "data": result}
     except Exception as e:
         logger.error(f"生成评估基准失败: {e}, {traceback.format_exc()}")
@@ -204,7 +204,7 @@ async def run_evaluation(db_id: str, params: dict = Body(...), current_user: Use
             db_id=db_id,
             benchmark_id=params.get("benchmark_id"),
             model_config=params.get("model_config", {}),
-            created_by=current_user.user_id,
+            created_by=current_user.uid,
         )
         return {"message": "success", "data": {"task_id": task_id}}
     except Exception as e:

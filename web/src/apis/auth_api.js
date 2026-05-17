@@ -49,7 +49,7 @@ async function getOIDCLoginUrl(redirectPath = '/') {
  *   token_type: string,
  *   user_id: number,
  *   username: string,
- *   user_id_login: string,
+ *   uid: string,
  *   phone_number: string | null,
  *   avatar: string | null,
  *   role: string,

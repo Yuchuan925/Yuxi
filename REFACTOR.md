@@ -23,3 +23,6 @@
 - [ ] Agent 的 user_id 使用的有歧义，从数据库表到代码中都修改为统一使用 yuxi_id 来代替
 - [ ] 权限新增一个 guest 的预设字段，暂无任何权限
 - [ ] department 的 id 也不能使用那个索引的 id 来使用了，应该是一个独立的 dept_id，需要确认
+- [ ] allow user config skill
+- [ ] Config spacy model 的 load
+- [ ] 在工作区的文件编辑的时候，保存和取消的按钮应该是悬浮在编辑框的右上角，而不是在 header 上面

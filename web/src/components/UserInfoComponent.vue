@@ -24,7 +24,7 @@
             <div class="user-info-display">
               <div class="user-menu-username">{{ userStore.username }}</div>
               <div class="user-menu-details">
-                <span class="user-menu-info">ID: {{ userStore.userIdLogin }}</span>
+                <span class="user-menu-info">ID: {{ userStore.uid }}</span>
                 <span class="user-menu-role">{{ userRoleText }}</span>
               </div>
             </div>
@@ -118,12 +118,12 @@
             </div>
           </div>
           <div class="info-item">
-            <div class="info-label">用户ID</div>
+            <div class="info-label">UID</div>
             <div class="info-value user-id" v-if="!profileEditing">
-              {{ userStore.userIdLogin || '未设置' }}
+              {{ userStore.uid || '未设置' }}
             </div>
             <div class="info-value" v-else>
-              <a-input :value="userStore.userIdLogin || ''" disabled style="width: 240px" />
+              <a-input :value="userStore.uid || ''" disabled style="width: 240px" />
             </div>
           </div>
           <div class="info-item">

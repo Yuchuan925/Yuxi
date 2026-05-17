@@ -435,7 +435,7 @@ const parseCommaSeparatedValues = (value) => {
 const parseModelParams = () => {
   const text = graphConfigForm.model_params_text.trim()
   if (!text) return {}
-  let params = null
+  let params
   try {
     params = JSON.parse(text)
   } catch {

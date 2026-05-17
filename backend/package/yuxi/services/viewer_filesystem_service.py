@@ -150,9 +150,9 @@ def _is_path_within(path: Path, root: Path) -> bool:
     return True
 
 
-def _resolve_local_user_data_path(thread_id: str, user_id: str, path: str) -> Path:
+def _resolve_local_user_data_path(thread_id: str, uid: str, path: str) -> Path:
     try:
-        actual_path = resolve_virtual_path(thread_id, path, user_id=user_id)
+        actual_path = resolve_virtual_path(thread_id, path, uid=uid)
     except ValueError as exc:
         # 真实路径越过允许根目录时，按权限拒绝处理，而不是当作普通参数错误。
         if "path traversal" in str(exc):
@@ -161,7 +161,7 @@ def _resolve_local_user_data_path(thread_id: str, user_id: str, path: str) -> Pa
     resolved_path = actual_path.resolve()
     allowed_roots = (
         sandbox_user_data_dir(thread_id).resolve(),
-        sandbox_workspace_dir(thread_id, user_id).resolve(),
+        sandbox_workspace_dir(thread_id, uid).resolve(),
     )
     if not any(_is_path_within(resolved_path, root) for root in allowed_roots):
         raise HTTPException(status_code=403, detail="Access denied")
@@ -248,10 +248,10 @@ def _sort_entries(entries: list[dict]) -> list[dict]:
     )
 
 
-def _entry_for_local_path(thread_id: str, user_id: str, path: Path) -> dict:
+def _entry_for_local_path(thread_id: str, uid: str, path: Path) -> dict:
     stat = path.stat()
     is_dir = path.is_dir()
-    display_path = virtual_path_for_thread_file(thread_id, path, user_id=user_id)
+    display_path = virtual_path_for_thread_file(thread_id, path, uid=uid)
     if is_dir and not display_path.endswith("/"):
         display_path = f"{display_path}/"
     return {
@@ -263,11 +263,11 @@ def _entry_for_local_path(thread_id: str, user_id: str, path: Path) -> dict:
     }
 
 
-def _list_local_entries(thread_id: str, user_id: str, actual_path) -> list[dict]:
+def _list_local_entries(thread_id: str, uid: str, actual_path) -> list[dict]:
     """List a local directory and remap children back into viewer virtual paths."""
     entries: list[dict] = []
     for child in sorted(actual_path.iterdir(), key=lambda item: (not item.is_dir(), item.name.lower())):
-        entries.append(_entry_for_local_path(thread_id, user_id, child))
+        entries.append(_entry_for_local_path(thread_id, uid, child))
     return entries
 
 
@@ -282,14 +282,14 @@ def _validate_child_name(name: str, *, field_name: str) -> str:
     return clean_name
 
 
-def _resolve_workspace_parent_dir(thread_id: str, user_id: str, parent_path: str) -> Path:
+def _resolve_workspace_parent_dir(thread_id: str, uid: str, parent_path: str) -> Path:
     normalized_parent = _normalize_path(parent_path)
     if not _is_workspace_path(normalized_parent):
         raise HTTPException(status_code=400, detail="当前路径不支持写入")
 
-    ensure_thread_dirs(thread_id, user_id)
+    ensure_thread_dirs(thread_id, uid)
     try:
-        actual_parent = _resolve_local_user_data_path(thread_id, user_id, normalized_parent)
+        actual_parent = _resolve_local_user_data_path(thread_id, uid, normalized_parent)
     except ValueError as exc:
         # workspace 写入边界按真实路径校验，软链接逃逸应表现为权限拒绝。
         if "path traversal" in str(exc):
@@ -302,9 +302,9 @@ def _resolve_workspace_parent_dir(thread_id: str, user_id: str, parent_path: str
     return actual_parent
 
 
-def _resolve_new_workspace_child(thread_id: str, user_id: str, parent_path: Path, name: str) -> Path:
+def _resolve_new_workspace_child(thread_id: str, uid: str, parent_path: Path, name: str) -> Path:
     target_path = parent_path / name
-    workspace_root = sandbox_workspace_dir(thread_id, user_id).resolve()
+    workspace_root = sandbox_workspace_dir(thread_id, uid).resolve()
     if not _is_path_within(target_path.resolve(strict=False), workspace_root):
         raise HTTPException(status_code=403, detail="Access denied")
     if target_path.exists():
@@ -312,12 +312,12 @@ def _resolve_new_workspace_child(thread_id: str, user_id: str, parent_path: Path
     return target_path
 
 
-def _list_user_data_root_entries(thread_id: str, user_id: str) -> list[dict]:
+def _list_user_data_root_entries(thread_id: str, uid: str) -> list[dict]:
     """Expose thread-root files while keeping the user workspace entry visible."""
-    entries = _list_local_entries(thread_id, user_id, sandbox_user_data_dir(thread_id))
+    entries = _list_local_entries(thread_id, uid, sandbox_user_data_dir(thread_id))
     visible_paths = {str(entry.get("path") or "").rstrip("/") for entry in entries}
-    workspace_dir = sandbox_workspace_dir(thread_id, user_id)
-    workspace_virtual_path = virtual_path_for_thread_file(thread_id, workspace_dir, user_id=user_id).rstrip("/")
+    workspace_dir = sandbox_workspace_dir(thread_id, uid)
+    workspace_virtual_path = virtual_path_for_thread_file(thread_id, workspace_dir, uid=uid).rstrip("/")
     if workspace_virtual_path not in visible_paths:
         # workspace is stored outside the per-thread root, so add it explicitly when needed.
         stat = workspace_dir.stat()
@@ -388,17 +388,17 @@ async def list_viewer_filesystem_tree(
 
     try:
         if _is_user_data_path(normalized_path):
-            user_id = str(current_user.id)
-            ensure_thread_dirs(thread_id, user_id)
+            uid = str(current_user.uid)
+            ensure_thread_dirs(thread_id, uid)
             if normalized_path == USER_DATA_PATH:
-                entries = await asyncio.to_thread(_list_user_data_root_entries, thread_id, user_id)
+                entries = await asyncio.to_thread(_list_user_data_root_entries, thread_id, uid)
                 return {"entries": _sort_entries(entries)}
-            actual_path = _resolve_local_user_data_path(thread_id, user_id, normalized_path)
+            actual_path = _resolve_local_user_data_path(thread_id, uid, normalized_path)
             if not actual_path.exists():
                 return {"entries": []}
             if not actual_path.is_dir():
                 raise HTTPException(status_code=400, detail="当前路径不是目录")
-            entries = await asyncio.to_thread(_list_local_entries, thread_id, user_id, actual_path)
+            entries = await asyncio.to_thread(_list_local_entries, thread_id, uid, actual_path)
             return {"entries": _sort_entries(entries)}
 
         if _is_skills_path(normalized_path):
@@ -436,7 +436,7 @@ async def read_viewer_file_content(
 
     try:
         if _is_user_data_path(normalized_path):
-            actual_path = _resolve_local_user_data_path(thread_id, str(current_user.id), normalized_path)
+            actual_path = _resolve_local_user_data_path(thread_id, str(current_user.uid), normalized_path)
             if not actual_path.exists():
                 raise HTTPException(status_code=404, detail="文件不存在")
             if not actual_path.is_file():
@@ -527,7 +527,7 @@ async def download_viewer_file(
 
     try:
         if _is_user_data_path(normalized_path):
-            actual_path = _resolve_local_user_data_path(thread_id, str(current_user.id), normalized_path)
+            actual_path = _resolve_local_user_data_path(thread_id, str(current_user.uid), normalized_path)
             if not actual_path.exists():
                 raise HTTPException(status_code=404, detail="文件不存在")
             if not actual_path.is_file():
@@ -599,7 +599,7 @@ async def delete_viewer_file(
         raise HTTPException(status_code=400, detail="当前目录不允许删除")
 
     try:
-        actual_path = _resolve_local_user_data_path(thread_id, str(current_user.id), normalized_path)
+        actual_path = _resolve_local_user_data_path(thread_id, str(current_user.uid), normalized_path)
         if not actual_path.exists():
             raise HTTPException(status_code=404, detail="文件不存在")
         if actual_path.is_dir():
@@ -635,12 +635,12 @@ async def create_viewer_directory(
         db=db,
     )
 
-    user_id = str(current_user.id)
+    uid = str(current_user.uid)
     directory_name = _validate_child_name(name, field_name="文件夹名")
 
     try:
-        actual_parent = _resolve_workspace_parent_dir(thread_id, user_id, parent_path)
-        target_path = _resolve_new_workspace_child(thread_id, user_id, actual_parent, directory_name)
+        actual_parent = _resolve_workspace_parent_dir(thread_id, uid, parent_path)
+        target_path = _resolve_new_workspace_child(thread_id, uid, actual_parent, directory_name)
         await asyncio.to_thread(target_path.mkdir)
     except FileExistsError as e:
         raise HTTPException(status_code=400, detail="同名文件或文件夹已存在") from e
@@ -649,7 +649,7 @@ async def create_viewer_directory(
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e)) from e
 
-    return {"success": True, "entry": _entry_for_local_path(thread_id, user_id, target_path)}
+    return {"success": True, "entry": _entry_for_local_path(thread_id, uid, target_path)}
 
 
 async def upload_viewer_file(
@@ -673,15 +673,15 @@ async def upload_viewer_file(
         db=db,
     )
 
-    user_id = str(current_user.id)
+    uid = str(current_user.uid)
     file_name = _validate_child_name(Path(file.filename or "").name, field_name="文件名")
     target_path: Path | None = None
     created_file = False
     upload_completed = False
 
     try:
-        actual_parent = _resolve_workspace_parent_dir(thread_id, user_id, parent_path)
-        target_path = _resolve_new_workspace_child(thread_id, user_id, actual_parent, file_name)
+        actual_parent = _resolve_workspace_parent_dir(thread_id, uid, parent_path)
+        target_path = _resolve_new_workspace_child(thread_id, uid, actual_parent, file_name)
         async with aiofiles.open(target_path, "xb") as buffer:
             created_file = True
             while chunk := await file.read(1024 * 1024):
@@ -699,4 +699,4 @@ async def upload_viewer_file(
             with contextlib.suppress(OSError):
                 await asyncio.to_thread(target_path.unlink)
 
-    return {"success": True, "entry": _entry_for_local_path(thread_id, user_id, target_path)}
+    return {"success": True, "entry": _entry_for_local_path(thread_id, uid, target_path)}

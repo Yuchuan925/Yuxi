@@ -235,19 +235,19 @@ class KnowledgeBaseManager:
         user_repo = UserRepository()
         user: User | None = await user_repo.get_by_id(id=int(user_id))
         if not user:
-            logger.warning(f"User not found: {user_id}")
+            logger.warning(f"User not found: {uid}")
             return {"databases": []}
         return await self.get_databases_by_user(user)
 
-    async def get_databases_by_user_id(self, user_id: str) -> dict:
-        """根据用户ID获取知识库列表（字符串ID版本）"""
+    async def get_databases_by_uid(self, uid: str) -> dict:
+        """根据 uid 获取知识库列表"""
         from yuxi.repositories.user_repository import UserRepository
 
         # 通过数据库获取用户信息
         user_repo = UserRepository()
-        user: User | None = await user_repo.get_by_user_id(user_id)
+        user: User | None = await user_repo.get_by_uid(uid)
         if not user:
-            logger.warning(f"User not found: {user_id}")
+            logger.warning(f"User not found: {uid}")
             return {"databases": []}
         return await self.get_databases_by_user(user)
 

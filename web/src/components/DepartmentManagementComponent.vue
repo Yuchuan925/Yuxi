@@ -109,26 +109,22 @@
         <a-divider v-if="!departmentManagement.editMode" />
 
         <template v-if="!departmentManagement.editMode">
-          <div class="admin-section-title">
-            <Users :size="16" />
-            <span>部门管理员</span>
-          </div>
           <p class="admin-section-hint">
             创建部门时必须同时创建管理员，该管理员将负责管理本部门用户
           </p>
 
-          <a-form-item label="管理员用户ID" required class="form-item">
+          <a-form-item label="管理员UID" required class="form-item">
             <a-input
-              v-model:value="departmentManagement.form.adminUserId"
-              placeholder="请输入管理员用户ID（3-20位字母/数字/下划线）"
+              v-model:value="departmentManagement.form.adminUid"
+              placeholder="请输入管理员UID（3-20位字母/数字/下划线）"
               size="large"
               :maxlength="20"
-              @blur="checkAdminUserId"
+              @blur="checkAdminUid"
             />
-            <div v-if="departmentManagement.form.userIdError" class="error-text">
-              {{ departmentManagement.form.userIdError }}
+            <div v-if="departmentManagement.form.uidError" class="error-text">
+              {{ departmentManagement.form.uidError }}
             </div>
-            <div v-else class="help-text">此ID将用于登录</div>
+            <div v-else class="help-text">此 UID 将用于登录</div>
           </a-form-item>
 
           <a-form-item label="密码" required class="form-item">
@@ -213,11 +209,11 @@ const departmentManagement = reactive({
   form: {
     name: '',
     description: '',
-    adminUserId: '',
+    adminUid: '',
     adminPassword: '',
     adminConfirmPassword: '',
     adminPhone: '',
-    userIdError: '',
+    uidError: '',
     phoneError: ''
   }
 })
@@ -245,11 +241,11 @@ const showAddDepartmentModal = () => {
   departmentManagement.form = {
     name: '',
     description: '',
-    adminUserId: '',
+    adminUid: '',
     adminPassword: '',
     adminConfirmPassword: '',
     adminPhone: '',
-    userIdError: '',
+    uidError: '',
     phoneError: ''
   }
   departmentManagement.modalVisible = true
@@ -263,11 +259,11 @@ const showEditDepartmentModal = (department) => {
   departmentManagement.form = {
     name: department.name,
     description: department.description || '',
-    adminUserId: '',
+    adminUid: '',
     adminPassword: '',
     adminConfirmPassword: '',
     adminPhone: '',
-    userIdError: '',
+    uidError: '',
     phoneError: ''
   }
   departmentManagement.modalVisible = true
@@ -293,34 +289,34 @@ watch(
   }
 )
 
-// 检查管理员用户ID是否可用
-const checkAdminUserId = async () => {
-  const userId = departmentManagement.form.adminUserId.trim()
-  departmentManagement.form.userIdError = ''
+// 检查管理员UID是否可用
+const checkAdminUid = async () => {
+  const uid = departmentManagement.form.adminUid.trim()
+  departmentManagement.form.uidError = ''
 
-  if (!userId) {
+  if (!uid) {
     return
   }
 
   // 验证格式
-  if (!/^[a-zA-Z0-9_]+$/.test(userId)) {
-    departmentManagement.form.userIdError = '用户ID只能包含字母、数字和下划线'
+  if (!/^[a-zA-Z0-9_]+$/.test(uid)) {
+    departmentManagement.form.uidError = 'UID只能包含字母、数字和下划线'
     return
   }
 
-  if (userId.length < 3 || userId.length > 20) {
-    departmentManagement.form.userIdError = '用户ID长度必须在3-20个字符之间'
+  if (uid.length < 3 || uid.length > 20) {
+    departmentManagement.form.uidError = 'UID长度必须在3-20个字符之间'
     return
   }
 
   // 检查是否已存在
   try {
-    const result = await apiSuperAdminGet(`/api/auth/check-user-id/${userId}`)
+    const result = await apiSuperAdminGet(`/api/auth/check-uid/${uid}`)
     if (!result.is_available) {
-      departmentManagement.form.userIdError = '该用户ID已被使用'
+      departmentManagement.form.uidError = '该UID已被使用'
     }
   } catch (error) {
-    console.error('检查用户ID失败:', error)
+    console.error('检查UID失败:', error)
   }
 }
 
@@ -338,25 +334,25 @@ const handleDepartmentFormSubmit = async () => {
       return
     }
 
-    // 验证管理员用户ID
-    const adminUserId = departmentManagement.form.adminUserId.trim()
-    if (!adminUserId) {
-      notification.error({ message: '请输入管理员用户ID' })
+    // 验证管理员UID
+    const adminUid = departmentManagement.form.adminUid.trim()
+    if (!adminUid) {
+      notification.error({ message: '请输入管理员UID' })
       return
     }
 
-    if (!/^[a-zA-Z0-9_]+$/.test(adminUserId)) {
-      notification.error({ message: '用户ID只能包含字母、数字和下划线' })
+    if (!/^[a-zA-Z0-9_]+$/.test(adminUid)) {
+      notification.error({ message: 'UID只能包含字母、数字和下划线' })
       return
     }
 
-    if (adminUserId.length < 3 || adminUserId.length > 20) {
-      notification.error({ message: '用户ID长度必须在3-20个字符之间' })
+    if (adminUid.length < 3 || adminUid.length > 20) {
+      notification.error({ message: 'UID长度必须在3-20个字符之间' })
       return
     }
 
-    if (departmentManagement.form.userIdError) {
-      notification.error({ message: '管理员用户ID已存在或格式错误' })
+    if (departmentManagement.form.uidError) {
+      notification.error({ message: '管理员UID已存在或格式错误' })
       return
     }
 
@@ -396,12 +392,12 @@ const handleDepartmentFormSubmit = async () => {
       await departmentApi.createDepartment({
         name: departmentManagement.form.name.trim(),
         description: departmentManagement.form.description.trim() || undefined,
-        admin_user_id: adminUserId,
+        admin_uid: adminUid,
         admin_password: departmentManagement.form.adminPassword,
         admin_phone: departmentManagement.form.adminPhone || undefined
       })
 
-      notification.success({ message: `部门创建成功，管理员 "${adminUserId}" 已创建` })
+      notification.success({ message: `部门创建成功，管理员 "${adminUid}" 已创建` })
     }
 
     // 重新获取部门列表

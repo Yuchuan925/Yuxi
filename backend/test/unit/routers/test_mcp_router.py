@@ -18,7 +18,7 @@ def _build_app() -> FastAPI:
     async def fake_admin_user():
         return User(
             username="admin",
-            user_id="admin",
+            uid="admin",
             password_hash="x",
             role="admin",
         )

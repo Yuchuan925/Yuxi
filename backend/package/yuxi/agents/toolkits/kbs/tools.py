@@ -32,8 +32,8 @@ async def list_kbs(dummy: str, runtime: ToolRuntime) -> str:  # Now has 2 params
     """
     # 从 runtime.context 获取用户信息
     runtime_context = runtime.context
-    user_id = getattr(runtime_context, "user_id", None)
-    if not user_id:
+    uid = getattr(runtime_context, "uid", None)
+    if not uid:
         return "无法获取用户信息"
 
     # 打印 runtime—context 中的所有信息以进行调试
@@ -51,8 +51,8 @@ async def list_kbs(dummy: str, runtime: ToolRuntime) -> str:  # Now has 2 params
 
     all_kb_names = [kb["name"] for kb in available_kbs]
 
-    logger.debug(f"用户 {user_id} 可访问的知识库列表: {all_kb_names}")
-    logger.debug(f"用户 {user_id} 当前对话启用的知识库列表: {enabled_kb_names}")
+    logger.debug(f"用户 {uid} 可访问的知识库列表: {all_kb_names}")
+    logger.debug(f"用户 {uid} 当前对话启用的知识库列表: {enabled_kb_names}")
 
     if not available_kbs:
         return "当前没有可访问的知识库"

@@ -24,7 +24,7 @@ async def _resolve_filesystem_context(
     agent_id: str,
     agent_config_id: int | None,
 ) -> BaseContext:
-    context = BaseContext(thread_id="", user_id=str(user.id))
+    context = BaseContext(thread_id="", uid=str(user.uid))
     repo = AgentConfigRepository(db)
 
     config_item = None
@@ -55,7 +55,7 @@ async def _resolve_filesystem_state(
     agent_config_id: int | None,
 ):
     conv_repo = ConversationRepository(db)
-    conversation = await require_user_conversation(conv_repo, thread_id, str(user.id))
+    conversation = await require_user_conversation(conv_repo, thread_id, str(user.uid))
 
     runtime_context = await _resolve_filesystem_context(
         db=db,
@@ -64,10 +64,10 @@ async def _resolve_filesystem_state(
         agent_config_id=agent_config_id,
     )
     runtime_context.thread_id = thread_id
-    runtime_context.user_id = str(user.id)
+    runtime_context.uid = str(user.uid)
     await resolve_visible_knowledge_bases_for_context(runtime_context)
 
-    sandbox_backend = ProvisionerSandboxBackend(thread_id=thread_id, user_id=str(user.id))
+    sandbox_backend = ProvisionerSandboxBackend(thread_id=thread_id, uid=str(user.uid))
     return conversation, runtime_context, sandbox_backend
 
 

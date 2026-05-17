@@ -27,8 +27,8 @@ async def test_stream_agent_run_events_emits_error_and_close_on_db_error(monkeyp
         def __init__(self, db):
             self.db = db
 
-        async def get_run_for_user(self, run_id: str, user_id: str):
-            del run_id, user_id
+        async def get_run_for_user(self, run_id: str, uid: str):
+            del run_id, uid
             raise RuntimeError("db down")
 
     monkeypatch.setattr(agent_run_service.pg_manager, "get_async_session_context", fake_session_ctx)
@@ -38,7 +38,7 @@ async def test_stream_agent_run_events_emits_error_and_close_on_db_error(monkeyp
     async for chunk in agent_run_service.stream_agent_run_events(
         run_id="run-1",
         after_seq="0",
-        current_user_id="1",
+        current_uid="user-1",
     ):
         chunks.append(chunk)
 
@@ -58,8 +58,8 @@ async def test_stream_agent_run_events_reads_redis_and_close_terminal(monkeypatc
         def __init__(self, db):
             self.db = db
 
-        async def get_run_for_user(self, run_id: str, user_id: str):
-            del run_id, user_id
+        async def get_run_for_user(self, run_id: str, uid: str):
+            del run_id, uid
             return SimpleNamespace(status="completed")
 
     calls = {"count": 0}
@@ -92,7 +92,7 @@ async def test_stream_agent_run_events_reads_redis_and_close_terminal(monkeypatc
     async for chunk in agent_run_service.stream_agent_run_events(
         run_id="run-1",
         after_seq="0",
-        current_user_id="1",
+        current_uid="user-1",
     ):
         chunks.append(chunk)
 
@@ -121,7 +121,7 @@ async def test_create_agent_run_commits_before_enqueue(monkeypatch: pytest.Monke
         thread_id="thread-1",
         status="pending",
         request_id="req-1",
-        user_id="1",
+        uid="user-1",
     )
 
     class Repo:
@@ -142,7 +142,7 @@ async def test_create_agent_run_commits_before_enqueue(monkeypatch: pytest.Monke
 
         async def get_conversation_by_thread_id(self, thread_id: str):
             del thread_id
-            return SimpleNamespace(user_id="1", status="active", department_id=1, extra_metadata={"agent_config_id": 1})
+            return SimpleNamespace(uid="user-1", status="active", department_id=1, extra_metadata={"agent_config_id": 1})
 
     class Queue:
         async def enqueue_job(self, job_name: str, run_id: str, _job_id: str):
@@ -167,7 +167,7 @@ async def test_create_agent_run_commits_before_enqueue(monkeypatch: pytest.Monke
         thread_id="thread-1",
         meta={"request_id": "req-1"},
         image_content=None,
-        current_user_id="1",
+        current_uid="user-1",
         db=db,
     )
 
@@ -196,7 +196,7 @@ async def test_create_agent_run_handles_integrity_error_with_same_user_existing(
         thread_id="thread-1",
         status="running",
         request_id="req-1",
-        user_id="1",
+        uid="user-1",
     )
     state = {"lookup_count": 0}
 
@@ -218,7 +218,7 @@ async def test_create_agent_run_handles_integrity_error_with_same_user_existing(
                 thread_id="thread-1",
                 status="pending",
                 request_id="req-1",
-                user_id="1",
+                uid="user-1",
             )
 
     class ConvRepo:
@@ -227,7 +227,7 @@ async def test_create_agent_run_handles_integrity_error_with_same_user_existing(
 
         async def get_conversation_by_thread_id(self, thread_id: str):
             del thread_id
-            return SimpleNamespace(user_id="1", status="active", department_id=1, extra_metadata={"agent_config_id": 1})
+            return SimpleNamespace(uid="user-1", status="active", department_id=1, extra_metadata={"agent_config_id": 1})
 
     async def fake_get_arq_pool():
         raise AssertionError("should not enqueue on integrity fallback")
@@ -244,7 +244,7 @@ async def test_create_agent_run_handles_integrity_error_with_same_user_existing(
         thread_id="thread-1",
         meta={"request_id": "req-1"},
         image_content=None,
-        current_user_id="1",
+        current_uid="user-1",
         db=db,
     )
 
@@ -269,7 +269,7 @@ async def test_create_agent_run_integrity_error_returns_409_for_other_user(monke
         thread_id="thread-1",
         status="pending",
         request_id="req-1",
-        user_id="2",
+        uid="user-2",
     )
     state = {"lookup_count": 0}
 
@@ -291,7 +291,7 @@ async def test_create_agent_run_integrity_error_returns_409_for_other_user(monke
                 thread_id="thread-1",
                 status="pending",
                 request_id="req-1",
-                user_id="1",
+                uid="user-1",
             )
 
     class ConvRepo:
@@ -300,7 +300,7 @@ async def test_create_agent_run_integrity_error_returns_409_for_other_user(monke
 
         async def get_conversation_by_thread_id(self, thread_id: str):
             del thread_id
-            return SimpleNamespace(user_id="1", status="active", department_id=1, extra_metadata={"agent_config_id": 1})
+            return SimpleNamespace(uid="user-1", status="active", department_id=1, extra_metadata={"agent_config_id": 1})
 
     monkeypatch.setattr(agent_run_service.agent_manager, "get_agent", lambda agent_id: object())
     monkeypatch.setattr(agent_run_service, "AgentConfigRepository", FakeConfigRepo)
@@ -314,7 +314,7 @@ async def test_create_agent_run_integrity_error_returns_409_for_other_user(monke
             thread_id="thread-1",
             meta={"request_id": "req-1"},
             image_content=None,
-            current_user_id="1",
+            current_uid="user-1",
             db=db,
         )
 

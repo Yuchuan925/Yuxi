@@ -28,7 +28,7 @@ class MilvusGraphVectorStore:
     def __init__(self):
         self.milvus_token = os.getenv("MILVUS_TOKEN") or ""
         self.milvus_uri = os.getenv("MILVUS_URI") or "http://localhost:19530"
-        self.milvus_db = os.getenv("MILVUS_DB") or "yuxi_know"
+        self.milvus_db = os.getenv("MILVUS_DB") or "yuxi"
         self.connection_alias = f"milvus_graph_{hashstr(self.milvus_uri, 6)}"
         self._init_connection()
 

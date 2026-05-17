@@ -41,7 +41,7 @@ async def test_base_agent_stream_messages_passes_callbacks_metadata_and_tags():
     items = []
     async for item in agent.stream_messages(
         ["hello"],
-        input_context={"user_id": "user-1", "thread_id": "thread-1"},
+        input_context={"uid": "user-1", "thread_id": "thread-1"},
         callbacks=["handler-1"],
         metadata={"langfuse_user_id": "user-1"},
         tags=["yuxi"],
@@ -51,7 +51,7 @@ async def test_base_agent_stream_messages_passes_callbacks_metadata_and_tags():
     graph = await agent.get_graph()
     assert len(items) == 1
     assert graph.last_stream_config == {
-        "configurable": {"thread_id": "thread-1", "user_id": "user-1"},
+        "configurable": {"thread_id": "thread-1", "uid": "user-1"},
         "recursion_limit": 300,
         "callbacks": ["handler-1"],
         "metadata": {"langfuse_user_id": "user-1"},
@@ -65,7 +65,7 @@ async def test_base_agent_invoke_messages_passes_callbacks_metadata_and_tags():
 
     await agent.invoke_messages(
         ["hello"],
-        input_context={"user_id": "user-1", "thread_id": "thread-1"},
+        input_context={"uid": "user-1", "thread_id": "thread-1"},
         callbacks=["handler-1"],
         metadata={"langfuse_user_id": "user-1"},
         tags=["yuxi"],
@@ -73,7 +73,7 @@ async def test_base_agent_invoke_messages_passes_callbacks_metadata_and_tags():
 
     graph = await agent.get_graph()
     assert graph.last_invoke_config == {
-        "configurable": {"thread_id": "thread-1", "user_id": "user-1"},
+        "configurable": {"thread_id": "thread-1", "uid": "user-1"},
         "recursion_limit": 100,
         "callbacks": ["handler-1"],
         "metadata": {"langfuse_user_id": "user-1"},

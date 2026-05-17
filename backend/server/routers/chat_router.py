@@ -406,7 +406,7 @@ async def create_agent_run(
         thread_id=payload.thread_id,
         meta=dict(payload.meta or {}),
         image_content=payload.image_content,
-        current_user_id=str(current_user.id),
+        current_uid=str(current_user.uid),
         db=db,
     )
 
@@ -418,7 +418,7 @@ async def get_agent_run(
     db: AsyncSession = Depends(get_db),
 ):
     """获取 run 状态（需要登录）"""
-    return await get_agent_run_view(run_id=run_id, current_user_id=str(current_user.id), db=db)
+    return await get_agent_run_view(run_id=run_id, current_uid=str(current_user.uid), db=db)
 
 
 @chat.post("/runs/{run_id}/cancel")
@@ -428,7 +428,7 @@ async def cancel_agent_run(
     db: AsyncSession = Depends(get_db),
 ):
     """取消 run（需要登录）"""
-    return await cancel_agent_run_view(run_id=run_id, current_user_id=str(current_user.id), db=db)
+    return await cancel_agent_run_view(run_id=run_id, current_uid=str(current_user.uid), db=db)
 
 
 @chat.get("/runs/{run_id}/events")
@@ -442,7 +442,7 @@ async def stream_run_events(
         stream_agent_run_events(
             run_id=run_id,
             after_seq=after_seq,
-            current_user_id=str(current_user.id),
+            current_uid=str(current_user.uid),
         ),
         media_type="text/event-stream",
         headers={
@@ -467,7 +467,7 @@ async def resume_thread_chat(
     # 验证 thread 存在且属于当前用户
     conv_repo = ConversationRepository(db)
     conversation = await conv_repo.get_conversation_by_thread_id(thread_id)
-    if not conversation or conversation.user_id != str(current_user.id) or conversation.status == "deleted":
+    if not conversation or conversation.uid != str(current_user.uid) or conversation.status == "deleted":
         raise HTTPException(status_code=404, detail="对话线程不存在")
     agent_id = conversation.agent_id
 
@@ -532,7 +532,7 @@ async def resume_thread_chat(
     meta = {
         "agent_id": agent_id,
         "thread_id": thread_id,
-        "user_id": current_user.id,
+        "uid": current_user.uid,
         "approved": approved,
         "answer": answer,
         "resume_input": resume_input,
@@ -560,7 +560,7 @@ async def get_thread_active_run(
     db: AsyncSession = Depends(get_db),
 ):
     """获取当前会话活跃 run（需要登录）"""
-    return await get_active_run_by_thread(thread_id=thread_id, current_user_id=str(current_user.id), db=db)
+    return await get_active_run_by_thread(thread_id=thread_id, current_uid=str(current_user.uid), db=db)
 
 
 @chat.get("/thread/{thread_id}/history")
@@ -571,7 +571,7 @@ async def get_thread_history(
     try:
         return await get_thread_history_view(
             thread_id=thread_id,
-            current_user_id=str(current_user.id),
+            current_uid=str(current_user.uid),
             db=db,
         )
 
@@ -590,7 +590,7 @@ async def get_thread_state(
     try:
         return await get_agent_state_view(
             thread_id=thread_id,
-            current_user_id=str(current_user.id),
+            current_uid=str(current_user.uid),
             db=db,
         )
     except HTTPException:
@@ -611,7 +611,7 @@ class ThreadCreate(BaseModel):
 
 class ThreadResponse(BaseModel):
     id: str
-    user_id: str
+    uid: str
     agent_id: str
     title: str | None = None
     is_pinned: bool = False
@@ -693,7 +693,7 @@ async def create_thread(
         title=thread.title,
         metadata=thread.metadata,
         db=db,
-        current_user_id=str(current_user.id),
+        current_uid=str(current_user.uid),
     )
 
 
@@ -707,7 +707,7 @@ async def list_threads(
 ):
     """获取用户的所有对话线程 (使用新存储系统)"""
     return await list_threads_view(
-        agent_id=agent_id, db=db, current_user_id=str(current_user.id), limit=limit, offset=offset
+        agent_id=agent_id, db=db, current_uid=str(current_user.uid), limit=limit, offset=offset
     )
 
 
@@ -716,7 +716,7 @@ async def delete_thread(
     thread_id: str, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_required_user)
 ):
     """删除对话线程 (使用新存储系统)"""
-    return await delete_thread_view(thread_id=thread_id, db=db, current_user_id=str(current_user.id))
+    return await delete_thread_view(thread_id=thread_id, db=db, current_uid=str(current_user.uid))
 
 
 class ThreadUpdate(BaseModel):
@@ -737,7 +737,7 @@ async def update_thread(
         title=thread_update.title,
         is_pinned=thread_update.is_pinned,
         db=db,
-        current_user_id=str(current_user.id),
+        current_uid=str(current_user.uid),
     )
 
 
@@ -758,7 +758,7 @@ async def upload_thread_attachment(
         thread_id=thread_id,
         file=file,
         db=db,
-        current_user_id=str(current_user.id),
+        current_uid=str(current_user.uid),
     )
 
 
@@ -772,7 +772,7 @@ async def list_thread_attachments(
     return await list_thread_attachments_view(
         thread_id=thread_id,
         db=db,
-        current_user_id=str(current_user.id),
+        current_uid=str(current_user.uid),
     )
 
 
@@ -788,7 +788,7 @@ async def delete_thread_attachment(
         thread_id=thread_id,
         file_id=file_id,
         db=db,
-        current_user_id=str(current_user.id),
+        current_uid=str(current_user.uid),
     )
 
 
@@ -803,7 +803,7 @@ async def list_thread_files(
     """列出线程文件目录。"""
     return await list_thread_files_view(
         thread_id=thread_id,
-        current_user_id=str(current_user.id),
+        current_uid=str(current_user.uid),
         db=db,
         path=path,
         recursive=recursive,
@@ -822,7 +822,7 @@ async def read_thread_file_content(
     """读取线程文本文件（按行分页）。"""
     return await read_thread_file_content_view(
         thread_id=thread_id,
-        current_user_id=str(current_user.id),
+        current_uid=str(current_user.uid),
         db=db,
         path=path,
         offset=offset,
@@ -841,7 +841,7 @@ async def get_thread_artifact(
     """下载或预览线程文件。"""
     file_path = await resolve_thread_artifact_view(
         thread_id=thread_id,
-        current_user_id=str(current_user.id),
+        current_uid=str(current_user.uid),
         db=db,
         path=path,
     )
@@ -861,7 +861,7 @@ async def save_thread_artifact_to_workspace(
     """保存交付物到共享 workspace/saved_artifacts 目录。"""
     return await save_thread_artifact_to_workspace_view(
         thread_id=thread_id,
-        current_user_id=str(current_user.id),
+        current_uid=str(current_user.uid),
         db=db,
         path=request.path,
     )
@@ -898,7 +898,7 @@ async def submit_message_feedback(
         rating=feedback_data.rating,
         reason=feedback_data.reason,
         db=db,
-        current_user_id=str(current_user.id),
+        current_uid=str(current_user.uid),
     )
     return MessageFeedbackResponse(**result)
 
@@ -913,7 +913,7 @@ async def get_message_feedback(
     return await get_message_feedback_view(
         message_id=message_id,
         db=db,
-        current_user_id=str(current_user.id),
+        current_uid=str(current_user.uid),
     )
 
 

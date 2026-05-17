@@ -137,7 +137,7 @@ async def _has_running_graph_build_task(db_id: str) -> bool:
 async def get_databases(current_user: User = Depends(get_admin_user)):
     """获取所有知识库（根据用户权限过滤）"""
     try:
-        return await knowledge_base.get_databases_by_user_id(current_user.user_id)
+        return await knowledge_base.get_databases_by_uid(current_user.uid)
     except Exception as e:
         logger.error(f"获取数据库列表失败 {e}, {traceback.format_exc()}")
         return {"message": f"获取数据库列表失败 {e}", "databases": []}
@@ -215,7 +215,7 @@ async def create_database(
 async def get_accessible_databases(current_user: User = Depends(get_required_user)):
     """获取当前用户有权访问的知识库列表（用于智能体配置）"""
     try:
-        databases = await knowledge_base.get_databases_by_user_id(current_user.user_id)
+        databases = await knowledge_base.get_databases_by_uid(current_user.uid)
 
         accessible = [
             {
@@ -324,7 +324,7 @@ async def configure_graph_build(
             db_id,
             extractor_type=data.get("extractor_type"),
             extractor_options=data.get("extractor_options") or {},
-            created_by=current_user.user_id,
+            created_by=current_user.uid,
         )
         return {"message": "图谱抽取配置已锁定", "status": "success", "config": config}
     except ValueError as e:
@@ -490,7 +490,7 @@ async def add_documents(
                 try:
                     # 1. Add file record (UPLOADED)
                     file_meta = await knowledge_base.add_file_record(
-                        db_id, item, params=params, operator_id=current_user.user_id
+                        db_id, item, params=params, operator_id=current_user.uid
                     )
                     file_id = file_meta["file_id"]
                     added_files[item] = (file_id, file_meta)
@@ -522,7 +522,7 @@ async def add_documents(
 
                 try:
                     # 2. Parse file (PARSING -> PARSED)
-                    file_meta = await knowledge_base.parse_file(db_id, file_id, operator_id=current_user.user_id)
+                    file_meta = await knowledge_base.parse_file(db_id, file_id, operator_id=current_user.uid)
                     added_files[item] = (file_id, file_meta)
                     processed_items.append(file_meta)
                     parse_success_count += 1
@@ -555,11 +555,11 @@ async def add_documents(
                     try:
                         # 1. 更新入库参数
                         await knowledge_base.update_file_params(
-                            db_id, file_id, indexing_params, operator_id=current_user.user_id
+                            db_id, file_id, indexing_params, operator_id=current_user.uid
                         )
                         # 2. 执行入库（传入 indexing_params 确保使用的参数与用户设置一致）
                         result = await knowledge_base.index_file(
-                            db_id, file_id, operator_id=current_user.user_id, params=indexing_params
+                            db_id, file_id, operator_id=current_user.uid, params=indexing_params
                         )
                         processed_items.append(result)
                     except Exception as index_error:
@@ -644,7 +644,7 @@ async def parse_documents(db_id: str, file_ids: list[str] = Body(...), current_u
                 await context.set_progress(progress, f"正在解析第 {idx}/{total} 个文档")
 
                 try:
-                    result = await knowledge_base.parse_file(db_id, file_id, operator_id=current_user.user_id)
+                    result = await knowledge_base.parse_file(db_id, file_id, operator_id=current_user.uid)
                     processed_items.append(result)
                 except Exception as e:
                     logger.error(f"Parse failed for {file_id}: {e}")

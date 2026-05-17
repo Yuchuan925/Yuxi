@@ -20,7 +20,7 @@ def _build_app(*, allow_admin: bool = True) -> FastAPI:
             raise HTTPException(status_code=403, detail="需要管理员权限")
         return User(
             username="admin",
-            user_id="admin",
+            uid="admin",
             password_hash="x",
             role="admin",
         )

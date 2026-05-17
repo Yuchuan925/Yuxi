@@ -6,18 +6,12 @@ from yuxi import knowledge_base
 
 
 async def resolve_visible_knowledge_bases_for_context(context) -> list[dict[str, Any]]:
-    user_id = getattr(context, "user_id", None)
-    if not user_id:
+    uid = getattr(context, "uid", None)
+    if not uid:
         setattr(context, "_visible_knowledge_bases", [])
         return []
 
-    try:
-        raw_user_id = int(user_id)
-    except (TypeError, ValueError):
-        setattr(context, "_visible_knowledge_bases", [])
-        return []
-
-    result = await knowledge_base.get_databases_by_raw_id(raw_user_id)
+    result = await knowledge_base.get_databases_by_uid(str(uid))
     databases = result.get("databases") or []
     enabled_knowledges = getattr(context, "knowledges", None)
     if enabled_knowledges is not None:

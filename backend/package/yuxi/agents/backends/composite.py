@@ -93,29 +93,29 @@ def _extract_thread_id(runtime) -> str:
     raise ValueError("thread_id is required in runtime configurable context")
 
 
-def _extract_user_id(runtime) -> str:
+def _extract_uid(runtime) -> str:
     config = getattr(runtime, "config", None)
     if isinstance(config, dict):
         configurable = config.get("configurable", {})
         if isinstance(configurable, dict):
-            user_id = configurable.get("user_id")
-            if isinstance(user_id, str) and user_id.strip():
-                return user_id.strip()
+            uid = configurable.get("uid")
+            if isinstance(uid, str) and uid.strip():
+                return uid.strip()
 
     context = getattr(runtime, "context", None)
-    user_id = getattr(context, "user_id", None)
-    if isinstance(user_id, str) and user_id.strip():
-        return user_id.strip()
+    uid = getattr(context, "uid", None)
+    if isinstance(uid, str) and uid.strip():
+        return uid.strip()
 
-    raise ValueError("user_id is required in runtime configurable context")
+    raise ValueError("uid is required in runtime configurable context")
 
 
 def create_agent_composite_backend(runtime) -> CompositeBackend:
     visible_skills = _get_visible_skills_from_runtime(runtime)
     thread_id = _extract_thread_id(runtime)
-    user_id = _extract_user_id(runtime)
+    uid = _extract_uid(runtime)
     return CustomCompositeBackend(
-        default=ProvisionerSandboxBackend(thread_id=thread_id, user_id=user_id, visible_skills=visible_skills),
+        default=ProvisionerSandboxBackend(thread_id=thread_id, uid=uid, visible_skills=visible_skills),
         routes={
             "/skills/": SelectedSkillsReadonlyBackend(selected_slugs=visible_skills),
         },
