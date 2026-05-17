@@ -1738,7 +1738,7 @@ import ChunkParamsConfig from '@/components/ChunkParamsConfig.vue'
 }
 
 .overflow-menu-panel {
-  min-width: 120px;
+  width: 160px;
   background: var(--gray-0);
   border: 1px solid var(--gray-150);
   border-radius: 8px;

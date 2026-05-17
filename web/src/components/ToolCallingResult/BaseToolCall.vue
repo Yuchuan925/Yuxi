@@ -389,7 +389,7 @@ const formatResultData = (data) => {
       }
 
       .tool-loader {
-        color: var(--gray-400);
+        color: var(--gray-600);
       }
 
       .tool-expand-icon {
