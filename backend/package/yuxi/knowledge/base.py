@@ -1,4 +1,5 @@
 import asyncio
+import mimetypes
 import os
 from abc import ABC, abstractmethod
 from typing import Any
@@ -377,19 +378,244 @@ class KnowledgeBase(ABC):
 
         return upload_result.url
 
-    async def _read_markdown_from_minio(self, file_path: str) -> str:
-        """Read markdown content from MinIO"""
+    async def _read_minio_bytes(self, file_path: str) -> bytes:
         from yuxi.knowledge.utils.kb_utils import is_minio_url, parse_minio_url
         from yuxi.storage.minio import get_minio_client
 
-        if not is_minio_url(file_path):
+        if not file_path or not is_minio_url(file_path):
             raise ValueError(f"Invalid MinIO path format: {file_path}")
 
         bucket_name, object_name = parse_minio_url(file_path)
         minio_client = get_minio_client()
+        return await minio_client.adownload_file(bucket_name, object_name)
 
-        content_bytes = await minio_client.adownload_file(bucket_name, object_name)
+    async def _read_markdown_from_minio(self, file_path: str) -> str:
+        """Read markdown content from MinIO"""
+        content_bytes = await self._read_minio_bytes(file_path)
         return content_bytes.decode("utf-8")
+
+    def _get_file_meta(self, db_id: str, file_id: str) -> dict:
+        file_meta = self.files_meta.get(file_id)
+        if not file_meta or file_meta.get("database_id") != db_id:
+            raise ValueError(f"File {file_id} not found")
+        return file_meta
+
+    @staticmethod
+    def _original_file_path(file_meta: dict) -> str | None:
+        return file_meta.get("minio_url") or file_meta.get("path")
+
+    def _knowledge_preview_variants(self, file_meta: dict) -> list[dict]:
+        variants = []
+        original_path = self._original_file_path(file_meta)
+        if original_path:
+            variants.append({"key": "original", "label": "Source", "supported": True})
+        if file_meta.get("markdown_file"):
+            variants.append({"key": "parsed", "label": "MD", "supported": True})
+        return variants
+
+    def _knowledge_file_entry(self, db_id: str, file_id: str, file_meta: dict) -> dict:
+        is_dir = bool(file_meta.get("is_folder"))
+        variants = [] if is_dir else self._knowledge_preview_variants(file_meta)
+        preview_modes = [item["key"] for item in variants]
+        default_preview_mode = None
+        if "parsed" in preview_modes:
+            default_preview_mode = "parsed"
+        elif preview_modes:
+            default_preview_mode = preview_modes[0]
+        path = f"/{file_id}"
+        if is_dir:
+            path = f"{path}/"
+        return {
+            "source": "knowledge",
+            "db_id": db_id,
+            "file_id": file_id,
+            "parent_id": file_meta.get("parent_id"),
+            "path": path,
+            "virtual_path": f"/knowledge/{db_id}/{file_id}",
+            "name": file_meta.get("filename") or file_meta.get("original_filename") or file_id,
+            "is_dir": is_dir,
+            "size": 0 if is_dir else file_meta.get("size") or 0,
+            "modified_at": file_meta.get("updated_at") or file_meta.get("created_at") or "",
+            "readonly": True,
+            "status": file_meta.get("status", "done"),
+            "preview_modes": preview_modes,
+            "default_preview_mode": default_preview_mode,
+        }
+
+    def _sort_file_entries(self, entries: list[dict]) -> list[dict]:
+        return sorted(
+            entries,
+            key=lambda item: (not bool(item.get("is_dir")), str(item.get("name") or "").lower()),
+        )
+
+    def _list_knowledge_children(
+        self,
+        db_id: str,
+        parent_id: str | None,
+        *,
+        recursive: bool,
+        files_only: bool,
+    ) -> list[dict]:
+        children = [
+            (file_id, meta)
+            for file_id, meta in self.files_meta.items()
+            if meta.get("database_id") == db_id and meta.get("parent_id") == parent_id
+        ]
+        entries = []
+        for file_id, meta in children:
+            if not files_only or not meta.get("is_folder"):
+                entries.append(self._knowledge_file_entry(db_id, file_id, meta))
+            if recursive and meta.get("is_folder"):
+                entries.extend(
+                    self._list_knowledge_children(
+                        db_id,
+                        file_id,
+                        recursive=True,
+                        files_only=files_only,
+                    )
+                )
+        return self._sort_file_entries(entries)
+
+    async def list_file_tree(
+        self,
+        db_id: str,
+        parent_id: str | None = None,
+        recursive: bool = False,
+        files_only: bool = False,
+    ) -> dict:
+        if db_id not in self.databases_meta:
+            raise ValueError(f"Database {db_id} not found")
+        if parent_id:
+            parent_meta = self._get_file_meta(db_id, parent_id)
+            if not parent_meta.get("is_folder"):
+                raise ValueError("Parent is not a folder")
+        return {
+            "entries": self._list_knowledge_children(
+                db_id,
+                parent_id,
+                recursive=recursive,
+                files_only=files_only,
+            ),
+            "readonly": True,
+        }
+
+    async def read_file_preview(self, db_id: str, file_id: str, variant: str = "parsed") -> dict:
+        from yuxi.services.viewer_filesystem_service import _detect_preview_type
+
+        file_meta = self._get_file_meta(db_id, file_id)
+        if file_meta.get("is_folder"):
+            raise ValueError("Cannot preview a folder")
+
+        variants = self._knowledge_preview_variants(file_meta)
+        variant_keys = {item["key"] for item in variants}
+        if variant not in {"original", "parsed"}:
+            raise ValueError("Unsupported preview variant")
+
+        filename = file_meta.get("filename") or file_meta.get("original_filename") or file_id
+        response = {
+            "source": "knowledge",
+            "db_id": db_id,
+            "file_id": file_id,
+            "filename": filename,
+            "variant": variant,
+            "readonly": True,
+            "available_variants": variants,
+        }
+
+        if variant == "parsed":
+            markdown_file = file_meta.get("markdown_file")
+            if not markdown_file or "parsed" not in variant_keys:
+                return {
+                    **response,
+                    "content": None,
+                    "preview_type": "unsupported",
+                    "supported": False,
+                    "message": "文件尚未生成解析结果",
+                }
+            content = await self._read_markdown_from_minio(markdown_file)
+            return {
+                **response,
+                "content": content,
+                "preview_type": "markdown",
+                "supported": True,
+                "message": None,
+            }
+
+        original_path = self._original_file_path(file_meta)
+        if not original_path or "original" not in variant_keys:
+            return {
+                **response,
+                "content": None,
+                "preview_type": "unsupported",
+                "supported": False,
+                "message": "文件没有可预览的原始内容",
+            }
+
+        preview_type, supported, message = _detect_preview_type(filename, b"")
+        if preview_type in {"image", "pdf"}:
+            return {
+                **response,
+                "content": None,
+                "preview_type": preview_type,
+                "supported": supported,
+                "message": message,
+            }
+
+        raw_content = await self._read_minio_bytes(original_path)
+        preview_type, supported, message = _detect_preview_type(filename, raw_content)
+        if preview_type in {"image", "pdf"} or not supported:
+            return {
+                **response,
+                "content": None,
+                "preview_type": preview_type,
+                "supported": supported,
+                "message": message,
+            }
+        try:
+            content = raw_content.decode("utf-8")
+        except UnicodeDecodeError:
+            return {
+                **response,
+                "content": None,
+                "preview_type": "unsupported",
+                "supported": False,
+                "message": "当前文件不是 UTF-8 文本，暂不支持预览",
+            }
+        return {
+            **response,
+            "content": content,
+            "preview_type": preview_type,
+            "supported": True,
+            "message": message,
+        }
+
+    async def get_file_download(self, db_id: str, file_id: str, variant: str = "original") -> dict:
+        file_meta = self._get_file_meta(db_id, file_id)
+        if file_meta.get("is_folder"):
+            raise ValueError("Cannot download a folder")
+        if variant not in {"original", "parsed"}:
+            raise ValueError("Unsupported download variant")
+
+        filename = file_meta.get("filename") or file_meta.get("original_filename") or file_id
+        if variant == "parsed":
+            markdown_file = file_meta.get("markdown_file")
+            if not markdown_file:
+                raise ValueError("文件尚未生成解析结果")
+            return {
+                "filename": f"{filename}.parsed.md",
+                "content": await self._read_minio_bytes(markdown_file),
+                "media_type": "text/markdown; charset=utf-8",
+            }
+
+        original_path = self._original_file_path(file_meta)
+        if not original_path:
+            raise ValueError("文件没有可下载的原始内容")
+        media_type = file_meta.get("content_type") or mimetypes.guess_type(filename)[0] or "application/octet-stream"
+        return {
+            "filename": filename,
+            "content": await self._read_minio_bytes(original_path),
+            "media_type": media_type,
+        }
 
     def _build_open_file_window(self, content: str, *, offset: int = 0, limit: int = 800) -> dict[str, Any]:
         lines = content.splitlines()

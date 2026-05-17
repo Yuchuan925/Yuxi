@@ -9,6 +9,18 @@
         <span class="file-path-title">{{ filePath }}</span>
       </div>
       <div class="modal-actions">
+        <div v-if="availablePreviewVariants.length > 1" class="preview-mode-switch">
+          <button
+            v-for="variant in availablePreviewVariants"
+            :key="variant.key"
+            class="preview-mode-btn text-mode-btn"
+            :class="{ active: activePreviewVariant === variant.key }"
+            :title="variant.label"
+            @click="$emit('switchVariant', variant.key)"
+          >
+            {{ variant.label }}
+          </button>
+        </div>
         <div v-if="canEdit" class="preview-mode-switch">
           <button
             class="preview-mode-btn"
@@ -311,7 +323,7 @@ const props = defineProps({
   }
 })
 
-const emit = defineEmits(['close', 'download', 'save'])
+const emit = defineEmits(['close', 'download', 'save', 'switchVariant'])
 
 const themeStore = useThemeStore()
 const closeTitle = computed(() =>
@@ -327,6 +339,11 @@ const fullscreenPreviewVisible = ref(false)
 const htmlPreviewRenderKey = ref(0)
 
 const isMarkdown = computed(() => isMarkdownPreview(props.filePath, props.file?.previewType))
+const availablePreviewVariants = computed(() => {
+  const variants = props.file?.availableVariants || props.file?.available_variants || []
+  return variants.filter((variant) => variant?.supported !== false && variant?.key)
+})
+const activePreviewVariant = computed(() => props.file?.variant || props.file?.previewVariant || '')
 const canEdit = computed(() => {
   const previewType = props.file?.previewType
   return (
@@ -520,6 +537,13 @@ onUnmounted(() => {
   background: var(--gray-0);
   color: var(--gray-900);
   box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08);
+}
+
+.text-mode-btn {
+  width: auto;
+  min-width: 48px;
+  padding: 0 8px;
+  font-size: 12px;
 }
 
 .file-content {

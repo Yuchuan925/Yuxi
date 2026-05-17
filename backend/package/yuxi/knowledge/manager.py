@@ -495,6 +495,24 @@ class KnowledgeBaseManager:
         kb_instance = await self._get_kb_for_database(db_id)
         return await kb_instance.get_file_info(db_id, file_id)
 
+    async def list_file_tree(
+        self,
+        db_id: str,
+        parent_id: str | None = None,
+        recursive: bool = False,
+        files_only: bool = False,
+    ) -> dict:
+        kb_instance = await self._get_kb_for_database(db_id)
+        return await kb_instance.list_file_tree(db_id, parent_id, recursive, files_only)
+
+    async def read_file_preview(self, db_id: str, file_id: str, variant: str = "parsed") -> dict:
+        kb_instance = await self._get_kb_for_database(db_id)
+        return await kb_instance.read_file_preview(db_id, file_id, variant)
+
+    async def get_file_download(self, db_id: str, file_id: str, variant: str = "original") -> dict:
+        kb_instance = await self._get_kb_for_database(db_id)
+        return await kb_instance.get_file_download(db_id, file_id, variant)
+
     async def file_name_existed_in_db(self, db_id: str | None, file_name: str | None) -> bool:
         """检查指定数据库中是否存在同名的文件"""
         if not db_id or not file_name:

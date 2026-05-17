@@ -70,6 +70,24 @@ class DifyKB(KnowledgeBase):
     async def get_file_info(self, db_id: str, file_id: str) -> dict:
         raise self._readonly_error()
 
+    async def list_file_tree(
+        self,
+        db_id: str,
+        parent_id: str | None = None,
+        recursive: bool = False,
+        files_only: bool = False,
+    ) -> dict:
+        del db_id, parent_id, recursive, files_only
+        raise ValueError("Dify 知识库不支持文件树预览")
+
+    async def read_file_preview(self, db_id: str, file_id: str, variant: str = "parsed") -> dict:
+        del db_id, file_id, variant
+        raise ValueError("Dify 知识库不支持文件预览")
+
+    async def get_file_download(self, db_id: str, file_id: str, variant: str = "original") -> dict:
+        del db_id, file_id, variant
+        raise ValueError("Dify 知识库不支持文件下载")
+
     async def aquery(self, query_text: str, db_id: str, agent_call: bool = False, **kwargs) -> list[dict]:
         del agent_call
         metadata = self.databases_meta.get(db_id, {}).get("metadata", {}) or {}

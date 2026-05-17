@@ -240,7 +240,7 @@ const copyDatabaseId = async () => {
 
 // 返回数据库列表
 const backToDatabase = () => {
-  router.push('/database')
+  router.push({ path: '/extensions', query: { tab: 'knowledge' } })
 }
 
 // 编辑相关逻辑（复用自 DatabaseHeader）

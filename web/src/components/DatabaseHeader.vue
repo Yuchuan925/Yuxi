@@ -90,7 +90,7 @@ const rules = {
 }
 
 const backToDatabase = () => {
-  router.push('/database')
+  router.push({ path: '/extensions', query: { tab: 'knowledge' } })
 }
 
 const showEditModal = () => {

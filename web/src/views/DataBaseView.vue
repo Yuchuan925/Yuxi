@@ -1,6 +1,7 @@
 <template>
   <div class="database-container layout-container">
     <PageHeader
+      v-if="!props.embedded"
       title="知识库"
       :active-key="knowledgeActiveView"
       :tabs="knowledgeViewItems"
@@ -212,11 +213,17 @@ const router = useRouter()
 const configStore = useConfigStore()
 const databaseStore = useDatabaseStore()
 
+const props = defineProps({
+  embedded: { type: Boolean, default: false }
+})
+
 // 使用 store 的状态
 const { databases, state: dbState } = storeToRefs(databaseStore)
 
 const knowledgeActiveView = 'documents'
-const knowledgeViewItems = [{ key: 'documents', label: '文档知识库', path: '/database' }]
+const knowledgeViewItems = [
+  { key: 'documents', label: '文档知识库', path: '/extensions?tab=knowledge' }
+]
 
 const kbTypes = ['milvus', 'dify']
 const searchQuery = ref('')
@@ -434,13 +441,13 @@ const cardTags = (database) => {
 }
 
 const navigateToDatabase = (databaseId) => {
-  router.push({ path: `/database/${databaseId}` })
+  router.push({ path: `/extensions/database/${databaseId}` })
 }
 
 watch(
   () => route.path,
   (newPath) => {
-    if (newPath === '/database') {
+    if (newPath === '/database' || (newPath === '/extensions' && route.query.tab === 'knowledge')) {
       databaseStore.loadDatabases()
     }
   }
@@ -449,6 +456,10 @@ watch(
 onMounted(() => {
   loadSupportedKbTypes()
   databaseStore.loadDatabases()
+})
+
+defineExpose({
+  loading: computed(() => dbState.value.listLoading)
 })
 </script>
 

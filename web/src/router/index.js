@@ -67,21 +67,12 @@ const router = createRouter({
     {
       path: '/database',
       name: 'database',
-      component: AppLayout,
-      children: [
-        {
-          path: '',
-          name: 'DatabaseComp',
-          component: () => import('../views/DataBaseView.vue'),
-          meta: { keepAlive: true, requiresAuth: true, requiresAdmin: true }
-        },
-        {
-          path: ':database_id',
-          name: 'DatabaseInfoComp',
-          component: () => import('../views/DataBaseInfoView.vue'),
-          meta: { keepAlive: false, requiresAuth: true, requiresAdmin: true }
-        }
-      ]
+      redirect: { path: '/extensions', query: { tab: 'knowledge' } }
+    },
+    {
+      path: '/database/:database_id',
+      name: 'DatabaseInfoCompLegacy',
+      redirect: (to) => ({ path: `/extensions/database/${to.params.database_id}` })
     },
     {
       path: '/dashboard',
@@ -122,37 +113,49 @@ const router = createRouter({
             keepAlive: false,
             requiresAuth: true,
             requiresAdmin: true
-          }
-        },
-        {
-          path: 'mcp/:name',
-          name: 'ExtensionMcpDetail',
-          component: () => import('../components/extensions/McpDetailView.vue'),
-          meta: {
-            keepAlive: false,
-            requiresAuth: true,
-            requiresAdmin: true
-          }
-        },
-        {
-          path: 'subagent/:name',
-          name: 'ExtensionSubagentDetail',
-          component: () => import('../components/extensions/SubagentDetailView.vue'),
-          meta: {
-            keepAlive: false,
-            requiresAuth: true,
-            requiresAdmin: true
-          }
-        },
-        {
-          path: 'skill/:slug',
-          name: 'ExtensionSkillDetail',
-          component: () => import('../components/extensions/SkillDetailView.vue'),
-          meta: {
-            keepAlive: false,
-            requiresAuth: true,
-            requiresAdmin: true
-          }
+          },
+          children: [
+            {
+              path: 'database/:database_id',
+              name: 'ExtensionDatabaseDetail',
+              component: () => import('../views/DataBaseInfoView.vue'),
+              meta: {
+                keepAlive: false,
+                requiresAuth: true,
+                requiresAdmin: true
+              }
+            },
+            {
+              path: 'mcp/:name',
+              name: 'ExtensionMcpDetail',
+              component: () => import('../components/extensions/McpDetailView.vue'),
+              meta: {
+                keepAlive: false,
+                requiresAuth: true,
+                requiresAdmin: true
+              }
+            },
+            {
+              path: 'subagent/:name',
+              name: 'ExtensionSubagentDetail',
+              component: () => import('../components/extensions/SubagentDetailView.vue'),
+              meta: {
+                keepAlive: false,
+                requiresAuth: true,
+                requiresAdmin: true
+              }
+            },
+            {
+              path: 'skill/:slug',
+              name: 'ExtensionSkillDetail',
+              component: () => import('../components/extensions/SkillDetailView.vue'),
+              meta: {
+                keepAlive: false,
+                requiresAuth: true,
+                requiresAdmin: true
+              }
+            }
+          ]
         }
       ]
     },
