@@ -41,6 +41,10 @@ class KBOperationError(KnowledgeBaseException):
 class KnowledgeBase(ABC):
     """知识库抽象基类，定义统一接口"""
 
+    requires_embedding_model = True
+    supports_documents = True
+    apply_chunk_defaults = True
+
     # 类级别的处理队列，跟踪所有正在处理的文件
     _processing_files = set()
     _processing_lock = None
@@ -76,7 +80,7 @@ class KnowledgeBase(ABC):
         self.databases_meta = {}
         for db_id, meta in global_databases_meta.items():
             if meta.get("kb_type") == self.kb_type:
-                normalized_additional_params = ensure_chunk_defaults_in_additional_params(meta.get("additional_params"))
+                normalized_additional_params = self.normalize_additional_params(meta.get("additional_params"))
                 self.databases_meta[db_id] = {
                     "name": meta.get("name"),
                     "description": meta.get("description"),
@@ -159,6 +163,24 @@ class KnowledgeBase(ABC):
     def kb_type(self) -> str:
         """知识库类型标识"""
         pass
+
+    @classmethod
+    def get_create_params_config(cls) -> dict[str, Any]:
+        """获取创建知识库时的类型特定参数配置。"""
+        return {"options": []}
+
+    @classmethod
+    def validate_additional_params(cls, additional_params: dict | None) -> dict:
+        """校验并规范化类型特定配置。"""
+        return dict(additional_params or {})
+
+    @classmethod
+    def normalize_additional_params(cls, additional_params: dict | None) -> dict:
+        """规范化 additional_params，仅文档型知识库补充分块默认值。"""
+        params = cls.validate_additional_params(additional_params)
+        if cls.apply_chunk_defaults:
+            return ensure_chunk_defaults_in_additional_params(params)
+        return params
 
     @abstractmethod
     async def _create_kb_instance(self, db_id: str, config: dict) -> Any:
@@ -708,7 +730,7 @@ class KnowledgeBase(ABC):
         """
         from yuxi.utils import hashstr
 
-        kwargs = ensure_chunk_defaults_in_additional_params(kwargs)
+        kwargs = self.normalize_additional_params(kwargs)
 
         db_id = f"kb_{hashstr(database_name, with_salt=True, length=32)}"
 
@@ -1286,7 +1308,7 @@ class KnowledgeBase(ABC):
                 "embedding_model_spec": kb.embedding_model_spec,
                 "llm_model_spec": kb.llm_model_spec,
                 "query_params": kb.query_params or self._get_default_query_params(kb.db_id),
-                "metadata": ensure_chunk_defaults_in_additional_params(kb.additional_params),
+                "metadata": self.normalize_additional_params(kb.additional_params),
                 "created_at": utc_isoformat(kb.created_at) if kb.created_at else utc_isoformat(),
             }
             for kb in databases

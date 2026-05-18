@@ -2,10 +2,7 @@ import asyncio
 import os
 
 from yuxi.knowledge.base import KBNotFoundError, KnowledgeBase
-from yuxi.knowledge.chunking.ragflow_like.presets import (
-    deep_merge,
-    ensure_chunk_defaults_in_additional_params,
-)
+from yuxi.knowledge.chunking.ragflow_like.presets import deep_merge
 from yuxi.knowledge.factory import KnowledgeBaseFactory
 from yuxi.storage.postgres.models_business import User
 from yuxi.utils import logger
@@ -179,7 +176,8 @@ class KnowledgeBaseManager:
 
             # 补充 share_config 和 additional_params
             db_info["share_config"] = row.share_config or {"is_shared": True, "accessible_departments": []}
-            db_info["additional_params"] = ensure_chunk_defaults_in_additional_params(row.additional_params)
+            db_info["additional_params"] = kb_instance.normalize_additional_params(row.additional_params)
+            db_info["created_by"] = row.created_by
             all_databases.append(db_info)
         return {"databases": all_databases}
 
@@ -314,6 +312,7 @@ class KnowledgeBaseManager:
         embedding_model_spec: str | None = None,
         llm_model_spec: str | None = None,
         share_config: dict | None = None,
+        created_by: str | None = None,
         **kwargs,
     ) -> dict:
         """
@@ -326,6 +325,7 @@ class KnowledgeBaseManager:
             embedding_model_spec: 嵌入模型 spec
             llm_model_spec: LLM 模型 spec
             share_config: 共享配置
+            created_by: 创建者 uid
             **kwargs: 其他配置参数
 
         Returns:
@@ -343,9 +343,8 @@ class KnowledgeBaseManager:
         if share_config is None:
             share_config = {"is_shared": True, "accessible_departments": []}
 
-        kwargs = ensure_chunk_defaults_in_additional_params(kwargs)
-
         kb_instance = self._get_or_create_kb_instance(kb_type)
+        kwargs = kb_instance.normalize_additional_params(kwargs)
         db_info = await kb_instance.create_database(
             database_name,
             description,
@@ -358,7 +357,7 @@ class KnowledgeBaseManager:
         from yuxi.repositories.knowledge_base_repository import KnowledgeBaseRepository
 
         kb_repo = KnowledgeBaseRepository()
-        updated = await kb_repo.update(db_id, {"share_config": share_config})
+        updated = await kb_repo.update(db_id, {"share_config": share_config, "created_by": created_by})
         if updated is None:
             await kb_repo.create(
                 {
@@ -370,6 +369,7 @@ class KnowledgeBaseManager:
                     "llm_model_spec": db_info.get("llm_model_spec"),
                     "additional_params": kwargs.copy(),
                     "share_config": share_config,
+                    "created_by": created_by,
                 }
             )
 
@@ -452,7 +452,7 @@ class KnowledgeBaseManager:
             }
 
         # 添加数据库中的附加字段
-        db_info["additional_params"] = ensure_chunk_defaults_in_additional_params(kb.additional_params)
+        db_info["additional_params"] = kb_instance.normalize_additional_params(kb.additional_params)
         db_info["share_config"] = kb.share_config or {"is_shared": True, "accessible_departments": []}
         db_info["mindmap"] = kb.mindmap
         db_info["sample_questions"] = kb.sample_questions or []
@@ -634,7 +634,7 @@ class KnowledgeBaseManager:
             if current_graph_config.get("locked") and "graph_build_config" in additional_params:
                 raise ValueError("图谱抽取配置已锁定，请使用图谱重置接口重新配置")
 
-            merged_additional_params = ensure_chunk_defaults_in_additional_params(
+            merged_additional_params = kb_instance.normalize_additional_params(
                 deep_merge(current_additional_params, additional_params)
             )
             update_data["additional_params"] = merged_additional_params

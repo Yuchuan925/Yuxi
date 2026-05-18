@@ -7,5 +7,6 @@
 
 from .dify import DifyKB
 from .milvus import MilvusKB
+from .read_only_connectors import ReadOnlyConnectors
 
-__all__ = ["MilvusKB", "DifyKB"]
+__all__ = ["MilvusKB", "DifyKB", "ReadOnlyConnectors"]

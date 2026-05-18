@@ -3,11 +3,13 @@ from typing import Any
 
 import httpx
 
-from yuxi.knowledge.base import KnowledgeBase
+from yuxi.knowledge.implementations.read_only_connectors import ReadOnlyConnectors
 from yuxi.utils import logger
 
+DIFY_REQUIRED_PARAMS = ("dify_api_url", "dify_token", "dify_dataset_id")
 
-class DifyKB(KnowledgeBase):
+
+class DifyKB(ReadOnlyConnectors):
     """基于 Dify Dataset Retrieve API 的只读检索知识库实现"""
 
     def __init__(self, work_dir: str, **kwargs):
@@ -18,75 +20,48 @@ class DifyKB(KnowledgeBase):
     def kb_type(self) -> str:
         return "dify"
 
-    async def _create_kb_instance(self, db_id: str, config: dict) -> Any:
-        return None
+    @classmethod
+    def get_create_params_config(cls) -> dict[str, Any]:
+        return {
+            "options": [
+                {
+                    "key": "dify_api_url",
+                    "label": "Dify API URL",
+                    "type": "text",
+                    "required": True,
+                    "placeholder": "例如: https://api.dify.ai/v1",
+                    "description": "Dify API 地址，必须以 /v1 结尾",
+                },
+                {
+                    "key": "dify_token",
+                    "label": "Dify Token",
+                    "type": "password",
+                    "required": True,
+                    "placeholder": "请输入 Dify API Token",
+                },
+                {
+                    "key": "dify_dataset_id",
+                    "label": "Dataset ID",
+                    "type": "text",
+                    "required": True,
+                    "placeholder": "请输入 Dify dataset_id",
+                },
+            ]
+        }
 
-    async def _initialize_kb_instance(self, instance: Any) -> None:
-        return None
+    @classmethod
+    def validate_additional_params(cls, additional_params: dict | None) -> dict:
+        params = dict(additional_params or {})
+        missing_fields = [field for field in DIFY_REQUIRED_PARAMS if not str(params.get(field) or "").strip()]
+        if missing_fields:
+            raise ValueError(f"Dify 参数缺失: {', '.join(missing_fields)}")
 
-    @staticmethod
-    def _readonly_error() -> ValueError:
-        return ValueError("Dify 知识库为只读检索类型，不支持该操作")
-
-    async def add_file_record(
-        self, db_id: str, item: str, params: dict | None = None, operator_id: str | None = None
-    ) -> dict:
-        raise self._readonly_error()
-
-    async def parse_file(self, db_id: str, file_id: str, operator_id: str | None = None) -> dict:
-        raise self._readonly_error()
-
-    async def update_file_params(self, db_id: str, file_id: str, params: dict, operator_id: str | None = None) -> None:
-        raise self._readonly_error()
-
-    async def create_folder(self, db_id: str, folder_name: str, parent_id: str | None = None) -> dict:
-        raise self._readonly_error()
-
-    async def move_file(self, db_id: str, file_id: str, new_parent_id: str | None) -> dict:
-        raise self._readonly_error()
-
-    async def delete_folder(self, db_id: str, folder_id: str) -> None:
-        raise self._readonly_error()
-
-    async def index_file(self, db_id: str, file_id: str, operator_id: str | None = None) -> dict:
-        raise self._readonly_error()
-
-    async def update_content(self, db_id: str, file_ids: list[str], params: dict | None = None) -> list[dict]:
-        raise self._readonly_error()
-
-    async def delete_file(self, db_id: str, file_id: str) -> None:
-        raise self._readonly_error()
-
-    async def get_file_basic_info(self, db_id: str, file_id: str) -> dict:
-        raise self._readonly_error()
-
-    async def get_file_content(self, db_id: str, file_id: str) -> dict:
-        raise self._readonly_error()
-
-    async def open_file_content(self, db_id: str, file_id: str, offset: int = 0, limit: int = 800) -> dict:
-        del offset, limit
-        raise self._readonly_error()
-
-    async def get_file_info(self, db_id: str, file_id: str) -> dict:
-        raise self._readonly_error()
-
-    async def list_file_tree(
-        self,
-        db_id: str,
-        parent_id: str | None = None,
-        recursive: bool = False,
-        files_only: bool = False,
-    ) -> dict:
-        del db_id, parent_id, recursive, files_only
-        raise ValueError("Dify 知识库不支持文件树预览")
-
-    async def read_file_preview(self, db_id: str, file_id: str, variant: str = "parsed") -> dict:
-        del db_id, file_id, variant
-        raise ValueError("Dify 知识库不支持文件预览")
-
-    async def get_file_download(self, db_id: str, file_id: str, variant: str = "original") -> dict:
-        del db_id, file_id, variant
-        raise ValueError("Dify 知识库不支持文件下载")
+        params["dify_api_url"] = str(params.get("dify_api_url") or "").strip()
+        params["dify_token"] = str(params.get("dify_token") or "").strip()
+        params["dify_dataset_id"] = str(params.get("dify_dataset_id") or "").strip()
+        if not params["dify_api_url"].endswith("/v1"):
+            raise ValueError("Dify api_url 必须以 /v1 结尾")
+        return params
 
     async def aquery(self, query_text: str, db_id: str, agent_call: bool = False, **kwargs) -> list[dict]:
         del agent_call
