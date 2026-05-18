@@ -114,7 +114,8 @@ async def test_milvus_graph_service_configure_persists_updated_concurrency():
         count_graph_pending_by_db_id=AsyncMock(return_value=0),
         count_graph_indexed_by_db_id=AsyncMock(return_value=0),
     )
-    service = MilvusGraphService(kb_repo=Repo(), chunk_repo=chunk_repo)
+    graph_repo = SimpleNamespace(count_by_db_id=AsyncMock(return_value=(3, 2)))
+    service = MilvusGraphService(kb_repo=Repo(), chunk_repo=chunk_repo, graph_repo=graph_repo)
 
     await service.configure(
         "kb_test",
@@ -125,6 +126,8 @@ async def test_milvus_graph_service_configure_persists_updated_concurrency():
     status = await service.get_status("kb_test")
 
     assert status["config"]["extractor_options"]["concurrency_count"] == 9
+    assert status["entity_count"] == 3
+    assert status["relationship_count"] == 2
 
 
 def test_milvus_graph_service_writes_chunk_entity_and_relation():

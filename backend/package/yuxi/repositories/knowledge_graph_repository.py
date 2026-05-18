@@ -15,6 +15,16 @@ from yuxi.storage.postgres.models_knowledge import (
 
 
 class KnowledgeGraphRepository:
+    async def count_by_db_id(self, db_id: str) -> tuple[int, int]:
+        async with pg_manager.get_async_session_context() as session:
+            entity_count = await session.scalar(
+                select(func.count()).select_from(KnowledgeGraphEntity).where(KnowledgeGraphEntity.db_id == db_id)
+            )
+            triple_count = await session.scalar(
+                select(func.count()).select_from(KnowledgeGraphTriple).where(KnowledgeGraphTriple.db_id == db_id)
+            )
+            return int(entity_count or 0), int(triple_count or 0)
+
     async def upsert_chunk_graph(
         self,
         *,
