@@ -122,8 +122,10 @@ class PostgresManager(metaclass=SingletonMeta):
         """确保知识库 schema 包含所有必要字段"""
         self._check_initialized()
         stmts = [
-            "ALTER TABLE IF EXISTS knowledge_bases ADD COLUMN IF NOT EXISTS embed_info JSONB",
-            "ALTER TABLE IF EXISTS knowledge_bases ADD COLUMN IF NOT EXISTS llm_info JSONB",
+            "ALTER TABLE IF EXISTS knowledge_bases ADD COLUMN IF NOT EXISTS embedding_model_spec VARCHAR(512)",
+            "ALTER TABLE IF EXISTS knowledge_bases ADD COLUMN IF NOT EXISTS llm_model_spec VARCHAR(512)",
+            "ALTER TABLE IF EXISTS knowledge_bases DROP COLUMN IF EXISTS embed_info",
+            "ALTER TABLE IF EXISTS knowledge_bases DROP COLUMN IF EXISTS llm_info",
             "ALTER TABLE IF EXISTS knowledge_bases ADD COLUMN IF NOT EXISTS query_params JSONB",
             "ALTER TABLE IF EXISTS knowledge_bases ADD COLUMN IF NOT EXISTS additional_params JSONB",
             "ALTER TABLE IF EXISTS knowledge_bases ADD COLUMN IF NOT EXISTS share_config JSONB",
@@ -161,6 +163,78 @@ class PostgresManager(metaclass=SingletonMeta):
             "ALTER TABLE IF EXISTS evaluation_result_details ADD COLUMN IF NOT EXISTS generated_answer TEXT",
             "ALTER TABLE IF EXISTS evaluation_result_details ADD COLUMN IF NOT EXISTS retrieved_chunks JSONB",
             "ALTER TABLE IF EXISTS evaluation_result_details ADD COLUMN IF NOT EXISTS metrics JSONB",
+            """
+            CREATE TABLE IF NOT EXISTS knowledge_chunks (
+                id SERIAL PRIMARY KEY,
+                chunk_id VARCHAR(128) NOT NULL UNIQUE,
+                file_id VARCHAR(64) NOT NULL REFERENCES knowledge_files(file_id) ON DELETE CASCADE,
+                db_id VARCHAR(80) NOT NULL REFERENCES knowledge_bases(db_id) ON DELETE CASCADE,
+                chunk_index INTEGER NOT NULL,
+                content TEXT NOT NULL,
+                start_char_pos INTEGER,
+                end_char_pos INTEGER,
+                start_token_pos INTEGER,
+                end_token_pos INTEGER,
+                graph_indexed BOOLEAN DEFAULT FALSE,
+                ent_ids JSONB,
+                tags JSONB,
+                extraction_result JSONB,
+                created_at TIMESTAMPTZ DEFAULT NOW(),
+                updated_at TIMESTAMPTZ DEFAULT NOW()
+            )
+            """,
+            "ALTER TABLE IF EXISTS knowledge_chunks ADD COLUMN IF NOT EXISTS extraction_result JSONB",
+            """
+            CREATE TABLE IF NOT EXISTS knowledge_graph_entities (
+                id SERIAL PRIMARY KEY,
+                entity_id VARCHAR(64) NOT NULL UNIQUE,
+                db_id VARCHAR(80) NOT NULL REFERENCES knowledge_bases(db_id) ON DELETE CASCADE,
+                normalized_name VARCHAR(512) NOT NULL,
+                label VARCHAR(128) NOT NULL,
+                name VARCHAR(512) NOT NULL,
+                attributes JSONB,
+                created_at TIMESTAMPTZ DEFAULT NOW(),
+                updated_at TIMESTAMPTZ DEFAULT NOW(),
+                CONSTRAINT uq_knowledge_graph_entities_identity UNIQUE (db_id, normalized_name, label)
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS knowledge_graph_entity_mentions (
+                id SERIAL PRIMARY KEY,
+                entity_id VARCHAR(64) NOT NULL REFERENCES knowledge_graph_entities(entity_id) ON DELETE CASCADE,
+                db_id VARCHAR(80) NOT NULL REFERENCES knowledge_bases(db_id) ON DELETE CASCADE,
+                file_id VARCHAR(64) NOT NULL REFERENCES knowledge_files(file_id) ON DELETE CASCADE,
+                chunk_id VARCHAR(128) NOT NULL REFERENCES knowledge_chunks(chunk_id) ON DELETE CASCADE,
+                created_at TIMESTAMPTZ DEFAULT NOW(),
+                CONSTRAINT uq_knowledge_graph_entity_mentions_entity_chunk UNIQUE (entity_id, chunk_id)
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS knowledge_graph_triples (
+                id SERIAL PRIMARY KEY,
+                triple_id VARCHAR(64) NOT NULL UNIQUE,
+                db_id VARCHAR(80) NOT NULL REFERENCES knowledge_bases(db_id) ON DELETE CASCADE,
+                source_entity_id VARCHAR(64) NOT NULL REFERENCES knowledge_graph_entities(entity_id) ON DELETE CASCADE,
+                target_entity_id VARCHAR(64) NOT NULL REFERENCES knowledge_graph_entities(entity_id) ON DELETE CASCADE,
+                relation_type VARCHAR(256) NOT NULL,
+                content TEXT NOT NULL,
+                created_at TIMESTAMPTZ DEFAULT NOW(),
+                updated_at TIMESTAMPTZ DEFAULT NOW()
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS knowledge_graph_triple_mentions (
+                id SERIAL PRIMARY KEY,
+                triple_id VARCHAR(64) NOT NULL REFERENCES knowledge_graph_triples(triple_id) ON DELETE CASCADE,
+                db_id VARCHAR(80) NOT NULL REFERENCES knowledge_bases(db_id) ON DELETE CASCADE,
+                file_id VARCHAR(64) NOT NULL REFERENCES knowledge_files(file_id) ON DELETE CASCADE,
+                chunk_id VARCHAR(128) NOT NULL REFERENCES knowledge_chunks(chunk_id) ON DELETE CASCADE,
+                text TEXT,
+                extractor_type VARCHAR(128),
+                created_at TIMESTAMPTZ DEFAULT NOW(),
+                CONSTRAINT uq_knowledge_graph_triple_mentions_triple_chunk UNIQUE (triple_id, chunk_id)
+            )
+            """,
             # 扩展 db_id 字段长度以支持最长 75 字符的 ID（kb_private_ + 64字符hash）
             "ALTER TABLE IF EXISTS knowledge_bases ALTER COLUMN db_id TYPE VARCHAR(80)",
             "ALTER TABLE IF EXISTS knowledge_files ALTER COLUMN db_id TYPE VARCHAR(80)",
@@ -177,6 +251,44 @@ class PostgresManager(metaclass=SingletonMeta):
             "CREATE INDEX IF NOT EXISTS idx_er_status ON evaluation_results(status)",
             "CREATE INDEX IF NOT EXISTS idx_er_started ON evaluation_results(started_at DESC)",
             "CREATE INDEX IF NOT EXISTS idx_erd_task ON evaluation_result_details(task_id)",
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_knowledge_chunks_chunk_id ON knowledge_chunks(chunk_id)",
+            "CREATE INDEX IF NOT EXISTS ix_knowledge_chunks_file_id ON knowledge_chunks(file_id)",
+            "CREATE INDEX IF NOT EXISTS ix_knowledge_chunks_db_id ON knowledge_chunks(db_id)",
+            "CREATE INDEX IF NOT EXISTS ix_knowledge_chunks_graph_indexed ON knowledge_chunks(graph_indexed)",
+            (
+                "CREATE UNIQUE INDEX IF NOT EXISTS uq_knowledge_graph_entities_entity_id "
+                "ON knowledge_graph_entities(entity_id)"
+            ),
+            "CREATE INDEX IF NOT EXISTS ix_knowledge_graph_entities_db_id ON knowledge_graph_entities(db_id)",
+            (
+                "CREATE INDEX IF NOT EXISTS ix_knowledge_graph_entity_mentions_db_id "
+                "ON knowledge_graph_entity_mentions(db_id)"
+            ),
+            (
+                "CREATE INDEX IF NOT EXISTS ix_knowledge_graph_entity_mentions_file_id "
+                "ON knowledge_graph_entity_mentions(file_id)"
+            ),
+            (
+                "CREATE INDEX IF NOT EXISTS ix_knowledge_graph_entity_mentions_chunk_id "
+                "ON knowledge_graph_entity_mentions(chunk_id)"
+            ),
+            (
+                "CREATE UNIQUE INDEX IF NOT EXISTS uq_knowledge_graph_triples_triple_id "
+                "ON knowledge_graph_triples(triple_id)"
+            ),
+            "CREATE INDEX IF NOT EXISTS ix_knowledge_graph_triples_db_id ON knowledge_graph_triples(db_id)",
+            (
+                "CREATE INDEX IF NOT EXISTS ix_knowledge_graph_triple_mentions_db_id "
+                "ON knowledge_graph_triple_mentions(db_id)"
+            ),
+            (
+                "CREATE INDEX IF NOT EXISTS ix_knowledge_graph_triple_mentions_file_id "
+                "ON knowledge_graph_triple_mentions(file_id)"
+            ),
+            (
+                "CREATE INDEX IF NOT EXISTS ix_knowledge_graph_triple_mentions_chunk_id "
+                "ON knowledge_graph_triple_mentions(chunk_id)"
+            ),
         ]
 
         async with self.async_engine.begin() as conn:
@@ -184,7 +296,7 @@ class PostgresManager(metaclass=SingletonMeta):
                 await conn.execute(text(stmt))
 
     async def ensure_business_schema(self):
-        """确保业务 schema 包含后续新增字段（兼容已存在表）。"""
+        """确保业务 schema 包含后续新增字段（运行时 schema 演进）。"""
         self._check_initialized()
         stmts = [
             "ALTER TABLE IF EXISTS skills ADD COLUMN IF NOT EXISTS tool_dependencies JSONB DEFAULT '[]'::jsonb",
@@ -196,6 +308,105 @@ class PostgresManager(metaclass=SingletonMeta):
             "ALTER TABLE IF EXISTS subagents ADD COLUMN IF NOT EXISTS enabled BOOLEAN NOT NULL DEFAULT TRUE",
             "ALTER TABLE IF EXISTS conversations ADD COLUMN IF NOT EXISTS is_pinned BOOLEAN NOT NULL DEFAULT FALSE",
             "ALTER TABLE IF EXISTS mcp_servers ADD COLUMN IF NOT EXISTS env JSONB",
+            """
+            ALTER TABLE IF EXISTS agent_configs
+            ADD COLUMN IF NOT EXISTS uid VARCHAR
+            """,
+            """
+            UPDATE agent_configs ac
+            SET uid = u.uid
+            FROM users u
+            WHERE ac.uid IS NULL
+              AND ac.created_by ~ '^[0-9]+$'
+              AND u.id = ac.created_by::integer
+            """,
+            """
+            UPDATE agent_configs ac
+            SET uid = u.uid
+            FROM users u
+            WHERE ac.uid IS NULL
+              AND ac.created_by = u.uid
+            """,
+            """
+            DO $$
+            BEGIN
+                IF EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name = 'agent_configs' AND column_name = 'department_id'
+                ) THEN
+                    EXECUTE $sql$
+                        UPDATE agent_configs ac
+                        SET uid = (
+                            SELECT u.uid
+                            FROM users u
+                            WHERE u.department_id = ac.department_id
+                              AND u.is_deleted = 0
+                            ORDER BY
+                              CASE WHEN u.role = 'superadmin' THEN 0 WHEN u.role = 'admin' THEN 1 ELSE 2 END,
+                              u.id ASC
+                            LIMIT 1
+                        )
+                        WHERE ac.uid IS NULL
+                    $sql$;
+                END IF;
+            END $$;
+            """,
+            "DELETE FROM agent_configs WHERE uid IS NULL",
+            "DROP INDEX IF EXISTS uq_agent_configs_department_agent_default",
+            "DROP INDEX IF EXISTS ix_agent_configs_department_id",
+            "ALTER TABLE IF EXISTS agent_configs DROP CONSTRAINT IF EXISTS uq_agent_configs_department_agent_name",
+            "ALTER TABLE IF EXISTS agent_configs DROP CONSTRAINT IF EXISTS agent_configs_department_id_fkey",
+            "ALTER TABLE IF EXISTS agent_configs DROP COLUMN IF EXISTS department_id",
+            "ALTER TABLE IF EXISTS agent_configs ALTER COLUMN uid SET NOT NULL",
+            """
+            WITH ranked AS (
+                SELECT id, ROW_NUMBER() OVER (PARTITION BY uid, agent_id, name ORDER BY id) AS rn
+                FROM agent_configs
+            )
+            UPDATE agent_configs ac
+            SET name = LEFT(ac.name, 90) || '-' || ac.id::text
+            FROM ranked
+            WHERE ac.id = ranked.id AND ranked.rn > 1
+            """,
+            """
+            WITH ranked AS (
+                SELECT id, ROW_NUMBER() OVER (PARTITION BY uid, agent_id ORDER BY id) AS rn
+                FROM agent_configs
+                WHERE is_default IS TRUE
+            )
+            UPDATE agent_configs ac
+            SET is_default = FALSE
+            FROM ranked
+            WHERE ac.id = ranked.id AND ranked.rn > 1
+            """,
+            """
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM pg_constraint WHERE conname = 'agent_configs_uid_fkey'
+                ) THEN
+                    ALTER TABLE agent_configs
+                    ADD CONSTRAINT agent_configs_uid_fkey FOREIGN KEY (uid) REFERENCES users(uid);
+                END IF;
+            END $$;
+            """,
+            """
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM pg_constraint WHERE conname = 'uq_agent_configs_uid_agent_name'
+                ) THEN
+                    ALTER TABLE agent_configs
+                    ADD CONSTRAINT uq_agent_configs_uid_agent_name UNIQUE (uid, agent_id, name);
+                END IF;
+            END $$;
+            """,
+            "CREATE INDEX IF NOT EXISTS ix_agent_configs_uid ON agent_configs(uid)",
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS uq_agent_configs_uid_agent_default
+            ON agent_configs(uid, agent_id)
+            WHERE is_default IS TRUE
+            """,
             """
             CREATE TABLE IF NOT EXISTS model_providers (
                 id SERIAL PRIMARY KEY,
@@ -228,7 +439,7 @@ class PostgresManager(metaclass=SingletonMeta):
                 id VARCHAR(64) PRIMARY KEY,
                 thread_id VARCHAR(64) NOT NULL,
                 agent_id VARCHAR(64) NOT NULL,
-                user_id VARCHAR(64) NOT NULL,
+                uid VARCHAR(64) NOT NULL,
                 status VARCHAR(32) NOT NULL DEFAULT 'pending',
                 request_id VARCHAR(64) NOT NULL UNIQUE,
                 input_payload JSONB NOT NULL DEFAULT '{}'::jsonb,
@@ -240,7 +451,7 @@ class PostgresManager(metaclass=SingletonMeta):
                 updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
             )
             """,
-            "CREATE INDEX IF NOT EXISTS idx_agent_runs_user_created ON agent_runs(user_id, created_at DESC)",
+            "CREATE INDEX IF NOT EXISTS idx_agent_runs_uid_created ON agent_runs(uid, created_at DESC)",
             "CREATE INDEX IF NOT EXISTS idx_agent_runs_thread_created ON agent_runs(thread_id, created_at DESC)",
             "CREATE INDEX IF NOT EXISTS idx_agent_runs_status_updated ON agent_runs(status, updated_at)",
             "CREATE INDEX IF NOT EXISTS ix_conversations_is_pinned ON conversations(is_pinned)",
@@ -297,18 +508,6 @@ class PostgresManager(metaclass=SingletonMeta):
             result = await session.execute(select(func.count(User.id)))
             count = result.scalar()
             return count == 0
-
-    async def execute(self, statement):
-        """直接执行 SQL 语句（用于迁移脚本）"""
-        self._check_initialized()
-        async with self.get_async_session_context() as session:
-            return await session.execute(statement)
-
-    async def add(self, instance):
-        """添加实例到会话（用于迁移脚本）"""
-        self._check_initialized()
-        async with self.get_async_session_context() as session:
-            session.add(instance)
 
     async def commit(self):
         """提交当前会话"""

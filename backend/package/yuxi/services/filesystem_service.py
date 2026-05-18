@@ -24,22 +24,20 @@ async def _resolve_filesystem_context(
     agent_id: str,
     agent_config_id: int | None,
 ) -> BaseContext:
-    context = BaseContext(thread_id="", user_id=str(user.id))
+    context = BaseContext(thread_id="", uid=str(user.uid))
     repo = AgentConfigRepository(db)
 
     config_item = None
     if agent_config_id is not None:
         config_item = await repo.get_by_id(config_id=int(agent_config_id))
-        if config_item is not None and (
-            config_item.department_id != user.department_id or config_item.agent_id != agent_id
-        ):
+        if config_item is not None and (config_item.uid != str(user.uid) or config_item.agent_id != agent_id):
             config_item = None
 
     if config_item is None:
         config_item = await repo.get_or_create_default(
-            department_id=user.department_id,
+            uid=str(user.uid),
             agent_id=agent_id,
-            created_by=str(user.id),
+            created_by=str(user.uid),
         )
 
     context.update_from_dict((config_item.config_json or {}).get("context", {}))
@@ -55,7 +53,7 @@ async def _resolve_filesystem_state(
     agent_config_id: int | None,
 ):
     conv_repo = ConversationRepository(db)
-    conversation = await require_user_conversation(conv_repo, thread_id, str(user.id))
+    conversation = await require_user_conversation(conv_repo, thread_id, str(user.uid))
 
     runtime_context = await _resolve_filesystem_context(
         db=db,
@@ -64,10 +62,10 @@ async def _resolve_filesystem_state(
         agent_config_id=agent_config_id,
     )
     runtime_context.thread_id = thread_id
-    runtime_context.user_id = str(user.id)
+    runtime_context.uid = str(user.uid)
     await resolve_visible_knowledge_bases_for_context(runtime_context)
 
-    sandbox_backend = ProvisionerSandboxBackend(thread_id=thread_id, user_id=str(user.id))
+    sandbox_backend = ProvisionerSandboxBackend(thread_id=thread_id, uid=str(user.uid))
     return conversation, runtime_context, sandbox_backend
 
 

@@ -18,15 +18,15 @@ async def test_login_with_invalid_credentials(test_client):
 
 
 async def test_user_is_locked_after_repeated_failed_logins(test_client, standard_user):
-    user_id = standard_user["user"]["user_id"]
+    uid = standard_user["user"]["uid"]
 
     for attempt in range(1, 5):
-        response = await test_client.post("/api/auth/token", data={"username": user_id, "password": "wrong-password"})
+        response = await test_client.post("/api/auth/token", data={"username": uid, "password": "wrong-password"})
         assert response.status_code == 401, response.text
         assert response.json()["detail"] == "用户名或密码错误"
 
     locked_response = await test_client.post(
-        "/api/auth/token", data={"username": user_id, "password": "wrong-password"}
+        "/api/auth/token", data={"username": uid, "password": "wrong-password"}
     )
     assert locked_response.status_code == 423, locked_response.text
     assert "X-Lock-Remaining" in locked_response.headers
@@ -34,7 +34,7 @@ async def test_user_is_locked_after_repeated_failed_logins(test_client, standard
 
     still_locked_response = await test_client.post(
         "/api/auth/token",
-        data={"username": user_id, "password": standard_user["password"]},
+        data={"username": uid, "password": standard_user["password"]},
     )
     assert still_locked_response.status_code == 423, still_locked_response.text
     assert "X-Lock-Remaining" in still_locked_response.headers
@@ -88,10 +88,10 @@ async def test_deleted_user_token_is_rejected(test_client, admin_headers, standa
 
 
 async def test_locked_user_token_is_rejected(test_client, standard_user):
-    user_id = standard_user["user"]["user_id"]
+    uid = standard_user["user"]["uid"]
 
     for _ in range(5):
-        await test_client.post("/api/auth/token", data={"username": user_id, "password": "wrong-password"})
+        await test_client.post("/api/auth/token", data={"username": uid, "password": "wrong-password"})
 
     profile_response = await test_client.get("/api/auth/me", headers=standard_user["headers"])
     assert profile_response.status_code == 423

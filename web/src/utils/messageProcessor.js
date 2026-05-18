@@ -169,10 +169,9 @@ export class MessageProcessor {
           continue
         }
 
-        // LightRAG: 结果为对象，chunks 在 data.chunks 下
-        const lightragChunks = parsed?.data?.chunks
-        if (Array.isArray(lightragChunks)) {
-          for (const chunk of lightragChunks) appendChunk(chunk, kbName)
+        const wrappedChunks = parsed?.data?.chunks
+        if (Array.isArray(wrappedChunks)) {
+          for (const chunk of wrappedChunks) appendChunk(chunk, kbName)
         }
       }
     }

@@ -3,29 +3,46 @@ import json
 import os
 import textwrap
 import traceback
+import time
 from urllib.parse import quote, unquote
 
 import aiofiles
 from fastapi import APIRouter, Body, Depends, File, HTTPException, Query, Request, UploadFile
+from pydantic import BaseModel
 from fastapi.responses import FileResponse
 from starlette.responses import StreamingResponse
 
 from yuxi.services.task_service import TaskContext, tasker
 from server.utils.auth_middleware import get_admin_user, get_required_user
 from yuxi import config, knowledge_base
-from yuxi.knowledge.chunking.ragflow_like.presets import ensure_chunk_defaults_in_additional_params
+from yuxi.knowledge.factory import KnowledgeBaseFactory
+from yuxi.knowledge.graphs.milvus_graph_service import GRAPH_TASK_TYPE, MilvusGraphService
 from yuxi.plugins.parser import Parser, SUPPORTED_FILE_EXTENSIONS, is_supported_file_extension
 from yuxi.knowledge.utils import calculate_content_hash
-from yuxi.knowledge.utils.kb_utils import parse_minio_url
-from yuxi.models.embed import test_all_embedding_models_status, test_embedding_model_status
-from yuxi.services.model_cache import is_v2_spec_format
+from yuxi.knowledge.utils.kb_utils import is_minio_url, parse_minio_url
+from yuxi.services.model_cache import model_cache
+from yuxi.services.workspace_service import MAX_WORKSPACE_UPLOAD_SIZE_BYTES, resolve_workspace_file_path
 from yuxi.storage.postgres.models_business import User
 from yuxi.storage.minio.client import MinIOClient, StorageError, aupload_file_to_minio, get_minio_client
 from yuxi.utils import logger
 
 knowledge = APIRouter(prefix="/knowledge", tags=["knowledge"])
 
-DIFY_REQUIRED_PARAMS = ("dify_api_url", "dify_token", "dify_dataset_id")
+ACTIVE_GRAPH_BUILD_STATUSES = {"pending", "running"}
+
+
+class UpdateDatabaseRequest(BaseModel):
+    name: str
+    description: str
+    llm_model_spec: str | None = None
+    additional_params: dict | None = None
+    share_config: dict | None = None
+
+
+class WorkspaceImportRequest(BaseModel):
+    db_id: str
+    paths: list[str]
+
 
 media_types = {
     ".pdf": "application/pdf",
@@ -63,24 +80,41 @@ media_types = {
 }
 
 
-def _validate_dify_additional_params(additional_params: dict | None) -> dict:
-    params = dict(additional_params or {})
-    missing_fields = [field for field in DIFY_REQUIRED_PARAMS if not str(params.get(field) or "").strip()]
-    if missing_fields:
-        raise HTTPException(status_code=400, detail=f"Dify 参数缺失: {', '.join(missing_fields)}")
+async def _delete_document_storage_objects(db_id: str, doc_id: str, file_path: str) -> None:
+    minio_client = get_minio_client()
 
-    api_url = str(params.get("dify_api_url") or "").strip()
-    if not api_url.endswith("/v1"):
-        raise HTTPException(status_code=400, detail="Dify api_url 必须以 /v1 结尾")
-    return params
+    if is_minio_url(file_path):
+        try:
+            bucket_name, object_name = parse_minio_url(file_path)
+            await minio_client.adelete_file(bucket_name, object_name)
+        except Exception as minio_error:
+            logger.warning(f"从MinIO删除原始文件失败: {minio_error}")
+
+    try:
+        await minio_client.adelete_file(minio_client.KB_BUCKETS["parsed"], f"{db_id}/parsed/{doc_id}.md")
+    except Exception as minio_error:
+        logger.warning(f"从MinIO删除解析结果失败: {minio_error}")
 
 
-async def _ensure_database_not_dify(db_id: str, operation: str) -> None:
+async def _ensure_database_supports_documents(db_id: str, operation: str) -> None:
     db_info = await knowledge_base.get_database_info(db_id)
     if not db_info:
         raise HTTPException(status_code=404, detail=f"知识库 {db_id} 不存在")
-    if (db_info.get("kb_type") or "").lower() == "dify":
-        raise HTTPException(status_code=400, detail=f"Dify 知识库只支持检索，不支持{operation}")
+    kb_type = (db_info.get("kb_type") or "").lower()
+    kb_class = KnowledgeBaseFactory.get_kb_class(kb_type)
+    if not kb_class.supports_documents:
+        raise HTTPException(status_code=400, detail=f"{db_info.get('name') or kb_type} 只支持检索，不支持{operation}")
+
+
+async def _has_running_graph_build_task(db_id: str) -> bool:
+    return (
+        await tasker.find_task_by_payload(
+            task_type=GRAPH_TASK_TYPE,
+            payload_match={"db_id": db_id},
+            statuses=ACTIVE_GRAPH_BUILD_STATUSES,
+        )
+        is not None
+    )
 
 
 # =============================================================================
@@ -92,7 +126,7 @@ async def _ensure_database_not_dify(db_id: str, operation: str) -> None:
 async def get_databases(current_user: User = Depends(get_admin_user)):
     """获取所有知识库（根据用户权限过滤）"""
     try:
-        return await knowledge_base.get_databases_by_user_id(current_user.user_id)
+        return await knowledge_base.get_databases_by_uid(current_user.uid)
     except Exception as e:
         logger.error(f"获取数据库列表失败 {e}, {traceback.format_exc()}")
         return {"message": f"获取数据库列表失败 {e}", "databases": []}
@@ -102,18 +136,18 @@ async def get_databases(current_user: User = Depends(get_admin_user)):
 async def create_database(
     database_name: str = Body(...),
     description: str = Body(...),
-    embed_model_name: str | None = Body(None),
-    kb_type: str = Body("lightrag"),
+    embedding_model_spec: str | None = Body(None),
+    kb_type: str = Body("milvus"),
     additional_params: dict = Body({}),
-    llm_info: dict = Body(None),
+    llm_model_spec: str | None = Body(None),
     share_config: dict = Body(None),
     current_user: User = Depends(get_admin_user),
 ):
     """创建知识库"""
     logger.debug(
         f"Create database {database_name} with kb_type {kb_type}, "
-        f"additional_params {additional_params}, llm_info {llm_info}, "
-        f"embed_model_name {embed_model_name}, share_config {share_config}"
+        f"additional_params {additional_params}, llm_model_spec {llm_model_spec}, "
+        f"embedding_model_spec {embedding_model_spec}, share_config {share_config}"
     )
     try:
         # 先检查名称是否已存在
@@ -123,61 +157,39 @@ async def create_database(
                 detail=f"知识库名称 '{database_name}' 已存在，请使用其他名称",
             )
 
+        if not KnowledgeBaseFactory.is_type_supported(kb_type):
+            raise HTTPException(status_code=400, detail=f"Unsupported knowledge base type: {kb_type}")
+
+        kb_class = KnowledgeBaseFactory.get_kb_class(kb_type)
+
         additional_params = {**(additional_params or {})}
         additional_params["auto_generate_questions"] = False  # 默认不生成问题
 
-        def remove_reranker_config(kb: str, params: dict) -> None:
-            """
-            移除 reranker_config（已废弃）
-            所有 reranker 参数现在通过 query_params.options 配置
-            """
-            reranker_cfg = params.get("reranker_config")
-            if reranker_cfg:
-                if kb == "milvus":
-                    logger.info("reranker_config is deprecated, please use query_params.options instead")
-                else:
-                    logger.warning(f"{kb} does not support reranker, ignoring reranker_config")
-                # 移除 reranker_config，不再保存
-                params.pop("reranker_config", None)
+        if "reranker_config" in additional_params:
+            raise HTTPException(
+                status_code=400,
+                detail="reranker_config 已移除，请在查询参数中使用 reranker_model spec",
+            )
+        additional_params = kb_class.normalize_additional_params(additional_params)
 
-        remove_reranker_config(kb_type, additional_params)
-        additional_params = ensure_chunk_defaults_in_additional_params(additional_params)
+        if kb_class.requires_embedding_model:
+            if not embedding_model_spec:
+                raise HTTPException(status_code=400, detail="embedding_model_spec 不能为空")
 
-        embed_info_dict = None
-        if kb_type == "dify":
-            additional_params = _validate_dify_additional_params(additional_params)
+            info = model_cache.get_model_info(embedding_model_spec)
+            if not info or info.model_type != "embedding":
+                raise HTTPException(status_code=400, detail=f"不支持的 embedding 模型: {embedding_model_spec}")
         else:
-            if not embed_model_name:
-                raise HTTPException(status_code=400, detail="embed_model_name 不能为空")
-
-            # V2 embedding model (spec 格式: provider_id:model_id，第一个特殊字符为冒号)
-            if is_v2_spec_format(embed_model_name):
-                from yuxi.services.model_cache import model_cache
-
-                info = model_cache.get_model_info(embed_model_name)
-                if not info or info.model_type != "embedding":
-                    raise HTTPException(status_code=400, detail=f"不支持的 embedding 模型: {embed_model_name}")
-                embed_info_dict = {
-                    "name": info.display_name,
-                    "dimension": info.dimension,
-                    "base_url": info.base_url,
-                    "api_key": info.api_key,
-                    "model_id": info.spec,
-                    "batch_size": info.batch_size,
-                }
-            else:
-                if embed_model_name not in config.embed_model_names:
-                    raise HTTPException(status_code=400, detail=f"不支持的 embedding 模型: {embed_model_name}")
-                embed_info = config.embed_model_names[embed_model_name]
-                embed_info_dict = embed_info.model_dump() if hasattr(embed_info, "model_dump") else embed_info.dict()
+            embedding_model_spec = None
 
         database_info = await knowledge_base.create_database(
             database_name,
             description,
             kb_type=kb_type,
-            embed_info=embed_info_dict,
-            llm_info=llm_info,
+            embedding_model_spec=embedding_model_spec,
+            llm_model_spec=llm_model_spec,
             share_config=share_config,
+            created_by=current_user.uid,
             **additional_params,
         )
 
@@ -198,13 +210,14 @@ async def create_database(
 async def get_accessible_databases(current_user: User = Depends(get_required_user)):
     """获取当前用户有权访问的知识库列表（用于智能体配置）"""
     try:
-        databases = await knowledge_base.get_databases_by_user_id(current_user.user_id)
+        databases = await knowledge_base.get_databases_by_uid(current_user.uid)
 
         accessible = [
             {
                 "name": db.get("name", ""),
                 "db_id": db.get("db_id"),
                 "description": db.get("description", ""),
+                "created_by": db.get("created_by"),
             }
             for db in databases.get("databases", [])
         ]
@@ -227,39 +240,42 @@ async def get_database_info(db_id: str, current_user: User = Depends(get_admin_u
 @knowledge.put("/databases/{db_id}")
 async def update_database_info(
     db_id: str,
-    name: str = Body(...),
-    description: str = Body(...),
-    llm_info: dict = Body(None),
-    additional_params: dict | None = Body(None),
-    share_config: dict = Body(None),
+    data: UpdateDatabaseRequest,
     current_user: User = Depends(get_admin_user),
 ):
     """更新知识库信息"""
     logger.debug(
-        f"[update_database_info] 接收到的参数: name={name}, llm_info={llm_info}, "
-        f"additional_params={additional_params}, share_config={share_config}"
+        f"[update_database_info] 接收到的参数: name={data.name}, llm_model_spec={data.llm_model_spec}, "
+        f"additional_params={data.additional_params}, share_config={data.share_config}"
     )
     try:
-        if additional_params is not None:
-            additional_params = ensure_chunk_defaults_in_additional_params(additional_params)
+        update_llm_model_spec = "llm_model_spec" in data.model_fields_set
 
+        additional_params = data.additional_params
+        if additional_params is not None:
             db_info = await knowledge_base.get_database_info(db_id)
             if not db_info:
                 raise HTTPException(status_code=404, detail=f"知识库 {db_id} 不存在")
 
             kb_type = (db_info.get("kb_type") or "").lower()
-            if kb_type == "dify":
-                merged_params = dict(db_info.get("additional_params") or {})
-                merged_params.update(additional_params)
-                _validate_dify_additional_params(merged_params)
+            kb_class = KnowledgeBaseFactory.get_kb_class(kb_type)
+            merged_params = dict(db_info.get("additional_params") or {})
+            merged_params.update(additional_params)
+            kb_class.normalize_additional_params(merged_params)
+            additional_params = (
+                kb_class.normalize_additional_params(additional_params)
+                if kb_class.apply_chunk_defaults
+                else kb_class.normalize_additional_params(merged_params)
+            )
 
         database = await knowledge_base.update_database(
             db_id,
-            name,
-            description,
-            llm_info,
+            data.name,
+            data.description,
+            data.llm_model_spec,
+            update_llm_model_spec=update_llm_model_spec,
             additional_params=additional_params,
-            share_config=share_config,
+            share_config=data.share_config,
         )
         return {"message": "更新成功", "database": database}
     except Exception as e:
@@ -283,6 +299,111 @@ async def delete_database(db_id: str, current_user: User = Depends(get_admin_use
     except Exception as e:
         logger.error(f"删除数据库失败 {e}, {traceback.format_exc()}")
         raise HTTPException(status_code=400, detail=f"删除数据库失败: {e}")
+
+
+@knowledge.get("/databases/{db_id}/graph-build/status")
+async def get_graph_build_status(db_id: str, current_user: User = Depends(get_admin_user)):
+    try:
+        return await MilvusGraphService().get_status(db_id, tasker=tasker)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"获取图谱构建状态失败 {e}, {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"获取图谱构建状态失败: {e}")
+
+
+@knowledge.post("/databases/{db_id}/graph-build/config")
+async def configure_graph_build(
+    db_id: str,
+    data: dict = Body(...),
+    current_user: User = Depends(get_admin_user),
+):
+    try:
+        config = await MilvusGraphService().configure(
+            db_id,
+            extractor_type=data.get("extractor_type"),
+            extractor_options=data.get("extractor_options") or {},
+            created_by=current_user.uid,
+        )
+        return {"message": "图谱抽取配置已锁定", "status": "success", "config": config}
+    except ValueError as e:
+        status_code = 409 if "已锁定" in str(e) else 400
+        raise HTTPException(status_code=status_code, detail=str(e))
+    except Exception as e:
+        logger.error(f"配置图谱构建失败 {e}, {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"配置图谱构建失败: {e}")
+
+
+@knowledge.post("/databases/{db_id}/graph-build/index")
+async def index_graph_build(
+    db_id: str,
+    data: dict = Body(default={}),
+    current_user: User = Depends(get_admin_user),
+):
+    try:
+        if await _has_running_graph_build_task(db_id):
+            raise HTTPException(status_code=409, detail="该知识库已有正在运行的图谱构建任务")
+
+        database = await knowledge_base.get_database_info(db_id)
+        if not database:
+            raise HTTPException(status_code=404, detail=f"知识库 {db_id} 不存在")
+
+        batch_size = max(1, min(int(data.get("batch_size") or 20), 200))
+        service = MilvusGraphService()
+        graph_status = await service.get_status(db_id)
+        if not graph_status.get("locked"):
+            raise HTTPException(status_code=400, detail="请先确认并锁定图谱抽取配置")
+
+        async def run_graph_index(context: TaskContext):
+            await context.set_message("任务初始化")
+            await context.set_progress(5.0, "准备构建图谱")
+            result = await service.build_pending_chunks(db_id, batch_size=batch_size, context=context)
+            await context.set_result(result)
+            await context.set_progress(100.0, f"图谱构建完成，成功 {result['success']} 个，失败 {result['failed']} 个")
+            return result
+
+        task, created = await tasker.enqueue_unique_by_payload(
+            name=f"图谱构建 ({database['name']})",
+            task_type=GRAPH_TASK_TYPE,
+            payload={"db_id": db_id, "batch_size": batch_size},
+            coroutine=run_graph_index,
+            payload_match={"db_id": db_id},
+            statuses=ACTIVE_GRAPH_BUILD_STATUSES,
+        )
+        if not created:
+            raise HTTPException(status_code=409, detail="该知识库已有正在运行的图谱构建任务")
+        return {"message": "图谱构建任务已提交", "status": "queued", "task_id": task.id}
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"提交图谱构建任务失败 {e}, {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"提交图谱构建任务失败: {e}")
+
+
+@knowledge.post("/databases/{db_id}/graph-build/reset")
+async def reset_graph_build(
+    db_id: str,
+    data: dict = Body(default={}),
+    current_user: User = Depends(get_admin_user),
+):
+    try:
+        if await _has_running_graph_build_task(db_id):
+            raise HTTPException(status_code=409, detail="该知识库存在正在运行的图谱构建任务，无法重置")
+
+        return await MilvusGraphService().reset(
+            db_id,
+            clear_extraction_result=bool(data.get("clear_extraction_result", True)),
+            clear_config=bool(data.get("clear_config", False)),
+        )
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"重置图谱构建状态失败 {e}, {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"重置图谱构建状态失败: {e}")
 
 
 @knowledge.get("/databases/{db_id}/export")
@@ -322,36 +443,28 @@ async def add_documents(
 ):
     """添加文档到知识库（上传 -> 解析 -> 可选入库）"""
     logger.debug(f"Add documents for db_id {db_id}: {items} {params=}")
-    await _ensure_database_not_dify(db_id, "文档添加/解析/入库")
+    await _ensure_database_supports_documents(db_id, "文档添加/解析/入库")
 
     content_type = params.get("content_type", "file")
     # 自动入库参数
     auto_index = params.get("auto_index", False)
-    indexing_params = {
-        "chunk_size": params.get("chunk_size", 1000),
-        "chunk_overlap": params.get("chunk_overlap", 200),
-        "qa_separator": params.get("qa_separator", ""),
-        "chunk_preset_id": params.get("chunk_preset_id"),
-        "chunk_parser_config": params.get("chunk_parser_config"),
-    }
-    if not indexing_params.get("chunk_preset_id"):
-        indexing_params.pop("chunk_preset_id", None)
-    if not isinstance(indexing_params.get("chunk_parser_config"), dict):
-        indexing_params.pop("chunk_parser_config", None)
+    indexing_params = {}
+    chunk_preset_id = params.get("chunk_preset_id")
+    if chunk_preset_id:
+        indexing_params["chunk_preset_id"] = chunk_preset_id
+
+    chunk_parser_config = params.get("chunk_parser_config")
+    if isinstance(chunk_parser_config, dict):
+        indexing_params["chunk_parser_config"] = chunk_parser_config
 
     # URL 解析与入库（需白名单验证）
     if content_type == "url":
         raise HTTPException(status_code=400, detail="URL 处理方式已变更，请使用 fetch-url 接口先获取内容")
 
-    # 安全检查：验证文件路径
     if content_type == "file":
-        from yuxi.knowledge.utils.kb_utils import validate_file_path
-
         for item in items:
-            try:
-                validate_file_path(item, db_id)
-            except ValueError as e:
-                raise HTTPException(status_code=403, detail=str(e))
+            if not is_minio_url(item):
+                raise HTTPException(status_code=400, detail="File source must be a MinIO URL")
 
     async def run_ingest(context: TaskContext):
         await context.set_message("任务初始化")
@@ -376,7 +489,7 @@ async def add_documents(
                 try:
                     # 1. Add file record (UPLOADED)
                     file_meta = await knowledge_base.add_file_record(
-                        db_id, item, params=params, operator_id=current_user.user_id
+                        db_id, item, params=params, operator_id=current_user.uid
                     )
                     file_id = file_meta["file_id"]
                     added_files[item] = (file_id, file_meta)
@@ -408,7 +521,7 @@ async def add_documents(
 
                 try:
                     # 2. Parse file (PARSING -> PARSED)
-                    file_meta = await knowledge_base.parse_file(db_id, file_id, operator_id=current_user.user_id)
+                    file_meta = await knowledge_base.parse_file(db_id, file_id, operator_id=current_user.uid)
                     added_files[item] = (file_id, file_meta)
                     processed_items.append(file_meta)
                     parse_success_count += 1
@@ -441,11 +554,11 @@ async def add_documents(
                     try:
                         # 1. 更新入库参数
                         await knowledge_base.update_file_params(
-                            db_id, file_id, indexing_params, operator_id=current_user.user_id
+                            db_id, file_id, indexing_params, operator_id=current_user.uid
                         )
                         # 2. 执行入库（传入 indexing_params 确保使用的参数与用户设置一致）
                         result = await knowledge_base.index_file(
-                            db_id, file_id, operator_id=current_user.user_id, params=indexing_params
+                            db_id, file_id, operator_id=current_user.uid, params=indexing_params
                         )
                         processed_items.append(result)
                     except Exception as index_error:
@@ -514,7 +627,7 @@ async def add_documents(
 async def parse_documents(db_id: str, file_ids: list[str] = Body(...), current_user: User = Depends(get_admin_user)):
     """手动触发文档解析"""
     logger.debug(f"Parse documents for db_id {db_id}: {file_ids}")
-    await _ensure_database_not_dify(db_id, "文档解析")
+    await _ensure_database_supports_documents(db_id, "文档解析")
 
     async def run_parse(context: TaskContext):
         await context.set_message("任务初始化")
@@ -530,7 +643,7 @@ async def parse_documents(db_id: str, file_ids: list[str] = Body(...), current_u
                 await context.set_progress(progress, f"正在解析第 {idx}/{total} 个文档")
 
                 try:
-                    result = await knowledge_base.parse_file(db_id, file_id, operator_id=current_user.user_id)
+                    result = await knowledge_base.parse_file(db_id, file_id, operator_id=current_user.uid)
                     processed_items.append(result)
                 except Exception as e:
                     logger.error(f"Parse failed for {file_id}: {e}")
@@ -568,7 +681,7 @@ async def index_documents(
 ):
     """手动触发文档入库（Indexing），支持更新参数"""
     logger.debug(f"Index documents for db_id {db_id}: {file_ids} {params=}")
-    await _ensure_database_not_dify(db_id, "文档入库")
+    await _ensure_database_supports_documents(db_id, "文档入库")
 
     # extract operator_id safely before background task
     operator_id = current_user.id
@@ -641,7 +754,7 @@ async def index_documents(
 async def get_document_info(db_id: str, doc_id: str, current_user: User = Depends(get_admin_user)):
     """获取文档详细信息（包含基本信息和内容信息）"""
     logger.debug(f"GET document {doc_id} info in {db_id}")
-    await _ensure_database_not_dify(db_id, "文档查看")
+    await _ensure_database_supports_documents(db_id, "文档查看")
 
     try:
         info = await knowledge_base.get_file_info(db_id, doc_id)
@@ -655,7 +768,7 @@ async def get_document_info(db_id: str, doc_id: str, current_user: User = Depend
 async def get_document_basic_info(db_id: str, doc_id: str, current_user: User = Depends(get_admin_user)):
     """获取文档基本信息（仅元数据）"""
     logger.debug(f"GET document {doc_id} basic info in {db_id}")
-    await _ensure_database_not_dify(db_id, "文档查看")
+    await _ensure_database_supports_documents(db_id, "文档查看")
 
     try:
         info = await knowledge_base.get_file_basic_info(db_id, doc_id)
@@ -669,7 +782,7 @@ async def get_document_basic_info(db_id: str, doc_id: str, current_user: User = 
 async def get_document_content(db_id: str, doc_id: str, current_user: User = Depends(get_admin_user)):
     """获取文档内容信息（chunks和lines）"""
     logger.debug(f"GET document {doc_id} content in {db_id}")
-    await _ensure_database_not_dify(db_id, "文档查看")
+    await _ensure_database_supports_documents(db_id, "文档查看")
 
     try:
         info = await knowledge_base.get_file_content(db_id, doc_id)
@@ -685,7 +798,7 @@ async def batch_delete_documents(
 ):
     """批量删除文档或文件夹"""
     logger.debug(f"BATCH DELETE documents {file_ids} in {db_id}")
-    await _ensure_database_not_dify(db_id, "批量文档删除")
+    await _ensure_database_supports_documents(db_id, "批量文档删除")
 
     deleted_count = 0
     failed_items = []
@@ -703,16 +816,7 @@ async def batch_delete_documents(
 
             file_path = file_meta_info.get("meta", {}).get("path", "")
 
-            # 尝试从 MinIO 删除文件对象与解析结果
-            try:
-                minio_client = get_minio_client()
-                if file_path.startswith(("http://", "https://")):
-                    bucket_name, object_name = parse_minio_url(file_path)
-                    await minio_client.adelete_file(bucket_name, object_name)
-                await minio_client.adelete_file(minio_client.KB_BUCKETS["parsed"], f"{db_id}/parsed/{doc_id}.md")
-                logger.debug(f"成功从MinIO删除文件: {file_path}")
-            except Exception as minio_error:
-                logger.warning(f"从MinIO删除文件失败: {minio_error}")
+            await _delete_document_storage_objects(db_id, doc_id, file_path)
 
             # 无论MinIO删除是否成功，都继续从知识库删除
             await knowledge_base.delete_file(db_id, doc_id)
@@ -737,7 +841,7 @@ async def batch_delete_documents(
 async def delete_document(db_id: str, doc_id: str, current_user: User = Depends(get_admin_user)):
     """删除文档或文件夹"""
     logger.debug(f"DELETE document {doc_id} info in {db_id}")
-    await _ensure_database_not_dify(db_id, "文档删除")
+    await _ensure_database_supports_documents(db_id, "文档删除")
     try:
         file_meta_info = await knowledge_base.get_file_basic_info(db_id, doc_id)
 
@@ -749,16 +853,7 @@ async def delete_document(db_id: str, doc_id: str, current_user: User = Depends(
 
         file_path = file_meta_info.get("meta", {}).get("path", "")
 
-        # 尝试从 MinIO 删除文件对象与解析结果
-        try:
-            minio_client = get_minio_client()
-            if file_path.startswith(("http://", "https://")):
-                bucket_name, object_name = parse_minio_url(file_path)
-                await minio_client.adelete_file(bucket_name, object_name)
-            await minio_client.adelete_file(minio_client.KB_BUCKETS["parsed"], f"{db_id}/parsed/{doc_id}.md")
-            logger.debug(f"成功从MinIO删除文件: {file_path}")
-        except Exception as minio_error:
-            logger.warning(f"从MinIO删除文件失败: {minio_error}")
+        await _delete_document_storage_objects(db_id, doc_id, file_path)
 
         # 无论MinIO删除是否成功，都继续从知识库删除
         await knowledge_base.delete_file(db_id, doc_id)
@@ -770,9 +865,9 @@ async def delete_document(db_id: str, doc_id: str, current_user: User = Depends(
 
 @knowledge.get("/databases/{db_id}/documents/{doc_id}/download")
 async def download_document(db_id: str, doc_id: str, request: Request, current_user: User = Depends(get_admin_user)):
-    """下载原始文件 - 根据path类型选择本地或MinIO下载"""
+    """下载原始文件"""
     logger.debug(f"Download document {doc_id} from {db_id}")
-    await _ensure_database_not_dify(db_id, "文档下载")
+    await _ensure_database_supports_documents(db_id, "文档下载")
     try:
         file_info = await knowledge_base.get_file_basic_info(db_id, doc_id)
         file_meta = file_info.get("meta", {})
@@ -799,102 +894,52 @@ async def download_document(db_id: str, doc_id: str, request: Request, current_u
         _, ext = os.path.splitext(decoded_filename)
         media_type = media_types.get(ext.lower(), "application/octet-stream")
 
-        # 根据path类型选择下载方式
-        from yuxi.knowledge.utils.kb_utils import is_minio_url
+        if not is_minio_url(file_path):
+            raise HTTPException(status_code=400, detail="文件路径必须是 MinIO URL")
 
-        if is_minio_url(file_path):
-            # MinIO下载
-            logger.debug(f"Downloading from MinIO: {file_path}")
+        logger.debug(f"Downloading from MinIO: {file_path}")
 
-            try:
-                # 使用通用函数解析MinIO URL
-                from yuxi.knowledge.utils.kb_utils import parse_minio_url
+        try:
+            bucket_name, object_name = parse_minio_url(file_path)
+            logger.debug(f"Parsed bucket_name: {bucket_name}, object_name: {object_name}")
 
-                bucket_name, object_name = parse_minio_url(file_path)
+            minio_client = get_minio_client()
 
-                logger.debug(f"Parsed bucket_name: {bucket_name}, object_name: {object_name}")
-
-                minio_client = get_minio_client()
-
-                # 直接使用解析出的完整对象名称下载
-                minio_response = await minio_client.adownload_response(
-                    bucket_name=bucket_name,
-                    object_name=object_name,
-                )
-                logger.debug(f"Successfully downloaded object: {object_name}")
-
-            except Exception as e:
-                logger.error(f"Failed to download MinIO file: {e}")
-                raise StorageError(f"下载文件失败: {e}")
-
-            # 创建流式生成器
-            async def minio_stream():
-                try:
-                    while True:
-                        chunk = await asyncio.to_thread(minio_response.read, 8192)
-                        if not chunk:
-                            break
-                        yield chunk
-                finally:
-                    minio_response.close()
-                    minio_response.release_conn()
-
-            # 创建StreamingResponse
-            response = StreamingResponse(
-                minio_stream(),
-                media_type=media_type,
+            # 直接使用解析出的完整对象名称下载
+            minio_response = await minio_client.adownload_response(
+                bucket_name=bucket_name,
+                object_name=object_name,
             )
-            # 正确处理中文文件名的HTTP头部设置
+            logger.debug(f"Successfully downloaded object: {object_name}")
+
+        except Exception as e:
+            logger.error(f"Failed to download MinIO file: {e}")
+            raise StorageError(f"下载文件失败: {e}")
+
+        # 创建流式生成器
+        async def minio_stream():
             try:
-                # 尝试使用ASCII编码（适用于英文文件名）
-                decoded_filename.encode("ascii")
-                # 如果成功，直接使用简单格式
-                response.headers["Content-Disposition"] = f'attachment; filename="{decoded_filename}"'
-            except UnicodeEncodeError:
-                # 如果包含非ASCII字符（如中文），使用RFC 2231格式
-                encoded_filename = quote(decoded_filename.encode("utf-8"))
-                response.headers["Content-Disposition"] = f"attachment; filename*=UTF-8''{encoded_filename}"
+                while True:
+                    chunk = await asyncio.to_thread(minio_response.read, 8192)
+                    if not chunk:
+                        break
+                    yield chunk
+            finally:
+                minio_response.close()
+                minio_response.release_conn()
 
-            return response
+        response = StreamingResponse(
+            minio_stream(),
+            media_type=media_type,
+        )
+        try:
+            decoded_filename.encode("ascii")
+            response.headers["Content-Disposition"] = f'attachment; filename="{decoded_filename}"'
+        except UnicodeEncodeError:
+            encoded_filename = quote(decoded_filename.encode("utf-8"))
+            response.headers["Content-Disposition"] = f"attachment; filename*=UTF-8''{encoded_filename}"
 
-        else:
-            # 本地文件下载
-            logger.debug(f"Downloading from local filesystem: {file_path}")
-
-            if not os.path.exists(file_path):
-                raise StorageError(f"文件不存在: {file_path}")
-
-            # 获取文件大小
-            file_size = os.path.getsize(file_path)
-
-            # 创建文件流式生成器
-            async def file_stream():
-                async with aiofiles.open(file_path, "rb") as f:
-                    while True:
-                        chunk = await f.read(8192)
-                        if not chunk:
-                            break
-                        yield chunk
-
-            # 创建StreamingResponse
-            response = StreamingResponse(
-                file_stream(),
-                media_type=media_type,
-            )
-            # 正确处理中文文件名的HTTP头部设置
-            try:
-                # 尝试使用ASCII编码（适用于英文文件名）
-                decoded_filename.encode("ascii")
-                # 如果成功，直接使用简单格式
-                response.headers["Content-Disposition"] = f'attachment; filename="{decoded_filename}"'
-                response.headers["Content-Length"] = str(file_size)
-            except UnicodeEncodeError:
-                # 如果包含非ASCII字符（如中文），使用RFC 2231格式
-                encoded_filename = quote(decoded_filename.encode("utf-8"))
-                response.headers["Content-Disposition"] = f"attachment; filename*=UTF-8''{encoded_filename}"
-                response.headers["Content-Length"] = str(file_size)
-
-            return response
+        return response
 
     except HTTPException:
         raise
@@ -984,10 +1029,7 @@ async def get_knowledge_base_query_params(db_id: str, current_user: User = Depen
         kb_instance = await knowledge_base._get_kb_for_database(db_id)
 
         # 调用知识库实例的方法获取配置
-        params = kb_instance.get_query_params_config(
-            db_id=db_id,
-            reranker_names=config.reranker_names,  # 传递动态配置
-        )
+        params = kb_instance.get_query_params_config(db_id=db_id)
 
         # 获取用户保存的配置并合并（从实例 metadata 读取）
         saved_options = kb_instance._get_query_params(db_id)
@@ -1060,8 +1102,9 @@ async def generate_sample_questions(
         db_info = await knowledge_base.get_database_info(db_id)
         if not db_info:
             raise HTTPException(status_code=404, detail=f"知识库 {db_id} 不存在")
-        if (db_info.get("kb_type") or "").lower() == "dify":
-            raise HTTPException(status_code=400, detail="Dify 知识库不支持基于文件生成测试问题")
+        kb_type = (db_info.get("kb_type") or "").lower()
+        if not KnowledgeBaseFactory.get_kb_class(kb_type).supports_documents:
+            raise HTTPException(status_code=400, detail=f"{db_info.get('name') or kb_type} 不支持基于文件生成测试问题")
 
         from yuxi.models import select_model
 
@@ -1213,7 +1256,7 @@ async def create_folder(
 ):
     """创建文件夹"""
     try:
-        await _ensure_database_not_dify(db_id, "文件夹创建")
+        await _ensure_database_supports_documents(db_id, "文件夹创建")
         return await knowledge_base.create_folder(db_id, folder_name, parent_id)
     except Exception as e:
         logger.error(f"创建文件夹失败 {e}, {traceback.format_exc()}")
@@ -1230,7 +1273,7 @@ async def move_document(
     """移动文件或文件夹"""
     logger.debug(f"Move document {doc_id} to {new_parent_id} in {db_id}")
     try:
-        await _ensure_database_not_dify(db_id, "文件移动")
+        await _ensure_database_supports_documents(db_id, "文件移动")
         return await knowledge_base.move_file(db_id, doc_id, new_parent_id)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -1313,6 +1356,72 @@ async def fetch_url(
         raise HTTPException(status_code=500, detail=f"Failed to fetch URL: {str(e)}")
 
 
+@knowledge.post("/files/import-workspace")
+async def import_workspace_files(
+    payload: WorkspaceImportRequest,
+    current_user: User = Depends(get_admin_user),
+):
+    """将当前用户工作区文件导入 MinIO，返回与普通文件上传一致的预处理结果。"""
+    db_id = payload.db_id.strip()
+    paths = [path for path in payload.paths if str(path or "").strip()]
+    if not db_id:
+        raise HTTPException(status_code=400, detail="db_id is required")
+    if not paths:
+        raise HTTPException(status_code=400, detail="请选择至少一个工作区文件")
+
+    await _ensure_database_supports_documents(db_id, "文档添加/解析/入库")
+
+    bucket_name = MinIOClient.KB_BUCKETS["documents"]
+    results = []
+    for workspace_path in paths:
+        target = resolve_workspace_file_path(path=workspace_path, current_user=current_user)
+
+        filename = target.name
+        ext = os.path.splitext(filename)[1].lower()
+        if ext == ".jsonl" or not (is_supported_file_extension(filename) or ext == ".zip"):
+            raise HTTPException(status_code=400, detail=f"Unsupported file type: {ext}")
+
+        size = target.stat().st_size
+        if size > MAX_WORKSPACE_UPLOAD_SIZE_BYTES:
+            raise HTTPException(status_code=400, detail="文件过大，当前仅支持 100 MB 以内的工作区文件")
+
+        file_bytes = await asyncio.to_thread(target.read_bytes)
+        content_hash = await calculate_content_hash(file_bytes)
+
+        file_exists = await knowledge_base.file_existed_in_db(db_id, content_hash)
+        if file_exists:
+            raise HTTPException(status_code=409, detail=f"数据库中已经存在了相同内容文件: {filename}")
+
+        basename, ext = os.path.splitext(filename)
+        timestamp = int(time.time() * 1000)
+        minio_filename = f"{basename}_{timestamp}{ext}"
+        object_name = f"{db_id}/upload/{minio_filename}"
+        minio_url = await aupload_file_to_minio(bucket_name, object_name, file_bytes)
+
+        normalized_filename = filename.lower()
+        same_name_files = await knowledge_base.get_same_name_files(db_id, normalized_filename)
+        results.append(
+            {
+                "message": "Workspace file successfully imported",
+                "file_path": minio_url,
+                "minio_path": minio_url,
+                "db_id": db_id,
+                "content_hash": content_hash,
+                "filename": normalized_filename,
+                "original_filename": basename,
+                "size": len(file_bytes),
+                "minio_filename": minio_filename,
+                "object_name": object_name,
+                "bucket_name": bucket_name,
+                "workspace_path": workspace_path,
+                "same_name_files": same_name_files,
+                "has_same_name": len(same_name_files) > 0,
+            }
+        )
+
+    return {"status": "success", "items": results}
+
+
 @knowledge.post("/files/upload")
 async def upload_file(
     file: UploadFile = File(...),
@@ -1374,6 +1483,7 @@ async def upload_file(
         "content_hash": content_hash,
         "filename": filename,  # 原始文件名（小写）
         "original_filename": basename,  # 原始文件名（去掉后缀）
+        "size": len(file_bytes),
         "minio_filename": minio_filename,  # MinIO中的文件名（带时间戳）
         "object_name": object_name,
         "bucket_name": bucket_name,  # MinIO存储桶名称
@@ -1446,38 +1556,6 @@ async def get_knowledge_base_statistics(current_user: User = Depends(get_admin_u
     except Exception as e:
         logger.error(f"获取知识库统计失败 {e}, {traceback.format_exc()}")
         return {"message": f"获取知识库统计失败 {e}", "stats": {}}
-
-
-# =============================================================================
-# === Embedding模型状态检查分组 ===
-# =============================================================================
-
-
-@knowledge.get("/embedding-models/{model_id}/status")
-async def get_embedding_model_status(model_id: str, current_user: User = Depends(get_admin_user)):
-    """获取指定embedding模型的状态"""
-    logger.debug(f"Checking embedding model status: {model_id}")
-    try:
-        status = await test_embedding_model_status(model_id)
-        return {"status": status, "message": "success"}
-    except Exception as e:
-        logger.error(f"获取embedding模型状态失败 {model_id}: {e}, {traceback.format_exc()}")
-        return {
-            "message": f"获取embedding模型状态失败: {e}",
-            "status": {"model_id": model_id, "status": "error", "message": str(e)},
-        }
-
-
-@knowledge.get("/embedding-models/status")
-async def get_all_embedding_models_status(current_user: User = Depends(get_admin_user)):
-    """获取所有embedding模型的状态"""
-    logger.debug("Checking all embedding models status")
-    try:
-        status = await test_all_embedding_models_status()
-        return {"status": status, "message": "success"}
-    except Exception as e:
-        logger.error(f"获取所有embedding模型状态失败: {e}, {traceback.format_exc()}")
-        return {"message": f"获取所有embedding模型状态失败: {e}", "status": {"models": {}, "total": 0, "available": 0}}
 
 
 # =============================================================================

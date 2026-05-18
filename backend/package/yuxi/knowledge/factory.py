@@ -77,8 +77,27 @@ class KnowledgeBaseFactory:
                 "class_name": kb_class.__name__,
                 "description": kb_class.__doc__ or "",
                 "default_config": cls._default_configs[kb_type],
+                "requires_embedding_model": kb_class.requires_embedding_model,
+                "supports_documents": kb_class.supports_documents,
+                "create_params": kb_class.get_create_params_config(),
             }
         return result
+
+    @classmethod
+    def get_kb_class(cls, kb_type: str) -> type[KnowledgeBase]:
+        """
+        获取指定类型的知识库类。
+
+        Args:
+            kb_type: 知识库类型
+
+        Returns:
+            知识库类
+        """
+        if kb_type not in cls._kb_types:
+            available_types = list(cls._kb_types.keys())
+            raise KBNotFoundError(f"Unknown knowledge base type: {kb_type}. Available types: {available_types}")
+        return cls._kb_types[kb_type]
 
     @classmethod
     def is_type_supported(cls, kb_type: str) -> bool:

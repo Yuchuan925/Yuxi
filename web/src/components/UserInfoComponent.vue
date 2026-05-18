@@ -1,6 +1,6 @@
 <template>
   <div class="user-info-component">
-    <a-dropdown :trigger="['hover']" v-if="userStore.isLoggedIn">
+    <a-dropdown :trigger="['click']" v-if="userStore.isLoggedIn">
       <div class="user-info-dropdown" :data-align="showRole ? 'left' : 'center'">
         <div class="user-avatar">
           <img
@@ -24,42 +24,36 @@
             <div class="user-info-display">
               <div class="user-menu-username">{{ userStore.username }}</div>
               <div class="user-menu-details">
-                <span class="user-menu-info">ID: {{ userStore.userIdLogin }}</span>
+                <span class="user-menu-info">ID: {{ userStore.uid }}</span>
                 <span class="user-menu-role">{{ userRoleText }}</span>
               </div>
             </div>
           </a-menu-item>
           <a-menu-divider />
-          <a-menu-item key="docs" @click="openDocs" :icon="BookOpenIcon">
+          <a-menu-item key="docs" @click="openDocs">
+            <template #icon><BookOpen :size="16" /></template>
             <span class="menu-text">文档中心</span>
           </a-menu-item>
-          <a-menu-item
-            key="theme"
-            @click="toggleTheme"
-            :icon="themeStore.isDark ? SunIcon : MoonIcon"
-          >
+          <a-menu-item key="theme" @click="toggleTheme">
+            <template #icon>
+              <Sun v-if="themeStore.isDark" :size="16" />
+              <Moon v-else :size="16" />
+            </template>
             <span class="menu-text">{{
               themeStore.isDark ? '切换到浅色模式' : '切换到深色模式 (Beta)'
             }}</span>
           </a-menu-item>
           <a-menu-divider v-if="userStore.isAdmin" />
-          <a-menu-item
-            v-if="userStore.isSuperAdmin"
-            key="debug"
-            @click="showDebug = true"
-            :icon="TerminalIcon"
-          >
+          <a-menu-item v-if="userStore.isSuperAdmin" key="debug" @click="showDebug = true">
+            <template #icon><Terminal :size="16" /></template>
             <span class="menu-text">调试面板（非生产环境）</span>
           </a-menu-item>
-          <a-menu-item
-            v-if="userStore.isAdmin"
-            key="setting"
-            @click="goToSetting"
-            :icon="SettingsIcon"
-          >
+          <a-menu-item v-if="userStore.isAdmin" key="setting" @click="goToSetting">
+            <template #icon><Settings :size="16" /></template>
             <span class="menu-text">系统设置</span>
           </a-menu-item>
-          <a-menu-item key="logout" @click="logout" :icon="LogOutIcon">
+          <a-menu-item key="logout" @click="logout">
+            <template #icon><LogOut :size="16" /></template>
             <span class="menu-text">退出登录</span>
           </a-menu-item>
         </a-menu>
@@ -124,12 +118,12 @@
             </div>
           </div>
           <div class="info-item">
-            <div class="info-label">用户ID</div>
+            <div class="info-label">UID</div>
             <div class="info-value user-id" v-if="!profileEditing">
-              {{ userStore.userIdLogin || '未设置' }}
+              {{ userStore.uid || '未设置' }}
             </div>
             <div class="info-value" v-else>
-              <a-input :value="userStore.userIdLogin || ''" disabled style="width: 240px" />
+              <a-input :value="userStore.uid || ''" disabled style="width: 240px" />
             </div>
           </div>
           <div class="info-item">
@@ -182,7 +176,7 @@
 </template>
 
 <script setup>
-import { computed, ref, inject, h, useSlots, watch } from 'vue'
+import { computed, ref, inject, useSlots, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useUserStore } from '@/stores/user'
 import DebugComponent from '@/components/DebugComponent.vue'
@@ -204,13 +198,6 @@ const userStore = useUserStore()
 const themeStore = useThemeStore()
 const slots = useSlots()
 
-// 预定义图标组件，避免 Vue 警告
-const BookOpenIcon = h(BookOpen, { size: '16' })
-const SunIcon = h(Sun, { size: '16' })
-const MoonIcon = h(Moon, { size: '16' })
-const TerminalIcon = h(Terminal, { size: '16' })
-const SettingsIcon = h(Settings, { size: '16' })
-const LogOutIcon = h(LogOut, { size: '16' })
 const DEFAULT_AVATAR_URL = 'https://xerrors.oss-cn-shanghai.aliyuncs.com/github/default.jpeg'
 
 // 调试面板状态
@@ -494,7 +481,7 @@ const handleAvatarChange = async (info) => {
   cursor: pointer;
   position: relative;
   overflow: hidden;
-  box-shadow: 0 2px 8px var(--shadow-2);
+  box-shadow: 0 2px 8px var(--shadow-1);
 
   &:hover {
     opacity: 0.9;

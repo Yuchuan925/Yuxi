@@ -1,9 +1,14 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
+import io
+from urllib.parse import quote
+
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from server.utils.auth_middleware import get_required_user
+from yuxi import knowledge_base
 from yuxi.services.workspace_service import (
     create_workspace_directory,
     delete_workspace_path,
@@ -28,6 +33,25 @@ class UpdateWorkspaceFileContentRequest(BaseModel):
     content: str
 
 
+async def _ensure_knowledge_read_access(current_user: User, db_id: str) -> None:
+    allowed = await knowledge_base.check_accessible(
+        {
+            "role": current_user.role,
+            "department_id": current_user.department_id,
+        },
+        db_id,
+    )
+    if not allowed:
+        raise HTTPException(status_code=403, detail="Access denied")
+
+
+def _raise_knowledge_read_error(error: ValueError) -> None:
+    message = str(error) or "知识库文件读取失败"
+    if message.startswith("Dify 知识库不支持"):
+        raise HTTPException(status_code=501, detail=message) from error
+    raise HTTPException(status_code=400, detail=message) from error
+
+
 @workspace.get("/tree", response_model=dict)
 async def get_workspace_tree(
     path: str = Query("/", description="工作区目录路径"),
@@ -49,6 +73,61 @@ async def get_workspace_file(
     current_user: User = Depends(get_required_user),
 ):
     return await read_workspace_file_content(path=path, current_user=current_user)
+
+
+@workspace.get("/knowledge/tree", response_model=dict)
+async def get_workspace_knowledge_tree(
+    db_id: str = Query(..., description="知识库 ID"),
+    parent_id: str | None = Query(None, description="父文件夹 ID"),
+    recursive: bool = Query(False, description="是否递归返回子目录文件"),
+    files_only: bool = Query(False, description="是否仅返回文件"),
+    current_user: User = Depends(get_required_user),
+):
+    await _ensure_knowledge_read_access(current_user, db_id)
+    try:
+        return await knowledge_base.list_file_tree(
+            db_id=db_id,
+            parent_id=parent_id,
+            recursive=recursive,
+            files_only=files_only,
+        )
+    except ValueError as error:
+        _raise_knowledge_read_error(error)
+
+
+@workspace.get("/knowledge/file", response_model=dict)
+async def get_workspace_knowledge_file(
+    db_id: str = Query(..., description="知识库 ID"),
+    file_id: str = Query(..., description="知识库文件 ID"),
+    variant: str = Query("parsed", description="预览模式：parsed 或 original"),
+    current_user: User = Depends(get_required_user),
+):
+    await _ensure_knowledge_read_access(current_user, db_id)
+    try:
+        return await knowledge_base.read_file_preview(db_id=db_id, file_id=file_id, variant=variant)
+    except ValueError as error:
+        _raise_knowledge_read_error(error)
+
+
+@workspace.get("/knowledge/download")
+async def download_workspace_knowledge_file(
+    db_id: str = Query(..., description="知识库 ID"),
+    file_id: str = Query(..., description="知识库文件 ID"),
+    variant: str = Query("original", description="下载模式：original 或 parsed"),
+    current_user: User = Depends(get_required_user),
+):
+    await _ensure_knowledge_read_access(current_user, db_id)
+    try:
+        data = await knowledge_base.get_file_download(db_id=db_id, file_id=file_id, variant=variant)
+    except ValueError as error:
+        _raise_knowledge_read_error(error)
+
+    filename = data["filename"]
+    return StreamingResponse(
+        io.BytesIO(data["content"]),
+        media_type=data["media_type"],
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(filename)}"},
+    )
 
 
 @workspace.put("/file", response_model=dict)

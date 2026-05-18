@@ -13,7 +13,7 @@ async def submit_message_feedback_view(
     rating: str,
     reason: str | None,
     db: AsyncSession,
-    current_user_id: str,
+    current_uid: str,
 ) -> dict:
     if rating not in ["like", "dislike"]:
         raise HTTPException(status_code=422, detail="Rating must be 'like' or 'dislike'")
@@ -26,11 +26,11 @@ async def submit_message_feedback_view(
 
         conversation_result = await db.execute(select(Conversation).filter_by(id=message.conversation_id))
         conversation = conversation_result.scalar_one_or_none()
-        if not conversation or conversation.user_id != str(current_user_id):
+        if not conversation or conversation.uid != str(current_uid):
             raise HTTPException(status_code=403, detail="Access denied")
 
         existing_feedback_result = await db.execute(
-            select(MessageFeedback).filter_by(message_id=message_id, user_id=str(current_user_id))
+            select(MessageFeedback).filter_by(message_id=message_id, uid=str(current_uid))
         )
         existing_feedback = existing_feedback_result.scalar_one_or_none()
         if existing_feedback:
@@ -38,7 +38,7 @@ async def submit_message_feedback_view(
 
         new_feedback = MessageFeedback(
             message_id=message_id,
-            user_id=str(current_user_id),
+            uid=str(current_uid),
             rating=rating,
             reason=reason,
         )
@@ -47,7 +47,7 @@ async def submit_message_feedback_view(
         await db.commit()
         await db.refresh(new_feedback)
 
-        logger.info(f"User {current_user_id} submitted {rating} feedback for message {message_id}")
+        logger.info(f"User {current_uid} submitted {rating} feedback for message {message_id}")
 
         return {
             "id": new_feedback.id,
@@ -69,11 +69,11 @@ async def get_message_feedback_view(
     *,
     message_id: int,
     db: AsyncSession,
-    current_user_id: str,
+    current_uid: str,
 ) -> dict:
     try:
         feedback_result = await db.execute(
-            select(MessageFeedback).filter_by(message_id=message_id, user_id=str(current_user_id))
+            select(MessageFeedback).filter_by(message_id=message_id, uid=str(current_uid))
         )
         feedback = feedback_result.scalar_one_or_none()
 

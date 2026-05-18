@@ -101,6 +101,7 @@ async def test_query_kb_returns_milvus_chunks_without_sandbox_paths(monkeypatch)
             "metadata": {
                 "file_id": "file-1",
                 "source": "auth-guide.pdf",
+                "resource_id": "db-1",
             },
         }
     ]
@@ -150,16 +151,17 @@ async def test_query_kb_allows_dify_knowledge_base(monkeypatch) -> None:
             "metadata": {
                 "file_id": "dify-doc-1",
                 "source": "Dify Doc",
+                "resource_id": "db-1",
             },
         }
     ]
 
 
 @pytest.mark.asyncio
-async def test_query_kb_returns_lightrag_result_without_path_injection(monkeypatch) -> None:
+async def test_query_kb_returns_plain_result_without_path_injection(monkeypatch) -> None:
     async def _fake_retriever(query_text: str, **kwargs):
         assert query_text == "auth"
-        return "LightRAG context"
+        return "Milvus context"
 
     monkeypatch.setattr(
         tools.knowledge_base,
@@ -168,7 +170,7 @@ async def test_query_kb_returns_lightrag_result_without_path_injection(monkeypat
             "db-1": {
                 "name": "FAQ",
                 "retriever": _fake_retriever,
-                "metadata": {"kb_type": "lightrag"},
+                "metadata": {"kb_type": "milvus"},
             }
         },
     )
@@ -181,7 +183,7 @@ async def test_query_kb_returns_lightrag_result_without_path_injection(monkeypat
     runtime = SimpleNamespace(context=SimpleNamespace())
     result = await _run_query_kb(kb_name="FAQ", query_text="auth", runtime=runtime)
 
-    assert result == "LightRAG context"
+    assert result == "Milvus context"
 
 
 @pytest.mark.asyncio
@@ -204,7 +206,7 @@ async def test_query_kb_normalizes_file_metadata_for_open(monkeypatch) -> None:
             "db-1": {
                 "name": "FAQ",
                 "retriever": _fake_retriever,
-                "metadata": {"kb_type": "lightrag"},
+                "metadata": {"kb_type": "milvus"},
             }
         },
     )
@@ -219,6 +221,7 @@ async def test_query_kb_normalizes_file_metadata_for_open(monkeypatch) -> None:
 
     assert result[0]["metadata"] == {
         "file_id": "file-1",
+        "resource_id": "db-1",
         "chunk_id": "chunk-1",
         "chunk_index": 3,
     }

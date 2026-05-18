@@ -124,9 +124,9 @@ async def mark_run_terminal(run_id: str, status: str, error_type: str | None = N
         await repo.set_terminal_status(run_id, status=status, error_type=error_type, error_message=error_message)
 
 
-async def _load_user(user_id: str):
+async def _load_user(uid: str):
     async with pg_manager.get_async_session_context() as db:
-        result = await db.execute(select(User).where(User.id == int(user_id)))
+        result = await db.execute(select(User).where(User.uid == uid, User.is_deleted == 0))
         return result.scalar_one_or_none()
 
 
@@ -202,12 +202,12 @@ async def process_agent_run(ctx, run_id: str):
     config = payload.get("config") or {}
     agent_id = payload.get("agent_id")
     image_content = payload.get("image_content")
-    user_id = payload.get("user_id")
+    uid = payload.get("uid")
     request_id = payload.get("request_id")
 
-    user = await _load_user(user_id)
+    user = await _load_user(uid)
     if not user:
-        await mark_run_terminal(run_id, "failed", "user_not_found", f"user {user_id} not found")
+        await mark_run_terminal(run_id, "failed", "user_not_found", f"user {uid} not found")
         return
 
     if not request_id:
@@ -219,7 +219,7 @@ async def process_agent_run(ctx, run_id: str):
         "agent_id": agent_id,
         "server_model_name": config.get("model", agent_id),
         "thread_id": config.get("thread_id"),
-        "user_id": user.id,
+        "uid": user.uid,
         "has_image": bool(image_content),
     }
 

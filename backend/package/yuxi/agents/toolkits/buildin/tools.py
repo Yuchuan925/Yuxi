@@ -1,8 +1,7 @@
 import os
-import traceback
 import uuid
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated
 
 import requests
 from langchain.tools import InjectedToolCallId
@@ -11,7 +10,7 @@ from langgraph.prebuilt.tool_node import ToolRuntime
 from langgraph.types import Command, interrupt
 from pydantic import BaseModel, Field
 
-from yuxi import config, graph_base
+from yuxi import config
 from yuxi.agents.toolkits.registry import ToolExtraMetadata, _all_tool_instances, _extra_registry, tool
 from yuxi.storage.minio import aupload_file_to_minio
 from yuxi.utils import logger
@@ -57,7 +56,7 @@ def _register_tavily_tool():
 
 
 # 模块加载时注册
-if config.enable_web_search:
+if os.getenv("TAVILY_API_KEY"):
     try:
         _register_tavily_tool()
     except Exception as e:
@@ -83,11 +82,11 @@ def _normalize_presented_artifact_path(filepath: str, runtime: ToolRuntime) -> s
     thread_id = getattr(runtime_context, "thread_id", None)
     if not thread_id:
         raise ValueError("当前运行时缺少 thread_id")
-    user_id = getattr(runtime_context, "user_id", None)
-    if not user_id:
-        raise ValueError("当前运行时缺少 user_id")
+    uid = getattr(runtime_context, "uid", None)
+    if not uid:
+        raise ValueError("当前运行时缺少 uid")
 
-    ensure_thread_dirs(thread_id, str(user_id))
+    ensure_thread_dirs(thread_id, str(uid))
     outputs_dir = sandbox_outputs_dir(thread_id).resolve()
     normalized_input = str(filepath or "").strip()
     if not normalized_input:
@@ -96,7 +95,7 @@ def _normalize_presented_artifact_path(filepath: str, runtime: ToolRuntime) -> s
     stripped = normalized_input.lstrip("/")
     virtual_prefix = VIRTUAL_PATH_PREFIX.lstrip("/")
     if stripped == virtual_prefix or stripped.startswith(f"{virtual_prefix}/"):
-        actual_path = resolve_virtual_path(thread_id, normalized_input, user_id=str(user_id))
+        actual_path = resolve_virtual_path(thread_id, normalized_input, uid=str(uid))
     else:
         actual_path = Path(normalized_input).expanduser().resolve()
 
@@ -211,10 +210,10 @@ def ask_user_question(
         list[dict] | str | None,
         "问题列表，每项格式 {question, options, multi_select, allow_other, question_id(optional)}",
     ] = None,
-    question: Annotated[str, "兼容字段：单个问题文本（建议优先使用 questions）"] = "",
-    options: Annotated[list[dict] | str | None, "兼容字段：单个问题候选项（建议优先使用 questions）"] = None,
-    multi_select: Annotated[bool, "兼容字段：单个问题是否允许多选"] = False,
-    allow_other: Annotated[bool, "兼容字段：单个问题是否允许 Other 自定义答案"] = True,
+    question: Annotated[str, "单问题模式：问题文本（建议优先使用 questions 参数）"] = "",
+    options: Annotated[list[dict] | str | None, "单问题模式：候选项"] = None,
+    multi_select: Annotated[bool, "单问题模式：是否允许多选"] = False,
+    allow_other: Annotated[bool, "单问题模式：是否允许自定义答案"] = True,
 ) -> dict:
     """向用户发起问题并等待回答。"""
     # 解析 options 参数：如果是字符串，尝试解析为 JSON
@@ -269,28 +268,6 @@ def ask_user_question(
     }
 
 
-KG_QUERY_DESCRIPTION = """
-使用这个工具可以查询知识图谱中包含的三元组信息。
-关键词（query），使用可能帮助回答这个问题的关键词进行查询，不要直接使用用户的原始输入去查询。
-"""
-
-
-@tool(category="buildin", tags=["图谱"], display_name="查询知识图谱", description=KG_QUERY_DESCRIPTION)
-def query_knowledge_graph(query: Annotated[str, "The keyword to query knowledge graph."]) -> Any:
-    """使用这个工具可以查询知识图谱中包含的三元组信息。关键词（query），使用可能帮助回答这个问题的关键词进行查询，不要直接使用用户的原始输入去查询。"""
-    try:
-        logger.debug(f"Querying knowledge graph with: {query}")
-        result = graph_base.query_node(query, hops=2, return_format="triples")
-        logger.debug(
-            f"Knowledge graph query returned "
-            f"{len(result.get('triples', [])) if isinstance(result, dict) else 'N/A'} triples"
-        )
-        return result
-    except Exception as e:
-        logger.error(f"Knowledge graph query error: {e}, {traceback.format_exc()}")
-        return f"知识图谱查询失败: {str(e)}"
-
-
 @tool(
     category="buildin",
     tags=["图片", "生成"],
@@ -302,7 +279,7 @@ async def text_to_img_qwen_image(
     negative_prompt: Annotated[str, "负面提示词，用于指定不想出现在图片中的元素"] = "",
     num_inference_steps: Annotated[int, "推理步数，范围1-100"] = 20,
     guidance_scale: Annotated[float, "引导强度，控制图片与提示词的匹配程度"] = 7.5,
-    user_id: Annotated[str, "用户ID，用于图片归档路径"] = "unknown",
+    uid: Annotated[str, "UID，用于图片归档路径"] = "unknown",
 ) -> str:
     """使用 Qwen-Image 模型生成图片，返回图片的URL，需要注意的是，生成结果不会默认展示，需要将返回的URL进行展示处理。"""
     url = "https://api.siliconflow.cn/v1/images/generations"
@@ -333,8 +310,8 @@ async def text_to_img_qwen_image(
     response = requests.get(image_url)
     file_data = response.content
 
-    safe_user_id = str(user_id or "unknown").replace("/", "_").replace("\\", "_")
-    file_name = f"user/{safe_user_id}/generated-images/{uuid.uuid4()}.jpg"
+    safe_uid = str(uid or "unknown").replace("/", "_").replace("\\", "_")
+    file_name = f"user/{safe_uid}/generated-images/{uuid.uuid4()}.jpg"
     image_url = await aupload_file_to_minio(bucket_name="public", file_name=file_name, data=file_data)
     logger.info(f"Image uploaded. URL: {image_url}")
     return image_url

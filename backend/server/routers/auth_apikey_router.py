@@ -86,9 +86,7 @@ async def list_api_keys(
             .limit(limit)
         )
         api_keys = result.scalars().all()
-        total_result = await db.execute(
-            select(func.count(APIKey.id)).filter(APIKey.user_id == current_user.id)
-        )
+        total_result = await db.execute(select(func.count(APIKey.id)).filter(APIKey.user_id == current_user.id))
     total = total_result.scalar()
 
     return {

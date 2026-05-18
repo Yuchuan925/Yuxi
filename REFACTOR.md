@@ -1,0 +1,30 @@
+
+
+
+# 兼容性报告
+
+无法兼容历史的数据库、知识库、配置项，只能重新创建项目
+
+# 功能性报告
+
+1. 将 LightRAG 从调用 package 修改为手动实现，不依赖原本仓库，更好管理。
+2. 移除 legacy 参数，简化代码逻辑，减少维护成本。
+3. 权限结构重构
+
+# 待办事项
+
+- [x] 移除所有对于 v1 的模型的代码的支持、移除所有对于 legacy 参数的支持
+- [x] 移除 lightrag
+- [x] 新增图谱构建，支持自定义 Schema、支持自定义并发数，知识库与向量检索解耦
+- [x] 知识图谱抽取要求支持并发处理
+
+
+## 权限部分
+- [x] Agent 的 user_id 使用的有歧义，从数据库表到代码中都修改为统一使用 yuxi_id 来代替
+- [ ] 权限新增一个 guest 的预设字段，暂无任何权限
+- [x] department 的 id 也不能使用那个索引的 id 来使用了，应该是一个独立的 dept_id，需要确认
+- [ ] allow user config skill
+- [ ] Config spacy model 的 load
+- [x] 在工作区的文件编辑的时候，保存和取消的按钮应该是悬浮在编辑框的右上角，而不是在 header 上面
+- [ ] default enable all build in tools / kbs / skills / mcps / subagents
+- [ ] 链接 Notion 和 feishu 目前来看，都是支持的

@@ -35,7 +35,6 @@ export const TOOL_ICON_MAP = {
   mysql_query: Database,
   present_artifacts: FolderOutput,
   query_kb: BookOpen,
-  query_knowledge_graph: Network,
   read_file: FileText,
   replace: FilePen,
   run_shell_command: Terminal,

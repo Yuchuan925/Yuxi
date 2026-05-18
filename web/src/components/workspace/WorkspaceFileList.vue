@@ -3,7 +3,7 @@
     <div class="file-list-header">
       <div class="path-line">
         <a-breadcrumb class="path-breadcrumb">
-          <a-breadcrumb-item v-for="item in breadcrumbItems" :key="item.path">
+          <a-breadcrumb-item v-for="item in resolvedBreadcrumbItems" :key="item.path">
             <button
               type="button"
               class="breadcrumb-action"
@@ -19,11 +19,11 @@
       </div>
       <div class="list-actions">
         <span class="entry-count">{{ entries.length }} 项</span>
-        <a-tooltip title="多选">
+        <a-tooltip v-if="!readonly" title="多选">
           <a-button
             size="small"
             class="lucide-icon-btn"
-            :type="selectionMode ? 'primary' : 'default'"
+            :type="effectiveSelectionMode ? 'primary' : 'default'"
             aria-label="多选"
             @click="toggleSelectionMode"
           >
@@ -31,7 +31,7 @@
           </a-button>
         </a-tooltip>
         <a-button
-          v-if="selectionMode"
+          v-if="effectiveSelectionMode"
           size="small"
           danger
           :disabled="!selectedPaths.length"
@@ -44,8 +44,8 @@
     </div>
 
     <div class="file-table" role="table" aria-label="工作区文件列表">
-      <div class="file-row table-head" :class="{ 'selection-enabled': selectionMode }" role="row">
-        <span v-if="selectionMode" class="selection-cell">
+      <div class="file-row table-head" :class="{ 'selection-enabled': effectiveSelectionMode }" role="row">
+        <span v-if="effectiveSelectionMode" class="selection-cell">
           <a-checkbox
             :checked="allSelected"
             :indeterminate="partiallySelected"
@@ -66,14 +66,14 @@
         :class="{
           selected: selectedPath === entry.path,
           deleting: isDeleting(entry.path),
-          'selection-enabled': selectionMode
+          'selection-enabled': effectiveSelectionMode
         }"
         role="row"
         tabindex="0"
         @click="$emit('select-entry', entry)"
         @keydown.enter="$emit('select-entry', entry)"
       >
-        <span v-if="selectionMode" class="selection-cell" @click.stop>
+        <span v-if="effectiveSelectionMode" class="selection-cell" @click.stop>
           <a-checkbox
             :checked="selectedPathSet.has(entry.path)"
             :disabled="isDeleting(entry.path)"
@@ -85,15 +85,15 @@
           <Folder v-if="entry.is_dir" :size="17" class="folder-icon" />
           <component
             v-else
-            :is="getFileIcon(entry.path)"
-            :style="{ color: getFileIconColor(entry.path), fontSize: '16px' }"
+            :is="getFileIcon(entry.name || entry.path)"
+            :style="{ color: getFileIconColor(entry.name || entry.path), fontSize: '16px' }"
           />
           <span class="entry-name" :title="entry.name">{{ entry.name }}</span>
         </span>
         <span>{{ entry.is_dir ? '-' : formatFileSize(entry.size) }}</span>
         <span>{{ formatRelativeTime(entry.modified_at) }}</span>
         <span class="action-cell" @click.stop>
-          <a-dropdown :trigger="['click']">
+          <a-dropdown v-if="!entry.is_dir || !readonly" :trigger="['click']">
             <button
               type="button"
               class="more-action"
@@ -115,7 +115,7 @@
                     <span>下载</span>
                   </span>
                 </a-menu-item>
-                <a-menu-item key="delete" danger @click="$emit('delete-entry', entry)">
+                <a-menu-item v-if="!readonly" key="delete" danger @click="$emit('delete-entry', entry)">
                   <span class="menu-item-content">
                     <Trash2 :size="14" />
                     <span>删除</span>
@@ -153,7 +153,10 @@ const props = defineProps({
   selectedPaths: { type: Array, default: () => [] },
   deletingPaths: { type: Array, default: () => [] },
   selectionMode: { type: Boolean, default: false },
-  loading: { type: Boolean, default: false }
+  loading: { type: Boolean, default: false },
+  readonly: { type: Boolean, default: false },
+  breadcrumbItems: { type: Array, default: null },
+  rootLabel: { type: String, default: '工作区' }
 })
 
 const emit = defineEmits([
@@ -169,11 +172,15 @@ const emit = defineEmits([
 const selectedPathSet = computed(() => new Set(props.selectedPaths))
 const deletingPathSet = computed(() => new Set(props.deletingPaths))
 const entryPaths = computed(() => props.entries.map((entry) => entry.path))
+const entryPathSet = computed(() => new Set(entryPaths.value))
 const normalizedCurrentPath = computed(() => (props.currentPath || '/').replace(/\/+$/, '') || '/')
-const breadcrumbItems = computed(() => {
+const effectiveSelectionMode = computed(() => !props.readonly && props.selectionMode)
+const resolvedBreadcrumbItems = computed(() => {
+  if (props.breadcrumbItems?.length) return props.breadcrumbItems
+
   const normalizedPath = normalizedCurrentPath.value
   if (normalizedPath === '/') {
-    return [{ name: '工作区', path: '/' }]
+    return [{ name: props.rootLabel, path: '/' }]
   }
 
   const segments = normalizedPath.split('/').filter(Boolean)
@@ -184,7 +191,7 @@ const breadcrumbItems = computed(() => {
       items.push({ name: segment, path })
       return items
     },
-    [{ name: '工作区', path: '/' }]
+    [{ name: props.rootLabel, path: '/' }]
   )
 })
 
@@ -201,6 +208,7 @@ const partiallySelected = computed(() => {
 const isDeleting = (path) => deletingPathSet.value.has(path)
 
 const toggleSelectionMode = () => {
+  if (props.readonly) return
   const nextMode = !props.selectionMode
   emit('update:selectionMode', nextMode)
   if (!nextMode) {
@@ -221,7 +229,7 @@ const toggleEntrySelection = (path, checked) => {
   }
   emit(
     'update:selectedPaths',
-    [...nextSelectedPaths].filter((selectedPath) => entryPaths.value.includes(selectedPath))
+    [...nextSelectedPaths].filter((selectedPath) => entryPathSet.value.has(selectedPath))
   )
 }
 </script>

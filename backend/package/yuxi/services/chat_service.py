@@ -34,8 +34,8 @@ from yuxi.utils.question_utils import (
 WORKSPACE_AGENTS_PROMPT_MAX_BYTES = 64 * 1024
 
 
-def _load_workspace_agents_prompt(thread_id: str, user_id: str) -> str:
-    prompt_file = sandbox_workspace_agents_prompt_file(thread_id, user_id)
+def _load_workspace_agents_prompt(thread_id: str, uid: str) -> str:
+    prompt_file = sandbox_workspace_agents_prompt_file(thread_id, uid)
     try:
         with prompt_file.open("rb") as buffer:
             content = buffer.read(WORKSPACE_AGENTS_PROMPT_MAX_BYTES + 1)
@@ -56,16 +56,16 @@ def _load_workspace_agents_prompt(thread_id: str, user_id: str) -> str:
     return prompt
 
 
-async def _build_agent_input_context(agent_config: dict, *, thread_id: str, user_id: str) -> dict:
+async def _build_agent_input_context(agent_config: dict, *, thread_id: str, uid: str) -> dict:
     input_context = dict(agent_config or {})
-    agents_prompt = await asyncio.to_thread(_load_workspace_agents_prompt, thread_id, user_id)
+    agents_prompt = await asyncio.to_thread(_load_workspace_agents_prompt, thread_id, uid)
 
     if agents_prompt:
         agents_section = f"用户工作区 agents/AGENTS.md 内容：\n{agents_prompt}"
         base_prompt = str(input_context.get("system_prompt") or "").rstrip()
         input_context["system_prompt"] = f"{base_prompt}\n\n{agents_section}" if base_prompt else agents_section
 
-    input_context.update({"user_id": user_id, "thread_id": thread_id})
+    input_context.update({"uid": uid, "thread_id": thread_id})
     return input_context
 
 
@@ -126,7 +126,7 @@ def _build_langfuse_run_context(
     message_type: str | None = None,
 ) -> LangfuseRunContext:
     return build_run_context(
-        user_id=str(current_user.id),
+        user_id=str(getattr(current_user, "uid", current_user.id)),
         thread_id=thread_id,
         agent_id=agent_id,
         request_id=request_id,
@@ -134,7 +134,7 @@ def _build_langfuse_run_context(
         agent_config_id=agent_config_id,
         message_type=message_type,
         username=getattr(current_user, "username", None),
-        login_user_id=getattr(current_user, "user_id", None),
+        login_user_id=getattr(current_user, "uid", None),
         department_id=getattr(current_user, "department_id", None),
     )
 
@@ -359,19 +359,19 @@ def _build_ask_user_question_payload(info: Any, thread_id: str) -> dict[str, Any
 
     questions = _normalize_interrupt_questions(payload.get("questions"))
     if not questions:
-        legacy_question = str(payload.get("question") or "").strip()
-        if legacy_question:
-            legacy_item: dict[str, Any] = {
+        single_question = str(payload.get("question") or "").strip()
+        if single_question:
+            single_item: dict[str, Any] = {
                 "question_id": str(payload.get("question_id") or uuid.uuid4()),
-                "question": legacy_question,
+                "question": single_question,
                 "options": _normalize_interrupt_options(payload.get("options")),
                 "multi_select": bool(payload.get("multi_select", False)),
                 "allow_other": bool(payload.get("allow_other", True)),
             }
-            legacy_operation = payload.get("operation")
-            if isinstance(legacy_operation, str) and legacy_operation.strip():
-                legacy_item["operation"] = legacy_operation.strip()
-            questions = [legacy_item]
+            single_operation = payload.get("operation")
+            if isinstance(single_operation, str) and single_operation.strip():
+                single_item["operation"] = single_operation.strip()
+            questions = [single_item]
 
     if not questions:
         questions = [
@@ -419,11 +419,11 @@ def _extract_ai_message(messages: list[Any] | None) -> AIMessage | None:
 
 async def get_agent_config_by_id(db, user: User, agent_config_id: int):
     """按配置 ID 解析 AgentConfig 记录。"""
-    department_id = user.department_id
+    uid = str(user.uid)
 
     agent_config_repo = AgentConfigRepository(db)
     config_item = await agent_config_repo.get_by_id(config_id=int(agent_config_id))
-    if config_item is None or config_item.department_id != department_id:
+    if config_item is None or config_item.uid != uid:
         raise ValueError("配置不存在")
 
     return config_item
@@ -431,7 +431,7 @@ async def get_agent_config_by_id(db, user: User, agent_config_id: int):
 
 async def _resolve_agent_config(db, agent_id: str, user: User, agent_config_id):
     """解析 agent_config，返回 agent_config"""
-    department_id = user.department_id
+    uid = str(user.uid)
 
     agent_config_repo = AgentConfigRepository(db)
     config_item = None
@@ -441,9 +441,7 @@ async def _resolve_agent_config(db, agent_id: str, user: User, agent_config_id):
             config_item = None
 
     if config_item is None:
-        config_item = await agent_config_repo.get_or_create_default(
-            department_id=department_id, agent_id=agent_id, created_by=str(user.id)
-        )
+        config_item = await agent_config_repo.get_or_create_default(uid=uid, agent_id=agent_id, created_by=uid)
 
     return (config_item.config_json or {}).get("context", {})
 
@@ -478,15 +476,14 @@ async def _ensure_thread_bound_agent_config(
     conv_repo: ConversationRepository,
     agent_config_repo: AgentConfigRepository,
     thread_id: str,
-    user_id: str,
-    department_id: int,
+    uid: str,
     agent_id: str,
     agent_config_id: int,
 ) -> None:
     conversation = await conv_repo.get_conversation_by_thread_id(thread_id)
     if not conversation:
         conversation = await conv_repo.create_conversation(
-            user_id=user_id,
+            uid=uid,
             agent_id=agent_id,
             thread_id=thread_id,
         )
@@ -502,13 +499,21 @@ async def _ensure_thread_bound_agent_config(
                 f"switching to default config for agent {agent_id}"
             )
             default_config = await agent_config_repo.get_or_create_default(
-                department_id=department_id,
+                uid=uid,
                 agent_id=agent_id,
-                created_by=user_id,
+                created_by=uid,
             )
             await conv_repo.bind_agent_config(thread_id, default_config.id)
         else:
-            await conv_repo.bind_agent_config(thread_id, agent_config_id)
+            if config_item.uid != uid or config_item.agent_id != agent_id:
+                default_config = await agent_config_repo.get_or_create_default(
+                    uid=uid,
+                    agent_id=agent_id,
+                    created_by=uid,
+                )
+                await conv_repo.bind_agent_config(thread_id, default_config.id)
+            else:
+                await conv_repo.bind_agent_config(thread_id, agent_config_id)
 
 
 async def agent_chat(
@@ -544,15 +549,7 @@ async def agent_chat(
             "request_id": meta.get("request_id"),
         }
 
-    if not current_user.department_id:
-        return {
-            "status": "error",
-            "error_type": "invalid_config",
-            "error_message": "当前用户未绑定部门",
-            "request_id": meta.get("request_id"),
-        }
-
-    user_id = str(current_user.id)
+    uid = str(current_user.uid)
     meta = dict(meta or {})
     if "request_id" not in meta or not meta.get("request_id"):
         logger.warning("请求缺少 request_id，已自动生成一个新的 request_id")
@@ -575,7 +572,7 @@ async def agent_chat(
             "agent_id": agent_id,
             "server_model_name": agent_id,
             "thread_id": thread_id,
-            "user_id": current_user.id,
+            "uid": current_user.uid,
             "has_image": bool(image_content),
         }
     )
@@ -598,7 +595,7 @@ async def agent_chat(
         thread_id = str(uuid.uuid4())
         logger.warning(f"No thread_id provided, generated new thread_id: {thread_id}")
 
-    input_context = await _build_agent_input_context(agent_config, thread_id=thread_id, user_id=user_id)
+    input_context = await _build_agent_input_context(agent_config, thread_id=thread_id, uid=uid)
     langfuse_run = _build_langfuse_run_context(
         current_user=current_user,
         thread_id=thread_id,
@@ -617,8 +614,7 @@ async def agent_chat(
             conv_repo=conv_repo,
             agent_config_repo=agent_config_repo,
             thread_id=thread_id,
-            user_id=user_id,
-            department_id=current_user.department_id,
+            uid=uid,
             agent_id=agent_id,
             agent_config_id=agent_config_id,
         )
@@ -638,7 +634,7 @@ async def agent_chat(
         except Exception as e:
             logger.error(f"Error saving user message: {e}")
 
-        langgraph_config = {"configurable": {"thread_id": thread_id, "user_id": user_id}}
+        langgraph_config = {"configurable": {"thread_id": thread_id, "uid": uid}}
         invoke_result = await agent.invoke_messages(
             messages,
             input_context=input_context,
@@ -767,16 +763,12 @@ async def stream_agent_chat(
         )
         return
 
-    if not current_user.department_id:
-        yield make_chunk(status="error", error_type="invalid_config", error_message="当前用户未绑定部门", meta=meta)
-        return
-
     meta = dict(meta or {})
     if "request_id" not in meta or not meta.get("request_id"):
         logger.warning("请求缺少 request_id，已自动生成一个新的 request_id")
         meta["request_id"] = str(uuid.uuid4())
 
-    user_id = str(current_user.id)
+    uid = str(current_user.uid)
     try:
         config_item = await get_agent_config_by_id(db, current_user, agent_config_id)
     except ValueError as e:
@@ -790,7 +782,7 @@ async def stream_agent_chat(
             "agent_id": agent_id,
             "server_model_name": agent_id,
             "thread_id": thread_id,
-            "user_id": current_user.id,
+            "uid": current_user.uid,
             "has_image": bool(image_content),
         }
     )
@@ -814,7 +806,7 @@ async def stream_agent_chat(
         thread_id = str(uuid.uuid4())
         logger.warning(f"No thread_id provided, generated new thread_id: {thread_id}")
 
-    input_context = await _build_agent_input_context(agent_config, thread_id=thread_id, user_id=user_id)
+    input_context = await _build_agent_input_context(agent_config, thread_id=thread_id, uid=uid)
     langfuse_run = _build_langfuse_run_context(
         current_user=current_user,
         thread_id=thread_id,
@@ -836,8 +828,7 @@ async def stream_agent_chat(
             conv_repo=conv_repo,
             agent_config_repo=agent_config_repo,
             thread_id=thread_id,
-            user_id=user_id,
-            department_id=current_user.department_id,
+            uid=uid,
             agent_id=agent_id,
             agent_config_id=agent_config_id,
         )
@@ -858,7 +849,7 @@ async def stream_agent_chat(
             logger.error(f"Error saving user message: {e}")
 
         # 先构建 langgraph_config
-        langgraph_config = {"configurable": {"thread_id": thread_id, "user_id": user_id}}
+        langgraph_config = {"configurable": {"thread_id": thread_id, "uid": uid}}
 
         # LangGraph 会自动从 checkpointer 恢复 state（包括 uploads）
         # 无需手动加载或传递
@@ -1040,7 +1031,7 @@ async def stream_agent_resume(
 
     resume_command = Command(resume=resume_input)
 
-    user_id = str(current_user.id)
+    uid = str(current_user.uid)
     agent_config_id = (config or {}).get("agent_config_id")
     try:
         agent_config = await _resolve_agent_config(db, agent_id, current_user, agent_config_id)
@@ -1049,7 +1040,7 @@ async def stream_agent_resume(
         return
 
     context = agent.context_schema()
-    context.update(await _build_agent_input_context(agent_config or {}, thread_id=thread_id, user_id=user_id))
+    context.update(await _build_agent_input_context(agent_config or {}, thread_id=thread_id, uid=uid))
     graph = await agent.get_graph(context=context)
     langfuse_run = _build_langfuse_run_context(
         current_user=current_user,
@@ -1067,7 +1058,7 @@ async def stream_agent_resume(
         resume_command,
         context=context,
         config={
-            "configurable": {"thread_id": thread_id, "user_id": user_id},
+            "configurable": {"thread_id": thread_id, "uid": uid},
             "callbacks": langfuse_run.callbacks,
             "metadata": langfuse_run.metadata,
             "tags": langfuse_run.tags,
@@ -1095,7 +1086,7 @@ async def stream_agent_resume(
                 content=getattr(msg, "content", ""), msg=msg_dict, metadata=metadata, status="loading"
             )
 
-        langgraph_config = {"configurable": {"thread_id": thread_id, "user_id": str(current_user.id)}}
+        langgraph_config = {"configurable": {"thread_id": thread_id, "uid": uid}}
         async for chunk in check_and_handle_interrupts(agent, langgraph_config, make_resume_chunk, meta, thread_id):
             yield chunk
 
@@ -1164,19 +1155,19 @@ async def stream_agent_resume(
 async def get_agent_state_view(
     *,
     thread_id: str,
-    current_user_id: str,
+    current_uid: str,
     db,
 ) -> dict:
     conv_repo = ConversationRepository(db)
     conversation = await conv_repo.get_conversation_by_thread_id(thread_id)
-    if not conversation or conversation.user_id != str(current_user_id) or conversation.status == "deleted":
+    if not conversation or conversation.uid != str(current_uid) or conversation.status == "deleted":
         from fastapi import HTTPException
 
         raise HTTPException(status_code=404, detail="对话线程不存在")
 
     agent = agent_manager.get_agent(conversation.agent_id)
     graph = await agent.get_graph()
-    langgraph_config = {"configurable": {"user_id": str(current_user_id), "thread_id": thread_id}}
+    langgraph_config = {"configurable": {"uid": str(current_uid), "thread_id": thread_id}}
     state = await graph.aget_state(langgraph_config)
     agent_state = extract_agent_state(getattr(state, "values", {})) if state else {}
 

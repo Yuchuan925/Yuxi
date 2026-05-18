@@ -41,12 +41,12 @@ class BaseAgent:
         """Get the agent's class name."""
         return self.__class__.__name__
 
-    async def get_info(self, include_configurable_items: bool = True):
+    async def get_info(self, include_configurable_items: bool = True, user_role: str | None = None):
         # metadata 固定在代码中，由各 Agent 的类属性提供
         metadata = self.load_metadata()
         configurable_items = {}
         if include_configurable_items:
-            configurable_items = self.context_schema.get_configurable_items()
+            configurable_items = self.context_schema.get_configurable_items(user_role=user_role)
 
         # Merge metadata with class attributes, metadata takes precedence
         return {
@@ -76,7 +76,7 @@ class BaseAgent:
 
         # 构建配置：LangGraph 会自动从 checkpointer 恢复 state
         input_config = {
-            "configurable": {"thread_id": context.thread_id, "user_id": context.user_id},
+            "configurable": {"thread_id": context.thread_id, "uid": context.uid},
             "recursion_limit": 300,
         }
 
@@ -103,7 +103,7 @@ class BaseAgent:
         logger.debug(f"stream_messages_with_state: {context=}")
 
         input_config = {
-            "configurable": {"thread_id": context.thread_id, "user_id": context.user_id},
+            "configurable": {"thread_id": context.thread_id, "uid": context.uid},
             "recursion_limit": 300,
         }
 
@@ -130,7 +130,7 @@ class BaseAgent:
 
         # 构建配置
         input_config = {
-            "configurable": {"thread_id": context.thread_id, "user_id": context.user_id},
+            "configurable": {"thread_id": context.thread_id, "uid": context.uid},
             "recursion_limit": 100,
         }
 
@@ -155,7 +155,7 @@ class BaseAgent:
             return False
         return True
 
-    async def get_history(self, user_id, thread_id) -> list[dict]:
+    async def get_history(self, uid, thread_id) -> list[dict]:
         """获取历史消息"""
         try:
             app = await self.get_graph()
@@ -163,7 +163,7 @@ class BaseAgent:
             if not await self.check_checkpointer():
                 return []
 
-            config = {"configurable": {"thread_id": thread_id, "user_id": user_id}}
+            config = {"configurable": {"thread_id": thread_id, "uid": uid}}
             state = await app.aget_state(config)
 
             result = []

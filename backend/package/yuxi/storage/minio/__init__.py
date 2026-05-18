@@ -7,7 +7,7 @@ MinIO 存储模块
 from .client import MinIOClient, StorageError, UploadResult, aupload_file_to_minio, get_minio_client
 from .utils import generate_unique_filename, get_file_size
 
-# 为了向后兼容，导出常用的函数
+# 导出常用函数
 __all__ = [
     # 核心功能
     "MinIOClient",

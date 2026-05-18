@@ -99,7 +99,7 @@ export function useAgentMentionConfig({
     const subagentOptionMap = new Map()
 
     Object.entries(configItems).forEach(([key, item]) => {
-      const kind = item?.template_metadata?.kind
+      const kind = item?.kind
       const val = currentConfig[key]
 
       if (kind === 'knowledges' && val === null) {

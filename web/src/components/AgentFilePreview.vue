@@ -9,6 +9,18 @@
         <span class="file-path-title">{{ filePath }}</span>
       </div>
       <div class="modal-actions">
+        <div v-if="availablePreviewVariants.length > 1" class="preview-mode-switch">
+          <button
+            v-for="variant in availablePreviewVariants"
+            :key="variant.key"
+            class="preview-mode-btn text-mode-btn"
+            :class="{ active: activePreviewVariant === variant.key }"
+            :title="variant.label"
+            @click="$emit('switchVariant', variant.key)"
+          >
+            {{ variant.label }}
+          </button>
+        </div>
         <div v-if="canEdit" class="preview-mode-switch">
           <button
             class="preview-mode-btn"
@@ -27,24 +39,7 @@
             <Pencil :size="16" />
           </button>
         </div>
-        <button
-          v-if="canEdit && editMode === 'edit'"
-          class="modal-action-btn"
-          :disabled="saving || !draftChanged"
-          @click="requestSave"
-          title="保存"
-        >
-          <Save :size="18" />
-        </button>
-        <button
-          v-if="canEdit && editMode === 'edit'"
-          class="modal-action-btn"
-          :disabled="saving"
-          @click="cancelEdit"
-          title="取消编辑"
-        >
-          <X :size="18" />
-        </button>
+
         <div v-if="isHtmlFile" class="preview-mode-switch">
           <button
             class="preview-mode-btn"
@@ -77,7 +72,7 @@
           @click="openFullscreenPreview"
           title="全屏预览"
         >
-          <Maximize2 :size="18" />
+          <Maximize :size="18" />
         </button>
         <button
           v-if="showClose"
@@ -92,6 +87,29 @@
     </div>
 
     <div class="file-content" :class="contentClass">
+      <div v-if="canEdit && editMode === 'edit'" class="edit-floating-actions">
+        <span v-if="draftChanged" class="edit-status-badge">修改未保存</span>
+        <button
+          v-if="draftChanged"
+          class="edit-floating-btn edit-floating-btn-primary"
+          :disabled="saving"
+          @click="requestSave"
+          title="保存"
+        >
+          <Save :size="16" />
+          <span v-if="saving">保存中...</span>
+          <span v-else>保存</span>
+        </button>
+        <button
+          class="edit-floating-btn"
+          :disabled="saving"
+          @click="cancelEdit"
+          title="取消"
+        >
+          <X :size="16" />
+          <span>取消</span>
+        </button>
+      </div>
       <template v-if="canEdit && editMode === 'edit'">
         <textarea
           v-model="draftContent"
@@ -235,7 +253,7 @@ import {
   Download,
   Eye,
   Globe,
-  Maximize2,
+  Maximize,
   PanelRightClose,
   Pencil,
   Save,
@@ -311,7 +329,7 @@ const props = defineProps({
   }
 })
 
-const emit = defineEmits(['close', 'download', 'save'])
+const emit = defineEmits(['close', 'download', 'save', 'switchVariant'])
 
 const themeStore = useThemeStore()
 const closeTitle = computed(() =>
@@ -327,6 +345,11 @@ const fullscreenPreviewVisible = ref(false)
 const htmlPreviewRenderKey = ref(0)
 
 const isMarkdown = computed(() => isMarkdownPreview(props.filePath, props.file?.previewType))
+const availablePreviewVariants = computed(() => {
+  const variants = props.file?.availableVariants || props.file?.available_variants || []
+  return variants.filter((variant) => variant?.supported !== false && variant?.key)
+})
+const activePreviewVariant = computed(() => props.file?.variant || props.file?.previewVariant || '')
 const canEdit = computed(() => {
   const previewType = props.file?.previewType
   return (
@@ -522,6 +545,13 @@ onUnmounted(() => {
   box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08);
 }
 
+.text-mode-btn {
+  width: auto;
+  min-width: 48px;
+  padding: 0 8px;
+  font-size: 12px;
+}
+
 .file-content {
   min-height: 300px;
   max-height: 80vh;
@@ -547,7 +577,83 @@ onUnmounted(() => {
   }
 
   .flat-md-preview {
-    padding: 20px;
+    padding: 16px calc(var(--page-padding) - 4px);
+    font-size: 0.85rem;
+  }
+}
+
+.edit-floating-actions {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 8px 12px;
+  background: var(--gray-0);
+  border-bottom: 1px solid var(--gray-100);
+}
+
+.edit-status-badge {
+  margin-right: auto;
+  font-size: 12px;
+  line-height: 1;
+  color: var(--color-warning-700);
+}
+
+.edit-floating-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 12px;
+  border: 1px solid var(--gray-200);
+  border-radius: 6px;
+  background: var(--gray-0);
+  color: var(--gray-700);
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+
+  &:hover:not(:disabled) {
+    background: var(--gray-50);
+    border-color: var(--gray-300);
+    color: var(--gray-900);
+  }
+
+  &:disabled {
+    color: var(--gray-300);
+    cursor: not-allowed;
+
+    &:hover {
+      background: var(--gray-0);
+      border-color: var(--gray-200);
+    }
+  }
+}
+
+.edit-floating-btn-primary {
+  background: var(--color-primary-500);
+  border-color: var(--color-primary-500);
+  color: #fff;
+
+  &:hover:not(:disabled) {
+    background: var(--color-primary-700);
+    border-color: var(--color-primary-700);
+    color: #fff;
+  }
+
+  &:disabled {
+    background: var(--color-primary-500);
+    border-color: var(--color-primary-500);
+    color: rgba(255, 255, 255, 0.5);
+    cursor: not-allowed;
+
+    &:hover {
+      background: var(--color-primary-500);
+      border-color: var(--color-primary-500);
+      color: rgba(255, 255, 255, 0.5);
+    }
   }
 }
 
@@ -561,8 +667,8 @@ onUnmounted(() => {
   background: var(--gray-0);
   color: var(--gray-1000);
   font-family: 'JetBrains Mono', 'Fira Code', 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
-  font-size: 13px;
-  line-height: 1.5;
+  font-size: 14px;
+  line-height: 1.6;
 }
 
 .file-edit-textarea:disabled {

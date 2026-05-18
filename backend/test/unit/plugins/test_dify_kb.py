@@ -41,6 +41,41 @@ class _FakeAsyncClient:
         return _FakeResponse(self._response_payload)
 
 
+def test_dify_create_params_config_and_validation():
+    config = DifyKB.get_create_params_config()
+    keys = [option["key"] for option in config["options"]]
+    assert keys == ["dify_api_url", "dify_token", "dify_dataset_id"]
+    assert all(option["required"] for option in config["options"])
+
+    params = DifyKB.normalize_additional_params(
+        {
+            "dify_api_url": " https://api.dify.ai/v1 ",
+            "dify_token": " token ",
+            "dify_dataset_id": " dataset-123 ",
+        }
+    )
+    assert params == {
+        "dify_api_url": "https://api.dify.ai/v1",
+        "dify_token": "token",
+        "dify_dataset_id": "dataset-123",
+    }
+    assert "chunk_preset_id" not in params
+
+
+def test_dify_validation_rejects_missing_or_invalid_params():
+    with pytest.raises(ValueError, match="Dify 参数缺失"):
+        DifyKB.normalize_additional_params({"dify_api_url": "https://api.dify.ai/v1"})
+
+    with pytest.raises(ValueError, match="必须以 /v1 结尾"):
+        DifyKB.normalize_additional_params(
+            {
+                "dify_api_url": "https://api.dify.ai",
+                "dify_token": "token",
+                "dify_dataset_id": "dataset-123",
+            }
+        )
+
+
 @pytest.mark.asyncio
 async def test_dify_kb_aquery_maps_records(monkeypatch, tmp_path):
     kb = DifyKB(str(tmp_path))

@@ -59,7 +59,6 @@
                   </button>
 
                   <button
-                    v-if="userStore.isAdmin"
                     type="button"
                     class="config-dropdown-item action-item"
                     @click="openCreateConfigModal"
@@ -287,7 +286,6 @@ const toggleConfigSidebar = () => {
 }
 
 const openCreateConfigModal = () => {
-  if (!userStore.isAdmin) return
   configDropdownOpen.value = false
   createConfigName.value = ''
   createConfigModalOpen.value = true
@@ -299,7 +297,7 @@ const closeCreateConfigModal = () => {
 }
 
 const handleCreateConfig = async () => {
-  if (!userStore.isAdmin || !selectedAgentId.value) return
+  if (!selectedAgentId.value) return
 
   const name = createConfigName.value.trim()
   if (!name) {

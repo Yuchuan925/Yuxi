@@ -3,7 +3,6 @@ import { ref, reactive, onMounted, computed, provide, watch } from 'vue'
 import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router'
 import { GithubOutlined } from '@ant-design/icons-vue'
 import {
-  LibraryBig,
   BarChart3,
   ClipboardList,
   Blocks,
@@ -121,8 +120,6 @@ const organizationName = computed(() => {
 })
 
 // 下面是导航菜单部分，添加智能体项
-const isLiteMode = import.meta.env.VITE_LITE_MODE === 'true'
-
 const mainList = computed(() => {
   const items = [
     {
@@ -142,19 +139,10 @@ const mainList = computed(() => {
   })
 
   if (userStore.isAdmin) {
-    if (!isLiteMode) {
-      items.push({
-        name: '知识库',
-        path: '/database',
-        activePaths: ['/database', '/graph'],
-        icon: LibraryBig,
-        activeIcon: LibraryBig
-      })
-    }
-
     items.push({
       name: '扩展管理',
       path: '/extensions',
+      activePaths: ['/extensions', '/database'],
       icon: Blocks,
       activeIcon: Blocks
     })
@@ -393,12 +381,12 @@ provide('settingsModal', {
 
 <style lang="less" scoped>
 // Less 变量定义
-@sidebar-width: 252px;
+@sidebar-width: 230px;
 @sidebar-collapsed-width: 56px;
 @sidebar-padding: 6px 8px;
 @sidebar-item-height: 36px;
 @sidebar-item-padding-x: 10px;
-@sidebar-icon-size: 18px;
+@sidebar-icon-size: 16px;
 
 .app-layout {
   display: flex;
@@ -412,7 +400,6 @@ div.header,
 #app-router-view {
   height: 100%;
   max-width: 100%;
-  user-select: none;
 }
 
 #app-router-view {
@@ -433,6 +420,7 @@ div.header,
   border-right: 1px solid var(--gray-100);
   padding: @sidebar-padding;
   overflow: hidden;
+  user-select: none;
   transition:
     width 0.18s ease,
     flex-basis 0.18s ease;
@@ -483,7 +471,7 @@ div.header,
     text-decoration: none;
     border: 0;
     background: transparent;
-    padding: 0 6px;
+    padding: 0 4px;
     cursor: pointer;
   }
 

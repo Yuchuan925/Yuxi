@@ -8,6 +8,7 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
@@ -31,13 +32,14 @@ class KnowledgeBase(Base):
     name = Column(String(255), nullable=False, index=True)
     description = Column(Text)
     kb_type = Column(String(32), nullable=False, index=True)
-    embed_info = Column(JSON_VALUE)
-    llm_info = Column(JSON_VALUE)
+    embedding_model_spec = Column(String(512))
+    llm_model_spec = Column(String(512))
     query_params = Column(JSON_VALUE)
     additional_params = Column(JSON_VALUE)
     share_config = Column(JSON_VALUE)
     mindmap = Column(JSON_VALUE)
     sample_questions = Column(JSON_VALUE)
+    created_by = Column(String(64))
     created_at = Column(DateTime(timezone=True), default=utc_now_naive)
     updated_at = Column(DateTime(timezone=True), default=utc_now_naive, onupdate=utc_now_naive)
 
@@ -69,6 +71,120 @@ class KnowledgeFile(Base):
     updated_by = Column(String(64))
     created_at = Column(DateTime(timezone=True), default=utc_now_naive)
     updated_at = Column(DateTime(timezone=True), default=utc_now_naive, onupdate=utc_now_naive)
+
+
+class KnowledgeChunk(Base):
+    """知识库 Chunk 模型"""
+
+    __tablename__ = "knowledge_chunks"
+    __table_args__ = (
+        UniqueConstraint("chunk_id", name="uq_knowledge_chunks_chunk_id"),
+        Index("ix_knowledge_chunks_file_id", "file_id"),
+        Index("ix_knowledge_chunks_db_id", "db_id"),
+        Index("ix_knowledge_chunks_graph_indexed", "graph_indexed"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    chunk_id = Column(String(128), nullable=False)
+    file_id = Column(String(64), ForeignKey("knowledge_files.file_id", ondelete="CASCADE"), nullable=False)
+    db_id = Column(String(80), ForeignKey("knowledge_bases.db_id", ondelete="CASCADE"), nullable=False)
+    chunk_index = Column(Integer, nullable=False)
+    content = Column(Text, nullable=False)
+    start_char_pos = Column(Integer)
+    end_char_pos = Column(Integer)
+    start_token_pos = Column(Integer)
+    end_token_pos = Column(Integer)
+    graph_indexed = Column(Boolean, default=False)
+    ent_ids = Column(JSON_VALUE)
+    tags = Column(JSON_VALUE)
+    extraction_result = Column(JSON_VALUE)
+    created_at = Column(DateTime(timezone=True), default=utc_now_naive)
+    updated_at = Column(DateTime(timezone=True), default=utc_now_naive, onupdate=utc_now_naive)
+
+
+class KnowledgeGraphEntity(Base):
+    """知识图谱实体"""
+
+    __tablename__ = "knowledge_graph_entities"
+    __table_args__ = (
+        UniqueConstraint("entity_id", name="uq_knowledge_graph_entities_entity_id"),
+        UniqueConstraint("db_id", "normalized_name", "label", name="uq_knowledge_graph_entities_identity"),
+        Index("ix_knowledge_graph_entities_db_id", "db_id"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    entity_id = Column(String(64), nullable=False)
+    db_id = Column(String(80), ForeignKey("knowledge_bases.db_id", ondelete="CASCADE"), nullable=False)
+    normalized_name = Column(String(512), nullable=False)
+    label = Column(String(128), nullable=False)
+    name = Column(String(512), nullable=False)
+    attributes = Column(JSON_VALUE)
+    created_at = Column(DateTime(timezone=True), default=utc_now_naive)
+    updated_at = Column(DateTime(timezone=True), default=utc_now_naive, onupdate=utc_now_naive)
+
+
+class KnowledgeGraphEntityMention(Base):
+    """知识图谱实体在 chunk 中的引用"""
+
+    __tablename__ = "knowledge_graph_entity_mentions"
+    __table_args__ = (
+        UniqueConstraint("entity_id", "chunk_id", name="uq_knowledge_graph_entity_mentions_entity_chunk"),
+        Index("ix_knowledge_graph_entity_mentions_db_id", "db_id"),
+        Index("ix_knowledge_graph_entity_mentions_file_id", "file_id"),
+        Index("ix_knowledge_graph_entity_mentions_chunk_id", "chunk_id"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    entity_id = Column(String(64), ForeignKey("knowledge_graph_entities.entity_id", ondelete="CASCADE"), nullable=False)
+    db_id = Column(String(80), ForeignKey("knowledge_bases.db_id", ondelete="CASCADE"), nullable=False)
+    file_id = Column(String(64), ForeignKey("knowledge_files.file_id", ondelete="CASCADE"), nullable=False)
+    chunk_id = Column(String(128), ForeignKey("knowledge_chunks.chunk_id", ondelete="CASCADE"), nullable=False)
+    created_at = Column(DateTime(timezone=True), default=utc_now_naive)
+
+
+class KnowledgeGraphTriple(Base):
+    """知识图谱三元组"""
+
+    __tablename__ = "knowledge_graph_triples"
+    __table_args__ = (
+        UniqueConstraint("triple_id", name="uq_knowledge_graph_triples_triple_id"),
+        Index("ix_knowledge_graph_triples_db_id", "db_id"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    triple_id = Column(String(64), nullable=False)
+    db_id = Column(String(80), ForeignKey("knowledge_bases.db_id", ondelete="CASCADE"), nullable=False)
+    source_entity_id = Column(
+        String(64), ForeignKey("knowledge_graph_entities.entity_id", ondelete="CASCADE"), nullable=False
+    )
+    target_entity_id = Column(
+        String(64), ForeignKey("knowledge_graph_entities.entity_id", ondelete="CASCADE"), nullable=False
+    )
+    relation_type = Column(String(256), nullable=False)
+    content = Column(Text, nullable=False)
+    created_at = Column(DateTime(timezone=True), default=utc_now_naive)
+    updated_at = Column(DateTime(timezone=True), default=utc_now_naive, onupdate=utc_now_naive)
+
+
+class KnowledgeGraphTripleMention(Base):
+    """知识图谱三元组在 chunk 中的引用"""
+
+    __tablename__ = "knowledge_graph_triple_mentions"
+    __table_args__ = (
+        UniqueConstraint("triple_id", "chunk_id", name="uq_knowledge_graph_triple_mentions_triple_chunk"),
+        Index("ix_knowledge_graph_triple_mentions_db_id", "db_id"),
+        Index("ix_knowledge_graph_triple_mentions_file_id", "file_id"),
+        Index("ix_knowledge_graph_triple_mentions_chunk_id", "chunk_id"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    triple_id = Column(String(64), ForeignKey("knowledge_graph_triples.triple_id", ondelete="CASCADE"), nullable=False)
+    db_id = Column(String(80), ForeignKey("knowledge_bases.db_id", ondelete="CASCADE"), nullable=False)
+    file_id = Column(String(64), ForeignKey("knowledge_files.file_id", ondelete="CASCADE"), nullable=False)
+    chunk_id = Column(String(128), ForeignKey("knowledge_chunks.chunk_id", ondelete="CASCADE"), nullable=False)
+    text = Column(Text)
+    extractor_type = Column(String(128))
+    created_at = Column(DateTime(timezone=True), default=utc_now_naive)
 
 
 class EvaluationBenchmark(Base):

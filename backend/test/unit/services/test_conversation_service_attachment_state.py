@@ -74,12 +74,12 @@ async def test_sync_thread_attachment_state_updates_graph(monkeypatch: pytest.Mo
     ]
     await svc._sync_thread_upload_state(
         thread_id="thread-1",
-        user_id="u1",
+        uid="u1",
         agent_id="ChatbotAgent",
         attachments=attachments,
     )
 
-    assert captured["write_config"] == {"configurable": {"thread_id": "thread-1", "user_id": "u1"}}
+    assert captured["write_config"] == {"configurable": {"thread_id": "thread-1", "uid": "u1"}}
     assert captured["write_values"] == {"uploads": svc._build_state_uploads(attachments)}
 
 
@@ -95,7 +95,7 @@ async def test_sync_thread_attachment_state_skips_when_agent_missing(monkeypatch
 
     await svc._sync_thread_upload_state(
         thread_id="thread-1",
-        user_id="u1",
+        uid="u1",
         agent_id="MissingAgent",
         attachments=[],
     )

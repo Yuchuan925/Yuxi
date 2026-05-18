@@ -128,7 +128,7 @@ async def generate_mindmap(
 async def get_databases_overview(current_user: User = Depends(get_admin_user)):
     """获取所有知识库的概览信息，用于思维导图界面选择。"""
     try:
-        databases = await knowledge_base.get_databases_by_user_id(current_user.user_id)
+        databases = await knowledge_base.get_databases_by_uid(current_user.uid)
         db_list = []
         for db_info in databases.get("databases", []):
             db_id = db_info.get("db_id")

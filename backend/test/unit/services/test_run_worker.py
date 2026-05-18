@@ -44,7 +44,7 @@ def _build_run() -> SimpleNamespace:
             "config": {"thread_id": "thread-1"},
             "agent_id": "ChatbotAgent",
             "image_content": None,
-            "user_id": "1",
+            "uid": "user-1",
             "request_id": "req-1",
         },
     )
@@ -63,9 +63,9 @@ def _patch_common(monkeypatch: pytest.MonkeyPatch, run_obj: SimpleNamespace):
         del run_id
         return run_obj
 
-    async def fake_load_user(user_id: str):
-        del user_id
-        return SimpleNamespace(id=1)
+    async def fake_load_user(uid: str):
+        del uid
+        return SimpleNamespace(id=1, uid="user-1")
 
     async def fake_not_cancelled(self):
         del self

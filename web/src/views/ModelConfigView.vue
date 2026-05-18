@@ -696,7 +696,6 @@ onMounted(loadProviders)
               <a-select-option value="openai">openai</a-select-option>
               <a-select-option value="anthropic">anthropic</a-select-option>
               <a-select-option value="gemini">gemini</a-select-option>
-              <a-select-option value="ollama">ollama</a-select-option>
               <a-select-option value="openrouter">openrouter</a-select-option>
               <a-select-option value="lmstudio">lmstudio</a-select-option>
             </a-select>

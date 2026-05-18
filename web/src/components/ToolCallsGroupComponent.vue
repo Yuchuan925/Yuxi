@@ -160,32 +160,29 @@ const toggleToolCallsExpanded = () => {
     display: inline-flex;
     align-items: center;
     gap: 8px;
-    padding: 4px 8px;
-    border: 1px solid transparent;
-    border-radius: 6px;
-    background: transparent;
     color: var(--gray-500);
     text-align: left;
     cursor: pointer;
     outline: none;
+    border: none;
+    padding: 0;
     transition: all 0.2s ease;
     user-select: none;
+    background: transparent;
 
     &:hover {
-      background: var(--gray-100);
       color: var(--gray-700);
     }
 
     &.is-expanded {
       color: var(--gray-700);
-      background: var(--gray-50);
       margin-bottom: 4px;
     }
 
     .summary-leading {
       display: inline-flex;
       align-items: center;
-      color: var(--gray-400);
+      color: var(--gray-600);
       flex-shrink: 0;
     }
 
@@ -209,7 +206,7 @@ const toggleToolCallsExpanded = () => {
     }
 
     .summary-meta {
-      color: var(--gray-400);
+      color: var(--gray-500);
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
@@ -237,7 +234,7 @@ const toggleToolCallsExpanded = () => {
   .tool-calls-panel {
     padding: 4px 0 4px 12px;
     border-left: 1px solid var(--gray-100);
-    margin-left: 16px;
+    margin-left: 8px;
     margin-top: 4px;
     margin-bottom: 8px;
   }

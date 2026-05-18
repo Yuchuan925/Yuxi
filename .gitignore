@@ -40,7 +40,8 @@ cache
 .pytest_cache
 .playwright
 .playwright-cli
-.playwright-mcp/
+.playwright-mcp
+.opencode
 
 
 ### IDE

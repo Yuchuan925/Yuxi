@@ -1,5 +1,3 @@
-import hashlib
-import hmac
 import os
 import secrets
 from datetime import timedelta
@@ -7,7 +5,7 @@ from typing import Any
 
 import jwt
 from argon2 import PasswordHasher
-from argon2.exceptions import InvalidHash, VerificationError, VerifyMismatchError
+from argon2.exceptions import InvalidHash, VerifyMismatchError, VerificationError
 from yuxi.utils.datetime_utils import utc_now
 
 # JWT配置
@@ -58,19 +56,12 @@ class AuthUtils:
     @staticmethod
     def verify_password(stored_password: str, provided_password: str) -> bool:
         """验证密码"""
-        if stored_password.startswith("$argon2"):
-            try:
-                return PASSWORD_HASHER.verify(stored_password, provided_password)
-            except (InvalidHash, VerifyMismatchError, VerificationError):
-                return False
-
-        # 兼容历史 SHA-256:盐 格式，避免现有账号密码在升级后立即失效。
-        if ":" not in stored_password:
+        if not stored_password.startswith("$argon2"):
             return False
-
-        hashed, salt = stored_password.split(":", 1)
-        check_hash = hashlib.sha256((provided_password + salt).encode()).hexdigest()
-        return hmac.compare_digest(hashed, check_hash)
+        try:
+            return PASSWORD_HASHER.verify(stored_password, provided_password)
+        except (InvalidHash, VerifyMismatchError, VerificationError):
+            return False
 
     @staticmethod
     def create_access_token(data: dict[str, Any], expires_delta: timedelta | None = None) -> str:

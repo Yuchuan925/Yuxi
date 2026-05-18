@@ -55,7 +55,7 @@ class User(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     username = Column(String, nullable=False, unique=True, index=True)  # 显示名称
-    user_id = Column(String, nullable=False, unique=True, index=True)  # 登录ID
+    uid = Column(String, nullable=False, unique=True, index=True)  # 登录标识
     phone_number = Column(String, nullable=True, unique=True, index=True)  # 手机号
     avatar = Column(String, nullable=True)  # 头像URL
     password_hash = Column(String, nullable=False)
@@ -86,7 +86,7 @@ class User(Base):
         result = {
             "id": self.id,
             "username": self.username,
-            "user_id": self.user_id,
+            "uid": self.uid,
             "phone_number": self.phone_number,
             "avatar": self.avatar,
             "role": self.role,
@@ -131,12 +131,12 @@ class User(Base):
 
 
 class AgentConfig(Base):
-    """智能体配置（按部门共享，多份可切换）"""
+    """智能体配置（按用户隔离，多份可切换）"""
 
     __tablename__ = "agent_configs"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    department_id = Column(Integer, ForeignKey("departments.id"), nullable=False, index=True)
+    uid = Column(String, ForeignKey("users.uid"), nullable=False, index=True)
     agent_id = Column(String(64), nullable=False, index=True)
 
     name = Column(String(100), nullable=False)
@@ -155,10 +155,10 @@ class AgentConfig(Base):
     updated_at = Column(DateTime, default=utc_now_naive, onupdate=utc_now_naive)
 
     __table_args__ = (
-        UniqueConstraint("department_id", "agent_id", "name", name="uq_agent_configs_department_agent_name"),
+        UniqueConstraint("uid", "agent_id", "name", name="uq_agent_configs_uid_agent_name"),
         Index(
-            "uq_agent_configs_department_agent_default",
-            "department_id",
+            "uq_agent_configs_uid_agent_default",
+            "uid",
             "agent_id",
             unique=True,
             postgresql_where=is_default.is_(True),
@@ -168,7 +168,7 @@ class AgentConfig(Base):
     def to_dict(self) -> dict[str, Any]:
         return {
             "id": self.id,
-            "department_id": self.department_id,
+            "uid": self.uid,
             "agent_id": self.agent_id,
             "name": self.name,
             "description": self.description,
@@ -232,7 +232,7 @@ class Conversation(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True, comment="Primary key")
     thread_id = Column(String(64), unique=True, index=True, nullable=False, comment="Thread ID (UUID)")
-    user_id = Column(String(64), index=True, nullable=False, comment="User ID")
+    uid = Column(String(64), index=True, nullable=False, comment="UID")
     agent_id = Column(String(64), index=True, nullable=False, comment="Agent ID")
     title = Column(String(255), nullable=True, comment="Conversation title")
     status = Column(String(20), default="active", comment="Status: active/archived/deleted")
@@ -252,7 +252,7 @@ class Conversation(Base):
         return {
             "id": self.id,
             "thread_id": self.thread_id,
-            "user_id": self.user_id,
+            "uid": self.uid,
             "agent_id": self.agent_id,
             "title": self.title,
             "status": self.status,
@@ -405,7 +405,7 @@ class MessageFeedback(Base):
     message_id = Column(
         Integer, ForeignKey("messages.id"), nullable=False, index=True, comment="Message ID being rated"
     )
-    user_id = Column(String(64), nullable=False, index=True, comment="User ID who provided feedback")
+    uid = Column(String(64), nullable=False, index=True, comment="UID who provided feedback")
     rating = Column(String(10), nullable=False, comment="Feedback rating: like or dislike")
     reason = Column(Text, nullable=True, comment="Optional reason for dislike feedback")
     created_at = Column(DateTime, default=utc_now_naive, comment="Feedback creation time")
@@ -417,7 +417,7 @@ class MessageFeedback(Base):
         return {
             "id": self.id,
             "message_id": self.message_id,
-            "user_id": self.user_id,
+            "uid": self.uid,
             "rating": self.rating,
             "reason": self.reason,
             "created_at": format_utc_datetime(self.created_at),
@@ -731,7 +731,7 @@ class AgentRun(Base):
     id = Column(String(64), primary_key=True, comment="Run ID (UUID)")
     thread_id = Column(String(64), index=True, nullable=False, comment="Thread ID")
     agent_id = Column(String(64), index=True, nullable=False, comment="Agent ID")
-    user_id = Column(String(64), index=True, nullable=False, comment="User ID")
+    uid = Column(String(64), index=True, nullable=False, comment="UID")
     status = Column(
         String(32),
         index=True,
@@ -753,7 +753,7 @@ class AgentRun(Base):
             "id": self.id,
             "thread_id": self.thread_id,
             "agent_id": self.agent_id,
-            "user_id": self.user_id,
+            "uid": self.uid,
             "status": self.status,
             "request_id": self.request_id,
             "input_payload": self.input_payload or {},

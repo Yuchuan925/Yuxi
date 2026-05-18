@@ -5,7 +5,7 @@ layout: home
 hero:
   name: "Yuxi"
   text: "智能知识库与知识图谱智能体开发平台"
-  tagline: 基于 LangGraph v1 + Vue.js + FastAPI + LightRAG，统一构建 RAG、知识图谱与多智能体应用
+  tagline: 基于 LangGraph v1 + Vue.js + FastAPI + Milvus，统一构建 RAG、知识图谱与多智能体应用
   image:
     src: /bb.png
     alt: Yuxi
@@ -26,7 +26,7 @@ features:
   - title: 📚 知识库与 RAG
     details: 支持多格式文档上传、解析、分块、向量检索与评估，兼容结构化与非结构化知识管理场景
   - title: 🕸️ 知识图谱
-    details: 基于 LightRAG 构建图谱问答与图谱检索，支持自动图谱生成、属性图谱导入与可视化分析
+    details: 基于 Milvus 知识库与 Neo4j 构建图谱抽取、检索与可视化分析
 ---
 
 ## 项目定位

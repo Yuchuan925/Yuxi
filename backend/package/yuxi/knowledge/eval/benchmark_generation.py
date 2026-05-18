@@ -105,7 +105,7 @@ async def iter_generated_benchmark_items(
     db_id: str,
     count: int,
     neighbors_count: int,
-    llm_model_spec: Any,
+    llm_model_spec: str | None,
     progress_cb: Callable[[int, str], Any] | None = None,
 ) -> AsyncIterator[dict[str, Any]]:
     if progress_cb:
@@ -118,6 +118,8 @@ async def iter_generated_benchmark_items(
     if progress_cb:
         await progress_cb(15, "准备生成样本")
 
+    if not llm_model_spec:
+        raise ValueError("llm_model_spec 不能为空")
     llm = select_model(model_spec=llm_model_spec)
     context_count = max(clamp_neighbors_count(neighbors_count), 1)
     generated = 0

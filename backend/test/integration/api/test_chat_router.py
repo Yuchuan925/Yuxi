@@ -59,6 +59,77 @@ async def test_admin_can_read_default_agent(test_client, admin_headers):
     assert "default_agent_id" in response.json()
 
 
+async def test_standard_user_manages_own_agent_config_with_role_filtered_fields(
+    test_client,
+    admin_headers,
+    standard_user,
+):
+    agents_response = await test_client.get("/api/chat/agent", headers=standard_user["headers"])
+    assert agents_response.status_code == 200, agents_response.text
+    agents = agents_response.json().get("agents", [])
+    if not agents:
+        pytest.skip("No agents are registered in the system.")
+
+    agent_id = agents[0]["id"]
+
+    user_agent_response = await test_client.get(f"/api/chat/agent/{agent_id}", headers=standard_user["headers"])
+    assert user_agent_response.status_code == 200, user_agent_response.text
+    user_items = user_agent_response.json().get("configurable_items", {})
+    assert "summary_threshold" not in user_items
+
+    admin_agent_response = await test_client.get(f"/api/chat/agent/{agent_id}", headers=admin_headers)
+    assert admin_agent_response.status_code == 200, admin_agent_response.text
+    admin_items = admin_agent_response.json().get("configurable_items", {})
+    assert "summary_threshold" in admin_items
+
+    config_name = f"pytest-config-{uuid.uuid4().hex[:8]}"
+    create_response = await test_client.post(
+        f"/api/chat/agent/{agent_id}/configs",
+        json={
+            "name": config_name,
+            "config_json": {"context": {"system_prompt": "user visible", "summary_threshold": 1}},
+            "set_default": True,
+        },
+        headers=standard_user["headers"],
+    )
+    assert create_response.status_code == 200, create_response.text
+    created = create_response.json()["config"]
+    config_id = created["id"]
+    assert created["uid"] == standard_user["user"]["uid"]
+    assert created["is_default"] is True
+    assert created["config_json"]["context"]["system_prompt"] == "user visible"
+    assert "summary_threshold" not in created["config_json"]["context"]
+
+    try:
+        admin_list_response = await test_client.get(f"/api/chat/agent/{agent_id}/configs", headers=admin_headers)
+        assert admin_list_response.status_code == 200, admin_list_response.text
+        admin_config_ids = {item["id"] for item in admin_list_response.json().get("configs", [])}
+        assert config_id not in admin_config_ids
+
+        update_response = await test_client.put(
+            f"/api/chat/agent/{agent_id}/configs/{config_id}",
+            json={"config_json": {"context": {"system_prompt": "updated", "summary_threshold": 2}}},
+            headers=standard_user["headers"],
+        )
+        assert update_response.status_code == 200, update_response.text
+        updated_context = update_response.json()["config"]["config_json"]["context"]
+        assert updated_context == {"system_prompt": "updated"}
+
+        default_response = await test_client.post(
+            f"/api/chat/agent/{agent_id}/configs/{config_id}/set_default",
+            json={},
+            headers=standard_user["headers"],
+        )
+        assert default_response.status_code == 200, default_response.text
+        assert default_response.json()["config"]["is_default"] is True
+    finally:
+        delete_response = await test_client.delete(
+            f"/api/chat/agent/{agent_id}/configs/{config_id}",
+            headers=standard_user["headers"],
+        )
+        assert delete_response.status_code in (200, 404), delete_response.text
+
+
 async def test_setting_default_agent_requires_admin(test_client, admin_headers, standard_user):
     # Attempt as admin first to obtain a candidate agent id.
     agents_response = await test_client.get("/api/chat/agent", headers=admin_headers)
@@ -92,11 +163,11 @@ async def test_setting_default_agent_requires_admin(test_client, admin_headers, 
 
 async def test_save_thread_artifact_to_workspace_copies_output_file(test_client, standard_user):
     headers = standard_user["headers"]
-    user_id = str(standard_user["user"]["id"])
+    uid = str(standard_user["user"]["uid"])
     thread_id = await _create_thread_for_user(test_client, headers)
     filename = f"artifact-{uuid.uuid4().hex[:8]}.md"
 
-    ensure_thread_dirs(thread_id, user_id)
+    ensure_thread_dirs(thread_id, uid)
     source_path = sandbox_user_data_dir(thread_id) / "outputs" / filename
     source_path.write_text("# artifact\n", encoding="utf-8")
 
@@ -112,7 +183,7 @@ async def test_save_thread_artifact_to_workspace_copies_output_file(test_client,
     assert payload["source_path"] == f"/home/gem/user-data/outputs/{filename}"
     assert payload["saved_path"] == f"/home/gem/user-data/workspace/saved_artifacts/{filename}"
 
-    saved_path = sandbox_workspace_dir(thread_id, user_id) / "saved_artifacts" / filename
+    saved_path = sandbox_workspace_dir(thread_id, uid) / "saved_artifacts" / filename
     assert saved_path.exists()
     assert saved_path.read_text(encoding="utf-8") == "# artifact\n"
 
@@ -123,12 +194,12 @@ async def test_save_thread_artifact_to_workspace_copies_output_file(test_client,
 
 async def test_save_thread_artifact_to_workspace_auto_renames_conflicts(test_client, standard_user):
     headers = standard_user["headers"]
-    user_id = str(standard_user["user"]["id"])
+    uid = str(standard_user["user"]["uid"])
     thread_id = await _create_thread_for_user(test_client, headers)
     filename = f"artifact-{uuid.uuid4().hex[:8]}.txt"
     renamed_filename = filename.replace(".txt", " (1).txt")
 
-    ensure_thread_dirs(thread_id, user_id)
+    ensure_thread_dirs(thread_id, uid)
     source_path = sandbox_user_data_dir(thread_id) / "outputs" / filename
     source_path.write_text("first\n", encoding="utf-8")
 
@@ -152,15 +223,15 @@ async def test_save_thread_artifact_to_workspace_auto_renames_conflicts(test_cli
     assert first_payload["saved_path"] == f"/home/gem/user-data/workspace/saved_artifacts/{filename}"
     assert second_payload["saved_path"] == f"/home/gem/user-data/workspace/saved_artifacts/{renamed_filename}"
 
-    first_saved = sandbox_workspace_dir(thread_id, user_id) / "saved_artifacts" / filename
-    second_saved = sandbox_workspace_dir(thread_id, user_id) / "saved_artifacts" / renamed_filename
+    first_saved = sandbox_workspace_dir(thread_id, uid) / "saved_artifacts" / filename
+    second_saved = sandbox_workspace_dir(thread_id, uid) / "saved_artifacts" / renamed_filename
     assert first_saved.read_text(encoding="utf-8") == "first\n"
     assert second_saved.read_text(encoding="utf-8") == "second\n"
 
 
 async def test_save_thread_artifact_to_workspace_rejects_invalid_paths(test_client, standard_user):
     headers = standard_user["headers"]
-    user_id = str(standard_user["user"]["id"])
+    uid = str(standard_user["user"]["uid"])
     thread_id = await _create_thread_for_user(test_client, headers)
 
     invalid_response = await test_client.post(
@@ -170,8 +241,8 @@ async def test_save_thread_artifact_to_workspace_rejects_invalid_paths(test_clie
     )
     assert invalid_response.status_code == 404, invalid_response.text
 
-    ensure_thread_dirs(thread_id, user_id)
-    directory_path = sandbox_workspace_dir(thread_id, user_id) / "nested-dir"
+    ensure_thread_dirs(thread_id, uid)
+    directory_path = sandbox_workspace_dir(thread_id, uid) / "nested-dir"
     directory_path.mkdir(parents=True, exist_ok=True)
     directory_response = await test_client.post(
         f"/api/chat/thread/{thread_id}/artifacts/save",

@@ -57,7 +57,7 @@ async def create_agent_run_view(
     thread_id: str,
     meta: dict,
     image_content: str | None,
-    current_user_id: str,
+    current_uid: str,
     db: AsyncSession,
 ) -> dict:
     if not query:
@@ -68,7 +68,7 @@ async def create_agent_run_view(
 
     config_repo = AgentConfigRepository(db)
     config_item = await config_repo.get_by_id(config_id=int(agent_config_id))
-    if config_item is None:
+    if config_item is None or config_item.uid != str(current_uid):
         raise HTTPException(status_code=404, detail="配置不存在")
 
     agent_id = config_item.agent_id
@@ -77,7 +77,7 @@ async def create_agent_run_view(
 
     conv_repo = ConversationRepository(db)
     conversation = await conv_repo.get_conversation_by_thread_id(thread_id)
-    if not conversation or conversation.user_id != str(current_user_id) or conversation.status == "deleted":
+    if not conversation or conversation.uid != str(current_uid) or conversation.status == "deleted":
         raise HTTPException(status_code=404, detail="对话线程不存在")
     if (conversation.extra_metadata or {}).get("agent_config_id") != int(agent_config_id):
         conversation = await conv_repo.bind_agent_config(thread_id, agent_config_id)
@@ -91,9 +91,9 @@ async def create_agent_run_view(
     }
     run_repo = AgentRunRepository(db)
     existing = await run_repo.get_run_by_request_id(request_id)
-    if existing and existing.user_id == str(current_user_id):
+    if existing and existing.uid == str(current_uid):
         return _build_run_response(existing)
-    if existing and existing.user_id != str(current_user_id):
+    if existing and existing.uid != str(current_uid):
         raise HTTPException(status_code=409, detail="request_id 冲突")
 
     run_id = str(uuid.uuid4())
@@ -103,7 +103,7 @@ async def create_agent_run_view(
         "image_content": image_content,
         "agent_id": agent_id,
         "thread_id": thread_id,
-        "user_id": str(current_user_id),
+        "uid": str(current_uid),
         "request_id": request_id,
         "created_at": utc_now_naive().isoformat(),
     }
@@ -112,7 +112,7 @@ async def create_agent_run_view(
             run_id=run_id,
             thread_id=thread_id,
             agent_id=agent_id,
-            user_id=str(current_user_id),
+            uid=str(current_uid),
             request_id=request_id,
             input_payload=input_payload,
         )
@@ -120,7 +120,7 @@ async def create_agent_run_view(
     except IntegrityError:
         await db.rollback()
         existing = await run_repo.get_run_by_request_id(request_id)
-        if existing and existing.user_id == str(current_user_id):
+        if existing and existing.uid == str(current_uid):
             return _build_run_response(existing)
         raise HTTPException(status_code=409, detail="request_id 冲突")
 
@@ -130,17 +130,17 @@ async def create_agent_run_view(
     return _build_run_response(run)
 
 
-async def get_agent_run_view(*, run_id: str, current_user_id: str, db: AsyncSession) -> dict:
+async def get_agent_run_view(*, run_id: str, current_uid: str, db: AsyncSession) -> dict:
     repo = AgentRunRepository(db)
-    run = await repo.get_run_for_user(run_id, str(current_user_id))
+    run = await repo.get_run_for_user(run_id, str(current_uid))
     if not run:
         raise HTTPException(status_code=404, detail="运行任务不存在")
     return {"run": run.to_dict()}
 
 
-async def cancel_agent_run_view(*, run_id: str, current_user_id: str, db: AsyncSession) -> dict:
+async def cancel_agent_run_view(*, run_id: str, current_uid: str, db: AsyncSession) -> dict:
     repo = AgentRunRepository(db)
-    run = await repo.get_run_for_user(run_id, str(current_user_id))
+    run = await repo.get_run_for_user(run_id, str(current_uid))
     if not run:
         raise HTTPException(status_code=404, detail="运行任务不存在")
 
@@ -153,7 +153,7 @@ async def stream_agent_run_events(
     *,
     run_id: str,
     after_seq: str | int,
-    current_user_id: str,
+    current_uid: str,
 ) -> AsyncIterator[str]:
     started_at = utc_now_naive()
     last_heartbeat_ts = started_at
@@ -165,7 +165,7 @@ async def stream_agent_run_events(
             try:
                 async with pg_manager.get_async_session_context() as db:
                     repo = AgentRunRepository(db)
-                    run = await repo.get_run_for_user(run_id, str(current_user_id))
+                    run = await repo.get_run_for_user(run_id, str(current_uid))
                     if not run:
                         yield _format_sse({"run_id": run_id, "message": "运行任务不存在"}, event="error")
                         yield _format_sse({"run_id": run_id, "last_seq": last_seq}, event="close")
@@ -242,7 +242,7 @@ async def stream_agent_run_events(
         return
 
 
-async def get_active_run_by_thread(*, thread_id: str, current_user_id: str, db: AsyncSession) -> dict:
+async def get_active_run_by_thread(*, thread_id: str, current_uid: str, db: AsyncSession) -> dict:
     from sqlalchemy import select
     from yuxi.storage.postgres.models_business import AgentRun
 
@@ -250,7 +250,7 @@ async def get_active_run_by_thread(*, thread_id: str, current_user_id: str, db: 
         select(AgentRun)
         .where(
             AgentRun.thread_id == thread_id,
-            AgentRun.user_id == str(current_user_id),
+            AgentRun.uid == str(current_uid),
             AgentRun.status.notin_(list(TERMINAL_RUN_STATUSES)),
         )
         .order_by(AgentRun.created_at.desc())

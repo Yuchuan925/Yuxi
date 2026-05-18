@@ -8,10 +8,20 @@
           管理系统用户，请谨慎操作。删除用户后该用户将无法登录系统。
         </p>
       </div>
-      <a-button type="primary" @click="showAddUserModal" class="add-btn lucide-icon-btn">
-        <template #icon><Plus :size="16" /></template>
-        添加用户
-      </a-button>
+      <div class="header-actions">
+        <a-button
+          @click="handleRefresh"
+          :loading="userManagement.refreshing"
+          title="刷新"
+          class="refresh-btn lucide-icon-btn"
+        >
+          <template #icon><RefreshCw :size="16" :class="{ spin: userManagement.refreshing }" /></template>
+        </a-button>
+        <a-button type="primary" @click="showAddUserModal" class="add-btn lucide-icon-btn">
+          <template #icon><Plus :size="16" /></template>
+          添加用户
+        </a-button>
+      </div>
     </div>
 
     <!-- 主内容区域 -->
@@ -61,7 +71,7 @@
                         </span>
                       </div>
                     </div>
-                    <div class="user-id-row">ID: {{ user.user_id || '-' }}</div>
+                    <div class="user-id-row">ID: {{ user.uid || '-' }}</div>
                   </div>
                 </div>
               </div>
@@ -132,17 +142,17 @@
           <a-input
             v-model:value="userManagement.form.username"
             placeholder="请输入用户名（2-20个字符）"
-            @blur="validateAndGenerateUserId"
+            @blur="validateAndGenerateUid"
             :maxlength="20"
           />
           <div v-if="userManagement.form.usernameError" class="error-text">
             {{ userManagement.form.usernameError }}
           </div>
           <div
-            v-if="userManagement.form.generatedUserId && !userManagement.editMode"
+            v-if="userManagement.form.generatedUid && !userManagement.editMode"
             class="help-text"
           >
-            登录ID：{{ userManagement.form.generatedUserId }}，此ID将用于登录，根据用户名自动生成
+            登录ID：{{ userManagement.form.generatedUid }}，此ID将用于登录，根据用户名自动生成
           </div>
         </a-form-item>
 
@@ -219,7 +229,7 @@ import { reactive, onMounted, watch } from 'vue'
 import { message, Modal } from 'ant-design-vue'
 import { useUserStore } from '@/stores/user'
 import { departmentApi } from '@/apis'
-import { Plus, Pencil, Trash2, User, UserLock, UserStar } from 'lucide-vue-next'
+import { Plus, Pencil, Trash2, User, UserLock, UserStar, RefreshCw } from 'lucide-vue-next'
 import { formatDateTime } from '@/utils/time'
 
 const userStore = useUserStore()
@@ -227,6 +237,7 @@ const userStore = useUserStore()
 // 用户管理相关状态
 const userManagement = reactive({
   loading: false,
+  refreshing: false,
   users: [],
   error: null,
   modalVisible: false,
@@ -235,7 +246,7 @@ const userManagement = reactive({
   editUserId: null,
   form: {
     username: '',
-    generatedUserId: '', // 自动生成的user_id
+    generatedUid: '', // 自动生成的uid
     phoneNumber: '', // 手机号
     password: '',
     confirmPassword: '',
@@ -263,26 +274,26 @@ const fetchDepartments = async () => {
   }
 }
 
-// 添加验证用户名并生成user_id的函数
-const validateAndGenerateUserId = async () => {
+// 添加验证用户名并生成uid的函数
+const validateAndGenerateUid = async () => {
   const username = userManagement.form.username.trim()
 
   // 清空之前的错误和生成的ID
   userManagement.form.usernameError = ''
-  userManagement.form.generatedUserId = ''
+  userManagement.form.generatedUid = ''
 
   if (!username) {
     return
   }
 
-  // 在编辑模式下，不需要重新生成user_id
+  // 在编辑模式下，不需要重新生成uid
   if (userManagement.editMode) {
     return
   }
 
   try {
-    const result = await userStore.validateUsernameAndGenerateUserId(username)
-    userManagement.form.generatedUserId = result.user_id
+    const result = await userStore.validateUsernameAndGenerateUid(username)
+    userManagement.form.generatedUid = result.uid
   } catch (error) {
     userManagement.form.usernameError = error.message || '用户名验证失败'
   }
@@ -341,6 +352,21 @@ const fetchUsers = async () => {
   }
 }
 
+// 刷新用户和部门信息
+const handleRefresh = async () => {
+  if (userManagement.refreshing) return
+  userManagement.refreshing = true
+  try {
+    await Promise.all([fetchUsers(), fetchDepartments()])
+    message.success('刷新成功')
+  } catch (error) {
+    console.error('刷新失败:', error)
+    message.error('刷新失败')
+  } finally {
+    userManagement.refreshing = false
+  }
+}
+
 // 打开添加用户模态框
 const showAddUserModal = () => {
   userManagement.modalTitle = '添加用户'
@@ -348,7 +374,7 @@ const showAddUserModal = () => {
   userManagement.editUserId = null
   userManagement.form = {
     username: '',
-    generatedUserId: '',
+    generatedUid: '',
     phoneNumber: '',
     password: '',
     confirmPassword: '',
@@ -368,7 +394,7 @@ const showEditUserModal = (user) => {
   userManagement.editUserId = user.id
   userManagement.form = {
     username: user.username,
-    generatedUserId: user.user_id || '', // 编辑模式显示现有的user_id
+    generatedUid: user.uid || '', // 编辑模式显示现有的uid
     phoneNumber: user.phone_number || '',
     password: '',
     confirmPassword: '',
@@ -531,6 +557,62 @@ onMounted(async () => {
 
 <style lang="less" scoped>
 .user-management {
+  .header-section {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+    gap: 16px;
+    margin-bottom: 16px;
+
+    .header-content {
+      flex: 1;
+      min-width: 0;
+
+      .section-title {
+        font-size: 16px;
+        font-weight: 500;
+        color: var(--gray-900);
+        line-height: 1.4;
+        margin: 12px 0 12px;
+      }
+
+      .section-description {
+        font-size: 14px;
+        color: var(--gray-600);
+        line-height: 1.4;
+        margin: 0;
+      }
+    }
+
+    .header-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+
+      .refresh-btn {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 32px;
+        height: 32px;
+        border-radius: 6px;
+        transition: all 0.2s ease;
+
+        &:hover {
+          background: var(--gray-25);
+        }
+
+        .spin {
+          animation: spin 1s linear infinite;
+        }
+
+        :deep(.ant-btn-loading-icon) {
+          color: var(--gray-600);
+        }
+      }
+    }
+  }
+
   .content-section {
     overflow: hidden;
 
@@ -744,6 +826,15 @@ onMounted(async () => {
     font-size: 13px;
     color: var(--gray-900);
     font-family: 'Monaco', 'Consolas', monospace;
+  }
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
   }
 }
 

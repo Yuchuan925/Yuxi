@@ -16,7 +16,7 @@ async def test_superadmin_can_delete_department_with_users(test_client, admin_he
     department_payload = {
         "name": f"pytest_department_{suffix}",
         "description": "integration test department",
-        "admin_user_id": f"pta_{suffix}",
+        "admin_uid": f"pta_{suffix}",
         "admin_password": "RouterDept123!",
     }
     user_payload = {
@@ -49,7 +49,7 @@ async def test_superadmin_can_delete_department_with_users(test_client, admin_he
         list_users_response = await test_client.get("/api/auth/users", headers=admin_headers)
         assert list_users_response.status_code == 200, list_users_response.text
         users_before_delete = list_users_response.json()
-        department_admin = next((user for user in users_before_delete if user["user_id"] == department_payload["admin_user_id"]), None)
+        department_admin = next((user for user in users_before_delete if user["uid"] == department_payload["admin_uid"]), None)
         assert department_admin is not None
         department_admin_id = department_admin["id"]
 

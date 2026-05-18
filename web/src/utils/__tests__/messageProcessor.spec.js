@@ -66,7 +66,7 @@ const run = () => {
     true
   )
 
-  // 2. LightRAG data.chunks 提取
+  // 2. 对象包装的 data.chunks 提取
   assert.equal(
     chunks.some((c) => c.content === 'B' && c.kb_name === 'LightGraphKB'),
     true

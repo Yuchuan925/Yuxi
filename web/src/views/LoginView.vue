@@ -50,24 +50,24 @@
               <div v-if="isFirstRun" class="login-form login-form--init">
                 <a-form :model="adminForm" @finish="handleInitialize" layout="vertical">
                   <a-form-item
-                    label="用户ID"
-                    name="user_id"
+                    label="UID"
+                    name="uid"
                     :rules="[
-                      { required: true, message: '请输入用户ID' },
+                      { required: true, message: '请输入UID' },
                       {
                         pattern: /^[a-zA-Z0-9_]+$/,
-                        message: '用户ID只能包含字母、数字和下划线'
+                        message: 'UID只能包含字母、数字和下划线'
                       },
                       {
                         min: 3,
                         max: 20,
-                        message: '用户ID长度必须在3-20个字符之间'
+                        message: 'UID长度必须在3-20个字符之间'
                       }
                     ]"
                   >
                     <a-input
-                      v-model:value="adminForm.user_id"
-                      placeholder="请输入用户ID（3-20个字符）"
+                      v-model:value="adminForm.uid"
+                      placeholder="请输入UID（3-20个字符）"
                       :maxlength="20"
                     />
                   </a-form-item>
@@ -156,9 +156,9 @@
                   <a-form-item
                     label="登录账号"
                     name="loginId"
-                    :rules="[{ required: true, message: '请输入用户ID或手机号' }]"
+                    :rules="[{ required: true, message: '请输入UID或手机号' }]"
                   >
-                    <a-input v-model:value="loginForm.loginId" placeholder="用户ID或手机号">
+                    <a-input v-model:value="loginForm.loginId" placeholder="UID或手机号">
                       <template #prefix>
                         <user-icon size="18" />
                       </template>
@@ -342,13 +342,13 @@ const lockCountdown = ref(null)
 
 // 登录表单
 const loginForm = reactive({
-  loginId: '', // 支持user_id或phone_number登录
+  loginId: '', // 支持uid或phone_number登录
   password: ''
 })
 
 // 管理员初始化表单
 const adminForm = reactive({
-  user_id: '', // 改为直接输入user_id
+  uid: '', // 改为直接输入uid
   password: '',
   confirmPassword: '',
   phone_number: '' // 手机号字段（可选）
@@ -563,7 +563,7 @@ const handleInitialize = async () => {
     }
 
     await userStore.initialize({
-      user_id: adminForm.user_id,
+      uid: adminForm.uid,
       password: adminForm.password,
       phone_number: adminForm.phone_number || null // 空字符串转为null
     })

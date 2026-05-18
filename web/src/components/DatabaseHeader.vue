@@ -24,14 +24,14 @@
           <span style="user-select: all">{{ database.db_id || 'N/A' }}</span>
         </span>
         <span class="file-count">{{ database.row_count || 0 }} 文件</span>
-        <a-tag color="blue">{{ database.embed_info?.name }}</a-tag>
+        <a-tag v-if="database.embedding_model_spec" color="blue">{{ database.embedding_model_spec }}</a-tag>
         <a-tag
-          :color="getKbTypeColor(database.kb_type || 'lightrag')"
+          :color="getKbTypeColor(database.kb_type || 'milvus')"
           class="kb-type-tag"
           size="small"
         >
-          <component :is="getKbTypeIcon(database.kb_type || 'lightrag')" class="type-icon" />
-          {{ getKbTypeLabel(database.kb_type || 'lightrag') }}
+          <component :is="getKbTypeIcon(database.kb_type || 'milvus')" class="type-icon" />
+          {{ getKbTypeLabel(database.kb_type || 'milvus') }}
         </a-tag>
       </div>
     </template>
@@ -58,15 +58,6 @@
           :rows="4"
         />
       </a-form-item>
-      <!-- 仅对 LightRAG 类型显示 LLM 配置 -->
-      <a-form-item v-if="database.kb_type === 'lightrag'" label="语言模型 (LLM)" name="llm_info">
-        <ModelSelectorComponent
-          :model_spec="llmModelSpec"
-          placeholder="请选择模型"
-          @select-model="handleLLMSelect"
-          style="width: 100%"
-        />
-      </a-form-item>
     </a-form>
   </a-modal>
 </template>
@@ -75,17 +66,9 @@
 import { ref, reactive, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { useDatabaseStore } from '@/stores/database'
-import {
-  getKbTypeLabel,
-  getKbTypeIcon,
-  getKbTypeColor,
-  parseModelSpec,
-  buildDisplaySpec,
-  buildLlmInfoPayload
-} from '@/utils/kb_utils'
+import { getKbTypeLabel, getKbTypeIcon, getKbTypeColor } from '@/utils/kb_utils'
 import { LeftOutlined, EditOutlined, DeleteOutlined } from '@ant-design/icons-vue'
 import HeaderComponent from '@/components/HeaderComponent.vue'
-import ModelSelectorComponent from '@/components/ModelSelectorComponent.vue'
 import AiTextarea from '@/components/AiTextarea.vue'
 import { h } from 'vue'
 
@@ -99,12 +82,7 @@ const editModalVisible = ref(false)
 const editFormRef = ref(null)
 const editForm = reactive({
   name: '',
-  description: '',
-  llm_info: {
-    model_spec: '',
-    provider: '',
-    model_name: ''
-  }
+  description: ''
 })
 
 const rules = {
@@ -112,19 +90,12 @@ const rules = {
 }
 
 const backToDatabase = () => {
-  router.push('/database')
+  router.push({ path: '/extensions', query: { tab: 'knowledge' } })
 }
 
 const showEditModal = () => {
   editForm.name = database.value.name || ''
   editForm.description = database.value.description || ''
-  // 如果是 LightRAG 类型，加载当前的 LLM 配置
-  if (database.value.kb_type === 'lightrag') {
-    const llmInfo = database.value.llm_info || {}
-    editForm.llm_info.model_spec = llmInfo.model_spec || ''
-    editForm.llm_info.provider = llmInfo.provider || ''
-    editForm.llm_info.model_name = llmInfo.model_name || ''
-  }
   editModalVisible.value = true
 }
 
@@ -137,26 +108,12 @@ const handleEditSubmit = () => {
         description: editForm.description
       }
 
-      // 如果是 LightRAG 类型，包含 llm_info
-      if (database.value.kb_type === 'lightrag') {
-        updateData.llm_info = buildLlmInfoPayload(editForm.llm_info)
-      }
-
       await store.updateDatabaseInfo(updateData)
       editModalVisible.value = false
     })
     .catch((err) => {
       console.error('表单验证失败:', err)
     })
-}
-
-// LLM 模型选择处理
-const llmModelSpec = computed(() => buildDisplaySpec(editForm.llm_info))
-
-const handleLLMSelect = (spec) => {
-  const parsed = parseModelSpec(spec)
-  if (!parsed) return
-  Object.assign(editForm.llm_info, parsed)
 }
 
 const deleteDatabase = () => {

@@ -10,8 +10,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from yuxi.storage.postgres.models_business import User
 from server.routers.auth_router import get_admin_user
-from server.utils.auth_middleware import get_db, get_required_user
+from server.utils.auth_middleware import get_current_user, get_db, get_required_user
 from yuxi import config as conf
+from yuxi.agents.context import filter_config_by_role
 from yuxi.agents.buildin import agent_manager
 from yuxi.models import select_model
 from yuxi.services.chat_service import agent_chat, get_agent_state_view, stream_agent_chat, stream_agent_resume
@@ -47,6 +48,7 @@ from yuxi.utils.paths import VIRTUAL_PATH_PREFIX
 
 
 # TODO：当前文件的功能过于庞杂，路由标签混乱
+
 
 # 图片上传响应模型
 class ImageUploadResponse(BaseModel):
@@ -97,6 +99,24 @@ class AgentChatRequest(BaseModel):
 
 
 chat = APIRouter(prefix="/chat", tags=["chat"])
+
+
+async def get_config_user(user: User | None = Depends(get_current_user)) -> User:
+    if user is None:
+        raise HTTPException(status_code=401, detail="请登录后再访问", headers={"WWW-Authenticate": "Bearer"})
+    return user
+
+
+def _filter_agent_config_json(agent_id: str, config_json: dict | None, role: str | None) -> dict:
+    agent = agent_manager.get_agent(agent_id)
+    context_schema = agent.context_schema if agent else None
+    return filter_config_by_role(config_json or {}, role, context_schema=context_schema)
+
+
+def _serialize_agent_config(item, role: str | None) -> dict:
+    data = item.to_dict()
+    data["config_json"] = _filter_agent_config_json(item.agent_id, data.get("config_json"), role)
+    return data
 
 # =============================================================================
 # > === 智能体管理分组 ===
@@ -157,11 +177,7 @@ async def call(query: str = Body(...), meta: dict = Body(None), current_user: Us
     if "request_id" not in meta or not meta.get("request_id"):
         meta["request_id"] = str(uuid.uuid4())
 
-    model = select_model(
-        model_provider=meta.get("model_provider"),
-        model_name=meta.get("model_name"),
-        model_spec=meta.get("model_spec") or meta.get("model"),
-    )
+    model = select_model(model_spec=meta.get("model_spec") or meta.get("model") or conf.default_model)
 
     response = await model.call(query)
     logger.debug({"query": query, "response": response.content})
@@ -177,7 +193,7 @@ async def get_agent(current_user: User = Depends(get_required_user)):
 
 
 @chat.get("/agent/{agent_id}")
-async def get_single_agent(agent_id: str, current_user: User = Depends(get_required_user)):
+async def get_single_agent(agent_id: str, current_user: User = Depends(get_config_user)):
     """获取指定智能体的完整信息（包含配置选项）（需要登录）"""
     try:
         # 检查智能体是否存在
@@ -185,7 +201,7 @@ async def get_single_agent(agent_id: str, current_user: User = Depends(get_requi
             raise HTTPException(status_code=404, detail=f"智能体 {agent_id} 不存在")
 
         # 获取智能体的完整信息（包含 configurable_items）
-        agent_info = await agent.get_info()
+        agent_info = await agent.get_info(user_role=current_user.role)
 
         return agent_info
 
@@ -199,21 +215,22 @@ async def get_single_agent(agent_id: str, current_user: User = Depends(get_requi
 @chat.get("/agent/{agent_id}/configs")
 async def list_agent_configs(
     agent_id: str,
-    current_user: User = Depends(get_required_user),
+    current_user: User = Depends(get_config_user),
     db: AsyncSession = Depends(get_db),
 ):
     if not agent_manager.get_agent(agent_id):
         raise HTTPException(status_code=404, detail=f"智能体 {agent_id} 不存在")
 
     repo = AgentConfigRepository(db)
-    items = await repo.list_by_department_agent(department_id=current_user.department_id, agent_id=agent_id)
+    uid = str(current_user.uid)
+    items = await repo.list_by_user_agent(uid=uid, agent_id=agent_id)
     if not items:
         await repo.get_or_create_default(
-            department_id=current_user.department_id,
+            uid=uid,
             agent_id=agent_id,
-            created_by=str(current_user.id),
+            created_by=uid,
         )
-        items = await repo.list_by_department_agent(department_id=current_user.department_id, agent_id=agent_id)
+        items = await repo.list_by_user_agent(uid=uid, agent_id=agent_id)
 
     configs = [
         {
@@ -234,7 +251,7 @@ async def list_agent_configs(
 async def get_agent_config_profile(
     agent_id: str,
     config_id: int,
-    current_user: User = Depends(get_required_user),
+    current_user: User = Depends(get_config_user),
     db: AsyncSession = Depends(get_db),
 ):
     if not agent_manager.get_agent(agent_id):
@@ -242,39 +259,38 @@ async def get_agent_config_profile(
 
     repo = AgentConfigRepository(db)
     item = await repo.get_by_id(config_id)
-    if not item or item.agent_id != agent_id or item.department_id != current_user.department_id:
+    if not item or item.agent_id != agent_id or item.uid != str(current_user.uid):
         raise HTTPException(status_code=404, detail="配置不存在")
 
-    return {"config": item.to_dict()}
+    return {"config": _serialize_agent_config(item, current_user.role)}
 
 
 @chat.post("/agent/{agent_id}/configs")
 async def create_agent_config_profile(
     agent_id: str,
     payload: AgentConfigCreate,
-    current_user: User = Depends(get_admin_user),
+    current_user: User = Depends(get_config_user),
     db: AsyncSession = Depends(get_db),
 ):
     if not agent_manager.get_agent(agent_id):
         raise HTTPException(status_code=404, detail=f"智能体 {agent_id} 不存在")
 
     repo = AgentConfigRepository(db)
+    uid = str(current_user.uid)
     item = await repo.create(
-        department_id=current_user.department_id,
+        uid=uid,
         agent_id=agent_id,
         name=payload.name,
         description=payload.description,
         icon=payload.icon,
         pics=payload.pics,
         examples=payload.examples,
-        config_json=payload.config_json,
+        config_json=_filter_agent_config_json(agent_id, payload.config_json, current_user.role),
         is_default=payload.set_default,
-        created_by=str(current_user.id),
+        created_by=uid,
     )
-    if payload.set_default:
-        item = await repo.set_default(config=item, updated_by=str(current_user.id))
 
-    return {"config": item.to_dict()}
+    return {"config": _serialize_agent_config(item, current_user.role)}
 
 
 @chat.put("/agent/{agent_id}/configs/{config_id}")
@@ -282,7 +298,7 @@ async def update_agent_config_profile(
     agent_id: str,
     config_id: int,
     payload: AgentConfigUpdate,
-    current_user: User = Depends(get_admin_user),
+    current_user: User = Depends(get_config_user),
     db: AsyncSession = Depends(get_db),
 ):
     if not agent_manager.get_agent(agent_id):
@@ -290,7 +306,7 @@ async def update_agent_config_profile(
 
     repo = AgentConfigRepository(db)
     item = await repo.get_by_id(config_id)
-    if not item or item.agent_id != agent_id or item.department_id != current_user.department_id:
+    if not item or item.agent_id != agent_id or item.uid != str(current_user.uid):
         raise HTTPException(status_code=404, detail="配置不存在")
 
     updated = await repo.update(
@@ -300,17 +316,19 @@ async def update_agent_config_profile(
         icon=payload.icon,
         pics=payload.pics,
         examples=payload.examples,
-        config_json=payload.config_json,
-        updated_by=str(current_user.id),
+        config_json=_filter_agent_config_json(agent_id, payload.config_json, current_user.role)
+        if payload.config_json is not None
+        else None,
+        updated_by=str(current_user.uid),
     )
-    return {"config": updated.to_dict()}
+    return {"config": _serialize_agent_config(updated, current_user.role)}
 
 
 @chat.post("/agent/{agent_id}/configs/{config_id}/set_default")
 async def set_agent_config_default(
     agent_id: str,
     config_id: int,
-    current_user: User = Depends(get_admin_user),
+    current_user: User = Depends(get_config_user),
     db: AsyncSession = Depends(get_db),
 ):
     if not agent_manager.get_agent(agent_id):
@@ -318,18 +336,18 @@ async def set_agent_config_default(
 
     repo = AgentConfigRepository(db)
     item = await repo.get_by_id(config_id)
-    if not item or item.agent_id != agent_id or item.department_id != current_user.department_id:
+    if not item or item.agent_id != agent_id or item.uid != str(current_user.uid):
         raise HTTPException(status_code=404, detail="配置不存在")
 
-    updated = await repo.set_default(config=item, updated_by=str(current_user.id))
-    return {"config": updated.to_dict()}
+    updated = await repo.set_default(config=item, updated_by=str(current_user.uid))
+    return {"config": _serialize_agent_config(updated, current_user.role)}
 
 
 @chat.delete("/agent/{agent_id}/configs/{config_id}")
 async def delete_agent_config_profile(
     agent_id: str,
     config_id: int,
-    current_user: User = Depends(get_admin_user),
+    current_user: User = Depends(get_config_user),
     db: AsyncSession = Depends(get_db),
 ):
     if not agent_manager.get_agent(agent_id):
@@ -337,10 +355,10 @@ async def delete_agent_config_profile(
 
     repo = AgentConfigRepository(db)
     item = await repo.get_by_id(config_id)
-    if not item or item.agent_id != agent_id or item.department_id != current_user.department_id:
+    if not item or item.agent_id != agent_id or item.uid != str(current_user.uid):
         raise HTTPException(status_code=404, detail="配置不存在")
 
-    await repo.delete(config=item, updated_by=str(current_user.id))
+    await repo.delete(config=item, updated_by=str(current_user.uid))
     return {"success": True}
 
 
@@ -409,7 +427,7 @@ async def create_agent_run(
         thread_id=payload.thread_id,
         meta=dict(payload.meta or {}),
         image_content=payload.image_content,
-        current_user_id=str(current_user.id),
+        current_uid=str(current_user.uid),
         db=db,
     )
 
@@ -421,7 +439,7 @@ async def get_agent_run(
     db: AsyncSession = Depends(get_db),
 ):
     """获取 run 状态（需要登录）"""
-    return await get_agent_run_view(run_id=run_id, current_user_id=str(current_user.id), db=db)
+    return await get_agent_run_view(run_id=run_id, current_uid=str(current_user.uid), db=db)
 
 
 @chat.post("/runs/{run_id}/cancel")
@@ -431,7 +449,7 @@ async def cancel_agent_run(
     db: AsyncSession = Depends(get_db),
 ):
     """取消 run（需要登录）"""
-    return await cancel_agent_run_view(run_id=run_id, current_user_id=str(current_user.id), db=db)
+    return await cancel_agent_run_view(run_id=run_id, current_uid=str(current_user.uid), db=db)
 
 
 @chat.get("/runs/{run_id}/events")
@@ -445,7 +463,7 @@ async def stream_run_events(
         stream_agent_run_events(
             run_id=run_id,
             after_seq=after_seq,
-            current_user_id=str(current_user.id),
+            current_uid=str(current_user.uid),
         ),
         media_type="text/event-stream",
         headers={
@@ -454,26 +472,6 @@ async def stream_run_events(
             "X-Accel-Buffering": "no",
         },
     )
-
-# =============================================================================
-# > === 模型管理分组 ===
-# =============================================================================
-
-
-@chat.get("/models")
-async def get_chat_models(model_provider: str, current_user: User = Depends(get_admin_user)):
-    """获取指定模型提供商的模型列表（需要登录）"""
-    model = select_model(model_provider=model_provider)
-    models = await model.get_models()
-    return {"models": models}
-
-
-@chat.post("/models/update")
-async def update_chat_models(model_provider: str, model_names: list[str], current_user=Depends(get_admin_user)):
-    """更新指定模型提供商的模型列表 (仅管理员)"""
-    conf.model_names[model_provider].models = model_names
-    conf._save_models_to_file(model_provider)
-    return {"models": conf.model_names[model_provider].models}
 
 
 @chat.post("/thread/{thread_id}/resume")
@@ -490,7 +488,7 @@ async def resume_thread_chat(
     # 验证 thread 存在且属于当前用户
     conv_repo = ConversationRepository(db)
     conversation = await conv_repo.get_conversation_by_thread_id(thread_id)
-    if not conversation or conversation.user_id != str(current_user.id) or conversation.status == "deleted":
+    if not conversation or conversation.uid != str(current_user.uid) or conversation.status == "deleted":
         raise HTTPException(status_code=404, detail="对话线程不存在")
     agent_id = conversation.agent_id
 
@@ -555,7 +553,7 @@ async def resume_thread_chat(
     meta = {
         "agent_id": agent_id,
         "thread_id": thread_id,
-        "user_id": current_user.id,
+        "uid": current_user.uid,
         "approved": approved,
         "answer": answer,
         "resume_input": resume_input,
@@ -583,7 +581,7 @@ async def get_thread_active_run(
     db: AsyncSession = Depends(get_db),
 ):
     """获取当前会话活跃 run（需要登录）"""
-    return await get_active_run_by_thread(thread_id=thread_id, current_user_id=str(current_user.id), db=db)
+    return await get_active_run_by_thread(thread_id=thread_id, current_uid=str(current_user.uid), db=db)
 
 
 @chat.get("/thread/{thread_id}/history")
@@ -594,7 +592,7 @@ async def get_thread_history(
     try:
         return await get_thread_history_view(
             thread_id=thread_id,
-            current_user_id=str(current_user.id),
+            current_uid=str(current_user.uid),
             db=db,
         )
 
@@ -613,7 +611,7 @@ async def get_thread_state(
     try:
         return await get_agent_state_view(
             thread_id=thread_id,
-            current_user_id=str(current_user.id),
+            current_uid=str(current_user.uid),
             db=db,
         )
     except HTTPException:
@@ -634,7 +632,7 @@ class ThreadCreate(BaseModel):
 
 class ThreadResponse(BaseModel):
     id: str
-    user_id: str
+    uid: str
     agent_id: str
     title: str | None = None
     is_pinned: bool = False
@@ -716,7 +714,7 @@ async def create_thread(
         title=thread.title,
         metadata=thread.metadata,
         db=db,
-        current_user_id=str(current_user.id),
+        current_uid=str(current_user.uid),
     )
 
 
@@ -730,7 +728,7 @@ async def list_threads(
 ):
     """获取用户的所有对话线程 (使用新存储系统)"""
     return await list_threads_view(
-        agent_id=agent_id, db=db, current_user_id=str(current_user.id), limit=limit, offset=offset
+        agent_id=agent_id, db=db, current_uid=str(current_user.uid), limit=limit, offset=offset
     )
 
 
@@ -739,7 +737,7 @@ async def delete_thread(
     thread_id: str, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_required_user)
 ):
     """删除对话线程 (使用新存储系统)"""
-    return await delete_thread_view(thread_id=thread_id, db=db, current_user_id=str(current_user.id))
+    return await delete_thread_view(thread_id=thread_id, db=db, current_uid=str(current_user.uid))
 
 
 class ThreadUpdate(BaseModel):
@@ -760,7 +758,7 @@ async def update_thread(
         title=thread_update.title,
         is_pinned=thread_update.is_pinned,
         db=db,
-        current_user_id=str(current_user.id),
+        current_uid=str(current_user.uid),
     )
 
 
@@ -781,7 +779,7 @@ async def upload_thread_attachment(
         thread_id=thread_id,
         file=file,
         db=db,
-        current_user_id=str(current_user.id),
+        current_uid=str(current_user.uid),
     )
 
 
@@ -795,7 +793,7 @@ async def list_thread_attachments(
     return await list_thread_attachments_view(
         thread_id=thread_id,
         db=db,
-        current_user_id=str(current_user.id),
+        current_uid=str(current_user.uid),
     )
 
 
@@ -811,7 +809,7 @@ async def delete_thread_attachment(
         thread_id=thread_id,
         file_id=file_id,
         db=db,
-        current_user_id=str(current_user.id),
+        current_uid=str(current_user.uid),
     )
 
 
@@ -826,7 +824,7 @@ async def list_thread_files(
     """列出线程文件目录。"""
     return await list_thread_files_view(
         thread_id=thread_id,
-        current_user_id=str(current_user.id),
+        current_uid=str(current_user.uid),
         db=db,
         path=path,
         recursive=recursive,
@@ -845,7 +843,7 @@ async def read_thread_file_content(
     """读取线程文本文件（按行分页）。"""
     return await read_thread_file_content_view(
         thread_id=thread_id,
-        current_user_id=str(current_user.id),
+        current_uid=str(current_user.uid),
         db=db,
         path=path,
         offset=offset,
@@ -864,7 +862,7 @@ async def get_thread_artifact(
     """下载或预览线程文件。"""
     file_path = await resolve_thread_artifact_view(
         thread_id=thread_id,
-        current_user_id=str(current_user.id),
+        current_uid=str(current_user.uid),
         db=db,
         path=path,
     )
@@ -884,7 +882,7 @@ async def save_thread_artifact_to_workspace(
     """保存交付物到共享 workspace/saved_artifacts 目录。"""
     return await save_thread_artifact_to_workspace_view(
         thread_id=thread_id,
-        current_user_id=str(current_user.id),
+        current_uid=str(current_user.uid),
         db=db,
         path=request.path,
     )
@@ -921,7 +919,7 @@ async def submit_message_feedback(
         rating=feedback_data.rating,
         reason=feedback_data.reason,
         db=db,
-        current_user_id=str(current_user.id),
+        current_uid=str(current_user.uid),
     )
     return MessageFeedbackResponse(**result)
 
@@ -936,7 +934,7 @@ async def get_message_feedback(
     return await get_message_feedback_view(
         message_id=message_id,
         db=db,
-        current_user_id=str(current_user.id),
+        current_uid=str(current_user.uid),
     )
 
 

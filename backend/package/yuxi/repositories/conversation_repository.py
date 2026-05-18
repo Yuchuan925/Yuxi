@@ -34,7 +34,7 @@ class ConversationRepository:
 
     async def create_conversation(
         self,
-        user_id: str,
+        uid: str,
         agent_id: str,
         title: str | None = None,
         thread_id: str | None = None,
@@ -50,7 +50,7 @@ class ConversationRepository:
 
         conversation = Conversation(
             thread_id=thread_id,
-            user_id=str(user_id),
+            uid=str(uid),
             agent_id=agent_id,
             title=normalized_title or "New Conversation",
             status="active",
@@ -65,7 +65,7 @@ class ConversationRepository:
         await self.db.commit()
         await self.db.refresh(conversation)
 
-        logger.info(f"Created conversation: {conversation.thread_id} for user {user_id}")
+        logger.info(f"Created conversation: {conversation.thread_id} for user {uid}")
         return conversation
 
     async def get_conversation_by_thread_id(self, thread_id: str) -> Conversation | None:
@@ -221,7 +221,7 @@ class ConversationRepository:
 
     async def list_conversations(
         self,
-        user_id: str | None = None,
+        uid: str | None = None,
         agent_id: str | None = None,
         status: str = "active",
         limit: int | None = None,
@@ -234,8 +234,8 @@ class ConversationRepository:
         """
 
         base_conditions = [Conversation.status == status]
-        if user_id:
-            base_conditions.append(Conversation.user_id == str(user_id))
+        if uid:
+            base_conditions.append(Conversation.uid == str(uid))
         if agent_id:
             base_conditions.append(Conversation.agent_id == agent_id)
 

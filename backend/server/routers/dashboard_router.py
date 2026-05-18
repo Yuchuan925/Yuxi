@@ -96,7 +96,7 @@ class ConversationListItem(BaseModel):
     """Conversation list item"""
 
     thread_id: str
-    user_id: str
+    uid: str
     agent_id: str
     title: str
     status: str
@@ -109,7 +109,7 @@ class ConversationDetailResponse(BaseModel):
     """Conversation detail"""
 
     thread_id: str
-    user_id: str
+    uid: str
     agent_id: str
     title: str
     status: str
@@ -127,7 +127,7 @@ class ConversationDetailResponse(BaseModel):
 
 @dashboard.get("/conversations", response_model=list[ConversationListItem])
 async def get_all_conversations(
-    user_id: str | None = None,
+    uid: str | None = None,
     agent_id: str | None = None,
     status: str = "active",
     limit: int = 100,
@@ -145,8 +145,8 @@ async def get_all_conversations(
         )
 
         # Apply filters
-        if user_id:
-            query = query.filter(Conversation.user_id == user_id)
+        if uid:
+            query = query.filter(Conversation.uid == uid)
         if agent_id:
             query = query.filter(Conversation.agent_id == agent_id)
         if status != "all":
@@ -161,7 +161,7 @@ async def get_all_conversations(
         return [
             {
                 "thread_id": conv.thread_id,
-                "user_id": conv.user_id,
+                "uid": conv.uid,
                 "agent_id": conv.agent_id,
                 "title": conv.title,
                 "status": conv.status,
@@ -223,7 +223,7 @@ async def get_conversation_detail(
 
         return {
             "thread_id": conversation.thread_id,
-            "user_id": conversation.user_id,
+            "uid": conversation.uid,
             "agent_id": conversation.agent_id,
             "title": conversation.title,
             "status": conversation.status,
@@ -259,12 +259,9 @@ async def get_user_activity_stats(
         # PostgreSQL with asyncpg requires naive datetime for naive DateTime columns
         naive_now = now.replace(tzinfo=None)
 
-        # Conversations may store either the numeric user primary key or the login user_id string.
+        # Conversations may store either the numeric user primary key or the login uid string.
         # Join condition accounts for both representations.
-        user_join_condition = or_(
-            Conversation.user_id == User.user_id,
-            Conversation.user_id == cast(User.id, String),
-        )
+        user_join_condition = Conversation.uid == User.uid
 
         # 基础用户统计（排除已删除用户）
         total_users_result = await db.execute(select(func.count(User.id)).filter(User.is_deleted == 0))
@@ -446,7 +443,6 @@ async def get_knowledge_stats(
         for kb in kb_rows:
             kb_type = (kb.kb_type or "unknown").lower()
             display_type = {
-                "lightrag": "LightRAG",
                 "faiss": "FAISS",
                 "milvus": "Milvus",
                 "dify": "Dify",
@@ -642,7 +638,7 @@ class FeedbackListItem(BaseModel):
     """反馈列表项"""
 
     id: int
-    user_id: str
+    uid: str
     username: str | None
     avatar: str | None
     rating: str
@@ -665,14 +661,14 @@ async def get_all_feedbacks(
 
     try:
         # Build query with joins including User table
-        # Try both User.id and User.user_id as MessageFeedback.user_id might be stored as either
+        # Try both User.id and User.uid as MessageFeedback.uid might be stored as either
         query = (
             select(MessageFeedback, Message, Conversation, User)
             .join(Message, MessageFeedback.message_id == Message.id)
             .join(Conversation, Message.conversation_id == Conversation.id)
             .outerjoin(
                 User,
-                (MessageFeedback.user_id == cast(User.id, String)) | (MessageFeedback.user_id == User.user_id),
+                (MessageFeedback.uid == User.uid) | (MessageFeedback.uid == User.uid),
             )
         )
 
@@ -696,7 +692,7 @@ async def get_all_feedbacks(
             {
                 "id": feedback.id,
                 "message_id": feedback.message_id,
-                "user_id": feedback.user_id,
+                "uid": feedback.uid,
                 "username": user.username if user else None,
                 "avatar": user.avatar if user else None,
                 "rating": feedback.rating,

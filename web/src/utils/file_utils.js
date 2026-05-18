@@ -1,4 +1,3 @@
-// 文件相关工具函数
 import {
   FileTextFilled,
   FileMarkdownFilled,
@@ -6,119 +5,76 @@ import {
   FileWordFilled,
   FileExcelFilled,
   FileImageFilled,
-  FileUnknownFilled,
+  FileFilled,
   FilePptFilled,
+  FileZipFilled,
   LinkOutlined
 } from '@ant-design/icons-vue'
 import { formatRelative, parseToShanghai } from '@/utils/time'
 
-// 根据文件扩展名获取文件图标
-export const getFileIcon = (filename) => {
-  if (!filename) return FileUnknownFilled
+const DEFAULT_FILE_ICON = { icon: FileFilled, color: 'var(--gray-600)' }
+const LINK_FILE_ICON = { icon: LinkOutlined, color: 'var(--color-info-500)' }
 
-  // Check if it's a URL
-  if (filename.startsWith('http://') || filename.startsWith('https://')) {
-    return LinkOutlined
-  }
-
-  const extension = filename.toLowerCase().split('.').pop()
-
-  const iconMap = {
-    // 文本文件
-    txt: FileTextFilled,
-    text: FileTextFilled,
-    log: FileTextFilled,
-
-    // Markdown文件
-    md: FileMarkdownFilled,
-    markdown: FileMarkdownFilled,
-
-    // PDF文件
-    pdf: FilePdfFilled,
-
-    // Word文档
-    doc: FileWordFilled,
-    docx: FileWordFilled,
-
-    // Excel文档
-    xls: FileExcelFilled,
-    xlsx: FileExcelFilled,
-    csv: FileExcelFilled,
-
-    // PPT文档
-    ppt: FilePptFilled,
-    pptx: FilePptFilled,
-
-    // 图片文件
-    jpg: FileImageFilled,
-    jpeg: FileImageFilled,
-    png: FileImageFilled,
-    gif: FileImageFilled,
-    bmp: FileImageFilled,
-    svg: FileImageFilled,
-    webp: FileImageFilled,
-
-    // HTML文件
-    html: FileTextFilled,
-    htm: FileTextFilled
-  }
-
-  return iconMap[extension] || FileUnknownFilled
+const FILE_ICON_CONFIG = {
+  txt: { icon: FileTextFilled, color: 'var(--color-info-500)' },
+  text: { icon: FileTextFilled, color: 'var(--color-info-500)' },
+  log: { icon: FileTextFilled, color: 'var(--color-info-500)' },
+  md: { icon: FileMarkdownFilled, color: 'var(--gray-700)' },
+  markdown: { icon: FileMarkdownFilled, color: 'var(--gray-700)' },
+  pdf: { icon: FilePdfFilled, color: 'var(--color-error-500)' },
+  doc: { icon: FileWordFilled, color: 'var(--color-info-700)' },
+  docx: { icon: FileWordFilled, color: 'var(--color-info-700)' },
+  xls: { icon: FileExcelFilled, color: 'var(--color-success-500)' },
+  xlsx: { icon: FileExcelFilled, color: 'var(--color-success-500)' },
+  csv: { icon: FileExcelFilled, color: 'var(--color-success-500)' },
+  ppt: { icon: FilePptFilled, color: 'var(--color-warning-700)' },
+  pptx: { icon: FilePptFilled, color: 'var(--color-warning-700)' },
+  jpg: { icon: FileImageFilled, color: 'var(--color-accent-700)' },
+  jpeg: { icon: FileImageFilled, color: 'var(--color-accent-700)' },
+  png: { icon: FileImageFilled, color: 'var(--color-accent-700)' },
+  gif: { icon: FileImageFilled, color: 'var(--color-accent-700)' },
+  bmp: { icon: FileImageFilled, color: 'var(--color-accent-700)' },
+  svg: { icon: FileImageFilled, color: 'var(--color-accent-700)' },
+  webp: { icon: FileImageFilled, color: 'var(--color-accent-700)' },
+  zip: { icon: FileZipFilled, color: 'var(--gray-700)' },
+  rar: { icon: FileZipFilled, color: 'var(--gray-700)' },
+  '7z': { icon: FileZipFilled, color: 'var(--gray-700)' },
+  tar: { icon: FileZipFilled, color: 'var(--gray-700)' },
+  gz: { icon: FileZipFilled, color: 'var(--gray-700)' },
+  js: { icon: FileTextFilled, color: 'var(--color-primary-700)' },
+  jsx: { icon: FileTextFilled, color: 'var(--color-primary-700)' },
+  ts: { icon: FileTextFilled, color: 'var(--color-primary-700)' },
+  tsx: { icon: FileTextFilled, color: 'var(--color-primary-700)' },
+  py: { icon: FileTextFilled, color: 'var(--color-primary-700)' },
+  java: { icon: FileTextFilled, color: 'var(--color-primary-700)' },
+  go: { icon: FileTextFilled, color: 'var(--color-primary-700)' },
+  rs: { icon: FileTextFilled, color: 'var(--color-primary-700)' },
+  vue: { icon: FileTextFilled, color: 'var(--color-primary-700)' },
+  html: { icon: FileTextFilled, color: 'var(--color-primary-700)' },
+  htm: { icon: FileTextFilled, color: 'var(--color-primary-700)' },
+  css: { icon: FileTextFilled, color: 'var(--color-primary-700)' },
+  less: { icon: FileTextFilled, color: 'var(--color-primary-700)' },
+  scss: { icon: FileTextFilled, color: 'var(--color-primary-700)' },
+  json: { icon: FileTextFilled, color: 'var(--color-primary-700)' },
+  yaml: { icon: FileTextFilled, color: 'var(--color-primary-700)' },
+  yml: { icon: FileTextFilled, color: 'var(--color-primary-700)' },
+  sh: { icon: FileTextFilled, color: 'var(--color-primary-700)' },
+  sql: { icon: FileTextFilled, color: 'var(--color-primary-700)' }
 }
 
-// 根据文件扩展名获取文件图标颜色
-export const getFileIconColor = (filename) => {
-  if (!filename) return '#8c8c8c'
+const getFileIconConfig = (filename) => {
+  const normalizedName = String(filename || '').trim().toLowerCase()
+  if (!normalizedName) return DEFAULT_FILE_ICON
+  if (normalizedName.startsWith('http://') || normalizedName.startsWith('https://')) return LINK_FILE_ICON
 
-  // Check if it's a URL
-  if (filename.startsWith('http://') || filename.startsWith('https://')) {
-    return '#1890ff' // Blue for links
-  }
-
-  const extension = filename.toLowerCase().split('.').pop()
-
-  const colorMap = {
-    // 文本文件 - 蓝色
-    txt: '#1890ff',
-    text: '#1890ff',
-    log: '#1890ff',
-
-    // Markdown文件 - 深灰色
-    md: '#595959',
-    markdown: '#595959',
-
-    // PDF文件 - 红色
-    pdf: '#ff4d4f',
-
-    // Word文档 - 深蓝色
-    doc: '#2f54eb',
-    docx: '#2f54eb',
-
-    // Excel文档 - 绿色
-    xls: '#52c41a',
-    xlsx: '#52c41a',
-    csv: '#52c41a',
-
-    // PPT文档 - 橙色
-    ppt: '#f6720d',
-    pptx: '#f6720d',
-
-    // 图片文件 - 紫色
-    jpg: '#722ed1',
-    jpeg: '#722ed1',
-    png: '#722ed1',
-    gif: '#722ed1',
-    bmp: '#722ed1',
-    svg: '#722ed1',
-    webp: '#722ed1',
-
-    // HTML文件 - 橙色
-    html: '#fa8c16',
-    htm: '#fa8c16'
-  }
-
-  return colorMap[extension] || '#8c8c8c'
+  const cleanName = normalizedName.split(/[?#]/)[0]
+  const extension = cleanName.includes('.') ? cleanName.split('.').pop() : cleanName
+  return FILE_ICON_CONFIG[extension] || DEFAULT_FILE_ICON
 }
+
+export const getFileIcon = (filename) => getFileIconConfig(filename).icon
+
+export const getFileIconColor = (filename) => getFileIconConfig(filename).color
 
 // Format relative time with CST baseline
 export const formatRelativeTime = (value) => formatRelative(value)

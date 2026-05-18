@@ -69,9 +69,9 @@ const handleCallback = async () => {
 
     // 更新用户状态
     userStore.token = tokenData.access_token
-    userStore.userId = tokenData.user_id
+    userStore.userId = tokenData.uid
     userStore.username = tokenData.username
-    userStore.userIdLogin = tokenData.user_id_login || ''
+    userStore.uid = tokenData.uid || ''
     userStore.phoneNumber = tokenData.phone_number || ''
     userStore.avatar = tokenData.avatar || ''
     userStore.userRole = tokenData.role || 'user'

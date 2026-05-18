@@ -24,7 +24,7 @@ MAX_WORKSPACE_UPLOAD_SIZE_BYTES = 100 * 1024 * 1024
 
 def _workspace_root(user: User) -> Path:
     try:
-        user_data_root = _global_user_data_dir(str(user.id)).resolve()
+        user_data_root = _global_user_data_dir(str(user.uid)).resolve()
         root = user_data_root / WORKSPACE_DIR_NAME
     except ValueError as exc:
         raise HTTPException(status_code=403, detail="Access denied") from exc
@@ -136,6 +136,15 @@ async def list_workspace_tree(
         raise HTTPException(status_code=400, detail="当前路径不是目录")
     entries = await asyncio.to_thread(_list_directory, root, target, recursive=recursive, files_only=files_only)
     return {"entries": entries}
+
+
+def resolve_workspace_file_path(*, path: str, current_user: User) -> Path:
+    target = _resolve_workspace_path(current_user, path)
+    if not target.exists():
+        raise HTTPException(status_code=404, detail=f"工作区文件不存在: {path}")
+    if not target.is_file():
+        raise HTTPException(status_code=400, detail=f"当前路径不是文件: {path}")
+    return target
 
 
 async def read_workspace_file_content(*, path: str, current_user: User) -> dict:

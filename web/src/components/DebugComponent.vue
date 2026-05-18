@@ -423,7 +423,7 @@ const printUserInfo = () => {
     token: userStore.token ? '*** (已隐藏)' : null,
     userId: userStore.userId,
     username: userStore.username,
-    userIdLogin: userStore.userIdLogin,
+    uid: userStore.uid,
     phoneNumber: userStore.phoneNumber,
     avatar: userStore.avatar,
     userRole: userStore.userRole,

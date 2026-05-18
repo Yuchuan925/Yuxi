@@ -224,7 +224,6 @@ export const useGraphStore = defineStore('graph', {
 
       // 处理节点数据
       nodesData.forEach((node, index) => {
-        // 适配新的LightRAG API格式
         const nodeId = String(node.id)
         const labels = node.labels || [node.entity_type || 'unknown']
         const entityType = node.entity_type || labels[0] || 'unknown'
@@ -275,7 +274,6 @@ export const useGraphStore = defineStore('graph', {
         const targetId = String(edge.target)
         const dynamicId = `${sourceId}-${targetId}-${index}`
 
-        // 适配新的LightRAG API格式
         const weight = Number(edge.properties?.weight || edge.weight || 1.0)
 
         const processedEdge = {
@@ -368,7 +366,7 @@ export const useGraphStore = defineStore('graph', {
           const edgeAttributes = {
             size: Number(edge.size) || 1,
             color: String(edge.color) || '#666',
-            label: String(edge.properties?.keywords || edge.properties?.description || ''),
+            label: String(edge.properties?.text || edge.properties?.keywords || edge.properties?.description || ''),
             originalWeight: Number(edge.originalWeight) || 1,
             // 保存原始数据引用
             originalData: edge

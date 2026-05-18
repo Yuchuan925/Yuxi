@@ -11,6 +11,9 @@
     />
 
     <div v-if="!isDetailPage" class="extensions-content">
+      <div v-show="activeTab === 'knowledge'" class="tab-panel">
+        <DataBaseView ref="knowledgeRef" embedded />
+      </div>
       <div v-show="activeTab === 'tools'" class="tab-panel">
         <ToolsCardList ref="toolsRef" />
       </div>
@@ -37,15 +40,18 @@ import McpCardList from '@/components/extensions/McpCardList.vue'
 import SubagentCardList from '@/components/extensions/SubagentCardList.vue'
 import SkillCardList from '@/components/extensions/SkillCardList.vue'
 import PageHeader from '@/components/shared/PageHeader.vue'
+import DataBaseView from '@/views/DataBaseView.vue'
 
 const route = useRoute()
-const activeTab = ref('tools')
+const activeTab = ref('knowledge')
+const knowledgeRef = ref(null)
 const skillsRef = ref(null)
 const mcpRef = ref(null)
 const subagentsRef = ref(null)
 const toolsRef = ref(null)
 
 const extensionTabs = [
+  { key: 'knowledge', label: '知识库' },
   { key: 'tools', label: '工具' },
   { key: 'mcp', label: 'MCP' },
   { key: 'subagents', label: 'Subagents' },
@@ -54,6 +60,7 @@ const extensionTabs = [
 
 const isDetailPage = computed(() => {
   return (
+    route.path.startsWith('/extensions/database/') ||
     route.path.startsWith('/extensions/mcp/') ||
     route.path.startsWith('/extensions/subagent/') ||
     route.path.startsWith('/extensions/skill/')
@@ -61,7 +68,13 @@ const isDetailPage = computed(() => {
 })
 
 const activeChildLoading = computed(() => {
-  const refMap = { tools: toolsRef, skills: skillsRef, mcp: mcpRef, subagents: subagentsRef }
+  const refMap = {
+    knowledge: knowledgeRef,
+    tools: toolsRef,
+    skills: skillsRef,
+    mcp: mcpRef,
+    subagents: subagentsRef
+  }
   const child = refMap[activeTab.value]
   return child?.value?.loading || false
 })
@@ -69,7 +82,7 @@ const activeChildLoading = computed(() => {
 watch(
   () => route.query,
   (query) => {
-    if (query.tab && ['tools', 'skills', 'mcp', 'subagents'].includes(query.tab)) {
+    if (query.tab && ['knowledge', 'tools', 'skills', 'mcp', 'subagents'].includes(query.tab)) {
       activeTab.value = query.tab
     }
   },

@@ -52,8 +52,7 @@ class ContentGuard:
         # 从配置读取LLM模型设置
         self.enable_llm = config.enable_content_guard_llm
         if self.enable_llm and config.content_guard_llm_model:
-            provider, model_name = config.content_guard_llm_model.split("/", maxsplit=1)
-            self.llm_model = select_model(model_provider=provider, model_name=model_name)
+            self.llm_model = select_model(model_spec=config.content_guard_llm_model)
         else:
             self.llm_model = None
 

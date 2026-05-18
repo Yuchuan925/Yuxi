@@ -41,7 +41,6 @@ from yuxi.agents.toolkits import buildin, mysql  # 触发 @tool 装饰器执行
 |------|------|
 | `calculator` | 计算器，支持加减乘除 |
 | `ask_user_question` | 向用户发起交互式提问 |
-| `query_knowledge_graph` | 查询知识图谱三元组 |
 | `text_to_img_qwen_image` | 使用 Qwen-Image 生成图片 |
 | `tavily_search` | Tavily 网页搜索（需配置 `TAVILY_API_KEY`） |
 

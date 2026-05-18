@@ -41,11 +41,9 @@
     </div>
     <template #overlay>
       <a-menu class="scrollable-menu">
-        <!-- v2 模型列表（新版本，优先显示） -->
         <a-menu-item-group v-for="(providerData, providerId) in v2Models" :key="`v2-${providerId}`">
           <template #title>
             <span>{{ providerId }}</span>
-            <a-tag color="success" size="small" class="provider-tag">新</a-tag>
           </template>
           <a-menu-item
             v-for="model in providerData.models"

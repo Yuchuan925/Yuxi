@@ -1,13 +1,11 @@
 import asyncio
+import mimetypes
 import os
 from abc import ABC, abstractmethod
 from typing import Any
 
-from yuxi.knowledge.chunking.ragflow_like.presets import (
-    ensure_chunk_defaults_in_additional_params,
-    resolve_chunk_processing_params,
-)
-from yuxi.knowledge.utils import sanitize_processing_params
+from yuxi.knowledge.chunking.ragflow_like.presets import ensure_chunk_defaults_in_additional_params
+from yuxi.knowledge.utils import resolve_processing_params, sanitize_processing_params
 from yuxi.utils import logger
 from yuxi.utils.datetime_utils import coerce_any_to_utc_datetime, utc_isoformat
 
@@ -20,9 +18,6 @@ class FileStatus:
     INDEXING = "indexing"
     INDEXED = "indexed"
     ERROR_INDEXING = "error_indexing"
-    # Legacy status mapping
-    DONE = "done"  # Map to INDEXED
-    FAILED = "failed"  # Generic failure
 
 
 class KnowledgeBaseException(Exception):
@@ -45,6 +40,10 @@ class KBOperationError(KnowledgeBaseException):
 
 class KnowledgeBase(ABC):
     """知识库抽象基类，定义统一接口"""
+
+    requires_embedding_model = True
+    supports_documents = True
+    apply_chunk_defaults = True
 
     # 类级别的处理队列，跟踪所有正在处理的文件
     _processing_files = set()
@@ -81,13 +80,13 @@ class KnowledgeBase(ABC):
         self.databases_meta = {}
         for db_id, meta in global_databases_meta.items():
             if meta.get("kb_type") == self.kb_type:
-                normalized_additional_params = ensure_chunk_defaults_in_additional_params(meta.get("additional_params"))
+                normalized_additional_params = self.normalize_additional_params(meta.get("additional_params"))
                 self.databases_meta[db_id] = {
                     "name": meta.get("name"),
                     "description": meta.get("description"),
                     "kb_type": meta.get("kb_type"),
-                    "embed_info": meta.get("embed_info"),
-                    "llm_info": meta.get("llm_info"),
+                    "embedding_model_spec": meta.get("embedding_model_spec"),
+                    "llm_model_spec": meta.get("llm_model_spec"),
                     "query_params": meta.get("query_params"),
                     "metadata": normalized_additional_params,
                     "created_at": meta.get("created_at"),
@@ -100,7 +99,7 @@ class KnowledgeBase(ABC):
                 db_id = meta.get("database_id")
                 kb_additional_params = self.databases_meta.get(db_id, {}).get("metadata") or {}
                 normalized_meta = dict(meta)
-                normalized_meta["processing_params"] = resolve_chunk_processing_params(
+                normalized_meta["processing_params"] = resolve_processing_params(
                     kb_additional_params=kb_additional_params,
                     file_processing_params=meta.get("processing_params"),
                 )
@@ -165,6 +164,24 @@ class KnowledgeBase(ABC):
         """知识库类型标识"""
         pass
 
+    @classmethod
+    def get_create_params_config(cls) -> dict[str, Any]:
+        """获取创建知识库时的类型特定参数配置。"""
+        return {"options": []}
+
+    @classmethod
+    def validate_additional_params(cls, additional_params: dict | None) -> dict:
+        """校验并规范化类型特定配置。"""
+        return dict(additional_params or {})
+
+    @classmethod
+    def normalize_additional_params(cls, additional_params: dict | None) -> dict:
+        """规范化 additional_params，仅文档型知识库补充分块默认值。"""
+        params = cls.validate_additional_params(additional_params)
+        if cls.apply_chunk_defaults:
+            return ensure_chunk_defaults_in_additional_params(params)
+        return params
+
     @abstractmethod
     async def _create_kb_instance(self, db_id: str, config: dict) -> Any:
         """
@@ -213,10 +230,26 @@ class KnowledgeBase(ABC):
         metadata = await prepare_item_metadata(item, content_type, db_id, params=params)
         file_id = metadata["file_id"]
         kb_additional_params = self.databases_meta.get(db_id, {}).get("metadata") or {}
-        metadata["processing_params"] = resolve_chunk_processing_params(
+        metadata["processing_params"] = resolve_processing_params(
             kb_additional_params=kb_additional_params,
             file_processing_params=metadata.get("processing_params"),
         )
+
+        # Fallback: fetch file size from MinIO if not provided
+        if metadata.get("size") is None and content_type == "file":
+            try:
+                from yuxi.knowledge.utils.kb_utils import is_minio_url, parse_minio_url
+                from yuxi.storage.minio import get_minio_client
+
+                file_path = metadata.get("path") or item
+                if is_minio_url(file_path):
+                    bucket_name, obj_name = parse_minio_url(file_path)
+                    minio_client = get_minio_client()
+                    file_size = await minio_client.astat_file(bucket_name, obj_name)
+                    if file_size is not None:
+                        metadata["size"] = file_size
+            except Exception as exc:
+                logger.warning(f"Failed to stat file size from MinIO for {item}: {exc}")
 
         # Initial status
         metadata["status"] = FileStatus.UPLOADED
@@ -336,7 +369,7 @@ class KnowledgeBase(ABC):
 
         logger.debug(f"[update_file_params] file_id={file_id}, current_params={current_params}, new_params={params}")
 
-        current_params = resolve_chunk_processing_params(
+        current_params = resolve_processing_params(
             kb_additional_params=kb_additional_params,
             file_processing_params=current_params,
             request_params=params,
@@ -383,19 +416,244 @@ class KnowledgeBase(ABC):
 
         return upload_result.url
 
-    async def _read_markdown_from_minio(self, file_path: str) -> str:
-        """Read markdown content from MinIO"""
-        from yuxi.knowledge.utils.kb_utils import parse_minio_url
+    async def _read_minio_bytes(self, file_path: str) -> bytes:
+        from yuxi.knowledge.utils.kb_utils import is_minio_url, parse_minio_url
         from yuxi.storage.minio import get_minio_client
 
-        if not file_path.startswith(("http://", "https://")):
+        if not file_path or not is_minio_url(file_path):
             raise ValueError(f"Invalid MinIO path format: {file_path}")
 
         bucket_name, object_name = parse_minio_url(file_path)
         minio_client = get_minio_client()
+        return await minio_client.adownload_file(bucket_name, object_name)
 
-        content_bytes = await minio_client.adownload_file(bucket_name, object_name)
+    async def _read_markdown_from_minio(self, file_path: str) -> str:
+        """Read markdown content from MinIO"""
+        content_bytes = await self._read_minio_bytes(file_path)
         return content_bytes.decode("utf-8")
+
+    def _get_file_meta(self, db_id: str, file_id: str) -> dict:
+        file_meta = self.files_meta.get(file_id)
+        if not file_meta or file_meta.get("database_id") != db_id:
+            raise ValueError(f"File {file_id} not found")
+        return file_meta
+
+    @staticmethod
+    def _original_file_path(file_meta: dict) -> str | None:
+        return file_meta.get("minio_url") or file_meta.get("path")
+
+    def _knowledge_preview_variants(self, file_meta: dict) -> list[dict]:
+        variants = []
+        original_path = self._original_file_path(file_meta)
+        if original_path:
+            variants.append({"key": "original", "label": "Source", "supported": True})
+        if file_meta.get("markdown_file"):
+            variants.append({"key": "parsed", "label": "MD", "supported": True})
+        return variants
+
+    def _knowledge_file_entry(self, db_id: str, file_id: str, file_meta: dict) -> dict:
+        is_dir = bool(file_meta.get("is_folder"))
+        variants = [] if is_dir else self._knowledge_preview_variants(file_meta)
+        preview_modes = [item["key"] for item in variants]
+        default_preview_mode = None
+        if "parsed" in preview_modes:
+            default_preview_mode = "parsed"
+        elif preview_modes:
+            default_preview_mode = preview_modes[0]
+        path = f"/{file_id}"
+        if is_dir:
+            path = f"{path}/"
+        return {
+            "source": "knowledge",
+            "db_id": db_id,
+            "file_id": file_id,
+            "parent_id": file_meta.get("parent_id"),
+            "path": path,
+            "virtual_path": f"/knowledge/{db_id}/{file_id}",
+            "name": file_meta.get("filename") or file_meta.get("original_filename") or file_id,
+            "is_dir": is_dir,
+            "size": 0 if is_dir else file_meta.get("size") or 0,
+            "modified_at": file_meta.get("updated_at") or file_meta.get("created_at") or "",
+            "readonly": True,
+            "status": file_meta.get("status", "done"),
+            "preview_modes": preview_modes,
+            "default_preview_mode": default_preview_mode,
+        }
+
+    def _sort_file_entries(self, entries: list[dict]) -> list[dict]:
+        return sorted(
+            entries,
+            key=lambda item: (not bool(item.get("is_dir")), str(item.get("name") or "").lower()),
+        )
+
+    def _list_knowledge_children(
+        self,
+        db_id: str,
+        parent_id: str | None,
+        *,
+        recursive: bool,
+        files_only: bool,
+    ) -> list[dict]:
+        children = [
+            (file_id, meta)
+            for file_id, meta in self.files_meta.items()
+            if meta.get("database_id") == db_id and meta.get("parent_id") == parent_id
+        ]
+        entries = []
+        for file_id, meta in children:
+            if not files_only or not meta.get("is_folder"):
+                entries.append(self._knowledge_file_entry(db_id, file_id, meta))
+            if recursive and meta.get("is_folder"):
+                entries.extend(
+                    self._list_knowledge_children(
+                        db_id,
+                        file_id,
+                        recursive=True,
+                        files_only=files_only,
+                    )
+                )
+        return self._sort_file_entries(entries)
+
+    async def list_file_tree(
+        self,
+        db_id: str,
+        parent_id: str | None = None,
+        recursive: bool = False,
+        files_only: bool = False,
+    ) -> dict:
+        if db_id not in self.databases_meta:
+            raise ValueError(f"Database {db_id} not found")
+        if parent_id:
+            parent_meta = self._get_file_meta(db_id, parent_id)
+            if not parent_meta.get("is_folder"):
+                raise ValueError("Parent is not a folder")
+        return {
+            "entries": self._list_knowledge_children(
+                db_id,
+                parent_id,
+                recursive=recursive,
+                files_only=files_only,
+            ),
+            "readonly": True,
+        }
+
+    async def read_file_preview(self, db_id: str, file_id: str, variant: str = "parsed") -> dict:
+        from yuxi.services.viewer_filesystem_service import _detect_preview_type
+
+        file_meta = self._get_file_meta(db_id, file_id)
+        if file_meta.get("is_folder"):
+            raise ValueError("Cannot preview a folder")
+
+        variants = self._knowledge_preview_variants(file_meta)
+        variant_keys = {item["key"] for item in variants}
+        if variant not in {"original", "parsed"}:
+            raise ValueError("Unsupported preview variant")
+
+        filename = file_meta.get("filename") or file_meta.get("original_filename") or file_id
+        response = {
+            "source": "knowledge",
+            "db_id": db_id,
+            "file_id": file_id,
+            "filename": filename,
+            "variant": variant,
+            "readonly": True,
+            "available_variants": variants,
+        }
+
+        if variant == "parsed":
+            markdown_file = file_meta.get("markdown_file")
+            if not markdown_file or "parsed" not in variant_keys:
+                return {
+                    **response,
+                    "content": None,
+                    "preview_type": "unsupported",
+                    "supported": False,
+                    "message": "文件尚未生成解析结果",
+                }
+            content = await self._read_markdown_from_minio(markdown_file)
+            return {
+                **response,
+                "content": content,
+                "preview_type": "markdown",
+                "supported": True,
+                "message": None,
+            }
+
+        original_path = self._original_file_path(file_meta)
+        if not original_path or "original" not in variant_keys:
+            return {
+                **response,
+                "content": None,
+                "preview_type": "unsupported",
+                "supported": False,
+                "message": "文件没有可预览的原始内容",
+            }
+
+        preview_type, supported, message = _detect_preview_type(filename, b"")
+        if preview_type in {"image", "pdf"}:
+            return {
+                **response,
+                "content": None,
+                "preview_type": preview_type,
+                "supported": supported,
+                "message": message,
+            }
+
+        raw_content = await self._read_minio_bytes(original_path)
+        preview_type, supported, message = _detect_preview_type(filename, raw_content)
+        if preview_type in {"image", "pdf"} or not supported:
+            return {
+                **response,
+                "content": None,
+                "preview_type": preview_type,
+                "supported": supported,
+                "message": message,
+            }
+        try:
+            content = raw_content.decode("utf-8")
+        except UnicodeDecodeError:
+            return {
+                **response,
+                "content": None,
+                "preview_type": "unsupported",
+                "supported": False,
+                "message": "当前文件不是 UTF-8 文本，暂不支持预览",
+            }
+        return {
+            **response,
+            "content": content,
+            "preview_type": preview_type,
+            "supported": True,
+            "message": message,
+        }
+
+    async def get_file_download(self, db_id: str, file_id: str, variant: str = "original") -> dict:
+        file_meta = self._get_file_meta(db_id, file_id)
+        if file_meta.get("is_folder"):
+            raise ValueError("Cannot download a folder")
+        if variant not in {"original", "parsed"}:
+            raise ValueError("Unsupported download variant")
+
+        filename = file_meta.get("filename") or file_meta.get("original_filename") or file_id
+        if variant == "parsed":
+            markdown_file = file_meta.get("markdown_file")
+            if not markdown_file:
+                raise ValueError("文件尚未生成解析结果")
+            return {
+                "filename": f"{filename}.parsed.md",
+                "content": await self._read_minio_bytes(markdown_file),
+                "media_type": "text/markdown; charset=utf-8",
+            }
+
+        original_path = self._original_file_path(file_meta)
+        if not original_path:
+            raise ValueError("文件没有可下载的原始内容")
+        media_type = file_meta.get("content_type") or mimetypes.guess_type(filename)[0] or "application/octet-stream"
+        return {
+            "filename": filename,
+            "content": await self._read_minio_bytes(original_path),
+            "media_type": media_type,
+        }
 
     def _build_open_file_window(self, content: str, *, offset: int = 0, limit: int = 800) -> dict[str, Any]:
         lines = content.splitlines()
@@ -453,8 +711,8 @@ class KnowledgeBase(ABC):
         self,
         database_name: str,
         description: str,
-        embed_info: dict | None = None,
-        llm_info: dict | None = None,
+        embedding_model_spec: str | None = None,
+        llm_model_spec: str | None = None,
         **kwargs,
     ) -> dict:
         """
@@ -463,8 +721,8 @@ class KnowledgeBase(ABC):
         Args:
             database_name: 数据库名称
             description: 数据库描述
-            embed_info: 嵌入模型信息
-            llm_info: LLM配置信息
+            embedding_model_spec: 嵌入模型 spec
+            llm_model_spec: LLM 模型 spec
             **kwargs: 其他配置参数
 
         Returns:
@@ -472,22 +730,16 @@ class KnowledgeBase(ABC):
         """
         from yuxi.utils import hashstr
 
-        kwargs = ensure_chunk_defaults_in_additional_params(kwargs)
+        kwargs = self.normalize_additional_params(kwargs)
 
-        # 从 kwargs 中获取 is_private 配置
-        is_private = kwargs.get("is_private", False)
-        prefix = "kb_private_" if is_private else "kb_"
-        db_id = f"{prefix}{hashstr(database_name, with_salt=True, length=32)}"
+        db_id = f"kb_{hashstr(database_name, with_salt=True, length=32)}"
 
-        # 创建数据库记录
-        # 确保 Pydantic 模型被转换为字典，以便 JSON 序列化
-        embed_info_dump = embed_info.model_dump() if hasattr(embed_info, "model_dump") else embed_info
         self.databases_meta[db_id] = {
             "name": database_name,
             "description": description,
             "kb_type": self.kb_type,
-            "embed_info": embed_info_dump,
-            "llm_info": llm_info.model_dump() if hasattr(llm_info, "model_dump") else llm_info,
+            "embedding_model_spec": embedding_model_spec,
+            "llm_model_spec": llm_model_spec,
             "metadata": kwargs,
             "created_at": utc_isoformat(),
             "query_params": self._get_default_query_params(db_id),
@@ -516,7 +768,7 @@ class KnowledgeBase(ABC):
             操作结果
         """
         if db_id in self.databases_meta:
-            from yuxi.knowledge.utils.kb_utils import parse_minio_url
+            from yuxi.knowledge.utils.kb_utils import is_minio_url, parse_minio_url
             from yuxi.repositories.knowledge_base_repository import KnowledgeBaseRepository
             from yuxi.storage.minio import get_minio_client
 
@@ -526,7 +778,7 @@ class KnowledgeBase(ABC):
             files_to_delete = [fid for fid, finfo in self.files_meta.items() if finfo.get("database_id") == db_id]
             for file_id in files_to_delete:
                 file_path = self.files_meta[file_id].get("path")
-                if file_path and file_path.startswith(("http://", "https://")):
+                if file_path and is_minio_url(file_path):
                     try:
                         bucket_name, object_name = parse_minio_url(file_path)
                         await minio_client.adelete_file(bucket_name, object_name)
@@ -626,7 +878,7 @@ class KnowledgeBase(ABC):
 
         Args:
             db_id: 数据库ID
-            **kwargs: 额外参数(如 reranker_names 等)
+            **kwargs: 额外参数
 
         Returns:
             dict: {
@@ -652,27 +904,6 @@ class KnowledgeBase(ABC):
     async def export_data(self, db_id: str, format: str = "zip", **kwargs) -> str:
         pass
 
-    def query(self, query_text: str, db_id: str, **kwargs) -> list[dict]:
-        """
-        同步查询知识库（兼容性方法）
-
-        Args:
-            query_text: 查询文本
-            db_id: 数据库ID
-            **kwargs: 查询参数
-
-        Returns:
-            一个包含字典的列表，每个字典代表一个检索到的文档块。
-        """
-        import asyncio
-
-        logger.warning("query is deprecated, use aquery instead")
-        try:
-            loop = asyncio.get_running_loop()
-            return loop.run_until_complete(self.aquery(query_text, db_id, **kwargs))
-        except RuntimeError:
-            return asyncio.run(self.aquery(query_text, db_id, **kwargs))
-
     def _get_query_params(self, db_id: str) -> dict:
         """从实例元数据中加载查询参数"""
         if db_id in self.databases_meta:
@@ -695,7 +926,7 @@ class KnowledgeBase(ABC):
 
         Args:
             db_id: 数据库ID
-            include_files: 是否包含文件信息，默认为True（保持向后兼容）
+            include_files: 是否包含文件信息，默认为True
 
         Returns:
             数据库信息或None
@@ -857,7 +1088,6 @@ class KnowledgeBase(ABC):
             intermediate_states = {
                 FileStatus.PARSING: FileStatus.ERROR_PARSING,
                 FileStatus.INDEXING: FileStatus.ERROR_INDEXING,
-                "processing": "failed",  # 兼容旧状态
             }
 
             # 检查该数据库下所有中间状态的文件
@@ -995,7 +1225,7 @@ class KnowledgeBase(ABC):
     @abstractmethod
     async def get_file_info(self, db_id: str, file_id: str) -> dict:
         """
-        获取文件完整信息（基本信息+内容信息）- 保持向后兼容
+        获取文件完整信息（基本信息+内容信息）
 
         Args:
             db_id: 数据库ID
@@ -1006,26 +1236,14 @@ class KnowledgeBase(ABC):
         """
         pass
 
-    def get_db_upload_path(self, db_id: str | None = None) -> str:
-        """
-        获取数据库上传路径
-
-        Args:
-            db_id: 数据库ID，可选
-
-        Returns:
-            上传路径
-        """
-        if db_id:
-            uploads_folder = os.path.join(self.work_dir, db_id, "uploads")
-            os.makedirs(uploads_folder, exist_ok=True)
-            return uploads_folder
-
-        general_uploads = os.path.join(self.work_dir, "uploads")
-        os.makedirs(general_uploads, exist_ok=True)
-        return general_uploads
-
-    def update_database(self, db_id: str, name: str, description: str, llm_info: dict = None) -> dict:
+    def update_database(
+        self,
+        db_id: str,
+        name: str,
+        description: str,
+        llm_model_spec: str | None = None,
+        update_llm_model_spec: bool = False,
+    ) -> dict:
         """
         更新数据库
 
@@ -1033,7 +1251,7 @@ class KnowledgeBase(ABC):
             db_id: 数据库ID
             name: 新名称
             description: 新描述
-            llm_info: LLM配置信息（可选，仅用于 LightRAG 类型知识库）
+            llm_model_spec: LLM 模型 spec（可选）
 
         Returns:
             更新后的数据库信息
@@ -1043,12 +1261,8 @@ class KnowledgeBase(ABC):
 
         self.databases_meta[db_id]["name"] = name
         self.databases_meta[db_id]["description"] = description
-
-        # 如果提供了 llm_info，则更新（仅针对 LightRAG 类型）
-        if llm_info is not None:
-            self.databases_meta[db_id]["llm_info"] = llm_info
-
-        asyncio.create_task(self._save_metadata())
+        if update_llm_model_spec:
+            self.databases_meta[db_id]["llm_model_spec"] = llm_model_spec
 
         return self.get_database_info(db_id)
 
@@ -1091,10 +1305,10 @@ class KnowledgeBase(ABC):
                 "name": kb.name,
                 "description": kb.description,
                 "kb_type": kb.kb_type,
-                "embed_info": kb.embed_info,
-                "llm_info": kb.llm_info,
+                "embedding_model_spec": kb.embedding_model_spec,
+                "llm_model_spec": kb.llm_model_spec,
                 "query_params": kb.query_params or self._get_default_query_params(kb.db_id),
-                "metadata": ensure_chunk_defaults_in_additional_params(kb.additional_params),
+                "metadata": self.normalize_additional_params(kb.additional_params),
                 "created_at": utc_isoformat(kb.created_at) if kb.created_at else utc_isoformat(),
             }
             for kb in databases
@@ -1117,7 +1331,7 @@ class KnowledgeBase(ABC):
                     "size": record.file_size,
                     "content_type": record.content_type,
                     "processing_params": sanitize_processing_params(
-                        resolve_chunk_processing_params(
+                        resolve_processing_params(
                             kb_additional_params=kb_additional_params,
                             file_processing_params=record.processing_params,
                         )
@@ -1155,6 +1369,54 @@ class KnowledgeBase(ABC):
                 }
 
         logger.info(f"Loaded {self.kb_type} metadata from database for {len(self.databases_meta)} databases")
+        await self._fill_missing_file_sizes()
+
+    async def _fill_missing_file_sizes(self) -> None:
+        """为缺少 size 的已有文件从 MinIO 补全大小信息"""
+        from yuxi.knowledge.utils.kb_utils import is_minio_url, parse_minio_url
+        from yuxi.storage.minio import get_minio_client
+
+        files_to_update: list[str] = []
+        for file_id, meta in self.files_meta.items():
+            if meta.get("is_folder"):
+                continue
+            if meta.get("size") is not None:
+                continue
+            file_path = meta.get("minio_url") or meta.get("path")
+            if not file_path or not is_minio_url(file_path):
+                continue
+            files_to_update.append(file_id)
+
+        if not files_to_update:
+            return
+
+        minio_client = get_minio_client()
+
+        async def _stat_file(file_id: str, file_path: str) -> tuple[str, int | None]:
+            bucket_name, obj_name = parse_minio_url(file_path)
+            try:
+                return file_id, await minio_client.astat_file(bucket_name, obj_name)
+            except Exception as exc:
+                logger.warning(f"Failed to fill size for {file_id}: {exc}")
+                return file_id, None
+
+        results = await asyncio.gather(
+            *(
+                _stat_file(fid, self.files_meta[fid].get("minio_url") or self.files_meta[fid].get("path"))
+                for fid in files_to_update
+            )
+        )
+        updated = 0
+        for file_id, file_size in results:
+            if file_size is not None:
+                self.files_meta[file_id]["size"] = file_size
+                updated += 1
+
+        if updated:
+            logger.info(f"Filled {updated}/{len(files_to_update)} missing file sizes from MinIO for {self.kb_type}")
+            for file_id, file_size in results:
+                if file_size is not None:
+                    await self._persist_file(file_id)
 
     async def _save_metadata(self) -> None:
         from yuxi.repositories.evaluation_repository import EvaluationRepository
@@ -1174,26 +1436,13 @@ class KnowledgeBase(ABC):
                 "name": meta.get("name") or db_id,
                 "description": meta.get("description"),
                 "kb_type": meta.get("kb_type") or self.kb_type,
-                "embed_info": meta.get("embed_info"),
-                "llm_info": meta.get("llm_info"),
+                "embedding_model_spec": meta.get("embedding_model_spec"),
+                "llm_model_spec": meta.get("llm_model_spec"),
                 "query_params": meta.get("query_params"),
                 "additional_params": meta.get("metadata") or {},
             }
             if existing is None:
                 await kb_repo.create(payload)
-            else:
-                await kb_repo.update(
-                    db_id,
-                    {
-                        "name": payload["name"],
-                        "description": payload["description"],
-                        "kb_type": payload["kb_type"],
-                        "embed_info": payload["embed_info"],
-                        "llm_info": payload["llm_info"],
-                        "query_params": payload["query_params"],
-                        "additional_params": payload["additional_params"],
-                    },
-                )
 
         for file_id, meta in self.files_meta.items():
             db_id = meta.get("database_id")
@@ -1292,8 +1541,8 @@ class KnowledgeBase(ABC):
             "name": meta.get("name") or db_id,
             "description": meta.get("description"),
             "kb_type": meta.get("kb_type") or self.kb_type,
-            "embed_info": meta.get("embed_info"),
-            "llm_info": meta.get("llm_info"),
+            "embedding_model_spec": meta.get("embedding_model_spec"),
+            "llm_model_spec": meta.get("llm_model_spec"),
             "query_params": meta.get("query_params"),
             "additional_params": meta.get("metadata") or {},
         }
@@ -1307,8 +1556,8 @@ class KnowledgeBase(ABC):
                     "name": payload["name"],
                     "description": payload["description"],
                     "kb_type": payload["kb_type"],
-                    "embed_info": payload["embed_info"],
-                    "llm_info": payload["llm_info"],
+                    "embedding_model_spec": payload["embedding_model_spec"],
+                    "llm_model_spec": payload["llm_model_spec"],
                     "query_params": payload["query_params"],
                     "additional_params": payload["additional_params"],
                 },

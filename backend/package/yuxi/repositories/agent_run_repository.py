@@ -23,9 +23,9 @@ class AgentRunRepository:
         result = await self.db.execute(select(AgentRun).where(AgentRun.request_id == request_id))
         return result.scalar_one_or_none()
 
-    async def get_run_for_user(self, run_id: str, user_id: str) -> AgentRun | None:
+    async def get_run_for_user(self, run_id: str, uid: str) -> AgentRun | None:
         result = await self.db.execute(
-            select(AgentRun).where(and_(AgentRun.id == run_id, AgentRun.user_id == str(user_id)))
+            select(AgentRun).where(and_(AgentRun.id == run_id, AgentRun.uid == str(uid)))
         )
         return result.scalar_one_or_none()
 
@@ -35,7 +35,7 @@ class AgentRunRepository:
         run_id: str,
         thread_id: str,
         agent_id: str,
-        user_id: str,
+        uid: str,
         request_id: str,
         input_payload: dict,
     ) -> AgentRun:
@@ -43,7 +43,7 @@ class AgentRunRepository:
             id=run_id,
             thread_id=thread_id,
             agent_id=agent_id,
-            user_id=str(user_id),
+            uid=str(uid),
             request_id=request_id,
             input_payload=input_payload or {},
             status="pending",

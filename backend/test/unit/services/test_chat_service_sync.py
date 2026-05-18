@@ -8,7 +8,7 @@ from langchain.messages import AIMessage, HumanMessage
 from yuxi.services import chat_service as svc
 
 
-def _empty_agents_prompt(_thread_id: str, _user_id: str) -> str:
+def _empty_agents_prompt(_thread_id: str, _uid: str) -> str:
     return ""
 
 
@@ -17,10 +17,10 @@ class _FakeAgentConfigRepo:
         pass
 
     async def get_by_id(self, config_id: int):
-        return SimpleNamespace(id=config_id)
+        return SimpleNamespace(id=config_id, uid="user-1", agent_id="test-agent")
 
-    async def get_or_create_default(self, *, department_id: str, agent_id: str, created_by: str):
-        return SimpleNamespace(id=999, department_id=department_id, agent_id=agent_id, created_by=created_by)
+    async def get_or_create_default(self, *, uid: str, agent_id: str, created_by: str):
+        return SimpleNamespace(id=999, uid=uid, agent_id=agent_id, created_by=created_by)
 
 
 class _FakeConvRepo:
@@ -54,9 +54,9 @@ class _FakeConvRepo:
     async def get_conversation_by_thread_id(self, thread_id: str):
         return self.conversations.get(thread_id)
 
-    async def create_conversation(self, *, user_id: str, agent_id: str, thread_id: str):
+    async def create_conversation(self, *, uid: str, agent_id: str, thread_id: str):
         conversation = SimpleNamespace(
-            user_id=user_id,
+            uid=uid,
             agent_id=agent_id,
             thread_id=thread_id,
             extra_metadata={},
@@ -67,7 +67,7 @@ class _FakeConvRepo:
     async def bind_agent_config(self, thread_id: str, agent_config_id: int):
         conversation = self.conversations.setdefault(
             thread_id,
-            SimpleNamespace(user_id="user-1", agent_id="test-agent", thread_id=thread_id, extra_metadata={}),
+            SimpleNamespace(uid="user-1", agent_id="test-agent", thread_id=thread_id, extra_metadata={}),
         )
         conversation.extra_metadata["agent_config_id"] = agent_config_id
         self.bound_agent_configs.append((thread_id, agent_config_id))
@@ -96,7 +96,7 @@ async def test_agent_chat_uses_invoke_messages_and_persists_langgraph_state(monk
             return FakeGraph()
 
     async def fake_get_agent_config_by_id(db, user, agent_config_id):
-        assert user.id == "user-1"
+        assert user.uid == "user-1"
         assert agent_config_id == 123
         return SimpleNamespace(agent_id="test-agent", config_json={"context": {"temperature": 0.1}})
 
@@ -116,7 +116,7 @@ async def test_agent_chat_uses_invoke_messages_and_persists_langgraph_state(monk
         calls["langfuse_kwargs"] = kwargs
         return SimpleNamespace(
             callbacks=["handler-1"],
-            metadata={"langfuse_user_id": kwargs["current_user"].id, "langfuse_session_id": kwargs["thread_id"]},
+            metadata={"langfuse_user_id": kwargs["current_user"].uid, "langfuse_session_id": kwargs["thread_id"]},
             tags=["yuxi", "chat"],
             trace_id="trace-seeded",
         )
@@ -142,7 +142,7 @@ async def test_agent_chat_uses_invoke_messages_and_persists_langgraph_state(monk
         thread_id="thread-1",
         meta={"request_id": "req-1"},
         image_content=None,
-        current_user=SimpleNamespace(id="user-1", department_id="dept-1"),
+        current_user=SimpleNamespace(id=1, uid="user-1", department_id="dept-1"),
         db=object(),
     )
 
@@ -157,14 +157,14 @@ async def test_agent_chat_uses_invoke_messages_and_persists_langgraph_state(monk
     assert len(invoke_messages) == 1
     assert isinstance(invoke_messages[0], HumanMessage)
     assert invoke_messages[0].content == "hello"
-    assert calls["invoke_input_context"] == {"temperature": 0.1, "user_id": "user-1", "thread_id": "thread-1"}
+    assert calls["invoke_input_context"] == {"temperature": 0.1, "uid": "user-1", "thread_id": "thread-1"}
     assert calls["invoke_kwargs"] == {
         "callbacks": ["handler-1"],
         "metadata": {"langfuse_user_id": "user-1", "langfuse_session_id": "thread-1"},
         "tags": ["yuxi", "chat"],
     }
     assert calls["saved_state"]["thread_id"] == "thread-1"
-    assert calls["saved_state"]["config_dict"] == {"configurable": {"thread_id": "thread-1", "user_id": "user-1"}}
+    assert calls["saved_state"]["config_dict"] == {"configurable": {"thread_id": "thread-1", "uid": "user-1"}}
     assert calls["saved_state"]["trace_info"] == {
         "langfuse_trace_id": "trace-runtime",
         "langfuse_session_id": "thread-1",
@@ -225,7 +225,7 @@ async def test_agent_chat_sync_returns_finished_even_when_state_has_interrupt(mo
         thread_id="thread-2",
         meta={"request_id": "req-2"},
         image_content=None,
-        current_user=SimpleNamespace(id="user-1", department_id="dept-1"),
+        current_user=SimpleNamespace(id=1, uid="user-1", department_id="dept-1"),
         db=object(),
     )
 
@@ -237,7 +237,7 @@ async def test_agent_chat_sync_returns_finished_even_when_state_has_interrupt(mo
 
 @pytest.mark.asyncio
 async def test_build_agent_input_context_merges_workspace_agents_prompt(monkeypatch: pytest.MonkeyPatch):
-    def fake_agents_prompt(_thread_id: str, _user_id: str) -> str:
+    def fake_agents_prompt(_thread_id: str, _uid: str) -> str:
         return "回答前先读取 AGENTS.md"
 
     monkeypatch.setattr(svc, "_load_workspace_agents_prompt", fake_agents_prompt)
@@ -245,13 +245,13 @@ async def test_build_agent_input_context_merges_workspace_agents_prompt(monkeypa
     context = await svc._build_agent_input_context(
         {"system_prompt": "原始系统提示词", "temperature": 0.1},
         thread_id="thread-1",
-        user_id="user-1",
+        uid="user-1",
     )
 
     assert context["system_prompt"] == "原始系统提示词\n\n用户工作区 agents/AGENTS.md 内容：\n回答前先读取 AGENTS.md"
     assert context["temperature"] == 0.1
     assert context["thread_id"] == "thread-1"
-    assert context["user_id"] == "user-1"
+    assert context["uid"] == "user-1"
 
 
 @pytest.mark.asyncio
@@ -263,7 +263,7 @@ async def test_build_agent_input_context_keeps_prompt_when_workspace_agents_prom
     context = await svc._build_agent_input_context(
         {"system_prompt": "原始系统提示词"},
         thread_id="thread-1",
-        user_id="user-1",
+        uid="user-1",
     )
 
     assert context["system_prompt"] == "原始系统提示词"

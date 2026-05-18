@@ -90,9 +90,9 @@ async def _convert_upload_to_markdown(upload: UploadFile) -> ConversionResult:
         raise
 
 
-async def require_user_conversation(conv_repo: ConversationRepository, thread_id: str, user_id: str):
+async def require_user_conversation(conv_repo: ConversationRepository, thread_id: str, uid: str):
     conversation = await conv_repo.get_conversation_by_thread_id(thread_id)
-    if not conversation or conversation.user_id != str(user_id) or conversation.status == "deleted":
+    if not conversation or conversation.uid != str(uid) or conversation.status == "deleted":
         raise HTTPException(status_code=404, detail="对话线程不存在")
     return conversation
 
@@ -116,7 +116,7 @@ def _make_attachment_path(file_name: str) -> str:
     return f"{safe_name}.md"
 
 
-def _build_attachment_storage_path(*, user_id: str, thread_id: str, file_name: str) -> tuple[str, Path]:
+def _build_attachment_storage_path(*, uid: str, thread_id: str, file_name: str) -> tuple[str, Path]:
     """返回附件虚拟路径和宿主机落盘路径。"""
     relative_name = _make_attachment_path(file_name)
     virtual_path = f"{VIRTUAL_PATH_UPLOADS}/attachments/{relative_name}"
@@ -157,7 +157,7 @@ def _build_state_uploads(attachments: list[dict]) -> list[dict]:
 async def _sync_thread_upload_state(
     *,
     thread_id: str,
-    user_id: str,
+    uid: str,
     agent_id: str,
     attachments: list[dict],
 ) -> None:
@@ -168,7 +168,7 @@ async def _sync_thread_upload_state(
             return
 
         graph = await agent.get_graph()
-        config = {"configurable": {"thread_id": thread_id, "user_id": str(user_id)}}
+        config = {"configurable": {"thread_id": thread_id, "uid": str(uid)}}
 
         await graph.aupdate_state(
             config=config,
@@ -200,13 +200,13 @@ def serialize_attachment(record: dict) -> dict:
 async def _materialize_attachment_files(
     *,
     thread_id: str,
-    user_id: str,
+    uid: str,
     upload: UploadFile,
     file_name: str,
     file_content: bytes,
 ) -> dict:
     """将原始附件与可选 markdown 副本落盘到线程 user-data。"""
-    ensure_thread_dirs(thread_id, user_id)
+    ensure_thread_dirs(thread_id, uid)
 
     upload_virtual_path = _make_upload_virtual_path(file_name)
     uploads_dir = sandbox_uploads_dir(thread_id)
@@ -234,7 +234,7 @@ async def _materialize_attachment_files(
         return record
 
     markdown_virtual_path, markdown_host_path = _build_attachment_storage_path(
-        user_id="",
+        uid=uid,
         thread_id=thread_id,
         file_name=file_name,
     )
@@ -261,12 +261,12 @@ async def create_thread_view(
     title: str | None,
     metadata: dict | None,
     db: AsyncSession,
-    current_user_id: str,
+    current_uid: str,
 ) -> dict:
     thread_id = str(uuid.uuid4())
     conv_repo = ConversationRepository(db)
     conversation = await conv_repo.create_conversation(
-        user_id=str(current_user_id),
+        uid=str(current_uid),
         agent_id=agent_id,
         title=title or "新的对话",
         thread_id=thread_id,
@@ -275,7 +275,7 @@ async def create_thread_view(
 
     return {
         "id": conversation.thread_id,
-        "user_id": conversation.user_id,
+        "uid": conversation.uid,
         "agent_id": conversation.agent_id,
         "title": conversation.title,
         "created_at": conversation.created_at.isoformat(),
@@ -288,13 +288,13 @@ async def list_threads_view(
     *,
     agent_id: str | None,
     db: AsyncSession,
-    current_user_id: str,
+    current_uid: str,
     limit: int | None = None,
     offset: int = 0,
 ) -> list[dict]:
     conv_repo = ConversationRepository(db)
     conversations = await conv_repo.list_conversations(
-        user_id=str(current_user_id),
+        uid=str(current_uid),
         agent_id=agent_id,
         status="active",
         limit=limit,
@@ -304,7 +304,7 @@ async def list_threads_view(
     return [
         {
             "id": conv.thread_id,
-            "user_id": conv.user_id,
+            "uid": conv.uid,
             "agent_id": conv.agent_id,
             "title": conv.title,
             "is_pinned": bool(conv.is_pinned),
@@ -320,10 +320,10 @@ async def delete_thread_view(
     *,
     thread_id: str,
     db: AsyncSession,
-    current_user_id: str,
+    current_uid: str,
 ) -> dict:
     conv_repo = ConversationRepository(db)
-    await require_user_conversation(conv_repo, thread_id, str(current_user_id))
+    await require_user_conversation(conv_repo, thread_id, str(current_uid))
     deleted = await conv_repo.delete_conversation(thread_id, soft_delete=True)
     if not deleted:
         raise HTTPException(status_code=404, detail="对话线程不存在")
@@ -336,16 +336,16 @@ async def update_thread_view(
     title: str | None = None,
     is_pinned: bool | None = None,
     db: AsyncSession,
-    current_user_id: str,
+    current_uid: str,
 ) -> dict:
     conv_repo = ConversationRepository(db)
-    await require_user_conversation(conv_repo, thread_id, str(current_user_id))
+    await require_user_conversation(conv_repo, thread_id, str(current_uid))
     updated_conv = await conv_repo.update_conversation(thread_id, title=title, is_pinned=is_pinned)
     if not updated_conv:
         raise HTTPException(status_code=500, detail="更新失败")
     return {
         "id": updated_conv.thread_id,
-        "user_id": updated_conv.user_id,
+        "uid": updated_conv.uid,
         "agent_id": updated_conv.agent_id,
         "title": updated_conv.title,
         "is_pinned": bool(updated_conv.is_pinned),
@@ -360,10 +360,10 @@ async def upload_thread_attachment_view(
     thread_id: str,
     file: UploadFile,
     db: AsyncSession,
-    current_user_id: str,
+    current_uid: str,
 ) -> dict:
     conv_repo = ConversationRepository(db)
-    conversation = await require_user_conversation(conv_repo, thread_id, str(current_user_id))
+    conversation = await require_user_conversation(conv_repo, thread_id, str(current_uid))
     if not file.filename:
         raise HTTPException(status_code=400, detail="无法识别的文件名")
 
@@ -376,7 +376,7 @@ async def upload_thread_attachment_view(
         raise HTTPException(status_code=400, detail=f"附件过大，当前仅支持 {max_size_mb} MB 以内的文件")
     materialized = await _materialize_attachment_files(
         thread_id=thread_id,
-        user_id=str(conversation.user_id),
+        uid=str(conversation.uid),
         upload=file,
         file_name=file_name,
         file_content=file_content,
@@ -405,7 +405,7 @@ async def upload_thread_attachment_view(
     all_attachments = await conv_repo.get_attachments(conversation.id)
     await _sync_thread_upload_state(
         thread_id=thread_id,
-        user_id=str(current_user_id),
+        uid=str(current_uid),
         agent_id=conversation.agent_id,
         attachments=all_attachments,
     )
@@ -417,10 +417,10 @@ async def list_thread_attachments_view(
     *,
     thread_id: str,
     db: AsyncSession,
-    current_user_id: str,
+    current_uid: str,
 ) -> dict:
     conv_repo = ConversationRepository(db)
-    conversation = await require_user_conversation(conv_repo, thread_id, str(current_user_id))
+    conversation = await require_user_conversation(conv_repo, thread_id, str(current_uid))
     attachments = await conv_repo.get_attachments(conversation.id)
     return {
         "attachments": [serialize_attachment(item) for item in attachments],
@@ -436,10 +436,10 @@ async def delete_thread_attachment_view(
     thread_id: str,
     file_id: str,
     db: AsyncSession,
-    current_user_id: str,
+    current_uid: str,
 ) -> dict:
     conv_repo = ConversationRepository(db)
-    conversation = await require_user_conversation(conv_repo, thread_id, str(current_user_id))
+    conversation = await require_user_conversation(conv_repo, thread_id, str(current_uid))
 
     existing_attachments = await conv_repo.get_attachments(conversation.id)
     target_attachment = next((item for item in existing_attachments if item.get("file_id") == file_id), None)
@@ -469,7 +469,7 @@ async def delete_thread_attachment_view(
     all_attachments = await conv_repo.get_attachments(conversation.id)
     await _sync_thread_upload_state(
         thread_id=thread_id,
-        user_id=str(current_user_id),
+        uid=str(current_uid),
         agent_id=conversation.agent_id,
         attachments=all_attachments,
     )
@@ -480,13 +480,13 @@ async def delete_thread_attachment_view(
 async def get_thread_history_view(
     *,
     thread_id: str,
-    current_user_id: str,
+    current_uid: str,
     db: AsyncSession,
 ) -> dict:
     """获取对话历史消息，包含用户反馈状态"""
     conv_repo = ConversationRepository(db)
     conversation = await conv_repo.get_conversation_by_thread_id(thread_id)
-    if not conversation or conversation.user_id != str(current_user_id) or conversation.status == "deleted":
+    if not conversation or conversation.uid != str(current_uid) or conversation.status == "deleted":
         raise HTTPException(status_code=404, detail="对话线程不存在")
 
     messages = await conv_repo.get_messages_by_thread_id(thread_id)
@@ -498,7 +498,7 @@ async def get_thread_history_view(
         user_feedback = None
         if msg.feedbacks:
             for feedback in msg.feedbacks:
-                if feedback.user_id == str(current_user_id):
+                if feedback.uid == str(current_uid):
                     user_feedback = {
                         "id": feedback.id,
                         "rating": feedback.rating,

@@ -217,7 +217,7 @@ async def standard_user(test_client: httpx.AsyncClient, admin_headers: dict[str,
     user_payload = response.json()
     login_response = await test_client.post(
         "/api/auth/token",
-        data={"username": user_payload["user_id"], "password": password},
+        data={"username": user_payload["uid"], "password": password},
     )
     if login_response.status_code != 200:
         pytest.fail(
@@ -245,7 +245,7 @@ async def standard_user(test_client: httpx.AsyncClient, admin_headers: dict[str,
             await anyio.sleep(0.3)
         if cleanup_error is not None:
             assert cleanup_error.status_code == 200, (
-                f"Failed to cleanup test user {user_payload['user_id']}: {cleanup_error.text}"
+                f"Failed to cleanup test user {user_payload['uid']}: {cleanup_error.text}"
             )
 
 
@@ -267,8 +267,8 @@ async def knowledge_database(
             json={
                 "database_name": db_name,
                 "description": "Pytest managed knowledge base",
-                "embed_model_name": "siliconflow/BAAI/bge-m3",
-                "kb_type": "lightrag",
+                "embedding_model_spec": "siliconflow-cn:Pro/BAAI/bge-m3",
+                "kb_type": "milvus",
                 "additional_params": {},
             },
             headers=admin_headers,

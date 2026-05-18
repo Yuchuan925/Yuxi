@@ -21,7 +21,7 @@ from server.utils.auth_middleware import (
     get_required_user,
 )
 from server.utils.auth_utils import AuthUtils
-from server.utils.user_utils import generate_unique_user_id, validate_username, is_valid_phone_number
+from server.utils.user_utils import generate_unique_uid, validate_username, is_valid_phone_number
 from server.utils.common_utils import log_operation
 from yuxi.storage.minio import aupload_file_to_minio
 from yuxi.utils.datetime_utils import utc_now_naive
@@ -44,7 +44,7 @@ class Token(BaseModel):
     token_type: str
     user_id: int
     username: str
-    user_id_login: str  # 用于登录的user_id
+    uid: str  # 用于登录的user_id
     phone_number: str | None = None
     avatar: str | None = None
     role: str
@@ -77,7 +77,7 @@ class UserProfileUpdate(BaseModel):
 class UserResponse(BaseModel):
     id: int
     username: str
-    user_id: str
+    uid: str
     phone_number: str | None = None
     avatar: str | None = None
     role: str
@@ -88,7 +88,7 @@ class UserResponse(BaseModel):
 
 
 class InitializeAdmin(BaseModel):
-    user_id: str  # 直接输入用户ID
+    uid: str  # 直接输入用户ID
     password: str
     phone_number: str | None = None
 
@@ -97,9 +97,9 @@ class UsernameValidation(BaseModel):
     username: str
 
 
-class UserIdGeneration(BaseModel):
+class UidGeneration(BaseModel):
     username: str
-    user_id: str
+    uid: str
     is_available: bool
 
 
@@ -118,7 +118,7 @@ class OIDCLoginResponse(BaseModel):
     token_type: str
     user_id: int
     username: str
-    user_id_login: str
+    uid: str
     phone_number: str | None = None
     avatar: str | None = None
     role: str
@@ -150,7 +150,7 @@ async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(
     login_identifier = form_data.username  # OAuth2表单中的username字段作为登录标识符
 
     # 尝试通过user_id查找
-    result = await db.execute(select(User).filter(User.user_id == login_identifier))
+    result = await db.execute(select(User).filter(User.uid == login_identifier))
     user = result.scalar_one_or_none()
 
     # 如果通过user_id没找到，尝试通过phone_number查找
@@ -230,7 +230,7 @@ async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(
         "token_type": "bearer",
         "user_id": user.id,
         "username": user.username,
-        "user_id_login": user.user_id,
+        "uid": user.uid,
         "phone_number": user.phone_number,
         "avatar": user.avatar,
         "role": user.role,
@@ -260,13 +260,13 @@ async def initialize_admin(admin_data: InitializeAdmin, db: AsyncSession = Depen
     hashed_password = AuthUtils.hash_password(admin_data.password)
 
     # 验证用户ID格式（只支持字母数字和下划线）
-    if not re.match(r"^[a-zA-Z0-9_]+$", admin_data.user_id):
+    if not re.match(r"^[a-zA-Z0-9_]+$", admin_data.uid):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="用户ID只能包含字母、数字和下划线",
         )
 
-    if len(admin_data.user_id) < 3 or len(admin_data.user_id) > 20:
+    if len(admin_data.uid) < 3 or len(admin_data.uid) > 20:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="用户ID长度必须在3-20个字符之间",
@@ -277,7 +277,7 @@ async def initialize_admin(admin_data: InitializeAdmin, db: AsyncSession = Depen
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="手机号格式不正确")
 
     # 由于是首次初始化，直接使用输入的user_id
-    user_id = admin_data.user_id
+    uid = admin_data.uid
 
     # 创建默认部门
     dept_repo = DepartmentRepository()
@@ -292,8 +292,8 @@ async def initialize_admin(admin_data: InitializeAdmin, db: AsyncSession = Depen
     user_repo = UserRepository()
     new_admin = await user_repo.create(
         {
-            "username": admin_data.user_id,
-            "user_id": user_id,
+            "username": admin_data.uid,
+            "uid": uid,
             "phone_number": admin_data.phone_number,
             "avatar": None,
             "password_hash": hashed_password,
@@ -315,7 +315,7 @@ async def initialize_admin(admin_data: InitializeAdmin, db: AsyncSession = Depen
         "token_type": "bearer",
         "user_id": new_admin.id,
         "username": new_admin.username,
-        "user_id_login": new_admin.user_id,
+        "uid": new_admin.uid,
         "phone_number": new_admin.phone_number,
         "avatar": new_admin.avatar,
         "role": new_admin.role,
@@ -442,9 +442,9 @@ async def create_user(
                 detail="手机号已存在",
             )
 
-    # 生成唯一的user_id
-    existing_user_ids = await user_repo.get_all_user_ids()
-    user_id = generate_unique_user_id(user_data.username, existing_user_ids)
+    # 生成唯一的 uid
+    existing_uids = await user_repo.get_all_uids()
+    uid = generate_unique_uid(user_data.username, existing_uids)
 
     # 创建新用户
     hashed_password = AuthUtils.hash_password(user_data.password)
@@ -487,7 +487,7 @@ async def create_user(
     new_user = await user_repo.create(
         {
             "username": user_data.username,
-            "user_id": user_id,
+            "uid": uid,
             "phone_number": user_data.phone_number,
             "password_hash": hashed_password,
             "role": user_data.role,
@@ -705,7 +705,7 @@ async def delete_user(
     import hashlib
 
     # 生成4位哈希（基于 user_id + id，避免历史软删除记录重名冲突）
-    hash_suffix = hashlib.sha256(f"{user.user_id}:{user.id}".encode()).hexdigest()[:4]
+    hash_suffix = hashlib.sha256(f"{user.uid}:{user.id}".encode()).hexdigest()[:4]
 
     user.is_deleted = 1
     user.deleted_at = utc_now_naive()
@@ -723,8 +723,8 @@ async def delete_user(
 
 
 # 路由：验证用户名并生成user_id
-@auth.post("/validate-username", response_model=UserIdGeneration)
-async def validate_username_and_generate_user_id(
+@auth.post("/validate-username", response_model=UidGeneration)
+async def validate_username_and_generate_uid(
     validation_data: UsernameValidation,
     current_user: User = Depends(get_admin_user),
     db: AsyncSession = Depends(get_db),
@@ -747,23 +747,23 @@ async def validate_username_and_generate_user_id(
             detail="用户名已存在",
         )
 
-    # 生成唯一的user_id
-    result = await db.execute(select(User.user_id))
-    existing_user_ids = [user_id for (user_id,) in result.all()]
-    user_id = generate_unique_user_id(validation_data.username, existing_user_ids)
+    # 生成唯一的 uid
+    result = await db.execute(select(User.uid))
+    existing_uids = [uid for (uid,) in result.all()]
+    uid = generate_unique_uid(validation_data.username, existing_uids)
 
-    return UserIdGeneration(username=validation_data.username, user_id=user_id, is_available=True)
+    return UidGeneration(username=validation_data.username, uid=uid, is_available=True)
 
 
-# 路由：检查user_id是否可用
-@auth.get("/check-user-id/{user_id}")
-async def check_user_id_availability(
-    user_id: str, current_user: User = Depends(get_admin_user), db: AsyncSession = Depends(get_db)
+# 路由：检查 uid 是否可用
+@auth.get("/check-uid/{uid}")
+async def check_uid_availability(
+    uid: str, current_user: User = Depends(get_admin_user), db: AsyncSession = Depends(get_db)
 ):
-    """检查user_id是否可用"""
-    result = await db.execute(select(User).filter(User.user_id == user_id))
+    """检查 uid 是否可用"""
+    result = await db.execute(select(User).filter(User.uid == uid))
     existing_user = result.scalar_one_or_none()
-    return {"user_id": user_id, "is_available": existing_user is None}
+    return {"uid": uid, "is_available": existing_user is None}
 
 
 # 路由：上传用户头像
@@ -849,9 +849,9 @@ async def impersonate_user(
     return {
         "access_token": access_token,
         "token_type": "bearer",
-        "user_id": target_user.id,
+        "uid": target_user.id,
         "username": target_user.username,
-        "user_id_login": target_user.user_id,
+        "uid": target_user.uid,
         "phone_number": target_user.phone_number,
         "avatar": target_user.avatar,
         "role": target_user.role,
@@ -863,6 +863,7 @@ async def impersonate_user(
 # =============================================================================
 # === OIDC 认证分组 ===
 # =============================================================================
+
 
 @auth.get("/oidc/config", response_model=OIDCConfigResponse)
 async def get_oidc_config():
@@ -877,12 +878,7 @@ async def get_oidc_login_url(redirect_path: str = "/"):
 
 
 @auth.get("/oidc/callback", response_class=RedirectResponse)
-async def oidc_callback(
-    request: Request,
-    code: str,
-    state: str,
-    db: AsyncSession = Depends(get_db)
-):
+async def oidc_callback(request: Request, code: str, state: str, db: AsyncSession = Depends(get_db)):
     """处理 OIDC 回调 - 重定向到前端 Vue 路由"""
     return await oidc_callback_handler(code, state, db, request)
 

@@ -46,7 +46,7 @@ async def test_create_database_with_chunk_preset(test_client, admin_headers):
     payload = {
         "database_name": db_name,
         "description": "Chunk preset create test",
-        "embed_model_name": "siliconflow/BAAI/bge-m3",
+        "embedding_model_spec": "siliconflow-cn:Pro/BAAI/bge-m3",
         "kb_type": "milvus",
         "additional_params": {"chunk_preset_id": "book"},
     }
@@ -102,7 +102,7 @@ async def test_knowledge_routes_enforce_permissions(test_client, standard_user, 
         json={
             "database_name": "unauthorized_db",
             "description": "Should not succeed",
-            "embed_model_name": "siliconflow/BAAI/bge-m3",
+            "embedding_model_spec": "siliconflow-cn:Pro/BAAI/bge-m3",
         },
         headers=standard_user["headers"],
     )
@@ -124,7 +124,7 @@ async def test_admin_can_create_vector_db_with_reranker(test_client, admin_heade
     payload = {
         "database_name": db_name,
         "description": "Vector DB with reranker",
-        "embed_model_name": "siliconflow/BAAI/bge-m3",
+        "embedding_model_spec": "siliconflow-cn:Pro/BAAI/bge-m3",
         "kb_type": "milvus",
         "additional_params": {},
     }
@@ -201,7 +201,10 @@ async def test_create_dify_database_success(test_client, admin_headers):
 
     create_response = await test_client.post("/api/knowledge/databases", json=payload, headers=admin_headers)
     assert create_response.status_code == 200, create_response.text
-    db_id = create_response.json()["db_id"]
+    created_payload = create_response.json()
+    db_id = created_payload["db_id"]
+    assert created_payload["embedding_model_spec"] is None
+    assert "chunk_preset_id" not in created_payload["metadata"]
 
     info_response = await test_client.get(f"/api/knowledge/databases/{db_id}", headers=admin_headers)
     assert info_response.status_code == 200, info_response.text
@@ -399,6 +402,13 @@ async def test_get_knowledge_base_types(test_client, admin_headers):
     payload = response.json()
     assert payload["message"] == "success"
     assert "kb_types" in payload
+    assert payload["kb_types"]["dify"]["requires_embedding_model"] is False
+    assert payload["kb_types"]["dify"]["supports_documents"] is False
+    assert [option["key"] for option in payload["kb_types"]["dify"]["create_params"]["options"]] == [
+        "dify_api_url",
+        "dify_token",
+        "dify_dataset_id",
+    ]
 
 
 async def test_get_knowledge_base_statistics(test_client, admin_headers):
@@ -449,14 +459,31 @@ async def test_duplicate_database_name(test_client, admin_headers, knowledge_dat
         json={
             "database_name": db_name,
             "description": "Duplicate name test",
-            "embed_model_name": "siliconflow/BAAI/bge-m3",
-            "kb_type": "lightrag",
+            "embedding_model_spec": "siliconflow-cn:Pro/BAAI/bge-m3",
+            "kb_type": "milvus",
             "additional_params": {},
         },
         headers=admin_headers,
     )
     assert response.status_code == 409
     assert "已存在" in response.json()["detail"]
+
+
+async def test_create_lightrag_knowledge_base_is_unsupported(test_client, admin_headers):
+    db_name = f"pytest_lightrag_{uuid.uuid4().hex[:6]}"
+    response = await test_client.post(
+        "/api/knowledge/databases",
+        json={
+            "database_name": db_name,
+            "description": "Unsupported LightRAG knowledge base",
+            "embedding_model_spec": "siliconflow-cn:Pro/BAAI/bge-m3",
+            "kb_type": "lightrag",
+            "additional_params": {},
+        },
+        headers=admin_headers,
+    )
+    assert response.status_code == 400
+    assert "Unsupported knowledge base type: lightrag" in response.json()["detail"]
 
 
 async def test_create_milvus_knowledge_base(test_client, admin_headers):
@@ -468,7 +495,7 @@ async def test_create_milvus_knowledge_base(test_client, admin_headers):
     payload = {
         "database_name": db_name,
         "description": "Pytest Milvus knowledge base",
-        "embed_model_name": "siliconflow/BAAI/bge-m3",
+        "embedding_model_spec": "siliconflow-cn:Pro/BAAI/bge-m3",
         "kb_type": "milvus",
         "additional_params": {},
     }
