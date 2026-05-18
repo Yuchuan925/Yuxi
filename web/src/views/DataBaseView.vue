@@ -58,7 +58,7 @@
                 <component :is="getKbTypeIcon(typeKey)" class="type-icon" />
                 <span class="type-title">{{ getKbTypeLabel(typeKey) }}</span>
               </div>
-              <div class="card-description">{{ typeInfo.description }}</div>
+              <div class="card-description">{{ getKbTypeDescription(typeInfo) }}</div>
             </div>
           </div>
         </div>
@@ -68,7 +68,7 @@
           <a-input v-model:value="newDatabase.name" placeholder="新建知识库名称" />
         </div>
 
-        <div v-if="newDatabase.kb_type !== 'dify'" class="form-grid two-columns">
+        <div v-if="selectedKbTypeInfo?.requires_embedding_model" class="form-grid two-columns">
           <div class="form-section compact-section">
             <h3 class="section-title">嵌入模型</h3>
             <EmbeddingModelSelector
@@ -93,29 +93,44 @@
           </div>
         </div>
 
-        <div v-if="newDatabase.kb_type === 'dify'" class="form-grid three-columns">
-          <div class="form-section compact-section">
-            <h3 class="section-title">Dify API URL</h3>
-            <a-input
-              v-model:value="newDatabase.dify_api_url"
-              placeholder="例如: https://api.dify.ai/v1"
-            />
-          </div>
-
-          <div class="form-section compact-section">
-            <h3 class="section-title">Dify Token</h3>
+        <div v-if="createParamOptions.length" class="form-grid three-columns">
+          <div
+            v-for="field in createParamOptions"
+            :key="field.key"
+            class="form-section compact-section"
+          >
+            <h3 class="section-title">
+              {{ field.label || field.key }}<span v-if="field.required" class="required-mark">*</span>
+            </h3>
             <a-input-password
-              v-model:value="newDatabase.dify_token"
-              placeholder="请输入 Dify API Token"
+              v-if="field.type === 'password'"
+              v-model:value="newDatabase.additional_params[field.key]"
+              :placeholder="field.placeholder"
             />
-          </div>
-
-          <div class="form-section compact-section">
-            <h3 class="section-title">Dataset ID</h3>
+            <a-input-number
+              v-else-if="field.type === 'number'"
+              v-model:value="newDatabase.additional_params[field.key]"
+              :min="field.min"
+              :max="field.max"
+              :step="field.step"
+              class="full-width"
+            />
+            <a-switch
+              v-else-if="field.type === 'boolean'"
+              v-model:checked="newDatabase.additional_params[field.key]"
+            />
+            <a-select
+              v-else-if="field.type === 'select'"
+              v-model:value="newDatabase.additional_params[field.key]"
+              :options="field.options || []"
+              class="full-width"
+            />
             <a-input
-              v-model:value="newDatabase.dify_dataset_id"
-              placeholder="请输入 Dify dataset_id"
+              v-else
+              v-model:value="newDatabase.additional_params[field.key]"
+              :placeholder="field.placeholder"
             />
+            <p v-if="field.description" class="field-hint">{{ field.description }}</p>
           </div>
         </div>
 
@@ -177,7 +192,7 @@
         :subtitle="cardSubtitle(database)"
         :description="database.description || '暂无描述'"
         :tags="cardTags(database)"
-        @click="navigateToDatabase(database.db_id)"
+        @click="navigateToDatabase(database)"
       >
         <template #icon>
           <component :is="getKbTypeIcon(database.kb_type || 'milvus')" :size="20" />
@@ -225,7 +240,7 @@ const knowledgeViewItems = [
   { key: 'documents', label: '文档知识库', path: '/extensions?tab=knowledge' }
 ]
 
-const kbTypes = ['milvus', 'dify']
+const kbTypes = computed(() => Object.keys(supportedKbTypes.value))
 const searchQuery = ref('')
 const typeFilter = ref(null)
 
@@ -264,9 +279,7 @@ const createEmptyDatabaseForm = () => ({
   kb_type: 'milvus',
   storage: '',
   chunk_preset_id: 'general',
-  dify_api_url: '',
-  dify_token: '',
-  dify_dataset_id: ''
+  additional_params: {}
 })
 
 const newDatabase = reactive(createEmptyDatabaseForm())
@@ -281,11 +294,34 @@ const supportedKbTypes = ref({})
 // 有序的知识库类型
 const orderedKbTypes = computed(() => supportedKbTypes.value)
 
+const selectedKbTypeInfo = computed(() => supportedKbTypes.value[newDatabase.kb_type] || null)
+
+const createParamOptions = computed(
+  () => selectedKbTypeInfo.value?.create_params?.options || []
+)
+
+const getKbTypeDescription = (typeInfo) =>
+  typeInfo?.default_config?.description || typeInfo?.description || ''
+
+const resetCreateParamValues = () => {
+  newDatabase.additional_params = {}
+  for (const field of createParamOptions.value) {
+    if ('default' in field) {
+      newDatabase.additional_params[field.key] = field.default
+    } else if (field.type === 'boolean') {
+      newDatabase.additional_params[field.key] = false
+    } else {
+      newDatabase.additional_params[field.key] = ''
+    }
+  }
+}
+
 // 加载支持的知识库类型
 const loadSupportedKbTypes = async () => {
   try {
     const data = await typeApi.getKnowledgeBaseTypes()
     supportedKbTypes.value = data.kb_types
+    resetCreateParamValues()
     console.log('支持的知识库类型:', supportedKbTypes.value)
   } catch (error) {
     console.error('加载知识库类型失败:', error)
@@ -293,7 +329,9 @@ const loadSupportedKbTypes = async () => {
     supportedKbTypes.value = {
       milvus: {
         description: '基于 Milvus 的生产级向量知识库，支持文档检索和图谱构建',
-        class_name: 'MilvusKB'
+        class_name: 'MilvusKB',
+        requires_embedding_model: true,
+        create_params: { options: [] }
       }
     }
   }
@@ -301,6 +339,7 @@ const loadSupportedKbTypes = async () => {
 
 const resetNewDatabase = () => {
   Object.assign(newDatabase, createEmptyDatabaseForm())
+  resetCreateParamValues()
   // 重置共享配置
   shareConfig.value = {
     is_shared: true,
@@ -349,6 +388,7 @@ const handleKbTypeChange = (type) => {
   console.log('知识库类型改变:', type)
   resetNewDatabase()
   newDatabase.kb_type = type
+  resetCreateParamValues()
 }
 
 // 构建请求数据（只负责表单数据转换）
@@ -360,7 +400,7 @@ const buildRequestData = () => {
     additional_params: {}
   }
 
-  if (newDatabase.kb_type !== 'dify') {
+  if (selectedKbTypeInfo.value?.requires_embedding_model) {
     requestData.embedding_model_spec = newDatabase.embedding_model_spec || configStore.config.embed_model
     requestData.additional_params.chunk_preset_id = newDatabase.chunk_preset_id || 'general'
   }
@@ -380,10 +420,9 @@ const buildRequestData = () => {
     }
   }
 
-  if (newDatabase.kb_type === 'dify') {
-    requestData.additional_params.dify_api_url = (newDatabase.dify_api_url || '').trim()
-    requestData.additional_params.dify_token = (newDatabase.dify_token || '').trim()
-    requestData.additional_params.dify_dataset_id = (newDatabase.dify_dataset_id || '').trim()
+  for (const field of createParamOptions.value) {
+    const value = newDatabase.additional_params[field.key]
+    requestData.additional_params[field.key] = typeof value === 'string' ? value.trim() : value
   }
 
   return requestData
@@ -391,17 +430,11 @@ const buildRequestData = () => {
 
 // 创建按钮处理
 const handleCreateDatabase = async () => {
-  if (newDatabase.kb_type === 'dify') {
-    if (
-      !newDatabase.dify_api_url?.trim() ||
-      !newDatabase.dify_token?.trim() ||
-      !newDatabase.dify_dataset_id?.trim()
-    ) {
-      message.error('请完整填写 Dify API URL、Token 和 Dataset ID')
-      return
-    }
-    if (!newDatabase.dify_api_url.trim().endsWith('/v1')) {
-      message.error('Dify API URL 必须以 /v1 结尾')
+  for (const field of createParamOptions.value) {
+    if (!field.required) continue
+    const value = newDatabase.additional_params[field.key]
+    if (value === undefined || value === null || (typeof value === 'string' && !value.trim())) {
+      message.error(`请填写${field.label || field.key}`)
       return
     }
   }
@@ -440,8 +473,8 @@ const cardTags = (database) => {
   return tags
 }
 
-const navigateToDatabase = (databaseId) => {
-  router.push({ path: `/extensions/database/${databaseId}` })
+const navigateToDatabase = (database) => {
+  router.push({ path: `/extensions/database/${database.db_id}` })
 }
 
 watch(

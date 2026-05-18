@@ -8,10 +8,20 @@
           管理系统用户，请谨慎操作。删除用户后该用户将无法登录系统。
         </p>
       </div>
-      <a-button type="primary" @click="showAddUserModal" class="add-btn lucide-icon-btn">
-        <template #icon><Plus :size="16" /></template>
-        添加用户
-      </a-button>
+      <div class="header-actions">
+        <a-button
+          @click="handleRefresh"
+          :loading="userManagement.refreshing"
+          title="刷新"
+          class="refresh-btn lucide-icon-btn"
+        >
+          <template #icon><RefreshCw :size="16" :class="{ spin: userManagement.refreshing }" /></template>
+        </a-button>
+        <a-button type="primary" @click="showAddUserModal" class="add-btn lucide-icon-btn">
+          <template #icon><Plus :size="16" /></template>
+          添加用户
+        </a-button>
+      </div>
     </div>
 
     <!-- 主内容区域 -->
@@ -219,7 +229,7 @@ import { reactive, onMounted, watch } from 'vue'
 import { message, Modal } from 'ant-design-vue'
 import { useUserStore } from '@/stores/user'
 import { departmentApi } from '@/apis'
-import { Plus, Pencil, Trash2, User, UserLock, UserStar } from 'lucide-vue-next'
+import { Plus, Pencil, Trash2, User, UserLock, UserStar, RefreshCw } from 'lucide-vue-next'
 import { formatDateTime } from '@/utils/time'
 
 const userStore = useUserStore()
@@ -227,6 +237,7 @@ const userStore = useUserStore()
 // 用户管理相关状态
 const userManagement = reactive({
   loading: false,
+  refreshing: false,
   users: [],
   error: null,
   modalVisible: false,
@@ -338,6 +349,21 @@ const fetchUsers = async () => {
     userManagement.error = '获取用户列表失败'
   } finally {
     userManagement.loading = false
+  }
+}
+
+// 刷新用户和部门信息
+const handleRefresh = async () => {
+  if (userManagement.refreshing) return
+  userManagement.refreshing = true
+  try {
+    await Promise.all([fetchUsers(), fetchDepartments()])
+    message.success('刷新成功')
+  } catch (error) {
+    console.error('刷新失败:', error)
+    message.error('刷新失败')
+  } finally {
+    userManagement.refreshing = false
   }
 }
 
@@ -531,6 +557,62 @@ onMounted(async () => {
 
 <style lang="less" scoped>
 .user-management {
+  .header-section {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+    gap: 16px;
+    margin-bottom: 16px;
+
+    .header-content {
+      flex: 1;
+      min-width: 0;
+
+      .section-title {
+        font-size: 16px;
+        font-weight: 500;
+        color: var(--gray-900);
+        line-height: 1.4;
+        margin: 12px 0 12px;
+      }
+
+      .section-description {
+        font-size: 14px;
+        color: var(--gray-600);
+        line-height: 1.4;
+        margin: 0;
+      }
+    }
+
+    .header-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+
+      .refresh-btn {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 32px;
+        height: 32px;
+        border-radius: 6px;
+        transition: all 0.2s ease;
+
+        &:hover {
+          background: var(--gray-25);
+        }
+
+        .spin {
+          animation: spin 1s linear infinite;
+        }
+
+        :deep(.ant-btn-loading-icon) {
+          color: var(--gray-600);
+        }
+      }
+    }
+  }
+
   .content-section {
     overflow: hidden;
 
@@ -744,6 +826,15 @@ onMounted(async () => {
     font-size: 13px;
     color: var(--gray-900);
     font-family: 'Monaco', 'Consolas', monospace;
+  }
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
   }
 }
 

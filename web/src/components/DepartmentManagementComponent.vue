@@ -6,10 +6,20 @@
         <div class="section-title">部门管理</div>
         <p class="section-description">管理系统部门，部门下的用户会被隔离管理。</p>
       </div>
-      <a-button type="primary" @click="showAddDepartmentModal" class="add-btn lucide-icon-btn">
-        <template #icon><Plus :size="16" /></template>
-        添加部门
-      </a-button>
+      <div class="header-actions">
+        <a-button
+          @click="handleRefresh"
+          :loading="departmentManagement.refreshing"
+          title="刷新"
+          class="refresh-btn lucide-icon-btn"
+        >
+          <template #icon><RefreshCw :size="16" :class="{ spin: departmentManagement.refreshing }" /></template>
+        </a-button>
+        <a-button type="primary" @click="showAddDepartmentModal" class="add-btn lucide-icon-btn">
+          <template #icon><Plus :size="16" /></template>
+          添加部门
+        </a-button>
+      </div>
     </div>
 
     <!-- 主内容区域 -->
@@ -164,9 +174,9 @@
 
 <script setup>
 import { reactive, onMounted, watch } from 'vue'
-import { notification, Modal } from 'ant-design-vue'
+import { notification, message, Modal } from 'ant-design-vue'
 import { departmentApi, apiSuperAdminGet } from '@/apis'
-import { Delete as Trash2, Edit3 as Pencil, Plus, Users } from 'lucide-vue-next'
+import { Delete as Trash2, Edit3 as Pencil, Plus, Users, RefreshCw } from 'lucide-vue-next'
 
 // 表格列定义
 const columns = [
@@ -200,6 +210,7 @@ const columns = [
 // 部门管理状态
 const departmentManagement = reactive({
   loading: false,
+  refreshing: false,
   departments: [],
   error: null,
   modalVisible: false,
@@ -230,6 +241,21 @@ const fetchDepartments = async () => {
     departmentManagement.error = '获取部门列表失败'
   } finally {
     departmentManagement.loading = false
+  }
+}
+
+// 刷新部门列表
+const handleRefresh = async () => {
+  if (departmentManagement.refreshing) return
+  departmentManagement.refreshing = true
+  try {
+    await fetchDepartments()
+    message.success('刷新成功')
+  } catch (error) {
+    console.error('刷新失败:', error)
+    message.error('刷新失败')
+  } finally {
+    departmentManagement.refreshing = false
   }
 }
 
@@ -397,7 +423,7 @@ const handleDepartmentFormSubmit = async () => {
         admin_phone: departmentManagement.form.adminPhone || undefined
       })
 
-      notification.success({ message: `部门创建成功，管理员 "${adminUid}" 已创建` })
+      message.success(`部门创建成功，管理员 "${adminUid}" 已创建`)
     }
 
     // 重新获取部门列表
@@ -450,6 +476,58 @@ onMounted(() => {
 
 <style lang="less" scoped>
 .department-management {
+  .header-section {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+    gap: 16px;
+    margin-bottom: 16px;
+
+    .header-content {
+      flex: 1;
+      min-width: 0;
+
+      .section-title {
+        font-size: 16px;
+        font-weight: 500;
+        color: var(--gray-900);
+        line-height: 1.4;
+        margin: 12px 0 12px;
+      }
+
+      .section-description {
+        font-size: 14px;
+        color: var(--gray-600);
+        line-height: 1.4;
+        margin: 0;
+      }
+    }
+
+    .header-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+
+      .refresh-btn {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 32px;
+        height: 32px;
+        border-radius: 6px;
+        transition: all 0.2s ease;
+
+        &:hover {
+          background: var(--gray-25);
+        }
+
+        .spin {
+          animation: spin 1s linear infinite;
+        }
+      }
+    }
+  }
+
   .content-section {
     overflow: hidden;
 
@@ -494,6 +572,15 @@ onMounted(() => {
         }
       }
     }
+  }
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
   }
 }
 

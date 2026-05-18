@@ -4,7 +4,6 @@ import {
   apiDelete,
   apiPut,
   apiAdminPost,
-  apiAdminDelete,
   apiRequest
 } from './base'
 import { useUserStore } from '@/stores/user'
@@ -124,16 +123,16 @@ export const agentApi = {
     apiGet(`/api/chat/agent/${agentId}/configs/${configId}`),
 
   createAgentConfigProfile: (agentId, payload) =>
-    apiAdminPost(`/api/chat/agent/${agentId}/configs`, payload),
+    apiPost(`/api/chat/agent/${agentId}/configs`, payload),
 
   updateAgentConfigProfile: (agentId, configId, payload) =>
     apiPut(`/api/chat/agent/${agentId}/configs/${configId}`, payload),
 
   setAgentConfigDefault: (agentId, configId) =>
-    apiAdminPost(`/api/chat/agent/${agentId}/configs/${configId}/set_default`, {}),
+    apiPost(`/api/chat/agent/${agentId}/configs/${configId}/set_default`, {}),
 
   deleteAgentConfigProfile: (agentId, configId) =>
-    apiAdminDelete(`/api/chat/agent/${agentId}/configs/${configId}`),
+    apiDelete(`/api/chat/agent/${agentId}/configs/${configId}`),
 
   /**
    * 设置默认智能体

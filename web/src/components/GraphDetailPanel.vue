@@ -141,6 +141,7 @@ const filteredEdgeProperties = computed(() => {
   border: 1px solid var(--gray-100);
   box-shadow: 0 0 4px 0px var(--shadow-2);
   font-size: 13px;
+  user-select: auto;
 
   .panel-header {
     display: flex;

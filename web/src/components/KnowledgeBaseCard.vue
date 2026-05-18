@@ -34,16 +34,7 @@
         <p class="description-text">{{ database.description || '暂无描述' }}</p>
       </div>
 
-      <!-- Tags -->
-      <div class="tags-section">
-        <span class="card-tag" :class="'tag-' + getKbTypeColor(database.kb_type || 'milvus')">
-          {{ getKbTypeLabel(database.kb_type || 'milvus') }}
-        </span>
-        <span class="card-tag tag-blue">{{ getModelShortName(database.embedding_model_spec) }}</span>
-        <span class="card-tag tag-cyan">{{
-          chunkPresetLabelMap[database.additional_params?.chunk_preset_id || 'general'] || 'General'
-        }}</span>
-      </div>
+
     </div>
   </div>
 
@@ -148,12 +139,7 @@ import { ref, reactive, computed, h, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useDatabaseStore } from '@/stores/database'
 import { useUserStore } from '@/stores/user'
-import { getKbTypeLabel, getKbTypeColor } from '@/utils/kb_utils'
-import {
-  CHUNK_PRESET_OPTIONS,
-  CHUNK_PRESET_LABEL_MAP,
-  getChunkPresetDescription
-} from '@/utils/chunk_presets'
+import { CHUNK_PRESET_OPTIONS, getChunkPresetDescription } from '@/utils/chunk_presets'
 import { message } from 'ant-design-vue'
 import { LeftOutlined, QuestionCircleOutlined } from '@ant-design/icons-vue'
 import { Pencil, Trash2, Copy } from 'lucide-vue-next'
@@ -166,12 +152,6 @@ const store = useDatabaseStore()
 const userStore = useUserStore()
 
 const database = computed(() => store.database)
-
-const getModelShortName = (spec) => {
-  if (!spec) return 'N/A'
-  const parts = spec.split('/')
-  return parts[parts.length - 1] || spec
-}
 
 // 部门列表（用于显示部门名称）
 const departments = ref([])
@@ -264,7 +244,6 @@ const editForm = reactive({
 })
 
 const chunkPresetOptions = CHUNK_PRESET_OPTIONS.map(({ label, value }) => ({ label, value }))
-const chunkPresetLabelMap = CHUNK_PRESET_LABEL_MAP
 const editPresetDescription = computed(() => getChunkPresetDescription(editForm.chunk_preset_id))
 
 const rules = {
@@ -451,13 +430,6 @@ const deleteDatabase = () => {
     line-height: 1.5;
     margin: 0;
   }
-}
-
-.tags-section {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 4px;
 }
 
 .chunk-preset-label {

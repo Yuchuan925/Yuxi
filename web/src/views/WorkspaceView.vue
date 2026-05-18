@@ -37,6 +37,7 @@
           :current-path="currentPath"
           :databases="databases"
           :loading-databases="loadingDatabases"
+          :current-uid="userStore.uid"
           @select-personal="selectPersonalWorkspace"
           @select-database="selectDatabase"
           @select-path="selectWorkspacePath"
@@ -159,6 +160,7 @@ import WorkspaceFileList from '@/components/workspace/WorkspaceFileList.vue'
 import WorkspacePreviewPane from '@/components/workspace/WorkspacePreviewPane.vue'
 import WorkspaceSidebar from '@/components/workspace/WorkspaceSidebar.vue'
 import { databaseApi } from '@/apis/knowledge_api'
+import { useUserStore } from '@/stores/user'
 import {
   createWorkspaceDirectory,
   deleteWorkspacePath,
@@ -171,6 +173,8 @@ import {
   saveWorkspaceFileContent,
   uploadWorkspaceFile
 } from '@/apis/workspace_api'
+
+const userStore = useUserStore()
 
 const activeSourceKey = ref('personal')
 const currentPath = ref('/')

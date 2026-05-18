@@ -400,7 +400,6 @@ div.header,
 #app-router-view {
   height: 100%;
   max-width: 100%;
-  user-select: none;
 }
 
 #app-router-view {
@@ -421,6 +420,7 @@ div.header,
   border-right: 1px solid var(--gray-100);
   padding: @sidebar-padding;
   overflow: hidden;
+  user-select: none;
   transition:
     width 0.18s ease,
     flex-basis 0.18s ease;

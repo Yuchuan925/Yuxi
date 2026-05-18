@@ -75,6 +75,11 @@ const router = createRouter({
       redirect: (to) => ({ path: `/extensions/database/${to.params.database_id}` })
     },
     {
+      path: '/extensions/connectors/:database_id',
+      name: 'ConnectorDetailLegacy',
+      redirect: (to) => ({ path: `/extensions/database/${to.params.database_id}` })
+    },
+    {
       path: '/dashboard',
       name: 'dashboard',
       component: AppLayout,

@@ -1,4 +1,17 @@
+import { h } from 'vue'
 import { Database, DatabaseZap } from 'lucide-vue-next'
+
+const ICON_BASE = 'https://registry.npmmirror.com/@lobehub/icons-static-svg/latest/files/icons'
+
+const createBrandIcon = (url) => {
+  const Icon = ({ size = 20 }) => h('img', { src: url, style: { width: size + 'px', height: size + 'px' } })
+  Icon.inheritAttrs = false
+  return Icon
+}
+
+export const brandIcons = {
+  dify: createBrandIcon(`${ICON_BASE}/dify-color.svg`),
+}
 
 export const getKbTypeLabel = (type) => {
   const labels = {
@@ -11,7 +24,7 @@ export const getKbTypeLabel = (type) => {
 export const getKbTypeIcon = (type) => {
   const icons = {
     milvus: DatabaseZap,
-    dify: Database
+    dify: brandIcons.dify
   }
   return icons[type] || Database
 }

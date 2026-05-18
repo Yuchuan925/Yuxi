@@ -2,7 +2,6 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { agentApi, databaseApi, mcpApi, skillApi } from '@/apis'
 import { handleChatError } from '@/utils/errorHandler'
-import { useUserStore } from '@/stores/user'
 
 const CHATBOT_AGENT_ID = 'ChatbotAgent'
 
@@ -20,7 +19,6 @@ function sortAgents(agents) {
 export const useAgentStore = defineStore(
   'agent',
   () => {
-    const userStore = useUserStore()
     // ==================== 状态定义 ====================
     // 智能体相关状态
     const agents = ref([])
@@ -398,7 +396,6 @@ export const useAgentStore = defineStore(
       const targetAgentId = selectedAgentId.value
       const targetConfigId = selectedAgentConfigId.value
       if (!targetAgentId || !targetConfigId) return
-      if (!userStore.isAdmin) return
 
       try {
         await agentApi.updateAgentConfigProfile(targetAgentId, targetConfigId, {
@@ -416,7 +413,6 @@ export const useAgentStore = defineStore(
     async function createAgentConfigProfile({ name, setDefault = false, fromCurrent = true } = {}) {
       const targetAgentId = selectedAgentId.value
       if (!targetAgentId) return null
-      if (!userStore.isAdmin) return null
       if (!name) throw new Error('配置名称不能为空')
 
       const baseContext = fromCurrent ? { ...agentConfig.value } : {}
@@ -439,7 +435,6 @@ export const useAgentStore = defineStore(
       const targetAgentId = selectedAgentId.value
       const targetConfigId = selectedAgentConfigId.value
       if (!targetAgentId || !targetConfigId) return
-      if (!userStore.isAdmin) return
 
       await agentApi.deleteAgentConfigProfile(targetAgentId, targetConfigId)
       await fetchAgentConfigs(targetAgentId)
@@ -458,7 +453,6 @@ export const useAgentStore = defineStore(
       const targetAgentId = selectedAgentId.value
       const targetConfigId = selectedAgentConfigId.value
       if (!targetAgentId || !targetConfigId) return
-      if (!userStore.isAdmin) return
 
       await agentApi.setAgentConfigDefault(targetAgentId, targetConfigId)
       await fetchAgentConfigs(targetAgentId)

@@ -46,13 +46,15 @@
               <div class="actions-right">
                 <a-button
                   v-if="isMilvus"
-                  class="action-btn"
-                  :class="{ 'has-active-dot': isBuildActive }"
+                  class="action-btn index-action-btn"
+                  :class="{ 'has-index-label': hasPendingGraphChunks }"
                   @click="showBuildPanel = !showBuildPanel; showSettings = false"
-                  title="索引管理"
+                  :title="graphIndexButtonTitle"
+                  :aria-label="graphIndexButtonTitle"
                 >
                   <Database :size="16" />
-                  <span v-if="isBuildActive" class="status-dot"></span>
+                  <span v-if="hasPendingGraphChunks" class="index-status-label">{{ pendingGraphChunks }} 待索引</span>
+                  <span v-if="graphIndexDotStatus" class="status-dot" :class="`status-dot--${graphIndexDotStatus}`"></span>
                 </a-button>
                 <a-button
                   class="action-btn"
@@ -357,6 +359,30 @@ const isBuildFailed = computed(() => {
   return graphBuildStatus.value?.build_task_status === 'failed'
 })
 
+const pendingGraphChunks = computed(() => {
+  return Number(graphBuildStatus.value?.pending_chunks ?? 0)
+})
+
+const hasPendingGraphChunks = computed(() => pendingGraphChunks.value > 0)
+
+const isGraphIndexComplete = computed(() => {
+  return Boolean(graphBuildStatus.value?.locked) && !isBuildActive.value && pendingGraphChunks.value === 0
+})
+
+const graphIndexDotStatus = computed(() => {
+  if (isBuildActive.value) return 'active'
+  if (hasPendingGraphChunks.value) return 'pending'
+  if (isGraphIndexComplete.value) return 'complete'
+  return ''
+})
+
+const graphIndexButtonTitle = computed(() => {
+  if (hasPendingGraphChunks.value) return `索引管理，${pendingGraphChunks.value} 待索引`
+  if (isGraphIndexComplete.value) return '索引管理，已全部索引'
+  if (isBuildActive.value) return '索引管理，索引中'
+  return '索引管理'
+})
+
 const isEditingGraphConfig = computed(() => Boolean(graphBuildStatus.value?.locked))
 
 const graphConfigTitle = computed(() => (isEditingGraphConfig.value ? '修改图谱抽取配置' : '配置图谱抽取器'))
@@ -657,6 +683,7 @@ onUnmounted(() => {
   flex-direction: column;
   overflow: hidden;
   position: relative;
+  user-select: none;
 }
 
 .graph-container-compact {
@@ -763,15 +790,46 @@ onUnmounted(() => {
     }
   }
 
+  .index-action-btn {
+    gap: 6px;
+    overflow: visible;
+
+    &.has-index-label {
+      width: auto;
+      min-width: 84px;
+      padding: 0 22px 0 8px;
+      justify-content: flex-start;
+    }
+
+    .index-status-label {
+      font-size: 12px;
+      line-height: 1;
+      color: var(--gray-700);
+      white-space: nowrap;
+    }
+  }
+
   .status-dot {
     position: absolute;
     bottom: 4px;
     right: 4px;
-    width: 6px;
-    height: 6px;
+    width: 7px;
+    height: 7px;
     border-radius: 50%;
-    background: #52c41a;
+    box-shadow: 0 0 0 1px var(--color-trans-light);
+  }
+
+  .status-dot--pending {
+    background: var(--color-warning-500);
+  }
+
+  .status-dot--active {
+    background: var(--color-warning-500);
     animation: blink 1.2s ease-in-out infinite;
+  }
+
+  .status-dot--complete {
+    background: var(--color-success-500);
   }
 
   .search-suffix-icon {

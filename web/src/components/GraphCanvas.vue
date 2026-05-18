@@ -64,6 +64,9 @@ let resizeObserver = null
 let renderTimeout = null
 let retryCount = 0
 let resizeTimer = null
+let layoutTimeout = null
+let highlightTimeout = null
+let isMounted = false
 const MAX_RETRIES = 5
 
 const defaultLayout = {
@@ -251,8 +254,8 @@ function initGraph() {
 }
 
 function setGraphData() {
-  if (!graphInstance) initGraph()
-  if (!graphInstance) return
+  if (!graphInstance || !isMounted) initGraph()
+  if (!graphInstance || !isMounted) return
   const data = formatData()
 
   console.log('开始设置图谱数据:', {
@@ -264,7 +267,9 @@ function setGraphData() {
   graphInstance.render()
 
   // 手动触发布局重新计算，确保节点分布
-  setTimeout(() => {
+  clearTimeout(layoutTimeout)
+  layoutTimeout = setTimeout(() => {
+    if (!isMounted || !graphInstance) return
     try {
       if (graphInstance && graphInstance.layout) {
         graphInstance.layout()
@@ -275,7 +280,9 @@ function setGraphData() {
     }
 
     // 等待力导向布局稳定后再应用高亮
-    setTimeout(() => {
+    clearTimeout(highlightTimeout)
+    highlightTimeout = setTimeout(() => {
+      if (!isMounted || !graphInstance) return
       applyHighlightKeywords()
       emit('data-rendered')
       console.log('图谱渲染完成，布局已稳定')
@@ -330,6 +337,7 @@ function renderGraph() {
 }
 
 function refreshGraph() {
+  if (!isMounted) return
   if (graphInstance) {
     try {
       graphInstance.destroy()
@@ -342,7 +350,7 @@ function refreshGraph() {
   retryCount = 0
   clearTimeout(renderTimeout)
   renderTimeout = setTimeout(() => {
-    renderGraph()
+    if (isMounted) renderGraph()
   }, 300)
 }
 
@@ -407,6 +415,7 @@ async function clearFocus() {
 watch(
   () => props.graphData,
   () => {
+    if (!isMounted) return
     clearTimeout(renderTimeout)
     renderTimeout = setTimeout(() => setGraphData(), 50)
   },
@@ -417,9 +426,11 @@ watch(
 watch(
   () => props.highlightKeywords,
   () => {
-    if (graphInstance) {
+    if (graphInstance && isMounted) {
       clearHighlights()
-      setTimeout(() => applyHighlightKeywords(), 50)
+      setTimeout(() => {
+        if (isMounted) applyHighlightKeywords()
+      }, 50)
     }
   },
   { deep: true }
@@ -429,24 +440,25 @@ watch(
 watch(
   () => themeStore.isDark,
   () => {
-    if (graphInstance) {
+    if (graphInstance && isMounted) {
       refreshGraph()
     }
   }
 )
 
 onMounted(() => {
+  isMounted = true
   // ResizeObserver 监听容器尺寸，自动重渲染
   if (window.ResizeObserver) {
     resizeObserver = new ResizeObserver(() => {
-      if (!container.value || !graphInstance) return
+      if (!container.value || !graphInstance || !isMounted) return
       const width = container.value.offsetWidth
       const height = container.value.offsetHeight
       if (width === 0 && height === 0) return
       graphInstance.setSize(width, height)
       clearTimeout(resizeTimer)
       resizeTimer = setTimeout(() => {
-        if (graphInstance) {
+        if (graphInstance && isMounted) {
           graphInstance.fitView()
         }
       }, 150)
@@ -456,17 +468,20 @@ onMounted(() => {
 
   clearTimeout(renderTimeout)
   renderTimeout = setTimeout(() => {
-    renderGraph()
+    if (isMounted) renderGraph()
   }, 300)
 
   window.addEventListener('resize', refreshGraph)
 })
 
 onUnmounted(() => {
+  isMounted = false
   window.removeEventListener('resize', refreshGraph)
   if (resizeObserver && container.value) resizeObserver.unobserve(container.value)
   clearTimeout(renderTimeout)
   clearTimeout(resizeTimer)
+  clearTimeout(layoutTimeout)
+  clearTimeout(highlightTimeout)
   try {
     graphInstance?.destroy()
   } catch {

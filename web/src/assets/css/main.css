@@ -51,6 +51,20 @@ body {
   gap: 6px;
 }
 
+.ant-btn.lucide-icon-btn,
+.lucide-icon-btn.ant-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.ant-btn .ant-btn-icon,
+.ant-btn .anticon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
 .lucide-icon-btn svg {
   flex-shrink: 0;
 }

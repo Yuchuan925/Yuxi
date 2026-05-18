@@ -8,7 +8,7 @@
         </div>
         <div class="header-actions">
           <a-tooltip
-            v-if="!isEmptyConfig && userStore.isAdmin"
+            v-if="!isEmptyConfig"
             :title="isCurrentDefault ? '当前已是默认配置' : '设为默认配置'"
           >
             <button
@@ -276,7 +276,7 @@
     </div>
 
     <!-- 固定在底部的操作按钮 -->
-    <div class="sidebar-footer" v-if="userStore.isAdmin && selectedAgentId">
+    <div class="sidebar-footer" v-if="selectedAgentId">
       <div class="form-actions">
         <a-button
           type="primary"
@@ -422,7 +422,6 @@ import { useRouter } from 'vue-router'
 import { X, Trash2, Check, Plus, Search, Star, RotateCw, Settings } from 'lucide-vue-next'
 import ModelSelectorComponent from '@/components/ModelSelectorComponent.vue'
 import { useAgentStore } from '@/stores/agent'
-import { useUserStore } from '@/stores/user'
 import { useDatabaseStore } from '@/stores/database'
 import { mcpApi } from '@/apis/mcp_api'
 import { skillApi } from '@/apis/skill_api'
@@ -447,7 +446,6 @@ const emit = defineEmits(['close'])
 
 // Store 管理
 const agentStore = useAgentStore()
-const userStore = useUserStore()
 const databaseStore = useDatabaseStore()
 const router = useRouter()
 
@@ -518,7 +516,7 @@ const currentConfigName = computed(() => {
   return selectedConfigSummary.value?.name || '当前配置'
 })
 
-const isReadOnlyConfig = computed(() => !userStore.isAdmin)
+const isReadOnlyConfig = computed(() => false)
 
 const isSavingConfig = ref(false)
 const isDeletingConfig = ref(false)
@@ -552,10 +550,6 @@ const filteredConfigurableItems = computed(() => {
 })
 
 const loadLiveSkillOptions = async (force = false) => {
-  if (!userStore.isAdmin) {
-    liveSkillOptions.value = []
-    return
-  }
   // 如果不是强制刷新且已有数据，则跳过
   if (!force && liveSkillOptions.value.length > 0) {
     return
@@ -574,10 +568,6 @@ const loadLiveSkillOptions = async (force = false) => {
 }
 
 const loadMcpOptions = async (force = false) => {
-  if (!userStore.isAdmin) {
-    liveMcpOptions.value = []
-    return
-  }
   if (!force && liveMcpOptions.value.length > 0) {
     return
   }
@@ -597,10 +587,6 @@ const loadMcpOptions = async (force = false) => {
 }
 
 const loadToolOptions = async (force = false) => {
-  if (!userStore.isAdmin) {
-    toolOptionsFromApi.value = []
-    return
-  }
   // 如果不是强制刷新且已有数据，则跳过
   if (!force && toolOptionsFromApi.value.length > 0) {
     return
@@ -618,10 +604,6 @@ const loadToolOptions = async (force = false) => {
 }
 
 const loadSubagentOptions = async (force = false) => {
-  if (!userStore.isAdmin) {
-    liveSubagentOptions.value = []
-    return
-  }
   if (!force && liveSubagentOptions.value.length > 0) {
     return
   }

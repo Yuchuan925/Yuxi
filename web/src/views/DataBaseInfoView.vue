@@ -22,7 +22,7 @@
       <div class="left-panel" :style="{ width: leftPanelWidth + '%' }">
         <KnowledgeBaseCard />
         <!-- 待处理文件提示条 -->
-        <div v-if="!isDify && (pendingParseCount > 0 || pendingIndexCount > 0)" class="info-panel">
+        <div v-if="isMilvus && (pendingParseCount > 0 || pendingIndexCount > 0)" class="info-panel">
           <div class="banner-item" v-if="pendingParseCount > 0" @click="confirmBatchParse">
             <FileText :size="14" />
             <span>{{ pendingParseCount }} 个文件待解析，点击解析</span>
@@ -33,20 +33,41 @@
           </div>
         </div>
         <FileTable
-          v-if="!isDify"
+          v-if="isMilvus"
           :right-panel-visible="state.rightPanelVisible"
           @show-add-files-modal="showAddFilesModal"
           @toggle-right-panel="toggleRightPanel"
         />
+        <div v-if="isConnector" class="search-config-wrapper">
+          <div class="search-config-header">
+            <h4>检索配置</h4>
+            <button
+              type="button"
+              class="lucide-icon-btn extension-panel-action extension-panel-action-primary"
+              :disabled="searchConfigSaving"
+              @click="handleInlineSearchConfigSave"
+            >
+              <Save :size="14" />
+              <span>保存</span>
+            </button>
+          </div>
+          <div class="search-config-body">
+            <SearchConfigPanel
+              ref="searchConfigPanelRef"
+              :database-id="databaseId"
+              @save="handleSearchConfigSave"
+            />
+          </div>
+        </div>
       </div>
 
-      <div v-if="!isDify" class="resize-handle" ref="resizeHandle"></div>
+      <div class="resize-handle" @mousedown="handleMouseDown"></div>
 
       <div
         class="right-panel"
         :style="{
           width: 100 - leftPanelWidth + '%',
-          display: isDify || store.state.rightPanelVisible ? 'flex' : 'none'
+          display: isConnector || store.state.rightPanelVisible ? 'flex' : 'none'
         }"
       >
         <a-tabs
@@ -54,7 +75,7 @@
           class="knowledge-tabs"
           :tabBarStyle="{ margin: 0, padding: '0 16px' }"
         >
-          <template #rightExtra>
+          <template v-if="isMilvus" #rightExtra>
             <a-tooltip title="检索配置" placement="bottom">
               <a-button type="text" class="config-btn" @click="openSearchConfigModal">
                 <SettingOutlined />
@@ -62,53 +83,35 @@
               </a-button>
             </a-tooltip>
           </template>
-          <a-tab-pane v-if="!isDify && isGraphSupported" key="graph" tab="知识图谱">
+          <a-tab-pane key="query" tab="检索测试">
+            <QuerySection ref="querySectionRef" :visible="true" @toggle-visible="() => {}" />
+          </a-tab-pane>
+          <a-tab-pane v-if="isMilvus" key="graph" tab="知识图谱">
             <KnowledgeGraphSection
               :visible="true"
               :active="activeTab === 'graph'"
               @toggle-visible="() => {}"
             />
           </a-tab-pane>
-          <a-tab-pane key="query" tab="检索测试">
-            <QuerySection ref="querySectionRef" :visible="true" @toggle-visible="() => {}" />
-          </a-tab-pane>
-          <a-tab-pane v-if="!isDify" key="mindmap" tab="知识导图">
+          <a-tab-pane v-if="isMilvus" key="mindmap" tab="知识导图">
             <MindMapSection v-if="databaseId" :database-id="databaseId" ref="mindmapSectionRef" />
           </a-tab-pane>
           <a-tab-pane
-            v-if="!isDify"
+            v-if="isMilvus"
             key="evaluation"
             tab="RAG评估"
-            :disabled="!isEvaluationSupported"
           >
-            <template #tab>
-              <span :style="{ color: !isEvaluationSupported ? 'var(--gray-400)' : '' }">
-                RAG评估
-                <a-tooltip v-if="!isEvaluationSupported" title="仅支持 Milvus 类型的知识库">
-                  <Info :size="14" style="margin-left: 4px; vertical-align: middle" />
-                </a-tooltip>
-              </span>
-            </template>
             <RAGEvaluationTab
-              v-if="databaseId && isEvaluationSupported"
+              v-if="databaseId"
               :database-id="databaseId"
               @switch-to-benchmarks="activeTab = 'benchmarks'"
             />
           </a-tab-pane>
           <a-tab-pane
-            v-if="!isDify"
+            v-if="isMilvus"
             key="benchmarks"
             tab="评估基准"
-            :disabled="!isEvaluationSupported"
           >
-            <template #tab>
-              <span :style="{ color: !isEvaluationSupported ? 'var(--gray-400)' : '' }">
-                评估基准
-                <a-tooltip v-if="!isEvaluationSupported" title="仅支持 Milvus 类型的知识库">
-                  <Info :size="14" style="margin-left: 4px; vertical-align: middle" />
-                </a-tooltip>
-              </span>
-            </template>
             <div class="benchmark-management-container">
               <div class="benchmark-content">
                 <EvaluationBenchmarks
@@ -136,11 +139,11 @@
 </template>
 
 <script setup>
-import { onMounted, ref, watch, onUnmounted, computed } from 'vue'
+import { ref, watch, onUnmounted, computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { useDatabaseStore } from '@/stores/database'
 import { useTaskerStore } from '@/stores/tasker'
-import { Info, FileText, Database } from 'lucide-vue-next'
+import { FileText, Database, Save } from 'lucide-vue-next'
 import { SettingOutlined } from '@ant-design/icons-vue'
 import { Modal } from 'ant-design-vue'
 import KnowledgeBaseCard from '@/components/KnowledgeBaseCard.vue'
@@ -153,6 +156,7 @@ import MindMapSection from '@/components/MindMapSection.vue'
 import RAGEvaluationTab from '@/components/RAGEvaluationTab.vue'
 import EvaluationBenchmarks from '@/components/EvaluationBenchmarks.vue'
 import SearchConfigModal from '@/components/SearchConfigModal.vue'
+import SearchConfigPanel from '@/components/SearchConfigPanel.vue'
 
 const route = useRoute()
 const store = useDatabaseStore()
@@ -161,18 +165,10 @@ const taskerStore = useTaskerStore()
 const databaseId = computed(() => store.databaseId)
 const database = computed(() => store.database)
 const state = computed(() => store.state)
-const isDify = computed(() => database.value.kb_type?.toLowerCase() === 'dify')
-// 计算属性：是否支持知识图谱
-const isGraphSupported = computed(() => {
-  const kbType = database.value.kb_type?.toLowerCase()
-  return kbType === 'milvus'
-})
-
-// 计算属性：是否支持评估功能
-const isEvaluationSupported = computed(() => {
-  const kbType = database.value.kb_type?.toLowerCase()
-  return kbType === 'milvus'
-})
+const isCurrentDatabaseLoaded = computed(() => database.value?.db_id === databaseId.value)
+const kbType = computed(() => (isCurrentDatabaseLoaded.value ? database.value.kb_type?.toLowerCase() : ''))
+const isMilvus = computed(() => kbType.value === 'milvus')
+const isConnector = computed(() => Boolean(kbType.value) && !isMilvus.value)
 
 // 计算待解析文件数量（status: 'uploaded'）
 const pendingParseCount = computed(() => {
@@ -235,55 +231,28 @@ const mindmapSectionRef = ref(null)
 // 查询区域引用
 const querySectionRef = ref(null)
 
-const resetGraphStats = () => {
-  store.graphStats = {
-    total_nodes: 0,
-    total_edges: 0,
-    displayed_nodes: 0,
-    displayed_edges: 0,
-    is_truncated: false
-  }
-}
+// 拖拽调整大小（仅水平方向）
+const leftPanelWidth = ref(50)
+const isDragging = ref(false)
 
 watch(
-  () => [databaseId.value, isGraphSupported.value, isEvaluationSupported.value, isDify.value],
-  ([newDbId, supported, , difyMode], oldValue = []) => {
-    const [oldDbId, previouslySupported] = oldValue
+  () => [databaseId.value, isMilvus.value],
+  ([newDbId, isMilvusType], oldValue = []) => {
+    const [oldDbId] = oldValue
 
     if (!newDbId) {
       return
     }
 
-    if (difyMode) {
+    if (!isMilvusType) {
       activeTab.value = 'query'
+      leftPanelWidth.value = 40
       return
     }
 
-    if (newDbId && newDbId !== oldDbId) {
-      resetGraphStats()
-    } else if (!supported && previouslySupported) {
-      resetGraphStats()
-    }
-
-    if (
-      supported &&
-      (newDbId !== oldDbId || previouslySupported === false || previouslySupported === undefined)
-    ) {
-      activeTab.value = 'graph'
-      return
-    }
-
-    if (!supported && activeTab.value === 'graph') {
-      activeTab.value = 'query'
-    }
-
-    // 如果知识库类型不支持评估功能且当前在评估相关 tab，切换到查询 tab
-    if (
-      !isEvaluationSupported.value &&
-      (activeTab.value === 'evaluation' || activeTab.value === 'benchmarks')
-    ) {
-      activeTab.value = 'query'
-    }
+    leftPanelWidth.value = 50
+    activeTab.value = 'query'
+    return
   },
   { immediate: true }
 )
@@ -293,16 +262,23 @@ const toggleRightPanel = () => {
   store.state.rightPanelVisible = !store.state.rightPanelVisible
 }
 
-// 拖拽调整大小（仅水平方向）
-const leftPanelWidth = ref(50)
-const isDragging = ref(false)
-const resizeHandle = ref(null)
-
 // 检索配置弹窗
 const searchConfigModalVisible = ref(false)
+const searchConfigSaving = ref(false)
+const searchConfigPanelRef = ref(null)
 
 const handleSearchConfigSave = () => {
   store.getDatabaseInfo()
+}
+
+const handleInlineSearchConfigSave = async () => {
+  if (!searchConfigPanelRef.value) return
+  searchConfigSaving.value = true
+  try {
+    await searchConfigPanelRef.value.save()
+  } finally {
+    searchConfigSaving.value = false
+  }
 }
 
 // 打开检索配置弹窗
@@ -392,7 +368,6 @@ watch(
 
     store.databaseId = newId
     resetFileSelectionState()
-    resetGraphStats()
     store.stopAutoRefresh()
     await store.getDatabaseInfo(newId, false) // Explicitly load query params on initial load
     store.startAutoRefresh()
@@ -468,27 +443,6 @@ watch(
 )
 
 // 组件挂载时启动示例轮播
-onMounted(() => {
-  store.databaseId = route.params.database_id
-  resetFileSelectionState()
-  store.getDatabaseInfo()
-  store.startAutoRefresh()
-
-  // 添加拖拽事件监听（仅水平方向）
-  if (resizeHandle.value) {
-    resizeHandle.value.addEventListener('mousedown', handleMouseDown)
-  }
-})
-
-// 组件卸载时停止示例轮播
-onUnmounted(() => {
-  store.stopAutoRefresh()
-  if (resizeHandle.value) {
-    resizeHandle.value.removeEventListener('mousedown', handleMouseDown)
-  }
-  document.removeEventListener('mousemove', handleMouseMove)
-  document.removeEventListener('mouseup', handleMouseUp)
-})
 
 // 拖拽调整大小功能
 const handleMouseDown = () => {
@@ -520,6 +474,7 @@ const handleMouseUp = () => {
 </script>
 
 <style lang="less" scoped>
+@import '@/assets/css/extensions.less';
 .db-main-container {
   display: flex;
   width: 100%;
@@ -571,7 +526,40 @@ const handleMouseUp = () => {
     flex-grow: 1;
     padding-right: 0;
     flex-direction: column;
-    // max-height: calc(100% - 16px);
+
+    .search-config-wrapper {
+      flex: 1;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+      border: 1px solid var(--gray-200);
+      border-radius: 12px;
+      background: var(--gray-0);
+      overflow: hidden;
+
+      .search-config-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 10px 12px;
+        border-bottom: 1px solid var(--gray-200);
+        flex-shrink: 0;
+
+        h4 {
+          margin: 0;
+          font-size: 14px;
+          font-weight: 600;
+          color: var(--gray-900);
+        }
+      }
+
+      .search-config-body {
+        flex: 1;
+        min-height: 0;
+        overflow-y: auto;
+        padding: 12px;
+      }
+    }
   }
 
   .info-panel {

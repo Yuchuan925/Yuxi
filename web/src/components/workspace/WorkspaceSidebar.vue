@@ -36,10 +36,10 @@
       </button>
     </section>
 
-    <section class="sidebar-section">
-      <div class="section-title">知识库</div>
+    <section v-if="myDatabases.length" class="sidebar-section">
+      <div class="section-title">我的知识库</div>
       <button
-        v-for="database in databases"
+        v-for="database in myDatabases"
         :key="database.db_id || database.id || database.name"
         type="button"
         class="workspace-nav-item secondary"
@@ -49,8 +49,28 @@
         <LibraryBig :size="15" />
         <span>{{ database.name }}</span>
       </button>
-      <div v-if="loadingDatabases" class="sidebar-muted">正在加载知识库...</div>
-      <div v-else-if="!databases.length" class="sidebar-muted">暂无可访问知识库</div>
+    </section>
+
+    <section v-if="sharedDatabases.length" class="sidebar-section">
+      <div class="section-title">共享知识库</div>
+      <button
+        v-for="database in sharedDatabases"
+        :key="database.db_id || database.id || database.name"
+        type="button"
+        class="workspace-nav-item secondary"
+        :class="{ active: activeKey === `database:${database.db_id}` }"
+        @click="$emit('select-database', database)"
+      >
+        <LibraryBig :size="15" />
+        <span>{{ database.name }}</span>
+      </button>
+    </section>
+
+    <section v-if="loadingDatabases" class="sidebar-section">
+      <div class="sidebar-muted">正在加载知识库...</div>
+    </section>
+    <section v-else-if="!databases.length" class="sidebar-section">
+      <div class="sidebar-muted">暂无可访问知识库</div>
     </section>
 
     <section class="sidebar-section">
@@ -65,6 +85,7 @@
 </template>
 
 <script setup>
+import { computed } from 'vue'
 import { Archive, Bot, FolderKanban, LibraryBig, UsersRound } from 'lucide-vue-next'
 
 const savedArtifactsPath = '/saved_artifacts'
@@ -80,21 +101,30 @@ const isSameOrChildPath = (path, targetPath) => {
 const isQuickAccessPath = (path) =>
   quickAccessPaths.some((targetPath) => isSameOrChildPath(path, targetPath))
 
-defineProps({
+const props = defineProps({
   activeKey: { type: String, default: 'personal' },
   currentPath: { type: String, default: '/' },
   databases: { type: Array, default: () => [] },
-  loadingDatabases: { type: Boolean, default: false }
+  loadingDatabases: { type: Boolean, default: false },
+  currentUid: { type: String, default: '' }
 })
 
 defineEmits(['select-personal', 'select-database', 'select-path'])
+
+const myDatabases = computed(() =>
+  props.databases.filter((db) => db.created_by === props.currentUid)
+)
+
+const sharedDatabases = computed(() =>
+  props.databases.filter((db) => db.created_by !== props.currentUid)
+)
 </script>
 
 <style scoped lang="less">
 .workspace-sidebar {
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: 12px;
   min-width: 0;
   padding: 14px 10px;
   border-right: 1px solid var(--gray-100);
@@ -105,11 +135,11 @@ defineEmits(['select-personal', 'select-database', 'select-path'])
 .sidebar-section {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  // gap: 6px;
 }
 
 .section-title {
-  padding: 0 8px;
+  padding: 4px 8px;
   color: var(--gray-500);
   font-size: 12px;
   font-weight: 600;
