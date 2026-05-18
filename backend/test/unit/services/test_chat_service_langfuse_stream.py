@@ -14,10 +14,10 @@ class _FakeAgentConfigRepo:
         pass
 
     async def get_by_id(self, config_id: int):
-        return SimpleNamespace(id=config_id)
+        return SimpleNamespace(id=config_id, uid="user-1", agent_id="test-agent")
 
-    async def get_or_create_default(self, *, department_id: str, agent_id: str, created_by: str):
-        return SimpleNamespace(id=999, department_id=department_id, agent_id=agent_id, created_by=created_by)
+    async def get_or_create_default(self, *, uid: str, agent_id: str, created_by: str):
+        return SimpleNamespace(id=999, uid=uid, agent_id=agent_id, created_by=created_by)
 
 
 class _FakeConvRepo:
