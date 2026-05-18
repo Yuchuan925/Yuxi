@@ -1,23 +1,8 @@
 <template>
   <div class="file-table-container">
     <div class="panel-header">
-      <div class="upload-btn-group">
-        <a-button type="primary" size="small" class="upload-btn" @click="showAddFilesModal()">
-          <FileUp size="14" />
-          上传
-        </a-button>
-
-        <a-button
-          class="panel-action-btn"
-          type="text"
-          size="small"
-          @click="showCreateFolderModal"
-          title="新建文件夹"
-        >
-          <template #icon><FolderPlus size="16" /></template>
-        </a-button>
-      </div>
       <div class="panel-actions">
+        <slot name="toolbar-extra" />
         <div class="panel-actions-default">
           <a-input
             v-model:value="filenameFilter"
@@ -32,23 +17,6 @@
             </template>
           </a-input>
 
-          <a-dropdown trigger="click">
-            <a-button
-              type="text"
-              class="panel-action-btn"
-              :class="{ active: sortField !== 'filename' }"
-              title="排序"
-            >
-              <template #icon><ArrowUpDown size="16" /></template>
-            </a-button>
-            <template #overlay>
-              <a-menu :selectedKeys="[sortField]" @click="handleSortMenuClick">
-                <a-menu-item v-for="opt in sortOptions" :key="opt.value">
-                  {{ opt.label }}
-                </a-menu-item>
-              </a-menu>
-            </template>
-          </a-dropdown>
 
           <a-dropdown trigger="click">
             <a-button
@@ -115,21 +83,6 @@
               </div>
               <div class="overflow-actions">
                 <a-dropdown trigger="click" placement="bottomLeft">
-                  <div class="overflow-action-item" :class="{ active: sortField !== 'filename' }">
-                    <ArrowUpDown size="16" />
-                    <span>排序</span>
-                    <span class="overflow-action-hint">{{ currentSortLabel }}</span>
-                  </div>
-                  <template #overlay>
-                    <a-menu :selectedKeys="[sortField]" @click="handleSortMenuClick">
-                      <a-menu-item v-for="opt in sortOptions" :key="opt.value">
-                        {{ opt.label }}
-                      </a-menu-item>
-                    </a-menu>
-                  </template>
-                </a-dropdown>
-
-                <a-dropdown trigger="click" placement="bottomLeft">
                   <div class="overflow-action-item" :class="{ active: statusFilter !== 'all' }">
                     <Filter size="16" />
                     <span>筛选</span>
@@ -167,15 +120,6 @@
           </template>
         </a-dropdown>
 
-        <a-button
-          type="text"
-          @click="toggleRightPanel"
-          title="切换右侧面板"
-          class="panel-action-btn expand"
-          :class="{ expanded: props.rightPanelVisible }"
-        >
-          <template #icon><ChevronLast size="16" /></template>
-        </a-button>
       </div>
     </div>
 
@@ -264,7 +208,6 @@
       row-key="file_id"
       class="my-table"
       size="small"
-      :show-header="false"
       :pagination="tablePagination"
       @change="handleTableChange"
       v-model:expandedRowKeys="expandedRowKeys"
@@ -295,84 +238,55 @@
               {{ record.filename }}
             </span>
           </template>
-          <a-popover
-            v-else
-            placement="right"
-            overlayClassName="file-info-popover"
-            :mouseEnterDelay="0.5"
-          >
-            <template #content>
-              <div class="file-info-card">
-                <div class="info-row">
-                  <span class="label">ID:</span> <span class="value">{{ record.file_id }}</span>
-                </div>
-                <div class="info-row">
-                  <span class="label">状态:</span>
-                  <span class="value">{{ getStatusText(record.status) }}</span>
-                </div>
-                <div class="info-row">
-                  <span class="label">时间:</span>
-                  <span class="value">{{ formatRelativeTime(record.created_at) }}</span>
-                </div>
-                <div v-if="record.error_message" class="info-row error">
-                  <span class="label">错误:</span>
-                  <span class="value">{{ record.error_message }}</span>
-                </div>
-              </div>
-            </template>
-            <a-button class="main-btn" type="link" @click="openFileDetail(record)">
-              <component
-                :is="getFileIcon(record.displayName || text)"
-                :style="{
-                  marginRight: '0',
-                  color: getFileIconColor(record.displayName || text),
-                  fontSize: '16px'
-                }"
-              />
-              {{ record.displayName || text }}
-            </a-button>
-          </a-popover>
+          <a-button v-else class="main-btn" type="link" @click="openFileDetail(record)">
+            <component
+              :is="getFileIcon(record.displayName || text)"
+              :style="{
+                marginRight: '0',
+                color: getFileIconColor(record.displayName || text),
+                fontSize: '16px'
+              }"
+            />
+            {{ record.displayName || text }}
+          </a-button>
         </div>
         <span v-else-if="column.key === 'type'">
           <span v-if="!record.is_folder" :class="['span-type', text]">{{
             text?.toUpperCase()
           }}</span>
         </span>
-        <div
-          v-else-if="column.key === 'status'"
-          style="display: flex; align-items: center; justify-content: flex-end"
-        >
+        <div v-else-if="column.key === 'status'" class="file-status-cell">
           <template v-if="!record.is_folder">
-            <a-tooltip :title="getStatusText(text)">
-              <span
-                v-if="text === 'done' || text === 'indexed'"
-                style="color: var(--color-success-500)"
-                ><CheckCircleFilled
-              /></span>
-              <span
-                v-else-if="
-                  text === 'failed' || text === 'error_parsing' || text === 'error_indexing'
-                "
-                style="color: var(--color-error-500)"
-                ><CloseCircleFilled
-              /></span>
-              <span
-                v-else-if="text === 'processing' || text === 'parsing' || text === 'indexing'"
-                style="color: var(--color-info-500)"
-                ><HourglassFilled
-              /></span>
-              <span
-                v-else-if="text === 'waiting' || text === 'uploaded'"
-                style="color: var(--color-warning-500)"
-                ><ClockCircleFilled
-              /></span>
-              <span v-else-if="text === 'parsed'" style="color: var(--color-primary-500)"
-                ><FileTextFilled
-              /></span>
-              <span v-else>{{ text }}</span>
-            </a-tooltip>
+            <span
+              v-if="text === 'done' || text === 'indexed'"
+              class="file-status-icon status-success"
+              ><CheckCircleFilled
+            /></span>
+            <span
+              v-else-if="text === 'failed' || text === 'error_parsing' || text === 'error_indexing'"
+              class="file-status-icon status-error"
+              ><CloseCircleFilled
+            /></span>
+            <span
+              v-else-if="text === 'processing' || text === 'parsing' || text === 'indexing'"
+              class="file-status-icon status-info"
+              ><HourglassFilled
+            /></span>
+            <span
+              v-else-if="text === 'waiting' || text === 'uploaded'"
+              class="file-status-icon status-warning"
+              ><ClockCircleFilled
+            /></span>
+            <span v-else-if="text === 'parsed'" class="file-status-icon status-primary"
+              ><FileTextFilled
+            /></span>
+            <span>{{ getStatusText(text) }}</span>
           </template>
         </div>
+
+        <span v-else-if="column.key === 'created_at'" class="file-time-cell">
+          {{ record.is_folder ? '-' : formatStandardTime(text) }}
+        </span>
 
         <div v-else-if="column.key === 'action'" class="table-row-actions">
           <a-popover
@@ -486,33 +400,17 @@ import {
   Trash2,
   Download,
   RotateCw,
-  ChevronLast,
   Ellipsis,
   FolderPlus,
   CheckSquare,
   FileText,
   Database,
-  FileUp,
   Search,
   Filter,
-  ArrowUpDown,
   MoreHorizontal
 } from 'lucide-vue-next'
 
 const store = useDatabaseStore()
-
-const sortField = ref('filename')
-const sortOptions = [
-  { label: '文件名', value: 'filename' },
-  { label: '创建时间', value: 'created_at' },
-  { label: '状态', value: 'status' }
-]
-
-const handleSortMenuClick = (e) => {
-  sortField.value = e.key
-  // 排序变化时重置到第一页
-  paginationConfig.value.current = 1
-}
 
 const handleStatusMenuClick = (e) => {
   statusFilter.value = e.key
@@ -538,15 +436,6 @@ const getStatusText = (status) => {
   return map[status] || status
 }
 
-const props = defineProps({
-  rightPanelVisible: {
-    type: Boolean,
-    default: true
-  }
-})
-
-const emit = defineEmits(['showAddFilesModal', 'toggleRightPanel'])
-
 const files = computed(() => Object.values(store.database.files || {}))
 const refreshing = computed(() => store.state.refrashing)
 const lock = computed(() => store.state.lock)
@@ -560,11 +449,6 @@ const selectedRowKeys = computed({
 
 const isSelectionMode = ref(false)
 const overflowMenuOpen = ref(false)
-
-const currentSortLabel = computed(() => {
-  const opt = sortOptions.find((o) => o.value === sortField.value)
-  return opt ? opt.label : ''
-})
 
 const currentStatusLabel = computed(() => {
   if (statusFilter.value === 'all') return ''
@@ -642,6 +526,10 @@ const showCreateFolderModal = (parentId = null) => {
   currentParentId.value = parentId
   createFolderModalVisible.value = true
 }
+
+defineExpose({
+  showCreateFolderModal
+})
 
 const toggleExpand = (record) => {
   if (!record.is_folder) return
@@ -843,8 +731,7 @@ const columnsCompact = [
     title: '状态',
     dataIndex: 'status',
     key: 'status',
-    width: 60,
-    align: 'right',
+    width: 90,
     sorter: (a, b) => {
       const statusOrder = {
         done: 1,
@@ -863,7 +750,15 @@ const columnsCompact = [
     },
     sortDirections: ['ascend', 'descend']
   },
-  { title: '', key: 'action', dataIndex: 'file_id', width: 40, align: 'center' }
+  {
+    title: '时间',
+    dataIndex: 'created_at',
+    key: 'created_at',
+    width: 180,
+    sorter: (a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0),
+    sortDirections: ['ascend', 'descend']
+  },
+  { title: '操作', key: 'action', dataIndex: 'file_id', width: 64, align: 'center' }
 ]
 
 // 构建文件树
@@ -963,27 +858,7 @@ const buildFileTree = (fileList) => {
       if (a.is_folder && !b.is_folder) return -1
       if (!a.is_folder && b.is_folder) return 1
 
-      if (sortField.value === 'filename') {
-        return (a.filename || '').localeCompare(b.filename || '')
-      } else if (sortField.value === 'created_at') {
-        return new Date(b.created_at || 0) - new Date(a.created_at || 0)
-      } else if (sortField.value === 'status') {
-        const statusOrder = {
-          done: 1,
-          indexed: 1,
-          processing: 2,
-          indexing: 2,
-          parsing: 2,
-          waiting: 3,
-          uploaded: 3,
-          parsed: 3,
-          failed: 4,
-          error_indexing: 4,
-          error_parsing: 4
-        }
-        return (statusOrder[a.status] || 5) - (statusOrder[b.status] || 5)
-      }
-      return 0
+      return (a.filename || '').localeCompare(b.filename || '')
     })
     nodes.forEach((node) => {
       if (node.children) sortNodes(node.children)
@@ -1056,19 +931,10 @@ const canBatchIndex = computed(() => {
   })
 })
 
-const showAddFilesModal = (options = {}) => {
-  emit('showAddFilesModal', options)
-}
-
 const handleRefresh = () => {
   // 刷新时重置分页
   paginationConfig.value.current = 1
   store.getDatabaseInfo(undefined, true) // Skip query params for manual refresh
-}
-
-const toggleRightPanel = () => {
-  console.log(props.rightPanelVisible)
-  emit('toggleRightPanel')
 }
 
 const onSelectChange = (keys, selectedRows) => {
@@ -1304,7 +1170,7 @@ const handleIndexConfigCancel = () => {
 }
 
 // 导入工具函数
-import { getFileIcon, getFileIconColor, formatRelativeTime } from '@/utils/file_utils'
+import { getFileIcon, getFileIconColor, formatStandardTime } from '@/utils/file_utils'
 import { buildChunkParamsPayload, isPlainObject } from '@/utils/chunk_presets'
 import ChunkParamsConfig from '@/components/ChunkParamsConfig.vue'
 </script>
@@ -1328,22 +1194,25 @@ import ChunkParamsConfig from '@/components/ChunkParamsConfig.vue'
   justify-content: space-between;
   align-items: center;
   flex-shrink: 0;
-  padding: 8px 8px;
+  padding: 12px;
 }
 
 .panel-actions {
+  width: 100%;
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
 
   .panel-actions-default {
     display: flex;
     align-items: center;
     gap: 6px;
+    margin-left: auto;
   }
 
   .overflow-trigger {
     display: none;
+    margin-left: auto;
   }
 
   .action-searcher {
@@ -1412,7 +1281,7 @@ import ChunkParamsConfig from '@/components/ChunkParamsConfig.vue'
   background-color: transparent;
   min-height: 0;
   table-layout: fixed;
-  padding-left: 4px;
+  padding: 0 8px;
 }
 
 .my-table .main-btn {
@@ -1459,6 +1328,44 @@ import ChunkParamsConfig from '@/components/ChunkParamsConfig.vue'
 .my-table .table-row-actions button svg {
   width: 16px;
   height: 16px;
+}
+
+.file-status-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--gray-700);
+  white-space: nowrap;
+}
+
+.file-status-icon {
+  display: inline-flex;
+  align-items: center;
+}
+
+.status-success {
+  color: var(--color-success-500);
+}
+
+.status-error {
+  color: var(--color-error-500);
+}
+
+.status-info {
+  color: var(--color-info-500);
+}
+
+.status-warning {
+  color: var(--color-warning-500);
+}
+
+.status-primary {
+  color: var(--color-primary-500);
+}
+
+.file-time-cell {
+  color: var(--gray-600);
+  white-space: nowrap;
 }
 
 .my-table .rechunk-btn:hover {
@@ -1592,21 +1499,6 @@ import ChunkParamsConfig from '@/components/ChunkParamsConfig.vue'
   }
 }
 
-.upload-btn-group {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-
-  .upload-btn {
-    height: 28px;
-    font-size: 13px;
-    display: flex;
-    padding: 0 12px;
-    align-items: center;
-    justify-content: center;
-    gap: 4px;
-  }
-}
 </style>
 
 <style lang="less">
@@ -1667,58 +1559,6 @@ import ChunkParamsConfig from '@/components/ChunkParamsConfig.vue'
     background-color: transparent;
     color: var(--gray-300);
     cursor: not-allowed;
-  }
-}
-
-.file-info-popover {
-  .ant-popover-inner {
-    border-radius: 8px;
-  }
-
-  // .ant-popover-inner-content {
-  //   padding: 16px;
-  // }
-
-  .file-info-card {
-    min-width: 120px;
-    max-width: 320px;
-    font-size: 13px;
-
-    .info-row {
-      display: flex;
-      margin-bottom: 8px;
-      line-height: 1.5;
-      align-items: flex-start;
-
-      &:last-child {
-        margin-bottom: 0;
-      }
-
-      .label {
-        color: var(--gray-500);
-        width: 40px;
-        flex-shrink: 0;
-        text-align: right;
-        margin-right: 12px;
-        font-weight: 500;
-      }
-
-      .value {
-        color: var(--gray-900);
-        word-break: break-all;
-        flex: 1;
-        font-family: monospace; /* Optional: for ID and numbers */
-      }
-
-      &.error {
-        .label {
-          color: var(--color-error-500);
-        }
-        .value {
-          color: var(--color-error-500);
-        }
-      }
-    }
   }
 }
 
