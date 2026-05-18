@@ -4,6 +4,7 @@ from ..config import config
 from .factory import KnowledgeBaseFactory
 from .implementations.dify import DifyKB
 from .implementations.milvus import MilvusKB
+from .implementations.notion import NotionKB
 from .manager import KnowledgeBaseManager
 
 _LITE_MODE = os.environ.get("LITE_MODE", "").lower() in ("true", "1")
@@ -14,6 +15,7 @@ if not _LITE_MODE:
     KnowledgeBaseFactory.register("milvus", MilvusKB, {"description": "基于 Milvus 的生产级向量知识库，适合高性能部署"})
 
 KnowledgeBaseFactory.register("dify", DifyKB, {"description": "连接 Dify Dataset 的只读检索知识库"})
+KnowledgeBaseFactory.register("notion", NotionKB, {"description": "连接 Notion Data Source 的只读知识库，支持检索、打开页面和页内查找"})
 
 # 创建知识库管理器
 work_dir = os.path.join(config.save_dir, "knowledge_base_data")

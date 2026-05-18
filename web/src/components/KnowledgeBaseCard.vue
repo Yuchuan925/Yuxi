@@ -65,7 +65,7 @@
       </a-form-item>
 
       <a-form-item
-        v-if="database.kb_type !== 'dify'"
+        v-if="!isReadOnlyConnector"
         label="自动生成问题"
         name="auto_generate_questions"
       >
@@ -79,7 +79,7 @@
         >
       </a-form-item>
 
-      <a-form-item v-if="database.kb_type !== 'dify'" name="chunk_preset_id">
+      <a-form-item v-if="!isReadOnlyConnector" name="chunk_preset_id">
         <template #label>
           <span class="chunk-preset-label">
             分块策略
@@ -91,7 +91,7 @@
         <a-select v-model:value="editForm.chunk_preset_id" :options="chunkPresetOptions" />
       </a-form-item>
 
-      <template v-if="database.kb_type === 'dify'">
+      <template v-if="isDifyKb">
         <a-form-item label="Dify API URL" name="dify_api_url">
           <a-input
             v-model:value="editForm.dify_api_url"
@@ -106,6 +106,24 @@
         </a-form-item>
         <a-form-item label="Dataset ID" name="dify_dataset_id">
           <a-input v-model:value="editForm.dify_dataset_id" placeholder="请输入 Dify dataset_id" />
+        </a-form-item>
+      </template>
+
+      <template v-if="isNotionKb">
+        <a-form-item label="Notion Token" name="notion_token">
+          <a-input-password
+            v-model:value="editForm.notion_token"
+            placeholder="留空则保持现有 Token 或使用环境变量"
+          />
+        </a-form-item>
+        <a-form-item label="Data Source ID" name="notion_data_source_id">
+          <a-input
+            v-model:value="editForm.notion_data_source_id"
+            placeholder="请输入 Notion data_source_id"
+          />
+        </a-form-item>
+        <a-form-item label="Notion API Version" name="notion_version">
+          <a-input v-model:value="editForm.notion_version" placeholder="2026-03-11" />
         </a-form-item>
       </template>
 
@@ -152,6 +170,9 @@ const store = useDatabaseStore()
 const userStore = useUserStore()
 
 const database = computed(() => store.database)
+const isDifyKb = computed(() => database.value?.kb_type === 'dify')
+const isNotionKb = computed(() => database.value?.kb_type === 'notion')
+const isReadOnlyConnector = computed(() => isDifyKb.value || isNotionKb.value)
 
 // 部门列表（用于显示部门名称）
 const departments = ref([])
@@ -240,7 +261,10 @@ const editForm = reactive({
   chunk_preset_id: 'general',
   dify_api_url: '',
   dify_token: '',
-  dify_dataset_id: ''
+  dify_dataset_id: '',
+  notion_token: '',
+  notion_data_source_id: '',
+  notion_version: '2026-03-11'
 })
 
 const chunkPresetOptions = CHUNK_PRESET_OPTIONS.map(({ label, value }) => ({ label, value }))
@@ -262,6 +286,9 @@ const showEditModal = () => {
   editForm.dify_api_url = database.value.additional_params?.dify_api_url || ''
   editForm.dify_token = database.value.additional_params?.dify_token || ''
   editForm.dify_dataset_id = database.value.additional_params?.dify_dataset_id || ''
+  editForm.notion_token = ''
+  editForm.notion_data_source_id = database.value.additional_params?.notion_data_source_id || ''
+  editForm.notion_version = database.value.additional_params?.notion_version || '2026-03-11'
 
   editModalVisible.value = true
 }
@@ -306,7 +333,7 @@ const handleEditSubmit = () => {
         }
       }
 
-      if (database.value.kb_type === 'dify') {
+      if (isDifyKb.value) {
         if (
           !editForm.dify_api_url?.trim() ||
           !editForm.dify_token?.trim() ||
@@ -323,6 +350,18 @@ const handleEditSubmit = () => {
           dify_api_url: editForm.dify_api_url.trim(),
           dify_token: editForm.dify_token.trim(),
           dify_dataset_id: editForm.dify_dataset_id.trim()
+        }
+      } else if (isNotionKb.value) {
+        if (!editForm.notion_data_source_id?.trim()) {
+          message.error('请填写 Notion Data Source ID')
+          return
+        }
+        updateData.additional_params = {
+          notion_data_source_id: editForm.notion_data_source_id.trim(),
+          notion_version: editForm.notion_version?.trim() || '2026-03-11'
+        }
+        if (editForm.notion_token?.trim()) {
+          updateData.additional_params.notion_token = editForm.notion_token.trim()
         }
       } else {
         updateData.additional_params = {

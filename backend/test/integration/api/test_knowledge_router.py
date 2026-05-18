@@ -409,6 +409,13 @@ async def test_get_knowledge_base_types(test_client, admin_headers):
         "dify_token",
         "dify_dataset_id",
     ]
+    assert payload["kb_types"]["notion"]["requires_embedding_model"] is False
+    assert payload["kb_types"]["notion"]["supports_documents"] is False
+    assert [option["key"] for option in payload["kb_types"]["notion"]["create_params"]["options"]] == [
+        "notion_token",
+        "notion_data_source_id",
+        "notion_version",
+    ]
 
 
 async def test_get_knowledge_base_statistics(test_client, admin_headers):
