@@ -131,12 +131,12 @@ class User(Base):
 
 
 class AgentConfig(Base):
-    """智能体配置（按部门共享，多份可切换）"""
+    """智能体配置（按用户隔离，多份可切换）"""
 
     __tablename__ = "agent_configs"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    department_id = Column(Integer, ForeignKey("departments.id"), nullable=False, index=True)
+    uid = Column(String, ForeignKey("users.uid"), nullable=False, index=True)
     agent_id = Column(String(64), nullable=False, index=True)
 
     name = Column(String(100), nullable=False)
@@ -155,10 +155,10 @@ class AgentConfig(Base):
     updated_at = Column(DateTime, default=utc_now_naive, onupdate=utc_now_naive)
 
     __table_args__ = (
-        UniqueConstraint("department_id", "agent_id", "name", name="uq_agent_configs_department_agent_name"),
+        UniqueConstraint("uid", "agent_id", "name", name="uq_agent_configs_uid_agent_name"),
         Index(
-            "uq_agent_configs_department_agent_default",
-            "department_id",
+            "uq_agent_configs_uid_agent_default",
+            "uid",
             "agent_id",
             unique=True,
             postgresql_where=is_default.is_(True),
@@ -168,7 +168,7 @@ class AgentConfig(Base):
     def to_dict(self) -> dict[str, Any]:
         return {
             "id": self.id,
-            "department_id": self.department_id,
+            "uid": self.uid,
             "agent_id": self.agent_id,
             "name": self.name,
             "description": self.description,

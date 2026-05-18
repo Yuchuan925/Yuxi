@@ -309,6 +309,105 @@ class PostgresManager(metaclass=SingletonMeta):
             "ALTER TABLE IF EXISTS conversations ADD COLUMN IF NOT EXISTS is_pinned BOOLEAN NOT NULL DEFAULT FALSE",
             "ALTER TABLE IF EXISTS mcp_servers ADD COLUMN IF NOT EXISTS env JSONB",
             """
+            ALTER TABLE IF EXISTS agent_configs
+            ADD COLUMN IF NOT EXISTS uid VARCHAR
+            """,
+            """
+            UPDATE agent_configs ac
+            SET uid = u.uid
+            FROM users u
+            WHERE ac.uid IS NULL
+              AND ac.created_by ~ '^[0-9]+$'
+              AND u.id = ac.created_by::integer
+            """,
+            """
+            UPDATE agent_configs ac
+            SET uid = u.uid
+            FROM users u
+            WHERE ac.uid IS NULL
+              AND ac.created_by = u.uid
+            """,
+            """
+            DO $$
+            BEGIN
+                IF EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name = 'agent_configs' AND column_name = 'department_id'
+                ) THEN
+                    EXECUTE $sql$
+                        UPDATE agent_configs ac
+                        SET uid = (
+                            SELECT u.uid
+                            FROM users u
+                            WHERE u.department_id = ac.department_id
+                              AND u.is_deleted = 0
+                            ORDER BY
+                              CASE WHEN u.role = 'superadmin' THEN 0 WHEN u.role = 'admin' THEN 1 ELSE 2 END,
+                              u.id ASC
+                            LIMIT 1
+                        )
+                        WHERE ac.uid IS NULL
+                    $sql$;
+                END IF;
+            END $$;
+            """,
+            "DELETE FROM agent_configs WHERE uid IS NULL",
+            "DROP INDEX IF EXISTS uq_agent_configs_department_agent_default",
+            "DROP INDEX IF EXISTS ix_agent_configs_department_id",
+            "ALTER TABLE IF EXISTS agent_configs DROP CONSTRAINT IF EXISTS uq_agent_configs_department_agent_name",
+            "ALTER TABLE IF EXISTS agent_configs DROP CONSTRAINT IF EXISTS agent_configs_department_id_fkey",
+            "ALTER TABLE IF EXISTS agent_configs DROP COLUMN IF EXISTS department_id",
+            "ALTER TABLE IF EXISTS agent_configs ALTER COLUMN uid SET NOT NULL",
+            """
+            WITH ranked AS (
+                SELECT id, ROW_NUMBER() OVER (PARTITION BY uid, agent_id, name ORDER BY id) AS rn
+                FROM agent_configs
+            )
+            UPDATE agent_configs ac
+            SET name = LEFT(ac.name, 90) || '-' || ac.id::text
+            FROM ranked
+            WHERE ac.id = ranked.id AND ranked.rn > 1
+            """,
+            """
+            WITH ranked AS (
+                SELECT id, ROW_NUMBER() OVER (PARTITION BY uid, agent_id ORDER BY id) AS rn
+                FROM agent_configs
+                WHERE is_default IS TRUE
+            )
+            UPDATE agent_configs ac
+            SET is_default = FALSE
+            FROM ranked
+            WHERE ac.id = ranked.id AND ranked.rn > 1
+            """,
+            """
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM pg_constraint WHERE conname = 'agent_configs_uid_fkey'
+                ) THEN
+                    ALTER TABLE agent_configs
+                    ADD CONSTRAINT agent_configs_uid_fkey FOREIGN KEY (uid) REFERENCES users(uid);
+                END IF;
+            END $$;
+            """,
+            """
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM pg_constraint WHERE conname = 'uq_agent_configs_uid_agent_name'
+                ) THEN
+                    ALTER TABLE agent_configs
+                    ADD CONSTRAINT uq_agent_configs_uid_agent_name UNIQUE (uid, agent_id, name);
+                END IF;
+            END $$;
+            """,
+            "CREATE INDEX IF NOT EXISTS ix_agent_configs_uid ON agent_configs(uid)",
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS uq_agent_configs_uid_agent_default
+            ON agent_configs(uid, agent_id)
+            WHERE is_default IS TRUE
+            """,
+            """
             CREATE TABLE IF NOT EXISTS model_providers (
                 id SERIAL PRIMARY KEY,
                 provider_id VARCHAR(100) NOT NULL UNIQUE,

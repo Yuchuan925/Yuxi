@@ -39,6 +39,7 @@ class KnowledgeBase(Base):
     share_config = Column(JSON_VALUE)
     mindmap = Column(JSON_VALUE)
     sample_questions = Column(JSON_VALUE)
+    created_by = Column(String(64))
     created_at = Column(DateTime(timezone=True), default=utc_now_naive)
     updated_at = Column(DateTime(timezone=True), default=utc_now_naive, onupdate=utc_now_naive)
 
