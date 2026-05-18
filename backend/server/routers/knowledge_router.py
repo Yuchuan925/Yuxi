@@ -15,7 +15,7 @@ from starlette.responses import StreamingResponse
 from yuxi.services.task_service import TaskContext, tasker
 from server.utils.auth_middleware import get_admin_user, get_required_user
 from yuxi import config, knowledge_base
-from yuxi.knowledge.chunking.ragflow_like.presets import ensure_chunk_defaults_in_additional_params
+from yuxi.knowledge.factory import KnowledgeBaseFactory
 from yuxi.knowledge.graphs.milvus_graph_service import GRAPH_TASK_TYPE, MilvusGraphService
 from yuxi.plugins.parser import Parser, SUPPORTED_FILE_EXTENSIONS, is_supported_file_extension
 from yuxi.knowledge.utils import calculate_content_hash
@@ -28,7 +28,6 @@ from yuxi.utils import logger
 
 knowledge = APIRouter(prefix="/knowledge", tags=["knowledge"])
 
-DIFY_REQUIRED_PARAMS = ("dify_api_url", "dify_token", "dify_dataset_id")
 ACTIVE_GRAPH_BUILD_STATUSES = {"pending", "running"}
 
 
@@ -97,24 +96,14 @@ async def _delete_document_storage_objects(db_id: str, doc_id: str, file_path: s
         logger.warning(f"从MinIO删除解析结果失败: {minio_error}")
 
 
-def _validate_dify_additional_params(additional_params: dict | None) -> dict:
-    params = dict(additional_params or {})
-    missing_fields = [field for field in DIFY_REQUIRED_PARAMS if not str(params.get(field) or "").strip()]
-    if missing_fields:
-        raise HTTPException(status_code=400, detail=f"Dify 参数缺失: {', '.join(missing_fields)}")
-
-    api_url = str(params.get("dify_api_url") or "").strip()
-    if not api_url.endswith("/v1"):
-        raise HTTPException(status_code=400, detail="Dify api_url 必须以 /v1 结尾")
-    return params
-
-
-async def _ensure_database_not_dify(db_id: str, operation: str) -> None:
+async def _ensure_database_supports_documents(db_id: str, operation: str) -> None:
     db_info = await knowledge_base.get_database_info(db_id)
     if not db_info:
         raise HTTPException(status_code=404, detail=f"知识库 {db_id} 不存在")
-    if (db_info.get("kb_type") or "").lower() == "dify":
-        raise HTTPException(status_code=400, detail=f"Dify 知识库只支持检索，不支持{operation}")
+    kb_type = (db_info.get("kb_type") or "").lower()
+    kb_class = KnowledgeBaseFactory.get_kb_class(kb_type)
+    if not kb_class.supports_documents:
+        raise HTTPException(status_code=400, detail=f"{db_info.get('name') or kb_type} 只支持检索，不支持{operation}")
 
 
 async def _has_running_graph_build_task(db_id: str) -> bool:
@@ -168,6 +157,11 @@ async def create_database(
                 detail=f"知识库名称 '{database_name}' 已存在，请使用其他名称",
             )
 
+        if not KnowledgeBaseFactory.is_type_supported(kb_type):
+            raise HTTPException(status_code=400, detail=f"Unsupported knowledge base type: {kb_type}")
+
+        kb_class = KnowledgeBaseFactory.get_kb_class(kb_type)
+
         additional_params = {**(additional_params or {})}
         additional_params["auto_generate_questions"] = False  # 默认不生成问题
 
@@ -176,17 +170,17 @@ async def create_database(
                 status_code=400,
                 detail="reranker_config 已移除，请在查询参数中使用 reranker_model spec",
             )
-        additional_params = ensure_chunk_defaults_in_additional_params(additional_params)
+        additional_params = kb_class.normalize_additional_params(additional_params)
 
-        if kb_type == "dify":
-            additional_params = _validate_dify_additional_params(additional_params)
-        else:
+        if kb_class.requires_embedding_model:
             if not embedding_model_spec:
                 raise HTTPException(status_code=400, detail="embedding_model_spec 不能为空")
 
             info = model_cache.get_model_info(embedding_model_spec)
             if not info or info.model_type != "embedding":
                 raise HTTPException(status_code=400, detail=f"不支持的 embedding 模型: {embedding_model_spec}")
+        else:
+            embedding_model_spec = None
 
         database_info = await knowledge_base.create_database(
             database_name,
@@ -195,6 +189,7 @@ async def create_database(
             embedding_model_spec=embedding_model_spec,
             llm_model_spec=llm_model_spec,
             share_config=share_config,
+            created_by=current_user.uid,
             **additional_params,
         )
 
@@ -222,6 +217,7 @@ async def get_accessible_databases(current_user: User = Depends(get_required_use
                 "name": db.get("name", ""),
                 "db_id": db.get("db_id"),
                 "description": db.get("description", ""),
+                "created_by": db.get("created_by"),
             }
             for db in databases.get("databases", [])
         ]
@@ -257,17 +253,20 @@ async def update_database_info(
 
         additional_params = data.additional_params
         if additional_params is not None:
-            additional_params = ensure_chunk_defaults_in_additional_params(additional_params)
-
             db_info = await knowledge_base.get_database_info(db_id)
             if not db_info:
                 raise HTTPException(status_code=404, detail=f"知识库 {db_id} 不存在")
 
             kb_type = (db_info.get("kb_type") or "").lower()
-            if kb_type == "dify":
-                merged_params = dict(db_info.get("additional_params") or {})
-                merged_params.update(additional_params)
-                _validate_dify_additional_params(merged_params)
+            kb_class = KnowledgeBaseFactory.get_kb_class(kb_type)
+            merged_params = dict(db_info.get("additional_params") or {})
+            merged_params.update(additional_params)
+            kb_class.normalize_additional_params(merged_params)
+            additional_params = (
+                kb_class.normalize_additional_params(additional_params)
+                if kb_class.apply_chunk_defaults
+                else kb_class.normalize_additional_params(merged_params)
+            )
 
         database = await knowledge_base.update_database(
             db_id,
@@ -444,7 +443,7 @@ async def add_documents(
 ):
     """添加文档到知识库（上传 -> 解析 -> 可选入库）"""
     logger.debug(f"Add documents for db_id {db_id}: {items} {params=}")
-    await _ensure_database_not_dify(db_id, "文档添加/解析/入库")
+    await _ensure_database_supports_documents(db_id, "文档添加/解析/入库")
 
     content_type = params.get("content_type", "file")
     # 自动入库参数
@@ -628,7 +627,7 @@ async def add_documents(
 async def parse_documents(db_id: str, file_ids: list[str] = Body(...), current_user: User = Depends(get_admin_user)):
     """手动触发文档解析"""
     logger.debug(f"Parse documents for db_id {db_id}: {file_ids}")
-    await _ensure_database_not_dify(db_id, "文档解析")
+    await _ensure_database_supports_documents(db_id, "文档解析")
 
     async def run_parse(context: TaskContext):
         await context.set_message("任务初始化")
@@ -682,7 +681,7 @@ async def index_documents(
 ):
     """手动触发文档入库（Indexing），支持更新参数"""
     logger.debug(f"Index documents for db_id {db_id}: {file_ids} {params=}")
-    await _ensure_database_not_dify(db_id, "文档入库")
+    await _ensure_database_supports_documents(db_id, "文档入库")
 
     # extract operator_id safely before background task
     operator_id = current_user.id
@@ -755,7 +754,7 @@ async def index_documents(
 async def get_document_info(db_id: str, doc_id: str, current_user: User = Depends(get_admin_user)):
     """获取文档详细信息（包含基本信息和内容信息）"""
     logger.debug(f"GET document {doc_id} info in {db_id}")
-    await _ensure_database_not_dify(db_id, "文档查看")
+    await _ensure_database_supports_documents(db_id, "文档查看")
 
     try:
         info = await knowledge_base.get_file_info(db_id, doc_id)
@@ -769,7 +768,7 @@ async def get_document_info(db_id: str, doc_id: str, current_user: User = Depend
 async def get_document_basic_info(db_id: str, doc_id: str, current_user: User = Depends(get_admin_user)):
     """获取文档基本信息（仅元数据）"""
     logger.debug(f"GET document {doc_id} basic info in {db_id}")
-    await _ensure_database_not_dify(db_id, "文档查看")
+    await _ensure_database_supports_documents(db_id, "文档查看")
 
     try:
         info = await knowledge_base.get_file_basic_info(db_id, doc_id)
@@ -783,7 +782,7 @@ async def get_document_basic_info(db_id: str, doc_id: str, current_user: User = 
 async def get_document_content(db_id: str, doc_id: str, current_user: User = Depends(get_admin_user)):
     """获取文档内容信息（chunks和lines）"""
     logger.debug(f"GET document {doc_id} content in {db_id}")
-    await _ensure_database_not_dify(db_id, "文档查看")
+    await _ensure_database_supports_documents(db_id, "文档查看")
 
     try:
         info = await knowledge_base.get_file_content(db_id, doc_id)
@@ -799,7 +798,7 @@ async def batch_delete_documents(
 ):
     """批量删除文档或文件夹"""
     logger.debug(f"BATCH DELETE documents {file_ids} in {db_id}")
-    await _ensure_database_not_dify(db_id, "批量文档删除")
+    await _ensure_database_supports_documents(db_id, "批量文档删除")
 
     deleted_count = 0
     failed_items = []
@@ -842,7 +841,7 @@ async def batch_delete_documents(
 async def delete_document(db_id: str, doc_id: str, current_user: User = Depends(get_admin_user)):
     """删除文档或文件夹"""
     logger.debug(f"DELETE document {doc_id} info in {db_id}")
-    await _ensure_database_not_dify(db_id, "文档删除")
+    await _ensure_database_supports_documents(db_id, "文档删除")
     try:
         file_meta_info = await knowledge_base.get_file_basic_info(db_id, doc_id)
 
@@ -868,7 +867,7 @@ async def delete_document(db_id: str, doc_id: str, current_user: User = Depends(
 async def download_document(db_id: str, doc_id: str, request: Request, current_user: User = Depends(get_admin_user)):
     """下载原始文件"""
     logger.debug(f"Download document {doc_id} from {db_id}")
-    await _ensure_database_not_dify(db_id, "文档下载")
+    await _ensure_database_supports_documents(db_id, "文档下载")
     try:
         file_info = await knowledge_base.get_file_basic_info(db_id, doc_id)
         file_meta = file_info.get("meta", {})
@@ -1103,8 +1102,9 @@ async def generate_sample_questions(
         db_info = await knowledge_base.get_database_info(db_id)
         if not db_info:
             raise HTTPException(status_code=404, detail=f"知识库 {db_id} 不存在")
-        if (db_info.get("kb_type") or "").lower() == "dify":
-            raise HTTPException(status_code=400, detail="Dify 知识库不支持基于文件生成测试问题")
+        kb_type = (db_info.get("kb_type") or "").lower()
+        if not KnowledgeBaseFactory.get_kb_class(kb_type).supports_documents:
+            raise HTTPException(status_code=400, detail=f"{db_info.get('name') or kb_type} 不支持基于文件生成测试问题")
 
         from yuxi.models import select_model
 
@@ -1256,7 +1256,7 @@ async def create_folder(
 ):
     """创建文件夹"""
     try:
-        await _ensure_database_not_dify(db_id, "文件夹创建")
+        await _ensure_database_supports_documents(db_id, "文件夹创建")
         return await knowledge_base.create_folder(db_id, folder_name, parent_id)
     except Exception as e:
         logger.error(f"创建文件夹失败 {e}, {traceback.format_exc()}")
@@ -1273,7 +1273,7 @@ async def move_document(
     """移动文件或文件夹"""
     logger.debug(f"Move document {doc_id} to {new_parent_id} in {db_id}")
     try:
-        await _ensure_database_not_dify(db_id, "文件移动")
+        await _ensure_database_supports_documents(db_id, "文件移动")
         return await knowledge_base.move_file(db_id, doc_id, new_parent_id)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -1369,7 +1369,7 @@ async def import_workspace_files(
     if not paths:
         raise HTTPException(status_code=400, detail="请选择至少一个工作区文件")
 
-    await _ensure_database_not_dify(db_id, "文档添加/解析/入库")
+    await _ensure_database_supports_documents(db_id, "文档添加/解析/入库")
 
     bucket_name = MinIOClient.KB_BUCKETS["documents"]
     results = []

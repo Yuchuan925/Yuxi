@@ -10,8 +10,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from yuxi.storage.postgres.models_business import User
 from server.routers.auth_router import get_admin_user
-from server.utils.auth_middleware import get_db, get_required_user
+from server.utils.auth_middleware import get_current_user, get_db, get_required_user
 from yuxi import config as conf
+from yuxi.agents.context import filter_config_by_role
 from yuxi.agents.buildin import agent_manager
 from yuxi.models import select_model
 from yuxi.services.chat_service import agent_chat, get_agent_state_view, stream_agent_chat, stream_agent_resume
@@ -99,6 +100,24 @@ class AgentChatRequest(BaseModel):
 
 chat = APIRouter(prefix="/chat", tags=["chat"])
 
+
+async def get_config_user(user: User | None = Depends(get_current_user)) -> User:
+    if user is None:
+        raise HTTPException(status_code=401, detail="请登录后再访问", headers={"WWW-Authenticate": "Bearer"})
+    return user
+
+
+def _filter_agent_config_json(agent_id: str, config_json: dict | None, role: str | None) -> dict:
+    agent = agent_manager.get_agent(agent_id)
+    context_schema = agent.context_schema if agent else None
+    return filter_config_by_role(config_json or {}, role, context_schema=context_schema)
+
+
+def _serialize_agent_config(item, role: str | None) -> dict:
+    data = item.to_dict()
+    data["config_json"] = _filter_agent_config_json(item.agent_id, data.get("config_json"), role)
+    return data
+
 # =============================================================================
 # > === 智能体管理分组 ===
 # =============================================================================
@@ -174,7 +193,7 @@ async def get_agent(current_user: User = Depends(get_required_user)):
 
 
 @chat.get("/agent/{agent_id}")
-async def get_single_agent(agent_id: str, current_user: User = Depends(get_required_user)):
+async def get_single_agent(agent_id: str, current_user: User = Depends(get_config_user)):
     """获取指定智能体的完整信息（包含配置选项）（需要登录）"""
     try:
         # 检查智能体是否存在
@@ -182,7 +201,7 @@ async def get_single_agent(agent_id: str, current_user: User = Depends(get_requi
             raise HTTPException(status_code=404, detail=f"智能体 {agent_id} 不存在")
 
         # 获取智能体的完整信息（包含 configurable_items）
-        agent_info = await agent.get_info()
+        agent_info = await agent.get_info(user_role=current_user.role)
 
         return agent_info
 
@@ -196,21 +215,22 @@ async def get_single_agent(agent_id: str, current_user: User = Depends(get_requi
 @chat.get("/agent/{agent_id}/configs")
 async def list_agent_configs(
     agent_id: str,
-    current_user: User = Depends(get_required_user),
+    current_user: User = Depends(get_config_user),
     db: AsyncSession = Depends(get_db),
 ):
     if not agent_manager.get_agent(agent_id):
         raise HTTPException(status_code=404, detail=f"智能体 {agent_id} 不存在")
 
     repo = AgentConfigRepository(db)
-    items = await repo.list_by_department_agent(department_id=current_user.department_id, agent_id=agent_id)
+    uid = str(current_user.uid)
+    items = await repo.list_by_user_agent(uid=uid, agent_id=agent_id)
     if not items:
         await repo.get_or_create_default(
-            department_id=current_user.department_id,
+            uid=uid,
             agent_id=agent_id,
-            created_by=str(current_user.id),
+            created_by=uid,
         )
-        items = await repo.list_by_department_agent(department_id=current_user.department_id, agent_id=agent_id)
+        items = await repo.list_by_user_agent(uid=uid, agent_id=agent_id)
 
     configs = [
         {
@@ -231,7 +251,7 @@ async def list_agent_configs(
 async def get_agent_config_profile(
     agent_id: str,
     config_id: int,
-    current_user: User = Depends(get_required_user),
+    current_user: User = Depends(get_config_user),
     db: AsyncSession = Depends(get_db),
 ):
     if not agent_manager.get_agent(agent_id):
@@ -239,39 +259,38 @@ async def get_agent_config_profile(
 
     repo = AgentConfigRepository(db)
     item = await repo.get_by_id(config_id)
-    if not item or item.agent_id != agent_id or item.department_id != current_user.department_id:
+    if not item or item.agent_id != agent_id or item.uid != str(current_user.uid):
         raise HTTPException(status_code=404, detail="配置不存在")
 
-    return {"config": item.to_dict()}
+    return {"config": _serialize_agent_config(item, current_user.role)}
 
 
 @chat.post("/agent/{agent_id}/configs")
 async def create_agent_config_profile(
     agent_id: str,
     payload: AgentConfigCreate,
-    current_user: User = Depends(get_admin_user),
+    current_user: User = Depends(get_config_user),
     db: AsyncSession = Depends(get_db),
 ):
     if not agent_manager.get_agent(agent_id):
         raise HTTPException(status_code=404, detail=f"智能体 {agent_id} 不存在")
 
     repo = AgentConfigRepository(db)
+    uid = str(current_user.uid)
     item = await repo.create(
-        department_id=current_user.department_id,
+        uid=uid,
         agent_id=agent_id,
         name=payload.name,
         description=payload.description,
         icon=payload.icon,
         pics=payload.pics,
         examples=payload.examples,
-        config_json=payload.config_json,
+        config_json=_filter_agent_config_json(agent_id, payload.config_json, current_user.role),
         is_default=payload.set_default,
-        created_by=str(current_user.id),
+        created_by=uid,
     )
-    if payload.set_default:
-        item = await repo.set_default(config=item, updated_by=str(current_user.id))
 
-    return {"config": item.to_dict()}
+    return {"config": _serialize_agent_config(item, current_user.role)}
 
 
 @chat.put("/agent/{agent_id}/configs/{config_id}")
@@ -279,7 +298,7 @@ async def update_agent_config_profile(
     agent_id: str,
     config_id: int,
     payload: AgentConfigUpdate,
-    current_user: User = Depends(get_admin_user),
+    current_user: User = Depends(get_config_user),
     db: AsyncSession = Depends(get_db),
 ):
     if not agent_manager.get_agent(agent_id):
@@ -287,7 +306,7 @@ async def update_agent_config_profile(
 
     repo = AgentConfigRepository(db)
     item = await repo.get_by_id(config_id)
-    if not item or item.agent_id != agent_id or item.department_id != current_user.department_id:
+    if not item or item.agent_id != agent_id or item.uid != str(current_user.uid):
         raise HTTPException(status_code=404, detail="配置不存在")
 
     updated = await repo.update(
@@ -297,17 +316,19 @@ async def update_agent_config_profile(
         icon=payload.icon,
         pics=payload.pics,
         examples=payload.examples,
-        config_json=payload.config_json,
-        updated_by=str(current_user.id),
+        config_json=_filter_agent_config_json(agent_id, payload.config_json, current_user.role)
+        if payload.config_json is not None
+        else None,
+        updated_by=str(current_user.uid),
     )
-    return {"config": updated.to_dict()}
+    return {"config": _serialize_agent_config(updated, current_user.role)}
 
 
 @chat.post("/agent/{agent_id}/configs/{config_id}/set_default")
 async def set_agent_config_default(
     agent_id: str,
     config_id: int,
-    current_user: User = Depends(get_admin_user),
+    current_user: User = Depends(get_config_user),
     db: AsyncSession = Depends(get_db),
 ):
     if not agent_manager.get_agent(agent_id):
@@ -315,18 +336,18 @@ async def set_agent_config_default(
 
     repo = AgentConfigRepository(db)
     item = await repo.get_by_id(config_id)
-    if not item or item.agent_id != agent_id or item.department_id != current_user.department_id:
+    if not item or item.agent_id != agent_id or item.uid != str(current_user.uid):
         raise HTTPException(status_code=404, detail="配置不存在")
 
-    updated = await repo.set_default(config=item, updated_by=str(current_user.id))
-    return {"config": updated.to_dict()}
+    updated = await repo.set_default(config=item, updated_by=str(current_user.uid))
+    return {"config": _serialize_agent_config(updated, current_user.role)}
 
 
 @chat.delete("/agent/{agent_id}/configs/{config_id}")
 async def delete_agent_config_profile(
     agent_id: str,
     config_id: int,
-    current_user: User = Depends(get_admin_user),
+    current_user: User = Depends(get_config_user),
     db: AsyncSession = Depends(get_db),
 ):
     if not agent_manager.get_agent(agent_id):
@@ -334,10 +355,10 @@ async def delete_agent_config_profile(
 
     repo = AgentConfigRepository(db)
     item = await repo.get_by_id(config_id)
-    if not item or item.agent_id != agent_id or item.department_id != current_user.department_id:
+    if not item or item.agent_id != agent_id or item.uid != str(current_user.uid):
         raise HTTPException(status_code=404, detail="配置不存在")
 
-    await repo.delete(config=item, updated_by=str(current_user.id))
+    await repo.delete(config=item, updated_by=str(current_user.uid))
     return {"success": True}
 
 

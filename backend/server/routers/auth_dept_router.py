@@ -10,7 +10,7 @@ from pydantic import BaseModel
 from sqlalchemy import delete as sqlalchemy_delete, select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from yuxi.storage.postgres.models_business import APIKey, AgentConfig, Department, User
+from yuxi.storage.postgres.models_business import APIKey, Department, User
 from yuxi.repositories.department_repository import DepartmentRepository
 from yuxi.repositories.user_repository import UserRepository
 from server.utils.auth_middleware import get_superadmin_user, get_admin_user, get_db
@@ -230,7 +230,6 @@ async def delete_department(
         for user in department_users:
             user.department_id = 1  # 将被删除部门的用户移至默认部门
 
-    await db.execute(sqlalchemy_delete(AgentConfig).where(AgentConfig.department_id == department_id))
     await db.execute(sqlalchemy_delete(APIKey).where(APIKey.department_id == department_id))
     await db.delete(department)
     await db.commit()
