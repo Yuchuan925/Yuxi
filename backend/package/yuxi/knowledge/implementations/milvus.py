@@ -239,6 +239,10 @@ def _retrieval_config_options() -> list[dict[str, Any]]:
 class MilvusKB(KnowledgeBase):
     """基于 Milvus 的生产级向量库"""
 
+    kb_type = "milvus"
+    name = "Milvus"
+    description = "基于 Milvus 的生产级向量知识库，适合高性能部署"
+
     def __init__(self, work_dir: str, **kwargs):
         """
         初始化 Milvus 知识库
@@ -272,11 +276,6 @@ class MilvusKB(KnowledgeBase):
         self._init_connection()
 
         logger.info("MilvusKB initialized")
-
-    @property
-    def kb_type(self) -> str:
-        """知识库类型标识"""
-        return "milvus"
 
     def _init_connection(self):
         """初始化 Milvus 连接"""

@@ -43,6 +43,9 @@ class KBOperationError(KnowledgeBaseException):
 class KnowledgeBase(ABC):
     """知识库抽象基类，定义统一接口"""
 
+    kb_type = ""
+    name = ""
+    description = ""
     requires_embedding_model = True
     supports_documents = True
     apply_chunk_defaults = True
@@ -159,12 +162,6 @@ class KnowledgeBase(ABC):
                     normalized = self._normalize_timestamp(b.get("updated_at"))
                     if normalized:
                         b["updated_at"] = normalized
-
-    @property
-    @abstractmethod
-    def kb_type(self) -> str:
-        """知识库类型标识"""
-        pass
 
     @classmethod
     def get_create_params_config(cls) -> dict[str, Any]:

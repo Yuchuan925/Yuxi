@@ -170,14 +170,14 @@ class _NotionClient:
 class NotionKB(ReadOnlyConnectors):
     """连接 Notion Data Source 的只读知识库实现"""
 
+    kb_type = "notion"
+    name = "Notion"
+    description = "连接 Notion Data Source 的只读知识库，支持检索、打开页面和页内查找"
+
     def __init__(self, work_dir: str, **kwargs):
         del kwargs
         super().__init__(work_dir)
         self._page_markdown_cache: dict[tuple[str, str, str, str], tuple[float, str]] = {}
-
-    @property
-    def kb_type(self) -> str:
-        return "notion"
 
     @classmethod
     def get_create_params_config(cls) -> dict[str, Any]:

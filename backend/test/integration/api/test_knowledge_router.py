@@ -402,6 +402,9 @@ async def test_get_knowledge_base_types(test_client, admin_headers):
     payload = response.json()
     assert payload["message"] == "success"
     assert "kb_types" in payload
+    assert "default_config" not in payload["kb_types"]["dify"]
+    assert payload["kb_types"]["dify"]["name"] == "Dify"
+    assert payload["kb_types"]["dify"]["description"] == "连接 Dify Dataset 的只读检索知识库"
     assert payload["kb_types"]["dify"]["requires_embedding_model"] is False
     assert payload["kb_types"]["dify"]["supports_documents"] is False
     assert [option["key"] for option in payload["kb_types"]["dify"]["create_params"]["options"]] == [
@@ -409,6 +412,12 @@ async def test_get_knowledge_base_types(test_client, admin_headers):
         "dify_token",
         "dify_dataset_id",
     ]
+    assert "default_config" not in payload["kb_types"]["notion"]
+    assert payload["kb_types"]["notion"]["name"] == "Notion"
+    assert (
+        payload["kb_types"]["notion"]["description"]
+        == "连接 Notion Data Source 的只读知识库，支持检索、打开页面和页内查找"
+    )
     assert payload["kb_types"]["notion"]["requires_embedding_model"] is False
     assert payload["kb_types"]["notion"]["supports_documents"] is False
     assert [option["key"] for option in payload["kb_types"]["notion"]["create_params"]["options"]] == [
