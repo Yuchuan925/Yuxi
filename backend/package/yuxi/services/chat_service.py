@@ -419,11 +419,11 @@ def _extract_ai_message(messages: list[Any] | None) -> AIMessage | None:
 
 async def get_agent_config_by_id(db, user: User, agent_config_id: int):
     """按配置 ID 解析 AgentConfig 记录。"""
-    department_id = user.department_id
+    uid = str(user.uid)
 
     agent_config_repo = AgentConfigRepository(db)
     config_item = await agent_config_repo.get_by_id(config_id=int(agent_config_id))
-    if config_item is None or config_item.department_id != department_id:
+    if config_item is None or config_item.uid != uid:
         raise ValueError("配置不存在")
 
     return config_item
@@ -431,7 +431,7 @@ async def get_agent_config_by_id(db, user: User, agent_config_id: int):
 
 async def _resolve_agent_config(db, agent_id: str, user: User, agent_config_id):
     """解析 agent_config，返回 agent_config"""
-    department_id = user.department_id
+    uid = str(user.uid)
 
     agent_config_repo = AgentConfigRepository(db)
     config_item = None
@@ -441,9 +441,7 @@ async def _resolve_agent_config(db, agent_id: str, user: User, agent_config_id):
             config_item = None
 
     if config_item is None:
-        config_item = await agent_config_repo.get_or_create_default(
-            department_id=department_id, agent_id=agent_id, created_by=str(user.id)
-        )
+        config_item = await agent_config_repo.get_or_create_default(uid=uid, agent_id=agent_id, created_by=uid)
 
     return (config_item.config_json or {}).get("context", {})
 
@@ -479,7 +477,6 @@ async def _ensure_thread_bound_agent_config(
     agent_config_repo: AgentConfigRepository,
     thread_id: str,
     uid: str,
-    department_id: int,
     agent_id: str,
     agent_config_id: int,
 ) -> None:
@@ -502,13 +499,21 @@ async def _ensure_thread_bound_agent_config(
                 f"switching to default config for agent {agent_id}"
             )
             default_config = await agent_config_repo.get_or_create_default(
-                department_id=department_id,
+                uid=uid,
                 agent_id=agent_id,
                 created_by=uid,
             )
             await conv_repo.bind_agent_config(thread_id, default_config.id)
         else:
-            await conv_repo.bind_agent_config(thread_id, agent_config_id)
+            if config_item.uid != uid or config_item.agent_id != agent_id:
+                default_config = await agent_config_repo.get_or_create_default(
+                    uid=uid,
+                    agent_id=agent_id,
+                    created_by=uid,
+                )
+                await conv_repo.bind_agent_config(thread_id, default_config.id)
+            else:
+                await conv_repo.bind_agent_config(thread_id, agent_config_id)
 
 
 async def agent_chat(
@@ -541,14 +546,6 @@ async def agent_chat(
             "status": "error",
             "error_type": "content_guard_blocked",
             "error_message": "输入内容包含敏感词",
-            "request_id": meta.get("request_id"),
-        }
-
-    if not current_user.department_id:
-        return {
-            "status": "error",
-            "error_type": "invalid_config",
-            "error_message": "当前用户未绑定部门",
             "request_id": meta.get("request_id"),
         }
 
@@ -618,7 +615,6 @@ async def agent_chat(
             agent_config_repo=agent_config_repo,
             thread_id=thread_id,
             uid=uid,
-            department_id=current_user.department_id,
             agent_id=agent_id,
             agent_config_id=agent_config_id,
         )
@@ -767,10 +763,6 @@ async def stream_agent_chat(
         )
         return
 
-    if not current_user.department_id:
-        yield make_chunk(status="error", error_type="invalid_config", error_message="当前用户未绑定部门", meta=meta)
-        return
-
     meta = dict(meta or {})
     if "request_id" not in meta or not meta.get("request_id"):
         logger.warning("请求缺少 request_id，已自动生成一个新的 request_id")
@@ -837,7 +829,6 @@ async def stream_agent_chat(
             agent_config_repo=agent_config_repo,
             thread_id=thread_id,
             uid=uid,
-            department_id=current_user.department_id,
             agent_id=agent_id,
             agent_config_id=agent_config_id,
         )

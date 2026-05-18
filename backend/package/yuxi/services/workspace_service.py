@@ -24,7 +24,7 @@ MAX_WORKSPACE_UPLOAD_SIZE_BYTES = 100 * 1024 * 1024
 
 def _workspace_root(user: User) -> Path:
     try:
-        user_data_root = _global_user_data_dir(str(user.id)).resolve()
+        user_data_root = _global_user_data_dir(str(user.uid)).resolve()
         root = user_data_root / WORKSPACE_DIR_NAME
     except ValueError as exc:
         raise HTTPException(status_code=403, detail="Access denied") from exc

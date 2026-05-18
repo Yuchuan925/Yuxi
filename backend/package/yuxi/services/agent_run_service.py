@@ -68,7 +68,7 @@ async def create_agent_run_view(
 
     config_repo = AgentConfigRepository(db)
     config_item = await config_repo.get_by_id(config_id=int(agent_config_id))
-    if config_item is None:
+    if config_item is None or config_item.uid != str(current_uid):
         raise HTTPException(status_code=404, detail="配置不存在")
 
     agent_id = config_item.agent_id

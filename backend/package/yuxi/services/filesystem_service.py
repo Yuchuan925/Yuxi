@@ -30,16 +30,14 @@ async def _resolve_filesystem_context(
     config_item = None
     if agent_config_id is not None:
         config_item = await repo.get_by_id(config_id=int(agent_config_id))
-        if config_item is not None and (
-            config_item.department_id != user.department_id or config_item.agent_id != agent_id
-        ):
+        if config_item is not None and (config_item.uid != str(user.uid) or config_item.agent_id != agent_id):
             config_item = None
 
     if config_item is None:
         config_item = await repo.get_or_create_default(
-            department_id=user.department_id,
+            uid=str(user.uid),
             agent_id=agent_id,
-            created_by=str(user.id),
+            created_by=str(user.uid),
         )
 
     context.update_from_dict((config_item.config_json or {}).get("context", {}))
