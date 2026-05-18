@@ -592,7 +592,7 @@ const loadToolOptions = async (force = false) => {
     return
   }
   try {
-    const result = await toolApi.getTools()
+    const result = await toolApi.getTools('buildin')
     toolOptionsFromApi.value = (result?.data || []).map((item) => ({
       id: item.id,
       name: item.name || item.id,

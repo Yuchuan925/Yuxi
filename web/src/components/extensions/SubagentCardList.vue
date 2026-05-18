@@ -6,7 +6,7 @@
           <Plus :size="14" />
           <span>添加</span>
         </a-button>
-        <a-tooltip title="刷新 Subagents">
+        <a-tooltip title="刷新 Subagents" placement="bottom">
           <a-button class="lucide-icon-btn" :disabled="loading" @click="fetchSubAgents">
             <RefreshCw :size="14" />
           </a-button>
