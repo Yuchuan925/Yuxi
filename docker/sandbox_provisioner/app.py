@@ -310,8 +310,8 @@ class LocalContainerProvisionerBackend:
         cmd = (
             "sh -lc "
             '"mkdir -p /home/gem/user-data/workspace /home/gem/user-data/uploads /home/gem/user-data/outputs '
-            '&& chmod a+rwx /home/gem/user-data /home/gem/user-data/workspace '
-            '/home/gem/user-data/uploads /home/gem/user-data/outputs"'
+            '&& chmod -R a+rwx /home/gem/user-data/workspace '
+            '&& chmod a+rwx /home/gem/user-data /home/gem/user-data/uploads /home/gem/user-data/outputs"'
         )
         result = container.exec_run(cmd, user="0:0")
         if result.exit_code != 0:
