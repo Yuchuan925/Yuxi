@@ -225,18 +225,6 @@ class KnowledgeBaseManager:
 
         return user_department_id in accessible_departments
 
-    async def get_databases_by_raw_id(self, user_id: int) -> dict:
-        """根据用户ID获取知识库列表"""
-        from yuxi.repositories.user_repository import UserRepository
-
-        # 通过数据库获取用户信息
-        user_repo = UserRepository()
-        user: User | None = await user_repo.get_by_id(id=int(user_id))
-        if not user:
-            logger.warning(f"User not found: {uid}")
-            return {"databases": []}
-        return await self.get_databases_by_user(user)
-
     async def get_databases_by_uid(self, uid: str) -> dict:
         """根据 uid 获取知识库列表"""
         from yuxi.repositories.user_repository import UserRepository
@@ -489,6 +477,28 @@ class KnowledgeBaseManager:
         """按行窗口打开文件解析后的 Markdown 内容"""
         kb_instance = await self._get_kb_for_database(db_id)
         return await kb_instance.open_file_content(db_id, file_id, offset, limit)
+
+    async def find_file_content(
+        self,
+        db_id: str,
+        file_id: str,
+        patterns: list[str],
+        *,
+        use_regex: bool = False,
+        case_sensitive: bool = False,
+        max_windows: int = 5,
+        window_size: int = 80,
+    ) -> dict:
+        kb_instance = await self._get_kb_for_database(db_id)
+        return await kb_instance.find_file_content(
+            db_id,
+            file_id,
+            patterns,
+            use_regex=use_regex,
+            case_sensitive=case_sensitive,
+            max_windows=max_windows,
+            window_size=window_size,
+        )
 
     async def get_file_info(self, db_id: str, file_id: str) -> dict:
         """获取文件完整信息（基本信息+内容信息）"""
