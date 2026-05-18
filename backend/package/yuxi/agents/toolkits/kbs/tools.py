@@ -3,8 +3,9 @@
 import inspect
 from typing import Any
 
-from langchain_core.tools import tool
 from langgraph.prebuilt.tool_node import ToolRuntime
+
+from yuxi.agents.toolkits.registry import tool
 from pydantic import BaseModel, Field
 
 from yuxi import knowledge_base
@@ -29,7 +30,7 @@ class ListKBsInput(BaseModel):
     dummy: str = Field(default="", description="Dummy parameter - ignore")  # Add this
 
 
-@tool(args_schema=ListKBsInput)
+@tool(category="knowledge", tags=["知识库"], args_schema=ListKBsInput)
 async def list_kbs(dummy: str, runtime: ToolRuntime) -> str:  # Now has 2 params
     """列出当前用户可访问的知识库列表
 
@@ -82,7 +83,7 @@ class GetMindmapInput(BaseModel):
     kb_name: str = Field(description="知识库名称，用于指定要获取思维导图的知识库")
 
 
-@tool(args_schema=GetMindmapInput)
+@tool(category="knowledge", tags=["知识库"], args_schema=GetMindmapInput)
 async def get_mindmap(kb_name: str, runtime: ToolRuntime) -> str:
     """获取指定知识库的思维导图结构
 
@@ -192,7 +193,7 @@ def _find_query_target(
     return target_info, normalized_resource_id, None
 
 
-@tool(args_schema=QueryKBInput)
+@tool(category="knowledge", tags=["知识库"], args_schema=QueryKBInput)
 async def query_kb(resource_id: str, query_text: str, file_name: str | None = None, runtime: ToolRuntime = None) -> Any:
     """在指定知识库中检索内容
 
@@ -238,7 +239,7 @@ async def query_kb(resource_id: str, query_text: str, file_name: str | None = No
         return f"检索失败: {str(e)}"
 
 
-@tool(args_schema=OpenKBDocumentInput)
+@tool(category="knowledge", tags=["知识库"], args_schema=OpenKBDocumentInput)
 async def open_kb_document(
     resource_id: str,
     file_id: str,
@@ -292,7 +293,7 @@ async def open_kb_document(
         return f"打开知识库文档失败: {str(e)}"
 
 
-@tool(args_schema=FindKBDocumentInput)
+@tool(category="knowledge", tags=["知识库"], args_schema=FindKBDocumentInput)
 async def find_kb_document(
     resource_id: str,
     file_id: str,

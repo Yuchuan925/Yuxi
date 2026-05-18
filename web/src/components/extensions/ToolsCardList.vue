@@ -15,7 +15,7 @@
         </a-select>
       </template>
       <template #actions>
-        <a-tooltip title="刷新工具">
+        <a-tooltip title="刷新工具" placement="bottom">
           <a-button class="lucide-icon-btn" :disabled="loading" @click="fetchTools">
             <RefreshCw :size="14" />
           </a-button>
@@ -129,9 +129,9 @@ const tools = ref([])
 const currentTool = ref(null)
 const detailVisible = ref(false)
 
-const categories = ['buildin', 'mysql', 'debug']
-const categoryLabels = { buildin: '内置工具', mysql: 'MySQL', debug: '调试' }
-const categoryColors = { buildin: 'blue', mysql: 'green', debug: 'orange' }
+const categories = ['buildin', 'knowledge', 'mysql', 'debug']
+const categoryLabels = { buildin: '内置工具', knowledge: '知识库', mysql: 'MySQL', debug: '调试' }
+const categoryColors = { buildin: 'blue', knowledge: 'purple', mysql: 'green', debug: 'orange' }
 
 const toolTags = (tool) => {
   const tags = []
