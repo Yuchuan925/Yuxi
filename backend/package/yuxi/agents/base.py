@@ -41,12 +41,12 @@ class BaseAgent:
         """Get the agent's class name."""
         return self.__class__.__name__
 
-    async def get_info(self, include_configurable_items: bool = True):
+    async def get_info(self, include_configurable_items: bool = True, user_role: str | None = None):
         # metadata 固定在代码中，由各 Agent 的类属性提供
         metadata = self.load_metadata()
         configurable_items = {}
         if include_configurable_items:
-            configurable_items = self.context_schema.get_configurable_items()
+            configurable_items = self.context_schema.get_configurable_items(user_role=user_role)
 
         # Merge metadata with class attributes, metadata takes precedence
         return {

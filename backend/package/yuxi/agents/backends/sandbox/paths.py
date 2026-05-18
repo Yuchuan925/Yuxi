@@ -63,12 +63,21 @@ def sandbox_workspace_agents_prompt_file(thread_id: str, uid: str) -> Path:
     return sandbox_workspace_dir(thread_id, uid) / WORKSPACE_AGENTS_DIR_NAME / WORKSPACE_AGENTS_PROMPT_FILE_NAME
 
 
+def _chmod_writable(path: Path, *, dir: bool = False) -> None:
+    mode = 0o777 if dir else 0o666
+    try:
+        path.chmod(mode)
+    except OSError:
+        pass
+
+
 def ensure_workspace_default_files(workspace_dir: Path) -> None:
     agents_dir = workspace_dir / WORKSPACE_AGENTS_DIR_NAME
     agents_file = agents_dir / WORKSPACE_AGENTS_PROMPT_FILE_NAME
 
     try:
         agents_dir.mkdir(parents=True, exist_ok=True)
+        _chmod_writable(agents_dir, dir=True)
     except FileExistsError:
         logger.warning("工作区默认 Agents 目录创建失败：路径已被文件占用")
         return
@@ -79,6 +88,7 @@ def ensure_workspace_default_files(workspace_dir: Path) -> None:
     try:
         with agents_file.open("xb"):
             pass
+        _chmod_writable(agents_file)
     except FileExistsError:
         if agents_file.is_dir():
             logger.warning("工作区默认 AGENTS.md 创建失败：路径已被目录占用")

@@ -7,6 +7,41 @@ from typing import get_origin
 from yuxi import config as sys_config
 
 
+def _role_can_access(auth: str | None, role: str | None) -> bool:
+    if not auth:
+        return True
+    if auth == "admin":
+        return role in {"admin", "superadmin"}
+    if auth == "superadmin":
+        return role == "superadmin"
+    return False
+
+
+def filter_config_by_role(
+    config_json: dict,
+    role: str | None,
+    context_schema: type["BaseContext"] | None = None,
+) -> dict:
+    """按 Context 字段 metadata.auth 过滤 config_json.context。"""
+    if not isinstance(config_json, dict):
+        return {}
+
+    schema = context_schema or BaseContext
+    restricted_fields = {
+        f.name
+        for f in fields(schema)
+        if f.metadata.get("auth") and not _role_can_access(str(f.metadata.get("auth")), role)
+    }
+    if not restricted_fields:
+        return dict(config_json)
+
+    filtered = dict(config_json)
+    context = filtered.get("context")
+    if isinstance(context, dict):
+        filtered["context"] = {key: value for key, value in context.items() if key not in restricted_fields}
+    return filtered
+
+
 @dataclass(kw_only=True)
 class BaseContext:
     """
@@ -123,11 +158,13 @@ class BaseContext:
     )
 
     @classmethod
-    def get_configurable_items(cls):
+    def get_configurable_items(cls, user_role: str | None = None):
         """实现一个可配置的参数列表，在 UI 上配置时使用"""
         configurable_items = {}
         for f in fields(cls):
             if f.init and not f.metadata.get("hide", False):
+                if user_role is not None and not _role_can_access(f.metadata.get("auth"), user_role):
+                    continue
                 if f.metadata.get("configurable", True):
                     type_name = cls._get_type_name(f.type)
 

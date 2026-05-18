@@ -28,10 +28,10 @@ class AgentConfigRepository:
     def __init__(self, db_session: AsyncSession):
         self.db = db_session
 
-    async def list_by_department_agent(self, *, department_id: int, agent_id: str) -> list[AgentConfig]:
+    async def list_by_user_agent(self, *, uid: str, agent_id: str) -> list[AgentConfig]:
         result = await self.db.execute(
             select(AgentConfig)
-            .where(AgentConfig.department_id == department_id, AgentConfig.agent_id == agent_id)
+            .where(AgentConfig.uid == uid, AgentConfig.agent_id == agent_id)
             .order_by(AgentConfig.is_default.desc(), AgentConfig.id.asc())
         )
         return list(result.scalars().all())
@@ -45,16 +45,13 @@ class AgentConfigRepository:
         return result.scalar_one_or_none()
 
     async def set_default(self, *, config: AgentConfig, updated_by: str | None = None) -> AgentConfig:
-        if config.is_default:
-            return config
-
         now = utc_now_naive()
 
-        # 先清空该部门+智能体的所有默认配置
+        # 先清空该用户+智能体的所有默认配置
         await self.db.execute(
             update(AgentConfig)
             .where(
-                AgentConfig.department_id == config.department_id,
+                AgentConfig.uid == config.uid,
                 AgentConfig.agent_id == config.agent_id,
             )
             .values(is_default=False, updated_at=now, updated_by=updated_by)
@@ -69,10 +66,10 @@ class AgentConfigRepository:
         await self.db.refresh(config)
         return config
 
-    async def get_default(self, *, department_id: int, agent_id: str) -> AgentConfig | None:
+    async def get_default(self, *, uid: str, agent_id: str) -> AgentConfig | None:
         result = await self.db.execute(
             select(AgentConfig).where(
-                AgentConfig.department_id == department_id,
+                AgentConfig.uid == uid,
                 AgentConfig.agent_id == agent_id,
                 AgentConfig.is_default.is_(True),
             )
@@ -82,20 +79,20 @@ class AgentConfigRepository:
     async def get_or_create_default(
         self,
         *,
-        department_id: int,
+        uid: str,
         agent_id: str,
         created_by: str | None = None,
     ) -> AgentConfig:
-        existing = await self.get_default(department_id=department_id, agent_id=agent_id)
+        existing = await self.get_default(uid=uid, agent_id=agent_id)
         if existing:
             return existing
 
-        items = await self.list_by_department_agent(department_id=department_id, agent_id=agent_id)
+        items = await self.list_by_user_agent(uid=uid, agent_id=agent_id)
         if items:
             return items[0]
 
         config = AgentConfig(
-            department_id=department_id,
+            uid=uid,
             agent_id=agent_id,
             name=DEFAULT_CONFIG_NAME,
             description=None,
@@ -114,9 +111,9 @@ class AgentConfigRepository:
         await self.db.refresh(config)
         return config
 
-    async def _name_exists(self, *, department_id: int, agent_id: str, name: str, exclude_id: int | None) -> bool:
+    async def _name_exists(self, *, uid: str, agent_id: str, name: str, exclude_id: int | None) -> bool:
         stmt = select(AgentConfig.id).where(
-            AgentConfig.department_id == department_id,
+            AgentConfig.uid == uid,
             AgentConfig.agent_id == agent_id,
             AgentConfig.name == name,
         )
@@ -128,36 +125,30 @@ class AgentConfigRepository:
     async def ensure_unique_name(
         self,
         *,
-        department_id: int,
+        uid: str,
         agent_id: str,
         desired_name: str,
         exclude_id: int | None = None,
     ) -> str:
         candidate = desired_name.strip() or "未命名配置"
-        if not await self._name_exists(
-            department_id=department_id, agent_id=agent_id, name=candidate, exclude_id=exclude_id
-        ):
+        if not await self._name_exists(uid=uid, agent_id=agent_id, name=candidate, exclude_id=exclude_id):
             return candidate
 
         base = f"{candidate}-副本"
-        if not await self._name_exists(
-            department_id=department_id, agent_id=agent_id, name=base, exclude_id=exclude_id
-        ):
+        if not await self._name_exists(uid=uid, agent_id=agent_id, name=base, exclude_id=exclude_id):
             return base
 
         idx = 2
         while True:
             candidate2 = f"{base}{idx}"
-            if not await self._name_exists(
-                department_id=department_id, agent_id=agent_id, name=candidate2, exclude_id=exclude_id
-            ):
+            if not await self._name_exists(uid=uid, agent_id=agent_id, name=candidate2, exclude_id=exclude_id):
                 return candidate2
             idx += 1
 
     async def create(
         self,
         *,
-        department_id: int,
+        uid: str,
         agent_id: str,
         name: str,
         description: str | None = None,
@@ -169,13 +160,13 @@ class AgentConfigRepository:
         created_by: str | None = None,
     ) -> AgentConfig:
         unique_name = await self.ensure_unique_name(
-            department_id=department_id,
+            uid=uid,
             agent_id=agent_id,
             desired_name=name,
             exclude_id=None,
         )
         config = AgentConfig(
-            department_id=department_id,
+            uid=uid,
             agent_id=agent_id,
             name=unique_name,
             description=description,
@@ -183,7 +174,7 @@ class AgentConfigRepository:
             pics=pics or [],
             examples=examples or [],
             config_json=config_json or {},
-            is_default=bool(is_default),
+            is_default=False,
             created_by=created_by,
             updated_by=created_by,
             created_at=utc_now_naive(),
@@ -192,6 +183,8 @@ class AgentConfigRepository:
         self.db.add(config)
         await self.db.commit()
         await self.db.refresh(config)
+        if is_default:
+            return await self.set_default(config=config, updated_by=created_by)
         return config
 
     async def update(
@@ -208,7 +201,7 @@ class AgentConfigRepository:
     ) -> AgentConfig:
         if name is not None:
             config.name = await self.ensure_unique_name(
-                department_id=config.department_id,
+                uid=config.uid,
                 agent_id=config.agent_id,
                 desired_name=name,
                 exclude_id=config.id,
@@ -231,16 +224,16 @@ class AgentConfigRepository:
         return config
 
     async def delete(self, *, config: AgentConfig, updated_by: str | None = None) -> None:
-        department_id = config.department_id
+        uid = config.uid
         agent_id = config.agent_id
         was_default = bool(config.is_default)
 
         await self.db.delete(config)
         await self.db.commit()
 
-        remaining = await self.list_by_department_agent(department_id=department_id, agent_id=agent_id)
+        remaining = await self.list_by_user_agent(uid=uid, agent_id=agent_id)
         if not remaining:
-            await self.get_or_create_default(department_id=department_id, agent_id=agent_id, created_by=updated_by)
+            await self.get_or_create_default(uid=uid, agent_id=agent_id, created_by=updated_by)
             return
 
         if was_default:
