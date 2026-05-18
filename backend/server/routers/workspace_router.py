@@ -36,6 +36,7 @@ class UpdateWorkspaceFileContentRequest(BaseModel):
 async def _ensure_knowledge_read_access(current_user: User, db_id: str) -> None:
     allowed = await knowledge_base.check_accessible(
         {
+            "uid": current_user.uid,
             "role": current_user.role,
             "department_id": current_user.department_id,
         },

@@ -39,7 +39,7 @@
   </div>
 
   <!-- 编辑对话框 -->
-  <a-modal v-model:open="editModalVisible" title="编辑知识库信息">
+  <a-modal v-model:open="editModalVisible" title="编辑知识库信息" width="700px">
     <template #footer>
       <a-button danger @click="deleteDatabase" style="margin-right: auto; margin-left: 0">
         <template #icon>
@@ -140,11 +140,11 @@
       <!-- 非编辑状态下显示共享配置信息 -->
       <a-form-item v-else-if="database.share_config" label="共享设置" name="share_config_readonly">
         <div class="share-config-readonly">
-          <a-tag :color="database.share_config.is_shared !== false ? 'green' : 'blue'">
-            {{ database.share_config.is_shared !== false ? '全员共享' : '指定部门' }}
+          <a-tag :color="shareConfigDisplay.color">
+            {{ shareConfigDisplay.label }}
           </a-tag>
-          <span v-if="database.share_config.is_shared === false" class="dept-names">
-            {{ getAccessibleDeptNames() }}
+          <span class="access-names">
+            {{ shareConfigDisplay.detail }}
           </span>
         </div>
       </a-form-item>
@@ -162,6 +162,7 @@ import { message } from 'ant-design-vue'
 import { LeftOutlined, QuestionCircleOutlined } from '@ant-design/icons-vue'
 import { Pencil, Trash2, Copy } from 'lucide-vue-next'
 import { departmentApi } from '@/apis/department_api'
+import { authApi } from '@/apis/auth_api'
 import AiTextarea from '@/components/AiTextarea.vue'
 import ShareConfigForm from '@/components/ShareConfigForm.vue'
 
@@ -174,10 +175,9 @@ const isDifyKb = computed(() => database.value?.kb_type === 'dify')
 const isNotionKb = computed(() => database.value?.kb_type === 'notion')
 const isReadOnlyConnector = computed(() => isDifyKb.value || isNotionKb.value)
 
-// 部门列表（用于显示部门名称）
 const departments = ref([])
+const users = ref([])
 
-// 加载部门列表
 const loadDepartments = async () => {
   try {
     const res = await departmentApi.getDepartments()
@@ -188,21 +188,57 @@ const loadDepartments = async () => {
   }
 }
 
-// 初始化时加载部门
+const loadUsers = async () => {
+  try {
+    users.value = await authApi.getUserAccessOptions()
+  } catch (e) {
+    console.error('加载用户列表失败:', e)
+    users.value = []
+  }
+}
+
 onMounted(() => {
   loadDepartments()
+  loadUsers()
 })
 
-// 获取可访问的部门名称
-const getAccessibleDeptNames = () => {
-  const deptIds = database.value?.share_config?.accessible_departments || []
-  if (deptIds.length === 0) return '无'
-  return deptIds
-    .map((id) => {
-      const dept = departments.value.find((d) => d.id === id)
-      return dept?.name || `部门${id}`
-    })
-    .join('、')
+const shareConfigDisplay = computed(() => {
+  const shareConfig = database.value?.share_config || { access_level: 'global' }
+  if (shareConfig.access_level === 'department') {
+    const departmentIds = shareConfig.department_ids || []
+    const names = departmentIds.map((id) => getDepartmentName(id)).join('、') || '无'
+    return {
+      color: 'blue',
+      label: '部门共享',
+      detail: `${departmentIds.length} 个部门可访问：${names}`
+    }
+  }
+
+  if (shareConfig.access_level === 'user') {
+    const userUids = shareConfig.user_uids || []
+    const names = userUids.map((uid) => getUserName(uid)).join('、') || '无'
+    return {
+      color: 'purple',
+      label: '指定人可访问',
+      detail: `${userUids.length} 个用户可访问：${names}`
+    }
+  }
+
+  return {
+    color: 'green',
+    label: '全局共享',
+    detail: '所有用户可访问'
+  }
+})
+
+const getDepartmentName = (id) => {
+  const dept = departments.value.find((item) => Number(item.id) === Number(id))
+  return dept?.name || `部门${id}`
+}
+
+const getUserName = (uid) => {
+  const user = users.value.find((item) => item.uid === uid)
+  return user?.username || uid
 }
 
 // 是否可以编辑共享配置
@@ -306,30 +342,15 @@ const handleEditSubmit = () => {
         }
       }
 
-      // 从 ShareConfigForm 组件直接获取当前值
-      let finalIsShared = true
-      let finalDeptIds = []
-
-      if (shareConfigFormRef.value) {
-        const formConfig = shareConfigFormRef.value.config
-        finalIsShared = formConfig.is_shared
-        finalDeptIds = formConfig.accessible_department_ids || []
-      }
-
-      console.log(
-        '[handleEditSubmit] 直接从组件获取 - is_shared:',
-        finalIsShared,
-        'dept_ids:',
-        JSON.stringify(finalDeptIds)
-      )
-
+      const formConfig = shareConfigFormRef.value?.config || { access_level: 'global' }
       const updateData = {
         name: editForm.name,
         description: editForm.description,
         additional_params: {},
         share_config: {
-          is_shared: finalIsShared,
-          accessible_departments: finalIsShared ? [] : finalDeptIds
+          access_level: formConfig.access_level,
+          department_ids: formConfig.access_level === 'department' ? formConfig.department_ids || [] : [],
+          user_uids: formConfig.access_level === 'user' ? formConfig.user_uids || [] : []
         }
       }
 
@@ -402,7 +423,7 @@ const deleteDatabase = () => {
   align-items: center;
   gap: 8px;
 
-  .dept-names {
+  .access-names {
     font-size: 13px;
     color: var(--gray-600);
   }

@@ -150,7 +150,7 @@
         <!-- 共享配置 -->
         <div class="form-section compact-section">
           <h3 class="section-title">共享设置</h3>
-          <ShareConfigForm v-model="shareConfig" :auto-select-user-dept="true" />
+          <ShareConfigForm ref="shareConfigFormRef" v-model="shareConfig" :auto-select-user-dept="true" />
         </div>
       </div>
       <template #footer>
@@ -270,11 +270,14 @@ const state = reactive({
   openNewDatabaseModel: false
 })
 
-// 共享配置状态（用于提交数据）
-const shareConfig = ref({
-  is_shared: true,
-  accessible_department_ids: []
+const createDefaultShareConfig = () => ({
+  access_level: 'global',
+  department_ids: [],
+  user_uids: []
 })
+
+const shareConfig = ref(createDefaultShareConfig())
+const shareConfigFormRef = ref(null)
 
 const chunkPresetOptions = CHUNK_PRESET_OPTIONS.map(({ label, value }) => ({ label, value }))
 
@@ -341,11 +344,7 @@ const resetNewDatabase = () => {
   Object.assign(newDatabase, createEmptyDatabaseForm())
   newDatabase.kb_type = kbTypes.value[0] || ''
   resetCreateParamValues()
-  // 重置共享配置
-  shareConfig.value = {
-    is_shared: true,
-    accessible_department_ids: []
-  }
+  shareConfig.value = createDefaultShareConfig()
 }
 
 const cancelCreateDatabase = () => {
@@ -406,12 +405,10 @@ const buildRequestData = () => {
     requestData.additional_params.chunk_preset_id = newDatabase.chunk_preset_id || 'general'
   }
 
-  // 添加共享配置
   requestData.share_config = {
-    is_shared: shareConfig.value.is_shared,
-    accessible_departments: shareConfig.value.is_shared
-      ? []
-      : shareConfig.value.accessible_department_ids || []
+    access_level: shareConfig.value.access_level,
+    department_ids: shareConfig.value.access_level === 'department' ? shareConfig.value.department_ids || [] : [],
+    user_uids: shareConfig.value.access_level === 'user' ? shareConfig.value.user_uids || [] : []
   }
 
   // 根据类型添加特定配置
@@ -441,6 +438,14 @@ const handleCreateDatabase = async () => {
     const value = newDatabase.additional_params[field.key]
     if (value === undefined || value === null || (typeof value === 'string' && !value.trim())) {
       message.error(`请填写${field.label || field.key}`)
+      return
+    }
+  }
+
+  if (shareConfigFormRef.value) {
+    const validation = shareConfigFormRef.value.validate()
+    if (!validation.valid) {
+      message.warning(validation.message)
       return
     }
   }
