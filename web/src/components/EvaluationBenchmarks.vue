@@ -3,13 +3,6 @@
     <!-- 操作栏 -->
     <div class="benchmarks-header">
       <div class="header-left">
-        <span class="total-count">{{ benchmarks.length }} 个基准</span>
-      </div>
-      <div class="header-right">
-        <a-button class="lucide-icon-btn" @click="loadBenchmarks">
-          <template #icon><RefreshCw :size="16" /></template>
-          刷新
-        </a-button>
         <a-button type="primary" class="lucide-icon-btn" @click="showUploadModal">
           <template #icon><Upload :size="16" /></template>
           上传基准
@@ -17,6 +10,13 @@
         <a-button class="lucide-icon-btn" @click="showGenerateModal">
           <template #icon><Bot :size="16" /></template>
           自动生成
+        </a-button>
+        <span class="total-count">{{ benchmarks.length }} 个基准</span>
+      </div>
+      <div class="header-right">
+        <a-button class="lucide-icon-btn" @click="loadBenchmarks">
+          <template #icon><RefreshCw :size="16" /></template>
+          刷新
         </a-button>
       </div>
     </div>
@@ -212,7 +212,6 @@
                 </div>
                 <a-switch
                   v-model:checked="previewAutoWrap"
-                  size="small"
                   checked-children="换行"
                   un-checked-children="不换行"
                 />
@@ -221,7 +220,7 @@
                 :dataSource="previewQuestions"
                 :columns="displayedQuestionColumns"
                 :pagination="paginationConfig"
-                :scroll="{ x: questionTableScrollX, y: 'calc(100vh - 270px)' }"
+                :scroll="{ x: questionTableScrollX, y: 'calc(100dvh - 294px)' }"
                 :class="{ 'table-nowrap': !previewAutoWrap }"
                 size="small"
                 :rowKey="(_, index) => index"
@@ -743,7 +742,7 @@ onUnmounted(() => {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 12px 0;
+  padding: 4px 0;
   margin-bottom: 12px;
 
   .total-count {
@@ -751,8 +750,10 @@ onUnmounted(() => {
     color: var(--color-text-secondary);
   }
 
-  .header-right {
+  .header-right,
+  .header-left {
     display: flex;
+    align-items: center;
     gap: 8px;
   }
 }
@@ -835,7 +836,7 @@ onUnmounted(() => {
 .benchmark-menu-item {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: 0;
 }
 
 .benchmark-desc {
@@ -954,19 +955,23 @@ onUnmounted(() => {
   inset: 0;
   z-index: 1000;
   width: 100vw;
-  height: 100vh;
-  background: var(--color-bg-container);
+  height: 100dvh;
+  padding: 12px;
+  box-sizing: border-box;
+  background: var(--dark-25);
   overflow: hidden;
 }
 
 :global(.evaluation-detail-panel) {
-  width: 100vw;
-  height: 100vh;
-  max-height: 100vh;
+  width: 100%;
+  height: calc(100dvh - 24px);
+  max-height: calc(100dvh - 24px);
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  border-radius: 12px;
   background: var(--color-bg-container);
+  box-shadow: 0 12px 32px var(--shadow-4);
 }
 
 :global(.evaluation-detail-titlebar) {

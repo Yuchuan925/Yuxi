@@ -577,8 +577,21 @@ class EvaluationService:
     async def list_runs(self, db_id: str) -> list[dict[str, Any]]:
         try:
             rows = await self.eval_repo.list_runs(db_id)
-            return [
-                {
+            running_run_ids = {row.run_id for row in rows if row.status == "running"}
+            task_by_run_id = {}
+            if running_run_ids:
+                tasks = await self.task_repo.list_all()
+                task_by_run_id = {
+                    (task.payload or {}).get("run_id"): task
+                    for task in tasks
+                    if task.type == "rag_evaluation"
+                    and task.status in {"pending", "running"}
+                    and (task.payload or {}).get("run_id") in running_run_ids
+                }
+
+            runs = []
+            for row in rows:
+                run = {
                     "run_id": row.run_id,
                     "dataset_id": row.dataset_id,
                     "status": row.status,
@@ -590,8 +603,12 @@ class EvaluationService:
                     "retrieval_config": row.retrieval_config or {},
                     "metrics": row.metrics or {},
                 }
-                for row in rows
-            ]
+                if row.status == "running":
+                    task = task_by_run_id.get(row.run_id)
+                    if task:
+                        run.update(progress=task.progress, message=task.message)
+                runs.append(run)
+            return runs
         except Exception as e:
             logger.error(f"获取评估运行历史失败: {e}")
             raise

@@ -5,7 +5,7 @@
       <div class="header-content">
         <div class="section-title">API Key 管理</div>
         <p class="section-description">
-          创建和管理 API Key，用于外部系统调用 Agent 对话接口。密钥仅显示一次，请妥善保管。
+          用于外部系统调用 Agent 对话接口。密钥仅显示一次，请妥善保管。
         </p>
       </div>
       <div class="header-actions">

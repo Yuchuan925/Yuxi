@@ -1,5 +1,5 @@
 <script setup>
-import { ref, reactive, onMounted, computed, provide, watch } from 'vue'
+import { ref, onMounted, computed, provide, watch } from 'vue'
 import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router'
 import { GithubOutlined } from '@ant-design/icons-vue'
 import {
@@ -40,11 +40,6 @@ const { activeCount: activeCountRef, isDrawerOpen } = storeToRefs(taskerStore)
 const { threads, currentThreadId, hasMoreThreads, isLoadingMoreThreads } =
   storeToRefs(chatThreadsStore)
 
-const layoutSettings = reactive({
-  showDebug: false,
-  useTopBar: false // 是否使用顶栏
-})
-
 // Add state for GitHub stars
 const githubStars = ref(0)
 const isLoadingStars = ref(false)
@@ -54,11 +49,13 @@ const showDebugModal = ref(false)
 
 // Add state for settings modal
 const showSettingsModal = ref(false)
+const settingsInitialTab = ref('')
 
 const { sidebarCollapsed } = storeToRefs(chatUIStore)
 
 // Provide settings modal methods to child components
-const openSettingsModal = () => {
+const openSettingsModal = (tab) => {
+  settingsInitialTab.value = tab || (userStore.isAdmin ? 'base' : 'account')
   showSettingsModal.value = true
 }
 
@@ -246,11 +243,8 @@ provide('settingsModal', {
 </script>
 
 <template>
-  <div
-    class="app-layout"
-    :class="{ 'use-top-bar': layoutSettings.useTopBar, 'sidebar-collapsed': sidebarCollapsed }"
-  >
-    <div class="header" :class="{ 'top-bar': layoutSettings.useTopBar }">
+  <div class="app-layout" :class="{ 'sidebar-collapsed': sidebarCollapsed }">
+    <div class="header">
       <div class="sidebar-brand" @click.stop>
         <router-link v-if="!sidebarCollapsed" to="/" class="brand-link">
           <img :src="infoStore.organization.avatar" class="brand-avatar" />
@@ -375,7 +369,11 @@ provide('settingsModal', {
       <DebugComponent />
     </a-modal>
     <TaskCenterDrawer v-if="userStore.isAdmin" />
-    <SettingsModal v-model:visible="showSettingsModal" @close="() => (showSettingsModal = false)" />
+    <SettingsModal
+      v-model:visible="showSettingsModal"
+      :initial-tab="settingsInitialTab"
+      @close="() => (showSettingsModal = false)"
+    />
   </div>
 </template>
 
@@ -633,17 +631,14 @@ div.header,
         margin-left: auto;
         overflow: hidden;
         font-size: 12px;
-        color: var(--gray-500);
+        color: var(--gray-600);
+        background-color: var(--gray-100);
+        padding: 2px 8px;
+        border-radius: 6px;
         white-space: nowrap;
         transition:
           opacity 0.12s ease,
           max-width 0.18s ease;
-
-        .star-icon {
-          color: var(--color-warning-500);
-          font-size: 12px;
-          margin-right: 2px;
-        }
 
         .star-count {
           font-weight: 600;
@@ -811,124 +806,4 @@ div.header,
   }
 }
 
-.app-layout.use-top-bar {
-  flex-direction: column;
-}
-
-.header.top-bar {
-  flex-direction: row;
-  flex: 0 0 50px;
-  width: 100%;
-  height: 50px;
-  border-right: none;
-  border-bottom: 1px solid var(--main-40);
-  background-color: var(--main-20);
-  padding: 0 20px;
-  gap: 24px;
-
-  .logo {
-    width: fit-content;
-    height: 28px;
-    margin-right: 16px;
-    display: flex;
-    align-items: center;
-
-    a {
-      display: flex;
-      align-items: center;
-      text-decoration: none;
-      color: inherit;
-    }
-
-    img {
-      width: 28px;
-      height: 28px;
-      margin-right: 8px;
-    }
-  }
-
-  .nav {
-    flex-direction: row;
-    height: auto;
-    gap: 20px;
-  }
-
-  .nav-item {
-    flex-direction: row;
-    width: auto;
-    padding: 4px 16px;
-    margin: 0;
-
-    .icon {
-      margin-right: 8px;
-      font-size: 15px; // 减小图标大小
-      border: none;
-      outline: none;
-
-      &:focus,
-      &:active {
-        border: none;
-        outline: none;
-      }
-    }
-
-    .text {
-      margin-top: 0;
-      font-size: 15px;
-    }
-
-    &.github {
-      padding: 8px 12px;
-
-      .icon {
-        margin-right: 0;
-        font-size: 18px;
-      }
-
-      &.active {
-        color: var(--main-color);
-      }
-
-      a {
-        display: flex;
-        align-items: center;
-      }
-
-      .github-stars {
-        display: flex;
-        align-items: center;
-        margin-left: 6px;
-
-        .star-icon {
-          color: var(--color-warning-500);
-          font-size: 14px;
-          margin-right: 2px;
-        }
-      }
-    }
-
-    &.theme-toggle-nav {
-      padding: 8px 12px;
-
-      .theme-toggle-icon {
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        color: var(--gray-1000);
-        transition: color 0.2s ease-in-out;
-        cursor: pointer;
-
-        &:hover {
-          color: var(--main-color);
-        }
-      }
-
-      &.active {
-        .theme-toggle-icon {
-          color: var(--main-color);
-        }
-      }
-    }
-  }
-}
 </style>

@@ -1,104 +1,10 @@
 <template>
   <div class="rag-evaluation-container">
-    <!-- 顶部工具栏 -->
-    <div class="toolbar">
-      <div class="toolbar-left">
-        <!-- 基准选择 -->
-        <div class="benchmark-selector">
-          <label class="selector-label">评估基准</label>
-          <a-select
-            v-model:value="selectedDatasetId"
-            placeholder="请选择评估基准"
-            style="width: 240px"
-            @change="onDatasetChanged"
-            :loading="datasetsLoading"
-          >
-            <a-select-option
-              v-for="benchmark in availableDatasets"
-              :key="benchmark.dataset_id"
-              :value="benchmark.dataset_id"
-            >
-              {{ benchmark.name }} ({{ benchmark.item_count }} 个问题)
-            </a-select-option>
-          </a-select>
-          <a-button
-            type="text"
-            size="middle"
-            :loading="datasetsLoading"
-            @click="() => loadDatasets(true)"
-            :icon="h(RefreshCw, { size: 16 })"
-            class="refresh-benchmarks-btn lucide-icon-btn"
-            title="刷新评估基准列表"
-          />
-        </div>
-      </div>
-      <div class="toolbar-right">
-        <!-- 开始评估按钮 -->
-        <a-button
-          type="primary"
-          :loading="startingEvaluation"
-          @click="startEvaluation"
-          :disabled="!selectedDataset"
-          size="middle"
-        >
-          开始评估
-        </a-button>
-      </div>
-    </div>
-
     <!-- 评估结果区域 -->
     <div class="evaluation-results">
-      <!-- 模型配置（仅在选中基准且需要时显示） -->
-      <div
-        v-if="
-          selectedDataset && (selectedDataset.has_gold_chunks || selectedDataset.has_gold_answers)
-        "
-        class="model-config-section"
-      >
-        <a-row :gutter="24">
-          <a-col :span="12">
-            <a-form-item
-              :label="
-                selectedDataset.has_gold_answers
-                  ? '答案生成模型（可选）'
-                  : '答案生成模型（当前基准无需）'
-              "
-            >
-              <ModelSelectorComponent
-                v-model:model_spec="configForm.answer_llm"
-                size="small"
-                displayName="mini"
-                :disabled="!selectedDataset || !selectedDataset.has_gold_answers"
-                @select-model="(value) => (configForm.answer_llm = value)"
-                style="width: 100%"
-              />
-            </a-form-item>
-          </a-col>
-
-          <a-col :span="12">
-            <a-form-item
-              :label="
-                selectedDataset.has_gold_answers
-                  ? '答案评判模型（可选）'
-                  : '答案评判模型（当前基准无需）'
-              "
-            >
-              <ModelSelectorComponent
-                v-model:model_spec="configForm.judge_llm"
-                size="small"
-                displayName="mini"
-                :disabled="!selectedDataset || !selectedDataset.has_gold_answers"
-                @select-model="(value) => (configForm.judge_llm = value)"
-                style="width: 100%"
-              />
-            </a-form-item>
-          </a-col>
-        </a-row>
-      </div>
-
       <template v-if="!selectedDataset">
         <div class="empty-state">
-          <a-empty description="请在顶部选择评估基准或前往基准管理">
+          <a-empty description="暂无可用评估基准，请前往基准管理">
             <a-space>
               <a-button @click="$emit('switch-to-benchmarks')"> 前往基准管理 </a-button>
             </a-space>
@@ -106,7 +12,175 @@
         </div>
       </template>
       <template v-else>
-        <!-- 历史评估记录 -->
+        <div class="last-evaluation-section">
+          <div class="section-header">
+            <h4 class="section-title">最后一次评估</h4>
+            <a-dropdown
+              v-model:open="evaluationDropdownOpen"
+              :trigger="['click']"
+              :disabled="availableDatasets.length === 0"
+              placement="bottomRight"
+            >
+              <a-button
+                type="primary"
+                :loading="startingEvaluation"
+                :disabled="availableDatasets.length === 0"
+                class="lucide-icon-btn"
+              >
+                开始评估
+                <ChevronDown :size="14" />
+              </a-button>
+              <template #overlay>
+                <div class="evaluation-start-dropdown" @click.stop>
+                  <div class="dropdown-header">
+                    <div class="dropdown-title">配置本次评估</div>
+                    <div class="dropdown-subtitle">选择评估基准与可选模型后开始评估</div>
+                  </div>
+
+                  <div class="dropdown-model-fields">
+                    <a-form-item label="评估基准">
+                      <div class="dropdown-benchmark-row">
+                        <a-select
+                          v-model:value="selectedDatasetId"
+                          placeholder="请选择评估基准"
+                          style="width: 100%"
+                          :loading="datasetsLoading"
+                          @change="onDatasetChanged"
+                        >
+                          <a-select-option
+                            v-for="benchmark in availableDatasets"
+                            :key="benchmark.dataset_id"
+                            :value="benchmark.dataset_id"
+                          >
+                            {{ benchmark.name }} ({{ benchmark.item_count }} 个问题)
+                          </a-select-option>
+                        </a-select>
+                        <a-button
+                          size="middle"
+                          :loading="datasetsLoading"
+                          :icon="h(RefreshCw, { size: 16 })"
+                          class="refresh-benchmarks-btn lucide-icon-btn"
+                          title="刷新评估基准列表"
+                          @click="() => loadDatasets(true)"
+                        />
+                      </div>
+                    </a-form-item>
+
+                    <a-form-item
+                      :label="
+                        selectedDataset?.has_gold_answers
+                          ? '答案生成模型（可选）'
+                          : '答案生成模型（当前基准无需）'
+                      "
+                    >
+                      <ModelSelectorComponent
+                        v-model:model_spec="configForm.answer_llm"
+                        size="small"
+                        displayName="mini"
+                        :disabled="!selectedDataset || !selectedDataset.has_gold_answers"
+                        @select-model="(value) => (configForm.answer_llm = value)"
+                        style="width: 100%"
+                      />
+                    </a-form-item>
+
+                    <a-form-item
+                      :label="
+                        selectedDataset?.has_gold_answers
+                          ? '答案评判模型（可选）'
+                          : '答案评判模型（当前基准无需）'
+                      "
+                    >
+                      <ModelSelectorComponent
+                        v-model:model_spec="configForm.judge_llm"
+                        size="small"
+                        displayName="mini"
+                        :disabled="!selectedDataset || !selectedDataset.has_gold_answers"
+                        @select-model="(value) => (configForm.judge_llm = value)"
+                        style="width: 100%"
+                      />
+                    </a-form-item>
+                  </div>
+
+                  <div class="dropdown-hint">
+                    {{ evaluationStartHint }}
+                  </div>
+
+                  <a-button
+                    type="primary"
+                    block
+                    :loading="startingEvaluation"
+                    :disabled="!selectedDataset"
+                    @click="startEvaluation"
+                  >
+                    开始评估
+                  </a-button>
+                </div>
+              </template>
+            </a-dropdown>
+          </div>
+
+          <div v-if="latestEvaluation" class="last-evaluation-card">
+            <div class="last-evaluation-main">
+              <div class="score-ring" :class="getLatestRingClass(latestEvaluation)">
+                {{ formatLatestRingValue(latestEvaluation) }}
+              </div>
+              <div class="last-evaluation-info">
+                <div class="last-evaluation-title">
+                  {{ getDatasetName(latestEvaluation.dataset_id) }}
+                  <a-tag :color="getStatusColor(latestEvaluation.status)" :bordered="false">
+                    {{ getStatusText(latestEvaluation.status) }}
+                  </a-tag>
+                </div>
+                <div class="last-evaluation-meta">
+                  {{ formatTime(latestEvaluation.started_at) }} ·
+                  <button
+                    v-if="latestEvaluation.status === 'completed'"
+                    type="button"
+                    class="run-id-link"
+                    @click="viewResults(latestEvaluation.run_id)"
+                  >
+                    Run {{ latestEvaluation.run_id }}
+                  </button>
+                  <span v-else>Run {{ latestEvaluation.run_id }}</span>
+                </div>
+                <div v-if="latestEvaluation.status === 'running'" class="last-evaluation-progress">
+                  <a-progress
+                    :percent="getRunProgress(latestEvaluation)"
+                    size="small"
+                    status="active"
+                    :show-info="false"
+                  />
+                  <span class="run-progress-message">{{ getRunProgressMessage(latestEvaluation) }}</span>
+                </div>
+              </div>
+            </div>
+            <div class="last-evaluation-metrics">
+              <div class="metric-card">
+                <span class="metric-label">Recall@10</span>
+                <strong :style="{ color: getMetricColor(getRecall10(latestEvaluation)) }">
+                  {{ formatMetricValue(getRecall10(latestEvaluation)) }}
+                </strong>
+              </div>
+              <div class="metric-card">
+                <span class="metric-label">耗时</span>
+                <strong>{{ formatRunDuration(latestEvaluation) }}</strong>
+              </div>
+              <div class="metric-card">
+                <span class="metric-label">数据量</span>
+                <strong>{{ formatRunItems(latestEvaluation) }}</strong>
+              </div>
+              <div class="metric-card">
+                <span class="metric-label">完成率</span>
+                <strong>{{ formatCompletionRate(latestEvaluation) }}</strong>
+              </div>
+            </div>
+          </div>
+
+          <div v-else class="last-evaluation-empty">
+            暂无评估记录，开始评估后会在这里展示最近一次结果。
+          </div>
+        </div>
+
         <div class="history-section">
           <div class="section-header">
             <h4 class="section-title">历史评估记录</h4>
@@ -125,31 +199,21 @@
             class="history-table"
             :columns="historyColumns"
             :data-source="evaluationHistory"
-            :pagination="{ pageSize: 10 }"
+            :pagination="{ pageSize: 10, showSizeChanger: false }"
+            row-key="run_id"
             size="small"
           >
             <template #bodyCell="{ column, record }">
-              <template v-if="column.key === 'overall_score'">
-                <span v-if="record.overall_score !== null">
-                  <a-tag :color="getScoreTagColor(record.overall_score)">
-                    {{ (record.overall_score * 100).toFixed(0) }}%
-                  </a-tag>
-                </span>
-                <span v-else>-</span>
-              </template>
-              <template v-else-if="column.key === 'actions'">
+              <template v-if="column.key === 'actions'">
                 <a-space>
-                  <a-button
+                  <a
                     v-if="record.status === 'completed'"
-                    type="link"
-                    size="small"
-                    @click="viewResults(record.run_id)"
+                    href=""
+                    class="history-action-link"
+                    @click.prevent="viewResults(record.run_id)"
                   >
                     查看
-                  </a-button>
-                  <a-tag v-else :color="getStatusColor(record.status)">
-                    {{ getStatusText(record.status) }}
-                  </a-tag>
+                  </a>
                   <a-popconfirm
                     title="确定要删除这条评估记录吗？"
                     description="删除后将无法恢复"
@@ -157,9 +221,9 @@
                     ok-text="确定"
                     cancel-text="取消"
                   >
-                    <a-button type="link" size="small" danger :loading="record.deleting">
+                    <a href="" class="history-action-link history-action-link-danger" @click.prevent>
                       删除
-                    </a-button>
+                    </a>
                   </a-popconfirm>
                 </a-space>
               </template>
@@ -265,7 +329,6 @@
             </div>
             <a-switch
               v-model:checked="resultAutoWrap"
-              size="small"
               checked-children="换行"
               un-checked-children="不换行"
             />
@@ -284,7 +347,7 @@
               onChange: handlePageChange,
               onShowSizeChange: handlePageSizeChange
             }"
-            :scroll="{ x: resultTableScrollX, y: 'calc(100vh - 230px)' }"
+            :scroll="{ x: resultTableScrollX, y: 'calc(100dvh - 254px)' }"
             :class="{ 'table-nowrap': !resultAutoWrap }"
             size="small"
             :loading="resultsLoading"
@@ -363,11 +426,11 @@
 </template>
 
 <script setup>
-import { ref, reactive, onMounted, onUnmounted, computed, h } from 'vue'
-import { message, Modal } from 'ant-design-vue'
+import { ref, reactive, onMounted, onUnmounted, computed, watch, h } from 'vue'
+import { message } from 'ant-design-vue'
 import { evaluationApi } from '@/apis/knowledge_api'
 import ModelSelectorComponent from '@/components/ModelSelectorComponent.vue'
-import { RefreshCw, X } from 'lucide-vue-next'
+import { ChevronDown, RefreshCw, X } from 'lucide-vue-next'
 import { useTaskerStore } from '@/stores/tasker'
 
 const props = defineProps({
@@ -388,6 +451,7 @@ const selectedDataset = ref(null)
 const datasetsLoading = ref(false)
 const availableDatasets = ref([])
 const startingEvaluation = ref(false)
+const evaluationDropdownOpen = ref(false)
 const evaluationHistory = ref([])
 const resultModalVisible = ref(false)
 const selectedResult = ref(null)
@@ -401,6 +465,7 @@ const currentPage = ref(1)
 const pageSize = ref(20)
 const paginationTotal = ref(0)
 const paginationTotalPages = ref(0)
+let evaluationRefreshTimer = null
 let stopColumnResize = null
 
 const resultColumnWidths = reactive({
@@ -413,10 +478,19 @@ const resultColumnWidths = reactive({
 const isDatasetCompleted = (dataset) =>
   (dataset?.build_metadata?.status || 'completed') === 'completed'
 
+const latestEvaluation = computed(() => evaluationHistory.value[0] || null)
+
 // 评估配置表单（使用知识库默认配置）
 const configForm = reactive({
   answer_llm: '', // 答案生成模型
   judge_llm: '' // 评判模型
+})
+
+const evaluationStartHint = computed(() => {
+  if (!selectedDataset.value?.has_gold_answers) return '当前基准只会执行检索评估，无需选择模型。'
+  if (!configForm.answer_llm && !configForm.judge_llm) return '不选择模型时，将仅执行检索评估。'
+  if (configForm.answer_llm && configForm.judge_llm) return '将执行检索评估与答案评估。'
+  return '答案生成模型和答案评判模型需要同时选择。'
 })
 
 // 表格列定义
@@ -513,71 +587,51 @@ const historyColumns = [
     title: '开始时间',
     dataIndex: 'started_at',
     key: 'started_at',
-    width: 180,
+    width: 160,
     customRender: ({ record }) => formatTime(record.started_at)
   },
   {
     title: '评估基准',
     key: 'dataset_name',
-    width: 200,
-    customRender: ({ record }) => {
-      // 根据 dataset_id 查找基准名称
-      const benchmark = availableDatasets.value.find((b) => b.dataset_id === record.dataset_id)
-      return benchmark ? benchmark.name : record.dataset_id?.slice(0, 8) || '-'
-    }
+    width: 180,
+    ellipsis: true,
+    customRender: ({ record }) => getDatasetName(record.dataset_id)
+  },
+  {
+    title: '数据量',
+    key: 'items',
+    width: 92,
+    customRender: ({ record }) => formatRunItems(record)
+  },
+  {
+    title: '耗时',
+    key: 'duration',
+    width: 100,
+    customRender: ({ record }) => formatRunDuration(record)
   },
   {
     title: 'Recall@10',
     key: 'recall_10',
     width: 100,
-    customRender: ({ record }) => {
-      // 使用后端返回的 metrics.recall@10 数据
-      if (
-        record.metrics &&
-        record.metrics['recall@10'] !== undefined &&
-        record.metrics['recall@10'] !== null
-      ) {
-        const recallValue = record.metrics['recall@10']
-        const displayValue = formatMetricValue(recallValue)
-        return h(
-          'a-tag',
-          {
-            color: getScoreTagColor(recallValue)
-          },
-          displayValue
-        )
-      }
-
-      // 如果是运行中的任务，显示计算中
-      if (record.status === 'running') {
-        return h(
-          'a-tag',
-          {
-            color: 'processing'
-          },
-          '计算中'
-        )
-      }
-
-      // 已完成但没有 recall@10 数据
-      if (record.status === 'completed') {
-        return h(
-          'a-tag',
-          {
-            color: 'default'
-          },
-          '无数据'
-        )
-      }
-
-      // 其他情况显示横线
-      return h('span', '-')
-    }
+    customRender: ({ record }) => renderMetricTag(getRecall10(record), record.status)
+  },
+  {
+    title: '综合评分',
+    key: 'overall_score',
+    width: 100,
+    customRender: ({ record }) => renderMetricTag(record.overall_score, record.status, 0)
+  },
+  {
+    title: '状态',
+    key: 'status',
+    width: 86,
+    customRender: ({ record }) =>
+      h('a-tag', { color: getStatusColor(record.status) }, getStatusText(record.status))
   },
   {
     title: '操作',
     key: 'actions',
-    width: 100
+    width: 120
   }
 ]
 
@@ -712,6 +766,29 @@ const loadDatasets = async (showSuccessMessage = false) => {
 const onDatasetChanged = (datasetId) => {
   const benchmark = availableDatasets.value.find((b) => b.dataset_id === datasetId)
   selectedDataset.value = benchmark || null
+  if (!selectedDataset.value?.has_gold_answers) {
+    configForm.answer_llm = ''
+    configForm.judge_llm = ''
+  }
+}
+
+const hasRunningEvaluation = () => evaluationHistory.value.some((record) => record.status === 'running')
+
+const stopEvaluationRefresh = () => {
+  if (evaluationRefreshTimer) {
+    window.clearInterval(evaluationRefreshTimer)
+    evaluationRefreshTimer = null
+  }
+}
+
+const syncEvaluationRefresh = () => {
+  if (!hasRunningEvaluation()) {
+    stopEvaluationRefresh()
+    return
+  }
+  if (!evaluationRefreshTimer) {
+    evaluationRefreshTimer = window.setInterval(() => loadEvaluationHistory(true), 3000)
+  }
 }
 
 // 刷新历史评估记录
@@ -735,61 +812,47 @@ const startEvaluation = async () => {
     return
   }
 
-  // 校验模型选择：必须同时选择或同时不选择
-  const hasAnswerModel = !!configForm.answer_llm
-  const hasJudgeModel = !!configForm.judge_llm
+  const answerModel = selectedDataset.value.has_gold_answers ? configForm.answer_llm : ''
+  const judgeModel = selectedDataset.value.has_gold_answers ? configForm.judge_llm : ''
+  const hasAnswerModel = !!answerModel
+  const hasJudgeModel = !!judgeModel
 
   if (hasAnswerModel !== hasJudgeModel) {
     message.warning('生成模型和评估模型必须同时选择或者同时不选择')
     return
   }
 
-  const runEvaluation = async () => {
-    startingEvaluation.value = true
+  startingEvaluation.value = true
 
-    // 只传递模型配置，检索配置由服务器从知识库读取
-    const params = {
-      dataset_id: selectedDataset.value.dataset_id,
-      model_config: {
-        answer_llm: configForm.answer_llm, // 传递答案生成模型
-        judge_llm: configForm.judge_llm // 传递评判模型
-      }
-    }
-
-    try {
-      const response = await evaluationApi.runEvaluation(props.databaseId, params)
-
-      if (response.message === 'success') {
-        message.success('评估任务已开始')
-        loadEvaluationHistory()
-        // 刷新任务中心的任务列表
-        taskerStore.loadTasks()
-      } else {
-        message.error(response.message || '启动评估失败')
-      }
-    } catch (error) {
-      console.error('启动评估失败:', error)
-      message.error('启动评估失败')
-    } finally {
-      startingEvaluation.value = false
+  const params = {
+    dataset_id: selectedDataset.value.dataset_id,
+    model_config: {
+      answer_llm: answerModel,
+      judge_llm: judgeModel
     }
   }
 
-  if (!hasAnswerModel) {
-    Modal.confirm({
-      title: '确认评估模式',
-      content: '您未选择答案生成模型，将仅进行检索测试，不会进行问答测试。是否继续？',
-      okText: '继续',
-      cancelText: '取消',
-      onOk: runEvaluation
-    })
-  } else {
-    runEvaluation()
+  try {
+    const response = await evaluationApi.runEvaluation(props.databaseId, params)
+
+    if (response.message === 'success') {
+      message.success('评估任务已开始')
+      evaluationDropdownOpen.value = false
+      loadEvaluationHistory()
+      taskerStore.loadTasks()
+    } else {
+      message.error(response.message || '启动评估失败')
+    }
+  } catch (error) {
+    console.error('启动评估失败:', error)
+    message.error('启动评估失败')
+  } finally {
+    startingEvaluation.value = false
   }
 }
 
 // 加载评估历史
-const loadEvaluationHistory = async () => {
+const loadEvaluationHistory = async (silent = false) => {
   try {
     const response = await evaluationApi.listRuns(props.databaseId)
     if (response.message === 'success') {
@@ -797,7 +860,9 @@ const loadEvaluationHistory = async () => {
     }
   } catch (error) {
     console.error('加载评估历史失败:', error)
-    message.error('加载评估历史失败')
+    if (!silent) message.error('加载评估历史失败')
+  } finally {
+    syncEvaluationRefresh()
   }
 }
 
@@ -939,6 +1004,79 @@ const formatTime = (timeStr) => {
   return date.toLocaleString('zh-CN')
 }
 
+const isFiniteNumber = (value) => typeof value === 'number' && Number.isFinite(value)
+
+const getDatasetName = (datasetId) => {
+  const benchmark = availableDatasets.value.find((b) => b.dataset_id === datasetId)
+  return benchmark ? benchmark.name : datasetId?.slice(0, 8) || '-'
+}
+
+const getRecall10 = (record) => record?.metrics?.['recall@10']
+
+const formatPercent = (value, digits = 1) => {
+  if (!isFiniteNumber(value)) return '-'
+  return `${(value * 100).toFixed(digits)}%`
+}
+
+const formatRunItems = (record) => `${record?.completed_items || 0}/${record?.total_items || 0}`
+
+const formatCompletionRate = (record) => {
+  const total = Number(record?.total_items || 0)
+  if (!total) return '-'
+  return formatPercent(Number(record?.completed_items || 0) / total, 0)
+}
+
+const formatRunDuration = (record) => {
+  if (record?.status === 'running') return '进行中'
+  if (!record?.started_at || !record?.completed_at) return '-'
+  const duration = (new Date(record.completed_at) - new Date(record.started_at)) / 1000
+  return Number.isFinite(duration) && duration >= 0 ? formatDuration(duration) : '-'
+}
+
+const getRunProgress = (record) => {
+  if (isFiniteNumber(record?.progress)) return Math.max(0, Math.min(Math.round(record.progress), 100))
+
+  const total = Number(record?.total_items || 0)
+  if (!total) return 0
+  const completed = Number(record?.completed_items || 0)
+  return Math.max(0, Math.min(Math.round((completed / total) * 100), 100))
+}
+
+const getRunProgressMessage = (record) => {
+  if (record?.message) return record.message
+  const total = Number(record?.total_items || 0)
+  if (total) return `评估 ${Number(record?.completed_items || 0)}/${total}`
+  return '评估进行中'
+}
+
+const formatLatestRingValue = (record) =>
+  record?.status === 'running' ? `${getRunProgress(record)}%` : formatPercent(record?.overall_score, 0)
+
+const getLatestRingClass = (record) =>
+  record?.status === 'running' ? 'score-running' : getScoreLevelClass(record?.overall_score)
+
+const getMetricColor = (value) => (isFiniteNumber(value) ? getScoreColor(value) : undefined)
+
+const renderMetricTag = (value, status, digits = 3) => {
+  if (isFiniteNumber(value)) {
+    return h(
+      'a-tag',
+      { color: getScoreTagColor(value) },
+      digits === 0 ? formatPercent(value, 0) : formatMetricValue(value)
+    )
+  }
+  if (status === 'running') return h('a-tag', { color: 'processing' }, '计算中')
+  if (status === 'completed') return h('a-tag', { color: 'default' }, '无数据')
+  return h('span', '-')
+}
+
+const getScoreLevelClass = (score) => {
+  if (!isFiniteNumber(score)) return 'score-empty'
+  if (score >= 0.8) return 'score-high'
+  if (score >= 0.6) return 'score-medium'
+  return 'score-low'
+}
+
 const getScoreColor = (score) => {
   if (score >= 0.8) return 'var(--color-success-500)'
   if (score >= 0.6) return 'var(--color-warning-500)'
@@ -1032,6 +1170,8 @@ const formatDuration = (seconds) => {
   }
 }
 
+watch(evaluationHistory, syncEvaluationRefresh, { deep: true })
+
 // 组件挂载时加载数据
 onMounted(() => {
   loadDatasets()
@@ -1039,6 +1179,7 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  stopEvaluationRefresh()
   stopColumnResize?.()
 })
 </script>
@@ -1050,45 +1191,70 @@ onUnmounted(() => {
   flex-direction: column;
 }
 
-// 顶部工具栏
-.toolbar {
-  padding: 12px 16px;
-  background: var(--gray-0);
-  border-radius: 8px;
+:global(.evaluation-start-dropdown) {
+  width: 420px;
+  padding: 14px;
   border: 1px solid var(--gray-200);
+  border-radius: 10px;
+  background: var(--color-bg-container);
+  box-shadow: 0 10px 30px var(--shadow-3);
+}
+
+:global(.evaluation-start-dropdown .dropdown-header) {
+  padding-bottom: 10px;
+  margin-bottom: 12px;
+  border-bottom: 1px solid var(--gray-150);
+}
+
+:global(.evaluation-start-dropdown .dropdown-title) {
+  margin-bottom: 4px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--gray-1000);
+}
+
+:global(.evaluation-start-dropdown .dropdown-subtitle) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+
+:global(.evaluation-start-dropdown .dropdown-model-fields) {
   display: flex;
-  justify-content: space-between;
+  flex-direction: column;
+  gap: 12px;
+}
+
+:global(.evaluation-start-dropdown .dropdown-benchmark-row) {
+  display: flex;
   align-items: center;
-  flex-shrink: 0;
+  gap: 8px;
+}
 
-  .toolbar-left {
-    display: flex;
-    align-items: center;
-  }
+:global(.evaluation-start-dropdown .refresh-benchmarks-btn) {
+  flex: 0 0 32px;
+  color: var(--gray-600);
+}
 
-  .benchmark-selector {
-    display: flex;
-    align-items: center;
-    gap: 12px;
+:global(.evaluation-start-dropdown .ant-form-item) {
+  margin-bottom: 0;
+}
 
-    .selector-label {
-      font-size: 14px;
-      font-weight: 500;
-      color: var(--gray-700);
-      margin: 0;
-      white-space: nowrap;
-    }
+:global(.evaluation-start-dropdown .ant-form-item-label) {
+  padding-bottom: 4px;
+  font-weight: 500;
+}
 
-    .refresh-benchmarks-btn {
-      color: var(--gray-600);
-    }
-  }
-
-  .toolbar-right {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-  }
+:global(.evaluation-start-dropdown .dropdown-hint) {
+  margin: 12px 0;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: var(--color-info-50);
+  color: var(--color-info-700);
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 // 评估内容区域
@@ -1109,7 +1275,7 @@ onUnmounted(() => {
   flex-direction: column;
   gap: 12px;
   overflow: auto;
-  margin-top: 12px;
+  margin-top: 0;
 
   &::-webkit-scrollbar {
     width: 6px;
@@ -1195,6 +1361,7 @@ onUnmounted(() => {
 
 // 优化表格样式
 :deep(.ant-table) {
+  overflow: auto;
   .ant-table-tbody > tr > td {
     padding: 12px 12px;
     vertical-align: top;
@@ -1256,35 +1423,6 @@ onUnmounted(() => {
 
     &:last-child {
       margin-right: 0;
-    }
-  }
-}
-
-// 优化模型配置表单项
-.model-config-section {
-  padding: 6px 8px;
-  background: var(--gray-10);
-  border-radius: 8px;
-  border: 1px solid var(--gray-150);
-
-  .ant-form-item {
-    margin-bottom: 0;
-
-    .ant-form-item-label {
-      font-weight: 500;
-    }
-
-    .ant-form-item-extra {
-      font-size: 12px;
-      color: var(--gray-500);
-      margin-top: 4px;
-    }
-  }
-
-  // 为模型配置部分内的列添加特定样式
-  .ant-col {
-    &:not(:last-child) .ant-form-item {
-      padding-right: 12px;
     }
   }
 }
@@ -1410,19 +1548,23 @@ onUnmounted(() => {
   inset: 0;
   z-index: 1000;
   width: 100vw;
-  height: 100vh;
-  background: var(--color-bg-container);
+  height: 100dvh;
+  padding: 12px;
+  box-sizing: border-box;
+  background: var(--dark-25);
   overflow: hidden;
 }
 
 :global(.evaluation-detail-panel) {
-  width: 100vw;
-  height: 100vh;
-  max-height: 100vh;
+  width: 100%;
+  height: calc(100dvh - 24px);
+  max-height: calc(100dvh - 24px);
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  border-radius: 12px;
   background: var(--color-bg-container);
+  box-shadow: 0 12px 32px var(--shadow-4);
 }
 
 :global(.evaluation-detail-titlebar) {
@@ -1670,6 +1812,191 @@ onUnmounted(() => {
   }
 }
 
+.section-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+
+  .section-title {
+    margin: 0;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--gray-800);
+  }
+}
+
+.last-evaluation-section {
+  padding: 14px 16px;
+  background: var(--gray-0);
+  border: 1px solid var(--gray-200);
+  border-radius: 10px;
+}
+
+.last-evaluation-card {
+  display: grid;
+  grid-template-columns: minmax(260px, 1.1fr) minmax(360px, 1.8fr);
+  gap: 16px;
+  align-items: stretch;
+}
+
+.last-evaluation-main {
+  display: flex;
+  gap: 14px;
+  align-items: center;
+  min-width: 0;
+}
+
+.score-ring {
+  width: 64px;
+  height: 64px;
+  flex: 0 0 64px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  font-size: 18px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  background: var(--gray-50);
+  color: var(--gray-700);
+  border: 6px solid var(--gray-200);
+
+  &.score-high {
+    color: var(--color-success-700);
+    border-color: var(--color-success-100);
+    background: var(--color-success-50);
+  }
+
+  &.score-medium {
+    color: var(--color-warning-700);
+    border-color: var(--color-warning-100);
+    background: var(--color-warning-50);
+  }
+
+  &.score-low {
+    color: var(--color-error-700);
+    border-color: var(--color-error-100);
+    background: var(--color-error-50);
+  }
+
+  &.score-running {
+    color: var(--color-primary-700);
+    border-color: var(--color-primary-100);
+    background: var(--color-primary-50);
+  }
+}
+
+.last-evaluation-info {
+  min-width: 0;
+}
+
+.last-evaluation-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  margin-bottom: 6px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--gray-1000);
+}
+
+.last-evaluation-meta {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+
+.last-evaluation-progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+
+  :deep(.ant-progress) {
+    width: 160px;
+    line-height: 1;
+  }
+}
+
+.run-progress-message {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+
+.run-id-link {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--color-primary-700);
+  cursor: pointer;
+  font: inherit;
+
+  &:hover {
+    color: var(--color-primary-900);
+    text-decoration: underline;
+  }
+}
+
+.last-evaluation-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.metric-card {
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--gray-150);
+  border-radius: 8px;
+  background: var(--gray-10);
+
+  .metric-label {
+    display: block;
+    margin-bottom: 4px;
+    font-size: 12px;
+    color: var(--color-text-secondary);
+  }
+
+  strong {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 16px;
+    color: var(--gray-1000);
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+.last-evaluation-empty {
+  padding: 18px;
+  border: 1px dashed var(--gray-200);
+  border-radius: 8px;
+  background: var(--gray-10);
+  color: var(--color-text-secondary);
+  text-align: center;
+  font-size: 13px;
+}
+
+@media (max-width: 960px) {
+  .last-evaluation-card {
+    grid-template-columns: 1fr;
+  }
+
+  .last-evaluation-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
 // 历史评估记录区域
 .history-section {
   .section-header {
@@ -1711,6 +2038,25 @@ onUnmounted(() => {
 
   :deep(.ant-table) {
     border: 1px solid var(--gray-100);
+  }
+
+  .history-action-link {
+    color: var(--color-primary-500);
+    font-size: 13px;
+    text-decoration: none;
+    cursor: pointer;
+
+    &:hover {
+      color: var(--color-primary-700);
+    }
+  }
+
+  .history-action-link-danger {
+    color: var(--color-error-700);
+
+    &:hover {
+      color: var(--color-error-900);
+    }
   }
 }
 

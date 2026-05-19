@@ -21,6 +21,15 @@
         <div class="settings-sider-nav">
           <div
             class="sider-item"
+            :class="{ activesec: activeTab === 'account' }"
+            @click="activeTab = 'account'"
+            v-if="userStore.isLoggedIn"
+          >
+            <CircleUser class="icon" :size="18" />
+            <span>账户设置</span>
+          </div>
+          <div
+            class="sider-item"
             :class="{ activesec: activeTab === 'base' }"
             @click="activeTab = 'base'"
             v-if="userStore.isAdmin"
@@ -45,15 +54,6 @@
           >
             <Users class="icon" :size="18" />
             <span>部门管理</span>
-          </div>
-          <div
-            class="sider-item"
-            :class="{ activesec: activeTab === 'apikey' }"
-            @click="activeTab = 'apikey'"
-            v-if="userStore.isLoggedIn"
-          >
-            <KeyIcon class="icon" :size="18" />
-            <span>API Key</span>
           </div>
         </div>
 
@@ -95,6 +95,14 @@
       <div class="settings-mobile-nav">
         <div
           class="nav-item"
+          :class="{ active: activeTab === 'account' }"
+          @click="activeTab = 'account'"
+          v-if="userStore.isLoggedIn"
+        >
+          账户设置
+        </div>
+        <div
+          class="nav-item"
           :class="{ active: activeTab === 'base' }"
           @click="activeTab = 'base'"
           v-if="userStore.isAdmin"
@@ -117,19 +125,15 @@
         >
           部门管理
         </div>
-        <div
-          class="nav-item"
-          :class="{ active: activeTab === 'apikey' }"
-          @click="activeTab = 'apikey'"
-          v-if="userStore.isLoggedIn"
-        >
-          API Key
-        </div>
       </div>
 
       <!-- 内容区域 -->
       <div class="settings-content-wrapper">
         <div class="settings-content">
+          <div v-show="activeTab === 'account'" v-if="userStore.isLoggedIn">
+            <AccountSettingsComponent />
+          </div>
+
           <div v-show="activeTab === 'base'" v-if="userStore.isAdmin">
             <BasicSettingsSection />
           </div>
@@ -142,9 +146,6 @@
             <DepartmentManagementComponent />
           </div>
 
-          <div v-show="activeTab === 'apikey'" v-if="userStore.isLoggedIn">
-            <ApiKeyManagementComponent />
-          </div>
         </div>
       </div>
     </div>
@@ -154,31 +155,27 @@
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue'
 import { useUserStore } from '@/stores/user'
-import {
-  ExternalLink,
-  Key as KeyIcon,
-  Settings,
-  Star,
-  User,
-  Users,
-  X
-} from 'lucide-vue-next'
+import { CircleUser, ExternalLink, Settings, Star, User, Users, X } from 'lucide-vue-next'
+import AccountSettingsComponent from '@/components/AccountSettingsComponent.vue'
 import BasicSettingsSection from '@/components/BasicSettingsSection.vue'
 import UserManagementComponent from '@/components/UserManagementComponent.vue'
 import DepartmentManagementComponent from '@/components/DepartmentManagementComponent.vue'
-import ApiKeyManagementComponent from '@/components/ApiKeyManagementComponent.vue'
 
 const props = defineProps({
   visible: {
     type: Boolean,
     default: false
+  },
+  initialTab: {
+    type: String,
+    default: ''
   }
 })
 
 const emit = defineEmits(['update:visible', 'close'])
 
 const userStore = useUserStore()
-const activeTab = ref('base')
+const activeTab = ref('account')
 const showStarCard = ref(true)
 
 const STAR_CARD_STORAGE_KEY = 'yuxi-settings-star-card-dismissed'
@@ -188,6 +185,22 @@ const visible = computed({
   get: () => props.visible,
   set: (value) => emit('update:visible', value)
 })
+
+const availableTabs = computed(() => {
+  const tabs = []
+  if (userStore.isLoggedIn) tabs.push('account')
+  if (userStore.isAdmin) tabs.push('base', 'user')
+  if (userStore.isSuperAdmin) tabs.push('department')
+  return tabs
+})
+
+const setActiveTab = (preferredTab) => {
+  if (preferredTab && availableTabs.value.includes(preferredTab)) {
+    activeTab.value = preferredTab
+    return
+  }
+  activeTab.value = userStore.isAdmin ? 'base' : availableTabs.value[0]
+}
 
 const handleClose = () => {
   emit('close')
@@ -202,16 +215,11 @@ onMounted(() => {
   showStarCard.value = localStorage.getItem(STAR_CARD_STORAGE_KEY) !== 'true'
 })
 
-// 根据用户权限设置默认标签页
 watch(
-  () => props.visible,
-  (newVal) => {
+  () => [props.visible, props.initialTab],
+  ([newVal]) => {
     if (newVal) {
-      if (userStore.isAdmin) {
-        activeTab.value = 'base'
-      } else if (userStore.isLogin) {
-        activeTab.value = 'apikey'
-      }
+      setActiveTab(props.initialTab)
     }
   }
 )

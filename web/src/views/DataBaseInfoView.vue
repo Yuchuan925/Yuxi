@@ -80,7 +80,6 @@
                   <span>上传</span>
                 </button>
               </div>
-              <span class="file-panel-desc">管理知识库中的文件、文件夹上传、整理与查看</span>
             </div>
             <div class="file-panel-status">
               <div
