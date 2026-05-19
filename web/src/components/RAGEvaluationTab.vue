@@ -7,25 +7,25 @@
         <div class="benchmark-selector">
           <label class="selector-label">评估基准</label>
           <a-select
-            v-model:value="selectedBenchmarkId"
+            v-model:value="selectedDatasetId"
             placeholder="请选择评估基准"
             style="width: 240px"
-            @change="onBenchmarkChanged"
-            :loading="benchmarksLoading"
+            @change="onDatasetChanged"
+            :loading="datasetsLoading"
           >
             <a-select-option
-              v-for="benchmark in availableBenchmarks"
-              :key="benchmark.benchmark_id"
-              :value="benchmark.benchmark_id"
+              v-for="benchmark in availableDatasets"
+              :key="benchmark.dataset_id"
+              :value="benchmark.dataset_id"
             >
-              {{ benchmark.name }} ({{ benchmark.question_count }} 个问题)
+              {{ benchmark.name }} ({{ benchmark.item_count }} 个问题)
             </a-select-option>
           </a-select>
           <a-button
             type="text"
             size="middle"
-            :loading="benchmarksLoading"
-            @click="() => loadBenchmarks(true)"
+            :loading="datasetsLoading"
+            @click="() => loadDatasets(true)"
             :icon="h(RefreshCw, { size: 16 })"
             class="refresh-benchmarks-btn lucide-icon-btn"
             title="刷新评估基准列表"
@@ -38,7 +38,7 @@
           type="primary"
           :loading="startingEvaluation"
           @click="startEvaluation"
-          :disabled="!selectedBenchmark"
+          :disabled="!selectedDataset"
           size="middle"
         >
           开始评估
@@ -51,8 +51,7 @@
       <!-- 模型配置（仅在选中基准且需要时显示） -->
       <div
         v-if="
-          selectedBenchmark &&
-          (selectedBenchmark.has_gold_chunks || selectedBenchmark.has_gold_answers)
+          selectedDataset && (selectedDataset.has_gold_chunks || selectedDataset.has_gold_answers)
         "
         class="model-config-section"
       >
@@ -60,7 +59,7 @@
           <a-col :span="12">
             <a-form-item
               :label="
-                selectedBenchmark.has_gold_answers
+                selectedDataset.has_gold_answers
                   ? '答案生成模型（可选）'
                   : '答案生成模型（当前基准无需）'
               "
@@ -68,7 +67,8 @@
               <ModelSelectorComponent
                 v-model:model_spec="configForm.answer_llm"
                 size="small"
-                :disabled="!selectedBenchmark || !selectedBenchmark.has_gold_answers"
+                displayName="mini"
+                :disabled="!selectedDataset || !selectedDataset.has_gold_answers"
                 @select-model="(value) => (configForm.answer_llm = value)"
                 style="width: 100%"
               />
@@ -78,7 +78,7 @@
           <a-col :span="12">
             <a-form-item
               :label="
-                selectedBenchmark.has_gold_answers
+                selectedDataset.has_gold_answers
                   ? '答案评判模型（可选）'
                   : '答案评判模型（当前基准无需）'
               "
@@ -86,7 +86,8 @@
               <ModelSelectorComponent
                 v-model:model_spec="configForm.judge_llm"
                 size="small"
-                :disabled="!selectedBenchmark || !selectedBenchmark.has_gold_answers"
+                displayName="mini"
+                :disabled="!selectedDataset || !selectedDataset.has_gold_answers"
                 @select-model="(value) => (configForm.judge_llm = value)"
                 style="width: 100%"
               />
@@ -95,7 +96,7 @@
         </a-row>
       </div>
 
-      <template v-if="!selectedBenchmark">
+      <template v-if="!selectedDataset">
         <div class="empty-state">
           <a-empty description="请在顶部选择评估基准或前往基准管理">
             <a-space>
@@ -142,7 +143,7 @@
                     v-if="record.status === 'completed'"
                     type="link"
                     size="small"
-                    @click="viewResults(record.task_id)"
+                    @click="viewResults(record.run_id)"
                   >
                     查看
                   </a-button>
@@ -152,7 +153,7 @@
                   <a-popconfirm
                     title="确定要删除这条评估记录吗？"
                     description="删除后将无法恢复"
-                    @confirm="deleteEvaluationRecord(record.task_id)"
+                    @confirm="deleteEvaluationRecord(record.run_id)"
                     ok-text="确定"
                     cancel-text="取消"
                   >
@@ -169,235 +170,204 @@
     </div>
   </div>
 
-  <!-- 评估结果详情模态框 -->
-  <a-modal
-    v-model:open="resultModalVisible"
-    :title="`评估结果 - ${selectedResult?.task_id?.slice(0, 8) || ''}`"
-    width="1200px"
-    :footer="null"
-  >
-    <div v-if="resultsLoading" class="loading-container">
-      <a-spin size="large" />
-      <p style="margin-top: 16px; color: var(--gray-600)">正在加载评估结果...</p>
-    </div>
+  <Teleport to="body">
+    <div v-if="resultModalVisible" class="evaluation-detail-overlay">
+      <div class="evaluation-detail-panel">
+        <div class="evaluation-detail-titlebar">
+          <div class="evaluation-detail-title">
+            评估结果 - {{ selectedResult?.run_id?.slice(0, 8) || '' }}
+          </div>
+          <a-button
+            type="text"
+            size="small"
+            class="lucide-icon-btn"
+            title="关闭"
+            @click="resultModalVisible = false"
+          >
+            <X :size="16" />
+          </a-button>
+        </div>
 
-    <div v-else-if="selectedResult && detailedResults.length > 0">
-      <!-- 基本信息 -->
-      <a-descriptions
-        title="基本信息"
-        :column="3"
-        size="small"
-        bordered
-        style="margin-bottom: 20px"
-      >
-        <a-descriptions-item label="任务ID">{{ selectedResult.task_id }}</a-descriptions-item>
-        <a-descriptions-item label="状态">
-          <a-tag :color="getStatusColor(selectedResult.status)">
-            {{ getStatusText(selectedResult.status) }}
-          </a-tag>
-        </a-descriptions-item>
-        <a-descriptions-item label="总体评分">
-          <span v-if="selectedResult.overall_score !== null">
-            <a-tag :color="getScoreTagColor(selectedResult.overall_score)">
-              {{ (selectedResult.overall_score * 100).toFixed(1) }}%
-            </a-tag>
-          </span>
-          <span v-else>-</span>
-        </a-descriptions-item>
-        <a-descriptions-item label="总问题数">{{
-          selectedResult.total_questions
-        }}</a-descriptions-item>
-        <a-descriptions-item label="完成数">{{
-          selectedResult.completed_questions
-        }}</a-descriptions-item>
-        <a-descriptions-item label="总耗时">
-          <span v-if="evaluationStats.totalDuration">
-            {{ formatDuration(evaluationStats.totalDuration) }}
-          </span>
-          <span v-else>-</span>
-        </a-descriptions-item>
-      </a-descriptions>
+        <div v-if="resultsLoading" class="loading-container">
+          <a-spin size="large" />
+          <p style="margin-top: 16px; color: var(--gray-600)">正在加载评估结果...</p>
+        </div>
 
-      <!-- 检索配置和整体评估报告 -->
-      <a-row :gutter="16" style="margin-bottom: 20px">
-        <!-- 检索配置 -->
-        <a-col :span="12" v-if="selectedResult.retrieval_config">
-          <a-card size="small" title="检索配置">
-            <div class="json-viewer-container">
-              <pre class="json-viewer">{{
-                JSON.stringify(selectedResult.retrieval_config, null, 2)
-              }}</pre>
+        <div v-else-if="selectedResult && detailedResults.length > 0" class="result-detail-content">
+          <div class="result-summary-bar">
+            <div class="summary-items">
+              <span class="summary-item summary-run-id" :title="selectedResult.run_id">
+                运行ID：{{ selectedResult.run_id }}
+              </span>
+              <span class="summary-item">
+                状态：
+                <a-tag :color="getStatusColor(selectedResult.status)">
+                  {{ getStatusText(selectedResult.status) }}
+                </a-tag>
+              </span>
+              <span class="summary-item">
+                总体评分：
+                <a-tag
+                  v-if="selectedResult.overall_score != null"
+                  :color="getScoreTagColor(selectedResult.overall_score)"
+                >
+                  {{ (selectedResult.overall_score * 100).toFixed(1) }}%
+                </a-tag>
+                <span v-else>-</span>
+              </span>
+              <span class="summary-item">总问题数：{{ selectedResult.total_items }}</span>
+              <span class="summary-item">完成数：{{ selectedResult.completed_items }}</span>
+              <span class="summary-item">
+                总耗时：{{
+                  evaluationStats.totalDuration
+                    ? formatDuration(evaluationStats.totalDuration)
+                    : '-'
+                }}
+              </span>
             </div>
-          </a-card>
-        </a-col>
+            <a-button
+              type="default"
+              size="small"
+              @click="toggleErrorOnly"
+              :class="{ 'error-only-active': showErrorsOnly }"
+            >
+              {{ showErrorsOnly ? '显示全部' : '仅查看错误' }}
+            </a-button>
+          </div>
 
-        <!-- 整体评估报告 -->
-        <a-col :span="selectedResult.retrieval_config ? 12 : 24">
-          <a-card size="small" title="整体评估报告">
-            <!-- 检索指标 -->
-            <div style="margin-bottom: 20px">
-              <h5 style="margin-bottom: 12px; font-size: 14px; font-weight: 500">检索指标</h5>
-              <div v-if="Object.keys(evaluationStats.retrievalMetrics || {}).length > 0">
-                <div
+          <div class="result-metrics-bar">
+            <div class="metric-items">
+              <span class="result-count">
+                {{
+                  showErrorsOnly
+                    ? `仅显示错误结果，共 ${paginationTotal} 条`
+                    : `显示全部结果，共 ${paginationTotal} 条`
+                }}
+              </span>
+              <template v-if="Object.keys(evaluationStats.retrievalMetrics || {}).length > 0">
+                <span
                   v-for="(value, key) in evaluationStats.retrievalMetrics"
                   :key="key"
-                  class="report-metric"
+                  class="compact-metric"
                 >
-                  <span class="metric-label">{{ getMetricTitle(key) }}：</span>
-                  <span class="metric-value" :style="{ color: getScoreColor(value) }">
+                  {{ getMetricTitle(key) }}：<strong :style="{ color: getScoreColor(value) }">
                     {{ formatMetricValue(value) }}
-                  </span>
-                </div>
-              </div>
-              <span v-else class="no-metrics">-</span>
-            </div>
-
-            <!-- 答案准确性 -->
-            <div>
-              <h5 style="margin-bottom: 12px; font-size: 14px; font-weight: 500">答案准确性</h5>
-              <div class="accuracy-stats">
-                <div class="accuracy-item">
-                  <span class="accuracy-label">正确答案数：</span>
-                  <span class="accuracy-value"
-                    >{{ evaluationStats.correctAnswers || 0 }} /
-                    {{ evaluationStats.totalQuestions || 0 }}</span
-                  >
-                </div>
-                <div class="accuracy-item">
-                  <span class="accuracy-label">准确率：</span>
-                  <span
-                    class="accuracy-value"
-                    :style="{ color: getScoreColor(evaluationStats.answerAccuracy) }"
-                  >
-                    {{ (evaluationStats.answerAccuracy * 100).toFixed(1) }}%
-                  </span>
-                </div>
-              </div>
-            </div>
-          </a-card>
-        </a-col>
-      </a-row>
-
-      <!-- 详细结果表格 -->
-      <div
-        style="
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          margin-bottom: 16px;
-        "
-      >
-        <div>
-          <h4 style="margin: 0">详细评估结果</h4>
-          <span style="font-size: 12px; color: var(--gray-600); margin-left: 8px">
-            {{
-              showErrorsOnly
-                ? `仅显示错误结果（共 ${paginationTotal} 条）`
-                : `显示全部结果（共 ${paginationTotal} 条）`
-            }}
-          </span>
-        </div>
-        <a-button
-          type="default"
-          size="small"
-          @click="toggleErrorOnly"
-          :class="{ 'error-only-active': showErrorsOnly }"
-        >
-          {{ showErrorsOnly ? '显示全部' : '仅查看错误' }}
-        </a-button>
-      </div>
-      <a-table
-        :columns="resultColumns"
-        :data-source="detailedResults"
-        :pagination="{
-          current: currentPage,
-          pageSize: pageSize,
-          total: paginationTotal,
-          showSizeChanger: true,
-          showQuickJumper: true,
-          showTotal: (total, range) => `第 ${range[0]}-${range[1]} 条，共 ${total} 条`,
-          onChange: handlePageChange,
-          onShowSizeChange: handlePageSizeChange
-        }"
-        :scroll="{ x: 1000 }"
-        size="small"
-        :loading="resultsLoading"
-      >
-        <template #bodyCell="{ column, record }">
-          <template v-if="column.key === 'query'">
-            <a-tooltip :title="record.query">
-              <div class="query-text">{{ record.query }}</div>
-            </a-tooltip>
-          </template>
-          <template v-else-if="column.key === 'generated_answer'">
-            <a-tooltip :title="record.generated_answer">
-              <div class="answer-text">{{ record.generated_answer || '-' }}</div>
-            </a-tooltip>
-          </template>
-          <template v-else-if="column.key === 'retrieval_score'">
-            <div
-              v-if="
-                record.metrics &&
-                Object.keys(record.metrics).some(
-                  (k) =>
-                    k.startsWith('recall') ||
-                    k.startsWith('precision') ||
-                    k === 'map' ||
-                    k === 'ndcg'
-                )
-              "
-              class="retrieval-metrics"
-            >
-              <div v-for="(val, key) in record.metrics" :key="key" class="metric-item">
-                <span
-                  v-if="
-                    key.startsWith('recall') ||
-                    key.startsWith('precision') ||
-                    key === 'map' ||
-                    key === 'ndcg'
-                  "
-                  class="metric-content"
-                  :class="`metric-${getMetricType(key)}`"
-                >
-                  <span class="metric-name">{{ getMetricShortName(key) }}</span>
-                  <span class="metric-value">{{ formatMetricValue(val) }}</span>
+                  </strong>
                 </span>
-              </div>
+              </template>
+              <span v-if="evaluationStats.totalQuestions" class="compact-metric">
+                答案准确率：<strong
+                  :style="{ color: getScoreColor(evaluationStats.answerAccuracy) }"
+                >
+                  {{ (evaluationStats.answerAccuracy * 100).toFixed(1) }}%
+                </strong>
+              </span>
             </div>
-            <span v-else class="no-metrics">-</span>
-          </template>
-          <template v-else-if="column.key === 'answer_score'">
-            <div v-if="record.metrics && record.metrics.score !== undefined">
-              <a-tag :color="record.metrics.score > 0.5 ? 'green' : 'red'">
-                {{ record.metrics.score === 1.0 ? '正确' : '错误' }}
-              </a-tag>
-              <div v-if="record.metrics.reasoning" class="answer-reasoning">
-                <a-tooltip :title="record.metrics.reasoning">
-                  {{ record.metrics.reasoning }}
-                </a-tooltip>
-              </div>
-            </div>
-            <span v-else>-</span>
-          </template>
-        </template>
-      </a-table>
-    </div>
+            <a-switch
+              v-model:checked="resultAutoWrap"
+              size="small"
+              checked-children="换行"
+              un-checked-children="不换行"
+            />
+          </div>
 
-    <div v-else-if="selectedResult" class="empty-results">
-      <a-empty description="暂无详细结果数据">
-        <a-button @click="viewDetails(selectedResult)">查看基本信息</a-button>
-      </a-empty>
-    </div>
-  </a-modal>
+          <a-table
+            :columns="resultColumns"
+            :data-source="detailedResults"
+            :pagination="{
+              current: currentPage,
+              pageSize: pageSize,
+              total: paginationTotal,
+              showSizeChanger: true,
+              showQuickJumper: true,
+              showTotal: (total, range) => `第 ${range[0]}-${range[1]} 条，共 ${total} 条`,
+              onChange: handlePageChange,
+              onShowSizeChange: handlePageSizeChange
+            }"
+            :scroll="{ x: resultTableScrollX, y: 'calc(100vh - 230px)' }"
+            :class="{ 'table-nowrap': !resultAutoWrap }"
+            size="small"
+            :loading="resultsLoading"
+          >
+            <template #bodyCell="{ column, record }">
+              <template v-if="column.key === 'query'">
+                <div class="query-text" :title="record.query">{{ record.query }}</div>
+              </template>
+              <template v-else-if="column.key === 'generated_answer'">
+                <div class="answer-text" :title="record.generated_answer">
+                  {{ record.generated_answer || '-' }}
+                </div>
+              </template>
+              <template v-else-if="column.key === 'retrieval_score'">
+                <div
+                  v-if="
+                    record.metrics &&
+                    Object.keys(record.metrics).some(
+                      (k) =>
+                        k.startsWith('recall') ||
+                        k.startsWith('precision') ||
+                        k === 'map' ||
+                        k === 'ndcg'
+                    )
+                  "
+                  class="retrieval-metrics"
+                >
+                  <template v-for="(val, key) in record.metrics" :key="key">
+                    <span
+                      v-if="
+                        key.startsWith('recall') ||
+                        key.startsWith('precision') ||
+                        key === 'map' ||
+                        key === 'ndcg'
+                      "
+                      class="metric-content"
+                      :class="`metric-${getMetricType(key)}`"
+                    >
+                      <span class="metric-name">{{ getMetricShortName(key) }}</span>
+                      <span class="metric-value">{{ formatMetricValue(val) }}</span>
+                    </span>
+                  </template>
+                </div>
+                <span v-else class="no-metrics">-</span>
+              </template>
+              <template v-else-if="column.key === 'answer_score'">
+                <div
+                  v-if="record.metrics && record.metrics.score !== undefined"
+                  class="answer-judgement"
+                >
+                  <a-tag :color="record.metrics.score > 0.5 ? 'green' : 'red'">
+                    {{ record.metrics.score === 1.0 ? '正确' : '错误' }}
+                  </a-tag>
+                  <div
+                    v-if="record.metrics.reasoning"
+                    class="answer-reasoning"
+                    :title="record.metrics.reasoning"
+                  >
+                    {{ record.metrics.reasoning }}
+                  </div>
+                </div>
+                <span v-else>-</span>
+              </template>
+            </template>
+          </a-table>
+        </div>
 
+        <div v-else-if="selectedResult" class="empty-results">
+          <a-empty description="暂无详细结果数据">
+            <a-button @click="viewDetails(selectedResult)">查看基本信息</a-button>
+          </a-empty>
+        </div>
+      </div>
+    </div>
+  </Teleport>
 </template>
 
 <script setup>
-import { ref, reactive, onMounted, computed, h } from 'vue'
+import { ref, reactive, onMounted, onUnmounted, computed, h } from 'vue'
 import { message, Modal } from 'ant-design-vue'
 import { evaluationApi } from '@/apis/knowledge_api'
 import ModelSelectorComponent from '@/components/ModelSelectorComponent.vue'
-import { RefreshCw } from 'lucide-vue-next'
+import { RefreshCw, X } from 'lucide-vue-next'
 import { useTaskerStore } from '@/stores/tasker'
 
 const props = defineProps({
@@ -413,10 +383,10 @@ defineEmits(['switch-to-benchmarks'])
 const taskerStore = useTaskerStore()
 
 // 状态
-const selectedBenchmarkId = ref(null)
-const selectedBenchmark = ref(null)
-const benchmarksLoading = ref(false)
-const availableBenchmarks = ref([])
+const selectedDatasetId = ref(null)
+const selectedDataset = ref(null)
+const datasetsLoading = ref(false)
+const availableDatasets = ref([])
 const startingEvaluation = ref(false)
 const evaluationHistory = ref([])
 const resultModalVisible = ref(false)
@@ -426,10 +396,22 @@ const evaluationStats = ref({})
 const resultsLoading = ref(false)
 const refreshingHistory = ref(false)
 const showErrorsOnly = ref(false)
+const resultAutoWrap = ref(true)
 const currentPage = ref(1)
 const pageSize = ref(20)
 const paginationTotal = ref(0)
 const paginationTotalPages = ref(0)
+let stopColumnResize = null
+
+const resultColumnWidths = reactive({
+  query: 360,
+  generated_answer: 420,
+  retrieval_score: 260,
+  answer_score: 320
+})
+
+const isDatasetCompleted = (dataset) =>
+  (dataset?.build_metadata?.status || 'completed') === 'completed'
 
 // 评估配置表单（使用知识库默认配置）
 const configForm = reactive({
@@ -444,17 +426,17 @@ const resultColumns = computed(() => {
       title: '问题',
       dataIndex: 'query',
       key: 'query',
-      width: 100
+      width: resultColumnWidths.query
     },
     {
       title: '生成答案',
       key: 'generated_answer',
-      width: 180
+      width: resultColumnWidths.generated_answer
     },
     {
       title: '答案评判',
       key: 'answer_score',
-      width: 260
+      width: resultColumnWidths.answer_score
     }
   ]
 
@@ -472,11 +454,58 @@ const resultColumns = computed(() => {
     columns.splice(2, 0, {
       title: '检索指标',
       key: 'retrieval_score',
-      width: 100
+      width: resultColumnWidths.retrieval_score
     })
   }
 
-  return columns
+  return columns.map(withResizableTitle)
+})
+
+const resultTableScrollX = computed(() =>
+  resultColumns.value.reduce((total, column) => total + Number(column.width || 0), 0)
+)
+
+const startColumnResize = (event, key, minWidth = 120) => {
+  stopColumnResize?.()
+
+  const startX = event.clientX
+  const startWidth = resultColumnWidths[key]
+  document.body.style.cursor = 'col-resize'
+  document.body.style.userSelect = 'none'
+
+  const onMouseMove = (moveEvent) => {
+    resultColumnWidths[key] = Math.max(minWidth, startWidth + moveEvent.clientX - startX)
+  }
+
+  const onMouseUp = () => {
+    document.body.style.cursor = ''
+    document.body.style.userSelect = ''
+    window.removeEventListener('mousemove', onMouseMove)
+    window.removeEventListener('mouseup', onMouseUp)
+    stopColumnResize = null
+  }
+
+  stopColumnResize = onMouseUp
+  window.addEventListener('mousemove', onMouseMove)
+  window.addEventListener('mouseup', onMouseUp)
+}
+
+const withResizableTitle = (column) => ({
+  ...column,
+  customHeaderCell: () => ({
+    class: 'resizable-table-header'
+  }),
+  title: h('div', { class: 'resizable-table-title' }, [
+    h('span', { class: 'resizable-table-title-text' }, column.title),
+    h('span', {
+      class: 'column-resize-handle',
+      onMousedown: (event) => {
+        event.preventDefault()
+        event.stopPropagation()
+        startColumnResize(event, column.key)
+      }
+    })
+  ])
 })
 
 const historyColumns = [
@@ -489,14 +518,12 @@ const historyColumns = [
   },
   {
     title: '评估基准',
-    key: 'benchmark_name',
+    key: 'dataset_name',
     width: 200,
     customRender: ({ record }) => {
-      // 根据 benchmark_id 查找基准名称
-      const benchmark = availableBenchmarks.value.find(
-        (b) => b.benchmark_id === record.benchmark_id
-      )
-      return benchmark ? benchmark.name : record.benchmark_id?.slice(0, 8) || '-'
+      // 根据 dataset_id 查找基准名称
+      const benchmark = availableDatasets.value.find((b) => b.dataset_id === record.dataset_id)
+      return benchmark ? benchmark.name : record.dataset_id?.slice(0, 8) || '-'
     }
   },
   {
@@ -586,9 +613,9 @@ const loadResultsWithPagination = async () => {
 
   try {
     resultsLoading.value = true
-    const response = await evaluationApi.getEvaluationResultsByDb(
+    const response = await evaluationApi.getRunResults(
       props.databaseId,
-      selectedResult.value.task_id,
+      selectedResult.value.run_id,
       {
         page: currentPage.value,
         pageSize: pageSize.value,
@@ -600,7 +627,7 @@ const loadResultsWithPagination = async () => {
       const resultData = response.data
 
       // 更新详细结果
-      detailedResults.value = resultData.interim_results || []
+      detailedResults.value = resultData.items || []
 
       // 更新分页信息
       if (resultData.pagination) {
@@ -642,37 +669,38 @@ const loadResultsWithPagination = async () => {
 }
 
 // 加载基准列表
-const loadBenchmarks = async (showSuccessMessage = false) => {
+const loadDatasets = async (showSuccessMessage = false) => {
   if (!props.databaseId) return
 
-  benchmarksLoading.value = true
+  datasetsLoading.value = true
   try {
-    const response = await evaluationApi.getBenchmarks(props.databaseId)
+    const response = await evaluationApi.listDatasets(props.databaseId)
 
     if (response && response.message === 'success' && Array.isArray(response.data)) {
-      availableBenchmarks.value = response.data
+      const completedDatasets = response.data.filter(isDatasetCompleted)
+      availableDatasets.value = completedDatasets
 
       // 如果没有选中的基准，且有可用基准，默认选中第一个
-      if (!selectedBenchmarkId.value && response.data.length > 0) {
-        selectedBenchmarkId.value = response.data[0].benchmark_id
-        selectedBenchmark.value = response.data[0]
-      } else if (selectedBenchmarkId.value) {
+      if (!selectedDatasetId.value && completedDatasets.length > 0) {
+        selectedDatasetId.value = completedDatasets[0].dataset_id
+        selectedDataset.value = completedDatasets[0]
+      } else if (selectedDatasetId.value) {
         // 如果之前有选中的基准，重新验证其有效性
-        const exists = response.data.some((b) => b.benchmark_id === selectedBenchmarkId.value)
+        const exists = completedDatasets.some((b) => b.dataset_id === selectedDatasetId.value)
         if (!exists) {
-          selectedBenchmarkId.value = null
-          selectedBenchmark.value = null
+          selectedDatasetId.value = null
+          selectedDataset.value = null
         } else {
           // 更新选中的基准对象
-          selectedBenchmark.value = response.data.find(
-            (b) => b.benchmark_id === selectedBenchmarkId.value
+          selectedDataset.value = completedDatasets.find(
+            (b) => b.dataset_id === selectedDatasetId.value
           )
         }
       }
 
       // 如果是手动刷新，显示成功提示
       if (showSuccessMessage) {
-        message.success(`已刷新，找到 ${response.data.length} 个评估基准`)
+        message.success(`已刷新，找到 ${completedDatasets.length} 个可评估基准`)
       }
     } else {
       console.error('响应格式不符合预期:', response)
@@ -682,14 +710,14 @@ const loadBenchmarks = async (showSuccessMessage = false) => {
     console.error('加载评估基准失败:', error)
     message.error('加载评估基准失败')
   } finally {
-    benchmarksLoading.value = false
+    datasetsLoading.value = false
   }
 }
 
 // 下拉框选择变化
-const onBenchmarkChanged = (benchmarkId) => {
-  const benchmark = availableBenchmarks.value.find((b) => b.benchmark_id === benchmarkId)
-  selectedBenchmark.value = benchmark || null
+const onDatasetChanged = (datasetId) => {
+  const benchmark = availableDatasets.value.find((b) => b.dataset_id === datasetId)
+  selectedDataset.value = benchmark || null
 }
 
 // 刷新历史评估记录
@@ -708,7 +736,7 @@ const refreshHistory = async () => {
 
 // 开始评估
 const startEvaluation = async () => {
-  if (!selectedBenchmark.value) {
+  if (!selectedDataset.value) {
     message.error('请先选择评估基准')
     return
   }
@@ -727,7 +755,7 @@ const startEvaluation = async () => {
 
     // 只传递模型配置，检索配置由服务器从知识库读取
     const params = {
-      benchmark_id: selectedBenchmark.value.benchmark_id,
+      dataset_id: selectedDataset.value.dataset_id,
       model_config: {
         answer_llm: configForm.answer_llm, // 传递答案生成模型
         judge_llm: configForm.judge_llm // 传递评判模型
@@ -769,7 +797,7 @@ const startEvaluation = async () => {
 // 加载评估历史
 const loadEvaluationHistory = async () => {
   try {
-    const response = await evaluationApi.getEvaluationHistory(props.databaseId)
+    const response = await evaluationApi.listRuns(props.databaseId)
     if (response.message === 'success') {
       evaluationHistory.value = response.data || []
     }
@@ -837,7 +865,7 @@ const calculateEvaluationStats = (results) => {
 }
 
 // 查看结果
-const viewResults = async (taskId) => {
+const viewResults = async (runId) => {
   try {
     resultsLoading.value = true
 
@@ -846,19 +874,19 @@ const viewResults = async (taskId) => {
     showErrorsOnly.value = false
 
     // 先获取基本信息（不分页）
-    const response = await evaluationApi.getEvaluationResultsByDb(props.databaseId, taskId)
+    const response = await evaluationApi.getRunResults(props.databaseId, runId)
 
     if (response.message === 'success' && response.data) {
       const resultData = response.data
 
       // 从历史记录中找到对应的任务信息，如果没有则使用API返回的数据
-      selectedResult.value = evaluationHistory.value.find((r) => r.task_id === taskId) || {
-        task_id: resultData.task_id,
+      selectedResult.value = evaluationHistory.value.find((r) => r.run_id === runId) || {
+        run_id: resultData.run_id,
         status: resultData.status,
         started_at: resultData.started_at,
         completed_at: resultData.completed_at,
-        total_questions: resultData.total_questions || 0,
-        completed_questions: resultData.completed_questions || 0,
+        total_items: resultData.total_items || 0,
+        completed_items: resultData.completed_items || 0,
         overall_score: resultData.overall_score,
         retrieval_config: resultData.retrieval_config
       }
@@ -885,15 +913,15 @@ const viewResults = async (taskId) => {
 }
 
 // 删除评估记录
-const deleteEvaluationRecord = async (taskId) => {
+const deleteEvaluationRecord = async (runId) => {
   try {
     // 找到对应的记录并设置loading状态
-    const record = evaluationHistory.value.find((r) => r.task_id === taskId)
+    const record = evaluationHistory.value.find((r) => r.run_id === runId)
     if (record) {
       record.deleting = true
     }
 
-    const response = await evaluationApi.deleteEvaluationResultByDb(props.databaseId, taskId)
+    const response = await evaluationApi.deleteRun(props.databaseId, runId)
     if (response.message === 'success') {
       message.success('删除成功')
       // 重新加载评估历史
@@ -904,7 +932,7 @@ const deleteEvaluationRecord = async (taskId) => {
     message.error('删除评估记录失败')
   } finally {
     // 清除loading状态
-    const record = evaluationHistory.value.find((r) => r.task_id === taskId)
+    const record = evaluationHistory.value.find((r) => r.run_id === runId)
     if (record) {
       record.deleting = false
     }
@@ -992,8 +1020,6 @@ const getMetricShortName = (key) => {
 // 格式化指标值
 const formatMetricValue = (val) => {
   if (typeof val !== 'number') return '-'
-  // 检索指标（recall, precision, f1 等）范围是 0.0-1.0，统一转换为百分比
-  if (val <= 1) return (val * 100).toFixed(1) + '%'
   return val.toFixed(3)
 }
 
@@ -1014,15 +1040,18 @@ const formatDuration = (seconds) => {
 
 // 组件挂载时加载数据
 onMounted(() => {
-  loadBenchmarks()
+  loadDatasets()
   loadEvaluationHistory()
+})
+
+onUnmounted(() => {
+  stopColumnResize?.()
 })
 </script>
 
 <style lang="less" scoped>
 .rag-evaluation-container {
   height: 100%;
-  background: var(--gray-0);
   display: flex;
   flex-direction: column;
 }
@@ -1031,7 +1060,8 @@ onMounted(() => {
 .toolbar {
   padding: 12px 16px;
   background: var(--gray-0);
-  border-bottom: 1px solid var(--gray-200);
+  border-radius: 8px;
+  border: 1px solid var(--gray-200);
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -1085,7 +1115,7 @@ onMounted(() => {
   flex-direction: column;
   gap: 12px;
   overflow: auto;
-  padding: 16px;
+  margin-top: 12px;
 
   &::-webkit-scrollbar {
     width: 6px;
@@ -1148,24 +1178,18 @@ onMounted(() => {
 
 .query-text {
   font-size: 12px;
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 4;
   line-height: 1.5;
   word-wrap: break-word;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  white-space: normal;
+  overflow: visible;
 }
 
 .answer-text {
   font-size: 12px;
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 4;
   line-height: 1.5;
   word-wrap: break-word;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  white-space: normal;
+  overflow: visible;
   color: var(--gray-700);
 }
 
@@ -1291,55 +1315,55 @@ onMounted(() => {
 
 // 检索指标样式
 .retrieval-metrics {
-  display: flex;
+  display: inline-flex;
   flex-wrap: wrap;
-  gap: 6px;
-  min-height: 20px;
+  gap: 4px 10px;
   align-items: center;
-}
-
-.metric-item {
-  display: flex;
-  align-items: center;
+  max-width: 100%;
 }
 
 .metric-content {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  padding: 2px 8px;
-  border-radius: 4px;
+  gap: 3px;
   font-size: 12px;
-  line-height: 1.4;
+  line-height: 1.45;
   font-weight: 500;
   white-space: nowrap;
+  color: var(--gray-650);
 
   &.metric-recall {
-    background-color: var(--color-info-50);
-    color: var(--color-info-900);
+    .metric-value {
+      color: var(--color-info-700);
+    }
   }
 
   &.metric-precision {
-    background-color: var(--color-success-50);
-    color: var(--color-success-900);
+    .metric-value {
+      color: var(--color-success-700);
+    }
   }
 
   &.metric-map,
   &.metric-ndcg {
-    background-color: var(--color-accent-50);
-    color: var(--color-accent-900);
+    .metric-value {
+      color: var(--color-accent-700);
+    }
   }
 }
 
 .metric-name {
-  font-weight: 600;
+  font-weight: 500;
   text-transform: uppercase;
-  letter-spacing: 0.4px;
+  letter-spacing: 0;
+  color: var(--gray-550);
 }
 
 .metric-value {
   font-weight: 700;
   font-family: 'SF Mono', 'Monaco', 'Consolas', monospace;
+  color: var(--gray-900);
+  font-variant-numeric: tabular-nums;
 }
 
 .no-metrics {
@@ -1347,19 +1371,26 @@ onMounted(() => {
   font-style: italic;
 }
 
+.answer-judgement {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+
+  :deep(.ant-tag) {
+    flex-shrink: 0;
+    margin-inline-end: 0;
+  }
+}
+
 // 答案推理样式
 .answer-reasoning {
   font-size: 12px;
   color: var(--gray-600);
-  margin-top: 8px;
   line-height: 1.4;
   cursor: pointer;
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 3;
   word-wrap: break-word;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  white-space: normal;
+  overflow: visible;
 
   &:hover {
     color: var(--gray-800);
@@ -1378,6 +1409,206 @@ onMounted(() => {
 .empty-results {
   padding: 40px 0;
   text-align: center;
+}
+
+:global(.evaluation-detail-overlay) {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  width: 100vw;
+  height: 100vh;
+  background: var(--color-bg-container);
+  overflow: hidden;
+}
+
+:global(.evaluation-detail-panel) {
+  width: 100vw;
+  height: 100vh;
+  max-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--color-bg-container);
+}
+
+:global(.evaluation-detail-titlebar) {
+  height: 44px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 14px 0 16px;
+  border-bottom: 1px solid var(--gray-150);
+}
+
+:global(.evaluation-detail-title) {
+  min-width: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--gray-1000);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.result-detail-content {
+  flex: 1;
+  height: auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 12px 16px;
+
+  :deep(.ant-table-wrapper) {
+    flex: 1;
+    min-height: 0;
+  }
+
+  :deep(.ant-table) {
+    .ant-table-thead > tr > th {
+      position: relative;
+      padding: 6px 10px;
+      font-size: 12px;
+    }
+
+    .ant-table-tbody > tr > td {
+      padding: 6px 10px;
+      font-size: 12px;
+    }
+
+    .ant-table-pagination {
+      margin: 10px 0 0;
+    }
+  }
+}
+
+.result-summary-bar {
+  flex-shrink: 0;
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--gray-150);
+}
+
+.summary-items {
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  align-items: center;
+  font-size: 12px;
+}
+
+.summary-item {
+  color: var(--gray-700);
+  white-space: nowrap;
+}
+
+.summary-run-id {
+  max-width: 360px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.result-metrics-bar {
+  flex-shrink: 0;
+  display: flex;
+  justify-content: space-between;
+  gap: 8px 14px;
+  align-items: center;
+  padding: 8px 0;
+  font-size: 12px;
+  color: var(--gray-700);
+}
+
+.metric-items {
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  align-items: center;
+}
+
+.result-count {
+  color: var(--color-text-secondary);
+}
+
+.compact-metric {
+  white-space: nowrap;
+}
+
+:deep(.table-nowrap) {
+  .ant-table-cell {
+    white-space: nowrap;
+    overflow: hidden;
+  }
+
+  .answer-judgement {
+    width: 100%;
+    max-width: 100%;
+    align-items: center;
+  }
+
+  .query-text,
+  .answer-text,
+  .answer-reasoning {
+    display: block;
+    width: 100%;
+    max-width: 100%;
+    white-space: nowrap;
+    word-wrap: normal;
+    overflow: hidden;
+    text-overflow: clip;
+  }
+}
+
+:deep(.resizable-table-header) {
+  position: relative;
+
+  .ant-table-column-title {
+    display: block;
+    width: 100%;
+  }
+}
+
+:deep(.resizable-table-title) {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-height: 20px;
+  padding-right: 14px;
+}
+
+:deep(.resizable-table-title-text) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+:deep(.column-resize-handle) {
+  position: absolute;
+  top: -6px;
+  right: -16px;
+  bottom: -6px;
+  width: 14px;
+  cursor: col-resize;
+  z-index: 2;
+
+  &::after {
+    content: '';
+    position: absolute;
+    top: 7px;
+    bottom: 7px;
+    right: 2px;
+    width: 1px;
+    background: transparent;
+  }
+
+  &:hover::after {
+    background: var(--color-primary-400);
+  }
 }
 
 // 评估报告样式

@@ -4,6 +4,10 @@
     title="自动生成评估基准"
     width="600px"
     :confirmLoading="generating"
+    :ok-button-props="{ disabled: generating }"
+    :cancel-button-props="{ disabled: generating }"
+    :mask-closable="!generating"
+    :closable="!generating"
     @ok="handleGenerate"
     @cancel="handleCancel"
   >
@@ -54,6 +58,23 @@
               />
             </a-form-item>
           </a-col>
+          <a-col :span="12">
+            <a-form-item
+              label="构建并发数"
+              name="concurrency_count"
+              :labelCol="{ span: 24 }"
+              :wrapperCol="{ span: 24 }"
+              extra="同时生成评估题目的 worker 数，过高可能触发模型服务限流"
+            >
+              <a-input-number
+                v-model:value="formState.concurrency_count"
+                :min="1"
+                :max="20"
+                style="width: 100%"
+                placeholder="默认 10"
+              />
+            </a-form-item>
+          </a-col>
         </a-row>
       </a-form-item>
 
@@ -97,7 +118,10 @@ const emit = defineEmits(['update:visible', 'success'])
 // 默认基准名称
 const defaultBenchmarkName = () => {
   const today = new Date().toISOString().slice(0, 10)
-  const suffix = Array.from({ length: 4 }, () => '0123456789abcdefghijklmnopqrstuvwxyz'[Math.floor(Math.random() * 36)]).join('')
+  const suffix = Array.from(
+    { length: 4 },
+    () => '0123456789abcdefghijklmnopqrstuvwxyz'[Math.floor(Math.random() * 36)]
+  ).join('')
   return `Test-${today}-${suffix}`
 }
 
@@ -110,6 +134,7 @@ const formState = reactive({
   description: '',
   count: 10,
   neighbors_count: 1,
+  concurrency_count: 10,
   llm_model_spec: configStore.config?.default_model || ''
 })
 
@@ -119,7 +144,8 @@ const rules = {
     { required: true, message: '请输入基准名称', trigger: 'blur' },
     { min: 2, max: 100, message: '基准名称长度应在2-100个字符之间', trigger: 'blur' }
   ],
-  count: [{ required: true, message: '请输入生成问题数量', trigger: 'blur' }]
+  count: [{ required: true, message: '请输入生成问题数量', trigger: 'blur' }],
+  concurrency_count: [{ required: true, message: '请输入构建并发数', trigger: 'blur' }]
 }
 
 // 双向绑定visible
@@ -146,6 +172,8 @@ const extraText = computed(() =>
 
 // 生成基准
 const handleGenerate = async () => {
+  if (generating.value) return
+
   try {
     // 表单验证
     await formRef.value.validate()
@@ -157,28 +185,31 @@ const handleGenerate = async () => {
       description: formState.description,
       count: formState.count,
       neighbors_count: formState.neighbors_count,
+      concurrency_count: formState.concurrency_count,
       llm_model_spec: formState.llm_model_spec
     }
 
-    const response = await evaluationApi.generateBenchmark(props.databaseId, params)
+    const response = await evaluationApi.generateDataset(props.databaseId, params)
 
     if (response.message === 'success') {
-      message.success('生成任务已提交，请稍后查看结果')
-      handleCancel()
+      message.success('生成任务已提交')
+      visible.value = false
+      resetForm()
       emit('success')
     } else {
+      generating.value = false
       message.error(response.message || '生成失败')
     }
   } catch (error) {
     console.error('生成失败:', error)
-    message.error('生成失败')
-  } finally {
     generating.value = false
+    message.error('生成失败')
   }
 }
 
 // 取消操作
 const handleCancel = () => {
+  if (generating.value) return
   visible.value = false
   resetForm()
 }
@@ -191,6 +222,7 @@ const resetForm = () => {
     description: '',
     count: 10,
     neighbors_count: 1,
+    concurrency_count: 10,
     llm_model_spec: configStore.config?.default_model || ''
   })
   generating.value = false
@@ -203,10 +235,8 @@ const handleSelectLLMModel = (modelSpec) => {
 
 // 监听visible变化
 watch(visible, (val) => {
-  if (val) {
+  if (val && !generating.value) {
     resetForm()
   }
 })
 </script>
-
-

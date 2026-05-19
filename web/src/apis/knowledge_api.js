@@ -423,141 +423,64 @@ export const typeApi = {
   }
 }
 
-
 // =============================================================================
 // === RAG评估分组 ===
 // =============================================================================
 
 export const evaluationApi = {
-  /**
-   * 上传评估基准文件
-   * @param {string} dbId - 知识库ID
-   * @param {File} file - JSONL文件
-   * @param {Object} metadata - 基准元数据
-   * @returns {Promise} - 上传结果
-   */
-  uploadBenchmark: async (dbId, file, metadata = {}) => {
+  uploadDataset: async (dbId, file, metadata = {}) => {
     const formData = new FormData()
     formData.append('file', file)
     formData.append('name', metadata.name || '')
     formData.append('description', metadata.description || '')
 
-    return apiAdminPost(`/api/evaluation/databases/${dbId}/benchmarks/upload`, formData)
+    return apiAdminPost(`/api/evaluation/databases/${dbId}/datasets/upload`, formData)
   },
 
-  /**
-   * 获取评估基准列表
-   * @param {string} dbId - 知识库ID
-   * @returns {Promise} - 基准列表
-   */
-  getBenchmarks: async (dbId) => {
-    return apiAdminGet(`/api/evaluation/databases/${dbId}/benchmarks`)
+  listDatasets: async (dbId) => {
+    return apiAdminGet(`/api/evaluation/databases/${dbId}/datasets`)
   },
 
-  /**
-   * 获取评估基准详情
-   * @param {string} benchmarkId - 基准ID
-   * @returns {Promise} - 基准详情
-   */
-  getBenchmark: async (benchmarkId) => {
-    return apiAdminGet(`/api/evaluation/benchmarks/${benchmarkId}`)
-  },
-  /**
-   * 获取评估基准详情（带db_id）
-   * @param {string} dbId - 知识库ID
-   * @param {string} benchmarkId - 基准ID
-   */
-  getBenchmarkByDb: async (dbId, benchmarkId, page = 1, pageSize = 50) => {
+  getDataset: async (dbId, datasetId, page = 1, pageSize = 50) => {
     const params = new URLSearchParams({
       page: page.toString(),
       page_size: pageSize.toString()
     })
-    return apiAdminGet(`/api/evaluation/databases/${dbId}/benchmarks/${benchmarkId}?${params}`)
+    return apiAdminGet(`/api/evaluation/databases/${dbId}/datasets/${datasetId}?${params}`)
   },
 
-  /**
-   * 删除评估基准
-   * @param {string} benchmarkId - 基准ID
-   * @returns {Promise} - 删除结果
-   */
-  deleteBenchmark: async (benchmarkId) => {
-    return apiAdminDelete(`/api/evaluation/benchmarks/${benchmarkId}`)
+  deleteDataset: async (datasetId) => {
+    return apiAdminDelete(`/api/evaluation/datasets/${datasetId}`)
   },
 
-  /**
-   * 下载评估基准
-   * @param {string} benchmarkId - 基准ID
-   * @returns {Promise} - Response对象
-   */
-  downloadBenchmark: async (benchmarkId) => {
-    return apiAdminGet(`/api/evaluation/benchmarks/${benchmarkId}/download`, {}, 'blob')
+  downloadDataset: async (datasetId) => {
+    return apiAdminGet(`/api/evaluation/datasets/${datasetId}/download`, {}, 'blob')
   },
 
-  /**
-   * 自动生成评估基准
-   * @param {string} dbId - 知识库ID
-   * @param {Object} params - 生成参数
-   * @param {number} params.count - 生成问题数量
-   * @param {string} params.llm_model_spec - LLM模型配置
-   * @returns {Promise} - 生成结果
-   */
-  generateBenchmark: async (dbId, params) => {
-    return apiAdminPost(`/api/evaluation/databases/${dbId}/benchmarks/generate`, params)
+  generateDataset: async (dbId, params) => {
+    return apiAdminPost(`/api/evaluation/databases/${dbId}/datasets/generate`, params)
   },
 
-  /**
-   * 运行RAG评估
-   * @param {string} dbId - 知识库ID
-   * @param {Object} params - 评估参数
-   * @param {string} params.benchmark_id - 基准ID
-   * @param {Object} params.retrieval_config - 检索配置
-   * @returns {Promise} - 评估任务ID
-   */
   runEvaluation: async (dbId, params) => {
-    return apiAdminPost(`/api/evaluation/databases/${dbId}/run`, params)
+    return apiAdminPost(`/api/evaluation/databases/${dbId}/runs`, params)
   },
 
-  /**
-   * 获取评估结果
-   * @param {string} taskId - 任务ID
-   * @returns {Promise} - 评估结果
-   */
-  getEvaluationResults: async (taskId) => {
-    // 已废弃：请改用 getEvaluationResultsByDb
-    return apiAdminGet(`/api/evaluation/${taskId}/results`)
+  listRuns: async (dbId) => {
+    return apiAdminGet(`/api/evaluation/databases/${dbId}/runs`)
   },
 
-  /**
-   * 删除评估结果
-   * @param {string} taskId - 任务ID
-   * @returns {Promise} - 删除结果
-   */
-  deleteEvaluationResult: async (taskId) => {
-    // 已废弃：请改用 deleteEvaluationResultByDb
-    return apiAdminDelete(`/api/evaluation/${taskId}`)
-  },
-
-  // 新接口：带 db_id 的评估结果查询与删除
-  getEvaluationResultsByDb: async (dbId, taskId, params = {}) => {
+  getRunResults: async (dbId, runId, params = {}) => {
     const queryParams = new URLSearchParams()
 
     if (params.page) queryParams.append('page', params.page)
     if (params.pageSize) queryParams.append('page_size', params.pageSize)
     if (params.errorOnly !== undefined) queryParams.append('error_only', params.errorOnly)
 
-    const url = `/api/evaluation/databases/${dbId}/results/${taskId}${queryParams.toString() ? '?' + queryParams.toString() : ''}`
+    const url = `/api/evaluation/databases/${dbId}/runs/${runId}${queryParams.toString() ? '?' + queryParams.toString() : ''}`
     return apiAdminGet(url)
   },
-  deleteEvaluationResultByDb: async (dbId, taskId) => {
-    return apiAdminDelete(`/api/evaluation/databases/${dbId}/results/${taskId}`)
-  },
 
-  /**
-   * 获取知识库的评估历史记录
-   * @param {string} dbId - 知识库ID
-   * @returns {Promise} - 评估历史列表
-   */
-  getEvaluationHistory: async (dbId) => {
-    return apiAdminGet(`/api/evaluation/databases/${dbId}/history`)
+  deleteRun: async (dbId, runId) => {
+    return apiAdminDelete(`/api/evaluation/databases/${dbId}/runs/${runId}`)
   }
 }

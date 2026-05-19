@@ -172,7 +172,7 @@ const handleUpload = async () => {
 
     uploading.value = true
 
-    const response = await evaluationApi.uploadBenchmark(props.databaseId, formState.file, {
+    const response = await evaluationApi.uploadDataset(props.databaseId, formState.file, {
       name: formState.name,
       description: formState.description
     })
