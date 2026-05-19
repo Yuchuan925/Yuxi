@@ -1,18 +1,22 @@
 import json
-import os
 import re
 import uuid
-from datetime import datetime
 from typing import Any
 
 from yuxi.knowledge import knowledge_base
-from yuxi.knowledge.eval.benchmark_generation import dump_benchmark_item, iter_generated_benchmark_items
+from yuxi.knowledge.eval.benchmark_generation import (
+    dump_benchmark_item,
+    iter_generated_benchmark_items,
+    normalize_generation_concurrency_count,
+)
 from yuxi.knowledge.eval.evaluator import aggregate_metrics, evaluate_question
 from yuxi.models import select_model
 from yuxi.repositories.evaluation_repository import EvaluationRepository
 from yuxi.repositories.knowledge_base_repository import KnowledgeBaseRepository
+from yuxi.repositories.task_repository import TaskRepository
 from yuxi.services.task_service import TaskContext, tasker
 from yuxi.utils import logger
+from yuxi.utils.datetime_utils import format_utc_datetime, utc_now_naive
 
 
 class EvaluationService:
@@ -21,343 +25,389 @@ class EvaluationService:
     def __init__(self):
         self.eval_repo = EvaluationRepository()
         self.kb_repo = KnowledgeBaseRepository()
+        self.task_repo = TaskRepository()
 
-    async def _get_benchmark_dir(self, db_id: str) -> str:
-        """获取评估基准目录"""
-        kb_instance = await knowledge_base.aget_kb(db_id)
-        base_dir = os.path.join(kb_instance.work_dir, db_id)
-        path = os.path.join(base_dir, "benchmarks")
-        os.makedirs(path, exist_ok=True)
-        return path
+    def _dataset_to_dict(self, row) -> dict[str, Any]:
+        return {
+            "id": row.dataset_id,
+            "dataset_id": row.dataset_id,
+            "name": row.name,
+            "description": row.description,
+            "db_id": row.db_id,
+            "item_count": row.item_count,
+            "has_gold_chunks": row.has_gold_chunks,
+            "has_gold_answers": row.has_gold_answers,
+            "build_metadata": row.build_metadata or {},
+            "created_by": row.created_by,
+            "created_at": format_utc_datetime(row.created_at),
+            "updated_at": format_utc_datetime(row.updated_at),
+        }
 
-    async def _get_result_dir(self, db_id: str) -> str:
-        """获取评估结果目录"""
-        kb_instance = await knowledge_base.aget_kb(db_id)
-        base_dir = os.path.join(kb_instance.work_dir, db_id)
-        path = os.path.join(base_dir, "results")
-        os.makedirs(path, exist_ok=True)
-        return path
+    def _dataset_item_to_dict(self, item) -> dict[str, Any]:
+        return {
+            "item_id": item.item_id,
+            "item_index": item.item_index,
+            "query": item.query_text,
+            "gold_chunk_ids": item.gold_chunk_ids or [],
+            "gold_answer": item.gold_answer,
+        }
 
-    # 已移除基准回退逻辑，统一使用集中元数据
+    def _run_item_to_dict(self, item) -> dict[str, Any]:
+        return {
+            "query": item.query_text,
+            "gold_chunk_ids": item.gold_chunk_ids,
+            "gold_answer": item.gold_answer,
+            "generated_answer": item.generated_answer,
+            "retrieved_chunks": item.retrieved_chunks,
+            "metrics": item.metrics or {},
+        }
 
-    # 已移除结果回退逻辑，统一通过 db_id 定位
+    def _is_error_run_item(self, item) -> bool:
+        metrics = item.metrics or {}
+        return metrics.get("score", 1.0) <= 0.5 or any(
+            metrics.get(key, 1.0) < 0.3 for key in metrics if key.startswith("recall@")
+        )
 
-    async def upload_benchmark(
-        self, db_id: str, file_content: bytes, filename: str, name: str, description: str, created_by: str
-    ) -> dict[str, Any]:
-        """上传评估基准文件"""
-        try:
-            content_str = file_content.decode("utf-8")
-            questions = []
-            has_gold_chunks = False
-            has_gold_answers = False
-
-            # 解析 JSONL
-            for line_num, line in enumerate(content_str.strip().split("\n"), 1):
-                if not line.strip():
-                    continue
-                try:
-                    item = json.loads(line)
-                    if "query" not in item:
-                        raise ValueError(f"第{line_num}行缺少必需的'query'字段")
-                    if item.get("gold_chunk_ids"):
-                        has_gold_chunks = True
-                    if item.get("gold_answer"):
-                        has_gold_answers = True
-                    questions.append(item)
-                except json.JSONDecodeError as e:
-                    raise ValueError(f"第{line_num}行JSON格式错误: {str(e)}")
-
-            if not questions:
-                raise ValueError("文件中没有有效的问题数据")
-
-            benchmark_id = f"benchmark_{uuid.uuid4().hex[:8]}"
-            benchmark_dir = await self._get_benchmark_dir(db_id)
-
-            # 保存数据文件 (.jsonl)
-            data_file_path = os.path.join(benchmark_dir, f"{benchmark_id}.jsonl")
-            with open(data_file_path, "w", encoding="utf-8") as f:
-                f.write(content_str)
-
-            meta = {
-                "id": benchmark_id,
-                "benchmark_id": benchmark_id,
-                "name": name,
-                "description": description,
-                "db_id": db_id,
-                "question_count": len(questions),
-                "has_gold_chunks": has_gold_chunks,
-                "has_gold_answers": has_gold_answers,
-                "benchmark_file": data_file_path,
-                "created_by": created_by,
-                "created_at": datetime.utcnow().isoformat(),
-                "updated_at": datetime.utcnow().isoformat(),
-            }
-            await self.eval_repo.create_benchmark(
-                {
-                    "benchmark_id": benchmark_id,
-                    "db_id": db_id,
-                    "name": name,
-                    "description": description,
-                    "question_count": len(questions),
-                    "has_gold_chunks": has_gold_chunks,
-                    "has_gold_answers": has_gold_answers,
-                    "data_file_path": data_file_path,
-                    "created_by": created_by,
-                }
-            )
-            return meta
-
-        except Exception as e:
-            logger.error(f"上传评估基准失败: {e}")
-            raise
-
-    async def get_benchmarks(self, db_id: str) -> list[dict[str, Any]]:
-        """获取知识库的评估基准列表"""
-        try:
-            rows = await self.eval_repo.list_benchmarks(db_id)
-            return [
-                {
-                    "id": row.benchmark_id,
-                    "benchmark_id": row.benchmark_id,
-                    "name": row.name,
-                    "description": row.description,
-                    "db_id": row.db_id,
-                    "question_count": row.question_count,
-                    "has_gold_chunks": row.has_gold_chunks,
-                    "has_gold_answers": row.has_gold_answers,
-                    "benchmark_file": row.data_file_path,
-                    "created_by": row.created_by,
-                    "created_at": row.created_at.isoformat() if row.created_at else None,
-                    "updated_at": row.updated_at.isoformat() if row.updated_at else None,
-                }
-                for row in rows
-            ]
-
-        except Exception as e:
-            logger.error(f"获取评估基准列表失败: {e}")
-            raise
-
-    async def get_benchmark_detail(self, benchmark_id: str) -> dict[str, Any]:
-        """获取评估基准详情 (包含问题列表)"""
-        try:
-            row = await self.eval_repo.get_benchmark(benchmark_id)
-            if row is None:
-                raise ValueError("Benchmark not found")
-            questions = []
-            if row.data_file_path and os.path.exists(row.data_file_path):
-                with open(row.data_file_path, encoding="utf-8") as f:
-                    for line in f:
-                        if line.strip():
-                            questions.append(json.loads(line))
-            return {
-                "id": row.benchmark_id,
-                "benchmark_id": row.benchmark_id,
-                "name": row.name,
-                "description": row.description,
-                "db_id": row.db_id,
-                "question_count": row.question_count,
-                "has_gold_chunks": row.has_gold_chunks,
-                "has_gold_answers": row.has_gold_answers,
-                "benchmark_file": row.data_file_path,
-                "created_by": row.created_by,
-                "created_at": row.created_at.isoformat() if row.created_at else None,
-                "updated_at": row.updated_at.isoformat() if row.updated_at else None,
-                "questions": questions,
-            }
-
-        except Exception as e:
-            logger.error(f"获取评估基准详情失败: {e}")
-            raise
-
-    async def get_benchmark_detail_by_db(
-        self, db_id: str, benchmark_id: str, page: int = 1, page_size: int = 10
-    ) -> dict[str, Any]:
-        """根据 db_id 获取评估基准详情（支持分页）"""
-        try:
-            row = await self.eval_repo.get_benchmark(benchmark_id)
-            if row is None or row.db_id != db_id:
-                raise ValueError("Benchmark not found")
-            data_file_path = row.data_file_path
-            total_questions = row.question_count or 0
-            questions = []
-
-            if data_file_path and os.path.exists(data_file_path):
-                # 计算分页范围
-                start_index = (page - 1) * page_size
-                end_index = start_index + page_size
-
-                # 读取指定范围的问题
-                with open(data_file_path, encoding="utf-8") as f:
-                    current_index = 0
-                    for line in f:
-                        if not line.strip():
-                            continue
-
-                        # 只处理指定范围内的问题
-                        if current_index >= start_index and current_index < end_index:
-                            questions.append(json.loads(line))
-                        elif current_index >= end_index:
-                            break  # 已经读取到足够的问题，停止读取
-
-                        current_index += 1
-
-            # 计算分页信息
-            total_pages = (total_questions + page_size - 1) // page_size
-
-            return {
-                "id": row.benchmark_id,
-                "benchmark_id": row.benchmark_id,
-                "name": row.name,
-                "description": row.description,
-                "db_id": row.db_id,
-                "question_count": row.question_count,
-                "has_gold_chunks": row.has_gold_chunks,
-                "has_gold_answers": row.has_gold_answers,
-                "benchmark_file": data_file_path,
-                "created_by": row.created_by,
-                "created_at": row.created_at.isoformat() if row.created_at else None,
-                "updated_at": row.updated_at.isoformat() if row.updated_at else None,
-                "questions": questions,
-                "pagination": {
-                    "current_page": page,
-                    "page_size": page_size,
-                    "total_questions": total_questions,
-                    "total_pages": total_pages,
-                    "has_next": page < total_pages,
-                    "has_prev": page > 1,
-                },
-            }
-        except Exception as e:
-            logger.error(f"获取评估基准详情失败: {e}")
-            raise
-
-    async def get_benchmark_download_info(self, benchmark_id: str) -> dict[str, str]:
-        """获取评估基准下载信息"""
-        row = await self.eval_repo.get_benchmark(benchmark_id)
-        if row is None:
-            raise ValueError("Benchmark not found")
-
-        data_file_path = row.data_file_path or ""
-        if not data_file_path or not os.path.exists(data_file_path):
-            raise ValueError("Benchmark file not found")
-
-        filename_base = (row.name or "").strip()
-        if not filename_base:
-            filename_base = row.benchmark_id
-
-        filename_base = re.sub(r"[\\/:*?\"<>|]+", "_", filename_base).strip()
-        if not filename_base or filename_base in {".", ".."}:
-            filename_base = row.benchmark_id
-
-        if not filename_base.endswith(".jsonl"):
-            filename_base = f"{filename_base}.jsonl"
-
-        return {"file_path": data_file_path, "filename": filename_base}
-
-    async def delete_benchmark(self, benchmark_id: str) -> None:
-        """删除评估基准"""
-        try:
-            row = await self.eval_repo.get_benchmark(benchmark_id)
-            if row is None:
-                raise ValueError("Benchmark not found")
-            if row.data_file_path and os.path.exists(row.data_file_path):
-                os.remove(row.data_file_path)
-            await self.eval_repo.delete_benchmark(benchmark_id)
-            logger.info(f"成功删除评估基准: {benchmark_id}")
+    async def _sync_dataset_build_metadata(self, row) -> None:
+        metadata = dict(row.build_metadata or {})
+        if metadata.get("source") != "generated" or metadata.get("status") not in {"pending", "running"}:
             return
 
+        task_id = metadata.get("task_id")
+        task = await self.task_repo.get_by_id(task_id) if task_id else None
+        if task is None:
+            metadata.pop("progress", None)
+            metadata.update(status="failed", message="生成任务不存在")
+        elif task.status == "success":
+            metadata.update(status="completed", progress=100, message=task.message or "完成")
+        elif task.status in {"failed", "cancelled"}:
+            metadata.pop("progress", None)
+            metadata.update(status="failed", message=task.error or task.message or "生成任务失败")
+        else:
+            metadata.update(status=task.status, progress=task.progress, message=task.message)
+
+        if metadata != (row.build_metadata or {}):
+            await self.eval_repo.update_dataset(row.dataset_id, {"build_metadata": metadata})
+            row.build_metadata = metadata
+
+    def _build_dataset_items(
+        self, dataset_id: str, db_id: str, questions: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        return [
+            {
+                "item_id": f"dataset_item_{uuid.uuid4().hex[:12]}",
+                "dataset_id": dataset_id,
+                "db_id": db_id,
+                "item_index": index,
+                "query_text": item["query"],
+                "gold_chunk_ids": item.get("gold_chunk_ids") or [],
+                "gold_answer": item.get("gold_answer"),
+            }
+            for index, item in enumerate(questions)
+        ]
+
+    def _build_jsonl_content(self, items: list[Any]) -> str:
+        lines = []
+        for item in items:
+            payload = {"query": item.query_text}
+            if item.gold_chunk_ids:
+                payload["gold_chunk_ids"] = item.gold_chunk_ids
+            if item.gold_answer:
+                payload["gold_answer"] = item.gold_answer
+            lines.append(dump_benchmark_item(payload).rstrip("\n"))
+        return "\n".join(lines) + ("\n" if lines else "")
+
+    def _safe_jsonl_filename(self, name: str | None, fallback: str) -> str:
+        filename = (name or "").strip() or fallback
+        filename = re.sub(r"[\\/:*?\"<>|]+", "_", filename).strip()
+        if not filename or filename in {".", ".."}:
+            filename = fallback
+        return filename if filename.endswith(".jsonl") else f"{filename}.jsonl"
+
+    def _parse_jsonl_questions(self, file_content: bytes) -> tuple[list[dict[str, Any]], bool, bool]:
+        questions = []
+        has_gold_chunks = False
+        has_gold_answers = False
+        content = file_content.decode("utf-8")
+
+        for line_num, line in enumerate(content.strip().split("\n"), 1):
+            if not line.strip():
+                continue
+            try:
+                item = json.loads(line)
+            except json.JSONDecodeError as e:
+                raise ValueError(f"第{line_num}行JSON格式错误: {str(e)}")
+            if "query" not in item:
+                raise ValueError(f"第{line_num}行缺少必需的'query'字段")
+            if item.get("gold_chunk_ids"):
+                has_gold_chunks = True
+            if item.get("gold_answer"):
+                has_gold_answers = True
+            questions.append(item)
+
+        if not questions:
+            raise ValueError("文件中没有有效的问题数据")
+        return questions, has_gold_chunks, has_gold_answers
+
+    async def upload_dataset(
+        self, db_id: str, file_content: bytes, filename: str, name: str, description: str, created_by: str
+    ) -> dict[str, Any]:
+        try:
+            questions, has_gold_chunks, has_gold_answers = self._parse_jsonl_questions(file_content)
+            dataset_id = f"dataset_{uuid.uuid4().hex[:8]}"
+            dataset_name = name.strip() or filename or dataset_id
+
+            row = await self.eval_repo.create_dataset_with_items(
+                {
+                    "dataset_id": dataset_id,
+                    "db_id": db_id,
+                    "name": dataset_name,
+                    "description": description,
+                    "item_count": len(questions),
+                    "has_gold_chunks": has_gold_chunks,
+                    "has_gold_answers": has_gold_answers,
+                    "build_metadata": {
+                        "source": "upload",
+                        "status": "completed",
+                        "progress": 100,
+                        "filename": filename,
+                    },
+                    "created_by": created_by,
+                },
+                self._build_dataset_items(dataset_id, db_id, questions),
+            )
+            return self._dataset_to_dict(row)
         except Exception as e:
-            logger.error(f"删除评估基准失败: {e}")
+            logger.error(f"上传评估数据集失败: {e}")
             raise
 
-    async def delete_evaluation_result(self, task_id: str, db_id: str) -> None:
-        """删除评估结果"""
-        if not task_id:
-            raise ValueError("task_id is required")
-        await self.delete_evaluation_result_by_db(db_id, task_id)
+    async def list_datasets(self, db_id: str) -> list[dict[str, Any]]:
+        try:
+            rows = await self.eval_repo.list_datasets(db_id)
+            for row in rows:
+                await self._sync_dataset_build_metadata(row)
+            return [self._dataset_to_dict(row) for row in rows]
+        except Exception as e:
+            logger.error(f"获取评估数据集列表失败: {e}")
+            raise
 
-    async def generate_benchmark(self, db_id: str, params: dict[str, Any], created_by: str) -> dict[str, Any]:
-        task_id = f"gen_benchmark_{uuid.uuid4().hex[:8]}"
-        await tasker.enqueue(
-            name="生成评估基准",
-            task_type="benchmark_generation",
-            payload={"task_id": task_id, "db_id": db_id, "created_by": created_by, **params},
-            coroutine=self._generate_benchmark_task,
+    async def get_dataset_detail(
+        self, db_id: str, dataset_id: str, page: int = 1, page_size: int = 10
+    ) -> dict[str, Any]:
+        try:
+            row = await self.eval_repo.get_dataset(dataset_id)
+            if row is None or row.db_id != db_id:
+                raise ValueError("Dataset not found")
+            if (row.build_metadata or {}).get("status", "completed") != "completed":
+                raise ValueError("Dataset is not ready")
+
+            total_items = await self.eval_repo.count_dataset_items(dataset_id)
+            items = await self.eval_repo.list_dataset_items(dataset_id, (page - 1) * page_size, page_size)
+            total_pages = (total_items + page_size - 1) // page_size
+            data = self._dataset_to_dict(row)
+            data.update(
+                {
+                    "items": [self._dataset_item_to_dict(item) for item in items],
+                    "pagination": {
+                        "current_page": page,
+                        "page_size": page_size,
+                        "total_items": total_items,
+                        "total_pages": total_pages,
+                        "has_next": page < total_pages,
+                        "has_prev": page > 1,
+                    },
+                }
+            )
+            return data
+        except Exception as e:
+            logger.error(f"获取评估数据集详情失败: {e}")
+            raise
+
+    async def export_dataset_jsonl(self, dataset_id: str) -> dict[str, str]:
+        row = await self.eval_repo.get_dataset(dataset_id)
+        if row is None:
+            raise ValueError("Dataset not found")
+        if (row.build_metadata or {}).get("status", "completed") != "completed":
+            raise ValueError("Dataset is not ready")
+        items = await self.eval_repo.list_all_dataset_items(dataset_id)
+        return {
+            "filename": self._safe_jsonl_filename(row.name, row.dataset_id),
+            "content": self._build_jsonl_content(items),
+        }
+
+    async def delete_dataset(self, dataset_id: str) -> None:
+        try:
+            row = await self.eval_repo.get_dataset(dataset_id)
+            if row is None:
+                raise ValueError("Dataset not found")
+            await self.eval_repo.delete_dataset(dataset_id)
+            logger.info(f"成功删除评估数据集: {dataset_id}")
+        except Exception as e:
+            logger.error(f"删除评估数据集失败: {e}")
+            raise
+
+    async def generate_dataset(
+        self,
+        db_id: str,
+        name: str,
+        description: str,
+        count: int,
+        neighbors_count: int,
+        concurrency_count: int,
+        llm_model_spec: str,
+        created_by: str,
+    ) -> dict[str, Any]:
+        dataset_id = f"dataset_{uuid.uuid4().hex[:8]}"
+        count = int(count)
+        neighbors_count = int(neighbors_count)
+        concurrency_count = normalize_generation_concurrency_count(concurrency_count)
+        build_metadata = {
+            "source": "generated",
+            "status": "pending",
+            "progress": 0,
+            "params": {
+                "count": count,
+                "neighbors_count": neighbors_count,
+                "concurrency_count": concurrency_count,
+                "llm_model_spec": llm_model_spec,
+            },
+        }
+        await self.eval_repo.create_dataset(
+            {
+                "dataset_id": dataset_id,
+                "db_id": db_id,
+                "name": name,
+                "description": description,
+                "item_count": 0,
+                "has_gold_chunks": True,
+                "has_gold_answers": True,
+                "build_metadata": build_metadata,
+                "created_by": created_by,
+            }
         )
-        return {"task_id": task_id, "message": "基准生成任务已提交"}
+        task = await tasker.enqueue(
+            name="生成评估数据集",
+            task_type="dataset_generation",
+            payload={
+                "dataset_id": dataset_id,
+                "db_id": db_id,
+                "created_by": created_by,
+                "name": name,
+                "description": description,
+                "count": count,
+                "neighbors_count": neighbors_count,
+                "concurrency_count": concurrency_count,
+                "llm_model_spec": llm_model_spec,
+            },
+            coroutine=self._generate_dataset_task,
+        )
+        build_metadata["task_id"] = task.id
+        await self.eval_repo.update_dataset(dataset_id, {"build_metadata": build_metadata})
+        return {"dataset_id": dataset_id, "task_id": task.id, "message": "评估数据集生成任务已提交"}
 
-    async def _generate_benchmark_task(self, context: TaskContext):
+    async def _update_dataset_build_metadata(
+        self, dataset_id: str, metadata: dict[str, Any], **updates
+    ) -> dict[str, Any]:
+        metadata.update(updates)
+        await self.eval_repo.update_dataset(dataset_id, {"build_metadata": metadata})
+        return metadata
+
+    async def _generate_dataset_task(self, context: TaskContext):
         await context.set_progress(0, "初始化")
-
         task = context._tasker._tasks.get(context.task_id)
         payload = task.payload if task else {}
 
+        dataset_id = payload.get("dataset_id")
         db_id = payload.get("db_id")
-        name = payload.get("name", "自动生成评估基准")
-        description = payload.get("description", "")
         count = int(payload.get("count", 10))
         neighbors_count = int(payload.get("neighbors_count", 1))
+        concurrency_count = normalize_generation_concurrency_count(payload.get("concurrency_count"))
         llm_model_spec = payload.get("llm_model_spec")
+        build_metadata = {
+            "source": "generated",
+            "status": "running",
+            "progress": 0,
+            "task_id": context.task_id,
+            "params": {
+                "count": count,
+                "neighbors_count": neighbors_count,
+                "concurrency_count": concurrency_count,
+                "llm_model_spec": llm_model_spec,
+            },
+        }
+        await self._update_dataset_build_metadata(dataset_id, build_metadata)
 
-        kb_instance = await knowledge_base.aget_kb(db_id)
-        if not kb_instance:
-            await context.set_message("知识库不存在")
-            raise ValueError("Knowledge Base not found")
-        if kb_instance.kb_type != "milvus":
-            await context.set_message("仅支持 commonrag/Milvus 类型知识库生成评估基准")
-            raise ValueError("Unsupported KB type for benchmark generation")
-
-        benchmark_id = f"benchmark_{uuid.uuid4().hex[:8]}"
-        bench_dir = await self._get_benchmark_dir(db_id)
-        data_file_path = os.path.join(bench_dir, f"{benchmark_id}.jsonl")
-        generated = 0
+        async def report_progress(progress: float, message: str | None = None) -> None:
+            await context.set_progress(progress, message)
+            await self._update_dataset_build_metadata(
+                dataset_id,
+                build_metadata,
+                progress=max(0, min(round(progress), 100)),
+                message=message or build_metadata.get("message", ""),
+            )
 
         try:
-            with open(data_file_path, "w", encoding="utf-8") as f:
+            kb_instance = await knowledge_base.aget_kb(db_id)
+            if not kb_instance:
+                await report_progress(100, "知识库不存在")
+                raise ValueError("Knowledge Base not found")
+            if kb_instance.kb_type != "milvus":
+                await report_progress(100, "仅支持 commonrag/Milvus 类型知识库生成评估数据集")
+                raise ValueError("Unsupported KB type for dataset generation")
+
+            questions = []
+            try:
                 async for item in iter_generated_benchmark_items(
                     kb_instance=kb_instance,
                     db_id=db_id,
                     count=count,
                     neighbors_count=neighbors_count,
                     llm_model_spec=llm_model_spec,
-                    progress_cb=context.set_progress,
+                    concurrency_count=concurrency_count,
+                    progress_cb=report_progress,
+                    cancel_cb=context.raise_if_cancelled,
                 ):
-                    f.write(dump_benchmark_item(item))
-                    generated += 1
-        except ValueError as e:
-            if str(e) == "No chunks found in knowledge base":
-                await context.set_message("知识库为空或未解析到chunks")
+                    questions.append(item)
+            except ValueError as e:
+                if str(e) == "No chunks found in knowledge base":
+                    await report_progress(100, "知识库为空或未解析到chunks")
+                raise
+
+            if not questions:
+                raise ValueError("未生成有效评估题目")
+
+            await self.eval_repo.add_dataset_items(self._build_dataset_items(dataset_id, db_id, questions))
+            await self.eval_repo.update_dataset(dataset_id, {"item_count": len(questions)})
+            await self._update_dataset_build_metadata(
+                dataset_id,
+                build_metadata,
+                status="completed",
+                progress=100,
+                message="完成",
+            )
+            await context.set_progress(100, "完成")
+        except Exception as e:
+            await self._update_dataset_build_metadata(
+                dataset_id,
+                build_metadata,
+                status="failed",
+                progress=100,
+                error_message=str(e),
+                message=str(e),
+            )
             raise
 
-        await self.eval_repo.create_benchmark(
-            {
-                "benchmark_id": benchmark_id,
-                "db_id": db_id,
-                "name": name,
-                "description": description,
-                "question_count": generated,
-                "has_gold_chunks": True,
-                "has_gold_answers": True,
-                "data_file_path": data_file_path,
-                "created_by": payload.get("created_by"),
-            }
-        )
-
-        await context.set_progress(100, "完成")
-
     async def run_evaluation(
-        self, db_id: str, benchmark_id: str, model_config: dict[str, Any] = None, created_by: str = "system"
+        self, db_id: str, dataset_id: str, model_config: dict[str, Any] = None, created_by: str = "system"
     ) -> str:
-        """运行RAG评估"""
         try:
-            task_id = f"eval_{uuid.uuid4().hex[:8]}"
+            run_id = f"run_{uuid.uuid4().hex[:8]}"
+            dataset_row = await self.eval_repo.get_dataset(dataset_id)
+            if dataset_row is None or dataset_row.db_id != db_id:
+                raise ValueError("Dataset not found")
+            if (dataset_row.build_metadata or {}).get("status", "completed") != "completed":
+                raise ValueError("Dataset is not ready")
 
-            benchmark_row = await self.eval_repo.get_benchmark(benchmark_id)
-            if benchmark_row is None or benchmark_row.db_id != db_id:
-                raise ValueError("Benchmark not found")
-
-            # 从知识库元数据中获取检索配置
             retrieval_config = {}
             try:
                 kb_row = await self.kb_repo.get_by_id(db_id)
@@ -370,85 +420,70 @@ class EvaluationService:
                 logger.info(f"从知识库 {db_id} 加载检索配置: {list(retrieval_config.keys())}")
             except Exception as e:
                 logger.error(f"获取知识库检索配置失败: {e}")
-                # 使用空配置作为默认值
 
-            # 合并前端传递的模型配置
             if model_config:
                 retrieval_config.update(model_config)
 
-            await self.eval_repo.create_result(
+            await self.eval_repo.create_run(
                 {
-                    "task_id": task_id,
+                    "run_id": run_id,
                     "db_id": db_id,
-                    "benchmark_id": benchmark_id,
+                    "dataset_id": dataset_id,
                     "status": "running",
                     "retrieval_config": retrieval_config,
                     "metrics": {},
                     "overall_score": None,
-                    "total_questions": benchmark_row.question_count or 0,
-                    "completed_questions": 0,
-                    "started_at": datetime.utcnow(),
+                    "total_items": dataset_row.item_count or 0,
+                    "completed_items": 0,
+                    "started_at": utc_now_naive(),
                     "completed_at": None,
                     "created_by": created_by,
                 }
             )
 
             await tasker.enqueue(
-                name=f"RAG评估({benchmark_row.name})",
+                name=f"RAG评估({dataset_row.name})",
                 task_type="rag_evaluation",
                 payload={
-                    "task_id": task_id,
+                    "run_id": run_id,
                     "db_id": db_id,
-                    "benchmark_id": benchmark_id,
+                    "dataset_id": dataset_id,
                     "retrieval_config": retrieval_config,
                     "created_by": created_by,
                 },
                 coroutine=self._run_evaluation_task,
             )
-
-            return task_id
-
+            return run_id
         except Exception as e:
             logger.error(f"启动评估失败: {e}")
             raise
 
     async def _run_evaluation_task(self, context: TaskContext):
-        """运行评估任务"""
         try:
             task = context._tasker._tasks.get(context.task_id)
             if not task:
                 raise ValueError("Task not found")
             payload = task.payload
 
-            task_id = payload["task_id"]
+            run_id = payload["run_id"]
             db_id = payload["db_id"]
-            benchmark_id = payload["benchmark_id"]
+            dataset_id = payload["dataset_id"]
             retrieval_config = payload["retrieval_config"]
 
-            # 加载基准数据
-            await context.set_progress(5, "加载基准数据")
-            benchmark_row = await self.eval_repo.get_benchmark(benchmark_id)
-            if benchmark_row is None or benchmark_row.db_id != db_id:
-                raise ValueError("Benchmark not found")
-            data_path = benchmark_row.data_file_path
-            if not data_path or not os.path.exists(data_path):
-                raise ValueError("Benchmark file not found")
+            await context.set_progress(5, "加载评估数据集")
+            dataset_row = await self.eval_repo.get_dataset(dataset_id)
+            if dataset_row is None or dataset_row.db_id != db_id:
+                raise ValueError("Dataset not found")
+            dataset_items = await self.eval_repo.list_all_dataset_items(dataset_id)
+            if not dataset_items:
+                raise ValueError("Dataset has no items")
 
-            benchmark_data = []
-            with open(data_path, encoding="utf-8") as f:
-                for line in f:
-                    if line.strip():
-                        benchmark_data.append(json.loads(line))
-
-            # 开始评估
             kb_instance = await knowledge_base.aget_kb(db_id)
             if not kb_instance:
                 raise ValueError(f"Knowledge Base {db_id} not found")
 
-            # 初始化 Judge LLM
             judge_llm = None
-            if benchmark_row.has_gold_answers:
-                # 优先使用配置中的 judge_llm，否则回退到 answer_llm，或者默认
+            if dataset_row.has_gold_answers:
                 judge_model_spec = retrieval_config.get("judge_llm") or retrieval_config.get("answer_llm")
                 if judge_model_spec:
                     try:
@@ -457,176 +492,153 @@ class EvaluationService:
                     except Exception as e:
                         logger.error(f"Failed to load judge LLM: {e}")
 
-            total_questions = len(benchmark_data)
             all_retrieval_metrics = []
             all_answer_metrics = []
+            total_items = len(dataset_items)
 
-            async def update_result_db(
-                status: str | None = None, completed: int | None = None, metrics=None, final_score=None
-            ):
-                payload = {}
+            async def update_run_db(status=None, completed=None, metrics=None, final_score=None):
+                data = {}
                 if status is not None:
-                    payload["status"] = status
+                    data["status"] = status
                     if status in ["completed", "failed"]:
-                        payload["completed_at"] = datetime.utcnow()
+                        data["completed_at"] = utc_now_naive()
                 if completed is not None:
-                    payload["completed_questions"] = completed
+                    data["completed_items"] = completed
                 if metrics is not None:
-                    payload["metrics"] = metrics
+                    data["metrics"] = metrics
                 if final_score is not None:
-                    payload["overall_score"] = final_score
-                if payload:
-                    await self.eval_repo.update_result(task_id, payload)
+                    data["overall_score"] = final_score
+                if data:
+                    await self.eval_repo.update_run(run_id, data)
 
-            for i, question_data in enumerate(benchmark_data):
+            for index, item in enumerate(dataset_items):
                 await context.raise_if_cancelled()
-                progress = 10 + (i / total_questions) * 80
-                await context.set_progress(progress, f"评估 {i + 1}/{total_questions}")
+                progress = 10 + (index / total_items) * 80
+                await context.set_progress(progress, f"评估 {index + 1}/{total_items}")
 
+                question_data = {
+                    "query": item.query_text,
+                    "gold_chunk_ids": item.gold_chunk_ids or [],
+                    "gold_answer": item.gold_answer,
+                }
                 question_result = await evaluate_question(
                     kb_instance=kb_instance,
                     db_id=db_id,
                     question_data=question_data,
                     retrieval_config=retrieval_config,
-                    has_gold_chunks=benchmark_row.has_gold_chunks,
-                    has_gold_answers=benchmark_row.has_gold_answers,
+                    has_gold_chunks=dataset_row.has_gold_chunks,
+                    has_gold_answers=dataset_row.has_gold_answers,
                     judge_llm=judge_llm,
                     select_model_fn=select_model,
                 )
 
-                if benchmark_row.has_gold_chunks and question_data.get("gold_chunk_ids"):
+                if dataset_row.has_gold_chunks and question_data.get("gold_chunk_ids"):
                     all_retrieval_metrics.append(question_result["retrieval_scores"])
-                if benchmark_row.has_gold_answers and question_data.get("gold_answer") and judge_llm:
+                if dataset_row.has_gold_answers and question_data.get("gold_answer") and judge_llm:
                     all_answer_metrics.append(question_result["answer_scores"])
 
-                await self.eval_repo.upsert_result_detail(
-                    task_id=task_id,
-                    query_index=i,
-                    data=question_result["detail"],
+                await self.eval_repo.upsert_run_item(
+                    run_id=run_id,
+                    item_index=index,
+                    data={"dataset_item_id": item.item_id, **question_result["detail"]},
                 )
 
-                current_overall_metrics, _ = aggregate_metrics(all_retrieval_metrics, all_answer_metrics)
-                await context.set_result(
-                    {
-                        "current_metrics": current_overall_metrics,
-                        "completed_questions": i + 1,
-                        "total_questions": total_questions,
-                    }
-                )
-
-                if (i + 1) % 5 == 0 or (i + 1) == total_questions:
-                    await update_result_db(completed=i + 1)
+                if (index + 1) % 5 == 0 or (index + 1) == total_items:
+                    current_metrics, _ = aggregate_metrics(all_retrieval_metrics, all_answer_metrics)
+                    await context.set_result(
+                        {"current_metrics": current_metrics, "completed_items": index + 1, "total_items": total_items}
+                    )
+                    await update_run_db(completed=index + 1)
 
             await context.set_progress(95, "计算最终指标")
             overall_metrics, overall_score = aggregate_metrics(
                 all_retrieval_metrics, all_answer_metrics, include_overall_score=True
             )
-
-            await update_result_db(
+            await update_run_db(
                 status="completed",
-                completed=total_questions,
+                completed=total_items,
                 metrics=overall_metrics,
                 final_score=overall_score,
             )
             await context.set_progress(100, "完成")
-
         except Exception as e:
             logger.error(f"Task failed: {e}")
             try:
                 if "payload" in locals():
-                    await self.eval_repo.update_result(
-                        payload["task_id"],
-                        {"status": "failed", "metrics": {"error": str(e)}, "completed_at": datetime.utcnow()},
+                    await self.eval_repo.update_run(
+                        payload["run_id"],
+                        {"status": "failed", "metrics": {"error": str(e)}, "completed_at": utc_now_naive()},
                     )
             except Exception as exc:
-                logger.error(f"Error updating result record: {exc}")
-
+                logger.error(f"Error updating run record: {exc}")
             await context.set_message(f"Error: {str(e)}")
             raise
 
-    async def get_evaluation_results(self, task_id: str, db_id: str) -> dict[str, Any]:
-        """获取评估结果"""
-        if not task_id:
-            raise ValueError("task_id is required")
-        return await self.get_evaluation_results_by_db(db_id, task_id)
-
-    async def get_evaluation_history(self, db_id: str) -> list[dict[str, Any]]:
-        """获取知识库的评估历史记录"""
+    async def list_runs(self, db_id: str) -> list[dict[str, Any]]:
         try:
-            rows = await self.eval_repo.list_results(db_id)
+            rows = await self.eval_repo.list_runs(db_id)
             return [
                 {
-                    "task_id": row.task_id,
-                    "benchmark_id": row.benchmark_id,
+                    "run_id": row.run_id,
+                    "dataset_id": row.dataset_id,
                     "status": row.status,
-                    "started_at": row.started_at.isoformat() if row.started_at else None,
-                    "completed_at": row.completed_at.isoformat() if row.completed_at else None,
-                    "total_questions": row.total_questions,
-                    "completed_questions": row.completed_questions,
+                    "started_at": format_utc_datetime(row.started_at),
+                    "completed_at": format_utc_datetime(row.completed_at),
+                    "total_items": row.total_items,
+                    "completed_items": row.completed_items,
                     "overall_score": row.overall_score,
                     "retrieval_config": row.retrieval_config or {},
                     "metrics": row.metrics or {},
                 }
                 for row in rows
             ]
-
         except Exception as e:
-            logger.error(f"获取评估历史失败: {e}")
+            logger.error(f"获取评估运行历史失败: {e}")
             raise
-        # 索引与回退逻辑已移除，统一通过 db_id 定位
 
-    async def get_evaluation_results_by_db(
-        self, db_id: str, task_id: str, page: int = 1, page_size: int = 20, error_only: bool = False
+    async def get_run_results(
+        self, db_id: str, run_id: str, page: int = 1, page_size: int = 20, error_only: bool = False
     ) -> dict[str, Any]:
-        if not re.match(r"^eval_[a-f0-9]{8}$", task_id):
-            raise ValueError("Invalid task_id format")
-        row = await self.eval_repo.get_result(task_id)
+        if not re.match(r"^run_[a-f0-9]{8}$", run_id):
+            raise ValueError("Invalid run_id format")
+        row = await self.eval_repo.get_run(run_id)
         if row is None or row.db_id != db_id:
-            task = await tasker.get_task(task_id)
+            task = await tasker.get_task(run_id)
             if task:
-                return {"task_id": task_id, "status": task.status, "progress": task.progress, "message": task.message}
-            raise ValueError(f"Result not found for task {task_id}")
+                return {"run_id": run_id, "status": task.status, "progress": task.progress, "message": task.message}
+            raise ValueError(f"Run not found for {run_id}")
 
-        details = await self.eval_repo.list_result_details(task_id)
-        all_results = [
-            {
-                "query": d.query_text,
-                "gold_chunk_ids": d.gold_chunk_ids,
-                "gold_answer": d.gold_answer,
-                "generated_answer": d.generated_answer,
-                "retrieved_chunks": d.retrieved_chunks,
-                "metrics": d.metrics or {},
-            }
-            for d in details
-        ]
-
-        if error_only:
-            filtered_results = []
-            for item in all_results:
-                if item.get("metrics", {}).get("score", 1.0) <= 0.5:
-                    filtered_results.append(item)
-                    continue
-                metrics = item.get("metrics", {})
-                has_low_recall = any(metrics.get(k, 1.0) < 0.3 for k in metrics if k.startswith("recall@"))
-                if has_low_recall:
-                    filtered_results.append(item)
-            all_results = filtered_results
-
-        total = len(all_results)
         start_idx = (page - 1) * page_size
-        end_idx = start_idx + page_size
-        paged_results = all_results[start_idx:end_idx]
-
+        if error_only:
+            total = 0
+            paged_items = []
+            offset = 0
+            batch_size = 200
+            while True:
+                batch = await self.eval_repo.list_run_items(run_id, offset, batch_size)
+                if not batch:
+                    break
+                for item in batch:
+                    if not self._is_error_run_item(item):
+                        continue
+                    if start_idx <= total < start_idx + page_size:
+                        paged_items.append(self._run_item_to_dict(item))
+                    total += 1
+                offset += batch_size
+        else:
+            total = await self.eval_repo.count_run_items(run_id)
+            details = await self.eval_repo.list_run_items(run_id, start_idx, page_size)
+            paged_items = [self._run_item_to_dict(item) for item in details]
         return {
-            "task_id": row.task_id,
+            "run_id": row.run_id,
             "status": row.status,
-            "started_at": row.started_at.isoformat() if row.started_at else None,
-            "completed_at": row.completed_at.isoformat() if row.completed_at else None,
-            "total_questions": row.total_questions or 0,
-            "completed_questions": row.completed_questions or 0,
+            "started_at": format_utc_datetime(row.started_at),
+            "completed_at": format_utc_datetime(row.completed_at),
+            "total_items": row.total_items or 0,
+            "completed_items": row.completed_items or 0,
             "overall_score": row.overall_score,
             "retrieval_config": row.retrieval_config or {},
-            "interim_results": paged_results,
+            "items": paged_items,
             "pagination": {
                 "current_page": page,
                 "page_size": page_size,
@@ -636,12 +648,11 @@ class EvaluationService:
             },
         }
 
-    async def delete_evaluation_result_by_db(self, db_id: str, task_id: str) -> None:
-        if not re.match(r"^eval_[a-f0-9]{8}$", task_id):
-            raise ValueError("Invalid task_id format")
-        row = await self.eval_repo.get_result(task_id)
+    async def delete_run(self, db_id: str, run_id: str) -> None:
+        if not re.match(r"^run_[a-f0-9]{8}$", run_id):
+            raise ValueError("Invalid run_id format")
+        row = await self.eval_repo.get_run(run_id)
         if row is None or row.db_id != db_id:
-            raise ValueError("Result not found")
-        await self.eval_repo.delete_result(task_id)
-        logger.info(f"成功删除评估结果: {task_id}")
-        return
+            raise ValueError("Run not found")
+        await self.eval_repo.delete_run(run_id)
+        logger.info(f"成功删除评估运行: {run_id}")

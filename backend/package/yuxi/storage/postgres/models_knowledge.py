@@ -187,68 +187,101 @@ class KnowledgeGraphTripleMention(Base):
     created_at = Column(DateTime(timezone=True), default=utc_now_naive)
 
 
-class EvaluationBenchmark(Base):
-    """评估基准模型"""
+class EvaluationDataset(Base):
+    """评估数据集模型"""
 
-    __tablename__ = "evaluation_benchmarks"
-    __table_args__ = (UniqueConstraint("benchmark_id", name="uq_evaluation_benchmarks_benchmark_id"),)
+    __tablename__ = "evaluation_datasets"
+    __table_args__ = (UniqueConstraint("dataset_id", name="uq_evaluation_datasets_dataset_id"),)
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    benchmark_id = Column(String(64), unique=True, nullable=False, index=True)
+    dataset_id = Column(String(64), unique=True, nullable=False, index=True)
     db_id = Column(String(80), ForeignKey("knowledge_bases.db_id", ondelete="CASCADE"), nullable=False, index=True)
     name = Column(String(255), nullable=False)
     description = Column(Text)
-    question_count = Column(Integer, default=0)
+    item_count = Column(Integer, default=0)
     has_gold_chunks = Column(Boolean, default=False)
     has_gold_answers = Column(Boolean, default=False)
-    data_file_path = Column(String(1024))
+    build_metadata = Column(JSON_VALUE)
     created_by = Column(String(64))
     created_at = Column(DateTime(timezone=True), default=utc_now_naive)
     updated_at = Column(DateTime(timezone=True), default=utc_now_naive, onupdate=utc_now_naive)
 
 
-class EvaluationResult(Base):
-    """评估结果模型"""
+class EvaluationDatasetItem(Base):
+    """评估数据集题目模型"""
 
-    __tablename__ = "evaluation_results"
-    __table_args__ = (UniqueConstraint("task_id", name="uq_evaluation_results_task_id"),)
+    __tablename__ = "evaluation_dataset_items"
+    __table_args__ = (
+        UniqueConstraint("item_id", name="uq_evaluation_dataset_items_item_id"),
+        UniqueConstraint("dataset_id", "item_index", name="uq_evaluation_dataset_items_dataset_index"),
+        Index("ix_evaluation_dataset_items_dataset_index", "dataset_id", "item_index"),
+    )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    task_id = Column(String(64), unique=True, nullable=False, index=True)
-    db_id = Column(String(80), ForeignKey("knowledge_bases.db_id", ondelete="CASCADE"), nullable=False, index=True)
-    benchmark_id = Column(
+    item_id = Column(String(64), unique=True, nullable=False, index=True)
+    dataset_id = Column(
         String(64),
-        ForeignKey("evaluation_benchmarks.benchmark_id", ondelete="SET NULL"),
+        ForeignKey("evaluation_datasets.dataset_id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    db_id = Column(String(80), ForeignKey("knowledge_bases.db_id", ondelete="CASCADE"), nullable=False, index=True)
+    item_index = Column(Integer, nullable=False)
+    query_text = Column(Text, nullable=False)
+    gold_chunk_ids = Column(JSON_VALUE)
+    gold_answer = Column(Text)
+    created_at = Column(DateTime(timezone=True), default=utc_now_naive)
+
+
+class EvaluationRun(Base):
+    """评估运行模型"""
+
+    __tablename__ = "evaluation_runs"
+    __table_args__ = (UniqueConstraint("run_id", name="uq_evaluation_runs_run_id"),)
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    run_id = Column(String(64), unique=True, nullable=False, index=True)
+    db_id = Column(String(80), ForeignKey("knowledge_bases.db_id", ondelete="CASCADE"), nullable=False, index=True)
+    dataset_id = Column(
+        String(64),
+        ForeignKey("evaluation_datasets.dataset_id", ondelete="SET NULL"),
         index=True,
     )
     status = Column(String(32), default="running", index=True)
     retrieval_config = Column(JSON_VALUE)
     metrics = Column(JSON_VALUE)
     overall_score = Column(Float)
-    total_questions = Column(Integer, default=0)
-    completed_questions = Column(Integer, default=0)
+    total_items = Column(Integer, default=0)
+    completed_items = Column(Integer, default=0)
     started_at = Column(DateTime(timezone=True), default=utc_now_naive, index=True)
     completed_at = Column(DateTime(timezone=True))
     created_by = Column(String(64))
 
 
-class EvaluationResultDetail(Base):
-    """评估结果详情模型"""
+class EvaluationRunItem(Base):
+    """评估逐题结果模型"""
 
-    __tablename__ = "evaluation_result_details"
-    __table_args__ = (UniqueConstraint("task_id", "query_index", name="uq_evaluation_result_details_task_query"),)
+    __tablename__ = "evaluation_run_items"
+    __table_args__ = (
+        UniqueConstraint("run_id", "item_index", name="uq_evaluation_run_items_run_index"),
+        Index("ix_evaluation_run_items_run_index", "run_id", "item_index"),
+    )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    task_id = Column(
+    run_id = Column(
         String(64),
-        ForeignKey("evaluation_results.task_id", ondelete="CASCADE"),
+        ForeignKey("evaluation_runs.run_id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
-    query_index = Column(Integer, nullable=False)
+    dataset_item_id = Column(
+        String(64), ForeignKey("evaluation_dataset_items.item_id", ondelete="SET NULL"), index=True
+    )
+    item_index = Column(Integer, nullable=False)
     query_text = Column(Text, nullable=False)
     gold_chunk_ids = Column(JSON_VALUE)
     gold_answer = Column(Text)
     generated_answer = Column(Text)
     retrieved_chunks = Column(JSON_VALUE)
     metrics = Column(JSON_VALUE)
+    created_at = Column(DateTime(timezone=True), default=utc_now_naive)

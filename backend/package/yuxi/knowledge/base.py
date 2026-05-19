@@ -1428,13 +1428,11 @@ class KnowledgeBase(ABC):
         return retrievers
 
     async def _load_metadata(self) -> None:
-        from yuxi.repositories.evaluation_repository import EvaluationRepository
         from yuxi.repositories.knowledge_base_repository import KnowledgeBaseRepository
         from yuxi.repositories.knowledge_file_repository import KnowledgeFileRepository
 
         kb_repo = KnowledgeBaseRepository()
         file_repo = KnowledgeFileRepository()
-        eval_repo = EvaluationRepository()
 
         databases = [kb for kb in await kb_repo.get_all() if kb.kb_type == self.kb_type]
         self.databases_meta = {
@@ -1484,26 +1482,6 @@ class KnowledgeBase(ABC):
                 }
 
         self.benchmarks_meta = {}
-        for kb in databases:
-            benchmarks = await eval_repo.list_benchmarks(kb.db_id)
-            if not benchmarks:
-                continue
-            self.benchmarks_meta[kb.db_id] = {}
-            for bench in benchmarks:
-                self.benchmarks_meta[kb.db_id][bench.benchmark_id] = {
-                    "id": bench.benchmark_id,
-                    "benchmark_id": bench.benchmark_id,
-                    "name": bench.name,
-                    "description": bench.description,
-                    "db_id": bench.db_id,
-                    "question_count": bench.question_count,
-                    "has_gold_chunks": bench.has_gold_chunks,
-                    "has_gold_answers": bench.has_gold_answers,
-                    "benchmark_file": bench.data_file_path,
-                    "created_by": bench.created_by,
-                    "created_at": utc_isoformat(bench.created_at) if bench.created_at else None,
-                    "updated_at": utc_isoformat(bench.updated_at) if bench.updated_at else None,
-                }
 
         logger.info(f"Loaded {self.kb_type} metadata from database for {len(self.databases_meta)} databases")
         await self._fill_missing_file_sizes()
@@ -1556,13 +1534,11 @@ class KnowledgeBase(ABC):
                     await self._persist_file(file_id)
 
     async def _save_metadata(self) -> None:
-        from yuxi.repositories.evaluation_repository import EvaluationRepository
         from yuxi.repositories.knowledge_base_repository import KnowledgeBaseRepository
         from yuxi.repositories.knowledge_file_repository import KnowledgeFileRepository
 
         kb_repo = KnowledgeBaseRepository()
         file_repo = KnowledgeFileRepository()
-        eval_repo = EvaluationRepository()
 
         self._normalize_metadata_state()
 
@@ -1607,23 +1583,6 @@ class KnowledgeBase(ABC):
                     "updated_by": str(meta.get("updated_by")) if meta.get("updated_by") else None,
                 },
             )
-
-        for db_id, benchmarks in self.benchmarks_meta.items():
-            for benchmark_id, meta in benchmarks.items():
-                existing = await eval_repo.get_benchmark(benchmark_id)
-                payload = {
-                    "benchmark_id": benchmark_id,
-                    "db_id": db_id,
-                    "name": meta.get("name") or benchmark_id,
-                    "description": meta.get("description"),
-                    "question_count": int(meta.get("question_count") or 0),
-                    "has_gold_chunks": bool(meta.get("has_gold_chunks")),
-                    "has_gold_answers": bool(meta.get("has_gold_answers")),
-                    "data_file_path": meta.get("benchmark_file"),
-                    "created_by": str(meta.get("created_by")) if meta.get("created_by") else None,
-                }
-                if existing is None:
-                    await eval_repo.create_benchmark(payload)
 
     async def _persist_file(self, file_id: str) -> None:
         """只保存单个文件到数据库，避免全量遍历"""
