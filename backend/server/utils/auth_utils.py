@@ -8,11 +8,10 @@ from argon2 import PasswordHasher
 from argon2.exceptions import InvalidHash, VerifyMismatchError, VerificationError
 from yuxi.utils.datetime_utils import utc_now
 
-# JWT配置
-LEGACY_JWT_SECRET_KEY = "yuxi_know_secure_key"
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRATION = 7 * 24 * 60 * 60  # 7天过期
 JWT_AUDIENCE = "yuxi-know-api"
+PUBLIC_DEFAULT_JWT_SECRET_KEY = "yuxi_know_secure_key"
 PASSWORD_HASHER = PasswordHasher()
 
 
@@ -35,8 +34,8 @@ def _get_or_create_dev_env(name: str, value_factory) -> str:
 
 def _get_jwt_secret_key() -> str:
     secret_key = _get_or_create_dev_env("JWT_SECRET_KEY", lambda: secrets.token_hex(32))
-    if secret_key == LEGACY_JWT_SECRET_KEY:
-        raise ValueError("JWT_SECRET_KEY 不能使用历史默认密钥，请重新生成随机强密钥")
+    if _is_production_env() and secret_key == PUBLIC_DEFAULT_JWT_SECRET_KEY:
+        raise ValueError("JWT_SECRET_KEY 不能使用公开默认密钥，请重新生成随机强密钥")
     return secret_key
 
 

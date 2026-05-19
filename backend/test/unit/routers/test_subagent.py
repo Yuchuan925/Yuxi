@@ -312,6 +312,7 @@ def test_update_subagent_status_not_found(monkeypatch):
 # Repository Tests
 # =============================================================================
 
+
 class TestSubAgentRepository:
     @pytest.mark.asyncio
     async def test_list_all(self):
@@ -418,6 +419,7 @@ class TestSubAgentRepository:
 # Service Tests
 # =============================================================================
 
+
 class TestSubAgentService:
     @pytest.mark.asyncio
     async def test_init_builtin_subagents_creates_agents(self, monkeypatch):
@@ -513,9 +515,11 @@ class TestSubAgentService:
         assert second[0]["tools"] == ["tool_a"]
         service_module.clear_specs_cache()
 
+
 # =============================================================================
 # Model Tests
 # =============================================================================
+
 
 class TestSubAgentModel:
     def test_to_dict(self):
@@ -615,3 +619,21 @@ class TestDeepAgentSubagentSelection:
 
         assert [item["name"] for item in resolved_specs] == ["research-agent"]
         assert resolved_specs[0]["tools"] == [mock_tool]
+
+    @pytest.mark.asyncio
+    async def test_get_subagents_from_names_none_selects_none(self, monkeypatch):
+        from yuxi.services import subagent_service as service_module
+
+        async def fake_get_specs(_db=None):
+            return [
+                {
+                    "name": "research-agent",
+                    "description": "r",
+                    "system_prompt": "s",
+                    "tools": ["tool_a"],
+                }
+            ]
+
+        monkeypatch.setattr(service_module, "get_subagent_specs", fake_get_specs)
+
+        assert await service_module.get_subagents_from_names(None) == []

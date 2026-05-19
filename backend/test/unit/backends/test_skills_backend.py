@@ -18,6 +18,16 @@ def _prepare_skills_dir(root: Path) -> None:
     )
 
 
+def test_selected_skills_backend_none_exposes_no_skills(tmp_path, monkeypatch):
+    _prepare_skills_dir(tmp_path)
+    monkeypatch.setattr(skills_backend, "get_skills_root_dir", lambda: tmp_path)
+
+    backend = skills_backend.SelectedSkillsReadonlyBackend(selected_slugs=None)
+
+    assert backend.ls_info("/") == []
+    assert "Access denied" in backend.read("/alpha/SKILL.md")
+
+
 def test_selected_skills_backend_readonly_and_visible_only_selected(tmp_path, monkeypatch):
     _prepare_skills_dir(tmp_path)
     monkeypatch.setattr(skills_backend, "get_skills_root_dir", lambda: tmp_path)

@@ -1,4 +1,5 @@
 import { computed } from 'vue'
+import { isDefaultAllAgentResourceKind } from '@/utils/agentConfigUtils'
 
 export function useAgentMentionConfig({
   currentAgentState,
@@ -27,26 +28,12 @@ export function useAgentMentionConfig({
       files.push(entry)
     }
 
-    // 处理 files - 兼容字典格式 {"/path/file": {content: [...]}} 和旧数组格式
     if (typeof rawFiles === 'object' && !Array.isArray(rawFiles) && rawFiles !== null) {
-      // 新格式：字典格式 {"/attachments/xxx/file.md": {...}}
       Object.entries(rawFiles).forEach(([filePath, fileData]) => {
         pushFile({
           path: filePath,
           ...fileData
         })
-      })
-    } else if (Array.isArray(rawFiles)) {
-      // 旧格式：数组格式
-      rawFiles.forEach((item) => {
-        if (typeof item === 'object' && item !== null) {
-          Object.entries(item).forEach(([filePath, fileData]) => {
-            pushFile({
-              path: filePath,
-              ...fileData
-            })
-          })
-        }
       })
     }
 
@@ -92,6 +79,9 @@ export function useAgentMentionConfig({
     const configItems = configurableItems.value || {}
     const currentConfig = agentConfig.value || {}
     let includeAllKnowledgeBases = false
+    let includeAllMcps = false
+    let includeAllSkills = false
+    let includeAllSubagents = false
     const allowedKbNames = new Set()
     const allowedMcpNames = new Set()
     const allowedSkillNames = new Set()
@@ -102,8 +92,11 @@ export function useAgentMentionConfig({
       const kind = item?.kind
       const val = currentConfig[key]
 
-      if (kind === 'knowledges' && val === null) {
-        includeAllKnowledgeBases = true
+      if (val === null && isDefaultAllAgentResourceKind(kind)) {
+        includeAllKnowledgeBases ||= kind === 'knowledges'
+        includeAllMcps ||= kind === 'mcps'
+        includeAllSkills ||= kind === 'skills'
+        includeAllSubagents ||= kind === 'subagents'
       } else if (Array.isArray(val)) {
         if (kind === 'knowledges') {
           val.forEach((v) => allowedKbNames.add(v))
@@ -136,15 +129,23 @@ export function useAgentMentionConfig({
       }
     })
 
+    if (includeAllSubagents) {
+      subagentOptionMap.forEach((_, name) => allowedSubagentNames.add(name))
+    }
+
     const knowledgeBases = includeAllKnowledgeBases
       ? availableKnowledgeBases.value
       : availableKnowledgeBases.value.filter((kb) => allowedKbNames.has(kb.name))
-    const mcps = availableMcps.value.filter((mcp) => allowedMcpNames.has(mcp.name))
-    const skills = availableSkills.value.filter((skill) => {
-      const skillName = skill.name || ''
-      const skillSlug = skill.slug || ''
-      return allowedSkillNames.has(skillName) || allowedSkillNames.has(skillSlug)
-    })
+    const mcps = includeAllMcps
+      ? availableMcps.value
+      : availableMcps.value.filter((mcp) => allowedMcpNames.has(mcp.name))
+    const skills = includeAllSkills
+      ? availableSkills.value
+      : availableSkills.value.filter((skill) => {
+          const skillName = skill.name || ''
+          const skillSlug = skill.slug || ''
+          return allowedSkillNames.has(skillName) || allowedSkillNames.has(skillSlug)
+        })
     const subagents = Array.from(allowedSubagentNames)
       .filter((name) => !!name)
       .map(

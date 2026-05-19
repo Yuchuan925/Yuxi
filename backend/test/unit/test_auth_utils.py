@@ -7,7 +7,7 @@ import jwt
 import pytest
 from yuxi.utils.datetime_utils import utc_now
 
-from server.utils.auth_utils import JWT_ALGORITHM, JWT_AUDIENCE, LEGACY_JWT_SECRET_KEY, AuthUtils
+from server.utils.auth_utils import JWT_ALGORITHM, JWT_AUDIENCE, AuthUtils
 
 
 def test_hash_password_uses_argon2():
@@ -50,11 +50,12 @@ def test_access_token_requires_configured_secret_in_production(monkeypatch):
         AuthUtils.create_access_token({"sub": "1"})
 
 
-def test_access_token_requires_non_default_secret(monkeypatch):
-    monkeypatch.setenv("JWT_SECRET_KEY", LEGACY_JWT_SECRET_KEY)
+def test_access_token_rejects_public_default_secret_in_production(monkeypatch):
+    monkeypatch.setenv("YUXI_ENV", "production")
+    monkeypatch.setenv("JWT_SECRET_KEY", "yuxi_know_secure_key")
     monkeypatch.setenv("YUXI_INSTANCE_ID", "pytest-instance")
 
-    with pytest.raises(ValueError, match="历史默认密钥"):
+    with pytest.raises(ValueError, match="公开默认密钥"):
         AuthUtils.create_access_token({"sub": "1"})
 
 

@@ -455,7 +455,7 @@ async def cancel_agent_run(
 @chat.get("/runs/{run_id}/events")
 async def stream_run_events(
     run_id: str,
-    after_seq: str = Query("0"),
+    after_seq: str = Query("0-0"),
     current_user: User = Depends(get_required_user),
 ):
     """SSE 拉取 run 事件（需要登录）"""

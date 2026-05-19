@@ -289,9 +289,7 @@ const { threads, currentThreadId, currentThread } = storeToRefs(chatThreadsStore
 const userInput = ref('')
 const sendCooldownActive = ref(false)
 let sendCooldownTimer = null
-const useRunsApi =
-  import.meta.env.VITE_USE_RUNS_API === 'true' &&
-  localStorage.getItem('force_legacy_stream') !== 'true'
+const useRunsApi = import.meta.env.VITE_USE_RUNS_API === 'true'
 
 // 预设的打招呼文本
 const greetingMessages = [

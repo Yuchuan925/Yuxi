@@ -12,6 +12,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 
 import yaml
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from yuxi import config as sys_config
 from yuxi.repositories.skill_repository import SkillRepository
@@ -185,7 +186,7 @@ def _is_builtin_managed(item: Skill, slug: str) -> bool:
     expected_dir = _build_builtin_skill_dir_path(slug)
     if item.dir_path != expected_dir:
         return False
-    return (item.created_by or "") in {"system", BUILTIN_SKILL_OPERATOR}
+    return (item.created_by or "") == BUILTIN_SKILL_OPERATOR
 
 
 def _dirs_equal(dir1: Path, dir2: Path) -> bool:
@@ -248,16 +249,12 @@ async def get_skill_dependency_options(db: AsyncSession) -> dict[str, list[str] 
     # 并行执行三个独立操作
     from yuxi.services.tool_service import get_tool_metadata
 
-    async def get_skills():
-        repo = SkillRepository(db)
-        return await repo.list_all()
-
     def get_tools():
         all_tools = get_tool_metadata()
         return [{"id": tool["id"], "name": tool.get("name", tool["id"])} for tool in all_tools]
 
-    items, tool_list, mcp_names = await asyncio.gather(
-        get_skills(),
+    skill_slugs, tool_list, mcp_names = await asyncio.gather(
+        list_skill_slugs(db),
         asyncio.to_thread(get_tools),
         get_enabled_mcp_server_names(db=db),
     )
@@ -265,13 +262,18 @@ async def get_skill_dependency_options(db: AsyncSession) -> dict[str, list[str] 
     return {
         "tools": tool_list,
         "mcps": mcp_names,
-        "skills": [item.slug for item in items],
+        "skills": skill_slugs,
     }
 
 
 async def list_skills(db: AsyncSession) -> list[Skill]:
     repo = SkillRepository(db)
     return await repo.list_all()
+
+
+async def list_skill_slugs(db: AsyncSession) -> list[str]:
+    result = await db.execute(select(Skill.slug).order_by(Skill.updated_at.desc(), Skill.id.desc()))
+    return [slug for slug in result.scalars().all() if isinstance(slug, str)]
 
 
 def _get_all_tool_names() -> list[str]:
@@ -793,10 +795,7 @@ async def init_builtin_skills(db: AsyncSession, *, created_by: str = "system") -
 
         skill_md = source_dir / "SKILL.md"
         if not skill_md.exists():
-            legacy_skill_md = source_dir / "SKILLS.md"
-            if not legacy_skill_md.exists():
-                raise ValueError(f"内置 skill 缺少 SKILL.md: {source_dir}")
-            skill_md = legacy_skill_md
+            raise ValueError(f"内置 skill 缺少 SKILL.md: {source_dir}")
 
         content = skill_md.read_text(encoding="utf-8")
         parsed_name, _, meta = _parse_skill_markdown(content)
@@ -827,10 +826,7 @@ def list_builtin_skill_specs() -> list[dict[str, Any]]:
 
         skill_md = source_dir / "SKILL.md"
         if not skill_md.exists():
-            legacy_skill_md = source_dir / "SKILLS.md"
-            if not legacy_skill_md.exists():
-                raise ValueError(f"内置 skill 缺少 SKILL.md: {source_dir}")
-            skill_md = legacy_skill_md
+            raise ValueError(f"内置 skill 缺少 SKILL.md: {source_dir}")
 
         content = skill_md.read_text(encoding="utf-8")
         parsed_name, parsed_desc, meta = _parse_skill_markdown(content)

@@ -220,7 +220,7 @@
 
                     <div v-if="getSelectedCount(key) > 0" class="selection-preview">
                       <a-tag
-                        v-for="val in agentConfig[key]"
+                        v-for="val in ensureArray(key)"
                         :key="val"
                         :closable="!isReadOnlyConfig"
                         @close="toggleOption(key, val)"
@@ -420,6 +420,7 @@ import { X, Trash2, Check, Plus, Search, Star, RotateCw, Settings } from 'lucide
 import ModelSelectorComponent from '@/components/ModelSelectorComponent.vue'
 import { useAgentStore } from '@/stores/agent'
 import { useDatabaseStore } from '@/stores/database'
+import { isDefaultAllAgentResourceKind } from '@/utils/agentConfigUtils'
 import { mcpApi } from '@/apis/mcp_api'
 import { skillApi } from '@/apis/skill_api'
 import { subagentApi } from '@/apis/subagent_api'
@@ -500,6 +501,7 @@ const segmentOptions = [
   { label: '工具', value: 'tools' },
   { label: '其他', value: 'other' }
 ]
+const isToolResourceKind = (kind) => isDefaultAllAgentResourceKind(kind)
 
 const isEmptyConfig = computed(() => {
   return !selectedAgentId.value || Object.keys(configurableItems.value).length === 0
@@ -527,11 +529,11 @@ const segmentConfigKeys = computed(() => {
     }),
     tools: keys.filter((key) => {
       const meta = configurableItems.value[key]?.kind
-      return ['tools', 'knowledges', 'mcps', 'skills', 'subagents'].includes(meta)
+      return isToolResourceKind(meta)
     }),
     other: keys.filter((key) => {
       const meta = configurableItems.value[key]?.kind
-      return !['llm', 'prompt', 'tools', 'knowledges', 'mcps', 'skills', 'subagents'].includes(meta)
+      return meta !== 'llm' && meta !== 'prompt' && !isToolResourceKind(meta)
     })
   }
 })
@@ -621,7 +623,7 @@ const loadSubagentOptions = async (force = false) => {
 
 // 判断是否为需要跳转的配置类型
 const isToolsKind = (kind) => {
-  return ['knowledges', 'tools', 'mcps', 'skills', 'subagents'].includes(kind)
+  return isToolResourceKind(kind)
 }
 
 // 强制刷新对应配置项的选项列表
@@ -711,9 +713,9 @@ const getConfigOptions = (value) => {
 }
 
 const isListConfig = (key, value) => {
-  const isTools = value?.kind === 'tools'
+  const isDefaultAllKind = isDefaultAllAgentResourceKind(value?.kind)
   const isList = value?.type === 'list'
-  return isTools || isList || key === 'skills' || key === 'subagents'
+  return isDefaultAllKind || isList || key === 'skills' || key === 'subagents'
 }
 
 const getOptionValue = (option) => {
@@ -803,8 +805,9 @@ const handleModelChange = (key, spec) => {
 // 多选相关方法
 const ensureArray = (key) => {
   const config = agentConfig.value || {}
-  if (config[key] === null && configurableItems.value[key]?.kind === 'knowledges') {
-    return getConfigOptions(configurableItems.value[key]).map((option) => getOptionValue(option))
+  const configItem = configurableItems.value[key]
+  if (config[key] === null && isDefaultAllAgentResourceKind(configItem?.kind)) {
+    return getConfigOptions(configItem).map((option) => getOptionValue(option))
   }
   if (!config[key] || !Array.isArray(config[key])) {
     return []
@@ -869,6 +872,9 @@ const openSelectionModal = async (key) => {
   }
   if (configurableItems.value[key]?.kind === 'skills') {
     await loadLiveSkillOptions()
+  }
+  if (configurableItems.value[key]?.kind === 'mcps') {
+    await loadMcpOptions()
   }
   if (configurableItems.value[key]?.kind === 'subagents') {
     await loadSubagentOptions()

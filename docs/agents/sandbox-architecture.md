@@ -16,7 +16,7 @@ Docker 和 Kubernetes 不是互斥关系。Docker 解决的是“把一个进程
 
 放到 Yuxi 里，这个关系更具体一些。Yuxi 本身并不直接决定“沙盒一定跑在 Docker 还是一定跑在 K8s 上”，它只要求后端拿到一个可访问的沙盒地址，然后通过 `agent-sandbox` 的 HTTP API 去执行命令、读写文件。真正负责创建和回收沙盒实例的是 `sandbox-provisioner` 这个单独的服务。也就是说，Yuxi 的应用层只依赖 “provisioner”，而 provisioner 的后端可以选择用本机 Docker 去起容器，也可以选择向 Kubernetes 集群创建 Pod 和 Service。
 
-所以项目里看到的概念其实分成两层。第一层是应用层的 `SANDBOX_PROVIDER`，当前代码只支持 `provisioner`。第二层是 provisioner 内部的 `SANDBOX_PROVISIONER_BACKEND`，它决定具体用哪种底层实现去创建沙盒。当前真正应该对外理解和配置的是 `docker`、`kubernetes`，而旧配置里的 `local` 只是 `docker` 的兼容别名，不是另一套独立实现。
+所以项目里看到的概念其实分成两层。第一层是应用层的 `SANDBOX_PROVIDER`，当前代码只支持 `provisioner`。第二层是 provisioner 内部的 `SANDBOX_PROVISIONER_BACKEND`，它决定具体用哪种底层实现去创建沙盒。当前真正应该对外理解和配置的是 `docker`、`kubernetes`，测试或占位场景可以使用 `memory`。
 
 ## 二、当前项目的真实沙盒调用链
 
@@ -24,19 +24,19 @@ Docker 和 Kubernetes 不是互斥关系。Docker 解决的是“把一个进程
 
 调用链可以概括为：Web/API 请求进入 Yuxi 后端，后端构造 `ProvisionerSandboxBackend`，再经由 `ProvisionerClient` 调用 `sandbox-provisioner` 的 `/api/sandboxes` 接口。`sandbox-provisioner` 根据 `SANDBOX_PROVISIONER_BACKEND` 选择内存占位实现、Docker 容器实现或 Kubernetes 实现。沙盒真正启动后，对外暴露一个 HTTP 地址，Yuxi 再使用这个地址完成执行命令、上传文件、下载文件、目录遍历等操作。
 
-当前仓库的默认配置和默认开发环境都应该理解为 `docker`。虽然旧环境变量值 `local` 仍然兼容，但代码会把它归一化为 `docker`。因此，正常情况下运行中的 provisioner 健康检查应返回 `backend=docker`。这意味着我们用 `docker compose up -d` 启动项目时，应用并不是直接把代码跑在宿主机上，而是通过 `sandbox-provisioner` 再去用 Docker 启一个真正的沙盒容器。
+当前仓库的默认配置和默认开发环境都应该理解为 `docker`。正常情况下运行中的 provisioner 健康检查应返回 `backend=docker`。这意味着我们用 `docker compose up -d` 启动项目时，应用并不是直接把代码跑在宿主机上，而是通过 `sandbox-provisioner` 再去用 Docker 启一个真正的沙盒容器。
 
-## 三、`docker`、`kubernetes` 以及兼容别名 `local` 到底分别是什么
+## 三、`memory`、`docker`、`kubernetes` 分别是什么
 
-当前实现里，`memory`、`docker`、`kubernetes` 是三种需要区分的语义，另外 `local` 只是 `docker` 的兼容别名。
+当前实现里，`memory`、`docker`、`kubernetes` 是三种需要区分的语义。
 
 `memory` 是一个纯内存登记实现。它不会真正创建容器，也不会提供真实隔离，主要适合测试或极轻量的占位场景。它只是记录一个 `sandbox_id -> sandbox_url` 的映射，因此不能把它理解成生产可用的沙盒。
 
-`docker` 是当前默认也是推荐的本机容器后端。`sandbox-provisioner` 会把 `docker` 以及历史值 `local` 都映射到同一个 `LocalContainerProvisionerBackend`。因此，今天在 Yuxi 里说 “Docker 模式” 和旧文档里说 “local 模式”，从代码路径上看是一回事。区别只在命名：现在应统一写成 `docker`，`local` 仅用于兼容旧部署。
+`docker` 是当前默认也是推荐的本机容器后端。`sandbox-provisioner` 会使用 `LocalContainerProvisionerBackend` 通过宿主机 Docker daemon 动态创建沙盒容器。
 
 `kubernetes` 则是另一条实现路径。它不会再去调用本机 Docker 起容器，而是使用 Kubernetes API 在指定 namespace 中创建一个 Pod 和一个 NodePort Service，然后把这个 Service 对应的可访问地址回传给 Yuxi 后端。
 
-因此，如果在界面、文档或者环境变量里看到 “docker / k8s” 这几个词，最准确的理解应该是：Yuxi 的应用层只有一种 provider，也就是 `provisioner`；provisioner 下面有多种 backend；其中 `docker` 是默认的本机 Docker 后端，`kubernetes` 是另一种远程集群后端；`local` 只是前者的历史别名。
+因此，如果在界面、文档或者环境变量里看到 “docker / k8s” 这几个词，最准确的理解应该是：Yuxi 的应用层只有一种 provider，也就是 `provisioner`；provisioner 下面有多种 backend；其中 `docker` 是默认的本机 Docker 后端，`kubernetes` 是另一种远程集群后端。
 
 ## 四、默认开发模式到底是什么
 
@@ -44,13 +44,13 @@ Docker 和 Kubernetes 不是互斥关系。Docker 解决的是“把一个进程
 
 这也是为什么在 `docker-compose.yml` 中既能看到 `api`、`worker`、`sandbox-provisioner` 这样的常驻服务，又能看到 `sandbox-provisioner` 挂载了 `/var/run/docker.sock`。这不是重复设计，而是为了让 provisioner 有能力继续调用宿主机 Docker daemon 去创建新的“每线程沙盒容器”。
 
-换句话说，当前项目不存在单独的 “纯宿主机 local 模式”。旧配置里的 `local`，本质上仍然是 Docker 容器模式，只是这些容器是在当前这台机器上由 provisioner 动态拉起，而不是被 Kubernetes 调度。
+换句话说，当前项目不存在单独的 “纯宿主机 local 模式”。本机开发和单机部署应显式使用 `docker` 后端。
 
 这里还需要把 Compose 里的环境变量分两层看。`api` 和 `worker` 关注的是应用层变量，例如 `SANDBOX_PROVIDER`、`SANDBOX_PROVISIONER_URL`、`SANDBOX_VIRTUAL_PATH_PREFIX`、`SANDBOX_EXEC_TIMEOUT_SECONDS`、`SANDBOX_MAX_OUTPUT_BYTES`。`sandbox-provisioner` 自己则有另一组变量，负责决定具体如何创建沙盒实例。两层不要混看，否则很容易误以为改了 API 环境变量就能切换底层承载方式。
 
 ## 五、Docker 本机后端是如何工作的
 
-当 `SANDBOX_PROVISIONER_BACKEND=docker` 时，或者为了兼容旧配置读取到 `local` 时，`sandbox-provisioner` 会进入 `LocalContainerProvisionerBackend`。它会检查 Docker 是否可用，解析自身容器里 `/app/saves` 这个挂载点在宿主机上的真实路径，并据此推导出线程数据目录。随后它为每个 `thread_id` 准备一个稳定的 `sandbox_id`，把容器命名为类似 `yuxi-sandbox-<id>` 的形式，并在 Docker 网络中启动真正的沙盒镜像。
+当 `SANDBOX_PROVISIONER_BACKEND=docker` 时，`sandbox-provisioner` 会进入 `LocalContainerProvisionerBackend`。它会检查 Docker 是否可用，解析自身容器里 `/app/saves` 这个挂载点在宿主机上的真实路径，并据此推导出线程数据目录。随后它为每个 `thread_id` 准备一个稳定的 `sandbox_id`，把容器命名为类似 `yuxi-sandbox-<id>` 的形式，并在 Docker 网络中启动真正的沙盒镜像。
 
 这个沙盒镜像默认来自 `SANDBOX_IMAGE`，容器内部监听的端口默认是 `8080`。provisioner 在启动容器时，会把这个端口随机映射到宿主机上的一个可用端口，再用 `DOCKER_SANDBOX_HOST` 拼出形如 `http://host.docker.internal:<random_port>` 的访问地址。Yuxi 后端拿到的就是这个地址。
 
@@ -294,11 +294,11 @@ CHECK_YUXI_SANDBOX_ENV_EXISTS=True
 
 当前项目不应再按“应用直接管理一个长期存在的本地 sandbox 服务”去理解。更准确的认识应该是：Yuxi 只管理线程和上下文；provisioner 负责创建线程对应的沙盒实例；文件系统不是简单地暴露一个容器根目录，而是把可写工作区、只读 skills 和只读知识库组合成一个受控命名空间。
 
-因此，当你在界面上“启用沙盒”或者在文档里“选择 K8s”时，本质上做的不是切换一段业务逻辑，而是在切换 provisioner 的底层实例承载方式。选择 `docker` 时，沙盒由当前部署机上的 Docker daemon 动态创建；旧值 `local` 也会落到这条路径。选择 `kubernetes` 时，沙盒由目标 K8s 集群动态创建。Yuxi 自己始终只面对一个 provisioner 服务地址。
+因此，当你在界面上“启用沙盒”或者在文档里“选择 K8s”时，本质上做的不是切换一段业务逻辑，而是在切换 provisioner 的底层实例承载方式。选择 `docker` 时，沙盒由当前部署机上的 Docker daemon 动态创建；选择 `kubernetes` 时，沙盒由目标 K8s 集群动态创建。Yuxi 自己始终只面对一个 provisioner 服务地址。
 
 ## 十五、排障时建议先看什么
 
-如果怀疑是 provisioner 级问题，先看 `http://localhost:8002/health`，确认 backend 类型和 idle timeout 是否符合预期。默认 Docker 部署下这里应看到 `backend=docker`，即使你沿用了旧的 `SANDBOX_PROVISIONER_BACKEND=local`。接着看 `docker logs sandbox-provisioner --tail 200`，因为这里能直接看到创建容器、复用旧实例、健康检查失败和 idle reaper 删除的日志。
+如果怀疑是 provisioner 级问题，先看 `http://localhost:8002/health`，确认 backend 类型和 idle timeout 是否符合预期。默认 Docker 部署下这里应看到 `backend=docker`。接着看 `docker logs sandbox-provisioner --tail 200`，因为这里能直接看到创建容器、复用旧实例、健康检查失败和 idle reaper 删除的日志。
 
 如果怀疑是 Docker 地址不可达，重点检查 `SANDBOX_DOCKER_SANDBOX_HOST` 和随机映射端口是否从 `api` 容器可访问。可以在 `api` 容器内直接 `curl` provisioner 返回的 `sandbox_url`。如果怀疑是 Kubernetes 地址不可达，重点检查 `NODE_HOST` 和 NodePort 的外部连通性，因为当前实现并不是通过集群内部 Service 名称回连。
 

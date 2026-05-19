@@ -920,7 +920,7 @@ const enableOcrOptions = computed(() => [
   },
   {
     value: 'rapid_ocr',
-    label: getRapidOcrLabel(),
+    label: getOcrLabel('rapid_ocr', 'RapidOCR (ONNX)'),
     title: 'ONNX with RapidOCR',
     disabled:
       ocrHealthStatus.value?.rapid_ocr?.status === 'unavailable' ||
@@ -928,7 +928,7 @@ const enableOcrOptions = computed(() => [
   },
   {
     value: 'mineru_ocr',
-    label: getMinerULabel(),
+    label: getOcrLabel('mineru_ocr', 'MinerU OCR'),
     title: 'MinerU OCR',
     disabled:
       ocrHealthStatus.value?.mineru_ocr?.status === 'unavailable' ||
@@ -936,7 +936,7 @@ const enableOcrOptions = computed(() => [
   },
   {
     value: 'mineru_official',
-    label: getMinerUOfficialLabel(),
+    label: getOcrLabel('mineru_official', 'MinerU Official API'),
     title: 'MinerU Official API',
     disabled:
       ocrHealthStatus.value?.mineru_official?.status === 'unavailable' ||
@@ -944,7 +944,7 @@ const enableOcrOptions = computed(() => [
   },
   {
     value: 'pp_structure_v3_ocr',
-    label: getPPStructureV3Label(),
+    label: getOcrLabel('pp_structure_v3_ocr', 'PP-Structure-V3'),
     title: 'PP-Structure-V3',
     disabled:
       ocrHealthStatus.value?.pp_structure_v3_ocr?.status === 'unavailable' ||
@@ -952,7 +952,7 @@ const enableOcrOptions = computed(() => [
   },
   {
     value: 'deepseek_ocr',
-    label: getDeepSeekOcrLabel(),
+    label: getOcrLabel('deepseek_ocr', 'DeepSeek OCR'),
     title: 'DeepSeek OCR (SiliconFlow)',
     disabled:
       ocrHealthStatus.value?.deepseek_ocr?.status === 'unavailable' ||
@@ -1011,13 +1011,6 @@ const getOcrLabel = (serviceKey, displayName) => {
   const status = ocrHealthStatus.value?.[serviceKey]?.status || 'unknown'
   return `${STATUS_ICONS[status] || '❓'} ${displayName}`
 }
-
-// 兼容性包装器
-const getRapidOcrLabel = () => getOcrLabel('rapid_ocr', 'RapidOCR (ONNX)')
-const getMinerULabel = () => getOcrLabel('mineru_ocr', 'MinerU OCR')
-const getMinerUOfficialLabel = () => getOcrLabel('mineru_official', 'MinerU Official API')
-const getPPStructureV3Label = () => getOcrLabel('pp_structure_v3_ocr', 'PP-Structure-V3')
-const getDeepSeekOcrLabel = () => getOcrLabel('deepseek_ocr', 'DeepSeek OCR')
 
 // 验证OCR服务可用性
 const validateOcrService = () => {

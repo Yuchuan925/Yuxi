@@ -226,6 +226,35 @@ class KnowledgeBaseManager:
             all_databases.append(db_info)
         return {"databases": all_databases}
 
+    @staticmethod
+    def _database_info_accessible(user: dict, db_info: dict) -> bool:
+        if user.get("role") == "superadmin":
+            return True
+
+        user_uid = str(user.get("uid") or "")
+        if user_uid and db_info.get("created_by") == user_uid:
+            return True
+
+        share_config = db_info.get("share_config") or DEFAULT_SHARE_CONFIG.copy()
+        access_level = share_config.get("access_level")
+        if access_level == "global":
+            return True
+
+        if access_level == "department":
+            user_department_id = user.get("department_id")
+            if user_department_id is None:
+                return False
+            try:
+                department_ids = [int(dept_id) for dept_id in share_config.get("department_ids") or []]
+                return int(user_department_id) in department_ids
+            except (ValueError, TypeError):
+                return False
+
+        if access_level == "user":
+            return bool(user_uid and user_uid in (share_config.get("user_uids") or []))
+
+        return False
+
     async def check_accessible(self, user: dict, db_id: str) -> bool:
         """检查用户是否有权限访问数据库
 
@@ -247,30 +276,13 @@ class KnowledgeBaseManager:
         if kb is None:
             return False
 
-        user_uid = str(user.get("uid") or "")
-        if user_uid and kb.created_by == user_uid:
-            return True
-
-        share_config = kb.share_config or DEFAULT_SHARE_CONFIG.copy()
-        access_level = share_config.get("access_level")
-
-        if access_level == "global":
-            return True
-
-        if access_level == "department":
-            user_department_id = user.get("department_id")
-            if user_department_id is None:
-                return False
-            try:
-                department_ids = [int(dept_id) for dept_id in share_config.get("department_ids") or []]
-                return int(user_department_id) in department_ids
-            except (ValueError, TypeError):
-                return False
-
-        if access_level == "user":
-            return bool(user_uid and user_uid in (share_config.get("user_uids") or []))
-
-        return False
+        return self._database_info_accessible(
+            user,
+            {
+                "created_by": kb.created_by,
+                "share_config": kb.share_config,
+            },
+        )
 
     async def get_databases_by_uid(self, uid: str) -> dict:
         """根据 uid 获取知识库列表"""
@@ -307,15 +319,9 @@ class KnowledgeBaseManager:
         if user_info.get("role") == "superadmin":
             return {"databases": all_databases}
 
-        filtered_databases = []
-
-        for db in all_databases:
-            db_id = db.get("db_id")
-            if not db_id:
-                continue
-
-            if await self.check_accessible(user_info, db_id):
-                filtered_databases.append(db)
+        filtered_databases = [
+            database for database in all_databases if self._database_info_accessible(user_info, database)
+        ]
 
         return {"databases": filtered_databases}
 

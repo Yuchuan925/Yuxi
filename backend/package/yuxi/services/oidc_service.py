@@ -480,20 +480,15 @@ async def find_user_by_oidc_sub(db, sub: str) -> User | None:
     if user:
         return user
 
-    # 方法2: 检查是否有绑定占位用户格式: "oidc:{sub}:{target_user_id}"（use_raw_username 绑定记录）
     # 绑定占位用户被标记为 is_deleted=1，需要包括deleted来查询
-    legacy_result = await db.execute(
+    binding_result = await db.execute(
         select(User)
         .filter(User.uid.like(f"{standard_oidc_uid}:%"), User.is_deleted.in_([0, 1]))
         .order_by(User.id.asc())
     )
-    legacy_users = list(legacy_result.scalars().all())
-    if legacy_users:
-        # 对于绑定占位用户，uid 格式为 oidc:{sub}:{target_user_id}，解析出 target_user_id 并返回真实用户
-        for placeholder in legacy_users:
-            if placeholder.is_deleted != 1:
-                # 非deleted占位，直接返回
-                return placeholder
+    binding_users = list(binding_result.scalars().all())
+    if binding_users:
+        for placeholder in binding_users:
             target_user_id = _extract_oidc_placeholder_target_user_id(placeholder.uid)
             if target_user_id is None:
                 continue
@@ -502,13 +497,6 @@ async def find_user_by_oidc_sub(db, sub: str) -> User | None:
             if target_user:
                 logger.debug(f"Resolved OIDC binding placeholder {placeholder.uid} to user {target_user_id}")
                 return target_user
-        # 如果没有解析出有效的目标用户，返回第一个非deleted legacy用户（向后兼容）
-        for candidate in legacy_users:
-            if candidate.is_deleted == 0:
-                return candidate
-        if len(legacy_users) > 1:
-            logger.warning(f"Multiple legacy OIDC users matched for sub={sub}, use earliest id={legacy_users[0].id}")
-        return legacy_users[0]
 
     return None
 
@@ -522,13 +510,12 @@ async def find_deleted_oidc_user_by_sub(db, sub: str) -> User | None:
     if deleted_user:
         return deleted_user
 
-    # 检查绑定占位格式 oidc:{sub}:{target_user_id}（占位本身是deleted，需要查询目标用户）
-    legacy_result = await db.execute(
+    binding_result = await db.execute(
         select(User).filter(User.uid.like(f"{oidc_uid}:%"), User.is_deleted == 1).order_by(User.id.asc())
     )
-    legacy_users = list(legacy_result.scalars().all())
-    if legacy_users:
-        for placeholder in legacy_users:
+    binding_users = list(binding_result.scalars().all())
+    if binding_users:
+        for placeholder in binding_users:
             target_user_id = _extract_oidc_placeholder_target_user_id(placeholder.uid)
             if target_user_id is None:
                 continue
@@ -536,7 +523,6 @@ async def find_deleted_oidc_user_by_sub(db, sub: str) -> User | None:
             target_user = result.scalar_one_or_none()
             if target_user:
                 return target_user
-        return legacy_users[0]
     return None
 
 

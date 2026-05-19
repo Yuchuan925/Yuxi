@@ -10,7 +10,7 @@ from yuxi.agents.backends import (
     resolve_visible_knowledge_bases_for_context,
 )
 from yuxi.agents.backends.sandbox.backend import _looks_like_binary
-from yuxi.agents.context import BaseContext
+from yuxi.agents.context import BaseContext, normalize_agent_context_config
 from yuxi.repositories.agent_config_repository import AgentConfigRepository
 from yuxi.repositories.conversation_repository import ConversationRepository
 from yuxi.services.conversation_service import require_user_conversation
@@ -40,7 +40,12 @@ async def _resolve_filesystem_context(
             created_by=str(user.uid),
         )
 
-    context.update_from_dict((config_item.config_json or {}).get("context", {}))
+    normalized_config = await normalize_agent_context_config(
+        (config_item.config_json or {}).get("context", {}),
+        db=db,
+        user=user,
+    )
+    context.update_from_dict(normalized_config)
     return context
 
 

@@ -2,20 +2,13 @@ import { reactive } from 'vue'
 import { message } from 'ant-design-vue'
 import { handleChatError } from '@/utils/errorHandler'
 import { agentApi } from '@/apis'
-import { normalizeQuestions, buildLegacyQuestion } from '@/utils/questionUtils'
+import { normalizeQuestions } from '@/utils/questionUtils'
 
 const extractQuestionPayload = (chunk) => {
   const interruptInfo = chunk?.interrupt_info || {}
   const rawQuestions = chunk?.questions || interruptInfo?.questions || []
   const source = chunk?.source || interruptInfo?.source || 'interrupt'
-  let questions = normalizeQuestions(rawQuestions)
-
-  if (!questions.length) {
-    const legacyQuestion = buildLegacyQuestion(chunk, interruptInfo)
-    if (legacyQuestion) {
-      questions = [legacyQuestion]
-    }
-  }
+  const questions = normalizeQuestions(rawQuestions)
 
   return {
     questions,

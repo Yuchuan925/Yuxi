@@ -5,12 +5,6 @@
   >
     <!-- Header Slot -->
     <div class="tool-header" @click="toggleExpand">
-      <!-- Slot for completely overriding header (not recommended based on new requirement but kept for backward compat if needed, or remove if strict) -->
-      <!-- Actually, the requirement says "tool call 的 header 也要有 slot", but "ICON 保留".
-           So we should probably not use a single "header" slot that replaces everything.
-           Instead, we structure it: Icon + Content + ExpandIcon.
-      -->
-
       <!-- Fixed Status Icon -->
       <span v-if="toolCall.status === 'success' || toolCall.tool_call_result">
         <component v-if="toolIcon" :is="toolIcon" size="16" class="tool-loader tool-success" />

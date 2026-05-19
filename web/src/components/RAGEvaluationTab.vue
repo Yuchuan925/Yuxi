@@ -630,14 +630,8 @@ const loadResultsWithPagination = async () => {
       detailedResults.value = resultData.items || []
 
       // 更新分页信息
-      if (resultData.pagination) {
-        paginationTotal.value = resultData.pagination.total
-        paginationTotalPages.value = resultData.pagination.total_pages
-      } else {
-        // 兼容旧格式数据
-        paginationTotal.value = detailedResults.value.length
-        paginationTotalPages.value = 1
-      }
+      paginationTotal.value = resultData.pagination.total
+      paginationTotalPages.value = resultData.pagination.total_pages
 
       // 更新统计信息
       // 如果是过滤模式，需要基于过滤后的总数计算统计

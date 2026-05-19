@@ -135,13 +135,10 @@ let lastResultContent = null
 let lastParsedResult = EMPTY_RESULT
 
 const normalizeChunks = (payload) => {
-  if (Array.isArray(payload)) return payload
   if (!payload || typeof payload !== 'object') return []
 
   if (Array.isArray(payload.results)) return payload.results
   if (Array.isArray(payload.chunks)) return payload.chunks
-  if (Array.isArray(payload.data?.results)) return payload.data.results
-  if (Array.isArray(payload.data?.chunks)) return payload.data.chunks
 
   return []
 }
@@ -166,24 +163,11 @@ const parseResult = (content) => {
     return lastParsedResult
   }
 
-  // 兼容 Milvus chunks 与对象包装结构。
   const nextResult = {
     chunks: normalizeChunks(payload),
-    entities: Array.isArray(payload.entities)
-      ? payload.entities
-      : Array.isArray(payload.data?.entities)
-        ? payload.data.entities
-        : [],
-    relationships: Array.isArray(payload.relationships)
-      ? payload.relationships
-      : Array.isArray(payload.data?.relationships)
-        ? payload.data.relationships
-        : [],
-    references: Array.isArray(payload.references)
-      ? payload.references
-      : Array.isArray(payload.data?.references)
-        ? payload.data.references
-        : []
+    entities: Array.isArray(payload.entities) ? payload.entities : [],
+    relationships: Array.isArray(payload.relationships) ? payload.relationships : [],
+    references: Array.isArray(payload.references) ? payload.references : []
   }
 
   lastResultContent = content
