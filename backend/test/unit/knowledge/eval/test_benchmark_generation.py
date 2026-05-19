@@ -1,3 +1,4 @@
+import asyncio
 import os
 from types import SimpleNamespace
 
@@ -11,6 +12,7 @@ from yuxi.knowledge.eval.benchmark_generation import (
     clamp_neighbors_count,
     collect_kb_chunks,
     iter_generated_benchmark_items,
+    normalize_generation_concurrency_count,
     select_neighbor_chunks_by_kb_query,
 )
 
@@ -65,10 +67,38 @@ class NoQueryKnowledgeBase(FakeGenerationKnowledgeBase):
         raise AssertionError("neighbors_count=1 时不应调用 aquery")
 
 
+class TrackingLlm:
+    def __init__(self, content=None, delay=0):
+        self.content = content or '{"query":"问题","gold_answer":"答案","gold_chunk_ids":["anchor_chunk"]}'
+        self.delay = delay
+        self.active_calls = 0
+        self.max_active_calls = 0
+        self.calls = 0
+
+    async def call(self, prompt, stream):
+        self.calls += 1
+        self.active_calls += 1
+        self.max_active_calls = max(self.max_active_calls, self.active_calls)
+        try:
+            if self.delay:
+                await asyncio.sleep(self.delay)
+            return SimpleNamespace(content=self.content)
+        finally:
+            self.active_calls -= 1
+
+
 def test_clamp_neighbors_count():
     assert clamp_neighbors_count(-1) == 0
     assert clamp_neighbors_count(3) == 3
     assert clamp_neighbors_count(11) == 10
+
+
+def test_normalize_generation_concurrency_count():
+    assert normalize_generation_concurrency_count(None) == 10
+    assert normalize_generation_concurrency_count("") == 10
+    assert normalize_generation_concurrency_count(0) == 1
+    assert normalize_generation_concurrency_count(-5) == 1
+    assert normalize_generation_concurrency_count(10000) == 20
 
 
 def test_build_benchmark_generation_prompt_contains_required_schema():
@@ -188,3 +218,65 @@ async def test_iter_generated_benchmark_items_falls_back_to_anchor_when_query_em
 
     assert items == [{"query": "问题", "gold_chunk_ids": ["anchor_chunk"], "gold_answer": "答案"}]
     assert "片段ID=anchor_chunk" in fake_llm.prompts[0]
+
+
+@pytest.mark.asyncio
+async def test_iter_generated_benchmark_items_respects_concurrency_count(monkeypatch):
+    fake_llm = TrackingLlm(delay=0.01)
+    monkeypatch.setattr(benchmark_generation, "select_model", lambda model_spec: fake_llm)
+
+    items = [
+        item
+        async for item in iter_generated_benchmark_items(
+            kb_instance=NoQueryKnowledgeBase(),
+            db_id="db_1",
+            count=4,
+            neighbors_count=1,
+            concurrency_count=2,
+            llm_model_spec="test-provider:test-model",
+        )
+    ]
+
+    assert len(items) == 4
+    assert fake_llm.max_active_calls == 2
+
+
+@pytest.mark.asyncio
+async def test_iter_generated_benchmark_items_returns_at_most_count(monkeypatch):
+    fake_llm = TrackingLlm(delay=0.01)
+    monkeypatch.setattr(benchmark_generation, "select_model", lambda model_spec: fake_llm)
+
+    items = [
+        item
+        async for item in iter_generated_benchmark_items(
+            kb_instance=NoQueryKnowledgeBase(),
+            db_id="db_1",
+            count=3,
+            neighbors_count=1,
+            concurrency_count=10,
+            llm_model_spec="test-provider:test-model",
+        )
+    ]
+
+    assert len(items) == 3
+
+
+@pytest.mark.asyncio
+async def test_iter_generated_benchmark_items_stops_at_max_attempts(monkeypatch):
+    fake_llm = TrackingLlm(content='{"query":"","gold_answer":"答案","gold_chunk_ids":["anchor_chunk"]}')
+    monkeypatch.setattr(benchmark_generation, "select_model", lambda model_spec: fake_llm)
+
+    items = [
+        item
+        async for item in iter_generated_benchmark_items(
+            kb_instance=NoQueryKnowledgeBase(),
+            db_id="db_1",
+            count=2,
+            neighbors_count=1,
+            concurrency_count=10,
+            llm_model_spec="test-provider:test-model",
+        )
+    ]
+
+    assert items == []
+    assert fake_llm.calls == 50
