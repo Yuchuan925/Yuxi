@@ -22,7 +22,7 @@
             <span>上传 Skill</span>
           </a-button>
         </a-upload>
-        <a-tooltip title="刷新 Skills">
+        <a-tooltip title="刷新 Skills" placement="bottom">
           <a-button class="lucide-icon-btn" :disabled="loading" @click="fetchSkills">
             <RefreshCw :size="14" />
           </a-button>

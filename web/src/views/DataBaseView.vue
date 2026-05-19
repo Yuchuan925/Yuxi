@@ -25,7 +25,7 @@
         </a-select>
       </template>
       <template #actions>
-        <a-button type="primary" @click="state.openNewDatabaseModel = true">
+        <a-button type="primary" :disabled="!kbTypes.length" @click="state.openNewDatabaseModel = true">
           <PlusOutlined /> 新建知识库
         </a-button>
       </template>
@@ -150,7 +150,7 @@
         <!-- 共享配置 -->
         <div class="form-section compact-section">
           <h3 class="section-title">共享设置</h3>
-          <ShareConfigForm v-model="shareConfig" :auto-select-user-dept="true" />
+          <ShareConfigForm ref="shareConfigFormRef" v-model="shareConfig" :auto-select-user-dept="true" />
         </div>
       </div>
       <template #footer>
@@ -159,6 +159,7 @@
           key="submit"
           type="primary"
           :loading="dbState.creating"
+          :disabled="!selectedKbTypeInfo"
           @click="handleCreateDatabase"
           >创建</a-button
         >
@@ -175,7 +176,12 @@
     <div v-else-if="!databases || databases.length === 0" class="empty-state">
       <h3 class="empty-title">暂无知识库</h3>
       <p class="empty-description">创建您的第一个知识库，开始管理文档和知识</p>
-      <a-button type="primary" size="large" @click="state.openNewDatabaseModel = true">
+      <a-button
+        type="primary"
+        size="large"
+        :disabled="!kbTypes.length"
+        @click="state.openNewDatabaseModel = true"
+      >
         <template #icon>
           <PlusOutlined />
         </template>
@@ -220,7 +226,7 @@ import ExtensionCardGrid from '@/components/extensions/ExtensionCardGrid.vue'
 import InfoCard from '@/components/shared/InfoCard.vue'
 import dayjs, { parseToShanghai } from '@/utils/time'
 import AiTextarea from '@/components/AiTextarea.vue'
-import { getKbTypeLabel, getKbTypeIcon, getKbTypeColor } from '@/utils/kb_utils'
+import { getKbTypeLabel, getKbTypeIcon, getKbTypeColor, kbUtils } from '@/utils/kb_utils'
 import { CHUNK_PRESET_OPTIONS, getChunkPresetDescription } from '@/utils/chunk_presets'
 
 const route = useRoute()
@@ -264,11 +270,14 @@ const state = reactive({
   openNewDatabaseModel: false
 })
 
-// 共享配置状态（用于提交数据）
-const shareConfig = ref({
-  is_shared: true,
-  accessible_department_ids: []
+const createDefaultShareConfig = () => ({
+  access_level: 'global',
+  department_ids: [],
+  user_uids: []
 })
+
+const shareConfig = ref(createDefaultShareConfig())
+const shareConfigFormRef = ref(null)
 
 const chunkPresetOptions = CHUNK_PRESET_OPTIONS.map(({ label, value }) => ({ label, value }))
 
@@ -276,7 +285,7 @@ const createEmptyDatabaseForm = () => ({
   name: '',
   description: '',
   embedding_model_spec: configStore.config?.embed_model,
-  kb_type: 'milvus',
+  kb_type: '',
   storage: '',
   chunk_preset_id: 'general',
   additional_params: {}
@@ -300,8 +309,7 @@ const createParamOptions = computed(
   () => selectedKbTypeInfo.value?.create_params?.options || []
 )
 
-const getKbTypeDescription = (typeInfo) =>
-  typeInfo?.default_config?.description || typeInfo?.description || ''
+const getKbTypeDescription = (typeInfo) => typeInfo?.description || ''
 
 const resetCreateParamValues = () => {
   newDatabase.additional_params = {}
@@ -320,31 +328,23 @@ const resetCreateParamValues = () => {
 const loadSupportedKbTypes = async () => {
   try {
     const data = await typeApi.getKnowledgeBaseTypes()
-    supportedKbTypes.value = data.kb_types
+    supportedKbTypes.value = data.kb_types || {}
+    newDatabase.kb_type = kbTypes.value[0] || ''
     resetCreateParamValues()
-    console.log('支持的知识库类型:', supportedKbTypes.value)
   } catch (error) {
     console.error('加载知识库类型失败:', error)
-    // 如果加载失败，设置默认类型
-    supportedKbTypes.value = {
-      milvus: {
-        description: '基于 Milvus 的生产级向量知识库，支持文档检索和图谱构建',
-        class_name: 'MilvusKB',
-        requires_embedding_model: true,
-        create_params: { options: [] }
-      }
-    }
+    supportedKbTypes.value = {}
+    newDatabase.kb_type = ''
+    resetCreateParamValues()
+    message.error('加载知识库类型失败，请稍后重试')
   }
 }
 
 const resetNewDatabase = () => {
   Object.assign(newDatabase, createEmptyDatabaseForm())
+  newDatabase.kb_type = kbTypes.value[0] || ''
   resetCreateParamValues()
-  // 重置共享配置
-  shareConfig.value = {
-    is_shared: true,
-    accessible_department_ids: []
-  }
+  shareConfig.value = createDefaultShareConfig()
 }
 
 const cancelCreateDatabase = () => {
@@ -405,12 +405,10 @@ const buildRequestData = () => {
     requestData.additional_params.chunk_preset_id = newDatabase.chunk_preset_id || 'general'
   }
 
-  // 添加共享配置
   requestData.share_config = {
-    is_shared: shareConfig.value.is_shared,
-    accessible_departments: shareConfig.value.is_shared
-      ? []
-      : shareConfig.value.accessible_department_ids || []
+    access_level: shareConfig.value.access_level,
+    department_ids: shareConfig.value.access_level === 'department' ? shareConfig.value.department_ids || [] : [],
+    user_uids: shareConfig.value.access_level === 'user' ? shareConfig.value.user_uids || [] : []
   }
 
   // 根据类型添加特定配置
@@ -430,11 +428,24 @@ const buildRequestData = () => {
 
 // 创建按钮处理
 const handleCreateDatabase = async () => {
+  if (!selectedKbTypeInfo.value) {
+    message.error('知识库类型加载失败，无法创建知识库')
+    return
+  }
+
   for (const field of createParamOptions.value) {
     if (!field.required) continue
     const value = newDatabase.additional_params[field.key]
     if (value === undefined || value === null || (typeof value === 'string' && !value.trim())) {
       message.error(`请填写${field.label || field.key}`)
+      return
+    }
+  }
+
+  if (shareConfigFormRef.value) {
+    const validation = shareConfigFormRef.value.validate()
+    if (!validation.valid) {
+      message.warning(validation.message)
       return
     }
   }
@@ -450,9 +461,12 @@ const handleCreateDatabase = async () => {
 }
 
 const cardSubtitle = (database) => {
-  const parts = [`${database.row_count || 0} 文件`]
+  const parts = []
   if (database.created_at) {
     parts.push(formatCreatedTime(database.created_at))
+  }
+  if (!kbUtils.isReadOnlyDatabase(database)) {
+    parts.push(`${database.row_count || 0} 文件`)
   }
   return parts.join(' · ')
 }

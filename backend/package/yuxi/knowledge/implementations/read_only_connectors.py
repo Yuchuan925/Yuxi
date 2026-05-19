@@ -70,6 +70,20 @@ class ReadOnlyConnectors(KnowledgeBase):
         del offset, limit
         raise self._readonly_error()
 
+    async def find_file_content(
+        self,
+        db_id: str,
+        file_id: str,
+        patterns: list[str],
+        *,
+        use_regex: bool = False,
+        case_sensitive: bool = False,
+        max_windows: int = 5,
+        window_size: int = 80,
+    ) -> dict:
+        del db_id, file_id, patterns, use_regex, case_sensitive, max_windows, window_size
+        raise self._readonly_error()
+
     async def get_file_info(self, db_id: str, file_id: str) -> dict:
         raise self._readonly_error()
 

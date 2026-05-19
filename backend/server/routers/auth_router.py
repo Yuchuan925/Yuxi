@@ -87,6 +87,14 @@ class UserResponse(BaseModel):
     last_login: str | None = None
 
 
+class UserAccessOption(BaseModel):
+    uid: str
+    username: str
+    role: str
+    department_id: int | None = None
+    department_name: str | None = None
+
+
 class InitializeAdmin(BaseModel):
     uid: str  # 直接输入用户ID
     password: str
@@ -477,6 +485,11 @@ async def create_user(
     else:
         # 普通管理员创建用户时，自动继承该管理员的部门
         department_id = current_user.department_id
+        if department_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="管理员必须属于部门才能创建用户",
+            )
         # 非超级管理员不能指定部门
         if user_data.department_id is not None:
             raise HTTPException(
@@ -528,6 +541,41 @@ async def read_users(
     return users
 
 
+def _ensure_user_in_current_department(current_user: User, target_user: User) -> None:
+    if current_user.role == "superadmin":
+        return
+    if target_user.department_id != current_user.department_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="只能管理本部门用户",
+        )
+
+
+@auth.get("/users/access-options", response_model=list[UserAccessOption])
+async def read_user_access_options(
+    skip: int = 0,
+    limit: int = 1000,
+    current_user: User = Depends(get_admin_user),
+):
+    user_repo = UserRepository()
+    if current_user.role == "superadmin":
+        users_with_dept = await user_repo.list_with_department(skip=skip, limit=limit)
+    else:
+        users_with_dept = await user_repo.list_with_department(
+            skip=skip, limit=limit, department_id=current_user.department_id
+        )
+    return [
+        {
+            "uid": user.uid,
+            "username": user.username,
+            "role": user.role,
+            "department_id": user.department_id,
+            "department_name": dept_name,
+        }
+        for user, dept_name in users_with_dept
+    ]
+
+
 # 路由：获取特定用户信息（管理员权限）
 @auth.get("/users/{user_id}", response_model=UserResponse)
 async def read_user(user_id: int, current_user: User = Depends(get_admin_user), db: AsyncSession = Depends(get_db)):
@@ -538,6 +586,7 @@ async def read_user(user_id: int, current_user: User = Depends(get_admin_user), 
             status_code=status.HTTP_404_NOT_FOUND,
             detail="用户不存在",
         )
+    _ensure_user_in_current_department(current_user, user)
     return user.to_dict()
 
 
@@ -570,6 +619,8 @@ async def update_user(
             detail="用户不存在",
         )
 
+    _ensure_user_in_current_department(current_user, user)
+
     # 检查权限
     if user.role == "superadmin" and current_user.role != "superadmin":
         raise HTTPException(
@@ -583,6 +634,18 @@ async def update_user(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="不能降级超级管理员账户",
         )
+
+    if current_user.role == "admin":
+        if user.role != "user":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="管理员只能修改普通用户账户",
+            )
+        if user_data.role is not None and user_data.role != "user":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="管理员只能将用户角色设置为普通用户",
+            )
 
     # 更新信息
     update_details = []
@@ -664,11 +727,19 @@ async def delete_user(
             detail="用户不存在",
         )
 
+    _ensure_user_in_current_department(current_user, user)
+
     # 不能删除超级管理员账户
     if user.role == "superadmin":
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="不能删除超级管理员账户",
+        )
+
+    if current_user.role == "admin" and user.role != "user":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="管理员只能删除普通用户账户",
         )
 
     # 检查是否是部门的唯一管理员
@@ -849,7 +920,7 @@ async def impersonate_user(
     return {
         "access_token": access_token,
         "token_type": "bearer",
-        "uid": target_user.id,
+        "user_id": target_user.id,
         "username": target_user.username,
         "uid": target_user.uid,
         "phone_number": target_user.phone_number,

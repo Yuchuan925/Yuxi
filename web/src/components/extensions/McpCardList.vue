@@ -6,7 +6,7 @@
           <Plus :size="14" />
           <span>添加 MCP</span>
         </a-button>
-        <a-tooltip title="刷新 MCP">
+        <a-tooltip title="刷新 MCP" placement="bottom">
           <a-button class="lucide-icon-btn" :disabled="loading" @click="fetchServers">
             <RefreshCw :size="14" />
           </a-button>

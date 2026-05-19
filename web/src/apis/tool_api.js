@@ -13,8 +13,8 @@ const BASE_URL = '/api/system/tools'
  * @returns {Promise} - 工具列表
  */
 export const getTools = async (category = null) => {
-  const params = category ? { category } : {}
-  return apiAdminGet(BASE_URL, params)
+  const query = category ? `?${new URLSearchParams({ category }).toString()}` : ''
+  return apiAdminGet(`${BASE_URL}${query}`)
 }
 
 /**

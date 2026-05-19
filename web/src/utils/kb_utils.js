@@ -11,12 +11,14 @@ const createBrandIcon = (url) => {
 
 export const brandIcons = {
   dify: createBrandIcon(`${ICON_BASE}/dify-color.svg`),
+  notion: createBrandIcon(`${ICON_BASE}/notion.svg`)
 }
 
 export const getKbTypeLabel = (type) => {
   const labels = {
-    milvus: 'CommonRAG',
-    dify: 'Dify'
+    milvus: 'Yuxi',
+    dify: 'Dify',
+    notion: 'Notion'
   }
   return labels[type] || type
 }
@@ -24,7 +26,8 @@ export const getKbTypeLabel = (type) => {
 export const getKbTypeIcon = (type) => {
   const icons = {
     milvus: DatabaseZap,
-    dify: brandIcons.dify
+    dify: brandIcons.dify,
+    notion: brandIcons.notion
   }
   return icons[type] || Database
 }
@@ -32,7 +35,29 @@ export const getKbTypeIcon = (type) => {
 export const getKbTypeColor = (type) => {
   const colors = {
     milvus: 'blue',
-    dify: 'gold'
+    dify: 'gold',
+    notion: 'purple'
   }
   return colors[type] || 'blue'
+}
+
+const READ_ONLY_KB_TYPES = new Set(['dify', 'notion'])
+
+export const isReadOnlyDatabase = (database, kbTypes = {}) => {
+  const kbType = (typeof database === 'string' ? database : database?.kb_type || 'milvus').toLowerCase()
+
+  if (database?.supports_documents !== undefined) {
+    return database.supports_documents === false
+  }
+  if (kbTypes[kbType]?.supports_documents !== undefined) {
+    return kbTypes[kbType].supports_documents === false
+  }
+  return READ_ONLY_KB_TYPES.has(kbType)
+}
+
+export const kbUtils = {
+  getKbTypeLabel,
+  getKbTypeIcon,
+  getKbTypeColor,
+  isReadOnlyDatabase
 }

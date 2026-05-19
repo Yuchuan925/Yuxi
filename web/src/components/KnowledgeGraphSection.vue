@@ -157,6 +157,14 @@
                   <span class="stat-value">{{ graphBuildStatus?.indexed_chunks ?? '-' }}</span>
                   <span class="stat-label">已构建</span>
                 </div>
+                <div class="stat-item">
+                  <span class="stat-value">{{ graphBuildStatus?.entity_count ?? '-' }}</span>
+                  <span class="stat-label">实体</span>
+                </div>
+                <div class="stat-item">
+                  <span class="stat-value">{{ graphBuildStatus?.relationship_count ?? '-' }}</span>
+                  <span class="stat-label">关系</span>
+                </div>
               </div>
               <div class="build-actions">
                 <a-button
@@ -202,7 +210,7 @@
                   >
                     修改配置
                   </a-button>
-                  <a-button size="small" type="text" danger @click="confirmResetGraph">重置</a-button>
+                  <a-button size="small" type="text" danger v-if="!isBuildActive" @click="confirmResetGraph">重置</a-button>
                 </div>
               </div>
             </div>
@@ -412,7 +420,7 @@ const graphConfigForm = reactive({
   extractor_type: 'llm',
   model_spec: '',
   schema: '',
-  concurrency_count: 5,
+  concurrency_count: 50,
   model_params_text: '',
   spacy_model: 'zh_core_web_sm',
   entity_labels_text: ''

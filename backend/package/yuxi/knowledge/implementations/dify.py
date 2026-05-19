@@ -12,13 +12,13 @@ DIFY_REQUIRED_PARAMS = ("dify_api_url", "dify_token", "dify_dataset_id")
 class DifyKB(ReadOnlyConnectors):
     """基于 Dify Dataset Retrieve API 的只读检索知识库实现"""
 
+    kb_type = "dify"
+    name = "Dify"
+    description = "连接 Dify Dataset 的只读检索知识库"
+
     def __init__(self, work_dir: str, **kwargs):
         del kwargs
         super().__init__(work_dir)
-
-    @property
-    def kb_type(self) -> str:
-        return "dify"
 
     @classmethod
     def get_create_params_config(cls) -> dict[str, Any]:

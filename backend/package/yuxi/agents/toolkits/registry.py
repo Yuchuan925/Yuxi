@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 class ToolExtraMetadata:
     """附加元数据（用装饰器注册）"""
 
-    category: str = ""  # 分类: buildin, mysql, subagents, debug
+    category: str = ""  # 分类: buildin, knowledge, mysql, subagents, debug
     tags: list[str] = field(default_factory=list)
     display_name: str = ""  # 显示名称（给人看的名字）
     icon: str = ""

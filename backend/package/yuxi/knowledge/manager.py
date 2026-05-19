@@ -9,6 +9,10 @@ from yuxi.utils import logger
 from yuxi.utils.datetime_utils import utc_isoformat
 
 
+DEFAULT_SHARE_CONFIG = {"access_level": "global", "department_ids": [], "user_uids": []}
+ACCESS_LEVELS = {"global", "department", "user"}
+
+
 class KnowledgeBaseManager:
     """
     知识库管理器
@@ -147,6 +151,47 @@ class KnowledgeBaseManager:
         """
         return await self._get_kb_for_database(db_id)
 
+    def _normalize_share_config(
+        self,
+        share_config: dict | None,
+        *,
+        user_uid: str | None = None,
+        department_id: int | str | None = None,
+    ) -> dict:
+        config = share_config or {}
+        access_level = config.get("access_level") or "global"
+        if access_level not in ACCESS_LEVELS:
+            raise ValueError("无效的知识库权限等级")
+
+        if access_level == "global":
+            return DEFAULT_SHARE_CONFIG.copy()
+
+        if access_level == "department":
+            department_ids = self._normalize_department_ids(config.get("department_ids"))
+            if department_id is not None:
+                department_ids.append(int(department_id))
+            department_ids = sorted(set(department_ids))
+            if not department_ids:
+                raise ValueError("部门共享至少需要选择一个部门")
+            return {"access_level": "department", "department_ids": department_ids, "user_uids": []}
+
+        user_uids = self._normalize_user_uids(config.get("user_uids"))
+        if user_uid:
+            user_uids.append(str(user_uid))
+        user_uids = sorted(set(user_uids))
+        if not user_uids:
+            raise ValueError("指定人可访问至少需要选择一个用户")
+        return {"access_level": "user", "department_ids": [], "user_uids": user_uids}
+
+    def _normalize_department_ids(self, department_ids: list | None) -> list[int]:
+        normalized = []
+        for department_id in department_ids or []:
+            normalized.append(int(department_id))
+        return normalized
+
+    def _normalize_user_uids(self, user_uids: list | None) -> list[str]:
+        return [uid for uid in (str(uid).strip() for uid in user_uids or []) if uid]
+
     async def get_databases(self) -> dict:
         """获取所有数据库信息"""
         from yuxi.repositories.knowledge_base_repository import KnowledgeBaseRepository
@@ -175,7 +220,7 @@ class KnowledgeBaseManager:
                 continue
 
             # 补充 share_config 和 additional_params
-            db_info["share_config"] = row.share_config or {"is_shared": True, "accessible_departments": []}
+            db_info["share_config"] = row.share_config or DEFAULT_SHARE_CONFIG.copy()
             db_info["additional_params"] = kb_instance.normalize_additional_params(row.additional_params)
             db_info["created_by"] = row.created_by
             all_databases.append(db_info)
@@ -202,40 +247,30 @@ class KnowledgeBaseManager:
         if kb is None:
             return False
 
-        share_config = kb.share_config or {}
-        is_shared = share_config.get("is_shared", True)
-
-        # 如果是全员共享，则有权限
-        if is_shared:
+        user_uid = str(user.get("uid") or "")
+        if user_uid and kb.created_by == user_uid:
             return True
 
-        # 检查部门权限
-        user_department_id = user.get("department_id")
-        accessible_departments = share_config.get("accessible_departments", [])
+        share_config = kb.share_config or DEFAULT_SHARE_CONFIG.copy()
+        access_level = share_config.get("access_level")
 
-        if user_department_id is None:
-            return False
+        if access_level == "global":
+            return True
 
-        # 转换为整数进行比较（前端可能传递字符串，后端存储为整数）
-        try:
-            user_department_id = int(user_department_id)
-            accessible_departments = [int(d) for d in accessible_departments]
-        except (ValueError, TypeError):
-            return False
+        if access_level == "department":
+            user_department_id = user.get("department_id")
+            if user_department_id is None:
+                return False
+            try:
+                department_ids = [int(dept_id) for dept_id in share_config.get("department_ids") or []]
+                return int(user_department_id) in department_ids
+            except (ValueError, TypeError):
+                return False
 
-        return user_department_id in accessible_departments
+        if access_level == "user":
+            return bool(user_uid and user_uid in (share_config.get("user_uids") or []))
 
-    async def get_databases_by_raw_id(self, user_id: int) -> dict:
-        """根据用户ID获取知识库列表"""
-        from yuxi.repositories.user_repository import UserRepository
-
-        # 通过数据库获取用户信息
-        user_repo = UserRepository()
-        user: User | None = await user_repo.get_by_id(id=int(user_id))
-        if not user:
-            logger.warning(f"User not found: {uid}")
-            return {"databases": []}
-        return await self.get_databases_by_user(user)
+        return False
 
     async def get_databases_by_uid(self, uid: str) -> dict:
         """根据 uid 获取知识库列表"""
@@ -257,6 +292,7 @@ class KnowledgeBaseManager:
             user_info = user
         else:
             user_info = {
+                "uid": user.uid,
                 "role": user.role,
                 "department_id": user.department_id,
             }
@@ -313,6 +349,7 @@ class KnowledgeBaseManager:
         llm_model_spec: str | None = None,
         share_config: dict | None = None,
         created_by: str | None = None,
+        created_by_department_id: int | str | None = None,
         **kwargs,
     ) -> dict:
         """
@@ -326,6 +363,7 @@ class KnowledgeBaseManager:
             llm_model_spec: LLM 模型 spec
             share_config: 共享配置
             created_by: 创建者 uid
+            created_by_department_id: 创建者部门 ID
             **kwargs: 其他配置参数
 
         Returns:
@@ -339,9 +377,11 @@ class KnowledgeBaseManager:
         if await self.database_name_exists(database_name):
             raise ValueError(f"知识库名称 '{database_name}' 已存在，请使用其他名称")
 
-        # 默认共享配置
-        if share_config is None:
-            share_config = {"is_shared": True, "accessible_departments": []}
+        share_config = self._normalize_share_config(
+            share_config,
+            user_uid=created_by,
+            department_id=created_by_department_id,
+        )
 
         kb_instance = self._get_or_create_kb_instance(kb_type)
         kwargs = kb_instance.normalize_additional_params(kwargs)
@@ -453,7 +493,7 @@ class KnowledgeBaseManager:
 
         # 添加数据库中的附加字段
         db_info["additional_params"] = kb_instance.normalize_additional_params(kb.additional_params)
-        db_info["share_config"] = kb.share_config or {"is_shared": True, "accessible_departments": []}
+        db_info["share_config"] = kb.share_config or DEFAULT_SHARE_CONFIG.copy()
         db_info["mindmap"] = kb.mindmap
         db_info["sample_questions"] = kb.sample_questions or []
         db_info["query_params"] = kb.query_params
@@ -489,6 +529,28 @@ class KnowledgeBaseManager:
         """按行窗口打开文件解析后的 Markdown 内容"""
         kb_instance = await self._get_kb_for_database(db_id)
         return await kb_instance.open_file_content(db_id, file_id, offset, limit)
+
+    async def find_file_content(
+        self,
+        db_id: str,
+        file_id: str,
+        patterns: list[str],
+        *,
+        use_regex: bool = False,
+        case_sensitive: bool = False,
+        max_windows: int = 5,
+        window_size: int = 80,
+    ) -> dict:
+        kb_instance = await self._get_kb_for_database(db_id)
+        return await kb_instance.find_file_content(
+            db_id,
+            file_id,
+            patterns,
+            use_regex=use_regex,
+            case_sensitive=case_sensitive,
+            max_windows=max_windows,
+            window_size=window_size,
+        )
 
     async def get_file_info(self, db_id: str, file_id: str) -> dict:
         """获取文件完整信息（基本信息+内容信息）"""
@@ -609,6 +671,8 @@ class KnowledgeBaseManager:
         update_llm_model_spec: bool = False,
         additional_params: dict | None = None,
         share_config: dict | None = None,
+        operator_uid: str | None = None,
+        operator_department_id: int | str | None = None,
     ) -> dict:
         """更新数据库"""
         from yuxi.repositories.knowledge_base_repository import KnowledgeBaseRepository
@@ -642,7 +706,11 @@ class KnowledgeBaseManager:
                 kb_instance.databases_meta[db_id]["metadata"] = merged_additional_params
 
         if share_config is not None:
-            update_data["share_config"] = share_config
+            update_data["share_config"] = self._normalize_share_config(
+                share_config,
+                user_uid=operator_uid,
+                department_id=operator_department_id,
+            )
 
         # 保存到数据库
         await kb_repo.update(db_id, update_data)

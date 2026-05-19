@@ -1,10 +1,12 @@
 import asyncio
 import mimetypes
 import os
+import re
 from abc import ABC, abstractmethod
 from typing import Any
 
 from yuxi.knowledge.chunking.ragflow_like.presets import ensure_chunk_defaults_in_additional_params
+from yuxi.knowledge.schemas import FindOutputSchema, FindWindowSchema, SearchOutputSchema, SearchResultSchema
 from yuxi.knowledge.utils import resolve_processing_params, sanitize_processing_params
 from yuxi.utils import logger
 from yuxi.utils.datetime_utils import coerce_any_to_utc_datetime, utc_isoformat
@@ -41,6 +43,9 @@ class KBOperationError(KnowledgeBaseException):
 class KnowledgeBase(ABC):
     """知识库抽象基类，定义统一接口"""
 
+    kb_type = ""
+    name = ""
+    description = ""
     requires_embedding_model = True
     supports_documents = True
     apply_chunk_defaults = True
@@ -157,12 +162,6 @@ class KnowledgeBase(ABC):
                     normalized = self._normalize_timestamp(b.get("updated_at"))
                     if normalized:
                         b["updated_at"] = normalized
-
-    @property
-    @abstractmethod
-    def kb_type(self) -> str:
-        """知识库类型标识"""
-        pass
 
     @classmethod
     def get_create_params_config(cls) -> dict[str, Any]:
@@ -675,6 +674,110 @@ class KnowledgeBase(ABC):
             "content": "\n".join(f"{start + idx + 1:6d}\t{line}" for idx, line in enumerate(selected)),
         }
 
+    @staticmethod
+    def build_search_output(resource_id: str, retrieval_results: Any) -> dict[str, Any] | Any:
+        if not isinstance(retrieval_results, list):
+            return retrieval_results
+
+        results = []
+        for index, chunk in enumerate(retrieval_results):
+            if not isinstance(chunk, dict):
+                continue
+
+            metadata = chunk.get("metadata") if isinstance(chunk.get("metadata"), dict) else {}
+            metadata = {
+                key: value
+                for key, value in metadata.items()
+                if key not in {"filepath", "parsed_path", "path", "markdown_file"}
+            }
+            file_id = metadata.get("file_id") or chunk.get("file_id") or chunk.get("full_doc_id") or ""
+            chunk_id = metadata.get("chunk_id") or chunk.get("chunk_id") or chunk.get("id")
+            chunk_index = metadata.get("chunk_index")
+            if chunk_index is None:
+                chunk_index = chunk.get("chunk_index")
+            if chunk_index is not None:
+                metadata.setdefault("chunk_index", chunk_index)
+            if chunk.get("score") is not None:
+                metadata.setdefault("score", chunk.get("score"))
+            if chunk.get("distance") is not None:
+                metadata.setdefault("distance", chunk.get("distance"))
+
+            results.append(
+                SearchResultSchema(
+                    id=str(chunk_id or f"{file_id}:{index + 1}"),
+                    resource_id=str(resource_id),
+                    file_id=str(file_id or ""),
+                    content=str(chunk.get("content") or ""),
+                    metadata=metadata,
+                )
+            )
+
+        return SearchOutputSchema(resource_id=str(resource_id), results=results).model_dump()
+
+    @staticmethod
+    def _build_find_file_windows(
+        content: str,
+        *,
+        patterns: list[str],
+        use_regex: bool = False,
+        case_sensitive: bool = False,
+        max_windows: int = 5,
+        window_size: int = 80,
+    ) -> dict[str, Any]:
+        patterns = [pattern for pattern in patterns if pattern]
+        if not patterns:
+            raise ValueError("请提供至少一个 pattern")
+
+        lines = content.splitlines()
+        flags = 0 if case_sensitive else re.IGNORECASE
+        if use_regex:
+            matchers = [re.compile(pattern, flags) for pattern in patterns]
+
+            def line_matches(line: str) -> bool:
+                return any(matcher.search(line) for matcher in matchers)
+
+        else:
+            normalized_patterns = patterns if case_sensitive else [pattern.lower() for pattern in patterns]
+
+            def line_matches(line: str) -> bool:
+                haystack = line if case_sensitive else line.lower()
+                return any(pattern in haystack for pattern in normalized_patterns)
+
+        matched_indexes = [index for index, line in enumerate(lines) if line_matches(line)]
+        windows: list[FindWindowSchema] = []
+        covered_until = -1
+        normalized_window_size = min(max(int(window_size), 1), 200)
+        half_window = normalized_window_size // 2
+
+        for matched_index in matched_indexes:
+            if matched_index < covered_until:
+                continue
+            start = max(matched_index - half_window, 0)
+            end = min(start + normalized_window_size, len(lines))
+            start = max(end - normalized_window_size, 0)
+            matched_lines = [index + 1 for index in matched_indexes if start <= index < end]
+            selected = lines[start:end]
+            windows.append(
+                FindWindowSchema(
+                    start_line=start + 1 if selected else 0,
+                    end_line=end,
+                    matched_lines=matched_lines,
+                    content="\n".join(f"{start + idx + 1:6d}\t{line}" for idx, line in enumerate(selected)),
+                )
+            )
+            covered_until = end
+            if len(windows) >= max_windows:
+                break
+
+        return FindOutputSchema(
+            resource_id="",
+            file_id="",
+            semantic=False,
+            match_mode="regex" if use_regex else "keyword",
+            total_matches=len(matched_indexes),
+            windows=windows,
+        ).model_dump(exclude={"resource_id", "file_id"})
+
     async def open_file_content(self, db_id: str, file_id: str, offset: int = 0, limit: int = 800) -> dict:
         """按行窗口打开文件解析后的 Markdown 内容"""
         file_meta = self.files_meta.get(file_id)
@@ -691,6 +794,39 @@ class KnowledgeBase(ABC):
 
         content = await self._read_markdown_from_minio(markdown_file)
         return self._build_open_file_window(content, offset=offset, limit=limit)
+
+    async def find_file_content(
+        self,
+        db_id: str,
+        file_id: str,
+        patterns: list[str],
+        *,
+        use_regex: bool = False,
+        case_sensitive: bool = False,
+        max_windows: int = 5,
+        window_size: int = 80,
+    ) -> dict:
+        file_meta = self.files_meta.get(file_id)
+        if file_meta is None:
+            raise Exception(f"文件不存在: {file_id}")
+        if file_meta.get("database_id") != db_id:
+            raise Exception(f"文件 {file_id} 不属于知识库 {db_id}")
+        if file_meta.get("is_folder"):
+            raise Exception(f"文件 {file_id} 是文件夹")
+
+        markdown_file = file_meta.get("markdown_file")
+        if not markdown_file:
+            raise Exception(f"文件 {file_id} 没有解析后的 Markdown 内容")
+
+        content = await self._read_markdown_from_minio(markdown_file)
+        return self._build_find_file_windows(
+            content,
+            patterns=patterns,
+            use_regex=use_regex,
+            case_sensitive=case_sensitive,
+            max_windows=max_windows,
+            window_size=window_size,
+        )
 
     @abstractmethod
     async def index_file(self, db_id: str, file_id: str, operator_id: str | None = None) -> dict:
@@ -1278,7 +1414,8 @@ class KnowledgeBase(ABC):
 
             def make_retriever(db_id):
                 async def retriever(query_text, **kwargs):
-                    return await self.aquery(query_text, db_id, agent_call=True, **kwargs)
+                    results = await self.aquery(query_text, db_id, agent_call=True, **kwargs)
+                    return self.build_search_output(db_id, results)
 
                 return retriever
 

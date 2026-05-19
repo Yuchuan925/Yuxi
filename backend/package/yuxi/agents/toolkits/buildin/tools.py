@@ -110,27 +110,6 @@ def _normalize_presented_artifact_path(filepath: str, runtime: ToolRuntime) -> s
     return f"{outputs_virtual_prefix}/{relative_path.as_posix()}"
 
 
-@tool(category="buildin", tags=["计算"], display_name="计算器")
-def calculator(a: float, b: float, operation: str) -> float:
-    """计算器：对给定的2个数字进行基本数学运算"""
-    try:
-        if operation == "add":
-            return a + b
-        elif operation == "subtract":
-            return a - b
-        elif operation == "multiply":
-            return a * b
-        elif operation == "divide":
-            if b == 0:
-                raise ZeroDivisionError("除数不能为零")
-            return a / b
-        else:
-            raise ValueError(f"不支持的运算类型: {operation}，仅支持 add, subtract, multiply, divide")
-    except Exception as e:
-        logger.error(f"Calculator error: {e}")
-        raise
-
-
 PRESENT_ARTIFACTS_DESCRIPTION = f"""
 将已经生成好的结果文件展示给用户。
 

@@ -20,6 +20,94 @@ def _assert_forbidden_response(response):
     assert isinstance(payload["detail"], str)
 
 
+async def _create_test_department(test_client, admin_headers, prefix="pytest_dept"):
+    suffix = uuid.uuid4().hex[:8]
+    admin_uid = f"deptadmin_{suffix}"
+    response = await test_client.post(
+        "/api/departments",
+        json={
+            "name": f"{prefix}_{suffix}",
+            "description": "pytest department",
+            "admin_uid": admin_uid,
+            "admin_password": f"Pw!{suffix}",
+        },
+        headers=admin_headers,
+    )
+    assert response.status_code == 201, response.text
+    payload = response.json()
+    payload["admin_uid"] = admin_uid
+    return payload
+
+
+async def _create_test_user(test_client, admin_headers, department_id):
+    suffix = uuid.uuid4().hex[:8]
+    password = f"Pw!{suffix}"
+    response = await test_client.post(
+        "/api/auth/users",
+        json={
+            "username": f"pytest_user_{suffix}",
+            "password": password,
+            "role": "user",
+            "department_id": department_id,
+        },
+        headers=admin_headers,
+    )
+    assert response.status_code == 200, response.text
+    user = response.json()
+
+    login_response = await test_client.post(
+        "/api/auth/token",
+        data={"username": user["uid"], "password": password},
+    )
+    assert login_response.status_code == 200, login_response.text
+    return {"user": user, "headers": {"Authorization": f"Bearer {login_response.json()['access_token']}"}}
+
+
+async def _delete_user_by_id(test_client, admin_headers, user_id):
+    response = await test_client.delete(f"/api/auth/users/{user_id}", headers=admin_headers)
+    assert response.status_code in (200, 404), response.text
+
+
+async def _find_user_id_by_uid(test_client, admin_headers, uid):
+    response = await test_client.get("/api/auth/users", headers=admin_headers)
+    assert response.status_code == 200, response.text
+    for user in response.json():
+        if user["uid"] == uid:
+            return user["id"]
+    return None
+
+
+async def _delete_department_with_admin(test_client, admin_headers, department):
+    admin_user_id = await _find_user_id_by_uid(test_client, admin_headers, department["admin_uid"])
+    if admin_user_id:
+        await _delete_user_by_id(test_client, admin_headers, admin_user_id)
+    response = await test_client.delete(f"/api/departments/{department['id']}", headers=admin_headers)
+    assert response.status_code in (200, 404), response.text
+
+
+async def _create_test_database(test_client, admin_headers, share_config=None):
+    response = await test_client.post(
+        "/api/knowledge/databases",
+        json={
+            "database_name": f"pytest_acl_{uuid.uuid4().hex[:8]}",
+            "description": "Knowledge permission test",
+            "embedding_model_spec": "siliconflow-cn:Pro/BAAI/bge-m3",
+            "kb_type": "milvus",
+            "additional_params": {},
+            "share_config": share_config,
+        },
+        headers=admin_headers,
+    )
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+async def _accessible_db_ids(test_client, headers):
+    response = await test_client.get("/api/knowledge/databases/accessible", headers=headers)
+    assert response.status_code == 200, response.text
+    return {item["db_id"] for item in response.json().get("databases", [])}
+
+
 async def test_admin_can_manage_knowledge_databases(test_client, admin_headers, knowledge_database):
     db_id = knowledge_database["db_id"]
 
@@ -395,6 +483,96 @@ async def test_get_accessible_databases(test_client, admin_headers, knowledge_da
     assert knowledge_database["db_id"] in db_ids
 
 
+async def test_create_database_defaults_to_global_share_config(test_client, admin_headers):
+    database = await _create_test_database(test_client, admin_headers)
+    db_id = database["db_id"]
+    try:
+        assert database["share_config"] == {"access_level": "global", "department_ids": [], "user_uids": []}
+    finally:
+        await test_client.delete(f"/api/knowledge/databases/{db_id}", headers=admin_headers)
+
+
+async def test_department_share_config_filters_accessible_databases(test_client, admin_headers):
+    department_a = await _create_test_department(test_client, admin_headers, "pytest_dept_a")
+    department_b = await _create_test_department(test_client, admin_headers, "pytest_dept_b")
+    user_a = user_b = None
+    database = None
+
+    try:
+        user_a = await _create_test_user(test_client, admin_headers, department_a["id"])
+        user_b = await _create_test_user(test_client, admin_headers, department_b["id"])
+        database = await _create_test_database(
+            test_client,
+            admin_headers,
+            {"access_level": "department", "department_ids": [department_a["id"]], "user_uids": []},
+        )
+
+        saved_config = database["share_config"]
+        assert saved_config["access_level"] == "department"
+        assert department_a["id"] in saved_config["department_ids"]
+
+        assert database["db_id"] in await _accessible_db_ids(test_client, user_a["headers"])
+        assert database["db_id"] not in await _accessible_db_ids(test_client, user_b["headers"])
+    finally:
+        if database:
+            await test_client.delete(f"/api/knowledge/databases/{database['db_id']}", headers=admin_headers)
+        if user_a:
+            await _delete_user_by_id(test_client, admin_headers, user_a["user"]["id"])
+        if user_b:
+            await _delete_user_by_id(test_client, admin_headers, user_b["user"]["id"])
+        await _delete_department_with_admin(test_client, admin_headers, department_a)
+        await _delete_department_with_admin(test_client, admin_headers, department_b)
+
+
+async def test_user_share_config_filters_accessible_databases(test_client, admin_headers):
+    department_a = await _create_test_department(test_client, admin_headers, "pytest_dept_a")
+    department_b = await _create_test_department(test_client, admin_headers, "pytest_dept_b")
+    user_a = user_b = None
+    database = None
+
+    try:
+        user_a = await _create_test_user(test_client, admin_headers, department_a["id"])
+        user_b = await _create_test_user(test_client, admin_headers, department_b["id"])
+        database = await _create_test_database(
+            test_client,
+            admin_headers,
+            {"access_level": "user", "department_ids": [], "user_uids": [user_a["user"]["uid"]]},
+        )
+
+        saved_config = database["share_config"]
+        assert saved_config["access_level"] == "user"
+        assert user_a["user"]["uid"] in saved_config["user_uids"]
+
+        assert database["db_id"] in await _accessible_db_ids(test_client, user_a["headers"])
+        assert database["db_id"] not in await _accessible_db_ids(test_client, user_b["headers"])
+    finally:
+        if database:
+            await test_client.delete(f"/api/knowledge/databases/{database['db_id']}", headers=admin_headers)
+        if user_a:
+            await _delete_user_by_id(test_client, admin_headers, user_a["user"]["id"])
+        if user_b:
+            await _delete_user_by_id(test_client, admin_headers, user_b["user"]["id"])
+        await _delete_department_with_admin(test_client, admin_headers, department_a)
+        await _delete_department_with_admin(test_client, admin_headers, department_b)
+
+
+async def test_user_access_options_include_all_departments_for_admin(test_client, admin_headers):
+    department = await _create_test_department(test_client, admin_headers, "pytest_access_options")
+    user = None
+
+    try:
+        user = await _create_test_user(test_client, admin_headers, department["id"])
+        response = await test_client.get("/api/auth/users/access-options", headers=admin_headers)
+        assert response.status_code == 200, response.text
+        uids = {item["uid"] for item in response.json()}
+        assert user["user"]["uid"] in uids
+        assert department["admin_uid"] in uids
+    finally:
+        if user:
+            await _delete_user_by_id(test_client, admin_headers, user["user"]["id"])
+        await _delete_department_with_admin(test_client, admin_headers, department)
+
+
 async def test_get_knowledge_base_types(test_client, admin_headers):
     """测试获取支持的知识库类型"""
     response = await test_client.get("/api/knowledge/types", headers=admin_headers)
@@ -402,12 +580,28 @@ async def test_get_knowledge_base_types(test_client, admin_headers):
     payload = response.json()
     assert payload["message"] == "success"
     assert "kb_types" in payload
+    assert "default_config" not in payload["kb_types"]["dify"]
+    assert payload["kb_types"]["dify"]["name"] == "Dify"
+    assert payload["kb_types"]["dify"]["description"] == "连接 Dify Dataset 的只读检索知识库"
     assert payload["kb_types"]["dify"]["requires_embedding_model"] is False
     assert payload["kb_types"]["dify"]["supports_documents"] is False
     assert [option["key"] for option in payload["kb_types"]["dify"]["create_params"]["options"]] == [
         "dify_api_url",
         "dify_token",
         "dify_dataset_id",
+    ]
+    assert "default_config" not in payload["kb_types"]["notion"]
+    assert payload["kb_types"]["notion"]["name"] == "Notion"
+    assert (
+        payload["kb_types"]["notion"]["description"]
+        == "连接 Notion Data Source 的只读知识库，支持检索、打开页面和页内查找"
+    )
+    assert payload["kb_types"]["notion"]["requires_embedding_model"] is False
+    assert payload["kb_types"]["notion"]["supports_documents"] is False
+    assert [option["key"] for option in payload["kb_types"]["notion"]["create_params"]["options"]] == [
+        "notion_token",
+        "notion_data_source_id",
+        "notion_version",
     ]
 
 

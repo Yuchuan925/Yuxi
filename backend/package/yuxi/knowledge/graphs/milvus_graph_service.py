@@ -70,11 +70,13 @@ class MilvusGraphService:
         kb = await self._get_milvus_kb(db_id)
         params = dict(kb.additional_params or {})
         config = params.get(GRAPH_CONFIG_KEY) or {}
-        total_chunks, pending_chunks, indexed_chunks = await asyncio.gather(
+        total_chunks, pending_chunks, indexed_chunks, graph_counts = await asyncio.gather(
             self.chunk_repo.count_by_db_id(db_id),
             self.chunk_repo.count_graph_pending_by_db_id(db_id),
             self.chunk_repo.count_graph_indexed_by_db_id(db_id),
+            self.graph_repo.count_by_db_id(db_id),
         )
+        entity_count, relationship_count = graph_counts
 
         build_task_status = None
         build_task_progress = 0
@@ -106,6 +108,8 @@ class MilvusGraphService:
             "total_chunks": total_chunks,
             "pending_chunks": pending_chunks,
             "indexed_chunks": indexed_chunks,
+            "entity_count": entity_count,
+            "relationship_count": relationship_count,
             "build_task_status": build_task_status,
             "build_task_progress": build_task_progress,
         }

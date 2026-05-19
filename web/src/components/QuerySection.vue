@@ -384,11 +384,10 @@ defineExpose({
 }
 
 .query-input-container {
-  padding: 16px;
+  padding-bottom: 16px;
   display: flex;
   flex-direction: column;
   gap: 12px;
-  background-color: var(--gray-0);
 }
 
 .search-input-wrapper {
@@ -512,7 +511,7 @@ defineExpose({
   }
 
   .result-list {
-    padding: 16px;
+    // padding: 16px;
 
     .no-results {
       text-align: center;
