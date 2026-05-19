@@ -74,10 +74,7 @@
                 </div>
 
                 <!-- 系统提示词 -->
-                <div
-                  v-else-if="value.kind === 'prompt'"
-                  class="system-prompt-container"
-                >
+                <div v-else-if="value.kind === 'prompt'" class="system-prompt-container">
                   <div class="system-prompt-display" @click="openSystemPromptModal(key)">
                     <div
                       class="system-prompt-content"
