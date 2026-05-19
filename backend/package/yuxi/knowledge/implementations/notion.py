@@ -406,7 +406,7 @@ class NotionKB(ReadOnlyConnectors):
 
         async with _NotionClient(token, notion_version) as client:
             page = await client.retrieve_page(page_id)
-            if not self._page_belongs_to_data_source(page, data_source_id, allow_unknown_parent=True):
+            if not self._page_belongs_to_data_source(page, data_source_id):
                 raise ValueError(f"Notion 页面 {page_id} 不属于当前 Data Source")
             markdown = await self._page_to_markdown(client, page_id, page)
 

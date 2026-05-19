@@ -78,6 +78,12 @@ class _FailingNotionClient(_FakeNotionClient):
         raise NotionAPIError("boom")
 
 
+class _UnknownParentNotionClient(_FakeNotionClient):
+    async def retrieve_page(self, page_id: str) -> dict:
+        page = await super().retrieve_page(page_id)
+        return {**page, "parent": {"type": "page_id", "page_id": "other-page"}}
+
+
 @pytest.fixture
 def notion_kb(tmp_path):
     kb = NotionKB(str(tmp_path))
@@ -173,6 +179,14 @@ async def test_notion_find_file_content_uses_page_markdown(monkeypatch, notion_k
     assert result["total_matches"] == 1
     assert result["windows"]
     assert "reasoning models" in result["windows"][0]["content"]
+
+
+@pytest.mark.asyncio
+async def test_notion_open_file_content_rejects_unknown_parent(monkeypatch, notion_kb):
+    monkeypatch.setattr("yuxi.knowledge.implementations.notion._NotionClient", _UnknownParentNotionClient)
+
+    with pytest.raises(ValueError, match="不属于当前 Data Source"):
+        await notion_kb.open_file_content("kb_notion", PAGE_ID)
 
 
 @pytest.mark.asyncio
