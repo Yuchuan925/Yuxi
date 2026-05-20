@@ -13,6 +13,7 @@ from yuxi.knowledge.eval.benchmark_generation import (
     collect_kb_chunks,
     iter_generated_benchmark_items,
     normalize_generation_concurrency_count,
+    select_graph_enhanced_chunks,
     select_neighbor_chunks_by_kb_query,
 )
 
@@ -87,6 +88,35 @@ class TrackingLlm:
             self.active_calls -= 1
 
 
+class FakeGraphGenerationKnowledgeBase(FakeGenerationKnowledgeBase):
+    async def get_file_content(self, db_id, fid):
+        return {
+            "lines": [
+                {
+                    "id": "vector_anchor",
+                    "content": "vector content",
+                    "chunk_order_index": 0,
+                    "graph_indexed": False,
+                    "ent_ids": ["vector_entity"],
+                },
+                {
+                    "id": "graph_anchor",
+                    "content": "graph anchor content",
+                    "chunk_order_index": 1,
+                    "graph_indexed": True,
+                    "ent_ids": ["anchor_entity"],
+                },
+                {
+                    "id": "graph_neighbor",
+                    "content": "graph neighbor content",
+                    "chunk_order_index": 2,
+                    "graph_indexed": False,
+                    "ent_ids": ["neighbor_entity"],
+                },
+            ]
+        }
+
+
 def test_clamp_neighbors_count():
     assert clamp_neighbors_count(-1) == 0
     assert clamp_neighbors_count(3) == 3
@@ -112,7 +142,18 @@ def test_build_benchmark_generation_prompt_contains_required_schema():
 async def test_collect_kb_chunks_filters_database_id():
     chunks = await collect_kb_chunks(FakeKnowledgeBase(), "db_1")
 
-    assert chunks == [{"id": "file_a_chunk", "content": "内容", "file_id": "file_a", "chunk_index": 0}]
+    assert chunks == [
+        {
+            "id": "file_a_chunk",
+            "content": "内容",
+            "file_id": "file_a",
+            "chunk_index": 0,
+            "graph_indexed": False,
+            "ent_ids": [],
+            "tags": [],
+            "extraction_result": None,
+        }
+    ]
 
 
 @pytest.mark.asyncio
@@ -168,6 +209,73 @@ async def test_select_neighbor_chunks_by_kb_query_filters_anchor():
             "similarity_threshold": 0.0,
         }
     ]
+
+
+@pytest.mark.asyncio
+async def test_select_graph_enhanced_chunks_expands_by_ppr_with_anchor_bias(monkeypatch):
+    calls = []
+
+    async def fake_rank(self, db_id, seed_weights, *, max_nodes, top_k, damping):
+        calls.append(dict(seed_weights))
+        if len(calls) == 1:
+            return [("anchor", 0.9), ("neighbor_1", 0.8)]
+        return [("anchor", 0.9), ("neighbor_1", 0.8), ("neighbor_2", 0.7)]
+
+    monkeypatch.setattr(
+        "yuxi.knowledge.graphs.milvus_graph_service.MilvusGraphService.query_and_rank_chunks_by_ppr",
+        fake_rank,
+    )
+    chunks_by_id = {
+        "anchor": {"id": "anchor", "content": "anchor", "ent_ids": ["anchor_entity"]},
+        "neighbor_1": {"id": "neighbor_1", "content": "neighbor 1", "ent_ids": ["entity_1"]},
+        "neighbor_2": {"id": "neighbor_2", "content": "neighbor 2", "ent_ids": ["entity_2"]},
+    }
+
+    chunks = await select_graph_enhanced_chunks(
+        db_id="db_1",
+        anchor_chunk=chunks_by_id["anchor"],
+        chunks_by_id=chunks_by_id,
+        context_count=3,
+        graph_expand_top_k=1,
+    )
+
+    assert [chunk["id"] for chunk in chunks] == ["anchor", "neighbor_1", "neighbor_2"]
+    assert calls[0] == {"anchor_entity": 1.0}
+    assert calls[1]["anchor_entity"] == 1.0
+    assert calls[1]["entity_1"] == 0.9
+
+
+@pytest.mark.asyncio
+async def test_iter_generated_benchmark_items_graph_mode_uses_graph_indexed_anchor(monkeypatch):
+    async def fake_rank(self, db_id, seed_weights, *, max_nodes, top_k, damping):
+        assert seed_weights["anchor_entity"] == 1.0
+        return [("graph_anchor", 0.9), ("graph_neighbor", 0.8)]
+
+    fake_llm = FakeLlm(gold_chunk_id="graph_neighbor")
+    monkeypatch.setattr(benchmark_generation, "select_model", lambda model_spec: fake_llm)
+    monkeypatch.setattr(
+        "yuxi.knowledge.graphs.milvus_graph_service.MilvusGraphService.query_and_rank_chunks_by_ppr",
+        fake_rank,
+    )
+    kb = FakeGraphGenerationKnowledgeBase()
+
+    items = [
+        item
+        async for item in iter_generated_benchmark_items(
+            kb_instance=kb,
+            db_id="db_1",
+            count=1,
+            neighbors_count=2,
+            llm_model_spec="test-provider:test-model",
+            generation_mode="graph_enhanced",
+        )
+    ]
+
+    assert items == [{"query": "问题", "gold_chunk_ids": ["graph_neighbor"], "gold_answer": "答案"}]
+    assert kb.query_calls == []
+    assert "片段ID=graph_anchor" in fake_llm.prompts[0]
+    assert "片段ID=graph_neighbor" in fake_llm.prompts[0]
+    assert "片段ID=vector_anchor" not in fake_llm.prompts[0]
 
 
 @pytest.mark.asyncio

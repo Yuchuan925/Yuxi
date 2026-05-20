@@ -297,11 +297,11 @@ const generateModalVisible = ref(false)
 const previewModalVisible = ref(false)
 const previewData = ref(null)
 const previewQuestions = ref([])
-const previewAutoWrap = ref(true)
+const previewAutoWrap = ref(false)
 const downloadingDatasetMap = reactive({})
 const previewPagination = ref({
   current: 1,
-  pageSize: 10,
+  pageSize: 50,
   total: 0,
   loading: false
 })
@@ -413,7 +413,7 @@ const paginationConfig = computed(() => ({
   total: previewPagination.value.total,
   showTotal: (total, range) => `第 ${range[0]}-${range[1]} 条，共 ${total} 条`,
   showSizeChanger: true,
-  pageSizeOptions: ['5', '10', '20', '50'],
+  pageSizeOptions: ['10', '20', '50', '100'],
   showQuickJumper: true,
   size: 'small',
   onChange: handlePageChange,
@@ -592,7 +592,7 @@ const previewDataset = async (benchmark) => {
     // 重置分页状态
     previewPagination.value = {
       current: 1,
-      pageSize: 10,
+      pageSize: 50,
       total: 0,
       loading: false
     }
@@ -765,14 +765,12 @@ onUnmounted(() => {
 
 .benchmark-list-content {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 420px));
-  justify-content: start;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr));
   gap: 12px;
 }
 
 .benchmark-item {
   width: 100%;
-  max-width: 420px;
   padding: 12px;
   border: 1px solid var(--gray-200);
   border-radius: 8px;

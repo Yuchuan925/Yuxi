@@ -551,6 +551,77 @@ class MilvusGraphService:
             logger.error(f"Milvus seed subgraph query failed: {e}")
             return {"nodes": [], "edges": []}
 
+    async def query_and_rank_chunks_by_ppr(
+        self,
+        db_id: str,
+        seed_weights: dict[str, float],
+        *,
+        max_nodes: int,
+        top_k: int,
+        damping: float,
+    ) -> list[tuple[str, float]]:
+        if not seed_weights:
+            return []
+        subgraph = await self.query_seed_subgraph(
+            db_id,
+            entity_ids=list(seed_weights.keys()),
+            max_nodes=max_nodes,
+        )
+        return self.rank_chunks_by_ppr(subgraph, seed_weights, top_k=top_k, damping=damping)
+
+    @staticmethod
+    def rank_chunks_by_ppr(
+        subgraph: dict[str, Any],
+        seed_weights: dict[str, float],
+        *,
+        top_k: int,
+        damping: float,
+    ) -> list[tuple[str, float]]:
+        nodes = subgraph.get("nodes") or []
+        edges = subgraph.get("edges") or []
+        if not nodes:
+            return []
+
+        try:
+            import igraph as ig
+        except ImportError:
+            logger.error("Graph retrieval requires python-igraph. Please install igraph.")
+            return []
+
+        node_ids = [node["id"] for node in nodes]
+        index_by_id = {node_id: index for index, node_id in enumerate(node_ids)}
+        edge_indices = [
+            (index_by_id[edge["source_id"]], index_by_id[edge["target_id"]])
+            for edge in edges
+            if edge.get("source_id") in index_by_id and edge.get("target_id") in index_by_id
+        ]
+        if not edge_indices:
+            return []
+
+        graph = ig.Graph(n=len(nodes), edges=edge_indices, directed=False)
+        reset = [0.0] * len(nodes)
+        chunk_node_indexes: list[tuple[int, str]] = []
+        for index, node in enumerate(nodes):
+            properties = node.get("properties") or {}
+            if node.get("type") == "Chunk" and properties.get("chunk_id"):
+                chunk_node_indexes.append((index, properties["chunk_id"]))
+                continue
+            entity_id = properties.get("entity_id")
+            if entity_id in seed_weights:
+                reset[index] = seed_weights[entity_id]
+
+        reset_total = sum(reset)
+        if reset_total <= 0 or not chunk_node_indexes:
+            return []
+        reset = [value / reset_total for value in reset]
+        scores = graph.personalized_pagerank(damping=min(max(damping, 0.1), 0.99), reset=reset)
+        ranked = sorted(
+            ((chunk_id, float(scores[index])) for index, chunk_id in chunk_node_indexes),
+            key=lambda item: item[1],
+            reverse=True,
+        )
+        return ranked[:top_k]
+
     async def get_labels(self, db_id: str | None = None) -> list[str]:
         effective_db_id = db_id or self.db_id
         if not effective_db_id:

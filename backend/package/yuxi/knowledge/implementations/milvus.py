@@ -1028,14 +1028,10 @@ class MilvusKB(KnowledgeBase):
                 return []
 
             graph_service = MilvusGraphService()
-            subgraph = await graph_service.query_seed_subgraph(
+            graph_scores = await graph_service.query_and_rank_chunks_by_ppr(
                 db_id,
-                entity_ids=list(seed_weights.keys()),
-                max_nodes=graph_max_nodes,
-            )
-            graph_scores = self._rank_graph_chunks_by_ppr(
-                subgraph,
                 seed_weights,
+                max_nodes=graph_max_nodes,
                 top_k=graph_top_k,
                 damping=float(query_params.get("ppr_damping", 0.85)),
             )
@@ -1089,59 +1085,6 @@ class MilvusKB(KnowledgeBase):
         if total <= 0:
             return {}
         return {entity_id: weight / total for entity_id, weight in seed_weights.items()}
-
-    def _rank_graph_chunks_by_ppr(
-        self,
-        subgraph: dict[str, Any],
-        seed_weights: dict[str, float],
-        *,
-        top_k: int,
-        damping: float,
-    ) -> list[tuple[str, float]]:
-        nodes = subgraph.get("nodes") or []
-        edges = subgraph.get("edges") or []
-        if not nodes:
-            return []
-
-        try:
-            import igraph as ig
-        except ImportError:
-            logger.error("Graph retrieval requires python-igraph. Please install igraph.")
-            return []
-
-        node_ids = [node["id"] for node in nodes]
-        index_by_id = {node_id: index for index, node_id in enumerate(node_ids)}
-        edge_indices = [
-            (index_by_id[edge["source_id"]], index_by_id[edge["target_id"]])
-            for edge in edges
-            if edge.get("source_id") in index_by_id and edge.get("target_id") in index_by_id
-        ]
-        if not edge_indices:
-            return []
-
-        graph = ig.Graph(n=len(nodes), edges=edge_indices, directed=False)
-        reset = [0.0] * len(nodes)
-        chunk_node_indexes: list[tuple[int, str]] = []
-        for index, node in enumerate(nodes):
-            properties = node.get("properties") or {}
-            if node.get("type") == "Chunk" and properties.get("chunk_id"):
-                chunk_node_indexes.append((index, properties["chunk_id"]))
-                continue
-            entity_id = properties.get("entity_id")
-            if entity_id in seed_weights:
-                reset[index] = seed_weights[entity_id]
-
-        reset_total = sum(reset)
-        if reset_total <= 0 or not chunk_node_indexes:
-            return []
-        reset = [value / reset_total for value in reset]
-        scores = graph.personalized_pagerank(damping=min(max(damping, 0.1), 0.99), reset=reset)
-        ranked = sorted(
-            ((chunk_id, float(scores[index])) for index, chunk_id in chunk_node_indexes),
-            key=lambda item: item[1],
-            reverse=True,
-        )
-        return ranked[:top_k]
 
     def _build_chunk_from_record(self, chunk: Any, score: float, score_field: str | None = None) -> dict:
         metadata = {

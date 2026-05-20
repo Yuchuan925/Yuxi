@@ -1,5 +1,5 @@
 import traceback
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
@@ -28,6 +28,8 @@ class GenerateDatasetRequest(BaseModel):
         le=MAX_BENCHMARK_GENERATION_CONCURRENCY,
     )
     llm_model_spec: str = Field(..., min_length=1)
+    generation_mode: Literal["vector", "graph_enhanced"] = "vector"
+    graph_expand_top_k: int = Field(default=1, ge=1, le=3)
 
 
 class RunEvaluationRequest(BaseModel):
@@ -44,7 +46,7 @@ async def upload_evaluation_dataset(
     current_user: User = Depends(get_admin_user),
 ):
     """上传评估数据集"""
-    from yuxi.services.evaluation_service import EvaluationService
+    from yuxi.knowledge.eval.service import EvaluationService
 
     try:
         if not file.filename.endswith(".jsonl"):
@@ -70,7 +72,7 @@ async def upload_evaluation_dataset(
 @evaluation.get("/databases/{db_id}/datasets")
 async def list_evaluation_datasets(db_id: str, current_user: User = Depends(get_admin_user)):
     """获取知识库的评估数据集列表"""
-    from yuxi.services.evaluation_service import EvaluationService
+    from yuxi.knowledge.eval.service import EvaluationService
 
     try:
         service = EvaluationService()
@@ -86,7 +88,7 @@ async def get_evaluation_dataset(
     db_id: str, dataset_id: str, page: int = 1, page_size: int = 10, current_user: User = Depends(get_admin_user)
 ):
     """获取评估数据集详情"""
-    from yuxi.services.evaluation_service import EvaluationService
+    from yuxi.knowledge.eval.service import EvaluationService
 
     try:
         if page < 1:
@@ -111,7 +113,7 @@ async def get_evaluation_dataset(
 @evaluation.get("/datasets/{dataset_id}/download")
 async def download_evaluation_dataset(dataset_id: str, current_user: User = Depends(get_admin_user)):
     """导出评估数据集 JSONL"""
-    from yuxi.services.evaluation_service import EvaluationService
+    from yuxi.knowledge.eval.service import EvaluationService
 
     try:
         service = EvaluationService()
@@ -134,7 +136,7 @@ async def download_evaluation_dataset(dataset_id: str, current_user: User = Depe
 @evaluation.delete("/datasets/{dataset_id}")
 async def delete_evaluation_dataset(dataset_id: str, current_user: User = Depends(get_admin_user)):
     """删除评估数据集"""
-    from yuxi.services.evaluation_service import EvaluationService
+    from yuxi.knowledge.eval.service import EvaluationService
 
     try:
         service = EvaluationService()
@@ -154,7 +156,7 @@ async def generate_evaluation_dataset(
     db_id: str, request: GenerateDatasetRequest, current_user: User = Depends(get_admin_user)
 ):
     """自动生成评估数据集"""
-    from yuxi.services.evaluation_service import EvaluationService
+    from yuxi.knowledge.eval.service import EvaluationService
 
     try:
         service = EvaluationService()
@@ -166,9 +168,13 @@ async def generate_evaluation_dataset(
             neighbors_count=request.neighbors_count,
             concurrency_count=request.concurrency_count,
             llm_model_spec=request.llm_model_spec,
+            generation_mode=request.generation_mode,
+            graph_expand_top_k=request.graph_expand_top_k,
             created_by=current_user.uid,
         )
         return {"message": "success", "data": result}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.error(f"生成评估数据集失败: {e}, {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=f"生成评估数据集失败: {str(e)}")
@@ -177,7 +183,7 @@ async def generate_evaluation_dataset(
 @evaluation.post("/databases/{db_id}/runs")
 async def run_evaluation(db_id: str, request: RunEvaluationRequest, current_user: User = Depends(get_admin_user)):
     """运行RAG评估"""
-    from yuxi.services.evaluation_service import EvaluationService
+    from yuxi.knowledge.eval.service import EvaluationService
 
     try:
         service = EvaluationService()
@@ -200,7 +206,7 @@ async def run_evaluation(db_id: str, request: RunEvaluationRequest, current_user
 @evaluation.get("/databases/{db_id}/runs")
 async def list_evaluation_runs(db_id: str, current_user: User = Depends(get_admin_user)):
     """获取知识库评估运行历史"""
-    from yuxi.services.evaluation_service import EvaluationService
+    from yuxi.knowledge.eval.service import EvaluationService
 
     try:
         service = EvaluationService()
@@ -221,7 +227,7 @@ async def get_evaluation_run_results(
     current_user: User = Depends(get_admin_user),
 ):
     """获取评估运行结果"""
-    from yuxi.services.evaluation_service import EvaluationService
+    from yuxi.knowledge.eval.service import EvaluationService
 
     try:
         if page < 1:
@@ -246,7 +252,7 @@ async def get_evaluation_run_results(
 @evaluation.delete("/databases/{db_id}/runs/{run_id}")
 async def delete_evaluation_run(db_id: str, run_id: str, current_user: User = Depends(get_admin_user)):
     """删除评估运行"""
-    from yuxi.services.evaluation_service import EvaluationService
+    from yuxi.knowledge.eval.service import EvaluationService
 
     try:
         service = EvaluationService()

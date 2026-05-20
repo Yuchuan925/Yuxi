@@ -849,6 +849,14 @@ onMounted(() => {
     flex: 1;
     min-height: 0;
   }
+
+  .detail-subtitle {
+    display: block;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
 }
 
 .database-detail-body {

@@ -342,6 +342,7 @@
               pageSize: pageSize,
               total: paginationTotal,
               showSizeChanger: true,
+              pageSizeOptions: ['10', '20', '50', '100'],
               showQuickJumper: true,
               showTotal: (total, range) => `第 ${range[0]}-${range[1]} 条，共 ${total} 条`,
               onChange: handlePageChange,
@@ -460,9 +461,9 @@ const evaluationStats = ref({})
 const resultsLoading = ref(false)
 const refreshingHistory = ref(false)
 const showErrorsOnly = ref(false)
-const resultAutoWrap = ref(true)
+const resultAutoWrap = ref(false)
 const currentPage = ref(1)
-const pageSize = ref(20)
+const pageSize = ref(50)
 const paginationTotal = ref(0)
 const paginationTotalPages = ref(0)
 let evaluationRefreshTimer = null

@@ -1,3 +1,4 @@
+from yuxi.knowledge.graphs.milvus_graph_service import MilvusGraphService
 from yuxi.knowledge.implementations.milvus import MilvusKB, _retrieval_config_options
 
 
@@ -13,7 +14,6 @@ def test_milvus_retrieval_config_exposes_graph_and_dependencies():
 
 
 def test_graph_ppr_ranks_chunk_nodes_from_seed_entities():
-    kb = object.__new__(MilvusKB)
     subgraph = {
         "nodes": [
             {"id": "e1", "type": "Entity", "properties": {"entity_id": "seed"}},
@@ -28,7 +28,7 @@ def test_graph_ppr_ranks_chunk_nodes_from_seed_entities():
         ],
     }
 
-    ranked = kb._rank_graph_chunks_by_ppr(subgraph, {"seed": 1.0}, top_k=2, damping=0.85)
+    ranked = MilvusGraphService.rank_chunks_by_ppr(subgraph, {"seed": 1.0}, top_k=2, damping=0.85)
 
     assert [chunk_id for chunk_id, _ in ranked] == ["chunk_a", "chunk_b"]
 

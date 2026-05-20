@@ -13,45 +13,7 @@
               @press-enter.prevent="onQuery"
             />
             <div class="search-actions">
-              <div class="query-examples-compact">
-                <div class="examples-label-group">
-                  <a-tooltip title="点击手动生成测试问题" placement="bottom">
-                    <a-button
-                      type="text"
-                      size="small"
-                      class="examples-label-btn"
-                      @click="() => generateSampleQuestions(false)"
-                    >
-                      示例:
-                    </a-button>
-                  </a-tooltip>
-                </div>
-                <div class="examples-container">
-                  <!-- 加载中或生成中 -->
-                  <div v-if="loadingQuestions || generatingQuestions" class="loading-text">
-                    <a-spin size="small" />
-                    <span>{{ generatingQuestions ? 'AI生成中...' : '加载中...' }}</span>
-                  </div>
-
-                  <!-- 示例轮播 -->
-                  <transition v-else-if="queryExamples.length > 0" name="fade" mode="out-in">
-                    <a-button
-                      type="link"
-                      :key="currentExampleIndex"
-                      @click="useQueryExample(queryExamples[currentExampleIndex])"
-                      size="small"
-                      class="example-btn"
-                    >
-                      {{ queryExamples[currentExampleIndex] }}
-                    </a-button>
-                  </transition>
-
-                  <!-- 空状态 - 添加文件后会自动生成 -->
-                  <span v-else style="color: var(--gray-500); font-size: 12px"
-                    >暂无问题，请点击左侧按钮生成</span
-                  >
-                </div>
-              </div>
+              <span class="query-hint">Enter 检索知识库内容</span>
               <div style="display: flex; gap: 12px; align-items: center">
                 <a-tooltip :title="showRawData ? '切换至格式化显示' : '切换至原始数据'">
                   <a-button
@@ -98,6 +60,14 @@
               <div v-else>
                 <div class="result-summary">
                   <strong>检索到 {{ queryResult.length }} 个相关文档块：</strong>
+                  <a-button
+                    type="text"
+                    size="small"
+                    class="clear-results-btn"
+                    @click="clearQueryResult"
+                  >
+                    清空
+                  </a-button>
                 </div>
                 <div v-for="(chunk, index) in queryResult" :key="index" class="result-item">
                   <div class="result-header">
@@ -139,20 +109,60 @@
           </div>
           <!-- 关闭格式化显示的div -->
         </div>
+
+        <div v-else-if="showQuerySuggestions" class="query-suggestions">
+          <div v-if="loadingQuestions || generatingQuestions" class="suggestions-loading">
+            <a-spin size="small" />
+            <span>{{ generatingQuestions ? '正在生成示例问题...' : '正在加载示例问题...' }}</span>
+          </div>
+
+          <div v-else-if="queryExamples.length > 0" class="suggestions-list">
+            <div class="suggestions-title">示例问题</div>
+            <button
+              v-for="(example, index) in visibleQueryExamples"
+              :key="`${index}-${example}`"
+              type="button"
+              class="suggestion-row"
+              @click="useQueryExample(example)"
+            >
+              <SearchOutlined class="suggestion-icon" />
+              <span class="suggestion-text">{{ example }}</span>
+            </button>
+            <button
+              type="button"
+              class="suggestion-row"
+              @click="() => generateSampleQuestions(false)"
+            >
+              <RefreshCw class="suggestion-icon" />
+              <span class="suggestion-text">重新生成</span>
+            </button>
+          </div>
+
+          <div v-else class="suggestions-empty">
+            <button
+              class="suggestion-row"
+              @click="() => generateSampleQuestions(false)"
+            >
+              <RefreshCw class="suggestion-icon" />
+              <span class="suggestion-text">生成示例问题</span>
+            </button>
+          </div>
+        </div>
       </div>
     </div>
   </div>
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted, watch, h } from 'vue'
+import { ref, computed, onMounted, watch, h } from 'vue'
 import { useDatabaseStore } from '@/stores/database'
 import { message } from 'ant-design-vue'
 import { queryApi } from '@/apis/knowledge_api'
 import { SearchOutlined } from '@ant-design/icons-vue'
-import { Braces } from 'lucide-vue-next'
+import { Braces, RefreshCw } from 'lucide-vue-next'
 
 const store = useDatabaseStore()
+const MAX_VISIBLE_EXAMPLES = 10
 
 defineProps({
   visible: {
@@ -171,18 +181,28 @@ defineEmits(['toggleVisible'])
 const searchLoading = computed(() => store.state.searchLoading)
 const queryResult = ref('')
 const showRawData = ref(false)
+const showQuerySuggestions = computed(() => !searchLoading.value && !queryResult.value)
 
 // 查询测试
 const queryText = ref('')
 
 // 示例问题相关
 const queryExamples = ref([])
-const currentExampleIndex = ref(0)
+const visibleQueryExamples = ref([])
 const loadingQuestions = ref(false)
 const generatingQuestions = ref(false)
 
-// 示例轮播相关
-let exampleCarouselInterval = null
+const updateQueryExamples = (questions = []) => {
+  queryExamples.value = questions
+  const shuffledQuestions = [...questions]
+  for (let index = shuffledQuestions.length - 1; index > 0; index--) {
+    const targetIndex = Math.floor(Math.random() * (index + 1))
+    const currentQuestion = shuffledQuestions[index]
+    shuffledQuestions[index] = shuffledQuestions[targetIndex]
+    shuffledQuestions[targetIndex] = currentQuestion
+  }
+  visibleQueryExamples.value = shuffledQuestions.slice(0, MAX_VISIBLE_EXAMPLES)
+}
 
 // 加载示例问题
 const loadSampleQuestions = async () => {
@@ -192,10 +212,10 @@ const loadSampleQuestions = async () => {
     loadingQuestions.value = true
     const data = await queryApi.getSampleQuestions(store.database.db_id)
     if (data.questions && data.questions.length > 0) {
-      queryExamples.value = data.questions
+      updateQueryExamples(data.questions)
     } else {
       // 如果没有问题，清空列表
-      queryExamples.value = []
+      updateQueryExamples()
     }
   } catch (error) {
     // 404表示还没有生成问题，清空问题列表
@@ -204,7 +224,7 @@ const loadSampleQuestions = async () => {
       error?.message?.includes('404') ||
       error?.message?.includes('还没有生成')
     ) {
-      queryExamples.value = []
+      updateQueryExamples()
     } else {
       console.error('加载示例问题失败:', error)
     }
@@ -215,9 +235,7 @@ const loadSampleQuestions = async () => {
 
 // 清空问题列表
 const clearQuestions = () => {
-  queryExamples.value = []
-  currentExampleIndex.value = 0
-  stopExampleCarousel()
+  updateQueryExamples()
 }
 
 // 生成示例问题
@@ -228,13 +246,9 @@ const generateSampleQuestions = async (silent = false) => {
     generatingQuestions.value = true
     const data = await queryApi.generateSampleQuestions(store.database.db_id, 10)
     if (data.questions && data.questions.length > 0) {
-      queryExamples.value = data.questions
+      updateQueryExamples(data.questions)
       if (!silent) {
         message.success(`成功生成 ${data.questions.length} 个测试问题`)
-      }
-      // 开始轮播
-      if (!exampleCarouselInterval) {
-        startExampleCarousel()
       }
     }
   } catch (error) {
@@ -266,19 +280,8 @@ const useQueryExample = (example) => {
   onQuery()
 }
 
-const startExampleCarousel = () => {
-  if (exampleCarouselInterval) return
-
-  exampleCarouselInterval = setInterval(() => {
-    currentExampleIndex.value = (currentExampleIndex.value + 1) % queryExamples.value.length
-  }, 10000) // 每10秒切换一次
-}
-
-const stopExampleCarousel = () => {
-  if (exampleCarouselInterval) {
-    clearInterval(exampleCarouselInterval)
-    exampleCarouselInterval = null
-  }
+const clearQueryResult = () => {
+  queryResult.value = ''
 }
 
 // 监听知识库ID变化，切换知识库时重新加载问题
@@ -287,17 +290,10 @@ watch(
   async (newDbId, oldDbId) => {
     // 如果知识库ID发生变化
     if (newDbId && newDbId !== oldDbId) {
-      // 停止当前轮播
-      stopExampleCarousel()
       // 清空当前问题列表
-      queryExamples.value = []
-      currentExampleIndex.value = 0
+      updateQueryExamples()
       // 重新加载新知识库的问题
       await loadSampleQuestions()
-      // 如果有问题，启动轮播
-      if (queryExamples.value.length > 0) {
-        startExampleCarousel()
-      }
     }
   },
   { immediate: false }
@@ -333,18 +329,7 @@ onMounted(async () => {
 
   // 加载示例问题
   await loadSampleQuestions()
-
-  // 如果有示例问题，启动轮播
-  if (queryExamples.value.length > 0) {
-    startExampleCarousel()
-  }
   // 不自动生成，只在创建知识库和添加文件时由 DataBaseInfoView 触发生成
-})
-
-// 组件卸载时停止示例轮播
-onUnmounted(() => {
-  // 停止示例轮播
-  stopExampleCarousel()
 })
 
 // 检查是否已有问题
@@ -520,12 +505,28 @@ defineExpose({
     }
 
     .result-summary {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
       margin-bottom: 12px;
       padding: 10px 14px;
       background-color: var(--main-50);
       border-radius: 6px;
       color: var(--gray-800);
       font-weight: 500;
+    }
+
+    .clear-results-btn {
+      flex: 0 0 auto;
+      color: var(--main-color);
+      background-color: var(--main-100);
+      border-radius: 6px;
+
+      &:hover {
+        color: var(--main-800);
+        background-color: var(--main-200);
+      }
     }
 
     .result-item {
@@ -619,67 +620,126 @@ defineExpose({
   }
 }
 
-.query-examples-compact {
-  display: flex;
-  flex-direction: row;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-.examples-label-btn {
+.query-hint {
+  font-size: 12px;
   color: var(--gray-500);
-  font-size: 12px;
-  display: flex;
-  align-items: center;
-  margin-left: -8px;
-  margin-right: -6px;
-
-  &:hover {
-    color: var(--main-color);
-    background-color: var(--gray-100);
-  }
-
-  .anticon {
-    /* Target Ant Design icons directly */
-    font-size: 10px; /* Make icon smaller */
-  }
+  line-height: 24px;
 }
 
-.examples-container {
-  min-height: 24px;
-  display: flex;
-  align-items: center;
+.query-suggestions {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 4px 0 16px;
 }
 
-.loading-text {
-  font-size: 12px;
-  color: var(--gray-400);
+.suggestions-loading,
+.suggestions-empty {
+  min-height: 72px;
   display: flex;
   align-items: center;
+  justify-content: center;
+  color: var(--gray-500);
+  font-size: 13px;
+}
+
+.suggestions-loading {
   gap: 6px;
 }
 
-.example-btn {
-  text-align: left;
-  white-space: normal;
-  height: auto;
-  padding: 0;
+.suggestions-list {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.suggestions-title {
+  padding: 0 2px;
+  color: var(--gray-600);
   font-size: 12px;
-  color: var(--gray-500);
+  font-weight: 600;
+  line-height: 20px;
+}
+
+.suggestion-row {
+  width: fit-content;
+  max-width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 16px;
+  border: none;
+  border-radius: 30px;
+  background-color: var(--gray-0);
+  color: var(--gray-800);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background-color 0.2s ease,
+    box-shadow 0.2s ease;
 
   &:hover {
-    color: var(--main-color);
+    box-shadow: 0 2px 8px var(--shadow-1);
+
+    .suggestion-icon {
+      color: var(--main-800);
+      opacity: 1;
+    }
+  }
+
+  &:active {
+    background-color: var(--main-50);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--main-300);
+    outline-offset: 2px;
   }
 }
 
-.fade-enter-active,
-.fade-leave-active {
-  transition: opacity 0.3s;
+.suggestion-text {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  word-break: break-word;
 }
 
-.fade-enter-from,
-.fade-leave-to {
-  opacity: 0;
+.suggestion-icon {
+  flex: 0 0 auto;
+  color: var(--main-color);
+  font-size: 14px;
+  width: 14px;
+  height: 14px;
+  opacity: 0.82;
+  transition:
+    color 0.2s ease,
+    opacity 0.2s ease;
+}
+
+.generate-suggestions-btn {
+  height: auto;
+  background-color: var(--gray-0);
+  border-radius: 40px;
+
+  &:hover {
+    background-color: var(--gray-0);
+    box-shadow: 0 2px 8px var(--shadow-1);
+  }
+}
+
+@media (max-width: 767px) {
+  .query-hint {
+    display: none;
+  }
+
+  .suggestion-row {
+    align-items: flex-start;
+  }
+
+  .suggestion-icon {
+    margin-top: 3px;
+  }
 }
 </style>

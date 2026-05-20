@@ -13,6 +13,7 @@ from yuxi.knowledge.eval.evaluator import aggregate_metrics, evaluate_question
 from yuxi.models import select_model
 from yuxi.repositories.evaluation_repository import EvaluationRepository
 from yuxi.repositories.knowledge_base_repository import KnowledgeBaseRepository
+from yuxi.repositories.knowledge_chunk_repository import KnowledgeChunkRepository
 from yuxi.repositories.task_repository import TaskRepository
 from yuxi.services.task_service import TaskContext, tasker
 from yuxi.utils import logger
@@ -25,6 +26,7 @@ class EvaluationService:
     def __init__(self):
         self.eval_repo = EvaluationRepository()
         self.kb_repo = KnowledgeBaseRepository()
+        self.chunk_repo = KnowledgeChunkRepository()
         self.task_repo = TaskRepository()
 
     def _dataset_to_dict(self, row) -> dict[str, Any]:
@@ -255,12 +257,21 @@ class EvaluationService:
         neighbors_count: int,
         concurrency_count: int,
         llm_model_spec: str,
-        created_by: str,
+        generation_mode: str = "vector",
+        graph_expand_top_k: int = 1,
+        created_by: str = "system",
     ) -> dict[str, Any]:
         dataset_id = f"dataset_{uuid.uuid4().hex[:8]}"
         count = int(count)
         neighbors_count = int(neighbors_count)
         concurrency_count = normalize_generation_concurrency_count(concurrency_count)
+        graph_expand_top_k = min(max(1, int(graph_expand_top_k)), 3)
+        if generation_mode not in {"vector", "graph_enhanced"}:
+            raise ValueError("不支持的评估基准生成方式")
+        if generation_mode == "graph_enhanced":
+            indexed_count = await self.chunk_repo.count_graph_indexed_by_db_id(db_id)
+            if indexed_count <= 0:
+                raise ValueError("当前知识库尚未完成图索引，无法使用图增强构建")
         build_metadata = {
             "source": "generated",
             "status": "pending",
@@ -270,6 +281,8 @@ class EvaluationService:
                 "neighbors_count": neighbors_count,
                 "concurrency_count": concurrency_count,
                 "llm_model_spec": llm_model_spec,
+                "generation_mode": generation_mode,
+                "graph_expand_top_k": graph_expand_top_k,
             },
         }
         await self.eval_repo.create_dataset(
@@ -298,6 +311,8 @@ class EvaluationService:
                 "neighbors_count": neighbors_count,
                 "concurrency_count": concurrency_count,
                 "llm_model_spec": llm_model_spec,
+                "generation_mode": generation_mode,
+                "graph_expand_top_k": graph_expand_top_k,
             },
             coroutine=self._generate_dataset_task,
         )
@@ -323,6 +338,8 @@ class EvaluationService:
         neighbors_count = int(payload.get("neighbors_count", 1))
         concurrency_count = normalize_generation_concurrency_count(payload.get("concurrency_count"))
         llm_model_spec = payload.get("llm_model_spec")
+        generation_mode = payload.get("generation_mode") or "vector"
+        graph_expand_top_k = min(max(1, int(payload.get("graph_expand_top_k", 1))), 3)
         build_metadata = {
             "source": "generated",
             "status": "running",
@@ -333,6 +350,8 @@ class EvaluationService:
                 "neighbors_count": neighbors_count,
                 "concurrency_count": concurrency_count,
                 "llm_model_spec": llm_model_spec,
+                "generation_mode": generation_mode,
+                "graph_expand_top_k": graph_expand_top_k,
             },
         }
         await self._update_dataset_build_metadata(dataset_id, build_metadata)
@@ -364,6 +383,8 @@ class EvaluationService:
                     neighbors_count=neighbors_count,
                     llm_model_spec=llm_model_spec,
                     concurrency_count=concurrency_count,
+                    generation_mode=generation_mode,
+                    graph_expand_top_k=graph_expand_top_k,
                     progress_cb=report_progress,
                     cancel_cb=context.raise_if_cancelled,
                 ):
