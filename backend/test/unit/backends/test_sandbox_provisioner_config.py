@@ -34,23 +34,9 @@ def _load_module():
     return module
 
 
-def test_canonical_backend_name_maps_local_to_docker(monkeypatch):
+def test_canonical_backend_name(monkeypatch):
     monkeypatch.setenv("PROVISIONER_BACKEND", "memory")
     module = _load_module()
 
-    assert module.canonical_backend_name("local") == "docker"
     assert module.canonical_backend_name("docker") == "docker"
     assert module.canonical_backend_name("kubernetes") == "kubernetes"
-
-
-def test_build_backend_keeps_local_compatible_but_returns_docker_name(monkeypatch):
-    monkeypatch.setenv("PROVISIONER_BACKEND", "local")
-    module = _load_module()
-
-    sentinel = object()
-    monkeypatch.setattr(module, "LocalContainerProvisionerBackend", lambda: sentinel)
-
-    backend_impl, backend_name = module._build_backend()
-
-    assert backend_impl is sentinel
-    assert backend_name == "docker"

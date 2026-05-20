@@ -35,11 +35,7 @@
                     />
                   </template>
                 </a-input>
-                <a-button
-                  class="action-btn"
-                  @click="loadGraph"
-                  title="刷新"
-                >
+                <a-button class="action-btn" @click="loadGraph" title="刷新">
                   <RefreshCw :size="16" :class="{ spin: graph.fetching }" />
                 </a-button>
               </div>
@@ -48,31 +44,34 @@
                   v-if="isMilvus"
                   class="action-btn index-action-btn"
                   :class="{ 'has-index-label': hasPendingGraphChunks }"
-                  @click="showBuildPanel = !showBuildPanel; showSettings = false"
+                  @click="toggleBuildPanel"
                   :title="graphIndexButtonTitle"
                   :aria-label="graphIndexButtonTitle"
                 >
                   <Database :size="16" />
-                  <span v-if="hasPendingGraphChunks" class="index-status-label">{{ pendingGraphChunks }} 待索引</span>
-                  <span v-if="graphIndexDotStatus" class="status-dot" :class="`status-dot--${graphIndexDotStatus}`"></span>
+                  <span v-if="hasPendingGraphChunks" class="index-status-label"
+                    >{{ pendingGraphChunks }} 待索引</span
+                  >
+                  <span
+                    v-if="graphIndexDotStatus"
+                    class="status-dot"
+                    :class="`status-dot--${graphIndexDotStatus}`"
+                  ></span>
                 </a-button>
-                <a-button
-                  class="action-btn"
-                  @click="showSettings = !showSettings; showBuildPanel = false"
-                  title="设置"
-                >
+                <a-button class="action-btn" @click="toggleSettingsPanel" title="设置">
                   <Settings :size="16" />
                 </a-button>
               </div>
             </div>
           </template>
         </GraphCanvas>
-        <div v-if="isMilvus && !graphBuildStatus?.locked && !graphBuildLoading" class="graph-config-empty">
+        <div
+          v-if="isMilvus && !graphBuildStatus?.locked && !graphBuildLoading"
+          class="graph-config-empty"
+        >
           <div class="empty-title">尚未配置图谱抽取器</div>
           <div class="empty-description">配置抽取器后才能从知识库 Chunk 构建实体与关系。</div>
-          <a-button type="primary" @click="openGraphConfig">
-            配置抽取器
-          </a-button>
+          <a-button type="primary" @click="openGraphConfig"> 配置抽取器 </a-button>
         </div>
 
         <!-- 详情浮动卡片 -->
@@ -113,7 +112,9 @@
                   <a-switch v-model:checked="subgraphParams.excludeChunk" />
                 </a-form-item>
                 <a-form-item>
-                  <a-button type="primary" @click="applySettings" style="width: 100%"> 应用 </a-button>
+                  <a-button type="primary" @click="applySettings" style="width: 100%">
+                    应用
+                  </a-button>
                 </a-form-item>
               </a-form>
             </div>
@@ -125,7 +126,13 @@
           <div v-if="isMilvus && showBuildPanel" class="floating-panel build-panel">
             <div class="panel-header">
               <span class="panel-title">索引管理</span>
-              <a-button size="small" type="text" :disabled="graphBuildLoading" @click="loadGraphBuildStatus" class="panel-refresh-btn">
+              <a-button
+                size="small"
+                type="text"
+                :disabled="graphBuildLoading"
+                @click="loadGraphBuildStatus"
+                class="panel-refresh-btn"
+              >
                 <RefreshCw :size="14" :class="{ spin: graphBuildLoading }" />
               </a-button>
             </div>
@@ -134,7 +141,9 @@
                 <span class="status-label">状态</span>
                 <a-tag v-if="isBuildActive" color="blue" size="small">构建中</a-tag>
                 <a-tag v-else-if="isBuildFailed" color="red" size="small">构建失败</a-tag>
-                <a-tag v-else-if="graphBuildStatus?.locked" color="green" size="small">已配置</a-tag>
+                <a-tag v-else-if="graphBuildStatus?.locked" color="green" size="small"
+                  >已配置</a-tag
+                >
                 <a-tag v-else color="orange" size="small">未配置</a-tag>
               </div>
               <a-progress
@@ -175,12 +184,7 @@
                 >
                   配置抽取器
                 </a-button>
-                <a-button
-                  v-else-if="isBuildActive"
-                  type="primary"
-                  block
-                  disabled
-                >
+                <a-button v-else-if="isBuildActive" type="primary" block disabled>
                   构建中 {{ graphBuildStatus?.build_task_progress ?? 0 }}%
                 </a-button>
                 <a-button
@@ -210,7 +214,14 @@
                   >
                     修改配置
                   </a-button>
-                  <a-button size="small" type="text" danger v-if="!isBuildActive" @click="confirmResetGraph">重置</a-button>
+                  <a-button
+                    size="small"
+                    type="text"
+                    danger
+                    v-if="!isBuildActive"
+                    @click="confirmResetGraph"
+                    >重置</a-button
+                  >
                 </div>
               </div>
             </div>
@@ -219,7 +230,12 @@
       </div>
     </div>
 
-    <a-modal v-model:open="showGraphConfig" :title="graphConfigTitle" width="640px" @ok="configureGraphBuild">
+    <a-modal
+      v-model:open="showGraphConfig"
+      :title="graphConfigTitle"
+      width="640px"
+      @ok="configureGraphBuild"
+    >
       <a-form layout="vertical">
         <a-alert
           v-if="isEditingGraphConfig"
@@ -234,7 +250,10 @@
               v-for="option in extractorTypeOptions"
               :key="option.value"
               class="extractor-type-card"
-              :class="{ active: graphConfigForm.extractor_type === option.value, disabled: isEditingGraphConfig }"
+              :class="{
+                active: graphConfigForm.extractor_type === option.value,
+                disabled: isEditingGraphConfig
+              }"
               @click="selectExtractorType(option.value)"
             >
               <div class="card-header">
@@ -271,7 +290,10 @@
               />
             </a-form-item>
             <a-form-item label="模型参数 JSON">
-              <a-input v-model:value="graphConfigForm.model_params_text" placeholder='例如 {"temperature":0.1}' />
+              <a-input
+                v-model:value="graphConfigForm.model_params_text"
+                placeholder='例如 {"temperature":0.1}'
+              />
             </a-form-item>
           </div>
         </template>
@@ -280,7 +302,10 @@
             <a-input v-model:value="graphConfigForm.spacy_model" placeholder="zh_core_web_sm" />
           </a-form-item>
           <a-form-item label="实体类型过滤">
-            <a-input v-model:value="graphConfigForm.entity_labels_text" placeholder="可选，逗号分隔" />
+            <a-input
+              v-model:value="graphConfigForm.entity_labels_text"
+              placeholder="可选，逗号分隔"
+            />
           </a-form-item>
         </template>
       </a-form>
@@ -335,7 +360,7 @@ const showBuildPanel = ref(false)
 const subgraphParams = reactive({
   maxNodes: 100,
   maxDepth: 2,
-  excludeChunk: true,
+  excludeChunk: true
 })
 const searchInput = ref('')
 const graphBuildStatus = ref(null)
@@ -374,7 +399,11 @@ const pendingGraphChunks = computed(() => {
 const hasPendingGraphChunks = computed(() => pendingGraphChunks.value > 0)
 
 const isGraphIndexComplete = computed(() => {
-  return Boolean(graphBuildStatus.value?.locked) && !isBuildActive.value && pendingGraphChunks.value === 0
+  return (
+    Boolean(graphBuildStatus.value?.locked) &&
+    !isBuildActive.value &&
+    pendingGraphChunks.value === 0
+  )
 })
 
 const graphIndexDotStatus = computed(() => {
@@ -391,9 +420,21 @@ const graphIndexButtonTitle = computed(() => {
   return '索引管理'
 })
 
+const toggleBuildPanel = () => {
+  showBuildPanel.value = !showBuildPanel.value
+  showSettings.value = false
+}
+
+const toggleSettingsPanel = () => {
+  showSettings.value = !showSettings.value
+  showBuildPanel.value = false
+}
+
 const isEditingGraphConfig = computed(() => Boolean(graphBuildStatus.value?.locked))
 
-const graphConfigTitle = computed(() => (isEditingGraphConfig.value ? '修改图谱抽取配置' : '配置图谱抽取器'))
+const graphConfigTitle = computed(() =>
+  isEditingGraphConfig.value ? '修改图谱抽取配置' : '配置图谱抽取器'
+)
 
 const stopBuildStatusPoll = () => {
   if (buildStatusPollTimer) {
@@ -409,13 +450,17 @@ const startBuildStatusPoll = () => {
   }, 5000)
 }
 
-watch(isBuildActive, (active) => {
-  if (active) {
-    startBuildStatusPoll()
-  } else {
-    stopBuildStatusPoll()
-  }
-}, { immediate: true })
+watch(
+  isBuildActive,
+  (active) => {
+    if (active) {
+      startBuildStatusPoll()
+    } else {
+      stopBuildStatusPoll()
+    }
+  },
+  { immediate: true }
+)
 const graphConfigForm = reactive({
   extractor_type: 'llm',
   model_spec: '',
@@ -489,9 +534,13 @@ const fillGraphConfigForm = () => {
   graphConfigForm.model_spec = options.model_spec || ''
   graphConfigForm.schema = options.schema || ''
   graphConfigForm.concurrency_count = Number(options.concurrency_count || 5)
-  graphConfigForm.model_params_text = options.model_params ? JSON.stringify(options.model_params) : ''
+  graphConfigForm.model_params_text = options.model_params
+    ? JSON.stringify(options.model_params)
+    : ''
   graphConfigForm.spacy_model = options.model || 'zh_core_web_sm'
-  graphConfigForm.entity_labels_text = Array.isArray(options.entity_labels) ? options.entity_labels.join(', ') : ''
+  graphConfigForm.entity_labels_text = Array.isArray(options.entity_labels)
+    ? options.entity_labels.join(', ')
+    : ''
 }
 
 const openGraphConfig = () => {
@@ -595,10 +644,15 @@ const loadGraph = async () => {
       node_label: searchInput.value || '*',
       max_nodes: subgraphParams.maxNodes,
       max_depth: subgraphParams.maxDepth,
-      exclude_chunk: subgraphParams.excludeChunk,
+      exclude_chunk: subgraphParams.excludeChunk
     })
 
-    if (requestSeq === graphLoadRequestSeq && currentDatabaseId === databaseId.value && res.success && res.data) {
+    if (
+      requestSeq === graphLoadRequestSeq &&
+      currentDatabaseId === databaseId.value &&
+      res.success &&
+      res.data
+    ) {
       graph.updateGraphData(res.data.nodes, res.data.edges)
     }
   } catch (e) {
@@ -850,8 +904,13 @@ onUnmounted(() => {
 }
 
 @keyframes blink {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.2; }
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.2;
+  }
 }
 
 .graph-disabled {

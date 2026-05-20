@@ -17,7 +17,6 @@
             </template>
           </a-input>
 
-
           <a-dropdown trigger="click">
             <a-button
               type="text"
@@ -119,7 +118,6 @@
             </div>
           </template>
         </a-dropdown>
-
       </div>
     </div>
 
@@ -1498,7 +1496,6 @@ import ChunkParamsConfig from '@/components/ChunkParamsConfig.vue'
     background-color: transparent !important;
   }
 }
-
 </style>
 
 <style lang="less">

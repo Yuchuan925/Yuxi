@@ -37,7 +37,7 @@ def _build_run_response(run) -> dict:
         "thread_id": run.thread_id,
         "status": run.status,
         "request_id": run.request_id,
-        "stream_url": f"/api/chat/runs/{run.id}/events?after_seq=0",
+        "stream_url": f"/api/chat/runs/{run.id}/events?after_seq=0-0",
     }
 
 
@@ -152,7 +152,7 @@ async def cancel_agent_run_view(*, run_id: str, current_uid: str, db: AsyncSessi
 async def stream_agent_run_events(
     *,
     run_id: str,
-    after_seq: str | int,
+    after_seq: str,
     current_uid: str,
 ) -> AsyncIterator[str]:
     started_at = utc_now_naive()
@@ -217,7 +217,7 @@ async def stream_agent_run_events(
 
             if run.status in TERMINAL_RUN_STATUSES and not events:
                 terminal_seq = last_seq
-                if terminal_seq in {"", "0", "0-0"}:
+                if terminal_seq in {"", "0-0"}:
                     terminal_seq = await get_last_run_stream_seq(run_id)
 
                 yield _format_sse(

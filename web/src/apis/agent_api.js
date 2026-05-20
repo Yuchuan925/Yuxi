@@ -207,11 +207,11 @@ export const agentApi = {
   /**
    * 打开 Run 事件 SSE 连接（调用方负责关闭）
    * @param {string} runId - run ID
-   * @param {string|number} afterSeq - 起始 seq/cursor
+   * @param {string} afterSeq - 起始 seq/cursor
    * @param {Object} options - { signal }
    * @returns {Promise<Response>}
    */
-  streamAgentRunEvents: (runId, afterSeq = '0', options = {}) => {
+  streamAgentRunEvents: (runId, afterSeq = '0-0', options = {}) => {
     const { signal } = options
     return fetch(
       `/api/chat/runs/${runId}/events?after_seq=${encodeURIComponent(String(afterSeq))}`,

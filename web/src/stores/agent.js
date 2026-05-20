@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { agentApi, databaseApi, mcpApi, skillApi } from '@/apis'
+import { isDefaultAllAgentResourceKind } from '@/utils/agentConfigUtils'
 import { handleChatError } from '@/utils/errorHandler'
 
 const CHATBOT_AGENT_ID = 'ChatbotAgent'
@@ -348,7 +349,8 @@ export const useAgentStore = defineStore(
         const items = configurableItems.value
         Object.keys(items).forEach((key) => {
           const item = items[key]
-          if (loadedConfig[key] === undefined || loadedConfig[key] === null) {
+          const isDefaultAllList = isDefaultAllAgentResourceKind(item?.kind)
+          if (loadedConfig[key] === undefined || (loadedConfig[key] === null && !isDefaultAllList)) {
             // 只有当默认值存在时才设置
             if (item.default !== undefined) {
               loadedConfig[key] = item.default

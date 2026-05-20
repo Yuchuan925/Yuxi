@@ -89,7 +89,6 @@ _PROTECTED_USER_DATA_ROOTS = frozenset(
         VIRTUAL_PATH_OUTPUTS,
     }
 )
-_LEGACY_KBS_PATH = "/home/gem/kbs"
 
 
 def _detect_preview_type(path: str, raw_content: bytes) -> tuple[str, bool, str | None]:
@@ -188,8 +187,6 @@ def _is_in_home_gem(path: str) -> bool:
     if path.startswith(f"{USER_DATA_PATH}/") or path == USER_DATA_PATH:
         return False
     if path.startswith(f"{SKILLS_PATH}/") or path == SKILLS_PATH:
-        return False
-    if path == _LEGACY_KBS_PATH or path.startswith(f"{_LEGACY_KBS_PATH}/"):
         return False
     return True
 

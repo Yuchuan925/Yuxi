@@ -48,28 +48,38 @@
     </div>
 
     <div class="database-detail-body">
-      <aside class="database-sidebar" aria-label="知识库功能导航">
-        <nav class="database-tab-list">
+      <div class="database-tab-bar" aria-label="知识库功能导航">
+        <nav class="database-tab-list" aria-label="知识库功能标签" role="tablist">
           <button
             v-for="tab in visibleTabs"
             :key="tab.key"
             type="button"
             class="database-tab-item"
             :class="{ active: activeTab === tab.key }"
+            role="tab"
+            :aria-selected="activeTab === tab.key"
             @click="activeTab = tab.key"
           >
             <component :is="tab.icon" :size="17" />
             <span>{{ tab.label }}</span>
           </button>
         </nav>
-      </aside>
+      </div>
 
       <main class="database-tab-content">
         <div v-if="isMilvus" v-show="activeTab === 'filetable'" class="tab-panel file-panel">
           <div class="file-management-info">
             <div class="file-info-title">
-              <span class="file-panel-title">文件管理</span>
-              <span class="file-panel-desc">管理知识库中的文件、文件夹上传、整理与查看</span>
+              <div class="file-info-title-row">
+                <button
+                  type="button"
+                  class="lucide-icon-btn extension-panel-action extension-panel-action-primary"
+                  @click="showAddFilesModal()"
+                >
+                  <FileUp :size="14" />
+                  <span>上传</span>
+                </button>
+              </div>
             </div>
             <div class="file-panel-status">
               <div
@@ -127,14 +137,6 @@
           <FileTable ref="fileTableRef">
             <template #toolbar-extra>
               <div class="file-panel-actions">
-                <button
-                  type="button"
-                  class="lucide-icon-btn extension-panel-action extension-panel-action-primary"
-                  @click="showAddFilesModal()"
-                >
-                  <FileUp :size="14" />
-                  <span>上传</span>
-                </button>
                 <button
                   type="button"
                   class="lucide-icon-btn extension-panel-action extension-panel-action-secondary"
@@ -278,7 +280,10 @@
             />
           </a-form-item>
           <a-form-item label="Dataset ID" name="dify_dataset_id">
-            <a-input v-model:value="editForm.dify_dataset_id" placeholder="请输入 Dify dataset_id" />
+            <a-input
+              v-model:value="editForm.dify_dataset_id"
+              placeholder="请输入 Dify dataset_id"
+            />
           </a-form-item>
         </template>
 
@@ -309,7 +314,11 @@
             />
           </a-form-item-rest>
         </a-form-item>
-        <a-form-item v-else-if="database.share_config" label="共享设置" name="share_config_readonly">
+        <a-form-item
+          v-else-if="database.share_config"
+          label="共享设置"
+          name="share_config_readonly"
+        >
           <div class="share-config-readonly">
             <a-tag :color="shareConfigDisplay.color">
               {{ shareConfigDisplay.label }}
@@ -363,11 +372,7 @@ import { departmentApi } from '@/apis/department_api'
 import { authApi } from '@/apis/auth_api'
 import { CHUNK_PRESET_OPTIONS, getChunkPresetDescription } from '@/utils/chunk_presets'
 import { formatFileSize } from '@/utils/file_utils'
-import {
-  getKbTypeIcon,
-  getKbTypeLabel,
-  kbUtils
-} from '@/utils/kb_utils'
+import { getKbTypeIcon, getKbTypeLabel, kbUtils } from '@/utils/kb_utils'
 
 const route = useRoute()
 const router = useRouter()
@@ -413,9 +418,7 @@ const tabs = computed(() => {
     ]
   }
 
-  return [
-    { key: 'query', label: '检索测试', icon: Search }
-  ]
+  return [{ key: 'query', label: '检索测试', icon: Search }]
 })
 
 const visibleTabs = computed(() => tabs.value)
@@ -852,41 +855,43 @@ onMounted(() => {
   flex: 1;
   min-height: 0;
   display: flex;
+  flex-direction: column;
   background: var(--gray-10);
   overflow: hidden;
 }
 
-.database-sidebar {
-  width: 180px;
+.database-tab-bar {
   flex-shrink: 0;
-  border-right: 1px solid var(--gray-150);
+  border-bottom: 1px solid var(--gray-150);
   background: var(--gray-0);
-  padding: 12px 10px;
-  overflow-y: auto;
+  padding: 8px 12px 0;
+  overflow-x: auto;
+  overflow-y: hidden;
 }
 
 .database-tab-list {
   display: flex;
-  flex-direction: column;
-  gap: 4px;
+  align-items: center;
+  gap: 6px;
+  min-width: max-content;
 }
 
 .database-tab-item {
   position: relative;
-  width: 100%;
-  min-height: 44px;
+  min-height: 40px;
   border: none;
-  border-radius: 8px;
+  border-radius: 8px 8px 0 0;
   background: transparent;
   color: var(--gray-600);
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 10px;
-  padding: 0 12px;
+  padding: 0 14px 8px;
   font-size: 14px;
   font-weight: 500;
   cursor: pointer;
-  text-align: left;
+  white-space: nowrap;
   transition:
     background 0.15s,
     color 0.15s;
@@ -907,16 +912,16 @@ onMounted(() => {
 
   &.active {
     color: var(--main-color);
-    background: var(--main-30);
+    background: var(--main-20);
 
     &::before {
       content: '';
       position: absolute;
-      left: 0;
-      top: 10px;
-      bottom: 10px;
-      width: 3px;
-      border-radius: 0 3px 3px 0;
+      left: 12px;
+      right: 12px;
+      bottom: 0;
+      height: 3px;
+      border-radius: 3px 3px 0 0;
       background: var(--main-color);
     }
   }
@@ -938,7 +943,7 @@ onMounted(() => {
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  padding: 12px;
+  padding: 16px var(--page-padding);
 }
 
 .file-panel {
@@ -1043,8 +1048,15 @@ onMounted(() => {
 .file-info-title {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 6px;
   min-width: 180px;
+}
+
+.file-info-title-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
 }
 
 .file-panel-desc {
@@ -1195,42 +1207,12 @@ onMounted(() => {
     display: none;
   }
 
-  .database-detail-body {
-    flex-direction: column;
-  }
-
-  .database-sidebar {
-    width: 100%;
-    border-right: none;
-    border-bottom: 1px solid var(--gray-150);
-    padding: 8px;
-    overflow-x: auto;
-    overflow-y: hidden;
-  }
-
-  .database-tab-list {
-    flex-direction: row;
-    min-width: max-content;
+  .database-tab-bar {
+    padding: 8px 8px 0;
   }
 
   .database-tab-item {
-    width: auto;
     min-width: 104px;
-    justify-content: center;
-
-    &.active::before {
-      left: 12px;
-      right: 12px;
-      top: auto;
-      bottom: 0;
-      width: auto;
-      height: 3px;
-      border-radius: 3px 3px 0 0;
-    }
-  }
-
-  .tab-panel {
-    padding: 8px;
   }
 
   .query-config-layout {
@@ -1350,9 +1332,13 @@ onMounted(() => {
   }
 }
 
+.graph-section {
+  border: 1px solid var(--gray-100);
+  border-radius: 12px;
+}
+
 .benchmark-management-container {
   height: 100%;
-  background: var(--gray-0);
   display: flex;
   flex-direction: column;
 }
@@ -1361,6 +1347,5 @@ onMounted(() => {
   flex: 1;
   overflow: hidden;
   min-height: 0;
-  padding: 12px 16px;
 }
 </style>

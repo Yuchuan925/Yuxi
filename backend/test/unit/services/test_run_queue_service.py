@@ -115,8 +115,6 @@ async def test_run_stream_event_roundtrip(monkeypatch: pytest.MonkeyPatch):
 
 def test_normalize_after_seq_stream_id_only():
     assert run_queue_service.normalize_after_seq(None) == "0-0"
-    assert run_queue_service.normalize_after_seq(0) == "0-0"
-    assert run_queue_service.normalize_after_seq(5) == "0-0"
     assert run_queue_service.normalize_after_seq("1700000000000-3") == "1700000000000-3"
     assert run_queue_service.normalize_after_seq("12") == "0-0"
     assert run_queue_service.normalize_after_seq("bad-value") == "0-0"

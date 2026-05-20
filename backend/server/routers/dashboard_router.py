@@ -466,7 +466,7 @@ async def get_knowledge_stats(
             total_nodes=total_nodes,
             total_storage_size=total_storage_size,
             databases_by_type=databases_by_type,
-            file_type_distribution=files_by_type,  # 保持API兼容，但使用新的数据
+            file_type_distribution=files_by_type,
         )
 
     except Exception as e:

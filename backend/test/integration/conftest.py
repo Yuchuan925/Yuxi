@@ -34,6 +34,22 @@ HTTP_TIMEOUT = httpx.Timeout(60.0, connect=5.0)
 SANDBOX_CONTAINER_PREFIX = os.getenv("YUXI_SANDBOX_CONTAINER_PREFIX", "yuxi-sandbox")
 
 
+@pytest.fixture(scope="session", autouse=True)
+def ensure_live_api_schema():
+    if not ADMIN_LOGIN or not ADMIN_PASSWORD:
+        return
+
+    async def run_schema_setup() -> None:
+        from yuxi.storage.postgres.manager import pg_manager
+
+        pg_manager.initialize()
+        await pg_manager.create_tables()
+        await pg_manager.ensure_business_schema()
+        await pg_manager.ensure_knowledge_schema()
+
+    anyio.run(run_schema_setup)
+
+
 def _require_admin_credentials() -> tuple[str, str]:
     if not ADMIN_LOGIN or not ADMIN_PASSWORD:
         pytest.skip("Integration credentials are not configured via TEST_USERNAME / TEST_PASSWORD.")

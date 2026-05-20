@@ -1,9 +1,9 @@
 <template>
-  <a-dropdown trigger="click" @open-change="handleOpenChange">
+  <a-dropdown trigger="click" :open="dropdownOpen" @open-change="handleOpenChange">
     <div class="model-select" :class="modelSelectClasses" @click.prevent>
       <div class="model-select-content">
         <div class="model-info">
-          <a-tooltip :title="displayModelText" placement="right">
+          <a-tooltip :title="displayModelTooltip" placement="right">
             <span class="model-text text"> {{ displayModelText }} </span>
           </a-tooltip>
         </div>
@@ -16,16 +16,6 @@
           >
             {{ modelStatusIcon }}
           </span>
-          <a-tooltip title="刷新缓存">
-            <button
-              :loading="state.refreshingCache"
-              @click.stop="refreshCache"
-              :disabled="state.refreshingCache"
-              class="cache-refresh-button"
-            >
-              <RefreshCw :size="13" :class="{ spin: state.refreshingCache }" />
-            </button>
-          </a-tooltip>
           <a-button
             :size="buttonSize"
             type="text"
@@ -40,20 +30,45 @@
       </div>
     </div>
     <template #overlay>
-      <a-menu class="scrollable-menu">
-        <a-menu-item-group v-for="(providerData, providerId) in v2Models" :key="`v2-${providerId}`">
-          <template #title>
-            <span>{{ providerId }}</span>
+      <div class="model-dropdown" @click.stop>
+        <div class="model-search">
+          <a-input v-model:value="modelSearchKeyword" placeholder="搜索模型" allow-clear @keydown.stop>
+            <template #suffix>
+              <a-tooltip title="刷新缓存">
+                <button
+                  :disabled="state.refreshingCache"
+                  class="cache-refresh-button"
+                  @mousedown.prevent.stop
+                  @click.stop="refreshCache"
+                >
+                  <RefreshCw :size="13" :class="{ spin: state.refreshingCache }" />
+                </button>
+              </a-tooltip>
+            </template>
+          </a-input>
+        </div>
+        <a-menu class="scrollable-menu">
+          <a-menu-item v-if="loadingV2Models" key="loading" disabled>加载中...</a-menu-item>
+          <a-menu-item v-else-if="!hasFilteredModels" key="empty" disabled>暂无匹配模型</a-menu-item>
+          <template v-else>
+            <a-menu-item-group
+              v-for="(providerData, providerId) in filteredV2Models"
+              :key="`v2-${providerId}`"
+            >
+              <template #title>
+                <span>{{ providerId }}</span>
+              </template>
+              <a-menu-item
+                v-for="model in providerData.models"
+                :key="model.spec"
+                @click="handleSelectV2Model(model.spec)"
+              >
+                {{ model.display_name }}
+              </a-menu-item>
+            </a-menu-item-group>
           </template>
-          <a-menu-item
-            v-for="model in providerData.models"
-            :key="model.spec"
-            @click="handleSelectV2Model(model.spec)"
-          >
-            {{ model.display_name }}
-          </a-menu-item>
-        </a-menu-item-group>
-      </a-menu>
+        </a-menu>
+      </div>
     </template>
   </a-dropdown>
 </template>
@@ -77,6 +92,11 @@ const props = defineProps({
     type: String,
     default: 'small',
     validator: (value) => ['small', 'middle', 'large'].includes(value)
+  },
+  displayName: {
+    type: String,
+    default: 'full',
+    validator: (value) => ['full', 'short', 'mini'].includes(value)
   }
 })
 
@@ -85,6 +105,33 @@ const emit = defineEmits(['select-model'])
 // v2 模型数据：每次展开下拉时实时从后端拉取
 const v2Models = ref({})
 const loadingV2Models = ref(false)
+const dropdownOpen = ref(false)
+const modelSearchKeyword = ref('')
+
+const filteredV2Models = computed(() => {
+  const keyword = modelSearchKeyword.value.trim().toLowerCase()
+  if (!keyword) return v2Models.value
+
+  return Object.entries(v2Models.value).reduce((result, [providerId, providerData]) => {
+    const models = (providerData.models || []).filter((model) => {
+      return [providerId, model.spec, model.model_id, model.display_name].some((value) =>
+        String(value || '')
+          .toLowerCase()
+          .includes(keyword)
+      )
+    })
+
+    if (models.length) {
+      result[providerId] = { ...providerData, models }
+    }
+
+    return result
+  }, {})
+})
+
+const hasFilteredModels = computed(() => {
+  return Object.values(filteredV2Models.value).some((providerData) => providerData.models?.length)
+})
 
 // 拉取 v2 模型列表
 const fetchV2Models = async () => {
@@ -104,6 +151,7 @@ const fetchV2Models = async () => {
 
 // 下拉展开时触发实时刷新（仅在打开瞬间触发，关闭时忽略）
 const handleOpenChange = (open) => {
+  dropdownOpen.value = open
   if (open) fetchV2Models()
 }
 
@@ -141,7 +189,24 @@ const buttonSize = computed(() => {
   return 'small'
 })
 
-const displayModelText = computed(() => props.model_spec || props.placeholder)
+const extractModelName = (spec) => {
+  const separatorIndex = spec.indexOf(':')
+  return separatorIndex >= 0 ? spec.slice(separatorIndex + 1) : spec
+}
+
+const displayModelText = computed(() => {
+  const spec = props.model_spec
+  if (!spec) return props.placeholder
+
+  const modelName = extractModelName(spec)
+  if (props.displayName === 'mini') {
+    return modelName.includes('/') ? modelName.split('/').pop() : modelName
+  }
+  if (props.displayName === 'short') return modelName
+  return spec
+})
+
+const displayModelTooltip = computed(() => props.model_spec || props.placeholder)
 
 // 检查当前模型状态
 const checkCurrentModelStatus = async () => {
@@ -189,6 +254,7 @@ const getCurrentModelStatusTooltip = () => {
 // 选择 v2 模型的方法
 const handleSelectV2Model = (spec) => {
   emit('select-model', spec)
+  dropdownOpen.value = false
 }
 </script>
 
@@ -204,20 +270,37 @@ const handleSelectV2Model = (spec) => {
 // 缓存刷新按钮
 .cache-refresh-button {
   font-size: 12px;
-  padding: 0 4px;
+  padding: 0;
   display: flex;
   align-items: center;
-  width: 24px;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
   background-color: transparent;
   border: none;
   outline: none;
   cursor: pointer;
 }
 
+.model-dropdown {
+  min-width: 280px;
+  max-width: 420px;
+  overflow: hidden;
+  background: var(--gray-0);
+  border-radius: 8px;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.08);
+}
+
+.model-search {
+  padding: 8px;
+  border-bottom: 1px solid var(--gray-100);
+}
+
 :deep(.ant-dropdown-menu) {
   &.scrollable-menu {
-    max-height: 300px;
+    max-height: 260px;
     overflow-y: auto;
+    box-shadow: none;
   }
 }
 </style>

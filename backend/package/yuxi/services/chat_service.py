@@ -11,6 +11,7 @@ from langgraph.types import Command
 from yuxi import config as conf
 from yuxi.agents.backends.sandbox.paths import sandbox_workspace_agents_prompt_file
 from yuxi.agents.buildin import agent_manager
+from yuxi.agents.context import normalize_agent_context_config
 from yuxi.agents.state import AgentStatePayload
 from yuxi.plugins.guard import content_guard
 from yuxi.repositories.agent_config_repository import AgentConfigRepository
@@ -24,9 +25,6 @@ from yuxi.services.langfuse_service import (
 from yuxi.storage.postgres.manager import pg_manager
 from yuxi.storage.postgres.models_business import User
 from yuxi.utils.logging_config import logger
-from yuxi.utils.question_utils import (
-    normalize_options as _normalize_interrupt_options,
-)
 from yuxi.utils.question_utils import (
     normalize_questions as _normalize_interrupt_questions,
 )
@@ -326,28 +324,10 @@ def _coerce_interrupt_payload(info: Any) -> dict:
         return payload
 
     questions = getattr(info, "questions", None)
-    question = getattr(info, "question", None)
-    question_id = getattr(info, "question_id", None)
-    options = getattr(info, "options", None)
-    multi_select = getattr(info, "multi_select", None)
-    allow_other = getattr(info, "allow_other", None)
-    operation = getattr(info, "operation", None)
     source = getattr(info, "source", None)
     result: dict[str, Any] = {}
     if isinstance(questions, list):
         result["questions"] = questions
-    if isinstance(question, str) and question.strip():
-        result["question"] = question
-    if isinstance(question_id, str) and question_id.strip():
-        result["question_id"] = question_id
-    if isinstance(options, list):
-        result["options"] = options
-    if isinstance(multi_select, bool):
-        result["multi_select"] = multi_select
-    if isinstance(allow_other, bool):
-        result["allow_other"] = allow_other
-    if isinstance(operation, str) and operation.strip():
-        result["operation"] = operation
     if isinstance(source, str) and source.strip():
         result["source"] = source
     return result
@@ -358,20 +338,6 @@ def _build_ask_user_question_payload(info: Any, thread_id: str) -> dict[str, Any
     payload = _coerce_interrupt_payload(info)
 
     questions = _normalize_interrupt_questions(payload.get("questions"))
-    if not questions:
-        single_question = str(payload.get("question") or "").strip()
-        if single_question:
-            single_item: dict[str, Any] = {
-                "question_id": str(payload.get("question_id") or uuid.uuid4()),
-                "question": single_question,
-                "options": _normalize_interrupt_options(payload.get("options")),
-                "multi_select": bool(payload.get("multi_select", False)),
-                "allow_other": bool(payload.get("allow_other", True)),
-            }
-            single_operation = payload.get("operation")
-            if isinstance(single_operation, str) and single_operation.strip():
-                single_item["operation"] = single_operation.strip()
-            questions = [single_item]
 
     if not questions:
         questions = [
@@ -429,8 +395,8 @@ async def get_agent_config_by_id(db, user: User, agent_config_id: int):
     return config_item
 
 
-async def _resolve_agent_config(db, agent_id: str, user: User, agent_config_id):
-    """解析 agent_config，返回 agent_config"""
+async def _resolve_agent_config(db, agent_id: str, user: User, agent_config_id, context_schema=None):
+    """解析 agent_config，返回已按用户权限规范化的 context。"""
     uid = str(user.uid)
 
     agent_config_repo = AgentConfigRepository(db)
@@ -443,7 +409,12 @@ async def _resolve_agent_config(db, agent_id: str, user: User, agent_config_id):
     if config_item is None:
         config_item = await agent_config_repo.get_or_create_default(uid=uid, agent_id=agent_id, created_by=uid)
 
-    return (config_item.config_json or {}).get("context", {})
+    return await normalize_agent_context_config(
+        (config_item.config_json or {}).get("context", {}),
+        db=db,
+        user=user,
+        context_schema=context_schema,
+    )
 
 
 async def check_and_handle_interrupts(
@@ -589,7 +560,12 @@ async def agent_chat(
         }
 
     messages = [human_message]
-    agent_config = (config_item.config_json or {}).get("context", {})
+    agent_config = await normalize_agent_context_config(
+        (config_item.config_json or {}).get("context", {}),
+        db=db,
+        user=current_user,
+        context_schema=agent.context_schema,
+    )
 
     if not thread_id:
         thread_id = str(uuid.uuid4())
@@ -800,7 +776,12 @@ async def stream_agent_chat(
         return
 
     messages = [human_message]
-    agent_config = (config_item.config_json or {}).get("context", {})
+    agent_config = await normalize_agent_context_config(
+        (config_item.config_json or {}).get("context", {}),
+        db=db,
+        user=current_user,
+        context_schema=agent.context_schema,
+    )
 
     if not thread_id:
         thread_id = str(uuid.uuid4())
@@ -1034,7 +1015,13 @@ async def stream_agent_resume(
     uid = str(current_user.uid)
     agent_config_id = (config or {}).get("agent_config_id")
     try:
-        agent_config = await _resolve_agent_config(db, agent_id, current_user, agent_config_id)
+        agent_config = await _resolve_agent_config(
+            db,
+            agent_id,
+            current_user,
+            agent_config_id,
+            context_schema=agent.context_schema,
+        )
     except ValueError as e:
         yield make_resume_chunk(status="error", error_type="invalid_config", error_message=str(e), meta=meta)
         return

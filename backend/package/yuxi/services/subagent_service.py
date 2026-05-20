@@ -5,9 +5,11 @@ from contextlib import asynccontextmanager
 from copy import deepcopy
 from typing import Any
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from yuxi.repositories.subagent_repository import SubAgentRepository
 from yuxi.storage.postgres.manager import pg_manager
+from yuxi.storage.postgres.models_business import SubAgent
 from yuxi.utils import logger
 from yuxi.utils.paths import OUTPUTS_DIR_NAME
 
@@ -112,6 +114,17 @@ async def get_subagent_specs(db: AsyncSession | None = None) -> list[dict[str, A
     return deepcopy(_subagent_specs_cache)
 
 
+async def get_enabled_subagent_names(db: AsyncSession | None = None) -> list[str]:
+    if _subagent_specs_cache is not None:
+        return [spec["name"] for spec in _subagent_specs_cache if isinstance(spec.get("name"), str)]
+
+    async with _get_session(db) as session:
+        result = await session.execute(
+            select(SubAgent.name).where(SubAgent.enabled.is_(True)).order_by(SubAgent.updated_at.desc())
+        )
+        return [name for name in result.scalars().all() if isinstance(name, str)]
+
+
 def clear_specs_cache() -> None:
     """清除 subagent specs 缓存"""
     global _subagent_specs_cache
@@ -127,7 +140,6 @@ async def get_subagents_from_names(selected_names: Any, *, db: AsyncSession | No
 
     selected_set = set(selected_names)
     available = {spec["name"] for spec in specs if isinstance(spec.get("name"), str)}
-
     matched = [spec for spec in specs if spec.get("name") in selected_set]
     missing = [n for n in selected_names if n not in available]
     if missing:

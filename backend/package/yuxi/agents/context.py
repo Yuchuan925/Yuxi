@@ -2,7 +2,7 @@
 
 import uuid
 from dataclasses import MISSING, dataclass, field, fields
-from typing import get_origin
+from typing import Any, get_origin
 
 from yuxi import config as sys_config
 
@@ -83,11 +83,12 @@ class BaseContext:
         },
     )
 
-    tools: list[str] = field(
-        default_factory=lambda: ["ask_user_question", "tavily_search"],
+    tools: list[str] | None = field(
+        default=None,
         metadata={
             "name": "工具",
-            "description": "内置的工具。",
+            "description": "内置的工具。默认选择当前用户可用的全部工具。",
+            "type": "list",
             "kind": "tools",
         },
     )
@@ -102,26 +103,27 @@ class BaseContext:
         },
     )
 
-    mcps: list[str] = field(
-        default_factory=list,
+    mcps: list[str] | None = field(
+        default=None,
         metadata={
             "name": "MCP服务器",
             "options": [],
             "description": (
-                "MCP服务器列表，建议使用支持 SSE 的 MCP 服务器，"
+                "MCP服务器列表，默认选择当前用户可用的全部 MCP 服务器。建议使用支持 SSE 的 MCP 服务器，"
                 "如果需要使用 uvx 或 npx 运行的服务器，也请在项目外部启动 MCP 服务器，并在项目中配置 MCP 服务器。"
             ),
+            "type": "list",
             "kind": "mcps",
         },
     )
 
-    skills: list[str] = field(
-        default_factory=list,
+    skills: list[str] | None = field(
+        default=None,
         metadata={
             "name": "Skills",
             "options": [],
-            "description": "可选技能列表（由超级管理员维护）。运行时仅挂载并只读暴露选中的 "
-            "skills。技能依赖的工具和 MCP 服务器也会被自动挂载。",
+            "description": "可选技能列表（由超级管理员维护），默认选择当前用户可用的全部 skills。"
+            "技能依赖的工具和 MCP 服务器也会被自动挂载。",
             "type": "list",
             "kind": "skills",
         },
@@ -136,12 +138,15 @@ class BaseContext:
         },
     )
 
-    subagents: list[str] = field(
-        default_factory=list,
+    subagents: list[str] | None = field(
+        default=None,
         metadata={
             "name": "子智能体",
             "options": [],
-            "description": "可选子智能体列表。为空表示不启用任何 SubAgent。但依然会启用一个 general-purpose 的子智能体",
+            "description": (
+                "可选子智能体列表，默认选择当前用户可用的全部 SubAgent。"
+                "为空表示不启用任何 SubAgent，但依然会启用一个 general-purpose 的子智能体。"
+            ),
             "type": "list",
             "kind": "subagents",
         },
@@ -205,3 +210,96 @@ class BaseContext:
         for key, value in data.items():
             if hasattr(self, key):
                 setattr(self, key, value)
+
+
+_DEFAULT_ALL_CONTEXT_FIELDS = frozenset({"tools", "knowledges", "mcps", "skills", "subagents"})
+
+
+def _normalize_selected_resource_names(value: Any, available: list[str]) -> list[str]:
+    if not isinstance(value, list):
+        return []
+
+    allowed = set(available)
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for item in value:
+        if not isinstance(item, str):
+            continue
+        name = item.strip()
+        if not name or name in seen or name not in allowed:
+            continue
+        seen.add(name)
+        normalized.append(name)
+    return normalized
+
+
+def _resource_fields_requiring_available_names(normalized: dict, resource_fields: set[str]) -> set[str]:
+    fields_to_load: set[str] = set()
+    for field_name in resource_fields:
+        current = normalized.get(field_name)
+        if current is None:
+            fields_to_load.add(field_name)
+        elif isinstance(current, list) and current:
+            fields_to_load.add(field_name)
+        else:
+            normalized[field_name] = []
+    return fields_to_load
+
+
+async def normalize_agent_context_config(
+    context: dict | None,
+    *,
+    db,
+    user,
+    context_schema: type[BaseContext] | None = None,
+) -> dict:
+    schema = context_schema or BaseContext
+    raw_context = dict(context) if isinstance(context, dict) else {}
+    filtered = filter_config_by_role({"context": raw_context}, getattr(user, "role", None), schema)
+    normalized = dict(filtered.get("context") or {})
+    field_names = {item.name for item in fields(schema)}
+    resource_fields = _DEFAULT_ALL_CONTEXT_FIELDS & field_names
+    if not resource_fields:
+        return normalized
+
+    fields_to_load = _resource_fields_requiring_available_names(normalized, resource_fields)
+    if not fields_to_load:
+        return normalized
+
+    available: dict[str, list[str]] = {}
+    if "tools" in fields_to_load:
+        from yuxi.agents.toolkits import get_all_tool_instances
+
+        available["tools"] = [
+            tool.name for tool in get_all_tool_instances() if isinstance(getattr(tool, "name", None), str)
+        ]
+    if "knowledges" in fields_to_load:
+        from yuxi.knowledge import knowledge_base
+
+        databases = (await knowledge_base.get_databases_by_user(user)).get("databases", [])
+        available["knowledges"] = [
+            str(db_item.get("db_id") or db_item.get("id"))
+            for db_item in databases
+            if isinstance(db_item, dict) and (db_item.get("db_id") or db_item.get("id"))
+        ]
+    if "mcps" in fields_to_load:
+        from yuxi.services.mcp_service import get_enabled_mcp_server_names
+
+        available["mcps"] = await get_enabled_mcp_server_names(db=db)
+    if "skills" in fields_to_load:
+        from yuxi.services.skill_service import list_skill_slugs
+
+        available["skills"] = await list_skill_slugs(db)
+    if "subagents" in fields_to_load:
+        from yuxi.services.subagent_service import get_enabled_subagent_names
+
+        available["subagents"] = await get_enabled_subagent_names(db)
+
+    for field_name, available_names in available.items():
+        current = normalized.get(field_name)
+        if current is None:
+            normalized[field_name] = available_names
+        else:
+            normalized[field_name] = _normalize_selected_resource_names(current, available_names)
+
+    return normalized

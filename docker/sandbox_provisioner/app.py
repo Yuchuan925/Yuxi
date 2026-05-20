@@ -19,8 +19,6 @@ logger = logging.getLogger(__name__)
 
 def canonical_backend_name(backend: str) -> str:
     value = (backend or "").strip().lower()
-    if value == "local":
-        return "docker"
     return value or "memory"
 
 
@@ -426,14 +424,14 @@ class LocalContainerProvisionerBackend:
         safe_thread_id = self._validate_thread_id(thread_id)
         safe_uid = self._validate_uid(uid)
         if not self._is_expected_skills_mount(container, safe_thread_id):
-            logger.info("Discarding stale sandbox %s with legacy skills mount", sandbox_id)
+            logger.info("Discarding stale sandbox %s with unexpected skills mount", sandbox_id)
             try:
                 self.delete(sandbox_id)
             except Exception as exc:
                 logger.warning("Failed to delete stale sandbox %s during discover: %s", sandbox_id, exc)
             return None
         if not self._has_expected_user_data_mounts(container, safe_thread_id, safe_uid):
-            logger.info("Discarding stale sandbox %s with legacy user-data mounts", sandbox_id)
+            logger.info("Discarding stale sandbox %s with unexpected user-data mounts", sandbox_id)
             try:
                 self.delete(sandbox_id)
             except Exception as exc:
@@ -791,7 +789,6 @@ class SandboxIdleReaper:
 
 def _build_backend():
     backend = canonical_backend_name(os.getenv("PROVISIONER_BACKEND", "memory"))
-    # "local" remains a legacy alias for the Docker-backed provisioner.
     if backend == "docker":
         return LocalContainerProvisionerBackend(), backend
     if backend == "kubernetes":

@@ -6,6 +6,8 @@ import types
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import pytest
+
 
 def _load_context_module():
     context_path = Path(__file__).resolve().parents[3] / "package/yuxi/agents/context.py"
@@ -28,6 +30,7 @@ def _load_context_module():
 context_module = _load_context_module()
 BaseContext = context_module.BaseContext
 filter_config_by_role = context_module.filter_config_by_role
+normalize_agent_context_config = context_module.normalize_agent_context_config
 
 
 @dataclass
@@ -74,3 +77,70 @@ def test_filter_config_by_role_keeps_admin_context_values_for_admin():
     )
 
     assert filtered == {"context": {"summary_threshold": 10}}
+
+
+@pytest.mark.asyncio
+async def test_normalize_agent_context_config_expands_null_and_filters_explicit_lists(monkeypatch):
+    async def fake_get_databases_by_user(_user):
+        return {"databases": [{"db_id": "kb-a"}, {"db_id": "kb-b"}]}
+
+    async def fake_get_enabled_mcp_server_names(db=None):
+        del db
+        return ["mcp-a", "mcp-b"]
+
+    async def fake_list_skill_slugs(_db):
+        return ["skill-a", "skill-b"]
+
+    async def fake_get_enabled_subagent_names(_db=None):
+        return ["research-agent", "critique-agent"]
+
+    monkeypatch.setitem(
+        sys.modules,
+        "yuxi.agents.toolkits",
+        types.SimpleNamespace(
+            get_all_tool_instances=lambda: [
+                types.SimpleNamespace(name="ask_user_question"),
+                types.SimpleNamespace(name="tavily_search"),
+            ]
+        ),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "yuxi.knowledge",
+        types.SimpleNamespace(knowledge_base=types.SimpleNamespace(get_databases_by_user=fake_get_databases_by_user)),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "yuxi.services.mcp_service",
+        types.SimpleNamespace(get_enabled_mcp_server_names=fake_get_enabled_mcp_server_names),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "yuxi.services.skill_service",
+        types.SimpleNamespace(list_skill_slugs=fake_list_skill_slugs),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "yuxi.services.subagent_service",
+        types.SimpleNamespace(get_enabled_subagent_names=fake_get_enabled_subagent_names),
+    )
+
+    normalized = await normalize_agent_context_config(
+        {
+            "tools": None,
+            "knowledges": ["kb-b", "missing", "kb-b"],
+            "mcps": None,
+            "skills": [],
+            "subagents": ["research-agent", "missing"],
+            "summary_threshold": 10,
+        },
+        db=object(),
+        user=types.SimpleNamespace(role="user", uid="u1", department_id=None),
+    )
+
+    assert normalized["tools"] == ["ask_user_question", "tavily_search"]
+    assert normalized["knowledges"] == ["kb-b"]
+    assert normalized["mcps"] == ["mcp-a", "mcp-b"]
+    assert normalized["skills"] == []
+    assert normalized["subagents"] == ["research-agent"]
+    assert "summary_threshold" not in normalized

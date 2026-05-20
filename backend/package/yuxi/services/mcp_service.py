@@ -209,8 +209,14 @@ async def get_enabled_mcp_server_config(server_name: str, *, db: AsyncSession | 
 
 async def get_enabled_mcp_server_names(*, db: AsyncSession | None = None) -> list[str]:
     """Get enabled MCP server names from the database."""
-    configs = await _load_enabled_mcp_server_configs(db=db)
-    return list(configs.keys())
+    if db is not None:
+        result = await db.execute(select(MCPServer.name).where(MCPServer.enabled == 1))
+        return [name for name in result.scalars().all() if isinstance(name, str)]
+
+    from yuxi.storage.postgres.manager import pg_manager
+
+    async with pg_manager.get_async_session_context() as session:
+        return await get_enabled_mcp_server_names(db=session)
 
 
 async def get_mcp_tools(

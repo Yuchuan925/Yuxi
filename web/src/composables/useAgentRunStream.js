@@ -5,54 +5,41 @@ import { handleChatError } from '@/utils/errorHandler'
 const RUN_TERMINAL_STATUSES = new Set(['completed', 'failed', 'cancelled', 'interrupted'])
 const ACTIVE_RUN_STORAGE_TTL_MS = 60 * 60 * 1000
 const ACTIVE_RUN_CLIENT_ID = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
+const RUN_SEQ_PATTERN = /^\d+-\d+$/
 
 const getActiveRunStorageKey = (threadId) => `active_run:${threadId}`
 
 const normalizeRunSeq = (value) => {
-  if (value === undefined || value === null) return '0'
+  if (value === undefined || value === null) return '0-0'
   const text = String(value).trim()
-  return text || '0'
+  return RUN_SEQ_PATTERN.test(text) ? text : '0-0'
 }
 
 const parseRunSeq = (value) => {
   const text = normalizeRunSeq(value)
-  if (text.includes('-')) {
-    const [majorRaw, minorRaw] = text.split('-', 2)
-
-    try {
-      const major = BigInt(majorRaw || '0')
-      const minor = BigInt(minorRaw || '0')
-      return { kind: 'stream', major, minor }
-    } catch {
-      return { kind: 'legacy', value: 0 }
-    }
+  if (!text.includes('-')) {
+    return { major: 0n, minor: 0n }
   }
+  const [majorRaw, minorRaw] = text.split('-', 2)
 
-  const numberValue = Number.parseInt(text, 10)
-  if (!Number.isNaN(numberValue)) {
-    return { kind: 'legacy', value: numberValue }
+  try {
+    const major = BigInt(majorRaw || '0')
+    const minor = BigInt(minorRaw || '0')
+    return { major, minor }
+  } catch {
+    return { major: 0n, minor: 0n }
   }
-  return { kind: 'legacy', value: 0 }
 }
 
 const compareRunSeq = (incoming, current) => {
   const left = parseRunSeq(incoming)
   const right = parseRunSeq(current)
 
-  if (left.kind === 'stream' && right.kind === 'stream') {
-    if (left.major > right.major) return 1
-    if (left.major < right.major) return -1
-    if (left.minor > right.minor) return 1
-    if (left.minor < right.minor) return -1
-    return 0
-  }
-
-  if (left.kind === 'legacy' && right.kind === 'legacy') {
-    return left.value - right.value
-  }
-
-  if (left.kind === 'stream' && right.kind === 'legacy') return 1
-  return -1
+  if (left.major > right.major) return 1
+  if (left.major < right.major) return -1
+  if (left.minor > right.minor) return 1
+  if (left.minor < right.minor) return -1
+  return 0
 }
 
 const processRunSseResponse = async (response, onEvent) => {
@@ -126,7 +113,7 @@ export function useAgentRunStream({
   onScrollToBottom,
   streamSmoother
 }) {
-  const saveActiveRunSnapshot = (threadId, runId, lastSeq = '0') => {
+  const saveActiveRunSnapshot = (threadId, runId, lastSeq = '0-0') => {
     if (!threadId || !runId) return
     localStorage.setItem(
       getActiveRunStorageKey(threadId),
@@ -164,7 +151,7 @@ export function useAgentRunStream({
     }
   }
 
-  const startRunStream = async (threadId, runId, afterSeq = '0') => {
+  const startRunStream = async (threadId, runId, afterSeq = '0-0') => {
     if (!threadId || !runId || !useRunsApi) return
     const ts = getThreadState(threadId)
     if (!ts) return
@@ -321,7 +308,7 @@ export function useAgentRunStream({
           const runRes = await agentApi.getAgentRun(snapshot.run_id)
           const run = runRes?.run
           if (run && !RUN_TERMINAL_STATUSES.has(run.status)) {
-            await startRunStream(threadId, run.id, snapshot.last_seq || '0')
+            await startRunStream(threadId, run.id, snapshot.last_seq || '0-0')
             return
           }
         } catch {
@@ -335,7 +322,7 @@ export function useAgentRunStream({
       const active = await agentApi.getThreadActiveRun(threadId)
       const run = active?.run
       if (run && !RUN_TERMINAL_STATUSES.has(run.status)) {
-        await startRunStream(threadId, run.id, 0)
+        await startRunStream(threadId, run.id, '0-0')
         return
       }
     } catch (e) {
@@ -343,7 +330,7 @@ export function useAgentRunStream({
     }
 
     ts.activeRunId = null
-    ts.runLastSeq = '0'
+    ts.runLastSeq = '0-0'
     ts.isStreaming = false
     ts.replyLoadingVisible = false
     ts.pendingRequestId = null

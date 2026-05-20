@@ -251,9 +251,7 @@ const initFileTypeChart = () => {
 
   fileTypeChart = echarts.init(fileTypeChartRef.value)
 
-  // 检查是否有文件类型数据 - 兼容旧字段名和新字段名
-  const fileTypesData =
-    props.knowledgeStats?.files_by_type || props.knowledgeStats?.file_type_distribution || {}
+  const fileTypesData = props.knowledgeStats?.file_type_distribution || {}
   if (Object.keys(fileTypesData).length > 0) {
     const data = Object.entries(fileTypesData)
       .map(([type, count]) => ({

@@ -6,6 +6,7 @@
           新建文件夹
         </a-button>
         <a-button
+          type="primary"
           :loading="uploadingFile"
           :disabled="activeSourceKey !== 'personal'"
           @click="openUploadFilePicker"

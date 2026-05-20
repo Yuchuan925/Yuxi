@@ -41,12 +41,9 @@ def _is_valid_stream_seq(value: str) -> bool:
     return major.isdigit() and minor.isdigit()
 
 
-def normalize_after_seq(after_seq: str | int | None) -> str:
+def normalize_after_seq(after_seq: str | None) -> str:
     """Normalize after_seq cursor to redis stream id format."""
     if after_seq is None:
-        return "0-0"
-
-    if isinstance(after_seq, int):
         return "0-0"
 
     text = str(after_seq).strip()
@@ -190,7 +187,7 @@ async def list_run_stream_events(
 ) -> list[dict]:
     redis = await get_redis_client()
     key = _event_stream_key(run_id)
-    start = "-" if after_seq in {"0", "0-0", ""} else f"({after_seq}"
+    start = "-" if after_seq in {"0-0", ""} else f"({after_seq}"
     rows = await redis.xrange(key, min=start, max="+", count=limit)
     events = []
 

@@ -189,23 +189,8 @@ def ask_user_question(
         list[dict] | str | None,
         "问题列表，每项格式 {question, options, multi_select, allow_other, question_id(optional)}",
     ] = None,
-    question: Annotated[str, "单问题模式：问题文本（建议优先使用 questions 参数）"] = "",
-    options: Annotated[list[dict] | str | None, "单问题模式：候选项"] = None,
-    multi_select: Annotated[bool, "单问题模式：是否允许多选"] = False,
-    allow_other: Annotated[bool, "单问题模式：是否允许自定义答案"] = True,
 ) -> dict:
     """向用户发起问题并等待回答。"""
-    # 解析 options 参数：如果是字符串，尝试解析为 JSON
-    if isinstance(options, str):
-        try:
-            import json
-
-            options = json.loads(options)
-            logger.debug(f"Parsed string options to list: {options}")
-        except Exception as e:
-            logger.error(f"Failed to parse options string: {e}, using empty list")
-            options = []
-
     # 解析 questions 参数：如果是字符串，尝试解析为 JSON
     if isinstance(questions, str):
         try:
@@ -217,20 +202,7 @@ def ask_user_question(
             logger.error(f"Failed to parse questions string: {e}, using None")
             questions = None
 
-    input_questions = questions
-    if not input_questions:
-        legacy_question = str(question or "").strip()
-        if legacy_question:
-            input_questions = [
-                {
-                    "question": legacy_question,
-                    "options": options or [],
-                    "multi_select": multi_select,
-                    "allow_other": allow_other,
-                }
-            ]
-
-    normalized_questions = normalize_questions(input_questions or [])
+    normalized_questions = normalize_questions(questions or [])
 
     if not normalized_questions:
         raise ValueError("questions 至少需要包含一个有效问题")

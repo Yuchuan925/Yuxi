@@ -231,13 +231,8 @@ const regenerateMessage = () => {
 
 // 获取模型名称
 const getModelName = (msg) => {
-  // 优先检查 response_metadata.model_name
   if (msg.response_metadata?.model_name) {
     return msg.response_metadata.model_name
-  }
-  // 兼容旧格式 meta.server_model_name
-  if (msg.meta?.server_model_name) {
-    return msg.meta.server_model_name
   }
   return null
 }
