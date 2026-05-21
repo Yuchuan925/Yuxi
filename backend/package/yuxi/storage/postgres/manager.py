@@ -168,7 +168,7 @@ class PostgresManager(metaclass=SingletonMeta):
             CREATE TABLE IF NOT EXISTS evaluation_datasets (
                 id SERIAL PRIMARY KEY,
                 dataset_id VARCHAR(64) NOT NULL UNIQUE,
-                db_id VARCHAR(80) NOT NULL REFERENCES knowledge_bases(db_id) ON DELETE CASCADE,
+                slug VARCHAR(80) NOT NULL REFERENCES knowledge_bases(slug) ON DELETE CASCADE,
                 name VARCHAR(255) NOT NULL,
                 description TEXT,
                 item_count INTEGER DEFAULT 0,
@@ -185,7 +185,7 @@ class PostgresManager(metaclass=SingletonMeta):
                 id SERIAL PRIMARY KEY,
                 item_id VARCHAR(64) NOT NULL UNIQUE,
                 dataset_id VARCHAR(64) NOT NULL REFERENCES evaluation_datasets(dataset_id) ON DELETE CASCADE,
-                db_id VARCHAR(80) NOT NULL REFERENCES knowledge_bases(db_id) ON DELETE CASCADE,
+                slug VARCHAR(80) NOT NULL REFERENCES knowledge_bases(slug) ON DELETE CASCADE,
                 item_index INTEGER NOT NULL,
                 query_text TEXT NOT NULL,
                 gold_chunk_ids JSONB,
@@ -198,7 +198,7 @@ class PostgresManager(metaclass=SingletonMeta):
             CREATE TABLE IF NOT EXISTS evaluation_runs (
                 id SERIAL PRIMARY KEY,
                 run_id VARCHAR(64) NOT NULL UNIQUE,
-                db_id VARCHAR(80) NOT NULL REFERENCES knowledge_bases(db_id) ON DELETE CASCADE,
+                slug VARCHAR(80) NOT NULL REFERENCES knowledge_bases(slug) ON DELETE CASCADE,
                 dataset_id VARCHAR(64) REFERENCES evaluation_datasets(dataset_id) ON DELETE SET NULL,
                 status VARCHAR(32) DEFAULT 'running',
                 retrieval_config JSONB,
@@ -232,7 +232,7 @@ class PostgresManager(metaclass=SingletonMeta):
                 id SERIAL PRIMARY KEY,
                 chunk_id VARCHAR(128) NOT NULL UNIQUE,
                 file_id VARCHAR(64) NOT NULL REFERENCES knowledge_files(file_id) ON DELETE CASCADE,
-                db_id VARCHAR(80) NOT NULL REFERENCES knowledge_bases(db_id) ON DELETE CASCADE,
+                slug VARCHAR(80) NOT NULL REFERENCES knowledge_bases(slug) ON DELETE CASCADE,
                 chunk_index INTEGER NOT NULL,
                 content TEXT NOT NULL,
                 start_char_pos INTEGER,
@@ -252,21 +252,21 @@ class PostgresManager(metaclass=SingletonMeta):
             CREATE TABLE IF NOT EXISTS knowledge_graph_entities (
                 id SERIAL PRIMARY KEY,
                 entity_id VARCHAR(64) NOT NULL UNIQUE,
-                db_id VARCHAR(80) NOT NULL REFERENCES knowledge_bases(db_id) ON DELETE CASCADE,
+                slug VARCHAR(80) NOT NULL REFERENCES knowledge_bases(slug) ON DELETE CASCADE,
                 normalized_name VARCHAR(512) NOT NULL,
                 label VARCHAR(128) NOT NULL,
                 name VARCHAR(512) NOT NULL,
                 attributes JSONB,
                 created_at TIMESTAMPTZ DEFAULT NOW(),
                 updated_at TIMESTAMPTZ DEFAULT NOW(),
-                CONSTRAINT uq_knowledge_graph_entities_identity UNIQUE (db_id, normalized_name, label)
+                CONSTRAINT uq_knowledge_graph_entities_identity UNIQUE (slug, normalized_name, label)
             )
             """,
             """
             CREATE TABLE IF NOT EXISTS knowledge_graph_entity_mentions (
                 id SERIAL PRIMARY KEY,
                 entity_id VARCHAR(64) NOT NULL REFERENCES knowledge_graph_entities(entity_id) ON DELETE CASCADE,
-                db_id VARCHAR(80) NOT NULL REFERENCES knowledge_bases(db_id) ON DELETE CASCADE,
+                slug VARCHAR(80) NOT NULL REFERENCES knowledge_bases(slug) ON DELETE CASCADE,
                 file_id VARCHAR(64) NOT NULL REFERENCES knowledge_files(file_id) ON DELETE CASCADE,
                 chunk_id VARCHAR(128) NOT NULL REFERENCES knowledge_chunks(chunk_id) ON DELETE CASCADE,
                 created_at TIMESTAMPTZ DEFAULT NOW(),
@@ -277,7 +277,7 @@ class PostgresManager(metaclass=SingletonMeta):
             CREATE TABLE IF NOT EXISTS knowledge_graph_triples (
                 id SERIAL PRIMARY KEY,
                 triple_id VARCHAR(64) NOT NULL UNIQUE,
-                db_id VARCHAR(80) NOT NULL REFERENCES knowledge_bases(db_id) ON DELETE CASCADE,
+                slug VARCHAR(80) NOT NULL REFERENCES knowledge_bases(slug) ON DELETE CASCADE,
                 source_entity_id VARCHAR(64) NOT NULL REFERENCES knowledge_graph_entities(entity_id) ON DELETE CASCADE,
                 target_entity_id VARCHAR(64) NOT NULL REFERENCES knowledge_graph_entities(entity_id) ON DELETE CASCADE,
                 relation_type VARCHAR(256) NOT NULL,
@@ -290,7 +290,7 @@ class PostgresManager(metaclass=SingletonMeta):
             CREATE TABLE IF NOT EXISTS knowledge_graph_triple_mentions (
                 id SERIAL PRIMARY KEY,
                 triple_id VARCHAR(64) NOT NULL REFERENCES knowledge_graph_triples(triple_id) ON DELETE CASCADE,
-                db_id VARCHAR(80) NOT NULL REFERENCES knowledge_bases(db_id) ON DELETE CASCADE,
+                slug VARCHAR(80) NOT NULL REFERENCES knowledge_bases(slug) ON DELETE CASCADE,
                 file_id VARCHAR(64) NOT NULL REFERENCES knowledge_files(file_id) ON DELETE CASCADE,
                 chunk_id VARCHAR(128) NOT NULL REFERENCES knowledge_chunks(chunk_id) ON DELETE CASCADE,
                 text TEXT,
@@ -299,40 +299,40 @@ class PostgresManager(metaclass=SingletonMeta):
                 CONSTRAINT uq_knowledge_graph_triple_mentions_triple_chunk UNIQUE (triple_id, chunk_id)
             )
             """,
-            # 扩展 db_id 字段长度以支持最长 75 字符的 ID（kb_private_ + 64字符hash）
-            "ALTER TABLE IF EXISTS knowledge_bases ALTER COLUMN db_id TYPE VARCHAR(80)",
-            "ALTER TABLE IF EXISTS knowledge_files ALTER COLUMN db_id TYPE VARCHAR(80)",
-            "ALTER TABLE IF EXISTS evaluation_datasets ALTER COLUMN db_id TYPE VARCHAR(80)",
-            "ALTER TABLE IF EXISTS evaluation_dataset_items ALTER COLUMN db_id TYPE VARCHAR(80)",
-            "ALTER TABLE IF EXISTS evaluation_runs ALTER COLUMN db_id TYPE VARCHAR(80)",
+            # 扩展 slug 字段长度以支持最长 75 字符的 ID（kb_private_ + 64字符hash）
+            "ALTER TABLE IF EXISTS knowledge_bases ALTER COLUMN slug TYPE VARCHAR(80)",
+            "ALTER TABLE IF EXISTS knowledge_files ALTER COLUMN slug TYPE VARCHAR(80)",
+            "ALTER TABLE IF EXISTS evaluation_datasets ALTER COLUMN slug TYPE VARCHAR(80)",
+            "ALTER TABLE IF EXISTS evaluation_dataset_items ALTER COLUMN slug TYPE VARCHAR(80)",
+            "ALTER TABLE IF EXISTS evaluation_runs ALTER COLUMN slug TYPE VARCHAR(80)",
             "CREATE INDEX IF NOT EXISTS idx_kb_type ON knowledge_bases(kb_type)",
             "CREATE INDEX IF NOT EXISTS idx_kb_name ON knowledge_bases(name)",
-            "CREATE INDEX IF NOT EXISTS idx_kf_db_id ON knowledge_files(db_id)",
+            "CREATE INDEX IF NOT EXISTS idx_kf_slug ON knowledge_files(slug)",
             "CREATE INDEX IF NOT EXISTS idx_kf_parent ON knowledge_files(parent_id)",
             "CREATE INDEX IF NOT EXISTS idx_kf_status ON knowledge_files(status)",
             "CREATE INDEX IF NOT EXISTS idx_kf_hash ON knowledge_files(content_hash)",
-            "CREATE INDEX IF NOT EXISTS ix_evaluation_datasets_db_id ON evaluation_datasets(db_id)",
+            "CREATE INDEX IF NOT EXISTS ix_evaluation_datasets_slug ON evaluation_datasets(slug)",
             (
                 "CREATE INDEX IF NOT EXISTS ix_evaluation_dataset_items_dataset_index "
                 "ON evaluation_dataset_items(dataset_id, item_index)"
             ),
-            "CREATE INDEX IF NOT EXISTS ix_evaluation_dataset_items_db_id ON evaluation_dataset_items(db_id)",
-            "CREATE INDEX IF NOT EXISTS ix_evaluation_runs_db_id ON evaluation_runs(db_id)",
+            "CREATE INDEX IF NOT EXISTS ix_evaluation_dataset_items_slug ON evaluation_dataset_items(slug)",
+            "CREATE INDEX IF NOT EXISTS ix_evaluation_runs_slug ON evaluation_runs(slug)",
             "CREATE INDEX IF NOT EXISTS ix_evaluation_runs_status ON evaluation_runs(status)",
             "CREATE INDEX IF NOT EXISTS ix_evaluation_runs_started ON evaluation_runs(started_at DESC)",
             "CREATE INDEX IF NOT EXISTS ix_evaluation_run_items_run_index ON evaluation_run_items(run_id, item_index)",
             "CREATE UNIQUE INDEX IF NOT EXISTS uq_knowledge_chunks_chunk_id ON knowledge_chunks(chunk_id)",
             "CREATE INDEX IF NOT EXISTS ix_knowledge_chunks_file_id ON knowledge_chunks(file_id)",
-            "CREATE INDEX IF NOT EXISTS ix_knowledge_chunks_db_id ON knowledge_chunks(db_id)",
+            "CREATE INDEX IF NOT EXISTS ix_knowledge_chunks_slug ON knowledge_chunks(slug)",
             "CREATE INDEX IF NOT EXISTS ix_knowledge_chunks_graph_indexed ON knowledge_chunks(graph_indexed)",
             (
                 "CREATE UNIQUE INDEX IF NOT EXISTS uq_knowledge_graph_entities_entity_id "
                 "ON knowledge_graph_entities(entity_id)"
             ),
-            "CREATE INDEX IF NOT EXISTS ix_knowledge_graph_entities_db_id ON knowledge_graph_entities(db_id)",
+            "CREATE INDEX IF NOT EXISTS ix_knowledge_graph_entities_slug ON knowledge_graph_entities(slug)",
             (
-                "CREATE INDEX IF NOT EXISTS ix_knowledge_graph_entity_mentions_db_id "
-                "ON knowledge_graph_entity_mentions(db_id)"
+                "CREATE INDEX IF NOT EXISTS ix_knowledge_graph_entity_mentions_slug "
+                "ON knowledge_graph_entity_mentions(slug)"
             ),
             (
                 "CREATE INDEX IF NOT EXISTS ix_knowledge_graph_entity_mentions_file_id "
@@ -346,10 +346,10 @@ class PostgresManager(metaclass=SingletonMeta):
                 "CREATE UNIQUE INDEX IF NOT EXISTS uq_knowledge_graph_triples_triple_id "
                 "ON knowledge_graph_triples(triple_id)"
             ),
-            "CREATE INDEX IF NOT EXISTS ix_knowledge_graph_triples_db_id ON knowledge_graph_triples(db_id)",
+            "CREATE INDEX IF NOT EXISTS ix_knowledge_graph_triples_slug ON knowledge_graph_triples(slug)",
             (
-                "CREATE INDEX IF NOT EXISTS ix_knowledge_graph_triple_mentions_db_id "
-                "ON knowledge_graph_triple_mentions(db_id)"
+                "CREATE INDEX IF NOT EXISTS ix_knowledge_graph_triple_mentions_slug "
+                "ON knowledge_graph_triple_mentions(slug)"
             ),
             (
                 "CREATE INDEX IF NOT EXISTS ix_knowledge_graph_triple_mentions_file_id "

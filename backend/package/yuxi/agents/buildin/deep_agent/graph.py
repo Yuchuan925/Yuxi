@@ -11,17 +11,18 @@ from langchain.agents.middleware import (
 
 from yuxi.agents import BaseAgent, BaseState, load_chat_model
 from yuxi.agents.backends import create_agent_composite_backend
+from yuxi.agents.context import prepare_agent_runtime_context
 from yuxi.agents.middlewares import (
-    RuntimeConfigMiddleware,
     SummaryOffloadMiddleware,
     save_attachments_to_fs,
 )
 from yuxi.agents.middlewares.knowledge_base_middleware import KnowledgeBaseMiddleware
 from yuxi.agents.middlewares.skills_middleware import SkillsMiddleware
 from yuxi.agents.toolkits.buildin.tools import _create_tavily_search
-from yuxi.services.mcp_service import get_tools_from_all_servers
-from yuxi.services.subagent_service import get_subagents_from_names
+from yuxi.services.subagent_service import get_subagents_from_slugs
+from yuxi.services.tool_service import resolve_configured_runtime_tools
 from yuxi.utils import logger
+from yuxi.utils.datetime_utils import shanghai_now
 
 from .prompt import DEEP_PROMPT
 
@@ -51,17 +52,19 @@ class DeepAgent(BaseAgent):
 
     async def get_graph(self, context=None, **kwargs):
 
-        context = context or self.context_schema()  # 获取上下文配置
-        system_prompt = f"{DEEP_PROMPT.strip()}\n\n{context.system_prompt or ''}"
+        context = await prepare_agent_runtime_context(
+            context or self.context_schema(),
+            context_schema=self.context_schema,
+        )
+        current_date = f"当前日期：{shanghai_now().strftime('%Y-%m-%d')}"
+        system_prompt = f"{current_date}\n\n{DEEP_PROMPT.strip()}\n\n{context.system_prompt or ''}"
 
         model = load_chat_model(context.model)
         sub_model = load_chat_model(context.subagents_model)
         search_tools = await self.get_tools()
-        all_mcp_tools = await get_tools_from_all_servers()
-        # 合并搜索工具和 MCP 工具
 
         # 从数据库加载 subagent specs（工具名称已解析）
-        user_subagents = await get_subagents_from_names(context.subagents)
+        user_subagents = await get_subagents_from_slugs(context.subagents)
 
         # 主 Agent 上下文优化：90k tokens 触发压缩（128k context window 的 70%）
         summary_middleware = SummaryOffloadMiddleware(
@@ -93,10 +96,10 @@ class DeepAgent(BaseAgent):
         # 使用 create_deep_agent 创建深度智能体
         graph = create_agent(
             model=model,
+            tools=await resolve_configured_runtime_tools(context),
             system_prompt=system_prompt,
             middleware=[
                 FilesystemMiddleware(backend=create_agent_composite_backend),  # 文件系统后端
-                RuntimeConfigMiddleware(extra_tools=all_mcp_tools),
                 SkillsMiddleware(),  # Skills 中间件（提示词注入、依赖展开、动态激活）
                 save_attachments_to_fs,  # 附件注入提示词
                 TodoListMiddleware(system_prompt="任务结束前，应该检查维护的待办事项列表是否结束。"),

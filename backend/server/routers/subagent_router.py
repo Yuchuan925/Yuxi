@@ -17,7 +17,8 @@ subagents_router = APIRouter(prefix="/system/subagents", tags=["subagents"])
 
 
 class SubAgentCreateRequest(BaseModel):
-    name: str = Field(..., description="唯一标识")
+    slug: str = Field(..., description="稳定标识")
+    name: str = Field(..., description="展示名称")
     description: str = Field(..., description="描述")
     system_prompt: str = Field(..., description="系统提示词")
     tools: list[str] = Field(default_factory=list, description="工具名称列表")
@@ -25,6 +26,7 @@ class SubAgentCreateRequest(BaseModel):
 
 
 class SubAgentUpdateRequest(BaseModel):
+    name: str | None = Field(None, description="展示名称")
     description: str | None = Field(None, description="描述")
     system_prompt: str | None = Field(None, description="系统提示词")
     tools: list[str] | None = Field(None, description="工具名称列表")
@@ -46,13 +48,9 @@ def _raise_internal_error(action: str, error: Exception) -> None:
     raise HTTPException(status_code=500, detail=f"{action}失败")
 
 
-def _is_subagent_name_duplicate_error(error: IntegrityError) -> bool:
+def _is_subagent_slug_duplicate_error(error: IntegrityError) -> bool:
     raw_message = str(getattr(error, "orig", error)).lower()
-    return (
-        "duplicate key" in raw_message
-        and "subagents" in raw_message
-        and ("(name)" in raw_message or "subagents_pkey" in raw_message)
-    )
+    return "duplicate key" in raw_message and "subagents" in raw_message and "(slug)" in raw_message
 
 
 @subagents_router.get("")
@@ -68,17 +66,17 @@ async def list_subagents_route(
         _raise_internal_error("获取列表", e)
 
 
-@subagents_router.get("/{name}")
+@subagents_router.get("/{slug}")
 async def get_subagent_route(
-    name: str,
+    slug: str,
     _current_user: User = Depends(get_admin_user),
     db: AsyncSession = Depends(get_db),
 ):
     """获取单个 SubAgent（管理员可读）"""
     try:
-        item = await service.get_subagent(name, db)
+        item = await service.get_subagent(slug, db)
         if not item:
-            raise HTTPException(status_code=404, detail=f"SubAgent '{name}' 不存在")
+            raise HTTPException(status_code=404, detail=f"SubAgent '{slug}' 不存在")
         return {"success": True, "data": item}
     except HTTPException:
         raise
@@ -98,8 +96,8 @@ async def create_subagent_route(
         item = await service.create_subagent(data, created_by=current_user.username, db=db)
         return {"success": True, "data": item}
     except IntegrityError as e:
-        if _is_subagent_name_duplicate_error(e):
-            raise HTTPException(status_code=409, detail=f"SubAgent '{payload.name}' 已存在")
+        if _is_subagent_slug_duplicate_error(e):
+            raise HTTPException(status_code=409, detail=f"SubAgent '{payload.slug}' 已存在")
         _raise_internal_error("创建", e)
     except HTTPException:
         raise
@@ -109,9 +107,9 @@ async def create_subagent_route(
         _raise_internal_error("创建", e)
 
 
-@subagents_router.put("/{name}")
+@subagents_router.put("/{slug}")
 async def update_subagent_route(
-    name: str,
+    slug: str,
     payload: SubAgentUpdateRequest,
     current_user: User = Depends(get_admin_user),
     db: AsyncSession = Depends(get_db),
@@ -119,9 +117,9 @@ async def update_subagent_route(
     """更新 SubAgent（管理员）"""
     try:
         data = payload.model_dump(exclude_unset=True)
-        item = await service.update_subagent(name, data, updated_by=current_user.username, db=db)
+        item = await service.update_subagent(slug, data, updated_by=current_user.username, db=db)
         if not item:
-            raise HTTPException(status_code=404, detail=f"SubAgent '{name}' 不存在")
+            raise HTTPException(status_code=404, detail=f"SubAgent '{slug}' 不存在")
         return {"success": True, "data": item}
     except ValueError as e:
         _raise_from_value_error(e)
@@ -131,17 +129,17 @@ async def update_subagent_route(
         _raise_internal_error("更新", e)
 
 
-@subagents_router.delete("/{name}")
+@subagents_router.delete("/{slug}")
 async def delete_subagent_route(
-    name: str,
+    slug: str,
     _current_user: User = Depends(get_admin_user),
     db: AsyncSession = Depends(get_db),
 ):
     """删除 SubAgent（管理员）"""
     try:
-        deleted = await service.delete_subagent(name, db=db)
+        deleted = await service.delete_subagent(slug, db=db)
         if not deleted:
-            raise HTTPException(status_code=404, detail=f"SubAgent '{name}' 不存在")
+            raise HTTPException(status_code=404, detail=f"SubAgent '{slug}' 不存在")
         return {"success": True}
     except ValueError as e:
         _raise_from_value_error(e)
@@ -151,22 +149,22 @@ async def delete_subagent_route(
         _raise_internal_error("删除", e)
 
 
-@subagents_router.put("/{name}/status")
+@subagents_router.put("/{slug}/status")
 async def update_subagent_status_route(
-    name: str,
+    slug: str,
     payload: SubAgentStatusRequest,
     current_user: User = Depends(get_admin_user),
     db: AsyncSession = Depends(get_db),
 ):
     """更新 SubAgent 启用状态（管理员）。"""
     try:
-        item = await service.set_subagent_enabled(name, payload.enabled, updated_by=current_user.username, db=db)
+        item = await service.set_subagent_enabled(slug, payload.enabled, updated_by=current_user.username, db=db)
         if not item:
-            raise HTTPException(status_code=404, detail=f"SubAgent '{name}' 不存在")
+            raise HTTPException(status_code=404, detail=f"SubAgent '{slug}' 不存在")
         return {
             "success": True,
             "data": item,
-            "message": f"SubAgent '{name}' 已{'添加' if payload.enabled else '移除'}",
+            "message": f"SubAgent '{slug}' 已{'添加' if payload.enabled else '移除'}",
         }
     except HTTPException:
         raise

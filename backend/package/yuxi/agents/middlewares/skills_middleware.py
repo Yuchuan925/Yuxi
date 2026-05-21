@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from yuxi.agents.toolkits import get_all_tool_instances
 from yuxi.repositories.skill_repository import SkillRepository
 from yuxi.services.mcp_service import get_enabled_mcp_tools
-from yuxi.services.skill_service import _normalize_string_list, is_valid_skill_slug
+from yuxi.services.skill_service import is_valid_skill_slug, normalize_string_list
 from yuxi.storage.postgres.manager import pg_manager
 from yuxi.utils.logging_config import logger
 
@@ -72,16 +72,11 @@ async def get_dependency_map(db: AsyncSession | None = None) -> dict[str, SkillD
     result: dict[str, SkillDependencyNode] = {}
     for item in skills:
         result[item.slug] = {
-            "tools": normalize_selected_skills(item.tool_dependencies or []),
-            "mcps": normalize_selected_skills(item.mcp_dependencies or []),
-            "skills": normalize_selected_skills(item.skill_dependencies or []),
+            "tools": normalize_string_list(item.tool_dependencies or []),
+            "mcps": normalize_string_list(item.mcp_dependencies or []),
+            "skills": normalize_string_list(item.skill_dependencies or []),
         }
     return result
-
-
-def normalize_selected_skills(selected_skills: list[str] | None) -> list[str]:
-    """规范化 skills 列表，去重并过滤无效值"""
-    return _normalize_string_list(selected_skills)
 
 
 def expand_skill_closure(
@@ -89,7 +84,7 @@ def expand_skill_closure(
     dependency_map: dict[str, SkillDependencyNode],
 ) -> list[str]:
     """展开 skills 依赖闭包，返回包含所有依赖的列表"""
-    ordered_roots = normalize_selected_skills(slugs)
+    ordered_roots = normalize_string_list(slugs)
     if not ordered_roots:
         return []
 
@@ -118,6 +113,19 @@ def expand_skill_closure(
     for root in ordered_roots:
         dfs(root, set())
     return result
+
+
+async def resolve_runtime_skills_for_context(context, *, db: AsyncSession | None = None) -> dict[str, list[str]]:
+    dependency_map = await get_dependency_map(db)
+    installed = set(dependency_map)
+    selected = normalize_string_list(getattr(context, "skills", None))
+    context_skills = [slug for slug in selected if slug in installed]
+    prompt_skills = expand_skill_closure(context_skills, dependency_map)
+    return {
+        "context_skills": context_skills,
+        "prompt_skills": prompt_skills,
+        "readable_skills": prompt_skills,
+    }
 
 
 def _activated_skills_reducer(left: list[str] | None, right: list[str] | None) -> list[str]:
@@ -182,24 +190,16 @@ class SkillsMiddleware(AgentMiddleware):
         if getattr(runtime_context, "_skills_prompt_injected", False):
             return None
 
-        # 从数据库加载 skills 数据（使用缓存）
-        dependency_map = await get_dependency_map()
-
-        # 获取配置的 skills
-        configured_skills = getattr(runtime_context, self.skills_context_name, None) or []
-        selected_skills = normalize_selected_skills(configured_skills)
-
-        if not selected_skills:
+        prompt_skills = getattr(runtime_context, "_prompt_skills", None)
+        if not isinstance(prompt_skills, list):
             return None
 
-        # 计算 visible_skills
-        visible_skills = expand_skill_closure(selected_skills, dependency_map)
-
-        if not visible_skills:
+        prompt_skills = normalize_string_list(prompt_skills)
+        if not prompt_skills:
             return None
 
         # 收集提示词元数据并构建提示段
-        skills_meta = await self._collect_prompt_metadata(visible_skills)
+        skills_meta = await self._collect_prompt_metadata(prompt_skills)
         skills_section = self._build_skills_section(skills_meta)
 
         # 注入提示词
@@ -207,9 +207,6 @@ class SkillsMiddleware(AgentMiddleware):
         merged_prompt = f"{base_prompt}\n\n{skills_section}" if base_prompt else skills_section
         setattr(runtime_context, "system_prompt", merged_prompt)
         setattr(runtime_context, "_skills_prompt_injected", True)
-
-        # 存储 visible_skills 供后续使用
-        setattr(runtime_context, "_visible_skills", visible_skills)
 
         return None
 
@@ -219,39 +216,23 @@ class SkillsMiddleware(AgentMiddleware):
         """包装模型调用，处理动态激活和依赖展开"""
         runtime_context = request.runtime.context
 
-        # 从缓存加载 skills 数据
-        dependency_map = await get_dependency_map()
-
-        # 1. 获取配置的 skills
-        configured_skills = getattr(runtime_context, self.skills_context_name, None) or []
-        configured = normalize_selected_skills(configured_skills)
-
-        # 2. 获取运行时动态激活的 skills
         state = request.state if isinstance(request.state, dict) else {}
         activated = state.get("activated_skills", []) or []
         if not isinstance(activated, list):
             activated = []
 
-        # 3. 合并并展开闭包
-        all_skills = normalize_selected_skills(configured + activated)
-        visible_skills = expand_skill_closure(all_skills, dependency_map)
+        readable_skills = self._get_readable_skills(runtime_context)
+        activated = [slug for slug in normalize_string_list(activated) if slug in readable_skills]
 
-        # 4. 更新 runtime_context 中的 visible_skills
-        setattr(runtime_context, "_visible_skills", visible_skills)
-
-        # 5. 构建依赖包（只从直接激活的 skills 获取依赖，不包含闭包展开的依赖）
         deps_bundle = await self._build_dependency_bundle(activated)
 
-        # 6. 加载依赖的工具（普通工具 + MCP 工具）
         enabled_tools = []
 
-        # 6.1 从 toolkits 获取普通工具
         if deps_bundle["tools"]:
             all_tools = get_all_tool_instances()
             required_tool_names = set(deps_bundle["tools"])
             enabled_tools = [t for t in all_tools if t.name in required_tool_names]
 
-        # 6.2 获取 MCP 工具
         if deps_bundle["mcps"]:
             mcp_tools = await self._get_mcp_tools_from_context(
                 runtime_context,
@@ -418,18 +399,13 @@ class SkillsMiddleware(AgentMiddleware):
             return None
         return slug
 
+    def _get_readable_skills(self, runtime_context) -> set[str]:
+        selected = getattr(runtime_context, "_readable_skills", [])
+        return set(normalize_string_list(selected if isinstance(selected, list) else []))
+
     def _is_visible_skill_slug(self, request: ToolCallRequest, slug: str) -> bool:
         """检查 slug 是否可见"""
-        runtime_context = request.runtime.context
-        visible_skills = getattr(runtime_context, "_visible_skills", None)
-
-        if isinstance(visible_skills, list):
-            return slug in visible_skills
-
-        # 后备：从配置的 skills 检查
-        configured_skills = getattr(runtime_context, self.skills_context_name, None) or []
-        normalized = normalize_selected_skills(configured_skills)
-        return slug in normalized
+        return slug in self._get_readable_skills(request.runtime.context)
 
     def _merge_activated_skill_update(self, result: Any, slug: str):
         """合并动态激活的 skill 更新"""

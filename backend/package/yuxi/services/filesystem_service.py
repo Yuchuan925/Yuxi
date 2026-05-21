@@ -4,13 +4,9 @@ import asyncio
 
 from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
-from yuxi.agents.backends import (
-    ProvisionerSandboxBackend,
-    create_agent_composite_backend,
-    resolve_visible_knowledge_bases_for_context,
-)
+from yuxi.agents.backends import create_agent_composite_backend
 from yuxi.agents.backends.sandbox.backend import _looks_like_binary
-from yuxi.agents.context import BaseContext, normalize_agent_context_config
+from yuxi.agents.context import BaseContext, normalize_agent_context_config, prepare_agent_runtime_context
 from yuxi.repositories.agent_config_repository import AgentConfigRepository
 from yuxi.repositories.conversation_repository import ConversationRepository
 from yuxi.services.conversation_service import require_user_conversation
@@ -68,10 +64,9 @@ async def _resolve_filesystem_state(
     )
     runtime_context.thread_id = thread_id
     runtime_context.uid = str(user.uid)
-    await resolve_visible_knowledge_bases_for_context(runtime_context)
+    await prepare_agent_runtime_context(runtime_context)
 
-    sandbox_backend = ProvisionerSandboxBackend(thread_id=thread_id, uid=str(user.uid))
-    return conversation, runtime_context, sandbox_backend
+    return conversation, runtime_context
 
 
 async def list_filesystem_entries_view(

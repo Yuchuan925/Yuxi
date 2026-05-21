@@ -16,7 +16,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from yuxi import config as sys_config
 from yuxi.repositories.skill_repository import SkillRepository
-from yuxi.services.mcp_service import get_enabled_mcp_server_names
+from yuxi.services.mcp_service import get_enabled_mcp_server_slugs
 from yuxi.storage.postgres.models_business import Skill
 from yuxi.utils.logging_config import logger
 
@@ -73,7 +73,7 @@ def _get_thread_skills_lock(thread_id: str) -> threading.Lock:
         return lock
 
 
-def _normalize_string_list(values: list[str] | None) -> list[str]:
+def normalize_string_list(values: list[str] | None) -> list[str]:
     if not values:
         return []
     normalized: list[str] = []
@@ -113,14 +113,14 @@ def get_thread_skills_root_dir(thread_id: str) -> Path:
     return root
 
 
-def sync_thread_visible_skills(thread_id: str, selected_slugs: list[str] | None) -> Path:
+def sync_thread_readable_skills(thread_id: str, selected_slugs: list[str] | None) -> Path:
     skills_root = get_skills_root_dir().resolve()
     thread_skills_root = get_thread_skills_root_dir(thread_id)
-    normalized_slugs = [slug for slug in _normalize_string_list(selected_slugs) if is_valid_skill_slug(slug)]
-    visible_slugs = set(normalized_slugs)
+    normalized_slugs = [slug for slug in normalize_string_list(selected_slugs) if is_valid_skill_slug(slug)]
+    readable_slugs = set(normalized_slugs)
     with _get_thread_skills_lock(thread_id):
         for entry in thread_skills_root.iterdir():
-            if entry.name in visible_slugs:
+            if entry.name in readable_slugs:
                 continue
             if entry.is_dir() and not entry.is_symlink():
                 shutil.rmtree(entry)
@@ -251,12 +251,12 @@ async def get_skill_dependency_options(db: AsyncSession) -> dict[str, list[str] 
 
     def get_tools():
         all_tools = get_tool_metadata()
-        return [{"id": tool["id"], "name": tool.get("name", tool["id"])} for tool in all_tools]
+        return [{"slug": tool["slug"], "name": tool.get("name", tool["slug"])} for tool in all_tools]
 
     skill_slugs, tool_list, mcp_names = await asyncio.gather(
         list_skill_slugs(db),
         asyncio.to_thread(get_tools),
-        get_enabled_mcp_server_names(db=db),
+        get_enabled_mcp_server_slugs(db=db),
     )
 
     return {
@@ -281,7 +281,7 @@ def _get_all_tool_names() -> list[str]:
     from yuxi.services.tool_service import get_tool_metadata
 
     all_tools = get_tool_metadata()
-    return [tool["id"] for tool in all_tools]
+    return [tool["slug"] for tool in all_tools]
 
 
 async def _validate_dependencies(
@@ -292,9 +292,9 @@ async def _validate_dependencies(
     skill_dependencies: list[str],
     available_skill_slugs: set[str],
 ) -> tuple[list[str], list[str], list[str]]:
-    tools = _normalize_string_list(tool_dependencies)
-    mcps = _normalize_string_list(mcp_dependencies)
-    skills = _normalize_string_list(skill_dependencies)
+    tools = normalize_string_list(tool_dependencies)
+    mcps = normalize_string_list(mcp_dependencies)
+    skills = normalize_string_list(skill_dependencies)
 
     # 验证所有工具（不仅仅是 buildin）
     available_tools = set(_get_all_tool_names())
@@ -302,7 +302,7 @@ async def _validate_dependencies(
     if invalid_tools:
         raise ValueError(f"存在无效工具依赖: {', '.join(invalid_tools)}")
 
-    available_mcps = set(await get_enabled_mcp_server_names(db=None))
+    available_mcps = set(await get_enabled_mcp_server_slugs(db=None))
     invalid_mcps = [name for name in mcps if name not in available_mcps]
     if invalid_mcps:
         raise ValueError(f"存在无效 MCP 依赖: {', '.join(invalid_mcps)}")
@@ -801,9 +801,9 @@ async def init_builtin_skills(db: AsyncSession, *, created_by: str = "system") -
         parsed_name, _, meta = _parse_skill_markdown(content)
         if parsed_name != slug:
             raise ValueError(f"内置 skill frontmatter.name 必须等于 slug: {slug}")
-        _normalize_string_list(meta.get("tool_dependencies"))
-        _normalize_string_list(meta.get("mcp_dependencies"))
-        _normalize_string_list(meta.get("skill_dependencies"))
+        normalize_string_list(meta.get("tool_dependencies"))
+        normalize_string_list(meta.get("mcp_dependencies"))
+        normalize_string_list(meta.get("skill_dependencies"))
         _compute_dir_hash(source_dir)
 
 
@@ -814,9 +814,9 @@ def list_builtin_skill_specs() -> list[dict[str, Any]]:
         source_dir = Path(str(getattr(raw_spec, "source_dir", ""))).resolve()
         configured_description = str(getattr(raw_spec, "description", "")).strip()
         version = str(getattr(raw_spec, "version", "1.0.0")).strip() or "1.0.0"
-        configured_tools = _normalize_string_list(getattr(raw_spec, "tool_dependencies", None))
-        configured_mcps = _normalize_string_list(getattr(raw_spec, "mcp_dependencies", None))
-        configured_skills = _normalize_string_list(getattr(raw_spec, "skill_dependencies", None))
+        configured_tools = normalize_string_list(getattr(raw_spec, "tool_dependencies", None))
+        configured_mcps = normalize_string_list(getattr(raw_spec, "mcp_dependencies", None))
+        configured_skills = normalize_string_list(getattr(raw_spec, "skill_dependencies", None))
 
         if not is_valid_skill_slug(slug):
             raise ValueError(f"内置 skill slug 非法: {slug}")
@@ -839,9 +839,9 @@ def list_builtin_skill_specs() -> list[dict[str, Any]]:
                 "name": slug,
                 "description": configured_description or parsed_desc,
                 "version": version,
-                "tool_dependencies": configured_tools or _normalize_string_list(meta.get("tool_dependencies")),
-                "mcp_dependencies": configured_mcps or _normalize_string_list(meta.get("mcp_dependencies")),
-                "skill_dependencies": configured_skills or _normalize_string_list(meta.get("skill_dependencies")),
+                "tool_dependencies": configured_tools or normalize_string_list(meta.get("tool_dependencies")),
+                "mcp_dependencies": configured_mcps or normalize_string_list(meta.get("mcp_dependencies")),
+                "skill_dependencies": configured_skills or normalize_string_list(meta.get("skill_dependencies")),
                 "content_hash": _compute_dir_hash(source_dir),
                 "source_dir": source_dir,
             }
@@ -914,9 +914,9 @@ async def update_builtin_skill(
         )
 
     if (
-        _normalize_string_list(item.tool_dependencies or []) != spec["tool_dependencies"]
-        or _normalize_string_list(item.mcp_dependencies or []) != spec["mcp_dependencies"]
-        or _normalize_string_list(item.skill_dependencies or []) != spec["skill_dependencies"]
+        normalize_string_list(item.tool_dependencies or []) != spec["tool_dependencies"]
+        or normalize_string_list(item.mcp_dependencies or []) != spec["mcp_dependencies"]
+        or normalize_string_list(item.skill_dependencies or []) != spec["skill_dependencies"]
     ):
         await repo.update_dependencies(
             item,

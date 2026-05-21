@@ -15,20 +15,20 @@ from yuxi.storage.postgres.models_knowledge import (
 
 
 class KnowledgeGraphRepository:
-    async def count_by_db_id(self, db_id: str) -> tuple[int, int]:
+    async def count_by_kb_id(self, kb_id: str) -> tuple[int, int]:
         async with pg_manager.get_async_session_context() as session:
             entity_count = await session.scalar(
-                select(func.count()).select_from(KnowledgeGraphEntity).where(KnowledgeGraphEntity.db_id == db_id)
+                select(func.count()).select_from(KnowledgeGraphEntity).where(KnowledgeGraphEntity.kb_id == kb_id)
             )
             triple_count = await session.scalar(
-                select(func.count()).select_from(KnowledgeGraphTriple).where(KnowledgeGraphTriple.db_id == db_id)
+                select(func.count()).select_from(KnowledgeGraphTriple).where(KnowledgeGraphTriple.kb_id == kb_id)
             )
             return int(entity_count or 0), int(triple_count or 0)
 
     async def upsert_chunk_graph(
         self,
         *,
-        db_id: str,
+        kb_id: str,
         file_id: str,
         chunk_id: str,
         entities: list[dict[str, Any]],
@@ -54,7 +54,7 @@ class KnowledgeGraphRepository:
                         [
                             {
                                 "entity_id": entity["entity_id"],
-                                "db_id": db_id,
+                                "kb_id": kb_id,
                                 "file_id": file_id,
                                 "chunk_id": chunk_id,
                             }
@@ -86,7 +86,7 @@ class KnowledgeGraphRepository:
                         [
                             {
                                 "triple_id": triple["triple_id"],
-                                "db_id": db_id,
+                                "kb_id": kb_id,
                                 "file_id": file_id,
                                 "chunk_id": chunk_id,
                                 "text": triple.get("text"),
@@ -183,9 +183,9 @@ class KnowledgeGraphRepository:
 
             return orphan_entity_ids, orphan_triple_ids
 
-    async def delete_by_db_id(self, db_id: str) -> None:
+    async def delete_by_kb_id(self, kb_id: str) -> None:
         async with pg_manager.get_async_session_context() as session:
-            await session.execute(delete(KnowledgeGraphTripleMention).where(KnowledgeGraphTripleMention.db_id == db_id))
-            await session.execute(delete(KnowledgeGraphEntityMention).where(KnowledgeGraphEntityMention.db_id == db_id))
-            await session.execute(delete(KnowledgeGraphTriple).where(KnowledgeGraphTriple.db_id == db_id))
-            await session.execute(delete(KnowledgeGraphEntity).where(KnowledgeGraphEntity.db_id == db_id))
+            await session.execute(delete(KnowledgeGraphTripleMention).where(KnowledgeGraphTripleMention.kb_id == kb_id))
+            await session.execute(delete(KnowledgeGraphEntityMention).where(KnowledgeGraphEntityMention.kb_id == kb_id))
+            await session.execute(delete(KnowledgeGraphTriple).where(KnowledgeGraphTriple.kb_id == kb_id))
+            await session.execute(delete(KnowledgeGraphEntity).where(KnowledgeGraphEntity.kb_id == kb_id))

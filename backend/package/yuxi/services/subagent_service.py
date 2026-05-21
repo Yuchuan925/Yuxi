@@ -31,7 +31,8 @@ async def _get_session(db: AsyncSession | None = None):
 # 内置 SubAgent 配置
 _DEFAULT_SUBAGENTS = [
     {
-        "name": "research-agent",
+        "slug": "research-agent",
+        "name": "研究员",
         "description": "利用搜索工具，用于研究更深入的问题。将调研结果写入到主题研究文件中。",
         "system_prompt": (
             "你是一位专注的研究员。你的工作是根据用户的问题进行研究。"
@@ -43,7 +44,8 @@ _DEFAULT_SUBAGENTS = [
         "is_builtin": True,
     },
     {
-        "name": "critique-agent",
+        "slug": "critique-agent",
+        "name": "评论员",
         "description": "用于评论最终报告。给这个代理一些关于你希望它如何评论报告的信息。",
         "system_prompt": (
             "你是一位专注的编辑。你的任务是评论一份报告。\n\n"
@@ -66,7 +68,7 @@ _DEFAULT_SUBAGENTS = [
     },
 ]
 
-_SYNCED_SUBAGENT_FIELDS = ("description", "system_prompt", "tools", "model", "is_builtin")
+_SYNCED_SUBAGENT_FIELDS = ("name", "description", "system_prompt", "tools", "model", "is_builtin")
 
 
 async def init_builtin_subagents() -> None:
@@ -74,9 +76,10 @@ async def init_builtin_subagents() -> None:
     async with pg_manager.get_async_session_context() as session:
         repo = SubAgentRepository(session)
         for data in _DEFAULT_SUBAGENTS:
-            item = await repo.get_by_name(data["name"])
+            item = await repo.get_by_slug(data["slug"])
             if item is None:
                 await repo.create(
+                    slug=data["slug"],
                     name=data["name"],
                     description=data["description"],
                     system_prompt=data["system_prompt"],
@@ -114,15 +117,15 @@ async def get_subagent_specs(db: AsyncSession | None = None) -> list[dict[str, A
     return deepcopy(_subagent_specs_cache)
 
 
-async def get_enabled_subagent_names(db: AsyncSession | None = None) -> list[str]:
+async def get_enabled_subagent_slugs(db: AsyncSession | None = None) -> list[str]:
     if _subagent_specs_cache is not None:
-        return [spec["name"] for spec in _subagent_specs_cache if isinstance(spec.get("name"), str)]
+        return [spec["slug"] for spec in _subagent_specs_cache if isinstance(spec.get("slug"), str)]
 
     async with _get_session(db) as session:
         result = await session.execute(
-            select(SubAgent.name).where(SubAgent.enabled.is_(True)).order_by(SubAgent.updated_at.desc())
+            select(SubAgent.slug).where(SubAgent.enabled.is_(True)).order_by(SubAgent.updated_at.desc())
         )
-        return [name for name in result.scalars().all() if isinstance(name, str)]
+        return [slug for slug in result.scalars().all() if isinstance(slug, str)]
 
 
 def clear_specs_cache() -> None:
@@ -131,17 +134,17 @@ def clear_specs_cache() -> None:
     _subagent_specs_cache = None
 
 
-async def get_subagents_from_names(selected_names: Any, *, db: AsyncSession | None = None) -> list[dict[str, Any]]:
-    """根据名称获取 subagent specs（含工具解析）。"""
+async def get_subagents_from_slugs(selected_slugs: Any, *, db: AsyncSession | None = None) -> list[dict[str, Any]]:
+    """根据 slug 获取 subagent specs（含工具解析）。"""
     specs = await get_subagent_specs(db)
 
-    if not selected_names:
+    if not selected_slugs:
         return []
 
-    selected_set = set(selected_names)
-    available = {spec["name"] for spec in specs if isinstance(spec.get("name"), str)}
-    matched = [spec for spec in specs if spec.get("name") in selected_set]
-    missing = [n for n in selected_names if n not in available]
+    selected_set = set(selected_slugs)
+    available = {spec["slug"] for spec in specs if isinstance(spec.get("slug"), str)}
+    matched = [spec for spec in specs if spec.get("slug") in selected_set]
+    missing = [slug for slug in selected_slugs if slug not in available]
     if missing:
         logger.warning(f"Configured subagents not found, skip: {missing}")
 
@@ -169,11 +172,11 @@ async def get_all_subagents(db: AsyncSession | None = None) -> list[dict[str, An
     return [item.to_dict() for item in items]
 
 
-async def get_subagent(name: str, db: AsyncSession | None = None) -> dict[str, Any] | None:
+async def get_subagent(slug: str, db: AsyncSession | None = None) -> dict[str, Any] | None:
     """获取单个 SubAgent"""
     async with _get_session(db) as session:
         repo = SubAgentRepository(session)
-        item = await repo.get_by_name(name)
+        item = await repo.get_by_slug(slug)
     return item.to_dict() if item else None
 
 
@@ -186,6 +189,7 @@ async def create_subagent(
     async with _get_session(db) as session:
         repo = SubAgentRepository(session)
         item = await repo.create(
+            slug=data["slug"],
             name=data["name"],
             description=data["description"],
             system_prompt=data["system_prompt"],
@@ -199,7 +203,7 @@ async def create_subagent(
 
 
 async def update_subagent(
-    name: str,
+    slug: str,
     data: dict[str, Any],
     updated_by: str | None,
     db: AsyncSession | None = None,
@@ -207,13 +211,14 @@ async def update_subagent(
     """更新 SubAgent"""
     async with _get_session(db) as session:
         repo = SubAgentRepository(session)
-        item = await repo.get_by_name(name)
+        item = await repo.get_by_slug(slug)
         if not item:
             return None
         if item.is_builtin:
             raise ValueError("内置 SubAgent 不可编辑")
         item = await repo.update(
             item,
+            name=data.get("name"),
             description=data.get("description"),
             system_prompt=data.get("system_prompt"),
             tools=data.get("tools"),
@@ -225,11 +230,11 @@ async def update_subagent(
     return item.to_dict()
 
 
-async def delete_subagent(name: str, db: AsyncSession | None = None) -> bool:
+async def delete_subagent(slug: str, db: AsyncSession | None = None) -> bool:
     """删除 SubAgent"""
     async with _get_session(db) as session:
         repo = SubAgentRepository(session)
-        item = await repo.get_by_name(name)
+        item = await repo.get_by_slug(slug)
         if not item:
             return False
         if item.is_builtin:
@@ -240,7 +245,7 @@ async def delete_subagent(name: str, db: AsyncSession | None = None) -> bool:
 
 
 async def set_subagent_enabled(
-    name: str,
+    slug: str,
     enabled: bool,
     *,
     updated_by: str | None,
@@ -249,7 +254,7 @@ async def set_subagent_enabled(
     """更新 SubAgent 启用状态。"""
     async with _get_session(db) as session:
         repo = SubAgentRepository(session)
-        item = await repo.get_by_name(name)
+        item = await repo.get_by_slug(slug)
         if not item:
             return None
         item.enabled = enabled

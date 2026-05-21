@@ -9,7 +9,7 @@ from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver, aiosqlite
 from langgraph.graph.state import CompiledStateGraph
 
 from yuxi import config as sys_config
-from yuxi.agents.context import BaseContext
+from yuxi.agents.context import BaseContext, resolve_agent_resource_options
 from yuxi.storage.postgres.manager import pg_manager
 from yuxi.utils import logger
 
@@ -41,12 +41,28 @@ class BaseAgent:
         """Get the agent's class name."""
         return self.__class__.__name__
 
-    async def get_info(self, include_configurable_items: bool = True, user_role: str | None = None):
+    async def get_info(
+        self,
+        include_configurable_items: bool = True,
+        user_role: str | None = None,
+        db=None,
+        user=None,
+    ):
         # metadata 固定在代码中，由各 Agent 的类属性提供
         metadata = self.load_metadata()
         configurable_items = {}
         if include_configurable_items:
             configurable_items = self.context_schema.get_configurable_items(user_role=user_role)
+            if db is not None and user is not None:
+                resource_fields = {
+                    item["kind"]
+                    for item in configurable_items.values()
+                    if item.get("kind") in {"tools", "knowledges", "mcps", "skills", "subagents"}
+                }
+                resource_options = await resolve_agent_resource_options(resource_fields, db=db, user=user)
+                for item in configurable_items.values():
+                    if item.get("kind") in resource_options:
+                        item["options"] = resource_options[item["kind"]]
 
         # Merge metadata with class attributes, metadata takes precedence
         return {

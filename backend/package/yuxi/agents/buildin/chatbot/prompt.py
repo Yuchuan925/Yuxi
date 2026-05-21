@@ -1,3 +1,4 @@
+from yuxi.utils.datetime_utils import shanghai_now
 from yuxi.utils.paths import (
     VIRTUAL_PATH_OUTPUTS,
     VIRTUAL_PATH_PREFIX,
@@ -23,7 +24,8 @@ PROMPT = f"""
 - {VIRTUAL_PATH_WORKSPACE}：用于存放用户文件（用户私人目录，除非用户要求，否则不得写入）
 - 其他路径：非必要不写入其他路径
 
-非必要不写入其他路径
+<| 风格规范 |>
+保持专业严谨，减少使用 Emoji
 """
 
 # 效果不好，暂时不启用
@@ -48,5 +50,6 @@ TODO_MID_PROMPT = """
 
 
 def build_prompt_with_context(context):
-    system_prompt = f"{PROMPT.strip()}\n\n{context.system_prompt or ''}"
+    current_date = f"当前日期：{shanghai_now().strftime('%Y-%m-%d')}"
+    system_prompt = f"{current_date}\n\n{PROMPT.strip()}\n\n{context.system_prompt or ''}"
     return system_prompt.strip()

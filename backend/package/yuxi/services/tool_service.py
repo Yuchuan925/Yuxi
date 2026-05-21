@@ -1,3 +1,5 @@
+from typing import Any
+
 from yuxi.utils import logger
 
 # 工具元数据缓存
@@ -8,7 +10,7 @@ def _extract_tool_info(tool_obj) -> dict:
     """从 tool_obj 提取基础信息"""
     metadata = getattr(tool_obj, "metadata", {}) or {}
     info = {
-        "id": tool_obj.name,
+        "slug": tool_obj.name,
         "name": metadata.get("name", tool_obj.name),  # 显示名称优先从 metadata 获取
         "description": tool_obj.description,
         "metadata": metadata,
@@ -77,3 +79,55 @@ def get_tool_metadata(category: str = None) -> list[dict]:
     if category:
         return [t for t in _metadata_cache if t.get("category") == category]
     return _metadata_cache
+
+
+def get_tool_instances_by_category(category: str) -> list[Any]:
+    from yuxi.agents.toolkits.registry import get_all_extra_metadata, get_all_tool_instances
+
+    extra_meta = get_all_extra_metadata()
+    tools = []
+    for tool in get_all_tool_instances():
+        tool_meta = extra_meta.get(tool.name)
+        tool_category = tool_meta.category if tool_meta else "buildin"
+        if tool_category == category:
+            tools.append(tool)
+    return tools
+
+
+async def resolve_configured_runtime_tools(context) -> list[Any]:
+    from yuxi.services.mcp_service import get_enabled_mcp_tools
+
+    selected_tools = []
+    selected_tool_names: set[str] = set()
+    buildin_tools = {tool.name: tool for tool in get_tool_instances_by_category("buildin")}
+
+    for tool_name in getattr(context, "tools", None) or []:
+        if not isinstance(tool_name, str) or tool_name in selected_tool_names:
+            continue
+        tool = buildin_tools.get(tool_name)
+        if tool is None:
+            logger.warning(f"Configured buildin tool not found, skip: {tool_name}")
+            continue
+        selected_tools.append(tool)
+        selected_tool_names.add(tool_name)
+
+    selected_mcp_servers: set[str] = set()
+    for server_name in getattr(context, "mcps", None) or []:
+        if not isinstance(server_name, str) or server_name in selected_mcp_servers:
+            continue
+        selected_mcp_servers.add(server_name)
+        try:
+            mcp_tools = await get_enabled_mcp_tools(server_name)
+        except Exception as e:
+            logger.warning(f"Failed to load configured MCP tools '{server_name}': {e}")
+            continue
+        if not mcp_tools:
+            logger.warning(f"Configured MCP unavailable, skip: {server_name}")
+            continue
+        for tool in mcp_tools:
+            if tool.name in selected_tool_names:
+                continue
+            selected_tools.append(tool)
+            selected_tool_names.add(tool.name)
+
+    return selected_tools

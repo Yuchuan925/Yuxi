@@ -8,7 +8,7 @@ from deepagents.backends.composite import (
 )
 from deepagents.backends.protocol import FileInfo
 
-from yuxi.agents.middlewares.skills_middleware import normalize_selected_skills
+from yuxi.services.skill_service import normalize_string_list
 
 from .sandbox import ProvisionerSandboxBackend
 from .skills_backend import SelectedSkillsReadonlyBackend
@@ -67,13 +67,10 @@ class CustomCompositeBackend(CompositeBackend):
         return await self.default.aglob_info(pattern, path)
 
 
-def _get_visible_skills_from_runtime(runtime) -> list[str]:
-    """获取运行时可见的 skills 列表"""
+def _get_readable_skills_from_runtime(runtime) -> list[str]:
     context = getattr(runtime, "context", None)
-    selected = getattr(context, "_visible_skills", None)
-    if not isinstance(selected, list):
-        selected = getattr(context, "skills", None) or []
-    return normalize_selected_skills(selected)
+    selected = getattr(context, "_readable_skills", [])
+    return normalize_string_list(selected if isinstance(selected, list) else [])
 
 
 def _extract_thread_id(runtime) -> str:
@@ -111,12 +108,12 @@ def _extract_uid(runtime) -> str:
 
 
 def create_agent_composite_backend(runtime) -> CompositeBackend:
-    visible_skills = _get_visible_skills_from_runtime(runtime)
+    readable_skills = _get_readable_skills_from_runtime(runtime)
     thread_id = _extract_thread_id(runtime)
     uid = _extract_uid(runtime)
     return CustomCompositeBackend(
-        default=ProvisionerSandboxBackend(thread_id=thread_id, uid=uid, visible_skills=visible_skills),
+        default=ProvisionerSandboxBackend(thread_id=thread_id, uid=uid, readable_skills=readable_skills),
         routes={
-            "/skills/": SelectedSkillsReadonlyBackend(selected_slugs=visible_skills),
+            "/skills/": SelectedSkillsReadonlyBackend(selected_slugs=readable_skills),
         },
     )
