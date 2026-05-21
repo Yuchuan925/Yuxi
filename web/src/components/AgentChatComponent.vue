@@ -21,7 +21,7 @@
         </div>
       </div>
 
-      <div class="chat-content-container">
+      <div class="chat-content-container" :class="{ 'has-agent-panel': isAgentPanelOpen }">
         <!-- Main Chat Area -->
         <div class="chat-main" ref="chatMainRef">
           <div class="chat-box">
@@ -48,6 +48,15 @@
                     "
                   />
                 </template>
+                <AgentArtifactsCard
+                  v-if="shouldShowArtifacts(row.conv)"
+                  :artifacts="currentArtifacts"
+                  :thread-id="currentChatId"
+                  :agent-id="currentThread?.agent_id || currentAgentId"
+                  :agent-config-id="selectedAgentConfigId"
+                  @saved="handleArtifactSaved"
+                  @open-preview="openPanelPreview"
+                />
                 <!-- 显示对话最后一个消息使用的模型 -->
                 <RefsComponent
                   v-if="shouldShowRefs(row.conv)"
@@ -73,6 +82,7 @@
                 <span class="generating-text">正在生成回复...</span>
               </div>
             </div>
+
           </div>
           <div class="bottom" :class="{ 'start-screen': !conversations.length }">
             <!-- 人工审批弹窗 - 放在输入框上方 -->
@@ -139,14 +149,6 @@
                 </a-dropdown>
               </div>
 
-              <AgentArtifactsCard
-                :artifacts="currentArtifacts"
-                :thread-id="currentChatId"
-                :agent-id="currentThread?.agent_id || currentAgentId"
-                :agent-config-id="selectedAgentConfigId"
-                @saved="handleArtifactSaved"
-              />
-
               <AgentInputArea
                 v-model="userInput"
                 :is-loading="isProcessing"
@@ -204,14 +206,21 @@
           <AgentPanel
             v-if="isAgentPanelOpen"
             :agent-state="currentAgentState"
-            :thread-files="currentThreadFiles"
             :thread-id="currentChatId"
             :agent-id="currentThread?.agent_id || currentAgentId"
             :agent-config-id="selectedAgentConfigId"
             :panel-ratio="panelRatio"
+            :preview-tabs="agentPanelPreviewTabs"
+            :active-preview-path="agentPanelActivePreviewPath"
+            :view-mode="agentPanelViewMode"
             @refresh="handleAgentStateRefresh"
             @resize="handlePanelResize"
             @resizing="handleResizingChange"
+            @open-preview="openPanelPreview"
+            @activate-preview="activatePanelPreview"
+            @close-preview-tab="closePanelPreviewTab"
+            @close-preview-path="closePanelPreviewPath"
+            @view-mode-change="setAgentPanelViewMode"
           />
         </div>
       </div>
@@ -256,7 +265,6 @@ import { useAgentRunStream } from '@/composables/useAgentRunStream'
 import { useAgentStreamHandler } from '@/composables/useAgentStreamHandler'
 import { useStreamSmoother } from '@/composables/useStreamSmoother'
 import { useAgentMentionConfig } from '@/composables/useAgentMentionConfig'
-import { shouldAutoOpenAgentPanel } from '@/utils/agentPanelAutoOpen'
 import AgentArtifactsCard from '@/components/AgentArtifactsCard.vue'
 import AgentPanel from '@/components/AgentPanel.vue'
 
@@ -355,13 +363,127 @@ const localUIState = reactive({
 // Agent Panel State
 const isAgentPanelOpen = ref(false)
 const isResizing = ref(false)
-const panelRatio = ref(0.3) // 面板宽度比例 (0-1)
+const defaultPanelRatio = 0.3
+const previewPanelRatio = 0.65
+const minPanelRatio = 0.25
+const maxPanelRatio = 0.75
+const minChatMainWidth = 350
+const panelRatio = ref(defaultPanelRatio) // 面板宽度比例 (0-1)
+const agentPanelPreviewTabs = ref([])
+const agentPanelActivePreviewPath = ref('')
+const agentPanelViewMode = ref('tree')
 const panelWrapperRef = ref(null) // 直接操作 DOM
-const minPanelRatio = 0.2 // 最小比例 20%
-const maxPanelRatio = 0.8 // 最大比例 80%
 let resizeStartX = 0
 let resizeStartWidth = 0
 let panelContainerWidth = 0
+
+const getPanelContainerWidth = () => {
+  const container = document.querySelector('.chat-content-container')
+  return container ? container.clientWidth : window.innerWidth
+}
+
+const getMaxPanelRatio = (containerWidth = getPanelContainerWidth()) => {
+  if (!containerWidth) return maxPanelRatio
+  return Math.max(minPanelRatio, Math.min(maxPanelRatio, (containerWidth - minChatMainWidth) / containerWidth))
+}
+
+const clampPanelRatio = (ratio, containerWidth = getPanelContainerWidth()) => {
+  return Math.max(minPanelRatio, Math.min(ratio, getMaxPanelRatio(containerWidth)))
+}
+
+const getPanelFileName = (file) => {
+  if (file?.name) return file.name
+  if (file?.path) return String(file.path).split('/').pop() || String(file.path)
+  return '未知文件'
+}
+
+const normalizePanelPath = (path) => String(path || '').replace(/\/+$/, '')
+
+const isSameOrChildPanelPath = (path, targetPath) => {
+  const normalizedPath = normalizePanelPath(path)
+  const normalizedTargetPath = normalizePanelPath(targetPath)
+  if (!normalizedPath || !normalizedTargetPath) return false
+  return (
+    normalizedPath === normalizedTargetPath || normalizedPath.startsWith(`${normalizedTargetPath}/`)
+  )
+}
+
+const resetAgentPanelState = () => {
+  isAgentPanelOpen.value = false
+  panelRatio.value = defaultPanelRatio
+  agentPanelPreviewTabs.value = []
+  agentPanelActivePreviewPath.value = ''
+  agentPanelViewMode.value = 'tree'
+}
+
+const setAgentPanelViewMode = (mode) => {
+  agentPanelViewMode.value = mode === 'preview' && agentPanelActivePreviewPath.value ? 'preview' : 'tree'
+
+  if (agentPanelActivePreviewPath.value) {
+    panelRatio.value = clampPanelRatio(previewPanelRatio)
+  }
+}
+
+const activatePanelPreview = (path) => {
+  if (!path) return
+  agentPanelActivePreviewPath.value = path
+  agentPanelViewMode.value = 'preview'
+  panelRatio.value = clampPanelRatio(previewPanelRatio)
+}
+
+const openPanelPreview = (file, keepTreeOpen = false) => {
+  if (!file?.path) return
+
+  const tab = {
+    ...file,
+    path: String(file.path),
+    name: getPanelFileName(file)
+  }
+  const existingIndex = agentPanelPreviewTabs.value.findIndex((item) => item.path === tab.path)
+
+  if (existingIndex >= 0) {
+    agentPanelPreviewTabs.value = agentPanelPreviewTabs.value.map((item, index) =>
+      index === existingIndex ? { ...item, ...tab } : item
+    )
+  } else {
+    agentPanelPreviewTabs.value = [...agentPanelPreviewTabs.value, tab]
+  }
+
+  isAgentPanelOpen.value = true
+  panelRatio.value = clampPanelRatio(previewPanelRatio)
+  agentPanelActivePreviewPath.value = tab.path
+  agentPanelViewMode.value = keepTreeOpen ? 'tree' : 'preview'
+}
+
+const closePanelPreviewTab = (path) => {
+  if (!path) return
+
+  const closingIndex = agentPanelPreviewTabs.value.findIndex((item) => item.path === path)
+  const nextTabs = agentPanelPreviewTabs.value.filter((item) => item.path !== path)
+  agentPanelPreviewTabs.value = nextTabs
+
+  if (agentPanelActivePreviewPath.value !== path) return
+
+  const nextActiveTab = nextTabs[Math.min(closingIndex, nextTabs.length - 1)]
+  agentPanelActivePreviewPath.value = nextActiveTab?.path || ''
+  agentPanelViewMode.value = nextActiveTab ? 'preview' : 'tree'
+}
+
+const closePanelPreviewPath = (targetPath) => {
+  if (!targetPath) return
+
+  const nextTabs = agentPanelPreviewTabs.value.filter(
+    (item) => !isSameOrChildPanelPath(item.path, targetPath)
+  )
+  const shouldCloseActive = isSameOrChildPanelPath(agentPanelActivePreviewPath.value, targetPath)
+  agentPanelPreviewTabs.value = nextTabs
+
+  if (!shouldCloseActive) return
+
+  const nextActiveTab = nextTabs[0]
+  agentPanelActivePreviewPath.value = nextActiveTab?.path || ''
+  agentPanelViewMode.value = nextActiveTab ? 'preview' : 'tree'
+}
 
 // ==================== COMPUTED PROPERTIES ====================
 const currentAgentId = computed(() => {
@@ -430,17 +552,6 @@ const currentTodos = computed(() => {
   return Array.isArray(todos) ? todos : []
 })
 
-const hasAgentStateContent = computed(() => {
-  return shouldAutoOpenAgentPanel(currentThreadFiles.value)
-})
-
-// 监听 hasAgentStateContent 从 false → true 时，自动展开面板
-watch(hasAgentStateContent, (newVal, oldVal) => {
-  if (newVal && !oldVal) {
-    // 从无状态变为有状态时，自动展开面板
-    isAgentPanelOpen.value = true
-  }
-})
 const { mentionConfig } = useAgentMentionConfig({
   currentAgentState,
   currentThreadFiles,
@@ -470,6 +581,14 @@ const shouldShowRefs = computed(() => {
         isProcessing.value
       )
     )
+  }
+})
+
+const shouldShowArtifacts = computed(() => {
+  return (conv) => {
+    if (!currentArtifacts.value.length || conv.status === 'streaming') return false
+    const latestConv = conversations.value[conversations.value.length - 1]
+    return latestConv === conv
   }
 })
 
@@ -1207,7 +1326,7 @@ const selectChat = async (chatId) => {
   }
 
   if (previousThreadId !== chatId) {
-    isAgentPanelOpen.value = false
+    resetAgentPanelState()
   }
 
   try {
@@ -1260,7 +1379,7 @@ const selectThreadFromRoute = async (threadId) => {
       stopThreadStream(previousThreadId)
       stopRunStreamSubscription(previousThreadId)
     }
-    isAgentPanelOpen.value = false
+    resetAgentPanelState()
     setCurrentThreadId(null)
     return true
   }
@@ -1574,6 +1693,10 @@ const toggleAgentPanel = async () => {
   isAgentPanelOpen.value = nextOpen
 
   if (nextOpen) {
+    agentPanelViewMode.value = agentPanelActivePreviewPath.value ? 'preview' : 'tree'
+    panelRatio.value = agentPanelActivePreviewPath.value
+      ? clampPanelRatio(previewPanelRatio)
+      : clampPanelRatio(defaultPanelRatio)
     await handleAgentStateRefresh()
   }
 }
@@ -1584,16 +1707,20 @@ const handlePanelResize = (clientX) => {
   if (!panelWrapperRef.value) return
 
   if (!panelContainerWidth) {
-    const container = document.querySelector('.chat-content-container')
-    panelContainerWidth = container ? container.clientWidth : window.innerWidth
+    panelContainerWidth = getPanelContainerWidth()
   }
 
   const deltaX = clientX - resizeStartX
-  const newWidth = resizeStartWidth - deltaX
-  const newRatio = newWidth / panelContainerWidth
+  const rawWidth = resizeStartWidth - deltaX
+  const minWidth = minPanelRatio * panelContainerWidth
+  const maxWidth = getMaxPanelRatio(panelContainerWidth) * panelContainerWidth
+  const nextWidth = Math.max(minWidth, Math.min(rawWidth, maxWidth))
 
-  if (newRatio >= minPanelRatio && newRatio <= maxPanelRatio) {
-    panelWrapperRef.value.style.setProperty('flex', `0 0 ${newWidth}px`, 'important')
+  panelWrapperRef.value.style.setProperty('flex', `0 0 ${nextWidth}px`, 'important')
+
+  if (nextWidth !== rawWidth) {
+    resizeStartX = clientX
+    resizeStartWidth = nextWidth
   }
 }
 
@@ -1605,15 +1732,14 @@ const handleResizingChange = (isResizingState, clientX = 0) => {
     resizeStartX = clientX
     resizeStartWidth = panelWrapperRef.value.offsetWidth
     if (!panelContainerWidth) {
-      const container = document.querySelector('.chat-content-container')
-      panelContainerWidth = container ? container.clientWidth : window.innerWidth
+      panelContainerWidth = getPanelContainerWidth()
     }
     return
   }
 
   if (!isResizingState && panelWrapperRef.value && panelContainerWidth) {
     const finalWidth = panelWrapperRef.value.offsetWidth
-    panelRatio.value = finalWidth / panelContainerWidth
+    panelRatio.value = clampPanelRatio(finalWidth / panelContainerWidth, panelContainerWidth)
     panelWrapperRef.value.style.removeProperty('flex')
     resizeStartX = 0
     resizeStartWidth = 0
@@ -1776,6 +1902,7 @@ const loadChatsList = async () => {
   if (props.singleMode && !agentId) {
     console.warn('No agent selected, cannot load chats list')
     threads.value = []
+    resetAgentPanelState()
     setCurrentThreadId(null)
     threadFilesMap.value = {}
     threadAttachmentsMap.value = {}
@@ -1834,6 +1961,7 @@ watch(
       threadMessages.value = {}
       threadFilesMap.value = {}
       threadAttachmentsMap.value = {}
+      resetAgentPanelState()
       // 清理所有线程状态
       resetOnGoingConv()
 
@@ -2013,6 +2141,7 @@ watch(currentChatId, (threadId, oldThreadId) => {
   opacity: 1;
   transform: translateX(0);
   margin-left: 0;
+  min-width: 320px;
 }
 
 .agent-panel-wrapper.no-transition {
@@ -2350,7 +2479,26 @@ watch(currentChatId, (threadId, oldThreadId) => {
   }
 }
 
+@media (max-width: 1024px) {
+  .chat-content-container.has-agent-panel .chat-main {
+    min-width: 350px;
+  }
+
+  .agent-panel-wrapper.is-visible {
+    max-width: calc(100% - 350px);
+  }
+}
+
 @media (max-width: 768px) {
+  .chat-content-container.has-agent-panel .chat-main {
+    min-width: 0;
+  }
+
+  .agent-panel-wrapper.is-visible {
+    min-width: 280px;
+    max-width: 80%;
+  }
+
   .agent-segment-wrapper {
     margin-bottom: 8px;
 

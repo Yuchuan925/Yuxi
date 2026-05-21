@@ -1,8 +1,12 @@
 <template>
-  <div class="agent-file-preview" :class="[containerClass, { 'is-full-height': fullHeight }]">
+  <div
+    class="agent-file-preview"
+    :class="[containerClass, { 'is-full-height': fullHeight, 'is-borderless': borderless }]"
+  >
     <div v-if="showHeader" class="preview-header">
       <div class="file-title">
         <component
+          v-if="showFileIcon"
           :is="getFileIcon(filePath)"
           :style="{ color: getFileIconColor(filePath), fontSize: '18px' }"
         />
@@ -86,7 +90,7 @@
       </div>
     </div>
 
-    <div class="file-content" :class="contentClass">
+    <div class="file-content" :class="{contentClass, 'is-iframe-preview': file?.previewType === 'pdf' || (isHtmlFile && htmlPreviewMode === 'render') }">
       <div v-if="canEdit && editMode === 'edit'" class="edit-floating-actions">
         <span v-if="draftChanged" class="edit-status-badge">修改未保存</span>
         <button
@@ -307,6 +311,14 @@ const props = defineProps({
     type: Boolean,
     default: false
   },
+  showFileIcon: {
+    type: Boolean,
+    default: true
+  },
+  borderless: {
+    type: Boolean,
+    default: false
+  },
   editable: {
     type: Boolean,
     default: false
@@ -455,12 +467,18 @@ onUnmounted(() => {
   min-width: 0;
   border-radius: 8px;
   overflow: hidden;
-}
-
-.agent-file-preview.is-full-height {
+  max-height: 90vh;
   display: flex;
   flex-direction: column;
   min-height: 0;
+}
+
+.agent-file-preview.is-full-height {
+  max-height: 100vh;
+}
+
+.agent-file-preview.is-borderless {
+  border-radius: 0;
 }
 
 .preview-header {
@@ -554,9 +572,12 @@ onUnmounted(() => {
 
 .file-content {
   min-height: 300px;
-  max-height: 80vh;
   overflow-y: auto;
   border-radius: 0px;
+
+  &.is-iframe-preview {
+    overflow: hidden;
+  }
 
   &::-webkit-scrollbar {
     width: 8px;
@@ -691,17 +712,17 @@ onUnmounted(() => {
 
 .file-content-pre.code-highlight {
   border-radius: 8px;
-  background: var(--gray-25);
+  background: var(--gray-0);
   white-space: pre;
   overflow-x: auto;
 }
 
 .file-content-pre.code-highlight code {
-  padding: 14px 16px;
   display: block;
   white-space: pre;
   color: inherit;
   min-height: calc(80vh - 40px);
+  background: var(--gray-0);
 }
 
 .image-preview-wrapper {
@@ -713,6 +734,7 @@ onUnmounted(() => {
 .image-preview {
   display: block;
   max-width: 100%;
+  height: 100%;
   max-height: calc(80vh - 32px);
   object-fit: contain;
   border-radius: 6px;
@@ -720,6 +742,7 @@ onUnmounted(() => {
 
 .pdf-preview {
   width: 100%;
+  height: 100%;
   min-height: calc(80vh - 40px);
   border: none;
   border-radius: 6px;
@@ -729,6 +752,7 @@ onUnmounted(() => {
 .html-preview {
   width: 100%;
   min-height: calc(80vh - 40px);
+  height: 100vh;
   border: none;
   border-radius: 0px;
   background: #fff; // HTML 内容通常需要白色背景以保证可读性
@@ -743,6 +767,7 @@ onUnmounted(() => {
   color: var(--gray-600);
   font-size: 14px;
   line-height: 1.6;
+  height: 100%;
   white-space: pre-wrap;
 }
 
