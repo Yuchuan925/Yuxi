@@ -102,26 +102,26 @@ async def _create_test_database(test_client, admin_headers, share_config=None):
     return response.json()
 
 
-async def _accessible_db_ids(test_client, headers):
+async def _accessible_slugs(test_client, headers):
     response = await test_client.get("/api/knowledge/databases/accessible", headers=headers)
     assert response.status_code == 200, response.text
-    return {item["db_id"] for item in response.json().get("databases", [])}
+    return {item["slug"] for item in response.json().get("databases", [])}
 
 
 async def test_admin_can_manage_knowledge_databases(test_client, admin_headers, knowledge_database):
-    db_id = knowledge_database["db_id"]
+    slug = knowledge_database["slug"]
 
     list_response = await test_client.get("/api/knowledge/databases", headers=admin_headers)
     assert list_response.status_code == 200, list_response.text
     databases = list_response.json().get("databases", [])
-    assert any(entry["db_id"] == db_id for entry in databases)
+    assert any(entry["slug"] == slug for entry in databases)
 
-    get_response = await test_client.get(f"/api/knowledge/databases/{db_id}", headers=admin_headers)
+    get_response = await test_client.get(f"/api/knowledge/databases/{slug}", headers=admin_headers)
     assert get_response.status_code == 200, get_response.text
-    assert get_response.json()["db_id"] == db_id
+    assert get_response.json()["slug"] == slug
 
     update_response = await test_client.put(
-        f"/api/knowledge/databases/{db_id}",
+        f"/api/knowledge/databases/{slug}",
         json={"name": knowledge_database["name"], "description": "Updated by pytest"},
         headers=admin_headers,
     )
@@ -141,23 +141,23 @@ async def test_create_database_with_chunk_preset(test_client, admin_headers):
 
     create_response = await test_client.post("/api/knowledge/databases", json=payload, headers=admin_headers)
     assert create_response.status_code == 200, create_response.text
-    db_id = create_response.json()["db_id"]
+    slug = create_response.json()["slug"]
 
-    info_response = await test_client.get(f"/api/knowledge/databases/{db_id}", headers=admin_headers)
+    info_response = await test_client.get(f"/api/knowledge/databases/{slug}", headers=admin_headers)
     assert info_response.status_code == 200, info_response.text
     assert info_response.json()["additional_params"]["chunk_preset_id"] == "book"
 
-    delete_response = await test_client.delete(f"/api/knowledge/databases/{db_id}", headers=admin_headers)
+    delete_response = await test_client.delete(f"/api/knowledge/databases/{slug}", headers=admin_headers)
     assert delete_response.status_code == 200, delete_response.text
 
 
 async def test_update_database_additional_params_merge_keeps_chunk_preset(
     test_client, admin_headers, knowledge_database
 ):
-    db_id = knowledge_database["db_id"]
+    slug = knowledge_database["slug"]
 
     first_update = await test_client.put(
-        f"/api/knowledge/databases/{db_id}",
+        f"/api/knowledge/databases/{slug}",
         json={
             "name": knowledge_database["name"],
             "description": "update with chunk preset",
@@ -168,7 +168,7 @@ async def test_update_database_additional_params_merge_keeps_chunk_preset(
     assert first_update.status_code == 200, first_update.text
 
     second_update = await test_client.put(
-        f"/api/knowledge/databases/{db_id}",
+        f"/api/knowledge/databases/{slug}",
         json={
             "name": knowledge_database["name"],
             "description": "update without additional params",
@@ -177,13 +177,13 @@ async def test_update_database_additional_params_merge_keeps_chunk_preset(
     )
     assert second_update.status_code == 200, second_update.text
 
-    info_response = await test_client.get(f"/api/knowledge/databases/{db_id}", headers=admin_headers)
+    info_response = await test_client.get(f"/api/knowledge/databases/{slug}", headers=admin_headers)
     assert info_response.status_code == 200, info_response.text
     assert info_response.json()["additional_params"]["chunk_preset_id"] == "qa"
 
 
 async def test_knowledge_routes_enforce_permissions(test_client, standard_user, knowledge_database):
-    db_id = knowledge_database["db_id"]
+    slug = knowledge_database["slug"]
 
     forbidden_create = await test_client.post(
         "/api/knowledge/databases",
@@ -199,7 +199,7 @@ async def test_knowledge_routes_enforce_permissions(test_client, standard_user, 
     forbidden_list = await test_client.get("/api/knowledge/databases", headers=standard_user["headers"])
     _assert_forbidden_response(forbidden_list)
 
-    forbidden_get = await test_client.get(f"/api/knowledge/databases/{db_id}", headers=standard_user["headers"])
+    forbidden_get = await test_client.get(f"/api/knowledge/databases/{slug}", headers=standard_user["headers"])
     _assert_forbidden_response(forbidden_get)
 
 
@@ -221,10 +221,10 @@ async def test_admin_can_create_vector_db_with_reranker(test_client, admin_heade
     assert create_response.status_code == 200, create_response.text
 
     db_payload = create_response.json()
-    db_id = db_payload["db_id"]
+    slug = db_payload["slug"]
 
     # 获取查询参数配置
-    params_response = await test_client.get(f"/api/knowledge/databases/{db_id}/query-params", headers=admin_headers)
+    params_response = await test_client.get(f"/api/knowledge/databases/{slug}/query-params", headers=admin_headers)
     assert params_response.status_code == 200, params_response.text
 
     params_payload = params_response.json()
@@ -253,12 +253,12 @@ async def test_admin_can_create_vector_db_with_reranker(test_client, admin_heade
         "recall_top_k": 20,
     }
     update_response = await test_client.put(
-        f"/api/knowledge/databases/{db_id}/query-params", json=update_params, headers=admin_headers
+        f"/api/knowledge/databases/{slug}/query-params", json=update_params, headers=admin_headers
     )
     assert update_response.status_code == 200, update_response.text
 
     # 再次获取参数，验证保存成功
-    params_response2 = await test_client.get(f"/api/knowledge/databases/{db_id}/query-params", headers=admin_headers)
+    params_response2 = await test_client.get(f"/api/knowledge/databases/{slug}/query-params", headers=admin_headers)
     assert params_response2.status_code == 200, params_response2.text
 
     params_payload2 = params_response2.json()
@@ -290,11 +290,11 @@ async def test_create_dify_database_success(test_client, admin_headers):
     create_response = await test_client.post("/api/knowledge/databases", json=payload, headers=admin_headers)
     assert create_response.status_code == 200, create_response.text
     created_payload = create_response.json()
-    db_id = created_payload["db_id"]
+    slug = created_payload["slug"]
     assert created_payload["embedding_model_spec"] is None
     assert "chunk_preset_id" not in created_payload["metadata"]
 
-    info_response = await test_client.get(f"/api/knowledge/databases/{db_id}", headers=admin_headers)
+    info_response = await test_client.get(f"/api/knowledge/databases/{slug}", headers=admin_headers)
     assert info_response.status_code == 200, info_response.text
     additional_params = info_response.json()["additional_params"]
     assert additional_params["dify_api_url"] == "https://api.dify.ai/v1"
@@ -350,16 +350,16 @@ async def test_dify_query_params_and_documents_readonly(test_client, admin_heade
 
     create_response = await test_client.post("/api/knowledge/databases", json=payload, headers=admin_headers)
     assert create_response.status_code == 200, create_response.text
-    db_id = create_response.json()["db_id"]
+    slug = create_response.json()["slug"]
 
-    params_response = await test_client.get(f"/api/knowledge/databases/{db_id}/query-params", headers=admin_headers)
+    params_response = await test_client.get(f"/api/knowledge/databases/{slug}/query-params", headers=admin_headers)
     assert params_response.status_code == 200, params_response.text
     options = params_response.json().get("params", {}).get("options", [])
     option_keys = {item.get("key") for item in options}
     assert option_keys == {"search_mode", "final_top_k", "score_threshold_enabled", "similarity_threshold"}
 
     add_response = await test_client.post(
-        f"/api/knowledge/databases/{db_id}/documents",
+        f"/api/knowledge/databases/{slug}/documents",
         json={"items": ["/tmp/demo.txt"], "params": {"content_type": "file"}},
         headers=admin_headers,
     )
@@ -367,7 +367,7 @@ async def test_dify_query_params_and_documents_readonly(test_client, admin_heade
     assert "只支持检索" in add_response.json()["detail"]
 
     parse_response = await test_client.post(
-        f"/api/knowledge/databases/{db_id}/documents/parse",
+        f"/api/knowledge/databases/{slug}/documents/parse",
         json=["file_id_1"],
         headers=admin_headers,
     )
@@ -375,7 +375,7 @@ async def test_dify_query_params_and_documents_readonly(test_client, admin_heade
     assert "只支持检索" in parse_response.json()["detail"]
 
     index_response = await test_client.post(
-        f"/api/knowledge/databases/{db_id}/documents/index",
+        f"/api/knowledge/databases/{slug}/documents/index",
         json={"file_ids": ["file_id_1"], "params": {}},
         headers=admin_headers,
     )
@@ -398,18 +398,18 @@ async def test_get_databases_overview(test_client, admin_headers, knowledge_data
     assert "total" in payload
 
     # 验证知识库在列表中
-    db_ids = [db["db_id"] for db in payload["databases"]]
-    assert knowledge_database["db_id"] in db_ids
+    slugs = [db["slug"] for db in payload["databases"]]
+    assert knowledge_database["slug"] in slugs
 
 
 async def test_get_database_files(test_client, admin_headers, knowledge_database):
     """测试获取知识库文件列表"""
-    db_id = knowledge_database["db_id"]
-    response = await test_client.get(f"/api/mindmap/databases/{db_id}/files", headers=admin_headers)
+    slug = knowledge_database["slug"]
+    response = await test_client.get(f"/api/mindmap/databases/{slug}/files", headers=admin_headers)
     assert response.status_code == 200, response.text
     payload = response.json()
     assert payload["message"] == "success"
-    assert payload["db_id"] == db_id
+    assert payload["slug"] == slug
     assert "files" in payload
     assert "total" in payload
     assert payload["db_name"] == knowledge_database["name"]
@@ -417,16 +417,16 @@ async def test_get_database_files(test_client, admin_headers, knowledge_database
 
 async def test_get_database_files_not_found(test_client, admin_headers):
     """测试获取不存在的知识库文件列表"""
-    response = await test_client.get("/api/mindmap/databases/nonexistent_db_id/files", headers=admin_headers)
+    response = await test_client.get("/api/mindmap/databases/nonexistent_slug/files", headers=admin_headers)
     assert response.status_code == 404
 
 
 async def test_generate_mindmap_empty_files(test_client, admin_headers, knowledge_database):
     """测试空文件列表生成思维导图"""
-    db_id = knowledge_database["db_id"]
+    slug = knowledge_database["slug"]
     response = await test_client.post(
         "/api/mindmap/generate",
-        json={"db_id": db_id, "file_ids": [], "user_prompt": ""},
+        json={"slug": slug, "file_ids": [], "user_prompt": ""},
         headers=admin_headers,
     )
     # 空文件应该返回400错误
@@ -436,11 +436,11 @@ async def test_generate_mindmap_empty_files(test_client, admin_headers, knowledg
 
 async def test_get_database_mindmap_not_exists(test_client, admin_headers, knowledge_database):
     """测试获取不存在的思维导图"""
-    db_id = knowledge_database["db_id"]
-    response = await test_client.get(f"/api/mindmap/database/{db_id}", headers=admin_headers)
+    slug = knowledge_database["slug"]
+    response = await test_client.get(f"/api/mindmap/database/{slug}", headers=admin_headers)
     assert response.status_code == 200, response.text
     payload = response.json()
-    assert payload["db_id"] == db_id
+    assert payload["slug"] == slug
     assert payload["mindmap"] is None  # 尚未生成思维导图
 
 
@@ -451,12 +451,12 @@ async def test_generate_and_get_mindmap(test_client, admin_headers, knowledge_da
     由于没有前置的文件上传 fixture，测试会先验证空文件场景（预期400），
     然后使用 xfail 标记等待后续完善。
     """
-    db_id = knowledge_database["db_id"]
+    slug = knowledge_database["slug"]
 
     # 空文件场景 - 预期返回400错误
     generate_response = await test_client.post(
         "/api/mindmap/generate",
-        json={"db_id": db_id, "file_ids": [], "user_prompt": ""},
+        json={"slug": slug, "file_ids": [], "user_prompt": ""},
         headers=admin_headers,
     )
     assert generate_response.status_code == 400
@@ -479,17 +479,17 @@ async def test_get_accessible_databases(test_client, admin_headers, knowledge_da
     assert "databases" in payload
 
     # 验证知识库在列表中
-    db_ids = [db["db_id"] for db in payload["databases"]]
-    assert knowledge_database["db_id"] in db_ids
+    slugs = [db["slug"] for db in payload["databases"]]
+    assert knowledge_database["slug"] in slugs
 
 
 async def test_create_database_defaults_to_global_share_config(test_client, admin_headers):
     database = await _create_test_database(test_client, admin_headers)
-    db_id = database["db_id"]
+    slug = database["slug"]
     try:
         assert database["share_config"] == {"access_level": "global", "department_ids": [], "user_uids": []}
     finally:
-        await test_client.delete(f"/api/knowledge/databases/{db_id}", headers=admin_headers)
+        await test_client.delete(f"/api/knowledge/databases/{slug}", headers=admin_headers)
 
 
 async def test_department_share_config_filters_accessible_databases(test_client, admin_headers):
@@ -511,11 +511,11 @@ async def test_department_share_config_filters_accessible_databases(test_client,
         assert saved_config["access_level"] == "department"
         assert department_a["id"] in saved_config["department_ids"]
 
-        assert database["db_id"] in await _accessible_db_ids(test_client, user_a["headers"])
-        assert database["db_id"] not in await _accessible_db_ids(test_client, user_b["headers"])
+        assert database["slug"] in await _accessible_slugs(test_client, user_a["headers"])
+        assert database["slug"] not in await _accessible_slugs(test_client, user_b["headers"])
     finally:
         if database:
-            await test_client.delete(f"/api/knowledge/databases/{database['db_id']}", headers=admin_headers)
+            await test_client.delete(f"/api/knowledge/databases/{database['slug']}", headers=admin_headers)
         if user_a:
             await _delete_user_by_id(test_client, admin_headers, user_a["user"]["id"])
         if user_b:
@@ -543,11 +543,11 @@ async def test_user_share_config_filters_accessible_databases(test_client, admin
         assert saved_config["access_level"] == "user"
         assert user_a["user"]["uid"] in saved_config["user_uids"]
 
-        assert database["db_id"] in await _accessible_db_ids(test_client, user_a["headers"])
-        assert database["db_id"] not in await _accessible_db_ids(test_client, user_b["headers"])
+        assert database["slug"] in await _accessible_slugs(test_client, user_a["headers"])
+        assert database["slug"] not in await _accessible_slugs(test_client, user_b["headers"])
     finally:
         if database:
-            await test_client.delete(f"/api/knowledge/databases/{database['db_id']}", headers=admin_headers)
+            await test_client.delete(f"/api/knowledge/databases/{database['slug']}", headers=admin_headers)
         if user_a:
             await _delete_user_by_id(test_client, admin_headers, user_a["user"]["id"])
         if user_b:
@@ -703,19 +703,19 @@ async def test_create_milvus_knowledge_base(test_client, admin_headers):
 
 async def test_sample_questions_endpoints(test_client, admin_headers, knowledge_database):
     """测试示例问题接口（空文件时预期返回400）"""
-    db_id = knowledge_database["db_id"]
+    slug = knowledge_database["slug"]
 
     # 获取示例问题（空知识库应该返回空列表）
-    get_response = await test_client.get(f"/api/knowledge/databases/{db_id}/sample-questions", headers=admin_headers)
+    get_response = await test_client.get(f"/api/knowledge/databases/{slug}/sample-questions", headers=admin_headers)
     assert get_response.status_code == 200, get_response.text
     get_payload = get_response.json()
-    assert get_payload["db_id"] == db_id
+    assert get_payload["slug"] == slug
     assert "questions" in get_payload
     assert get_payload["count"] == 0  # 空知识库没有问题
 
     # 生成示例问题（空知识库应该返回400）
     generate_response = await test_client.post(
-        f"/api/knowledge/databases/{db_id}/sample-questions",
+        f"/api/knowledge/databases/{slug}/sample-questions",
         json={"count": 5},
         headers=admin_headers,
     )
@@ -725,18 +725,18 @@ async def test_sample_questions_endpoints(test_client, admin_headers, knowledge_
 
 async def test_mindmap_permissions(test_client, standard_user, knowledge_database):
     """测试思维导图接口的权限控制"""
-    db_id = knowledge_database["db_id"]
+    slug = knowledge_database["slug"]
 
     # 普通用户应该无法访问
     forbidden_list = await test_client.get("/api/mindmap/databases", headers=standard_user["headers"])
     _assert_forbidden_response(forbidden_list)
 
-    forbidden_files = await test_client.get(f"/api/mindmap/databases/{db_id}/files", headers=standard_user["headers"])
+    forbidden_files = await test_client.get(f"/api/mindmap/databases/{slug}/files", headers=standard_user["headers"])
     _assert_forbidden_response(forbidden_files)
 
     forbidden_generate = await test_client.post(
         "/api/mindmap/generate",
-        json={"db_id": db_id, "file_ids": []},
+        json={"slug": slug, "file_ids": []},
         headers=standard_user["headers"],
     )
     _assert_forbidden_response(forbidden_generate)

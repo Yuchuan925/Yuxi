@@ -22,7 +22,7 @@ class FakeChunkRepository:
     def __init__(self, indexed_count):
         self.indexed_count = indexed_count
 
-    async def count_graph_indexed_by_db_id(self, db_id):
+    async def count_graph_indexed_by_kb_id(self, kb_id):
         return self.indexed_count
 
 
@@ -37,7 +37,7 @@ async def test_generate_dataset_saves_generation_params(monkeypatch):
     service.chunk_repo = FakeChunkRepository(indexed_count=1)
 
     result = await service.generate_dataset(
-        db_id="db_1",
+        kb_id="db_1",
         name="dataset",
         description="desc",
         count=2,
@@ -65,7 +65,7 @@ async def test_generate_dataset_rejects_graph_mode_without_indexed_chunks():
 
     with pytest.raises(ValueError, match="尚未完成图索引"):
         await service.generate_dataset(
-            db_id="db_1",
+            kb_id="db_1",
             name="dataset",
             description="desc",
             count=2,

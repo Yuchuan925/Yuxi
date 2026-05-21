@@ -16,6 +16,7 @@ def _runtime(
     thread_id: str | None = "thread-1",
     uid: str | None = "user-1",
     skills: list[str] | None = None,
+    readable_skills: list[str] | None = None,
     visible_kbs: list[dict] | None = None,
 ):
     configurable = {"thread_id": thread_id, "uid": uid} if thread_id and uid else {}
@@ -23,21 +24,22 @@ def _runtime(
         config={"configurable": configurable},
         context=SimpleNamespace(
             skills=skills or [],
+            _readable_skills=readable_skills,
             _visible_knowledge_bases=visible_kbs or [],
             uid=uid,
         ),
     )
 
 
-def test_create_agent_composite_backend_uses_provisioner_default(monkeypatch):
+def test_create_agent_composite_backend_uses_prepared_readable_skills(monkeypatch):
     monkeypatch.setattr("yuxi.agents.backends.sandbox.backend.get_sandbox_provider", lambda: object())
 
     backend = create_agent_composite_backend(
-        _runtime(skills=["reporter"], visible_kbs=[{"db_id": "db-1", "name": "Docs"}])
+        _runtime(readable_skills=["reporter"], visible_kbs=[{"slug": "db-1", "name": "Docs"}])
     )
 
     assert isinstance(backend.default, ProvisionerSandboxBackend)
-    assert backend.default._visible_skills == ["reporter"]
+    assert backend.default._readable_skills == ["reporter"]
     assert "/skills/" in backend.routes
     assert "/home/gem/kbs/" not in backend.routes
 
@@ -45,6 +47,14 @@ def test_create_agent_composite_backend_uses_provisioner_default(monkeypatch):
 def test_create_agent_composite_backend_requires_thread_id():
     with pytest.raises(ValueError, match="thread_id is required"):
         create_agent_composite_backend(_runtime(thread_id=None))
+
+
+def test_create_agent_composite_backend_ignores_unprepared_context_skills(monkeypatch):
+    monkeypatch.setattr("yuxi.agents.backends.sandbox.backend.get_sandbox_provider", lambda: object())
+
+    backend = create_agent_composite_backend(_runtime(skills=["configured"], readable_skills=None))
+
+    assert backend.default._readable_skills == []
 
 
 def test_skills_middleware_extracts_slug_for_new_paths() -> None:

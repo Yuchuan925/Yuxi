@@ -12,6 +12,10 @@ def _empty_agents_prompt(_thread_id: str, _uid: str) -> str:
     return ""
 
 
+async def _fake_normalize_agent_context_config(context, **_kwargs):
+    return dict(context or {})
+
+
 class _FakeAgentConfigRepo:
     def __init__(self, _db):
         pass
@@ -83,6 +87,8 @@ async def test_agent_chat_uses_invoke_messages_and_persists_langgraph_state(monk
             return SimpleNamespace(values={"messages": [AIMessage(content="Hi from graph")], "todos": ["todo-1"]})
 
     class FakeAgent:
+        context_schema = None
+
         async def invoke_messages(self, messages, input_context=None, **kwargs):
             calls["invoke_messages"] = messages
             calls["invoke_input_context"] = input_context
@@ -131,6 +137,7 @@ async def test_agent_chat_uses_invoke_messages_and_persists_langgraph_state(monk
 
     monkeypatch.setattr(svc.agent_manager, "get_agent", lambda agent_id: FakeAgent())
     monkeypatch.setattr(svc, "get_agent_config_by_id", fake_get_agent_config_by_id)
+    monkeypatch.setattr(svc, "normalize_agent_context_config", _fake_normalize_agent_context_config)
     monkeypatch.setattr(svc, "ConversationRepository", _FakeConvRepo)
     monkeypatch.setattr(svc, "AgentConfigRepository", _FakeAgentConfigRepo)
     monkeypatch.setattr(svc, "save_messages_from_langgraph_state", fake_save_messages_from_langgraph_state)
@@ -142,7 +149,7 @@ async def test_agent_chat_uses_invoke_messages_and_persists_langgraph_state(monk
         thread_id="thread-1",
         meta={"request_id": "req-1"},
         image_content=None,
-        current_user=SimpleNamespace(id=1, uid="user-1", department_id="dept-1"),
+        current_user=SimpleNamespace(id=1, uid="user-1", role="user", department_id="dept-1"),
         db=object(),
     )
 
@@ -185,6 +192,8 @@ async def test_agent_chat_sync_returns_finished_even_when_state_has_interrupt(mo
             )
 
     class FakeAgent:
+        context_schema = None
+
         async def invoke_messages(self, messages, input_context=None, **kwargs):
             return {"messages": [messages[0], AIMessage(content="Need input later")]}
 
@@ -214,6 +223,7 @@ async def test_agent_chat_sync_returns_finished_even_when_state_has_interrupt(mo
 
     monkeypatch.setattr(svc.agent_manager, "get_agent", lambda agent_id: FakeAgent())
     monkeypatch.setattr(svc, "get_agent_config_by_id", fake_get_agent_config_by_id)
+    monkeypatch.setattr(svc, "normalize_agent_context_config", _fake_normalize_agent_context_config)
     monkeypatch.setattr(svc, "ConversationRepository", _FakeConvRepo)
     monkeypatch.setattr(svc, "AgentConfigRepository", _FakeAgentConfigRepo)
     monkeypatch.setattr(svc, "save_messages_from_langgraph_state", fake_save_messages_from_langgraph_state)
@@ -225,7 +235,7 @@ async def test_agent_chat_sync_returns_finished_even_when_state_has_interrupt(mo
         thread_id="thread-2",
         meta={"request_id": "req-2"},
         image_content=None,
-        current_user=SimpleNamespace(id=1, uid="user-1", department_id="dept-1"),
+        current_user=SimpleNamespace(id=1, uid="user-1", role="user", department_id="dept-1"),
         db=object(),
     )
 

@@ -102,19 +102,19 @@ async def test_milvus_graph_service_configure_persists_updated_concurrency():
     )
 
     class Repo:
-        async def get_by_id(self, db_id):
+        async def get_by_kb_id(self, kb_id):
             return kb
 
-        async def update(self, db_id, data):
+        async def update(self, kb_id, data):
             kb.additional_params = data["additional_params"]
             return kb
 
     chunk_repo = SimpleNamespace(
-        count_by_db_id=AsyncMock(return_value=0),
-        count_graph_pending_by_db_id=AsyncMock(return_value=0),
-        count_graph_indexed_by_db_id=AsyncMock(return_value=0),
+        count_by_kb_id=AsyncMock(return_value=0),
+        count_graph_pending_by_kb_id=AsyncMock(return_value=0),
+        count_graph_indexed_by_kb_id=AsyncMock(return_value=0),
     )
-    graph_repo = SimpleNamespace(count_by_db_id=AsyncMock(return_value=(3, 2)))
+    graph_repo = SimpleNamespace(count_by_kb_id=AsyncMock(return_value=(3, 2)))
     service = MilvusGraphService(kb_repo=Repo(), chunk_repo=chunk_repo, graph_repo=graph_repo)
 
     await service.configure(
@@ -142,7 +142,7 @@ def test_milvus_graph_service_writes_chunk_entity_and_relation():
     chunk = SimpleNamespace(
         chunk_id="chunk_1",
         file_id="file_1",
-        db_id="kb_test",
+        kb_id="kb_test",
         chunk_index=1,
         content="张三任职于公司",
         start_char_pos=0,
@@ -182,25 +182,25 @@ def test_milvus_graph_service_writes_chunk_entity_and_relation():
     assert entity_call.kwargs["attributes"] == '[{"text": "工程师", "label": "Occupation"}]'
 
 
-def test_milvus_graph_service_query_nodes_empty_db_id():
+def test_milvus_graph_service_query_nodes_empty_kb_id():
     service = MilvusGraphService()
     import asyncio
 
-    result = asyncio.get_event_loop().run_until_complete(service.query_nodes(db_id=None, keyword="test"))
+    result = asyncio.get_event_loop().run_until_complete(service.query_nodes(kb_id=None, keyword="test"))
     assert result == {"nodes": [], "edges": []}
 
 
-def test_milvus_graph_service_get_labels_empty_db_id():
+def test_milvus_graph_service_get_labels_empty_kb_id():
     service = MilvusGraphService()
     import asyncio
 
-    result = asyncio.get_event_loop().run_until_complete(service.get_labels(db_id=None))
+    result = asyncio.get_event_loop().run_until_complete(service.get_labels(kb_id=None))
     assert result == []
 
 
-def test_milvus_graph_service_get_stats_empty_db_id():
+def test_milvus_graph_service_get_stats_empty_kb_id():
     service = MilvusGraphService()
     import asyncio
 
-    result = asyncio.get_event_loop().run_until_complete(service.get_stats(db_id=None))
+    result = asyncio.get_event_loop().run_until_complete(service.get_stats(kb_id=None))
     assert result == {"total_nodes": 0, "total_edges": 0, "entity_types": []}

@@ -14,17 +14,17 @@ async def test_import_workspace_files_uploads_workspace_file_to_minio(tmp_path, 
     source = tmp_path / "note.md"
     source.write_text("# workspace note\n", encoding="utf-8")
 
-    async def fake_ensure_database_not_dify(db_id: str, operation: str) -> None:
-        assert db_id == "db_1"
+    async def fake_ensure_database_supports_documents(slug: str, operation: str) -> None:
+        assert slug == "db_1"
         assert "文档添加" in operation
 
-    async def fake_file_existed_in_db(db_id: str, content_hash: str) -> bool:
-        assert db_id == "db_1"
+    async def fake_file_existed_in_db(slug: str, content_hash: str) -> bool:
+        assert slug == "db_1"
         assert content_hash
         return False
 
-    async def fake_get_same_name_files(db_id: str, filename: str) -> list:
-        assert db_id == "db_1"
+    async def fake_get_same_name_files(slug: str, filename: str) -> list:
+        assert slug == "db_1"
         assert filename == "note.md"
         return []
 
@@ -34,14 +34,18 @@ async def test_import_workspace_files_uploads_workspace_file_to_minio(tmp_path, 
         assert data == b"# workspace note\n"
         return f"http://minio/{bucket_name}/{file_name}"
 
-    monkeypatch.setattr(knowledge_router, "_ensure_database_not_dify", fake_ensure_database_not_dify)
+    monkeypatch.setattr(
+        knowledge_router,
+        "_ensure_database_supports_documents",
+        fake_ensure_database_supports_documents,
+    )
     monkeypatch.setattr(knowledge_router, "resolve_workspace_file_path", lambda **_kwargs: source)
     monkeypatch.setattr(knowledge_router.knowledge_base, "file_existed_in_db", fake_file_existed_in_db)
     monkeypatch.setattr(knowledge_router.knowledge_base, "get_same_name_files", fake_get_same_name_files)
     monkeypatch.setattr(knowledge_router, "aupload_file_to_minio", fake_upload)
 
     result = await knowledge_router.import_workspace_files(
-        knowledge_router.WorkspaceImportRequest(db_id="db_1", paths=["/note.md"]),
+        knowledge_router.WorkspaceImportRequest(slug="db_1", paths=["/note.md"]),
         current_user=SimpleNamespace(id="user_1"),
     )
 
@@ -58,18 +62,22 @@ async def test_import_workspace_files_uploads_workspace_file_to_minio(tmp_path, 
 
 
 async def test_import_workspace_files_rejects_directory(tmp_path, monkeypatch):
-    async def fake_ensure_database_not_dify(db_id: str, operation: str) -> None:
+    async def fake_ensure_database_supports_documents(slug: str, operation: str) -> None:
         return None
 
     def fake_resolve_workspace_file_path(**_kwargs):
         raise HTTPException(status_code=400, detail="当前路径不是文件: /folder")
 
-    monkeypatch.setattr(knowledge_router, "_ensure_database_not_dify", fake_ensure_database_not_dify)
+    monkeypatch.setattr(
+        knowledge_router,
+        "_ensure_database_supports_documents",
+        fake_ensure_database_supports_documents,
+    )
     monkeypatch.setattr(knowledge_router, "resolve_workspace_file_path", fake_resolve_workspace_file_path)
 
     with pytest.raises(HTTPException) as exc_info:
         await knowledge_router.import_workspace_files(
-            knowledge_router.WorkspaceImportRequest(db_id="db_1", paths=["/folder"]),
+            knowledge_router.WorkspaceImportRequest(slug="db_1", paths=["/folder"]),
             current_user=SimpleNamespace(id="user_1"),
         )
 

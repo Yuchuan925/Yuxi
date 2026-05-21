@@ -85,7 +85,7 @@ def _patch_retrievers(monkeypatch, *, kb_type: str = "milvus", retriever=None):
 
 async def _fake_visible_kbs(runtime):
     del runtime
-    return [{"db_id": "db-1", "name": "FAQ"}]
+    return [{"kb_id": "db-1", "name": "FAQ"}]
 
 
 @pytest.mark.asyncio
@@ -108,11 +108,11 @@ async def test_query_kb_returns_search_schema_without_sandbox_paths(monkeypatch)
     monkeypatch.setattr(tools, "_resolve_visible_knowledge_bases_for_query", _fake_visible_kbs)
 
     runtime = SimpleNamespace(context=SimpleNamespace())
-    result = await _run_query_kb(resource_id="db-1", query_text="auth", runtime=runtime)
+    result = await _run_query_kb(kb_id="db-1", query_text="auth", runtime=runtime)
 
-    assert result["resource_id"] == "db-1"
+    assert result["kb_id"] == "db-1"
     assert result["results"][0]["id"] == "file-1:1"
-    assert result["results"][0]["resource_id"] == "db-1"
+    assert result["results"][0]["kb_id"] == "db-1"
     assert result["results"][0]["file_id"] == "file-1"
     assert result["results"][0]["content"] == "auth guide"
     assert result["results"][0]["metadata"]["source"] == "auth-guide.pdf"
@@ -140,14 +140,14 @@ async def test_query_kb_allows_dify_knowledge_base(monkeypatch) -> None:
     monkeypatch.setattr(tools, "_resolve_visible_knowledge_bases_for_query", _fake_visible_kbs)
 
     runtime = SimpleNamespace(context=SimpleNamespace())
-    result = await _run_query_kb(resource_id="db-1", query_text="auth", runtime=runtime)
+    result = await _run_query_kb(kb_id="db-1", query_text="auth", runtime=runtime)
 
     assert result == {
-        "resource_id": "db-1",
+        "kb_id": "db-1",
         "results": [
             {
                 "id": "dify-segment-1",
-                "resource_id": "db-1",
+                "kb_id": "db-1",
                 "file_id": "dify-doc-1",
                 "content": "auth guide",
                 "metadata": {
@@ -171,7 +171,7 @@ async def test_query_kb_returns_plain_result_without_path_injection(monkeypatch)
     monkeypatch.setattr(tools, "_resolve_visible_knowledge_bases_for_query", _fake_visible_kbs)
 
     runtime = SimpleNamespace(context=SimpleNamespace())
-    result = await _run_query_kb(resource_id="db-1", query_text="auth", runtime=runtime)
+    result = await _run_query_kb(kb_id="db-1", query_text="auth", runtime=runtime)
 
     assert result == "Milvus context"
 
@@ -193,11 +193,11 @@ async def test_query_kb_maps_full_doc_id_and_chunk_metadata(monkeypatch) -> None
     monkeypatch.setattr(tools, "_resolve_visible_knowledge_bases_for_query", _fake_visible_kbs)
 
     runtime = SimpleNamespace(context=SimpleNamespace())
-    result = await _run_query_kb(resource_id="db-1", query_text="auth", runtime=runtime)
+    result = await _run_query_kb(kb_id="db-1", query_text="auth", runtime=runtime)
 
     assert result["results"][0] == {
         "id": "chunk-1",
-        "resource_id": "db-1",
+        "kb_id": "db-1",
         "file_id": "file-1",
         "content": "auth guide",
         "metadata": {"chunk_index": 3},
@@ -210,7 +210,7 @@ async def test_find_kb_document_returns_context_windows(monkeypatch) -> None:
     monkeypatch.setattr(tools, "_resolve_visible_knowledge_bases_for_query", _fake_visible_kbs)
 
     async def _fake_find_file_content(
-        db_id: str,
+        kb_id: str,
         file_id: str,
         patterns: list[str],
         *,
@@ -219,7 +219,7 @@ async def test_find_kb_document_returns_context_windows(monkeypatch) -> None:
         max_windows: int = 5,
         window_size: int = 80,
     ):
-        assert db_id == "db-1"
+        assert kb_id == "db-1"
         assert file_id == "file-1"
         assert patterns == ["token"]
         assert use_regex is False
@@ -244,14 +244,14 @@ async def test_find_kb_document_returns_context_windows(monkeypatch) -> None:
 
     runtime = SimpleNamespace(context=SimpleNamespace())
     result = await _run_find_kb_document(
-        resource_id="db-1",
+        kb_id="db-1",
         file_id="file-1",
         patterns=["token"],
         runtime=runtime,
     )
 
     assert result == {
-        "resource_id": "db-1",
+        "kb_id": "db-1",
         "file_id": "file-1",
         "semantic": False,
         "match_mode": "keyword",
@@ -274,7 +274,7 @@ async def test_find_kb_document_rejects_dify(monkeypatch) -> None:
 
     runtime = SimpleNamespace(context=SimpleNamespace())
     result = await _run_find_kb_document(
-        resource_id="db-1",
+        kb_id="db-1",
         file_id="file-1",
         patterns=["token"],
         runtime=runtime,
@@ -290,17 +290,17 @@ async def test_open_kb_document_reads_markdown_content_by_default_window(monkeyp
     _patch_retrievers(monkeypatch)
     monkeypatch.setattr(tools, "_resolve_visible_knowledge_bases_for_query", _fake_visible_kbs)
 
-    async def _fake_open_file_content(db_id: str, file_id: str, offset: int = 0, limit: int = 1800):
-        assert db_id == "db-1"
+    async def _fake_open_file_content(kb_id: str, file_id: str, offset: int = 0, limit: int = 1800):
+        assert kb_id == "db-1"
         assert file_id == "file-1"
         return _build_test_window("\n".join(lines), offset=offset, limit=limit)
 
     monkeypatch.setattr(tools.knowledge_base, "open_file_content", _fake_open_file_content)
 
     runtime = SimpleNamespace(context=SimpleNamespace())
-    result = await _run_open_kb_document(resource_id="db-1", file_id="file-1", runtime=runtime)
+    result = await _run_open_kb_document(kb_id="db-1", file_id="file-1", runtime=runtime)
 
-    assert result["resource_id"] == "db-1"
+    assert result["kb_id"] == "db-1"
     assert result["file_id"] == "file-1"
     assert result["start_line"] == 1
     assert result["end_line"] == 1800
@@ -320,8 +320,8 @@ async def test_open_kb_document_prefers_line_over_offset(monkeypatch) -> None:
     _patch_retrievers(monkeypatch)
     monkeypatch.setattr(tools, "_resolve_visible_knowledge_bases_for_query", _fake_visible_kbs)
 
-    async def _fake_open_file_content(db_id: str, file_id: str, offset: int = 0, limit: int = 1800):
-        assert db_id == "db-1"
+    async def _fake_open_file_content(kb_id: str, file_id: str, offset: int = 0, limit: int = 1800):
+        assert kb_id == "db-1"
         assert file_id == "file-1"
         return _build_test_window("\n".join(lines), offset=offset, limit=limit)
 
@@ -329,7 +329,7 @@ async def test_open_kb_document_prefers_line_over_offset(monkeypatch) -> None:
 
     runtime = SimpleNamespace(context=SimpleNamespace())
     result = await _run_open_kb_document(
-        resource_id="db-1",
+        kb_id="db-1",
         file_id="file-1",
         line=801,
         offset=0,
@@ -350,12 +350,12 @@ async def test_open_kb_document_prefers_line_over_offset(monkeypatch) -> None:
 async def test_open_kb_document_rejects_invisible_resource(monkeypatch) -> None:
     async def _fake_visible_kbs(runtime):
         del runtime
-        return [{"db_id": "db-2", "name": "FAQ"}]
+        return [{"kb_id": "db-2", "name": "FAQ"}]
 
     monkeypatch.setattr(tools, "_resolve_visible_knowledge_bases_for_query", _fake_visible_kbs)
 
     runtime = SimpleNamespace(context=SimpleNamespace())
-    result = await _run_open_kb_document(resource_id="db-1", file_id="file-1", runtime=runtime)
+    result = await _run_open_kb_document(kb_id="db-1", file_id="file-1", runtime=runtime)
 
     assert "不存在或当前会话未启用" in result
 
@@ -365,13 +365,13 @@ async def test_open_kb_document_requires_markdown_content(monkeypatch) -> None:
     _patch_retrievers(monkeypatch)
     monkeypatch.setattr(tools, "_resolve_visible_knowledge_bases_for_query", _fake_visible_kbs)
 
-    async def _fake_open_file_content(db_id: str, file_id: str, offset: int = 0, limit: int = 1800):
-        del db_id, file_id, offset, limit
+    async def _fake_open_file_content(kb_id: str, file_id: str, offset: int = 0, limit: int = 1800):
+        del kb_id, file_id, offset, limit
         raise Exception("文件 file-1 没有解析后的 Markdown 内容")
 
     monkeypatch.setattr(tools.knowledge_base, "open_file_content", _fake_open_file_content)
 
     runtime = SimpleNamespace(context=SimpleNamespace())
-    result = await _run_open_kb_document(resource_id="db-1", file_id="file-1", runtime=runtime)
+    result = await _run_open_kb_document(kb_id="db-1", file_id="file-1", runtime=runtime)
 
     assert "没有解析后的 Markdown 内容" in result

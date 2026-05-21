@@ -9,6 +9,10 @@ from langchain.messages import AIMessageChunk, HumanMessage
 from yuxi.services import chat_service as svc
 
 
+async def _fake_normalize_agent_context_config(context, **_kwargs):
+    return dict(context or {})
+
+
 class _FakeAgentConfigRepo:
     def __init__(self, _db):
         pass
@@ -75,6 +79,8 @@ async def test_stream_agent_chat_passes_langfuse_callbacks_and_persists_trace_in
     calls: dict[str, object] = {}
 
     class FakeAgent:
+        context_schema = None
+
         async def stream_messages(self, messages, input_context=None, **kwargs):
             calls["stream_messages"] = messages
             calls["stream_input_context"] = input_context
@@ -111,6 +117,7 @@ async def test_stream_agent_chat_passes_langfuse_callbacks_and_persists_trace_in
 
     monkeypatch.setattr(svc.agent_manager, "get_agent", lambda agent_id: FakeAgent())
     monkeypatch.setattr(svc, "get_agent_config_by_id", fake_get_agent_config_by_id)
+    monkeypatch.setattr(svc, "normalize_agent_context_config", _fake_normalize_agent_context_config)
     monkeypatch.setattr(svc, "ConversationRepository", _FakeConvRepo)
     monkeypatch.setattr(svc, "AgentConfigRepository", _FakeAgentConfigRepo)
     monkeypatch.setattr(svc, "save_messages_from_langgraph_state", fake_save_messages_from_langgraph_state)
@@ -144,7 +151,7 @@ async def test_stream_agent_chat_passes_langfuse_callbacks_and_persists_trace_in
         thread_id="thread-1",
         meta={"request_id": "req-1"},
         image_content=None,
-        current_user=SimpleNamespace(id=1, uid="user-1", department_id="dept-1"),
+        current_user=SimpleNamespace(id=1, uid="user-1", role="user", department_id="dept-1"),
         db=object(),
     ):
         chunks.append(json.loads(chunk.decode("utf-8")))
@@ -171,6 +178,8 @@ async def test_stream_agent_chat_emits_realtime_agent_state_from_values(monkeypa
             return SimpleNamespace(values={"todos": [{"content": "done", "status": "completed"}]})
 
     class FakeAgent:
+        context_schema = None
+
         async def stream_messages_with_state(self, messages, input_context=None, **kwargs):
             yield "values", {"messages": [], "todos": [{"content": "step 1", "status": "pending"}]}
             yield "values", {"messages": [], "todos": [{"content": "step 1", "status": "in_progress"}]}
@@ -202,6 +211,7 @@ async def test_stream_agent_chat_emits_realtime_agent_state_from_values(monkeypa
 
     monkeypatch.setattr(svc.agent_manager, "get_agent", lambda agent_id: FakeAgent())
     monkeypatch.setattr(svc, "get_agent_config_by_id", fake_get_agent_config_by_id)
+    monkeypatch.setattr(svc, "normalize_agent_context_config", _fake_normalize_agent_context_config)
     monkeypatch.setattr(svc, "ConversationRepository", _FakeConvRepo)
     monkeypatch.setattr(svc, "AgentConfigRepository", _FakeAgentConfigRepo)
     monkeypatch.setattr(svc, "save_messages_from_langgraph_state", fake_save_messages_from_langgraph_state)
@@ -223,7 +233,7 @@ async def test_stream_agent_chat_emits_realtime_agent_state_from_values(monkeypa
         thread_id="thread-1",
         meta={"request_id": "req-1"},
         image_content=None,
-        current_user=SimpleNamespace(id=1, uid="user-1", department_id="dept-1"),
+        current_user=SimpleNamespace(id=1, uid="user-1", role="user", department_id="dept-1"),
         db=object(),
     ):
         chunks.append(json.loads(chunk.decode("utf-8")))

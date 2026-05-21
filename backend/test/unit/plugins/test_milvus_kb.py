@@ -37,11 +37,11 @@ class FakeCollection:
 def make_kb(collection: FakeCollection) -> MilvusKB:
     kb = MilvusKB.__new__(MilvusKB)
     kb.databases_meta = {"db": {"embedding_model_spec": "test-provider:test-embedding"}}
-    kb.files_meta = {"file-1": {"filename": "demo.md", "database_id": "db"}}
-    kb._get_query_params = lambda db_id: {}
+    kb.files_meta = {"file-1": {"filename": "demo.md", "kb_id": "db"}}
+    kb._get_query_params = lambda kb_id: {}
     kb._get_embedding_function = lambda embedding_model_spec, **kwargs: lambda texts: [[0.1, 0.2] for _ in texts]
 
-    async def get_collection(db_id: str):
+    async def get_collection(kb_id: str):
         return collection
 
     kb._get_milvus_collection = get_collection

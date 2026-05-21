@@ -48,6 +48,7 @@ def test_list_subagents_returns_data(monkeypatch):
     async def fake_get_all_subagents(_db):
         return [
             {
+                "slug": "research-agent",
                 "name": "research-agent",
                 "description": "Test research agent",
                 "system_prompt": "You are a researcher",
@@ -78,6 +79,7 @@ def test_get_single_subagent(monkeypatch):
     async def fake_get_subagent(name, db=None):
         if name == "research-agent":
             return {
+                "slug": "research-agent",
                 "name": "research-agent",
                 "description": "Test research agent",
                 "system_prompt": "You are a researcher",
@@ -122,6 +124,7 @@ def test_create_subagent(monkeypatch):
         captured["data"] = data
         captured["created_by"] = created_by
         return {
+            "slug": data["slug"],
             "name": data["name"],
             "description": data["description"],
             "system_prompt": data["system_prompt"],
@@ -142,7 +145,8 @@ def test_create_subagent(monkeypatch):
     resp = client.post(
         "/api/system/subagents",
         json={
-            "name": "my-agent",
+            "slug": "my-agent",
+            "name": "My Agent",
             "description": "My custom agent",
             "system_prompt": "You are a helpful assistant",
             "tools": ["tool_a", "tool_b"],
@@ -152,7 +156,8 @@ def test_create_subagent(monkeypatch):
     assert resp.status_code == 200, resp.text
     payload = resp.json()
     assert payload["success"] is True
-    assert captured["data"]["name"] == "my-agent"
+    assert captured["data"]["slug"] == "my-agent"
+    assert captured["data"]["name"] == "My Agent"
     assert captured["created_by"] == "admin"
 
 
@@ -161,7 +166,10 @@ def test_create_subagent_duplicate_returns_409(monkeypatch):
         raise IntegrityError(
             "duplicate",
             {},
-            Exception('duplicate key value violates unique constraint "subagents_pkey"'),
+            Exception(
+                'duplicate key value violates unique constraint "subagents_slug_key" '
+                "Detail: Key (slug)=(my-agent) already exists."
+            ),
         )
 
     monkeypatch.setattr("server.routers.subagent_router.service.create_subagent", fake_create_subagent)
@@ -171,7 +179,8 @@ def test_create_subagent_duplicate_returns_409(monkeypatch):
     resp = client.post(
         "/api/system/subagents",
         json={
-            "name": "my-agent",
+            "slug": "my-agent",
+            "name": "My Agent",
             "description": "My custom agent",
             "system_prompt": "You are a helpful assistant",
             "tools": [],
@@ -189,6 +198,7 @@ def test_update_subagent(monkeypatch):
         captured["data"] = data
         captured["updated_by"] = updated_by
         return {
+            "slug": name,
             "name": name,
             "description": data.get("description", "Updated description"),
             "system_prompt": data.get("system_prompt", "Updated prompt"),
@@ -271,6 +281,7 @@ def test_update_subagent_status(monkeypatch):
         captured["enabled"] = enabled
         captured["updated_by"] = updated_by
         return {
+            "slug": name,
             "name": name,
             "description": "Test",
             "system_prompt": "Prompt",
@@ -322,6 +333,7 @@ class TestSubAgentRepository:
         mock_result = MagicMock()
         mock_result.scalars.return_value.all.return_value = [
             SubAgent(
+                slug="test-agent",
                 name="test-agent",
                 description="Test agent",
                 system_prompt="You are a test",
@@ -344,12 +356,13 @@ class TestSubAgentRepository:
         mock_db.execute.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_get_by_name_found(self):
+    async def test_get_by_slug_found(self):
         from yuxi.repositories.subagent_repository import SubAgentRepository
 
         mock_db = AsyncMock()
         mock_result = MagicMock()
         mock_result.scalar_one_or_none.return_value = SubAgent(
+            slug="test-agent",
             name="test-agent",
             description="Test agent",
             system_prompt="You are a test",
@@ -364,13 +377,13 @@ class TestSubAgentRepository:
         mock_db.execute.return_value = mock_result
 
         repo = SubAgentRepository(mock_db)
-        result = await repo.get_by_name("test-agent")
+        result = await repo.get_by_slug("test-agent")
 
         assert result is not None
         assert result.name == "test-agent"
 
     @pytest.mark.asyncio
-    async def test_get_by_name_not_found(self):
+    async def test_get_by_slug_not_found(self):
         from yuxi.repositories.subagent_repository import SubAgentRepository
 
         mock_db = AsyncMock()
@@ -379,7 +392,7 @@ class TestSubAgentRepository:
         mock_db.execute.return_value = mock_result
 
         repo = SubAgentRepository(mock_db)
-        result = await repo.get_by_name("nonexistent")
+        result = await repo.get_by_slug("nonexistent")
 
         assert result is None
 
@@ -390,6 +403,7 @@ class TestSubAgentRepository:
         mock_db = AsyncMock()
         repo = SubAgentRepository(mock_db)
         item = SubAgent(
+            slug="test-agent",
             name="test-agent",
             description="Test agent",
             system_prompt="You are a test",
@@ -404,6 +418,7 @@ class TestSubAgentRepository:
 
         await repo.update(
             item,
+            name=None,
             description=None,
             system_prompt=None,
             tools=None,
@@ -431,7 +446,7 @@ class TestSubAgentService:
             def __init__(self, session):
                 pass
 
-            async def get_by_name(self, name):
+            async def get_by_slug(self, name):
                 return None
 
             async def create(self, **kwargs):
@@ -458,15 +473,16 @@ class TestSubAgentService:
         await service_module.init_builtin_subagents()
 
         assert len(created_agents) == 2
-        agent_names = [a["name"] for a in created_agents]
-        assert "research-agent" in agent_names
-        assert "critique-agent" in agent_names
+        agent_slugs = [a["slug"] for a in created_agents]
+        assert "research-agent" in agent_slugs
+        assert "critique-agent" in agent_slugs
 
     @pytest.mark.asyncio
     async def test_get_subagent_specs_returns_list(self, monkeypatch):
         from yuxi.services import subagent_service as service_module
 
         mock_spec = {
+            "slug": "test-agent",
             "name": "test-agent",
             "description": "Test",
             "system_prompt": "You are a test",
@@ -501,6 +517,7 @@ class TestSubAgentService:
 
         service_module._subagent_specs_cache = [
             {
+                "slug": "test-agent",
                 "name": "test-agent",
                 "description": "Test",
                 "system_prompt": "You are a test",
@@ -525,6 +542,7 @@ class TestSubAgentModel:
     def test_to_dict(self):
         now = utc_now_naive()
         agent = SubAgent(
+            slug="test-agent",
             name="test-agent",
             description="Test agent",
             system_prompt="You are a test",
@@ -549,6 +567,7 @@ class TestSubAgentModel:
 
     def test_to_subagent_spec(self):
         agent = SubAgent(
+            slug="test-agent",
             name="test-agent",
             description="Test agent",
             system_prompt="You are a test",
@@ -571,6 +590,7 @@ class TestSubAgentModel:
 
     def test_to_subagent_spec_no_model(self):
         agent = SubAgent(
+            slug="test-agent",
             name="test-agent",
             description="Test agent",
             system_prompt="You are a test",
@@ -590,18 +610,20 @@ class TestSubAgentModel:
 
 class TestDeepAgentSubagentSelection:
     @pytest.mark.asyncio
-    async def test_get_subagents_from_names_filters_and_resolves_tools(self, monkeypatch):
+    async def test_get_subagents_from_slugs_filters_and_resolves_tools(self, monkeypatch):
         from yuxi.services import subagent_service as service_module
 
         async def fake_get_specs(_db=None):
             return [
                 {
+                    "slug": "research-agent",
                     "name": "research-agent",
                     "description": "r",
                     "system_prompt": "s",
                     "tools": ["tool_a"],
                 },
                 {
+                    "slug": "critique-agent",
                     "name": "critique-agent",
                     "description": "c",
                     "system_prompt": "s",
@@ -615,18 +637,19 @@ class TestDeepAgentSubagentSelection:
         monkeypatch.setattr(service_module, "get_subagent_specs", fake_get_specs)
         monkeypatch.setattr("yuxi.agents.toolkits.get_all_tool_instances", lambda: [mock_tool])
 
-        resolved_specs = await service_module.get_subagents_from_names(["research-agent", "missing-agent"])
+        resolved_specs = await service_module.get_subagents_from_slugs(["research-agent", "missing-agent"])
 
         assert [item["name"] for item in resolved_specs] == ["research-agent"]
         assert resolved_specs[0]["tools"] == [mock_tool]
 
     @pytest.mark.asyncio
-    async def test_get_subagents_from_names_none_selects_none(self, monkeypatch):
+    async def test_get_subagents_from_slugs_none_selects_none(self, monkeypatch):
         from yuxi.services import subagent_service as service_module
 
         async def fake_get_specs(_db=None):
             return [
                 {
+                    "slug": "research-agent",
                     "name": "research-agent",
                     "description": "r",
                     "system_prompt": "s",
@@ -636,4 +659,4 @@ class TestDeepAgentSubagentSelection:
 
         monkeypatch.setattr(service_module, "get_subagent_specs", fake_get_specs)
 
-        assert await service_module.get_subagents_from_names(None) == []
+        assert await service_module.get_subagents_from_slugs(None) == []

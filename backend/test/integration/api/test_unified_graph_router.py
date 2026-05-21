@@ -23,11 +23,11 @@ async def _create_dify_database(test_client, admin_headers) -> str:
         headers=admin_headers,
     )
     assert response.status_code == 200, response.text
-    return response.json()["db_id"]
+    return response.json()["slug"]
 
 
-async def _delete_database(test_client, admin_headers, db_id: str) -> None:
-    await test_client.delete(f"/api/knowledge/databases/{db_id}", headers=admin_headers)
+async def _delete_database(test_client, admin_headers, slug: str) -> None:
+    await test_client.delete(f"/api/knowledge/databases/{slug}", headers=admin_headers)
 
 
 async def test_graph_routes_require_auth(test_client):
@@ -49,16 +49,16 @@ async def test_get_graphs_list_only_returns_milvus(test_client, admin_headers, k
     assert isinstance(payload["data"], list)
     assert payload["data"]
     assert all(graph["type"] == "milvus" for graph in payload["data"])
-    assert any(graph["id"] == knowledge_database["db_id"] for graph in payload["data"])
+    assert any(graph["id"] == knowledge_database["slug"] for graph in payload["data"])
 
 
 @pytest.mark.parametrize("path", ["/api/graph/subgraph", "/api/graph/stats", "/api/graph/labels"])
 async def test_graph_endpoints_reject_non_milvus_types(test_client, admin_headers, path):
-    db_id = await _create_dify_database(test_client, admin_headers)
+    slug = await _create_dify_database(test_client, admin_headers)
     try:
-        response = await test_client.get(path, params={"db_id": db_id}, headers=admin_headers)
+        response = await test_client.get(path, params={"slug": slug}, headers=admin_headers)
     finally:
-        await _delete_database(test_client, admin_headers, db_id)
+        await _delete_database(test_client, admin_headers, slug)
 
     assert response.status_code == 404
     assert "only supports Milvus" in response.text
@@ -67,7 +67,7 @@ async def test_graph_endpoints_reject_non_milvus_types(test_client, admin_header
 async def test_milvus_subgraph_endpoint(test_client, admin_headers, knowledge_database):
     response = await test_client.get(
         "/api/graph/subgraph",
-        params={"db_id": knowledge_database["db_id"], "node_label": "*", "max_nodes": 10},
+        params={"slug": knowledge_database["slug"], "node_label": "*", "max_nodes": 10},
         headers=admin_headers,
     )
 
@@ -81,7 +81,7 @@ async def test_milvus_subgraph_endpoint(test_client, admin_headers, knowledge_da
 async def test_milvus_stats_endpoint(test_client, admin_headers, knowledge_database):
     response = await test_client.get(
         "/api/graph/stats",
-        params={"db_id": knowledge_database["db_id"]},
+        params={"slug": knowledge_database["slug"]},
         headers=admin_headers,
     )
 
@@ -96,7 +96,7 @@ async def test_milvus_stats_endpoint(test_client, admin_headers, knowledge_datab
 async def test_milvus_labels_endpoint(test_client, admin_headers, knowledge_database):
     response = await test_client.get(
         "/api/graph/labels",
-        params={"db_id": knowledge_database["db_id"]},
+        params={"slug": knowledge_database["slug"]},
         headers=admin_headers,
     )
 

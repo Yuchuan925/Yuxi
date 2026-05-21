@@ -8,34 +8,34 @@ class FakeKnowledgeBase(KnowledgeBase):
     def kb_type(self) -> str:
         return "fake"
 
-    async def _create_kb_instance(self, db_id: str, config: dict):
+    async def _create_kb_instance(self, slug: str, config: dict):
         return None
 
     async def _initialize_kb_instance(self, instance) -> None:
         pass
 
-    async def index_file(self, db_id: str, file_id: str, operator_id: str | None = None) -> dict:
+    async def index_file(self, slug: str, file_id: str, operator_id: str | None = None) -> dict:
         return {}
 
-    async def update_content(self, db_id: str, file_ids: list[str], params: dict | None = None) -> list[dict]:
+    async def update_content(self, slug: str, file_ids: list[str], params: dict | None = None) -> list[dict]:
         return []
 
-    async def aquery(self, query_text: str, db_id: str, **kwargs) -> list[dict]:
+    async def aquery(self, query_text: str, slug: str, **kwargs) -> list[dict]:
         return []
 
-    def get_query_params_config(self, db_id: str, **kwargs) -> dict:
+    def get_query_params_config(self, slug: str, **kwargs) -> dict:
         return {"options": []}
 
-    async def delete_file(self, db_id: str, file_id: str) -> None:
+    async def delete_file(self, slug: str, file_id: str) -> None:
         pass
 
-    async def get_file_basic_info(self, db_id: str, file_id: str) -> dict:
+    async def get_file_basic_info(self, slug: str, file_id: str) -> dict:
         return {}
 
-    async def get_file_content(self, db_id: str, file_id: str) -> dict:
+    async def get_file_content(self, slug: str, file_id: str) -> dict:
         return {}
 
-    async def get_file_info(self, db_id: str, file_id: str) -> dict:
+    async def get_file_info(self, slug: str, file_id: str) -> dict:
         return {}
 
     async def _save_metadata(self) -> None:

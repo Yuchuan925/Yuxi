@@ -79,8 +79,8 @@ def test_dify_validation_rejects_missing_or_invalid_params():
 @pytest.mark.asyncio
 async def test_dify_kb_aquery_maps_records(monkeypatch, tmp_path):
     kb = DifyKB(str(tmp_path))
-    db_id = "kb_test_dify"
-    kb.databases_meta[db_id] = {
+    slug = "kb_test_dify"
+    kb.databases_meta[slug] = {
         "name": "dify-kb",
         "description": "test",
         "kb_type": "dify",
@@ -118,7 +118,7 @@ async def test_dify_kb_aquery_maps_records(monkeypatch, tmp_path):
         lambda **kwargs: _FakeAsyncClient(response_payload=payload, **kwargs),
     )
 
-    result = await kb.aquery("hello", db_id)
+    result = await kb.aquery("hello", slug)
     assert len(result) == 1
     assert result[0]["content"] == "hello world"
     assert result[0]["score"] == 0.98
@@ -131,8 +131,8 @@ async def test_dify_kb_aquery_maps_records(monkeypatch, tmp_path):
 @pytest.mark.asyncio
 async def test_dify_kb_aquery_error_returns_empty(monkeypatch, tmp_path):
     kb = DifyKB(str(tmp_path))
-    db_id = "kb_test_dify_error"
-    kb.databases_meta[db_id] = {
+    slug = "kb_test_dify_error"
+    kb.databases_meta[slug] = {
         "name": "dify-kb",
         "description": "test",
         "kb_type": "dify",
@@ -149,5 +149,5 @@ async def test_dify_kb_aquery_error_returns_empty(monkeypatch, tmp_path):
         lambda **kwargs: _FakeAsyncClient(raises=RuntimeError("boom"), **kwargs),
     )
 
-    result = await kb.aquery("hello", db_id)
+    result = await kb.aquery("hello", slug)
     assert result == []

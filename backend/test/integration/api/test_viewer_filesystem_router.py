@@ -105,7 +105,7 @@ async def test_viewer_tree_root_does_not_require_sandbox_listing(test_client, st
     service_module = importlib.import_module("yuxi.services.viewer_filesystem_service")
 
     async def _fake_resolve_viewer_state(**kwargs):
-        return _FailingSandbox(), _EmptyBackend(), _EmptyBackend(), []
+        return _FailingSandbox(), _EmptyBackend(), []
 
     monkeypatch.setattr(service_module, "_resolve_viewer_state", _fake_resolve_viewer_state)
 
@@ -141,7 +141,7 @@ async def test_viewer_tree_user_data_uses_local_thread_directory(test_client, st
     service_module = importlib.import_module("yuxi.services.viewer_filesystem_service")
 
     async def _fake_resolve_viewer_state(**kwargs):
-        return _FailingSandbox(), _EmptyBackend(), _EmptyBackend(), []
+        return _FailingSandbox(), _EmptyBackend(), []
 
     monkeypatch.setattr(service_module, "_resolve_viewer_state", _fake_resolve_viewer_state)
 

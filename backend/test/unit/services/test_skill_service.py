@@ -43,18 +43,18 @@ def test_is_valid_skill_slug():
     assert svc.is_valid_skill_slug("") is False
 
 
-def test_sync_thread_visible_skills_none_keeps_no_skills(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+def test_sync_thread_readable_skills_none_keeps_no_skills(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(svc.sys_config, "save_dir", str(tmp_path))
     skills_root = tmp_path / "skills"
     (skills_root / "alpha").mkdir(parents=True, exist_ok=True)
     (skills_root / "alpha" / "SKILL.md").write_text("alpha", encoding="utf-8")
 
-    thread_root = svc.sync_thread_visible_skills("thread_1", None)
+    thread_root = svc.sync_thread_readable_skills("thread_1", None)
 
     assert list(thread_root.iterdir()) == []
 
 
-def test_sync_thread_visible_skills_only_keeps_selected(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+def test_sync_thread_readable_skills_only_keeps_selected(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(svc.sys_config, "save_dir", str(tmp_path))
     skills_root = tmp_path / "skills"
     (skills_root / "alpha").mkdir(parents=True, exist_ok=True)
@@ -62,7 +62,7 @@ def test_sync_thread_visible_skills_only_keeps_selected(tmp_path: Path, monkeypa
     (skills_root / "beta").mkdir(parents=True, exist_ok=True)
     (skills_root / "beta" / "SKILL.md").write_text("beta", encoding="utf-8")
 
-    thread_root = svc.sync_thread_visible_skills("thread_1", ["alpha", "missing", "alpha"])
+    thread_root = svc.sync_thread_readable_skills("thread_1", ["alpha", "missing", "alpha"])
 
     assert thread_root == tmp_path / "threads" / "thread_1" / "skills"
     assert sorted(path.name for path in thread_root.iterdir()) == ["alpha"]
@@ -70,7 +70,7 @@ def test_sync_thread_visible_skills_only_keeps_selected(tmp_path: Path, monkeypa
     assert not (thread_root / "alpha").is_symlink()
     assert (thread_root / "alpha" / "SKILL.md").read_text(encoding="utf-8") == "alpha"
 
-    svc.sync_thread_visible_skills("thread_1", ["beta"])
+    svc.sync_thread_readable_skills("thread_1", ["beta"])
     assert sorted(path.name for path in thread_root.iterdir()) == ["beta"]
     assert (thread_root / "beta" / "SKILL.md").read_text(encoding="utf-8") == "beta"
 
@@ -80,17 +80,17 @@ async def test_get_skill_dependency_options(monkeypatch: pytest.MonkeyPatch):
     # Mock get_tool_metadata to return tool list
     def fake_get_tool_metadata(category=None):
         return [
-            {"id": "calculator", "name": "Calculator"},
-            {"id": "search", "name": "Search"},
+            {"slug": "calculator", "name": "Calculator"},
+            {"slug": "search", "name": "Search"},
         ]
 
     monkeypatch.setattr(tool_service, "get_tool_metadata", fake_get_tool_metadata)
 
-    async def fake_get_enabled_mcp_server_names(db=None):
+    async def fake_get_enabled_mcp_server_slugs(db=None):
         del db
         return ["mcp-a", "mcp-b"]
 
-    monkeypatch.setattr(svc, "get_enabled_mcp_server_names", fake_get_enabled_mcp_server_names)
+    monkeypatch.setattr(svc, "get_enabled_mcp_server_slugs", fake_get_enabled_mcp_server_slugs)
 
     async def fake_list_skill_slugs(_db):
         return ["alpha", "beta"]
@@ -98,7 +98,7 @@ async def test_get_skill_dependency_options(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(svc, "list_skill_slugs", fake_list_skill_slugs)
 
     result = await svc.get_skill_dependency_options(None)
-    assert result["tools"] == [{"id": "calculator", "name": "Calculator"}, {"id": "search", "name": "Search"}]
+    assert result["tools"] == [{"slug": "calculator", "name": "Calculator"}, {"slug": "search", "name": "Search"}]
     assert result["mcps"] == ["mcp-a", "mcp-b"]
     assert result["skills"] == ["alpha", "beta"]
 
@@ -316,15 +316,15 @@ async def test_update_skill_dependencies(monkeypatch: pytest.MonkeyPatch):
 
     # Mock get_tool_metadata to return tool list
     def fake_get_tool_metadata(category=None):
-        return [{"id": "calculator", "name": "Calculator"}]
+        return [{"slug": "calculator", "name": "Calculator"}]
 
     monkeypatch.setattr(tool_service, "get_tool_metadata", fake_get_tool_metadata)
 
-    async def fake_get_enabled_mcp_server_names(db=None):
+    async def fake_get_enabled_mcp_server_slugs(db=None):
         del db
         return ["mcp-a"]
 
-    monkeypatch.setattr(svc, "get_enabled_mcp_server_names", fake_get_enabled_mcp_server_names)
+    monkeypatch.setattr(svc, "get_enabled_mcp_server_slugs", fake_get_enabled_mcp_server_slugs)
 
     async def fake_get_skill_or_raise(_db, slug: str):
         assert slug == "alpha"

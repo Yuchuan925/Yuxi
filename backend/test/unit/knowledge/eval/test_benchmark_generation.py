@@ -20,11 +20,11 @@ from yuxi.knowledge.eval.benchmark_generation import (
 
 class FakeKnowledgeBase:
     files_meta = {
-        "file_a": {"database_id": "db_1"},
-        "file_b": {"database_id": "db_2"},
+        "file_a": {"kb_id": "db_1"},
+        "file_b": {"kb_id": "db_2"},
     }
 
-    async def get_file_content(self, db_id, fid):
+    async def get_file_content(self, kb_id, fid):
         return {
             "lines": [
                 {"id": f"{fid}_chunk", "content": "内容", "chunk_order_index": 0},
@@ -33,21 +33,21 @@ class FakeKnowledgeBase:
 
 
 class FakeGenerationKnowledgeBase:
-    files_meta = {"file_a": {"database_id": "db_1"}}
+    files_meta = {"file_a": {"kb_id": "db_1"}}
 
     def __init__(self, query_results=None):
         self.query_results = query_results or []
         self.query_calls = []
 
-    async def get_file_content(self, db_id, fid):
+    async def get_file_content(self, kb_id, fid):
         return {
             "lines": [
                 {"id": "anchor_chunk", "content": "anchor content", "chunk_order_index": 0},
             ]
         }
 
-    async def aquery(self, query_text, db_id, **kwargs):
-        self.query_calls.append({"query_text": query_text, "db_id": db_id, **kwargs})
+    async def aquery(self, query_text, kb_id, **kwargs):
+        self.query_calls.append({"query_text": query_text, "kb_id": kb_id, **kwargs})
         return self.query_results
 
 
@@ -64,7 +64,7 @@ class FakeLlm:
 
 
 class NoQueryKnowledgeBase(FakeGenerationKnowledgeBase):
-    async def aquery(self, query_text, db_id, **kwargs):
+    async def aquery(self, query_text, kb_id, **kwargs):
         raise AssertionError("neighbors_count=1 时不应调用 aquery")
 
 
@@ -89,7 +89,7 @@ class TrackingLlm:
 
 
 class FakeGraphGenerationKnowledgeBase(FakeGenerationKnowledgeBase):
-    async def get_file_content(self, db_id, fid):
+    async def get_file_content(self, kb_id, fid):
         return {
             "lines": [
                 {
@@ -139,7 +139,7 @@ def test_build_benchmark_generation_prompt_contains_required_schema():
 
 
 @pytest.mark.asyncio
-async def test_collect_kb_chunks_filters_database_id():
+async def test_collect_kb_chunks_filters_kb_id():
     chunks = await collect_kb_chunks(FakeKnowledgeBase(), "db_1")
 
     assert chunks == [
@@ -165,7 +165,7 @@ async def test_iter_generated_benchmark_items_with_one_chunk_does_not_query(monk
         item
         async for item in iter_generated_benchmark_items(
             kb_instance=NoQueryKnowledgeBase(),
-            db_id="db_1",
+            kb_id="db_1",
             count=1,
             neighbors_count=1,
             llm_model_spec="test-provider:test-model",
@@ -193,7 +193,7 @@ async def test_select_neighbor_chunks_by_kb_query_filters_anchor():
 
     chunks = await select_neighbor_chunks_by_kb_query(
         kb_instance=kb,
-        db_id="db_1",
+        kb_id="db_1",
         anchor_chunk={"id": "anchor_chunk", "content": "anchor content", "file_id": "file_a", "chunk_index": 0},
         neighbors_count=1,
     )
@@ -202,7 +202,7 @@ async def test_select_neighbor_chunks_by_kb_query_filters_anchor():
     assert kb.query_calls == [
         {
             "query_text": "anchor content",
-            "db_id": "db_1",
+            "kb_id": "db_1",
             "search_mode": "vector",
             "final_top_k": 4,
             "use_reranker": False,
@@ -215,7 +215,7 @@ async def test_select_neighbor_chunks_by_kb_query_filters_anchor():
 async def test_select_graph_enhanced_chunks_expands_by_ppr_with_anchor_bias(monkeypatch):
     calls = []
 
-    async def fake_rank(self, db_id, seed_weights, *, max_nodes, top_k, damping):
+    async def fake_rank(self, kb_id, seed_weights, *, max_nodes, top_k, damping):
         calls.append(dict(seed_weights))
         if len(calls) == 1:
             return [("anchor", 0.9), ("neighbor_1", 0.8)]
@@ -232,7 +232,7 @@ async def test_select_graph_enhanced_chunks_expands_by_ppr_with_anchor_bias(monk
     }
 
     chunks = await select_graph_enhanced_chunks(
-        db_id="db_1",
+        kb_id="db_1",
         anchor_chunk=chunks_by_id["anchor"],
         chunks_by_id=chunks_by_id,
         context_count=3,
@@ -247,7 +247,7 @@ async def test_select_graph_enhanced_chunks_expands_by_ppr_with_anchor_bias(monk
 
 @pytest.mark.asyncio
 async def test_iter_generated_benchmark_items_graph_mode_uses_graph_indexed_anchor(monkeypatch):
-    async def fake_rank(self, db_id, seed_weights, *, max_nodes, top_k, damping):
+    async def fake_rank(self, kb_id, seed_weights, *, max_nodes, top_k, damping):
         assert seed_weights["anchor_entity"] == 1.0
         return [("graph_anchor", 0.9), ("graph_neighbor", 0.8)]
 
@@ -263,7 +263,7 @@ async def test_iter_generated_benchmark_items_graph_mode_uses_graph_indexed_anch
         item
         async for item in iter_generated_benchmark_items(
             kb_instance=kb,
-            db_id="db_1",
+            kb_id="db_1",
             count=1,
             neighbors_count=2,
             llm_model_spec="test-provider:test-model",
@@ -295,7 +295,7 @@ async def test_iter_generated_benchmark_items_uses_query_neighbor(monkeypatch):
         item
         async for item in iter_generated_benchmark_items(
             kb_instance=kb,
-            db_id="db_1",
+            kb_id="db_1",
             count=1,
             neighbors_count=2,
             llm_model_spec="test-provider:test-model",
@@ -317,7 +317,7 @@ async def test_iter_generated_benchmark_items_falls_back_to_anchor_when_query_em
         item
         async for item in iter_generated_benchmark_items(
             kb_instance=FakeGenerationKnowledgeBase(query_results=[]),
-            db_id="db_1",
+            kb_id="db_1",
             count=1,
             neighbors_count=2,
             llm_model_spec="test-provider:test-model",
@@ -337,7 +337,7 @@ async def test_iter_generated_benchmark_items_respects_concurrency_count(monkeyp
         item
         async for item in iter_generated_benchmark_items(
             kb_instance=NoQueryKnowledgeBase(),
-            db_id="db_1",
+            kb_id="db_1",
             count=4,
             neighbors_count=1,
             concurrency_count=2,
@@ -358,7 +358,7 @@ async def test_iter_generated_benchmark_items_returns_at_most_count(monkeypatch)
         item
         async for item in iter_generated_benchmark_items(
             kb_instance=NoQueryKnowledgeBase(),
-            db_id="db_1",
+            kb_id="db_1",
             count=3,
             neighbors_count=1,
             concurrency_count=10,
@@ -378,7 +378,7 @@ async def test_iter_generated_benchmark_items_stops_at_max_attempts(monkeypatch)
         item
         async for item in iter_generated_benchmark_items(
             kb_instance=NoQueryKnowledgeBase(),
-            db_id="db_1",
+            kb_id="db_1",
             count=2,
             neighbors_count=1,
             concurrency_count=10,

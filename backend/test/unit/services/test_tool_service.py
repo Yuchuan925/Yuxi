@@ -34,7 +34,7 @@ def test_get_tool_metadata_includes_config_guide(monkeypatch):
 
     assert result == [
         {
-            "id": "demo_tool",
+            "slug": "demo_tool",
             "name": "演示工具",
             "description": "demo description",
             "metadata": {},

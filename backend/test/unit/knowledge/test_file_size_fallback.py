@@ -67,7 +67,7 @@ class TestAddFileRecordSizeFallback:
             def kb_type(self):
                 return "test"
 
-            async def _create_kb_instance(self, db_id, config):
+            async def _create_kb_instance(self, kb_id, config):
                 pass
 
             async def _initialize_kb_instance(self, instance):
@@ -76,34 +76,34 @@ class TestAddFileRecordSizeFallback:
             async def _persist_file(self, file_id):
                 pass
 
-            async def _persist_kb(self, db_id):
+            async def _persist_kb(self, kb_id):
                 pass
 
             async def _save_metadata(self):
                 pass
 
-            async def index_file(self, db_id, file_id, operator_id=None):
+            async def index_file(self, kb_id, file_id, operator_id=None):
                 return {}
 
-            async def aquery(self, query_text, db_id, **kwargs):
+            async def aquery(self, query_text, kb_id, **kwargs):
                 return []
 
-            async def delete_file(self, db_id, file_id):
+            async def delete_file(self, kb_id, file_id):
                 pass
 
-            async def get_file_basic_info(self, db_id, file_id):
+            async def get_file_basic_info(self, kb_id, file_id):
                 return {}
 
-            async def get_file_content(self, db_id, file_id):
+            async def get_file_content(self, kb_id, file_id):
                 return {}
 
-            async def get_file_info(self, db_id, file_id):
+            async def get_file_info(self, kb_id, file_id):
                 return {}
 
-            async def update_content(self, db_id, file_ids, params=None):
+            async def update_content(self, kb_id, file_ids, params=None):
                 return []
 
-            async def get_query_params_config(self, db_id, **kwargs):
+            async def get_query_params_config(self, kb_id, **kwargs):
                 return {"type": "test", "options": []}
 
         kb = TestKB(work_dir=work_dir)
@@ -177,34 +177,34 @@ async def test_save_metadata_does_not_overwrite_existing_kb_config():
         def kb_type(self):
             return "test"
 
-        async def _create_kb_instance(self, db_id, config):
+        async def _create_kb_instance(self, kb_id, config):
             pass
 
         async def _initialize_kb_instance(self, instance):
             pass
 
-        async def index_file(self, db_id, file_id, operator_id=None):
+        async def index_file(self, kb_id, file_id, operator_id=None):
             return {}
 
-        async def update_content(self, db_id, file_ids, params=None):
+        async def update_content(self, kb_id, file_ids, params=None):
             return []
 
-        async def aquery(self, query_text, db_id, **kwargs):
+        async def aquery(self, query_text, kb_id, **kwargs):
             return []
 
-        def get_query_params_config(self, db_id, **kwargs):
+        def get_query_params_config(self, kb_id, **kwargs):
             return {"type": "test", "options": []}
 
-        async def delete_file(self, db_id, file_id):
+        async def delete_file(self, kb_id, file_id):
             pass
 
-        async def get_file_basic_info(self, db_id, file_id):
+        async def get_file_basic_info(self, kb_id, file_id):
             return {}
 
-        async def get_file_content(self, db_id, file_id):
+        async def get_file_content(self, kb_id, file_id):
             return {}
 
-        async def get_file_info(self, db_id, file_id):
+        async def get_file_info(self, kb_id, file_id):
             return {}
 
     class ExistingKbRepo:
@@ -212,14 +212,14 @@ async def test_save_metadata_does_not_overwrite_existing_kb_config():
             self.created = []
             self.updated = []
 
-        async def get_by_id(self, db_id):
-            return SimpleNamespace(db_id=db_id)
+        async def get_by_kb_id(self, kb_id):
+            return SimpleNamespace(kb_id=kb_id)
 
         async def create(self, payload):
             self.created.append(payload)
 
-        async def update(self, db_id, data):
-            self.updated.append((db_id, data))
+        async def update(self, kb_id, data):
+            self.updated.append((kb_id, data))
 
     kb_repo = ExistingKbRepo()
     kb = TestKB(work_dir="/tmp/test_kb")

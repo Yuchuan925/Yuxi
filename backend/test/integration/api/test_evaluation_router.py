@@ -11,12 +11,12 @@ import pytest
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
 
 
-async def _upload_test_dataset(test_client, admin_headers: dict[str, str], db_id: str) -> tuple[str, str]:
+async def _upload_test_dataset(test_client, admin_headers: dict[str, str], slug: str) -> tuple[str, str]:
     dataset_name = f"pytest_dataset_{uuid.uuid4().hex[:8]}"
     line = '{"query":"什么是单元测试？","gold_answer":"用于验证代码行为的自动化测试"}\n'
 
     response = await test_client.post(
-        f"/api/evaluation/databases/{db_id}/datasets/upload",
+        f"/api/evaluation/databases/{slug}/datasets/upload",
         data={"name": dataset_name, "description": "pytest dataset for download"},
         files={"file": ("pytest_dataset.jsonl", line.encode("utf-8"), "application/x-ndjson")},
         headers=admin_headers,
@@ -39,7 +39,7 @@ async def test_download_dataset_requires_admin(test_client, standard_user):
 
 
 async def test_admin_can_download_dataset(test_client, admin_headers, knowledge_database):
-    dataset_id, expected_line = await _upload_test_dataset(test_client, admin_headers, knowledge_database["db_id"])
+    dataset_id, expected_line = await _upload_test_dataset(test_client, admin_headers, knowledge_database["slug"])
 
     response = await test_client.get(
         f"/api/evaluation/datasets/{dataset_id}/download",

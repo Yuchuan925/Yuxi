@@ -146,15 +146,15 @@ def cleanup_test_knowledge_databases():
             prefixes = ("pytest_", "py_test")
             for entry in databases:
                 name = entry.get("name") or ""
-                db_id = entry.get("db_id")
-                if not db_id or not isinstance(name, str) or not name.startswith(prefixes):
+                slug = entry.get("slug")
+                if not slug or not isinstance(name, str) or not name.startswith(prefixes):
                     continue
                 try:
-                    delete_response = await client.delete(f"/api/knowledge/databases/{db_id}", headers=headers)
+                    delete_response = await client.delete(f"/api/knowledge/databases/{slug}", headers=headers)
                     if delete_response.status_code not in (200, 404):
-                        print(f"Warning: Failed to cleanup knowledge database {db_id}: {delete_response.text}")
+                        print(f"Warning: Failed to cleanup knowledge database {slug}: {delete_response.text}")
                 except Exception as exc:
-                    print(f"Warning: Exception during cleanup of {db_id}: {exc}")
+                    print(f"Warning: Exception during cleanup of {slug}: {exc}")
 
     try:
         anyio.run(run_cleanup)
@@ -275,7 +275,7 @@ async def knowledge_database(
     unique_id = uuid.uuid4().hex
     timestamp = int(time.time() * 1000000)
     db_name = f"pytest_kb_{timestamp}_{unique_id}"
-    db_id = None
+    slug = None
 
     try:
         create_response = await test_client.post(
@@ -292,7 +292,7 @@ async def knowledge_database(
 
         if create_response.status_code == 200:
             db_payload = create_response.json()
-            db_id = db_payload["db_id"]
+            slug = db_payload["slug"]
         elif create_response.status_code == 409:
             error_detail = create_response.json().get("detail", "")
             pytest.fail(f"Knowledge database name conflict: {error_detail}. Please clean up old test databases first.")
@@ -301,13 +301,13 @@ async def knowledge_database(
                 f"Failed to create knowledge database (status={create_response.status_code}): {create_response.text}"
             )
 
-        yield db_payload if db_id else {"db_id": db_id, "name": db_name}
+        yield db_payload if slug else {"slug": slug, "name": db_name}
 
     finally:
-        if db_id:
+        if slug:
             try:
-                delete_response = await test_client.delete(f"/api/knowledge/databases/{db_id}", headers=admin_headers)
+                delete_response = await test_client.delete(f"/api/knowledge/databases/{slug}", headers=admin_headers)
                 if delete_response.status_code != 200:
-                    print(f"Warning: Failed to cleanup knowledge database {db_id}: {delete_response.text}")
+                    print(f"Warning: Failed to cleanup knowledge database {slug}: {delete_response.text}")
             except Exception as exc:
-                print(f"Warning: Exception during cleanup of {db_id}: {exc}")
+                print(f"Warning: Exception during cleanup of {slug}: {exc}")

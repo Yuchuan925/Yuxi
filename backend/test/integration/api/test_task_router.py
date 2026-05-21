@@ -73,11 +73,11 @@ async def test_enqueue_document_creates_task(
         headers=admin_headers,
     )
     assert create_response.status_code == 200, create_response.text
-    db_id = create_response.json()["db_id"]
+    slug = create_response.json()["slug"]
 
     try:
         enqueue_response = await test_client.post(
-            f"/api/knowledge/databases/{db_id}/documents",
+            f"/api/knowledge/databases/{slug}/documents",
             json={
                 "items": [],
                 "params": {"content_type": "file"},
@@ -119,4 +119,4 @@ async def test_enqueue_document_creates_task(
         else:
             pytest.fail("Task did not reach a terminal status within timeout window")
     finally:
-        await test_client.delete(f"/api/knowledge/databases/{db_id}", headers=admin_headers)
+        await test_client.delete(f"/api/knowledge/databases/{slug}", headers=admin_headers)

@@ -350,7 +350,7 @@ async def test_install_skill_git_with_skill_names_passes_admin_check(mock_pg):
                     # Mock enabling skill in config
                     mock_enable.return_value = True
 
-                    with patch("yuxi.services.skill_service.sync_thread_visible_skills"):
+                    with patch("yuxi.services.skill_service.sync_thread_readable_skills"):
                         result = await _install_skill_func(
                             source="owner/repo",
                             skill_names=["test-skill"],
@@ -387,7 +387,7 @@ async def test_install_skill_sandbox_success(mock_pg):
                 ) as mock_enable:
                     mock_enable.return_value = True
 
-                    with patch("yuxi.services.skill_service.sync_thread_visible_skills"):
+                    with patch("yuxi.services.skill_service.sync_thread_readable_skills"):
                         result = await _install_skill_func(
                             source="/home/gem/user-data/workspace/my-skill",
                             runtime=runtime,
@@ -476,7 +476,7 @@ async def test_install_skill_partial_config_failure(mock_pg):
                     # Simulate config persistence failure
                     mock_enable.return_value = False
 
-                    with patch("yuxi.services.skill_service.sync_thread_visible_skills"):
+                    with patch("yuxi.services.skill_service.sync_thread_readable_skills"):
                         result = await _install_skill_func(
                             source="/home/gem/user-data/workspace/my-skill",
                             runtime=runtime,
@@ -514,7 +514,7 @@ async def test_install_skill_slug_warning_for_renamed(mock_pg):
                 ) as mock_enable:
                     mock_enable.return_value = True
 
-                    with patch("yuxi.services.skill_service.sync_thread_visible_skills"):
+                    with patch("yuxi.services.skill_service.sync_thread_readable_skills"):
                         result = await _install_skill_func(
                             source="/home/gem/user-data/workspace/my-skill",
                             runtime=runtime,
