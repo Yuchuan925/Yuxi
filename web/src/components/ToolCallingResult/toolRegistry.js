@@ -14,16 +14,16 @@ import {
   HelpCircle,
   Image,
   Network,
-  Terminal
+  SquareTerminal
 } from 'lucide-vue-next'
 
 export const TOOL_ICON_MAP = {
   ask_user_question: HelpCircle,
-  bash: Terminal,
+  bash: SquareTerminal,
   calculator: Calculator,
-  cmd: Terminal,
+  cmd: SquareTerminal,
   edit_file: FilePen,
-  execute: Terminal,
+  execute: SquareTerminal,
   find_kb_document: FolderSearch,
   get_mindmap: Network,
   glob: FolderSearch,
@@ -39,7 +39,7 @@ export const TOOL_ICON_MAP = {
   query_kb: BookOpen,
   read_file: FileText,
   replace: FilePen,
-  run_shell_command: Terminal,
+  run_shell_command: SquareTerminal,
   search_file_content: FolderSearch,
   task: Bot,
   tavily_search: Globe,

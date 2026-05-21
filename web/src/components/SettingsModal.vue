@@ -55,6 +55,15 @@
             <Users class="icon" :size="18" />
             <span>部门管理</span>
           </div>
+          <div
+            class="sider-item"
+            :class="{ activesec: activeTab === 'agentEnv' }"
+            @click="activeTab = 'agentEnv'"
+            v-if="userStore.isLoggedIn"
+          >
+            <SquareTerminal class="icon" :size="18" />
+            <span>环境变量</span>
+          </div>
         </div>
 
         <div v-if="showStarCard" class="settings-star-card">
@@ -103,6 +112,14 @@
         </div>
         <div
           class="nav-item"
+          :class="{ active: activeTab === 'agentEnv' }"
+          @click="activeTab = 'agentEnv'"
+          v-if="userStore.isLoggedIn"
+        >
+          沙盒环境变量
+        </div>
+        <div
+          class="nav-item"
           :class="{ active: activeTab === 'base' }"
           @click="activeTab = 'base'"
           v-if="userStore.isAdmin"
@@ -134,6 +151,10 @@
             <AccountSettingsComponent />
           </div>
 
+          <div v-if="activeTab === 'agentEnv' && userStore.isLoggedIn">
+            <AgentEnvSettingsCard />
+          </div>
+
           <div v-show="activeTab === 'base'" v-if="userStore.isAdmin">
             <BasicSettingsSection />
           </div>
@@ -155,8 +176,9 @@
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue'
 import { useUserStore } from '@/stores/user'
-import { CircleUser, ExternalLink, Settings, Star, User, Users, X } from 'lucide-vue-next'
+import { CircleUser, ExternalLink, Settings, Star, SquareTerminal, User, Users, X } from 'lucide-vue-next'
 import AccountSettingsComponent from '@/components/AccountSettingsComponent.vue'
+import AgentEnvSettingsCard from '@/components/AgentEnvSettingsCard.vue'
 import BasicSettingsSection from '@/components/BasicSettingsSection.vue'
 import UserManagementComponent from '@/components/UserManagementComponent.vue'
 import DepartmentManagementComponent from '@/components/DepartmentManagementComponent.vue'
@@ -188,7 +210,7 @@ const visible = computed({
 
 const availableTabs = computed(() => {
   const tabs = []
-  if (userStore.isLoggedIn) tabs.push('account')
+  if (userStore.isLoggedIn) tabs.push('account', 'agentEnv')
   if (userStore.isAdmin) tabs.push('base', 'user')
   if (userStore.isSuperAdmin) tabs.push('department')
   return tabs

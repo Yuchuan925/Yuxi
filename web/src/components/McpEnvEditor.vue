@@ -13,7 +13,7 @@
         删除
       </a-button>
     </div>
-    <a-button size="small" @click="addRow">
+    <a-button @click="addRow" class="add-env">
       <template #icon><PlusOutlined /></template>
       添加变量
     </a-button>
@@ -140,6 +140,10 @@ watch(
     .env-value-input {
       flex: 1;
     }
+  }
+
+  button.add-env {
+    width: fit-content;
   }
 }
 </style>
