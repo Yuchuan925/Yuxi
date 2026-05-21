@@ -24,9 +24,11 @@
 - [ ] 权限新增一个 guest 的预设字段，暂无任何权限
 - [ ] rename database table name, such as skills -> agent_skills, subagents -> agent_subagents, mcp, tool_call, 等等
 - [x] department 的 id 也不能使用那个索引的 id 来使用了，应该是一个独立的 dept_id，需要确认
-- [ ] allow user config skill
+- [ ] allow user config skill, and envs
+- [ ] add model retry times to agent context config
+- [ ] add user envs when load sandbox
 - [ ] Config spacy model 的 load
-- [ ] allow multi-hop qa generate
+- [x] allow multi-hop qa generate
 - [x] 在工作区的文件编辑的时候，保存和取消的按钮应该是悬浮在编辑框的右上角，而不是在 header 上面
 - [x] default enable all build in tools / kbs / skills / mcps / subagents
 - [x] 链接 Notion 和 feishu 目前来看，都是支持的

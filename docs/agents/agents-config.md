@@ -221,9 +221,15 @@ config_json.context + runtime ids -> context_schema instance
 
 因此 Graph 不是和 Context 解耦的。相反，Graph 的构造本身就依赖 Context。
 
-### 4.4 中间件运行阶段
+### 4.4 Graph 构建与中间件运行阶段
 
-中间件通过 `request.runtime.context` 或 `runtime.context` 继续读取和修改 Context。
+`get_graph()` 创建 LangGraph 前会先调用 `prepare_agent_runtime_context`，用当前用户重新过滤资源字段，并派生运行时字段：
+
+- `_visible_knowledge_bases`：当前会话实际可查询的知识库对象
+- `_prompt_skills`：需要注入提示词的 Skill 闭包
+- `_readable_skills`：`/home/gem/skills` 和沙盒可读的 Skill 闭包
+
+中间件通过 `request.runtime.context` 或 `runtime.context` 继续读取这些结果。
 
 例如：
 
@@ -231,15 +237,14 @@ config_json.context + runtime ids -> context_schema instance
   - 读取 `model`、`system_prompt`、`tools`、`mcps`
   - 动态覆盖模型、系统提示词和工具列表
 - `SkillsMiddleware`
-  - 读取 `skills`
-  - 计算可见技能闭包
-  - 将 skills 提示段注入 `system_prompt`
-  - 在运行期回写 `_visible_skills`
+  - 读取 `_prompt_skills` 注入 skills 提示段
+  - 读取 `_readable_skills` 校验可激活 Skill
+  - 根据 `activated_skills` 按需挂载工具和 MCP 依赖
 - 文件系统与沙盒接入
   - 通过 `thread_id` 获取对应沙盒
-  - 通过 `skills` 决定 `/home/gem/skills` 的可见范围
+  - 通过 `_readable_skills` 决定 `/home/gem/skills` 的可读范围
 
-所以 Context 既是输入配置，也是中间件共享的运行时状态载体。
+所以 Context 既是输入配置，也是 Graph 创建前整理出的运行时资源上下文。
 
 ### 4.5 文件系统与 Viewer 阶段
 
