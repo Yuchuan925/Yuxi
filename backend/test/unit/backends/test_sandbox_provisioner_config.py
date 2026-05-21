@@ -40,3 +40,24 @@ def test_canonical_backend_name(monkeypatch):
 
     assert module.canonical_backend_name("docker") == "docker"
     assert module.canonical_backend_name("kubernetes") == "kubernetes"
+
+
+def test_merged_sandbox_env_user_values_override_global(monkeypatch):
+    monkeypatch.setenv("PROVISIONER_BACKEND", "memory")
+    module = _load_module()
+
+    assert module.merged_sandbox_env(
+        {"SHARED": "global", "GLOBAL_ONLY": "value"},
+        {"SHARED": "user", "USER_ONLY": "value"},
+    ) == {
+        "SHARED": "user",
+        "GLOBAL_ONLY": "value",
+        "USER_ONLY": "value",
+    }
+
+
+def test_normalize_env_converts_values_to_strings(monkeypatch):
+    monkeypatch.setenv("PROVISIONER_BACKEND", "memory")
+    module = _load_module()
+
+    assert module.normalize_env({"A": 1, "B": None, "": "ignored"}) == {"A": "1", "B": ""}
