@@ -13,7 +13,7 @@ from server.routers.subagent_router import subagents_router
 from server.routers.system_router import system
 from server.routers.system_task_router import tasks
 from server.routers.tool_router import tools
-from server.routers.auth_apikey_router import apikey_router
+from server.routers.user_router import user_router
 from server.routers.filesystem_router import filesystem_router
 from server.routers.workspace_router import workspace
 
@@ -35,7 +35,7 @@ router.include_router(model_providers)  # /api/system/model-providers/* 独立�
 router.include_router(skills)  # /api/system/skills/* Skills 管理
 router.include_router(subagents_router)  # /api/system/subagents/* 子智能体管理
 router.include_router(tools)  # /api/system/tools/* 工具列表与配置
-router.include_router(apikey_router)  # /api/apikey/* API Key 管理
+router.include_router(user_router)  # /api/user/* 用户级配置与凭据
 router.include_router(filesystem_router)  # /api/viewer/filesystem/* 工作台文件系统视图
 router.include_router(workspace)  # /api/workspace/* 用户个人工作区
 

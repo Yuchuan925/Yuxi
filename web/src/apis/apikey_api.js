@@ -1,15 +1,17 @@
 import { apiGet, apiPost, apiPut, apiDelete } from './base'
 
+const API_KEY_BASE_PATH = '/api/user/apikey'
+
 export const apikeyApi = {
-  list: (skip = 0, limit = 100) => apiGet('/api/apikey/', { params: { skip, limit } }),
+  list: (skip = 0, limit = 100) => apiGet(`${API_KEY_BASE_PATH}/`, { params: { skip, limit } }),
 
-  create: (data) => apiPost('/api/apikey/', data),
+  create: (data) => apiPost(`${API_KEY_BASE_PATH}/`, data),
 
-  get: (id) => apiGet(`/api/apikey/${id}`),
+  get: (id) => apiGet(`${API_KEY_BASE_PATH}/${id}`),
 
-  update: (id, data) => apiPut(`/api/apikey/${id}`, data),
+  update: (id, data) => apiPut(`${API_KEY_BASE_PATH}/${id}`, data),
 
-  delete: (id) => apiDelete(`/api/apikey/${id}`),
+  delete: (id) => apiDelete(`${API_KEY_BASE_PATH}/${id}`),
 
-  regenerate: (id) => apiPost(`/api/apikey/${id}/regenerate`)
+  regenerate: (id) => apiPost(`${API_KEY_BASE_PATH}/${id}/regenerate`)
 }
