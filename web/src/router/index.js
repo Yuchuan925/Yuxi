@@ -65,21 +65,6 @@ const router = createRouter({
       ]
     },
     {
-      path: '/database',
-      name: 'database',
-      redirect: { path: '/extensions', query: { tab: 'knowledge' } }
-    },
-    {
-      path: '/database/:database_id',
-      name: 'DatabaseInfoCompLegacy',
-      redirect: (to) => ({ path: `/extensions/database/${to.params.database_id}` })
-    },
-    {
-      path: '/extensions/connectors/:database_id',
-      name: 'ConnectorDetailLegacy',
-      redirect: (to) => ({ path: `/extensions/database/${to.params.database_id}` })
-    },
-    {
       path: '/dashboard',
       name: 'dashboard',
       component: AppLayout,
@@ -121,8 +106,8 @@ const router = createRouter({
           },
           children: [
             {
-              path: 'database/:database_id',
-              name: 'ExtensionDatabaseDetail',
+              path: 'knowledgebase/:kbId',
+              name: 'ExtensionKnowledgeBaseDetail',
               component: () => import('../views/DataBaseInfoView.vue'),
               meta: {
                 keepAlive: false,
@@ -131,7 +116,7 @@ const router = createRouter({
               }
             },
             {
-              path: 'mcp/:name',
+              path: 'mcp/:slug',
               name: 'ExtensionMcpDetail',
               component: () => import('../components/extensions/McpDetailView.vue'),
               meta: {
@@ -141,7 +126,7 @@ const router = createRouter({
               }
             },
             {
-              path: 'subagent/:name',
+              path: 'subagent/:slug',
               name: 'ExtensionSubagentDetail',
               component: () => import('../components/extensions/SubagentDetailView.vue'),
               meta: {

@@ -60,7 +60,7 @@ import { Markmap } from 'markmap-view'
 import { Transformer } from 'markmap-lib'
 
 const props = defineProps({
-  databaseId: {
+  kbId: {
     type: String,
     required: true
   }
@@ -84,11 +84,11 @@ let markmapInstance = null
  * 加载思维导图
  */
 const loadMindmap = async () => {
-  if (!props.databaseId) return
+  if (!props.kbId) return
 
   try {
     loading.value = true
-    const response = await mindmapApi.getByDatabase(props.databaseId)
+    const response = await mindmapApi.getByDatabase(props.kbId)
 
     if (response.mindmap) {
       mindmapData.value = response.mindmap
@@ -121,13 +121,13 @@ const loadMindmap = async () => {
  * 生成思维导图
  */
 const generateMindmap = async () => {
-  if (!props.databaseId) return
+  if (!props.kbId) return
 
   try {
     generating.value = true
 
     const response = await mindmapApi.generateMindmap(
-      props.databaseId,
+      props.kbId,
       [], // 使用所有文件
       '' // 无自定义提示
     )
@@ -257,7 +257,7 @@ defineExpose({
 
 // 监听数据库ID变化
 watch(
-  () => props.databaseId,
+  () => props.kbId,
   (newId) => {
     if (newId) {
       loadMindmap()

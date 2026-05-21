@@ -51,7 +51,7 @@ const props = defineProps({
     type: Boolean,
     default: false
   },
-  databaseId: {
+  kbId: {
     type: String,
     required: true
   }
@@ -172,7 +172,7 @@ const handleUpload = async () => {
 
     uploading.value = true
 
-    const response = await evaluationApi.uploadDataset(props.databaseId, formState.file, {
+    const response = await evaluationApi.uploadDataset(props.kbId, formState.file, {
       name: formState.name,
       description: formState.description
     })

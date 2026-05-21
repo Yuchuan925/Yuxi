@@ -154,14 +154,14 @@
     <!-- 上传模态框 -->
     <BenchmarkUploadModal
       v-model:visible="uploadModalVisible"
-      :database-id="databaseId"
+      :kb-id="kbId"
       @success="onUploadSuccess"
     />
 
     <!-- 生成模态框 -->
     <BenchmarkGenerateModal
       v-model:visible="generateModalVisible"
-      :database-id="databaseId"
+      :kb-id="kbId"
       @success="onGenerateSuccess"
     />
 
@@ -279,7 +279,7 @@ import BenchmarkUploadModal from './modals/BenchmarkUploadModal.vue'
 import BenchmarkGenerateModal from './modals/BenchmarkGenerateModal.vue'
 
 const props = defineProps({
-  databaseId: {
+  kbId: {
     type: String,
     required: true
   }
@@ -494,11 +494,11 @@ const syncBuildRefresh = () => {
 
 // 加载基准列表
 const loadBenchmarks = async (silent = false) => {
-  if (!props.databaseId) return
+  if (!props.kbId) return
 
   if (!silent) loading.value = true
   try {
-    const response = await evaluationApi.listDatasets(props.databaseId)
+    const response = await evaluationApi.listDatasets(props.kbId)
 
     if (response && response.message === 'success' && Array.isArray(response.data)) {
       benchmarks.value = response.data
@@ -563,7 +563,7 @@ const loadPreviewQuestions = async () => {
   try {
     previewPagination.value.loading = true
     const response = await evaluationApi.getDataset(
-      props.databaseId,
+      props.kbId,
       previewData.value.dataset_id,
       previewPagination.value.current,
       previewPagination.value.pageSize
@@ -598,7 +598,7 @@ const previewDataset = async (benchmark) => {
     }
 
     const response = await evaluationApi.getDataset(
-      props.databaseId,
+      props.kbId,
       benchmark.dataset_id,
       previewPagination.value.current,
       previewPagination.value.pageSize

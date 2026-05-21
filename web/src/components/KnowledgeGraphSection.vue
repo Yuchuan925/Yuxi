@@ -349,7 +349,7 @@ const props = defineProps({
 const store = useDatabaseStore()
 const taskerStore = useTaskerStore()
 
-const databaseId = computed(() => store.databaseId)
+const kbId = computed(() => store.kbId)
 const kbType = computed(() => store.database.kb_type)
 const kbTypeLabel = computed(() => getKbTypeLabel(kbType.value || 'milvus'))
 const isMilvus = computed(() => kbType.value?.toLowerCase() === MILVUS_KB_TYPE)
@@ -485,13 +485,13 @@ const getErrorDetail = (e, fallback) => {
 }
 
 const loadGraphBuildStatus = async () => {
-  if (!databaseId.value || !isMilvus.value) return
+  if (!kbId.value || !isMilvus.value) return
   const requestSeq = ++graphStatusRequestSeq
-  const currentDatabaseId = databaseId.value
+  const currentDatabaseId = kbId.value
   graphBuildLoading.value = true
   try {
     const status = await graphBuildApi.getStatus(currentDatabaseId)
-    if (requestSeq === graphStatusRequestSeq && currentDatabaseId === databaseId.value) {
+    if (requestSeq === graphStatusRequestSeq && currentDatabaseId === kbId.value) {
       graphBuildStatus.value = status
     }
   } catch (e) {
@@ -574,7 +574,7 @@ const configureGraphBuild = async () => {
   try {
     document.activeElement?.blur()
     await nextTick()
-    await graphBuildApi.configure(databaseId.value, {
+    await graphBuildApi.configure(kbId.value, {
       extractor_type: graphConfigForm.extractor_type,
       extractor_options: buildExtractorOptions()
     })
@@ -589,15 +589,15 @@ const configureGraphBuild = async () => {
 
 const startGraphBuild = async () => {
   try {
-    const data = await graphBuildApi.startIndex(databaseId.value, 20)
+    const data = await graphBuildApi.startIndex(kbId.value, 20)
     message.success(data.message || '图谱构建任务已提交')
     if (data.task_id) {
       taskerStore.registerQueuedTask({
         task_id: data.task_id,
-        name: `图谱构建 (${databaseId.value})`,
+        name: `图谱构建 (${kbId.value})`,
         task_type: GRAPH_BUILD_TASK_TYPE,
         message: data.message,
-        payload: { db_id: databaseId.value }
+        payload: { kb_id: kbId.value }
       })
     }
     await loadGraphBuildStatus()
@@ -619,7 +619,7 @@ const confirmResetGraph = () => {
 
 const resetGraphBuild = async () => {
   try {
-    await graphBuildApi.reset(databaseId.value, {
+    await graphBuildApi.reset(kbId.value, {
       clear_extraction_result: true,
       clear_config: true
     })
@@ -633,14 +633,14 @@ const resetGraphBuild = async () => {
 }
 
 const loadGraph = async () => {
-  if (!databaseId.value || !isGraphSupported.value) return
+  if (!kbId.value || !isGraphSupported.value) return
 
   const requestSeq = ++graphLoadRequestSeq
-  const currentDatabaseId = databaseId.value
+  const currentDatabaseId = kbId.value
   graph.fetching = true
   try {
     const res = await unifiedApi.getSubgraph({
-      db_id: currentDatabaseId,
+      kb_id: currentDatabaseId,
       node_label: searchInput.value || '*',
       max_nodes: subgraphParams.maxNodes,
       max_depth: subgraphParams.maxDepth,
@@ -649,7 +649,7 @@ const loadGraph = async () => {
 
     if (
       requestSeq === graphLoadRequestSeq &&
-      currentDatabaseId === databaseId.value &&
+      currentDatabaseId === kbId.value &&
       res.success &&
       res.data
     ) {
@@ -675,7 +675,7 @@ const onSearch = () => {
 }
 
 const scheduleGraphLoad = (delay = 200) => {
-  if (!props.active || !isGraphSupported.value || !databaseId.value) {
+  if (!props.active || !isGraphSupported.value || !kbId.value) {
     return
   }
 
@@ -685,7 +685,7 @@ const scheduleGraphLoad = (delay = 200) => {
   pendingLoadTimer = setTimeout(async () => {
     pendingLoadTimer = null
     await nextTick()
-    if (props.active && isGraphSupported.value && databaseId.value) {
+    if (props.active && isGraphSupported.value && kbId.value) {
       await loadGraph()
     }
   }, delay)
@@ -704,7 +704,7 @@ watch(
   { immediate: true }
 )
 
-watch(databaseId, () => {
+watch(kbId, () => {
   graphStatusRequestSeq += 1
   graphLoadRequestSeq += 1
   graph.clearGraph()

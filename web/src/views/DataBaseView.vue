@@ -193,7 +193,7 @@
     <ExtensionCardGrid v-else>
       <InfoCard
         v-for="database in filteredDatabases"
-        :key="database.db_id"
+        :key="database.kb_id"
         :title="database.name"
         :subtitle="cardSubtitle(database)"
         :description="database.description || '暂无描述'"
@@ -488,13 +488,13 @@ const cardTags = (database) => {
 }
 
 const navigateToDatabase = (database) => {
-  router.push({ path: `/extensions/database/${database.db_id}` })
+  router.push({ path: `/extensions/knowledgebase/${database.kb_id}` })
 }
 
 watch(
   () => route.path,
   (newPath) => {
-    if (newPath === '/database' || (newPath === '/extensions' && route.query.tab === 'knowledge')) {
+    if (newPath === '/extensions' && route.query.tab === 'knowledge') {
       databaseStore.loadDatabases()
     }
   }

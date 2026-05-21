@@ -138,7 +138,7 @@
           :accept="acceptedFileTypes"
           :before-upload="beforeUpload"
           :customRequest="customRequest"
-          :action="'/api/knowledge/files/upload?db_id=' + databaseId"
+          :action="'/api/knowledge/files/upload?kb_id=' + kbId"
           :headers="getAuthHeaders()"
           @change="handleFileUpload"
           @drop="handleDrop"
@@ -524,7 +524,7 @@ const visible = computed({
   set: (value) => emit('update:visible', value)
 })
 
-const databaseId = computed(() => store.databaseId)
+const kbId = computed(() => store.kbId)
 const chunkLoading = computed(() => store.state.chunkLoading)
 
 // 上传模式
@@ -701,7 +701,7 @@ const mergeSameNameFiles = (sameNameList = []) => {
 const fetchSingleUrlItem = async (item) => {
   item.status = 'fetching'
   try {
-    const res = await fileApi.fetchUrl(item.url, databaseId.value)
+    const res = await fileApi.fetchUrl(item.url, kbId.value)
     item.status = 'success'
     item.data = res
     mergeSameNameFiles(res.same_name_files)
@@ -1058,7 +1058,7 @@ const showSameNameFilesInUploadArea = (files) => {
 const downloadSameNameFile = async (file) => {
   try {
     // 获取当前数据库ID
-    const currentDbId = databaseId.value
+    const currentDbId = kbId.value
     if (!currentDbId) {
       message.error('知识库ID不存在')
       return
@@ -1097,7 +1097,7 @@ const deleteSameNameFile = (file) => {
     onOk: async () => {
       try {
         // 获取当前数据库ID
-        const currentDbId = databaseId.value
+        const currentDbId = kbId.value
         if (!currentDbId) {
           message.error('知识库ID不存在')
           return
@@ -1186,8 +1186,8 @@ const runUploadTask = (task) => {
       isFolderUpload.value && file.webkitRelativePath ? file.webkitRelativePath : file.name
     formData.append('file', file, filename)
 
-    const dbId = databaseId.value
-    if (!dbId) {
+    const currentKbId = kbId.value
+    if (!currentKbId) {
       const error = new Error('Database ID is missing')
       if (fileUid) {
         uploadTaskStatus.value[fileUid] = 'error'
@@ -1199,7 +1199,7 @@ const runUploadTask = (task) => {
 
     const xhr = new XMLHttpRequest()
     task.xhr = xhr
-    xhr.open('POST', `/api/knowledge/files/upload?db_id=${dbId}`)
+    xhr.open('POST', `/api/knowledge/files/upload?kb_id=${currentKbId}`)
 
     const headers = getAuthHeaders()
     for (const [key, value] of Object.entries(headers)) {
@@ -1341,7 +1341,7 @@ const openDocLink = () => {
 }
 
 const chunkData = async () => {
-  if (!databaseId.value) {
+  if (!kbId.value) {
     message.error('请先选择知识库')
     return
   }
@@ -1359,7 +1359,7 @@ const chunkData = async () => {
 
     try {
       store.state.chunkLoading = true
-      const res = await fileApi.importWorkspaceFiles(databaseId.value, selectedWorkspacePaths.value)
+      const res = await fileApi.importWorkspaceFiles(kbId.value, selectedWorkspacePaths.value)
       const importedItems = Array.isArray(res?.items) ? res.items : []
       if (importedItems.length === 0) {
         message.error('工作区文件导入失败')

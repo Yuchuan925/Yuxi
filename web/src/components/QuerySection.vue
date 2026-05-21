@@ -206,11 +206,11 @@ const updateQueryExamples = (questions = []) => {
 
 // 加载示例问题
 const loadSampleQuestions = async () => {
-  if (!store.database?.db_id) return
+  if (!store.database?.kb_id) return
 
   try {
     loadingQuestions.value = true
-    const data = await queryApi.getSampleQuestions(store.database.db_id)
+    const data = await queryApi.getSampleQuestions(store.database.kb_id)
     if (data.questions && data.questions.length > 0) {
       updateQueryExamples(data.questions)
     } else {
@@ -240,11 +240,11 @@ const clearQuestions = () => {
 
 // 生成示例问题
 const generateSampleQuestions = async (silent = false) => {
-  if (!store.database?.db_id) return
+  if (!store.database?.kb_id) return
 
   try {
     generatingQuestions.value = true
-    const data = await queryApi.generateSampleQuestions(store.database.db_id, 10)
+    const data = await queryApi.generateSampleQuestions(store.database.kb_id, 10)
     if (data.questions && data.questions.length > 0) {
       updateQueryExamples(data.questions)
       if (!silent) {
@@ -286,10 +286,10 @@ const clearQueryResult = () => {
 
 // 监听知识库ID变化，切换知识库时重新加载问题
 watch(
-  () => store.database?.db_id,
-  async (newDbId, oldDbId) => {
+  () => store.database?.kb_id,
+  async (newKbId, oldKbId) => {
     // 如果知识库ID发生变化
-    if (newDbId && newDbId !== oldDbId) {
+    if (newKbId && newKbId !== oldKbId) {
       // 清空当前问题列表
       updateQueryExamples()
       // 重新加载新知识库的问题
@@ -311,7 +311,7 @@ const onQuery = async () => {
   const queryMeta = { ...store.meta }
 
   try {
-    const data = await queryApi.queryTest(store.database.db_id, queryText.value.trim(), queryMeta)
+    const data = await queryApi.queryTest(store.database.kb_id, queryText.value.trim(), queryMeta)
     queryResult.value = data
   } catch (error) {
     console.error(error)

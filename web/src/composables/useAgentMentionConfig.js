@@ -1,5 +1,55 @@
 import { computed } from 'vue'
-import { isDefaultAllAgentResourceKind } from '@/utils/agentConfigUtils'
+import {
+  getAgentConfigOptionDescription,
+  getAgentConfigOptionLabel,
+  getAgentConfigOptions,
+  getAgentConfigOptionValue,
+  isDefaultAllAgentResourceKind,
+  isMentionAgentResourceKind
+} from '@/utils/agentConfigUtils'
+
+const createResourceMap = (createValue) => ({
+  knowledges: createValue(),
+  mcps: createValue(),
+  skills: createValue(),
+  subagents: createValue()
+})
+
+const getMentionResourceKind = (key, kind) => {
+  if (isMentionAgentResourceKind(kind)) return kind
+  if (isMentionAgentResourceKind(key)) return key
+  return null
+}
+
+const normalizeMentionResource = (option, kind) => {
+  const value = getAgentConfigOptionValue(option)
+  if (!value) return null
+
+  const name = getAgentConfigOptionLabel(option) || value
+  const description = getAgentConfigOptionDescription(option)
+
+  if (kind === 'knowledges') {
+    return {
+      kb_id: value,
+      name,
+      description
+    }
+  }
+
+  if (kind === 'subagents') {
+    return {
+      id: value,
+      name,
+      description
+    }
+  }
+
+  return {
+    slug: value,
+    name,
+    description
+  }
+}
 
 export function useAgentMentionConfig({
   currentAgentState,
@@ -7,10 +57,7 @@ export function useAgentMentionConfig({
   currentThreadAttachments,
   workspaceMentionFiles,
   configurableItems,
-  agentConfig,
-  availableKnowledgeBases,
-  availableMcps,
-  availableSkills
+  agentConfig
 }) {
   const mentionConfig = computed(() => {
     const rawFiles = currentAgentState.value?.files || {}
@@ -78,84 +125,57 @@ export function useAgentMentionConfig({
 
     const configItems = configurableItems.value || {}
     const currentConfig = agentConfig.value || {}
-    let includeAllKnowledgeBases = false
-    let includeAllMcps = false
-    let includeAllSkills = false
-    let includeAllSubagents = false
-    const allowedKbNames = new Set()
-    const allowedMcpNames = new Set()
-    const allowedSkillNames = new Set()
-    const allowedSubagentNames = new Set()
-    const subagentOptionMap = new Map()
+    const includeAllByKind = createResourceMap(() => false)
+    const selectedByKind = createResourceMap(() => new Set())
+    const optionsByKind = createResourceMap(() => new Map())
+    const resourceItems = []
 
     Object.entries(configItems).forEach(([key, item]) => {
-      const kind = item?.kind
+      const kind = getMentionResourceKind(key, item?.kind)
+      if (!kind) return
+
+      resourceItems.push({ kind, item })
       const val = currentConfig[key]
-
       if (val === null && isDefaultAllAgentResourceKind(kind)) {
-        includeAllKnowledgeBases ||= kind === 'knowledges'
-        includeAllMcps ||= kind === 'mcps'
-        includeAllSkills ||= kind === 'skills'
-        includeAllSubagents ||= kind === 'subagents'
+        includeAllByKind[kind] = true
       } else if (Array.isArray(val)) {
-        if (kind === 'knowledges') {
-          val.forEach((v) => allowedKbNames.add(v))
-        } else if (kind === 'mcps') {
-          val.forEach((v) => allowedMcpNames.add(v))
-        } else if (kind === 'skills' || key === 'skills') {
-          val.forEach((v) => allowedSkillNames.add(v))
-        } else if (kind === 'subagents' || key === 'subagents') {
-          val.forEach((v) => allowedSubagentNames.add(v))
-        }
-      }
-
-      if (kind === 'subagents' || key === 'subagents') {
-        const options = Array.isArray(item?.options) ? item.options : []
-        options.forEach((option) => {
-          if (option == null) return
-
-          const value =
-            typeof option === 'object'
-              ? option.id || option.value || option.name || option.label
-              : option
-          if (!value) return
-
-          subagentOptionMap.set(value, {
-            id: value,
-            name: typeof option === 'object' ? option.name || option.label || value : value,
-            description: typeof option === 'object' ? option.description || '' : ''
-          })
-        })
+        val.forEach((value) => selectedByKind[kind].add(value))
       }
     })
 
-    if (includeAllSubagents) {
-      subagentOptionMap.forEach((_, name) => allowedSubagentNames.add(name))
+    resourceItems.forEach(({ kind, item }) => {
+      const selectedValues = selectedByKind[kind]
+      if (!includeAllByKind[kind] && !selectedValues.size) return
+
+      getAgentConfigOptions(item).forEach((option) => {
+        const value = getAgentConfigOptionValue(option)
+        if (!value || (!includeAllByKind[kind] && !selectedValues.has(value))) return
+
+        const normalized = normalizeMentionResource(option, kind)
+        if (normalized) optionsByKind[kind].set(value, normalized)
+      })
+    })
+
+    const selectOptions = (kind) => {
+      const result = []
+      const optionMap = optionsByKind[kind]
+
+      if (includeAllByKind[kind]) {
+        optionMap.forEach((option) => result.push(option))
+        return result
+      }
+
+      selectedByKind[kind].forEach((value) => {
+        const option = optionMap.get(value)
+        if (option) result.push(option)
+      })
+      return result
     }
 
-    const knowledgeBases = includeAllKnowledgeBases
-      ? availableKnowledgeBases.value
-      : availableKnowledgeBases.value.filter((kb) => allowedKbNames.has(kb.name))
-    const mcps = includeAllMcps
-      ? availableMcps.value
-      : availableMcps.value.filter((mcp) => allowedMcpNames.has(mcp.name))
-    const skills = includeAllSkills
-      ? availableSkills.value
-      : availableSkills.value.filter((skill) => {
-          const skillName = skill.name || ''
-          const skillSlug = skill.slug || ''
-          return allowedSkillNames.has(skillName) || allowedSkillNames.has(skillSlug)
-        })
-    const subagents = Array.from(allowedSubagentNames)
-      .filter((name) => !!name)
-      .map(
-        (name) =>
-          subagentOptionMap.get(name) || {
-            id: name,
-            name,
-            description: ''
-          }
-      )
+    const knowledgeBases = selectOptions('knowledges')
+    const mcps = selectOptions('mcps')
+    const skills = selectOptions('skills')
+    const subagents = selectOptions('subagents')
 
     if (
       !files.length &&

@@ -40,10 +40,10 @@
       <div class="section-title">我的知识库</div>
       <button
         v-for="database in myDatabases"
-        :key="database.db_id || database.id || database.name"
+        :key="database.kb_id || database.id || database.name"
         type="button"
         class="workspace-nav-item secondary"
-        :class="{ active: activeKey === `database:${database.db_id}` }"
+        :class="{ active: activeKey === `database:${database.kb_id}` }"
         @click="$emit('select-database', database)"
       >
         <LibraryBig :size="15" />
@@ -55,10 +55,10 @@
       <div class="section-title">共享知识库</div>
       <button
         v-for="database in sharedDatabases"
-        :key="database.db_id || database.id || database.name"
+        :key="database.kb_id || database.id || database.name"
         type="button"
         class="workspace-nav-item secondary"
-        :class="{ active: activeKey === `database:${database.db_id}` }"
+        :class="{ active: activeKey === `database:${database.kb_id}` }"
         @click="$emit('select-database', database)"
       >
         <LibraryBig :size="15" />

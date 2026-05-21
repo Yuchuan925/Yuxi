@@ -66,7 +66,7 @@ import { message } from 'ant-design-vue'
 import { queryApi } from '@/apis/knowledge_api'
 
 const props = defineProps({
-  databaseId: {
+  kbId: {
     type: String,
     default: ''
   }
@@ -113,7 +113,7 @@ const updateMeta = (key, value) => {
 }
 
 const loadQueryParams = async () => {
-  if (!props.databaseId) {
+  if (!props.kbId) {
     queryParams.value = []
     return
   }
@@ -121,7 +121,7 @@ const loadQueryParams = async () => {
   loading.value = true
   error.value = ''
   try {
-    const response = await queryApi.getKnowledgeBaseQueryParams(props.databaseId)
+    const response = await queryApi.getKnowledgeBaseQueryParams(props.kbId)
     queryParams.value = (response.params?.options || []).filter(
       (param) => param.key !== 'include_distances'
     )
@@ -149,9 +149,9 @@ const loadQueryParams = async () => {
 }
 
 const loadSavedConfig = () => {
-  if (!props.databaseId) return
+  if (!props.kbId) return
 
-  const saved = localStorage.getItem(`search-config-${props.databaseId}`)
+  const saved = localStorage.getItem(`search-config-${props.kbId}`)
   if (saved) {
     try {
       const savedConfig = JSON.parse(saved)
@@ -171,7 +171,7 @@ const loadSavedConfig = () => {
 }
 
 const save = async () => {
-  if (!props.databaseId) {
+  if (!props.kbId) {
     message.error('无法保存配置：缺少知识库ID')
     return false
   }
@@ -179,9 +179,9 @@ const save = async () => {
   meta.include_distances = true
 
   try {
-    const response = await queryApi.updateKnowledgeBaseQueryParams(props.databaseId, { ...meta })
+    const response = await queryApi.updateKnowledgeBaseQueryParams(props.kbId, { ...meta })
     if (response.message === 'success') {
-      localStorage.setItem(`search-config-${props.databaseId}`, JSON.stringify(meta))
+      localStorage.setItem(`search-config-${props.kbId}`, JSON.stringify(meta))
       Object.assign(store.meta, meta)
       message.success('配置已保存')
       emit('save', { ...meta })
@@ -207,7 +207,7 @@ const resetToDefaults = () => {
 }
 
 watch(
-  () => props.databaseId,
+  () => props.kbId,
   (newId) => {
     if (newId) {
       loadQueryParams()

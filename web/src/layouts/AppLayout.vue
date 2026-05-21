@@ -139,7 +139,7 @@ const mainList = computed(() => {
     items.push({
       name: '扩展管理',
       path: '/extensions',
-      activePaths: ['/extensions', '/database'],
+      activePaths: ['/extensions'],
       icon: Blocks,
       activeIcon: Blocks
     })

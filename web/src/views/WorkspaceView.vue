@@ -249,7 +249,7 @@ const isBinaryPreview = (previewType) => previewType === 'image' || previewType 
 const createBinaryPreviewUrl = async (entry, response) => {
   const downloadResponse =
     entry.source === 'knowledge'
-      ? await downloadWorkspaceKnowledgeFile(entry.db_id, entry.file_id, response.variant || 'original')
+      ? await downloadWorkspaceKnowledgeFile(entry.kb_id, entry.file_id, response.variant || 'original')
       : await downloadWorkspaceFile(entry.path)
   const blob = await downloadResponse.blob()
   return window.URL.createObjectURL(blob)
@@ -374,7 +374,7 @@ const loadKnowledgePreview = async (
 ) => {
   const requestId = startPreviewRequest(entry, baseFile)
   try {
-    const response = await getWorkspaceKnowledgeFileContent(entry.db_id, entry.file_id, variant)
+    const response = await getWorkspaceKnowledgeFileContent(entry.kb_id, entry.file_id, variant)
     if (!isCurrentPreviewEntry(requestId, entry)) return
     const file = await normalizePreviewFile(entry, response)
     applyPreviewFile(requestId, entry, file)
@@ -421,11 +421,11 @@ const loadWorkspaceEntries = async (path = '/') => {
 }
 
 const loadKnowledgeEntries = async (database, parentId = null, breadcrumbs = null) => {
-  if (!database?.db_id) return
+  if (!database?.kb_id) return
 
   loadingTree.value = true
   try {
-    const response = await getWorkspaceKnowledgeTree(database.db_id, parentId)
+    const response = await getWorkspaceKnowledgeTree(database.kb_id, parentId)
     entries.value = response.entries || []
     knowledgeBreadcrumbItems.value = breadcrumbs || [
       { name: database.name || '知识库', path: '/', parentId: null }
@@ -500,7 +500,7 @@ const selectDatabase = async (database) => {
   closePreview()
   clearWorkspaceSelection()
   selectedDatabase.value = database
-  activeSourceKey.value = `database:${database.db_id}`
+  activeSourceKey.value = `database:${database.kb_id}`
   await loadKnowledgeEntries(database)
 }
 
@@ -541,7 +541,7 @@ const handleSelectEntry = async (entry) => {
 
 const handleSwitchKnowledgeVariant = async (variant) => {
   const entry = selectedEntry.value
-  if (!entry || entry.source !== 'knowledge' || !entry.db_id || !entry.file_id) return
+  if (!entry || entry.source !== 'knowledge' || !entry.kb_id || !entry.file_id) return
   if (previewFile.value?.variant === variant || previewFile.value?.previewVariant === variant) return
 
   await loadKnowledgePreview(entry, variant, previewFile.value || entry, KNOWLEDGE_PREVIEW_SWITCH_MESSAGES)
@@ -720,7 +720,7 @@ const downloadEntry = async (entry) => {
   try {
     const response =
       entry.source === 'knowledge'
-        ? await downloadWorkspaceKnowledgeFile(entry.db_id, entry.file_id)
+        ? await downloadWorkspaceKnowledgeFile(entry.kb_id, entry.file_id)
         : await downloadWorkspaceFile(entry.path)
     const blob = await response.blob()
     const contentDisposition =

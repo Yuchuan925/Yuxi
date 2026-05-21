@@ -175,7 +175,7 @@
                 <div class="search-config-body">
                   <SearchConfigPanel
                     ref="searchConfigPanelRef"
-                    :database-id="databaseId"
+                    :kb-id="kbId"
                     @save="handleSearchConfigSave"
                   />
                 </div>
@@ -193,13 +193,13 @@
         </div>
 
         <div v-if="isMilvus && activeTab === 'mindmap'" class="tab-panel">
-          <MindMapSection v-if="databaseId" :database-id="databaseId" ref="mindmapSectionRef" />
+          <MindMapSection v-if="kbId" :kb-id="kbId" ref="mindmapSectionRef" />
         </div>
 
         <div v-if="isMilvus && activeTab === 'evaluation'" class="tab-panel">
           <RAGEvaluationTab
-            v-if="databaseId"
-            :database-id="databaseId"
+            v-if="kbId"
+            :kb-id="kbId"
             @switch-to-benchmarks="activeTab = 'benchmarks'"
           />
         </div>
@@ -208,8 +208,8 @@
           <div class="benchmark-management-container">
             <div class="benchmark-content">
               <EvaluationBenchmarks
-                v-if="databaseId && isEvaluationSupported"
-                :database-id="databaseId"
+                v-if="kbId && isEvaluationSupported"
+                :kb-id="kbId"
                 @benchmark-selected="activeTab = 'evaluation'"
               />
             </div>
@@ -380,9 +380,9 @@ const store = useDatabaseStore()
 const taskerStore = useTaskerStore()
 const userStore = useUserStore()
 
-const databaseId = computed(() => store.databaseId)
+const kbId = computed(() => store.kbId)
 const database = computed(() => store.database)
-const isCurrentDatabaseLoaded = computed(() => database.value?.db_id === databaseId.value)
+const isCurrentDatabaseLoaded = computed(() => database.value?.kb_id === kbId.value)
 const kbType = computed(() =>
   isCurrentDatabaseLoaded.value ? database.value.kb_type?.toLowerCase() || 'milvus' : ''
 )
@@ -425,7 +425,7 @@ const visibleTabs = computed(() => tabs.value)
 const activeTab = ref('filetable')
 
 watch(
-  () => [databaseId.value, isMilvus.value],
+  () => [kbId.value, isMilvus.value],
   ([newDbId, isMilvusType]) => {
     if (!newDbId) return
     activeTab.value = isMilvusType ? 'filetable' : 'query'
@@ -574,13 +574,13 @@ const resetFileSelectionState = () => {
 }
 
 watch(
-  () => route.params.database_id,
-  async (newId) => {
+  () => route.params.kbId,
+  async (nextKbId) => {
     isInitialLoad.value = true
-    store.databaseId = newId
+    store.kbId = nextKbId
     resetFileSelectionState()
     store.stopAutoRefresh()
-    await store.getDatabaseInfo(newId, false)
+    await store.getDatabaseInfo(nextKbId, false)
     store.startAutoRefresh()
   },
   { immediate: true }
@@ -637,17 +637,17 @@ const backToDatabase = () => {
 }
 
 const copyDatabaseId = async () => {
-  if (!database.value.db_id) {
+  if (!database.value.kb_id) {
     message.warning('知识库ID为空')
     return
   }
 
   try {
-    await navigator.clipboard.writeText(database.value.db_id)
+    await navigator.clipboard.writeText(database.value.kb_id)
     message.success('知识库ID已复制到剪贴板')
   } catch {
     const textArea = document.createElement('textarea')
-    textArea.value = database.value.db_id
+    textArea.value = database.value.kb_id
     document.body.appendChild(textArea)
     textArea.select()
     document.execCommand('copy')

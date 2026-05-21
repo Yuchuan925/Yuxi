@@ -954,19 +954,19 @@ watch(useInlinePreview, (isInline) => {
       box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
     }
 
-    :deep(.ant-modal-header) {
+    .ant-modal-header {
       background: var(--main-5);
       border-bottom: 1px solid var(--gray-200);
       padding: 16px 20px;
     }
 
-    :deep(.ant-modal-title) {
+    .ant-modal-title {
       font-weight: 600;
       color: var(--gray-1000);
       font-family: 'JetBrains Mono', 'Fira Code', 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
     }
 
-    :deep(.ant-modal-body) {
+    .ant-modal-body {
       padding: 0;
     }
   }

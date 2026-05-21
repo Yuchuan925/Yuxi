@@ -124,7 +124,7 @@ const mcpTags = (server) => {
 }
 
 const navigateToDetail = (server) => {
-  router.push({ path: `/extensions/mcp/${encodeURIComponent(server.name)}` })
+  router.push({ path: `/extensions/mcp/${encodeURIComponent(server.slug)}` })
 }
 
 const handleMcpAdd = () => {
@@ -138,7 +138,7 @@ const handleFormSubmitted = async () => {
 
 const handleSetServerEnabled = async (server, enabled) => {
   try {
-    const result = await mcpApi.updateMcpServerStatus(server.name, enabled)
+    const result = await mcpApi.updateMcpServerStatus(server.slug, enabled)
     if (result.success) {
       message.success(result.message || `MCP 已${enabled ? '添加' : '移除'}`)
       await fetchServers()

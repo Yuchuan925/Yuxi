@@ -235,12 +235,12 @@ const afterOpenChange = (open) => {
 }
 
 const loadSourcePreview = async () => {
-  if (!file.value?.file_id || !store.databaseId || !hasSourcePreview.value) return
+  if (!file.value?.file_id || !store.kbId || !hasSourcePreview.value) return
   if (sourcePreviewUrl.value) return
 
   sourcePreviewLoading.value = true
   try {
-    const response = await documentApi.downloadDocument(store.databaseId, file.value.file_id)
+    const response = await documentApi.downloadDocument(store.kbId, file.value.file_id)
     const blob = await response.blob()
     revokeSourcePreviewUrl()
     sourcePreviewUrl.value = window.URL.createObjectURL(blob)
@@ -268,15 +268,15 @@ const handleDownloadOriginal = async () => {
     return
   }
 
-  const dbId = store.databaseId
-  if (!dbId) {
+  const kbId = store.kbId
+  if (!kbId) {
     message.error('无法获取数据库ID，请刷新页面后重试')
     return
   }
 
   downloadingOriginal.value = true
   try {
-    const response = await documentApi.downloadDocument(dbId, file.value.file_id)
+    const response = await documentApi.downloadDocument(kbId, file.value.file_id)
 
     // 获取文件名
     const contentDisposition = response.headers.get('content-disposition')

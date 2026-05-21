@@ -60,7 +60,7 @@ const extensionTabs = [
 
 const isDetailPage = computed(() => {
   return (
-    route.path.startsWith('/extensions/database/') ||
+    route.path.startsWith('/extensions/knowledgebase/') ||
     route.path.startsWith('/extensions/mcp/') ||
     route.path.startsWith('/extensions/subagent/') ||
     route.path.startsWith('/extensions/skill/')

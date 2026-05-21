@@ -435,7 +435,7 @@ import { ChevronDown, RefreshCw, X } from 'lucide-vue-next'
 import { useTaskerStore } from '@/stores/tasker'
 
 const props = defineProps({
-  databaseId: {
+  kbId: {
     type: String,
     required: true
   }
@@ -669,7 +669,7 @@ const loadResultsWithPagination = async () => {
   try {
     resultsLoading.value = true
     const response = await evaluationApi.getRunResults(
-      props.databaseId,
+      props.kbId,
       selectedResult.value.run_id,
       {
         page: currentPage.value,
@@ -719,11 +719,11 @@ const loadResultsWithPagination = async () => {
 
 // 加载基准列表
 const loadDatasets = async (showSuccessMessage = false) => {
-  if (!props.databaseId) return
+  if (!props.kbId) return
 
   datasetsLoading.value = true
   try {
-    const response = await evaluationApi.listDatasets(props.databaseId)
+    const response = await evaluationApi.listDatasets(props.kbId)
 
     if (response && response.message === 'success' && Array.isArray(response.data)) {
       const completedDatasets = response.data.filter(isDatasetCompleted)
@@ -834,7 +834,7 @@ const startEvaluation = async () => {
   }
 
   try {
-    const response = await evaluationApi.runEvaluation(props.databaseId, params)
+    const response = await evaluationApi.runEvaluation(props.kbId, params)
 
     if (response.message === 'success') {
       message.success('评估任务已开始')
@@ -855,7 +855,7 @@ const startEvaluation = async () => {
 // 加载评估历史
 const loadEvaluationHistory = async (silent = false) => {
   try {
-    const response = await evaluationApi.listRuns(props.databaseId)
+    const response = await evaluationApi.listRuns(props.kbId)
     if (response.message === 'success') {
       evaluationHistory.value = response.data || []
     }
@@ -934,7 +934,7 @@ const viewResults = async (runId) => {
     showErrorsOnly.value = false
 
     // 先获取基本信息（不分页）
-    const response = await evaluationApi.getRunResults(props.databaseId, runId)
+    const response = await evaluationApi.getRunResults(props.kbId, runId)
 
     if (response.message === 'success' && response.data) {
       const resultData = response.data
@@ -981,7 +981,7 @@ const deleteEvaluationRecord = async (runId) => {
       record.deleting = true
     }
 
-    const response = await evaluationApi.deleteRun(props.databaseId, runId)
+    const response = await evaluationApi.deleteRun(props.kbId, runId)
     if (response.message === 'success') {
       message.success('删除成功')
       // 重新加载评估历史

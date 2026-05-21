@@ -555,7 +555,7 @@ const handleCreateFolder = async () => {
 
   createFolderLoading.value = true
   try {
-    await documentApi.createFolder(store.databaseId, newFolderName.value, currentParentId.value)
+    await documentApi.createFolder(store.kbId, newFolderName.value, currentParentId.value)
     message.success('创建成功')
     createFolderModalVisible.value = false
     handleRefresh()
@@ -1025,17 +1025,17 @@ const openFileDetail = (record) => {
 
 const handleDownloadFile = async (record) => {
   closePopover(record.file_id)
-  const dbId = store.databaseId
-  if (!dbId) {
-    console.error('无法获取数据库ID，数据库ID:', store.databaseId, '记录:', record)
+  const kbId = store.kbId
+  if (!kbId) {
+    console.error('无法获取数据库ID，数据库ID:', store.kbId, '记录:', record)
     message.error('无法获取数据库ID，请刷新页面后重试')
     return
   }
 
-  console.log('开始下载文件:', { dbId, fileId: record.file_id, record })
+  console.log('开始下载文件:', { kbId, fileId: record.file_id, record })
 
   try {
-    const response = await documentApi.downloadDocument(dbId, record.file_id)
+    const response = await documentApi.downloadDocument(kbId, record.file_id)
 
     // 获取文件名
     const contentDisposition = response.headers.get('content-disposition')
@@ -1106,7 +1106,7 @@ const loadRecordProcessingParams = async (record) => {
     return record.processing_params
   }
 
-  const detail = await documentApi.getDocumentInfo(store.databaseId, record.file_id)
+  const detail = await documentApi.getDocumentInfo(store.kbId, record.file_id)
   return detail?.processing_params || null
 }
 

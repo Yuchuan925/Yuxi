@@ -99,15 +99,20 @@
                 <!-- 单选 -->
                 <a-select
                   v-else-if="
-                    value?.options.length > 0 && (value?.type === 'str' || value?.type === 'select')
+                    getConfigOptions(value).length > 0 &&
+                    (value?.type === 'str' || value?.type === 'select')
                   "
                   :value="agentConfig[key]"
                   :disabled="isReadOnlyConfig"
                   @update:value="(val) => updateConfigValue(key, val)"
                   class="config-select"
                 >
-                  <a-select-option v-for="option in value.options" :key="option" :value="option">
-                    {{ option.label || option }}
+                  <a-select-option
+                    v-for="option in getConfigOptions(value)"
+                    :key="getOptionValue(option)"
+                    :value="getOptionValue(option)"
+                  >
+                    {{ getOptionLabel(option) }}
                   </a-select-option>
                 </a-select>
 
@@ -419,12 +424,13 @@ import { useRouter } from 'vue-router'
 import { X, Trash2, Check, Plus, Search, Star, RotateCw, Settings } from 'lucide-vue-next'
 import ModelSelectorComponent from '@/components/ModelSelectorComponent.vue'
 import { useAgentStore } from '@/stores/agent'
-import { useDatabaseStore } from '@/stores/database'
-import { isDefaultAllAgentResourceKind } from '@/utils/agentConfigUtils'
-import { mcpApi } from '@/apis/mcp_api'
-import { skillApi } from '@/apis/skill_api'
-import { subagentApi } from '@/apis/subagent_api'
-import { toolApi } from '@/apis/tool_api'
+import {
+  getAgentConfigOptionDescription as getOptionDescription,
+  getAgentConfigOptionLabel as getOptionLabel,
+  getAgentConfigOptions as getConfigOptions,
+  getAgentConfigOptionValue as getOptionValue,
+  isDefaultAllAgentResourceKind
+} from '@/utils/agentConfigUtils'
 import { storeToRefs } from 'pinia'
 
 // Props
@@ -444,19 +450,12 @@ const emit = defineEmits(['close'])
 
 // Store 管理
 const agentStore = useAgentStore()
-const databaseStore = useDatabaseStore()
 const router = useRouter()
 
 watch(
   () => props.isOpen,
   async (val) => {
     if (val) {
-      // 强制刷新以获取最新数据
-      databaseStore.loadDatabases(true).catch(() => {})
-      loadLiveSkillOptions(true).catch(() => {})
-      loadMcpOptions(true).catch(() => {})
-      loadSubagentOptions(true).catch(() => {})
-      loadToolOptions(true).catch(() => {})
       if (selectedAgentId.value) {
         agentStore.fetchAgentConfigs(selectedAgentId.value).catch((error) => {
           console.error('刷新智能体配置列表失败:', error)
@@ -491,10 +490,6 @@ const selectionSearchText = ref('')
 const systemPromptModalOpen = ref(false)
 const currentSystemPromptKey = ref(null)
 const systemPromptDraft = ref('')
-const liveSkillOptions = ref([])
-const liveMcpOptions = ref([])
-const liveSubagentOptions = ref([])
-const toolOptionsFromApi = ref([])
 const currentSegment = ref('model')
 const segmentOptions = [
   { label: '模型', value: 'model' },
@@ -548,110 +543,17 @@ const filteredConfigurableItems = computed(() => {
   return filtered
 })
 
-const loadLiveSkillOptions = async (force = false) => {
-  // 如果不是强制刷新且已有数据，则跳过
-  if (!force && liveSkillOptions.value.length > 0) {
-    return
-  }
-  try {
-    const result = await skillApi.listSkills()
-    const rows = result?.data || []
-    liveSkillOptions.value = rows.map((item) => ({
-      id: item.slug,
-      name: item.slug,
-      description: item.description || ''
-    }))
-  } catch (error) {
-    console.warn('加载实时 Skills 列表失败:', error)
-  }
-}
-
-const loadMcpOptions = async (force = false) => {
-  if (!force && liveMcpOptions.value.length > 0) {
-    return
-  }
-  try {
-    const result = await mcpApi.getMcpServers()
-    const rows = result?.data || []
-    liveMcpOptions.value = rows
-      .filter((item) => item?.enabled !== false)
-      .map((item) => ({
-        id: item.name,
-        name: item.name,
-        description: item.description || ''
-      }))
-  } catch (error) {
-    console.warn('加载 MCP 列表失败:', error)
-  }
-}
-
-const loadToolOptions = async (force = false) => {
-  // 如果不是强制刷新且已有数据，则跳过
-  if (!force && toolOptionsFromApi.value.length > 0) {
-    return
-  }
-  try {
-    const result = await toolApi.getTools('buildin')
-    toolOptionsFromApi.value = (result?.data || []).map((item) => ({
-      id: item.id,
-      name: item.name || item.id,
-      description: item.description || ''
-    }))
-  } catch (error) {
-    console.warn('加载工具列表失败:', error)
-  }
-}
-
-const loadSubagentOptions = async (force = false) => {
-  if (!force && liveSubagentOptions.value.length > 0) {
-    return
-  }
-  try {
-    const result = await subagentApi.getSubAgents()
-    const rows = result?.data || []
-    liveSubagentOptions.value = rows
-      .filter((item) => item?.enabled !== false)
-      .map((item) => ({
-        id: item.name,
-        name: item.name,
-        description: item.description || ''
-      }))
-  } catch (error) {
-    console.warn('加载 Subagents 列表失败:', error)
-  }
-}
-
 // 判断是否为需要跳转的配置类型
 const isToolsKind = (kind) => {
   return isToolResourceKind(kind)
 }
 
 // 强制刷新对应配置项的选项列表
-const refreshConfigOptions = async (_key, kind) => {
-  if (isReadOnlyConfig.value) return
+const refreshConfigOptions = async () => {
+  if (isReadOnlyConfig.value || !selectedAgentId.value) return
   try {
-    switch (kind) {
-      case 'knowledges':
-        await databaseStore.loadDatabases(true)
-        message.success('知识库列表已刷新')
-        break
-      case 'tools':
-        await loadToolOptions(true)
-        message.success('工具列表已刷新')
-        break
-      case 'skills':
-        await loadLiveSkillOptions(true)
-        message.success('Skills 列表已刷新')
-        break
-      case 'subagents':
-        await loadSubagentOptions(true)
-        message.success('Subagents 列表已刷新')
-        break
-      case 'mcps':
-        await loadMcpOptions(true)
-        message.success('MCP 列表已刷新')
-        break
-    }
+    await agentStore.fetchAgentDetail(selectedAgentId.value, true)
+    message.success('配置选项已刷新')
   } catch (error) {
     console.error('刷新配置选项失败:', error)
     message.error('刷新失败')
@@ -685,55 +587,10 @@ const navigateToConfigPage = (kind) => {
   }, 100)
 }
 
-// 通用选项获取与处理
-const resolveOptionValue = (option) => {
-  if (typeof option === 'object' && option !== null) {
-    return option.id || option.value || option.name || option.db_id || option.slug
-  }
-  return option
-}
-
-const getConfigOptions = (value) => {
-  if (value?.kind === 'tools') {
-    return toolOptionsFromApi.value || []
-  }
-  if (value?.kind === 'knowledges') {
-    return databaseStore.databases || []
-  }
-  if (value?.kind === 'mcps') {
-    return liveMcpOptions.value || []
-  }
-  if (value?.kind === 'skills') {
-    return liveSkillOptions.value.length > 0 ? liveSkillOptions.value : value?.options || []
-  }
-  if (value?.kind === 'subagents') {
-    return liveSubagentOptions.value || []
-  }
-  return value?.options || []
-}
-
 const isListConfig = (key, value) => {
   const isDefaultAllKind = isDefaultAllAgentResourceKind(value?.kind)
   const isList = value?.type === 'list'
   return isDefaultAllKind || isList || key === 'skills' || key === 'subagents'
-}
-
-const getOptionValue = (option) => {
-  return resolveOptionValue(option)
-}
-
-const getOptionLabel = (option) => {
-  if (typeof option === 'object' && option !== null) {
-    return option.name || option.label || option.id || option.db_id || option.slug
-  }
-  return option
-}
-
-const getOptionDescription = (option) => {
-  if (typeof option === 'object' && option !== null) {
-    return option.description || '暂无描述'
-  }
-  return null
 }
 
 const currentConfigKind = computed(() => {
@@ -855,30 +712,9 @@ const getOptionLabelFromValue = (key, val) => {
   return option ? getOptionLabel(option) : val
 }
 
-const openSelectionModal = async (key) => {
+const openSelectionModal = (key) => {
   if (isReadOnlyConfig.value) return
   currentConfigKey.value = key
-  // 如果是工具，从 API 刷新工具列表
-  if (configurableItems.value[key]?.kind === 'tools') {
-    await loadToolOptions()
-  }
-  // 如果是知识库，需要获取知识库列表
-  if (configurableItems.value[key]?.kind === 'knowledges') {
-    try {
-      await databaseStore.loadDatabases()
-    } catch (error) {
-      console.error('加载知识库列表失败:', error)
-    }
-  }
-  if (configurableItems.value[key]?.kind === 'skills') {
-    await loadLiveSkillOptions()
-  }
-  if (configurableItems.value[key]?.kind === 'mcps') {
-    await loadMcpOptions()
-  }
-  if (configurableItems.value[key]?.kind === 'subagents') {
-    await loadSubagentOptions()
-  }
   tempSelectedValues.value = [...ensureArray(key)]
   selectionModalOpen.value = true
 }

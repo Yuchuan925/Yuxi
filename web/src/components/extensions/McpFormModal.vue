@@ -17,12 +17,15 @@
     </div>
 
     <a-form v-if="formMode === 'form'" layout="vertical" class="extension-form">
-      <a-form-item label="MCP 名称" required class="form-item">
+      <a-form-item label="MCP 标识" required class="form-item">
         <a-input
-          v-model:value="form.name"
-          placeholder="请输入 MCP 名称（唯一标识）"
+          v-model:value="form.slug"
+          placeholder="请输入 MCP 稳定标识，如 my-mcp"
           :disabled="editMode"
         />
+      </a-form-item>
+      <a-form-item label="MCP 名称" required class="form-item">
+        <a-input v-model:value="form.name" placeholder="请输入 MCP 展示名称" />
       </a-form-item>
       <a-form-item label="描述" class="form-item">
         <a-input v-model:value="form.description" placeholder="请输入 MCP 描述" />
@@ -142,6 +145,7 @@ const formMode = ref('form')
 const jsonContent = ref('')
 
 const form = reactive({
+  slug: '',
   name: '',
   description: '',
   transport: 'streamable_http',
@@ -169,6 +173,7 @@ watch(
     if (val && props.editData) {
       formMode.value = 'form'
       Object.assign(form, {
+        slug: props.editData.slug || '',
         name: props.editData.name || '',
         description: props.editData.description || '',
         transport: props.editData.transport || 'streamable_http',
@@ -186,6 +191,7 @@ watch(
     } else if (val && !props.editData) {
       formMode.value = 'form'
       Object.assign(form, {
+        slug: '',
         name: '',
         description: '',
         transport: 'streamable_http',
@@ -218,6 +224,7 @@ const parseJsonToForm = () => {
   try {
     const obj = JSON.parse(jsonContent.value)
     Object.assign(form, {
+      slug: obj.slug || '',
       name: obj.name || '',
       description: obj.description || '',
       transport: obj.transport || 'streamable_http',
@@ -260,6 +267,7 @@ const handleFormSubmit = async () => {
         }
       }
       data = {
+        slug: form.slug,
         name: form.name,
         description: form.description || null,
         transport: form.transport,
@@ -273,6 +281,10 @@ const handleFormSubmit = async () => {
         tags: form.tags.length > 0 ? form.tags : null,
         icon: form.icon || null
       }
+    }
+    if (!data.slug?.trim()) {
+      message.error('MCP 标识不能为空')
+      return
     }
     if (!data.name?.trim()) {
       message.error('MCP 名称不能为空')
@@ -296,7 +308,7 @@ const handleFormSubmit = async () => {
     }
 
     if (props.editMode) {
-      const result = await mcpApi.updateMcpServer(data.name, data)
+      const result = await mcpApi.updateMcpServer(props.editData?.slug || data.slug, data)
       if (result.success) {
         message.success('MCP 更新成功')
       } else {

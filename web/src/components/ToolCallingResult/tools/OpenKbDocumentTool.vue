@@ -48,7 +48,7 @@ const args = computed(() => {
   }
 })
 
-const resourceName = computed(() => databaseStore.getDatabaseNameById(args.value.resource_id))
+const resourceName = computed(() => databaseStore.getDatabaseNameById(args.value.kb_id))
 const fileId = computed(() => args.value.file_id || '')
 const lineLabel = computed(() => {
   if (args.value.line) return `Line ${args.value.line}`

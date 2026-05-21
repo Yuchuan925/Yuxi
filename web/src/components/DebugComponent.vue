@@ -441,7 +441,7 @@ const printDatabaseInfo = async () => {
   try {
     console.log('=== 知识库信息 ===')
     console.log('基本信息:', {
-      databaseId: databaseStore.databaseId,
+      kbId: databaseStore.kbId,
       databaseName: databaseStore.database.name,
       databaseDesc: databaseStore.database.description,
       fileCount: Object.keys(databaseStore.database.files || {}).length

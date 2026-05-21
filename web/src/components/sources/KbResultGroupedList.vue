@@ -109,7 +109,7 @@ const normalizedChunks = computed(() =>
         item.file_name ||
         item.filename ||
         item.file_id ||
-        item.resource_id ||
+        item.kb_id ||
         '未知来源'
 
       return {

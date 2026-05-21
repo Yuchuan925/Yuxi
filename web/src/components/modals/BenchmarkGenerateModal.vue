@@ -131,7 +131,7 @@ const props = defineProps({
     type: Boolean,
     default: false
   },
-  databaseId: {
+  kbId: {
     type: String,
     required: true
   }
@@ -206,9 +206,9 @@ const extraText = computed(() =>
 )
 
 const loadGraphBuildStatus = async () => {
-  if (!props.databaseId) return
+  if (!props.kbId) return
   try {
-    const status = await graphBuildApi.getStatus(props.databaseId)
+    const status = await graphBuildApi.getStatus(props.kbId)
     graphIndexedChunks.value = Number(status?.indexed_chunks || 0)
     if (graphEnhancedDisabled.value && formState.generation_mode === 'graph_enhanced') {
       formState.generation_mode = 'vector'
@@ -243,7 +243,7 @@ const handleGenerate = async () => {
       llm_model_spec: formState.llm_model_spec
     }
 
-    const response = await evaluationApi.generateDataset(props.databaseId, params)
+    const response = await evaluationApi.generateDataset(props.kbId, params)
 
     if (response.message === 'success') {
       message.success('生成任务已提交')

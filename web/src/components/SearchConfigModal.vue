@@ -12,7 +12,7 @@
     <SearchConfigPanel
       v-if="props.modelValue"
       ref="searchConfigPanelRef"
-      :database-id="props.databaseId"
+      :kb-id="props.kbId"
       @save="handlePanelSave"
     />
   </a-modal>
@@ -27,7 +27,7 @@ const props = defineProps({
     type: Boolean,
     default: false
   },
-  databaseId: {
+  kbId: {
     type: String,
     default: ''
   }

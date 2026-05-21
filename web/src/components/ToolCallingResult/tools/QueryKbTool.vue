@@ -120,7 +120,7 @@ const toolName = computed(() => props.toolCall.name || props.toolCall.function?.
 const operationLabel = computed(() => `${toolName.value} 搜索`)
 
 const resourceLabel = computed(
-  () => args.value.kb_name || databaseStore.getDatabaseNameById(args.value.resource_id)
+  () => args.value.kb_name || databaseStore.getDatabaseNameById(args.value.kb_id)
 )
 const queryText = computed(() => args.value.query_text || '')
 

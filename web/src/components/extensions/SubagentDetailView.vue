@@ -139,12 +139,11 @@
       width="600px"
     >
       <a-form layout="vertical" class="extension-form">
+        <a-form-item label="标识" required class="form-item">
+          <a-input v-model:value="form.slug" disabled />
+        </a-form-item>
         <a-form-item label="名称" required class="form-item">
-          <a-input
-            v-model:value="form.name"
-            placeholder="请输入 SubAgent 名称（唯一标识）"
-            disabled
-          />
+          <a-input v-model:value="form.name" placeholder="请输入 SubAgent 展示名称" />
         </a-form-item>
         <a-form-item label="描述" class="form-item">
           <a-input v-model:value="form.description" placeholder="请输入 SubAgent 描述" />
@@ -203,7 +202,7 @@ import ModelSelectorComponent from '@/components/ModelSelectorComponent.vue'
 
 const route = useRoute()
 const router = useRouter()
-const name = computed(() => decodeURIComponent(route.params.name))
+const slug = computed(() => decodeURIComponent(route.params.slug ?? route.params.name))
 
 const loading = ref(false)
 const agent = ref(null)
@@ -212,6 +211,7 @@ const formModalVisible = ref(false)
 const formLoading = ref(false)
 const availableTools = ref([])
 const form = reactive({
+  slug: '',
   name: '',
   description: '',
   system_prompt: '',
@@ -228,7 +228,7 @@ const formatTime = (timeStr) => formatFullDateTime(timeStr)
 const fetchAgent = async () => {
   try {
     loading.value = true
-    const result = await subagentApi.getSubAgent(name.value)
+    const result = await subagentApi.getSubAgent(slug.value)
     if (result.success && result.data) {
       agent.value = result.data
     } else {
@@ -256,6 +256,7 @@ const fetchAvailableTools = async () => {
 const showEditModal = () => {
   if (!agent.value) return
   Object.assign(form, {
+    slug: agent.value.slug,
     name: agent.value.name,
     description: agent.value.description || '',
     system_prompt: agent.value.system_prompt || '',
@@ -271,6 +272,10 @@ const handleModelSelect = (spec) => {
 
 const handleFormSubmit = async () => {
   try {
+    if (!form.name?.trim()) {
+      message.error('名称不能为空')
+      return
+    }
     if (!form.system_prompt?.trim()) {
       message.error('系统提示词不能为空')
       return
@@ -283,7 +288,7 @@ const handleFormSubmit = async () => {
       tools: form.tools || [],
       model: form.model || null
     }
-    const result = await subagentApi.updateSubAgent(form.name, data)
+    const result = await subagentApi.updateSubAgent(agent.value.slug, data)
     if (result.success) {
       message.success('SubAgent 更新成功')
       formModalVisible.value = false
@@ -308,7 +313,7 @@ const confirmDeleteAgent = () => {
     cancelText: '取消',
     async onOk() {
       try {
-        const result = await subagentApi.deleteSubAgent(agent.value.name)
+        const result = await subagentApi.deleteSubAgent(agent.value.slug)
         if (result.success) {
           message.success('SubAgent 删除成功')
           router.push({ path: '/extensions', query: { tab: 'subagents' } })

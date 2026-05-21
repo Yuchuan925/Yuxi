@@ -64,8 +64,11 @@
       width="600px"
     >
       <a-form layout="vertical" class="extension-form">
+        <a-form-item label="标识" required class="form-item">
+          <a-input v-model:value="form.slug" placeholder="请输入 SubAgent 稳定标识，如 research-agent" />
+        </a-form-item>
         <a-form-item label="名称" required class="form-item">
-          <a-input v-model:value="form.name" placeholder="请输入 SubAgent 名称（唯一标识）" />
+          <a-input v-model:value="form.name" placeholder="请输入 SubAgent 展示名称" />
         </a-form-item>
         <a-form-item label="描述" class="form-item">
           <a-input v-model:value="form.description" placeholder="请输入 SubAgent 描述" />
@@ -125,6 +128,7 @@ const availableTools = ref([])
 const formModalVisible = ref(false)
 const formLoading = ref(false)
 const form = reactive({
+  slug: '',
   name: '',
   description: '',
   system_prompt: '',
@@ -156,11 +160,11 @@ const filteredDisabledSubAgents = computed(() =>
 )
 
 const navigateToDetail = (agent) => {
-  router.push({ path: `/extensions/subagent/${encodeURIComponent(agent.name)}` })
+  router.push({ path: `/extensions/subagent/${encodeURIComponent(agent.slug)}` })
 }
 
 const handleSubagentAdd = () => {
-  Object.assign(form, { name: '', description: '', system_prompt: '', tools: [], model: '' })
+  Object.assign(form, { slug: '', name: '', description: '', system_prompt: '', tools: [], model: '' })
   formModalVisible.value = true
 }
 
@@ -182,6 +186,10 @@ const handleModelSelect = (spec) => {
 
 const handleFormSubmit = async () => {
   try {
+    if (!form.slug?.trim()) {
+      message.error('标识不能为空')
+      return
+    }
     if (!form.name?.trim()) {
       message.error('名称不能为空')
       return
@@ -192,6 +200,7 @@ const handleFormSubmit = async () => {
     }
     formLoading.value = true
     const data = {
+      slug: form.slug.trim(),
       name: form.name.trim(),
       description: form.description || '',
       system_prompt: form.system_prompt,
@@ -215,7 +224,7 @@ const handleFormSubmit = async () => {
 
 const handleSetAgentEnabled = async (agent, enabled) => {
   try {
-    const result = await subagentApi.updateSubAgentStatus(agent.name, enabled)
+    const result = await subagentApi.updateSubAgentStatus(agent.slug, enabled)
     if (result.success) {
       message.success(result.message || `SubAgent 已${enabled ? '添加' : '移除'}`)
       await fetchSubAgents()
