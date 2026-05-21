@@ -50,11 +50,11 @@ class EvaluationRepository:
             result = await session.execute(select(EvaluationDataset).where(EvaluationDataset.dataset_id == dataset_id))
             return result.scalar_one_or_none()
 
-    async def list_datasets(self, db_id: str) -> list[EvaluationDataset]:
+    async def list_datasets(self, kb_id: str) -> list[EvaluationDataset]:
         async with pg_manager.get_async_session_context() as session:
             result = await session.execute(
                 select(EvaluationDataset)
-                .where(EvaluationDataset.db_id == db_id)
+                .where(EvaluationDataset.kb_id == kb_id)
                 .order_by(EvaluationDataset.created_at.desc())
             )
             return list(result.scalars().all())
@@ -106,10 +106,10 @@ class EvaluationRepository:
             result = await session.execute(select(EvaluationRun).where(EvaluationRun.run_id == run_id))
             return result.scalar_one_or_none()
 
-    async def list_runs(self, db_id: str) -> list[EvaluationRun]:
+    async def list_runs(self, kb_id: str) -> list[EvaluationRun]:
         async with pg_manager.get_async_session_context() as session:
             result = await session.execute(
-                select(EvaluationRun).where(EvaluationRun.db_id == db_id).order_by(EvaluationRun.started_at.desc())
+                select(EvaluationRun).where(EvaluationRun.kb_id == kb_id).order_by(EvaluationRun.started_at.desc())
             )
             return list(result.scalars().all())
 

@@ -12,6 +12,7 @@ import aiofiles
 from fastapi import HTTPException, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
+from yuxi.agents.backends import create_agent_composite_backend
 from yuxi.agents.backends.sandbox import (
     SKILLS_PATH,
     USER_DATA_PATH,
@@ -22,7 +23,7 @@ from yuxi.agents.backends.sandbox import (
     virtual_path_for_thread_file,
 )
 from yuxi.agents.backends.skills_backend import SelectedSkillsReadonlyBackend
-from yuxi.agents.middlewares.skills_middleware import normalize_selected_skills
+from yuxi.services.skill_service import normalize_string_list
 from yuxi.services.filesystem_service import _resolve_filesystem_state
 from yuxi.storage.postgres.models_business import User
 from yuxi.utils.datetime_utils import utc_isoformat_from_timestamp
@@ -338,14 +339,17 @@ async def _resolve_viewer_state(
     current_user: User,
     db: AsyncSession,
 ):
-    _conversation, runtime_context, sandbox_backend = await _resolve_filesystem_state(
+    _conversation, runtime_context = await _resolve_filesystem_state(
         thread_id=thread_id,
         user=current_user,
         db=db,
         agent_id=agent_id,
         agent_config_id=agent_config_id,
     )
-    selected_skills = normalize_selected_skills(getattr(runtime_context, "skills", None) or [])
+    selected_skills = getattr(runtime_context, "_readable_skills", [])
+    selected_skills = normalize_string_list(selected_skills if isinstance(selected_skills, list) else [])
+    runtime_stub = type("RuntimeStub", (), {"context": runtime_context})()
+    sandbox_backend = create_agent_composite_backend(runtime_stub)
     skills_backend = SelectedSkillsReadonlyBackend(selected_slugs=selected_skills)
     return sandbox_backend, skills_backend, selected_skills
 

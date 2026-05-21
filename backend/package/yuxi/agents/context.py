@@ -215,7 +215,7 @@ class BaseContext:
 _DEFAULT_ALL_CONTEXT_FIELDS = frozenset({"tools", "knowledges", "mcps", "skills", "subagents"})
 
 
-def _normalize_selected_resource_names(value: Any, available: list[str]) -> list[str]:
+def _normalize_selected_resource_keys(value: Any, available: list[str]) -> list[str]:
     if not isinstance(value, list):
         return []
 
@@ -225,15 +225,15 @@ def _normalize_selected_resource_names(value: Any, available: list[str]) -> list
     for item in value:
         if not isinstance(item, str):
             continue
-        name = item.strip()
-        if not name or name in seen or name not in allowed:
+        key = item.strip()
+        if not key or key in seen or key not in allowed:
             continue
-        seen.add(name)
-        normalized.append(name)
+        seen.add(key)
+        normalized.append(key)
     return normalized
 
 
-def _resource_fields_requiring_available_names(normalized: dict, resource_fields: set[str]) -> set[str]:
+def _resource_fields_requiring_available_keys(normalized: dict, resource_fields: set[str]) -> set[str]:
     fields_to_load: set[str] = set()
     for field_name in resource_fields:
         current = normalized.get(field_name)
@@ -244,6 +244,73 @@ def _resource_fields_requiring_available_names(normalized: dict, resource_fields
         else:
             normalized[field_name] = []
     return fields_to_load
+
+
+def _resource_option(key: Any, name: Any = None, description: Any = None) -> dict[str, str]:
+    key_value = str(key)
+    return {
+        "key": key_value,
+        "name": str(name or key_value),
+        "description": str(description or ""),
+    }
+
+
+async def resolve_agent_resource_options(
+    resource_fields: set[str] | None = None,
+    *,
+    db,
+    user,
+) -> dict[str, list[dict[str, str]]]:
+    fields_to_load = _DEFAULT_ALL_CONTEXT_FIELDS if resource_fields is None else resource_fields
+    if not fields_to_load:
+        return {}
+
+    options: dict[str, list[dict[str, str]]] = {}
+
+    if "tools" in fields_to_load:
+        from yuxi.services.tool_service import get_tool_metadata
+
+        options["tools"] = [
+            _resource_option(tool["slug"], tool.get("name"), tool.get("description"))
+            for tool in get_tool_metadata(category="buildin")
+            if tool.get("slug")
+        ]
+    if "knowledges" in fields_to_load:
+        from yuxi.knowledge import knowledge_base
+
+        databases = (await knowledge_base.get_databases_by_user(user)).get("databases", [])
+        options["knowledges"] = [
+            _resource_option(item.get("kb_id"), item.get("name"), item.get("description"))
+            for item in databases
+            if isinstance(item, dict) and item.get("kb_id")
+        ]
+    if "mcps" in fields_to_load:
+        from yuxi.services.mcp_service import get_all_mcp_servers
+
+        servers = await get_all_mcp_servers(db)
+        options["mcps"] = [
+            _resource_option(server.slug, server.name, server.description)
+            for server in servers
+            if server.enabled and server.slug
+        ]
+    if "skills" in fields_to_load:
+        from yuxi.services.skill_service import list_skills
+
+        skills = await list_skills(db)
+        options["skills"] = [
+            _resource_option(skill.slug, skill.name, skill.description) for skill in skills if skill.slug
+        ]
+    if "subagents" in fields_to_load:
+        from yuxi.services.subagent_service import get_all_subagents
+
+        subagents = await get_all_subagents(db)
+        options["subagents"] = [
+            _resource_option(item.get("slug"), item.get("name"), item.get("description"))
+            for item in subagents
+            if item.get("enabled") and item.get("slug")
+        ]
+
+    return options
 
 
 async def normalize_agent_context_config(
@@ -262,44 +329,72 @@ async def normalize_agent_context_config(
     if not resource_fields:
         return normalized
 
-    fields_to_load = _resource_fields_requiring_available_names(normalized, resource_fields)
+    fields_to_load = _resource_fields_requiring_available_keys(normalized, resource_fields)
     if not fields_to_load:
         return normalized
 
-    available: dict[str, list[str]] = {}
-    if "tools" in fields_to_load:
-        from yuxi.agents.toolkits import get_all_tool_instances
+    resource_options = await resolve_agent_resource_options(fields_to_load, db=db, user=user)
+    available = {
+        field_name: [option["key"] for option in field_options]
+        for field_name, field_options in resource_options.items()
+    }
 
-        available["tools"] = [
-            tool.name for tool in get_all_tool_instances() if isinstance(getattr(tool, "name", None), str)
-        ]
-    if "knowledges" in fields_to_load:
-        from yuxi.knowledge import knowledge_base
-
-        databases = (await knowledge_base.get_databases_by_user(user)).get("databases", [])
-        available["knowledges"] = [
-            str(db_item.get("db_id") or db_item.get("id"))
-            for db_item in databases
-            if isinstance(db_item, dict) and (db_item.get("db_id") or db_item.get("id"))
-        ]
-    if "mcps" in fields_to_load:
-        from yuxi.services.mcp_service import get_enabled_mcp_server_names
-
-        available["mcps"] = await get_enabled_mcp_server_names(db=db)
-    if "skills" in fields_to_load:
-        from yuxi.services.skill_service import list_skill_slugs
-
-        available["skills"] = await list_skill_slugs(db)
-    if "subagents" in fields_to_load:
-        from yuxi.services.subagent_service import get_enabled_subagent_names
-
-        available["subagents"] = await get_enabled_subagent_names(db)
-
-    for field_name, available_names in available.items():
+    for field_name, available_keys in available.items():
         current = normalized.get(field_name)
         if current is None:
-            normalized[field_name] = available_names
+            normalized[field_name] = available_keys
         else:
-            normalized[field_name] = _normalize_selected_resource_names(current, available_names)
+            normalized[field_name] = _normalize_selected_resource_keys(current, available_keys)
 
     return normalized
+
+
+async def prepare_agent_runtime_context(
+    context: BaseContext,
+    *,
+    context_schema: type[BaseContext] | None = None,
+) -> BaseContext:
+    """准备 Agent 运行时上下文，主要是根据 context 中的 uid 加载用户可访问的资源列表，并进行规范化处理。"""
+    uid = str(getattr(context, "uid", "") or "").strip()
+    if not uid:
+        return context
+
+    from yuxi.agents.backends.knowledge_base_backend import resolve_visible_knowledge_bases_for_context
+    from yuxi.agents.middlewares.skills_middleware import resolve_runtime_skills_for_context
+    from yuxi.repositories.user_repository import UserRepository
+    from yuxi.storage.postgres.manager import pg_manager
+
+    resource_fields = _DEFAULT_ALL_CONTEXT_FIELDS
+    async with pg_manager.get_async_session_context() as db:
+        user = await UserRepository().get_by_uid_with_db(db, uid)
+        if user is None:
+            for field_name in resource_fields:
+                if hasattr(context, field_name):
+                    setattr(context, field_name, [])
+            setattr(context, "_visible_knowledge_bases", [])
+            setattr(context, "_prompt_skills", [])
+            setattr(context, "_readable_skills", [])
+            return context
+
+        raw_resources = {
+            field_name: getattr(context, field_name, None)
+            for field_name in resource_fields
+            if hasattr(context, field_name)
+        }
+        normalized = await normalize_agent_context_config(
+            raw_resources,
+            db=db,
+            user=user,
+            context_schema=context_schema,
+        )
+        for field_name in resource_fields:
+            if hasattr(context, field_name):
+                setattr(context, field_name, normalized.get(field_name, []))
+
+        await resolve_visible_knowledge_bases_for_context(context)
+        skill_scope = await resolve_runtime_skills_for_context(context, db=db)
+        context.skills = skill_scope["context_skills"]
+        setattr(context, "_prompt_skills", skill_scope["prompt_skills"])
+        setattr(context, "_readable_skills", skill_scope["readable_skills"])
+
+    return context

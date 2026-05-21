@@ -193,7 +193,11 @@ async def get_agent(current_user: User = Depends(get_required_user)):
 
 
 @chat.get("/agent/{agent_id}")
-async def get_single_agent(agent_id: str, current_user: User = Depends(get_config_user)):
+async def get_single_agent(
+    agent_id: str,
+    current_user: User = Depends(get_config_user),
+    db: AsyncSession = Depends(get_db),
+):
     """获取指定智能体的完整信息（包含配置选项）（需要登录）"""
     try:
         # 检查智能体是否存在
@@ -201,7 +205,7 @@ async def get_single_agent(agent_id: str, current_user: User = Depends(get_confi
             raise HTTPException(status_code=404, detail=f"智能体 {agent_id} 不存在")
 
         # 获取智能体的完整信息（包含 configurable_items）
-        agent_info = await agent.get_info(user_role=current_user.role)
+        agent_info = await agent.get_info(user_role=current_user.role, db=db, user=current_user)
 
         return agent_info
 

@@ -6,23 +6,21 @@ from langchain.agents.middleware import ModelRetryMiddleware, TodoListMiddleware
 
 from yuxi.agents import BaseAgent, BaseState, load_chat_model
 from yuxi.agents.backends import create_agent_composite_backend
+from yuxi.agents.context import prepare_agent_runtime_context
 from yuxi.agents.middlewares import (
-    RuntimeConfigMiddleware,
     SummaryOffloadMiddleware,
     save_attachments_to_fs,
 )
 from yuxi.agents.middlewares.knowledge_base_middleware import KnowledgeBaseMiddleware
 from yuxi.agents.middlewares.skills_middleware import SkillsMiddleware
-from yuxi.services.mcp_service import get_tools_from_all_servers
-from yuxi.services.subagent_service import get_subagents_from_names
+from yuxi.services.subagent_service import get_subagents_from_slugs
+from yuxi.services.tool_service import resolve_configured_runtime_tools
 
 from .prompt import TODO_MID_PROMPT, build_prompt_with_context
 
 
 async def _build_middlewares(context):
     """构建中间件列表"""
-    all_mcp_tools = await get_tools_from_all_servers()  # 因为异步加载，无法放在 RuntimeConfigMiddleware 的 __init__ 中
-
     # summary middleware
     # 主 Agent 上下文优化：90k tokens 触发压缩（128k context window 的 70%）
     summary_middleware = SummaryOffloadMiddleware(
@@ -34,7 +32,7 @@ async def _build_middlewares(context):
     )
 
     # subagents
-    subagents = await get_subagents_from_names(context.subagents)
+    subagents = await get_subagents_from_slugs(context.subagents)
     subagents_middleware = SubAgentMiddleware(
         default_model=load_chat_model(fully_specified_name=context.subagents_model),
         subagents=subagents,
@@ -50,7 +48,6 @@ async def _build_middlewares(context):
         FilesystemMiddleware(backend=create_agent_composite_backend),  # 文件系统后端
         save_attachments_to_fs,  # 附件注入提示词
         KnowledgeBaseMiddleware(),  # 知识库工具
-        RuntimeConfigMiddleware(extra_tools=all_mcp_tools),  # 运行时配置应用（模型/工具/MCP/提示词）
         SkillsMiddleware(),  # Skills 中间件（提示词注入、依赖展开、动态激活）
         subagents_middleware,
         summary_middleware,
@@ -80,11 +77,15 @@ class ChatbotAgent(BaseAgent):
 
     async def get_graph(self, context=None, **kwargs):
 
-        context = context or self.context_schema()  # 获取上下文配置
+        context = await prepare_agent_runtime_context(
+            context or self.context_schema(),
+            context_schema=self.context_schema,
+        )
 
         # 使用 create_agent 创建智能体
         graph = create_agent(
             model=load_chat_model(fully_specified_name=context.model),
+            tools=await resolve_configured_runtime_tools(context),
             system_prompt=build_prompt_with_context(context),
             middleware=await _build_middlewares(context),
             state_schema=BaseState,

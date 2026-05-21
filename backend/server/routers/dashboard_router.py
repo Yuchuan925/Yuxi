@@ -452,7 +452,7 @@ async def get_knowledge_stats(
             }.get(kb_type, kb.kb_type or "未知类型")
             databases_by_type[display_type] = databases_by_type.get(display_type, 0) + 1
 
-            files = await file_repo.list_by_db_id(kb.db_id)
+            files = await file_repo.list_by_kb_id(kb.kb_id)
             total_files += len(files)
             for record in files:
                 file_ext = (record.file_type or "").lower()

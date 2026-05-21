@@ -429,8 +429,9 @@ class MCPServer(Base):
 
     __tablename__ = "mcp_servers"
 
-    # 核心字段 - name 作为主键
-    name = Column(String(100), primary_key=True, comment="服务器名称（唯一标识）")
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    slug = Column(String(100), nullable=False, unique=True, index=True, comment="稳定标识")
+    name = Column(String(100), nullable=False, comment="展示名称")
     description = Column(String(500), nullable=True, comment="描述")
 
     # 连接配置
@@ -461,6 +462,8 @@ class MCPServer(Base):
 
     def to_dict(self) -> dict[str, Any]:
         return {
+            "id": self.id,
+            "slug": self.slug,
             "name": self.name,
             "description": self.description,
             "transport": self.transport,
@@ -634,7 +637,9 @@ class SubAgent(Base):
 
     __tablename__ = "subagents"
 
-    name = Column(String(128), primary_key=True, comment="唯一标识")
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    slug = Column(String(128), nullable=False, unique=True, index=True, comment="稳定标识")
+    name = Column(String(128), nullable=False, comment="展示名称")
     description = Column(Text, nullable=False, comment="描述")
     system_prompt = Column(Text, nullable=False, comment="系统提示词")
     tools = Column(JSON, nullable=False, default=list, comment="工具名称列表")
@@ -650,6 +655,8 @@ class SubAgent(Base):
 
     def to_dict(self) -> dict[str, Any]:
         return {
+            "id": self.id,
+            "slug": self.slug,
             "name": self.name,
             "description": self.description,
             "system_prompt": self.system_prompt,
@@ -666,7 +673,8 @@ class SubAgent(Base):
     def to_subagent_spec(self) -> dict[str, Any]:
         """转换为 SubAgentMiddleware 需要的 spec 格式"""
         spec = {
-            "name": self.name,
+            "slug": self.slug,
+            "name": self.slug,
             "description": self.description,
             "system_prompt": self.system_prompt,
             "tools": self.tools or [],

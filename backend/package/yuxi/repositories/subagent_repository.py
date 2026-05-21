@@ -30,21 +30,22 @@ class SubAgentRepository:
         items = await self.list_enabled()
         return [item.to_subagent_spec() for item in items]
 
-    async def get_by_name(self, name: str) -> SubAgent | None:
-        """根据名称获取 SubAgent"""
-        result = await self.db.execute(select(SubAgent).where(SubAgent.name == name))
+    async def get_by_slug(self, slug: str) -> SubAgent | None:
+        """根据 slug 获取 SubAgent"""
+        result = await self.db.execute(select(SubAgent).where(SubAgent.slug == slug))
         return result.scalar_one_or_none()
 
-    async def exists_name(self, name: str) -> bool:
-        """检查名称是否存在（仅查询计数，不获取完整数据）"""
+    async def exists_slug(self, slug: str) -> bool:
+        """检查 slug 是否存在（仅查询计数，不获取完整数据）"""
         from sqlalchemy import func, select
 
-        result = await self.db.execute(select(func.count()).select_from(SubAgent).where(SubAgent.name == name))
+        result = await self.db.execute(select(func.count()).select_from(SubAgent).where(SubAgent.slug == slug))
         return result.scalar() > 0
 
     async def create(
         self,
         *,
+        slug: str,
         name: str,
         description: str,
         system_prompt: str,
@@ -55,6 +56,7 @@ class SubAgentRepository:
     ) -> SubAgent:
         now = utc_now_naive()
         item = SubAgent(
+            slug=slug,
             name=name,
             description=description,
             system_prompt=system_prompt,
@@ -76,6 +78,7 @@ class SubAgentRepository:
         self,
         item: SubAgent,
         *,
+        name: str | None,
         description: str | None,
         system_prompt: str | None,
         tools: list[str] | None,
@@ -85,6 +88,7 @@ class SubAgentRepository:
     ) -> SubAgent:
         # 批量更新非空字段
         updates = {
+            "name": name,
             "description": description,
             "system_prompt": system_prompt,
             "tools": tools,

@@ -28,7 +28,8 @@ mcp = APIRouter(prefix="/system/mcp-servers", tags=["mcp"])
 
 
 class CreateMcpServerRequest(BaseModel):
-    name: str = Field(..., description="服务器名称")
+    slug: str = Field(..., description="稳定标识")
+    name: str = Field(..., description="展示名称")
     transport: str = Field(..., description="传输类型：sse/streamable_http/stdio")
     url: str | None = Field(None, description="服务器 URL（sse/streamable_http）")
     command: str | None = Field(None, description="命令（stdio）")
@@ -43,6 +44,7 @@ class CreateMcpServerRequest(BaseModel):
 
 
 class UpdateMcpServerRequest(BaseModel):
+    name: str | None = Field(None, description="展示名称")
     transport: str | None = Field(None, description="传输类型")
     url: str | None = Field(None, description="服务器 URL")
     command: str | None = Field(None, description="命令（stdio）")
@@ -65,11 +67,11 @@ class UpdateMcpServerStatusRequest(BaseModel):
 # =============================================================================
 
 
-async def get_server_or_404(db: AsyncSession, name: str):
+async def get_server_or_404(db: AsyncSession, slug: str):
     """Helper to get server or raise 404."""
-    server = await get_mcp_server(db, name)
+    server = await get_mcp_server(db, slug)
     if not server:
-        raise HTTPException(status_code=404, detail=f"服务器 '{name}' 不存在")
+        raise HTTPException(status_code=404, detail=f"服务器 '{slug}' 不存在")
     return server
 
 
@@ -129,6 +131,7 @@ async def create_mcp_server_route(
     try:
         server = await create_mcp_server(
             db,
+            slug=request.slug,
             name=request.name,
             transport=request.transport,
             url=request.url,
@@ -151,15 +154,15 @@ async def create_mcp_server_route(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@mcp.get("/{name}")
+@mcp.get("/{slug}")
 async def get_mcp_server_route(
-    name: str,
+    slug: str,
     current_user: User = Depends(get_admin_user),
     db: AsyncSession = Depends(get_db),
 ):
     """获取单个 MCP 服务器配置"""
     try:
-        server = await get_server_or_404(db, name)
+        server = await get_server_or_404(db, slug)
         return {"success": True, "data": server.to_dict()}
     except HTTPException:
         raise
@@ -168,9 +171,9 @@ async def get_mcp_server_route(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@mcp.put("/{name}")
+@mcp.put("/{slug}")
 async def update_mcp_server_route(
-    name: str,
+    slug: str,
     request: UpdateMcpServerRequest,
     current_user: User = Depends(get_admin_user),
     db: AsyncSession = Depends(get_db),
@@ -189,7 +192,8 @@ async def update_mcp_server_route(
 
         server = await update_mcp_server(
             db,
-            name=name,
+            slug=slug,
+            name=request.name,
             description=request.description,
             transport=request.transport,
             url=request.url,
@@ -211,23 +215,23 @@ async def update_mcp_server_route(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@mcp.delete("/{name}")
+@mcp.delete("/{slug}")
 async def delete_mcp_server_route(
-    name: str,
+    slug: str,
     current_user: User = Depends(get_admin_user),
     db: AsyncSession = Depends(get_db),
 ):
     """删除 MCP 服务器"""
     try:
         # 检查是否为系统内置服务器
-        server = await get_mcp_server(db, name)
+        server = await get_mcp_server(db, slug)
         if server and server.created_by == "system":
             raise HTTPException(status_code=403, detail="系统内置的 MCP 服务器无法删除")
 
-        deleted = await delete_mcp_server(db, name)
+        deleted = await delete_mcp_server(db, slug)
         if not deleted:
-            raise HTTPException(status_code=404, detail=f"服务器 '{name}' 不存在")
-        return {"success": True, "message": f"服务器 '{name}' 已删除"}
+            raise HTTPException(status_code=404, detail=f"服务器 '{slug}' 不存在")
+        return {"success": True, "message": f"服务器 '{slug}' 已删除"}
     except HTTPException:
         raise
     except Exception as e:
@@ -240,18 +244,18 @@ async def delete_mcp_server_route(
 # =============================================================================
 
 
-@mcp.post("/{name}/test")
+@mcp.post("/{slug}/test")
 async def test_mcp_server(
-    name: str,
+    slug: str,
     current_user: User = Depends(get_admin_user),
     db: AsyncSession = Depends(get_db),
 ):
     """测试 MCP 服务器连接"""
     try:
-        await get_server_or_404(db, name)
+        await get_server_or_404(db, slug)
 
         try:
-            tools = await get_all_mcp_tools(name)
+            tools = await get_all_mcp_tools(slug)
             return {
                 "success": True,
                 "message": f"连接成功，共发现 {len(tools)} 个工具",
@@ -266,21 +270,21 @@ async def test_mcp_server(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@mcp.put("/{name}/status")
+@mcp.put("/{slug}/status")
 async def update_mcp_server_status_route(
-    name: str,
+    slug: str,
     request: UpdateMcpServerStatusRequest,
     current_user: User = Depends(get_admin_user),
     db: AsyncSession = Depends(get_db),
 ):
     """更新 MCP 服务器启用状态"""
     try:
-        is_enabled, server = await set_server_enabled(db, name, request.enabled, current_user.username)
+        is_enabled, server = await set_server_enabled(db, slug, request.enabled, current_user.username)
         return {
             "success": True,
             "enabled": is_enabled,
             "data": server.to_dict(),
-            "message": f"MCP '{name}' 已{'添加' if is_enabled else '移除'}",
+            "message": f"MCP '{slug}' 已{'添加' if is_enabled else '移除'}",
         }
     except ValueError as ve:
         raise HTTPException(status_code=404, detail=str(ve))
@@ -294,20 +298,20 @@ async def update_mcp_server_status_route(
 # =============================================================================
 
 
-@mcp.get("/{name}/tools")
+@mcp.get("/{slug}/tools")
 async def get_mcp_server_tools(
-    name: str,
+    slug: str,
     current_user: User = Depends(get_admin_user),
     db: AsyncSession = Depends(get_db),
 ):
     """获取 MCP 服务器的工具列表"""
     try:
-        server = await get_server_or_404(db, name)
+        server = await get_server_or_404(db, slug)
         disabled_tools = server.disabled_tools or []
 
         try:
             # 获取所有工具（不过滤 disabled_tools）
-            tools = await get_all_mcp_tools(name)
+            tools = await get_all_mcp_tools(slug)
             tool_list = []
 
             for tool in tools:
@@ -336,7 +340,7 @@ async def get_mcp_server_tools(
                 "total": len(tool_list),
             }
         except Exception as tool_error:
-            logger.error(f"Failed to get tools from MCP server '{name}': {tool_error}")
+            logger.error(f"Failed to get tools from MCP server '{slug}': {tool_error}")
             raise HTTPException(status_code=500, detail=f"获取工具失败: {str(tool_error)}")
     except HTTPException:
         raise
@@ -345,22 +349,22 @@ async def get_mcp_server_tools(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@mcp.post("/{name}/tools/refresh")
+@mcp.post("/{slug}/tools/refresh")
 async def refresh_mcp_server_tools(
-    name: str,
+    slug: str,
     current_user: User = Depends(get_admin_user),
     db: AsyncSession = Depends(get_db),
 ):
     """刷新 MCP 服务器的工具列表（清除缓存重新获取）"""
     try:
-        await get_server_or_404(db, name)
+        await get_server_or_404(db, slug)
 
         try:
             # 获取所有工具（不过滤 disabled_tools）
-            tools = await get_all_mcp_tools(name)
+            tools = await get_all_mcp_tools(slug)
 
             # 获取统计信息
-            stats = get_mcp_tools_stats(name)
+            stats = get_mcp_tools_stats(slug)
             enabled_count = stats.get("enabled", len(tools)) if stats else len(tools)
             disabled_count = stats.get("disabled", 0) if stats else 0
 
@@ -386,16 +390,16 @@ async def refresh_mcp_server_tools(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@mcp.put("/{name}/tools/{tool_name}/toggle")
+@mcp.put("/{slug}/tools/{tool_name}/toggle")
 async def toggle_mcp_server_tool_route(
-    name: str,
+    slug: str,
     tool_name: str,
     current_user: User = Depends(get_admin_user),
     db: AsyncSession = Depends(get_db),
 ):
     """切换单个工具的启用状态"""
     try:
-        enabled, server = await toggle_tool_enabled(db, name, tool_name, current_user.username)
+        enabled, server = await toggle_tool_enabled(db, slug, tool_name, current_user.username)
         return {
             "success": True,
             "tool_name": tool_name,

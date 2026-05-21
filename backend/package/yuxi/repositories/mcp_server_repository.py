@@ -11,10 +11,10 @@ from yuxi.storage.postgres.models_business import MCPServer
 class MCPServerRepository:
     """MCP 服务器数据访问层"""
 
-    async def get_by_name(self, name: str) -> MCPServer | None:
+    async def get_by_slug(self, slug: str) -> MCPServer | None:
         """根据名称获取 MCP 服务器"""
         async with pg_manager.get_async_session_context() as session:
-            result = await session.execute(select(MCPServer).where(MCPServer.name == name))
+            result = await session.execute(select(MCPServer).where(MCPServer.slug == slug))
             return result.scalar_one_or_none()
 
     async def list(self) -> list[MCPServer]:
@@ -36,22 +36,22 @@ class MCPServerRepository:
             session.add(server)
         return server
 
-    async def update(self, name: str, data: dict[str, Any]) -> MCPServer | None:
+    async def update(self, slug: str, data: dict[str, Any]) -> MCPServer | None:
         """更新 MCP 服务器"""
         async with pg_manager.get_async_session_context() as session:
-            result = await session.execute(select(MCPServer).where(MCPServer.name == name))
+            result = await session.execute(select(MCPServer).where(MCPServer.slug == slug))
             server = result.scalar_one_or_none()
             if server is None:
                 return None
             for key, value in data.items():
-                if key != "name":
+                if key != "slug":
                     setattr(server, key, value)
         return server
 
-    async def delete(self, name: str) -> bool:
+    async def delete(self, slug: str) -> bool:
         """删除 MCP 服务器"""
         async with pg_manager.get_async_session_context() as session:
-            result = await session.execute(select(MCPServer).where(MCPServer.name == name))
+            result = await session.execute(select(MCPServer).where(MCPServer.slug == slug))
             server = result.scalar_one_or_none()
             if server is None:
                 return False
@@ -60,22 +60,22 @@ class MCPServerRepository:
 
     async def upsert(self, data: dict[str, Any]) -> MCPServer:
         """插入或更新 MCP 服务器"""
-        name = data.get("name")
+        slug = data.get("slug")
         async with pg_manager.get_async_session_context() as session:
-            result = await session.execute(select(MCPServer).where(MCPServer.name == name))
+            result = await session.execute(select(MCPServer).where(MCPServer.slug == slug))
             existing = result.scalar_one_or_none()
             if existing is None:
                 server = MCPServer(**data)
                 session.add(server)
             else:
                 for key, value in data.items():
-                    if key != "name":
+                    if key != "slug":
                         setattr(existing, key, value)
                 server = existing
         return server
 
-    async def exists_by_name(self, name: str) -> bool:
+    async def exists_by_slug(self, slug: str) -> bool:
         """检查 MCP 服务器是否存在"""
         async with pg_manager.get_async_session_context() as session:
-            result = await session.execute(select(MCPServer.id).where(MCPServer.name == name))
+            result = await session.execute(select(MCPServer.id).where(MCPServer.slug == slug))
             return result.scalar_one_or_none() is not None

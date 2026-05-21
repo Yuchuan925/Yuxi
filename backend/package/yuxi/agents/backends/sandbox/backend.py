@@ -17,7 +17,7 @@ from deepagents.backends.protocol import (
 from deepagents.backends.sandbox import BaseSandbox
 
 from yuxi import config as conf
-from yuxi.services.skill_service import sync_thread_visible_skills
+from yuxi.services.skill_service import sync_thread_readable_skills
 from yuxi.utils.logging_config import logger
 
 from .provider import get_sandbox_provider, sandbox_id_for_thread
@@ -62,7 +62,7 @@ def _looks_like_binary(content: bytes) -> bool:
 
 
 class ProvisionerSandboxBackend(BaseSandbox):
-    def __init__(self, thread_id: str, *, uid: str, visible_skills: list[str] | None = None):
+    def __init__(self, thread_id: str, *, uid: str, readable_skills: list[str] | None = None):
         self._thread_id = str(thread_id or "").strip()
         if not self._thread_id:
             raise ValueError("thread_id is required for ProvisionerSandboxBackend")
@@ -70,7 +70,7 @@ class ProvisionerSandboxBackend(BaseSandbox):
         if not self._uid:
             raise ValueError("uid is required for ProvisionerSandboxBackend")
 
-        self._visible_skills = list(visible_skills or [])
+        self._readable_skills = list(readable_skills or [])
         self._provider = get_sandbox_provider()
         self._id = sandbox_id_for_thread(self._thread_id)
         self._client: Any | None = None
@@ -93,7 +93,7 @@ class ProvisionerSandboxBackend(BaseSandbox):
         return AgentSandboxClient(base_url=sandbox_url, timeout=self._command_timeout_seconds)
 
     def _get_client(self) -> Any:
-        sync_thread_visible_skills(self._thread_id, self._visible_skills)
+        sync_thread_readable_skills(self._thread_id, self._readable_skills)
         connection = self._provider.get(self._thread_id, uid=self._uid, create_if_missing=True)
         if connection is None:
             raise RuntimeError(f"sandbox is unavailable for thread {self._thread_id}")
