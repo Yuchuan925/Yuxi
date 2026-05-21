@@ -125,6 +125,7 @@ images=(
     "quay.io/coreos/etcd:v3.5.5"
     "postgres:16"
     "redis:7-alpine"
+    "enterprise-public-cn-beijing.cr.volces.com/vefaas-public/all-in-one-sandbox:latest"
 )
 
 # Pull each image

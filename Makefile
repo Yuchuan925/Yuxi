@@ -1,5 +1,5 @@
 
-.PHONY: up up-lite down logs lint format
+.PHONY: up up-lite down logs lint format seed
 
 PYTEST_ARGS ?=
 
@@ -25,6 +25,9 @@ logs:
 	@echo "\n\nBranch: $$(git branch --show-current)"
 	@echo "Commit ID: $$(git rev-parse HEAD)"
 	@echo "System: $$(uname -a)"
+
+seed:
+	docker compose exec api uv run python scripts/seed_initial_users.py
 
 ######################
 # LINTING AND FORMATTING

@@ -11,10 +11,12 @@ from pathlib import Path
 from urllib import request
 
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from dotenv import dotenv_values
 
 logger = logging.getLogger(__name__)
+
+SANDBOX_ENV_FILE = Path(__file__).parent / "sandbox.env"
 
 
 def canonical_backend_name(backend: str) -> str:
@@ -22,10 +24,25 @@ def canonical_backend_name(backend: str) -> str:
     return value or "memory"
 
 
+def normalize_env(env: dict | None) -> dict[str, str]:
+    if not isinstance(env, dict):
+        return {}
+    return {str(key): "" if value is None else str(value) for key, value in env.items() if str(key)}
+
+
+def load_sandbox_env() -> dict[str, str]:
+    return normalize_env(dotenv_values(SANDBOX_ENV_FILE))
+
+
+def merged_sandbox_env(global_env: dict[str, str], user_env: dict[str, str]) -> dict[str, str]:
+    return {**global_env, **normalize_env(user_env)}
+
+
 class CreateSandboxRequest(BaseModel):
     sandbox_id: str
     thread_id: str
     uid: str
+    env: dict[str, str] = Field(default_factory=dict)
 
 
 class SandboxResponse(BaseModel):
@@ -69,9 +86,10 @@ class MemoryProvisionerBackend:
             return template.format(sandbox_id=sandbox_id)
         return template
 
-    def create(self, sandbox_id: str, thread_id: str, uid: str) -> SandboxRecord:
+    def create(self, sandbox_id: str, thread_id: str, uid: str, env: dict[str, str] | None = None) -> SandboxRecord:
         _ = thread_id  # unused in memory backend
         _ = uid  # unused in memory backend
+        _ = env  # unused in memory backend
         with self._lock:
             existing = self._records.get(sandbox_id)
             if existing is not None:
@@ -113,16 +131,6 @@ def wait_for_sandbox_ready(sandbox_url: str, timeout_seconds: int = 30) -> bool:
 
 
 class LocalContainerProvisionerBackend:
-    _SANDBOX_ENV_FILE = Path(__file__).parent / "sandbox.env"
-
-    @staticmethod
-    def _load_sandbox_env() -> dict[str, str]:
-        """Parse sandbox.env and return environment variables to inject into sandbox containers."""
-        if LocalContainerProvisionerBackend._SANDBOX_ENV_FILE.exists():
-            return dotenv_values(LocalContainerProvisionerBackend._SANDBOX_ENV_FILE)
-
-        return {}
-
     def __init__(self):
         import docker
         from docker.errors import DockerException
@@ -139,7 +147,7 @@ class LocalContainerProvisionerBackend:
         self._container_prefix = os.getenv("DOCKER_SANDBOX_PREFIX", "yuxi-sandbox")
         self._sandbox_host = os.getenv("DOCKER_SANDBOX_HOST", "host.docker.internal")
         self._health_timeout_seconds = int(os.getenv("SANDBOX_HEALTH_TIMEOUT_SECONDS", "300"))
-        self._sandbox_env = self._load_sandbox_env()
+        self._sandbox_env = load_sandbox_env()
 
         try:
             self._client = docker.from_env()
@@ -329,7 +337,7 @@ class LocalContainerProvisionerBackend:
         except NotFound:
             return None
 
-    def create(self, sandbox_id: str, thread_id: str, uid: str) -> SandboxRecord:
+    def create(self, sandbox_id: str, thread_id: str, uid: str, env: dict[str, str] | None = None) -> SandboxRecord:
         with self._lock:
             safe_thread_id = self._validate_thread_id(thread_id)
             safe_uid = self._validate_uid(uid)
@@ -397,8 +405,9 @@ class LocalContainerProvisionerBackend:
             }
             if self._network:
                 run_kwargs["network"] = self._network
-            if self._sandbox_env:
-                run_kwargs["environment"] = self._sandbox_env
+            sandbox_env = merged_sandbox_env(self._sandbox_env, env or {})
+            if sandbox_env:
+                run_kwargs["environment"] = sandbox_env
 
             container = self._client.containers.run(self._sandbox_image, **run_kwargs)
             container.reload()
@@ -480,6 +489,7 @@ class KubernetesProvisionerBackend:
         self._thread_pvc = os.getenv("THREAD_PVC", "yuxi-thread")
         self._node_host = os.getenv("NODE_HOST", "host.docker.internal")
         self._container_port = int(os.getenv("SANDBOX_CONTAINER_PORT", "8080"))
+        self._sandbox_env = load_sandbox_env()
 
         kubeconfig_path = os.getenv("KUBECONFIG_PATH")
         if kubeconfig_path:
@@ -501,8 +511,12 @@ class KubernetesProvisionerBackend:
     def _service_name(sandbox_id: str) -> str:
         return f"sandbox-{sandbox_id}"
 
-    def _build_pod_spec(self, sandbox_id: str, thread_id: str, uid: str):
+    def _build_pod_spec(self, sandbox_id: str, thread_id: str, uid: str, env: dict[str, str]):
         pod_name = self._pod_name(sandbox_id)
+        env_vars = [
+            self._client.V1EnvVar(name=key, value=value)
+            for key, value in merged_sandbox_env(self._sandbox_env, env).items()
+        ]
         return self._client.V1Pod(
             metadata=self._client.V1ObjectMeta(
                 name=pod_name,
@@ -539,6 +553,7 @@ class KubernetesProvisionerBackend:
                     self._client.V1Container(
                         name="sandbox",
                         image=self._sandbox_image,
+                        env=env_vars,
                         ports=[self._client.V1ContainerPort(container_port=self._container_port)],
                         volume_mounts=[
                             self._client.V1VolumeMount(name="home-dir", mount_path="/home/gem"),
@@ -603,7 +618,7 @@ class KubernetesProvisionerBackend:
             ),
         )
 
-    def create(self, sandbox_id: str, thread_id: str, uid: str) -> SandboxRecord:
+    def create(self, sandbox_id: str, thread_id: str, uid: str, env: dict[str, str] | None = None) -> SandboxRecord:
         from kubernetes.client.rest import ApiException
 
         with self._lock:
@@ -617,7 +632,7 @@ class KubernetesProvisionerBackend:
             try:
                 self._core_api.create_namespaced_pod(
                     namespace=self._namespace,
-                    body=self._build_pod_spec(sandbox_id, thread_id, uid),
+                    body=self._build_pod_spec(sandbox_id, thread_id, uid, env or {}),
                 )
             except ApiException as exc:
                 if exc.status != 409:
@@ -828,7 +843,7 @@ def health():
 def create_sandbox(payload: CreateSandboxRequest):
     try:
         # Backend.create() already handles container reuse (discovers existing container first)
-        record = backend_impl.create(payload.sandbox_id, payload.thread_id, payload.uid)
+        record = backend_impl.create(payload.sandbox_id, payload.thread_id, payload.uid, payload.env)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:  # noqa: BLE001

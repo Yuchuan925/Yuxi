@@ -82,6 +82,8 @@ class User(Base):
     # 关联 API Keys
     api_keys = relationship("APIKey", back_populates="user", cascade="all, delete-orphan")
 
+    agent_env = relationship("AgentEnv", back_populates="user", cascade="all, delete-orphan", uselist=False)
+
     def to_dict(self, include_password: bool = False) -> dict[str, Any]:
         result = {
             "id": self.id,
@@ -128,6 +130,28 @@ class User(Base):
         self.login_failed_count = 0
         self.last_failed_login = None
         self.login_locked_until = None
+
+
+class AgentEnv(Base):
+    """用户级 Agent 沙盒环境变量"""
+
+    __tablename__ = "agent_envs"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    uid = Column(String, ForeignKey("users.uid"), nullable=False, unique=True, index=True)
+    env = Column(JSON, nullable=False, default=dict)
+    created_at = Column(DateTime, default=utc_now_naive)
+    updated_at = Column(DateTime, default=utc_now_naive, onupdate=utc_now_naive)
+
+    user = relationship("User", back_populates="agent_env")
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "uid": self.uid,
+            "env": self.env or {},
+            "created_at": format_utc_datetime(self.created_at),
+            "updated_at": format_utc_datetime(self.updated_at),
+        }
 
 
 class AgentConfig(Base):
