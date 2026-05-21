@@ -20,23 +20,23 @@ export const mindmapApi = {
 
   /**
    * 获取指定知识库的文件列表
-   * @param {string} dbId - 知识库ID
+   * @param {string} kbId - 知识库ID
    * @returns {Promise} - 文件列表
    */
-  getDatabaseFiles: async (dbId) => {
-    return apiAdminGet(`/api/mindmap/databases/${dbId}/files`)
+  getDatabaseFiles: async (kbId) => {
+    return apiAdminGet(`/api/mindmap/databases/${kbId}/files`)
   },
 
   /**
    * AI生成思维导图
-   * @param {string} dbId - 知识库ID
+   * @param {string} kbId - 知识库ID
    * @param {Array<string>} fileIds - 选择的文件ID列表（为空则使用所有文件）
    * @param {string} userPrompt - 用户自定义提示词
    * @returns {Promise} - 思维导图数据
    */
-  generateMindmap: async (dbId, fileIds = [], userPrompt = '') => {
+  generateMindmap: async (kbId, fileIds = [], userPrompt = '') => {
     return apiAdminPost('/api/mindmap/generate', {
-      db_id: dbId,
+      kb_id: kbId,
       file_ids: fileIds,
       user_prompt: userPrompt
     })
@@ -44,10 +44,10 @@ export const mindmapApi = {
 
   /**
    * 获取知识库的思维导图
-   * @param {string} dbId - 知识库ID
+   * @param {string} kbId - 知识库ID
    * @returns {Promise} - 思维导图数据
    */
-  getByDatabase: async (dbId) => {
-    return apiAdminGet(`/api/mindmap/database/${dbId}`)
+  getByDatabase: async (kbId) => {
+    return apiAdminGet(`/api/mindmap/database/${kbId}`)
   }
 }

@@ -4,26 +4,26 @@ from pydantic import BaseModel, Field
 
 
 class SearchInputSchema(BaseModel):
-    resource_id: str = Field(description="知识库资源 ID，也就是 kb_id")
+    kb_id: str = Field(description="知识库资源 ID，也就是 kb_id")
     query_text: str = Field(description="检索关键词，应提炼为有助于召回答案的关键词或短语")
     file_name: str | None = Field(default=None, description="可选文件名关键词过滤，非必要不要使用")
 
 
 class SearchResultSchema(BaseModel):
     id: str = Field(description="检索结果 ID，通常对应 chunk_id")
-    resource_id: str = Field(description="知识库资源 ID，也就是 kb_id")
+    kb_id: str = Field(description="知识库资源 ID，也就是 kb_id")
     file_id: str = Field(default="", description="结果所属文件 ID，可用于 Find/Open")
     content: str = Field(description="chunk 内容")
     metadata: dict[str, Any] = Field(default_factory=dict, description="来源、分数、chunk_index 等附加信息")
 
 
 class SearchOutputSchema(BaseModel):
-    resource_id: str = Field(description="知识库资源 ID，也就是 kb_id")
+    kb_id: str = Field(description="知识库资源 ID，也就是 kb_id")
     results: list[SearchResultSchema] = Field(default_factory=list, description="检索结果列表")
 
 
 class FindInputSchema(BaseModel):
-    resource_id: str = Field(description="知识库资源 ID，也就是 kb_id")
+    kb_id: str = Field(description="知识库资源 ID，也就是 kb_id")
     file_id: str = Field(description="要检索的文件 ID")
     patterns: list[str] = Field(description="关键词或正则模式列表，至少提供一个")
     use_regex: bool = Field(default=False, description="是否将 patterns 作为正则表达式处理")
@@ -40,7 +40,7 @@ class FindWindowSchema(BaseModel):
 
 
 class FindOutputSchema(BaseModel):
-    resource_id: str = Field(description="知识库资源 ID，也就是 kb_id")
+    kb_id: str = Field(description="知识库资源 ID，也就是 kb_id")
     file_id: str = Field(description="文件 ID")
     semantic: bool = Field(default=False, description="是否为语义查找")
     match_mode: Literal["keyword", "regex"] = Field(description="匹配模式")
@@ -49,7 +49,7 @@ class FindOutputSchema(BaseModel):
 
 
 class OpenInputSchema(BaseModel):
-    resource_id: str = Field(description="知识库资源 ID，也就是 kb_id")
+    kb_id: str = Field(description="知识库资源 ID，也就是 kb_id")
     file_id: str = Field(description="要打开的文件 ID")
     line: int | None = Field(default=None, ge=1, description="可选，1-based 起始行号")
     offset: int | None = Field(default=None, ge=0, description="可选，0-based 起始偏移；line 优先于 offset")
@@ -57,7 +57,7 @@ class OpenInputSchema(BaseModel):
 
 
 class OpenOutputSchema(BaseModel):
-    resource_id: str = Field(description="知识库资源 ID，也就是 kb_id")
+    kb_id: str = Field(description="知识库资源 ID，也就是 kb_id")
     file_id: str = Field(description="文件 ID")
     start_line: int = Field(description="窗口起始行号，1-based；空结果为 0")
     end_line: int = Field(description="窗口结束行号，1-based；空结果为 0")

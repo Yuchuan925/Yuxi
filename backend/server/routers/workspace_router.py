@@ -33,14 +33,14 @@ class UpdateWorkspaceFileContentRequest(BaseModel):
     content: str
 
 
-async def _ensure_knowledge_read_access(current_user: User, db_id: str) -> None:
+async def _ensure_knowledge_read_access(current_user: User, kb_id: str) -> None:
     allowed = await knowledge_base.check_accessible(
         {
             "uid": current_user.uid,
             "role": current_user.role,
             "department_id": current_user.department_id,
         },
-        db_id,
+        kb_id,
     )
     if not allowed:
         raise HTTPException(status_code=403, detail="Access denied")
@@ -78,16 +78,16 @@ async def get_workspace_file(
 
 @workspace.get("/knowledge/tree", response_model=dict)
 async def get_workspace_knowledge_tree(
-    db_id: str = Query(..., description="知识库 ID"),
+    kb_id: str = Query(..., description="知识库 ID"),
     parent_id: str | None = Query(None, description="父文件夹 ID"),
     recursive: bool = Query(False, description="是否递归返回子目录文件"),
     files_only: bool = Query(False, description="是否仅返回文件"),
     current_user: User = Depends(get_required_user),
 ):
-    await _ensure_knowledge_read_access(current_user, db_id)
+    await _ensure_knowledge_read_access(current_user, kb_id)
     try:
         return await knowledge_base.list_file_tree(
-            db_id=db_id,
+            kb_id=kb_id,
             parent_id=parent_id,
             recursive=recursive,
             files_only=files_only,
@@ -98,28 +98,28 @@ async def get_workspace_knowledge_tree(
 
 @workspace.get("/knowledge/file", response_model=dict)
 async def get_workspace_knowledge_file(
-    db_id: str = Query(..., description="知识库 ID"),
+    kb_id: str = Query(..., description="知识库 ID"),
     file_id: str = Query(..., description="知识库文件 ID"),
     variant: str = Query("parsed", description="预览模式：parsed 或 original"),
     current_user: User = Depends(get_required_user),
 ):
-    await _ensure_knowledge_read_access(current_user, db_id)
+    await _ensure_knowledge_read_access(current_user, kb_id)
     try:
-        return await knowledge_base.read_file_preview(db_id=db_id, file_id=file_id, variant=variant)
+        return await knowledge_base.read_file_preview(kb_id=kb_id, file_id=file_id, variant=variant)
     except ValueError as error:
         _raise_knowledge_read_error(error)
 
 
 @workspace.get("/knowledge/download")
 async def download_workspace_knowledge_file(
-    db_id: str = Query(..., description="知识库 ID"),
+    kb_id: str = Query(..., description="知识库 ID"),
     file_id: str = Query(..., description="知识库文件 ID"),
     variant: str = Query("original", description="下载模式：original 或 parsed"),
     current_user: User = Depends(get_required_user),
 ):
-    await _ensure_knowledge_read_access(current_user, db_id)
+    await _ensure_knowledge_read_access(current_user, kb_id)
     try:
-        data = await knowledge_base.get_file_download(db_id=db_id, file_id=file_id, variant=variant)
+        data = await knowledge_base.get_file_download(kb_id=kb_id, file_id=file_id, variant=variant)
     except ValueError as error:
         _raise_knowledge_read_error(error)
 

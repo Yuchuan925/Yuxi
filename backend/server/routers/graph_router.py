@@ -11,8 +11,8 @@ from yuxi.utils.logging_config import logger
 graph = APIRouter(prefix="/graph", tags=["graph"])
 
 
-async def _get_graph_service(db_id: str) -> MilvusGraphService:
-    db_info = await knowledge_base.get_database_info(db_id)
+async def _get_graph_service(kb_id: str) -> MilvusGraphService:
+    db_info = await knowledge_base.get_database_info(kb_id)
     if not db_info:
         raise HTTPException(status_code=404, detail="Knowledge base not found")
 
@@ -20,7 +20,7 @@ async def _get_graph_service(db_id: str) -> MilvusGraphService:
     if kb_type != "milvus":
         raise HTTPException(status_code=404, detail="Graph API only supports Milvus knowledge bases")
 
-    return MilvusGraphService(db_id=db_id)
+    return MilvusGraphService(kb_id=kb_id)
 
 
 @graph.get("/list")
@@ -34,7 +34,7 @@ async def get_graphs(current_user: User = Depends(get_admin_user)):
                 continue
             graphs.append(
                 {
-                    "id": db.get("db_id"),
+                    "id": db.get("kb_id"),
                     "name": db.get("name"),
                     "type": "milvus",
                     "description": db.get("description"),
@@ -52,7 +52,7 @@ async def get_graphs(current_user: User = Depends(get_admin_user)):
 
 @graph.get("/subgraph")
 async def get_subgraph(
-    db_id: str = Query(..., description="Milvus 知识库ID"),
+    kb_id: str = Query(..., description="Milvus 知识库ID"),
     node_label: str = Query("*", description="节点标签或查询关键词"),
     max_depth: int = Query(2, description="最大深度", ge=1, le=5),
     max_nodes: int = Query(100, description="最大节点数", ge=1, le=1000),
@@ -61,8 +61,8 @@ async def get_subgraph(
 ):
     """查询 Milvus 知识库图谱子图"""
     try:
-        logger.info(f"Querying subgraph - db_id: {db_id}, label: {node_label}")
-        service = await _get_graph_service(db_id)
+        logger.info(f"Querying subgraph - kb_id: {kb_id}, label: {node_label}")
+        service = await _get_graph_service(kb_id)
         result_data = await service.query_nodes(
             keyword=node_label, max_depth=max_depth, max_nodes=max_nodes, exclude_chunk=exclude_chunk,
         )
@@ -77,12 +77,12 @@ async def get_subgraph(
 
 @graph.get("/labels")
 async def get_graph_labels(
-    db_id: str = Query(..., description="Milvus 知识库ID"),
+    kb_id: str = Query(..., description="Milvus 知识库ID"),
     current_user: User = Depends(get_admin_user),
 ):
     """获取 Milvus 知识库图谱的所有标签"""
     try:
-        service = await _get_graph_service(db_id)
+        service = await _get_graph_service(kb_id)
         labels = await service.get_labels()
         return {"success": True, "data": {"labels": labels}}
     except HTTPException:
@@ -94,12 +94,12 @@ async def get_graph_labels(
 
 @graph.get("/stats")
 async def get_graph_stats(
-    db_id: str = Query(..., description="Milvus 知识库ID"),
+    kb_id: str = Query(..., description="Milvus 知识库ID"),
     current_user: User = Depends(get_admin_user),
 ):
     """获取 Milvus 知识库图谱统计信息"""
     try:
-        service = await _get_graph_service(db_id)
+        service = await _get_graph_service(kb_id)
         stats_data = await service.get_stats()
         return {"success": True, "data": stats_data}
     except HTTPException:

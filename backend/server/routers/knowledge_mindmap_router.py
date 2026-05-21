@@ -27,18 +27,18 @@ from yuxi.utils import logger
 mindmap = APIRouter(prefix="/mindmap", tags=["mindmap"])
 
 
-@mindmap.get("/databases/{db_id}/files")
-async def get_database_files(db_id: str, current_user: User = Depends(get_admin_user)):
+@mindmap.get("/databases/{kb_id}/files")
+async def get_database_files(kb_id: str, current_user: User = Depends(get_admin_user)):
     """获取指定知识库的所有文件列表。"""
     try:
-        db_info = await knowledge_base.get_database_info(db_id)
+        db_info = await knowledge_base.get_database_info(kb_id)
         if not db_info:
-            raise HTTPException(status_code=404, detail=f"知识库 {db_id} 不存在")
+            raise HTTPException(status_code=404, detail=f"知识库 {kb_id} 不存在")
 
         file_list = build_database_file_list(db_info.get("files", {}))
         return {
             "message": "success",
-            "db_id": db_id,
+            "kb_id": kb_id,
             "db_name": db_info.get("name", ""),
             "files": file_list,
             "total": len(file_list),
@@ -53,16 +53,16 @@ async def get_database_files(db_id: str, current_user: User = Depends(get_admin_
 
 @mindmap.post("/generate")
 async def generate_mindmap(
-    db_id: str = Body(..., description="知识库ID"),
+    kb_id: str = Body(..., description="知识库ID"),
     file_ids: list[str] = Body(default=[], description="选择的文件ID列表"),
     user_prompt: str = Body(default="", description="用户自定义提示词"),
     current_user: User = Depends(get_admin_user),
 ):
     """使用 AI 分析知识库文件，生成思维导图结构。"""
     try:
-        db_info = await knowledge_base.get_database_info(db_id)
+        db_info = await knowledge_base.get_database_info(kb_id)
         if not db_info:
-            raise HTTPException(status_code=404, detail=f"知识库 {db_id} 不存在")
+            raise HTTPException(status_code=404, detail=f"知识库 {kb_id} 不存在")
 
         db_name = db_info.get("name", "知识库")
         all_files = db_info.get("files", {})
@@ -102,15 +102,15 @@ async def generate_mindmap(
         try:
             from yuxi.repositories.knowledge_base_repository import KnowledgeBaseRepository
 
-            await KnowledgeBaseRepository().update(db_id, {"mindmap": mindmap_data})
-            logger.info(f"思维导图已保存到知识库: {db_id}")
+            await KnowledgeBaseRepository().update(kb_id, {"mindmap": mindmap_data})
+            logger.info(f"思维导图已保存到知识库: {kb_id}")
         except Exception as save_error:
             logger.error(f"保存思维导图失败: {save_error}")
 
         return {
             "message": "success",
             "mindmap": mindmap_data,
-            "db_id": db_id,
+            "kb_id": kb_id,
             "db_name": db_name,
             "file_count": len(files_info),
             "original_file_count": original_count,
@@ -131,15 +131,15 @@ async def get_databases_overview(current_user: User = Depends(get_admin_user)):
         databases = await knowledge_base.get_databases_by_uid(current_user.uid)
         db_list = []
         for db_info in databases.get("databases", []):
-            db_id = db_info.get("db_id")
-            if not db_id:
+            kb_id = db_info.get("kb_id")
+            if not kb_id:
                 continue
 
-            detail_info = await knowledge_base.get_database_info(db_id)
+            detail_info = await knowledge_base.get_database_info(kb_id)
             file_count = len(detail_info.get("files", {})) if detail_info else 0
             db_list.append(
                 {
-                    "db_id": db_id,
+                    "kb_id": kb_id,
                     "name": db_info.get("name", ""),
                     "description": db_info.get("description", ""),
                     "kb_type": db_info.get("kb_type", ""),
@@ -154,20 +154,20 @@ async def get_databases_overview(current_user: User = Depends(get_admin_user)):
         raise HTTPException(status_code=500, detail=f"获取知识库列表失败: {str(e)}")
 
 
-@mindmap.get("/database/{db_id}")
-async def get_database_mindmap(db_id: str, current_user: User = Depends(get_admin_user)):
+@mindmap.get("/database/{kb_id}")
+async def get_database_mindmap(kb_id: str, current_user: User = Depends(get_admin_user)):
     """获取知识库关联的思维导图。"""
     try:
         from yuxi.repositories.knowledge_base_repository import KnowledgeBaseRepository
 
-        kb = await KnowledgeBaseRepository().get_by_id(db_id)
+        kb = await KnowledgeBaseRepository().get_by_kb_id(kb_id)
         if kb is None:
-            raise HTTPException(status_code=404, detail=f"知识库 {db_id} 不存在")
+            raise HTTPException(status_code=404, detail=f"知识库 {kb_id} 不存在")
 
         return {
             "message": "success",
             "mindmap": kb.mindmap,
-            "db_id": db_id,
+            "kb_id": kb_id,
             "db_name": kb.name,
         }
 

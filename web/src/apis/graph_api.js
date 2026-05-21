@@ -6,14 +6,14 @@ export const graphApi = {
   },
 
   getSubgraph: async (params) => {
-    const { db_id, node_label = '*', max_depth = 2, max_nodes = 100, exclude_chunk = false } = params
+    const { kb_id, node_label = '*', max_depth = 2, max_nodes = 100, exclude_chunk = false } = params
 
-    if (!db_id) {
-      throw new Error('db_id is required')
+    if (!kb_id) {
+      throw new Error('kb_id is required')
     }
 
     const queryParams = new URLSearchParams({
-      db_id,
+      kb_id,
       node_label,
       max_depth: max_depth.toString(),
       max_nodes: max_nodes.toString(),
@@ -23,21 +23,21 @@ export const graphApi = {
     return await apiGet(`/api/graph/subgraph?${queryParams.toString()}`, {}, true)
   },
 
-  getStats: async (db_id) => {
-    if (!db_id) {
-      throw new Error('db_id is required')
+  getStats: async (kb_id) => {
+    if (!kb_id) {
+      throw new Error('kb_id is required')
     }
 
-    const queryParams = new URLSearchParams({ db_id })
+    const queryParams = new URLSearchParams({ kb_id })
     return await apiGet(`/api/graph/stats?${queryParams.toString()}`, {}, true)
   },
 
-  getLabels: async (db_id) => {
-    if (!db_id) {
-      throw new Error('db_id is required')
+  getLabels: async (kb_id) => {
+    if (!kb_id) {
+      throw new Error('kb_id is required')
     }
 
-    const queryParams = new URLSearchParams({ db_id })
+    const queryParams = new URLSearchParams({ kb_id })
     return await apiGet(`/api/graph/labels?${queryParams.toString()}`, {}, true)
   }
 }

@@ -25,10 +25,10 @@ class KnowledgeBase(Base):
     """知识库模型"""
 
     __tablename__ = "knowledge_bases"
-    __table_args__ = (UniqueConstraint("db_id", name="uq_knowledge_bases_db_id"),)
+    __table_args__ = (UniqueConstraint("kb_id", name="uq_knowledge_bases_kb_id"),)
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    db_id = Column(String(80), unique=True, nullable=False, index=True)
+    kb_id = Column(String(80), unique=True, nullable=False, index=True)
     name = Column(String(255), nullable=False, index=True)
     description = Column(Text)
     kb_type = Column(String(32), nullable=False, index=True)
@@ -52,7 +52,7 @@ class KnowledgeFile(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     file_id = Column(String(64), unique=True, nullable=False, index=True)
-    db_id = Column(String(80), ForeignKey("knowledge_bases.db_id", ondelete="CASCADE"), nullable=False, index=True)
+    kb_id = Column(String(80), ForeignKey("knowledge_bases.kb_id", ondelete="CASCADE"), nullable=False, index=True)
     parent_id = Column(String(64), ForeignKey("knowledge_files.file_id", ondelete="SET NULL"), index=True)
     filename = Column(String(512), nullable=False)
     original_filename = Column(String(512))
@@ -80,14 +80,14 @@ class KnowledgeChunk(Base):
     __table_args__ = (
         UniqueConstraint("chunk_id", name="uq_knowledge_chunks_chunk_id"),
         Index("ix_knowledge_chunks_file_id", "file_id"),
-        Index("ix_knowledge_chunks_db_id", "db_id"),
+        Index("ix_knowledge_chunks_kb_id", "kb_id"),
         Index("ix_knowledge_chunks_graph_indexed", "graph_indexed"),
     )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     chunk_id = Column(String(128), nullable=False)
     file_id = Column(String(64), ForeignKey("knowledge_files.file_id", ondelete="CASCADE"), nullable=False)
-    db_id = Column(String(80), ForeignKey("knowledge_bases.db_id", ondelete="CASCADE"), nullable=False)
+    kb_id = Column(String(80), ForeignKey("knowledge_bases.kb_id", ondelete="CASCADE"), nullable=False)
     chunk_index = Column(Integer, nullable=False)
     content = Column(Text, nullable=False)
     start_char_pos = Column(Integer)
@@ -108,13 +108,13 @@ class KnowledgeGraphEntity(Base):
     __tablename__ = "knowledge_graph_entities"
     __table_args__ = (
         UniqueConstraint("entity_id", name="uq_knowledge_graph_entities_entity_id"),
-        UniqueConstraint("db_id", "normalized_name", "label", name="uq_knowledge_graph_entities_identity"),
-        Index("ix_knowledge_graph_entities_db_id", "db_id"),
+        UniqueConstraint("kb_id", "normalized_name", "label", name="uq_knowledge_graph_entities_identity"),
+        Index("ix_knowledge_graph_entities_kb_id", "kb_id"),
     )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     entity_id = Column(String(64), nullable=False)
-    db_id = Column(String(80), ForeignKey("knowledge_bases.db_id", ondelete="CASCADE"), nullable=False)
+    kb_id = Column(String(80), ForeignKey("knowledge_bases.kb_id", ondelete="CASCADE"), nullable=False)
     normalized_name = Column(String(512), nullable=False)
     label = Column(String(128), nullable=False)
     name = Column(String(512), nullable=False)
@@ -129,14 +129,14 @@ class KnowledgeGraphEntityMention(Base):
     __tablename__ = "knowledge_graph_entity_mentions"
     __table_args__ = (
         UniqueConstraint("entity_id", "chunk_id", name="uq_knowledge_graph_entity_mentions_entity_chunk"),
-        Index("ix_knowledge_graph_entity_mentions_db_id", "db_id"),
+        Index("ix_knowledge_graph_entity_mentions_kb_id", "kb_id"),
         Index("ix_knowledge_graph_entity_mentions_file_id", "file_id"),
         Index("ix_knowledge_graph_entity_mentions_chunk_id", "chunk_id"),
     )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     entity_id = Column(String(64), ForeignKey("knowledge_graph_entities.entity_id", ondelete="CASCADE"), nullable=False)
-    db_id = Column(String(80), ForeignKey("knowledge_bases.db_id", ondelete="CASCADE"), nullable=False)
+    kb_id = Column(String(80), ForeignKey("knowledge_bases.kb_id", ondelete="CASCADE"), nullable=False)
     file_id = Column(String(64), ForeignKey("knowledge_files.file_id", ondelete="CASCADE"), nullable=False)
     chunk_id = Column(String(128), ForeignKey("knowledge_chunks.chunk_id", ondelete="CASCADE"), nullable=False)
     created_at = Column(DateTime(timezone=True), default=utc_now_naive)
@@ -148,12 +148,12 @@ class KnowledgeGraphTriple(Base):
     __tablename__ = "knowledge_graph_triples"
     __table_args__ = (
         UniqueConstraint("triple_id", name="uq_knowledge_graph_triples_triple_id"),
-        Index("ix_knowledge_graph_triples_db_id", "db_id"),
+        Index("ix_knowledge_graph_triples_kb_id", "kb_id"),
     )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     triple_id = Column(String(64), nullable=False)
-    db_id = Column(String(80), ForeignKey("knowledge_bases.db_id", ondelete="CASCADE"), nullable=False)
+    kb_id = Column(String(80), ForeignKey("knowledge_bases.kb_id", ondelete="CASCADE"), nullable=False)
     source_entity_id = Column(
         String(64), ForeignKey("knowledge_graph_entities.entity_id", ondelete="CASCADE"), nullable=False
     )
@@ -172,14 +172,14 @@ class KnowledgeGraphTripleMention(Base):
     __tablename__ = "knowledge_graph_triple_mentions"
     __table_args__ = (
         UniqueConstraint("triple_id", "chunk_id", name="uq_knowledge_graph_triple_mentions_triple_chunk"),
-        Index("ix_knowledge_graph_triple_mentions_db_id", "db_id"),
+        Index("ix_knowledge_graph_triple_mentions_kb_id", "kb_id"),
         Index("ix_knowledge_graph_triple_mentions_file_id", "file_id"),
         Index("ix_knowledge_graph_triple_mentions_chunk_id", "chunk_id"),
     )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     triple_id = Column(String(64), ForeignKey("knowledge_graph_triples.triple_id", ondelete="CASCADE"), nullable=False)
-    db_id = Column(String(80), ForeignKey("knowledge_bases.db_id", ondelete="CASCADE"), nullable=False)
+    kb_id = Column(String(80), ForeignKey("knowledge_bases.kb_id", ondelete="CASCADE"), nullable=False)
     file_id = Column(String(64), ForeignKey("knowledge_files.file_id", ondelete="CASCADE"), nullable=False)
     chunk_id = Column(String(128), ForeignKey("knowledge_chunks.chunk_id", ondelete="CASCADE"), nullable=False)
     text = Column(Text)
@@ -195,7 +195,7 @@ class EvaluationDataset(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     dataset_id = Column(String(64), unique=True, nullable=False, index=True)
-    db_id = Column(String(80), ForeignKey("knowledge_bases.db_id", ondelete="CASCADE"), nullable=False, index=True)
+    kb_id = Column(String(80), ForeignKey("knowledge_bases.kb_id", ondelete="CASCADE"), nullable=False, index=True)
     name = Column(String(255), nullable=False)
     description = Column(Text)
     item_count = Column(Integer, default=0)
@@ -225,7 +225,7 @@ class EvaluationDatasetItem(Base):
         nullable=False,
         index=True,
     )
-    db_id = Column(String(80), ForeignKey("knowledge_bases.db_id", ondelete="CASCADE"), nullable=False, index=True)
+    kb_id = Column(String(80), ForeignKey("knowledge_bases.kb_id", ondelete="CASCADE"), nullable=False, index=True)
     item_index = Column(Integer, nullable=False)
     query_text = Column(Text, nullable=False)
     gold_chunk_ids = Column(JSON_VALUE)
@@ -241,7 +241,7 @@ class EvaluationRun(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     run_id = Column(String(64), unique=True, nullable=False, index=True)
-    db_id = Column(String(80), ForeignKey("knowledge_bases.db_id", ondelete="CASCADE"), nullable=False, index=True)
+    kb_id = Column(String(80), ForeignKey("knowledge_bases.kb_id", ondelete="CASCADE"), nullable=False, index=True)
     dataset_id = Column(
         String(64),
         ForeignKey("evaluation_datasets.dataset_id", ondelete="SET NULL"),
