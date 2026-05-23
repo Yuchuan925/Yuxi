@@ -1,5 +1,4 @@
 import re
-import uuid
 from yuxi.utils import logger
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Request, status, UploadFile, File
@@ -23,7 +22,7 @@ from server.utils.auth_middleware import (
 from server.utils.auth_utils import AuthUtils
 from server.utils.user_utils import generate_unique_uid, validate_username, is_valid_phone_number
 from server.utils.common_utils import log_operation
-from yuxi.storage.minio import aupload_file_to_minio
+from yuxi.services.upload_utils import upload_image_to_minio
 from yuxi.utils.datetime_utils import utc_now_naive
 
 # OIDC 认证相关导入
@@ -843,35 +842,22 @@ async def upload_user_avatar(
     file: UploadFile = File(...), current_user: User = Depends(get_required_user), db: AsyncSession = Depends(get_db)
 ):
     """上传用户头像"""
-    # 检查文件类型
-    if not file.content_type or not file.content_type.startswith("image/"):
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="只能上传图片文件")
-
-    # 检查文件大小（5MB限制）
-    file_size = 0
-    file_content = await file.read()
-    file_size = len(file_content)
-
-    if file_size > 5 * 1024 * 1024:  # 5MB
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="文件大小不能超过5MB")
-
     try:
-        # 获取文件扩展名
-        file_extension = file.filename.split(".")[-1].lower() if file.filename and "." in file.filename else "jpg"
+        avatar_url = await upload_image_to_minio(
+            file,
+            object_prefix=f"avatar/{current_user.id}",
+            max_size_bytes=5 * 1024 * 1024,
+            too_large_message="文件大小不能超过5MB",
+        )
 
-        # 上传到MinIO
-        file_name = f"avatar/{current_user.id}/{uuid.uuid4()}.{file_extension}"
-        avatar_url = await aupload_file_to_minio("public", file_name, file_content)
-
-        # 更新用户头像
         current_user.avatar = avatar_url
         await db.commit()
-
-        # 记录操作
         await log_operation(db, current_user.id, "上传头像", f"更新头像: {avatar_url}")
 
         return {"success": True, "avatar_url": avatar_url, "message": "头像上传成功"}
 
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"头像上传失败: {str(e)}")
 

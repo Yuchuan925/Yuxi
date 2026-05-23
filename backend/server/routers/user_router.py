@@ -5,13 +5,14 @@ import re
 import secrets
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from server.utils.auth_middleware import get_db, get_required_user
+from yuxi.services.upload_utils import upload_image_to_minio
 from yuxi.storage.postgres.models_business import APIKey, AgentEnv, User
 from yuxi.utils.datetime_utils import coerce_any_to_utc_datetime, format_utc_datetime, utc_now_naive
 
@@ -21,6 +22,7 @@ ENV_KEY_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 MAX_ENV_COUNT = 200
 MAX_ENV_KEY_LENGTH = 128
 MAX_ENV_VALUE_LENGTH = 32768
+MAX_USER_IMAGE_SIZE_BYTES = 5 * 1024 * 1024
 
 
 def generate_api_key() -> tuple[str, str, str]:
@@ -69,6 +71,21 @@ class AgentEnvUpdate(BaseModel):
 class AgentEnvResponse(BaseModel):
     env: dict[str, str]
     updated_at: str | None = None
+
+
+@user_router.post("/upload-image", response_model=dict)
+async def upload_user_image(file: UploadFile = File(...), current_user: User = Depends(get_required_user)):
+    try:
+        image_url = await upload_image_to_minio(
+            file,
+            object_prefix=f"images/{current_user.uid}",
+            max_size_bytes=MAX_USER_IMAGE_SIZE_BYTES,
+            too_large_message="图片大小不能超过 5MB",
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    return {"success": True, "image_url": image_url, "url": image_url}
 
 
 def validate_agent_env(env: dict[str, Any]) -> dict[str, str]:
