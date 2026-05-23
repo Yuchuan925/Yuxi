@@ -14,7 +14,7 @@ API Key 是一种用于身份验证的密钥字符串，外部系统可以通过
 
 ## 接口调用方式
 
-外部系统通过 HTTP 请求调用 Yuxi 的对话接口，需要在请求头中携带 API Key。流式接口地址为 `POST /api/chat/agent`，非流式接口地址为 `POST /api/chat/agent/sync`（不支持 HITL）。请求头需要包含 `Authorization` 字段，值格式为 `Bearer <api_key>`，其中 `<api_key>` 是创建 API Key 时获取的完整密钥。请求体为 JSON 格式，必填字段为 `query` 和 `agent_config_id`，可选字段为 `thread_id`、`image_content` 和 `meta`。
+外部系统通过 HTTP 请求调用 Yuxi 的对话接口，需要在请求头中携带 API Key。流式接口地址为 `POST /api/agent/chat`，非流式接口地址为 `POST /api/agent/chat/sync`（不支持 HITL）。请求头需要包含 `Authorization` 字段，值格式为 `Bearer <api_key>`，其中 `<api_key>` 是创建 API Key 时获取的完整密钥。请求体为 JSON 格式，必填字段为 `query` 和 `agent_id`，可选字段为 `thread_id`、`image_content` 和 `meta`。
 
 以下是一个典型的 Python 调用示例：
 
@@ -22,14 +22,14 @@ API Key 是一种用于身份验证的密钥字符串，外部系统可以通过
 import requests
 import json
 
-url = "http://your-yuxi-server/api/chat/agent"
+url = "http://your-yuxi-server/api/agent/chat"
 headers = {
     "Authorization": "Bearer yxkey_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
     "Content-Type": "application/json"
 }
 payload = {
     "query": "你好，请介绍一下你自己",
-    "agent_config_id": 1,
+    "agent_id": "default-chatbot",
     "meta": {}
 }
 
