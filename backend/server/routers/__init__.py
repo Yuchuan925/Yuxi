@@ -3,6 +3,7 @@ import os
 from fastapi import APIRouter
 
 from server.routers.auth_router import auth
+from server.routers.agent_router import agent_router
 from server.routers.chat_router import chat
 from server.routers.dashboard_router import dashboard
 from server.routers.auth_dept_router import department
@@ -24,7 +25,8 @@ router = APIRouter()
 # 基础系统接口：健康检查、配置、认证与聊天主链路。
 router.include_router(system)  # /api/system/* 系统状态与全局配置
 router.include_router(auth)  # /api/auth/* 登录与用户信息
-router.include_router(chat)  # /api/chat/* 对话、消息流、运行态
+router.include_router(agent_router)  # /api/agent/* 智能体管理与运行态
+router.include_router(chat)  # /api/chat/* 对话线程、消息历史与附件
 
 # 管理与工作台接口：后台任务、权限域以及工具体系配置。
 router.include_router(dashboard)  # /api/dashboard/* 仪表盘聚合数据

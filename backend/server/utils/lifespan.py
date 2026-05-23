@@ -34,6 +34,14 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"Failed to ensure builtin MCP servers during startup: {e}")
 
+    try:
+        from yuxi.repositories.agent_repository import AgentRepository
+
+        async with pg_manager.get_async_session_context() as session:
+            await AgentRepository(session).ensure_default_agent()
+    except Exception as e:
+        logger.error(f"Failed to ensure default agent during startup: {e}")
+
     # 初始化内置模型供应商配置
     try:
         async with pg_manager.get_async_session_context() as session:

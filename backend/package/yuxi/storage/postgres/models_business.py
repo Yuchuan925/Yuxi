@@ -14,7 +14,6 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
-    UniqueConstraint,
 )
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
@@ -154,52 +153,44 @@ class AgentEnv(Base):
         }
 
 
-class AgentConfig(Base):
-    """智能体配置（按用户隔离，多份可切换）"""
+class Agent(Base):
+    """用户可管理、可授权、可切换的智能体。"""
 
-    __tablename__ = "agent_configs"
+    __tablename__ = "agents"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    uid = Column(String, ForeignKey("users.uid"), nullable=False, index=True)
-    agent_id = Column(String(64), nullable=False, index=True)
+    slug = Column(String(80), nullable=False, unique=True, index=True)
+    backend_id = Column(String(64), nullable=False, index=True)
 
     name = Column(String(100), nullable=False)
-    description = Column(String(255), nullable=True)
+    description = Column(Text, nullable=True)
     icon = Column(String(255), nullable=True)
 
     pics = Column(JSON, nullable=False, default=list)
-    examples = Column(JSON, nullable=False, default=list)
     config_json = Column(JSON, nullable=False, default=dict)
+    share_config = Column(JSON, nullable=False, default=dict)
 
     is_default = Column(Boolean, nullable=False, default=False, index=True)
 
-    created_by = Column(String(64), nullable=True)
+    created_by = Column(String(64), nullable=True, index=True)
     updated_by = Column(String(64), nullable=True)
     created_at = Column(DateTime, default=utc_now_naive)
     updated_at = Column(DateTime, default=utc_now_naive, onupdate=utc_now_naive)
 
-    __table_args__ = (
-        UniqueConstraint("uid", "agent_id", "name", name="uq_agent_configs_uid_agent_name"),
-        Index(
-            "uq_agent_configs_uid_agent_default",
-            "uid",
-            "agent_id",
-            unique=True,
-            postgresql_where=is_default.is_(True),
-        ),
-    )
+    __table_args__ = (Index("uq_agents_default", "is_default", unique=True, postgresql_where=is_default.is_(True)),)
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "id": self.id,
-            "uid": self.uid,
-            "agent_id": self.agent_id,
+            "slug": self.slug,
+            "agent_id": self.slug,
+            "backend_id": self.backend_id,
             "name": self.name,
             "description": self.description,
             "icon": self.icon,
             "pics": self.pics or [],
-            "examples": self.examples or [],
             "config_json": self.config_json or {},
+            "share_config": self.share_config or {},
             "is_default": bool(self.is_default),
             "created_by": self.created_by,
             "updated_by": self.updated_by,
