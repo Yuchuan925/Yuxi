@@ -1,25 +1,14 @@
 <script setup>
 import { computed, onMounted, reactive, ref } from 'vue'
 import { message, Modal } from 'ant-design-vue'
-import {
-  Globe,
-  Plus,
-  RefreshCw,
-  Search,
-  Settings2,
-  Trash2,
-  CheckCircle2,
-  Edit3
-} from 'lucide-vue-next'
+import { Globe, Plus, RefreshCw, Search, Settings2, Trash2, CheckCircle2, Edit3 } from 'lucide-vue-next'
 
 import { modelProviderApi } from '@/apis/system_api'
 import { modelIcons } from '@/utils/modelIcon'
-import PageHeader from '@/components/shared/PageHeader.vue'
 import PageShoulder from '@/components/shared/PageShoulder.vue'
 import InfoCard from '@/components/shared/InfoCard.vue'
 import ExtensionCardGrid from '@/components/extensions/ExtensionCardGrid.vue'
 
-// ============ State ============
 const loading = ref(false)
 const remoteLoading = ref(false)
 const saving = ref(false)
@@ -78,8 +67,6 @@ const remoteModelsLoaded = ref({})
 // Remote model search state per provider
 const remoteModelSearch = ref({})
 const remoteModelTypeFilter = ref({})
-
-// ============ Computed ============
 const filteredProviders = computed(() => {
   const keyword = searchQuery.value.trim().toLowerCase()
   const filtered = keyword
@@ -234,8 +221,6 @@ const parseJsonObject = (text, label) => {
 }
 
 const formatJsonText = (value) => JSON.stringify(value || {}, null, 2)
-
-// ============ Provider Operations ============
 const loadProviders = async () => {
   loading.value = true
   try {
@@ -251,7 +236,7 @@ const loadProviders = async () => {
 function getProviderInfo(provider) {
   return [
     { label: 'Base URL', value: provider.base_url || '-' },
-    { label: '类型', value: provider.provider_type || 'openai' },
+    { label: '能力', value: provider.capabilities?.join(', ') || 'chat' },
     { label: '已启用', value: `${provider.enabled_models?.length || 0} 个模型` }
   ]
 }
@@ -564,76 +549,65 @@ const removeModel = async (providerId, modelId) => {
   })
 }
 
-// ============ Lifecycle ============
 onMounted(loadProviders)
+
+defineExpose({
+  loading,
+  stats: providerStats,
+  refresh: loadProviders
+})
 </script>
 
 <template>
-  <div class="model-config-view">
-    <!-- Page Header -->
-    <PageHeader title="模型配置" :show-border="true">
-      <template #info>
-        <div class="summary-strip">
-          <span>{{ providerStats.total }} 个供应商</span>
-          <span>{{ providerStats.enabled }} 个启用</span>
-          <span v-if="providerStats.warning > 0" class="warning-count"
-            >{{ providerStats.warning }} 个凭证缺失</span
-          >
-          <span>{{ providerStats.models }} 个模型</span>
-        </div>
-      </template>
-    </PageHeader>
-
-    <!-- Toolbar -->
-    <PageShoulder v-model:search="searchQuery" search-placeholder="搜索供应商...">
-      <template #actions>
-        <a-button type="primary" class="lucide-icon-btn" @click="openCreateProviderModal">
-          <Plus :size="14" />
-          新增供应商
-        </a-button>
-        <a-button class="lucide-icon-btn" @click="loadProviders" :loading="loading">
-          <RefreshCw :size="14" :class="{ spinning: loading }" />
-        </a-button>
-      </template>
-    </PageShoulder>
-
-    <!-- Provider Card Grid -->
-    <ExtensionCardGrid :min-width="320">
-      <InfoCard
-        v-for="provider in filteredProviders"
-        :key="provider.provider_id"
-        :title="provider.display_name"
-        :subtitle="provider.provider_id"
-        :disabled="!provider.is_enabled"
-        :default-icon="Globe"
-        :info="getProviderInfo(provider)"
-        :status="getProviderStatus(provider)"
-        @click="openEditProviderModal(provider)"
-      >
-        <template #icon>
-          <img
-            v-if="getProviderIcon(provider)"
-            :src="getIconUrl(getProviderIcon(provider))"
-            :alt="provider.display_name"
-          />
-        </template>
-        <template #footer>
-          <button class="view-models-btn" type="button" @click.stop="openModelsModal(provider)">
-            <Settings2 :size="14" />
-            管理模型
-          </button>
-          <a-tooltip title="编辑供应商">
-            <a-button
-              size="small"
-              class="lucide-icon-btn"
-              @click.stop="openEditProviderModal(provider)"
-            >
-              <Edit3 :size="14" />
+  <div class="model-provider-manage-panel">
+        <PageShoulder v-model:search="searchQuery" search-placeholder="搜索供应商...">
+          <template #actions>
+            <a-button type="primary" class="lucide-icon-btn" @click="openCreateProviderModal">
+              <Plus :size="14" />
+              新增供应商
             </a-button>
-          </a-tooltip>
-        </template>
-      </InfoCard>
-    </ExtensionCardGrid>
+            <a-button class="lucide-icon-btn" @click="loadProviders" :loading="loading">
+              <RefreshCw :size="14" :class="{ spinning: loading }" />
+            </a-button>
+          </template>
+        </PageShoulder>
+
+        <ExtensionCardGrid :min-width="320">
+          <InfoCard
+            v-for="provider in filteredProviders"
+            :key="provider.provider_id"
+            :title="provider.display_name"
+            :subtitle="provider.provider_id"
+            :disabled="!provider.is_enabled"
+            :default-icon="Globe"
+            :info="getProviderInfo(provider)"
+            :status="getProviderStatus(provider)"
+            @click="openEditProviderModal(provider)"
+          >
+            <template #icon>
+              <img
+                v-if="getProviderIcon(provider)"
+                :src="getIconUrl(getProviderIcon(provider))"
+                :alt="provider.display_name"
+              />
+            </template>
+            <template #footer>
+              <button class="view-models-btn" type="button" @click.stop="openModelsModal(provider)">
+                <Settings2 :size="14" />
+                管理模型
+              </button>
+              <a-tooltip title="编辑供应商">
+                <a-button
+                  size="small"
+                  class="lucide-icon-btn"
+                  @click.stop="openEditProviderModal(provider)"
+                >
+                  <Edit3 :size="14" />
+                </a-button>
+              </a-tooltip>
+            </template>
+          </InfoCard>
+        </ExtensionCardGrid>
 
     <!-- Provider Edit Modal -->
     <a-modal
@@ -791,7 +765,6 @@ onMounted(loadProviders)
         </a-collapse>
       </div>
     </a-modal>
-
     <!-- Models Management Modal -->
     <a-modal
       v-model:open="showModelsModal"
@@ -957,7 +930,6 @@ onMounted(loadProviders)
         </div>
       </div>
     </a-modal>
-
     <!-- Model Config Modal -->
     <a-modal
       v-model:open="showModelModal"
@@ -1022,38 +994,13 @@ onMounted(loadProviders)
   </div>
 </template>
 
+
 <style lang="less" scoped>
-.model-config-view {
-  display: flex;
-  flex-direction: column;
-  min-height: 100%;
-  background: var(--gray-0);
-  color: var(--gray-1000);
+.model-provider-manage-panel {
+  height: 100%;
+  min-height: 0;
 }
 
-// ============ Provider Summary Strip ============
-.summary-strip {
-  display: flex;
-  gap: 8px;
-
-  span {
-    padding: 6px 10px;
-    border: 1px solid var(--gray-100);
-    border-radius: 7px;
-    background: var(--gray-10);
-    color: var(--gray-700);
-    font-size: 12px;
-    line-height: 18px;
-  }
-
-  .warning-count {
-    background: var(--color-warning-50);
-    border-color: var(--color-warning-100);
-    color: var(--color-warning-700);
-  }
-}
-
-// ============ Provider Card Footer ============
 .view-models-btn {
   display: inline-flex;
   align-items: center;
@@ -1086,31 +1033,10 @@ onMounted(loadProviders)
   }
 }
 
-.clickable {
-  color: var(--main-700);
-  cursor: pointer;
-  font-weight: 500;
-
-  &:hover {
-    text-decoration: underline;
-  }
-}
-
-.card-actions {
-  display: flex;
-  gap: 4px;
-}
-
-// ============ Models Modal ============
 .models-modal-content {
   display: flex;
   flex-direction: column;
   gap: 20px;
-}
-
-.models-modal-actions {
-  display: flex;
-  gap: 8px;
 }
 
 .models-section {
@@ -1126,12 +1052,6 @@ onMounted(loadProviders)
   color: var(--gray-700);
 }
 
-.models-actions {
-  display: flex;
-  gap: 8px;
-}
-
-// ============ Models Table ============
 .models-table {
   display: flex;
   flex-direction: column;
@@ -1140,10 +1060,15 @@ onMounted(loadProviders)
   overflow: hidden;
 }
 
-.table-head {
+.table-head,
+.table-row {
   display: grid;
   grid-template-columns: 1fr 80px 70px 60px 110px;
   gap: 8px;
+  align-items: center;
+}
+
+.table-head {
   padding: 10px 12px;
   background: var(--gray-50);
   font-size: 11px;
@@ -1154,13 +1079,9 @@ onMounted(loadProviders)
 }
 
 .table-row {
-  display: grid;
-  grid-template-columns: 1fr 80px 70px 60px 110px;
-  gap: 8px;
   padding: 10px 12px;
   border-top: 1px solid var(--gray-100);
   font-size: 13px;
-  align-items: center;
   transition: background 0.1s;
 
   &:hover {
@@ -1196,14 +1117,6 @@ onMounted(loadProviders)
   white-space: nowrap;
 }
 
-.col-id {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-family: monospace;
-  font-size: 12px;
-}
-
 .col-type {
   display: flex;
   align-items: center;
@@ -1215,18 +1128,12 @@ onMounted(loadProviders)
   font-size: 12px;
 }
 
-.col-status {
-  display: flex;
-  align-items: center;
-}
-
 .col-ops {
   display: flex;
   gap: 4px;
   justify-content: flex-end;
 }
 
-// ============ Type Tags ============
 .type-tag {
   display: inline-flex;
   align-items: center;
@@ -1258,53 +1165,6 @@ onMounted(loadProviders)
     background: var(--gray-200);
     color: var(--gray-700);
   }
-}
-
-// ============ Status Badges ============
-.status-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 12px;
-
-  &.active {
-    color: var(--color-success-700);
-  }
-
-  &.stale {
-    color: var(--color-warning-700);
-  }
-}
-
-// ============ Remote Section ============
-.remote-section {
-  margin-top: 16px;
-  border: 1px solid var(--gray-150);
-  border-radius: 6px;
-  overflow: hidden;
-}
-
-.remote-toggle {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  padding: 10px 12px;
-  border: none;
-  background: var(--gray-50);
-  color: var(--gray-700);
-  font-size: 13px;
-  font-weight: 500;
-  cursor: pointer;
-  transition: background 0.1s;
-
-  &:hover {
-    background: var(--gray-100);
-  }
-}
-
-.remote-list {
-  border-top: 1px solid var(--gray-100);
 }
 
 .enabled-header {
@@ -1343,6 +1203,10 @@ onMounted(loadProviders)
 
 .remote-type-filter {
   flex-shrink: 0;
+}
+
+.remote-list {
+  border-top: 1px solid var(--gray-100);
 }
 
 .remote-row {
@@ -1413,11 +1277,6 @@ onMounted(loadProviders)
   }
 }
 
-.models-empty {
-  padding: 24px;
-}
-
-// ============ Modal Form ============
 .modal-form {
   display: flex;
   flex-direction: column;
@@ -1466,6 +1325,7 @@ onMounted(loadProviders)
     flex-direction: column;
     gap: 14px;
   }
+
   :deep(.ant-collapse-header) {
     padding-inline: 0;
   }
@@ -1506,28 +1366,9 @@ onMounted(loadProviders)
   }
 }
 
-// ============ Responsive ============
 @media (max-width: 768px) {
-  .page-header {
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 16px;
-    padding: 20px 16px;
-  }
-
-  .toolbar {
-    padding: 12px 16px;
-    flex-direction: column;
-    align-items: stretch;
-  }
-
-  .search-input {
-    width: 100%;
-  }
-
-  .provider-grid {
+  .form-row {
     grid-template-columns: 1fr;
-    padding: 16px;
   }
 
   .table-head,

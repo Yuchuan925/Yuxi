@@ -78,15 +78,15 @@ const router = createRouter({
       ]
     },
     {
-      path: '/model-config',
-      name: 'model-config',
+      path: '/model-manage',
+      name: 'model-manage',
       component: AppLayout,
       children: [
         {
           path: '',
-          name: 'ModelConfigComp',
-          component: () => import('../views/ModelConfigView.vue'),
-          meta: { keepAlive: false, requiresAuth: true, requiresAdmin: true }
+          name: 'ModelManageComp',
+          component: () => import('../views/ModelManageView.vue'),
+          meta: { keepAlive: false, requiresAuth: true }
         }
       ]
     },

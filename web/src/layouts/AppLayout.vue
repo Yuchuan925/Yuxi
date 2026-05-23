@@ -145,8 +145,8 @@ const mainList = computed(() => {
     })
 
     items.push({
-      name: '模型配置',
-      path: '/model-config',
+      name: '模型管理',
+      path: '/model-manage',
       icon: Box,
       activeIcon: Box
     })
