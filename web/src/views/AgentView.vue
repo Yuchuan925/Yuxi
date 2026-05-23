@@ -8,10 +8,10 @@
           :single-mode="false"
           @thread-change="handleThreadChange"
         >
-          <template #input-actions-left>
+          <template #input-actions-left="{ hasActiveThread }">
             <a-dropdown
               v-if="selectedAgentId"
-              v-model:open="configDropdownOpen"
+              v-model:open="agentDropdownOpen"
               :trigger="['click']"
               placement="topLeft"
               overlay-class-name="config-dropdown-overlay"
@@ -23,49 +23,58 @@
                 @click.stop
                 @mousedown.stop
               >
-                <Settings2 size="18" class="nav-btn-icon" />
-                <span class="hide-text config-dropdown-text">{{ currentConfigLabel }}</span>
+                <img
+                  class="config-dropdown-agent-icon nav-btn-icon"
+                  :src="currentAgentIcon"
+                  :alt="`${currentAgentLabel}图标`"
+                />
+                <span class="hide-text config-dropdown-text">{{ currentAgentLabel }}</span>
                 <ChevronDown size="15" class="config-dropdown-chevron" />
               </button>
 
               <template #overlay>
                 <div class="config-dropdown-panel" @click.stop>
                   <button
-                    v-for="config in configQuickSwitchOptions"
-                    :key="config.value"
+                    v-for="agent in agentQuickSwitchOptions"
+                    :key="agent.value"
                     type="button"
                     class="config-dropdown-item"
-                    :class="{ selected: config.value === selectedAgentConfigId }"
-                    @click="handleConfigSwitch(config.value)"
+                    :class="{
+                      selected: agent.value === selectedAgentId,
+                      disabled: hasActiveThread && agent.value !== selectedAgentId
+                    }"
+                    @click="handleAgentSwitch(agent.value, hasActiveThread)"
                   >
-                    <span class="config-dropdown-item-label">{{ config.label }}</span>
-                    <span v-if="config.isDefault" class="config-dropdown-item-badge">默认</span>
+                    <img
+                      class="config-dropdown-item-icon-image"
+                      :src="agent.icon"
+                      :alt="`${agent.label}图标`"
+                    />
+                    <span class="config-dropdown-item-label">{{ agent.label }}</span>
+                    <span v-if="agent.isBuiltin" class="config-dropdown-item-badge">内置</span>
                     <Check
-                      v-if="config.value === selectedAgentConfigId"
+                      v-if="agent.value === selectedAgentId"
                       :size="14"
                       class="config-dropdown-item-check"
                     />
                   </button>
 
-                  <div class="config-dropdown-divider"></div>
+                  <div v-if="hasActiveThread" class="config-dropdown-hint">
+                    当前对话已绑定智能体，新对话可切换。
+                  </div>
 
-                  <button
-                    type="button"
-                    class="config-dropdown-item action-item"
-                    @click="toggleConfigSidebar"
-                  >
-                    <Settings2 :size="15" class="config-dropdown-item-icon" />
-                    <span class="config-dropdown-item-label">{{ configSidebarActionLabel }}</span>
-                  </button>
+                  <template v-if="userStore.isAdmin">
+                    <div class="config-dropdown-divider"></div>
 
-                  <button
-                    type="button"
-                    class="config-dropdown-item action-item"
-                    @click="openCreateConfigModal"
-                  >
-                    <Plus :size="15" class="config-dropdown-item-icon" />
-                    <span class="config-dropdown-item-label">新建配置</span>
-                  </button>
+                    <button
+                      type="button"
+                      class="config-dropdown-item action-item"
+                      @click="openAgentManagement"
+                    >
+                      <Settings2 :size="15" class="config-dropdown-item-icon" />
+                      <span class="config-dropdown-item-label">管理智能体</span>
+                    </button>
+                  </template>
                 </div>
               </template>
             </a-dropdown>
@@ -96,29 +105,12 @@
         </AgentChatComponent>
       </div>
 
-      <!-- 配置侧边栏 -->
-      <AgentConfigSidebar
-        :isOpen="chatUIStore.isConfigSidebarOpen"
-        @close="() => (chatUIStore.isConfigSidebarOpen = false)"
-      />
-
       <!-- 反馈模态框 -->
       <FeedbackModalComponent
         v-if="userStore.isAdmin"
         ref="feedbackModal"
         :agent-id="selectedAgentId"
       />
-
-      <a-modal
-        v-model:open="createConfigModalOpen"
-        title="新建配置"
-        :width="360"
-        :confirm-loading="createConfigLoading"
-        @ok="handleCreateConfig"
-        @cancel="closeCreateConfigModal"
-      >
-        <a-input v-model:value="createConfigName" placeholder="请输入配置名称" allow-clear />
-      </a-modal>
 
       <!-- 自定义更多菜单 -->
       <Teleport to="body">
@@ -151,17 +143,17 @@
 import { computed, ref, watch } from 'vue'
 import { MessageOutlined, ShareAltOutlined } from '@ant-design/icons-vue'
 import { message } from 'ant-design-vue'
-import { Settings2, Ellipsis, ChevronDown, Check, Plus, FolderKanban } from 'lucide-vue-next'
+import { Settings2, Ellipsis, ChevronDown, Check, FolderKanban } from 'lucide-vue-next'
 import { useRoute, useRouter } from 'vue-router'
 import AgentChatComponent from '@/components/AgentChatComponent.vue'
-import AgentConfigSidebar from '@/components/AgentConfigSidebar.vue'
 import FeedbackModalComponent from '@/components/dashboard/FeedbackModalComponent.vue'
 import { useUserStore } from '@/stores/user'
-import { useAgentStore } from '@/stores/agent'
+import { isBuiltinAgent, useAgentStore } from '@/stores/agent'
 import { useChatUIStore } from '@/stores/chatUI'
 import { ChatExporter } from '@/utils/chatExporter'
 import { handleChatError } from '@/utils/errorHandler'
 import { onClickOutside } from '@vueuse/core'
+import defaultAgentIcon from '@/assets/defaults/agent.png'
 
 import { storeToRefs } from 'pinia'
 
@@ -177,8 +169,7 @@ const route = useRoute()
 const router = useRouter()
 
 // 从 agentStore 中获取响应式状态
-const { selectedAgentId, defaultAgentId, selectedAgentConfigId, agentConfigs, isLoadingConfig } =
-  storeToRefs(agentStore)
+const { agents, selectedAgentId, isLoadingConfig } = storeToRefs(agentStore)
 
 const syncingRouteThread = ref(false)
 
@@ -194,14 +185,8 @@ const syncSelectedThreadFromRoute = async () => {
   const threadId = getRouteThreadId()
   syncingRouteThread.value = true
   try {
-    if (!threadId) {
-      if (!agentStore.isInitialized) {
-        await agentStore.initialize()
-      }
-      const targetAgentId = defaultAgentId.value
-      if (targetAgentId && selectedAgentId.value !== targetAgentId) {
-        await agentStore.selectAgent(targetAgentId)
-      }
+    if (!threadId && !agentStore.isInitialized) {
+      await agentStore.initialize()
     }
 
     const ok = await chatComponent.selectThreadFromRoute(threadId)
@@ -241,86 +226,46 @@ const handleThreadChange = (threadId) => {
   }
 }
 
-// 输入区只负责快速切换已有配置，详细查看/编辑仍通过侧边栏完成。
-const configQuickSwitchOptions = computed(() => {
-  if (!selectedAgentId.value) return []
-  const list = agentConfigs.value[selectedAgentId.value] || []
-  return list.map((config) => ({
-    label: config.name,
-    value: config.id,
-    isDefault: !!config.is_default
+const agentQuickSwitchOptions = computed(() =>
+  (agents.value || []).map((agent) => ({
+    label: agent.name || agent.id,
+    value: agent.id,
+    icon: agent.icon || defaultAgentIcon,
+    isBuiltin: isBuiltinAgent(agent)
   }))
-})
+)
 
-const currentConfigLabel = computed(() => {
+const currentAgentOption = computed(() =>
+  agentQuickSwitchOptions.value.find((agent) => agent.value === selectedAgentId.value)
+)
+
+const currentAgentLabel = computed(() => {
   if (isLoadingConfig.value) return '加载中...'
-  const current = configQuickSwitchOptions.value.find(
-    (config) => config.value === selectedAgentConfigId.value
-  )
-  return current?.label || '配置'
+  return currentAgentOption.value?.label || '智能体'
 })
 
-const configSidebarActionLabel = computed(() => {
-  return chatUIStore.isConfigSidebarOpen ? '收起配置侧边栏' : '查看/编辑配置'
-})
+const currentAgentIcon = computed(() => currentAgentOption.value?.icon || defaultAgentIcon)
 
-const configDropdownOpen = ref(false)
-const createConfigModalOpen = ref(false)
-const createConfigLoading = ref(false)
-const createConfigName = ref('')
+const agentDropdownOpen = ref(false)
 
-const handleConfigSwitch = async (configId) => {
-  if (!configId || configId === selectedAgentConfigId.value) return
-  try {
-    await agentStore.selectAgentConfig(configId)
-    configDropdownOpen.value = false
-  } catch (error) {
-    console.error('切换配置出错:', error)
-    message.error('切换配置失败')
-  }
-}
-
-const toggleConfigSidebar = () => {
-  chatUIStore.isConfigSidebarOpen = !chatUIStore.isConfigSidebarOpen
-  configDropdownOpen.value = false
-}
-
-const openCreateConfigModal = () => {
-  configDropdownOpen.value = false
-  createConfigName.value = ''
-  createConfigModalOpen.value = true
-}
-
-const closeCreateConfigModal = () => {
-  createConfigModalOpen.value = false
-  createConfigName.value = ''
-}
-
-const handleCreateConfig = async () => {
-  if (!selectedAgentId.value) return
-
-  const name = createConfigName.value.trim()
-  if (!name) {
-    message.error('请输入配置名称')
+const handleAgentSwitch = async (agentId, hasActiveThread) => {
+  if (!agentId || agentId === selectedAgentId.value) return
+  if (hasActiveThread) {
+    message.info('当前对话已绑定智能体，请新建对话后切换')
     return
   }
-
-  createConfigLoading.value = true
   try {
-    await agentStore.createAgentConfigProfile({
-      name,
-      setDefault: false,
-      fromCurrent: false
-    })
-    closeCreateConfigModal()
-    chatUIStore.isConfigSidebarOpen = true
-    message.success('配置已创建')
+    await agentStore.selectAgent(agentId)
+    agentDropdownOpen.value = false
   } catch (error) {
-    console.error('创建配置出错:', error)
-    message.error(error.message || '创建配置失败')
-  } finally {
-    createConfigLoading.value = false
+    console.error('切换智能体出错:', error)
+    message.error('切换智能体失败')
   }
+}
+
+const openAgentManagement = () => {
+  agentDropdownOpen.value = false
+  router.push({ name: 'ModelManageComp', query: { tab: 'agents' } })
 }
 
 // 更多菜单相关
@@ -441,6 +386,13 @@ const handleFeedback = () => {
 
 .config-dropdown-trigger .nav-btn-icon {
   color: currentColor;
+}
+
+.config-dropdown-agent-icon {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  object-fit: contain;
 }
 
 .config-dropdown-trigger :deep(svg) {
@@ -596,6 +548,11 @@ const handleFeedback = () => {
   background: var(--gray-50);
 }
 
+.config-dropdown-overlay .config-dropdown-item.disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
 .config-dropdown-overlay .config-dropdown-item.selected {
   background: var(--gray-50);
 }
@@ -615,9 +572,19 @@ const handleFeedback = () => {
   color: var(--gray-800);
 }
 
-.config-dropdown-overlay .config-dropdown-item-icon {
+.config-dropdown-overlay .config-dropdown-item-icon,
+.config-dropdown-overlay .config-dropdown-item-icon-image {
   flex-shrink: 0;
+}
+
+.config-dropdown-overlay .config-dropdown-item-icon {
   color: var(--gray-500);
+}
+
+.config-dropdown-overlay .config-dropdown-item-icon-image {
+  width: 24px;
+  height: 24px;
+  object-fit: contain;
 }
 
 .config-dropdown-overlay .config-dropdown-item-badge {
@@ -633,6 +600,13 @@ const handleFeedback = () => {
 .config-dropdown-overlay .config-dropdown-item-check {
   flex-shrink: 0;
   color: var(--main-600);
+}
+
+.config-dropdown-overlay .config-dropdown-hint {
+  padding: 6px 8px;
+  color: var(--gray-500);
+  font-size: 12px;
+  line-height: 1.4;
 }
 
 .config-dropdown-overlay .config-dropdown-divider {

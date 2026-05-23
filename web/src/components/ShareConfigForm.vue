@@ -1,6 +1,11 @@
 <template>
-  <div class="share-config-form">
-    <div class="share-mode-cards" :class="`active-${config.access_level}`" role="radiogroup" aria-label="共享设置">
+  <div class="share-config-form" :class="{ disabled }">
+    <div
+      class="share-mode-cards"
+      :class="`active-${config.access_level}`"
+      role="radiogroup"
+      aria-label="共享设置"
+    >
       <div
         v-for="option in shareModeOptions"
         :key="option.value"
@@ -8,7 +13,7 @@
         class="share-mode-card"
         :class="{ active: config.access_level === option.value }"
         :aria-checked="config.access_level === option.value"
-        :tabindex="config.access_level === option.value ? 0 : -1"
+        :tabindex="!disabled && config.access_level === option.value ? 0 : -1"
         @click="setAccessLevel(option.value)"
         @keydown.enter.prevent="setAccessLevel(option.value)"
         @keydown.space.prevent="setAccessLevel(option.value)"
@@ -29,6 +34,7 @@
                   size="small"
                   class="select-action lucide-icon-btn"
                   :aria-label="option.value === 'department' ? '选择部门' : '选择用户'"
+                  :disabled="disabled"
                 >
                   <UserPlus class="select-action-icon" :size="14" />
                   <span class="access-count">{{ getAccessCount(option.value) }}</span>
@@ -88,6 +94,7 @@
         </div>
       </div>
     </div>
+    <a-alert v-if="disabled && disabledReason" type="info" show-icon class="share-disabled-alert" :message="disabledReason" />
   </div>
 </template>
 
@@ -103,7 +110,7 @@ const departments = ref([])
 const users = ref([])
 const syncingFromProps = ref(false)
 
-const shareModeOptions = [
+const baseShareModeOptions = [
   {
     value: 'global',
     title: '全局共享',
@@ -137,6 +144,18 @@ const props = defineProps({
   autoSelectUserDept: {
     type: Boolean,
     default: false
+  },
+  disabled: {
+    type: Boolean,
+    default: false
+  },
+  disabledReason: {
+    type: String,
+    default: ''
+  },
+  allowedAccessLevels: {
+    type: Array,
+    default: () => ['global', 'department', 'user']
   }
 })
 
@@ -159,6 +178,13 @@ const currentDepartmentId = computed(() => {
 })
 
 const currentUserUid = computed(() => userStore.uid || '')
+const normalizedAllowedAccessLevels = computed(() => {
+  const allowed = props.allowedAccessLevels.filter((level) => ['global', 'department', 'user'].includes(level))
+  return allowed.length ? allowed : ['global']
+})
+const shareModeOptions = computed(() =>
+  baseShareModeOptions.filter((option) => normalizedAllowedAccessLevels.value.includes(option.value))
+)
 
 const departmentOptions = computed(() =>
   departments.value.map((dept) => {
@@ -220,10 +246,12 @@ const normalizeActiveConfig = () => {
 
 const initConfig = () => {
   syncingFromProps.value = true
-  const accessLevel = ['global', 'department', 'user'].includes(props.modelValue?.access_level)
+  const requestedAccessLevel = ['global', 'department', 'user'].includes(props.modelValue?.access_level)
     ? props.modelValue.access_level
     : 'global'
-  config.access_level = accessLevel
+  config.access_level = normalizedAllowedAccessLevels.value.includes(requestedAccessLevel)
+    ? requestedAccessLevel
+    : normalizedAllowedAccessLevels.value[0]
   config.department_ids = normalizeDepartmentIds(props.modelValue?.department_ids)
   config.user_uids = normalizeUserUids(props.modelValue?.user_uids)
   normalizeActiveConfig()
@@ -241,6 +269,7 @@ const emitConfig = () => {
 }
 
 const setAccessLevel = (accessLevel) => {
+  if (props.disabled || !normalizedAllowedAccessLevels.value.includes(accessLevel)) return
   if (config.access_level === accessLevel) return
   config.access_level = accessLevel
   normalizeActiveConfig()
@@ -273,6 +302,7 @@ const isSelected = (accessLevel, value) => {
 }
 
 const toggleSelection = (accessLevel, value, checked) => {
+  if (props.disabled) return
   if (accessLevel === 'department') {
     const departmentId = Number(value)
     const selected = checked
@@ -315,6 +345,8 @@ watch(
   () => initConfig(),
   { deep: true }
 )
+
+watch(normalizedAllowedAccessLevels, () => initConfig())
 
 watch(
   config,
@@ -381,6 +413,15 @@ defineExpose({
     @media (max-width: 768px) {
       grid-template-columns: 1fr;
     }
+  }
+
+  .share-disabled-alert {
+    margin-top: 10px;
+  }
+
+  &.disabled .share-mode-card {
+    cursor: not-allowed;
+    opacity: 0.78;
   }
 
   .share-mode-card {

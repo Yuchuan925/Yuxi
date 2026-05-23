@@ -151,14 +151,6 @@ const props = defineProps({
     type: String,
     default: null
   },
-  agentId: {
-    type: String,
-    default: null
-  },
-  agentConfigId: {
-    type: [String, Number],
-    default: null
-  },
   panelRatio: {
     type: Number,
     default: 0.35
@@ -341,12 +333,7 @@ const getFileName = (fileItem) => {
 }
 
 const loadDirectoryChildren = async (directoryPath) => {
-  const res = await getViewerFileSystemTree(
-    props.threadId,
-    directoryPath,
-    props.agentId,
-    props.agentConfigId
-  )
+  const res = await getViewerFileSystemTree(props.threadId, directoryPath)
   return sortEntries(res?.entries || []).map((entry) => createTreeNode(entry))
 }
 
@@ -361,12 +348,7 @@ const refreshFileSystem = async () => {
   filesystemError.value = ''
 
   try {
-    const res = await getViewerFileSystemTree(
-      props.threadId,
-      '/',
-      props.agentId,
-      props.agentConfigId
-    )
+    const res = await getViewerFileSystemTree(props.threadId, '/')
     if (res?.entries) {
       const displayRootEntry = res.entries.find(
         (entry) => entry?.is_dir && entry.name === DISPLAY_ROOT_DIRECTORY_NAME
@@ -437,22 +419,14 @@ const loadActivePreview = async () => {
   }
 
   try {
-    const res = await getViewerFileContent(
-      props.threadId,
-      filePath,
-      props.agentId,
-      props.agentConfigId
-    )
+    const res = await getViewerFileContent(props.threadId, filePath)
+    if (requestSeq !== previewRequestSeq) return
+
     const previewType = res?.preview_type || 'text'
     let previewUrl = ''
 
     if ((previewType === 'image' || previewType === 'pdf') && res?.supported) {
-      const response = await downloadViewerFile(
-        props.threadId,
-        filePath,
-        props.agentId,
-        props.agentConfigId
-      )
+      const response = await downloadViewerFile(props.threadId, filePath)
       const blob = await response.blob()
       previewUrl = window.URL.createObjectURL(blob)
     }
@@ -523,7 +497,7 @@ const confirmDeleteNode = (node) => {
       deletingPaths.value = nextDeletingPaths
 
       try {
-        await deleteViewerFile(props.threadId, node.key, props.agentId, props.agentConfigId)
+        await deleteViewerFile(props.threadId, node.key)
         dynamicTreeData.value = removeTreeNode(dynamicTreeData.value, node.key)
         pruneTreeStateAfterDelete(node.key)
         message.success(isDirectory ? '文件夹删除成功' : '文件删除成功')
@@ -543,12 +517,7 @@ const downloadFile = async (fileItem) => {
   if (!props.threadId || !fileItem?.path) return
 
   try {
-    const response = await downloadViewerFile(
-      props.threadId,
-      fileItem.path,
-      props.agentId,
-      props.agentConfigId
-    )
+    const response = await downloadViewerFile(props.threadId, fileItem.path)
     const blob = await response.blob()
     const contentDisposition =
       response.headers.get('Content-Disposition') || response.headers.get('content-disposition')
@@ -648,7 +617,7 @@ onUnmounted(() => {
   revokeCurrentPreviewUrl()
 })
 
-watch([() => props.threadId, () => props.agentId, () => props.agentConfigId], ([threadId]) => {
+watch(() => props.threadId, (threadId) => {
   if (threadId) {
     refreshFileSystem()
   } else {
@@ -659,11 +628,7 @@ watch([() => props.threadId, () => props.agentId, () => props.agentConfigId], ([
   }
 })
 
-watch(
-  [() => props.threadId, () => props.agentId, () => props.agentConfigId, () => props.activePreviewPath],
-  loadActivePreview,
-  { immediate: true }
-)
+watch([() => props.threadId, () => props.activePreviewPath], loadActivePreview, { immediate: true })
 
 watch(
   () => props.activePreviewPath,

@@ -1,43 +1,8 @@
 <template>
-  <div class="agent-config-sidebar" :class="{ open: isOpen }">
-    <!-- 侧边栏头部 -->
-    <div class="sidebar-header">
-      <div class="header-top-row">
-        <div v-if="selectedAgentId" class="config-title-row">
-          <span class="config-title-text">{{ currentConfigName }}</span>
-        </div>
-        <div class="header-actions">
-          <a-tooltip
-            v-if="!isEmptyConfig"
-            :title="isCurrentDefault ? '当前已是默认配置' : '设为默认配置'"
-          >
-            <button
-              type="button"
-              class="header-icon-action"
-              :class="{ 'is-default': isCurrentDefault }"
-              @click="setAsDefault"
-            >
-              <Star :size="18" :fill="isCurrentDefault ? 'currentColor' : 'none'" />
-            </button>
-          </a-tooltip>
-
-          <button type="button" @click="closeSidebar" class="header-icon-action">
-            <X :size="16" />
-          </button>
-        </div>
-      </div>
-    </div>
-
-    <!-- 侧边栏内容 -->
-    <div class="sidebar-content">
+  <div class="agent-runtime-config-form">
+    <div class="runtime-config-content">
       <div class="agent-info" v-if="selectedAgent">
-        <!-- <div class="agent-basic-info">
-          <p class="agent-description">{{ selectedAgent.description }}</p>
-        </div> -->
-
-        <!-- <a-divider /> -->
-
-        <div class="config-segment" v-if="!isEmptyConfig">
+        <div class="config-segment" v-if="props.showSegmented && !isEmptyConfig">
           <a-segmented v-model:value="currentSegment" :options="segmentOptions" block />
         </div>
 
@@ -56,6 +21,11 @@
               class="config-alert"
             />
             <!-- 统一显示所有配置项 -->
+            <a-empty
+              v-if="isCurrentSegmentEmpty"
+              description="暂无配置项"
+              class="config-empty"
+            />
             <template v-for="(value, key) in filteredConfigurableItems" :key="key">
               <a-form-item :label="getConfigLabel(key, value)" :name="key" class="config-item">
                 <p v-if="value.description" class="config-description">{{ value.description }}</p>
@@ -277,32 +247,6 @@
       </div>
     </div>
 
-    <!-- 固定在底部的操作按钮 -->
-    <div class="sidebar-footer" v-if="selectedAgentId">
-      <div class="form-actions">
-        <a-button
-          type="primary"
-          @click="saveConfig"
-          class="footer-main-btn save-btn"
-          :class="{ changed: agentStore.hasConfigChanges }"
-          :disabled="isSavingConfig || isEmptyConfig"
-        >
-          保存
-        </a-button>
-
-        <a-tooltip v-if="!isEmptyConfig" title="删除配置">
-          <button
-            type="button"
-            class="footer-icon-btn"
-            @click="confirmDeleteConfig"
-            :disabled="isDeletingConfig"
-          >
-            <Trash2 :size="16" />
-          </button>
-        </a-tooltip>
-      </div>
-    </div>
-
     <a-modal
       v-model:open="selectionModalOpen"
       :title="`选择${configurableItems[currentConfigKey]?.name || '项目'}`"
@@ -418,10 +362,10 @@
 </template>
 
 <script setup>
-import { ref, computed, watch } from 'vue'
-import { message, Modal } from 'ant-design-vue'
+import { ref, computed } from 'vue'
+import { message } from 'ant-design-vue'
 import { useRouter } from 'vue-router'
-import { X, Trash2, Check, Plus, Search, Star, RotateCw, Settings } from 'lucide-vue-next'
+import { Check, Plus, Search, RotateCw, Settings } from 'lucide-vue-next'
 import ModelSelectorComponent from '@/components/ModelSelectorComponent.vue'
 import { useAgentStore } from '@/stores/agent'
 import {
@@ -433,52 +377,21 @@ import {
 } from '@/utils/agentConfigUtils'
 import { storeToRefs } from 'pinia'
 
-// Props
 const props = defineProps({
-  isOpen: {
-    type: Boolean,
-    default: false
+  segment: {
+    type: String,
+    default: 'model'
   },
-  disabled: {
+  showSegmented: {
     type: Boolean,
-    default: false
+    default: true
   }
 })
 
-// Emits
-const emit = defineEmits(['close'])
-
-// Store 管理
 const agentStore = useAgentStore()
 const router = useRouter()
 
-watch(
-  () => props.isOpen,
-  async (val) => {
-    if (val) {
-      if (selectedAgentId.value) {
-        agentStore.fetchAgentConfigs(selectedAgentId.value).catch((error) => {
-          console.error('刷新智能体配置列表失败:', error)
-        })
-        try {
-          await agentStore.fetchAgentDetail(selectedAgentId.value, true)
-        } catch (error) {
-          console.error('刷新智能体配置项失败:', error)
-        }
-      }
-    }
-  }
-)
-
-const {
-  selectedAgent,
-  selectedAgentId,
-  selectedAgentConfigId,
-  selectedConfigSummary,
-  agentConfigs,
-  agentConfig,
-  configurableItems
-} = storeToRefs(agentStore)
+const { selectedAgent, selectedAgentId, agentConfig, configurableItems } = storeToRefs(agentStore)
 
 // console.log(availableTools.value)
 
@@ -496,24 +409,15 @@ const segmentOptions = [
   { label: '工具', value: 'tools' },
   { label: '其他', value: 'other' }
 ]
+const activeSegment = computed(() => (props.showSegmented ? currentSegment.value : props.segment))
 const isToolResourceKind = (kind) => isDefaultAllAgentResourceKind(kind)
 
 const isEmptyConfig = computed(() => {
   return !selectedAgentId.value || Object.keys(configurableItems.value).length === 0
 })
 
-const isCurrentDefault = computed(() => {
-  return !!selectedConfigSummary.value?.is_default
-})
-
-const currentConfigName = computed(() => {
-  return selectedConfigSummary.value?.name || '当前配置'
-})
-
-const isReadOnlyConfig = computed(() => false)
-
-const isSavingConfig = ref(false)
-const isDeletingConfig = ref(false)
+const canManageCurrentAgent = computed(() => !!selectedAgent.value?.can_manage)
+const isReadOnlyConfig = computed(() => !canManageCurrentAgent.value)
 
 const segmentConfigKeys = computed(() => {
   const keys = Object.keys(configurableItems.value)
@@ -535,13 +439,17 @@ const segmentConfigKeys = computed(() => {
 
 const filteredConfigurableItems = computed(() => {
   if (isEmptyConfig.value) return {}
-  const keys = segmentConfigKeys.value[currentSegment.value] || []
+  const keys = segmentConfigKeys.value[activeSegment.value] || []
   const filtered = {}
   keys.forEach((key) => {
     filtered[key] = configurableItems.value[key]
   })
   return filtered
 })
+
+const isCurrentSegmentEmpty = computed(
+  () => !isEmptyConfig.value && Object.keys(filteredConfigurableItems.value).length === 0
+)
 
 // 判断是否为需要跳转的配置类型
 const isToolsKind = (kind) => {
@@ -632,10 +540,6 @@ const updateConfigValue = (key, value) => {
   agentStore.updateAgentConfig({
     [key]: value
   })
-}
-
-const closeSidebar = () => {
-  emit('close')
 }
 
 const getConfigLabel = (key, value) => {
@@ -799,177 +703,14 @@ const validateAndFilterConfig = () => {
   return validatedConfig
 }
 
-// 配置保存和重置
-const saveConfig = async () => {
-  if (!selectedAgentId.value) {
-    message.error('没有选择智能体')
-    return
-  }
-
-  if (!agentStore.hasConfigChanges) return
-
-  try {
-    isSavingConfig.value = true
-    // 验证和过滤配置
-    const validatedConfig = validateAndFilterConfig()
-
-    // 如果配置有变化，先更新到store
-    if (JSON.stringify(validatedConfig) !== JSON.stringify(agentConfig.value)) {
-      agentStore.updateAgentConfig(validatedConfig)
-      message.info('检测到无效配置项，已自动过滤')
-    }
-
-    await agentStore.saveAgentConfig()
-    message.success('配置已保存到服务器')
-  } catch (error) {
-    console.error('保存配置到服务器出错:', error)
-    message.error('保存配置到服务器失败')
-  } finally {
-    isSavingConfig.value = false
-  }
-}
-
-const setAsDefault = async () => {
-  if (!selectedAgentId.value || !selectedAgentConfigId.value) return
-  try {
-    await agentStore.setSelectedAgentConfigDefault()
-    message.success('已设为默认配置')
-  } catch (error) {
-    console.error('设置默认配置出错:', error)
-    message.error('设置默认配置失败')
-  }
-}
-
-const confirmDeleteConfig = async () => {
-  if (!selectedAgentId.value || !selectedAgentConfigId.value) return
-
-  const currentName = selectedConfigSummary.value?.name || '当前配置'
-  const list = agentConfigs.value[selectedAgentId.value] || []
-  const content =
-    list.length <= 1
-      ? `将删除「${currentName}」。删除后系统会自动创建一个新的默认配置。`
-      : `将删除「${currentName}」。`
-
-  Modal.confirm({
-    title: '确认删除配置？',
-    content,
-    okText: '删除',
-    okType: 'danger',
-    cancelText: '取消',
-    onOk: async () => {
-      isDeletingConfig.value = true
-      try {
-        await agentStore.deleteSelectedAgentConfigProfile()
-        message.success('配置已删除')
-      } catch (error) {
-        console.error('删除配置出错:', error)
-        message.error('删除配置失败')
-      } finally {
-        isDeletingConfig.value = false
-      }
-    }
-  })
-}
+defineExpose({ validateAndFilterConfig })
 </script>
 
 <style lang="less" scoped>
-.agent-config-sidebar {
-  position: relative;
-  width: 0;
-  height: 100vh;
+.agent-runtime-config-form {
   background: var(--gray-0);
-  border-left: 1px solid var(--gray-200);
-  transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
-  flex-shrink: 0;
 
-  &.open {
-    width: 360px;
-  }
-
-  .sidebar-header {
-    display: flex;
-    align-items: center;
-    padding: 0 12px;
-    height: var(--header-height);
-    border-bottom: 1px solid var(--gray-150);
-    background: var(--gray-0);
-    flex-shrink: 0;
-    min-width: 360px;
-    z-index: 10;
-
-    .header-top-row {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      width: 100%;
-    }
-
-    .config-title-row {
-      display: flex;
-      align-items: center;
-      flex: 1;
-      min-width: 0;
-    }
-
-    .config-title-text {
-      min-width: 0;
-      font-size: 14px;
-      font-weight: 600;
-      color: var(--gray-900);
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-
-    .header-actions {
-      display: flex;
-      align-items: center;
-      gap: 4px;
-      margin-left: auto;
-    }
-  }
-
-  .header-icon-action {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 28px;
-    height: 28px;
-    padding: 0;
-    border: none;
-    background: transparent;
-    border-radius: 6px;
-    color: var(--gray-600);
-    transition:
-      color 0.2s ease,
-      background-color 0.2s ease;
-    cursor: pointer;
-
-    &:hover:not(:disabled) {
-      color: var(--main-600);
-      background: var(--gray-100);
-    }
-
-    &.is-default,
-    &.is-default:hover:not(:disabled) {
-      color: var(--color-warning-500);
-    }
-
-    &:disabled {
-      cursor: not-allowed;
-      background: transparent;
-      color: var(--gray-400);
-
-      &.is-default {
-        opacity: 1;
-      }
-    }
-  }
-
-  .sidebar-content {
+  .runtime-config-content {
     flex: 1;
     overflow-y: auto;
     padding: 10px 12px 8px;
@@ -1040,7 +781,8 @@ const confirmDeleteConfig = async () => {
       }
 
       .config-form {
-        .config-alert {
+        .config-alert,
+        .config-empty {
           margin-bottom: 16px;
         }
 
@@ -1137,87 +879,6 @@ const confirmDeleteConfig = async () => {
       }
     }
   }
-
-  .sidebar-footer {
-    padding: 8px 12px;
-    border-top: 1px solid var(--gray-100);
-    background: var(--gray-0);
-    // min-width: 400px;
-    z-index: 10;
-    flex-shrink: 0; // Ensure footer doesn't shrink
-
-    .form-actions {
-      display: flex;
-      gap: 10px;
-      align-items: center;
-
-      .footer-main-btn {
-        flex: 1;
-        height: 36px;
-        border-radius: 8px;
-        font-size: 14px;
-        font-weight: 500;
-        transition:
-          opacity 0.2s ease,
-          border-color 0.2s ease,
-          background-color 0.2s ease,
-          color 0.2s ease;
-      }
-
-      .save-btn {
-        background-color: var(--gray-100);
-        border: 1px solid var(--gray-200);
-        color: var(--gray-600);
-
-        &.changed {
-          background-color: var(--main-color);
-          color: var(--gray-0);
-          border-color: var(--main-color);
-        }
-
-        &:hover:not(:disabled) {
-          opacity: 0.9;
-        }
-
-        &:disabled {
-          cursor: not-allowed;
-          background-color: var(--gray-100);
-          border-color: var(--gray-200);
-          color: var(--gray-400);
-        }
-      }
-
-      .footer-icon-btn {
-        width: 36px;
-        height: 36px;
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        flex-shrink: 0;
-        border: 1px solid var(--gray-200);
-        border-radius: 8px;
-        background: var(--gray-0);
-        color: var(--gray-500);
-        cursor: pointer;
-        transition:
-          color 0.2s ease,
-          border-color 0.2s ease,
-          background-color 0.2s ease;
-
-        &:hover:not(:disabled) {
-          color: var(--color-error-700);
-          border-color: var(--color-error-100);
-          background: var(--color-error-50);
-        }
-
-        &:disabled {
-          cursor: not-allowed;
-          color: var(--gray-400);
-          background: var(--gray-50);
-        }
-      }
-    }
-  }
 }
 
 // 选择器样式
@@ -1298,11 +959,12 @@ const confirmDeleteConfig = async () => {
 
   .options-grid {
     display: grid;
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr));
     gap: 8px;
   }
 
   .option-card {
+    min-width: 0;
     border: 1px solid var(--gray-300);
     border-radius: 8px;
     padding: 8px 12px;
@@ -1343,11 +1005,14 @@ const confirmDeleteConfig = async () => {
       justify-content: space-between;
       align-items: center;
       gap: 8px;
+      min-width: 0;
 
       .option-text {
         flex: 1;
+        min-width: 0;
         font-size: 13px;
         line-height: 1.4;
+        overflow-wrap: anywhere;
       }
 
       .option-indicator {
@@ -1575,17 +1240,5 @@ const confirmDeleteConfig = async () => {
 
 .selection-search .inline-action-btn {
   font-size: 13px;
-}
-
-// 响应式适配
-@media (max-width: 768px) {
-  .agent-config-sidebar.open {
-    width: 100%;
-  }
-
-  .sidebar-header,
-  .sidebar-content {
-    min-width: 100% !important;
-  }
 }
 </style>

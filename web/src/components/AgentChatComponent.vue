@@ -52,8 +52,6 @@
                   v-if="shouldShowArtifacts(row.conv)"
                   :artifacts="currentArtifacts"
                   :thread-id="currentChatId"
-                  :agent-id="currentThread?.agent_id || currentAgentId"
-                  :agent-config-id="selectedAgentConfigId"
                   @saved="handleArtifactSaved"
                   @open-preview="openPanelPreview"
                 />
@@ -82,7 +80,6 @@
                 <span class="generating-text">正在生成回复...</span>
               </div>
             </div>
-
           </div>
           <div class="bottom" :class="{ 'start-screen': !conversations.length }">
             <!-- 人工审批弹窗 - 放在输入框上方 -->
@@ -101,52 +98,8 @@
               </div>
 
               <!-- 打招呼区域 - 在输入框上方 -->
-              <div v-if="!conversations.length" class="chat-examples-input">
+              <div v-if="!conversations.length" class="chat-greeting-input">
                 <h1>{{ randomGreeting }}</h1>
-              </div>
-
-              <div v-if="showStartAgentSegment" class="agent-segment-wrapper">
-                <a-segmented
-                  :value="currentAgentId"
-                  :options="agentSegmentOptions"
-                  @change="handleStartAgentChange"
-                />
-              </div>
-
-              <div v-else-if="showStartAgentDropdown" class="agent-switcher-wrapper">
-                <a-dropdown :trigger="['click']" placement="bottomCenter">
-                  <button type="button" class="agent-switcher-btn">
-                    <component :is="currentAgentIcon" size="16" class="agent-switcher-icon" />
-                    <span class="agent-switcher-text">{{ currentAgentName }}</span>
-                    <ChevronDown size="16" class="agent-switcher-chevron" />
-                  </button>
-                  <template #overlay>
-                    <a-menu class="agent-switcher-menu">
-                      <a-menu-item
-                        v-for="agent in startAgents"
-                        :key="agent.id"
-                        @click="handleStartAgentChange(agent.id)"
-                      >
-                        <div class="agent-switcher-menu-item">
-                          <component
-                            :is="getAgentIconComponent(agent.id)"
-                            size="16"
-                            class="agent-switcher-menu-icon"
-                          />
-                          <span class="agent-switcher-menu-text">{{
-                            agent.name || 'Unknown'
-                          }}</span>
-                          <span
-                            v-if="agent.id === currentAgentId"
-                            class="agent-switcher-menu-badge"
-                          >
-                            当前
-                          </span>
-                        </div>
-                      </a-menu-item>
-                    </a-menu>
-                  </template>
-                </a-dropdown>
               </div>
 
               <AgentInputArea
@@ -158,30 +111,15 @@
                 :supports-file-upload="supportsFileUpload"
                 :has-active-thread="!!currentChatId"
                 :todos="currentTodos"
+                :attachments="currentPendingThreadAttachments"
                 @send="handleSendOrStop"
                 @upload-attachment="handleAttachmentUpload"
+                @remove-attachment="handleAttachmentRemove"
               >
                 <template #actions-left-extra>
-                  <slot name="input-actions-left"></slot>
+                  <slot name="input-actions-left" :has-active-thread="!!currentChatId"></slot>
                 </template>
               </AgentInputArea>
-
-              <!-- 示例问题 -->
-              <div
-                class="example-questions"
-                v-if="!conversations.length && exampleQuestions.length > 0"
-              >
-                <div class="example-chips">
-                  <div
-                    v-for="question in exampleQuestions"
-                    :key="question.id"
-                    class="example-chip"
-                    @click="handleExampleClick(question.text)"
-                  >
-                    {{ question.text }}
-                  </div>
-                </div>
-              </div>
 
               <div class="bottom-actions" v-if="conversations.length > 0">
                 <p class="note">当前智能体：{{ currentThreadAgentName }}；请注意辨别内容的可靠性</p>
@@ -207,8 +145,6 @@
             v-if="isAgentPanelOpen"
             :agent-state="currentAgentState"
             :thread-id="currentChatId"
-            :agent-id="currentThread?.agent_id || currentAgentId"
-            :agent-config-id="selectedAgentConfigId"
             :panel-ratio="panelRatio"
             :preview-tabs="agentPanelPreviewTabs"
             :active-preview-path="agentPanelActivePreviewPath"
@@ -238,15 +174,13 @@ import {
   computed,
   onUnmounted,
   onActivated,
-  onDeactivated,
-  h
+  onDeactivated
 } from 'vue'
 import { message } from 'ant-design-vue'
 import AgentInputArea from '@/components/AgentInputArea.vue'
 import AgentMessageComponent from '@/components/AgentMessageComponent.vue'
 import RefsComponent from '@/components/RefsComponent.vue'
 import ToolCallsGroupComponent from '@/components/ToolCallsGroupComponent.vue'
-import { Bot, Telescope, ChevronDown } from 'lucide-vue-next'
 import { handleChatError, handleValidationError } from '@/utils/errorHandler'
 import { ScrollController } from '@/utils/scrollController'
 import { AgentValidator } from '@/utils/agentValidator'
@@ -280,15 +214,8 @@ const agentStore = useAgentStore()
 const chatThreadsStore = useChatThreadsStore()
 const chatUIStore = useChatUIStore()
 const configStore = useConfigStore()
-const {
-  agents,
-  selectedAgentId,
-  defaultAgentId,
-  selectedAgentConfigId,
-  agentConfig,
-  configurableItems,
-  availableKnowledgeBases
-} = storeToRefs(agentStore)
+const { agents, selectedAgentId, agentConfig, configurableItems, availableKnowledgeBases } =
+  storeToRefs(agentStore)
 const { threads, currentThreadId, currentThread } = storeToRefs(chatThreadsStore)
 
 // ==================== LOCAL CHAT & UI STATE ====================
@@ -308,20 +235,6 @@ const greetingMessages = [
 
 // 随机选择一个打招呼文本
 const randomGreeting = greetingMessages[Math.floor(Math.random() * greetingMessages.length)]
-
-// 从智能体元数据获取示例问题
-const exampleQuestions = computed(() => {
-  const agentId = currentAgentId.value
-  let examples = []
-  if (agentId && agents.value && agents.value.length > 0) {
-    const agent = agents.value.find((a) => a.id === agentId)
-    examples = agent ? agent.metadata?.examples || [] : []
-  }
-  return examples.map((text, index) => ({
-    id: index + 1,
-    text: text
-  }))
-})
 
 // 业务状态（保留在组件本地）
 const chatState = reactive({
@@ -384,7 +297,10 @@ const getPanelContainerWidth = () => {
 
 const getMaxPanelRatio = (containerWidth = getPanelContainerWidth()) => {
   if (!containerWidth) return maxPanelRatio
-  return Math.max(minPanelRatio, Math.min(maxPanelRatio, (containerWidth - minChatMainWidth) / containerWidth))
+  return Math.max(
+    minPanelRatio,
+    Math.min(maxPanelRatio, (containerWidth - minChatMainWidth) / containerWidth)
+  )
 }
 
 const clampPanelRatio = (ratio, containerWidth = getPanelContainerWidth()) => {
@@ -417,7 +333,8 @@ const resetAgentPanelState = () => {
 }
 
 const setAgentPanelViewMode = (mode) => {
-  agentPanelViewMode.value = mode === 'preview' && agentPanelActivePreviewPath.value ? 'preview' : 'tree'
+  agentPanelViewMode.value =
+    mode === 'preview' && agentPanelActivePreviewPath.value ? 'preview' : 'tree'
 
   if (agentPanelActivePreviewPath.value) {
     panelRatio.value = clampPanelRatio(previewPanelRatio)
@@ -488,10 +405,9 @@ const closePanelPreviewPath = (targetPath) => {
 // ==================== COMPUTED PROPERTIES ====================
 const currentAgentId = computed(() => {
   if (props.singleMode) {
-    return props.agentId || defaultAgentId.value
-  } else {
-    return selectedAgentId.value
+    return props.agentId || selectedAgentId.value || agents.value[0]?.id || ''
   }
+  return selectedAgentId.value
 })
 
 const currentAgentName = computed(() => {
@@ -503,7 +419,6 @@ const currentAgent = computed(() => {
   if (!currentAgentId.value || !agents.value || !agents.value.length) return null
   return agents.value.find((a) => a.id === currentAgentId.value) || null
 })
-const startAgents = computed(() => agents.value || [])
 const currentChatId = computed(() => currentThreadId.value)
 
 const currentThreadAgentName = computed(() => {
@@ -516,8 +431,6 @@ const currentThreadAgentName = computed(() => {
   }
   return currentAgentName.value
 })
-const currentAgentIcon = computed(() => getAgentIconComponent(currentAgentId.value))
-
 // 检查当前智能体是否支持文件上传
 const supportsFileUpload = computed(() => {
   if (!currentAgent.value) return false
@@ -543,6 +456,9 @@ const currentThreadAttachments = computed(() => {
   if (!currentChatId.value) return []
   return threadAttachmentsMap.value[currentChatId.value] || []
 })
+const currentPendingThreadAttachments = computed(() =>
+  currentThreadAttachments.value.filter((attachment) => !attachment?.request_id)
+)
 const currentArtifacts = computed(() => {
   const artifacts = currentAgentState.value?.artifacts
   return Array.isArray(artifacts) ? artifacts : []
@@ -656,55 +572,6 @@ const conversationRows = computed(() => {
   return rows
 })
 
-// 智能体图标映射
-const agentIconMap = {
-  ChatbotAgent: Bot,
-  DeepAgent: Telescope
-}
-
-const getAgentIconComponent = (agentId) => {
-  return agentIconMap[agentId] || Bot
-}
-
-const agentSegmentOptions = computed(() => {
-  return startAgents.value.map((agent) => {
-    const IconComponent = getAgentIconComponent(agent.id)
-    return {
-      label: () =>
-        h('div', { class: 'agent-option-label' }, [
-          h(IconComponent, { size: 16, class: 'agent-option-icon' }),
-          h('span', null, agent.name || 'Unknown')
-        ]),
-      value: agent.id
-    }
-  })
-})
-
-const showStartAgentSelector = computed(() => {
-  return !props.singleMode && !conversations.value.length && startAgents.value.length > 1
-})
-
-const showStartAgentDropdown = computed(() => {
-  return (
-    showStartAgentSelector.value &&
-    (startAgents.value.length >= 4 || localUIState.chatMainWidth < 380)
-  )
-})
-
-const showStartAgentSegment = computed(() => {
-  return showStartAgentSelector.value && !showStartAgentDropdown.value
-})
-
-const handleStartAgentChange = async (agentId) => {
-  if (!agentId || agentId === currentAgentId.value) return
-  if (conversations.value.length > 0) return
-  try {
-    await agentStore.selectAgent(agentId)
-  } catch (error) {
-    handleChatError(error, 'load')
-  }
-}
-
 const isLoadingMessages = computed(() => chatUIStore.isLoadingMessages)
 const isStreaming = computed(() => {
   const threadState = currentThreadState.value
@@ -739,7 +606,12 @@ const createClientRequestId = () => {
   return `req-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
 }
 
-const buildOptimisticHumanMessage = ({ requestId, text, imageContent = null }) => {
+const buildOptimisticHumanMessage = ({
+  requestId,
+  text,
+  imageContent = null,
+  attachments = []
+}) => {
   const message = {
     id: requestId,
     role: 'user',
@@ -747,7 +619,8 @@ const buildOptimisticHumanMessage = ({ requestId, text, imageContent = null }) =
     content: text,
     message_type: imageContent ? 'multimodal_image' : 'text',
     extra_metadata: {
-      request_id: requestId
+      request_id: requestId,
+      attachments
     }
   }
 
@@ -802,13 +675,31 @@ const stripDuplicatedOngoingHumanMessage = (historyConvs, ongoingMessages) => {
 }
 
 // 发送 runs 前先在前端插入一条用户消息，避免等待 worker 轮询后消息才出现。
-const insertOptimisticHumanMessage = (threadState, { requestId, text, imageContent = null }) => {
+const insertOptimisticHumanMessage = (
+  threadState,
+  { requestId, text, imageContent = null, attachments = [] }
+) => {
   if (!threadState || !requestId) return
   threadState.pendingRequestId = requestId
   threadState.replyLoadingVisible = false
   threadState.onGoingConv.msgChunks[requestId] = [
-    buildOptimisticHumanMessage({ requestId, text, imageContent })
+    buildOptimisticHumanMessage({ requestId, text, imageContent, attachments })
   ]
+}
+
+const markAttachmentsRequestId = (threadId, attachments, requestId) => {
+  if (!threadId || !attachments.length) return null
+  const previousAttachments = threadAttachmentsMap.value[threadId] || []
+  const fileIds = new Set(attachments.map((attachment) => attachment.file_id).filter(Boolean))
+  threadAttachmentsMap.value[threadId] = previousAttachments.map((attachment) =>
+    fileIds.has(attachment.file_id) ? { ...attachment, request_id: requestId } : attachment
+  )
+  return previousAttachments
+}
+
+const rollbackAttachments = (threadId, previousAttachments) => {
+  if (!threadId || !Array.isArray(previousAttachments)) return
+  threadAttachmentsMap.value[threadId] = previousAttachments
 }
 
 const CONFIG_CHANGE_NOTICE_MESSAGE =
@@ -826,7 +717,6 @@ const withConfigNoticeSync = async (task) => {
 const buildThreadConfigSnapshot = () => {
   return {
     agentId: currentAgentId.value || '',
-    agentConfigId: selectedAgentConfigId.value ?? null,
     configJson: JSON.stringify(agentConfig.value || {})
   }
 }
@@ -915,7 +805,6 @@ const maybeInsertThreadConfigNotice = () => {
 
   if (
     previousSnapshot.agentId === currentSnapshot.agentId &&
-    previousSnapshot.agentConfigId === currentSnapshot.agentConfigId &&
     previousSnapshot.configJson === currentSnapshot.configJson
   ) {
     return
@@ -1030,34 +919,6 @@ onUnmounted(() => {
 })
 
 // ==================== 线程管理方法 ====================
-const setThreadAgentConfigId = (threadId, agentConfigId) => {
-  if (!threadId) return
-  const thread = threads.value.find((item) => item.id === threadId)
-  if (thread) {
-    thread.metadata = {
-      ...(thread.metadata || {}),
-      agent_config_id: agentConfigId ?? null
-    }
-  }
-}
-
-const syncSelectedConfigForThread = async (thread) => {
-  const threadAgentConfigId = thread?.metadata?.agent_config_id
-  if (!threadAgentConfigId) return
-
-  const targetAgentId = thread.agent_id || currentAgentId.value
-  if (!targetAgentId) return
-
-  const configList = agentStore.agentConfigs[targetAgentId] || []
-  if (!configList.length) {
-    await agentStore.fetchAgentConfigs(targetAgentId)
-  }
-
-  if (selectedAgentConfigId.value !== threadAgentConfigId) {
-    await agentStore.selectAgentConfig(threadAgentConfigId)
-  }
-}
-
 // 获取当前智能体的线程列表
 const fetchThreads = async (agentId = null) => {
   const targetAgentId = props.singleMode ? agentId || currentAgentId.value : agentId
@@ -1230,6 +1091,28 @@ const handleAttachmentUpload = async (files) => {
   }
 }
 
+const handleAttachmentRemove = async (attachment) => {
+  const threadId = currentChatId.value
+  const fileId = attachment?.file_id
+  if (!threadId || !fileId) return
+
+  const previousAttachments = threadAttachmentsMap.value[threadId] || []
+  threadAttachmentsMap.value[threadId] = previousAttachments.filter(
+    (item) => item.file_id !== fileId
+  )
+
+  try {
+    await threadApi.deleteThreadAttachment(threadId, fileId)
+    await Promise.all([
+      fetchAgentState(currentAgentId.value, threadId),
+      refreshThreadFilesAndAttachments(threadId)
+    ])
+  } catch (error) {
+    threadAttachmentsMap.value[threadId] = previousAttachments
+    handleChatError(error, 'delete')
+  }
+}
+
 // ==================== 审批功能管理 ====================
 const { approvalState, handleApproval, processApprovalInStream } = useApproval({
   getThreadState,
@@ -1263,7 +1146,9 @@ const sendMessage = async ({
   threadId,
   text,
   signal = undefined,
-  imageData = undefined
+  imageData = undefined,
+  requestId = '',
+  attachmentFileIds = []
 }) => {
   if (!agentId || !threadId || !text) {
     const error = new Error('Missing agent, thread, or message text')
@@ -1271,18 +1156,14 @@ const sendMessage = async ({
     return Promise.reject(error)
   }
 
-  if (!selectedAgentConfigId.value) {
-    const error = new Error('Missing agent_config_id')
-    handleChatError(error, 'send')
-    return Promise.reject(error)
-  }
-
-  setThreadAgentConfigId(threadId, selectedAgentConfigId.value)
-
   const requestData = {
     query: text,
+    agent_id: agentId,
     thread_id: threadId,
-    agent_config_id: selectedAgentConfigId.value
+    meta: {
+      request_id: requestId,
+      attachment_file_ids: attachmentFileIds
+    }
   }
 
   // 如果有图片，添加到请求中
@@ -1342,7 +1223,6 @@ const selectChat = async (chatId) => {
         await agentStore.selectAgent(targetChat.agent_id)
       }
 
-      await syncSelectedConfigForThread(targetChat)
       syncThreadConfigSnapshot(chatId)
     })
   } catch (error) {
@@ -1407,11 +1287,6 @@ const handleSendMessage = async ({ image } = {}) => {
   if ((!text && !image) || !currentAgent.value || isProcessing.value || sendCooldownActive.value)
     return
 
-  if (!selectedAgentConfigId.value) {
-    message.error('请先选择智能体配置后再发送消息')
-    return
-  }
-
   // 发送后进入短暂冷却，防止连续触发停止
   startSendCooldown()
 
@@ -1431,6 +1306,11 @@ const handleSendMessage = async ({ image } = {}) => {
 
   const threadState = getThreadState(threadId)
   if (!threadState) return
+
+  const pendingAttachments = [...currentPendingThreadAttachments.value]
+  const pendingAttachmentFileIds = pendingAttachments
+    .map((attachment) => attachment.file_id)
+    .filter(Boolean)
 
   if (useRunsApi) {
     if ((threadMessages.value[threadId] || []).length === 0) {
@@ -1459,19 +1339,25 @@ const handleSendMessage = async ({ image } = {}) => {
 
     resetOnGoingConv(threadId)
     const requestId = createClientRequestId()
+    const previousAttachments = markAttachmentsRequestId(threadId, pendingAttachments, requestId)
     insertOptimisticHumanMessage(threadState, {
       requestId,
       text,
-      imageContent
+      imageContent,
+      attachments: pendingAttachments.map((attachment) => ({
+        ...attachment,
+        request_id: requestId
+      }))
     })
     threadState.isStreaming = true
     try {
       const runResp = await agentApi.createAgentRun({
         query: text,
-        agent_config_id: selectedAgentConfigId.value,
+        agent_id: currentAgentId.value,
         thread_id: threadId,
         meta: {
-          request_id: requestId
+          request_id: requestId,
+          attachment_file_ids: pendingAttachmentFileIds
         },
         image_content: imageContent
       })
@@ -1484,6 +1370,7 @@ const handleSendMessage = async ({ image } = {}) => {
       threadState.isStreaming = false
       threadState.replyLoadingVisible = false
       threadState.pendingRequestId = null
+      rollbackAttachments(threadId, previousAttachments)
       resetOnGoingConv(threadId)
       handleChatError(error, 'send')
     }
@@ -1518,10 +1405,12 @@ const handleSendMessage = async ({ image } = {}) => {
   threadState.isStreaming = true
   resetOnGoingConv(threadId)
   const requestId = createClientRequestId()
+  const previousAttachments = markAttachmentsRequestId(threadId, pendingAttachments, requestId)
   insertOptimisticHumanMessage(threadState, {
     requestId,
     text,
-    imageContent
+    imageContent,
+    attachments: pendingAttachments.map((attachment) => ({ ...attachment, request_id: requestId }))
   })
   threadState.streamAbortController = new AbortController()
 
@@ -1531,13 +1420,16 @@ const handleSendMessage = async ({ image } = {}) => {
       threadId: threadId,
       text: text,
       signal: threadState.streamAbortController?.signal,
-      imageData: image
+      imageData: image,
+      requestId,
+      attachmentFileIds: pendingAttachmentFileIds
     })
 
     await handleAgentResponse(response, threadId)
   } catch (error) {
     if (error.name !== 'AbortError') {
       console.error('Stream error:', error)
+      rollbackAttachments(threadId, previousAttachments)
       handleChatError(error, 'send')
     } else {
       console.warn('[Interrupted] Catch')
@@ -1611,7 +1503,7 @@ const handleApprovalWithStream = async (answer) => {
 
   try {
     // 使用审批 composable 处理审批
-    const response = await handleApproval(answer, currentAgentId.value, selectedAgentConfigId.value)
+    const response = await handleApproval(answer)
 
     if (!response) return // 如果 handleApproval 抛出错误，这里不会执行
 
@@ -1642,14 +1534,6 @@ const handleQuestionSubmit = (answer) => {
 
 const handleQuestionCancel = () => {
   handleApprovalWithStream('reject')
-}
-
-// 处理示例问题点击
-const handleExampleClick = (questionText) => {
-  userInput.value = questionText
-  nextTick(() => {
-    handleSendMessage()
-  })
 }
 
 const buildExportPayload = () => {
@@ -1991,11 +1875,6 @@ watch(currentAgentId, (newAgentId, oldAgentId) => {
   maybeInsertThreadConfigNotice()
 })
 
-watch(selectedAgentConfigId, (newConfigId, oldConfigId) => {
-  if (oldConfigId === undefined || newConfigId === oldConfigId) return
-  maybeInsertThreadConfigNotice()
-})
-
 watch(
   () => JSON.stringify(agentConfig.value || {}),
   (newConfigJson, oldConfigJson) => {
@@ -2128,7 +2007,6 @@ watch(currentChatId, (threadId, oldThreadId) => {
   will-change: flex-basis;
 }
 
-
 /* Workbench transition animations */
 .agent-panel-wrapper {
   transition: flex-basis 0.3s cubic-bezier(0.4, 0, 0.2, 1);
@@ -2148,7 +2026,7 @@ watch(currentChatId, (threadId, oldThreadId) => {
   transition: none !important;
 }
 
-.chat-examples-input {
+.chat-greeting-input {
   padding: 24px 0;
   text-align: center;
 
@@ -2268,45 +2146,6 @@ watch(currentChatId, (threadId, oldThreadId) => {
   background: var(--main-30);
   color: var(--main-700);
   font-size: 12px;
-}
-
-.example-questions {
-  margin-top: 16px;
-  text-align: center;
-
-  .example-chips {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-    justify-content: center;
-  }
-
-  .example-chip {
-    padding: 6px 12px;
-    background: var(--gray-25);
-    // border: 1px solid var(--gray-100);
-    border-radius: 16px;
-    cursor: pointer;
-    font-size: 0.8rem;
-    color: var(--gray-700);
-    transition: all 0.15s ease;
-    white-space: nowrap;
-    max-width: 200px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-
-    &:hover {
-      // background: var(--main-25);
-      border-color: var(--main-200);
-      color: var(--main-700);
-      box-shadow: 0 0px 4px rgba(0, 0, 0, 0.03);
-    }
-
-    &:active {
-      transform: translateY(0);
-      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
-    }
-  }
 }
 
 .chat-loading {

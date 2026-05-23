@@ -30,11 +30,11 @@
     <ExtensionCardGrid v-else>
       <InfoCard
         v-for="tool in filteredTools"
-        :key="tool.id"
+        :key="getToolSlug(tool)"
         :title="tool.name"
-        :subtitle="tool.id"
+        :subtitle="getToolSlug(tool)"
         :description="tool.description || '无描述'"
-        :default-icon="getToolIcon(tool.id) || WrenchIcon"
+        :default-icon="getToolIcon(getToolSlug(tool)) || WrenchIcon"
         :tags="toolTags(tool)"
         @click="selectTool(tool)"
       >
@@ -133,6 +133,8 @@ const categories = ['buildin', 'knowledge', 'mysql', 'debug']
 const categoryLabels = { buildin: '内置工具', knowledge: '知识库', mysql: 'MySQL', debug: '调试' }
 const categoryColors = { buildin: 'blue', knowledge: 'purple', mysql: 'green', debug: 'orange' }
 
+const getToolSlug = (tool) => tool?.slug || tool?.id || ''
+
 const toolTags = (tool) => {
   const tags = []
   if (tool.category) {
@@ -161,7 +163,7 @@ const filteredTools = computed(() => {
     result = result.filter(
       (t) =>
         t.name.toLowerCase().includes(q) ||
-        t.id.toLowerCase().includes(q) ||
+        getToolSlug(t).toLowerCase().includes(q) ||
         t.description?.toLowerCase().includes(q) ||
         t.config_guide?.toLowerCase().includes(q)
     )

@@ -12,12 +12,57 @@
     @keydown="handleKeyDown"
   >
     <template #top>
-      <div v-if="currentImage" class="input-top-stack">
+      <div v-if="currentImage || previewAttachments.length" class="input-top-stack">
         <ImagePreviewComponent
+          v-if="currentImage"
           :image-data="currentImage"
           @remove="handleImageRemoved"
           class="image-preview-wrapper"
         />
+
+        <div v-if="previewAttachments.length" class="attachment-preview-list">
+          <div
+            v-for="attachment in previewImageAttachments"
+            :key="attachment.fileId"
+            class="attachment-preview-image"
+          >
+            <img
+              :src="attachment.previewUrl"
+              :alt="attachment.name"
+              class="attachment-image-thumb"
+            />
+            <button
+              class="attachment-remove-btn"
+              type="button"
+              :aria-label="`移除附件 ${attachment.name}`"
+              @click.stop="handleAttachmentRemoved(attachment)"
+            >
+              <X :size="14" />
+            </button>
+          </div>
+
+          <div
+            v-for="attachment in previewFileAttachments"
+            :key="attachment.fileId"
+            class="attachment-file-card"
+          >
+            <div class="attachment-file-icon" :style="{ color: attachment.iconColor }">
+              <component :is="attachment.icon" />
+            </div>
+            <div class="attachment-file-body">
+              <div class="attachment-file-name" :title="attachment.name">{{ attachment.name }}</div>
+              <div class="attachment-file-meta">{{ attachment.meta }}</div>
+            </div>
+            <button
+              class="attachment-remove-btn"
+              type="button"
+              :aria-label="`移除附件 ${attachment.name}`"
+              @click.stop="handleAttachmentRemoved(attachment)"
+            >
+              <X :size="14" />
+            </button>
+          </div>
+        </div>
       </div>
     </template>
     <template #options-left>
@@ -98,7 +143,8 @@ import { computed, ref, watch } from 'vue'
 import MessageInputComponent from '@/components/MessageInputComponent.vue'
 import ImagePreviewComponent from '@/components/ImagePreviewComponent.vue'
 import AttachmentOptionsComponent from '@/components/AttachmentOptionsComponent.vue'
-import { SquareCheck } from 'lucide-vue-next'
+import { SquareCheck, X } from 'lucide-vue-next'
+import { normalizeAttachmentPreviews } from '@/utils/file_utils'
 import {
   CheckCircleOutlined,
   ClockCircleOutlined,
@@ -118,10 +164,20 @@ const props = defineProps({
   todos: {
     type: Array,
     default: () => []
+  },
+  attachments: {
+    type: Array,
+    default: () => []
   }
 })
 
-const emit = defineEmits(['update:modelValue', 'send', 'keydown', 'upload-attachment'])
+const emit = defineEmits([
+  'update:modelValue',
+  'send',
+  'keydown',
+  'upload-attachment',
+  'remove-attachment'
+])
 
 const inputRef = ref(null)
 const currentImage = ref(null)
@@ -137,6 +193,13 @@ const todoProgress = computed(() => {
   if (!totalTodoCount.value) return 0
   return Math.round((completedTodoCount.value / totalTodoCount.value) * 100)
 })
+const previewAttachments = computed(() => normalizeAttachmentPreviews(props.attachments))
+const previewImageAttachments = computed(() =>
+  previewAttachments.value.filter((attachment) => attachment.isImage && attachment.previewUrl)
+)
+const previewFileAttachments = computed(() =>
+  previewAttachments.value.filter((attachment) => !attachment.isImage || !attachment.previewUrl)
+)
 
 watch(showTodoEntry, (visible) => {
   if (!visible) {
@@ -167,6 +230,10 @@ const handleImageUploadSuccess = () => {
 
 const handleImageRemoved = () => {
   currentImage.value = null
+}
+
+const handleAttachmentRemoved = (attachment) => {
+  emit('remove-attachment', attachment.raw)
 }
 
 const handleSend = () => {
@@ -225,6 +292,105 @@ const getTodoStatusLabel = (status) => {
   flex-direction: column;
   gap: 8px;
   margin-bottom: 10px;
+}
+
+.attachment-preview-list {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.attachment-preview-image {
+  position: relative;
+  width: 80px;
+  height: 80px;
+  border-radius: 12px;
+  border: 1px solid var(--gray-150);
+  background: var(--gray-25);
+  overflow: hidden;
+}
+
+.attachment-image-thumb {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.attachment-file-card {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 220px;
+  min-width: 0;
+  padding: 10px 34px 10px 12px;
+  border: 1px solid var(--gray-150);
+  border-radius: 12px;
+  background: var(--gray-0);
+  box-shadow: 0 1px 4px var(--shadow-0);
+}
+
+.attachment-file-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: var(--main-700);
+  background: var(--main-30);
+}
+
+.attachment-file-body {
+  min-width: 0;
+}
+
+.attachment-file-name {
+  overflow: hidden;
+  color: var(--gray-900);
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.attachment-file-meta {
+  margin-top: 2px;
+  color: var(--gray-500);
+  font-size: 12px;
+  line-height: 1.3;
+}
+
+.attachment-remove-btn {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  color: var(--gray-0);
+  background: var(--gray-900);
+  cursor: pointer;
+  transition:
+    background-color 0.15s ease,
+    transform 0.15s ease;
+
+  &:hover {
+    background: var(--gray-700);
+  }
+
+  &:active {
+    transform: scale(0.96);
+  }
 }
 
 // 输入框操作按钮通用样式（穿透到 slot 内容）
@@ -407,6 +573,10 @@ const getTodoStatusLabel = (status) => {
   .input-top-stack {
     gap: 8px;
     margin-bottom: 10px;
+  }
+
+  .attachment-file-card {
+    width: min(220px, 100%);
   }
 
   .todo-popover-card {

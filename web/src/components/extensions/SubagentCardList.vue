@@ -26,8 +26,9 @@
       <ExtensionCardGrid>
         <InfoCard
           v-for="agent in filteredEnabledSubAgents"
-          :key="agent.name"
+          :key="agent.slug"
           :title="agent.name"
+          :subtitle="agent.slug"
           :description="agent.description || '暂无描述'"
           :default-icon="BotIcon"
           :tags="agent.is_builtin ? [{ name: '内置' }] : [{ name: '添加' }]"
@@ -41,8 +42,9 @@
       <ExtensionCardGrid v-if="filteredDisabledSubAgents.length">
         <InfoCard
           v-for="agent in filteredDisabledSubAgents"
-          :key="agent.name"
+          :key="agent.slug"
           :title="agent.name"
+          :subtitle="agent.slug"
           :description="agent.description || '暂无描述'"
           :default-icon="BotIcon"
           :tags="agent.is_builtin ? [{ name: '内置' }] : [{ name: '添加' }]"

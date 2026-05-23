@@ -47,14 +47,6 @@ const props = defineProps({
   threadId: {
     type: String,
     default: null
-  },
-  agentId: {
-    type: String,
-    default: null
-  },
-  agentConfigId: {
-    type: [String, Number],
-    default: null
   }
 })
 const emit = defineEmits(['saved', 'open-preview'])
@@ -104,12 +96,7 @@ const downloadFile = async (file) => {
   if (!props.threadId || !file?.path) return
 
   try {
-    const response = await downloadViewerFile(
-      props.threadId,
-      file.path,
-      props.agentId,
-      props.agentConfigId
-    )
+    const response = await downloadViewerFile(props.threadId, file.path)
     const blob = await response.blob()
     const contentDisposition =
       response.headers.get('Content-Disposition') || response.headers.get('content-disposition')

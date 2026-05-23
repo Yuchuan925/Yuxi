@@ -161,7 +161,7 @@ watch(showModal, (isOpen) => {
 import { useConfigStore } from '@/stores/config'
 import { useUserStore } from '@/stores/user'
 import { useDatabaseStore } from '@/stores/database'
-import { useAgentStore } from '@/stores/agent'
+import { isBuiltinAgent, useAgentStore } from '@/stores/agent'
 import { useInfoStore } from '@/stores/info'
 import { useThrottleFn } from '@vueuse/core'
 import {
@@ -484,7 +484,6 @@ const printAgentConfig = async () => {
     console.log('Store 状态:', {
       isInitialized: agentStore.isInitialized,
       selectedAgentId: agentStore.selectedAgentId,
-      defaultAgentId: agentStore.defaultAgentId,
       agentCount: agentStore.agentsList.length,
       loadingStates: {
         isLoadingAgents: agentStore.isLoadingAgents,
@@ -505,7 +504,7 @@ const printAgentConfig = async () => {
     if (agentStore.selectedAgent) {
       console.log('当前选中智能体:', {
         agent: toRaw(agentStore.selectedAgent),
-        isDefault: agentStore.isDefaultAgent,
+        isBuiltin: isBuiltinAgent(agentStore.selectedAgent),
         configurableItemsCount: Object.keys(agentStore.configurableItems).length
       })
 

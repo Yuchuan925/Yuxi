@@ -5,7 +5,14 @@
   >
     <img :src="`data:image/jpeg;base64,${message.image_content}`" alt="用户上传的图片" />
   </div>
-  <div class="message-box" :class="[message.type, customClasses]">
+  <div
+    class="message-box"
+    :class="[
+      message.type,
+      customClasses,
+      { 'has-attachments': message.type === 'human' && messageAttachments.length }
+    ]"
+  >
     <!-- 用户消息 -->
     <div
       v-if="message.type === 'human'"
@@ -38,7 +45,12 @@
       </div>
 
       <!-- 消息内容 -->
-      <MarkdownPreview v-if="parsedData.content" :key="message.id" :content="parsedData.content" class="message-md" />
+      <MarkdownPreview
+        v-if="parsedData.content"
+        :key="message.id"
+        :content="parsedData.content"
+        class="message-md"
+      />
 
       <div v-else-if="parsedData.reasoning_content" class="empty-block"></div>
 
@@ -89,6 +101,35 @@
     <!-- 自定义内容 -->
     <slot></slot>
   </div>
+
+  <div
+    v-if="message.type === 'human' && messageAttachments.length"
+    class="human-message-attachments"
+  >
+    <div
+      v-for="attachment in imageAttachments"
+      :key="attachment.fileId"
+      class="message-attachment-image"
+    >
+      <img :src="attachment.previewUrl" :alt="attachment.name" class="message-attachment-thumb" />
+    </div>
+
+    <div
+      v-for="attachment in fileAttachments"
+      :key="attachment.fileId"
+      class="message-attachment-file"
+    >
+      <div class="message-attachment-icon" :style="{ color: attachment.iconColor }">
+        <component :is="attachment.icon" />
+      </div>
+      <div class="message-attachment-body">
+        <div class="message-attachment-name" :title="attachment.name">
+          {{ attachment.name }}
+        </div>
+        <div class="message-attachment-meta">{{ attachment.meta }}</div>
+      </div>
+    </div>
+  </div>
 </template>
 
 <script setup>
@@ -102,6 +143,7 @@ import { useAgentStore } from '@/stores/agent'
 import { useInfoStore } from '@/stores/info'
 import { storeToRefs } from 'pinia'
 import { MessageProcessor } from '@/utils/messageProcessor'
+import { normalizeAttachmentPreviews } from '@/utils/file_utils'
 
 const props = defineProps({
   // 消息角色：'user'|'assistant'|'sent'|'received'
@@ -211,7 +253,17 @@ const getErrorMessage = computed(() => {
 const agentStore = useAgentStore()
 const { availableKnowledgeBases } = storeToRefs(agentStore)
 const infoStore = useInfoStore()
-// 提取消息来源
+const messageAttachments = computed(() =>
+  normalizeAttachmentPreviews(props.message.extra_metadata?.attachments)
+)
+
+const imageAttachments = computed(() =>
+  messageAttachments.value.filter((attachment) => attachment.isImage && attachment.previewUrl)
+)
+const fileAttachments = computed(() =>
+  messageAttachments.value.filter((attachment) => !attachment.isImage || !attachment.previewUrl)
+)
+
 const messageSources = computed(() => {
   if (props.message.type === 'ai') {
     return MessageProcessor.extractSourcesFromMessage(props.message, availableKnowledgeBases.value)
@@ -265,7 +317,6 @@ const parsedData = computed(() => {
     reasoning_content
   }
 })
-
 </script>
 
 <style lang="less" scoped>
@@ -311,6 +362,11 @@ const parsedData = computed(() => {
     max-width: 100%;
     margin-bottom: 0;
     white-space: pre-line;
+  }
+
+  &.human.has-attachments,
+  &.sent.has-attachments {
+    margin-bottom: 0.375rem;
   }
 
   .message-copy-btn {
@@ -456,6 +512,78 @@ const parsedData = computed(() => {
   }
 }
 
+.human-message-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  justify-content: flex-end;
+  align-self: flex-end;
+  max-width: 95%;
+  margin-bottom: 0.8rem;
+}
+
+.message-attachment-image {
+  width: 112px;
+  height: 112px;
+  overflow: hidden;
+  border: 1px solid var(--gray-200);
+  border-radius: 0.5rem;
+  background: var(--gray-0);
+}
+
+.message-attachment-thumb {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.message-attachment-file {
+  width: 220px;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  padding: 0.625rem 0.75rem;
+  border: 1px solid var(--gray-200);
+  border-radius: 0.625rem;
+  background: var(--gray-0);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+}
+
+.message-attachment-icon {
+  width: 2rem;
+  height: 2rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  border-radius: 0.5rem;
+  color: var(--main-color);
+  background: var(--main-50);
+}
+
+.message-attachment-body {
+  min-width: 0;
+  flex: 1;
+}
+
+.message-attachment-name {
+  overflow: hidden;
+  color: var(--gray-900);
+  font-size: 0.875rem;
+  line-height: 1.25rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.message-attachment-meta {
+  margin-top: 0.125rem;
+  color: var(--gray-500);
+  font-size: 0.75rem;
+  line-height: 1rem;
+}
+
 .retry-hint {
   margin-top: 8px;
   padding: 8px 16px;
@@ -531,7 +659,7 @@ const parsedData = computed(() => {
   }
 }
 
-  .message-md {
-    margin: 8px 0;
-  }
+.message-md {
+  margin: 8px 0;
+}
 </style>

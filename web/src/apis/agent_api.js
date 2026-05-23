@@ -3,7 +3,6 @@ import {
   apiPost,
   apiDelete,
   apiPut,
-  apiAdminPost,
   apiRequest
 } from './base'
 import { useUserStore } from '@/stores/user'
@@ -31,7 +30,7 @@ export const agentApi = {
       ...useUserStore().getAuthHeaders()
     }
 
-    return fetch('/api/chat/agent', {
+    return fetch('/api/agent/chat', {
       method: 'POST',
       body: JSON.stringify(data),
       signal,
@@ -65,23 +64,19 @@ export const agentApi = {
   },
 
   /**
-   * 获取默认智能体
-   * @returns {Promise} - 默认智能体信息
-   */
-  getDefaultAgent: () => apiGet('/api/chat/default_agent'),
-
-  /**
    * 获取智能体列表
    * @returns {Promise} - 智能体列表
    */
-  getAgents: () => apiGet('/api/chat/agent'),
+  getAgents: () => apiGet('/api/agent'),
+
+  getAgentBackends: () => apiGet('/api/agent/backends'),
 
   /**
    * 获取单个智能体详情
    * @param {string} agentId - 智能体ID
    * @returns {Promise} - 智能体详情
    */
-  getAgentDetail: (agentId) => apiGet(`/api/chat/agent/${agentId}`),
+  getAgentDetail: (agentId) => apiGet(`/api/agent/${agentId}`),
 
   /**
    * 获取智能体历史消息
@@ -117,36 +112,16 @@ export const agentApi = {
   getMessageFeedback: (messageId) => apiGet(`/api/chat/message/${messageId}/feedback`),
 
 
-  getAgentConfigs: (agentId) => apiGet(`/api/chat/agent/${agentId}/configs`),
+  createAgent: (payload) => apiPost('/api/agent', payload),
 
-  getAgentConfigProfile: (agentId, configId) =>
-    apiGet(`/api/chat/agent/${agentId}/configs/${configId}`),
+  updateAgent: (agentId, payload) => apiPut(`/api/agent/${agentId}`, payload),
 
-  createAgentConfigProfile: (agentId, payload) =>
-    apiPost(`/api/chat/agent/${agentId}/configs`, payload),
-
-  updateAgentConfigProfile: (agentId, configId, payload) =>
-    apiPut(`/api/chat/agent/${agentId}/configs/${configId}`, payload),
-
-  setAgentConfigDefault: (agentId, configId) =>
-    apiPost(`/api/chat/agent/${agentId}/configs/${configId}/set_default`, {}),
-
-  deleteAgentConfigProfile: (agentId, configId) =>
-    apiDelete(`/api/chat/agent/${agentId}/configs/${configId}`),
-
-  /**
-   * 设置默认智能体
-   * @param {string} agentId - 智能体ID
-   * @returns {Promise} - 设置结果
-   */
-  setDefaultAgent: async (agentId) => {
-    return apiAdminPost('/api/chat/set_default_agent', { agent_id: agentId })
-  },
+  deleteAgent: (agentId) => apiDelete(`/api/agent/${agentId}`),
 
   /**
    * 恢复被人工审批中断的对话（流式响应）
-   * @param {string} agentId - 智能体ID
-   * @param {Object} data - 恢复数据 { thread_id, answer: { question_id: answer }, approved }
+   * @param {string} threadId - 会话 ID
+   * @param {Object} data - 恢复数据 { answer: { question_id: answer }, approved }
    * @param {Object} options - 可选参数（signal, headers等）
    * @returns {Promise} - 恢复响应流
    */
@@ -175,9 +150,9 @@ export const agentApi = {
    * @returns {Promise<Object>}
    */
   createAgentRun: (data) =>
-    apiPost('/api/chat/runs', {
+    apiPost('/api/agent/runs', {
       query: data.query,
-      agent_config_id: data.agent_config_id,
+      agent_id: data.agent_id,
       thread_id: data.thread_id,
       meta: data.meta || {},
       image_content: data.image_content || null
@@ -188,21 +163,21 @@ export const agentApi = {
    * @param {string} runId - run ID
    * @returns {Promise<Object>}
    */
-  getAgentRun: (runId) => apiGet(`/api/chat/runs/${runId}`),
+  getAgentRun: (runId) => apiGet(`/api/agent/runs/${runId}`),
 
   /**
    * 取消 Run
    * @param {string} runId - run ID
    * @returns {Promise<Object>}
    */
-  cancelAgentRun: (runId) => apiPost(`/api/chat/runs/${runId}/cancel`, {}),
+  cancelAgentRun: (runId) => apiPost(`/api/agent/runs/${runId}/cancel`, {}),
 
   /**
    * 获取线程活跃 Run
    * @param {string} threadId - 线程ID
    * @returns {Promise<Object>}
    */
-  getThreadActiveRun: (threadId) => apiGet(`/api/chat/thread/${threadId}/active_run`),
+  getThreadActiveRun: (threadId) => apiGet(`/api/agent/thread/${threadId}/active_run`),
 
   /**
    * 打开 Run 事件 SSE 连接（调用方负责关闭）
@@ -214,7 +189,7 @@ export const agentApi = {
   streamAgentRunEvents: (runId, afterSeq = '0-0', options = {}) => {
     const { signal } = options
     return fetch(
-      `/api/chat/runs/${runId}/events?after_seq=${encodeURIComponent(String(afterSeq))}`,
+      `/api/agent/runs/${runId}/events?after_seq=${encodeURIComponent(String(afterSeq))}`,
       {
         method: 'GET',
         headers: {
