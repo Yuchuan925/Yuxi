@@ -196,6 +196,16 @@ class BaseContext:
         },
     )
 
+    model_retry_times: int = field(
+        default=2,
+        metadata={
+            "name": "模型重试次数",
+            "description": "模型调用失败时的最大重试次数，默认值为 2。",
+            "type": "number",
+            "auth": "admin",
+        },
+    )
+
     @classmethod
     def get_configurable_items(cls, user_role: str | None = None):
         """实现一个可配置的参数列表，在 UI 上配置时使用"""

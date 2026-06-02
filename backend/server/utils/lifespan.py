@@ -45,7 +45,9 @@ async def lifespan(app: FastAPI):
         from yuxi.repositories.agent_repository import AgentRepository
 
         async with pg_manager.get_async_session_context() as session:
-            await AgentRepository(session).ensure_default_agent()
+            repository = AgentRepository(session)
+            await repository.ensure_default_agent()
+            await repository.ensure_web_search_subagent()
     except Exception as e:
         logger.error(f"Failed to ensure default agent during startup: {e}")
 

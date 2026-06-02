@@ -16,6 +16,24 @@ DEFAULT_AGENT_BACKEND_ID = "ChatbotAgent"
 SUB_AGENT_BACKEND_ID = "SubAgentBackend"
 DEFAULT_AGENT_DESCRIPTION = "基础的对话机器人，可以回答问题，可在配置中启用需要的工具。"
 DEFAULT_SHARE_CONFIG = {"access_level": "global", "department_ids": [], "user_uids": []}
+
+WEB_SEARCH_AGENT_SLUG = "web-search"
+WEB_SEARCH_AGENT_NAME = "网页检索"
+WEB_SEARCH_AGENT_DESCRIPTION = "围绕检索目标持续搜索网页，返回带引用来源的摘要资料。"
+WEB_SEARCH_SYSTEM_PROMPT = """你是「网页检索」子智能体，由主智能体通过 task 工具调用，专注于面向目标的网页信息检索。
+
+你的职责：围绕调用方给定的检索目标，使用网页搜索工具持续检索，直到收集到足以回答目标的信息。
+
+工作方式：
+1. 拆解目标，确定需要检索的关键问题与检索词。
+2. 多轮调用网页搜索工具：依据上一轮结果调整检索词、补充遗漏角度、交叉验证关键事实，直到信息充分或确认无法获取更多有效信息。
+3. 优先采信权威、时效性强且彼此印证的来源；对存在冲突的信息要说明分歧。
+
+输出要求：
+- 返回一份结构化的摘要资料，按主题或要点组织。
+- 每条关键结论后使用 <cite source="$URL" type="url">$INDEX</cite> 标注引用来源，$INDEX 从 1 开始递增。
+- 在结尾汇总「参考来源」列表，逐条列出标题与 URL。
+- 不要编造来源或链接；无法验证的信息要明确标注。"""
 ACCESS_LEVELS = {"global", "department", "user"}
 ADMIN_ROLES = {"admin", "superadmin"}
 
@@ -149,6 +167,32 @@ class AgentRepository:
             share_config=DEFAULT_SHARE_CONFIG.copy(),
             is_default=True,
             is_subagent=False,
+            created_by=created_by,
+            updated_by=created_by,
+            created_at=utc_now_naive(),
+            updated_at=utc_now_naive(),
+        )
+        self.db.add(agent)
+        await self.db.commit()
+        await self.db.refresh(agent)
+        return agent
+
+    async def ensure_web_search_subagent(self, *, created_by: str | None = None) -> Agent:
+        agent = await self.get_by_slug(WEB_SEARCH_AGENT_SLUG)
+        if agent:
+            return agent
+
+        agent = Agent(
+            slug=WEB_SEARCH_AGENT_SLUG,
+            backend_id=SUB_AGENT_BACKEND_ID,
+            name=WEB_SEARCH_AGENT_NAME,
+            description=WEB_SEARCH_AGENT_DESCRIPTION,
+            icon=None,
+            pics=[],
+            config_json={"context": {"system_prompt": WEB_SEARCH_SYSTEM_PROMPT}},
+            share_config=DEFAULT_SHARE_CONFIG.copy(),
+            is_default=False,
+            is_subagent=True,
             created_by=created_by,
             updated_by=created_by,
             created_at=utc_now_naive(),

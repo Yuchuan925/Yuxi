@@ -48,7 +48,7 @@ async def _build_middlewares(context):
             summary_middleware,
             TodoListMiddleware(system_prompt=TODO_MID_PROMPT),
             PatchToolCallsMiddleware(),
-            ModelRetryMiddleware(),
+            ModelRetryMiddleware(max_retries=getattr(context, "model_retry_times", 2)),
         ]
     )
     return middlewares
