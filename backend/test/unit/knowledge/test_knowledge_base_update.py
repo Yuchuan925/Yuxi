@@ -150,7 +150,9 @@ def test_get_database_info_returns_persisted_content_stats(tmp_path):
     result = kb.get_database_info("db")
 
     assert result["row_count"] == 3
-    assert result["stats"] == {"file_count": 2, "chunk_count": 5, "token_count": 25}
+    assert result["stats"]["file_count"] == 2
+    assert result["stats"]["chunk_count"] == 5
+    assert result["stats"]["token_count"] == 25
     assert result["files"]["file-1"]["chunk_count"] == 2
     assert result["files"]["file-1"]["token_count"] == 10
 
@@ -165,7 +167,9 @@ def test_get_database_info_prefers_metadata_stats(tmp_path):
 
     result = kb.get_database_info("db")
 
-    assert result["stats"] == {"file_count": 2, "chunk_count": 8, "token_count": 40}
+    assert result["stats"]["file_count"] == 2
+    assert result["stats"]["chunk_count"] == 8
+    assert result["stats"]["token_count"] == 40
 
 
 async def test_refresh_database_stats_persists_metadata(tmp_path):
@@ -190,7 +194,9 @@ async def test_refresh_database_stats_persists_metadata(tmp_path):
 
     stats = await kb.refresh_database_stats("db")
 
-    assert stats == {"file_count": 1, "chunk_count": 2, "token_count": 10}
+    assert stats["file_count"] == 1
+    assert stats["chunk_count"] == 2
+    assert stats["token_count"] == 10
     assert kb.databases_meta["db"]["metadata"]["stats"] == stats
     assert persisted_kbs == [("db", {"stats": stats})]
 
@@ -242,9 +248,12 @@ async def test_repair_missing_file_stats_updates_files_and_database_metadata(tmp
     assert kb.files_meta["file-1"]["token_count"] == expected_token_count
     assert kb.files_meta["file-2"]["chunk_count"] == 3
     assert kb.files_meta["file-2"]["token_count"] == 7
-    assert result["stats"] == expected_stats
+    for key, value in expected_stats.items():
+        assert result["stats"][key] == value
     assert result["scanned_token_files"] == 1
     assert result["updated_chunk_files"] == 2
     assert result["updated_token_files"] == 1
     assert {file_id for file_id, _ in persisted_files} == {"file-1", "file-2"}
-    assert persisted_kbs == [("db", {"stats": expected_stats})]
+    persisted_stats = persisted_kbs[0][1]["stats"]
+    for key, value in expected_stats.items():
+        assert persisted_stats[key] == value

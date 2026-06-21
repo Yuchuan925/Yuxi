@@ -285,6 +285,10 @@ async def get_accessible_databases(current_user: User = Depends(get_required_use
                 "kb_id": db.get("kb_id"),
                 "description": db.get("description", ""),
                 "created_by": db.get("created_by"),
+                "kb_type": db.get("kb_type"),
+                "supports_documents": KnowledgeBaseFactory.get_kb_class(
+                    (db.get("kb_type") or "milvus").lower()
+                ).supports_documents,
             }
             for db in databases.get("databases", [])
         ]
@@ -362,9 +366,13 @@ async def get_mindmap_diff_route(kb_id: str, current_user: User = Depends(get_ad
 
 
 @knowledge.get("/databases/{kb_id}")
-async def get_database_info(kb_id: str, current_user: User = Depends(get_admin_user)):
+async def get_database_info(
+    kb_id: str,
+    include_files: bool = Query(False, description="是否包含全量文件列表，默认关闭以避免大知识库响应过大"),
+    current_user: User = Depends(get_admin_user),
+):
     """获取知识库详细信息"""
-    database = await knowledge_base.get_database_info(kb_id)
+    database = await knowledge_base.get_database_info(kb_id, include_files=include_files)
     if database is None:
         raise HTTPException(status_code=404, detail="Database not found")
     return database
@@ -589,6 +597,33 @@ async def export_database(
 # =============================================================================
 # === 知识库文档管理分组 ===
 # =============================================================================
+
+
+@knowledge.get("/databases/{kb_id}/documents")
+async def list_documents(
+    kb_id: str,
+    parent_id: str | None = Query(None, description="父文件夹 ID，空值表示根目录"),
+    path_prefix: str | None = Query(None, description="路径型目录前缀，用于懒加载 source_path 形成的虚拟目录"),
+    status: str = Query("all", description="文件状态筛选"),
+    page: int = Query(1, ge=1, description="页码"),
+    page_size: int = Query(100, ge=1, le=500, description="每页数量"),
+    recursive: bool = Query(False, description="是否跨目录筛选"),
+    current_user: User = Depends(get_admin_user),
+):
+    """分页获取知识库文件列表。"""
+    await _ensure_database_supports_documents(kb_id, "文档查看")
+    try:
+        return await knowledge_base.list_document_files(
+            kb_id,
+            parent_id=parent_id,
+            path_prefix=path_prefix,
+            status=status,
+            page=page,
+            page_size=page_size,
+            recursive=recursive,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @knowledge.post("/databases/{kb_id}/documents")

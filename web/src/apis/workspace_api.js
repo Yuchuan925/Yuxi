@@ -20,13 +20,16 @@ export const getWorkspaceFileContent = (path) => {
   return apiGet(`/api/workspace/file?${query}`, {}, true, 'blob')
 }
 
-export const getWorkspaceKnowledgeTree = (
-  kbId,
-  parentId = null,
-  recursive = false,
-  filesOnly = false
-) => {
-  const query = buildQuery({ kb_id: kbId, parent_id: parentId, recursive, files_only: filesOnly })
+export const getWorkspaceKnowledgeTree = (kbId, params = {}) => {
+  const query = buildQuery({
+    kb_id: kbId,
+    parent_id: params.parentId,
+    path_prefix: params.pathPrefix,
+    page: params.page,
+    page_size: params.pageSize,
+    recursive: params.recursive || false,
+    files_only: params.filesOnly || false
+  })
   return apiGet(`/api/workspace/knowledge/tree?${query}`)
 }
 

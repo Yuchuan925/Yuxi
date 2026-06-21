@@ -92,7 +92,28 @@ export const databaseApi = {
 // === 文档管理分组 ===
 // =============================================================================
 
+const buildQuery = (params) => {
+  const query = new URLSearchParams()
+  Object.entries(params).forEach(([key, value]) => {
+    if (value !== undefined && value !== null && value !== '') {
+      query.set(key, String(value))
+    }
+  })
+  return query.toString()
+}
+
 export const documentApi = {
+  /**
+   * 分页获取知识库文档列表
+   * @param {string} kbId - 知识库ID
+   * @param {Object} params - 查询参数
+   * @returns {Promise} - 文档列表
+   */
+  listDocuments: async (kbId, params = {}) => {
+    const query = buildQuery(params)
+    return apiAdminGet(`/api/knowledge/databases/${kbId}/documents${query ? `?${query}` : ''}`)
+  },
+
   /**
    * 创建文件夹
    * @param {string} kbId - 知识库ID
@@ -104,19 +125,6 @@ export const documentApi = {
     return apiAdminPost(`/api/knowledge/databases/${kbId}/folders`, {
       folder_name: folderName,
       parent_id: parentId
-    })
-  },
-
-  /**
-   * 移动文档/文件夹
-   * @param {string} kbId - 知识库ID
-   * @param {string} docId - 文档/文件夹ID
-   * @param {string} newParentId - 新的父文件夹ID
-   * @returns {Promise} - 移动结果
-   */
-  moveDocument: async (kbId, docId, newParentId) => {
-    return apiAdminPut(`/api/knowledge/databases/${kbId}/documents/${docId}/move`, {
-      new_parent_id: newParentId
     })
   },
 

@@ -1073,18 +1073,42 @@ class KnowledgeBase(ABC):
         return {"options": defaults}
 
     def _build_database_stats(self, kb_id: str) -> dict[str, int]:
-        stats = {"file_count": 0, "chunk_count": 0, "token_count": 0}
+        stats = self._normalize_database_stats(None)
         for file_info in self.files_meta.values():
-            if file_info.get("kb_id") != kb_id or file_info.get("is_folder"):
+            if file_info.get("kb_id") != kb_id:
                 continue
+
+            stats["row_count"] += 1
+            if file_info.get("is_folder"):
+                stats["folder_count"] += 1
+                continue
+
             stats["file_count"] += 1
             stats["chunk_count"] += int(file_info.get("chunk_count") or 0)
             stats["token_count"] += int(file_info.get("token_count") or 0)
+            stats["total_size"] += int(file_info.get("size") or file_info.get("file_size") or 0)
+            status = file_info.get("status")
+            if status == "uploaded":
+                stats["pending_parse_count"] += 1
+            elif status in {"parsed", "error_indexing"}:
+                stats["pending_index_count"] += 1
+            elif status in {"processing", "waiting", "parsing", "indexing"}:
+                stats["processing_count"] += 1
         return stats
 
     @staticmethod
     def _normalize_database_stats(stats: dict | None) -> dict[str, int]:
-        normalized = {"file_count": 0, "chunk_count": 0, "token_count": 0}
+        normalized = {
+            "file_count": 0,
+            "folder_count": 0,
+            "row_count": 0,
+            "total_size": 0,
+            "chunk_count": 0,
+            "token_count": 0,
+            "pending_parse_count": 0,
+            "pending_index_count": 0,
+            "processing_count": 0,
+        }
         if not isinstance(stats, dict):
             return normalized
 
@@ -1186,13 +1210,11 @@ class KnowledgeBase(ABC):
         meta = self.databases_meta[kb_id].copy()
         meta["kb_id"] = kb_id
 
-        # 检查并修复异常的processing状态
-        self._check_and_fix_processing_status(kb_id)
+        if include_files:
+            self._check_and_fix_processing_status(kb_id)
 
-        # 统计文件数量（始终计算，即使不加载文件详情）
-        db_file_count = sum(1 for file_info in self.files_meta.values() if file_info.get("kb_id") == kb_id)
-        meta["row_count"] = db_file_count
         meta["stats"] = self._get_database_stats(kb_id)
+        meta["row_count"] = meta["stats"].get("row_count") or meta["stats"].get("file_count") or 0
 
         # 仅在需要时加载文件详情
         if include_files:
@@ -1224,6 +1246,7 @@ class KnowledgeBase(ABC):
             )
 
             meta["files"] = sorted_files
+            meta["row_count"] = len(sorted_files)
 
         meta["status"] = "已连接"
         return meta

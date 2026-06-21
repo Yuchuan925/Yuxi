@@ -23,16 +23,28 @@ export const useDatabaseStore = defineStore('database', () => {
   const database = ref({})
   const kbId = ref(null)
   const selectedFile = ref(null)
+  const documentFiles = ref([])
+  const folderBreadcrumbs = ref([{ file_id: null, filename: '全部文件', path_prefix: '' }])
 
   const queryParams = ref([])
   const meta = reactive({})
   const selectedRowKeys = ref([])
+  const fileBrowser = reactive({
+    loading: false,
+    parentId: null,
+    page: 1,
+    pageSize: 100,
+    total: 0,
+    hasMore: false,
+    pathPrefix: '',
+    status: 'all',
+    recursive: false
+  })
 
   const state = reactive({
     listLoading: false,
     creating: false,
     databaseLoading: false,
-    searchLoading: false,
     lock: false,
     fileDetailModalVisible: false,
     fileDetailLoading: false,
@@ -46,6 +58,31 @@ export const useDatabaseStore = defineStore('database', () => {
   let refreshInterval = null
   let autoRefreshSource = null // Tracks whether auto-refresh was user-triggered or automatic
   let autoRefreshManualOverride = false // Indicates user explicitly disabled auto-refresh
+
+  function setCurrentFileMap(items = []) {
+    database.value = {
+      ...database.value,
+      files: Object.fromEntries(items.map((item) => [item.file_id, item]))
+    }
+  }
+
+  function resetFileBrowser() {
+    documentFiles.value = []
+    folderBreadcrumbs.value = [{ file_id: null, filename: '全部文件', path_prefix: '' }]
+    selectedRowKeys.value = []
+    Object.assign(fileBrowser, {
+      loading: false,
+      parentId: null,
+      page: 1,
+      pageSize: 100,
+      total: 0,
+      hasMore: false,
+      pathPrefix: '',
+      status: 'all',
+      recursive: false
+    })
+    setCurrentFileMap([])
+  }
 
   // Actions
   // 管理员获取所有知识库，普通用户获取有权限访问的知识库
@@ -112,8 +149,9 @@ export const useDatabaseStore = defineStore('database', () => {
     }
     try {
       const data = await databaseApi.getDatabaseInfo(kbIdValue)
-      database.value = data
-      ensureAutoRefreshForProcessing(data?.files)
+      const currentFiles = database.value.files || {}
+      database.value = { ...data, files: data?.files || currentFiles }
+      ensureAutoRefreshForProcessing(data?.files, data?.stats)
 
       // Only load query parameters if explicitly requested or if not loaded yet
       if (!skipQueryParams && queryParams.value.length === 0) {
@@ -171,6 +209,7 @@ export const useDatabaseStore = defineStore('database', () => {
     try {
       await documentApi.deleteDocument(kbId.value, fileId)
       await getDatabaseInfo(undefined, true) // Skip query params for file deletion
+      await loadDocumentFiles({ isBackground: true })
     } catch (error) {
       console.error(error)
       message.error(error.message || '删除失败')
@@ -251,6 +290,7 @@ export const useDatabaseStore = defineStore('database', () => {
 
           selectedRowKeys.value = []
           await getDatabaseInfo(undefined, true) // Skip query params for batch deletion
+          await loadDocumentFiles({ isBackground: true })
         } catch (error) {
           message.destroy(progressKey)
           console.error('批量删除出错:', error)
@@ -280,8 +320,13 @@ export const useDatabaseStore = defineStore('database', () => {
     }
   }
 
-  function ensureAutoRefreshForProcessing(filesMap) {
-    const files = Object.values(filesMap || {})
+  function ensureAutoRefreshForProcessing(filesMap, stats = null) {
+    if (Number(stats?.processing_count || 0) > 0) {
+      enableAutoRefresh('auto')
+      return true
+    }
+
+    const files = Array.isArray(filesMap) ? filesMap : Object.values(filesMap || {})
     const hasPending = files.some((file) => isProcessingFile(file))
     if (hasPending) {
       enableAutoRefresh('auto')
@@ -294,19 +339,107 @@ export const useDatabaseStore = defineStore('database', () => {
     return hasPending
   }
 
-  async function moveFile(fileId, newParentId) {
-    state.lock = true
+  async function loadDocumentFiles(options = {}) {
+    const kbIdValue = options.kbId || kbId.value
+    if (!kbIdValue) return
+
+    const nextStatus = options.status ?? fileBrowser.status
+    const nextRecursive = options.recursive ?? nextStatus !== 'all'
+    const nextParentId = nextRecursive ? null : (options.parentId ?? fileBrowser.parentId)
+    const nextPathPrefix = nextRecursive ? '' : (options.pathPrefix ?? fileBrowser.pathPrefix)
+    const nextPage = Number(options.page ?? fileBrowser.page) || 1
+    const nextPageSize = Number(options.pageSize ?? fileBrowser.pageSize) || 100
+
+    if (!options.isBackground) {
+      fileBrowser.loading = true
+    }
+
     try {
-      await documentApi.moveDocument(kbId.value, fileId, newParentId)
-      await getDatabaseInfo(undefined, true) // Skip query params for file movement
-      message.success('移动成功')
+      const params = {
+        page: nextPage,
+        page_size: nextPageSize,
+        status: nextStatus,
+        recursive: nextRecursive
+      }
+      if (!nextRecursive && nextParentId) {
+        params.parent_id = nextParentId
+      }
+      if (!nextRecursive && nextPathPrefix) {
+        params.path_prefix = nextPathPrefix
+      }
+
+      const data = await documentApi.listDocuments(kbIdValue, params)
+      const items = data?.items || []
+      documentFiles.value = items
+      setCurrentFileMap(items)
+      Object.assign(fileBrowser, {
+        parentId: nextParentId,
+        page: data?.page || nextPage,
+        pageSize: data?.page_size || nextPageSize,
+        total: data?.total || 0,
+        hasMore: Boolean(data?.has_more),
+        pathPrefix: data?.path_prefix || nextPathPrefix,
+        status: nextStatus,
+        recursive: nextRecursive
+      })
+
+      if (data?.stats) {
+        database.value = {
+          ...database.value,
+          stats: data.stats,
+          row_count: data.stats.row_count
+        }
+      }
+      ensureAutoRefreshForProcessing(items, data?.stats)
     } catch (error) {
       console.error(error)
-      message.error(error.message || '移动失败')
-      throw error
+      if (!options.isBackground) {
+        message.error(error.message || '加载文件列表失败')
+      }
     } finally {
-      state.lock = false
+      if (!options.isBackground) {
+        fileBrowser.loading = false
+      }
     }
+  }
+
+  async function enterFolder(folder) {
+    if (!folder?.is_folder) return
+    const isVirtualFolder = Boolean(folder.is_virtual_folder)
+    const currentParentId = fileBrowser.parentId
+    folderBreadcrumbs.value = [
+      ...folderBreadcrumbs.value,
+      {
+        file_id: folder.file_id,
+        filename: folder.filename,
+        is_virtual_folder: isVirtualFolder,
+        parent_id: isVirtualFolder ? currentParentId : folder.file_id,
+        path_prefix: isVirtualFolder ? folder.path_prefix || '' : ''
+      }
+    ]
+    selectedRowKeys.value = []
+    await loadDocumentFiles({
+      parentId: isVirtualFolder ? currentParentId : folder.file_id,
+      pathPrefix: isVirtualFolder ? folder.path_prefix || '' : '',
+      page: 1,
+      status: 'all',
+      recursive: false
+    })
+  }
+
+  async function goToFolder(index) {
+    const nextBreadcrumbs = folderBreadcrumbs.value.slice(0, index + 1)
+    const target = nextBreadcrumbs[nextBreadcrumbs.length - 1]
+    folderBreadcrumbs.value = nextBreadcrumbs
+    selectedRowKeys.value = []
+    const isVirtualFolder = Boolean(target?.is_virtual_folder)
+    await loadDocumentFiles({
+      parentId: isVirtualFolder ? target?.parent_id || null : target?.file_id || null,
+      pathPrefix: isVirtualFolder ? target?.path_prefix || '' : '',
+      page: 1,
+      status: 'all',
+      recursive: false
+    })
   }
 
   async function addFiles({ items, contentType, params, parentId }) {
@@ -489,6 +622,7 @@ export const useDatabaseStore = defineStore('database', () => {
     if (state.autoRefresh && !refreshInterval) {
       refreshInterval = setInterval(() => {
         getDatabaseInfo(undefined, true, true) // Skip loading query params during auto-refresh
+        loadDocumentFiles({ isBackground: true })
       }, 1000)
     }
   }
@@ -504,6 +638,7 @@ export const useDatabaseStore = defineStore('database', () => {
   async function delayedRefresh() {
     await new Promise((resolve) => setTimeout(resolve, 1000))
     await getDatabaseInfo(undefined, true)
+    await loadDocumentFiles({ isBackground: true })
   }
 
   function toggleAutoRefresh() {
@@ -555,9 +690,12 @@ export const useDatabaseStore = defineStore('database', () => {
     database,
     kbId,
     selectedFile,
+    documentFiles,
+    folderBreadcrumbs,
     queryParams,
     meta,
     selectedRowKeys,
+    fileBrowser,
     state,
     loadDatabases,
     createDatabase,
@@ -567,12 +705,15 @@ export const useDatabaseStore = defineStore('database', () => {
     deleteFile,
     handleDeleteFile,
     handleBatchDelete,
-    moveFile,
     addFiles,
     parseFiles,
     indexFiles,
     openFileDetail,
     loadQueryParams,
+    loadDocumentFiles,
+    enterFolder,
+    goToFolder,
+    resetFileBrowser,
 
     startAutoRefresh,
     stopAutoRefresh,
