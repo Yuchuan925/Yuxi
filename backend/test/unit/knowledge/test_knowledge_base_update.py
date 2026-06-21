@@ -257,3 +257,69 @@ async def test_repair_missing_file_stats_updates_files_and_database_metadata(tmp
     persisted_stats = persisted_kbs[0][1]["stats"]
     for key, value in expected_stats.items():
         assert persisted_stats[key] == value
+
+
+async def test_repair_missing_file_stats_skips_unindexed_files(tmp_path, monkeypatch):
+    kb = make_kb(tmp_path)
+    kb.databases_meta["db"]["metadata"] = {}
+    kb.files_meta = {
+        "file-indexed": {
+            "kb_id": "db",
+            "filename": "alpha.md",
+            "status": "indexed",
+            "chunk_count": 0,
+            "token_count": 0,
+        },
+        "file-uploaded": {
+            "kb_id": "db",
+            "filename": "beta.md",
+            "status": "uploaded",
+            "chunk_count": 9,
+            "token_count": 90,
+        },
+        "file-parsed": {
+            "kb_id": "db",
+            "filename": "gamma.md",
+            "status": "parsed",
+            "chunk_count": 3,
+            "token_count": 30,
+        },
+    }
+    persisted_files = []
+
+    class FakeChunkRepo:
+        async def count_by_file_ids(self, file_ids):
+            assert file_ids == ["file-indexed"]
+            return {"file-indexed": 2}
+
+        async def list_by_file_ids(self, file_ids):
+            assert file_ids == ["file-indexed"]
+            return [types.SimpleNamespace(file_id="file-indexed", content="alpha beta")]
+
+    async def persist_file(file_id):
+        persisted_files.append((file_id, dict(kb.files_meta[file_id])))
+
+    async def persist_kb(kb_id):
+        pass
+
+    monkeypatch.setattr("yuxi.repositories.knowledge_chunk_repository.KnowledgeChunkRepository", FakeChunkRepo)
+    kb._persist_file = persist_file
+    kb._persist_kb = persist_kb
+
+    result = await kb.repair_missing_file_stats("db")
+
+    expected_token_count = count_tokens("alpha beta")
+    assert kb.files_meta["file-indexed"]["chunk_count"] == 2
+    assert kb.files_meta["file-indexed"]["token_count"] == expected_token_count
+    assert kb.files_meta["file-uploaded"]["chunk_count"] == 0
+    assert kb.files_meta["file-uploaded"]["token_count"] == 0
+    assert kb.files_meta["file-parsed"]["chunk_count"] == 0
+    assert kb.files_meta["file-parsed"]["token_count"] == 0
+    assert result["stats"]["file_count"] == 3
+    assert result["stats"]["chunk_count"] == 2
+    assert result["stats"]["token_count"] == expected_token_count
+    assert result["scanned_files"] == 3
+    assert result["scanned_indexed_files"] == 1
+    assert result["skipped_unindexed_files"] == 2
+    assert result["updated_files"] == 3
+    assert {file_id for file_id, _ in persisted_files} == {"file-indexed", "file-uploaded", "file-parsed"}

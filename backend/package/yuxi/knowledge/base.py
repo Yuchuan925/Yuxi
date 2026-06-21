@@ -34,6 +34,14 @@ class FileStatus:
     ERROR_INDEXING = "error_indexing"
 
 
+INDEXED_STATS_STATUSES = {FileStatus.INDEXED, "done"}
+
+
+def _should_repair_file_stats(file_meta: dict) -> bool:
+    status = file_meta.get("status")
+    return status is None or status in INDEXED_STATS_STATUSES
+
+
 class KnowledgeBaseException(Exception):
     """知识库统一异常基类"""
 
@@ -1152,8 +1160,14 @@ class KnowledgeBase(ABC):
             if meta.get("kb_id") == kb_id and not meta.get("is_folder")
         ]
         chunk_repo = KnowledgeChunkRepository()
-        chunk_counts = await chunk_repo.count_by_file_ids(file_ids)
-        token_file_ids = [file_id for file_id in file_ids if int(self.files_meta[file_id].get("token_count") or 0) <= 0]
+        indexed_file_ids = [file_id for file_id in file_ids if _should_repair_file_stats(self.files_meta[file_id])]
+        indexed_file_id_set = set(indexed_file_ids)
+        skipped_file_count = len(file_ids) - len(indexed_file_ids)
+
+        chunk_counts = await chunk_repo.count_by_file_ids(indexed_file_ids)
+        token_file_ids = [
+            file_id for file_id in indexed_file_ids if int(self.files_meta[file_id].get("token_count") or 0) <= 0
+        ]
         token_counts = {file_id: 0 for file_id in token_file_ids}
         for chunk in await chunk_repo.list_by_file_ids(token_file_ids):
             token_counts[chunk.file_id] = token_counts.get(chunk.file_id, 0) + count_tokens(chunk.content or "")
@@ -1164,6 +1178,17 @@ class KnowledgeBase(ABC):
 
         for file_id in file_ids:
             meta = self.files_meta[file_id]
+            if file_id not in indexed_file_id_set:
+                if int(meta.get("chunk_count") or 0) != 0:
+                    meta["chunk_count"] = 0
+                    changed_file_ids.add(file_id)
+                    updated_chunk_files += 1
+                if int(meta.get("token_count") or 0) != 0:
+                    meta["token_count"] = 0
+                    changed_file_ids.add(file_id)
+                    updated_token_files += 1
+                continue
+
             next_chunk_count = int(chunk_counts.get(file_id, 0))
             if int(meta.get("chunk_count") or 0) != next_chunk_count:
                 meta["chunk_count"] = next_chunk_count
@@ -1187,6 +1212,8 @@ class KnowledgeBase(ABC):
             "status": "success",
             "stats": stats,
             "scanned_files": len(file_ids),
+            "scanned_indexed_files": len(indexed_file_ids),
+            "skipped_unindexed_files": skipped_file_count,
             "scanned_token_files": len(token_file_ids),
             "updated_files": len(changed_file_ids),
             "updated_chunk_files": updated_chunk_files,
