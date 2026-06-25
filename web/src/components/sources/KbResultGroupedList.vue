@@ -40,6 +40,7 @@
                 <span v-if="typeof chunk.rerank_score === 'number'" class="score-item"
                   >重排序 {{ (chunk.rerank_score * 100).toFixed(0) }}%</span
                 >
+                <span v-if="getLineRange(chunk)" class="score-item">{{ getLineRange(chunk) }}</span>
               </div>
               <span class="chunk-preview">{{ getPreviewText(chunk.content) }}</span>
               <Eye :size="14" class="view-icon" />
@@ -168,6 +169,13 @@ const getChunkKey = (chunk, index) => {
 const getPreviewText = (text = '') => {
   const content = String(text)
   return content.length <= 100 ? content : `${content.substring(0, 100)}...`
+}
+
+const getLineRange = (chunk) => {
+  const startLine = Number(chunk?.metadata?.start_line || 0)
+  const endLine = Number(chunk?.metadata?.end_line || 0)
+  if (!startLine || !endLine) return ''
+  return startLine === endLine ? `第 ${startLine} 行` : `第 ${startLine}-${endLine} 行`
 }
 
 const openChunkDetail = (chunk, index) => {

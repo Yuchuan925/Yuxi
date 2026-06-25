@@ -14,7 +14,13 @@ from yuxi.agents.middlewares.skills import (
 )
 from yuxi.agents.toolkits.service import resolve_configured_runtime_tools
 
-_KB_TOOL_NAMES = {"list_kbs", "query_kb", "find_kb_document", "open_kb_document", "get_mindmap"}
+_KB_TOOL_NAMES = {
+    "list_kbs",
+    "query_kb",
+    "find_kb_document",
+    "open_kb_document",
+    "get_mindmap",
+}
 
 
 def _system_message_text(message: SystemMessage) -> str:

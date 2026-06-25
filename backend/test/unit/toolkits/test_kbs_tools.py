@@ -70,17 +70,24 @@ def _build_test_window(content: str, offset: int = 0, limit: int = 1800) -> dict
 
 
 def _patch_retrievers(monkeypatch, *, kb_type: str = "milvus", retriever=None):
-    monkeypatch.setattr(
-        tools.knowledge_base,
-        "get_retrievers",
-        lambda: {
+    async def _not_configured(*args, **kwargs):
+        del args, kwargs
+        raise AssertionError("knowledge base method is not configured for this test")
+
+    manager = SimpleNamespace(
+        get_retrievers=lambda: {
             "db-1": {
                 "name": "FAQ",
                 "retriever": retriever or object(),
                 "metadata": {"kb_type": kb_type},
             }
         },
+        find_file_content=_not_configured,
+        open_file_content=_not_configured,
     )
+    monkeypatch.setattr(tools, "_get_knowledge_base", lambda: manager)
+    monkeypatch.setattr(tools, "knowledge_base", manager, raising=False)
+    return manager
 
 
 async def _fake_visible_kbs(runtime):

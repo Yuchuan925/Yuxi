@@ -17,7 +17,7 @@ from yuxi.utils.paths import VIRTUAL_PATH_CONVERSATION_HISTORY, VIRTUAL_PATH_LAR
 from .sandbox import ProvisionerSandboxBackend
 from .skills_backend import SelectedSkillsReadonlyBackend
 
-_TOOL_RESULT_EVICTION_EXEMPT_TOOLS = frozenset({"read_file"})
+_TOOL_RESULT_EVICTION_EXEMPT_TOOLS = frozenset({"read_file", "open_kb_document"})
 
 
 def _coerce_glob_result(result) -> GlobResult:

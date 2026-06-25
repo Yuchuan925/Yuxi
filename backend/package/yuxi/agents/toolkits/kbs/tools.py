@@ -198,6 +198,12 @@ def _find_query_target(
     return target_info, normalized_kb_id, None
 
 
+async def _build_query_output(knowledge_base: Any, target_kb_id: str, result: Any) -> Any:
+    if isinstance(result, dict) and result.get("kb_id") == target_kb_id and isinstance(result.get("results"), list):
+        return SearchOutputSchema(**result).model_dump()
+    return KnowledgeBase.build_search_output(target_kb_id, result)
+
+
 @tool(category="knowledge", tags=["知识库"], args_schema=QueryKBInput)
 async def query_kb(kb_id: str, query_text: str, file_name: str | None = None, runtime: ToolRuntime = None) -> Any:
     """在指定知识库中检索内容
@@ -232,9 +238,7 @@ async def query_kb(kb_id: str, query_text: str, file_name: str | None = None, ru
         else:
             result = retriever(query_text, **kwargs)
 
-        if isinstance(result, dict) and result.get("kb_id") == target_kb_id and isinstance(result.get("results"), list):
-            return SearchOutputSchema(**result).model_dump()
-        return KnowledgeBase.build_search_output(target_kb_id, result)
+        return await _build_query_output(knowledge_base, target_kb_id, result)
 
     except Exception as e:
         logger.error(f"检索失败: {e}")

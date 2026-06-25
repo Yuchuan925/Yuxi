@@ -8,7 +8,12 @@ from abc import ABC, abstractmethod
 from typing import Any
 
 from yuxi.knowledge.chunking.ragflow_like.presets import ensure_chunk_defaults_in_additional_params
-from yuxi.knowledge.schemas import FindOutputSchema, FindWindowSchema, SearchOutputSchema, SearchResultSchema
+from yuxi.knowledge.schemas import (
+    FindOutputSchema,
+    FindWindowSchema,
+    SearchOutputSchema,
+    SearchResultSchema,
+)
 from yuxi.knowledge.utils import resolve_processing_params, sanitize_processing_params
 from yuxi.services.file_preview import (
     MAX_BINARY_PREVIEW_SIZE_BYTES,
@@ -207,16 +212,6 @@ class KnowledgeBase(ABC):
             raise ValueError(f"File {file_id} not found")
 
         return self._file_record_to_meta(record)
-
-    async def _load_file_metas(self, kb_id: str, file_ids: list[str]) -> dict[str, dict]:
-        normalized_ids = [file_id for file_id in file_ids if file_id]
-        if not normalized_ids:
-            return {}
-
-        from yuxi.repositories.knowledge_file_repository import KnowledgeFileRepository
-
-        records = await KnowledgeFileRepository().list_by_file_ids(normalized_ids)
-        return {record.file_id: self._file_record_to_meta(record) for record in records if record.kb_id == kb_id}
 
     def _normalize_metadata_state(self) -> None:
         """Ensure in-memory metadata uses normalized timestamp formats."""

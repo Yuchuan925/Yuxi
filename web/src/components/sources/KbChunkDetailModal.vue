@@ -15,6 +15,7 @@
       <span v-if="chunk.metadata?.chunk_id" class="meta-item"
         >chunk_id: {{ chunk.metadata.chunk_id }}</span
       >
+      <span v-if="lineRange" class="meta-item">{{ lineRange }}</span>
     </div>
 
     <MarkdownPreview
@@ -56,6 +57,13 @@ const modalTitle = computed(() => {
   const source = props.chunk?.metadata?.source
   return source ? `${props.titlePrefix} - ${source}` : props.titlePrefix
 })
+
+const lineRange = computed(() => {
+  const startLine = Number(props.chunk?.metadata?.start_line || 0)
+  const endLine = Number(props.chunk?.metadata?.end_line || 0)
+  if (!startLine || !endLine) return ''
+  return startLine === endLine ? `第 ${startLine} 行` : `第 ${startLine}-${endLine} 行`
+})
 </script>
 
 <style scoped lang="less">
@@ -64,6 +72,7 @@ const modalTitle = computed(() => {
   font-size: 12px;
   color: var(--gray-600);
   display: flex;
+  flex-wrap: wrap;
   gap: 10px;
 
   .score {
