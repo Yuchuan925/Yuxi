@@ -67,6 +67,152 @@ def test_prepare_run_input_message_keeps_invocation_meta_namespaced():
     assert "custom_variables" not in input_message.extra_metadata
 
 
+def _progress_event(seq: str, chunks: list[dict]) -> dict:
+    return {
+        "seq": seq,
+        "event_type": "messages",
+        "payload": {
+            "schema_version": 1,
+            "run_id": "run-1",
+            "thread_id": "thread-1",
+            "event": "messages",
+            "payload": {"items": chunks},
+            "created_at": "2026-06-30T00:00:00+00:00",
+        },
+        "ts": 1700000000000,
+    }
+
+
+def _progress_chunk(stream_event: dict) -> dict:
+    return {"status": "loading", "stream_event": stream_event}
+
+
+@pytest.mark.asyncio
+async def test_get_agent_run_progress_returns_empty_progress_for_empty_events(monkeypatch: pytest.MonkeyPatch):
+    async def fake_list_recent_run_stream_events(run_id: str, *, limit: int):
+        assert run_id == "run-1"
+        assert limit == agent_run_service.RUN_PROGRESS_RECENT_EVENT_SCAN_LIMIT
+        return []
+
+    monkeypatch.setattr(agent_run_service, "list_recent_run_stream_events", fake_list_recent_run_stream_events)
+
+    assert await agent_run_service.get_agent_run_progress("run-1") == {"last_seq": "0-0", "messages": []}
+
+
+@pytest.mark.asyncio
+async def test_get_agent_run_progress_extracts_recent_message_delta_events(monkeypatch: pytest.MonkeyPatch):
+    async def fake_list_recent_run_stream_events(run_id: str, *, limit: int):
+        del run_id, limit
+        return [
+            _progress_event(
+                "2-0",
+                [
+                    _progress_chunk({"type": "message_delta", "message_id": "msg-1", "content": " world"}),
+                    _progress_chunk({"type": "message_delta", "message_id": "msg-2", "content": "new"}),
+                ],
+            ),
+            _progress_event(
+                "1-0",
+                [_progress_chunk({"type": "message_delta", "message_id": "msg-1", "content": "hello"})],
+            ),
+        ]
+
+    monkeypatch.setattr(agent_run_service, "list_recent_run_stream_events", fake_list_recent_run_stream_events)
+
+    progress = await agent_run_service.get_agent_run_progress("run-1")
+
+    assert progress["last_seq"] == "2-0"
+    assert progress["messages"] == [
+        {
+            "seq": "1-0",
+            "kind": "assistant_message",
+            "message_id": "msg-1",
+            "content": "hello",
+        },
+        {
+            "seq": "2-0",
+            "kind": "assistant_message",
+            "message_id": "msg-1",
+            "content": "world",
+        },
+        {
+            "seq": "2-0",
+            "kind": "assistant_message",
+            "message_id": "msg-2",
+            "content": "new",
+        },
+    ]
+
+
+@pytest.mark.asyncio
+async def test_get_agent_run_progress_keeps_latest_three_readable_items(monkeypatch: pytest.MonkeyPatch):
+    events = [
+        _progress_event(
+            f"{seq}-0",
+            [_progress_chunk({"type": "message_delta", "message_id": f"msg-{seq}", "content": f"message-{seq}"})],
+        )
+        for seq in range(4, 0, -1)
+    ]
+
+    async def fake_list_recent_run_stream_events(run_id: str, *, limit: int):
+        del run_id, limit
+        return events
+
+    monkeypatch.setattr(agent_run_service, "list_recent_run_stream_events", fake_list_recent_run_stream_events)
+
+    progress = await agent_run_service.get_agent_run_progress("run-1")
+
+    assert progress["last_seq"] == "4-0"
+    assert [item["message_id"] for item in progress["messages"]] == ["msg-2", "msg-3", "msg-4"]
+
+
+@pytest.mark.asyncio
+async def test_get_agent_run_progress_extracts_tool_call_events(monkeypatch: pytest.MonkeyPatch):
+    async def fake_list_recent_run_stream_events(run_id: str, *, limit: int):
+        del run_id, limit
+        return [
+            _progress_event(
+                "3-0",
+                [
+                    _progress_chunk(
+                        {
+                            "type": "tool_call",
+                            "message_id": "msg-3",
+                            "tool_call_id": "call-3",
+                            "name": "write_file",
+                            "args": {"path": "/home/gem/user-data/outputs/report.md"},
+                        }
+                    )
+                ],
+            ),
+            _progress_event(
+                "2-0",
+                [
+                    _progress_chunk(
+                        {
+                            "type": "tool_call_delta",
+                            "message_id": "msg-2",
+                            "tool_call_id": "call-2",
+                            "name": "read_file",
+                            "args_delta": '{"path":',
+                        }
+                    )
+                ],
+            ),
+        ]
+
+    monkeypatch.setattr(agent_run_service, "list_recent_run_stream_events", fake_list_recent_run_stream_events)
+
+    progress = await agent_run_service.get_agent_run_progress("run-1")
+
+    assert progress["messages"][0]["kind"] == "tool_call_delta"
+    assert progress["messages"][0]["tool_call_id"] == "call-2"
+    assert progress["messages"][0]["content"] == "正在准备工具 read_file"
+    assert progress["messages"][1]["kind"] == "tool_call"
+    assert progress["messages"][1]["tool_call_id"] == "call-3"
+    assert progress["messages"][1]["content"] == "调用工具 write_file"
+
+
 class _FakeContext:
     def __init__(self):
         self.model = "agent-default-model"

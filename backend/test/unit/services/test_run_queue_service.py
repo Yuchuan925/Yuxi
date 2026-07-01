@@ -80,6 +80,10 @@ async def test_run_stream_event_roundtrip(monkeypatch: pytest.MonkeyPatch):
     last_seq = await run_queue_service.get_last_run_stream_seq(run_id)
     assert last_seq == seq2
 
+    recent_events = await run_queue_service.list_recent_run_stream_events(run_id, limit=2)
+    assert [item["seq"] for item in recent_events] == [seq2, seq1]
+    assert [item["event_type"] for item in recent_events] == ["finished", "loading"]
+
 
 def test_normalize_after_seq_stream_id_only():
     assert run_queue_service.normalize_after_seq(None) == "0-0"

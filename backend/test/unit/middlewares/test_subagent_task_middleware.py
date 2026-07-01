@@ -544,9 +544,17 @@ async def test_subagent_status_returns_terminal_result(monkeypatch) -> None:
         captured["get_agent_run_result"] = {"run_id": run_id, "current_uid": current_uid, "db": db}
         return {"status": "completed", "output": "final result"}
 
+    async def fake_get_agent_run_progress(run_id: str):
+        captured["get_agent_run_progress"] = run_id
+        return {
+            "last_seq": "3-0",
+            "messages": [{"seq": "3-0", "kind": "assistant_message", "message_id": "msg-1", "content": "working"}],
+        }
+
     _patch_session(monkeypatch)
     _patch_subagent_run_service(monkeypatch, _SubagentRunService)
     monkeypatch.setattr(agent_run_service, "get_agent_run_result", fake_get_agent_run_result)
+    monkeypatch.setattr(agent_run_service, "get_agent_run_progress", fake_get_agent_run_progress)
 
     tool = next(item for item in _async_tool_middleware().tools if item.name == "subagent_status")
     result = await tool.coroutine(run_id="child-run", runtime=SimpleNamespace(tool_call_id="status-call"))
@@ -554,7 +562,9 @@ async def test_subagent_status_returns_terminal_result(monkeypatch) -> None:
     assert isinstance(result, Command)
     payload = json.loads(result.update["messages"][0].content)
     assert payload["status"] == "completed"
+    assert payload["progress"]["messages"][0]["content"] == "working"
     assert payload["result"]["output"] == "final result"
+    assert captured["get_agent_run_progress"] == "child-run"
     assert captured["get_run_for_creator"] == {
         "uid": "user-1",
         "created_by_run_id": "parent-run",
@@ -573,6 +583,51 @@ async def test_subagent_status_returns_terminal_result(monkeypatch) -> None:
             "result_url": "/api/agent/runs/child-run/result",
         }
     ]
+
+
+@pytest.mark.asyncio
+async def test_subagent_status_returns_progress_for_running_run(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    class _SubagentRunService:
+        def __init__(self, db):
+            captured["db"] = db
+
+        async def get_run_for_creator(self, **kwargs):
+            captured["get_run_for_creator"] = kwargs
+            return _subagent_run(status="running")
+
+    async def fake_get_agent_run_result(**kwargs):
+        raise AssertionError(f"running status should not load terminal result: {kwargs}")
+
+    async def fake_get_agent_run_progress(run_id: str):
+        captured["get_agent_run_progress"] = run_id
+        return {
+            "last_seq": "9-0",
+            "messages": [
+                {"seq": "8-0", "kind": "tool_call", "tool_call_id": "call-1", "content": "调用工具 read_file"},
+                {"seq": "9-0", "kind": "assistant_message", "message_id": "msg-2", "content": "正在整理结果"},
+            ],
+        }
+
+    _patch_session(monkeypatch)
+    _patch_subagent_run_service(monkeypatch, _SubagentRunService)
+    monkeypatch.setattr(agent_run_service, "get_agent_run_result", fake_get_agent_run_result)
+    monkeypatch.setattr(agent_run_service, "get_agent_run_progress", fake_get_agent_run_progress)
+
+    tool = next(item for item in _async_tool_middleware().tools if item.name == "subagent_status")
+    result = await tool.coroutine(run_id="child-run", runtime=SimpleNamespace(tool_call_id="status-call"))
+
+    payload = json.loads(result.update["messages"][0].content)
+    assert payload["status"] == "running"
+    assert "result" not in payload
+    assert payload["progress"]["last_seq"] == "9-0"
+    assert [item["content"] for item in payload["progress"]["messages"]] == ["调用工具 read_file", "正在整理结果"]
+    assert captured["get_run_for_creator"] == {
+        "uid": "user-1",
+        "created_by_run_id": "parent-run",
+        "run_id": "child-run",
+    }
 
 
 @pytest.mark.asyncio

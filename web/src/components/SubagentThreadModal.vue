@@ -63,6 +63,10 @@ const props = defineProps({
     type: String,
     default: ''
   },
+  runStatus: {
+    type: String,
+    default: ''
+  },
   subagentName: {
     type: String,
     default: ''
@@ -91,6 +95,7 @@ const loading = ref(false)
 const error = ref('')
 const messages = ref([])
 const historyRunId = ref('')
+const historyRunStatus = ref('')
 const activeStreamRunId = ref('')
 const streamReplayActive = ref(false)
 const modalBodyRef = ref(null)
@@ -103,7 +108,12 @@ let modalScrollContainer = null
 let modalResizeObserver = null
 let scheduledScrollFrame = null
 
+const RUN_TERMINAL_STATUSES = new Set(['completed', 'failed', 'cancelled', 'interrupted'])
+const normalizeRunStatus = (status) => String(status || '').trim()
+const isTerminalRunStatus = (status) => RUN_TERMINAL_STATUSES.has(normalizeRunStatus(status))
+
 const modalTitleName = computed(() => props.subagentName || '子智能体')
+const effectiveRunStatus = computed(() => normalizeRunStatus(historyRunStatus.value || props.runStatus))
 const getStreamThreadState = (threadId) => {
   if (!threadId) return null
   if (!streamState.threadStates[threadId]) {
@@ -154,11 +164,20 @@ const streamedMessages = computed(() => {
     : []
 })
 const hasStreamedMessages = computed(() => streamedMessages.value.length > 0)
-const displayOngoingMessages = computed(() =>
-  hasStreamedMessages.value ? streamedMessages.value : props.ongoingMessages
+const displayOngoingMessages = computed(() => {
+  if (isTerminalRunStatus(effectiveRunStatus.value)) return []
+  return hasStreamedMessages.value ? streamedMessages.value : props.ongoingMessages
+})
+const displayMessages = computed(() =>
+  hasStreamedMessages.value && !isTerminalRunStatus(effectiveRunStatus.value)
+    ? []
+    : messages.value
 )
-const displayMessages = computed(() => (hasStreamedMessages.value ? [] : messages.value))
-const displayIsStreaming = computed(() => props.isStreaming || streamReplayActive.value)
+const displayIsStreaming = computed(
+  () =>
+    !isTerminalRunStatus(effectiveRunStatus.value) &&
+    (props.isStreaming || streamReplayActive.value)
+)
 const effectiveRunId = computed(() => props.runId || historyRunId.value)
 const hasRenderableMessages = computed(
   () => displayMessages.value.length > 0 || displayOngoingMessages.value.length > 0
@@ -237,20 +256,52 @@ const flattenContent = (content) => {
   return content ?? ''
 }
 
+const normalizeMessages = (items) =>
+  (Array.isArray(items) ? items : []).map((msg) => ({
+    ...msg,
+    content: flattenContent(msg.content)
+  }))
+
+const loadPersistedMessages = async (threadId) => {
+  const response = await agentApi.getAgentHistory(threadId)
+  messages.value = normalizeMessages(response.history || [])
+}
+
 const loadHistory = async (threadId) => {
   if (!threadId) return
   loading.value = true
   error.value = ''
   messages.value = []
   try {
+    historyRunStatus.value = normalizeRunStatus(props.runStatus)
+    if (isTerminalRunStatus(historyRunStatus.value)) {
+      stopRunStream()
+      resetStreamState()
+      await loadPersistedMessages(threadId)
+      await nextTick()
+      if (props.open && props.childThreadId === threadId) {
+        scheduleScrollToBottom(true, true)
+      }
+      return
+    }
+
     // 子智能体消息存于 LangGraph checkpoint，需走 state 接口并把 tool 结果嵌入 AI 消息。
     const response = await agentApi.getAgentState(threadId, { includeMessages: true })
     historyRunId.value = response?.subagent_run?.run_id ? String(response.subagent_run.run_id) : ''
+    historyRunStatus.value = normalizeRunStatus(response?.subagent_run?.status || props.runStatus)
+    if (isTerminalRunStatus(historyRunStatus.value)) {
+      stopRunStream()
+      resetStreamState()
+      await loadPersistedMessages(threadId)
+      await nextTick()
+      if (props.open && props.childThreadId === threadId) {
+        scheduleScrollToBottom(true, true)
+      }
+      return
+    }
+
     // checkpoint 的 content 可能是 LangChain 内容块数组，扁平成文本供 MarkdownPreview 渲染。
-    const normalized = (response.messages || []).map((msg) => ({
-      ...msg,
-      content: flattenContent(msg.content)
-    }))
+    const normalized = normalizeMessages(response.messages || [])
     messages.value = MessageProcessor.convertToolResultToMessages(normalized)
     await nextTick()
     if (props.open && props.childThreadId === threadId) {
@@ -287,7 +338,7 @@ const routeChunkThreadId = (data, payload, chunk) => {
 const startRunStreamReplay = async (runId) => {
   stopRunStream()
   resetStreamState()
-  if (!runId || !props.childThreadId) return
+  if (!runId || !props.childThreadId || isTerminalRunStatus(effectiveRunStatus.value)) return
 
   const controller = new AbortController()
   streamAbortController = controller
@@ -356,11 +407,12 @@ const startRunStreamReplay = async (runId) => {
 }
 
 watch(
-  () => [props.open, props.childThreadId],
+  () => [props.open, props.childThreadId, props.runStatus],
   ([isOpen, threadId]) => {
     stopRunStream()
     resetStreamState()
     historyRunId.value = ''
+    historyRunStatus.value = ''
     if (isOpen && threadId) {
       attachModalScrollTracking()
       scheduleScrollToBottom(true, true)
@@ -373,9 +425,13 @@ watch(
 )
 
 watch(
-  () => [props.open, props.childThreadId, effectiveRunId.value],
-  ([isOpen, threadId, runId]) => {
+  () => [props.open, props.childThreadId, effectiveRunId.value, effectiveRunStatus.value],
+  ([isOpen, threadId, runId, runStatus]) => {
     if (!isOpen || !threadId || !runId) return
+    if (!runStatus || isTerminalRunStatus(runStatus)) {
+      stopRunStream()
+      return
+    }
     if (activeStreamRunId.value === runId && streamAbortController) return
     startRunStreamReplay(runId)
   },

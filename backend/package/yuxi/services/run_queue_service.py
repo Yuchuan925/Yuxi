@@ -223,6 +223,43 @@ async def list_run_stream_events(
     return events
 
 
+async def list_recent_run_stream_events(run_id: str, *, limit: int = 100) -> list[dict]:
+    """从 Redis Stream 反向读取最近的 run events，返回顺序为新到旧。"""
+    redis = await get_redis_client()
+    key = _event_stream_key(run_id)
+    rows = await redis.xrevrange(key, max="+", min="-", count=limit)
+    events = []
+
+    for event_id, fields in rows:
+        payload_raw = fields.get("payload") or "{}"
+        try:
+            payload = json.loads(payload_raw)
+        except Exception:
+            payload = {}
+
+        event_type = fields.get("event_type") or "message"
+        if not isinstance(payload, dict) or payload.get("schema_version") != 1:
+            payload = {
+                "schema_version": 1,
+                "run_id": run_id,
+                "thread_id": None,
+                "event": event_type,
+                "payload": payload if isinstance(payload, dict) else {},
+                "created_at": None,
+            }
+
+        ts_value = fields.get("ts")
+        events.append(
+            {
+                "seq": str(event_id),
+                "event_type": event_type,
+                "payload": payload,
+                "ts": int(ts_value) if ts_value else None,
+            }
+        )
+    return events
+
+
 async def get_last_run_stream_seq(run_id: str) -> str:
     redis = await get_redis_client()
     key = _event_stream_key(run_id)

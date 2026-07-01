@@ -41,6 +41,7 @@ from yuxi.services.run_queue_service import (
     get_arq_pool,
     get_last_run_stream_seq,
     list_run_stream_events,
+    list_recent_run_stream_events,
     normalize_after_seq,
     publish_cancel_signal,
 )
@@ -53,6 +54,9 @@ from yuxi.utils.logging_config import logger
 SSE_HEARTBEAT_SECONDS = int(os.getenv("RUN_SSE_HEARTBEAT_SECONDS", "15"))  # SSE 连接空闲多久发送心跳
 SSE_MAX_CONNECTION_MINUTES = int(os.getenv("RUN_SSE_MAX_CONNECTION_MINUTES", "30"))  # SSE 连接最大持续时间
 SSE_POLL_INTERVAL_SECONDS = float(os.getenv("RUN_SSE_POLL_INTERVAL_SECONDS", "1.0"))  # SSE 轮询间隔
+RUN_PROGRESS_RECENT_EVENT_SCAN_LIMIT = 100
+RUN_PROGRESS_MESSAGE_LIMIT = 3
+RUN_PROGRESS_CONTENT_MAX_CHARS = 800
 
 
 def _resolve_agent_run_request_id(
@@ -270,6 +274,82 @@ def _compact_run_event_envelope(envelope: dict) -> dict | None:
         compact["request_id"] = request_id
     compact["payload"] = _compact_run_event_payload(event_type, payload)
     return compact
+
+
+def _progress_message_from_chunk(chunk: dict, *, seq: str) -> dict | None:
+    """把单个消息 chunk 转成 status 可展示的一条进度。"""
+    stream_event = chunk.get("stream_event")
+    if not isinstance(stream_event, dict):
+        return None
+    stream_type = stream_event.get("type")
+    message_id = str(stream_event.get("message_id") or "").strip()
+
+    content = ""
+    kind = ""
+    if stream_type == "message_delta":
+        content = (
+            stream_event.get("content")
+            or stream_event.get("reasoning_content")
+            or stream_event.get("additional_reasoning_content")
+            or ""
+        )
+        kind = "assistant_message" if stream_event.get("content") else "assistant_reasoning"
+    elif stream_type in {"tool_call", "tool_call_delta"}:
+        tool_name = str(stream_event.get("name") or stream_event.get("tool_call_id") or "工具").strip()
+        content = f"调用工具 {tool_name}" if stream_type == "tool_call" else f"正在准备工具 {tool_name}"
+        kind = stream_type
+    else:
+        return None
+
+    content = str(content).strip()
+    if not content:
+        return None
+    if len(content) > RUN_PROGRESS_CONTENT_MAX_CHARS:
+        content = "..." + content[-RUN_PROGRESS_CONTENT_MAX_CHARS:]
+
+    base = {"seq": seq}
+    if message_id:
+        base["message_id"] = message_id
+    tool_call_id = str(stream_event.get("tool_call_id") or "").strip()
+    if tool_call_id:
+        base["tool_call_id"] = tool_call_id
+    return {**base, "kind": kind, "content": content}
+
+
+async def get_agent_run_progress(run_id: str, *, message_limit: int = RUN_PROGRESS_MESSAGE_LIMIT) -> dict:
+    """读取适合 status 轮询返回的轻量运行进度快照。"""
+    try:
+        events = await list_recent_run_stream_events(run_id, limit=RUN_PROGRESS_RECENT_EVENT_SCAN_LIMIT)
+    except Exception as e:
+        logger.warning(f"Failed to read run progress events for run {run_id}: {e}")
+        return {"last_seq": "0-0", "messages": []}
+
+    last_seq = str(events[0]["seq"]) if events else "0-0"
+    limit = max(1, int(message_limit or RUN_PROGRESS_MESSAGE_LIMIT))
+    messages = []
+
+    for event in events:
+        envelope = event.get("payload") if isinstance(event.get("payload"), dict) else {}
+        if event.get("event_type") != "messages" and envelope.get("event") != "messages":
+            continue
+        payload = envelope.get("payload")
+        if not isinstance(payload, dict):
+            continue
+
+        chunks = []
+        if isinstance(payload.get("chunk"), dict):
+            chunks.append(payload["chunk"])
+        if isinstance(payload.get("items"), list):
+            chunks.extend(item for item in payload["items"] if isinstance(item, dict))
+
+        for chunk in reversed(chunks):
+            message = _progress_message_from_chunk(chunk, seq=str(event.get("seq") or ""))
+            if message:
+                messages.append(message)
+            if len(messages) >= limit:
+                return {"last_seq": last_seq, "messages": list(reversed(messages))}
+
+    return {"last_seq": last_seq, "messages": list(reversed(messages))}
 
 
 async def create_agent_run_view(

@@ -549,6 +549,7 @@
       v-model:open="subagentThreadModal.open"
       :child-thread-id="subagentThreadModal.childThreadId"
       :run-id="activeSubagentThreadRunId"
+      :run-status="activeSubagentThreadRunStatus"
       :subagent-name="activeSubagentThreadName"
       :subagent-avatar="activeSubagentThreadAvatar"
       :subagent-default-avatar="activeSubagentThreadDefaultAvatar"
@@ -1222,6 +1223,7 @@ const subagentThreadModal = reactive({
   open: false,
   childThreadId: '',
   runId: '',
+  runStatus: '',
   subagentName: '',
   subagentAvatar: '',
   subagentDefaultAvatar: ''
@@ -1230,6 +1232,7 @@ const openSubagentThread = (run) => {
   if (!run?.child_thread_id) return
   subagentThreadModal.childThreadId = String(run.child_thread_id)
   subagentThreadModal.runId = run.run_id ? String(run.run_id) : ''
+  subagentThreadModal.runStatus = run.status ? String(run.status) : ''
   subagentThreadModal.subagentName = getSubagentRunName(run)
   subagentThreadModal.subagentAvatar = getSubagentIconSrc(run)
   subagentThreadModal.subagentDefaultAvatar = getSubagentDefaultIconSrc(run)
@@ -1519,6 +1522,11 @@ const activeSubagentThreadRunId = computed(() =>
   activeSubagentThreadRun.value?.run_id
     ? String(activeSubagentThreadRun.value.run_id)
     : subagentThreadModal.runId
+)
+const activeSubagentThreadRunStatus = computed(() =>
+  activeSubagentThreadRun.value?.status
+    ? String(activeSubagentThreadRun.value.status)
+    : subagentThreadModal.runStatus
 )
 const activeSubagentThreadAvatar = computed(() =>
   activeSubagentThreadRun.value

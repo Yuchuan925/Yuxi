@@ -81,7 +81,10 @@ Returns a child thread ID for future continuation and a run ID for status/events
 Use this for long-running or parallelizable subagent work. If `thread_id` is provided, it continues that subagent
 thread when no active run is currently writing to it."""
 
-SUBAGENT_STATUS_DESCRIPTION = """Check a subagent run status by run_id."""
+SUBAGENT_STATUS_DESCRIPTION = """Check a subagent run status by run_id.
+
+Returns the current run status, a compact progress summary with the latest 3 readable messages, and the final result
+when the run has reached a terminal status."""
 
 SUBAGENT_EVENTS_DESCRIPTION = """Read recent events for a subagent run by run_id and Redis stream cursor."""
 
@@ -253,7 +256,7 @@ class YuxiSubAgentMiddleware(AgentMiddleware[Any, ContextT, ResponseT]):
             run_id: Annotated[str, SUBAGENT_RUN_ID_ARG],
             runtime: ToolRuntime,
         ) -> str | Command:
-            from yuxi.services.agent_run_service import get_agent_run_result
+            from yuxi.services.agent_run_service import get_agent_run_progress, get_agent_run_result
 
             parent_runtime, runtime_error = self._require_async_parent_runtime("无法查询子智能体")
             if runtime_error:
@@ -281,6 +284,7 @@ class YuxiSubAgentMiddleware(AgentMiddleware[Any, ContextT, ResponseT]):
                 "thread_id": run.conversation_thread_id,
                 "subagent_slug": run.agent_slug,
                 "error": run.error_message,
+                "progress": await get_agent_run_progress(run.id),
                 **subagent_service.subagent_run_urls(run.id),
             }
             if result:

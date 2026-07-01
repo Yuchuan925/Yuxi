@@ -27,6 +27,17 @@
           </div>
         </div>
 
+        <div v-if="progressMessages.length" class="progress-list">
+          <div
+            v-for="(message, index) in progressMessages"
+            :key="progressMessageKey(message, index)"
+            class="progress-row"
+          >
+            <span class="progress-kind">{{ progressKindLabel(message.kind) }}</span>
+            <span class="progress-content">{{ message.content }}</span>
+          </div>
+        </div>
+
         <div v-if="events.length" class="events-list">
           <div
             v-for="event in events"
@@ -80,6 +91,13 @@ const TOOL_LABELS = {
   subagent_events: '读取子智能体事件',
   subagent_cancel: '取消子智能体',
   subagent_await: '等待子智能体'
+}
+
+const PROGRESS_KIND_LABELS = {
+  assistant_message: '消息',
+  assistant_reasoning: '思考',
+  tool_call: '工具',
+  tool_call_delta: '工具'
 }
 
 const STATUS_LABELS = {
@@ -178,7 +196,7 @@ const metaItems = computed(() => {
       'subagent_slug',
       result.subagent_slug || args.value.subagent_slug || subagentRun.value?.subagent_slug
     ],
-    ['last_seq', result.last_seq],
+    ['last_seq', result.last_seq || result.progress?.last_seq],
     ['events', Array.isArray(result.events) ? `${result.events.length} 条` : '']
   ]
   return items
@@ -191,6 +209,23 @@ const events = computed(() => {
   return Array.isArray(value) ? value.slice(0, 8) : []
 })
 
+const progressMessages = computed(() => {
+  const value = parsedResult.value?.progress?.messages
+  if (!Array.isArray(value)) return []
+  return value
+    .filter((message) => String(message?.content || '').trim())
+    .slice(0, 3)
+    .map((message) => ({
+      ...message,
+      content: String(message.content || '').trim()
+    }))
+})
+
+const progressKindLabel = (kind) => PROGRESS_KIND_LABELS[kind] || '进度'
+
+const progressMessageKey = (message, index) =>
+  [message?.seq, message?.message_id, message?.tool_call_id, index].filter(Boolean).join(':')
+
 const resultText = computed(() => {
   const result = parsedResult.value?.result
   if (!result) return ''
@@ -201,7 +236,8 @@ const resultText = computed(() => {
 })
 
 const fallbackResult = computed(() => {
-  if (!parsedResult.value || resultText.value || events.value.length) return ''
+  if (!parsedResult.value || resultText.value || events.value.length || progressMessages.value.length)
+    return ''
   return JSON.stringify(parsedResult.value, null, 2)
 })
 </script>
@@ -292,6 +328,36 @@ const fallbackResult = computed(() => {
   white-space: nowrap;
   font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
   color: var(--gray-700);
+}
+
+.progress-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  border-radius: 6px;
+  background: var(--gray-25);
+}
+
+.progress-row {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+  min-width: 0;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.progress-kind {
+  color: var(--gray-500);
+}
+
+.progress-content {
+  min-width: 0;
+  color: var(--gray-800);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .events-list {
