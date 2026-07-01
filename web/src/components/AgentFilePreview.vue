@@ -878,7 +878,22 @@ onUnmounted(() => {
 }
 
 .fullscreen-preview-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  min-height: 40px;
+  padding: 4px;
+  border: 1px solid var(--gray-200);
+  border-radius: 999px;
+  background: var(--color-trans-light);
   box-shadow: 0 10px 30px rgba(15, 23, 42, 0.14);
+  backdrop-filter: blur(10px);
+
+  .preview-mode-btn {
+    width: 32px;
+    height: 32px;
+    border-radius: 999px;
+  }
 }
 
 .fullscreen-action-btn {

@@ -494,7 +494,7 @@ defineExpose({
   min-height: 0;
   overflow: hidden;
   border: 1px solid var(--gray-150);
-  border-radius: 12px;
+  border-radius: 8px;
   background: var(--gray-0);
 
   &.without-sidebar {
@@ -510,9 +510,9 @@ defineExpose({
 .agent-modal-sidebar {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
   min-height: 0;
-  padding: 14px 8px;
+  padding: 12px 8px;
   overflow-y: auto;
   border-right: 1px solid var(--gray-150);
   background: linear-gradient(180deg, var(--gray-50), var(--main-10));
@@ -523,10 +523,10 @@ defineExpose({
   align-items: center;
   justify-content: space-between;
   width: 100%;
-  min-height: 40px;
-  padding: 9px 10px;
+  min-height: 34px;
+  padding: 7px 9px;
   border: 1px solid transparent;
-  border-radius: 10px;
+  border-radius: 7px;
   background: transparent;
   color: var(--gray-800);
   font-size: 13px;

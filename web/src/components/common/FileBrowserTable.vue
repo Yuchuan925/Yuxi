@@ -426,7 +426,7 @@ const handleTableChange = (pagination, filters, sorter, extra) => {
 }
 
 .file-browser-ant-table :deep(.ant-table-tbody > tr.file-browser-row-selected > td:first-child) {
-  box-shadow: inset 3px 0 0 var(--main-color);
+  box-shadow: none;
 }
 
 .file-browser-ant-table :deep(.ant-table-tbody > tr.ant-table-row-selected > td) {

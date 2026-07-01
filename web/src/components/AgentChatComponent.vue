@@ -1027,14 +1027,23 @@ const tokenUsageSegments = computed(() => {
     ? Math.max(toFiniteNumber(usage.summary_message_tokens) || 0, 0)
     : 0
   const llmMessageTokens = Math.max(toFiniteNumber(usage.llm_messages_tokens) || 0, 0)
+  const hasSplitMessageTokens =
+    toFiniteNumber(usage.llm_content_message_tokens) !== null ||
+    toFiniteNumber(usage.llm_tool_message_tokens) !== null
+  const contentMessageTokens = hasSplitMessageTokens
+    ? Math.max(toFiniteNumber(usage.llm_content_message_tokens) || 0, 0)
+    : Math.max(llmMessageTokens - summaryTokens, 0)
+  const toolMessageTokens = Math.max(toFiniteNumber(usage.llm_tool_message_tokens) || 0, 0)
   const stateMessageTokensBeforeCall = Math.max(
     toFiniteNumber(usage.state_messages_tokens_before_call ?? usage.state_messages_tokens) || 0,
     0
   )
-  const messageTokens = Math.max(llmMessageTokens - summaryTokens, 0)
   const cutMessageTokens = Math.max(stateMessageTokensBeforeCall - llmMessageTokens, 0)
   const llmMessageCount = Math.max(toFiniteNumber(usage.llm_message_count) || 0, 0)
-  const displayMessageCount = Math.max(llmMessageCount - (usage.summary_active ? 1 : 0), 0)
+  const contentMessageCount = hasSplitMessageTokens
+    ? Math.max(toFiniteNumber(usage.llm_content_message_count) || 0, 0)
+    : Math.max(llmMessageCount - (usage.summary_active ? 1 : 0), 0)
+  const toolMessageCount = Math.max(toFiniteNumber(usage.llm_tool_message_count) || 0, 0)
   const stateMessageCountBeforeCall = Math.max(
     toFiniteNumber(usage.state_message_count_before_call ?? usage.state_message_count) || 0,
     0
@@ -1053,10 +1062,17 @@ const tokenUsageSegments = computed(() => {
     },
     {
       key: 'messages',
-      label: '消息',
-      value: messageTokens,
-      messageCount: displayMessageCount,
+      label: '内容消息',
+      value: contentMessageTokens,
+      messageCount: contentMessageCount,
       tone: 'is-messages'
+    },
+    {
+      key: 'toolMessages',
+      label: '工具消息',
+      value: toolMessageTokens,
+      messageCount: toolMessageCount,
+      tone: 'is-tool-messages'
     },
     {
       key: 'summary',
@@ -1067,13 +1083,13 @@ const tokenUsageSegments = computed(() => {
     },
     {
       key: 'system',
-      label: '系统',
+      label: '系统消息',
       value: systemTokens,
       tone: 'is-system'
     },
     {
       key: 'tools',
-      label: `工具 (${usage.tool_count || 0})`,
+      label: `工具定义 (${usage.tool_count || 0})`,
       value: toolsTokens,
       tone: 'is-tools'
     }
@@ -1673,7 +1689,9 @@ function mergeActiveRunOngoingIntoHistory(historyConvs, ongoingMessages, activeR
   const ongoingRequestId = getMessageRequestId(firstOngoingMessage)
   const sameActiveRun =
     getMessageRunId(lastHuman) === activeRunId ||
-    (Boolean(historyRequestId) && Boolean(ongoingRequestId) && ongoingRequestId === historyRequestId)
+    (Boolean(historyRequestId) &&
+      Boolean(ongoingRequestId) &&
+      ongoingRequestId === historyRequestId)
   if (!sameActiveRun) return { historyConvs: filteredHistoryConvs, ongoingMessages }
 
   const patchedHistoryConvs = [...filteredHistoryConvs]
@@ -2361,12 +2379,13 @@ const selectChat = async (chatId) => {
   }
 
   await nextTick()
-  scrollController.scrollToBottomStaticForce()
+  await scrollController.scrollToBottomStaticForce()
   // await fetchAgentState(targetAgentId, chatId)
   await handleAgentStateRefresh(chatId)
   syncThreadConfigSnapshot(chatId, { overwrite: false })
   await resumeActiveRunForThread(chatId)
   restorePendingInterruptForThread(chatId)
+  await scrollController.scrollToBottomStaticForce()
 }
 
 const selectThreadFromRoute = async (threadId) => {
@@ -3765,7 +3784,7 @@ watch(currentChatId, (threadId, oldThreadId) => {
 .token-usage-stack-legend {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
+  gap: 8px 10px;
   font-size: 11px;
   color: var(--gray-500);
 }
@@ -3775,9 +3794,8 @@ watch(currentChatId, (threadId, oldThreadId) => {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  line-height: 1.35;
+  white-space: normal;
 }
 
 .token-usage-stack-legend-item i {
@@ -3805,6 +3823,10 @@ watch(currentChatId, (threadId, oldThreadId) => {
     background: var(--main-500);
   }
 
+  &.is-tool-messages {
+    background: var(--color-primary-500);
+  }
+
   &.is-summary {
     background: var(--color-info-500);
   }
@@ -3823,8 +3845,8 @@ watch(currentChatId, (threadId, oldThreadId) => {
 }
 
 .token-usage-breakdown {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  display: flex;
+  flex-direction: column;
   gap: 6px 10px;
   padding-top: 2px;
 }
@@ -3832,24 +3854,27 @@ watch(currentChatId, (threadId, oldThreadId) => {
 .token-usage-breakdown-row {
   min-width: 0;
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 6px;
   font-size: 12px;
   color: var(--gray-500);
+  flex-wrap: wrap;
 }
 
 .token-usage-breakdown-row span,
 .token-usage-breakdown-row strong {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  min-width: 0;
+  white-space: normal;
 }
 
 .token-usage-breakdown-row strong {
+  flex: 1 1 100%;
   color: var(--gray-800);
   font-weight: 600;
   font-variant-numeric: tabular-nums;
+  line-height: 1.35;
+  word-break: break-word;
 }
 
 .todo-panel-list {
@@ -3922,8 +3947,8 @@ watch(currentChatId, (threadId, oldThreadId) => {
   width: 100%;
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 9px 10px;
+  gap: 7px;
+  padding: 7px 9px;
   border: 1px solid var(--gray-100);
   border-radius: 10px;
   background: var(--gray-25);
@@ -3956,7 +3981,7 @@ watch(currentChatId, (threadId, oldThreadId) => {
 }
 
 .state-list-item-title {
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 600;
   color: var(--gray-900);
   overflow: hidden;
@@ -3965,9 +3990,9 @@ watch(currentChatId, (threadId, oldThreadId) => {
 }
 
 .state-list-item-meta {
-  margin-top: 2px;
+  margin-top: 1px;
   font-size: 12px;
-  line-height: 1.3;
+  line-height: 1.25;
   color: var(--gray-500);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -3975,11 +4000,11 @@ watch(currentChatId, (threadId, oldThreadId) => {
 }
 
 .state-subagent-icon {
-  width: 28px;
-  height: 28px;
+  width: 24px;
+  height: 24px;
   flex-shrink: 0;
   border: 1px solid var(--gray-150);
-  border-radius: 7px;
+  border-radius: 6px;
   background: var(--gray-0);
   object-fit: cover;
 }

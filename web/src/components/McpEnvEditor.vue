@@ -1,17 +1,32 @@
 <template>
   <div class="env-editor">
     <div v-for="(row, index) in rows" :key="index" class="env-row">
-      <a-input v-model:value="row.key" placeholder="Key" class="env-key-input" />
-      <a-input v-model:value="row.value" placeholder="Value" class="env-value-input" />
-      <a-button
-        size="small"
-        type="text"
-        danger
-        @click="removeRow(index)"
-        :disabled="rows.length === 1"
-      >
-        删除
-      </a-button>
+      <a-input
+        v-model:value="row.key"
+        placeholder="Key"
+        class="env-key-input"
+        :disabled="isKeyLocked(row)"
+      />
+      <div class="env-value-field">
+        <a-input
+          v-model:value="row.value"
+          placeholder="Value"
+          class="env-value-input"
+          :type="isValueHidden(row) ? 'password' : 'text'"
+        />
+        <a-button
+          v-if="shouldConcealRow(row)"
+          size="small"
+          type="text"
+          class="env-value-toggle"
+          :aria-label="isValueHidden(row) ? '查看变量值' : '隐藏变量值'"
+          @click="toggleValueVisible(row)"
+        >
+          <Eye v-if="isValueHidden(row)" :size="14" />
+          <EyeOff v-else :size="14" />
+        </a-button>
+      </div>
+      <a-button size="small" type="text" danger @click="removeRow(index)"> 删除 </a-button>
     </div>
     <a-button @click="addRow" class="add-env">
       <template #icon><PlusOutlined /></template>
@@ -21,13 +36,22 @@
 </template>
 
 <script setup>
-import { ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { PlusOutlined } from '@ant-design/icons-vue'
+import { Eye, EyeOff } from 'lucide-vue-next'
 
 const props = defineProps({
   modelValue: {
     type: Object,
     default: null
+  },
+  lockedKeys: {
+    type: Array,
+    default: () => []
+  },
+  concealLockedValues: {
+    type: Boolean,
+    default: false
   }
 })
 
@@ -35,6 +59,8 @@ const emit = defineEmits(['update:modelValue'])
 
 const rows = ref([{ key: '', value: '' }])
 const syncingFromObject = ref(false)
+const visibleValueKeys = ref(new Set())
+const lockedKeySet = computed(() => new Set(props.lockedKeys.map((key) => String(key))))
 
 const objectToRows = (envObj) => {
   if (!envObj || typeof envObj !== 'object') {
@@ -97,6 +123,42 @@ const removeRow = (index) => {
   rows.value.splice(index, 1)
 }
 
+const getRowKey = (row) => String(row?.key || '').trim()
+
+const isKeyLocked = (row) => {
+  const key = getRowKey(row)
+  return Boolean(key && lockedKeySet.value.has(key))
+}
+
+const shouldConcealRow = (row) => props.concealLockedValues && isKeyLocked(row)
+
+const isValueHidden = (row) => {
+  const key = getRowKey(row)
+  return shouldConcealRow(row) && !visibleValueKeys.value.has(key)
+}
+
+const toggleValueVisible = (row) => {
+  const key = getRowKey(row)
+  if (!key) return
+  const next = new Set(visibleValueKeys.value)
+  if (next.has(key)) {
+    next.delete(key)
+  } else {
+    next.add(key)
+  }
+  visibleValueKeys.value = next
+}
+
+watch(
+  () => props.lockedKeys,
+  (keys) => {
+    const nextLockedKeys = new Set(keys.map((key) => String(key)))
+    visibleValueKeys.value = new Set(
+      [...visibleValueKeys.value].filter((key) => nextLockedKeys.has(key))
+    )
+  }
+)
+
 watch(
   () => props.modelValue,
   (value) => {
@@ -145,6 +207,28 @@ watch(
     .env-key-input,
     .env-value-input {
       flex: 1;
+    }
+
+    .env-value-field {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      flex: 1;
+      min-width: 0;
+
+      .env-value-input {
+        min-width: 0;
+      }
+    }
+
+    .env-value-toggle {
+      width: 28px;
+      height: 28px;
+      flex: 0 0 auto;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--gray-500);
     }
   }
 

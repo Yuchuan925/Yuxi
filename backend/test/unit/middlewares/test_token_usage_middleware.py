@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 from langchain.agents.middleware.types import ExtendedModelResponse, ModelResponse
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
 from yuxi.agents.middlewares.token_usage import TokenUsageMiddleware
 
@@ -27,7 +27,10 @@ async def test_token_usage_middleware_records_request_and_state_tokens() -> None
     request = SimpleNamespace(
         model=SimpleNamespace(profile={"max_input_tokens": 2000}),
         state={"messages": [HumanMessage(content="old message")]},
-        messages=[HumanMessage(content="current message")],
+        messages=[
+            HumanMessage(content="current message"),
+            ToolMessage(content="tool result", tool_call_id="call_1"),
+        ],
         system_message=SystemMessage(content="system prompt"),
         tools=[tool_schema],
         runtime=SimpleNamespace(context=SimpleNamespace(summary_threshold=2)),
@@ -49,7 +52,11 @@ async def test_token_usage_middleware_records_request_and_state_tokens() -> None
     token_usage = result.command.update["token_usage"]
     assert token_usage["state_message_count"] == 2
     assert token_usage["state_message_count_before_call"] == 1
-    assert token_usage["llm_message_count"] == 1
+    assert token_usage["llm_message_count"] == 2
+    assert token_usage["llm_content_message_count"] == 1
+    assert token_usage["llm_content_message_tokens"] > 0
+    assert token_usage["llm_tool_message_count"] == 1
+    assert token_usage["llm_tool_message_tokens"] > 0
     assert token_usage["state_messages_tokens"] >= token_usage["state_messages_tokens_before_call"]
     assert token_usage["llm_input_tokens"] >= token_usage["llm_messages_tokens"]
     assert token_usage["system_tokens"] > 0

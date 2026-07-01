@@ -27,6 +27,10 @@ class TokenUsagePayload(TypedDict, total=False):
     state_messages_tokens_before_call: int
     llm_message_count: int
     llm_messages_tokens: int
+    llm_content_message_count: int
+    llm_content_message_tokens: int
+    llm_tool_message_count: int
+    llm_tool_message_tokens: int
     llm_input_tokens: int
     system_tokens: int
     tools_tokens: int
@@ -78,6 +82,10 @@ def _is_summary_message(message: AnyMessage) -> bool:
     return getattr(message, "additional_kwargs", {}).get("lc_source") == "summarization"
 
 
+def _is_tool_message(message: AnyMessage) -> bool:
+    return getattr(message, "type", None) == "tool" or getattr(message, "role", None) == "tool"
+
+
 def _model_usage_from_response(response: ModelResponse) -> dict[str, int]:
     for message in reversed(response.result):
         if not isinstance(message, AIMessage):
@@ -127,6 +135,10 @@ class TokenUsageMiddleware(AgentMiddleware[TokenUsageState]):
             remaining_context_tokens = max(context_window - llm_input_tokens, 0)
 
         summary_message = llm_messages[0] if llm_messages and _is_summary_message(llm_messages[0]) else None
+        llm_tool_messages = [message for message in llm_messages if _is_tool_message(message)]
+        llm_content_messages = [
+            message for message in llm_messages if not _is_tool_message(message) and not _is_summary_message(message)
+        ]
         summary_trigger_tokens = _summary_trigger_tokens(getattr(request.runtime, "context", None))
 
         return {
@@ -136,6 +148,10 @@ class TokenUsageMiddleware(AgentMiddleware[TokenUsageState]):
             "state_messages_tokens_before_call": state_tokens_before_call,
             "llm_message_count": len(llm_messages),
             "llm_messages_tokens": llm_messages_tokens,
+            "llm_content_message_count": len(llm_content_messages),
+            "llm_content_message_tokens": self._count_tokens(llm_content_messages),
+            "llm_tool_message_count": len(llm_tool_messages),
+            "llm_tool_message_tokens": self._count_tokens(llm_tool_messages),
             "llm_input_tokens": llm_input_tokens,
             "system_tokens": system_tokens,
             "tools_tokens": tools_tokens,

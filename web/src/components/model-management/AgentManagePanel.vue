@@ -296,9 +296,11 @@ defineExpose({
 }
 
 .agent-card-menu-item {
-  display: inline-flex;
+  display: flex;
   align-items: center;
+  min-height: 22px;
   gap: 8px;
+  line-height: 1;
 
   &.danger {
     color: var(--color-error-700);

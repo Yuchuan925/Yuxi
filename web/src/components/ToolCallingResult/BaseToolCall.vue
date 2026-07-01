@@ -59,7 +59,7 @@
     </div>
 
     <!-- Content Area -->
-    <div class="tool-content" v-show="isExpanded">
+    <div v-if="isExpanded" class="tool-content">
       <!-- Params Slot -->
       <div class="tool-params" v-if="hasParams && !hideParams">
         <slot name="params" :tool-call="toolCall" :args="formattedArgs">

@@ -46,7 +46,7 @@
         :class="{ active: activeKey === `database:${database.kb_id}` }"
         @click="$emit('select-database', database)"
       >
-        <FileTypeIcon is-dir folder-variant="knowledge" :size="18" />
+        <FileTypeIcon is-dir :size="18" />
         <span>{{ database.name }}</span>
       </button>
     </section>
@@ -61,7 +61,7 @@
         :class="{ active: activeKey === `database:${database.kb_id}` }"
         @click="$emit('select-database', database)"
       >
-        <FileTypeIcon is-dir folder-variant="enterprise" :size="18" />
+        <FileTypeIcon is-dir :size="18" />
         <span>{{ database.name }}</span>
       </button>
     </section>

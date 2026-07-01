@@ -12,20 +12,28 @@
           <template #icon><RefreshCw :size="16" :class="{ spin: loading }" /></template>
           刷新
         </a-button>
-        <a-button type="primary" :loading="saving" @click="saveAgentEnv">保存</a-button>
+        <a-button type="primary" :loading="saving" @click="saveAgentEnv">
+          {{ saveButtonText }}
+        </a-button>
       </div>
     </div>
 
     <div class="env-tip">保存后仅对新建沙盒生效，已运行沙盒不会热更新。</div>
 
     <a-spin :spinning="loading">
-      <McpEnvEditor :modelValue="draftEnv" @update:modelValue="updateDraftEnv" />
+      <McpEnvEditor
+        :key="editorRevision"
+        :modelValue="draftEnv"
+        :locked-keys="savedEnvKeys"
+        conceal-locked-values
+        @update:modelValue="updateDraftEnv"
+      />
     </a-spin>
   </div>
 </template>
 
 <script setup>
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { message } from 'ant-design-vue'
 import { RefreshCw } from 'lucide-vue-next'
 import { agentEnvApi } from '@/apis/agent_env_api'
@@ -40,6 +48,7 @@ const loading = ref(false)
 const saving = ref(false)
 const draftEnv = ref({})
 const lastSavedEnv = ref({})
+const editorRevision = ref(0)
 
 const normalizeEnv = (env) => {
   if (!env || typeof env !== 'object' || Array.isArray(env)) {
@@ -58,6 +67,12 @@ const isSameEnv = (left, right) => {
   if (leftEntries.length !== rightEntries.length) return false
   return leftEntries.every(([key, value]) => right[key] === value)
 }
+
+const savedEnvKeys = computed(() => Object.keys(lastSavedEnv.value || {}))
+const hasUnsavedChanges = computed(
+  () => !isSameEnv(normalizeEnv(draftEnv.value), lastSavedEnv.value)
+)
+const saveButtonText = computed(() => (hasUnsavedChanges.value ? '保存（有修改）' : '保存'))
 
 const updateDraftEnv = (value) => {
   const nextEnv = normalizeEnv(value)
@@ -97,6 +112,7 @@ const loadAgentEnv = async () => {
     const env = normalizeEnv(res.env)
     draftEnv.value = env
     lastSavedEnv.value = env
+    editorRevision.value += 1
   } catch (error) {
     message.error(error.message || '加载环境变量失败')
   } finally {
@@ -117,6 +133,7 @@ const saveAgentEnv = async () => {
     await agentEnvApi.update(env)
     draftEnv.value = env
     lastSavedEnv.value = env
+    editorRevision.value += 1
     message.success('环境变量已保存')
   } catch (error) {
     message.error(error.message || '保存环境变量失败')

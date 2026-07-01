@@ -90,12 +90,14 @@
 
       <div class="identity-panel">
         <div class="identity-item">
+          <span class="identity-icon"><ShieldCheck :size="15" /></span>
           <span class="profile-label">权限</span>
           <span class="profile-value" :style="{ color: getRoleColor(userStore.userRole) }">
             {{ userRoleText }}
           </span>
         </div>
         <div class="identity-item">
+          <span class="identity-icon"><Building2 :size="15" /></span>
           <span class="profile-label">部门</span>
           <span class="profile-value">{{ userStore.departmentName || '默认部门' }}</span>
         </div>
@@ -111,7 +113,7 @@
 <script setup>
 import { computed, nextTick, reactive, ref, watch } from 'vue'
 import { message } from 'ant-design-vue'
-import { RefreshCw, Upload } from 'lucide-vue-next'
+import { Building2, RefreshCw, ShieldCheck, Upload } from 'lucide-vue-next'
 import ApiKeyManagementComponent from '@/components/ApiKeyManagementComponent.vue'
 import FallbackAvatar from '@/components/common/FallbackAvatar.vue'
 import { useUserStore } from '@/stores/user'
@@ -298,6 +300,7 @@ watch(() => [userStore.username, userStore.phoneNumber], syncProfileDraft, { imm
     align-items: stretch;
     justify-content: space-between;
     gap: 20px;
+    background: var(--gray-25);
 
     @media (max-width: 760px) {
       flex-direction: column;
@@ -325,12 +328,11 @@ watch(() => [userStore.username, userStore.phoneNumber], syncProfileDraft, { imm
     border-radius: 50%;
     overflow: hidden;
     flex: 0 0 auto;
-    box-shadow: 0 2px 8px var(--shadow-2);
 
     .account-avatar {
       width: 80px;
       height: 80px;
-      border: 3px solid var(--gray-150);
+      border: 3px solid var(--gray-0);
     }
 
     &:hover .avatar-mask,
@@ -362,8 +364,7 @@ watch(() => [userStore.username, userStore.phoneNumber], syncProfileDraft, { imm
     flex: 1;
   }
 
-  .profile-row,
-  .identity-item {
+  .profile-row {
     min-width: 0;
     display: grid;
     grid-template-columns: 56px minmax(0, 1fr);
@@ -418,11 +419,30 @@ watch(() => [userStore.username, userStore.phoneNumber], syncProfileDraft, { imm
     gap: 12px;
     padding: 14px;
     border-radius: 10px;
-    background: var(--gray-50);
+    background: var(--gray-0);
 
     @media (max-width: 760px) {
       min-width: 0;
     }
+  }
+
+  .identity-item {
+    min-width: 0;
+    display: grid;
+    grid-template-columns: 20px 42px minmax(0, 1fr);
+    align-items: center;
+    gap: 8px;
+  }
+
+  .identity-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    border-radius: 6px;
+    background: var(--gray-50);
+    color: var(--gray-500);
   }
 
   .mono {

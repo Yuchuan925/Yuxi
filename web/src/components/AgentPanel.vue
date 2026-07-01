@@ -815,7 +815,7 @@ watch(
   flex-shrink: 0;
 
   &.active {
-    border-color: var(--main-600);
+    border-color: var(--gray-150);
     background: var(--gray-0);
     color: var(--main-800);
   }

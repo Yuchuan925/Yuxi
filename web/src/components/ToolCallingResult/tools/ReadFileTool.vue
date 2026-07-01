@@ -77,8 +77,8 @@ const skillName = computed(() => {
 <style lang="less" scoped>
 .sep-header {
   .tag {
-    color: var(--color-primary-600);
-    background-color: var(--color-primary-50);
+    color: var(--gray-500);
+    background-color: transparent;
   }
 
   // SKILL.md 专用样式
