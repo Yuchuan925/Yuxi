@@ -884,9 +884,7 @@ class MilvusGraphService:
         final_nodes = nodes[:limit]
         node_ids = {node["id"] for node in final_nodes}
         final_edges = [
-            edge
-            for edge in edges
-            if edge.get("source_id") in node_ids and edge.get("target_id") in node_ids
+            edge for edge in edges if edge.get("source_id") in node_ids and edge.get("target_id") in node_ids
         ]
         return {"nodes": final_nodes, "edges": final_edges[: limit * 2]}
 

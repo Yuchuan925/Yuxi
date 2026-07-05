@@ -3,7 +3,9 @@
     <div class="header-section">
       <div class="header-content">
         <div class="section-title">用户配置(Beta)</div>
-        <p class="section-description">配置当前用户的专属设置。当前为测试预览版，暂未引入新的特性，仅作技术能力拓展。</p>
+        <p class="section-description">
+          配置当前用户的专属设置。当前为测试预览版，暂未引入新的特性，仅作技术能力拓展。
+        </p>
       </div>
       <div class="header-actions">
         <a-button class="lucide-icon-btn" :loading="loading" @click="loadUserConfig">

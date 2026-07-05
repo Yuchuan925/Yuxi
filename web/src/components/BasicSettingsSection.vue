@@ -50,7 +50,9 @@
           </div>
           <div class="setting-row two-cols">
             <div class="col-item">
-              <div class="setting-label">{{ items?.default_ocr_engine?.des || '默认 OCR 解析引擎' }}</div>
+              <div class="setting-label">
+                {{ items?.default_ocr_engine?.des || '默认 OCR 解析引擎' }}
+              </div>
               <div class="setting-content">
                 <a-select
                   :value="configStore.config?.default_ocr_engine || 'rapid_ocr'"

@@ -58,7 +58,9 @@
                     </template>
                   </span>
                 </span>
-                <span class="result-date">{{ formatResultDate(item.latest_match_at || item.updated_at) }}</span>
+                <span class="result-date">{{
+                  formatResultDate(item.latest_match_at || item.updated_at)
+                }}</span>
               </button>
               <div v-if="isLoadingMore" class="conversation-search-loading-more">加载中...</div>
             </div>

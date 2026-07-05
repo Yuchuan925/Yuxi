@@ -131,7 +131,8 @@ const getProviderIcon = (provider) => {
   return modelIcons[providerId] || modelIcons[providerType] || modelIcons.default
 }
 
-const getProviderTypeLabel = (providerType) => providerTypeLabelMap[providerType] || providerType || '-'
+const getProviderTypeLabel = (providerType) =>
+  providerTypeLabelMap[providerType] || providerType || '-'
 
 const getIconUrl = (icon) => {
   if (!icon) return modelIcons.default
@@ -185,7 +186,8 @@ const getDefaultModelProviderId = () => {
 
 const providerContainsDefaultModel = (providerId) => getDefaultModelProviderId() === providerId
 
-const isDefaultModel = (providerId, modelId) => defaultModelSpec.value === buildModelSpec(providerId, modelId)
+const isDefaultModel = (providerId, modelId) =>
+  defaultModelSpec.value === buildModelSpec(providerId, modelId)
 
 const warnDefaultModelProtected = () => {
   message.warning('当前默认模型正在使用该供应商或模型，请先切换默认模型')

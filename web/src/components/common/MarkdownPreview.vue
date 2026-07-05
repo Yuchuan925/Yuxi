@@ -135,8 +135,16 @@ const handleHtmlPreviewHeight = (event) => {
   const contentHeight = Number(data.height)
   if (!Number.isFinite(contentHeight) || contentHeight <= 0) return
 
-  const minHeight = getHtmlPreviewCssNumber(entry.slot, '--html-preview-min-height', HTML_PREVIEW_MIN_HEIGHT)
-  const maxHeight = getHtmlPreviewCssNumber(entry.slot, '--html-preview-max-height', HTML_PREVIEW_MAX_HEIGHT)
+  const minHeight = getHtmlPreviewCssNumber(
+    entry.slot,
+    '--html-preview-min-height',
+    HTML_PREVIEW_MIN_HEIGHT
+  )
+  const maxHeight = getHtmlPreviewCssNumber(
+    entry.slot,
+    '--html-preview-max-height',
+    HTML_PREVIEW_MAX_HEIGHT
+  )
   const nextHeight = Math.min(Math.max(Math.ceil(contentHeight), minHeight), maxHeight)
   entry.slot.style.height = `${nextHeight}px`
   entry.slot.dataset.overflow = contentHeight > maxHeight ? 'true' : 'false'
@@ -876,11 +884,7 @@ const showCopiedFeedback = (btn) => {
   .html-preview-loading-slot {
     display: block;
     width: 100%;
-    height: clamp(
-      var(--html-preview-height, 360px),
-      58vh,
-      var(--html-preview-max-height, 1200px)
-    );
+    height: clamp(var(--html-preview-height, 360px), 58vh, var(--html-preview-max-height, 1200px));
     padding: 24px;
     background: linear-gradient(180deg, #fff 0%, var(--gray-50) 100%);
   }

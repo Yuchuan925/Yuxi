@@ -137,16 +137,7 @@ const sanitizeHtmlPreviewSrcdoc = (html) =>
   DOMPurify.sanitize(html, {
     WHOLE_DOCUMENT: true,
     ADD_TAGS: ['html', 'head', 'body', 'style', 'link'],
-    FORBID_TAGS: [
-      'script',
-      'iframe',
-      'object',
-      'embed',
-      'form',
-      'input',
-      'textarea',
-      'select'
-    ],
+    FORBID_TAGS: ['script', 'iframe', 'object', 'embed', 'form', 'input', 'textarea', 'select'],
     FORBID_ATTR: ['srcdoc', 'sandbox']
   })
 

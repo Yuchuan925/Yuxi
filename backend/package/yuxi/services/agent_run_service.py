@@ -40,8 +40,8 @@ from yuxi.services.run_queue_service import (
     build_run_event_envelope,
     get_arq_pool,
     get_last_run_stream_seq,
-    list_run_stream_events,
     list_recent_run_stream_events,
+    list_run_stream_events,
     normalize_after_seq,
     publish_cancel_signal,
 )

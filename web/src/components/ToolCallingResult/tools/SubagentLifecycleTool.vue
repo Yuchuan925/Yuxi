@@ -236,7 +236,12 @@ const resultText = computed(() => {
 })
 
 const fallbackResult = computed(() => {
-  if (!parsedResult.value || resultText.value || events.value.length || progressMessages.value.length)
+  if (
+    !parsedResult.value ||
+    resultText.value ||
+    events.value.length ||
+    progressMessages.value.length
+  )
     return ''
   return JSON.stringify(parsedResult.value, null, 2)
 })

@@ -12,7 +12,6 @@ from yuxi.utils.logging_config import logger
 _TOOL_IMAGE_USER_TEXT = "Images returned by read_file are attached below. Inspect them when answering."
 
 
-
 def resolve_chat_model_spec(model_spec: str | None, *, fallback: str | None = None) -> str:
     """解析空模型配置，不吞掉已经配置但无效的模型值。
 
@@ -72,7 +71,6 @@ def load_chat_model(fully_specified_name: str | None, **kwargs) -> BaseChatModel
     )
 
 
-
 class _ToolCallChunkFixChatOpenAI(ChatOpenAI):
     """归一化流式 tool_call 续片中的空串 name/id，规避 v3 流式累积缺陷。"""
 
@@ -90,6 +88,7 @@ class _ToolCallChunkFixChatOpenAI(ChatOpenAI):
         for chunk in super()._stream(*args, **kwargs):
             _normalize_tool_call_chunks(chunk.message)
             yield chunk
+
 
 def _bridge_tool_images_to_user_messages(payload: dict[str, Any]) -> dict[str, Any]:
     """将工具调用返回的 image_url 块桥接到用户消息中，避免工具消息中包含图片导致的渲染问题。"""
@@ -192,4 +191,3 @@ def _text_without_images(content: Any, image_blocks: list[dict[str, Any]]) -> st
             if isinstance(text, str):
                 parts.append(text)
     return "\n".join(part for part in parts if part)
-

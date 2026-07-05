@@ -77,9 +77,9 @@ const displayItemsList = computed(() =>
 const isDisplayMessageProcessing = (conv, displayItem) =>
   Boolean(
     props.isProcessing &&
-      displayItem?.type === 'message' &&
-      conv?.status === 'streaming' &&
-      displayItem.sourceIndex === conv.messages.length - 1
+    displayItem?.type === 'message' &&
+    conv?.status === 'streaming' &&
+    displayItem.sourceIndex === conv.messages.length - 1
   )
 
 const isToolGroupActive = (conv, itemIndex, displayItems) =>

@@ -1022,7 +1022,9 @@ const ocrEngineOptions = [
 ]
 
 const resolveDefaultOcrEngine = () => {
-  const configuredEngine = String(configStore.config?.default_ocr_engine || DEFAULT_OCR_ENGINE).trim()
+  const configuredEngine = String(
+    configStore.config?.default_ocr_engine || DEFAULT_OCR_ENGINE
+  ).trim()
   return ocrEngineOptions.some((option) => option.value === configuredEngine)
     ? configuredEngine
     : DEFAULT_OCR_ENGINE

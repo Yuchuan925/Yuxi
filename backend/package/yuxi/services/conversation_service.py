@@ -14,7 +14,7 @@ from yuxi.agents.buildin import agent_manager
 from yuxi.config import config as app_config
 from yuxi.knowledge.parser import DocumentProcessorFactory, Parser
 from yuxi.repositories.agent_repository import AgentRepository
-from yuxi.repositories.conversation_repository import ConversationRepository, INVOCATION_CONVERSATION_SOURCES
+from yuxi.repositories.conversation_repository import INVOCATION_CONVERSATION_SOURCES, ConversationRepository
 from yuxi.services.mention_search_service import invalidate_mention_cache
 from yuxi.storage.minio import StorageError, get_minio_client
 from yuxi.storage.postgres.models_business import User

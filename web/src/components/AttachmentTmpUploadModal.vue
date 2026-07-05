@@ -243,7 +243,9 @@ const getDefaultParseMethod = (parseMethods) => {
   if (!Array.isArray(parseMethods) || parseMethods.length === 0) {
     return null
   }
-  const configuredEngine = String(configStore.config?.default_ocr_engine || DEFAULT_OCR_ENGINE).trim()
+  const configuredEngine = String(
+    configStore.config?.default_ocr_engine || DEFAULT_OCR_ENGINE
+  ).trim()
   if (parseMethods.includes(configuredEngine)) {
     return configuredEngine
   }

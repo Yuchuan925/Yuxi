@@ -113,7 +113,9 @@ const normalizeRunStatus = (status) => String(status || '').trim()
 const isTerminalRunStatus = (status) => RUN_TERMINAL_STATUSES.has(normalizeRunStatus(status))
 
 const modalTitleName = computed(() => props.subagentName || '子智能体')
-const effectiveRunStatus = computed(() => normalizeRunStatus(historyRunStatus.value || props.runStatus))
+const effectiveRunStatus = computed(() =>
+  normalizeRunStatus(historyRunStatus.value || props.runStatus)
+)
 const getStreamThreadState = (threadId) => {
   if (!threadId) return null
   if (!streamState.threadStates[threadId]) {
@@ -169,9 +171,7 @@ const displayOngoingMessages = computed(() => {
   return hasStreamedMessages.value ? streamedMessages.value : props.ongoingMessages
 })
 const displayMessages = computed(() =>
-  hasStreamedMessages.value && !isTerminalRunStatus(effectiveRunStatus.value)
-    ? []
-    : messages.value
+  hasStreamedMessages.value && !isTerminalRunStatus(effectiveRunStatus.value) ? [] : messages.value
 )
 const displayIsStreaming = computed(
   () =>

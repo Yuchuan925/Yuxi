@@ -2,6 +2,7 @@
 .PHONY: up up-lite down logs lint format seed reset
 
 PYTEST_ARGS ?=
+BACKEND_PYTHON ?= $(shell cat backend/.python-version)
 
 up:
 	@if [ ! -f .env ]; then \
@@ -46,8 +47,8 @@ seed:
 ######################
 
 format:
-	cd backend && uv run ruff format package
-	cd backend && uv run ruff check package --fix
-	cd backend && uv run ruff check --select I package --fix
+	cd backend && UV_PYTHON=$(BACKEND_PYTHON) uv run ruff format package
+	cd backend && UV_PYTHON=$(BACKEND_PYTHON) uv run ruff check package --fix
+	cd backend && UV_PYTHON=$(BACKEND_PYTHON) uv run ruff check --select I package --fix
 	cd web && pnpm run format
 	cd web && pnpm run lint

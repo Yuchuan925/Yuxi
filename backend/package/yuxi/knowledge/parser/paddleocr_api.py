@@ -16,7 +16,6 @@ from yuxi.knowledge.parser.base import BaseDocumentProcessor, DocumentParserExce
 from yuxi.storage.minio import get_minio_client
 from yuxi.utils import logger
 
-
 DEFAULT_PADDLEOCR_API_URL = "https://paddleocr.aistudio-app.com/api/v2/ocr/jobs"
 PADDLEOCR_SUPPORTED_EXTENSIONS = [".pdf", ".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".tif"]
 

@@ -17,8 +17,7 @@ const renderHtmlPreviewContainer = (content) =>
     `</div>`
   ].join('')
 
-const escapeSrcdoc = (value) =>
-  escapeHtml(value).replaceAll('\r', '').replaceAll('\n', '&#10;')
+const escapeSrcdoc = (value) => escapeHtml(value).replaceAll('\r', '').replaceAll('\n', '&#10;')
 
 const renderHtmlPreviewLoading = () =>
   renderHtmlPreviewContainer(
@@ -68,7 +67,10 @@ export function renderHtmlPreviewBlocks(markdown, options = {}) {
     const openMatch = lines[i].match(/^( {0,3})(`{3,}|~{3,})\s*(\S*)/)
     const language = openMatch?.[3].toLowerCase()
 
-    if (openMatch && (isHtmlPreviewLanguage(language) || isStreamingHtmlPreviewLanguage(language))) {
+    if (
+      openMatch &&
+      (isHtmlPreviewLanguage(language) || isStreamingHtmlPreviewLanguage(language))
+    ) {
       const indent = openMatch[1]
       const fenceChar = openMatch[2]
       const openLine = lines[i]
