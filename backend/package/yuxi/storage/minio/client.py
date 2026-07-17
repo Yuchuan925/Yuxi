@@ -10,6 +10,7 @@ import os
 from contextlib import asynccontextmanager
 from datetime import timedelta
 from io import BytesIO
+from urllib.parse import quote, urlsplit
 
 from urllib3 import BaseHTTPResponse
 from yuxi.utils import logger
@@ -37,6 +38,19 @@ class UploadResult:
         self.object_name = object_name
 
 
+def normalize_public_minio_url(value: str | None) -> str | None:
+    if not value or value.startswith("/minio/public/"):
+        return value
+    try:
+        parsed = urlsplit(value)
+        if parsed.port != 9000 or not parsed.path.startswith("/public/"):
+            return value
+    except ValueError:
+        return value
+    public_base_url = (os.getenv("MINIO_PUBLIC_URL") or "/minio").rstrip("/")
+    return f"{public_base_url}{parsed.path}"
+
+
 class MinIOClient:
     """
     简化的 MinIO 客户端类
@@ -56,6 +70,7 @@ class MinIOClient:
         self.endpoint = os.getenv("MINIO_URI") or "http://minio:9000"
         self.access_key = os.getenv("MINIO_ACCESS_KEY") or "minioadmin"
         self.secret_key = os.getenv("MINIO_SECRET_KEY") or "minioadmin"
+        self.public_base_url = (os.getenv("MINIO_PUBLIC_URL") or "/minio").rstrip("/")
         self._client = None
 
         # 设置公开访问端点
@@ -124,7 +139,10 @@ class MinIOClient:
             )
 
             assert result is not None
-            url = f"http://{self.public_endpoint}/{bucket_name}/{object_name}"
+            if bucket_name in self.PUBLIC_READ_BUCKETS:
+                url = f"{self.public_base_url}/{bucket_name}/{quote(object_name, safe='/')}"
+            else:
+                url = f"http://{self.public_endpoint}/{bucket_name}/{object_name}"
 
             return UploadResult(url, bucket_name, object_name)
 
@@ -340,12 +358,6 @@ class MinIOClient:
                     "Principal": {"AWS": ["*"]},
                     "Action": ["s3:GetObject"],
                     "Resource": [f"arn:aws:s3:::{bucket_name}/*"],
-                },
-                {
-                    "Effect": "Allow",
-                    "Principal": {"AWS": ["*"]},
-                    "Action": ["s3:ListBucket"],
-                    "Resource": [f"arn:aws:s3:::{bucket_name}"],
                 },
             ],
         }

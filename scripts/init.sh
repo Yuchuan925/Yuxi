@@ -41,6 +41,20 @@ YUXI_INSTANCE_ID=${YUXI_INSTANCE_ID}
 EOF
 }
 
+ensure_sandbox_env() {
+    if grep -Eq '^SANDBOX_PROVISIONER_TOKEN=.+' .env; then
+        return
+    fi
+
+    SANDBOX_PROVISIONER_TOKEN=$(generate_hex 32)
+    cat >> .env << EOF
+
+# Sandbox provisioner authentication
+SANDBOX_PROVISIONER_TOKEN=${SANDBOX_PROVISIONER_TOKEN}
+EOF
+    echo "Generated SANDBOX_PROVISIONER_TOKEN and saved it to .env."
+}
+
 echo "🚀 Initializing Yuxi project..."
 echo "=================================="
 
@@ -48,6 +62,7 @@ echo "=================================="
 if [ -f ".env" ]; then
     echo "✅ .env file already exists. Skipping environment setup."
     ensure_jwt_env
+    ensure_sandbox_env
 else
     echo "📝 .env file not found. Let's set up your environment variables."
     echo ""
@@ -103,6 +118,7 @@ EOF
 # JWT security settings
 JWT_SECRET_KEY=${JWT_SECRET_KEY}
 YUXI_INSTANCE_ID=${YUXI_INSTANCE_ID}
+SANDBOX_PROVISIONER_TOKEN=$(generate_hex 32)
 EOF
 
     echo "✅ .env file created successfully!"
