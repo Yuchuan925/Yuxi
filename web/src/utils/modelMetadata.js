@@ -1,5 +1,7 @@
 let catalogPromise
 
+export const USD_TO_CNY_RATE = 7
+
 export const loadModelMetadataCatalog = () => {
   catalogPromise ||= import('@opencode-ai/models/snapshot').then(({ providers }) => ({ providers }))
   return catalogPromise
@@ -21,9 +23,6 @@ export const resolveModelDisplayMetadata = (providers, providerId, model = {}) =
     : catalogModel?.modalities?.input || []
   const context = model.context_length || catalogModel?.limit?.context || null
   const cost = normalizeRemotePrice(model.pricing) || catalogModel?.cost
-  const inputPrice = formatModelPrice(cost?.input)
-  const outputPrice = formatModelPrice(cost?.output)
-  const priceText = inputPrice && outputPrice ? `输入 $${inputPrice} · 输出 $${outputPrice}` : ''
 
   return {
     matched: !!catalogModel,
@@ -32,9 +31,7 @@ export const resolveModelDisplayMetadata = (providers, providerId, model = {}) =
     contextLabel: formatModelTokenCount(context),
     isOneMillionContext: context >= 1_000_000 && context < 1_500_000,
     vision: inputModalities.includes('image'),
-    priceDisplay: inputPrice && outputPrice ? `$${inputPrice} / $${outputPrice}` : '',
-    priceText,
-    priceTooltip: priceText ? `${priceText}（USD / 百万 tokens）` : ''
+    price: cost
   }
 }
 
@@ -51,12 +48,17 @@ export const formatModelPrice = (value) => {
   return trimTrailingZeros(value.toFixed(precision))
 }
 
+export const formatModelPriceDisplay = (price, currency = 'USD') => {
+  if (!Number.isFinite(price?.input) || !Number.isFinite(price?.output)) return ''
+  const rate = currency === 'CNY' ? USD_TO_CNY_RATE : 1
+  const symbol = currency === 'CNY' ? '¥' : '$'
+  return `${symbol}${formatModelPrice(price.input * rate)} / ${symbol}${formatModelPrice(price.output * rate)}`
+}
+
 const normalizeRemotePrice = (pricing) => {
   if (!pricing) return null
   const input = Number.parseFloat(pricing.prompt ?? pricing.prompt_price ?? pricing.input)
-  const output = Number.parseFloat(
-    pricing.completion ?? pricing.completion_price ?? pricing.output
-  )
+  const output = Number.parseFloat(pricing.completion ?? pricing.completion_price ?? pricing.output)
   if (!Number.isFinite(input) || !Number.isFinite(output) || input < 0 || output < 0) {
     return null
   }

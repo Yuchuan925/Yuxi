@@ -23,8 +23,10 @@ import { modelProviderApi } from '@/apis/system_api'
 import { useConfigStore } from '@/stores/config'
 import { modelAvatars } from '@/utils/modelIcon'
 import {
+  formatModelPriceDisplay,
   loadModelMetadataCatalog,
-  resolveModelDisplayMetadata
+  resolveModelDisplayMetadata,
+  USD_TO_CNY_RATE
 } from '@/utils/modelMetadata'
 import PageShoulder from '@/components/shared/PageShoulder.vue'
 import InfoCard from '@/components/shared/InfoCard.vue'
@@ -106,6 +108,7 @@ const modelCatalogProviders = ref({})
 // Remote model search state per provider
 const remoteModelSearch = ref({})
 const remoteModelTypeFilter = ref({})
+const priceCurrency = ref('USD')
 const filteredProviders = computed(() => {
   const keyword = searchQuery.value.trim().toLowerCase()
   const filtered = keyword
@@ -193,6 +196,13 @@ const getModelTestTitle = (providerId, model) => {
 const getProviderModelInfo = (providerId, model) =>
   resolveModelDisplayMetadata(modelCatalogProviders.value, providerId, model)
 
+const getRemoteModelPriceDisplay = (providerId, model) =>
+  formatModelPriceDisplay(getProviderModelInfo(providerId, model).price, priceCurrency.value)
+
+const togglePriceCurrency = () => {
+  priceCurrency.value = priceCurrency.value === 'CNY' ? 'USD' : 'CNY'
+}
+
 const getModalityDisplay = (modality) =>
   MODALITY_DISPLAY[modality] || { icon: FileText, label: modality }
 
@@ -245,9 +255,9 @@ const remoteModelTypeOptions = computed(() => {
   }, {})
   return [
     { label: `全部 ${models.length}`, value: 'all' },
-    { label: `Chat ${counts.chat || 0}`, value: 'chat' },
-    { label: `Embedding ${counts.embedding || 0}`, value: 'embedding' },
-    { label: `Rerank ${counts.rerank || 0}`, value: 'rerank' }
+    { label: `对话 ${counts.chat || 0}`, value: 'chat' },
+    { label: `向量 ${counts.embedding || 0}`, value: 'embedding' },
+    { label: `重排 ${counts.rerank || 0}`, value: 'rerank' }
   ]
 })
 
@@ -1026,21 +1036,41 @@ defineExpose({
         <div class="models-section">
           <div class="remote-header">
             <h4 class="models-section-title">远端候选模型 ({{ filteredRemoteModels.length }})</h4>
-            <a-input
+            <div
               v-if="remoteModelsMap[currentProviderForModels.provider_id]?.length"
-              v-model:value="remoteModelSearch[currentProviderForModels.provider_id]"
-              class="remote-search-input"
-              placeholder="搜索模型..."
-              allow-clear
+              class="remote-controls"
             >
-              <template #prefix><Search :size="12" /></template>
-            </a-input>
-            <a-segmented
-              v-if="remoteModelsMap[currentProviderForModels.provider_id]?.length"
-              v-model:value="remoteModelTypeFilter[currentProviderForModels.provider_id]"
-              :options="remoteModelTypeOptions"
-              class="remote-type-filter"
-            />
+              <a-input
+                v-model:value="remoteModelSearch[currentProviderForModels.provider_id]"
+                class="remote-search-input"
+                placeholder="搜索模型..."
+                allow-clear
+                autocomplete="off"
+                autocapitalize="none"
+                autocorrect="off"
+                spellcheck="false"
+              >
+                <template #prefix><Search :size="12" /></template>
+              </a-input>
+              <button
+                type="button"
+                class="currency-toggle"
+                :title="
+                  priceCurrency === 'CNY'
+                    ? `当前按人民币展示，点击切换美元（1 USD ≈ ¥${USD_TO_CNY_RATE}）`
+                    : `当前按美元展示，点击切换人民币（1 USD ≈ ¥${USD_TO_CNY_RATE}）`
+                "
+                :aria-label="priceCurrency === 'CNY' ? '切换为美元计费' : '切换为人民币计费'"
+                @click="togglePriceCurrency"
+              >
+                {{ priceCurrency === 'CNY' ? '¥' : '$' }}
+              </button>
+              <a-segmented
+                v-model:value="remoteModelTypeFilter[currentProviderForModels.provider_id]"
+                :options="remoteModelTypeOptions"
+                class="remote-type-filter"
+              />
+            </div>
           </div>
           <div
             class="remote-list"
@@ -1079,16 +1109,10 @@ defineExpose({
                   .contextLabel || '-'
               }}</span>
               <span
-                v-if="
-                  getProviderModelInfo(currentProviderForModels.provider_id, remoteModel)
-                    .priceDisplay
-                "
+                v-if="getRemoteModelPriceDisplay(currentProviderForModels.provider_id, remoteModel)"
                 class="remote-price"
               >
-                {{
-                  getProviderModelInfo(currentProviderForModels.provider_id, remoteModel)
-                    .priceDisplay
-                }}
+                {{ getRemoteModelPriceDisplay(currentProviderForModels.provider_id, remoteModel) }}
               </span>
               <span v-else class="remote-price placeholder">N/A</span>
               <a-button
@@ -1123,6 +1147,12 @@ defineExpose({
                 <Plus :size="13" v-else />
               </a-button>
             </div>
+          </div>
+          <div v-if="Object.keys(modelCatalogProviders).length" class="model-metadata-source">
+            部分信息（价格、能力等）来自
+            <a href="https://models.dev" target="_blank" rel="noreferrer">models.dev</a>
+            填补。人民币价格按固定汇率 1 USD = ¥{{ USD_TO_CNY_RATE }}
+            换算。以上信息仅供参考，可能和官网或实时汇率有偏差。
           </div>
           <div class="remote-fetch-actions"></div>
         </div>
@@ -1435,7 +1465,6 @@ defineExpose({
 .remote-header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 12px;
 
   .models-section-title {
@@ -1444,8 +1473,43 @@ defineExpose({
   }
 }
 
+.remote-controls {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-left: auto;
+}
+
 .remote-search-input {
   width: 180px;
+}
+
+.currency-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+  border: 1px solid var(--gray-150);
+  border-radius: 8px;
+  background: var(--gray-0);
+  color: var(--gray-700);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+
+  &:hover {
+    border-color: var(--gray-200);
+    background: var(--gray-25);
+    color: var(--gray-900);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--main-200);
+    outline-offset: 1px;
+  }
 }
 
 .remote-type-filter {
@@ -1521,6 +1585,16 @@ defineExpose({
 
   &.placeholder {
     color: var(--gray-400);
+  }
+}
+
+.model-metadata-source {
+  color: var(--gray-500);
+  font-size: 11px;
+  line-height: 1.5;
+
+  a {
+    color: var(--main-600);
   }
 }
 

@@ -48,6 +48,10 @@
             v-model:value="modelSearchKeyword"
             placeholder="搜索模型"
             allow-clear
+            autocomplete="off"
+            autocapitalize="none"
+            autocorrect="off"
+            spellcheck="false"
             @keydown.stop
           >
             <template #suffix>
@@ -84,9 +88,7 @@
                 @click="handleSelectV2Model(model.spec)"
               >
                 <div class="model-option">
-                  <a-tooltip :title="getModelInfo(model).priceTooltip || undefined">
-                    <span class="model-option-name">{{ model.display_name }}</span>
-                  </a-tooltip>
+                  <span class="model-option-name">{{ model.display_name }}</span>
                   <div class="model-option-signals">
                     <a-tooltip v-if="getModelInfo(model).vision" title="支持图像输入">
                       <span class="model-signal-icon" role="img" aria-label="支持图像输入">
@@ -106,10 +108,9 @@
           </template>
         </a-menu>
         <div v-if="hasModelMetadata" class="model-metadata-source">
-          模型信息来自
-          <a href="https://models.dev" target="_blank" rel="noreferrer" @click.stop
-            >models.dev</a
-          >，仅供参考
+          部分信息（价格、能力等）来自
+          <a href="https://models.dev" target="_blank" rel="noreferrer" @click.stop>models.dev</a>
+          填补。仅供参考，可能和官网有偏差。
         </div>
       </div>
     </template>
@@ -121,10 +122,7 @@ import { computed, reactive, ref, watch } from 'vue'
 import { modelProviderApi } from '@/apis/system_api'
 import { Eye, RefreshCw, X } from 'lucide-vue-next'
 import { useModelStatus } from '@/composables/useModelStatus'
-import {
-  loadModelMetadataCatalog,
-  resolveModelDisplayMetadata
-} from '@/utils/modelMetadata'
+import { loadModelMetadataCatalog, resolveModelDisplayMetadata } from '@/utils/modelMetadata'
 
 const props = defineProps({
   model_spec: {
