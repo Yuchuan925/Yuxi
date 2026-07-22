@@ -65,50 +65,14 @@
             <p class="param-description">选择文件保存的目标文件夹</p>
           </div>
           <div class="col-item" v-if="uploadMode !== 'url'">
-            <div class="setting-label">
-              OCR 引擎（仅应用于 PDF/图片文件）
-            </div>
+            <div class="setting-label">OCR 引擎（仅应用于 PDF/图片文件）</div>
             <div class="setting-content">
-              <a-popover
-                v-model:open="ocrPanelOpen"
-                placement="bottomLeft"
-                trigger="click"
-                overlayClassName="ocr-engine-popover"
-                @openChange="handleOcrPanelOpenChange"
-              >
-                <template #content>
-                  <div class="ocr-engine-panel">
-                    <button
-                      v-for="option in ocrEngineOptions"
-                      :key="option.value"
-                      type="button"
-                      class="ocr-engine-option"
-                      :class="{ selected: processingParams.ocr_engine === option.value }"
-                      :disabled="chunkLoading"
-                      @click="selectOcrEngine(option.value)"
-                    >
-                      <span class="ocr-engine-option-header">
-                        <span class="ocr-engine-name">{{ option.label }}</span>
-                        <span
-                          class="ocr-engine-status"
-                          :class="`status-${getOcrStatus(option.value)}`"
-                        >
-                          {{ getOcrStatusLabel(option.value) }}
-                        </span>
-                      </span>
-                      <span class="ocr-engine-desc">{{ getOcrDescription(option.value) }}</span>
-                    </button>
-
-                  </div>
-                </template>
-
-                <a-button class="ocr-engine-trigger" block>
-                  <span class="ocr-engine-trigger-main">
-                    <span class="ocr-engine-trigger-label">{{ selectedOcrEngineLabel }}</span>
-                  </span>
-                  <ChevronDown :size="14" />
-                </a-button>
-              </a-popover>
+              <OCRSelector
+                v-model="processingParams.ocr_engine"
+                :disabled="chunkLoading"
+                @change="ocrEngineTouched = true"
+                @options-loaded="handleOcrOptionsLoaded"
+              />
             </div>
           </div>
         </div>
@@ -378,8 +342,8 @@
 import { ref, computed, onMounted, watch, h } from 'vue'
 import { message, Upload, Modal } from 'ant-design-vue'
 import { useUserStore } from '@/stores/user'
+import { useConfigStore } from '@/stores/config'
 import { useDatabaseStore } from '@/stores/database'
-import { ocrApi } from '@/apis/system_api'
 import { fileApi, documentApi } from '@/apis/knowledge_api'
 import { getWorkspaceTree } from '@/apis/workspace_api'
 import {
@@ -400,6 +364,7 @@ import {
 import { buildChunkParamsPayload } from '@/utils/chunkUtils'
 import ChunkParamsConfig from '@/components/ChunkParamsConfig.vue'
 import FileTypeIcon from '@/components/common/FileTypeIcon.vue'
+import OCRSelector from '@/components/OCRSelector.vue'
 
 const props = defineProps({
   visible: {
@@ -427,6 +392,7 @@ const props = defineProps({
 const emit = defineEmits(['update:visible', 'success'])
 
 const store = useDatabaseStore()
+const configStore = useConfigStore()
 const DEFAULT_OCR_ENGINE = 'rapid_ocr'
 const defaultOcrEngine = ref(DEFAULT_OCR_ENGINE)
 
@@ -455,7 +421,7 @@ watch(
   (newVal) => {
     if (newVal) {
       ocrEngineTouched.value = false
-      loadOcrOptions()
+      applyDefaultOcrEngine()
       selectedFolderId.value = props.currentFolderId
       isFolderUpload.value = props.isFolderMode
       uploadMode.value = props.mode || (props.isFolderMode ? 'folder' : 'file')
@@ -535,10 +501,7 @@ const loadSupportedFileTypes = async () => {
   }
 }
 
-onMounted(() => {
-  loadSupportedFileTypes()
-  loadOcrOptions()
-})
+onMounted(loadSupportedFileTypes)
 
 const visible = computed({
   get: () => props.visible,
@@ -846,12 +809,11 @@ const toggleWorkspacePath = (path, checked) => {
   selectedWorkspacePaths.value = selectedWorkspacePaths.value.filter((item) => item !== path)
 }
 
-const ocrPanelOpen = ref(false)
 const ocrEngineTouched = ref(false)
 
 // 解析参数
 const processingParams = ref({
-  ocr_engine: DEFAULT_OCR_ENGINE,
+  ocr_engine: DEFAULT_OCR_ENGINE
 })
 
 // 自动入库相关
@@ -924,32 +886,20 @@ const hasZipFiles = computed(() => {
 
 const ocrEngineOptions = ref([])
 
-const loadOcrOptions = async () => {
-  try {
-    const data = await ocrApi.getOptions()
-    const engines = Array.isArray(data?.engines) ? data.engines : []
-    if (engines.length) {
-      ocrEngineOptions.value = engines
-        .filter((engine) => engine.enabled)
-        .map((engine) => ({
-          value: engine.engine_id,
-          label: engine.display_name,
-          description:
-            engine.engine_id === 'disable'
-              ? '不启用 OCR，仅处理文本文件'
-              : engine.display_name
-        }))
-    }
-    defaultOcrEngine.value = data?.default_engine || DEFAULT_OCR_ENGINE
-    if (!ocrEngineTouched.value) applyDefaultOcrEngine()
-  } catch (error) {
-    console.error('获取 OCR 引擎选项失败:', error)
-    message.error('获取 OCR 引擎选项失败，请稍后重试')
-  }
+const handleOcrOptionsLoaded = (data) => {
+  const engines = Array.isArray(data?.engines) ? data.engines : []
+  ocrEngineOptions.value = engines
+    .filter((engine) => engine.engine_id !== 'disable')
+    .map((engine) => ({ value: engine.engine_id }))
+  defaultOcrEngine.value = data?.default_engine || DEFAULT_OCR_ENGINE
+  if (!ocrEngineTouched.value) applyDefaultOcrEngine()
 }
 
 const resolveDefaultOcrEngine = () => {
-  const configuredEngine = String(defaultOcrEngine.value || DEFAULT_OCR_ENGINE).trim()
+  const configuredEngine = String(
+    configStore.config?.default_ocr_engine || defaultOcrEngine.value || DEFAULT_OCR_ENGINE
+  ).trim()
+  if (configuredEngine === 'disable') return configuredEngine
   return ocrEngineOptions.value.some((option) => option.value === configuredEngine)
     ? configuredEngine
     : DEFAULT_OCR_ENGINE
@@ -959,37 +909,12 @@ const applyDefaultOcrEngine = () => {
   processingParams.value.ocr_engine = resolveDefaultOcrEngine()
 }
 
-const ocrStatusLabels = {
-  local: '不启用',
-  configured: '已配置'
-}
-
-const getOcrStatus = (engine) => {
-    if (engine === 'disable') return 'local'
-  return 'configured'
-}
-
-const getOcrStatusLabel = (engine) => ocrStatusLabels[getOcrStatus(engine)] || '状态未知'
-
-const getOcrDescription = (engine) => {
-  const option = ocrEngineOptions.value.find((item) => item.value === engine)
-  if (engine === 'disable') return option?.description || '不启用 OCR，仅处理文本文件'
-
-  return option?.description || '由管理员配置中心管理'
-}
-
-const selectedOcrEngineLabel = computed(() => {
-  return (
-    ocrEngineOptions.value.find((option) => option.value === processingParams.value.ocr_engine)?.label ||
-    '选择 OCR 引擎'
-  )
-})
-
-const selectOcrEngine = (engine) => {
-  ocrEngineTouched.value = true
-  processingParams.value.ocr_engine = engine
-  ocrPanelOpen.value = false
-}
+watch(
+  () => configStore.config?.default_ocr_engine,
+  () => {
+    if (props.visible && !ocrEngineTouched.value) applyDefaultOcrEngine()
+  }
+)
 
 // 验证OCR服务可用性
 const validateOcrService = () => {
@@ -997,7 +922,9 @@ const validateOcrService = () => {
     return true
   }
 
-  if (!ocrEngineOptions.value.some((option) => option.value === processingParams.value.ocr_engine)) {
+  if (
+    !ocrEngineOptions.value.some((option) => option.value === processingParams.value.ocr_engine)
+  ) {
     message.error('OCR 引擎选项尚未加载，请稍后重试')
     return false
   }
@@ -1281,10 +1208,6 @@ const handleFileUpload = (info) => {
 const handleDrop = () => {}
 
 // 已移除文件夹上传逻辑
-
-const handleOcrPanelOpenChange = (open) => {
-  ocrPanelOpen.value = open
-}
 
 const getAuthHeaders = () => {
   const userStore = useUserStore()
@@ -1655,108 +1578,6 @@ const chunkData = async () => {
 .folder-checkbox {
   margin-left: 12px;
   white-space: nowrap;
-}
-
-.ocr-engine-trigger {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  width: 100%;
-  min-width: 0;
-}
-
-.ocr-engine-trigger-main {
-  display: inline-flex;
-  align-items: center;
-  flex: 1 1 auto;
-  min-width: 0;
-  gap: 8px;
-}
-
-.ocr-engine-trigger-loading {
-  flex: 0 0 auto;
-  color: var(--main-color);
-  animation: spin 1s linear infinite;
-}
-
-.ocr-engine-trigger-label {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.ocr-engine-panel {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  width: 280px;
-}
-
-.ocr-engine-option {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  width: 100%;
-  padding: 8px 10px;
-  border: 1px solid var(--gray-100);
-  border-radius: 8px;
-  background: var(--gray-0);
-  color: inherit;
-  cursor: pointer;
-  text-align: left;
-}
-
-.ocr-engine-option:hover:not(:disabled) {
-  border-color: var(--main-color);
-  background: color-mix(in srgb, var(--main-color) 6%, var(--gray-0));
-}
-
-.ocr-engine-option.selected {
-  border-color: var(--main-color);
-  background: color-mix(in srgb, var(--main-color) 8%, var(--gray-0));
-}
-
-.ocr-engine-option-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  min-width: 0;
-}
-
-.ocr-engine-name {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--gray-900);
-  font-size: 13px;
-  font-weight: 500;
-}
-
-.ocr-engine-status {
-  display: inline-flex;
-  align-items: center;
-  min-height: 18px;
-  flex: none;
-  font-size: 12px;
-  line-height: 1;
-}
-
-.ocr-engine-status.status-local,
-.ocr-engine-status.status-configured {
-  color: var(--color-success-700);
-}
-
-.ocr-engine-desc {
-  color: var(--gray-500);
-  font-size: 12px;
-  line-height: 1.4;
-}
-
-:global(.ocr-engine-popover .ant-popover-inner-content) {
-  padding: 10px;
 }
 
 .param-description {

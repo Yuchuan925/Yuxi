@@ -22,7 +22,7 @@ class MinerUParser(BaseDocumentProcessor):
     supported_extensions = [".pdf", ".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".tif"]
 
     def __init__(self, server_url: str | None = None):
-        self.server_url = server_url or os.getenv("MINERU_API_URI") or "http://localhost:30001"
+        self.server_url = (server_url or os.getenv("MINERU_API_URI") or "http://localhost:30001").rstrip("/")
         self.parse_endpoint = f"{self.server_url}/file_parse"
 
     def get_service_name(self) -> str:

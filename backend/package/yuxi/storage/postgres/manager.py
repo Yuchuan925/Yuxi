@@ -452,27 +452,20 @@ class PostgresManager(metaclass=SingletonMeta):
             WHERE is_default IS TRUE
             """,
             """
-            CREATE TABLE IF NOT EXISTS ocr_engine_configs (
+            CREATE TABLE IF NOT EXISTS config_options (
                 id SERIAL PRIMARY KEY,
-                engine_id VARCHAR(64) NOT NULL UNIQUE,
-                enabled BOOLEAN NOT NULL DEFAULT TRUE,
-                is_default BOOLEAN NOT NULL DEFAULT FALSE,
-                endpoint VARCHAR(500),
-                credential_source VARCHAR(32),
-                credential_value TEXT,
+                key VARCHAR(100) NOT NULL UNIQUE,
+                name VARCHAR(100) NOT NULL,
+                description TEXT NOT NULL DEFAULT '',
+                params JSONB NOT NULL DEFAULT '{}'::jsonb,
+                value JSONB NOT NULL DEFAULT '{}'::jsonb,
                 created_by VARCHAR(100),
                 updated_by VARCHAR(100),
                 created_at TIMESTAMPTZ DEFAULT NOW(),
                 updated_at TIMESTAMPTZ DEFAULT NOW()
             )
             """,
-            "CREATE UNIQUE INDEX IF NOT EXISTS ix_ocr_engine_configs_engine_id ON ocr_engine_configs(engine_id)",
-            "ALTER TABLE IF EXISTS ocr_engine_configs ADD COLUMN IF NOT EXISTS credential_value TEXT",
-            """
-            CREATE UNIQUE INDEX IF NOT EXISTS uq_ocr_engine_configs_default
-            ON ocr_engine_configs(is_default)
-            WHERE is_default IS TRUE
-            """,
+            "CREATE UNIQUE INDEX IF NOT EXISTS ix_config_options_key ON config_options(key)",
             """
             CREATE TABLE IF NOT EXISTS model_providers (
                 id SERIAL PRIMARY KEY,

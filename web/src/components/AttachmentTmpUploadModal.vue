@@ -56,60 +56,28 @@
               }}</span>
             </div>
 
-            <a-popover
+            <div
               v-if="item.parseSupported && item.status !== 'uploading' && item.status !== 'error'"
-              v-model:open="item.parsePanelOpen"
-              placement="bottomRight"
-              trigger="click"
-              overlayClassName="attachment-parse-popover"
-              @openChange="(open) => handleParsePanelOpenChange(item.localId, open)"
+              class="attachment-parse-controls"
             >
-              <template #content>
-                <div class="parse-panel">
-                  <button
-                    v-for="method in getAvailableParseMethods(item)"
-                    :key="method"
-                    type="button"
-                    class="parse-method-option"
-                    :class="{ selected: item.selectedParseMethod === method }"
-                    :disabled="item.status === 'parsing' || confirming"
-                    @click="handleParseMethodChange(item.localId, method)"
-                  >
-                    <span class="parse-method-option-header">
-                      <span class="parse-method-name">{{ methodLabels[method] || method }}</span>
-                      <span
-                        class="parse-method-status"
-                        :class="`status-${getMethodStatus(method)}`"
-                      >
-                        {{ getMethodStatusLabel(method) }}
-                      </span>
-                    </span>
-                    <span class="parse-method-desc">{{ getMethodDescription(method) }}</span>
-                  </button>
-
-                  <a-button
-                    type="primary"
-                    size="small"
-                    block
-                    class="parse-start-btn"
-                    :loading="item.status === 'parsing'"
-                    :disabled="isParseDisabled(item)"
-                    @click="handleStartParse(item.localId)"
-                  >
-                    开始解析
-                  </a-button>
-                </div>
-              </template>
-
+              <OCRSelector
+                :model-value="item.selectedParseMethod"
+                :allowed-engines="item.parseMethods"
+                :disabled="item.status === 'parsing' || confirming"
+                placeholder="选择 OCR"
+                @update:model-value="handleParseMethodChange(item.localId, $event)"
+              />
               <a-button
+                type="primary"
                 size="small"
                 class="parse-trigger-btn"
                 :loading="item.status === 'parsing'"
-                :disabled="confirming"
+                :disabled="isParseDisabled(item)"
+                @click="handleStartParse(item.localId)"
               >
-                可解析
+                解析
               </a-button>
-            </a-popover>
+            </div>
           </div>
         </div>
       </div>
@@ -122,8 +90,9 @@ import { computed, ref, watch } from 'vue'
 import { message } from 'ant-design-vue'
 import { X } from 'lucide-vue-next'
 import { threadApi } from '@/apis'
-import { ocrApi } from '@/apis/system_api'
+import { useConfigStore } from '@/stores/config'
 import FileTypeIcon from '@/components/common/FileTypeIcon.vue'
+import OCRSelector from '@/components/OCRSelector.vue'
 
 const props = defineProps({
   open: { type: Boolean, default: false },
@@ -136,18 +105,11 @@ const props = defineProps({
 const emit = defineEmits(['update:open', 'added'])
 
 const DEFAULT_OCR_ENGINE = 'rapid_ocr'
-const defaultOcrEngine = ref(DEFAULT_OCR_ENGINE)
+const configStore = useConfigStore()
 const fileItems = ref([])
 const confirming = ref(false)
 let localIdSeed = 0
 let consumedInitialFilesKey = 0
-
-const methodLabels = { disable: 'PDF 文本提取' }
-
-const methodStatusLabels = {
-  local: '无需 OCR',
-  configured: '已配置'
-}
 
 const busy = computed(() =>
   fileItems.value.some((item) => ['uploading', 'parsing'].includes(item.status))
@@ -163,8 +125,6 @@ watch(
     if (!open) {
       fileItems.value = []
       confirming.value = false
-    } else {
-      loadOcrOptions()
     }
   }
 )
@@ -177,14 +137,20 @@ const getDefaultParseMethod = (parseMethods) => {
   if (!Array.isArray(parseMethods) || parseMethods.length === 0) {
     return null
   }
-  const configuredEngine = String(defaultOcrEngine.value || DEFAULT_OCR_ENGINE).trim()
-  if (parseMethods.includes(configuredEngine)) {
+  const configuredEngine = String(
+    configStore.config?.default_ocr_engine || DEFAULT_OCR_ENGINE
+  ).trim()
+  if (configuredEngine === 'disable' && parseMethods.includes('disable')) {
     return configuredEngine
   }
-  if (parseMethods.includes(DEFAULT_OCR_ENGINE)) {
+  const selectableMethods = parseMethods.filter((method) => method !== 'disable')
+  if (selectableMethods.includes(configuredEngine)) {
+    return configuredEngine
+  }
+  if (selectableMethods.includes(DEFAULT_OCR_ENGINE)) {
     return DEFAULT_OCR_ENGINE
   }
-  return parseMethods[0]
+  return selectableMethods[0] || null
 }
 
 const normalizeTmpUpload = (response) => ({
@@ -200,28 +166,6 @@ const normalizeTmpUpload = (response) => ({
   selectedParseMethod: getDefaultParseMethod(response.parse_methods || []),
   parseMethodTouched: false
 })
-
-const applyDefaultParseMethods = () => {
-  fileItems.value = fileItems.value.map((item) => {
-    if (!item.parseSupported || item.parseMethodTouched || item.status === 'parsed') {
-      return item
-    }
-    return { ...item, selectedParseMethod: getDefaultParseMethod(item.parseMethods || []) }
-  })
-}
-
-const loadOcrOptions = async () => {
-  try {
-    const data = await ocrApi.getOptions()
-    defaultOcrEngine.value = data?.default_engine || DEFAULT_OCR_ENGINE
-    for (const engine of data?.engines || []) {
-      methodLabels[engine.engine_id] = engine.display_name
-    }
-    applyDefaultParseMethods()
-  } catch (error) {
-    console.error('获取 OCR 引擎选项失败:', error)
-  }
-}
 
 const updateItem = (localId, patch) => {
   fileItems.value = fileItems.value.map((item) =>
@@ -280,25 +224,8 @@ watch(
   { flush: 'post' }
 )
 
-const getMethodStatus = (method) => {
-  if (method === 'disable') return 'local'
-  return 'configured'
-}
-
-const getMethodStatusLabel = (method) => methodStatusLabels[getMethodStatus(method)] || '状态未知'
-
-const getMethodDescription = (method) => {
-  if (method === 'disable') return '使用文件内置文本层，不调用 OCR 服务'
-
-  return '由管理员配置中心管理'
-}
-
-const getAvailableParseMethods = (item) => item.parseMethods || []
-
 const isParseDisabled = (item) =>
-  item.status === 'parsing' ||
-  !item.selectedParseMethod ||
-  confirming.value
+  item.status === 'parsing' || !item.selectedParseMethod || confirming.value
 
 const clearParsedState = {
   parsedObjectName: null,
@@ -321,7 +248,6 @@ const handleParseMethodChange = (localId, selectedParseMethod) => {
 const handleStartParse = (localId) => {
   const item = fileItems.value.find((entry) => entry.localId === localId)
   if (!item || isParseDisabled(item)) return
-  updateItem(localId, { parsePanelOpen: false })
   void handleParse(item)
 }
 
@@ -359,10 +285,6 @@ const handleParse = async (item) => {
 
 const removeItem = (localId) => {
   fileItems.value = fileItems.value.filter((item) => item.localId !== localId)
-}
-
-const handleParsePanelOpenChange = (localId, open) => {
-  updateItem(localId, { parsePanelOpen: open })
 }
 
 const handleConfirm = async () => {
@@ -512,6 +434,7 @@ const formatFileSize = (size) => {
 
 .attachment-status-row {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
@@ -544,75 +467,20 @@ const formatFileSize = (size) => {
 
 .parse-trigger-btn {
   flex: none;
-  margin-left: auto;
   font-size: 12px;
 }
 
-.parse-panel {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  width: 260px;
-}
-
-.parse-method-option {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  width: 100%;
-  padding: 8px 10px;
-  border: 1px solid var(--gray-100);
-  border-radius: 8px;
-  background: var(--gray-0);
-  color: inherit;
-  cursor: pointer;
-  text-align: left;
-}
-
-.parse-method-option:hover:not(:disabled) {
-  border-color: var(--main-color);
-  background: color-mix(in srgb, var(--main-color) 6%, var(--gray-0));
-}
-
-.parse-method-option.selected {
-  border-color: var(--main-color);
-  background: color-mix(in srgb, var(--main-color) 8%, var(--gray-0));
-}
-
-.parse-method-option-header {
+.attachment-parse-controls {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-}
+  gap: 6px;
+  width: min(260px, 100%);
+  margin-left: auto;
 
-.parse-method-name {
-  color: var(--gray-900);
-  font-size: 13px;
-  font-weight: 500;
-}
-
-.parse-method-status {
-  flex: none;
-  font-size: 12px;
-}
-
-.parse-method-status.status-local,
-.parse-method-status.status-configured {
-  color: var(--color-success-700);
-}
-
-.parse-method-desc {
-  color: var(--gray-500);
-  font-size: 12px;
-  line-height: 1.4;
-}
-
-.parse-start-btn {
-  margin-top: 2px;
-}
-
-:global(.attachment-parse-popover .ant-popover-inner-content) {
-  padding: 10px;
+  :deep(.ocr-selector-trigger) {
+    min-height: 24px;
+    padding: 1px 8px;
+    font-size: 12px;
+  }
 }
 </style>

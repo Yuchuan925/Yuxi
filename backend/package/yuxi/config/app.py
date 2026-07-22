@@ -18,7 +18,7 @@ DEFAULT_OCR_ENGINE = "rapid_ocr"
 
 
 def _get_available_ocr_engines() -> set[str]:
-    return set(PROCESSOR_TYPES)
+    return {"disable", *PROCESSOR_TYPES}
 
 
 def _normalize_default_ocr_engine(value: Any) -> str:

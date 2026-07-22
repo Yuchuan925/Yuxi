@@ -115,7 +115,7 @@ async def test_ensure_business_schema_creates_user_config_table():
 
 
 @pytest.mark.asyncio
-async def test_ensure_business_schema_creates_ocr_engine_config_table_and_default_index():
+async def test_ensure_business_schema_creates_generic_config_options_table():
     manager = PostgresManager()
     original_initialized = manager._initialized
     original_engine = manager.async_engine
@@ -131,10 +131,10 @@ async def test_ensure_business_schema_creates_ocr_engine_config_table_and_defaul
 
     statements = "\n".join(connection.statements)
 
-    assert "CREATE TABLE IF NOT EXISTS ocr_engine_configs" in statements
-    assert "credential_value TEXT" in statements
-    assert "ADD COLUMN IF NOT EXISTS credential_value TEXT" in statements
-    assert "CREATE UNIQUE INDEX IF NOT EXISTS uq_ocr_engine_configs_default" in statements
+    assert "CREATE TABLE IF NOT EXISTS config_options" in statements
+    assert "params JSONB NOT NULL" in statements
+    assert "value JSONB NOT NULL" in statements
+    assert "CREATE UNIQUE INDEX IF NOT EXISTS ix_config_options_key" in statements
 
 
 @pytest.mark.asyncio

@@ -15,6 +15,9 @@ from docx import Document
 from PIL import Image
 
 from yuxi.knowledge.parser.factory import DocumentProcessorFactory
+from yuxi.knowledge.parser.mineru import MinerUParser
+from yuxi.knowledge.parser.mineru_official import MinerUOfficialParser
+from yuxi.knowledge.parser.rapid_ocr import RapidOCRParser
 from yuxi.knowledge.parser.unified import Parser
 
 DATA_DIR = Path(__file__).resolve().parents[2] / "data"
@@ -39,6 +42,35 @@ def test_clear_cache_can_target_single_engine(monkeypatch: pytest.MonkeyPatch):
     DocumentProcessorFactory.clear_cache("rapid_ocr")
 
     assert factory_module._PROCESSOR_CACHE == {"mineru_ocr|two": second}
+
+
+def test_mineru_parser_normalizes_trailing_slash():
+    parser = MinerUParser(server_url="http://mineru-api:30001/")
+
+    assert parser.server_url == "http://mineru-api:30001"
+    assert parser.parse_endpoint == "http://mineru-api:30001/file_parse"
+
+
+def test_mineru_official_health_check_does_not_create_task(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(
+        "yuxi.knowledge.parser.mineru_official.requests.post",
+        lambda *args, **kwargs: pytest.fail("健康检查不应创建解析任务"),
+    )
+
+    health = MinerUOfficialParser(api_key="test-key").check_health()
+
+    assert health["status"] == "configured"
+
+
+def test_rapid_ocr_health_check_does_not_load_model(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(
+        "yuxi.knowledge.parser.rapid_ocr.RapidOCR",
+        lambda *args, **kwargs: pytest.fail("健康检查不应加载 OCR 模型"),
+    )
+
+    health = RapidOCRParser().check_health()
+
+    assert health["status"] == "healthy"
 
 
 def _build_pdf(file_path: Path, text: str) -> None:
@@ -201,7 +233,7 @@ def test_parser_parse_png_file_returns_markdown_text_with_mocked_ocr(
         return params or {}
 
     monkeypatch.setattr(parser_unified, "parse_image_async", _fake_parse_image_async)
-    monkeypatch.setattr("yuxi.services.ocr_config_service.resolve_ocr_task_params", _resolve_params)
+    monkeypatch.setattr("yuxi.services.ocr_service.resolve_ocr_task_params", _resolve_params)
 
     markdown = Parser.parse(str(file_path), params={"ocr_engine": "rapid_ocr"})
 
@@ -255,7 +287,7 @@ async def test_parser_aparse_pdf_file_returns_markdown_text(tmp_path: Path, monk
     async def _resolve_params(params=None):
         return params or {}
 
-    monkeypatch.setattr("yuxi.services.ocr_config_service.resolve_ocr_task_params", _resolve_params)
+    monkeypatch.setattr("yuxi.services.ocr_service.resolve_ocr_task_params", _resolve_params)
 
     markdown = await Parser.aparse(str(file_path), params={"ocr_engine": "disable"})
 

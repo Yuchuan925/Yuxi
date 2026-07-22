@@ -682,32 +682,21 @@ class ModelProvider(Base):
         }
 
 
-class OCREngineConfig(Base):
-    """OCR 引擎全局配置。"""
+class ConfigOption(Base):
+    """系统定义、管理员维护值的通用配置项。"""
 
-    __tablename__ = "ocr_engine_configs"
+    __tablename__ = "config_options"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    engine_id = Column(String(64), nullable=False, unique=True, index=True)
-    enabled = Column(Boolean, nullable=False, default=True)
-    is_default = Column(Boolean, nullable=False, default=False, index=True)
-    endpoint = Column(String(500), nullable=True)
-    credential_source = Column(String(32), nullable=True)
-    credential_value = Column(Text, nullable=True)
+    key = Column(String(100), nullable=False, unique=True, index=True)
+    name = Column(String(100), nullable=False)
+    description = Column(Text, nullable=False, default="")
+    params = Column(JSON, nullable=False, default=dict)
+    value = Column(JSON, nullable=False, default=dict)
     created_by = Column(String(100), nullable=True)
     updated_by = Column(String(100), nullable=True)
     created_at = Column(DateTime, default=utc_now_naive)
     updated_at = Column(DateTime, default=utc_now_naive, onupdate=utc_now_naive)
-
-    __table_args__ = (
-        Index(
-            "uq_ocr_engine_configs_default",
-            "is_default",
-            unique=True,
-            postgresql_where=is_default.is_(True),
-            sqlite_where=is_default.is_(True),
-        ),
-    )
 
 
 class TaskRecord(Base):

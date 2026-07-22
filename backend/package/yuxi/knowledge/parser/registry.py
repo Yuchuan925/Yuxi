@@ -13,61 +13,13 @@ PROCESSOR_TYPES = {
 }
 
 PROCESSOR_METADATA = {
-    "rapid_ocr": {
-        "display_name": "RapidOCR (ONNX)",
-        "enabled": True,
-        "endpoint": None,
-        "credential_source": None,
-        "credential_ref": None,
-    },
-    "mineru_ocr": {
-        "display_name": "MinerU OCR",
-        "enabled": True,
-        "endpoint": None,
-        "credential_source": None,
-        "credential_ref": None,
-        "endpoint_editable": True,
-    },
-    "mineru_official": {
-        "display_name": "MinerU Official API",
-        "enabled": True,
-        "endpoint": "https://mineru.net/api/v4",
-        "credential_source": "environment",
-        "credential_ref": "MINERU_API_KEY",
-        "credential_sources": ["environment", "database"],
-    },
-    "pp_structure_v3_ocr": {
-        "display_name": "PP-Structure-V3",
-        "enabled": True,
-        "endpoint": None,
-        "credential_source": None,
-        "credential_ref": None,
-        "endpoint_editable": True,
-    },
-    "deepseek_ocr": {
-        "display_name": "DeepSeek OCR",
-        "enabled": True,
-        "endpoint": "https://api.siliconflow.cn/v1/chat/completions",
-        "credential_source": "environment",
-        "credential_ref": "SILICONFLOW_API_KEY",
-        "credential_sources": ["environment", "database"],
-    },
-    "paddleocr_vl_1_6": {
-        "display_name": "PaddleOCR-VL-1.6",
-        "enabled": True,
-        "endpoint": None,
-        "credential_source": "environment",
-        "credential_ref": "PADDLEOCR_API_TOKEN",
-        "credential_sources": ["environment", "database"],
-    },
-    "paddleocr_pp_ocrv6": {
-        "display_name": "PP-OCRv6",
-        "enabled": True,
-        "endpoint": None,
-        "credential_source": "environment",
-        "credential_ref": "PADDLEOCR_API_TOKEN",
-        "credential_sources": ["environment", "database"],
-    },
+    "rapid_ocr": {"display_name": "RapidOCR (ONNX)"},
+    "mineru_ocr": {"display_name": "MinerU OCR"},
+    "mineru_official": {"display_name": "MinerU Official API"},
+    "pp_structure_v3_ocr": {"display_name": "PP-Structure-V3"},
+    "deepseek_ocr": {"display_name": "DeepSeek OCR"},
+    "paddleocr_vl_1_6": {"display_name": "PaddleOCR-VL-1.6"},
+    "paddleocr_pp_ocrv6": {"display_name": "PP-OCRv6"},
 }
 
 

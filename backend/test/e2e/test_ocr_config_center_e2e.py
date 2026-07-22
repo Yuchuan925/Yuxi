@@ -20,11 +20,9 @@ async def test_admin_ocr_config_drives_real_tmp_attachment_parse(
 ):
     """验证管理员配置能驱动真实临时附件 OCR，并回收测试创建的资源。"""
 
-    configs_response = await e2e_client.get("/api/system/ocr/configs", headers=e2e_headers)
+    configs_response = await e2e_client.get("/api/system/config", headers=e2e_headers)
     assert configs_response.status_code == 200, configs_response.text
-    configs = configs_response.json()["configs"]
-    rapid = next(item for item in configs if item["engine_id"] == "rapid_ocr")
-    previous_default = next(item for item in configs if item["is_default"])
+    previous_default = configs_response.json()["default_ocr_engine"]
     image_path = tmp_path / "ocr-config-center.png"
     _build_ocr_image(image_path)
     thread_id = None
@@ -33,12 +31,9 @@ async def test_admin_ocr_config_drives_real_tmp_attachment_parse(
     attachment = None
 
     try:
-        update_response = await e2e_client.put(
-            "/api/system/ocr/configs/rapid_ocr",
-            json={
-                "enabled": True,
-                "is_default": True,
-            },
+        update_response = await e2e_client.post(
+            "/api/system/config/update",
+            json={"default_ocr_engine": "rapid_ocr"},
             headers=e2e_headers,
         )
         assert update_response.status_code == 200, update_response.text
@@ -114,19 +109,12 @@ async def test_admin_ocr_config_drives_real_tmp_attachment_parse(
         assert "CENTER" in recognized
     finally:
         try:
-            if previous_default["engine_id"] != "rapid_ocr":
-                restore_default = await e2e_client.put(
-                    f"/api/system/ocr/configs/{previous_default['engine_id']}",
-                    json={"enabled": True, "is_default": True},
-                    headers=e2e_headers,
-                )
-                assert restore_default.status_code == 200, restore_default.text
-            restore_rapid = await e2e_client.put(
-                "/api/system/ocr/configs/rapid_ocr",
-                json={"enabled": rapid["enabled"]},
+            restore_default = await e2e_client.post(
+                "/api/system/config/update",
+                json={"default_ocr_engine": previous_default},
                 headers=e2e_headers,
             )
-            assert restore_rapid.status_code == 200, restore_rapid.text
+            assert restore_default.status_code == 200, restore_default.text
         finally:
             await _cleanup_created_resources(
                 e2e_client=e2e_client,

@@ -74,13 +74,12 @@ async def lifespan(app: FastAPI):
         logger.error(f"Failed to initialize model cache during startup: {e}")
 
     try:
-        from yuxi.services.ocr_config_service import ensure_ocr_configs_in_db
+        from yuxi.config.options import ensure_options_in_db
 
         async with pg_manager.get_async_session_context() as session:
-            await ensure_ocr_configs_in_db(session)
-            await session.commit()
+            await ensure_options_in_db(session)
     except Exception as e:
-        logger.error(f"Failed to initialize OCR engine configs during startup: {e}")
+        logger.error(f"Failed to initialize config options during startup: {e}")
 
     # 初始化知识库管理器
     if os.environ.get("LITE_MODE", "").lower() in ("true", "1"):
@@ -98,7 +97,7 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"Run queue redis unavailable on startup: {e}")
 
-    # 启动应用级运行时配置同步线程；OCR 配置不依赖该线程。
+    # 启动应用级运行时配置同步线程。
     config.start_runtime_sync()
 
     try:

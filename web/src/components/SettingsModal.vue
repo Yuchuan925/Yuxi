@@ -154,19 +154,19 @@
         </div>
         <div
           class="nav-item"
-          :class="{ active: activeTab === 'user' }"
-          @click="activeTab = 'user'"
-          v-if="userStore.isAdmin"
-        >
-          用户管理
-        </div>
-        <div
-          class="nav-item"
           :class="{ active: activeTab === 'ocr' }"
           @click="activeTab = 'ocr'"
           v-if="userStore.isAdmin"
         >
           OCR 配置
+        </div>
+        <div
+          class="nav-item"
+          :class="{ active: activeTab === 'user' }"
+          @click="activeTab = 'user'"
+          v-if="userStore.isAdmin"
+        >
+          用户管理
         </div>
         <div
           class="nav-item"

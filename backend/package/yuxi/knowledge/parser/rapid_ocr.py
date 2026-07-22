@@ -45,21 +45,17 @@ class RapidOCRParser(BaseDocumentProcessor):
         }
 
     def check_health(self) -> dict:
-        """检查 RapidOCR 模型是否可用"""
-        try:
-            test_ocr = RapidOCR(params=self._get_model_params())
-            del test_ocr
-            return {
-                "status": "healthy",
-                "message": "RapidOCR PP-OCRv5 模型可用",
-                "details": {
-                    "ocr_version": "PP-OCRv5",
-                    "engine": "onnxruntime",
-                    "det_box_thresh": self.det_box_thresh,
-                },
-            }
-        except Exception as e:
-            return {"status": "error", "message": f"模型加载失败: {str(e)}", "details": {"error": str(e)}}
+        """报告本地组件状态，避免选择器刷新时重复加载模型。"""
+
+        return {
+            "status": "healthy",
+            "message": "RapidOCR PP-OCRv5 组件可用",
+            "details": {
+                "ocr_version": "PP-OCRv5",
+                "engine": "onnxruntime",
+                "det_box_thresh": self.det_box_thresh,
+            },
+        }
 
     def _load_model(self):
         """延迟加载 OCR 模型"""

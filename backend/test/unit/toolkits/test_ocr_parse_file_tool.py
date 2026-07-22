@@ -37,10 +37,10 @@ def _runtime(
 async def test_ocr_parse_file_writes_markdown_to_outputs(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("yuxi.config.save_dir", str(tmp_path))
 
-    async def resolve_engine(engine_id):
+    def resolve_engine(engine_id):
         return engine_id
 
-    monkeypatch.setattr("yuxi.services.ocr_config_service.resolve_ocr_engine_id", resolve_engine)
+    monkeypatch.setattr("yuxi.services.ocr_service.resolve_ocr_engine_id", resolve_engine)
     thread_id = "thread-1"
     uid = "user-1"
     ensure_thread_dirs(thread_id, uid)
@@ -80,11 +80,11 @@ async def test_ocr_parse_file_writes_markdown_to_outputs(tmp_path, monkeypatch: 
 async def test_ocr_parse_file_uses_default_engine(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("yuxi.config.save_dir", str(tmp_path))
 
-    async def resolve_engine(engine_id):
+    def resolve_engine(engine_id):
         assert engine_id is None
         return "rapid_ocr"
 
-    monkeypatch.setattr("yuxi.services.ocr_config_service.resolve_ocr_engine_id", resolve_engine)
+    monkeypatch.setattr("yuxi.services.ocr_service.resolve_ocr_engine_id", resolve_engine)
     thread_id = "thread-1"
     uid = "user-1"
     ensure_thread_dirs(thread_id, uid)
@@ -106,6 +106,33 @@ async def test_ocr_parse_file_uses_default_engine(tmp_path, monkeypatch: pytest.
 
     assert result["ocr_engine"] == "rapid_ocr"
     assert captured["params"] == {"ocr_engine": "rapid_ocr"}
+
+
+@pytest.mark.asyncio
+async def test_ocr_parse_file_accepts_disable_for_pdf(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("yuxi.config.save_dir", str(tmp_path))
+    thread_id = "thread-1"
+    uid = "user-1"
+    ensure_thread_dirs(thread_id, uid)
+    source_path = sandbox_uploads_dir(thread_id) / "text-layer.pdf"
+    source_path.write_bytes(b"fake pdf")
+    source_virtual_path = virtual_path_for_thread_file(thread_id, source_path, uid=uid)
+    captured: dict[str, object] = {}
+
+    async def fake_aparse(source: str, params: dict | None = None) -> str:
+        captured["params"] = params
+        return "PDF text layer"
+
+    monkeypatch.setattr(Parser, "aparse", fake_aparse)
+
+    result = await ocr_parse_file.coroutine(
+        file_path=source_virtual_path,
+        ocr_engine="disable",
+        runtime=_runtime(thread_id=thread_id, uid=uid),
+    )
+
+    assert result["ocr_engine"] == "disable"
+    assert captured["params"] == {"ocr_engine": "disable"}
 
 
 @pytest.mark.asyncio

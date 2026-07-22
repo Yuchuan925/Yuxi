@@ -446,7 +446,7 @@ class Parser:
         resolved_params = params
         suffix = Path(source.split("?", 1)[0]).suffix.lower()
         if suffix in OCR_FILE_EXTENSIONS:
-            from yuxi.services.ocr_config_service import resolve_ocr_task_params
+            from yuxi.services.ocr_service import resolve_ocr_task_params
 
             resolved_params = await resolve_ocr_task_params(params)
         parsed = await parse_source_to_markdown(source=source, params=resolved_params)

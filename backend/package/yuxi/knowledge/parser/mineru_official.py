@@ -40,58 +40,13 @@ class MinerUOfficialParser(BaseDocumentProcessor):
         return "mineru_official"
 
     def check_health(self) -> dict[str, Any]:
-        """检查 API 可用性和密钥有效性"""
-        try:
-            # 使用一个简单的测试请求来验证 API 密钥
-            # 由于没有专门的 ping 接口，我们尝试创建一个测试任务的请求
-            test_data = {"url": "https://cdn-mineru.openxlab.org.cn/demo/example.pdf", "is_ocr": True}
+        """报告凭证配置状态，避免健康检查创建真实解析任务。"""
 
-            response = requests.post(f"{self.api_base}/extract/task", headers=self.headers, json=test_data, timeout=10)
-
-            # 如果返回 401 或特定的 API 错误码，说明密钥有问题
-            if response.status_code == 401:
-                return {"status": "unhealthy", "message": "API 密钥无效或已过期", "details": {"error_code": "A0202"}}
-            elif response.status_code == 403:
-                return {"status": "unhealthy", "message": "API 密钥权限不足", "details": {"error_code": "A0211"}}
-            elif response.status_code == 200:
-                # 解析响应检查是否成功创建任务
-                try:
-                    result = response.json()
-                    if result.get("code") == 0:
-                        return {
-                            "status": "healthy",
-                            "message": "MinerU 官方 API 服务可用",
-                            "details": {"api_base": self.api_base},
-                        }
-                    else:
-                        return {
-                            "status": "unhealthy",
-                            "message": f"API 返回错误: {result.get('msg', '未知错误')}",
-                            "details": {"error_code": result.get("code")},
-                        }
-                except Exception:
-                    return {
-                        "status": "healthy",
-                        "message": "MinerU 官方 API 服务可用",
-                        "details": {"api_base": self.api_base},
-                    }
-            else:
-                return {
-                    "status": "unhealthy",
-                    "message": f"API 服务异常: HTTP {response.status_code}",
-                    "details": {"status_code": response.status_code},
-                }
-
-        except requests.exceptions.Timeout:
-            return {"status": "timeout", "message": "API 请求超时", "details": {"timeout": "10s"}}
-        except requests.exceptions.ConnectionError:
-            return {
-                "status": "unavailable",
-                "message": "无法连接到 MinerU 官方 API 服务",
-                "details": {"api_base": self.api_base},
-            }
-        except Exception as e:
-            return {"status": "error", "message": f"健康检查失败: {str(e)}", "details": {"error": str(e)}}
+        return {
+            "status": "configured",
+            "message": "MinerU 官方 API Key 已配置，将在解析时验证",
+            "details": {"api_base": self.api_base},
+        }
 
     def process_file(self, file_path: str, params: dict[str, Any] | None = None) -> str:
         """

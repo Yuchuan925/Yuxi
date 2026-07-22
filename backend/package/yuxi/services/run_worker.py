@@ -631,7 +631,7 @@ async def _load_input_message(message_id: int | None) -> Message | None:
 
 
 async def _worker_startup(ctx):
-    """初始化 worker 依赖并启动 OCR 配置同步任务。"""
+    """初始化 worker 依赖。"""
 
     pg_manager.initialize()
     await pg_manager.create_business_tables()
@@ -639,10 +639,9 @@ async def _worker_startup(ctx):
     await ensure_builtin_mcp_servers_in_db()
     async with pg_manager.get_async_session_context() as session:
         await init_builtin_skills(session)
-        from yuxi.services.ocr_config_service import ensure_ocr_configs_in_db
+        from yuxi.config.options import ensure_options_in_db
 
-        await ensure_ocr_configs_in_db(session)
-        await session.commit()
+        await ensure_options_in_db(session)
     sys_config.start_runtime_sync()
     await recover_pending_dispatches()
 

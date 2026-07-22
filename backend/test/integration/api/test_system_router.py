@@ -46,7 +46,7 @@ async def test_config_get_requires_login_and_update_requires_admin(test_client, 
     assert update_response.status_code == 403
 
 
-async def test_ocr_options_hide_infrastructure_and_admin_view_exposes_capabilities(
+async def test_ocr_options_and_config_options_permissions(
     test_client,
     standard_user,
     admin_headers,
@@ -58,57 +58,67 @@ async def test_ocr_options_hide_infrastructure_and_admin_view_exposes_capabiliti
     assert options["engines"]
     assert {"endpoint", "credential_source", "credential_ref", "default_params"}.isdisjoint(options["engines"][0])
 
-    denied_response = await test_client.get("/api/system/ocr/configs", headers=standard_user["headers"])
+    denied_response = await test_client.get("/api/system/config/options", headers=standard_user["headers"])
     assert denied_response.status_code == 403
 
-    configs_response = await test_client.get("/api/system/ocr/configs", headers=admin_headers)
+    configs_response = await test_client.get("/api/system/config/options", headers=admin_headers)
     assert configs_response.status_code == 200, configs_response.text
-    configs = configs_response.json()["configs"]
-    mineru = next(item for item in configs if item["engine_id"] == "mineru_ocr")
-    mineru_official = next(item for item in configs if item["engine_id"] == "mineru_official")
-    deepseek = next(item for item in configs if item["engine_id"] == "deepseek_ocr")
-    assert mineru["endpoint_editable"] is True
-    assert mineru_official["endpoint_editable"] is False
-    assert mineru_official["credential_sources"] == ["environment", "database"]
-    assert mineru_official["credential_ref"] == "MINERU_API_KEY"
-    assert deepseek["credential_sources"] == ["environment", "database"]
+    configs = configs_response.json()["options"]
+    assert {item["key"] for item in configs} == {
+        "mineru_ocr_host_opts",
+        "mineru_official_api_opts",
+        "pp_structure_v3_ocr_host_opts",
+        "paddleocr_api_opts",
+    }
+    assert all("deepseek" not in item["key"] for item in configs)
+    official = next(item for item in configs if item["key"] == "mineru_official_api_opts")
+    assert official["params"]["fields"][0]["sensitive"] is True
+    assert official["value"]["api_key"] == ""
+    assert isinstance(official["sensitive_configured"]["api_key"], bool)
+    assert official["sensitive_state"]["api_key"]["source"] in {"database", "environment", "none"}
+    assert "configured" in official["sensitive_state"]["api_key"]
 
 
-async def test_ocr_config_rejects_managed_fields_and_invalid_sources(test_client, admin_headers):
-    managed_endpoint_response = await test_client.put(
-        "/api/system/ocr/configs/mineru_official",
-        json={"endpoint": "https://attacker.example/api/v4"},
-        headers=admin_headers,
-    )
-    assert managed_endpoint_response.status_code == 400
-    assert "服务端点由系统管理" in managed_endpoint_response.json()["detail"]
+async def test_config_option_update_is_visible_and_restored(test_client, admin_headers):
+    response = await test_client.get("/api/system/config/options", headers=admin_headers)
+    option = next(item for item in response.json()["options"] if item["key"] == "mineru_ocr_host_opts")
+    previous_url = option["value"].get("server_url", "")
 
-    missing_database_key_response = await test_client.put(
-        "/api/system/ocr/configs/mineru_official",
-        json={"credential_source": "database"},
-        headers=admin_headers,
-    )
-    assert missing_database_key_response.status_code == 400
-    assert "必须填写密钥" in missing_database_key_response.json()["detail"]
-
-    deepseek_database_response = await test_client.put(
-        "/api/system/ocr/configs/deepseek_ocr",
-        json={"credential_source": "database", "credential_value": "test-secret"},
-        headers=admin_headers,
-    )
-    assert deepseek_database_response.status_code == 200
+    try:
+        update_response = await test_client.put(
+            "/api/system/config/options/mineru_ocr_host_opts",
+            json={"value": {"server_url": "http://integration-mineru:30001"}},
+            headers=admin_headers,
+        )
+        assert update_response.status_code == 200, update_response.text
+        assert update_response.json()["option"]["value"]["server_url"] == "http://integration-mineru:30001/"
+    finally:
+        restore_response = await test_client.put(
+            "/api/system/config/options/mineru_ocr_host_opts",
+            json={"value": {"server_url": previous_url}},
+            headers=admin_headers,
+        )
+        assert restore_response.status_code == 200, restore_response.text
 
 
-async def test_ocr_config_update_is_visible_to_next_database_read(test_client, admin_headers):
-    configs_response = await test_client.get("/api/system/ocr/configs", headers=admin_headers)
-    assert configs_response.status_code == 200, configs_response.text
-    rapid = next(item for item in configs_response.json()["configs"] if item["engine_id"] == "rapid_ocr")
-    update_response = await test_client.put(
-        "/api/system/ocr/configs/rapid_ocr",
-        json={"enabled": rapid["enabled"]},
-        headers=admin_headers,
-    )
-    assert update_response.status_code == 200, update_response.text
+async def test_ocr_health_is_available_to_logged_in_users_and_returns_all_methods(
+    test_client,
+    standard_user,
+    admin_headers,
+    monkeypatch,
+):
+    async def fake_health(db):
+        del db
+        return {"rapid_ocr": {"status": "healthy", "message": "ok"}}
+
+    monkeypatch.setattr("yuxi.services.ocr_service.check_all_ocr_health", fake_health)
+
+    response = await test_client.get("/api/system/ocr/health", headers=standard_user["headers"])
+    assert response.status_code == 200, response.text
+    assert response.json()["health"]["rapid_ocr"]["status"] == "healthy"
+
+    admin_response = await test_client.get("/api/system/ocr/health", headers=admin_headers)
+    assert admin_response.status_code == 200, admin_response.text
 
 
 async def test_admin_can_fetch_config_and_reload_info(test_client, admin_headers):

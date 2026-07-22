@@ -191,75 +191,70 @@ async def reload_info_config(current_user: User = Depends(get_admin_user)):
 
 
 # =============================================================================
-# === OCR服务分组 ===
+# === 通用配置项与 OCR 分组 ===
 # =============================================================================
 
 
-class OCREngineConfigPayload(BaseModel):
-    """管理员可更新的 OCR 配置字段。"""
+class ConfigOptionValuePayload(BaseModel):
+    """管理员可更新的通用配置值。"""
 
-    enabled: bool | None = None
-    is_default: bool | None = None
-    endpoint: str | None = None
-    credential_source: str | None = None
-    credential_value: str | None = None
+    value: dict
+
+
+@system.get("/config/options")
+async def get_config_options(
+    current_user: User = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """返回系统定义的通用配置表单和值。"""
+
+    from yuxi.config.options import list_options, serialize_option
+
+    return {"options": [serialize_option(record) for record in await list_options(db)]}
+
+
+@system.put("/config/options/{key}")
+async def put_config_option(
+    key: str,
+    payload: ConfigOptionValuePayload,
+    current_user: User = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """保存一个通用配置项的 JSON 值。"""
+
+    from yuxi.config.options import serialize_option, update_option_value
+
+    try:
+        record = await update_option_value(db, key, payload.value, current_user.username)
+        if record is None:
+            raise HTTPException(status_code=404, detail=f"配置项不存在: {key}")
+        await db.commit()
+        await db.refresh(record)
+        return {"option": serialize_option(record)}
+    except HTTPException:
+        raise
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @system.get("/ocr/options")
 async def get_ocr_engine_options(
     current_user: User = Depends(get_required_user),
+):
+    """返回所有代码支持的 OCR 方法和默认项。"""
+
+    from yuxi.services.ocr_service import get_ocr_options
+
+    return get_ocr_options()
+
+
+@system.get("/ocr/health")
+async def get_ocr_health(
+    current_user: User = Depends(get_required_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """返回普通用户可见的脱敏 OCR 引擎选项。"""
+    """供登录用户使用当前有效配置检查全部 OCR 方法。"""
 
-    from yuxi.services.ocr_config_service import get_ocr_options
+    from yuxi.services.ocr_service import check_all_ocr_health
 
-    return await get_ocr_options(db)
-
-
-@system.get("/ocr/configs")
-async def get_ocr_engine_configs(
-    current_user: User = Depends(get_admin_user),
-    db: AsyncSession = Depends(get_db),
-):
-    """返回管理员可编辑的 OCR 配置与凭证状态。"""
-
-    from yuxi.repositories.ocr_config_repository import list_ocr_configs
-    from yuxi.services.ocr_config_service import serialize_admin_config
-
-    records = await list_ocr_configs(db)
-    return {"configs": [serialize_admin_config(record) for record in records]}
-
-
-@system.put("/ocr/configs/{engine_id}")
-async def put_ocr_engine_config(
-    engine_id: str,
-    payload: OCREngineConfigPayload,
-    current_user: User = Depends(get_admin_user),
-    db: AsyncSession = Depends(get_db),
-):
-    """保存单个 OCR 引擎配置。后续 OCR 任务会直接读取最新数据库配置。"""
-
-    from yuxi.services.ocr_config_service import serialize_admin_config, update_ocr_config
-
-    try:
-        record = await update_ocr_config(
-            db,
-            engine_id,
-            payload.model_dump(exclude_unset=True),
-            current_user.username,
-        )
-        if record is None:
-            raise HTTPException(status_code=404, detail=f"OCR 引擎配置不存在: {engine_id}")
-        # 先提交事实来源；后续 OCR 任务会直接读取已提交的数据库配置。
-        try:
-            await db.commit()
-        except Exception:
-            await db.rollback()
-            raise
-        await db.refresh(record)
-        return {"config": serialize_admin_config(record)}
-    except HTTPException:
-        raise
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"health": await check_all_ocr_health(db)}
