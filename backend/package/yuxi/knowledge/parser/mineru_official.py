@@ -21,12 +21,14 @@ from yuxi.utils import hashstr, logger
 class MinerUOfficialParser(BaseDocumentProcessor):
     """MinerU 官方 API 解析器"""
 
-    def __init__(self, api_key: str | None = None):
+    def __init__(self, api_key: str | None = None, api_base: str | None = None):
+        """使用配置中心解析后的凭证和官方端点初始化解析器。"""
+
         self.api_key = api_key or os.getenv("MINERU_API_KEY")
         if not self.api_key:
             raise DocumentParserException("MINERU_API_KEY 环境变量未设置", "mineru_official", "missing_api_key")
 
-        self.api_base = "https://mineru.net/api/v4"
+        self.api_base = (api_base or "https://mineru.net/api/v4").rstrip("/")
         self.headers = {
             "Content-Type": "application/json",
             "Authorization": f"Bearer {self.api_key}",
@@ -140,7 +142,11 @@ class MinerUOfficialParser(BaseDocumentProcessor):
             logger.info(f"文件上传成功，batch_id: {batch_id}")
 
             # 步骤 2: 轮询任务结果
-            result = self._poll_batch_result(batch_id)
+            result = self._poll_batch_result(
+                batch_id,
+                max_wait_time=int(params.get("max_wait_seconds", 600)),
+                poll_interval=float(params.get("poll_interval_seconds", 5)),
+            )
             logger.info(f"任务完成，状态: {result['state']}")
 
             zip_url = result.get("full_zip_url")
@@ -252,7 +258,12 @@ class MinerUOfficialParser(BaseDocumentProcessor):
 
         return batch_id
 
-    def _poll_batch_result(self, batch_id: str, max_wait_time: int = 600) -> dict[str, Any]:
+    def _poll_batch_result(
+        self,
+        batch_id: str,
+        max_wait_time: int = 600,
+        poll_interval: float = 5,
+    ) -> dict[str, Any]:
         """轮询批量任务结果"""
         start_time = time.time()
 
@@ -277,7 +288,7 @@ class MinerUOfficialParser(BaseDocumentProcessor):
 
             extract_results = result["data"].get("extract_result", [])
             if not extract_results:
-                time.sleep(5)
+                time.sleep(poll_interval)
                 continue
 
             # 检查第一个文件的状态
@@ -291,7 +302,7 @@ class MinerUOfficialParser(BaseDocumentProcessor):
                 raise DocumentParserException(f"文档解析失败: {err_msg}", self.get_service_name(), "parsing_failed")
 
             # 继续等待
-            time.sleep(5)
+            time.sleep(poll_interval)
 
         raise DocumentParserException("任务处理超时", self.get_service_name(), "timeout")
 

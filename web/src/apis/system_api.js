@@ -73,6 +73,16 @@ export const brandApi = {
 // =============================================================================
 
 export const ocrApi = {
+  getOptions: async () => apiGet('/api/system/ocr/options'),
+
+  getConfigs: async () => apiAdminGet('/api/system/ocr/configs'),
+
+  updateConfig: async (engineId, payload) =>
+    apiAdminPut(`/api/system/ocr/configs/${encodeURIComponent(engineId)}`, payload),
+
+  checkHealth: async (engineId) =>
+    apiAdminPost(`/api/system/ocr/configs/${encodeURIComponent(engineId)}/health`),
+
   /**
    * 获取OCR服务健康状态
    * @returns {Promise} - OCR健康状态

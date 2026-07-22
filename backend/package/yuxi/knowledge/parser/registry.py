@@ -1,5 +1,7 @@
 """文档处理器注册表。"""
 
+from yuxi.knowledge.parser.config_schemas import validate_default_params
+
 PROCESSOR_TYPES = {
     "rapid_ocr": ("yuxi.knowledge.parser.rapid_ocr", "RapidOCRParser"),
     "mineru_ocr": ("yuxi.knowledge.parser.mineru", "MinerUParser"),
@@ -8,4 +10,86 @@ PROCESSOR_TYPES = {
     "deepseek_ocr": ("yuxi.knowledge.parser.deepseek_ocr", "DeepSeekOCRParser"),
     "paddleocr_vl_1_6": ("yuxi.knowledge.parser.paddleocr_api", "PaddleOCRVLParser"),
     "paddleocr_pp_ocrv6": ("yuxi.knowledge.parser.paddleocr_api", "PaddleOCRPPOCRv6Parser"),
+}
+
+# 参数默认值由 Pydantic 契约生成，避免注册表维护第二份易漂移的数值配置。
+PROCESSOR_METADATA = {
+    "disable": {
+        "display_name": "不启用 OCR",
+        "supported_extensions": [".pdf"],
+        "enabled": True,
+        "endpoint": None,
+        "credential_source": None,
+        "credential_ref": None,
+        "default_params": validate_default_params("disable", None),
+    },
+    "rapid_ocr": {
+        "display_name": "RapidOCR (ONNX)",
+        "supported_extensions": [".pdf", ".png", ".jpg", ".jpeg", ".bmp", ".tiff", ".tif"],
+        "enabled": True,
+        "endpoint": None,
+        "credential_source": None,
+        "credential_ref": None,
+        "default_params": validate_default_params("rapid_ocr", None),
+    },
+    "mineru_ocr": {
+        "display_name": "MinerU OCR",
+        "supported_extensions": [".pdf", ".png", ".jpg", ".jpeg"],
+        "enabled": True,
+        "endpoint": None,
+        "credential_source": None,
+        "credential_ref": None,
+        "endpoint_editable": True,
+        "default_params": validate_default_params("mineru_ocr", None),
+    },
+    "mineru_official": {
+        "display_name": "MinerU Official API",
+        "supported_extensions": [".pdf", ".png", ".jpg", ".jpeg"],
+        "enabled": True,
+        "endpoint": "https://mineru.net/api/v4",
+        "credential_source": "environment",
+        "credential_ref": "MINERU_API_KEY",
+        "credential_sources": ["environment", "database"],
+        "default_params": validate_default_params("mineru_official", None),
+    },
+    "pp_structure_v3_ocr": {
+        "display_name": "PP-Structure-V3",
+        "supported_extensions": [".pdf", ".png", ".jpg", ".jpeg"],
+        "enabled": True,
+        "endpoint": None,
+        "credential_source": None,
+        "credential_ref": None,
+        "endpoint_editable": True,
+        "default_params": validate_default_params("pp_structure_v3_ocr", None),
+    },
+    "deepseek_ocr": {
+        "display_name": "DeepSeek OCR",
+        "supported_extensions": [".pdf", ".png", ".jpg", ".jpeg", ".bmp", ".webp"],
+        "enabled": True,
+        "endpoint": "https://api.siliconflow.cn/v1/chat/completions",
+        "credential_source": "model_provider",
+        "credential_ref": "siliconflow-cn",
+        "credential_sources": ["model_provider"],
+        "default_params": validate_default_params("deepseek_ocr", None),
+    },
+    "paddleocr_vl_1_6": {
+        "display_name": "PaddleOCR-VL-1.6",
+        "supported_extensions": [".pdf", ".png", ".jpg", ".jpeg", ".bmp", ".tiff", ".tif"],
+        "enabled": True,
+        "endpoint": None,
+        "credential_source": "environment",
+        "credential_ref": "PADDLEOCR_API_TOKEN",
+        "credential_sources": ["environment", "database"],
+        "default_params": validate_default_params("paddleocr_vl_1_6", None),
+    },
+    "paddleocr_pp_ocrv6": {
+        "display_name": "PP-OCRv6",
+        "supported_extensions": [".pdf", ".png", ".jpg", ".jpeg", ".bmp", ".tiff", ".tif"],
+        "enabled": True,
+        "endpoint": None,
+        "credential_source": "environment",
+        "credential_ref": "PADDLEOCR_API_TOKEN",
+        "credential_sources": ["environment", "database"],
+        "default_params": validate_default_params("paddleocr_pp_ocrv6", None),
+    },
 }

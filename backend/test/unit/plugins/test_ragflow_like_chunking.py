@@ -150,7 +150,7 @@ def test_book_chunking_should_apply_overlength_protection() -> None:
 
 
 def test_split_sentences_chinese_should_keep_quote_boundary() -> None:
-    text = '他说：“你好。”然后问：“你在吗？”最后结束！'
+    text = "他说：“你好。”然后问：“你在吗？”最后结束！"
     sentences = split_sentences_chinese(text)
 
     assert sentences == ["他说：“你好。”", "然后问：“你在吗？”", "最后结束！"]
@@ -341,7 +341,8 @@ def test_resolve_processing_params_keeps_ocr_fields_and_chunk_params() -> None:
     )
 
     assert resolved["ocr_engine"] == "mineru_ocr"
-    assert resolved["ocr_engine_config"] == {"backend": "pipeline"}
+    assert resolved["ocr_engine_config"]["backend"] == "pipeline"
+    assert resolved["ocr_engine_config"]["timeout_seconds"] == 1800
     assert resolved["chunk_preset_id"] == "laws"
     assert resolved["chunk_parser_config"] == {
         "delimiter": "\n",
@@ -353,12 +354,31 @@ def test_resolve_processing_params_keeps_ocr_fields_and_chunk_params() -> None:
     assert "auto_index" not in resolved
 
 
-def test_resolve_processing_params_defaults_ocr_fields() -> None:
+def test_resolve_processing_params_defaults_ocr_fields(monkeypatch) -> None:
+    monkeypatch.setattr("yuxi.services.ocr_config_service.get_default_ocr_engine", lambda: "rapid_ocr")
+    monkeypatch.setattr(
+        "yuxi.services.ocr_config_service.resolve_ocr_default_params",
+        lambda engine, *, require_enabled=False: {"det_box_thresh": 0.3, "zoom_x": 2.0, "zoom_y": 2.0},
+    )
+
     resolved = resolve_processing_params(
         kb_additional_params={},
         file_processing_params={"ocr_engine_config": "invalid", "enable_ocr": "mineru_ocr"},
     )
 
     assert resolved["ocr_engine"] == "rapid_ocr"
-    assert resolved["ocr_engine_config"] == {}
+    assert resolved["ocr_engine_config"] == {"det_box_thresh": 0.3, "zoom_x": 2.0, "zoom_y": 2.0}
     assert "enable_ocr" not in resolved
+
+
+def test_resolve_processing_params_merges_file_and_request_ocr_config() -> None:
+    resolved = resolve_processing_params(
+        kb_additional_params={},
+        file_processing_params={
+            "ocr_engine": "rapid_ocr",
+            "ocr_engine_config": {"det_box_thresh": 0.4, "zoom_x": 3.0},
+        },
+        request_params={"ocr_engine_config": {"det_box_thresh": 0.6}},
+    )
+
+    assert resolved["ocr_engine_config"] == {"det_box_thresh": 0.6, "zoom_x": 3.0, "zoom_y": 2.0}

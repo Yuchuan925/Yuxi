@@ -5,6 +5,7 @@
 """
 
 import asyncio
+import hashlib
 from importlib import import_module
 from typing import Any
 
@@ -23,11 +24,15 @@ class DocumentProcessorFactory:
 
     @classmethod
     def _build_cache_key(cls, processor_type: str, kwargs: dict[str, Any]) -> str:
+        """生成不暴露初始化参数内容的稳定缓存键。"""
+
         if not kwargs:
             return processor_type
 
         kwargs_repr = "|".join(f"{key}={kwargs[key]!r}" for key in sorted(kwargs))
-        return f"{processor_type}|{kwargs_repr}"
+        # 初始化参数可能包含数据库密钥；摘要既区分实例配置，也避免密钥出现在缓存键和调试输出中。
+        digest = hashlib.sha256(kwargs_repr.encode()).hexdigest()[:16]
+        return f"{processor_type}|{digest}"
 
     @classmethod
     def _load_processor_class(cls, processor_type: str) -> type[BaseDocumentProcessor]:
@@ -60,6 +65,11 @@ class DocumentProcessorFactory:
         """
         if processor_type not in cls.PROCESSOR_TYPES:
             raise ValueError(f"不支持的处理器类型: {processor_type}. 支持的类型: {list(cls.PROCESSOR_TYPES.keys())}")
+
+        if not kwargs:
+            from yuxi.services.ocr_config_service import resolve_processor_kwargs
+
+            kwargs = resolve_processor_kwargs(processor_type)
 
         # 使用缓存避免重复创建
         cache_key = cls._build_cache_key(processor_type, kwargs)
@@ -125,6 +135,8 @@ class DocumentProcessorFactory:
 
     @classmethod
     async def check_all_health_async(cls) -> dict[str, dict[str, Any]]:
+        """在线程池中并发检查全部处理器，避免阻塞事件循环。"""
+
         async def run_check(processor_type: str) -> tuple[str, dict[str, Any]]:
             return processor_type, await asyncio.to_thread(cls.check_health, processor_type)
 
@@ -137,7 +149,16 @@ class DocumentProcessorFactory:
         return list(cls.PROCESSOR_TYPES.keys())
 
     @classmethod
-    def clear_cache(cls):
-        """清除处理器缓存"""
-        _PROCESSOR_CACHE.clear()
-        logger.debug("文档处理器缓存已清除")
+    def clear_cache(cls, processor_type: str | None = None):
+        """清除全部处理器缓存，或只淘汰指定引擎的实例。"""
+
+        if processor_type is None:
+            _PROCESSOR_CACHE.clear()
+            logger.debug("文档处理器缓存已清除")
+            return
+        matching_keys = [
+            key for key in _PROCESSOR_CACHE if key == processor_type or key.startswith(f"{processor_type}|")
+        ]
+        for cache_key in matching_keys:
+            del _PROCESSOR_CACHE[cache_key]
+        logger.debug(f"文档处理器缓存已清除: {processor_type}")

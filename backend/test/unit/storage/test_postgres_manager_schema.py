@@ -115,6 +115,30 @@ async def test_ensure_business_schema_creates_user_config_table():
 
 
 @pytest.mark.asyncio
+async def test_ensure_business_schema_creates_ocr_engine_config_table_and_default_index():
+    manager = PostgresManager()
+    original_initialized = manager._initialized
+    original_engine = manager.async_engine
+    connection = _RecordingConnection()
+
+    manager._initialized = True
+    manager.async_engine = _RecordingEngine(connection)
+    try:
+        await manager.ensure_business_schema()
+    finally:
+        manager._initialized = original_initialized
+        manager.async_engine = original_engine
+
+    statements = "\n".join(connection.statements)
+
+    assert "CREATE TABLE IF NOT EXISTS ocr_engine_configs" in statements
+    assert "credential_ref VARCHAR(128)" in statements
+    assert "credential_value TEXT" in statements
+    assert "ADD COLUMN IF NOT EXISTS credential_value TEXT" in statements
+    assert "CREATE UNIQUE INDEX IF NOT EXISTS uq_ocr_engine_configs_default" in statements
+
+
+@pytest.mark.asyncio
 async def test_ensure_business_schema_removes_unbound_api_keys_before_requiring_user_id():
     manager = PostgresManager()
     original_initialized = manager._initialized

@@ -280,13 +280,15 @@ def _runtime_scope_value(runtime: ToolRuntime, key: str) -> str | None:
 
 def _resolve_ocr_engine(ocr_engine: str | None) -> str:
     """Validate the requested OCR engine, falling back to the system default when omitted."""
-    from yuxi import config
     from yuxi.knowledge.parser.factory import DocumentProcessorFactory
+    from yuxi.services.ocr_config_service import get_default_ocr_engine, get_runtime_ocr_config
 
-    engine = str(ocr_engine or config.default_ocr_engine).strip() or config.default_ocr_engine
+    default_engine = get_default_ocr_engine()
+    engine = str(ocr_engine or default_engine).strip() or default_engine
     allowed = {"disable", *DocumentProcessorFactory.get_available_processors()}
     if engine not in allowed:
         raise ValueError(f"不支持的 OCR 引擎: {engine}")
+    get_runtime_ocr_config(engine)
     return engine
 
 

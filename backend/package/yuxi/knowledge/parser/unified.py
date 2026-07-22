@@ -91,13 +91,15 @@ def _resolve_image_storage_params(params: dict | None) -> tuple[str, str]:
 
 
 def _resolve_ocr_engine_params(params: dict | None) -> tuple[str, dict[str, Any]]:
-    from yuxi import config
+    from yuxi.services.ocr_config_service import get_default_ocr_engine, resolve_ocr_default_params
 
     params = params or {}
-    engine = str(params.get("ocr_engine") if "ocr_engine" in params else config.default_ocr_engine)
-    engine = engine.strip() or config.default_ocr_engine
+    default_engine = get_default_ocr_engine()
+    engine = str(params.get("ocr_engine") if "ocr_engine" in params else default_engine)
+    engine = engine.strip() or default_engine
     engine_config = params.get("ocr_engine_config")
     processor_params = dict(params)
+    processor_params.update(resolve_ocr_default_params(engine))
     if isinstance(engine_config, dict):
         processor_params.update(engine_config)
     return engine, processor_params

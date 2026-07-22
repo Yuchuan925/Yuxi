@@ -82,12 +82,19 @@ class PPStructureV3Parser(BaseDocumentProcessor):
             if value is not None:
                 payload[key] = value
 
+        timeout_seconds = kwargs.pop("timeout_seconds", 300)
+
         # 添加其他kwargs参数
         for key, value in kwargs.items():
             if value is not None:
                 payload[key] = value
 
-        response = requests.post(self.endpoint, json=payload, headers={"Content-Type": "application/json"}, timeout=300)
+        response = requests.post(
+            self.endpoint,
+            json=payload,
+            headers={"Content-Type": "application/json"},
+            timeout=timeout_seconds,
+        )
 
         if response.status_code == 200:
             return response.json()
@@ -239,6 +246,7 @@ class PPStructureV3Parser(BaseDocumentProcessor):
                 use_table_recognition=params.get("use_table_recognition", True),
                 use_formula_recognition=params.get("use_formula_recognition", True),
                 use_seal_recognition=params.get("use_seal_recognition", False),
+                timeout_seconds=params.get("timeout_seconds", 300),
             )
 
             # 检查API调用是否成功

@@ -87,41 +87,6 @@
                     <span class="parse-method-desc">{{ getMethodDescription(method) }}</span>
                   </button>
 
-                  <div v-if="getUnavailableParseMethods(item).length" class="unavailable-methods">
-                    <button
-                      type="button"
-                      class="unavailable-toggle"
-                      @click="toggleUnavailableParseMethods(item.localId)"
-                    >
-                      <span>不可用选项（{{ getUnavailableParseMethods(item).length }}）</span>
-                      <ChevronUp v-if="item.unavailableMethodsExpanded" :size="14" />
-                      <ChevronDown v-else :size="14" />
-                    </button>
-
-                    <div v-if="item.unavailableMethodsExpanded" class="unavailable-method-list">
-                      <button
-                        v-for="method in getUnavailableParseMethods(item)"
-                        :key="method"
-                        type="button"
-                        class="parse-method-option disabled"
-                        disabled
-                      >
-                        <span class="parse-method-option-header">
-                          <span class="parse-method-name">{{
-                            methodLabels[method] || method
-                          }}</span>
-                          <span
-                            class="parse-method-status"
-                            :class="`status-${getMethodStatus(method)}`"
-                          >
-                            {{ getMethodStatusLabel(method) }}
-                          </span>
-                        </span>
-                        <span class="parse-method-desc">{{ getMethodDescription(method) }}</span>
-                      </button>
-                    </div>
-                  </div>
-
                   <a-button
                     type="primary"
                     size="small"
@@ -155,10 +120,9 @@
 <script setup>
 import { computed, ref, watch } from 'vue'
 import { message } from 'ant-design-vue'
-import { ChevronDown, ChevronUp, X } from 'lucide-vue-next'
+import { X } from 'lucide-vue-next'
 import { threadApi } from '@/apis'
 import { ocrApi } from '@/apis/system_api'
-import { useConfigStore } from '@/stores/config'
 import FileTypeIcon from '@/components/common/FileTypeIcon.vue'
 
 const props = defineProps({
@@ -171,50 +135,18 @@ const props = defineProps({
 
 const emit = defineEmits(['update:open', 'added'])
 
-const configStore = useConfigStore()
 const DEFAULT_OCR_ENGINE = 'rapid_ocr'
+const defaultOcrEngine = ref(DEFAULT_OCR_ENGINE)
 const fileItems = ref([])
 const confirming = ref(false)
 let localIdSeed = 0
 let consumedInitialFilesKey = 0
 
-const methodLabels = {
-  disable: 'PDF 文本提取',
-  rapid_ocr: 'RapidOCR',
-  mineru_ocr: 'MinerU OCR',
-  mineru_official: 'MinerU Official',
-  pp_structure_v3_ocr: 'PP-Structure V3',
-  deepseek_ocr: 'DeepSeek OCR',
-  paddleocr_vl_1_6: 'PaddleOCR-VL-1.6',
-  paddleocr_pp_ocrv6: 'PP-OCRv6'
-}
-
-const ocrMethodKeys = [
-  'rapid_ocr',
-  'mineru_ocr',
-  'mineru_official',
-  'pp_structure_v3_ocr',
-  'deepseek_ocr',
-  'paddleocr_vl_1_6',
-  'paddleocr_pp_ocrv6'
-]
-
-const defaultOcrHealthStatus = () =>
-  Object.fromEntries(ocrMethodKeys.map((method) => [method, { status: 'unknown', message: '' }]))
-
-const ocrHealthStatus = ref(defaultOcrHealthStatus())
-const ocrHealthChecking = ref(false)
+const methodLabels = { disable: 'PDF 文本提取' }
 
 const methodStatusLabels = {
   local: '无需 OCR',
-  healthy: '可用',
-  configured: '已配置',
-  unavailable: '不可用',
-  unhealthy: '异常',
-  timeout: '超时',
-  error: '异常',
-  checking: '检查中',
-  unknown: '状态未知'
+  configured: '已配置'
 }
 
 const busy = computed(() =>
@@ -231,6 +163,8 @@ watch(
     if (!open) {
       fileItems.value = []
       confirming.value = false
+    } else {
+      loadOcrOptions()
     }
   }
 )
@@ -243,9 +177,7 @@ const getDefaultParseMethod = (parseMethods) => {
   if (!Array.isArray(parseMethods) || parseMethods.length === 0) {
     return null
   }
-  const configuredEngine = String(
-    configStore.config?.default_ocr_engine || DEFAULT_OCR_ENGINE
-  ).trim()
+  const configuredEngine = String(defaultOcrEngine.value || DEFAULT_OCR_ENGINE).trim()
   if (parseMethods.includes(configuredEngine)) {
     return configuredEngine
   }
@@ -269,39 +201,32 @@ const normalizeTmpUpload = (response) => ({
   parseMethodTouched: false
 })
 
-watch(
-  () => configStore.config?.default_ocr_engine,
-  () => {
-    fileItems.value = fileItems.value.map((item) => {
-      if (!item.parseSupported || item.parseMethodTouched || item.status === 'parsed') {
-        return item
-      }
-      return { ...item, selectedParseMethod: getDefaultParseMethod(item.parseMethods || []) }
-    })
+const applyDefaultParseMethods = () => {
+  fileItems.value = fileItems.value.map((item) => {
+    if (!item.parseSupported || item.parseMethodTouched || item.status === 'parsed') {
+      return item
+    }
+    return { ...item, selectedParseMethod: getDefaultParseMethod(item.parseMethods || []) }
+  })
+}
+
+const loadOcrOptions = async () => {
+  try {
+    const data = await ocrApi.getOptions()
+    defaultOcrEngine.value = data?.default_engine || DEFAULT_OCR_ENGINE
+    for (const engine of data?.engines || []) {
+      methodLabels[engine.engine_id] = engine.display_name
+    }
+    applyDefaultParseMethods()
+  } catch (error) {
+    console.error('获取 OCR 引擎选项失败:', error)
   }
-)
+}
 
 const updateItem = (localId, patch) => {
   fileItems.value = fileItems.value.map((item) =>
     item.localId === localId ? { ...item, ...patch } : item
   )
-}
-
-const checkOcrHealth = async () => {
-  if (ocrHealthChecking.value) return
-
-  ocrHealthChecking.value = true
-  try {
-    const healthData = await ocrApi.getHealth()
-    ocrHealthStatus.value = {
-      ...defaultOcrHealthStatus(),
-      ...(healthData?.services || {})
-    }
-  } catch (error) {
-    console.error('OCR健康检查失败:', error)
-  } finally {
-    ocrHealthChecking.value = false
-  }
 }
 
 const uploadFile = async (file) => {
@@ -322,9 +247,6 @@ const uploadFile = async (file) => {
     const response = await threadApi.uploadTmpAttachment(file)
     const normalized = normalizeTmpUpload(response)
     updateItem(localId, { ...normalized, status: 'uploaded' })
-    if (normalized.parseSupported) {
-      void checkOcrHealth()
-    }
   } catch (error) {
     updateItem(localId, {
       status: 'error',
@@ -360,9 +282,7 @@ watch(
 
 const getMethodStatus = (method) => {
   if (method === 'disable') return 'local'
-  const current = ocrHealthStatus.value?.[method]
-  if (ocrHealthChecking.value && (!current || current.status === 'unknown')) return 'checking'
-  return current?.status || 'unknown'
+  return 'configured'
 }
 
 const getMethodStatusLabel = (method) => methodStatusLabels[getMethodStatus(method)] || '状态未知'
@@ -370,37 +290,15 @@ const getMethodStatusLabel = (method) => methodStatusLabels[getMethodStatus(meth
 const getMethodDescription = (method) => {
   if (method === 'disable') return '使用文件内置文本层，不调用 OCR 服务'
 
-  const messageText = ocrHealthStatus.value?.[method]?.message
-  if (messageText) return messageText
-
-  const status = getMethodStatus(method)
-  const fallbackMap = {
-    healthy: '服务正常',
-    configured: 'Token 已配置，将在解析时验证',
-    unavailable: '服务不可用',
-    unhealthy: '服务异常',
-    timeout: '服务检查超时',
-    error: '服务异常',
-    checking: '正在检查服务状态',
-    unknown: '服务状态未知'
-  }
-  return fallbackMap[status] || '服务状态未知'
+  return '由管理员配置中心管理'
 }
 
-const isUnavailableParseMethod = (method) =>
-  ['unavailable', 'error'].includes(getMethodStatus(method))
-
-const getAvailableParseMethods = (item) =>
-  (item.parseMethods || []).filter((method) => !isUnavailableParseMethod(method))
-
-const getUnavailableParseMethods = (item) =>
-  (item.parseMethods || []).filter((method) => isUnavailableParseMethod(method))
+const getAvailableParseMethods = (item) => item.parseMethods || []
 
 const isParseDisabled = (item) =>
   item.status === 'parsing' ||
   !item.selectedParseMethod ||
-  confirming.value ||
-  isUnavailableParseMethod(item.selectedParseMethod)
+  confirming.value
 
 const clearParsedState = {
   parsedObjectName: null,
@@ -463,16 +361,8 @@ const removeItem = (localId) => {
   fileItems.value = fileItems.value.filter((item) => item.localId !== localId)
 }
 
-const toggleUnavailableParseMethods = (localId) => {
-  const item = fileItems.value.find((entry) => entry.localId === localId)
-  updateItem(localId, { unavailableMethodsExpanded: !item?.unavailableMethodsExpanded })
-}
-
 const handleParsePanelOpenChange = (localId, open) => {
   updateItem(localId, { parsePanelOpen: open })
-  if (open) {
-    void checkOcrHealth()
-  }
 }
 
 const handleConfirm = async () => {
@@ -689,35 +579,6 @@ const formatFileSize = (size) => {
   background: color-mix(in srgb, var(--main-color) 8%, var(--gray-0));
 }
 
-.parse-method-option.disabled {
-  cursor: not-allowed;
-  opacity: 0.6;
-}
-
-.unavailable-methods,
-.unavailable-method-list {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.unavailable-toggle {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  width: 100%;
-  padding: 4px 2px;
-  border: none;
-  background: transparent;
-  color: var(--gray-500);
-  cursor: pointer;
-  font-size: 12px;
-}
-
-.unavailable-toggle:hover {
-  color: var(--gray-800);
-}
-
 .parse-method-option-header {
   display: flex;
   align-items: center;
@@ -737,21 +598,8 @@ const formatFileSize = (size) => {
 }
 
 .parse-method-status.status-local,
-.parse-method-status.status-healthy,
 .parse-method-status.status-configured {
   color: var(--color-success-700);
-}
-
-.parse-method-status.status-unavailable,
-.parse-method-status.status-error {
-  color: var(--color-error-700);
-}
-
-.parse-method-status.status-unhealthy,
-.parse-method-status.status-timeout,
-.parse-method-status.status-unknown,
-.parse-method-status.status-checking {
-  color: var(--color-warning-700);
 }
 
 .parse-method-desc {

@@ -1,3 +1,4 @@
+import asyncio
 import os
 from contextlib import asynccontextmanager
 
@@ -73,6 +74,23 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"Failed to initialize model cache during startup: {e}")
 
+    ocr_config_sync_task = None
+    try:
+        from yuxi.services.ocr_config_service import (
+            ensure_ocr_configs_in_db,
+            rebuild_ocr_config_cache,
+            sync_ocr_config_cache,
+        )
+
+        async with pg_manager.get_async_session_context() as session:
+            await ensure_ocr_configs_in_db(session)
+            await session.commit()
+            await rebuild_ocr_config_cache(session)
+        # Redis 仅用于脱敏快照；数据库凭证通过此任务直接从 PostgreSQL 同步。
+        ocr_config_sync_task = asyncio.create_task(sync_ocr_config_cache())
+    except Exception as e:
+        logger.error(f"Failed to initialize OCR engine configs during startup: {e}")
+
     # 初始化知识库管理器
     if os.environ.get("LITE_MODE", "").lower() in ("true", "1"):
         logger.info("LITE_MODE enabled, skipping knowledge base initialization")
@@ -118,6 +136,9 @@ async def lifespan(app: FastAPI):
     """)
     logger.info("Yuxi backend startup complete")
     yield
+    if ocr_config_sync_task:
+        ocr_config_sync_task.cancel()
+        await asyncio.gather(ocr_config_sync_task, return_exceptions=True)
     await tasker.shutdown()
     shutdown_sandbox_provider()
     await close_queue_clients()

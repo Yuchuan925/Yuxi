@@ -1,14 +1,17 @@
+import asyncio
 import os
 from pathlib import Path
 
 import aiofiles
 import yaml
 from fastapi import APIRouter, Body, Depends, HTTPException
+from pydantic import BaseModel
+from sqlalchemy.ext.asyncio import AsyncSession
 from yuxi import config, get_version
 from yuxi.storage.postgres.models_business import User
 from yuxi.utils.logging_config import logger
 
-from server.utils.auth_middleware import get_admin_user, get_required_user
+from server.utils.auth_middleware import get_admin_user, get_db, get_required_user
 
 system = APIRouter(prefix="/system", tags=["system"])
 
@@ -191,6 +194,90 @@ async def reload_info_config(current_user: User = Depends(get_admin_user)):
 # =============================================================================
 # === OCR服务分组 ===
 # =============================================================================
+
+
+class OCREngineConfigPayload(BaseModel):
+    """管理员可更新的 OCR 配置字段。"""
+
+    enabled: bool | None = None
+    is_default: bool | None = None
+    endpoint: str | None = None
+    credential_source: str | None = None
+    credential_ref: str | None = None
+    credential_value: str | None = None
+    default_params: dict | None = None
+
+
+@system.get("/ocr/options")
+async def get_ocr_engine_options(
+    current_user: User = Depends(get_required_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """返回普通用户可见的脱敏 OCR 引擎选项。"""
+
+    from yuxi.services.ocr_config_service import get_ocr_options
+
+    return await get_ocr_options(db)
+
+
+@system.get("/ocr/configs")
+async def get_ocr_engine_configs(
+    current_user: User = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """返回管理员可编辑的 OCR 配置与凭证状态。"""
+
+    from yuxi.repositories.ocr_config_repository import list_ocr_configs
+    from yuxi.services.ocr_config_service import serialize_admin_config
+
+    records = await list_ocr_configs(db)
+    return {"configs": [serialize_admin_config(record) for record in records]}
+
+
+@system.put("/ocr/configs/{engine_id}")
+async def put_ocr_engine_config(
+    engine_id: str,
+    payload: OCREngineConfigPayload,
+    current_user: User = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """保存单个 OCR 引擎配置并刷新当前进程缓存。"""
+
+    from yuxi.services.ocr_config_service import rebuild_ocr_config_cache, serialize_admin_config, update_ocr_config
+
+    try:
+        record = await update_ocr_config(
+            db,
+            engine_id,
+            payload.model_dump(exclude_unset=True),
+            current_user.username,
+        )
+        if record is None:
+            raise HTTPException(status_code=404, detail=f"OCR 引擎配置不存在: {engine_id}")
+        # 先提交事实来源，再发布可降级的 Redis 快照，避免运行时领先于数据库。
+        try:
+            await db.commit()
+        except Exception:
+            await db.rollback()
+            raise
+        await db.refresh(record)
+        await rebuild_ocr_config_cache(db)
+        return {"config": serialize_admin_config(record)}
+    except HTTPException:
+        raise
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@system.post("/ocr/configs/{engine_id}/health")
+async def check_ocr_engine_health(engine_id: str, current_user: User = Depends(get_admin_user)):
+    """在线程池中检查单个 OCR 引擎，避免阻塞事件循环。"""
+
+    from yuxi.knowledge.parser.factory import DocumentProcessorFactory
+
+    if engine_id not in DocumentProcessorFactory.PROCESSOR_TYPES:
+        raise HTTPException(status_code=400, detail=f"不支持的 OCR 引擎: {engine_id}")
+    return await asyncio.to_thread(DocumentProcessorFactory.check_health, engine_id)
 
 
 @system.get("/ocr/health")

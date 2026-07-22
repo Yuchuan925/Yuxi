@@ -53,7 +53,11 @@ class RapidOCRParser(BaseDocumentProcessor):
             return {
                 "status": "healthy",
                 "message": "RapidOCR PP-OCRv5 模型可用",
-                "details": {"ocr_version": "PP-OCRv5", "engine": "onnxruntime"},
+                "details": {
+                    "ocr_version": "PP-OCRv5",
+                    "engine": "onnxruntime",
+                    "det_box_thresh": self.det_box_thresh,
+                },
             }
         except Exception as e:
             return {"status": "error", "message": f"模型加载失败: {str(e)}", "details": {"error": str(e)}}

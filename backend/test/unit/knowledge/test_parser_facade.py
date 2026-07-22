@@ -266,8 +266,6 @@ def test_parse_pdf_uses_config_default_ocr_when_engine_missing(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import yuxi
-
     file_path = tmp_path / "parser_test.pdf"
     _build_pdf(file_path, "Parser PDF content")
     captured = {}
@@ -278,7 +276,8 @@ def test_parse_pdf_uses_config_default_ocr_when_engine_missing(
         captured["params"] = params
         return "default OCR content"
 
-    monkeypatch.setattr(yuxi.config, "default_ocr_engine", "mineru_ocr")
+    monkeypatch.setattr("yuxi.services.ocr_config_service.get_default_ocr_engine", lambda: "mineru_ocr")
+    monkeypatch.setattr("yuxi.services.ocr_config_service.resolve_ocr_default_params", lambda engine: {})
     monkeypatch.setattr(DocumentProcessorFactory, "process_file", _fake_process_file)
 
     result = parser_unified.parse_pdf(str(file_path), params={})
@@ -292,11 +291,9 @@ def test_parse_pdf_keeps_explicit_disable_when_default_ocr_enabled(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import yuxi
-
     file_path = tmp_path / "parser_test.pdf"
     _build_pdf(file_path, "Parser PDF content")
-    monkeypatch.setattr(yuxi.config, "default_ocr_engine", "mineru_ocr")
+    monkeypatch.setattr("yuxi.services.ocr_config_service.get_default_ocr_engine", lambda: "mineru_ocr")
 
     result = parser_unified.parse_pdf(str(file_path), params={"ocr_engine": "disable"})
 

@@ -203,20 +203,33 @@ def _require_tmp_object_section(
     return current_tmp_file_id, object_file_name
 
 
+def _available_tmp_ocr_methods() -> tuple[str, ...]:
+    """返回当前允许新临时附件任务使用的 OCR 引擎。"""
+
+    from yuxi.services.ocr_config_service import is_ocr_engine_enabled
+
+    return tuple(method for method in TMP_ATTACHMENT_OCR_METHODS if is_ocr_engine_enabled(method))
+
+
 def _normalize_parse_method(file_name: str, parse_method: str | None) -> str:
+    """按文件类型和系统启停状态确定临时附件解析方式。"""
+
     suffix = Path(file_name).suffix.lower()
     if suffix not in TMP_ATTACHMENT_PARSE_EXTENSIONS:
         raise HTTPException(status_code=400, detail="当前仅支持 PDF 和图片附件解析")
 
     if suffix in TMP_ATTACHMENT_IMAGE_EXTENSIONS:
-        default_engine = app_config.default_ocr_engine
+        from yuxi.services.ocr_config_service import get_default_ocr_engine
+
+        default_engine = get_default_ocr_engine()
+        # 图片没有可直接提取的文本层，系统默认 disable 时仍需回退到本地 OCR。
         method = parse_method or ("rapid_ocr" if default_engine == "disable" else default_engine)
     else:
         method = parse_method or "disable"
     if suffix in TMP_ATTACHMENT_IMAGE_EXTENSIONS:
-        allowed_methods = TMP_ATTACHMENT_OCR_METHODS
+        allowed_methods = _available_tmp_ocr_methods()
     else:
-        allowed_methods = TMP_ATTACHMENT_PARSE_METHODS
+        allowed_methods = ("disable", *_available_tmp_ocr_methods())
 
     if method not in allowed_methods:
         allowed = ", ".join(allowed_methods)
@@ -602,10 +615,11 @@ async def upload_tmp_attachment_view(*, file: UploadFile, current_uid: str) -> d
         raise HTTPException(status_code=500, detail=f"临时附件上传失败: {exc}") from exc
 
     suffix = Path(file_name).suffix.lower()
+    available_ocr_methods = _available_tmp_ocr_methods()
     if suffix == ".pdf":
-        parse_methods = list(TMP_ATTACHMENT_PARSE_METHODS)
+        parse_methods = ["disable", *available_ocr_methods]
     elif suffix in TMP_ATTACHMENT_IMAGE_EXTENSIONS:
-        parse_methods = list(TMP_ATTACHMENT_OCR_METHODS)
+        parse_methods = list(available_ocr_methods)
     else:
         parse_methods = []
 

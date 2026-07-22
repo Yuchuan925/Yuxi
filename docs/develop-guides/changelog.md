@@ -6,6 +6,7 @@
 
 ## v0.7.2 (current)
 
+- 新增 OCR 引擎配置中心：使用 PostgreSQL `ocr_engine_configs` 统一管理 7 种 OCR 引擎与 `disable` 策略的默认项、启停、自托管端点、凭证来源和识别参数；MinerU Official 与 PaddleOCR 云引擎支持读取固定环境变量或由管理员填写数据库密钥，数据库密钥使用持久化的 `OCR_CREDENTIAL_ENCRYPTION_KEY`（未单独配置时使用显式设置的 `JWT_SECRET_KEY`）加密落库且不进入 Redis，DeepSeek OCR 固定复用 `siliconflow-cn` 模型供应商凭证。配置接口只返回凭证状态，不返回密钥原文；官方云服务端点由系统管理。普通用户通过 `/api/system/ocr/options` 只读取可用引擎，管理员可编辑配置和执行健康检查。API 与 worker 每 5 秒从 PostgreSQL 刷新本地运行时配置，并淘汰发生变化的旧解析器实例；知识库文件仅保存识别参数快照。补充参数校验、权限、接口、缓存、Redis 故障降级与真实 RapidOCR 附件解析 E2E。
 - 修复部署配置：开发与生产 Compose 中的 Milvus 现在复用对应环境文件里的自定义 MinIO 凭据，避免对象存储认证失败导致服务无法健康启动；Web 生产镜像会统一将静态资源目录设为 `755`、文件设为 `644`，避免 Nginx 因构建产物权限过严返回 403。
 - 丰富模型选型参考信息：接入 `@opencode-ai/models` 内置 snapshot，补充模型上下文、能力和价格等信息；模型选择器移除价格悬浮提示并关闭搜索自动完成，模型供应商候选列表支持美元与人民币价格切换，默认美元，人民币按固定汇率 `1 USD = ¥7` 换算，并明确 models.dev 数据与固定汇率仅供参考；候选模型工具栏统一靠右排列搜索、币种和类型筛选控件，类型文案改为“对话 / 向量 / 重排”。DashScope 中国站内置标识修正为 `alibaba-cn`，`alibaba` 改为使用 `dashscope-intl.aliyuncs.com` 的国际站定义。
 - 优化 Agent 会话与设置页多项交互细节：修复文件侧栏重新展开丢失预览、审批模式改为本地记忆最近选择、下拉面板点击外部区域自动收起、输入框添加内容入口改为 `+` 并可直接引用知识库与 Skill、Skill 图标统一为 Lucide `WandSparkles`、账户设置合并 Memory 开关等；侧栏导航“智能体管理”简化为“智能体”，路由由 `/model-manage` 重命名为 `/agent-manage`；同步优化首页首屏视觉细节。

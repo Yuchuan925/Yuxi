@@ -109,6 +109,9 @@ class PaddleOCRAPIParser(BaseDocumentProcessor):
             for key in payload:
                 if key in overrides:
                     payload[key] = overrides[key]
+        for key in payload:
+            if key in params:
+                payload[key] = params[key]
         return payload
 
     def _submit_job(self, file_path: str, params: dict[str, Any]) -> str:

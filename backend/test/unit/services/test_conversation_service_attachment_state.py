@@ -162,30 +162,30 @@ async def test_convert_upload_to_markdown_rejects_unsupported_extension(monkeypa
 
 
 def test_normalize_parse_method_uses_default_ocr_engine_for_images(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr(svc.app_config, "default_ocr_engine", "mineru_ocr")
+    monkeypatch.setattr("yuxi.services.ocr_config_service.get_default_ocr_engine", lambda: "mineru_ocr")
     method = svc._normalize_parse_method("scan.png", parse_method=None)
     assert method == "mineru_ocr"
 
 
 def test_normalize_parse_method_uses_default_ocr_engine_for_images_fallback_to_rapid(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr(svc.app_config, "default_ocr_engine", "deepseek_ocr")
+    monkeypatch.setattr("yuxi.services.ocr_config_service.get_default_ocr_engine", lambda: "deepseek_ocr")
     method = svc._normalize_parse_method("scan.jpg", parse_method=None)
     assert method == "deepseek_ocr"
 
 
 def test_normalize_parse_method_pdf_defaults_to_disable(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr(svc.app_config, "default_ocr_engine", "mineru_ocr")
+    monkeypatch.setattr("yuxi.services.ocr_config_service.get_default_ocr_engine", lambda: "mineru_ocr")
     method = svc._normalize_parse_method("doc.pdf", parse_method=None)
     assert method == "disable"
 
 
 def test_normalize_parse_method_respects_explicit_parse_method(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr(svc.app_config, "default_ocr_engine", "rapid_ocr")
+    monkeypatch.setattr("yuxi.services.ocr_config_service.get_default_ocr_engine", lambda: "rapid_ocr")
     method = svc._normalize_parse_method("scan.png", parse_method="deepseek_ocr")
     assert method == "deepseek_ocr"
 
 
 def test_normalize_parse_method_fallback_to_rapid_when_default_is_disable(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr(svc.app_config, "default_ocr_engine", "disable")
+    monkeypatch.setattr("yuxi.services.ocr_config_service.get_default_ocr_engine", lambda: "disable")
     method = svc._normalize_parse_method("scan.png", parse_method=None)
     assert method == "rapid_ocr"
