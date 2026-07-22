@@ -1,4 +1,3 @@
-import asyncio
 import os
 from contextlib import asynccontextmanager
 
@@ -74,20 +73,12 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"Failed to initialize model cache during startup: {e}")
 
-    ocr_config_sync_task = None
     try:
-        from yuxi.services.ocr_config_service import (
-            ensure_ocr_configs_in_db,
-            rebuild_ocr_config_cache,
-            sync_ocr_config_cache,
-        )
+        from yuxi.services.ocr_config_service import ensure_ocr_configs_in_db
 
         async with pg_manager.get_async_session_context() as session:
             await ensure_ocr_configs_in_db(session)
             await session.commit()
-            await rebuild_ocr_config_cache(session)
-        # Redis 仅用于脱敏快照；数据库凭证通过此任务直接从 PostgreSQL 同步。
-        ocr_config_sync_task = asyncio.create_task(sync_ocr_config_cache())
     except Exception as e:
         logger.error(f"Failed to initialize OCR engine configs during startup: {e}")
 
@@ -107,7 +98,7 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"Run queue redis unavailable on startup: {e}")
 
-    # 启动运行时配置同步线程（周期性从 Redis 拉取管理员保存的配置快照）
+    # 启动应用级运行时配置同步线程；OCR 配置不依赖该线程。
     config.start_runtime_sync()
 
     try:
@@ -136,9 +127,6 @@ async def lifespan(app: FastAPI):
     """)
     logger.info("Yuxi backend startup complete")
     yield
-    if ocr_config_sync_task:
-        ocr_config_sync_task.cancel()
-        await asyncio.gather(ocr_config_sync_task, return_exceptions=True)
     await tasker.shutdown()
     shutdown_sandbox_provider()
     await close_queue_clients()

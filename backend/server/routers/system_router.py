@@ -1,4 +1,3 @@
-import asyncio
 import os
 from pathlib import Path
 
@@ -203,9 +202,7 @@ class OCREngineConfigPayload(BaseModel):
     is_default: bool | None = None
     endpoint: str | None = None
     credential_source: str | None = None
-    credential_ref: str | None = None
     credential_value: str | None = None
-    default_params: dict | None = None
 
 
 @system.get("/ocr/options")
@@ -241,9 +238,9 @@ async def put_ocr_engine_config(
     current_user: User = Depends(get_admin_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """保存单个 OCR 引擎配置并刷新当前进程缓存。"""
+    """保存单个 OCR 引擎配置。后续 OCR 任务会直接读取最新数据库配置。"""
 
-    from yuxi.services.ocr_config_service import rebuild_ocr_config_cache, serialize_admin_config, update_ocr_config
+    from yuxi.services.ocr_config_service import serialize_admin_config, update_ocr_config
 
     try:
         record = await update_ocr_config(
@@ -254,68 +251,15 @@ async def put_ocr_engine_config(
         )
         if record is None:
             raise HTTPException(status_code=404, detail=f"OCR 引擎配置不存在: {engine_id}")
-        # 先提交事实来源，再发布可降级的 Redis 快照，避免运行时领先于数据库。
+        # 先提交事实来源；后续 OCR 任务会直接读取已提交的数据库配置。
         try:
             await db.commit()
         except Exception:
             await db.rollback()
             raise
         await db.refresh(record)
-        await rebuild_ocr_config_cache(db)
         return {"config": serialize_admin_config(record)}
     except HTTPException:
         raise
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-
-@system.post("/ocr/configs/{engine_id}/health")
-async def check_ocr_engine_health(engine_id: str, current_user: User = Depends(get_admin_user)):
-    """在线程池中检查单个 OCR 引擎，避免阻塞事件循环。"""
-
-    from yuxi.knowledge.parser.factory import DocumentProcessorFactory
-
-    if engine_id not in DocumentProcessorFactory.PROCESSOR_TYPES:
-        raise HTTPException(status_code=400, detail=f"不支持的 OCR 引擎: {engine_id}")
-    return await asyncio.to_thread(DocumentProcessorFactory.check_health, engine_id)
-
-
-@system.get("/ocr/health")
-async def check_ocr_services_health(current_user: User = Depends(get_admin_user)):
-    """
-    检查所有OCR服务的健康状态
-    返回各个OCR服务的可用性信息
-    """
-    from yuxi.knowledge.parser.factory import DocumentProcessorFactory
-
-    try:
-        # 使用统一的健康检查接口
-        health_status = await DocumentProcessorFactory.check_all_health_async()
-
-        # 格式化健康检查响应
-        formatted_status = {}
-        for service_name, health_info in health_status.items():
-            formatted_status[service_name] = {
-                "status": health_info.get("status", "unknown"),
-                "message": health_info.get("message", ""),
-                "details": health_info.get("details", {}),
-            }
-
-        # 计算整体健康状态
-        overall_status = (
-            "healthy" if any(svc["status"] == "healthy" for svc in formatted_status.values()) else "unhealthy"
-        )
-
-        return {
-            "overall_status": overall_status,
-            "services": formatted_status,
-            "message": "OCR服务健康检查完成",
-        }
-
-    except Exception as e:
-        logger.error(f"OCR健康检查失败: {str(e)}")
-        return {
-            "overall_status": "error",
-            "services": {},
-            "message": f"OCR健康检查失败: {str(e)}",
-        }

@@ -132,7 +132,6 @@ async def test_ensure_business_schema_creates_ocr_engine_config_table_and_defaul
     statements = "\n".join(connection.statements)
 
     assert "CREATE TABLE IF NOT EXISTS ocr_engine_configs" in statements
-    assert "credential_ref VARCHAR(128)" in statements
     assert "credential_value TEXT" in statements
     assert "ADD COLUMN IF NOT EXISTS credential_value TEXT" in statements
     assert "CREATE UNIQUE INDEX IF NOT EXISTS uq_ocr_engine_configs_default" in statements

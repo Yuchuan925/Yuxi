@@ -5,7 +5,7 @@
 """
 
 from abc import ABC, abstractmethod
-from typing import Any
+from typing import Any, ClassVar
 
 
 class DocumentProcessorException(Exception):
@@ -43,6 +43,8 @@ class ServiceHealthCheckException(DocumentProcessorException):
 
 class BaseDocumentProcessor(ABC):
     """文档处理器基类"""
+
+    supported_extensions: ClassVar[list[str]] = []
 
     @abstractmethod
     def process_file(self, file_path: str, params: dict[str, Any] | None = None) -> str:
@@ -93,7 +95,6 @@ class BaseDocumentProcessor(ABC):
         """
         return file_extension.lower() in self.get_supported_extensions()
 
-    @abstractmethod
     def get_supported_extensions(self) -> list[str]:
-        """返回支持的文件扩展名列表"""
-        pass
+        """返回类声明的支持文件扩展名。"""
+        return list(self.supported_extensions)

@@ -639,27 +639,18 @@ async def _worker_startup(ctx):
     await ensure_builtin_mcp_servers_in_db()
     async with pg_manager.get_async_session_context() as session:
         await init_builtin_skills(session)
-        from yuxi.services.ocr_config_service import (
-            ensure_ocr_configs_in_db,
-            rebuild_ocr_config_cache,
-            sync_ocr_config_cache,
-        )
+        from yuxi.services.ocr_config_service import ensure_ocr_configs_in_db
 
         await ensure_ocr_configs_in_db(session)
         await session.commit()
-        await rebuild_ocr_config_cache(session)
-    # Redis 快照不含数据库凭证，worker 必须周期性从 PostgreSQL 刷新本地配置。
-    ctx["ocr_config_sync_task"] = asyncio.create_task(sync_ocr_config_cache())
     sys_config.start_runtime_sync()
     await recover_pending_dispatches()
 
 
 async def _worker_shutdown(ctx):
-    """停止 OCR 同步任务并关闭 worker 数据库连接。"""
+    """关闭 worker 数据库连接。"""
 
-    if task := ctx.get("ocr_config_sync_task"):
-        task.cancel()
-        await asyncio.gather(task, return_exceptions=True)
+    del ctx
     await pg_manager.close()
 
 

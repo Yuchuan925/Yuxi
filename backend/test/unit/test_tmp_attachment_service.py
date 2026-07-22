@@ -9,11 +9,25 @@ from types import SimpleNamespace
 import pytest
 
 os.environ.setdefault("OPENAI_API_KEY", "test-key")
-os.environ.setdefault("SAVE_DIR", os.path.join(os.environ.get("CLAUDE_JOB_DIR", tempfile.gettempdir()), "yuxi-test-saves"))
+os.environ.setdefault(
+    "SAVE_DIR", os.path.join(os.environ.get("CLAUDE_JOB_DIR", tempfile.gettempdir()), "yuxi-test-saves")
+)
 
 from yuxi.services import conversation_service as service
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.fixture(autouse=True)
+def mock_ocr_records(monkeypatch):
+    async def list_records(db):
+        del db
+        return [
+            SimpleNamespace(engine_id="disable", enabled=True, is_default=True),
+            SimpleNamespace(engine_id="rapid_ocr", enabled=True, is_default=False),
+        ]
+
+    monkeypatch.setattr("yuxi.repositories.ocr_config_repository.list_ocr_configs", list_records)
 
 
 class FakeUpload:
@@ -101,6 +115,7 @@ async def test_upload_tmp_attachment_writes_user_scoped_minio_object(monkeypatch
 
     response = await service.upload_tmp_attachment_view(
         file=FakeUpload("demo.pdf", b"pdf-bytes", "application/pdf"),
+        db=None,
         current_uid="user-1",
     )
 
@@ -130,6 +145,7 @@ async def test_parse_tmp_attachment_uses_selected_method_and_uploads_markdown(mo
         file_name="demo.pdf",
         parse_method="disable",
         bucket_name="knowledgebases",
+        db=None,
         current_uid="user-1",
     )
 
@@ -196,9 +212,9 @@ async def test_confirm_tmp_thread_attachments_materializes_original_and_parsed_f
     assert original_name.endswith("_demo.pdf")
     assert markdown_name.endswith("_demo.md")
     assert (tmp_path / "threads" / "thread-1" / "user-data" / "uploads" / original_name).read_bytes() == b"pdf-bytes"
-    assert (
-        tmp_path / "threads" / "thread-1" / "user-data" / "uploads" / "attachments" / markdown_name
-    ).read_text(encoding="utf-8") == "# parsed"
+    assert (tmp_path / "threads" / "thread-1" / "user-data" / "uploads" / "attachments" / markdown_name).read_text(
+        encoding="utf-8"
+    ) == "# parsed"
     assert Path(fake_repo.attachments[0]["original_path"]).name == original_name
 
 
@@ -215,6 +231,7 @@ async def test_parse_tmp_attachment_uses_object_name_for_type_validation(monkeyp
             file_name="demo.pdf",
             parse_method="disable",
             bucket_name="knowledgebases",
+            db=None,
             current_uid="user-1",
         )
 
@@ -242,6 +259,7 @@ async def test_parse_tmp_attachment_handles_url_metacharacters(monkeypatch):
         file_name="ignored.pdf",
         parse_method="disable",
         bucket_name="knowledgebases",
+        db=None,
         current_uid="user-1",
     )
 
@@ -347,5 +365,9 @@ async def test_confirm_tmp_thread_attachments_keeps_duplicate_names_separate(mon
 
     first, second = response["attachments"]
     assert first["original_path"] != second["original_path"]
-    assert (tmp_path / "threads" / "thread-1" / "user-data" / "uploads" / Path(first["original_path"]).name).read_bytes() == b"first"
-    assert (tmp_path / "threads" / "thread-1" / "user-data" / "uploads" / Path(second["original_path"]).name).read_bytes() == b"second"
+    assert (
+        tmp_path / "threads" / "thread-1" / "user-data" / "uploads" / Path(first["original_path"]).name
+    ).read_bytes() == b"first"
+    assert (
+        tmp_path / "threads" / "thread-1" / "user-data" / "uploads" / Path(second["original_path"]).name
+    ).read_bytes() == b"second"

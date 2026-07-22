@@ -4,7 +4,6 @@
 提供统一的文档处理器创建和管理接口
 """
 
-import asyncio
 import hashlib
 from importlib import import_module
 from typing import Any
@@ -66,14 +65,10 @@ class DocumentProcessorFactory:
         if processor_type not in cls.PROCESSOR_TYPES:
             raise ValueError(f"不支持的处理器类型: {processor_type}. 支持的类型: {list(cls.PROCESSOR_TYPES.keys())}")
 
-        if not kwargs:
-            from yuxi.services.ocr_config_service import resolve_processor_kwargs
-
-            kwargs = resolve_processor_kwargs(processor_type)
-
         # 使用缓存避免重复创建
         cache_key = cls._build_cache_key(processor_type, kwargs)
         if cache_key not in _PROCESSOR_CACHE:
+            cls.clear_cache(processor_type)
             processor_class = cls._load_processor_class(processor_type)
             _PROCESSOR_CACHE[cache_key] = processor_class(**kwargs)
             logger.debug(f"创建文档处理器: {processor_type}")
@@ -81,7 +76,13 @@ class DocumentProcessorFactory:
         return _PROCESSOR_CACHE[cache_key]
 
     @classmethod
-    def process_file(cls, processor_type: str, file_path: str, params: dict | None = None) -> str:
+    def process_file(
+        cls,
+        processor_type: str,
+        file_path: str,
+        params: dict | None = None,
+        processor_kwargs: dict[str, Any] | None = None,
+    ) -> str:
         """
         使用指定处理器处理文件 (便捷方法)
 
@@ -96,11 +97,11 @@ class DocumentProcessorFactory:
         Raises:
             DocumentProcessorException: 处理失败
         """
-        processor = cls.get_processor(processor_type)
+        processor = cls.get_processor(processor_type, **(processor_kwargs or {}))
         return processor.process_file(file_path, params)
 
     @classmethod
-    def check_health(cls, processor_type: str) -> dict[str, Any]:
+    def check_health(cls, processor_type: str, **kwargs) -> dict[str, Any]:
         """
         检查指定处理器的健康状态
 
@@ -111,7 +112,7 @@ class DocumentProcessorFactory:
             dict: 健康状态信息
         """
         try:
-            processor = cls.get_processor(processor_type)
+            processor = cls.get_processor(processor_type, **kwargs)
             return processor.check_health()
         except Exception as e:
             return {
@@ -119,29 +120,6 @@ class DocumentProcessorFactory:
                 "message": f"健康检查失败: {str(e)}",
                 "details": {"error": str(e)},
             }
-
-    @classmethod
-    def check_all_health(cls) -> dict[str, dict[str, Any]]:
-        """
-        检查所有处理器的健康状态
-
-        Returns:
-            dict: 各处理器的健康状态
-        """
-        health_status = {}
-        for processor_type in cls.PROCESSOR_TYPES:
-            health_status[processor_type] = cls.check_health(processor_type)
-        return health_status
-
-    @classmethod
-    async def check_all_health_async(cls) -> dict[str, dict[str, Any]]:
-        """在线程池中并发检查全部处理器，避免阻塞事件循环。"""
-
-        async def run_check(processor_type: str) -> tuple[str, dict[str, Any]]:
-            return processor_type, await asyncio.to_thread(cls.check_health, processor_type)
-
-        results = await asyncio.gather(*(run_check(processor_type) for processor_type in cls.PROCESSOR_TYPES))
-        return {processor_type: health for processor_type, health in results}
 
     @classmethod
     def get_available_processors(cls) -> list[str]:

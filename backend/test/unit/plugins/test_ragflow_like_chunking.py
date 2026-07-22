@@ -316,7 +316,6 @@ def test_sanitize_processing_params_should_drop_non_persistent_fields() -> None:
         "chunk_preset_id": "general",
         "chunk_parser_config": {"chunk_token_num": 300},
         "ocr_engine": "mineru_ocr",
-        "ocr_engine_config": {},
     }
 
 
@@ -341,8 +340,7 @@ def test_resolve_processing_params_keeps_ocr_fields_and_chunk_params() -> None:
     )
 
     assert resolved["ocr_engine"] == "mineru_ocr"
-    assert resolved["ocr_engine_config"]["backend"] == "pipeline"
-    assert resolved["ocr_engine_config"]["timeout_seconds"] == 1800
+    assert "ocr_engine_config" not in resolved
     assert resolved["chunk_preset_id"] == "laws"
     assert resolved["chunk_parser_config"] == {
         "delimiter": "\n",
@@ -354,24 +352,18 @@ def test_resolve_processing_params_keeps_ocr_fields_and_chunk_params() -> None:
     assert "auto_index" not in resolved
 
 
-def test_resolve_processing_params_defaults_ocr_fields(monkeypatch) -> None:
-    monkeypatch.setattr("yuxi.services.ocr_config_service.get_default_ocr_engine", lambda: "rapid_ocr")
-    monkeypatch.setattr(
-        "yuxi.services.ocr_config_service.resolve_ocr_default_params",
-        lambda engine, *, require_enabled=False: {"det_box_thresh": 0.3, "zoom_x": 2.0, "zoom_y": 2.0},
-    )
-
+def test_resolve_processing_params_does_not_inject_runtime_defaults() -> None:
     resolved = resolve_processing_params(
         kb_additional_params={},
         file_processing_params={"ocr_engine_config": "invalid", "enable_ocr": "mineru_ocr"},
     )
 
-    assert resolved["ocr_engine"] == "rapid_ocr"
-    assert resolved["ocr_engine_config"] == {"det_box_thresh": 0.3, "zoom_x": 2.0, "zoom_y": 2.0}
+    assert "ocr_engine" not in resolved
+    assert "ocr_engine_config" not in resolved
     assert "enable_ocr" not in resolved
 
 
-def test_resolve_processing_params_merges_file_and_request_ocr_config() -> None:
+def test_resolve_processing_params_drops_file_and_request_ocr_config() -> None:
     resolved = resolve_processing_params(
         kb_additional_params={},
         file_processing_params={
@@ -381,4 +373,5 @@ def test_resolve_processing_params_merges_file_and_request_ocr_config() -> None:
         request_params={"ocr_engine_config": {"det_box_thresh": 0.6}},
     )
 
-    assert resolved["ocr_engine_config"] == {"det_box_thresh": 0.6, "zoom_x": 3.0, "zoom_y": 2.0}
+    assert resolved["ocr_engine"] == "rapid_ocr"
+    assert "ocr_engine_config" not in resolved

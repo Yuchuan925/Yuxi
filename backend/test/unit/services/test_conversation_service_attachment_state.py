@@ -9,6 +9,17 @@ from yuxi.services import chat_service as chat_svc
 from yuxi.services import conversation_service as svc
 
 
+def _mock_ocr_records(monkeypatch: pytest.MonkeyPatch, default_engine: str) -> None:
+    async def list_records(db):
+        del db
+        return [
+            SimpleNamespace(engine_id=engine_id, enabled=True, is_default=engine_id == default_engine)
+            for engine_id in ("disable", "rapid_ocr", "mineru_ocr", "deepseek_ocr")
+        ]
+
+    monkeypatch.setattr("yuxi.repositories.ocr_config_repository.list_ocr_configs", list_records)
+
+
 def test_tmp_attachment_ocr_methods_use_processor_factory():
     assert svc.TMP_ATTACHMENT_OCR_METHODS == tuple(svc.DocumentProcessorFactory.get_available_processors())
     assert "paddleocr_vl_1_6" in svc.TMP_ATTACHMENT_OCR_METHODS
@@ -161,31 +172,38 @@ async def test_convert_upload_to_markdown_rejects_unsupported_extension(monkeypa
         await svc._convert_upload_to_markdown(upload)
 
 
-def test_normalize_parse_method_uses_default_ocr_engine_for_images(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr("yuxi.services.ocr_config_service.get_default_ocr_engine", lambda: "mineru_ocr")
-    method = svc._normalize_parse_method("scan.png", parse_method=None)
+@pytest.mark.asyncio
+async def test_normalize_parse_method_uses_default_ocr_engine_for_images(monkeypatch: pytest.MonkeyPatch):
+    _mock_ocr_records(monkeypatch, "mineru_ocr")
+    method = await svc._normalize_parse_method(None, "scan.png", parse_method=None)
     assert method == "mineru_ocr"
 
 
-def test_normalize_parse_method_uses_default_ocr_engine_for_images_fallback_to_rapid(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr("yuxi.services.ocr_config_service.get_default_ocr_engine", lambda: "deepseek_ocr")
-    method = svc._normalize_parse_method("scan.jpg", parse_method=None)
+@pytest.mark.asyncio
+async def test_normalize_parse_method_uses_default_ocr_engine_for_images_fallback_to_rapid(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    _mock_ocr_records(monkeypatch, "deepseek_ocr")
+    method = await svc._normalize_parse_method(None, "scan.jpg", parse_method=None)
     assert method == "deepseek_ocr"
 
 
-def test_normalize_parse_method_pdf_defaults_to_disable(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr("yuxi.services.ocr_config_service.get_default_ocr_engine", lambda: "mineru_ocr")
-    method = svc._normalize_parse_method("doc.pdf", parse_method=None)
+@pytest.mark.asyncio
+async def test_normalize_parse_method_pdf_defaults_to_disable(monkeypatch: pytest.MonkeyPatch):
+    _mock_ocr_records(monkeypatch, "mineru_ocr")
+    method = await svc._normalize_parse_method(None, "doc.pdf", parse_method=None)
     assert method == "disable"
 
 
-def test_normalize_parse_method_respects_explicit_parse_method(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr("yuxi.services.ocr_config_service.get_default_ocr_engine", lambda: "rapid_ocr")
-    method = svc._normalize_parse_method("scan.png", parse_method="deepseek_ocr")
+@pytest.mark.asyncio
+async def test_normalize_parse_method_respects_explicit_parse_method(monkeypatch: pytest.MonkeyPatch):
+    _mock_ocr_records(monkeypatch, "rapid_ocr")
+    method = await svc._normalize_parse_method(None, "scan.png", parse_method="deepseek_ocr")
     assert method == "deepseek_ocr"
 
 
-def test_normalize_parse_method_fallback_to_rapid_when_default_is_disable(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr("yuxi.services.ocr_config_service.get_default_ocr_engine", lambda: "disable")
-    method = svc._normalize_parse_method("scan.png", parse_method=None)
+@pytest.mark.asyncio
+async def test_normalize_parse_method_fallback_to_rapid_when_default_is_disable(monkeypatch: pytest.MonkeyPatch):
+    _mock_ocr_records(monkeypatch, "disable")
+    method = await svc._normalize_parse_method(None, "scan.png", parse_method=None)
     assert method == "rapid_ocr"

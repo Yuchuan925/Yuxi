@@ -21,6 +21,8 @@ from yuxi.utils import logger
 class DeepSeekOCRParser(BaseDocumentProcessor):
     """DeepSeek OCR Parser using SiliconFlow API"""
 
+    supported_extensions = [".pdf", ".png", ".jpg", ".jpeg", ".bmp", ".webp"]
+
     # MIME type mapping for supported formats
     MIME_TYPE_MAP = {
         ".pdf": "application/pdf",
@@ -50,10 +52,6 @@ class DeepSeekOCRParser(BaseDocumentProcessor):
 
     def get_service_name(self) -> str:
         return "deepseek_ocr"
-
-    def get_supported_extensions(self) -> list[str]:
-        """DeepSeek OCR supports PDF and images"""
-        return list(self.MIME_TYPE_MAP.keys())
 
     def check_health(self) -> dict[str, Any]:
         """Check API availability and key validity"""

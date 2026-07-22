@@ -43,6 +43,7 @@ SUPPORTED_FILE_EXTENSIONS: tuple[str, ...] = (
     ".tif",
     ".zip",
 )
+OCR_FILE_EXTENSIONS = {".pdf", ".png", ".jpg", ".jpeg", ".bmp", ".webp", ".tiff", ".tif"}
 
 
 def is_supported_file_extension(file_name: str | os.PathLike[str]) -> bool:
@@ -91,17 +92,14 @@ def _resolve_image_storage_params(params: dict | None) -> tuple[str, str]:
 
 
 def _resolve_ocr_engine_params(params: dict | None) -> tuple[str, dict[str, Any]]:
-    from yuxi.services.ocr_config_service import get_default_ocr_engine, resolve_ocr_default_params
+    from yuxi import config
 
     params = params or {}
-    default_engine = get_default_ocr_engine()
+    default_engine = config.default_ocr_engine
     engine = str(params.get("ocr_engine") if "ocr_engine" in params else default_engine)
     engine = engine.strip() or default_engine
-    engine_config = params.get("ocr_engine_config")
     processor_params = dict(params)
-    processor_params.update(resolve_ocr_default_params(engine))
-    if isinstance(engine_config, dict):
-        processor_params.update(engine_config)
+    processor_params.pop("ocr_engine_config", None)
     return engine, processor_params
 
 
@@ -242,9 +240,10 @@ def parse_pdf(file, params=None):
     image_bucket, image_prefix = _resolve_image_storage_params(processor_params)
     processor_params.setdefault("image_bucket", image_bucket)
     processor_params.setdefault("image_prefix", image_prefix)
+    processor_kwargs = processor_params.pop("_ocr_processor_kwargs", {})
 
     try:
-        return DocumentProcessorFactory.process_file(opt_ocr, file, processor_params)
+        return DocumentProcessorFactory.process_file(opt_ocr, file, processor_params, processor_kwargs)
     except DocumentProcessorException as e:
         logger.error(f"文档处理失败: {e.service_name} - {str(e)}")
         raise
@@ -271,9 +270,10 @@ def parse_image(file, params=None):
     image_bucket, image_prefix = _resolve_image_storage_params(processor_params)
     processor_params.setdefault("image_bucket", image_bucket)
     processor_params.setdefault("image_prefix", image_prefix)
+    processor_kwargs = processor_params.pop("_ocr_processor_kwargs", {})
 
     try:
-        return DocumentProcessorFactory.process_file(opt_ocr, file, processor_params)
+        return DocumentProcessorFactory.process_file(opt_ocr, file, processor_params, processor_kwargs)
     except DocumentProcessorException as e:
         logger.error(f"图像处理失败: {e.service_name} - {str(e)}")
         raise
@@ -443,7 +443,13 @@ class Parser:
     @staticmethod
     async def aparse(source: str, params: dict | None = None) -> str:
         """Asynchronously parse source content and return markdown text."""
-        parsed = await parse_source_to_markdown(source=source, params=params)
+        resolved_params = params
+        suffix = Path(source.split("?", 1)[0]).suffix.lower()
+        if suffix in OCR_FILE_EXTENSIONS:
+            from yuxi.services.ocr_config_service import resolve_ocr_task_params
+
+            resolved_params = await resolve_ocr_task_params(params)
+        parsed = await parse_source_to_markdown(source=source, params=resolved_params)
         return parsed.markdown
 
     @classmethod

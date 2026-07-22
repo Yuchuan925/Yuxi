@@ -21,6 +21,8 @@ from yuxi.utils import hashstr, logger
 class MinerUOfficialParser(BaseDocumentProcessor):
     """MinerU 官方 API 解析器"""
 
+    supported_extensions = [".pdf", ".doc", ".docx", ".ppt", ".pptx", ".png", ".jpg", ".jpeg"]
+
     def __init__(self, api_key: str | None = None, api_base: str | None = None):
         """使用配置中心解析后的凭证和官方端点初始化解析器。"""
 
@@ -36,10 +38,6 @@ class MinerUOfficialParser(BaseDocumentProcessor):
 
     def get_service_name(self) -> str:
         return "mineru_official"
-
-    def get_supported_extensions(self) -> list[str]:
-        """MinerU 官方 API 支持的文件格式"""
-        return [".pdf", ".doc", ".docx", ".ppt", ".pptx", ".png", ".jpg", ".jpeg"]
 
     def check_health(self) -> dict[str, Any]:
         """检查 API 可用性和密钥有效性"""

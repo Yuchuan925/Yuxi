@@ -203,15 +203,17 @@ def _require_tmp_object_section(
     return current_tmp_file_id, object_file_name
 
 
-def _available_tmp_ocr_methods() -> tuple[str, ...]:
+async def _available_tmp_ocr_methods(db: AsyncSession) -> tuple[str, ...]:
     """返回当前允许新临时附件任务使用的 OCR 引擎。"""
 
-    from yuxi.services.ocr_config_service import is_ocr_engine_enabled
+    from yuxi.repositories.ocr_config_repository import list_ocr_configs
 
-    return tuple(method for method in TMP_ATTACHMENT_OCR_METHODS if is_ocr_engine_enabled(method))
+    records = await list_ocr_configs(db)
+    enabled = {record.engine_id for record in records if record.enabled}
+    return tuple(method for method in TMP_ATTACHMENT_OCR_METHODS if method in enabled)
 
 
-def _normalize_parse_method(file_name: str, parse_method: str | None) -> str:
+async def _normalize_parse_method(db: AsyncSession, file_name: str, parse_method: str | None) -> str:
     """按文件类型和系统启停状态确定临时附件解析方式。"""
 
     suffix = Path(file_name).suffix.lower()
@@ -219,17 +221,18 @@ def _normalize_parse_method(file_name: str, parse_method: str | None) -> str:
         raise HTTPException(status_code=400, detail="当前仅支持 PDF 和图片附件解析")
 
     if suffix in TMP_ATTACHMENT_IMAGE_EXTENSIONS:
-        from yuxi.services.ocr_config_service import get_default_ocr_engine
+        from yuxi.repositories.ocr_config_repository import list_ocr_configs
 
-        default_engine = get_default_ocr_engine()
+        records = await list_ocr_configs(db)
+        default_engine = next((record.engine_id for record in records if record.is_default), "rapid_ocr")
         # 图片没有可直接提取的文本层，系统默认 disable 时仍需回退到本地 OCR。
         method = parse_method or ("rapid_ocr" if default_engine == "disable" else default_engine)
     else:
         method = parse_method or "disable"
     if suffix in TMP_ATTACHMENT_IMAGE_EXTENSIONS:
-        allowed_methods = _available_tmp_ocr_methods()
+        allowed_methods = await _available_tmp_ocr_methods(db)
     else:
-        allowed_methods = ("disable", *_available_tmp_ocr_methods())
+        allowed_methods = ("disable", *(await _available_tmp_ocr_methods(db)))
 
     if method not in allowed_methods:
         allowed = ", ".join(allowed_methods)
@@ -585,7 +588,7 @@ async def update_thread_view(
     }
 
 
-async def upload_tmp_attachment_view(*, file: UploadFile, current_uid: str) -> dict:
+async def upload_tmp_attachment_view(*, file: UploadFile, db: AsyncSession, current_uid: str) -> dict:
     """上传附件到用户隔离的 MinIO tmp 路径。"""
     if not file.filename:
         raise HTTPException(status_code=400, detail="无法识别的文件名")
@@ -615,7 +618,7 @@ async def upload_tmp_attachment_view(*, file: UploadFile, current_uid: str) -> d
         raise HTTPException(status_code=500, detail=f"临时附件上传失败: {exc}") from exc
 
     suffix = Path(file_name).suffix.lower()
-    available_ocr_methods = _available_tmp_ocr_methods()
+    available_ocr_methods = await _available_tmp_ocr_methods(db)
     if suffix == ".pdf":
         parse_methods = ["disable", *available_ocr_methods]
     elif suffix in TMP_ATTACHMENT_IMAGE_EXTENSIONS:
@@ -643,6 +646,7 @@ async def parse_tmp_attachment_view(
     file_name: str,
     parse_method: str | None,
     bucket_name: str | None,
+    db: AsyncSession,
     current_uid: str,
 ) -> dict:
     """解析用户 tmp 附件并把 markdown 写回 tmp。"""
@@ -653,7 +657,7 @@ async def parse_tmp_attachment_view(
         raise HTTPException(status_code=400, detail="无效的临时附件 bucket")
 
     tmp_file_id, safe_name = _require_tmp_object_section(object_name, str(current_uid), "original")
-    method = _normalize_parse_method(safe_name, parse_method)
+    method = await _normalize_parse_method(db, safe_name, parse_method)
 
     try:
         markdown = await Parser.aparse(_minio_source(bucket_name, object_name), params={"ocr_engine": method})

@@ -353,14 +353,19 @@ async def update_thread(
 
 
 @chat.post("/attachments/tmp", response_model=TmpAttachmentResponse)
-async def upload_tmp_attachment(file: UploadFile = File(...), current_user: User = Depends(get_required_user)):
+async def upload_tmp_attachment(
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_required_user),
+):
     """上传附件到 MinIO tmp，暂不关联线程。"""
-    return await upload_tmp_attachment_view(file=file, current_uid=str(current_user.uid))
+    return await upload_tmp_attachment_view(file=file, db=db, current_uid=str(current_user.uid))
 
 
 @chat.post("/attachments/tmp/parse", response_model=TmpAttachmentParseResponse)
 async def parse_tmp_attachment(
     request: TmpAttachmentParseRequest,
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_required_user),
 ):
     """解析 tmp 附件并返回解析后的 tmp URL。"""
@@ -369,6 +374,7 @@ async def parse_tmp_attachment(
         file_name=request.file_name,
         parse_method=request.parse_method,
         bucket_name=request.bucket_name,
+        db=db,
         current_uid=str(current_user.uid),
     )
 

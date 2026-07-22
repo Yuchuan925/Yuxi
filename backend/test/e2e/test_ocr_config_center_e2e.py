@@ -7,8 +7,6 @@ import httpx
 import pytest
 from PIL import Image, ImageDraw, ImageFont
 
-from yuxi.knowledge.parser.factory import DocumentProcessorFactory
-from yuxi.services.ocr_config_cache import OCRConfigCache
 from yuxi.storage.minio.client import get_minio_client
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.e2e]
@@ -27,8 +25,6 @@ async def test_admin_ocr_config_drives_real_tmp_attachment_parse(
     configs = configs_response.json()["configs"]
     rapid = next(item for item in configs if item["engine_id"] == "rapid_ocr")
     previous_default = next(item for item in configs if item["is_default"])
-    previous_threshold = rapid["default_params"]["det_box_thresh"]
-    updated_threshold = 0.25 if previous_threshold != 0.25 else 0.35
     image_path = tmp_path / "ocr-config-center.png"
     _build_ocr_image(image_path)
     thread_id = None
@@ -42,27 +38,10 @@ async def test_admin_ocr_config_drives_real_tmp_attachment_parse(
             json={
                 "enabled": True,
                 "is_default": True,
-                "default_params": {**rapid["default_params"], "det_box_thresh": updated_threshold},
             },
             headers=e2e_headers,
         )
         assert update_response.status_code == 200, update_response.text
-
-        separate_process_cache = OCRConfigCache()
-        published_config = separate_process_cache.get("rapid_ocr")
-        assert published_config is not None
-        assert published_config.default_params["det_box_thresh"] == updated_threshold
-
-        DocumentProcessorFactory.clear_cache("rapid_ocr")
-        processor = DocumentProcessorFactory.get_processor("rapid_ocr")
-        assert processor.det_box_thresh == updated_threshold
-
-        health_response = await e2e_client.post(
-            "/api/system/ocr/configs/rapid_ocr/health",
-            headers=e2e_headers,
-        )
-        assert health_response.status_code == 200, health_response.text
-        assert health_response.json()["details"]["det_box_thresh"] == updated_threshold
 
         options_response = await e2e_client.get("/api/system/ocr/options", headers=e2e_headers)
         assert options_response.status_code == 200, options_response.text
@@ -144,7 +123,7 @@ async def test_admin_ocr_config_drives_real_tmp_attachment_parse(
                 assert restore_default.status_code == 200, restore_default.text
             restore_rapid = await e2e_client.put(
                 "/api/system/ocr/configs/rapid_ocr",
-                json={"enabled": rapid["enabled"], "default_params": rapid["default_params"]},
+                json={"enabled": rapid["enabled"]},
                 headers=e2e_headers,
             )
             assert restore_rapid.status_code == 200, restore_rapid.text

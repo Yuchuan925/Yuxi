@@ -11,6 +11,7 @@ _DROPPED_PROCESSING_PARAM_KEYS = {
     "content_hashes",
     "file_sizes",
     "enable_ocr",
+    "ocr_engine_config",
 }
 
 
@@ -27,30 +28,9 @@ def resolve_processing_params(
     file_processing_params: dict | None,
     request_params: dict | None = None,
 ) -> dict:
-    """合并文件、请求与系统默认的 OCR 和分块参数。"""
-
-    from yuxi.services.ocr_config_service import get_default_ocr_engine, resolve_ocr_default_params
+    """合并文件、请求中的 OCR 和分块参数。"""
 
     merged_params = sanitize_processing_params(merge_processing_params(file_processing_params, request_params)) or {}
-    if "ocr_engine" not in merged_params or not merged_params.get("ocr_engine"):
-        merged_params["ocr_engine"] = get_default_ocr_engine()
-
-    file_ocr_config = (file_processing_params or {}).get("ocr_engine_config")
-    request_ocr_config = (request_params or {}).get("ocr_engine_config")
-    requested_engine = (request_params or {}).get("ocr_engine")
-    file_engine = (file_processing_params or {}).get("ocr_engine")
-    if requested_engine and requested_engine != file_engine:
-        file_ocr_config = {}
-    saved_config = {
-        **(file_ocr_config if isinstance(file_ocr_config, dict) else {}),
-        **(request_ocr_config if isinstance(request_ocr_config, dict) else {}),
-    }
-    # 历史文件快照必须可读；引擎启停只限制新执行，不应破坏已有元数据。
-    merged_params["ocr_engine_config"] = {
-        **resolve_ocr_default_params(merged_params["ocr_engine"], require_enabled=False),
-        **saved_config,
-    }
-
     chunk_params = resolve_chunk_processing_params(
         kb_additional_params=kb_additional_params,
         file_processing_params=file_processing_params,

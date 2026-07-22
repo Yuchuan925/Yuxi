@@ -36,6 +36,11 @@ def _runtime(
 @pytest.mark.asyncio
 async def test_ocr_parse_file_writes_markdown_to_outputs(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("yuxi.config.save_dir", str(tmp_path))
+
+    async def resolve_engine(engine_id):
+        return engine_id
+
+    monkeypatch.setattr("yuxi.services.ocr_config_service.resolve_ocr_engine_id", resolve_engine)
     thread_id = "thread-1"
     uid = "user-1"
     ensure_thread_dirs(thread_id, uid)
@@ -74,7 +79,12 @@ async def test_ocr_parse_file_writes_markdown_to_outputs(tmp_path, monkeypatch: 
 @pytest.mark.asyncio
 async def test_ocr_parse_file_uses_default_engine(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("yuxi.config.save_dir", str(tmp_path))
-    monkeypatch.setattr("yuxi.config.default_ocr_engine", "rapid_ocr")
+
+    async def resolve_engine(engine_id):
+        assert engine_id is None
+        return "rapid_ocr"
+
+    monkeypatch.setattr("yuxi.services.ocr_config_service.resolve_ocr_engine_id", resolve_engine)
     thread_id = "thread-1"
     uid = "user-1"
     ensure_thread_dirs(thread_id, uid)

@@ -852,7 +852,6 @@ const ocrEngineTouched = ref(false)
 // 解析参数
 const processingParams = ref({
   ocr_engine: DEFAULT_OCR_ENGINE,
-  ocr_engine_config: {}
 })
 
 // 自动入库相关
@@ -966,7 +965,7 @@ const ocrStatusLabels = {
 }
 
 const getOcrStatus = (engine) => {
-  if (engine === 'disable') return 'local'
+    if (engine === 'disable') return 'local'
   return 'configured'
 }
 

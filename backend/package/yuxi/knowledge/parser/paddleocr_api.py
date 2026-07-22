@@ -17,15 +17,13 @@ from yuxi.storage.minio import get_minio_client
 from yuxi.utils import logger
 
 DEFAULT_PADDLEOCR_API_URL = "https://paddleocr.aistudio-app.com/api/v2/ocr/jobs"
-PADDLEOCR_SUPPORTED_EXTENSIONS = [".pdf", ".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".tif"]
-
-
 class PaddleOCRAPIParser(BaseDocumentProcessor):
     """Base parser for PaddleOCR cloud jobs API."""
 
     model = ""
     service_name = ""
     default_optional_payload: dict[str, bool] = {}
+    supported_extensions = [".pdf", ".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".tif"]
 
     def __init__(self, api_token: str | None = None, api_url: str | None = None):
         self.api_token = api_token or os.getenv("PADDLEOCR_API_TOKEN")
@@ -33,9 +31,6 @@ class PaddleOCRAPIParser(BaseDocumentProcessor):
 
     def get_service_name(self) -> str:
         return self.service_name
-
-    def get_supported_extensions(self) -> list[str]:
-        return PADDLEOCR_SUPPORTED_EXTENSIONS
 
     def check_health(self) -> dict[str, Any]:
         if not self.api_token:
