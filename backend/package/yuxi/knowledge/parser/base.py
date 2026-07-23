@@ -44,6 +44,8 @@ class ServiceHealthCheckException(DocumentProcessorException):
 class BaseDocumentProcessor(ABC):
     """文档处理器基类"""
 
+    service_name: ClassVar[str] = ""
+    display_name: ClassVar[str] = ""
     supported_extensions: ClassVar[list[str]] = []
 
     @abstractmethod
@@ -78,10 +80,9 @@ class BaseDocumentProcessor(ABC):
         """
         pass
 
-    @abstractmethod
     def get_service_name(self) -> str:
-        """返回服务名称"""
-        pass
+        """返回 parser 声明的稳定服务标识。"""
+        return self.service_name
 
     def supports_file_type(self, file_extension: str) -> bool:
         """

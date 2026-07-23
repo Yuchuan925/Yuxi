@@ -12,7 +12,6 @@ from yuxi.agents.backends.sandbox.paths import (
     virtual_path_for_thread_file,
 )
 from yuxi.agents.toolkits.buildin.tools import ocr_parse_file
-from yuxi.knowledge.parser.unified import Parser
 
 pytestmark = pytest.mark.unit
 
@@ -49,12 +48,13 @@ async def test_ocr_parse_file_writes_markdown_to_outputs(tmp_path, monkeypatch: 
     source_virtual_path = virtual_path_for_thread_file(thread_id, source_path, uid=uid)
     captured: dict[str, object] = {}
 
-    async def fake_aparse(source: str, params: dict | None = None) -> str:
+    async def fake_parse_document(source: str, params: dict | None = None, db=None) -> str:
+        del db
         captured["source"] = source
         captured["params"] = params
         return "识别结果\n" + ("长文本" * 500)
 
-    monkeypatch.setattr(Parser, "aparse", fake_aparse)
+    monkeypatch.setattr("yuxi.services.ocr_service.parse_document", fake_parse_document)
 
     result = await ocr_parse_file.coroutine(
         file_path=source_virtual_path,
@@ -93,11 +93,12 @@ async def test_ocr_parse_file_uses_default_engine(tmp_path, monkeypatch: pytest.
     source_virtual_path = virtual_path_for_thread_file(thread_id, source_path, uid=uid)
     captured: dict[str, object] = {}
 
-    async def fake_aparse(source: str, params: dict | None = None) -> str:
+    async def fake_parse_document(source: str, params: dict | None = None, db=None) -> str:
+        del source, db
         captured["params"] = params
         return "OCR content"
 
-    monkeypatch.setattr(Parser, "aparse", fake_aparse)
+    monkeypatch.setattr("yuxi.services.ocr_service.parse_document", fake_parse_document)
 
     result = await ocr_parse_file.coroutine(
         file_path=source_virtual_path,
@@ -119,11 +120,12 @@ async def test_ocr_parse_file_accepts_disable_for_pdf(tmp_path, monkeypatch: pyt
     source_virtual_path = virtual_path_for_thread_file(thread_id, source_path, uid=uid)
     captured: dict[str, object] = {}
 
-    async def fake_aparse(source: str, params: dict | None = None) -> str:
+    async def fake_parse_document(source: str, params: dict | None = None, db=None) -> str:
+        del source, db
         captured["params"] = params
         return "PDF text layer"
 
-    monkeypatch.setattr(Parser, "aparse", fake_aparse)
+    monkeypatch.setattr("yuxi.services.ocr_service.parse_document", fake_parse_document)
 
     result = await ocr_parse_file.coroutine(
         file_path=source_virtual_path,

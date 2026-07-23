@@ -14,10 +14,10 @@ from yuxi.agents.backends.sandbox import (
 from yuxi.agents.buildin import agent_manager
 from yuxi.config import config as app_config
 from yuxi.knowledge.parser.factory import DocumentProcessorFactory
-from yuxi.knowledge.parser.unified import Parser
 from yuxi.repositories.agent_repository import AgentRepository
 from yuxi.repositories.conversation_repository import INVOCATION_CONVERSATION_SOURCES, ConversationRepository
 from yuxi.services.mention_search_service import invalidate_mention_cache
+from yuxi.services.ocr_service import parse_document
 from yuxi.storage.minio import StorageError, get_minio_client
 from yuxi.storage.postgres.models_business import AgentRun, User
 from yuxi.utils.datetime_utils import format_utc_datetime, utc_isoformat
@@ -88,7 +88,7 @@ async def _convert_upload_to_markdown(upload: UploadFile) -> ConversionResult:
 
     try:
         file_size = await _write_upload_to_disk(upload, temp_path)
-        markdown = await Parser.aparse(str(temp_path))
+        markdown = await parse_document(str(temp_path))
         markdown, truncated = _truncate_markdown(markdown)
         return ConversionResult(
             file_id=uuid.uuid4().hex,
@@ -644,7 +644,7 @@ async def parse_tmp_attachment_view(
     method = _normalize_parse_method(safe_name, parse_method)
 
     try:
-        markdown = await Parser.aparse(_minio_source(bucket_name, object_name), params={"ocr_engine": method})
+        markdown = await parse_document(_minio_source(bucket_name, object_name), params={"ocr_engine": method})
         markdown, truncated = _truncate_markdown(markdown)
         parsed_object_name = _make_tmp_parsed_object(str(current_uid), tmp_file_id, safe_name)
         upload_result = await minio_client.aupload_file(

@@ -92,12 +92,11 @@ def _resolve_image_storage_params(params: dict | None) -> tuple[str, str]:
 
 
 def _resolve_ocr_engine_params(params: dict | None) -> tuple[str, dict[str, Any]]:
-    from yuxi import config
-
     params = params or {}
-    default_engine = config.default_ocr_engine
-    engine = str(params.get("ocr_engine") if "ocr_engine" in params else default_engine)
-    engine = engine.strip() or default_engine
+    engine = str(params.get("ocr_engine") or "").strip()
+    if not engine:
+        raise ValueError("OCR 文件缺少已解析的 ocr_engine，请通过 parse_document() 解析")
+
     processor_params = dict(params)
     processor_params.pop("ocr_engine_config", None)
     return engine, processor_params
@@ -290,28 +289,30 @@ async def parse_image_async(file, params=None):
     return await asyncio.to_thread(parse_image, file, params=params)
 
 
-async def _process_file_to_markdown_core(
-    file_path: str, params: dict | None = None
-) -> tuple[str, str | None, dict[str, Any]]:
+
+async def parse_resolved_document(source: str, params: dict | None = None) -> MarkdownParseResult:
+    """使用已经解析好的运行时参数执行底层文件转换。"""
+
     """将不同类型的文件转换为 markdown，支持本地文件和 MinIO 文件。"""
     from yuxi.knowledge.utils.kb_utils import is_minio_url, parse_minio_url
     from yuxi.storage.minio.client import get_minio_client
 
-    if is_minio_url(file_path):
-        logger.debug(f"Downloading file from MinIO: {file_path}")
+    # 1. 如果是 MinIO URL，下载文件到临时路径
+    if is_minio_url(source):
+        logger.debug(f"Downloading file from MinIO: {source}")
 
-        if "?" in file_path:
-            file_path_clean = file_path.split("?")[0]
+        if "?" in source:
+            source_clean = source.split("?")[0]
         else:
-            file_path_clean = file_path
+            source_clean = source
 
-        original_filename = file_path_clean.split("/")[-1]
+        original_filename = source_clean.split("/")[-1]
 
         with tempfile.NamedTemporaryFile(delete=False, suffix=Path(original_filename).suffix) as temp_file:
             temp_path = temp_file.name
 
         try:
-            bucket_name, object_name = parse_minio_url(file_path)
+            bucket_name, object_name = parse_minio_url(source)
             minio_client = get_minio_client()
             file_content = await minio_client.adownload_file(bucket_name, object_name)
 
@@ -327,11 +328,12 @@ async def _process_file_to_markdown_core(
             logger.error(f"Failed to download file from MinIO: {e}")
             raise ValueError(f"无法从MinIO下载文件: {e}")
     else:
-        actual_file_path = file_path
+        actual_file_path = source
 
     file_ext: str | None = None
     artifacts: dict[str, Any] = {}
 
+    # 2. 根据文件类型调用不同的解析器
     try:
         file_path_obj = Path(actual_file_path)
         file_ext = file_path_obj.suffix.lower()
@@ -408,7 +410,7 @@ async def _process_file_to_markdown_core(
             raise ValueError(f"Unsupported file type: {file_ext}")
 
     except Exception:
-        if is_minio_url(file_path) and os.path.exists(actual_file_path):
+        if is_minio_url(source) and os.path.exists(actual_file_path):
             try:
                 os.unlink(actual_file_path)
                 logger.debug(f"Cleaned up temp file: {actual_file_path}")
@@ -417,47 +419,15 @@ async def _process_file_to_markdown_core(
         raise
 
     finally:
-        if is_minio_url(file_path) and os.path.exists(actual_file_path):
+        if is_minio_url(source) and os.path.exists(actual_file_path):
             try:
                 os.unlink(actual_file_path)
                 logger.debug(f"Cleaned up temp file: {actual_file_path}")
             except Exception as e:  # noqa: BLE001
                 logger.warning(f"Failed to clean up temp file {actual_file_path}: {e}")
 
-    return result, file_ext, artifacts
-
-
-async def parse_source_to_markdown(source: str, params: dict | None = None) -> MarkdownParseResult:
-    """统一入口: 将文件解析为 Markdown（URL 解析已废弃）。"""
-    markdown, file_ext, artifacts = await _process_file_to_markdown_core(source, params=params)
     return MarkdownParseResult(
-        markdown=markdown,
+        markdown=result,
         file_ext=file_ext,
         artifacts=artifacts,
     )
-
-
-class Parser:
-    """Lightweight facade for converting file sources to markdown."""
-
-    @staticmethod
-    async def aparse(source: str, params: dict | None = None) -> str:
-        """Asynchronously parse source content and return markdown text."""
-        resolved_params = params
-        suffix = Path(source.split("?", 1)[0]).suffix.lower()
-        if suffix in OCR_FILE_EXTENSIONS:
-            from yuxi.services.ocr_service import resolve_ocr_task_params
-
-            resolved_params = await resolve_ocr_task_params(params)
-        parsed = await parse_source_to_markdown(source=source, params=resolved_params)
-        return parsed.markdown
-
-    @classmethod
-    def parse(cls, source: str, params: dict | None = None) -> str:
-        """Synchronously parse source content and return markdown text."""
-        try:
-            asyncio.get_running_loop()
-        except RuntimeError:
-            return asyncio.run(cls.aparse(source=source, params=params))
-
-        raise RuntimeError("当前处于异步上下文，请使用 `await Parser.aparse(...)`")

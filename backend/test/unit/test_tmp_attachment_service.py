@@ -125,7 +125,7 @@ async def test_parse_tmp_attachment_uses_selected_method_and_uploads_markdown(mo
         parse_calls.append({"source": source, "params": params})
         return "# parsed"
 
-    monkeypatch.setattr(service.Parser, "aparse", staticmethod(fake_parse))
+    monkeypatch.setattr(service, "parse_document", fake_parse)
 
     response = await service.parse_tmp_attachment_view(
         object_name=object_name,
@@ -237,7 +237,7 @@ async def test_parse_tmp_attachment_handles_url_metacharacters(monkeypatch):
         parse_calls.append(source)
         return "# parsed"
 
-    monkeypatch.setattr(service.Parser, "aparse", staticmethod(fake_parse))
+    monkeypatch.setattr(service, "parse_document", fake_parse)
 
     response = await service.parse_tmp_attachment_view(
         object_name=object_name,

@@ -21,6 +21,8 @@ from yuxi.utils import hashstr, logger
 class MinerUOfficialParser(BaseDocumentProcessor):
     """MinerU 官方 API 解析器"""
 
+    service_name = "mineru_official"
+    display_name = "MinerU Official API"
     supported_extensions = [".pdf", ".doc", ".docx", ".ppt", ".pptx", ".png", ".jpg", ".jpeg"]
 
     def __init__(self, api_key: str | None = None, api_base: str | None = None):
@@ -35,9 +37,6 @@ class MinerUOfficialParser(BaseDocumentProcessor):
             "Content-Type": "application/json",
             "Authorization": f"Bearer {self.api_key}",
         }
-
-    def get_service_name(self) -> str:
-        return "mineru_official"
 
     def check_health(self) -> dict[str, Any]:
         """报告凭证配置状态，避免健康检查创建真实解析任务。"""

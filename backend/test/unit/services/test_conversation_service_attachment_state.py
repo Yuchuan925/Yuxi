@@ -115,11 +115,11 @@ async def test_convert_upload_to_markdown_returns_conversion_result(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
 ):
-    async def _fake_aparse(source: str, params=None) -> str:
+    async def _fake_parse_document(source: str, params=None) -> str:
         return "converted markdown"
 
     monkeypatch.setattr(svc, "_ensure_workdir", lambda: tmp_path)
-    monkeypatch.setattr(svc.Parser, "aparse", _fake_aparse)
+    monkeypatch.setattr(svc, "parse_document", _fake_parse_document)
 
     payload = b"hello attachment"
     upload = _DummyUpload(filename="note.txt", content_type="text/plain", data=payload)
@@ -138,11 +138,11 @@ async def test_convert_upload_to_markdown_truncates_content(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
 ):
-    async def _fake_aparse(source: str, params=None) -> str:
+    async def _fake_parse_document(source: str, params=None) -> str:
         return "x" * (svc.MAX_ATTACHMENT_MARKDOWN_CHARS + 200)
 
     monkeypatch.setattr(svc, "_ensure_workdir", lambda: tmp_path)
-    monkeypatch.setattr(svc.Parser, "aparse", _fake_aparse)
+    monkeypatch.setattr(svc, "parse_document", _fake_parse_document)
 
     upload = _DummyUpload(filename="note.md", content_type="text/markdown", data=b"hello")
 

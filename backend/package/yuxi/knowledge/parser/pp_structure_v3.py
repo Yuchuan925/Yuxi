@@ -19,15 +19,14 @@ from yuxi.utils import logger
 class PPStructureV3Parser(BaseDocumentProcessor):
     """PP-Structure-V3 文档解析器 - 使用 PP-Structure-V3 进行版面解析"""
 
+    service_name = "pp_structure_v3_ocr"
+    display_name = "PP-Structure-V3"
     supported_extensions = [".pdf", ".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".tif"]
 
     def __init__(self, server_url: str | None = None):
         self.server_url = server_url or os.getenv("PADDLEX_URI") or "http://localhost:8080"
         self.base_url = self.server_url.rstrip("/")
         self.endpoint = f"{self.base_url}/layout-parsing"
-
-    def get_service_name(self) -> str:
-        return "pp_structure_v3_ocr"
 
     def _encode_file_to_base64(self, file_path: str) -> str:
         """将文件编码为Base64"""

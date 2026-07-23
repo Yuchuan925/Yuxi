@@ -12,20 +12,20 @@ PROCESSOR_TYPES = {
     "paddleocr_pp_ocrv6": ("yuxi.knowledge.parser.paddleocr_api", "PaddleOCRPPOCRv6Parser"),
 }
 
-PROCESSOR_METADATA = {
-    "rapid_ocr": {"display_name": "RapidOCR (ONNX)"},
-    "mineru_ocr": {"display_name": "MinerU OCR"},
-    "mineru_official": {"display_name": "MinerU Official API"},
-    "pp_structure_v3_ocr": {"display_name": "PP-Structure-V3"},
-    "deepseek_ocr": {"display_name": "DeepSeek OCR"},
-    "paddleocr_vl_1_6": {"display_name": "PaddleOCR-VL-1.6"},
-    "paddleocr_pp_ocrv6": {"display_name": "PP-OCRv6"},
-}
 
+def get_parser_metadata(engine_id: str) -> dict[str, str | list[str]]:
+    """从 parser 类读取并校验静态元数据。"""
 
-def get_supported_extensions(engine_id: str) -> list[str]:
-    """从解析器类读取文件能力，避免配置中心复制一份扩展名清单。"""
-
+    if engine_id not in PROCESSOR_TYPES:
+        raise ValueError(f"不支持的 OCR 引擎: {engine_id}")
     module_path, class_name = PROCESSOR_TYPES[engine_id]
     processor_class = getattr(import_module(module_path), class_name)
-    return list(processor_class.supported_extensions)
+    if processor_class.service_name != engine_id:
+        raise ValueError(f"Parser service_name 不匹配: {engine_id} != {processor_class.service_name}")
+    if not processor_class.display_name:
+        raise ValueError(f"Parser display_name 未配置: {engine_id}")
+    return {
+        "service_name": processor_class.service_name,
+        "display_name": processor_class.display_name,
+        "supported_extensions": list(processor_class.supported_extensions),
+    }

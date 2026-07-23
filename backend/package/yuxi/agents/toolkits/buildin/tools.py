@@ -196,11 +196,11 @@ OCR_PARSE_FILE_DESCRIPTION = f"""
 async def ocr_parse_file(file_path: str, runtime: ToolRuntime, ocr_engine: str | None = None) -> dict:
     """Parse a sandbox file with OCR, persist Markdown output, and return only a short result summary."""
     from yuxi.agents.backends.sandbox.paths import virtual_path_for_thread_file
-    from yuxi.knowledge.parser.unified import Parser
+    from yuxi.services.ocr_service import parse_document
 
     file_thread_id, uid, actual_path = _resolve_ocr_source_path(file_path, runtime)
     engine = _resolve_ocr_engine(ocr_engine)
-    markdown = await Parser.aparse(str(actual_path), params={"ocr_engine": engine})
+    markdown = await parse_document(str(actual_path), params={"ocr_engine": engine})
 
     output_path = _next_ocr_output_path(file_thread_id, actual_path)
     output_path.write_text(markdown, encoding="utf-8")

@@ -3,18 +3,20 @@
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from yuxi.knowledge.parser.factory import DocumentProcessorFactory
-from yuxi.knowledge.parser.registry import PROCESSOR_METADATA, get_supported_extensions
 from yuxi.config.options import (
     mineru_ocr_host_opts,
     mineru_official_api_opts,
     paddleocr_api_opts,
     pp_structure_v3_ocr_host_opts,
 )
+from yuxi.knowledge.parser.factory import DocumentProcessorFactory
+from yuxi.knowledge.parser.registry import PROCESSOR_TYPES, get_parser_metadata
+from yuxi.knowledge.parser.unified import OCR_FILE_EXTENSIONS, parse_resolved_document
 
 
 def get_ocr_options() -> dict[str, Any]:
@@ -22,14 +24,7 @@ def get_ocr_options() -> dict[str, Any]:
 
     return {
         "default_engine": config.default_ocr_engine,
-        "engines": [
-            {
-                "engine_id": engine_id,
-                "display_name": metadata["display_name"],
-                "supported_extensions": get_supported_extensions(engine_id),
-            }
-            for engine_id, metadata in PROCESSOR_METADATA.items()
-        ],
+        "engines": [{"engine_id": engine_id, **get_parser_metadata(engine_id)} for engine_id in PROCESSOR_TYPES],
     }
 
 
@@ -39,7 +34,7 @@ def resolve_ocr_engine_id(engine_id: str | None = None) -> str:
     resolved = str(engine_id or config.default_ocr_engine).strip() or config.default_ocr_engine
     if resolved == "disable":
         return resolved
-    if resolved not in PROCESSOR_METADATA:
+    if resolved not in PROCESSOR_TYPES:
         raise ValueError(f"不支持的 OCR 引擎: {resolved}")
     return resolved
 
@@ -49,12 +44,13 @@ async def resolve_ocr_task_params(
     db: AsyncSession | None = None,
 ) -> dict[str, Any]:
     resolved = dict(params or {})
-    if resolved.get("ocr_engine") == "disable":
-        resolved["_ocr_processor_kwargs"] = {}
-        return resolved
-
     engine_id = resolve_ocr_engine_id(resolved.get("ocr_engine"))
-    if db is None:
+    resolved["ocr_engine"] = engine_id
+    resolved.pop("ocr_engine_config", None)
+
+    if engine_id == "disable":
+        kwargs = {}
+    elif db is None:
         from yuxi.storage.postgres.manager import pg_manager
 
         async with pg_manager.get_async_session_context() as session:
@@ -62,10 +58,50 @@ async def resolve_ocr_task_params(
     else:
         kwargs = await _build_processor_kwargs(db, engine_id)
 
-    resolved["ocr_engine"] = engine_id
-    resolved.pop("ocr_engine_config", None)
     resolved["_ocr_processor_kwargs"] = kwargs
     return resolved
+
+
+async def parse_document(
+    source: str,
+    params: dict[str, Any] | None = None,
+    db: AsyncSession | None = None,
+) -> str:
+    """使用当前运行时配置将文件解析为 Markdown。
+
+    这是业务代码唯一应调用的文档解析入口。函数负责区分应用层配置解析和
+    底层文件转换：对于 PDF 与图片等 OCR 文件，先确定最终 OCR 引擎，再从
+    数据库 Options、环境变量或模型供应商中解析该引擎的构造参数；对于普通
+    文本、Office、表格等文件，参数保持原样并直接交给统一解析器。
+
+    底层 parser 只接收已经准备好的 ``ocr_engine`` 和
+    ``_ocr_processor_kwargs``，不查询数据库，也不关心配置值来自何处。调用方
+    不应直接调用 ``yuxi.knowledge.parser.unified`` 中的内部解析入口，否则会
+    绕过数据库配置、环境变量回退和默认 OCR 引擎解析。
+
+    Args:
+        source: 本地文件路径或系统支持的 MinIO 文件地址。
+        params: 文件解析参数。可以包含 ``ocr_engine``、图片存储位置和各解析器
+            支持的业务参数；未指定 OCR 引擎时使用系统默认值。
+        db: 可选的异步数据库会话。已有事务的调用方可以传入以复用会话；未传入
+            时仅在 OCR 配置解析需要查询数据库时创建独立会话。
+
+    Returns:
+        解析后的 Markdown 文本。
+
+    Raises:
+        ValueError: OCR 引擎无效、图片禁用 OCR 或文件类型不受支持。
+        DocumentProcessorException: OCR 或文档解析器执行失败。
+        StorageError: MinIO 文件读取失败。
+    """
+
+    resolved_params = params
+    suffix = Path(source.split("?", 1)[0]).suffix.lower()
+    if suffix in OCR_FILE_EXTENSIONS:
+        resolved_params = await resolve_ocr_task_params(params, db)
+
+    parsed = await parse_resolved_document(source=source, params=resolved_params)
+    return parsed.markdown
 
 
 async def check_all_ocr_health(db: AsyncSession) -> dict[str, Any]:
@@ -73,7 +109,7 @@ async def check_all_ocr_health(db: AsyncSession) -> dict[str, Any]:
 
     configured = []
     results = {}
-    for engine_id in PROCESSOR_METADATA:
+    for engine_id in PROCESSOR_TYPES:
         try:
             kwargs = await _build_processor_kwargs(db, engine_id)
             configured.append((engine_id, kwargs))

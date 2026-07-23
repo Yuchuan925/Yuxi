@@ -40,6 +40,15 @@ def test_resolve_ocr_engine_id_accepts_disable():
     assert ocr_service.resolve_ocr_engine_id("disable") == "disable"
 
 
+def test_ocr_options_use_parser_metadata():
+    options = ocr_service.get_ocr_options()
+    rapid_ocr = next(item for item in options["engines"] if item["engine_id"] == "rapid_ocr")
+
+    assert rapid_ocr["service_name"] == "rapid_ocr"
+    assert rapid_ocr["display_name"] == "RapidOCR (ONNX)"
+    assert ".pdf" in rapid_ocr["supported_extensions"]
+
+
 @pytest.mark.asyncio
 async def test_deepseek_uses_siliconflow_model_provider(db_session, monkeypatch):
     provider = SimpleNamespace(
@@ -78,5 +87,5 @@ async def test_health_checks_every_registered_ocr_method(db_session, monkeypatch
 
     health = await ocr_service.check_all_ocr_health(db_session)
 
-    assert set(health) == set(ocr_service.PROCESSOR_METADATA)
+    assert set(health) == set(ocr_service.PROCESSOR_TYPES)
     assert all(result["status"] == "healthy" for result in health.values())
