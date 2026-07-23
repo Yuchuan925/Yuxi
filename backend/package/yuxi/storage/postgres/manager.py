@@ -452,6 +452,21 @@ class PostgresManager(metaclass=SingletonMeta):
             WHERE is_default IS TRUE
             """,
             """
+            CREATE TABLE IF NOT EXISTS config_options (
+                id SERIAL PRIMARY KEY,
+                key VARCHAR(100) NOT NULL UNIQUE,
+                name VARCHAR(100) NOT NULL,
+                description TEXT NOT NULL DEFAULT '',
+                params JSONB NOT NULL DEFAULT '{}'::jsonb,
+                value JSONB NOT NULL DEFAULT '{}'::jsonb,
+                created_by VARCHAR(100),
+                updated_by VARCHAR(100),
+                created_at TIMESTAMPTZ DEFAULT NOW(),
+                updated_at TIMESTAMPTZ DEFAULT NOW()
+            )
+            """,
+            "CREATE UNIQUE INDEX IF NOT EXISTS ix_config_options_key ON config_options(key)",
+            """
             CREATE TABLE IF NOT EXISTS model_providers (
                 id SERIAL PRIMARY KEY,
                 provider_id VARCHAR(100) NOT NULL UNIQUE,
