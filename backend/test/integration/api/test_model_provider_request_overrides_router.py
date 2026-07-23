@@ -78,7 +78,7 @@ async def test_model_provider_api_persists_and_validates_request_body_overrides(
             headers=admin_headers,
         )
         assert invalid_response.status_code == 400
-        assert "受保护字段" in invalid_response.json()["detail"]
+        assert "包含不支持的 extra_body 字段: messages" in invalid_response.json()["detail"]
     finally:
         await test_client.delete(f"/api/system/model-providers/{provider_id}", headers=admin_headers)
 
@@ -125,7 +125,7 @@ async def test_model_provider_api_rejects_request_body_overrides_outside_openai_
                     "id": "rerank-model",
                     "type": "rerank",
                     "source": "manual",
-                    "request_body_overrides": {"top_n": 5},
+                    "request_body_overrides": {"thinking_budget": 1024},
                 }
             ],
             "is_enabled": False,

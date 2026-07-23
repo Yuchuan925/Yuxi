@@ -1242,8 +1242,8 @@ defineExpose({
             :placeholder="REQUEST_BODY_OVERRIDES_PLACEHOLDER"
           />
           <small class="form-help">
-            仅 OpenAI/OpenRouter 的 chat 模型会通过 extra_body 透传；不能覆盖 model、messages、input、Authorization 或 temperature
-            等标准参数。
+            仅 OpenAI/OpenRouter 的 chat 模型会通过 extra_body 透传；支持 enable_thinking、thinking_budget、thinking、reasoning
+            和 reasoning_effort。
           </small>
         </label>
 

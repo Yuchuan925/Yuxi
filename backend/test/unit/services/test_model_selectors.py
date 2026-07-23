@@ -213,7 +213,8 @@ def test_load_chat_model_merges_request_body_overrides_into_extra_body(monkeypat
                 "Qwen/Qwen3-8B",
                 request_body_overrides={
                     "enable_thinking": False,
-                    "provider_option": "model",
+                    "reasoning_effort": "high",
+                    "thinking_budget": 1024,
                 },
             )
             if spec == "siliconflow-cn:Qwen/Qwen3-8B"
@@ -229,20 +230,23 @@ def test_load_chat_model_merges_request_body_overrides_into_extra_body(monkeypat
 
     model = load_chat_model(
         "siliconflow-cn:Qwen/Qwen3-8B",
+        reasoning_effort="low",
         temperature=0.1,
-        extra_body={"provider_option": "caller", "caller_only": True},
+        extra_body={"thinking_budget": 256, "caller_only": True},
     )
 
     assert isinstance(model, FakeChatOpenAI)
+    assert captured["reasoning_effort"] == "low"
     assert captured["temperature"] == 0.1
     assert captured["extra_body"] == {
-        "provider_option": "model",
         "caller_only": True,
         "enable_thinking": False,
+        "reasoning_effort": "high",
+        "thinking_budget": 1024,
     }
 
 
-def test_load_chat_model_rejects_cached_protected_request_body_override_fields(monkeypatch):
+def test_load_chat_model_rejects_cached_request_body_override_fields_outside_allowlist(monkeypatch):
     monkeypatch.setattr(
         "yuxi.agents.models.model_cache.get_model_info",
         lambda spec: (
@@ -250,7 +254,6 @@ def test_load_chat_model_rejects_cached_protected_request_body_override_fields(m
                 "siliconflow-cn",
                 "Qwen/Qwen3-8B",
                 request_body_overrides={
-                    "default_headers": {"Authorization": "Bearer leaked"},
                     "enable_thinking": False,
                     "stream": True,
                 },
@@ -260,7 +263,7 @@ def test_load_chat_model_rejects_cached_protected_request_body_override_fields(m
         ),
     )
 
-    with pytest.raises(ValueError, match="不允许覆盖受保护字段"):
+    with pytest.raises(ValueError, match="包含不支持的 extra_body 字段: stream"):
         load_chat_model("siliconflow-cn:Qwen/Qwen3-8B")
 
 
@@ -272,7 +275,7 @@ def test_load_chat_model_rejects_request_body_overrides_for_non_openai_compatibl
                 "anthropic",
                 "claude-sonnet",
                 provider_type="anthropic",
-                request_body_overrides={"thinking_effort": "low"},
+                request_body_overrides={"thinking": {"type": "enabled"}},
             )
             if spec == "anthropic:claude-sonnet"
             else None

@@ -32,7 +32,14 @@ def test_normalize_payload_accepts_enabled_chat_model():
     assert payload["enabled_models"][0]["display_name"] == "anthropic/claude-sonnet-4.5"
 
 
-def test_normalize_payload_accepts_model_request_body_overrides():
+def test_normalize_payload_accepts_allowed_model_request_body_overrides():
+    overrides = {
+        "enable_thinking": True,
+        "thinking_budget": 1024,
+        "thinking": {"type": "enabled"},
+        "reasoning": {"effort": "low"},
+        "reasoning_effort": "high",
+    }
     payload = _normalize_payload(
         {
             "provider_id": "siliconflow-local",
@@ -42,19 +49,13 @@ def test_normalize_payload_accepts_model_request_body_overrides():
                 {
                     "id": "Qwen/Qwen3-8B",
                     "type": "chat",
-                    "request_body_overrides": {
-                        "enable_thinking": True,
-                        "thinking_budget": 1024,
-                    },
+                    "request_body_overrides": overrides,
                 }
             ],
         }
     )
 
-    assert payload["enabled_models"][0]["request_body_overrides"] == {
-        "enable_thinking": True,
-        "thinking_budget": 1024,
-    }
+    assert payload["enabled_models"][0]["request_body_overrides"] == overrides
 
 
 def test_normalize_payload_accepts_openrouter_specific_request_body_overrides():
@@ -69,13 +70,23 @@ def test_normalize_payload_accepts_openrouter_specific_request_body_overrides():
                 {
                     "id": "openai/gpt-oss-120b",
                     "type": "chat",
-                    "request_body_overrides": {"reasoning": {"effort": "low"}},
+                    "request_body_overrides": {
+                        "reasoning": {
+                            "effort": "low",
+                            "future_provider_option": {"enabled": True},
+                        }
+                    },
                 }
             ],
         }
     )
 
-    assert payload["enabled_models"][0]["request_body_overrides"] == {"reasoning": {"effort": "low"}}
+    assert payload["enabled_models"][0]["request_body_overrides"] == {
+        "reasoning": {
+            "effort": "low",
+            "future_provider_option": {"enabled": True},
+        }
+    }
 
 
 def test_normalize_payload_rejects_non_object_model_request_body_overrides():
@@ -96,8 +107,8 @@ def test_normalize_payload_rejects_non_object_model_request_body_overrides():
         )
 
 
-def test_normalize_payload_rejects_protected_model_request_body_override_fields():
-    with pytest.raises(ValueError, match="不允许覆盖受保护字段: Authorization, messages, model"):
+def test_normalize_payload_rejects_request_body_override_fields_outside_allowlist():
+    with pytest.raises(ValueError, match="包含不支持的 extra_body 字段: Authorization, messages, model"):
         _normalize_payload(
             {
                 "provider_id": "siliconflow-local",
@@ -112,47 +123,6 @@ def test_normalize_payload_rejects_protected_model_request_body_override_fields(
                             "messages": [],
                             "model": "other-model",
                         },
-                    }
-                ],
-            }
-        )
-
-
-@pytest.mark.parametrize(
-    "field",
-    [
-        "apiKey",
-        "baseUrl",
-        "defaultHeaders",
-        "functionCall",
-        "functions",
-        "maxTokens",
-        "modalities",
-        "openaiApiKey",
-        "parallelToolCalls",
-        "prediction",
-        "promptCacheKey",
-        "reasoningEffort",
-        "responseFormat",
-        "safetyIdentifier",
-        "streamOptions",
-        "temperature",
-        "toolChoice",
-        "webSearchOptions",
-    ],
-)
-def test_normalize_payload_rejects_protected_model_request_body_override_aliases(field):
-    with pytest.raises(ValueError, match="不允许覆盖受保护字段"):
-        _normalize_payload(
-            {
-                "provider_id": "siliconflow-local",
-                "display_name": "SiliconFlow Local",
-                "base_url": "https://api.siliconflow.cn/v1",
-                "enabled_models": [
-                    {
-                        "id": "Qwen/Qwen3-8B",
-                        "type": "chat",
-                        "request_body_overrides": {field: True},
                     }
                 ],
             }
@@ -192,7 +162,7 @@ def test_normalize_payload_rejects_request_body_overrides_for_non_chat_model():
                     {
                         "id": "rerank-model",
                         "type": "rerank",
-                        "request_body_overrides": {"top_n": 5},
+                        "request_body_overrides": {"thinking_budget": 1024},
                     }
                 ],
             }
