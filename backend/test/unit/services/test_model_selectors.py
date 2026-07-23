@@ -1,3 +1,4 @@
+import json
 from types import SimpleNamespace
 
 import httpx
@@ -203,7 +204,7 @@ def test_load_chat_model_keeps_non_siliconflow_openai_streaming(monkeypatch):
 
 
 def test_load_chat_model_merges_request_body_overrides_into_extra_body(monkeypatch):
-    captured = {}
+    captured_body = {}
 
     monkeypatch.setattr(
         "yuxi.agents.models.model_cache.get_model_info",
@@ -222,28 +223,42 @@ def test_load_chat_model_merges_request_body_overrides_into_extra_body(monkeypat
         ),
     )
 
-    class FakeChatOpenAI:
-        def __init__(self, **kwargs):
-            captured.update(kwargs)
+    def capture_request(request: httpx.Request) -> httpx.Response:
+        captured_body.update(json.loads(request.content))
+        return httpx.Response(
+            200,
+            json={
+                "id": "chatcmpl-test",
+                "object": "chat.completion",
+                "created": 0,
+                "model": "Qwen/Qwen3-8B",
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {"role": "assistant", "content": "ok"},
+                        "finish_reason": "stop",
+                    }
+                ],
+                "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+            },
+        )
 
-    monkeypatch.setattr("yuxi.agents.models._ToolCallChunkFixChatOpenAI", FakeChatOpenAI)
+    with httpx.Client(transport=httpx.MockTransport(capture_request)) as http_client:
+        model = load_chat_model(
+            "siliconflow-cn:Qwen/Qwen3-8B",
+            reasoning_effort="low",
+            temperature=0.1,
+            extra_body={"thinking_budget": 256, "caller_only": True},
+            http_client=http_client,
+        )
+        response = model.invoke("hello")
 
-    model = load_chat_model(
-        "siliconflow-cn:Qwen/Qwen3-8B",
-        reasoning_effort="low",
-        temperature=0.1,
-        extra_body={"thinking_budget": 256, "caller_only": True},
-    )
-
-    assert isinstance(model, FakeChatOpenAI)
-    assert captured["reasoning_effort"] == "low"
-    assert captured["temperature"] == 0.1
-    assert captured["extra_body"] == {
-        "caller_only": True,
-        "enable_thinking": False,
-        "reasoning_effort": "high",
-        "thinking_budget": 1024,
-    }
+    assert response.content == "ok"
+    assert captured_body["temperature"] == 0.1
+    assert captured_body["caller_only"] is True
+    assert captured_body["enable_thinking"] is False
+    assert captured_body["reasoning_effort"] == "high"
+    assert captured_body["thinking_budget"] == 1024
 
 
 def test_load_chat_model_rejects_cached_request_body_override_fields_outside_allowlist(monkeypatch):
