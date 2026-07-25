@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -190,6 +191,57 @@ class YuxiClient:
         }
         return self._request("POST", "/agent-invocation/eval/runs", json=payload, timeout=timeout_seconds)
 
+    def create_agent_chat_run(
+        self,
+        *,
+        message: str,
+        agent_slug: str,
+        thread_id: str | None,
+        request_id: str,
+    ) -> dict:
+        """创建供 CLI Chat 使用的异步 Agent Run。"""
+        return self._request(
+            "POST",
+            "/agent-invocation/agent-call/runs",
+            json={
+                "agent_slug": agent_slug,
+                "messages": [{"role": "user", "content": message}],
+                "thread_id": thread_id,
+                "request_id": request_id,
+                "async_mode": True,
+                "queue_policy": "reject",
+            },
+        )
+
+    def stream_agent_run_events(self, run_id: str) -> Iterator[dict[str, str]]:
+        """读取 Agent Run SSE，并逐条返回解析后的事件。"""
+        headers = {}
+        if self.remote.api_key:
+            headers["Authorization"] = f"Bearer {self.remote.api_key}"
+        url = f"{self.remote.api_base_url}/agent/runs/{run_id}/events"
+
+        try:
+            with self.client.stream(
+                "GET",
+                url,
+                headers=headers,
+                params={"verbose": "false"},
+                timeout=None,
+            ) as response:
+                if response.status_code >= 400:
+                    response.read()
+                    error_code, error_message = _parse_http_error(response)
+                    raise ClientError(
+                        error_message,
+                        error_code=error_code,
+                        status_code=response.status_code,
+                    )
+                yield from _iter_sse_events(response.iter_lines())
+        except ClientError:
+            raise
+        except httpx.HTTPError as exc:
+            raise ClientError(f"运行事件流连接失败: {exc}") from exc
+
     def authorize_url(self, session: CLIAuthSession) -> str:
         return build_url(self.remote.url, session.authorize_path)
 
@@ -262,3 +314,34 @@ def _parse_http_error(response: httpx.Response) -> tuple[str | None, str]:
     if detail:
         return None, str(detail)
     return None, f"HTTP {response.status_code}"
+
+
+def _iter_sse_events(lines: Iterator[str]) -> Iterator[dict[str, str]]:
+    """解析 SSE 文本行，忽略 heartbeat，并保留 event、data 与 id。"""
+    event: dict[str, str] = {}
+    data_lines: list[str] = []
+
+    for line in lines:
+        if not line:
+            if data_lines:
+                event["data"] = "\n".join(data_lines)
+                yield event
+            event = {}
+            data_lines = []
+            continue
+        if line.startswith(":"):
+            continue
+
+        field, separator, value = line.partition(":")
+        if not separator:
+            value = ""
+        elif value.startswith(" "):
+            value = value[1:]
+        if field == "data":
+            data_lines.append(value)
+        elif field in {"event", "id"}:
+            event[field] = value
+
+    if data_lines:
+        event["data"] = "\n".join(data_lines)
+        yield event

@@ -1,0 +1,324 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Yuxi Chat</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --canvas: #f7f6f3;
+        --surface: #ffffff;
+        --text: #20201e;
+        --muted: #787774;
+        --border: #e4e3df;
+        --soft: #efeee9;
+        --error: #9f2f2d;
+      }
+
+      * { box-sizing: border-box; }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background: var(--canvas);
+        color: var(--text);
+        font-family: "SF Pro Display", "Helvetica Neue", Arial, sans-serif;
+      }
+
+      .shell {
+        width: min(860px, calc(100% - 32px));
+        min-height: 100vh;
+        margin: 0 auto;
+        padding: 36px 0 24px;
+        display: grid;
+        grid-template-rows: auto 1fr auto;
+        gap: 20px;
+      }
+
+      header {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 24px;
+      }
+
+      h1 {
+        margin: 0 0 5px;
+        font-family: "Newsreader", Georgia, serif;
+        font-size: clamp(30px, 5vw, 44px);
+        line-height: 1;
+        letter-spacing: -0.035em;
+        font-weight: 500;
+      }
+
+      .meta {
+        margin: 0;
+        color: var(--muted);
+        font: 12px/1.5 "SF Mono", Menlo, monospace;
+      }
+
+      button {
+        border: 0;
+        border-radius: 5px;
+        background: #20201e;
+        color: #fff;
+        padding: 10px 15px;
+        font: 600 13px/1 "SF Pro Display", "Helvetica Neue", sans-serif;
+        cursor: pointer;
+      }
+
+      button:hover { background: #3a3936; }
+      button:active { transform: scale(0.98); }
+      button:disabled { cursor: not-allowed; opacity: 0.45; }
+
+      .secondary {
+        background: transparent;
+        color: var(--text);
+        border: 1px solid var(--border);
+      }
+
+      .secondary:hover { background: var(--soft); }
+
+      #messages {
+        min-height: 360px;
+        padding: 26px;
+        overflow-y: auto;
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+      }
+
+      .empty {
+        height: 100%;
+        min-height: 306px;
+        display: grid;
+        place-items: center;
+        color: var(--muted);
+        text-align: center;
+        line-height: 1.6;
+      }
+
+      .message {
+        max-width: 78%;
+        margin-bottom: 18px;
+        padding: 13px 15px;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        animation: appear 180ms ease-out both;
+      }
+
+      .message.user {
+        margin-left: auto;
+        background: #f3f2ee;
+      }
+
+      .message.assistant { background: #fff; }
+      .message.error { color: var(--error); background: #fdebec; }
+
+      .label {
+        display: block;
+        margin-bottom: 7px;
+        color: var(--muted);
+        font: 10px/1 "SF Mono", Menlo, monospace;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      .content {
+        margin: 0;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+        font: 15px/1.65 "SF Pro Display", "Helvetica Neue", sans-serif;
+      }
+
+      form {
+        padding: 14px;
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+      }
+
+      textarea {
+        display: block;
+        width: 100%;
+        min-height: 86px;
+        resize: vertical;
+        border: 0;
+        outline: 0;
+        background: transparent;
+        color: var(--text);
+        font: 15px/1.55 "SF Pro Display", "Helvetica Neue", sans-serif;
+      }
+
+      textarea::placeholder { color: #aaa8a2; }
+
+      .composer-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        padding-top: 10px;
+        border-top: 1px solid var(--border);
+      }
+
+      #status {
+        color: var(--muted);
+        font: 11px/1.4 "SF Mono", Menlo, monospace;
+      }
+
+      @keyframes appear {
+        from { opacity: 0; transform: translateY(6px); }
+        to { opacity: 1; transform: translateY(0); }
+      }
+
+      @media (max-width: 620px) {
+        .shell { width: min(100% - 20px, 860px); padding-top: 22px; }
+        #messages { padding: 16px; }
+        .message { max-width: 92%; }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        .message { animation: none; }
+        button:active { transform: none; }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="shell">
+      <header>
+        <div>
+          <h1>Yuxi Chat</h1>
+          <p class="meta">Agent <span id="agent"></span></p>
+        </div>
+        <button id="new-chat" class="secondary" type="button">新对话</button>
+      </header>
+
+      <section id="messages" aria-live="polite">
+        <div class="empty">本地调试会话<br />输入消息开始测试</div>
+      </section>
+
+      <form id="composer">
+        <textarea id="input" placeholder="输入消息，Enter 发送，Shift + Enter 换行" autofocus></textarea>
+        <div class="composer-row">
+          <span id="status">就绪</span>
+          <button id="send" type="submit">发送</button>
+        </div>
+      </form>
+    </main>
+
+    <script>
+      const sessionToken = __SESSION_TOKEN__;
+      const agentSlug = __AGENT_SLUG__;
+      const messages = document.querySelector("#messages");
+      const composer = document.querySelector("#composer");
+      const input = document.querySelector("#input");
+      const send = document.querySelector("#send");
+      const status = document.querySelector("#status");
+      document.querySelector("#agent").textContent = agentSlug;
+
+      let threadId = null;
+      let running = false;
+
+      function addMessage(role, content = "") {
+        messages.querySelector(".empty")?.remove();
+        const item = document.createElement("article");
+        item.className = `message ${role}`;
+        const label = document.createElement("span");
+        label.className = "label";
+        label.textContent = role === "user" ? "You" : role === "error" ? "Error" : "Yuxi";
+        const text = document.createElement("pre");
+        text.className = "content";
+        text.textContent = content;
+        item.append(label, text);
+        messages.append(item);
+        messages.scrollTop = messages.scrollHeight;
+        return text;
+      }
+
+      function setRunning(value) {
+        running = value;
+        send.disabled = value;
+        input.disabled = value;
+        status.textContent = value ? "生成中" : "就绪";
+      }
+
+      async function readEvents(response, output) {
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        let completed = false;
+
+        while (true) {
+          const { value, done } = await reader.read();
+          buffer += decoder.decode(value || new Uint8Array(), { stream: !done });
+          const lines = buffer.split("\n");
+          buffer = lines.pop() || "";
+          for (const line of lines) {
+            if (!line.trim()) continue;
+            const event = JSON.parse(line);
+            if (event.type === "meta") threadId = event.thread_id || threadId;
+            if (event.type === "delta") {
+              output.textContent += event.content;
+              messages.scrollTop = messages.scrollHeight;
+            }
+            if (event.type === "error") throw new Error(event.message);
+            if (event.type === "done") completed = event.status === "completed";
+          }
+          if (done) break;
+        }
+        if (!completed) throw new Error("回答流在完成前中断，请重试");
+      }
+
+      async function submitMessage() {
+        const message = input.value.trim();
+        if (!message || running) return;
+        input.value = "";
+        addMessage("user", message);
+        const output = addMessage("assistant");
+        setRunning(true);
+
+        try {
+          const response = await fetch("/api/chat", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-Yuxi-Chat-Token": sessionToken
+            },
+            body: JSON.stringify({ message, thread_id: threadId })
+          });
+          if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.error || `请求失败：${response.status}`);
+          }
+          await readEvents(response, output);
+        } catch (error) {
+          output.closest(".message").remove();
+          addMessage("error", error.message || String(error));
+        } finally {
+          setRunning(false);
+          input.focus();
+        }
+      }
+
+      composer.addEventListener("submit", (event) => {
+        event.preventDefault();
+        submitMessage();
+      });
+
+      input.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" && !event.shiftKey) {
+          event.preventDefault();
+          submitMessage();
+        }
+      });
+
+      document.querySelector("#new-chat").addEventListener("click", () => {
+        if (running) return;
+        threadId = null;
+        messages.innerHTML = '<div class="empty">本地调试会话<br />输入消息开始测试</div>';
+        input.focus();
+      });
+    </script>
+  </body>
+</html>
