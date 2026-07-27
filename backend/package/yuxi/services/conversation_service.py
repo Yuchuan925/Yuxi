@@ -554,12 +554,19 @@ async def update_thread_view(
     thread_id: str,
     title: str | None = None,
     is_pinned: bool | None = None,
+    tool_approval_mode: str | None = None,
     db: AsyncSession,
     current_uid: str,
 ) -> dict:
     conv_repo = ConversationRepository(db)
     await require_user_conversation(conv_repo, thread_id, str(current_uid))
-    updated_conv = await conv_repo.update_conversation(thread_id, title=title, is_pinned=is_pinned)
+    metadata = {"tool_approval_mode": tool_approval_mode} if tool_approval_mode is not None else None
+    updated_conv = await conv_repo.update_conversation(
+        thread_id,
+        title=title,
+        is_pinned=is_pinned,
+        metadata=metadata,
+    )
     if not updated_conv:
         raise HTTPException(status_code=500, detail="更新失败")
     return {

@@ -926,7 +926,7 @@ class AgentRunRequest(Base):
         String(16),
         nullable=False,
         default="enqueue",
-        comment="排队策略: enqueue/reject",
+        comment="排队策略: enqueue/reject/steer",
     )
     status = Column(
         String(32),

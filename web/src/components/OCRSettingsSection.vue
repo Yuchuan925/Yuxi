@@ -20,7 +20,7 @@
             <h4>{{ option.name }}</h4>
             <p>{{ option.description }}</p>
           </div>
-          <div class="option-actions">
+          <div class="option-actions" :class="{ editing: editingKey === option.key }">
             <template v-if="editingKey === option.key">
               <a-button size="small" :disabled="savingOption === option.key" @click="cancelEditing">
                 取消
@@ -224,6 +224,16 @@ onMounted(loadConfigOptions)
   display: flex;
   flex: none;
   gap: 8px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s ease;
+}
+
+.option-card:hover .option-actions,
+.option-card:focus-within .option-actions,
+.option-actions.editing {
+  opacity: 1;
+  pointer-events: auto;
 }
 
 .save-button {

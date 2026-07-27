@@ -108,6 +108,36 @@ async def test_admin_can_list_agents(test_client, admin_headers):
         assert "agent_id" in payload["agents"][0]
 
 
+async def test_thread_tool_approval_mode_is_saved_in_conversation_metadata(test_client, admin_headers):
+    thread_id = await _create_thread_for_user(test_client, admin_headers)
+
+    update_response = await test_client.put(
+        f"/api/chat/thread/{thread_id}",
+        headers=admin_headers,
+        json={"tool_approval_mode": "always_trust"},
+    )
+
+    assert update_response.status_code == 200, update_response.text
+    assert update_response.json()["metadata"]["tool_approval_mode"] == "always_trust"
+
+    list_response = await test_client.get("/api/chat/threads", headers=admin_headers)
+    assert list_response.status_code == 200, list_response.text
+    thread = next(item for item in list_response.json() if item["id"] == thread_id)
+    assert thread["metadata"]["tool_approval_mode"] == "always_trust"
+
+
+async def test_thread_tool_approval_mode_rejects_unknown_value(test_client, admin_headers):
+    thread_id = await _create_thread_for_user(test_client, admin_headers)
+
+    response = await test_client.put(
+        f"/api/chat/thread/{thread_id}",
+        headers=admin_headers,
+        json={"tool_approval_mode": "unknown"},
+    )
+
+    assert response.status_code == 422, response.text
+
+
 async def test_admin_can_read_default_agent(test_client, admin_headers):
     response = await test_client.get("/api/agent/default", headers=admin_headers)
     assert response.status_code == 200, response.text

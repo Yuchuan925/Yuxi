@@ -71,7 +71,6 @@
                     cancel-text="取消"
                   >
                     <a-button
-                      type="text"
                       size="small"
                       danger
                       class="action-btn delete-action-btn lucide-icon-btn"
@@ -453,6 +452,11 @@ onMounted(() => {
             &.delete-action-btn:hover {
               color: var(--color-error-700);
               background: var(--color-error-50);
+            }
+
+            &.delete-action-btn {
+              border-color: var(--color-error-100);
+              color: var(--color-error-700);
             }
           }
         }

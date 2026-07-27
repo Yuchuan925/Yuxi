@@ -483,6 +483,8 @@ async def test_stream_agent_run_events_compacts_verbose_false(monkeypatch: pytes
                         "agent_slug": "deep-research",
                         "backend_id": "ChatbotAgent",
                         "uid": "user-1",
+                        "run_type": "chat",
+                        "source": "chat",
                     },
                     "created_at": "2026-05-27T00:00:00+00:00",
                 },
@@ -621,9 +623,12 @@ async def test_stream_agent_run_events_compacts_verbose_false(monkeypatch: pytes
     ):
         chunks.append(chunk)
 
-    assert len(chunks) == 3
+    assert len(chunks) == 4
 
-    init_data = _sse_data(chunks[0])
+    metadata_data = _sse_data(chunks[0])
+    assert metadata_data["payload"] == {"run_type": "chat", "source": "chat"}
+
+    init_data = _sse_data(chunks[1])
     init_chunk = init_data["payload"]["chunk"]
     assert init_data["request_id"] == "req-1"
     assert init_data["payload"]["name"] == "yuxi.init"
@@ -634,7 +639,7 @@ async def test_stream_agent_run_events_compacts_verbose_false(monkeypatch: pytes
     assert "image_content" not in init_chunk["msg"]
     assert "extra_metadata" not in init_chunk["msg"]
 
-    message_data = _sse_data(chunks[1])
+    message_data = _sse_data(chunks[2])
     message_chunk = message_data["payload"]["items"][0]
     assert message_data["request_id"] == "req-1"
     assert "request_id" not in message_chunk
@@ -645,7 +650,7 @@ async def test_stream_agent_run_events_compacts_verbose_false(monkeypatch: pytes
     assert "thread_id" not in message_chunk["stream_event"]
     assert "namespace" not in message_chunk["stream_event"]
 
-    end_data = _sse_data(chunks[2])
+    end_data = _sse_data(chunks[3])
     assert end_data["request_id"] == "req-1"
     assert end_data["payload"]["status"] == "completed"
     assert "request_id" not in end_data["payload"]["chunk"]

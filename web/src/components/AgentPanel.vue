@@ -815,9 +815,9 @@ watch(
   flex-shrink: 0;
 
   &.active {
-    border-color: var(--gray-150);
+    border-color: var(--gray-200);
     background: var(--gray-0);
-    color: var(--main-800);
+    color: var(--gray-1000);
   }
 }
 

@@ -3,8 +3,10 @@ export const TOOL_APPROVAL_MODE_STORAGE_KEY = 'yuxi_tool_approval_mode'
 
 export const isToolApprovalMode = (value) => TOOL_APPROVAL_MODES.includes(value)
 
-export const resolveToolApprovalMode = ({ threadMode, agentMode, savedMode }) =>
-  [threadMode, agentMode, savedMode].find(isToolApprovalMode) || TOOL_APPROVAL_MODES[0]
+export const resolveToolApprovalMode = ({ hasThread, threadMode, agentMode, savedMode }) => {
+  const candidates = hasThread ? [threadMode] : [savedMode, agentMode]
+  return candidates.find(isToolApprovalMode) || TOOL_APPROVAL_MODES[0]
+}
 
 const resolveStorage = (storage) =>
   storage || (typeof window !== 'undefined' ? window.localStorage : null)

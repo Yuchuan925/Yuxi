@@ -222,7 +222,7 @@ defineExpose({
             <template v-if="group.key === 'agents'" #tags>
               <div class="agent-card-actions">
                 <a-button
-                  type="primary"
+                  type="text"
                   size="small"
                   class="lucide-icon-btn agent-chat-entry"
                   @click.stop="openAgentChat(agent)"
@@ -295,15 +295,30 @@ defineExpose({
 }
 
 .agent-chat-entry {
-  min-width: 78px;
+  min-width: 88px;
+  height: 32px;
+  padding: 2px 10px;
   border: 0;
+  border-radius: 8px;
+  background: var(--gray-100);
   box-shadow: none;
+  color: var(--gray-800);
   font-size: 12px;
 
-  &:hover,
-  &:focus {
+  &:hover {
     border: 0;
+    background: var(--gray-700);
     box-shadow: none;
+    color: var(--gray-0);
+  }
+
+  &:focus:not(:focus-visible) {
+    outline: none;
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--main-200);
+    outline-offset: 2px;
   }
 }
 

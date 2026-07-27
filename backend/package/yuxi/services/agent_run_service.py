@@ -297,7 +297,11 @@ def _compact_run_event_envelope(envelope: dict) -> dict | None:
     event_type = str(envelope.get("event") or "")
     payload = envelope.get("payload")
     if event_type == "metadata":
-        return None
+        compact = {key: envelope[key] for key in ("run_id", "thread_id") if key in envelope}
+        compact["payload"] = {
+            key: payload[key] for key in ("run_type", "source") if isinstance(payload, dict) and key in payload
+        }
+        return compact
     if event_type == "custom" and isinstance(payload, dict) and payload.get("name") == "yuxi.agent_state":
         state = payload.get("agent_state")
         chunk = payload.get("chunk") if isinstance(payload.get("chunk"), dict) else {}

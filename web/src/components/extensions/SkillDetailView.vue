@@ -814,7 +814,9 @@ onMounted(() => {
 
 .tree-container {
   width: 240px;
-  border-right: 1px solid var(--gray-150);
+  order: 2;
+  border-left: 1px solid var(--gray-150);
+  background: var(--gray-0);
   display: flex;
   flex-direction: column;
   flex-shrink: 0;

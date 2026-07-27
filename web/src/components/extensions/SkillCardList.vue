@@ -78,7 +78,7 @@
     <template v-else>
       <template v-for="group in visibleSkillGroups" :key="group.key">
         <div class="extension-section-header">{{ group.title }}</div>
-        <ExtensionCardGrid :min-width="360">
+        <ExtensionCardGrid :min-width="280">
           <div
             v-for="skill in group.skills"
             :key="`${group.key}:${skill.slug}`"
@@ -100,8 +100,9 @@
               class="card-select-checkbox"
             />
             <InfoCard
-              variant="mini"
+              variant="default"
               :title="formatExtensionCardTitle(skill.name)"
+              :subtitle="skill.slug"
               :description="skill.description || '暂无描述'"
               :default-icon="WandSparkles"
               @click="handleCardClick(skill)"
@@ -110,7 +111,7 @@
                 'recommendation-card': skill.isRecommendation
               }"
             >
-              <template #action>
+              <template #actions>
                 <button
                   v-if="skill.isRecommendation"
                   type="button"

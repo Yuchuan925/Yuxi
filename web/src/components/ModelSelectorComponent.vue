@@ -476,8 +476,7 @@ const handleClear = () => {
 }
 
 .model-dropdown {
-  min-width: 320px;
-  max-width: min(440px, calc(100vw - 24px));
+  width: min(360px, calc(100vw - 24px));
   overflow: hidden;
   background: var(--gray-0);
   border-radius: 8px;

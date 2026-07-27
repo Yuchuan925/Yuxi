@@ -72,11 +72,11 @@ export const useChatThreadsStore = defineStore('chatThreads', () => {
     }
   }
 
-  const createThread = async (agentId, title = '新的对话') => {
+  const createThread = async (agentId, title = '新的对话', metadata = {}) => {
     if (!agentId) return null
 
     try {
-      const thread = await threadApi.createThread(agentId, title)
+      const thread = await threadApi.createThread(agentId, title, metadata)
       if (thread) {
         threads.value = [thread, ...threads.value.filter((item) => item.id !== thread.id)]
       }
@@ -104,42 +104,26 @@ export const useChatThreadsStore = defineStore('chatThreads', () => {
     }
   }
 
-  const updateThread = async (threadId, title, isPinned) => {
+  const updateThread = async (threadId, title, isPinned, toolApprovalMode) => {
     if (!threadId) return
 
-    if (title) {
-      const normalizedTitle = String(title).replace(/\s+/g, ' ').trim().slice(0, 255)
-      if (!normalizedTitle) return
+    const normalizedTitle = title ? String(title).replace(/\s+/g, ' ').trim().slice(0, 255) : null
+    if (title && !normalizedTitle) return
+    if (!normalizedTitle && isPinned === undefined && toolApprovalMode === undefined) return
 
-      try {
-        await threadApi.updateThread(threadId, normalizedTitle, isPinned)
-        const thread = threads.value.find((item) => item.id === threadId)
-        if (thread) {
-          thread.title = normalizedTitle
-          if (isPinned !== undefined) {
-            thread.is_pinned = isPinned
-          }
-        }
-      } catch (error) {
-        console.error('Failed to update thread:', error)
-        handleChatError(error, 'update')
-        throw error
-      }
-      return
-    }
-
-    if (isPinned !== undefined) {
-      try {
-        await threadApi.updateThread(threadId, null, isPinned)
-        const thread = threads.value.find((item) => item.id === threadId)
-        if (thread) {
-          thread.is_pinned = isPinned
-        }
-      } catch (error) {
-        console.error('Failed to update thread pin status:', error)
-        handleChatError(error, 'update')
-        throw error
-      }
+    try {
+      const updatedThread = await threadApi.updateThread(
+        threadId,
+        normalizedTitle,
+        isPinned,
+        toolApprovalMode
+      )
+      upsertThread(updatedThread)
+      return updatedThread
+    } catch (error) {
+      console.error('Failed to update thread:', error)
+      handleChatError(error, 'update')
+      throw error
     }
   }
 

@@ -150,6 +150,11 @@ export const agentApi = {
   cancelRequest: (requestId) => apiPost(`/api/agent/requests/${requestId}/cancel`, {}),
 
   /**
+   * 将普通排队请求提升为下一条执行的引导请求
+   */
+  steerRequest: (requestId) => apiPost(`/api/agent/requests/${requestId}/steer`, {}),
+
+  /**
    * 打开 Request 事件 SSE 连接（调用方负责关闭）
    */
   streamRequestEvents: (requestId, options = {}) => {
@@ -297,12 +302,14 @@ export const threadApi = {
    * @param {string} threadId - 对话线程ID
    * @param {string} title - 对话标题
    * @param {boolean} is_pinned - 是否置顶
+   * @param {string} toolApprovalMode - 工具审批模式
    * @returns {Promise} - 更新结果
    */
-  updateThread: (threadId, title, is_pinned) =>
+  updateThread: (threadId, title, is_pinned, toolApprovalMode) =>
     apiPut(`/api/chat/thread/${threadId}`, {
       title,
-      is_pinned
+      is_pinned,
+      tool_approval_mode: toolApprovalMode
     }),
 
   /**

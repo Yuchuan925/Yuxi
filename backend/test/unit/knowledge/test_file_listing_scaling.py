@@ -14,6 +14,15 @@ class FakeKnowledgeBaseClass:
 
 
 class FakeKnowledgeBaseRepository:
+    async def get_all(self):
+        record = await self.get_by_kb_id("kb_1")
+        record.additional_params = {
+            "chunk_preset_id": "general",
+            "stats": {"file_count": 2, "folder_count": 1, "row_count": 3},
+        }
+        record.created_by = "user_1"
+        return [record]
+
     async def get_by_kb_id(self, kb_id):
         if kb_id != "kb_1":
             return None
@@ -136,6 +145,25 @@ async def test_get_database_info_omits_files_by_default():
     assert "files" not in result
     assert result["stats"]["file_count"] == 2
     assert result["stats"]["total_size"] == 1024
+
+
+async def test_get_databases_does_not_initialize_knowledge_backend(monkeypatch):
+    manager = KnowledgeBaseManager("/tmp/yuxi-test")
+
+    def fail_if_initialized(_kb_type):
+        pytest.fail("知识库列表不应初始化 Milvus 等后端实例")
+
+    monkeypatch.setattr(manager, "_get_or_create_kb_instance", fail_if_initialized)
+
+    result = await manager.get_databases()
+
+    database = result["databases"][0]
+    assert database["kb_id"] == "kb_1"
+    assert database["name"] == "知识库"
+    assert database["row_count"] == 3
+    assert database["stats"]["file_count"] == 2
+    assert database["additional_params"]["chunk_preset_id"] == "general"
+    assert database["created_by"] == "user_1"
 
 
 async def test_list_document_files_returns_lightweight_paginated_items():

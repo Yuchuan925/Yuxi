@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from yuxi.storage.postgres.models_business import User
 from server.utils.auth_middleware import get_db, get_required_user
 from yuxi import config as conf
+from yuxi.agents.tool_approval import ToolApprovalMode
 from yuxi.models import select_model
 from yuxi.services.chat_service import get_agent_state_view
 from yuxi.services.conversation_service import (
@@ -328,6 +329,7 @@ async def delete_thread(
 class ThreadUpdate(BaseModel):
     title: str | None = None
     is_pinned: bool | None = None
+    tool_approval_mode: ToolApprovalMode | None = None
 
 
 @chat.put("/thread/{thread_id}", response_model=ThreadResponse)
@@ -342,6 +344,7 @@ async def update_thread(
         thread_id=thread_id,
         title=thread_update.title,
         is_pinned=thread_update.is_pinned,
+        tool_approval_mode=thread_update.tool_approval_mode,
         db=db,
         current_uid=str(current_user.uid),
     )

@@ -56,9 +56,13 @@
           <span class="info-card-name" :title="title">{{ title }}</span>
           <span v-if="subtitle" class="info-card-subtitle" :title="subtitle">{{ subtitle }}</span>
         </div>
-        <div v-if="$slots.status || actionLabel || status" class="info-card-status">
+        <div
+          v-if="$slots.status || actionLabel || status || $slots.actions"
+          class="info-card-status"
+        >
           <slot name="status" />
-          <template v-if="!$slots.status">
+          <slot name="actions" />
+          <template v-if="!$slots.status && !$slots.actions">
             <button
               v-if="actionLabel"
               type="button"

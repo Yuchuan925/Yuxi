@@ -372,7 +372,7 @@ watch(() => [userStore.username, userStore.phoneNumber], syncProfileDraft, { imm
     min-width: 0;
     display: flex;
     flex-direction: column;
-    gap: 10px;
+    gap: 6px;
     flex: 1;
   }
 
