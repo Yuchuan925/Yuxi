@@ -166,6 +166,58 @@ async def test_get_databases_does_not_initialize_knowledge_backend(monkeypatch):
     assert database["created_by"] == "user_1"
 
 
+async def test_get_databases_skips_rows_with_invalid_metadata(monkeypatch):
+    class BrokenKnowledgeBaseClass:
+        @classmethod
+        def normalize_additional_params(cls, _additional_params):
+            raise ValueError("Notion 参数缺失: notion_data_source_id")
+
+    class MultiKnowledgeBaseRepository:
+        async def get_all(self):
+            return [
+                SimpleNamespace(
+                    kb_id="kb_bad",
+                    name="坏配置",
+                    description="",
+                    kb_type="notion",
+                    embedding_model_spec=None,
+                    llm_model_spec=None,
+                    query_params=None,
+                    additional_params={},
+                    share_config=None,
+                    created_at=None,
+                    created_by="user_1",
+                ),
+                SimpleNamespace(
+                    kb_id="kb_good",
+                    name="可用库",
+                    description="",
+                    kb_type="milvus",
+                    embedding_model_spec=None,
+                    llm_model_spec=None,
+                    query_params=None,
+                    additional_params={"chunk_preset_id": "general"},
+                    share_config=None,
+                    created_at=None,
+                    created_by="user_1",
+                ),
+            ]
+
+    monkeypatch.setattr(
+        "yuxi.knowledge.manager.KnowledgeBaseFactory.get_kb_class",
+        staticmethod(lambda kb_type: BrokenKnowledgeBaseClass if kb_type == "notion" else FakeKnowledgeBaseClass),
+    )
+    monkeypatch.setattr(
+        "yuxi.repositories.knowledge_base_repository.KnowledgeBaseRepository",
+        MultiKnowledgeBaseRepository,
+    )
+
+    manager = KnowledgeBaseManager("/tmp/yuxi-test")
+    result = await manager.get_databases()
+
+    assert [db["kb_id"] for db in result["databases"]] == ["kb_good"]
+
+
 async def test_list_document_files_returns_lightweight_paginated_items():
     manager = KnowledgeBaseManager("/tmp/yuxi-test")
 

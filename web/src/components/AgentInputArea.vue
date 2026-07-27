@@ -163,11 +163,10 @@ const handleImageRemoved = () => {
   currentImage.value = null
 }
 
-// 发送被后端拒绝时仅向空输入区恢复旧图片，保留等待期间新选择的图片。
+// 发送被后端拒绝时把旧图片恢复到输入区，覆盖等待期间可能新选的图片，
+// 避免旧图片被悄悄丢弃；用户可重新选择新图片。
 const restoreImage = (image) => {
-  if (!currentImage.value) {
-    currentImage.value = image || null
-  }
+  currentImage.value = image || null
 }
 
 const handleAttachmentRemoved = (attachment) => {

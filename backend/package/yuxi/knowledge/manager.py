@@ -40,50 +40,43 @@ class KnowledgeBaseManager:
 
     async def initialize(self):
         """异步初始化"""
-        # 初始化已存在的知识库实例
-        self._initialize_existing_kbs()
+        # 初始化已存在的知识库实例；等待完成后，databases_meta 才能保证
+        # 与 PostgreSQL 一致，避免启动后短期内对 KB 的操作命中"未找到"路径。
+        await self._initialize_existing_kbs()
         logger.info("KnowledgeBaseManager initialized")
 
-    def _initialize_existing_kbs(self):
+    async def _initialize_existing_kbs(self):
         """初始化已存在的知识库实例"""
         from yuxi.repositories.knowledge_base_repository import KnowledgeBaseRepository
 
-        async def _async_init():
-            kb_repo = KnowledgeBaseRepository()
-            rows = await kb_repo.get_all()
+        kb_repo = KnowledgeBaseRepository()
+        rows = await kb_repo.get_all()
 
-            kb_types_in_use = set()
-            for row in rows:
-                kb_type = row.kb_type or "milvus"
-                if KnowledgeBaseFactory.is_type_supported(kb_type):
-                    kb_types_in_use.add(kb_type)
-                else:
-                    logger.warning(f"Skip unsupported knowledge base type during initialization: {kb_type}")
+        kb_types_in_use = set()
+        for row in rows:
+            kb_type = row.kb_type or "milvus"
+            if KnowledgeBaseFactory.is_type_supported(kb_type):
+                kb_types_in_use.add(kb_type)
+            else:
+                logger.warning(f"Skip unsupported knowledge base type during initialization: {kb_type}")
 
-            logger.info(f"[InitializeKB] 发现 {len(kb_types_in_use)} 种知识库类型: {kb_types_in_use}")
+        logger.info(f"[InitializeKB] 发现 {len(kb_types_in_use)} 种知识库类型: {kb_types_in_use}")
 
-            # 为每种使用中的知识库类型创建实例并加载元数据
-            for kb_type in kb_types_in_use:
-                if not KnowledgeBaseFactory.is_type_supported(kb_type):
-                    logger.warning(f"[InitializeKB] Skip initialization for unsupported knowledge base type: {kb_type}")
-                    continue
-                try:
-                    kb_instance = self._get_or_create_kb_instance(kb_type)
-                    # 让 KB 实例自行加载元数据
-                    await kb_instance._load_metadata()
-                    logger.info(f"[InitializeKB] {kb_type} 实例已初始化")
-                except Exception as e:
-                    logger.error(f"Failed to initialize {kb_type} knowledge base: {e}")
-                    import traceback
+        # 为每种使用中的知识库类型创建实例并加载元数据
+        for kb_type in kb_types_in_use:
+            if not KnowledgeBaseFactory.is_type_supported(kb_type):
+                logger.warning(f"[InitializeKB] Skip initialization for unsupported knowledge base type: {kb_type}")
+                continue
+            try:
+                kb_instance = self._get_or_create_kb_instance(kb_type)
+                # 让 KB 实例自行加载元数据
+                await kb_instance._load_metadata()
+                logger.info(f"[InitializeKB] {kb_type} 实例已初始化")
+            except Exception as e:
+                logger.error(f"Failed to initialize {kb_type} knowledge base: {e}")
+                import traceback
 
-                    logger.error(traceback.format_exc())
-
-        # 在事件循环中运行异步初始化
-        try:
-            loop = asyncio.get_running_loop()
-            loop.create_task(_async_init())
-        except RuntimeError:
-            asyncio.run(_async_init())
+                logger.error(traceback.format_exc())
 
     def _get_or_create_kb_instance(self, kb_type: str) -> KnowledgeBase:
         """
@@ -185,9 +178,14 @@ class KnowledgeBaseManager:
                 logger.warning(f"Skip unsupported database: kb_id={row.kb_id}, kb_type={kb_type}")
                 continue
 
-            kb_class = KnowledgeBaseFactory.get_kb_class(kb_type)
-            additional_params = kb_class.normalize_additional_params(row.additional_params)
-            stats = KnowledgeBase._normalize_database_stats(additional_params.get("stats"))
+            # 单条记录元数据不合法时只跳过该条，避免一条坏记录隐藏整个列表。
+            try:
+                kb_class = KnowledgeBaseFactory.get_kb_class(kb_type)
+                additional_params = kb_class.normalize_additional_params(row.additional_params)
+                stats = KnowledgeBase._normalize_database_stats(additional_params.get("stats"))
+            except Exception as e:
+                logger.warning(f"Skip database with invalid metadata: kb_id={row.kb_id}, kb_type={kb_type}: {e}")
+                continue
             all_databases.append(
                 {
                     "kb_id": row.kb_id,
