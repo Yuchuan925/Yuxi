@@ -72,7 +72,11 @@ async def test_agent_call_adapter_waits_and_wraps_result(monkeypatch: pytest.Mon
             "thread_id": "thread-1",
             "agent_run_id": run_id,
             "request_id": "req-1",
-            "usage": {"input_tokens": 3, "output_tokens": 2, "total_tokens": 5},
+            "token_usage": {
+                "schema_version": 2,
+                "models": {"provider:model": {}},
+                "total": {"input_tokens": 3, "output_tokens": 2, "total_tokens": 5},
+            },
         }
 
     monkeypatch.setattr(call_router, "submit_run_command", fake_submit_run_command)

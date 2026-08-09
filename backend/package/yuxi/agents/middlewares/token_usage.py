@@ -14,8 +14,41 @@ from langchain.agents.middleware.types import (
     ModelResponse,
 )
 from langchain_core.messages import AIMessage, AnyMessage
+from langchain_core.messages.ai import UsageMetadata, add_usage
 from langchain_core.messages.utils import count_tokens_approximately
 from langgraph.types import Command
+
+from yuxi.models.providers.cache import model_cache
+
+TOKEN_USAGE_PROVIDER_BLACKLIST = frozenset({"siliconflow-cn", "siliconflow"})
+ZERO_TOTAL = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
+TOKEN_USAGE_CONTEXT_FIELDS = frozenset(
+    {
+        "state_message_count",
+        "state_message_count_before_call",
+        "state_messages_tokens",
+        "state_messages_tokens_before_call",
+        "llm_message_count",
+        "llm_messages_tokens",
+        "llm_content_message_count",
+        "llm_content_message_tokens",
+        "llm_tool_message_count",
+        "llm_tool_message_tokens",
+        "llm_input_tokens",
+        "system_tokens",
+        "tools_tokens",
+        "tool_count",
+        "context_window",
+        "context_usage_ratio",
+        "remaining_context_tokens",
+        "summary_active",
+        "summary_message_tokens",
+        "summary_trigger_tokens",
+        "counter",
+        "estimate",
+        "measured_at",
+    }
+)
 
 
 class TokenUsagePayload(TypedDict, total=False):
@@ -41,7 +74,10 @@ class TokenUsagePayload(TypedDict, total=False):
     summary_active: bool
     summary_message_tokens: int
     summary_trigger_tokens: int | None
-    model_usage: dict[str, int]
+    current_run_id: str
+    latest: dict[str, Any] | None
+    run: dict[str, Any]
+    thread: dict[str, Any]
     counter: str
     estimate: bool
     measured_at: str
@@ -86,15 +122,244 @@ def _is_tool_message(message: AnyMessage) -> bool:
     return getattr(message, "type", None) == "tool" or getattr(message, "role", None) == "tool"
 
 
-def _model_usage_from_response(response: ModelResponse) -> dict[str, int]:
+def _ai_message_from_response(response: ModelResponse) -> AIMessage | None:
     for message in reversed(response.result):
-        if not isinstance(message, AIMessage):
+        if isinstance(message, AIMessage):
+            return message
+    return None
+
+
+def _model_usage_from_response(response: ModelResponse) -> dict[str, Any] | None:
+    message = _ai_message_from_response(response)
+    usage = getattr(message, "usage_metadata", None) if message else None
+    return dict(usage) if isinstance(usage, Mapping) else None
+
+
+def _usage_for_accumulation(usage: Mapping[str, Any] | None) -> UsageMetadata | None:
+    """保留可累计的数值 token 字段，忽略 Provider 的非数值扩展元数据。"""
+    if not usage:
+        return None
+
+    normalized: dict[str, Any] = {}
+    for key, value in usage.items():
+        if isinstance(value, int) and not isinstance(value, bool):
+            normalized[str(key)] = value
             continue
-        usage = getattr(message, "usage_metadata", None)
-        if not isinstance(usage, Mapping):
+        if isinstance(value, Mapping):
+            details = {
+                str(detail_key): detail_value
+                for detail_key, detail_value in value.items()
+                if isinstance(detail_value, int) and not isinstance(detail_value, bool)
+            }
+            if details:
+                normalized[str(key)] = details
+
+    required_keys = ("input_tokens", "output_tokens", "total_tokens")
+    if not all(isinstance(normalized.get(key), int) for key in required_keys):
+        return None
+    return normalized  # type: ignore[return-value]
+
+
+def _model_identity(request: ModelRequest, response: ModelResponse) -> dict[str, str]:
+    model_metadata = getattr(request.model, "metadata", None) or {}
+    runtime_context = getattr(request.runtime, "context", None)
+    configured_spec = getattr(runtime_context, "model", None)
+    configured_spec = configured_spec.strip() if isinstance(configured_spec, str) else ""
+
+    identity: dict[str, str] = {}
+    for key, meta_key in (
+        ("provider_id", "yuxi_provider_id"),
+        ("provider_type", "yuxi_provider_type"),
+        ("configured_model_id", "yuxi_model_id"),
+        ("configured_model_spec", "yuxi_model_spec"),
+    ):
+        value = model_metadata.get(meta_key)
+        if isinstance(value, str) and value:
+            identity[key] = value
+
+    if not identity and configured_spec:
+        model_info = model_cache.get_model_info(configured_spec)
+        if model_info:
+            identity = {
+                "provider_id": model_info.provider_id,
+                "provider_type": model_info.provider_type,
+                "configured_model_id": model_info.model_id,
+                "configured_model_spec": model_info.spec,
+            }
+        else:
+            identity["configured_model_spec"] = configured_spec
+    elif configured_spec:
+        identity["configured_model_spec"] = configured_spec
+
+    message = _ai_message_from_response(response)
+    response_metadata = getattr(message, "response_metadata", None) if message else None
+    if isinstance(response_metadata, Mapping):
+        response_model_id = response_metadata.get("model_name") or response_metadata.get("model")
+        if isinstance(response_model_id, str) and response_model_id:
+            identity["response_model_id"] = response_model_id
+        if "provider_type" not in identity:
+            response_provider = response_metadata.get("model_provider")
+            if isinstance(response_provider, str) and response_provider:
+                identity["provider_type"] = response_provider
+
+    return identity
+
+
+def _usage_input_tokens(usage: Mapping[str, Any] | None) -> int:
+    value = usage.get("input_tokens") if usage else None
+    return value if isinstance(value, int) and not isinstance(value, bool) else 0
+
+
+def _cache_read_tokens(usage: Mapping[str, Any] | None) -> int | None:
+    details = usage.get("input_token_details") if usage else None
+    if not isinstance(details, Mapping):
+        return None
+    for key in ("cache_read", "priority_cache_read", "flex_cache_read"):
+        if key not in details:
             continue
-        return {str(key): value for key, value in usage.items() if isinstance(value, int)}
-    return {}
+        value = details.get(key)
+        return value if isinstance(value, int) and not isinstance(value, bool) else None
+    return None
+
+
+def _ratio(numerator: int, denominator: int) -> float | None:
+    return round(numerator / denominator, 4) if denominator > 0 else None
+
+
+def _empty_aggregate() -> dict[str, Any]:
+    return {
+        "schema_version": 2,
+        "model_call_count": 0,
+        "usage_reported_call_count": 0,
+        "models": {},
+        "total": dict(ZERO_TOTAL),
+    }
+
+
+def _aggregate_from_state(value: Any) -> dict[str, Any]:
+    if not isinstance(value, Mapping) or value.get("schema_version") != 2:
+        return _empty_aggregate()
+    models = value.get("models")
+    total = value.get("total")
+    return {
+        "schema_version": 2,
+        "model_call_count": _safe_int(value.get("model_call_count")) or 0,
+        "usage_reported_call_count": _safe_int(value.get("usage_reported_call_count")) or 0,
+        "models": {str(key): dict(bucket) for key, bucket in models.items() if isinstance(bucket, Mapping)}
+        if isinstance(models, Mapping)
+        else {},
+        "total": dict(total) if isinstance(total, Mapping) else dict(ZERO_TOTAL),
+    }
+
+
+def _recompute_aggregate_totals(aggregate: dict[str, Any]) -> None:
+    """根据当前 models 重算聚合级计数和 total。"""
+    models = aggregate["models"]
+    aggregate["model_call_count"] = sum(
+        _safe_int(bucket.get("model_call_count")) or 0
+        for bucket in models.values()
+        if isinstance(bucket, Mapping)
+    )
+    aggregate["usage_reported_call_count"] = sum(
+        _safe_int(bucket.get("usage_reported_call_count")) or 0
+        for bucket in models.values()
+        if isinstance(bucket, Mapping)
+    )
+    total = dict(ZERO_TOTAL)
+    for bucket in models.values():
+        if not isinstance(bucket, Mapping):
+            continue
+        bucket_usage = bucket.get("usage")
+        if not isinstance(bucket_usage, Mapping):
+            continue
+        for key in total:
+            total[key] += _safe_int(bucket_usage.get(key)) or 0
+    aggregate["total"] = total
+
+
+def _without_blacklisted_providers(aggregate: Mapping[str, Any]) -> dict[str, Any]:
+    """移除历史 checkpoint 中已禁用 Provider 的错误用量桶。"""
+    result = _aggregate_from_state(aggregate)
+    result["models"] = {
+        key: bucket
+        for key, bucket in result["models"].items()
+        if not (
+            isinstance(bucket.get("model"), Mapping)
+            and bucket["model"].get("provider_id") in TOKEN_USAGE_PROVIDER_BLACKLIST
+        )
+    }
+    _recompute_aggregate_totals(result)
+    return result
+
+
+def _bucket_key(identity: Mapping[str, str], model: Any) -> tuple[str, str]:
+    configured_spec = identity.get("configured_model_spec")
+    if configured_spec:
+        return configured_spec, "configured_metadata"
+    response_model_id = identity.get("response_model_id")
+    provider_type = identity.get("provider_type") or "unknown"
+    if response_model_id:
+        return f"response:{provider_type}:{response_model_id}", "response_metadata"
+    model_id = getattr(model, "model_name", None) or getattr(model, "model", None) or "unknown"
+    return f"unattributed:{model.__class__.__name__}:{model_id}", "adapter_fallback"
+
+
+def _add_call_to_aggregate(
+    aggregate: Mapping[str, Any],
+    *,
+    bucket_key: str,
+    identity_source: str,
+    identity: Mapping[str, str],
+    usage: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    result = _aggregate_from_state(aggregate)
+    models = result["models"]
+    previous_bucket = models.get(bucket_key)
+    previous_bucket = dict(previous_bucket) if isinstance(previous_bucket, Mapping) else {}
+    usage_increment = _usage_for_accumulation(usage)
+    previous_usage = previous_bucket.get("usage")
+    previous_usage = _usage_for_accumulation(previous_usage) if isinstance(previous_usage, Mapping) else None
+    cumulative_usage = add_usage(previous_usage, usage_increment) if usage_increment else previous_usage
+
+    model_identity = previous_bucket.get("model")
+    model_identity = dict(model_identity) if isinstance(model_identity, Mapping) else {}
+    model_identity.update({key: value for key, value in identity.items() if key != "response_model_id"})
+    model_identity["identity_source"] = identity_source
+    response_model_ids = model_identity.get("response_model_ids")
+    response_model_ids = list(response_model_ids) if isinstance(response_model_ids, list) else []
+    response_model_id = identity.get("response_model_id")
+    if response_model_id and response_model_id not in response_model_ids:
+        response_model_ids.append(response_model_id)
+    model_identity["response_model_ids"] = response_model_ids
+
+    cache_read = _cache_read_tokens(usage)
+    cache_observed = cache_read is not None
+    cache_observed_calls = (_safe_int(previous_bucket.get("cache_observed_call_count")) or 0) + int(cache_observed)
+    cache_hit_calls = (_safe_int(previous_bucket.get("cache_hit_call_count")) or 0) + int(
+        cache_read is not None and cache_read > 0
+    )
+    observed_input = (_safe_int(previous_bucket.get("cache_observed_input_tokens")) or 0) + (
+        _usage_input_tokens(usage) if cache_observed else 0
+    )
+    cache_read_input = (_safe_int(previous_bucket.get("cache_read_input_tokens")) or 0) + (cache_read or 0)
+
+    models[bucket_key] = {
+        "model": model_identity,
+        "usage": cumulative_usage or {},
+        "model_call_count": (_safe_int(previous_bucket.get("model_call_count")) or 0) + 1,
+        "usage_reported_call_count": (_safe_int(previous_bucket.get("usage_reported_call_count")) or 0)
+        + int(usage_increment is not None),
+        "cache_observed_call_count": cache_observed_calls,
+        "cache_hit_call_count": cache_hit_calls,
+        "cache_observed_input_tokens": observed_input,
+        "cache_read_input_tokens": cache_read_input,
+        "uncached_input_tokens": max(observed_input - cache_read_input, 0) if cache_observed_calls else None,
+        "cache_hit_ratio": _ratio(cache_read_input, observed_input),
+        "cache_request_hit_ratio": _ratio(cache_hit_calls, cache_observed_calls),
+    }
+
+    _recompute_aggregate_totals(result)
+    return result
 
 
 class TokenUsageMiddleware(AgentMiddleware[TokenUsageState]):
@@ -111,6 +376,37 @@ class TokenUsageMiddleware(AgentMiddleware[TokenUsageState]):
         if tools is not None:
             return int(self.token_counter(message_list, tools=tools))
         return int(self.token_counter(message_list))
+
+    def before_agent(self, state: TokenUsageState, runtime: Any) -> dict[str, Any] | None:
+        """在 Run 入口重置 Run 级用量，同时保留 v2 线程累计。"""
+        run_id = str(getattr(runtime.context, "run_id", None) or "")
+        previous = state.get("token_usage")
+        previous = previous if isinstance(previous, Mapping) else {}
+        same_run = previous.get("current_run_id") == run_id and isinstance(previous.get("run"), Mapping)
+        context_fields = {key: previous[key] for key in TOKEN_USAGE_CONTEXT_FIELDS if key in previous}
+        latest = previous.get("latest") if same_run else None
+        if isinstance(latest, Mapping):
+            latest_model = latest.get("model")
+            latest_bucket_key = latest.get("bucket_key")
+            latest_provider_id = latest_model.get("provider_id") if isinstance(latest_model, Mapping) else None
+            if latest_provider_id in TOKEN_USAGE_PROVIDER_BLACKLIST or (
+                isinstance(latest_bucket_key, str)
+                and latest_bucket_key.split(":", 1)[0] in TOKEN_USAGE_PROVIDER_BLACKLIST
+            ):
+                latest = None
+        return {
+            "token_usage": {
+                **context_fields,
+                "current_run_id": run_id,
+                "latest": latest,
+                "run": _without_blacklisted_providers(previous.get("run")) if same_run else _empty_aggregate(),
+                "thread": _without_blacklisted_providers(previous.get("thread")),
+            }
+        }
+
+    async def abefore_agent(self, state: TokenUsageState, runtime: Any) -> dict[str, Any] | None:
+        """异步入口复用同步 Run 初始化逻辑。"""
+        return self.before_agent(state, runtime)
 
     def _build_snapshot(self, request: ModelRequest, response: ModelResponse) -> TokenUsagePayload:
         state_messages = list(request.state.get("messages") or [])
@@ -140,6 +436,48 @@ class TokenUsageMiddleware(AgentMiddleware[TokenUsageState]):
             message for message in llm_messages if not _is_tool_message(message) and not _is_summary_message(message)
         ]
         summary_trigger_tokens = _summary_trigger_tokens(getattr(request.runtime, "context", None))
+        previous_snapshot = request.state.get("token_usage")
+        previous_snapshot = previous_snapshot if isinstance(previous_snapshot, Mapping) else {}
+        model_usage = _model_usage_from_response(response)
+        identity = _model_identity(request, response)
+        runtime_context = getattr(request.runtime, "context", None)
+        run_id = str(getattr(runtime_context, "run_id", None) or "")
+        previous_run = previous_snapshot.get("run") if previous_snapshot.get("current_run_id") == run_id else None
+        measured_at = datetime.now(UTC).isoformat()
+        latest_usage = None
+        run_usage = _without_blacklisted_providers(
+            previous_run if isinstance(previous_run, Mapping) else _empty_aggregate()
+        )
+        thread_usage = _without_blacklisted_providers(previous_snapshot.get("thread"))
+
+        if identity.get("provider_id") not in TOKEN_USAGE_PROVIDER_BLACKLIST:
+            bucket_key, identity_source = _bucket_key(identity, request.model)
+            run_usage = _add_call_to_aggregate(
+                run_usage,
+                bucket_key=bucket_key,
+                identity_source=identity_source,
+                identity=identity,
+                usage=model_usage,
+            )
+            thread_usage = _add_call_to_aggregate(
+                thread_usage,
+                bucket_key=bucket_key,
+                identity_source=identity_source,
+                identity=identity,
+                usage=model_usage,
+            )
+            cache_read_tokens = _cache_read_tokens(model_usage)
+            input_tokens = _usage_input_tokens(model_usage)
+            latest_usage = {
+                "bucket_key": bucket_key,
+                "model": identity,
+                "usage": model_usage or {},
+                "uncached_input_tokens": (
+                    max(input_tokens - cache_read_tokens, 0) if cache_read_tokens is not None else None
+                ),
+                "cache_hit_ratio": (_ratio(cache_read_tokens, input_tokens) if cache_read_tokens is not None else None),
+                "measured_at": measured_at,
+            }
 
         return {
             "state_message_count": len(next_state_messages),
@@ -162,10 +500,13 @@ class TokenUsageMiddleware(AgentMiddleware[TokenUsageState]):
             "summary_active": summary_message is not None,
             "summary_message_tokens": self._count_tokens([summary_message]) if summary_message else 0,
             "summary_trigger_tokens": summary_trigger_tokens,
-            "model_usage": _model_usage_from_response(response),
+            "current_run_id": run_id,
+            "latest": latest_usage,
+            "run": run_usage,
+            "thread": thread_usage,
             "counter": "langchain.count_tokens_approximately",
             "estimate": True,
-            "measured_at": datetime.now(UTC).isoformat(),
+            "measured_at": measured_at,
         }
 
     def wrap_model_call(

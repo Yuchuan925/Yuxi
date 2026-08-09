@@ -143,7 +143,7 @@
         </div>
       </template>
       <template v-else-if="file?.previewType === 'pdf' && file?.previewUrl">
-        <iframe :src="file.previewUrl" class="pdf-preview" :title="filePath" />
+        <iframe :src="`${file.previewUrl}#view=FitH&toolbar=0`" class="pdf-preview" :title="filePath" />
       </template>
       <template v-else-if="isHtmlFile && htmlPreviewMode === 'render'">
         <iframe
@@ -223,7 +223,7 @@
             </template>
             <template v-else-if="file?.previewType === 'pdf' && file?.previewUrl">
               <iframe
-                :src="file.previewUrl"
+                :src="`${file.previewUrl}#view=FitH&toolbar=0`"
                 class="pdf-preview fullscreen-embed-preview"
                 :title="filePath"
               />

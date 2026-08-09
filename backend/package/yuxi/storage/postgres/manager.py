@@ -656,6 +656,10 @@ class PostgresManager(metaclass=SingletonMeta):
                 "origin_metadata JSONB NOT NULL DEFAULT '{}'::jsonb"
             ),
             (
+                "ALTER TABLE IF EXISTS agent_runs ADD COLUMN IF NOT EXISTS "
+                "token_usage JSONB NOT NULL DEFAULT '{}'::jsonb"
+            ),
+            (
                 "ALTER TABLE IF EXISTS agent_run_requests ADD COLUMN IF NOT EXISTS "
                 "channel VARCHAR(32) NOT NULL DEFAULT 'web'"
             ),

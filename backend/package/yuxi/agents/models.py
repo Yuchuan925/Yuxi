@@ -42,6 +42,17 @@ def load_chat_model(fully_specified_name: str | None, **kwargs) -> BaseChatModel
         extra_body.update(info.request_body_overrides)
         kwargs = {**kwargs, "extra_body": extra_body}
 
+    metadata = dict(kwargs.pop("metadata", {}) or {})
+    metadata.update(
+        {
+            "yuxi_provider_id": info.provider_id,
+            "yuxi_provider_type": info.provider_type,
+            "yuxi_model_id": info.model_id,
+            "yuxi_model_spec": info.spec,
+        }
+    )
+    kwargs["metadata"] = metadata
+
     logger.debug(f"Loading model {fully_specified_name} with provider_type={info.provider_type}")
 
     if info.provider_type == "anthropic":

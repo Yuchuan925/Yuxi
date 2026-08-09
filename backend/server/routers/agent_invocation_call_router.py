@@ -211,6 +211,8 @@ def _build_agent_call_response(result: dict[str, Any]) -> dict[str, Any]:
     raw_status = str(result.get("status") or "unknown")
     status = "pending" if raw_status == "dispatched" else raw_status
     output = result.get("output") if isinstance(result.get("output"), str) else ""
+    token_usage = result.get("token_usage")
+    token_total = token_usage.get("total") if isinstance(token_usage, dict) else None
     payload: dict[str, Any] = {
         "run_id": result.get("agent_run_id") or result.get("run_id"),
         "agent_slug": result.get("agent_slug"),
@@ -225,7 +227,7 @@ def _build_agent_call_response(result: dict[str, Any]) -> dict[str, Any]:
                 "finish_reason": _finish_reason(status),
             }
         ],
-        "usage": _normalize_usage(result.get("usage")),
+        "usage": _normalize_usage(token_total or result.get("usage")),
     }
     if result.get("error"):
         payload["error"] = result["error"]

@@ -312,68 +312,128 @@
             <div class="state-panel-body">
               <section
                 v-if="currentTokenUsage"
-                class="state-section"
-                :class="{ 'is-collapsed': !isStateSectionExpanded('tokenUsage') }"
+                class="state-section token-usage-section"
                 aria-label="上下文使用情况"
               >
                 <button
                   type="button"
-                  class="state-section-header"
-                  :aria-expanded="isStateSectionExpanded('tokenUsage')"
-                  aria-controls="state-section-token-usage"
-                  @click="toggleStateSection('tokenUsage')"
+                  class="token-usage-context-card"
+                  :aria-expanded="isStateSectionExpanded('tokenUsageDetails')"
+                  aria-controls="token-usage-details"
+                  @click="toggleStateSection('tokenUsageDetails')"
                 >
-                  <span class="state-section-label">
-                    <span class="state-section-title">上下文使用</span>
+                  <span class="token-usage-card-topline">
+                    <span class="token-usage-card-title">上下文占用</span>
+                    <span class="token-usage-card-summary">{{ tokenUsageStackHeadLabel }}</span>
                     <ChevronDown
                       :size="15"
                       class="state-section-chevron"
-                      :class="{ 'is-collapsed': !isStateSectionExpanded('tokenUsage') }"
+                      :class="{
+                        'is-collapsed': !isStateSectionExpanded('tokenUsageDetails')
+                      }"
                     />
+                  </span>
+                  <strong class="token-usage-card-percent">{{
+                    tokenUsageHeaderPercentLabel
+                  }}</strong>
+
+                  <span
+                    class="token-usage-context-track"
+                    role="progressbar"
+                    aria-valuemin="0"
+                    aria-valuemax="100"
+                    :aria-valuenow="
+                      tokenUsageContextRatio === null ? undefined : tokenUsageContextRatio * 100
+                    "
+                    :aria-valuetext="tokenUsageContextAriaLabel"
+                  >
+                    <span
+                      class="token-usage-context-fill"
+                      :class="tokenUsageContextTone"
+                      :style="{ width: tokenUsageContextPercent }"
+                    ></span>
+                  </span>
+
+                  <span v-if="hasTokenUsageMetrics" class="token-usage-card-metrics">
+                    <span v-if="tokenUsageRunTotalLabel !== null">
+                      <small>累计 Token 用量</small>
+                      <strong>{{ tokenUsageRunTotalLabel }}</strong>
+                    </span>
+                    <span v-if="tokenUsageCacheHitLabel !== null">
+                      <small>累计缓存命中率</small>
+                      <strong>{{ tokenUsageCacheHitLabel }}</strong>
+                    </span>
                   </span>
                 </button>
                 <div
-                  v-show="isStateSectionExpanded('tokenUsage')"
-                  id="state-section-token-usage"
-                  class="state-section-content"
+                  v-show="isStateSectionExpanded('tokenUsageDetails')"
+                  id="token-usage-details"
+                  class="token-usage-details"
                 >
-                  <div class="token-usage-content">
-                    <div class="token-usage-stack">
-                      <div class="token-usage-stack-head">
-                        <span>{{ tokenUsageHeaderPercentLabel }}</span>
-                        <strong>{{ tokenUsageStackHeadLabel }}</strong>
+                  <div v-if="tokenUsageModelItems.length" class="token-usage-model-list">
+                    <article
+                      v-for="model in tokenUsageModelItems"
+                      :key="model.key"
+                      class="token-usage-model-item"
+                    >
+                      <header class="token-usage-model-header">
+                        <div>
+                          <strong>{{ model.name }}</strong>
+                          <span v-if="model.responseModel">响应 {{ model.responseModel }}</span>
+                        </div>
+                        <span>{{ model.callCount }} 次调用</span>
+                      </header>
+                      <div class="token-usage-model-stats">
+                        <div class="is-io">
+                          <span>输入 / 输出</span>
+                          <strong>{{ model.io }}</strong>
+                        </div>
+                        <div v-if="model.cache" class="is-cache">
+                          <span>缓存</span>
+                          <strong>{{ model.cache }}</strong>
+                        </div>
+                        <div v-if="model.reasoning" class="is-reasoning">
+                          <span>推理</span>
+                          <strong>{{ model.reasoning }}</strong>
+                        </div>
                       </div>
-                      <div class="token-usage-stack-track" aria-label="Token 构成">
-                        <div
-                          v-for="segment in tokenUsageBarSegments"
-                          :key="segment.key"
-                          class="token-usage-stack-segment"
-                          :class="segment.tone"
-                          :style="{ width: segment.percent }"
-                          :title="`${segment.label}: ${segment.valueLabel}`"
-                        ></div>
-                      </div>
-                      <div class="token-usage-stack-legend">
-                        <span
-                          v-for="segment in tokenUsageSegments"
-                          :key="segment.key"
-                          class="token-usage-stack-legend-item"
-                        >
-                          <i :class="segment.tone"></i>
-                          {{ segment.label }} {{ segment.valueLabel }}
-                        </span>
+                    </article>
+                  </div>
+
+                  <div class="token-usage-composition">
+                    <div class="token-usage-detail-heading">
+                      <span>最近上下文构成</span>
+                    </div>
+                    <div class="token-usage-stack-track" aria-label="Token 构成">
+                      <div
+                        v-for="segment in tokenUsageBarSegments"
+                        :key="segment.key"
+                        class="token-usage-stack-segment"
+                        :class="segment.tone"
+                        :style="{ width: segment.percent }"
+                        :title="`${segment.label}: ${segment.valueLabel}`"
+                      ></div>
+                    </div>
+                    <div class="token-usage-composition-list">
+                      <div
+                        v-for="segment in tokenUsageSegments"
+                        :key="segment.key"
+                        class="token-usage-composition-item"
+                      >
+                        <span><i :class="segment.tone"></i>{{ segment.label }}</span>
+                        <strong>{{ segment.valueLabel }}</strong>
                       </div>
                     </div>
+                  </div>
 
-                    <div v-if="tokenUsageMetaRows.length" class="token-usage-breakdown">
-                      <div
-                        v-for="item in tokenUsageMetaRows"
-                        :key="item.key"
-                        class="token-usage-breakdown-row"
-                      >
-                        <span>{{ item.label }}</span>
-                        <strong>{{ item.value }}</strong>
-                      </div>
+                  <div v-if="tokenUsageSupplementRows.length" class="token-usage-supplement">
+                    <div
+                      v-for="item in tokenUsageSupplementRows"
+                      :key="item.key"
+                      class="token-usage-supplement-row"
+                    >
+                      <span>{{ item.label }}</span>
+                      <strong>{{ item.value }}</strong>
                     </div>
                   </div>
                 </div>
@@ -800,7 +860,7 @@ const attachmentInitialFiles = ref([])
 const attachmentInitialFilesKey = ref(0)
 const isRefreshingState = ref(false)
 const collapsedStateSections = reactive({
-  tokenUsage: false,
+  tokenUsageDetails: true,
   todos: false,
   files: false,
   artifacts: false,
@@ -1183,6 +1243,8 @@ const currentAgentState = computed(() => {
   return currentChatId.value ? getThreadState(currentChatId.value)?.agentState || null : null
 })
 const toFiniteNumber = (value) => {
+  if (value === null || value === undefined || value === '' || typeof value === 'boolean')
+    return null
   const numeric = Number(value)
   return Number.isFinite(numeric) ? numeric : null
 }
@@ -1195,6 +1257,10 @@ const formatTokenCount = (value) => {
     return `${(numeric / TOKEN_COUNT_K_UNIT).toFixed(digits).replace(/\.0+$/, '')}k`
   }
   return String(Math.round(numeric))
+}
+const formatTokenRatio = (value) => {
+  const numeric = toFiniteNumber(value)
+  return numeric === null ? '未上报' : `${(Math.max(0, Math.min(numeric, 1)) * 100).toFixed(1)}%`
 }
 const currentTokenUsage = computed(() => {
   const usage = currentAgentState.value?.token_usage
@@ -1313,13 +1379,35 @@ const tokenUsageStackLimit = computed(() => {
   const contextWindow = toFiniteNumber(currentTokenUsage.value?.context_window)
   if (contextWindow && contextWindow > 0) return contextWindow
 
-  return Math.max(tokenUsageStackTotal.value, 1)
+  return null
+})
+const tokenUsageContextRatio = computed(() => {
+  if (tokenUsageStackLimit.value === null) return null
+  return Math.max(0, Math.min(tokenUsageStackTotal.value / tokenUsageStackLimit.value, 1))
 })
 const tokenUsageHeaderPercentLabel = computed(() => {
-  const limit = Math.max(tokenUsageStackLimit.value, 1)
-  const percent = Math.max(0, Math.min((tokenUsageStackTotal.value / limit) * 100, 100))
+  if (tokenUsageContextRatio.value === null) return '--'
+  const percent = tokenUsageContextRatio.value * 100
   if (percent > 0 && percent < 1) return '<1%'
   return `${Math.round(percent)}%`
+})
+const tokenUsageContextPercent = computed(() => {
+  return tokenUsageContextRatio.value === null
+    ? '0%'
+    : `${(tokenUsageContextRatio.value * 100).toFixed(2)}%`
+})
+const tokenUsageContextTone = computed(() => {
+  const ratio = tokenUsageContextRatio.value
+  if (ratio === null) return ''
+  if (ratio >= 0.9) return 'is-danger'
+  if (ratio >= 0.75) return 'is-warning'
+  return ''
+})
+const tokenUsageContextAriaLabel = computed(() => {
+  if (tokenUsageContextRatio.value === null) {
+    return `上下文上限未知，当前估算 ${formatTokenCount(tokenUsageStackTotal.value)} Token`
+  }
+  return `上下文占用 ${tokenUsageHeaderPercentLabel.value}`
 })
 const tokenUsageStackHeadLabel = computed(() => {
   const summaryTriggerTokens = toFiniteNumber(currentTokenUsage.value?.summary_trigger_tokens)
@@ -1328,8 +1416,35 @@ const tokenUsageStackHeadLabel = computed(() => {
   }
   return `${formatTokenCount(tokenUsageStackTotal.value)} Token`
 })
+const tokenUsageRunTotal = computed(() => {
+  const total = toFiniteNumber(currentTokenUsage.value?.thread?.total?.total_tokens)
+  return total === null ? null : Math.max(total, 0)
+})
+const tokenUsageRunTotalLabel = computed(() => {
+  if (tokenUsageRunTotal.value === null) return null
+  return formatTokenCount(tokenUsageRunTotal.value)
+})
+const tokenUsageCacheHitLabel = computed(() => {
+  const models = currentTokenUsage.value?.thread?.models
+  if (!models || typeof models !== 'object' || Object.keys(models).length === 0) return null
+  let observedInputTokens = 0
+  let cacheReadTokens = 0
+  let observedCalls = 0
+  Object.values(models).forEach((bucket) => {
+    if (!bucket || typeof bucket !== 'object') return
+    observedInputTokens += Math.max(toFiniteNumber(bucket.cache_observed_input_tokens) || 0, 0)
+    cacheReadTokens += Math.max(toFiniteNumber(bucket.cache_read_input_tokens) || 0, 0)
+    observedCalls += Math.max(toFiniteNumber(bucket.cache_observed_call_count) || 0, 0)
+  })
+  if (observedCalls <= 0 || observedInputTokens <= 0) return null
+  return formatTokenRatio(cacheReadTokens / observedInputTokens)
+})
+// 旧会话没有累计统计，两个指标都为 null 时隐藏整个指标行
+const hasTokenUsageMetrics = computed(
+  () => tokenUsageRunTotalLabel.value !== null || tokenUsageCacheHitLabel.value !== null
+)
 const tokenUsageBarSegments = computed(() => {
-  const limit = Math.max(tokenUsageStackLimit.value, 1)
+  const limit = tokenUsageStackLimit.value || Math.max(tokenUsageStackTotal.value, 1)
   let remaining = limit
   return tokenUsageSegments.value
     .filter((segment) => segment.key !== 'cut')
@@ -1343,15 +1458,52 @@ const tokenUsageBarSegments = computed(() => {
     })
     .filter((segment) => segment.value > 0 && segment.percent !== '0.00%')
 })
-const tokenUsageMetaRows = computed(() => {
+const tokenUsageModelItems = computed(() => {
+  const usage = currentTokenUsage.value
+  if (!usage) return []
+  const threadUsage = usage.thread && typeof usage.thread === 'object' ? usage.thread : null
+  const models =
+    threadUsage?.models && typeof threadUsage.models === 'object' ? threadUsage.models : {}
+  return Object.entries(models).map(([bucketKey, bucket]) => {
+    const model = bucket?.model && typeof bucket.model === 'object' ? bucket.model : {}
+    const modelUsage = bucket?.usage && typeof bucket.usage === 'object' ? bucket.usage : {}
+    const responseModelIds = Array.isArray(model.response_model_ids)
+      ? [...new Set(model.response_model_ids.filter((item) => typeof item === 'string' && item))]
+      : []
+    const responseModels = responseModelIds.filter((item) => item !== model.configured_model_id)
+    const cacheRatio = toFiniteNumber(bucket?.cache_hit_ratio)
+    const cacheObservedCalls = toFiniteNumber(bucket?.cache_observed_call_count) || 0
+    const reasoning = toFiniteNumber(modelUsage.output_token_details?.reasoning)
+    return {
+      key: bucketKey,
+      name: model.configured_model_spec || bucketKey,
+      responseModel:
+        responseModels.length > 1
+          ? `${responseModels[0]} 等 ${responseModels.length} 个模型`
+          : responseModels[0] || '',
+      callCount: Math.max(toFiniteNumber(bucket?.model_call_count) || 0, 0),
+      io: `${formatTokenCount(modelUsage.input_tokens)} / ${formatTokenCount(modelUsage.output_tokens)}`,
+      cache:
+        cacheObservedCalls === 0
+          ? ''
+          : cacheRatio === null
+            ? formatTokenCount(bucket?.cache_read_input_tokens)
+            : `${formatTokenCount(bucket?.cache_read_input_tokens)} · ${formatTokenRatio(cacheRatio)}`,
+      reasoning: reasoning === null ? '' : formatTokenCount(reasoning)
+    }
+  })
+})
+const tokenUsageSupplementRows = computed(() => {
   const usage = currentTokenUsage.value
   if (!usage) return []
   const rows = []
-  if (toFiniteNumber(usage.context_window)) {
+  const latest = usage.latest && typeof usage.latest === 'object' ? usage.latest : null
+
+  if (latest?.usage && typeof latest.usage === 'object') {
     rows.push({
-      key: 'context',
-      label: '窗口/剩余',
-      value: `${formatTokenCount(usage.context_window)} / ${formatTokenCount(usage.remaining_context_tokens)}`
+      key: 'latestUsage',
+      label: '最近调用',
+      value: `输入 ${formatTokenCount(latest.usage.input_tokens)} · 输出 ${formatTokenCount(latest.usage.output_tokens)}`
     })
   }
   return rows
@@ -4321,32 +4473,246 @@ watch(currentChatId, (threadId, oldThreadId) => {
   text-align: center;
 }
 
-.token-usage-content {
+.token-usage-section {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  padding-top: 2px;
 }
 
-.token-usage-stack {
+.token-usage-context-card {
+  width: 100%;
   display: flex;
   flex-direction: column;
-  gap: 7px;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--gray-150);
+  border-radius: 10px;
+  background: var(--gray-0);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+
+  &:hover {
+    border-color: var(--gray-200);
+    background: var(--gray-10);
+
+    .token-usage-card-title,
+    .state-section-chevron {
+      color: var(--gray-900);
+    }
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--main-200);
+    outline-offset: 2px;
+  }
 }
 
-.token-usage-stack-head {
+.token-usage-card-topline {
   display: flex;
   align-items: center;
+  gap: 8px;
+}
+
+.token-usage-card-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--gray-800);
+}
+
+.token-usage-card-summary {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  color: var(--gray-500);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.token-usage-card-percent {
+  display: block;
+  color: var(--gray-900);
+  font-size: 24px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+}
+
+.token-usage-context-track {
+  width: 100%;
+  height: 5px;
+  display: block;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--gray-100);
+}
+
+.token-usage-context-fill {
+  display: block;
+  height: 100%;
+  min-width: 2px;
+  border-radius: inherit;
+  background: var(--main-500);
+  transition:
+    width 0.2s ease,
+    background-color 0.2s ease;
+
+  &.is-warning {
+    background: var(--color-warning-500);
+  }
+
+  &.is-danger {
+    background: var(--color-error-500);
+  }
+}
+
+.token-usage-card-metrics {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 2px;
+  padding-top: 10px;
+  border-top: 1px solid var(--gray-100);
+}
+
+.token-usage-card-metrics > span {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.token-usage-card-metrics > span + span {
+  padding-left: 12px;
+  border-left: 1px solid var(--gray-150);
+}
+
+.token-usage-card-metrics small {
+  color: var(--gray-500);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.token-usage-card-metrics strong {
+  overflow: hidden;
+  color: var(--gray-900);
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.token-usage-details {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 0 2px;
+}
+
+.token-usage-model-list {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--gray-150);
+  border-radius: 9px;
+  overflow: hidden;
+}
+
+.token-usage-model-item {
+  padding: 11px;
+  background: var(--gray-0);
+  border-bottom: 1px solid var(--gray-150);
+}
+
+.token-usage-model-item:last-child {
+  border-bottom: 0;
+}
+
+.token-usage-model-header {
+  display: flex;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 8px;
+  margin-bottom: 10px;
+}
+
+.token-usage-model-header > div {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.token-usage-model-header strong {
+  overflow: hidden;
+  color: var(--gray-900);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.4;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.token-usage-model-header span {
   font-size: 11px;
   color: var(--gray-500);
 }
 
-.token-usage-stack-head strong {
+.token-usage-model-header > span {
+  flex-shrink: 0;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: var(--gray-50);
+}
+
+.token-usage-model-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.token-usage-model-stats > div {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.token-usage-model-stats span {
+  color: var(--gray-500);
+  font-size: 10px;
+}
+
+.token-usage-model-stats strong {
+  overflow-wrap: anywhere;
   color: var(--gray-900);
-  font-weight: 650;
+  font-size: 12px;
+  font-weight: 600;
   font-variant-numeric: tabular-nums;
+}
+
+.token-usage-composition {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 11px;
+  border: 1px solid var(--gray-150);
+  border-radius: 9px;
+  background: var(--gray-0);
+}
+
+.token-usage-detail-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--gray-600);
+  font-size: 11px;
+  font-weight: 600;
 }
 
 .token-usage-stack-track {
@@ -4364,24 +4730,36 @@ watch(currentChatId, (threadId, oldThreadId) => {
   transition: width 0.2s ease;
 }
 
-.token-usage-stack-legend {
+.token-usage-composition-list {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px 10px;
-  font-size: 12px;
-  color: var(--gray-500);
+  gap: 6px 12px;
 }
 
-.token-usage-stack-legend-item {
+.token-usage-composition-item {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  color: var(--gray-500);
+  font-size: 11px;
+}
+
+.token-usage-composition-item > span {
   min-width: 0;
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  line-height: 1.35;
-  white-space: normal;
 }
 
-.token-usage-stack-legend-item i {
+.token-usage-composition-item strong {
+  color: var(--gray-800);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.token-usage-composition-item i {
   width: 7px;
   height: 7px;
   flex-shrink: 0;
@@ -4390,7 +4768,7 @@ watch(currentChatId, (threadId, oldThreadId) => {
 }
 
 .token-usage-stack-segment,
-.token-usage-stack-legend-item i {
+.token-usage-composition-item i {
   &.is-cut {
     background-color: var(--main-500);
     background-image: repeating-linear-gradient(
@@ -4403,23 +4781,23 @@ watch(currentChatId, (threadId, oldThreadId) => {
   }
 
   &.is-messages {
-    background: var(--main-500);
+    background: var(--chart-palette-1);
   }
 
   &.is-tool-messages {
-    background: var(--color-primary-500);
+    background: var(--chart-palette-6);
   }
 
   &.is-summary {
-    background: var(--color-info-500);
+    background: var(--chart-palette-5);
   }
 
   &.is-system {
-    background: var(--color-success-500);
+    background: var(--chart-palette-2);
   }
 
   &.is-tools {
-    background: var(--color-warning-500);
+    background: var(--chart-palette-3);
   }
 
   &.is-overhead {
@@ -4427,37 +4805,46 @@ watch(currentChatId, (threadId, oldThreadId) => {
   }
 }
 
-.token-usage-breakdown {
+.token-usage-supplement {
   display: flex;
   flex-direction: column;
-  gap: 6px 10px;
-  padding-top: 2px;
+  padding: 0 4px;
 }
 
-.token-usage-breakdown-row {
+.token-usage-supplement-row {
   min-width: 0;
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
-  gap: 6px;
-  font-size: 12px;
+  gap: 10px;
+  padding: 5px 0;
+  border-bottom: 1px solid var(--gray-100);
+  font-size: 11px;
   color: var(--gray-500);
-  flex-wrap: wrap;
 }
 
-.token-usage-breakdown-row span,
-.token-usage-breakdown-row strong {
+.token-usage-supplement-row:last-child {
+  border-bottom: 0;
+}
+
+.token-usage-supplement-row span,
+.token-usage-supplement-row strong {
   min-width: 0;
-  white-space: normal;
 }
 
-.token-usage-breakdown-row strong {
-  flex: 1 1 100%;
+.token-usage-supplement-row strong {
   color: var(--gray-800);
   font-weight: 600;
   font-variant-numeric: tabular-nums;
-  line-height: 1.35;
-  word-break: break-word;
+  text-align: right;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .token-usage-context-fill,
+  .token-usage-stack-segment,
+  .state-section-chevron {
+    transition: none;
+  }
 }
 
 .todo-panel-list {

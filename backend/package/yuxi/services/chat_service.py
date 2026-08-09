@@ -1007,7 +1007,11 @@ async def stream_agent_chat(
                             request_id=meta.get("request_id"),
                         )
                         meta["time_cost"] = asyncio.get_event_loop().time() - start_time
-                        yield make_chunk(status="interrupted", message="检测到敏感内容，已中断输出", meta=meta)
+                        yield make_chunk(
+                            status="interrupted",
+                            message="检测到敏感内容，已中断输出",
+                            meta=meta,
+                        )
                         return
 
                 yield make_chunk(
@@ -1032,7 +1036,11 @@ async def stream_agent_chat(
                 request_id=meta.get("request_id"),
             )
             meta["time_cost"] = asyncio.get_event_loop().time() - start_time
-            yield make_chunk(status="interrupted", message="检测到敏感内容，已中断输出", meta=meta)
+            yield make_chunk(
+                status="interrupted",
+                message="检测到敏感内容，已中断输出",
+                meta=meta,
+            )
             return
 
         interrupted = False
@@ -1102,7 +1110,11 @@ async def stream_agent_chat(
         except Exception as exc:
             logger.error(f"Error during cleanup save: {exc}")
 
-        yield make_chunk(status="interrupted", message="对话已中断", meta=meta)
+        yield make_chunk(
+            status="interrupted",
+            message="对话已中断",
+            meta=meta,
+        )
 
     except Exception as e:
         logger.exception(f"Error streaming messages: {e}")
@@ -1125,7 +1137,12 @@ async def stream_agent_chat(
                 request_id=meta.get("request_id"),
             )
 
-        yield make_chunk(status="error", error_type=error_type, error_message=error_msg, meta=meta)
+        yield make_chunk(
+            status="error",
+            error_type=error_type,
+            error_message=error_msg,
+            meta=meta,
+        )
     finally:
         flush_langfuse()
 
@@ -1320,7 +1337,11 @@ async def stream_agent_resume(
                 request_id=meta.get("request_id"),
             )
 
-        yield make_resume_chunk(status="interrupted", message="对话恢复已中断", meta=meta)
+        yield make_resume_chunk(
+            status="interrupted",
+            message="对话恢复已中断",
+            meta=meta,
+        )
 
     except Exception as e:
         logger.exception(f"Error during resume: {e}")
@@ -1337,7 +1358,10 @@ async def stream_agent_resume(
                 request_id=meta.get("request_id"),
             )
 
-        yield make_resume_chunk(message=f"Error during resume: {e}", status="error")
+        yield make_resume_chunk(
+            message=f"Error during resume: {e}",
+            status="error",
+        )
     finally:
         flush_langfuse()
 

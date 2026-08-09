@@ -109,3 +109,36 @@ async def test_create_run_persists_origin_snapshot(session):
     assert run.channel == "api"
     assert run.external_id == "external-1"
     assert run.origin_metadata == {"agent_invocation_meta": {"trace_id": "trace-1"}}
+
+
+async def test_set_terminal_status_persists_token_usage_only_for_winner(session):
+    repo = AgentRunRepository(session)
+    run = await repo.create_run(
+        run_id="usage-run",
+        conversation_thread_id="thread-1",
+        agent_slug="main",
+        uid="user-1",
+        request_id="usage-request",
+        input_payload={},
+    )
+    usage = {
+        "schema_version": 2,
+        "models": {"provider:model": {}},
+        "total": {"input_tokens": 10, "output_tokens": 2, "total_tokens": 12},
+    }
+
+    persisted, changed = await repo.set_terminal_status(
+        run.id,
+        status="completed",
+        token_usage=usage,
+    )
+    loser, loser_changed = await repo.set_terminal_status(
+        run.id,
+        status="failed",
+        token_usage={"total": {"input_tokens": 999}},
+    )
+
+    assert changed is True
+    assert persisted.token_usage == usage
+    assert loser_changed is False
+    assert loser.token_usage == usage
