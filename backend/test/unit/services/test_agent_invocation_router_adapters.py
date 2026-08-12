@@ -74,6 +74,7 @@ async def test_agent_call_adapter_waits_and_wraps_result(monkeypatch: pytest.Mon
             "request_id": "req-1",
             "token_usage": {
                 "schema_version": 2,
+                "complete": True,
                 "models": {"provider:model": {}},
                 "total": {"input_tokens": 3, "output_tokens": 2, "total_tokens": 5},
             },
@@ -103,6 +104,23 @@ def test_agent_call_response_keeps_unavailable_usage_distinct_from_zero():
             "status": "completed",
             "agent_run_id": "run-1",
             "token_usage": {"available": False},
+        }
+    )
+
+    assert result["usage"] is None
+
+
+def test_agent_call_response_rejects_partial_usage():
+    result = call_router._build_agent_call_response(
+        {
+            "status": "completed",
+            "agent_run_id": "run-1",
+            "token_usage": {
+                "complete": False,
+                "model_call_count": 2,
+                "usage_reported_call_count": 1,
+                "total": {"input_tokens": 3, "output_tokens": 2, "total_tokens": 5},
+            },
         }
     )
 

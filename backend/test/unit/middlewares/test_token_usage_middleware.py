@@ -58,6 +58,17 @@ def _response(
     )
 
 
+def _response_without_usage(*, response_model: str):
+    return ModelResponse(
+        result=[
+            AIMessage(
+                content="answer",
+                response_metadata={"model_name": response_model, "model_provider": "openai"},
+            )
+        ]
+    )
+
+
 @pytest.mark.asyncio
 async def test_token_usage_middleware_records_context_and_run_usage() -> None:
     middleware = TokenUsageMiddleware()
@@ -89,6 +100,7 @@ async def test_token_usage_middleware_records_context_and_run_usage() -> None:
         "output_token_details": {"reasoning": 3},
     }
     assert bucket["cache_hit_ratio"] == 0.6667
+    assert token_usage["run"]["complete"] is True
     assert token_usage["run"]["total"] == {"input_tokens": 12, "output_tokens": 5, "total_tokens": 17}
     assert token_usage["thread"] == token_usage["run"]
 
@@ -123,6 +135,54 @@ async def test_token_usage_middleware_groups_multiple_models_within_one_run() ->
     bucket_b = token_usage["run"]["models"]["provider-b:model-b"]
     assert bucket_b["cache_observed_call_count"] == 0
     assert bucket_b["cache_hit_ratio"] is None
+    assert token_usage["run"]["complete"] is True
+
+
+@pytest.mark.asyncio
+async def test_token_usage_middleware_marks_missing_usage_incomplete() -> None:
+    middleware = TokenUsageMiddleware()
+    request = _request(run_id="run-1", model_spec="provider-a:model-a")
+    initialized = middleware.before_agent(request.state, request.runtime)
+    request.state["token_usage"] = initialized["token_usage"]
+
+    async def handler(_request):
+        return _response_without_usage(response_model="model-a")
+
+    result = await middleware.awrap_model_call(request, handler)
+    aggregate = result.command.update["token_usage"]["run"]
+
+    assert aggregate["model_call_count"] == 1
+    assert aggregate["usage_reported_call_count"] == 0
+    assert aggregate["complete"] is False
+
+
+@pytest.mark.asyncio
+async def test_token_usage_middleware_marks_partial_usage_incomplete() -> None:
+    middleware = TokenUsageMiddleware()
+    first_request = _request(run_id="run-1", model_spec="provider-a:model-a")
+    initialized = middleware.before_agent(first_request.state, first_request.runtime)
+    first_request.state["token_usage"] = initialized["token_usage"]
+
+    async def first_handler(_request):
+        return _response(input_tokens=10, output_tokens=2, cache_read=None, response_model="model-a")
+
+    first = await middleware.awrap_model_call(first_request, first_handler)
+    second_request = _request(
+        run_id="run-1",
+        model_spec="provider-a:model-a",
+        state={"messages": [], "token_usage": first.command.update["token_usage"]},
+    )
+
+    async def second_handler(_request):
+        return _response_without_usage(response_model="model-a")
+
+    second = await middleware.awrap_model_call(second_request, second_handler)
+    aggregate = second.command.update["token_usage"]["run"]
+
+    assert aggregate["model_call_count"] == 2
+    assert aggregate["usage_reported_call_count"] == 1
+    assert aggregate["total"] == {"input_tokens": 10, "output_tokens": 2, "total_tokens": 12}
+    assert aggregate["complete"] is False
 
 
 @pytest.mark.asyncio
@@ -314,5 +374,8 @@ async def test_token_usage_middleware_skips_blacklisted_siliconflow_usage() -> N
     assert token_usage["llm_input_tokens"] > 0
     assert token_usage["latest"] is None
     assert token_usage["run"]["models"] == {}
+    assert token_usage["run"]["model_call_count"] == 1
+    assert token_usage["run"]["usage_unavailable_call_count"] == 1
+    assert token_usage["run"]["complete"] is False
     assert token_usage["run"]["total"] == {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
     assert token_usage["thread"]["models"] == {}

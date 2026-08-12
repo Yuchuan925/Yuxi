@@ -231,6 +231,8 @@ def _empty_aggregate() -> dict[str, Any]:
         "schema_version": 2,
         "model_call_count": 0,
         "usage_reported_call_count": 0,
+        "usage_unavailable_call_count": 0,
+        "complete": False,
         "models": {},
         "total": dict(ZERO_TOTAL),
     }
@@ -245,6 +247,8 @@ def _aggregate_from_state(value: Any) -> dict[str, Any]:
         "schema_version": 2,
         "model_call_count": _safe_int(value.get("model_call_count")) or 0,
         "usage_reported_call_count": _safe_int(value.get("usage_reported_call_count")) or 0,
+        "usage_unavailable_call_count": _safe_int(value.get("usage_unavailable_call_count")) or 0,
+        "complete": value.get("complete") is True,
         "models": {str(key): dict(bucket) for key, bucket in models.items() if isinstance(bucket, Mapping)}
         if isinstance(models, Mapping)
         else {},
@@ -255,13 +259,19 @@ def _aggregate_from_state(value: Any) -> dict[str, Any]:
 def _recompute_aggregate_totals(aggregate: dict[str, Any]) -> None:
     """根据当前 models 重算聚合级计数和 total。"""
     models = aggregate["models"]
-    aggregate["model_call_count"] = sum(
+    model_call_count = sum(
         _safe_int(bucket.get("model_call_count")) or 0 for bucket in models.values() if isinstance(bucket, Mapping)
     )
-    aggregate["usage_reported_call_count"] = sum(
+    usage_reported_call_count = sum(
         _safe_int(bucket.get("usage_reported_call_count")) or 0
         for bucket in models.values()
         if isinstance(bucket, Mapping)
+    )
+    usage_unavailable_call_count = _safe_int(aggregate.get("usage_unavailable_call_count")) or 0
+    aggregate["model_call_count"] = model_call_count + usage_unavailable_call_count
+    aggregate["usage_reported_call_count"] = usage_reported_call_count
+    aggregate["complete"] = aggregate["model_call_count"] > 0 and (
+        usage_reported_call_count == aggregate["model_call_count"]
     )
     total = dict(ZERO_TOTAL)
     for bucket in models.values():
@@ -273,6 +283,14 @@ def _recompute_aggregate_totals(aggregate: dict[str, Any]) -> None:
         for key in total:
             total[key] += _safe_int(bucket_usage.get(key)) or 0
     aggregate["total"] = total
+
+
+def _add_unavailable_call(aggregate: Mapping[str, Any]) -> dict[str, Any]:
+    """记录一次无法获得可信 Provider usage 的模型调用。"""
+    result = _aggregate_from_state(aggregate)
+    result["usage_unavailable_call_count"] += 1
+    _recompute_aggregate_totals(result)
+    return result
 
 
 def _without_blacklisted_providers(aggregate: Mapping[str, Any]) -> dict[str, Any]:
@@ -476,6 +494,9 @@ class TokenUsageMiddleware(AgentMiddleware[TokenUsageState]):
                 "cache_hit_ratio": (_ratio(cache_read_tokens, input_tokens) if cache_read_tokens is not None else None),
                 "measured_at": measured_at,
             }
+        else:
+            run_usage = _add_unavailable_call(run_usage)
+            thread_usage = _add_unavailable_call(thread_usage)
 
         return {
             "state_message_count": len(next_state_messages),

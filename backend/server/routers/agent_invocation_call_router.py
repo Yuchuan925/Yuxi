@@ -213,9 +213,7 @@ def _build_agent_call_response(result: dict[str, Any]) -> dict[str, Any]:
     output = result.get("output") if isinstance(result.get("output"), str) else ""
     token_usage = result.get("token_usage")
     token_total = (
-        token_usage.get("total")
-        if isinstance(token_usage, dict) and token_usage.get("available") is not False
-        else None
+        token_usage.get("total") if isinstance(token_usage, dict) and token_usage.get("complete") is True else None
     )
     payload: dict[str, Any] = {
         "run_id": result.get("agent_run_id") or result.get("run_id"),
