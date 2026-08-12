@@ -97,6 +97,18 @@ async def test_agent_call_adapter_waits_and_wraps_result(monkeypatch: pytest.Mon
     assert calls["await"] == ("run-1", "user-1")
 
 
+def test_agent_call_response_keeps_unavailable_usage_distinct_from_zero():
+    result = call_router._build_agent_call_response(
+        {
+            "status": "completed",
+            "agent_run_id": "run-1",
+            "token_usage": {"available": False},
+        }
+    )
+
+    assert result["usage"] is None
+
+
 @pytest.mark.asyncio
 async def test_agent_call_adapter_rejects_invalid_sync_policy():
     with pytest.raises(HTTPException) as exc:

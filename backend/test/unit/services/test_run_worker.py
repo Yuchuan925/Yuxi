@@ -249,6 +249,36 @@ async def test_read_run_token_usage_from_state_rejects_other_run(monkeypatch: py
 
 
 @pytest.mark.asyncio
+async def test_finish_run_marks_usage_unavailable_when_state_read_fails(monkeypatch: pytest.MonkeyPatch):
+    terminal_calls: list[dict] = []
+
+    async def fake_read_usage(**kwargs):
+        del kwargs
+        return None
+
+    async def fake_mark_terminal(run_id: str, status: str, **kwargs):
+        terminal_calls.append({"run_id": run_id, "status": status, **kwargs})
+        return run_worker.TerminalTransition(status=status, changed=True)
+
+    async def fake_append_end_event(*args, **kwargs):
+        del args, kwargs
+
+    monkeypatch.setattr(run_worker, "_read_run_token_usage_from_state", fake_read_usage)
+    monkeypatch.setattr(run_worker, "mark_run_terminal", fake_mark_terminal)
+    monkeypatch.setattr(run_worker, "_append_end_event", fake_append_end_event)
+
+    await run_worker._finish_run(
+        "run-1",
+        "completed",
+        thread_id="thread-1",
+        chunk={"status": "finished"},
+        current_user=SimpleNamespace(uid="user-1"),
+    )
+
+    assert terminal_calls[0]["token_usage"] == {"available": False}
+
+
+@pytest.mark.asyncio
 async def test_process_agent_run_publishes_interrupt_after_final_state(monkeypatch: pytest.MonkeyPatch):
     """审批中断必须在最终状态落流后结束，避免前端过早刷新历史。"""
     run_obj = _build_run()

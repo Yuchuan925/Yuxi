@@ -304,7 +304,7 @@ async def _finish_run(
     error_type: str | None = None,
     error_message: str | None = None,
 ) -> TerminalTransition:
-    token_usage = {}
+    token_usage = {"available": False}
     if thread_id:
         state_token_usage = await _read_run_token_usage_from_state(
             run_id=run_id,
@@ -600,7 +600,7 @@ async def process_agent_run(ctx, run_id: str):
             "cancelled",
             error_type="cancelled",
             error_message="对话已取消",
-            token_usage=state_token_usage or {},
+            token_usage=state_token_usage or {"available": False},
         )
         if transition.changed:
             await append_run_event(

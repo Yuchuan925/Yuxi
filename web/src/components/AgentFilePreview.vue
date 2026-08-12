@@ -143,11 +143,7 @@
         </div>
       </template>
       <template v-else-if="file?.previewType === 'pdf' && file?.previewUrl">
-        <iframe
-          :src="`${file.previewUrl}#view=FitH&toolbar=0`"
-          class="pdf-preview"
-          :title="filePath"
-        />
+        <iframe :src="file.previewUrl" class="pdf-preview" :title="filePath" />
       </template>
       <template v-else-if="isHtmlFile && htmlPreviewMode === 'render'">
         <iframe
@@ -227,7 +223,7 @@
             </template>
             <template v-else-if="file?.previewType === 'pdf' && file?.previewUrl">
               <iframe
-                :src="`${file.previewUrl}#view=FitH&toolbar=0`"
+                :src="file.previewUrl"
                 class="pdf-preview fullscreen-embed-preview"
                 :title="filePath"
               />
@@ -271,7 +267,16 @@
 
 <script setup>
 import { computed, onUnmounted, ref, watch } from 'vue'
-import { Code2, Download, Globe, Maximize, PanelRight, FilePen, Save, X } from 'lucide-vue-next'
+import {
+  Code2,
+  Download,
+  Globe,
+  Maximize,
+  PanelRight,
+  FilePen,
+  Save,
+  X
+} from 'lucide-vue-next'
 import hljs from 'highlight.js/lib/common'
 import MarkdownPreview from '@/components/common/MarkdownPreview.vue'
 import FileTypeIcon from '@/components/common/FileTypeIcon.vue'
