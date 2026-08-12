@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
-from sqlalchemy import and_, select
+from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from yuxi.storage.postgres.models_business import AGENT_RUN_TERMINAL_STATUSES, AgentRun, SubagentThread
 from yuxi.utils.datetime_utils import utc_now_naive
 
 TERMINAL_RUN_STATUSES = set(AGENT_RUN_TERMINAL_STATUSES)
+
+TOP_LEVEL_RUN_TYPES = ("chat", "resume")
 
 
 class AgentRunRepository:
@@ -105,12 +107,44 @@ class AgentRunRepository:
                 AgentRun.uid == str(uid),
                 AgentRun.agent_slug == agent_slug,
                 AgentRun.conversation_thread_id == conversation_thread_id,
-                AgentRun.run_type.in_(["chat", "resume"]),
+                AgentRun.run_type.in_(TOP_LEVEL_RUN_TYPES),
             )
             .order_by(AgentRun.created_at.desc(), AgentRun.id.desc())
             .limit(1)
         )
         return result.scalar_one_or_none()
+
+    async def get_latest_top_level_runs_for_threads(
+        self, uid: str, conversation_thread_ids: list[str]
+    ) -> dict[str, tuple[str, str]]:
+        """批量读取各线程最新顶层 chat/resume run，返回 thread_id -> (run_id, status)。
+
+        使用窗口函数一次查询完成，避免对每个线程执行 N+1 查询。
+        """
+        if not conversation_thread_ids:
+            return {}
+
+        ranked = (
+            select(
+                AgentRun.id,
+                AgentRun.status,
+                AgentRun.conversation_thread_id,
+                func.row_number()
+                .over(
+                    partition_by=AgentRun.conversation_thread_id,
+                    order_by=(AgentRun.created_at.desc(), AgentRun.id.desc()),
+                )
+                .label("rn"),
+            )
+            .where(
+                AgentRun.uid == str(uid),
+                AgentRun.conversation_thread_id.in_(conversation_thread_ids),
+                AgentRun.run_type.in_(TOP_LEVEL_RUN_TYPES),
+            )
+            .subquery()
+        )
+        result = await self.db.execute(select(ranked).where(ranked.c.rn == 1))
+        return {row.conversation_thread_id: (row.id, row.status) for row in result.all()}
 
     async def list_child_runs_for_user(self, created_by_run_id: str, uid: str) -> list[AgentRun]:
         """列出由指定 run 创建的所有子 run。"""

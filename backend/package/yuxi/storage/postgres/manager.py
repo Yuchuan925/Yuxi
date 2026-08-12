@@ -518,6 +518,19 @@ class PostgresManager(metaclass=SingletonMeta):
             "ALTER TABLE IF EXISTS skills ADD COLUMN IF NOT EXISTS enabled BOOLEAN NOT NULL DEFAULT TRUE",
             "ALTER TABLE IF EXISTS skills ADD COLUMN IF NOT EXISTS content_hash VARCHAR(128)",
             "ALTER TABLE IF EXISTS conversations ADD COLUMN IF NOT EXISTS is_pinned BOOLEAN NOT NULL DEFAULT FALSE",
+            "ALTER TABLE IF EXISTS conversations ADD COLUMN IF NOT EXISTS last_viewed_run_id VARCHAR(64)",
+            (
+                # 一次性回填：历史线程按各自最新顶层 Run 视为已读，仅处理 NULL；
+                # 新建线程由 repository 写入哨兵值，不受本回填影响。
+                "UPDATE conversations c SET last_viewed_run_id = r.run_id "
+                "FROM ("
+                "  SELECT DISTINCT ON (conversation_thread_id) conversation_thread_id AS thread_id, id AS run_id "
+                "  FROM agent_runs "
+                "  WHERE run_type IN ('chat', 'resume') "
+                "  ORDER BY conversation_thread_id, created_at DESC, id DESC"
+                ") r "
+                "WHERE c.thread_id = r.thread_id AND c.last_viewed_run_id IS NULL"
+            ),
             "ALTER TABLE IF EXISTS mcp_servers ADD COLUMN IF NOT EXISTS env JSONB",
             """
             CREATE TABLE IF NOT EXISTS agent_envs (

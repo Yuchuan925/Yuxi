@@ -19,6 +19,20 @@
           >
             <span class="conversation-title">{{ chat.title || '新的对话' }}</span>
             <span class="actions-mask"></span>
+            <span
+              v-if="chat.thread_status === 'loading'"
+              class="thread-status thread-status-loading"
+              role="status"
+              title="正在运行"
+            >
+              <Loader2 :size="12" />
+            </span>
+            <span
+              v-else-if="chat.thread_status === 'ready'"
+              class="thread-status thread-status-ready"
+              role="status"
+              title="有新回复"
+            ></span>
             <span class="conversation-actions" @click.stop @dblclick.stop>
               <a-dropdown :trigger="['click']">
                 <template #overlay>
@@ -75,7 +89,7 @@
 <script setup>
 import { computed, h, ref } from 'vue'
 import { message, Modal } from 'ant-design-vue'
-import { ChevronDown, MoreVertical, Pin, PinOff, SquarePen, Trash2 } from 'lucide-vue-next'
+import { ChevronDown, Loader2, MoreVertical, Pin, PinOff, SquarePen, Trash2 } from 'lucide-vue-next'
 import { parseToShanghai } from '@/utils/time'
 
 const props = defineProps({
@@ -242,6 +256,36 @@ const renameChat = async (chatId) => {
   white-space: nowrap;
 }
 
+.thread-status {
+  position: absolute;
+  top: 50%;
+  right: 16px;
+  display: inline-flex;
+  align-items: center;
+  color: var(--main-color);
+  pointer-events: none;
+  transform: translateY(-50%) translateX(50%);
+}
+
+.thread-status-loading {
+  :deep(svg) {
+    animation: thread-status-spin 1s linear infinite;
+  }
+}
+
+.thread-status-ready {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--main-color);
+}
+
+@keyframes thread-status-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .history-panel {
   display: flex;
   min-height: 0;
@@ -311,7 +355,7 @@ const renameChat = async (chatId) => {
     }
 
     .actions-mask {
-      background: linear-gradient(to right, transparent, var(--gray-50));
+      background: linear-gradient(to right, transparent, var(--gray-50) 28px);
     }
 
     .more-btn {
@@ -319,6 +363,10 @@ const renameChat = async (chatId) => {
     }
 
     .pinned-indicator {
+      display: none;
+    }
+
+    .thread-status {
       display: none;
     }
   }
@@ -336,7 +384,7 @@ const renameChat = async (chatId) => {
       background: linear-gradient(
         to right,
         transparent,
-        color-mix(in srgb, var(--main-color) 8%, var(--gray-0)) 20px
+        color-mix(in srgb, var(--main-color) 8%, var(--gray-0)) 28px
       );
     }
   }
@@ -355,7 +403,7 @@ const renameChat = async (chatId) => {
   right: 0;
   bottom: 0;
   width: 56px;
-  background: linear-gradient(to right, transparent, var(--main-5) 20px);
+  background: linear-gradient(to right, transparent, var(--main-5) 28px);
   opacity: 0;
   pointer-events: none;
   transition: opacity 0.2s ease;

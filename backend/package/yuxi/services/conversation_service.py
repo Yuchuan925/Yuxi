@@ -15,11 +15,12 @@ from yuxi.agents.buildin import agent_manager
 from yuxi.config import config as app_config
 from yuxi.knowledge.parser.factory import DocumentProcessorFactory
 from yuxi.repositories.agent_repository import AgentRepository
+from yuxi.repositories.agent_run_repository import AgentRunRepository
 from yuxi.repositories.conversation_repository import INVOCATION_CONVERSATION_SOURCES, ConversationRepository
 from yuxi.services.mention_search_service import invalidate_mention_cache
 from yuxi.services.ocr_service import parse_document
 from yuxi.storage.minio import StorageError, get_minio_client
-from yuxi.storage.postgres.models_business import AgentRun, User
+from yuxi.storage.postgres.models_business import AGENT_RUN_TERMINAL_STATUSES, AgentRun, User
 from yuxi.utils.datetime_utils import format_utc_datetime, utc_isoformat
 from yuxi.utils.logging_config import logger
 from yuxi.utils.paths import VIRTUAL_PATH_UPLOADS
@@ -51,6 +52,34 @@ def _ensure_workdir() -> Path:
     workdir = Path(app_config.save_dir) / "uploads" / "chat_attachments"
     workdir.mkdir(parents=True, exist_ok=True)
     return workdir
+
+
+def _thread_status(run_id: str | None, run_status: str | None, last_viewed_run_id: str | None) -> str:
+    """将线程最新顶层 run 与查看记录映射为侧边栏三态。
+
+    loading: 顶层 run 进行中；ready: run 已终态且未查看；done: 无 run 或已查看。
+    """
+    if run_id is None:
+        return "done"
+    if run_status not in AGENT_RUN_TERMINAL_STATUSES:
+        return "loading"
+    if run_id == last_viewed_run_id:
+        return "done"
+    return "ready"
+
+
+def _serialize_thread(conversation: Any, *, thread_status: str) -> dict:
+    return {
+        "id": conversation.thread_id,
+        "uid": conversation.uid,
+        "agent_id": conversation.agent_id,
+        "title": conversation.title,
+        "is_pinned": bool(conversation.is_pinned),
+        "created_at": conversation.created_at.isoformat(),
+        "updated_at": conversation.updated_at.isoformat(),
+        "metadata": conversation.extra_metadata or {},
+        "thread_status": thread_status,
+    }
 
 
 async def _write_upload_to_disk(upload: UploadFile, dest: Path) -> int:
@@ -436,15 +465,7 @@ async def create_thread_view(
         metadata=thread_metadata,
     )
 
-    return {
-        "id": conversation.thread_id,
-        "uid": conversation.uid,
-        "agent_id": conversation.agent_id,
-        "title": conversation.title,
-        "created_at": conversation.created_at.isoformat(),
-        "updated_at": conversation.updated_at.isoformat(),
-        "metadata": conversation.extra_metadata or {},
-    }
+    return _serialize_thread(conversation, thread_status="done")
 
 
 async def list_threads_view(
@@ -465,17 +486,18 @@ async def list_threads_view(
         exclude_sources=INVOCATION_CONVERSATION_SOURCES,
     )
 
+    run_repo = AgentRunRepository(db)
+    thread_ids = [conv.thread_id for conv in conversations]
+    run_map = await run_repo.get_latest_top_level_runs_for_threads(str(current_uid), thread_ids)
+
     return [
-        {
-            "id": conv.thread_id,
-            "uid": conv.uid,
-            "agent_id": conv.agent_id,
-            "title": conv.title,
-            "is_pinned": bool(conv.is_pinned),
-            "created_at": conv.created_at.isoformat(),
-            "updated_at": conv.updated_at.isoformat(),
-            "metadata": conv.extra_metadata or {},
-        }
+        _serialize_thread(
+            conv,
+            thread_status=_thread_status(
+                *run_map.get(conv.thread_id, (None, None)),
+                conv.last_viewed_run_id,
+            ),
+        )
         for conv in conversations
     ]
 
@@ -569,16 +591,38 @@ async def update_thread_view(
     )
     if not updated_conv:
         raise HTTPException(status_code=500, detail="更新失败")
-    return {
-        "id": updated_conv.thread_id,
-        "uid": updated_conv.uid,
-        "agent_id": updated_conv.agent_id,
-        "title": updated_conv.title,
-        "is_pinned": bool(updated_conv.is_pinned),
-        "created_at": updated_conv.created_at.isoformat(),
-        "updated_at": updated_conv.updated_at.isoformat(),
-        "metadata": updated_conv.extra_metadata or {},
-    }
+
+    run_repo = AgentRunRepository(db)
+    run_map = await run_repo.get_latest_top_level_runs_for_threads(str(current_uid), [updated_conv.thread_id])
+    run_id, run_status = run_map.get(updated_conv.thread_id, (None, None))
+
+    return _serialize_thread(
+        updated_conv,
+        thread_status=_thread_status(run_id, run_status, updated_conv.last_viewed_run_id),
+    )
+
+
+async def mark_thread_viewed_view(
+    *,
+    thread_id: str,
+    db: AsyncSession,
+    current_uid: str,
+) -> dict:
+    """记录用户已查看该线程的最新顶层 run，使未读状态转为已读。"""
+    conv_repo = ConversationRepository(db)
+    conversation = await require_user_conversation(conv_repo, thread_id, str(current_uid))
+
+    run_repo = AgentRunRepository(db)
+    run_map = await run_repo.get_latest_top_level_runs_for_threads(str(current_uid), [thread_id])
+    run_id, run_status = run_map.get(thread_id, (None, None))
+
+    if run_id and run_status in AGENT_RUN_TERMINAL_STATUSES:
+        conversation = await conv_repo.mark_thread_viewed(thread_id, run_id)
+
+    return _serialize_thread(
+        conversation,
+        thread_status=_thread_status(run_id, run_status, conversation.last_viewed_run_id),
+    )
 
 
 async def upload_tmp_attachment_view(*, file: UploadFile, current_uid: str) -> dict:

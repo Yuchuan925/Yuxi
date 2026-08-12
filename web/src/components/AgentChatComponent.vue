@@ -2562,12 +2562,19 @@ const { startRunStream, resumeActiveRunForThread, stopRunStreamSubscription } = 
   onInterruptDetected: ({ threadId }) => {
     restorePendingInterruptForThread(threadId)
     void resumeQueuedRequestsForThread(threadId)
+    void chatThreadsStore.markThreadViewed(threadId)
   },
-  onTerminalDetected: ({ threadId, touchedThreadIds = [] }) => {
+  onTerminalDetected: ({ threadId, runId, touchedThreadIds = [] }) => {
     if (approvalState.threadId === threadId || touchedThreadIds.includes(approvalState.threadId)) {
       hideApprovalState()
     }
     void resumeQueuedRequestsForThread(threadId)
+    if (runId) {
+      void chatThreadsStore.markThreadViewed(threadId)
+    }
+  },
+  onRunStarted: ({ threadId }) => {
+    chatThreadsStore.setThreadStatus(threadId, 'loading')
   }
 })
 const {
@@ -2708,6 +2715,7 @@ const selectChat = async (chatId) => {
   chatUIStore.isLoadingMessages = true
   try {
     await fetchThreadMessages({ agentId: targetAgentId, threadId: chatId })
+    void chatThreadsStore.markThreadViewed(chatId)
   } catch (error) {
     handleChatError(error, 'load')
   } finally {
