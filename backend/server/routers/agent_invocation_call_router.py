@@ -229,7 +229,7 @@ def _build_agent_call_response(result: dict[str, Any]) -> dict[str, Any]:
                 "finish_reason": _finish_reason(status),
             }
         ],
-        "usage": _normalize_usage(token_total or result.get("usage")),
+        "usage": _normalize_usage(token_total),
     }
     if result.get("error"):
         payload["error"] = result["error"]

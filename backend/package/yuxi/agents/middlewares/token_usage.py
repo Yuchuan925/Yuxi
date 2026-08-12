@@ -123,6 +123,7 @@ def _is_tool_message(message: AnyMessage) -> bool:
 
 
 def _ai_message_from_response(response: ModelResponse) -> AIMessage | None:
+    """从模型响应结果中取最后一条 AIMessage。"""
     for message in reversed(response.result):
         if isinstance(message, AIMessage):
             return message
@@ -130,6 +131,7 @@ def _ai_message_from_response(response: ModelResponse) -> AIMessage | None:
 
 
 def _model_usage_from_response(response: ModelResponse) -> dict[str, Any] | None:
+    """提取响应中 AIMessage 携带的原始 usage_metadata。"""
     message = _ai_message_from_response(response)
     usage = getattr(message, "usage_metadata", None) if message else None
     return dict(usage) if isinstance(usage, Mapping) else None
@@ -161,6 +163,7 @@ def _usage_for_accumulation(usage: Mapping[str, Any] | None) -> UsageMetadata | 
 
 
 def _model_identity(request: ModelRequest, response: ModelResponse) -> dict[str, str]:
+    """依次从模型元数据、运行时上下文配置的 model spec、model_cache 和响应元数据解析模型身份信息。"""
     model_metadata = getattr(request.model, "metadata", None) or {}
     runtime_context = getattr(request.runtime, "context", None)
     configured_spec = getattr(runtime_context, "model", None)
@@ -206,11 +209,13 @@ def _model_identity(request: ModelRequest, response: ModelResponse) -> dict[str,
 
 
 def _usage_input_tokens(usage: Mapping[str, Any] | None) -> int:
+    """读取 usage 中的 input_tokens，缺失或非法时返回 0。"""
     value = usage.get("input_tokens") if usage else None
     return value if isinstance(value, int) and not isinstance(value, bool) else 0
 
 
 def _cache_read_tokens(usage: Mapping[str, Any] | None) -> int | None:
+    """按优先级从 input_token_details 中读取缓存命中 token 数，未观测到缓存字段时返回 None。"""
     details = usage.get("input_token_details") if usage else None
     if not isinstance(details, Mapping):
         return None
@@ -223,10 +228,12 @@ def _cache_read_tokens(usage: Mapping[str, Any] | None) -> int | None:
 
 
 def _ratio(numerator: int, denominator: int) -> float | None:
+    """计算比例，分母为 0 时返回 None 而非抛出除零异常。"""
     return round(numerator / denominator, 4) if denominator > 0 else None
 
 
 def _empty_aggregate() -> dict[str, Any]:
+    """构造一个空的 v2 聚合结构，作为 Run/Thread 用量的初始状态。"""
     return {
         "schema_version": 2,
         "model_call_count": 0,
@@ -239,6 +246,7 @@ def _empty_aggregate() -> dict[str, Any]:
 
 
 def _aggregate_from_state(value: Any) -> dict[str, Any]:
+    """校验并规整从 state 读取的聚合结构，schema_version 不匹配时回退为空聚合。"""
     if not isinstance(value, Mapping) or value.get("schema_version") != 2:
         return _empty_aggregate()
     models = value.get("models")
@@ -309,6 +317,7 @@ def _without_blacklisted_providers(aggregate: Mapping[str, Any]) -> dict[str, An
 
 
 def _bucket_key(identity: Mapping[str, str], model: Any) -> tuple[str, str]:
+    """按优先级选取用量分桶 key：配置的 model spec > 响应携带的 model id > 适配器兜底标识。"""
     configured_spec = identity.get("configured_model_spec")
     if configured_spec:
         return configured_spec, "configured_metadata"
@@ -328,6 +337,7 @@ def _add_call_to_aggregate(
     identity: Mapping[str, str],
     usage: Mapping[str, Any] | None,
 ) -> dict[str, Any]:
+    """把一次模型调用的 usage 累加进指定分桶，同时更新缓存命中统计和聚合总计。"""
     result = _aggregate_from_state(aggregate)
     models = result["models"]
     previous_bucket = models.get(bucket_key)

@@ -200,6 +200,7 @@ async def _read_run_token_usage_from_state(*, run_id: str, thread_id: str, curre
                 thread_id=thread_id,
                 current_user=current_user,
                 db=db,
+                include_relations=False,
             )
     except Exception:
         logger.warning(f"Failed to read token usage from state for run {run_id}", exc_info=True)
