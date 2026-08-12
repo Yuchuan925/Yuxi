@@ -256,9 +256,7 @@ def _recompute_aggregate_totals(aggregate: dict[str, Any]) -> None:
     """根据当前 models 重算聚合级计数和 total。"""
     models = aggregate["models"]
     aggregate["model_call_count"] = sum(
-        _safe_int(bucket.get("model_call_count")) or 0
-        for bucket in models.values()
-        if isinstance(bucket, Mapping)
+        _safe_int(bucket.get("model_call_count")) or 0 for bucket in models.values() if isinstance(bucket, Mapping)
     )
     aggregate["usage_reported_call_count"] = sum(
         _safe_int(bucket.get("usage_reported_call_count")) or 0
