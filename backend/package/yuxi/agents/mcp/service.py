@@ -340,6 +340,9 @@ async def get_mcp_tools(
                     f"{len(all_processed_tools)} tools loaded."
                 )
 
+        except ExceptionGroup as e:
+            logger.warning(f"MCP server '{server_slug}' failed with group error: {e}")
+            return []
         except Exception as e:
             logger.exception(f"Failed to load tools from MCP server '{server_slug}': {e}")
             return []

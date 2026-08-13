@@ -614,6 +614,26 @@ async def process_agent_run(ctx, run_id: str):
             logger.info(f"Run cancelled: {run_id}")
         else:
             logger.info(f"Run cancellation ignored after terminal status: {run_id}, status={transition.status}")
+    except ExceptionGroup as e:
+        await writer.flush()
+        message = str(e)
+        logger.error(f"Run failed {run_id}: {message}")
+        error_chunk = {
+            "status": "error",
+            "error_type": "worker_error",
+            "error_message": message,
+            "request_id": request_id,
+            "retryable": False,
+        }
+        await append_run_event(
+            run_id,
+            "error",
+            {"chunk": error_chunk, "retryable": False},
+            thread_id=thread_id,
+        )
+        await mark_run_terminal(run_id, "failed", error_type="worker_error", error_message=message)
+        await _append_end_event(run_id, "failed", thread_id=thread_id, payload={"chunk": error_chunk})
+        return
     except Exception as e:
         await writer.flush()
         if _is_retryable_exception(e):
