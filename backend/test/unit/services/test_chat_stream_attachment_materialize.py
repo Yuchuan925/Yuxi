@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import io
-from pathlib import Path
 
 import pytest
 
 from yuxi.services import conversation_service as cs
+from yuxi.storage.filestore import LocalFileStore
 
 
 class _DummyUpload:
@@ -21,20 +21,18 @@ class _DummyUpload:
         return self._buffer.seek(offset)
 
 
-def test_build_attachment_storage_path_uses_thread_local_uploads_dir(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setattr(cs.app_config, "save_dir", str(tmp_path))
-
-    virtual_path, host_path = cs._build_attachment_storage_path(
+def test_build_attachment_storage_path_uses_thread_upload_key() -> None:
+    virtual_path, storage_key = cs._build_attachment_storage_path(
         uid="u-1",
         thread_id="t-1",
         file_name="demo.txt",
     )
 
     assert virtual_path == "/home/gem/user-data/uploads/attachments/demo.md"
-    assert host_path == tmp_path / "threads" / "t-1" / "user-data" / "uploads" / "attachments" / "demo.md"
+    assert storage_key == "threads/t-1/uploads/attachments/demo.md"
 
 
-def test_serialize_attachment_includes_original_file_fields() -> None:
+def test_serialize_attachment_includes_storage_keys() -> None:
     serialized = cs.serialize_attachment(
         {
             "file_id": "f-1",
@@ -42,27 +40,30 @@ def test_serialize_attachment_includes_original_file_fields() -> None:
             "file_type": "text/plain",
             "file_size": 5,
             "status": "parsed",
-            "uploaded_at": "2026-03-25T00:00:00+00:00",
             "path": "/home/gem/user-data/uploads/attachments/demo.md",
-            "artifact_url": "/api/chat/thread/t-1/artifacts/home/gem/user-data/uploads/attachments/demo.md",
-            "original_path": "/home/gem/user-data/uploads/demo.txt",
-            "original_artifact_url": "/api/chat/thread/t-1/artifacts/home/gem/user-data/uploads/demo.txt",
-            "minio_url": None,
+            "storage_key": "threads/t-1/uploads/attachments/demo.md",
+            "original_storage_key": "threads/t-1/uploads/demo.txt",
+            "markdown_storage_key": "threads/t-1/uploads/attachments/demo.md",
         }
     )
 
-    assert serialized["path"] == "/home/gem/user-data/uploads/attachments/demo.md"
-    assert serialized["original_path"] == "/home/gem/user-data/uploads/demo.txt"
-    assert serialized["original_artifact_url"] == "/api/chat/thread/t-1/artifacts/home/gem/user-data/uploads/demo.txt"
+    assert serialized["storage_key"] == "threads/t-1/uploads/attachments/demo.md"
+    assert serialized["original_storage_key"] == "threads/t-1/uploads/demo.txt"
+    assert serialized["markdown_storage_key"] == "threads/t-1/uploads/attachments/demo.md"
 
 
 @pytest.mark.asyncio
-async def test_materialize_attachment_files_keeps_original_file_when_markdown_conversion_unsupported(
-    tmp_path: Path,
+async def test_materialize_attachment_files_keeps_original_object_when_conversion_unsupported(
+    tmp_path,
     monkeypatch,
 ) -> None:
-    monkeypatch.setattr(cs.app_config, "save_dir", str(tmp_path))
+    store = LocalFileStore(tmp_path / "filestore")
+    monkeypatch.setattr(cs, "get_file_store", lambda: store)
 
+    async def _unsupported(_upload):
+        raise ValueError("unsupported")
+
+    monkeypatch.setattr(cs, "_convert_upload_to_markdown", _unsupported)
     upload = _DummyUpload(filename="demo.pdf", content_type="application/pdf", data=b"%PDF-test")
 
     result = await cs._materialize_attachment_files(
@@ -74,19 +75,18 @@ async def test_materialize_attachment_files_keeps_original_file_when_markdown_co
     )
 
     assert result["status"] == "uploaded"
-    assert result["path"] == "/home/gem/user-data/uploads/demo.pdf"
-    assert result["original_path"] == "/home/gem/user-data/uploads/demo.pdf"
-    assert (
-        tmp_path / "threads" / "t-1" / "user-data" / "uploads" / "demo.pdf"
-    ).read_bytes() == b"%PDF-test"
+    assert result["storage_key"] == "threads/t-1/uploads/demo.pdf"
+    assert "storage_path" not in result
+    assert (await store.read(result["storage_key"])).data == b"%PDF-test"
 
 
 @pytest.mark.asyncio
-async def test_materialize_attachment_files_writes_markdown_copy_when_conversion_succeeds(
-    tmp_path: Path,
+async def test_materialize_attachment_files_writes_markdown_object_when_conversion_succeeds(
+    tmp_path,
     monkeypatch,
 ) -> None:
-    monkeypatch.setattr(cs.app_config, "save_dir", str(tmp_path))
+    store = LocalFileStore(tmp_path / "filestore")
+    monkeypatch.setattr(cs, "get_file_store", lambda: store)
 
     async def _fake_convert(_upload):
         return cs.ConversionResult(
@@ -99,7 +99,6 @@ async def test_materialize_attachment_files_writes_markdown_copy_when_conversion
         )
 
     monkeypatch.setattr(cs, "_convert_upload_to_markdown", _fake_convert)
-
     upload = _DummyUpload(filename="demo.txt", content_type="text/plain", data=b"hello")
 
     result = await cs._materialize_attachment_files(
@@ -111,11 +110,8 @@ async def test_materialize_attachment_files_writes_markdown_copy_when_conversion
     )
 
     assert result["status"] == "parsed"
-    assert result["path"] == "/home/gem/user-data/uploads/attachments/demo.md"
-    assert result["original_path"] == "/home/gem/user-data/uploads/demo.txt"
-    assert result["file_path"] == "/home/gem/user-data/uploads/attachments/demo.md"
-    assert result["markdown"] == "hello\nworld"
-    assert (tmp_path / "threads" / "t-1" / "user-data" / "uploads" / "demo.txt").read_bytes() == b"hello"
-    assert (
-        tmp_path / "threads" / "t-1" / "user-data" / "uploads" / "attachments" / "demo.md"
-    ).read_text(encoding="utf-8") == "hello\nworld"
+    assert result["storage_key"] == "threads/t-1/uploads/attachments/demo.md"
+    assert result["original_storage_key"] == "threads/t-1/uploads/demo.txt"
+    assert result["markdown_storage_key"] == "threads/t-1/uploads/attachments/demo.md"
+    assert (await store.read(result["original_storage_key"])).data == b"hello"
+    assert (await store.read(result["markdown_storage_key"])).data == b"hello\nworld"

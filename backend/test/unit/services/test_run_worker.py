@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 import yuxi.services.run_worker as run_worker
+from yuxi.config import options as config_options
 
 
 class _RaisingAsyncIter:
@@ -506,6 +507,9 @@ async def test_worker_startup_ensures_builtin_mcp_servers(monkeypatch: pytest.Mo
     async def fake_ensure_business_schema():
         calls.append("ensure_business_schema")
 
+    async def fake_setup_langgraph_checkpointer():
+        calls.append("setup_langgraph_checkpointer")
+
     async def fake_ensure_builtin_mcp_servers_in_db():
         calls.append("ensure_builtin_mcp_servers_in_db")
 
@@ -517,6 +521,19 @@ async def test_worker_startup_ensures_builtin_mcp_servers(monkeypatch: pytest.Mo
         del session
         calls.append("init_builtin_skills")
 
+    async def fake_ensure_options_in_db(session):
+        del session
+        calls.append("ensure_options_in_db")
+
+    async def fake_load_system_config_snapshot(session, config):
+        del session, config
+        calls.append("load_system_config")
+        return {}, ""
+
+    def fake_save_runtime_config(config, **_kwargs):
+        del config
+        calls.append("save_runtime_config")
+
     def fake_start_runtime_sync():
         calls.append("start_runtime_sync")
 
@@ -526,9 +543,17 @@ async def test_worker_startup_ensures_builtin_mcp_servers(monkeypatch: pytest.Mo
     monkeypatch.setattr(run_worker.pg_manager, "initialize", fake_initialize)
     monkeypatch.setattr(run_worker.pg_manager, "create_business_tables", fake_create_business_tables)
     monkeypatch.setattr(run_worker.pg_manager, "ensure_business_schema", fake_ensure_business_schema)
+    monkeypatch.setattr(
+        run_worker.pg_manager,
+        "setup_langgraph_checkpointer",
+        fake_setup_langgraph_checkpointer,
+    )
     monkeypatch.setattr(run_worker.pg_manager, "get_async_session_context", fake_session_ctx)
     monkeypatch.setattr(run_worker, "ensure_builtin_mcp_servers_in_db", fake_ensure_builtin_mcp_servers_in_db)
     monkeypatch.setattr(run_worker, "init_builtin_skills", fake_init_builtin_skills)
+    monkeypatch.setattr(config_options, "ensure_options_in_db", fake_ensure_options_in_db)
+    monkeypatch.setattr(config_options, "load_system_config_snapshot", fake_load_system_config_snapshot)
+    monkeypatch.setattr(run_worker.runtime_cache, "save_runtime_config", fake_save_runtime_config)
     monkeypatch.setattr(run_worker.sys_config, "start_runtime_sync", fake_start_runtime_sync)
     monkeypatch.setattr(run_worker, "recover_pending_dispatches", fake_recover_pending_dispatches)
 
@@ -538,8 +563,27 @@ async def test_worker_startup_ensures_builtin_mcp_servers(monkeypatch: pytest.Mo
         "initialize",
         "create_business_tables",
         "ensure_business_schema",
+        "setup_langgraph_checkpointer",
         "ensure_builtin_mcp_servers_in_db",
         "init_builtin_skills",
+        "ensure_options_in_db",
+        "load_system_config",
+        "save_runtime_config",
         "start_runtime_sync",
         "recover_pending_dispatches",
     ]
+
+
+@pytest.mark.asyncio
+async def test_worker_shutdown_closes_postgres_manager(monkeypatch: pytest.MonkeyPatch):
+    closed = False
+
+    async def fake_close():
+        nonlocal closed
+        closed = True
+
+    monkeypatch.setattr(run_worker.pg_manager, "close", fake_close)
+
+    await run_worker._worker_shutdown({})
+
+    assert closed is True

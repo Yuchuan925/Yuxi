@@ -3,6 +3,7 @@ import os
 import textwrap
 import time
 import traceback
+from pathlib import PurePosixPath
 from urllib.parse import quote, unquote
 
 from fastapi import APIRouter, Body, Depends, File, HTTPException, Query, UploadFile
@@ -37,7 +38,7 @@ from yuxi.permissions import (
 )
 from yuxi.services.ocr_service import parse_document
 from yuxi.services.task_service import TaskContext, tasker
-from yuxi.services.workspace_service import MAX_WORKSPACE_UPLOAD_SIZE_BYTES, resolve_workspace_file_path
+from yuxi.services.workspace_service import MAX_WORKSPACE_UPLOAD_SIZE_BYTES, read_workspace_file_object
 from yuxi.storage.minio.client import MinIOClient, StorageError, aupload_file_to_minio, get_minio_client
 from yuxi.storage.postgres.models_business import User
 from yuxi.utils import logger
@@ -1877,18 +1878,17 @@ async def import_workspace_files(
     bucket_name = MinIOClient.KB_BUCKETS["documents"]
     results = []
     for workspace_path in paths:
-        target = resolve_workspace_file_path(path=workspace_path, current_user=current_user)
-
-        filename = target.name
+        stored = await read_workspace_file_object(path=workspace_path, current_user=current_user)
+        filename = PurePosixPath(workspace_path).name
         ext = os.path.splitext(filename)[1].lower()
         if not is_supported_file_extension(filename):
             raise HTTPException(status_code=400, detail=f"Unsupported file type: {ext}")
 
-        size = target.stat().st_size
+        size = stored.size
         if size > MAX_WORKSPACE_UPLOAD_SIZE_BYTES:
             raise HTTPException(status_code=400, detail="文件过大，当前仅支持 100 MB 以内的工作区文件")
 
-        file_bytes = await asyncio.to_thread(target.read_bytes)
+        file_bytes = stored.data
         content_hash = await calculate_content_hash(file_bytes)
 
         file_exists = await knowledge_base.file_existed_in_db(kb_id, content_hash)

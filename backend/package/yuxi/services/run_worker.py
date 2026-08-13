@@ -12,6 +12,7 @@ from sqlalchemy import select, update
 from sqlalchemy.exc import OperationalError
 from yuxi.agents.mcp.service import ensure_builtin_mcp_servers_in_db
 from yuxi.agents.skills.service import init_builtin_skills
+from yuxi.config import cache as runtime_cache
 from yuxi.config import config as sys_config
 from yuxi.repositories.agent_run_repository import TERMINAL_RUN_STATUSES, AgentRunRepository
 from yuxi.services.agent_request_queue_service import (
@@ -650,12 +651,16 @@ async def _worker_startup(ctx):
     pg_manager.initialize()
     await pg_manager.create_business_tables()
     await pg_manager.ensure_business_schema()
+    if os.getenv("LANGGRAPH_CHECKPOINTER_BACKEND", "postgres").strip().lower() == "postgres":
+        await pg_manager.setup_langgraph_checkpointer()
     await ensure_builtin_mcp_servers_in_db()
     async with pg_manager.get_async_session_context() as session:
         await init_builtin_skills(session)
-        from yuxi.config.options import ensure_options_in_db
+        from yuxi.config.options import ensure_options_in_db, load_system_config_snapshot
 
         await ensure_options_in_db(session)
+        _values, version = await load_system_config_snapshot(session, sys_config)
+    runtime_cache.save_runtime_config(sys_config, version=version, updated_at=version)
     sys_config.start_runtime_sync()
     await recover_pending_dispatches()
 

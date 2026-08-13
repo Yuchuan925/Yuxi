@@ -4,6 +4,7 @@ import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from yuxi.config import options
+from yuxi.config.app import Config
 from yuxi.storage.postgres.models_business import Base
 
 
@@ -27,6 +28,50 @@ async def test_ensure_options_syncs_definitions_and_preserves_values(db_session)
 
     assert [record.key for record in synced] == list(options.OPTION_DEFINITIONS)
     assert synced[0].value == {"server_url": "http://custom-mineru:30001"}
+    system_config = await options.get_option(db_session, options.SYSTEM_CONFIG_OPTION_KEY)
+    assert system_config is not None
+    assert system_config.value == {}
+
+
+@pytest.mark.asyncio
+async def test_system_config_persists_complete_snapshot_and_loads_into_new_process_config(db_session, tmp_path):
+    await options.ensure_options_in_db(db_session)
+    api_config = Config(save_dir=str(tmp_path / "api"))
+    original_model = api_config.default_model
+
+    persisted = await options.persist_system_config(
+        db_session,
+        api_config,
+        {"default_model": "test-provider:persisted-chat", "enable_content_guard": True},
+        "tester",
+    )
+
+    assert api_config.default_model == original_model
+    assert persisted["default_model"] == "test-provider:persisted-chat"
+    assert persisted["enable_content_guard"] is True
+    assert "save_dir" not in persisted
+
+    worker_config = Config(save_dir=str(tmp_path / "worker"))
+    loaded = await options.load_system_config(db_session, worker_config)
+
+    assert loaded == persisted
+    assert worker_config.default_model == "test-provider:persisted-chat"
+    assert worker_config.enable_content_guard is True
+    assert worker_config.save_dir == str(tmp_path / "worker")
+
+
+@pytest.mark.asyncio
+async def test_empty_system_config_keeps_local_compatibility_defaults(db_session, tmp_path):
+    await options.ensure_options_in_db(db_session)
+    config_dir = tmp_path / "config"
+    config_dir.mkdir(parents=True)
+    (config_dir / "base.toml").write_text('default_model = "test-provider:local-default"\n')
+    config = Config(save_dir=str(tmp_path))
+
+    loaded = await options.load_system_config(db_session, config)
+
+    assert loaded == {}
+    assert config.default_model == "test-provider:local-default"
 
 
 @pytest.mark.asyncio

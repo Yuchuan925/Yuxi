@@ -1,6 +1,7 @@
 import os
 import re
-from pathlib import Path
+import tempfile
+from pathlib import Path, PurePosixPath
 from typing import Annotated
 
 import httpx
@@ -12,6 +13,14 @@ from langgraph.types import Command, interrupt
 from pydantic import BaseModel, Field
 
 from yuxi.agents.toolkits.registry import ToolExtraMetadata, _all_tool_instances, _extra_registry, tool
+from yuxi.agents.backends.sandbox.synchronizer import file_thread_operation_lock
+from yuxi.storage.filestore import (
+    FileStoreError,
+    get_file_store,
+    thread_output_key,
+    thread_upload_key,
+    user_workspace_key,
+)
 from yuxi.utils import logger
 from yuxi.utils.paths import (
     CONVERSATION_HISTORY_DIR_NAME,
@@ -220,48 +229,17 @@ class PresentArtifactsInput(BaseModel):
     )
 
 
-def _normalize_presented_artifact_path(filepath: str, runtime: ToolRuntime) -> str:
-    from yuxi.agents.backends.sandbox.paths import (
-        VIRTUAL_PATH_PREFIX,
-        ensure_thread_dirs,
-        resolve_virtual_path,
-        sandbox_outputs_dir,
-    )
-
-    outputs_virtual_prefix = f"{VIRTUAL_PATH_PREFIX}/outputs"
-    runtime_context = runtime.context
-    thread_id = getattr(runtime_context, "file_thread_id", None) or getattr(runtime_context, "thread_id", None)
-    if not thread_id:
-        raise ValueError("当前运行时缺少 thread_id")
-    uid = getattr(runtime_context, "uid", None)
-    if not uid:
-        raise ValueError("当前运行时缺少 uid")
-
-    ensure_thread_dirs(thread_id, str(uid))
-    outputs_dir = sandbox_outputs_dir(thread_id).resolve()
-    normalized_input = str(filepath or "").strip()
-    if not normalized_input:
-        raise ValueError("文件路径不能为空")
-
-    stripped = normalized_input.lstrip("/")
-    virtual_prefix = VIRTUAL_PATH_PREFIX.lstrip("/")
-    if stripped == virtual_prefix or stripped.startswith(f"{virtual_prefix}/"):
-        actual_path = resolve_virtual_path(thread_id, normalized_input, uid=str(uid))
-    else:
-        actual_path = Path(normalized_input).expanduser().resolve()
-
-    if not actual_path.exists() or not actual_path.is_file():
-        raise ValueError(f"文件不存在或不是普通文件: {normalized_input}")
+async def _normalize_presented_artifact_path(filepath: str, runtime: ToolRuntime) -> str:
+    file_thread_id, _ = _resolve_runtime_file_scope(runtime)
+    relative_path = _relative_virtual_file_path(filepath, VIRTUAL_PATH_OUTPUTS)
+    if relative_path.parts[0] in _PRESENT_ARTIFACTS_INTERNAL_DIR_NAMES:
+        raise ValueError(f"不允许展示工具调用阶段文件: {VIRTUAL_PATH_OUTPUTS}/{relative_path.as_posix()}")
 
     try:
-        relative_path = actual_path.relative_to(outputs_dir)
-    except ValueError as exc:
-        raise ValueError(f"只允许展示 {outputs_virtual_prefix}/ 下的文件: {normalized_input}") from exc
-
-    if relative_path.parts and relative_path.parts[0] in _PRESENT_ARTIFACTS_INTERNAL_DIR_NAMES:
-        raise ValueError(f"不允许展示工具调用阶段文件: {outputs_virtual_prefix}/{relative_path.as_posix()}")
-
-    return f"{outputs_virtual_prefix}/{relative_path.as_posix()}"
+        await get_file_store().stat(thread_output_key(file_thread_id, relative_path.as_posix()))
+    except FileStoreError as exc:
+        raise ValueError(f"文件不存在或不是普通文件: {filepath}") from exc
+    return f"{VIRTUAL_PATH_OUTPUTS}/{relative_path.as_posix()}"
 
 
 PRESENT_ARTIFACTS_DESCRIPTION = f"""
@@ -289,14 +267,14 @@ PRESENT_ARTIFACTS_DESCRIPTION = f"""
     description=PRESENT_ARTIFACTS_DESCRIPTION,
     args_schema=PresentArtifactsInput,
 )
-def present_artifacts(
+async def present_artifacts(
     filepaths: list[str],
     runtime: ToolRuntime,
     tool_call_id: Annotated[str, InjectedToolCallId],
 ) -> Command:
     """登记当前线程 outputs 目录下的交付物文件，使前端在对话结束后展示给用户。"""
     try:
-        normalized_paths = [_normalize_presented_artifact_path(filepath, runtime) for filepath in filepaths]
+        normalized_paths = [await _normalize_presented_artifact_path(filepath, runtime) for filepath in filepaths]
     except ValueError as exc:
         return Command(update={"messages": [ToolMessage(content=f"Error: {exc}", tool_call_id=tool_call_id)]})
 
@@ -341,17 +319,29 @@ OCR_PARSE_FILE_DESCRIPTION = f"""
 )
 async def ocr_parse_file(file_path: str, runtime: ToolRuntime, ocr_engine: str | None = None) -> dict:
     """Parse a sandbox file with OCR, persist Markdown output, and return only a short result summary."""
-    from yuxi.agents.backends.sandbox.paths import virtual_path_for_thread_file
     from yuxi.services.ocr_service import parse_document
 
-    file_thread_id, uid, actual_path = _resolve_ocr_source_path(file_path, runtime)
-    engine = _resolve_ocr_engine(ocr_engine)
-    markdown = await parse_document(str(actual_path), params={"ocr_engine": engine})
+    file_thread_id, uid = _resolve_runtime_file_scope(runtime)
+    source_virtual_path, source_key, source_name = _resolve_ocr_source(file_path, file_thread_id, uid)
+    try:
+        source = await get_file_store().read(source_key)
+    except FileStoreError as exc:
+        raise ValueError(f"文件不存在: {source_virtual_path}") from exc
 
-    output_path = _next_ocr_output_path(file_thread_id, actual_path)
-    output_path.write_text(markdown, encoding="utf-8")
-    parsed_path = virtual_path_for_thread_file(file_thread_id, output_path, uid=uid)
-    source_virtual_path = virtual_path_for_thread_file(file_thread_id, actual_path, uid=uid)
+    engine = _resolve_ocr_engine(ocr_engine)
+    with tempfile.TemporaryDirectory(prefix="yuxi-ocr-") as temp_dir:
+        actual_path = Path(temp_dir) / source_name
+        actual_path.write_bytes(source.data)
+        markdown = await parse_document(str(actual_path), params={"ocr_engine": engine})
+
+    async with file_thread_operation_lock(file_thread_id):
+        output_name = await _next_ocr_output_name(file_thread_id, source_name)
+        await get_file_store().put(
+            thread_output_key(file_thread_id, f"{_OCR_OUTPUT_DIR_NAME}/{output_name}"),
+            markdown.encode("utf-8"),
+            content_type="text/markdown",
+        )
+    parsed_path = f"{VIRTUAL_PATH_OUTPUTS}/{_OCR_OUTPUT_DIR_NAME}/{output_name}"
     preview, truncated = _ocr_preview(markdown)
 
     return {
@@ -364,64 +354,59 @@ async def ocr_parse_file(file_path: str, runtime: ToolRuntime, ocr_engine: str |
     }
 
 
-def _resolve_ocr_source_path(file_path: str, runtime: ToolRuntime) -> tuple[str, str, Path]:
-    """Resolve a sandbox virtual path to a host file inside the Agent-visible user-data roots."""
-    from yuxi.agents.backends.sandbox.paths import get_virtual_path_prefix, resolve_virtual_path
-
-    file_thread_id, uid = _resolve_runtime_file_scope(runtime)
+def _resolve_ocr_source(file_path: str, file_thread_id: str, uid: str) -> tuple[str, str, str]:
+    """将 OCR 虚拟输入路径映射到 FileStore key。"""
+    from yuxi.utils.paths import VIRTUAL_PATH_PREFIX
 
     normalized_input = str(file_path or "").strip()
-    if not normalized_input:
-        raise ValueError("文件路径不能为空")
-
-    virtual_prefix = get_virtual_path_prefix().rstrip("/")
     clean_virtual_path = "/" + normalized_input.lstrip("/")
-    if clean_virtual_path != virtual_prefix and not clean_virtual_path.startswith(f"{virtual_prefix}/"):
+    virtual_prefix = VIRTUAL_PATH_PREFIX.rstrip("/")
+    if not normalized_input or clean_virtual_path == virtual_prefix or not clean_virtual_path.startswith(
+        f"{virtual_prefix}/"
+    ):
         raise ValueError(f"只允许解析 {virtual_prefix} 下的沙盒虚拟路径")
 
-    relative_path = clean_virtual_path[len(virtual_prefix) :].lstrip("/")
-    namespace = Path(relative_path).parts[0] if relative_path else ""
-    if namespace not in _OCR_PARSE_ALLOWED_DIRS:
+    relative_path = _relative_virtual_file_path(clean_virtual_path, virtual_prefix)
+    namespace, *file_parts = relative_path.parts
+    if namespace not in _OCR_PARSE_ALLOWED_DIRS or not file_parts:
         allowed = ", ".join(f"{virtual_prefix}/{item}" for item in sorted(_OCR_PARSE_ALLOWED_DIRS))
         raise ValueError(f"只允许解析 {allowed} 下的文件")
 
-    try:
-        actual_path = resolve_virtual_path(file_thread_id, clean_virtual_path, uid=uid)
-    except ValueError as exc:
-        raise ValueError(f"只允许解析 {virtual_prefix} 下的沙盒虚拟路径") from exc
-    if not actual_path.exists():
-        raise ValueError(f"文件不存在: {clean_virtual_path}")
-    if not actual_path.is_file():
-        raise ValueError(f"路径不是普通文件: {clean_virtual_path}")
-
-    return file_thread_id, uid, actual_path
+    source_relative = PurePosixPath(*file_parts).as_posix()
+    if namespace == WORKSPACE_DIR_NAME:
+        key = user_workspace_key(uid, source_relative)
+    elif namespace == UPLOADS_DIR_NAME:
+        key = thread_upload_key(file_thread_id, source_relative)
+    else:
+        key = thread_output_key(file_thread_id, source_relative)
+    return clean_virtual_path, key, file_parts[-1]
 
 
 def _resolve_runtime_file_scope(runtime: ToolRuntime) -> tuple[str, str]:
-    """Read the thread and user scope needed for sandbox path mapping from ToolRuntime."""
-    thread_id = _runtime_scope_value(runtime, "file_thread_id") or _runtime_scope_value(runtime, "thread_id")
-    uid = _runtime_scope_value(runtime, "uid")
-    if not thread_id:
-        raise ValueError("当前运行时缺少 thread_id")
-    if not uid:
+    """从运行上下文读取 FileStore 所需的线程与用户作用域。"""
+    context = getattr(runtime, "context", None)
+    thread_id = getattr(context, "file_thread_id", None)
+    uid = getattr(context, "uid", None)
+    if not isinstance(thread_id, str) or not thread_id.strip():
+        raise ValueError("当前运行时缺少 file_thread_id")
+    if not isinstance(uid, str) or not uid.strip():
         raise ValueError("当前运行时缺少 uid")
-    return thread_id, uid
+    return thread_id.strip(), uid.strip()
 
 
-def _runtime_scope_value(runtime: ToolRuntime, key: str) -> str | None:
-    """Look up a runtime scope value from LangGraph config, context, or state."""
-    config = getattr(runtime, "config", None)
-    configurable = config.get("configurable", {}) if isinstance(config, dict) else {}
-    sources = (
-        configurable if isinstance(configurable, dict) else {},
-        getattr(runtime, "context", None),
-        getattr(runtime, "state", None) if isinstance(getattr(runtime, "state", None), dict) else {},
-    )
-    for source in sources:
-        value = source.get(key) if isinstance(source, dict) else getattr(source, key, None)
-        if isinstance(value, str) and value.strip():
-            return value.strip()
-    return None
+def _relative_virtual_file_path(filepath: str, virtual_root: str) -> PurePosixPath:
+    """校验规范虚拟文件路径并返回相对路径。"""
+    normalized = str(filepath or "").strip()
+    if not normalized:
+        raise ValueError("文件路径不能为空")
+    if "\\" in normalized or not normalized.startswith(f"{virtual_root}/"):
+        raise ValueError(f"只允许使用 {virtual_root}/ 下的规范虚拟路径")
+
+    relative = normalized[len(virtual_root) + 1 :]
+    parts = relative.split("/")
+    if any(part in {"", ".", ".."} for part in parts):
+        raise ValueError(f"只允许使用 {virtual_root}/ 下的规范虚拟路径")
+    return PurePosixPath(*parts)
 
 
 def _resolve_ocr_engine(ocr_engine: str | None) -> str:
@@ -436,25 +421,22 @@ def _resolve_ocr_engine(ocr_engine: str | None) -> str:
     return engine
 
 
-def _next_ocr_output_path(thread_id: str, source_path: Path) -> Path:
-    """Choose a non-conflicting Markdown output path under the thread outputs/ocr directory."""
-    from yuxi.agents.backends.sandbox.paths import sandbox_outputs_dir
-
-    output_dir = sandbox_outputs_dir(thread_id) / _OCR_OUTPUT_DIR_NAME
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    base_name = _safe_ocr_output_stem(source_path)
-    candidate = output_dir / f"{base_name}.md"
+async def _next_ocr_output_name(thread_id: str, source_name: str) -> str:
+    """基于 FileStore 中的现有对象选择不冲突的 OCR 输出文件名。"""
+    prefix = thread_output_key(thread_id, f"{_OCR_OUTPUT_DIR_NAME}/_").rsplit("/", 1)[0] + "/"
+    existing = {item.key for item in await get_file_store().list(prefix)}
+    base_name = _safe_ocr_output_stem(source_name)
+    candidate = f"{base_name}.md"
     index = 1
-    while candidate.exists():
-        candidate = output_dir / f"{base_name}-{index}.md"
+    while f"{prefix}{candidate}" in existing:
+        candidate = f"{base_name}-{index}.md"
         index += 1
     return candidate
 
 
-def _safe_ocr_output_stem(source_path: Path) -> str:
+def _safe_ocr_output_stem(source_name: str) -> str:
     """Build a filesystem-friendly output filename stem from the source file name."""
-    stem = source_path.stem.strip() or "ocr_result"
+    stem = Path(source_name).stem.strip() or "ocr_result"
     safe_stem = _SAFE_OUTPUT_STEM_RE.sub("_", stem).strip("._-")
     return safe_stem or "ocr_result"
 

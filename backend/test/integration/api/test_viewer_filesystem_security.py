@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 
 import pytest
-from yuxi.agents.backends.sandbox import ensure_thread_dirs, sandbox_workspace_dir
+from yuxi.agents.backends.sandbox.paths import ensure_thread_dirs, sandbox_workspace_dir
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
 

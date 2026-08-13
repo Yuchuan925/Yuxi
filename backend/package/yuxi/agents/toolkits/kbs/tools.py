@@ -1,23 +1,21 @@
 """知识库工具模块"""
 
-from pathlib import Path
+from pathlib import PurePosixPath
 from typing import Any
 
 from langgraph.prebuilt.tool_node import ToolRuntime
 from pydantic import BaseModel, Field
 
-from yuxi.agents.backends.sandbox.paths import (
-    ensure_thread_dirs,
-    sandbox_outputs_dir,
-    virtual_path_for_thread_file,
-)
 from yuxi.agents.toolkits.registry import tool
+from yuxi.agents.backends.sandbox.synchronizer import file_thread_operation_lock
 from yuxi.knowledge.schemas import (
     FindInputSchema,
     OpenInputSchema,
     SearchInputSchema,
 )
+from yuxi.storage.filestore import FileStoreError, get_file_store, thread_output_key
 from yuxi.utils import logger
+from yuxi.utils.paths import VIRTUAL_PATH_OUTPUTS
 
 # ========== 通用知识库工具 ==========
 
@@ -369,19 +367,24 @@ async def download_kb_file(
     if not file_thread_id or not uid:
         return "无法获取当前会话的沙盒上下文，缺少 file_thread_id 或 uid"
 
-    output_path = _resolve_download_output_path(file_thread_id, uid, data, normalized_file_id, save_as)
     try:
-        output_path.write_bytes(data["content"])
-    except OSError as e:
-        logger.error(f"写入沙盒 outputs 失败: {e}")
-        return f"写入沙盒 outputs 失败: {str(e)}"
+        async with file_thread_operation_lock(file_thread_id):
+            output_name = await _resolve_download_output_name(file_thread_id, data, normalized_file_id, save_as)
+            await get_file_store().put(
+                thread_output_key(file_thread_id, output_name),
+                data["content"],
+                content_type=data["media_type"],
+            )
+    except FileStoreError as e:
+        logger.error(f"写入 FileStore outputs 失败: {e}")
+        return f"写入 FileStore outputs 失败: {str(e)}"
 
     return {
-        "virtual_path": virtual_path_for_thread_file(file_thread_id, output_path, uid=uid),
+        "virtual_path": f"{VIRTUAL_PATH_OUTPUTS}/{output_name}",
         "filename": data["filename"] or normalized_file_id,
         "media_type": data["media_type"],
         "size_bytes": len(data["content"]),
-        "saved_as": output_path.name,
+        "saved_as": output_name,
     }
 
 
@@ -447,30 +450,27 @@ def _runtime_uid(runtime: ToolRuntime | None) -> str | None:
     return getattr(context, "uid", None)
 
 
-def _resolve_download_output_path(
+async def _resolve_download_output_name(
     file_thread_id: str,
-    uid: str,
     data: dict[str, Any],
     file_id: str,
     save_as: str | None,
-) -> Path:
-    """计算沙盒 outputs 目录下的落盘路径，处理重名与路径穿越防护。"""
-    ensure_thread_dirs(file_thread_id, uid)
-    outputs_dir = sandbox_outputs_dir(file_thread_id)
-
-    # 仅取文件名部分，剥离任何目录，防止路径穿越
+) -> str:
+    """基于 FileStore outputs 对象选择安全且不冲突的文件名。"""
     wanted_name = (save_as or data.get("filename") or file_id).strip()
-    base_name = Path(wanted_name).name or file_id
+    base_name = PurePosixPath(wanted_name.replace("\\", "/")).name or file_id
 
-    candidate = outputs_dir / base_name
-    if not candidate.exists():
+    prefix = thread_output_key(file_thread_id, "_").rsplit("/", 1)[0] + "/"
+    existing = {item.key for item in await get_file_store().list(prefix)}
+    candidate = base_name
+    if f"{prefix}{candidate}" not in existing:
         return candidate
 
-    # 重名时追加 _1 / _2 ... 后缀
-    stem = candidate.stem
-    suffix = candidate.suffix
+    path = PurePosixPath(candidate)
+    stem = path.stem
+    suffix = path.suffix
     index = 1
-    while candidate.exists():
-        candidate = outputs_dir / f"{stem}_{index}{suffix}"
+    while f"{prefix}{candidate}" in existing:
+        candidate = f"{stem}_{index}{suffix}"
         index += 1
     return candidate

@@ -1,13 +1,12 @@
 """Define the configurable parameters for the agent."""
 
-import asyncio
 import uuid
 from dataclasses import MISSING, dataclass, field, fields
 from typing import Any, get_origin
 
-from yuxi.agents.backends.sandbox.paths import sandbox_workspace_agent_context_file
 from yuxi.agents.tool_approval import DEFAULT_TOOL_APPROVAL_MODE
-from yuxi.utils.logging_config import logger
+from yuxi.agents.backends.sandbox.synchronizer import sandbox_file_operation_lock
+from yuxi.storage.filestore import FileStoreError, get_file_store, user_workspace_key
 from yuxi.utils.paths import WORKSPACE_AGENT_CONTEXT_FILES
 
 WORKSPACE_AGENTS_PROMPT_MAX_BYTES = 64 * 1024
@@ -60,21 +59,26 @@ def _role_can_access(auth: str | None, role: str | None) -> bool:
     return False
 
 
-def _load_workspace_agent_context(thread_id: str, uid: str) -> str:
+async def _load_workspace_agent_context(uid: str) -> str:
+    """从 FileStore 读取用户 workspace 默认上下文文件。"""
     sections: list[str] = []
-    for filename in WORKSPACE_AGENT_CONTEXT_FILES:
-        context_file = sandbox_workspace_agent_context_file(thread_id, uid, filename)
+    store = get_file_store()
+    for filename, default_content in WORKSPACE_AGENT_CONTEXT_FILES.items():
+        key = user_workspace_key(uid, f"agents/{filename}")
         try:
-            with context_file.open("rb") as buffer:
-                content = buffer.read(WORKSPACE_AGENTS_PROMPT_MAX_BYTES + 1)
-        except FileNotFoundError:
-            continue
-        except IsADirectoryError:
-            logger.warning(f"读取工作区 {filename} 失败: 路径是目录")
-            continue
-        except OSError as exc:
-            logger.warning(f"读取工作区 {filename} 失败: {exc}")
-            continue
+            stored = await store.read(key)
+        except FileStoreError:
+            async with sandbox_file_operation_lock(uid=uid):
+                try:
+                    stored = await store.read(key)
+                except FileStoreError:
+                    await store.put(key, default_content.encode("utf-8"), content_type="text/markdown")
+                    content = default_content.encode("utf-8")
+                else:
+                    content = stored.data
+        else:
+            content = stored.data
+        content = content[: WORKSPACE_AGENTS_PROMPT_MAX_BYTES + 1]
 
         prompt = content[:WORKSPACE_AGENTS_PROMPT_MAX_BYTES].decode("utf-8", errors="replace").strip()
         if not prompt:
@@ -94,7 +98,7 @@ async def build_agent_input_context(
     request_id: str | None = None,
 ) -> dict:
     input_context = dict(agent_config or {})
-    agent_context = await asyncio.to_thread(_load_workspace_agent_context, thread_id, uid)
+    agent_context = await _load_workspace_agent_context(uid)
 
     if agent_context:
         base_prompt = str(input_context.get("system_prompt") or "").rstrip()

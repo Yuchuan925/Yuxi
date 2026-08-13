@@ -357,42 +357,26 @@ class BaseAgent:
         if self.checkpointer is not None:
             return self.checkpointer
 
-        checkpointer = None
-        backend = os.getenv("LANGGRAPH_CHECKPOINTER_BACKEND", "sqlite").strip().lower()
+        backend = os.getenv("LANGGRAPH_CHECKPOINTER_BACKEND", "postgres").strip().lower()
 
         if backend == "postgres":
-            checkpointer = await self._create_postgres_checkpointer()
-
-        if checkpointer is None:
-            try:
-                checkpointer = AsyncSqliteSaver(await self.get_async_conn())
-            except Exception as e:
-                logger.error(f"构建 sqlite checkpointer 失败: {e}, 尝试使用内存存储")
-                checkpointer = InMemorySaver()
+            checkpointer = self._create_postgres_checkpointer()
+        elif backend == "sqlite":
+            checkpointer = AsyncSqliteSaver(await self.get_async_conn())
+        elif backend == "memory":
+            checkpointer = InMemorySaver()
+        else:
+            raise ValueError(
+                "LANGGRAPH_CHECKPOINTER_BACKEND must be one of: postgres, sqlite, memory"
+            )
 
         self.checkpointer = checkpointer
         return self.checkpointer
 
-    async def _create_postgres_checkpointer(self):
-        postgres_url = os.getenv("POSTGRES_URL")
-        if not postgres_url:
-            logger.warning("POSTGRES_URL 未配置，无法启用 postgres checkpointer，回退 sqlite")
-            return None
-
-        try:
-            from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver  # type: ignore
-        except Exception as e:
-            logger.warning(f"langgraph postgres checkpointer 不可用，回退 sqlite: {e}")
-            return None
-
-        try:
-            saver = AsyncPostgresSaver(pg_manager.langgraph_pool)
-
-            logger.info(f"{self.name} 使用 postgres checkpointer")
-            return saver
-        except Exception as e:
-            logger.warning(f"初始化 postgres checkpointer 失败，回退 sqlite: {e}")
-            return None
+    def _create_postgres_checkpointer(self):
+        saver = pg_manager.get_langgraph_checkpointer()
+        logger.info(f"{self.name} 使用 postgres checkpointer")
+        return saver
 
     async def get_async_conn(self) -> aiosqlite.Connection:
         """获取异步数据库连接"""

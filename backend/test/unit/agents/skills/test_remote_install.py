@@ -364,16 +364,14 @@ async def test_prepare_remote_skills_batch_creates_sandbox_before_temp_home(monk
 
 
 @pytest.mark.asyncio
-async def test_remote_skill_sandbox_cleanup_removes_whole_thread_dir_when_release_fails(
+async def test_remote_skill_sandbox_cleanup_does_not_touch_host_thread_dirs_when_release_fails(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ):
     thread_dir = tmp_path / "threads" / "remote-skill-test"
-    user_data_dir = thread_dir / "user-data"
     workspace_root = tmp_path / "threads" / "shared" / "remote-skill-test"
-    (user_data_dir / "outputs").mkdir(parents=True)
-    (thread_dir / "skills").mkdir()
-    (workspace_root / "workspace").mkdir(parents=True)
+    thread_dir.mkdir(parents=True)
+    workspace_root.mkdir(parents=True)
     release_calls: list[tuple[tuple, dict]] = []
 
     class FakeProvider:
@@ -382,8 +380,6 @@ async def test_remote_skill_sandbox_cleanup_removes_whole_thread_dir_when_releas
             raise RuntimeError("release failed")
 
     monkeypatch.setattr(svc, "get_sandbox_provider", lambda: FakeProvider())
-    monkeypatch.setattr(svc, "sandbox_user_data_dir", lambda _thread_id: user_data_dir)
-    monkeypatch.setattr(svc, "sandbox_workspace_dir", lambda _thread_id, _uid: workspace_root / "workspace")
     sandbox = svc._RemoteSkillSandbox(
         thread_id="remote-skill-test",
         home="/home/gem/user-data/outputs/.remote-skill-test",
@@ -393,8 +389,8 @@ async def test_remote_skill_sandbox_cleanup_removes_whole_thread_dir_when_releas
     with pytest.raises(RuntimeError, match="release failed"):
         await sandbox.cleanup()
 
-    assert not thread_dir.exists()
-    assert not workspace_root.exists()
+    assert thread_dir.exists()
+    assert workspace_root.exists()
     assert release_calls == [
         (
             ("remote-skill-test",),

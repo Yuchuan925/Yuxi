@@ -286,6 +286,10 @@ class ProvisionerSandboxProvider:
             except Exception as exc:  # noqa: BLE001
                 logger.warning(f"Failed to release sandbox {connection.sandbox_id} for {connection.cache_key}: {exc}")
 
+    def replace_skills(self, sandbox_id: str, files: dict[str, bytes]) -> None:
+        """使用 provisioner 受信任接口替换指定 Sandbox 的 Skills 快照。"""
+        self._client.replace_skills(sandbox_id, files)
+
 
 _sandbox_provider: ProvisionerSandboxProvider | None = None
 _sandbox_provider_lock = threading.Lock()

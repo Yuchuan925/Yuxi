@@ -10,7 +10,8 @@ import uuid
 
 import pytest
 from PIL import Image
-from yuxi.agents.backends.sandbox import ensure_thread_dirs, sandbox_user_data_dir, sandbox_workspace_dir
+from yuxi.agents.backends.sandbox.paths import ensure_thread_dirs, sandbox_workspace_dir
+from yuxi.storage.filestore import get_file_store, thread_output_key
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
 
@@ -214,9 +215,7 @@ async def test_save_thread_artifact_to_workspace_copies_output_file(test_client,
     thread_id = await _create_thread_for_user(test_client, headers)
     filename = f"artifact-{uuid.uuid4().hex[:8]}.md"
 
-    ensure_thread_dirs(thread_id, uid)
-    source_path = sandbox_user_data_dir(thread_id) / "outputs" / filename
-    source_path.write_text("# artifact\n", encoding="utf-8")
+    await get_file_store().put(thread_output_key(thread_id, filename), b"# artifact\n", content_type="text/markdown")
 
     response = await test_client.post(
         f"/api/chat/thread/{thread_id}/artifacts/save",
@@ -246,9 +245,7 @@ async def test_save_thread_artifact_to_workspace_auto_renames_conflicts(test_cli
     filename = f"artifact-{uuid.uuid4().hex[:8]}.txt"
     renamed_filename = filename.replace(".txt", " (1).txt")
 
-    ensure_thread_dirs(thread_id, uid)
-    source_path = sandbox_user_data_dir(thread_id) / "outputs" / filename
-    source_path.write_text("first\n", encoding="utf-8")
+    await get_file_store().put(thread_output_key(thread_id, filename), b"first\n", content_type="text/plain")
 
     first_response = await test_client.post(
         f"/api/chat/thread/{thread_id}/artifacts/save",
@@ -257,7 +254,7 @@ async def test_save_thread_artifact_to_workspace_auto_renames_conflicts(test_cli
     )
     assert first_response.status_code == 200, first_response.text
 
-    source_path.write_text("second\n", encoding="utf-8")
+    await get_file_store().put(thread_output_key(thread_id, filename), b"second\n", content_type="text/plain")
     second_response = await test_client.post(
         f"/api/chat/thread/{thread_id}/artifacts/save",
         json={"path": f"/home/gem/user-data/outputs/{filename}"},

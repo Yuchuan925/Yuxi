@@ -50,7 +50,19 @@ def _docker_backend(module, tmp_path, run_container):
     backend._sandbox_env = {}
     backend._health_timeout_seconds = 1
     backend._threads_host_path = str(tmp_path)
-    backend._client = SimpleNamespace(containers=SimpleNamespace(run=run_container))
+    backend._docker = SimpleNamespace(
+        errors=SimpleNamespace(NotFound=KeyError),
+        types=SimpleNamespace(Mount=lambda **kwargs: SimpleNamespace(**kwargs)),
+    )
+    volume = SimpleNamespace(
+        attrs={"Labels": {"managed-by": "yuxi-sandbox-provisioner", "sandbox-id": "sandbox-1"}},
+        name="sandbox-skills",
+        remove=lambda **_kwargs: None,
+    )
+    backend._client = SimpleNamespace(
+        containers=SimpleNamespace(run=run_container),
+        volumes=SimpleNamespace(get=lambda _name: volume, create=lambda **_kwargs: volume),
+    )
     return backend
 
 
@@ -117,34 +129,28 @@ def test_memory_backend_accepts_split_thread_ids(monkeypatch):
     assert backend.discover("sandbox-1") is record
 
 
-def test_docker_mount_checks_use_file_and_skills_thread_ids(monkeypatch, tmp_path):
+def test_docker_backend_uses_ephemeral_container_storage(monkeypatch, tmp_path):
     monkeypatch.setenv("PROVISIONER_BACKEND", "memory")
     module = _load_module()
-    backend = object.__new__(module.LocalContainerProvisionerBackend)
-    backend._threads_host_path = str(tmp_path)
+    captured = []
+    backend = _docker_backend(module, tmp_path, lambda image, **kwargs: captured.append(kwargs) or SimpleNamespace(
+        name="sandbox", status="running", attrs={"State": {"Status": "running"}}, reload=lambda: None
+    ))
+    monkeypatch.setattr(backend, "_get_container", lambda _sandbox_id: None)
+    monkeypatch.setattr(backend, "_ensure_network", backend._network_name)
+    monkeypatch.setattr(backend, "_ensure_user_data_writable", lambda _container: None)
+    monkeypatch.setattr(module, "wait_for_sandbox_ready", lambda _url, timeout_seconds: True)
 
-    workspace = tmp_path / "shared" / "user-1" / "workspace"
-    uploads = tmp_path / "parent-thread" / "user-data" / "uploads"
-    outputs = tmp_path / "parent-thread" / "user-data" / "outputs"
-    skills = tmp_path / "child-skills-thread" / "skills"
-    container = SimpleNamespace(
-        attrs={
-            "Mounts": [
-                {"Destination": "/home/gem/user-data/workspace", "Source": str(workspace)},
-                {"Destination": "/home/gem/user-data/uploads", "Source": str(uploads)},
-                {"Destination": "/home/gem/user-data/outputs", "Source": str(outputs)},
-                {"Destination": "/home/gem/skills", "Source": str(skills)},
-            ]
-        }
-    )
+    backend.create("sandbox-1", "thread-1", "user-1")
 
-    assert backend._has_expected_user_data_mounts(container, "parent-thread", "user-1") is True
-    assert backend._is_expected_skills_mount(container, "child-skills-thread") is True
-    assert backend._has_expected_user_data_mounts(container, "child-thread", "user-1") is False
-    assert backend._is_expected_skills_mount(container, "parent-thread") is False
+    assert "volumes" not in captured[0]
+    assert captured[0]["tmpfs"] == {"/home/gem": "rw,exec,mode=777"}
+    assert [(mount.target, mount.read_only) for mount in captured[0]["mounts"]] == [
+        ("/home/gem/skills", True),
+    ]
 
 
-def test_docker_sandbox_mounts_shared_workspace_without_thread_history_projection(monkeypatch, tmp_path):
+def test_docker_sandbox_uses_ephemeral_storage_without_business_mounts(monkeypatch, tmp_path):
     monkeypatch.setenv("PROVISIONER_BACKEND", "memory")
     module = _load_module()
     captured = []
@@ -169,18 +175,11 @@ def test_docker_sandbox_mounts_shared_workspace_without_thread_history_projectio
 
     backend.create("sandbox-1", "thread-1", "user-1")
 
-    volumes = captured[0][1]["volumes"]
-    destinations = {mount["bind"] for mount in volumes.values()}
-    assert destinations == {
-        "/home/gem/user-data/workspace",
-        "/home/gem/user-data/uploads",
-        "/home/gem/user-data/outputs",
-        "/home/gem/skills",
-    }
-    assert all("/agents/chats" not in destination for destination in destinations)
+    assert "volumes" not in captured[0][1]
+    assert captured[0][1]["tmpfs"] == {"/home/gem": "rw,exec,mode=777"}
 
 
-def test_kubernetes_mount_check_uses_file_and_skills_thread_ids(monkeypatch):
+def test_kubernetes_mount_check_requires_only_ephemeral_home(monkeypatch):
     monkeypatch.setenv("PROVISIONER_BACKEND", "memory")
     module = _load_module()
     pod = SimpleNamespace(
@@ -189,19 +188,8 @@ def test_kubernetes_mount_check_uses_file_and_skills_thread_ids(monkeypatch):
                 SimpleNamespace(
                     name="sandbox",
                     volume_mounts=[
-                        SimpleNamespace(
-                            mount_path="/home/gem/user-data/workspace",
-                            sub_path="threads/shared/user-1/workspace",
-                        ),
-                        SimpleNamespace(
-                            mount_path="/home/gem/user-data/uploads",
-                            sub_path="threads/parent-thread/user-data/uploads",
-                        ),
-                        SimpleNamespace(
-                            mount_path="/home/gem/user-data/outputs",
-                            sub_path="threads/parent-thread/user-data/outputs",
-                        ),
-                        SimpleNamespace(mount_path="/home/gem/skills", sub_path="threads/child-skills-thread/skills"),
+                        SimpleNamespace(mount_path="/home/gem", read_only=False),
+                        SimpleNamespace(mount_path="/home/gem/skills", read_only=True),
                     ],
                 )
             ]
@@ -210,15 +198,10 @@ def test_kubernetes_mount_check_uses_file_and_skills_thread_ids(monkeypatch):
 
     assert module.KubernetesProvisionerBackend._pod_has_expected_mounts(
         pod,
-        file_thread_id="parent-thread",
-        skills_thread_id="child-skills-thread",
-        uid="user-1",
+        file_thread_id="parent-thread", skills_thread_id="child-skills-thread", uid="user-1",
     )
-    assert not module.KubernetesProvisionerBackend._pod_has_expected_mounts(
-        pod,
-        file_thread_id="child-thread",
-        skills_thread_id="child-skills-thread",
-        uid="user-1",
+    assert module.KubernetesProvisionerBackend._pod_has_expected_mounts(
+        pod, file_thread_id="child-thread", skills_thread_id="child-skills-thread", uid="user-1"
     )
 
 
@@ -475,7 +458,6 @@ def test_kubernetes_sandbox_disables_service_account_token_and_environment(monke
     backend._client = FakeKubernetesClient()
     backend._sandbox_image = "sandbox-image"
     backend._container_port = 8080
-    backend._thread_pvc = "threads"
     backend._sandbox_env = {"GLOBAL_SECRET": "value"}
 
     pod = backend._build_pod_spec(
@@ -490,6 +472,11 @@ def test_kubernetes_sandbox_disables_service_account_token_and_environment(monke
 
     assert pod.spec.automount_service_account_token is False
     assert pod.spec.containers[0].env == []
+    assert len(pod.spec.volumes) == 2
+    assert all(volume.empty_dir is not None for volume in pod.spec.volumes)
+    mounts = {mount.mount_path: mount.read_only for mount in pod.spec.containers[0].volume_mounts}
+    assert "/home/gem/.yuxi-skills-rw" not in mounts
+    assert mounts["/home/gem/skills"] is True
 
 
 def test_docker_backend_cleans_up_container_and_network_when_health_check_fails(monkeypatch, tmp_path):
@@ -555,6 +542,25 @@ def test_docker_backend_cleans_up_network_when_container_start_fails(monkeypatch
     assert deleted_networks == ["sandbox-1"]
 
 
+def test_docker_backend_delete_removes_ephemeral_skills_volume(monkeypatch, tmp_path):
+    monkeypatch.setenv("PROVISIONER_BACKEND", "memory")
+    module = _load_module()
+    removed = []
+    volume = SimpleNamespace(
+        attrs={"Labels": {"managed-by": "yuxi-sandbox-provisioner", "sandbox-id": "sandbox-1"}},
+        name="yuxi-sandbox-sandbox-1-skills",
+        remove=lambda *, force: removed.append(force),
+    )
+    backend = _docker_backend(module, tmp_path, lambda *_args, **_kwargs: None)
+    backend._client.volumes = SimpleNamespace(get=lambda _name: volume)
+    monkeypatch.setattr(backend, "_get_container", lambda _sandbox_id: None)
+    monkeypatch.setattr(backend, "_delete_network", lambda _sandbox_id: None)
+
+    backend.delete("sandbox-1")
+
+    assert removed == [True]
+
+
 def test_docker_backend_assigns_each_sandbox_a_distinct_network(monkeypatch):
     monkeypatch.setenv("PROVISIONER_BACKEND", "memory")
     module = _load_module()
@@ -608,9 +614,8 @@ def test_docker_backend_reconnects_provisioner_before_reusing_sandbox(monkeypatc
     backend._client.networks = SimpleNamespace(get=lambda _name: FakeNetwork())
     backend._provisioner_container = SimpleNamespace(id="provisioner-id")
     monkeypatch.setattr(backend, "_get_container", lambda _sandbox_id: FakeContainer())
-    monkeypatch.setattr(backend, "_is_expected_skills_mount", lambda _container, _thread_id: True)
     monkeypatch.setattr(backend, "_is_on_expected_network", lambda _container, _sandbox_id: True)
-    monkeypatch.setattr(backend, "_has_expected_user_data_mounts", lambda _container, _thread_id, _uid: True)
+    monkeypatch.setattr(backend, "_has_expected_skills_mounts", lambda _container, _sandbox_id: True)
     monkeypatch.setattr(backend, "_ensure_user_data_writable", lambda _container: None)
     monkeypatch.setattr(module, "wait_for_sandbox_ready", lambda _url, timeout_seconds: bool(connected))
 
@@ -651,3 +656,205 @@ def test_docker_backend_does_not_remove_unowned_network(monkeypatch, tmp_path):
 
     assert disconnected == []
     assert removed == []
+
+
+def _install_fake_kubernetes(monkeypatch) -> dict:
+    """在 sys.modules 中安装 fake kubernetes，提供 ApiException/stream/STDIN_CHANNEL。
+
+    app.py 在方法内部惰性 import kubernetes，测试环境未安装该库，
+    因此拦截 import 并挂接可断言的桩。
+    """
+    import types
+
+    class ApiException(Exception):
+        def __init__(self, *args, status=404, **kwargs):
+            self.status = status
+            super().__init__(*args)
+
+    kubernetes = types.ModuleType("kubernetes")
+    client = types.ModuleType("kubernetes.client")
+    rest = types.ModuleType("kubernetes.client.rest")
+    stream = types.ModuleType("kubernetes.stream")
+    ws_client = types.ModuleType("kubernetes.stream.ws_client")
+
+    rest.ApiException = ApiException
+    ws_client.STDIN_CHANNEL = 0
+    stream.stream = None
+    client.rest = rest
+    kubernetes.client = client
+    kubernetes.stream = stream
+
+    for name, module in {
+        "kubernetes": kubernetes,
+        "kubernetes.client": client,
+        "kubernetes.client.rest": rest,
+        "kubernetes.stream": stream,
+        "kubernetes.stream.ws_client": ws_client,
+    }.items():
+        monkeypatch.setitem(sys.modules, name, module)
+    return {
+        "ApiException": ApiException,
+        "stream": stream,
+        "STDIN_CHANNEL": ws_client.STDIN_CHANNEL,
+    }
+
+
+def test_kubernetes_discover_discards_terminating_and_failed_pods(monkeypatch):
+    monkeypatch.setenv("PROVISIONER_BACKEND", "memory")
+    module = _load_module()
+    api_error = _install_fake_kubernetes(monkeypatch)["ApiException"]
+
+    deleted = []
+    pod_state = {"phase": "Running", "deletion_timestamp": None}
+
+    def read_pod(name, namespace):
+        if pod_state["phase"] == "NotFound":
+            raise api_error(status=404)
+        pod = SimpleNamespace(
+            metadata=SimpleNamespace(
+                annotations={
+                    "thread-id": "thread-1",
+                    "file-thread-id": "thread-1",
+                    "skills-thread-id": "thread-1",
+                    "uid": "user-1",
+                },
+                deletion_timestamp=pod_state["deletion_timestamp"],
+            ),
+            status=SimpleNamespace(phase=pod_state["phase"]),
+        )
+        return pod
+
+    def read_service(name, namespace):
+        return SimpleNamespace(spec=SimpleNamespace(ports=[SimpleNamespace(node_port=31234)]))
+
+    backend = object.__new__(module.KubernetesProvisionerBackend)
+    backend._namespace = "yuxi-know"
+    backend._node_host = "172.21.0.2"
+    backend._core_api = SimpleNamespace(
+        read_namespaced_pod=read_pod,
+        read_namespaced_service=read_service,
+        delete_namespaced_pod=lambda *a, **kw: deleted.append(("pod", kw)),
+        delete_namespaced_service=lambda *a, **kw: deleted.append(("svc", kw)),
+    )
+    monkeypatch.setattr(backend, "_pod_has_expected_mounts", lambda *args, **kwargs: True)
+
+    pod_state["phase"] = "Running"
+    assert backend.discover("sandbox-1") is not None
+
+    pod_state["deletion_timestamp"] = "2026-08-13T08:00:00Z"
+    assert backend.discover("sandbox-1") is None
+    assert any(kind == "pod" and kw.get("grace_period_seconds") == 0 for kind, kw in deleted)
+
+    deleted.clear()
+    pod_state["deletion_timestamp"] = None
+    pod_state["phase"] = "Failed"
+    assert backend.discover("sandbox-1") is None
+
+    pod_state["phase"] = "NotFound"
+    assert backend.discover("sandbox-1") is None
+
+
+def test_kubernetes_delete_forces_pod_and_service_removal(monkeypatch):
+    monkeypatch.setenv("PROVISIONER_BACKEND", "memory")
+    module = _load_module()
+    _install_fake_kubernetes(monkeypatch)
+
+    delete_calls = []
+
+    def delete_pod(name, namespace, grace_period_seconds):
+        delete_calls.append(("pod", name, grace_period_seconds))
+
+    def delete_service(name, namespace, grace_period_seconds):
+        delete_calls.append(("svc", name, grace_period_seconds))
+
+    backend = object.__new__(module.KubernetesProvisionerBackend)
+    backend._namespace = "yuxi-know"
+    backend._core_api = SimpleNamespace(
+        delete_namespaced_pod=delete_pod,
+        delete_namespaced_service=delete_service,
+    )
+
+    backend.delete("sandbox-1")
+
+    assert sorted(c[0] for c in delete_calls) == ["pod", "svc"]
+    assert all(c[2] == 0 for c in delete_calls)
+
+
+def test_kubernetes_wait_for_sandbox_gone_returns_when_resources_vanish(monkeypatch):
+    monkeypatch.setenv("PROVISIONER_BACKEND", "memory")
+    module = _load_module()
+    api_error = _install_fake_kubernetes(monkeypatch)["ApiException"]
+
+    reads = {"pod": 0, "svc": 0}
+
+    def read_pod(name, namespace):
+        reads["pod"] += 1
+        if reads["pod"] <= 2:
+            return SimpleNamespace()
+        raise api_error(status=404)
+
+    def read_service(name, namespace):
+        reads["svc"] += 1
+        if reads["svc"] <= 2:
+            return SimpleNamespace()
+        raise api_error(status=404)
+
+    backend = object.__new__(module.KubernetesProvisionerBackend)
+    backend._namespace = "yuxi-know"
+    backend._core_api = SimpleNamespace(
+        read_namespaced_pod=read_pod,
+        read_namespaced_service=read_service,
+    )
+
+    backend._wait_for_sandbox_gone("sandbox-1", timeout_seconds=10)
+
+    assert reads["pod"] == 3
+    assert reads["svc"] == 3
+
+
+def test_kubernetes_replace_skills_uses_websocket_stdin_channel(monkeypatch):
+    monkeypatch.setenv("PROVISIONER_BACKEND", "memory")
+    module = _load_module()
+    fake_k8s = _install_fake_kubernetes(monkeypatch)
+
+    written = []
+    channels_closed = []
+    updated = []
+
+    class FakeWsResponse:
+        returncode = None
+
+        def write_stdin(self, data):
+            written.append(data)
+
+        def close_channel(self, channel):
+            channels_closed.append(channel)
+
+        def is_open(self):
+            return False
+
+        def update(self, timeout=1):
+            updated.append(True)
+
+        def read_stderr(self):
+            return ""
+
+        def close(self):
+            return None
+
+    def fake_stream(*args, **kwargs):
+        return FakeWsResponse()
+
+    backend = object.__new__(module.KubernetesProvisionerBackend)
+    backend._namespace = "yuxi-know"
+    backend._core_api = SimpleNamespace(
+        connect_get_namespaced_pod_exec=lambda *a, **kw: None,
+    )
+    monkeypatch.setattr(backend, "discover", lambda *a, **kw: SimpleNamespace())
+    monkeypatch.setattr(fake_k8s["stream"], "stream", fake_stream)
+
+    backend.replace_skills("sandbox-1", {"demo/SKILL.md": b"# demo\n"})
+
+    assert written and written[0]
+    assert channels_closed and channels_closed[0] == fake_k8s["STDIN_CHANNEL"]
+    assert updated == []

@@ -19,8 +19,6 @@ from .sandbox import (
     sandbox_id_for_thread,
     sandbox_outputs_dir,
     sandbox_uploads_dir,
-    sandbox_user_data_dir,
-    sandbox_workspace_dir,
     shutdown_sandbox_provider,
     virtual_path_for_thread_file,
 )
@@ -43,8 +41,6 @@ __all__ = [
     "resolve_visible_knowledge_bases_for_context",
     "virtual_path_for_thread_file",
     "sandbox_id_for_thread",
-    "sandbox_user_data_dir",
-    "sandbox_workspace_dir",
     "sandbox_uploads_dir",
     "sandbox_outputs_dir",
     # Config paths

@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import io
 import logging
 import os
 import re
 import secrets
+import tarfile
 import threading
 import time
 from collections.abc import AsyncIterator
@@ -111,6 +114,10 @@ class ListSandboxesResponse(BaseModel):
     count: int
 
 
+class ReplaceSandboxSkillsRequest(BaseModel):
+    files: dict[str, str] = Field(default_factory=dict)
+
+
 @dataclass(slots=True)
 class SandboxRecord:
     sandbox_id: str
@@ -171,6 +178,11 @@ class MemoryProvisionerBackend:
         with self._lock:
             self._records.pop(sandbox_id, None)
 
+    def replace_skills(self, sandbox_id: str, files: dict[str, bytes]) -> None:
+        _ = files
+        if self.discover(sandbox_id) is None:
+            raise ValueError("sandbox not found")
+
 
 def wait_for_sandbox_ready(sandbox_url: str, timeout_seconds: int = 30) -> bool:
     deadline = time.time() + timeout_seconds
@@ -202,7 +214,6 @@ class LocalContainerProvisionerBackend:
         self._network_prefix = os.getenv("DOCKER_NETWORK_PREFIX")
         if not self._network_prefix:
             raise RuntimeError("DOCKER_NETWORK_PREFIX is required for the docker backend")
-        self._threads_host_path = os.getenv("DOCKER_THREADS_HOST_PATH")
         self._container_prefix = os.getenv("DOCKER_SANDBOX_PREFIX", "yuxi-sandbox")
         self._health_timeout_seconds = int(os.getenv("SANDBOX_HEALTH_TIMEOUT_SECONDS", "300"))
         self._sandbox_env = load_sandbox_env()
@@ -213,27 +224,6 @@ class LocalContainerProvisionerBackend:
             self._provisioner_container = self._client.containers.get(os.environ["HOSTNAME"])
         except DockerException as exc:
             raise RuntimeError(f"docker backend unavailable: {exc}") from exc
-
-        self._resolve_host_paths()
-        self._threads_host_path = self._normalize_host_bind_path(self._threads_host_path)
-
-    @staticmethod
-    def _normalize_host_bind_path(path_value: str | None) -> str:
-        value = str(path_value or "").strip()
-        if not value:
-            raise RuntimeError("docker host bind path is required")
-
-        # Docker Desktop on Windows can report bind sources as D:\\... while
-        # this provisioner runs in a Linux container. Convert that daemon-
-        # reported path into the Linux path exposed inside Docker Desktop.
-        normalized = value.replace("\\", "/")
-        match = re.match(r"^([A-Za-z]):/(.+)$", normalized)
-        if match:
-            drive = match.group(1).lower()
-            rest = match.group(2).lstrip("/")
-            return f"/run/desktop/mnt/host/{drive}/{rest}"
-
-        return normalized
 
     @staticmethod
     def _validate_path_segment(value: str, label: str) -> str:
@@ -264,92 +254,27 @@ class LocalContainerProvisionerBackend:
         prefix = self._network_prefix.rstrip("-_")
         return f"{prefix}-{self._sanitize_id(sandbox_id)}"
 
-    def _thread_skills_host_path(self, thread_id: str) -> Path:
-        threads_root = Path(self._threads_host_path).resolve()
-        thread_skills = (threads_root / thread_id / "skills").resolve()
-        try:
-            thread_skills.relative_to(threads_root)
-        except ValueError as exc:
-            raise ValueError("thread skills path resolved outside threads host root") from exc
-        return thread_skills
-
-    def _shared_workspace_host_path(self, uid: str) -> Path:
-        threads_root = Path(self._threads_host_path).resolve()
-        workspace = (threads_root / "shared" / uid / "workspace").resolve()
-        try:
-            workspace.relative_to(threads_root)
-        except ValueError as exc:
-            raise ValueError("user workspace path resolved outside threads host root") from exc
-        return workspace
-
-    def _thread_uploads_host_path(self, thread_id: str) -> Path:
-        threads_root = Path(self._threads_host_path).resolve()
-        uploads = (threads_root / thread_id / "user-data" / "uploads").resolve()
-        try:
-            uploads.relative_to(threads_root)
-        except ValueError as exc:
-            raise ValueError("thread uploads path resolved outside threads host root") from exc
-        return uploads
-
-    def _thread_outputs_host_path(self, thread_id: str) -> Path:
-        threads_root = Path(self._threads_host_path).resolve()
-        outputs = (threads_root / thread_id / "user-data" / "outputs").resolve()
-        try:
-            outputs.relative_to(threads_root)
-        except ValueError as exc:
-            raise ValueError("thread outputs path resolved outside threads host root") from exc
-        return outputs
-
-    def _is_expected_skills_mount(self, container, skills_thread_id: str) -> bool:
-        expected_source = str(self._thread_skills_host_path(skills_thread_id))
-        for mount in container.attrs.get("Mounts") or []:
-            destination = (mount.get("Destination") or "").rstrip("/")
-            if destination != "/home/gem/skills":
-                continue
-            source = str(mount.get("Source") or "").rstrip("/")
-            return source == expected_source
-        return False
-
-    def _has_expected_user_data_mounts(self, container, file_thread_id: str, uid: str) -> bool:
-        expected_mounts = {
-            "/home/gem/user-data/workspace": str(self._shared_workspace_host_path(uid)),
-            "/home/gem/user-data/uploads": str(self._thread_uploads_host_path(file_thread_id)),
-            "/home/gem/user-data/outputs": str(self._thread_outputs_host_path(file_thread_id)),
-        }
-        actual_mounts = {
-            str((mount.get("Destination") or "").rstrip("/")): str((mount.get("Source") or "").rstrip("/"))
-            for mount in container.attrs.get("Mounts") or []
-        }
-        return all(actual_mounts.get(destination) == source for destination, source in expected_mounts.items())
-
-    def _resolve_host_paths(self) -> None:
-        if self._threads_host_path:
-            return
-
-        container_id = os.getenv("HOSTNAME", "").strip()
-        if not container_id:
-            raise RuntimeError("HOSTNAME is required to infer docker backend host paths")
-
-        inspected = self._client.api.inspect_container(container_id)
-        mounts = inspected.get("Mounts") or []
-
-        saves_source = None
-        for mount in mounts:
-            destination = (mount.get("Destination") or "").rstrip("/")
-            if destination == "/app/saves":
-                saves_source = mount.get("Source")
-                break
-
-        if not saves_source:
-            raise RuntimeError("cannot infer host path for /app/saves mount")
-
-        base = Path(self._normalize_host_bind_path(saves_source))
-        if not self._threads_host_path:
-            self._threads_host_path = str(base / "threads")
+    def _skills_volume_name(self, sandbox_id: str) -> str:
+        return f"{self._container_prefix}-{self._sanitize_id(sandbox_id)}-skills"
 
     def _is_on_expected_network(self, container, sandbox_id: str) -> bool:
         networks = (container.attrs.get("NetworkSettings") or {}).get("Networks") or {}
         return set(networks) == {self._network_name(sandbox_id)}
+
+    def _has_expected_skills_mounts(self, container, sandbox_id: str) -> bool:
+        """确认 Sandbox 仅持有 Skills 只读挂载。"""
+        expected_source = self._skills_volume_name(sandbox_id)
+        mounts = {
+            str(mount.get("Destination") or "").rstrip("/"): (
+                str(mount.get("Name") or mount.get("Source") or ""),
+                bool(mount.get("RW")),
+            )
+            for mount in container.attrs.get("Mounts") or []
+        }
+        return "/home/gem/.yuxi-skills-rw" not in mounts and mounts.get("/home/gem/skills") == (
+            expected_source,
+            False,
+        )
 
     @staticmethod
     def _has_expected_network_ownership(network, sandbox_id: str) -> bool:
@@ -357,7 +282,7 @@ class LocalContainerProvisionerBackend:
         return labels.get("managed-by") == "yuxi-sandbox-provisioner" and labels.get("sandbox-id") == sandbox_id
 
     def _ensure_network(self, sandbox_id: str) -> str:
-        from docker.errors import NotFound
+        NotFound = self._docker.errors.NotFound
 
         network_name = self._network_name(sandbox_id)
         try:
@@ -382,7 +307,7 @@ class LocalContainerProvisionerBackend:
         return network_name
 
     def _delete_network(self, sandbox_id: str) -> None:
-        from docker.errors import NotFound
+        NotFound = self._docker.errors.NotFound
 
         try:
             network = self._client.networks.get(self._network_name(sandbox_id))
@@ -396,6 +321,36 @@ class LocalContainerProvisionerBackend:
         if self._provisioner_container.id in containers:
             network.disconnect(self._provisioner_container, force=True)
         network.remove()
+
+    def _ensure_skills_volume(self, sandbox_id: str) -> str:
+        """创建仅属于当前 Sandbox 的临时 Skills 卷。"""
+        NotFound = self._docker.errors.NotFound
+
+        volume_name = self._skills_volume_name(sandbox_id)
+        try:
+            volume = self._client.volumes.get(volume_name)
+        except NotFound:
+            volume = self._client.volumes.create(
+                name=volume_name,
+                labels={"managed-by": "yuxi-sandbox-provisioner", "sandbox-id": sandbox_id},
+            )
+        labels = volume.attrs.get("Labels") or {}
+        if labels.get("managed-by") != "yuxi-sandbox-provisioner" or labels.get("sandbox-id") != sandbox_id:
+            raise RuntimeError(f"sandbox skills volume {volume_name} has unexpected ownership")
+        return volume_name
+
+    def _delete_skills_volume(self, sandbox_id: str) -> None:
+        NotFound = self._docker.errors.NotFound
+
+        try:
+            volume = self._client.volumes.get(self._skills_volume_name(sandbox_id))
+        except NotFound:
+            return
+        labels = volume.attrs.get("Labels") or {}
+        if labels.get("managed-by") != "yuxi-sandbox-provisioner" or labels.get("sandbox-id") != sandbox_id:
+            logger.warning("Skipping removal of sandbox skills volume %s with unexpected ownership", volume.name)
+            return
+        volume.remove(force=True)
 
     def _sandbox_url(self, container) -> str:
         return f"http://{container.name}:{self._container_port}"
@@ -453,16 +408,10 @@ class LocalContainerProvisionerBackend:
             existing = self._get_container(sandbox_id)
             if existing is not None:
                 existing.reload()
-                if not self._is_expected_skills_mount(existing, safe_skills_thread_id):
-                    logger.info("Recreating sandbox %s because skills mount is stale", sandbox_id)
-                    self.delete(sandbox_id)
-                    existing = None
-                elif not self._is_on_expected_network(existing, sandbox_id):
-                    logger.info("Recreating sandbox %s because its network is stale", sandbox_id)
-                    self.delete(sandbox_id)
-                    existing = None
-                elif not self._has_expected_user_data_mounts(existing, safe_file_thread_id, safe_uid):
-                    logger.info("Recreating sandbox %s because user-data mounts are stale", sandbox_id)
+                if not self._is_on_expected_network(existing, sandbox_id) or not self._has_expected_skills_mounts(
+                    existing, sandbox_id
+                ):
+                    logger.info("Recreating sandbox %s because its network or Skills mounts are stale", sandbox_id)
                     self.delete(sandbox_id)
                     existing = None
             if existing is not None:
@@ -482,15 +431,8 @@ class LocalContainerProvisionerBackend:
                 except Exception as exc:
                     logger.warning("Failed to delete stale sandbox %s before recreate: %s", sandbox_id, exc)
 
-            shared_workspace = self._shared_workspace_host_path(safe_uid)
-            shared_workspace.mkdir(parents=True, exist_ok=True)
-            thread_uploads = self._thread_uploads_host_path(safe_file_thread_id)
-            thread_outputs = self._thread_outputs_host_path(safe_file_thread_id)
-            thread_uploads.mkdir(parents=True, exist_ok=True)
-            thread_outputs.mkdir(parents=True, exist_ok=True)
-            thread_skills = self._thread_skills_host_path(safe_skills_thread_id)
-            thread_skills.mkdir(parents=True, exist_ok=True)
             network_name = self._ensure_network(sandbox_id)
+            skills_volume_name = self._ensure_skills_volume(sandbox_id)
 
             container_name = self._container_name(sandbox_id)
             run_kwargs = {
@@ -505,18 +447,20 @@ class LocalContainerProvisionerBackend:
                     "uid": safe_uid,
                     "managed-by": "yuxi-sandbox-provisioner",
                 },
-                "volumes": {
-                    str(shared_workspace): {"bind": "/home/gem/user-data/workspace", "mode": "rw"},
-                    str(thread_uploads): {"bind": "/home/gem/user-data/uploads", "mode": "rw"},
-                    str(thread_outputs): {"bind": "/home/gem/user-data/outputs", "mode": "rw"},
-                    str(thread_skills): {"bind": "/home/gem/skills", "mode": "ro"},
-                },
                 "network": network_name,
                 "security_opt": ["seccomp=unconfined"],
                 # The sandbox image expects /home/gem to be writable during boot.
                 # Keep it ephemeral and mount persistent user-data underneath it.
                 "tmpfs": {"/home/gem": "rw,exec,mode=777"},
             }
+            run_kwargs["mounts"] = [
+                self._docker.types.Mount(
+                    target="/home/gem/skills",
+                    source=skills_volume_name,
+                    type="volume",
+                    read_only=True,
+                ),
+            ]
             sandbox_env = merged_sandbox_env(self._sandbox_env, env or {}) if inherit_env else {}
             if sandbox_env:
                 run_kwargs["environment"] = sandbox_env
@@ -550,9 +494,9 @@ class LocalContainerProvisionerBackend:
         uid = str(labels.get("uid") or "").strip()
         if not uid:
             return None
-        safe_file_thread_id = self._validate_thread_id(file_thread_id)
-        safe_skills_thread_id = self._validate_thread_id(skills_thread_id)
-        safe_uid = self._validate_uid(uid)
+        self._validate_thread_id(file_thread_id)
+        self._validate_thread_id(skills_thread_id)
+        self._validate_uid(uid)
         if not self._is_on_expected_network(container, sandbox_id):
             logger.info("Discarding stale sandbox %s on an unexpected network", sandbox_id)
             try:
@@ -560,21 +504,14 @@ class LocalContainerProvisionerBackend:
             except Exception as exc:
                 logger.warning("Failed to delete stale sandbox %s during discover: %s", sandbox_id, exc)
             return None
+        if not self._has_expected_skills_mounts(container, sandbox_id):
+            logger.info("Discarding stale sandbox %s with unexpected Skills mounts", sandbox_id)
+            try:
+                self.delete(sandbox_id)
+            except Exception as exc:
+                logger.warning("Failed to delete stale sandbox %s during discover: %s", sandbox_id, exc)
+            return None
         self._ensure_network(sandbox_id)
-        if not self._is_expected_skills_mount(container, safe_skills_thread_id):
-            logger.info("Discarding stale sandbox %s with unexpected skills mount", sandbox_id)
-            try:
-                self.delete(sandbox_id)
-            except Exception as exc:
-                logger.warning("Failed to delete stale sandbox %s during discover: %s", sandbox_id, exc)
-            return None
-        if not self._has_expected_user_data_mounts(container, safe_file_thread_id, safe_uid):
-            logger.info("Discarding stale sandbox %s with unexpected user-data mounts", sandbox_id)
-            try:
-                self.delete(sandbox_id)
-            except Exception as exc:
-                logger.warning("Failed to delete stale sandbox %s during discover: %s", sandbox_id, exc)
-            return None
         record = self._to_record(container, sandbox_id)
         if not record.sandbox_url:
             return None
@@ -601,7 +538,42 @@ class LocalContainerProvisionerBackend:
             if container.status == "running":
                 container.stop(timeout=10)
             container.remove(v=True, force=True)
+        self._delete_skills_volume(sandbox_id)
         self._delete_network(sandbox_id)
+
+    def replace_skills(self, sandbox_id: str, files: dict[str, bytes]) -> None:
+        """通过短生命周期 helper 容器替换 Skills 卷内容。"""
+        if self._get_container(sandbox_id) is None:
+            raise ValueError("sandbox not found")
+
+        volume_name = self._ensure_skills_volume(sandbox_id)
+        archive = _build_skills_archive(files)
+        helper = self._client.containers.create(
+            self._sandbox_image,
+            command=["-lc", "sleep 300"],
+            entrypoint="sh",
+            labels={"managed-by": "yuxi-sandbox-provisioner", "sandbox-id": sandbox_id, "role": "skills-sync"},
+            mounts=[
+                self._docker.types.Mount(
+                    target="/skills",
+                    source=volume_name,
+                    type="volume",
+                    read_only=False,
+                )
+            ],
+        )
+        try:
+            helper.start()
+            result = helper.exec_run(
+                ["sh", "-lc", "find /skills -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +"],
+                user="0:0",
+            )
+            if result.exit_code != 0:
+                raise RuntimeError("failed to clear sandbox skills volume")
+            if files and not helper.put_archive("/skills", archive):
+                raise RuntimeError("failed to populate sandbox skills volume")
+        finally:
+            helper.remove(force=True)
 
 
 class KubernetesProvisionerBackend:
@@ -614,8 +586,6 @@ class KubernetesProvisionerBackend:
             "SANDBOX_IMAGE",
             "enterprise-public-cn-beijing.cr.volces.com/vefaas-public/all-in-one-sandbox:latest",
         )
-        self._skill_pvc = os.getenv("SKILLS_PVC", "yuxi-skills")
-        self._thread_pvc = os.getenv("THREAD_PVC", "yuxi-thread")
         self._node_host = os.getenv("NODE_HOST", "host.docker.internal")
         self._container_port = int(os.getenv("SANDBOX_CONTAINER_PORT", "8080"))
         self._sandbox_env = load_sandbox_env()
@@ -672,26 +642,6 @@ class KubernetesProvisionerBackend:
                     fs_group=0,
                     run_as_user=0,
                 ),
-                init_containers=[
-                    self._client.V1Container(
-                        name="init-user-data",
-                        image=self._sandbox_image,
-                        command=["sh", "-c"],
-                        args=[
-                            "chmod 777 /home/gem "
-                            f"&& mkdir -p /mnt/shared-data/threads/shared/{uid}/workspace "
-                            f"/mnt/shared-data/threads/{file_thread_id}/user-data/uploads "
-                            f"/mnt/shared-data/threads/{file_thread_id}/user-data/outputs "
-                            f"/mnt/shared-data/threads/{skills_thread_id}/skills "
-                            f"&& chmod -R 777 /mnt/shared-data/threads/shared/{uid}/workspace "
-                            f"/mnt/shared-data/threads/{file_thread_id}/user-data ",
-                        ],
-                        volume_mounts=[
-                            self._client.V1VolumeMount(name="home-dir", mount_path="/home/gem"),
-                            self._client.V1VolumeMount(name="shared-data", mount_path="/mnt/shared-data"),
-                        ],
-                    ),
-                ],
                 containers=[
                     self._client.V1Container(
                         name="sandbox",
@@ -699,41 +649,28 @@ class KubernetesProvisionerBackend:
                         env=env_vars,
                         ports=[self._client.V1ContainerPort(container_port=self._container_port)],
                         volume_mounts=[
-                            self._client.V1VolumeMount(name="home-dir", mount_path="/home/gem"),
+                            self._client.V1VolumeMount(name="home-dir", mount_path="/home/gem", read_only=False),
                             self._client.V1VolumeMount(
-                                name="shared-data",
-                                mount_path="/home/gem/user-data/workspace",
-                                sub_path=f"threads/shared/{uid}/workspace",
-                            ),
-                            self._client.V1VolumeMount(
-                                name="shared-data",
-                                mount_path="/home/gem/user-data/uploads",
-                                sub_path=f"threads/{file_thread_id}/user-data/uploads",
-                            ),
-                            self._client.V1VolumeMount(
-                                name="shared-data",
-                                mount_path="/home/gem/user-data/outputs",
-                                sub_path=f"threads/{file_thread_id}/user-data/outputs",
-                            ),
-                            self._client.V1VolumeMount(
-                                name="shared-data",
-                                mount_path="/home/gem/skills",
-                                sub_path=f"threads/{skills_thread_id}/skills",
-                                read_only=True,
+                                name="skills-dir", mount_path="/home/gem/skills", read_only=True
                             ),
                         ],
-                    )
+                    ),
+                    self._client.V1Container(
+                        name="skills-sync",
+                        image=self._sandbox_image,
+                        command=["sh", "-lc", "sleep infinity"],
+                        volume_mounts=[
+                            self._client.V1VolumeMount(name="skills-dir", mount_path="/skills", read_only=False)
+                        ],
+                    ),
                 ],
                 volumes=[
                     self._client.V1Volume(
-                        name="shared-data",
-                        persistent_volume_claim=self._client.V1PersistentVolumeClaimVolumeSource(
-                            claim_name=self._thread_pvc,
-                            read_only=False,
-                        ),
+                        name="home-dir",
+                        empty_dir=self._client.V1EmptyDirVolumeSource(),
                     ),
                     self._client.V1Volume(
-                        name="home-dir",
+                        name="skills-dir",
                         empty_dir=self._client.V1EmptyDirVolumeSource(),
                     ),
                 ],
@@ -763,20 +700,21 @@ class KubernetesProvisionerBackend:
 
     @staticmethod
     def _pod_has_expected_mounts(pod, *, file_thread_id: str, skills_thread_id: str, uid: str) -> bool:
-        expected_mounts = {
-            "/home/gem/user-data/workspace": f"threads/shared/{uid}/workspace",
-            "/home/gem/user-data/uploads": f"threads/{file_thread_id}/user-data/uploads",
-            "/home/gem/user-data/outputs": f"threads/{file_thread_id}/user-data/outputs",
-            "/home/gem/skills": f"threads/{skills_thread_id}/skills",
-        }
         for container in getattr(pod.spec, "containers", []) or []:
             if getattr(container, "name", None) != "sandbox":
                 continue
-            actual_mounts = {
-                str(getattr(mount, "mount_path", "") or "").rstrip("/"): str(getattr(mount, "sub_path", "") or "")
-                for mount in getattr(container, "volume_mounts", []) or []
+            mounts = {
+                str(getattr(mount, "mount_path", "") or "").rstrip("/"): bool(
+                    getattr(mount, "read_only", False)
+                )
+                for mount in container.volume_mounts or []
             }
-            return all(actual_mounts.get(path) == sub_path for path, sub_path in expected_mounts.items())
+            return (
+                mounts.get("/home/gem") is False
+                and "/home/gem/.yuxi-skills-rw" not in mounts
+                and mounts.get("/home/gem/skills") is True
+                and "/home/gem/user-data" not in mounts
+            )
         return False
 
     def _discovered_matches_request(
@@ -841,6 +779,7 @@ class KubernetesProvisionerBackend:
 
             self._pod_name(sandbox_id)
             self._service_name(sandbox_id)
+            self._wait_for_sandbox_gone(sandbox_id)
 
             try:
                 self._core_api.create_namespaced_pod(
@@ -905,6 +844,13 @@ class KubernetesProvisionerBackend:
         safe_file_thread_id = LocalContainerProvisionerBackend._validate_thread_id(file_thread_id)
         safe_skills_thread_id = LocalContainerProvisionerBackend._validate_thread_id(skills_thread_id)
         safe_uid = LocalContainerProvisionerBackend._validate_uid(uid)
+        if getattr(pod.metadata, "deletion_timestamp", None) is not None or (pod.status and (pod.status.phase in {"Failed", "Unknown"})):
+            logger.info("Discarding sandbox %s in terminating or failed phase", sandbox_id)
+            try:
+                self.delete(sandbox_id)
+            except Exception as exc:
+                logger.warning("Failed to delete terminating sandbox %s during discover: %s", sandbox_id, exc)
+            return None
         if not self._pod_has_expected_mounts(
             pod,
             file_thread_id=safe_file_thread_id,
@@ -960,14 +906,119 @@ class KubernetesProvisionerBackend:
         service_name = self._service_name(sandbox_id)
 
         for delete_call in (
-            lambda: self._core_api.delete_namespaced_service(name=service_name, namespace=self._namespace),
-            lambda: self._core_api.delete_namespaced_pod(name=pod_name, namespace=self._namespace),
+            lambda: self._core_api.delete_namespaced_service(
+                name=service_name,
+                namespace=self._namespace,
+                grace_period_seconds=0,
+            ),
+            lambda: self._core_api.delete_namespaced_pod(
+                name=pod_name,
+                namespace=self._namespace,
+                grace_period_seconds=0,
+            ),
         ):
             try:
                 delete_call()
             except ApiException as exc:
                 if exc.status != 404:
                     raise
+
+    def _wait_for_sandbox_gone(self, sandbox_id: str, timeout_seconds: int = 60) -> None:
+        """等待同名 Pod 与 Service 完全消失，避免 409 冲突重用 Terminating 资源。"""
+        from kubernetes.client.rest import ApiException
+
+        deadline = time.time() + timeout_seconds
+        while time.time() <= deadline:
+            pod_gone = True
+            service_gone = True
+            try:
+                self._core_api.read_namespaced_pod(name=self._pod_name(sandbox_id), namespace=self._namespace)
+                pod_gone = False
+            except ApiException as exc:
+                if exc.status != 404:
+                    raise
+            try:
+                self._core_api.read_namespaced_service(name=self._service_name(sandbox_id), namespace=self._namespace)
+                service_gone = False
+            except ApiException as exc:
+                if exc.status != 404:
+                    raise
+            if pod_gone and service_gone:
+                return
+            time.sleep(1)
+        # 优雅删除可能因 Sandbox 进程未能及时退出而卡在 Terminating，
+        # 强制删除以释放 Pod 名称，避免后续重建请求 409。
+        logger.warning("Forcing removal of sandbox %s after graceful delete timed out", sandbox_id)
+        try:
+            self._core_api.delete_namespaced_pod(
+                name=self._pod_name(sandbox_id),
+                namespace=self._namespace,
+                grace_period_seconds=0,
+            )
+        except ApiException as exc:
+            if exc.status != 404:
+                raise
+        deadline = time.time() + timeout_seconds
+        while time.time() <= deadline:
+            try:
+                self._core_api.read_namespaced_pod(name=self._pod_name(sandbox_id), namespace=self._namespace)
+            except ApiException:
+                return
+            time.sleep(1)
+        raise RuntimeError(f"timed out waiting for sandbox {sandbox_id} pod to be removed")
+
+    def replace_skills(self, sandbox_id: str, files: dict[str, bytes]) -> None:
+        """仅通过受信任 helper 容器替换 Pod 内的 Skills 卷内容。"""
+        from kubernetes.stream import stream
+        from kubernetes.stream.ws_client import STDIN_CHANNEL
+
+        if self.discover(sandbox_id) is None:
+            raise ValueError("sandbox not found")
+        payload = base64.b64encode(_build_skills_archive(files)).decode("ascii")
+        script = (
+            "import base64, io, os, shutil, sys, tarfile; "
+            "root='/skills'; "
+            "[shutil.rmtree(os.path.join(root,n)) if os.path.isdir(os.path.join(root,n)) else "
+            "os.unlink(os.path.join(root,n)) for n in os.listdir(root)]; "
+            "data=base64.b64decode(sys.stdin.read()); "
+            "tarfile.open(fileobj=io.BytesIO(data), mode='r:').extractall(root) if data else None"
+        )
+        response = stream(
+            self._core_api.connect_get_namespaced_pod_exec,
+            self._pod_name(sandbox_id),
+            self._namespace,
+            container="skills-sync",
+            command=["python3", "-c", script],
+            stderr=True,
+            stdin=True,
+            stdout=True,
+            tty=False,
+            _preload_content=False,
+        )
+        try:
+            response.write_stdin(payload)
+            response.close_channel(STDIN_CHANNEL)
+            while response.is_open():
+                response.update(timeout=1)
+            if response.returncode not in (0, None):
+                raise RuntimeError(response.read_stderr() or "failed to replace sandbox skills")
+        finally:
+            response.close()
+
+
+def _build_skills_archive(files: dict[str, bytes]) -> bytes:
+    """校验 Skills 相对路径并构建不含链接的 tar 快照。"""
+    buffer = io.BytesIO()
+    with tarfile.open(fileobj=buffer, mode="w") as archive:
+        for relative_path, data in sorted(files.items()):
+            path = Path(relative_path)
+            if path.is_absolute() or not path.parts or any(part in {"", ".", ".."} for part in path.parts):
+                raise ValueError(f"invalid skill path: {relative_path}")
+            info = tarfile.TarInfo(path.as_posix())
+            info.size = len(data)
+            info.mode = 0o444
+            archive.addfile(info, io.BytesIO(data))
+    return buffer.getvalue()
 
 
 class SandboxIdleReaper:
@@ -1185,6 +1236,22 @@ def delete_sandbox(sandbox_id: str):
     idle_reaper.forget(sandbox_id)
 
     return DeleteSandboxResponse(ok=True, sandbox_id=sandbox_id)
+
+
+@app.put(
+    "/api/sandboxes/{sandbox_id}/skills",
+    dependencies=[Depends(require_provisioner_auth)],
+)
+def replace_sandbox_skills(sandbox_id: str, payload: ReplaceSandboxSkillsRequest):
+    try:
+        files = {path: base64.b64decode(content, validate=True) for path, content in payload.files.items()}
+        backend_impl.replace_skills(sandbox_id, files)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    idle_reaper.touch(sandbox_id)
+    return {"ok": True, "sandbox_id": sandbox_id}
 
 
 @app.api_route(

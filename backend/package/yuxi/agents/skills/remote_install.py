@@ -15,7 +15,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from yuxi.agents.backends.sandbox import ProvisionerSandboxBackend
 from yuxi.agents.backends.sandbox.download import download_sandbox_directory
-from yuxi.agents.backends.sandbox.paths import sandbox_user_data_dir, sandbox_workspace_dir
 from yuxi.agents.backends.sandbox.provider import get_sandbox_provider
 from yuxi.agents.skills.service import import_skill_dir, is_valid_skill_slug
 from yuxi.config.options import remote_skill_source_policy
@@ -103,11 +102,6 @@ class _RemoteSkillSandbox:
         except Exception as exc:
             logger.error(f"销毁远程 Skill Sandbox 失败: {exc}")
             raise
-        finally:
-            thread_dir = sandbox_user_data_dir(self.thread_id).parent
-            workspace_dir = sandbox_workspace_dir(self.thread_id, self.thread_id).parent
-            await asyncio.to_thread(shutil.rmtree, thread_dir, ignore_errors=True)
-            await asyncio.to_thread(shutil.rmtree, workspace_dir, ignore_errors=True)
 
 
 def _normalize_source(source: str, allowed_hosts: list[str]) -> str:

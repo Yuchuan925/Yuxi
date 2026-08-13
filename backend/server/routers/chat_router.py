@@ -1,10 +1,10 @@
 import traceback
 import uuid
 from typing import Any
+from urllib.parse import quote
 
-import aiofiles
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, UploadFile, File
-from fastapi.responses import FileResponse
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -28,7 +28,6 @@ from yuxi.services.conversation_service import (
     upload_thread_attachment_view,
     upload_tmp_attachment_view,
 )
-from yuxi.services.file_preview import detect_media_type
 from yuxi.services.thread_files_service import (
     list_thread_files_view,
     read_thread_file_content_view,
@@ -485,18 +484,16 @@ async def get_thread_artifact(
     current_user: User = Depends(get_required_user),
 ):
     """下载或预览线程文件。"""
-    file_path = await resolve_thread_artifact_view(
+    artifact = await resolve_thread_artifact_view(
         thread_id=thread_id,
         current_uid=str(current_user.uid),
         db=db,
         path=path,
     )
 
-    async with aiofiles.open(file_path, "rb") as artifact_file:
-        file_head = await artifact_file.read(512)
-    media_type = detect_media_type(file_path.name, file_head)
-    headers = {"Content-Disposition": f'attachment; filename="{file_path.name}"'} if download else None
-    return FileResponse(path=file_path, media_type=media_type, headers=headers)
+    disposition = "attachment" if download else "inline"
+    headers = {"Content-Disposition": f"{disposition}; filename*=UTF-8''{quote(artifact.name)}"}
+    return StreamingResponse(artifact.stream, media_type=artifact.media_type, headers=headers)
 
 
 @chat.post("/thread/{thread_id}/artifacts/save", response_model=SaveThreadArtifactResponse)

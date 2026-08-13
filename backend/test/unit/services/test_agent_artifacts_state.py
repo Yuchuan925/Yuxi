@@ -1,18 +1,19 @@
-from yuxi.agents.backends.sandbox import (
-    VIRTUAL_PATH_PREFIX,
-    ensure_thread_dirs,
-    sandbox_outputs_dir,
-    sandbox_uploads_dir,
-)
+from yuxi.agents.backends.sandbox import VIRTUAL_PATH_PREFIX
 from yuxi.agents.buildin.chatbot.state import merge_subagent_runs
 from yuxi.agents.state import merge_artifacts
+from yuxi.agents.toolkits.buildin import tools
 from yuxi.agents.toolkits.buildin.tools import _normalize_presented_artifact_path
 from yuxi.services.chat_service import extract_agent_state
+from yuxi.storage.filestore import LocalFileStore, thread_output_key
 from yuxi.utils.paths import CONVERSATION_HISTORY_DIR_NAME, LARGE_TOOL_RESULTS_DIR_NAME
 
 
 def _runtime_with_thread(thread_id: str, uid: str = "user-1"):
-    context = type("RuntimeContext", (), {"thread_id": thread_id, "uid": uid})()
+    context = type(
+        "RuntimeContext",
+        (),
+        {"thread_id": thread_id, "file_thread_id": thread_id, "uid": uid},
+    )()
     return type("RuntimeStub", (), {"context": context})()
 
 
@@ -138,24 +139,22 @@ def test_merge_subagent_runs_does_not_merge_different_run_ids_by_state_id():
     ]
 
 
-def test_normalize_presented_artifact_path_accepts_host_path():
-    thread_id = "artifacts-host-path"
-    ensure_thread_dirs(thread_id, "user-1")
-    output_file = sandbox_outputs_dir(thread_id) / "report.md"
-    output_file.write_text("# demo", encoding="utf-8")
-
-    normalized = _normalize_presented_artifact_path(str(output_file), _runtime_with_thread(thread_id))
-
-    assert normalized == f"{VIRTUAL_PATH_PREFIX}/outputs/report.md"
+async def test_normalize_presented_artifact_path_rejects_host_path():
+    try:
+        await _normalize_presented_artifact_path("/app/saves/outputs/report.md", _runtime_with_thread("thread-1"))
+    except ValueError as exc:
+        assert f"{VIRTUAL_PATH_PREFIX}/outputs/" in str(exc)
+    else:
+        raise AssertionError("expected ValueError for host path")
 
 
-def test_normalize_presented_artifact_path_accepts_virtual_path():
+async def test_normalize_presented_artifact_path_accepts_virtual_path(monkeypatch, tmp_path):
     thread_id = "artifacts-virtual-path"
-    ensure_thread_dirs(thread_id, "user-1")
-    output_file = sandbox_outputs_dir(thread_id) / "summary.txt"
-    output_file.write_text("demo", encoding="utf-8")
+    store = LocalFileStore(tmp_path)
+    await store.put(thread_output_key(thread_id, "summary.txt"), b"demo")
+    monkeypatch.setattr(tools, "get_file_store", lambda: store)
 
-    normalized = _normalize_presented_artifact_path(
+    normalized = await _normalize_presented_artifact_path(
         f"{VIRTUAL_PATH_PREFIX}/outputs/summary.txt",
         _runtime_with_thread(thread_id),
     )
@@ -163,31 +162,25 @@ def test_normalize_presented_artifact_path_accepts_virtual_path():
     assert normalized == f"{VIRTUAL_PATH_PREFIX}/outputs/summary.txt"
 
 
-def test_normalize_presented_artifact_path_rejects_non_outputs_path():
-    thread_id = "artifacts-reject-path"
-    ensure_thread_dirs(thread_id, "user-1")
-    upload_file = sandbox_uploads_dir(thread_id) / "note.txt"
-    upload_file.write_text("demo", encoding="utf-8")
-
+async def test_normalize_presented_artifact_path_rejects_non_outputs_path():
     try:
-        _normalize_presented_artifact_path(str(upload_file), _runtime_with_thread(thread_id))
+        await _normalize_presented_artifact_path(
+            f"{VIRTUAL_PATH_PREFIX}/uploads/note.txt",
+            _runtime_with_thread("artifacts-reject-path"),
+        )
     except ValueError as exc:
         assert f"{VIRTUAL_PATH_PREFIX}/outputs/" in str(exc)
     else:
         raise AssertionError("expected ValueError for non-outputs file")
 
 
-def test_normalize_presented_artifact_path_rejects_internal_output_files():
-    thread_id = "artifacts-reject-internal"
-    ensure_thread_dirs(thread_id, "user-1")
-
+async def test_normalize_presented_artifact_path_rejects_internal_output_files():
     for dir_name in [LARGE_TOOL_RESULTS_DIR_NAME, CONVERSATION_HISTORY_DIR_NAME, "large_tool_history"]:
-        output_file = sandbox_outputs_dir(thread_id) / dir_name / "stage.txt"
-        output_file.parent.mkdir(parents=True, exist_ok=True)
-        output_file.write_text("internal", encoding="utf-8")
-
         try:
-            _normalize_presented_artifact_path(str(output_file), _runtime_with_thread(thread_id))
+            await _normalize_presented_artifact_path(
+                f"{VIRTUAL_PATH_PREFIX}/outputs/{dir_name}/stage.txt",
+                _runtime_with_thread("artifacts-reject-internal"),
+            )
         except ValueError as exc:
             assert "工具调用阶段文件" in str(exc)
         else:

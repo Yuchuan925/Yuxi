@@ -177,6 +177,37 @@ async def test_admin_can_fetch_config_and_reload_info(test_client, admin_headers
     assert "data" in reload_payload
 
 
+async def test_admin_system_config_update_is_persisted_in_config_options(test_client, admin_headers):
+    engine = create_async_engine(os.environ["POSTGRES_URL"])
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+    config_response = await test_client.get("/api/system/config", headers=admin_headers)
+    previous_value = config_response.json()["enable_content_guard"]
+
+    try:
+        updated_value = not previous_value
+        update_response = await test_client.post(
+            "/api/system/config",
+            json={"key": "enable_content_guard", "value": updated_value},
+            headers=admin_headers,
+        )
+        assert update_response.status_code == 200, update_response.text
+        assert update_response.json()["enable_content_guard"] is updated_value
+
+        async with session_factory() as db:
+            record = await get_option(db, "system_runtime_config")
+            assert record is not None
+            assert record.value["enable_content_guard"] is updated_value
+            assert "save_dir" not in record.value
+    finally:
+        restore_response = await test_client.post(
+            "/api/system/config",
+            json={"key": "enable_content_guard", "value": previous_value},
+            headers=admin_headers,
+        )
+        assert restore_response.status_code == 200, restore_response.text
+        await engine.dispose()
+
+
 async def test_sandbox_config_is_environment_only(test_client, admin_headers):
     config_response = await test_client.get("/api/system/config", headers=admin_headers)
     assert config_response.status_code == 200, config_response.text

@@ -13,11 +13,17 @@ x-api-worker-env: &api-worker-env
   MILVUS_DB_NAME: ${MILVUS_DB_NAME:-default}
   MILVUS_TOKEN: ${MILVUS_TOKEN:-}
   MINIO_URI: ${MINIO_URI:-http://minio:9000}
+  FILESTORE_BACKEND: ${FILESTORE_BACKEND:-s3}
+  FILESTORE_LOCAL_ROOT: ${FILESTORE_LOCAL_ROOT:-/tmp/yuxi-filestore}
+  FILESTORE_S3_ENDPOINT: ${FILESTORE_S3_ENDPOINT:-${MINIO_URI:-http://minio:9000}}
+  FILESTORE_S3_ACCESS_KEY: ${FILESTORE_S3_ACCESS_KEY:-${MINIO_ACCESS_KEY:-minioadmin}}
+  FILESTORE_S3_SECRET_KEY: ${FILESTORE_S3_SECRET_KEY:-${MINIO_SECRET_KEY:-minioadmin}}
+  FILESTORE_S3_BUCKET: ${FILESTORE_S3_BUCKET:-yuxi-filestore}
+  FILESTORE_S3_REGION: ${FILESTORE_S3_REGION:-us-east-1}
   # 文档解析
   MINERU_API_URI: ${MINERU_API_URI:-http://mineru-api:30001}
   PADDLEX_URI: ${PADDLEX_URI:-http://paddlex:8080}
   # Sandbox related
-  YUXI_DOCKER_API_BASE: ${YUXI_DOCKER_API_BASE:-http://localhost}
   SANDBOX_PROVIDER: ${SANDBOX_PROVIDER:-provisioner}
   SANDBOX_PROVISIONER_URL: ${SANDBOX_PROVISIONER_URL:-http://sandbox-provisioner:8002}
   SANDBOX_PROVISIONER_TOKEN: ${SANDBOX_PROVISIONER_TOKEN:?Set SANDBOX_PROVISIONER_TOKEN in .env [v0.7.1+], or rerun `bash scripts/init.sh`.}
@@ -29,6 +35,7 @@ x-api-worker-env: &api-worker-env
   LLM_TIMEOUT: ${LLM_TIMEOUT:-600}
   TASKER_DEFAULT_TIMEOUT_SECONDS: ${TASKER_DEFAULT_TIMEOUT_SECONDS:-21600}
   # Agent run
+  LANGGRAPH_CHECKPOINTER_BACKEND: ${LANGGRAPH_CHECKPOINTER_BACKEND:-postgres}
   RUN_CANCEL_KEY_TTL_SECONDS: ${RUN_CANCEL_KEY_TTL_SECONDS:-1800}
   RUN_EVENTS_STREAM_TTL_SECONDS: ${RUN_EVENTS_STREAM_TTL_SECONDS:-7200}
   YUXI_CORS_ORIGINS: ${YUXI_CORS_ORIGINS:-}
@@ -42,20 +49,19 @@ services:
     build:
       context: .
       dockerfile: docker/api.Dockerfile
-    image: yuxi-api:${YUXI_VERSION:-0.7.1}
+    image: yuxi-api:${YUXI_VERSION:-0.7.2.dev}
     container_name: api-dev
     working_dir: /app
     volumes:
       - ./backend/server:/app/server
       - ./backend/package:/app/package
-      - ./docker/volumes/yuxi:/app/saves
-      - ./docker/volumes/models:/app/models
       - ./backend/test:/app/test
       - ./backend/scripts:/app/scripts
+      - ./docker-compose.yml:/app/docker-compose.yml:ro
+      - ./docker-compose.prod.yml:/app/docker-compose.prod.yml:ro
+      - ./docker/api.Dockerfile:/app/docker/api.Dockerfile:ro
       - ./docker/sandbox_provisioner:/app/docker/sandbox_provisioner:ro
       - ./.env:/app/.env
-      - /var/run/docker.sock:/var/run/docker.sock
-      - nltk_data:/root/nltk_data  # 使用命名卷持久化NLTK数据，避免路径展开差异
     ports:
       - "5050:5050"
     networks:
@@ -90,21 +96,18 @@ services:
     build:
       context: .
       dockerfile: docker/api.Dockerfile
-    image: yuxi-api:${YUXI_VERSION:-0.7.1}
+    image: yuxi-api:${YUXI_VERSION:-0.7.2.dev}
     container_name: worker-dev
     working_dir: /app
     volumes:
       - ./backend/server:/app/server
       - ./backend/package:/app/package
-      - ./docker/volumes/yuxi:/app/saves
-      - ./docker/volumes/models:/app/models
       - ./backend/test:/app/test
       - ./backend/scripts:/app/scripts
       - ./docker/sandbox_provisioner:/app/docker/sandbox_provisioner:ro
       - ./.env:/app/.env
       - ./backend/pyproject.toml:/app/pyproject.toml
       - ./backend/uv.lock:/app/uv.lock
-      - /var/run/docker.sock:/var/run/docker.sock
     networks:
       - app-network
     extra_hosts:
@@ -129,10 +132,9 @@ services:
     build:
       context: ./docker/sandbox_provisioner
       dockerfile: Dockerfile
-    image: yuxi-sandbox-provisioner:${YUXI_VERSION:-0.7.1}
+    image: yuxi-sandbox-provisioner:${YUXI_VERSION:-0.7.2.dev}
     container_name: sandbox-provisioner
     volumes:
-      - ./docker/volumes/yuxi:/app/saves
       - ./docker/sandbox_provisioner/app.py:/app/app.py:ro
       - ./docker/sandbox_provisioner/sandbox.env:/app/sandbox.env:ro
       - /var/run/docker.sock:/var/run/docker.sock
@@ -160,14 +162,11 @@ services:
       - NO_PROXY=localhost,127.0.0.1,host.docker.internal
       # Docker backend only
       - DOCKER_NETWORK_PREFIX=${SANDBOX_DOCKER_NETWORK_PREFIX:-yuxi-know-sandbox}
-      - DOCKER_THREADS_HOST_PATH=${SANDBOX_DOCKER_THREADS_HOST_PATH:-}
       - DOCKER_SANDBOX_PREFIX=${SANDBOX_DOCKER_SANDBOX_PREFIX:-yuxi-sandbox}
       # Kubernetes backend only
       - K8S_NAMESPACE=${SANDBOX_K8S_NAMESPACE:-yuxi-know}
       - NODE_HOST=${SANDBOX_NODE_HOST:-host.docker.internal}
       - KUBECONFIG_PATH=${KUBECONFIG_PATH:-}
-      - THREAD_PVC=${THREAD_PVC:-yuxi-thread}
-      - SKILLS_PVC=${SKILLS_PVC:-yuxi-skills}
     command: >
       sh -lc "python -c 'import docker' >/dev/null 2>&1 || pip install --no-cache-dir 'docker>=7.1.0';
       uvicorn app:app --host 0.0.0.0 --port 8002"
@@ -184,7 +183,7 @@ services:
       context: .
       dockerfile: docker/web.Dockerfile
       target: development
-    image: yuxi-web:${YUXI_VERSION:-0.7.1}
+    image: yuxi-web:${YUXI_VERSION:-0.7.2.dev}
     container_name: web-dev
     volumes:
       - ./web/src:/app/src
@@ -412,9 +411,6 @@ services:
     networks:
       - app-network
     restart: unless-stopped
-
-volumes:
-  nltk_data:
 
 networks:
   app-network:

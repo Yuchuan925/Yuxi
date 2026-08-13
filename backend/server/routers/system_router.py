@@ -7,6 +7,8 @@ from fastapi import APIRouter, Body, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from yuxi import config, get_version
+from yuxi.config import cache as runtime_cache
+from yuxi.config.options import SYSTEM_CONFIG_OPTION_KEY, get_option, persist_system_config
 from yuxi.storage.postgres.models_business import User
 from yuxi.utils.logging_config import logger
 
@@ -67,28 +69,45 @@ async def get_config(current_user: User = Depends(get_required_user)):
 
 
 @system.post("/config")
-async def update_config_single(key=Body(...), value=Body(...), current_user: User = Depends(get_admin_user)) -> dict:
+async def update_config_single(
+    key=Body(...),
+    value=Body(...),
+    current_user: User = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
     """更新单个配置项"""
     if not isinstance(key, str) or key not in type(config).model_fields:
         raise HTTPException(status_code=400, detail=f"未知配置项: {key}")
     if not config.can_update(key):
         raise HTTPException(status_code=400, detail=f"配置项不可修改: {key}")
     try:
-        config.set_value(key, value)
+        persisted = await persist_system_config(db, config, {key: value}, current_user.username)
+        await db.commit()
+        record = await get_option(db, SYSTEM_CONFIG_OPTION_KEY)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    config.save()
+    config.update(persisted)
+    version = record.updated_at.isoformat() if record and record.updated_at else ""
+    runtime_cache.save_runtime_config(config, version=version, updated_at=version)
     return config.dump_config()
 
 
 @system.post("/config/update")
-async def update_config_batch(items: dict = Body(...), current_user: User = Depends(get_admin_user)) -> dict:
+async def update_config_batch(
+    items: dict = Body(...),
+    current_user: User = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
     """批量更新配置项"""
     try:
-        config.update(items)
+        persisted = await persist_system_config(db, config, items, current_user.username)
+        await db.commit()
+        record = await get_option(db, SYSTEM_CONFIG_OPTION_KEY)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    config.save()
+    config.update(persisted)
+    version = record.updated_at.isoformat() if record and record.updated_at else ""
+    runtime_cache.save_runtime_config(config, version=version, updated_at=version)
     return config.dump_config()
 
 

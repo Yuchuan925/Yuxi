@@ -10,9 +10,7 @@ from server.routers import knowledge_router
 pytestmark = pytest.mark.asyncio
 
 
-async def test_import_workspace_files_uploads_workspace_file_to_minio(tmp_path, monkeypatch):
-    source = tmp_path / "note.md"
-    source.write_text("# workspace note\n", encoding="utf-8")
+async def test_import_workspace_files_uploads_workspace_file_to_minio(monkeypatch):
 
     async def fake_ensure_database_supports_documents(slug: str, operation: str) -> None:
         assert slug == "db_1"
@@ -34,12 +32,15 @@ async def test_import_workspace_files_uploads_workspace_file_to_minio(tmp_path, 
         assert data == b"# workspace note\n"
         return f"http://minio/{bucket_name}/{file_name}"
 
+    async def fake_read_workspace_file_object(**_kwargs):
+        return SimpleNamespace(data=b"# workspace note\n", size=len(b"# workspace note\n"))
+
     monkeypatch.setattr(
         knowledge_router,
         "_ensure_database_supports_documents",
         fake_ensure_database_supports_documents,
     )
-    monkeypatch.setattr(knowledge_router, "resolve_workspace_file_path", lambda **_kwargs: source)
+    monkeypatch.setattr(knowledge_router, "read_workspace_file_object", fake_read_workspace_file_object)
     monkeypatch.setattr(knowledge_router.knowledge_base, "file_existed_in_db", fake_file_existed_in_db)
     monkeypatch.setattr(knowledge_router.knowledge_base, "get_same_name_files", fake_get_same_name_files)
     monkeypatch.setattr(knowledge_router, "aupload_file_to_minio", fake_upload)
@@ -61,11 +62,11 @@ async def test_import_workspace_files_uploads_workspace_file_to_minio(tmp_path, 
     assert item["workspace_path"] == "/note.md"
 
 
-async def test_import_workspace_files_rejects_directory(tmp_path, monkeypatch):
+async def test_import_workspace_files_rejects_directory(monkeypatch):
     async def fake_ensure_database_supports_documents(slug: str, operation: str) -> None:
         return None
 
-    def fake_resolve_workspace_file_path(**_kwargs):
+    async def fake_read_workspace_file_object(**_kwargs):
         raise HTTPException(status_code=400, detail="当前路径不是文件: /folder")
 
     monkeypatch.setattr(
@@ -73,7 +74,7 @@ async def test_import_workspace_files_rejects_directory(tmp_path, monkeypatch):
         "_ensure_database_supports_documents",
         fake_ensure_database_supports_documents,
     )
-    monkeypatch.setattr(knowledge_router, "resolve_workspace_file_path", fake_resolve_workspace_file_path)
+    monkeypatch.setattr(knowledge_router, "read_workspace_file_object", fake_read_workspace_file_object)
 
     with pytest.raises(HTTPException) as exc_info:
         await knowledge_router.import_workspace_files(

@@ -6,6 +6,7 @@ import pytest
 from fastapi import HTTPException
 
 from yuxi.services import thread_files_service as svc
+from yuxi.storage.filestore import LocalFileStore
 
 
 class _Conversation:
@@ -16,57 +17,30 @@ async def _fake_require_user_conversation(_repo, _thread_id: str, _current_uid: 
     return _Conversation()
 
 
-@pytest.mark.asyncio
-async def test_read_thread_file_content_runs_file_read_in_worker_thread(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-):
-    file_path = tmp_path / "notes.txt"
-    file_path.write_text("first\nsecond\nthird", encoding="utf-8")
-    threaded_calls = []
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/home/gem/user-data/uploads/../secret.txt",
+        "/home/gem/user-data/outputs/a//b.txt",
+        "/home/gem/user-data/uploads/a\\b.txt",
+    ],
+)
+def test_resolve_thread_object_path_rejects_traversal(path: str) -> None:
+    with pytest.raises(HTTPException) as exc_info:
+        svc.resolve_thread_object_path("thread-1", path)
 
-    async def _fake_to_thread(func, *args, **kwargs):
-        threaded_calls.append(func)
-        return func(*args, **kwargs)
-
-    monkeypatch.setattr(svc, "require_user_conversation", _fake_require_user_conversation)
-    monkeypatch.setattr(svc, "ConversationRepository", lambda _db: object())
-    monkeypatch.setattr(svc, "resolve_virtual_path", lambda _thread_id, _path, *, uid: file_path)
-    monkeypatch.setattr(svc.asyncio, "to_thread", _fake_to_thread)
-
-    result = await svc.read_thread_file_content_view(
-        thread_id="thread-1",
-        current_uid="user-1",
-        db=None,
-        path="/home/gem/user-data/workspace/notes.txt",
-        offset=1,
-        limit=1,
-    )
-
-    assert result["content"] == ["second"]
-    assert threaded_calls == [file_path.read_text]
+    assert exc_info.value.status_code == 403
 
 
 @pytest.mark.asyncio
-async def test_list_thread_files_runs_directory_scan_in_worker_thread(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    directory = tmp_path / "outputs"
-    directory.mkdir()
-    (directory / "result.txt").write_text("result", encoding="utf-8")
-    threaded_calls = []
+async def test_list_thread_files_uses_filestore_and_hides_keep_marker(tmp_path: Path, monkeypatch) -> None:
+    store = LocalFileStore(tmp_path / "filestore")
+    await store.put("threads/thread-1/outputs/report.txt", b"result")
+    await store.put("threads/thread-1/outputs/empty/.keep", b"")
 
-    async def _fake_to_thread(func, *args, **kwargs):
-        threaded_calls.append(func)
-        return func(*args, **kwargs)
-
+    monkeypatch.setattr(svc, "get_file_store", lambda: store)
     monkeypatch.setattr(svc, "require_user_conversation", _fake_require_user_conversation)
     monkeypatch.setattr(svc, "ConversationRepository", lambda _db: object())
-    monkeypatch.setattr(svc, "ensure_thread_dirs", lambda _thread_id, _uid: None)
-    monkeypatch.setattr(svc, "resolve_virtual_path", lambda _thread_id, _path, *, uid: directory)
-    monkeypatch.setattr(
-        svc,
-        "virtual_path_for_thread_file",
-        lambda _thread_id, path, *, uid: f"/home/gem/user-data/outputs/{path.name}",
-    )
-    monkeypatch.setattr(svc.asyncio, "to_thread", _fake_to_thread)
 
     result = await svc.list_thread_files_view(
         thread_id="thread-1",
@@ -75,35 +49,68 @@ async def test_list_thread_files_runs_directory_scan_in_worker_thread(tmp_path: 
         path="/home/gem/user-data/outputs",
     )
 
-    assert [item["name"] for item in result["files"]] == ["result.txt"]
-    assert threaded_calls == [svc._list_directory_entries]
+    assert [(item["name"], item["is_dir"]) for item in result["files"]] == [
+        ("empty", True),
+        ("report.txt", False),
+    ]
+    assert all(item["name"] != ".keep" for item in result["files"])
 
 
 @pytest.mark.asyncio
-async def test_resolve_thread_artifact_view_blocks_symlink_escape(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    thread_root = tmp_path / "threads" / "thread-1" / "user-data"
-    uploads_dir = thread_root / "uploads"
-    uploads_dir.mkdir(parents=True, exist_ok=True)
-    outside_file = tmp_path / "outside.txt"
-    outside_file.write_text("secret", encoding="utf-8")
-    (uploads_dir / "escape.txt").symlink_to(outside_file)
-
+async def test_read_thread_file_content_reads_filestore_object(tmp_path: Path, monkeypatch) -> None:
+    store = LocalFileStore(tmp_path / "filestore")
+    await store.put("threads/thread-1/uploads/notes.txt", b"first\nsecond\nthird")
+    monkeypatch.setattr(svc, "get_file_store", lambda: store)
     monkeypatch.setattr(svc, "require_user_conversation", _fake_require_user_conversation)
-    monkeypatch.setattr(svc, "ensure_thread_dirs", lambda _thread_id, _uid: None)
-    monkeypatch.setattr(
-        svc,
-        "sandbox_workspace_dir",
-        lambda _thread_id, _uid: tmp_path / "shared" / _uid / "workspace",
-    )
-    monkeypatch.setattr(svc, "sandbox_uploads_dir", lambda _thread_id: uploads_dir)
-    monkeypatch.setattr(svc, "sandbox_outputs_dir", lambda _thread_id: thread_root / "outputs")
-    monkeypatch.setattr(svc, "resolve_virtual_path", lambda _thread_id, _path, *, uid: uploads_dir / "escape.txt")
     monkeypatch.setattr(svc, "ConversationRepository", lambda _db: object())
 
-    with pytest.raises(HTTPException, match="access denied"):
-        await svc.resolve_thread_artifact_view(
-            thread_id="thread-1",
-            current_uid="user-1",
-            db=None,
-            path="/home/gem/user-data/uploads/escape.txt",
-        )
+    result = await svc.read_thread_file_content_view(
+        thread_id="thread-1",
+        current_uid="user-1",
+        db=None,
+        path="/home/gem/user-data/uploads/notes.txt",
+        offset=1,
+        limit=1,
+    )
+
+    assert result["content"] == ["second"]
+
+
+@pytest.mark.asyncio
+async def test_resolve_thread_artifact_returns_filestore_stream(tmp_path: Path, monkeypatch) -> None:
+    store = LocalFileStore(tmp_path / "filestore")
+    await store.put("threads/thread-1/outputs/image.jpg", b"\x89PNG\r\n\x1a\nimage", content_type="image/jpeg")
+    monkeypatch.setattr(svc, "get_file_store", lambda: store)
+    monkeypatch.setattr(svc, "require_user_conversation", _fake_require_user_conversation)
+    monkeypatch.setattr(svc, "ConversationRepository", lambda _db: object())
+
+    artifact = await svc.resolve_thread_artifact_view(
+        thread_id="thread-1",
+        current_uid="user-1",
+        db=None,
+        path="/home/gem/user-data/outputs/image.jpg",
+    )
+
+    assert artifact.name == "image.jpg"
+    assert artifact.media_type == "image/png"
+    assert b"".join([chunk async for chunk in artifact.stream]) == b"\x89PNG\r\n\x1a\nimage"
+
+
+@pytest.mark.asyncio
+async def test_copy_thread_artifact_to_workspace_uses_filestore(tmp_path: Path, monkeypatch) -> None:
+    store = LocalFileStore(tmp_path / "filestore")
+    await store.put("threads/thread-1/outputs/report.md", b"# report", content_type="text/markdown")
+    monkeypatch.setattr(svc, "get_file_store", lambda: store)
+    monkeypatch.setattr(svc, "require_user_conversation", _fake_require_user_conversation)
+    monkeypatch.setattr(svc, "ConversationRepository", lambda _db: object())
+    monkeypatch.setattr("yuxi.services.workspace_service.get_file_store", lambda: store)
+
+    result = await svc.save_thread_artifact_to_workspace_view(
+        thread_id="thread-1",
+        current_uid="user-1",
+        db=None,
+        path="/home/gem/user-data/outputs/report.md",
+    )
+
+    assert result["saved_path"] == "/home/gem/user-data/workspace/saved_artifacts/report.md"
+    assert (await store.read("users/user-1/workspace/saved_artifacts/report.md")).data == b"# report"

@@ -203,8 +203,7 @@ async def _run_install_task(
         setattr(runtime_context, "_runtime_skill_dependency_map", dependency_map)
 
         skill_sources = dict(getattr(runtime_context, "_runtime_skill_sources", {}) or {})
-        for slug in installed_slugs:
-            skill_sources.pop(slug, None)
+        skill_sources.update({item.slug: str(item.source_dir) for item in installed_items})
         setattr(runtime_context, "_runtime_skill_sources", skill_sources)
         projected_skills = [slug for slug in runtime_context._readable_skills if slug in skill_sources]
         await sync_thread_readable_skills_async(thread_id, projected_skills, skill_sources)

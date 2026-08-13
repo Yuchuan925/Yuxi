@@ -50,31 +50,29 @@ Docker 和 Kubernetes 不是互斥关系。Docker 解决的是“把一个进程
 
 ## 五、Docker 本机后端是如何工作的
 
-当 `SANDBOX_PROVISIONER_BACKEND=docker` 时，`sandbox-provisioner` 会进入 `LocalContainerProvisionerBackend`。它会检查 Docker 是否可用，解析自身容器里 `/app/saves` 这个挂载点在宿主机上的真实路径，并据此推导出线程数据目录。随后它为每组文件线程与 skills 线程准备一个稳定的 `sandbox_id`，把容器命名为类似 `yuxi-sandbox-<id>` 的形式，并在 Docker 网络中启动真正的沙盒镜像。
+当 `SANDBOX_PROVISIONER_BACKEND=docker` 时，`sandbox-provisioner` 会进入 `LocalContainerProvisionerBackend`。它会检查 Docker 是否可用，为每组文件线程与 skills 线程准备一个稳定的 `sandbox_id`，把容器命名为类似 `yuxi-sandbox-<id>` 的形式，并在 Docker 网络中启动真正的沙盒镜像。线程文件由应用的 FileStore 同步到沙盒临时文件系统，不再依赖宿主机保存目录。
 
 这个沙盒镜像默认来自 `SANDBOX_IMAGE`，容器内部监听的端口默认是 `8080`。provisioner 会为每个动态沙盒创建独立的 Docker bridge 网络，只把 provisioner 和该沙盒接入其中；沙盒之间不能互访，也不能访问承载 PostgreSQL、Redis、Neo4j、MinIO 等服务的 `app-network`。沙盒端口不发布到宿主机，provisioner 通过对应的独立网络访问真实容器，再以需要 Bearer token 的代理地址向 API/worker 提供文件和命令接口。API/worker 不直接持有沙盒容器地址。
 
 这个拓扑把沙箱按“其中代码可能被完全控制”处理。`SANDBOX_PROVISIONER_TOKEN` 只配置给 API、worker 和 provisioner，绝不能写进 `sandbox.env` 或用户级 Agent 环境变量，否则沙箱会重新获得 provisioner 管理权限。
 
-Docker 后端在启动沙盒时，会挂载三类关键目录。第一类是用户级 workspace，挂载到容器内的 `/home/gem/user-data/workspace`。第二类是文件线程级 uploads/outputs，分别挂载到 `/home/gem/user-data/uploads` 和 `/home/gem/user-data/outputs`。第三类是 skills 线程可见的 skills 目录，挂载到 `/home/gem/skills`，而且是只读挂载。除此之外，容器的 `/home/gem` 本身还会额外挂一个 `tmpfs`，原因是当前沙盒镜像启动时要求 `/home/gem` 可写，但 Yuxi 希望真正持久化的只有 `user-data` 下面的内容。
+Docker 后端使用临时 `/home/gem`，并为每个 sandbox 创建独立 named volume。Sandbox 本体只把该卷以 RO 方式挂载到 `/home/gem/skills`；同步器通过 provisioner 鉴权接口启动短生命周期 helper 容器，以 RW 方式整体替换卷内容，因此 Agent shell 无法访问任何 Skills 写通道。workspace、uploads、outputs 由 FileStore 投影到临时文件系统，其中只回写 workspace 与 outputs。删除 sandbox 时会同时删除该 named volume。
 
 为了避免长期空闲的沙盒一直占资源，provisioner 还带了一个 idle reaper。它会记录每个沙盒最近一次被 touch 的时间，超过 `SANDBOX_IDLE_TIMEOUT_SECONDS` 之后自动删除。当前默认空闲超时是 120 秒，但如果这个值小于命令执行超时，系统会自动把它提高到“命令超时 + 30 秒”，以免执行中的任务被误回收。
 
 对应到 `docker-compose.yml` 和 `docker-compose.prod.yml`，当前 `sandbox-provisioner` 实际会读取的 Docker 后端相关变量主要是这些：
 
 - 通用变量：`PROVISIONER_BACKEND`、`SANDBOX_IMAGE`、`SANDBOX_CONTAINER_PORT`、`SANDBOX_HEALTH_TIMEOUT_SECONDS`、`SANDBOX_IDLE_TIMEOUT_SECONDS`、`SANDBOX_IDLE_CHECK_INTERVAL_SECONDS`、`SANDBOX_EXEC_TIMEOUT_SECONDS`、`MEMORY_SANDBOX_URL_TEMPLATE`
-- Docker 后端变量：`DOCKER_NETWORK_PREFIX`、`DOCKER_THREADS_HOST_PATH`、`DOCKER_SANDBOX_PREFIX`
+- Docker 后端变量：`DOCKER_NETWORK_PREFIX`、`DOCKER_SANDBOX_PREFIX`
 - 容器代理变量：`HTTP_PROXY`、`HTTPS_PROXY`、`NO_PROXY`
 
-`DOCKER_NETWORK_PREFIX` 用于生成每个沙盒的独立网络名称。`DOCKER_THREADS_HOST_PATH` 也是 Docker 后端专用；如果不显式传入，provisioner 会尝试根据自身容器挂载反推出宿主机路径。
+`DOCKER_NETWORK_PREFIX` 用于生成每个沙盒的独立网络名称。
 
 ## 六、Kubernetes 后端是如何工作的
 
 当 `SANDBOX_PROVISIONER_BACKEND=kubernetes` 时，`sandbox-provisioner` 会改用 Kubernetes Python 客户端。它会先加载 kubeconfig 或集群内配置，然后在指定的 namespace 中创建一个沙盒 Pod，再创建一个同名的 NodePort Service，把这个 Service 的 `nodePort` 暴露给 Yuxi 后端使用。
 
-Kubernetes 后端下，沙盒还是同一套镜像，还是暴露同样的 HTTP API，但存储方式和暴露方式变了。它不会依赖宿主机 Docker bind mount，而是要求有一个可写的 PVC。当前实现里真正使用的是 `THREAD_PVC`，Pod 会把这块共享存储挂到 `/mnt/shared-data`，然后用 `subPath` 的方式把 `threads/shared/<uid>/workspace` 挂到 `/home/gem/user-data/workspace`，把 `threads/<file_thread_id>/user-data/uploads` 与 `threads/<file_thread_id>/user-data/outputs` 分别挂到 uploads/outputs，把 `threads/<skills_thread_id>/skills` 挂到 `/home/gem/skills`。这样做的好处是目录结构仍然可以和 Docker 模式保持一致，同时允许子智能体共享父对话文件但隔离 skills。
-
-需要特别说明的是，代码里虽然读取了 `SKILLS_PVC` 这个环境变量，但当前 Pod 规格实际没有使用单独的 skills PVC，而是统一从 `THREAD_PVC` 中切 `threads/<thread_id>/skills` 这个子路径。因此，如果看到环境变量里同时出现 `SKILLS_PVC` 和 `THREAD_PVC`，应当以 `THREAD_PVC` 的真实挂载语义为准，`SKILLS_PVC` 目前更像一个预留字段。
+Kubernetes 后端下，沙盒还是同一套镜像，还是暴露同样的 HTTP API，但存储方式和暴露方式变了。它不会依赖宿主机 Docker bind mount，而是使用 Pod 的临时文件系统；Sandbox 容器只读挂载 Skills `emptyDir`，provisioner 仅 exec 到同 Pod 的受信任 helper 容器写入该卷。Agent 容器不持有 ServiceAccount token，也没有 RW 别名，因此无法触达写通道；应用继续通过 FileStore 同步 workspace、uploads、outputs 和 skills。
 
 Kubernetes 后端还需要一个 `NODE_HOST`。这是因为当前实现使用的是 NodePort Service，而不是 Ingress，也不是 ClusterIP。provisioner 创建完 Service 后会通过 `http://<NODE_HOST>:<nodePort>` 访问目标沙箱，但返回给 Yuxi 后端的仍是 provisioner 认证代理地址。所以 `NODE_HOST` 必须从 provisioner 可达，不需要直接暴露给 API/worker。
 
@@ -83,10 +81,6 @@ Kubernetes 后端还需要一个 `NODE_HOST`。这是因为当前实现使用的
 - `K8S_NAMESPACE`
 - `KUBECONFIG_PATH`
 - `NODE_HOST`
-- `THREAD_PVC`
-- `SKILLS_PVC`
-
-其中真正决定运行时挂载的是 `THREAD_PVC`。`SKILLS_PVC` 目前只保留为代码层读取字段，并没有进入实际 Pod 挂载。
 
 ## 七、如果要使用“远程 K8s”，应该怎么接
 
@@ -103,8 +97,6 @@ services:
       - PROVISIONER_BACKEND=kubernetes
       - K8S_NAMESPACE=yuxi-know
       - KUBECONFIG_PATH=/root/.kube/config
-      - THREAD_PVC=yuxi-thread
-      - SKILLS_PVC=yuxi-skills
       - NODE_HOST=203.0.113.10
     volumes:
       - ~/.kube/config:/root/.kube/config:ro
@@ -151,6 +143,8 @@ Yuxi 不会把整个容器文件系统都开放给 Agent 或 viewer。当前 vie
 `/home/gem/user-data` 是主要工作区。它允许模型和工具写入，但推荐语义并不相同。内置 prompt 中已经明确说明，`workspace` 应当放中间文件，`outputs` 应当放最终产物，`uploads` 是用户上传文件的位置。对于普通对话 Agent，文案甚至提示“非必要不要写 workspace，而优先写 outputs”。
 
 `/home/gem/skills` 是共享与内置 Skill 的只读目录。它不是简单地把 `saves/skills` 整个暴露进去，而是按当前运行时最终生效的共享与内置 Skill，将来源同步到 `saves/threads/<skills_thread_id>/skills`，再把线程目录只读挂进沙盒。个人 Skill 不进入这层投影，Agent 直接读取已经挂载的 `/home/gem/user-data/workspace/agents/skills/<slug>`。
+
+每次 execute、write、edit 或 upload 都在同一个同步 operation context 中完成 `refresh -> 变更 -> sync_back`。该窗口按 uid workspace、file thread 的固定顺序获取进程内可重入锁和 Redis 分布式锁，锁超时覆盖命令超时及同步余量；Redis 不可用或锁竞争超时会显式失败，不降级为可能丢写的单进程执行。同步文件数和字节配额按 workspace、uploads、outputs、skills 四个 scope 分别计算，单 scope 默认上限为 1000 文件、256 MB。
 
 知识库访问不属于沙盒文件系统暴露规则。当前 Agent 可见知识库仍由用户权限和 Agent 配置共同决定，但只通过 `query_kb`、`open_kb_document` 等工具访问，不提供沙盒目录投影。
 
@@ -231,7 +225,6 @@ sandbox-provisioner 的环境变量传递分**两层**，需要分别理解：
 |--------|------|--------|
 | `DOCKER_NETWORK_PREFIX` | 每沙盒独立网络的名称前缀 | `yuxi-know-sandbox` |
 | `DOCKER_SANDBOX_PREFIX` | 沙盒容器名前缀 | `yuxi-sandbox` |
-| `DOCKER_THREADS_HOST_PATH` | 线程数据宿主机路径 | 自动推断 |
 
 **Kubernetes 后端专用：**
 
@@ -240,8 +233,6 @@ sandbox-provisioner 的环境变量传递分**两层**，需要分别理解：
 | `K8S_NAMESPACE` | Kubernetes namespace | `yuxi-know` |
 | `NODE_HOST` | Kubernetes 节点地址 | `host.docker.internal` |
 | `KUBECONFIG_PATH` | kubeconfig 文件路径 | 空（使用 incluster 配置） |
-| `THREAD_PVC` | 线程数据持久化卷 | `yuxi-thread` |
-| `SKILLS_PVC` | 技能目录持久化卷（预留） | `yuxi-skills` |
 
 ### 环境变量传递链
 

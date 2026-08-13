@@ -1,24 +1,17 @@
 from __future__ import annotations
 
-import asyncio
 import contextlib
-import hashlib
 import io
-import shutil
+import tempfile
+from collections.abc import AsyncIterator
 from pathlib import Path, PurePosixPath
 from urllib.parse import quote
 
-import aiofiles
 from fastapi import HTTPException, UploadFile
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
-from yuxi.agents.backends.sandbox.paths import (
-    ensure_workspace_default_files,
-    global_user_data_dir,
-    sandbox_outputs_dir,
-    sandbox_uploads_dir,
-    validate_thread_id,
-)
+from yuxi.agents.backends.sandbox.paths import validate_thread_id
+from yuxi.agents.backends.sandbox.synchronizer import sandbox_file_operation_lock
 from yuxi.repositories.conversation_repository import ConversationRepository
 from yuxi.services.file_preview import (
     MAX_BINARY_PREVIEW_SIZE_BYTES,
@@ -32,8 +25,17 @@ from yuxi.services.file_preview import (
     render_preview_too_large_payload,
 )
 from yuxi.services.mention_search_service import invalidate_workspace_mention_cache
+from yuxi.storage.filestore import (
+    FileStoreError,
+    ObjectStat,
+    StoredObject,
+    get_file_store,
+    thread_output_key,
+    thread_upload_key,
+    user_workspace_key,
+)
 from yuxi.storage.postgres.models_business import User
-from yuxi.utils.datetime_utils import utc_isoformat_from_timestamp
+from yuxi.utils.datetime_utils import utc_isoformat
 from yuxi.utils.logging_config import logger
 from yuxi.utils.paths import (
     CONVERSATION_HISTORY_DIR_NAME,
@@ -41,16 +43,16 @@ from yuxi.utils.paths import (
     OUTPUTS_DIR_NAME,
     UPLOADS_DIR_NAME,
     VIRTUAL_PATH_WORKSPACE,
+    WORKSPACE_AGENT_CONTEXT_FILES,
     WORKSPACE_AGENTS_DIR_NAME,
-    WORKSPACE_DIR_NAME,
-    ensure_within_root,
 )
-from yuxi.utils.upload_utils import MAX_UPLOAD_SIZE_BYTES, write_upload_to_buffer
+from yuxi.utils.upload_utils import MAX_UPLOAD_SIZE_BYTES, read_upload_with_limit
 
 EDITABLE_WORKSPACE_SUFFIXES = {".md", ".markdown", ".mdx", ".txt"}
 MAX_WORKSPACE_UPLOAD_SIZE_BYTES = MAX_UPLOAD_SIZE_BYTES
 MAX_WORKSPACE_UPLOAD_FILES = 50
 WORKSPACE_CHATS_DIR_NAME = "chats"
+KEEP_MARKER = ".keep"
 _CHAT_READONLY_MESSAGE = "历史对话文件为只读，请在对应对话中修改"
 _CHAT_INTERMEDIATE_DIR_NAMES = frozenset(
     {
@@ -70,14 +72,14 @@ async def list_workspace_tree(
     current_user: User,
     thread_titles: dict[str, str] | None = None,
 ) -> dict:
-    root = _workspace_root(current_user)
-    if workspace_path_uses_chat_mapping(path):
-        chats_path = root / WORKSPACE_AGENTS_DIR_NAME / WORKSPACE_CHATS_DIR_NAME
-        if chats_path.is_symlink() or chats_path.exists():
-            raise HTTPException(status_code=409, detail="工作区 agents/chats 已被现有文件或目录占用")
+    """列出用户 workspace，并合成只读的历史对话虚拟目录。"""
+    uid = str(current_user.uid)
+    await ensure_workspace_defaults(uid)
+
+    if workspace_path_uses_chat_mapping(path) and await _workspace_path_exists(uid, _physical_chats_path()):
+        raise HTTPException(status_code=409, detail="工作区 agents/chats 已被现有文件或目录占用")
     if _chat_path_parts(path) is not None:
-        entries = await asyncio.to_thread(
-            _list_chat_directory,
+        entries = await _list_chat_directory(
             path,
             thread_titles=thread_titles or {},
             recursive=recursive,
@@ -85,31 +87,23 @@ async def list_workspace_tree(
         )
         return {"entries": entries, "readonly": True}
 
-    target = _resolve_workspace_path(current_user, path)
-    if not target.exists():
+    relative = _workspace_relative_path(path)
+    kind = await _workspace_path_kind(uid, relative)
+    if kind is None:
         return {"entries": []}
-    if not target.is_dir():
+    if kind != "directory":
         raise HTTPException(status_code=400, detail="当前路径不是目录")
-    entries = await asyncio.to_thread(_list_directory, root, target, recursive=recursive, files_only=files_only)
-    if (
-        thread_titles is not None
-        and _normalize_workspace_path(path).as_posix().rstrip("/") == f"/{WORKSPACE_AGENTS_DIR_NAME}"
-    ):
+
+    entries = await _list_workspace_directory(uid, relative, recursive=recursive, files_only=files_only)
+    normalized_path = _normalize_workspace_path(path).as_posix().rstrip("/")
+    if thread_titles is not None and normalized_path == f"/{WORKSPACE_AGENTS_DIR_NAME}":
         entries = [entry for entry in entries if entry["name"] != WORKSPACE_CHATS_DIR_NAME]
         chats_path = f"/{WORKSPACE_AGENTS_DIR_NAME}/{WORKSPACE_CHATS_DIR_NAME}"
         if not files_only:
-            entries.append(
-                _virtual_entry(
-                    chats_path,
-                    name=WORKSPACE_CHATS_DIR_NAME,
-                    title="历史对话",
-                    is_dir=True,
-                )
-            )
+            entries.append(_virtual_entry(chats_path, name=WORKSPACE_CHATS_DIR_NAME, title="历史对话", is_dir=True))
         if recursive:
             entries.extend(
-                await asyncio.to_thread(
-                    _list_chat_directory,
+                await _list_chat_directory(
                     chats_path,
                     thread_titles=thread_titles,
                     recursive=True,
@@ -120,51 +114,46 @@ async def list_workspace_tree(
     return {"entries": entries}
 
 
-def resolve_workspace_file_path(*, path: str, current_user: User, thread_titles: dict[str, str] | None = None) -> Path:
-    if _chat_path_parts(path) is not None:
-        root = _workspace_root(current_user)
-        chats_path = root / WORKSPACE_AGENTS_DIR_NAME / WORKSPACE_CHATS_DIR_NAME
-        if chats_path.is_symlink() or chats_path.exists():
-            raise HTTPException(status_code=409, detail="工作区 agents/chats 已被现有文件或目录占用")
-        target, _display_path = _resolve_chat_path(path, thread_titles)
-        if target is None:
-            raise HTTPException(status_code=400, detail=f"当前路径不是文件: {path}")
-    else:
-        target = _resolve_workspace_path(current_user, path)
-    if not target.exists():
-        raise HTTPException(status_code=404, detail=f"工作区文件不存在: {path}")
-    if not target.is_file():
-        raise HTTPException(status_code=400, detail=f"当前路径不是文件: {path}")
-    return target
+async def read_workspace_file_object(
+    *, path: str, current_user: User, thread_titles: dict[str, str] | None = None
+) -> StoredObject:
+    """读取 workspace 或历史对话映射中的文件对象。"""
+    uid = str(current_user.uid)
+    await ensure_workspace_defaults(uid)
+    key, _display_path = await _resolve_readable_file_key(uid, path, thread_titles)
+    try:
+        return await get_file_store().read(key)
+    except FileStoreError as exc:
+        raise HTTPException(status_code=404, detail=f"工作区文件不存在: {path}") from exc
 
 
 async def read_workspace_file_content(
     *, path: str, current_user: User, thread_titles: dict[str, str] | None = None
 ) -> dict | StreamingResponse:
-    target = resolve_workspace_file_path(path=path, current_user=current_user, thread_titles=thread_titles)
-    if not target.exists():
-        raise HTTPException(status_code=404, detail="文件不存在")
-
-    stat = await asyncio.to_thread(target.stat)
-    if stat.st_size > MAX_BINARY_PREVIEW_SIZE_BYTES:
+    """读取并渲染 workspace 文件预览。"""
+    stored = await read_workspace_file_object(path=path, current_user=current_user, thread_titles=thread_titles)
+    if stored.size > MAX_BINARY_PREVIEW_SIZE_BYTES:
         return render_preview_too_large_payload()
 
+    filename = PurePosixPath(_normalize_workspace_path(path).as_posix()).name or "preview"
     if is_office_pdf_preview_file(path):
-        pdf_content = await _convert_workspace_office_to_pdf(current_user, target, target.name)
+        try:
+            pdf_content = await convert_office_to_pdf(filename, stored.data)
+        except OfficePreviewConversionError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         return _preview_binary_response(
-            filename=f"{target.stem or 'preview'}.pdf",
+            filename=f"{PurePosixPath(filename).stem or 'preview'}.pdf",
             content=pdf_content,
             media_type="application/pdf",
             preview_type="pdf",
         )
 
-    raw_content = await asyncio.to_thread(target.read_bytes)
-    preview_type, supported, message = detect_preview_type(path, raw_content)
+    preview_type, supported, message = detect_preview_type(path, stored.data)
     if is_binary_preview_type(preview_type) and supported:
         return _preview_binary_response(
-            filename=target.name or "preview",
-            content=raw_content,
-            media_type=detect_media_type(path, raw_content),
+            filename=filename,
+            content=stored.data,
+            media_type=detect_media_type(path, stored.data),
             preview_type=preview_type,
         )
     if not supported:
@@ -176,133 +165,234 @@ async def read_workspace_file_content(
             "truncated": False,
             "limit": None,
         }
-    return render_preview_payload(path, raw_content)
+    return render_preview_payload(path, stored.data)
 
 
 async def write_workspace_file_content(*, path: str, content: str, current_user: User) -> dict:
-    if _chat_path_parts(path) is not None:
-        raise HTTPException(status_code=403, detail=_CHAT_READONLY_MESSAGE)
-    root = _workspace_root(current_user)
-    target = _resolve_workspace_path(current_user, path)
-    if not target.exists():
-        raise HTTPException(status_code=404, detail="文件不存在")
-    if not target.is_file():
-        raise HTTPException(status_code=400, detail="当前路径是目录")
-    if target.suffix.lower() not in EDITABLE_WORKSPACE_SUFFIXES:
-        raise HTTPException(status_code=400, detail="当前文件类型不支持编辑")
+    """更新 workspace 中已有的 UTF-8 文本文件。"""
+    _reject_chat_write(path)
+    uid = str(current_user.uid)
+    async with sandbox_file_operation_lock(uid=uid):
+        relative = _workspace_relative_path(path)
+        kind = await _workspace_path_kind(uid, relative)
+        if kind is None:
+            raise HTTPException(status_code=404, detail="文件不存在")
+        if kind != "file":
+            raise HTTPException(status_code=400, detail="当前路径是目录")
+        if PurePosixPath(relative).suffix.lower() not in EDITABLE_WORKSPACE_SUFFIXES:
+            raise HTTPException(status_code=400, detail="当前文件类型不支持编辑")
 
-    raw_content = await asyncio.to_thread(target.read_bytes)
-    preview_type, supported, _message = detect_preview_type(path, raw_content)
-    if preview_type not in {"markdown", "text"} or not supported:
-        raise HTTPException(status_code=400, detail="当前文件类型不支持编辑")
-    try:
-        raw_content.decode("utf-8")
-    except UnicodeDecodeError as exc:
-        raise HTTPException(status_code=400, detail="当前文件不是 UTF-8 文本") from exc
+        stored = await read_workspace_file_object(path=path, current_user=current_user)
+        preview_type, supported, _message = detect_preview_type(path, stored.data)
+        if preview_type not in {"markdown", "text"} or not supported:
+            raise HTTPException(status_code=400, detail="当前文件类型不支持编辑")
+        try:
+            stored.data.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise HTTPException(status_code=400, detail="当前文件不是 UTF-8 文本") from exc
 
-    try:
-        await asyncio.to_thread(target.write_text, content, encoding="utf-8")
-    except PermissionError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-    return {
-        "success": True,
-        "path": _normalize_workspace_path(path).as_posix(),
-        "entry": _entry_for_path(root, target),
-    }
+        stat = await get_file_store().put(
+            user_workspace_key(uid, relative), content.encode("utf-8"), content_type=stored.content_type
+        )
+    return {"success": True, "path": _display_path(relative), "entry": _workspace_file_entry(relative, stat)}
 
 
 async def delete_workspace_path(*, path: str, current_user: User) -> dict:
-    if _chat_path_parts(path) is not None:
-        raise HTTPException(status_code=403, detail=_CHAT_READONLY_MESSAGE)
-    root = _workspace_root(current_user)
-    target = _resolve_workspace_path(current_user, path)
-    if target == root:
-        raise HTTPException(status_code=400, detail="工作区根目录不允许删除")
-    if not target.exists():
-        raise HTTPException(status_code=404, detail="文件不存在")
+    """删除 workspace 文件或目录前缀。"""
+    _reject_chat_write(path)
+    uid = str(current_user.uid)
+    async with sandbox_file_operation_lock(uid=uid):
+        relative = _workspace_relative_path(path)
+        if not relative:
+            raise HTTPException(status_code=400, detail="工作区根目录不允许删除")
+        kind = await _workspace_path_kind(uid, relative)
+        if kind is None:
+            raise HTTPException(status_code=404, detail="文件不存在")
 
-    try:
-        if target.is_dir():
-            await asyncio.to_thread(shutil.rmtree, target)
+        store = get_file_store()
+        if kind == "directory":
+            await store.delete_prefix(f"{user_workspace_key(uid, relative)}/")
         else:
-            await asyncio.to_thread(target.unlink)
-    except PermissionError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-    await invalidate_workspace_mention_cache(str(current_user.uid))
-    return {"success": True, "path": _normalize_workspace_path(path).as_posix()}
+            await store.delete(user_workspace_key(uid, relative))
+    await invalidate_workspace_mention_cache(uid)
+    return {"success": True, "path": _display_path(relative)}
 
 
 async def create_workspace_directory(*, parent_path: str, name: str, current_user: User) -> dict:
-    if _chat_path_parts(parent_path) is not None:
-        raise HTTPException(status_code=403, detail=_CHAT_READONLY_MESSAGE)
-    root = _workspace_root(current_user)
-    directory_name = _validate_child_name(name, field_name="文件夹名")
-    parent = _resolve_parent_directory(current_user, parent_path)
-    target = _resolve_new_child(root, parent, directory_name)
+    """使用隐藏 marker 创建 workspace 空目录。"""
+    _reject_chat_write(parent_path)
+    uid = str(current_user.uid)
+    async with sandbox_file_operation_lock(uid=uid):
+        parent = _workspace_relative_path(parent_path)
+        await _require_workspace_directory(uid, parent)
+        directory_name = _validate_child_name(name, field_name="文件夹名")
+        relative = _join_relative(parent, directory_name)
+        if await _workspace_path_kind(uid, relative) is not None:
+            raise HTTPException(status_code=400, detail="同名文件或文件夹已存在")
 
-    try:
-        await asyncio.to_thread(target.mkdir)
-    except FileExistsError as exc:
-        raise HTTPException(status_code=400, detail="同名文件或文件夹已存在") from exc
-    except PermissionError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-    await invalidate_workspace_mention_cache(str(current_user.uid))
-    return {"success": True, "entry": _entry_for_path(root, target)}
+        stat = await get_file_store().put(
+            user_workspace_key(uid, f"{relative}/{KEEP_MARKER}"), b"", content_type="application/octet-stream"
+        )
+    await invalidate_workspace_mention_cache(uid)
+    return {"success": True, "entry": _workspace_directory_entry(relative, stat)}
 
 
 async def upload_workspace_files(*, parent_path: str, files: list[UploadFile], current_user: User) -> dict:
+    """批量上传 workspace 文件，失败时回滚本批次已写对象。"""
     if not files:
         raise HTTPException(status_code=400, detail="请选择至少一个文件")
     if len(files) > MAX_WORKSPACE_UPLOAD_FILES:
         raise HTTPException(status_code=400, detail=f"一次最多上传 {MAX_WORKSPACE_UPLOAD_FILES} 个文件")
+    _reject_chat_write(parent_path)
 
-    if _chat_path_parts(parent_path) is not None:
-        raise HTTPException(status_code=403, detail=_CHAT_READONLY_MESSAGE)
-    root = _workspace_root(current_user)
-    parent = _resolve_parent_directory(current_user, parent_path)
-    seen_names = set()
-    upload_targets: list[tuple[UploadFile, Path]] = []
+    uid = str(current_user.uid)
+    async with sandbox_file_operation_lock(uid=uid):
+        parent = _workspace_relative_path(parent_path)
+        await _require_workspace_directory(uid, parent)
+        seen_names: set[str] = set()
+        targets: list[tuple[UploadFile, str]] = []
+        for file in files:
+            filename = _validate_child_name(PurePosixPath(file.filename or "").name, field_name="文件名")
+            if filename in seen_names:
+                raise HTTPException(status_code=400, detail=f"选择的文件中存在重复文件名: {filename}")
+            seen_names.add(filename)
+            relative = _join_relative(parent, filename)
+            if await _workspace_path_kind(uid, relative) is not None:
+                raise HTTPException(status_code=400, detail="同名文件或文件夹已存在")
+            targets.append((file, relative))
 
-    for file in files:
-        file_name = _validate_child_name(Path(file.filename or "").name, field_name="文件名")
-        if file_name in seen_names:
-            raise HTTPException(status_code=400, detail=f"选择的文件中存在重复文件名: {file_name}")
-        seen_names.add(file_name)
-        upload_targets.append((file, _resolve_new_child(root, parent, file_name)))
+        store = get_file_store()
+        completed: list[str] = []
+        entries: list[dict] = []
+        try:
+            for file, relative in targets:
+                try:
+                    content = await read_upload_with_limit(
+                        file,
+                        max_size_bytes=MAX_WORKSPACE_UPLOAD_SIZE_BYTES,
+                        too_large_message="文件过大，当前仅支持 100 MB 以内的文件",
+                    )
+                except ValueError as exc:
+                    raise HTTPException(status_code=400, detail=str(exc)) from exc
+                key = user_workspace_key(uid, relative)
+                stat = await store.put(key, content, content_type=file.content_type)
+                completed.append(key)
+                entries.append(_workspace_file_entry(relative, stat))
+        except Exception:
+            for key in completed:
+                await store.delete(key)
+            raise
 
-    completed_targets: list[Path] = []
-    try:
-        for file, target in upload_targets:
-            await _write_workspace_upload(file, target)
-            completed_targets.append(target)
-    except HTTPException:
-        for target in completed_targets:
-            with contextlib.suppress(OSError):
-                await asyncio.to_thread(target.unlink)
-        raise
+    await invalidate_workspace_mention_cache(uid)
+    return {"success": True, "entries": entries}
 
-    await invalidate_workspace_mention_cache(str(current_user.uid))
-    return {"success": True, "entries": [_entry_for_path(root, target) for _file, target in upload_targets]}
+
+async def put_workspace_file(*, uid: str, path: str, content: bytes, content_type: str | None = None) -> dict:
+    """将字节写入 workspace 新文件，供服务间复制使用。"""
+    async with sandbox_file_operation_lock(uid=uid):
+        relative = _workspace_relative_path(path)
+        if not relative:
+            raise HTTPException(status_code=400, detail="当前路径必须是文件")
+        parent = PurePosixPath(relative).parent.as_posix()
+        parent = "" if parent == "." else parent
+        await _require_workspace_directory(uid, parent)
+        if await _workspace_path_kind(uid, relative) is not None:
+            raise HTTPException(status_code=400, detail="同名文件或文件夹已存在")
+        stat = await get_file_store().put(user_workspace_key(uid, relative), content, content_type=content_type)
+    await invalidate_workspace_mention_cache(uid)
+    return _workspace_file_entry(relative, stat)
+
+
+async def ensure_workspace_directory(*, uid: str, path: str) -> dict:
+    """确保 workspace 目录存在，不存在时写入隐藏 marker。"""
+    async with sandbox_file_operation_lock(uid=uid):
+        relative = _workspace_relative_path(path)
+        kind = await _workspace_path_kind(uid, relative)
+        if kind == "file":
+            raise HTTPException(status_code=400, detail="目标路径不是目录")
+        if kind == "directory":
+            return _workspace_directory_entry(relative)
+        parent = PurePosixPath(relative).parent.as_posix()
+        parent = "" if parent == "." else parent
+        await _require_workspace_directory(uid, parent)
+        stat = await get_file_store().put(
+            user_workspace_key(uid, f"{relative}/{KEEP_MARKER}"), b"", content_type="application/octet-stream"
+        )
+        return _workspace_directory_entry(relative, stat)
+
+
+async def next_available_workspace_path(*, uid: str, parent_path: str, filename: str) -> str:
+    """返回 workspace 目录内可用的冲突递增文件路径。"""
+    parent = _workspace_relative_path(parent_path)
+    await _require_workspace_directory(uid, parent)
+    clean_name = _validate_child_name(filename, field_name="文件名")
+    stem = PurePosixPath(clean_name).stem
+    suffix = PurePosixPath(clean_name).suffix
+    for index in range(1000):
+        candidate_name = clean_name if index == 0 else f"{stem} ({index}){suffix}"
+        relative = _join_relative(parent, candidate_name)
+        if await _workspace_path_kind(uid, relative) is None:
+            return _display_path(relative)
+    raise RuntimeError(f"Unable to find available filename for {filename} after 1000 attempts.")
 
 
 async def download_workspace_file(
     *, path: str, current_user: User, thread_titles: dict[str, str] | None = None
-) -> StreamingResponse | FileResponse:
-    target = resolve_workspace_file_path(path=path, current_user=current_user, thread_titles=thread_titles)
-    if not target.exists():
-        raise HTTPException(status_code=404, detail="文件不存在")
+) -> StreamingResponse:
+    """流式下载 workspace 或历史对话映射文件。"""
+    uid = str(current_user.uid)
+    await ensure_workspace_defaults(uid)
+    key, display_path = await _resolve_readable_file_key(uid, path, thread_titles)
+    store = get_file_store()
+    try:
+        stat = await store.stat(key)
+    except FileStoreError as exc:
+        raise HTTPException(status_code=404, detail="文件不存在") from exc
+    filename = PurePosixPath(display_path).name or "download"
+    headers = {"Content-Disposition": f"attachment; filename*=UTF-8''{quote(filename)}"}
+    return StreamingResponse(
+        store.stream(key), media_type=stat.content_type or detect_media_type(filename), headers=headers
+    )
 
-    file_name = target.name or "download"
-    media_type = detect_media_type(file_name)
-    headers = {"Content-Disposition": f"attachment; filename*=UTF-8''{quote(file_name)}"}
-    if target.stat().st_size > 1024 * 1024 * 16:
-        return FileResponse(path=target, media_type=media_type, headers=headers)
 
-    content = await asyncio.to_thread(target.read_bytes)
-    return StreamingResponse(io.BytesIO(content), media_type=media_type, headers=headers)
+@contextlib.asynccontextmanager
+async def materialize_workspace_file(
+    *, path: str, current_user: User, thread_titles: dict[str, str] | None = None
+) -> AsyncIterator[Path]:
+    """将 FileStore 对象临时落盘，并在使用后删除。"""
+    stored = await read_workspace_file_object(path=path, current_user=current_user, thread_titles=thread_titles)
+    suffix = PurePosixPath(path).suffix
+    with tempfile.TemporaryDirectory(prefix="yuxi-workspace-") as temp_dir:
+        target = Path(temp_dir) / f"source{suffix}"
+        target.write_bytes(stored.data)
+        yield target
+
+
+async def ensure_workspace_defaults(uid: str) -> None:
+    """初始化 workspace 默认上下文文件，不覆盖已有对象。"""
+    store = get_file_store()
+    missing = [
+        (filename, content)
+        for filename, content in WORKSPACE_AGENT_CONTEXT_FILES.items()
+        if await _workspace_path_kind(uid, f"{WORKSPACE_AGENTS_DIR_NAME}/{filename}") is None
+    ]
+    if not missing:
+        return
+    async with sandbox_file_operation_lock(uid=uid):
+        for filename, default_content in missing:
+            relative = f"{WORKSPACE_AGENTS_DIR_NAME}/{filename}"
+            if await _workspace_path_kind(uid, relative) is not None:
+                continue
+            await store.put(
+                user_workspace_key(uid, relative), default_content.encode("utf-8"), content_type="text/markdown"
+            )
+
+
+async def list_workspace_index_entries(uid: str) -> list[tuple[str, str]]:
+    """返回 mention 搜索需要的 workspace 文件与目录索引。"""
+    await ensure_workspace_defaults(uid)
+    entries = await _list_workspace_directory(uid, "", recursive=True, files_only=False)
+    return [(entry["name"], entry["path"].lstrip("/")) for entry in entries]
 
 
 async def build_owned_thread_titles(db: AsyncSession, uid: str) -> dict[str, str]:
@@ -333,64 +423,56 @@ def workspace_path_uses_chat_mapping(path: str | None) -> bool:
     return normalized == f"/{WORKSPACE_AGENTS_DIR_NAME}" or is_workspace_chat_path(path)
 
 
-def _workspace_root(user: User) -> Path:
-    try:
-        user_data_root = global_user_data_dir(str(user.uid)).resolve()
-        root = user_data_root / WORKSPACE_DIR_NAME
-    except ValueError as exc:
-        raise HTTPException(status_code=403, detail="Access denied") from exc
-    if root.is_symlink():
-        raise HTTPException(status_code=403, detail="Access denied")
-    root.mkdir(parents=True, exist_ok=True)
-    resolved_root = root.resolve()
-    try:
-        ensure_within_root(resolved_root, user_data_root, error_message="Access denied")
-    except ValueError as exc:
-        raise HTTPException(status_code=403, detail="Access denied") from exc
-    ensure_workspace_default_files(resolved_root)
-    return resolved_root
-
-
 def _normalize_workspace_path(path: str | None) -> PurePosixPath:
     raw_path = (path or "/").strip() or "/"
+    if "\\" in raw_path:
+        raise HTTPException(status_code=403, detail="Access denied")
     if not raw_path.startswith("/"):
         raw_path = f"/{raw_path}"
-    normalized = PurePosixPath(raw_path)
-    if ".." in normalized.parts:
+    parts = raw_path.split("/")
+    if any(part in {".", ".."} for part in parts):
         raise HTTPException(status_code=403, detail="Access denied")
-    return normalized
+    return PurePosixPath(raw_path)
 
 
-def _resolve_workspace_path(user: User, path: str | None) -> Path:
-    root = _workspace_root(user)
-    normalized = _normalize_workspace_path(path)
-    relative_parts = [part for part in normalized.parts if part not in {"/", ""}]
-    target = (root.joinpath(*relative_parts) if relative_parts else root).resolve(strict=False)
+def _workspace_relative_path(path: str | None) -> str:
+    return _normalize_workspace_path(path).as_posix().lstrip("/")
+
+
+def _display_path(relative: str) -> str:
+    return f"/{relative}" if relative else "/"
+
+
+def _join_relative(parent: str, name: str) -> str:
+    return f"{parent}/{name}" if parent else name
+
+
+def _physical_chats_path() -> str:
+    return f"{WORKSPACE_AGENTS_DIR_NAME}/{WORKSPACE_CHATS_DIR_NAME}"
+
+
+async def _workspace_path_exists(uid: str, relative: str) -> bool:
+    return await _workspace_path_kind(uid, relative) is not None
+
+
+async def _workspace_path_kind(uid: str, relative: str) -> str | None:
+    if not relative:
+        return "directory"
+    store = get_file_store()
+    key = user_workspace_key(uid, relative)
     try:
-        ensure_within_root(target, root, error_message="Access denied")
-    except ValueError as exc:
-        raise HTTPException(status_code=403, detail="Access denied") from exc
-    return target
+        await store.stat(key)
+        return "file"
+    except FileStoreError:
+        return "directory" if await store.list(f"{key}/") else None
 
 
-def _resolve_parent_directory(user: User, parent_path: str) -> Path:
-    parent = _resolve_workspace_path(user, parent_path)
-    if not parent.exists():
+async def _require_workspace_directory(uid: str, relative: str) -> None:
+    kind = await _workspace_path_kind(uid, relative)
+    if kind is None:
         raise HTTPException(status_code=404, detail="目标目录不存在")
-    if not parent.is_dir():
+    if kind != "directory":
         raise HTTPException(status_code=400, detail="目标路径不是目录")
-    return parent
-
-
-def _resolve_new_child(root: Path, parent: Path, name: str) -> Path:
-    target = parent / name
-    try:
-        ensure_within_root(target.resolve(strict=False), root, error_message="Access denied")
-    except ValueError as exc:
-        raise HTTPException(status_code=403, detail="Access denied") from exc
-    if target.exists():
-        raise HTTPException(status_code=400, detail="同名文件或文件夹已存在")
-    return target
 
 
 def _validate_child_name(name: str, *, field_name: str) -> str:
@@ -399,146 +481,133 @@ def _validate_child_name(name: str, *, field_name: str) -> str:
         raise HTTPException(status_code=422, detail=f"{field_name} 不能为空")
     if clean_name in {".", ".."} or "/" in clean_name or "\\" in clean_name:
         raise HTTPException(status_code=422, detail=f"{field_name} 不能包含路径分隔符")
-    if PurePosixPath(clean_name).name != clean_name:
-        raise HTTPException(status_code=422, detail=f"{field_name} 不能包含路径分隔符")
     return clean_name
 
 
-def _entry_for_path(root: Path, path: Path) -> dict:
-    stat = path.stat()
-    is_dir = path.is_dir()
-    relative = path.relative_to(root).as_posix()
-    display_path = f"/{relative}" if relative else "/"
-    if is_dir and display_path != "/" and not display_path.endswith("/"):
-        display_path = f"{display_path}/"
-    virtual_path = VIRTUAL_PATH_WORKSPACE if display_path == "/" else f"{VIRTUAL_PATH_WORKSPACE}{display_path}"
-    entry = {
-        "path": display_path,
-        "virtual_path": virtual_path,
-        "name": path.name or "工作区",
-        "is_dir": is_dir,
-        "size": 0 if is_dir else stat.st_size,
-        "modified_at": utc_isoformat_from_timestamp(stat.st_mtime) or "",
+def _workspace_file_entry(relative: str, stat: ObjectStat) -> dict:
+    path = _display_path(relative)
+    return {
+        "path": path,
+        "virtual_path": f"{VIRTUAL_PATH_WORKSPACE}{path}",
+        "name": PurePosixPath(relative).name,
+        "is_dir": False,
+        "size": stat.size,
+        "modified_at": utc_isoformat(stat.modified),
     }
-    return entry
 
 
-def _sort_entries(entries: list[dict]) -> list[dict]:
-    return sorted(entries, key=lambda item: (not bool(item.get("is_dir")), str(item.get("name") or "").lower()))
+def _workspace_directory_entry(relative: str, stat: ObjectStat | None = None) -> dict:
+    path = f"{_display_path(relative).rstrip('/')}/" if relative else "/"
+    return {
+        "path": path,
+        "virtual_path": VIRTUAL_PATH_WORKSPACE if path == "/" else f"{VIRTUAL_PATH_WORKSPACE}{path}",
+        "name": PurePosixPath(relative).name if relative else "工作区",
+        "is_dir": True,
+        "size": 0,
+        "modified_at": utc_isoformat(stat.modified) if stat else "",
+    }
 
 
-def _sort_chat_entries(entries: list[dict]) -> list[dict]:
-    return sorted(entries, key=lambda item: str(item.get("title") or item.get("name") or "").lower(), reverse=True)
+async def _list_workspace_directory(uid: str, relative: str, *, recursive: bool, files_only: bool) -> list[dict]:
+    prefix_key = (
+        user_workspace_key(uid, relative)
+        if relative
+        else user_workspace_key(uid, KEEP_MARKER).rsplit("/", 1)[0]
+    )
+    prefix = f"{prefix_key}/"
+    objects = await get_file_store().list(prefix)
+    entries: dict[str, dict] = {}
+    for item in objects:
+        child_relative = item.key[len(prefix) :]
+        if not child_relative:
+            continue
+        parts = child_relative.split("/")
+        full_parts = ([*PurePosixPath(relative).parts] if relative else [])
 
+        if recursive:
+            for index in range(1, len(parts)):
+                directory = PurePosixPath(*full_parts, *parts[:index]).as_posix()
+                if parts[index - 1] != KEEP_MARKER and not files_only:
+                    entries.setdefault(directory, _workspace_directory_entry(directory, item))
+        elif len(parts) > 1:
+            directory = PurePosixPath(*full_parts, parts[0]).as_posix()
+            if parts[0] != KEEP_MARKER and not files_only:
+                entries.setdefault(directory, _workspace_directory_entry(directory, item))
+            continue
 
-def _list_directory(
-    root: Path,
-    target: Path,
-    *,
-    recursive: bool = False,
-    files_only: bool = False,
-) -> list[dict]:
-    children = list(target.iterdir())
-    entries = [_entry_for_path(root, child) for child in children if not files_only or child.is_file()]
-    if recursive:
-        for child in children:
-            if child.is_dir() and not child.is_symlink():
-                entries.extend(_list_directory(root, child, recursive=True, files_only=files_only))
-    return _sort_entries(entries)
+        if parts[-1] == KEEP_MARKER:
+            marker_dir = PurePosixPath(*full_parts, *parts[:-1]).as_posix()
+            if marker_dir and marker_dir != "." and not files_only:
+                entries.setdefault(marker_dir, _workspace_directory_entry(marker_dir, item))
+            continue
+        file_relative = PurePosixPath(*full_parts, *parts).as_posix()
+        entries[file_relative] = _workspace_file_entry(file_relative, item)
+    return _sort_entries(list(entries.values()))
 
 
 def _chat_path_parts(path: str | None) -> tuple[str, ...] | None:
     parts = tuple(part for part in _normalize_workspace_path(path).parts if part not in {"/", ""})
     prefix = (WORKSPACE_AGENTS_DIR_NAME, WORKSPACE_CHATS_DIR_NAME)
-    if parts[:2] != prefix:
-        return None
-    return parts[2:]
+    return parts[2:] if parts[:2] == prefix else None
 
 
-def _resolve_chat_path(path: str | None, thread_titles: dict[str, str] | None) -> tuple[Path | None, str]:
-    """将网页工作区的虚拟 chats 路径解析到对应 thread 文件目录。"""
+def _chat_namespace_key(thread_id: str, namespace: str, relative: str = "") -> str:
+    if namespace == UPLOADS_DIR_NAME:
+        return thread_upload_key(thread_id, relative or KEEP_MARKER).removesuffix(f"/{KEEP_MARKER}")
+    if namespace == OUTPUTS_DIR_NAME:
+        return thread_output_key(thread_id, relative or KEEP_MARKER).removesuffix(f"/{KEEP_MARKER}")
+    raise HTTPException(status_code=404, detail="历史对话目录不存在")
+
+
+async def _resolve_readable_file_key(
+    uid: str, path: str, thread_titles: dict[str, str] | None
+) -> tuple[str, str]:
     parts = _chat_path_parts(path)
     if parts is None:
-        raise HTTPException(status_code=400, detail="当前路径不是历史对话路径")
-    if not parts:
-        return None, "/agents/chats"
+        relative = _workspace_relative_path(path)
+        if await _workspace_path_kind(uid, relative) != "file":
+            kind = await _workspace_path_kind(uid, relative)
+            if kind == "directory":
+                raise HTTPException(status_code=400, detail=f"当前路径不是文件: {path}")
+            raise HTTPException(status_code=404, detail=f"工作区文件不存在: {path}")
+        return user_workspace_key(uid, relative), _display_path(relative)
 
-    thread_id = parts[0]
+    if await _workspace_path_exists(uid, _physical_chats_path()):
+        raise HTTPException(status_code=409, detail="工作区 agents/chats 已被现有文件或目录占用")
+    if len(parts) < 3:
+        raise HTTPException(status_code=400, detail=f"当前路径不是文件: {path}")
+    thread_id, namespace, *relative_parts = parts
     if thread_id not in (thread_titles or {}):
         raise HTTPException(status_code=403, detail="Access denied")
-    if len(parts) == 1:
-        return None, f"/agents/chats/{thread_id}"
-
-    namespace = parts[1]
-    if len(parts) > 2 and parts[2] in _CHAT_INTERMEDIATE_DIR_NAMES:
+    if relative_parts[0] in _CHAT_INTERMEDIATE_DIR_NAMES:
         raise HTTPException(status_code=404, detail="历史对话文件不存在")
-    if namespace == UPLOADS_DIR_NAME:
-        base_dir = sandbox_uploads_dir(thread_id).resolve(strict=False)
-    elif namespace == OUTPUTS_DIR_NAME:
-        base_dir = sandbox_outputs_dir(thread_id).resolve(strict=False)
-    else:
-        raise HTTPException(status_code=404, detail="历史对话目录不存在")
-
-    target = base_dir.joinpath(*parts[2:]).resolve(strict=False)
+    relative = "/".join(relative_parts)
+    key = f"{_chat_namespace_key(thread_id, namespace)}/{relative}"
     try:
-        ensure_within_root(target, base_dir, error_message="Access denied")
-    except ValueError as exc:
-        raise HTTPException(status_code=403, detail="Access denied") from exc
-    return target, f"/agents/chats/{'/'.join(parts)}"
+        await get_file_store().stat(key)
+    except FileStoreError as exc:
+        if await get_file_store().list(f"{key}/"):
+            raise HTTPException(status_code=400, detail=f"当前路径不是文件: {path}") from exc
+        raise HTTPException(status_code=404, detail=f"工作区文件不存在: {path}") from exc
+    return key, _normalize_workspace_path(path).as_posix()
 
 
-def _virtual_entry(path: str, *, name: str, is_dir: bool, title: str | None = None, source: Path | None = None) -> dict:
-    display_path = f"{path.rstrip('/')}/" if is_dir else path
-    stat = source.stat() if source and source.exists() else None
-    entry = {
-        "path": display_path,
-        "virtual_path": f"{VIRTUAL_PATH_WORKSPACE}{display_path}",
-        "name": name,
-        "is_dir": is_dir,
-        "size": 0 if is_dir or stat is None else stat.st_size,
-        "modified_at": utc_isoformat_from_timestamp(stat.st_mtime) if stat else "",
-        "readonly": True,
-    }
-    if title:
-        entry["title"] = title
-    return entry
-
-
-def _is_chat_intermediate_path(path: Path, namespace_root: Path) -> bool:
-    try:
-        relative = path.resolve(strict=False).relative_to(namespace_root.resolve(strict=False))
-    except ValueError:
-        return True
-    return bool(relative.parts and relative.parts[0] in _CHAT_INTERMEDIATE_DIR_NAMES)
-
-
-def _directory_has_visible_entries(directory: Path) -> bool:
-    if not directory.is_dir():
-        return False
-    root = directory.resolve(strict=False)
-    for child in directory.iterdir():
-        if _is_chat_intermediate_path(child, directory):
+async def _visible_chat_objects(thread_id: str, namespace: str) -> list[ObjectStat]:
+    prefix = f"{_chat_namespace_key(thread_id, namespace)}/"
+    objects = await get_file_store().list(prefix)
+    visible = []
+    for item in objects:
+        relative = item.key[len(prefix) :]
+        if not relative or relative == KEEP_MARKER:
             continue
-        try:
-            ensure_within_root(child.resolve(strict=False), root, error_message="Access denied")
-        except ValueError:
+        first = relative.split("/", 1)[0]
+        if first in _CHAT_INTERMEDIATE_DIR_NAMES:
             continue
-        return True
-    return False
+        visible.append(item)
+    return visible
 
 
-def _nonempty_chat_namespaces(thread_id: str) -> list[tuple[str, Path]]:
-    return [
-        (namespace, directory)
-        for namespace, directory in (
-            (UPLOADS_DIR_NAME, sandbox_uploads_dir(thread_id)),
-            (OUTPUTS_DIR_NAME, sandbox_outputs_dir(thread_id)),
-        )
-        if _directory_has_visible_entries(directory)
-    ]
-
-
-def _list_chat_directory(
+async def _list_chat_directory(
     path: str,
     *,
     thread_titles: dict[str, str],
@@ -549,83 +618,123 @@ def _list_chat_directory(
     if parts is None:
         return []
     if not parts:
-        entries: list[dict] = []
+        entries = []
         for thread_id, title in thread_titles.items():
-            if not _nonempty_chat_namespaces(thread_id):
+            has_visible = bool(
+                await _visible_chat_objects(thread_id, UPLOADS_DIR_NAME)
+                or await _visible_chat_objects(thread_id, OUTPUTS_DIR_NAME)
+            )
+            if not has_visible:
                 continue
             thread_path = f"/agents/chats/{thread_id}"
             if not files_only:
                 entries.append(_virtual_entry(thread_path, name=thread_id, title=title, is_dir=True))
             if recursive:
                 entries.extend(
-                    _list_chat_directory(
-                        thread_path,
-                        thread_titles=thread_titles,
-                        recursive=True,
-                        files_only=files_only,
+                    await _list_chat_directory(
+                        thread_path, thread_titles=thread_titles, recursive=True, files_only=files_only
                     )
                 )
         return _sort_chat_entries(entries)
+
+    thread_id = parts[0]
+    if thread_id not in thread_titles:
+        raise HTTPException(status_code=403, detail="Access denied")
     if len(parts) == 1:
-        thread_id = parts[0]
-        if thread_id not in thread_titles:
-            raise HTTPException(status_code=403, detail="Access denied")
         entries = []
-        for namespace, directory in _nonempty_chat_namespaces(thread_id):
+        for namespace in (UPLOADS_DIR_NAME, OUTPUTS_DIR_NAME):
+            objects = await _visible_chat_objects(thread_id, namespace)
+            if not objects:
+                continue
             namespace_path = f"/agents/chats/{thread_id}/{namespace}"
             if not files_only:
-                entries.append(_virtual_entry(namespace_path, name=namespace, is_dir=True, source=directory))
+                entries.append(_virtual_entry(namespace_path, name=namespace, is_dir=True, source=objects[0]))
             if recursive:
                 entries.extend(
-                    _list_chat_directory(
-                        namespace_path,
-                        thread_titles=thread_titles,
-                        recursive=True,
-                        files_only=files_only,
+                    await _list_chat_directory(
+                        namespace_path, thread_titles=thread_titles, recursive=True, files_only=files_only
                     )
                 )
         return _sort_entries(entries)
 
-    target, display_root = _resolve_chat_path(path, thread_titles)
-    if target is None or not target.exists():
+    namespace = parts[1]
+    relative_root = "/".join(parts[2:])
+    if relative_root and relative_root.split("/", 1)[0] in _CHAT_INTERMEDIATE_DIR_NAMES:
+        raise HTTPException(status_code=404, detail="历史对话文件不存在")
+    base_key = _chat_namespace_key(thread_id, namespace)
+    prefix = f"{base_key}/{relative_root}/" if relative_root else f"{base_key}/"
+    objects = await get_file_store().list(prefix)
+    if not objects:
         return []
-    if not target.is_dir():
-        raise HTTPException(status_code=400, detail="当前路径不是目录")
 
-    entries: list[dict] = []
-    namespace_root = target
-    if len(parts) > 2:
-        namespace_root = (
-            sandbox_uploads_dir(parts[0]) if parts[1] == UPLOADS_DIR_NAME else sandbox_outputs_dir(parts[0])
-        )
-        namespace_root = namespace_root.resolve(strict=False)
-    for child in target.iterdir():
-        if _is_chat_intermediate_path(child, namespace_root):
+    display_root = f"/agents/chats/{thread_id}/{namespace}"
+    if relative_root:
+        display_root = f"{display_root}/{relative_root}"
+    entries: dict[str, dict] = {}
+    for item in objects:
+        relative = item.key[len(prefix) :]
+        if not relative:
             continue
-        resolved_child = child.resolve(strict=False)
-        try:
-            ensure_within_root(resolved_child, target, error_message="Access denied")
-        except ValueError:
+        parts_tail = relative.split("/")
+        if parts_tail[0] in _CHAT_INTERMEDIATE_DIR_NAMES:
             continue
-        if not files_only or resolved_child.is_file():
-            entries.append(
-                _virtual_entry(
-                    f"{display_root}/{child.name}",
-                    name=child.name,
-                    is_dir=resolved_child.is_dir(),
-                    source=resolved_child,
+        if recursive:
+            for index in range(1, len(parts_tail)):
+                directory_path = f"{display_root}/{'/'.join(parts_tail[:index])}"
+                if not files_only:
+                    entries.setdefault(
+                        directory_path,
+                        _virtual_entry(directory_path, name=parts_tail[index - 1], is_dir=True, source=item),
+                    )
+        elif len(parts_tail) > 1:
+            directory_path = f"{display_root}/{parts_tail[0]}"
+            if not files_only:
+                entries.setdefault(
+                    directory_path, _virtual_entry(directory_path, name=parts_tail[0], is_dir=True, source=item)
                 )
-            )
-        if recursive and resolved_child.is_dir() and not child.is_symlink():
-            entries.extend(
-                _list_chat_directory(
-                    f"{display_root}/{child.name}",
-                    thread_titles=thread_titles,
-                    recursive=True,
-                    files_only=files_only,
+            continue
+        if parts_tail[-1] == KEEP_MARKER:
+            marker_relative = "/".join(parts_tail[:-1])
+            if marker_relative and not files_only:
+                marker_path = f"{display_root}/{marker_relative}"
+                entries.setdefault(
+                    marker_path, _virtual_entry(marker_path, name=parts_tail[-2], is_dir=True, source=item)
                 )
-            )
-    return _sort_entries(entries)
+            continue
+        file_path = f"{display_root}/{relative}"
+        entries[file_path] = _virtual_entry(file_path, name=parts_tail[-1], is_dir=False, source=item)
+    return _sort_entries(list(entries.values()))
+
+
+def _virtual_entry(
+    path: str, *, name: str, is_dir: bool, title: str | None = None, source: ObjectStat | None = None
+) -> dict:
+    display_path = f"{path.rstrip('/')}/" if is_dir else path
+    entry = {
+        "path": display_path,
+        "virtual_path": f"{VIRTUAL_PATH_WORKSPACE}{display_path}",
+        "name": name,
+        "is_dir": is_dir,
+        "size": 0 if is_dir or source is None else source.size,
+        "modified_at": utc_isoformat(source.modified) if source else "",
+        "readonly": True,
+    }
+    if title:
+        entry["title"] = title
+    return entry
+
+
+def _reject_chat_write(path: str) -> None:
+    if _chat_path_parts(path) is not None:
+        raise HTTPException(status_code=403, detail=_CHAT_READONLY_MESSAGE)
+
+
+def _sort_entries(entries: list[dict]) -> list[dict]:
+    return sorted(entries, key=lambda item: (not bool(item.get("is_dir")), str(item.get("name") or "").lower()))
+
+
+def _sort_chat_entries(entries: list[dict]) -> list[dict]:
+    return sorted(entries, key=lambda item: str(item.get("title") or item.get("name") or "").lower(), reverse=True)
 
 
 def _preview_binary_response(*, filename: str, content: bytes, media_type: str, preview_type: str) -> StreamingResponse:
@@ -635,58 +744,3 @@ def _preview_binary_response(*, filename: str, content: bytes, media_type: str, 
         "X-Yuxi-Preview-Filename": quote(filename),
     }
     return StreamingResponse(io.BytesIO(content), media_type=media_type, headers=headers)
-
-
-async def _write_workspace_upload(file: UploadFile, target: Path) -> None:
-    created_file = False
-    upload_completed = False
-
-    try:
-        async with aiofiles.open(target, "xb") as buffer:
-            created_file = True
-            await write_upload_to_buffer(
-                file,
-                buffer,
-                max_size_bytes=MAX_WORKSPACE_UPLOAD_SIZE_BYTES,
-                too_large_message="文件过大，当前仅支持 100 MB 以内的文件",
-            )
-        upload_completed = True
-    except FileExistsError as exc:
-        raise HTTPException(status_code=400, detail="同名文件或文件夹已存在") from exc
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except PermissionError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    finally:
-        if created_file and not upload_completed and target.exists():
-            with contextlib.suppress(OSError):
-                await asyncio.to_thread(target.unlink)
-
-
-async def _convert_workspace_office_to_pdf(user: User, target: Path, file_name: str) -> bytes:
-    user_data_root = global_user_data_dir(str(user.uid)).resolve()
-    cache_dir = user_data_root / ".office_preview_cache"
-    stat = await asyncio.to_thread(target.stat)
-    digest = hashlib.sha256(str(target).encode("utf-8")).hexdigest()
-    cache_path = cache_dir / f"{digest}-{stat.st_mtime_ns}-{stat.st_size}.pdf"
-
-    cached = await asyncio.to_thread(lambda: cache_path.read_bytes() if cache_path.exists() else None)
-    if cached is not None:
-        return cached
-
-    content = await asyncio.to_thread(target.read_bytes)
-    try:
-        pdf_content = await convert_office_to_pdf(file_name, content)
-    except OfficePreviewConversionError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-    await asyncio.to_thread(_store_office_pdf_cache, cache_dir, digest, cache_path, pdf_content)
-    return pdf_content
-
-
-def _store_office_pdf_cache(cache_dir: Path, digest: str, cache_path: Path, pdf_content: bytes) -> None:
-    cache_dir.mkdir(parents=True, exist_ok=True)
-    for stale in cache_dir.glob(f"{digest}-*.pdf"):
-        if stale != cache_path:
-            stale.unlink(missing_ok=True)
-    cache_path.write_bytes(pdf_content)

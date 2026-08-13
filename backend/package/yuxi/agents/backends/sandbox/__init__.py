@@ -6,9 +6,7 @@ from .paths import (
     resolve_virtual_path,
     sandbox_outputs_dir,
     sandbox_uploads_dir,
-    sandbox_user_data_dir,
     sandbox_workspace_agent_context_file,
-    sandbox_workspace_dir,
     virtual_path_for_thread_file,
 )
 from .provider import (
@@ -37,9 +35,7 @@ __all__ = [
     "sandbox_id_for_thread",
     "sandbox_outputs_dir",
     "sandbox_uploads_dir",
-    "sandbox_user_data_dir",
     "sandbox_workspace_agent_context_file",
-    "sandbox_workspace_dir",
     "shutdown_sandbox_provider",
     "virtual_path_for_thread_file",
     "USER_DATA_PATH",

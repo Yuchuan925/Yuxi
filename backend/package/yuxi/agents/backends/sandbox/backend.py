@@ -3,7 +3,7 @@ from __future__ import annotations
 import base64
 import os
 import uuid
-from contextlib import suppress
+from contextlib import contextmanager, suppress
 from datetime import datetime
 from pathlib import PurePosixPath
 from typing import Any
@@ -34,6 +34,7 @@ from yuxi.utils.paths import (
 )
 
 from .provider import get_sandbox_provider, sandbox_id_for_thread, sandbox_provisioner_token
+from .synchronizer import SandboxFileSynchronizer
 
 _USER_DATA_ROOT = "/" + VIRTUAL_PATH_PREFIX.strip("/")
 _WORKSPACE_ROOT = f"{_USER_DATA_ROOT}/{WORKSPACE_DIR_NAME}"
@@ -206,6 +207,12 @@ class ProvisionerSandboxBackend(BaseSandbox):
         self._client_url: str | None = None
         self._command_timeout_seconds = int(os.getenv("SANDBOX_EXEC_TIMEOUT_SECONDS") or 180)
         self._max_output_bytes = int(os.getenv("SANDBOX_MAX_OUTPUT_BYTES") or 262_144)
+        self._synchronizer = SandboxFileSynchronizer(
+            uid=self._uid,
+            file_thread_id=self._file_thread_id,
+            skills_thread_id=self._skills_thread_id,
+            sandbox_id=self._id,
+        )
 
     @property
     def id(self) -> str:
@@ -240,8 +247,39 @@ class ProvisionerSandboxBackend(BaseSandbox):
         if self._client is None or self._client_url != connection.sandbox_url:
             self._client = self._build_client(connection.sandbox_url)
             self._client_url = connection.sandbox_url
+            if hasattr(getattr(self._client, "file", None), "list_path"):
+                with self._synchronizer.operation(
+                    self._client,
+                    timeout_seconds=self._command_timeout_seconds,
+                ):
+                    pass
 
         return self._client
+
+    @contextmanager
+    def _file_operation(self, *, timeout: int | None = None, scopes: set[str] | None = None):
+        """覆盖 refresh、Sandbox 变更与 sync_back 的完整同步操作窗口。"""
+        client = self._get_client()
+        if not hasattr(getattr(client, "file", None), "list_path"):
+            yield client
+            return
+        operation_timeout = timeout if timeout is not None else self._command_timeout_seconds
+        with self._synchronizer.operation(client, timeout_seconds=operation_timeout):
+            self._synchronizer.refresh(client, scopes=scopes)
+            yield client
+
+    @staticmethod
+    def _scope_for_path(path: str) -> set[str]:
+        """返回虚拟路径对应的 FileStore scope。"""
+        if _is_same_or_child(path, _WORKSPACE_ROOT):
+            return {"workspace"}
+        if _is_same_or_child(path, _UPLOADS_ROOT):
+            return {"uploads"}
+        if _is_same_or_child(path, _OUTPUTS_ROOT):
+            return {"outputs"}
+        if _is_same_or_child(path, _SKILLS_ROOT):
+            return {"skills"}
+        return {"workspace", "uploads", "outputs", "skills"}
 
     def _read_binary(self, path: str, offset: int = 0, limit: int | None = None) -> bytes:
         """Read file content from the sandbox file API and normalize it to bytes.
@@ -351,22 +389,23 @@ class ProvisionerSandboxBackend(BaseSandbox):
         )
         binary_read_error = "read_file only supports UTF-8 text and image files. This file type is not supported."
         try:
-            extension = PurePosixPath(normalized_path).suffix.lower()
-            if extension in _IMAGE_EXTENSIONS:
-                return self._read_base64_file(normalized_path)
-            if extension in _DOCUMENT_EXTENSIONS:
-                self._file_size_bytes(normalized_path)
-                return ReadResult(error=document_read_error)
-            if _get_file_type(normalized_path) != "text":
-                self._file_size_bytes(normalized_path)
-                return ReadResult(error=binary_read_error)
+            with self._file_operation(scopes=self._scope_for_path(normalized_path)):
+                extension = PurePosixPath(normalized_path).suffix.lower()
+                if extension in _IMAGE_EXTENSIONS:
+                    return self._read_base64_file(normalized_path)
+                if extension in _DOCUMENT_EXTENSIONS:
+                    self._file_size_bytes(normalized_path)
+                    return ReadResult(error=document_read_error)
+                if _get_file_type(normalized_path) != "text":
+                    self._file_size_bytes(normalized_path)
+                    return ReadResult(error=binary_read_error)
 
-            try:
-                content = self._read_binary(normalized_path, offset=offset, limit=limit)
-            except Exception as exc:  # noqa: BLE001
-                if not _is_utf8_decode_failure(exc):
-                    raise
-                return ReadResult(error=binary_read_error)
+                try:
+                    content = self._read_binary(normalized_path, offset=offset, limit=limit)
+                except Exception as exc:  # noqa: BLE001
+                    if not _is_utf8_decode_failure(exc):
+                        raise
+                    return ReadResult(error=binary_read_error)
 
             if not _looks_like_binary(content):
                 return ReadResult(file_data={"content": content.decode("utf-8"), "encoding": "utf-8"})
@@ -383,12 +422,17 @@ class ProvisionerSandboxBackend(BaseSandbox):
         payload size before being returned.
         """
         try:
-            kwargs: dict[str, Any] = {"command": command}
-            if timeout is not None:
-                kwargs["timeout"] = timeout
-                kwargs["hard_timeout"] = timeout
-                kwargs["request_options"] = {"timeout_in_seconds": timeout}
-            result = self._get_client().shell.exec_command(**kwargs)
+            with self._file_operation(timeout=timeout) as client:
+                kwargs: dict[str, Any] = {"command": command}
+                if timeout is not None:
+                    kwargs["timeout"] = timeout
+                    kwargs["hard_timeout"] = timeout
+                    kwargs["request_options"] = {"timeout_in_seconds": timeout}
+                try:
+                    result = client.shell.exec_command(**kwargs)
+                finally:
+                    if hasattr(getattr(client, "file", None), "list_path"):
+                        self._synchronizer.sync_back(client)
 
             output = result.data.output or ""
             exit_code = result.data.exit_code
@@ -418,7 +462,8 @@ class ProvisionerSandboxBackend(BaseSandbox):
             return LsResult(error=_permission_error("read", normalized_path))
 
         try:
-            result = self._get_client().file.list_path(path=normalized_path, recursive=False, include_size=True)
+            with self._file_operation(scopes=self._scope_for_path(normalized_path)) as client:
+                result = client.file.list_path(path=normalized_path, recursive=False, include_size=True)
         except Exception as exc:  # noqa: BLE001
             return LsResult(error=str(exc) or f"Failed to list '{path}'")
 
@@ -458,19 +503,20 @@ class ProvisionerSandboxBackend(BaseSandbox):
         if not isinstance(content, str):
             return WriteResult(error="Error: write() only supports text content; use upload_files() for binary data")
         try:
-            self._read_binary(normalized_path)
-        except Exception:  # noqa: BLE001
-            pass
-        else:
-            return WriteResult(error=f"Error: File '{file_path}' already exists")
-
-        try:
-            result = self._get_client().file.write_file(file=normalized_path, content=content)
-            if not result.success:
-                return WriteResult(error=result.message or f"Failed to write file '{file_path}'")
+            with self._file_operation() as client:
+                try:
+                    self._read_binary(normalized_path)
+                except Exception:  # noqa: BLE001
+                    pass
+                else:
+                    return WriteResult(error=f"Error: File '{file_path}' already exists")
+                result = client.file.write_file(file=normalized_path, content=content)
+                if not result.success:
+                    return WriteResult(error=result.message or f"Failed to write file '{file_path}'")
+                if hasattr(getattr(client, "file", None), "list_path"):
+                    self._synchronizer.sync_back(client)
         except Exception as exc:  # noqa: BLE001
             return WriteResult(error=str(exc) or f"Failed to write file '{file_path}'")
-
         return WriteResult(path=normalized_path)
 
     def edit(
@@ -492,38 +538,36 @@ class ProvisionerSandboxBackend(BaseSandbox):
         if not _can_write_path(normalized_path):
             return EditResult(error=f"Error: {_permission_error('write', normalized_path)}")
 
-        # Check if old_string exists
         try:
-            text = self._read_binary(normalized_path).decode("utf-8", errors="replace")
-        except Exception:  # noqa: BLE001
-            return EditResult(error=f"Error: File '{file_path}' not found")
-
-        count = text.count(old_string)
-        if count == 0:
-            return EditResult(error=f"Error: String not found in file: '{old_string}'")
-        if count > 1 and not replace_all:
-            return EditResult(
-                error=(
-                    f"Error: String '{old_string}' appears multiple times. "
-                    "Use replace_all=True to replace all occurrences."
+            with self._file_operation() as client:
+                try:
+                    text = self._read_binary(normalized_path).decode("utf-8", errors="replace")
+                except Exception:  # noqa: BLE001
+                    return EditResult(error=f"Error: File '{file_path}' not found")
+                count = text.count(old_string)
+                if count == 0:
+                    return EditResult(error=f"Error: String not found in file: '{old_string}'")
+                if count > 1 and not replace_all:
+                    return EditResult(
+                        error=(
+                            f"Error: String '{old_string}' appears multiple times. "
+                            "Use replace_all=True to replace all occurrences."
+                        )
+                    )
+                replace_mode = "ALL" if replace_all else "FIRST"
+                result = client.file.str_replace_editor(
+                    command="str_replace",
+                    path=normalized_path,
+                    old_str=old_string,
+                    new_str=new_string,
+                    replace_mode=replace_mode,
                 )
-            )
-
-        # Use str_replace_editor API
-        replace_mode = "ALL" if replace_all else "FIRST"
-        try:
-            result = self._get_client().file.str_replace_editor(
-                command="str_replace",
-                path=normalized_path,
-                old_str=old_string,
-                new_str=new_string,
-                replace_mode=replace_mode,
-            )
-            if not result.success:
-                return EditResult(error=result.message or f"Error editing file '{file_path}'")
+                if not result.success:
+                    return EditResult(error=result.message or f"Error editing file '{file_path}'")
+                if hasattr(getattr(client, "file", None), "list_path"):
+                    self._synchronizer.sync_back(client)
         except Exception as exc:  # noqa: BLE001
             return EditResult(error=f"Error editing file: {exc}")
-
         return EditResult(path=normalized_path, occurrences=count if replace_all else 1)
 
     def grep(
@@ -543,11 +587,13 @@ class ProvisionerSandboxBackend(BaseSandbox):
             return GrepResult(error=_permission_error("read", normalized_path))
 
         matches: list[GrepMatch] = []
-        for search_path in search_paths:
-            result = super().grep(pattern=pattern, path=search_path, glob=glob)
-            if result.error:
-                return result
-            matches.extend(result.matches or [])
+        scopes = set().union(*(self._scope_for_path(search_path) for search_path in search_paths))
+        with self._file_operation(scopes=scopes):
+            for search_path in search_paths:
+                result = super().grep(pattern=pattern, path=search_path, glob=glob)
+                if result.error:
+                    return result
+                matches.extend(result.matches or [])
         return GrepResult(matches=_filter_readable_matches(matches))
 
     def glob(self, pattern: str, path: str = "/") -> GlobResult:
@@ -564,16 +610,18 @@ class ProvisionerSandboxBackend(BaseSandbox):
             return GlobResult(error=_permission_error("read", normalized_path))
 
         infos: list[FileInfo] = []
-        for search_path in search_paths:
-            try:
-                result = self._get_client().file.find_files(
-                    path=search_path,
-                    glob=_glob_for_search_root(pattern, search_path),
-                )
-            except Exception as exc:  # noqa: BLE001
-                return GlobResult(error=str(exc) or f"Failed to glob '{path}'")
-            for file_path in result.data.files or []:
-                infos.append({"path": file_path})
+        scopes = set().union(*(self._scope_for_path(search_path) for search_path in search_paths))
+        try:
+            with self._file_operation(scopes=scopes) as client:
+                for search_path in search_paths:
+                    result = client.file.find_files(
+                        path=search_path,
+                        glob=_glob_for_search_root(pattern, search_path),
+                    )
+                    for file_path in result.data.files or []:
+                        infos.append({"path": file_path})
+        except Exception as exc:  # noqa: BLE001
+            return GlobResult(error=str(exc) or f"Failed to glob '{path}'")
         infos = _filter_readable_infos(infos)
         infos.sort(key=lambda item: item.get("path", ""))
         return GlobResult(matches=infos)
@@ -585,70 +633,116 @@ class ProvisionerSandboxBackend(BaseSandbox):
         arbitrary bytes can be transferred safely.
         """
         responses: list[FileUploadResponse] = []
+        writable_files: list[tuple[str, bytes]] = []
         for path, content in files:
             try:
                 normalized_path = _normalize_path(path)
-                if not _can_write_path(normalized_path):
-                    responses.append(FileUploadResponse(path=normalized_path, error="permission_denied"))
-                    continue
-                result = self._get_client().file.write_file(
-                    file=normalized_path,
-                    content=base64.b64encode(content).decode("ascii"),
-                    encoding="base64",
-                )
-                if not result.success:
-                    raise Exception(result.message or "Upload failed")
-                responses.append(FileUploadResponse(path=normalized_path, error=None))
-            except PermissionError:
-                normalized_path = str(path)
+            except ValueError:
+                responses.append(FileUploadResponse(path=str(path), error="invalid_path"))
+                continue
+            if not _can_write_path(normalized_path):
                 responses.append(FileUploadResponse(path=normalized_path, error="permission_denied"))
-            except IsADirectoryError:
-                normalized_path = str(path)
-                responses.append(FileUploadResponse(path=normalized_path, error="is_directory"))
-            except FileNotFoundError:
-                normalized_path = str(path)
-                responses.append(FileUploadResponse(path=normalized_path, error="file_not_found"))
-            except Exception as exc:  # noqa: BLE001
-                normalized_path = str(path)
-                logger.warning(f"Upload to sandbox failed for {normalized_path}: {exc}")
-                responses.append(FileUploadResponse(path=normalized_path, error="invalid_path"))
+                continue
+            writable_files.append((normalized_path, content))
+        if not writable_files:
+            return responses
+
+        try:
+            with self._file_operation() as client:
+                for normalized_path, content in writable_files:
+                    try:
+                        result = client.file.write_file(
+                            file=normalized_path,
+                            content=base64.b64encode(content).decode("ascii"),
+                            encoding="base64",
+                        )
+                        if not result.success:
+                            raise Exception(result.message or "Upload failed")
+                        responses.append(FileUploadResponse(path=normalized_path, error=None))
+                    except PermissionError:
+                        responses.append(FileUploadResponse(path=normalized_path, error="permission_denied"))
+                    except IsADirectoryError:
+                        responses.append(FileUploadResponse(path=normalized_path, error="is_directory"))
+                    except FileNotFoundError:
+                        responses.append(FileUploadResponse(path=normalized_path, error="file_not_found"))
+                    except Exception as exc:  # noqa: BLE001
+                        logger.warning(f"Upload to sandbox failed for {normalized_path}: {exc}")
+                        responses.append(FileUploadResponse(path=normalized_path, error="invalid_path"))
+                if hasattr(getattr(client, "file", None), "list_path"):
+                    self._synchronizer.sync_back(client)
+        except Exception as exc:  # noqa: BLE001
+            logger.error(f"Sandbox upload operation failed for thread {self._thread_id}: {exc}")
+            responses.extend(
+                FileUploadResponse(path=path, error=f"sync_failed: {exc}") for path, _ in writable_files
+            )
         return responses
 
     def download_files(self, paths: list[str]) -> list[FileDownloadResponse]:
         """Download file payloads as raw bytes from the sandbox file API."""
-        responses: list[FileDownloadResponse] = []
-        for path in paths:
+        responses: list[FileDownloadResponse | None] = [None] * len(paths)
+        normalized_paths: list[tuple[int, str]] = []
+        for index, path in enumerate(paths):
             try:
                 normalized_path = _normalize_path(path)
                 if not _can_read_path(normalized_path):
-                    responses.append(
-                        FileDownloadResponse(path=normalized_path, content=None, error="permission_denied")
-                    )
-                    continue
-                content = b"".join(
-                    self._get_client().file.download_file(
+                    responses[index] = FileDownloadResponse(
                         path=normalized_path,
-                        request_options={"timeout_in_seconds": self._command_timeout_seconds},
+                        content=None,
+                        error="permission_denied",
                     )
-                )
-                responses.append(FileDownloadResponse(path=normalized_path, content=content, error=None))
-            except PermissionError:
-                normalized_path = str(path)
-                responses.append(FileDownloadResponse(path=normalized_path, content=None, error="permission_denied"))
-            except IsADirectoryError:
-                normalized_path = str(path)
-                responses.append(FileDownloadResponse(path=normalized_path, content=None, error="is_directory"))
-            except FileNotFoundError:
-                normalized_path = str(path)
-                responses.append(FileDownloadResponse(path=normalized_path, content=None, error="file_not_found"))
-            except ValueError:
-                normalized_path = str(path)
-                responses.append(FileDownloadResponse(path=normalized_path, content=None, error="invalid_path"))
-            except Exception as exc:  # noqa: BLE001
-                normalized_path = str(path)
-                if _is_missing_file_error(exc):
-                    responses.append(FileDownloadResponse(path=normalized_path, content=None, error="file_not_found"))
                     continue
-                logger.warning(f"Download from sandbox failed for {normalized_path}: {exc}")
-                responses.append(FileDownloadResponse(path=normalized_path, content=None, error=f"read_failed: {exc}"))
-        return responses
+                normalized_paths.append((index, normalized_path))
+            except ValueError:
+                responses[index] = FileDownloadResponse(path=str(path), content=None, error="invalid_path")
+
+        scopes = (
+            set().union(*(self._scope_for_path(path) for _, path in normalized_paths)) if normalized_paths else set()
+        )
+        try:
+            with self._file_operation(scopes=scopes) as client:
+                for index, normalized_path in normalized_paths:
+                    try:
+                        content = b"".join(
+                            client.file.download_file(
+                                path=normalized_path,
+                                request_options={"timeout_in_seconds": self._command_timeout_seconds},
+                            )
+                        )
+                        responses[index] = FileDownloadResponse(path=normalized_path, content=content, error=None)
+                    except PermissionError:
+                        responses[index] = FileDownloadResponse(
+                            path=normalized_path,
+                            content=None,
+                            error="permission_denied",
+                        )
+                    except IsADirectoryError:
+                        responses[index] = FileDownloadResponse(
+                            path=normalized_path,
+                            content=None,
+                            error="is_directory",
+                        )
+                    except FileNotFoundError:
+                        responses[index] = FileDownloadResponse(
+                            path=normalized_path,
+                            content=None,
+                            error="file_not_found",
+                        )
+                    except Exception as exc:  # noqa: BLE001
+                        if _is_missing_file_error(exc):
+                            responses[index] = FileDownloadResponse(
+                                path=normalized_path,
+                                content=None,
+                                error="file_not_found",
+                            )
+                            continue
+                        logger.warning(f"Download from sandbox failed for {normalized_path}: {exc}")
+                        responses[index] = FileDownloadResponse(
+                            path=normalized_path,
+                            content=None,
+                            error=f"read_failed: {exc}",
+                        )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(f"Download refresh failed: {exc}")
+            for index, path in normalized_paths:
+                responses[index] = FileDownloadResponse(path=path, content=None, error=f"read_failed: {exc}")
+        return [response for response in responses if response is not None]

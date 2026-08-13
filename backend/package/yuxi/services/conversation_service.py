@@ -7,11 +7,8 @@ from urllib.parse import quote
 from fastapi import HTTPException, UploadFile
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from yuxi.agents.backends.sandbox import (
-    ensure_thread_dirs,
-    sandbox_uploads_dir,
-)
 from yuxi.agents.buildin import agent_manager
+from yuxi.agents.backends.sandbox.synchronizer import sandbox_file_operation_lock
 from yuxi.config import config as app_config
 from yuxi.knowledge.parser.factory import DocumentProcessorFactory
 from yuxi.repositories.agent_repository import AgentRepository
@@ -19,6 +16,7 @@ from yuxi.repositories.conversation_repository import INVOCATION_CONVERSATION_SO
 from yuxi.services.mention_search_service import invalidate_mention_cache
 from yuxi.services.ocr_service import parse_document
 from yuxi.storage.minio import StorageError, get_minio_client
+from yuxi.storage.filestore import get_file_store, thread_upload_key
 from yuxi.storage.postgres.models_business import AgentRun, User
 from yuxi.utils.datetime_utils import format_utc_datetime, utc_isoformat
 from yuxi.utils.logging_config import logger
@@ -134,16 +132,11 @@ def _make_attachment_path(file_name: str) -> str:
     return f"{safe_name}.md"
 
 
-def _build_attachment_storage_path(*, uid: str, thread_id: str, file_name: str) -> tuple[str, Path]:
-    """返回附件虚拟路径和宿主机落盘路径。"""
+def _build_attachment_storage_path(*, uid: str, thread_id: str, file_name: str) -> tuple[str, str]:
+    """返回附件 Markdown 副本的虚拟路径和 FileStore key。"""
     relative_name = _make_attachment_path(file_name)
     virtual_path = f"{VIRTUAL_PATH_UPLOADS}/attachments/{relative_name}"
-
-    host_dir = Path(app_config.save_dir) / "threads" / thread_id / "user-data" / "uploads" / "attachments"
-    host_dir.mkdir(parents=True, exist_ok=True)
-    host_path = host_dir / relative_name
-
-    return virtual_path, host_path
+    return virtual_path, thread_upload_key(thread_id, f"attachments/{relative_name}")
 
 
 def _artifact_url(thread_id: str, virtual_path: str) -> str:
@@ -289,7 +282,9 @@ def serialize_attachment(record: dict) -> dict:
         "artifact_url": record.get("artifact_url"),
         "original_path": record.get("original_path"),
         "original_artifact_url": record.get("original_artifact_url"),
-        "minio_url": record.get("minio_url"),
+        "storage_key": record.get("storage_key"),
+        "original_storage_key": record.get("original_storage_key"),
+        "markdown_storage_key": record.get("markdown_storage_key"),
         "request_id": record.get("request_id"),
     }
 
@@ -302,23 +297,19 @@ async def _materialize_attachment_files(
     file_name: str,
     file_content: bytes,
 ) -> dict:
-    """将原始附件与可选 markdown 副本落盘到线程 user-data。"""
-    ensure_thread_dirs(thread_id, uid)
-
+    """将原始附件与可选 Markdown 副本写入 FileStore。"""
     upload_virtual_path = _make_upload_virtual_path(file_name)
-    uploads_dir = sandbox_uploads_dir(thread_id)
-    upload_actual_path = uploads_dir / Path(upload_virtual_path).name
-    upload_actual_path.write_bytes(file_content)
+    original_storage_key = thread_upload_key(thread_id, Path(upload_virtual_path).name)
+    await get_file_store().put(original_storage_key, file_content, content_type=upload.content_type)
 
     record = {
         "status": "uploaded",
         "path": upload_virtual_path,
         "artifact_url": _artifact_url(thread_id, upload_virtual_path),
-        "storage_path": str(upload_actual_path),
+        "storage_key": original_storage_key,
         "original_path": upload_virtual_path,
         "original_artifact_url": _artifact_url(thread_id, upload_virtual_path),
-        "original_storage_path": str(upload_actual_path),
-        "minio_url": None,
+        "original_storage_key": original_storage_key,
     }
 
     try:
@@ -330,29 +321,29 @@ async def _materialize_attachment_files(
         logger.warning(f"Attachment markdown materialization failed for {file_name}: {exc}")
         return record
 
-    markdown_virtual_path, markdown_host_path = _build_attachment_storage_path(
+    markdown_virtual_path, markdown_storage_key = _build_attachment_storage_path(
         uid=uid,
         thread_id=thread_id,
         file_name=file_name,
     )
-    markdown_host_path.write_text(conversion.markdown, encoding="utf-8")
+    await get_file_store().put(markdown_storage_key, conversion.markdown.encode("utf-8"), content_type="text/markdown")
 
     record.update(
         {
             "status": "parsed",
             "path": markdown_virtual_path,
             "artifact_url": _artifact_url(thread_id, markdown_virtual_path),
-            "storage_path": str(markdown_host_path),
+            "storage_key": markdown_storage_key,
             "file_path": markdown_virtual_path,
             "markdown": conversion.markdown,
             "truncated": conversion.truncated,
-            "markdown_storage_path": str(markdown_host_path),
+            "markdown_storage_key": markdown_storage_key,
         }
     )
     return record
 
 
-def _materialize_tmp_attachment_files(
+async def _materialize_tmp_attachment_files(
     *,
     thread_id: str,
     uid: str,
@@ -363,44 +354,40 @@ def _materialize_tmp_attachment_files(
     truncated: bool = False,
 ) -> dict:
     """将 tmp 附件复制到线程目录，不主动删除 tmp 对象。"""
-    ensure_thread_dirs(thread_id, uid)
-
     storage_name = f"{file_id}_{file_name}"
     upload_virtual_path = _make_upload_virtual_path(storage_name)
-    uploads_dir = sandbox_uploads_dir(thread_id)
-    upload_actual_path = uploads_dir / Path(upload_virtual_path).name
-    upload_actual_path.write_bytes(file_content)
+    original_storage_key = thread_upload_key(thread_id, Path(upload_virtual_path).name)
+    await get_file_store().put(original_storage_key, file_content)
 
     record = {
         "status": "uploaded",
         "path": upload_virtual_path,
         "artifact_url": _artifact_url(thread_id, upload_virtual_path),
-        "storage_path": str(upload_actual_path),
+        "storage_key": original_storage_key,
         "original_path": upload_virtual_path,
         "original_artifact_url": _artifact_url(thread_id, upload_virtual_path),
-        "original_storage_path": str(upload_actual_path),
-        "minio_url": None,
+        "original_storage_key": original_storage_key,
     }
 
     if parsed_markdown is None:
         return record
 
-    markdown_virtual_path, markdown_host_path = _build_attachment_storage_path(
+    markdown_virtual_path, markdown_storage_key = _build_attachment_storage_path(
         uid=uid,
         thread_id=thread_id,
         file_name=storage_name,
     )
-    markdown_host_path.write_text(parsed_markdown, encoding="utf-8")
+    await get_file_store().put(markdown_storage_key, parsed_markdown.encode("utf-8"), content_type="text/markdown")
     record.update(
         {
             "status": "parsed",
             "path": markdown_virtual_path,
             "artifact_url": _artifact_url(thread_id, markdown_virtual_path),
-            "storage_path": str(markdown_host_path),
+            "storage_key": markdown_storage_key,
             "file_path": markdown_virtual_path,
             "markdown": parsed_markdown,
             "truncated": truncated,
-            "markdown_storage_path": str(markdown_host_path),
+            "markdown_storage_key": markdown_storage_key,
         }
     )
     return record
@@ -738,36 +725,36 @@ async def confirm_tmp_thread_attachments_view(
         )
 
     added_records: list[dict] = []
-    for prepared in prepared_items:
-        file_id = uuid.uuid4().hex
-        materialized = _materialize_tmp_attachment_files(
-            thread_id=thread_id,
-            uid=str(conversation.uid),
-            file_id=file_id,
-            file_name=prepared["file_name"],
-            file_content=prepared["file_content"],
-            parsed_markdown=prepared["parsed_markdown"],
-            truncated=prepared["truncated"],
-        )
-        attachment_record = {
-            "file_id": file_id,
-            "file_name": prepared["file_name"],
-            "file_type": prepared["file_type"],
-            "file_size": len(prepared["file_content"]),
-            "status": materialized["status"],
-            "uploaded_at": utc_isoformat(),
-            "path": materialized["path"],
-            "artifact_url": materialized["artifact_url"],
-            "storage_path": materialized["storage_path"],
-            "original_path": materialized["original_path"],
-            "original_artifact_url": materialized["original_artifact_url"],
-            "original_storage_path": materialized["original_storage_path"],
-            "minio_url": materialized["minio_url"],
-        }
-        for optional_key in ("file_path", "markdown", "truncated", "markdown_storage_path"):
-            if optional_key in materialized:
-                attachment_record[optional_key] = materialized[optional_key]
-        added_records.append(attachment_record)
+    async with sandbox_file_operation_lock(file_thread_id=thread_id):
+        for prepared in prepared_items:
+            file_id = uuid.uuid4().hex
+            materialized = await _materialize_tmp_attachment_files(
+                thread_id=thread_id,
+                uid=str(conversation.uid),
+                file_id=file_id,
+                file_name=prepared["file_name"],
+                file_content=prepared["file_content"],
+                parsed_markdown=prepared["parsed_markdown"],
+                truncated=prepared["truncated"],
+            )
+            attachment_record = {
+                "file_id": file_id,
+                "file_name": prepared["file_name"],
+                "file_type": prepared["file_type"],
+                "file_size": len(prepared["file_content"]),
+                "status": materialized["status"],
+                "uploaded_at": utc_isoformat(),
+                "path": materialized["path"],
+                "artifact_url": materialized["artifact_url"],
+                "storage_key": materialized["storage_key"],
+                "original_path": materialized["original_path"],
+                "original_artifact_url": materialized["original_artifact_url"],
+                "original_storage_key": materialized["original_storage_key"],
+            }
+            for optional_key in ("file_path", "markdown", "truncated", "markdown_storage_key"):
+                if optional_key in materialized:
+                    attachment_record[optional_key] = materialized[optional_key]
+            added_records.append(attachment_record)
 
     await conv_repo.add_attachments(conversation.id, added_records)
     all_attachments = await conv_repo.get_attachments(conversation.id)
@@ -802,13 +789,14 @@ async def upload_thread_attachment_view(
     if file_size > MAX_ATTACHMENT_SIZE_BYTES:
         max_size_mb = MAX_ATTACHMENT_SIZE_BYTES // (1024 * 1024)
         raise HTTPException(status_code=400, detail=f"附件过大，当前仅支持 {max_size_mb} MB 以内的文件")
-    materialized = await _materialize_attachment_files(
-        thread_id=thread_id,
-        uid=str(conversation.uid),
-        upload=file,
-        file_name=file_name,
-        file_content=file_content,
-    )
+    async with sandbox_file_operation_lock(file_thread_id=thread_id):
+        materialized = await _materialize_attachment_files(
+            thread_id=thread_id,
+            uid=str(conversation.uid),
+            upload=file,
+            file_name=file_name,
+            file_content=file_content,
+        )
 
     attachment_record = {
         "file_id": uuid.uuid4().hex,
@@ -819,13 +807,12 @@ async def upload_thread_attachment_view(
         "uploaded_at": utc_isoformat(),
         "path": materialized["path"],
         "artifact_url": materialized["artifact_url"],
-        "storage_path": materialized["storage_path"],
+        "storage_key": materialized["storage_key"],
         "original_path": materialized["original_path"],
         "original_artifact_url": materialized["original_artifact_url"],
-        "original_storage_path": materialized["original_storage_path"],
-        "minio_url": materialized["minio_url"],
+        "original_storage_key": materialized["original_storage_key"],
     }
-    for optional_key in ("file_path", "markdown", "truncated", "markdown_storage_path"):
+    for optional_key in ("file_path", "markdown", "truncated", "markdown_storage_key"):
         if optional_key in materialized:
             attachment_record[optional_key] = materialized[optional_key]
 
@@ -880,22 +867,21 @@ async def delete_thread_attachment_view(
         raise HTTPException(status_code=404, detail="附件不存在或已被删除")
 
     if target_attachment:
-        delete_candidates = {
-            str(value).strip()
-            for value in (
-                target_attachment.get("storage_path"),
-                target_attachment.get("original_storage_path"),
-                target_attachment.get("markdown_storage_path"),
-            )
-            if isinstance(value, str) and value.strip()
-        }
-        for candidate in delete_candidates:
-            try:
-                file_path = Path(candidate)
-                if file_path.exists():
-                    file_path.unlink()
-            except Exception as exc:  # noqa: BLE001
-                logger.warning(f"Failed to remove attachment file {candidate}: {exc}")
+        async with sandbox_file_operation_lock(file_thread_id=thread_id):
+            delete_candidates = {
+                str(value).strip()
+                for value in (
+                    target_attachment.get("storage_key"),
+                    target_attachment.get("original_storage_key"),
+                    target_attachment.get("markdown_storage_key"),
+                )
+                if isinstance(value, str) and value.strip()
+            }
+            for candidate in delete_candidates:
+                try:
+                    await get_file_store().delete(candidate)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(f"Failed to remove attachment object {candidate}: {exc}")
 
     all_attachments = await conv_repo.get_attachments(conversation.id)
     await _sync_thread_upload_state(

@@ -1,17 +1,9 @@
 from __future__ import annotations
 
-import asyncio
 import base64
-import os
 from collections.abc import Sequence
-from pathlib import Path
 
 import ormsgpack
-from yuxi.agents.backends.sandbox.paths import (
-    sandbox_outputs_dir,
-    sandbox_uploads_dir,
-    sandbox_workspace_dir,
-)
 from yuxi.services.run_queue_service import get_redis_client
 from yuxi.utils.logging_config import logger
 from yuxi.utils.paths import VIRTUAL_PATH_PREFIX
@@ -42,57 +34,6 @@ WORKSPACE_CACHE_PREFIX = f"{REDIS_KEY_PREFIX}workspace:"
 THREAD_CACHE_PREFIX = f"{REDIS_KEY_PREFIX}thread:"
 WORKSPACE_THREAD_PLACEHOLDER = "_workspace"
 MENTION_SOURCES = {"workspace", "thread"}
-
-
-def _scan_pruned_files(root: Path, max_entries: int) -> list[tuple[str, str]]:
-    """
-    同步扫描磁盘文件目录并进行多重限额剪枝保护 (防止大文件仓库卡死)
-    """
-    results: list[tuple[str, str]] = []
-    if not root.exists():
-        return results
-
-    root_str = str(root)
-    for dirpath, dirnames, filenames in os.walk(root_str):
-        # 1. 剪枝黑名单和隐藏目录 (直接在 dirnames 中修改，阻止 os.walk 深入)
-        dirnames[:] = [d for d in dirnames if d not in MENTION_EXCLUDE_DIRS and not d.startswith(".")]
-
-        # 2. 深度保护：限制最大搜索深度（root 本身为第 0 层，第 15 层时 rel.parts 长度恰好为 15）
-        try:
-            rel = Path(dirpath).relative_to(root)
-            if len(rel.parts) >= MAX_SEARCH_DEPTH:
-                dirnames.clear()
-                continue
-        except Exception:
-            pass
-
-        # 3. 宽度与全局限额保护下的合格“子目录实体”收集
-        for dirname in dirnames:
-            full_dir_path = Path(dirpath) / dirname
-            rel_dir_path = full_dir_path.relative_to(root).as_posix()
-
-            # 使用以 '/' 结尾的虚拟相对路径，代表这是一个目录
-            virtual_dir_path = f"{rel_dir_path}/"
-            results.append((dirname, virtual_dir_path))
-
-            if len(results) >= max_entries:
-                return results
-
-        # 4. 宽度限额保护：单层目录限制最多只读取 500 个文件，防止扁平超宽目录卡死
-        scan_filenames = filenames[:MAX_ENTRIES_PER_DIR]
-        for filename in scan_filenames:
-            full_path = Path(dirpath) / filename
-            # 计算相对于根路径的相对路径
-            rel_path = full_path.relative_to(root).as_posix()
-
-            # 存为紧凑型元组 (filename, relative_path)
-            results.append((filename, rel_path))
-
-            # 5. 全局上限保护：如果总文件数已达上限，熔断退出
-            if len(results) >= max_entries:
-                return results
-
-    return results
 
 
 async def _read_cached_index(redis, redis_key: str) -> list[tuple[str, str]] | None:
@@ -131,16 +72,32 @@ def _normalize_sources(sources: Sequence[str] | None, *, has_thread: bool) -> tu
     return tuple(normalized or (["workspace"] if not has_thread else ["thread", "workspace"]))
 
 
-def _workspace_root(uid: str) -> Path:
-    return sandbox_workspace_dir(WORKSPACE_THREAD_PLACEHOLDER, uid)
-
-
-async def _scan_virtual_root(root: Path, virtual_prefix: str, max_entries: int) -> list[tuple[str, str]]:
-    scan_results = await asyncio.to_thread(_scan_pruned_files, root, max_entries)
-    return [
-        (name, f"{virtual_prefix}/{rel_path}" if rel_path and rel_path != "." else virtual_prefix)
-        for name, rel_path in scan_results
-    ]
+def _filter_index_entries(entries: list[dict], virtual_prefix: str, max_entries: int) -> list[tuple[str, str]]:
+    """按既有隐藏、深度、单目录和总量规则过滤 FileStore 列表。"""
+    results: list[tuple[str, str]] = []
+    per_directory: dict[str, int] = {}
+    prefix = virtual_prefix.rstrip("/")
+    for entry in entries:
+        path = str(entry.get("path") or "").rstrip("/")
+        if not path.startswith(f"{prefix}/"):
+            continue
+        relative = path[len(prefix) + 1 :]
+        parts = relative.split("/")
+        parent = "/".join(parts[:-1])
+        directory_parts = parts if entry.get("is_dir") else parts[:-1]
+        if len(parts) > MAX_SEARCH_DEPTH or any(
+            part.startswith(".") or part in MENTION_EXCLUDE_DIRS for part in directory_parts
+        ):
+            continue
+        if per_directory.get(parent, 0) >= MAX_ENTRIES_PER_DIR:
+            continue
+        per_directory[parent] = per_directory.get(parent, 0) + 1
+        suffix = "/" if entry.get("is_dir") else ""
+        virtual_relative = path[len(VIRTUAL_PATH_PREFIX.rstrip("/")) + 1 :]
+        results.append((str(entry.get("name") or parts[-1]), f"{virtual_relative}{suffix}"))
+        if len(results) >= max_entries:
+            break
+    return results
 
 
 async def get_or_build_workspace_index(uid: str) -> list[tuple[str, str]]:
@@ -150,7 +107,21 @@ async def get_or_build_workspace_index(uid: str) -> list[tuple[str, str]]:
     if cached is not None:
         return cached
 
-    entries = await _scan_virtual_root(_workspace_root(uid), "workspace", MAX_CACHED_ENTRIES)
+    from yuxi.services.workspace_service import list_workspace_index_entries
+
+    entries = await list_workspace_index_entries(uid)
+    entries = _filter_index_entries(
+        [
+            {
+                "name": name,
+                "path": f"/home/gem/user-data/workspace/{path}",
+                "is_dir": path.endswith("/"),
+            }
+            for name, path in entries
+        ],
+        "/home/gem/user-data/workspace",
+        MAX_CACHED_ENTRIES,
+    )
     await _write_cached_index(redis, redis_key, entries)
     return entries
 
@@ -163,14 +134,14 @@ async def get_or_build_thread_index(thread_id: str) -> list[tuple[str, str]]:
         return cached
 
     entries: list[tuple[str, str]] = []
-    for virtual_prefix, root in (
-        ("uploads", sandbox_uploads_dir(thread_id)),
-        ("outputs", sandbox_outputs_dir(thread_id)),
-    ):
+    from yuxi.services.thread_files_service import list_thread_object_entries
+
+    for virtual_prefix in ("/home/gem/user-data/uploads", "/home/gem/user-data/outputs"):
         needed = MAX_CACHED_ENTRIES - len(entries)
         if needed <= 0:
             break
-        entries.extend(await _scan_virtual_root(root, virtual_prefix, needed))
+        listed = await list_thread_object_entries(thread_id, virtual_prefix, recursive=True)
+        entries.extend(_filter_index_entries(listed, virtual_prefix, needed))
 
     await _write_cached_index(redis, redis_key, entries)
     return entries

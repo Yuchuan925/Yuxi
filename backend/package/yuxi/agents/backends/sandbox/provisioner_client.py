@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 from dataclasses import dataclass
 
 import httpx
@@ -90,3 +91,13 @@ class ProvisionerClient:
         if response.status_code in {200, 404}:
             return
         raise RuntimeError(f"failed to delete sandbox {sandbox_id}: {response.status_code} {response.text}")
+
+    def replace_skills(self, sandbox_id: str, files: dict[str, bytes]) -> None:
+        """通过 provisioner 的受信任通道整体替换 Sandbox Skills。"""
+        response = self._request(
+            "PUT",
+            f"/api/sandboxes/{sandbox_id}/skills",
+            json={"files": {path: base64.b64encode(data).decode("ascii") for path, data in files.items()}},
+        )
+        if response.status_code >= 400:
+            raise RuntimeError(f"failed to replace sandbox skills {sandbox_id}: {response.status_code} {response.text}")

@@ -6,7 +6,6 @@ from pathlib import Path
 from typing import Any
 
 import tomli
-import tomli_w
 from pydantic import BaseModel, Field, PrivateAttr
 
 from yuxi.config import cache as runtime_cache
@@ -31,9 +30,8 @@ def _normalize_default_ocr_engine(value: Any) -> str:
 class Config(BaseModel):
     """应用配置类。
 
-    `save_dir` 只在启动时决定配置文件位置，运行时不可修改。管理员保存配置时先写
-    `base.toml`，再把可运行时同步的字段写入 Redis 快照（`yuxi:runtime_config`）。
-    其他进程通过 `start_runtime_sync()` 启动的后台线程周期性拉取该快照刷新内存值。
+    `save_dir` 只在启动时决定本地兼容配置文件位置，运行时不可修改。`base.toml`
+    仅作为本地默认值读取；管理员配置由 PostgreSQL 持久化，并通过 Redis 快照同步。
     """
 
     save_dir: str = Field(default="saves", description="保存目录", exclude=True)
@@ -111,28 +109,6 @@ class Config(BaseModel):
         """从 Redis 快照刷新公开配置字段到内存；Redis 不可用或无快照时保持当前值。"""
         runtime_cache.refresh_runtime_config(self)
 
-    def save(self) -> None:
-        if not self._config_file:
-            logger.warning("Config file path not set")
-            return
-
-        logger.info(f"Saving config to {self._config_file}")
-        user_modified = {}
-        for field_name, field_info in type(self).model_fields.items():
-            if field_info.exclude:
-                continue
-            current_value = getattr(self, field_name)
-            if current_value != field_info.default:
-                user_modified[field_name] = current_value
-
-        try:
-            with open(self._config_file, "wb") as f:
-                tomli_w.dump(user_modified, f)
-            logger.info(f"Config saved to {self._config_file}")
-            runtime_cache.save_runtime_config(self)
-        except Exception as e:
-            logger.error(f"Failed to save config to {self._config_file}: {e}")
-
     def dump_config(self) -> dict[str, Any]:
         config_dict = self.model_dump()
         fields_info = {}
@@ -151,13 +127,21 @@ class Config(BaseModel):
         return config_dict
 
     def update(self, other: dict[str, Any]) -> None:
+        for key, value in self.normalize_updates(other).items():
+            self.set_value(key, value)
+
+    def normalize_updates(self, other: dict[str, Any]) -> dict[str, Any]:
+        """校验可管理配置更新，但不修改当前内存值。"""
+
+        normalized = {}
         for key, value in other.items():
             if self.can_update(key):
-                self.set_value(key, value)
+                normalized[key] = self._normalize_config_value(key, value)
             elif key in READONLY_CONFIG_FIELDS:
                 logger.warning(f"Readonly config key ignored: {key}")
             else:
                 logger.warning(f"Unknown config key: {key}")
+        return normalized
 
     def can_update(self, key: object) -> bool:
         return isinstance(key, str) and key in type(self).model_fields and key not in READONLY_CONFIG_FIELDS

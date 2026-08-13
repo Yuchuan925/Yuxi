@@ -4,9 +4,7 @@ Shared pytest fixtures for integration tests that exercise the live API service.
 
 from __future__ import annotations
 
-import json
 import os
-import subprocess
 import sys
 import uuid
 from collections.abc import AsyncGenerator
@@ -34,7 +32,8 @@ LITE_MODE = os.getenv("LITE_MODE", "").lower() in {"true", "1"}
 
 _ADMIN_TOKEN_CACHE: str | None = None
 HTTP_TIMEOUT = httpx.Timeout(60.0, connect=5.0)
-SANDBOX_CONTAINER_PREFIX = os.getenv("YUXI_SANDBOX_CONTAINER_PREFIX", "yuxi-sandbox")
+SANDBOX_PROVISIONER_URL = os.getenv("SANDBOX_PROVISIONER_URL", "http://localhost:8002").rstrip("/")
+SANDBOX_PROVISIONER_TOKEN = os.getenv("SANDBOX_PROVISIONER_TOKEN", "")
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -145,54 +144,28 @@ def cleanup_test_knowledge_resources():
     anyio.run(run_cleanup)
 
 
-def _docker_api_request(method: str, path: str) -> list[dict] | dict:
-    cmd = [
-        "curl",
-        "-sS",
-        "--unix-socket",
-        os.getenv("YUXI_DOCKER_API_SOCKET", "/var/run/docker.sock"),
-        "-X",
-        method,
-        f"{os.getenv('YUXI_DOCKER_API_BASE', 'http://localhost').rstrip('/')}{path}",
-    ]
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=15, check=False)
-    if result.returncode != 0:
-        raise RuntimeError(result.stderr.strip() or "Docker API request failed")
-    text = (result.stdout or "").strip()
-    if not text:
-        return {}
-    return json.loads(text)
-
-
-def _cleanup_sandbox_containers() -> None:
-    try:
-        containers = _docker_api_request("GET", "/containers/json?all=true")
-    except Exception as exc:
-        print(f"Warning: Failed to list sandbox containers for cleanup: {exc}")
+async def _cleanup_sandboxes() -> None:
+    if not SANDBOX_PROVISIONER_TOKEN:
         return
 
-    for container in containers if isinstance(containers, list) else []:
-        names = container.get("Names") or []
-        if not any(name.lstrip("/").startswith(f"{SANDBOX_CONTAINER_PREFIX}-") for name in names):
-            continue
-        container_id = container.get("Id")
-        if not container_id:
-            continue
-        try:
-            _docker_api_request("POST", f"/containers/{container_id}/stop?t=2")
-        except Exception:
-            pass
-        try:
-            _docker_api_request("DELETE", f"/containers/{container_id}?force=true")
-        except Exception as exc:
-            print(f"Warning: Failed to cleanup sandbox container {container_id[:12]}: {exc}")
+    headers = {"Authorization": f"Bearer {SANDBOX_PROVISIONER_TOKEN}"}
+    async with httpx.AsyncClient(base_url=SANDBOX_PROVISIONER_URL, timeout=HTTP_TIMEOUT) as client:
+        response = await client.get("/api/sandboxes", headers=headers)
+        response.raise_for_status()
+        for sandbox in response.json().get("sandboxes", []):
+            sandbox_id = sandbox.get("sandbox_id", "")
+            if not sandbox_id:
+                continue
+            delete_response = await client.delete(f"/api/sandboxes/{sandbox_id}", headers=headers)
+            if delete_response.status_code not in (200, 404):
+                delete_response.raise_for_status()
 
 
 @pytest.fixture(scope="session", autouse=True)
 def cleanup_test_sandboxes():
-    _cleanup_sandbox_containers()
+    anyio.run(_cleanup_sandboxes)
     yield
-    _cleanup_sandbox_containers()
+    anyio.run(_cleanup_sandboxes)
 
 
 @pytest_asyncio.fixture(scope="function")

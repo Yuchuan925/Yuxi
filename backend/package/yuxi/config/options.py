@@ -16,6 +16,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from yuxi.storage.postgres.models_business import ConfigOption
 
+SYSTEM_CONFIG_OPTION_KEY = "system_runtime_config"
+
 
 @dataclass(frozen=True, slots=True)
 class Option:
@@ -184,12 +186,30 @@ async def ensure_options_in_db(db: AsyncSession) -> list[ConfigOption]:
             record.description = definition.description
             record.params = definition.params
         synced.append(record)
+
+    system_config = await get_option(db, SYSTEM_CONFIG_OPTION_KEY)
+    if system_config is None:
+        db.add(
+            ConfigOption(
+                key=SYSTEM_CONFIG_OPTION_KEY,
+                name="系统运行配置",
+                description="管理员维护的系统运行配置。",
+                params={"internal": True},
+                value={},
+                created_by="system",
+                updated_by="system",
+            )
+        )
     await db.flush()
     return synced
 
 
 async def list_options(db: AsyncSession) -> list[ConfigOption]:
-    result = await db.execute(select(ConfigOption).order_by(ConfigOption.id.asc()))
+    result = await db.execute(
+        select(ConfigOption)
+        .where(ConfigOption.key != SYSTEM_CONFIG_OPTION_KEY)
+        .order_by(ConfigOption.id.asc())
+    )
     return list(result.scalars().all())
 
 
@@ -197,6 +217,57 @@ async def get_option(db: AsyncSession, key: str) -> ConfigOption | None:
     statement = select(ConfigOption).where(ConfigOption.key == key).execution_options(populate_existing=True)
     result = await db.execute(statement)
     return result.scalar_one_or_none()
+
+
+async def load_system_config(db: AsyncSession, config: Any) -> dict[str, Any]:
+    """从 PostgreSQL 加载管理员系统配置到当前进程内存。"""
+
+    record = await get_option(db, SYSTEM_CONFIG_OPTION_KEY)
+    if record is None:
+        raise ValueError("系统运行配置记录不存在")
+
+    values = config.normalize_updates(dict(record.value or {}))
+    config.update(values)
+    return values
+
+
+async def load_system_config_snapshot(db: AsyncSession, config: Any) -> tuple[dict[str, Any], str]:
+    """加载系统配置并返回可用于 Redis 比较的数据库版本。"""
+    record = await get_option(db, SYSTEM_CONFIG_OPTION_KEY)
+    if record is None:
+        raise ValueError("系统运行配置记录不存在")
+    values = config.normalize_updates(dict(record.value or {}))
+    config.update(values)
+    version = record.updated_at.isoformat() if record.updated_at is not None else ""
+    return values, version
+
+
+async def persist_system_config(
+    db: AsyncSession,
+    config: Any,
+    updates: dict[str, Any],
+    updated_by: str,
+) -> dict[str, Any]:
+    """在不提前修改内存的前提下持久化完整系统配置快照。"""
+
+    normalized_updates = config.normalize_updates(updates)
+    statement = select(ConfigOption).where(ConfigOption.key == SYSTEM_CONFIG_OPTION_KEY).with_for_update()
+    result = await db.execute(statement)
+    record = result.scalar_one_or_none()
+    if record is None:
+        raise ValueError("系统运行配置记录不存在")
+
+    values = {
+        field_name: getattr(config, field_name)
+        for field_name, field_info in type(config).model_fields.items()
+        if not field_info.exclude
+    }
+    values.update(config.normalize_updates(dict(record.value or {})))
+    values.update(normalized_updates)
+    record.value = values
+    record.updated_by = updated_by
+    await db.flush()
+    return values
 
 
 def serialize_option(record: ConfigOption) -> dict[str, Any]:

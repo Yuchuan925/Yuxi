@@ -4,8 +4,10 @@ import json
 import os
 from contextlib import asynccontextmanager
 
+from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from psycopg_pool import AsyncConnectionPool
 from sqlalchemy import text
+from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import declarative_base
 from yuxi.storage.postgres.models_business import AGENT_RUN_TERMINAL_STATUSES
@@ -17,6 +19,14 @@ from yuxi.utils.singleton import SingletonMeta
 # 合并两个 Base
 CombinedBase = declarative_base()
 AGENT_RUN_TERMINAL_STATUS_SQL = ", ".join(f"'{status}'" for status in AGENT_RUN_TERMINAL_STATUSES)
+
+
+def redact_postgres_url(db_url: str) -> str:
+    """隐藏 PostgreSQL URL 中的密码，用于安全日志输出。"""
+    try:
+        return make_url(db_url).render_as_string(hide_password=True)
+    except Exception:
+        return "<invalid PostgreSQL URL>"
 
 # 继承所有表
 for module in [KnowledgeBase, BusinessBase]:
@@ -36,6 +46,8 @@ class PostgresManager(metaclass=SingletonMeta):
         self.async_engine = None
         self.AsyncSession = None
         self.langgraph_pool = None
+        self.langgraph_checkpointer = None
+        self._langgraph_checkpointer_setup = False
         self._initialized = False
 
     def initialize(self):
@@ -86,15 +98,33 @@ class PostgresManager(metaclass=SingletonMeta):
             )
 
             self._initialized = True
-            logger.info(f"PostgreSQL manager initialized for knowledge base: {db_url.split('@')[0]}://***")
+            logger.info(f"PostgreSQL manager initialized for knowledge base: {redact_postgres_url(db_url)}")
         except Exception as e:
-            logger.error(f"Failed to initialize PostgreSQL manager: {e}")
+            logger.error(f"Failed to initialize PostgreSQL manager ({type(e).__name__})")
             # 不抛出异常，允许应用启动，但在使用时会报错
 
     def _check_initialized(self):
         """检查是否已初始化"""
         if not self._initialized:
             raise RuntimeError("PostgreSQL manager not initialized. Please check configuration.")
+
+    def get_langgraph_checkpointer(self) -> AsyncPostgresSaver:
+        """获取当前进程共享的 PostgreSQL LangGraph checkpointer。"""
+        self._check_initialized()
+        if self.langgraph_pool is None:
+            raise RuntimeError("PostgreSQL LangGraph connection pool is not initialized.")
+        if self.langgraph_checkpointer is None:
+            self.langgraph_checkpointer = AsyncPostgresSaver(self.langgraph_pool)
+        return self.langgraph_checkpointer
+
+    async def setup_langgraph_checkpointer(self) -> AsyncPostgresSaver:
+        """幂等创建 LangGraph checkpoint 表并返回共享 checkpointer。"""
+        checkpointer = self.get_langgraph_checkpointer()
+        if not self._langgraph_checkpointer_setup:
+            await checkpointer.setup()
+            self._langgraph_checkpointer_setup = True
+            logger.info("LangGraph checkpoint tables verified/created")
+        return checkpointer
 
     async def create_tables(self):
         """创建所有表（知识库和业务表）"""
@@ -959,6 +989,13 @@ class PostgresManager(metaclass=SingletonMeta):
 
         if self.langgraph_pool:
             await self.langgraph_pool.close()
+
+        self.async_engine = None
+        self.AsyncSession = None
+        self.langgraph_pool = None
+        self.langgraph_checkpointer = None
+        self._langgraph_checkpointer_setup = False
+        self._initialized = False
 
     async def async_check_first_run(self):
         """检查是否首次运行（异步版本）- 检查用户表是否有数据"""

@@ -2,24 +2,25 @@ import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
-from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
-
-from yuxi.services.task_service import tasker
+from yuxi import get_version
+from yuxi.agents.backends.sandbox import init_sandbox_provider, shutdown_sandbox_provider
 from yuxi.agents.mcp.service import ensure_builtin_mcp_servers_in_db
+from yuxi.config import cache as runtime_cache
+from yuxi.config import config
+from yuxi.knowledge.runtime import knowledge_base
 from yuxi.models.providers.service import ensure_builtin_model_providers_in_db
 from yuxi.services.run_queue_service import close_queue_clients, get_redis_client
-from yuxi.storage.postgres.manager import pg_manager
+from yuxi.services.task_service import tasker
 from yuxi.storage.neo4j import close_shared_neo4j_connection
-from yuxi.knowledge.runtime import knowledge_base
+from yuxi.storage.postgres.manager import pg_manager
 from yuxi.utils import logger
-from yuxi.agents.backends.sandbox import init_sandbox_provider, shutdown_sandbox_provider
-from yuxi import get_version
-from yuxi.config import config
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """FastAPI lifespan事件管理器"""
+    runtime_config_ready = False
+
     # 初始化数据库连接
     try:
         pg_manager.initialize()
@@ -74,10 +75,13 @@ async def lifespan(app: FastAPI):
         logger.error(f"Failed to initialize model cache during startup: {e}")
 
     try:
-        from yuxi.config.options import ensure_options_in_db
+        from yuxi.config.options import ensure_options_in_db, load_system_config_snapshot
 
         async with pg_manager.get_async_session_context() as session:
             await ensure_options_in_db(session)
+            _values, version = await load_system_config_snapshot(session, config)
+        runtime_cache.save_runtime_config(config, version=version, updated_at=version)
+        runtime_config_ready = True
     except Exception as e:
         logger.error(f"Failed to initialize config options during startup: {e}")
 
@@ -97,20 +101,17 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"Run queue redis unavailable on startup: {e}")
 
-    # 启动应用级运行时配置同步线程。
-    config.start_runtime_sync()
+    # 只有 PostgreSQL 事实加载成功后才允许 Redis 快照更新内存。
+    if runtime_config_ready:
+        config.start_runtime_sync()
 
     try:
         init_sandbox_provider()
     except Exception as e:
         logger.error(f"Failed to initialize sandbox provider during startup: {e}")
 
-    # =========================================================
-    # 2. 核心修复：在这里执行一次 setup()，建完表就拉倒
-    # =========================================================
-    checkpointer = AsyncPostgresSaver(pg_manager.langgraph_pool)
-    await checkpointer.setup()
-    print("LangGraph Checkpoint tables verified/created!")
+    if os.getenv("LANGGRAPH_CHECKPOINTER_BACKEND", "postgres").strip().lower() == "postgres":
+        await pg_manager.setup_langgraph_checkpointer()
 
     await tasker.start()
     logger.info(f"""

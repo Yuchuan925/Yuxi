@@ -13,6 +13,7 @@ WORKDIR /app
 ENV TZ=Asia/Shanghai \
     UV_PROJECT_ENVIRONMENT="/usr/local" \
     UV_COMPILE_BYTECODE=1 \
+    NLTK_DATA=/usr/local/share/nltk_data \
     DEBIAN_FRONTEND=noninteractive
 
 # 设置 npm 镜像源，为 MCP 和 Skills 安装依赖
@@ -53,6 +54,17 @@ COPY backend/package /app/package
 
 # 如果网络还是不好，可以在后面添加 --index-url https://pypi.tuna.tsinghua.edu.cn/simple
 RUN uv sync --no-cache --group test --no-dev --frozen
+
+# Download the tokenizer data during the image build so runtime containers do not need network access.
+RUN mkdir -p "$NLTK_DATA" \
+    && curl --fail --location \
+        --connect-timeout 10 --max-time 120 --retry 3 --retry-all-errors \
+        --output /tmp/punkt_tab.zip \
+        https://cdn.jsdelivr.net/gh/nltk/nltk_data@gh-pages/packages/tokenizers/punkt_tab.zip \
+    && echo "e57f64187974277726a3417ca6f181ec5403676c717672eef6a748a7b20e0106  /tmp/punkt_tab.zip" | sha256sum --check --strict \
+    && uv run --no-sync --no-dev python -c "from pathlib import Path; import zipfile; target = Path('$NLTK_DATA/tokenizers'); target.mkdir(parents=True, exist_ok=True); zipfile.ZipFile('/tmp/punkt_tab.zip').extractall(target)" \
+    && rm /tmp/punkt_tab.zip \
+    && uv run --no-sync --no-dev python -c "import nltk; nltk.data.find('tokenizers/punkt_tab')"
 
 # 复制 server 代码
 COPY backend/server /app/server

@@ -92,6 +92,7 @@ class SkillRepository:
         item.version = version
         item.content_hash = content_hash
         item.source_type = "builtin"
+        item.dir_path = f"builtin:{item.slug}"
         item.share_config = {
             "version": 2,
             "read_scope": {"access_level": "global", "department_ids": [], "user_uids": []},

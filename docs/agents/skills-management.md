@@ -10,7 +10,7 @@ Skills 系统的设计理念就是将这类"可插拔"的能力封装成独立�
 
 ## 架构设计
 
-Skills 系统分为平台共享与个人工作区两层。共享 Skill 采用「文件系统存内容，数据库存索引」；
+Skills 系统分为平台共享与个人工作区两层。共享 Skill 采用「FileStore 存内容，数据库存索引」；
 个人 Skill 只存在于当前用户 workspace，并使用 Redis 保存 5 分钟的元数据快照：
 
 ```
@@ -18,7 +18,7 @@ Skills 系统分为平台共享与个人工作区两层。共享 Skill 采用「
 │                      Skills 存储架构                         │
 ├─────────────────────────────────────────────────────────────┤
 │                                                             │
-│   /app/saves/skills/          数据库索引                    │
+│   FileStore shared-skills/    数据库索引                    │
 │   ├── skill-a/               ┌──────────────┐              │
 │   │   ├── SKILL.md           │ skills 表    │              │
 │   │   ├── tools/             │ - slug       │              │
@@ -41,7 +41,7 @@ Skills 系统分为平台共享与个人工作区两层。共享 Skill 采用「
 
 ### 存储结构
 
-- **文件系统**：`/app/saves/skills` 目录下，每个 Skill 占用一个子目录
+- **FileStore**：共享 Skill 按稳定 key 保存，每个 Skill 占用一个前缀
 - **数据库索引**：`skills` 表存储元数据（slug、name、description、来源、共享范围、启用状态、依赖关系等）
 - **关联机制**：通过 `dir_path` 字段关联文件系统目录与数据库记录
 - **个人工作区**：`workspace/agents/skills/<slug>` 保存当前用户个人 Skill，不创建数据库记录
@@ -177,7 +177,7 @@ description: 这是一个用于处理特定任务的技能
 系统会在后端：
 - 只接受管理员白名单中的 HTTPS 来源；GitHub `owner/repo` 简写按 `github.com` 校验
 - 在不继承全局或用户环境变量的一次性 Sandbox 中执行 `npx skills`，Kubernetes Sandbox 不挂载 ServiceAccount token
-- 通过 Sandbox 文件 API 提取对应 Skill，严格校验返回的相对路径，并限制文件数、目录深度和总大小；个人确认写入 workspace，共享确认写入 `/app/saves/skills` 与数据库
+- 通过 Sandbox 文件 API 提取对应 Skill，严格校验返回的相对路径，并限制文件数、目录深度和总大小；个人确认写入 workspace，共享确认写入 FileStore 与数据库
 
 来源白名单用于限制产品允许的远程仓库，并不等同于 Sandbox 网络出口防火墙。
 

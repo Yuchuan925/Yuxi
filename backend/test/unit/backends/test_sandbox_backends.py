@@ -6,6 +6,7 @@ import base64
 import gc
 import threading
 import weakref
+from contextlib import contextmanager
 from types import MethodType, SimpleNamespace
 
 import pytest
@@ -23,6 +24,12 @@ from yuxi.agents.backends.sandbox import ProvisionerSandboxProvider, resolve_vir
 from yuxi.agents.backends.sandbox.backend import ProvisionerSandboxBackend
 from yuxi.agents.middlewares.skills import SkillsMiddleware
 from yuxi.utils.paths import VIRTUAL_PATH_CONVERSATION_HISTORY, VIRTUAL_PATH_LARGE_TOOL_RESULTS
+
+
+@contextmanager
+def _noop_file_operation(*, timeout=None, scopes=None):
+    del timeout, scopes
+    yield
 
 
 def _runtime(
@@ -722,6 +729,25 @@ def test_provisioner_read_preserves_base64_like_plain_text(monkeypatch) -> None:
     assert result.file_data == {"content": "SGVsbG8=", "encoding": "utf-8"}
 
 
+def test_provisioner_read_refreshes_output_scope_before_read(monkeypatch) -> None:
+    monkeypatch.setattr("yuxi.agents.backends.sandbox.backend.get_sandbox_provider", lambda: object())
+    backend = ProvisionerSandboxBackend(thread_id="thread-1", uid="user-1")
+    refreshed = []
+
+    @contextmanager
+    def operation(*, timeout=None, scopes=None):
+        refreshed.append((timeout, scopes))
+        yield
+
+    monkeypatch.setattr(backend, "_file_operation", operation)
+    monkeypatch.setattr(backend, "_read_binary", lambda path, offset=0, limit=None: b"fresh")
+
+    result = backend.read("/home/gem/user-data/outputs/direct.txt")
+
+    assert result.file_data == {"content": "fresh", "encoding": "utf-8"}
+    assert refreshed == [(None, {"outputs"})]
+
+
 def test_provisioner_read_decodes_explicit_base64(monkeypatch) -> None:
     monkeypatch.setattr("yuxi.agents.backends.sandbox.backend.get_sandbox_provider", lambda: object())
     backend = ProvisionerSandboxBackend(thread_id="thread-1", uid="user-1")
@@ -772,6 +798,7 @@ def test_provisioner_read_file_base64_reads_temp_file_not_shell_output(monkeypat
 def test_provisioner_read_reports_binary_files(monkeypatch) -> None:
     monkeypatch.setattr("yuxi.agents.backends.sandbox.backend.get_sandbox_provider", lambda: object())
     backend = ProvisionerSandboxBackend(thread_id="thread-1", uid="user-1")
+    monkeypatch.setattr(backend, "_file_operation", _noop_file_operation)
     monkeypatch.setattr(backend, "_file_size_bytes", lambda _path: 8)
     monkeypatch.setattr(backend, "_read_file_base64", lambda _path: "iVBORw0KGgo=")
 
@@ -785,6 +812,7 @@ def test_provisioner_read_reports_binary_files(monkeypatch) -> None:
 def test_provisioner_read_treats_known_non_text_extension_as_base64(monkeypatch) -> None:
     monkeypatch.setattr("yuxi.agents.backends.sandbox.backend.get_sandbox_provider", lambda: object())
     backend = ProvisionerSandboxBackend(thread_id="thread-1", uid="user-1")
+    monkeypatch.setattr(backend, "_file_operation", _noop_file_operation)
     monkeypatch.setattr(backend, "_file_size_bytes", lambda _path: 6)
     monkeypatch.setattr(backend, "_read_binary", lambda path, offset=0, limit=None: pytest.fail("file API used"))
     monkeypatch.setattr(backend, "_read_file_base64", lambda _path: "R0lGODlh")
@@ -798,6 +826,7 @@ def test_provisioner_read_treats_known_non_text_extension_as_base64(monkeypatch)
 def test_provisioner_read_rejects_large_known_binary_before_read(monkeypatch) -> None:
     monkeypatch.setattr("yuxi.agents.backends.sandbox.backend.get_sandbox_provider", lambda: object())
     backend = ProvisionerSandboxBackend(thread_id="thread-1", uid="user-1")
+    monkeypatch.setattr(backend, "_file_operation", _noop_file_operation)
     read_calls: list[tuple[str, int, int | None]] = []
     monkeypatch.setattr(backend, "_file_size_bytes", lambda _path: MAX_BINARY_BYTES + 1)
 
@@ -818,6 +847,7 @@ def test_provisioner_read_rejects_large_known_binary_before_read(monkeypatch) ->
 def test_provisioner_read_rejects_unknown_binary(monkeypatch) -> None:
     monkeypatch.setattr("yuxi.agents.backends.sandbox.backend.get_sandbox_provider", lambda: object())
     backend = ProvisionerSandboxBackend(thread_id="thread-1", uid="user-1")
+    monkeypatch.setattr(backend, "_file_operation", _noop_file_operation)
     read_calls: list[tuple[str, int, int | None]] = []
 
     def _read_binary(path, offset=0, limit=None):
@@ -836,6 +866,7 @@ def test_provisioner_read_rejects_unknown_binary(monkeypatch) -> None:
 def test_provisioner_read_rejects_unknown_file_on_sandbox_utf8_decode_failure(monkeypatch) -> None:
     monkeypatch.setattr("yuxi.agents.backends.sandbox.backend.get_sandbox_provider", lambda: object())
     backend = ProvisionerSandboxBackend(thread_id="thread-1", uid="user-1")
+    monkeypatch.setattr(backend, "_file_operation", _noop_file_operation)
 
     def _read_binary_raises(path, offset=0, limit=None):
         raise RuntimeError("'utf-8' codec can't decode byte 0x89 in position 0")
@@ -852,6 +883,7 @@ def test_provisioner_read_rejects_unknown_file_on_sandbox_utf8_decode_failure(mo
 def test_provisioner_read_routes_documents_to_ocr(monkeypatch, extension: str) -> None:
     monkeypatch.setattr("yuxi.agents.backends.sandbox.backend.get_sandbox_provider", lambda: object())
     backend = ProvisionerSandboxBackend(thread_id="thread-1", uid="user-1")
+    monkeypatch.setattr(backend, "_file_operation", _noop_file_operation)
     monkeypatch.setattr(backend, "_file_size_bytes", lambda _path: 8)
     monkeypatch.setattr(backend, "_read_binary", lambda *_args, **_kwargs: pytest.fail("document was read"))
 
@@ -867,6 +899,7 @@ def test_provisioner_read_routes_documents_to_ocr(monkeypatch, extension: str) -
 def test_provisioner_read_rejects_other_known_modalities(monkeypatch, extension: str) -> None:
     monkeypatch.setattr("yuxi.agents.backends.sandbox.backend.get_sandbox_provider", lambda: object())
     backend = ProvisionerSandboxBackend(thread_id="thread-1", uid="user-1")
+    monkeypatch.setattr(backend, "_file_operation", _noop_file_operation)
     monkeypatch.setattr(backend, "_file_size_bytes", lambda _path: 8)
     monkeypatch.setattr(backend, "_read_file_base64", lambda _path: pytest.fail("binary file was read"))
 
@@ -933,10 +966,10 @@ def test_provisioner_download_files_distinguishes_invalid_path_from_read_failure
         backend,
     )
 
-    responses = backend.download_files(["bad-path", "/home/gem/user-data/read-failed"])
+    responses = backend.download_files(["/home/gem/user-data/read-failed", "bad-path"])
 
-    assert responses[0].error == "invalid_path"
-    assert responses[1].error.startswith("read_failed")
+    assert responses[0].error.startswith("read_failed")
+    assert responses[1].error == "invalid_path"
 
 
 def test_provisioner_download_files_treats_sandbox_404_as_missing(monkeypatch) -> None:

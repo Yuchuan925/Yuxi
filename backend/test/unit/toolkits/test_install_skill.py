@@ -54,6 +54,7 @@ async def test_install_skill_from_sandbox_installs_as_current_user_private_skill
             name="Demo Skill",
             description="demo description",
             source_scope="personal",
+            source_dir=source_dir,
             tool_dependencies=[],
             mcp_dependencies=[],
             skill_dependencies=[],
@@ -120,7 +121,10 @@ async def test_install_skill_from_sandbox_installs_as_current_user_private_skill
     assert runtime.context.skills == ["existing-skill", "demo-skill"]
     assert runtime.context._readable_skills == ["existing-skill", "demo-skill"]
     assert runtime.context._prompt_skills == ["existing-skill", "demo-skill"]
-    assert runtime.context._runtime_skill_sources == {"existing-skill": "/tmp/shared/existing-skill"}
+    assert runtime.context._runtime_skill_sources == {
+        "existing-skill": "/tmp/shared/existing-skill",
+        "demo-skill": str(source_dir),
+    }
     assert runtime.context._runtime_skill_metadata == {
         "demo-skill": {
             "name": "Demo Skill",
@@ -131,8 +135,11 @@ async def test_install_skill_from_sandbox_installs_as_current_user_private_skill
     assert runtime.context._runtime_skill_dependency_map == {"demo-skill": {"tools": [], "mcps": [], "skills": []}}
     assert calls["sync"] == {
         "thread_id": "thread-1",
-        "skills": ["existing-skill"],
-        "sources": {"existing-skill": "/tmp/shared/existing-skill"},
+        "skills": ["existing-skill", "demo-skill"],
+        "sources": {
+            "existing-skill": "/tmp/shared/existing-skill",
+            "demo-skill": str(source_dir),
+        },
     }
 
 

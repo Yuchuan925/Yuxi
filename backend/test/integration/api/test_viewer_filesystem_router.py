@@ -8,7 +8,7 @@ from types import SimpleNamespace
 
 from fastapi import HTTPException
 import pytest
-from yuxi.agents.backends.sandbox import (
+from yuxi.agents.backends.sandbox.paths import (
     ensure_thread_dirs,
     sandbox_user_data_dir,
     sandbox_workspace_dir,
@@ -480,11 +480,7 @@ async def test_delete_viewer_file_rejects_user_data_root_without_removing(monkey
     async def _fake_resolve_viewer_state(**kwargs):
         return object(), object(), []
 
-    def _fail_rmtree(path):
-        raise AssertionError(f"unexpected root removal: {path}")
-
     monkeypatch.setattr(service_module, "_resolve_viewer_state", _fake_resolve_viewer_state)
-    monkeypatch.setattr(service_module.shutil, "rmtree", _fail_rmtree)
 
     with pytest.raises(HTTPException) as exc_info:
         await service_module.delete_viewer_file(

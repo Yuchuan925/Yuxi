@@ -11,6 +11,12 @@
 :::
 
 
+- 新增独立异步 FileStore 基础层：提供 Local 与 S3/MinIO 实现、统一对象元数据和安全逻辑 key，S3 默认使用 aioboto3 path-style 并兼容现有 MinIO 配置；本阶段不改动现有 MinIOClient 和业务文件链路。
+- 部署配置完成 FileStore 收敛：API/worker 不再挂载 saves、models 或 Docker socket，sandbox-provisioner 仅保留自身代码、配置和 Docker socket；标准 Docker API/worker 拆分拓扑显式拒绝 local FileStore，单进程测试需设置 `FILESTORE_ALLOW_LOCAL=true`。NLTK `punkt_tab` 改为镜像构建期下载。
+- Sandbox 改为 ephemeral 文件系统：完整 `refresh -> execute/write/edit/upload -> sync_back` 使用进程内可重入锁与自动续租的 Redis 分布式锁串行化，续租和释放失败会显式暴露且不覆盖业务异常；Docker Sandbox 只读挂载独立 Skills volume，由 provisioner 启动短生命周期 helper 写卷；Kubernetes Sandbox 同样只读挂载 Skills `emptyDir`，由受信任 helper 容器接收 provisioner exec 写入。
+- 用户 workspace、线程文件、Agent 文件工具与 Skills 正式链路迁移到 FileStore：CRUD、Viewer、附件、Agent context、artifact 保存及个人 Skill 变更按 uid/file_thread 复用 Sandbox 分布式锁，跨 scope 固定按 uid→file_thread 获取；`ocr_parse_file` 与知识库下载在锁内完成重名选择和 outputs 写入。共享/个人 Skill 与线程 Skills 不再依赖共享 `saves`，安装失败会补偿删除对象。
+- 管理员系统配置改以 PostgreSQL `config_options` 为持久事实：Redis snapshot 携带数据库版本，API/worker 周期同步在 Redis 缺失或落后时回源 PostgreSQL 并重新发布，避免一次发布失败形成永久旧值；`base.toml` 停止运行时写入，仅兼容本地默认值读取。
+- LangGraph checkpoint 默认统一使用 PostgreSQL；API 与 worker 均会在自身启动阶段幂等建表并在关闭时释放连接。PostgreSQL 初始化失败不再静默回退共享 SQLite 或内存，SQLite/内存仅在显式配置时启用；空数据部署无需迁移历史 SQLite checkpoint。
 - 优化知识库文档列表性能：根目录虚拟目录分组改用部分索引（`idx_kf_kb_parent_segment` 按路径首段聚合），平铺文件筛选与排序用 `idx_kf_kb_parent_flat` 支撑，避免大知识库全表扫描与 46MB 磁盘排序溢出；文件统计聚合结果增加 10 秒 Redis 短缓存，列表、统计、子目录计数与创建人查询并行执行，前端自动刷新轮询间隔同步调整为 10 秒。36 万文件知识库列表接口耗时由约 1.3s 降至约 300ms。
 - 修复 MCP 管理接口可通过 stdio 启动任意本地进程的问题：用户配置仅允许 SSE/Streamable HTTP，运行时拒绝加载历史用户 stdio 记录，系统内置 stdio 的连接参数改为仅由代码维护；前端移除用户 stdio 配置入口，文档补充内置 stdio 的代码添加与验证方式。
 - 工作区新增只读历史对话文件入口 `agents/chats/{thread_id}`，网页以 `YYYY-MM-DD-title` 显示并按日期标题倒序浏览各 thread 的非空 uploads 与 outputs；空目录、无文件对话及 `large_tool_results`、`conversation_history` 等内部中间产物不展示。该目录由 API 虚拟映射，不创建符号链接或复制文件，也不进入当前会话 viewer 与 sandbox 挂载，避免 Agent 读取其他会话历史。面包屑中该目录固定显示为"历史对话"与目录列表一致，多选过滤改用只读路径集合避免逐项查找。
@@ -143,7 +149,7 @@
 - 优化 Agent 上下文压缩：Yuxi 的 DeepAgents summary adapter 在生成 summary 与写入 conversation history 时，会先对本次模型调用的临时消息视图执行 L1 结构精简，截断旧 `write_file`/`edit_file` 大参数，并把超过阈值的大 `ToolMessage.content` 写入 `outputs/large_tool_results` 后替换为路径和有限预览；L1 不修改 LangGraph state 原始消息，L1 后若上下文低于入口阈值的 40% 则直接调用模型，不生成 summary event，仍超过时才进入 L2 summary。L2 继续使用 DeepAgents `_summarization_event.cutoff_index` 重建 effective messages；Summary 阈值判断改为使用 Yuxi 自己的近似 token 计算结果，不再根据 provider `usage_metadata.total_tokens` 或 usage scaling 提前触发；首次写入 `conversation_history` 前读取旧文件的 sandbox 404 会按 `file_not_found` 处理，不再产生误导性 warning；`present_artifacts` 会拒绝展示 `large_tool_results` 与 `conversation_history` 等工具调用阶段文件。新增管理员可配置项 `summary_keep_messages`、`summary_prompt`、`summary_tool_result_token_limit` 与 `max_execution_steps`，分别控制摘要后保留消息数、摘要提示词、summary 阶段工具结果预览上限和 LangGraph `recursion_limit`。
 - 收敛普通聊天模型加载链路：`select_model` 保留旧 `.call()` 调用契约，内部改为通过 LangChain chat model adapter 复用 Agent 侧模型加载器，统一 OpenAI-compatible、Anthropic 与 Gemini 等 provider 的运行时适配；移除旧 `OpenAIBase` wrapper，默认重试策略迁移为 LangChain provider 参数。
 - 统一 Redis 客户端管理：新增 `yuxi.storage.redis` 作为 Redis 配置、短生命周期同步客户端、共享异步客户端与 ARQ RedisSettings 的唯一基础设施入口；运行队列、系统配置快照同步、模型缓存和 worker 不再各自散落读取 `REDIS_URL` 或直接创建 Redis 客户端，Redis 连接失败日志统一使用脱敏 URL。
-- 新增系统配置 Redis 快照同步：管理员保存配置时仍以 `saves/config/base.toml` 作为唯一持久化来源，成功写入后将可运行时同步的公开配置字段写入 `yuxi:runtime_config`；API 与 worker 进程在启动时各拉起一个后台同步线程，按 5 秒间隔从快照刷新内存值，读取端按普通属性访问、无需感知，Redis 不可用时继续使用当前内存值。`save_dir` 是启动期内部路径配置，不在管理员配置中展示、不从 `base.toml` 读取、不写入 Redis 快照且不支持通过管理员配置接口修改；sandbox 相关配置仍属于启动期敏感配置，运行中的已初始化组件不承诺完整热更新，修改后仍需重启保证生效；移除已无运行时调用点的 `enable_reranker` 与 `default_agent_id` 配置字段。
+- 新增系统配置 Redis 快照同步：初版以 `saves/config/base.toml` 持久化并同步公开字段；v0.7.2 已将持久事实迁移到 PostgreSQL，保留 5 秒快照热同步。`save_dir` 始终是启动期内部配置，不在管理员配置中展示，也不写入数据库或 Redis；sandbox 等已初始化组件修改后仍需重启保证生效。
 - 优化 FastAPI 请求链路并发能力：Milvus 知识库检索中的同步 embedding、向量/BM25/混合检索调用，以及图谱查询中的同步 Milvus/Neo4j 读操作（含连接建立）统一通过有界 `asyncio.to_thread` 在线程中执行，避免阻塞 API 事件循环；并发上限按事件循环懒加载信号量控制，不改变检索默认行为与参数上限。
 - 修复 AgentRun worker 在 LLM 流式响应期间长期占用 PostgreSQL 连接：chat 与 resume 在完成运行时解析、会话和附件等预处理后，进入流式执行前显式提交事务并归还业务连接，最终消息保存时再按需获取连接。
 - 修复异步文档解析阻塞 API 事件循环：DOCX、PPTX、XLS/XLSX、DOC、CSV 与 HTML 的同步转换统一下沉到工作线程，文本读取改用异步文件 I/O；Docling 单例转换增加线程互斥，避免并发解析共享转换器，并补充事件循环可继续调度的回归测试。

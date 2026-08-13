@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import io
 import mimetypes
-import shutil
 from pathlib import Path, PurePosixPath
 from urllib.parse import quote
 
@@ -13,13 +12,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from yuxi.agents.backends import create_agent_composite_backend
 from yuxi.agents.backends.sandbox import (
     SKILLS_PATH,
-    USER_DATA_PATH,
-    ensure_thread_dirs,
-    resolve_virtual_path,
-    sandbox_user_data_dir,
-    sandbox_workspace_dir,
-    virtual_path_for_thread_file,
 )
+from yuxi.agents.backends.sandbox.synchronizer import sandbox_file_operation_lock
 from yuxi.agents.backends.skills_backend import SelectedSkillsReadonlyBackend
 from yuxi.agents.skills.service import normalize_string_list
 from yuxi.services.agent_runtime_service import resolve_thread_agent_runtime_context
@@ -47,12 +41,14 @@ from yuxi.services.workspace_service import (
     upload_workspace_files as upload_workspace_files_entry,
 )
 from yuxi.storage.postgres.models_business import User
-from yuxi.utils.datetime_utils import utc_isoformat_from_timestamp
-from yuxi.utils.paths import VIRTUAL_PATH_OUTPUTS, VIRTUAL_PATH_UPLOADS, VIRTUAL_PATH_WORKSPACE
+from yuxi.storage.filestore import FileStoreError, get_file_store
+from yuxi.utils.datetime_utils import utc_isoformat
+from yuxi.utils.paths import VIRTUAL_PATH_OUTPUTS, VIRTUAL_PATH_PREFIX, VIRTUAL_PATH_UPLOADS, VIRTUAL_PATH_WORKSPACE
+from yuxi.utils.upload_utils import MAX_UPLOAD_SIZE_BYTES, read_upload_with_limit
 
 _PROTECTED_USER_DATA_ROOTS = frozenset(
     {
-        USER_DATA_PATH,
+        VIRTUAL_PATH_PREFIX,
         VIRTUAL_PATH_WORKSPACE,
         VIRTUAL_PATH_UPLOADS,
         VIRTUAL_PATH_OUTPUTS,
@@ -64,47 +60,49 @@ def _normalize_path(path: str | None) -> str:
     normalized = (path or "/").strip() or "/"
     if not normalized.startswith("/"):
         normalized = f"/{normalized}"
-    return normalized.rstrip("/") if normalized not in {"/", SKILLS_PATH, USER_DATA_PATH} else normalized
-
-
-def _resolve_local_user_data_path(thread_id: str, uid: str, path: str) -> Path:
-    try:
-        actual_path = resolve_virtual_path(thread_id, path, uid=uid)
-    except ValueError as exc:
-        # 真实路径越过允许根目录时，按权限拒绝处理，而不是当作普通参数错误。
-        if "path traversal" in str(exc):
-            raise HTTPException(status_code=403, detail="Access denied") from exc
-        raise
-    resolved_path = actual_path.resolve()
-    user_data_root = sandbox_user_data_dir(thread_id).resolve()
-    workspace_root = sandbox_workspace_dir(thread_id, uid).resolve()
-    if not (resolved_path.is_relative_to(user_data_root) or resolved_path.is_relative_to(workspace_root)):
-        raise HTTPException(status_code=403, detail="Access denied")
-    return resolved_path
-
-
-def _is_user_data_path(path: str) -> bool:
-    return path == USER_DATA_PATH or path.startswith(f"{USER_DATA_PATH}/")
+    return normalized.rstrip("/") if normalized not in {"/", SKILLS_PATH, VIRTUAL_PATH_PREFIX} else normalized
 
 
 def _is_workspace_path(path: str) -> bool:
     return path == VIRTUAL_PATH_WORKSPACE or path.startswith(f"{VIRTUAL_PATH_WORKSPACE}/")
 
 
+def _is_object_namespace_path(path: str) -> bool:
+    return (
+        path == VIRTUAL_PATH_UPLOADS
+        or path == VIRTUAL_PATH_OUTPUTS
+        or path.startswith((f"{VIRTUAL_PATH_UPLOADS}/", f"{VIRTUAL_PATH_OUTPUTS}/"))
+    )
+
+
+def _object_entry(path: str, *, name: str, is_dir: bool, size: int = 0, modified_at: str = "") -> dict:
+    return {
+        "path": f"{path}/" if is_dir and not path.endswith("/") else path,
+        "name": name,
+        "is_dir": is_dir,
+        "size": size,
+        "modified_at": modified_at,
+    }
+
+
+def _validate_object_child_name(name: str, field_name: str) -> str:
+    clean_name = str(name or "").strip()
+    if not clean_name or clean_name in {".", ".."} or "/" in clean_name or "\\" in clean_name:
+        raise HTTPException(status_code=422, detail=f"{field_name} 不能包含路径分隔符")
+    return clean_name
+
+
+async def _require_object_directory(path) -> None:
+    """确认 FileStore 虚拟目录存在，命名空间根目录始终存在。"""
+    if not path.relative_path:
+        return
+    objects = await get_file_store().list(f"{path.key}/")
+    if not objects:
+        raise HTTPException(status_code=404, detail="目标目录不存在")
+
+
 def _is_skills_path(path: str) -> bool:
     return path == SKILLS_PATH or path.startswith(f"{SKILLS_PATH}/")
-
-
-def _is_in_home_gem(path: str) -> bool:
-    """检查路径是否在 /home/gem/ 下但不在虚拟挂载点内"""
-    if not path.startswith("/home/gem/"):
-        return False
-    # 排除虚拟挂载点
-    if path.startswith(f"{USER_DATA_PATH}/") or path == USER_DATA_PATH:
-        return False
-    if path.startswith(f"{SKILLS_PATH}/") or path == SKILLS_PATH:
-        return False
-    return True
 
 
 def _strip_skills_prefix(path: str) -> str:
@@ -163,36 +161,6 @@ def _render_viewer_preview(path: str, raw_content: bytes) -> dict | StreamingRes
     return payload
 
 
-def _entry_for_local_path(thread_id: str, uid: str, path: Path, listing_root: Path) -> dict:
-    resolved_path = path.resolve()
-    if not resolved_path.is_relative_to(listing_root):
-        raise HTTPException(status_code=403, detail="Access denied")
-    stat = resolved_path.stat()
-    is_dir = resolved_path.is_dir()
-    display_path = virtual_path_for_thread_file(thread_id, resolved_path, uid=uid)
-    if is_dir and not display_path.endswith("/"):
-        display_path = f"{display_path}/"
-    return {
-        "path": display_path,
-        "name": resolved_path.name,
-        "is_dir": is_dir,
-        "size": 0 if is_dir else stat.st_size,
-        "modified_at": utc_isoformat_from_timestamp(stat.st_mtime) or "",
-    }
-
-
-def _list_local_entries(thread_id: str, uid: str, actual_path) -> list[dict]:
-    """List a local directory and remap children back into viewer virtual paths."""
-    listing_root = actual_path.resolve()
-    entries: list[dict] = []
-    for child in sorted(actual_path.iterdir(), key=lambda item: item.name.lower()):
-        resolved_child = child.resolve()
-        if not resolved_child.is_relative_to(listing_root):
-            continue
-        entries.append(_entry_for_local_path(thread_id, uid, resolved_child, listing_root))
-    return entries
-
-
 def _workspace_relative_path(path: str) -> str:
     if path == VIRTUAL_PATH_WORKSPACE:
         return "/"
@@ -229,27 +197,6 @@ def _viewer_response_from_workspace_response(response: dict) -> dict:
     return result
 
 
-def _list_user_data_root_entries(thread_id: str, uid: str) -> list[dict]:
-    """Expose thread-root files while keeping the user workspace entry visible."""
-    entries = _list_local_entries(thread_id, uid, sandbox_user_data_dir(thread_id))
-    visible_paths = {str(entry.get("path") or "").rstrip("/") for entry in entries}
-    workspace_dir = sandbox_workspace_dir(thread_id, uid)
-    workspace_virtual_path = virtual_path_for_thread_file(thread_id, workspace_dir, uid=uid).rstrip("/")
-    if workspace_virtual_path not in visible_paths:
-        # workspace is stored outside the per-thread root, so add it explicitly when needed.
-        stat = workspace_dir.stat()
-        entries.append(
-            {
-                "path": f"{workspace_virtual_path}/",
-                "name": workspace_dir.name,
-                "is_dir": True,
-                "size": 0,
-                "modified_at": utc_isoformat_from_timestamp(stat.st_mtime) or "",
-            }
-        )
-    return entries
-
-
 async def _resolve_viewer_state(
     *,
     thread_id: str,
@@ -276,6 +223,8 @@ async def list_viewer_filesystem_tree(
     current_user: User,
     db: AsyncSession,
 ) -> dict:
+    from yuxi.services.thread_files_service import list_thread_object_entries
+
     if not thread_id:
         raise HTTPException(status_code=422, detail="thread_id 不能为空")
 
@@ -291,7 +240,7 @@ async def list_viewer_filesystem_tree(
         entries = []
 
         entries.append(
-            {"path": f"{USER_DATA_PATH}/", "name": "user-data", "is_dir": True, "size": 0, "modified_at": ""}
+            {"path": f"{VIRTUAL_PATH_PREFIX}/", "name": "user-data", "is_dir": True, "size": 0, "modified_at": ""}
         )
         if selected_skills:
             entries.append({"path": f"{SKILLS_PATH}/", "name": "skills", "is_dir": True, "size": 0, "modified_at": ""})
@@ -299,9 +248,32 @@ async def list_viewer_filesystem_tree(
         return {"entries": _sort_entries(entries)}
 
     try:
-        if _is_user_data_path(normalized_path):
-            uid = str(current_user.uid)
-            ensure_thread_dirs(thread_id, uid)
+        if normalized_path == VIRTUAL_PATH_PREFIX:
+            entries = [
+                {
+                    "path": f"{VIRTUAL_PATH_WORKSPACE}/",
+                    "name": "workspace",
+                    "is_dir": True,
+                    "size": 0,
+                    "modified_at": "",
+                },
+                {
+                    "path": f"{VIRTUAL_PATH_UPLOADS}/",
+                    "name": "uploads",
+                    "is_dir": True,
+                    "size": 0,
+                    "modified_at": "",
+                },
+                {
+                    "path": f"{VIRTUAL_PATH_OUTPUTS}/",
+                    "name": "outputs",
+                    "is_dir": True,
+                    "size": 0,
+                    "modified_at": "",
+                },
+            ]
+            return {"entries": _sort_entries(entries)}
+        if _is_workspace_path(normalized_path) or _is_object_namespace_path(normalized_path):
             if _is_workspace_path(normalized_path):
                 response = await list_workspace_tree(
                     path=_workspace_relative_path(normalized_path),
@@ -309,16 +281,9 @@ async def list_viewer_filesystem_tree(
                 )
                 entries = [_viewer_entry_from_workspace_entry(entry) for entry in response.get("entries", [])]
                 return {"entries": _sort_entries(entries)}
-            if normalized_path == USER_DATA_PATH:
-                entries = await asyncio.to_thread(_list_user_data_root_entries, thread_id, uid)
+            if _is_object_namespace_path(normalized_path):
+                entries = await list_thread_object_entries(thread_id, normalized_path)
                 return {"entries": _sort_entries(entries)}
-            actual_path = _resolve_local_user_data_path(thread_id, uid, normalized_path)
-            if not actual_path.exists():
-                return {"entries": []}
-            if not actual_path.is_dir():
-                raise HTTPException(status_code=400, detail="当前路径不是目录")
-            entries = await asyncio.to_thread(_list_local_entries, thread_id, uid, actual_path)
-            return {"entries": _sort_entries(entries)}
 
         if _is_skills_path(normalized_path):
             result = await asyncio.to_thread(skills_backend.ls, _strip_skills_prefix(normalized_path))
@@ -341,6 +306,8 @@ async def read_viewer_file_content(
     current_user: User,
     db: AsyncSession,
 ) -> dict | StreamingResponse:
+    from yuxi.services.thread_files_service import resolve_thread_object_path
+
     if not thread_id:
         raise HTTPException(status_code=422, detail="thread_id 不能为空")
     normalized_path = _normalize_path(path)
@@ -352,26 +319,23 @@ async def read_viewer_file_content(
     )
 
     try:
-        if _is_user_data_path(normalized_path):
+        if _is_workspace_path(normalized_path) or _is_object_namespace_path(normalized_path):
             if _is_workspace_path(normalized_path):
                 return await read_workspace_file_content_response(
                     path=_workspace_relative_path(normalized_path),
                     current_user=current_user,
                 )
-            actual_path = _resolve_local_user_data_path(thread_id, str(current_user.uid), normalized_path)
-            if not actual_path.exists():
-                raise HTTPException(status_code=404, detail="文件不存在")
-            if not actual_path.is_file():
-                raise HTTPException(status_code=400, detail="当前路径是目录")
-            if actual_path.stat().st_size > MAX_BINARY_PREVIEW_SIZE_BYTES:
+            if _is_object_namespace_path(normalized_path):
+                resolved = resolve_thread_object_path(thread_id, normalized_path)
+                try:
+                    raw_content = (await get_file_store().read(resolved.key)).data
+                except FileStoreError as exc:
+                    raise HTTPException(status_code=404, detail="文件不存在") from exc
+            if len(raw_content) > MAX_BINARY_PREVIEW_SIZE_BYTES:
                 return _preview_too_large_payload()
-            raw_content = await asyncio.to_thread(actual_path.read_bytes)
             return _render_viewer_preview(normalized_path, raw_content)
         elif _is_skills_path(normalized_path):
             responses = await asyncio.to_thread(skills_backend.download_files, [_strip_skills_prefix(normalized_path)])
-        elif _is_in_home_gem(normalized_path):
-            # /home/gem/ 下的其他文件（如 workspace 目录）
-            responses = await asyncio.to_thread(sandbox_backend.download_files, [normalized_path])
         else:
             raise HTTPException(
                 status_code=400,
@@ -401,6 +365,8 @@ async def download_viewer_file(
     current_user: User,
     db: AsyncSession,
 ) -> StreamingResponse | FileResponse:
+    from yuxi.services.thread_files_service import resolve_thread_object_path
+
     normalized_path = _normalize_path(path)
     sandbox_backend, skills_backend, _selected_skills = await _resolve_viewer_state(
         thread_id=thread_id,
@@ -409,30 +375,29 @@ async def download_viewer_file(
     )
 
     try:
-        if _is_user_data_path(normalized_path):
+        if _is_workspace_path(normalized_path) or _is_object_namespace_path(normalized_path):
             if _is_workspace_path(normalized_path):
                 return await download_workspace_file_response(
                     path=_workspace_relative_path(normalized_path),
                     current_user=current_user,
                 )
-            actual_path = _resolve_local_user_data_path(thread_id, str(current_user.uid), normalized_path)
-            if not actual_path.exists():
-                raise HTTPException(status_code=404, detail="文件不存在")
-            if not actual_path.is_file():
-                raise HTTPException(status_code=400, detail="当前路径是目录")
-
-            file_name = actual_path.name or "download"
+            if _is_object_namespace_path(normalized_path):
+                resolved = resolve_thread_object_path(thread_id, normalized_path)
+                store = get_file_store()
+                try:
+                    await store.stat(resolved.key)
+                except FileStoreError as exc:
+                    raise HTTPException(status_code=404, detail="文件不存在") from exc
+                file_name = PurePosixPath(resolved.relative_path).name or "download"
+                stream = store.stream(resolved.key)
             media_type = mimetypes.guess_type(file_name)[0] or "application/octet-stream"
             headers = {
                 "Content-Disposition": f"attachment; filename*=UTF-8''{quote(file_name)}",
             }
-            return FileResponse(path=actual_path, media_type=media_type, headers=headers)
+            return StreamingResponse(stream, media_type=media_type, headers=headers)
 
         if _is_skills_path(normalized_path):
             responses = await asyncio.to_thread(skills_backend.download_files, [_strip_skills_prefix(normalized_path)])
-        elif _is_in_home_gem(normalized_path):
-            # /home/gem/ 下的其他文件（如 workspace 目录）
-            responses = await asyncio.to_thread(sandbox_backend.download_files, [normalized_path])
         else:
             raise HTTPException(
                 status_code=400,
@@ -467,6 +432,8 @@ async def delete_viewer_file(
     current_user: User,
     db: AsyncSession,
 ) -> dict:
+    from yuxi.services.thread_files_service import resolve_thread_object_path
+
     if not thread_id:
         raise HTTPException(status_code=422, detail="thread_id 不能为空")
 
@@ -477,7 +444,9 @@ async def delete_viewer_file(
         db=db,
     )
 
-    if not _is_user_data_path(normalized_path):
+    if normalized_path == VIRTUAL_PATH_PREFIX:
+        raise HTTPException(status_code=400, detail="当前目录不允许删除")
+    if not (_is_workspace_path(normalized_path) or _is_object_namespace_path(normalized_path)):
         raise HTTPException(status_code=400, detail="当前路径不支持删除")
     if normalized_path in _PROTECTED_USER_DATA_ROOTS:
         raise HTTPException(status_code=400, detail="当前目录不允许删除")
@@ -486,13 +455,22 @@ async def delete_viewer_file(
         if _is_workspace_path(normalized_path):
             await delete_workspace_path(path=_workspace_relative_path(normalized_path), current_user=current_user)
             return {"success": True, "path": normalized_path}
-        actual_path = _resolve_local_user_data_path(thread_id, str(current_user.uid), normalized_path)
-        if not actual_path.exists():
-            raise HTTPException(status_code=404, detail="文件不存在")
-        if actual_path.is_dir():
-            await asyncio.to_thread(shutil.rmtree, actual_path)
-        else:
-            await asyncio.to_thread(actual_path.unlink)
+        if _is_object_namespace_path(normalized_path):
+            async with sandbox_file_operation_lock(file_thread_id=thread_id):
+                resolved = resolve_thread_object_path(thread_id, normalized_path, allow_root=True)
+                if not resolved.relative_path:
+                    raise HTTPException(status_code=400, detail="当前目录不允许删除")
+                store = get_file_store()
+                descendants = await store.list(f"{resolved.key}/")
+                if descendants:
+                    await store.delete_prefix(f"{resolved.key}/")
+                else:
+                    try:
+                        await store.stat(resolved.key)
+                    except FileStoreError:
+                        raise HTTPException(status_code=404, detail="文件不存在")
+                    await store.delete(resolved.key)
+            return {"success": True, "path": normalized_path}
     except PermissionError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     except ValueError as e:
@@ -509,6 +487,8 @@ async def create_viewer_directory(
     current_user: User,
     db: AsyncSession,
 ) -> dict:
+    from yuxi.services.thread_files_service import resolve_thread_object_path
+
     if not thread_id:
         raise HTTPException(status_code=422, detail="thread_id 不能为空")
 
@@ -519,6 +499,27 @@ async def create_viewer_directory(
     )
 
     normalized_parent = _normalize_path(parent_path)
+    if _is_object_namespace_path(normalized_parent):
+        async with sandbox_file_operation_lock(file_thread_id=thread_id):
+            resolved = resolve_thread_object_path(thread_id, normalized_parent, allow_root=True)
+            await _require_object_directory(resolved)
+            directory_name = _validate_object_child_name(name, "文件夹名")
+            directory_key = f"{resolved.key}/{directory_name}"
+            marker_key = f"{resolved.key}/{directory_name}/.keep"
+            store = get_file_store()
+            try:
+                await store.stat(directory_key)
+                raise HTTPException(status_code=400, detail="同名文件或文件夹已存在")
+            except FileStoreError:
+                if await store.list(f"{directory_key}/"):
+                    raise HTTPException(status_code=400, detail="同名文件或文件夹已存在")
+                await store.put(marker_key, b"", content_type="application/octet-stream")
+        return {
+            "success": True,
+            "entry": _object_entry(
+                f"{normalized_parent.rstrip('/')}/{directory_name}", name=directory_name, is_dir=True
+            ),
+        }
     if not _is_workspace_path(normalized_parent):
         raise HTTPException(status_code=400, detail="当前路径不支持写入")
 
@@ -538,6 +539,8 @@ async def upload_viewer_files(
     current_user: User,
     db: AsyncSession,
 ) -> dict:
+    from yuxi.services.thread_files_service import resolve_thread_object_path
+
     if not thread_id:
         raise HTTPException(status_code=422, detail="thread_id 不能为空")
 
@@ -548,6 +551,48 @@ async def upload_viewer_files(
     )
 
     normalized_parent = _normalize_path(parent_path)
+    if _is_object_namespace_path(normalized_parent):
+        if not files:
+            raise HTTPException(status_code=400, detail="请选择至少一个文件")
+        if len(files) > 50:
+            raise HTTPException(status_code=400, detail="一次最多上传 50 个文件")
+        async with sandbox_file_operation_lock(file_thread_id=thread_id):
+            resolved = resolve_thread_object_path(thread_id, normalized_parent, allow_root=True)
+            await _require_object_directory(resolved)
+            entries = []
+            seen_names: set[str] = set()
+            for file in files:
+                file_name = _validate_object_child_name(Path(file.filename or "").name, "文件名")
+                if file_name in seen_names:
+                    raise HTTPException(status_code=400, detail=f"选择的文件中存在重复文件名: {file_name}")
+                seen_names.add(file_name)
+                key = f"{resolved.key}/{file_name}"
+                try:
+                    await get_file_store().stat(key)
+                except FileStoreError:
+                    if await get_file_store().list(f"{key}/"):
+                        raise HTTPException(status_code=400, detail="同名文件或文件夹已存在")
+                    try:
+                        content = await read_upload_with_limit(
+                            file,
+                            max_size_bytes=MAX_UPLOAD_SIZE_BYTES,
+                            too_large_message="文件过大，当前仅支持 100 MB 以内的文件",
+                        )
+                    except ValueError as exc:
+                        raise HTTPException(status_code=400, detail=str(exc)) from exc
+                    stat = await get_file_store().put(key, content, content_type=file.content_type)
+                    entries.append(
+                        _object_entry(
+                            f"{normalized_parent.rstrip('/')}/{file_name}",
+                            name=file_name,
+                            is_dir=False,
+                            size=stat.size,
+                            modified_at=utc_isoformat(stat.modified),
+                        )
+                    )
+                    continue
+                raise HTTPException(status_code=400, detail="同名文件或文件夹已存在")
+        return {"success": True, "entries": entries}
     if not _is_workspace_path(normalized_parent):
         raise HTTPException(status_code=400, detail="当前路径不支持写入")
 

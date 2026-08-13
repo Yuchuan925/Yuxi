@@ -14,6 +14,7 @@ os.environ.setdefault(
 )
 
 from yuxi.services import conversation_service as service
+from yuxi.storage.filestore import LocalFileStore
 
 pytestmark = pytest.mark.unit
 
@@ -156,15 +157,8 @@ async def test_confirm_tmp_thread_attachments_materializes_original_and_parsed_f
 
     monkeypatch.setattr(service, "get_minio_client", lambda: fake_minio)
     monkeypatch.setattr(service, "ConversationRepository", lambda db: fake_repo)
-    monkeypatch.setattr(service.app_config, "save_dir", str(tmp_path))
-
-    def fake_uploads_dir(thread_id: str) -> Path:
-        path = tmp_path / "threads" / thread_id / "user-data" / "uploads"
-        path.mkdir(parents=True, exist_ok=True)
-        return path
-
-    monkeypatch.setattr(service, "ensure_thread_dirs", lambda thread_id, user_id: fake_uploads_dir(thread_id))
-    monkeypatch.setattr(service, "sandbox_uploads_dir", fake_uploads_dir)
+    store = LocalFileStore(tmp_path / "filestore")
+    monkeypatch.setattr(service, "get_file_store", lambda: store)
 
     async def noop_sync(**kwargs):
         return None
@@ -197,10 +191,8 @@ async def test_confirm_tmp_thread_attachments_materializes_original_and_parsed_f
     markdown_name = Path(attachment["path"]).name
     assert original_name.endswith("_demo.pdf")
     assert markdown_name.endswith("_demo.md")
-    assert (tmp_path / "threads" / "thread-1" / "user-data" / "uploads" / original_name).read_bytes() == b"pdf-bytes"
-    assert (tmp_path / "threads" / "thread-1" / "user-data" / "uploads" / "attachments" / markdown_name).read_text(
-        encoding="utf-8"
-    ) == "# parsed"
+    assert (await store.read(f"threads/thread-1/uploads/{original_name}")).data == b"pdf-bytes"
+    assert (await store.read(f"threads/thread-1/uploads/attachments/{markdown_name}")).data == b"# parsed"
     assert Path(fake_repo.attachments[0]["original_path"]).name == original_name
 
 
@@ -318,15 +310,8 @@ async def test_confirm_tmp_thread_attachments_keeps_duplicate_names_separate(mon
 
     monkeypatch.setattr(service, "get_minio_client", lambda: fake_minio)
     monkeypatch.setattr(service, "ConversationRepository", lambda db: fake_repo)
-    monkeypatch.setattr(service.app_config, "save_dir", str(tmp_path))
-
-    def fake_uploads_dir(thread_id: str) -> Path:
-        path = tmp_path / "threads" / thread_id / "user-data" / "uploads"
-        path.mkdir(parents=True, exist_ok=True)
-        return path
-
-    monkeypatch.setattr(service, "ensure_thread_dirs", lambda thread_id, uid: fake_uploads_dir(thread_id))
-    monkeypatch.setattr(service, "sandbox_uploads_dir", fake_uploads_dir)
+    store = LocalFileStore(tmp_path / "filestore")
+    monkeypatch.setattr(service, "get_file_store", lambda: store)
 
     async def noop_sync(**kwargs):
         return None
@@ -349,9 +334,5 @@ async def test_confirm_tmp_thread_attachments_keeps_duplicate_names_separate(mon
 
     first, second = response["attachments"]
     assert first["original_path"] != second["original_path"]
-    assert (
-        tmp_path / "threads" / "thread-1" / "user-data" / "uploads" / Path(first["original_path"]).name
-    ).read_bytes() == b"first"
-    assert (
-        tmp_path / "threads" / "thread-1" / "user-data" / "uploads" / Path(second["original_path"]).name
-    ).read_bytes() == b"second"
+    assert (await store.read(first["original_storage_key"])).data == b"first"
+    assert (await store.read(second["original_storage_key"])).data == b"second"

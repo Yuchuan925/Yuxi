@@ -47,7 +47,7 @@ Yuxi 是一个面向 RAG、知识图谱和多智能体工作流的知识库平�
 - `storage/neo4j` 管理共享 Neo4j Driver、生命周期和图查询辅助。
 - `knowledge` 是知识库、文档解析、评估和图谱领域。`runtime.py` 暴露运行时知识库管理器；`implementations` 放 Milvus、Dify、Notion 和只读连接器；`parser` 统一封装 OCR/文档解析；`chunking` 管理分块策略；`graphs` 管理 Milvus 与 Neo4j 图谱能力。
 - `models` 封装 chat、embedding 和 rerank 模型适配；`models/providers` 使用 PostgreSQL 保存模型供应商，并通过 Redis 缓存向 API 和 worker 提供一致视图。
-- `config` 区分系统级配置和用户级配置。系统配置写入 `base.toml` 并同步 Redis 快照，用户配置保存在 PostgreSQL。
+- `config` 区分系统级配置和用户级配置。管理员系统配置与用户配置均以 PostgreSQL 为事实来源；系统配置额外同步 Redis 快照供 API/worker 热更新，`base.toml` 仅兼容读取本地启动默认值。
 - `utils` 只放跨领域且足够通用的日志、时间、SSE 和轻量工具。
 
 ### 两类后台任务
@@ -106,7 +106,7 @@ Yuxi 是一个面向 RAG、知识图谱和多智能体工作流的知识库平�
 
 ## 跨切面关注点
 
-- **配置**：Compose 和 `.env` 提供部署配置；管理员系统配置写入 `base.toml` 并通过 Redis 快照同步；用户配置与模型供应商以 PostgreSQL 为事实来源。
+- **配置**：Compose 和 `.env` 提供部署配置；管理员系统配置、用户配置与模型供应商以 PostgreSQL 为事实来源，系统配置通过 Redis 快照同步 API/worker；`save_dir` 与 sandbox 等内部配置保留为启动期配置。
 - **权限**：前端路由和页面标签提供体验级约束，FastAPI 认证依赖和 repository 可见性查询提供最终授权。
 - **状态与存储**：PostgreSQL 保存请求、Run、消息、业务和知识库元数据；LangGraph checkpoint 使用 PostgreSQL，必要时可回退 SQLite/内存；Redis 保存短期事件、取消信号、ARQ 和跨进程缓存；MinIO、沙盒与本地 `saves` 分别承载不同生命周期的文件。
 - **文档处理**：上传文件先进入对象存储和文件元数据边界，再经过解析、分块和知识库实现；解析器、分块策略和知识库连接器保持可替换。

@@ -244,7 +244,7 @@ class Skill(Base):
     tool_dependencies = Column(JSON, nullable=False, default=list, comment="依赖的内置工具名列表")
     mcp_dependencies = Column(JSON, nullable=False, default=list, comment="依赖的 MCP 服务名列表")
     skill_dependencies = Column(JSON, nullable=False, default=list, comment="依赖的其他 skill slug 列表")
-    dir_path = Column(String(512), nullable=False, comment="技能目录路径（相对 save_dir）")
+    dir_path = Column(String(512), nullable=False, comment="技能内容来源（FileStore 逻辑前缀或 builtin 标识）")
     version = Column(String(64), nullable=True, comment="技能版本（内置 skill 使用语义化版本）")
     content_hash = Column(String(128), nullable=True, comment="技能目录内容哈希（内置 skill 安装时计算）")
     share_config = Column(JSON_VALUE, nullable=False, comment="共享权限配置")

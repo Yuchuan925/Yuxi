@@ -7,7 +7,6 @@ import sys
 from contextlib import contextmanager
 
 import pytest
-import tomli
 from yuxi.config.app import Config
 from yuxi.config.cache import RUNTIME_CONFIG_REDIS_KEY
 
@@ -45,6 +44,7 @@ def _patch_runtime_redis(monkeypatch: pytest.MonkeyPatch, redis: _FakeRedis) -> 
         yield redis
 
     monkeypatch.setattr(config_cache, "sync_redis_client", fake_sync_redis_client)
+    monkeypatch.setattr(config_cache, "_load_postgres_snapshot", lambda _config: None)
 
 
 def _import_yuxi_in_fresh_process(tmp_path, config_text: str) -> tuple[dict, subprocess.CompletedProcess[str]]:
@@ -110,36 +110,29 @@ def test_fresh_import_ignores_invalid_ocr_engine_and_loads_later_config(tmp_path
     assert loaded["default_model"] == "test-provider:after-invalid-ocr"
 
 
-def test_save_writes_runtime_snapshot_after_base_toml(tmp_path, monkeypatch: pytest.MonkeyPatch):
+def test_save_runtime_snapshot_contains_only_managed_fields(tmp_path, monkeypatch: pytest.MonkeyPatch):
     redis = _FakeRedis()
     _patch_runtime_redis(monkeypatch, redis)
     cfg = Config(save_dir=str(tmp_path))
 
     cfg.default_model = "test-provider:new-chat"
     cfg.enable_content_guard = True
-    cfg.save()
-
-    base_config = tomli.loads((tmp_path / "config" / "base.toml").read_text())
-    assert base_config["default_model"] == "test-provider:new-chat"
+    config_cache.save_runtime_config(cfg)
 
     payload = json.loads(redis.data[RUNTIME_CONFIG_REDIS_KEY])
-    assert payload["default_model"] == "test-provider:new-chat"
-    assert payload["enable_content_guard"] is True
-    assert payload["default_ocr_engine"] == "rapid_ocr"
-    assert "save_dir" not in payload
-    assert "enable_reranker" not in payload
-    assert "default_agent_id" not in payload
-    # 快照只含公开配置字段，不夹带元数据
-    assert "schema_version" not in payload
-    assert "saved_at" not in payload
-    assert all(not key.startswith("_") for key in payload)
+    assert payload["values"]["default_model"] == "test-provider:new-chat"
+    assert payload["values"]["enable_content_guard"] is True
+    assert payload["values"]["default_ocr_engine"] == "rapid_ocr"
+    assert "save_dir" not in payload["values"]
+    assert payload["version"] == ""
+    assert payload["updated_at"] == ""
 
 
-def test_unknown_config_fields_are_removed_on_save(tmp_path, monkeypatch: pytest.MonkeyPatch):
-    _patch_runtime_redis(monkeypatch, _FakeRedis())
+def test_base_toml_is_compatibility_read_only(tmp_path):
     config_dir = tmp_path / "config"
     config_dir.mkdir(parents=True)
-    (config_dir / "base.toml").write_text(
+    config_file = config_dir / "base.toml"
+    config_file.write_text(
         'default_model = "test-provider:file-chat"\nenable_reranker = true\ndefault_agent_id = "ChatbotAgent"\n',
         encoding="utf-8",
     )
@@ -150,14 +143,10 @@ def test_unknown_config_fields_are_removed_on_save(tmp_path, monkeypatch: pytest
     assert not hasattr(cfg, "enable_reranker")
     assert not hasattr(cfg, "default_agent_id")
 
-    cfg.save()
-
-    base_config = tomli.loads((config_dir / "base.toml").read_text())
-    assert base_config == {"default_model": "test-provider:file-chat"}
+    assert config_file.read_text(encoding="utf-8").endswith('default_agent_id = "ChatbotAgent"\n')
 
 
-def test_save_dir_from_base_toml_is_ignored(tmp_path, monkeypatch: pytest.MonkeyPatch):
-    _patch_runtime_redis(monkeypatch, _FakeRedis())
+def test_save_dir_from_base_toml_is_ignored(tmp_path):
     config_dir = tmp_path / "config"
     config_dir.mkdir(parents=True)
     (config_dir / "base.toml").write_text(
@@ -169,12 +158,6 @@ def test_save_dir_from_base_toml_is_ignored(tmp_path, monkeypatch: pytest.Monkey
 
     assert cfg.save_dir == str(tmp_path)
     assert cfg.default_model == "test-provider:file-chat"
-
-    cfg.save()
-
-    base_config = tomli.loads((config_dir / "base.toml").read_text())
-    assert base_config == {"default_model": "test-provider:file-chat"}
-
 
 def test_refresh_loads_public_config_from_redis(tmp_path, monkeypatch: pytest.MonkeyPatch):
     redis_save_dir = str(tmp_path / "redis-save")
@@ -212,16 +195,65 @@ def test_refresh_keeps_memory_value_when_redis_unavailable(tmp_path, monkeypatch
     assert redis.get_keys == [RUNTIME_CONFIG_REDIS_KEY]
 
 
-def test_save_keeps_base_toml_when_runtime_snapshot_write_fails(tmp_path, monkeypatch: pytest.MonkeyPatch):
+def test_refresh_recovers_redis_miss_from_newer_postgres_snapshot(tmp_path, monkeypatch: pytest.MonkeyPatch):
+    redis = _FakeRedis(raw=None)
+    _patch_runtime_redis(monkeypatch, redis)
+    cfg = Config(save_dir=str(tmp_path))
+    cfg.default_model = "test-provider:old-chat"
+    monkeypatch.setattr(
+        config_cache,
+        "_load_postgres_snapshot",
+        lambda _config: {
+            "version": "2026-08-13T01:00:00",
+            "updated_at": "2026-08-13T01:00:00",
+            "values": {"default_model": "test-provider:postgres-chat"},
+        },
+    )
+
+    cfg.refresh()
+
+    assert cfg.default_model == "test-provider:postgres-chat"
+    published = json.loads(redis.data[RUNTIME_CONFIG_REDIS_KEY])
+    assert published["version"] == "2026-08-13T01:00:00"
+    assert published["values"]["default_model"] == "test-provider:postgres-chat"
+
+
+def test_refresh_replaces_stale_redis_snapshot_from_postgres(tmp_path, monkeypatch: pytest.MonkeyPatch):
+    redis = _FakeRedis(
+        raw=json.dumps(
+            {
+                "version": "2026-08-13T00:00:00",
+                "updated_at": "2026-08-13T00:00:00",
+                "values": {"default_model": "test-provider:stale-chat"},
+            }
+        )
+    )
+    _patch_runtime_redis(monkeypatch, redis)
+    cfg = Config(save_dir=str(tmp_path))
+    monkeypatch.setattr(
+        config_cache,
+        "_load_postgres_snapshot",
+        lambda _config: {
+            "version": "2026-08-13T02:00:00",
+            "updated_at": "2026-08-13T02:00:00",
+            "values": {"default_model": "test-provider:fresh-chat"},
+        },
+    )
+
+    cfg.refresh()
+
+    assert cfg.default_model == "test-provider:fresh-chat"
+
+
+def test_runtime_snapshot_failure_does_not_write_base_toml(tmp_path, monkeypatch: pytest.MonkeyPatch):
     redis = _FakeRedis(set_error=RuntimeError("redis unavailable"))
     _patch_runtime_redis(monkeypatch, redis)
     cfg = Config(save_dir=str(tmp_path))
     cfg.default_model = "test-provider:file-chat"
 
-    cfg.save()
+    config_cache.save_runtime_config(cfg)
 
-    base_config = tomli.loads((tmp_path / "config" / "base.toml").read_text())
-    assert base_config["default_model"] == "test-provider:file-chat"
+    assert not (tmp_path / "config" / "base.toml").exists()
 
 
 def test_start_runtime_sync_is_idempotent(tmp_path):
@@ -258,6 +290,15 @@ def test_update_rejects_unknown_default_ocr_engine(tmp_path, monkeypatch: pytest
 
     with pytest.raises(ValueError, match="不支持的默认 OCR 引擎"):
         cfg.update({"default_ocr_engine": "not_an_ocr_engine"})
+
+
+def test_normalize_updates_does_not_modify_memory(tmp_path):
+    cfg = Config(save_dir=str(tmp_path))
+
+    normalized = cfg.normalize_updates({"default_model": "test-provider:persisted-chat"})
+
+    assert normalized == {"default_model": "test-provider:persisted-chat"}
+    assert cfg.default_model != "test-provider:persisted-chat"
 
 
 def test_dump_config_hides_save_dir(tmp_path):
