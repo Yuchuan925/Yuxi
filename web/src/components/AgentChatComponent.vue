@@ -356,8 +356,12 @@
 
                   <span v-if="hasTokenUsageMetrics" class="token-usage-card-metrics">
                     <span v-if="tokenUsageRunTotalLabel !== null">
-                      <small>累计 Token 用量</small>
-                      <strong>{{ tokenUsageRunTotalLabel }}</strong>
+                      <small>当前 Run 累计</small>
+                      <strong>{{ tokenUsageRunTotalLabel }} Token</strong>
+                    </span>
+                    <span v-if="tokenUsageThreadTotalLabel !== null">
+                      <small>当前 Thread 累计</small>
+                      <strong>{{ tokenUsageThreadTotalLabel }} Token</strong>
                     </span>
                     <span v-if="tokenUsageCacheHitLabel !== null">
                       <small>累计缓存命中率</small>
@@ -1417,12 +1421,20 @@ const tokenUsageStackHeadLabel = computed(() => {
   return `${formatTokenCount(tokenUsageStackTotal.value)} Token`
 })
 const tokenUsageRunTotal = computed(() => {
-  const total = toFiniteNumber(currentTokenUsage.value?.thread?.total?.total_tokens)
+  const total = toFiniteNumber(currentTokenUsage.value?.run?.total?.total_tokens)
   return total === null ? null : Math.max(total, 0)
 })
 const tokenUsageRunTotalLabel = computed(() => {
   if (tokenUsageRunTotal.value === null) return null
   return formatTokenCount(tokenUsageRunTotal.value)
+})
+const tokenUsageThreadTotal = computed(() => {
+  const total = toFiniteNumber(currentTokenUsage.value?.thread?.total?.total_tokens)
+  return total === null ? null : Math.max(total, 0)
+})
+const tokenUsageThreadTotalLabel = computed(() => {
+  if (tokenUsageThreadTotal.value === null) return null
+  return formatTokenCount(tokenUsageThreadTotal.value)
 })
 const tokenUsageCacheHitLabel = computed(() => {
   const models = currentTokenUsage.value?.thread?.models
@@ -1441,7 +1453,10 @@ const tokenUsageCacheHitLabel = computed(() => {
 })
 // 旧会话没有累计统计，两个指标都为 null 时隐藏整个指标行
 const hasTokenUsageMetrics = computed(
-  () => tokenUsageRunTotalLabel.value !== null || tokenUsageCacheHitLabel.value !== null
+  () =>
+    tokenUsageRunTotalLabel.value !== null ||
+    tokenUsageThreadTotalLabel.value !== null ||
+    tokenUsageCacheHitLabel.value !== null
 )
 const tokenUsageBarSegments = computed(() => {
   const limit = tokenUsageStackLimit.value || Math.max(tokenUsageStackTotal.value, 1)
