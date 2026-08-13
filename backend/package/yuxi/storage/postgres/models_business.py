@@ -28,6 +28,9 @@ JSON_VALUE = JSON().with_variant(JSONB, "postgresql")
 MAX_LOGIN_FAILED_ATTEMPTS = 5
 LOGIN_LOCK_DURATION_SECONDS = 300
 AGENT_RUN_TERMINAL_STATUSES = ("completed", "failed", "cancelled", "interrupted")
+# 新建线程的初始已查看标记，用于区分"尚无任何 Run"与"上线前的历史会话"，
+# 避免 startup 回填把后续新产生的未读状态误清为已读。不会与真实 Run id 冲突。
+UNVIEWED_RUN_MARKER = "__unviewed__"
 
 
 class Department(Base):

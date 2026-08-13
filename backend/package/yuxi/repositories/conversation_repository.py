@@ -9,7 +9,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from sqlalchemy.orm.attributes import flag_modified
 
-from yuxi.storage.postgres.models_business import Conversation, ConversationStats, Message, ToolCall
+from yuxi.storage.postgres.models_business import (
+    Conversation,
+    ConversationStats,
+    Message,
+    ToolCall,
+    UNVIEWED_RUN_MARKER,
+)
 from yuxi.utils import logger
 from yuxi.utils.datetime_utils import utc_now_naive
 
@@ -20,9 +26,6 @@ MESSAGE_SEARCH_SNIPPETS_PER_THREAD = 2
 MESSAGE_SEARCH_ROLES = ("user", "assistant")
 MESSAGE_SEARCH_EXCLUDED_TYPES = ("tool_call", "tool_result")
 INVOCATION_CONVERSATION_SOURCES = ("agent_call", "agent_evaluation")
-# 新建线程的初始已查看标记，用于区分"尚无任何 Run"与"上线前的历史会话"，
-# 避免 startup 回填把后续新产生的未读状态误清为已读。不会与真实 Run id 冲突。
-UNVIEWED_RUN_MARKER = "__unviewed__"
 
 
 class ConversationRepository:

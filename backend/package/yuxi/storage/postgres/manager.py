@@ -8,7 +8,7 @@ from psycopg_pool import AsyncConnectionPool
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import declarative_base
-from yuxi.storage.postgres.models_business import AGENT_RUN_TERMINAL_STATUSES
+from yuxi.storage.postgres.models_business import AGENT_RUN_TERMINAL_STATUSES, UNVIEWED_RUN_MARKER
 from yuxi.storage.postgres.models_business import Base as BusinessBase
 from yuxi.storage.postgres.models_knowledge import Base as KnowledgeBase
 from yuxi.utils import logger
@@ -951,6 +951,13 @@ class PostgresManager(metaclass=SingletonMeta):
                         ") r "
                         "WHERE c.thread_id = r.thread_id AND c.last_viewed_run_id IS NULL"
                     )
+                )
+                # 没有 chat/resume Run 的历史会话（如 agent_call / agent_evaluation 调用、
+                # 从未真正对话过的线程）写入未读哨兵，使上面的探测条件在首次回填后自然收敛，
+                # 避免每次启动都重复对 agent_runs 做全表聚合。
+                await conn.execute(
+                    text("UPDATE conversations SET last_viewed_run_id = :marker WHERE last_viewed_run_id IS NULL"),
+                    {"marker": UNVIEWED_RUN_MARKER},
                 )
 
     @property

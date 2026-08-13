@@ -2562,14 +2562,17 @@ const { startRunStream, resumeActiveRunForThread, stopRunStreamSubscription } = 
   onInterruptDetected: ({ threadId }) => {
     restorePendingInterruptForThread(threadId)
     void resumeQueuedRequestsForThread(threadId)
-    void chatThreadsStore.markThreadViewed(threadId)
+    if (threadId === chatState.currentThreadId) {
+      void chatThreadsStore.markThreadViewed(threadId)
+    }
   },
   onTerminalDetected: ({ threadId, runId, touchedThreadIds = [] }) => {
     if (approvalState.threadId === threadId || touchedThreadIds.includes(approvalState.threadId)) {
       hideApprovalState()
     }
     void resumeQueuedRequestsForThread(threadId)
-    if (runId) {
+    // 仅当终态事件属于当前正在查看的线程时才自动标记已读；后台线程保留 ready 态
+    if (runId && threadId === chatState.currentThreadId) {
       void chatThreadsStore.markThreadViewed(threadId)
     }
   },
