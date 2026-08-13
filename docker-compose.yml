@@ -4,11 +4,11 @@ x-api-worker-env: &api-worker-env
   RUNNING_IN_DOCKER: "true"
   YUXI_ENV: development
   # DBs and other services
-  POSTGRES_URL: ${POSTGRES_URL:-postgresql+asyncpg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-yuxi}}
+  POSTGRES_URL: ${POSTGRES_URL:-postgresql+asyncpg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:?Run scripts/init.sh or set POSTGRES_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-yuxi}}
   REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
   NEO4J_URI: ${NEO4J_URI:-bolt://graph:7687}
   NEO4J_USERNAME: ${NEO4J_USERNAME:-neo4j}
-  NEO4J_PASSWORD: ${NEO4J_PASSWORD:-0123456789}
+  NEO4J_PASSWORD: ${NEO4J_PASSWORD:?Run scripts/init.sh or set NEO4J_PASSWORD in .env}
   MILVUS_URI: ${MILVUS_URI:-http://milvus:19530}
   MILVUS_DB_NAME: ${MILVUS_DB_NAME:-default}
   MILVUS_TOKEN: ${MILVUS_TOKEN:-}
@@ -52,6 +52,7 @@ services:
       - ./docker/volumes/models:/app/models
       - ./backend/test:/app/test
       - ./backend/scripts:/app/scripts
+      - ./scripts:/workspace-scripts:ro
       - ./docker/sandbox_provisioner:/app/docker/sandbox_provisioner:ro
       - ./.env:/app/.env
       - /var/run/docker.sock:/var/run/docker.sock
@@ -100,6 +101,7 @@ services:
       - ./docker/volumes/models:/app/models
       - ./backend/test:/app/test
       - ./backend/scripts:/app/scripts
+      - ./scripts:/workspace-scripts:ro
       - ./docker/sandbox_provisioner:/app/docker/sandbox_provisioner:ro
       - ./.env:/app/.env
       - ./backend/pyproject.toml:/app/pyproject.toml
@@ -216,13 +218,13 @@ services:
       - ./docker/volumes/neo4j/data:/data
       - ./docker/volumes/neo4j/logs:/var/lib/neo4j/logs
     healthcheck:
-      test: ["CMD-SHELL", "cypher-shell -a bolt://localhost:7687 -u ${NEO4J_USERNAME:-neo4j} -p ${NEO4J_PASSWORD:-0123456789} 'RETURN 1;' >/dev/null || exit 1"]
+      test: ["CMD-SHELL", "cypher-shell -a bolt://localhost:7687 -u ${NEO4J_USERNAME:-neo4j} -p ${NEO4J_PASSWORD:?Run scripts/init.sh or set NEO4J_PASSWORD in .env} 'RETURN 1;' >/dev/null || exit 1"]
       interval: 20s
       timeout: 10s
       retries: 5
       start_period: 30s
     environment:
-      - NEO4J_AUTH=${NEO4J_USERNAME:-neo4j}/${NEO4J_PASSWORD:-0123456789}
+      - NEO4J_AUTH=${NEO4J_USERNAME:-neo4j}/${NEO4J_PASSWORD:?Run scripts/init.sh or set NEO4J_PASSWORD in .env}
       - NEO4J_server_bolt_listen__address=0.0.0.0:7687
       - NEO4J_server_http_listen__address=0.0.0.0:7474
       - ENTITY_EMBEDDING=true
@@ -256,8 +258,8 @@ services:
     container_name: minio
     image: minio/minio:RELEASE.2023-03-20T20-16-18Z
     environment:
-      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
-      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:?Run scripts/init.sh or set MINIO_ACCESS_KEY in .env}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:?Run scripts/init.sh or set MINIO_SECRET_KEY in .env}
     volumes:
       - ./docker/volumes/milvus/minio:/minio_data
       - ./docker/volumes/milvus/minio_config:/root/.minio
@@ -284,8 +286,8 @@ services:
     environment:
       ETCD_ENDPOINTS: etcd:2379
       MINIO_ADDRESS: minio:9000
-      MINIO_ACCESS_KEY_ID: ${MINIO_ACCESS_KEY:-minioadmin}
-      MINIO_SECRET_ACCESS_KEY: ${MINIO_SECRET_KEY:-minioadmin}
+      MINIO_ACCESS_KEY_ID: ${MINIO_ACCESS_KEY:?Run scripts/init.sh or set MINIO_ACCESS_KEY in .env}
+      MINIO_SECRET_ACCESS_KEY: ${MINIO_SECRET_KEY:?Run scripts/init.sh or set MINIO_SECRET_KEY in .env}
       MILVUS_LOG_LEVEL: error
     volumes:
       - ./docker/volumes/milvus/milvus:/var/lib/milvus
@@ -313,7 +315,7 @@ services:
       - "127.0.0.1:5432:5432"
     environment:
       - POSTGRES_USER=${POSTGRES_USER:-postgres}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?Run scripts/init.sh or set POSTGRES_PASSWORD in .env}
       - POSTGRES_DB=${POSTGRES_DB:-yuxi}
       - TZ=${TZ:-Asia/Shanghai}
     volumes:

@@ -93,6 +93,91 @@ ensure_sandbox_env() {
     set_env_value "SANDBOX_PROVISIONER_TOKEN" "$SANDBOX_PROVISIONER_TOKEN"
 }
 
+env_value() {
+    local name="$1"
+    awk -F= -v name="$name" '
+        $1 == name {
+            sub(/^[^=]*=/, "")
+            value = $0
+        }
+        END {
+            gsub(/^[[:space:]]+|[[:space:]]+$/, "", value)
+            quote = substr(value, 1, 1)
+            if ((quote == "\"") || (quote == "\047")) {
+                rest = substr(value, 2)
+                closing = index(rest, quote)
+                suffix = closing ? substr(rest, closing + 1) : ""
+                if (closing && suffix ~ /^[[:space:]]*(#.*)?$/) {
+                    print substr(rest, 1, closing - 1)
+                } else {
+                    print value
+                }
+            } else {
+                sub(/[[:space:]]+#.*$/, "", value)
+                sub(/[[:space:]]+$/, "", value)
+                print value
+            }
+        }
+    ' .env
+}
+
+directory_has_data() {
+    local path="$1"
+    local first_entry
+    if [ ! -e "$path" ]; then
+        return 1
+    fi
+    if [ ! -d "$path" ] || [ ! -r "$path" ] || [ ! -x "$path" ]; then
+        echo "❌ Cannot safely inspect persisted data path: ${path}." >&2
+        exit 1
+    fi
+    if ! first_entry=$(find "$path" -mindepth 1 -maxdepth 1 -print -quit); then
+        echo "❌ Cannot safely inspect persisted data path: ${path}." >&2
+        exit 1
+    fi
+    [ -n "$first_entry" ]
+}
+
+ensure_service_credential() {
+    local name="$1"
+    local public_default="$2"
+    local byte_count="$3"
+    local data_path="$4"
+    local current_value
+    current_value=$(env_value "$name")
+
+    if [ -n "$current_value" ] && [ "$current_value" != "$public_default" ] && [[ "$current_value" != *'$'* ]]; then
+        return
+    fi
+
+    if directory_has_data "$data_path"; then
+        echo "❌ ${name} is missing or insecure while ${data_path} contains persisted data."
+        echo "Rotate the service credential first, then update .env. See docs/advanced/deployment.md."
+        exit 1
+    fi
+
+    set_env_value "$name" "$(generate_hex "$byte_count")"
+    echo "Generated secure ${name} and saved it to .env."
+}
+
+ensure_service_credentials() {
+    ensure_service_credential "POSTGRES_PASSWORD" "postgres" 32 "docker/volumes/postgresql"
+    ensure_service_credential "NEO4J_PASSWORD" "0123456789" 32 "docker/volumes/neo4j/data"
+    ensure_service_credential "MINIO_ACCESS_KEY" "minioadmin" 10 "docker/volumes/milvus/minio"
+    ensure_service_credential "MINIO_SECRET_KEY" "minioadmin" 32 "docker/volumes/milvus/minio"
+}
+
+ensure_new_install_has_no_service_data() {
+    local data_path
+    for data_path in docker/volumes/postgresql docker/volumes/neo4j/data docker/volumes/milvus/minio; do
+        if directory_has_data "$data_path"; then
+            echo "❌ .env is missing while ${data_path} contains persisted data."
+            echo "Restore the matching credentials before initialization. See docs/advanced/deployment.md."
+            exit 1
+        fi
+    done
+}
+
 skip_existing_image() {
     local image="$1"
 
@@ -113,7 +198,9 @@ if [ -f ".env" ]; then
     ensure_required_api_env
     ensure_jwt_env
     ensure_sandbox_env
+    ensure_service_credentials
 else
+    ensure_new_install_has_no_service_data
     echo "📝 .env file not found. Let's set up your environment variables."
     echo ""
 
@@ -175,6 +262,11 @@ else
         echo "Generated SANDBOX_PROVISIONER_TOKEN and saved it to .env."
     fi
 
+    POSTGRES_PASSWORD=$(generate_hex 32)
+    NEO4J_PASSWORD=$(generate_hex 32)
+    MINIO_ACCESS_KEY=$(generate_hex 10)
+    MINIO_SECRET_KEY=$(generate_hex 32)
+
     # Create .env file
     cat > .env << EOF
 # SiliconFlow API Key (required)
@@ -199,6 +291,12 @@ EOF
 JWT_SECRET_KEY=${JWT_SECRET_KEY}
 YUXI_INSTANCE_ID=${YUXI_INSTANCE_ID}
 SANDBOX_PROVISIONER_TOKEN=${SANDBOX_PROVISIONER_TOKEN}
+
+# Service credentials generated for this installation
+POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+NEO4J_PASSWORD=${NEO4J_PASSWORD}
+MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY}
+MINIO_SECRET_KEY=${MINIO_SECRET_KEY}
 EOF
 
     echo "✅ .env file created successfully!"

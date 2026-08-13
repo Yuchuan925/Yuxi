@@ -64,6 +64,8 @@ cd Yuxi
 .\scripts\init.ps1
 ```
 
+The initialization script generates random PostgreSQL, Neo4j, and MinIO credentials in `.env`. Keep this file private and do not commit it; Compose no longer falls back to public default passwords.
+
 **2. Start with Docker**
 
 ```bash

@@ -49,6 +49,7 @@ cd Yuxi
 - 创建 `.env` 配置文件
 - 设置 `SILICONFLOW_API_KEY`（必需，用于调用大模型）
 - 设置 `TAVILY_API_KEY`（可选，用于搜索服务）
+- 自动生成 PostgreSQL、Neo4j 与 MinIO 的随机凭据，请妥善保存 `.env`，不要提交到版本库
 - 自动拉取必需的 Docker 镜像
 
 ::: tip API Key 获取
@@ -64,8 +65,11 @@ cd Yuxi
 # 复制环境变量模板
 cp .env.template .env
 
-# 编辑 .env 文件，填入你的 API Key
+# 编辑 .env 文件，填入 API Key，并为 POSTGRES_PASSWORD、NEO4J_PASSWORD、
+# MINIO_ACCESS_KEY、MINIO_SECRET_KEY 设置各不相同的随机值
 ```
+
+开发与生产 Compose 都不会回退到公开默认凭据；上述服务凭据缺失时会拒绝启动。若已有数据卷仍使用历史默认凭据，请先按[生产部署指南](../advanced/deployment.md#从使用默认凭据的版本升级)完成服务内凭据轮换，再更新 `.env`。
 
 ### 步骤三：启动服务
 

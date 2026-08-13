@@ -56,6 +56,8 @@ cd Yuxi
 .\scripts\init.ps1
 ```
 
+初始化脚本会为 PostgreSQL、Neo4j 和 MinIO 生成随机凭据并写入 `.env`。请妥善保存该文件，不要提交到版本库；Compose 不再使用公开默认密码。
+
 **2. 使用 Docker 启动**
 
 ```bash

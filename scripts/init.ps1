@@ -91,6 +91,68 @@ function Ensure-SandboxEnv {
     Set-EnvValue "SANDBOX_PROVISIONER_TOKEN" $SANDBOX_PROVISIONER_TOKEN
 }
 
+function Get-EnvValue($Name) {
+    $escapedName = [regex]::Escape($Name)
+    $line = Get-Content -Path ".env" | Where-Object { $_ -match "^$escapedName=" } | Select-Object -Last 1
+    if ($null -eq $line) {
+        return ""
+    }
+    $value = $line.Substring($line.IndexOf("=") + 1).Trim()
+    if ($value.StartsWith('"') -or $value.StartsWith("'")) {
+        $quote = $value.Substring(0, 1)
+        $closing = $value.IndexOf($quote, 1)
+        if ($closing -gt 0 -and $value.Substring($closing + 1) -match '^\s*(#.*)?$') {
+            return $value.Substring(1, $closing - 1)
+        }
+    }
+    return ($value -replace '\s+#.*$', '').TrimEnd()
+}
+
+function Test-DirectoryHasData($Path) {
+    if (-not (Test-Path $Path)) {
+        return $false
+    }
+    try {
+        return $null -ne (Get-ChildItem -Path $Path -Force -ErrorAction Stop | Select-Object -First 1)
+    } catch {
+        Write-Host "❌ Cannot safely inspect persisted data path: $Path." -ForegroundColor Red
+        exit 1
+    }
+}
+
+function Ensure-ServiceCredential($Name, $PublicDefault, $ByteCount, $DataPath) {
+    $currentValue = Get-EnvValue $Name
+    if (-not [string]::IsNullOrEmpty($currentValue) -and $currentValue -ne $PublicDefault -and -not $currentValue.Contains('$')) {
+        return
+    }
+
+    if (Test-DirectoryHasData $DataPath) {
+        Write-Host "❌ $Name is missing or insecure while $DataPath contains persisted data." -ForegroundColor Red
+        Write-Host "Rotate the service credential first, then update .env. See docs/advanced/deployment.md." -ForegroundColor Red
+        exit 1
+    }
+
+    Set-EnvValue $Name (New-RandomHex $ByteCount)
+    Write-Host "Generated secure $Name and saved it to .env." -ForegroundColor Green
+}
+
+function Ensure-ServiceCredentials {
+    Ensure-ServiceCredential "POSTGRES_PASSWORD" "postgres" 32 "docker/volumes/postgresql"
+    Ensure-ServiceCredential "NEO4J_PASSWORD" "0123456789" 32 "docker/volumes/neo4j/data"
+    Ensure-ServiceCredential "MINIO_ACCESS_KEY" "minioadmin" 10 "docker/volumes/milvus/minio"
+    Ensure-ServiceCredential "MINIO_SECRET_KEY" "minioadmin" 32 "docker/volumes/milvus/minio"
+}
+
+function Confirm-NewInstallHasNoServiceData {
+    foreach ($dataPath in @("docker/volumes/postgresql", "docker/volumes/neo4j/data", "docker/volumes/milvus/minio")) {
+        if (Test-DirectoryHasData $dataPath) {
+            Write-Host "❌ .env is missing while $dataPath contains persisted data." -ForegroundColor Red
+            Write-Host "Restore the matching credentials before initialization. See docs/advanced/deployment.md." -ForegroundColor Red
+            exit 1
+        }
+    }
+}
+
 function Test-SkipExistingImage($ImageTag) {
     & docker image inspect $ImageTag *> $null
     if ($LASTEXITCODE -ne 0) {
@@ -110,7 +172,9 @@ if (Test-Path ".env") {
     Ensure-RequiredApiEnv
     Ensure-JwtEnv
     Ensure-SandboxEnv
+    Ensure-ServiceCredentials
 } else {
+    Confirm-NewInstallHasNoServiceData
     Write-Host "📝 .env file not found. Let's set up your environment variables." -ForegroundColor Yellow
     Write-Host ""
 
@@ -169,6 +233,11 @@ if (Test-Path ".env") {
         Write-Host "Generated SANDBOX_PROVISIONER_TOKEN and saved it to .env." -ForegroundColor Green
     }
 
+    $POSTGRES_PASSWORD = New-RandomHex 32
+    $NEO4J_PASSWORD = New-RandomHex 32
+    $MINIO_ACCESS_KEY = New-RandomHex 10
+    $MINIO_SECRET_KEY = New-RandomHex 32
+
     # Create .env file
     $envContent = @"
 # SiliconFlow API Key (required)
@@ -193,6 +262,12 @@ SILICONFLOW_API_KEY=$apiKey
 JWT_SECRET_KEY=$JWT_SECRET_KEY
 YUXI_INSTANCE_ID=$YUXI_INSTANCE_ID
 SANDBOX_PROVISIONER_TOKEN=$SANDBOX_PROVISIONER_TOKEN
+
+# Service credentials generated for this installation
+POSTGRES_PASSWORD=$POSTGRES_PASSWORD
+NEO4J_PASSWORD=$NEO4J_PASSWORD
+MINIO_ACCESS_KEY=$MINIO_ACCESS_KEY
+MINIO_SECRET_KEY=$MINIO_SECRET_KEY
 "@
 
     $envContent | Out-File -FilePath ".env" -Encoding UTF8
@@ -206,6 +281,10 @@ SANDBOX_PROVISIONER_TOKEN=$SANDBOX_PROVISIONER_TOKEN
     Remove-Variable -Name "JWT_SECRET_KEY" -ErrorAction SilentlyContinue
     Remove-Variable -Name "YUXI_INSTANCE_ID" -ErrorAction SilentlyContinue
     Remove-Variable -Name "SANDBOX_PROVISIONER_TOKEN" -ErrorAction SilentlyContinue
+    Remove-Variable -Name "POSTGRES_PASSWORD" -ErrorAction SilentlyContinue
+    Remove-Variable -Name "NEO4J_PASSWORD" -ErrorAction SilentlyContinue
+    Remove-Variable -Name "MINIO_ACCESS_KEY" -ErrorAction SilentlyContinue
+    Remove-Variable -Name "MINIO_SECRET_KEY" -ErrorAction SilentlyContinue
 }
 
 Write-Host ""
