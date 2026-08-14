@@ -10,6 +10,8 @@
 1. 升级到 v0.7.2 后，管理员此前创建的 stdio MCP 会被禁用，也无法重新启用。请在详情页迁移为 SSE 或 Streamable HTTP，或直接删除；代码内置的系统 stdio MCP 不受影响。
 :::
 
+- 完善 Agent Token 用量统计：state 同时保留近似上下文与主 Agent 模型返回的 Provider `usage_metadata`，实际用量拆分为最近调用、当前 Run 和线程累计；前端只读取 state，终态 chunk 不传递用量，worker 在 Run 终态时将父线程中 Run ID 匹配的 state 快照写入 AgentRun。支持 OpenAI priority/flex 缓存明细；L2 摘要内部调用暂未计入完整账单口径。
+- 修复公开图片上传的存储型 XSS 风险：头像与用户图片不再信任客户端 MIME 或文件名后缀，服务端校验真实图片内容且仅接受 PNG、JPEG、WebP、GIF，对象名使用识别出的固定安全后缀，拒绝伪装成图片的 SVG。
 
 - 优化知识库文档列表性能：根目录虚拟目录分组改用部分索引（`idx_kf_kb_parent_segment` 按路径首段聚合），平铺文件筛选与排序用 `idx_kf_kb_parent_flat` 支撑，避免大知识库全表扫描与 46MB 磁盘排序溢出；文件统计聚合结果增加 10 秒 Redis 短缓存，列表、统计、子目录计数与创建人查询并行执行，前端自动刷新轮询间隔同步调整为 10 秒。36 万文件知识库列表接口耗时由约 1.3s 降至约 300ms。
 - 修复 MCP 管理接口可通过 stdio 启动任意本地进程的问题：用户配置仅允许 SSE/Streamable HTTP，运行时拒绝加载历史用户 stdio 记录，系统内置 stdio 的连接参数改为仅由代码维护；前端移除用户 stdio 配置入口，文档补充内置 stdio 的代码添加与验证方式。

@@ -206,6 +206,7 @@ export function useAgentStreamHandler({
             todos: chunk.agent_state?.todos || [],
             uploads: chunk.agent_state?.uploads || []
           })
+          threadState.agentStateRequestVersion = (threadState.agentStateRequestVersion || 0) + 1
           threadState.agentState = chunk.agent_state
         } else {
           console.warn(`${debugPrefix}[agent_state_skip]`, {

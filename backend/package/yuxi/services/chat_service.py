@@ -1369,6 +1369,7 @@ async def get_agent_state_view(
     current_user: User,
     db,
     include_messages: bool = False,
+    include_relations: bool = True,
 ) -> dict:
     from fastapi import HTTPException
 
@@ -1416,30 +1417,31 @@ async def get_agent_state_view(
                 **_build_pending_interrupt_payload(interrupt_info, thread_id),
                 "run_id": latest_run.id,
             }
-        relation = await SubagentThreadRepository(db).get_by_child_conversation_for_user(
-            conversation.id,
-            str(current_uid),
-        )
-        if relation:
-            parent_conversation = await conv_repo.get_conversation_by_id(relation.parent_conversation_id)
-            if (
-                not parent_conversation
-                or parent_conversation.uid != str(current_uid)
-                or parent_conversation.status == "deleted"
-            ):
-                raise HTTPException(status_code=404, detail="父对话线程不存在")
-            response["parent_thread_id"] = parent_conversation.thread_id
-            response["subagent_thread"] = relation.to_dict()
-            latest_run = await run_repo.get_latest_subagent_run_by_thread_for_user(
-                thread_id,
+        if include_relations:
+            relation = await SubagentThreadRepository(db).get_by_child_conversation_for_user(
+                conversation.id,
                 str(current_uid),
             )
-            if latest_run:
-                try:
-                    response["subagent_run"] = serialize_subagent_run_state(latest_run)
-                except ValueError as exc:
-                    logger.error(f"子智能体运行记录格式异常: thread_id={thread_id}, run_id={latest_run.id}, {exc}")
-                    raise HTTPException(status_code=500, detail="子智能体运行记录格式异常") from exc
+            if relation:
+                parent_conversation = await conv_repo.get_conversation_by_id(relation.parent_conversation_id)
+                if (
+                    not parent_conversation
+                    or parent_conversation.uid != str(current_uid)
+                    or parent_conversation.status == "deleted"
+                ):
+                    raise HTTPException(status_code=404, detail="父对话线程不存在")
+                response["parent_thread_id"] = parent_conversation.thread_id
+                response["subagent_thread"] = relation.to_dict()
+                latest_run = await run_repo.get_latest_subagent_run_by_thread_for_user(
+                    thread_id,
+                    str(current_uid),
+                )
+                if latest_run:
+                    try:
+                        response["subagent_run"] = serialize_subagent_run_state(latest_run)
+                    except ValueError as exc:
+                        logger.error(f"子智能体运行记录格式异常: thread_id={thread_id}, run_id={latest_run.id}, {exc}")
+                        raise HTTPException(status_code=500, detail="子智能体运行记录格式异常") from exc
         if include_messages:
             response["messages"] = _serialize_state_messages(values)
         return response

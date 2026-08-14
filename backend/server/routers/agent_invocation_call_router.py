@@ -193,10 +193,10 @@ def _extract_input_message(messages: list[dict[str, Any]]) -> AgentRunInputMessa
     raise HTTPException(status_code=422, detail="messages 必须包含 user 消息")
 
 
-def _normalize_usage(usage: object) -> dict[str, int]:
+def _normalize_usage(usage: object) -> dict[str, int] | None:
     """把不同来源的 usage 字段归一为 OpenAI-compatible 计数字段。"""
     if not isinstance(usage, dict):
-        return {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+        return None
     prompt = usage.get("prompt_tokens", usage.get("input_tokens", 0))
     completion = usage.get("completion_tokens", usage.get("output_tokens", 0))
     total = usage.get("total_tokens")
@@ -211,6 +211,10 @@ def _build_agent_call_response(result: dict[str, Any]) -> dict[str, Any]:
     raw_status = str(result.get("status") or "unknown")
     status = "pending" if raw_status == "dispatched" else raw_status
     output = result.get("output") if isinstance(result.get("output"), str) else ""
+    token_usage = result.get("token_usage")
+    token_total = (
+        token_usage.get("total") if isinstance(token_usage, dict) and token_usage.get("complete") is True else None
+    )
     payload: dict[str, Any] = {
         "run_id": result.get("agent_run_id") or result.get("run_id"),
         "agent_slug": result.get("agent_slug"),
@@ -225,7 +229,7 @@ def _build_agent_call_response(result: dict[str, Any]) -> dict[str, Any]:
                 "finish_reason": _finish_reason(status),
             }
         ],
-        "usage": _normalize_usage(result.get("usage")),
+        "usage": _normalize_usage(token_total),
     }
     if result.get("error"):
         payload["error"] = result["error"]

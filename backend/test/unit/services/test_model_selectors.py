@@ -184,6 +184,10 @@ def test_load_chat_model_uses_toolcall_chunk_fix_for_openai_compatible(monkeypat
     # 不再按 provider 禁用流式，改用归一化子类规避 v3 流式累积丢 tool_call 字段的缺陷
     assert isinstance(model, _ToolCallChunkFixChatOpenAI)
     assert model.disable_streaming is False
+    assert model.metadata["yuxi_provider_id"] == "siliconflow-cn"
+    assert model.metadata["yuxi_provider_type"] == "openai"
+    assert model.metadata["yuxi_model_id"] == "deepseek-ai/DeepSeek-V4-Flash"
+    assert model.metadata["yuxi_model_spec"] == "siliconflow-cn:deepseek-ai/DeepSeek-V4-Flash"
 
 
 def test_load_chat_model_keeps_non_siliconflow_openai_streaming(monkeypatch):

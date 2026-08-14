@@ -845,6 +845,7 @@ async def get_agent_run_result(*, run_id: str, current_uid: str, db: AsyncSessio
         "request_id": run.request_id,
         "final_message_id": output_message.id if output_message else None,
         "langfuse_trace_id": output_metadata.get("langfuse_trace_id"),
+        "token_usage": getattr(run, "token_usage", None) or {},
     }
     if run.error_type or run.error_message:
         payload["error"] = {"type": run.error_type, "message": run.error_message}
