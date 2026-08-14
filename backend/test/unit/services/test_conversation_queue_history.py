@@ -119,3 +119,106 @@ async def test_queue_history_keeps_each_request_with_its_reply(session):
         "B",
         "B reply",
     ]
+
+
+async def test_thread_history_includes_run_timing_on_assistant_messages(session):
+    started_at = datetime(2026, 7, 12, 9, 0, 0)
+    run_started_at = started_at + timedelta(seconds=10)
+    run_finished_at = started_at + timedelta(seconds=22)
+    session.add(Conversation(id=1, thread_id="thread-1", uid="user-1", agent_id="main", status="active"))
+    session.add(
+        AgentRun(
+            id="run-a",
+            conversation_thread_id="thread-1",
+            agent_slug="main",
+            uid="user-1",
+            request_id="request-a",
+            conversation_id=1,
+            input_payload={},
+            status="completed",
+            created_at=started_at,
+            started_at=run_started_at,
+            finished_at=run_finished_at,
+        )
+    )
+    session.add_all(
+        [
+            Message(
+                id=1,
+                conversation_id=1,
+                role="user",
+                content="A",
+                request_id="request-a",
+                run_id="run-a",
+                delivery_status="complete",
+                created_at=started_at,
+            ),
+            Message(
+                id=2,
+                conversation_id=1,
+                role="assistant",
+                content="A reply",
+                run_id="run-a",
+                delivery_status="complete",
+                created_at=run_finished_at,
+            ),
+        ]
+    )
+    await session.commit()
+
+    history = await get_thread_history_view(
+        thread_id="thread-1",
+        current_uid="user-1",
+        db=session,
+    )
+
+    assistant_message = next(
+        message for message in history["history"] if message["type"] == "ai"
+    )
+    assert assistant_message["run_started_at"] == "2026-07-12T09:00:10Z"
+    assert assistant_message["run_finished_at"] == "2026-07-12T09:00:22Z"
+
+    user_message = next(message for message in history["history"] if message["type"] == "human")
+    assert "run_started_at" not in user_message
+    assert "run_finished_at" not in user_message
+
+
+async def test_thread_history_handles_run_without_timing_fields(session):
+    started_at = datetime(2026, 7, 12, 9, 0, 0)
+    session.add(Conversation(id=1, thread_id="thread-1", uid="user-1", agent_id="main", status="active"))
+    session.add(
+        AgentRun(
+            id="run-a",
+            conversation_thread_id="thread-1",
+            agent_slug="main",
+            uid="user-1",
+            request_id="request-a",
+            conversation_id=1,
+            input_payload={},
+            status="completed",
+            created_at=started_at,
+            started_at=None,
+            finished_at=None,
+        )
+    )
+    session.add(
+        Message(
+            id=1,
+            conversation_id=1,
+            role="assistant",
+            content="A reply",
+            run_id="run-a",
+            delivery_status="complete",
+            created_at=started_at,
+        )
+    )
+    await session.commit()
+
+    history = await get_thread_history_view(
+        thread_id="thread-1",
+        current_uid="user-1",
+        db=session,
+    )
+    assistant_message = next(message for message in history["history"] if message["type"] == "ai")
+    assert assistant_message["run_started_at"] is None
+    assert assistant_message["run_finished_at"] is None
