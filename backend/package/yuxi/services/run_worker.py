@@ -12,7 +12,6 @@ from sqlalchemy import select, update
 from sqlalchemy.exc import OperationalError
 from yuxi.agents.mcp.service import ensure_builtin_mcp_servers_in_db
 from yuxi.agents.skills.service import init_builtin_skills
-from yuxi.config import config as sys_config
 from yuxi.repositories.agent_run_repository import TERMINAL_RUN_STATUSES, AgentRunRepository
 from yuxi.services.agent_request_queue_service import (
     RUN_STATUS_TO_DELIVERY_STATUS,
@@ -722,20 +721,33 @@ async def _worker_startup(ctx):
     pg_manager.initialize()
     await pg_manager.create_business_tables()
     await pg_manager.ensure_business_schema()
+    if os.getenv("LANGGRAPH_CHECKPOINTER_BACKEND", "postgres").strip().lower() == "postgres":
+        await pg_manager.setup_langgraph_checkpointer()
+    async with pg_manager.get_async_session_context() as session:
+        from yuxi.config.options import (
+            ensure_options_in_db,
+            invalidate_option_cache,
+            migrate_legacy_system_options,
+            system_options,
+        )
+
+        await ensure_options_in_db(session)
+        await migrate_legacy_system_options(session)
+        await session.commit()
+    await invalidate_option_cache(system_options.key)
     await ensure_builtin_mcp_servers_in_db()
     async with pg_manager.get_async_session_context() as session:
         await init_builtin_skills(session)
-        from yuxi.config.options import ensure_options_in_db
-
-        await ensure_options_in_db(session)
-    sys_config.start_runtime_sync()
     await recover_pending_dispatches()
 
 
 async def _worker_shutdown(ctx):
-    """关闭 worker 数据库连接。"""
+    """关闭 worker 共享连接。"""
 
     del ctx
+    from yuxi.services.run_queue_service import close_queue_clients
+
+    await close_queue_clients()
     await pg_manager.close()
 
 

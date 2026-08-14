@@ -10,11 +10,11 @@ from sqlalchemy.orm import selectinload
 from sqlalchemy.orm.attributes import flag_modified
 
 from yuxi.storage.postgres.models_business import (
+    UNVIEWED_RUN_MARKER,
     Conversation,
     ConversationStats,
     Message,
     ToolCall,
-    UNVIEWED_RUN_MARKER,
 )
 from yuxi.utils import logger
 from yuxi.utils.datetime_utils import utc_now_naive
@@ -180,8 +180,12 @@ class ConversationRepository:
         conversation.extra_metadata = metadata
         flag_modified(conversation, "extra_metadata")
         conversation.updated_at = utc_now_naive()
-        await self.db.commit()
-        await self.db.refresh(conversation)
+        await self.db.flush()
+
+    async def _lock_conversation_by_id(self, conversation_id: int) -> Conversation | None:
+        """锁定会话元数据，串行化同一线程的附件更新。"""
+        result = await self.db.execute(select(Conversation).where(Conversation.id == conversation_id).with_for_update())
+        return result.scalar_one_or_none()
 
     async def add_message(
         self,
@@ -584,6 +588,13 @@ class ConversationRepository:
         metadata = self._ensure_metadata(conversation)
         return list(metadata.get("attachments", []))
 
+    async def lock_attachments(self, conversation_id: int) -> list[dict]:
+        """锁定会话并返回当前附件，用于需要检查后更新的用例。"""
+        conversation = await self._lock_conversation_by_id(conversation_id)
+        if not conversation:
+            return []
+        return list(self._ensure_metadata(conversation).get("attachments", []))
+
     async def get_attachments_by_thread_id(self, thread_id: str) -> list[dict]:
         conversation = await self.get_conversation_by_thread_id(thread_id)
         if not conversation:
@@ -591,7 +602,7 @@ class ConversationRepository:
         return await self.get_attachments(conversation.id)
 
     async def add_attachment(self, conversation_id: int, attachment_info: dict) -> dict | None:
-        conversation = await self.get_conversation_by_id(conversation_id)
+        conversation = await self._lock_conversation_by_id(conversation_id)
         if not conversation:
             return None
 
@@ -604,7 +615,7 @@ class ConversationRepository:
         return attachment_info
 
     async def add_attachments(self, conversation_id: int, attachment_infos: list[dict]) -> list[dict] | None:
-        conversation = await self.get_conversation_by_id(conversation_id)
+        conversation = await self._lock_conversation_by_id(conversation_id)
         if not conversation:
             return None
 
@@ -620,7 +631,7 @@ class ConversationRepository:
     async def update_attachment_status(
         self, conversation_id: int, file_id: str, status: str, update_fields: dict | None = None
     ) -> dict | None:
-        conversation = await self.get_conversation_by_id(conversation_id)
+        conversation = await self._lock_conversation_by_id(conversation_id)
         if not conversation:
             return None
 
@@ -643,7 +654,7 @@ class ConversationRepository:
     async def bind_attachments_to_request(
         self, conversation_id: int, request_id: str, file_ids: list[str]
     ) -> list[dict]:
-        conversation = await self.get_conversation_by_id(conversation_id)
+        conversation = await self._lock_conversation_by_id(conversation_id)
         if not conversation or not request_id or not file_ids:
             return []
 
@@ -673,7 +684,7 @@ class ConversationRepository:
         return [item for item in attachments if item.get("request_id") == request_id]
 
     async def remove_attachment(self, conversation_id: int, file_id: str) -> bool:
-        conversation = await self.get_conversation_by_id(conversation_id)
+        conversation = await self._lock_conversation_by_id(conversation_id)
         if not conversation:
             return False
 

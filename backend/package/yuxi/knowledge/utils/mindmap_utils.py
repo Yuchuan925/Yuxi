@@ -8,7 +8,7 @@ from typing import Any
 
 from fastapi import HTTPException
 
-from yuxi import config
+from yuxi.config.options import system_options
 from yuxi.knowledge.runtime import knowledge_base
 from yuxi.models import select_model
 from yuxi.repositories.knowledge_base_repository import KnowledgeBaseRepository
@@ -375,7 +375,7 @@ async def update_mindmap_incremental(kb_id: str, user_prompt: str = "") -> dict[
     if changes["added_files"]:
         added_files_info = collect_mindmap_files(current_files, [f["file_id"] for f in changes["added_files"]])
         if added_files_info:
-            model = select_model(model_spec=config.default_model)
+            model = select_model(model_spec=(await system_options.get())["default_model"])
             messages = [
                 {"role": "system", "content": MINDMAP_INCREMENTAL_SYSTEM_PROMPT},
                 {
@@ -468,7 +468,7 @@ async def generate_database_mindmap(
 
     logger.info(f"开始生成思维导图，知识库: {db_name}, 文件数量: {len(files_info)}")
 
-    model = select_model(model_spec=config.default_model)
+    model = select_model(model_spec=(await system_options.get())["default_model"])
     messages = [
         {"role": "system", "content": MINDMAP_SYSTEM_PROMPT},
         {"role": "user", "content": build_mindmap_user_message(db_name, files_info, user_prompt)},

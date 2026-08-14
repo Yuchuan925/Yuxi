@@ -1,7 +1,7 @@
 import os
+from copy import copy
 from pathlib import Path
 
-from yuxi.config.app import config
 from yuxi.models import select_model
 from yuxi.utils import logger
 
@@ -42,6 +42,8 @@ def load_keywords(file_path: str) -> list[str]:
 
 
 class ContentGuard:
+    """基于关键词和可热更新 LLM 配置执行内容审查。"""
+
     def __init__(self, keywords_file: str = None):
         if keywords_file is None:
             keywords_file = Path(__file__).parent.parent / "config" / "static" / "bad_keywords.txt"
@@ -49,12 +51,25 @@ class ContentGuard:
         if not self.keywords:
             self.keywords = ["贩毒"]
 
-        # 从配置读取LLM模型设置
-        self.enable_llm = config.enable_content_guard_llm
-        if self.enable_llm and config.content_guard_llm_model:
-            self.llm_model = select_model(model_spec=config.content_guard_llm_model)
-        else:
-            self.llm_model = None
+        self.enable_llm = False
+        self.llm_model_spec = ""
+        self.llm_model = None
+
+    def configure(self, enabled: bool, model_spec: str) -> None:
+        """为本次运行设置 LLM 审查配置。"""
+        model_spec = model_spec if enabled else ""
+        if enabled == self.enable_llm and model_spec == self.llm_model_spec:
+            return
+
+        self.enable_llm = enabled
+        self.llm_model_spec = model_spec
+        self.llm_model = select_model(model_spec=model_spec) if model_spec else None
+
+    def configured(self, enabled: bool, model_spec: str) -> "ContentGuard":
+        """创建携带独立模型配置的请求级审查器。"""
+        guard = copy(self)
+        guard.configure(enabled, model_spec)
+        return guard
 
     async def check(self, text: str) -> bool:
         """

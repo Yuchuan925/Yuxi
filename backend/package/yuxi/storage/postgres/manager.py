@@ -4,6 +4,7 @@ import json
 import os
 from contextlib import asynccontextmanager
 
+from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from psycopg_pool import AsyncConnectionPool
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -36,6 +37,8 @@ class PostgresManager(metaclass=SingletonMeta):
         self.async_engine = None
         self.AsyncSession = None
         self.langgraph_pool = None
+        self.langgraph_checkpointer = None
+        self._langgraph_checkpointer_setup = False
         self._initialized = False
 
     def initialize(self):
@@ -95,6 +98,37 @@ class PostgresManager(metaclass=SingletonMeta):
         """检查是否已初始化"""
         if not self._initialized:
             raise RuntimeError("PostgreSQL manager not initialized. Please check configuration.")
+
+    def get_langgraph_checkpointer(self) -> AsyncPostgresSaver:
+        """获取当前进程共享的 PostgreSQL LangGraph checkpointer。"""
+        self._check_initialized()
+        if self.langgraph_pool is None:
+            raise RuntimeError("PostgreSQL LangGraph connection pool is not initialized.")
+        if self.langgraph_checkpointer is None:
+            self.langgraph_checkpointer = AsyncPostgresSaver(self.langgraph_pool)
+        return self.langgraph_checkpointer
+
+    async def setup_langgraph_checkpointer(self) -> AsyncPostgresSaver:
+        """跨进程串行创建 LangGraph checkpoint 表并返回共享 checkpointer。"""
+        checkpointer = self.get_langgraph_checkpointer()
+        if not self._langgraph_checkpointer_setup:
+            async with self.langgraph_pool.connection() as connection:
+                await connection.execute("SELECT pg_advisory_lock(94721802)")
+                try:
+                    await checkpointer.setup()
+                finally:
+                    try:
+                        cursor = await connection.execute("SELECT pg_advisory_unlock(94721802)")
+                        row = await cursor.fetchone()
+                        if not row or row[0] is not True:
+                            raise RuntimeError("Failed to release LangGraph checkpoint advisory lock")
+                    except BaseException:
+                        # Session 级锁不随事务回滚释放，解锁失败时必须销毁物理连接。
+                        await connection.close()
+                        raise
+                self._langgraph_checkpointer_setup = True
+                logger.info("LangGraph checkpoint tables verified/created")
+        return checkpointer
 
     async def create_tables(self):
         """创建所有表（知识库和业务表）"""
@@ -998,6 +1032,13 @@ class PostgresManager(metaclass=SingletonMeta):
 
         if self.langgraph_pool:
             await self.langgraph_pool.close()
+
+        self.async_engine = None
+        self.AsyncSession = None
+        self.langgraph_pool = None
+        self.langgraph_checkpointer = None
+        self._langgraph_checkpointer_setup = False
+        self._initialized = False
 
     async def async_check_first_run(self):
         """检查是否首次运行（异步版本）- 检查用户表是否有数据"""

@@ -26,8 +26,8 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from yuxi.agents.buildin import agent_manager
-from yuxi.agents.models import resolve_chat_model_spec
 from yuxi.agents.tool_approval import DEFAULT_TOOL_APPROVAL_MODE, normalize_tool_approval_mode
+from yuxi.config.options import system_options
 from yuxi.models.providers.cache import model_cache
 from yuxi.repositories.agent_repository import AgentRepository
 from yuxi.repositories.agent_run_repository import TERMINAL_RUN_STATUSES, AgentRunRepository
@@ -89,7 +89,7 @@ class AgentRunWaitTimeout(Exception):
         super().__init__(f"agent run {run_id} is still {status} after waiting")
 
 
-def _load_agent_context(agent_item, agent_backend):
+def load_agent_run_context(agent_item, agent_backend):
     """用 Agent 配置的 context 片段实例化并填充运行上下文，供 run 解析器读取配置字段。"""
     context = agent_backend.context_schema()
     config_json = getattr(agent_item, "config_json", None) or {}
@@ -99,41 +99,55 @@ def _load_agent_context(agent_item, agent_backend):
     return context
 
 
-def resolve_agent_run_model_spec(model_spec: str | None, agent_item, agent_backend, context=None) -> str:
-    """解析本次 run 实际使用的模型：显式覆盖优先，否则配置模型，最后系统默认模型。"""
-    normalized = model_spec.strip() if isinstance(model_spec, str) else None
-    if normalized:
-        info = model_cache.get_model_info(normalized)
-        if not info or info.model_type != "chat":
-            raise HTTPException(status_code=422, detail=f"未找到可用聊天模型: '{normalized}'")
-        return normalized
+async def resolve_agent_run_model_spec(
+    requested_model: str | None,
+    configured_model: str | None,
+    db: AsyncSession | None = None,
+) -> str:
+    """按请求、Agent 配置、系统默认的顺序解析并校验聊天模型。"""
+    model_spec = next(
+        (
+            candidate.strip()
+            for candidate in (requested_model, configured_model)
+            if isinstance(candidate, str) and candidate.strip()
+        ),
+        None,
+    )
+    if model_spec is None:
+        model_spec = str((await system_options.get(db))["default_model"]).strip()
 
-    if context is None:
-        context = _load_agent_context(agent_item, agent_backend)
-    return resolve_chat_model_spec(getattr(context, "model", None))
+    info = model_cache.get_model_info(model_spec)
+    if not info or info.model_type != "chat":
+        raise HTTPException(status_code=422, detail=f"未找到可用聊天模型: '{model_spec}'")
+    return model_spec
 
 
-def resolve_agent_run_tool_approval_mode(requested_mode: str | None, agent_item, agent_backend, context=None) -> str:
+def resolve_agent_run_tool_approval_mode(requested_mode: str | None, configured_mode: str | None) -> str:
     """解析本次 run 的工具审批模式：显式覆盖优先，否则使用 Agent 配置与默认值。"""
-    source = requested_mode
-    if source is None:
-        if context is None:
-            context = _load_agent_context(agent_item, agent_backend)
-        source = getattr(context, "tool_approval_mode", DEFAULT_TOOL_APPROVAL_MODE)
+    source = requested_mode if requested_mode is not None else configured_mode or DEFAULT_TOOL_APPROVAL_MODE
     try:
         return normalize_tool_approval_mode(source)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
-def resolve_agent_run_config(
-    model_spec: str | None, tool_approval_mode: str | None, agent_item, agent_backend
+async def resolve_agent_run_config(
+    model_spec: str | None,
+    tool_approval_mode: str | None,
+    agent_item,
+    agent_backend,
+    db: AsyncSession | None = None,
 ) -> tuple[str, str]:
     """一次性解析 model_spec 与 tool_approval_mode，共享同一份运行上下文。"""
-    context = _load_agent_context(agent_item, agent_backend)
-    resolved_model_spec = resolve_agent_run_model_spec(model_spec, agent_item, agent_backend, context)
+    context = load_agent_run_context(agent_item, agent_backend)
+    resolved_model_spec = await resolve_agent_run_model_spec(
+        model_spec,
+        getattr(context, "model", None),
+        db,
+    )
     resolved_tool_approval_mode = resolve_agent_run_tool_approval_mode(
-        tool_approval_mode, agent_item, agent_backend, context
+        tool_approval_mode,
+        getattr(context, "tool_approval_mode", None),
     )
     return resolved_model_spec, resolved_tool_approval_mode
 
@@ -447,8 +461,8 @@ async def create_agent_run_view(
             "tool_approval_mode", DEFAULT_TOOL_APPROVAL_MODE
         )
     else:
-        resolved_model_spec, resolved_tool_approval_mode = resolve_agent_run_config(
-            model_spec, tool_approval_mode, scope.agent_item, scope.agent_backend
+        resolved_model_spec, resolved_tool_approval_mode = await resolve_agent_run_config(
+            model_spec, tool_approval_mode, scope.agent_item, scope.agent_backend, db
         )
 
     run_input_message = _prepare_run_input_message(
