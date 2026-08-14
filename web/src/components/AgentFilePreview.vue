@@ -545,7 +545,6 @@ const zoomHtmlPreview = (delta) => {
 
 const resetHtmlPreviewZoom = () => {
   htmlPreviewScale.value = HTML_PREVIEW_DEFAULT_SCALE
-  htmlPreviewRenderKey.value += 1
 }
 
 const requestSave = () => {
