@@ -13,8 +13,8 @@ from langgraph.graph.state import CompiledStateGraph
 from langgraph.stream.transformers import CustomTransformer
 from langgraph.types import Command
 
-from yuxi.config import get_save_dir
 from yuxi.agents.context import DEFAULT_MAX_EXECUTION_STEPS, BaseContext, resolve_agent_resource_options
+from yuxi.config import get_save_dir
 from yuxi.storage.postgres.manager import pg_manager
 from yuxi.utils import logger
 from yuxi.utils.hash_utils import subagent_child_thread_id
@@ -270,8 +270,11 @@ class BaseAgent:
             with suppress(asyncio.CancelledError):
                 await route_task
 
-    async def stream_messages_with_state(self, messages: list[str], input_context=None, **kwargs):
-        async for event in self._stream_input_with_state({"messages": messages}, input_context, **kwargs):
+    async def stream_messages_with_state(self, messages: list[str], input_context=None, uploads=None, **kwargs):
+        graph_input = {"messages": messages}
+        if uploads is not None:
+            graph_input["uploads"] = uploads
+        async for event in self._stream_input_with_state(graph_input, input_context, **kwargs):
             yield event
 
     async def stream_resume_with_state(self, resume_input, input_context=None, **kwargs):

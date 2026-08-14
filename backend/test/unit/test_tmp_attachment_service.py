@@ -13,7 +13,7 @@ os.environ.setdefault(
     "SAVE_DIR", os.path.join(os.environ.get("CLAUDE_JOB_DIR", tempfile.gettempdir()), "yuxi-test-saves")
 )
 
-from yuxi.services import conversation_service as service
+from yuxi.services import attachment_service as service
 
 pytestmark = pytest.mark.unit
 
@@ -109,6 +109,26 @@ class FakeConversationRepository:
     async def get_attachments(self, conversation_id: int):
         return list(self.attachments)
 
+    async def lock_attachments(self, conversation_id: int):
+        return list(self.attachments)
+
+    async def remove_attachment(self, conversation_id: int, file_id: str):
+        before = len(self.attachments)
+        self.attachments = [item for item in self.attachments if item.get("file_id") != file_id]
+        return len(self.attachments) != before
+
+
+class FakeDB:
+    def __init__(self):
+        self.commit_count = 0
+        self.rollback_count = 0
+
+    async def commit(self):
+        self.commit_count += 1
+
+    async def rollback(self):
+        self.rollback_count += 1
+
 
 @pytest.mark.asyncio
 async def test_upload_tmp_attachment_writes_user_scoped_minio_object(monkeypatch):
@@ -171,13 +191,9 @@ async def test_confirm_tmp_thread_attachments_persists_objects_without_local_pat
     monkeypatch.setattr(service, "get_minio_client", lambda: fake_minio)
     monkeypatch.setattr(service, "ConversationRepository", lambda db: fake_repo)
 
-    async def noop_sync(**kwargs):
-        return None
-
     async def noop_invalidate(thread_id: str):
         return None
 
-    monkeypatch.setattr(service, "_sync_thread_upload_state", noop_sync)
     monkeypatch.setattr(service, "invalidate_mention_cache", noop_invalidate)
 
     response = await service.confirm_tmp_thread_attachments_view(
@@ -192,7 +208,7 @@ async def test_confirm_tmp_thread_attachments_persists_objects_without_local_pat
                 "truncated": False,
             }
         ],
-        db=None,
+        db=FakeDB(),
         current_uid="user-1",
     )
 
@@ -322,13 +338,9 @@ async def test_confirm_tmp_thread_attachments_keeps_duplicate_names_separate(mon
     monkeypatch.setattr(service, "get_minio_client", lambda: fake_minio)
     monkeypatch.setattr(service, "ConversationRepository", lambda db: fake_repo)
 
-    async def noop_sync(**kwargs):
-        return None
-
     async def noop_invalidate(thread_id: str):
         return None
 
-    monkeypatch.setattr(service, "_sync_thread_upload_state", noop_sync)
     monkeypatch.setattr(service, "invalidate_mention_cache", noop_invalidate)
 
     response = await service.confirm_tmp_thread_attachments_view(
@@ -337,7 +349,7 @@ async def test_confirm_tmp_thread_attachments_keeps_duplicate_names_separate(mon
             {"file_name": "report.pdf", "bucket_name": "knowledgebases", "object_name": first_object},
             {"file_name": "report.pdf", "bucket_name": "knowledgebases", "object_name": second_object},
         ],
-        db=None,
+        db=FakeDB(),
         current_uid="user-1",
     )
 
@@ -406,7 +418,7 @@ def test_delete_materialized_attachment_files_removes_only_target(monkeypatch, t
 
 
 @pytest.mark.asyncio
-async def test_delete_recorded_objects_propagates_storage_failure_when_required():
+async def test_delete_recorded_objects_is_best_effort():
     class FailingMinio:
         async def adownload_file(self, _bucket_name, object_name):
             return object_name.encode()
@@ -414,10 +426,40 @@ async def test_delete_recorded_objects_propagates_storage_failure_when_required(
         async def adelete_file(self, _bucket_name, _object_name):
             raise service.StorageError("storage unavailable")
 
-    with pytest.raises(service.StorageError, match="storage unavailable"):
-        await service._delete_recorded_objects(
-            {"original_object_name": "threads/thread-1/attachments/file-1/original/demo.pdf"},
-            "knowledgebases",
-            FailingMinio(),
-            best_effort=False,
+    await service._delete_recorded_objects(
+        {"original_object_name": "threads/thread-1/attachments/file-1/original/demo.pdf"},
+        "knowledgebases",
+        FailingMinio(),
+    )
+
+
+@pytest.mark.asyncio
+async def test_delete_thread_attachment_rejects_active_thread_run(monkeypatch):
+    fake_repo = FakeConversationRepository(db=None)
+    fake_repo.attachments = [{"file_id": "file-1", "file_name": "demo.pdf"}]
+
+    class RunRepo:
+        def __init__(self, _db):
+            pass
+
+        async def get_active_run_by_thread_for_user(self, **kwargs):
+            assert kwargs == {
+                "agent_slug": "agent-1",
+                "conversation_thread_id": "thread-1",
+                "uid": "user-1",
+            }
+            return SimpleNamespace(id="run-1")
+
+    monkeypatch.setattr(service, "ConversationRepository", lambda _db: fake_repo)
+    monkeypatch.setattr(service, "AgentRunRepository", RunRepo)
+
+    with pytest.raises(service.HTTPException) as exc:
+        await service.delete_thread_attachment_view(
+            thread_id="thread-1",
+            file_id="file-1",
+            db=FakeDB(),
+            current_uid="user-1",
         )
+
+    assert exc.value.status_code == 409
+    assert fake_repo.attachments[0]["file_id"] == "file-1"

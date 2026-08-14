@@ -21,16 +21,16 @@ from typing import Any, Literal
 
 from langchain.messages import AIMessage, AIMessageChunk
 from langgraph.types import Command
-from yuxi.config.options import system_options
 from yuxi.agents.base import _json_safe
 from yuxi.agents.buildin import agent_manager
 from yuxi.agents.context import build_agent_input_context, normalize_agent_context_config
 from yuxi.agents.state import AgentStatePayload
+from yuxi.config.options import system_options
 from yuxi.repositories.agent_repository import AgentRepository
 from yuxi.repositories.agent_run_repository import AgentRunRepository
 from yuxi.repositories.conversation_repository import ConversationRepository
 from yuxi.repositories.subagent_thread_repository import SubagentThreadRepository
-from yuxi.services.conversation_service import (
+from yuxi.services.attachment_service import (
     materialize_attachment_records,
     materialize_thread_attachments,
     serialize_attachment,
@@ -377,10 +377,11 @@ def _message_payload_yuxi_events(
     )
 
 
-async def _stream_agent_events(agent, messages, *, input_context=None, **kwargs):
+async def _stream_agent_events(agent, messages, *, input_context=None, uploads=None, **kwargs):
     async for mode, payload in agent.stream_messages_with_state(
         messages,
         input_context=input_context,
+        uploads=uploads,
         **kwargs,
     ):
         yield mode, payload
@@ -761,39 +762,16 @@ async def _ensure_thread_bound_agent(
         raise ValueError("已有线程已绑定智能体，不能切换")
 
 
-def _normalize_attachment_file_ids(meta: dict | None) -> list[str]:
-    file_ids = (meta or {}).get("attachment_file_ids") or []
-    if not isinstance(file_ids, list):
-        return []
-
-    normalized = []
-    seen = set()
-    for file_id in file_ids:
-        value = str(file_id).strip()
-        if not value or value in seen:
-            continue
-        seen.add(value)
-        normalized.append(value)
-    return normalized
-
-
-async def _bind_request_attachments(
+async def _load_request_attachments(
     *,
     conv_repo: ConversationRepository,
     thread_id: str,
     request_id: str,
-    attachment_file_ids: list[str],
 ) -> list[dict]:
     conversation = await conv_repo.get_conversation_by_thread_id(thread_id)
     if not conversation:
         return []
-
-    if attachment_file_ids:
-        attachments = await conv_repo.bind_attachments_to_request(conversation.id, request_id, attachment_file_ids)
-    else:
-        attachments = await conv_repo.get_attachments_by_request_id(conversation.id, request_id)
-
-    return attachments
+    return await conv_repo.get_attachments_by_request_id(conversation.id, request_id)
 
 
 async def stream_agent_chat(
@@ -904,14 +882,16 @@ async def stream_agent_chat(
             agent_item=agent_item,
         )
 
-        request_attachment_records = await _bind_request_attachments(
+        request_attachment_records = await _load_request_attachments(
             conv_repo=conv_repo,
             thread_id=thread_id,
             request_id=meta["request_id"],
-            attachment_file_ids=_normalize_attachment_file_ids(meta),
         )
-        await materialize_attachment_records(thread_id, uid, request_attachment_records)
+        conversation = await conv_repo.get_conversation_by_thread_id(thread_id)
+        thread_attachment_records = await conv_repo.get_attachments(conversation.id) if conversation else []
+        await materialize_attachment_records(thread_id, uid, thread_attachment_records)
         request_attachments = [serialize_attachment(attachment) for attachment in request_attachment_records]
+        thread_uploads = [serialize_attachment(attachment) for attachment in thread_attachment_records]
 
         init_msg = {
             "role": "user",
@@ -950,14 +930,12 @@ async def stream_agent_chat(
         # 先构建 langgraph_config
         langgraph_config = {"configurable": {"thread_id": thread_id, "uid": uid}}
 
-        # LangGraph 会自动从 checkpointer 恢复 state（包括 uploads）
-        # 无需手动加载或传递
-
         protocol_message_ids: dict[tuple[str, str], str] = {}
         async for mode, payload in _stream_agent_events(
             agent,
             messages,
             input_context=input_context,
+            uploads=thread_uploads,
             callbacks=langfuse_run.callbacks,
             metadata=langfuse_run.metadata,
             tags=langfuse_run.tags,
@@ -1168,8 +1146,6 @@ async def stream_agent_resume(
 
     yield make_resume_chunk(status="init", meta=meta)
 
-    resume_command = Command(resume=resume_input)
-
     uid = str(current_user.uid)
     try:
         agent_item, agent, agent_config = await _resolve_agent_runtime(
@@ -1182,7 +1158,11 @@ async def stream_agent_resume(
         yield make_resume_chunk(status="error", error_type="invalid_agent", error_message=str(e), meta=meta)
         return
 
-    await materialize_thread_attachments(thread_id=thread_id, current_uid=uid, db=db)
+    thread_attachments = await materialize_thread_attachments(thread_id=thread_id, current_uid=uid, db=db)
+    resume_command = Command(
+        resume=resume_input,
+        update={"uploads": [serialize_attachment(attachment) for attachment in thread_attachments]},
+    )
 
     # 恢复流执行期间不访问业务数据库，先结束运行时解析事务并归还连接池。
     await db.commit()

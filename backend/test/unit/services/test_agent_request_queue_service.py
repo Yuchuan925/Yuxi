@@ -110,6 +110,77 @@ async def test_channel_steer_is_accepted_for_active_message_run(
     assert result.queue_policy == "steer"
 
 
+@pytest.mark.asyncio
+async def test_intake_request_binds_attachments_in_request_transaction(session, monkeypatch: pytest.MonkeyPatch):
+    from yuxi.services import agent_request_queue_service
+    from yuxi.services.input_message_service import build_chat_input_message
+    from yuxi.storage.postgres.models_business import Conversation
+
+    async def resolve_config(*_args):
+        return "model", "default"
+
+    monkeypatch.setattr(agent_request_queue_service, "resolve_agent_run_config", resolve_config)
+    await _seed_thread(session)
+    conversation = await session.get(Conversation, 10)
+    conversation.extra_metadata = {"attachments": [{"file_id": "file-1", "file_name": "notes.txt"}]}
+    await session.commit()
+
+    result = await intake_request(
+        db=session,
+        request_id="request-with-attachment",
+        uid="user-1",
+        agent_slug="main",
+        thread_id="t1",
+        input_message=build_chat_input_message("read it"),
+        agent_item=MagicMock(),
+        agent_backend=MagicMock(),
+        meta={"attachment_file_ids": ["file-1"]},
+    )
+
+    await session.refresh(conversation)
+    assert result.status == "dispatched"
+    assert conversation.extra_metadata["attachments"][0]["request_id"] == "request-with-attachment"
+
+
+@pytest.mark.asyncio
+async def test_intake_request_rejects_missing_attachment_without_creating_request(
+    session,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from fastapi import HTTPException
+    from yuxi.services import agent_request_queue_service
+    from yuxi.services.input_message_service import build_chat_input_message
+
+    async def resolve_config(*_args):
+        return "model", "default"
+
+    monkeypatch.setattr(agent_request_queue_service, "resolve_agent_run_config", resolve_config)
+    await _seed_thread(session)
+
+    with pytest.raises(HTTPException) as exc:
+        await intake_request(
+            db=session,
+            request_id="request-missing-attachment",
+            uid="user-1",
+            agent_slug="main",
+            thread_id="t1",
+            input_message=build_chat_input_message("read it"),
+            agent_item=MagicMock(),
+            agent_backend=MagicMock(),
+            meta={"attachment_file_ids": ["missing"]},
+        )
+
+    assert exc.value.status_code == 422
+    assert (
+        await session.scalar(
+            select(sa_func.count())
+            .select_from(AgentRunRequest)
+            .where(AgentRunRequest.request_id == "request-missing-attachment")
+        )
+        == 0
+    )
+
+
 # ── AgentRunCreate request model ──
 
 

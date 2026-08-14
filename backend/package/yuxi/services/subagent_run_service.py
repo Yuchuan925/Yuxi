@@ -20,7 +20,6 @@ import yuxi.services.agent_run_service as agent_run_service
 from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from yuxi.agents.tool_approval import DEFAULT_TOOL_APPROVAL_MODE
-from yuxi.config.options import system_options
 from yuxi.repositories.agent_run_repository import AgentRunRepository
 from yuxi.repositories.conversation_repository import ConversationRepository
 from yuxi.repositories.subagent_thread_repository import SubagentThreadRepository
@@ -222,11 +221,11 @@ class SubagentRunService:
         if creator_run.conversation_id != relation.parent_conversation_id:
             raise HTTPException(status_code=409, detail="subagent thread relation 与本次运行不匹配")
 
-        resolved_model_spec = agent_run_service.resolve_agent_run_model_spec(
+        context = agent_run_service.load_agent_run_context(scope.agent_item, scope.agent_backend)
+        resolved_model_spec = await agent_run_service.resolve_agent_run_model_spec(
             model_spec,
-            scope.agent_item,
-            scope.agent_backend,
-            (await system_options.get(self.db))["default_model"],
+            getattr(context, "model", None),
+            self.db,
         )
         runtime_payload = {
             "tool_call_id": tool_call_id,

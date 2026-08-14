@@ -13,20 +13,22 @@ from server.utils.auth_middleware import get_db, get_required_user
 from yuxi.config.options import system_options
 from yuxi.agents.tool_approval import ToolApprovalMode
 from yuxi.models import select_model
-from yuxi.services.chat_service import get_agent_state_view
-from yuxi.services.conversation_service import (
+from yuxi.services.attachment_service import (
     confirm_tmp_thread_attachments_view,
-    create_thread_view,
     delete_thread_attachment_view,
-    delete_thread_view,
-    get_thread_history_view,
     list_thread_attachments_view,
-    list_threads_view,
     parse_tmp_attachment_view,
-    search_threads_view,
-    update_thread_view,
     upload_thread_attachment_view,
     upload_tmp_attachment_view,
+)
+from yuxi.services.chat_service import get_agent_state_view
+from yuxi.services.conversation_service import (
+    create_thread_view,
+    delete_thread_view,
+    get_thread_history_view,
+    list_threads_view,
+    search_threads_view,
+    update_thread_view,
 )
 from yuxi.services.file_preview import detect_media_type
 from yuxi.services.thread_files_service import (

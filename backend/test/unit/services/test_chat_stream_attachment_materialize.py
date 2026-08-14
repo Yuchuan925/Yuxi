@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from yuxi.services import conversation_service as cs
+from yuxi.services import attachment_service as cs
 
 
 def test_thread_attachment_objects_are_scoped_by_thread_and_file_id() -> None:

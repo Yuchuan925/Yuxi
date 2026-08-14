@@ -119,7 +119,7 @@ class _FakeConvRepo:
     async def get_attachments_by_request_id(self, conversation_id: int, request_id: str):
         return []
 
-    async def bind_attachments_to_request(self, conversation_id: int, request_id: str, file_ids: list[str]):
+    async def get_attachments(self, conversation_id: int):
         return []
 
 
@@ -265,6 +265,7 @@ async def test_stream_agent_chat_commits_before_stream_and_persists_langfuse_con
         "callbacks": ["handler-1"],
         "metadata": {"langfuse_user_id": "user-1", "langfuse_session_id": "thread-1"},
         "tags": ["yuxi", "chat"],
+        "uploads": [],
     }
     assert calls["saved_state"]["trace_info"] == {
         "langfuse_trace_id": "trace-runtime",
