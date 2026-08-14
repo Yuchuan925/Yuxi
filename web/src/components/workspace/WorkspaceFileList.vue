@@ -135,8 +135,8 @@ const columns = [
 
 const deletingPathSet = computed(() => new Set(props.deletingPaths))
 const entryPathSet = computed(() => new Set(props.entries.map((entry) => entry.path)))
-const readonlyPathSet = computed(() =>
-  new Set(props.entries.filter((entry) => entry.readonly).map((entry) => entry.path))
+const readonlyPathSet = computed(
+  () => new Set(props.entries.filter((entry) => entry.readonly).map((entry) => entry.path))
 )
 const normalizedCurrentPath = computed(() => (props.currentPath || '/').replace(/\/+$/, '') || '/')
 const effectiveSelectionMode = computed(() => !props.readonly && props.selectionMode)
