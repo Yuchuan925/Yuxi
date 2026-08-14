@@ -1,6 +1,24 @@
 import pytest
 
-from yuxi.knowledge.utils.kb_utils import prepare_item_metadata
+from yuxi.knowledge.utils.kb_utils import build_kb_image_proxy_url, prepare_item_metadata
+
+
+def test_build_kb_image_proxy_url_uses_private_bucket_proxy_path():
+    url = build_kb_image_proxy_url("db_1/kb-images/1710000000000_diagram.png")
+
+    assert url == "/api/knowledge/databases/db_1/images/kb-images/1710000000000_diagram.png"
+
+
+def test_build_kb_image_proxy_url_encodes_special_chars_but_keeps_slashes():
+    url = build_kb_image_proxy_url("db_1/kb-images/1710000000000_user 1.png")
+
+    assert url == "/api/knowledge/databases/db_1/images/kb-images/1710000000000_user%201.png"
+
+
+@pytest.mark.parametrize("object_name", ["db_1/images/a.png", "/kb-images/a.png", "db_1"])
+def test_build_kb_image_proxy_url_rejects_invalid_object_name(object_name):
+    with pytest.raises(ValueError, match="知识库图片对象名"):
+        build_kb_image_proxy_url(object_name)
 
 
 async def test_prepare_item_metadata_preserves_uploaded_file_size():
