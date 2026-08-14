@@ -276,6 +276,13 @@ async def test_prepare_agent_runtime_context_filters_resources_and_derives_runti
         async def __aexit__(self, exc_type, exc, tb):
             return None
 
+    class FakeSystemOptions:
+        async def get(self, _db=None):
+            return {"default_model": "fake-model"}
+
+    context_module = _load_context_module()
+    monkeypatch.setattr(context_module, "system_options", FakeSystemOptions())
+
     class FakeUserRepository:
         async def get_by_uid_with_db(self, _db, uid):
             assert uid == "u1"
@@ -372,6 +379,13 @@ async def test_prepare_agent_runtime_context_clears_resources_for_missing_user(m
 
         async def __aexit__(self, exc_type, exc, tb):
             return None
+
+    class FakeSystemOptions:
+        async def get(self, _db=None):
+            return {"default_model": "fake-model"}
+
+    context_module = _load_context_module()
+    monkeypatch.setattr(context_module, "system_options", FakeSystemOptions())
 
     class FakeUserRepository:
         async def get_by_uid_with_db(self, _db, _uid):

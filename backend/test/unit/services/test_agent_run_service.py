@@ -1327,25 +1327,28 @@ async def test_cancel_agent_run_view_cascades_children(monkeypatch: pytest.Monke
     assert signals == [("child-1", True), ("child-2", True), ("parent-run", True)]
 
 
-def test_resolve_agent_run_model_spec_rejects_unknown_explicit_model(monkeypatch: pytest.MonkeyPatch):
+@pytest.mark.asyncio
+async def test_resolve_agent_run_model_spec_rejects_unknown_explicit_model(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(agent_run_service.model_cache, "get_model_info", lambda spec: None)
     with pytest.raises(agent_run_service.HTTPException) as exc:
-        agent_run_service.resolve_agent_run_model_spec("nope", SimpleNamespace(config_json={}), _FakeBackend())
+        await agent_run_service.resolve_agent_run_model_spec("nope", "default:model")
     assert exc.value.status_code == 422
 
 
-def test_resolve_agent_run_model_spec_rejects_non_chat_explicit_model(monkeypatch: pytest.MonkeyPatch):
+@pytest.mark.asyncio
+async def test_resolve_agent_run_model_spec_rejects_non_chat_explicit_model(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(
         agent_run_service.model_cache,
         "get_model_info",
         lambda spec: SimpleNamespace(model_type="embedding"),
     )
     with pytest.raises(agent_run_service.HTTPException) as exc:
-        agent_run_service.resolve_agent_run_model_spec("embed-1", SimpleNamespace(config_json={}), _FakeBackend())
+        await agent_run_service.resolve_agent_run_model_spec("embed-1", "default:model")
     assert exc.value.status_code == 422
 
 
-def test_resolve_agent_run_model_spec_strips_explicit_chat_model(monkeypatch: pytest.MonkeyPatch):
+@pytest.mark.asyncio
+async def test_resolve_agent_run_model_spec_strips_explicit_chat_model(monkeypatch: pytest.MonkeyPatch):
     seen = []
 
     def fake_get_model_info(spec):
@@ -1354,15 +1357,35 @@ def test_resolve_agent_run_model_spec_strips_explicit_chat_model(monkeypatch: py
 
     monkeypatch.setattr(agent_run_service.model_cache, "get_model_info", fake_get_model_info)
 
-    assert (
-        agent_run_service.resolve_agent_run_model_spec(
-            " gpt-x ",
-            SimpleNamespace(config_json={}),
-            _FakeBackend(),
-        )
-        == "gpt-x"
-    )
+    assert await agent_run_service.resolve_agent_run_model_spec(" gpt-x ", "default:model") == "gpt-x"
     assert seen == ["gpt-x"]
+
+
+@pytest.mark.asyncio
+async def test_resolve_agent_run_model_spec_uses_configured_model_without_loading_system_default(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    async def unexpected_get(*_args):
+        raise AssertionError("configured model should not read system default")
+
+    monkeypatch.setattr(type(agent_run_service.system_options), "get", unexpected_get)
+    monkeypatch.setattr(
+        agent_run_service.model_cache,
+        "get_model_info",
+        lambda spec: SimpleNamespace(model_type="chat") if spec == "agent:model" else None,
+    )
+
+    assert await agent_run_service.resolve_agent_run_model_spec(None, " agent:model ") == "agent:model"
+
+
+@pytest.mark.asyncio
+async def test_resolve_agent_run_model_spec_validates_configured_model(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(agent_run_service.model_cache, "get_model_info", lambda _spec: None)
+
+    with pytest.raises(agent_run_service.HTTPException) as exc:
+        await agent_run_service.resolve_agent_run_model_spec(None, "missing:model")
+
+    assert exc.value.status_code == 422
 
 
 def _patch_agent_run_creation(
@@ -1439,6 +1462,16 @@ def _patch_agent_run_creation(
     monkeypatch.setattr(agent_run_service, "ConversationRepository", ConvRepo)
     monkeypatch.setattr(agent_run_service, "AgentRunRepository", _CreateRunRepo)
     monkeypatch.setattr(agent_run_service, "get_arq_pool", fake_get_arq_pool)
+
+    async def get_system_options(_option, _db=None):
+        return {"default_model": "system-default:model"}
+
+    monkeypatch.setattr(type(agent_run_service.system_options), "get", get_system_options)
+    monkeypatch.setattr(
+        agent_run_service.model_cache,
+        "get_model_info",
+        lambda _spec: SimpleNamespace(model_type="chat"),
+    )
     return db
 
 
@@ -1512,11 +1545,6 @@ async def test_create_chat_run_snapshots_agent_configured_model_spec(monkeypatch
 
 @pytest.mark.asyncio
 async def test_create_chat_run_snapshots_system_default_when_agent_model_empty(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr(
-        agent_run_service,
-        "resolve_chat_model_spec",
-        lambda model_spec: str(model_spec).strip() if str(model_spec or "").strip() else "system-default-model",
-    )
     db = _patch_agent_run_creation(
         monkeypatch,
         agent_config_json={"context": {"model": ""}},
@@ -1532,7 +1560,7 @@ async def test_create_chat_run_snapshots_system_default_when_agent_model_empty(m
         model_spec=None,
     )
 
-    assert db.created_run_kwargs["input_payload"]["model_spec"] == "system-default-model"
+    assert db.created_run_kwargs["input_payload"]["model_spec"] == "system-default:model"
     assert "model_spec" not in db.added[0].extra_metadata
 
 
@@ -1593,23 +1621,14 @@ async def test_create_resume_run_defaults_tool_approval_mode_for_legacy_parent(m
 
 
 def test_resolve_tool_approval_mode_uses_request_then_agent_config_then_default():
-    configured_agent = SimpleNamespace(config_json={"context": {"tool_approval_mode": "always_trust"}})
-    default_agent = SimpleNamespace(config_json={})
-
-    assert (
-        agent_run_service.resolve_agent_run_tool_approval_mode("default", configured_agent, _FakeBackend()) == "default"
-    )
-    assert (
-        agent_run_service.resolve_agent_run_tool_approval_mode(None, configured_agent, _FakeBackend()) == "always_trust"
-    )
-    assert agent_run_service.resolve_agent_run_tool_approval_mode(None, default_agent, _FakeBackend()) == "default"
+    assert agent_run_service.resolve_agent_run_tool_approval_mode("default", "always_trust") == "default"
+    assert agent_run_service.resolve_agent_run_tool_approval_mode(None, "always_trust") == "always_trust"
+    assert agent_run_service.resolve_agent_run_tool_approval_mode(None, None) == "default"
 
 
 def test_resolve_tool_approval_mode_rejects_unknown_value():
     with pytest.raises(agent_run_service.HTTPException) as exc:
-        agent_run_service.resolve_agent_run_tool_approval_mode(
-            "unknown", SimpleNamespace(config_json={}), _FakeBackend()
-        )
+        agent_run_service.resolve_agent_run_tool_approval_mode("unknown", None)
 
     assert exc.value.status_code == 422
 

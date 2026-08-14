@@ -60,7 +60,9 @@
           :key="server.slug"
           variant="mini"
           :title="formatExtensionCardTitle(server.name)"
-          :description="server.requires_migration ? '需要迁移为远程 MCP' : server.description || '暂无描述'"
+          :description="
+            server.requires_migration ? '需要迁移为远程 MCP' : server.description || '暂无描述'
+          "
           @click="handleCardClick(server)"
         >
           <template #icon>
@@ -69,10 +71,7 @@
           <template #action>
             <button
               type="button"
-              :class="[
-                'mcp-card-action',
-                { 'mcp-card-action-danger': server.requires_migration }
-              ]"
+              :class="['mcp-card-action', { 'mcp-card-action-danger': server.requires_migration }]"
               :disabled="isActionLoading(server)"
               :aria-label="server.requires_migration ? '删除 MCP' : '添加 MCP'"
               @click.stop="
@@ -108,9 +107,7 @@
             </div>
             <div class="mcp-basic-info-meta">
               <span>{{ previewServer.transport || '未知传输类型' }}</span>
-              <span v-if="previewServer.is_builtin" class="mcp-basic-info-tag">
-                内置
-              </span>
+              <span v-if="previewServer.is_builtin" class="mcp-basic-info-tag"> 内置 </span>
             </div>
           </div>
         </div>

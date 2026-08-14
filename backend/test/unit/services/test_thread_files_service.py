@@ -10,6 +10,7 @@ from yuxi.services import thread_files_service as svc
 
 class _Conversation:
     uid = "user-1"
+    extra_metadata = None
 
 
 async def _fake_require_user_conversation(_repo, _thread_id: str, _current_uid: str):

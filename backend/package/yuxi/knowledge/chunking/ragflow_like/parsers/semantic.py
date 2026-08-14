@@ -137,10 +137,11 @@ def chunk_markdown(
     # 延迟加载重型资源，仅在没有注入 embed_fn 时触发
     if embed_fn is None:
         try:
-            from yuxi.config.app import config
             from yuxi.models.embed import select_embedding_model
 
-            embed_model_id = parser_config.get("embed_model_id") or config.embed_model
+            embed_model_id = parser_config.get("embed_model_id")
+            if not embed_model_id:
+                raise ValueError("语义切分缺少 embed_model_id")
             logger.info(f"语义切分加载Embedding模型: {embed_model_id}")
             embed_model = select_embedding_model(embed_model_id)
             embed_fn = embed_model.encode

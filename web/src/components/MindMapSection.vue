@@ -20,7 +20,11 @@
         </div>
         <p class="empty-title">暂无思维导图</p>
         <p class="empty-description">
-          {{ readonly ? '思维导图尚未生成，请等待知识库管理员生成后查看。' : '从当前知识库内容生成结构化导图。' }}
+          {{
+            readonly
+              ? '思维导图尚未生成，请等待知识库管理员生成后查看。'
+              : '从当前知识库内容生成结构化导图。'
+          }}
         </p>
         <button
           v-if="!readonly"

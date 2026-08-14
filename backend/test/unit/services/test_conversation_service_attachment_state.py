@@ -1,12 +1,11 @@
 from __future__ import annotations
 
 import io
-from types import SimpleNamespace
 
 import pytest
 
 from yuxi.services import chat_service as chat_svc
-from yuxi.services import conversation_service as svc
+from yuxi.services import attachment_service as svc
 
 
 def test_tmp_attachment_ocr_methods_use_processor_factory():
@@ -55,62 +54,6 @@ def test_build_state_files_only_parsed_and_with_content():
 
 
 @pytest.mark.asyncio
-async def test_sync_thread_attachment_state_updates_graph(monkeypatch: pytest.MonkeyPatch):
-    captured: dict = {}
-
-    class FakeGraph:
-        async def aupdate_state(self, *, config, values):
-            captured["write_config"] = config
-            captured["write_values"] = values
-
-    class FakeAgent:
-        async def get_graph(self):
-            return FakeGraph()
-
-    monkeypatch.setattr(svc.agent_manager, "get_agent", lambda _agent_id: FakeAgent())
-
-    attachments = [
-        {
-            "status": "parsed",
-            "path": "/home/gem/user-data/uploads/attachments/resume.md",
-            "file_name": "resume.md",
-            "uploaded_at": "2026-02-20T00:00:00+00:00",
-        }
-    ]
-    await svc._sync_thread_upload_state(
-        thread_id="thread-1",
-        uid="u1",
-        agent_id="ChatbotAgent",
-        backend_id=None,
-        attachments=attachments,
-    )
-
-    assert captured["write_config"] == {"configurable": {"thread_id": "thread-1", "uid": "u1"}}
-    assert captured["write_values"] == {"uploads": svc._build_state_uploads(attachments)}
-
-
-@pytest.mark.asyncio
-async def test_sync_thread_attachment_state_skips_when_agent_missing(monkeypatch: pytest.MonkeyPatch):
-    warnings: list[str] = []
-    fake_logger = SimpleNamespace(
-        warning=lambda message: warnings.append(message),
-    )
-
-    monkeypatch.setattr(svc, "logger", fake_logger)
-    monkeypatch.setattr(svc.agent_manager, "get_agent", lambda _agent_id: None)
-
-    await svc._sync_thread_upload_state(
-        thread_id="thread-1",
-        uid="u1",
-        agent_id="MissingAgent",
-        backend_id=None,
-        attachments=[],
-    )
-
-    assert any("agent not found" in msg for msg in warnings)
-
-
-@pytest.mark.asyncio
 async def test_convert_upload_to_markdown_returns_conversion_result(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
@@ -131,6 +74,7 @@ async def test_convert_upload_to_markdown_returns_conversion_result(
     assert result.file_size == len(payload)
     assert result.markdown == "converted markdown"
     assert result.truncated is False
+    assert list(tmp_path.iterdir()) == []
 
 
 @pytest.mark.asyncio
@@ -161,33 +105,26 @@ async def test_convert_upload_to_markdown_rejects_unsupported_extension(monkeypa
         await svc._convert_upload_to_markdown(upload)
 
 
-def test_normalize_parse_method_uses_default_ocr_engine_for_images(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr(svc.app_config, "default_ocr_engine", "mineru_ocr")
-    method = svc._normalize_parse_method("scan.png", parse_method=None)
+def test_normalize_parse_method_uses_default_ocr_engine_for_images():
+    method = svc._normalize_parse_method("scan.png", parse_method=None, default_ocr_engine="mineru_ocr")
     assert method == "mineru_ocr"
 
 
-def test_normalize_parse_method_uses_default_ocr_engine_for_images_fallback_to_rapid(
-    monkeypatch: pytest.MonkeyPatch,
-):
-    monkeypatch.setattr(svc.app_config, "default_ocr_engine", "deepseek_ocr")
-    method = svc._normalize_parse_method("scan.jpg", parse_method=None)
+def test_normalize_parse_method_uses_default_ocr_engine_for_images_fallback_to_rapid():
+    method = svc._normalize_parse_method("scan.jpg", parse_method=None, default_ocr_engine="deepseek_ocr")
     assert method == "deepseek_ocr"
 
 
-def test_normalize_parse_method_pdf_defaults_to_disable(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr(svc.app_config, "default_ocr_engine", "mineru_ocr")
-    method = svc._normalize_parse_method("doc.pdf", parse_method=None)
+def test_normalize_parse_method_pdf_defaults_to_disable():
+    method = svc._normalize_parse_method("doc.pdf", parse_method=None, default_ocr_engine="mineru_ocr")
     assert method == "disable"
 
 
-def test_normalize_parse_method_respects_explicit_parse_method(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr(svc.app_config, "default_ocr_engine", "rapid_ocr")
-    method = svc._normalize_parse_method("scan.png", parse_method="deepseek_ocr")
+def test_normalize_parse_method_respects_explicit_parse_method():
+    method = svc._normalize_parse_method("scan.png", parse_method="deepseek_ocr", default_ocr_engine="rapid_ocr")
     assert method == "deepseek_ocr"
 
 
-def test_normalize_parse_method_fallback_to_rapid_when_default_is_disable(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr(svc.app_config, "default_ocr_engine", "disable")
-    method = svc._normalize_parse_method("scan.png", parse_method=None)
+def test_normalize_parse_method_fallback_to_rapid_when_default_is_disable():
+    method = svc._normalize_parse_method("scan.png", parse_method=None, default_ocr_engine="disable")
     assert method == "rapid_ocr"

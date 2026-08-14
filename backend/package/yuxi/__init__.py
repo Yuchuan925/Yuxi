@@ -4,8 +4,6 @@ load_dotenv(".env", override=True)
 
 from concurrent.futures import ThreadPoolExecutor  # noqa: E402
 
-from yuxi.config import config as config  # noqa: E402
-
 try:
     from importlib.metadata import version
 

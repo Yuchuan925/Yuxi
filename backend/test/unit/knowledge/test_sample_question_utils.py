@@ -85,6 +85,11 @@ async def test_generate_database_sample_questions_saves_and_returns_questions(mo
     monkeypatch.setattr(sq, "select_model", lambda model_spec: FakeModel())
     monkeypatch.setattr(sq, "KnowledgeBaseRepository", lambda: FakeRepository())
 
+    async def get_system_options(_option, _db=None):
+        return {"default_model": "test-provider:test-model"}
+
+    monkeypatch.setattr(type(sq.system_options), "get", get_system_options)
+
     generated = await sq.generate_database_sample_questions("kb_1", count=1)
     stored = await sq.get_database_sample_questions("kb_1")
 
@@ -110,6 +115,11 @@ async def test_generate_database_sample_questions_maps_invalid_json(monkeypatch)
         lambda _kb_type: SimpleNamespace(supports_documents=True),
     )
     monkeypatch.setattr(sq, "select_model", lambda model_spec: FakeModel())
+
+    async def get_system_options(_option, _db=None):
+        return {"default_model": "test-provider:test-model"}
+
+    monkeypatch.setattr(type(sq.system_options), "get", get_system_options)
 
     with pytest.raises(HTTPException) as exc_info:
         await sq.generate_database_sample_questions("kb_1")

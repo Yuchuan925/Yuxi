@@ -286,7 +286,7 @@ def test_context_backend_construction_does_not_sync_skill_projection(monkeypatch
     from yuxi.agents.skills import service as skill_service
 
     monkeypatch.setattr("yuxi.agents.backends.sandbox.backend.get_sandbox_provider", lambda: object())
-    monkeypatch.setattr(skill_service.sys_config, "save_dir", tmp_path)
+    monkeypatch.setenv("SAVE_DIR", str(tmp_path))
     source_dir = tmp_path / "source" / "shared-skill"
     source_dir.mkdir(parents=True)
     (source_dir / "SKILL.md").write_text("# Shared", encoding="utf-8")

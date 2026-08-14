@@ -4,6 +4,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+import server.routers.system_router as system_router
 from server.routers.system_router import system
 
 pytestmark = pytest.mark.unit
@@ -25,3 +26,10 @@ def test_discovery_endpoint_is_public(monkeypatch):
     assert payload["capabilities"]["cli"]["api_key_auth"] is True
     assert payload["capabilities"]["cli"]["kb_upload"] is True
     assert payload["endpoints"]["cli_auth_sessions"] == "/api/auth/cli/sessions"
+
+
+def test_serialize_system_config_includes_field_metadata():
+    result = system_router._serialize_system_config({"default_model": "test-provider:latest"})
+
+    assert result["default_model"] == "test-provider:latest"
+    assert result["_config_items"]["default_model"]["type"] == "model"

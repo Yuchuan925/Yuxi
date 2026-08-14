@@ -211,6 +211,16 @@ def _patch_run_record_creation(
 ):
     db.active_run = active_run
 
+    async def get_system_options(_option, _db=None):
+        return {"default_model": "system-default:model"}
+
+    monkeypatch.setattr(type(agent_run_service.system_options), "get", get_system_options)
+    monkeypatch.setattr(
+        agent_run_service.model_cache,
+        "get_model_info",
+        lambda _spec: SimpleNamespace(model_type="chat"),
+    )
+
     class _FakeContext:
         def __init__(self):
             self.model = "agent-default-model"

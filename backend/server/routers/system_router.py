@@ -6,7 +6,8 @@ import yaml
 from fastapi import APIRouter, Body, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
-from yuxi import config, get_version
+from yuxi import get_version
+from yuxi.config.options import invalidate_option_cache, system_options, update_option_value
 from yuxi.storage.postgres.models_business import User
 from yuxi.utils.logging_config import logger
 
@@ -60,36 +61,61 @@ async def discovery():
 # =============================================================================
 
 
+def _serialize_system_config(values: dict) -> dict:
+    fields = {
+        field["key"]: {
+            "des": field["label"],
+            "default": field.get("default"),
+            "type": field.get("type", "string"),
+            "exclude": False,
+        }
+        for field in system_options.fields
+    }
+    return {**values, "_config_items": fields}
+
+
 @system.get("/config")
-async def get_config(current_user: User = Depends(get_required_user)):
+async def get_config(
+    current_user: User = Depends(get_required_user),
+    db: AsyncSession = Depends(get_db),
+):
     """获取系统配置"""
-    return config.dump_config()
+    return _serialize_system_config(await system_options.get(db))
 
 
 @system.post("/config")
-async def update_config_single(key=Body(...), value=Body(...), current_user: User = Depends(get_admin_user)) -> dict:
+async def update_config_single(
+    key=Body(...),
+    value=Body(...),
+    current_user: User = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
     """更新单个配置项"""
-    if not isinstance(key, str) or key not in type(config).model_fields:
+    if not isinstance(key, str) or key not in {field["key"] for field in system_options.fields}:
         raise HTTPException(status_code=400, detail=f"未知配置项: {key}")
-    if not config.can_update(key):
-        raise HTTPException(status_code=400, detail=f"配置项不可修改: {key}")
     try:
-        config.set_value(key, value)
+        await update_option_value(db, system_options.key, {key: value}, current_user.username)
+        await db.commit()
+        await invalidate_option_cache(system_options.key)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    config.save()
-    return config.dump_config()
+    return _serialize_system_config(await system_options.get(db))
 
 
 @system.post("/config/update")
-async def update_config_batch(items: dict = Body(...), current_user: User = Depends(get_admin_user)) -> dict:
+async def update_config_batch(
+    items: dict = Body(...),
+    current_user: User = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
     """批量更新配置项"""
     try:
-        config.update(items)
+        await update_option_value(db, system_options.key, items, current_user.username)
+        await db.commit()
+        await invalidate_option_cache(system_options.key)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    config.save()
-    return config.dump_config()
+    return _serialize_system_config(await system_options.get(db))
 
 
 @system.get("/logs")
@@ -229,6 +255,7 @@ async def put_config_option(
         if record is None:
             raise HTTPException(status_code=404, detail=f"配置项不存在: {key}")
         await db.commit()
+        await invalidate_option_cache(key)
         await db.refresh(record)
         return {"option": serialize_option(record)}
     except HTTPException:
@@ -240,12 +267,13 @@ async def put_config_option(
 @system.get("/ocr/options")
 async def get_ocr_engine_options(
     current_user: User = Depends(get_required_user),
+    db: AsyncSession = Depends(get_db),
 ):
     """返回所有代码支持的 OCR 方法和默认项。"""
 
     from yuxi.services.ocr_service import get_ocr_options
 
-    return get_ocr_options()
+    return await get_ocr_options(db)
 
 
 @system.get("/ocr/health")

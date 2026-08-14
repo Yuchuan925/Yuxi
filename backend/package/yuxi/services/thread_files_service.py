@@ -16,6 +16,7 @@ from yuxi.agents.backends.sandbox import (
     virtual_path_for_thread_file,
 )
 from yuxi.repositories.conversation_repository import ConversationRepository
+from yuxi.services.attachment_service import materialize_attachment_records
 from yuxi.services.conversation_service import require_user_conversation
 from yuxi.services.mention_search_service import invalidate_mention_cache, invalidate_workspace_mention_cache
 from yuxi.utils.datetime_utils import utc_isoformat_from_timestamp
@@ -61,6 +62,7 @@ async def list_thread_files_view(
     conv_repo = ConversationRepository(db)
     conversation = await require_user_conversation(conv_repo, thread_id, str(current_uid))
     uid = str(conversation.uid)
+    await materialize_attachment_records(thread_id, uid, (conversation.extra_metadata or {}).get("attachments", []))
 
     ensure_thread_dirs(thread_id, uid)
     virtual_path = path or _get_virtual_root()
@@ -153,6 +155,7 @@ async def read_thread_file_content_view(
     conv_repo = ConversationRepository(db)
     conversation = await require_user_conversation(conv_repo, thread_id, str(current_uid))
     uid = str(conversation.uid)
+    await materialize_attachment_records(thread_id, uid, (conversation.extra_metadata or {}).get("attachments", []))
 
     try:
         actual_path = resolve_virtual_path(thread_id, path, uid=uid)
@@ -190,6 +193,7 @@ async def resolve_thread_artifact_view(
     conv_repo = ConversationRepository(db)
     conversation = await require_user_conversation(conv_repo, thread_id, str(current_uid))
     uid = str(conversation.uid)
+    await materialize_attachment_records(thread_id, uid, (conversation.extra_metadata or {}).get("attachments", []))
 
     ensure_thread_dirs(thread_id, uid)
 

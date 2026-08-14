@@ -4,7 +4,7 @@ import hashlib
 import re
 from pathlib import Path
 
-from yuxi import config as conf
+from yuxi.config import get_save_dir
 from yuxi.utils.logging_config import logger
 from yuxi.utils.paths import (
     OUTPUTS_DIR_NAME,
@@ -34,7 +34,7 @@ def validate_thread_id(thread_id: str) -> str:
 
 def _thread_root_dir(thread_id: str) -> Path:
     safe_thread_id = validate_thread_id(thread_id)
-    return Path(conf.save_dir) / "threads" / safe_thread_id / "user-data"
+    return get_save_dir() / "threads" / safe_thread_id / "user-data"
 
 
 def workspace_uid_dirname(uid: str) -> str:
@@ -56,7 +56,7 @@ def workspace_uid_dirname(uid: str) -> str:
 def global_user_data_dir(uid: str) -> Path:
     """Return the shared host-side directory used for one user's workspace files."""
     safe_uid = workspace_uid_dirname(uid)
-    return Path(conf.save_dir) / "threads" / "shared" / safe_uid
+    return get_save_dir() / "threads" / "shared" / safe_uid
 
 
 def sandbox_user_data_dir(thread_id: str) -> Path:
@@ -73,7 +73,7 @@ def sandbox_workspace_agent_context_file(thread_id: str, uid: str, filename: str
 
 
 def _threads_root_dir() -> Path:
-    return (Path(conf.save_dir) / "threads").resolve(strict=False)
+    return (get_save_dir() / "threads").resolve(strict=False)
 
 
 def _resolve_threads_child_path(path: Path) -> Path:

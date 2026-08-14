@@ -83,17 +83,12 @@ def test_selectors_report_unknown_unconfigured_specs(selector, args):
         selector(**args)
 
 
-def test_resolve_chat_model_spec_prefers_explicit_then_fallback_then_default(monkeypatch):
-    monkeypatch.setattr("yuxi.agents.models.sys_config.default_model", "system-default:model")
-
+def test_resolve_chat_model_spec_prefers_explicit_then_fallback():
     assert resolve_chat_model_spec(" explicit:model ", fallback="fallback:model") == "explicit:model"
     assert resolve_chat_model_spec("", fallback=" fallback:model ") == "fallback:model"
-    assert resolve_chat_model_spec(None, fallback="") == "system-default:model"
 
 
-def test_resolve_chat_model_spec_rejects_all_empty(monkeypatch):
-    monkeypatch.setattr("yuxi.agents.models.sys_config.default_model", "")
-
+def test_resolve_chat_model_spec_rejects_all_empty():
     with pytest.raises(ValueError, match="model spec 不能为空"):
         resolve_chat_model_spec("", fallback=None)
 
