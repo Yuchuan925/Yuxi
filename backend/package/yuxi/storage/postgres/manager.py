@@ -116,10 +116,18 @@ class PostgresManager(metaclass=SingletonMeta):
                 await connection.execute("SELECT pg_advisory_lock(94721802)")
                 try:
                     await checkpointer.setup()
-                    self._langgraph_checkpointer_setup = True
-                    logger.info("LangGraph checkpoint tables verified/created")
                 finally:
-                    await connection.execute("SELECT pg_advisory_unlock(94721802)")
+                    try:
+                        cursor = await connection.execute("SELECT pg_advisory_unlock(94721802)")
+                        row = await cursor.fetchone()
+                        if not row or row[0] is not True:
+                            raise RuntimeError("Failed to release LangGraph checkpoint advisory lock")
+                    except BaseException:
+                        # Session 级锁不随事务回滚释放，解锁失败时必须销毁物理连接。
+                        await connection.close()
+                        raise
+                self._langgraph_checkpointer_setup = True
+                logger.info("LangGraph checkpoint tables verified/created")
         return checkpointer
 
     async def create_tables(self):

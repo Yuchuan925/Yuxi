@@ -32,7 +32,6 @@ from yuxi.repositories.conversation_repository import ConversationRepository
 from yuxi.repositories.subagent_thread_repository import SubagentThreadRepository
 from yuxi.services.attachment_service import (
     materialize_attachment_records,
-    materialize_thread_attachments,
     serialize_attachment,
 )
 from yuxi.services.input_message_service import AgentRunInputMessage
@@ -679,11 +678,12 @@ async def _resolve_agent_runtime(
     requested_agent_slug: str | None,
     thread_id: str | None,
     agent_kind: Literal["main", "subagent"] = "main",
-) -> tuple[Agent, Any, dict]:
-    """解析智能体运行时，返回 (Agent, backend, agent_config)"""
+) -> tuple[Agent, Any, dict, Any | None]:
+    """解析智能体运行时，并返回已校验的线程快照。"""
     agent_repo = AgentRepository(db)
     conv_repo = ConversationRepository(db)
     resolved_agent_slug = requested_agent_slug
+    conversation = None
 
     if thread_id:
         conversation = await conv_repo.get_conversation_by_thread_id(thread_id)
@@ -712,7 +712,7 @@ async def _resolve_agent_runtime(
         user=user,
         context_schema=backend.context_schema,
     )
-    return agent_item, backend, agent_config
+    return agent_item, backend, agent_config, conversation
 
 
 async def check_and_handle_interrupts(
@@ -744,34 +744,22 @@ async def check_and_handle_interrupts(
 async def _ensure_thread_bound_agent(
     *,
     conv_repo: ConversationRepository,
+    conversation: Any | None,
     thread_id: str,
     uid: str,
     agent_item: Agent,
-) -> None:
-    conversation = await conv_repo.get_conversation_by_thread_id(thread_id)
+) -> Any:
     if not conversation:
-        await conv_repo.create_conversation(
+        return await conv_repo.create_conversation(
             uid=uid,
             agent_id=agent_item.slug,
             thread_id=thread_id,
             metadata={"backend_id": agent_item.backend_id},
         )
-        return
 
     if conversation.agent_id != agent_item.slug:
         raise ValueError("已有线程已绑定智能体，不能切换")
-
-
-async def _load_request_attachments(
-    *,
-    conv_repo: ConversationRepository,
-    thread_id: str,
-    request_id: str,
-) -> list[dict]:
-    conversation = await conv_repo.get_conversation_by_thread_id(thread_id)
-    if not conversation:
-        return []
-    return await conv_repo.get_attachments_by_request_id(conversation.id, request_id)
+    return conversation
 
 
 async def stream_agent_chat(
@@ -824,7 +812,7 @@ async def stream_agent_chat(
         return
 
     try:
-        agent_item, agent, agent_config = await _resolve_agent_runtime(
+        agent_item, agent, agent_config, conversation = await _resolve_agent_runtime(
             db=db,
             user=current_user,
             requested_agent_slug=agent_slug,
@@ -875,21 +863,18 @@ async def stream_agent_chat(
 
     try:
         conv_repo = ConversationRepository(db)
-        await _ensure_thread_bound_agent(
+        conversation = await _ensure_thread_bound_agent(
             conv_repo=conv_repo,
+            conversation=conversation,
             thread_id=thread_id,
             uid=uid,
             agent_item=agent_item,
         )
 
-        request_attachment_records = await _load_request_attachments(
-            conv_repo=conv_repo,
-            thread_id=thread_id,
-            request_id=meta["request_id"],
-        )
-        conversation = await conv_repo.get_conversation_by_thread_id(thread_id)
-        thread_attachment_records = await conv_repo.get_attachments(conversation.id) if conversation else []
-        await materialize_attachment_records(thread_id, uid, thread_attachment_records)
+        thread_attachment_records = list((conversation.extra_metadata or {}).get("attachments", []))
+        request_attachment_records = [
+            attachment for attachment in thread_attachment_records if attachment.get("request_id") == meta["request_id"]
+        ]
         request_attachments = [serialize_attachment(attachment) for attachment in request_attachment_records]
         thread_uploads = [serialize_attachment(attachment) for attachment in thread_attachment_records]
 
@@ -926,6 +911,7 @@ async def stream_agent_chat(
 
         # 智能体流式执行期间不访问业务数据库，先结束预处理事务并归还连接池。
         await db.commit()
+        await materialize_attachment_records(thread_id, uid, thread_attachment_records)
 
         # 先构建 langgraph_config
         langgraph_config = {"configurable": {"thread_id": thread_id, "uid": uid}}
@@ -1148,7 +1134,7 @@ async def stream_agent_resume(
 
     uid = str(current_user.uid)
     try:
-        agent_item, agent, agent_config = await _resolve_agent_runtime(
+        agent_item, agent, agent_config, conversation = await _resolve_agent_runtime(
             db=db,
             user=current_user,
             requested_agent_slug=None,
@@ -1158,7 +1144,10 @@ async def stream_agent_resume(
         yield make_resume_chunk(status="error", error_type="invalid_agent", error_message=str(e), meta=meta)
         return
 
-    thread_attachments = await materialize_thread_attachments(thread_id=thread_id, current_uid=uid, db=db)
+    if conversation is None:
+        yield make_resume_chunk(status="error", error_type="invalid_thread", error_message="对话线程不存在", meta=meta)
+        return
+    thread_attachments = list((conversation.extra_metadata or {}).get("attachments", []))
     resume_command = Command(
         resume=resume_input,
         update={"uploads": [serialize_attachment(attachment) for attachment in thread_attachments]},
@@ -1166,6 +1155,7 @@ async def stream_agent_resume(
 
     # 恢复流执行期间不访问业务数据库，先结束运行时解析事务并归还连接池。
     await db.commit()
+    await materialize_attachment_records(thread_id, uid, thread_attachments)
 
     meta["agent_slug"] = agent_item.slug
     meta["backend_id"] = agent_item.backend_id

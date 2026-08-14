@@ -51,11 +51,10 @@ class Option:
                 return self.resolve(cached)
             cache_version = await _load_cache_version(self.key)
 
-        if db is None:
-            from yuxi.storage.postgres.manager import pg_manager
+        from yuxi.storage.postgres.manager import pg_manager
 
-            async with pg_manager.get_async_session_context() as session:
-                stored = await self._load_stored_value(session)
+        async with pg_manager.get_async_session_context() as session:
+            stored = await self._load_stored_value(session)
 
         if self.cacheable:
             await _save_cached_value(self.key, stored, cache_version)
@@ -340,6 +339,7 @@ async def migrate_legacy_system_options(db: AsyncSession) -> None:
                     raw = tomli.load(file)
             except (OSError, tomli.TOMLDecodeError) as exc:
                 logger.warning(f"Failed to migrate legacy config file {config_file}: {exc}")
+                return
 
     # 旧配置只负责补充尚未存在的字段，不能覆盖已经落库的管理员值。
     if raw:

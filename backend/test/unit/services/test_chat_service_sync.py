@@ -62,7 +62,7 @@ async def test_resolve_agent_runtime_includes_subagents_only_when_requested(monk
             thread_id="child-thread",
         )
 
-    agent_item, backend, agent_config = await svc._resolve_agent_runtime(
+    agent_item, backend, agent_config, conversation = await svc._resolve_agent_runtime(
         db=object(),
         user=user,
         requested_agent_slug="worker",
@@ -74,6 +74,7 @@ async def test_resolve_agent_runtime_includes_subagents_only_when_requested(monk
     assert agent_item.slug == "worker"
     assert backend.context_schema is None
     assert agent_config == {}
+    assert conversation.thread_id == "child-thread"
 
 
 class _FakeConvRepo:

@@ -242,7 +242,7 @@ async def test_invalid_legacy_config_does_not_block_migration(db_session, monkey
 
 
 @pytest.mark.asyncio
-async def test_malformed_legacy_toml_does_not_block_migration(db_session, monkeypatch, tmp_path):
+async def test_malformed_legacy_toml_is_retried_after_file_is_fixed(db_session, monkeypatch, tmp_path):
     monkeypatch.setenv("SAVE_DIR", str(tmp_path))
     config_dir = tmp_path / "config"
     config_dir.mkdir()
@@ -253,6 +253,12 @@ async def test_malformed_legacy_toml_does_not_block_migration(db_session, monkey
     record = await options.get_option(db_session, options.system_options.key)
 
     assert record.value == {}
+    assert record.params.get("migration_version", 0) == 0
+
+    (config_dir / "base.toml").write_text('default_model = "fixed:model"\n', encoding="utf-8")
+    await options.migrate_legacy_system_options(db_session)
+
+    assert record.value == {"default_model": "fixed:model"}
     assert record.params["migration_version"] == 1
 
 
