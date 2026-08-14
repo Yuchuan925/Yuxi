@@ -21,6 +21,7 @@ from pymilvus import (
     utility,
 )
 
+from yuxi.config.options import system_options
 from yuxi.knowledge.base import FileStatus, KnowledgeBase
 from yuxi.knowledge.chunking.ragflow_like.dispatcher import chunk_markdown
 from yuxi.knowledge.chunking.ragflow_like.nlp import count_tokens
@@ -720,6 +721,9 @@ class MilvusKB(KnowledgeBase):
         logger.debug(f"[index_file] file_id={file_id}, processing_params={params}")
 
         try:
+            chunk_parser_config = dict(params.get("chunk_parser_config") or {})
+            chunk_parser_config.setdefault("embed_model_id", (await system_options.get())["embed_model"])
+            params["chunk_parser_config"] = chunk_parser_config
             # Read markdown
             markdown_content = await self._read_markdown_from_minio(file_meta["markdown_file"])
             filename = file_meta.get("filename")
@@ -826,6 +830,10 @@ class MilvusKB(KnowledgeBase):
                     kb_id=kb_id,
                     data={"status": FileStatus.INDEXING, "processing_params": resolved_params},
                 )
+
+                chunk_parser_config = dict(resolved_params.get("chunk_parser_config") or {})
+                chunk_parser_config.setdefault("embed_model_id", (await system_options.get())["embed_model"])
+                resolved_params["chunk_parser_config"] = chunk_parser_config
 
                 # 重新解析文件为 markdown
                 parse_params = {**resolved_params, "image_bucket": "public", "image_prefix": f"{kb_id}/kb-images"}

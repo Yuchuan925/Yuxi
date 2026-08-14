@@ -27,27 +27,20 @@ class _FakeSession:
     async def commit(self):
         self.commit_count += 1
 
+
 def test_build_tool_approval_payload_preserves_actions_and_review_configs():
     payload = _build_tool_approval_payload(
         {
-            "action_requests": [
-                {"name": "execute", "args": {"command": "pytest -q"}, "description": "approval"}
-            ],
-            "review_configs": [
-                {"action_name": "execute", "allowed_decisions": ["approve", "reject"]}
-            ],
+            "action_requests": [{"name": "execute", "args": {"command": "pytest -q"}, "description": "approval"}],
+            "review_configs": [{"action_name": "execute", "allowed_decisions": ["approve", "reject"]}],
         },
         "thread-1",
     )
 
     assert payload == {
         "approval": {
-            "action_requests": [
-                {"name": "execute", "args": {"command": "pytest -q"}, "description": "approval"}
-            ],
-            "review_configs": [
-                {"action_name": "execute", "allowed_decisions": ["approve", "reject"]}
-            ],
+            "action_requests": [{"name": "execute", "args": {"command": "pytest -q"}, "description": "approval"}],
+            "review_configs": [{"action_name": "execute", "allowed_decisions": ["approve", "reject"]}],
         },
         "thread_id": "thread-1",
     }
@@ -272,7 +265,12 @@ async def test_stream_agent_resume_commits_before_stream_and_routes_subagent_chu
             return FakeGraph()
 
     async def fake_resolve_agent_runtime(**_kwargs):
-        return SimpleNamespace(slug="main-agent", backend_id="ChatbotAgent"), FakeAgent(), {}
+        return (
+            SimpleNamespace(slug="main-agent", backend_id="ChatbotAgent"),
+            FakeAgent(),
+            {},
+            SimpleNamespace(uid="user-1", status="active", extra_metadata={"attachments": []}),
+        )
 
     async def fake_save_messages_from_langgraph_state(**_kwargs):
         return None
@@ -293,7 +291,19 @@ async def test_stream_agent_resume_commits_before_stream_and_routes_subagent_chu
     )
     monkeypatch.setattr(svc, "check_and_handle_interrupts", fake_check_and_handle_interrupts)
     monkeypatch.setattr(svc, "save_messages_from_langgraph_state", fake_save_messages_from_langgraph_state)
-    monkeypatch.setattr(svc, "ConversationRepository", lambda _db: object())
+
+    class FakeConversationRepository:
+        def __init__(self, _db):
+            pass
+
+        async def get_conversation_by_thread_id(self, _thread_id):
+            return SimpleNamespace(uid="user-1", status="active", extra_metadata={"attachments": []})
+
+    async def fake_materialize(_thread_id, _uid, _attachments):
+        assert db.commit_count == 1
+
+    monkeypatch.setattr(svc, "ConversationRepository", FakeConversationRepository)
+    monkeypatch.setattr(svc, "materialize_attachment_records", fake_materialize)
     monkeypatch.setattr(svc, "flush_langfuse", lambda: None)
 
     stream = stream_agent_resume(

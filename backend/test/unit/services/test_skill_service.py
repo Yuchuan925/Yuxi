@@ -35,7 +35,7 @@ async def test_prepare_remote_skill_install_stages_success_and_failure(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ):
-    monkeypatch.setattr(svc.sys_config, "save_dir", str(tmp_path))
+    monkeypatch.setenv("SAVE_DIR", str(tmp_path))
     valid_dir = tmp_path / "remote-pdf"
     invalid_dir = tmp_path / "remote-broken"
     valid_dir.mkdir()
@@ -267,6 +267,12 @@ async def test_runtime_access_still_excludes_disabled_shared_skill(monkeypatch: 
 
     monkeypatch.setattr(svc, "SkillRepository", FakeRepo)
 
+    async def no_personal_skills(_uid, *, refresh=False):
+        del refresh
+        return svc.PersonalSkillSnapshot(items=[], scanned_at="", from_cache=False)
+
+    monkeypatch.setattr(svc, "list_personal_skills", no_personal_skills)
+
     assert svc.user_can_access_skill(_user("root", role="user"), skill) is False
     assert await svc.list_accessible_skills(None, _user("root", role="user")) == []
 
@@ -275,7 +281,7 @@ async def test_runtime_access_still_excludes_disabled_shared_skill(monkeypatch: 
 async def test_normal_user_skill_upload_draft_defaults_to_personal_read_scope(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
-    monkeypatch.setattr(svc.sys_config, "save_dir", str(tmp_path))
+    monkeypatch.setenv("SAVE_DIR", str(tmp_path))
 
     class FakeRepo:
         def __init__(self, _db):
@@ -322,7 +328,7 @@ async def test_normal_user_confirm_skill_draft_rejects_wider_share_scope(
     monkeypatch: pytest.MonkeyPatch,
     share_config: dict,
 ):
-    monkeypatch.setattr(svc.sys_config, "save_dir", str(tmp_path))
+    monkeypatch.setenv("SAVE_DIR", str(tmp_path))
 
     class FakeRepo:
         def __init__(self, _db):
@@ -531,7 +537,7 @@ def test_is_valid_skill_slug():
 
 
 def test_sync_thread_readable_skills_none_keeps_no_skills(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr(svc.sys_config, "save_dir", str(tmp_path))
+    monkeypatch.setenv("SAVE_DIR", str(tmp_path))
     skills_root = tmp_path / "skills"
     (skills_root / "alpha").mkdir(parents=True, exist_ok=True)
     (skills_root / "alpha" / "SKILL.md").write_text("alpha", encoding="utf-8")
@@ -569,7 +575,7 @@ async def test_sync_thread_readable_skills_async_runs_in_thread(monkeypatch: pyt
 
 
 def test_sync_thread_readable_skills_only_keeps_selected(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr(svc.sys_config, "save_dir", str(tmp_path))
+    monkeypatch.setenv("SAVE_DIR", str(tmp_path))
     skills_root = tmp_path / "skills"
     (skills_root / "alpha").mkdir(parents=True, exist_ok=True)
     (skills_root / "alpha" / "SKILL.md").write_text("alpha", encoding="utf-8")
@@ -630,7 +636,7 @@ def test_resolve_relative_path_blocks_traversal(tmp_path: Path):
 
 @pytest.mark.asyncio
 async def test_skill_upload_prepare_confirm_rewrites_conflicting_name(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr(svc.sys_config, "save_dir", str(tmp_path))
+    monkeypatch.setenv("SAVE_DIR", str(tmp_path))
 
     class FakeRepo:
         existing_slugs = {"demo"}
@@ -680,7 +686,7 @@ async def test_skill_upload_prepare_confirm_rewrites_conflicting_name(tmp_path: 
 
 @pytest.mark.asyncio
 async def test_skill_zip_import_uses_skill_md_name_not_zip_or_root_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr(svc.sys_config, "save_dir", str(tmp_path))
+    monkeypatch.setenv("SAVE_DIR", str(tmp_path))
 
     class FakeRepo:
         created_item: Skill | None = None
@@ -731,7 +737,7 @@ async def test_skill_zip_import_uses_skill_md_name_not_zip_or_root_dir(tmp_path:
 async def test_skill_zip_import_validates_skill_md_name_not_zip_filename(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
-    monkeypatch.setattr(svc.sys_config, "save_dir", str(tmp_path))
+    monkeypatch.setenv("SAVE_DIR", str(tmp_path))
 
     class FakeRepo:
         def __init__(self, _db):
@@ -761,7 +767,7 @@ async def test_skill_zip_import_validates_skill_md_name_not_zip_filename(
 async def test_skill_zip_import_uses_frontmatter_slug_and_keeps_display_name(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
-    monkeypatch.setattr(svc.sys_config, "save_dir", str(tmp_path))
+    monkeypatch.setenv("SAVE_DIR", str(tmp_path))
 
     class FakeRepo:
         created_item: Skill | None = None
@@ -822,7 +828,7 @@ async def test_skill_zip_import_uses_frontmatter_slug_and_keeps_display_name(
 async def test_skill_zip_import_rewrites_conflicting_slug_not_display_name(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
-    monkeypatch.setattr(svc.sys_config, "save_dir", str(tmp_path))
+    monkeypatch.setenv("SAVE_DIR", str(tmp_path))
 
     class FakeRepo:
         existing_slugs = {"word-docx"}
@@ -879,7 +885,7 @@ async def test_skill_zip_import_rewrites_conflicting_slug_not_display_name(
 
 @pytest.mark.asyncio
 async def test_skill_md_prepare_confirm_creates_single_file_skill(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr(svc.sys_config, "save_dir", str(tmp_path))
+    monkeypatch.setenv("SAVE_DIR", str(tmp_path))
 
     class FakeRepo:
         created_item: Skill | None = None
@@ -920,7 +926,7 @@ async def test_skill_md_prepare_confirm_creates_single_file_skill(tmp_path: Path
 
 @pytest.mark.asyncio
 async def test_import_skill_dir_requires_root_skill_md(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr(svc.sys_config, "save_dir", str(tmp_path))
+    monkeypatch.setenv("SAVE_DIR", str(tmp_path))
     source_dir = tmp_path / "source-skill"
     source_dir.mkdir(parents=True, exist_ok=True)
 
@@ -934,7 +940,7 @@ async def test_import_skill_dir_requires_root_skill_md(tmp_path: Path, monkeypat
 
 @pytest.mark.asyncio
 async def test_update_skill_md_syncs_metadata(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr(svc.sys_config, "save_dir", str(tmp_path))
+    monkeypatch.setenv("SAVE_DIR", str(tmp_path))
     skill_dir = tmp_path / "skills" / "demo"
     skill_dir.mkdir(parents=True, exist_ok=True)
     (skill_dir / "SKILL.md").write_text(
@@ -1152,7 +1158,7 @@ def test_owner_only_skill_can_depend_on_visible_skill():
 
 @pytest.mark.asyncio
 async def test_init_builtin_skills_create_missing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr(svc.sys_config, "save_dir", str(tmp_path))
+    monkeypatch.setenv("SAVE_DIR", str(tmp_path))
 
     source_dir = tmp_path / "builtin-skills" / "reporter"
     source_dir.mkdir(parents=True, exist_ok=True)
@@ -1213,7 +1219,7 @@ async def test_init_builtin_skills_create_missing(tmp_path: Path, monkeypatch: p
 async def test_init_builtin_skills_updates_existing_record_and_preserves_disabled(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
-    monkeypatch.setattr(svc.sys_config, "save_dir", str(tmp_path))
+    monkeypatch.setenv("SAVE_DIR", str(tmp_path))
 
     source_dir = tmp_path / "builtin-skills" / "reporter"
     source_dir.mkdir(parents=True, exist_ok=True)
@@ -1340,7 +1346,7 @@ async def test_init_builtin_skills_updates_existing_record_and_preserves_disable
 
 @pytest.mark.asyncio
 async def test_init_builtin_skills_rejects_non_builtin_conflict(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr(svc.sys_config, "save_dir", str(tmp_path))
+    monkeypatch.setenv("SAVE_DIR", str(tmp_path))
 
     source_dir = tmp_path / "builtin" / "reporter"
     source_dir.mkdir(parents=True, exist_ok=True)
@@ -1416,7 +1422,7 @@ async def test_update_skill_enabled_allows_builtin(monkeypatch: pytest.MonkeyPat
 
 @pytest.mark.asyncio
 async def test_builtin_skill_file_edit_blocked(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr(svc.sys_config, "save_dir", str(tmp_path))
+    monkeypatch.setenv("SAVE_DIR", str(tmp_path))
 
     target_dir = tmp_path / "skills" / "reporter"
     target_dir.mkdir(parents=True, exist_ok=True)
@@ -1450,7 +1456,7 @@ async def test_builtin_skill_file_edit_blocked(tmp_path: Path, monkeypatch: pyte
 
 @pytest.mark.asyncio
 async def test_delete_skills_batch_ok(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr(svc.sys_config, "save_dir", str(tmp_path))
+    monkeypatch.setenv("SAVE_DIR", str(tmp_path))
 
     # 模拟两个已安装的技能
     (tmp_path / "skills" / "skill-a").mkdir(parents=True, exist_ok=True)
@@ -1497,7 +1503,7 @@ async def test_delete_skills_batch_limit_exceeded():
 
 @pytest.mark.asyncio
 async def test_delete_skill_concurrent_lock(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr(svc.sys_config, "save_dir", str(tmp_path))
+    monkeypatch.setenv("SAVE_DIR", str(tmp_path))
     (tmp_path / "skills" / "concurrent-skill").mkdir(parents=True, exist_ok=True)
 
     item = Skill(
@@ -1693,7 +1699,7 @@ async def test_personal_skill_overrides_shared_skill_and_drops_dependencies(
     monkeypatch.setattr(svc, "SkillRepository", FakeRepo)
     monkeypatch.setattr(svc, "get_async_redis_client", fake_get_redis)
     monkeypatch.setattr(svc, "get_personal_skills_root_dir", lambda _uid: personal_root)
-    monkeypatch.setattr(svc.sys_config, "save_dir", str(tmp_path))
+    monkeypatch.setenv("SAVE_DIR", str(tmp_path))
 
     items = await svc.list_accessible_skills(None, _user("user-1", role="user"))
 
@@ -1766,7 +1772,7 @@ async def test_skill_cards_keep_shadowed_shared_item_for_management(
     monkeypatch.setattr(svc, "SkillRepository", FakeRepo)
     monkeypatch.setattr(svc, "get_async_redis_client", fake_get_redis)
     monkeypatch.setattr(svc, "get_personal_skills_root_dir", lambda _uid: personal_root)
-    monkeypatch.setattr(svc.sys_config, "save_dir", str(tmp_path))
+    monkeypatch.setenv("SAVE_DIR", str(tmp_path))
 
     cards, snapshot = await svc.list_skill_cards_for_user(None, _user("user-1", role="user"))
 
@@ -1818,7 +1824,7 @@ async def test_confirm_personal_skill_draft_uses_original_slug_without_database(
 
     monkeypatch.setattr(svc, "get_async_redis_client", fake_get_redis)
     monkeypatch.setattr(svc, "get_personal_skills_root_dir", lambda _uid: personal_root)
-    monkeypatch.setattr(svc.sys_config, "save_dir", str(tmp_path))
+    monkeypatch.setenv("SAVE_DIR", str(tmp_path))
 
     results = await svc.confirm_personal_skill_install_draft(
         draft_id=draft_id,
@@ -1837,7 +1843,7 @@ def test_sync_thread_readable_skills_uses_final_source_mapping(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ):
-    monkeypatch.setattr(svc.sys_config, "save_dir", str(tmp_path))
+    monkeypatch.setenv("SAVE_DIR", str(tmp_path))
     shared_dir = tmp_path / "skills" / "demo"
     personal_dir = tmp_path / "personal" / "demo"
     shared_dir.mkdir(parents=True)

@@ -390,7 +390,10 @@ async def test_parse_document_uses_config_default_ocr_when_engine_missing(
         del db, engine_id
         return {}
 
-    monkeypatch.setattr("yuxi.config.default_ocr_engine", "mineru_ocr")
+    async def _system_options_get(_option, _db=None):
+        return {"default_ocr_engine": "mineru_ocr"}
+
+    monkeypatch.setattr("yuxi.config.options.Option.get", _system_options_get)
     monkeypatch.setattr(DocumentProcessorFactory, "process_file", _fake_process_file)
     monkeypatch.setattr("yuxi.services.ocr_service._build_processor_kwargs", _build_processor_kwargs)
 

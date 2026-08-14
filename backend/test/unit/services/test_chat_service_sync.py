@@ -62,7 +62,7 @@ async def test_resolve_agent_runtime_includes_subagents_only_when_requested(monk
             thread_id="child-thread",
         )
 
-    agent_item, backend, agent_config = await svc._resolve_agent_runtime(
+    agent_item, backend, agent_config, conversation = await svc._resolve_agent_runtime(
         db=object(),
         user=user,
         requested_agent_slug="worker",
@@ -74,6 +74,7 @@ async def test_resolve_agent_runtime_includes_subagents_only_when_requested(monk
     assert agent_item.slug == "worker"
     assert backend.context_schema is None
     assert agent_config == {}
+    assert conversation.thread_id == "child-thread"
 
 
 class _FakeConvRepo:
@@ -277,7 +278,7 @@ async def test_build_agent_input_context_loads_all_workspace_agent_context_files
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ):
-    monkeypatch.setattr(workspace_paths.conf, "save_dir", str(tmp_path))
+    monkeypatch.setenv("SAVE_DIR", str(tmp_path))
     workspace_paths.ensure_thread_dirs("thread-1", "user-1")
     agents_dir = tmp_path / "threads" / "shared" / "user-1" / "workspace" / "agents"
     (agents_dir / "AGENTS.md").write_text("行为约束", encoding="utf-8")

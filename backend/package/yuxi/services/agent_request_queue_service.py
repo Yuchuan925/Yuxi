@@ -196,8 +196,8 @@ async def intake_request(
     else:
         request_status = REQUEST_STATUS_QUEUED
         delivery_status = DELIVERY_STATUS_QUEUED
-        resolved_model_spec, resolved_tool_approval_mode = resolve_agent_run_config(
-            model_spec, tool_approval_mode, agent_item, agent_backend
+        resolved_model_spec, resolved_tool_approval_mode = await resolve_agent_run_config(
+            model_spec, tool_approval_mode, agent_item, agent_backend, db
         )
         input_payload = {
             "model_spec": resolved_model_spec,
@@ -209,6 +209,20 @@ async def intake_request(
     )
     try:
         async with db.begin_nested():
+            attachment_file_ids = _normalize_attachment_file_ids(meta.get("attachment_file_ids"))
+            if not reject_without_immediate_dispatch and attachment_file_ids:
+                bound_attachments = await ConversationRepository(db).bind_attachments_to_request(
+                    conversation.id,
+                    request_id,
+                    attachment_file_ids,
+                )
+                bound_ids = {str(item.get("file_id")) for item in bound_attachments}
+                missing_ids = [file_id for file_id in attachment_file_ids if file_id not in bound_ids]
+                if missing_ids:
+                    raise HTTPException(
+                        status_code=422,
+                        detail=f"附件不存在、已被使用或已被删除: {', '.join(missing_ids)}",
+                    )
             persisted_message = await create_agent_run_input_message(
                 db=db,
                 conversation_id=conversation.id,
@@ -724,6 +738,21 @@ def _build_message_metadata(
     if meta.get("tool_approval_mode") is not None:
         metadata["tool_approval_mode"] = meta["tool_approval_mode"]
     return metadata
+
+
+def _normalize_attachment_file_ids(value: object) -> list[str]:
+    """规范化请求附件 ID，保持原始顺序并去重。"""
+    if not isinstance(value, list):
+        return []
+
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for file_id in value:
+        current = str(file_id).strip()
+        if current and current not in seen:
+            seen.add(current)
+            normalized.append(current)
+    return normalized
 
 
 async def _is_steerable_message_run(*, db: AsyncSession, run: AgentRun) -> bool:

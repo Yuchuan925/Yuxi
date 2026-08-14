@@ -3,6 +3,7 @@ x-api-worker-env: &api-worker-env
   LITE_MODE: ${LITE_MODE:-}
   RUNNING_IN_DOCKER: "true"
   YUXI_ENV: production
+  LANGGRAPH_CHECKPOINTER_BACKEND: ${LANGGRAPH_CHECKPOINTER_BACKEND:-postgres}
   PYTHONPATH: /app/package
   JWT_SECRET_KEY: ${JWT_SECRET_KEY:?Set JWT_SECRET_KEY in .env.prod}
   YUXI_INSTANCE_ID: ${YUXI_INSTANCE_ID:?Set YUXI_INSTANCE_ID in .env.prod}

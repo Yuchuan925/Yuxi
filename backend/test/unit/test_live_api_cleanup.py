@@ -74,7 +74,7 @@ async def test_cleanup_deletes_e2e_threads_before_temporary_agents(tmp_path, mon
     """只删除 E2E 标记的对话和智能体，并允许资源已经不存在。"""
 
     deleted_paths: list[str] = []
-    monkeypatch.setattr(live_api_cleanup.conf, "save_dir", str(tmp_path))
+    monkeypatch.setenv("SAVE_DIR", str(tmp_path))
     (tmp_path / "threads" / "thread-viewer").mkdir(parents=True)
     (tmp_path / "threads" / "thread-marked").mkdir(parents=True)
     responses: dict[str, object] = {
@@ -137,7 +137,7 @@ async def test_cleanup_paginates_active_threads(tmp_path, monkeypatch):
 
     deleted_paths: list[str] = []
     offsets: list[str] = []
-    monkeypatch.setattr(live_api_cleanup.conf, "save_dir", str(tmp_path))
+    monkeypatch.setenv("SAVE_DIR", str(tmp_path))
 
     def handle_request(request: httpx.Request) -> httpx.Response:
         """模拟分两页返回线程的清理 API。"""
@@ -183,7 +183,7 @@ async def test_cleanup_removes_deleted_and_subagent_thread_storage(tmp_path, mon
     """已软删除和 subagent 状态的线程也必须回收本地沙盒目录。"""
 
     deleted_paths: list[str] = []
-    monkeypatch.setattr(live_api_cleanup.conf, "save_dir", str(tmp_path))
+    monkeypatch.setenv("SAVE_DIR", str(tmp_path))
     for thread_id in ("thread-deleted", "thread-child"):
         (tmp_path / "threads" / thread_id).mkdir(parents=True)
 
@@ -215,7 +215,7 @@ async def test_cleanup_removes_deleted_and_subagent_thread_storage(tmp_path, mon
 async def test_remove_e2e_thread_storage_rejects_symlink(tmp_path, monkeypatch):
     """沙盒目录是符号链接时必须拒绝删除，避免解析后误删用户目录。"""
 
-    monkeypatch.setattr(live_api_cleanup.conf, "save_dir", str(tmp_path))
+    monkeypatch.setenv("SAVE_DIR", str(tmp_path))
     threads_root = tmp_path / "threads"
     threads_root.mkdir()
     user_dir = threads_root / "user-data"

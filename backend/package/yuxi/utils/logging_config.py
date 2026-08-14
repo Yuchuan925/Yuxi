@@ -4,11 +4,11 @@ import sys
 
 from loguru import logger as loguru_logger
 
+from yuxi.config import get_save_dir
 from yuxi.utils.datetime_utils import shanghai_now
 
-SAVE_DIR = "saves"
 DATETIME = shanghai_now().strftime("%Y-%m-%d")
-LOG_FILE = f"{SAVE_DIR}/logs/yuxi-{DATETIME}.log"
+LOG_FILE = str(get_save_dir() / "logs" / f"yuxi-{DATETIME}.log")
 
 
 class LoguruHandler(logging.Handler):
@@ -47,7 +47,7 @@ def _setup_logging_bridge():
 
 def setup_logger(name, level="DEBUG", console=True):
     """使用 loguru 设置日志记录器"""
-    os.makedirs(f"{SAVE_DIR}/logs", exist_ok=True)
+    os.makedirs(get_save_dir() / "logs", exist_ok=True)
 
     # 移除默认的 handler
     loguru_logger.remove()

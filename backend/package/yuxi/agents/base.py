@@ -4,7 +4,6 @@ import asyncio
 import os
 from abc import abstractmethod
 from contextlib import suppress
-from pathlib import Path
 from typing import Any
 
 from langchain_core.messages import ToolMessage
@@ -14,8 +13,8 @@ from langgraph.graph.state import CompiledStateGraph
 from langgraph.stream.transformers import CustomTransformer
 from langgraph.types import Command
 
-from yuxi import config as sys_config
 from yuxi.agents.context import DEFAULT_MAX_EXECUTION_STEPS, BaseContext, resolve_agent_resource_options
+from yuxi.config import get_save_dir
 from yuxi.storage.postgres.manager import pg_manager
 from yuxi.utils import logger
 from yuxi.utils.hash_utils import subagent_child_thread_id
@@ -117,7 +116,7 @@ class BaseAgent:
         self.graph = None  # will be covered by get_graph
         self.checkpointer = None
         self._async_conn = None
-        self.workdir = Path(sys_config.save_dir) / "agents" / self.module_name
+        self.workdir = get_save_dir() / "agents" / self.module_name
         self.workdir.mkdir(parents=True, exist_ok=True)
 
     @property
@@ -271,8 +270,11 @@ class BaseAgent:
             with suppress(asyncio.CancelledError):
                 await route_task
 
-    async def stream_messages_with_state(self, messages: list[str], input_context=None, **kwargs):
-        async for event in self._stream_input_with_state({"messages": messages}, input_context, **kwargs):
+    async def stream_messages_with_state(self, messages: list[str], input_context=None, uploads=None, **kwargs):
+        graph_input = {"messages": messages}
+        if uploads is not None:
+            graph_input["uploads"] = uploads
+        async for event in self._stream_input_with_state(graph_input, input_context, **kwargs):
             yield event
 
     async def stream_resume_with_state(self, resume_input, input_context=None, **kwargs):
@@ -357,42 +359,26 @@ class BaseAgent:
         if self.checkpointer is not None:
             return self.checkpointer
 
-        checkpointer = None
-        backend = os.getenv("LANGGRAPH_CHECKPOINTER_BACKEND", "sqlite").strip().lower()
+        backend = os.getenv("LANGGRAPH_CHECKPOINTER_BACKEND", "postgres").strip().lower()
 
         if backend == "postgres":
             checkpointer = await self._create_postgres_checkpointer()
-
-        if checkpointer is None:
+        elif backend == "sqlite":
             try:
                 checkpointer = AsyncSqliteSaver(await self.get_async_conn())
             except Exception as e:
                 logger.error(f"构建 sqlite checkpointer 失败: {e}, 尝试使用内存存储")
                 checkpointer = InMemorySaver()
+        else:
+            raise ValueError(f"不支持的 LangGraph checkpointer backend: {backend}")
 
         self.checkpointer = checkpointer
         return self.checkpointer
 
     async def _create_postgres_checkpointer(self):
-        postgres_url = os.getenv("POSTGRES_URL")
-        if not postgres_url:
-            logger.warning("POSTGRES_URL 未配置，无法启用 postgres checkpointer，回退 sqlite")
-            return None
-
-        try:
-            from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver  # type: ignore
-        except Exception as e:
-            logger.warning(f"langgraph postgres checkpointer 不可用，回退 sqlite: {e}")
-            return None
-
-        try:
-            saver = AsyncPostgresSaver(pg_manager.langgraph_pool)
-
-            logger.info(f"{self.name} 使用 postgres checkpointer")
-            return saver
-        except Exception as e:
-            logger.warning(f"初始化 postgres checkpointer 失败，回退 sqlite: {e}")
-            return None
+        saver = pg_manager.get_langgraph_checkpointer()
+        logger.info(f"{self.name} 使用 postgres checkpointer")
+        return saver
 
     async def get_async_conn(self) -> aiosqlite.Connection:
         """获取异步数据库连接"""

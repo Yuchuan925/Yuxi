@@ -12,6 +12,7 @@ from langgraph.types import Command, interrupt
 from pydantic import BaseModel, Field
 
 from yuxi.agents.toolkits.registry import ToolExtraMetadata, _all_tool_instances, _extra_registry, tool
+from yuxi.config.options import system_options
 from yuxi.utils import logger
 from yuxi.utils.paths import (
     CONVERSATION_HISTORY_DIR_NAME,
@@ -345,7 +346,9 @@ async def ocr_parse_file(file_path: str, runtime: ToolRuntime, ocr_engine: str |
     from yuxi.services.ocr_service import parse_document
 
     file_thread_id, uid, actual_path = _resolve_ocr_source_path(file_path, runtime)
-    engine = _resolve_ocr_engine(ocr_engine)
+    from yuxi.services.ocr_service import resolve_ocr_engine_id
+
+    engine = resolve_ocr_engine_id(ocr_engine, (await system_options.get())["default_ocr_engine"])
     markdown = await parse_document(str(actual_path), params={"ocr_engine": engine})
 
     output_path = _next_ocr_output_path(file_thread_id, actual_path)
@@ -422,18 +425,6 @@ def _runtime_scope_value(runtime: ToolRuntime, key: str) -> str | None:
         if isinstance(value, str) and value.strip():
             return value.strip()
     return None
-
-
-def _resolve_ocr_engine(ocr_engine: str | None) -> str:
-    """Validate the requested OCR engine, falling back to the system default when omitted."""
-    from yuxi.knowledge.parser.factory import DocumentProcessorFactory
-    from yuxi.services.ocr_service import resolve_ocr_engine_id
-
-    engine = resolve_ocr_engine_id(ocr_engine)
-    allowed = {"disable", *DocumentProcessorFactory.get_available_processors()}
-    if engine not in allowed:
-        raise ValueError(f"不支持的 OCR 引擎: {engine}")
-    return engine
 
 
 def _next_ocr_output_path(thread_id: str, source_path: Path) -> Path:
