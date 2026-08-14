@@ -63,11 +63,11 @@ class MinIOClient:
 
     PUBLIC_READ_BUCKETS = {"public"}
 
-    # 知识库相关的 bucket 名称
+    # 知识库相关的 bucket 名称；images 使用私有 bucket，图片统一经后端鉴权代理访问
     KB_BUCKETS = {
         "documents": "knowledgebases",
         "parsed": "knowledgebases",
-        "images": "public",
+        "images": "kb-images",
     }
 
     def __init__(self):

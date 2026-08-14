@@ -1,5 +1,6 @@
 import hashlib
 import time
+from urllib.parse import quote
 
 from yuxi.knowledge.chunking.ragflow_like.presets import resolve_chunk_processing_params
 from yuxi.utils import hashstr, logger
@@ -208,6 +209,19 @@ def merge_processing_params(metadata_params: dict | None, request_params: dict |
         f"merged_keys={list(merged_params.keys())}"
     )
     return merged_params
+
+
+def build_kb_image_proxy_url(object_name: str) -> str:
+    """构建知识库图片的后端鉴权代理 URL。
+
+    图片存放在私有 bucket，前端通过该 URL 请求后端鉴权后读取图片。
+    对象名格式为 ``{kb_id}/kb-images/{timestamp}_{filename}``，kb_id 即首段；
+    路径参数只保留 ``kb-images/...`` 部分（保留斜杠、编码其余字符）。
+    """
+    kb_id, separator, relative_path = object_name.partition("/")
+    if not kb_id or not separator or not relative_path.startswith("kb-images/"):
+        raise ValueError("知识库图片对象名必须符合 {kb_id}/kb-images/{filename} 格式")
+    return f"/api/knowledge/databases/{kb_id}/images/{quote(relative_path, safe='/')}"
 
 
 def is_minio_url(file_path: str) -> bool:

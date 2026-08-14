@@ -1638,6 +1638,45 @@ async def download_document(kb_id: str, doc_id: str, current_user: User = Depend
         raise HTTPException(status_code=500, detail=f"下载失败: {e}")
 
 
+@knowledge.get("/databases/{kb_id}/images/{object_path:path}")
+async def get_kb_image(kb_id: str, object_path: str, current_user: User = Depends(require_knowledge_base_read)):
+    """经鉴权代理读取知识库图片（图片存放在私有 bucket，禁止匿名访问）"""
+    if not object_path.startswith("kb-images/"):
+        raise HTTPException(status_code=400, detail="非法的知识库图片路径")
+    if ".." in object_path or "\\" in object_path:
+        raise HTTPException(status_code=400, detail="非法的知识库图片路径")
+
+    object_name = f"{kb_id}/{object_path}"
+    minio_client = get_minio_client()
+    try:
+        minio_response = await minio_client.adownload_response(
+            bucket_name=MinIOClient.KB_BUCKETS["images"],
+            object_name=object_name,
+        )
+    except StorageError as error:
+        if "不存在" in str(error):
+            raise HTTPException(status_code=404, detail="图片不存在")
+        logger.error(f"读取知识库图片失败 {object_name}: {error}")
+        raise HTTPException(status_code=500, detail="读取图片失败")
+
+    content_type = minio_response.getheader("Content-Type") or "application/octet-stream"
+
+    async def image_stream():
+        try:
+            while True:
+                chunk = await asyncio.to_thread(minio_response.read, 8192)
+                if not chunk:
+                    break
+                yield chunk
+        finally:
+            minio_response.close()
+            minio_response.release_conn()
+
+    return StreamingResponse(
+        image_stream(), media_type=content_type, headers={"Cache-Control": "private, max-age=3600"}
+    )
+
+
 # =============================================================================
 # === 知识库查询分组 ===
 # =============================================================================

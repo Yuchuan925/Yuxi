@@ -251,6 +251,69 @@ async def test_knowledge_routes_enforce_permissions(test_client, standard_user, 
     _assert_forbidden_response(forbidden_exists)
 
 
+async def test_kb_image_proxy_requires_auth_and_streams_private_image(
+    test_client, admin_headers, knowledge_database
+):
+    """知识库图片代理：未登录不可访问，鉴权后可读取私有 bucket 图片"""
+    from yuxi.storage.minio.client import MinIOClient, get_minio_client
+
+    kb_id = knowledge_database["kb_id"]
+    image_name = f"proxy_{uuid.uuid4().hex[:8]}.png"
+    object_name = f"{kb_id}/kb-images/{image_name}"
+    image_bytes = b"\x89PNG\r\n\x1a\nfake-image-content"
+
+    minio_client = get_minio_client()
+    minio_client.upload_file(
+        bucket_name=MinIOClient.KB_BUCKETS["images"],
+        object_name=object_name,
+        data=image_bytes,
+        content_type="image/png",
+    )
+
+    proxy_path = f"/api/knowledge/databases/{kb_id}/images/kb-images/{image_name}"
+
+    anonymous = await test_client.get(proxy_path)
+    assert anonymous.status_code == 401
+
+    invalid_headers = {"Authorization": "Bearer invalid-token"}
+    forbidden = await test_client.get(proxy_path, headers=invalid_headers)
+    assert forbidden.status_code == 401
+
+    authorized = await test_client.get(proxy_path, headers=admin_headers)
+    assert authorized.status_code == 200, authorized.text
+    assert authorized.content == image_bytes
+    assert authorized.headers["content-type"].startswith("image/png")
+
+
+async def test_kb_image_proxy_rejects_invalid_or_missing_object(test_client, admin_headers, knowledge_database):
+    """知识库图片代理：非法路径与不存在的图片返回 400/404"""
+    kb_id = knowledge_database["kb_id"]
+
+    invalid_path = await test_client.get(
+        f"/api/knowledge/databases/{kb_id}/images/avatar/user.png",
+        headers=admin_headers,
+    )
+    assert invalid_path.status_code == 400
+
+    traversal_path = await test_client.get(
+        f"/api/knowledge/databases/{kb_id}/images/kb-images/..%2Fother.png",
+        headers=admin_headers,
+    )
+    assert traversal_path.status_code == 400
+
+    backslash_path = await test_client.get(
+        f"/api/knowledge/databases/{kb_id}/images/kb-images/..%5Cother.png",
+        headers=admin_headers,
+    )
+    assert backslash_path.status_code == 400
+
+    missing_image = await test_client.get(
+        f"/api/knowledge/databases/{kb_id}/images/kb-images/missing.png",
+        headers=admin_headers,
+    )
+    assert missing_image.status_code == 404
+
+
 async def test_admin_can_create_vector_db_with_reranker(test_client, admin_headers):
     """测试创建向量库并配置 reranker 参数（通过 query_params.options）
 

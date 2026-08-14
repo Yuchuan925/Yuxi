@@ -224,7 +224,7 @@ class PaddleOCRAPIParser(BaseDocumentProcessor):
                 "image_download_failed",
             )
 
-        image_bucket = params.get("image_bucket") or "public"
+        image_bucket = params.get("image_bucket") or get_minio_client().KB_BUCKETS["images"]
         image_prefix = str(params.get("image_prefix") or "unknown/kb-images").strip("/") or "unknown/kb-images"
         filename = Path(image_path).name or "paddleocr_image"
         suffix = Path(filename).suffix
@@ -236,12 +236,14 @@ class PaddleOCRAPIParser(BaseDocumentProcessor):
         object_name = f"{image_prefix}/{int(time.time() * 1000000)}_{filename}"
         minio_client = get_minio_client()
         minio_client.ensure_bucket_exists(image_bucket)
-        upload_result = minio_client.upload_file(
+        minio_client.upload_file(
             bucket_name=image_bucket,
             object_name=object_name,
             data=response.content,
         )
-        return upload_result.url
+        from yuxi.knowledge.utils.kb_utils import build_kb_image_proxy_url
+
+        return build_kb_image_proxy_url(object_name)
 
 
 class PaddleOCRVLParser(PaddleOCRAPIParser):

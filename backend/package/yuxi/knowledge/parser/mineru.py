@@ -187,7 +187,9 @@ class MinerUParser(BaseDocumentProcessor):
                     tmp_zip.flush()
 
                     try:
-                        image_bucket = params.get("image_bucket") or "public"
+                        from yuxi.storage.minio import get_minio_client
+
+                        image_bucket = params.get("image_bucket") or get_minio_client().KB_BUCKETS["images"]
                         image_prefix = params.get("image_prefix") or "unknown/kb-images"
 
                         processed = process_zip_file_sync(

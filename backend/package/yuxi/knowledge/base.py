@@ -317,7 +317,9 @@ class KnowledgeBase(ABC):
                 kb_additional_params=additional_params,
                 file_processing_params=file_meta.get("processing_params"),
             )
-            params["image_bucket"] = "public"
+            from yuxi.storage.minio import get_minio_client
+
+            params["image_bucket"] = get_minio_client().KB_BUCKETS["images"]
             params["image_prefix"] = f"{kb_id}/kb-images"
 
             markdown_content = await parse_document(

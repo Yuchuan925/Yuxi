@@ -6,10 +6,11 @@ import time
 import zipfile
 from pathlib import Path
 
+from yuxi.knowledge.utils.kb_utils import build_kb_image_proxy_url
 from yuxi.storage.minio import get_minio_client
 from yuxi.utils import logger
 
-DEFAULT_IMAGE_BUCKET = "public"
+DEFAULT_IMAGE_BUCKET = "kb-images"
 DEFAULT_IMAGE_PREFIX = "unknown/kb-images"
 
 
@@ -157,7 +158,7 @@ async def process_images(
             timestamp = int(time.time() * 1000000)
             object_name = f"{normalized_prefix}/{timestamp}_{Path(img_name).name}"
 
-            result = await minio_client.aupload_file(
+            await minio_client.aupload_file(
                 bucket_name=image_bucket,
                 object_name=object_name,
                 data=data,
@@ -165,12 +166,12 @@ async def process_images(
 
             img_info = {
                 "name": Path(img_name).name,
-                "url": result.url,
+                "url": build_kb_image_proxy_url(object_name),
                 "path": f"images/{Path(img_name).name}",
             }
             images.append(img_info)
 
-            logger.debug(f"图片上传成功: {Path(img_name).name} -> {result.url}")
+            logger.debug(f"图片上传成功: {Path(img_name).name} -> {img_info['url']}")
 
         except Exception as e:
             logger.error(f"上传图片失败 {Path(img_name).name}: {e}")

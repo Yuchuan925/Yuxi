@@ -44,6 +44,30 @@
             <Code2 :size="16" />
           </button>
         </div>
+        <div
+          v-if="isHtmlFile && htmlPreviewMode === 'render' && !(canEdit && editMode === 'edit')"
+          class="html-preview-zoom-control"
+        >
+          <button
+            class="preview-mode-btn"
+            :disabled="zoomOutDisabled"
+            @click="zoomHtmlPreview(-HTML_PREVIEW_SCALE_STEP)"
+            title="缩小"
+            aria-label="缩小"
+          >
+            <ZoomOut :size="14" />
+          </button>
+          <span class="html-preview-zoom-value" title="缩放比例">{{ htmlPreviewScalePercent }}%</span>
+          <button
+            class="preview-mode-btn"
+            :disabled="zoomInDisabled"
+            @click="zoomHtmlPreview(HTML_PREVIEW_SCALE_STEP)"
+            title="放大"
+            aria-label="放大"
+          >
+            <ZoomIn :size="14" />
+          </button>
+        </div>
         <button
           v-if="showDownload && file"
           class="modal-action-btn"
@@ -92,6 +116,28 @@
       >
         <Code2 :size="16" />
       </button>
+      <template v-if="htmlPreviewMode === 'render' && !(canEdit && editMode === 'edit')">
+        <span class="preview-mode-divider"></span>
+        <button
+          class="preview-mode-btn"
+          :disabled="zoomOutDisabled"
+          @click="zoomHtmlPreview(-HTML_PREVIEW_SCALE_STEP)"
+          title="缩小"
+          aria-label="缩小"
+        >
+          <ZoomOut :size="14" />
+        </button>
+        <span class="html-preview-zoom-value" title="缩放比例">{{ htmlPreviewScalePercent }}%</span>
+        <button
+          class="preview-mode-btn"
+          :disabled="zoomInDisabled"
+          @click="zoomHtmlPreview(HTML_PREVIEW_SCALE_STEP)"
+          title="放大"
+          aria-label="放大"
+        >
+          <ZoomIn :size="14" />
+        </button>
+      </template>
     </div>
 
     <div v-if="canEdit && editMode === 'edit'" class="edit-floating-actions">
@@ -197,6 +243,28 @@
             >
               <Code2 :size="16" />
             </button>
+            <template v-if="htmlPreviewMode === 'render'">
+              <span class="preview-mode-divider"></span>
+              <button
+                class="preview-mode-btn"
+                :disabled="zoomOutDisabled"
+                @click="zoomHtmlPreview(-HTML_PREVIEW_SCALE_STEP)"
+                title="缩小"
+                aria-label="缩小"
+              >
+                <ZoomOut :size="14" />
+              </button>
+              <span class="html-preview-zoom-value" title="缩放比例">{{ htmlPreviewScalePercent }}%</span>
+              <button
+                class="preview-mode-btn"
+                :disabled="zoomInDisabled"
+                @click="zoomHtmlPreview(HTML_PREVIEW_SCALE_STEP)"
+                title="放大"
+                aria-label="放大"
+              >
+                <ZoomIn :size="14" />
+              </button>
+            </template>
           </div>
           <button
             v-if="showDownload && file"
@@ -267,7 +335,18 @@
 
 <script setup>
 import { computed, onUnmounted, ref, watch } from 'vue'
-import { Code2, Download, Globe, Maximize, PanelRight, FilePen, Save, X } from 'lucide-vue-next'
+import {
+  Code2,
+  Download,
+  Globe,
+  Maximize,
+  PanelRight,
+  FilePen,
+  Save,
+  X,
+  ZoomIn,
+  ZoomOut
+} from 'lucide-vue-next'
 import hljs from 'highlight.js/lib/common'
 import MarkdownPreview from '@/components/common/MarkdownPreview.vue'
 import FileTypeIcon from '@/components/common/FileTypeIcon.vue'
@@ -281,8 +360,10 @@ import {
 } from '@/utils/file_preview'
 
 const EDITABLE_EXTENSIONS = new Set(['.md', '.markdown', '.mdx', '.txt'])
-const HTML_PREVIEW_SCALE = 0.75
-const HTML_PREVIEW_FULLSCREEN_SCALE = 1
+const HTML_PREVIEW_DEFAULT_SCALE = 0.9
+const HTML_PREVIEW_SCALE_STEP = 0.1
+const HTML_PREVIEW_SCALE_MIN = 0.6
+const HTML_PREVIEW_SCALE_MAX = 1.5
 
 const props = defineProps({
   file: {
@@ -366,6 +447,10 @@ const editMode = ref('preview')
 const draftContent = ref('')
 const fullscreenPreviewVisible = ref(false)
 const htmlPreviewRenderKey = ref(0)
+const htmlPreviewScale = ref(HTML_PREVIEW_DEFAULT_SCALE)
+const zoomInDisabled = computed(() => htmlPreviewScale.value >= HTML_PREVIEW_SCALE_MAX)
+const zoomOutDisabled = computed(() => htmlPreviewScale.value <= HTML_PREVIEW_SCALE_MIN)
+const htmlPreviewScalePercent = computed(() => Math.round(htmlPreviewScale.value * 100))
 
 const isMarkdown = computed(() => isMarkdownPreview(props.filePath, props.file?.previewType))
 const canEdit = computed(() => {
@@ -387,10 +472,10 @@ const isHtmlFile = computed(
     isHtmlPreview(props.filePath)
 )
 const htmlPreviewSrcdoc = computed(() =>
-  buildHtmlPreviewSrcdoc(props.file?.content, HTML_PREVIEW_SCALE)
+  buildHtmlPreviewSrcdoc(props.file?.content, htmlPreviewScale.value)
 )
 const htmlPreviewFullscreenSrcdoc = computed(() =>
-  buildHtmlPreviewSrcdoc(props.file?.content, HTML_PREVIEW_FULLSCREEN_SCALE)
+  buildHtmlPreviewSrcdoc(props.file?.content, htmlPreviewScale.value)
 )
 const codeThemeClass = computed(() => (themeStore.isDark ? 'hljs-theme-dark' : 'hljs-theme-light'))
 const codeLanguage = computed(() => getCodeLanguageByPath(props.filePath))
@@ -432,7 +517,7 @@ const serializeDoctype = (doctype) => {
   return `<!DOCTYPE ${doctype.name}${publicId}${systemId}>`
 }
 
-const buildHtmlPreviewSrcdoc = (content, scale = HTML_PREVIEW_SCALE) => {
+const buildHtmlPreviewSrcdoc = (content, scale = HTML_PREVIEW_DEFAULT_SCALE) => {
   const html = formatContent(content)
   if (!html.trim() || typeof DOMParser === 'undefined') return html
 
@@ -450,6 +535,16 @@ const buildHtmlPreviewSrcdoc = (content, scale = HTML_PREVIEW_SCALE) => {
 const syncDraftContent = () => {
   draftContent.value = savedContent.value
   editMode.value = 'preview'
+}
+
+const zoomHtmlPreview = (delta) => {
+  const next = Math.round((htmlPreviewScale.value + delta) * 10) / 10
+  htmlPreviewScale.value = Math.min(Math.max(next, HTML_PREVIEW_SCALE_MIN), HTML_PREVIEW_SCALE_MAX)
+  htmlPreviewRenderKey.value += 1
+}
+
+const resetHtmlPreviewZoom = () => {
+  htmlPreviewScale.value = HTML_PREVIEW_DEFAULT_SCALE
 }
 
 const requestSave = () => {
@@ -474,6 +569,7 @@ watch(
   () => props.filePath,
   () => {
     htmlPreviewMode.value = 'render'
+    resetHtmlPreviewZoom()
   }
 )
 
@@ -616,6 +712,31 @@ onUnmounted(() => {
   min-width: 48px;
   padding: 0 8px;
   font-size: 12px;
+}
+
+.preview-mode-divider {
+  width: 1px;
+  height: 14px;
+  margin: 0 2px;
+  background: var(--gray-300);
+}
+
+.html-preview-zoom-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 8px;
+  background: var(--gray-100);
+}
+
+.html-preview-zoom-value {
+  min-width: 34px;
+  color: var(--gray-700);
+  font-size: 12px;
+  line-height: 1;
+  text-align: center;
+  user-select: none;
 }
 
 .file-content {
