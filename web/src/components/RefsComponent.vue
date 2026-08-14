@@ -63,10 +63,16 @@
       <!-- 对话结束时间 / 执行耗时 -->
       <span
         v-if="messageFinishedAt"
-        class="item btn time-entry-btn"
-        :class="{ 'is-duration': showingDuration }"
+        class="item time-entry-btn"
+        :class="{ btn: messageDurationMs, 'is-duration': showingDuration }"
         @click="toggleTimeDisplay"
-        :title="showingDuration ? '点击显示结束时间' : '点击显示执行耗时'"
+        :title="
+          messageDurationMs
+            ? showingDuration
+              ? '点击显示结束时间'
+              : '点击显示执行耗时'
+            : '结束时间'
+        "
       >
         <Clock size="12" />
         <span v-if="showingDuration && messageDurationLabel">{{ messageDurationLabel }}</span>
@@ -168,8 +174,8 @@ const feedbackState = reactive({
 // 对话结束时间 / 执行耗时切换
 const showingDuration = ref(false)
 const messageFinishedAt = computed(() => {
-  if (!msg.value?.created_at) return ''
-  return formatDateTime(msg.value.created_at, 'HH:mm')
+  const finishedAt = msg.value?.run_finished_at || msg.value?.created_at
+  return finishedAt ? formatDateTime(finishedAt, 'HH:mm') : ''
 })
 const messageDurationMs = computed(() => {
   const started = parseToShanghai(msg.value?.run_started_at)
@@ -188,7 +194,6 @@ const messageDurationLabel = computed(() => {
   return `耗时 ${minutes}分${restSeconds}s`
 })
 const toggleTimeDisplay = () => {
-  /* 在「结束时间」与「执行耗时」之间切换展示；无耗时数据时不响应 */
   if (!messageDurationMs.value) return
   showingDuration.value = !showingDuration.value
 }

@@ -2150,6 +2150,7 @@ const replyLoadingText = computed(() => {
 })
 const replyElapsedSeconds = ref(0)
 let replyElapsedTimer = null
+let replyStartedAt = null
 const replyElapsedLabel = computed(() => {
   const seconds = replyElapsedSeconds.value
   if (!seconds) return ''
@@ -2157,28 +2158,35 @@ const replyElapsedLabel = computed(() => {
   const minutes = Math.floor(seconds / 60)
   return `${minutes}分${seconds % 60}s`
 })
-const startReplyElapsedTimer = () => {
-  /* 启动回复生成计时器：重置已执行秒数，每秒递增用于实时展示加载耗时 */
-  stopReplyElapsedTimer()
-  replyElapsedSeconds.value = 0
-  replyElapsedTimer = window.setInterval(() => {
-    replyElapsedSeconds.value += 1
-  }, 1000)
+const updateReplyElapsedSeconds = () => {
+  if (!replyStartedAt) return
+  replyElapsedSeconds.value = Math.floor((Date.now() - replyStartedAt) / 1000)
 }
-const stopReplyElapsedTimer = () => {
-  /* 停止回复生成计时器并释放定时器句柄 */
+const startReplyElapsedTimer = ({ reset = false } = {}) => {
+  stopReplyElapsedTimer()
+  if (reset || !replyStartedAt) {
+    replyStartedAt = Date.now()
+  }
+  updateReplyElapsedSeconds()
+  replyElapsedTimer = window.setInterval(updateReplyElapsedSeconds, 1000)
+}
+const stopReplyElapsedTimer = ({ reset = false } = {}) => {
   if (replyElapsedTimer) {
     window.clearInterval(replyElapsedTimer)
     replyElapsedTimer = null
   }
+  if (reset) {
+    replyStartedAt = null
+    replyElapsedSeconds.value = 0
+  }
 }
 watch(isReplyLoading, (loading) => {
   if (loading) {
-    startReplyElapsedTimer()
+    startReplyElapsedTimer({ reset: true })
   } else {
-    stopReplyElapsedTimer()
+    stopReplyElapsedTimer({ reset: true })
   }
-})
+}, { immediate: true })
 const isSendButtonDisabled = computed(() => {
   return (
     sendCooldownActive.value ||
@@ -2489,7 +2497,7 @@ onDeactivated(() => {
 })
 
 onUnmounted(() => {
-  stopReplyElapsedTimer()
+  stopReplyElapsedTimer({ reset: true })
   if (typeof document !== 'undefined') {
     document.removeEventListener('visibilitychange', handlePageVisibilityChange)
   }
