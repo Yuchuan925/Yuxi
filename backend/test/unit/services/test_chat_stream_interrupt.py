@@ -4,6 +4,7 @@ import json
 import sys
 import os
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -27,27 +28,20 @@ class _FakeSession:
     async def commit(self):
         self.commit_count += 1
 
+
 def test_build_tool_approval_payload_preserves_actions_and_review_configs():
     payload = _build_tool_approval_payload(
         {
-            "action_requests": [
-                {"name": "execute", "args": {"command": "pytest -q"}, "description": "approval"}
-            ],
-            "review_configs": [
-                {"action_name": "execute", "allowed_decisions": ["approve", "reject"]}
-            ],
+            "action_requests": [{"name": "execute", "args": {"command": "pytest -q"}, "description": "approval"}],
+            "review_configs": [{"action_name": "execute", "allowed_decisions": ["approve", "reject"]}],
         },
         "thread-1",
     )
 
     assert payload == {
         "approval": {
-            "action_requests": [
-                {"name": "execute", "args": {"command": "pytest -q"}, "description": "approval"}
-            ],
-            "review_configs": [
-                {"action_name": "execute", "allowed_decisions": ["approve", "reject"]}
-            ],
+            "action_requests": [{"name": "execute", "args": {"command": "pytest -q"}, "description": "approval"}],
+            "review_configs": [{"action_name": "execute", "allowed_decisions": ["approve", "reject"]}],
         },
         "thread_id": "thread-1",
     }
@@ -294,6 +288,7 @@ async def test_stream_agent_resume_commits_before_stream_and_routes_subagent_chu
     monkeypatch.setattr(svc, "check_and_handle_interrupts", fake_check_and_handle_interrupts)
     monkeypatch.setattr(svc, "save_messages_from_langgraph_state", fake_save_messages_from_langgraph_state)
     monkeypatch.setattr(svc, "ConversationRepository", lambda _db: object())
+    monkeypatch.setattr(svc, "materialize_thread_attachments", AsyncMock(return_value=[]))
     monkeypatch.setattr(svc, "flush_langfuse", lambda: None)
 
     stream = stream_agent_resume(

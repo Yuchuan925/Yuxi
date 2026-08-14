@@ -6,20 +6,34 @@
 
 from __future__ import annotations
 
+import json
 import os
 from dataclasses import dataclass
 from typing import Any
 
+import tomli
 from pydantic import HttpUrl, TypeAdapter
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from yuxi.storage.postgres.models_business import ConfigOption
+from yuxi.storage.redis import get_async_redis_client
+from yuxi.utils.logging_config import logger
+
+from . import get_save_dir
+
+OPTION_CACHE_PREFIX = "yuxi:config_option:"
+OPTION_CACHE_VERSION_PREFIX = "yuxi:config_option_version:"
+OPTION_CACHE_TTL_SECONDS = 300
+_LEGACY_SYSTEM_CONFIG_KEY = "system_runtime_config"
+_BASE_TOML_MIGRATED_PARAM = "base_toml_migrated"
+_SYSTEM_OPTIONS_MIGRATION_VERSION_PARAM = "migration_version"
+_SYSTEM_OPTIONS_MIGRATION_VERSION = 1
 
 
 @dataclass(frozen=True, slots=True)
 class Option:
-    """由代码定义、每次读取都查询数据库的通用配置项。"""
+    """由代码定义并持久化到 PostgreSQL 的管理员配置项。"""
 
     key: str
     name: str
@@ -27,27 +41,114 @@ class Option:
     params: dict[str, Any]
 
     async def get(self, db: AsyncSession | None = None) -> dict[str, Any]:
+        if db is not None:
+            return self.resolve(await self._load_stored_value(db))
+
+        cache_version = None
+        if self.cacheable:
+            cached = await _load_cached_value(self.key)
+            if cached is not None:
+                return self.resolve(cached)
+            cache_version = await _load_cache_version(self.key)
+
         if db is None:
             from yuxi.storage.postgres.manager import pg_manager
 
             async with pg_manager.get_async_session_context() as session:
-                return await self.get(session)
+                stored = await self._load_stored_value(session)
 
+        if self.cacheable:
+            await _save_cached_value(self.key, stored, cache_version)
+        return self.resolve(stored)
+
+    async def _load_stored_value(self, db: AsyncSession) -> dict[str, Any]:
+        """从指定事务读取原始配置值。"""
         record = await get_option(db, self.key)
         if record is None:
             raise ValueError(f"配置项不存在: {self.key}")
-        stored = dict(record.value or {})
+        return dict(record.value or {})
+
+    def resolve(self, stored: dict[str, Any]) -> dict[str, Any]:
+        """按数据库、环境变量、默认值顺序解析有效配置。"""
         resolved = {}
-        for field in _fields(record):
+        for field in self.fields:
             field_key = field["key"]
-            stored_value = stored.get(field_key)
-            if field.get("type") == "list[str]" and field_key in stored:
+            if field_key in stored and field.get("type") in {"list[str]", "boolean"}:
                 resolved[field_key] = stored[field_key]
                 continue
 
+            stored_value = stored.get(field_key)
             environment_value = os.getenv(field.get("environment", ""))
             resolved[field_key] = stored_value or environment_value or field.get("default")
         return resolved
+
+    @property
+    def fields(self) -> list[dict[str, Any]]:
+        return list(self.params.get("fields") or [])
+
+    @property
+    def cacheable(self) -> bool:
+        return not any(field.get("sensitive") for field in self.fields)
+
+
+system_options = Option(
+    key="system_options",
+    name="系统配置",
+    description="API 与 worker 共用的管理员配置。",
+    params={
+        "internal": True,
+        "fields": [
+            {
+                "key": "enable_content_guard",
+                "label": "是否启用内容审查",
+                "type": "boolean",
+                "default": False,
+            },
+            {
+                "key": "enable_content_guard_llm",
+                "label": "是否启用 LLM 内容审查",
+                "type": "boolean",
+                "default": False,
+            },
+            {
+                "key": "default_model",
+                "label": "默认对话模型",
+                "type": "model",
+                "default": "siliconflow-cn:Pro/MiniMaxAI/MiniMax-M2.5",
+            },
+            {
+                "key": "fast_model",
+                "label": "快速响应模型",
+                "type": "model",
+                "default": "siliconflow-cn:Pro/MiniMaxAI/MiniMax-M2.5",
+            },
+            {
+                "key": "embed_model",
+                "label": "默认 Embedding 模型",
+                "type": "model",
+                "default": "siliconflow-cn:Pro/BAAI/bge-m3",
+            },
+            {
+                "key": "reranker",
+                "label": "默认 Re-Ranker 模型",
+                "type": "model",
+                "default": "siliconflow-cn:Pro/BAAI/bge-reranker-v2-m3",
+            },
+            {
+                "key": "content_guard_llm_model",
+                "label": "内容审查 LLM 模型",
+                "type": "model",
+                "default": "siliconflow-cn:Pro/MiniMaxAI/MiniMax-M2.5",
+            },
+            {
+                "key": "default_ocr_engine",
+                "label": "默认 OCR 解析引擎",
+                "type": "ocr_engine",
+                "default": "rapid_ocr",
+            },
+        ],
+    },
+)
 
 
 mineru_ocr_host_opts = Option(
@@ -155,6 +256,7 @@ OPTION_DEFINITIONS = {
         pp_structure_v3_ocr_host_opts,
         paddleocr_api_opts,
         remote_skill_source_policy,
+        system_options,
     )
 }
 
@@ -164,7 +266,11 @@ _URL_ADAPTER = TypeAdapter(HttpUrl)
 async def ensure_options_in_db(db: AsyncSession) -> list[ConfigOption]:
     """幂等同步系统定义，保留管理员已经保存的值。"""
 
-    existing = {record.key: record for record in await list_options(db)}
+    if db.bind and db.bind.dialect.name == "postgresql":
+        await db.execute(text("SELECT pg_advisory_xact_lock(94721801)"))
+
+    result = await db.execute(select(ConfigOption).where(ConfigOption.key.in_(OPTION_DEFINITIONS)))
+    existing = {record.key: record for record in result.scalars().all()}
     synced = []
     for key, definition in OPTION_DEFINITIONS.items():
         record = existing.get(key)
@@ -182,14 +288,24 @@ async def ensure_options_in_db(db: AsyncSession) -> list[ConfigOption]:
         else:
             record.name = definition.name
             record.description = definition.description
-            record.params = definition.params
+            params = dict(definition.params)
+            if definition.key == system_options.key:
+                params[_BASE_TOML_MIGRATED_PARAM] = bool((record.params or {}).get(_BASE_TOML_MIGRATED_PARAM))
+                params[_SYSTEM_OPTIONS_MIGRATION_VERSION_PARAM] = int(
+                    (record.params or {}).get(_SYSTEM_OPTIONS_MIGRATION_VERSION_PARAM) or 0
+                )
+            record.params = params
         synced.append(record)
     await db.flush()
     return synced
 
 
 async def list_options(db: AsyncSession) -> list[ConfigOption]:
-    result = await db.execute(select(ConfigOption).order_by(ConfigOption.id.asc()))
+    result = await db.execute(
+        select(ConfigOption)
+        .where(ConfigOption.key.notin_((system_options.key, _LEGACY_SYSTEM_CONFIG_KEY)))
+        .order_by(ConfigOption.id.asc())
+    )
     return list(result.scalars().all())
 
 
@@ -197,6 +313,51 @@ async def get_option(db: AsyncSession, key: str) -> ConfigOption | None:
     statement = select(ConfigOption).where(ConfigOption.key == key).execution_options(populate_existing=True)
     result = await db.execute(statement)
     return result.scalar_one_or_none()
+
+
+async def migrate_legacy_system_options(db: AsyncSession) -> None:
+    """将旧 base.toml 的合法系统字段一次性迁移到 system_options。"""
+    statement = select(ConfigOption).where(ConfigOption.key == system_options.key).with_for_update()
+    result = await db.execute(statement)
+    record = result.scalar_one_or_none()
+    if record is None:
+        raise RuntimeError("系统配置项不存在")
+
+    params = dict(record.params or {})
+    if int(params.get(_SYSTEM_OPTIONS_MIGRATION_VERSION_PARAM) or 0) >= _SYSTEM_OPTIONS_MIGRATION_VERSION:
+        return
+
+    migrated = dict(record.value or {})
+    legacy_record = await get_option(db, _LEGACY_SYSTEM_CONFIG_KEY)
+    if legacy_record is not None:
+        raw = dict(legacy_record.value or {})
+    else:
+        config_file = get_save_dir() / "config" / "base.toml"
+        raw = {}
+        if config_file.exists():
+            try:
+                with config_file.open("rb") as file:
+                    raw = tomli.load(file)
+            except (OSError, tomli.TOMLDecodeError) as exc:
+                logger.warning(f"Failed to migrate legacy config file {config_file}: {exc}")
+
+    # 旧配置只负责补充尚未存在的字段，不能覆盖已经落库的管理员值。
+    if raw:
+        allowed = {field["key"] for field in system_options.fields}
+        for key, value in raw.items():
+            if key in allowed and key not in migrated:
+                field = next(field for field in system_options.fields if field["key"] == key)
+                try:
+                    migrated[key] = _normalize_value(field, value)
+                except ValueError as exc:
+                    logger.warning(f"Skipped invalid legacy config field {key}: {exc}")
+
+    record.value = migrated
+    record.updated_by = "system-migration"
+    params[_BASE_TOML_MIGRATED_PARAM] = True
+    params[_SYSTEM_OPTIONS_MIGRATION_VERSION_PARAM] = _SYSTEM_OPTIONS_MIGRATION_VERSION
+    record.params = params
+    await db.flush()
 
 
 def serialize_option(record: ConfigOption) -> dict[str, Any]:
@@ -241,7 +402,7 @@ async def update_option_value(
     value: dict[str, Any],
     updated_by: str,
 ) -> ConfigOption | None:
-    record = await get_option(db, key)
+    record = await db.scalar(select(ConfigOption).where(ConfigOption.key == key).with_for_update())
     if record is None:
         return None
 
@@ -260,11 +421,33 @@ async def update_option_value(
     return record
 
 
+async def invalidate_option_cache(key: str) -> None:
+    """数据库提交后删除 Option 缓存。"""
+    try:
+        redis = await get_async_redis_client()
+        await redis.eval(
+            """
+            redis.call('INCR', KEYS[1])
+            return redis.call('DEL', KEYS[2])
+            """,
+            2,
+            f"{OPTION_CACHE_VERSION_PREFIX}{key}",
+            f"{OPTION_CACHE_PREFIX}{key}",
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(f"Failed to invalidate option cache {key}: {exc}")
+
+
 def _fields(record: ConfigOption) -> list[dict[str, Any]]:
     return list((record.params or {}).get("fields") or [])
 
 
 def _normalize_value(field: dict[str, Any], value: Any) -> Any:
+    if field.get("type") == "boolean":
+        if not isinstance(value, bool):
+            raise ValueError("配置值必须是布尔值")
+        return value
+
     if field.get("type") == "list[str]":
         if not isinstance(value, list):
             raise ValueError("配置值必须是列表")
@@ -275,7 +458,57 @@ def _normalize_value(field: dict[str, Any], value: Any) -> Any:
     normalized = str(value or "").strip()
     if field.get("type") == "url" and normalized:
         return str(_URL_ADAPTER.validate_python(normalized))
+    if field.get("type") == "ocr_engine" and normalized:
+        from yuxi.knowledge.parser.registry import PROCESSOR_TYPES
+
+        if normalized not in {"disable", *PROCESSOR_TYPES}:
+            raise ValueError(f"不支持的默认 OCR 引擎: {normalized}")
     return normalized
+
+
+async def _load_cached_value(key: str) -> dict[str, Any] | None:
+    try:
+        redis = await get_async_redis_client()
+        raw = await redis.get(f"{OPTION_CACHE_PREFIX}{key}")
+        value = json.loads(raw) if raw else None
+        return value if isinstance(value, dict) else None
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(f"Failed to load option cache {key}: {exc}")
+        return None
+
+
+async def _load_cache_version(key: str) -> str | None:
+    try:
+        redis = await get_async_redis_client()
+        await redis.set(f"{OPTION_CACHE_VERSION_PREFIX}{key}", "0", nx=True)
+        return str(await redis.get(f"{OPTION_CACHE_VERSION_PREFIX}{key}") or "0")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(f"Failed to load option cache version {key}: {exc}")
+        return None
+
+
+async def _save_cached_value(key: str, value: dict[str, Any], expected_version: str | None) -> None:
+    if expected_version is None:
+        return
+    try:
+        redis = await get_async_redis_client()
+        version_key = f"{OPTION_CACHE_VERSION_PREFIX}{key}"
+        await redis.eval(
+            """
+            if redis.call('GET', KEYS[1]) == ARGV[1] then
+                return redis.call('SET', KEYS[2], ARGV[2], 'EX', ARGV[3])
+            end
+            return nil
+            """,
+            2,
+            version_key,
+            f"{OPTION_CACHE_PREFIX}{key}",
+            expected_version,
+            json.dumps(value, ensure_ascii=False),
+            OPTION_CACHE_TTL_SECONDS,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(f"Failed to save option cache {key}: {exc}")
 
 
 def _mask_sensitive_value(value: str) -> str:

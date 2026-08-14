@@ -7,6 +7,7 @@ from typing import Any, get_origin
 
 from yuxi.agents.backends.sandbox.paths import sandbox_workspace_agent_context_file
 from yuxi.agents.tool_approval import DEFAULT_TOOL_APPROVAL_MODE
+from yuxi.config.options import system_options
 from yuxi.utils.logging_config import logger
 from yuxi.utils.paths import WORKSPACE_AGENT_CONTEXT_FILES
 
@@ -537,6 +538,8 @@ async def prepare_agent_runtime_context(
 
     resource_fields = _AGENT_RESOURCE_FIELDS
     async with pg_manager.get_async_session_context() as db:
+        if not str(getattr(context, "model", "") or "").strip():
+            setattr(context, "model", (await system_options.get(db))["default_model"])
         user = await UserRepository().get_by_uid_with_db(db, uid)
         if user is None:
             for field_name in resource_fields:

@@ -21,7 +21,7 @@ import yaml
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from yuxi import config as sys_config
+from yuxi.config import get_save_dir
 from yuxi.agents.mcp.service import get_enabled_mcp_server_slugs
 from yuxi.agents.skills.repository import SkillRepository
 from yuxi.permissions import ResourcePermission, normalize_permission_config, resolve_skill_permission
@@ -255,13 +255,13 @@ def _ensure_non_builtin(item: Skill) -> None:
 
 
 def get_skills_root_dir() -> Path:
-    root = Path(sys_config.save_dir) / "skills"
+    root = get_save_dir() / "skills"
     root.mkdir(parents=True, exist_ok=True)
     return root
 
 
 def get_skill_drafts_root_dir() -> Path:
-    root = Path(sys_config.save_dir) / "skill_import_drafts"
+    root = get_save_dir() / "skill_import_drafts"
     root.mkdir(parents=True, exist_ok=True)
     return root
 
@@ -332,7 +332,7 @@ def get_thread_skills_root_dir(thread_id: str) -> Path:
     if not re.fullmatch(r"[A-Za-z0-9_-]+", safe_thread_id):
         raise ValueError("thread_id contains invalid characters")
 
-    root = Path(sys_config.save_dir) / "threads" / safe_thread_id / "skills"
+    root = get_save_dir() / "threads" / safe_thread_id / "skills"
     root.mkdir(parents=True, exist_ok=True)
     return root
 
@@ -1131,7 +1131,7 @@ def _resolve_skill_dir(item: Skill) -> Path:
     dir_path = Path(item.dir_path)
     if dir_path.is_absolute():
         return dir_path
-    return (Path(sys_config.save_dir) / dir_path).resolve()
+    return (get_save_dir() / dir_path).resolve()
 
 
 def _resolve_relative_path(skill_dir: Path, relative_path: str, *, allow_root: bool = False) -> tuple[Path, str]:

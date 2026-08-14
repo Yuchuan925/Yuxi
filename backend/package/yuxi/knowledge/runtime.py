@@ -2,7 +2,7 @@
 
 import os
 
-from yuxi.config import config
+from yuxi.config import get_save_dir
 from yuxi.knowledge.factory import KnowledgeBaseFactory
 from yuxi.knowledge.implementations.dify import DifyKB
 from yuxi.knowledge.implementations.milvus import MilvusKB
@@ -14,4 +14,4 @@ if os.environ.get("LITE_MODE", "").lower() not in ("true", "1"):
 KnowledgeBaseFactory.register(DifyKB)
 KnowledgeBaseFactory.register(NotionKB)
 
-knowledge_base = KnowledgeBaseManager(os.path.join(config.save_dir, "knowledge_base_data"))
+knowledge_base = KnowledgeBaseManager(os.path.join(get_save_dir(), "knowledge_base_data"))

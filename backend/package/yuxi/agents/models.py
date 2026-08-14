@@ -2,7 +2,6 @@ from langchain.chat_models import BaseChatModel
 from langchain_openai import ChatOpenAI
 from pydantic import SecretStr
 
-from yuxi import config as sys_config
 from yuxi.models.providers.cache import model_cache
 from yuxi.utils import get_docker_safe_url
 from yuxi.utils.logging_config import logger
@@ -14,7 +13,7 @@ def resolve_chat_model_spec(model_spec: str | None, *, fallback: str | None = No
     这里仅处理模型为空时的优先级：请求或配置值、调用方 fallback、系统默认模型；
     具体模型是否存在、是否为聊天模型仍由 model_cache 校验。
     """
-    for candidate in (model_spec, fallback, sys_config.default_model):
+    for candidate in (model_spec, fallback):
         if isinstance(candidate, str) and candidate.strip():
             return candidate.strip()
     raise ValueError("model spec 不能为空")

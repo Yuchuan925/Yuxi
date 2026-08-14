@@ -12,7 +12,7 @@ from yuxi.services import workspace_service
 
 
 def test_resolve_local_user_data_path_blocks_upload_symlink_escape(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setattr(sandbox_paths.conf, "save_dir", str(tmp_path))
+    monkeypatch.setenv("SAVE_DIR", str(tmp_path))
     thread_id = "thread-1"
     uid = "user-1"
     sandbox_paths.ensure_thread_dirs(thread_id, uid)
@@ -29,7 +29,7 @@ def test_resolve_local_user_data_path_blocks_upload_symlink_escape(tmp_path: Pat
 
 
 def test_list_local_entries_skips_symlink_escape(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setattr(sandbox_paths.conf, "save_dir", str(tmp_path))
+    monkeypatch.setenv("SAVE_DIR", str(tmp_path))
     thread_id = "thread-1"
     uid = "user-1"
     sandbox_paths.ensure_thread_dirs(thread_id, uid)
@@ -50,7 +50,7 @@ async def test_read_viewer_workspace_office_file_returns_pdf_preview(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
-    monkeypatch.setattr(sandbox_paths.conf, "save_dir", str(tmp_path))
+    monkeypatch.setenv("SAVE_DIR", str(tmp_path))
     thread_id = "thread-1"
     uid = "user-1"
     user = SimpleNamespace(uid=uid)

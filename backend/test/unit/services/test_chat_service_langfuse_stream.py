@@ -10,6 +10,30 @@ from yuxi.services import chat_service as svc
 from yuxi.services.input_message_service import build_chat_input_message
 
 
+@pytest.fixture
+def stub_system_options(monkeypatch: pytest.MonkeyPatch):
+    async def get_system_options(_option, _db=None):
+        return {
+            "enable_content_guard": False,
+            "enable_content_guard_llm": False,
+            "content_guard_llm_model": "",
+        }
+
+    monkeypatch.setattr(type(svc.system_options), "get", get_system_options)
+
+
+@pytest.fixture
+def stub_content_guard(monkeypatch: pytest.MonkeyPatch):
+    class FakeGuard:
+        async def check(self, _content):
+            return False
+
+        async def check_with_keywords(self, _content):
+            return False
+
+    monkeypatch.setattr(svc.content_guard, "configured", lambda *_args: FakeGuard())
+
+
 async def _fake_normalize_agent_context_config(context, **_kwargs):
     return dict(context or {})
 
@@ -139,6 +163,8 @@ def test_build_langfuse_run_context_reads_evaluation_from_invocation_meta(monkey
 
 @pytest.mark.asyncio
 async def test_stream_agent_chat_commits_before_stream_and_persists_langfuse_context(
+    stub_system_options,
+    stub_content_guard,
     monkeypatch: pytest.MonkeyPatch,
 ):
     calls: dict[str, object] = {}
@@ -253,7 +279,11 @@ async def test_stream_agent_chat_commits_before_stream_and_persists_langfuse_con
 
 
 @pytest.mark.asyncio
-async def test_stream_agent_chat_maps_raw_protocol_events_to_yuxi_stream_events(monkeypatch: pytest.MonkeyPatch):
+async def test_stream_agent_chat_maps_raw_protocol_events_to_yuxi_stream_events(
+    stub_system_options,
+    stub_content_guard,
+    monkeypatch: pytest.MonkeyPatch,
+):
     class FakeGraph:
         async def aget_state(self, _config):
             return SimpleNamespace(values={"messages": [], "files": {}, "artifacts": []})
@@ -388,7 +418,11 @@ async def test_stream_agent_chat_maps_raw_protocol_events_to_yuxi_stream_events(
 
 
 @pytest.mark.asyncio
-async def test_stream_agent_chat_emits_realtime_agent_state_from_values(monkeypatch: pytest.MonkeyPatch):
+async def test_stream_agent_chat_emits_realtime_agent_state_from_values(
+    stub_system_options,
+    stub_content_guard,
+    monkeypatch: pytest.MonkeyPatch,
+):
     class FakeGraph:
         async def aget_state(self, _config):
             return SimpleNamespace(values={"todos": [{"content": "done", "status": "completed"}]})
@@ -465,6 +499,8 @@ async def test_stream_agent_chat_emits_realtime_agent_state_from_values(monkeypa
 
 @pytest.mark.asyncio
 async def test_stream_agent_chat_maps_custom_compression_event_to_context_compression_chunk(
+    stub_system_options,
+    stub_content_guard,
     monkeypatch: pytest.MonkeyPatch,
 ):
     class FakeGraph:

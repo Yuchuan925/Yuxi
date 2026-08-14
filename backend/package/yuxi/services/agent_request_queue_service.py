@@ -196,8 +196,8 @@ async def intake_request(
     else:
         request_status = REQUEST_STATUS_QUEUED
         delivery_status = DELIVERY_STATUS_QUEUED
-        resolved_model_spec, resolved_tool_approval_mode = resolve_agent_run_config(
-            model_spec, tool_approval_mode, agent_item, agent_backend
+        resolved_model_spec, resolved_tool_approval_mode = await resolve_agent_run_config(
+            model_spec, tool_approval_mode, agent_item, agent_backend, db
         )
         input_payload = {
             "model_spec": resolved_model_spec,

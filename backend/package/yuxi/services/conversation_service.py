@@ -1,3 +1,4 @@
+import asyncio
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -12,7 +13,8 @@ from yuxi.agents.backends.sandbox import (
     sandbox_uploads_dir,
 )
 from yuxi.agents.buildin import agent_manager
-from yuxi.config import config as app_config
+from yuxi.config import get_save_dir
+from yuxi.config.options import system_options
 from yuxi.knowledge.parser.factory import DocumentProcessorFactory
 from yuxi.repositories.agent_repository import AgentRepository
 from yuxi.repositories.conversation_repository import INVOCATION_CONVERSATION_SOURCES, ConversationRepository
@@ -29,6 +31,7 @@ ATTACHMENT_ALLOWED_EXTENSIONS: tuple[str, ...] = ()
 MAX_ATTACHMENT_SIZE_BYTES = 5 * 1024 * 1024  # 5 MB
 MAX_ATTACHMENT_MARKDOWN_CHARS = 32_000  # TODO: 转 MARKDOWN的时候，不应该裁剪
 TMP_ATTACHMENT_PREFIX = "tmp/chat_attachments"
+THREAD_ATTACHMENT_PREFIX = "threads"
 TMP_ATTACHMENT_PARSE_EXTENSIONS = (".pdf", ".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".tif")
 TMP_ATTACHMENT_IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".tif")
 TMP_ATTACHMENT_OCR_METHODS = tuple(DocumentProcessorFactory.get_available_processors())
@@ -48,7 +51,7 @@ class ConversionResult:
 
 
 def _ensure_workdir() -> Path:
-    workdir = Path(app_config.save_dir) / "uploads" / "chat_attachments"
+    workdir = get_save_dir() / "uploads" / "chat_attachments"
     workdir.mkdir(parents=True, exist_ok=True)
     return workdir
 
@@ -101,6 +104,8 @@ async def _convert_upload_to_markdown(upload: UploadFile) -> ConversionResult:
     except Exception as exc:  # noqa: BLE001
         logger.error(f"Attachment conversion failed: {exc}")
         raise
+    finally:
+        temp_path.unlink(missing_ok=True)
 
 
 async def require_user_conversation(conv_repo: ConversationRepository, thread_id: str, uid: str):
@@ -134,18 +139,6 @@ def _make_attachment_path(file_name: str) -> str:
     return f"{safe_name}.md"
 
 
-def _build_attachment_storage_path(*, uid: str, thread_id: str, file_name: str) -> tuple[str, Path]:
-    """返回附件虚拟路径和宿主机落盘路径。"""
-    relative_name = _make_attachment_path(file_name)
-    virtual_path = f"{VIRTUAL_PATH_UPLOADS}/attachments/{relative_name}"
-
-    host_dir = Path(app_config.save_dir) / "threads" / thread_id / "user-data" / "uploads" / "attachments"
-    host_dir.mkdir(parents=True, exist_ok=True)
-    host_path = host_dir / relative_name
-
-    return virtual_path, host_path
-
-
 def _artifact_url(thread_id: str, virtual_path: str) -> str:
     return f"/api/chat/thread/{thread_id}/artifacts/{virtual_path.lstrip('/')}"
 
@@ -168,6 +161,13 @@ def _make_tmp_attachment_object(uid: str, file_name: str) -> tuple[str, str]:
 def _make_tmp_parsed_object(uid: str, tmp_file_id: str, file_name: str) -> str:
     stem = Path(_safe_file_name(file_name)).stem or "attachment"
     return f"{_tmp_attachment_prefix(uid, tmp_file_id)}/parsed/{stem}.md"
+
+
+def _make_thread_attachment_objects(thread_id: str, file_id: str, file_name: str) -> tuple[str, str]:
+    """生成正式附件原件和 Markdown 对象路径。"""
+    safe_name = _safe_file_name(file_name)
+    prefix = f"{THREAD_ATTACHMENT_PREFIX}/{thread_id}/attachments/{file_id}"
+    return f"{prefix}/original/{safe_name}", f"{prefix}/parsed/{Path(safe_name).stem or 'attachment'}.md"
 
 
 def _minio_source(bucket_name: str, object_name: str) -> str:
@@ -203,7 +203,7 @@ def _require_tmp_object_section(
     return current_tmp_file_id, object_file_name
 
 
-def _normalize_parse_method(file_name: str, parse_method: str | None) -> str:
+def _normalize_parse_method(file_name: str, parse_method: str | None, default_ocr_engine: str) -> str:
     """按文件类型确定临时附件解析方式。"""
 
     suffix = Path(file_name).suffix.lower()
@@ -211,9 +211,8 @@ def _normalize_parse_method(file_name: str, parse_method: str | None) -> str:
         raise HTTPException(status_code=400, detail="当前仅支持 PDF 和图片附件解析")
 
     if suffix in TMP_ATTACHMENT_IMAGE_EXTENSIONS:
-        default_engine = app_config.default_ocr_engine
         # 图片没有可直接提取的文本层，系统默认 disable 时仍需回退到本地 OCR。
-        method = parse_method or ("rapid_ocr" if default_engine == "disable" else default_engine)
+        method = parse_method or ("rapid_ocr" if default_ocr_engine == "disable" else default_ocr_engine)
     else:
         method = parse_method or "disable"
     allowed_methods = (
@@ -294,116 +293,189 @@ def serialize_attachment(record: dict) -> dict:
     }
 
 
-async def _materialize_attachment_files(
+async def _store_attachment_objects(
     *,
     thread_id: str,
-    uid: str,
-    upload: UploadFile,
-    file_name: str,
-    file_content: bytes,
-) -> dict:
-    """将原始附件与可选 markdown 副本落盘到线程 user-data。"""
-    ensure_thread_dirs(thread_id, uid)
-
-    upload_virtual_path = _make_upload_virtual_path(file_name)
-    uploads_dir = sandbox_uploads_dir(thread_id)
-    upload_actual_path = uploads_dir / Path(upload_virtual_path).name
-    upload_actual_path.write_bytes(file_content)
-
-    record = {
-        "status": "uploaded",
-        "path": upload_virtual_path,
-        "artifact_url": _artifact_url(thread_id, upload_virtual_path),
-        "storage_path": str(upload_actual_path),
-        "original_path": upload_virtual_path,
-        "original_artifact_url": _artifact_url(thread_id, upload_virtual_path),
-        "original_storage_path": str(upload_actual_path),
-        "minio_url": None,
-    }
-
-    try:
-        await upload.seek(0)
-        conversion = await _convert_upload_to_markdown(upload)
-    except ValueError:
-        return record
-    except Exception as exc:  # noqa: BLE001
-        logger.warning(f"Attachment markdown materialization failed for {file_name}: {exc}")
-        return record
-
-    markdown_virtual_path, markdown_host_path = _build_attachment_storage_path(
-        uid=uid,
-        thread_id=thread_id,
-        file_name=file_name,
-    )
-    markdown_host_path.write_text(conversion.markdown, encoding="utf-8")
-
-    record.update(
-        {
-            "status": "parsed",
-            "path": markdown_virtual_path,
-            "artifact_url": _artifact_url(thread_id, markdown_virtual_path),
-            "storage_path": str(markdown_host_path),
-            "file_path": markdown_virtual_path,
-            "markdown": conversion.markdown,
-            "truncated": conversion.truncated,
-            "markdown_storage_path": str(markdown_host_path),
-        }
-    )
-    return record
-
-
-def _materialize_tmp_attachment_files(
-    *,
-    thread_id: str,
-    uid: str,
     file_id: str,
     file_name: str,
+    file_type: str | None,
     file_content: bytes,
     parsed_markdown: str | None = None,
     truncated: bool = False,
 ) -> dict:
-    """将 tmp 附件复制到线程目录，不主动删除 tmp 对象。"""
-    ensure_thread_dirs(thread_id, uid)
+    """将正式附件写入 MinIO，并返回稳定虚拟路径和对象引用。"""
+    minio_client = get_minio_client()
+    bucket_name = _get_tmp_attachment_bucket()
+    original_object_name, markdown_object_name = _make_thread_attachment_objects(thread_id, file_id, file_name)
+    await minio_client.aupload_file(
+        bucket_name=bucket_name,
+        object_name=original_object_name,
+        data=file_content,
+        content_type=file_type,
+    )
 
-    storage_name = f"{file_id}_{file_name}"
-    upload_virtual_path = _make_upload_virtual_path(storage_name)
-    uploads_dir = sandbox_uploads_dir(thread_id)
-    upload_actual_path = uploads_dir / Path(upload_virtual_path).name
-    upload_actual_path.write_bytes(file_content)
-
+    storage_name = f"{file_id}_{_safe_file_name(file_name)}"
+    original_path = _make_upload_virtual_path(storage_name)
     record = {
         "status": "uploaded",
-        "path": upload_virtual_path,
-        "artifact_url": _artifact_url(thread_id, upload_virtual_path),
-        "storage_path": str(upload_actual_path),
-        "original_path": upload_virtual_path,
-        "original_artifact_url": _artifact_url(thread_id, upload_virtual_path),
-        "original_storage_path": str(upload_actual_path),
-        "minio_url": None,
+        "path": original_path,
+        "artifact_url": _artifact_url(thread_id, original_path),
+        "original_path": original_path,
+        "original_artifact_url": _artifact_url(thread_id, original_path),
+        "bucket_name": bucket_name,
+        "original_object_name": original_object_name,
+        "minio_url": _minio_source(bucket_name, original_object_name),
     }
-
     if parsed_markdown is None:
         return record
 
-    markdown_virtual_path, markdown_host_path = _build_attachment_storage_path(
-        uid=uid,
-        thread_id=thread_id,
-        file_name=storage_name,
-    )
-    markdown_host_path.write_text(parsed_markdown, encoding="utf-8")
+    try:
+        await minio_client.aupload_file(
+            bucket_name=bucket_name,
+            object_name=markdown_object_name,
+            data=parsed_markdown.encode("utf-8"),
+            content_type="text/markdown; charset=utf-8",
+        )
+    except Exception:
+        await minio_client.adelete_file(bucket_name, original_object_name)
+        raise
+
+    markdown_path = f"{VIRTUAL_PATH_UPLOADS}/attachments/{_make_attachment_path(storage_name)}"
     record.update(
         {
             "status": "parsed",
-            "path": markdown_virtual_path,
-            "artifact_url": _artifact_url(thread_id, markdown_virtual_path),
-            "storage_path": str(markdown_host_path),
-            "file_path": markdown_virtual_path,
+            "path": markdown_path,
+            "artifact_url": _artifact_url(thread_id, markdown_path),
+            "file_path": markdown_path,
             "markdown": parsed_markdown,
             "truncated": truncated,
-            "markdown_storage_path": str(markdown_host_path),
+            "markdown_object_name": markdown_object_name,
         }
     )
     return record
+
+
+async def _delete_recorded_objects(
+    records: list[dict] | dict,
+    bucket_name: str,
+    minio_client,
+    *,
+    best_effort: bool = True,
+) -> None:
+    """Best-effort delete MinIO objects for stored attachment records on rollback."""
+    items = records if isinstance(records, list) else [records]
+    object_names = [
+        object_name
+        for record in items
+        for object_name in (record.get("original_object_name"), record.get("markdown_object_name"))
+        if isinstance(object_name, str) and object_name
+    ]
+    backups: dict[str, bytes] = {}
+    if not best_effort:
+        for object_name in object_names:
+            backups[object_name] = await minio_client.adownload_file(bucket_name, object_name)
+
+    deleted: list[str] = []
+    for record in items:
+        for object_name in (record.get("original_object_name"), record.get("markdown_object_name")):
+            if isinstance(object_name, str) and object_name:
+                try:
+                    await minio_client.adelete_file(bucket_name, object_name)
+                    deleted.append(object_name)
+                except StorageError as exc:
+                    if not best_effort:
+                        for deleted_name in deleted:
+                            await minio_client.aupload_file(
+                                bucket_name=bucket_name,
+                                object_name=deleted_name,
+                                data=backups[deleted_name],
+                            )
+                        raise
+                    logger.warning(f"Failed to remove attachment object {object_name}: {exc}")
+
+
+def _delete_materialized_attachment_files(thread_id: str, attachment: dict) -> None:
+    """删除正式附件按需恢复到线程目录的本地缓存。"""
+    uploads_dir = sandbox_uploads_dir(thread_id)
+    candidates = []
+
+    original_path = attachment.get("original_path")
+    if isinstance(original_path, str) and original_path:
+        candidates.append(uploads_dir / Path(original_path).name)
+
+    markdown_path = attachment.get("path")
+    if isinstance(attachment.get("markdown_object_name"), str) and isinstance(markdown_path, str):
+        candidates.append(uploads_dir / "attachments" / Path(markdown_path).name)
+
+    for path in candidates:
+        try:
+            path.unlink(missing_ok=True)
+        except OSError as exc:
+            logger.warning(f"Failed to remove materialized attachment file {path}: {exc}")
+
+
+async def materialize_attachment_record(
+    thread_id: str,
+    uid: str,
+    attachment: dict,
+    *,
+    uploads_dir: Path | None = None,
+    minio_client=None,
+) -> None:
+    """按需把 MinIO 正式附件恢复到线程 uploads 临时目录。"""
+    bucket_name = attachment.get("bucket_name")
+    original_object_name = attachment.get("original_object_name")
+    if not isinstance(bucket_name, str) or not isinstance(original_object_name, str):
+        return
+
+    if uploads_dir is None:
+        ensure_thread_dirs(thread_id, uid)
+        uploads_dir = sandbox_uploads_dir(thread_id)
+    if minio_client is None:
+        minio_client = get_minio_client()
+
+    original_path = attachment.get("original_path")
+    if isinstance(original_path, str) and original_path:
+        local_original = uploads_dir / Path(original_path).name
+        if not local_original.exists():
+            local_original.write_bytes(await minio_client.adownload_file(bucket_name, original_object_name))
+
+    markdown_object_name = attachment.get("markdown_object_name")
+    markdown_path = attachment.get("path")
+    if isinstance(markdown_object_name, str) and isinstance(markdown_path, str):
+        local_markdown = uploads_dir / "attachments" / Path(markdown_path).name
+        if not local_markdown.exists():
+            local_markdown.parent.mkdir(parents=True, exist_ok=True)
+            local_markdown.write_bytes(await minio_client.adownload_file(bucket_name, markdown_object_name))
+
+
+async def materialize_attachment_records(thread_id: str, uid: str, attachments: list[dict]) -> None:
+    """将一组 MinIO 附件按需恢复为本地只读缓存。"""
+    if not attachments:
+        return
+    ensure_thread_dirs(thread_id, uid)
+    uploads_dir = sandbox_uploads_dir(thread_id)
+    minio_client = get_minio_client()
+    for attachment in attachments:
+        try:
+            await materialize_attachment_record(
+                thread_id,
+                uid,
+                attachment,
+                uploads_dir=uploads_dir,
+                minio_client=minio_client,
+            )
+        except StorageError as exc:
+            raise HTTPException(status_code=404, detail=f"附件对象不存在: {exc}") from exc
+
+
+async def materialize_thread_attachments(*, thread_id: str, current_uid: str, db: AsyncSession) -> list[dict]:
+    """恢复当前线程全部 MinIO 附件，供 worker、Viewer 和 artifact 使用。"""
+    conv_repo = ConversationRepository(db)
+    conversation = await require_user_conversation(conv_repo, thread_id, str(current_uid))
+    attachments = await conv_repo.get_attachments(conversation.id)
+    await materialize_attachment_records(thread_id, str(conversation.uid), attachments)
+    return attachments
 
 
 async def create_thread_view(
@@ -546,6 +618,14 @@ async def delete_thread_view(
     deleted = await conv_repo.delete_conversation(thread_id, soft_delete=True)
     if not deleted:
         raise HTTPException(status_code=404, detail="对话线程不存在")
+
+    try:
+        await get_minio_client().adelete_objects_by_prefix(
+            _get_tmp_attachment_bucket(),
+            f"{THREAD_ATTACHMENT_PREFIX}/{thread_id}/attachments/",
+        )
+    except StorageError as exc:
+        logger.warning(f"Failed to remove attachment objects for thread {thread_id}: {exc}")
     return {"message": "删除成功"}
 
 
@@ -648,7 +728,10 @@ async def parse_tmp_attachment_view(
         raise HTTPException(status_code=400, detail="无效的临时附件 bucket")
 
     tmp_file_id, safe_name = _require_tmp_object_section(object_name, str(current_uid), "original")
-    method = _normalize_parse_method(safe_name, parse_method)
+    default_ocr_engine = "rapid_ocr"
+    if parse_method is None and Path(safe_name).suffix.lower() in TMP_ATTACHMENT_IMAGE_EXTENSIONS:
+        default_ocr_engine = (await system_options.get())["default_ocr_engine"]
+    method = _normalize_parse_method(safe_name, parse_method, default_ocr_engine)
 
     try:
         markdown = await parse_document(_minio_source(bucket_name, object_name), params={"ocr_engine": method})
@@ -731,6 +814,7 @@ async def confirm_tmp_thread_attachments_view(
             {
                 "file_name": file_name,
                 "file_type": item.get("file_type"),
+                "tmp_file_id": tmp_file_id,
                 "file_content": file_content,
                 "parsed_markdown": parsed_markdown,
                 "truncated": bool(item.get("truncated")),
@@ -738,38 +822,46 @@ async def confirm_tmp_thread_attachments_view(
         )
 
     added_records: list[dict] = []
-    for prepared in prepared_items:
-        file_id = uuid.uuid4().hex
-        materialized = _materialize_tmp_attachment_files(
-            thread_id=thread_id,
-            uid=str(conversation.uid),
-            file_id=file_id,
-            file_name=prepared["file_name"],
-            file_content=prepared["file_content"],
-            parsed_markdown=prepared["parsed_markdown"],
-            truncated=prepared["truncated"],
-        )
-        attachment_record = {
-            "file_id": file_id,
-            "file_name": prepared["file_name"],
-            "file_type": prepared["file_type"],
-            "file_size": len(prepared["file_content"]),
-            "status": materialized["status"],
-            "uploaded_at": utc_isoformat(),
-            "path": materialized["path"],
-            "artifact_url": materialized["artifact_url"],
-            "storage_path": materialized["storage_path"],
-            "original_path": materialized["original_path"],
-            "original_artifact_url": materialized["original_artifact_url"],
-            "original_storage_path": materialized["original_storage_path"],
-            "minio_url": materialized["minio_url"],
-        }
-        for optional_key in ("file_path", "markdown", "truncated", "markdown_storage_path"):
-            if optional_key in materialized:
-                attachment_record[optional_key] = materialized[optional_key]
-        added_records.append(attachment_record)
+    try:
+        for prepared in prepared_items:
+            file_id = uuid.uuid4().hex
+            stored = await _store_attachment_objects(
+                thread_id=thread_id,
+                file_id=file_id,
+                file_name=prepared["file_name"],
+                file_type=prepared["file_type"],
+                file_content=prepared["file_content"],
+                parsed_markdown=prepared["parsed_markdown"],
+                truncated=prepared["truncated"],
+            )
+            attachment_record = {
+                "file_id": file_id,
+                "file_name": prepared["file_name"],
+                "file_type": prepared["file_type"],
+                "file_size": len(prepared["file_content"]),
+                "status": stored["status"],
+                "uploaded_at": utc_isoformat(),
+                "path": stored["path"],
+                "artifact_url": stored["artifact_url"],
+                "original_path": stored["original_path"],
+                "original_artifact_url": stored["original_artifact_url"],
+                "bucket_name": stored["bucket_name"],
+                "original_object_name": stored["original_object_name"],
+                "minio_url": stored["minio_url"],
+            }
+            for optional_key in ("file_path", "markdown", "truncated", "markdown_object_name"):
+                if optional_key in stored:
+                    attachment_record[optional_key] = stored[optional_key]
+            added_records.append(attachment_record)
+    except Exception:
+        await _delete_recorded_objects(added_records, expected_bucket, minio_client)
+        raise
 
-    await conv_repo.add_attachments(conversation.id, added_records)
+    try:
+        await conv_repo.add_attachments(conversation.id, added_records)
+    except Exception:
+        await _delete_recorded_objects(added_records, expected_bucket, minio_client)
+        raise
     all_attachments = await conv_repo.get_attachments(conversation.id)
     await _sync_thread_upload_state(
         thread_id=thread_id,
@@ -779,6 +871,20 @@ async def confirm_tmp_thread_attachments_view(
         attachments=all_attachments,
     )
     await invalidate_mention_cache(thread_id)
+
+    delete_results = await asyncio.gather(
+        *(
+            minio_client.adelete_objects_by_prefix(
+                expected_bucket,
+                f"{_tmp_attachment_prefix(str(current_uid), prepared['tmp_file_id'])}/",
+            )
+            for prepared in prepared_items
+        ),
+        return_exceptions=True,
+    )
+    for prepared, result in zip(prepared_items, delete_results):
+        if isinstance(result, StorageError):
+            logger.warning(f"Failed to remove confirmed tmp attachment {prepared['tmp_file_id']}: {result}")
 
     return {"attachments": [serialize_attachment(item) for item in added_records]}
 
@@ -802,34 +908,53 @@ async def upload_thread_attachment_view(
     if file_size > MAX_ATTACHMENT_SIZE_BYTES:
         max_size_mb = MAX_ATTACHMENT_SIZE_BYTES // (1024 * 1024)
         raise HTTPException(status_code=400, detail=f"附件过大，当前仅支持 {max_size_mb} MB 以内的文件")
-    materialized = await _materialize_attachment_files(
+    parsed_markdown = None
+    truncated = False
+    try:
+        await file.seek(0)
+        conversion = await _convert_upload_to_markdown(file)
+        parsed_markdown = conversion.markdown
+        truncated = conversion.truncated
+    except ValueError:
+        pass
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(f"Attachment markdown conversion failed for {file_name}: {exc}")
+
+    file_id = uuid.uuid4().hex
+    stored = await _store_attachment_objects(
         thread_id=thread_id,
-        uid=str(conversation.uid),
-        upload=file,
+        file_id=file_id,
         file_name=file_name,
+        file_type=file.content_type,
         file_content=file_content,
+        parsed_markdown=parsed_markdown,
+        truncated=truncated,
     )
 
     attachment_record = {
-        "file_id": uuid.uuid4().hex,
+        "file_id": file_id,
         "file_name": file_name,
         "file_type": file.content_type,
         "file_size": file_size,
-        "status": materialized["status"],
+        "status": stored["status"],
         "uploaded_at": utc_isoformat(),
-        "path": materialized["path"],
-        "artifact_url": materialized["artifact_url"],
-        "storage_path": materialized["storage_path"],
-        "original_path": materialized["original_path"],
-        "original_artifact_url": materialized["original_artifact_url"],
-        "original_storage_path": materialized["original_storage_path"],
-        "minio_url": materialized["minio_url"],
+        "path": stored["path"],
+        "artifact_url": stored["artifact_url"],
+        "original_path": stored["original_path"],
+        "original_artifact_url": stored["original_artifact_url"],
+        "bucket_name": stored["bucket_name"],
+        "original_object_name": stored["original_object_name"],
+        "minio_url": stored["minio_url"],
     }
-    for optional_key in ("file_path", "markdown", "truncated", "markdown_storage_path"):
-        if optional_key in materialized:
-            attachment_record[optional_key] = materialized[optional_key]
+    for optional_key in ("file_path", "markdown", "truncated", "markdown_object_name"):
+        if optional_key in stored:
+            attachment_record[optional_key] = stored[optional_key]
 
-    await conv_repo.add_attachment(conversation.id, attachment_record)
+    try:
+        await conv_repo.add_attachment(conversation.id, attachment_record)
+    except Exception:
+        await _delete_recorded_objects(attachment_record, stored["bucket_name"], get_minio_client())
+        raise
     all_attachments = await conv_repo.get_attachments(conversation.id)
     await _sync_thread_upload_state(
         thread_id=thread_id,
@@ -874,28 +999,17 @@ async def delete_thread_attachment_view(
 
     existing_attachments = await conv_repo.get_attachments(conversation.id)
     target_attachment = next((item for item in existing_attachments if item.get("file_id") == file_id), None)
+    if target_attachment is None:
+        raise HTTPException(status_code=404, detail="附件不存在或已被删除")
+
+    bucket_name = target_attachment.get("bucket_name")
+    if isinstance(bucket_name, str):
+        await _delete_recorded_objects(target_attachment, bucket_name, get_minio_client(), best_effort=False)
 
     removed = await conv_repo.remove_attachment(conversation.id, file_id)
     if not removed:
-        raise HTTPException(status_code=404, detail="附件不存在或已被删除")
-
-    if target_attachment:
-        delete_candidates = {
-            str(value).strip()
-            for value in (
-                target_attachment.get("storage_path"),
-                target_attachment.get("original_storage_path"),
-                target_attachment.get("markdown_storage_path"),
-            )
-            if isinstance(value, str) and value.strip()
-        }
-        for candidate in delete_candidates:
-            try:
-                file_path = Path(candidate)
-                if file_path.exists():
-                    file_path.unlink()
-            except Exception as exc:  # noqa: BLE001
-                logger.warning(f"Failed to remove attachment file {candidate}: {exc}")
+        raise RuntimeError("附件元数据在删除过程中发生变化")
+    _delete_materialized_attachment_files(thread_id, target_attachment)
 
     all_attachments = await conv_repo.get_attachments(conversation.id)
     await _sync_thread_upload_state(

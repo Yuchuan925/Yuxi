@@ -21,7 +21,7 @@ from typing import Any, Literal
 
 from langchain.messages import AIMessage, AIMessageChunk
 from langgraph.types import Command
-from yuxi import config as conf
+from yuxi.config.options import system_options
 from yuxi.agents.base import _json_safe
 from yuxi.agents.buildin import agent_manager
 from yuxi.agents.context import build_agent_input_context, normalize_agent_context_config
@@ -30,7 +30,11 @@ from yuxi.repositories.agent_repository import AgentRepository
 from yuxi.repositories.agent_run_repository import AgentRunRepository
 from yuxi.repositories.conversation_repository import ConversationRepository
 from yuxi.repositories.subagent_thread_repository import SubagentThreadRepository
-from yuxi.services.conversation_service import serialize_attachment
+from yuxi.services.conversation_service import (
+    materialize_attachment_records,
+    materialize_thread_attachments,
+    serialize_attachment,
+)
 from yuxi.services.input_message_service import AgentRunInputMessage
 from yuxi.services.langfuse_service import (
     LangfuseRunContext,
@@ -789,7 +793,7 @@ async def _bind_request_attachments(
     else:
         attachments = await conv_repo.get_attachments_by_request_id(conversation.id, request_id)
 
-    return [serialize_attachment(attachment) for attachment in attachments]
+    return attachments
 
 
 async def stream_agent_chat(
@@ -828,8 +832,14 @@ async def stream_agent_chat(
     image_content = input_message.image_content
     human_message = input_message.require_langchain_message()
     message_type = input_message.message_type
+    system_config = await system_options.get(db)
+    content_guard_enabled = bool(system_config["enable_content_guard"])
+    request_content_guard = content_guard.configured(
+        content_guard_enabled and bool(system_config["enable_content_guard_llm"]),
+        str(system_config["content_guard_llm_model"]),
+    )
 
-    if conf.enable_content_guard and await content_guard.check(query):
+    if content_guard_enabled and await request_content_guard.check(query):
         yield make_chunk(
             status="error", error_type="content_guard_blocked", error_message="输入内容包含敏感词", meta=meta
         )
@@ -894,12 +904,14 @@ async def stream_agent_chat(
             agent_item=agent_item,
         )
 
-        request_attachments = await _bind_request_attachments(
+        request_attachment_records = await _bind_request_attachments(
             conv_repo=conv_repo,
             thread_id=thread_id,
             request_id=meta["request_id"],
             attachment_file_ids=_normalize_attachment_file_ids(meta),
         )
+        await materialize_attachment_records(thread_id, uid, request_attachment_records)
+        request_attachments = [serialize_attachment(attachment) for attachment in request_attachment_records]
 
         init_msg = {
             "role": "user",
@@ -995,7 +1007,7 @@ async def stream_agent_chat(
                     trace_info = get_trace_info(langfuse_run)
                     accumulated_content.append(content)
                     content_for_check = "".join(accumulated_content[-10:])
-                    if conf.enable_content_guard and await content_guard.check_with_keywords(content_for_check):
+                    if content_guard_enabled and await request_content_guard.check_with_keywords(content_for_check):
                         full_msg = AIMessage(content="".join(accumulated_content))
                         await save_partial_message(
                             conv_repo,
@@ -1021,7 +1033,11 @@ async def stream_agent_chat(
         full_msg = _ensure_full_msg(full_msg, accumulated_content)
         trace_info = get_trace_info(langfuse_run)
 
-        if conf.enable_content_guard and hasattr(full_msg, "content") and await content_guard.check(full_msg.content):
+        if (
+            content_guard_enabled
+            and hasattr(full_msg, "content")
+            and await request_content_guard.check(full_msg.content)
+        ):
             await save_partial_message(
                 conv_repo,
                 thread_id,
@@ -1165,6 +1181,8 @@ async def stream_agent_resume(
     except ValueError as e:
         yield make_resume_chunk(status="error", error_type="invalid_agent", error_message=str(e), meta=meta)
         return
+
+    await materialize_thread_attachments(thread_id=thread_id, current_uid=uid, db=db)
 
     # 恢复流执行期间不访问业务数据库，先结束运行时解析事务并归还连接池。
     await db.commit()

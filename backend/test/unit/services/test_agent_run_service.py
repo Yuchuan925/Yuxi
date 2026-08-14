@@ -1330,7 +1330,9 @@ async def test_cancel_agent_run_view_cascades_children(monkeypatch: pytest.Monke
 def test_resolve_agent_run_model_spec_rejects_unknown_explicit_model(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(agent_run_service.model_cache, "get_model_info", lambda spec: None)
     with pytest.raises(agent_run_service.HTTPException) as exc:
-        agent_run_service.resolve_agent_run_model_spec("nope", SimpleNamespace(config_json={}), _FakeBackend())
+        agent_run_service.resolve_agent_run_model_spec(
+            "nope", SimpleNamespace(config_json={}), _FakeBackend(), "default:model"
+        )
     assert exc.value.status_code == 422
 
 
@@ -1341,7 +1343,9 @@ def test_resolve_agent_run_model_spec_rejects_non_chat_explicit_model(monkeypatc
         lambda spec: SimpleNamespace(model_type="embedding"),
     )
     with pytest.raises(agent_run_service.HTTPException) as exc:
-        agent_run_service.resolve_agent_run_model_spec("embed-1", SimpleNamespace(config_json={}), _FakeBackend())
+        agent_run_service.resolve_agent_run_model_spec(
+            "embed-1", SimpleNamespace(config_json={}), _FakeBackend(), "default:model"
+        )
     assert exc.value.status_code == 422
 
 
@@ -1359,6 +1363,7 @@ def test_resolve_agent_run_model_spec_strips_explicit_chat_model(monkeypatch: py
             " gpt-x ",
             SimpleNamespace(config_json={}),
             _FakeBackend(),
+            "default:model",
         )
         == "gpt-x"
     )
@@ -1439,6 +1444,11 @@ def _patch_agent_run_creation(
     monkeypatch.setattr(agent_run_service, "ConversationRepository", ConvRepo)
     monkeypatch.setattr(agent_run_service, "AgentRunRepository", _CreateRunRepo)
     monkeypatch.setattr(agent_run_service, "get_arq_pool", fake_get_arq_pool)
+
+    async def get_system_options(_option, _db=None):
+        return {"default_model": "system-default:model"}
+
+    monkeypatch.setattr(type(agent_run_service.system_options), "get", get_system_options)
     return db
 
 
@@ -1515,7 +1525,7 @@ async def test_create_chat_run_snapshots_system_default_when_agent_model_empty(m
     monkeypatch.setattr(
         agent_run_service,
         "resolve_chat_model_spec",
-        lambda model_spec: str(model_spec).strip() if str(model_spec or "").strip() else "system-default-model",
+        lambda model_spec, *, fallback=None: str(model_spec).strip() if str(model_spec or "").strip() else fallback,
     )
     db = _patch_agent_run_creation(
         monkeypatch,
@@ -1532,7 +1542,7 @@ async def test_create_chat_run_snapshots_system_default_when_agent_model_empty(m
         model_spec=None,
     )
 
-    assert db.created_run_kwargs["input_payload"]["model_spec"] == "system-default-model"
+    assert db.created_run_kwargs["input_payload"]["model_spec"] == "system-default:model"
     assert "model_spec" not in db.added[0].extra_metadata
 
 

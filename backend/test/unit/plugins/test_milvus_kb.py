@@ -348,6 +348,11 @@ async def test_index_file_persists_chunk_stats(monkeypatch):
     kb.delete_file_chunks_only = delete_file_chunks_only
     kb._embed_and_store_chunks = embed_and_store_chunks
 
+    async def get_system_options(_option, _db=None):
+        return {"embed_model": EMBEDDING_MODEL_SPEC}
+
+    monkeypatch.setattr(type(milvus_module.system_options), "get", get_system_options)
+
     result = await kb.index_file(
         "db",
         "file-1",
@@ -419,6 +424,11 @@ async def test_index_file_cancellation_marks_file_retryable(monkeypatch):
     kb._get_or_create_milvus_collection = get_collection
     kb._get_embedding_function = lambda embedding_model_spec: None
     kb._read_markdown_from_minio = cancelled_read
+
+    async def get_system_options(_option, _db=None):
+        return {"embed_model": EMBEDDING_MODEL_SPEC}
+
+    monkeypatch.setattr(type(milvus_module.system_options), "get", get_system_options)
 
     task = asyncio.create_task(
         kb.index_file(
@@ -579,6 +589,11 @@ async def test_update_content_uses_streaming_chunk_store(monkeypatch):
     kb.delete_file_chunks_only = delete_file_chunks_only
     kb._embed_and_store_chunks = embed_and_store_chunks
     monkeypatch.setattr("yuxi.knowledge.implementations.milvus.parse_document", parse_file)
+
+    async def get_system_options(_option, _db=None):
+        return {"embed_model": EMBEDDING_MODEL_SPEC}
+
+    monkeypatch.setattr(type(milvus_module.system_options), "get", get_system_options)
 
     result = await kb.update_content(
         "db",

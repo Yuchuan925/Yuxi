@@ -43,6 +43,8 @@ class FakeMinioClient:
     def __init__(self):
         self.objects: dict[tuple[str, str], bytes] = {}
         self.uploads: list[dict] = []
+        self.deleted: list[tuple[str, str]] = []
+        self.deleted_prefixes: list[tuple[str, str]] = []
 
     async def aupload_file(self, bucket_name: str, object_name: str, data: bytes, content_type: str | None = None):
         self.objects[(bucket_name, object_name)] = data
@@ -65,6 +67,18 @@ class FakeMinioClient:
             return self.objects[(bucket_name, object_name)]
         except KeyError as exc:
             raise service.StorageError("missing object") from exc
+
+    async def adelete_file(self, bucket_name: str, object_name: str) -> bool:
+        self.objects.pop((bucket_name, object_name), None)
+        self.deleted.append((bucket_name, object_name))
+        return True
+
+    async def adelete_objects_by_prefix(self, bucket_name: str, prefix: str) -> int:
+        keys = [key for key in self.objects if key[0] == bucket_name and key[1].startswith(prefix)]
+        for key in keys:
+            self.objects.pop(key)
+        self.deleted_prefixes.append((bucket_name, prefix))
+        return len(keys)
 
 
 @dataclass
@@ -146,7 +160,7 @@ async def test_parse_tmp_attachment_uses_selected_method_and_uploads_markdown(mo
 
 
 @pytest.mark.asyncio
-async def test_confirm_tmp_thread_attachments_materializes_original_and_parsed_files(monkeypatch, tmp_path: Path):
+async def test_confirm_tmp_thread_attachments_persists_objects_without_local_paths(monkeypatch):
     fake_minio = FakeMinioClient()
     original_object = "tmp/chat_attachments/user-1/tmp-1/original/demo.pdf"
     parsed_object = "tmp/chat_attachments/user-1/tmp-1/parsed/demo.md"
@@ -156,15 +170,6 @@ async def test_confirm_tmp_thread_attachments_materializes_original_and_parsed_f
 
     monkeypatch.setattr(service, "get_minio_client", lambda: fake_minio)
     monkeypatch.setattr(service, "ConversationRepository", lambda db: fake_repo)
-    monkeypatch.setattr(service.app_config, "save_dir", str(tmp_path))
-
-    def fake_uploads_dir(thread_id: str) -> Path:
-        path = tmp_path / "threads" / thread_id / "user-data" / "uploads"
-        path.mkdir(parents=True, exist_ok=True)
-        return path
-
-    monkeypatch.setattr(service, "ensure_thread_dirs", lambda thread_id, user_id: fake_uploads_dir(thread_id))
-    monkeypatch.setattr(service, "sandbox_uploads_dir", fake_uploads_dir)
 
     async def noop_sync(**kwargs):
         return None
@@ -193,15 +198,13 @@ async def test_confirm_tmp_thread_attachments_materializes_original_and_parsed_f
 
     [attachment] = response["attachments"]
     assert attachment["status"] == "parsed"
-    original_name = Path(attachment["original_path"]).name
-    markdown_name = Path(attachment["path"]).name
-    assert original_name.endswith("_demo.pdf")
-    assert markdown_name.endswith("_demo.md")
-    assert (tmp_path / "threads" / "thread-1" / "user-data" / "uploads" / original_name).read_bytes() == b"pdf-bytes"
-    assert (tmp_path / "threads" / "thread-1" / "user-data" / "uploads" / "attachments" / markdown_name).read_text(
-        encoding="utf-8"
-    ) == "# parsed"
-    assert Path(fake_repo.attachments[0]["original_path"]).name == original_name
+    stored = fake_repo.attachments[0]
+    assert stored["original_object_name"].startswith("threads/thread-1/attachments/")
+    assert stored["markdown_object_name"].startswith("threads/thread-1/attachments/")
+    assert "storage_path" not in stored
+    assert fake_minio.objects[("knowledgebases", stored["original_object_name"])] == b"pdf-bytes"
+    assert fake_minio.objects[("knowledgebases", stored["markdown_object_name"])] == b"# parsed"
+    assert fake_minio.deleted_prefixes == [("knowledgebases", "tmp/chat_attachments/user-1/tmp-1/")]
 
 
 @pytest.mark.asyncio
@@ -308,7 +311,7 @@ async def test_confirm_tmp_thread_attachments_validates_batch_before_commit(monk
 
 
 @pytest.mark.asyncio
-async def test_confirm_tmp_thread_attachments_keeps_duplicate_names_separate(monkeypatch, tmp_path: Path):
+async def test_confirm_tmp_thread_attachments_keeps_duplicate_names_separate(monkeypatch):
     fake_minio = FakeMinioClient()
     first_object = "tmp/chat_attachments/user-1/tmp-1/original/report.pdf"
     second_object = "tmp/chat_attachments/user-1/tmp-2/original/report.pdf"
@@ -318,15 +321,6 @@ async def test_confirm_tmp_thread_attachments_keeps_duplicate_names_separate(mon
 
     monkeypatch.setattr(service, "get_minio_client", lambda: fake_minio)
     monkeypatch.setattr(service, "ConversationRepository", lambda db: fake_repo)
-    monkeypatch.setattr(service.app_config, "save_dir", str(tmp_path))
-
-    def fake_uploads_dir(thread_id: str) -> Path:
-        path = tmp_path / "threads" / thread_id / "user-data" / "uploads"
-        path.mkdir(parents=True, exist_ok=True)
-        return path
-
-    monkeypatch.setattr(service, "ensure_thread_dirs", lambda thread_id, uid: fake_uploads_dir(thread_id))
-    monkeypatch.setattr(service, "sandbox_uploads_dir", fake_uploads_dir)
 
     async def noop_sync(**kwargs):
         return None
@@ -349,9 +343,81 @@ async def test_confirm_tmp_thread_attachments_keeps_duplicate_names_separate(mon
 
     first, second = response["attachments"]
     assert first["original_path"] != second["original_path"]
-    assert (
-        tmp_path / "threads" / "thread-1" / "user-data" / "uploads" / Path(first["original_path"]).name
-    ).read_bytes() == b"first"
-    assert (
-        tmp_path / "threads" / "thread-1" / "user-data" / "uploads" / Path(second["original_path"]).name
-    ).read_bytes() == b"second"
+    first_record, second_record = fake_repo.attachments
+    assert first_record["original_object_name"] != second_record["original_object_name"]
+    assert fake_minio.objects[("knowledgebases", first_record["original_object_name"])] == b"first"
+    assert fake_minio.objects[("knowledgebases", second_record["original_object_name"])] == b"second"
+
+
+@pytest.mark.asyncio
+async def test_materialize_attachment_record_restores_missing_local_cache(monkeypatch, tmp_path: Path):
+    fake_minio = FakeMinioClient()
+    original_object = "threads/thread-1/attachments/file-1/original/demo.pdf"
+    markdown_object = "threads/thread-1/attachments/file-1/parsed/demo.md"
+    fake_minio.objects[("knowledgebases", original_object)] = b"pdf-bytes"
+    fake_minio.objects[("knowledgebases", markdown_object)] = b"# parsed"
+    monkeypatch.setattr(service, "get_minio_client", lambda: fake_minio)
+
+    def fake_uploads_dir(thread_id: str) -> Path:
+        path = tmp_path / thread_id / "uploads"
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
+    monkeypatch.setattr(service, "ensure_thread_dirs", lambda thread_id, uid: fake_uploads_dir(thread_id))
+    monkeypatch.setattr(service, "sandbox_uploads_dir", fake_uploads_dir)
+    attachment = {
+        "bucket_name": "knowledgebases",
+        "original_object_name": original_object,
+        "markdown_object_name": markdown_object,
+        "original_path": "/home/gem/user-data/uploads/file-1_demo.pdf",
+        "path": "/home/gem/user-data/uploads/attachments/file-1_demo.md",
+    }
+
+    await service.materialize_attachment_record("thread-1", "user-1", attachment)
+
+    assert (tmp_path / "thread-1" / "uploads" / "file-1_demo.pdf").read_bytes() == b"pdf-bytes"
+    assert (tmp_path / "thread-1" / "uploads" / "attachments" / "file-1_demo.md").read_text() == "# parsed"
+
+
+def test_delete_materialized_attachment_files_removes_only_target(monkeypatch, tmp_path: Path):
+    uploads_dir = tmp_path / "thread-1" / "uploads"
+    attachments_dir = uploads_dir / "attachments"
+    attachments_dir.mkdir(parents=True)
+    original = uploads_dir / "file-1_demo.pdf"
+    markdown = attachments_dir / "file-1_demo.md"
+    unrelated = uploads_dir / "keep.txt"
+    original.write_bytes(b"pdf")
+    markdown.write_text("parsed", encoding="utf-8")
+    unrelated.write_text("keep", encoding="utf-8")
+    monkeypatch.setattr(service, "sandbox_uploads_dir", lambda _thread_id: uploads_dir)
+
+    service._delete_materialized_attachment_files(
+        "thread-1",
+        {
+            "original_path": "/home/gem/user-data/uploads/file-1_demo.pdf",
+            "path": "/home/gem/user-data/uploads/attachments/file-1_demo.md",
+            "markdown_object_name": "threads/thread-1/attachments/file-1/parsed/demo.md",
+        },
+    )
+
+    assert not original.exists()
+    assert not markdown.exists()
+    assert unrelated.read_text(encoding="utf-8") == "keep"
+
+
+@pytest.mark.asyncio
+async def test_delete_recorded_objects_propagates_storage_failure_when_required():
+    class FailingMinio:
+        async def adownload_file(self, _bucket_name, object_name):
+            return object_name.encode()
+
+        async def adelete_file(self, _bucket_name, _object_name):
+            raise service.StorageError("storage unavailable")
+
+    with pytest.raises(service.StorageError, match="storage unavailable"):
+        await service._delete_recorded_objects(
+            {"original_object_name": "threads/thread-1/attachments/file-1/original/demo.pdf"},
+            "knowledgebases",
+            FailingMinio(),
+            best_effort=False,
+        )

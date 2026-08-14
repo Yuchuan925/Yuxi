@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from yuxi.storage.postgres.models_business import User
 from server.utils.auth_middleware import get_db, get_required_user
-from yuxi import config as conf
+from yuxi.config.options import system_options
 from yuxi.agents.tool_approval import ToolApprovalMode
 from yuxi.models import select_model
 from yuxi.services.chat_service import get_agent_state_view
@@ -61,7 +61,12 @@ chat = APIRouter(prefix="/chat", tags=["chat"])
 
 
 @chat.post("/call")
-async def call(query: str = Body(...), meta: dict = Body(None), current_user: User = Depends(get_required_user)):
+async def call(
+    query: str = Body(...),
+    meta: dict = Body(None),
+    current_user: User = Depends(get_required_user),
+    db: AsyncSession = Depends(get_db),
+):
     """调用模型进行简单问答（需要登录）"""
     meta = meta or {}
 
@@ -69,7 +74,8 @@ async def call(query: str = Body(...), meta: dict = Body(None), current_user: Us
     if "request_id" not in meta or not meta.get("request_id"):
         meta["request_id"] = str(uuid.uuid4())
 
-    model = select_model(model_spec=meta.get("model_spec") or meta.get("model") or conf.default_model)
+    options = await system_options.get(db)
+    model = select_model(model_spec=meta.get("model_spec") or meta.get("model") or options["default_model"])
 
     response = await model.call(query)
     logger.debug({"query": query, "response": response.content})

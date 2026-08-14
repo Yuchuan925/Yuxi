@@ -131,6 +131,7 @@ async def test_convert_upload_to_markdown_returns_conversion_result(
     assert result.file_size == len(payload)
     assert result.markdown == "converted markdown"
     assert result.truncated is False
+    assert list(tmp_path.iterdir()) == []
 
 
 @pytest.mark.asyncio
@@ -161,33 +162,26 @@ async def test_convert_upload_to_markdown_rejects_unsupported_extension(monkeypa
         await svc._convert_upload_to_markdown(upload)
 
 
-def test_normalize_parse_method_uses_default_ocr_engine_for_images(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr(svc.app_config, "default_ocr_engine", "mineru_ocr")
-    method = svc._normalize_parse_method("scan.png", parse_method=None)
+def test_normalize_parse_method_uses_default_ocr_engine_for_images():
+    method = svc._normalize_parse_method("scan.png", parse_method=None, default_ocr_engine="mineru_ocr")
     assert method == "mineru_ocr"
 
 
-def test_normalize_parse_method_uses_default_ocr_engine_for_images_fallback_to_rapid(
-    monkeypatch: pytest.MonkeyPatch,
-):
-    monkeypatch.setattr(svc.app_config, "default_ocr_engine", "deepseek_ocr")
-    method = svc._normalize_parse_method("scan.jpg", parse_method=None)
+def test_normalize_parse_method_uses_default_ocr_engine_for_images_fallback_to_rapid():
+    method = svc._normalize_parse_method("scan.jpg", parse_method=None, default_ocr_engine="deepseek_ocr")
     assert method == "deepseek_ocr"
 
 
-def test_normalize_parse_method_pdf_defaults_to_disable(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr(svc.app_config, "default_ocr_engine", "mineru_ocr")
-    method = svc._normalize_parse_method("doc.pdf", parse_method=None)
+def test_normalize_parse_method_pdf_defaults_to_disable():
+    method = svc._normalize_parse_method("doc.pdf", parse_method=None, default_ocr_engine="mineru_ocr")
     assert method == "disable"
 
 
-def test_normalize_parse_method_respects_explicit_parse_method(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr(svc.app_config, "default_ocr_engine", "rapid_ocr")
-    method = svc._normalize_parse_method("scan.png", parse_method="deepseek_ocr")
+def test_normalize_parse_method_respects_explicit_parse_method():
+    method = svc._normalize_parse_method("scan.png", parse_method="deepseek_ocr", default_ocr_engine="rapid_ocr")
     assert method == "deepseek_ocr"
 
 
-def test_normalize_parse_method_fallback_to_rapid_when_default_is_disable(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr(svc.app_config, "default_ocr_engine", "disable")
-    method = svc._normalize_parse_method("scan.png", parse_method=None)
+def test_normalize_parse_method_fallback_to_rapid_when_default_is_disable():
+    method = svc._normalize_parse_method("scan.png", parse_method=None, default_ocr_engine="disable")
     assert method == "rapid_ocr"

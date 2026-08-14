@@ -2,9 +2,11 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 import yuxi.services.run_worker as run_worker
+from yuxi.config import options as config_options
 
 
 class _RaisingAsyncIter:
@@ -52,7 +54,7 @@ def _build_run() -> SimpleNamespace:
 def _patch_common(monkeypatch: pytest.MonkeyPatch, run_obj: SimpleNamespace):
     @asynccontextmanager
     async def fake_session_ctx():
-        yield object()
+        yield SimpleNamespace(commit=AsyncMock())
 
     async def fake_noop(*args, **kwargs):
         del args, kwargs
@@ -506,19 +508,31 @@ async def test_worker_startup_ensures_builtin_mcp_servers(monkeypatch: pytest.Mo
     async def fake_ensure_business_schema():
         calls.append("ensure_business_schema")
 
+    async def fake_setup_langgraph_checkpointer():
+        calls.append("setup_langgraph_checkpointer")
+
     async def fake_ensure_builtin_mcp_servers_in_db():
         calls.append("ensure_builtin_mcp_servers_in_db")
 
     @asynccontextmanager
     async def fake_session_ctx():
-        yield object()
+        yield SimpleNamespace(commit=AsyncMock())
 
     async def fake_init_builtin_skills(session):
         del session
         calls.append("init_builtin_skills")
 
-    def fake_start_runtime_sync():
-        calls.append("start_runtime_sync")
+    async def fake_ensure_options_in_db(session):
+        del session
+        calls.append("ensure_options_in_db")
+
+    async def fake_migrate_legacy_system_options(session):
+        del session
+        calls.append("migrate_system_options")
+
+    async def fake_invalidate_option_cache(key):
+        del key
+        calls.append("invalidate_option_cache")
 
     async def fake_recover_pending_dispatches():
         calls.append("recover_pending_dispatches")
@@ -526,10 +540,13 @@ async def test_worker_startup_ensures_builtin_mcp_servers(monkeypatch: pytest.Mo
     monkeypatch.setattr(run_worker.pg_manager, "initialize", fake_initialize)
     monkeypatch.setattr(run_worker.pg_manager, "create_business_tables", fake_create_business_tables)
     monkeypatch.setattr(run_worker.pg_manager, "ensure_business_schema", fake_ensure_business_schema)
+    monkeypatch.setattr(run_worker.pg_manager, "setup_langgraph_checkpointer", fake_setup_langgraph_checkpointer)
     monkeypatch.setattr(run_worker.pg_manager, "get_async_session_context", fake_session_ctx)
     monkeypatch.setattr(run_worker, "ensure_builtin_mcp_servers_in_db", fake_ensure_builtin_mcp_servers_in_db)
     monkeypatch.setattr(run_worker, "init_builtin_skills", fake_init_builtin_skills)
-    monkeypatch.setattr(run_worker.sys_config, "start_runtime_sync", fake_start_runtime_sync)
+    monkeypatch.setattr(config_options, "ensure_options_in_db", fake_ensure_options_in_db)
+    monkeypatch.setattr(config_options, "migrate_legacy_system_options", fake_migrate_legacy_system_options)
+    monkeypatch.setattr(config_options, "invalidate_option_cache", fake_invalidate_option_cache)
     monkeypatch.setattr(run_worker, "recover_pending_dispatches", fake_recover_pending_dispatches)
 
     await run_worker._worker_startup({})
@@ -538,8 +555,52 @@ async def test_worker_startup_ensures_builtin_mcp_servers(monkeypatch: pytest.Mo
         "initialize",
         "create_business_tables",
         "ensure_business_schema",
+        "setup_langgraph_checkpointer",
+        "ensure_options_in_db",
+        "migrate_system_options",
+        "invalidate_option_cache",
         "ensure_builtin_mcp_servers_in_db",
         "init_builtin_skills",
-        "start_runtime_sync",
         "recover_pending_dispatches",
     ]
+
+
+@pytest.mark.asyncio
+async def test_worker_startup_fails_when_system_options_cannot_migrate(monkeypatch: pytest.MonkeyPatch):
+
+    monkeypatch.setattr(run_worker.pg_manager, "initialize", lambda: None)
+    monkeypatch.setattr(run_worker.pg_manager, "create_business_tables", AsyncMock())
+    monkeypatch.setattr(run_worker.pg_manager, "ensure_business_schema", AsyncMock())
+    monkeypatch.setattr(run_worker.pg_manager, "setup_langgraph_checkpointer", AsyncMock())
+
+    @asynccontextmanager
+    async def fake_session_ctx():
+        yield object()
+
+    async def fail_migrate(_session):
+        raise RuntimeError("config load failed")
+
+    monkeypatch.setattr(run_worker.pg_manager, "get_async_session_context", fake_session_ctx)
+    monkeypatch.setattr(config_options, "ensure_options_in_db", AsyncMock())
+    monkeypatch.setattr(config_options, "migrate_legacy_system_options", fail_migrate)
+
+    with pytest.raises(RuntimeError, match="config load failed"):
+        await run_worker._worker_startup({})
+
+
+@pytest.mark.asyncio
+async def test_worker_shutdown_closes_queue_clients_before_postgres(monkeypatch: pytest.MonkeyPatch):
+    calls: list[str] = []
+
+    async def fake_close_queue_clients():
+        calls.append("redis")
+
+    async def fake_close_postgres():
+        calls.append("postgres")
+
+    monkeypatch.setattr("yuxi.services.run_queue_service.close_queue_clients", fake_close_queue_clients)
+    monkeypatch.setattr(run_worker.pg_manager, "close", fake_close_postgres)
+
+    await run_worker._worker_shutdown({})
+
+    assert calls == ["redis", "postgres"]

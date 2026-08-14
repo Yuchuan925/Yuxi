@@ -85,7 +85,10 @@ async def test_channel_steer_is_accepted_for_active_message_run(
     from yuxi.services import agent_request_queue_service
     from yuxi.services.input_message_service import build_chat_input_message
 
-    monkeypatch.setattr(agent_request_queue_service, "resolve_agent_run_config", lambda *args: ("model", "default"))
+    async def resolve_config(*_args):
+        return "model", "default"
+
+    monkeypatch.setattr(agent_request_queue_service, "resolve_agent_run_config", resolve_config)
     await _seed_thread(session)
     await _seed_active_run(session, source=active_source)
 
@@ -957,7 +960,10 @@ async def test_reject_marks_request_rejected_when_immediate_dispatch_loses_race(
     from yuxi.services import agent_request_queue_service
     from yuxi.services.input_message_service import build_chat_input_message
 
-    monkeypatch.setattr(agent_request_queue_service, "resolve_agent_run_config", lambda *args: ("model", "default"))
+    async def resolve_config(*_args):
+        return "model", "default"
+
+    monkeypatch.setattr(agent_request_queue_service, "resolve_agent_run_config", resolve_config)
 
     async def lose_dispatch_race(**kwargs):
         return None
@@ -995,7 +1001,10 @@ async def test_intake_rejects_message_while_run_is_interrupted(
     from yuxi.services import agent_request_queue_service
     from yuxi.services.input_message_service import build_chat_input_message
 
-    monkeypatch.setattr(agent_request_queue_service, "resolve_agent_run_config", lambda *args: ("model", "default"))
+    async def resolve_config(*_args):
+        return "model", "default"
+
+    monkeypatch.setattr(agent_request_queue_service, "resolve_agent_run_config", resolve_config)
     await _seed_thread(session)
     now = utc_now_naive()
     await _seed_queued_request(session, request_id="request-b", message_id=101, created_at=now)
@@ -1038,7 +1047,10 @@ async def test_enqueue_after_empty_failed_queue_dispatches_new_request(session, 
     from yuxi.services import agent_request_queue_service
     from yuxi.services.input_message_service import build_chat_input_message
 
-    monkeypatch.setattr(agent_request_queue_service, "resolve_agent_run_config", lambda *args: ("model", "default"))
+    async def resolve_config(*_args):
+        return "model", "default"
+
+    monkeypatch.setattr(agent_request_queue_service, "resolve_agent_run_config", resolve_config)
     await _seed_thread(session)
     now = utc_now_naive()
     await _seed_terminal_run(
