@@ -218,7 +218,9 @@ def build_kb_image_proxy_url(object_name: str) -> str:
     对象名格式为 ``{kb_id}/kb-images/{timestamp}_{filename}``，kb_id 即首段；
     路径参数只保留 ``kb-images/...`` 部分（保留斜杠、编码其余字符）。
     """
-    kb_id, relative_path = object_name.split("/", 1)
+    kb_id, separator, relative_path = object_name.partition("/")
+    if not kb_id or not separator or not relative_path.startswith("kb-images/"):
+        raise ValueError("知识库图片对象名必须符合 {kb_id}/kb-images/{filename} 格式")
     return f"/api/knowledge/databases/{kb_id}/images/{quote(relative_path, safe='/')}"
 
 

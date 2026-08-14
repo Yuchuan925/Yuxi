@@ -295,6 +295,18 @@ async def test_kb_image_proxy_rejects_invalid_or_missing_object(test_client, adm
     )
     assert invalid_path.status_code == 400
 
+    traversal_path = await test_client.get(
+        f"/api/knowledge/databases/{kb_id}/images/kb-images/..%2Fother.png",
+        headers=admin_headers,
+    )
+    assert traversal_path.status_code == 400
+
+    backslash_path = await test_client.get(
+        f"/api/knowledge/databases/{kb_id}/images/kb-images/..%5Cother.png",
+        headers=admin_headers,
+    )
+    assert backslash_path.status_code == 400
+
     missing_image = await test_client.get(
         f"/api/knowledge/databases/{kb_id}/images/kb-images/missing.png",
         headers=admin_headers,

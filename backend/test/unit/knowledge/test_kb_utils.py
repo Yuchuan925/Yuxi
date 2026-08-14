@@ -15,6 +15,12 @@ def test_build_kb_image_proxy_url_encodes_special_chars_but_keeps_slashes():
     assert url == "/api/knowledge/databases/db_1/images/kb-images/1710000000000_user%201.png"
 
 
+@pytest.mark.parametrize("object_name", ["db_1/images/a.png", "/kb-images/a.png", "db_1"])
+def test_build_kb_image_proxy_url_rejects_invalid_object_name(object_name):
+    with pytest.raises(ValueError, match="知识库图片对象名"):
+        build_kb_image_proxy_url(object_name)
+
+
 async def test_prepare_item_metadata_preserves_uploaded_file_size():
     item = "minio://knowledgebases/db/upload/demo.txt"
     params = {

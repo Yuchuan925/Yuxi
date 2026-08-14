@@ -278,12 +278,12 @@ def test_paddleocr_vl_uploads_markdown_images(tmp_path: Path, monkeypatch: pytes
     parser = PaddleOCRVLParser(api_token="token")
     result = parser.process_file(
         str(file_path),
-        params={"image_bucket": "public", "image_prefix": "kb/images"},
+        params={"image_bucket": "kb-images", "image_prefix": "kb/kb-images"},
     )
 
-    assert result == "before ![](/api/knowledge/databases/kb/images/images/1000000_table.png) after"
+    assert result == "before ![](/api/knowledge/databases/kb/images/kb-images/1000000_table.png) after"
     assert uploaded == {
-        "bucket_name": "public",
-        "object_name": "kb/images/1000000_table.png",
+        "bucket_name": "kb-images",
+        "object_name": "kb/kb-images/1000000_table.png",
         "data": b"image-bytes",
     }
