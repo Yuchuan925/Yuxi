@@ -103,7 +103,8 @@ export function useAgentRunStream({
   onScrollToBottom,
   streamSmoother,
   onInterruptDetected = null,
-  onTerminalDetected = null
+  onTerminalDetected = null,
+  onRunStarted = null
 }) {
   const saveActiveRunSnapshot = (threadId, runId, lastSeq = '0-0') => {
     if (!threadId || !runId) return
@@ -270,6 +271,9 @@ export function useAgentRunStream({
     ts.lastRetryableJobTry = null
     ts.isStreaming = true
     saveActiveRunSnapshot(threadId, runId, ts.runLastSeq)
+    if (typeof onRunStarted === 'function') {
+      onRunStarted({ threadId, runId })
+    }
     const touchedThreadIds = new Set([threadId])
     let sawTerminalEvent = false
 

@@ -72,7 +72,12 @@ async def test_agent_call_adapter_waits_and_wraps_result(monkeypatch: pytest.Mon
             "thread_id": "thread-1",
             "agent_run_id": run_id,
             "request_id": "req-1",
-            "usage": {"input_tokens": 3, "output_tokens": 2, "total_tokens": 5},
+            "token_usage": {
+                "schema_version": 2,
+                "complete": True,
+                "models": {"provider:model": {}},
+                "total": {"input_tokens": 3, "output_tokens": 2, "total_tokens": 5},
+            },
         }
 
     monkeypatch.setattr(call_router, "submit_run_command", fake_submit_run_command)
@@ -91,6 +96,35 @@ async def test_agent_call_adapter_waits_and_wraps_result(monkeypatch: pytest.Mon
     assert result["choices"][0]["finish_reason"] == "stop"
     assert result["usage"] == {"prompt_tokens": 3, "completion_tokens": 2, "total_tokens": 5}
     assert calls["await"] == ("run-1", "user-1")
+
+
+def test_agent_call_response_keeps_unavailable_usage_distinct_from_zero():
+    result = call_router._build_agent_call_response(
+        {
+            "status": "completed",
+            "agent_run_id": "run-1",
+            "token_usage": {"available": False},
+        }
+    )
+
+    assert result["usage"] is None
+
+
+def test_agent_call_response_rejects_partial_usage():
+    result = call_router._build_agent_call_response(
+        {
+            "status": "completed",
+            "agent_run_id": "run-1",
+            "token_usage": {
+                "complete": False,
+                "model_call_count": 2,
+                "usage_reported_call_count": 1,
+                "total": {"input_tokens": 3, "output_tokens": 2, "total_tokens": 5},
+            },
+        }
+    )
+
+    assert result["usage"] is None
 
 
 @pytest.mark.asyncio

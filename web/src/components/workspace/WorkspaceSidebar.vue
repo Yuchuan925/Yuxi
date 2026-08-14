@@ -18,7 +18,7 @@
         type="button"
         class="workspace-nav-item secondary"
         :class="{
-          active: activeKey === 'personal' && isSameOrChildPath(currentPath, savedArtifactsPath)
+          active: activeKey === 'personal' && isSamePath(currentPath, savedArtifactsPath)
         }"
         @click="$emit('select-path', savedArtifactsPath)"
       >
@@ -28,11 +28,20 @@
       <button
         type="button"
         class="workspace-nav-item secondary"
-        :class="{ active: activeKey === 'personal' && isSameOrChildPath(currentPath, agentsPath) }"
+        :class="{ active: activeKey === 'personal' && isSamePath(currentPath, agentsPath) }"
         @click="$emit('select-path', agentsPath)"
       >
         <FileTypeIcon is-dir folder-variant="agent" :size="18" />
         <span>智能体文件</span>
+      </button>
+      <button
+        type="button"
+        class="workspace-nav-item secondary"
+        :class="{ active: activeKey === 'personal' && isSamePath(currentPath, chatsPath) }"
+        @click="$emit('select-path', chatsPath)"
+      >
+        <FileTypeIcon is-dir :size="18" />
+        <span>历史对话</span>
       </button>
     </section>
 
@@ -81,7 +90,8 @@ import FileTypeIcon from '@/components/common/FileTypeIcon.vue'
 
 const savedArtifactsPath = '/saved_artifacts'
 const agentsPath = '/agents/'
-const quickAccessPaths = [savedArtifactsPath, agentsPath]
+const chatsPath = '/agents/chats'
+const quickAccessPaths = [savedArtifactsPath, agentsPath, chatsPath]
 
 const normalizePath = (path) => String(path || '/').replace(/\/$/, '') || '/'
 const isSameOrChildPath = (path, targetPath) => {
@@ -89,6 +99,7 @@ const isSameOrChildPath = (path, targetPath) => {
   const target = normalizePath(targetPath)
   return current === target || current.startsWith(`${target}/`)
 }
+const isSamePath = (path, targetPath) => normalizePath(path) === normalizePath(targetPath)
 const isQuickAccessPath = (path) =>
   quickAccessPaths.some((targetPath) => isSameOrChildPath(path, targetPath))
 

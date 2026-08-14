@@ -138,6 +138,33 @@ async def test_thread_tool_approval_mode_rejects_unknown_value(test_client, admi
     assert response.status_code == 422, response.text
 
 
+async def test_thread_list_exposes_thread_status(test_client, admin_headers):
+    thread_id = await _create_thread_for_user(test_client, admin_headers)
+
+    list_response = await test_client.get("/api/chat/threads", headers=admin_headers)
+    assert list_response.status_code == 200, list_response.text
+    thread = next(item for item in list_response.json() if item["id"] == thread_id)
+    assert thread["thread_status"] in {"done", "ready", "loading"}
+
+
+async def test_mark_thread_viewed_returns_thread_status(test_client, admin_headers):
+    thread_id = await _create_thread_for_user(test_client, admin_headers)
+
+    response = await test_client.post(f"/api/chat/thread/{thread_id}/viewed", headers=admin_headers)
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["id"] == thread_id
+    assert payload["thread_status"] in {"done", "ready", "loading"}
+
+
+async def test_mark_thread_viewed_requires_ownership(test_client, standard_user, admin_headers):
+    headers = standard_user["headers"]
+    thread_id = await _create_thread_for_user(test_client, headers)
+
+    response = await test_client.post(f"/api/chat/thread/{thread_id}/viewed", headers=admin_headers)
+    assert response.status_code == 404, response.text
+
+
 async def test_admin_can_read_default_agent(test_client, admin_headers):
     response = await test_client.get("/api/agent/default", headers=admin_headers)
     assert response.status_code == 200, response.text

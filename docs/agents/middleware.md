@@ -30,7 +30,7 @@
 | `PatchToolCallsMiddleware` | 修正部分工具调用消息形态，提升工具调用兼容性 |
 | `ModelRetryMiddleware` | 在模型调用失败时按配置重试 |
 | `ImageInputCompatibilityMiddleware` | 仅为 OpenAI Chat Completions 兼容链路桥接 `read_file` 返回的图片；模型明确拒绝图片输入时自动改为 `ocr_parse_file` |
-| `TokenUsageMiddleware` | 在 LangGraph state 写入本轮 token 使用快照，供前端状态面板查看 |
+| `TokenUsageMiddleware` | 在 LangGraph state 写入近似上下文、本次与线程累计的 Provider 实际 token 用量、模型标识和缓存命中率，供前端状态面板查看 |
 
 `SubAgentBackend` 使用同一组核心能力，但不会挂载 `YuxiSubAgentMiddleware`，并额外过滤 `present_artifacts`、`ask_user_question`、`install_skill` 等不适合子智能体直接使用的工具。
 
@@ -80,6 +80,19 @@
 | `summary_l2_trigger_ratio` | L1 后进入 L2 summary 的触发比例，建议 `0.1~1.0`，默认 `0.4` |
 
 触发判断使用 Yuxi 自己的近似 token 计算结果，不使用模型返回的 `usage_metadata.total_tokens` 作为触发依据，避免 provider 的计费口径、累计口径或异常上报导致短对话过早压缩。
+
+## Token 用量统计
+
+`TokenUsageMiddleware` 同时维护两种口径，二者不能混用：
+
+- 近似上下文统计通过 `count_tokens_approximately` 计算，用于上下文窗口、摘要阈值和消息构成展示。
+- 实际用量直接保留主 Agent 模型调用返回的 `AIMessage.usage_metadata`，包括 `input_tokens`、`output_tokens`、`total_tokens`、缓存和推理 token 明细。当前不包含 Summary 中间件内部直接发起的 L2 摘要模型调用，因此尚不能作为完整账单口径。
+
+state 中的实际用量分为 `latest`、`run` 和 `thread`：分别表示最近一次模型调用、当前 AgentRun 累计和当前 LangGraph 线程累计。前端状态面板只读取 state；流式终态 chunk 不携带用量。worker 从当前父线程、`current_run_id` 匹配的 AgentState 提取 `run`，在 Run 进入终态时将该快照写入 `AgentRun.token_usage`。`run.models` 与 `thread.models` 使用 Yuxi `provider_id:model_id` 配置 spec 分桶，并记录 Provider 响应中的实际模型 ID，避免模型切换后把不同模型的 token 混为一组，也避免把 OpenAI 兼容协议类型误当作业务供应商。
+
+每个模型桶独立计算缓存 token 命中率：使用 Provider 明确上报的 `input_token_details.cache_read / input_tokens`；OpenAI `priority` / `flex` service tier 对应识别 `priority_cache_read` / `flex_cache_read`。累计时先汇总该模型已上报缓存明细的输入 token，再计算 `sum(cache_read) / sum(input_tokens)`；缺少缓存读取字段表示 Provider 未上报，不按 0 命中处理。当前 Run 的按模型聚合会在终态事务中写入 `AgentRun.token_usage`，父 Run 与 SubAgent Run 分别保存，不重复合并。
+
+`siliconflow-cn` 与 `siliconflow` 当前返回的 usage 格式与统计契约不一致，暂列入 Token 用量 Provider 黑名单。黑名单模型仍计算近似上下文占用，但不写入最近调用、Run 或线程的 Provider 实际用量聚合。
 
 触发后，中间件先执行 L1 结构精简：在本次模型调用的临时消息视图里截断旧 `write_file`/`edit_file` 工具调用的大参数；`ToolMessage.content` 估算 token 数超过 `summary_tool_result_token_limit` 时，会写入当前 Agent 可见的 `outputs/large_tool_results`，消息内替换为工具名、近似 token 数、完整结果路径和不超过同一 token 上限的预览。未超过该上限的工具结果保持原样。这个步骤不修改 LangGraph state 中的原始消息。
 

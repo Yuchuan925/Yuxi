@@ -313,6 +313,13 @@ export const threadApi = {
     }),
 
   /**
+   * 记录用户已查看该线程的最新顶层 run，清除侧边栏未读状态
+   * @param {string} threadId - 对话线程ID
+   * @returns {Promise} - 更新后的线程
+   */
+  markThreadViewed: (threadId) => apiPost(`/api/chat/thread/${threadId}/viewed`),
+
+  /**
    * 删除对话线程
    * @param {string} threadId - 对话线程ID
    * @returns {Promise} - 删除结果

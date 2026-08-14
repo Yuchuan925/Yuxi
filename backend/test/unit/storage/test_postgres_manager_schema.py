@@ -9,7 +9,7 @@ class _RecordingConnection:
     def __init__(self):
         self.statements: list[str] = []
 
-    async def execute(self, statement):
+    async def execute(self, statement, params=None):
         self.statements.append(str(statement))
 
 
@@ -90,6 +90,32 @@ async def test_ensure_business_schema_cleans_duplicate_active_agent_runs_before_
     assert "CREATE UNIQUE INDEX IF NOT EXISTS uq_agent_runs_one_active_per_thread" in statements
     assert statements.index("WITH duplicated_active_runs AS") < statements.index(
         "CREATE UNIQUE INDEX IF NOT EXISTS uq_agent_runs_one_active_per_thread"
+    )
+
+
+@pytest.mark.asyncio
+async def test_ensure_business_schema_backfills_unviewed_marker_for_no_run_threads():
+    """没有 chat/resume Run 的历史会话要写入未读哨兵，确保回填探测条件收敛为 false。"""
+    manager = PostgresManager()
+    original_initialized = manager._initialized
+    original_engine = manager.async_engine
+    connection = _RecordingConnection()
+
+    manager._initialized = True
+    manager.async_engine = _RecordingEngine(connection)
+    try:
+        await manager.ensure_business_schema()
+    finally:
+        manager._initialized = original_initialized
+        manager.async_engine = original_engine
+
+    statements = "\n".join(connection.statements)
+
+    assert "SELECT EXISTS (SELECT 1 FROM conversations WHERE last_viewed_run_id IS NULL)" in statements
+    assert "SET last_viewed_run_id = r.run_id" in statements
+    assert "SET last_viewed_run_id = :marker WHERE last_viewed_run_id IS NULL" in statements
+    assert statements.index("SET last_viewed_run_id = r.run_id") < statements.index(
+        "SET last_viewed_run_id = :marker WHERE last_viewed_run_id IS NULL"
     )
 
 

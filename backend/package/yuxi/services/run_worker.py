@@ -18,7 +18,7 @@ from yuxi.services.agent_request_queue_service import (
     dispatch_next_request,
     recover_pending_dispatches,
 )
-from yuxi.services.chat_service import stream_agent_chat, stream_agent_resume
+from yuxi.services.chat_service import get_agent_state_view, stream_agent_chat, stream_agent_resume
 from yuxi.services.input_message_service import restore_chat_input_message
 from yuxi.services.run_queue_service import (
     append_run_stream_event,
@@ -155,7 +155,13 @@ async def mark_run_running(run_id: str):
         await repo.mark_running(run_id)
 
 
-async def mark_run_terminal(run_id: str, status: str, error_type: str | None = None, error_message: str | None = None):
+async def mark_run_terminal(
+    run_id: str,
+    status: str,
+    error_type: str | None = None,
+    error_message: str | None = None,
+    token_usage: dict | None = None,
+):
     async with pg_manager.get_async_session_context() as db:
         repo = AgentRunRepository(db)
         run, changed = await repo.set_terminal_status(
@@ -163,6 +169,7 @@ async def mark_run_terminal(run_id: str, status: str, error_type: str | None = N
             status=status,
             error_type=error_type,
             error_message=error_message,
+            token_usage=token_usage,
         )
         persisted_status = run.status if run else None
         delivery_status = RUN_STATUS_TO_DELIVERY_STATUS.get(persisted_status or "")
@@ -182,6 +189,28 @@ async def _load_user(uid: str):
 async def _is_cancel_requested(run_id: str) -> bool:
     run = await _get_run(run_id)
     return bool(run and run.status == "cancel_requested")
+
+
+async def _read_run_token_usage_from_state(*, run_id: str, thread_id: str, current_user) -> dict | None:
+    """从当前线程 state 读取属于指定 Run 的用量快照。"""
+    try:
+        async with pg_manager.get_async_session_context() as db:
+            view = await get_agent_state_view(
+                thread_id=thread_id,
+                current_user=current_user,
+                db=db,
+                include_relations=False,
+            )
+    except Exception:
+        logger.warning(f"Failed to read token usage from state for run {run_id}", exc_info=True)
+        return None
+
+    agent_state = view.get("agent_state") if isinstance(view, dict) else None
+    token_usage = agent_state.get("token_usage") if isinstance(agent_state, dict) else None
+    if not isinstance(token_usage, dict) or token_usage.get("current_run_id") != run_id:
+        return None
+    run_usage = token_usage.get("run")
+    return dict(run_usage) if isinstance(run_usage, dict) else None
 
 
 def _job_try(ctx) -> int:
@@ -271,14 +300,25 @@ async def _finish_run(
     *,
     thread_id: str | None,
     chunk: dict,
+    current_user,
     error_type: str | None = None,
     error_message: str | None = None,
 ) -> TerminalTransition:
+    token_usage = {"available": False}
+    if thread_id:
+        state_token_usage = await _read_run_token_usage_from_state(
+            run_id=run_id,
+            thread_id=thread_id,
+            current_user=current_user,
+        )
+        if state_token_usage is not None:
+            token_usage = state_token_usage
     transition = await mark_run_terminal(
         run_id,
         status,
         error_type=error_type,
         error_message=error_message,
+        token_usage=token_usage,
     )
     if transition.changed and transition.status:
         await _append_end_event(run_id, transition.status, thread_id=thread_id, payload={"chunk": chunk})
@@ -425,7 +465,6 @@ async def process_agent_run(ctx, run_id: str):
     )
     terminal_set = False
     pending_interrupt: tuple[dict, str | None] | None = None
-
     try:
         async with pg_manager.get_async_session_context() as db:
             if run_type == "resume":
@@ -480,6 +519,7 @@ async def process_agent_run(ctx, run_id: str):
                             "completed",
                             thread_id=thread_id,
                             chunk=chunk,
+                            current_user=user,
                         )
                         terminal_set = transition.status is not None
                     elif status == "error":
@@ -490,6 +530,7 @@ async def process_agent_run(ctx, run_id: str):
                             chunk=chunk,
                             error_type=chunk.get("error_type") or "stream_error",
                             error_message=chunk.get("error_message") or chunk.get("message"),
+                            current_user=user,
                         )
                         terminal_set = transition.status is not None
                     elif status == "interrupted":
@@ -501,6 +542,7 @@ async def process_agent_run(ctx, run_id: str):
                             chunk=chunk,
                             error_type=status_value,
                             error_message=chunk.get("message"),
+                            current_user=user,
                         )
                         terminal_set = transition.status is not None
 
@@ -529,6 +571,7 @@ async def process_agent_run(ctx, run_id: str):
                     if interrupt_status == "human_approval_required"
                     else first_question or "需要用户回答问题"
                 ),
+                current_user=user,
             )
             terminal_set = transition.status is not None
 
@@ -541,16 +584,23 @@ async def process_agent_run(ctx, run_id: str):
                 "completed",
                 thread_id=thread_id,
                 chunk=finished_chunk,
+                current_user=user,
             )
 
     except asyncio.CancelledError:
         await writer.flush()
         cancel_chunk = {"status": "interrupted", "message": "对话已取消", "request_id": request_id}
+        state_token_usage = await _read_run_token_usage_from_state(
+            run_id=run_id,
+            thread_id=thread_id,
+            current_user=user,
+        )
         transition = await mark_run_terminal(
             run_id,
             "cancelled",
             error_type="cancelled",
             error_message="对话已取消",
+            token_usage=state_token_usage or {"available": False},
         )
         if transition.changed:
             await append_run_event(
@@ -610,6 +660,7 @@ async def process_agent_run(ctx, run_id: str):
                     chunk=retryable_error_chunk,
                     error_type="retryable_worker_error",
                     error_message=str(e),
+                    current_user=user,
                 )
                 logger.error(f"Run failed after retries exhausted {run_id}: {e}")
                 return
@@ -639,6 +690,7 @@ async def process_agent_run(ctx, run_id: str):
             chunk=error_chunk,
             error_type="worker_error",
             error_message=str(e),
+            current_user=user,
         )
         return
     finally:

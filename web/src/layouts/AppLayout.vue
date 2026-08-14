@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted, computed, provide, watch } from 'vue'
+import { ref, onMounted, onUnmounted, computed, provide, watch } from 'vue'
 import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router'
 import { GithubOutlined } from '@ant-design/icons-vue'
 import {
@@ -107,6 +107,31 @@ onMounted(async () => {
   if (userStore.isAdmin) {
     taskerStore.loadTasks()
     fetchGithubStars() // Fetch GitHub stars on mount
+  }
+  startThreadStatusSync()
+})
+
+// 低频刷新侧边栏线程状态，让后台线程完成时也能从 loading 转为 ready/done。
+const THREAD_STATUS_SYNC_INTERVAL_MS = 12 * 1000
+let threadStatusSyncTimer = null
+
+const startThreadStatusSync = () => {
+  if (threadStatusSyncTimer) return
+  threadStatusSyncTimer = setInterval(() => {
+    if (
+      sidebarCollapsed.value ||
+      (typeof document !== 'undefined' && document.visibilityState !== 'visible')
+    ) {
+      return
+    }
+    void chatThreadsStore.syncThreadStatuses()
+  }, THREAD_STATUS_SYNC_INTERVAL_MS)
+}
+
+onUnmounted(() => {
+  if (threadStatusSyncTimer) {
+    clearInterval(threadStatusSyncTimer)
+    threadStatusSyncTimer = null
   }
 })
 

@@ -9,7 +9,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from sqlalchemy.orm.attributes import flag_modified
 
-from yuxi.storage.postgres.models_business import Conversation, ConversationStats, Message, ToolCall
+from yuxi.storage.postgres.models_business import (
+    UNVIEWED_RUN_MARKER,
+    Conversation,
+    ConversationStats,
+    Message,
+    ToolCall,
+)
 from yuxi.utils import logger
 from yuxi.utils.datetime_utils import utc_now_naive
 
@@ -105,6 +111,7 @@ class ConversationRepository:
             title=normalized_title or "New Conversation",
             status="active",
             extra_metadata=metadata,
+            last_viewed_run_id=UNVIEWED_RUN_MARKER,
         )
 
         self.db.add(conversation)
@@ -151,6 +158,17 @@ class ConversationRepository:
     async def get_conversation_by_id(self, conversation_id: int) -> Conversation | None:
         result = await self.db.execute(select(Conversation).where(Conversation.id == conversation_id))
         return result.scalar_one_or_none()
+
+    async def mark_thread_viewed(self, thread_id: str, run_id: str) -> Conversation | None:
+        """记录用户最近查看过的顶层 run id；重复标记同一 run 时保持幂等。"""
+        conversation = await self.get_conversation_by_thread_id(thread_id)
+        if not conversation:
+            return None
+        if conversation.last_viewed_run_id != run_id:
+            conversation.last_viewed_run_id = run_id
+            await self.db.commit()
+            await self.db.refresh(conversation)
+        return conversation
 
     def _ensure_metadata(self, conversation: Conversation) -> dict:
         metadata = dict(conversation.extra_metadata or {})

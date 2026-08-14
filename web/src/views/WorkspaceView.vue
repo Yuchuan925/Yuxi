@@ -284,7 +284,7 @@ const isSameOrChildPath = (path, targetPath) => {
 const isAgentsWorkspacePath = computed(
   () =>
     activeSourceKey.value === 'personal' &&
-    isSameOrChildPath(currentPath.value, AGENTS_WORKSPACE_PATH)
+    comparablePath(currentPath.value) === AGENTS_WORKSPACE_PATH
 )
 const isReadonlyWorkspacePath = computed(
   () => isKnowledgeSource.value || isSameOrChildPath(currentPath.value, CHATS_WORKSPACE_PATH)

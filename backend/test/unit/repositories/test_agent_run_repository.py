@@ -109,3 +109,92 @@ async def test_create_run_persists_origin_snapshot(session):
     assert run.channel == "api"
     assert run.external_id == "external-1"
     assert run.origin_metadata == {"agent_invocation_meta": {"trace_id": "trace-1"}}
+
+
+async def _seed_thread_run(db, *, thread_id: str, run_id: str, status: str, run_type: str = "chat"):
+    run = AgentRun(
+        id=run_id,
+        conversation_thread_id=thread_id,
+        agent_slug="main",
+        uid="user-1",
+        status=status,
+        request_id=f"req-{run_id}",
+        run_type=run_type,
+        input_payload={},
+    )
+    db.add(run)
+    await db.flush()
+    return run
+
+
+async def test_get_latest_top_level_runs_for_threads_picks_latest_chat_resume(session):
+    await _seed_thread_run(session, thread_id="t1", run_id="t1-old", status="completed")
+    await _seed_thread_run(session, thread_id="t1", run_id="t1-running", status="running")
+    await _seed_thread_run(session, thread_id="t2", run_id="t2-sub", status="running", run_type="subagent")
+    await _seed_thread_run(session, thread_id="t2", run_id="t2-done", status="completed")
+    await session.commit()
+
+    result = await AgentRunRepository(session).get_latest_top_level_runs_for_threads(
+        "user-1", ["t1", "t2"]
+    )
+
+    assert result["t1"] == ("t1-running", "running")
+    assert result["t2"] == ("t2-done", "completed")
+
+
+async def test_get_latest_top_level_runs_for_threads_scopes_by_user(session):
+    await _seed_thread_run(session, thread_id="t1", run_id="t1-done", status="completed")
+    session.add(
+        AgentRun(
+            id="t1-other",
+            conversation_thread_id="t1",
+            agent_slug="main",
+            uid="user-2",
+            status="running",
+            request_id="req-other",
+            run_type="chat",
+            input_payload={},
+        )
+    )
+    await session.commit()
+
+    result = await AgentRunRepository(session).get_latest_top_level_runs_for_threads("user-1", ["t1"])
+
+    assert result["t1"] == ("t1-done", "completed")
+
+
+async def test_get_latest_top_level_runs_for_threads_empty_input(session):
+    result = await AgentRunRepository(session).get_latest_top_level_runs_for_threads("user-1", [])
+    assert result == {}
+
+async def test_set_terminal_status_persists_token_usage_only_for_winner(session):
+    repo = AgentRunRepository(session)
+    run = await repo.create_run(
+        run_id="usage-run",
+        conversation_thread_id="thread-1",
+        agent_slug="main",
+        uid="user-1",
+        request_id="usage-request",
+        input_payload={},
+    )
+    usage = {
+        "schema_version": 2,
+        "models": {"provider:model": {}},
+        "total": {"input_tokens": 10, "output_tokens": 2, "total_tokens": 12},
+    }
+
+    persisted, changed = await repo.set_terminal_status(
+        run.id,
+        status="completed",
+        token_usage=usage,
+    )
+    loser, loser_changed = await repo.set_terminal_status(
+        run.id,
+        status="failed",
+        token_usage={"total": {"input_tokens": 999}},
+    )
+
+    assert changed is True
+    assert persisted.token_usage == usage
+    assert loser_changed is False
+    assert loser.token_usage == usage

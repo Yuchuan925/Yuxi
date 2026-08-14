@@ -9,7 +9,7 @@ from psycopg_pool import AsyncConnectionPool
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import declarative_base
-from yuxi.storage.postgres.models_business import AGENT_RUN_TERMINAL_STATUSES
+from yuxi.storage.postgres.models_business import AGENT_RUN_TERMINAL_STATUSES, UNVIEWED_RUN_MARKER
 from yuxi.storage.postgres.models_business import Base as BusinessBase
 from yuxi.storage.postgres.models_knowledge import Base as KnowledgeBase
 from yuxi.utils import logger
@@ -544,6 +544,7 @@ class PostgresManager(metaclass=SingletonMeta):
             "ALTER TABLE IF EXISTS skills ADD COLUMN IF NOT EXISTS enabled BOOLEAN NOT NULL DEFAULT TRUE",
             "ALTER TABLE IF EXISTS skills ADD COLUMN IF NOT EXISTS content_hash VARCHAR(128)",
             "ALTER TABLE IF EXISTS conversations ADD COLUMN IF NOT EXISTS is_pinned BOOLEAN NOT NULL DEFAULT FALSE",
+            "ALTER TABLE IF EXISTS conversations ADD COLUMN IF NOT EXISTS last_viewed_run_id VARCHAR(64)",
             "ALTER TABLE IF EXISTS mcp_servers ADD COLUMN IF NOT EXISTS env JSONB",
             """
             CREATE TABLE IF NOT EXISTS agent_envs (
@@ -680,6 +681,10 @@ class PostgresManager(metaclass=SingletonMeta):
             (
                 "ALTER TABLE IF EXISTS agent_runs ADD COLUMN IF NOT EXISTS "
                 "origin_metadata JSONB NOT NULL DEFAULT '{}'::jsonb"
+            ),
+            (
+                "ALTER TABLE IF EXISTS agent_runs ADD COLUMN IF NOT EXISTS "
+                "token_usage JSONB NOT NULL DEFAULT '{}'::jsonb"
             ),
             (
                 "ALTER TABLE IF EXISTS agent_run_requests ADD COLUMN IF NOT EXISTS "
@@ -950,6 +955,40 @@ class PostgresManager(metaclass=SingletonMeta):
 
             for stmt in stmts:
                 await conn.execute(text(stmt))
+
+            # 一次性回填：历史线程按各自最新顶层 Run 视为已读；新建线程由 repository 写入哨兵值，不受本回填影响。
+            # 先用轻量 EXISTS 探测是否还有待回填的行，避免每次启动都对 agent_runs 做全表 DISTINCT ON 聚合；
+            # 探测失败时保守地按需要回填处理，行为与探测前一致。
+            needs_backfill = True
+            try:
+                probe = await conn.execute(
+                    text("SELECT EXISTS (SELECT 1 FROM conversations WHERE last_viewed_run_id IS NULL)")
+                )
+                needs_backfill = bool(probe.scalar())
+            except Exception as exc:
+                logger.warning(f"Failed to probe last_viewed_run_id backfill status, running unconditionally: {exc}")
+
+            if needs_backfill:
+                await conn.execute(
+                    text(
+                        "UPDATE conversations c SET last_viewed_run_id = r.run_id "
+                        "FROM ("
+                        "  SELECT DISTINCT ON (conversation_thread_id) conversation_thread_id AS thread_id, "
+                        "id AS run_id "
+                        "  FROM agent_runs "
+                        "  WHERE run_type IN ('chat', 'resume') "
+                        "  ORDER BY conversation_thread_id, created_at DESC, id DESC"
+                        ") r "
+                        "WHERE c.thread_id = r.thread_id AND c.last_viewed_run_id IS NULL"
+                    )
+                )
+                # 没有 chat/resume Run 的历史会话（如 agent_call / agent_evaluation 调用、
+                # 从未真正对话过的线程）写入未读哨兵，使上面的探测条件在首次回填后自然收敛，
+                # 避免每次启动都重复对 agent_runs 做全表聚合。
+                await conn.execute(
+                    text("UPDATE conversations SET last_viewed_run_id = :marker WHERE last_viewed_run_id IS NULL"),
+                    {"marker": UNVIEWED_RUN_MARKER},
+                )
 
     @property
     def is_postgresql(self) -> bool:

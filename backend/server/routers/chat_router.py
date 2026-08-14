@@ -27,6 +27,7 @@ from yuxi.services.conversation_service import (
     delete_thread_view,
     get_thread_history_view,
     list_threads_view,
+    mark_thread_viewed_view,
     search_threads_view,
     update_thread_view,
 )
@@ -142,6 +143,7 @@ class ThreadResponse(BaseModel):
     created_at: str
     updated_at: str
     metadata: dict[str, Any] = Field(default_factory=dict)
+    thread_status: str = "done"
 
 
 class ThreadSearchSnippet(BaseModel):
@@ -353,6 +355,20 @@ async def update_thread(
         title=thread_update.title,
         is_pinned=thread_update.is_pinned,
         tool_approval_mode=thread_update.tool_approval_mode,
+        db=db,
+        current_uid=str(current_user.uid),
+    )
+
+
+@chat.post("/thread/{thread_id}/viewed", response_model=ThreadResponse)
+async def mark_thread_viewed(
+    thread_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_required_user),
+):
+    """记录用户已查看该线程的最新顶层 run，清除侧边栏未读状态。"""
+    return await mark_thread_viewed_view(
+        thread_id=thread_id,
         db=db,
         current_uid=str(current_user.uid),
     )

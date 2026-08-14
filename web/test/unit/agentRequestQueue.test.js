@@ -48,6 +48,26 @@ const createRunStream = ({ threadState, handleStreamChunk, resetOnGoingConv }) =
     streamSmoother: { flushThread: () => {} }
   })
 
+test('agent_state SSE 使在途状态请求失效', () => {
+  const threadState = {
+    agentState: null,
+    agentStateRequestVersion: 4,
+    onGoingConv: { msgChunks: {} }
+  }
+  const { handleStreamChunk } = useAgentStreamHandler({
+    getThreadState: () => threadState,
+    processApprovalInStream: () => false,
+    currentAgentId: { value: 'agent-1' },
+    supportsFiles: { value: false }
+  })
+  const agentState = { token_usage: { measured_at: '2026-08-09T00:00:00Z' } }
+
+  handleStreamChunk({ status: 'agent_state', agent_state: agentState }, 'thread-1')
+
+  assert.deepEqual(threadState.agentState, agentState)
+  assert.equal(threadState.agentStateRequestVersion, 5)
+})
+
 test('run_created 立即完成状态交接并订阅新 Run SSE', async () => {
   const threadState = {
     queuedRequests: [{ request_id: 'request-1', status: 'queued' }],
@@ -58,10 +78,9 @@ test('run_created 立即完成状态交接并订阅新 Run SSE', async () => {
   const calls = []
   const originalStreamRequestEvents = agentApi.streamRequestEvents
   agentApi.streamRequestEvents = async () =>
-    new Response(
-      'event: run_created\ndata: {"run_id":"run-2"}\n\n',
-      { headers: { 'Content-Type': 'text/event-stream' } }
-    )
+    new Response('event: run_created\ndata: {"run_id":"run-2"}\n\n', {
+      headers: { 'Content-Type': 'text/event-stream' }
+    })
 
   try {
     const queue = useAgentRequestQueue({
@@ -312,10 +331,9 @@ test('旧 Run 终态清理保留排队 Request SSE', async () => {
   const resetCalls = []
   const originalStreamAgentRunEvents = agentApi.streamAgentRunEvents
   agentApi.streamAgentRunEvents = async () =>
-    new Response(
-      'event: end\ndata: {"run_id":"run-1","payload":{"status":"completed"}}\n\n',
-      { headers: { 'Content-Type': 'text/event-stream' } }
-    )
+    new Response('event: end\ndata: {"run_id":"run-1","payload":{"status":"completed"}}\n\n', {
+      headers: { 'Content-Type': 'text/event-stream' }
+    })
 
   try {
     const runStream = createRunStream({
