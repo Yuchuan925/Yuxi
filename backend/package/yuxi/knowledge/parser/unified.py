@@ -82,7 +82,7 @@ def _get_docling_converter() -> DocumentConverter:
 def _resolve_image_storage_params(params: dict | None) -> tuple[str, str]:
     params = params or {}
 
-    image_bucket = params.get("image_bucket") or "public"
+    image_bucket = params.get("image_bucket") or get_minio_client().KB_BUCKETS["images"]
     image_prefix = params.get("image_prefix")
     if image_prefix:
         normalized_prefix = str(image_prefix).strip("/")
@@ -104,7 +104,9 @@ def _resolve_ocr_engine_params(params: dict | None) -> tuple[str, dict[str, Any]
 
 
 def _upload_image_to_minio(image_data: bytes, filename: str, bucket_name: str, object_prefix: str) -> str:
-    """上传图片到 MinIO，返回 URL。"""
+    """上传图片到 MinIO，返回经后端鉴权代理访问的 URL。"""
+    from yuxi.knowledge.utils.kb_utils import build_kb_image_proxy_url
+
     minio_client = get_minio_client()
     minio_client.ensure_bucket_exists(bucket_name)
 
@@ -112,12 +114,12 @@ def _upload_image_to_minio(image_data: bytes, filename: str, bucket_name: str, o
     timestamp = int(time.time() * 1000000)
     object_name = f"{normalized_prefix}/{timestamp}_{Path(filename).name}"
 
-    result = minio_client.upload_file(
+    minio_client.upload_file(
         bucket_name=bucket_name,
         object_name=object_name,
         data=image_data,
     )
-    return result.url
+    return build_kb_image_proxy_url(object_name)
 
 
 def _parse_data_uri(data_uri: str) -> tuple[bytes, str]:

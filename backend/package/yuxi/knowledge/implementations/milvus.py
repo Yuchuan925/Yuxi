@@ -828,7 +828,13 @@ class MilvusKB(KnowledgeBase):
                 )
 
                 # 重新解析文件为 markdown
-                parse_params = {**resolved_params, "image_bucket": "public", "image_prefix": f"{kb_id}/kb-images"}
+                from yuxi.storage.minio import get_minio_client
+
+                parse_params = {
+                    **resolved_params,
+                    "image_bucket": get_minio_client().KB_BUCKETS["images"],
+                    "image_prefix": f"{kb_id}/kb-images",
+                }
                 markdown_content = await parse_document(source=file_path, params=parse_params)
 
                 # 重新生成 chunks

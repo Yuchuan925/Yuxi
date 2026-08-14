@@ -281,7 +281,7 @@ def test_paddleocr_vl_uploads_markdown_images(tmp_path: Path, monkeypatch: pytes
         params={"image_bucket": "public", "image_prefix": "kb/images"},
     )
 
-    assert result == "before ![](minio://public/kb/table.png) after"
+    assert result == "before ![](/api/knowledge/databases/kb/images/images/1000000_table.png) after"
     assert uploaded == {
         "bucket_name": "public",
         "object_name": "kb/images/1000000_table.png",
