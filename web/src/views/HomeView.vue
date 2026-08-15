@@ -122,61 +122,7 @@
                 </g>
               </svg>
 
-              <div class="flow-diagram">
-                <div class="flow-row">
-                  <div class="flow-node">
-                    <span class="flow-icon"><Workflow :size="22" /></span>
-                    <span class="flow-name">智能体 Harness</span>
-                  </div>
-
-                  <div class="flow-link" aria-hidden="true">
-                    <span class="flow-rail"></span>
-                    <span
-                      class="flow-dot flow-dot--fwd"
-                      v-for="n in 2"
-                      :key="`f1${n}`"
-                      :style="{ '--i': n - 1 }"
-                    ></span>
-                    <span
-                      class="flow-dot flow-dot--back"
-                      v-for="n in 2"
-                      :key="`b1${n}`"
-                      :style="{ '--i': n - 1 }"
-                    ></span>
-                  </div>
-
-                  <div class="flow-node flow-node--hub">
-                    <span class="flow-icon flow-icon--hub">
-                      <span class="hub-ring"></span>
-                      <Sparkles :size="24" />
-                    </span>
-                    <span class="flow-name">RAG 引擎</span>
-                  </div>
-
-                  <div class="flow-link" aria-hidden="true">
-                    <span class="flow-rail"></span>
-                    <span
-                      class="flow-dot flow-dot--fwd"
-                      v-for="n in 2"
-                      :key="`f2${n}`"
-                      :style="{ '--i': n - 1 }"
-                    ></span>
-                    <span
-                      class="flow-dot flow-dot--back"
-                      v-for="n in 2"
-                      :key="`b2${n}`"
-                      :style="{ '--i': n - 1 }"
-                    ></span>
-                  </div>
-
-                  <div class="flow-node">
-                    <span class="flow-icon"><Library :size="22" /></span>
-                    <span class="flow-name">知识库</span>
-                  </div>
-                </div>
-
-                <p class="flow-caption">智能体发起检索 · 引擎融合向量与图谱 · 召回知识增强生成</p>
-              </div>
+              <HomeAgentPreview />
 
               <div class="stat-row" v-if="realtimeStats.length">
                 <div class="stat-item" v-for="stat in realtimeStats" :key="stat.key">
@@ -210,16 +156,8 @@ import { useUserStore } from '@/stores/user'
 import { useInfoStore } from '@/stores/info'
 import { healthApi } from '@/apis/system_api'
 import UserInfoComponent from '@/components/UserInfoComponent.vue'
-import {
-  BookText,
-  Star,
-  GitFork,
-  CircleDot,
-  ArrowRight,
-  Workflow,
-  Library,
-  Sparkles
-} from 'lucide-vue-next'
+import HomeAgentPreview from '@/components/HomeAgentPreview.vue'
+import { ArrowRight, BookText, CircleDot, GitFork, Star } from 'lucide-vue-next'
 
 const router = useRouter()
 const userStore = useUserStore()
@@ -845,11 +783,7 @@ const realtimeStats = computed(() => {
   pointer-events: none;
 }
 
-// Harness → RAG 引擎 → 知识库 横向数据流
-.flow-diagram {
-  position: relative;
-  z-index: 1;
-}
+
 
 .flow-row {
   display: flex;
@@ -1071,51 +1005,11 @@ const realtimeStats = computed(() => {
   }
 }
 
-@keyframes flowRight {
-  0% {
-    left: -4px;
-    opacity: 0;
-  }
-  15% {
-    opacity: 1;
-  }
-  85% {
-    opacity: 1;
-  }
-  100% {
-    left: calc(100% - 4px);
-    opacity: 0;
-  }
-}
 
-@keyframes flowLeft {
-  0% {
-    left: calc(100% - 4px);
-    opacity: 0;
-  }
-  15% {
-    opacity: 1;
-  }
-  85% {
-    opacity: 1;
-  }
-  100% {
-    left: -4px;
-    opacity: 0;
-  }
-}
 
-@keyframes hubPulse {
-  0% {
-    opacity: 0.6;
-    transform: scale(1);
-  }
-  70%,
-  100% {
-    opacity: 0;
-    transform: scale(1.4);
-  }
-}
+
+
+
 
 // 暗色模式
 :global(:root.dark) {
@@ -1162,11 +1056,6 @@ const realtimeStats = computed(() => {
   .reveal-up {
     opacity: 1;
     transform: none;
-  }
-
-  .flow-dot,
-  .hub-ring {
-    display: none;
   }
 
   .subtitle-switch-enter-active,
