@@ -1,6 +1,7 @@
 <script setup>
 import { ref, computed } from 'vue'
 import { withBase } from 'vitepress'
+import HomeAgentPreview from './HomeAgentPreview.vue'
 
 const GITHUB = 'https://github.com/xerrors/Yuxi'
 const DEMO = 'https://www.bilibili.com/video/BV1TZEx6NEit/'
@@ -222,13 +223,9 @@ const vReveal = {
           <a class="yx-btn yx-btn--ghost" :href="GITHUB" target="_blank" rel="noreferrer">在 GitHub 查看</a>
           <a class="yx-btn yx-btn--text" :href="DEMO" target="_blank" rel="noreferrer">▷ 演示视频</a>
         </div>
+        <!-- hero 视觉：可交互的 Agent 对话预览（假数据演示） -->
         <div class="yx-hero__shot">
-          <img
-            class="yx-hero__img"
-            src="https://xerrors.oss-cn-shanghai.aliyuncs.com/github/image-20260608002434299.png"
-            alt="语析 Yuxi 产品界面预览"
-            loading="lazy"
-          />
+          <HomeAgentPreview />
         </div>
       </div>
     </section>
@@ -606,11 +603,6 @@ open http://localhost:5173</code></pre>
 .yx-btn--text:hover { color: var(--yx-brand); }
 
 .yx-hero__shot { margin-top: 56px; }
-.yx-hero__img {
-  display: block; width: 100%; border-radius: 14px;
-  border: 1px solid var(--vp-c-divider);
-  box-shadow: 0 24px 60px -28px rgba(0, 0, 0, .25);
-}
 
 /* 占位图 */
 .yx-placeholder {
