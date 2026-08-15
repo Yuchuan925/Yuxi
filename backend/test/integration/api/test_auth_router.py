@@ -4,11 +4,66 @@ Integration tests for authentication-related API routes.
 
 from __future__ import annotations
 
+import os
 import uuid
+from datetime import timedelta
 
 import pytest
+import pytest_asyncio
+from sqlalchemy import update
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+from yuxi.services import login_rate_limit_service as login_limiter
+from yuxi.storage.postgres.models_business import User as UserModel
+from yuxi.storage.redis import create_async_redis_client
+from yuxi.utils.datetime_utils import utc_now_naive
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
+
+
+async def _expire_login_lock(user_id: int) -> None:
+    """用一次性引擎把用户锁定截止时间改到过去。
+
+    不复用 pg_manager 的共享引擎：其连接池绑定在别的 loop 上，
+    跨用例事件循环复用会报 "attached to a different loop"。
+    """
+    engine = create_async_engine(os.environ["POSTGRES_URL"])
+    try:
+        session_factory = async_sessionmaker(bind=engine, expire_on_commit=False)
+        async with session_factory() as session:
+            await session.execute(
+                update(UserModel)
+                .where(UserModel.id == user_id)
+                .values(login_locked_until=utc_now_naive() - timedelta(seconds=1))
+            )
+            await session.commit()
+    finally:
+        await engine.dispose()
+
+
+async def _clear_login_failure_keys():
+    # 每个用例的事件循环不同，不复用共享单例客户端
+    redis = await create_async_redis_client()
+    try:
+        keys = [key async for key in redis.scan_iter(match="yuxi:login-failure:*")]
+        if keys:
+            await redis.delete(*keys)
+    finally:
+        await redis.aclose()
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def _reset_login_rate_limits(test_client):
+    """清理 Redis 登录失败计数，避免用例间通过共享 Redis 相互影响。"""
+    await _clear_login_failure_keys()
+    yield
+    await _clear_login_failure_keys()
+    # 一次成功登录会清空内存中间件在同一 IP 上的滑动窗口计数，
+    # 避免失败密集的用例把同 IP 的后续用例顶到中间件限速。
+    username = os.getenv("TEST_USERNAME")
+    password = os.getenv("TEST_PASSWORD")
+    if username and password:
+        await test_client.post("/api/auth/token", data={"username": username, "password": password})
 
 
 async def _require_superadmin(test_client, headers):
@@ -99,6 +154,55 @@ async def test_user_is_locked_after_repeated_failed_logins(test_client, standard
     assert still_locked_response.status_code == 423, still_locked_response.text
     assert "X-Lock-Remaining" in still_locked_response.headers
     assert "登录被锁定" in still_locked_response.json()["detail"]
+
+
+async def test_login_rate_limit_blocks_repeated_failures_per_ip_and_account(test_client):
+    # 测试进程连 localhost:5050，服务端看到的来源 IP 是 127.0.0.1
+    identifier = f"nouser_{uuid.uuid4().hex[:8]}"
+    for _ in range(login_limiter.LOGIN_FAILURE_IP_ACCOUNT_MAX - 1):
+        await login_limiter.record_login_failure("127.0.0.1", identifier)
+
+    failure_response = await test_client.post(
+        "/api/auth/token",
+        data={"username": identifier, "password": "wrong-password"},
+    )
+    assert failure_response.status_code == 401, failure_response.text
+
+    # 第 10 次失败后，同 IP+账号组合进入滑动窗口限速
+    blocked_response = await test_client.post(
+        "/api/auth/token",
+        data={"username": identifier, "password": "wrong-password"},
+    )
+    assert blocked_response.status_code == 429, blocked_response.text
+    assert int(blocked_response.headers["Retry-After"]) >= 1
+    assert "过于频繁" in blocked_response.json()["detail"]
+
+
+async def test_expired_lock_resets_failure_count_before_next_failure(
+    test_client, standard_user
+):
+    uid = standard_user["user"]["uid"]
+
+    for _ in range(4):
+        response = await test_client.post("/api/auth/token", data={"username": uid, "password": "wrong-password"})
+        assert response.status_code == 401, response.text
+    # 第 5 次失败触发账号锁定
+    locked_response = await test_client.post("/api/auth/token", data={"username": uid, "password": "wrong-password"})
+    assert locked_response.status_code == 423, locked_response.text
+
+    # 把锁定截止时间改到过去，模拟锁定到期
+    await _expire_login_lock(standard_user["user"]["id"])
+
+    # 锁定过期后首次失败应是普通 401，而不是失败计数残留导致的立即再锁定
+    wrong_response = await test_client.post("/api/auth/token", data={"username": uid, "password": "wrong-password"})
+    assert wrong_response.status_code == 401, wrong_response.text
+
+    # 正确密码可正常登录
+    success_response = await test_client.post(
+        "/api/auth/token",
+        data={"username": uid, "password": standard_user["password"]},
+    )
+    assert success_response.status_code == 200, success_response.text
 
 
 async def test_admin_can_login_and_fetch_profile(test_client, admin_headers):
