@@ -179,7 +179,10 @@ async def test_preview_workspace_file_caches_office_pdf_conversion(
     filename: str,
     content: bytes,
 ) -> None:
-    monkeypatch.setenv("SAVE_DIR", str(tmp_path))
+    save_dir = tmp_path / "saves"
+    runtime_dir = tmp_path / "runtime"
+    monkeypatch.setenv("SAVE_DIR", str(save_dir))
+    monkeypatch.setenv("YUXI_RUNTIME_DIR", str(runtime_dir))
     user = _user()
     root = svc._workspace_root(user)
     target = root / filename
@@ -207,6 +210,8 @@ async def test_preview_workspace_file_caches_office_pdf_conversion(
     assert await read_pdf() == b"%PDF-1.4\npreview"
     assert await read_pdf() == b"%PDF-1.4\npreview"
     assert convert_calls == 1
+    assert list((runtime_dir / "cache" / "office-previews").rglob("*.pdf"))
+    assert not list(save_dir.rglob(".office_preview_cache"))
 
     target.write_bytes(content + b"-v2")
     assert await read_pdf() == b"%PDF-1.4\npreview"
@@ -254,9 +259,7 @@ async def test_write_workspace_file_content_updates_file(
     target = root / f"note.{extension}"
     target.write_text(original, encoding="utf-8")
 
-    result = await svc.write_workspace_file_content(
-        path=f"/note.{extension}", content=content, current_user=user
-    )
+    result = await svc.write_workspace_file_content(path=f"/note.{extension}", content=content, current_user=user)
 
     assert result["success"] is True
     assert result["path"] == f"/note.{extension}"

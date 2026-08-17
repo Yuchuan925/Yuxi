@@ -18,7 +18,9 @@ from yuxi.agents.backends.sandbox.paths import (
     sandbox_outputs_dir,
     sandbox_uploads_dir,
     validate_thread_id,
+    workspace_uid_dirname,
 )
+from yuxi.config import get_runtime_dir
 from yuxi.repositories.conversation_repository import ConversationRepository
 from yuxi.services.file_preview import (
     MAX_BINARY_PREVIEW_SIZE_BYTES,
@@ -685,8 +687,7 @@ async def _write_workspace_upload(file: UploadFile, target: Path) -> None:
 
 
 async def _convert_workspace_office_to_pdf(user: User, target: Path, file_name: str) -> bytes:
-    user_data_root = global_user_data_dir(str(user.uid)).resolve()
-    cache_dir = user_data_root / ".office_preview_cache"
+    cache_dir = get_runtime_dir() / "cache" / "office-previews" / workspace_uid_dirname(str(user.uid))
     stat = await asyncio.to_thread(target.stat)
     digest = hashlib.sha256(str(target).encode("utf-8")).hexdigest()
     cache_path = cache_dir / f"{digest}-{stat.st_mtime_ns}-{stat.st_size}.pdf"

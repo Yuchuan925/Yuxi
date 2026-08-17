@@ -8,6 +8,7 @@ import yaml
 
 FORBIDDEN_API_WORKER_TARGETS = frozenset({"/app/models", "/var/run/docker.sock"})
 FORBIDDEN_API_WORKER_ENV_KEYS = frozenset({"YUXI_DOCKER_API_BASE"})
+EXPECTED_RUNTIME_DIRS = {"api": "/app/runtime/api", "worker": "/app/runtime/worker"}
 FORBIDDEN_DIRECT_DOCKER_ACCESS_MARKERS = frozenset(
     {"--unix-socket", "/var/run/docker.sock", "YUXI_DOCKER_API_SOCKET", "docker.from_env(", "DockerClient("}
 )
@@ -65,6 +66,17 @@ def _forbidden_api_worker_env_keys(compose: dict) -> set[tuple[str, str]]:
     return violations
 
 
+def _runtime_directory_violations(compose: dict) -> set[tuple[str, str]]:
+    """识别共享、持久或未按服务隔离的运行目录。"""
+    violations: set[tuple[str, str]] = set()
+    for service_name, expected in EXPECTED_RUNTIME_DIRS.items():
+        environment = compose["services"][service_name].get("environment") or {}
+        actual = str(environment.get("YUXI_RUNTIME_DIR") or "")
+        if actual != expected:
+            violations.add((service_name, actual))
+    return violations
+
+
 def _forbidden_direct_docker_access(source: str) -> set[str]:
     """识别绕过 provisioner 直接访问 Docker daemon 的测试代码。"""
     return {marker for marker in FORBIDDEN_DIRECT_DOCKER_ACCESS_MARKERS if marker in source}
@@ -80,6 +92,16 @@ def test_api_and_worker_do_not_mount_unused_host_dependencies(filename: str):
 def test_api_and_worker_do_not_expose_removed_docker_api_configuration(filename: str):
     """API/worker 不得保留已删除 Docker daemon 通道的配置表面。"""
     assert _forbidden_api_worker_env_keys(_load_compose(filename)) == set()
+
+
+@pytest.mark.parametrize("filename", ["docker-compose.yml", "docker-compose.prod.yml"])
+def test_api_and_worker_use_distinct_local_runtime_directories(filename: str):
+    """日志与无状态缓存必须使用服务独立且位于 saves 外的运行目录。"""
+    compose = _load_compose(filename)
+
+    assert _runtime_directory_violations(compose) == set()
+    assert len(set(EXPECTED_RUNTIME_DIRS.values())) == len(EXPECTED_RUNTIME_DIRS)
+    assert all(not path.startswith("/app/saves/") for path in EXPECTED_RUNTIME_DIRS.values())
 
 
 @pytest.mark.parametrize("filename", ["docker-compose.yml", "docker-compose.prod.yml"])
@@ -123,6 +145,15 @@ def test_environment_guard_detects_reintroduced_docker_api_configuration():
     compose["services"]["api"]["environment"]["YUXI_DOCKER_API_BASE"] = "http://localhost"
 
     assert _forbidden_api_worker_env_keys(compose) == {("api", "YUXI_DOCKER_API_BASE")}
+
+
+@pytest.mark.parametrize("service_name", ["api", "worker"])
+def test_runtime_directory_guard_detects_shared_save_directory(service_name: str):
+    """把运行目录恢复到共享 saves 时，边界 guard 必须报告对应服务。"""
+    compose = deepcopy(_load_compose("docker-compose.yml"))
+    compose["services"][service_name]["environment"]["YUXI_RUNTIME_DIR"] = "/app/saves/runtime"
+
+    assert _runtime_directory_violations(compose) == {(service_name, "/app/saves/runtime")}
 
 
 @pytest.mark.parametrize("marker", sorted(FORBIDDEN_DIRECT_DOCKER_ACCESS_MARKERS))

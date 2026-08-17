@@ -139,7 +139,7 @@ async def update_config_batch(
 
 @system.get("/logs")
 async def get_system_logs(levels: str | None = None, current_user: User = Depends(get_admin_user)):
-    """获取系统日志
+    """获取当前 API 进程日志。
 
     Args:
         levels: 可选的日志级别过滤，多个级别用逗号分隔，如 "INFO,ERROR,DEBUG,WARNING"
@@ -174,7 +174,7 @@ async def get_system_logs(levels: str | None = None, current_user: User = Depend
                         lines.pop(0)
 
         log = "".join(lines)
-        return {"log": log, "message": "success", "log_file": LOG_FILE}
+        return {"log": log, "message": "success", "log_file": LOG_FILE, "scope": "api"}
     except Exception as e:
         logger.error(f"获取系统日志失败: {e}")
         raise HTTPException(status_code=500, detail=f"获取系统日志失败: {str(e)}")

@@ -52,6 +52,7 @@ services:
     # region api_envs
     environment:
       <<: *api-worker-env
+      YUXI_RUNTIME_DIR: /app/runtime/api
     # endregion api_envs
     command: uv run --no-sync --no-dev uvicorn server.main:app --host 0.0.0.0 --port 5050
     restart: unless-stopped
@@ -88,6 +89,7 @@ services:
       - .env.prod
     environment:
       <<: *api-worker-env
+      YUXI_RUNTIME_DIR: /app/runtime/worker
     command: uv run --no-sync --no-dev arq server.worker_main.WorkerSettings
     restart: unless-stopped
     healthcheck:
