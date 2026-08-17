@@ -303,7 +303,7 @@ images=(
     "nginx:alpine"
     "quay.io/coreos/etcd:v3.5.5"
     "postgres:16"
-    "redis:7-alpine"
+    "redis:7.4.9-alpine"
 )
 
 # Pull each image

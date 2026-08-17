@@ -101,6 +101,15 @@ git pull
 docker compose -f docker-compose.prod.yml up -d --build
 ```
 
+### 重建 Redis 后重启 worker
+
+arq worker 在 Redis 断连后不会自动重连。重建或升级 Redis 容器后，需重启 worker 才能恢复 `/api/system/ready`：
+
+```bash
+docker compose -f docker-compose.prod.yml up -d redis
+docker compose -f docker-compose.prod.yml restart worker
+```
+
 生产 Compose 不再向宿主机发布 PostgreSQL 和文档解析服务端口。确需从宿主机维护时，优先使用 `docker compose exec`；不要为了临时调试把这些端口重新暴露到公网。
 
 ### 查看日志
@@ -124,9 +133,11 @@ Yuxi 本体采用 MIT 许可证，但 Compose 引入的第三方组件保留各�
 | Milvus | `milvusdb/milvus:v2.5.6` | Apache-2.0 | 向量检索 |
 | etcd | `quay.io/coreos/etcd:v3.5.5` | Apache-2.0 | Milvus 元数据 |
 | PostgreSQL | `postgres:16` | PostgreSQL License | 业务主库 |
-| Redis | `redis:7-alpine` | RSALv2/SSPLv1（7.4 起；7.2 及更早为 BSD-3-Clause） | 投递、短期事件与缓存 |
+| Redis | `redis:7.4.9-alpine` | RSALv2/SSPLv1（非 OSI；7.2 及更早为 BSD-3-Clause） | 投递、短期事件与缓存 |
 
-其中 Neo4j、MinIO、Milvus 与 etcd 已锁定精确版本；PostgreSQL 与 Redis 仍为浮动 tag，可按部署需要自行固定。其余镜像与构建基础镜像（Nginx、Node、Python 等）均为宽松许可证，以其上游声明为准。
+其中 Neo4j、MinIO、Milvus、etcd 与 Redis 已锁定精确版本；PostgreSQL 仍为浮动 tag，可按部署需要自行固定。其余镜像与构建基础镜像（Nginx、Node、Python 等）均为宽松许可证，以其上游声明为准。
+
+Redis 7.4 起采用 RSALv2/SSPLv1 双许可（均非 OSI）：自托管使用、修改与再分发（无论是否修改）均被允许。两条路径的差异在于托管服务——RSALv2 不得把 Redis 本身作为托管服务对外提供；SSPLv1 允许托管，条件是开源整个服务管理栈。自托管 Compose 部署通常按 RSALv2 路径理解即可。
 
 ### 再分发与托管义务
 
