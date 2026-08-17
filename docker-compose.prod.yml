@@ -45,7 +45,6 @@ services:
       - app-network
     volumes:
       - ./docker/volumes/yuxi:/app/saves
-      - ./docker/volumes/models:/app/models
     extra_hosts:
       - "host.docker.internal:host-gateway"
     env_file:
@@ -83,7 +82,6 @@ services:
       - app-network
     volumes:
       - ./docker/volumes/yuxi:/app/saves
-      - ./docker/volumes/models:/app/models
     extra_hosts:
       - "host.docker.internal:host-gateway"
     env_file:

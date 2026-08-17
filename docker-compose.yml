@@ -19,7 +19,6 @@ x-api-worker-env: &api-worker-env
   MINERU_API_URI: ${MINERU_API_URI:-http://mineru-api:30001}
   PADDLEX_URI: ${PADDLEX_URI:-http://paddlex:8080}
   # Sandbox related
-  YUXI_DOCKER_API_BASE: ${YUXI_DOCKER_API_BASE:-http://localhost}
   SANDBOX_PROVIDER: ${SANDBOX_PROVIDER:-provisioner}
   SANDBOX_PROVISIONER_URL: ${SANDBOX_PROVISIONER_URL:-http://sandbox-provisioner:8002}
   SANDBOX_PROVISIONER_TOKEN: ${SANDBOX_PROVISIONER_TOKEN:?Set SANDBOX_PROVISIONER_TOKEN in .env [v0.7.1+], or rerun `bash scripts/init.sh`.}
@@ -53,12 +52,10 @@ services:
       - ./backend/server:/app/server
       - ./backend/package:/app/package
       - ./docker/volumes/yuxi:/app/saves
-      - ./docker/volumes/models:/app/models
       - ./backend/test:/app/test
       - ./backend/scripts:/app/scripts
       - ./docker/sandbox_provisioner:/app/docker/sandbox_provisioner:ro
       - ./.env:/app/.env
-      - /var/run/docker.sock:/var/run/docker.sock
       - nltk_data:/root/nltk_data  # 使用命名卷持久化NLTK数据，避免路径展开差异
     ports:
       - "5050:5050"
@@ -101,14 +98,12 @@ services:
       - ./backend/server:/app/server
       - ./backend/package:/app/package
       - ./docker/volumes/yuxi:/app/saves
-      - ./docker/volumes/models:/app/models
       - ./backend/test:/app/test
       - ./backend/scripts:/app/scripts
       - ./docker/sandbox_provisioner:/app/docker/sandbox_provisioner:ro
       - ./.env:/app/.env
       - ./backend/pyproject.toml:/app/pyproject.toml
       - ./backend/uv.lock:/app/uv.lock
-      - /var/run/docker.sock:/var/run/docker.sock
     networks:
       - app-network
     extra_hosts:
