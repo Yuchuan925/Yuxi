@@ -216,7 +216,7 @@ services:
 
   # region neo4j
   graph:
-    image: neo4j:5.26
+    image: neo4j:5.26.28
     container_name: graph
     ports:
       - "127.0.0.1:7474:7474"

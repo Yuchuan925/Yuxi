@@ -112,3 +112,33 @@ docker logs -f api-prod
 # Nginx 访问日志
 docker logs -f web-prod
 ```
+
+## 第三方组件与许可证
+
+Yuxi 本体采用 MIT 许可证，但 Compose 引入的第三方组件保留各自原始许可证。当前拓扑下，Yuxi 后端与这些组件均为独立进程，分别通过 bolt（Neo4j）、S3 API（MinIO）与原生协议（PostgreSQL、Redis、Milvus）通信，属于进程间聚合（mere aggregation），Yuxi 的 MIT 代码不构成 GPL/AGPL 意义下的衍生作品。
+
+| 组件 | 镜像 | 许可证 | 在 Yuxi 中的角色 |
+|------|------------------|--------|------------------|
+| Neo4j Community | `neo4j:5.26.28` | GPL-3.0-only | 知识图谱存储（`graph` 服务） |
+| MinIO | `minio/minio:RELEASE.2023-03-20T20-16-18Z` | AGPL-3.0 | Yuxi 对象存储（头像、Agent 图片、知识库文件）与 Milvus 存储依赖 |
+| Milvus | `milvusdb/milvus:v2.5.6` | Apache-2.0 | 向量检索 |
+| etcd | `quay.io/coreos/etcd:v3.5.5` | Apache-2.0 | Milvus 元数据 |
+| PostgreSQL | `postgres:16` | PostgreSQL License | 业务主库 |
+| Redis | `redis:7-alpine` | RSALv2/SSPLv1（7.4 起；7.2 及更早为 BSD-3-Clause） | 投递、短期事件与缓存 |
+
+其中 Neo4j、MinIO、Milvus 与 etcd 已锁定精确版本；PostgreSQL 与 Redis 仍为浮动 tag，可按部署需要自行固定。其余镜像与构建基础镜像（Nginx、Node、Python 等）均为宽松许可证，以其上游声明为准。
+
+### 再分发与托管义务
+
+以下情形会触发相应组件许可证的额外义务：
+
+1. **再分发镜像**：`docker/save_docker_images.sh` / `save_docker_images.ps1` 把镜像导出为 tar 交付给第三方时，构成对 GPL/AGPL 软件的再分发。分发未修改的上游镜像时，保留原始 tag/digest、随交付物附带对应许可证文本，并提供对应源码或其获取方式（未修改镜像通常指向上游源码即可）；不要修改镜像内容或剥离许可证声明。
+2. **修改 AGPL 组件**：修改 MinIO 并对外提供网络服务时，需按 AGPL-3.0 向用户提供修改后的对应源码；使用未修改的上游版本时提供上游源码地址即可。仓库内 `docker/mineru.Dockerfile` 构建的 MinerU 自 3.1.0 起采用以 Apache-2.0 为基础的 MinerU 开源许可（含规模化商用门槛与归属标注条款），以其 Dockerfile 内锁定版本的注释为准。
+3. **进程内集成**：把 GPL/AGPL 组件以进程内链接方式并入自有代码会触发传染条款。Yuxi 架构不做进程内集成，二次开发也不要引入。
+
+### 商业部署
+
+- **Neo4j**：需要企业版功能或商业支持时，可改用 `neo4j:5.26-enterprise` 镜像并设置 `NEO4J_ACCEPT_LICENSE_AGREEMENT=yes`，许可条款以 Neo4j 官方订阅协议为准。
+- **MinIO**：同时承载 Yuxi 自身对象存储（头像、Agent 图片、知识库文件）与 Milvus 依赖；商业场景可评估 MinIO 商业订阅，或由运维侧替换为其他 S3 兼容对象存储并同步迁移这两部分的数据与配置。
+
+本节为工程侧整理的边界说明，不构成法律意见；对外商业交付前请由法务确认最终方案。

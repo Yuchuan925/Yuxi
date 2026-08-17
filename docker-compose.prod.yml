@@ -174,7 +174,7 @@ services:
     restart: unless-stopped
 
   graph:
-    image: neo4j:5.26
+    image: neo4j:5.26.28
     container_name: graph
     volumes:
       - ./docker/volumes/neo4j/data:/data

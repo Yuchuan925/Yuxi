@@ -96,6 +96,8 @@ docker compose up --build
 
 本项目采用 MIT 许可证 - 查看 [LICENSE](LICENSE) 文件了解详情。
 
+Docker Compose 引入的第三方组件（Neo4j 社区版 GPL-3.0、MinIO AGPL-3.0 等）保留各自原始许可证，部署与再分发边界见[生产部署指南](docs/advanced/deployment.md)。
+
 ---
 
 <div align="center">

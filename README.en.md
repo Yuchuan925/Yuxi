@@ -180,6 +180,8 @@ Thanks to all contributors for supporting this project!
 
 This project is licensed under the MIT License. See [LICENSE](LICENSE) for details.
 
+Third-party components brought in by Docker Compose (Neo4j Community GPL-3.0, MinIO AGPL-3.0, etc.) retain their original licenses; see the [deployment guide](docs/advanced/deployment.md) for deployment and redistribution boundaries.
+
 ---
 
 <div align="center">
