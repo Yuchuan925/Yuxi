@@ -19,11 +19,15 @@ Agent 创建 PR 时使用本默认模板。
 
 ## 验证情况
 
-结果只使用 `Passed`、`Inspected`、`Not run`、`Inferred`；后三者不得写成测试通过。
+每条验收主张单独一组，字段与决策记录的证据矩阵一致（主张、失败面、语义 Owner、证据、负向案例、结果）。结果词只使用 `Passed`、`Inspected`、`Not run`、`Inferred`；除 `Passed` 外不得写成测试通过。不适用的字段写「不适用」，不要留空。
 
-| 验收主张 | 失败面 | 语义 Owner | 直接证据 / 命令 | 负向案例 | 当前结果 |
-|---|---|---|---|---|---|
-|  |  |  |  |  |  |
+### <验收主张>
+
+- 失败面：
+- 语义 Owner：
+- 直接证据 / 命令：
+- 负向案例：
+- 结果：<Passed / Inspected / Not run / Inferred>
 
 涉及 Run、FIFO、SSE、沙盒、恢复或其他高风险 assembled path 时，请附 deterministic E2E 结果；真实 provider/browser 未执行时明确写 `Not run` 和风险。
 

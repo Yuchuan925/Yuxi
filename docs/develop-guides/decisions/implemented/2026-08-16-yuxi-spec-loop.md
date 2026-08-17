@@ -12,7 +12,7 @@ Yuxi 已有语义 Owner、decision lifecycle、测试分层、负向案例和独
 
 Yuxi 使用 [Spec Loop](../../spec-loop.md) 统一 Scope/classify、权威重建、Propose、assembled-path 实现、Verify、独立 Review、Converge 和 Learn。任务类型固定为 `feature`、`bug-fix`、`simplification`、`architecture`、`process`、`testing`；非平凡变更在实现前创建 tracked proposed decision，证据收敛后改写为 implemented。
 
-Proposed decision 和 PR 使用同一份验收证据矩阵，逐条记录验收主张、失败面、语义 Owner、直接 oracle/命令、负向案例和 `Passed` / `Inspected` / `Not run` / `Inferred` 结果。Verifier 只检查确定性结构、结果词、Owner 和 workflow 接线，不代替语义 Review。
+Proposed decision 和 PR 使用同一组验收字段——验收主张、失败面、语义 Owner、直接 oracle/命令、负向案例和 `Passed` / `Inspected` / `Not run` / `Inferred` 结果；决策记录以证据矩阵表呈现，PR 模板以逐条分组呈现。Verifier 只检查确定性结构、结果词、Owner 和 workflow 接线，不代替语义 Review。
 
 Agent 创建 PR 时使用默认严格模板；人工或其他非 Agent 提交可以显式选择简化模板，只保留变更、验证、风险和关联事项。模板分层不免除非 trivial / 高风险变更在贡献指南中的 decision、直接证据和未验证范围要求。
 
