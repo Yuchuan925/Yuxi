@@ -174,7 +174,7 @@ services:
     restart: unless-stopped
 
   graph:
-    image: neo4j:5.26.28
+    image: neo4j:5.26.29
     container_name: graph
     volumes:
       - ./docker/volumes/neo4j/data:/data
@@ -283,7 +283,7 @@ services:
     restart: unless-stopped
 
   redis:
-    image: redis:7.4.9-alpine
+    image: redis:7.4.10-alpine
     container_name: redis
     command: redis-server --appendonly yes
     healthcheck:

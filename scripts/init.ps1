@@ -283,13 +283,13 @@ $images = @(
     "node:24-slim",
     "node:24-alpine",
     "milvusdb/milvus:v2.5.6",
-    "neo4j:5.26.28",
+    "neo4j:5.26.29",
     "minio/minio:RELEASE.2023-03-20T20-16-18Z",
     "ghcr.io/astral-sh/uv:0.11.26",
     "nginx:alpine",
     "quay.io/coreos/etcd:v3.5.5",
     "postgres:16",
-    "redis:7.4.9-alpine"
+    "redis:7.4.10-alpine"
 )
 
 # Pull each image

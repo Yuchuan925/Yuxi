@@ -128,14 +128,14 @@ Yuxi 本体采用 MIT 许可证，但 Compose 引入的第三方组件保留各�
 
 | 组件 | 镜像 | 许可证 | 在 Yuxi 中的角色 |
 |------|------------------|--------|------------------|
-| Neo4j Community | `neo4j:5.26.28` | GPL-3.0-only | 知识图谱存储（`graph` 服务） |
+| Neo4j Community | `neo4j:5.26.29` | GPL-3.0-only | 知识图谱存储（`graph` 服务） |
 | MinIO | `minio/minio:RELEASE.2023-03-20T20-16-18Z` | AGPL-3.0 | Yuxi 对象存储（头像、Agent 图片、知识库文件）与 Milvus 存储依赖 |
 | Milvus | `milvusdb/milvus:v2.5.6` | Apache-2.0 | 向量检索 |
 | etcd | `quay.io/coreos/etcd:v3.5.5` | Apache-2.0 | Milvus 元数据 |
 | PostgreSQL | `postgres:16` | PostgreSQL License | 业务主库 |
-| Redis | `redis:7.4.9-alpine` | RSALv2/SSPLv1（非 OSI；7.2 及更早为 BSD-3-Clause） | 投递、短期事件与缓存 |
+| Redis | `redis:7.4.10-alpine` | RSALv2/SSPLv1（非 OSI；7.2 及更早为 BSD-3-Clause） | 投递、短期事件与缓存 |
 
-其中 Neo4j、MinIO、Milvus、etcd 与 Redis 已锁定精确版本；PostgreSQL 仍为浮动 tag，可按部署需要自行固定。其余镜像与构建基础镜像（Nginx、Node、Python 等）均为宽松许可证，以其上游声明为准。
+其中 Neo4j、MinIO、Milvus、etcd 与 Redis 已锁定精确版本；PostgreSQL 仍为浮动 tag，可按部署需要自行固定。上表只说明主要应用组件本体的许可证，不代表完整容器镜像内的基础系统与依赖包均为宽松许可证；离线再分发前需按实际镜像核对软件物料清单、许可证声明与对应源码义务。
 
 Redis 7.4 起采用 RSALv2/SSPLv1 双许可（均非 OSI）：自托管使用、修改与再分发（无论是否修改）均被允许。两条路径的差异在于托管服务——RSALv2 不得把 Redis 本身作为托管服务对外提供；SSPLv1 允许托管，条件是开源整个服务管理栈。自托管 Compose 部署通常按 RSALv2 路径理解即可。
 
@@ -143,8 +143,8 @@ Redis 7.4 起采用 RSALv2/SSPLv1 双许可（均非 OSI）：自托管使用、
 
 以下情形会触发相应组件许可证的额外义务：
 
-1. **再分发镜像**：`docker/save_docker_images.sh` / `save_docker_images.ps1` 把镜像导出为 tar 交付给第三方时，构成对 GPL/AGPL 软件的再分发。分发未修改的上游镜像时，保留原始 tag/digest、随交付物附带对应许可证文本，并提供对应源码或其获取方式（未修改镜像通常指向上游源码即可）；不要修改镜像内容或剥离许可证声明。
-2. **修改 AGPL 组件**：修改 MinIO 并对外提供网络服务时，需按 AGPL-3.0 向用户提供修改后的对应源码；使用未修改的上游版本时提供上游源码地址即可。仓库内 `docker/mineru.Dockerfile` 构建的 MinerU 自 3.1.0 起采用以 Apache-2.0 为基础的 MinerU 开源许可（含规模化商用门槛与归属标注条款），以其 Dockerfile 内锁定版本的注释为准。
+1. **再分发镜像**：`docker/save_docker_images.sh` / `save_docker_images.ps1` 把镜像导出为 tar 交付给第三方时，构成对 GPL/AGPL 软件的再分发。除保留 tag/digest、许可证文本和原始声明外，还需按 GPLv3/AGPLv3 第 6 节选择与交付方式匹配的源码路径：通过物理介质交付时随附机器可读的完整对应源码，或附带对任何持有目标代码者有效的书面源码要约；要约至少有效三年，并在仍为该产品型号提供备件或客户支持期间持续有效，承诺按不高于合理物理交付成本提供源码介质或免费网络下载。通过指定网络位置提供镜像时，以同等方式且不额外收费地提供精确对应源码。源码可由不同的第三方服务器托管，但再分发者仍须在镜像下载位置旁提供清晰指引，并确保源码在所需期限内持续可用。
+2. **修改 AGPL 组件**：修改 MinIO 并对外提供网络服务时，需按 AGPL-3.0 向用户提供修改后的对应源码；未修改的上游版本仅在网络中运行时不触发第 13 节的修改源码提供义务，但再分发其镜像仍须遵守上一项的第 6 节要求。仓库内 `docker/mineru.Dockerfile` 构建的 MinerU 自 3.1.0 起采用以 Apache-2.0 为基础的 MinerU 开源许可（含规模化商用门槛与归属标注条款），以其 Dockerfile 内锁定版本的注释为准。
 3. **进程内集成**：把 GPL/AGPL 组件以进程内链接方式并入自有代码会触发传染条款。Yuxi 架构不做进程内集成，二次开发也不要引入。
 
 ### 商业部署
