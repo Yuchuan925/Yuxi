@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import os
 import tempfile
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
@@ -380,6 +382,349 @@ async def test_materialize_attachment_record_restores_missing_local_cache(monkey
 
     assert (tmp_path / "thread-1" / "uploads" / "file-1_demo.pdf").read_bytes() == b"pdf-bytes"
     assert (tmp_path / "thread-1" / "uploads" / "attachments" / "file-1_demo.md").read_text() == "# parsed"
+
+
+def _hydrate_record(
+    *,
+    thread_id: str = "thread-1",
+    file_id: str = "file-1",
+    file_name: str = "demo.pdf",
+    parsed: bool = False,
+) -> dict:
+    original_object, markdown_object = service._make_thread_attachment_objects(thread_id, file_id, file_name)
+    storage_name = f"{file_id}_{file_name}"
+    original_path = f"/home/gem/user-data/uploads/{storage_name}"
+    record = {
+        "file_id": file_id,
+        "file_name": file_name,
+        "file_size": 3,
+        "bucket_name": "knowledgebases",
+        "original_object_name": original_object,
+        "original_path": original_path,
+        "path": original_path,
+    }
+    if parsed:
+        record.update(
+            {
+                "markdown_object_name": markdown_object,
+                "path": f"/home/gem/user-data/uploads/attachments/{service._make_attachment_path(storage_name)}",
+            }
+        )
+    return record
+
+
+@pytest.mark.asyncio
+async def test_hydrate_attachment_records_streams_validated_minio_objects(monkeypatch, tmp_path: Path):
+    fake_minio = FakeMinioClient()
+    parsed = _hydrate_record(thread_id="parent-thread", parsed=True)
+    plain = _hydrate_record(thread_id="parent-thread", file_id="file-2", file_name="plain.txt")
+    fake_minio.objects[("knowledgebases", parsed["original_object_name"])] = b"pdf-bytes"
+    fake_minio.objects[("knowledgebases", parsed["markdown_object_name"])] = b"# parsed"
+    fake_minio.objects[("knowledgebases", plain["original_object_name"])] = b"plain"
+    events = []
+    original_download = fake_minio.adownload_file
+
+    async def tracked_download(bucket_name, object_name):
+        events.append(("download", object_name))
+        return await original_download(bucket_name, object_name)
+
+    fake_minio.adownload_file = tracked_download
+    monkeypatch.setattr(service, "get_minio_client", lambda: fake_minio)
+    monkeypatch.setattr(service, "sandbox_uploads_dir", lambda _thread_id: tmp_path / "legacy-uploads")
+    calls = {}
+
+    class FakeBackend:
+        def __init__(self, **kwargs):
+            calls["scope"] = kwargs
+
+        def clear_upload_files(self):
+            events.append(("clear", None))
+
+        def write_upload_file(self, path, content):
+            events.append(("write", path, content))
+
+    monkeypatch.setattr(service, "ProvisionerSandboxBackend", FakeBackend)
+
+    await service.hydrate_attachment_records_to_sandbox(
+        "child-thread",
+        "user-1",
+        [parsed, plain],
+        file_thread_id="parent-thread",
+        skills_thread_id="child-thread",
+    )
+
+    assert calls["scope"] == {
+        "thread_id": "child-thread",
+        "uid": "user-1",
+        "file_thread_id": "parent-thread",
+        "skills_thread_id": "child-thread",
+    }
+    assert events == [
+        ("clear", None),
+        ("download", parsed["original_object_name"]),
+        ("write", parsed["original_path"], b"pdf-bytes"),
+        ("download", parsed["markdown_object_name"]),
+        ("write", parsed["path"], b"# parsed"),
+        ("download", plain["original_object_name"]),
+        ("write", plain["original_path"], b"plain"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_hydrate_attachment_records_clears_sandbox_when_current_set_is_empty(monkeypatch, tmp_path: Path):
+    monkeypatch.setattr(service, "get_minio_client", FakeMinioClient)
+    monkeypatch.setattr(service, "sandbox_uploads_dir", lambda _thread_id: tmp_path / "legacy-uploads")
+    clear_calls = []
+
+    class FakeBackend:
+        def __init__(self, **_kwargs):
+            pass
+
+        def clear_upload_files(self):
+            clear_calls.append(True)
+
+        def write_upload_file(self, _path, _content):
+            pytest.fail("空附件集不得写入")
+
+    monkeypatch.setattr(service, "ProvisionerSandboxBackend", FakeBackend)
+
+    await service.hydrate_attachment_records_to_sandbox("thread-1", "user-1", [])
+
+    assert clear_calls == [True]
+
+
+@pytest.mark.asyncio
+async def test_hydrate_attachment_records_fails_before_sandbox_on_missing_object(monkeypatch, tmp_path: Path):
+    record = _hydrate_record()
+    clear_calls = []
+    monkeypatch.setattr(service, "get_minio_client", FakeMinioClient)
+    monkeypatch.setattr(service, "sandbox_uploads_dir", lambda _thread_id: tmp_path / "legacy-uploads")
+
+    class FakeBackend:
+        def __init__(self, **_kwargs):
+            pass
+
+        def clear_upload_files(self):
+            clear_calls.append(True)
+
+        def write_upload_file(self, _path, _content):
+            pytest.fail("缺失对象时不得写入 sandbox")
+
+    monkeypatch.setattr(service, "ProvisionerSandboxBackend", FakeBackend)
+
+    with pytest.raises(service.HTTPException, match="附件对象不存在"):
+        await service.hydrate_attachment_records_to_sandbox("thread-1", "user-1", [record])
+    assert clear_calls == [True, True]
+
+
+@pytest.mark.asyncio
+async def test_hydrate_attachment_records_rejects_cross_thread_object_before_download(monkeypatch, tmp_path: Path):
+    fake_minio = FakeMinioClient()
+    record = _hydrate_record()
+    record["original_object_name"] = "threads/other-thread/attachments/file-1/original/demo.pdf"
+    monkeypatch.setattr(service, "get_minio_client", lambda: fake_minio)
+    monkeypatch.setattr(service, "sandbox_uploads_dir", lambda _thread_id: tmp_path / "legacy-uploads")
+    monkeypatch.setattr(
+        service,
+        "ProvisionerSandboxBackend",
+        lambda **_kwargs: pytest.fail("跨线程对象不得触达 sandbox"),
+    )
+
+    with pytest.raises(service.HTTPException, match="附件对象作用域无效"):
+        await service.hydrate_attachment_records_to_sandbox("thread-1", "user-1", [record])
+    assert fake_minio.objects == {}
+
+
+@pytest.mark.asyncio
+async def test_hydrate_accepts_existing_record_with_pre_normalized_file_name(monkeypatch, tmp_path: Path):
+    fake_minio = FakeMinioClient()
+    object_name = "threads/thread-1/attachments/file-1/original/report.txt"
+    fake_minio.objects[("knowledgebases", object_name)] = b"content"
+    record = {
+        "file_id": "file-1",
+        "file_name": " report.txt",
+        "file_size": 7,
+        "bucket_name": "knowledgebases",
+        "original_object_name": object_name,
+        "original_path": "/home/gem/user-data/uploads/file-1_report.txt",
+        "path": "/home/gem/user-data/uploads/file-1_report.txt",
+    }
+    writes = []
+    monkeypatch.setattr(service, "get_minio_client", lambda: fake_minio)
+    monkeypatch.setattr(service, "sandbox_uploads_dir", lambda _thread_id: tmp_path / "legacy-uploads")
+
+    class FakeBackend:
+        def __init__(self, **_kwargs):
+            pass
+
+        def clear_upload_files(self):
+            pass
+
+        def write_upload_file(self, path, content):
+            writes.append((path, content))
+
+    monkeypatch.setattr(service, "ProvisionerSandboxBackend", FakeBackend)
+
+    await service.hydrate_attachment_records_to_sandbox("thread-1", "user-1", [record])
+
+    assert writes == [("/home/gem/user-data/uploads/file-1_report.txt", b"content")]
+
+
+@pytest.mark.asyncio
+async def test_store_attachment_normalizes_persisted_file_name(monkeypatch):
+    fake_minio = FakeMinioClient()
+    monkeypatch.setattr(service, "get_minio_client", lambda: fake_minio)
+
+    record = await service._store_attachment(
+        thread_id="thread-1",
+        file_id="file-1",
+        file_name=" report.txt",
+        file_type="text/plain",
+        file_content=b"content",
+    )
+
+    assert record["file_name"] == "report.txt"
+    assert record["original_path"] == "/home/gem/user-data/uploads/file-1_report.txt"
+
+
+@pytest.mark.asyncio
+async def test_hydrate_attachment_records_uses_legacy_files_without_minio_metadata(monkeypatch, tmp_path: Path):
+    uploads_dir = tmp_path / "legacy-uploads"
+    attachments_dir = uploads_dir / "attachments"
+    attachments_dir.mkdir(parents=True)
+    record = _hydrate_record(file_id="legacy", file_name="legacy.pdf", parsed=True)
+    record.pop("bucket_name")
+    record.pop("original_object_name")
+    record.pop("markdown_object_name")
+    record["original_path"] = "/home/gem/user-data/uploads/legacy.pdf"
+    record["path"] = "/home/gem/user-data/uploads/attachments/legacy.md"
+    (uploads_dir / "legacy.pdf").write_bytes(b"legacy-pdf")
+    (attachments_dir / "legacy.md").write_bytes(b"# legacy")
+    monkeypatch.setattr(service, "get_minio_client", FakeMinioClient)
+    monkeypatch.setattr(service, "sandbox_uploads_dir", lambda _thread_id: uploads_dir)
+    calls = []
+
+    class FakeBackend:
+        def __init__(self, **_kwargs):
+            pass
+
+        def clear_upload_files(self):
+            calls.append(("clear",))
+
+        def write_upload_file(self, path, content):
+            calls.append(("write", path, content))
+
+    monkeypatch.setattr(service, "ProvisionerSandboxBackend", FakeBackend)
+
+    await service.hydrate_attachment_records_to_sandbox(
+        "thread-1",
+        "user-1",
+        [record],
+    )
+
+    assert calls == [
+        ("clear",),
+        ("write", record["original_path"], b"legacy-pdf"),
+        ("write", record["path"], b"# legacy"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_hydrate_attachment_records_rejects_missing_legacy_file_before_sandbox(monkeypatch, tmp_path: Path):
+    record = _hydrate_record(file_id="missing", file_name="missing.pdf")
+    record.pop("bucket_name")
+    record.pop("original_object_name")
+    record["original_path"] = "/home/gem/user-data/uploads/missing.pdf"
+    record["path"] = record["original_path"]
+    clear_calls = []
+    monkeypatch.setattr(service, "get_minio_client", FakeMinioClient)
+    monkeypatch.setattr(service, "sandbox_uploads_dir", lambda _thread_id: tmp_path / "legacy-uploads")
+
+    class FakeBackend:
+        def __init__(self, **_kwargs):
+            pass
+
+        def clear_upload_files(self):
+            clear_calls.append(True)
+
+        def write_upload_file(self, _path, _content):
+            pytest.fail("历史附件缺失时不得写入 sandbox")
+
+    monkeypatch.setattr(service, "ProvisionerSandboxBackend", FakeBackend)
+
+    with pytest.raises(service.HTTPException, match="不存在或不安全"):
+        await service.hydrate_attachment_records_to_sandbox("thread-1", "user-1", [record])
+    assert clear_calls == [True, True]
+
+
+@pytest.mark.asyncio
+async def test_hydrate_attachment_records_rejects_legacy_symlink(monkeypatch, tmp_path: Path):
+    uploads_dir = tmp_path / "legacy-uploads"
+    uploads_dir.mkdir()
+    secret = tmp_path / "secret"
+    secret.write_bytes(b"worker-secret")
+    record = _hydrate_record(file_id="legacy", file_name="secret.txt")
+    record.pop("bucket_name")
+    record.pop("original_object_name")
+    record["original_path"] = "/home/gem/user-data/uploads/secret.txt"
+    record["path"] = record["original_path"]
+    (uploads_dir / "secret.txt").symlink_to(secret)
+    clear_calls = []
+    monkeypatch.setattr(service, "get_minio_client", FakeMinioClient)
+    monkeypatch.setattr(service, "sandbox_uploads_dir", lambda _thread_id: uploads_dir)
+
+    class FakeBackend:
+        def __init__(self, **_kwargs):
+            pass
+
+        def clear_upload_files(self):
+            clear_calls.append(True)
+
+        def write_upload_file(self, _path, _content):
+            pytest.fail("符号链接内容不得写入 sandbox")
+
+    monkeypatch.setattr(service, "ProvisionerSandboxBackend", FakeBackend)
+
+    with pytest.raises(service.HTTPException, match="不存在或不安全"):
+        await service.hydrate_attachment_records_to_sandbox("thread-1", "user-1", [record])
+    assert clear_calls == [True, True]
+
+
+@pytest.mark.asyncio
+async def test_hydrate_cancellation_waits_for_write_then_clears(monkeypatch, tmp_path: Path):
+    fake_minio = FakeMinioClient()
+    record = _hydrate_record()
+    fake_minio.objects[("knowledgebases", record["original_object_name"])] = b"content"
+    write_started = threading.Event()
+    allow_write_finish = threading.Event()
+    calls = []
+    monkeypatch.setattr(service, "get_minio_client", lambda: fake_minio)
+    monkeypatch.setattr(service, "sandbox_uploads_dir", lambda _thread_id: tmp_path / "legacy-uploads")
+
+    class FakeBackend:
+        def __init__(self, **_kwargs):
+            pass
+
+        def clear_upload_files(self):
+            calls.append("clear")
+
+        def write_upload_file(self, _path, _content):
+            calls.append("write-start")
+            write_started.set()
+            allow_write_finish.wait(timeout=5)
+            calls.append("write-finish")
+
+    monkeypatch.setattr(service, "ProvisionerSandboxBackend", FakeBackend)
+    task = asyncio.create_task(service.hydrate_attachment_records_to_sandbox("thread-1", "user-1", [record]))
+    await asyncio.to_thread(write_started.wait, 5)
+    task.cancel()
+    await asyncio.sleep(0)
+    assert not task.done()
+
+    allow_write_finish.set()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert calls == ["clear", "write-start", "write-finish", "clear"]
 
 
 def test_delete_materialized_attachment_files_removes_only_target(monkeypatch, tmp_path: Path):

@@ -2,15 +2,19 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
+import os
 import uuid
+from pathlib import Path
 
 import asyncpg
 import httpx
 import pytest
 
 from e2e_helpers import cancel_run, consume_events, delete_agent, postgres_dsn, wait_for_run
+from yuxi.agents.backends.sandbox import ProvisionerSandboxBackend, get_sandbox_provider, sandbox_uploads_dir
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.e2e, pytest.mark.slow]
 
@@ -80,6 +84,35 @@ async def _create_provider(client: httpx.AsyncClient, headers: dict[str, str]) -
 async def _delete_provider(client: httpx.AsyncClient, headers: dict[str, str]) -> None:
     response = await client.delete(f"/api/system/model-providers/{PROVIDER_ID}", headers=headers)
     assert response.status_code in {200, 404}, response.text
+
+
+async def _run_deterministic(
+    client: httpx.AsyncClient,
+    headers: dict[str, str],
+    *,
+    agent_slug: str,
+    thread_id: str,
+    attachment_file_ids: list[str] | None = None,
+) -> dict:
+    """提交无外部模型依赖的真实 worker Run 并等待终态。"""
+    request_id = f"deterministic-hydrate-{uuid.uuid4()}"
+    response = await client.post(
+        "/api/agent/runs",
+        json={
+            "query": f"只输出 {EXPECTED_OUTPUT}",
+            "agent_slug": agent_slug,
+            "thread_id": thread_id,
+            "meta": {
+                "request_id": request_id,
+                "attachment_file_ids": attachment_file_ids or [],
+            },
+        },
+        headers=headers,
+    )
+    assert response.status_code == 200, response.text
+    run = await wait_for_run(client, headers, str(response.json()["run_id"]))
+    assert run["status"] == "completed", run
+    return run
 
 
 async def _create_agent(client: httpx.AsyncClient, headers: dict[str, str], uid: str) -> str:
@@ -259,9 +292,101 @@ async def test_deterministic_agent_path_reaches_persisted_result(
         if run_id and not run_completed:
             await cancel_run(e2e_client, e2e_headers, run_id)
         if thread_id:
-            thread_delete = await e2e_client.delete(
-                f"/api/chat/thread/{thread_id}", headers=e2e_headers
-            )
+            thread_delete = await e2e_client.delete(f"/api/chat/thread/{thread_id}", headers=e2e_headers)
+            assert thread_delete.status_code in {200, 404}, thread_delete.text
+        if agent_slug:
+            await delete_agent(e2e_client, e2e_headers, agent_slug)
+        await _delete_provider(e2e_client, e2e_headers)
+
+
+async def test_attachment_hydrates_to_sandbox_without_host_upload_mount(
+    e2e_client: httpx.AsyncClient,
+    e2e_headers: dict[str, str],
+) -> None:
+    me_response = await e2e_client.get("/api/auth/me", headers=e2e_headers)
+    assert me_response.status_code == 200, me_response.text
+    uid = str(me_response.json()["uid"])
+    await _create_provider(e2e_client, e2e_headers)
+
+    agent_slug: str | None = None
+    thread_id: str | None = None
+    try:
+        agent_slug = await _create_agent(e2e_client, e2e_headers, uid)
+        thread_response = await e2e_client.post(
+            "/api/chat/thread",
+            json={
+                "agent_id": agent_slug,
+                "title": f"attachment-hydrate-e2e-{uuid.uuid4().hex[:8]}",
+                "metadata": {"_yuxi_e2e": True, "test": "attachment-hydrate-e2e"},
+            },
+            headers=e2e_headers,
+        )
+        assert thread_response.status_code == 200, thread_response.text
+        thread_id = str(thread_response.json().get("thread_id") or thread_response.json()["id"])
+
+        expected_content = f"sandbox hydrate {uuid.uuid4()}\n"
+        file_name = f"hydrate-{uuid.uuid4().hex[:8]}.txt"
+        upload_response = await e2e_client.post(
+            f"/api/chat/thread/{thread_id}/attachments",
+            files={"file": (file_name, expected_content.encode(), "text/plain")},
+            headers=e2e_headers,
+        )
+        assert upload_response.status_code == 200, upload_response.text
+        attachment = upload_response.json()
+        attachment_path = str(attachment["original_path"])
+        host_path = sandbox_uploads_dir(thread_id) / Path(attachment_path).name
+        host_path.unlink(missing_ok=True)
+        assert not host_path.exists()
+
+        await _run_deterministic(
+            e2e_client,
+            e2e_headers,
+            agent_slug=agent_slug,
+            thread_id=thread_id,
+            attachment_file_ids=[str(attachment["file_id"])],
+        )
+
+        sandbox = ProvisionerSandboxBackend(thread_id=thread_id, uid=uid)
+        read_result = sandbox.read(attachment_path)
+        assert read_result.error is None, read_result
+        assert read_result.file_data == {"content": expected_content.rstrip(), "encoding": "utf-8"}
+        assert not host_path.exists(), "worker 不得把 MinIO 附件重新写回共享 host uploads"
+
+        get_sandbox_provider().release(thread_id, uid=uid)
+        await asyncio.sleep(int(os.getenv("SANDBOX_KEEPALIVE_INTERVAL_SECONDS", "30")) + 1)
+        await _run_deterministic(
+            e2e_client,
+            e2e_headers,
+            agent_slug=agent_slug,
+            thread_id=thread_id,
+        )
+        sandbox = ProvisionerSandboxBackend(thread_id=thread_id, uid=uid)
+        recreated_read = sandbox.read(attachment_path)
+        assert recreated_read.error is None, recreated_read
+        assert recreated_read.file_data == {"content": expected_content.rstrip(), "encoding": "utf-8"}
+        assert not host_path.exists()
+
+        delete_response = await e2e_client.delete(
+            f"/api/chat/thread/{thread_id}/attachments/{attachment['file_id']}",
+            headers=e2e_headers,
+        )
+        assert delete_response.status_code == 200, delete_response.text
+        await _run_deterministic(
+            e2e_client,
+            e2e_headers,
+            agent_slug=agent_slug,
+            thread_id=thread_id,
+        )
+        missing_result = sandbox.read(attachment_path)
+        assert missing_result.file_data is None
+        assert missing_result.error and "does not exist" in missing_result.error.lower()
+    finally:
+        if thread_id:
+            try:
+                get_sandbox_provider().release(thread_id, uid=uid)
+            except Exception:
+                pass
+            thread_delete = await e2e_client.delete(f"/api/chat/thread/{thread_id}", headers=e2e_headers)
             assert thread_delete.status_code in {200, 404}, thread_delete.text
         if agent_slug:
             await delete_agent(e2e_client, e2e_headers, agent_slug)

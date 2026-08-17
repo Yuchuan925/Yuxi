@@ -608,6 +608,65 @@ def test_provisioner_denies_upload_writes(monkeypatch) -> None:
     assert upload_result[0].error == "permission_denied"
 
 
+def test_provisioner_trusted_hydrate_clears_and_writes_uploads(monkeypatch) -> None:
+    monkeypatch.setattr("yuxi.agents.backends.sandbox.backend.get_sandbox_provider", lambda: object())
+    backend = ProvisionerSandboxBackend(thread_id="thread-1", uid="user-1")
+    calls = []
+
+    def _exec_command(**kwargs):
+        calls.append(("clear", kwargs["command"]))
+        return SimpleNamespace(data=SimpleNamespace(exit_code=0, output=""))
+
+    def _write_file(**kwargs):
+        calls.append(("write", kwargs))
+        return SimpleNamespace(success=True, message="")
+
+    backend._get_client = MethodType(
+        lambda self: SimpleNamespace(
+            shell=SimpleNamespace(exec_command=_exec_command),
+            file=SimpleNamespace(write_file=_write_file),
+        ),
+        backend,
+    )
+
+    backend.clear_upload_files()
+    backend.write_upload_file("/home/gem/user-data/uploads/file.bin", b"\x00\xff")
+    backend.write_upload_file("/home/gem/user-data/uploads/attachments/file.md", b"content")
+
+    assert [call[0] for call in calls] == ["clear", "write", "write"]
+    assert calls[1][1] == {
+        "file": "/home/gem/user-data/uploads/file.bin",
+        "content": "AP8=",
+        "encoding": "base64",
+    }
+
+
+def test_provisioner_trusted_hydrate_rejects_failed_or_outside_write(monkeypatch) -> None:
+    monkeypatch.setattr("yuxi.agents.backends.sandbox.backend.get_sandbox_provider", lambda: object())
+    backend = ProvisionerSandboxBackend(thread_id="thread-1", uid="user-1")
+    clear_calls = []
+
+    def _exec_command(**_kwargs):
+        clear_calls.append(True)
+        return SimpleNamespace(data=SimpleNamespace(exit_code=0, output=""))
+
+    backend._get_client = MethodType(
+        lambda self: SimpleNamespace(
+            shell=SimpleNamespace(exec_command=_exec_command),
+            file=SimpleNamespace(write_file=lambda **_kwargs: SimpleNamespace(success=False, message="write failed")),
+        ),
+        backend,
+    )
+
+    with pytest.raises(RuntimeError, match="write failed"):
+        backend.write_upload_file("/home/gem/user-data/uploads/file.bin", b"content")
+    assert clear_calls == []
+
+    with pytest.raises(ValueError, match="must be under"):
+        backend.write_upload_file("/home/gem/user-data/outputs/escape.bin", b"content")
+    assert clear_calls == []
+
+
 def test_provisioner_allows_outputs_writes(monkeypatch) -> None:
     monkeypatch.setattr("yuxi.agents.backends.sandbox.backend.get_sandbox_provider", lambda: object())
     backend = ProvisionerSandboxBackend(thread_id="thread-1", uid="user-1")

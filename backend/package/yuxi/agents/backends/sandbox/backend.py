@@ -614,6 +614,35 @@ class ProvisionerSandboxBackend(BaseSandbox):
                 responses.append(FileUploadResponse(path=normalized_path, error="invalid_path"))
         return responses
 
+    def clear_upload_files(self) -> None:
+        """由受信任服务清空 sandbox 附件工作副本。"""
+        client = self._get_client()
+        result = client.shell.exec_command(
+            command=(
+                f"mkdir -p {_UPLOADS_ROOT} && find {_UPLOADS_ROOT} -mindepth 1 -delete "
+                f"&& mkdir -p {_UPLOADS_ROOT}/attachments"
+            ),
+            timeout=self._command_timeout_seconds,
+        )
+        if result.data.exit_code not in (0, None):
+            raise RuntimeError(result.data.output or "failed to clear sandbox uploads")
+
+    def write_upload_file(self, path: str, content: bytes) -> None:
+        """由受信任服务写入单个 sandbox 附件工作副本。"""
+        normalized_path = _normalize_path(path)
+        if normalized_path == _UPLOADS_ROOT or not _is_same_or_child(normalized_path, _UPLOADS_ROOT):
+            raise ValueError(f"attachment hydrate path must be under {_UPLOADS_ROOT}: {normalized_path}")
+        if not isinstance(content, bytes):
+            raise TypeError(f"attachment hydrate content must be bytes: {normalized_path}")
+
+        result = self._get_client().file.write_file(
+            file=normalized_path,
+            content=base64.b64encode(content).decode("ascii"),
+            encoding="base64",
+        )
+        if not result.success:
+            raise RuntimeError(result.message or f"failed to hydrate attachment {normalized_path}")
+
     def download_files(self, paths: list[str]) -> list[FileDownloadResponse]:
         """Download file payloads as raw bytes from the sandbox file API."""
         responses: list[FileDownloadResponse] = []

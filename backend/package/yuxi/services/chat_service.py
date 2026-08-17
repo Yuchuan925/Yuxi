@@ -31,7 +31,7 @@ from yuxi.repositories.agent_run_repository import AgentRunRepository
 from yuxi.repositories.conversation_repository import ConversationRepository
 from yuxi.repositories.subagent_thread_repository import SubagentThreadRepository
 from yuxi.services.attachment_service import (
-    materialize_attachment_records,
+    hydrate_attachment_records_to_sandbox,
     serialize_attachment,
 )
 from yuxi.services.input_message_service import AgentRunInputMessage
@@ -222,8 +222,9 @@ def _apply_input_context_field(input_context: dict, meta: dict | None, key: str)
 def _apply_subagent_runtime_context(input_context: dict, meta: dict | None) -> None:
     """把子智能体 run 的父线程和文件线程信息注入运行 context。"""
     meta = meta or {}
-    # 仅对子智能体类型的 run 生效
     if meta.get("run_type") != "subagent":
+        for key in ("parent_thread_id", "file_thread_id", "skills_thread_id", "is_subagent_runtime"):
+            input_context.pop(key, None)
         return
     # 这三个线程 ID 由 subagent_run_service 在创建 run 时写入 runtime，
     # 是子智能体区别于普通对话的唯一依据；缺失即上游契约被破坏，直接失败而非静默回退。
@@ -838,6 +839,23 @@ async def _ensure_thread_bound_agent(
     return conversation
 
 
+async def _attachment_records_for_file_thread(
+    *,
+    conv_repo: ConversationRepository,
+    conversation: Any,
+    runtime_thread_id: str,
+    file_thread_id: str,
+    uid: str,
+) -> list[dict]:
+    """读取实际文件线程的附件事实，供主/子智能体共用。"""
+    file_conversation = conversation
+    if file_thread_id != runtime_thread_id:
+        file_conversation = await conv_repo.get_conversation_by_thread_id(file_thread_id)
+        if file_conversation is None or file_conversation.uid != uid or file_conversation.status == "deleted":
+            raise ValueError("附件文件线程不存在")
+    return await conv_repo.get_attachments(file_conversation.id)
+
+
 async def stream_agent_chat(
     *,
     agent_slug: str,
@@ -947,7 +965,15 @@ async def stream_agent_chat(
             agent_item=agent_item,
         )
 
-        thread_attachment_records = list((conversation.extra_metadata or {}).get("attachments", []))
+        file_thread_id = str(input_context.get("file_thread_id") or thread_id)
+        skills_thread_id = str(input_context.get("skills_thread_id") or thread_id)
+        thread_attachment_records = await _attachment_records_for_file_thread(
+            conv_repo=conv_repo,
+            conversation=conversation,
+            runtime_thread_id=thread_id,
+            file_thread_id=file_thread_id,
+            uid=uid,
+        )
         request_attachment_records = [
             attachment for attachment in thread_attachment_records if attachment.get("request_id") == meta["request_id"]
         ]
@@ -987,7 +1013,13 @@ async def stream_agent_chat(
 
         # 智能体流式执行期间不访问业务数据库，先结束预处理事务并归还连接池。
         await db.commit()
-        await materialize_attachment_records(thread_id, uid, thread_attachment_records)
+        await hydrate_attachment_records_to_sandbox(
+            thread_id,
+            uid,
+            thread_attachment_records,
+            file_thread_id=file_thread_id,
+            skills_thread_id=skills_thread_id,
+        )
 
         # 先构建 langgraph_config
         langgraph_config = {"configurable": {"thread_id": thread_id, "uid": uid}}
@@ -1209,7 +1241,8 @@ async def stream_agent_resume(
     if conversation is None:
         yield make_resume_chunk(status="error", error_type="invalid_thread", error_message="对话线程不存在", meta=meta)
         return
-    thread_attachments = list((conversation.extra_metadata or {}).get("attachments", []))
+    conv_repo = ConversationRepository(db)
+    thread_attachments = await conv_repo.get_attachments(conversation.id)
     resume_command = Command(
         resume=resume_input,
         update={"uploads": [serialize_attachment(attachment) for attachment in thread_attachments]},
@@ -1217,7 +1250,7 @@ async def stream_agent_resume(
 
     # 恢复流执行期间不访问业务数据库，先结束运行时解析事务并归还连接池。
     await db.commit()
-    await materialize_attachment_records(thread_id, uid, thread_attachments)
+    await hydrate_attachment_records_to_sandbox(thread_id, uid, thread_attachments)
 
     meta["agent_slug"] = agent_item.slug
     meta["backend_id"] = agent_item.backend_id
@@ -1334,7 +1367,6 @@ async def stream_agent_resume(
             yield make_resume_chunk(status="agent_state", agent_state=agent_state, meta=meta)
 
         # 先存储数据库，再返回 finished，避免前端查询时数据未落库
-        conv_repo = ConversationRepository(db)
         try:
             terminal_committed = await save_messages_from_langgraph_state(
                 agent_instance=agent,

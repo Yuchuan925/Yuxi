@@ -173,6 +173,28 @@ async def test_new_thread_creation_uses_unviewed_marker(session):
     assert conversation.last_viewed_run_id == UNVIEWED_RUN_MARKER
 
 
+async def test_new_thread_creation_cannot_seed_attachment_records(session):
+    conversation = await ConversationRepository(session).add_conversation(
+        uid="user-1",
+        agent_id="main",
+        thread_id="thread-reserved-metadata",
+        metadata={"attachments": [{"bucket_name": "private", "object_name": "secret"}]},
+    )
+
+    assert conversation.extra_metadata["attachments"] == []
+
+
+async def test_create_thread_view_rejects_client_attachment_metadata():
+    with pytest.raises(svc.HTTPException, match="服务端保留字段"):
+        await svc.create_thread_view(
+            agent_slug="main",
+            title="malicious",
+            metadata={"attachments": [{"bucket_name": "private", "object_name": "secret"}]},
+            db=None,
+            current_uid="user-1",
+        )
+
+
 async def test_marker_thread_with_terminal_run_shows_ready_then_done(session):
     await _seed_conversation(session, thread_id="thread-marker", last_viewed_run_id=UNVIEWED_RUN_MARKER)
     await _seed_run(session, thread_id="thread-marker", run_id="run-marker", status="completed")

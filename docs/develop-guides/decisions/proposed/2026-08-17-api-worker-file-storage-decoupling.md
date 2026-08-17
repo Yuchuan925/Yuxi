@@ -18,8 +18,8 @@ Owner：docker-compose.yml
 
 1. 先删除没有应用 runtime consumer 的 API/worker `/app/models` 与 Docker socket 挂载；Docker sandbox-provisioner 保留 Docker socket。集成测试的沙盒清理由直连 Docker daemon 改为调用 provisioner 的鉴权管理 API。该阶段不修改或迁移 `saves`。
 2. 以 `YUXI_RUNTIME_DIR` 为进程本地运行目录，API 与 worker 使用不同的容器本地路径；日志和已确认可丢弃的 Office 预览缓存写入该目录，不把它们纳入用户文件抽象。`GET /api/system/logs` 明确只读取 API 进程日志，worker 日志继续由容器日志和 worker 自身运行目录观察；历史日志与预览缓存不迁移。
-3. 复用现有 MinIO 附件对象，通过受信任 sandbox 文件 API hydrate uploads，先证明不依赖宿主机路径的真实链路。
-4. 依次迁移 outputs/artifacts、只读版本化 Skills、最后迁移跨线程可写 workspace。
+3. 复用现有 MinIO 附件对象，通过受信任 sandbox 文件 API hydrate uploads，并从 Docker/Kind sandbox 中移除 uploads 的 bind/PVC 子目录挂载。worker 在模型执行前按 Conversation 当前附件集合清空并重建 sandbox uploads，Agent 文件后端对该目录保持只读；MinIO 读取、sandbox 清理或写入任一步失败都阻止执行，不能继续使用上一次残留。API/Viewer 的本地附件物化暂保留，不在本阶段删除共享 `saves`。
+4. 当 outputs 作为第二种文件语义进入时，先抽取最小 scoped FileStore 边界，共用 scope/path/object/snapshot 解析与 sandbox hydrate，再实现 outputs/artifacts 的 revision/publish；之后迁移只读版本化 Skills，最后迁移跨线程可写 workspace。该边界不把 MinIO 伪装成 POSIX，uploads、outputs、Skills 和 workspace 仍保留各自 Owner 与写入/冲突语义。
 5. PostgreSQL 拥有文件 scope/path、revision、删除/重命名与 publish/unknown 事实；MinIO/S3 拥有对象字节；sandbox 只保存可重建 POSIX 工作副本。完成旧数据核对后删除 provisioner host-path 推导和共享 `saves`。
 
 每个阶段是独立 Review 单元，必须拥有当前 consumer、风险相称的 oracle 和能恢复目标缺陷的负向案例。阶段证据完成后先由独立 Reviewer 审查，再等待用户明确 Review；未经确认不进入下一阶段。
@@ -30,6 +30,7 @@ Owner：docker-compose.yml
 - 集成测试清理仍会在专用测试环境中删除 provisioner 当前管理的全部沙盒，但不再要求被测 API 容器拥有 Docker socket。
 - 阶段 2 完成后，API 与 worker 不再向共享 `saves/logs` 追加同一日志文件，Office 预览缓存也不再写入用户数据目录；容器重建后这些可重建数据允许丢失。
 - 管理端日志接口不再隐式聚合 worker 日志；它返回 `scope: api`，前端明确标注“API 进程日志”。worker 的历史日志留存由部署环境的容器日志策略负责。
+- 阶段 3 完成后，Agent 执行读取附件不再依赖 provisioner 宿主机 uploads 路径或 Kubernetes 共享 PVC 子目录；sandbox 重建后由 worker 从 MinIO 重新 hydrate。Agent 通用文件后端仍拒绝写 uploads，受信任替换接口只接受该虚拟根目录下的路径，并在部分失败后再次清空以 fail-closed。
 - 共享 `saves`、sandbox host-path 推导和用户文件协议保持原状；本阶段不会改善它们的跨宿主机部署能力，后续阶段必须继续处理。
 - 每一阶段都可能单独停止、回滚或调整顺序；只有对应证据和用户 Review 通过后才开始下一阶段。
 
@@ -37,6 +38,7 @@ Owner：docker-compose.yml
 
 - 继续共享 bind volume 或把 RWX PVC 作为默认协议：拒绝。它保留跨进程共享文件系统语义，不能满足跨宿主机解耦；PVC 只能作为可选部署优化。
 - 在 sandbox 中挂载 s3fs/ossfs：拒绝。对象存储不提供 Agent shell 所依赖的完整 POSIX rename、锁和 partial-write 语义，并会扩大凭据边界。
+- 一次性把 MinIO 包装成完整 thread 文件系统：拒绝。workspace 实际属于用户跨线程共享作用域，outputs 还需要 revision/publish 事实；用同一层目录 API 抹平它们会隐藏冲突与部分失败。第二个 consumer 出现时抽取最小 scoped FileStore，不在只有附件读取时预造完整文件系统。
 - 整体重放 `feat/filestore-decouple`：拒绝。该分支与当前配置、附件、文件搜索和 RunAttempt 实现大面积冲突，且同步协议没有持久版本事实。
 - 一次迁移所有 `saves` 数据后再切换：拒绝。协议、实现、迁移和故障恢复无法独立验证，失败面过大。
 - 先删除无 consumer 挂载，再以已有对象链路验证传输，最后按数据复杂度迁移：采用。它先净删除无用权限和部署耦合，不制造数据迁移风险，并为后续阶段提供可复用的真实边界。
@@ -50,6 +52,7 @@ Owner：docker-compose.yml
 | API/worker 日志与 Office 预览缓存使用彼此独立且位于 `saves` 外的运行目录 | 两个服务仍写同一文件、默认目录回落到 `saves`、预览缓存仍污染用户数据 | `yuxi.config.get_runtime_dir`、两个 Compose service environment、`logging_config.py`、`workspace_service.py` | config/workspace unit；Compose 边界 guard；真实容器分别写入标记并从 API 日志接口回读 | 把任一 `YUXI_RUNTIME_DIR` 恢复为 `/app/saves` 子目录，或恢复 `.office_preview_cache` 时失败 | Passed |
 | 日志接口明确且只返回 API 进程日志 | worker 或旧共享日志标记被接口返回、响应路径回退到 `saves` | `GET /api/system/logs`、`logging_config.py` | 真实 HTTP integration；返回 `scope: api`，API 标记存在，worker sibling 与旧共享日志标记不存在 | 恢复 `saves/logs`、扫描 worker runtime 或旧共享日志时失败 | Passed |
 | 管理端明确标注 API 进程日志 | UI 继续把当前 API 文件误称为全系统日志 | `DebugComponent.vue` | Web lint/unit/build 与真实登录页面截图 | 移除界面标注时 Review 拒绝 | Not run |
+| worker 从 MinIO 当前附件集合直接重建 sandbox uploads，且 sandbox 不挂载共享 uploads | 仍先写 host uploads、旧附件残留、部分 hydrate 后继续执行、Docker 或 Kind 仍挂载 uploads | `attachment_service.py`、`ProvisionerSandboxBackend`、`docker/sandbox_provisioner/app.py` | service/backend unit；真实 MinIO、HTTP、worker、sandbox 文件回读与 sandbox 重建 E2E | 恢复 `materialize_attachment_records` worker 调用、恢复 uploads bind/PVC、让清理/写入失败后继续时失败 | Passed |
 | 最终默认生产拓扑中 API/worker 无共享可变数据卷，provisioner 不交换宿主机 saves 路径 | 仍可通过隐式 host path 工作，测试只覆盖单容器 | Compose、provisioner contract | 无共享卷 Docker assembled-path E2E；Docker 与 Kind/Kubernetes smoke | 恢复共享 saves mount 或 host-path 推导时静态 gate/E2E 失败 | Not run |
 | 附件、outputs、Skills、workspace 在 sandbox 重建后保持一致 | 只验证 HTTP 200 或日志，没有回读 DB/对象/文件 | 对应 service/repository、文件 revision | PostgreSQL、MinIO、真实 HTTP、worker、sandbox E2E 回读 | 删除 hydrate/publish、相邻线程猜测、回退本地 Path 时失败 | Not run |
 | 并发或失联 publish 不静默覆盖新版本 | Redis 锁失效后覆盖、对象成功但 DB 未确认 | 文件 revision/publish transaction | PostgreSQL 并发 integration 与故障注入 E2E | 同 base revision 并发发布、确认前崩溃 | Not run |
@@ -89,3 +92,13 @@ Owner：docker-compose.yml
 - 确定性 Agent assembled-path E2E：2 passed；Web lint、36 个 unit 与生产 build 均通过；工程契约 gate 与配套 48 tests、dev/prod Compose config、changed-file Ruff、docs build、`git diff --check` 均通过。
 - `DebugComponent.vue` 已标注“API 进程日志”，lint/unit/build 已覆盖编译与回归；真实登录页面的截图验证尚未完成，因此管理端页面验收当前结果仍为 `Not run`，不能写成页面验证通过。
 - 2026-08-17 用户 Review 接受容器本地日志可随容器重建丢失、worker 历史日志由部署环境管理的当前语义，并明确要求提交阶段 2、开始阶段 3。真实页面截图仍作为未验证范围保留，不改写为通过。
+
+## 阶段 3 验证记录
+
+- 定向 service/backend/provisioner/chat/conversation unit：151 passed。覆盖 MinIO 原件与 Markdown 逐个下载/写入、无附件时清空、两种真实历史本地 fallback、对象或历史文件缺失时阻止执行、固定 bucket 与 thread/file 对象前缀、创建对话时禁止注入附件保留字段、legacy 符号链接拒绝、producer/consumer 文件名规范化、受信任虚拟路径限制、取消后等待阻塞写完成再清空、失败后再次清空、主 Run 剔除配置伪造文件 scope、子智能体读取授权父对话附件，以及 hydrate 失败后模型流入口未被调用。
+- 真实确定性 Agent E2E：3 passed。新增链路通过真实 HTTP 上传、PostgreSQL/Conversation 附件事实、MinIO 对象、worker 执行和 sandbox 文件 API 回读原字节；确认宿主机 uploads 未生成文件，sandbox 删除并重建后同一线程可重新 hydrate，从 Conversation 删除附件后下次执行不再保留旧文件。
+- 真实 Docker sandbox mount 回读：动态容器只挂载 workspace、outputs 和只读 skills，不存在 `/home/gem/user-data/uploads` mount。dev/prod Compose 展开配置均不含 sandbox uploads 挂载；prod 首次因本机缺少 `.env.prod` 必填值未展开，后用 `config --no-interpolate` 完成结构检查。
+- 最终全量 backend non-slow unit：1312 passed、26 skipped。较早一次全量运行暴露 chat unit 脚手架在默认情况下误调真实 provisioner，导致顺序相关失败与挂起；改为默认 no-op、仅专项测试注入 hydrate 后，单文件通过，之后每轮安全/兼容修复后的全量重跑均通过。
+- 工程契约检查与配套 48 tests、changed-file Ruff check/format、`git diff --check`、docs build、health/readiness 均通过。docs build 仅有既有 Rolldown、env lexer、chunk 与 esbuild deprecation warnings。
+- 本地未提供可用 Kind/Kubernetes 集群，因此本阶段完成 Kubernetes pod spec/mount 负控 unit，但真实 Kubernetes smoke 仍为 `Not run`。
+- 独立 Reviewer 首轮发现 3 个 P1 和 1 个 P2：附件 metadata 可注入跨作用域 MinIO 对象、legacy fallback 跟随符号链接、取消后后台线程可回写 stale 附件，以及整线程附件字节聚合的内存风险。修复后 freshness 复核又校正了真实历史 direct-upload 路径、旧文件名规范化和主 Agent 配置 scope。最终复核结论为所有 finding 均按正确原因关闭，无新 P0–P3 finding，patch 正确且无阻塞。

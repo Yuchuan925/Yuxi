@@ -148,14 +148,12 @@ def test_docker_mount_checks_use_file_and_skills_thread_ids(monkeypatch, tmp_pat
     backend._threads_host_path = str(tmp_path)
 
     workspace = tmp_path / "shared" / "user-1" / "workspace"
-    uploads = tmp_path / "parent-thread" / "user-data" / "uploads"
     outputs = tmp_path / "parent-thread" / "user-data" / "outputs"
     skills = tmp_path / "child-skills-thread" / "skills"
     container = SimpleNamespace(
         attrs={
             "Mounts": [
                 {"Destination": "/home/gem/user-data/workspace", "Source": str(workspace)},
-                {"Destination": "/home/gem/user-data/uploads", "Source": str(uploads)},
                 {"Destination": "/home/gem/user-data/outputs", "Source": str(outputs)},
                 {"Destination": "/home/gem/skills", "Source": str(skills)},
             ]
@@ -166,6 +164,11 @@ def test_docker_mount_checks_use_file_and_skills_thread_ids(monkeypatch, tmp_pat
     assert backend._is_expected_skills_mount(container, "child-skills-thread") is True
     assert backend._has_expected_user_data_mounts(container, "child-thread", "user-1") is False
     assert backend._is_expected_skills_mount(container, "parent-thread") is False
+
+    container.attrs["Mounts"].append(
+        {"Destination": "/home/gem/user-data/uploads", "Source": str(tmp_path / "legacy-uploads")}
+    )
+    assert backend._has_expected_user_data_mounts(container, "parent-thread", "user-1") is False
 
 
 def test_docker_sandbox_mounts_shared_workspace_without_thread_history_projection(monkeypatch, tmp_path):
@@ -178,7 +181,6 @@ def test_docker_sandbox_mounts_shared_workspace_without_thread_history_projectio
     destinations = {mount["bind"] for mount in volumes.values()}
     assert destinations == {
         "/home/gem/user-data/workspace",
-        "/home/gem/user-data/uploads",
         "/home/gem/user-data/outputs",
         "/home/gem/skills",
     }
@@ -197,10 +199,6 @@ def test_kubernetes_mount_check_uses_file_and_skills_thread_ids(monkeypatch):
                         SimpleNamespace(
                             mount_path="/home/gem/user-data/workspace",
                             sub_path="threads/shared/user-1/workspace",
-                        ),
-                        SimpleNamespace(
-                            mount_path="/home/gem/user-data/uploads",
-                            sub_path="threads/parent-thread/user-data/uploads",
                         ),
                         SimpleNamespace(
                             mount_path="/home/gem/user-data/outputs",
@@ -222,6 +220,19 @@ def test_kubernetes_mount_check_uses_file_and_skills_thread_ids(monkeypatch):
     assert not module.KubernetesProvisionerBackend._pod_has_expected_mounts(
         pod,
         file_thread_id="child-thread",
+        skills_thread_id="child-skills-thread",
+        uid="user-1",
+    )
+
+    pod.spec.containers[0].volume_mounts.append(
+        SimpleNamespace(
+            mount_path="/home/gem/user-data/uploads",
+            sub_path="threads/parent-thread/user-data/uploads",
+        )
+    )
+    assert not module.KubernetesProvisionerBackend._pod_has_expected_mounts(
+        pod,
+        file_thread_id="parent-thread",
         skills_thread_id="child-skills-thread",
         uid="user-1",
     )
@@ -457,6 +468,9 @@ def test_kubernetes_sandbox_disables_service_account_token_and_environment(monke
 
     assert pod.spec.automount_service_account_token is False
     assert pod.spec.containers[0].env == []
+    sandbox_mounts = {mount.mount_path for mount in pod.spec.containers[0].volume_mounts}
+    assert "/home/gem/user-data/uploads" not in sandbox_mounts
+    assert "/home/gem/user-data/uploads" in pod.spec.init_containers[0].args[0]
 
 
 @pytest.mark.parametrize(

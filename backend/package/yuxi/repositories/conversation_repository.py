@@ -100,7 +100,7 @@ class ConversationRepository:
             thread_id = str(uuid_lib.uuid4())
 
         metadata = (metadata or {}).copy()
-        metadata.setdefault("attachments", [])
+        metadata["attachments"] = []
 
         normalized_title = self._normalize_title(title)
 

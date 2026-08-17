@@ -1,4 +1,6 @@
 import asyncio
+import os
+import stat
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -6,7 +8,7 @@ from urllib.parse import quote
 
 from fastapi import HTTPException, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
-from yuxi.agents.backends.sandbox import ensure_thread_dirs, sandbox_uploads_dir
+from yuxi.agents.backends.sandbox import ProvisionerSandboxBackend, ensure_thread_dirs, sandbox_uploads_dir
 from yuxi.config import get_save_dir
 from yuxi.config.options import system_options
 from yuxi.knowledge.parser.factory import DocumentProcessorFactory
@@ -41,6 +43,17 @@ class ConversionResult:
     file_size: int
     markdown: str
     truncated: bool
+
+
+@dataclass(frozen=True, slots=True)
+class AttachmentHydrateSource:
+    """表示经过作用域校验的单个 sandbox 附件来源。"""
+
+    path: str
+    bucket_name: str | None = None
+    object_name: str | None = None
+    legacy_parts: tuple[str, ...] | None = None
+    inline_content: bytes | None = None
 
 
 async def parse_document(source: str, params: dict | None = None, db: AsyncSession | None = None) -> str:
@@ -251,6 +264,7 @@ async def _store_attachment(
     truncated: bool = False,
 ) -> dict:
     """将正式附件写入 MinIO，并构造完整的持久化记录。"""
+    file_name = _safe_file_name(file_name)
     minio_client = get_minio_client()
     bucket_name = _get_tmp_attachment_bucket()
     original_object_name, markdown_object_name = _make_thread_attachment_objects(thread_id, file_id, file_name)
@@ -392,6 +406,202 @@ async def materialize_attachment_records(thread_id: str, uid: str, attachments: 
             )
         except StorageError as exc:
             raise HTTPException(status_code=404, detail=f"附件对象不存在: {exc}") from exc
+
+
+def _validated_attachment_hydrate_sources(
+    file_thread_id: str,
+    attachments: list[dict],
+    expected_bucket: str,
+) -> list[AttachmentHydrateSource]:
+    """校验 Conversation 附件记录与文件线程的完整绑定。"""
+    sources: list[AttachmentHydrateSource] = []
+    seen_paths: set[str] = set()
+
+    for attachment in attachments:
+        file_id = attachment.get("file_id")
+        file_name = attachment.get("file_name")
+        if (
+            not isinstance(file_id, str)
+            or not file_id
+            or any(marker in file_id for marker in ("/", "\\"))
+            or not isinstance(file_name, str)
+        ):
+            raise HTTPException(status_code=400, detail="附件记录作用域无效")
+
+        file_size = attachment.get("file_size")
+        if file_size is not None and (
+            not isinstance(file_size, int) or file_size < 0 or file_size > MAX_ATTACHMENT_SIZE_BYTES
+        ):
+            raise HTTPException(status_code=400, detail="附件记录大小无效")
+
+        safe_file_name = _safe_file_name(file_name)
+        storage_name = f"{file_id}_{safe_file_name}"
+        expected_original_path = _make_upload_virtual_path(storage_name)
+        legacy_original_path = _make_upload_virtual_path(safe_file_name)
+        original_path = attachment.get("original_path")
+        recorded_path = attachment.get("path")
+        if not isinstance(original_path, str) and isinstance(recorded_path, str):
+            original_path = recorded_path
+
+        expected_original_object, expected_markdown_object = _make_thread_attachment_objects(
+            file_thread_id,
+            file_id,
+            safe_file_name,
+        )
+        bucket_name = attachment.get("bucket_name")
+        original_object_name = attachment.get("original_object_name")
+        if bucket_name is None and original_object_name is None:
+            if original_path == legacy_original_path:
+                storage_name = safe_file_name
+            elif original_path != expected_original_path:
+                raise HTTPException(status_code=400, detail="附件虚拟路径作用域无效")
+            original_source = AttachmentHydrateSource(
+                path=original_path,
+                legacy_parts=(Path(original_path).name,),
+            )
+        elif bucket_name == expected_bucket and original_object_name == expected_original_object:
+            if original_path != expected_original_path:
+                raise HTTPException(status_code=400, detail="附件虚拟路径作用域无效")
+            original_source = AttachmentHydrateSource(
+                path=expected_original_path,
+                bucket_name=expected_bucket,
+                object_name=expected_original_object,
+            )
+        else:
+            raise HTTPException(status_code=400, detail="附件对象作用域无效")
+        sources.append(original_source)
+
+        markdown_object_name = attachment.get("markdown_object_name")
+        if recorded_path in (None, original_path):
+            if markdown_object_name is not None:
+                raise HTTPException(status_code=400, detail="附件解析对象作用域无效")
+            continue
+
+        expected_markdown_path = f"{VIRTUAL_PATH_UPLOADS}/attachments/{_make_attachment_path(storage_name)}"
+        if recorded_path != expected_markdown_path:
+            raise HTTPException(status_code=400, detail="附件解析路径作用域无效")
+        if markdown_object_name is not None:
+            if bucket_name != expected_bucket or markdown_object_name != expected_markdown_object:
+                raise HTTPException(status_code=400, detail="附件解析对象作用域无效")
+            markdown_source = AttachmentHydrateSource(
+                path=expected_markdown_path,
+                bucket_name=expected_bucket,
+                object_name=expected_markdown_object,
+            )
+        elif isinstance(attachment.get("markdown"), str):
+            markdown_source = AttachmentHydrateSource(
+                path=expected_markdown_path,
+                inline_content=attachment["markdown"].encode("utf-8"),
+            )
+        else:
+            markdown_source = AttachmentHydrateSource(
+                path=expected_markdown_path,
+                legacy_parts=("attachments", Path(expected_markdown_path).name),
+            )
+        sources.append(markdown_source)
+
+    for source in sources:
+        if source.path in seen_paths:
+            raise HTTPException(status_code=400, detail="附件虚拟路径重复")
+        seen_paths.add(source.path)
+    return sources
+
+
+def _read_legacy_upload_file(uploads_dir: Path, parts: tuple[str, ...]) -> bytes:
+    """不跟随符号链接地读取历史 uploads 普通文件。"""
+    directory_fds: list[int] = []
+    file_fd: int | None = None
+    try:
+        directory_fd = os.open(uploads_dir, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        directory_fds.append(directory_fd)
+        for part in parts[:-1]:
+            directory_fd = os.open(
+                part,
+                os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                dir_fd=directory_fd,
+            )
+            directory_fds.append(directory_fd)
+        file_fd = os.open(parts[-1], os.O_RDONLY | os.O_NOFOLLOW, dir_fd=directory_fd)
+        if not stat.S_ISREG(os.fstat(file_fd).st_mode):
+            raise OSError("历史附件不是普通文件")
+        with os.fdopen(file_fd, "rb", closefd=True) as file_obj:
+            file_fd = None
+            content = file_obj.read(MAX_ATTACHMENT_SIZE_BYTES + 1)
+    except OSError as exc:
+        raise HTTPException(status_code=404, detail=f"历史附件文件不存在或不安全: {'/'.join(parts)}") from exc
+    finally:
+        if file_fd is not None:
+            os.close(file_fd)
+        for directory_fd in reversed(directory_fds):
+            os.close(directory_fd)
+
+    if len(content) > MAX_ATTACHMENT_SIZE_BYTES:
+        raise HTTPException(status_code=400, detail="历史附件超过大小限制")
+    return content
+
+
+async def _await_blocking_hydrate_call(function, *args):
+    """取消时仍等待已启动的阻塞 sandbox 操作到达终点。"""
+    task = asyncio.create_task(asyncio.to_thread(function, *args))
+    try:
+        return await asyncio.shield(task)
+    except asyncio.CancelledError:
+        try:
+            await task
+        except Exception as exc:  # noqa: BLE001
+            logger.error(f"Cancelled attachment hydrate operation also failed: {exc}")
+        raise
+
+
+async def hydrate_attachment_records_to_sandbox(
+    runtime_thread_id: str,
+    uid: str,
+    attachments: list[dict],
+    *,
+    file_thread_id: str | None = None,
+    skills_thread_id: str | None = None,
+) -> None:
+    """从持久附件事实替换 sandbox 内完整的只读 uploads。"""
+    file_thread_id = str(file_thread_id or runtime_thread_id)
+    minio_client = get_minio_client()
+    legacy_uploads_dir = sandbox_uploads_dir(file_thread_id)
+    sources = _validated_attachment_hydrate_sources(
+        file_thread_id,
+        attachments,
+        minio_client.KB_BUCKETS["documents"],
+    )
+    backend = ProvisionerSandboxBackend(
+        thread_id=runtime_thread_id,
+        uid=uid,
+        file_thread_id=file_thread_id,
+        skills_thread_id=skills_thread_id,
+    )
+
+    try:
+        await _await_blocking_hydrate_call(backend.clear_upload_files)
+        for source in sources:
+            if source.bucket_name is not None and source.object_name is not None:
+                try:
+                    content = await minio_client.adownload_file(source.bucket_name, source.object_name)
+                except StorageError as exc:
+                    raise HTTPException(status_code=404, detail=f"附件对象不存在: {exc}") from exc
+            elif source.inline_content is not None:
+                content = source.inline_content
+            else:
+                content = await _await_blocking_hydrate_call(
+                    _read_legacy_upload_file,
+                    legacy_uploads_dir,
+                    source.legacy_parts,
+                )
+            if len(content) > MAX_ATTACHMENT_SIZE_BYTES:
+                raise HTTPException(status_code=400, detail="附件对象超过大小限制")
+            await _await_blocking_hydrate_call(backend.write_upload_file, source.path, content)
+    except (Exception, asyncio.CancelledError):
+        try:
+            await _await_blocking_hydrate_call(backend.clear_upload_files)
+        except Exception as exc:  # noqa: BLE001
+            logger.error(f"Failed to clear sandbox uploads after hydrate error: {exc}")
+        raise
 
 
 async def materialize_thread_attachments(*, thread_id: str, current_uid: str, db: AsyncSession) -> list[dict]:

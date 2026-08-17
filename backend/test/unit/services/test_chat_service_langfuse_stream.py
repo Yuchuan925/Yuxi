@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from contextlib import asynccontextmanager
 from types import SimpleNamespace
 
 import pytest
@@ -71,6 +72,10 @@ async def _fake_interrupts(agent, langgraph_config, make_chunk, meta, thread_id,
     return
 
 
+async def _fake_hydrate_attachment_records(*_args, **_kwargs):
+    return None
+
+
 def _patch_stream_scaffolding(
     monkeypatch: pytest.MonkeyPatch,
     *,
@@ -83,17 +88,29 @@ def _patch_stream_scaffolding(
     flush_langfuse=None,
     materialize=None,
 ):
+    resolved_conversation = conversation or SimpleNamespace(
+        id=1,
+        uid="user-1",
+        agent_id="test-agent",
+        status="active",
+        extra_metadata={},
+    )
+
     async def fake_resolve_agent_runtime(**_kwargs):
         return (
             SimpleNamespace(slug="test-agent", backend_id="ChatbotAgent"),
             agent,
             runtime_context or {},
-            conversation
-            or SimpleNamespace(id=1, uid="user-1", agent_id="test-agent", status="active", extra_metadata={}),
+            resolved_conversation,
         )
 
     monkeypatch.setattr(svc, "_resolve_agent_runtime", fake_resolve_agent_runtime)
     monkeypatch.setattr(svc, "normalize_agent_context_config", _fake_normalize_agent_context_config)
+    monkeypatch.setattr(
+        _FakeConvRepo,
+        "default_attachments",
+        list((resolved_conversation.extra_metadata or {}).get("attachments", [])),
+    )
     monkeypatch.setattr(svc, "ConversationRepository", _FakeConvRepo)
     monkeypatch.setattr(
         svc, "save_messages_from_langgraph_state", save_messages or _fake_save_messages_from_langgraph_state
@@ -101,8 +118,11 @@ def _patch_stream_scaffolding(
     monkeypatch.setattr(svc.content_guard, "check", _fake_guard_check)
     monkeypatch.setattr(svc.content_guard, "check_with_keywords", _fake_guard_check_with_keywords)
     monkeypatch.setattr(svc, "check_and_handle_interrupts", _fake_interrupts)
-    if materialize is not None:
-        monkeypatch.setattr(svc, "materialize_attachment_records", materialize)
+    monkeypatch.setattr(
+        svc,
+        "hydrate_attachment_records_to_sandbox",
+        materialize or _fake_hydrate_attachment_records,
+    )
     monkeypatch.setattr(
         svc,
         "_build_langfuse_run_context",
@@ -132,6 +152,8 @@ class _FakeSession:
 
 
 class _FakeConvRepo:
+    default_attachments: list[dict] = []
+
     def __init__(self, _db):
         self.saved_messages: list[dict] = []
         self.conversations: dict[str, SimpleNamespace] = {}
@@ -194,7 +216,61 @@ class _FakeConvRepo:
         return []
 
     async def get_attachments(self, conversation_id: int):
-        return []
+        del conversation_id
+        return [dict(item) for item in self.default_attachments]
+
+
+@pytest.mark.asyncio
+async def test_attachment_records_use_authorized_file_thread_for_subagent() -> None:
+    child = SimpleNamespace(uid="user-1", status="subagent", extra_metadata={})
+    parent = SimpleNamespace(
+        id=2,
+        uid="user-1",
+        status="active",
+        extra_metadata={"attachments": [{"file_id": "parent-file"}]},
+    )
+
+    class FakeRepo:
+        async def get_conversation_by_thread_id(self, thread_id: str):
+            assert thread_id == "parent-thread"
+            return parent
+
+        async def get_attachments(self, conversation_id: int):
+            assert conversation_id == 2
+            return [{"file_id": "parent-file"}]
+
+    records = await svc._attachment_records_for_file_thread(
+        conv_repo=FakeRepo(),
+        conversation=child,
+        runtime_thread_id="child-thread",
+        file_thread_id="parent-thread",
+        uid="user-1",
+    )
+    assert records == [{"file_id": "parent-file"}]
+
+    parent.uid = "other-user"
+    with pytest.raises(ValueError, match="附件文件线程不存在"):
+        await svc._attachment_records_for_file_thread(
+            conv_repo=FakeRepo(),
+            conversation=child,
+            runtime_thread_id="child-thread",
+            file_thread_id="parent-thread",
+            uid="user-1",
+        )
+
+
+def test_main_run_discards_configured_subagent_file_scope() -> None:
+    input_context = {
+        "file_thread_id": "other-thread",
+        "skills_thread_id": "other-skills",
+        "parent_thread_id": "other-parent",
+        "is_subagent_runtime": True,
+        "temperature": 0.1,
+    }
+
+    svc._apply_subagent_runtime_context(input_context, {"run_type": "chat"})
+
+    assert input_context == {"temperature": 0.1}
 
 
 def test_build_langfuse_run_context_reads_evaluation_from_invocation_meta(monkeypatch: pytest.MonkeyPatch):
@@ -261,9 +337,10 @@ async def test_stream_agent_chat_commits_before_stream_and_persists_langfuse_con
 
             return FakeGraph()
 
-    async def fake_materialize(_thread_id, _uid, _attachments):
+    async def fake_materialize(_thread_id, _uid, _attachments, **scope):
         assert db.commit_count == 1
         calls["materialized"] = _attachments
+        calls["hydrate_scope"] = scope
 
     async def fake_save_messages_from_langgraph_state(
         *,
@@ -295,7 +372,11 @@ async def test_stream_agent_chat_commits_before_stream_and_persists_langfuse_con
     _patch_stream_scaffolding(
         monkeypatch,
         agent=FakeAgent(),
-        runtime_context={"temperature": 0.1},
+        runtime_context={
+            "temperature": 0.1,
+            "file_thread_id": "configured-other-thread",
+            "skills_thread_id": "configured-other-skills",
+        },
         conversation=SimpleNamespace(
             id=1,
             uid="user-1",
@@ -379,6 +460,8 @@ async def test_stream_agent_chat_commits_before_stream_and_persists_langfuse_con
             },
         ],
     }
+    assert "file_thread_id" not in calls["stream_input_context"]
+    assert "skills_thread_id" not in calls["stream_input_context"]
     assert calls["saved_state"]["trace_info"] == {
         "langfuse_trace_id": "trace-runtime",
         "langfuse_session_id": "thread-1",
@@ -389,9 +472,72 @@ async def test_stream_agent_chat_commits_before_stream_and_persists_langfuse_con
     assert calls["saved_state"]["complete_run"] is True
     assert chunks[-1]["status"] == "finished"
     assert [attachment["file_id"] for attachment in calls["materialized"]] == ["file-1", "file-2"]
+    assert calls["hydrate_scope"] == {
+        "file_thread_id": "thread-1",
+        "skills_thread_id": "thread-1",
+    }
     assert chunks[0]["msg"]["extra_metadata"]["attachments"] == [calls["stream_kwargs"]["uploads"][0]]
     assert calls["flushed"] is True
     assert isinstance(calls["stream_messages"][0], HumanMessage)
+
+
+@pytest.mark.asyncio
+async def test_stream_agent_chat_hydrate_failure_prevents_agent_execution(
+    stub_system_options,
+    stub_content_guard,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    agent_started = False
+
+    class FakeAgent:
+        context_schema = _FakeContext
+
+        async def stream_messages_with_state(self, messages, input_context=None, **kwargs):
+            nonlocal agent_started
+            del messages, input_context, kwargs
+            agent_started = True
+            yield "messages", (AIMessageChunk(content="must not run"), {"node": "llm"})
+
+    async def fail_hydrate(*_args, **_kwargs):
+        raise RuntimeError("sandbox hydrate failed")
+
+    @asynccontextmanager
+    async def fake_session_context():
+        yield _FakeSession()
+
+    async def fake_save_partial_message(*_args, **_kwargs):
+        return None
+
+    _patch_stream_scaffolding(
+        monkeypatch,
+        agent=FakeAgent(),
+        conversation=SimpleNamespace(
+            id=1,
+            uid="user-1",
+            agent_id="test-agent",
+            status="active",
+            extra_metadata={"attachments": [{"file_id": "file-1"}]},
+        ),
+        materialize=fail_hydrate,
+    )
+    monkeypatch.setattr(svc.pg_manager, "get_async_session_context", fake_session_context)
+    monkeypatch.setattr(svc, "save_partial_message", fake_save_partial_message)
+
+    chunks = []
+    async for chunk in svc.stream_agent_chat(
+        agent_slug="test-agent",
+        thread_id="thread-1",
+        meta={"request_id": "req-1"},
+        input_message=build_chat_input_message("hello"),
+        current_user=SimpleNamespace(id=1, uid="user-1", role="user", department_id="dept-1"),
+        db=_FakeSession(),
+    ):
+        chunks.append(json.loads(chunk.decode("utf-8")))
+
+    assert agent_started is False
+    assert chunks[-1]["status"] == "error"
+    assert "sandbox hydrate failed" in chunks[-1]["error_message"]
+    assert all(chunk.get("status") != "finished" for chunk in chunks)
 
 
 @pytest.mark.asyncio
