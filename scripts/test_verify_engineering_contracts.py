@@ -708,6 +708,18 @@ jobs:
             any("禁止对举式否定" in error for error in self._errors())
         )
 
+    def test_nested_list_fence_cannot_hide_outer_item_prose(self) -> None:
+        self._write(
+            "docs/advanced/nested-list-fence.md",
+            "# 列表示例\n\n- 外层\n  - 内层\n"
+            "    ```text\n    fence 内容\n"
+            "  系统不是缓存层，而是最终事实源。\n",
+        )
+
+        self.assertTrue(
+            any("禁止对举式否定" in error for error in self._errors())
+        )
+
     def test_vibe_drafts_are_excluded_from_prose_check(self) -> None:
         self._write(
             "docs/vibe/2026-08-17-personal-note.md",

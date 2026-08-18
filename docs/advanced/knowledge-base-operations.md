@@ -45,7 +45,7 @@ CLI 的 `yuxi kb upload` 封装了上传与导入链路。原文件上传会计�
 
 ## 知识导图与示例问题
 
-Milvus 知识库可以根据文件元数据生成层次化知识导图。当前生成请求最多取前 20 个文件，结果保存到知识库 `mindmap` 字段；Agent 可通过 `get_mindmap` 读取。增量更新先比较已追踪文件与当前文件列表：纯删除直接修改现有树，出现新增文件时再调用模型整合分类。成功删除文件也会移除对应导图叶子。
+Milvus 知识库可以根据文件元数据生成层次化知识导图。当前生成请求受 [`MINDMAP_GENERATION_FILE_LIMIT`](https://github.com/xerrors/Yuxi/blob/main/backend/package/yuxi/knowledge/utils/mindmap_utils.py) 控制，结果保存到知识库 `mindmap` 字段；Agent 可通过 `get_mindmap` 读取。增量更新先比较已追踪文件与当前文件列表：纯删除直接修改现有树，出现新增文件时再调用模型整合分类。成功删除文件也会移除对应导图叶子。
 
 示例问题同样基于文件列表生成并保存到 `sample_questions`，供检索测试选择。两项能力都只使用文件元数据，不证明已经读取或总结全文；内容问答仍需检索 chunk，并按需要打开原文窗口。
 

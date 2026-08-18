@@ -530,6 +530,16 @@ def _strip_blockquote_prefixes(
     return line, depth
 
 
+def _list_item_content_indent(item_match: re.Match[str]) -> int:
+    """返回 list item 正文起点相对于原始行的列数。"""
+
+    return (
+        len(item_match.group("indent"))
+        + len(item_match.group("marker"))
+        + len(item_match.group("spacing"))
+    )
+
+
 def _markdown_body_line(
     line: str, active_list_indent: int | None
 ) -> tuple[str, int, int | None]:
@@ -541,16 +551,17 @@ def _markdown_body_line(
             return "", quote_depth, active_list_indent
         leading_spaces = len(body) - len(body.lstrip(" "))
         if leading_spaces >= active_list_indent:
-            return body[active_list_indent:], quote_depth, active_list_indent
+            stripped = body[active_list_indent:]
+            nested_item = MARKDOWN_LIST_ITEM.match(stripped)
+            if nested_item:
+                content_indent = active_list_indent + _list_item_content_indent(nested_item)
+                return nested_item.group("content"), quote_depth, content_indent
+            return stripped, quote_depth, active_list_indent
         active_list_indent = None
 
     item = MARKDOWN_LIST_ITEM.match(body)
     if item:
-        content_indent = (
-            len(item.group("indent"))
-            + len(item.group("marker"))
-            + len(item.group("spacing"))
-        )
+        content_indent = _list_item_content_indent(item)
         return item.group("content"), quote_depth, content_indent
     return body, quote_depth, active_list_indent
 

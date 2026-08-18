@@ -17,10 +17,10 @@
 
 ```mermaid
 flowchart TD
-    Request["ModelRequest\nstate + effective messages + tools"] --> Count["截短当前轮工具参数后\n近似统计 tokens"]
+    Request["ModelRequest\nstate + effective messages + tools"] --> Count["近似统计 tokens\n（保留原始工具参数）"]
     Count --> Entry{"达到入口阈值？"}
     Entry -- "否" --> Main["直接调用主模型"]
-    Main -- "ContextOverflowError" --> L1["L1 临时精简"]
+    Main -- "ContextOverflowError" --> L1["L1 临时精简\n截短工具参数 + 工具结果 offload"]
     Entry -- "是" --> Event["发送 started"]
     Event --> L1
     L1 --> Recount["重新统计 L1 请求"]
