@@ -1,0 +1,65 @@
+name: Dependency Supply Chain Audit
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  python:
+    name: Python vulnerabilities and licenses
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v4
+        with:
+          version: "0.11.7"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Audit locked Python vulnerabilities
+        working-directory: backend
+        # The locked PyTorch 2.12.1 wheels require setuptools<82 and no compatible 2.13 CPU pair is available yet.
+        run: uv audit --locked --no-dev --ignore GHSA-h35f-9h28-mq5c --ignore GHSA-rrmf-rvhw-rf47
+      - name: Install locked backend production environment
+        working-directory: backend
+        run: uv sync --no-dev --frozen
+      - name: Audit Python transitive licenses
+        working-directory: backend
+        run: uvx --from pip-licenses pip-licenses --python .venv/bin/python --from mixed --format markdown
+      - name: Audit yuxi-cli locked vulnerabilities
+        working-directory: packages/yuxi-cli
+        run: uv audit --locked --no-dev
+      - name: Install locked yuxi-cli production environment
+        working-directory: packages/yuxi-cli
+        run: uv sync --no-dev --frozen
+      - name: Audit yuxi-cli transitive licenses
+        working-directory: packages/yuxi-cli
+        run: uvx --from pip-licenses pip-licenses --python .venv/bin/python --from mixed --format markdown
+
+  node:
+    name: Node.js production vulnerabilities
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        project: [web, docs]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.11.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: ${{ matrix.project }}/pnpm-lock.yaml
+      - name: Audit locked Node.js production dependencies
+        working-directory: ${{ matrix.project }}
+        run: pnpm audit --audit-level=high --prod

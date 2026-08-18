@@ -1,5 +1,5 @@
 
-.PHONY: up up-lite down logs lint format seed reset test verify-trust
+.PHONY: up up-lite down logs lint format seed reset test verify-trust audit-dependencies audit-licenses
 
 PYTEST_ARGS ?=
 BACKEND_PYTHON ?= $(shell cat backend/.python-version)
@@ -66,3 +66,15 @@ test:
 verify-trust:
 	python3 scripts/verify_engineering_contracts.py
 	python3 -m unittest scripts.test_verify_engineering_contracts
+
+audit-dependencies:
+	cd backend && uv audit --locked --no-dev --ignore GHSA-h35f-9h28-mq5c --ignore GHSA-rrmf-rvhw-rf47
+	cd packages/yuxi-cli && uv audit --locked --no-dev
+	cd web && pnpm audit --audit-level=high --prod
+	cd docs && pnpm audit --audit-level=high --prod
+
+audit-licenses:
+	cd backend && UV_PYTHON=$(BACKEND_PYTHON) uv sync --no-dev --frozen
+	cd backend && uvx --from pip-licenses pip-licenses --python .venv/bin/python --from mixed --format markdown
+	cd packages/yuxi-cli && uv sync --no-dev --frozen
+	cd packages/yuxi-cli && uvx --from pip-licenses pip-licenses --python .venv/bin/python --from mixed --format markdown
