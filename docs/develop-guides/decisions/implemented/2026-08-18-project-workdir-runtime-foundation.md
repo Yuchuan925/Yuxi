@@ -33,8 +33,9 @@ Sandbox identity、generation 和挂载校验由 `agents/backends/sandbox/provid
   共享卷 flock 串行替换；授权上下文缺失时 fail-closed。
 - personal Skill 来源使用从文件系统根逐组件 `O_NOFOLLOW` 的 fd-relative 快照，只复制普通文件和
   真实目录。symlink 竞态、Unix socket、FIFO、设备等特殊项会删除旧 slug 投影并阻止本次刷新。
-- 附件、outputs、Viewer、artifact、每 Run 文件副本和 output revision/publish 继续由旧 Owner 处理，
-  直到后续全量物化与实时主链路在单一切换阶段完成，避免形成部分启用的双重事实源。
+- 本决定落地时附件、outputs、Viewer 和 artifact 暂由旧 Owner 处理；后续
+  [实时 Project Workdir 与独立 Sandbox Runtime](2026-08-18-live-project-workdir-and-runtime.md)
+  已完成全量物化、实时主链路切换和旧 revision/hydrate 表面删除。
 
 ## 替代方案
 
@@ -52,8 +53,7 @@ Sandbox identity、generation 和挂载校验由 `agents/backends/sandbox/provid
 - Project 文件身份与 Sandbox runtime identity 已分离，未来 Project 只需让多个顶层 Conversation
   指向同一 `workdir_id`，无需再次改变文件协议。
 - 同 uid 的父子 Agent 看到相同 Skills 文件全集，但各自 Prompt/工具仍保持选择隔离。
-- 当前 shipping 仍使用旧附件/output snapshot Owner，因此实时 Viewer、任意路径 artifact 和 revision
-  发布前 404 尚未改变；这些行为由后续提案的原子主链路切换负责。
+- 实时文件行为由后续 owning decision 负责；本记录只保留 Workdir/runtime identity 与 Skills 投影基础。
 - Skills 投影刷新会执行受限安全复制并跨 worker 串行化，换取授权一致性和用户可写来源的信任边界。
 - 真实 Kubernetes RWX 行为仍需目标集群 smoke；Compose 和 Pod spec 测试不能替代该证据。
 

@@ -22,10 +22,10 @@ from yuxi.repositories.project_workdir_repository import (
     FileStorageMaterializationRepository,
     ProjectWorkdirRepository,
 )
-from yuxi.repositories.thread_output_repository import ThreadOutputRepository
 from yuxi.services.attachment_service import (
-    _read_legacy_upload_file,
-    _validated_attachment_hydrate_sources,
+    MAX_ATTACHMENT_SIZE_BYTES,
+    _make_attachment_path,
+    _safe_file_name,
 )
 from yuxi.storage.minio import StorageError, get_minio_client
 from yuxi.storage.postgres.manager import pg_manager
@@ -38,6 +38,14 @@ MAX_MATERIALIZED_DIRECTORIES_PER_WORKDIR = 2000
 MAX_MATERIALIZED_BYTES_PER_WORKDIR = 100 * 1024 * 1024
 MAX_MATERIALIZED_DIRECTORY_DEPTH = 64
 _LEGACY_USER_DATA_ROOT = "/home/gem/user-data"
+_LEGACY_OUTPUT_TABLE = "thread_output_revisions"
+_LEGACY_OUTPUT_POINTER = "current_output_revision_id"
+_LEGACY_ATTACHMENT_STORAGE_FIELDS = (
+    "bucket_name",
+    "original_object_name",
+    "markdown_object_name",
+    "minio_url",
+)
 
 
 class FileStorageNotReadyError(RuntimeError):
@@ -82,6 +90,74 @@ def _target_path_from_legacy_virtual_path(path: str) -> str:
     if not relative or ".." in PurePosixPath(relative).parts:
         raise ValueError(f"旧文件路径无效: {path}")
     return relative
+
+
+async def _legacy_output_schema_state(db) -> tuple[bool, bool]:
+    """检测升级前 outputs pointer/table 是否仍存在。"""
+    row = (
+        await db.execute(
+            text(
+                """
+                SELECT
+                    EXISTS (
+                        SELECT 1
+                        FROM pg_attribute
+                        WHERE attrelid = to_regclass('conversations')
+                          AND attname = :pointer
+                          AND NOT attisdropped
+                    ) AS has_pointer,
+                    to_regclass(:table_name) IS NOT NULL AS has_revision_table
+                """
+            ),
+            {"pointer": _LEGACY_OUTPUT_POINTER, "table_name": _LEGACY_OUTPUT_TABLE},
+        )
+    ).one()
+    return bool(row.has_pointer), bool(row.has_revision_table)
+
+
+def _validate_legacy_output_revision_scope(conversation: Conversation, row) -> None:
+    """校验旧 revision 行仍属于当前 Conversation 与用户。"""
+    if row.thread_id != conversation.thread_id or str(row.uid) != str(conversation.uid):
+        raise ValueError(f"Conversation {conversation.thread_id} 的 current outputs revision 作用域无效")
+
+
+async def _legacy_current_output_files(db, conversation: Conversation) -> tuple[str, list[dict]] | None:
+    """只为一次性升级读取旧 current revision；新 schema 返回 None。"""
+    has_pointer, has_revision_table = await _legacy_output_schema_state(db)
+    if not has_pointer:
+        return None
+    revision_id = await db.scalar(
+        text("SELECT current_output_revision_id FROM conversations WHERE id = :conversation_id"),
+        {"conversation_id": conversation.id},
+    )
+    if revision_id is None:
+        return None
+    if not has_revision_table:
+        raise ValueError(f"Conversation {conversation.thread_id} 的 current outputs revision 表不存在")
+    row = (
+        await db.execute(
+            text(
+                """
+                SELECT thread_id, uid, files
+                FROM thread_output_revisions
+                WHERE id = :revision_id
+                  AND conversation_id = :conversation_id
+                  AND status = 'published'
+                """
+            ),
+            {"revision_id": revision_id, "conversation_id": conversation.id},
+        )
+    ).one_or_none()
+    if row is None:
+        raise ValueError(f"Conversation {conversation.thread_id} 的 current outputs revision 不可用")
+    _validate_legacy_output_revision_scope(conversation, row)
+    files = row.files
+    if not isinstance(files, list):
+        raise ValueError(f"Conversation {conversation.thread_id} 的 current outputs manifest 无效")
+    revision_id = str(revision_id)
+    if not revision_id or any(marker in revision_id for marker in ("/", "\\")):
+        raise ValueError(f"Conversation {conversation.thread_id} 的 current outputs revision identity 无效")
+    return revision_id, files
 
 
 def _read_host_file(root: Path, parts: tuple[str, ...]) -> bytes:
@@ -198,6 +274,57 @@ async def _object_source(
     )
 
 
+async def _output_sources(
+    conversation: Conversation,
+    revision_id: str,
+    descriptors: list[dict],
+) -> list[LegacyFileSource]:
+    """校验旧 outputs manifest 与线程、对象和路径的完整绑定。"""
+    minio = get_minio_client()
+    expected_bucket = minio.KB_BUCKETS["documents"]
+    path_prefix = f"{_LEGACY_USER_DATA_ROOT}/outputs/"
+    object_prefix = f"threads/{conversation.thread_id}/outputs/revisions/{revision_id}/"
+    sources: list[LegacyFileSource] = []
+    for descriptor in descriptors:
+        if not isinstance(descriptor, dict):
+            raise ValueError(f"Conversation {conversation.thread_id} 的 outputs descriptor 无效")
+        bucket_name = descriptor.get("bucket_name")
+        object_name = descriptor.get("object_name")
+        path = descriptor.get("path")
+        if bucket_name != expected_bucket or not isinstance(object_name, str) or not isinstance(path, str):
+            raise ValueError(f"Conversation {conversation.thread_id} 的 outputs descriptor 作用域无效")
+        target_path = _target_path_from_legacy_virtual_path(path)
+        if not path.startswith(path_prefix) or not target_path.startswith("outputs/"):
+            raise ValueError(f"Conversation {conversation.thread_id} 的 outputs descriptor 路径无效")
+        relative_path = target_path.removeprefix("outputs/")
+        if not relative_path or object_name != f"{object_prefix}{relative_path}":
+            raise ValueError(f"Conversation {conversation.thread_id} 的 outputs descriptor 对象作用域无效")
+        size = descriptor.get("size")
+        sha256 = descriptor.get("sha256")
+        if (
+            not isinstance(size, int)
+            or isinstance(size, bool)
+            or size < 0
+            or size > MAX_MATERIALIZED_BYTES_PER_WORKDIR
+            or not isinstance(sha256, str)
+            or len(sha256) != 64
+        ):
+            raise ValueError(f"Conversation {conversation.thread_id} 的 outputs descriptor 完整性无效")
+        try:
+            bytes.fromhex(sha256)
+        except ValueError as exc:
+            raise ValueError(f"Conversation {conversation.thread_id} 的 outputs descriptor 完整性无效") from exc
+        source = await _object_source(
+            target_path=target_path,
+            bucket_name=expected_bucket,
+            object_name=object_name,
+        )
+        if source.size != size or source.sha256 != sha256:
+            raise ValueError(f"Conversation {conversation.thread_id} 的 outputs descriptor 内容不一致")
+        sources.append(source)
+    return sources
+
+
 async def _download_object_content(bucket_name: str, object_name: str) -> bytes:
     """流式读取旧对象，并在进入 worker 内存上限前终止异常对象。"""
     try:
@@ -221,46 +348,119 @@ async def _download_object_content(bucket_name: str, object_name: str) -> bytes:
 
 
 async def _attachment_sources(conversation: Conversation, attachments: list[dict]) -> list[LegacyFileSource]:
-    minio = get_minio_client()
-    descriptors = _validated_attachment_hydrate_sources(
-        conversation.thread_id,
-        attachments,
-        minio.KB_BUCKETS["documents"],
-    )
+    """把旧附件记录收敛为物化来源，不暴露运行时 hydrate 接口。"""
+    expected_bucket = get_minio_client().KB_BUCKETS["documents"]
     legacy_root = get_save_dir() / "threads" / conversation.thread_id / "user-data" / "uploads"
     sources: list[LegacyFileSource] = []
-    for descriptor in descriptors:
-        target_path = _target_path_from_legacy_virtual_path(descriptor.path)
-        if descriptor.bucket_name and descriptor.object_name:
-            sources.append(
-                await _object_source(
-                    target_path=target_path,
-                    bucket_name=descriptor.bucket_name,
-                    object_name=descriptor.object_name,
-                )
-            )
-        elif descriptor.inline_content is not None:
-            content = descriptor.inline_content
+    seen_paths: set[str] = set()
+    for attachment in attachments:
+        file_id = attachment.get("file_id")
+        file_name = attachment.get("file_name")
+        if (
+            not isinstance(file_id, str)
+            or not file_id
+            or any(marker in file_id for marker in ("/", "\\"))
+            or not isinstance(file_name, str)
+        ):
+            raise ValueError("旧附件记录作用域无效")
+        file_size = attachment.get("file_size")
+        if file_size is not None and (
+            not isinstance(file_size, int) or file_size < 0 or file_size > MAX_ATTACHMENT_SIZE_BYTES
+        ):
+            raise ValueError("旧附件记录大小无效")
+
+        safe_file_name = _safe_file_name(file_name)
+        storage_name = f"{file_id}_{safe_file_name}"
+        expected_original_path = f"{_LEGACY_USER_DATA_ROOT}/uploads/{storage_name}"
+        direct_upload_path = f"{_LEGACY_USER_DATA_ROOT}/uploads/{safe_file_name}"
+        recorded_path = attachment.get("path")
+        original_path = attachment.get("original_path")
+        if not isinstance(original_path, str) and isinstance(recorded_path, str):
+            original_path = recorded_path
+
+        bucket_name = attachment.get("bucket_name")
+        original_object_name = attachment.get("original_object_name")
+        expected_prefix = f"threads/{conversation.thread_id}/attachments/{file_id}"
+        expected_original_object = f"{expected_prefix}/original/{safe_file_name}"
+        expected_markdown_object = f"{expected_prefix}/parsed/{Path(safe_file_name).stem or 'attachment'}.md"
+        if bucket_name is None and original_object_name is None:
+            if original_path == direct_upload_path:
+                storage_name = safe_file_name
+            elif original_path != expected_original_path:
+                raise ValueError("旧附件虚拟路径作用域无效")
+            content = await asyncio.to_thread(_read_host_file, legacy_root, (Path(original_path).name,))
+            if len(content) > MAX_ATTACHMENT_SIZE_BYTES:
+                raise ValueError("旧附件超过大小限制")
             sources.append(
                 LegacyFileSource(
-                    target_path=target_path,
-                    size=len(content),
-                    sha256=hashlib.sha256(content).hexdigest(),
-                    inline_content=content,
-                )
-            )
-        else:
-            parts = tuple(descriptor.legacy_parts or ())
-            content = await asyncio.to_thread(_read_legacy_upload_file, legacy_root, parts)
-            sources.append(
-                LegacyFileSource(
-                    target_path=target_path,
+                    target_path=_target_path_from_legacy_virtual_path(original_path),
                     size=len(content),
                     sha256=hashlib.sha256(content).hexdigest(),
                     host_root=legacy_root,
-                    host_parts=parts,
+                    host_parts=(Path(original_path).name,),
                 )
             )
+        elif bucket_name == expected_bucket and original_object_name == expected_original_object:
+            if original_path != expected_original_path:
+                raise ValueError("旧附件虚拟路径作用域无效")
+            sources.append(
+                await _object_source(
+                    target_path=_target_path_from_legacy_virtual_path(original_path),
+                    bucket_name=expected_bucket,
+                    object_name=expected_original_object,
+                )
+            )
+        else:
+            raise ValueError("旧附件对象作用域无效")
+
+        markdown_object_name = attachment.get("markdown_object_name")
+        if recorded_path not in (None, original_path):
+            expected_markdown_path = (
+                f"{_LEGACY_USER_DATA_ROOT}/uploads/attachments/{_make_attachment_path(storage_name)}"
+            )
+            if recorded_path != expected_markdown_path:
+                raise ValueError("旧附件解析路径作用域无效")
+            if markdown_object_name is not None:
+                if bucket_name != expected_bucket or markdown_object_name != expected_markdown_object:
+                    raise ValueError("旧附件解析对象作用域无效")
+                sources.append(
+                    await _object_source(
+                        target_path=_target_path_from_legacy_virtual_path(recorded_path),
+                        bucket_name=expected_bucket,
+                        object_name=expected_markdown_object,
+                    )
+                )
+            elif isinstance(attachment.get("markdown"), str):
+                content = attachment["markdown"].encode("utf-8")
+                sources.append(
+                    LegacyFileSource(
+                        target_path=_target_path_from_legacy_virtual_path(recorded_path),
+                        size=len(content),
+                        sha256=hashlib.sha256(content).hexdigest(),
+                        inline_content=content,
+                    )
+                )
+            else:
+                parts = ("attachments", Path(recorded_path).name)
+                content = await asyncio.to_thread(_read_host_file, legacy_root, parts)
+                if len(content) > MAX_ATTACHMENT_SIZE_BYTES:
+                    raise ValueError("旧附件超过大小限制")
+                sources.append(
+                    LegacyFileSource(
+                        target_path=_target_path_from_legacy_virtual_path(recorded_path),
+                        size=len(content),
+                        sha256=hashlib.sha256(content).hexdigest(),
+                        host_root=legacy_root,
+                        host_parts=parts,
+                    )
+                )
+        elif markdown_object_name is not None:
+            raise ValueError("旧附件解析对象作用域无效")
+
+    for source in sources:
+        if source.target_path in seen_paths:
+            raise ValueError("旧附件虚拟路径重复")
+        seen_paths.add(source.target_path)
     return sources
 
 
@@ -278,25 +478,12 @@ async def _conversation_sources(db, conversation: Conversation) -> list[LegacyFi
     legacy_root = get_save_dir() / "threads" / conversation.thread_id / "user-data"
     sources.extend(await asyncio.to_thread(_scan_host_tree, legacy_root / "uploads", "uploads"))
 
-    current_revision = await ThreadOutputRepository(db).get_current(conversation)
+    current_revision = await _legacy_current_output_files(db, conversation)
     if current_revision is None:
-        if conversation.current_output_revision_id:
-            raise ValueError(f"Conversation {conversation.thread_id} 的 current outputs revision 不可用")
         sources.extend(await asyncio.to_thread(_scan_host_tree, legacy_root / "outputs", "outputs"))
     else:
-        for descriptor in current_revision.files or []:
-            bucket_name = descriptor.get("bucket_name")
-            object_name = descriptor.get("object_name")
-            path = descriptor.get("path")
-            if not all(isinstance(value, str) and value for value in (bucket_name, object_name, path)):
-                raise ValueError(f"Conversation {conversation.thread_id} 的 outputs descriptor 无效")
-            sources.append(
-                await _object_source(
-                    target_path=_target_path_from_legacy_virtual_path(path),
-                    bucket_name=bucket_name,
-                    object_name=object_name,
-                )
-            )
+        revision_id, descriptors = current_revision
+        sources.extend(await _output_sources(conversation, revision_id, descriptors))
     return sources
 
 
@@ -437,6 +624,65 @@ async def _rewrite_persisted_project_paths(db, conversations: list[Conversation]
     await db.flush()
 
 
+def _strip_legacy_attachment_storage(record: dict) -> dict:
+    """移除已经由实时 Workdir 取代的对象存储定位字段。"""
+    return {key: value for key, value in record.items() if key not in _LEGACY_ATTACHMENT_STORAGE_FIELDS}
+
+
+def _is_legacy_file_storage_object(object_name: str) -> bool:
+    """只识别 Stage 3/4 曾拥有的正式附件与 outputs 对象。"""
+    if not object_name or str(PurePosixPath(object_name)) != object_name:
+        return False
+    parts = PurePosixPath(object_name).parts
+    if any(part in {"", ".", ".."} for part in parts):
+        return False
+    if len(parts) >= 6 and parts[0] == "threads" and parts[2] == "attachments":
+        return parts[4] in {"original", "parsed"}
+    return len(parts) >= 6 and parts[0] == "threads" and parts[2] == "outputs" and parts[3] == "revisions"
+
+
+async def _cleanup_legacy_file_storage(db) -> None:
+    """在物化激活后删除旧对象，并事务性移除旧 schema/元数据。"""
+    has_pointer, has_revision_table = await _legacy_output_schema_state(db)
+    conversations = list((await db.scalars(select(Conversation).order_by(Conversation.id))).all())
+    has_legacy_attachment_metadata = False
+    for conversation in conversations:
+        attachments = (conversation.extra_metadata or {}).get("attachments")
+        if not isinstance(attachments, list):
+            continue
+        has_legacy_attachment_metadata = has_legacy_attachment_metadata or any(
+            isinstance(item, dict) and any(field in item for field in _LEGACY_ATTACHMENT_STORAGE_FIELDS)
+            for item in attachments
+        )
+    if not has_pointer and not has_revision_table and not has_legacy_attachment_metadata:
+        await db.rollback()
+        return
+
+    minio = get_minio_client()
+    bucket_name = minio.KB_BUCKETS["documents"]
+    object_names = await minio.alist_object_names(bucket_name, "threads/")
+    for object_name in sorted(name for name in object_names if _is_legacy_file_storage_object(name)):
+        await minio.adelete_file(bucket_name, object_name)
+
+    await db.rollback()
+    conversations = list((await db.scalars(select(Conversation).order_by(Conversation.id).with_for_update())).all())
+    for conversation in conversations:
+        metadata = dict(conversation.extra_metadata or {})
+        attachments = metadata.get("attachments")
+        if not isinstance(attachments, list):
+            continue
+        rewritten = [_strip_legacy_attachment_storage(item) if isinstance(item, dict) else item for item in attachments]
+        if rewritten != attachments:
+            metadata["attachments"] = rewritten
+            conversation.extra_metadata = metadata
+    await db.flush()
+    if has_revision_table:
+        await db.execute(text("DROP TABLE thread_output_revisions"))
+    if has_pointer:
+        await db.execute(text("ALTER TABLE conversations DROP COLUMN current_output_revision_id"))
+    await db.commit()
+
+
 async def _source_content(source: LegacyFileSource) -> bytes:
     if source.is_directory:
         raise ValueError(f"旧目录不能按文件读取: {source.target_path}")
@@ -557,6 +803,7 @@ async def ensure_project_workdir_materialized() -> None:
                 control_repo = FileStorageMaterializationRepository(db)
                 control = await control_repo.get(for_update=True)
                 if control.phase == "active":
+                    await _cleanup_legacy_file_storage(db)
                     return
                 if await _nonterminal_run_count(db):
                     raise FileStorageNotReadyError("仍有非终态 AgentRun，不能采集最终旧文件 inventory")
@@ -636,6 +883,7 @@ async def ensure_project_workdir_materialized() -> None:
                     activated_at=utc_now_naive(),
                 )
                 await db.commit()
+                await _cleanup_legacy_file_storage(db)
             except Exception as exc:
                 await db.rollback()
                 control = await FileStorageMaterializationRepository(db).get(for_update=True)

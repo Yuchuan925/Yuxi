@@ -43,12 +43,13 @@ async def _project_backend(test_client, headers, thread_id: str, uid: str) -> tu
     path = response.json()["entries"][0]["path"]
     project_root = path.rsplit("/", 1)[0]
     workdir_id = project_root.removeprefix("/home/gem/projects/project-")
+    file_scope_id = f"workdir-files-{workdir_id}"
     return (
         ProvisionerSandboxBackend(
-            thread_id=thread_id,
+            thread_id=file_scope_id,
             uid=uid,
             workdir_id=workdir_id,
-            sandbox_instance_id=thread_id,
+            sandbox_instance_id=file_scope_id,
             create_if_missing=False,
         ),
         project_root,

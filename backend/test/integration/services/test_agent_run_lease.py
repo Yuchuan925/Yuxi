@@ -19,7 +19,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from yuxi.repositories.agent_run_repository import AgentRunRepository
 from yuxi.repositories.conversation_repository import ConversationRepository
 from yuxi.services import chat_service, run_worker
-from yuxi.storage.postgres.manager import AGENT_RUN_LEASE_SCHEMA_STATEMENTS, THREAD_OUTPUT_SCHEMA_STATEMENTS
+from yuxi.storage.postgres.manager import AGENT_RUN_LEASE_SCHEMA_STATEMENTS
 from yuxi.storage.postgres.models_business import AgentRun, Conversation, Message
 from yuxi.utils.datetime_utils import utc_now_naive
 
@@ -32,8 +32,6 @@ async def lease_database():
     async with engine.begin() as connection:
         for _ in range(2):
             for statement in AGENT_RUN_LEASE_SCHEMA_STATEMENTS:
-                await connection.execute(text(statement))
-            for statement in THREAD_OUTPUT_SCHEMA_STATEMENTS:
                 await connection.execute(text(statement))
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
     try:

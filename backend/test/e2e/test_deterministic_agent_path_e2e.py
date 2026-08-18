@@ -184,8 +184,7 @@ async def _assert_persistent_workdir_binding(run_id: str, thread_id: str) -> Non
     try:
         row = await conn.fetchrow(
             """
-            SELECT conversation.current_output_revision_id,
-                   conversation.workdir_id,
+            SELECT conversation.workdir_id,
                    workdir.materialization_status,
                    run.runtime_scope_id,
                    control.phase
@@ -199,7 +198,6 @@ async def _assert_persistent_workdir_binding(run_id: str, thread_id: str) -> Non
             thread_id,
         )
         assert row, f"workdir binding missing for {thread_id}"
-        assert row["current_output_revision_id"] is None
         assert row["workdir_id"]
         assert row["materialization_status"] == "ready"
         assert row["runtime_scope_id"] == thread_id

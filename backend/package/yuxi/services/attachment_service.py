@@ -1,7 +1,6 @@
 import asyncio
 import hashlib
 import os
-import stat
 import tempfile
 import uuid
 from dataclasses import dataclass
@@ -10,30 +9,20 @@ from urllib.parse import quote
 
 from fastapi import HTTPException, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
-from yuxi.agents.backends.sandbox import ProvisionerSandboxBackend, ensure_thread_dirs, sandbox_uploads_dir
 from yuxi.config import get_save_dir
 from yuxi.config.options import system_options
 from yuxi.knowledge.parser.factory import DocumentProcessorFactory
 from yuxi.repositories.conversation_repository import ConversationRepository
 from yuxi.services.mention_search_service import invalidate_mention_cache
-from yuxi.services.scoped_file_store import (
-    await_blocking_file_call,
-    replace_scope_with_objects,
-    validate_scoped_virtual_path,
-)
 from yuxi.storage.minio import StorageError, get_minio_client
 from yuxi.utils.datetime_utils import utc_isoformat
 from yuxi.utils.logging_config import logger
-from yuxi.utils.paths import VIRTUAL_PATH_UPLOADS
 from yuxi.utils.upload_utils import read_upload_with_limit, write_upload_to_path
 
 ATTACHMENT_ALLOWED_EXTENSIONS: tuple[str, ...] = ()
 MAX_ATTACHMENT_SIZE_BYTES = 5 * 1024 * 1024  # 5 MB
-MAX_ATTACHMENT_HYDRATE_FILES = 1000
-MAX_ATTACHMENT_HYDRATE_BYTES = 100 * 1024 * 1024
 MAX_ATTACHMENT_MARKDOWN_CHARS = 32_000  # TODO: 转 MARKDOWN的时候，不应该裁剪
 TMP_ATTACHMENT_PREFIX = "tmp/chat_attachments"
-THREAD_ATTACHMENT_PREFIX = "threads"
 TMP_ATTACHMENT_PARSE_EXTENSIONS = (".pdf", ".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".tif")
 TMP_ATTACHMENT_IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".tif")
 TMP_ATTACHMENT_OCR_METHODS = tuple(DocumentProcessorFactory.get_available_processors())
@@ -50,19 +39,6 @@ class ConversionResult:
     file_size: int
     markdown: str
     truncated: bool
-
-
-@dataclass(frozen=True, slots=True)
-class AttachmentHydrateSource:
-    """表示经过作用域校验的单个 sandbox 附件来源。"""
-
-    path: str
-    bucket_name: str | None = None
-    object_name: str | None = None
-    legacy_parts: tuple[str, ...] | None = None
-    inline_content: bytes | None = None
-    size: int | None = None
-    sha256: str | None = None
 
 
 async def parse_document(source: str, params: dict | None = None, db: AsyncSession | None = None) -> str:
@@ -143,10 +119,6 @@ def _safe_file_name(file_name: str | None, default: str = "attachment.bin") -> s
     return safe_name or default
 
 
-def _make_upload_virtual_path(file_name: str) -> str:
-    return f"{VIRTUAL_PATH_UPLOADS}/{_safe_file_name(file_name)}"
-
-
 def _make_attachment_path(file_name: str) -> str:
     """生成附件在沙盒用户目录中的统一路径。"""
     file_name = _safe_file_name(file_name)
@@ -182,13 +154,6 @@ def _make_tmp_attachment_object(uid: str, file_name: str) -> tuple[str, str]:
 def _make_tmp_parsed_object(uid: str, tmp_file_id: str, file_name: str) -> str:
     stem = Path(_safe_file_name(file_name)).stem or "attachment"
     return f"{_tmp_attachment_prefix(uid, tmp_file_id)}/parsed/{stem}.md"
-
-
-def _make_thread_attachment_objects(thread_id: str, file_id: str, file_name: str) -> tuple[str, str]:
-    """生成正式附件原件和 Markdown 对象路径。"""
-    safe_name = _safe_file_name(file_name)
-    prefix = f"{THREAD_ATTACHMENT_PREFIX}/{thread_id}/attachments/{file_id}"
-    return f"{prefix}/original/{safe_name}", f"{prefix}/parsed/{Path(safe_name).stem or 'attachment'}.md"
 
 
 def _minio_source(bucket_name: str, object_name: str) -> str:
@@ -257,7 +222,6 @@ def serialize_attachment(record: dict) -> dict:
         "artifact_url": record.get("artifact_url"),
         "original_path": record.get("original_path"),
         "original_artifact_url": record.get("original_artifact_url"),
-        "minio_url": record.get("minio_url"),
         "request_id": record.get("request_id"),
     }
 
@@ -330,351 +294,6 @@ async def _store_attachment(
         }
     )
     return record
-
-
-async def _delete_recorded_objects(records: list[dict] | dict, bucket_name: str, minio_client) -> None:
-    """Best-effort 删除附件对象，供回滚和数据库提交后的清理使用。"""
-    items = records if isinstance(records, list) else [records]
-    for record in items:
-        for object_name in (record.get("original_object_name"), record.get("markdown_object_name")):
-            if isinstance(object_name, str) and object_name:
-                try:
-                    await minio_client.adelete_file(bucket_name, object_name)
-                except StorageError as exc:
-                    logger.warning(f"Failed to remove attachment object {object_name}: {exc}")
-
-
-def _delete_materialized_attachment_files(thread_id: str, attachment: dict) -> None:
-    """删除正式附件按需恢复到线程目录的本地缓存。"""
-    uploads_dir = sandbox_uploads_dir(thread_id)
-    candidates = []
-
-    original_path = attachment.get("original_path")
-    if isinstance(original_path, str) and original_path:
-        candidates.append(uploads_dir / Path(original_path).name)
-
-    markdown_path = attachment.get("path")
-    if isinstance(attachment.get("markdown_object_name"), str) and isinstance(markdown_path, str):
-        candidates.append(uploads_dir / "attachments" / Path(markdown_path).name)
-
-    for path in candidates:
-        try:
-            path.unlink(missing_ok=True)
-        except OSError as exc:
-            logger.warning(f"Failed to remove materialized attachment file {path}: {exc}")
-
-
-async def materialize_attachment_record(
-    thread_id: str,
-    uid: str,
-    attachment: dict,
-    *,
-    uploads_dir: Path | None = None,
-    minio_client=None,
-) -> None:
-    """按需把 MinIO 正式附件恢复到线程 uploads 临时目录。"""
-    bucket_name = attachment.get("bucket_name")
-    original_object_name = attachment.get("original_object_name")
-    if not isinstance(bucket_name, str) or not isinstance(original_object_name, str):
-        return
-
-    if uploads_dir is None:
-        ensure_thread_dirs(thread_id, uid)
-        uploads_dir = sandbox_uploads_dir(thread_id)
-    if minio_client is None:
-        minio_client = get_minio_client()
-
-    original_path = attachment.get("original_path")
-    if isinstance(original_path, str) and original_path:
-        local_original = uploads_dir / Path(original_path).name
-        if not local_original.exists():
-            local_original.write_bytes(await minio_client.adownload_file(bucket_name, original_object_name))
-
-    markdown_object_name = attachment.get("markdown_object_name")
-    markdown_path = attachment.get("path")
-    if isinstance(markdown_object_name, str) and isinstance(markdown_path, str):
-        local_markdown = uploads_dir / "attachments" / Path(markdown_path).name
-        if not local_markdown.exists():
-            local_markdown.parent.mkdir(parents=True, exist_ok=True)
-            local_markdown.write_bytes(await minio_client.adownload_file(bucket_name, markdown_object_name))
-
-
-async def materialize_attachment_records(thread_id: str, uid: str, attachments: list[dict]) -> None:
-    """将一组 MinIO 附件按需恢复为本地只读缓存。"""
-    if not attachments:
-        return
-    ensure_thread_dirs(thread_id, uid)
-    uploads_dir = sandbox_uploads_dir(thread_id)
-    minio_client = get_minio_client()
-    for attachment in attachments:
-        try:
-            await materialize_attachment_record(
-                thread_id,
-                uid,
-                attachment,
-                uploads_dir=uploads_dir,
-                minio_client=minio_client,
-            )
-        except StorageError as exc:
-            raise HTTPException(status_code=404, detail=f"附件对象不存在: {exc}") from exc
-
-
-def _validated_attachment_hydrate_sources(
-    file_thread_id: str,
-    attachments: list[dict],
-    expected_bucket: str,
-) -> list[AttachmentHydrateSource]:
-    """校验 Conversation 附件记录与文件线程的完整绑定。"""
-    sources: list[AttachmentHydrateSource] = []
-    seen_paths: set[str] = set()
-
-    for attachment in attachments:
-        file_id = attachment.get("file_id")
-        file_name = attachment.get("file_name")
-        if (
-            not isinstance(file_id, str)
-            or not file_id
-            or any(marker in file_id for marker in ("/", "\\"))
-            or not isinstance(file_name, str)
-        ):
-            raise HTTPException(status_code=400, detail="附件记录作用域无效")
-
-        file_size = attachment.get("file_size")
-        if file_size is not None and (
-            not isinstance(file_size, int) or file_size < 0 or file_size > MAX_ATTACHMENT_SIZE_BYTES
-        ):
-            raise HTTPException(status_code=400, detail="附件记录大小无效")
-
-        safe_file_name = _safe_file_name(file_name)
-        storage_name = f"{file_id}_{safe_file_name}"
-        expected_original_path = _make_upload_virtual_path(storage_name)
-        legacy_original_path = _make_upload_virtual_path(safe_file_name)
-        original_path = attachment.get("original_path")
-        recorded_path = attachment.get("path")
-        if not isinstance(original_path, str) and isinstance(recorded_path, str):
-            original_path = recorded_path
-
-        expected_original_object, expected_markdown_object = _make_thread_attachment_objects(
-            file_thread_id,
-            file_id,
-            safe_file_name,
-        )
-        bucket_name = attachment.get("bucket_name")
-        original_object_name = attachment.get("original_object_name")
-        if bucket_name is None and original_object_name is None:
-            if original_path == legacy_original_path:
-                storage_name = safe_file_name
-            elif original_path != expected_original_path:
-                raise HTTPException(status_code=400, detail="附件虚拟路径作用域无效")
-            original_source = AttachmentHydrateSource(
-                path=original_path,
-                legacy_parts=(Path(original_path).name,),
-            )
-        elif bucket_name == expected_bucket and original_object_name == expected_original_object:
-            if original_path != expected_original_path:
-                raise HTTPException(status_code=400, detail="附件虚拟路径作用域无效")
-            original_source = AttachmentHydrateSource(
-                path=expected_original_path,
-                bucket_name=expected_bucket,
-                object_name=expected_original_object,
-                size=file_size if isinstance(file_size, int) else None,
-                sha256=(
-                    attachment.get("original_sha256") if isinstance(attachment.get("original_sha256"), str) else None
-                ),
-            )
-        else:
-            raise HTTPException(status_code=400, detail="附件对象作用域无效")
-        sources.append(original_source)
-
-        markdown_object_name = attachment.get("markdown_object_name")
-        if recorded_path in (None, original_path):
-            if markdown_object_name is not None:
-                raise HTTPException(status_code=400, detail="附件解析对象作用域无效")
-            continue
-
-        expected_markdown_path = f"{VIRTUAL_PATH_UPLOADS}/attachments/{_make_attachment_path(storage_name)}"
-        if recorded_path != expected_markdown_path:
-            raise HTTPException(status_code=400, detail="附件解析路径作用域无效")
-        if markdown_object_name is not None:
-            if bucket_name != expected_bucket or markdown_object_name != expected_markdown_object:
-                raise HTTPException(status_code=400, detail="附件解析对象作用域无效")
-            markdown_content = attachment.get("markdown")
-            markdown_bytes = markdown_content.encode("utf-8") if isinstance(markdown_content, str) else None
-            markdown_size = attachment.get("markdown_size")
-            markdown_digest = attachment.get("markdown_sha256")
-            markdown_source = AttachmentHydrateSource(
-                path=expected_markdown_path,
-                bucket_name=expected_bucket,
-                object_name=expected_markdown_object,
-                size=(
-                    markdown_size
-                    if isinstance(markdown_size, int)
-                    else (len(markdown_bytes) if markdown_bytes is not None else None)
-                ),
-                sha256=(
-                    markdown_digest
-                    if isinstance(markdown_digest, str)
-                    else (hashlib.sha256(markdown_bytes).hexdigest() if markdown_bytes is not None else None)
-                ),
-            )
-        elif isinstance(attachment.get("markdown"), str):
-            markdown_source = AttachmentHydrateSource(
-                path=expected_markdown_path,
-                inline_content=attachment["markdown"].encode("utf-8"),
-            )
-        else:
-            markdown_source = AttachmentHydrateSource(
-                path=expected_markdown_path,
-                legacy_parts=("attachments", Path(expected_markdown_path).name),
-            )
-        sources.append(markdown_source)
-
-    for source in sources:
-        if source.path in seen_paths:
-            raise HTTPException(status_code=400, detail="附件虚拟路径重复")
-        seen_paths.add(source.path)
-    return sources
-
-
-def _read_legacy_upload_file(uploads_dir: Path, parts: tuple[str, ...]) -> bytes:
-    """不跟随符号链接地读取历史 uploads 普通文件。"""
-    directory_fds: list[int] = []
-    file_fd: int | None = None
-    try:
-        directory_fd = os.open(uploads_dir, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
-        directory_fds.append(directory_fd)
-        for part in parts[:-1]:
-            directory_fd = os.open(
-                part,
-                os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
-                dir_fd=directory_fd,
-            )
-            directory_fds.append(directory_fd)
-        file_fd = os.open(parts[-1], os.O_RDONLY | os.O_NOFOLLOW, dir_fd=directory_fd)
-        if not stat.S_ISREG(os.fstat(file_fd).st_mode):
-            raise OSError("历史附件不是普通文件")
-        with os.fdopen(file_fd, "rb", closefd=True) as file_obj:
-            file_fd = None
-            content = file_obj.read(MAX_ATTACHMENT_SIZE_BYTES + 1)
-    except OSError as exc:
-        raise HTTPException(status_code=404, detail=f"历史附件文件不存在或不安全: {'/'.join(parts)}") from exc
-    finally:
-        if file_fd is not None:
-            os.close(file_fd)
-        for directory_fd in reversed(directory_fds):
-            os.close(directory_fd)
-
-    if len(content) > MAX_ATTACHMENT_SIZE_BYTES:
-        raise HTTPException(status_code=400, detail="历史附件超过大小限制")
-    return content
-
-
-async def _await_blocking_hydrate_call(function, *args):
-    """取消时仍等待已启动的阻塞 sandbox 操作到达终点。"""
-    return await await_blocking_file_call(function, *args)
-
-
-async def hydrate_attachment_records_to_sandbox(
-    runtime_thread_id: str,
-    uid: str,
-    attachments: list[dict],
-    *,
-    file_thread_id: str | None = None,
-    sandbox_instance_id: str | None = None,
-    create_if_missing: bool = True,
-) -> None:
-    """从持久附件事实替换 sandbox 内完整的只读 uploads。"""
-    file_thread_id = str(file_thread_id or runtime_thread_id)
-    minio_client = get_minio_client()
-    legacy_uploads_dir = sandbox_uploads_dir(file_thread_id)
-    sources = _validated_attachment_hydrate_sources(
-        file_thread_id,
-        attachments,
-        minio_client.KB_BUCKETS["documents"],
-    )
-    backend = ProvisionerSandboxBackend(
-        thread_id=runtime_thread_id,
-        uid=uid,
-        sandbox_instance_id=sandbox_instance_id,
-        create_if_missing=create_if_missing,
-    )
-
-    if all(source.bucket_name is not None and source.object_name is not None for source in sources):
-        descriptors = [
-            {
-                "path": source.path,
-                "bucket_name": source.bucket_name,
-                "object_name": source.object_name,
-                "size": source.size,
-                "sha256": source.sha256,
-            }
-            for source in sources
-        ]
-        try:
-            await replace_scope_with_objects(
-                backend=backend,
-                scope="uploads",
-                files=descriptors,
-                minio_client=minio_client,
-                max_files=MAX_ATTACHMENT_HYDRATE_FILES,
-                max_bytes=MAX_ATTACHMENT_HYDRATE_BYTES,
-                max_file_bytes=MAX_ATTACHMENT_SIZE_BYTES,
-                require_integrity=False,
-            )
-        except FileNotFoundError as exc:
-            raise HTTPException(status_code=404, detail=f"附件对象不存在: {exc}") from exc
-        return
-
-    try:
-        await _await_blocking_hydrate_call(backend.clear_upload_files)
-        hydrated_total_size = 0
-        for source in sources:
-            validate_scoped_virtual_path("uploads", source.path)
-            if source.bucket_name is not None and source.object_name is not None:
-                try:
-                    content = await minio_client.adownload_file(source.bucket_name, source.object_name)
-                except StorageError as exc:
-                    raise HTTPException(status_code=404, detail=f"附件对象不存在: {exc}") from exc
-            elif source.inline_content is not None:
-                content = source.inline_content
-            else:
-                content = await _await_blocking_hydrate_call(
-                    _read_legacy_upload_file,
-                    legacy_uploads_dir,
-                    source.legacy_parts,
-                )
-            if len(content) > MAX_ATTACHMENT_SIZE_BYTES:
-                raise HTTPException(status_code=400, detail="附件对象超过大小限制")
-            hydrated_total_size += len(content)
-            if hydrated_total_size > MAX_ATTACHMENT_HYDRATE_BYTES:
-                raise HTTPException(status_code=400, detail="附件集合超过大小限制")
-            await _await_blocking_hydrate_call(backend.write_upload_file, source.path, content)
-    except (Exception, asyncio.CancelledError):
-        try:
-            await _await_blocking_hydrate_call(backend.clear_upload_files)
-        except Exception as exc:  # noqa: BLE001
-            logger.error(f"Failed to clear sandbox uploads after hydrate error: {exc}")
-        raise
-
-
-async def materialize_thread_attachments(*, thread_id: str, current_uid: str, db: AsyncSession) -> list[dict]:
-    """恢复当前线程全部 MinIO 附件，供 worker、Viewer 和 artifact 使用。"""
-    conv_repo = ConversationRepository(db)
-    conversation = await _require_user_conversation(conv_repo, thread_id, str(current_uid))
-    attachments = await conv_repo.get_attachments(conversation.id)
-    await materialize_attachment_records(thread_id, str(conversation.uid), attachments)
-    return attachments
-
-
-async def delete_thread_attachment_objects(thread_id: str) -> None:
-    """尽力删除指定线程在 MinIO 中保存的全部附件对象。"""
-    try:
-        await get_minio_client().adelete_objects_by_prefix(
-            _get_tmp_attachment_bucket(),
-            f"{THREAD_ATTACHMENT_PREFIX}/{thread_id}/attachments/",
-        )
-    except StorageError as exc:
-        logger.warning(f"Failed to remove attachment objects for thread {thread_id}: {exc}")
 
 
 async def upload_tmp_attachment_view(*, file: UploadFile, current_uid: str) -> dict:

@@ -4,15 +4,10 @@
 类型：architecture
 Owner：docker-compose.yml
 
-日志与缓存路径由 `yuxi.config` 和 `logging_config.py` 拥有；附件与 outputs 的运行时文件语义分别由
-`attachment_service.py`、`thread_output_service.py`、对应 repository 和 provisioner 拥有。本记录保存
-当前开发分支已经实现的边界，不替代这些代码事实。
-
-该决定的阶段 4 尚未部署。Sandbox identity 与 Skills 投影已经由
-[Project Workdir 与 Sandbox Runtime 基础](2026-08-18-project-workdir-runtime-foundation.md) 取代；实时
-文件主链路仍计划由
-[Project Workdir 与独立 Sandbox Runtime](../proposed/2026-08-18-project-workdir-and-sandbox-runtime.md)
-取代。在该主链路通过验证前，本记录仍描述附件与 outputs 的当前分支行为。
+日志与缓存路径由 `yuxi.config` 和 `logging_config.py` 拥有。本记录继续拥有 Stage 1/2 的进程、日志和
+缓存解耦边界；Stage 3/4 的附件、outputs、Viewer 与 Sandbox 文件协议已经由
+[实时 Project Workdir 与独立 Sandbox Runtime](2026-08-18-live-project-workdir-and-runtime.md)
+取代，不能把下述历史验证中的 MinIO/revision 模型视为当前事实。
 
 ## 问题
 
@@ -26,16 +21,9 @@ outputs 在 Sandbox 重建、父子 Agent 与并发 Run 中也缺少明确的恢
   Docker daemon 权限。测试清理通过 provisioner 的鉴权管理 API 完成。
 - API 与 worker 使用独立 `YUXI_RUNTIME_DIR`。日志和 Office 预览缓存位于各自容器本地运行目录，
   不写入共享 `saves`；管理端日志接口只读取 API 进程日志。
-- Conversation 附件字节以 MinIO 对象为正式来源。worker 在 Agent 执行前校验固定对象作用域并通过
-  受信任 Sandbox 文件 API 重建 uploads；Docker/Kubernetes 不挂载 uploads。旧本地附件只通过
-  不跟随 symlink 的兼容读取进入该链路，失败时阻止执行。
-- outputs 由 PostgreSQL `ThreadOutputRevision` 和 Conversation current pointer 记录发布事实，MinIO
-  保存不可变对象。每个 Run 使用独立 Sandbox instance，从 base revision 重建 outputs，并在 Run
-  终态事务中发布；Viewer、artifact 和删除读取已发布 revision。
-- 父 Run 通过私有 checkpoint、子完整 checkpoint 与公开 delta projection 和串行三方合并交换
-  outputs；冲突、取消、重试、Sandbox 消失和对象确认不明都 fail-closed，不静默推进 current。
-- uploads/outputs 共用的 scoped file primitives 负责授权路径、限长流式传输、hash/size、连接释放、
-  symlink 防护和取消边界，但不提供通用 POSIX 文件系统。
+- Conversation 附件与 outputs 当前直接使用实时 Project Workdir；MinIO 正式附件、output revision、
+  父子 checkpoint/projection/merge 和 scoped hydrate 属于已被后续决定删除的历史 Stage 3/4 实现。
+  未确认的临时附件解析仍可使用用户隔离的 MinIO 前缀。
 - 用户级 `/home/gem/user-data/workspace` 和按 uid 汇总的授权 Skills 只读投影仍通过共享 `saves`/PVC
   挂入 Sandbox；Sandbox 的 Skills identity/wire 已由
   [2026-08-18 基础决定](2026-08-18-project-workdir-runtime-foundation.md) 接管。附件与 outputs 的旧文件
@@ -50,19 +38,17 @@ outputs 在 Sandbox 重建、父子 Agent 与并发 Run 中也缺少明确的恢
   和锁语义，并会扩大凭据边界。
 - 整体重放旧 `feat/filestore-decouple`：拒绝。旧实现没有当前 RunAttempt、revision 与确认不明事实，
   且与附件、Viewer 和调度实现冲突。
-- 共享 Project RWX POSIX 文件系统：在本决定实施时未采用；实时协作需求确认后由 2026-08-18 新提案
-  重新裁决。该提案必须先删除本记录 Stage 4 的双重事实源，不能并行叠加。
+- 共享 Project RWX POSIX 文件系统：本决定实施时未采用，随后已由 2026-08-18 实时 Workdir 决定
+  取代 Stage 3/4 文件模型并删除双重事实源。
 
 ## 后果
 
 - 阶段 1 至阶段 3 已减少 API/worker 权限和宿主机耦合，日志/缓存与附件主链路可以独立部署和重建。
 - API 日志不是 worker 日志聚合；历史日志留存由容器平台负责。Office 缓存和本地 runtime 可在重建时
   丢失。
-- 当前 outputs 只有终态 revision 可被 Viewer 读取，流式 artifact 路径可能在 revision 发布前短暂
-  返回 404；这是当前 Stage 4 模型的直接后果。
-- 每 Run Sandbox 与父子文件复制、projection 和 merge 增加了状态、对象和故障面。当前实现有对应
-  安全边界和证据，但尚未部署，因此可以在形成兼容承诺前被新实时 Workdir 模型删除。
-- 真实 Kubernetes RWX、最终旧数据迁移、Skills 与共享 `saves` 删除仍未完成。
+- 实时 Project Workdir 已删除每 Run 文件副本、父子 projection/merge 与发布前 404；这些后果由后续
+  owning decision 记录。
+- 真实 Kubernetes RWX、Skills 兼容路径和最终共享 `saves` 删除仍未完成。
 
 ## 验证
 

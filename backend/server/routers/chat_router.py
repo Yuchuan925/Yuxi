@@ -175,7 +175,6 @@ class AttachmentResponse(BaseModel):
     artifact_url: str | None = None
     original_path: str | None = None
     original_artifact_url: str | None = None
-    minio_url: str | None = None
     request_id: str | None = None
 
 

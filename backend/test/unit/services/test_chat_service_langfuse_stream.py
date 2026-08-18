@@ -405,7 +405,6 @@ async def test_stream_agent_chat_commits_before_stream_and_persists_langfuse_con
                 "artifact_url": None,
                 "original_path": None,
                 "original_artifact_url": None,
-                "minio_url": None,
                 "request_id": "req-1",
             },
             {
@@ -419,7 +418,6 @@ async def test_stream_agent_chat_commits_before_stream_and_persists_langfuse_con
                 "artifact_url": None,
                 "original_path": None,
                 "original_artifact_url": None,
-                "minio_url": None,
                 "request_id": "req-old",
             },
         ],

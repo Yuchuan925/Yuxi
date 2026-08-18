@@ -15,7 +15,7 @@
 - API 与 worker 的日志及 Office 预览缓存改用各自容器本地运行目录，不再写入共享 `saves`；管理端日志接口与调试面板明确只展示 API 进程日志。历史日志和预览缓存不迁移，worker 日志由容器日志查看。
 - Agent 文件主链路统一为实时 Project Workdir：附件、Agent 写入、Viewer、下载与 artifact 读取同一 POSIX 文件系统；`uploads/outputs` 只保留目录约定，Agent 可覆盖上传，交付物可来自 Project、User Data 或授权 Skill 普通文件。
 - 根 Conversation 与全部子 Agent 共用稳定 Sandbox runtime 和 Workdir，不再通过 output revision、hydrate、checkpoint、projection 或三方合并同步文件；不同顶层 Conversation 仍隔离运行环境，未来可只共享 Workdir。
-- 升级启动期以全局 fence、source fingerprint 和隔离 staging 一次性物化旧附件与 outputs；全部 Workdir 校验 ready 后才激活新主链路，缺失对象、内容冲突、部分复制或确认不明均阻止服务就绪。
+- 升级启动期以全局 fence、source fingerprint 和隔离 staging 一次性物化旧附件与 outputs；全部 Workdir 校验 ready 后才激活，随后删除旧正式附件/output 对象、revision 表和 current pointer。缺失、冲突、部分复制或清理失败均阻止服务就绪并可重试。
 - 建立 Agent-first 工程信任系统：高风险主张在语义 Owner 处绑定负向 oracle、CI gate 与决策记录，审计视图从当前代码、测试、workflow 和决策派生；补齐 Web gate 和完整 unit inventory。API 分离 liveness/readiness；Run 输出只允许当前 lease owner 绑定同 conversation、Run 与 request 的 assistant Message，缺失或非法输出不能进入 completed；worker 以 attempt lease/heartbeat 识别失联并收敛为带 `worker_lease_expired` 原因的失败，PostgreSQL 取消事实与终态不再被 Redis 事件故障绕过。LITE startup 不创建或宣告知识能力，Web 从 runtime discovery 同步隐藏并停止请求不存在的能力；checkpoint 初始化不再静默改变持久化语义。
 - API Key 创建支持并发与响应丢失后的安全重放；删除用户、OIDC 恢复和旧库升级均保留不可复活 tombstone，API/CLI 创建与删除按 User 行锁串行化。三项安全密钥不可复用，Bash/PowerShell 均有原生负控。Web 错误对象不再携带任意服务端上下文。
 
