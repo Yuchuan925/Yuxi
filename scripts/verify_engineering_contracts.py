@@ -811,12 +811,21 @@ def _validate_agents_files(root: Path, errors: list[str]) -> list[dict[str, Any]
     return projection
 
 
+def _is_formal_docs_markdown(path: Path) -> bool:
+    """`docs/vibe/` 与任何 `node_modules` 都是本仓库非正式资料。"""
+
+    parts = set(path.parts)
+    return not (parts & {"vibe", "node_modules"})
+
+
 def _validate_document_prose(root: Path, errors: list[str]) -> int:
     """拒绝正式文档中的对举式否定，fenced code block 不参与检查。"""
 
     docs_root = root / "docs"
     checked = 0
     for path in sorted(docs_root.rglob("*.md")):
+        if not _is_formal_docs_markdown(path):
+            continue
         checked += 1
         relative = path.relative_to(root)
         for line_number, line in _visible_markdown_numbered_lines(

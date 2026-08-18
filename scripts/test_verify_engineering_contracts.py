@@ -708,6 +708,22 @@ jobs:
             any("禁止对举式否定" in error for error in self._errors())
         )
 
+    def test_vibe_drafts_are_excluded_from_prose_check(self) -> None:
+        self._write(
+            "docs/vibe/2026-08-17-personal-note.md",
+            "# 临时计划\n\n系统不是缓存层，而是最终事实源。\n",
+        )
+
+        self.assertEqual(self._errors(), [])
+
+    def test_node_modules_markdown_is_excluded_from_prose_check(self) -> None:
+        self._write(
+            "docs/node_modules/example/README.md",
+            "# README\n\n系统不是缓存层，而是最终事实源。\n",
+        )
+
+        self.assertEqual(self._errors(), [])
+
     def test_proposed_decision_missing_acceptance_heading_is_rejected(self) -> None:
         self._write(
             "docs/develop-guides/decisions/proposed/2026-08-16-flawed-proposal.md",
