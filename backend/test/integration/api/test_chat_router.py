@@ -10,9 +10,19 @@ import uuid
 
 import pytest
 from PIL import Image
-from yuxi.agents.backends.sandbox import ensure_thread_dirs, sandbox_user_data_dir, sandbox_workspace_dir
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
+
+
+async def _upload_project_file(test_client, headers, thread_id: str, name: str, content: bytes) -> str:
+    response = await test_client.post(
+        "/api/viewer/filesystem/upload",
+        data={"thread_id": thread_id, "parent_path": "/"},
+        files={"files": (name, content, "text/plain")},
+        headers=headers,
+    )
+    assert response.status_code == 200, response.text
+    return response.json()["entries"][0]["path"]
 
 
 async def test_chat_endpoints_require_authentication(test_client):
@@ -227,29 +237,21 @@ async def test_setting_default_agent_requires_admin(test_client, admin_headers, 
 
 async def test_save_thread_artifact_to_workspace_copies_output_file(test_client, standard_user):
     headers = standard_user["headers"]
-    uid = str(standard_user["user"]["uid"])
     thread_id = await _create_thread_for_user(test_client, headers)
     filename = f"artifact-{uuid.uuid4().hex[:8]}.md"
-
-    ensure_thread_dirs(thread_id, uid)
-    source_path = sandbox_user_data_dir(thread_id) / "outputs" / filename
-    source_path.write_text("# artifact\n", encoding="utf-8")
+    source_path = await _upload_project_file(test_client, headers, thread_id, filename, b"# artifact\n")
 
     response = await test_client.post(
         f"/api/chat/thread/{thread_id}/artifacts/save",
-        json={"path": f"/home/gem/user-data/outputs/{filename}"},
+        json={"path": source_path},
         headers=headers,
     )
     assert response.status_code == 200, response.text
 
     payload = response.json()
     assert payload["name"] == filename
-    assert payload["source_path"] == f"/home/gem/user-data/outputs/{filename}"
+    assert payload["source_path"] == source_path
     assert payload["saved_path"] == f"/home/gem/user-data/workspace/saved_artifacts/{filename}"
-
-    saved_path = sandbox_workspace_dir(thread_id, uid) / "saved_artifacts" / filename
-    assert saved_path.exists()
-    assert saved_path.read_text(encoding="utf-8") == "# artifact\n"
 
     download_response = await test_client.get(payload["saved_artifact_url"], headers=headers)
     assert download_response.status_code == 200, download_response.text
@@ -258,26 +260,23 @@ async def test_save_thread_artifact_to_workspace_copies_output_file(test_client,
 
 async def test_save_thread_artifact_to_workspace_auto_renames_conflicts(test_client, standard_user):
     headers = standard_user["headers"]
-    uid = str(standard_user["user"]["uid"])
     thread_id = await _create_thread_for_user(test_client, headers)
     filename = f"artifact-{uuid.uuid4().hex[:8]}.txt"
     renamed_filename = filename.replace(".txt", " (1).txt")
 
-    ensure_thread_dirs(thread_id, uid)
-    source_path = sandbox_user_data_dir(thread_id) / "outputs" / filename
-    source_path.write_text("first\n", encoding="utf-8")
+    source_path = await _upload_project_file(test_client, headers, thread_id, filename, b"first\n")
 
     first_response = await test_client.post(
         f"/api/chat/thread/{thread_id}/artifacts/save",
-        json={"path": f"/home/gem/user-data/outputs/{filename}"},
+        json={"path": source_path},
         headers=headers,
     )
     assert first_response.status_code == 200, first_response.text
 
-    source_path.write_text("second\n", encoding="utf-8")
+    await _upload_project_file(test_client, headers, thread_id, filename, b"second\n")
     second_response = await test_client.post(
         f"/api/chat/thread/{thread_id}/artifacts/save",
-        json={"path": f"/home/gem/user-data/outputs/{filename}"},
+        json={"path": source_path},
         headers=headers,
     )
     assert second_response.status_code == 200, second_response.text
@@ -287,15 +286,14 @@ async def test_save_thread_artifact_to_workspace_auto_renames_conflicts(test_cli
     assert first_payload["saved_path"] == f"/home/gem/user-data/workspace/saved_artifacts/{filename}"
     assert second_payload["saved_path"] == f"/home/gem/user-data/workspace/saved_artifacts/{renamed_filename}"
 
-    first_saved = sandbox_workspace_dir(thread_id, uid) / "saved_artifacts" / filename
-    second_saved = sandbox_workspace_dir(thread_id, uid) / "saved_artifacts" / renamed_filename
-    assert first_saved.read_text(encoding="utf-8") == "first\n"
-    assert second_saved.read_text(encoding="utf-8") == "second\n"
+    first_download = await test_client.get(first_payload["saved_artifact_url"], headers=headers)
+    second_download = await test_client.get(second_payload["saved_artifact_url"], headers=headers)
+    assert first_download.content == b"first\n"
+    assert second_download.content == b"second\n"
 
 
 async def test_save_thread_artifact_to_workspace_rejects_invalid_paths(test_client, standard_user):
     headers = standard_user["headers"]
-    uid = str(standard_user["user"]["uid"])
     thread_id = await _create_thread_for_user(test_client, headers)
 
     invalid_response = await test_client.post(
@@ -305,12 +303,16 @@ async def test_save_thread_artifact_to_workspace_rejects_invalid_paths(test_clie
     )
     assert invalid_response.status_code == 404, invalid_response.text
 
-    ensure_thread_dirs(thread_id, uid)
-    directory_path = sandbox_workspace_dir(thread_id, uid) / "nested-dir"
-    directory_path.mkdir(parents=True, exist_ok=True)
+    directory = await test_client.post(
+        "/api/viewer/filesystem/directory",
+        json={"thread_id": thread_id, "parent_path": "/", "name": "nested-dir"},
+        headers=headers,
+    )
+    assert directory.status_code == 200, directory.text
+    directory_path = directory.json()["entry"]["path"].rstrip("/")
     directory_response = await test_client.post(
         f"/api/chat/thread/{thread_id}/artifacts/save",
-        json={"path": "/home/gem/user-data/workspace/nested-dir"},
+        json={"path": directory_path},
         headers=headers,
     )
     assert directory_response.status_code == 400, directory_response.text

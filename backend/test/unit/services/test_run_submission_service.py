@@ -9,6 +9,14 @@ from yuxi.services import run_submission_service as svc
 from yuxi.services.input_message_service import build_chat_input_message
 
 
+@pytest.fixture(autouse=True)
+def active_workdir_gate(monkeypatch):
+    async def active(_db):
+        return SimpleNamespace(phase="active", epoch_id="test-epoch")
+
+    monkeypatch.setattr(svc, "require_project_workdir_active", active)
+
+
 class _EmptyRequestRepo:
     def __init__(self, db):
         del db

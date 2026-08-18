@@ -17,7 +17,7 @@ from yuxi.services.agent_request_queue_service import (
     steer_queued_request,
     validate_queue_policy,
 )
-from yuxi.storage.postgres.models_business import AgentRunRequest, Base, Message
+from yuxi.storage.postgres.models_business import AgentRunRequest, Base, FileStorageMaterialization, Message
 from yuxi.utils.datetime_utils import utc_now_naive
 
 pytestmark = [pytest.mark.unit]
@@ -187,6 +187,8 @@ async def session():
         await conn.run_sync(Base.metadata.create_all)
     factory = async_sessionmaker(engine, expire_on_commit=False)
     async with factory() as db:
+        db.add(FileStorageMaterialization(id="project-workdir-v1", phase="active", epoch_id="test-epoch"))
+        await db.commit()
         yield db
     await engine.dispose()
 
@@ -218,6 +220,7 @@ async def _seed_active_run(session, *, source="chat", status="running", run_type
         AgentRun(
             id="active-run",
             conversation_thread_id="t1",
+            runtime_scope_id="t1",
             agent_slug="main",
             uid="user-1",
             status=status,
@@ -637,6 +640,17 @@ async def test_dispatches_multiple_queued_requests_one_at_a_time(session):
         worker_id=worker_id,
     )
     assert completed is True
+    await session.commit()
+    blocked_c = await _dispatch_ready_head(
+        db=session,
+        uid="user-1",
+        agent_slug="main",
+        thread_id="t1",
+        conversation_id=10,
+    )
+    assert blocked_c is None
+    persisted_b = await run_repository.get_run(run_b)
+    persisted_b.runtime_cleanup_pending = False
     await session.commit()
     dispatched_c = await _dispatch_ready_head(
         db=session,

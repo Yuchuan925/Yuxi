@@ -292,7 +292,7 @@ Skill 加载分为三个阶段：
 - **路径安全**：所有路径都经过安全校验，防止目录穿越攻击
 
 ::: tip 只读不等于不可执行
-`/home/gem/skills` 对 Agent 是只读的，但沙盒命令工具仍可执行其中的脚本。Skill 应写清依赖、运行方式和产物位置；脚本产生的文件应保存到 workspace 或 outputs，Skill 目录禁止写入。
+`/home/gem/skills` 对 Agent 是只读的，但沙盒命令工具仍可执行其中的脚本。Skill 应把依赖、运行方式和产物位置写清楚；脚本若需要写文件，应写入当前 Project Workdir 或 User Data，而不是 Skill 目录。
 :::
 
 个人 Skill 的可写来源仍位于 `/home/gem/user-data/workspace/agents/skills`。Run 初始化会把当前用户授权的

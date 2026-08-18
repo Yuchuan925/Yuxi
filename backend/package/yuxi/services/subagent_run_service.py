@@ -109,15 +109,15 @@ class SubagentRunService:
         input_message: AgentRunInputMessage,
         tool_call_id: str,
         requested_thread_id: str | None = None,
-        file_thread_id: str | None = None,
         model_spec: str | None = None,
-        output_base_revision_id: str | None = None,
     ) -> SubagentStartResult:
         """启动或继续一个后台子智能体 run，并在新建时入队 worker。"""
 
-        creator_run = await self.run_repo.get_run_for_user(created_by_run_id, uid)
+        creator_run = await self.run_repo.lock_run_for_user(created_by_run_id, uid)
         if not creator_run:
             raise ValueError("父运行任务不存在")
+        if getattr(creator_run, "status", "running") != "running":
+            raise ValueError("父运行已结束，不能再创建子智能体")
         if getattr(creator_run, "run_type", None) == "subagent":
             raise ValueError("子智能体不能创建子智能体")
 
@@ -151,8 +151,6 @@ class SubagentRunService:
                 creator_run=creator_run,
                 relation=relation,
                 tool_call_id=tool_call_id,
-                file_thread_id=file_thread_id,
-                output_base_revision_id=output_base_revision_id,
             )
         except HTTPException as exc:
             detail = exc.detail
@@ -198,8 +196,6 @@ class SubagentRunService:
         creator_run: AgentRun,
         relation: SubagentThread,
         tool_call_id: str,
-        file_thread_id: str | None,
-        output_base_revision_id: str | None = None,
     ) -> tuple[Any, bool]:
         """创建后台子智能体 run，并把规范化输入消息保存为该 run 的输入。"""
         if not input_message.content:
@@ -234,8 +230,6 @@ class SubagentRunService:
             "tool_call_id": tool_call_id,
             "subagent_name": scope.agent_item.name,
             "parent_thread_id": creator_run.conversation_thread_id,
-            "file_thread_id": file_thread_id or creator_run.conversation_thread_id,
-            "output_base_revision_id": output_base_revision_id,
         }
         input_payload = {
             "model_spec": resolved_model_spec,

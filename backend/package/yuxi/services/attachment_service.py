@@ -2,6 +2,7 @@ import asyncio
 import hashlib
 import os
 import stat
+import tempfile
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -13,8 +14,6 @@ from yuxi.agents.backends.sandbox import ProvisionerSandboxBackend, ensure_threa
 from yuxi.config import get_save_dir
 from yuxi.config.options import system_options
 from yuxi.knowledge.parser.factory import DocumentProcessorFactory
-from yuxi.repositories.agent_run_repository import AgentRunRepository
-from yuxi.repositories.agent_run_request_repository import AgentRunRequestRepository
 from yuxi.repositories.conversation_repository import ConversationRepository
 from yuxi.services.mention_search_service import invalidate_mention_cache
 from yuxi.services.scoped_file_store import (
@@ -263,9 +262,27 @@ def serialize_attachment(record: dict) -> dict:
     }
 
 
+async def _write_workdir_file(backend, path: str, content: bytes) -> None:
+    """通过受信任 no-follow 文件边界写入实时 Workdir。"""
+    temp_path = ""
+    try:
+        with tempfile.NamedTemporaryFile(prefix="yuxi-attachment-", delete=False) as temp_file:
+            temp_path = temp_file.name
+            temp_file.write(content)
+        await asyncio.to_thread(backend.upload_authorized_file_from_path, path, temp_path)
+    finally:
+        if temp_path:
+            try:
+                os.unlink(temp_path)
+            except FileNotFoundError:
+                pass
+
+
 async def _store_attachment(
     *,
     thread_id: str,
+    backend,
+    workdir_path: str,
     file_id: str,
     file_name: str,
     file_type: str | None,
@@ -273,20 +290,11 @@ async def _store_attachment(
     parsed_markdown: str | None = None,
     truncated: bool = False,
 ) -> dict:
-    """将正式附件写入 MinIO，并构造完整的持久化记录。"""
+    """将正式附件直接写入实时 Project Workdir。"""
     file_name = _safe_file_name(file_name)
-    minio_client = get_minio_client()
-    bucket_name = _get_tmp_attachment_bucket()
-    original_object_name, markdown_object_name = _make_thread_attachment_objects(thread_id, file_id, file_name)
-    await minio_client.aupload_file(
-        bucket_name=bucket_name,
-        object_name=original_object_name,
-        data=file_content,
-        content_type=file_type,
-    )
-
     storage_name = f"{file_id}_{_safe_file_name(file_name)}"
-    original_path = _make_upload_virtual_path(storage_name)
+    original_path = f"{workdir_path}/uploads/{storage_name}"
+    await _write_workdir_file(backend, original_path, file_content)
     record = {
         "file_id": file_id,
         "file_name": file_name,
@@ -299,25 +307,16 @@ async def _store_attachment(
         "artifact_url": _artifact_url(thread_id, original_path),
         "original_path": original_path,
         "original_artifact_url": _artifact_url(thread_id, original_path),
-        "bucket_name": bucket_name,
-        "original_object_name": original_object_name,
-        "minio_url": _minio_source(bucket_name, original_object_name),
     }
     if parsed_markdown is None:
         return record
 
+    markdown_path = f"{workdir_path}/uploads/attachments/{_make_attachment_path(storage_name)}"
     try:
-        await minio_client.aupload_file(
-            bucket_name=bucket_name,
-            object_name=markdown_object_name,
-            data=parsed_markdown.encode("utf-8"),
-            content_type="text/markdown; charset=utf-8",
-        )
+        await _write_workdir_file(backend, markdown_path, parsed_markdown.encode("utf-8"))
     except Exception:
-        await minio_client.adelete_file(bucket_name, original_object_name)
+        await asyncio.to_thread(backend.delete_authorized_path, original_path, root=workdir_path)
         raise
-
-    markdown_path = f"{VIRTUAL_PATH_UPLOADS}/attachments/{_make_attachment_path(storage_name)}"
     record.update(
         {
             "status": "parsed",
@@ -326,7 +325,6 @@ async def _store_attachment(
             "file_path": markdown_path,
             "markdown": parsed_markdown,
             "truncated": truncated,
-            "markdown_object_name": markdown_object_name,
             "markdown_size": len(parsed_markdown.encode("utf-8")),
             "markdown_sha256": hashlib.sha256(parsed_markdown.encode("utf-8")).hexdigest(),
         }
@@ -793,6 +791,11 @@ async def confirm_tmp_thread_attachments_view(
 
     conv_repo = ConversationRepository(db)
     conversation = await _require_user_conversation(conv_repo, thread_id, str(current_uid))
+    from yuxi.services.project_workdir_service import resolve_project_workdir_binding
+
+    binding = await resolve_project_workdir_binding(thread_id=thread_id, uid=str(current_uid), db=db)
+    backend = binding.create_file_backend(create_if_missing=True)
+    await asyncio.to_thread(backend.ensure_available)
     minio_client = get_minio_client()
     expected_bucket = _get_tmp_attachment_bucket()
     prepared_items: list[dict] = []
@@ -845,6 +848,8 @@ async def confirm_tmp_thread_attachments_view(
             file_id = uuid.uuid4().hex
             attachment_record = await _store_attachment(
                 thread_id=thread_id,
+                backend=backend,
+                workdir_path=binding.workdir_path,
                 file_id=file_id,
                 file_name=prepared["file_name"],
                 file_type=prepared["file_type"],
@@ -854,7 +859,13 @@ async def confirm_tmp_thread_attachments_view(
             )
             added_records.append(attachment_record)
     except Exception:
-        await _delete_recorded_objects(added_records, expected_bucket, minio_client)
+        for record in added_records:
+            for path in (record.get("path"), record.get("original_path")):
+                if isinstance(path, str):
+                    try:
+                        await asyncio.to_thread(backend.delete_authorized_path, path, root=binding.workdir_path)
+                    except Exception:
+                        pass
         raise
 
     try:
@@ -862,7 +873,17 @@ async def confirm_tmp_thread_attachments_view(
         await db.commit()
     except Exception:
         await db.rollback()
-        await _delete_recorded_objects(added_records, expected_bucket, minio_client)
+        for record in added_records:
+            for path in {record.get("path"), record.get("original_path")}:
+                if isinstance(path, str):
+                    try:
+                        await asyncio.to_thread(
+                            backend.delete_authorized_path,
+                            path,
+                            root=binding.workdir_path,
+                        )
+                    except Exception:
+                        pass
         raise
     await invalidate_mention_cache(thread_id)
 
@@ -893,6 +914,11 @@ async def upload_thread_attachment_view(
     """上传原始附件并关联到指定对话线程。"""
     conv_repo = ConversationRepository(db)
     conversation = await _require_user_conversation(conv_repo, thread_id, str(current_uid))
+    from yuxi.services.project_workdir_service import resolve_project_workdir_binding
+
+    binding = await resolve_project_workdir_binding(thread_id=thread_id, uid=str(current_uid), db=db)
+    backend = binding.create_file_backend(create_if_missing=True)
+    await asyncio.to_thread(backend.ensure_available)
     if not file.filename:
         raise HTTPException(status_code=400, detail="无法识别的文件名")
 
@@ -921,6 +947,8 @@ async def upload_thread_attachment_view(
     file_id = uuid.uuid4().hex
     attachment_record = await _store_attachment(
         thread_id=thread_id,
+        backend=backend,
+        workdir_path=binding.workdir_path,
         file_id=file_id,
         file_name=file_name,
         file_type=file.content_type,
@@ -934,7 +962,12 @@ async def upload_thread_attachment_view(
         await db.commit()
     except Exception:
         await db.rollback()
-        await _delete_recorded_objects(attachment_record, attachment_record["bucket_name"], get_minio_client())
+        for path in {attachment_record.get("path"), attachment_record.get("original_path")}:
+            if isinstance(path, str):
+                try:
+                    await asyncio.to_thread(backend.delete_authorized_path, path, root=binding.workdir_path)
+                except Exception:
+                    pass
         raise
     await invalidate_mention_cache(thread_id)
 
@@ -970,37 +1003,32 @@ async def delete_thread_attachment_view(
     """删除指定对话线程的附件。"""
     conv_repo = ConversationRepository(db)
     conversation = await _require_user_conversation(conv_repo, thread_id, str(current_uid))
+    from yuxi.services.project_workdir_service import resolve_project_workdir_binding
+
+    binding = await resolve_project_workdir_binding(thread_id=thread_id, uid=str(current_uid), db=db)
+    backend = binding.create_file_backend(create_if_missing=True)
+    await asyncio.to_thread(backend.ensure_available)
 
     existing_attachments = await conv_repo.lock_attachments(conversation.id)
     target_attachment = next((item for item in existing_attachments if item.get("file_id") == file_id), None)
     if target_attachment is None:
         raise HTTPException(status_code=404, detail="附件不存在或已被删除")
 
-    request_id = target_attachment.get("request_id")
-    if isinstance(request_id, str) and request_id:
-        request = await AgentRunRequestRepository(db).get_by_request_id(request_id)
-        run = await AgentRunRepository(db).get_run_by_request_id(request_id)
-        request_is_active = request and (request.status == "queued" or (request.status == "dispatched" and run is None))
-        if request_is_active:
-            raise HTTPException(status_code=409, detail="附件正在被请求使用，暂时不能删除")
-
-    active_run = await AgentRunRepository(db).get_active_run_by_thread_for_user(
-        agent_slug=conversation.agent_id,
-        conversation_thread_id=thread_id,
-        uid=str(current_uid),
-    )
-    if active_run:
-        raise HTTPException(status_code=409, detail="对话正在运行，暂时不能删除附件")
-
     removed = await conv_repo.remove_attachment(conversation.id, file_id)
     if not removed:
         raise HTTPException(status_code=404, detail="附件不存在或已被删除")
     await db.commit()
 
-    bucket_name = target_attachment.get("bucket_name")
-    if isinstance(bucket_name, str):
-        await _delete_recorded_objects(target_attachment, bucket_name, get_minio_client())
-    _delete_materialized_attachment_files(thread_id, target_attachment)
+    for path in {target_attachment.get("path"), target_attachment.get("original_path")}:
+        if not isinstance(path, str):
+            continue
+        try:
+            await asyncio.to_thread(backend.delete_authorized_path, path, root=binding.workdir_path)
+        except FileNotFoundError:
+            pass
+        except Exception:
+            # PostgreSQL 已经移除 shipping 引用；残留文件仍留在用户可见 Workdir，后续可显式清理。
+            logger.warning("附件元数据已删除，但 Workdir 文件清理失败: thread=%s path=%s", thread_id, path)
 
     await invalidate_mention_cache(thread_id)
 

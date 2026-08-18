@@ -134,6 +134,9 @@ def _patch_repos(
             assert uid == "user-1"
             return {"parent-run": parent_run, "child-run": child_run}.get(run_id)
 
+        async def lock_run_for_user(self, run_id: str, uid: str):
+            return await self.get_run_for_user(run_id, uid)
+
         async def get_subagent_run_for_creator(self, *, uid: str, created_by_run_id: str, run_id: str):
             assert uid == "user-1"
             captured["get_subagent_run_for_creator"] = {
@@ -521,6 +524,36 @@ async def test_subagent_run_service_rejects_subagent_as_creator(monkeypatch: pyt
 
 
 @pytest.mark.asyncio
+async def test_subagent_run_service_rejects_child_creation_after_parent_terminal(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    captured: dict[str, object] = {}
+    _patch_repos(
+        monkeypatch,
+        captured=captured,
+        parent_run=SimpleNamespace(
+            id="parent-run",
+            conversation_thread_id="parent-thread",
+            conversation_id=10,
+            run_type="chat",
+            status="completed",
+        ),
+    )
+
+    with pytest.raises(ValueError, match="父运行已结束"):
+        await SubagentRunService(_FakeDB()).start(
+            uid="user-1",
+            created_by_run_id="parent-run",
+            agent_item=_agent(),
+            input_message=build_chat_input_message("late child"),
+            tool_call_id="tool-late",
+        )
+
+    assert "conversation" not in captured
+    assert "relation" not in captured
+
+
+@pytest.mark.asyncio
 async def test_subagent_run_service_rejects_child_thread_owned_by_normal_conversation(
     monkeypatch: pytest.MonkeyPatch,
 ):
@@ -607,7 +640,6 @@ async def test_subagent_run_service_create_run_record_persists_subagent_context(
         creator_run=creator_run,
         relation=relation,
         tool_call_id="tool-1",
-        file_thread_id="parent-file-thread",
     )
 
     assert created is True
@@ -631,14 +663,13 @@ async def test_subagent_run_service_create_run_record_persists_subagent_context(
             "tool_call_id": "tool-1",
             "subagent_name": "Worker",
             "parent_thread_id": "parent-thread",
-            "file_thread_id": "parent-file-thread",
         },
     }
     assert db.committed is False
 
 
 @pytest.mark.asyncio
-async def test_subagent_run_service_create_run_record_uses_creator_thread_when_file_thread_missing(
+async def test_subagent_run_service_create_run_record_uses_creator_runtime_scope(
     monkeypatch: pytest.MonkeyPatch,
 ):
     db = _FakeDB()
@@ -659,12 +690,11 @@ async def test_subagent_run_service_create_run_record_uses_creator_thread_when_f
         creator_run=creator_run,
         relation=relation,
         tool_call_id="tool-2",
-        file_thread_id=None,
     )
 
     assert db.created_run_kwargs["created_by_run_id"] == "parent-run"
     assert db.created_run_kwargs["input_payload"]["runtime"]["parent_thread_id"] == "current-parent-thread"
-    assert db.created_run_kwargs["input_payload"]["runtime"]["file_thread_id"] == "current-parent-thread"
+    assert "file_thread_id" not in db.created_run_kwargs["input_payload"]["runtime"]
     assert db.created_run_kwargs["input_payload"]["tool_approval_mode"] == "always_trust"
 
 
@@ -686,7 +716,6 @@ async def test_subagent_run_service_create_run_record_rejects_non_subagent_defin
             creator_run=creator_run,
             relation=relation,
             tool_call_id="tool-1",
-            file_thread_id="parent-thread",
         )
 
     assert exc.value.status_code == 404
@@ -712,7 +741,6 @@ async def test_subagent_run_service_create_run_record_rejects_relation_parent_mi
             creator_run=creator_run,
             relation=relation,
             tool_call_id="tool-1",
-            file_thread_id="parent-thread",
         )
 
     assert exc.value.status_code == 409

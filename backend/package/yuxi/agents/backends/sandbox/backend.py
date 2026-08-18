@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import json
 import os
 import tempfile
 import uuid
@@ -36,6 +37,7 @@ from yuxi.utils.paths import (
 )
 
 from .provider import get_sandbox_provider, sandbox_id_for_thread, sandbox_provisioner_token
+from .paths import project_workdir_virtual_dir
 
 _USER_DATA_ROOT = "/" + VIRTUAL_PATH_PREFIX.strip("/")
 _WORKSPACE_ROOT = f"{_USER_DATA_ROOT}/{WORKSPACE_DIR_NAME}"
@@ -46,8 +48,6 @@ _TRUSTED_FILE_SCOPE_ROOTS = {
     OUTPUTS_DIR_NAME: _OUTPUTS_ROOT,
 }
 _SKILLS_ROOT = "/" + VIRTUAL_SKILLS_PATH.strip("/")
-_READABLE_ROOTS = (_USER_DATA_ROOT, _SKILLS_ROOT)
-_WRITABLE_ROOTS = (_WORKSPACE_ROOT, _OUTPUTS_ROOT)
 _BINARY_PREVIEW_TOO_LARGE_ERROR = f"Binary file exceeds maximum preview size of {MAX_BINARY_BYTES} bytes"
 _IMAGE_EXTENSIONS = frozenset({".gif", ".heic", ".heif", ".jpeg", ".jpg", ".png", ".webp"})
 _DOCUMENT_EXTENSIONS = frozenset({".doc", ".docx", ".pdf", ".ppt", ".pptx", ".xls", ".xlsx"})
@@ -76,24 +76,6 @@ def _path_overlaps_root(path: str, root: str) -> bool:
     return _is_same_or_child(path, root) or _is_same_or_child(root, path)
 
 
-def _can_read_path(path: str) -> bool:
-    return any(_is_same_or_child(path, root) for root in _READABLE_ROOTS)
-
-
-def _can_list_path(path: str) -> bool:
-    return any(_path_overlaps_root(path, root) for root in _READABLE_ROOTS)
-
-
-def _can_write_path(path: str) -> bool:
-    return any(_is_same_or_child(path, root) for root in _WRITABLE_ROOTS)
-
-
-def _readable_search_paths(path: str) -> list[str]:
-    if _can_read_path(path):
-        return [path]
-    return [root for root in _READABLE_ROOTS if _is_same_or_child(root, path)]
-
-
 def _glob_for_search_root(pattern: str, root: str) -> str:
     bare_pattern = str(pattern or "*").lstrip("/")
     bare_root = root.strip("/")
@@ -105,32 +87,34 @@ def _glob_for_search_root(pattern: str, root: str) -> str:
     return pattern
 
 
-def _filter_readable_infos(infos: list[FileInfo]) -> list[FileInfo]:
-    result: list[FileInfo] = []
-    for info in infos:
-        try:
-            path = _normalize_path(info.get("path", ""))
-        except ValueError:
-            continue
-        if _can_list_path(path):
-            result.append(info)
-    return result
-
-
-def _filter_readable_matches(matches: list[GrepMatch]) -> list[GrepMatch]:
-    result: list[GrepMatch] = []
-    for match in matches:
-        try:
-            path = _normalize_path(match.get("path", ""))
-        except ValueError:
-            continue
-        if _can_read_path(path):
-            result.append(match)
-    return result
-
-
 def _permission_error(operation: str, path: str) -> str:
     return f"permission denied for {operation} on '{path}'"
+
+
+class FileTransferLimitError(ValueError):
+    """受信任文件传输超过调用方声明的字节上限。"""
+
+
+def _raise_authorized_path_operation_error(output: str | None, path: str, fallback: str) -> None:
+    """把 sandbox 安全文件脚本的失败恢复为稳定边界异常。"""
+    detail = str(output or "")
+    if "FileNotFoundError" in detail or "No such file or directory" in detail:
+        raise FileNotFoundError(path)
+    if "IsADirectoryError" in detail or "source is a directory" in detail:
+        raise IsADirectoryError(path)
+    if "OverflowError" in detail or "exceeds transfer limit" in detail:
+        raise FileTransferLimitError("file exceeds transfer limit")
+    if any(
+        marker in detail
+        for marker in (
+            "NotADirectoryError",
+            "PermissionError",
+            "Too many levels of symbolic links",
+            "source is not regular",
+        )
+    ):
+        raise PermissionError(path)
+    raise RuntimeError(detail or fallback)
 
 
 def _describe_read_error(file_path: str, exc: Exception) -> str:
@@ -200,6 +184,7 @@ class ProvisionerSandboxBackend(BaseSandbox):
         self._create_if_missing = create_if_missing
         self._sandbox_instance_id = str(sandbox_instance_id or self._thread_id).strip()
         self._workdir_id = str(workdir_id or "").strip() or None
+        self._project_root = project_workdir_virtual_dir(self._workdir_id) if self._workdir_id else None
         self._provider = get_sandbox_provider()
         self._id = sandbox_id_for_thread(
             self._thread_id,
@@ -210,6 +195,50 @@ class ProvisionerSandboxBackend(BaseSandbox):
         self._client_url: str | None = None
         self._command_timeout_seconds = int(os.getenv("SANDBOX_EXEC_TIMEOUT_SECONDS") or 180)
         self._max_output_bytes = int(os.getenv("SANDBOX_MAX_OUTPUT_BYTES") or 262_144)
+
+    def _readable_roots(self) -> tuple[str, ...]:
+        project_roots = (self._project_root,) if self._project_root else ()
+        return (*project_roots, _USER_DATA_ROOT, _SKILLS_ROOT)
+
+    def _writable_roots(self) -> tuple[str, ...]:
+        project_roots = (self._project_root,) if self._project_root else ()
+        return (*project_roots, _USER_DATA_ROOT)
+
+    def _can_read_path(self, path: str) -> bool:
+        return any(_is_same_or_child(path, root) for root in self._readable_roots())
+
+    def _can_list_path(self, path: str) -> bool:
+        return any(_path_overlaps_root(path, root) for root in self._readable_roots())
+
+    def _can_write_path(self, path: str) -> bool:
+        return any(_is_same_or_child(path, root) for root in self._writable_roots())
+
+    def _readable_search_paths(self, path: str) -> list[str]:
+        if self._can_read_path(path):
+            return [path]
+        return [root for root in self._readable_roots() if _is_same_or_child(root, path)]
+
+    def _filter_readable_infos(self, infos: list[FileInfo]) -> list[FileInfo]:
+        result: list[FileInfo] = []
+        for info in infos:
+            try:
+                path = _normalize_path(info.get("path", ""))
+            except ValueError:
+                continue
+            if self._can_list_path(path):
+                result.append(info)
+        return result
+
+    def _filter_readable_matches(self, matches: list[GrepMatch]) -> list[GrepMatch]:
+        result: list[GrepMatch] = []
+        for match in matches:
+            try:
+                path = _normalize_path(match.get("path", ""))
+            except ValueError:
+                continue
+            if self._can_read_path(path):
+                result.append(match)
+        return result
 
     @property
     def id(self) -> str:
@@ -351,7 +380,7 @@ class ProvisionerSandboxBackend(BaseSandbox):
             normalized_path = _normalize_path(file_path)
         except Exception as exc:  # noqa: BLE001
             return ReadResult(error=f"Invalid path '{file_path}': {exc}")
-        if not _can_read_path(normalized_path):
+        if not self._can_read_path(normalized_path):
             return ReadResult(error=_permission_error("read", normalized_path))
 
         document_read_error = (
@@ -423,7 +452,7 @@ class ProvisionerSandboxBackend(BaseSandbox):
             normalized_path = _normalize_path(path)
         except Exception as exc:  # noqa: BLE001
             return LsResult(error=f"Invalid path '{path}': {exc}")
-        if not _can_list_path(normalized_path):
+        if not self._can_list_path(normalized_path):
             return LsResult(error=_permission_error("read", normalized_path))
 
         try:
@@ -450,7 +479,7 @@ class ProvisionerSandboxBackend(BaseSandbox):
                 elif isinstance(modified_time, (int, float)):
                     info["modified_at"] = datetime.fromtimestamp(modified_time).isoformat()
             infos.append(info)
-        return LsResult(entries=_filter_readable_infos(infos))
+        return LsResult(entries=self._filter_readable_infos(infos))
 
     def write(self, file_path: str, content: str) -> WriteResult:
         """Write a new text file.
@@ -462,7 +491,7 @@ class ProvisionerSandboxBackend(BaseSandbox):
             normalized_path = _normalize_path(file_path)
         except Exception as exc:  # noqa: BLE001
             return WriteResult(error=f"Error: Invalid path '{file_path}': {exc}")
-        if not _can_write_path(normalized_path):
+        if not self._can_write_path(normalized_path):
             return WriteResult(error=f"Error: {_permission_error('write', normalized_path)}")
         if not isinstance(content, str):
             return WriteResult(error="Error: write() only supports text content; use upload_files() for binary data")
@@ -498,7 +527,7 @@ class ProvisionerSandboxBackend(BaseSandbox):
             normalized_path = _normalize_path(file_path)
         except Exception as exc:  # noqa: BLE001
             return EditResult(error=f"Error: Invalid path '{file_path}': {exc}")
-        if not _can_write_path(normalized_path):
+        if not self._can_write_path(normalized_path):
             return EditResult(error=f"Error: {_permission_error('write', normalized_path)}")
 
         # Check if old_string exists
@@ -547,7 +576,7 @@ class ProvisionerSandboxBackend(BaseSandbox):
         except Exception as exc:  # noqa: BLE001
             return GrepResult(error=f"Invalid path '{path or '/'}': {exc}")
 
-        search_paths = _readable_search_paths(normalized_path)
+        search_paths = self._readable_search_paths(normalized_path)
         if not search_paths:
             return GrepResult(error=_permission_error("read", normalized_path))
 
@@ -557,7 +586,7 @@ class ProvisionerSandboxBackend(BaseSandbox):
             if result.error:
                 return result
             matches.extend(result.matches or [])
-        return GrepResult(matches=_filter_readable_matches(matches))
+        return GrepResult(matches=self._filter_readable_matches(matches))
 
     def glob(self, pattern: str, path: str = "/") -> GlobResult:
         """Return files matching a glob pattern under allowed sandbox paths."""
@@ -568,7 +597,7 @@ class ProvisionerSandboxBackend(BaseSandbox):
         if ".." in PurePosixPath(str(pattern or "")).parts:
             return GlobResult(error="Invalid glob pattern: path traversal is not allowed")
 
-        search_paths = _readable_search_paths(normalized_path)
+        search_paths = self._readable_search_paths(normalized_path)
         if not search_paths:
             return GlobResult(error=_permission_error("read", normalized_path))
 
@@ -583,7 +612,7 @@ class ProvisionerSandboxBackend(BaseSandbox):
                 return GlobResult(error=str(exc) or f"Failed to glob '{path}'")
             for file_path in result.data.files or []:
                 infos.append({"path": file_path})
-        infos = _filter_readable_infos(infos)
+        infos = self._filter_readable_infos(infos)
         infos.sort(key=lambda item: item.get("path", ""))
         return GlobResult(matches=infos)
 
@@ -597,7 +626,7 @@ class ProvisionerSandboxBackend(BaseSandbox):
         for path, content in files:
             try:
                 normalized_path = _normalize_path(path)
-                if not _can_write_path(normalized_path):
+                if not self._can_write_path(normalized_path):
                     responses.append(FileUploadResponse(path=normalized_path, error="permission_denied"))
                     continue
                 result = self._get_client().file.write_file(
@@ -696,6 +725,25 @@ else:
         root = _TRUSTED_FILE_SCOPE_ROOTS.get(scope)
         if root is None:
             raise ValueError(f"unsupported sandbox file scope: {scope}")
+        self._upload_file_from_path_at_root(root, path, source_path)
+
+    def upload_authorized_file_from_path(self, path: str, source_path: str) -> None:
+        """从受信任服务向 Project 或 User Data 写入普通文件。"""
+        normalized_path = _normalize_path(path)
+        root = next(
+            (
+                candidate
+                for candidate in self._writable_roots()
+                if normalized_path != candidate and _is_same_or_child(normalized_path, candidate)
+            ),
+            None,
+        )
+        if root is None:
+            raise ValueError(f"write path is outside authorized roots: {normalized_path}")
+        self._upload_file_from_path_at_root(root, normalized_path, source_path)
+
+    def _upload_file_from_path_at_root(self, root: str, path: str, source_path: str) -> None:
+        """通过 root-to-leaf no-follow 边界原子写入单个文件。"""
         normalized_path = _normalize_path(path)
         if normalized_path == root or not _is_same_or_child(normalized_path, root):
             raise ValueError(f"hydrate path must be under {root}: {normalized_path}")
@@ -763,7 +811,145 @@ finally:
         encoded_script = base64.b64encode(script.encode("utf-8")).decode("ascii")
         install_result = self.execute(f"python3 -c \"import base64;exec(base64.b64decode('{encoded_script}'))\"")
         if install_result.exit_code not in (0, None):
-            raise RuntimeError(install_result.output or f"failed to hydrate {normalized_path}")
+            _raise_authorized_path_operation_error(
+                install_result.output,
+                normalized_path,
+                f"failed to write {normalized_path}",
+            )
+
+    def list_authorized_directory(self, path: str, *, root: str) -> list[dict[str, Any]]:
+        """不跟随链接地列出授权目录中的普通文件与真实目录。"""
+        normalized_path = _normalize_path(path)
+        normalized_root = _normalize_path(root)
+        if normalized_path != normalized_root and not _is_same_or_child(normalized_path, normalized_root):
+            raise ValueError(f"directory path is outside authorized root: {normalized_path}")
+        relative_parts = (
+            ()
+            if normalized_path == normalized_root
+            else tuple(PurePosixPath(normalized_path[len(normalized_root) + 1 :]).parts)
+        )
+        script = f"""
+import base64
+import json
+import os
+import stat
+
+root = {normalized_root!r}
+parts = {relative_parts!r}
+directory_fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+try:
+    for part in parts:
+        child_fd = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=directory_fd)
+        os.close(directory_fd)
+        directory_fd = child_fd
+    entries = []
+    for name in sorted(os.listdir(directory_fd), key=str.lower):
+        item_stat = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+        if not (stat.S_ISDIR(item_stat.st_mode) or stat.S_ISREG(item_stat.st_mode)):
+            continue
+        entries.append({{
+            "name": name,
+            "is_dir": stat.S_ISDIR(item_stat.st_mode),
+            "size": 0 if stat.S_ISDIR(item_stat.st_mode) else item_stat.st_size,
+            "modified_at": item_stat.st_mtime,
+        }})
+    print("YUXI_SAFE_LIST " + base64.b64encode(json.dumps(entries).encode()).decode())
+finally:
+    os.close(directory_fd)
+"""
+        encoded_script = base64.b64encode(script.encode("utf-8")).decode("ascii")
+        result = self.execute(f"python3 -c \"import base64;exec(base64.b64decode('{encoded_script}'))\"")
+        if result.exit_code not in (0, None):
+            raise FileNotFoundError(normalized_path)
+        payload = next(
+            (
+                line.removeprefix("YUXI_SAFE_LIST ")
+                for line in (result.output or "").splitlines()
+                if line.startswith("YUXI_SAFE_LIST ")
+            ),
+            None,
+        )
+        if payload is None:
+            raise RuntimeError("sandbox directory listing did not return a safe payload")
+        decoded = json.loads(base64.b64decode(payload).decode("utf-8"))
+        return list(decoded) if isinstance(decoded, list) else []
+
+    def create_authorized_directory(self, parent_path: str, name: str, *, root: str) -> str:
+        """在授权根内以 dir-fd 创建一个单层目录。"""
+        if not name or name in {".", ".."} or "/" in name or "\\" in name:
+            raise ValueError("directory name must be one path component")
+        normalized_parent = _normalize_path(parent_path)
+        normalized_root = _normalize_path(root)
+        if normalized_parent != normalized_root and not _is_same_or_child(normalized_parent, normalized_root):
+            raise ValueError("parent path is outside authorized root")
+        target_path = f"{normalized_parent.rstrip('/')}/{name}"
+        relative_parts = (
+            ()
+            if normalized_parent == normalized_root
+            else tuple(PurePosixPath(normalized_parent[len(normalized_root) + 1 :]).parts)
+        )
+        script = f"""
+import os
+root = {normalized_root!r}
+parts = {relative_parts!r}
+name = {name!r}
+directory_fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+try:
+    for part in parts:
+        child_fd = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=directory_fd)
+        os.close(directory_fd)
+        directory_fd = child_fd
+    os.mkdir(name, 0o755, dir_fd=directory_fd)
+finally:
+    os.close(directory_fd)
+"""
+        encoded_script = base64.b64encode(script.encode("utf-8")).decode("ascii")
+        result = self.execute(f"python3 -c \"import base64;exec(base64.b64decode('{encoded_script}'))\"")
+        if result.exit_code not in (0, None):
+            raise ValueError(result.output or "failed to create directory")
+        return target_path
+
+    def delete_authorized_path(self, path: str, *, root: str) -> None:
+        """不跟随链接地递归删除授权根内路径，但不允许删除根。"""
+        normalized_path = _normalize_path(path)
+        normalized_root = _normalize_path(root)
+        if normalized_path == normalized_root or not _is_same_or_child(normalized_path, normalized_root):
+            raise ValueError("delete path is outside authorized root or is the root")
+        parts = tuple(PurePosixPath(normalized_path[len(normalized_root) + 1 :]).parts)
+        script = f"""
+import os
+import stat
+
+root = {normalized_root!r}
+parts = {parts!r}
+
+def remove_entry(parent_fd, name):
+    item_stat = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+    if not stat.S_ISDIR(item_stat.st_mode):
+        os.unlink(name, dir_fd=parent_fd)
+        return
+    child_fd = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent_fd)
+    try:
+        for child_name in os.listdir(child_fd):
+            remove_entry(child_fd, child_name)
+    finally:
+        os.close(child_fd)
+    os.rmdir(name, dir_fd=parent_fd)
+
+directory_fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+try:
+    for part in parts[:-1]:
+        child_fd = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=directory_fd)
+        os.close(directory_fd)
+        directory_fd = child_fd
+    remove_entry(directory_fd, parts[-1])
+finally:
+    os.close(directory_fd)
+"""
+        encoded_script = base64.b64encode(script.encode("utf-8")).decode("ascii")
+        result = self.execute(f"python3 -c \"import base64;exec(base64.b64decode('{encoded_script}'))\"")
+        if result.exit_code not in (0, None):
+            raise FileNotFoundError(normalized_path)
 
     def write_upload_file(self, path: str, content: bytes) -> None:
         """由受信任服务写入单个 sandbox 附件工作副本。"""
@@ -809,19 +995,56 @@ finally:
         return self._download_scoped_file_to_path(normalized_path, _OUTPUTS_ROOT, target_path, max_bytes)
 
     def download_user_data_file_to_path(self, path: str, target_path: str, max_bytes: int) -> int:
-        """安全下载 Agent 可读 user-data 普通文件到 worker 临时路径。"""
+        """兼容入口：安全下载 Agent 可读普通文件到 worker 临时路径。"""
+        return self.download_authorized_file_to_path(path, target_path, max_bytes)
+
+    def download_authorized_file_to_path(self, path: str, target_path: str, max_bytes: int) -> int:
+        """安全下载 Project、User Data 或 Skills 内普通文件到 worker。"""
         normalized_path = _normalize_path(path)
         root = next(
             (
                 candidate
-                for candidate in (_WORKSPACE_ROOT, _UPLOADS_ROOT, _OUTPUTS_ROOT)
+                for candidate in self._readable_roots()
                 if normalized_path != candidate and _is_same_or_child(normalized_path, candidate)
             ),
             None,
         )
         if root is None:
-            raise ValueError(f"file path must be under Agent user-data roots: {normalized_path}")
+            raise ValueError(f"file path is outside authorized roots: {normalized_path}")
         return self._download_scoped_file_to_path(normalized_path, root, target_path, max_bytes)
+
+    def regular_file_exists(self, path: str) -> bool:
+        """确认授权根内路径是未越界的普通文件。"""
+        normalized_path = _normalize_path(path)
+        if not self._can_read_path(normalized_path):
+            return False
+        root = next(
+            (
+                candidate
+                for candidate in self._readable_roots()
+                if normalized_path != candidate and _is_same_or_child(normalized_path, candidate)
+            ),
+            None,
+        )
+        if root is None:
+            return False
+        path_b64 = base64.b64encode(normalized_path.encode("utf-8")).decode("ascii")
+        root_b64 = base64.b64encode(root.encode("utf-8")).decode("ascii")
+        command = (
+            'python3 -c "'
+            "import base64, os, stat; "
+            f"path = base64.b64decode('{path_b64}').decode('utf-8'); "
+            f"root = base64.b64decode('{root_b64}').decode('utf-8'); "
+            "st = os.lstat(path); "
+            "inside = os.path.commonpath([os.path.realpath(path), os.path.realpath(root)]) == os.path.realpath(root); "
+            "raise SystemExit(0 if stat.S_ISREG(st.st_mode) and inside else 2)"
+            '"'
+        )
+        try:
+            result = self.execute(command)
+        except (FileNotFoundError, IsADirectoryError, RuntimeError, ValueError):
+            return False
+        return result.exit_code in (0, None)
 
     def _download_scoped_file_to_path(self, normalized_path: str, root: str, target_path: str, max_bytes: int) -> int:
         """通过目录 fd 固化普通文件，再做有界的 sandbox→worker 传输。"""
@@ -849,8 +1072,11 @@ try:
         os.close(directory_fd)
         directory_fd = child_fd
     source_fd = os.open(parts[-1], os.O_RDONLY | os.O_NOFOLLOW, dir_fd=directory_fd)
-    if not stat.S_ISREG(os.fstat(source_fd).st_mode):
-        raise ValueError("source is not regular")
+    source_mode = os.fstat(source_fd).st_mode
+    if stat.S_ISDIR(source_mode):
+        raise IsADirectoryError("source is a directory")
+    if not stat.S_ISREG(source_mode):
+        raise PermissionError("source is not regular")
     target_fd = os.open(export_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
     size = 0
     digest = hashlib.sha256()
@@ -887,13 +1113,44 @@ finally:
             encoded_script = base64.b64encode(script.encode("utf-8")).decode("ascii")
             result = self.execute(f"python3 -c \"import base64;exec(base64.b64decode('{encoded_script}'))\"")
             if result.exit_code not in (0, None):
-                raise ValueError(f"output source snapshot failed: {normalized_path}")
+                _raise_authorized_path_operation_error(
+                    result.output,
+                    normalized_path,
+                    f"authorized file snapshot failed: {normalized_path}",
+                )
             snapshot_line = next(
                 (line for line in str(result.output or "").splitlines() if line.startswith("YUXI_OUTPUT_SNAPSHOT ")),
                 None,
             )
             if snapshot_line is None:
-                raise RuntimeError("sandbox output snapshot did not report size and checksum")
+                export_path_b64 = base64.b64encode(export_path.encode("utf-8")).decode("ascii")
+                metadata_result = self.execute(
+                    'python3 -c "import base64,hashlib,os,stat; '
+                    f"p=base64.b64decode('{export_path_b64}').decode(); "
+                    "fd=os.open(p,os.O_RDONLY|os.O_NOFOLLOW); st=os.fstat(fd); "
+                    "(_ for _ in ()).throw(PermissionError()) if not stat.S_ISREG(st.st_mode) else None; "
+                    "digest=hashlib.sha256(); "
+                    "size=sum((digest.update(chunk) or len(chunk)) "
+                    "for chunk in iter(lambda:os.read(fd,1048576),b'')); "
+                    "os.close(fd); "
+                    "print(f'YUXI_OUTPUT_SNAPSHOT {size} {digest.hexdigest()}')\""
+                )
+                if metadata_result.exit_code not in (0, None):
+                    _raise_authorized_path_operation_error(
+                        metadata_result.output,
+                        normalized_path,
+                        "sandbox snapshot metadata read failed",
+                    )
+                snapshot_line = next(
+                    (
+                        line
+                        for line in str(metadata_result.output or "").splitlines()
+                        if line.startswith("YUXI_OUTPUT_SNAPSHOT ")
+                    ),
+                    None,
+                )
+                if snapshot_line is None:
+                    raise RuntimeError("sandbox output snapshot did not report size and checksum")
             _, expected_size_text, expected_digest = snapshot_line.rsplit(" ", 2)
             expected_size = int(expected_size_text)
 
@@ -907,7 +1164,7 @@ finally:
                 for chunk in chunks:
                     actual_size += len(chunk)
                     if actual_size > max_bytes:
-                        raise ValueError(f"output file exceeds transfer limit: {normalized_path}")
+                        raise FileTransferLimitError(f"output file exceeds transfer limit: {normalized_path}")
                     actual_digest.update(chunk)
                     target.write(chunk)
             if actual_size != expected_size or actual_digest.hexdigest() != expected_digest:
@@ -960,7 +1217,7 @@ finally:
         for path in paths:
             try:
                 normalized_path = _normalize_path(path)
-                if not _can_read_path(normalized_path):
+                if not self._can_read_path(normalized_path):
                     responses.append(
                         FileDownloadResponse(path=normalized_path, content=None, error="permission_denied")
                     )

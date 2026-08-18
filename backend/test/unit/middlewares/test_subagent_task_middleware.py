@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import json
 from types import SimpleNamespace
 
@@ -8,7 +7,6 @@ import pytest
 import yuxi.agents.middlewares.subagent_task as subagent_task_middleware
 import yuxi.services.agent_run_service as agent_run_service
 import yuxi.services.subagent_run_service as subagent_run_service
-import yuxi.services.thread_output_service as thread_output_service
 from langgraph.prebuilt.tool_node import ToolRuntime
 from langgraph.types import Command
 from yuxi.agents.middlewares.subagent_task import YuxiSubAgentMiddleware
@@ -40,27 +38,10 @@ class _SessionContext:
 
 
 def _patch_session(monkeypatch):
-    async def checkpoint_parent_outputs(self, parent_runtime, *, base_revision_id=None):
-        del self, parent_runtime, base_revision_id
-        return "base-revision", []
-
-    async def sync_child_outputs_to_parent(self, parent_runtime, child_run):
-        del self, parent_runtime, child_run
-
-    async def discard_unreferenced_output_checkpoint(revision_id):
-        del revision_id
-
     monkeypatch.setattr(
         subagent_task_middleware,
         "pg_manager",
         SimpleNamespace(get_async_session_context=lambda: _SessionContext()),
-    )
-    monkeypatch.setattr(YuxiSubAgentMiddleware, "_checkpoint_parent_outputs", checkpoint_parent_outputs)
-    monkeypatch.setattr(YuxiSubAgentMiddleware, "_sync_child_outputs_to_parent", sync_child_outputs_to_parent)
-    monkeypatch.setattr(
-        thread_output_service,
-        "discard_unreferenced_output_checkpoint",
-        discard_unreferenced_output_checkpoint,
     )
 
 
@@ -78,7 +59,13 @@ def _patch_subagent_run_service(monkeypatch, service_class) -> None:
 
 
 def _async_tool_middleware(*, model: str | None = None) -> YuxiSubAgentMiddleware:
-    parent_context = SimpleNamespace(thread_id="parent-thread", uid="user-1", run_id="parent-run")
+    parent_context = SimpleNamespace(
+        thread_id="parent-thread",
+        runtime_scope_id="parent-thread",
+        workdir_id="workdir-1",
+        uid="user-1",
+        run_id="parent-run",
+    )
     if model:
         parent_context.model = model
     return YuxiSubAgentMiddleware(
@@ -272,8 +259,8 @@ async def test_task_tool_invokes_subagent_with_child_scope(monkeypatch) -> None:
     middleware = YuxiSubAgentMiddleware(
         parent_context=SimpleNamespace(
             thread_id="child-runtime-thread",
-            parent_thread_id="parent-thread",
-            file_thread_id="parent-file-thread",
+            runtime_scope_id="parent-thread",
+            workdir_id="workdir-1",
             uid="user-1",
             run_id="parent-run",
         ),
@@ -301,9 +288,7 @@ async def test_task_tool_invokes_subagent_with_child_scope(monkeypatch) -> None:
     assert captured["start"]["uid"] == "user-1"
     assert captured["start"]["created_by_run_id"] == "parent-run"
     assert captured["start"]["requested_thread_id"] is None
-    assert captured["start"]["file_thread_id"] == "parent-file-thread"
     assert captured["start"]["model_spec"] is None
-    assert captured["start"]["output_base_revision_id"] == "base-revision"
     assert captured["await"] == {"run_id": "child-run", "current_uid": "user-1"}
     assert result.update["subagent_runs"][0]["run_id"] == "child-run"
     assert result.update["subagent_runs"][0]["child_thread_id"] == "child-thread"
@@ -318,6 +303,8 @@ async def test_task_tool_inherits_parent_model_when_subagent_model_empty(monkeyp
     middleware = YuxiSubAgentMiddleware(
         parent_context=SimpleNamespace(
             thread_id="parent-thread",
+            runtime_scope_id="parent-thread",
+            workdir_id="workdir-1",
             uid="user-1",
             run_id="parent-run",
             model="parent:model",
@@ -348,7 +335,14 @@ async def test_task_tool_records_failed_subagent_run(monkeypatch) -> None:
     _patch_task_start_and_await(monkeypatch, captured, status="failed", output="", error_message="child boom")
 
     middleware = YuxiSubAgentMiddleware(
-        parent_context=SimpleNamespace(thread_id="parent-thread", uid="user-1", run_id="parent-run", model=""),
+        parent_context=SimpleNamespace(
+            thread_id="parent-thread",
+            runtime_scope_id="parent-thread",
+            workdir_id="workdir-1",
+            uid="user-1",
+            run_id="parent-run",
+            model="",
+        ),
         subagents=[
             SimpleNamespace(
                 slug="worker",
@@ -378,7 +372,14 @@ async def test_task_tool_reports_running_subagent_after_wait_timeout(monkeypatch
     _patch_task_start_and_await(monkeypatch, captured, status="running", output="", wait_timeout=True)
 
     middleware = YuxiSubAgentMiddleware(
-        parent_context=SimpleNamespace(thread_id="parent-thread", uid="user-1", run_id="parent-run", model=""),
+        parent_context=SimpleNamespace(
+            thread_id="parent-thread",
+            runtime_scope_id="parent-thread",
+            workdir_id="workdir-1",
+            uid="user-1",
+            run_id="parent-run",
+            model="",
+        ),
         subagents=[
             SimpleNamespace(
                 slug="worker",
@@ -411,7 +412,14 @@ async def test_task_tool_continues_existing_subagent_thread(monkeypatch) -> None
     _patch_task_start_and_await(monkeypatch, captured, output="continued done", thread_id="child-thread")
 
     middleware = YuxiSubAgentMiddleware(
-        parent_context=SimpleNamespace(thread_id="parent-thread", uid="user-1", run_id="parent-run", model=""),
+        parent_context=SimpleNamespace(
+            thread_id="parent-thread",
+            runtime_scope_id="parent-thread",
+            workdir_id="workdir-1",
+            uid="user-1",
+            run_id="parent-run",
+            model="",
+        ),
         subagents=[
             SimpleNamespace(
                 slug="worker.agent",
@@ -438,8 +446,6 @@ async def test_task_tool_continues_existing_subagent_thread(monkeypatch) -> None
 
 @pytest.mark.asyncio
 async def test_task_tool_rejects_invalid_continuation_thread(monkeypatch) -> None:
-    discarded: list[str] = []
-
     class _SubagentRunService:
         def __init__(self, db):
             del db
@@ -449,17 +455,15 @@ async def test_task_tool_rejects_invalid_continuation_thread(monkeypatch) -> Non
 
     _patch_session(monkeypatch)
 
-    async def discard_unreferenced_output_checkpoint(revision_id):
-        discarded.append(revision_id)
-
-    monkeypatch.setattr(
-        thread_output_service,
-        "discard_unreferenced_output_checkpoint",
-        discard_unreferenced_output_checkpoint,
-    )
     _patch_subagent_run_service(monkeypatch, _SubagentRunService)
     middleware = YuxiSubAgentMiddleware(
-        parent_context=SimpleNamespace(thread_id="parent-thread", uid="user-1", run_id="parent-run"),
+        parent_context=SimpleNamespace(
+            thread_id="parent-thread",
+            runtime_scope_id="parent-thread",
+            workdir_id="workdir-1",
+            uid="user-1",
+            run_id="parent-run",
+        ),
         subagents=[
             SimpleNamespace(
                 slug="worker",
@@ -481,7 +485,6 @@ async def test_task_tool_rejects_invalid_continuation_thread(monkeypatch) -> Non
     )
 
     assert result == f"无法继续子智能体线程 {unknown_thread_id}：当前对话中没有找到对应的运行记录"
-    assert discarded == ["base-revision"]
 
 
 @pytest.mark.asyncio
@@ -537,8 +540,7 @@ async def test_subagent_start_creates_child_run_and_enqueues(monkeypatch) -> Non
 
 
 @pytest.mark.asyncio
-async def test_subagent_start_replay_discards_new_unreferenced_checkpoint(monkeypatch) -> None:
-    discarded: list[str] = []
+async def test_subagent_start_replay_reuses_existing_run_without_file_checkpoint(monkeypatch) -> None:
 
     class _SubagentRunService:
         def __init__(self, db):
@@ -546,7 +548,6 @@ async def test_subagent_start_replay_discards_new_unreferenced_checkpoint(monkey
 
         async def start(self, **kwargs):
             run = _subagent_run(status="pending")
-            run.input_payload["runtime"]["output_base_revision_id"] = "existing-base-revision"
             return SimpleNamespace(
                 run=run,
                 created=False,
@@ -556,14 +557,6 @@ async def test_subagent_start_replay_discards_new_unreferenced_checkpoint(monkey
 
     _patch_session(monkeypatch)
 
-    async def discard_unreferenced_output_checkpoint(revision_id):
-        discarded.append(revision_id)
-
-    monkeypatch.setattr(
-        thread_output_service,
-        "discard_unreferenced_output_checkpoint",
-        discard_unreferenced_output_checkpoint,
-    )
     _patch_subagent_run_service(monkeypatch, _SubagentRunService)
 
     tool = next(item for item in _async_tool_middleware().tools if item.name == "subagent_start")
@@ -574,7 +567,6 @@ async def test_subagent_start_replay_discards_new_unreferenced_checkpoint(monkey
     )
 
     assert json.loads(result.update["messages"][0].content)["status"] == "existing"
-    assert discarded == ["base-revision"]
 
 
 @pytest.mark.asyncio
@@ -770,30 +762,8 @@ async def test_subagent_await_reports_timeout_when_run_is_still_active(monkeypat
     assert len(captured["loads"]) == 2
 
 
-@pytest.mark.asyncio
-async def test_child_output_sync_serializes_parallel_task_completions(monkeypatch) -> None:
-    middleware = _async_tool_middleware()
-    active = 0
-    max_active = 0
+def test_parent_runtime_keeps_one_shared_runtime_and_workdir() -> None:
+    runtime = _async_tool_middleware()._parent_runtime()
 
-    async def fake_sync_locked(self, parent_runtime, child_run):
-        nonlocal active, max_active
-        del self, parent_runtime, child_run
-        active += 1
-        max_active = max(max_active, active)
-        await asyncio.sleep(0.01)
-        active -= 1
-
-    monkeypatch.setattr(YuxiSubAgentMiddleware, "_sync_child_outputs_to_parent_locked", fake_sync_locked)
-    parent_runtime = middleware._parent_runtime()
-    first = _subagent_run(status="completed")
-    second = _subagent_run(status="completed")
-    second.id = "child-run-2"
-
-    await asyncio.gather(
-        middleware._sync_child_outputs_to_parent(parent_runtime, first),
-        middleware._sync_child_outputs_to_parent(parent_runtime, second),
-    )
-
-    assert max_active == 1
-    assert middleware._synced_child_run_ids == {"child-run", "child-run-2"}
+    assert runtime.runtime_scope_id == "parent-thread"
+    assert runtime.workdir_id == "workdir-1"

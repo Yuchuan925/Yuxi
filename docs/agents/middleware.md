@@ -21,7 +21,7 @@
 
 | 中间件 | 作用 |
 | --- | --- |
-| `create_agent_filesystem_middleware` | 接入沙盒文件系统、用户工作区、线程 uploads/outputs 与只读 Skills 路由，并在工具结果过大时把内容写入 `outputs/large_tool_results` |
+| `create_agent_filesystem_middleware` | 接入实时 Project Workdir、User Data 与只读 Skills 路由，并在工具结果过大时把内容写入 Project `outputs/large_tool_results` |
 | `save_attachments_to_fs` / `AttachmentMiddleware` | 从 LangGraph state 的 `uploads` 读取附件路径，把可读路径注入系统提示，提示模型按需使用 `read_file` |
 | `SkillsMiddleware` | 注入可见 Skill 的提示段，监听读取 `SKILL.md` 后的 Skill 激活，并按依赖追加工具和 MCP 工具；知识库工具由内置 `knowledge-base` Skill 按需加载 |
 | `YuxiSubAgentMiddleware` | 仅主 Agent 在存在可见子智能体时挂载，提供 `task` 工具调用真实子 Agent graph |
@@ -57,7 +57,7 @@
 
 附件上传后会先落盘到线程文件系统，并在 LangGraph state 中记录 `uploads`。`AttachmentMiddleware` 只把文件名和可读路径注入提示词，不会把文件内容整体塞进模型上下文。模型需要查看附件时，应通过 `read_file` 读取对应路径。
 
-文件系统中间件负责把 sandbox backend、线程 uploads/outputs、用户工作区和只读 Skills 组合成 Agent 可访问的虚拟文件系统。普通 Agent 默认使用当前 `thread_id` 作为旧文件作用域；子智能体使用 child `thread_id` 做 checkpoint，同时沿用父线程的 uploads/outputs。这个旧文件 scope 不参与 Sandbox identity 或 provisioner wire。父子 Sandbox 都只读挂载同一 uid 的授权 Skill 投影，各 Agent 的选中列表只影响 Prompt 和工具激活。
+文件系统中间件负责把实时 Project Workdir、User Data 和只读 Skills 组合成 Agent 可访问的虚拟文件系统。普通 Agent 与子智能体使用根 Conversation 的同一个 `runtime_scope_id` 和 `workdir_id`；child `thread_id` 只隔离 LangGraph checkpoint。父子 Agent 直接读取同一份 POSIX 文件，各 Agent 的 Skill 选中列表只影响 Prompt 和工具激活。
 
 ## 子智能体任务
 

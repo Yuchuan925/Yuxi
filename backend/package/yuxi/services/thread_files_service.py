@@ -1,60 +1,86 @@
+"""线程文件 API 的实时 Project Workdir 适配。"""
+
 from __future__ import annotations
 
 import asyncio
-import shutil
-from pathlib import Path
-from typing import Any
+import os
+import tempfile
+from pathlib import Path, PurePosixPath
 
 from fastapi import HTTPException
-from yuxi.agents.backends.sandbox import (
-    ensure_thread_dirs,
-    resolve_virtual_path,
-    sandbox_outputs_dir,
-    sandbox_uploads_dir,
-    sandbox_user_data_dir,
-    sandbox_workspace_dir,
-    virtual_path_for_thread_file,
-)
-from yuxi.repositories.conversation_repository import ConversationRepository
-from yuxi.services.attachment_service import materialize_attachment_records
-from yuxi.services.conversation_service import require_user_conversation
+from fastapi.responses import FileResponse
+from starlette.background import BackgroundTask
+
+from yuxi.agents.backends.sandbox.backend import FileTransferLimitError
+from yuxi.agents.skills.service import list_accessible_skills
+from yuxi.repositories.user_repository import UserRepository
+from yuxi.services.file_preview import detect_media_type
 from yuxi.services.mention_search_service import invalidate_mention_cache, invalidate_workspace_mention_cache
-from yuxi.services.thread_output_service import (
-    find_output_descriptor,
-    get_current_output_snapshot,
-    list_output_entries,
-)
-from yuxi.storage.minio import StorageError, get_minio_client
-from yuxi.utils.datetime_utils import utc_isoformat_from_timestamp
-from yuxi.utils.paths import OUTPUTS_DIR_NAME, VIRTUAL_PATH_PREFIX
+from yuxi.services.project_workdir_service import resolve_project_workdir_binding
+from yuxi.utils.paths import VIRTUAL_SKILLS_PATH
+
+MAX_THREAD_FILE_READ_BYTES = 10 * 1024 * 1024
+MAX_ARTIFACT_DOWNLOAD_BYTES = 1024 * 1024 * 1024
+MAX_RECURSIVE_ENTRIES = 5000
+MAX_RECURSIVE_DIRECTORIES = 600
+MAX_SAVED_ARTIFACT_NAME_ATTEMPTS = 1000
 
 
-def _get_virtual_root() -> str:
-    """Return the virtual root exposed by the thread-files API."""
-    return "/" + VIRTUAL_PATH_PREFIX.strip("/")
-
-
-def _thread_file_entry(
-    thread_id: str,
-    uid: str,
-    child: Path,
-    *,
-    directory_paths_end_with_slash: bool = False,
-) -> dict[str, Any]:
-    stat = child.stat()
-    child_virtual_path = virtual_path_for_thread_file(thread_id, child, uid=uid)
-    if directory_paths_end_with_slash and child.is_dir() and not child_virtual_path.endswith("/"):
-        child_virtual_path = f"{child_virtual_path}/"
+def _thread_file_entry(thread_id: str, directory: str, item: dict) -> dict:
+    child_path = f"{directory.rstrip('/')}/{item['name']}"
+    is_dir = bool(item.get("is_dir"))
     return {
-        "path": child_virtual_path,
-        "name": child.name,
-        "is_dir": child.is_dir(),
-        "size": stat.st_size if child.is_file() else 0,
-        "modified_at": utc_isoformat_from_timestamp(stat.st_mtime),
-        "artifact_url": None
-        if child.is_dir()
-        else f"/api/chat/thread/{thread_id}/artifacts/{child_virtual_path.lstrip('/')}",
+        "path": f"{child_path}/" if is_dir else child_path,
+        "name": item["name"],
+        "is_dir": is_dir,
+        "size": int(item.get("size") or 0),
+        "modified_at": "",
+        "artifact_url": None if is_dir else f"/api/chat/thread/{thread_id}/artifacts/{child_path.lstrip('/')}",
     }
+
+
+def _normalize_project_path(workdir_path: str, path: str | None) -> str:
+    raw = str(path or "/").strip() or "/"
+    if raw == "/":
+        return workdir_path
+    normalized = str(PurePosixPath(raw if raw.startswith("/") else f"/{raw}"))
+    if ".." in PurePosixPath(raw).parts:
+        raise HTTPException(status_code=403, detail="access denied")
+    if normalized != workdir_path and not normalized.startswith(f"{workdir_path}/"):
+        raise HTTPException(status_code=403, detail="thread files only expose the Project Workdir")
+    return normalized
+
+
+def _normalize_artifact_path(workdir_path: str, path: str) -> str:
+    raw = str(path or "").strip()
+    normalized = str(PurePosixPath(raw if raw.startswith("/") else f"/{raw}"))
+    if ".." in PurePosixPath(raw).parts:
+        raise HTTPException(status_code=403, detail="access denied")
+    allowed = normalized.startswith(f"{workdir_path}/") or normalized.startswith("/home/gem/user-data/")
+    allowed = allowed or normalized.startswith(f"{VIRTUAL_SKILLS_PATH}/")
+    if not allowed:
+        raise HTTPException(status_code=403, detail="artifact is outside the current user's visible roots")
+    return normalized
+
+
+async def _require_skill_artifact_access(*, normalized_path: str, current_uid: str, db) -> None:
+    skills_prefix = f"{VIRTUAL_SKILLS_PATH}/"
+    if not normalized_path.startswith(skills_prefix):
+        return
+    slug = normalized_path[len(skills_prefix) :].split("/", 1)[0]
+    user = await UserRepository(db).get_by_uid(str(current_uid))
+    if user is None or bool(user.is_deleted):
+        raise HTTPException(status_code=403, detail="artifact access denied")
+    accessible_slugs = {skill.slug for skill in await list_accessible_skills(db, user)}
+    if slug not in accessible_slugs:
+        raise HTTPException(status_code=403, detail="artifact access denied")
+
+
+async def _binding_backend(*, thread_id: str, current_uid: str, db):
+    binding = await resolve_project_workdir_binding(thread_id=thread_id, uid=current_uid, db=db)
+    backend = binding.create_file_backend(create_if_missing=True)
+    await asyncio.to_thread(backend.ensure_available)
+    return binding, backend
 
 
 async def list_thread_files_view(
@@ -65,121 +91,42 @@ async def list_thread_files_view(
     path: str | None = None,
     recursive: bool = False,
 ) -> dict:
-    conv_repo = ConversationRepository(db)
-    conversation = await require_user_conversation(conv_repo, thread_id, str(current_uid))
-    uid = str(conversation.uid)
-    await materialize_attachment_records(thread_id, uid, (conversation.extra_metadata or {}).get("attachments", []))
-
-    virtual_path = path or _get_virtual_root()
-    output_revision_id, output_files = await get_current_output_snapshot(conversation=conversation, db=db)
-    if output_revision_id and (
-        virtual_path == "/home/gem/user-data/outputs" or virtual_path.startswith("/home/gem/user-data/outputs/")
-    ):
-        return {
-            "path": virtual_path,
-            "files": list_output_entries(output_files, virtual_path, recursive=recursive),
-        }
-
-    ensure_thread_dirs(thread_id, uid)
-    if output_revision_id and recursive and virtual_path.rstrip("/") == _get_virtual_root():
-        result = await asyncio.to_thread(
-            _list_user_data_root_entries,
-            thread_id,
-            uid,
-            virtual_path,
-            recursive=True,
-            recursive_skip_names={OUTPUTS_DIR_NAME},
-        )
-        output_root = "/home/gem/user-data/outputs"
-        result["files"] = [
-            entry
-            for entry in result["files"]
-            if not str(entry.get("path") or "").rstrip("/").startswith(f"{output_root}/")
-        ]
-        result["files"].extend(list_output_entries(output_files, output_root, recursive=True))
-        return result
-    try:
-        actual_path = resolve_virtual_path(thread_id, virtual_path, uid=uid)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-    if not actual_path.exists():
-        return {"path": virtual_path, "files": []}
-    if not actual_path.is_dir():
-        raise HTTPException(status_code=400, detail="path must be a directory")
-
-    if recursive:
-        if virtual_path.rstrip("/") == _get_virtual_root():
-            return await asyncio.to_thread(
-                _list_user_data_root_entries,
-                thread_id,
-                uid,
-                virtual_path,
-                recursive=True,
-            )
-        return await asyncio.to_thread(_list_files_recursive, thread_id, uid, actual_path, virtual_path)
-
-    if virtual_path.rstrip("/") == _get_virtual_root():
-        return await asyncio.to_thread(_list_user_data_root_entries, thread_id, uid, virtual_path)
-
-    entries = await asyncio.to_thread(_list_directory_entries, thread_id, uid, actual_path)
-
-    return {"path": virtual_path, "files": entries}
-
-
-def _list_directory_entries(thread_id: str, uid: str, actual_path: Path) -> list[dict[str, Any]]:
-    return [
-        _thread_file_entry(thread_id, uid, child)
-        for child in sorted(actual_path.iterdir(), key=lambda item: (not item.is_dir(), item.name.lower()))
-    ]
-
-
-def _list_user_data_root_entries(
-    thread_id: str,
-    uid: str,
-    virtual_path: str,
-    recursive: bool = False,
-    recursive_skip_names: set[str] | None = None,
-) -> dict:
-    """List the thread root and inject the user workspace entry if needed."""
-    recursive_skip_names = recursive_skip_names or set()
-    entries: list[dict[str, Any]] = []
-    thread_root = sandbox_user_data_dir(thread_id)
-    for child in sorted(thread_root.iterdir(), key=lambda item: (not item.is_dir(), item.name.lower())):
-        entry = _thread_file_entry(thread_id, uid, child, directory_paths_end_with_slash=True)
-        entries.append(entry)
-        if recursive and child.is_dir() and child.name not in recursive_skip_names:
-            nested = _list_files_recursive(thread_id, uid, child, entry["path"])
-            entries.extend(nested["files"])
-
-    workspace_dir = sandbox_workspace_dir(thread_id, uid)
-    workspace_virtual_path = virtual_path_for_thread_file(thread_id, workspace_dir, uid=uid)
-    if workspace_virtual_path.rstrip("/") not in {str(entry["path"]).rstrip("/") for entry in entries}:
-        # workspace lives outside the per-thread root, so expose it as a top-level entry.
-        entry = _thread_file_entry(thread_id, uid, workspace_dir, directory_paths_end_with_slash=True)
-        entries.append(entry)
-        if recursive:
-            nested = _list_files_recursive(thread_id, uid, workspace_dir, entry["path"])
-            entries.extend(nested["files"])
-    return {"path": virtual_path, "files": entries}
-
-
-def _list_files_recursive(thread_id: str, uid: str, actual_path: Path, virtual_path: str) -> dict:
-    """Recursively scan a directory while preserving viewer virtual paths."""
-    entries: list[dict[str, Any]] = []
-
-    def _scan_dir(base_actual_path: Path):
+    """列出实时 Project Workdir，兼容 thread-files 响应结构。"""
+    binding, backend = await _binding_backend(thread_id=thread_id, current_uid=current_uid, db=db)
+    normalized = _normalize_project_path(binding.workdir_path, path)
+    if not recursive:
         try:
-            for child in sorted(base_actual_path.iterdir(), key=lambda item: (not item.is_dir(), item.name.lower())):
-                entry = _thread_file_entry(thread_id, uid, child)
-                entries.append(entry)
-                if child.is_dir():
-                    _scan_dir(child)
-        except PermissionError:
-            pass
+            items = await asyncio.to_thread(
+                backend.list_authorized_directory,
+                normalized,
+                root=binding.workdir_path,
+            )
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="path not found") from exc
+        files = [_thread_file_entry(thread_id, normalized, item) for item in items]
+        return {"path": normalized, "files": files}
 
-    _scan_dir(actual_path)
-    return {"path": virtual_path, "files": entries}
+    files: list[dict] = []
+    pending = [normalized]
+    visited_directories = 0
+    while pending and len(files) < MAX_RECURSIVE_ENTRIES:
+        directory = pending.pop(0)
+        visited_directories += 1
+        if visited_directories > MAX_RECURSIVE_DIRECTORIES:
+            break
+        try:
+            items = await asyncio.to_thread(backend.list_authorized_directory, directory, root=binding.workdir_path)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="path not found") from exc
+        for item in items:
+            child_path = f"{directory.rstrip('/')}/{item['name']}"
+            entry = _thread_file_entry(thread_id, directory, item)
+            files.append(entry)
+            if len(files) >= MAX_RECURSIVE_ENTRIES:
+                break
+            if item.get("is_dir"):
+                pending.append(child_path)
+    return {"path": normalized, "files": files}
 
 
 async def read_thread_file_content_view(
@@ -191,62 +138,38 @@ async def read_thread_file_content_view(
     offset: int = 0,
     limit: int = 2000,
 ) -> dict:
-    conv_repo = ConversationRepository(db)
-    conversation = await require_user_conversation(conv_repo, thread_id, str(current_uid))
-    uid = str(conversation.uid)
-    await materialize_attachment_records(thread_id, uid, (conversation.extra_metadata or {}).get("attachments", []))
-
-    output_revision_id, output_files = await get_current_output_snapshot(conversation=conversation, db=db)
-    if output_revision_id and (
-        path == "/home/gem/user-data/outputs" or path.startswith("/home/gem/user-data/outputs/")
-    ):
-        try:
-            descriptor = find_output_descriptor(output_files, path)
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        if descriptor is None:
-            raise HTTPException(status_code=404, detail="file not found")
-        try:
-            raw_content = await get_minio_client().adownload_file(
-                str(descriptor["bucket_name"]), str(descriptor["object_name"])
-            )
-        except StorageError as exc:
-            raise HTTPException(status_code=404, detail="file object not found") from exc
-        lines = raw_content.decode("utf-8", errors="replace").splitlines()
-        start = max(0, int(offset))
-        count = min(max(1, int(limit)), 5000)
-        return {
-            "path": path,
-            "content": lines[start : start + count],
-            "offset": start,
-            "limit": count,
-            "total_lines": len(lines),
-            "artifact_url": f"/api/chat/thread/{thread_id}/artifacts/{path.lstrip('/')}",
-        }
-
+    """从实时 Workdir 读取文本行。"""
+    binding, backend = await _binding_backend(thread_id=thread_id, current_uid=current_uid, db=db)
+    normalized = _normalize_project_path(binding.workdir_path, path)
+    descriptor, temp_path = tempfile.mkstemp(prefix="yuxi-thread-file-")
+    os.close(descriptor)
     try:
-        actual_path = resolve_virtual_path(thread_id, path, uid=uid)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-    if not actual_path.exists():
-        raise HTTPException(status_code=404, detail="file not found")
-    if not actual_path.is_file():
-        raise HTTPException(status_code=400, detail="path must be a file")
-
-    text = await asyncio.to_thread(actual_path.read_text, encoding="utf-8", errors="replace")
+        await asyncio.to_thread(
+            backend.download_authorized_file_to_path,
+            normalized,
+            temp_path,
+            MAX_THREAD_FILE_READ_BYTES,
+        )
+        text = await asyncio.to_thread(Path(temp_path).read_text, encoding="utf-8", errors="replace")
+    except FileTransferLimitError as exc:
+        raise HTTPException(status_code=413, detail="file exceeds transfer limit") from exc
+    except (FileNotFoundError, ValueError) as exc:
+        raise HTTPException(status_code=404, detail="file not found") from exc
+    finally:
+        try:
+            os.unlink(temp_path)
+        except FileNotFoundError:
+            pass
     lines = text.splitlines()
     start = max(0, int(offset))
     count = min(max(1, int(limit)), 5000)
-    selected = lines[start : start + count]
-
     return {
-        "path": path,
-        "content": selected,
+        "path": normalized,
+        "content": lines[start : start + count],
         "offset": start,
         "limit": count,
         "total_lines": len(lines),
-        "artifact_url": f"/api/chat/thread/{thread_id}/artifacts/{path.lstrip('/')}",
+        "artifact_url": f"/api/chat/thread/{thread_id}/artifacts/{normalized.lstrip('/')}",
     }
 
 
@@ -256,115 +179,101 @@ async def resolve_thread_artifact_view(
     current_uid: str,
     db,
     path: str,
-) -> Path | dict:
-    conv_repo = ConversationRepository(db)
-    conversation = await require_user_conversation(conv_repo, thread_id, str(current_uid))
-    uid = str(conversation.uid)
-    await materialize_attachment_records(thread_id, uid, (conversation.extra_metadata or {}).get("attachments", []))
-
-    normalized = "/" + path.lstrip("/")
-    output_revision_id, output_files = await get_current_output_snapshot(conversation=conversation, db=db)
-    if normalized == "/home/gem/user-data/outputs" or normalized.startswith("/home/gem/user-data/outputs/"):
-        if output_revision_id:
-            try:
-                descriptor = find_output_descriptor(output_files, normalized)
-            except ValueError as exc:
-                raise HTTPException(status_code=400, detail=str(exc)) from exc
-            if descriptor is None:
-                raise HTTPException(status_code=404, detail="artifact not found")
-            return descriptor
-
-    ensure_thread_dirs(thread_id, uid)
+    download: bool = False,
+) -> FileResponse:
+    """把实时授权文件导出为自动清理的 HTTP 文件响应。"""
+    binding, backend = await _binding_backend(thread_id=thread_id, current_uid=current_uid, db=db)
+    normalized = _normalize_artifact_path(binding.workdir_path, path)
+    await _require_skill_artifact_access(normalized_path=normalized, current_uid=current_uid, db=db)
+    descriptor, temp_path = tempfile.mkstemp(prefix="yuxi-artifact-", suffix=PurePosixPath(normalized).suffix)
+    os.close(descriptor)
     try:
-        actual_path = resolve_virtual_path(thread_id, normalized, uid=uid)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-    if not actual_path.exists():
-        raise HTTPException(status_code=404, detail="artifact not found")
-    if not actual_path.is_file():
-        raise HTTPException(status_code=400, detail="artifact path is not a file")
-
-    resolved_path = actual_path.resolve()
-    workspace_root = sandbox_workspace_dir(thread_id, uid).resolve()
-    uploads_root = sandbox_uploads_dir(thread_id).resolve()
-    outputs_root = sandbox_outputs_dir(thread_id).resolve()
-    if not (
-        resolved_path.is_relative_to(workspace_root)
-        or resolved_path.is_relative_to(uploads_root)
-        or resolved_path.is_relative_to(outputs_root)
-    ):
-        raise HTTPException(status_code=403, detail="access denied")
-
-    return resolved_path
-
-
-async def save_thread_artifact_to_workspace_view(
-    *,
-    thread_id: str,
-    current_uid: str,
-    db,
-    path: str,
-) -> dict[str, str]:
-    source = await resolve_thread_artifact_view(
-        thread_id=thread_id,
-        current_uid=current_uid,
-        db=db,
-        path=path,
+        await asyncio.to_thread(
+            backend.download_authorized_file_to_path,
+            normalized,
+            temp_path,
+            MAX_ARTIFACT_DOWNLOAD_BYTES,
+        )
+    except PermissionError as exc:
+        try:
+            os.unlink(temp_path)
+        except FileNotFoundError:
+            pass
+        raise HTTPException(status_code=403, detail="artifact access denied") from exc
+    except IsADirectoryError as exc:
+        try:
+            os.unlink(temp_path)
+        except FileNotFoundError:
+            pass
+        raise HTTPException(status_code=400, detail="artifact path is not a regular file") from exc
+    except FileTransferLimitError as exc:
+        try:
+            os.unlink(temp_path)
+        except FileNotFoundError:
+            pass
+        raise HTTPException(status_code=413, detail="artifact exceeds transfer limit") from exc
+    except (FileNotFoundError, ValueError) as exc:
+        try:
+            os.unlink(temp_path)
+        except FileNotFoundError:
+            pass
+        raise HTTPException(status_code=404, detail="artifact not found") from exc
+    file_name = PurePosixPath(normalized).name or "artifact"
+    with open(temp_path, "rb") as artifact_file:
+        media_type = detect_media_type(file_name, artifact_file.read(16 * 1024))
+    return FileResponse(
+        temp_path,
+        media_type=media_type,
+        filename=file_name if download else None,
+        content_disposition_type="attachment",
+        background=BackgroundTask(os.unlink, temp_path),
     )
 
-    conv_repo = ConversationRepository(db)
-    conversation = await require_user_conversation(conv_repo, thread_id, str(current_uid))
-    uid = str(conversation.uid)
-    target_dir = sandbox_workspace_dir(thread_id, uid) / "saved_artifacts"
-    target_dir.mkdir(parents=True, exist_ok=True)
 
-    source_name = Path(str(source.get("path") or "artifact")).name if isinstance(source, dict) else source.name
-    target_path = _next_available_artifact_path(target_dir, source_name)
-    if isinstance(source, dict):
+async def save_thread_artifact_to_workspace_view(*, thread_id: str, current_uid: str, db, path: str) -> dict[str, str]:
+    """把可见 artifact 复制到用户级 User Data saved_artifacts。"""
+    binding, backend = await _binding_backend(thread_id=thread_id, current_uid=current_uid, db=db)
+    normalized = _normalize_artifact_path(binding.workdir_path, path)
+    await _require_skill_artifact_access(normalized_path=normalized, current_uid=current_uid, db=db)
+    descriptor, temp_path = tempfile.mkstemp(prefix="yuxi-save-artifact-")
+    os.close(descriptor)
+    try:
         try:
-            response = await get_minio_client().adownload_response(
-                str(source["bucket_name"]), str(source["object_name"])
+            await asyncio.to_thread(
+                backend.download_authorized_file_to_path,
+                normalized,
+                temp_path,
+                MAX_ARTIFACT_DOWNLOAD_BYTES,
             )
-        except StorageError as exc:
-            raise HTTPException(status_code=404, detail="artifact object not found") from exc
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail="artifact access denied") from exc
+        except IsADirectoryError as exc:
+            raise HTTPException(status_code=400, detail="artifact path is not a regular file") from exc
+        except FileTransferLimitError as exc:
+            raise HTTPException(status_code=413, detail="artifact exceeds transfer limit") from exc
+        except (FileNotFoundError, ValueError) as exc:
+            raise HTTPException(status_code=404, detail="artifact not found") from exc
+        file_name = PurePosixPath(normalized).name or "artifact"
+        target = f"/home/gem/user-data/workspace/saved_artifacts/{file_name}"
+        index = 1
+        stem = PurePosixPath(file_name).stem
+        suffix = PurePosixPath(file_name).suffix
+        while await asyncio.to_thread(backend.regular_file_exists, target):
+            if index > MAX_SAVED_ARTIFACT_NAME_ATTEMPTS:
+                raise HTTPException(status_code=409, detail="saved artifact name space is exhausted")
+            target = f"/home/gem/user-data/workspace/saved_artifacts/{stem} ({index}){suffix}"
+            index += 1
+        await asyncio.to_thread(backend.upload_authorized_file_from_path, target, temp_path)
+    finally:
         try:
-            with target_path.open("wb") as dst:
-                while chunk := await asyncio.to_thread(response.read, 1024 * 1024):
-                    dst.write(chunk)
-        finally:
-            response.close()
-            response.release_conn()
-    else:
-        with source.open("rb") as src, target_path.open("wb") as dst:
-            shutil.copyfileobj(src, dst)
-
-    await invalidate_mention_cache(thread_id)
-    await invalidate_workspace_mention_cache(uid)
-
-    saved_virtual_path = virtual_path_for_thread_file(thread_id, target_path, uid=uid)
+            os.unlink(temp_path)
+        except FileNotFoundError:
+            pass
+    await invalidate_mention_cache(binding.thread_id)
+    await invalidate_workspace_mention_cache(current_uid)
     return {
-        "name": target_path.name,
-        "source_path": "/" + path.lstrip("/"),
-        "saved_path": saved_virtual_path,
-        "saved_artifact_url": f"/api/chat/thread/{thread_id}/artifacts/{saved_virtual_path.lstrip('/')}",
+        "name": PurePosixPath(target).name,
+        "source_path": normalized,
+        "saved_path": target,
+        "saved_artifact_url": f"/api/chat/thread/{thread_id}/artifacts/{target.lstrip('/')}",
     }
-
-
-def _next_available_artifact_path(target_dir: Path, filename: str) -> Path:
-    candidate = target_dir / filename
-    if not candidate.exists():
-        return candidate
-
-    base_name = Path(filename).stem
-    suffix = Path(filename).suffix
-    index = 1
-    while True:
-        candidate = target_dir / f"{base_name} ({index}){suffix}"
-        if not candidate.exists():
-            return candidate
-
-        index += 1
-        if index >= 1000:
-            # This is a safety check to prevent infinite loops in case of some unexpected issue with file naming.
-            raise RuntimeError(f"Unable to find available filename for {filename} after 1000 attempts.")

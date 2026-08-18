@@ -20,6 +20,7 @@ from yuxi.repositories.agent_run_request_repository import AgentRunRequestReposi
 from yuxi.repositories.conversation_repository import ConversationRepository
 from yuxi.services.agent_request_queue_service import finalize_intake, intake_request
 from yuxi.services.input_message_service import AgentRunInputMessage
+from yuxi.services.project_workdir_materialization_service import require_project_workdir_active
 from yuxi.storage.postgres.models_business import User
 
 
@@ -76,6 +77,8 @@ async def submit_run_command(
     origin_metadata = {
         key: value for key, value in origin.metadata.items() if key not in {"source", "channel", "external_id"}
     }
+
+    await require_project_workdir_active(db)
 
     agent_repo = AgentRepository(db)
     agent_item = await agent_repo.get_visible_by_slug(

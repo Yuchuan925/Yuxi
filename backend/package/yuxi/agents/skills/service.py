@@ -395,6 +395,33 @@ async def refresh_user_skill_projection_async(uid: str) -> dict[str, str]:
         return source_dirs
 
 
+def _remove_skill_from_user_projection(uid: str, slug: str) -> None:
+    """从一个已物化 uid 投影移除 Skill，授权变更时保持 fail-closed。"""
+    if not is_valid_skill_slug(slug):
+        raise ValueError("无效 skill slug")
+    with _get_user_skills_lock(uid), _user_skills_file_lock(uid):
+        _remove_skill_projection_entry(get_user_skills_root_dir(uid) / slug)
+
+
+async def apply_skill_projection_policy_change(db: AsyncSession, slug: str) -> None:
+    """提交 Skill 授权变更，并同步所有已存在的 uid 投影。"""
+    from yuxi.agents.backends.sandbox.paths import workspace_uid_dirname
+
+    result = await db.execute(select(User.uid).where(User.is_deleted == 0).order_by(User.id))
+    projection_root = get_save_dir() / "skill-projections"
+    uids = [str(uid) for uid in result.scalars().all() if (projection_root / workspace_uid_dirname(str(uid))).is_dir()]
+    for uid in uids:
+        await db.execute(
+            text("SELECT pg_advisory_xact_lock(hashtext(:lock_scope))"),
+            {"lock_scope": f"{_USER_SKILL_PROJECTION_LOCK_SCOPE}{uid}"},
+        )
+    for uid in uids:
+        await asyncio.to_thread(_remove_skill_from_user_projection, uid, slug)
+    await db.commit()
+    for uid in uids:
+        await refresh_user_skill_projection_async(uid)
+
+
 def sync_user_accessible_skills(
     uid: str,
     source_dirs: dict[str, str | Path],
@@ -1837,12 +1864,16 @@ async def update_skill_share_config(
         source_type=item.source_type,
         allowed_access_levels=set(get_allowed_skill_access_levels(operator)),
     )
-    return await SkillRepository(db).update_share_config(item, share_config=normalized, updated_by=operator.uid)
+    repo = SkillRepository(db)
+    repo.autocommit = False
+    return await repo.update_share_config(item, share_config=normalized, updated_by=operator.uid)
 
 
 async def update_skill_enabled(db: AsyncSession, *, slug: str, enabled: bool, operator: User) -> Skill:
     item = await get_manageable_skill_or_raise(db, operator, slug)
-    return await SkillRepository(db).update_enabled(item, enabled=enabled, updated_by=operator.uid)
+    repo = SkillRepository(db)
+    repo.autocommit = False
+    return await repo.update_enabled(item, enabled=enabled, updated_by=operator.uid)
 
 
 def list_builtin_skill_specs() -> list[dict[str, Any]]:

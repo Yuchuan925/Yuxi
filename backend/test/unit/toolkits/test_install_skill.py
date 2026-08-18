@@ -43,6 +43,8 @@ async def test_install_skill_from_sandbox_installs_as_current_user_private_skill
         uid,
         staging_root,
         sandbox_instance_id,
+        workdir_id,
+        workdir_path,
     ):
         calls["prepare_thread_id"] = threading.get_ident()
         calls["prepare"] = {
@@ -51,6 +53,8 @@ async def test_install_skill_from_sandbox_installs_as_current_user_private_skill
             "uid": uid,
             "staging_root": staging_root,
             "sandbox_instance_id": sandbox_instance_id,
+            "workdir_id": workdir_id,
+            "workdir_path": workdir_path,
         }
         return source_dir
 
@@ -103,6 +107,9 @@ async def test_install_skill_from_sandbox_installs_as_current_user_private_skill
     runtime = _runtime(
         uid="normal-user",
         thread_id="thread-1",
+        sandbox_instance_id="thread-1",
+        workdir_id="workdir-1",
+        workdir_path="/home/gem/projects/project-workdir-1",
         skills=["existing-skill"],
         _readable_skills=["existing-skill", "demo-skill"],
         _prompt_skills=["existing-skill", "demo-skill"],
@@ -290,10 +297,11 @@ def test_prepare_skill_from_sandbox_uses_sandbox_api_without_host_path_resolutio
     remote_dir = "/home/gem/user-data/workspace/demo-skill"
 
     class FakeProvisionerSandboxBackend:
-        def __init__(self, *, thread_id, uid, sandbox_instance_id, create_if_missing):
+        def __init__(self, *, thread_id, uid, sandbox_instance_id, workdir_id, create_if_missing):
             assert thread_id == "thread-1"
             assert uid == "user-1"
             assert sandbox_instance_id is None
+            assert workdir_id is None
             assert create_if_missing is False
 
         def ls(self, path):
@@ -328,10 +336,11 @@ def test_prepare_skill_from_sandbox_preserves_download_error_message(monkeypatch
     remote_dir = "/home/gem/user-data/workspace/demo-skill"
 
     class FakeProvisionerSandboxBackend:
-        def __init__(self, *, thread_id, uid, sandbox_instance_id, create_if_missing):
+        def __init__(self, *, thread_id, uid, sandbox_instance_id, workdir_id, create_if_missing):
             assert thread_id == "thread-1"
             assert uid == "user-1"
             assert sandbox_instance_id is None
+            assert workdir_id is None
             assert create_if_missing is False
 
         def ls(self, _path):

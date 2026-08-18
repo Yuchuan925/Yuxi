@@ -1,161 +1,92 @@
 from __future__ import annotations
 
-import io
 from pathlib import Path
 
 import pytest
 from fastapi import HTTPException
 
-from yuxi.services import thread_files_service as svc
+import yuxi.services.thread_files_service as svc
+from yuxi.agents.backends.sandbox.backend import FileTransferLimitError
+from yuxi.services.project_workdir_service import ProjectWorkdirBinding
 
 
-class _Conversation:
-    uid = "user-1"
-    extra_metadata = None
-
-
-async def _fake_require_user_conversation(_repo, _thread_id: str, _current_uid: str):
-    return _Conversation()
-
-
-@pytest.mark.asyncio
-async def test_read_thread_file_content_runs_file_read_in_worker_thread(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-):
-    file_path = tmp_path / "notes.txt"
-    file_path.write_text("first\nsecond\nthird", encoding="utf-8")
-    threaded_calls = []
-
-    async def _fake_to_thread(func, *args, **kwargs):
-        threaded_calls.append(func)
-        return func(*args, **kwargs)
-
-    monkeypatch.setattr(svc, "require_user_conversation", _fake_require_user_conversation)
-    monkeypatch.setattr(svc, "ConversationRepository", lambda _db: object())
-    monkeypatch.setattr(svc, "resolve_virtual_path", lambda _thread_id, _path, *, uid: file_path)
-    monkeypatch.setattr(svc.asyncio, "to_thread", _fake_to_thread)
-
-    result = await svc.read_thread_file_content_view(
-        thread_id="thread-1",
-        current_uid="user-1",
-        db=None,
-        path="/home/gem/user-data/workspace/notes.txt",
-        offset=1,
-        limit=1,
-    )
-
-    assert result["content"] == ["second"]
-    assert threaded_calls == [file_path.read_text]
-
-
-@pytest.mark.asyncio
-async def test_list_thread_files_runs_directory_scan_in_worker_thread(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    directory = tmp_path / "outputs"
-    directory.mkdir()
-    (directory / "result.txt").write_text("result", encoding="utf-8")
-    threaded_calls = []
-
-    async def _fake_to_thread(func, *args, **kwargs):
-        threaded_calls.append(func)
-        return func(*args, **kwargs)
-
-    monkeypatch.setattr(svc, "require_user_conversation", _fake_require_user_conversation)
-    monkeypatch.setattr(svc, "ConversationRepository", lambda _db: object())
-    monkeypatch.setattr(svc, "ensure_thread_dirs", lambda _thread_id, _uid: None)
-    monkeypatch.setattr(svc, "resolve_virtual_path", lambda _thread_id, _path, *, uid: directory)
-    monkeypatch.setattr(
-        svc,
-        "virtual_path_for_thread_file",
-        lambda _thread_id, path, *, uid: f"/home/gem/user-data/outputs/{path.name}",
-    )
-    monkeypatch.setattr(svc.asyncio, "to_thread", _fake_to_thread)
-
-    result = await svc.list_thread_files_view(
-        thread_id="thread-1",
-        current_uid="user-1",
-        db=None,
-        path="/home/gem/user-data/outputs",
-    )
-
-    assert [item["name"] for item in result["files"]] == ["result.txt"]
-    assert threaded_calls == [svc._list_directory_entries]
-
-
-@pytest.mark.asyncio
-async def test_list_published_outputs_honors_recursive_flag(monkeypatch: pytest.MonkeyPatch):
-    files = [
-        {"path": "/home/gem/user-data/outputs/report.txt", "size": 6},
-        {"path": "/home/gem/user-data/outputs/nested/chart.csv", "size": 8},
-    ]
-
-    monkeypatch.setattr(svc, "require_user_conversation", _fake_require_user_conversation)
-    monkeypatch.setattr(svc, "ConversationRepository", lambda _db: object())
-    monkeypatch.setattr(svc, "materialize_attachment_records", lambda *_args, **_kwargs: _async_none())
-    monkeypatch.setattr(svc, "get_current_output_snapshot", lambda **_kwargs: _async_value(("revision-1", files)))
-
-    result = await svc.list_thread_files_view(
-        thread_id="thread-1",
-        current_uid="user-1",
-        db=None,
-        path="/home/gem/user-data/outputs",
-        recursive=True,
-    )
-
-    assert [item["path"] for item in result["files"]] == [
-        "/home/gem/user-data/outputs/nested/",
-        "/home/gem/user-data/outputs/nested/chart.csv",
-        "/home/gem/user-data/outputs/report.txt",
-    ]
-
-
-@pytest.mark.asyncio
-async def test_recursive_user_data_root_replaces_legacy_output_descendants(monkeypatch: pytest.MonkeyPatch):
-    files = [{"path": "/home/gem/user-data/outputs/nested/current.csv", "size": 8}]
-    root_scan_kwargs = {}
-
-    async def fake_to_thread(function, *args, **kwargs):
-        return function(*args, **kwargs)
-
-    def fake_root_entries(*_args, **kwargs):
-        root_scan_kwargs.update(kwargs)
-        return {
-            "path": "/home/gem/user-data",
-            "files": [
-                {"path": "/home/gem/user-data/outputs/", "name": "outputs", "is_dir": True},
-                {
-                    "path": "/home/gem/user-data/outputs/legacy.txt",
-                    "name": "legacy.txt",
-                    "is_dir": False,
-                },
-                {"path": "/home/gem/user-data/workspace/", "name": "workspace", "is_dir": True},
+class _Backend:
+    def __init__(self):
+        self.files = {
+            "/home/gem/projects/project-workdir-1/report.md": b"one\ntwo\n",
+            "/home/gem/user-data/notes.txt": b"private",
+            "/home/gem/skills/reporter/SKILL.md": b"skill",
+        }
+        self.directories = {
+            "/home/gem/projects/project-workdir-1": [
+                {"name": "outputs", "is_dir": True, "size": 0},
+                {"name": "report.md", "is_dir": False, "size": 8},
             ],
+            "/home/gem/projects/project-workdir-1/outputs": [{"name": "nested.txt", "is_dir": False, "size": 3}],
         }
 
-    monkeypatch.setattr(svc, "require_user_conversation", _fake_require_user_conversation)
-    monkeypatch.setattr(svc, "ConversationRepository", lambda _db: object())
-    monkeypatch.setattr(svc, "materialize_attachment_records", lambda *_args, **_kwargs: _async_none())
-    monkeypatch.setattr(svc, "get_current_output_snapshot", lambda **_kwargs: _async_value(("revision-1", files)))
-    monkeypatch.setattr(svc, "ensure_thread_dirs", lambda *_args: None)
-    monkeypatch.setattr(svc, "_list_user_data_root_entries", fake_root_entries)
-    monkeypatch.setattr(svc.asyncio, "to_thread", fake_to_thread)
+    def ensure_available(self):
+        return "sandbox-1"
 
-    result = await svc.list_thread_files_view(
+    def list_authorized_directory(self, path, *, root):
+        assert root == "/home/gem/projects/project-workdir-1"
+        if path not in self.directories:
+            raise FileNotFoundError(path)
+        return self.directories[path]
+
+    def download_authorized_file_to_path(self, path, target, max_bytes):
+        content = self.files.get(path)
+        if content is None:
+            raise FileNotFoundError(path)
+        assert len(content) <= max_bytes
+        Path(target).write_bytes(content)
+        return len(content)
+
+    def regular_file_exists(self, path):
+        return path in self.files
+
+    def upload_authorized_file_from_path(self, path, source):
+        self.files[path] = Path(source).read_bytes()
+
+
+@pytest.fixture
+def live_files(monkeypatch):
+    backend = _Backend()
+    binding = ProjectWorkdirBinding(
+        conversation_id=1,
         thread_id="thread-1",
-        current_uid="user-1",
-        db=None,
-        path="/home/gem/user-data",
-        recursive=True,
+        runtime_scope_id="thread-1",
+        workdir_id="workdir-1",
+        workdir_path="/home/gem/projects/project-workdir-1",
+        uid="user-1",
     )
 
-    paths = {item["path"] for item in result["files"]}
-    assert "/home/gem/user-data/outputs/" in paths
-    assert "/home/gem/user-data/outputs/legacy.txt" not in paths
-    assert "/home/gem/user-data/outputs/nested/current.csv" in paths
-    assert root_scan_kwargs == {"recursive": True, "recursive_skip_names": {"outputs"}}
+    async def resolve(**kwargs):
+        assert kwargs["uid"] == "user-1"
+        return binding
 
+    async def invalidate(*args, **kwargs):
+        del args, kwargs
 
-async def _async_none():
-    return None
+    monkeypatch.setattr(svc, "resolve_project_workdir_binding", resolve)
+    monkeypatch.setattr(binding.__class__, "create_file_backend", lambda self, **kwargs: backend)
+    monkeypatch.setattr(svc, "invalidate_mention_cache", invalidate)
+    monkeypatch.setattr(svc, "invalidate_workspace_mention_cache", invalidate)
+    monkeypatch.setattr(
+        svc,
+        "UserRepository",
+        lambda _db: type(
+            "Repo",
+            (),
+            {"get_by_uid": lambda self, uid: _async_value(type("User", (), {"uid": uid, "is_deleted": False})())},
+        )(),
+    )
+    monkeypatch.setattr(
+        svc,
+        "list_accessible_skills",
+        lambda _db, _user: _async_value([type("Skill", (), {"slug": "reporter"})()]),
+    )
+    return backend
 
 
 async def _async_value(value):
@@ -163,92 +94,140 @@ async def _async_value(value):
 
 
 @pytest.mark.asyncio
-async def test_resolve_thread_artifact_view_blocks_symlink_escape(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    thread_root = tmp_path / "threads" / "thread-1" / "user-data"
-    uploads_dir = thread_root / "uploads"
-    uploads_dir.mkdir(parents=True, exist_ok=True)
-    outside_file = tmp_path / "outside.txt"
-    outside_file.write_text("secret", encoding="utf-8")
-    (uploads_dir / "escape.txt").symlink_to(outside_file)
-
-    monkeypatch.setattr(svc, "require_user_conversation", _fake_require_user_conversation)
-    monkeypatch.setattr(svc, "ensure_thread_dirs", lambda _thread_id, _uid: None)
-    monkeypatch.setattr(
-        svc,
-        "sandbox_workspace_dir",
-        lambda _thread_id, _uid: tmp_path / "shared" / _uid / "workspace",
+async def test_list_thread_files_reads_live_project_tree(live_files):
+    result = await svc.list_thread_files_view(
+        thread_id="thread-1", current_uid="user-1", db=object(), path="/", recursive=False
     )
-    monkeypatch.setattr(svc, "sandbox_uploads_dir", lambda _thread_id: uploads_dir)
-    monkeypatch.setattr(svc, "sandbox_outputs_dir", lambda _thread_id: thread_root / "outputs")
-    monkeypatch.setattr(svc, "resolve_virtual_path", lambda _thread_id, _path, *, uid: uploads_dir / "escape.txt")
-    monkeypatch.setattr(svc, "ConversationRepository", lambda _db: object())
-
-    with pytest.raises(HTTPException, match="access denied"):
-        await svc.resolve_thread_artifact_view(
-            thread_id="thread-1",
-            current_uid="user-1",
-            db=None,
-            path="/home/gem/user-data/uploads/escape.txt",
-        )
+    assert [item["name"] for item in result["files"]] == ["outputs", "report.md"]
+    assert result["path"] == "/home/gem/projects/project-workdir-1"
 
 
 @pytest.mark.asyncio
-async def test_save_published_artifact_releases_minio_response(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    content = b"published artifact"
-
-    class FakeResponse:
-        def __init__(self):
-            self.stream = io.BytesIO(content)
-            self.closed = False
-            self.released = False
-
-        def read(self, size):
-            return self.stream.read(size)
-
-        def close(self):
-            self.closed = True
-
-        def release_conn(self):
-            self.released = True
-
-    response = FakeResponse()
-    minio = type(
-        "FakeMinio",
-        (),
-        {"adownload_response": lambda _self, *_args: _async_value(response)},
-    )()
-
-    monkeypatch.setattr(
-        svc,
-        "resolve_thread_artifact_view",
-        lambda **_kwargs: _async_value(
-            {
-                "path": "/home/gem/user-data/outputs/report.txt",
-                "bucket_name": "thread-files",
-                "object_name": "outputs/report.txt",
-            }
-        ),
+async def test_recursive_thread_files_includes_nested_current_files(live_files):
+    result = await svc.list_thread_files_view(
+        thread_id="thread-1", current_uid="user-1", db=object(), path="/", recursive=True
     )
-    monkeypatch.setattr(svc, "require_user_conversation", _fake_require_user_conversation)
-    monkeypatch.setattr(svc, "ConversationRepository", lambda _db: object())
-    monkeypatch.setattr(svc, "sandbox_workspace_dir", lambda *_args: tmp_path / "workspace")
-    monkeypatch.setattr(svc, "get_minio_client", lambda: minio)
-    monkeypatch.setattr(svc, "invalidate_mention_cache", lambda *_args: _async_none())
-    monkeypatch.setattr(svc, "invalidate_workspace_mention_cache", lambda *_args: _async_none())
-    monkeypatch.setattr(
-        svc,
-        "virtual_path_for_thread_file",
-        lambda *_args, **_kwargs: "/home/gem/user-data/workspace/saved_artifacts/report.txt",
+    assert [item["path"] for item in result["files"]] == [
+        "/home/gem/projects/project-workdir-1/outputs/",
+        "/home/gem/projects/project-workdir-1/report.md",
+        "/home/gem/projects/project-workdir-1/outputs/nested.txt",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_read_thread_file_uses_live_workdir(live_files):
+    result = await svc.read_thread_file_content_view(
+        thread_id="thread-1",
+        current_uid="user-1",
+        db=object(),
+        path="/home/gem/projects/project-workdir-1/report.md",
+        offset=1,
+        limit=1,
+    )
+    assert result["content"] == ["two"]
+
+
+@pytest.mark.asyncio
+async def test_thread_file_transfer_limit_is_not_reported_as_missing(live_files, monkeypatch):
+    def reject_large_file(*_args, **_kwargs):
+        raise FileTransferLimitError("file exceeds transfer limit")
+
+    monkeypatch.setattr(live_files, "download_authorized_file_to_path", reject_large_file)
+    with pytest.raises(HTTPException) as exc:
+        await svc.read_thread_file_content_view(
+            thread_id="thread-1",
+            current_uid="user-1",
+            db=object(),
+            path="/home/gem/projects/project-workdir-1/report.md",
+        )
+    assert exc.value.status_code == 413
+
+
+@pytest.mark.asyncio
+async def test_artifact_allows_project_user_data_and_authorized_skills(live_files):
+    for path in (
+        "/home/gem/projects/project-workdir-1/report.md",
+        "/home/gem/user-data/notes.txt",
+        "/home/gem/skills/reporter/SKILL.md",
+    ):
+        response = await svc.resolve_thread_artifact_view(
+            thread_id="thread-1", current_uid="user-1", db=object(), path=path
+        )
+        assert Path(response.path).read_bytes() == live_files.files[path]
+        await response.background()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("file_name", ["报告.txt", 'quoted"name.txt', "line\nbreak.txt"])
+async def test_artifact_download_encodes_untrusted_posix_filename(live_files, file_name):
+    path = f"/home/gem/projects/project-workdir-1/{file_name}"
+    live_files.files[path] = b"safe"
+
+    response = await svc.resolve_thread_artifact_view(
+        thread_id="thread-1",
+        current_uid="user-1",
+        db=object(),
+        path=path,
+        download=True,
     )
 
+    disposition = response.headers["content-disposition"]
+    assert disposition.startswith("attachment;")
+    assert "\r" not in disposition and "\n" not in disposition
+    assert file_name not in disposition
+    await response.background()
+
+
+@pytest.mark.asyncio
+async def test_artifact_rejects_other_project(live_files):
+    with pytest.raises(HTTPException) as exc:
+        await svc.resolve_thread_artifact_view(
+            thread_id="thread-1",
+            current_uid="user-1",
+            db=object(),
+            path="/home/gem/projects/project-other/secret.txt",
+        )
+    assert exc.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_artifact_rechecks_current_skill_authorization(live_files, monkeypatch):
+    monkeypatch.setattr(svc, "list_accessible_skills", lambda _db, _user: _async_value([]))
+
+    with pytest.raises(HTTPException) as exc:
+        await svc.resolve_thread_artifact_view(
+            thread_id="thread-1",
+            current_uid="user-1",
+            db=object(),
+            path="/home/gem/skills/reporter/SKILL.md",
+        )
+
+    assert exc.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_artifact_transfer_limit_is_not_reported_as_missing(live_files, monkeypatch):
+    def reject_large_file(*_args, **_kwargs):
+        raise FileTransferLimitError("file exceeds transfer limit")
+
+    monkeypatch.setattr(live_files, "download_authorized_file_to_path", reject_large_file)
+    with pytest.raises(HTTPException) as exc:
+        await svc.resolve_thread_artifact_view(
+            thread_id="thread-1",
+            current_uid="user-1",
+            db=object(),
+            path="/home/gem/projects/project-workdir-1/report.md",
+        )
+    assert exc.value.status_code == 413
+
+
+@pytest.mark.asyncio
+async def test_save_artifact_copies_live_bytes_to_user_data(live_files):
     result = await svc.save_thread_artifact_to_workspace_view(
         thread_id="thread-1",
         current_uid="user-1",
-        db=None,
-        path="/home/gem/user-data/outputs/report.txt",
+        db=object(),
+        path="/home/gem/projects/project-workdir-1/report.md",
     )
-
-    assert result["name"] == "report.txt"
-    assert (tmp_path / "workspace" / "saved_artifacts" / "report.txt").read_bytes() == content
-    assert response.closed is True
-    assert response.released is True
+    assert result["saved_path"] == "/home/gem/user-data/workspace/saved_artifacts/report.md"
+    assert live_files.files[result["saved_path"]] == b"one\ntwo\n"

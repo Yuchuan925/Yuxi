@@ -487,16 +487,25 @@ async def test_attempt_owner_blocks_duplicate_until_retry_release(session):
         worker_id="worker-1:attempt-1",
         now=now + timedelta(seconds=1),
     )
-    _, retry_acquired = await repo.mark_running(
+    _, blocked_before_cleanup = await repo.mark_running(
         run.id,
         worker_id="worker-1:attempt-2",
         lease_seconds=60,
         now=now + timedelta(seconds=2),
     )
+    run.runtime_cleanup_pending = False
+    await session.flush()
+    _, retry_acquired = await repo.mark_running(
+        run.id,
+        worker_id="worker-1:attempt-2",
+        lease_seconds=60,
+        now=now + timedelta(seconds=3),
+    )
 
     assert first_acquired is True
     assert duplicate_acquired is False
     assert released is True
+    assert blocked_before_cleanup is False
     assert retry_acquired is True
     assert run.status == "running"
     assert run.worker_id == "worker-1:attempt-2"
@@ -532,12 +541,13 @@ async def test_expired_owner_cannot_finish_or_release_before_reconciliation(sess
         worker_id="worker-expired:attempt-1",
         now=now + timedelta(seconds=11),
     )
-    reconciled = await repo.reconcile_expired_leases(now=now + timedelta(seconds=11))
+    reconciled, cancelled_descendants = await repo.reconcile_expired_leases(now=now + timedelta(seconds=11))
 
     assert acquired is True
     assert released is False
     assert completed is False
     assert [item.id for item in reconciled] == [run.id]
+    assert cancelled_descendants == []
     assert run.status == "failed"
     assert run.error_type == "worker_lease_expired"
 
@@ -568,7 +578,7 @@ async def test_pending_cancel_is_terminal_without_fake_worker_expiry(session):
     )
 
     cancelled = await repo.request_cancel(run.id)
-    reconciled = await repo.reconcile_expired_leases(now=utc_now_naive() + timedelta(minutes=5))
+    reconciled, cancelled_descendants = await repo.reconcile_expired_leases(now=utc_now_naive() + timedelta(minutes=5))
     await session.refresh(message)
 
     assert cancelled is run
@@ -578,6 +588,7 @@ async def test_pending_cancel_is_terminal_without_fake_worker_expiry(session):
     assert run.lease_expires_at is None
     assert message.delivery_status == "cancelled"
     assert reconciled == []
+    assert cancelled_descendants == []
 
 
 async def test_durable_cancel_wins_terminal_race_for_live_owner(session):
@@ -621,6 +632,44 @@ async def test_durable_cancel_wins_terminal_race_for_live_owner(session):
     assert persisted.status == "cancelled"
 
 
+async def test_terminal_root_atomically_cancels_active_execution_tree_descendants(session):
+    repo = AgentRunRepository(session)
+    now = utc_now_naive()
+    parent = await repo.create_run(
+        run_id="tree-parent-run",
+        conversation_thread_id="tree-parent-thread",
+        runtime_scope_id="tree-runtime",
+        agent_slug="main",
+        uid="user-1",
+        request_id="tree-parent-request",
+        input_payload={},
+    )
+    child = await repo.create_run(
+        run_id="tree-child-run",
+        conversation_thread_id="tree-child-thread",
+        runtime_scope_id="tree-runtime",
+        agent_slug="worker",
+        uid="user-1",
+        request_id="tree-child-request",
+        input_payload={},
+        created_by_run_id=parent.id,
+        run_type="subagent",
+    )
+    await repo.mark_running(parent.id, worker_id="parent-worker", lease_seconds=60, now=now)
+    await repo.mark_running(child.id, worker_id="child-worker", lease_seconds=60, now=now)
+
+    parent.status = "failed"
+    parent.finished_at = now
+    cancelled = await repo.cancel_active_execution_tree_descendants(parent)
+
+    assert cancelled == [(child.id, child.conversation_thread_id)]
+    assert child.status == "cancelled"
+    assert child.error_type == "execution_tree_closed"
+    assert child.worker_id is None
+    assert child.heartbeat_at is None
+    assert child.lease_expires_at is None
+
+
 async def _seed_running_run(db, *, run_id: str = "attempt-run", request_id: str = "attempt-request") -> AgentRun:
     run = await AgentRunRepository(db).create_run(
         run_id=run_id,
@@ -661,12 +710,18 @@ async def test_retry_release_then_reclaim_uses_new_attempt_no_and_keeps_old_fact
     released = await repository.release_lease_for_retry(
         run.id, worker_id="worker-a:token-1", now=now + timedelta(seconds=1)
     )
-    await repository.mark_running(
+    _, blocked_before_cleanup = await repository.mark_running(
         run.id, worker_id="worker-b:token-2", lease_seconds=60, now=now + timedelta(seconds=2)
+    )
+    run.runtime_cleanup_pending = False
+    await session.flush()
+    await repository.mark_running(
+        run.id, worker_id="worker-b:token-2", lease_seconds=60, now=now + timedelta(seconds=3)
     )
     attempts = await repository.list_run_attempts(run.id)
 
     assert released is True
+    assert blocked_before_cleanup is False
     assert [attempt.attempt_no for attempt in attempts] == [1, 2]
     assert attempts[0].outcome == "retry_released"
     assert attempts[0].finished_at is not None
@@ -704,10 +759,11 @@ async def test_reconcile_closes_open_attempt_as_lease_expired(session):
     now = utc_now_naive()
 
     await repository.mark_running(run.id, worker_id="worker-dead:token-1", lease_seconds=10, now=now)
-    reconciled = await repository.reconcile_expired_leases(now=now + timedelta(seconds=11))
+    reconciled, cancelled_descendants = await repository.reconcile_expired_leases(now=now + timedelta(seconds=11))
     attempts = await repository.list_run_attempts(run.id)
 
     assert [item.id for item in reconciled] == [run.id]
+    assert cancelled_descendants == []
     assert len(attempts) == 1
     assert attempts[0].outcome == "lease_expired"
     assert attempts[0].error_type == "worker_lease_expired"

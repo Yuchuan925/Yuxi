@@ -13,9 +13,9 @@
 
 - 锁定 Neo4j 5.26.29 与 Redis 7.4.10 镜像版本，补充第三方组件许可证、镜像再分发义务与商业部署边界；完整镜像许可证以实际软件物料清单为准。
 - API 与 worker 的日志及 Office 预览缓存改用各自容器本地运行目录，不再写入共享 `saves`；管理端日志接口与调试面板明确只展示 API 进程日志。历史日志和预览缓存不迁移，worker 日志由容器日志查看。
-- Agent 运行前按 Conversation 当前附件集合从 MinIO 重建沙盒 uploads 工作副本，通用文件后端继续拒绝 Agent 写入；Docker 与 Kubernetes 沙盒不再挂载共享 uploads，重建后可恢复，下次 Agent 执行时不会沿用已删除的旧附件，hydrate 失败则阻止执行。API/Viewer 的历史本地物化暂保留。
-- Agent outputs 改为 PostgreSQL revision 与 MinIO 不可变对象：每次 Run 从当前版本重建沙盒并在终态事务内条件发布，冲突或确认不明可追踪；Docker/Kubernetes 不再挂载共享 outputs，Viewer、产物下载与删除直接读取已发布版本。没有 current revision 的旧线程会在首次 Run 安全回放本地 outputs 并发布首个版本，独立批量迁移仍留待后续阶段。
-- Agent sandbox 改为每个 Run 独立 instance；父子智能体通过不公开父中间态的私有 checkpoint、子终态公开投影和父运行内串行三方合并共享文件。后台子任务即使父 Run 先结束也会原子发布自身改动；无效 continuation 或 busy 启动产生的未引用 checkpoint 与 MinIO 对象会立即回收。
+- Agent 文件主链路统一为实时 Project Workdir：附件、Agent 写入、Viewer、下载与 artifact 读取同一 POSIX 文件系统；`uploads/outputs` 只保留目录约定，Agent 可覆盖上传，交付物可来自 Project、User Data 或授权 Skill 普通文件。
+- 根 Conversation 与全部子 Agent 共用稳定 Sandbox runtime 和 Workdir，不再通过 output revision、hydrate、checkpoint、projection 或三方合并同步文件；不同顶层 Conversation 仍隔离运行环境，未来可只共享 Workdir。
+- 升级启动期以全局 fence、source fingerprint 和隔离 staging 一次性物化旧附件与 outputs；全部 Workdir 校验 ready 后才激活新主链路，缺失对象、内容冲突、部分复制或确认不明均阻止服务就绪。
 - 建立 Agent-first 工程信任系统：高风险主张在语义 Owner 处绑定负向 oracle、CI gate 与决策记录，审计视图从当前代码、测试、workflow 和决策派生；补齐 Web gate 和完整 unit inventory。API 分离 liveness/readiness；Run 输出只允许当前 lease owner 绑定同 conversation、Run 与 request 的 assistant Message，缺失或非法输出不能进入 completed；worker 以 attempt lease/heartbeat 识别失联并收敛为带 `worker_lease_expired` 原因的失败，PostgreSQL 取消事实与终态不再被 Redis 事件故障绕过。LITE startup 不创建或宣告知识能力，Web 从 runtime discovery 同步隐藏并停止请求不存在的能力；checkpoint 初始化不再静默改变持久化语义。
 - API Key 创建支持并发与响应丢失后的安全重放；删除用户、OIDC 恢复和旧库升级均保留不可复活 tombstone，API/CLI 创建与删除按 User 行锁串行化。三项安全密钥不可复用，Bash/PowerShell 均有原生负控。Web 错误对象不再携带任意服务端上下文。
 

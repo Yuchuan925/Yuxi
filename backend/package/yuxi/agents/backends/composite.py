@@ -15,7 +15,8 @@ from yuxi.agents.skills.service import (
     get_user_skills_root_dir,
     refresh_user_skill_projection_async,
 )
-from yuxi.utils.paths import VIRTUAL_PATH_CONVERSATION_HISTORY, VIRTUAL_PATH_LARGE_TOOL_RESULTS, VIRTUAL_PATH_OUTPUTS
+from yuxi.agents.backends.sandbox.paths import project_workdir_virtual_dir
+from yuxi.utils.paths import VIRTUAL_PATH_CONVERSATION_HISTORY, VIRTUAL_PATH_LARGE_TOOL_RESULTS
 
 from .sandbox import ProvisionerSandboxBackend
 from .skills_backend import SelectedSkillsReadonlyBackend
@@ -118,6 +119,8 @@ class YuxiFilesystemMiddleware(FilesystemMiddleware):
 @dataclass(frozen=True)
 class _BackendScope:
     thread_id: str
+    runtime_scope_id: str
+    workdir_id: str
     uid: str
     skill_sources: dict[str, str]
     sandbox_instance_id: str
@@ -163,20 +166,27 @@ class _BackendScope:
             if not isinstance(slug, str) or not slug.strip() or not isinstance(path, str) or not path.strip():
                 raise ValueError(f"_runtime_skill_sources contains an invalid entry in {error_context}")
             skill_sources[slug.strip()] = path.strip()
+        runtime_scope_id = string_value("runtime_scope_id") or thread_id
         return cls(
             thread_id=thread_id,
+            runtime_scope_id=runtime_scope_id,
+            workdir_id=string_value("workdir_id") or "",
             uid=uid,
             skill_sources=skill_sources,
-            sandbox_instance_id=string_value("sandbox_instance_id") or thread_id,
+            sandbox_instance_id=string_value("sandbox_instance_id") or runtime_scope_id,
         )
 
     def create_backend(self) -> CompositeBackend:
+        if not self.workdir_id:
+            raise ValueError("workdir_id is required in runtime context")
+        workdir_path = project_workdir_virtual_dir(self.workdir_id)
         user_skills_root = get_user_skills_root_dir(self.uid)
         return CustomCompositeBackend(
             default=ProvisionerSandboxBackend(
-                thread_id=self.thread_id,
+                thread_id=self.runtime_scope_id,
                 uid=self.uid,
                 sandbox_instance_id=self.sandbox_instance_id,
+                workdir_id=self.workdir_id,
                 create_if_missing=False,
             ),
             routes={
@@ -185,7 +195,7 @@ class _BackendScope:
                     root_dir=user_skills_root,
                 ),
             },
-            artifacts_root=VIRTUAL_PATH_OUTPUTS,
+            artifacts_root=workdir_path,
         )
 
 

@@ -1,12 +1,8 @@
-import asyncio
 import traceback
 import uuid
-from pathlib import Path
 from typing import Any
 
-import aiofiles
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, UploadFile, File
-from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -33,7 +29,6 @@ from yuxi.services.conversation_service import (
     search_threads_view,
     update_thread_view,
 )
-from yuxi.services.file_preview import detect_media_type
 from yuxi.services.thread_files_service import (
     list_thread_files_view,
     read_thread_file_content_view,
@@ -511,41 +506,13 @@ async def get_thread_artifact(
     current_user: User = Depends(get_required_user),
 ):
     """下载或预览线程文件。"""
-    artifact = await resolve_thread_artifact_view(
+    return await resolve_thread_artifact_view(
         thread_id=thread_id,
         current_uid=str(current_user.uid),
         db=db,
         path=path,
+        download=download,
     )
-
-    if isinstance(artifact, dict):
-        from yuxi.storage.minio import StorageError, get_minio_client
-
-        try:
-            response = await get_minio_client().adownload_response(
-                str(artifact["bucket_name"]), str(artifact["object_name"])
-            )
-        except StorageError as exc:
-            raise HTTPException(status_code=404, detail="artifact object not found") from exc
-
-        async def stream_object():
-            try:
-                while chunk := await asyncio.to_thread(response.read, 1024 * 1024):
-                    yield chunk
-            finally:
-                response.close()
-                response.release_conn()
-
-        file_name = Path(str(artifact.get("path") or "artifact")).name
-        media_type = str(artifact.get("content_type") or "application/octet-stream")
-        headers = {"Content-Disposition": f'attachment; filename="{file_name}"'} if download else None
-        return StreamingResponse(stream_object(), media_type=media_type, headers=headers)
-
-    async with aiofiles.open(artifact, "rb") as artifact_file:
-        file_head = await artifact_file.read(512)
-    media_type = detect_media_type(artifact.name, file_head)
-    headers = {"Content-Disposition": f'attachment; filename="{artifact.name}"'} if download else None
-    return FileResponse(path=artifact, media_type=media_type, headers=headers)
 
 
 @chat.post("/thread/{thread_id}/artifacts/save", response_model=SaveThreadArtifactResponse)

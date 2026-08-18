@@ -340,7 +340,7 @@ export const threadApi = {
    * @param {boolean} recursive
    * @returns {Promise}
    */
-  listThreadFiles: (threadId, path = '/home/gem/user-data', recursive = false) =>
+  listThreadFiles: (threadId, path = '/', recursive = false) =>
     apiGet(
       `/api/chat/thread/${threadId}/files?path=${encodeURIComponent(path)}&recursive=${recursive}`
     ),
@@ -383,6 +383,10 @@ export const threadApi = {
    */
   downloadThreadArtifact: (threadId, path) =>
     apiGet(threadApi.getThreadArtifactUrl(threadId, path, true), {}, true, 'blob'),
+
+  /** 读取允许跨 Project/User Data/Skills 的 artifact 预览字节。 */
+  previewThreadArtifact: (threadId, path) =>
+    apiGet(threadApi.getThreadArtifactUrl(threadId, path, false), {}, true, 'blob'),
 
   /**
    * 保存交付物到 workspace/saved_artifacts

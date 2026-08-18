@@ -95,7 +95,7 @@ class MyAgent(BaseAgent):
 
 `ChatBotContext` 在 `BaseContext` 之上增加 `subagents` 字段，表示当前主 Agent 允许调用的子智能体。`subagents` 未显式配置或保存空列表时会默认启用当前用户可见的全部子智能体；显式选择后则作为允许列表过滤。
 
-`SubAgentContext` 在 `BaseContext` 之上增加 `parent_thread_id`、`file_thread_id` 与 `is_subagent_runtime` 等隐藏运行态字段，不包含 `subagents`，因此子智能体不能继续配置下一层子智能体。
+`SubAgentContext` 在 `BaseContext` 之上增加 `parent_thread_id` 与 `is_subagent_runtime` 等隐藏运行态字段，不包含 `subagents`，因此子智能体不能继续配置下一层子智能体。
 
 ### 3.2 前端配置项如何从 Context 生成
 
@@ -239,9 +239,9 @@ Graph 构建直接依赖 Context。普通 Agent 在归一化后的 `context.suba
 
 文件系统与沙盒接入同样读取这些运行时字段：
 
-- 普通 Agent 默认使用当前 `thread_id` 作为文件作用域
-- 子智能体使用 child `thread_id` 做 checkpoint，`file_thread_id` 指向父会话 uploads/outputs
-- `file_thread_id` 只属于尚未切换的附件/output 快照服务，不参与 Sandbox identity 或 provisioner wire
+- 普通 Agent 使用根 Conversation 的 `runtime_scope_id` 和 `workdir_id` 连接实时 Project Workdir
+- 子智能体保留 child `thread_id` 作为 LangGraph checkpoint，但继承根 Conversation 的 runtime 与 Workdir
+- `/home/gem/projects/project-<workdir_id>` 是当前执行树的默认工作目录；`uploads`、`outputs` 只是可写子目录约定
 - `/home/gem/skills` 使用当前用户的授权 Skill 投影；`_readable_skills` 与 `_prompt_skills` 只决定当前 Agent 在 Prompt 和工具层激活哪些 Skill，不改变 sandbox 身份或挂载
 
 所以 Context 既是输入配置，也是 Graph 创建前整理出的运行时资源上下文。

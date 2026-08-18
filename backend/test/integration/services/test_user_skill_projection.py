@@ -8,7 +8,7 @@ import uuid
 from contextlib import asynccontextmanager, suppress
 
 import pytest
-from sqlalchemy import delete, text, update
+from sqlalchemy import delete, select, text, update
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from yuxi.agents.skills import service as skill_service
@@ -16,6 +16,32 @@ from yuxi.storage.postgres.manager import pg_manager
 from yuxi.storage.postgres.models_business import Skill, User
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
+
+
+async def _wait_for_advisory_waiter(session_factory, lock_identity) -> bool:
+    """等待真实 PostgreSQL 观察到同一 advisory lock 的阻塞者。"""
+    deadline = asyncio.get_running_loop().time() + 5
+    async with session_factory() as observer_db:
+        while asyncio.get_running_loop().time() < deadline:
+            waiting = bool(
+                await observer_db.scalar(
+                    text(
+                        "SELECT EXISTS (SELECT 1 FROM pg_locks "
+                        "WHERE locktype = 'advisory' AND NOT granted "
+                        "AND classid::bigint = :classid "
+                        "AND objid::bigint = :objid AND objsubid = :objsubid)"
+                    ),
+                    {
+                        "classid": lock_identity.classid,
+                        "objid": lock_identity.objid,
+                        "objsubid": lock_identity.objsubid,
+                    },
+                )
+            )
+            if waiting:
+                return True
+            await asyncio.sleep(0.01)
+    return False
 
 
 async def test_projection_refresh_waits_for_lock_then_reloads_revoked_authorization(
@@ -54,6 +80,7 @@ async def test_projection_refresh_waits_for_lock_then_reloads_revoked_authorizat
     user_id: int | None = None
     skill_id: int | None = None
     refresh_task: asyncio.Task[dict[str, str]] | None = None
+    policy_task: asyncio.Task[None] | None = None
     lock_scope = f"yuxi:skills:user-projection:v1:{uid}"
 
     try:
@@ -105,30 +132,9 @@ async def test_projection_refresh_waits_for_lock_then_reloads_revoked_authorizat
             ).one()
             refresh_task = asyncio.create_task(skill_service.refresh_user_skill_projection_async(uid))
 
-            deadline = asyncio.get_running_loop().time() + 5
-            waiter_observed = False
-            async with session_factory() as observer_db:
-                while asyncio.get_running_loop().time() < deadline:
-                    waiter_observed = bool(
-                        await observer_db.scalar(
-                            text(
-                                "SELECT EXISTS (SELECT 1 FROM pg_locks "
-                                "WHERE locktype = 'advisory' AND NOT granted "
-                                "AND classid::bigint = :classid "
-                                "AND objid::bigint = :objid AND objsubid = :objsubid)"
-                            ),
-                            {
-                                "classid": lock_identity.classid,
-                                "objid": lock_identity.objid,
-                                "objsubid": lock_identity.objsubid,
-                            },
-                        )
-                    )
-                    if waiter_observed:
-                        break
-                    await asyncio.sleep(0.01)
-
-            assert waiter_observed, "refresh did not wait on the expected PostgreSQL advisory lock"
+            assert await _wait_for_advisory_waiter(session_factory, lock_identity), (
+                "refresh did not wait on the expected PostgreSQL advisory lock"
+            )
             assert not refresh_task.done()
 
             async with session_factory() as revoke_db:
@@ -154,12 +160,78 @@ async def test_projection_refresh_waits_for_lock_then_reloads_revoked_authorizat
         refreshed_sources = await asyncio.wait_for(refresh_task, timeout=5)
         assert slug not in refreshed_sources
         assert not (projection / slug).exists()
+
+        async with session_factory() as db:
+            await db.execute(
+                update(Skill)
+                .where(Skill.id == skill_id)
+                .values(
+                    share_config={
+                        "version": 2,
+                        "read_scope": {
+                            "access_level": "user",
+                            "department_ids": [],
+                            "user_uids": [uid],
+                        },
+                        "manage_scope": None,
+                    }
+                )
+            )
+            await db.commit()
+        await skill_service.refresh_user_skill_projection_async(uid)
+        assert (projection / slug / "SKILL.md").is_file()
+
+        async with session_factory() as lock_db:
+            await lock_db.execute(
+                text("SELECT pg_advisory_xact_lock(hashtext(:lock_scope))"),
+                {"lock_scope": lock_scope},
+            )
+            lock_identity = (
+                await lock_db.execute(
+                    text(
+                        "SELECT classid::bigint, objid::bigint, objsubid "
+                        "FROM pg_locks WHERE pid = pg_backend_pid() "
+                        "AND locktype = 'advisory' AND granted"
+                    )
+                )
+            ).one()
+            async with session_factory() as policy_db:
+                await policy_db.execute(
+                    update(Skill)
+                    .where(Skill.id == skill_id)
+                    .values(
+                        share_config={
+                            "version": 2,
+                            "read_scope": {
+                                "access_level": "user",
+                                "department_ids": [],
+                                "user_uids": ["different-user"],
+                            },
+                            "manage_scope": None,
+                        }
+                    )
+                )
+                policy_task = asyncio.create_task(skill_service.apply_skill_projection_policy_change(policy_db, slug))
+                assert await _wait_for_advisory_waiter(session_factory, lock_identity), (
+                    "policy mutation did not wait on the uid projection lock"
+                )
+                assert not policy_task.done()
+                assert (projection / slug / "SKILL.md").is_file()
+                await lock_db.commit()
+                await asyncio.wait_for(policy_task, timeout=5)
+
+        assert not (projection / slug).exists()
+        async with session_factory() as db:
+            persisted_share_config = await db.scalar(select(Skill.share_config).where(Skill.id == skill_id))
+        assert persisted_share_config["read_scope"]["user_uids"] == ["different-user"]
     finally:
-        if refresh_task is not None:
-            if not refresh_task.done():
-                refresh_task.cancel()
+        for task in (refresh_task, policy_task):
+            if task is None:
+                continue
+            if not task.done():
+                task.cancel()
             with suppress(asyncio.CancelledError, Exception):
-                await refresh_task
+                await task
         async with session_factory() as db:
             if skill_id is not None:
                 await db.execute(delete(Skill).where(Skill.id == skill_id))

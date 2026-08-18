@@ -12,7 +12,6 @@ sys.path.insert(0, os.getcwd())
 from yuxi.services.chat_service import (
     _build_ask_user_question_payload,
     _build_tool_approval_payload,
-    _hydrate_run_file_scopes,
     _normalize_interrupt_questions,
     stream_agent_resume,
 )
@@ -196,34 +195,6 @@ async def test_stream_agent_resume_init_does_not_render_resume_input():
 
 
 @pytest.mark.asyncio
-async def test_hydrate_run_file_scopes_replays_complete_snapshot_after_sandbox_disappears(monkeypatch):
-    calls: list[str] = []
-
-    async def fake_attachment_hydrate(*_args, **_kwargs):
-        calls.append("uploads")
-
-    async def fake_output_hydrate(**_kwargs):
-        calls.append("outputs")
-        if calls.count("outputs") == 1:
-            raise RuntimeError("sandbox not found")
-
-    monkeypatch.setattr(svc, "hydrate_attachment_records_to_sandbox", fake_attachment_hydrate)
-    monkeypatch.setattr(svc, "hydrate_thread_outputs_to_sandbox", fake_output_hydrate)
-
-    await _hydrate_run_file_scopes(
-        runtime_thread_id="runtime-thread",
-        file_thread_id="file-thread",
-        uid="user-1",
-        attachments=[{"file_id": "attachment-1"}],
-        output_files=[{"path": "result.txt"}],
-        legacy_output_root=None,
-        sandbox_instance_id="run-1",
-    )
-
-    assert calls == ["uploads", "outputs", "uploads", "outputs"]
-
-
-@pytest.mark.asyncio
 async def test_stream_agent_resume_commits_before_stream_and_routes_subagent_chunks(monkeypatch):
     db = _FakeSession()
 
@@ -264,7 +235,13 @@ async def test_stream_agent_resume_commits_before_stream_and_routes_subagent_chu
             SimpleNamespace(slug="main-agent", backend_id="ChatbotAgent"),
             FakeAgent(),
             {},
-            SimpleNamespace(id=1, uid="user-1", status="active", extra_metadata={"attachments": []}),
+            SimpleNamespace(
+                id=1,
+                uid="user-1",
+                status="active",
+                workdir_id="workdir-1",
+                extra_metadata={"attachments": []},
+            ),
         )
 
     async def fake_save_messages_from_langgraph_state(**_kwargs):
@@ -292,7 +269,13 @@ async def test_stream_agent_resume_commits_before_stream_and_routes_subagent_chu
             pass
 
         async def get_conversation_by_thread_id(self, _thread_id):
-            return SimpleNamespace(id=1, uid="user-1", status="active", extra_metadata={"attachments": []})
+            return SimpleNamespace(
+                id=1,
+                uid="user-1",
+                status="active",
+                workdir_id="workdir-1",
+                extra_metadata={"attachments": []},
+            )
 
         async def get_attachments(self, _conversation_id):
             return []
@@ -307,10 +290,15 @@ async def test_stream_agent_resume_commits_before_stream_and_routes_subagent_chu
         return "output-revision-1"
 
     monkeypatch.setattr(svc, "ConversationRepository", FakeConversationRepository)
-    monkeypatch.setattr(svc, "hydrate_attachment_records_to_sandbox", fake_materialize)
-    monkeypatch.setattr(svc, "hydrate_thread_outputs_to_sandbox", fake_output_hydrate)
-    monkeypatch.setattr(svc, "hydrate_legacy_thread_outputs_to_sandbox", fake_output_hydrate)
-    monkeypatch.setattr(svc, "stage_thread_outputs", fake_stage_outputs)
+
+    class FakeSandboxBackend:
+        def __init__(self, **_kwargs):
+            pass
+
+        def ensure_available(self):
+            return "sandbox-1"
+
+    monkeypatch.setattr(svc, "ProvisionerSandboxBackend", FakeSandboxBackend)
     monkeypatch.setattr(svc, "flush_langfuse", lambda: None)
 
     stream = stream_agent_resume(

@@ -13,6 +13,7 @@ from server.utils.auth_middleware import get_admin_user, get_db, get_required_us
 from yuxi.agents.skills.service import (
     confirm_personal_skill_install_draft,
     confirm_skill_install_draft,
+    apply_skill_projection_policy_change,
     create_skill_node,
     delete_skill,
     delete_skill_node,
@@ -407,6 +408,7 @@ async def update_skill_share_config_route(
 ):
     try:
         item = await update_skill_share_config(db, slug=slug, share_config=payload.share_config, operator=current_user)
+        await apply_skill_projection_policy_change(db, slug)
         return {"success": True, "data": _serialize_skill_for_user(item, current_user)}
     except ValueError as e:
         _raise_from_value_error(e)
@@ -424,6 +426,7 @@ async def update_skill_enabled_route(
 ):
     try:
         item = await update_skill_enabled(db, slug=slug, enabled=payload.enabled, operator=current_user)
+        await apply_skill_projection_policy_change(db, slug)
         return {"success": True, "data": _serialize_skill_for_user(item, current_user)}
     except ValueError as e:
         _raise_from_value_error(e)

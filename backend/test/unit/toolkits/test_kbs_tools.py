@@ -722,11 +722,10 @@ def _patch_output_backend(monkeypatch: pytest.MonkeyPatch):
         def __init__(self, **kwargs):
             state.scopes.append(kwargs)
 
-        def output_file_exists(self, path):
+        def regular_file_exists(self, path):
             return path in state.files
 
-        def upload_scope_file_from_path(self, scope, path, source_path):
-            assert scope == "outputs"
+        def upload_authorized_file_from_path(self, path, source_path):
             state.files[path] = Path(source_path).read_bytes()
 
     monkeypatch.setattr(tools, "ProvisionerSandboxBackend", FakeBackend)
@@ -745,21 +744,29 @@ async def test_download_kb_file_writes_original_to_outputs_and_returns_virtual_p
     )
 
     runtime = SimpleNamespace(
-        context=SimpleNamespace(thread_id="child-thread", file_thread_id="thread-1", uid="user-1")
+        context=SimpleNamespace(
+            thread_id="child-thread",
+            runtime_scope_id="thread-1",
+            sandbox_instance_id="thread-1",
+            workdir_id="workdir-1",
+            workdir_path="/home/gem/projects/project-workdir-1",
+            uid="user-1",
+        )
     )
     result = await _run_download_kb_file(kb_id="db-1", file_id="file-1", runtime=runtime)
 
-    assert sandbox.files["/home/gem/user-data/outputs/report.pdf"] == b"%PDF-1.4 bytes"
+    assert sandbox.files["/home/gem/projects/project-workdir-1/outputs/report.pdf"] == b"%PDF-1.4 bytes"
     assert sandbox.scopes == [
         {
-            "thread_id": "child-thread",
+            "thread_id": "thread-1",
             "uid": "user-1",
-            "sandbox_instance_id": "child-thread",
+            "sandbox_instance_id": "thread-1",
+            "workdir_id": "workdir-1",
             "create_if_missing": False,
         }
     ]
     assert result == {
-        "virtual_path": "/home/gem/user-data/outputs/report.pdf",
+        "virtual_path": "/home/gem/projects/project-workdir-1/outputs/report.pdf",
         "filename": "report.pdf",
         "media_type": "application/octet-stream",
         "size_bytes": len(b"%PDF-1.4 bytes"),
@@ -778,10 +785,19 @@ async def test_download_kb_file_passes_save_as_argument(monkeypatch, tmp_path) -
         file_download=_async_get_file_download(b"xlsx bytes", "origin.xlsx"),
     )
 
-    runtime = SimpleNamespace(context=SimpleNamespace(thread_id="thread-1", uid="user-1"))
+    runtime = SimpleNamespace(
+        context=SimpleNamespace(
+            thread_id="thread-1",
+            runtime_scope_id="thread-1",
+            sandbox_instance_id="thread-1",
+            workdir_id="workdir-1",
+            workdir_path="/home/gem/projects/project-workdir-1",
+            uid="user-1",
+        )
+    )
     result = await _run_download_kb_file(kb_id="db-1", file_id="file-1", save_as="renamed.xlsx", runtime=runtime)
 
-    assert sandbox.files["/home/gem/user-data/outputs/renamed.xlsx"] == b"xlsx bytes"
+    assert sandbox.files["/home/gem/projects/project-workdir-1/outputs/renamed.xlsx"] == b"xlsx bytes"
     assert result["saved_as"] == "renamed.xlsx"
 
 
@@ -846,23 +862,35 @@ async def test_download_kb_file_missing_sandbox_context_returns_error(monkeypatc
 def test_resolve_download_output_path_strips_directory_and_avoids_traversal() -> None:
     """save_as 含目录或路径穿越时，必须被剥离成纯文件名并落在 outputs 下。"""
     data = {"filename": "report.pdf"}
-    backend = SimpleNamespace(output_file_exists=lambda _path: False)
-    path = tools._resolve_download_output_path(backend, data, "file-1", "../../../etc/passwd")
+    backend = SimpleNamespace(regular_file_exists=lambda _path: False)
+    path = tools._resolve_download_output_path(
+        backend,
+        "/home/gem/projects/project-workdir-1",
+        data,
+        "file-1",
+        "../../../etc/passwd",
+    )
 
-    assert path == "/home/gem/user-data/outputs/passwd"
+    assert path == "/home/gem/projects/project-workdir-1/outputs/passwd"
 
 
 def test_resolve_download_output_path_appends_suffix_on_conflict() -> None:
     """目标文件名已存在时，追加 _1 / _2 后缀直到不冲突。"""
     data = {"filename": "report.pdf"}
     existing = {
-        "/home/gem/user-data/outputs/report.pdf",
-        "/home/gem/user-data/outputs/report_1.pdf",
+        "/home/gem/projects/project-workdir-1/outputs/report.pdf",
+        "/home/gem/projects/project-workdir-1/outputs/report_1.pdf",
     }
-    backend = SimpleNamespace(output_file_exists=lambda path: path in existing)
-    path = tools._resolve_download_output_path(backend, data, "file-1", None)
+    backend = SimpleNamespace(regular_file_exists=lambda path: path in existing)
+    path = tools._resolve_download_output_path(
+        backend,
+        "/home/gem/projects/project-workdir-1",
+        data,
+        "file-1",
+        None,
+    )
 
-    assert path == "/home/gem/user-data/outputs/report_2.pdf"
+    assert path == "/home/gem/projects/project-workdir-1/outputs/report_2.pdf"
 
 
 def _async_get_file_download(content: bytes, filename: str):

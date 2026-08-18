@@ -19,7 +19,6 @@ from yuxi.knowledge.schemas import (
     SearchInputSchema,
 )
 from yuxi.utils import logger
-from yuxi.utils.paths import OUTPUTS_DIR_NAME, VIRTUAL_PATH_OUTPUTS
 
 # ========== 通用知识库工具 ==========
 
@@ -369,23 +368,23 @@ async def download_kb_file(
     sandbox_scope = _runtime_sandbox_scope(runtime)
     if sandbox_scope is None:
         return "无法获取当前会话的沙盒上下文，缺少 thread_id 或 uid"
-    runtime_thread_id, uid, sandbox_instance_id = sandbox_scope
+    runtime_thread_id, uid, sandbox_instance_id, workdir_id, workdir_path = sandbox_scope
     backend = ProvisionerSandboxBackend(
         thread_id=runtime_thread_id,
         uid=uid,
         sandbox_instance_id=sandbox_instance_id,
+        workdir_id=workdir_id,
         create_if_missing=False,
     )
 
-    output_path = _resolve_download_output_path(backend, data, normalized_file_id, save_as)
+    output_path = _resolve_download_output_path(backend, workdir_path, data, normalized_file_id, save_as)
     temp_path = ""
     try:
         with tempfile.NamedTemporaryFile(prefix="yuxi-kb-download-", delete=False) as temp_file:
             temp_path = temp_file.name
             temp_file.write(data["content"])
         await asyncio.to_thread(
-            backend.upload_scope_file_from_path,
-            OUTPUTS_DIR_NAME,
+            backend.upload_authorized_file_from_path,
             output_path,
             temp_path,
         )
@@ -462,25 +461,30 @@ def _runtime_uid(runtime: ToolRuntime | None) -> str | None:
     return getattr(context, "uid", None)
 
 
-def _runtime_sandbox_scope(runtime: ToolRuntime | None) -> tuple[str, str, str] | None:
-    """返回知识库下载使用的 runtime/user/instance scope。"""
+def _runtime_sandbox_scope(runtime: ToolRuntime | None) -> tuple[str, str, str, str, str] | None:
+    """返回知识库下载使用的 runtime/user/instance/workdir scope。"""
     context = getattr(runtime, "context", None) if runtime else None
     if context is None:
         return None
-    runtime_thread_id = getattr(context, "thread_id", None)
+    runtime_thread_id = getattr(context, "runtime_scope_id", None) or getattr(context, "thread_id", None)
     uid = getattr(context, "uid", None)
     sandbox_instance_id = getattr(context, "sandbox_instance_id", None) or runtime_thread_id
-    if not runtime_thread_id or not uid:
+    workdir_id = getattr(context, "workdir_id", None)
+    workdir_path = getattr(context, "workdir_path", None)
+    if not runtime_thread_id or not uid or not workdir_id or not workdir_path:
         return None
     return (
         str(runtime_thread_id),
         str(uid),
         str(sandbox_instance_id),
+        str(workdir_id),
+        str(workdir_path),
     )
 
 
 def _resolve_download_output_path(
     backend: ProvisionerSandboxBackend,
+    workdir_path: str,
     data: dict[str, Any],
     file_id: str,
     save_as: str | None,
@@ -490,8 +494,8 @@ def _resolve_download_output_path(
     wanted_name = (save_as or data.get("filename") or file_id).strip()
     base_name = Path(wanted_name).name or file_id
 
-    candidate = f"{VIRTUAL_PATH_OUTPUTS}/{base_name}"
-    if not backend.output_file_exists(candidate):
+    candidate = f"{workdir_path}/outputs/{base_name}"
+    if not backend.regular_file_exists(candidate):
         return candidate
 
     # 重名时追加 _1 / _2 ... 后缀
@@ -499,7 +503,7 @@ def _resolve_download_output_path(
     stem = pure_candidate.stem
     suffix = pure_candidate.suffix
     index = 1
-    while backend.output_file_exists(candidate):
-        candidate = f"{VIRTUAL_PATH_OUTPUTS}/{stem}_{index}{suffix}"
+    while backend.regular_file_exists(candidate):
+        candidate = f"{workdir_path}/outputs/{stem}_{index}{suffix}"
         index += 1
     return candidate

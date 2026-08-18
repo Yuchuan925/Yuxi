@@ -202,8 +202,47 @@ def test_idle_reaper_does_not_delete_or_forget_new_generation(monkeypatch):
 
     reaper._delete_expired_sandbox(*expired[0])
 
-    assert backend.deleted == [("sandbox-1", "generation-1")]
+    assert backend.deleted == []
     assert reaper._last_activity_at["sandbox-1"][0] == "generation-2"
+
+
+def test_operation_pins_drain_started_requests_and_block_new_requests_during_delete(monkeypatch):
+    monkeypatch.setenv("PROVISIONER_BACKEND", "memory")
+    module = _load_module()
+    pins = module.SandboxOperationPins()
+    delete_started = threading.Event()
+    delete_finished = threading.Event()
+    next_request_started = threading.Event()
+
+    pins.acquire("sandbox-1")
+
+    def delete_generation():
+        pins.begin_delete("sandbox-1")
+        delete_started.set()
+        assert not next_request_started.is_set()
+        pins.end_delete("sandbox-1")
+        delete_finished.set()
+
+    delete_thread = threading.Thread(target=delete_generation)
+    delete_thread.start()
+    with pins._condition:
+        assert pins._condition.wait_for(lambda: "sandbox-1" in pins._deleting, timeout=1)
+    assert not delete_started.is_set()
+
+    def next_request():
+        pins.acquire("sandbox-1")
+        next_request_started.set()
+        pins.release("sandbox-1")
+
+    next_thread = threading.Thread(target=next_request)
+    next_thread.start()
+    assert not next_request_started.wait(timeout=0.05)
+
+    pins.release("sandbox-1")
+    assert delete_finished.wait(timeout=1)
+    assert next_request_started.wait(timeout=1)
+    delete_thread.join(timeout=1)
+    next_thread.join(timeout=1)
 
 
 def test_docker_mount_checks_reject_uploads_and_outputs_mounts(monkeypatch, tmp_path):

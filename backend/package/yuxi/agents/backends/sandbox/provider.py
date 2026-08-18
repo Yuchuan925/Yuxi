@@ -150,12 +150,11 @@ class ProvisionerSandboxProvider:
         return (time.time() - last_touch) >= self._touch_interval_seconds
 
     def _touch_if_needed(self, connection: SandboxConnection) -> bool:
-        if not self._should_touch(connection.cache_key):
-            return True
-        is_alive = self._client.touch(connection.sandbox_id)
-        self._last_touch_at[connection.cache_key] = time.time()
-        if not is_alive:
-            return False
+        if self._should_touch(connection.cache_key):
+            is_alive = self._client.touch(connection.sandbox_id)
+            self._last_touch_at[connection.cache_key] = time.time()
+            if not is_alive:
+                return False
         record = self._client.discover(connection.sandbox_id)
         if record is None:
             return False
@@ -304,9 +303,7 @@ class ProvisionerSandboxProvider:
         with lock:
             connection = self._connections.get(cache_key)
             if connection and connection.workdir_id != normalized_workdir_id:
-                raise SandboxIdentityMismatchError(
-                    "sandbox Project Workdir does not match the existing runtime scope"
-                )
+                raise SandboxIdentityMismatchError("sandbox Project Workdir does not match the existing runtime scope")
             if connection is None:
                 sandbox_id = sandbox_id_for_thread(
                     thread_id,

@@ -8,6 +8,7 @@ import threading
 from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -17,6 +18,7 @@ os.environ.setdefault(
 )
 
 from yuxi.services import attachment_service as service
+from yuxi.services import project_workdir_service
 
 pytestmark = pytest.mark.unit
 
@@ -164,6 +166,22 @@ class FakeDB:
         self.rollback_count += 1
 
 
+class FakeWorkdirBackend:
+    def __init__(self):
+        self.files: dict[str, bytes] = {}
+
+    def ensure_available(self):
+        return "sandbox-1"
+
+    def upload_authorized_file_from_path(self, path: str, source_path: str):
+        self.files[path] = Path(source_path).read_bytes()
+
+    def delete_authorized_path(self, path: str, *, root: str):
+        assert root == "/home/gem/projects/project-workdir-1"
+        if self.files.pop(path, None) is None:
+            raise FileNotFoundError(path)
+
+
 @pytest.mark.asyncio
 async def test_upload_tmp_attachment_writes_user_scoped_minio_object(monkeypatch):
     fake_minio = FakeMinioClient()
@@ -218,9 +236,20 @@ def confirm_attachment_env(monkeypatch: pytest.MonkeyPatch):
     """构造 confirm 流程所需的 MinIO 与仓库假实现，并挂载到 service 模块。"""
     fake_minio = FakeMinioClient()
     fake_repo = FakeConversationRepository(db=None)
+    backend = FakeWorkdirBackend()
 
     monkeypatch.setattr(service, "get_minio_client", lambda: fake_minio)
     monkeypatch.setattr(service, "ConversationRepository", lambda db: fake_repo)
+
+    async def resolve_binding(**kwargs):
+        del kwargs
+        return SimpleNamespace(
+            workdir_path="/home/gem/projects/project-workdir-1",
+            create_file_backend=lambda **_kwargs: backend,
+        )
+
+    monkeypatch.setattr(project_workdir_service, "resolve_project_workdir_binding", resolve_binding)
+    fake_repo.workdir_backend = backend
 
     async def noop_invalidate(thread_id: str):
         return None
@@ -231,7 +260,7 @@ def confirm_attachment_env(monkeypatch: pytest.MonkeyPatch):
 
 
 @pytest.mark.asyncio
-async def test_confirm_tmp_thread_attachments_persists_objects_without_local_paths(confirm_attachment_env):
+async def test_confirm_tmp_thread_attachments_writes_realtime_workdir(confirm_attachment_env):
     fake_minio, fake_repo = confirm_attachment_env
     original_object = "tmp/chat_attachments/user-1/tmp-1/original/demo.pdf"
     parsed_object = "tmp/chat_attachments/user-1/tmp-1/parsed/demo.md"
@@ -257,11 +286,10 @@ async def test_confirm_tmp_thread_attachments_persists_objects_without_local_pat
     [attachment] = response["attachments"]
     assert attachment["status"] == "parsed"
     stored = fake_repo.attachments[0]
-    assert stored["original_object_name"].startswith("threads/thread-1/attachments/")
-    assert stored["markdown_object_name"].startswith("threads/thread-1/attachments/")
-    assert "storage_path" not in stored
-    assert fake_minio.objects[("knowledgebases", stored["original_object_name"])] == b"pdf-bytes"
-    assert fake_minio.objects[("knowledgebases", stored["markdown_object_name"])] == b"# parsed"
+    assert stored["original_path"].startswith("/home/gem/projects/project-workdir-1/uploads/")
+    assert stored["path"].startswith("/home/gem/projects/project-workdir-1/uploads/attachments/")
+    assert fake_repo.workdir_backend.files[stored["original_path"]] == b"pdf-bytes"
+    assert fake_repo.workdir_backend.files[stored["path"]] == b"# parsed"
     assert fake_minio.deleted_prefixes == [("knowledgebases", "tmp/chat_attachments/user-1/tmp-1/")]
 
 
@@ -381,9 +409,8 @@ async def test_confirm_tmp_thread_attachments_keeps_duplicate_names_separate(con
     first, second = response["attachments"]
     assert first["original_path"] != second["original_path"]
     first_record, second_record = fake_repo.attachments
-    assert first_record["original_object_name"] != second_record["original_object_name"]
-    assert fake_minio.objects[("knowledgebases", first_record["original_object_name"])] == b"first"
-    assert fake_minio.objects[("knowledgebases", second_record["original_object_name"])] == b"second"
+    assert fake_repo.workdir_backend.files[first_record["original_path"]] == b"first"
+    assert fake_repo.workdir_backend.files[second_record["original_path"]] == b"second"
 
 
 @pytest.mark.asyncio
@@ -605,11 +632,13 @@ async def test_hydrate_accepts_existing_record_with_pre_normalized_file_name(mon
 
 @pytest.mark.asyncio
 async def test_store_attachment_normalizes_persisted_file_name(monkeypatch):
-    fake_minio = FakeMinioClient()
-    monkeypatch.setattr(service, "get_minio_client", lambda: fake_minio)
+    del monkeypatch
+    backend = FakeWorkdirBackend()
 
     record = await service._store_attachment(
         thread_id="thread-1",
+        backend=backend,
+        workdir_path="/home/gem/projects/project-workdir-1",
         file_id="file-1",
         file_name=" report.txt",
         file_type="text/plain",
@@ -617,7 +646,8 @@ async def test_store_attachment_normalizes_persisted_file_name(monkeypatch):
     )
 
     assert record["file_name"] == "report.txt"
-    assert record["original_path"] == "/home/gem/user-data/uploads/file-1_report.txt"
+    assert record["original_path"] == "/home/gem/projects/project-workdir-1/uploads/file-1_report.txt"
+    assert backend.files[record["original_path"]] == b"content"
 
 
 @pytest.mark.asyncio
@@ -804,26 +834,60 @@ async def test_delete_recorded_objects_is_best_effort():
 
 
 @pytest.mark.asyncio
-async def test_delete_thread_attachment_rejects_active_thread_run(monkeypatch):
+async def test_delete_thread_attachment_updates_live_workdir_even_during_runtime(monkeypatch):
     fake_repo = FakeConversationRepository(db=None)
-    fake_repo.attachments = [{"file_id": "file-1", "file_name": "demo.pdf"}]
+    backend = FakeWorkdirBackend()
+    original = "/home/gem/projects/project-workdir-1/uploads/file-1_demo.pdf"
+    parsed = "/home/gem/projects/project-workdir-1/uploads/attachments/file-1_demo.md"
+    backend.files = {original: b"pdf", parsed: b"markdown"}
+    fake_repo.attachments = [{"file_id": "file-1", "file_name": "demo.pdf", "original_path": original, "path": parsed}]
 
-    class RunRepo:
-        def __init__(self, _db):
-            pass
-
-        async def get_active_run_by_thread_for_user(self, **kwargs):
-            assert kwargs == {
-                "agent_slug": "agent-1",
-                "conversation_thread_id": "thread-1",
-                "uid": "user-1",
-            }
-            return SimpleNamespace(id="run-1")
+    async def resolve_binding(**kwargs):
+        del kwargs
+        return SimpleNamespace(
+            workdir_path="/home/gem/projects/project-workdir-1",
+            create_file_backend=lambda **_kwargs: backend,
+        )
 
     monkeypatch.setattr(service, "ConversationRepository", lambda _db: fake_repo)
-    monkeypatch.setattr(service, "AgentRunRepository", RunRepo)
+    monkeypatch.setattr(project_workdir_service, "resolve_project_workdir_binding", resolve_binding)
+    monkeypatch.setattr(service, "invalidate_mention_cache", AsyncMock())
 
-    with pytest.raises(service.HTTPException) as exc:
+    result = await service.delete_thread_attachment_view(
+        thread_id="thread-1", file_id="file-1", db=FakeDB(), current_uid="user-1"
+    )
+
+    assert result == {"message": "附件已删除"}
+    assert fake_repo.attachments == []
+    assert backend.files == {}
+
+
+@pytest.mark.asyncio
+async def test_delete_thread_attachment_does_not_delete_bytes_before_metadata_commit(monkeypatch):
+    fake_repo = FakeConversationRepository(db=None)
+    backend = FakeWorkdirBackend()
+    original = "/home/gem/projects/project-workdir-1/uploads/file-1_demo.pdf"
+    backend.files = {original: b"pdf"}
+    fake_repo.attachments = [
+        {"file_id": "file-1", "file_name": "demo.pdf", "original_path": original, "path": original}
+    ]
+
+    async def fail_remove(_conversation_id: int, _file_id: str):
+        raise RuntimeError("database unavailable")
+
+    fake_repo.remove_attachment = fail_remove
+
+    async def resolve_binding(**kwargs):
+        del kwargs
+        return SimpleNamespace(
+            workdir_path="/home/gem/projects/project-workdir-1",
+            create_file_backend=lambda **_kwargs: backend,
+        )
+
+    monkeypatch.setattr(service, "ConversationRepository", lambda _db: fake_repo)
+    monkeypatch.setattr(project_workdir_service, "resolve_project_workdir_binding", resolve_binding)
+
+    with pytest.raises(RuntimeError, match="database unavailable"):
         await service.delete_thread_attachment_view(
             thread_id="thread-1",
             file_id="file-1",
@@ -831,5 +895,4 @@ async def test_delete_thread_attachment_rejects_active_thread_run(monkeypatch):
             current_uid="user-1",
         )
 
-    assert exc.value.status_code == 409
-    assert fake_repo.attachments[0]["file_id"] == "file-1"
+    assert backend.files == {original: b"pdf"}

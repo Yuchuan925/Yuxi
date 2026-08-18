@@ -181,6 +181,21 @@ class BaseContext:
         metadata={"name": "Sandbox 实例 ID", "configurable": False, "hide": True},
     )
 
+    runtime_scope_id: str | None = field(
+        default=None,
+        metadata={"name": "Sandbox Runtime Scope", "configurable": False, "hide": True},
+    )
+
+    workdir_id: str | None = field(
+        default=None,
+        metadata={"name": "Project Workdir ID", "configurable": False, "hide": True},
+    )
+
+    workdir_path: str | None = field(
+        default=None,
+        metadata={"name": "Project Workdir Path", "configurable": False, "hide": True},
+    )
+
     system_prompt: str = field(
         default="You are a helpful assistant.",
         metadata={"name": "系统提示词", "description": "用来描述智能体的角色和行为", "kind": "prompt"},

@@ -17,7 +17,6 @@ import json
 import uuid
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import Any, Literal
 
 from langchain.messages import AIMessage, AIMessageChunk
@@ -25,20 +24,17 @@ from langgraph.types import Command
 from yuxi.agents.base import _json_safe
 from yuxi.agents.buildin import agent_manager
 from yuxi.agents.context import build_agent_input_context, normalize_agent_context_config
-from yuxi.agents.backends.sandbox import ProvisionerSandboxBackend, get_sandbox_provider, sandbox_outputs_dir
+from yuxi.agents.backends.sandbox import ProvisionerSandboxBackend
 from yuxi.agents.state import AgentStatePayload
 from yuxi.config.options import system_options
 from yuxi.repositories.agent_repository import AgentRepository
 from yuxi.repositories.agent_run_repository import AgentRunRepository
 from yuxi.repositories.conversation_repository import ConversationRepository
-from yuxi.repositories.thread_output_repository import OutputRevisionConflictError
+from yuxi.repositories.project_workdir_repository import ProjectWorkdirRepository
 from yuxi.repositories.subagent_thread_repository import SubagentThreadRepository
-from yuxi.services.attachment_service import (
-    hydrate_attachment_records_to_sandbox,
-    serialize_attachment,
-)
+from yuxi.services.attachment_service import serialize_attachment
 from yuxi.services.input_message_service import AgentRunInputMessage
-from yuxi.services.scoped_file_store import await_blocking_file_call
+from yuxi.services.run_queue_service import publish_cancel_signal
 from yuxi.services.langfuse_service import (
     LangfuseRunContext,
     build_run_context,
@@ -46,19 +42,11 @@ from yuxi.services.langfuse_service import (
     get_trace_info,
 )
 from yuxi.services.subagent_run_service import serialize_subagent_run_state
-from yuxi.services.thread_output_service import (
-    get_current_output_snapshot,
-    get_output_snapshot,
-    hydrate_legacy_thread_outputs_to_sandbox,
-    hydrate_thread_outputs_to_sandbox,
-    mark_output_revision_status,
-    publish_staged_outputs,
-    stage_thread_outputs,
-)
 from yuxi.storage.postgres.manager import pg_manager
 from yuxi.storage.postgres.models_business import Agent, User
 from yuxi.utils.guard import content_guard
 from yuxi.utils.logging_config import logger
+from yuxi.agents.backends.sandbox.paths import project_workdir_virtual_dir
 from yuxi.utils.question_utils import (
     normalize_questions as _normalize_interrupt_questions,
 )
@@ -167,7 +155,18 @@ def _build_langfuse_run_context(
     )
 
 
-def extract_agent_state(values: dict) -> AgentStatePayload:
+def _normalize_agent_artifact_path(path: object, workdir_path: str | None) -> object:
+    if not isinstance(path, str) or not workdir_path:
+        return path
+    legacy_root = "/home/gem/user-data"
+    for namespace in ("uploads", "outputs"):
+        prefix = f"{legacy_root}/{namespace}"
+        if path == prefix or path.startswith(f"{prefix}/"):
+            return f"{workdir_path}{path[len(legacy_root) :]}"
+    return path
+
+
+def extract_agent_state(values: dict, *, workdir_path: str | None = None) -> AgentStatePayload:
     """从 LangGraph state 中提取 agent 状态"""
     if not isinstance(values, dict):
         return {"todos": [], "files": {}, "artifacts": [], "subagent_runs": [], "token_usage": None}
@@ -180,7 +179,7 @@ def extract_agent_state(values: dict) -> AgentStatePayload:
     result: AgentStatePayload = {
         "todos": list(todos)[:20] if todos else [],
         "files": values.get("files") or {},
-        "artifacts": list(artifacts) if artifacts else [],
+        "artifacts": [_normalize_agent_artifact_path(path, workdir_path) for path in artifacts] if artifacts else [],
         "subagent_runs": list(subagent_runs) if subagent_runs else [],
         "token_usage": dict(token_usage) if isinstance(token_usage, dict) else None,
     }
@@ -233,19 +232,16 @@ def _apply_input_context_field(input_context: dict, meta: dict | None, key: str)
 
 
 def _apply_subagent_runtime_context(input_context: dict, meta: dict | None) -> None:
-    """把子智能体 run 的父线程和文件线程信息注入运行 context。"""
+    """把子智能体 run 的父线程信息注入运行 context。"""
     meta = meta or {}
     if meta.get("run_type") != "subagent":
         for key in ("parent_thread_id", "file_thread_id", "is_subagent_runtime"):
             input_context.pop(key, None)
         return
-    # 这两个线程 ID 由 subagent_run_service 在创建 run 时写入 runtime，
-    # 是子智能体区别于普通对话的唯一依据；缺失即上游契约被破坏，直接失败而非静默回退。
-    for key in ("parent_thread_id", "file_thread_id"):
-        value = str(meta.get(key) or "").strip()
-        if not value:
-            raise ValueError(f"子智能体运行缺少必需的 {key}")
-        input_context[key] = value
+    parent_thread_id = str(meta.get("parent_thread_id") or "").strip()
+    if not parent_thread_id:
+        raise ValueError("子智能体运行缺少必需的 parent_thread_id")
+    input_context["parent_thread_id"] = parent_thread_id
     # 标记为子智能体运行，供下游逻辑判断
     input_context["is_subagent_runtime"] = True
 
@@ -492,6 +488,20 @@ async def _save_tool_message(conv_repo: ConversationRepository, msg_dict: dict, 
     )
 
 
+async def _publish_execution_tree_cancel_signals(cancelled: list[tuple[str, str]]) -> None:
+    """尽力通知已由 PostgreSQL 收敛的后代 Run 停止执行。"""
+
+    if not cancelled:
+        return
+    results = await asyncio.gather(
+        *(publish_cancel_signal(run_id) for run_id, _thread_id in cancelled),
+        return_exceptions=True,
+    )
+    for (run_id, _thread_id), result in zip(cancelled, results, strict=True):
+        if isinstance(result, BaseException):
+            logger.warning("Failed to publish execution-tree cancel signal: run=%s", run_id, exc_info=result)
+
+
 async def save_partial_message(
     conv_repo: ConversationRepository,
     thread_id: str,
@@ -504,6 +514,7 @@ async def save_partial_message(
     worker_id: str | None = None,
     interrupt_run: bool = False,
 ):
+    cancelled_descendants: list[tuple[str, str]] = []
     try:
         extra_metadata = {
             "error_type": error_type,
@@ -556,7 +567,9 @@ async def save_partial_message(
                 )
                 if terminal_run is None or not changed:
                     raise ValueError("AgentRun 部分输出已写入但 interrupted 终态未能在同一事务提交")
+                cancelled_descendants = await run_repo.cancel_active_execution_tree_descendants(terminal_run)
             await conv_repo.db.commit()
+            await _publish_execution_tree_cancel_signals(cancelled_descendants)
         elif run_id and interrupt_run:
             raise ValueError("AgentRun 中断输出消息未能持久化")
         return message
@@ -585,15 +598,15 @@ async def save_messages_from_langgraph_state(
     interrupt_error_type: str | None = None,
     interrupt_error_message: str | None = None,
     token_usage: dict[str, Any] | None = None,
-    output_revision_id: str | None = None,
 ) -> bool:
-    """在有效 lease 锁内原子写入输出、revision 与完成或中断终态。"""
+    """在有效 lease 锁内原子写入消息与完成或中断终态。"""
 
     if complete_run and interrupt_run:
         raise ValueError("AgentRun 不能同时完成和中断")
 
     run_repo = AgentRunRepository(conv_repo.db) if run_id else None
     staged_run = None
+    cancelled_descendants: list[tuple[str, str]] = []
     try:
         if run_id:
             if not worker_id or not request_id:
@@ -652,8 +665,6 @@ async def save_messages_from_langgraph_state(
                     last_ai_message.id,
                     worker_id=worker_id,
                 )
-        if output_revision_id:
-            await publish_staged_outputs(db=conv_repo.db, revision_id=output_revision_id)
         if run_id:
             terminal_status = "completed" if complete_run else "interrupted" if interrupt_run else None
             if terminal_status:
@@ -667,28 +678,18 @@ async def save_messages_from_langgraph_state(
                 )
                 if terminal_run is None or not changed:
                     raise ValueError(f"AgentRun 输出已写入但 {terminal_status} 终态未能在同一事务提交")
+                cancelled_descendants = await run_repo.cancel_active_execution_tree_descendants(terminal_run)
             await conv_repo.db.commit()
+            await _publish_execution_tree_cancel_signals(cancelled_descendants)
             return terminal_status is not None
-        if output_revision_id:
-            await conv_repo.db.commit()
         return False
     except asyncio.CancelledError:
-        if run_id or output_revision_id:
+        if run_id:
             await conv_repo.db.rollback()
-        if output_revision_id:
-            await mark_output_revision_status(output_revision_id, "unknown", "发布事务在取消时确认不明")
-        raise
-    except OutputRevisionConflictError:
-        if run_id or output_revision_id:
-            await conv_repo.db.rollback()
-        if output_revision_id:
-            await mark_output_revision_status(output_revision_id, "conflict", "base revision 已变化")
         raise
     except Exception:
-        if run_id or output_revision_id:
+        if run_id:
             await conv_repo.db.rollback()
-        if output_revision_id:
-            await mark_output_revision_status(output_revision_id, "unknown", "发布事务确认失败")
         raise
 
 
@@ -841,6 +842,9 @@ async def _resolve_agent_runtime(
             # Conversation.agent_id 是历史字段名，实际保存的是 Agent.slug。
             if requested_agent_slug and requested_agent_slug != conversation.agent_id:
                 raise ValueError("已有线程已绑定智能体，不能切换")
+            if not conversation.workdir_id:
+                raise ValueError("Conversation 缺少 Project Workdir")
+            await ProjectWorkdirRepository(db).require_for_user(conversation.workdir_id, str(user.uid))
             resolved_agent_slug = conversation.agent_id
 
     if not resolved_agent_slug:
@@ -908,110 +912,6 @@ async def _ensure_thread_bound_agent(
     if conversation.agent_id != agent_item.slug:
         raise ValueError("已有线程已绑定智能体，不能切换")
     return conversation
-
-
-async def _conversation_for_file_thread(
-    *,
-    conv_repo: ConversationRepository,
-    conversation: Any,
-    runtime_thread_id: str,
-    file_thread_id: str,
-    uid: str,
-) -> Any:
-    """解析并授权实际文件线程，供主/子智能体共用。"""
-    file_conversation = conversation
-    if file_thread_id != runtime_thread_id:
-        file_conversation = await conv_repo.get_conversation_by_thread_id(file_thread_id)
-        if file_conversation is None or file_conversation.uid != uid or file_conversation.status == "deleted":
-            raise ValueError("附件文件线程不存在")
-    return file_conversation
-
-
-async def _attachment_records_for_file_thread(
-    *,
-    conv_repo: ConversationRepository,
-    conversation: Any,
-    runtime_thread_id: str,
-    file_thread_id: str,
-    uid: str,
-) -> list[dict]:
-    """读取实际文件线程的附件事实，供主/子智能体共用。"""
-    file_conversation = await _conversation_for_file_thread(
-        conv_repo=conv_repo,
-        conversation=conversation,
-        runtime_thread_id=runtime_thread_id,
-        file_thread_id=file_thread_id,
-        uid=uid,
-    )
-    return await conv_repo.get_attachments(file_conversation.id)
-
-
-async def _hydrate_run_file_scopes(
-    *,
-    runtime_thread_id: str,
-    file_thread_id: str,
-    uid: str,
-    attachments: list[dict],
-    output_files: list[dict],
-    legacy_output_root: Path | None,
-    sandbox_instance_id: str | None,
-) -> None:
-    """连续恢复 uploads/outputs；sandbox 冷启动丢失时整组重试一次。"""
-    for attempt in range(2):
-        try:
-            bootstrap_backend = ProvisionerSandboxBackend(
-                thread_id=runtime_thread_id,
-                uid=uid,
-                sandbox_instance_id=sandbox_instance_id,
-            )
-            await await_blocking_file_call(bootstrap_backend.ensure_available)
-            await hydrate_attachment_records_to_sandbox(
-                runtime_thread_id,
-                uid,
-                attachments,
-                file_thread_id=file_thread_id,
-                sandbox_instance_id=sandbox_instance_id,
-                create_if_missing=False,
-            )
-            if legacy_output_root is None:
-                await hydrate_thread_outputs_to_sandbox(
-                    runtime_thread_id=runtime_thread_id,
-                    file_thread_id=file_thread_id,
-                    uid=uid,
-                    files=output_files,
-                    sandbox_instance_id=sandbox_instance_id,
-                    create_if_missing=False,
-                )
-            else:
-                await hydrate_legacy_thread_outputs_to_sandbox(
-                    runtime_thread_id=runtime_thread_id,
-                    file_thread_id=file_thread_id,
-                    uid=uid,
-                    legacy_root=legacy_output_root,
-                    sandbox_instance_id=sandbox_instance_id,
-                    create_if_missing=False,
-                )
-            return
-        except Exception as exc:
-            detail = str(exc).lower()
-            if (
-                attempt
-                or "sandbox" not in detail
-                or not any(marker in detail for marker in ("not found", "unavailable", "disappeared"))
-            ):
-                raise
-            try:
-                await asyncio.to_thread(
-                    get_sandbox_provider().release,
-                    runtime_thread_id,
-                    uid=uid,
-                    file_thread_id=file_thread_id,
-                    sandbox_instance_id=sandbox_instance_id,
-                    clear_cache_on_delete_failure=True,
-                )
-            except Exception:
-                logger.warning("Failed to reset disappeared sandbox before hydrate retry", exc_info=True)
-            logger.warning("Sandbox disappeared during file hydrate; retrying complete snapshot: %s", runtime_thread_id)
 
 
 async def stream_agent_chat(
@@ -1096,6 +996,16 @@ async def stream_agent_chat(
     )
     _apply_model_override(input_context, meta)
     _apply_input_context_field(input_context, meta, "tool_approval_mode")
+    runtime_scope_id = str(meta.get("runtime_scope_id") or thread_id)
+    if not conversation.workdir_id:
+        raise ValueError("Conversation 缺少 Project Workdir")
+    input_context["runtime_scope_id"] = runtime_scope_id
+    input_context["workdir_id"] = conversation.workdir_id
+    input_context["workdir_path"] = project_workdir_virtual_dir(conversation.workdir_id)
+    meta["runtime_scope_id"] = runtime_scope_id
+    meta["workdir_id"] = conversation.workdir_id
+    meta["workdir_path"] = input_context["workdir_path"]
+    meta["sandbox_instance_id"] = runtime_scope_id
     _apply_input_context_field(input_context, meta, "sandbox_instance_id")
     _apply_subagent_runtime_context(input_context, meta)
     context = _build_agent_context(agent, input_context)
@@ -1124,35 +1034,16 @@ async def stream_agent_chat(
             agent_item=agent_item,
         )
 
-        file_thread_id = str(input_context.get("file_thread_id") or thread_id)
-        thread_attachment_records = await _attachment_records_for_file_thread(
-            conv_repo=conv_repo,
-            conversation=conversation,
-            runtime_thread_id=thread_id,
-            file_thread_id=file_thread_id,
-            uid=uid,
-        )
-        file_conversation = await _conversation_for_file_thread(
-            conv_repo=conv_repo,
-            conversation=conversation,
-            runtime_thread_id=thread_id,
-            file_thread_id=file_thread_id,
-            uid=uid,
-        )
-        requested_output_revision_id = str(meta.get("output_base_revision_id") or "").strip()
+        attachment_conversation = conversation
         if meta.get("run_type") == "subagent":
-            if not requested_output_revision_id:
-                raise ValueError("子智能体运行缺少 outputs 基线 revision")
-            output_base_revision_id, output_files = await get_output_snapshot(
-                conversation=file_conversation,
-                revision_id=requested_output_revision_id,
-                db=db,
-            )
-        else:
-            output_base_revision_id, output_files = await get_current_output_snapshot(
-                conversation=file_conversation,
-                db=db,
-            )
+            attachment_conversation = await conv_repo.get_conversation_by_thread_id(runtime_scope_id)
+            if (
+                attachment_conversation is None
+                or attachment_conversation.uid != uid
+                or attachment_conversation.workdir_id != conversation.workdir_id
+            ):
+                raise ValueError("子智能体根 Conversation 的 Project Workdir 不可用")
+        thread_attachment_records = await conv_repo.get_attachments(attachment_conversation.id)
         request_attachment_records = [
             attachment for attachment in thread_attachment_records if attachment.get("request_id") == meta["request_id"]
         ]
@@ -1192,15 +1083,13 @@ async def stream_agent_chat(
 
         # 智能体流式执行期间不访问业务数据库，先结束预处理事务并归还连接池。
         await db.commit()
-        await _hydrate_run_file_scopes(
-            runtime_thread_id=thread_id,
-            file_thread_id=file_thread_id,
+        bootstrap_backend = ProvisionerSandboxBackend(
+            thread_id=runtime_scope_id,
             uid=uid,
-            attachments=thread_attachment_records,
-            output_files=output_files,
-            legacy_output_root=(sandbox_outputs_dir(file_thread_id) if output_base_revision_id is None else None),
-            sandbox_instance_id=meta.get("sandbox_instance_id"),
+            sandbox_instance_id=runtime_scope_id,
+            workdir_id=conversation.workdir_id,
         )
+        await asyncio.to_thread(bootstrap_backend.ensure_available)
 
         # 先构建 langgraph_config
         langgraph_config = {"configurable": {"thread_id": thread_id, "uid": uid}}
@@ -1216,7 +1105,10 @@ async def stream_agent_chat(
             tags=langfuse_run.tags,
         ):
             if mode == "values":
-                agent_state = extract_agent_state(payload if isinstance(payload, dict) else {})
+                agent_state = extract_agent_state(
+                    payload if isinstance(payload, dict) else {},
+                    workdir_path=meta.get("workdir_path"),
+                )
                 signature = _agent_state_signature(agent_state)
                 if signature and signature != last_agent_state_signature:
                     last_agent_state_signature = signature
@@ -1330,7 +1222,11 @@ async def stream_agent_chat(
         try:
             graph = await agent.get_graph(context=context)
             state = await graph.aget_state(langgraph_config)
-            agent_state = extract_agent_state(getattr(state, "values", {})) if state else {}
+            agent_state = (
+                extract_agent_state(getattr(state, "values", {}), workdir_path=meta.get("workdir_path"))
+                if state
+                else {}
+            )
         except Exception:
             agent_state = {}
 
@@ -1341,15 +1237,6 @@ async def stream_agent_chat(
 
         # 先存储数据库，再返回 finished，避免前端查询时数据未落库
         try:
-            output_revision_id = await stage_thread_outputs(
-                runtime_thread_id=thread_id,
-                file_thread_id=file_thread_id,
-                uid=uid,
-                conversation_id=file_conversation.id,
-                run_id=meta.get("run_id"),
-                base_revision_id=output_base_revision_id,
-                sandbox_instance_id=meta.get("sandbox_instance_id"),
-            )
             terminal_committed = await save_messages_from_langgraph_state(
                 agent_instance=agent,
                 thread_id=thread_id,
@@ -1365,7 +1252,6 @@ async def stream_agent_chat(
                 interrupt_error_type=interrupt_error_type,
                 interrupt_error_message=interrupt_error_message,
                 token_usage=_current_run_token_usage(agent_state, meta.get("run_id")),
-                output_revision_id=output_revision_id,
             )
         except Exception as e:
             logger.exception(f"Error saving messages from LangGraph state: {e}")
@@ -1452,7 +1338,6 @@ async def stream_agent_resume(
         return
     conv_repo = ConversationRepository(db)
     thread_attachments = await conv_repo.get_attachments(conversation.id)
-    output_base_revision_id, output_files = await get_current_output_snapshot(conversation=conversation, db=db)
     resume_command = Command(
         resume=resume_input,
         update={"uploads": [serialize_attachment(attachment) for attachment in thread_attachments]},
@@ -1460,18 +1345,22 @@ async def stream_agent_resume(
 
     # 恢复流执行期间不访问业务数据库，先结束运行时解析事务并归还连接池。
     await db.commit()
-    await _hydrate_run_file_scopes(
-        runtime_thread_id=thread_id,
-        file_thread_id=thread_id,
-        uid=uid,
-        attachments=thread_attachments,
-        output_files=output_files,
-        legacy_output_root=(sandbox_outputs_dir(thread_id) if output_base_revision_id is None else None),
-        sandbox_instance_id=meta.get("sandbox_instance_id"),
-    )
-
     meta["agent_slug"] = agent_item.slug
     meta["backend_id"] = agent_item.backend_id
+    runtime_scope_id = str(meta.get("runtime_scope_id") or thread_id)
+    if not conversation.workdir_id:
+        raise ValueError("Conversation 缺少 Project Workdir")
+    meta["runtime_scope_id"] = runtime_scope_id
+    meta["workdir_id"] = conversation.workdir_id
+    meta["workdir_path"] = project_workdir_virtual_dir(conversation.workdir_id)
+    meta["sandbox_instance_id"] = runtime_scope_id
+    bootstrap_backend = ProvisionerSandboxBackend(
+        thread_id=runtime_scope_id,
+        uid=uid,
+        sandbox_instance_id=runtime_scope_id,
+        workdir_id=conversation.workdir_id,
+    )
+    await asyncio.to_thread(bootstrap_backend.ensure_available)
     input_context = await build_agent_input_context(
         agent_config or {},
         thread_id=thread_id,
@@ -1481,6 +1370,9 @@ async def stream_agent_resume(
     )
     _apply_model_override(input_context, meta)
     _apply_input_context_field(input_context, meta, "tool_approval_mode")
+    input_context["runtime_scope_id"] = runtime_scope_id
+    input_context["workdir_id"] = conversation.workdir_id
+    input_context["workdir_path"] = meta["workdir_path"]
     _apply_input_context_field(input_context, meta, "sandbox_instance_id")
     context = _build_agent_context(agent, input_context)
     langfuse_run = _build_langfuse_run_context(
@@ -1509,7 +1401,10 @@ async def stream_agent_resume(
     try:
         async for mode, payload in stream_source:
             if mode == "values":
-                agent_state = extract_agent_state(payload if isinstance(payload, dict) else {})
+                agent_state = extract_agent_state(
+                    payload if isinstance(payload, dict) else {},
+                    workdir_path=meta.get("workdir_path"),
+                )
                 signature = _agent_state_signature(agent_state)
                 if signature and signature != last_agent_state_signature:
                     last_agent_state_signature = signature
@@ -1580,7 +1475,11 @@ async def stream_agent_resume(
         try:
             graph = await agent.get_graph(context=context)
             state = await graph.aget_state(langgraph_config)
-            agent_state = extract_agent_state(getattr(state, "values", {})) if state else {}
+            agent_state = (
+                extract_agent_state(getattr(state, "values", {}), workdir_path=meta.get("workdir_path"))
+                if state
+                else {}
+            )
         except Exception:
             agent_state = {}
 
@@ -1590,15 +1489,6 @@ async def stream_agent_resume(
 
         # 先存储数据库，再返回 finished，避免前端查询时数据未落库
         try:
-            output_revision_id = await stage_thread_outputs(
-                runtime_thread_id=thread_id,
-                file_thread_id=thread_id,
-                uid=uid,
-                conversation_id=conversation.id,
-                run_id=meta.get("run_id"),
-                base_revision_id=output_base_revision_id,
-                sandbox_instance_id=meta.get("sandbox_instance_id"),
-            )
             terminal_committed = await save_messages_from_langgraph_state(
                 agent_instance=agent,
                 thread_id=thread_id,
@@ -1614,7 +1504,6 @@ async def stream_agent_resume(
                 interrupt_error_type=interrupt_error_type,
                 interrupt_error_message=interrupt_error_message,
                 token_usage=_current_run_token_usage(agent_state, meta.get("run_id")),
-                output_revision_id=output_revision_id,
             )
         except Exception as e:
             logger.exception(f"Error saving messages from LangGraph state: {e}")
@@ -1724,7 +1613,12 @@ async def get_agent_state_view(
         context = _build_agent_context(agent, input_context)
         state = await _read_checkpoint_state(agent, uid=current_uid, thread_id=thread_id, context=context)
         values = getattr(state, "values", {}) if state else {}
-        response = {"agent_state": extract_agent_state(values)}
+        response = {
+            "agent_state": extract_agent_state(
+                values,
+                workdir_path=project_workdir_virtual_dir(conversation.workdir_id),
+            )
+        }
         interrupt_info = _extract_interrupt_info(state) if state else None
         if latest_run and latest_run.status == "interrupted" and interrupt_info:
             response["interrupt"] = {

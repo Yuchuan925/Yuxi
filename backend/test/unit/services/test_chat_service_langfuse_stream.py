@@ -55,10 +55,9 @@ async def _fake_save_messages_from_langgraph_state(
     interrupt_error_type=None,
     interrupt_error_message=None,
     token_usage=None,
-    output_revision_id=None,
 ):
     del agent_instance, thread_id, conv_repo, config_dict, context, trace_info
-    del run_id, request_id, worker_id, interrupt_error_type, interrupt_error_message, token_usage, output_revision_id
+    del run_id, request_id, worker_id, interrupt_error_type, interrupt_error_message, token_usage
     return complete_run or interrupt_run
 
 
@@ -70,70 +69,10 @@ async def _fake_guard_check_with_keywords(_content):
     return False
 
 
-@pytest.mark.asyncio
-async def test_output_publish_commit_failure_is_recorded_unknown(monkeypatch):
-    calls: list[tuple] = []
-
-    class FailingCommitDB:
-        async def commit(self):
-            calls.append(("commit",))
-            raise RuntimeError("commit response lost")
-
-        async def rollback(self):
-            calls.append(("rollback",))
-
-    async def fake_messages(*_args, **_kwargs):
-        return []
-
-    async def fake_existing_ids(*_args, **_kwargs):
-        return set()
-
-    async def fake_publish(**kwargs):
-        calls.append(("publish", kwargs["revision_id"]))
-
-    async def fake_mark(revision_id, status, error_message):
-        calls.append(("mark", revision_id, status, error_message))
-
-    monkeypatch.setattr(svc, "_get_langgraph_messages", fake_messages)
-    monkeypatch.setattr(svc, "_get_existing_message_ids", fake_existing_ids)
-    monkeypatch.setattr(svc, "publish_staged_outputs", fake_publish)
-    monkeypatch.setattr(svc, "mark_output_revision_status", fake_mark)
-    conversation_repository = SimpleNamespace(db=FailingCommitDB())
-
-    with pytest.raises(RuntimeError, match="commit response lost"):
-        await svc.save_messages_from_langgraph_state(
-            agent_instance=object(),
-            thread_id="thread-1",
-            conv_repo=conversation_repository,
-            config_dict={},
-            context=object(),
-            output_revision_id="revision-1",
-        )
-
-    assert calls == [
-        ("publish", "revision-1"),
-        ("commit",),
-        ("rollback",),
-        ("mark", "revision-1", "unknown", "发布事务确认失败"),
-    ]
-
-
 async def _fake_interrupts(agent, langgraph_config, make_chunk, meta, thread_id, context):
     if False:
         yield None
     return
-
-
-async def _fake_hydrate_attachment_records(*_args, **_kwargs):
-    return None
-
-
-async def _fake_current_output_snapshot(**_kwargs):
-    return None, []
-
-
-async def _fake_stage_thread_outputs(**_kwargs):
-    return "output-revision-1"
 
 
 def _patch_stream_scaffolding(
@@ -146,15 +85,17 @@ def _patch_stream_scaffolding(
     build_run_context=None,
     get_trace_info=None,
     flush_langfuse=None,
-    materialize=None,
 ):
     resolved_conversation = conversation or SimpleNamespace(
         id=1,
         uid="user-1",
         agent_id="test-agent",
         status="active",
+        workdir_id="workdir-1",
         extra_metadata={},
     )
+    if not hasattr(resolved_conversation, "workdir_id"):
+        resolved_conversation.workdir_id = "workdir-1"
 
     async def fake_resolve_agent_runtime(**_kwargs):
         return (
@@ -178,15 +119,15 @@ def _patch_stream_scaffolding(
     monkeypatch.setattr(svc.content_guard, "check", _fake_guard_check)
     monkeypatch.setattr(svc.content_guard, "check_with_keywords", _fake_guard_check_with_keywords)
     monkeypatch.setattr(svc, "check_and_handle_interrupts", _fake_interrupts)
-    monkeypatch.setattr(
-        svc,
-        "hydrate_attachment_records_to_sandbox",
-        materialize or _fake_hydrate_attachment_records,
-    )
-    monkeypatch.setattr(svc, "get_current_output_snapshot", _fake_current_output_snapshot)
-    monkeypatch.setattr(svc, "hydrate_thread_outputs_to_sandbox", _fake_hydrate_attachment_records)
-    monkeypatch.setattr(svc, "hydrate_legacy_thread_outputs_to_sandbox", _fake_hydrate_attachment_records)
-    monkeypatch.setattr(svc, "stage_thread_outputs", _fake_stage_thread_outputs)
+
+    class FakeSandboxBackend:
+        def __init__(self, **_kwargs):
+            pass
+
+        def ensure_available(self):
+            return "sandbox-1"
+
+    monkeypatch.setattr(svc, "ProvisionerSandboxBackend", FakeSandboxBackend)
     monkeypatch.setattr(
         svc,
         "_build_langfuse_run_context",
@@ -284,45 +225,6 @@ class _FakeConvRepo:
         return [dict(item) for item in self.default_attachments]
 
 
-@pytest.mark.asyncio
-async def test_attachment_records_use_authorized_file_thread_for_subagent() -> None:
-    child = SimpleNamespace(uid="user-1", status="subagent", extra_metadata={})
-    parent = SimpleNamespace(
-        id=2,
-        uid="user-1",
-        status="active",
-        extra_metadata={"attachments": [{"file_id": "parent-file"}]},
-    )
-
-    class FakeRepo:
-        async def get_conversation_by_thread_id(self, thread_id: str):
-            assert thread_id == "parent-thread"
-            return parent
-
-        async def get_attachments(self, conversation_id: int):
-            assert conversation_id == 2
-            return [{"file_id": "parent-file"}]
-
-    records = await svc._attachment_records_for_file_thread(
-        conv_repo=FakeRepo(),
-        conversation=child,
-        runtime_thread_id="child-thread",
-        file_thread_id="parent-thread",
-        uid="user-1",
-    )
-    assert records == [{"file_id": "parent-file"}]
-
-    parent.uid = "other-user"
-    with pytest.raises(ValueError, match="附件文件线程不存在"):
-        await svc._attachment_records_for_file_thread(
-            conv_repo=FakeRepo(),
-            conversation=child,
-            runtime_thread_id="child-thread",
-            file_thread_id="parent-thread",
-            uid="user-1",
-        )
-
-
 def test_main_run_discards_configured_subagent_file_scope() -> None:
     input_context = {
         "file_thread_id": "other-thread",
@@ -400,11 +302,6 @@ async def test_stream_agent_chat_commits_before_stream_and_persists_langfuse_con
 
             return FakeGraph()
 
-    async def fake_materialize(_thread_id, _uid, _attachments, **scope):
-        assert db.commit_count == 1
-        calls["materialized"] = _attachments
-        calls["hydrate_scope"] = scope
-
     async def fake_save_messages_from_langgraph_state(
         *,
         agent_instance,
@@ -421,7 +318,6 @@ async def test_stream_agent_chat_commits_before_stream_and_persists_langfuse_con
         interrupt_error_type=None,
         interrupt_error_message=None,
         token_usage=None,
-        output_revision_id=None,
     ):
         calls["saved_state"] = {
             "thread_id": thread_id,
@@ -436,7 +332,6 @@ async def test_stream_agent_chat_commits_before_stream_and_persists_langfuse_con
             "interrupt_error_type": interrupt_error_type,
             "interrupt_error_message": interrupt_error_message,
             "token_usage": token_usage,
-            "output_revision_id": output_revision_id,
         }
         return complete_run or interrupt_run
 
@@ -471,17 +366,7 @@ async def test_stream_agent_chat_commits_before_stream_and_persists_langfuse_con
             "langfuse_session_id": "thread-1",
         },
         flush_langfuse=lambda: calls.setdefault("flushed", True),
-        materialize=fake_materialize,
     )
-
-    async def fake_legacy_output_hydrate(**kwargs):
-        calls["legacy_output_hydrate"] = kwargs
-
-    async def fail_object_output_hydrate(**_kwargs):
-        raise AssertionError("没有 current revision 时必须先恢复 legacy outputs")
-
-    monkeypatch.setattr(svc, "hydrate_legacy_thread_outputs_to_sandbox", fake_legacy_output_hydrate)
-    monkeypatch.setattr(svc, "hydrate_thread_outputs_to_sandbox", fail_object_output_hydrate)
 
     chunks = []
     async for chunk in svc.stream_agent_chat(
@@ -549,21 +434,15 @@ async def test_stream_agent_chat_commits_before_stream_and_persists_langfuse_con
     assert calls["saved_state"]["context"].temperature == 0.1
     assert calls["saved_state"]["complete_run"] is True
     assert chunks[-1]["status"] == "finished"
-    assert [attachment["file_id"] for attachment in calls["materialized"]] == ["file-1", "file-2"]
-    assert calls["hydrate_scope"] == {
-        "file_thread_id": "thread-1",
-        "sandbox_instance_id": None,
-        "create_if_missing": False,
-    }
-    assert calls["legacy_output_hydrate"]["file_thread_id"] == "thread-1"
-    assert calls["legacy_output_hydrate"]["legacy_root"].name == "outputs"
+    assert calls["stream_input_context"]["workdir_id"] == "workdir-1"
+    assert calls["stream_input_context"]["runtime_scope_id"] == "thread-1"
     assert chunks[0]["msg"]["extra_metadata"]["attachments"] == [calls["stream_kwargs"]["uploads"][0]]
     assert calls["flushed"] is True
     assert isinstance(calls["stream_messages"][0], HumanMessage)
 
 
 @pytest.mark.asyncio
-async def test_stream_agent_chat_hydrate_failure_prevents_agent_execution(
+async def test_stream_agent_chat_sandbox_bootstrap_failure_prevents_agent_execution(
     stub_system_options,
     stub_content_guard,
     monkeypatch: pytest.MonkeyPatch,
@@ -578,9 +457,6 @@ async def test_stream_agent_chat_hydrate_failure_prevents_agent_execution(
             del messages, input_context, kwargs
             agent_started = True
             yield "messages", (AIMessageChunk(content="must not run"), {"node": "llm"})
-
-    async def fail_hydrate(*_args, **_kwargs):
-        raise RuntimeError("sandbox hydrate failed")
 
     @asynccontextmanager
     async def fake_session_context():
@@ -599,8 +475,16 @@ async def test_stream_agent_chat_hydrate_failure_prevents_agent_execution(
             status="active",
             extra_metadata={"attachments": [{"file_id": "file-1"}]},
         ),
-        materialize=fail_hydrate,
     )
+
+    class FailingSandboxBackend:
+        def __init__(self, **_kwargs):
+            pass
+
+        def ensure_available(self):
+            raise RuntimeError("sandbox bootstrap failed")
+
+    monkeypatch.setattr(svc, "ProvisionerSandboxBackend", FailingSandboxBackend)
     monkeypatch.setattr(svc.pg_manager, "get_async_session_context", fake_session_context)
     monkeypatch.setattr(svc, "save_partial_message", fake_save_partial_message)
 
@@ -617,7 +501,7 @@ async def test_stream_agent_chat_hydrate_failure_prevents_agent_execution(
 
     assert agent_started is False
     assert chunks[-1]["status"] == "error"
-    assert "sandbox hydrate failed" in chunks[-1]["error_message"]
+    assert "sandbox bootstrap failed" in chunks[-1]["error_message"]
     assert all(chunk.get("status") != "finished" for chunk in chunks)
 
 

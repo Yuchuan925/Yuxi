@@ -160,12 +160,13 @@ async def test_attempt_history_survives_retry_takeover_and_reconciliation(fact_d
         reconciled_at = now + timedelta(seconds=30)
         async with session_factory() as db:
             repository = AgentRunRepository(db)
-            reconciled = await repository.reconcile_expired_leases(now=reconciled_at)
+            reconciled, cancelled_descendants = await repository.reconcile_expired_leases(now=reconciled_at)
             await db.commit()
 
         attempts = await _persisted_attempts(session_factory, run_id)
 
         assert [run.id for run in reconciled] == [run_id]
+        assert cancelled_descendants == []
         assert [attempt.attempt_no for attempt in attempts] == [1, 2]
         first, second = attempts
         assert first.worker_id == owner_a

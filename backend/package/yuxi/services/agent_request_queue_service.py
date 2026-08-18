@@ -794,9 +794,7 @@ async def _get_queue_state(
         return "idle", {"paused_reason": None, "blocking_run_id": None, "can_continue": False}
 
     run_repo = AgentRunRepository(db)
-    active_run = await run_repo.get_active_run_by_thread_for_user(
-        uid=str(uid), agent_slug=agent_slug, conversation_thread_id=thread_id
-    )
+    active_run = await run_repo.get_active_run_by_runtime_scope_for_user(uid=str(uid), runtime_scope_id=thread_id)
     if active_run:
         return "running", {"paused_reason": None, "blocking_run_id": None, "can_continue": False}
 
@@ -833,6 +831,9 @@ async def _dispatch_ready_head(
     expected_request_id: str | None = None,
 ) -> DispatchResult | None:
     """只在 ready 状态派发 FIFO 队头。"""
+    from yuxi.services.project_workdir_materialization_service import require_project_workdir_active
+
+    await require_project_workdir_active(db)
     repo = AgentRunRequestRepository(db)
     head = await repo.get_queue_head(
         uid=uid,

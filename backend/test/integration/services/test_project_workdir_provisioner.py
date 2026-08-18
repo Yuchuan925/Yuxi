@@ -73,6 +73,119 @@ async def test_two_sandboxes_share_project_files_but_not_runtime_state():
                 pass
 
 
+async def test_recreated_runtime_keeps_project_files_and_drops_process_state():
+    suffix = uuid.uuid4().hex
+    uid = f"pytest-project-recreate-{suffix}"
+    workdir_id = f"workdir-{suffix}"
+    first_scope = f"pytest-runtime-before-{suffix}"
+    second_scope = f"pytest-runtime-after-{suffix}"
+    project_root = f"/home/gem/projects/project-{workdir_id}"
+    project_file = f"{project_root}/outputs/persistent.txt"
+    runtime_file = f"/tmp/yuxi-runtime-{suffix}"
+    provider = get_sandbox_provider()
+
+    first = ProvisionerSandboxBackend(thread_id=first_scope, uid=uid, workdir_id=workdir_id)
+    second = ProvisionerSandboxBackend(thread_id=second_scope, uid=uid, workdir_id=workdir_id)
+    try:
+        result = await asyncio.to_thread(
+            first.execute,
+            f"mkdir -p {project_root}/outputs && printf persistent > {project_file} "
+            f"&& printf transient > {runtime_file}",
+        )
+        assert result.exit_code == 0, result.output
+        await asyncio.to_thread(
+            provider.release,
+            first_scope,
+            uid=uid,
+            workdir_id=workdir_id,
+            clear_cache_on_delete_failure=True,
+        )
+
+        result = await asyncio.to_thread(second.execute, f"cat {project_file} && test ! -e {runtime_file}")
+        assert result.exit_code == 0, result.output
+        assert result.output == "persistent"
+    finally:
+        try:
+            await asyncio.to_thread(second.execute, f"rm -f {project_file}")
+        except Exception:
+            pass
+        for scope in (first_scope, second_scope):
+            try:
+                await asyncio.to_thread(
+                    provider.release,
+                    scope,
+                    uid=uid,
+                    workdir_id=workdir_id,
+                    clear_cache_on_delete_failure=True,
+                )
+            except Exception:
+                pass
+
+
+async def test_file_bridge_remains_available_when_execution_runtime_is_released():
+    """Viewer 文件桥接与执行 runtime 共享字节，但不共享删除生命周期。"""
+    suffix = uuid.uuid4().hex
+    uid = f"pytest-file-bridge-{suffix}"
+    workdir_id = f"workdir-{suffix}"
+    runtime_scope = f"pytest-runtime-{suffix}"
+    file_scope = f"workdir-files-{workdir_id}"
+    project_root = f"/home/gem/projects/project-{workdir_id}"
+    project_file = f"{project_root}/outputs/realtime.txt"
+    provider = get_sandbox_provider()
+    runtime_backend = ProvisionerSandboxBackend(
+        thread_id=runtime_scope,
+        uid=uid,
+        workdir_id=workdir_id,
+    )
+    file_backend = ProvisionerSandboxBackend(
+        thread_id=file_scope,
+        uid=uid,
+        sandbox_instance_id=file_scope,
+        workdir_id=workdir_id,
+    )
+    try:
+        result = await asyncio.to_thread(
+            runtime_backend.execute,
+            f"mkdir -p {project_root}/outputs && printf realtime > {project_file}",
+        )
+        assert result.exit_code == 0, result.output
+        before_release = await asyncio.to_thread(
+            file_backend.list_authorized_directory,
+            f"{project_root}/outputs",
+            root=project_root,
+        )
+        assert [item["name"] for item in before_release] == ["realtime.txt"]
+
+        await asyncio.to_thread(
+            provider.release,
+            runtime_scope,
+            uid=uid,
+            workdir_id=workdir_id,
+            clear_cache_on_delete_failure=True,
+        )
+
+        read_result = await asyncio.to_thread(file_backend.read, project_file)
+        assert read_result.error is None
+        assert read_result.file_data == {"content": "realtime", "encoding": "utf-8"}
+    finally:
+        try:
+            await asyncio.to_thread(file_backend.execute, f"rm -f {project_file}")
+        except Exception:
+            pass
+        for scope in (runtime_scope, file_scope):
+            try:
+                await asyncio.to_thread(
+                    provider.release,
+                    scope,
+                    uid=uid,
+                    sandbox_instance_id=scope,
+                    workdir_id=workdir_id,
+                    clear_cache_on_delete_failure=True,
+                )
+            except Exception:
+                pass
+
+
 async def test_user_skill_projection_is_shared_across_sandboxes_but_isolated_by_uid(tmp_path):
     """同一用户的 Sandbox 共享授权 Skill 文件，不同用户不可读。"""
     suffix = uuid.uuid4().hex

@@ -18,16 +18,13 @@ from yuxi.storage.postgres.manager import pg_manager
 from yuxi.utils.logging_config import logger
 from yuxi.utils.paths import VIRTUAL_PATH_WORKSPACE_SKILLS
 
-SANDBOX_PATH_HINT = (
-    "请使用 /home/gem/user-data/workspace/...、/home/gem/user-data/uploads/... 或 /home/gem/user-data/outputs/..."
-)
+SANDBOX_PATH_HINT = "请使用当前 Project Workdir 下的目录，或 /home/gem/user-data/..."
 
 
 class InstallSkillInput(BaseModel):
     source: str = Field(
         description="Skill 来源，支持两种格式:\n"
-        "1. Sandbox 路径: /home/gem/user-data/workspace/...、"
-        "/home/gem/user-data/uploads/... 或 /home/gem/user-data/outputs/...（/ 开头）\n"
+        "1. Sandbox 路径: 当前 Project Workdir 或 /home/gem/user-data/ 下的绝对路径\n"
         "2. Git 仓库: owner/repo 或完整 GitHub URL"
     )
     skill_names: list[str] | None = Field(
@@ -41,6 +38,8 @@ def _prepare_skill_from_sandbox(
     uid: str,
     staging_root: Path,
     sandbox_instance_id: str | None = None,
+    workdir_id: str | None = None,
+    workdir_path: str | None = None,
 ) -> Path:
     """从 Sandbox 路径准备 skill 目录，返回本地暂存目录。"""
     from yuxi.agents.backends.sandbox import ProvisionerSandboxBackend
@@ -50,7 +49,9 @@ def _prepare_skill_from_sandbox(
     if not is_valid_skill_slug(slug):
         raise ValueError(f"slug '{slug}' 不合法（仅允许小写字母、数字和连字符）")
 
-    if not sandbox_path.startswith("/home/gem/user-data/"):
+    allowed = sandbox_path.startswith("/home/gem/user-data/")
+    allowed = allowed or bool(workdir_path and sandbox_path.startswith(f"{workdir_path.rstrip('/')}/"))
+    if not allowed:
         raise ValueError(f"不支持的沙盒路径: {sandbox_path}。{SANDBOX_PATH_HINT}")
 
     staging = staging_root / slug
@@ -58,6 +59,7 @@ def _prepare_skill_from_sandbox(
         thread_id=thread_id,
         uid=uid,
         sandbox_instance_id=sandbox_instance_id,
+        workdir_id=workdir_id,
         create_if_missing=False,
     )
     download_sandbox_directory(
@@ -157,6 +159,8 @@ async def _run_install_task(
                     uid,
                     Path(tmp),
                     getattr(runtime_context, "sandbox_instance_id", None),
+                    getattr(runtime_context, "workdir_id", None),
+                    getattr(runtime_context, "workdir_path", None),
                 )
                 item = await install_personal_skill_dir(uid, source_dir)
                 installed_items = [item]

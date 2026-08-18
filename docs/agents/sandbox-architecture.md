@@ -31,7 +31,7 @@ API 与 worker 使用下面的变量连接 provisioner；实际默认值和 Comp
 
 ## Provisioner 通用配置
 
-当前仓库里，后端只支持 `SANDBOX_PROVIDER=provisioner`。当某个对话线程第一次需要执行文件操作或命令执行时，后端会基于 uid、当前 runtime thread 和 instance 生成稳定的 `sandbox_id`，然后请求 `sandbox-provisioner` 创建或复用对应沙盒；若请求携带 Workdir，provisioner 还会把它作为不可变挂载身份复核。Skill 选择和旧 `file_thread_id` 都不参与 sandbox identity。应用层拿到返回的 `sandbox_url` 之后，才会真正通过 `agent-sandbox` 客户端去调用远程沙盒的文件 API 和 shell API。
+当前仓库里，后端只支持 `SANDBOX_PROVIDER=provisioner`。当某个对话线程第一次需要执行文件操作或命令执行时，后端会基于 uid、根 runtime scope 和 instance 生成稳定的 `sandbox_id`，然后请求 `sandbox-provisioner` 创建或复用对应沙盒；provisioner 还会把 Workdir 作为不可漂移的挂载身份复核。Skill 选择不参与 sandbox identity。应用层拿到返回的 `sandbox_url` 之后，才会真正通过 `agent-sandbox` 客户端去调用远程沙盒的文件 API 和 shell API。
 
 Compose 用宿主变量生成 provisioner 容器变量；直接部署 provisioner 时则设置右侧容器变量：
 
@@ -88,7 +88,7 @@ Kubernetes backend 使用 kubeconfig 或 Pod 内服务账号创建沙盒 Pod 和
 
 这个拓扑把沙箱按“其中代码可能被完全控制”处理。`SANDBOX_PROVISIONER_TOKEN` 只配置给 API、worker 和 provisioner，绝不能写进 `sandbox.env` 或用户级 Agent 环境变量，否则沙箱会重新获得 provisioner 管理权限。
 
-Docker 后端在启动沙盒时，挂载用户级 workspace 和当前 uid 授权全集的只读 Skills 投影。`/home/gem/user-data/uploads` 与 `outputs` 都位于沙盒临时 `/home/gem` 中：每个 Run 使用由 run ID 区分的 sandbox instance，worker 在执行前分别从 Conversation 当前附件集合和指定 outputs revision 完整重建；执行结束后把 outputs 逐文件上传为 MinIO 不可变对象，并在 Run 终态事务内条件推进 PostgreSQL 当前版本。这样相邻 Run 和父子 Run 的后台进程不会共享临时 home，sandbox 重建不依赖宿主机线程目录，冲突也不会静默覆盖较新版本。容器的 `/home/gem` 使用 `tmpfs`，workspace 仍是当前唯一挂入沙盒的可写持久目录。
+Docker 后端在启动沙盒时，会把当前 Conversation 绑定的 Project Workdir 挂到 `/home/gem/projects/project-<workdir_id>`，把用户级 User Data 挂到 `/home/gem/user-data`，并只读挂载当前 uid 的授权 Skills 投影。Project Workdir 是默认工作目录，`uploads/`、`outputs/` 都只是其中的可写目录约定。根 Agent 与子 Agent 使用同一个稳定 runtime；不同顶层 Conversation 使用独立容器，但未来可挂载同一 Workdir。runtime 销毁只清理进程、`/tmp` 和依赖状态，不删除持久挂载中的文件。
 
 为了避免长期空闲的沙盒一直占资源，provisioner 还带了一个 idle reaper。它会记录每个沙盒最近一次被 touch 的时间，超过 `SANDBOX_IDLE_TIMEOUT_SECONDS` 之后自动删除。当前默认空闲超时是 120 秒，但如果这个值小于命令执行超时，系统会自动把它提高到“命令超时 + 30 秒”，以免执行中的任务被误回收。
 
@@ -104,7 +104,7 @@ Docker 后端在启动沙盒时，挂载用户级 workspace 和当前 uid 授权
 
 当 `SANDBOX_PROVISIONER_BACKEND=kubernetes` 时，`sandbox-provisioner` 会改用 Kubernetes Python 客户端。它会先加载 kubeconfig 或集群内配置，然后在指定的 namespace 中创建一个沙盒 Pod，再创建一个同名的 NodePort Service，把这个 Service 的 `nodePort` 暴露给 Yuxi 后端使用。
 
-Kubernetes 后端下，沙盒还是同一套镜像并暴露相同 HTTP API，但由 Pod 承载。当前真正使用的是 `THREAD_PVC`：Pod 把它挂到 `/mnt/shared-data`，再用 `subPath` 把 `threads/shared/<uid>/workspace` 与 `skill-projections/<uid>` 挂到对应虚拟目录。uploads 与 outputs 留在 Pod 的 `emptyDir` home 中，由 worker 从 MinIO/PostgreSQL 指定快照 hydrate；子智能体在旧附件/output 服务中仍沿用父对话 `file_thread_id` 定位快照，但该字段不再传给 provisioner，也不参与 Sandbox 身份。当前父子文件仍通过父私有 checkpoint 和子终态 revision 同步。
+Kubernetes 后端下，沙盒还是同一套镜像并暴露相同 HTTP API，但由 Pod 承载。Pod 把 `THREAD_PVC` 挂到 `/mnt/shared-data`，再用 `subPath` 分别挂载 `projects/<workdir_id>`、`threads/shared/<uid>` 与 `skill-projections/<uid>`。Project 要跨节点实时共享时，该 PVC 必须由支持 `ReadWriteMany` 的存储类提供；worker 不再从 MinIO/PostgreSQL hydrate 运行时文件，也不在父子 Agent 之间搬运文件。
 
 需要特别说明的是，代码里虽然读取了 `SKILLS_PVC` 这个环境变量，但当前 Pod 规格实际没有使用单独的 skills PVC，而是统一从 `THREAD_PVC` 中切 `skill-projections/<uid>` 这个子路径。因此，如果看到环境变量里同时出现 `SKILLS_PVC` 和 `THREAD_PVC`，应当以 `THREAD_PVC` 的真实挂载语义为准，`SKILLS_PVC` 目前更像一个预留字段。
 
@@ -148,12 +148,20 @@ services:
 
 ## 八、当前项目的沙盒文件系统是如何设计的
 
-从模型和工具调用的视角看，Yuxi 主要向 Agent 暴露两类路径：`/home/gem/user-data` 和 `/home/gem/skills`。其中 `user-data` 是可写的用户工作区，`skills` 是只读的技能目录。知识库不再映射为沙盒文件系统路径，模型应通过知识库工具检索和打开文档。
+从模型和工具调用的视角看，Yuxi 向 Agent 暴露三类路径：当前 Project Workdir、`/home/gem/user-data` 和 `/home/gem/skills`。Project 是默认工作目录和 AgentPanel Viewer 的唯一根；User Data 是用户跨 Project 的私有可写目录；Skills 是当前用户授权全集的只读投影。知识库不映射为沙盒文件系统路径，模型应通过知识库工具检索和打开文档。
 
 在宿主机侧，和线程相关的数据主要放在 `saves` 目录下。当前可读的目录结构可以概括为下面这样：
 
 ```text
 saves/
+├── projects/
+│   └── <workdir_id>/
+│       ├── uploads/
+│       ├── outputs/
+│       └── ...
+├── skill-projections/
+│   └── <uid>/
+│       └── <skill-slug>/
 ├── skills/
 │   ├── <skill-slug>/
 │   └── ...
@@ -172,15 +180,17 @@ saves/
 │   └── ...
 ```
 
-这里要重点理解 `workspace`、`uploads` 和 `outputs` 的区别。workspace 是用户级跨线程共享目录，位置仍是 `saves/threads/shared/<uid>/workspace`；uploads 的字节 Owner 是 MinIO、绑定事实 Owner 是 Conversation；outputs 的字节 Owner 是 MinIO，不可变 revision 与当前指针 Owner 是 PostgreSQL。宿主机线程 uploads/outputs 只为尚未迁移的历史数据和 API legacy fallback 保留，不再是 Agent runtime 协议。普通 Agent 使用当前对话文件作用域，子智能体使用父对话作为 `file_thread_id`，因此读写父对话同一份文件快照。
-
-运行时 provisioner 只把 workspace 和 skills 映射到沙盒；uploads、outputs 都是沙盒内可重建的工作副本，其中 Agent 通用文件后端对 uploads 保持只读、对 outputs 可写。虚拟路径仍稳定为 `/home/gem/user-data/{uploads,outputs}`，不应再从同名宿主机目录推断当前运行时内容。
+`projects/<workdir_id>` 是实时文件事实源；其 `uploads`、`outputs` 与其他目录都使用同一挂载和权限协议，差异只来自产品约定。`threads/shared/<uid>` 继续承载 User Data 的兼容内容。旧 thread uploads/outputs、MinIO 附件对象和 `ThreadOutputRevision` 只在一次性升级物化中作为来源，激活后不再进入 shipping 读写链路。
 
 ## 九、路径暴露规则是什么
 
-Yuxi 不会把整个容器文件系统都开放给 Agent 或 viewer。当前 viewer 根目录只会列出几个命名空间入口，而不会直接暴露 `/` 的真实文件树。这样做是为了避免只看文件树就触发沙盒冷启动，也为了让权限边界更稳定。
+Yuxi 不会把整个容器文件系统都开放给 Agent 或 Viewer。AgentPanel 的 `/` 直接映射当前 Project Workdir，不展示 User Data、Skills、`/tmp` 或容器系统目录。Agent 可以读写 Project 与 User Data；`present_artifacts` 还可读取已授权 Skills 中的普通文件。所有受信任 API 都以 root-to-leaf no-follow 方式拒绝越界路径、symlink 和特殊文件。
 
-`/home/gem/user-data` 是主要工作区。它允许模型和工具写入，但推荐语义并不相同。内置 prompt 中已经明确说明，`workspace` 应当放中间文件，`outputs` 应当放最终产物，`uploads` 是用户上传文件的位置。对于普通对话 Agent，文案甚至提示“非必要不要写 workspace，而优先写 outputs”。
+Project Workdir 是主要工作区。内置 prompt 建议把用户上传放在 `uploads/`、最终交付物放在 `outputs/`，但后端不把这些建议提升为权限或发布协议；Agent 可以覆盖上传文件，artifact 也不要求 outputs 前缀。
+
+API 的 Viewer、附件和 artifact 不复用 execution runtime，而是通过独立的受信任 file-bridge Sandbox 挂载同一 Project Workdir。这样 execution tree 结束时销毁容器不会让实时文件 API 产生删除竞态；file bridge 仍执行相同的 uid、Workdir、no-follow 和普通文件边界，不允许 API/worker 直接读取宿主机路径。
+
+根 Run 进入终态时会在 PostgreSQL 中原子取消仍活跃的后代，并设置 `runtime_cleanup_pending`。下一次顶层 Run、retry attempt 和 SSE `end` 都不能越过这个 fence；worker 删除 runtime 成功后才清除它，周期 reconciler 负责重试失败的清理并重新投递 pending retry。单个子 Run 终态不会删除父子共享 runtime，任何 runtime cleanup 都不删除 Project Workdir。
 
 `/home/gem/skills` 是当前用户授权 Skill 的只读目录。它不把全局 `saves/skills` 直接暴露进去，而是将当前用户可达的共享、内置与个人 Skill 来源同步到 `saves/skill-projections/<uid>`，再把该目录只读挂进沙盒。不同用户使用不同投影，Agent 选中列表不改变这个挂载。
 
@@ -190,7 +200,7 @@ Yuxi 不会把整个容器文件系统都开放给 Agent 或 viewer。当前 vie
 
 skills 的结合方式分成两层。第一层是提示词层，`prepare_agent_runtime_context` 会先根据当前 Agent 配置的 `context.skills` 展开依赖闭包，`SkillsMiddleware` 再把 `_prompt_skills` 注入到系统提示里，并给出每个 Skill 的真实运行入口。第二层是文件系统层：`sync_user_accessible_skills` 把用户授权的共享、内置与个人 Skill 同步到用户级投影，并只读挂载到 `/home/gem/skills`。因此未选中但用户有权访问的 Skill 文件仍可读，但不会自动进入系统提示或激活工具。
 
-附件上传后，原件和可选 Markdown 解析结果保存在 MinIO，Conversation 保存文件 ID、对象名、请求绑定和虚拟路径。`metadata.attachments` 是服务端保留字段；worker 消费前还会校验固定 bucket、`file_thread_id/file_id` 对象前缀和规范虚拟路径，不会仅因记录位于当前 Conversation 就使用全局 MinIO 凭据读取它。worker 在模型执行前先提交业务数据库事务，再读取实际 `file_thread_id` 的当前附件集合，通过受信任 sandbox 文件 API 清空并逐个重建 `/home/gem/user-data/uploads`。任一对象读取、清理或写入失败都会阻止本次执行；部分写入失败或取消后还会等待已启动写入到达终点并再次清空，避免旧 Run 回写新旧混合内容。LangGraph state 中的 `uploads` 列表继续把稳定虚拟路径告诉模型，Agent 通用文件后端仍拒绝写 uploads。缺少 MinIO 元数据的历史附件可以通过不跟随符号链接的读取从旧本地普通文件回填；任一历史文件缺失或不安全会阻止本次执行，统一迁移留给后续阶段。
+附件确认后，原件和可选 Markdown 解析结果直接写入当前 Project Workdir 的 `uploads/`，Conversation 只保留文件 ID、请求绑定、展示名称和实时路径。临时上传对象在确认完成后删除；Agent、Viewer 和父子 Agent 随后读取的是同一份 POSIX 字节。升级前的 MinIO 对象与旧本地附件只由启动期全量物化读取，缺失、冲突或不安全会阻止新文件主链路激活。
 
 知识库不再与沙盒文件系统结合。它不会被复制到每个线程目录，也不会生成虚拟目录；模型通过专门的知识库工具检索，并在需要更完整上下文时用 `open_kb_document` 按 `kb_id` 和 `file_id` 打开文档内容。
 
@@ -342,4 +352,4 @@ CHECK_YUXI_SANDBOX_ENV_EXISTS=True
 
 如果怀疑是 Docker 地址不可达，先确认每个动态沙箱只连接自己的 `yuxi-know-sandbox-<id>` 网络，provisioner 同时连接该网络，而 API/worker 只在 `app-network`。provisioner 日志中的目标地址应是动态容器名，API/worker 拿到的地址应是 `/api/sandboxes/<id>/proxy`；代理请求必须携带 `SANDBOX_PROVISIONER_TOKEN`。如果怀疑是 Kubernetes 地址不可达，重点检查 `NODE_HOST` 和 NodePort 是否从 provisioner 可达。
 
-如果附件在 Viewer 可见但模型读不到，先检查 Conversation 对象元数据、MinIO 对象、worker hydrate 错误和 sandbox uploads。如果 outputs 异常，检查 Conversation 当前 revision 指针、`thread_output_revisions` 状态与对象描述符，再检查 sandbox outputs；不要再用宿主机同名目录判断当前内容。workspace 或 skills 问题仍需检查宿主机/PVC 路径、当前 scope 和实际挂载。
+如果文件在 Viewer 可见但模型读不到，先检查 Conversation 的 `workdir_id`、Run 的根 `runtime_scope_id`、provisioner generation 与 Project mount；父子绑定必须解析到同一个根 runtime。若 Viewer 与 Sandbox 看到不同字节，检查共享卷/PVC 的实际 subPath 和 RWX 一致性，不要检查已经退出 shipping 链路的 output revision 或 hydrate。User Data 或 Skills 问题仍需检查 uid、授权投影和实际挂载。

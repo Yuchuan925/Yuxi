@@ -87,6 +87,8 @@ PROJECT_WORKDIR_SCHEMA_STATEMENTS = (
         storage_key VARCHAR(255) NOT NULL UNIQUE,
         materialization_status VARCHAR(32) NOT NULL DEFAULT 'pending',
         materialization_error TEXT,
+        materialization_epoch_id VARCHAR(64),
+        source_fingerprint VARCHAR(64),
         created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT NOW(),
         updated_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT NOW()
     )
@@ -94,6 +96,8 @@ PROJECT_WORKDIR_SCHEMA_STATEMENTS = (
     "ALTER TABLE project_workdirs ALTER COLUMN materialization_status SET DEFAULT 'pending'",
     "ALTER TABLE project_workdirs ALTER COLUMN created_at SET DEFAULT NOW()",
     "ALTER TABLE project_workdirs ALTER COLUMN updated_at SET DEFAULT NOW()",
+    "ALTER TABLE project_workdirs ADD COLUMN IF NOT EXISTS materialization_epoch_id VARCHAR(64)",
+    "ALTER TABLE project_workdirs ADD COLUMN IF NOT EXISTS source_fingerprint VARCHAR(64)",
     """
     DO $$
     BEGIN
@@ -109,9 +113,14 @@ PROJECT_WORKDIR_SCHEMA_STATEMENTS = (
     END $$
     """,
     "CREATE INDEX IF NOT EXISTS ix_project_workdirs_uid ON project_workdirs(uid)",
+    "CREATE UNIQUE INDEX IF NOT EXISTS uq_project_workdirs_id_uid ON project_workdirs(id, uid)",
     (
         "CREATE INDEX IF NOT EXISTS ix_project_workdirs_materialization_status "
         "ON project_workdirs(materialization_status)"
+    ),
+    (
+        "CREATE INDEX IF NOT EXISTS ix_project_workdirs_materialization_epoch_id "
+        "ON project_workdirs(materialization_epoch_id)"
     ),
     "ALTER TABLE IF EXISTS conversations ADD COLUMN IF NOT EXISTS workdir_id VARCHAR(64)",
     """
@@ -166,10 +175,63 @@ PROJECT_WORKDIR_SCHEMA_STATEMENTS = (
         END IF;
     END $$
     """,
+    """
+    DO $$
+    BEGIN
+        IF NOT EXISTS (
+            SELECT 1 FROM pg_constraint
+            WHERE conname = 'fk_conversations_workdir_owner'
+              AND conrelid = 'conversations'::regclass
+        ) THEN
+            ALTER TABLE conversations
+            ADD CONSTRAINT fk_conversations_workdir_owner
+            FOREIGN KEY (workdir_id, uid) REFERENCES project_workdirs(id, uid) ON DELETE RESTRICT;
+        END IF;
+    END $$
+    """,
     "CREATE INDEX IF NOT EXISTS ix_conversations_workdir_id ON conversations(workdir_id)",
+    """
+    CREATE TABLE IF NOT EXISTS file_storage_materializations (
+        id VARCHAR(64) PRIMARY KEY,
+        phase VARCHAR(32) NOT NULL DEFAULT 'pending',
+        epoch_id VARCHAR(64) UNIQUE,
+        inventory_fingerprint VARCHAR(64),
+        error_message TEXT,
+        activated_at TIMESTAMP WITHOUT TIME ZONE,
+        created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT NOW()
+    )
+    """,
+    "ALTER TABLE file_storage_materializations ALTER COLUMN phase SET DEFAULT 'pending'",
+    "ALTER TABLE file_storage_materializations ALTER COLUMN created_at SET DEFAULT NOW()",
+    "ALTER TABLE file_storage_materializations ALTER COLUMN updated_at SET DEFAULT NOW()",
+    """
+    DO $$
+    BEGIN
+        IF NOT EXISTS (
+            SELECT 1 FROM pg_constraint
+            WHERE conname = 'ck_file_storage_materializations_phase'
+              AND conrelid = 'file_storage_materializations'::regclass
+        ) THEN
+            ALTER TABLE file_storage_materializations
+            ADD CONSTRAINT ck_file_storage_materializations_phase
+            CHECK (phase IN ('pending', 'fenced', 'preparing', 'active', 'error'));
+        END IF;
+    END $$
+    """,
+    "CREATE INDEX IF NOT EXISTS ix_file_storage_materializations_phase ON file_storage_materializations(phase)",
+    """
+    INSERT INTO file_storage_materializations (id, phase)
+    VALUES ('project-workdir-v1', 'pending')
+    ON CONFLICT (id) DO NOTHING
+    """,
 )
 RUNTIME_SCOPE_SCHEMA_STATEMENTS = (
     "ALTER TABLE IF EXISTS agent_runs ADD COLUMN IF NOT EXISTS runtime_scope_id VARCHAR(64)",
+    (
+        "ALTER TABLE IF EXISTS agent_runs ADD COLUMN IF NOT EXISTS "
+        "runtime_cleanup_pending BOOLEAN NOT NULL DEFAULT FALSE"
+    ),
     """
     UPDATE agent_runs AS run
     SET runtime_scope_id = COALESCE(
@@ -184,6 +246,7 @@ RUNTIME_SCOPE_SCHEMA_STATEMENTS = (
     WHERE run.runtime_scope_id IS NULL
     """,
     "CREATE INDEX IF NOT EXISTS ix_agent_runs_runtime_scope_id ON agent_runs(runtime_scope_id)",
+    ("CREATE INDEX IF NOT EXISTS ix_agent_runs_runtime_cleanup_pending ON agent_runs(runtime_cleanup_pending)"),
 )
 
 

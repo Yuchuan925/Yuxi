@@ -10,6 +10,7 @@ from types import SimpleNamespace
 import pytest
 import pytest_asyncio
 from sqlalchemy import delete, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from yuxi.storage.postgres.manager import (
@@ -77,6 +78,39 @@ async def test_project_workdir_schema_evolution_is_idempotent(workdir_database):
     assert status_check is True
 
 
+async def test_conversation_cannot_bind_another_users_project_workdir(workdir_database):
+    _, session_factory = workdir_database
+    suffix = uuid.uuid4().hex
+    owner_uid = f"pytest-workdir-owner-{suffix}"
+    attacker_uid = f"pytest-workdir-attacker-{suffix}"
+    workdir_id = f"workdir-{suffix}"
+
+    async with session_factory() as db:
+        db.add(
+            ProjectWorkdir(
+                id=workdir_id,
+                uid=owner_uid,
+                storage_key=f"projects/{workdir_id}",
+                materialization_status="pending",
+            )
+        )
+        await db.commit()
+        db.add(
+            Conversation(
+                thread_id=f"pytest-cross-uid-{suffix}",
+                uid=attacker_uid,
+                agent_id="main",
+                status="active",
+                workdir_id=workdir_id,
+            )
+        )
+        with pytest.raises(IntegrityError):
+            await db.commit()
+        await db.rollback()
+        await db.execute(delete(ProjectWorkdir).where(ProjectWorkdir.id == workdir_id))
+        await db.commit()
+
+
 async def test_single_legacy_schema_pass_backfills_runtime_scope_after_thread_id():
     schema_name = f"pytest_legacy_scope_{uuid.uuid4().hex}"
     admin_engine = create_async_engine(os.environ["POSTGRES_URL"], pool_pre_ping=True)
@@ -111,10 +145,7 @@ async def test_single_legacy_schema_pass_backfills_runtime_scope_after_thread_id
         async with isolated_engine.connect() as connection:
             row = (
                 await connection.execute(
-                    text(
-                        "SELECT conversation_thread_id, runtime_scope_id FROM agent_runs "
-                        "WHERE id = 'legacy-run'"
-                    )
+                    text("SELECT conversation_thread_id, runtime_scope_id FROM agent_runs WHERE id = 'legacy-run'")
                 )
             ).one()
             legacy_column_exists = await connection.scalar(
@@ -164,9 +195,7 @@ async def test_schema_rerun_does_not_create_legacy_workdir_for_bound_conversatio
     finally:
         async with session_factory() as db:
             if conversation_id is not None:
-                await db.execute(
-                    delete(ConversationStats).where(ConversationStats.conversation_id == conversation_id)
-                )
+                await db.execute(delete(ConversationStats).where(ConversationStats.conversation_id == conversation_id))
                 await db.execute(delete(Conversation).where(Conversation.id == conversation_id))
             if workdir_id is not None:
                 await db.execute(delete(ProjectWorkdir).where(ProjectWorkdir.id == workdir_id))

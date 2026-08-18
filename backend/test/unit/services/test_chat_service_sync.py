@@ -41,10 +41,26 @@ async def test_resolve_agent_runtime_includes_subagents_only_when_requested(monk
             pass
 
         async def get_conversation_by_thread_id(self, thread_id: str):
-            return SimpleNamespace(uid="user-1", agent_id="worker", thread_id=thread_id, status="subagent")
+            return SimpleNamespace(
+                uid="user-1",
+                agent_id="worker",
+                thread_id=thread_id,
+                status="subagent",
+                workdir_id="workdir-1",
+            )
+
+    class FakeProjectWorkdirRepository:
+        def __init__(self, _db):
+            pass
+
+        async def require_for_user(self, workdir_id: str, uid: str):
+            assert workdir_id == "workdir-1"
+            assert uid == "user-1"
+            return SimpleNamespace(id=workdir_id, uid=uid)
 
     monkeypatch.setattr(svc, "AgentRepository", FakeAgentRepository)
     monkeypatch.setattr(svc, "ConversationRepository", FakeConversationRepository)
+    monkeypatch.setattr(svc, "ProjectWorkdirRepository", FakeProjectWorkdirRepository)
     monkeypatch.setattr(svc, "normalize_agent_context_config", _fake_normalize_agent_context_config)
     monkeypatch.setattr(
         svc.agent_manager,
@@ -303,7 +319,7 @@ async def test_save_messages_from_langgraph_state_backfills_run_output_message(m
 
 
 @pytest.mark.asyncio
-async def test_interrupt_publishes_message_revision_and_terminal_status_before_one_commit(
+async def test_interrupt_persists_message_and_terminal_status_in_one_commit(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     events: list[tuple] = []
@@ -338,12 +354,12 @@ async def test_interrupt_publishes_message_revision_and_terminal_status_before_o
             events.append(("terminal", run_id, kwargs))
             return SimpleNamespace(status="interrupted"), True
 
-    async def fake_publish(*, db, revision_id):
-        events.append(("publish", revision_id, db))
+        async def cancel_active_execution_tree_descendants(self, _run):
+            events.append(("descendants",))
+            return []
 
     fake_db = FakeDB()
     monkeypatch.setattr(svc, "AgentRunRepository", FakeRunRepo)
-    monkeypatch.setattr(svc, "publish_staged_outputs", fake_publish)
 
     terminal_committed = await svc.save_messages_from_langgraph_state(
         agent_instance=FakeAgent(),
@@ -357,12 +373,11 @@ async def test_interrupt_publishes_message_revision_and_terminal_status_before_o
         interrupt_run=True,
         interrupt_error_type="ask_user_question_required",
         interrupt_error_message="请选择",
-        output_revision_id="revision-1",
     )
 
     assert terminal_committed is True
-    assert [event[0] for event in events] == ["lock", "message", "publish", "terminal", "commit"]
-    assert events[-2][2] == {
+    assert [event[0] for event in events] == ["lock", "message", "terminal", "descendants", "commit"]
+    assert events[-3][2] == {
         "status": "interrupted",
         "error_type": "ask_user_question_required",
         "error_message": "请选择",
@@ -477,7 +492,13 @@ async def test_get_agent_state_view_returns_interrupted_checkpoint_payload(monke
 
         async def get_conversation_by_thread_id(self, requested_thread_id: str):
             assert requested_thread_id == thread_id
-            return SimpleNamespace(id=20, uid="user-1", agent_id="main", status="active")
+            return SimpleNamespace(
+                id=20,
+                uid="user-1",
+                agent_id="main",
+                status="active",
+                workdir_id="workdir-1",
+            )
 
     class AgentRepo:
         def __init__(self, _db):
@@ -571,7 +592,13 @@ async def test_get_agent_state_view_includes_subagent_thread_relation(monkeypatc
 
         async def get_conversation_by_thread_id(self, thread_id: str):
             if thread_id == child_thread_id:
-                return SimpleNamespace(id=20, uid="user-1", agent_id="worker", status="subagent")
+                return SimpleNamespace(
+                    id=20,
+                    uid="user-1",
+                    agent_id="worker",
+                    status="subagent",
+                    workdir_id="workdir-1",
+                )
             return None
 
         async def get_conversation_by_id(self, conversation_id: int):
@@ -706,7 +733,13 @@ async def test_get_agent_state_view_reports_malformed_subagent_run_as_server_err
 
         async def get_conversation_by_thread_id(self, thread_id: str):
             assert thread_id == child_thread_id
-            return SimpleNamespace(id=20, uid="user-1", agent_id="worker", status="subagent")
+            return SimpleNamespace(
+                id=20,
+                uid="user-1",
+                agent_id="worker",
+                status="subagent",
+                workdir_id="workdir-1",
+            )
 
         async def get_conversation_by_id(self, conversation_id: int):
             assert conversation_id == 11

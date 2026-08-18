@@ -24,7 +24,9 @@ logger = logging.getLogger(__name__)
 
 SANDBOX_ENV_FILE = Path(__file__).parent / "sandbox.env"
 SAFE_PATH_SEGMENT_RE = re.compile(r"^[A-Za-z0-9_-]+$")
-PROXY_RESPONSE_HEADERS = frozenset({"cache-control", "content-disposition", "content-type", "etag", "last-modified"})
+PROXY_RESPONSE_HEADERS = frozenset(
+    {"cache-control", "content-disposition", "content-type", "etag", "last-modified"}
+)
 HOP_BY_HOP_HEADERS = frozenset(
     {
         "connection",
@@ -48,32 +50,46 @@ def canonical_backend_name(backend: str) -> str:
 def normalize_env(env: dict | None) -> dict[str, str]:
     if not isinstance(env, dict):
         return {}
-    return {str(key): "" if value is None else str(value) for key, value in env.items() if str(key)}
+    return {
+        str(key): "" if value is None else str(value)
+        for key, value in env.items()
+        if str(key)
+    }
 
 
 def load_sandbox_env() -> dict[str, str]:
     return normalize_env(dotenv_values(SANDBOX_ENV_FILE))
 
 
-def merged_sandbox_env(global_env: dict[str, str], user_env: dict[str, str]) -> dict[str, str]:
+def merged_sandbox_env(
+    global_env: dict[str, str], user_env: dict[str, str]
+) -> dict[str, str]:
     return {**global_env, **normalize_env(user_env)}
 
 
 def provisioner_token() -> str:
     token = os.getenv("SANDBOX_PROVISIONER_TOKEN", "").strip()
     if len(token) < 32:
-        raise RuntimeError("SANDBOX_PROVISIONER_TOKEN must contain at least 32 characters")
+        raise RuntimeError(
+            "SANDBOX_PROVISIONER_TOKEN must contain at least 32 characters"
+        )
     return token
 
 
-def require_provisioner_auth(authorization: Annotated[str | None, Header()] = None) -> None:
+def require_provisioner_auth(
+    authorization: Annotated[str | None, Header()] = None,
+) -> None:
     expected = f"Bearer {provisioner_token()}"
     if authorization is None or not secrets.compare_digest(authorization, expected):
         raise HTTPException(status_code=401, detail="invalid provisioner credentials")
 
 
 def sandbox_proxy_url(sandbox_id: str) -> str:
-    public_url = os.getenv("PROVISIONER_PUBLIC_URL", "http://sandbox-provisioner:8002").strip().rstrip("/")
+    public_url = (
+        os.getenv("PROVISIONER_PUBLIC_URL", "http://sandbox-provisioner:8002")
+        .strip()
+        .rstrip("/")
+    )
     if not public_url:
         raise RuntimeError("PROVISIONER_PUBLIC_URL is required")
     return f"{public_url}/api/sandboxes/{sandbox_id}/proxy"
@@ -125,11 +141,48 @@ class SandboxGenerationMismatchError(RuntimeError):
     """删除请求引用的 Sandbox generation 已经过期。"""
 
 
+class SandboxOperationPins:
+    """让删除等待已经开始的 proxy 请求排空，并阻止新的请求穿过删除。"""
+
+    def __init__(self):
+        self._condition = threading.Condition()
+        self._active: dict[str, int] = {}
+        self._deleting: set[str] = set()
+
+    def acquire(self, sandbox_id: str) -> None:
+        with self._condition:
+            while sandbox_id in self._deleting:
+                self._condition.wait()
+            self._active[sandbox_id] = self._active.get(sandbox_id, 0) + 1
+
+    def release(self, sandbox_id: str) -> None:
+        with self._condition:
+            count = self._active.get(sandbox_id, 0)
+            if count <= 1:
+                self._active.pop(sandbox_id, None)
+                self._condition.notify_all()
+            else:
+                self._active[sandbox_id] = count - 1
+
+    def begin_delete(self, sandbox_id: str) -> None:
+        with self._condition:
+            self._deleting.add(sandbox_id)
+            while self._active.get(sandbox_id, 0):
+                self._condition.wait()
+
+    def end_delete(self, sandbox_id: str) -> None:
+        with self._condition:
+            self._deleting.discard(sandbox_id)
+            self._condition.notify_all()
+
+
 class MemoryProvisionerBackend:
     def __init__(self):
         self._lock = threading.Lock()
         self._records: dict[str, SandboxRecord] = {}
-        self._url_template = os.getenv("MEMORY_SANDBOX_URL_TEMPLATE", "http://agent-sandbox:8000")
+        self._url_template = os.getenv(
+            "MEMORY_SANDBOX_URL_TEMPLATE", "http://agent-sandbox:8000"
+        )
 
     def _url_for(self, sandbox_id: str) -> str:
         template = self._url_template
@@ -155,7 +208,9 @@ class MemoryProvisionerBackend:
             existing = self._records.get(sandbox_id)
             if existing is not None:
                 if existing.workdir_id != workdir_id:
-                    raise ValueError("sandbox workdir identity does not match existing generation")
+                    raise ValueError(
+                        "sandbox workdir identity does not match existing generation"
+                    )
                 return existing
             record = SandboxRecord(
                 sandbox_id=sandbox_id,
@@ -175,11 +230,19 @@ class MemoryProvisionerBackend:
         with self._lock:
             return list(self._records.values())
 
-    def delete(self, sandbox_id: str, *, expected_generation: str | None = None) -> None:
+    def delete(
+        self, sandbox_id: str, *, expected_generation: str | None = None
+    ) -> None:
         with self._lock:
             record = self._records.get(sandbox_id)
-            if record is not None and expected_generation and record.generation != expected_generation:
-                raise SandboxGenerationMismatchError("sandbox generation does not match delete request")
+            if (
+                record is not None
+                and expected_generation
+                and record.generation != expected_generation
+            ):
+                raise SandboxGenerationMismatchError(
+                    "sandbox generation does not match delete request"
+                )
             self._records.pop(sandbox_id, None)
 
 
@@ -188,7 +251,9 @@ def wait_for_sandbox_ready(sandbox_url: str, timeout_seconds: int = 30) -> bool:
     opener = request.build_opener(request.ProxyHandler({}))
     while time.time() < deadline:
         try:
-            with opener.open(f"{sandbox_url.rstrip('/')}/v1/sandbox", timeout=3) as response:
+            with opener.open(
+                f"{sandbox_url.rstrip('/')}/v1/sandbox", timeout=3
+            ) as response:
                 status_code = getattr(response, "status", 200)
             if status_code == 200:
                 return True
@@ -212,21 +277,29 @@ class LocalContainerProvisionerBackend:
         )
         self._network_prefix = os.getenv("DOCKER_NETWORK_PREFIX")
         if not self._network_prefix:
-            raise RuntimeError("DOCKER_NETWORK_PREFIX is required for the docker backend")
+            raise RuntimeError(
+                "DOCKER_NETWORK_PREFIX is required for the docker backend"
+            )
         self._threads_host_path = os.getenv("DOCKER_THREADS_HOST_PATH")
         self._container_prefix = os.getenv("DOCKER_SANDBOX_PREFIX", "yuxi-sandbox")
-        self._health_timeout_seconds = int(os.getenv("SANDBOX_HEALTH_TIMEOUT_SECONDS", "300"))
+        self._health_timeout_seconds = int(
+            os.getenv("SANDBOX_HEALTH_TIMEOUT_SECONDS", "300")
+        )
         self._sandbox_env = load_sandbox_env()
 
         try:
             self._client = docker.from_env()
             self._client.ping()
-            self._provisioner_container = self._client.containers.get(os.environ["HOSTNAME"])
+            self._provisioner_container = self._client.containers.get(
+                os.environ["HOSTNAME"]
+            )
         except DockerException as exc:
             raise RuntimeError(f"docker backend unavailable: {exc}") from exc
 
         self._resolve_host_paths()
-        self._threads_host_path = self._normalize_host_bind_path(self._threads_host_path)
+        self._threads_host_path = self._normalize_host_bind_path(
+            self._threads_host_path
+        )
 
     @staticmethod
     def _normalize_host_bind_path(path_value: str | None) -> str:
@@ -257,7 +330,9 @@ class LocalContainerProvisionerBackend:
 
     @staticmethod
     def _validate_thread_id(thread_id: str) -> str:
-        return LocalContainerProvisionerBackend._validate_path_segment(thread_id, "thread_id")
+        return LocalContainerProvisionerBackend._validate_path_segment(
+            thread_id, "thread_id"
+        )
 
     @staticmethod
     def _validate_uid(uid: str) -> str:
@@ -265,11 +340,15 @@ class LocalContainerProvisionerBackend:
 
     @staticmethod
     def _validate_workdir_id(workdir_id: str) -> str:
-        return LocalContainerProvisionerBackend._validate_path_segment(workdir_id, "workdir_id")
+        return LocalContainerProvisionerBackend._validate_path_segment(
+            workdir_id, "workdir_id"
+        )
 
     @staticmethod
     def _sanitize_id(value: str) -> str:
-        sanitized = "".join(ch if ch.isalnum() or ch in "-_" else "-" for ch in value.strip().lower())
+        sanitized = "".join(
+            ch if ch.isalnum() or ch in "-_" else "-" for ch in value.strip().lower()
+        )
         return sanitized[:48] or "sandbox"
 
     def _container_name(self, sandbox_id: str) -> str:
@@ -280,12 +359,16 @@ class LocalContainerProvisionerBackend:
         return f"{prefix}-{self._sanitize_id(sandbox_id)}"
 
     def _user_skills_host_path(self, uid: str) -> Path:
-        projections_root = (Path(self._threads_host_path).resolve().parent / "skill-projections").resolve()
+        projections_root = (
+            Path(self._threads_host_path).resolve().parent / "skill-projections"
+        ).resolve()
         user_skills = (projections_root / uid).resolve()
         try:
             user_skills.relative_to(projections_root)
         except ValueError as exc:
-            raise ValueError("user skills path resolved outside projection root") from exc
+            raise ValueError(
+                "user skills path resolved outside projection root"
+            ) from exc
         return user_skills
 
     def _shared_workspace_host_path(self, uid: str) -> Path:
@@ -297,7 +380,9 @@ class LocalContainerProvisionerBackend:
         try:
             user_data.relative_to(threads_root)
         except ValueError as exc:
-            raise ValueError("user data path resolved outside threads host root") from exc
+            raise ValueError(
+                "user data path resolved outside threads host root"
+            ) from exc
         return user_data
 
     def _project_workdir_host_path(self, workdir_id: str) -> Path:
@@ -307,7 +392,9 @@ class LocalContainerProvisionerBackend:
         try:
             workdir.relative_to(projects_root)
         except ValueError as exc:
-            raise ValueError("project workdir path resolved outside projects host root") from exc
+            raise ValueError(
+                "project workdir path resolved outside projects host root"
+            ) from exc
         return workdir
 
     @staticmethod
@@ -333,18 +420,28 @@ class LocalContainerProvisionerBackend:
         if workdir_id:
             expected_mounts = {
                 "/home/gem/user-data": str(self._shared_user_data_host_path(uid)),
-                self._project_workdir_mount_path(workdir_id): str(self._project_workdir_host_path(workdir_id)),
+                self._project_workdir_mount_path(workdir_id): str(
+                    self._project_workdir_host_path(workdir_id)
+                ),
             }
         else:
             expected_mounts = {
-                "/home/gem/user-data/workspace": str(self._shared_workspace_host_path(uid)),
+                "/home/gem/user-data/workspace": str(
+                    self._shared_workspace_host_path(uid)
+                ),
             }
         actual_mounts = {
-            str((mount.get("Destination") or "").rstrip("/")): str((mount.get("Source") or "").rstrip("/"))
+            str((mount.get("Destination") or "").rstrip("/")): str(
+                (mount.get("Source") or "").rstrip("/")
+            )
             for mount in container.attrs.get("Mounts") or []
         }
-        return not ({"/home/gem/user-data/uploads", "/home/gem/user-data/outputs"} & actual_mounts.keys()) and all(
-            actual_mounts.get(destination) == source for destination, source in expected_mounts.items()
+        return not (
+            {"/home/gem/user-data/uploads", "/home/gem/user-data/outputs"}
+            & actual_mounts.keys()
+        ) and all(
+            actual_mounts.get(destination) == source
+            for destination, source in expected_mounts.items()
         )
 
     def _resolve_host_paths(self) -> None:
@@ -353,7 +450,9 @@ class LocalContainerProvisionerBackend:
 
         container_id = os.getenv("HOSTNAME", "").strip()
         if not container_id:
-            raise RuntimeError("HOSTNAME is required to infer docker backend host paths")
+            raise RuntimeError(
+                "HOSTNAME is required to infer docker backend host paths"
+            )
 
         inspected = self._client.api.inspect_container(container_id)
         mounts = inspected.get("Mounts") or []
@@ -379,7 +478,10 @@ class LocalContainerProvisionerBackend:
     @staticmethod
     def _has_expected_network_ownership(network, sandbox_id: str) -> bool:
         labels = network.attrs.get("Labels") or {}
-        return labels.get("managed-by") == "yuxi-sandbox-provisioner" and labels.get("sandbox-id") == sandbox_id
+        return (
+            labels.get("managed-by") == "yuxi-sandbox-provisioner"
+            and labels.get("sandbox-id") == sandbox_id
+        )
 
     def _ensure_network(self, sandbox_id: str) -> str:
         from docker.errors import NotFound
@@ -399,11 +501,15 @@ class LocalContainerProvisionerBackend:
 
         network.reload()
         if not self._has_expected_network_ownership(network, sandbox_id):
-            raise RuntimeError(f"sandbox network {network_name} has unexpected ownership")
+            raise RuntimeError(
+                f"sandbox network {network_name} has unexpected ownership"
+            )
 
         containers = network.attrs.get("Containers") or {}
         if self._provisioner_container.id not in containers:
-            network.connect(self._provisioner_container, aliases=["sandbox-provisioner"])
+            network.connect(
+                self._provisioner_container, aliases=["sandbox-provisioner"]
+            )
         return network_name
 
     def _delete_network(self, sandbox_id: str) -> None:
@@ -415,7 +521,10 @@ class LocalContainerProvisionerBackend:
             return
         network.reload()
         if not self._has_expected_network_ownership(network, sandbox_id):
-            logger.warning("Skipping removal of sandbox network %s with unexpected ownership", network.name)
+            logger.warning(
+                "Skipping removal of sandbox network %s with unexpected ownership",
+                network.name,
+            )
             return
         containers = network.attrs.get("Containers") or {}
         if self._provisioner_container.id in containers:
@@ -439,7 +548,9 @@ class LocalContainerProvisionerBackend:
     @staticmethod
     def _ensure_user_data_writable(container, workdir_id: str | None = None) -> None:
         if workdir_id:
-            project_dir = LocalContainerProvisionerBackend._project_workdir_mount_path(workdir_id)
+            project_dir = LocalContainerProvisionerBackend._project_workdir_mount_path(
+                workdir_id
+            )
             cmd = (
                 f'sh -lc "mkdir -p {project_dir}/uploads {project_dir}/outputs '
                 f'&& chmod -R a+rwx {project_dir} /home/gem/user-data"'
@@ -458,7 +569,9 @@ class LocalContainerProvisionerBackend:
                 if isinstance(result.output, bytes)
                 else str(result.output)
             )
-            raise RuntimeError(f"failed to ensure writable thread user-data mount: {output}")
+            raise RuntimeError(
+                f"failed to ensure writable thread user-data mount: {output}"
+            )
 
     def _get_container(self, sandbox_id: str):
         from docker.errors import NotFound
@@ -482,28 +595,46 @@ class LocalContainerProvisionerBackend:
         with self._lock:
             safe_thread_id = self._validate_thread_id(thread_id)
             safe_uid = self._validate_uid(uid)
-            safe_workdir_id = self._validate_workdir_id(workdir_id) if workdir_id else None
+            safe_workdir_id = (
+                self._validate_workdir_id(workdir_id) if workdir_id else None
+            )
             existing = self._get_container(sandbox_id)
             if existing is not None:
                 existing.reload()
                 labels = getattr(existing, "labels", None) or {}
                 if str(labels.get("thread-id") or "").strip() != safe_thread_id:
-                    raise ValueError("sandbox runtime identity does not match existing generation")
-                existing_workdir_id = str(labels.get("workdir-id") or "").strip() or None
+                    raise ValueError(
+                        "sandbox runtime identity does not match existing generation"
+                    )
+                existing_workdir_id = (
+                    str(labels.get("workdir-id") or "").strip() or None
+                )
                 if existing_workdir_id != safe_workdir_id:
-                    raise ValueError("sandbox workdir identity does not match existing generation")
+                    raise ValueError(
+                        "sandbox workdir identity does not match existing generation"
+                    )
                 if not self._is_expected_skills_mount(existing, safe_uid):
-                    logger.info("Recreating sandbox %s because skills mount is stale", sandbox_id)
+                    logger.info(
+                        "Recreating sandbox %s because skills mount is stale",
+                        sandbox_id,
+                    )
                     self.delete(sandbox_id)
                     existing = None
                 elif not self._is_on_expected_network(existing, sandbox_id):
-                    logger.info("Recreating sandbox %s because its network is stale", sandbox_id)
+                    logger.info(
+                        "Recreating sandbox %s because its network is stale", sandbox_id
+                    )
                     self.delete(sandbox_id)
                     existing = None
                 elif not (
-                    self._has_expected_user_data_mounts(existing, safe_uid, safe_workdir_id)
+                    self._has_expected_user_data_mounts(
+                        existing, safe_uid, safe_workdir_id
+                    )
                 ):
-                    logger.info("Recreating sandbox %s because user-data mounts are stale", sandbox_id)
+                    logger.info(
+                        "Recreating sandbox %s because user-data mounts are stale",
+                        sandbox_id,
+                    )
                     self.delete(sandbox_id)
                     existing = None
             if existing is not None:
@@ -512,21 +643,36 @@ class LocalContainerProvisionerBackend:
                     try:
                         self._ensure_user_data_writable(existing, safe_workdir_id)
                         record = self._to_record(existing, sandbox_id)
-                        if not wait_for_sandbox_ready(record.sandbox_url, timeout_seconds=self._health_timeout_seconds):
-                            raise RuntimeError(f"sandbox {sandbox_id} is not ready at {record.sandbox_url}")
+                        if not wait_for_sandbox_ready(
+                            record.sandbox_url,
+                            timeout_seconds=self._health_timeout_seconds,
+                        ):
+                            raise RuntimeError(
+                                f"sandbox {sandbox_id} is not ready at {record.sandbox_url}"
+                            )
                         return record
                     except Exception as exc:
-                        logger.warning("Recreating unhealthy sandbox %s: %s", sandbox_id, exc)
+                        logger.warning(
+                            "Recreating unhealthy sandbox %s: %s", sandbox_id, exc
+                        )
 
                 try:
                     self.delete(sandbox_id)
                 except Exception as exc:
-                    logger.warning("Failed to delete stale sandbox %s before recreate: %s", sandbox_id, exc)
+                    logger.warning(
+                        "Failed to delete stale sandbox %s before recreate: %s",
+                        sandbox_id,
+                        exc,
+                    )
 
             shared_workspace = self._shared_workspace_host_path(safe_uid)
             shared_workspace.mkdir(parents=True, exist_ok=True)
             shared_user_data = self._shared_user_data_host_path(safe_uid)
-            project_workdir = self._project_workdir_host_path(safe_workdir_id) if safe_workdir_id else None
+            project_workdir = (
+                self._project_workdir_host_path(safe_workdir_id)
+                if safe_workdir_id
+                else None
+            )
             if project_workdir is not None:
                 project_workdir.mkdir(parents=True, exist_ok=True)
             user_skills = self._user_skills_host_path(safe_uid)
@@ -557,36 +703,53 @@ class LocalContainerProvisionerBackend:
             if safe_workdir_id and project_workdir is not None:
                 run_kwargs["volumes"].update(
                     {
-                        str(shared_user_data): {"bind": "/home/gem/user-data", "mode": "rw"},
+                        str(shared_user_data): {
+                            "bind": "/home/gem/user-data",
+                            "mode": "rw",
+                        },
                         str(project_workdir): {
                             "bind": self._project_workdir_mount_path(safe_workdir_id),
                             "mode": "rw",
                         },
                     }
                 )
-                run_kwargs["working_dir"] = self._project_workdir_mount_path(safe_workdir_id)
+                run_kwargs["working_dir"] = self._project_workdir_mount_path(
+                    safe_workdir_id
+                )
             else:
                 run_kwargs["volumes"][str(shared_workspace)] = {
                     "bind": "/home/gem/user-data/workspace",
                     "mode": "rw",
                 }
-            sandbox_env = merged_sandbox_env(self._sandbox_env, env or {}) if inherit_env else {}
+            sandbox_env = (
+                merged_sandbox_env(self._sandbox_env, env or {}) if inherit_env else {}
+            )
             if sandbox_env:
                 run_kwargs["environment"] = sandbox_env
 
             try:
-                container = self._client.containers.run(self._sandbox_image, **run_kwargs)
+                container = self._client.containers.run(
+                    self._sandbox_image, **run_kwargs
+                )
                 container.reload()
                 self._ensure_user_data_writable(container, safe_workdir_id)
                 record = self._to_record(container, sandbox_id)
-                if not wait_for_sandbox_ready(record.sandbox_url, timeout_seconds=self._health_timeout_seconds):
-                    raise RuntimeError(f"sandbox {sandbox_id} is not ready at {record.sandbox_url}")
+                if not wait_for_sandbox_ready(
+                    record.sandbox_url, timeout_seconds=self._health_timeout_seconds
+                ):
+                    raise RuntimeError(
+                        f"sandbox {sandbox_id} is not ready at {record.sandbox_url}"
+                    )
                 return record
             except Exception:
                 try:
                     self.delete(sandbox_id)
                 except Exception as cleanup_exc:
-                    logger.warning("Failed to clean up sandbox %s after creation failed: %s", sandbox_id, cleanup_exc)
+                    logger.warning(
+                        "Failed to clean up sandbox %s after creation failed: %s",
+                        sandbox_id,
+                        cleanup_exc,
+                    )
                 raise
 
     def discover(self, sandbox_id: str) -> SandboxRecord | None:
@@ -606,26 +769,47 @@ class LocalContainerProvisionerBackend:
         safe_uid = self._validate_uid(uid)
         safe_workdir_id = self._validate_workdir_id(workdir_id) if workdir_id else None
         if not self._is_on_expected_network(container, sandbox_id):
-            logger.info("Discarding stale sandbox %s on an unexpected network", sandbox_id)
+            logger.info(
+                "Discarding stale sandbox %s on an unexpected network", sandbox_id
+            )
             try:
                 self.delete(sandbox_id)
             except Exception as exc:
-                logger.warning("Failed to delete stale sandbox %s during discover: %s", sandbox_id, exc)
+                logger.warning(
+                    "Failed to delete stale sandbox %s during discover: %s",
+                    sandbox_id,
+                    exc,
+                )
             return None
         self._ensure_network(sandbox_id)
         if not self._is_expected_skills_mount(container, safe_uid):
-            logger.info("Discarding stale sandbox %s with unexpected skills mount", sandbox_id)
+            logger.info(
+                "Discarding stale sandbox %s with unexpected skills mount", sandbox_id
+            )
             try:
                 self.delete(sandbox_id)
             except Exception as exc:
-                logger.warning("Failed to delete stale sandbox %s during discover: %s", sandbox_id, exc)
+                logger.warning(
+                    "Failed to delete stale sandbox %s during discover: %s",
+                    sandbox_id,
+                    exc,
+                )
             return None
-        if not self._has_expected_user_data_mounts(container, safe_uid, safe_workdir_id):
-            logger.info("Discarding stale sandbox %s with unexpected user-data mounts", sandbox_id)
+        if not self._has_expected_user_data_mounts(
+            container, safe_uid, safe_workdir_id
+        ):
+            logger.info(
+                "Discarding stale sandbox %s with unexpected user-data mounts",
+                sandbox_id,
+            )
             try:
                 self.delete(sandbox_id)
             except Exception as exc:
-                logger.warning("Failed to delete stale sandbox %s during discover: %s", sandbox_id, exc)
+                logger.warning(
+                    "Failed to delete stale sandbox %s during discover: %s",
+                    sandbox_id,
+                    exc,
+                )
             return None
         record = self._to_record(container, sandbox_id)
         if not record.sandbox_url:
@@ -636,7 +820,10 @@ class LocalContainerProvisionerBackend:
 
     def list(self) -> list[SandboxRecord]:
         containers = self._client.containers.list(
-            all=True, filters={"label": ["app=yuxi-sandbox", "managed-by=yuxi-sandbox-provisioner"]}
+            all=True,
+            filters={
+                "label": ["app=yuxi-sandbox", "managed-by=yuxi-sandbox-provisioner"]
+            },
         )
         records: list[SandboxRecord] = []
         for container in containers:
@@ -647,14 +834,18 @@ class LocalContainerProvisionerBackend:
                 records.append(self._to_record(container, sandbox_id))
         return records
 
-    def delete(self, sandbox_id: str, *, expected_generation: str | None = None) -> None:
+    def delete(
+        self, sandbox_id: str, *, expected_generation: str | None = None
+    ) -> None:
         with self._lock:
             container = self._get_container(sandbox_id)
             if container is not None:
                 container.reload()
                 current_generation = str(getattr(container, "id", "") or "") or None
                 if expected_generation and current_generation != expected_generation:
-                    raise SandboxGenerationMismatchError("sandbox generation does not match delete request")
+                    raise SandboxGenerationMismatchError(
+                        "sandbox generation does not match delete request"
+                    )
                 if container.status == "running":
                     container.stop(timeout=10)
                 container.remove(v=True, force=True)
@@ -709,9 +900,14 @@ class KubernetesProvisionerBackend:
     ):
         pod_name = self._pod_name(sandbox_id)
         sandbox_env = merged_sandbox_env(self._sandbox_env, env) if inherit_env else {}
-        env_vars = [self._client.V1EnvVar(name=key, value=value) for key, value in sandbox_env.items()]
+        env_vars = [
+            self._client.V1EnvVar(name=key, value=value)
+            for key, value in sandbox_env.items()
+        ]
         project_mount_path = (
-            LocalContainerProvisionerBackend._project_workdir_mount_path(workdir_id) if workdir_id else None
+            LocalContainerProvisionerBackend._project_workdir_mount_path(workdir_id)
+            if workdir_id
+            else None
         )
         if workdir_id:
             init_command = (
@@ -772,8 +968,12 @@ class KubernetesProvisionerBackend:
                         command=["sh", "-c"],
                         args=[init_command],
                         volume_mounts=[
-                            self._client.V1VolumeMount(name="home-dir", mount_path="/home/gem"),
-                            self._client.V1VolumeMount(name="shared-data", mount_path="/mnt/shared-data"),
+                            self._client.V1VolumeMount(
+                                name="home-dir", mount_path="/home/gem"
+                            ),
+                            self._client.V1VolumeMount(
+                                name="shared-data", mount_path="/mnt/shared-data"
+                            ),
                         ],
                     ),
                 ],
@@ -783,9 +983,15 @@ class KubernetesProvisionerBackend:
                         image=self._sandbox_image,
                         env=env_vars,
                         working_dir=project_mount_path,
-                        ports=[self._client.V1ContainerPort(container_port=self._container_port)],
+                        ports=[
+                            self._client.V1ContainerPort(
+                                container_port=self._container_port
+                            )
+                        ],
                         volume_mounts=[
-                            self._client.V1VolumeMount(name="home-dir", mount_path="/home/gem"),
+                            self._client.V1VolumeMount(
+                                name="home-dir", mount_path="/home/gem"
+                            ),
                             *data_mounts,
                             self._client.V1VolumeMount(
                                 name="shared-data",
@@ -843,7 +1049,9 @@ class KubernetesProvisionerBackend:
         if workdir_id:
             expected_mounts = {
                 "/home/gem/user-data": f"threads/shared/{uid}",
-                LocalContainerProvisionerBackend._project_workdir_mount_path(workdir_id): f"projects/{workdir_id}",
+                LocalContainerProvisionerBackend._project_workdir_mount_path(
+                    workdir_id
+                ): f"projects/{workdir_id}",
                 "/home/gem/skills": f"skill-projections/{uid}",
             }
         else:
@@ -861,9 +1069,17 @@ class KubernetesProvisionerBackend:
                 )
                 for mount in getattr(container, "volume_mounts", []) or []
             }
-            return not ({"/home/gem/user-data/uploads", "/home/gem/user-data/outputs"} & actual_mounts.keys()) and all(
-                actual_mounts.get(path, (None, False))[0] == sub_path for path, sub_path in expected_mounts.items()
-            ) and actual_mounts.get("/home/gem/skills", (None, False))[1]
+            return (
+                not (
+                    {"/home/gem/user-data/uploads", "/home/gem/user-data/outputs"}
+                    & actual_mounts.keys()
+                )
+                and all(
+                    actual_mounts.get(path, (None, False))[0] == sub_path
+                    for path, sub_path in expected_mounts.items()
+                )
+                and actual_mounts.get("/home/gem/skills", (None, False))[1]
+            )
         return False
 
     def _discovered_matches_request(
@@ -876,7 +1092,9 @@ class KubernetesProvisionerBackend:
     ) -> bool:
         pod_name = self._pod_name(sandbox_id)
         try:
-            pod = self._core_api.read_namespaced_pod(name=pod_name, namespace=self._namespace)
+            pod = self._core_api.read_namespaced_pod(
+                name=pod_name, namespace=self._namespace
+            )
         except Exception:
             return False
 
@@ -906,10 +1124,14 @@ class KubernetesProvisionerBackend:
         from kubernetes.client.rest import ApiException
 
         with self._lock:
-            safe_thread_id = LocalContainerProvisionerBackend._validate_thread_id(thread_id)
+            safe_thread_id = LocalContainerProvisionerBackend._validate_thread_id(
+                thread_id
+            )
             safe_uid = LocalContainerProvisionerBackend._validate_uid(uid)
             safe_workdir_id = (
-                LocalContainerProvisionerBackend._validate_workdir_id(workdir_id) if workdir_id else None
+                LocalContainerProvisionerBackend._validate_workdir_id(workdir_id)
+                if workdir_id
+                else None
             )
             discovered = self.discover(sandbox_id)
             if discovered is not None:
@@ -946,7 +1168,9 @@ class KubernetesProvisionerBackend:
                     uid=safe_uid,
                     workdir_id=safe_workdir_id,
                 ):
-                    raise ValueError("sandbox identity does not match existing generation") from exc
+                    raise ValueError(
+                        "sandbox identity does not match existing generation"
+                    ) from exc
 
             try:
                 self._core_api.create_namespaced_service(
@@ -960,7 +1184,9 @@ class KubernetesProvisionerBackend:
             health_timeout = int(os.getenv("SANDBOX_HEALTH_TIMEOUT_SECONDS", "60"))
             record = self.discover(sandbox_id)
             if record is None:
-                raise RuntimeError(f"failed to discover sandbox after create: {sandbox_id}")
+                raise RuntimeError(
+                    f"failed to discover sandbox after create: {sandbox_id}"
+                )
             if not self._discovered_matches_request(
                 sandbox_id,
                 thread_id=safe_thread_id,
@@ -968,12 +1194,16 @@ class KubernetesProvisionerBackend:
                 workdir_id=safe_workdir_id,
             ):
                 raise ValueError("sandbox identity does not match created generation")
-            if not wait_for_sandbox_ready(record.sandbox_url, timeout_seconds=health_timeout):
+            if not wait_for_sandbox_ready(
+                record.sandbox_url, timeout_seconds=health_timeout
+            ):
                 try:
                     self.delete(sandbox_id)
                 except Exception:
                     pass
-                raise RuntimeError(f"sandbox {sandbox_id} is not ready at {record.sandbox_url}")
+                raise RuntimeError(
+                    f"sandbox {sandbox_id} is not ready at {record.sandbox_url}"
+                )
             return record
 
     def discover(self, sandbox_id: str) -> SandboxRecord | None:
@@ -982,8 +1212,12 @@ class KubernetesProvisionerBackend:
         pod_name = self._pod_name(sandbox_id)
         service_name = self._service_name(sandbox_id)
         try:
-            pod = self._core_api.read_namespaced_pod(name=pod_name, namespace=self._namespace)
-            service = self._core_api.read_namespaced_service(name=service_name, namespace=self._namespace)
+            pod = self._core_api.read_namespaced_pod(
+                name=pod_name, namespace=self._namespace
+            )
+            service = self._core_api.read_namespaced_service(
+                name=service_name, namespace=self._namespace
+            )
         except ApiException as exc:
             if exc.status == 404:
                 return None
@@ -999,19 +1233,31 @@ class KubernetesProvisionerBackend:
             return None
         LocalContainerProvisionerBackend._validate_thread_id(thread_id)
         safe_uid = LocalContainerProvisionerBackend._validate_uid(uid)
-        safe_workdir_id = LocalContainerProvisionerBackend._validate_workdir_id(workdir_id) if workdir_id else None
+        safe_workdir_id = (
+            LocalContainerProvisionerBackend._validate_workdir_id(workdir_id)
+            if workdir_id
+            else None
+        )
         if not self._pod_has_expected_mounts(
             pod,
             uid=safe_uid,
             workdir_id=safe_workdir_id,
         ):
             if safe_workdir_id:
-                raise ValueError("sandbox mounts do not match recorded Project Workdir identity")
-            logger.info("Discarding stale sandbox %s with unexpected pod mounts", sandbox_id)
+                raise ValueError(
+                    "sandbox mounts do not match recorded Project Workdir identity"
+                )
+            logger.info(
+                "Discarding stale sandbox %s with unexpected pod mounts", sandbox_id
+            )
             try:
                 self.delete(sandbox_id)
             except Exception as exc:
-                logger.warning("Failed to delete stale sandbox %s during discover: %s", sandbox_id, exc)
+                logger.warning(
+                    "Failed to delete stale sandbox %s during discover: %s",
+                    sandbox_id,
+                    exc,
+                )
             return None
 
         node_port = None
@@ -1051,7 +1297,9 @@ class KubernetesProvisionerBackend:
                 records.append(record)
         return records
 
-    def delete(self, sandbox_id: str, *, expected_generation: str | None = None) -> None:
+    def delete(
+        self, sandbox_id: str, *, expected_generation: str | None = None
+    ) -> None:
         from kubernetes.client.rest import ApiException
 
         with self._lock:
@@ -1077,20 +1325,25 @@ class KubernetesProvisionerBackend:
                 if exc.status != 404:
                     raise
             try:
-                self._core_api.delete_namespaced_service(name=service_name, namespace=self._namespace)
+                self._core_api.delete_namespaced_service(
+                    name=service_name, namespace=self._namespace
+                )
             except ApiException as exc:
                 if exc.status != 404:
                     raise
 
 
 class SandboxIdleReaper:
-    def __init__(self, backend):
+    def __init__(self, backend, operation_pins: SandboxOperationPins | None = None):
         self._backend = backend
+        self._operation_pins = operation_pins or SandboxOperationPins()
         self._lock = threading.Lock()
         self._last_activity_at: dict[str, tuple[str | None, float]] = {}
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
-        self._exec_timeout_seconds = int(os.getenv("SANDBOX_EXEC_TIMEOUT_SECONDS", "180"))
+        self._exec_timeout_seconds = int(
+            os.getenv("SANDBOX_EXEC_TIMEOUT_SECONDS", "180")
+        )
         configured_idle_timeout = int(os.getenv("SANDBOX_IDLE_TIMEOUT_SECONDS", "600"))
         if 0 < configured_idle_timeout <= self._exec_timeout_seconds:
             logger.warning(
@@ -1102,15 +1355,23 @@ class SandboxIdleReaper:
             )
             configured_idle_timeout = self._exec_timeout_seconds + 30
         self._idle_timeout_seconds = configured_idle_timeout
-        self._check_interval_seconds = max(1, int(os.getenv("SANDBOX_IDLE_CHECK_INTERVAL_SECONDS", "10")))
+        self._check_interval_seconds = max(
+            1, int(os.getenv("SANDBOX_IDLE_CHECK_INTERVAL_SECONDS", "10"))
+        )
 
     def touch(self, sandbox_id: str, *, generation: str | None = None) -> None:
         with self._lock:
             current = self._last_activity_at.get(sandbox_id)
-            observed_generation = generation if generation is not None else (current[0] if current else None)
+            observed_generation = (
+                generation
+                if generation is not None
+                else (current[0] if current else None)
+            )
             self._last_activity_at[sandbox_id] = (observed_generation, time.time())
 
-    def forget(self, sandbox_id: str, *, expected_generation: str | None = None) -> None:
+    def forget(
+        self, sandbox_id: str, *, expected_generation: str | None = None
+    ) -> None:
         with self._lock:
             current = self._last_activity_at.get(sandbox_id)
             if current is None:
@@ -1129,7 +1390,9 @@ class SandboxIdleReaper:
         now = time.time()
         with self._lock:
             for record in records:
-                self._last_activity_at.setdefault(record.sandbox_id, (record.generation, now))
+                self._last_activity_at.setdefault(
+                    record.sandbox_id, (record.generation, now)
+                )
 
     def _collect_expired_sandboxes(self) -> list[tuple[str, str | None]]:
         if self._idle_timeout_seconds <= 0:
@@ -1143,12 +1406,20 @@ class SandboxIdleReaper:
             ]
 
     def _delete_expired_sandbox(self, sandbox_id: str, generation: str | None) -> None:
+        self._operation_pins.begin_delete(sandbox_id)
         try:
+            cutoff = time.time() - self._idle_timeout_seconds
+            with self._lock:
+                current = self._last_activity_at.get(sandbox_id)
+                if current is None or current[0] != generation or current[1] > cutoff:
+                    return
             self._backend.delete(sandbox_id, expected_generation=generation)
             logger.info(f"Deleted idle sandbox: {sandbox_id}")
             self.forget(sandbox_id, expected_generation=generation)
         except Exception as exc:  # noqa: BLE001
             logger.warning(f"Failed to delete idle sandbox {sandbox_id}: {exc}")
+        finally:
+            self._operation_pins.end_delete(sandbox_id)
 
     def _run(self) -> None:
         while not self._stop_event.wait(self._check_interval_seconds):
@@ -1161,7 +1432,9 @@ class SandboxIdleReaper:
             logger.info("Idle reaper disabled (SANDBOX_IDLE_TIMEOUT_SECONDS <= 0)")
             return
         self._seed_existing()
-        self._thread = threading.Thread(target=self._run, name="sandbox-idle-reaper", daemon=True)
+        self._thread = threading.Thread(
+            target=self._run, name="sandbox-idle-reaper", daemon=True
+        )
         self._thread.start()
         logger.info(
             "Started sandbox idle reaper with timeout=%ss interval=%ss",
@@ -1185,13 +1458,16 @@ def _build_backend():
 
 
 backend_impl, backend_name = _build_backend()
-idle_reaper = SandboxIdleReaper(backend_impl)
+sandbox_operation_pins = SandboxOperationPins()
+idle_reaper = SandboxIdleReaper(backend_impl, sandbox_operation_pins)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     provisioner_token()
-    app.state.http_client = httpx.AsyncClient(timeout=None, follow_redirects=False, trust_env=False)
+    app.state.http_client = httpx.AsyncClient(
+        timeout=None, follow_redirects=False, trust_env=False
+    )
     try:
         idle_reaper.start()
         yield
@@ -1233,20 +1509,24 @@ def health():
     dependencies=[Depends(require_provisioner_auth)],
 )
 def create_sandbox(payload: CreateSandboxRequest):
+    sandbox_operation_pins.acquire(payload.sandbox_id)
     try:
-        # Backend.create() already handles container reuse (discovers existing container first)
-        record = backend_impl.create(
-            payload.sandbox_id,
-            payload.thread_id,
-            payload.uid,
-            payload.env,
-            workdir_id=payload.workdir_id,
-            inherit_env=payload.inherit_env,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        try:
+            # Backend.create() already handles container reuse (discovers existing container first)
+            record = backend_impl.create(
+                payload.sandbox_id,
+                payload.thread_id,
+                payload.uid,
+                payload.env,
+                workdir_id=payload.workdir_id,
+                inherit_env=payload.inherit_env,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+    finally:
+        sandbox_operation_pins.release(payload.sandbox_id)
     idle_reaper.touch(record.sandbox_id, generation=record.generation)
     return sandbox_response(record)
 
@@ -1257,14 +1537,18 @@ def create_sandbox(payload: CreateSandboxRequest):
     dependencies=[Depends(require_provisioner_auth)],
 )
 def get_sandbox(sandbox_id: str):
+    sandbox_operation_pins.acquire(sandbox_id)
     try:
-        record = backend_impl.discover(sandbox_id)
-    except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        try:
+            record = backend_impl.discover(sandbox_id)
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
 
-    if record is None:
-        raise HTTPException(status_code=404, detail="sandbox not found")
-    idle_reaper.touch(record.sandbox_id, generation=record.generation)
+        if record is None:
+            raise HTTPException(status_code=404, detail="sandbox not found")
+        idle_reaper.touch(record.sandbox_id, generation=record.generation)
+    finally:
+        sandbox_operation_pins.release(sandbox_id)
 
     return sandbox_response(record)
 
@@ -1275,13 +1559,17 @@ def get_sandbox(sandbox_id: str):
     dependencies=[Depends(require_provisioner_auth)],
 )
 def touch_sandbox(sandbox_id: str):
+    sandbox_operation_pins.acquire(sandbox_id)
     try:
-        record = backend_impl.discover(sandbox_id)
-    except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
-    if record is None:
-        raise HTTPException(status_code=404, detail="sandbox not found")
-    idle_reaper.touch(sandbox_id, generation=record.generation)
+        try:
+            record = backend_impl.discover(sandbox_id)
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+        if record is None:
+            raise HTTPException(status_code=404, detail="sandbox not found")
+        idle_reaper.touch(sandbox_id, generation=record.generation)
+    finally:
+        sandbox_operation_pins.release(sandbox_id)
     return TouchSandboxResponse(ok=True, sandbox_id=sandbox_id, status=record.status)
 
 
@@ -1306,12 +1594,15 @@ def list_sandboxes():
     dependencies=[Depends(require_provisioner_auth)],
 )
 def delete_sandbox(sandbox_id: str, expected_generation: str | None = None):
+    sandbox_operation_pins.begin_delete(sandbox_id)
     try:
         backend_impl.delete(sandbox_id, expected_generation=expected_generation)
     except SandboxGenerationMismatchError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+    finally:
+        sandbox_operation_pins.end_delete(sandbox_id)
     idle_reaper.forget(sandbox_id, expected_generation=expected_generation)
 
     return DeleteSandboxResponse(ok=True, sandbox_id=sandbox_id)
@@ -1328,11 +1619,19 @@ def delete_sandbox(sandbox_id: str, expected_generation: str | None = None):
     dependencies=[Depends(require_provisioner_auth)],
 )
 async def proxy_sandbox_request(sandbox_id: str, request: Request, path: str = ""):
+    await asyncio.to_thread(sandbox_operation_pins.acquire, sandbox_id)
     try:
         record = await asyncio.to_thread(backend_impl.discover, sandbox_id)
+    except asyncio.CancelledError:
+        sandbox_operation_pins.release(sandbox_id)
+        raise
     except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=502, detail="failed to discover sandbox") from exc
+        sandbox_operation_pins.release(sandbox_id)
+        raise HTTPException(
+            status_code=502, detail="failed to discover sandbox"
+        ) from exc
     if record is None:
+        sandbox_operation_pins.release(sandbox_id)
         raise HTTPException(status_code=404, detail="sandbox not found")
 
     target_url = f"{record.sandbox_url.rstrip('/')}/{path.lstrip('/')}"
@@ -1351,7 +1650,11 @@ async def proxy_sandbox_request(sandbox_id: str, request: Request, path: str = "
             content=request.stream(),
         )
         upstream_response = await client.send(upstream_request, stream=True)
+    except asyncio.CancelledError:
+        sandbox_operation_pins.release(sandbox_id)
+        raise
     except Exception as exc:  # noqa: BLE001
+        sandbox_operation_pins.release(sandbox_id)
         raise HTTPException(status_code=502, detail="sandbox request failed") from exc
 
     async def response_body() -> AsyncIterator[bytes]:
@@ -1359,10 +1662,15 @@ async def proxy_sandbox_request(sandbox_id: str, request: Request, path: str = "
             async for chunk in upstream_response.aiter_bytes():
                 yield chunk
         finally:
-            await upstream_response.aclose()
+            try:
+                await upstream_response.aclose()
+            finally:
+                sandbox_operation_pins.release(sandbox_id)
 
     response_headers = {
-        key: value for key, value in upstream_response.headers.items() if key.lower() in PROXY_RESPONSE_HEADERS
+        key: value
+        for key, value in upstream_response.headers.items()
+        if key.lower() in PROXY_RESPONSE_HEADERS
     }
     idle_reaper.touch(sandbox_id, generation=record.generation)
     return StreamingResponse(

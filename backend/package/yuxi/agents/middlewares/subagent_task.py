@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import json
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -15,7 +14,6 @@ from langgraph.types import Command
 
 from yuxi.repositories.agent_repository import AgentRepository
 from yuxi.repositories.agent_run_repository import TERMINAL_RUN_STATUSES
-from yuxi.repositories.conversation_repository import ConversationRepository
 from yuxi.repositories.user_repository import UserRepository
 from yuxi.services.input_message_service import build_chat_input_message
 from yuxi.storage.postgres.manager import pg_manager
@@ -128,8 +126,6 @@ class YuxiSubAgentMiddleware(AgentMiddleware[Any, ContextT, ResponseT]):
         super().__init__()
         self.parent_context = parent_context
         self.subagents = {agent.slug: agent for agent in subagents}
-        self._synced_child_run_ids: set[str] = set()
-        self._output_sync_lock = asyncio.Lock()
         available_agents = "\n".join(f"- {agent.slug}: {agent.description or agent.name}" for agent in subagents)
         self.system_prompt = TASK_SYSTEM_PROMPT.format(available_agents=available_agents)
         self.tools = [self._build_task_tool(available_agents), *self._build_async_subagent_tools(available_agents)]
@@ -197,7 +193,6 @@ class YuxiSubAgentMiddleware(AgentMiddleware[Any, ContextT, ResponseT]):
             except ValueError as exc:
                 return str(exc)
 
-            await self._sync_child_outputs_to_parent(parent_runtime, run)
             subagent_run = subagent_service.serialize_subagent_run_state(run)
             return _task_result_response(result, runtime.tool_call_id, subagent_run)
 
@@ -268,7 +263,6 @@ class YuxiSubAgentMiddleware(AgentMiddleware[Any, ContextT, ResponseT]):
             except ValueError as exc:
                 return str(exc)
 
-            await self._sync_child_outputs_to_parent(parent_runtime, run)
             subagent_service = _subagent_run_service_module()
             payload = {
                 "status": run.status,
@@ -355,7 +349,6 @@ class YuxiSubAgentMiddleware(AgentMiddleware[Any, ContextT, ResponseT]):
             except ValueError as exc:
                 return str(exc)
 
-            await self._sync_child_outputs_to_parent(parent_runtime, run)
             subagent_service = _subagent_run_service_module()
             payload = {
                 "status": run.status,
@@ -394,115 +387,17 @@ class YuxiSubAgentMiddleware(AgentMiddleware[Any, ContextT, ResponseT]):
 
     def _parent_runtime(self) -> _ParentRuntime:
         """从父智能体 context 中抽取子智能体运行所需的最小父运行信息。"""
-        parent_thread_id = str(getattr(self.parent_context, "parent_thread_id", None) or self.parent_context.thread_id)
-        file_thread_id = str(getattr(self.parent_context, "file_thread_id", None) or parent_thread_id)
         uid = str(getattr(self.parent_context, "uid", "") or "").strip()
         created_by_run_id = str(getattr(self.parent_context, "run_id", "") or "").strip()
-        runtime_thread_id = str(getattr(self.parent_context, "thread_id", "") or "").strip()
-        sandbox_instance_id = str(
-            getattr(self.parent_context, "sandbox_instance_id", None) or created_by_run_id or runtime_thread_id
-        )
+        runtime_scope_id = str(
+            getattr(self.parent_context, "runtime_scope_id", None) or self.parent_context.thread_id
+        ).strip()
+        workdir_id = str(getattr(self.parent_context, "workdir_id", "") or "").strip()
         return _ParentRuntime(
-            runtime_thread_id=runtime_thread_id,
-            file_thread_id=file_thread_id,
+            runtime_scope_id=runtime_scope_id,
             uid=uid,
             created_by_run_id=created_by_run_id,
-            sandbox_instance_id=sandbox_instance_id,
-        )
-
-    async def _checkpoint_parent_outputs(
-        self,
-        parent_runtime: _ParentRuntime,
-        *,
-        base_revision_id: str | None = None,
-    ) -> tuple[str, list[dict]]:
-        """固化父 Run 当前 outputs 私有快照，作为父子独立 sandbox 的同步边界。"""
-        from yuxi.repositories.thread_output_repository import ThreadOutputRepository
-        from yuxi.services.thread_output_service import get_current_output_snapshot, stage_thread_outputs
-
-        async with pg_manager.get_async_session_context() as db:
-            conversation = await ConversationRepository(db).get_conversation_by_thread_id(parent_runtime.file_thread_id)
-            if conversation is None or str(conversation.uid) != parent_runtime.uid:
-                raise ValueError("父运行文件线程不存在")
-            if base_revision_id is None:
-                base_revision_id, _files = await get_current_output_snapshot(conversation=conversation, db=db)
-            conversation_id = conversation.id
-
-        revision_id = await stage_thread_outputs(
-            runtime_thread_id=parent_runtime.runtime_thread_id,
-            file_thread_id=parent_runtime.file_thread_id,
-            uid=parent_runtime.uid,
-            conversation_id=conversation_id,
-            run_id=parent_runtime.created_by_run_id,
-            base_revision_id=base_revision_id,
-            sandbox_instance_id=parent_runtime.sandbox_instance_id,
-        )
-        async with pg_manager.get_async_session_context() as db:
-            revision = await ThreadOutputRepository(db).checkpoint(revision_id)
-            await db.commit()
-            return revision.id, list(revision.files or [])
-
-    async def _sync_child_outputs_to_parent(self, parent_runtime: _ParentRuntime, child_run) -> None:
-        """三方合并子 Run revision 与父 Run 增量，并重建父 runtime outputs。"""
-        if child_run.status != "completed" or child_run.id in self._synced_child_run_ids:
-            return
-        async with self._output_sync_lock:
-            if child_run.id in self._synced_child_run_ids:
-                return
-            await self._sync_child_outputs_to_parent_locked(parent_runtime, child_run)
-            self._synced_child_run_ids.add(child_run.id)
-
-    async def _sync_child_outputs_to_parent_locked(self, parent_runtime: _ParentRuntime, child_run) -> None:
-        """在父 runtime 文件锁内完成一次 durable 子产物同步。"""
-
-        from yuxi.repositories.thread_output_repository import ThreadOutputRepository, merge_output_manifests
-
-        async with pg_manager.get_async_session_context() as db:
-            conversation = await ConversationRepository(db).get_conversation_by_thread_id(parent_runtime.file_thread_id)
-            if conversation is None or str(conversation.uid) != parent_runtime.uid:
-                raise ValueError("父运行文件线程不存在")
-            repository = ThreadOutputRepository(db)
-            child_revision = await repository.get_revision_for_run(conversation, child_run.id, status="checkpoint")
-            if child_revision is None or not child_revision.base_revision_id:
-                raise ValueError("子智能体 outputs revision 不可用")
-            base_revision = await repository.get_snapshot(conversation, child_revision.base_revision_id)
-            if base_revision is None or base_revision.status != "checkpoint":
-                raise ValueError("子智能体 outputs 基线不可用")
-            synced_revision = await repository.get_revision_for_run(
-                conversation,
-                parent_runtime.created_by_run_id,
-                status="checkpoint",
-                base_revision_id=child_revision.id,
-            )
-            if synced_revision is not None:
-                files = list(synced_revision.files or [])
-            else:
-                files = None
-            child_files = list(child_revision.files or [])
-            base_files = list(base_revision.files or [])
-
-        if files is None:
-            revision_id, parent_files = await self._checkpoint_parent_outputs(
-                parent_runtime,
-                base_revision_id=child_revision.id,
-            )
-            files = merge_output_manifests(
-                base=base_files,
-                staged=child_files,
-                current=parent_files,
-            )
-            async with pg_manager.get_async_session_context() as db:
-                await ThreadOutputRepository(db).set_checkpoint_files(revision_id, files)
-                await db.commit()
-        from yuxi.services.thread_output_service import hydrate_thread_outputs_to_sandbox
-
-        await hydrate_thread_outputs_to_sandbox(
-            runtime_thread_id=parent_runtime.runtime_thread_id,
-            file_thread_id=parent_runtime.file_thread_id,
-            uid=parent_runtime.uid,
-            files=files,
-            sandbox_instance_id=parent_runtime.sandbox_instance_id,
-            create_if_missing=False,
+            workdir_id=workdir_id,
         )
 
     def _require_async_parent_runtime(self, error_prefix: str) -> tuple[_ParentRuntime, str | None]:
@@ -512,6 +407,8 @@ class YuxiSubAgentMiddleware(AgentMiddleware[Any, ContextT, ResponseT]):
             return parent_runtime, f"{error_prefix}：当前运行时缺少 uid"
         if not parent_runtime.created_by_run_id:
             return parent_runtime, f"{error_prefix}：当前运行时缺少父运行 ID"
+        if not parent_runtime.workdir_id:
+            return parent_runtime, f"{error_prefix}：当前运行时缺少 Project Workdir"
         return parent_runtime, None
 
     async def _start_subagent(
@@ -536,7 +433,6 @@ class YuxiSubAgentMiddleware(AgentMiddleware[Any, ContextT, ResponseT]):
 
         agent_item = self.subagents[subagent_slug]
         input_message = build_chat_input_message(description)
-        output_base_revision_id, _files = await self._checkpoint_parent_outputs(parent_runtime)
         subagent_service = _subagent_run_service_module()
         try:
             async with pg_manager.get_async_session_context() as db:
@@ -547,43 +443,14 @@ class YuxiSubAgentMiddleware(AgentMiddleware[Any, ContextT, ResponseT]):
                     input_message=input_message,
                     tool_call_id=runtime.tool_call_id,
                     requested_thread_id=thread_id,
-                    file_thread_id=parent_runtime.file_thread_id,
                     model_spec=self._subagent_model_override(agent_item),
-                    output_base_revision_id=output_base_revision_id,
                 )
         except subagent_service.SubagentRunBusy as exc:
-            cleanup_error = await self._discard_rejected_subagent_checkpoint(output_base_revision_id)
             payload = exc.to_payload()
-            if cleanup_error:
-                payload["cleanup_warning"] = cleanup_error
             return None, _json_tool_command(payload, runtime.tool_call_id)
         except ValueError as exc:
-            cleanup_error = await self._discard_rejected_subagent_checkpoint(output_base_revision_id)
-            if cleanup_error:
-                return None, f"{exc}；{cleanup_error}"
             return None, str(exc)
-        if not result.created:
-            existing_runtime = (
-                result.run.input_payload.get("runtime") if isinstance(result.run.input_payload, dict) else None
-            )
-            existing_revision_id = (
-                str(existing_runtime.get("output_base_revision_id") or "") if isinstance(existing_runtime, dict) else ""
-            )
-            if existing_revision_id != output_base_revision_id:
-                cleanup_error = await self._discard_rejected_subagent_checkpoint(output_base_revision_id)
-                if cleanup_error:
-                    return None, f"{error_prefix}：命中已有子 Run，但{cleanup_error}"
         return _StartedSubagent(result=result, parent_runtime=parent_runtime, agent_item=agent_item), None
-
-    async def _discard_rejected_subagent_checkpoint(self, revision_id: str) -> str | None:
-        """回收未创建 child Run 时留下的父输出私有快照。"""
-        from yuxi.services.thread_output_service import discard_unreferenced_output_checkpoint
-
-        try:
-            await discard_unreferenced_output_checkpoint(revision_id)
-        except Exception as exc:
-            return f"父输出临时快照清理失败：{exc}"
-        return None
 
     def _subagent_model_override(self, agent_item: Agent) -> str | None:
         """当子智能体未显式配置模型时，沿用父智能体当前模型。"""
@@ -610,11 +477,10 @@ class YuxiSubAgentMiddleware(AgentMiddleware[Any, ContextT, ResponseT]):
 
 @dataclass(frozen=True)
 class _ParentRuntime:
-    runtime_thread_id: str
-    file_thread_id: str
+    runtime_scope_id: str
     uid: str
     created_by_run_id: str
-    sandbox_instance_id: str
+    workdir_id: str
 
 
 @dataclass(frozen=True)

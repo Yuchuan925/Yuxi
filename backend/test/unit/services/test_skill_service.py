@@ -687,6 +687,45 @@ async def test_sync_user_accessible_skills_async_runs_in_thread(monkeypatch: pyt
     ]
 
 
+@pytest.mark.asyncio
+async def test_skill_policy_change_removes_stale_projection_before_refresh(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """撤权提交时旧 Skill 必须先消失，再按新数据库授权恢复仍有权用户。"""
+    monkeypatch.setenv("SAVE_DIR", str(tmp_path))
+    for uid in ("user-1", "user-2"):
+        target = tmp_path / "skill-projections" / uid / "reporter"
+        target.mkdir(parents=True)
+        (target / "SKILL.md").write_text("# stale\n", encoding="utf-8")
+
+    lifecycle: list[str] = []
+
+    class Result:
+        @staticmethod
+        def scalars():
+            return SimpleNamespace(all=lambda: ["user-1", "user-2"])
+
+    class Db:
+        async def commit(self):
+            assert not (tmp_path / "skill-projections/user-1/reporter").exists()
+            assert not (tmp_path / "skill-projections/user-2/reporter").exists()
+            lifecycle.append("commit")
+
+        async def execute(self, _statement, _parameters=None):
+            return Result()
+
+    async def refresh(uid: str):
+        lifecycle.append(f"refresh:{uid}")
+        return {}
+
+    monkeypatch.setattr(svc, "refresh_user_skill_projection_async", refresh)
+
+    await svc.apply_skill_projection_policy_change(Db(), "reporter")
+
+    assert lifecycle == ["commit", "refresh:user-1", "refresh:user-2"]
+
+
 def test_sync_user_accessible_skills_serializes_multiple_processes(tmp_path: Path):
     """一个进程持有 uid 文件锁时，另一进程的同步必须等待。"""
     source_dir = tmp_path / "sources" / "skill-a"

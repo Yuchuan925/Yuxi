@@ -77,6 +77,15 @@ async def _startup(app: FastAPI) -> None:
     if not lite_mode:
         await pg_manager.ensure_knowledge_schema()
 
+    from yuxi.services.project_workdir_materialization_service import ensure_project_workdir_materialized
+
+    await _initialize_startup_component(
+        app,
+        name="project_workdir_materialization",
+        required=True,
+        operation=ensure_project_workdir_materialized,
+    )
+
     from yuxi.config.options import (
         ensure_options_in_db,
         invalidate_option_cache,

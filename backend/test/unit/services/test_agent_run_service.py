@@ -669,7 +669,12 @@ async def test_stream_agent_run_events_compact_fallback_end_keeps_request_id(mon
 
         async def get_run_for_user(self, run_id: str, uid: str):
             del run_id, uid
-            return SimpleNamespace(status="completed", conversation_thread_id="thread-1", request_id="req-1")
+            return SimpleNamespace(
+                status="completed",
+                conversation_thread_id="thread-1",
+                request_id="req-1",
+                runtime_cleanup_pending=False,
+            )
 
     async def fake_list_events(run_id: str, *, after_seq: str, limit: int):
         del run_id, after_seq, limit
@@ -699,6 +704,58 @@ async def test_stream_agent_run_events_compact_fallback_end_keeps_request_id(mon
     data = _sse_data(chunks[0])
     assert data["request_id"] == "req-1"
     assert data["payload"] == {"status": "completed"}
+
+
+@pytest.mark.asyncio
+async def test_stream_agent_run_events_does_not_fallback_end_before_runtime_cleanup(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """PostgreSQL 已终态但 cleanup fence 未清除时，SSE 不能越过 worker 提前合成 end。"""
+
+    @asynccontextmanager
+    async def fake_session_ctx():
+        yield object()
+
+    class Repo:
+        def __init__(self, db):
+            self.db = db
+
+        async def get_run_for_user(self, run_id: str, uid: str):
+            del run_id, uid
+            return SimpleNamespace(
+                status="completed",
+                conversation_thread_id="thread-1",
+                request_id="req-1",
+                runtime_cleanup_pending=True,
+            )
+
+    async def fake_list_events(run_id: str, *, after_seq: str, limit: int):
+        del run_id, after_seq, limit
+        return []
+
+    sleep_calls = 0
+
+    async def stop_after_one_poll(_seconds: float):
+        nonlocal sleep_calls
+        sleep_calls += 1
+        raise agent_run_service.asyncio.CancelledError
+
+    monkeypatch.setattr(agent_run_service.pg_manager, "get_async_session_context", fake_session_ctx)
+    monkeypatch.setattr(agent_run_service, "AgentRunRepository", Repo)
+    monkeypatch.setattr(agent_run_service, "list_run_stream_events", fake_list_events)
+    monkeypatch.setattr(agent_run_service.asyncio, "sleep", stop_after_one_poll)
+
+    chunks = []
+    async for chunk in agent_run_service.stream_agent_run_events(
+        run_id="run-1",
+        after_seq="0",
+        current_uid="user-1",
+        verbose=False,
+    ):
+        chunks.append(chunk)
+
+    assert sleep_calls == 1
+    assert not any(chunk.startswith("event: end") for chunk in chunks)
 
 
 @pytest.mark.asyncio

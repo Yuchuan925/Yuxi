@@ -19,19 +19,10 @@ from yuxi.agents.toolkits.registry import ToolExtraMetadata, _all_tool_instances
 from yuxi.config.options import system_options
 from yuxi.utils import logger
 from yuxi.utils.paths import (
-    CONVERSATION_HISTORY_DIR_NAME,
-    LARGE_TOOL_RESULTS_DIR_NAME,
-    OUTPUTS_DIR_NAME,
-    UPLOADS_DIR_NAME,
-    VIRTUAL_PATH_OUTPUTS,
-    WORKSPACE_DIR_NAME,
+    VIRTUAL_SKILLS_PATH,
 )
 from yuxi.utils.question_utils import normalize_questions
 
-_PRESENT_ARTIFACTS_INTERNAL_DIR_NAMES = frozenset(
-    {CONVERSATION_HISTORY_DIR_NAME, LARGE_TOOL_RESULTS_DIR_NAME, "large_tool_history"}
-)
-_OCR_PARSE_ALLOWED_DIRS = frozenset({WORKSPACE_DIR_NAME, UPLOADS_DIR_NAME, OUTPUTS_DIR_NAME})
 _OCR_OUTPUT_DIR_NAME = "ocr"
 _OCR_PREVIEW_LIMIT = 1200
 _SAFE_OUTPUT_STEM_RE = re.compile(r"[^A-Za-z0-9._\-\u4e00-\u9fff]+")
@@ -220,68 +211,51 @@ except Exception as e:
 class PresentArtifactsInput(BaseModel):
     """Expose artifact files to the frontend after the agent finishes."""
 
-    filepaths: list[str] = Field(
-        description=f"需要展示给用户的文件绝对路径列表，只允许位于 {VIRTUAL_PATH_OUTPUTS} 下，且不能是内部运行文件"
-    )
+    filepaths: list[str] = Field(description="需要展示给用户的文件绝对路径列表；建议把交付物放在 Project outputs/ 下")
 
 
 def _normalize_presented_artifact_path(filepath: str, runtime: ToolRuntime) -> str:
     from yuxi.agents.backends.sandbox.backend import ProvisionerSandboxBackend
-    from yuxi.services.scoped_file_store import validate_scoped_virtual_path
-    from yuxi.utils.paths import OUTPUTS_DIR_NAME
 
-    outputs_virtual_prefix = VIRTUAL_PATH_OUTPUTS
     runtime_context = runtime.context
-    runtime_thread_id = getattr(runtime_context, "thread_id", None)
-    if not runtime_thread_id:
-        raise ValueError("当前运行时缺少 thread_id")
-    uid = getattr(runtime_context, "uid", None)
-    if not uid:
-        raise ValueError("当前运行时缺少 uid")
+    runtime_scope_id, uid, sandbox_instance_id, workdir_id = _resolve_runtime_sandbox_scope(runtime)
 
     normalized_input = str(filepath or "").strip()
     if not normalized_input:
         raise ValueError("文件路径不能为空")
 
-    candidate = normalized_input if normalized_input.startswith("/") else f"/{normalized_input}"
-    try:
-        normalized_path = validate_scoped_virtual_path(OUTPUTS_DIR_NAME, candidate)
-    except ValueError as exc:
-        raise ValueError(f"只允许展示 {outputs_virtual_prefix}/ 下的文件: {normalized_input}") from exc
-
-    sandbox_instance_id = getattr(runtime_context, "sandbox_instance_id", None) or runtime_thread_id
+    normalized_path = str(
+        PurePosixPath(normalized_input if normalized_input.startswith("/") else f"/{normalized_input}")
+    )
+    workdir_path = str(getattr(runtime_context, "workdir_path", "") or "").rstrip("/")
+    allowed = normalized_path.startswith(f"{workdir_path}/") or normalized_path.startswith("/home/gem/user-data/")
+    allowed = allowed or normalized_path.startswith(f"{VIRTUAL_SKILLS_PATH}/")
+    if not workdir_path or not allowed:
+        raise ValueError(f"文件不在当前用户可见范围内: {normalized_input}")
     backend = ProvisionerSandboxBackend(
-        thread_id=runtime_thread_id,
+        thread_id=runtime_scope_id,
         uid=str(uid),
         sandbox_instance_id=sandbox_instance_id,
+        workdir_id=workdir_id,
         create_if_missing=False,
     )
-    if not backend.output_file_exists(normalized_path):
+    if not backend.regular_file_exists(normalized_path):
         raise ValueError(f"文件不存在或不是普通文件: {normalized_input}")
-
-    relative_path = PurePosixPath(normalized_path).relative_to(PurePosixPath(outputs_virtual_prefix))
-
-    if relative_path.parts and relative_path.parts[0] in _PRESENT_ARTIFACTS_INTERNAL_DIR_NAMES:
-        raise ValueError(f"不允许展示工具调用阶段文件: {outputs_virtual_prefix}/{relative_path.as_posix()}")
-
     return normalized_path
 
 
-PRESENT_ARTIFACTS_DESCRIPTION = f"""
+PRESENT_ARTIFACTS_DESCRIPTION = """
 将已经生成好的结果文件展示给用户。
 
 使用场景：
-1. 你已经在 `{VIRTUAL_PATH_OUTPUTS}` 下写好了最终结果文件
+1. 你已经写好了最终结果文件；建议放在当前 Project Workdir 的 `outputs/` 下
 2. 你希望前端在对话结束后显示这些结果文件卡片
 3. 这些文件需要支持下载或预览
 
 注意事项：
-1. 只能传入 `{VIRTUAL_PATH_OUTPUTS}` 下的文件
+1. 可以传入当前 Project Workdir、User Data 或已授权 Skills 中的普通文件
 2. 不要传入中间过程文件，只有真正需要给用户看的结果文件才调用
-3. 不要传入工具调用阶段文件，例如：
-   - `{VIRTUAL_PATH_OUTPUTS}/{LARGE_TOOL_RESULTS_DIR_NAME}`
-   - `{VIRTUAL_PATH_OUTPUTS}/{CONVERSATION_HISTORY_DIR_NAME}`
-4. 可以一次传多个文件
+3. 可以一次传多个文件
 """
 
 
@@ -297,7 +271,7 @@ def present_artifacts(
     runtime: ToolRuntime,
     tool_call_id: Annotated[str, InjectedToolCallId],
 ) -> Command:
-    """登记当前线程 outputs 目录下的交付物文件，使前端在对话结束后展示给用户。"""
+    """登记当前用户可见的普通文件，使前端展示给用户。"""
     try:
         normalized_paths = [_normalize_presented_artifact_path(filepath, runtime) for filepath in filepaths]
     except ValueError as exc:
@@ -314,22 +288,21 @@ def present_artifacts(
 class OcrParseFileInput(BaseModel):
     """Parse a sandbox file with OCR and save the Markdown result."""
 
-    file_path: str = Field(description="需要 OCR 解析的沙盒虚拟路径，必须位于 /home/gem/user-data 下")
+    file_path: str = Field(description="需要 OCR 解析的 Project、User Data 或已授权 Skill 文件绝对路径")
     ocr_engine: str | None = Field(default=None, description="可选 OCR 引擎；省略时使用系统默认 OCR 引擎")
 
 
-OCR_PARSE_FILE_DESCRIPTION = f"""
+OCR_PARSE_FILE_DESCRIPTION = """
 将沙盒中的 PDF、Office 文档或图片文件解析为 Markdown 文本，并把结果保存为文件。
 
 使用场景：
 1. 用户上传了 PDF、Office 文档或图片附件，需要提取其中的文字内容
-2. 工作区、uploads 或 outputs 下已有文件，需要转成可读取的 Markdown
+2. Project Workdir、User Data 或 Skills 下已有文件，需要转成可读取的 Markdown
 3. 解析结果较长，后续应使用 read_file 读取保存后的 Markdown 文件
 
 注意事项：
-1. file_path 必须是 /home/gem/user-data 下的虚拟路径
-2. 只允许读取 workspace、uploads、outputs 下的普通文件
-3. 解析结果会写入 {VIRTUAL_PATH_OUTPUTS}/{_OCR_OUTPUT_DIR_NAME}/
+1. file_path 必须位于当前用户可见范围
+2. 解析结果会写入当前 Project Workdir 的 outputs/ocr/ 下
 4. 工具只返回结果文件路径和短预览，不直接返回完整 OCR 文本
 5. 如需在前端展示结果文件，请再调用 present_artifacts
 """
@@ -346,12 +319,13 @@ async def ocr_parse_file(file_path: str, runtime: ToolRuntime, ocr_engine: str |
     """Parse a sandbox file with OCR, persist Markdown output, and return only a short result summary."""
     from yuxi.services.ocr_service import parse_document
 
-    runtime_thread_id, uid, sandbox_instance_id = _resolve_runtime_sandbox_scope(runtime)
+    runtime_scope_id, uid, sandbox_instance_id, workdir_id = _resolve_runtime_sandbox_scope(runtime)
     source_virtual_path = _resolve_ocr_source_path(file_path, runtime)
     backend = ProvisionerSandboxBackend(
-        thread_id=runtime_thread_id,
+        thread_id=runtime_scope_id,
         uid=uid,
         sandbox_instance_id=sandbox_instance_id,
+        workdir_id=workdir_id,
         create_if_missing=False,
     )
     from yuxi.services.ocr_service import resolve_ocr_engine_id
@@ -365,7 +339,7 @@ async def ocr_parse_file(file_path: str, runtime: ToolRuntime, ocr_engine: str |
             source_temp = temp_file.name
         try:
             await asyncio.to_thread(
-                backend.download_user_data_file_to_path,
+                backend.download_authorized_file_to_path,
                 source_virtual_path,
                 source_temp,
                 100 * 1024 * 1024,
@@ -373,16 +347,12 @@ async def ocr_parse_file(file_path: str, runtime: ToolRuntime, ocr_engine: str |
         except ValueError as exc:
             raise ValueError(f"文件不存在或不是普通文件: {source_virtual_path}") from exc
         markdown = await parse_document(source_temp, params={"ocr_engine": engine})
-        parsed_path = _next_ocr_output_path(backend, PurePosixPath(source_virtual_path))
+        workdir_path = str(_runtime_scope_value(runtime, "workdir_path") or "").rstrip("/")
+        parsed_path = _next_ocr_output_path(backend, workdir_path, PurePosixPath(source_virtual_path))
         with tempfile.NamedTemporaryFile(prefix="yuxi-ocr-output-", delete=False) as temp_file:
             output_temp = temp_file.name
             temp_file.write(markdown.encode("utf-8"))
-        await asyncio.to_thread(
-            backend.upload_scope_file_from_path,
-            OUTPUTS_DIR_NAME,
-            parsed_path,
-            output_temp,
-        )
+        await asyncio.to_thread(backend.upload_authorized_file_from_path, parsed_path, output_temp)
     finally:
         for temp_path in (source_temp, output_temp):
             if temp_path:
@@ -401,39 +371,38 @@ async def ocr_parse_file(file_path: str, runtime: ToolRuntime, ocr_engine: str |
 
 
 def _resolve_ocr_source_path(file_path: str, runtime: ToolRuntime) -> str:
-    """校验 OCR 输入位于 Agent user-data 的受支持命名空间。"""
-    from yuxi.agents.backends.sandbox.paths import get_virtual_path_prefix
-
+    """校验 OCR 输入位于当前用户可见文件范围。"""
     _resolve_runtime_sandbox_scope(runtime)
 
     normalized_input = str(file_path or "").strip()
     if not normalized_input:
         raise ValueError("文件路径不能为空")
+    if ".." in PurePosixPath(normalized_input).parts:
+        raise ValueError("只允许解析当前用户可见范围内的文件")
 
-    virtual_prefix = get_virtual_path_prefix().rstrip("/")
     clean_virtual_path = "/" + normalized_input.lstrip("/")
-    if clean_virtual_path != virtual_prefix and not clean_virtual_path.startswith(f"{virtual_prefix}/"):
-        raise ValueError(f"只允许解析 {virtual_prefix} 下的沙盒虚拟路径")
-
-    relative_path = clean_virtual_path[len(virtual_prefix) :].lstrip("/")
-    namespace = Path(relative_path).parts[0] if relative_path else ""
-    if namespace not in _OCR_PARSE_ALLOWED_DIRS:
-        allowed = ", ".join(f"{virtual_prefix}/{item}" for item in sorted(_OCR_PARSE_ALLOWED_DIRS))
-        raise ValueError(f"只允许解析 {allowed} 下的文件")
+    workdir_path = str(_runtime_scope_value(runtime, "workdir_path") or "").rstrip("/")
+    allowed = clean_virtual_path.startswith(f"{workdir_path}/") or clean_virtual_path.startswith("/home/gem/user-data/")
+    allowed = allowed or clean_virtual_path.startswith(f"{VIRTUAL_SKILLS_PATH}/")
+    if not workdir_path or not allowed:
+        raise ValueError("只允许解析当前用户可见范围内的文件")
 
     return clean_virtual_path
 
 
-def _resolve_runtime_sandbox_scope(runtime: ToolRuntime) -> tuple[str, str, str]:
-    """读取 runtime、用户与实例三个 Sandbox scope。"""
-    runtime_thread_id = _runtime_scope_value(runtime, "thread_id")
+def _resolve_runtime_sandbox_scope(runtime: ToolRuntime) -> tuple[str, str, str, str]:
+    """读取 runtime、用户、实例与 Workdir 四个 Sandbox scope。"""
+    runtime_thread_id = _runtime_scope_value(runtime, "runtime_scope_id") or _runtime_scope_value(runtime, "thread_id")
     uid = _runtime_scope_value(runtime, "uid")
     sandbox_instance_id = _runtime_scope_value(runtime, "sandbox_instance_id") or runtime_thread_id
+    workdir_id = _runtime_scope_value(runtime, "workdir_id")
     if not runtime_thread_id:
         raise ValueError("当前运行时缺少 thread_id")
     if not uid:
         raise ValueError("当前运行时缺少 uid")
-    return runtime_thread_id, uid, str(sandbox_instance_id)
+    if not workdir_id:
+        raise ValueError("当前运行时缺少 workdir_id")
+    return runtime_thread_id, uid, str(sandbox_instance_id), workdir_id
 
 
 def _runtime_scope_value(runtime: ToolRuntime, key: str) -> str | None:
@@ -452,13 +421,13 @@ def _runtime_scope_value(runtime: ToolRuntime, key: str) -> str | None:
     return None
 
 
-def _next_ocr_output_path(backend, source_path: PurePosixPath) -> str:
-    """在当前 runtime sandbox outputs 中选择不冲突的 Markdown 路径。"""
+def _next_ocr_output_path(backend, workdir_path: str, source_path: PurePosixPath) -> str:
+    """在当前 Project outputs 中选择不冲突的 Markdown 路径。"""
     base_name = _safe_ocr_output_stem(source_path)
-    candidate = f"{VIRTUAL_PATH_OUTPUTS}/{_OCR_OUTPUT_DIR_NAME}/{base_name}.md"
+    candidate = f"{workdir_path}/outputs/{_OCR_OUTPUT_DIR_NAME}/{base_name}.md"
     index = 1
-    while backend.output_file_exists(candidate):
-        candidate = f"{VIRTUAL_PATH_OUTPUTS}/{_OCR_OUTPUT_DIR_NAME}/{base_name}-{index}.md"
+    while backend.regular_file_exists(candidate):
+        candidate = f"{workdir_path}/outputs/{_OCR_OUTPUT_DIR_NAME}/{base_name}-{index}.md"
         index += 1
     return candidate
 
