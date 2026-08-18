@@ -294,6 +294,7 @@ class Conversation(Base):
     status = Column(String(20), default="active", comment="Status: active/archived/deleted")
     is_pinned = Column(Boolean, default=False, nullable=False, index=True, comment="Is pinned to top")
     last_viewed_run_id = Column(String(64), nullable=True, comment="Latest top-level run id viewed by user")
+    current_output_revision_id = Column(String(64), nullable=True, comment="当前已发布 outputs revision")
     created_at = Column(DateTime, default=utc_now_naive, comment="Creation time")
     updated_at = Column(DateTime, default=utc_now_naive, onupdate=utc_now_naive, comment="Update time")
     extra_metadata = Column(JSON, nullable=True, comment="Additional metadata")
@@ -314,6 +315,7 @@ class Conversation(Base):
             "title": self.title,
             "status": self.status,
             "is_pinned": bool(self.is_pinned),
+            "current_output_revision_id": self.current_output_revision_id,
             "created_at": format_utc_datetime(self.created_at),
             "updated_at": format_utc_datetime(self.updated_at),
             "metadata": metadata,
@@ -940,6 +942,55 @@ Index(
     sqlite_where=AgentRun.status.notin_(AGENT_RUN_TERMINAL_STATUSES),
 )
 Index("ix_agent_runs_status_lease_expires", AgentRun.status, AgentRun.lease_expires_at)
+
+
+class ThreadOutputRevision(Base):
+    """线程 outputs 的不可变发布 revision。"""
+
+    __tablename__ = "thread_output_revisions"
+
+    id = Column(String(64), primary_key=True, comment="Opaque revision ID")
+    conversation_id = Column(
+        Integer,
+        ForeignKey("conversations.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+        comment="Owning conversation",
+    )
+    thread_id = Column(String(64), nullable=False, index=True)
+    uid = Column(String(64), nullable=False, index=True)
+    run_id = Column(String(64), ForeignKey("agent_runs.id", ondelete="SET NULL"), nullable=True, index=True)
+    base_revision_id = Column(String(64), nullable=True)
+    status = Column(
+        String(32),
+        nullable=False,
+        default="staging",
+        index=True,
+        comment="staging/checkpoint/published/conflict/failed/unknown",
+    )
+    files = Column(JSON_VALUE, nullable=False, default=list, comment="完整文件快照描述符")
+    error_message = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=utc_now_naive, nullable=False)
+    published_at = Column(DateTime, nullable=True)
+    updated_at = Column(DateTime, default=utc_now_naive, onupdate=utc_now_naive, nullable=False)
+
+    __table_args__ = (Index("ix_thread_output_revisions_thread_created", "thread_id", "created_at"),)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "conversation_id": self.conversation_id,
+            "thread_id": self.thread_id,
+            "uid": self.uid,
+            "run_id": self.run_id,
+            "base_revision_id": self.base_revision_id,
+            "status": self.status,
+            "files": self.files or [],
+            "error_message": self.error_message,
+            "created_at": format_utc_datetime(self.created_at),
+            "published_at": format_utc_datetime(self.published_at),
+            "updated_at": format_utc_datetime(self.updated_at),
+        }
 
 
 class AgentRunAttempt(Base):

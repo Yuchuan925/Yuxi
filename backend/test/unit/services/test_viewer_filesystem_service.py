@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -9,6 +10,14 @@ from fastapi import HTTPException
 from yuxi.agents.backends.sandbox import paths as sandbox_paths
 from yuxi.services import viewer_filesystem_service as svc
 from yuxi.services import workspace_service
+
+
+@pytest.fixture(autouse=True)
+def stub_output_snapshot(monkeypatch: pytest.MonkeyPatch):
+    async def fake_snapshot(**_kwargs):
+        return SimpleNamespace(id=1), None, []
+
+    monkeypatch.setattr(svc, "get_user_output_snapshot", fake_snapshot)
 
 
 def _prepare_symlink_escape(tmp_path: Path, monkeypatch) -> tuple[str, str]:
@@ -45,6 +54,68 @@ def test_list_local_entries_skips_symlink_escape(tmp_path: Path, monkeypatch) ->
     entries = svc._list_local_entries(thread_id, uid, uploads_dir)
 
     assert {entry["path"] for entry in entries} == {"/home/gem/user-data/uploads/safe.txt"}
+
+
+@pytest.mark.asyncio
+async def test_download_published_output_releases_minio_response(monkeypatch) -> None:
+    content = b"published output"
+
+    class FakeResponse:
+        def __init__(self):
+            self.stream = io.BytesIO(content)
+            self.closed = False
+            self.released = False
+
+        def read(self, size):
+            return self.stream.read(size)
+
+        def close(self):
+            self.closed = True
+
+        def release_conn(self):
+            self.released = True
+
+    response = FakeResponse()
+    minio = SimpleNamespace(adownload_response=lambda *_args: _async_value(response))
+
+    monkeypatch.setattr(svc, "_resolve_viewer_state", lambda **_kwargs: _async_value((None, None, [])))
+    monkeypatch.setattr(
+        svc,
+        "get_user_output_snapshot",
+        lambda **_kwargs: _async_value(
+            (
+                SimpleNamespace(id=1),
+                "revision-1",
+                [
+                    {
+                        "path": "/home/gem/user-data/outputs/report.txt",
+                        "bucket_name": "thread-files",
+                        "object_name": "outputs/report.txt",
+                        "content_type": "text/plain",
+                    }
+                ],
+            )
+        ),
+    )
+    monkeypatch.setattr(svc, "get_minio_client", lambda: minio)
+
+    download = await svc.download_viewer_file(
+        thread_id="thread-1",
+        path="/home/gem/user-data/outputs/report.txt",
+        current_user=SimpleNamespace(uid="user-1"),
+        db=None,
+    )
+    body = b""
+    async for chunk in download.body_iterator:
+        body += chunk
+
+    assert body == content
+    assert response.closed is True
+    assert response.released is True
+
+
+async def _async_value(value):
+    return value
 
 
 @pytest.mark.asyncio
@@ -181,15 +252,11 @@ async def test_search_viewer_files_matches_filenames_recursively(
 
     monkeypatch.setattr(svc, "_resolve_viewer_state", fake_resolve_viewer_state)
 
-    response = await svc.search_viewer_files(
-        thread_id=thread_id, query="record", current_user=user, db=None
-    )
+    response = await svc.search_viewer_files(thread_id=thread_id, query="record", current_user=user, db=None)
     assert [entry["name"] for entry in response["entries"]] == ["record-2026.md"]
     assert response["entries"][0]["path"] == "/home/gem/user-data/outputs/分组/record-2026.md"
 
-    chinese_response = await svc.search_viewer_files(
-        thread_id=thread_id, query="报告", current_user=user, db=None
-    )
+    chinese_response = await svc.search_viewer_files(thread_id=thread_id, query="报告", current_user=user, db=None)
     assert [entry["name"] for entry in chinese_response["entries"]] == ["年度报告.docx"]
 
     empty = await svc.search_viewer_files(thread_id=thread_id, query="  ", current_user=user, db=None)
@@ -222,8 +289,6 @@ async def test_search_viewer_files_skips_unreadable_directories(
     monkeypatch.setattr(svc, "_resolve_viewer_state", fake_resolve_viewer_state)
     monkeypatch.setattr(svc, "_list_viewer_directory_entries", flaky_listing)
 
-    response = await svc.search_viewer_files(
-        thread_id=thread_id, query="anything", current_user=user, db=None
-    )
+    response = await svc.search_viewer_files(thread_id=thread_id, query="anything", current_user=user, db=None)
     assert response["entries"] == []
     assert "/home/gem/user-data/workspace" in visited

@@ -64,6 +64,7 @@ async def _create_run(
             "query": query,
             "agent_slug": agent_slug,
             "thread_id": thread_id,
+            "tool_approval_mode": "always_trust",
             "meta": {"request_id": f"subagent-stream-e2e-{uuid.uuid4()}"},
         },
         headers=headers,
@@ -159,6 +160,39 @@ def _find_tool_call_ids(value: Any) -> set[str]:
     return ids
 
 
+def _find_named_tool_call_ids(value: Any, tool_name: str) -> set[str]:
+    ids: set[str] = set()
+    if isinstance(value, dict):
+        tool_calls = value.get("tool_calls")
+        if isinstance(tool_calls, list):
+            for tool_call in tool_calls:
+                if not isinstance(tool_call, dict):
+                    continue
+                function = tool_call.get("function") if isinstance(tool_call.get("function"), dict) else {}
+                name = tool_call.get("name") or function.get("name")
+                if name == tool_name and tool_call.get("id"):
+                    ids.add(str(tool_call["id"]))
+        for child in value.values():
+            ids.update(_find_named_tool_call_ids(child, tool_name))
+    elif isinstance(value, list):
+        for item in value:
+            ids.update(_find_named_tool_call_ids(item, tool_name))
+    return ids
+
+
+def _find_tool_result_contents(value: Any, tool_call_ids: set[str]) -> list[str]:
+    contents: list[str] = []
+    if isinstance(value, dict):
+        if str(value.get("tool_call_id") or "") in tool_call_ids and value.get("content") is not None:
+            contents.append(str(value["content"]))
+        for child in value.values():
+            contents.extend(_find_tool_result_contents(child, tool_call_ids))
+    elif isinstance(value, list):
+        for item in value:
+            contents.extend(_find_tool_result_contents(item, tool_call_ids))
+    return contents
+
+
 async def _read_thread_file(
     client: httpx.AsyncClient,
     headers: dict[str, str],
@@ -192,6 +226,7 @@ async def test_subagent_stream_records_run_and_shares_output_files(
     marker = f"YUXI_SUBAGENT_STREAM_E2E_{suffix}"
     sub_slug = f"e2e-subagent-{suffix}"
     main_slug = f"e2e-main-{suffix}"
+    parent_input_path = "/home/gem/user-data/outputs/parent-input.txt"
     output_path = "/home/gem/user-data/outputs/subagents.txt"
     expected_content = "由这个子智能体创建"
     created_agents: list[str] = []
@@ -226,8 +261,8 @@ async def test_subagent_stream_records_run_and_shares_output_files(
                     "context": {
                         **base_context,
                         "system_prompt": (
-                            "你是专门负责文件写入和文件校验的子智能体。收到任务后必须使用文件系统工具完成任务，"
-                            "不要向用户提问。必须严格写入用户指定路径，文件内容必须完全符合用户要求，"
+                            "你是专门负责文件读取、写入和校验的子智能体。收到任务后必须使用文件系统工具完成任务，"
+                            "不要向用户提问。必须先读取用户指定的来源文件，再严格写入目标路径，文件内容必须完全符合要求，"
                             "不要自动追加句号、引号、说明或其他字符。完成后只回复写入的路径和文件内容。"
                         ),
                     }
@@ -251,9 +286,11 @@ async def test_subagent_stream_records_run_and_shares_output_files(
                         **base_context,
                         "subagents": [sub_slug],
                         "system_prompt": (
-                            "你是主智能体。遇到用户要求创建、修改或验证文件的任务时，"
-                            "必须调用 task 工具交给可用子智能体完成，不要自己写文件，"
-                            "也不要通过 shell、curl 或 HTTP API 调用子智能体。子智能体完成后，简短汇总结果。"
+                            "你是主智能体。严格按用户给出的文件工具顺序执行：先由你写入父文件，再调用 task 子智能体，"
+                            "子智能体完成后由你读取其结果；最后一个工具调用必须是 present_artifacts，"
+                            "且必须传入目标文件。"
+                            "在 present_artifacts 成功前不得结束回答，也不得用 execute 代替展示。"
+                            "不要通过 shell、curl 或 HTTP API 调用子智能体。"
                         ),
                     }
                 },
@@ -277,10 +314,10 @@ async def test_subagent_stream_records_run_and_shares_output_files(
 
         thread_id = await _create_thread(e2e_client, e2e_headers, main_slug, marker)
         query = (
-            f"请调用子智能体 {sub_slug} 在 outputs 目录创建文件 {output_path}。"
-            "必须通过 task 工具调用子智能体完成。"
-            f"文件内容必须完全等于下面一行：\n{expected_content}\n"
-            "不要添加句号、引号、说明或其他任何字符。完成后只需要回复文件路径。"
+            f"请严格依次完成：1）你先用 write_file 创建 {parent_input_path}，内容只有一行“{expected_content}”；"
+            f"2）通过 task 调用子智能体 {sub_slug}，要求它读取 {parent_input_path}，"
+            f"并把完全相同的内容写入 {output_path}；3）task 返回后，你必须用 read_file 读取 {output_path}；"
+            f"4）最后调用 present_artifacts 展示 {output_path}。禁止使用 execute 代替，且不要省略任何一步。"
         )
         run_id = await _create_run(
             e2e_client,
@@ -304,6 +341,7 @@ async def test_subagent_stream_records_run_and_shares_output_files(
         state_response = await e2e_client.get(f"/api/chat/thread/{thread_id}/state", headers=e2e_headers)
         _assert_ok(state_response)
         final_agent_state = state_response.json().get("agent_state") or stream_agent_state
+        assert output_path in (final_agent_state.get("artifacts") or []), final_agent_state
         subagent_runs = final_agent_state.get("subagent_runs") or []
         assert subagent_runs, final_agent_state
         completed_runs = [
@@ -341,10 +379,19 @@ async def test_subagent_stream_records_run_and_shares_output_files(
         assert child_run.get("status") == "completed"
         assert child_state_payload.get("messages"), child_state_payload
         child_messages_text = json.dumps(child_state_payload["messages"], ensure_ascii=False, default=str)
-        assert "write_file" in child_messages_text and output_path in child_messages_text, {
-            "message": "子智能体未执行目标 write_file 调用",
+        assert all(
+            marker in child_messages_text for marker in ("read_file", parent_input_path, "write_file", output_path)
+        ), {
+            "message": "子智能体未执行父文件读取到子产物写入链路",
             "subagent_run": completed_run,
             "messages": child_state_payload["messages"],
+        }
+        child_read_call_ids = _find_named_tool_call_ids(child_state_payload["messages"], "read_file")
+        child_read_results = _find_tool_result_contents(child_state_payload["messages"], child_read_call_ids)
+        assert child_read_call_ids and any(expected_content in content for content in child_read_results), {
+            "message": "子智能体 read_file 未从父 runtime checkpoint 读到真实内容",
+            "tool_call_ids": sorted(child_read_call_ids),
+            "tool_results": child_read_results,
         }
 
         leaked_child_chunks = [
@@ -355,9 +402,13 @@ async def test_subagent_stream_records_run_and_shares_output_files(
         history_response = await e2e_client.get(f"/api/chat/thread/{thread_id}/history", headers=e2e_headers)
         _assert_ok(history_response)
         history_payload = history_response.json()
+        history_text = json.dumps(history_payload, ensure_ascii=False)
         tool_call_ids = _find_tool_call_ids(history_payload)
         assert str(completed_run["id"]) in tool_call_ids
-        assert child_thread_id in json.dumps(history_payload, ensure_ascii=False)
+        assert child_thread_id in history_text
+        assert "write_file" in history_text and parent_input_path in history_text
+        assert "read_file" in history_text and output_path in history_text
+        assert "present_artifacts" in history_text and output_path in history_text
 
         files_response = await e2e_client.get(
             f"/api/chat/thread/{thread_id}/files",
@@ -373,6 +424,8 @@ async def test_subagent_stream_records_run_and_shares_output_files(
             "subagent_run": completed_run,
         }
         assert (await _read_thread_file(e2e_client, e2e_headers, thread_id, output_path)).strip() == expected_content
+        parent_content = await _read_thread_file(e2e_client, e2e_headers, thread_id, parent_input_path)
+        assert parent_content.strip() == expected_content
 
         tree_response = await e2e_client.get(
             "/api/viewer/filesystem/tree",

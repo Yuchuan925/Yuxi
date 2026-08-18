@@ -31,7 +31,9 @@ Owner：docker-compose.yml
 - 阶段 2 完成后，API 与 worker 不再向共享 `saves/logs` 追加同一日志文件，Office 预览缓存也不再写入用户数据目录；容器重建后这些可重建数据允许丢失。
 - 管理端日志接口不再隐式聚合 worker 日志；它返回 `scope: api`，前端明确标注“API 进程日志”。worker 的历史日志留存由部署环境的容器日志策略负责。
 - 阶段 3 完成后，Agent 执行读取附件不再依赖 provisioner 宿主机 uploads 路径或 Kubernetes 共享 PVC 子目录；sandbox 重建后由 worker 从 MinIO 重新 hydrate。Agent 通用文件后端仍拒绝写 uploads，受信任替换接口只接受该虚拟根目录下的路径，并在部分失败后再次清空以 fail-closed。
-- 共享 `saves`、sandbox host-path 推导和用户文件协议保持原状；本阶段不会改善它们的跨宿主机部署能力，后续阶段必须继续处理。
+- 阶段 4 完成后，outputs 由 PostgreSQL revision/current pointer 与 MinIO 不可变对象共同拥有；每个 Run 使用独立 sandbox instance，开始前从指定版本完整重建，结束时先记录 staging 并逐文件上传，随后与输出 Message/Run 终态在同一事务内条件发布。Viewer 与 artifact 读取当前版本，删除发布只复用对象的新 manifest；冲突、失败与确认不明 revision 不会成为当前版本。
+- 父 Run 调用子智能体前只创建不推进 current 的私有 checkpoint，子 Run 据此重建自己的 sandbox。子 Run 终态保留完整 checkpoint 供父 Run 合并，同时只把相对父 checkpoint 的子改动投影为公开 revision；父 Run 通过 `task/status/await` 消费完成结果时串行合并并重建自己的运行副本，仍由父 Run 最终事务发布其完整结果。被拒绝的 continuation/busy 启动会回收尚未引用的 checkpoint 与对象。
+- uploads/outputs 共用的 scoped FileStore 只负责虚拟 scope/path、对象描述符、流式 hydrate 与取消边界，不提供通用 POSIX API，也不接管 workspace 或 Skills 的 Owner。workspace、Skills、历史本地文件和最终共享 `saves` 删除仍留待后续阶段。
 - 每一阶段都可能单独停止、回滚或调整顺序；只有对应证据和用户 Review 通过后才开始下一阶段。
 
 ## 替代方案
@@ -53,6 +55,7 @@ Owner：docker-compose.yml
 | 日志接口明确且只返回 API 进程日志 | worker 或旧共享日志标记被接口返回、响应路径回退到 `saves` | `GET /api/system/logs`、`logging_config.py` | 真实 HTTP integration；返回 `scope: api`，API 标记存在，worker sibling 与旧共享日志标记不存在 | 恢复 `saves/logs`、扫描 worker runtime 或旧共享日志时失败 | Passed |
 | 管理端明确标注 API 进程日志 | UI 继续把当前 API 文件误称为全系统日志 | `DebugComponent.vue` | Web lint/unit/build 与真实登录页面截图 | 移除界面标注时 Review 拒绝 | Not run |
 | worker 从 MinIO 当前附件集合直接重建 sandbox uploads，且 sandbox 不挂载共享 uploads | 仍先写 host uploads、旧附件残留、部分 hydrate 后继续执行、Docker 或 Kind 仍挂载 uploads | `attachment_service.py`、`ProvisionerSandboxBackend`、`docker/sandbox_provisioner/app.py` | service/backend unit；真实 MinIO、HTTP、worker、sandbox 文件回读与 sandbox 重建 E2E | 恢复 `materialize_attachment_records` worker 调用、恢复 uploads bind/PVC、让清理/写入失败后继续时失败 | Passed |
+| outputs 从当前 revision 重建并在 Run 终态事务内发布，Viewer/artifact 不依赖本地文件 | staging 上传成功却没有可审计事实、旧版本覆盖新版本、Viewer 仍读取 host Path、sandbox 重建丢产物 | `thread_output_revisions`、Conversation 当前指针、`thread_output_service.py`、Viewer/artifact service | repository/service unit；真实 PostgreSQL/MinIO/HTTP；worker/sandbox E2E | 同 base 对同一路径写入不同内容时只能一个成功，不同路径或未变路径必须三方合并；对象校验失败、实际传输超限、sandbox 中途消失、恢复本地 outputs mount 时失败 | Passed |
 | 最终默认生产拓扑中 API/worker 无共享可变数据卷，provisioner 不交换宿主机 saves 路径 | 仍可通过隐式 host path 工作，测试只覆盖单容器 | Compose、provisioner contract | 无共享卷 Docker assembled-path E2E；Docker 与 Kind/Kubernetes smoke | 恢复共享 saves mount 或 host-path 推导时静态 gate/E2E 失败 | Not run |
 | 附件、outputs、Skills、workspace 在 sandbox 重建后保持一致 | 只验证 HTTP 200 或日志，没有回读 DB/对象/文件 | 对应 service/repository、文件 revision | PostgreSQL、MinIO、真实 HTTP、worker、sandbox E2E 回读 | 删除 hydrate/publish、相邻线程猜测、回退本地 Path 时失败 | Not run |
 | 并发或失联 publish 不静默覆盖新版本 | Redis 锁失效后覆盖、对象成功但 DB 未确认 | 文件 revision/publish transaction | PostgreSQL 并发 integration 与故障注入 E2E | 同 base revision 并发发布、确认前崩溃 | Not run |
@@ -102,3 +105,12 @@ Owner：docker-compose.yml
 - 工程契约检查与配套 48 tests、changed-file Ruff check/format、`git diff --check`、docs build、health/readiness 均通过。docs build 仅有既有 Rolldown、env lexer、chunk 与 esbuild deprecation warnings。
 - 本地未提供可用 Kind/Kubernetes 集群，因此本阶段完成 Kubernetes pod spec/mount 负控 unit，但真实 Kubernetes smoke 仍为 `Not run`。
 - 独立 Reviewer 首轮发现 3 个 P1 和 1 个 P2：附件 metadata 可注入跨作用域 MinIO 对象、legacy fallback 跟随符号链接、取消后后台线程可回写 stale 附件，以及整线程附件字节聚合的内存风险。修复后 freshness 复核又校正了真实历史 direct-upload 路径、旧文件名规范化和主 Agent 配置 scope。最终复核结论为所有 finding 均按正确原因关闭，无新 P0–P3 finding，patch 正确且无阻塞。
+
+## 阶段 4 验证记录
+
+- 完整 backend non-slow unit：1349 passed、26 skipped；定向 repository/scoped store/sandbox/chat/thread-files/worker/tool/subagent 主集合与随后新增的 checkpoint 投影、并行同步、幂等重放和拒绝启动回收负控均通过。覆盖虚拟 scope 越界、legacy outputs 目录 fd 遍历与 symlink 拒绝、损坏 current pointer fail-closed、文件数/字节限制、取消边界、uploads/outputs 整份重放、发布 commit 确认不明、同路径冲突、不同路径三方合并、父子私有 checkpoint/公开投影、并行父同步、递归 thread-files，以及 Message/revision/interrupted 在一次 commit 前完成。
+- 真实 PostgreSQL/MinIO/provisioner outputs integration：5 passed。同 base 同路径冲突只有一个事务成功；父长 session 发布会保留并发子文件；动态 sandbox 验证实际传输上限、逐文件 MinIO 发布与 hash/size 恢复；历史宿主 outputs 会在无 current 的首次 Run 回放、发布后再从对象恢复；被拒绝的子启动 checkpoint 会同时删除 PostgreSQL revision 与 MinIO 对象；确定性父私有文件 → 子读取/写入 → 子投影 → 父合并 → `present_artifacts` 文件存在校验通过。真实 Message、空 revision 与 `AgentRun=interrupted` 在同一 PostgreSQL transaction 提交。Viewer HTTP 36 passed，覆盖本地 outputs 不存在时的树、预览、流式下载、artifact、跨用户拒绝和以新 manifest 删除。
+- 父/子智能体外部模型 E2E 的一次运行完成父写入、子真实 `read_file`/写入和父真实读取，但模型未按提示调用 `present_artifacts`；第二次模型没有执行完整子任务。因此这两次外部模型结果均记录为失败，不用它们替代上述确定性 producer-consumer integration。
+- 真实确定性 Agent assembled-path E2E：3 passed。Run 完成行、输出 Message、request 因果与 Conversation 当前 outputs revision 在 PostgreSQL 中一致；sandbox 释放重建、附件删除后的下次执行及完整文件 scope 重放均通过。动态 Docker 容器 mount 回读只包含用户 workspace 与只读 skills，不存在 uploads 或 outputs mount。
+- 修复审查 finding 后的完整 backend non-slow unit 单命令：1330 passed、26 skipped，两个独立进程 import 边界用例本轮也在原命令内通过。此前两次运行曾分别因 1/2 个固定 30 秒 subprocess timeout 未得到单命令全绿，失败用例独立通过；保留该历史环境时序事实，不用本轮结果抹去。
+- 工程契约检查与配套 48 tests、changed-file Ruff check/format、`git diff --check`、dev/prod Compose config、docs build、health/readiness 均通过；docs build 只有既有 Rolldown、env lexer、chunk 与 esbuild deprecation warnings。本机没有可用 Kind/Kubernetes 集群，Kubernetes pod spec/mount 负控 unit 已通过，真实 Kubernetes smoke 仍为 `Not run`。

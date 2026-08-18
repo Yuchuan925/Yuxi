@@ -86,7 +86,7 @@ Kubernetes backend 使用 kubeconfig 或 Pod 内服务账号创建沙盒 Pod 和
 
 这个拓扑把沙箱按“其中代码可能被完全控制”处理。`SANDBOX_PROVISIONER_TOKEN` 只配置给 API、worker 和 provisioner，绝不能写进 `sandbox.env` 或用户级 Agent 环境变量，否则沙箱会重新获得 provisioner 管理权限。
 
-Docker 后端在启动沙盒时，会挂载用户级 workspace、文件线程级 outputs 和 skills 线程可见的只读 skills。`/home/gem/user-data/uploads` 不再从宿主机挂载，而是位于沙盒自身的临时 `/home/gem` 中；worker 在每次执行前按 Conversation 当前附件集合从 MinIO 清空并重建该目录。这样附件读取不需要 provisioner 与 worker 共享 uploads 路径，sandbox 重建后也能从持久对象恢复。容器的 `/home/gem` 使用 `tmpfs`，满足沙盒镜像启动时的可写要求；当前仍需持久化的 workspace 与 outputs 继续单独挂载。
+Docker 后端在启动沙盒时，只挂载用户级 workspace 和 skills 线程可见的只读 skills。`/home/gem/user-data/uploads` 与 `outputs` 都位于沙盒临时 `/home/gem` 中：每个 Run 使用由 run ID 区分的 sandbox instance，worker 在执行前分别从 Conversation 当前附件集合和指定 outputs revision 完整重建；执行结束后把 outputs 逐文件上传为 MinIO 不可变对象，并在 Run 终态事务内条件推进 PostgreSQL 当前版本。这样相邻 Run 和父子 Run 的后台进程不会共享临时 home，sandbox 重建不依赖宿主机线程目录，冲突也不会静默覆盖较新版本。容器的 `/home/gem` 使用 `tmpfs`，workspace 仍是当前唯一挂入沙盒的可写持久目录。
 
 为了避免长期空闲的沙盒一直占资源，provisioner 还带了一个 idle reaper。它会记录每个沙盒最近一次被 touch 的时间，超过 `SANDBOX_IDLE_TIMEOUT_SECONDS` 之后自动删除。当前默认空闲超时是 120 秒，但如果这个值小于命令执行超时，系统会自动把它提高到“命令超时 + 30 秒”，以免执行中的任务被误回收。
 
@@ -102,7 +102,7 @@ Docker 后端在启动沙盒时，会挂载用户级 workspace、文件线程级
 
 当 `SANDBOX_PROVISIONER_BACKEND=kubernetes` 时，`sandbox-provisioner` 会改用 Kubernetes Python 客户端。它会先加载 kubeconfig 或集群内配置，然后在指定的 namespace 中创建一个沙盒 Pod，再创建一个同名的 NodePort Service，把这个 Service 的 `nodePort` 暴露给 Yuxi 后端使用。
 
-Kubernetes 后端下，沙盒还是同一套镜像，还是暴露同样的 HTTP API，但存储方式和暴露方式变了。它不会依赖宿主机 Docker bind mount，而是要求有一个可写的 PVC。当前实现里真正使用的是 `THREAD_PVC`，Pod 会把这块共享存储挂到 `/mnt/shared-data`，再用 `subPath` 把 `threads/shared/<uid>/workspace`、`threads/<file_thread_id>/user-data/outputs` 和 `threads/<skills_thread_id>/skills` 分别挂到对应虚拟目录。uploads 留在 Pod 的 `emptyDir` home 中，同样由 worker 从 MinIO hydrate；子智能体使用父对话作为 `file_thread_id` 读取相同附件事实，同时保持自己的 skills scope。
+Kubernetes 后端下，沙盒还是同一套镜像并暴露相同 HTTP API，但由 Pod 承载。当前真正使用的是 `THREAD_PVC`：Pod 把它挂到 `/mnt/shared-data`，再用 `subPath` 把 `threads/shared/<uid>/workspace` 与 `threads/<skills_thread_id>/skills` 挂到对应虚拟目录。uploads 与 outputs 留在 Pod 的 `emptyDir` home 中，由 worker 从 MinIO/PostgreSQL 指定快照 hydrate；子智能体沿用父对话 `file_thread_id`，但运行在独立 instance，通过父私有 checkpoint 和子终态 revision 同步文件，同时保持自己的 skills scope。
 
 需要特别说明的是，代码里虽然读取了 `SKILLS_PVC` 这个环境变量，但当前 Pod 规格实际没有使用单独的 skills PVC，而是统一从 `THREAD_PVC` 中切 `threads/<thread_id>/skills` 这个子路径。因此，如果看到环境变量里同时出现 `SKILLS_PVC` 和 `THREAD_PVC`，应当以 `THREAD_PVC` 的真实挂载语义为准，`SKILLS_PVC` 目前更像一个预留字段。
 
@@ -170,9 +170,9 @@ saves/
 │   └── ...
 ```
 
-这里要重点理解 `workspace`、`uploads` 和 `outputs` 的区别。workspace 是用户级共享目录，位置是 `saves/threads/shared/<uid>/workspace`；outputs 仍属于文件线程目录，位置是 `saves/threads/<file_thread_id>/user-data/outputs`。宿主机 uploads 暂时保留给 API/Viewer 的 legacy 本地物化，但不再挂入 Agent sandbox。普通 Agent 的 `file_thread_id` 是当前对话，子智能体使用父对话作为 `file_thread_id`，因此 worker 会从父对话附件事实 hydrate，并把产物写回父对话 outputs。
+这里要重点理解 `workspace`、`uploads` 和 `outputs` 的区别。workspace 是用户级跨线程共享目录，位置仍是 `saves/threads/shared/<uid>/workspace`；uploads 的字节 Owner 是 MinIO、绑定事实 Owner 是 Conversation；outputs 的字节 Owner 是 MinIO，不可变 revision 与当前指针 Owner 是 PostgreSQL。宿主机线程 uploads/outputs 只为尚未迁移的历史数据和 API legacy fallback 保留，不再是 Agent runtime 协议。普通 Agent 使用当前对话文件作用域，子智能体使用父对话作为 `file_thread_id`，因此读写父对话同一份文件快照。
 
-运行时 provisioner 只把 workspace、outputs 和 skills 映射到沙盒；uploads 是沙盒内可重建的工作副本，Agent 通用文件后端对它保持只读。容器内虚拟路径仍稳定为 `/home/gem/user-data/uploads`，但它的字节 Owner 是 MinIO、绑定事实 Owner 是 Conversation，不应再从同名宿主机目录推断运行时内容。
+运行时 provisioner 只把 workspace 和 skills 映射到沙盒；uploads、outputs 都是沙盒内可重建的工作副本，其中 Agent 通用文件后端对 uploads 保持只读、对 outputs 可写。虚拟路径仍稳定为 `/home/gem/user-data/{uploads,outputs}`，不应再从同名宿主机目录推断当前运行时内容。
 
 ## 九、路径暴露规则是什么
 
@@ -340,4 +340,4 @@ CHECK_YUXI_SANDBOX_ENV_EXISTS=True
 
 如果怀疑是 Docker 地址不可达，先确认每个动态沙箱只连接自己的 `yuxi-know-sandbox-<id>` 网络，provisioner 同时连接该网络，而 API/worker 只在 `app-network`。provisioner 日志中的目标地址应是动态容器名，API/worker 拿到的地址应是 `/api/sandboxes/<id>/proxy`；代理请求必须携带 `SANDBOX_PROVISIONER_TOKEN`。如果怀疑是 Kubernetes 地址不可达，重点检查 `NODE_HOST` 和 NodePort 是否从 provisioner 可达。
 
-如果附件在 Viewer 可见但模型读不到，先检查 Conversation 中的对象元数据和 MinIO 对象，再检查 worker hydrate 错误与 sandbox 内 `/home/gem/user-data/uploads`；不要再以宿主机 uploads 是否存在判断 Agent 可见性。workspace、outputs 或 skills 问题仍需分别检查宿主机/PVC 路径、当前 `file_thread_id` / `skills_thread_id` 和实际挂载。
+如果附件在 Viewer 可见但模型读不到，先检查 Conversation 对象元数据、MinIO 对象、worker hydrate 错误和 sandbox uploads。如果 outputs 异常，检查 Conversation 当前 revision 指针、`thread_output_revisions` 状态与对象描述符，再检查 sandbox outputs；不要再用宿主机同名目录判断当前内容。workspace 或 skills 问题仍需检查宿主机/PVC 路径、当前 scope 和实际挂载。

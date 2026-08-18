@@ -1,6 +1,9 @@
+import asyncio
 import os
 import re
-from pathlib import Path
+import tempfile
+from contextlib import suppress
+from pathlib import Path, PurePosixPath
 from typing import Annotated
 
 import httpx
@@ -11,6 +14,7 @@ from langgraph.prebuilt.tool_node import ToolRuntime
 from langgraph.types import Command, interrupt
 from pydantic import BaseModel, Field
 
+from yuxi.agents.backends.sandbox import ProvisionerSandboxBackend
 from yuxi.agents.toolkits.registry import ToolExtraMetadata, _all_tool_instances, _extra_registry, tool
 from yuxi.config.options import system_options
 from yuxi.utils import logger
@@ -222,47 +226,49 @@ class PresentArtifactsInput(BaseModel):
 
 
 def _normalize_presented_artifact_path(filepath: str, runtime: ToolRuntime) -> str:
-    from yuxi.agents.backends.sandbox.paths import (
-        VIRTUAL_PATH_PREFIX,
-        ensure_thread_dirs,
-        resolve_virtual_path,
-        sandbox_outputs_dir,
-    )
+    from yuxi.agents.backends.sandbox.backend import ProvisionerSandboxBackend
+    from yuxi.services.scoped_file_store import validate_scoped_virtual_path
+    from yuxi.utils.paths import OUTPUTS_DIR_NAME
 
-    outputs_virtual_prefix = f"{VIRTUAL_PATH_PREFIX}/outputs"
+    outputs_virtual_prefix = VIRTUAL_PATH_OUTPUTS
     runtime_context = runtime.context
-    thread_id = getattr(runtime_context, "file_thread_id", None) or getattr(runtime_context, "thread_id", None)
-    if not thread_id:
+    runtime_thread_id = getattr(runtime_context, "thread_id", None)
+    if not runtime_thread_id:
         raise ValueError("当前运行时缺少 thread_id")
     uid = getattr(runtime_context, "uid", None)
     if not uid:
         raise ValueError("当前运行时缺少 uid")
 
-    ensure_thread_dirs(thread_id, str(uid))
-    outputs_dir = sandbox_outputs_dir(thread_id).resolve()
     normalized_input = str(filepath or "").strip()
     if not normalized_input:
         raise ValueError("文件路径不能为空")
 
-    stripped = normalized_input.lstrip("/")
-    virtual_prefix = VIRTUAL_PATH_PREFIX.lstrip("/")
-    if stripped == virtual_prefix or stripped.startswith(f"{virtual_prefix}/"):
-        actual_path = resolve_virtual_path(thread_id, normalized_input, uid=str(uid))
-    else:
-        actual_path = Path(normalized_input).expanduser().resolve()
-
-    if not actual_path.exists() or not actual_path.is_file():
-        raise ValueError(f"文件不存在或不是普通文件: {normalized_input}")
-
+    candidate = normalized_input if normalized_input.startswith("/") else f"/{normalized_input}"
     try:
-        relative_path = actual_path.relative_to(outputs_dir)
+        normalized_path = validate_scoped_virtual_path(OUTPUTS_DIR_NAME, candidate)
     except ValueError as exc:
         raise ValueError(f"只允许展示 {outputs_virtual_prefix}/ 下的文件: {normalized_input}") from exc
+
+    file_thread_id = getattr(runtime_context, "file_thread_id", None) or runtime_thread_id
+    skills_thread_id = getattr(runtime_context, "skills_thread_id", None) or runtime_thread_id
+    sandbox_instance_id = getattr(runtime_context, "sandbox_instance_id", None) or runtime_thread_id
+    backend = ProvisionerSandboxBackend(
+        thread_id=runtime_thread_id,
+        uid=str(uid),
+        file_thread_id=file_thread_id,
+        skills_thread_id=skills_thread_id,
+        sandbox_instance_id=sandbox_instance_id,
+        create_if_missing=False,
+    )
+    if not backend.output_file_exists(normalized_path):
+        raise ValueError(f"文件不存在或不是普通文件: {normalized_input}")
+
+    relative_path = PurePosixPath(normalized_path).relative_to(PurePosixPath(outputs_virtual_prefix))
 
     if relative_path.parts and relative_path.parts[0] in _PRESENT_ARTIFACTS_INTERNAL_DIR_NAMES:
         raise ValueError(f"不允许展示工具调用阶段文件: {outputs_virtual_prefix}/{relative_path.as_posix()}")
 
-    return f"{outputs_virtual_prefix}/{relative_path.as_posix()}"
+    return normalized_path
 
 
 PRESENT_ARTIFACTS_DESCRIPTION = f"""
@@ -342,19 +348,54 @@ OCR_PARSE_FILE_DESCRIPTION = f"""
 )
 async def ocr_parse_file(file_path: str, runtime: ToolRuntime, ocr_engine: str | None = None) -> dict:
     """Parse a sandbox file with OCR, persist Markdown output, and return only a short result summary."""
-    from yuxi.agents.backends.sandbox.paths import virtual_path_for_thread_file
     from yuxi.services.ocr_service import parse_document
 
-    file_thread_id, uid, actual_path = _resolve_ocr_source_path(file_path, runtime)
+    runtime_thread_id, file_thread_id, skills_thread_id, uid, sandbox_instance_id = _resolve_runtime_sandbox_scope(
+        runtime
+    )
+    source_virtual_path = _resolve_ocr_source_path(file_path, runtime)
+    backend = ProvisionerSandboxBackend(
+        thread_id=runtime_thread_id,
+        uid=uid,
+        file_thread_id=file_thread_id,
+        skills_thread_id=skills_thread_id,
+        sandbox_instance_id=sandbox_instance_id,
+        create_if_missing=False,
+    )
     from yuxi.services.ocr_service import resolve_ocr_engine_id
 
     engine = resolve_ocr_engine_id(ocr_engine, (await system_options.get())["default_ocr_engine"])
-    markdown = await parse_document(str(actual_path), params={"ocr_engine": engine})
-
-    output_path = _next_ocr_output_path(file_thread_id, actual_path)
-    output_path.write_text(markdown, encoding="utf-8")
-    parsed_path = virtual_path_for_thread_file(file_thread_id, output_path, uid=uid)
-    source_virtual_path = virtual_path_for_thread_file(file_thread_id, actual_path, uid=uid)
+    source_temp = ""
+    output_temp = ""
+    try:
+        suffix = PurePosixPath(source_virtual_path).suffix
+        with tempfile.NamedTemporaryFile(prefix="yuxi-ocr-source-", suffix=suffix, delete=False) as temp_file:
+            source_temp = temp_file.name
+        try:
+            await asyncio.to_thread(
+                backend.download_user_data_file_to_path,
+                source_virtual_path,
+                source_temp,
+                100 * 1024 * 1024,
+            )
+        except ValueError as exc:
+            raise ValueError(f"文件不存在或不是普通文件: {source_virtual_path}") from exc
+        markdown = await parse_document(source_temp, params={"ocr_engine": engine})
+        parsed_path = _next_ocr_output_path(backend, PurePosixPath(source_virtual_path))
+        with tempfile.NamedTemporaryFile(prefix="yuxi-ocr-output-", delete=False) as temp_file:
+            output_temp = temp_file.name
+            temp_file.write(markdown.encode("utf-8"))
+        await asyncio.to_thread(
+            backend.upload_scope_file_from_path,
+            OUTPUTS_DIR_NAME,
+            parsed_path,
+            output_temp,
+        )
+    finally:
+        for temp_path in (source_temp, output_temp):
+            if temp_path:
+                with suppress(FileNotFoundError):
+                    await asyncio.to_thread(os.unlink, temp_path)
     preview, truncated = _ocr_preview(markdown)
 
     return {
@@ -367,11 +408,11 @@ async def ocr_parse_file(file_path: str, runtime: ToolRuntime, ocr_engine: str |
     }
 
 
-def _resolve_ocr_source_path(file_path: str, runtime: ToolRuntime) -> tuple[str, str, Path]:
-    """Resolve a sandbox virtual path to a host file inside the Agent-visible user-data roots."""
-    from yuxi.agents.backends.sandbox.paths import get_virtual_path_prefix, resolve_virtual_path
+def _resolve_ocr_source_path(file_path: str, runtime: ToolRuntime) -> str:
+    """校验 OCR 输入位于 Agent user-data 的受支持命名空间。"""
+    from yuxi.agents.backends.sandbox.paths import get_virtual_path_prefix
 
-    file_thread_id, uid = _resolve_runtime_file_scope(runtime)
+    _resolve_runtime_sandbox_scope(runtime)
 
     normalized_input = str(file_path or "").strip()
     if not normalized_input:
@@ -388,16 +429,7 @@ def _resolve_ocr_source_path(file_path: str, runtime: ToolRuntime) -> tuple[str,
         allowed = ", ".join(f"{virtual_prefix}/{item}" for item in sorted(_OCR_PARSE_ALLOWED_DIRS))
         raise ValueError(f"只允许解析 {allowed} 下的文件")
 
-    try:
-        actual_path = resolve_virtual_path(file_thread_id, clean_virtual_path, uid=uid)
-    except ValueError as exc:
-        raise ValueError(f"只允许解析 {virtual_prefix} 下的沙盒虚拟路径") from exc
-    if not actual_path.exists():
-        raise ValueError(f"文件不存在: {clean_virtual_path}")
-    if not actual_path.is_file():
-        raise ValueError(f"路径不是普通文件: {clean_virtual_path}")
-
-    return file_thread_id, uid, actual_path
+    return clean_virtual_path
 
 
 def _resolve_runtime_file_scope(runtime: ToolRuntime) -> tuple[str, str]:
@@ -409,6 +441,20 @@ def _resolve_runtime_file_scope(runtime: ToolRuntime) -> tuple[str, str]:
     if not uid:
         raise ValueError("当前运行时缺少 uid")
     return thread_id, uid
+
+
+def _resolve_runtime_sandbox_scope(runtime: ToolRuntime) -> tuple[str, str, str, str, str]:
+    """读取 runtime、文件、Skills 与用户四个 sandbox scope。"""
+    runtime_thread_id = _runtime_scope_value(runtime, "thread_id")
+    file_thread_id = _runtime_scope_value(runtime, "file_thread_id") or runtime_thread_id
+    skills_thread_id = _runtime_scope_value(runtime, "skills_thread_id") or runtime_thread_id
+    uid = _runtime_scope_value(runtime, "uid")
+    sandbox_instance_id = _runtime_scope_value(runtime, "sandbox_instance_id") or runtime_thread_id
+    if not runtime_thread_id:
+        raise ValueError("当前运行时缺少 thread_id")
+    if not uid:
+        raise ValueError("当前运行时缺少 uid")
+    return runtime_thread_id, str(file_thread_id), str(skills_thread_id), uid, str(sandbox_instance_id)
 
 
 def _runtime_scope_value(runtime: ToolRuntime, key: str) -> str | None:
@@ -427,18 +473,13 @@ def _runtime_scope_value(runtime: ToolRuntime, key: str) -> str | None:
     return None
 
 
-def _next_ocr_output_path(thread_id: str, source_path: Path) -> Path:
-    """Choose a non-conflicting Markdown output path under the thread outputs/ocr directory."""
-    from yuxi.agents.backends.sandbox.paths import sandbox_outputs_dir
-
-    output_dir = sandbox_outputs_dir(thread_id) / _OCR_OUTPUT_DIR_NAME
-    output_dir.mkdir(parents=True, exist_ok=True)
-
+def _next_ocr_output_path(backend, source_path: PurePosixPath) -> str:
+    """在当前 runtime sandbox outputs 中选择不冲突的 Markdown 路径。"""
     base_name = _safe_ocr_output_stem(source_path)
-    candidate = output_dir / f"{base_name}.md"
+    candidate = f"{VIRTUAL_PATH_OUTPUTS}/{_OCR_OUTPUT_DIR_NAME}/{base_name}.md"
     index = 1
-    while candidate.exists():
-        candidate = output_dir / f"{base_name}-{index}.md"
+    while backend.output_file_exists(candidate):
+        candidate = f"{VIRTUAL_PATH_OUTPUTS}/{_OCR_OUTPUT_DIR_NAME}/{base_name}-{index}.md"
         index += 1
     return candidate
 

@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import os
 import stat
 import uuid
@@ -16,6 +17,11 @@ from yuxi.repositories.agent_run_repository import AgentRunRepository
 from yuxi.repositories.agent_run_request_repository import AgentRunRequestRepository
 from yuxi.repositories.conversation_repository import ConversationRepository
 from yuxi.services.mention_search_service import invalidate_mention_cache
+from yuxi.services.scoped_file_store import (
+    await_blocking_file_call,
+    replace_scope_with_objects,
+    validate_scoped_virtual_path,
+)
 from yuxi.storage.minio import StorageError, get_minio_client
 from yuxi.utils.datetime_utils import utc_isoformat
 from yuxi.utils.logging_config import logger
@@ -24,6 +30,8 @@ from yuxi.utils.upload_utils import read_upload_with_limit, write_upload_to_path
 
 ATTACHMENT_ALLOWED_EXTENSIONS: tuple[str, ...] = ()
 MAX_ATTACHMENT_SIZE_BYTES = 5 * 1024 * 1024  # 5 MB
+MAX_ATTACHMENT_HYDRATE_FILES = 1000
+MAX_ATTACHMENT_HYDRATE_BYTES = 100 * 1024 * 1024
 MAX_ATTACHMENT_MARKDOWN_CHARS = 32_000  # TODO: 转 MARKDOWN的时候，不应该裁剪
 TMP_ATTACHMENT_PREFIX = "tmp/chat_attachments"
 THREAD_ATTACHMENT_PREFIX = "threads"
@@ -54,6 +62,8 @@ class AttachmentHydrateSource:
     object_name: str | None = None
     legacy_parts: tuple[str, ...] | None = None
     inline_content: bytes | None = None
+    size: int | None = None
+    sha256: str | None = None
 
 
 async def parse_document(source: str, params: dict | None = None, db: AsyncSession | None = None) -> str:
@@ -282,6 +292,7 @@ async def _store_attachment(
         "file_name": file_name,
         "file_type": file_type,
         "file_size": len(file_content),
+        "original_sha256": hashlib.sha256(file_content).hexdigest(),
         "status": "uploaded",
         "uploaded_at": utc_isoformat(),
         "path": original_path,
@@ -316,6 +327,8 @@ async def _store_attachment(
             "markdown": parsed_markdown,
             "truncated": truncated,
             "markdown_object_name": markdown_object_name,
+            "markdown_size": len(parsed_markdown.encode("utf-8")),
+            "markdown_sha256": hashlib.sha256(parsed_markdown.encode("utf-8")).hexdigest(),
         }
     )
     return record
@@ -466,6 +479,10 @@ def _validated_attachment_hydrate_sources(
                 path=expected_original_path,
                 bucket_name=expected_bucket,
                 object_name=expected_original_object,
+                size=file_size if isinstance(file_size, int) else None,
+                sha256=(
+                    attachment.get("original_sha256") if isinstance(attachment.get("original_sha256"), str) else None
+                ),
             )
         else:
             raise HTTPException(status_code=400, detail="附件对象作用域无效")
@@ -483,10 +500,24 @@ def _validated_attachment_hydrate_sources(
         if markdown_object_name is not None:
             if bucket_name != expected_bucket or markdown_object_name != expected_markdown_object:
                 raise HTTPException(status_code=400, detail="附件解析对象作用域无效")
+            markdown_content = attachment.get("markdown")
+            markdown_bytes = markdown_content.encode("utf-8") if isinstance(markdown_content, str) else None
+            markdown_size = attachment.get("markdown_size")
+            markdown_digest = attachment.get("markdown_sha256")
             markdown_source = AttachmentHydrateSource(
                 path=expected_markdown_path,
                 bucket_name=expected_bucket,
                 object_name=expected_markdown_object,
+                size=(
+                    markdown_size
+                    if isinstance(markdown_size, int)
+                    else (len(markdown_bytes) if markdown_bytes is not None else None)
+                ),
+                sha256=(
+                    markdown_digest
+                    if isinstance(markdown_digest, str)
+                    else (hashlib.sha256(markdown_bytes).hexdigest() if markdown_bytes is not None else None)
+                ),
             )
         elif isinstance(attachment.get("markdown"), str):
             markdown_source = AttachmentHydrateSource(
@@ -542,15 +573,7 @@ def _read_legacy_upload_file(uploads_dir: Path, parts: tuple[str, ...]) -> bytes
 
 async def _await_blocking_hydrate_call(function, *args):
     """取消时仍等待已启动的阻塞 sandbox 操作到达终点。"""
-    task = asyncio.create_task(asyncio.to_thread(function, *args))
-    try:
-        return await asyncio.shield(task)
-    except asyncio.CancelledError:
-        try:
-            await task
-        except Exception as exc:  # noqa: BLE001
-            logger.error(f"Cancelled attachment hydrate operation also failed: {exc}")
-        raise
+    return await await_blocking_file_call(function, *args)
 
 
 async def hydrate_attachment_records_to_sandbox(
@@ -560,6 +583,8 @@ async def hydrate_attachment_records_to_sandbox(
     *,
     file_thread_id: str | None = None,
     skills_thread_id: str | None = None,
+    sandbox_instance_id: str | None = None,
+    create_if_missing: bool = True,
 ) -> None:
     """从持久附件事实替换 sandbox 内完整的只读 uploads。"""
     file_thread_id = str(file_thread_id or runtime_thread_id)
@@ -575,11 +600,41 @@ async def hydrate_attachment_records_to_sandbox(
         uid=uid,
         file_thread_id=file_thread_id,
         skills_thread_id=skills_thread_id,
+        sandbox_instance_id=sandbox_instance_id,
+        create_if_missing=create_if_missing,
     )
+
+    if all(source.bucket_name is not None and source.object_name is not None for source in sources):
+        descriptors = [
+            {
+                "path": source.path,
+                "bucket_name": source.bucket_name,
+                "object_name": source.object_name,
+                "size": source.size,
+                "sha256": source.sha256,
+            }
+            for source in sources
+        ]
+        try:
+            await replace_scope_with_objects(
+                backend=backend,
+                scope="uploads",
+                files=descriptors,
+                minio_client=minio_client,
+                max_files=MAX_ATTACHMENT_HYDRATE_FILES,
+                max_bytes=MAX_ATTACHMENT_HYDRATE_BYTES,
+                max_file_bytes=MAX_ATTACHMENT_SIZE_BYTES,
+                require_integrity=False,
+            )
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=f"附件对象不存在: {exc}") from exc
+        return
 
     try:
         await _await_blocking_hydrate_call(backend.clear_upload_files)
+        hydrated_total_size = 0
         for source in sources:
+            validate_scoped_virtual_path("uploads", source.path)
             if source.bucket_name is not None and source.object_name is not None:
                 try:
                     content = await minio_client.adownload_file(source.bucket_name, source.object_name)
@@ -595,6 +650,9 @@ async def hydrate_attachment_records_to_sandbox(
                 )
             if len(content) > MAX_ATTACHMENT_SIZE_BYTES:
                 raise HTTPException(status_code=400, detail="附件对象超过大小限制")
+            hydrated_total_size += len(content)
+            if hydrated_total_size > MAX_ATTACHMENT_HYDRATE_BYTES:
+                raise HTTPException(status_code=400, detail="附件集合超过大小限制")
             await _await_blocking_hydrate_call(backend.write_upload_file, source.path, content)
     except (Exception, asyncio.CancelledError):
         try:

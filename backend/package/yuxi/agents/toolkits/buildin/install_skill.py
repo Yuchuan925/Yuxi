@@ -35,7 +35,15 @@ class InstallSkillInput(BaseModel):
     )
 
 
-def _prepare_skill_from_sandbox(sandbox_path: str, thread_id: str, uid: str, staging_root: Path) -> Path:
+def _prepare_skill_from_sandbox(
+    sandbox_path: str,
+    thread_id: str,
+    uid: str,
+    staging_root: Path,
+    file_thread_id: str | None = None,
+    skills_thread_id: str | None = None,
+    sandbox_instance_id: str | None = None,
+) -> Path:
     """从 Sandbox 路径准备 skill 目录，返回本地暂存目录。"""
     from yuxi.agents.backends.sandbox import ProvisionerSandboxBackend
     from yuxi.agents.skills.service import is_valid_skill_slug
@@ -48,7 +56,14 @@ def _prepare_skill_from_sandbox(sandbox_path: str, thread_id: str, uid: str, sta
         raise ValueError(f"不支持的沙盒路径: {sandbox_path}。{SANDBOX_PATH_HINT}")
 
     staging = staging_root / slug
-    backend = ProvisionerSandboxBackend(thread_id=thread_id, uid=uid)
+    backend = ProvisionerSandboxBackend(
+        thread_id=thread_id,
+        uid=uid,
+        file_thread_id=file_thread_id,
+        skills_thread_id=skills_thread_id,
+        sandbox_instance_id=sandbox_instance_id,
+        create_if_missing=False,
+    )
     download_sandbox_directory(
         backend,
         sandbox_path,
@@ -145,6 +160,9 @@ async def _run_install_task(
                     thread_id,
                     uid,
                     Path(tmp),
+                    getattr(runtime_context, "file_thread_id", None),
+                    getattr(runtime_context, "skills_thread_id", None),
+                    getattr(runtime_context, "sandbox_instance_id", None),
                 )
                 item = await install_personal_skill_dir(uid, source_dir)
                 installed_items = [item]

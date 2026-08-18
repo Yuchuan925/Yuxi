@@ -48,6 +48,37 @@ AGENT_RUN_FACT_SCHEMA_STATEMENTS = (
     ),
     "CREATE INDEX IF NOT EXISTS ix_agent_run_attempts_open ON agent_run_attempts(run_id, finished_at)",
 )
+THREAD_OUTPUT_SCHEMA_STATEMENTS = (
+    "ALTER TABLE IF EXISTS conversations ADD COLUMN IF NOT EXISTS current_output_revision_id VARCHAR(64)",
+    """
+    CREATE TABLE IF NOT EXISTS thread_output_revisions (
+        id VARCHAR(64) PRIMARY KEY,
+        conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+        thread_id VARCHAR(64) NOT NULL,
+        uid VARCHAR(64) NOT NULL,
+        run_id VARCHAR(64) REFERENCES agent_runs(id) ON DELETE SET NULL,
+        base_revision_id VARCHAR(64),
+        status VARCHAR(32) NOT NULL DEFAULT 'staging',
+        files JSONB NOT NULL DEFAULT '[]'::jsonb,
+        error_message TEXT,
+        created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT NOW(),
+        published_at TIMESTAMP WITHOUT TIME ZONE,
+        updated_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT NOW()
+    )
+    """,
+    (
+        "CREATE INDEX IF NOT EXISTS ix_thread_output_revisions_conversation_id "
+        "ON thread_output_revisions(conversation_id)"
+    ),
+    "CREATE INDEX IF NOT EXISTS ix_thread_output_revisions_thread_id ON thread_output_revisions(thread_id)",
+    "CREATE INDEX IF NOT EXISTS ix_thread_output_revisions_uid ON thread_output_revisions(uid)",
+    "CREATE INDEX IF NOT EXISTS ix_thread_output_revisions_run_id ON thread_output_revisions(run_id)",
+    "CREATE INDEX IF NOT EXISTS ix_thread_output_revisions_status ON thread_output_revisions(status)",
+    """
+    CREATE INDEX IF NOT EXISTS ix_thread_output_revisions_thread_created
+    ON thread_output_revisions(thread_id, created_at)
+    """,
+)
 
 
 class PostgresManager(metaclass=SingletonMeta):
@@ -576,6 +607,7 @@ class PostgresManager(metaclass=SingletonMeta):
             "ALTER TABLE IF EXISTS skills ADD COLUMN IF NOT EXISTS content_hash VARCHAR(128)",
             "ALTER TABLE IF EXISTS conversations ADD COLUMN IF NOT EXISTS is_pinned BOOLEAN NOT NULL DEFAULT FALSE",
             "ALTER TABLE IF EXISTS conversations ADD COLUMN IF NOT EXISTS last_viewed_run_id VARCHAR(64)",
+            *THREAD_OUTPUT_SCHEMA_STATEMENTS,
             "ALTER TABLE IF EXISTS mcp_servers ADD COLUMN IF NOT EXISTS env JSONB",
             """
             CREATE TABLE IF NOT EXISTS agent_envs (

@@ -123,6 +123,7 @@ class _BackendScope:
     skill_sources: dict[str, str]
     file_thread_id: str
     skills_thread_id: str
+    sandbox_instance_id: str
 
     @classmethod
     def from_runtime(cls, runtime) -> _BackendScope:
@@ -169,6 +170,7 @@ class _BackendScope:
             skill_sources=skill_sources,
             file_thread_id=string_value("file_thread_id") or thread_id,
             skills_thread_id=string_value("skills_thread_id") or thread_id,
+            sandbox_instance_id=string_value("sandbox_instance_id") or thread_id,
         )
 
     def create_backend(self) -> CompositeBackend:
@@ -181,6 +183,8 @@ class _BackendScope:
                 skill_sources=self.skill_sources,
                 file_thread_id=self.file_thread_id,
                 skills_thread_id=self.skills_thread_id,
+                sandbox_instance_id=self.sandbox_instance_id,
+                create_if_missing=False,
             ),
             routes={
                 "/skills/": SelectedSkillsReadonlyBackend(

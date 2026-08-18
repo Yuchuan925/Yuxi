@@ -86,7 +86,7 @@ Yuxi 是一个面向 RAG、知识图谱和多智能体工作流的知识库平�
 7. 智能体通过 middleware 组合沙盒文件系统、附件、Skills、MCP、SubAgent、审批、摘要和工具能力。知识库能力主要由内置 `knowledge-base` Skill 及其依赖工具按需开放。
 8. Run 事件写入 Redis Stream，取消通过 Redis key/pubsub 传递；AgentRun、消息投递状态和最终结果写入 PostgreSQL。任何 assistant Message 发布前先在 Run 行锁内验证当前 attempt；正常输出、绑定和 `completed` 同事务提交。worker 失联后，过期 lease 会幂等收敛为带 `worker_lease_expired` 原因的 `failed`。该失败只证明执行 ownership 已丢失，外部副作用仍需按 at-least-once 语义核对。
 9. 前端在排队阶段消费 Request SSE，派发后切换到 Run SSE，并根据数据库状态处理断线恢复和终态补偿。
-10. 附件和对象数据保存在 MinIO；智能体需要操作的文件映射到线程隔离的沙盒路径，生成物写入用户可见的输出目录。
+10. 附件与 outputs 对象保存在 MinIO；Conversation 附件事实及 PostgreSQL outputs revision/current pointer 决定每次 Run 重建的文件快照，沙盒只保存可重建工作副本。
 
 审批或人机输入产生的 resume 请求会从 LangGraph checkpoint 恢复，并创建新的 AgentRun；它不重新进入普通消息 FIFO 接入流程。
 
@@ -113,6 +113,6 @@ Yuxi 是一个面向 RAG、知识图谱和多智能体工作流的知识库平�
 
 - **配置**：Compose 和 `.env` 提供部署配置；管理员系统配置、用户配置与模型供应商以 PostgreSQL 为持久化 Owner，Redis 只提供可失效缓存；旧 `base.toml` 仅用于一次性迁移已有系统配置。
 - **权限**：前端路由和页面标签提供体验级约束，FastAPI 认证依赖和 repository 可见性查询提供最终授权。
-- **状态与存储**：PostgreSQL 保存请求、Run、消息、业务和知识库元数据，也是 Compose 与 Python 默认路径的 LangGraph checkpoint Owner；SQLite 仅在显式选择时使用，初始化失败不会切换为内存语义。Redis 保存短期事件、取消信号、ARQ 和跨进程缓存；MinIO、沙盒与本地 `saves` 分别承载不同生命周期的文件。
+- **状态与存储**：PostgreSQL 保存请求、Run、消息、outputs revision/current pointer、业务和知识库元数据，也是 Compose 与 Python 默认路径的 LangGraph checkpoint Owner；SQLite 仅在显式选择时使用，初始化失败不会切换为内存语义。Redis 保存短期事件、取消信号、ARQ 和跨进程缓存；MinIO 保存附件与 outputs 对象字节，沙盒保存可重建工作副本，本地 `saves` 仍承载 workspace、Skills 与待迁移历史文件。
 - **文档处理**：上传文件先进入对象存储和文件元数据边界，再经过解析、分块和知识库实现；解析器、分块策略和知识库连接器保持可替换。
 - **观测与调试**：优先查看 `api-dev`、`worker-dev` 和相关依赖日志；Langfuse 集中在服务层和 AgentRun 上下文；SSE 问题同时检查 Redis 事件与 PostgreSQL 终态。

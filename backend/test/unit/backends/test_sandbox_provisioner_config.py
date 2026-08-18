@@ -141,20 +141,18 @@ def test_memory_backend_accepts_split_thread_ids(monkeypatch):
     assert backend.discover("sandbox-1") is record
 
 
-def test_docker_mount_checks_use_file_and_skills_thread_ids(monkeypatch, tmp_path):
+def test_docker_mount_checks_reject_uploads_and_outputs_mounts(monkeypatch, tmp_path):
     monkeypatch.setenv("PROVISIONER_BACKEND", "memory")
     module = _load_module()
     backend = object.__new__(module.LocalContainerProvisionerBackend)
     backend._threads_host_path = str(tmp_path)
 
     workspace = tmp_path / "shared" / "user-1" / "workspace"
-    outputs = tmp_path / "parent-thread" / "user-data" / "outputs"
     skills = tmp_path / "child-skills-thread" / "skills"
     container = SimpleNamespace(
         attrs={
             "Mounts": [
                 {"Destination": "/home/gem/user-data/workspace", "Source": str(workspace)},
-                {"Destination": "/home/gem/user-data/outputs", "Source": str(outputs)},
                 {"Destination": "/home/gem/skills", "Source": str(skills)},
             ]
         }
@@ -162,8 +160,13 @@ def test_docker_mount_checks_use_file_and_skills_thread_ids(monkeypatch, tmp_pat
 
     assert backend._has_expected_user_data_mounts(container, "parent-thread", "user-1") is True
     assert backend._is_expected_skills_mount(container, "child-skills-thread") is True
-    assert backend._has_expected_user_data_mounts(container, "child-thread", "user-1") is False
     assert backend._is_expected_skills_mount(container, "parent-thread") is False
+
+    container.attrs["Mounts"].append(
+        {"Destination": "/home/gem/user-data/outputs", "Source": str(tmp_path / "legacy-outputs")}
+    )
+    assert backend._has_expected_user_data_mounts(container, "parent-thread", "user-1") is False
+    container.attrs["Mounts"].pop()
 
     container.attrs["Mounts"].append(
         {"Destination": "/home/gem/user-data/uploads", "Source": str(tmp_path / "legacy-uploads")}
@@ -181,13 +184,12 @@ def test_docker_sandbox_mounts_shared_workspace_without_thread_history_projectio
     destinations = {mount["bind"] for mount in volumes.values()}
     assert destinations == {
         "/home/gem/user-data/workspace",
-        "/home/gem/user-data/outputs",
         "/home/gem/skills",
     }
     assert all("/agents/chats" not in destination for destination in destinations)
 
 
-def test_kubernetes_mount_check_uses_file_and_skills_thread_ids(monkeypatch):
+def test_kubernetes_mount_check_rejects_uploads_and_outputs_mounts(monkeypatch):
     monkeypatch.setenv("PROVISIONER_BACKEND", "memory")
     module = _load_module()
     pod = SimpleNamespace(
@@ -199,10 +201,6 @@ def test_kubernetes_mount_check_uses_file_and_skills_thread_ids(monkeypatch):
                         SimpleNamespace(
                             mount_path="/home/gem/user-data/workspace",
                             sub_path="threads/shared/user-1/workspace",
-                        ),
-                        SimpleNamespace(
-                            mount_path="/home/gem/user-data/outputs",
-                            sub_path="threads/parent-thread/user-data/outputs",
                         ),
                         SimpleNamespace(mount_path="/home/gem/skills", sub_path="threads/child-skills-thread/skills"),
                     ],
@@ -217,12 +215,19 @@ def test_kubernetes_mount_check_uses_file_and_skills_thread_ids(monkeypatch):
         skills_thread_id="child-skills-thread",
         uid="user-1",
     )
+    pod.spec.containers[0].volume_mounts.append(
+        SimpleNamespace(
+            mount_path="/home/gem/user-data/outputs",
+            sub_path="threads/parent-thread/user-data/outputs",
+        )
+    )
     assert not module.KubernetesProvisionerBackend._pod_has_expected_mounts(
         pod,
-        file_thread_id="child-thread",
+        file_thread_id="parent-thread",
         skills_thread_id="child-skills-thread",
         uid="user-1",
     )
+    pod.spec.containers[0].volume_mounts.pop()
 
     pod.spec.containers[0].volume_mounts.append(
         SimpleNamespace(

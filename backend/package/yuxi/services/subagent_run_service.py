@@ -111,6 +111,7 @@ class SubagentRunService:
         requested_thread_id: str | None = None,
         file_thread_id: str | None = None,
         model_spec: str | None = None,
+        output_base_revision_id: str | None = None,
     ) -> SubagentStartResult:
         """启动或继续一个后台子智能体 run，并在新建时入队 worker。"""
 
@@ -151,6 +152,7 @@ class SubagentRunService:
                 relation=relation,
                 tool_call_id=tool_call_id,
                 file_thread_id=file_thread_id,
+                output_base_revision_id=output_base_revision_id,
             )
         except HTTPException as exc:
             detail = exc.detail
@@ -197,6 +199,7 @@ class SubagentRunService:
         relation: SubagentThread,
         tool_call_id: str,
         file_thread_id: str | None,
+        output_base_revision_id: str | None = None,
     ) -> tuple[Any, bool]:
         """创建后台子智能体 run，并把规范化输入消息保存为该 run 的输入。"""
         if not input_message.content:
@@ -233,6 +236,7 @@ class SubagentRunService:
             "parent_thread_id": creator_run.conversation_thread_id,
             "file_thread_id": file_thread_id or creator_run.conversation_thread_id,
             "skills_thread_id": relation.child_thread_id,
+            "output_base_revision_id": output_base_revision_id,
         }
         input_payload = {
             "model_spec": resolved_model_spec,

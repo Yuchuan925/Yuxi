@@ -17,9 +17,10 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from yuxi.repositories.agent_run_repository import AgentRunRepository
 from yuxi.repositories.conversation_repository import ConversationRepository
+from yuxi.repositories.thread_output_repository import ThreadOutputRepository
 from yuxi.services import chat_service, run_worker
-from yuxi.storage.postgres.manager import AGENT_RUN_LEASE_SCHEMA_STATEMENTS
-from yuxi.storage.postgres.models_business import AgentRun, Conversation, Message
+from yuxi.storage.postgres.manager import AGENT_RUN_LEASE_SCHEMA_STATEMENTS, THREAD_OUTPUT_SCHEMA_STATEMENTS
+from yuxi.storage.postgres.models_business import AgentRun, Conversation, Message, ThreadOutputRevision
 from yuxi.utils.datetime_utils import utc_now_naive
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
@@ -31,6 +32,8 @@ async def lease_database():
     async with engine.begin() as connection:
         for _ in range(2):
             for statement in AGENT_RUN_LEASE_SCHEMA_STATEMENTS:
+                await connection.execute(text(statement))
+            for statement in THREAD_OUTPUT_SCHEMA_STATEMENTS:
                 await connection.execute(text(statement))
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
     try:
@@ -287,6 +290,74 @@ async def test_invalid_attempt_cannot_leave_assistant_message(
         assert persisted_run.output_message_id is None
         assert persisted_run.status == run_status
         assert assistant_messages == []
+    finally:
+        await _cleanup_runs(session_factory, [thread_id])
+
+
+async def test_interrupt_message_revision_and_run_terminal_commit_together(lease_database):
+    """真实事务中断点必须同时推进 Message、revision 与 Run 终态。"""
+    _, session_factory = lease_database
+    owner = "worker-interrupt:attempt-owner"
+    run_id, thread_id, _ = await _create_run(session_factory)
+
+    class FakeGraph:
+        async def aget_state(self, _config):
+            return SimpleNamespace(values={"messages": [AIMessage(id=f"output-{run_id}", content="waiting")]})
+
+    class FakeAgent:
+        async def get_graph(self, *, context):
+            return FakeGraph()
+
+    revision_id = uuid.uuid4().hex
+    try:
+        async with session_factory() as db:
+            run, acquired = await AgentRunRepository(db).mark_running(
+                run_id,
+                worker_id=owner,
+                lease_seconds=60,
+            )
+            conversation = await db.get(Conversation, run.conversation_id)
+            repository = ThreadOutputRepository(db)
+            await repository.create_staging(
+                revision_id=revision_id,
+                conversation=conversation,
+                run_id=run_id,
+                base_revision_id=None,
+            )
+            await repository.set_files(revision_id, [])
+            await db.commit()
+            request_id = run.request_id
+            uid = run.uid
+        assert acquired is True
+
+        async with session_factory() as db:
+            committed = await chat_service.save_messages_from_langgraph_state(
+                agent_instance=FakeAgent(),
+                thread_id=thread_id,
+                conv_repo=ConversationRepository(db),
+                config_dict={"configurable": {"thread_id": thread_id, "uid": uid}},
+                context=object(),
+                run_id=run_id,
+                request_id=request_id,
+                worker_id=owner,
+                interrupt_run=True,
+                interrupt_error_type="ask_user_question_required",
+                interrupt_error_message="请选择",
+                output_revision_id=revision_id,
+            )
+        assert committed is True
+
+        async with session_factory() as db:
+            run = await db.get(AgentRun, run_id)
+            conversation = await db.get(Conversation, run.conversation_id)
+            revision = await db.get(ThreadOutputRevision, revision_id)
+            output_message = await db.get(Message, run.output_message_id)
+
+        assert run.status == "interrupted"
+        assert run.error_type == "ask_user_question_required"
+        assert output_message.content == "waiting"
+        assert revision.status == "published"
+        assert conversation.current_output_revision_id == revision_id
     finally:
         await _cleanup_runs(session_factory, [thread_id])
 

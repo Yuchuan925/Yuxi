@@ -178,6 +178,34 @@ async def _assert_persisted_causality(run_id: str, request_id: str) -> None:
         await conn.close()
 
 
+async def _assert_published_output_revision(run_id: str, thread_id: str) -> None:
+    """Run 完成与 outputs 当前版本发布必须属于同一持久化结果。"""
+    conn = await asyncpg.connect(postgres_dsn())
+    try:
+        row = await conn.fetchrow(
+            """
+            SELECT conversation.current_output_revision_id,
+                   revision.thread_id,
+                   revision.run_id,
+                   revision.status,
+                   revision.files
+            FROM conversations conversation
+            JOIN thread_output_revisions revision
+              ON revision.id = conversation.current_output_revision_id
+            WHERE conversation.thread_id = $1
+            """,
+            thread_id,
+        )
+        assert row, f"published output revision missing for {thread_id}"
+        assert row["thread_id"] == thread_id
+        assert row["run_id"] == run_id
+        assert row["status"] == "published"
+        files = json.loads(row["files"]) if isinstance(row["files"], str) else row["files"]
+        assert files == []
+    finally:
+        await conn.close()
+
+
 async def _assert_persisted_execution_facts(run_id: str, agent_slug: str) -> None:
     """真实 worker 链路固化后的 manifest 指纹与 attempt 终止事实。"""
     conn = await asyncpg.connect(postgres_dsn())
@@ -286,6 +314,7 @@ async def test_deterministic_agent_path_reaches_persisted_result(
         assert result.json()["thread_id"] == thread_id
 
         await _assert_persisted_causality(run_id, request_id)
+        await _assert_published_output_revision(run_id, thread_id)
         await _assert_persisted_execution_facts(run_id, agent_slug)
         run_completed = True
     finally:

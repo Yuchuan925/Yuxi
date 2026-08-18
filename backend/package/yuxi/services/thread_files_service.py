@@ -19,8 +19,14 @@ from yuxi.repositories.conversation_repository import ConversationRepository
 from yuxi.services.attachment_service import materialize_attachment_records
 from yuxi.services.conversation_service import require_user_conversation
 from yuxi.services.mention_search_service import invalidate_mention_cache, invalidate_workspace_mention_cache
+from yuxi.services.thread_output_service import (
+    find_output_descriptor,
+    get_current_output_snapshot,
+    list_output_entries,
+)
+from yuxi.storage.minio import StorageError, get_minio_client
 from yuxi.utils.datetime_utils import utc_isoformat_from_timestamp
-from yuxi.utils.paths import VIRTUAL_PATH_PREFIX
+from yuxi.utils.paths import OUTPUTS_DIR_NAME, VIRTUAL_PATH_PREFIX
 
 
 def _get_virtual_root() -> str:
@@ -64,8 +70,34 @@ async def list_thread_files_view(
     uid = str(conversation.uid)
     await materialize_attachment_records(thread_id, uid, (conversation.extra_metadata or {}).get("attachments", []))
 
-    ensure_thread_dirs(thread_id, uid)
     virtual_path = path or _get_virtual_root()
+    output_revision_id, output_files = await get_current_output_snapshot(conversation=conversation, db=db)
+    if output_revision_id and (
+        virtual_path == "/home/gem/user-data/outputs" or virtual_path.startswith("/home/gem/user-data/outputs/")
+    ):
+        return {
+            "path": virtual_path,
+            "files": list_output_entries(output_files, virtual_path, recursive=recursive),
+        }
+
+    ensure_thread_dirs(thread_id, uid)
+    if output_revision_id and recursive and virtual_path.rstrip("/") == _get_virtual_root():
+        result = await asyncio.to_thread(
+            _list_user_data_root_entries,
+            thread_id,
+            uid,
+            virtual_path,
+            recursive=True,
+            recursive_skip_names={OUTPUTS_DIR_NAME},
+        )
+        output_root = "/home/gem/user-data/outputs"
+        result["files"] = [
+            entry
+            for entry in result["files"]
+            if not str(entry.get("path") or "").rstrip("/").startswith(f"{output_root}/")
+        ]
+        result["files"].extend(list_output_entries(output_files, output_root, recursive=True))
+        return result
     try:
         actual_path = resolve_virtual_path(thread_id, virtual_path, uid=uid)
     except ValueError as exc:
@@ -102,14 +134,21 @@ def _list_directory_entries(thread_id: str, uid: str, actual_path: Path) -> list
     ]
 
 
-def _list_user_data_root_entries(thread_id: str, uid: str, virtual_path: str, recursive: bool = False) -> dict:
+def _list_user_data_root_entries(
+    thread_id: str,
+    uid: str,
+    virtual_path: str,
+    recursive: bool = False,
+    recursive_skip_names: set[str] | None = None,
+) -> dict:
     """List the thread root and inject the user workspace entry if needed."""
+    recursive_skip_names = recursive_skip_names or set()
     entries: list[dict[str, Any]] = []
     thread_root = sandbox_user_data_dir(thread_id)
     for child in sorted(thread_root.iterdir(), key=lambda item: (not item.is_dir(), item.name.lower())):
         entry = _thread_file_entry(thread_id, uid, child, directory_paths_end_with_slash=True)
         entries.append(entry)
-        if recursive and child.is_dir():
+        if recursive and child.is_dir() and child.name not in recursive_skip_names:
             nested = _list_files_recursive(thread_id, uid, child, entry["path"])
             entries.extend(nested["files"])
 
@@ -157,6 +196,34 @@ async def read_thread_file_content_view(
     uid = str(conversation.uid)
     await materialize_attachment_records(thread_id, uid, (conversation.extra_metadata or {}).get("attachments", []))
 
+    output_revision_id, output_files = await get_current_output_snapshot(conversation=conversation, db=db)
+    if output_revision_id and (
+        path == "/home/gem/user-data/outputs" or path.startswith("/home/gem/user-data/outputs/")
+    ):
+        try:
+            descriptor = find_output_descriptor(output_files, path)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if descriptor is None:
+            raise HTTPException(status_code=404, detail="file not found")
+        try:
+            raw_content = await get_minio_client().adownload_file(
+                str(descriptor["bucket_name"]), str(descriptor["object_name"])
+            )
+        except StorageError as exc:
+            raise HTTPException(status_code=404, detail="file object not found") from exc
+        lines = raw_content.decode("utf-8", errors="replace").splitlines()
+        start = max(0, int(offset))
+        count = min(max(1, int(limit)), 5000)
+        return {
+            "path": path,
+            "content": lines[start : start + count],
+            "offset": start,
+            "limit": count,
+            "total_lines": len(lines),
+            "artifact_url": f"/api/chat/thread/{thread_id}/artifacts/{path.lstrip('/')}",
+        }
+
     try:
         actual_path = resolve_virtual_path(thread_id, path, uid=uid)
     except ValueError as exc:
@@ -189,15 +256,25 @@ async def resolve_thread_artifact_view(
     current_uid: str,
     db,
     path: str,
-) -> Path:
+) -> Path | dict:
     conv_repo = ConversationRepository(db)
     conversation = await require_user_conversation(conv_repo, thread_id, str(current_uid))
     uid = str(conversation.uid)
     await materialize_attachment_records(thread_id, uid, (conversation.extra_metadata or {}).get("attachments", []))
 
-    ensure_thread_dirs(thread_id, uid)
-
     normalized = "/" + path.lstrip("/")
+    output_revision_id, output_files = await get_current_output_snapshot(conversation=conversation, db=db)
+    if normalized == "/home/gem/user-data/outputs" or normalized.startswith("/home/gem/user-data/outputs/"):
+        if output_revision_id:
+            try:
+                descriptor = find_output_descriptor(output_files, normalized)
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+            if descriptor is None:
+                raise HTTPException(status_code=404, detail="artifact not found")
+            return descriptor
+
+    ensure_thread_dirs(thread_id, uid)
     try:
         actual_path = resolve_virtual_path(thread_id, normalized, uid=uid)
     except ValueError as exc:
@@ -229,7 +306,7 @@ async def save_thread_artifact_to_workspace_view(
     db,
     path: str,
 ) -> dict[str, str]:
-    source_path = await resolve_thread_artifact_view(
+    source = await resolve_thread_artifact_view(
         thread_id=thread_id,
         current_uid=current_uid,
         db=db,
@@ -242,9 +319,25 @@ async def save_thread_artifact_to_workspace_view(
     target_dir = sandbox_workspace_dir(thread_id, uid) / "saved_artifacts"
     target_dir.mkdir(parents=True, exist_ok=True)
 
-    target_path = _next_available_artifact_path(target_dir, source_path.name)
-    with source_path.open("rb") as src, target_path.open("wb") as dst:
-        shutil.copyfileobj(src, dst)
+    source_name = Path(str(source.get("path") or "artifact")).name if isinstance(source, dict) else source.name
+    target_path = _next_available_artifact_path(target_dir, source_name)
+    if isinstance(source, dict):
+        try:
+            response = await get_minio_client().adownload_response(
+                str(source["bucket_name"]), str(source["object_name"])
+            )
+        except StorageError as exc:
+            raise HTTPException(status_code=404, detail="artifact object not found") from exc
+        try:
+            with target_path.open("wb") as dst:
+                while chunk := await asyncio.to_thread(response.read, 1024 * 1024):
+                    dst.write(chunk)
+        finally:
+            response.close()
+            response.release_conn()
+    else:
+        with source.open("rb") as src, target_path.open("wb") as dst:
+            shutil.copyfileobj(src, dst)
 
     await invalidate_mention_cache(thread_id)
     await invalidate_workspace_mention_cache(uid)

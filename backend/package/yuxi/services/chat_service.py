@@ -17,6 +17,7 @@ import json
 import uuid
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any, Literal
 
 from langchain.messages import AIMessage, AIMessageChunk
@@ -24,17 +25,20 @@ from langgraph.types import Command
 from yuxi.agents.base import _json_safe
 from yuxi.agents.buildin import agent_manager
 from yuxi.agents.context import build_agent_input_context, normalize_agent_context_config
+from yuxi.agents.backends.sandbox import ProvisionerSandboxBackend, get_sandbox_provider, sandbox_outputs_dir
 from yuxi.agents.state import AgentStatePayload
 from yuxi.config.options import system_options
 from yuxi.repositories.agent_repository import AgentRepository
 from yuxi.repositories.agent_run_repository import AgentRunRepository
 from yuxi.repositories.conversation_repository import ConversationRepository
+from yuxi.repositories.thread_output_repository import OutputRevisionConflictError
 from yuxi.repositories.subagent_thread_repository import SubagentThreadRepository
 from yuxi.services.attachment_service import (
     hydrate_attachment_records_to_sandbox,
     serialize_attachment,
 )
 from yuxi.services.input_message_service import AgentRunInputMessage
+from yuxi.services.scoped_file_store import await_blocking_file_call
 from yuxi.services.langfuse_service import (
     LangfuseRunContext,
     build_run_context,
@@ -42,6 +46,15 @@ from yuxi.services.langfuse_service import (
     get_trace_info,
 )
 from yuxi.services.subagent_run_service import serialize_subagent_run_state
+from yuxi.services.thread_output_service import (
+    get_current_output_snapshot,
+    get_output_snapshot,
+    hydrate_legacy_thread_outputs_to_sandbox,
+    hydrate_thread_outputs_to_sandbox,
+    mark_output_revision_status,
+    publish_staged_outputs,
+    stage_thread_outputs,
+)
 from yuxi.storage.postgres.manager import pg_manager
 from yuxi.storage.postgres.models_business import Agent, User
 from yuxi.utils.guard import content_guard
@@ -489,6 +502,7 @@ async def save_partial_message(
     run_id: str | None = None,
     request_id: str | None = None,
     worker_id: str | None = None,
+    interrupt_run: bool = False,
 ):
     try:
         extra_metadata = {
@@ -531,13 +545,28 @@ async def save_partial_message(
         )
         if run_id and message is not None:
             await run_repo.set_output_message(run_id, message.id, worker_id=worker_id)
+            if interrupt_run:
+                terminal_run, changed = await run_repo.set_terminal_status(
+                    run_id,
+                    status="interrupted",
+                    error_type=error_type,
+                    error_message=error_message,
+                    token_usage={"available": False},
+                    worker_id=worker_id,
+                )
+                if terminal_run is None or not changed:
+                    raise ValueError("AgentRun 部分输出已写入但 interrupted 终态未能在同一事务提交")
             await conv_repo.db.commit()
+        elif run_id and interrupt_run:
+            raise ValueError("AgentRun 中断输出消息未能持久化")
         return message
 
     except Exception as e:
         if run_id:
             await conv_repo.db.rollback()
         logger.exception(f"Error saving message: {e}")
+        if interrupt_run:
+            raise
         return None
 
 
@@ -552,9 +581,16 @@ async def save_messages_from_langgraph_state(
     request_id: str | None = None,
     worker_id: str | None = None,
     complete_run: bool = False,
+    interrupt_run: bool = False,
+    interrupt_error_type: str | None = None,
+    interrupt_error_message: str | None = None,
     token_usage: dict[str, Any] | None = None,
+    output_revision_id: str | None = None,
 ) -> bool:
-    """在有效 lease 锁内原子写入输出、绑定指针，并可同时提交 completed 终态。"""
+    """在有效 lease 锁内原子写入输出、revision 与完成或中断终态。"""
+
+    if complete_run and interrupt_run:
+        raise ValueError("AgentRun 不能同时完成和中断")
 
     run_repo = AgentRunRepository(conv_repo.db) if run_id else None
     staged_run = None
@@ -616,25 +652,43 @@ async def save_messages_from_langgraph_state(
                     last_ai_message.id,
                     worker_id=worker_id,
                 )
-            if complete_run:
-                completed_run, changed = await run_repo.set_terminal_status(
+        if output_revision_id:
+            await publish_staged_outputs(db=conv_repo.db, revision_id=output_revision_id)
+        if run_id:
+            terminal_status = "completed" if complete_run else "interrupted" if interrupt_run else None
+            if terminal_status:
+                terminal_run, changed = await run_repo.set_terminal_status(
                     run_id,
-                    status="completed",
+                    status=terminal_status,
+                    error_type=interrupt_error_type if interrupt_run else None,
+                    error_message=interrupt_error_message if interrupt_run else None,
                     token_usage=token_usage or {"available": False},
                     worker_id=worker_id,
                 )
-                if completed_run is None or not changed:
-                    raise ValueError("AgentRun 输出已写入但 completed 终态未能在同一事务提交")
+                if terminal_run is None or not changed:
+                    raise ValueError(f"AgentRun 输出已写入但 {terminal_status} 终态未能在同一事务提交")
             await conv_repo.db.commit()
-            return complete_run
+            return terminal_status is not None
+        if output_revision_id:
+            await conv_repo.db.commit()
         return False
     except asyncio.CancelledError:
-        if run_id:
+        if run_id or output_revision_id:
             await conv_repo.db.rollback()
+        if output_revision_id:
+            await mark_output_revision_status(output_revision_id, "unknown", "发布事务在取消时确认不明")
+        raise
+    except OutputRevisionConflictError:
+        if run_id or output_revision_id:
+            await conv_repo.db.rollback()
+        if output_revision_id:
+            await mark_output_revision_status(output_revision_id, "conflict", "base revision 已变化")
         raise
     except Exception:
-        if run_id:
+        if run_id or output_revision_id:
             await conv_repo.db.rollback()
+        if output_revision_id:
+            await mark_output_revision_status(output_revision_id, "unknown", "发布事务确认失败")
         raise
 
 
@@ -722,6 +776,23 @@ def _build_pending_interrupt_payload(info: Any, thread_id: str) -> dict[str, Any
 
     question_payload = _build_ask_user_question_payload(coerced, thread_id)
     return {"status": "ask_user_question_required", **question_payload}
+
+
+def _interrupt_terminal_details(chunk: bytes) -> tuple[str, str]:
+    """从待发送中断 chunk 提取持久终态的错误类型与摘要。"""
+    try:
+        payload = json.loads(chunk)
+    except (TypeError, ValueError):
+        return "interrupted", "等待用户交互"
+    status = str(payload.get("status") or "interrupted")
+    if status == "human_approval_required":
+        return status, "需要用户审批工具操作"
+    questions = payload.get("questions")
+    if isinstance(questions, list) and questions and isinstance(questions[0], dict):
+        question = str(questions[0].get("question") or "").strip()
+        if question:
+            return status, question
+    return status, str(payload.get("message") or "需要用户回答问题")
 
 
 def _ensure_full_msg(full_msg: AIMessage | None, accumulated_content: list[str]) -> AIMessage | None:
@@ -839,6 +910,23 @@ async def _ensure_thread_bound_agent(
     return conversation
 
 
+async def _conversation_for_file_thread(
+    *,
+    conv_repo: ConversationRepository,
+    conversation: Any,
+    runtime_thread_id: str,
+    file_thread_id: str,
+    uid: str,
+) -> Any:
+    """解析并授权实际文件线程，供主/子智能体共用。"""
+    file_conversation = conversation
+    if file_thread_id != runtime_thread_id:
+        file_conversation = await conv_repo.get_conversation_by_thread_id(file_thread_id)
+        if file_conversation is None or file_conversation.uid != uid or file_conversation.status == "deleted":
+            raise ValueError("附件文件线程不存在")
+    return file_conversation
+
+
 async def _attachment_records_for_file_thread(
     *,
     conv_repo: ConversationRepository,
@@ -848,12 +936,89 @@ async def _attachment_records_for_file_thread(
     uid: str,
 ) -> list[dict]:
     """读取实际文件线程的附件事实，供主/子智能体共用。"""
-    file_conversation = conversation
-    if file_thread_id != runtime_thread_id:
-        file_conversation = await conv_repo.get_conversation_by_thread_id(file_thread_id)
-        if file_conversation is None or file_conversation.uid != uid or file_conversation.status == "deleted":
-            raise ValueError("附件文件线程不存在")
+    file_conversation = await _conversation_for_file_thread(
+        conv_repo=conv_repo,
+        conversation=conversation,
+        runtime_thread_id=runtime_thread_id,
+        file_thread_id=file_thread_id,
+        uid=uid,
+    )
     return await conv_repo.get_attachments(file_conversation.id)
+
+
+async def _hydrate_run_file_scopes(
+    *,
+    runtime_thread_id: str,
+    file_thread_id: str,
+    skills_thread_id: str,
+    uid: str,
+    attachments: list[dict],
+    output_files: list[dict],
+    legacy_output_root: Path | None,
+    sandbox_instance_id: str | None,
+) -> None:
+    """连续恢复 uploads/outputs；sandbox 冷启动丢失时整组重试一次。"""
+    for attempt in range(2):
+        try:
+            bootstrap_backend = ProvisionerSandboxBackend(
+                thread_id=runtime_thread_id,
+                uid=uid,
+                file_thread_id=file_thread_id,
+                skills_thread_id=skills_thread_id,
+                sandbox_instance_id=sandbox_instance_id,
+            )
+            await await_blocking_file_call(bootstrap_backend.ensure_available)
+            await hydrate_attachment_records_to_sandbox(
+                runtime_thread_id,
+                uid,
+                attachments,
+                file_thread_id=file_thread_id,
+                skills_thread_id=skills_thread_id,
+                sandbox_instance_id=sandbox_instance_id,
+                create_if_missing=False,
+            )
+            if legacy_output_root is None:
+                await hydrate_thread_outputs_to_sandbox(
+                    runtime_thread_id=runtime_thread_id,
+                    file_thread_id=file_thread_id,
+                    skills_thread_id=skills_thread_id,
+                    uid=uid,
+                    files=output_files,
+                    sandbox_instance_id=sandbox_instance_id,
+                    create_if_missing=False,
+                )
+            else:
+                await hydrate_legacy_thread_outputs_to_sandbox(
+                    runtime_thread_id=runtime_thread_id,
+                    file_thread_id=file_thread_id,
+                    skills_thread_id=skills_thread_id,
+                    uid=uid,
+                    legacy_root=legacy_output_root,
+                    sandbox_instance_id=sandbox_instance_id,
+                    create_if_missing=False,
+                )
+            return
+        except Exception as exc:
+            detail = str(exc).lower()
+            if (
+                attempt
+                or "sandbox" not in detail
+                or not any(marker in detail for marker in ("not found", "unavailable", "disappeared"))
+            ):
+                raise
+            try:
+                await asyncio.to_thread(
+                    get_sandbox_provider().release,
+                    runtime_thread_id,
+                    uid=uid,
+                    file_thread_id=file_thread_id,
+                    skills_thread_id=skills_thread_id,
+                    sandbox_instance_id=sandbox_instance_id,
+                    clear_cache_on_delete_failure=True,
+                )
+            except Exception:
+                logger.warning("Failed to reset disappeared sandbox before hydrate retry", exc_info=True)
+            logger.warning("Sandbox disappeared during file hydrate; retrying complete snapshot: %s", runtime_thread_id)
 
 
 async def stream_agent_chat(
@@ -938,6 +1103,7 @@ async def stream_agent_chat(
     )
     _apply_model_override(input_context, meta)
     _apply_input_context_field(input_context, meta, "tool_approval_mode")
+    _apply_input_context_field(input_context, meta, "sandbox_instance_id")
     _apply_subagent_runtime_context(input_context, meta)
     context = _build_agent_context(agent, input_context)
     langfuse_run = _build_langfuse_run_context(
@@ -974,6 +1140,27 @@ async def stream_agent_chat(
             file_thread_id=file_thread_id,
             uid=uid,
         )
+        file_conversation = await _conversation_for_file_thread(
+            conv_repo=conv_repo,
+            conversation=conversation,
+            runtime_thread_id=thread_id,
+            file_thread_id=file_thread_id,
+            uid=uid,
+        )
+        requested_output_revision_id = str(meta.get("output_base_revision_id") or "").strip()
+        if meta.get("run_type") == "subagent":
+            if not requested_output_revision_id:
+                raise ValueError("子智能体运行缺少 outputs 基线 revision")
+            output_base_revision_id, output_files = await get_output_snapshot(
+                conversation=file_conversation,
+                revision_id=requested_output_revision_id,
+                db=db,
+            )
+        else:
+            output_base_revision_id, output_files = await get_current_output_snapshot(
+                conversation=file_conversation,
+                db=db,
+            )
         request_attachment_records = [
             attachment for attachment in thread_attachment_records if attachment.get("request_id") == meta["request_id"]
         ]
@@ -1013,12 +1200,15 @@ async def stream_agent_chat(
 
         # 智能体流式执行期间不访问业务数据库，先结束预处理事务并归还连接池。
         await db.commit()
-        await hydrate_attachment_records_to_sandbox(
-            thread_id,
-            uid,
-            thread_attachment_records,
+        await _hydrate_run_file_scopes(
+            runtime_thread_id=thread_id,
             file_thread_id=file_thread_id,
             skills_thread_id=skills_thread_id,
+            uid=uid,
+            attachments=thread_attachment_records,
+            output_files=output_files,
+            legacy_output_root=(sandbox_outputs_dir(file_thread_id) if output_base_revision_id is None else None),
+            sandbox_instance_id=meta.get("sandbox_instance_id"),
         )
 
         # 先构建 langgraph_config
@@ -1090,9 +1280,15 @@ async def stream_agent_chat(
                             run_id=meta.get("run_id"),
                             request_id=meta.get("request_id"),
                             worker_id=meta.get("worker_id"),
+                            interrupt_run=True,
                         )
                         meta["time_cost"] = asyncio.get_event_loop().time() - start_time
-                        yield make_chunk(status="interrupted", message="检测到敏感内容，已中断输出", meta=meta)
+                        yield make_chunk(
+                            status="interrupted",
+                            message="检测到敏感内容，已中断输出",
+                            meta=meta,
+                            terminal_committed=True,
+                        )
                         return
 
                 yield make_chunk(
@@ -1120,14 +1316,23 @@ async def stream_agent_chat(
                 run_id=meta.get("run_id"),
                 request_id=meta.get("request_id"),
                 worker_id=meta.get("worker_id"),
+                interrupt_run=True,
             )
             meta["time_cost"] = asyncio.get_event_loop().time() - start_time
-            yield make_chunk(status="interrupted", message="检测到敏感内容，已中断输出", meta=meta)
+            yield make_chunk(
+                status="interrupted",
+                message="检测到敏感内容，已中断输出",
+                meta=meta,
+                terminal_committed=True,
+            )
             return
 
         interrupted = False
+        interrupt_error_type = None
+        interrupt_error_message = None
         async for chunk in check_and_handle_interrupts(agent, langgraph_config, make_chunk, meta, thread_id, context):
             interrupted = True
+            interrupt_error_type, interrupt_error_message = _interrupt_terminal_details(chunk)
             yield chunk
 
         meta["time_cost"] = asyncio.get_event_loop().time() - start_time
@@ -1145,6 +1350,16 @@ async def stream_agent_chat(
 
         # 先存储数据库，再返回 finished，避免前端查询时数据未落库
         try:
+            output_revision_id = await stage_thread_outputs(
+                runtime_thread_id=thread_id,
+                file_thread_id=file_thread_id,
+                skills_thread_id=skills_thread_id,
+                uid=uid,
+                conversation_id=file_conversation.id,
+                run_id=meta.get("run_id"),
+                base_revision_id=output_base_revision_id,
+                sandbox_instance_id=meta.get("sandbox_instance_id"),
+            )
             terminal_committed = await save_messages_from_langgraph_state(
                 agent_instance=agent,
                 thread_id=thread_id,
@@ -1156,7 +1371,11 @@ async def stream_agent_chat(
                 request_id=meta.get("request_id"),
                 worker_id=meta.get("worker_id"),
                 complete_run=not interrupted,
+                interrupt_run=interrupted,
+                interrupt_error_type=interrupt_error_type,
+                interrupt_error_message=interrupt_error_message,
                 token_usage=_current_run_token_usage(agent_state, meta.get("run_id")),
+                output_revision_id=output_revision_id,
             )
         except Exception as e:
             logger.exception(f"Error saving messages from LangGraph state: {e}")
@@ -1243,6 +1462,7 @@ async def stream_agent_resume(
         return
     conv_repo = ConversationRepository(db)
     thread_attachments = await conv_repo.get_attachments(conversation.id)
+    output_base_revision_id, output_files = await get_current_output_snapshot(conversation=conversation, db=db)
     resume_command = Command(
         resume=resume_input,
         update={"uploads": [serialize_attachment(attachment) for attachment in thread_attachments]},
@@ -1250,7 +1470,16 @@ async def stream_agent_resume(
 
     # 恢复流执行期间不访问业务数据库，先结束运行时解析事务并归还连接池。
     await db.commit()
-    await hydrate_attachment_records_to_sandbox(thread_id, uid, thread_attachments)
+    await _hydrate_run_file_scopes(
+        runtime_thread_id=thread_id,
+        file_thread_id=thread_id,
+        skills_thread_id=thread_id,
+        uid=uid,
+        attachments=thread_attachments,
+        output_files=output_files,
+        legacy_output_root=(sandbox_outputs_dir(thread_id) if output_base_revision_id is None else None),
+        sandbox_instance_id=meta.get("sandbox_instance_id"),
+    )
 
     meta["agent_slug"] = agent_item.slug
     meta["backend_id"] = agent_item.backend_id
@@ -1263,6 +1492,7 @@ async def stream_agent_resume(
     )
     _apply_model_override(input_context, meta)
     _apply_input_context_field(input_context, meta, "tool_approval_mode")
+    _apply_input_context_field(input_context, meta, "sandbox_instance_id")
     context = _build_agent_context(agent, input_context)
     langfuse_run = _build_langfuse_run_context(
         current_user=current_user,
@@ -1347,10 +1577,13 @@ async def stream_agent_resume(
 
         langgraph_config = {"configurable": {"thread_id": thread_id, "uid": uid}}
         interrupted = False
+        interrupt_error_type = None
+        interrupt_error_message = None
         async for chunk in check_and_handle_interrupts(
             agent, langgraph_config, make_resume_chunk, meta, thread_id, context
         ):
             interrupted = True
+            interrupt_error_type, interrupt_error_message = _interrupt_terminal_details(chunk)
             yield chunk
 
         meta["time_cost"] = asyncio.get_event_loop().time() - start_time
@@ -1368,6 +1601,16 @@ async def stream_agent_resume(
 
         # 先存储数据库，再返回 finished，避免前端查询时数据未落库
         try:
+            output_revision_id = await stage_thread_outputs(
+                runtime_thread_id=thread_id,
+                file_thread_id=thread_id,
+                skills_thread_id=thread_id,
+                uid=uid,
+                conversation_id=conversation.id,
+                run_id=meta.get("run_id"),
+                base_revision_id=output_base_revision_id,
+                sandbox_instance_id=meta.get("sandbox_instance_id"),
+            )
             terminal_committed = await save_messages_from_langgraph_state(
                 agent_instance=agent,
                 thread_id=thread_id,
@@ -1379,7 +1622,11 @@ async def stream_agent_resume(
                 request_id=meta.get("request_id"),
                 worker_id=meta.get("worker_id"),
                 complete_run=not interrupted,
+                interrupt_run=interrupted,
+                interrupt_error_type=interrupt_error_type,
+                interrupt_error_message=interrupt_error_message,
                 token_usage=_current_run_token_usage(agent_state, meta.get("run_id")),
+                output_revision_id=output_revision_id,
             )
         except Exception as e:
             logger.exception(f"Error saving messages from LangGraph state: {e}")

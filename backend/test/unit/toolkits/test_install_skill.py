@@ -37,13 +37,24 @@ async def test_install_skill_from_sandbox_installs_as_current_user_private_skill
     db = SimpleNamespace()
     source_dir = tmp_path / "demo-skill"
 
-    def prepare_skill_from_sandbox(source, thread_id, uid, staging_root):
+    def prepare_skill_from_sandbox(
+        source,
+        thread_id,
+        uid,
+        staging_root,
+        file_thread_id,
+        skills_thread_id,
+        sandbox_instance_id,
+    ):
         calls["prepare_thread_id"] = threading.get_ident()
         calls["prepare"] = {
             "source": source,
             "thread_id": thread_id,
             "uid": uid,
             "staging_root": staging_root,
+            "file_thread_id": file_thread_id,
+            "skills_thread_id": skills_thread_id,
+            "sandbox_instance_id": sandbox_instance_id,
         }
         return source_dir
 
@@ -275,9 +286,13 @@ def test_prepare_skill_from_sandbox_uses_sandbox_api_without_host_path_resolutio
     remote_dir = "/home/gem/user-data/workspace/demo-skill"
 
     class FakeProvisionerSandboxBackend:
-        def __init__(self, *, thread_id, uid):
+        def __init__(self, *, thread_id, uid, file_thread_id, skills_thread_id, sandbox_instance_id, create_if_missing):
             assert thread_id == "thread-1"
             assert uid == "user-1"
+            assert file_thread_id is None
+            assert skills_thread_id is None
+            assert sandbox_instance_id is None
+            assert create_if_missing is False
 
         def ls(self, path):
             assert path == remote_dir
@@ -311,9 +326,13 @@ def test_prepare_skill_from_sandbox_preserves_download_error_message(monkeypatch
     remote_dir = "/home/gem/user-data/workspace/demo-skill"
 
     class FakeProvisionerSandboxBackend:
-        def __init__(self, *, thread_id, uid):
+        def __init__(self, *, thread_id, uid, file_thread_id, skills_thread_id, sandbox_instance_id, create_if_missing):
             assert thread_id == "thread-1"
             assert uid == "user-1"
+            assert file_thread_id is None
+            assert skills_thread_id is None
+            assert sandbox_instance_id is None
+            assert create_if_missing is False
 
         def ls(self, _path):
             return SimpleNamespace(

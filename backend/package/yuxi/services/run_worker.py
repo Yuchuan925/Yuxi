@@ -15,6 +15,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import OperationalError
 from yuxi.agents.checkpointer_config import resolve_checkpointer_backend
 from yuxi.agents.mcp.service import ensure_builtin_mcp_servers_in_db
+from yuxi.agents.backends.sandbox.provider import get_sandbox_provider
 from yuxi.agents.skills.service import init_builtin_skills
 from yuxi.repositories.agent_run_repository import TERMINAL_RUN_STATUSES, AgentRunRepository
 from yuxi.services.agent_request_queue_service import (
@@ -190,7 +191,6 @@ class ChunkedEventWriter:
         if _flush_loading_chunk_immediately(chunk):
             await self.flush(target_thread_id)
             return
-
         if (time.monotonic() - buffer.last_flush) >= self.interval_seconds or buffer.chars >= self.max_chars:
             await self.flush(target_thread_id)
 
@@ -212,6 +212,32 @@ class ChunkedEventWriter:
         buffer.items = []
         buffer.chars = 0
         buffer.last_flush = time.monotonic()
+
+
+def _run_sandbox_scope(run: AgentRun) -> tuple[str, str]:
+    """返回 Run 的文件与 Skills scope；runtime thread 始终由 Run 自身拥有。"""
+    runtime = run.input_payload.get("runtime") if isinstance(run.input_payload, dict) else None
+    runtime = runtime if isinstance(runtime, dict) else {}
+    if run.run_type == "subagent":
+        return (
+            str(runtime.get("file_thread_id") or run.conversation_thread_id),
+            str(runtime.get("skills_thread_id") or run.conversation_thread_id),
+        )
+    return run.conversation_thread_id, run.conversation_thread_id
+
+
+async def _release_run_sandbox(run: AgentRun) -> None:
+    """销毁 Run runtime sandbox，阻止遗留进程污染后续 Run。"""
+    file_thread_id, skills_thread_id = _run_sandbox_scope(run)
+    await asyncio.to_thread(
+        get_sandbox_provider().release,
+        run.conversation_thread_id,
+        uid=str(run.uid),
+        file_thread_id=file_thread_id,
+        skills_thread_id=skills_thread_id,
+        clear_cache_on_delete_failure=True,
+        sandbox_instance_id=str(run.id),
+    )
 
 
 async def _get_run(run_id: str):
@@ -511,10 +537,15 @@ async def _finish_user_cancel(
     current_user,
     worker_id: str,
     writer: ChunkedEventWriter,
+    run: AgentRun,
 ) -> TerminalTransition:
     """在 PostgreSQL 已确认取消后，由当前 owner 写入 cancelled。"""
 
     await _flush_writer_best_effort(writer)
+    try:
+        await _release_run_sandbox(run)
+    except Exception:
+        logger.error(f"Failed to release cancelled Run sandbox: run={run.id}", exc_info=True)
     cancel_chunk = {"status": "interrupted", "message": "对话已取消", "request_id": request_id}
     state_token_usage = None
     if current_user is not None:
@@ -569,6 +600,10 @@ async def process_agent_run(ctx, run_id: str):
         return
 
     if run.status in TERMINAL_RUN_STATUSES:
+        try:
+            await _release_run_sandbox(run)
+        except Exception:
+            logger.error(f"Failed to release terminal Run sandbox: run={run_id}", exc_info=True)
         if run.status == "completed":
             await dispatch_next_request(
                 uid=run.uid,
@@ -666,6 +701,11 @@ async def process_agent_run(ctx, run_id: str):
             )
             return
 
+        try:
+            await _release_run_sandbox(run)
+        except Exception as exc:
+            raise RetryableRunError(f"failed to reset Run sandbox before execution: {run_id}") from exc
+
         resume_input = None
         if run_type == "resume":
             resume_input = input_metadata.get("resume")
@@ -726,6 +766,7 @@ async def process_agent_run(ctx, run_id: str):
             "run_type": run_type,
             "created_by_run_id": run.created_by_run_id,
             "worker_id": worker_id,
+            "sandbox_instance_id": run_id,
         }
         if run_type == "subagent":
             # 三个线程 ID 在 subagent_run_service 创建 run 时已写入 runtime，此处不再二次兜底；
@@ -733,6 +774,7 @@ async def process_agent_run(ctx, run_id: str):
             meta["parent_thread_id"] = runtime.get("parent_thread_id")
             meta["file_thread_id"] = runtime.get("file_thread_id")
             meta["skills_thread_id"] = runtime.get("skills_thread_id")
+            meta["output_base_revision_id"] = runtime.get("output_base_revision_id")
         if input_metadata.get("source"):
             meta["source"] = input_metadata.get("source")
         if isinstance(input_metadata.get("agent_invocation_meta"), dict):
@@ -871,7 +913,7 @@ async def process_agent_run(ctx, run_id: str):
                             worker_id=worker_id,
                             publish_end=False,
                         )
-                        if transition.changed:
+                        if transition.changed or transition.status == "interrupted":
                             await _append_run_event_best_effort(
                                 run_id,
                                 event_type,
@@ -914,7 +956,7 @@ async def process_agent_run(ctx, run_id: str):
                 worker_id=worker_id,
                 publish_end=False,
             )
-            if transition.changed:
+            if transition.changed or transition.status == "interrupted":
                 await _append_run_event_best_effort(
                     run_id,
                     event_type,
@@ -955,6 +997,7 @@ async def process_agent_run(ctx, run_id: str):
                 current_user=user,
                 worker_id=worker_id,
                 writer=writer,
+                run=run,
             )
             logger.info(f"Run user cancellation settled: run={run_id}, changed={transition.changed}")
             return
@@ -972,6 +1015,7 @@ async def process_agent_run(ctx, run_id: str):
                 current_user=user,
                 worker_id=worker_id,
                 writer=writer,
+                run=run,
             )
             logger.info(f"Run concurrent user cancellation settled: run={run_id}, changed={transition.changed}")
             return
@@ -1026,6 +1070,7 @@ async def process_agent_run(ctx, run_id: str):
                     current_user=user,
                     worker_id=worker_id,
                     writer=writer,
+                    run=run,
                 )
                 return
             if _is_last_try(ctx):
@@ -1056,6 +1101,12 @@ async def process_agent_run(ctx, run_id: str):
                 logger.error(f"Run failed after retries exhausted {run_id}: {e}")
                 return
 
+            sandbox_cleanup_error = None
+            try:
+                await _release_run_sandbox(run)
+            except Exception as cleanup_error:  # noqa: BLE001
+                sandbox_cleanup_error = cleanup_error
+                logger.error(f"Failed to release retryable Run sandbox: run={run_id}", exc_info=True)
             if not await release_run_lease_for_retry(run_id, worker_id):
                 if await _confirmed_user_cancel(run_id):
                     await _finish_user_cancel(
@@ -1065,10 +1116,13 @@ async def process_agent_run(ctx, run_id: str):
                         current_user=user,
                         worker_id=worker_id,
                         writer=writer,
+                        run=run,
                     )
                     return
                 logger.warning(f"Run retry skipped after ownership changed: {run_id}")
                 return
+            if sandbox_cleanup_error is not None:
+                raise RetryableRunError(f"failed to release retryable Run sandbox: {run_id}") from sandbox_cleanup_error
             await _append_run_event_best_effort(
                 run_id,
                 "error",
@@ -1114,6 +1168,11 @@ async def process_agent_run(ctx, run_id: str):
         except Exception:
             logger.error(f"Failed to load AgentRun during lifecycle cleanup: run={run_id}", exc_info=True)
             final_run = None
+        if final_run and final_run.status in TERMINAL_RUN_STATUSES:
+            try:
+                await _release_run_sandbox(final_run)
+            except Exception:
+                logger.error(f"Failed to release terminal Run sandbox: run={run_id}", exc_info=True)
         if final_run and final_run.status == "cancelled":
             await _clear_cancel_signal_best_effort(run_id)
         # completed 后尝试派发线程的下一个排队请求

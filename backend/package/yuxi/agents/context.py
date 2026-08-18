@@ -176,6 +176,11 @@ class BaseContext:
         metadata={"name": "请求 ID", "configurable": False, "hide": True},
     )
 
+    sandbox_instance_id: str | None = field(
+        default=None,
+        metadata={"name": "Sandbox 实例 ID", "configurable": False, "hide": True},
+    )
+
     system_prompt: str = field(
         default="You are a helpful assistant.",
         metadata={"name": "系统提示词", "description": "用来描述智能体的角色和行为", "kind": "prompt"},

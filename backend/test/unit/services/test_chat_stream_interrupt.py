@@ -12,6 +12,7 @@ sys.path.insert(0, os.getcwd())
 from yuxi.services.chat_service import (
     _build_ask_user_question_payload,
     _build_tool_approval_payload,
+    _hydrate_run_file_scopes,
     _normalize_interrupt_questions,
     stream_agent_resume,
 )
@@ -195,6 +196,35 @@ async def test_stream_agent_resume_init_does_not_render_resume_input():
 
 
 @pytest.mark.asyncio
+async def test_hydrate_run_file_scopes_replays_complete_snapshot_after_sandbox_disappears(monkeypatch):
+    calls: list[str] = []
+
+    async def fake_attachment_hydrate(*_args, **_kwargs):
+        calls.append("uploads")
+
+    async def fake_output_hydrate(**_kwargs):
+        calls.append("outputs")
+        if calls.count("outputs") == 1:
+            raise RuntimeError("sandbox not found")
+
+    monkeypatch.setattr(svc, "hydrate_attachment_records_to_sandbox", fake_attachment_hydrate)
+    monkeypatch.setattr(svc, "hydrate_thread_outputs_to_sandbox", fake_output_hydrate)
+
+    await _hydrate_run_file_scopes(
+        runtime_thread_id="runtime-thread",
+        file_thread_id="file-thread",
+        skills_thread_id="skills-thread",
+        uid="user-1",
+        attachments=[{"file_id": "attachment-1"}],
+        output_files=[{"path": "result.txt"}],
+        legacy_output_root=None,
+        sandbox_instance_id="run-1",
+    )
+
+    assert calls == ["uploads", "outputs", "uploads", "outputs"]
+
+
+@pytest.mark.asyncio
 async def test_stream_agent_resume_commits_before_stream_and_routes_subagent_chunks(monkeypatch):
     db = _FakeSession()
 
@@ -271,8 +301,17 @@ async def test_stream_agent_resume_commits_before_stream_and_routes_subagent_chu
     async def fake_materialize(_thread_id, _uid, _attachments, **_scope):
         assert db.commit_count == 1
 
+    async def fake_output_hydrate(**_kwargs):
+        assert db.commit_count == 1
+
+    async def fake_stage_outputs(**_kwargs):
+        return "output-revision-1"
+
     monkeypatch.setattr(svc, "ConversationRepository", FakeConversationRepository)
     monkeypatch.setattr(svc, "hydrate_attachment_records_to_sandbox", fake_materialize)
+    monkeypatch.setattr(svc, "hydrate_thread_outputs_to_sandbox", fake_output_hydrate)
+    monkeypatch.setattr(svc, "hydrate_legacy_thread_outputs_to_sandbox", fake_output_hydrate)
+    monkeypatch.setattr(svc, "stage_thread_outputs", fake_stage_outputs)
     monkeypatch.setattr(svc, "flush_langfuse", lambda: None)
 
     stream = stream_agent_resume(

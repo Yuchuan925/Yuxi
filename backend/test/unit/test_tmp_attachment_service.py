@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import io
 import os
 import tempfile
 import threading
@@ -70,6 +71,27 @@ class FakeMinioClient:
         except KeyError as exc:
             raise service.StorageError("missing object") from exc
 
+    async def adownload_response(self, bucket_name: str, object_name: str):
+        try:
+            content = self.objects[(bucket_name, object_name)]
+        except KeyError as exc:
+            raise service.StorageError("missing object") from exc
+
+        class Response:
+            def __init__(self):
+                self.stream = io.BytesIO(content)
+
+            def read(self, size):
+                return self.stream.read(size)
+
+            def close(self):
+                return None
+
+            def release_conn(self):
+                return None
+
+        return Response()
+
     async def adelete_file(self, bucket_name: str, object_name: str) -> bool:
         self.objects.pop((bucket_name, object_name), None)
         self.deleted.append((bucket_name, object_name))
@@ -81,6 +103,16 @@ class FakeMinioClient:
             self.objects.pop(key)
         self.deleted_prefixes.append((bucket_name, prefix))
         return len(keys)
+
+
+class _ScopedBackendAdapter:
+    def clear_scope_files(self, scope):
+        assert scope == "uploads"
+        return self.clear_upload_files()
+
+    def upload_scope_file_from_path(self, scope, path, source_path):
+        assert scope == "uploads"
+        return self.write_upload_file(path, Path(source_path).read_bytes())
 
 
 @dataclass
@@ -421,19 +453,21 @@ async def test_hydrate_attachment_records_streams_validated_minio_objects(monkey
     fake_minio.objects[("knowledgebases", parsed["original_object_name"])] = b"pdf-bytes"
     fake_minio.objects[("knowledgebases", parsed["markdown_object_name"])] = b"# parsed"
     fake_minio.objects[("knowledgebases", plain["original_object_name"])] = b"plain"
+    parsed["file_size"] = len(b"pdf-bytes")
+    plain["file_size"] = len(b"plain")
     events = []
-    original_download = fake_minio.adownload_file
+    original_download = fake_minio.adownload_response
 
     async def tracked_download(bucket_name, object_name):
         events.append(("download", object_name))
         return await original_download(bucket_name, object_name)
 
-    fake_minio.adownload_file = tracked_download
+    fake_minio.adownload_response = tracked_download
     monkeypatch.setattr(service, "get_minio_client", lambda: fake_minio)
     monkeypatch.setattr(service, "sandbox_uploads_dir", lambda _thread_id: tmp_path / "legacy-uploads")
     calls = {}
 
-    class FakeBackend:
+    class FakeBackend(_ScopedBackendAdapter):
         def __init__(self, **kwargs):
             calls["scope"] = kwargs
 
@@ -458,6 +492,8 @@ async def test_hydrate_attachment_records_streams_validated_minio_objects(monkey
         "uid": "user-1",
         "file_thread_id": "parent-thread",
         "skills_thread_id": "child-thread",
+        "sandbox_instance_id": None,
+        "create_if_missing": True,
     }
     assert events == [
         ("clear", None),
@@ -476,7 +512,7 @@ async def test_hydrate_attachment_records_clears_sandbox_when_current_set_is_emp
     monkeypatch.setattr(service, "sandbox_uploads_dir", lambda _thread_id: tmp_path / "legacy-uploads")
     clear_calls = []
 
-    class FakeBackend:
+    class FakeBackend(_ScopedBackendAdapter):
         def __init__(self, **_kwargs):
             pass
 
@@ -500,7 +536,7 @@ async def test_hydrate_attachment_records_fails_before_sandbox_on_missing_object
     monkeypatch.setattr(service, "get_minio_client", FakeMinioClient)
     monkeypatch.setattr(service, "sandbox_uploads_dir", lambda _thread_id: tmp_path / "legacy-uploads")
 
-    class FakeBackend:
+    class FakeBackend(_ScopedBackendAdapter):
         def __init__(self, **_kwargs):
             pass
 
@@ -553,7 +589,7 @@ async def test_hydrate_accepts_existing_record_with_pre_normalized_file_name(mon
     monkeypatch.setattr(service, "get_minio_client", lambda: fake_minio)
     monkeypatch.setattr(service, "sandbox_uploads_dir", lambda _thread_id: tmp_path / "legacy-uploads")
 
-    class FakeBackend:
+    class FakeBackend(_ScopedBackendAdapter):
         def __init__(self, **_kwargs):
             pass
 
@@ -604,7 +640,7 @@ async def test_hydrate_attachment_records_uses_legacy_files_without_minio_metada
     monkeypatch.setattr(service, "sandbox_uploads_dir", lambda _thread_id: uploads_dir)
     calls = []
 
-    class FakeBackend:
+    class FakeBackend(_ScopedBackendAdapter):
         def __init__(self, **_kwargs):
             pass
 
@@ -640,7 +676,7 @@ async def test_hydrate_attachment_records_rejects_missing_legacy_file_before_san
     monkeypatch.setattr(service, "get_minio_client", FakeMinioClient)
     monkeypatch.setattr(service, "sandbox_uploads_dir", lambda _thread_id: tmp_path / "legacy-uploads")
 
-    class FakeBackend:
+    class FakeBackend(_ScopedBackendAdapter):
         def __init__(self, **_kwargs):
             pass
 
@@ -673,7 +709,7 @@ async def test_hydrate_attachment_records_rejects_legacy_symlink(monkeypatch, tm
     monkeypatch.setattr(service, "get_minio_client", FakeMinioClient)
     monkeypatch.setattr(service, "sandbox_uploads_dir", lambda _thread_id: uploads_dir)
 
-    class FakeBackend:
+    class FakeBackend(_ScopedBackendAdapter):
         def __init__(self, **_kwargs):
             pass
 
@@ -695,13 +731,14 @@ async def test_hydrate_cancellation_waits_for_write_then_clears(monkeypatch, tmp
     fake_minio = FakeMinioClient()
     record = _hydrate_record()
     fake_minio.objects[("knowledgebases", record["original_object_name"])] = b"content"
+    record["file_size"] = len(b"content")
     write_started = threading.Event()
     allow_write_finish = threading.Event()
     calls = []
     monkeypatch.setattr(service, "get_minio_client", lambda: fake_minio)
     monkeypatch.setattr(service, "sandbox_uploads_dir", lambda _thread_id: tmp_path / "legacy-uploads")
 
-    class FakeBackend:
+    class FakeBackend(_ScopedBackendAdapter):
         def __init__(self, **_kwargs):
             pass
 

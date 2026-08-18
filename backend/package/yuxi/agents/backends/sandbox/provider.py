@@ -21,18 +21,37 @@ def sandbox_provisioner_token() -> str:
     return token
 
 
-def sandbox_id_for_thread(thread_id: str, skills_thread_id: str | None = None, *, uid: str | None = None) -> str:
+def sandbox_id_for_thread(
+    thread_id: str,
+    skills_thread_id: str | None = None,
+    *,
+    uid: str | None = None,
+    runtime_thread_id: str | None = None,
+    sandbox_instance_id: str | None = None,
+) -> str:
     file_thread_id = str(thread_id or "").strip()
     skills_id = str(skills_thread_id or file_thread_id).strip()
     uid_id = str(uid or "").strip()
     scope = file_thread_id if skills_id == file_thread_id else f"{file_thread_id}:{skills_id}"
+    runtime_id = str(runtime_thread_id or file_thread_id).strip()
+    if runtime_id != file_thread_id:
+        scope = f"{scope}:{runtime_id}"
+    instance_id = str(sandbox_instance_id or runtime_id).strip()
+    if instance_id != runtime_id:
+        scope = f"{scope}:{instance_id}"
     identity = f"{uid_id}:{scope}" if uid_id else scope
     digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()
     return digest[:12]
 
 
-def _sandbox_key(uid: str, file_thread_id: str, skills_thread_id: str) -> str:
-    return f"{uid}::{file_thread_id}::{skills_thread_id}"
+def _sandbox_key(
+    uid: str,
+    runtime_thread_id: str,
+    file_thread_id: str,
+    skills_thread_id: str,
+    sandbox_instance_id: str,
+) -> str:
+    return f"{uid}::{runtime_thread_id}::{file_thread_id}::{skills_thread_id}::{sandbox_instance_id}"
 
 
 def normalize_env(env: dict | None) -> dict[str, str]:
@@ -153,10 +172,12 @@ class ProvisionerSandboxProvider:
         file_thread_id: str | None = None,
         skills_thread_id: str | None = None,
         inherit_env: bool = True,
+        sandbox_instance_id: str | None = None,
     ) -> str:
         file_id = str(file_thread_id or thread_id).strip()
         skills_id = str(skills_thread_id or thread_id).strip()
-        cache_key = _sandbox_key(uid, file_id, skills_id)
+        instance_id = str(sandbox_instance_id or thread_id).strip()
+        cache_key = _sandbox_key(uid, thread_id, file_id, skills_id, instance_id)
         lock = self._thread_lock(cache_key)
         with lock:
             current = self._connections.get(cache_key)
@@ -172,7 +193,13 @@ class ProvisionerSandboxProvider:
                     logger.warning(f"Failed to touch sandbox {current.sandbox_id} for {cache_key}: {exc}")
                     return current.sandbox_id
 
-            sandbox_id = sandbox_id_for_thread(file_id, skills_id, uid=uid)
+            sandbox_id = sandbox_id_for_thread(
+                file_id,
+                skills_id,
+                uid=uid,
+                runtime_thread_id=thread_id,
+                sandbox_instance_id=instance_id,
+            )
             logger.info(f"Ensuring sandbox {sandbox_id} for file thread {file_id} and skills thread {skills_id}")
             record = self._client.create(
                 sandbox_id,
@@ -203,10 +230,12 @@ class ProvisionerSandboxProvider:
         file_thread_id: str | None = None,
         skills_thread_id: str | None = None,
         inherit_env: bool = True,
+        sandbox_instance_id: str | None = None,
     ) -> SandboxConnection | None:
         file_id = str(file_thread_id or thread_id).strip()
         skills_id = str(skills_thread_id or thread_id).strip()
-        cache_key = _sandbox_key(uid, file_id, skills_id)
+        instance_id = str(sandbox_instance_id or thread_id).strip()
+        cache_key = _sandbox_key(uid, thread_id, file_id, skills_id, instance_id)
         lock = self._thread_lock(cache_key)
         with lock:
             current = self._connections.get(cache_key)
@@ -222,7 +251,13 @@ class ProvisionerSandboxProvider:
                     logger.warning(f"Failed to touch sandbox {current.sandbox_id} for {cache_key}: {exc}")
                     return current
 
-            sandbox_id = sandbox_id_for_thread(file_id, skills_id, uid=uid)
+            sandbox_id = sandbox_id_for_thread(
+                file_id,
+                skills_id,
+                uid=uid,
+                runtime_thread_id=thread_id,
+                sandbox_instance_id=instance_id,
+            )
             if create_if_missing:
                 record = self._client.create(
                     sandbox_id,
@@ -255,15 +290,27 @@ class ProvisionerSandboxProvider:
         file_thread_id: str | None = None,
         skills_thread_id: str | None = None,
         clear_cache_on_delete_failure: bool = False,
+        sandbox_instance_id: str | None = None,
     ) -> None:
         """释放一个指定作用域的 Sandbox，并清理本地连接缓存。"""
         file_id = str(file_thread_id or thread_id).strip()
         skills_id = str(skills_thread_id or thread_id).strip()
-        cache_key = _sandbox_key(uid, file_id, skills_id)
+        instance_id = str(sandbox_instance_id or thread_id).strip()
+        cache_key = _sandbox_key(uid, thread_id, file_id, skills_id, instance_id)
         lock = self._thread_lock(cache_key)
         with lock:
             connection = self._connections.get(cache_key)
-            sandbox_id = connection.sandbox_id if connection else sandbox_id_for_thread(file_id, skills_id, uid=uid)
+            sandbox_id = (
+                connection.sandbox_id
+                if connection
+                else sandbox_id_for_thread(
+                    file_id,
+                    skills_id,
+                    uid=uid,
+                    runtime_thread_id=thread_id,
+                    sandbox_instance_id=instance_id,
+                )
+            )
             try:
                 self._client.delete(sandbox_id)
             except Exception:

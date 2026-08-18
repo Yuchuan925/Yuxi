@@ -303,6 +303,75 @@ async def test_save_messages_from_langgraph_state_backfills_run_output_message(m
 
 
 @pytest.mark.asyncio
+async def test_interrupt_publishes_message_revision_and_terminal_status_before_one_commit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events: list[tuple] = []
+
+    class FakeDB:
+        async def commit(self):
+            events.append(("commit",))
+
+        async def rollback(self):
+            events.append(("rollback",))
+
+    class FakeGraph:
+        async def aget_state(self, _config):
+            return SimpleNamespace(values={"messages": [AIMessage(content="waiting")]})
+
+    class FakeAgent:
+        async def get_graph(self, *, context):
+            return FakeGraph()
+
+    class FakeRunRepo:
+        def __init__(self, _db):
+            pass
+
+        async def lock_output_persistence(self, *_args, **_kwargs):
+            events.append(("lock",))
+            return object()
+
+        async def set_output_message(self, run_id, message_id, *, worker_id):
+            events.append(("message", run_id, message_id, worker_id))
+
+        async def set_terminal_status(self, run_id, **kwargs):
+            events.append(("terminal", run_id, kwargs))
+            return SimpleNamespace(status="interrupted"), True
+
+    async def fake_publish(*, db, revision_id):
+        events.append(("publish", revision_id, db))
+
+    fake_db = FakeDB()
+    monkeypatch.setattr(svc, "AgentRunRepository", FakeRunRepo)
+    monkeypatch.setattr(svc, "publish_staged_outputs", fake_publish)
+
+    terminal_committed = await svc.save_messages_from_langgraph_state(
+        agent_instance=FakeAgent(),
+        thread_id="thread-1",
+        conv_repo=_FakeConvRepo(fake_db),
+        config_dict={},
+        context=object(),
+        run_id="run-1",
+        request_id="request-1",
+        worker_id="worker-1",
+        interrupt_run=True,
+        interrupt_error_type="ask_user_question_required",
+        interrupt_error_message="请选择",
+        output_revision_id="revision-1",
+    )
+
+    assert terminal_committed is True
+    assert [event[0] for event in events] == ["lock", "message", "publish", "terminal", "commit"]
+    assert events[-2][2] == {
+        "status": "interrupted",
+        "error_type": "ask_user_question_required",
+        "error_message": "请选择",
+        "token_usage": {"available": False},
+        "worker_id": "worker-1",
+    }
+
+
+@pytest.mark.asyncio
 async def test_build_agent_input_context_loads_all_workspace_agent_context_files(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

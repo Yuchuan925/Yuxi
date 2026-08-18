@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import importlib
+import hashlib
+import os
 import uuid
 from types import SimpleNamespace
 
 from fastapi import HTTPException
 import pytest
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from yuxi.agents.backends.sandbox import (
     ensure_thread_dirs,
     sandbox_outputs_dir,
@@ -15,6 +19,9 @@ from yuxi.agents.backends.sandbox import (
     sandbox_workspace_dir,
     virtual_path_for_thread_file,
 )
+from yuxi.repositories.thread_output_repository import ThreadOutputRepository
+from yuxi.storage.minio import get_minio_client
+from yuxi.storage.postgres.models_business import Conversation
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
 
@@ -98,6 +105,92 @@ async def test_viewer_tree_root_lists_user_data_namespace(test_client, standard_
     entries = response.json().get("entries", [])
     paths = {entry.get("path") for entry in entries}
     assert "/home/gem/user-data/" in paths
+
+
+async def test_published_output_survives_local_absence_and_viewer_delete(test_client, standard_user, admin_headers):
+    headers = standard_user["headers"]
+    thread_id = await _create_thread_for_user(test_client, headers)
+    content = b"persistent output\n"
+    revision_id = uuid.uuid4().hex
+    object_name = f"threads/{thread_id}/outputs/revisions/{revision_id}/result.txt"
+    bucket_name = get_minio_client().KB_BUCKETS["documents"]
+    await get_minio_client().aupload_file(bucket_name, object_name, content, "text/plain")
+    engine = create_async_engine(os.environ["POSTGRES_URL"], pool_pre_ping=True)
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+
+    try:
+        async with session_factory() as db:
+            conversation = await db.scalar(select(Conversation).where(Conversation.thread_id == thread_id))
+            repository = ThreadOutputRepository(db)
+            await repository.create_staging(
+                revision_id=revision_id,
+                conversation=conversation,
+                run_id=None,
+                base_revision_id=None,
+            )
+            await repository.set_files(
+                revision_id,
+                [
+                    {
+                        "path": "/home/gem/user-data/outputs/result.txt",
+                        "bucket_name": bucket_name,
+                        "object_name": object_name,
+                        "size": len(content),
+                        "sha256": hashlib.sha256(content).hexdigest(),
+                        "content_type": "text/plain",
+                    }
+                ],
+            )
+            await repository.publish(revision_id)
+            await db.commit()
+
+        local_output = sandbox_outputs_dir(thread_id) / "result.txt"
+        assert not local_output.exists()
+
+        tree = await test_client.get(
+            "/api/viewer/filesystem/tree",
+            params={"thread_id": thread_id, "path": "/home/gem/user-data/outputs"},
+            headers=headers,
+        )
+        assert tree.status_code == 200, tree.text
+        assert [entry["name"] for entry in tree.json()["entries"]] == ["result.txt"]
+
+        download = await test_client.get(
+            "/api/viewer/filesystem/download",
+            params={"thread_id": thread_id, "path": "/home/gem/user-data/outputs/result.txt"},
+            headers=headers,
+        )
+        assert download.status_code == 200, download.text
+        assert download.content == content
+
+        artifact = await test_client.get(
+            f"/api/chat/thread/{thread_id}/artifacts/home/gem/user-data/outputs/result.txt",
+            headers=headers,
+        )
+        assert artifact.status_code == 200, artifact.text
+        assert artifact.content == content
+
+        cross_user = await test_client.get(
+            f"/api/chat/thread/{thread_id}/artifacts/home/gem/user-data/outputs/result.txt",
+            headers=admin_headers,
+        )
+        assert cross_user.status_code == 404, cross_user.text
+
+        deleted = await test_client.delete(
+            "/api/viewer/filesystem/file",
+            params={"thread_id": thread_id, "path": "/home/gem/user-data/outputs/result.txt"},
+            headers=headers,
+        )
+        assert deleted.status_code == 200, deleted.text
+        missing = await test_client.get(
+            "/api/viewer/filesystem/download",
+            params={"thread_id": thread_id, "path": "/home/gem/user-data/outputs/result.txt"},
+            headers=headers,
+        )
+        assert missing.status_code == 404, missing.text
+    finally:
+        await get_minio_client().adelete_file(bucket_name, object_name)
+        await engine.dispose()
 
 
 async def test_viewer_tree_root_does_not_require_sandbox_listing(test_client, standard_user, monkeypatch):
@@ -729,5 +822,3 @@ async def test_viewer_search_matches_files_in_user_data(test_client, standard_us
     entries = response.json().get("entries", [])
     names = [entry.get("name") for entry in entries]
     assert "report-2026.md" in names
-
-

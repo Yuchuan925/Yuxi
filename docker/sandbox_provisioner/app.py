@@ -282,15 +282,6 @@ class LocalContainerProvisionerBackend:
             raise ValueError("user workspace path resolved outside threads host root") from exc
         return workspace
 
-    def _thread_outputs_host_path(self, thread_id: str) -> Path:
-        threads_root = Path(self._threads_host_path).resolve()
-        outputs = (threads_root / thread_id / "user-data" / "outputs").resolve()
-        try:
-            outputs.relative_to(threads_root)
-        except ValueError as exc:
-            raise ValueError("thread outputs path resolved outside threads host root") from exc
-        return outputs
-
     def _is_expected_skills_mount(self, container, skills_thread_id: str) -> bool:
         expected_source = str(self._thread_skills_host_path(skills_thread_id))
         for mount in container.attrs.get("Mounts") or []:
@@ -304,13 +295,12 @@ class LocalContainerProvisionerBackend:
     def _has_expected_user_data_mounts(self, container, file_thread_id: str, uid: str) -> bool:
         expected_mounts = {
             "/home/gem/user-data/workspace": str(self._shared_workspace_host_path(uid)),
-            "/home/gem/user-data/outputs": str(self._thread_outputs_host_path(file_thread_id)),
         }
         actual_mounts = {
             str((mount.get("Destination") or "").rstrip("/")): str((mount.get("Source") or "").rstrip("/"))
             for mount in container.attrs.get("Mounts") or []
         }
-        return "/home/gem/user-data/uploads" not in actual_mounts and all(
+        return not ({"/home/gem/user-data/uploads", "/home/gem/user-data/outputs"} & actual_mounts.keys()) and all(
             actual_mounts.get(destination) == source for destination, source in expected_mounts.items()
         )
 
@@ -476,8 +466,6 @@ class LocalContainerProvisionerBackend:
 
             shared_workspace = self._shared_workspace_host_path(safe_uid)
             shared_workspace.mkdir(parents=True, exist_ok=True)
-            thread_outputs = self._thread_outputs_host_path(safe_file_thread_id)
-            thread_outputs.mkdir(parents=True, exist_ok=True)
             thread_skills = self._thread_skills_host_path(safe_skills_thread_id)
             thread_skills.mkdir(parents=True, exist_ok=True)
             network_name = self._ensure_network(sandbox_id)
@@ -497,7 +485,6 @@ class LocalContainerProvisionerBackend:
                 },
                 "volumes": {
                     str(shared_workspace): {"bind": "/home/gem/user-data/workspace", "mode": "rw"},
-                    str(thread_outputs): {"bind": "/home/gem/user-data/outputs", "mode": "rw"},
                     str(thread_skills): {"bind": "/home/gem/skills", "mode": "ro"},
                 },
                 "network": network_name,
@@ -667,13 +654,12 @@ class KubernetesProvisionerBackend:
                         image=self._sandbox_image,
                         command=["sh", "-c"],
                         args=[
-                            "mkdir -p /home/gem/user-data/uploads "
+                            "mkdir -p /home/gem/user-data/uploads /home/gem/user-data/outputs "
                             f"/mnt/shared-data/threads/shared/{uid}/workspace "
-                            f"/mnt/shared-data/threads/{file_thread_id}/user-data/outputs "
                             f"/mnt/shared-data/threads/{skills_thread_id}/skills "
                             "&& chmod 777 /home/gem /home/gem/user-data /home/gem/user-data/uploads "
-                            f"&& chmod -R 777 /mnt/shared-data/threads/shared/{uid}/workspace "
-                            f"/mnt/shared-data/threads/{file_thread_id}/user-data/outputs ",
+                            "/home/gem/user-data/outputs "
+                            f"&& chmod -R 777 /mnt/shared-data/threads/shared/{uid}/workspace ",
                         ],
                         volume_mounts=[
                             self._client.V1VolumeMount(name="home-dir", mount_path="/home/gem"),
@@ -693,11 +679,6 @@ class KubernetesProvisionerBackend:
                                 name="shared-data",
                                 mount_path="/home/gem/user-data/workspace",
                                 sub_path=f"threads/shared/{uid}/workspace",
-                            ),
-                            self._client.V1VolumeMount(
-                                name="shared-data",
-                                mount_path="/home/gem/user-data/outputs",
-                                sub_path=f"threads/{file_thread_id}/user-data/outputs",
                             ),
                             self._client.V1VolumeMount(
                                 name="shared-data",
@@ -749,7 +730,6 @@ class KubernetesProvisionerBackend:
     def _pod_has_expected_mounts(pod, *, file_thread_id: str, skills_thread_id: str, uid: str) -> bool:
         expected_mounts = {
             "/home/gem/user-data/workspace": f"threads/shared/{uid}/workspace",
-            "/home/gem/user-data/outputs": f"threads/{file_thread_id}/user-data/outputs",
             "/home/gem/skills": f"threads/{skills_thread_id}/skills",
         }
         for container in getattr(pod.spec, "containers", []) or []:
@@ -759,7 +739,7 @@ class KubernetesProvisionerBackend:
                 str(getattr(mount, "mount_path", "") or "").rstrip("/"): str(getattr(mount, "sub_path", "") or "")
                 for mount in getattr(container, "volume_mounts", []) or []
             }
-            return "/home/gem/user-data/uploads" not in actual_mounts and all(
+            return not ({"/home/gem/user-data/uploads", "/home/gem/user-data/outputs"} & actual_mounts.keys()) and all(
                 actual_mounts.get(path) == sub_path for path, sub_path in expected_mounts.items()
             )
         return False

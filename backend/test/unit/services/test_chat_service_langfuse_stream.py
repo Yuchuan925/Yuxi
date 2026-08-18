@@ -51,11 +51,15 @@ async def _fake_save_messages_from_langgraph_state(
     request_id=None,
     worker_id=None,
     complete_run=False,
+    interrupt_run=False,
+    interrupt_error_type=None,
+    interrupt_error_message=None,
     token_usage=None,
+    output_revision_id=None,
 ):
     del agent_instance, thread_id, conv_repo, config_dict, context, trace_info
-    del run_id, request_id, worker_id, token_usage
-    return complete_run
+    del run_id, request_id, worker_id, interrupt_error_type, interrupt_error_message, token_usage, output_revision_id
+    return complete_run or interrupt_run
 
 
 async def _fake_guard_check(_content):
@@ -66,6 +70,54 @@ async def _fake_guard_check_with_keywords(_content):
     return False
 
 
+@pytest.mark.asyncio
+async def test_output_publish_commit_failure_is_recorded_unknown(monkeypatch):
+    calls: list[tuple] = []
+
+    class FailingCommitDB:
+        async def commit(self):
+            calls.append(("commit",))
+            raise RuntimeError("commit response lost")
+
+        async def rollback(self):
+            calls.append(("rollback",))
+
+    async def fake_messages(*_args, **_kwargs):
+        return []
+
+    async def fake_existing_ids(*_args, **_kwargs):
+        return set()
+
+    async def fake_publish(**kwargs):
+        calls.append(("publish", kwargs["revision_id"]))
+
+    async def fake_mark(revision_id, status, error_message):
+        calls.append(("mark", revision_id, status, error_message))
+
+    monkeypatch.setattr(svc, "_get_langgraph_messages", fake_messages)
+    monkeypatch.setattr(svc, "_get_existing_message_ids", fake_existing_ids)
+    monkeypatch.setattr(svc, "publish_staged_outputs", fake_publish)
+    monkeypatch.setattr(svc, "mark_output_revision_status", fake_mark)
+    conversation_repository = SimpleNamespace(db=FailingCommitDB())
+
+    with pytest.raises(RuntimeError, match="commit response lost"):
+        await svc.save_messages_from_langgraph_state(
+            agent_instance=object(),
+            thread_id="thread-1",
+            conv_repo=conversation_repository,
+            config_dict={},
+            context=object(),
+            output_revision_id="revision-1",
+        )
+
+    assert calls == [
+        ("publish", "revision-1"),
+        ("commit",),
+        ("rollback",),
+        ("mark", "revision-1", "unknown", "发布事务确认失败"),
+    ]
+
+
 async def _fake_interrupts(agent, langgraph_config, make_chunk, meta, thread_id, context):
     if False:
         yield None
@@ -74,6 +126,14 @@ async def _fake_interrupts(agent, langgraph_config, make_chunk, meta, thread_id,
 
 async def _fake_hydrate_attachment_records(*_args, **_kwargs):
     return None
+
+
+async def _fake_current_output_snapshot(**_kwargs):
+    return None, []
+
+
+async def _fake_stage_thread_outputs(**_kwargs):
+    return "output-revision-1"
 
 
 def _patch_stream_scaffolding(
@@ -123,6 +183,10 @@ def _patch_stream_scaffolding(
         "hydrate_attachment_records_to_sandbox",
         materialize or _fake_hydrate_attachment_records,
     )
+    monkeypatch.setattr(svc, "get_current_output_snapshot", _fake_current_output_snapshot)
+    monkeypatch.setattr(svc, "hydrate_thread_outputs_to_sandbox", _fake_hydrate_attachment_records)
+    monkeypatch.setattr(svc, "hydrate_legacy_thread_outputs_to_sandbox", _fake_hydrate_attachment_records)
+    monkeypatch.setattr(svc, "stage_thread_outputs", _fake_stage_thread_outputs)
     monkeypatch.setattr(
         svc,
         "_build_langfuse_run_context",
@@ -354,7 +418,11 @@ async def test_stream_agent_chat_commits_before_stream_and_persists_langfuse_con
         request_id=None,
         worker_id=None,
         complete_run=False,
+        interrupt_run=False,
+        interrupt_error_type=None,
+        interrupt_error_message=None,
         token_usage=None,
+        output_revision_id=None,
     ):
         calls["saved_state"] = {
             "thread_id": thread_id,
@@ -365,9 +433,13 @@ async def test_stream_agent_chat_commits_before_stream_and_persists_langfuse_con
             "request_id": request_id,
             "worker_id": worker_id,
             "complete_run": complete_run,
+            "interrupt_run": interrupt_run,
+            "interrupt_error_type": interrupt_error_type,
+            "interrupt_error_message": interrupt_error_message,
             "token_usage": token_usage,
+            "output_revision_id": output_revision_id,
         }
-        return complete_run
+        return complete_run or interrupt_run
 
     _patch_stream_scaffolding(
         monkeypatch,
@@ -403,6 +475,15 @@ async def test_stream_agent_chat_commits_before_stream_and_persists_langfuse_con
         flush_langfuse=lambda: calls.setdefault("flushed", True),
         materialize=fake_materialize,
     )
+
+    async def fake_legacy_output_hydrate(**kwargs):
+        calls["legacy_output_hydrate"] = kwargs
+
+    async def fail_object_output_hydrate(**_kwargs):
+        raise AssertionError("没有 current revision 时必须先恢复 legacy outputs")
+
+    monkeypatch.setattr(svc, "hydrate_legacy_thread_outputs_to_sandbox", fake_legacy_output_hydrate)
+    monkeypatch.setattr(svc, "hydrate_thread_outputs_to_sandbox", fail_object_output_hydrate)
 
     chunks = []
     async for chunk in svc.stream_agent_chat(
@@ -475,7 +556,11 @@ async def test_stream_agent_chat_commits_before_stream_and_persists_langfuse_con
     assert calls["hydrate_scope"] == {
         "file_thread_id": "thread-1",
         "skills_thread_id": "thread-1",
+        "sandbox_instance_id": None,
+        "create_if_missing": False,
     }
+    assert calls["legacy_output_hydrate"]["file_thread_id"] == "thread-1"
+    assert calls["legacy_output_hydrate"]["legacy_root"].name == "outputs"
     assert chunks[0]["msg"]["extra_metadata"]["attachments"] == [calls["stream_kwargs"]["uploads"][0]]
     assert calls["flushed"] is True
     assert isinstance(calls["stream_messages"][0], HumanMessage)

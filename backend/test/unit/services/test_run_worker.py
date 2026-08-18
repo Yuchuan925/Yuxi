@@ -110,6 +110,11 @@ def _patch_common(monkeypatch: pytest.MonkeyPatch, run_obj: SimpleNamespace):
     monkeypatch.setattr(run_worker.RunContext, "start", fake_noop)
     monkeypatch.setattr(run_worker.RunContext, "close", fake_noop)
     monkeypatch.setattr(run_worker.RunContext, "is_cancelled", fake_not_cancelled)
+    monkeypatch.setattr(
+        run_worker,
+        "get_sandbox_provider",
+        lambda: SimpleNamespace(release=lambda *_args, **_kwargs: None),
+    )
 
 
 @pytest.mark.asyncio
@@ -315,7 +320,8 @@ async def test_process_agent_run_publishes_interrupt_after_final_state(monkeypat
     async def fake_mark_terminal(run_id: str, status: str, **kwargs):
         del run_id, kwargs
         terminal_statuses.append(status)
-        return run_worker.TerminalTransition(status=status, changed=True)
+        # chat_service 已在 Message/revision 的 owning transaction 内提交 interrupted。
+        return run_worker.TerminalTransition(status=status, changed=False)
 
     def fake_stream_agent_chat(**kwargs):
         del kwargs
@@ -444,8 +450,10 @@ async def test_durable_cancel_without_redis_signal_never_enters_agent_stream(mon
     run_obj.status = "cancel_requested"
     _patch_common(monkeypatch, run_obj)
     terminal_calls: list[dict] = []
+    lifecycle: list[str] = []
 
     async def fake_mark_terminal(run_id: str, status: str, **kwargs):
+        lifecycle.append("terminal")
         terminal_calls.append({"run_id": run_id, "status": status, **kwargs})
         run_obj.status = status
         return run_worker.TerminalTransition(status=status, changed=True)
@@ -456,11 +464,17 @@ async def test_durable_cancel_without_redis_signal_never_enters_agent_stream(mon
 
     monkeypatch.setattr(run_worker, "mark_run_terminal", fake_mark_terminal)
     monkeypatch.setattr(run_worker, "stream_agent_chat", forbidden_stream)
+    monkeypatch.setattr(
+        run_worker,
+        "get_sandbox_provider",
+        lambda: SimpleNamespace(release=lambda *_args, **_kwargs: lifecycle.append("release")),
+    )
 
     await run_worker.process_agent_run({"worker_id": "worker-cancel", "job_try": 1}, "run-1")
 
     assert [call["status"] for call in terminal_calls] == ["cancelled"]
     assert terminal_calls[0]["worker_id"].startswith("worker-cancel:")
+    assert lifecycle == ["release", "terminal", "release"]
 
 
 @pytest.mark.asyncio

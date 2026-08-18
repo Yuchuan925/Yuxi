@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import gc
+import hashlib
 import threading
 import weakref
 from types import MethodType, SimpleNamespace
@@ -85,7 +86,7 @@ def test_sandbox_provider_release_deletes_sandbox_and_clears_cache():
     provider._last_touch_at = {}
     provider._client = SimpleNamespace(delete=deleted.append)
     connection = SimpleNamespace(sandbox_id="sandbox-1")
-    cache_key = "user-1::thread-1::thread-1"
+    cache_key = "user-1::thread-1::thread-1::thread-1::thread-1"
     provider._connections[cache_key] = connection
     provider._last_touch_at[cache_key] = 1.0
 
@@ -116,7 +117,7 @@ def test_sandbox_provider_waiter_keeps_shared_thread_lock_alive():
     provider = object.__new__(ProvisionerSandboxProvider)
     provider._lock = threading.Lock()
     provider._thread_locks = weakref.WeakValueDictionary()
-    cache_key = "user-1::thread-1::thread-1"
+    cache_key = "user-1::thread-1::thread-1::thread-1::thread-1"
     first_lock = provider._thread_lock(cache_key)
     waiter_ready = threading.Event()
     waiter_acquired = threading.Event()
@@ -154,7 +155,7 @@ def test_sandbox_provider_release_on_delete_failure(clear_cache_on_delete_failur
 
     provider._client = SimpleNamespace(delete=fail_delete)
     connection = SimpleNamespace(sandbox_id="sandbox-1")
-    cache_key = "user-1::thread-1::thread-1"
+    cache_key = "user-1::thread-1::thread-1::thread-1::thread-1"
     provider._connections[cache_key] = connection
     provider._last_touch_at[cache_key] = 1.0
 
@@ -517,7 +518,9 @@ def test_provider_get_create_if_missing_ensures_expected_split_scope(monkeypatch
         skills_thread_id="child-skills-thread",
     )
 
-    sandbox_id = sandbox_id_for_thread("parent-thread", "child-skills-thread", uid="user-1")
+    sandbox_id = sandbox_id_for_thread(
+        "parent-thread", "child-skills-thread", uid="user-1", runtime_thread_id="child-thread"
+    )
     assert connection.sandbox_id == sandbox_id
     assert connection.file_thread_id == "parent-thread"
     assert connection.skills_thread_id == "child-skills-thread"
@@ -583,6 +586,7 @@ def test_provisioner_uses_file_and_skills_thread_ids(monkeypatch) -> None:
                 "file_thread_id": "parent-thread",
                 "skills_thread_id": "child-skills-thread",
                 "inherit_env": True,
+                "sandbox_instance_id": "child-thread",
             },
         )
     ]
@@ -617,14 +621,14 @@ def test_provisioner_trusted_hydrate_clears_and_writes_uploads(monkeypatch) -> N
         calls.append(("clear", kwargs["command"]))
         return SimpleNamespace(data=SimpleNamespace(exit_code=0, output=""))
 
-    def _write_file(**kwargs):
-        calls.append(("write", kwargs))
+    def _upload_file(**kwargs):
+        calls.append(("upload", kwargs["path"], kwargs["file"].read()))
         return SimpleNamespace(success=True, message="")
 
     backend._get_client = MethodType(
         lambda self: SimpleNamespace(
             shell=SimpleNamespace(exec_command=_exec_command),
-            file=SimpleNamespace(write_file=_write_file),
+            file=SimpleNamespace(upload_file=_upload_file),
         ),
         backend,
     )
@@ -633,12 +637,10 @@ def test_provisioner_trusted_hydrate_clears_and_writes_uploads(monkeypatch) -> N
     backend.write_upload_file("/home/gem/user-data/uploads/file.bin", b"\x00\xff")
     backend.write_upload_file("/home/gem/user-data/uploads/attachments/file.md", b"content")
 
-    assert [call[0] for call in calls] == ["clear", "write", "write"]
-    assert calls[1][1] == {
-        "file": "/home/gem/user-data/uploads/file.bin",
-        "content": "AP8=",
-        "encoding": "base64",
-    }
+    assert [call[0] for call in calls] == ["clear", "upload", "clear", "upload", "clear"]
+    assert calls[1][2] == b"\x00\xff"
+    assert calls[3][2] == b"content"
+    assert all(call[1].startswith("/tmp/.yuxi-hydrate-") for call in (calls[1], calls[3]))
 
 
 def test_provisioner_trusted_hydrate_rejects_failed_or_outside_write(monkeypatch) -> None:
@@ -653,7 +655,7 @@ def test_provisioner_trusted_hydrate_rejects_failed_or_outside_write(monkeypatch
     backend._get_client = MethodType(
         lambda self: SimpleNamespace(
             shell=SimpleNamespace(exec_command=_exec_command),
-            file=SimpleNamespace(write_file=lambda **_kwargs: SimpleNamespace(success=False, message="write failed")),
+            file=SimpleNamespace(upload_file=lambda **_kwargs: SimpleNamespace(success=False, message="write failed")),
         ),
         backend,
     )
@@ -1012,3 +1014,142 @@ def test_provisioner_download_files_streams_binary_bytes(monkeypatch) -> None:
             "request_options": {"timeout_in_seconds": backend._command_timeout_seconds},
         }
     ]
+
+
+def test_trusted_output_listing_rejects_symlink_or_scope_escape(monkeypatch) -> None:
+    monkeypatch.setattr("yuxi.agents.backends.sandbox.backend.get_sandbox_provider", lambda: object())
+    backend = ProvisionerSandboxBackend(thread_id="thread-1", uid="user-1")
+    backend._get_client = MethodType(
+        lambda self: SimpleNamespace(
+            file=SimpleNamespace(
+                list_path=lambda **_kwargs: SimpleNamespace(
+                    data=SimpleNamespace(
+                        files=[
+                            SimpleNamespace(
+                                path="/home/gem/user-data/outputs/escape.txt",
+                                is_directory=False,
+                            )
+                        ]
+                    )
+                )
+            )
+        ),
+        backend,
+    )
+    monkeypatch.setattr(
+        backend,
+        "execute",
+        lambda _command: SimpleNamespace(exit_code=2, output="not regular", truncated=False),
+    )
+
+    with pytest.raises(ValueError, match="not a regular scoped file"):
+        backend.list_output_files()
+
+
+def test_output_download_enforces_limit_during_actual_transfer(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr("yuxi.agents.backends.sandbox.backend.get_sandbox_provider", lambda: object())
+    backend = ProvisionerSandboxBackend(thread_id="thread-1", uid="user-1")
+    content = b"12345678"
+    execute_calls = 0
+
+    def execute(_command):
+        nonlocal execute_calls
+        execute_calls += 1
+        return SimpleNamespace(
+            exit_code=0,
+            output=f"YUXI_OUTPUT_SNAPSHOT {len(content)} {hashlib.sha256(content).hexdigest()}",
+            truncated=False,
+        )
+
+    backend.execute = execute
+    backend._get_client = MethodType(
+        lambda self: SimpleNamespace(
+            file=SimpleNamespace(download_file=lambda **_kwargs: iter([content[:4], content[4:]]))
+        ),
+        backend,
+    )
+    target_path = tmp_path / "snapshot.bin"
+
+    with pytest.raises(ValueError, match="exceeds transfer limit"):
+        backend.download_output_file_to_path(
+            "/home/gem/user-data/outputs/growing.bin",
+            str(target_path),
+            max_bytes=5,
+        )
+
+    assert not target_path.exists()
+    assert execute_calls == 2
+
+
+def test_output_snapshot_never_creates_missing_sandbox(monkeypatch) -> None:
+    calls = []
+
+    class FakeProvider:
+        def get(self, *_args, **kwargs):
+            calls.append(kwargs)
+            return None
+
+    monkeypatch.setattr("yuxi.agents.backends.sandbox.backend.get_sandbox_provider", FakeProvider)
+    backend = ProvisionerSandboxBackend(
+        thread_id="thread-1",
+        uid="user-1",
+        create_if_missing=False,
+    )
+
+    with pytest.raises(RuntimeError, match="sandbox is unavailable"):
+        backend.list_output_files()
+
+    assert calls[0]["create_if_missing"] is False
+
+
+def test_output_snapshot_attempts_cleanup_after_snapshot_command_failure(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr("yuxi.agents.backends.sandbox.backend.get_sandbox_provider", lambda: object())
+    backend = ProvisionerSandboxBackend(thread_id="thread-1", uid="user-1")
+    execute_results = iter(
+        [
+            SimpleNamespace(exit_code=1, output="connection lost", truncated=False),
+            SimpleNamespace(exit_code=0, output="", truncated=False),
+        ]
+    )
+    backend.execute = lambda _command: next(execute_results)
+
+    with pytest.raises(ValueError, match="snapshot failed"):
+        backend.download_output_file_to_path(
+            "/home/gem/user-data/outputs/report.txt",
+            str(tmp_path / "report.txt"),
+            max_bytes=1024,
+        )
+
+    with pytest.raises(StopIteration):
+        next(execute_results)
+
+
+def test_output_snapshot_cleanup_failure_blocks_publication(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr("yuxi.agents.backends.sandbox.backend.get_sandbox_provider", lambda: object())
+    backend = ProvisionerSandboxBackend(thread_id="thread-1", uid="user-1")
+    content = b"report"
+    execute_results = iter(
+        [
+            SimpleNamespace(
+                exit_code=0,
+                output=f"YUXI_OUTPUT_SNAPSHOT {len(content)} {hashlib.sha256(content).hexdigest()}",
+                truncated=False,
+            ),
+            SimpleNamespace(exit_code=1, output="cleanup failed", truncated=False),
+        ]
+    )
+    backend.execute = lambda _command: next(execute_results)
+    backend._get_client = MethodType(
+        lambda self: SimpleNamespace(file=SimpleNamespace(download_file=lambda **_kwargs: iter([content]))),
+        backend,
+    )
+    target = tmp_path / "report.txt"
+
+    with pytest.raises(RuntimeError, match="cleanup failed"):
+        backend.download_output_file_to_path(
+            "/home/gem/user-data/outputs/report.txt",
+            str(target),
+            max_bytes=1024,
+        )
+
+    assert not target.exists()

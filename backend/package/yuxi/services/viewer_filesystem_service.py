@@ -36,6 +36,13 @@ from yuxi.services.file_preview import (
 from yuxi.services.workspace_service import (
     create_workspace_directory as create_workspace_directory_entry,
 )
+from yuxi.services.thread_output_service import (
+    find_output_descriptor,
+    get_user_output_snapshot,
+    list_output_entries,
+    publish_output_manifest,
+)
+from yuxi.storage.minio import StorageError, get_minio_client
 from yuxi.services.workspace_service import (
     delete_workspace_path,
     list_workspace_tree,
@@ -93,6 +100,10 @@ def _is_user_data_path(path: str) -> bool:
 
 def _is_workspace_path(path: str) -> bool:
     return path == VIRTUAL_PATH_WORKSPACE or path.startswith(f"{VIRTUAL_PATH_WORKSPACE}/")
+
+
+def _is_outputs_path(path: str) -> bool:
+    return path == VIRTUAL_PATH_OUTPUTS or path.startswith(f"{VIRTUAL_PATH_OUTPUTS}/")
 
 
 def _is_skills_path(path: str) -> bool:
@@ -288,6 +299,8 @@ async def _list_viewer_directory_entries(
     thread_id: str,
     current_user: User,
     normalized_path: str,
+    output_revision_id: str | None,
+    output_files: list[dict],
 ) -> list[dict]:
     """列出 viewer 命名空间内单个目录的条目，根目录返回虚拟命名空间入口。"""
     if normalized_path == "/":
@@ -307,6 +320,8 @@ async def _list_viewer_directory_entries(
                     current_user=current_user,
                 )
                 return [_viewer_entry_from_workspace_entry(entry) for entry in response.get("entries", [])]
+            if _is_outputs_path(normalized_path) and output_revision_id:
+                return list_output_entries(output_files, normalized_path)
             if normalized_path == USER_DATA_PATH:
                 return await asyncio.to_thread(_list_user_data_root_entries, thread_id, uid)
             actual_path = _resolve_local_user_data_path(thread_id, uid, normalized_path)
@@ -345,6 +360,9 @@ async def list_viewer_filesystem_tree(
         current_user=current_user,
         db=db,
     )
+    _conversation, output_revision_id, output_files = await get_user_output_snapshot(
+        thread_id=thread_id, uid=str(current_user.uid), db=db
+    )
     entries = await _list_viewer_directory_entries(
         sandbox_backend,
         skills_backend,
@@ -352,6 +370,8 @@ async def list_viewer_filesystem_tree(
         thread_id=thread_id,
         current_user=current_user,
         normalized_path=normalized_path,
+        output_revision_id=output_revision_id,
+        output_files=output_files,
     )
     return {"entries": _sort_entries(entries)}
 
@@ -381,6 +401,9 @@ async def search_viewer_files(
         current_user=current_user,
         db=db,
     )
+    _conversation, output_revision_id, output_files = await get_user_output_snapshot(
+        thread_id=thread_id, uid=str(current_user.uid), db=db
+    )
 
     matches: list[dict] = []
     pending: list[str] = ["/"]
@@ -396,6 +419,8 @@ async def search_viewer_files(
                 thread_id=thread_id,
                 current_user=current_user,
                 normalized_path=directory_path,
+                output_revision_id=output_revision_id,
+                output_files=output_files,
             )
         except HTTPException as exc:
             logger.warning("搜索时跳过无法访问的目录 %s: %s", directory_path, exc.detail)
@@ -424,6 +449,9 @@ async def read_viewer_file_content(
         current_user=current_user,
         db=db,
     )
+    _conversation, output_revision_id, output_files = await get_user_output_snapshot(
+        thread_id=thread_id, uid=str(current_user.uid), db=db
+    )
 
     try:
         if _is_user_data_path(normalized_path):
@@ -432,6 +460,19 @@ async def read_viewer_file_content(
                     path=_workspace_relative_path(normalized_path),
                     current_user=current_user,
                 )
+            if _is_outputs_path(normalized_path) and output_revision_id:
+                descriptor = find_output_descriptor(output_files, normalized_path)
+                if descriptor is None:
+                    raise HTTPException(status_code=404, detail="文件不存在")
+                if int(descriptor.get("size") or 0) > MAX_BINARY_PREVIEW_SIZE_BYTES:
+                    return _preview_too_large_payload()
+                try:
+                    raw_content = await get_minio_client().adownload_file(
+                        str(descriptor["bucket_name"]), str(descriptor["object_name"])
+                    )
+                except StorageError as exc:
+                    raise HTTPException(status_code=404, detail="文件对象不存在") from exc
+                return await _render_viewer_preview(normalized_path, raw_content)
             actual_path = _resolve_local_user_data_path(thread_id, str(current_user.uid), normalized_path)
             if not actual_path.exists():
                 raise HTTPException(status_code=404, detail="文件不存在")
@@ -481,6 +522,9 @@ async def download_viewer_file(
         current_user=current_user,
         db=db,
     )
+    _conversation, output_revision_id, output_files = await get_user_output_snapshot(
+        thread_id=thread_id, uid=str(current_user.uid), db=db
+    )
 
     try:
         if _is_user_data_path(normalized_path):
@@ -489,6 +533,29 @@ async def download_viewer_file(
                     path=_workspace_relative_path(normalized_path),
                     current_user=current_user,
                 )
+            if _is_outputs_path(normalized_path) and output_revision_id:
+                descriptor = find_output_descriptor(output_files, normalized_path)
+                if descriptor is None:
+                    raise HTTPException(status_code=404, detail="文件不存在")
+                try:
+                    response = await get_minio_client().adownload_response(
+                        str(descriptor["bucket_name"]), str(descriptor["object_name"])
+                    )
+                except StorageError as exc:
+                    raise HTTPException(status_code=404, detail="文件对象不存在") from exc
+
+                async def stream_object():
+                    try:
+                        while chunk := await asyncio.to_thread(response.read, 1024 * 1024):
+                            yield chunk
+                    finally:
+                        response.close()
+                        response.release_conn()
+
+                file_name = PurePosixPath(normalized_path).name or "download"
+                media_type = str(descriptor.get("content_type") or "application/octet-stream")
+                headers = {"Content-Disposition": f"attachment; filename*=UTF-8''{quote(file_name)}"}
+                return StreamingResponse(stream_object(), media_type=media_type, headers=headers)
             actual_path = _resolve_local_user_data_path(thread_id, str(current_user.uid), normalized_path)
             if not actual_path.exists():
                 raise HTTPException(status_code=404, detail="文件不存在")
@@ -545,16 +612,36 @@ async def delete_viewer_file(
         raise HTTPException(status_code=422, detail="thread_id 不能为空")
 
     normalized_path = _normalize_path(path)
+    if not _is_user_data_path(normalized_path):
+        raise HTTPException(status_code=400, detail="当前路径不支持删除")
+    if normalized_path in _PROTECTED_USER_DATA_ROOTS:
+        raise HTTPException(status_code=400, detail="当前目录不允许删除")
+
     await _resolve_viewer_state(
         thread_id=thread_id,
         current_user=current_user,
         db=db,
     )
+    conversation, output_revision_id, output_files = await get_user_output_snapshot(
+        thread_id=thread_id, uid=str(current_user.uid), db=db
+    )
 
-    if not _is_user_data_path(normalized_path):
-        raise HTTPException(status_code=400, detail="当前路径不支持删除")
-    if normalized_path in _PROTECTED_USER_DATA_ROOTS:
-        raise HTTPException(status_code=400, detail="当前目录不允许删除")
+    if _is_outputs_path(normalized_path) and output_revision_id:
+        prefix = f"{normalized_path.rstrip('/')}/"
+        remaining = [
+            item
+            for item in output_files
+            if item.get("path") != normalized_path and not str(item.get("path") or "").startswith(prefix)
+        ]
+        if len(remaining) == len(output_files):
+            raise HTTPException(status_code=404, detail="文件不存在")
+        await publish_output_manifest(
+            db=db,
+            conversation=conversation,
+            base_revision_id=output_revision_id,
+            files=remaining,
+        )
+        return {"success": True, "path": normalized_path}
 
     try:
         if _is_workspace_path(normalized_path):

@@ -715,35 +715,51 @@ async def _run_download_kb_file(**kwargs):
     return await _run_tool(_download_kb_file_callable(), **kwargs)
 
 
+def _patch_output_backend(monkeypatch: pytest.MonkeyPatch):
+    state = SimpleNamespace(files={}, scopes=[])
+
+    class FakeBackend:
+        def __init__(self, **kwargs):
+            state.scopes.append(kwargs)
+
+        def output_file_exists(self, path):
+            return path in state.files
+
+        def upload_scope_file_from_path(self, scope, path, source_path):
+            assert scope == "outputs"
+            state.files[path] = Path(source_path).read_bytes()
+
+    monkeypatch.setattr(tools, "ProvisionerSandboxBackend", FakeBackend)
+    return state
+
+
 @pytest.mark.asyncio
 async def test_download_kb_file_writes_original_to_outputs_and_returns_virtual_path(monkeypatch, tmp_path) -> None:
-    captured: dict = {}
-
-    def _fake_resolve_output_path(file_thread_id, uid, data, file_id, save_as):
-        captured["file_thread_id"] = file_thread_id
-        captured["uid"] = uid
-        captured["data"] = data
-        captured["save_as"] = save_as
-        return tmp_path / "report.pdf"
+    del tmp_path
+    sandbox = _patch_output_backend(monkeypatch)
 
     monkeypatch.setattr(tools, "_resolve_visible_knowledge_bases_for_query", _fake_visible_kbs)
     _patch_download_manager(
         monkeypatch,
         file_download=_async_get_file_download(b"%PDF-1.4 bytes", "report.pdf"),
     )
-    monkeypatch.setattr(tools, "_resolve_download_output_path", _fake_resolve_output_path)
-    monkeypatch.setattr(
-        tools,
-        "virtual_path_for_thread_file",
-        lambda thread_id, path, *, uid: f"/home/gem/user-data/outputs/{Path(path).name}",
-    )
 
-    runtime = SimpleNamespace(context=SimpleNamespace(file_thread_id="thread-1", uid="user-1"))
+    runtime = SimpleNamespace(
+        context=SimpleNamespace(thread_id="child-thread", file_thread_id="thread-1", uid="user-1")
+    )
     result = await _run_download_kb_file(kb_id="db-1", file_id="file-1", runtime=runtime)
 
-    assert (tmp_path / "report.pdf").read_bytes() == b"%PDF-1.4 bytes"
-    assert captured["file_thread_id"] == "thread-1"
-    assert captured["save_as"] is None
+    assert sandbox.files["/home/gem/user-data/outputs/report.pdf"] == b"%PDF-1.4 bytes"
+    assert sandbox.scopes == [
+        {
+            "thread_id": "child-thread",
+            "uid": "user-1",
+            "file_thread_id": "thread-1",
+            "skills_thread_id": "child-thread",
+            "sandbox_instance_id": "child-thread",
+            "create_if_missing": False,
+        }
+    ]
     assert result == {
         "virtual_path": "/home/gem/user-data/outputs/report.pdf",
         "filename": "report.pdf",
@@ -755,28 +771,19 @@ async def test_download_kb_file_writes_original_to_outputs_and_returns_virtual_p
 
 @pytest.mark.asyncio
 async def test_download_kb_file_passes_save_as_argument(monkeypatch, tmp_path) -> None:
-    captured: dict = {}
-
-    def _fake_resolve_output_path(file_thread_id, uid, data, file_id, save_as):
-        captured["save_as"] = save_as
-        return tmp_path / "renamed.xlsx"
+    del tmp_path
+    sandbox = _patch_output_backend(monkeypatch)
 
     monkeypatch.setattr(tools, "_resolve_visible_knowledge_bases_for_query", _fake_visible_kbs)
     _patch_download_manager(
         monkeypatch,
         file_download=_async_get_file_download(b"xlsx bytes", "origin.xlsx"),
     )
-    monkeypatch.setattr(tools, "_resolve_download_output_path", _fake_resolve_output_path)
-    monkeypatch.setattr(
-        tools,
-        "virtual_path_for_thread_file",
-        lambda thread_id, path, *, uid: f"/home/gem/user-data/outputs/{Path(path).name}",
-    )
 
     runtime = SimpleNamespace(context=SimpleNamespace(file_thread_id="thread-1", uid="user-1"))
     result = await _run_download_kb_file(kb_id="db-1", file_id="file-1", save_as="renamed.xlsx", runtime=runtime)
 
-    assert captured["save_as"] == "renamed.xlsx"
+    assert sandbox.files["/home/gem/user-data/outputs/renamed.xlsx"] == b"xlsx bytes"
     assert result["saved_as"] == "renamed.xlsx"
 
 
@@ -838,33 +845,26 @@ async def test_download_kb_file_missing_sandbox_context_returns_error(monkeypatc
     assert "沙盒上下文" in result
 
 
-def test_resolve_download_output_path_strips_directory_and_avoids_traversal(monkeypatch, tmp_path) -> None:
+def test_resolve_download_output_path_strips_directory_and_avoids_traversal() -> None:
     """save_as 含目录或路径穿越时，必须被剥离成纯文件名并落在 outputs 下。"""
-    monkeypatch.setattr(tools, "ensure_thread_dirs", lambda *a, **k: None)
-    monkeypatch.setattr(tools, "sandbox_outputs_dir", lambda thread_id: tmp_path)
-
     data = {"filename": "report.pdf"}
-    path = tools._resolve_download_output_path("thread-1", "user-1", data, "file-1", "../../../etc/passwd")
+    backend = SimpleNamespace(output_file_exists=lambda _path: False)
+    path = tools._resolve_download_output_path(backend, data, "file-1", "../../../etc/passwd")
 
-    assert path.parent == tmp_path
-    # 纯文件名，不含目录分隔，且未逃出 outputs 目录
-    assert path.name == "passwd"
-    assert "/" not in path.name
+    assert path == "/home/gem/user-data/outputs/passwd"
 
 
-def test_resolve_download_output_path_appends_suffix_on_conflict(monkeypatch, tmp_path) -> None:
+def test_resolve_download_output_path_appends_suffix_on_conflict() -> None:
     """目标文件名已存在时，追加 _1 / _2 后缀直到不冲突。"""
-    monkeypatch.setattr(tools, "ensure_thread_dirs", lambda *a, **k: None)
-    monkeypatch.setattr(tools, "sandbox_outputs_dir", lambda thread_id: tmp_path)
-
-    (tmp_path / "report.pdf").write_bytes(b"existing")
-    (tmp_path / "report_1.pdf").write_bytes(b"existing")
-
     data = {"filename": "report.pdf"}
-    path = tools._resolve_download_output_path("thread-1", "user-1", data, "file-1", None)
+    existing = {
+        "/home/gem/user-data/outputs/report.pdf",
+        "/home/gem/user-data/outputs/report_1.pdf",
+    }
+    backend = SimpleNamespace(output_file_exists=lambda path: path in existing)
+    path = tools._resolve_download_output_path(backend, data, "file-1", None)
 
-    assert path.name == "report_2.pdf"
-    assert not path.exists()
+    assert path == "/home/gem/user-data/outputs/report_2.pdf"
 
 
 def _async_get_file_download(content: bytes, filename: str):
