@@ -14,7 +14,7 @@ from langgraph.types import Command
 
 from yuxi.agents.checkpointer_config import resolve_checkpointer_backend
 from yuxi.agents.context import DEFAULT_MAX_EXECUTION_STEPS, BaseContext, resolve_agent_resource_options
-from yuxi.config import get_save_dir
+from yuxi.config import get_checkpoint_dir
 from yuxi.storage.postgres.manager import pg_manager
 from yuxi.utils import logger
 from yuxi.utils.hash_utils import subagent_child_thread_id
@@ -116,7 +116,7 @@ class BaseAgent:
         self.graph = None  # will be covered by get_graph
         self.checkpointer = None
         self._async_conn = None
-        self.workdir = get_save_dir() / "agents" / self.module_name
+        self.workdir = get_checkpoint_dir() / "agents" / self.module_name
         self.workdir.mkdir(parents=True, exist_ok=True)
 
     @property

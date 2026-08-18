@@ -128,6 +128,11 @@ class ListSandboxesResponse(BaseModel):
     count: int
 
 
+class QuiesceSandboxesResponse(BaseModel):
+    ok: bool
+    deleted: int
+
+
 @dataclass(slots=True)
 class SandboxRecord:
     sandbox_id: str
@@ -174,6 +179,35 @@ class SandboxOperationPins:
         with self._condition:
             self._deleting.discard(sandbox_id)
             self._condition.notify_all()
+
+
+class SandboxQuiescenceGate:
+    """迁移停机后拒绝创建新的 Sandbox generation。"""
+
+    def __init__(self):
+        self._condition = threading.Condition()
+        self._started = False
+        self._active_creates = 0
+
+    def begin(self) -> None:
+        with self._condition:
+            self._started = True
+            while self._active_creates:
+                self._condition.wait()
+
+    def acquire_create(self) -> None:
+        with self._condition:
+            if self._started:
+                raise RuntimeError(
+                    "sandbox provisioner is quiescing for storage migration"
+                )
+            self._active_creates += 1
+
+    def release_create(self) -> None:
+        with self._condition:
+            self._active_creates -= 1
+            if not self._active_creates:
+                self._condition.notify_all()
 
 
 class MemoryProvisionerBackend:
@@ -280,7 +314,14 @@ class LocalContainerProvisionerBackend:
             raise RuntimeError(
                 "DOCKER_NETWORK_PREFIX is required for the docker backend"
             )
-        self._threads_host_path = os.getenv("DOCKER_THREADS_HOST_PATH")
+        self._user_data_host_path = os.getenv("DOCKER_USER_DATA_HOST_PATH")
+        self._projects_host_path = os.getenv("DOCKER_PROJECTS_HOST_PATH")
+        self._skill_projections_host_path = os.getenv(
+            "DOCKER_SKILL_PROJECTIONS_HOST_PATH"
+        )
+        self._projects_container_path = Path("/app/projects")
+        self._user_data_container_path = Path("/app/user-data")
+        self._skill_projections_container_path = Path("/app/skill-projections")
         self._container_prefix = os.getenv("DOCKER_SANDBOX_PREFIX", "yuxi-sandbox")
         self._health_timeout_seconds = int(
             os.getenv("SANDBOX_HEALTH_TIMEOUT_SECONDS", "300")
@@ -297,8 +338,14 @@ class LocalContainerProvisionerBackend:
             raise RuntimeError(f"docker backend unavailable: {exc}") from exc
 
         self._resolve_host_paths()
-        self._threads_host_path = self._normalize_host_bind_path(
-            self._threads_host_path
+        self._user_data_host_path = self._normalize_host_bind_path(
+            self._user_data_host_path
+        )
+        self._projects_host_path = self._normalize_host_bind_path(
+            self._projects_host_path
+        )
+        self._skill_projections_host_path = self._normalize_host_bind_path(
+            self._skill_projections_host_path
         )
 
     @staticmethod
@@ -359,9 +406,7 @@ class LocalContainerProvisionerBackend:
         return f"{prefix}-{self._sanitize_id(sandbox_id)}"
 
     def _user_skills_host_path(self, uid: str) -> Path:
-        projections_root = (
-            Path(self._threads_host_path).resolve().parent / "skill-projections"
-        ).resolve()
+        projections_root = Path(self._skill_projections_host_path).resolve()
         user_skills = (projections_root / uid).resolve()
         try:
             user_skills.relative_to(projections_root)
@@ -375,7 +420,7 @@ class LocalContainerProvisionerBackend:
         return self._shared_user_data_host_path(uid) / "workspace"
 
     def _shared_user_data_host_path(self, uid: str) -> Path:
-        threads_root = Path(self._threads_host_path).resolve()
+        threads_root = Path(self._user_data_host_path).resolve()
         user_data = (threads_root / "shared" / uid).resolve()
         try:
             user_data.relative_to(threads_root)
@@ -386,8 +431,7 @@ class LocalContainerProvisionerBackend:
         return user_data
 
     def _project_workdir_host_path(self, workdir_id: str) -> Path:
-        saves_root = Path(self._threads_host_path).resolve().parent
-        projects_root = (saves_root / "projects").resolve()
+        projects_root = Path(self._projects_host_path).resolve()
         workdir = (projects_root / workdir_id).resolve()
         try:
             workdir.relative_to(projects_root)
@@ -444,8 +488,29 @@ class LocalContainerProvisionerBackend:
             for destination, source in expected_mounts.items()
         )
 
+    @staticmethod
+    def _has_no_persistent_file_mounts(container) -> bool:
+        """一次性 Sandbox 不得获得 User Data、Project 或 Skill 持久卷。"""
+        for mount in container.attrs.get("Mounts") or []:
+            destination = str((mount.get("Destination") or "").rstrip("/"))
+            if destination in {
+                "/home/gem/skills",
+                "/home/gem/user-data",
+                "/home/gem/projects",
+            }:
+                return False
+            if destination.startswith(
+                ("/home/gem/skills/", "/home/gem/user-data/", "/home/gem/projects/")
+            ):
+                return False
+        return True
+
     def _resolve_host_paths(self) -> None:
-        if self._threads_host_path:
+        if (
+            self._user_data_host_path
+            and self._projects_host_path
+            and self._skill_projections_host_path
+        ):
             return
 
         container_id = os.getenv("HOSTNAME", "").strip()
@@ -457,19 +522,37 @@ class LocalContainerProvisionerBackend:
         inspected = self._client.api.inspect_container(container_id)
         mounts = inspected.get("Mounts") or []
 
-        saves_source = None
+        sources: dict[str, str] = {}
         for mount in mounts:
             destination = (mount.get("Destination") or "").rstrip("/")
-            if destination == "/app/saves":
-                saves_source = mount.get("Source")
-                break
+            source = str(mount.get("Source") or "").strip()
+            if (
+                destination
+                in {
+                    "/app/projects",
+                    "/app/user-data",
+                    "/app/skill-projections",
+                }
+                and source
+            ):
+                sources[destination] = source
 
-        if not saves_source:
-            raise RuntimeError("cannot infer host path for /app/saves mount")
-
-        base = Path(self._normalize_host_bind_path(saves_source))
-        if not self._threads_host_path:
-            self._threads_host_path = str(base / "threads")
+        if not self._user_data_host_path:
+            self._user_data_host_path = sources.get("/app/user-data")
+        if not self._projects_host_path:
+            self._projects_host_path = sources.get("/app/projects")
+        if not self._skill_projections_host_path:
+            self._skill_projections_host_path = sources.get("/app/skill-projections")
+        if not all(
+            (
+                self._user_data_host_path,
+                self._projects_host_path,
+                self._skill_projections_host_path,
+            )
+        ):
+            raise RuntimeError(
+                "cannot infer explicit Project/User Data/Skill host paths"
+            )
 
     def _is_on_expected_network(self, container, sandbox_id: str) -> bool:
         networks = (container.attrs.get("NetworkSettings") or {}).get("Networks") or {}
@@ -598,6 +681,7 @@ class LocalContainerProvisionerBackend:
             safe_workdir_id = (
                 self._validate_workdir_id(workdir_id) if workdir_id else None
             )
+            ephemeral_storage = not inherit_env and safe_workdir_id is None
             existing = self._get_container(sandbox_id)
             if existing is not None:
                 existing.reload()
@@ -613,7 +697,23 @@ class LocalContainerProvisionerBackend:
                     raise ValueError(
                         "sandbox workdir identity does not match existing generation"
                     )
-                if not self._is_expected_skills_mount(existing, safe_uid):
+                existing_ephemeral = labels.get("storage-mode") == "ephemeral"
+                if existing_ephemeral != ephemeral_storage:
+                    raise ValueError(
+                        "sandbox storage identity does not match existing generation"
+                    )
+                if ephemeral_storage and not self._has_no_persistent_file_mounts(
+                    existing
+                ):
+                    logger.info(
+                        "Recreating sandbox %s because ephemeral mounts are stale",
+                        sandbox_id,
+                    )
+                    self.delete(sandbox_id)
+                    existing = None
+                elif not ephemeral_storage and not self._is_expected_skills_mount(
+                    existing, safe_uid
+                ):
                     logger.info(
                         "Recreating sandbox %s because skills mount is stale",
                         sandbox_id,
@@ -626,7 +726,7 @@ class LocalContainerProvisionerBackend:
                     )
                     self.delete(sandbox_id)
                     existing = None
-                elif not (
+                elif not ephemeral_storage and not (
                     self._has_expected_user_data_mounts(
                         existing, safe_uid, safe_workdir_id
                     )
@@ -665,18 +765,33 @@ class LocalContainerProvisionerBackend:
                         exc,
                     )
 
-            shared_workspace = self._shared_workspace_host_path(safe_uid)
-            shared_workspace.mkdir(parents=True, exist_ok=True)
-            shared_user_data = self._shared_user_data_host_path(safe_uid)
+            shared_workspace = None
+            shared_user_data = None
+            user_skills = None
+            if not ephemeral_storage:
+                shared_workspace = self._shared_workspace_host_path(safe_uid)
+                (
+                    self._user_data_container_path / "shared" / safe_uid / "workspace"
+                ).mkdir(
+                    parents=True,
+                    exist_ok=True,
+                )
+                shared_user_data = self._shared_user_data_host_path(safe_uid)
+                user_skills = self._user_skills_host_path(safe_uid)
+                (self._skill_projections_container_path / safe_uid).mkdir(
+                    parents=True,
+                    exist_ok=True,
+                )
             project_workdir = (
                 self._project_workdir_host_path(safe_workdir_id)
                 if safe_workdir_id
                 else None
             )
             if project_workdir is not None:
-                project_workdir.mkdir(parents=True, exist_ok=True)
-            user_skills = self._user_skills_host_path(safe_uid)
-            user_skills.mkdir(parents=True, exist_ok=True)
+                (self._projects_container_path / safe_workdir_id).mkdir(
+                    parents=True,
+                    exist_ok=True,
+                )
             network_name = self._ensure_network(sandbox_id)
 
             container_name = self._container_name(sandbox_id)
@@ -689,18 +804,27 @@ class LocalContainerProvisionerBackend:
                     "thread-id": safe_thread_id,
                     "uid": safe_uid,
                     "workdir-id": safe_workdir_id or "",
+                    "storage-mode": "ephemeral" if ephemeral_storage else "persistent",
                     "managed-by": "yuxi-sandbox-provisioner",
                 },
-                "volumes": {
-                    str(user_skills): {"bind": "/home/gem/skills", "mode": "ro"},
-                },
+                "volumes": {},
                 "network": network_name,
                 "security_opt": ["seccomp=unconfined"],
                 # The sandbox image expects /home/gem to be writable during boot.
                 # Keep it ephemeral and mount persistent user-data underneath it.
                 "tmpfs": {"/home/gem": "rw,exec,mode=777"},
             }
-            if safe_workdir_id and project_workdir is not None:
+            if not ephemeral_storage and user_skills is not None:
+                run_kwargs["volumes"][str(user_skills)] = {
+                    "bind": "/home/gem/skills",
+                    "mode": "ro",
+                }
+            if (
+                not ephemeral_storage
+                and safe_workdir_id
+                and project_workdir is not None
+                and shared_user_data is not None
+            ):
                 run_kwargs["volumes"].update(
                     {
                         str(shared_user_data): {
@@ -716,7 +840,7 @@ class LocalContainerProvisionerBackend:
                 run_kwargs["working_dir"] = self._project_workdir_mount_path(
                     safe_workdir_id
                 )
-            else:
+            elif not ephemeral_storage and shared_workspace is not None:
                 run_kwargs["volumes"][str(shared_workspace)] = {
                     "bind": "/home/gem/user-data/workspace",
                     "mode": "rw",
@@ -763,6 +887,7 @@ class LocalContainerProvisionerBackend:
             return None
         uid = str(labels.get("uid") or "").strip()
         workdir_id = str(labels.get("workdir-id") or "").strip() or None
+        ephemeral_storage = labels.get("storage-mode") == "ephemeral"
         if not uid:
             return None
         self._validate_thread_id(thread_id)
@@ -782,7 +907,23 @@ class LocalContainerProvisionerBackend:
                 )
             return None
         self._ensure_network(sandbox_id)
-        if not self._is_expected_skills_mount(container, safe_uid):
+        if ephemeral_storage and not self._has_no_persistent_file_mounts(container):
+            logger.info(
+                "Discarding stale ephemeral sandbox %s with persistent mounts",
+                sandbox_id,
+            )
+            try:
+                self.delete(sandbox_id)
+            except Exception as exc:
+                logger.warning(
+                    "Failed to delete stale sandbox %s during discover: %s",
+                    sandbox_id,
+                    exc,
+                )
+            return None
+        if not ephemeral_storage and not self._is_expected_skills_mount(
+            container, safe_uid
+        ):
             logger.info(
                 "Discarding stale sandbox %s with unexpected skills mount", sandbox_id
             )
@@ -795,7 +936,7 @@ class LocalContainerProvisionerBackend:
                     exc,
                 )
             return None
-        if not self._has_expected_user_data_mounts(
+        if not ephemeral_storage and not self._has_expected_user_data_mounts(
             container, safe_uid, safe_workdir_id
         ):
             logger.info(
@@ -863,7 +1004,7 @@ class KubernetesProvisionerBackend:
             "enterprise-public-cn-beijing.cr.volces.com/vefaas-public/all-in-one-sandbox:latest",
         )
         self._skill_pvc = os.getenv("SKILLS_PVC", "yuxi-skills")
-        self._thread_pvc = os.getenv("THREAD_PVC", "yuxi-thread")
+        self._project_data_pvc = os.getenv("PROJECT_DATA_PVC", "yuxi-project-data")
         self._node_host = os.getenv("NODE_HOST", "host.docker.internal")
         self._container_port = int(os.getenv("SANDBOX_CONTAINER_PORT", "8080"))
         self._sandbox_env = load_sandbox_env()
@@ -909,18 +1050,22 @@ class KubernetesProvisionerBackend:
             if workdir_id
             else None
         )
-        if workdir_id:
+        ephemeral_storage = not inherit_env and workdir_id is None
+        if ephemeral_storage:
+            init_command = None
+            data_mounts = []
+        elif workdir_id:
             init_command = (
                 f"mkdir -p /mnt/shared-data/projects/{workdir_id}/uploads "
-                f"/mnt/shared-data/projects/{workdir_id}/outputs /mnt/shared-data/threads/shared/{uid} "
-                f"/mnt/shared-data/skill-projections/{uid} "
-                f"&& chmod -R 777 /mnt/shared-data/projects/{workdir_id} /mnt/shared-data/threads/shared/{uid}"
+                f"/mnt/shared-data/projects/{workdir_id}/outputs /mnt/shared-data/user-data/shared/{uid} "
+                f"/mnt/skills-data/skill-projections/{uid} "
+                f"&& chmod -R 777 /mnt/shared-data/projects/{workdir_id} /mnt/shared-data/user-data/shared/{uid}"
             )
             data_mounts = [
                 self._client.V1VolumeMount(
                     name="shared-data",
                     mount_path="/home/gem/user-data",
-                    sub_path=f"threads/shared/{uid}",
+                    sub_path=f"user-data/shared/{uid}",
                 ),
                 self._client.V1VolumeMount(
                     name="shared-data",
@@ -931,27 +1076,32 @@ class KubernetesProvisionerBackend:
         else:
             init_command = (
                 "mkdir -p /home/gem/user-data/uploads /home/gem/user-data/outputs "
-                f"/mnt/shared-data/threads/shared/{uid}/workspace "
-                f"/mnt/shared-data/skill-projections/{uid} "
+                f"/mnt/shared-data/user-data/shared/{uid}/workspace "
+                f"/mnt/skills-data/skill-projections/{uid} "
                 "&& chmod 777 /home/gem /home/gem/user-data /home/gem/user-data/uploads "
                 "/home/gem/user-data/outputs "
-                f"&& chmod -R 777 /mnt/shared-data/threads/shared/{uid}/workspace "
+                f"&& chmod -R 777 /mnt/shared-data/user-data/shared/{uid}/workspace "
             )
             data_mounts = [
                 self._client.V1VolumeMount(
                     name="shared-data",
                     mount_path="/home/gem/user-data/workspace",
-                    sub_path=f"threads/shared/{uid}/workspace",
+                    sub_path=f"user-data/shared/{uid}/workspace",
                 )
             ]
         return self._client.V1Pod(
             metadata=self._client.V1ObjectMeta(
                 name=pod_name,
-                labels={"app": "yuxi-sandbox", "sandbox-id": sandbox_id},
+                labels={
+                    "app": "yuxi-sandbox",
+                    "managed-by": "yuxi-sandbox-provisioner",
+                    "sandbox-id": sandbox_id,
+                },
                 annotations={
                     "thread-id": thread_id,
                     "uid": uid,
                     "workdir-id": workdir_id or "",
+                    "storage-mode": "ephemeral" if ephemeral_storage else "persistent",
                 },
             ),
             spec=self._client.V1PodSpec(
@@ -961,7 +1111,9 @@ class KubernetesProvisionerBackend:
                     fs_group=0,
                     run_as_user=0,
                 ),
-                init_containers=[
+                init_containers=[]
+                if init_command is None
+                else [
                     self._client.V1Container(
                         name="init-user-data",
                         image=self._sandbox_image,
@@ -971,8 +1123,19 @@ class KubernetesProvisionerBackend:
                             self._client.V1VolumeMount(
                                 name="home-dir", mount_path="/home/gem"
                             ),
-                            self._client.V1VolumeMount(
-                                name="shared-data", mount_path="/mnt/shared-data"
+                            *(
+                                [
+                                    self._client.V1VolumeMount(
+                                        name="shared-data",
+                                        mount_path="/mnt/shared-data",
+                                    ),
+                                    self._client.V1VolumeMount(
+                                        name="skills-data",
+                                        mount_path="/mnt/skills-data",
+                                    ),
+                                ]
+                                if not ephemeral_storage
+                                else []
                             ),
                         ],
                     ),
@@ -993,22 +1156,41 @@ class KubernetesProvisionerBackend:
                                 name="home-dir", mount_path="/home/gem"
                             ),
                             *data_mounts,
-                            self._client.V1VolumeMount(
-                                name="shared-data",
-                                mount_path="/home/gem/skills",
-                                sub_path=f"skill-projections/{uid}",
-                                read_only=True,
+                            *(
+                                [
+                                    self._client.V1VolumeMount(
+                                        name="skills-data",
+                                        mount_path="/home/gem/skills",
+                                        sub_path=f"skill-projections/{uid}",
+                                        read_only=True,
+                                    )
+                                ]
+                                if not ephemeral_storage
+                                else []
                             ),
                         ],
                     )
                 ],
                 volumes=[
-                    self._client.V1Volume(
-                        name="shared-data",
-                        persistent_volume_claim=self._client.V1PersistentVolumeClaimVolumeSource(
-                            claim_name=self._thread_pvc,
-                            read_only=False,
-                        ),
+                    *(
+                        [
+                            self._client.V1Volume(
+                                name="shared-data",
+                                persistent_volume_claim=self._client.V1PersistentVolumeClaimVolumeSource(
+                                    claim_name=self._project_data_pvc,
+                                    read_only=False,
+                                ),
+                            ),
+                            self._client.V1Volume(
+                                name="skills-data",
+                                persistent_volume_claim=self._client.V1PersistentVolumeClaimVolumeSource(
+                                    claim_name=self._skill_pvc,
+                                    read_only=False,
+                                ),
+                            ),
+                        ]
+                        if not ephemeral_storage
+                        else []
                     ),
                     self._client.V1Volume(
                         name="home-dir",
@@ -1023,7 +1205,11 @@ class KubernetesProvisionerBackend:
         return self._client.V1Service(
             metadata=self._client.V1ObjectMeta(
                 name=service_name,
-                labels={"app": "yuxi-sandbox", "sandbox-id": sandbox_id},
+                labels={
+                    "app": "yuxi-sandbox",
+                    "managed-by": "yuxi-sandbox-provisioner",
+                    "sandbox-id": sandbox_id,
+                },
             ),
             spec=self._client.V1ServiceSpec(
                 type="NodePort",
@@ -1039,31 +1225,76 @@ class KubernetesProvisionerBackend:
             ),
         )
 
-    @staticmethod
     def _pod_has_expected_mounts(
+        self,
         pod,
         *,
         uid: str,
         workdir_id: str | None = None,
+        ephemeral_storage: bool = False,
     ) -> bool:
+        if ephemeral_storage:
+            for container in getattr(pod.spec, "containers", []) or []:
+                if getattr(container, "name", None) != "sandbox":
+                    continue
+                destinations = {
+                    str(getattr(mount, "mount_path", "") or "").rstrip("/")
+                    for mount in getattr(container, "volume_mounts", []) or []
+                }
+                return not any(
+                    path
+                    in {
+                        "/home/gem/skills",
+                        "/home/gem/user-data",
+                        "/home/gem/projects",
+                    }
+                    or path.startswith(
+                        (
+                            "/home/gem/skills/",
+                            "/home/gem/user-data/",
+                            "/home/gem/projects/",
+                        )
+                    )
+                    for path in destinations
+                )
+            return False
+        actual_claims = {
+            str(getattr(volume, "name", "") or ""): str(
+                getattr(
+                    getattr(volume, "persistent_volume_claim", None),
+                    "claim_name",
+                    "",
+                )
+                or ""
+            )
+            for volume in getattr(pod.spec, "volumes", []) or []
+        }
+        if actual_claims.get("shared-data") != self._project_data_pvc:
+            return False
+        if actual_claims.get("skills-data") != self._skill_pvc:
+            return False
         if workdir_id:
             expected_mounts = {
-                "/home/gem/user-data": f"threads/shared/{uid}",
+                "/home/gem/user-data": ("shared-data", f"user-data/shared/{uid}"),
                 LocalContainerProvisionerBackend._project_workdir_mount_path(
                     workdir_id
-                ): f"projects/{workdir_id}",
-                "/home/gem/skills": f"skill-projections/{uid}",
+                ): ("shared-data", f"projects/{workdir_id}"),
+                "/home/gem/skills": ("skills-data", f"skill-projections/{uid}"),
             }
         else:
             expected_mounts = {
-                "/home/gem/user-data/workspace": f"threads/shared/{uid}/workspace",
-                "/home/gem/skills": f"skill-projections/{uid}",
+                "/home/gem/user-data/workspace": (
+                    "shared-data",
+                    f"user-data/shared/{uid}/workspace",
+                ),
+                "/home/gem/skills": ("skills-data", f"skill-projections/{uid}"),
             }
         for container in getattr(pod.spec, "containers", []) or []:
             if getattr(container, "name", None) != "sandbox":
                 continue
             actual_mounts = {
                 str(getattr(mount, "mount_path", "") or "").rstrip("/"): (
+                    str(getattr(mount, "name", "") or ""),
                     str(getattr(mount, "sub_path", "") or ""),
                     getattr(mount, "read_only", None) is True,
                 )
@@ -1075,10 +1306,10 @@ class KubernetesProvisionerBackend:
                     & actual_mounts.keys()
                 )
                 and all(
-                    actual_mounts.get(path, (None, False))[0] == sub_path
-                    for path, sub_path in expected_mounts.items()
+                    actual_mounts.get(path, (None, None, False))[:2] == expected
+                    for path, expected in expected_mounts.items()
                 )
-                and actual_mounts.get("/home/gem/skills", (None, False))[1]
+                and actual_mounts.get("/home/gem/skills", (None, None, False))[2]
             )
         return False
 
@@ -1089,6 +1320,7 @@ class KubernetesProvisionerBackend:
         thread_id: str,
         uid: str,
         workdir_id: str | None,
+        ephemeral_storage: bool,
     ) -> bool:
         pod_name = self._pod_name(sandbox_id)
         try:
@@ -1105,10 +1337,13 @@ class KubernetesProvisionerBackend:
             return False
         if (str(annotations.get("workdir-id") or "").strip() or None) != workdir_id:
             return False
+        if (annotations.get("storage-mode") == "ephemeral") != ephemeral_storage:
+            return False
         return self._pod_has_expected_mounts(
             pod,
             uid=uid,
             workdir_id=workdir_id,
+            ephemeral_storage=ephemeral_storage,
         )
 
     def create(
@@ -1133,6 +1368,7 @@ class KubernetesProvisionerBackend:
                 if workdir_id
                 else None
             )
+            ephemeral_storage = not inherit_env and safe_workdir_id is None
             discovered = self.discover(sandbox_id)
             if discovered is not None:
                 if self._discovered_matches_request(
@@ -1140,6 +1376,7 @@ class KubernetesProvisionerBackend:
                     thread_id=safe_thread_id,
                     uid=safe_uid,
                     workdir_id=safe_workdir_id,
+                    ephemeral_storage=ephemeral_storage,
                 ):
                     return discovered
                 raise ValueError("sandbox identity does not match existing generation")
@@ -1167,6 +1404,7 @@ class KubernetesProvisionerBackend:
                     thread_id=safe_thread_id,
                     uid=safe_uid,
                     workdir_id=safe_workdir_id,
+                    ephemeral_storage=ephemeral_storage,
                 ):
                     raise ValueError(
                         "sandbox identity does not match existing generation"
@@ -1192,6 +1430,7 @@ class KubernetesProvisionerBackend:
                 thread_id=safe_thread_id,
                 uid=safe_uid,
                 workdir_id=safe_workdir_id,
+                ephemeral_storage=ephemeral_storage,
             ):
                 raise ValueError("sandbox identity does not match created generation")
             if not wait_for_sandbox_ready(
@@ -1229,6 +1468,7 @@ class KubernetesProvisionerBackend:
             return None
         uid = str(annotations.get("uid") or "").strip()
         workdir_id = str(annotations.get("workdir-id") or "").strip() or None
+        ephemeral_storage = annotations.get("storage-mode") == "ephemeral"
         if not uid:
             return None
         LocalContainerProvisionerBackend._validate_thread_id(thread_id)
@@ -1242,6 +1482,7 @@ class KubernetesProvisionerBackend:
             pod,
             uid=safe_uid,
             workdir_id=safe_workdir_id,
+            ephemeral_storage=ephemeral_storage,
         ):
             if safe_workdir_id:
                 raise ValueError(
@@ -1282,19 +1523,27 @@ class KubernetesProvisionerBackend:
         try:
             pod_list = self._core_api.list_namespaced_pod(
                 namespace=self._namespace,
-                label_selector="app=yuxi-sandbox",
+                label_selector="app=yuxi-sandbox,managed-by=yuxi-sandbox-provisioner",
             )
         except ApiException:
-            return []
+            raise
 
         records: list[SandboxRecord] = []
         for pod in pod_list.items:
             sandbox_id = (pod.metadata.labels or {}).get("sandbox-id")
             if not sandbox_id:
                 continue
-            record = self.discover(sandbox_id)
-            if record is not None:
-                records.append(record)
+            annotations = pod.metadata.annotations or {}
+            workdir_id = str(annotations.get("workdir-id") or "").strip() or None
+            records.append(
+                SandboxRecord(
+                    sandbox_id=sandbox_id,
+                    sandbox_url="",
+                    status=(pod.status.phase if pod.status else "Unknown"),
+                    generation=str(getattr(pod.metadata, "uid", "") or "") or None,
+                    workdir_id=workdir_id,
+                )
+            )
         return records
 
     def delete(
@@ -1459,6 +1708,7 @@ def _build_backend():
 
 backend_impl, backend_name = _build_backend()
 sandbox_operation_pins = SandboxOperationPins()
+sandbox_quiescence_gate = SandboxQuiescenceGate()
 idle_reaper = SandboxIdleReaper(backend_impl, sandbox_operation_pins)
 
 
@@ -1509,24 +1759,31 @@ def health():
     dependencies=[Depends(require_provisioner_auth)],
 )
 def create_sandbox(payload: CreateSandboxRequest):
-    sandbox_operation_pins.acquire(payload.sandbox_id)
     try:
+        sandbox_quiescence_gate.acquire_create()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    try:
+        sandbox_operation_pins.acquire(payload.sandbox_id)
         try:
-            # Backend.create() already handles container reuse (discovers existing container first)
-            record = backend_impl.create(
-                payload.sandbox_id,
-                payload.thread_id,
-                payload.uid,
-                payload.env,
-                workdir_id=payload.workdir_id,
-                inherit_env=payload.inherit_env,
-            )
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        except Exception as exc:  # noqa: BLE001
-            raise HTTPException(status_code=500, detail=str(exc)) from exc
+            try:
+                # Backend.create() already handles container reuse (discovers existing container first)
+                record = backend_impl.create(
+                    payload.sandbox_id,
+                    payload.thread_id,
+                    payload.uid,
+                    payload.env,
+                    workdir_id=payload.workdir_id,
+                    inherit_env=payload.inherit_env,
+                )
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+            except Exception as exc:  # noqa: BLE001
+                raise HTTPException(status_code=500, detail=str(exc)) from exc
+        finally:
+            sandbox_operation_pins.release(payload.sandbox_id)
     finally:
-        sandbox_operation_pins.release(payload.sandbox_id)
+        sandbox_quiescence_gate.release_create()
     idle_reaper.touch(record.sandbox_id, generation=record.generation)
     return sandbox_response(record)
 
@@ -1586,6 +1843,51 @@ def list_sandboxes():
 
     sandboxes = [sandbox_response(record) for record in records]
     return ListSandboxesResponse(sandboxes=sandboxes, count=len(sandboxes))
+
+
+@app.post(
+    "/api/sandboxes/quiesce",
+    response_model=QuiesceSandboxesResponse,
+    dependencies=[Depends(require_provisioner_auth)],
+)
+def quiesce_sandboxes(timeout_seconds: int = 180):
+    """禁止新建运行时，删除全部 Sandbox 并等待权威枚举归零。"""
+    if timeout_seconds < 1 or timeout_seconds > 900:
+        raise HTTPException(status_code=400, detail="invalid quiesce timeout")
+    sandbox_quiescence_gate.begin()
+    deadline = time.monotonic() + timeout_seconds
+    deleted_ids: set[str] = set()
+    while True:
+        try:
+            records = backend_impl.list()
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+        if not records:
+            return QuiesceSandboxesResponse(ok=True, deleted=len(deleted_ids))
+        for record in records:
+            sandbox_operation_pins.begin_delete(record.sandbox_id)
+            try:
+                backend_impl.delete(
+                    record.sandbox_id,
+                    expected_generation=record.generation,
+                )
+            except SandboxGenerationMismatchError:
+                continue
+            except Exception as exc:  # noqa: BLE001
+                raise HTTPException(status_code=500, detail=str(exc)) from exc
+            finally:
+                sandbox_operation_pins.end_delete(record.sandbox_id)
+            idle_reaper.forget(
+                record.sandbox_id,
+                expected_generation=record.generation,
+            )
+            deleted_ids.add(record.sandbox_id)
+        if time.monotonic() >= deadline:
+            raise HTTPException(
+                status_code=504,
+                detail="timed out waiting for sandbox runtimes to terminate",
+            )
+        time.sleep(0.25)
 
 
 @app.delete(

@@ -196,7 +196,16 @@ async def session():
 async def _seed_thread(session, *, uid="user-1", msg_id=100, conv_id=10):
     from yuxi.storage.postgres.models_business import Conversation, Message
 
-    session.add(Conversation(id=conv_id, thread_id="t1", uid=uid, agent_id="main", status="active"))
+    session.add(
+        Conversation(
+            id=conv_id,
+            thread_id="t1",
+            workdir_id=f"workdir-{uid}-t1",
+            uid=uid,
+            agent_id="main",
+            status="active",
+        )
+    )
     session.add(Message(id=msg_id, conversation_id=conv_id, role="user", content="hi"))
     await session.commit()
 
@@ -498,7 +507,16 @@ async def test_intake_idempotent_rejects_scope_mismatch(session):
     from yuxi.storage.postgres.models_business import Conversation
 
     await _seed_thread(session)
-    session.add(Conversation(id=11, thread_id="t2", uid="user-1", agent_id="other", status="active"))
+    session.add(
+        Conversation(
+            id=11,
+            thread_id="t2",
+            workdir_id="workdir-user-1-t2",
+            uid="user-1",
+            agent_id="other",
+            status="active",
+        )
+    )
     await _create_request(session, request_id="req-scope")
 
     with pytest.raises(HTTPException) as exc_info:
@@ -683,6 +701,7 @@ async def test_reject_with_active_run_persists_request_and_is_idempotent(session
         AgentRun(
             id=str(_uuid.uuid4()),
             conversation_thread_id="t1",
+            runtime_scope_id="t1",
             agent_slug="main",
             uid="user-1",
             request_id="existing",
@@ -758,6 +777,7 @@ async def _seed_terminal_run(session, *, run_id: str, status: str, created_at, f
         AgentRun(
             id=run_id,
             conversation_thread_id="t1",
+            runtime_scope_id="t1",
             agent_slug="main",
             uid="user-1",
             request_id=f"request-{run_id}",

@@ -9,11 +9,10 @@ from urllib.parse import quote
 
 from fastapi import HTTPException, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
-from yuxi.config import get_save_dir
+from yuxi.config import get_runtime_dir
 from yuxi.config.options import system_options
 from yuxi.knowledge.parser.factory import DocumentProcessorFactory
 from yuxi.repositories.conversation_repository import ConversationRepository
-from yuxi.services.mention_search_service import invalidate_mention_cache
 from yuxi.storage.minio import StorageError, get_minio_client
 from yuxi.utils.datetime_utils import utc_isoformat
 from yuxi.utils.logging_config import logger
@@ -57,7 +56,7 @@ async def _require_user_conversation(conv_repo: ConversationRepository, thread_i
 
 
 def _ensure_workdir() -> Path:
-    workdir = get_save_dir() / "uploads" / "chat_attachments"
+    workdir = get_runtime_dir() / "uploads" / "chat_attachments"
     workdir.mkdir(parents=True, exist_ok=True)
     return workdir
 
@@ -504,7 +503,6 @@ async def confirm_tmp_thread_attachments_view(
                     except Exception:
                         pass
         raise
-    await invalidate_mention_cache(thread_id)
 
     delete_results = await asyncio.gather(
         *(
@@ -588,7 +586,6 @@ async def upload_thread_attachment_view(
                 except Exception:
                     pass
         raise
-    await invalidate_mention_cache(thread_id)
 
     return serialize_attachment(attachment_record)
 
@@ -648,7 +645,5 @@ async def delete_thread_attachment_view(
         except Exception:
             # PostgreSQL 已经移除 shipping 引用；残留文件仍留在用户可见 Workdir，后续可显式清理。
             logger.warning("附件元数据已删除，但 Workdir 文件清理失败: thread=%s path=%s", thread_id, path)
-
-    await invalidate_mention_cache(thread_id)
 
     return {"message": "附件已删除"}

@@ -65,9 +65,7 @@ async def test_resolve_runtime_skills_derives_prompt_and_readable_closure(monkey
     assert scope["readable_skills"] == ["alpha", "beta"]
     assert set(scope["runtime_skill_metadata"]) == {"alpha", "beta"}
     assert scope["runtime_skill_metadata"]["alpha"]["path"] == "/home/gem/skills/alpha/SKILL.md"
-    assert (
-        scope["runtime_skill_metadata"]["beta"]["path"] == "/home/gem/user-data/workspace/agents/skills/beta/SKILL.md"
-    )
+    assert scope["runtime_skill_metadata"]["beta"]["path"] == "/home/gem/skills/beta/SKILL.md"
     assert scope["runtime_skill_sources"] == {
         "alpha": "/tmp/shared/alpha",
         "beta": "/tmp/personal/beta",
@@ -292,25 +290,28 @@ async def test_awrap_model_call_keeps_gated_tools_when_activated():
     assert captured["tools"] == {"read_file", "list_kbs", "query_kb"}
 
 
-@pytest.mark.parametrize(
-    "file_path",
-    [
-        "/home/gem/skills/alpha/SKILL.md",
-        "/home/gem/user-data/workspace/agents/skills/alpha/SKILL.md",
-    ],
-)
-def test_read_file_activates_only_readable_skill(file_path: str) -> None:
+def test_read_file_activates_only_readable_skill() -> None:
     middleware = SkillsMiddleware()
     result = ToolMessage(content="ok", tool_call_id="tool-1", name="read_file")
     request = SimpleNamespace(
         runtime=SimpleNamespace(context=SimpleNamespace(_readable_skills=["alpha"])),
-        tool_call={"name": "read_file", "args": {"file_path": file_path}},
+        tool_call={"name": "read_file", "args": {"file_path": "/home/gem/skills/alpha/SKILL.md"}},
     )
 
     updated = middleware._process_tool_call_result(result, request)
 
     assert isinstance(updated, Command)
     assert updated.update["activated_skills"] == ["alpha"]
+
+
+def test_workspace_compat_path_no_longer_activates_skill() -> None:
+    middleware = SkillsMiddleware()
+
+    slug = middleware._extract_skill_slug_from_skill_md_path(
+        "/home/gem/user-data/workspace/agents/skills/alpha/SKILL.md"
+    )
+
+    assert slug is None
 
 
 def test_read_file_denies_skill_outside_readable_scope() -> None:

@@ -21,7 +21,7 @@ from yuxi.agents.backends.composite import (
     create_agent_filesystem_middleware,
     sync_agent_context_skills,
 )
-from yuxi.agents.backends.sandbox import ProvisionerSandboxProvider, resolve_virtual_path, sandbox_id_for_thread
+from yuxi.agents.backends.sandbox import ProvisionerSandboxProvider, sandbox_id_for_thread
 from yuxi.agents.backends.sandbox.backend import ProvisionerSandboxBackend
 from yuxi.agents.backends.sandbox.provider import SandboxIdentityMismatchError
 from yuxi.agents.middlewares.skills import SkillsMiddleware
@@ -267,28 +267,6 @@ def test_create_agent_composite_backend_ignores_unprepared_context_skills(monkey
     assert backend.routes["/skills/"]._selected_slugs == set()
 
 
-@pytest.mark.parametrize("scope_source", ["config", "state"])
-def test_create_agent_composite_backend_ignores_legacy_file_thread_scope(monkeypatch, scope_source):
-    monkeypatch.setattr("yuxi.agents.backends.sandbox.backend.get_sandbox_provider", lambda: object())
-    runtime = _runtime(
-        thread_id="child-thread",
-        uid="user-1",
-        readable_skills=["worker-skill"],
-        skill_sources={"worker-skill": "/tmp/worker-skill"},
-    )
-    split_scopes = {"file_thread_id": "parent-thread"}
-    if scope_source == "config":
-        runtime.config["configurable"].update(split_scopes)
-    else:
-        runtime.state = split_scopes
-
-    backend = create_agent_composite_backend(runtime)
-
-    assert backend.default._thread_id == "child-thread"
-    assert not hasattr(backend.default, "_file_thread_id")
-    assert backend.routes["/skills/"]._selected_slugs == {"worker-skill"}
-
-
 def test_create_agent_filesystem_middleware_uses_context_scope(monkeypatch):
     monkeypatch.setattr("yuxi.agents.backends.sandbox.backend.get_sandbox_provider", lambda: object())
     context = SimpleNamespace(
@@ -297,7 +275,6 @@ def test_create_agent_filesystem_middleware_uses_context_scope(monkeypatch):
         sandbox_instance_id="parent-thread",
         workdir_id="workdir-1",
         uid="user-1",
-        file_thread_id="parent-thread",
         _readable_skills=["worker-skill"],
         _runtime_skill_sources={"worker-skill": "/tmp/worker-skill"},
     )
@@ -306,7 +283,6 @@ def test_create_agent_filesystem_middleware_uses_context_scope(monkeypatch):
     backend = middleware.backend(None)
 
     assert backend.default._thread_id == "parent-thread"
-    assert not hasattr(backend.default, "_file_thread_id")
     assert backend.routes["/skills/"]._selected_slugs == {"worker-skill"}
 
 
@@ -315,7 +291,7 @@ def test_context_backend_construction_does_not_sync_skill_projection(monkeypatch
     from yuxi.agents.skills import service as skill_service
 
     monkeypatch.setattr("yuxi.agents.backends.sandbox.backend.get_sandbox_provider", lambda: object())
-    monkeypatch.setenv("SAVE_DIR", str(tmp_path))
+    monkeypatch.setenv("YUXI_USER_DATA_DIR", str(tmp_path / "threads"))
     source_dir = tmp_path / "source" / "shared-skill"
     source_dir.mkdir(parents=True)
     (source_dir / "SKILL.md").write_text("# Shared", encoding="utf-8")
@@ -461,21 +437,8 @@ def test_custom_composite_glob_only_searches_routes_from_root() -> None:
 
 def test_skills_middleware_extracts_slug_for_new_paths() -> None:
     middleware = SkillsMiddleware()
-    assert middleware.skills_sources_for_prompt == [
-        "/home/gem/skills/",
-        "/home/gem/user-data/workspace/agents/skills/",
-    ]
+    assert middleware.skills_sources_for_prompt == ["/home/gem/skills/"]
     assert middleware._extract_skill_slug_from_skill_md_path("/home/gem/skills/demo-skill/SKILL.md") == "demo-skill"
-
-
-def test_resolve_virtual_path_rejects_outside_prefix():
-    with pytest.raises(ValueError, match="path must start with"):
-        resolve_virtual_path("thread-1", "/etc/passwd", uid="user-1")
-
-
-def test_resolve_virtual_path_rejects_path_traversal():
-    with pytest.raises(ValueError, match="path traversal"):
-        resolve_virtual_path("thread-1", "/home/gem/user-data/../secrets", uid="user-1")
 
 
 def test_sandbox_id_for_thread_is_stable():
@@ -790,7 +753,7 @@ def test_provisioner_uses_runtime_thread_and_instance(monkeypatch) -> None:
 
 def test_provisioner_denies_reads_outside_allowed_roots(monkeypatch) -> None:
     monkeypatch.setattr("yuxi.agents.backends.sandbox.backend.get_sandbox_provider", lambda: object())
-    backend = ProvisionerSandboxBackend(thread_id="thread-1", uid="user-1")
+    backend = ProvisionerSandboxBackend(thread_id="thread-1", uid="user-1", workdir_id="workdir-1")
 
     result = backend.read("/etc/passwd")
 
@@ -820,63 +783,6 @@ def test_provisioner_allows_project_upload_writes(monkeypatch) -> None:
     assert write_result.error is None
     assert upload_result[0].error is None
     assert written == [f"{root}/note.txt", f"{root}/data.bin"]
-
-
-def test_provisioner_trusted_hydrate_clears_and_writes_uploads(monkeypatch) -> None:
-    monkeypatch.setattr("yuxi.agents.backends.sandbox.backend.get_sandbox_provider", lambda: object())
-    backend = ProvisionerSandboxBackend(thread_id="thread-1", uid="user-1")
-    calls = []
-
-    def _exec_command(**kwargs):
-        calls.append(("clear", kwargs["command"]))
-        return SimpleNamespace(data=SimpleNamespace(exit_code=0, output=""))
-
-    def _upload_file(**kwargs):
-        calls.append(("upload", kwargs["path"], kwargs["file"].read()))
-        return SimpleNamespace(success=True, message="")
-
-    backend._get_client = MethodType(
-        lambda self: SimpleNamespace(
-            shell=SimpleNamespace(exec_command=_exec_command),
-            file=SimpleNamespace(upload_file=_upload_file),
-        ),
-        backend,
-    )
-
-    backend.clear_upload_files()
-    backend.write_upload_file("/home/gem/user-data/uploads/file.bin", b"\x00\xff")
-    backend.write_upload_file("/home/gem/user-data/uploads/attachments/file.md", b"content")
-
-    assert [call[0] for call in calls] == ["clear", "upload", "clear", "upload", "clear"]
-    assert calls[1][2] == b"\x00\xff"
-    assert calls[3][2] == b"content"
-    assert all(call[1].startswith("/tmp/.yuxi-hydrate-") for call in (calls[1], calls[3]))
-
-
-def test_provisioner_trusted_hydrate_rejects_failed_or_outside_write(monkeypatch) -> None:
-    monkeypatch.setattr("yuxi.agents.backends.sandbox.backend.get_sandbox_provider", lambda: object())
-    backend = ProvisionerSandboxBackend(thread_id="thread-1", uid="user-1")
-    clear_calls = []
-
-    def _exec_command(**_kwargs):
-        clear_calls.append(True)
-        return SimpleNamespace(data=SimpleNamespace(exit_code=0, output=""))
-
-    backend._get_client = MethodType(
-        lambda self: SimpleNamespace(
-            shell=SimpleNamespace(exec_command=_exec_command),
-            file=SimpleNamespace(upload_file=lambda **_kwargs: SimpleNamespace(success=False, message="write failed")),
-        ),
-        backend,
-    )
-
-    with pytest.raises(RuntimeError, match="write failed"):
-        backend.write_upload_file("/home/gem/user-data/uploads/file.bin", b"content")
-    assert clear_calls == []
-
-    with pytest.raises(ValueError, match="must be under"):
-        backend.write_upload_file("/home/gem/user-data/outputs/escape.bin", b"content")
-    assert clear_calls == []
 
 
 def test_provisioner_allows_outputs_writes(monkeypatch) -> None:
@@ -1226,39 +1132,9 @@ def test_provisioner_download_files_streams_binary_bytes(monkeypatch) -> None:
     ]
 
 
-def test_trusted_output_listing_rejects_symlink_or_scope_escape(monkeypatch) -> None:
+def test_authorized_download_enforces_limit_during_actual_transfer(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr("yuxi.agents.backends.sandbox.backend.get_sandbox_provider", lambda: object())
-    backend = ProvisionerSandboxBackend(thread_id="thread-1", uid="user-1")
-    backend._get_client = MethodType(
-        lambda self: SimpleNamespace(
-            file=SimpleNamespace(
-                list_path=lambda **_kwargs: SimpleNamespace(
-                    data=SimpleNamespace(
-                        files=[
-                            SimpleNamespace(
-                                path="/home/gem/user-data/outputs/escape.txt",
-                                is_directory=False,
-                            )
-                        ]
-                    )
-                )
-            )
-        ),
-        backend,
-    )
-    monkeypatch.setattr(
-        backend,
-        "execute",
-        lambda _command: SimpleNamespace(exit_code=2, output="not regular", truncated=False),
-    )
-
-    with pytest.raises(ValueError, match="not a regular scoped file"):
-        backend.list_output_files()
-
-
-def test_output_download_enforces_limit_during_actual_transfer(monkeypatch, tmp_path) -> None:
-    monkeypatch.setattr("yuxi.agents.backends.sandbox.backend.get_sandbox_provider", lambda: object())
-    backend = ProvisionerSandboxBackend(thread_id="thread-1", uid="user-1")
+    backend = ProvisionerSandboxBackend(thread_id="thread-1", uid="user-1", workdir_id="workdir-1")
     content = b"12345678"
     execute_calls = 0
 
@@ -1267,7 +1143,7 @@ def test_output_download_enforces_limit_during_actual_transfer(monkeypatch, tmp_
         execute_calls += 1
         return SimpleNamespace(
             exit_code=0,
-            output=f"YUXI_OUTPUT_SNAPSHOT {len(content)} {hashlib.sha256(content).hexdigest()}",
+            output=f"YUXI_FILE_SNAPSHOT {len(content)} {hashlib.sha256(content).hexdigest()}",
             truncated=False,
         )
 
@@ -1281,8 +1157,8 @@ def test_output_download_enforces_limit_during_actual_transfer(monkeypatch, tmp_
     target_path = tmp_path / "snapshot.bin"
 
     with pytest.raises(ValueError, match="exceeds transfer limit"):
-        backend.download_output_file_to_path(
-            "/home/gem/user-data/outputs/growing.bin",
+        backend.download_authorized_file_to_path(
+            "/home/gem/projects/project-workdir-1/growing.bin",
             str(target_path),
             max_bytes=5,
         )
@@ -1294,36 +1170,15 @@ def test_output_download_enforces_limit_during_actual_transfer(monkeypatch, tmp_
 def test_authorized_download_maps_sandbox_overflow_to_stable_limit_error() -> None:
     with pytest.raises(ValueError, match="exceeds transfer limit"):
         sandbox_backend_module._raise_authorized_path_operation_error(
-            "Traceback: OverflowError: output exceeds transfer limit",
+            "Traceback: OverflowError: file exceeds transfer limit",
             "/home/gem/projects/project-workdir-1/large.bin",
             "snapshot failed",
         )
 
 
-def test_output_snapshot_never_creates_missing_sandbox(monkeypatch) -> None:
-    calls = []
-
-    class FakeProvider:
-        def get(self, *_args, **kwargs):
-            calls.append(kwargs)
-            return None
-
-    monkeypatch.setattr("yuxi.agents.backends.sandbox.backend.get_sandbox_provider", FakeProvider)
-    backend = ProvisionerSandboxBackend(
-        thread_id="thread-1",
-        uid="user-1",
-        create_if_missing=False,
-    )
-
-    with pytest.raises(RuntimeError, match="sandbox is unavailable"):
-        backend.list_output_files()
-
-    assert calls[0]["create_if_missing"] is False
-
-
-def test_output_snapshot_attempts_cleanup_after_snapshot_command_failure(monkeypatch, tmp_path) -> None:
+def test_authorized_snapshot_attempts_cleanup_after_snapshot_command_failure(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr("yuxi.agents.backends.sandbox.backend.get_sandbox_provider", lambda: object())
-    backend = ProvisionerSandboxBackend(thread_id="thread-1", uid="user-1")
+    backend = ProvisionerSandboxBackend(thread_id="thread-1", uid="user-1", workdir_id="workdir-1")
     execute_results = iter(
         [
             SimpleNamespace(exit_code=1, output="connection lost", truncated=False),
@@ -1333,8 +1188,8 @@ def test_output_snapshot_attempts_cleanup_after_snapshot_command_failure(monkeyp
     backend.execute = lambda _command: next(execute_results)
 
     with pytest.raises(RuntimeError, match="connection lost"):
-        backend.download_output_file_to_path(
-            "/home/gem/user-data/outputs/report.txt",
+        backend.download_authorized_file_to_path(
+            "/home/gem/projects/project-workdir-1/report.txt",
             str(tmp_path / "report.txt"),
             max_bytes=1024,
         )
@@ -1371,7 +1226,7 @@ def test_authorized_download_recovers_snapshot_metadata_when_first_stdout_is_mis
     monkeypatch.setattr("yuxi.agents.backends.sandbox.backend.get_sandbox_provider", lambda: object())
     backend = ProvisionerSandboxBackend(thread_id="thread-1", uid="user-1", workdir_id="workdir-1")
     content = b"live bytes"
-    marker = f"YUXI_OUTPUT_SNAPSHOT {len(content)} {hashlib.sha256(content).hexdigest()}"
+    marker = f"YUXI_FILE_SNAPSHOT {len(content)} {hashlib.sha256(content).hexdigest()}"
     execute_results = iter(
         [
             SimpleNamespace(exit_code=0, output="", truncated=False),
@@ -1420,15 +1275,15 @@ def test_authorized_upload_rejects_symlink_parent_as_permission_error(monkeypatc
         )
 
 
-def test_output_snapshot_cleanup_failure_blocks_publication(monkeypatch, tmp_path) -> None:
+def test_authorized_snapshot_cleanup_failure_blocks_download(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr("yuxi.agents.backends.sandbox.backend.get_sandbox_provider", lambda: object())
-    backend = ProvisionerSandboxBackend(thread_id="thread-1", uid="user-1")
+    backend = ProvisionerSandboxBackend(thread_id="thread-1", uid="user-1", workdir_id="workdir-1")
     content = b"report"
     execute_results = iter(
         [
             SimpleNamespace(
                 exit_code=0,
-                output=f"YUXI_OUTPUT_SNAPSHOT {len(content)} {hashlib.sha256(content).hexdigest()}",
+                output=f"YUXI_FILE_SNAPSHOT {len(content)} {hashlib.sha256(content).hexdigest()}",
                 truncated=False,
             ),
             SimpleNamespace(exit_code=1, output="cleanup failed", truncated=False),
@@ -1442,8 +1297,8 @@ def test_output_snapshot_cleanup_failure_blocks_publication(monkeypatch, tmp_pat
     target = tmp_path / "report.txt"
 
     with pytest.raises(RuntimeError, match="cleanup failed"):
-        backend.download_output_file_to_path(
-            "/home/gem/user-data/outputs/report.txt",
+        backend.download_authorized_file_to_path(
+            "/home/gem/projects/project-workdir-1/report.txt",
             str(target),
             max_bytes=1024,
         )
@@ -1454,7 +1309,7 @@ def test_output_snapshot_cleanup_failure_blocks_publication(monkeypatch, tmp_pat
 def test_project_workdir_paths_use_one_safe_opaque_segment(monkeypatch, tmp_path) -> None:
     from yuxi.agents.backends.sandbox import paths
 
-    monkeypatch.setattr(paths, "get_save_dir", lambda: tmp_path)
+    monkeypatch.setattr(paths, "get_projects_dir", lambda: tmp_path / "projects")
 
     assert paths.project_workdir_virtual_dir("workdir-1") == "/home/gem/projects/project-workdir-1"
     assert paths.project_workdir_host_dir("workdir-1") == tmp_path / "projects" / "workdir-1"

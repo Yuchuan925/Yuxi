@@ -3,9 +3,9 @@ import tempfile
 from pathlib import Path
 
 
-def get_save_dir() -> Path:
-    """读取当前进程的保存目录。"""
-    return Path(os.getenv("SAVE_DIR", "saves"))
+def get_legacy_storage_dir() -> Path:
+    """读取仅供一次性迁移使用的历史广域存储目录。"""
+    return Path(os.getenv("YUXI_LEGACY_STORAGE_DIR", "legacy-saves"))
 
 
 def get_runtime_dir() -> Path:
@@ -14,6 +14,34 @@ def get_runtime_dir() -> Path:
     if configured:
         return Path(configured)
     return Path(tempfile.gettempdir()) / f"yuxi-runtime-{os.getpid()}"
+
+
+def get_checkpoint_dir() -> Path:
+    """读取显式 SQLite LangGraph checkpoint 的共享持久目录。"""
+    configured = os.getenv("YUXI_CHECKPOINT_DIR")
+    return Path(configured) if configured else Path("checkpoints")
+
+
+def get_skill_data_dir() -> Path:
+    """读取共享与个人 Skill 持久源目录。"""
+    configured = os.getenv("YUXI_SKILL_DATA_DIR")
+    return Path(configured) if configured else Path("skill-sources")
+
+
+def get_skill_projection_dir() -> Path:
+    """读取用户授权 Skill 只读投影目录。"""
+    configured = os.getenv("YUXI_SKILL_PROJECTION_DIR")
+    return Path(configured) if configured else Path("skill-projections")
+
+
+def get_projects_dir() -> Path:
+    """读取 Project Workdir 持久目录。"""
+    return Path(os.getenv("YUXI_PROJECTS_DIR", "projects"))
+
+
+def get_user_data_dir() -> Path:
+    """读取用户级实时文件持久目录。"""
+    return Path(os.getenv("YUXI_USER_DATA_DIR", "user-data"))
 
 
 def __getattr__(name: str):
@@ -25,4 +53,14 @@ def __getattr__(name: str):
     raise AttributeError(name)
 
 
-__all__ = ["UserConfig", "UserConfigSchema", "get_runtime_dir", "get_save_dir"]
+__all__ = [
+    "UserConfig",
+    "UserConfigSchema",
+    "get_runtime_dir",
+    "get_checkpoint_dir",
+    "get_legacy_storage_dir",
+    "get_projects_dir",
+    "get_skill_data_dir",
+    "get_skill_projection_dir",
+    "get_user_data_dir",
+]

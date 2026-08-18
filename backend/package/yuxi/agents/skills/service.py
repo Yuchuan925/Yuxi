@@ -27,7 +27,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from yuxi.agents.mcp.service import get_enabled_mcp_server_slugs
 from yuxi.agents.skills.repository import SkillRepository
-from yuxi.config import get_save_dir
+from yuxi.config import (
+    get_legacy_storage_dir,
+    get_runtime_dir,
+    get_skill_data_dir,
+    get_skill_projection_dir,
+    get_user_data_dir,
+)
 from yuxi.permissions import ResourcePermission, normalize_permission_config, resolve_skill_permission
 from yuxi.storage.postgres.models_business import Skill, User
 from yuxi.storage.redis import get_async_redis_client
@@ -79,10 +85,10 @@ PERSONAL_SKILL_SCAN_LOCK_PREFIX = "yuxi:skills:personal:scan-lock:v1:"
 PERSONAL_SKILL_SCAN_LOCK_TIMEOUT_SECONDS = 30
 PERSONAL_SKILL_SCAN_LOCK_WAIT_SECONDS = 10
 PERSONAL_SKILL_SOURCE_TYPE = "personal"
-WORKSPACE_SKILLS_RELATIVE_DIR = Path("agents") / "skills"
 _USER_SKILLS_LOCK = threading.Lock()
 _USER_SKILLS_LOCKS: dict[str, threading.Lock] = {}
 _USER_SKILL_PROJECTION_LOCK_SCOPE = "yuxi:skills:user-projection:v1:"
+_SKILL_STORAGE_MIGRATION_LOCK = 0x5958534B
 
 
 @dataclass(frozen=True, slots=True)
@@ -150,7 +156,7 @@ def _user_skills_file_lock(uid: str):
     """在共享投影卷上串行化同一用户的目录替换。"""
     from yuxi.agents.backends.sandbox.paths import workspace_uid_dirname
 
-    lock_dir = get_save_dir() / "skill-projections" / ".locks"
+    lock_dir = get_skill_projection_dir() / ".locks"
     lock_dir.mkdir(parents=True, exist_ok=True)
     lock_path = lock_dir / f"{workspace_uid_dirname(uid)}.lock"
     with lock_path.open("a+b") as lock_file:
@@ -276,13 +282,15 @@ def _ensure_non_builtin(item: Skill) -> None:
 
 
 def get_skills_root_dir() -> Path:
-    root = get_save_dir() / "skills"
+    """返回共享与内置 Skill 的持久源目录。"""
+    root = get_skill_data_dir() / "shared"
     root.mkdir(parents=True, exist_ok=True)
     return root
 
 
 def get_skill_drafts_root_dir() -> Path:
-    root = get_save_dir() / "skill_import_drafts"
+    """返回可丢弃的 Skill 安装草稿目录。"""
+    root = get_runtime_dir() / "skill_import_drafts"
     root.mkdir(parents=True, exist_ok=True)
     return root
 
@@ -351,7 +359,7 @@ def get_user_skills_root_dir(uid: str) -> Path:
     from yuxi.agents.backends.sandbox.paths import workspace_uid_dirname
 
     safe_uid = workspace_uid_dirname(uid)
-    root = get_save_dir() / "skill-projections" / safe_uid
+    root = get_skill_projection_dir() / safe_uid
     root.mkdir(parents=True, exist_ok=True)
     return root
 
@@ -408,7 +416,7 @@ async def apply_skill_projection_policy_change(db: AsyncSession, slug: str) -> N
     from yuxi.agents.backends.sandbox.paths import workspace_uid_dirname
 
     result = await db.execute(select(User.uid).where(User.is_deleted == 0).order_by(User.id))
-    projection_root = get_save_dir() / "skill-projections"
+    projection_root = get_skill_projection_dir()
     uids = [str(uid) for uid in result.scalars().all() if (projection_root / workspace_uid_dirname(str(uid))).is_dir()]
     for uid in uids:
         await db.execute(
@@ -479,7 +487,7 @@ def get_builtin_skill_specs() -> list[Any]:
 
 
 def _build_builtin_skill_dir_path(slug: str) -> str:
-    return (Path("skills") / slug).as_posix()
+    return (Path("shared") / slug).as_posix()
 
 
 def _dir_contains_symlink(path: Path) -> bool:
@@ -622,6 +630,170 @@ def _replace_skill_target(
 
     if trash_dir and trash_dir.exists():
         shutil.rmtree(trash_dir, ignore_errors=True)
+
+
+def _migrate_legacy_skill_tree(source_dir: Path, target_dir: Path, *, expected_slug: str) -> None:
+    """安全复制一个历史 Skill 源；目标冲突时保留两端并拒绝切换。"""
+    if source_dir.is_symlink() or not source_dir.is_dir():
+        raise ValueError(f"历史 Skill 来源不是可信目录: {source_dir}")
+    target_dir.parent.mkdir(parents=True, exist_ok=True)
+    temp_target = target_dir.with_name(f".{target_dir.name}.migrate-{uuid.uuid4().hex[:8]}")
+    try:
+        _copy_skill_tree_no_symlinks(source_dir, temp_target)
+        metadata = _parse_skill_dir_metadata(temp_target)
+        if metadata["slug"] != expected_slug:
+            raise ValueError(f"历史 Skill slug 不一致: expected={expected_slug}, actual={metadata['slug']}")
+        if target_dir.exists() or target_dir.is_symlink():
+            if target_dir.is_symlink() or not target_dir.is_dir() or not _dirs_equal(target_dir, temp_target):
+                raise ValueError(f"Skill 新旧持久源内容冲突: {expected_slug}")
+            return
+        temp_target.rename(target_dir)
+    finally:
+        if temp_target.exists():
+            shutil.rmtree(temp_target, ignore_errors=True)
+
+
+async def migrate_legacy_skill_storage(
+    db: AsyncSession,
+    *,
+    remove_personal_legacy: bool = False,
+) -> None:
+    """一次性迁移历史 Skill 源；停机迁移可删除旧个人目录。"""
+    from yuxi.agents.backends.sandbox.paths import workspace_uid_dirname
+
+    if db.get_bind().dialect.name == "postgresql":
+        await db.execute(text("SELECT pg_advisory_xact_lock(:lock_key)"), {"lock_key": _SKILL_STORAGE_MIGRATION_LOCK})
+
+    repo = SkillRepository(db)
+    repo.autocommit = False
+    migrated_sources: list[Path] = []
+    legacy_shared_root = get_legacy_storage_dir() / "skills"
+    if legacy_shared_root.is_symlink():
+        raise ValueError(f"共享 Skill 历史根目录非法: {legacy_shared_root}")
+    shared_items = await repo.list_all()
+    for item in shared_items:
+        legacy_path = legacy_shared_root / item.slug
+        target_path = get_skills_root_dir() / item.slug
+        legacy_path_exists = legacy_path.exists() or legacy_path.is_symlink()
+        if Path(item.dir_path) == Path("skills") / item.slug:
+            if legacy_path_exists:
+                await asyncio.to_thread(
+                    _migrate_legacy_skill_tree,
+                    legacy_path,
+                    target_path,
+                    expected_slug=item.slug,
+                )
+                migrated_sources.append(legacy_path)
+            elif item.source_type != "builtin" and not target_path.is_dir():
+                raise RuntimeError(f"Skill 持久源缺失，拒绝切换: {item.slug}")
+            item.dir_path = (Path("shared") / item.slug).as_posix()
+        elif Path(item.dir_path) == Path("shared") / item.slug and legacy_path_exists:
+            # 数据库切换与旧目录删除不是同一个事务；重跑时必须继续校验并清理已迁移来源。
+            await asyncio.to_thread(
+                _migrate_legacy_skill_tree,
+                legacy_path,
+                target_path,
+                expected_slug=item.slug,
+            )
+            migrated_sources.append(legacy_path)
+
+    registered_shared_names = {item.slug for item in shared_items}
+    if legacy_shared_root.is_dir():
+        orphan_root = get_skill_data_dir() / "legacy-orphans" / "shared"
+        for entry in sorted(legacy_shared_root.iterdir(), key=lambda path: path.name):
+            if entry.name in registered_shared_names:
+                continue
+            if entry.is_symlink() or not entry.is_dir():
+                raise ValueError(f"未登记的共享 Skill 历史来源非法: {entry}")
+            await asyncio.to_thread(
+                _migrate_legacy_orphan_tree,
+                entry,
+                orphan_root / entry.name,
+            )
+            migrated_sources.append(entry)
+
+    result = await db.execute(select(User.uid).order_by(User.id))
+    registered_uid_dirs: set[str] = set()
+    for uid_value in result.scalars().all():
+        uid = str(uid_value or "").strip()
+        if not uid:
+            continue
+        uid_dirname = workspace_uid_dirname(uid)
+        registered_uid_dirs.add(uid_dirname)
+        legacy_root = get_user_data_dir() / "shared" / uid_dirname / "workspace" / "agents" / "skills"
+        if not legacy_root.exists() and not legacy_root.is_symlink():
+            continue
+        if legacy_root.is_symlink() or not legacy_root.is_dir():
+            raise ValueError(f"个人 Skill 历史根目录非法: uid={uid}")
+        for entry in sorted(legacy_root.iterdir(), key=lambda path: path.name):
+            if not is_valid_skill_slug(entry.name):
+                raise ValueError(f"个人 Skill 历史目录名非法: uid={uid}, name={entry.name}")
+            await asyncio.to_thread(
+                _migrate_legacy_skill_tree,
+                entry,
+                get_personal_skills_root_dir(uid) / entry.name,
+                expected_slug=entry.name,
+            )
+        if remove_personal_legacy:
+            migrated_sources.append(legacy_root)
+
+    if remove_personal_legacy:
+        shared_user_root = get_user_data_dir() / "shared"
+        if shared_user_root.exists():
+            for uid_dir in shared_user_root.iterdir():
+                legacy_root = uid_dir / "workspace" / "agents" / "skills"
+                legacy_parents = (uid_dir, uid_dir / "workspace", uid_dir / "workspace" / "agents", legacy_root)
+                if any(path.is_symlink() for path in legacy_parents):
+                    raise ValueError(f"个人 Skill 历史根目录非法: {legacy_root}")
+                if legacy_root.is_dir() and legacy_root not in migrated_sources:
+                    if uid_dir.name not in registered_uid_dirs:
+                        await asyncio.to_thread(
+                            _migrate_legacy_orphan_tree,
+                            legacy_root,
+                            get_skill_data_dir() / "legacy-orphans" / "personal" / uid_dir.name,
+                        )
+                    migrated_sources.append(legacy_root)
+
+    await db.commit()
+    for source in sorted(migrated_sources, key=lambda path: len(path.parts), reverse=True):
+        if source.exists() and source.is_dir() and not source.is_symlink():
+            shutil.rmtree(source)
+
+
+_LEGACY_SKILL_MIGRATION_MARKER = ".legacy-migration-complete"
+
+
+def legacy_skill_storage_migration_completed() -> bool:
+    """返回 Skill 历史来源是否已经由停机迁移永久接管。"""
+    return (get_skill_data_dir() / _LEGACY_SKILL_MIGRATION_MARKER).is_file()
+
+
+def mark_legacy_skill_storage_migrated() -> None:
+    """原子写入持久完成标记，避免把后续普通 workspace 目录再次当作历史数据。"""
+    root = get_skill_data_dir()
+    root.mkdir(parents=True, exist_ok=True)
+    marker = root / _LEGACY_SKILL_MIGRATION_MARKER
+    temp = root / f".{_LEGACY_SKILL_MIGRATION_MARKER}.{uuid.uuid4().hex}.tmp"
+    temp.write_text("1\n", encoding="utf-8")
+    temp.replace(marker)
+
+
+def _migrate_legacy_orphan_tree(source_dir: Path, target_dir: Path) -> None:
+    """保留未登记历史目录的字节，但不把它注册成可执行 Skill。"""
+    if source_dir.is_symlink() or not source_dir.is_dir():
+        raise ValueError(f"未登记 Skill 历史来源非法: {source_dir}")
+    target_dir.parent.mkdir(parents=True, exist_ok=True)
+    temp_target = target_dir.with_name(f".{target_dir.name}.migrate-{uuid.uuid4().hex[:8]}")
+    try:
+        _copy_skill_tree_no_symlinks(source_dir, temp_target)
+        if target_dir.exists() or target_dir.is_symlink():
+            if target_dir.is_symlink() or not target_dir.is_dir() or not _dirs_equal(target_dir, temp_target):
+                raise ValueError(f"未登记 Skill 新旧持久源内容冲突: {source_dir.name}")
+            return
+        temp_target.rename(target_dir)
+    finally:
+        if temp_target.exists():
+            shutil.rmtree(temp_target, ignore_errors=True)
 
 
 async def list_accessible_skills(
@@ -939,17 +1111,16 @@ def _parse_skill_dir_metadata(source_skill_dir: Path) -> dict[str, Any]:
 
 
 def get_personal_skills_root_dir(uid: str) -> Path:
-    """返回认证用户的个人 Skill 根目录。"""
-    from yuxi.agents.backends.sandbox.paths import sandbox_workspace_dir
-    from yuxi.services.mention_search_service import WORKSPACE_THREAD_PLACEHOLDER
+    """返回认证用户唯一的个人 Skill 持久源目录。"""
+    from yuxi.agents.backends.sandbox.paths import workspace_uid_dirname
 
-    root = sandbox_workspace_dir(WORKSPACE_THREAD_PLACEHOLDER, uid) / WORKSPACE_SKILLS_RELATIVE_DIR
+    root = get_skill_data_dir() / "personal" / workspace_uid_dirname(uid)
     root.mkdir(parents=True, exist_ok=True)
     return root.resolve()
 
 
 async def list_personal_skills(uid: str, *, refresh: bool = False) -> PersonalSkillSnapshot:
-    """读取个人 Skill Redis 快照，必要时重新扫描工作区。"""
+    """读取个人 Skill Redis 快照，必要时重新扫描持久源。"""
     redis = await get_async_redis_client()
     root = get_personal_skills_root_dir(uid)
 
@@ -972,7 +1143,7 @@ async def install_personal_skill_dir(
     *,
     refresh_cache: bool = True,
 ) -> ResolvedSkill:
-    """将一个 Skill 原子安装到当前用户个人工作区。"""
+    """将一个 Skill 原子安装到当前用户个人持久源。"""
     redis = await get_async_redis_client()
     async with _personal_skill_scan_lock(redis, uid):
         item = await asyncio.to_thread(_install_personal_skill_dir_sync, uid, Path(source_dir))
@@ -1152,7 +1323,7 @@ def _install_personal_skill_dir_sync(uid: str, source_dir: Path) -> ResolvedSkil
     slug = metadata["slug"]
     target_dir = root / slug
     if target_dir.exists() or target_dir.is_symlink():
-        raise ValueError(f"个人工作区已存在同名 Skill: {slug}")
+        raise ValueError(f"个人 Skill 源已存在同名 Skill: {slug}")
 
     def _validate_slug_unchanged(copied_dir: Path) -> None:
         copied_metadata = _parse_skill_dir_metadata(copied_dir)
@@ -1264,7 +1435,7 @@ async def _import_skill_dir_impl(
                 tool_dependencies=parsed["tool_dependencies"],
                 mcp_dependencies=parsed["mcp_dependencies"],
                 skill_dependencies=parsed["skill_dependencies"],
-                dir_path=(Path("skills") / final_slug).as_posix(),
+                dir_path=(Path("shared") / final_slug).as_posix(),
                 share_config=share_config,
                 enabled=True,
                 created_by=created_by,
@@ -1280,7 +1451,7 @@ def _resolve_skill_dir(item: Skill) -> Path:
     dir_path = Path(item.dir_path)
     if dir_path.is_absolute():
         return dir_path
-    return (get_save_dir() / dir_path).resolve()
+    return (get_skill_data_dir() / dir_path).resolve()
 
 
 def _resolve_relative_path(skill_dir: Path, relative_path: str, *, allow_root: bool = False) -> tuple[Path, str]:
@@ -1517,7 +1688,7 @@ async def confirm_skill_install_draft(
                         tool_dependencies=parsed["tool_dependencies"],
                         mcp_dependencies=parsed["mcp_dependencies"],
                         skill_dependencies=parsed["skill_dependencies"],
-                        dir_path=(Path("skills") / slug).as_posix(),
+                        dir_path=(Path("shared") / slug).as_posix(),
                         share_config=normalized_share_config,
                         enabled=True,
                         created_by=operator.uid,
@@ -1544,7 +1715,7 @@ async def confirm_personal_skill_install_draft(
     slugs: list[str] | None,
     operator: User,
 ) -> list[dict[str, Any]]:
-    """确认草稿并将选中 Skill 安装到当前用户个人工作区。"""
+    """确认草稿并将选中 Skill 安装到当前用户个人持久源。"""
     draft_dir, _data, draft_items = _load_and_select_draft_items(draft_id, slugs, operator)
 
     results: list[dict[str, Any]] = []
@@ -1920,7 +2091,7 @@ def list_builtin_skill_specs() -> list[dict[str, Any]]:
 
 async def init_builtin_skills(db: AsyncSession, *, created_by: str = "system") -> list[Skill]:
     if db is not None and db.get_bind().dialect.name == "postgresql":
-        await db.execute(text("SELECT pg_advisory_xact_lock(:lock_key)"), {"lock_key": 0x5958534B})
+        await db.execute(text("SELECT pg_advisory_xact_lock(:lock_key)"), {"lock_key": _SKILL_STORAGE_MIGRATION_LOCK})
 
     repo = SkillRepository(db)
     repo.autocommit = False
@@ -1936,6 +2107,7 @@ async def init_builtin_skills(db: AsyncSession, *, created_by: str = "system") -
         _replace_skill_target(target_dir, Path(spec["source_dir"]))
 
         if existing:
+            existing.dir_path = _build_builtin_skill_dir_path(slug)
             if existing.name != spec["name"] or existing.description != spec["description"]:
                 await repo.update_metadata(
                     existing,

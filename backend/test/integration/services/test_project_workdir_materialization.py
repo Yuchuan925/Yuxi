@@ -12,10 +12,13 @@ import pytest
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
+import yuxi.storage_migration as storage_migration
 import yuxi.services.project_workdir_materialization_service as svc
 from yuxi.repositories.project_workdir_repository import FILE_STORAGE_MATERIALIZATION_ID
 from yuxi.storage.postgres.models_business import (
+    AgentRun,
     Base,
+    ConfigOption,
     Conversation,
     FileStorageMaterialization,
     Message,
@@ -36,6 +39,134 @@ class _ScopedMinioClient:
 
     def __getattr__(self, name):
         return getattr(self._delegate, name)
+
+
+async def test_real_postgres_detects_legacy_cutover_before_schema_initialization(monkeypatch):
+    """首次安装、旧 schema 与已 active 部署必须由迁移前 PostgreSQL 事实区分。"""
+    schema_name = f"pytest_storage_gate_{uuid.uuid4().hex}"
+    admin_engine = create_async_engine(os.environ["POSTGRES_URL"], pool_pre_ping=True)
+    engine = create_async_engine(
+        os.environ["POSTGRES_URL"],
+        pool_pre_ping=True,
+        connect_args={"server_settings": {"search_path": schema_name}},
+    )
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+
+    @asynccontextmanager
+    async def session_context():
+        async with session_factory() as db:
+            yield db
+
+    try:
+        async with admin_engine.begin() as connection:
+            await connection.execute(text(f'CREATE SCHEMA "{schema_name}"'))
+        monkeypatch.setattr(
+            storage_migration,
+            "pg_manager",
+            SimpleNamespace(get_async_session_context=session_context),
+        )
+
+        assert await storage_migration._legacy_cutover_pending_before_schema_init() is False
+        async with engine.begin() as connection:
+            await connection.execute(text("CREATE TABLE users (id VARCHAR(64) PRIMARY KEY)"))
+        assert await storage_migration._legacy_cutover_pending_before_schema_init() is True
+        async with engine.begin() as connection:
+            await connection.execute(
+                text(
+                    "CREATE TABLE file_storage_materializations "
+                    "(id VARCHAR(64) PRIMARY KEY, phase VARCHAR(32) NOT NULL)"
+                )
+            )
+            await connection.execute(
+                text("INSERT INTO file_storage_materializations (id, phase) VALUES (:id, 'active')"),
+                {"id": FILE_STORAGE_MATERIALIZATION_ID},
+            )
+        assert await storage_migration._legacy_cutover_pending_before_schema_init() is False
+    finally:
+        await engine.dispose()
+        async with admin_engine.begin() as connection:
+            await connection.execute(text(f'DROP SCHEMA IF EXISTS "{schema_name}" CASCADE'))
+        await admin_engine.dispose()
+
+
+async def test_real_postgres_storage_migration_converges_runs_and_imports_base_toml(
+    monkeypatch,
+    tmp_path,
+):
+    """停机 proof 之后，旧 Run 与管理员配置必须在迁移 Owner 中形成持久事实。"""
+    schema_name = f"pytest_storage_state_{uuid.uuid4().hex}"
+    admin_engine = create_async_engine(os.environ["POSTGRES_URL"], pool_pre_ping=True)
+    engine = create_async_engine(
+        os.environ["POSTGRES_URL"],
+        pool_pre_ping=True,
+        connect_args={"server_settings": {"search_path": schema_name}},
+    )
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+
+    @asynccontextmanager
+    async def session_context():
+        async with session_factory() as db:
+            yield db
+
+    legacy_root = tmp_path / "legacy"
+    (legacy_root / "config").mkdir(parents=True)
+    (legacy_root / "config/base.toml").write_text(
+        'default_model = "legacy:model"\nenable_content_guard = true\n',
+        encoding="utf-8",
+    )
+    try:
+        async with admin_engine.begin() as connection:
+            await connection.execute(text(f'CREATE SCHEMA "{schema_name}"'))
+        async with engine.begin() as connection:
+            await connection.run_sync(Base.metadata.create_all)
+        async with session_factory() as db:
+            db.add(
+                AgentRun(
+                    id="legacy-pending-run",
+                    conversation_thread_id="legacy-thread",
+                    runtime_scope_id="legacy-thread",
+                    agent_slug="main",
+                    uid="user-1",
+                    status="pending",
+                    request_id="legacy-pending-request",
+                    run_type="chat",
+                    input_payload={},
+                )
+            )
+            await db.commit()
+
+        monkeypatch.setattr(
+            storage_migration,
+            "pg_manager",
+            SimpleNamespace(get_async_session_context=session_context),
+        )
+        monkeypatch.setattr(storage_migration, "get_legacy_storage_dir", lambda: legacy_root)
+
+        await storage_migration._converge_database_state(fail_nonterminal_runs=False)
+
+        async with session_factory() as db:
+            run = await db.get(AgentRun, "legacy-pending-run")
+            config = await db.scalar(select(ConfigOption).where(ConfigOption.key == "system_options"))
+            assert run.status == "pending"
+            assert config.value["default_model"] == "legacy:model"
+            assert config.value["enable_content_guard"] is True
+
+        await storage_migration._converge_database_state(fail_nonterminal_runs=True)
+
+        async with session_factory() as db:
+            run = await db.get(AgentRun, "legacy-pending-run")
+            config = await db.scalar(select(ConfigOption).where(ConfigOption.key == "system_options"))
+            assert run.status == "failed"
+            assert run.error_type == "storage_migration"
+            assert run.runtime_cleanup_pending is False
+            assert config.value["default_model"] == "legacy:model"
+            assert config.value["enable_content_guard"] is True
+            assert config.params["migration_version"] == 1
+    finally:
+        await engine.dispose()
+        async with admin_engine.begin() as connection:
+            await connection.execute(text(f'DROP SCHEMA IF EXISTS "{schema_name}" CASCADE'))
+        await admin_engine.dispose()
 
 
 async def test_real_postgres_epoch_materializes_legacy_files_and_activates_atomically(monkeypatch, tmp_path):
@@ -193,7 +324,7 @@ async def test_real_postgres_epoch_materializes_legacy_files_and_activates_atomi
             "pg_manager",
             SimpleNamespace(async_engine=engine, get_async_session_context=session_context),
         )
-        monkeypatch.setattr(svc, "get_save_dir", lambda: tmp_path)
+        monkeypatch.setattr(svc, "get_legacy_storage_dir", lambda: tmp_path)
         monkeypatch.setattr(svc, "project_workdir_host_dir", lambda value: tmp_path / "projects" / value)
 
         original_materialize = svc.materialize_inventory_epoch
@@ -385,7 +516,7 @@ async def test_concurrent_startup_holds_one_dedicated_advisory_lock_until_activa
             "pg_manager",
             SimpleNamespace(async_engine=engine, get_async_session_context=session_context),
         )
-        monkeypatch.setattr(svc, "get_save_dir", lambda: tmp_path)
+        monkeypatch.setattr(svc, "get_legacy_storage_dir", lambda: tmp_path)
         monkeypatch.setattr(svc, "project_workdir_host_dir", lambda value: tmp_path / "projects" / value)
 
         entered_materialization = asyncio.Event()

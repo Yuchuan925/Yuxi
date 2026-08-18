@@ -1400,9 +1400,10 @@ async def _worker_startup(ctx):
     pg_manager.initialize()
     await pg_manager.create_business_tables()
     await pg_manager.ensure_business_schema()
-    from yuxi.services.project_workdir_materialization_service import ensure_project_workdir_materialized
+    from yuxi.services.project_workdir_materialization_service import require_project_workdir_active
 
-    await ensure_project_workdir_materialized()
+    async with pg_manager.get_async_session_context() as session:
+        await require_project_workdir_active(session)
     if checkpointer_backend == "postgres":
         await pg_manager.setup_langgraph_checkpointer()
     async with pg_manager.get_async_session_context() as session:

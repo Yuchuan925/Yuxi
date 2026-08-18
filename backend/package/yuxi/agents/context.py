@@ -5,7 +5,7 @@ import uuid
 from dataclasses import MISSING, dataclass, field, fields
 from typing import Any, get_origin
 
-from yuxi.agents.backends.sandbox.paths import sandbox_workspace_agent_context_file
+from yuxi.agents.backends.sandbox.paths import user_workspace_agent_context_file
 from yuxi.agents.tool_approval import DEFAULT_TOOL_APPROVAL_MODE
 from yuxi.config.options import system_options
 from yuxi.config.runtime import lite_mode_enabled
@@ -62,10 +62,10 @@ def _role_can_access(auth: str | None, role: str | None) -> bool:
     return False
 
 
-def _load_workspace_agent_context(thread_id: str, uid: str) -> str:
+def _load_workspace_agent_context(uid: str) -> str:
     sections: list[str] = []
     for filename in WORKSPACE_AGENT_CONTEXT_FILES:
-        context_file = sandbox_workspace_agent_context_file(thread_id, uid, filename)
+        context_file = user_workspace_agent_context_file(uid, filename)
         try:
             with context_file.open("rb") as buffer:
                 content = buffer.read(WORKSPACE_AGENTS_PROMPT_MAX_BYTES + 1)
@@ -96,7 +96,7 @@ async def build_agent_input_context(
     request_id: str | None = None,
 ) -> dict:
     input_context = dict(agent_config or {})
-    agent_context = await asyncio.to_thread(_load_workspace_agent_context, thread_id, uid)
+    agent_context = await asyncio.to_thread(_load_workspace_agent_context, uid)
 
     if agent_context:
         base_prompt = str(input_context.get("system_prompt") or "").rstrip()

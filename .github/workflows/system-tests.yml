@@ -11,6 +11,7 @@ on:
       - 'backend/test/support/**'
       - 'docker-compose.yml'
       - 'docker-compose.prod.yml'
+      - 'scripts/migrate-storage.sh'
       - '.github/workflows/system-tests.yml'
   push:
     branches: [main]
@@ -23,6 +24,7 @@ on:
       - 'backend/test/support/**'
       - 'docker-compose.yml'
       - 'docker-compose.prod.yml'
+      - 'scripts/migrate-storage.sh'
       - '.github/workflows/system-tests.yml'
   workflow_dispatch:
 
@@ -127,6 +129,14 @@ jobs:
         run: docker compose exec -T -e E2E_USERNAME -e E2E_PASSWORD api uv run --no-sync --no-dev pytest test/e2e/test_deterministic_agent_path_e2e.py -q
       - name: Verify identity transaction and replayable secret publication
         run: docker compose exec -T api uv run pytest test/integration/services/test_identity_admin_service.py test/integration/services/test_api_key_schema_migration.py test/integration/services/test_api_key_user_lifecycle.py test/integration/api/test_apikey_router.py -q
+      - name: Verify destructive storage migration and Skill authorization
+        run: |
+          docker compose exec -T api uv run pytest \
+            test/integration/services/test_project_workdir_materialization.py \
+            test/integration/services/test_user_skill_projection.py \
+            test/integration/api/test_skill_artifact_authorization.py -q
+      - name: Verify real Sandbox storage isolation and shared projections
+        run: docker compose exec -T api uv run pytest test/integration/services/test_project_workdir_provisioner.py -q
       - name: Runtime logs on failure
         if: failure()
         run: docker compose logs api worker --tail 300

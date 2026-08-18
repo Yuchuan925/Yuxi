@@ -24,7 +24,6 @@ from yuxi.services.file_preview import (
     render_preview_payload,
     render_preview_too_large_payload,
 )
-from yuxi.services.mention_search_service import invalidate_mention_cache
 from yuxi.services.project_workdir_service import ProjectWorkdirBinding, resolve_project_workdir_binding
 from yuxi.utils.datetime_utils import utc_isoformat_from_timestamp
 from yuxi.utils.upload_utils import write_upload_to_path
@@ -104,7 +103,7 @@ async def search_viewer_files(*, thread_id: str, query: str, current_user, db) -
         for item in await _list_directory(binding, backend, directory):
             if item["is_dir"]:
                 pending.append(str(item["path"]).rstrip("/"))
-            elif normalized_query in str(item["name"]).lower():
+            if normalized_query in str(item["name"]).lower():
                 matches.append(item)
                 if len(matches) >= SEARCH_MAX_RESULTS:
                     break
@@ -205,7 +204,6 @@ async def delete_viewer_file(*, thread_id: str, path: str, current_user, db) -> 
         await asyncio.to_thread(backend.delete_authorized_path, normalized, root=binding.workdir_path)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail="文件不存在") from exc
-    await invalidate_mention_cache(binding.thread_id)
     return {"success": True, "path": normalized}
 
 
@@ -222,7 +220,6 @@ async def create_viewer_directory(*, thread_id: str, parent_path: str, name: str
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    await invalidate_mention_cache(binding.thread_id)
     return {
         "entry": {
             "path": f"{path}/",
@@ -273,5 +270,4 @@ async def upload_viewer_files(*, thread_id: str, parent_path: str, files: list[U
                 "modified_at": "",
             }
         )
-    await invalidate_mention_cache(binding.thread_id)
     return {"entries": entries}

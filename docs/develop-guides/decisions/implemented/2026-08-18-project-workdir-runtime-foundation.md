@@ -33,6 +33,9 @@ Sandbox identity、generation 和挂载校验由 `agents/backends/sandbox/provid
   共享卷 flock 串行替换；授权上下文缺失时 fail-closed。
 - personal Skill 来源使用从文件系统根逐组件 `O_NOFOLLOW` 的 fd-relative 快照，只复制普通文件和
   真实目录。symlink 竞态、Unix socket、FIFO、设备等特殊项会删除旧 slug 投影并阻止本次刷新。
+- personal Skill 的持久源与单一路径已由
+  [Skill 持久源与只读投影收敛](2026-08-18-skill-source-convergence.md)接管；本记录只保留授权投影的
+  并发与安全基础。
 - 本决定落地时附件、outputs、Viewer 和 artifact 暂由旧 Owner 处理；后续
   [实时 Project Workdir 与独立 Sandbox Runtime](2026-08-18-live-project-workdir-and-runtime.md)
   已完成全量物化、实时主链路切换和旧 revision/hydrate 表面删除。

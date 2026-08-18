@@ -16,7 +16,7 @@ from yuxi.repositories.agent_repository import AgentRepository
 from yuxi.repositories.conversation_repository import ConversationRepository
 from yuxi.storage.postgres.manager import pg_manager
 from yuxi.utils.logging_config import logger
-from yuxi.utils.paths import VIRTUAL_PATH_WORKSPACE_SKILLS
+from yuxi.utils.paths import VIRTUAL_SKILLS_PATH
 
 SANDBOX_PATH_HINT = "请使用当前 Project Workdir 下的目录，或 /home/gem/user-data/..."
 
@@ -225,12 +225,12 @@ async def _run_install_task(
         if installed_slugs:
             lines.append(f"✅ 成功安装并激活技能: {', '.join(installed_slugs)}")
             for slug in installed_slugs:
-                lines.append(f"📁 安装位置: {VIRTUAL_PATH_WORKSPACE_SKILLS}/{slug}")
+                lines.append(f"📁 安装位置: {VIRTUAL_SKILLS_PATH}/{slug}")
         if failed_items:
             for item in failed_items:
                 lines.append(f"❌ 安装失败 ({item['slug']}): {item.get('error', '未知错误')}")
         if not config_success:
-            lines.append("⚠️ Skill 已持久安装到个人工作区，并在当前会话激活；当前 Agent 配置未更新")
+            lines.append("⚠️ Skill 已持久安装到个人 Skill 源，并在当前会话激活；当前 Agent 配置未更新")
         if not installed_slugs and not failed_items:
             lines.append("ℹ️ 未发现需要安装的技能")
 

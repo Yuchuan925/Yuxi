@@ -78,7 +78,6 @@ def test_provisioner_client_sends_project_workdir_contract(monkeypatch):
     record = client.create("sandbox-1", "root-thread", "user-1", workdir_id="workdir-1")
 
     assert calls[0]["json"]["workdir_id"] == "workdir-1"
-    assert "file_thread_id" not in calls[0]["json"]
     assert record.generation == "generation-1"
     assert record.workdir_id == "workdir-1"
 

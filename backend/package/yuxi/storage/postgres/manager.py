@@ -124,6 +124,7 @@ PROJECT_WORKDIR_SCHEMA_STATEMENTS = (
     WHERE child.id = relation.child_conversation_id
       AND child.workdir_id IS DISTINCT FROM parent.workdir_id
     """,
+    "ALTER TABLE IF EXISTS conversations ALTER COLUMN workdir_id SET NOT NULL",
     """
     DO $$
     BEGIN
@@ -214,6 +215,7 @@ RUNTIME_SCOPE_SCHEMA_STATEMENTS = (
     )
     WHERE run.runtime_scope_id IS NULL
     """,
+    "ALTER TABLE IF EXISTS agent_runs ALTER COLUMN runtime_scope_id SET NOT NULL",
     "CREATE INDEX IF NOT EXISTS ix_agent_runs_runtime_scope_id ON agent_runs(runtime_scope_id)",
     ("CREATE INDEX IF NOT EXISTS ix_agent_runs_runtime_cleanup_pending ON agent_runs(runtime_cleanup_pending)"),
 )

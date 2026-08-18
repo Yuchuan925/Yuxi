@@ -70,7 +70,7 @@ async def test_attachment_inventory_rejects_cross_thread_object_before_download(
         async def adownload_response(self, _bucket, _object):
             pytest.fail("跨线程对象不得进入下载")
 
-    monkeypatch.setattr(svc, "get_save_dir", lambda: tmp_path)
+    monkeypatch.setattr(svc, "get_legacy_storage_dir", lambda: tmp_path)
     monkeypatch.setattr(svc, "get_minio_client", _Client)
     conversation = SimpleNamespace(thread_id="thread-1")
     attachment = {
@@ -97,7 +97,7 @@ async def test_attachment_inventory_rejects_legacy_symlink(monkeypatch, tmp_path
     secret = tmp_path / "secret.txt"
     secret.write_text("secret", encoding="utf-8")
     (uploads / "report.txt").symlink_to(secret)
-    monkeypatch.setattr(svc, "get_save_dir", lambda: tmp_path)
+    monkeypatch.setattr(svc, "get_legacy_storage_dir", lambda: tmp_path)
     monkeypatch.setattr(svc, "get_minio_client", _Client)
     conversation = SimpleNamespace(thread_id="thread-1")
     attachment = {
@@ -251,8 +251,17 @@ async def test_materialize_epoch_replaces_workdir_only_after_verified_stage(monk
     final = projects / "workdir-1"
     final.mkdir(parents=True)
     (final / "old.txt").write_text("old", encoding="utf-8")
-    monkeypatch.setattr(svc, "get_save_dir", lambda: tmp_path)
+    monkeypatch.setattr(svc, "get_legacy_storage_dir", lambda: tmp_path)
+    monkeypatch.setattr(svc, "get_projects_dir", lambda: projects)
     monkeypatch.setattr(svc, "project_workdir_host_dir", lambda workdir_id: projects / workdir_id)
+    original_replace = svc.os.replace
+
+    def replace_with_mount_guard(source, target):
+        assert Path(source).is_relative_to(projects)
+        assert Path(target).is_relative_to(projects)
+        return original_replace(source, target)
+
+    monkeypatch.setattr(svc.os, "replace", replace_with_mount_guard)
     sources = svc._deduplicate_sources(
         [
             svc.LegacyFileSource(
@@ -299,7 +308,8 @@ async def test_materialize_epoch_keeps_previous_root_when_source_changes(monkeyp
         sources=(source,),
         fingerprint=svc._inventory_fingerprint((source,)),
     )
-    monkeypatch.setattr(svc, "get_save_dir", lambda: tmp_path)
+    monkeypatch.setattr(svc, "get_legacy_storage_dir", lambda: tmp_path)
+    monkeypatch.setattr(svc, "get_projects_dir", lambda: projects)
     monkeypatch.setattr(svc, "project_workdir_host_dir", lambda workdir_id: projects / workdir_id)
 
     with pytest.raises(ValueError, match="发生变化"):

@@ -537,6 +537,40 @@ class AgentRunRepository:
             await self.db.flush()
         return reconciled_runs, cancelled_descendants
 
+    async def fail_nonterminal_for_storage_migration(self) -> list[str]:
+        """停机迁移时把已失去运行环境的 Run 收敛为可观察失败事实。"""
+        current_time = utc_now_naive()
+        result = await self.db.execute(
+            select(AgentRun)
+            .where(AgentRun.status.notin_(TERMINAL_RUN_STATUSES))
+            .order_by(AgentRun.created_at.asc(), AgentRun.id.asc())
+            .with_for_update()
+        )
+        run_ids: list[str] = []
+        for run in result.scalars().all():
+            run.status = "failed"
+            run.error_type = "storage_migration"
+            run.error_message = "存储升级已停止旧运行环境；本次运行未完成"
+            run.finished_at = current_time
+            run.updated_at = current_time
+            run.worker_id = None
+            run.heartbeat_at = None
+            run.lease_expires_at = None
+            # quiescence proof 已证明旧 runtime 不存在，无需再创建异步清理任务。
+            run.runtime_cleanup_pending = False
+            await self._project_input_delivery_status(run)
+            await self._close_open_attempts(
+                run.id,
+                outcome="failed",
+                error_type=run.error_type,
+                error_message=run.error_message,
+                now=current_time,
+            )
+            run_ids.append(run.id)
+        if run_ids:
+            await self.db.flush()
+        return run_ids
+
     async def request_cancel(self, run_id: str) -> AgentRun | None:
         """持久化用户取消；未开始的 Run 直接形成 cancelled 终态。"""
         run = await self._lock_run(run_id)

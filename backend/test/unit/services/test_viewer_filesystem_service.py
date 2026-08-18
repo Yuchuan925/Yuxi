@@ -72,11 +72,7 @@ def realtime_viewer(monkeypatch):
         assert kwargs["uid"] == "user-1"
         return binding
 
-    async def invalidate(*args, **kwargs):
-        del args, kwargs
-
     monkeypatch.setattr(svc, "resolve_project_workdir_binding", resolve)
-    monkeypatch.setattr(svc, "invalidate_mention_cache", invalidate)
     monkeypatch.setattr(binding.__class__, "create_file_backend", lambda self, **kwargs: backend)
     return backend
 
@@ -153,3 +149,12 @@ async def test_viewer_search_walks_current_workdir(realtime_viewer):
         thread_id="thread-1", query="report", current_user=SimpleNamespace(uid="user-1"), db=object()
     )
     assert [item["name"] for item in result["entries"]] == ["report.txt", "final-report.md"]
+
+    directory_result = await svc.search_viewer_files(
+        thread_id="thread-1",
+        query="output",
+        current_user=SimpleNamespace(uid="user-1"),
+        db=object(),
+    )
+    assert directory_result["entries"][0]["name"] == "outputs"
+    assert directory_result["entries"][0]["is_dir"] is True

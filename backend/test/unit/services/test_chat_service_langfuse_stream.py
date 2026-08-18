@@ -225,9 +225,8 @@ class _FakeConvRepo:
         return [dict(item) for item in self.default_attachments]
 
 
-def test_main_run_discards_configured_subagent_file_scope() -> None:
+def test_main_run_discards_configured_subagent_runtime_markers() -> None:
     input_context = {
-        "file_thread_id": "other-thread",
         "parent_thread_id": "other-parent",
         "is_subagent_runtime": True,
         "temperature": 0.1,
@@ -340,7 +339,6 @@ async def test_stream_agent_chat_commits_before_stream_and_persists_langfuse_con
         agent=FakeAgent(),
         runtime_context={
             "temperature": 0.1,
-            "file_thread_id": "configured-other-thread",
         },
         conversation=SimpleNamespace(
             id=1,
@@ -422,7 +420,6 @@ async def test_stream_agent_chat_commits_before_stream_and_persists_langfuse_con
             },
         ],
     }
-    assert "file_thread_id" not in calls["stream_input_context"]
     assert calls["saved_state"]["trace_info"] == {
         "langfuse_trace_id": "trace-runtime",
         "langfuse_session_id": "thread-1",

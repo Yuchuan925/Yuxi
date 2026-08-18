@@ -280,15 +280,6 @@ async def test_stream_agent_resume_commits_before_stream_and_routes_subagent_chu
         async def get_attachments(self, _conversation_id):
             return []
 
-    async def fake_materialize(_thread_id, _uid, _attachments, **_scope):
-        assert db.commit_count == 1
-
-    async def fake_output_hydrate(**_kwargs):
-        assert db.commit_count == 1
-
-    async def fake_stage_outputs(**_kwargs):
-        return "output-revision-1"
-
     monkeypatch.setattr(svc, "ConversationRepository", FakeConversationRepository)
 
     class FakeSandboxBackend:

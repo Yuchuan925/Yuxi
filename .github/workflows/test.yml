@@ -14,6 +14,7 @@ on:
       - 'scripts/init.sh'
       - 'scripts/init.ps1'
       - 'scripts/test_init_security.ps1'
+      - 'scripts/migrate-storage.sh'
       - '.github/workflows/test.yml'
   push:
     branches:
@@ -27,6 +28,7 @@ on:
       - 'scripts/init.sh'
       - 'scripts/init.ps1'
       - 'scripts/test_init_security.ps1'
+      - 'scripts/migrate-storage.sh'
       - '.github/workflows/test.yml'
 
 permissions:

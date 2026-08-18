@@ -694,7 +694,6 @@ async def test_subagent_run_service_create_run_record_uses_creator_runtime_scope
 
     assert db.created_run_kwargs["created_by_run_id"] == "parent-run"
     assert db.created_run_kwargs["input_payload"]["runtime"]["parent_thread_id"] == "current-parent-thread"
-    assert "file_thread_id" not in db.created_run_kwargs["input_payload"]["runtime"]
     assert db.created_run_kwargs["input_payload"]["tool_approval_mode"] == "always_trust"
 
 

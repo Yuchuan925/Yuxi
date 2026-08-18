@@ -71,11 +71,25 @@ async def test_project_workdir_schema_evolution_is_idempotent(workdir_database):
                 "WHERE conname = 'ck_project_workdirs_materialization_status')"
             )
         )
+        conversation_nullable = await connection.scalar(
+            text(
+                "SELECT is_nullable FROM information_schema.columns "
+                "WHERE table_name = 'conversations' AND column_name = 'workdir_id'"
+            )
+        )
+        run_nullable = await connection.scalar(
+            text(
+                "SELECT is_nullable FROM information_schema.columns "
+                "WHERE table_name = 'agent_runs' AND column_name = 'runtime_scope_id'"
+            )
+        )
 
     assert conversation_column is True
     assert run_column is True
     assert foreign_key is True
     assert status_check is True
+    assert conversation_nullable == "NO"
+    assert run_nullable == "NO"
 
 
 async def test_conversation_cannot_bind_another_users_project_workdir(workdir_database):
@@ -125,6 +139,7 @@ async def test_single_legacy_schema_pass_backfills_runtime_scope_after_thread_id
         async with isolated_engine.begin() as connection:
             await connection.run_sync(Base.metadata.create_all)
             await connection.execute(text("ALTER TABLE agent_runs ALTER COLUMN conversation_thread_id DROP NOT NULL"))
+            await connection.execute(text("ALTER TABLE agent_runs ALTER COLUMN runtime_scope_id DROP NOT NULL"))
             await connection.execute(text("ALTER TABLE agent_runs ADD COLUMN thread_id VARCHAR(64)"))
             await connection.execute(
                 text(
@@ -214,6 +229,9 @@ async def test_schema_backfill_binds_child_to_parent_workdir_and_runtime_scope(w
     workdir_ids: list[str] = []
 
     try:
+        async with engine.begin() as connection:
+            await connection.execute(text("ALTER TABLE conversations ALTER COLUMN workdir_id DROP NOT NULL"))
+            await connection.execute(text("ALTER TABLE agent_runs ALTER COLUMN runtime_scope_id DROP NOT NULL"))
         async with session_factory() as db:
             parent = Conversation(thread_id=parent_thread, uid=uid, agent_id="main", status="active")
             child = Conversation(thread_id=child_thread, uid=uid, agent_id="worker", status="subagent")

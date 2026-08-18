@@ -3,14 +3,51 @@
 from __future__ import annotations
 
 import asyncio
+import shutil
 import uuid
 
 import pytest
 
 from yuxi.agents.backends.sandbox import ProvisionerSandboxBackend, get_sandbox_provider
+from yuxi.agents.backends.sandbox.paths import workspace_uid_dirname
 from yuxi.agents.skills.service import sync_user_accessible_skills_async
+from yuxi.config import get_skill_projection_dir, get_user_data_dir
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
+
+
+async def test_ephemeral_remote_skill_sandbox_does_not_create_persistent_uid_roots():
+    """无环境的一次性 Sandbox 只能使用 emptyDir/tmpfs，不得消耗持久卷 inode。"""
+    suffix = uuid.uuid4().hex
+    uid = f"remote-skill-{suffix}"
+    scope = uid
+    safe_uid = workspace_uid_dirname(uid)
+    user_root = get_user_data_dir() / "shared" / safe_uid
+    skill_root = get_skill_projection_dir() / safe_uid
+    backend = ProvisionerSandboxBackend(
+        thread_id=scope,
+        uid=uid,
+        inherit_env=False,
+    )
+    try:
+        result = await asyncio.to_thread(
+            backend.execute,
+            "mkdir -p /home/gem/user-data/outputs && printf ephemeral > /home/gem/user-data/outputs/check.txt",
+        )
+        assert result.exit_code == 0, result.output
+        assert not user_root.exists()
+        assert not skill_root.exists()
+    finally:
+        try:
+            await asyncio.to_thread(
+                get_sandbox_provider().release,
+                scope,
+                uid=uid,
+                clear_cache_on_delete_failure=True,
+            )
+        finally:
+            shutil.rmtree(user_root, ignore_errors=True)
+            shutil.rmtree(skill_root, ignore_errors=True)
 
 
 async def test_two_sandboxes_share_project_files_but_not_runtime_state():

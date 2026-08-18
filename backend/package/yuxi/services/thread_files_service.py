@@ -15,7 +15,7 @@ from yuxi.agents.backends.sandbox.backend import FileTransferLimitError
 from yuxi.agents.skills.service import list_accessible_skills
 from yuxi.repositories.user_repository import UserRepository
 from yuxi.services.file_preview import detect_media_type
-from yuxi.services.mention_search_service import invalidate_mention_cache, invalidate_workspace_mention_cache
+from yuxi.services.mention_search_service import invalidate_workspace_mention_cache
 from yuxi.services.project_workdir_service import resolve_project_workdir_binding
 from yuxi.utils.paths import VIRTUAL_SKILLS_PATH
 
@@ -269,7 +269,6 @@ async def save_thread_artifact_to_workspace_view(*, thread_id: str, current_uid:
             os.unlink(temp_path)
         except FileNotFoundError:
             pass
-    await invalidate_mention_cache(binding.thread_id)
     await invalidate_workspace_mention_cache(current_uid)
     return {
         "name": PurePosixPath(target).name,

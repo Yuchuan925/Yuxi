@@ -4,7 +4,6 @@ import base64
 import hashlib
 import json
 import os
-import tempfile
 import uuid
 from contextlib import suppress
 from datetime import datetime
@@ -29,8 +28,6 @@ from deepagents.backends.utils import _get_file_type
 
 from yuxi.utils.logging_config import logger
 from yuxi.utils.paths import (
-    OUTPUTS_DIR_NAME,
-    UPLOADS_DIR_NAME,
     VIRTUAL_PATH_PREFIX,
     VIRTUAL_SKILLS_PATH,
     WORKSPACE_DIR_NAME,
@@ -41,12 +38,6 @@ from .paths import project_workdir_virtual_dir
 
 _USER_DATA_ROOT = "/" + VIRTUAL_PATH_PREFIX.strip("/")
 _WORKSPACE_ROOT = f"{_USER_DATA_ROOT}/{WORKSPACE_DIR_NAME}"
-_UPLOADS_ROOT = f"{_USER_DATA_ROOT}/{UPLOADS_DIR_NAME}"
-_OUTPUTS_ROOT = f"{_USER_DATA_ROOT}/{OUTPUTS_DIR_NAME}"
-_TRUSTED_FILE_SCOPE_ROOTS = {
-    UPLOADS_DIR_NAME: _UPLOADS_ROOT,
-    OUTPUTS_DIR_NAME: _OUTPUTS_ROOT,
-}
 _SKILLS_ROOT = "/" + VIRTUAL_SKILLS_PATH.strip("/")
 _BINARY_PREVIEW_TOO_LARGE_ERROR = f"Binary file exceeds maximum preview size of {MAX_BINARY_BYTES} bytes"
 _IMAGE_EXTENSIONS = frozenset({".gif", ".heic", ".heif", ".jpeg", ".jpg", ".png", ".webp"})
@@ -652,81 +643,6 @@ class ProvisionerSandboxBackend(BaseSandbox):
                 responses.append(FileUploadResponse(path=normalized_path, error="invalid_path"))
         return responses
 
-    def clear_scope_files(self, scope: str) -> None:
-        """由受信任服务清空 uploads 或 outputs 工作副本。"""
-        root = _TRUSTED_FILE_SCOPE_ROOTS.get(scope)
-        if root is None:
-            raise ValueError(f"unsupported sandbox file scope: {scope}")
-        replacement_name = f".yuxi-new-{uuid.uuid4().hex}"
-        quarantine_name = f".yuxi-old-{uuid.uuid4().hex}"
-        script = f"""
-import os
-import shutil
-import stat
-
-parent = {_USER_DATA_ROOT!r}
-scope_name = {scope!r}
-replacement_name = {replacement_name!r}
-quarantine_name = {quarantine_name!r}
-parent_fd = os.open(parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
-try:
-    os.mkdir(replacement_name, 0o755, dir_fd=parent_fd)
-    replacement_fd = os.open(replacement_name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent_fd)
-    try:
-        if scope_name == {UPLOADS_DIR_NAME!r}:
-            os.mkdir("attachments", 0o755, dir_fd=replacement_fd)
-    finally:
-        os.close(replacement_fd)
-    try:
-        os.rename(scope_name, quarantine_name, src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
-    except FileNotFoundError:
-        pass
-    os.rename(replacement_name, scope_name, src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
-finally:
-    os.close(parent_fd)
-
-quarantine_path = os.path.join(parent, quarantine_name)
-try:
-    mode = os.lstat(quarantine_path).st_mode
-except FileNotFoundError:
-    pass
-else:
-    if stat.S_ISDIR(mode):
-        shutil.rmtree(quarantine_path)
-    else:
-        os.unlink(quarantine_path)
-"""
-        encoded_script = base64.b64encode(script.encode("utf-8")).decode("ascii")
-        result = self.execute(f"python3 -c \"import base64;exec(base64.b64decode('{encoded_script}'))\"")
-        if result.exit_code not in (0, None):
-            raise RuntimeError(result.output or f"failed to clear sandbox {scope}")
-
-    def clear_upload_files(self) -> None:
-        """由受信任服务清空 sandbox 附件工作副本。"""
-        self.clear_scope_files(UPLOADS_DIR_NAME)
-
-    def write_scope_file(self, scope: str, path: str, content: bytes) -> None:
-        """由受信任服务写入单个 uploads 或 outputs 工作副本。"""
-        if not isinstance(content, bytes):
-            raise TypeError(f"hydrate content must be bytes: {path}")
-        temp_path = ""
-        try:
-            with tempfile.NamedTemporaryFile(prefix="yuxi-scope-write-", delete=False) as temp_file:
-                temp_path = temp_file.name
-                temp_file.write(content)
-            self.upload_scope_file_from_path(scope, path, temp_path)
-        finally:
-            if temp_path:
-                with suppress(FileNotFoundError):
-                    os.unlink(temp_path)
-
-    def upload_scope_file_from_path(self, scope: str, path: str, source_path: str) -> None:
-        """从 worker 临时文件流式写入单个 sandbox scope 文件。"""
-        root = _TRUSTED_FILE_SCOPE_ROOTS.get(scope)
-        if root is None:
-            raise ValueError(f"unsupported sandbox file scope: {scope}")
-        self._upload_file_from_path_at_root(root, path, source_path)
-
     def upload_authorized_file_from_path(self, path: str, source_path: str) -> None:
         """从受信任服务向 Project 或 User Data 写入普通文件。"""
         normalized_path = _normalize_path(path)
@@ -746,9 +662,9 @@ else:
         """通过 root-to-leaf no-follow 边界原子写入单个文件。"""
         normalized_path = _normalize_path(path)
         if normalized_path == root or not _is_same_or_child(normalized_path, root):
-            raise ValueError(f"hydrate path must be under {root}: {normalized_path}")
+            raise ValueError(f"file path must be under {root}: {normalized_path}")
         relative_parts = normalized_path[len(root) + 1 :].split("/")
-        export_path = f"/tmp/.yuxi-hydrate-{uuid.uuid4().hex}"
+        export_path = f"/tmp/.yuxi-file-upload-{uuid.uuid4().hex}"
         with open(source_path, "rb") as source:
             result = self._get_client().file.upload_file(
                 file=source,
@@ -756,7 +672,7 @@ else:
                 request_options={"timeout_in_seconds": self._command_timeout_seconds},
             )
         if not result.success:
-            raise RuntimeError(result.message or f"failed to upload hydrate source for {normalized_path}")
+            raise RuntimeError(result.message or f"failed to upload source for {normalized_path}")
         script = f"""
 import os
 import stat
@@ -780,7 +696,7 @@ try:
         directory_fd = child_fd
     source_fd = os.open(source_path, os.O_RDONLY | os.O_NOFOLLOW)
     if not stat.S_ISREG(os.fstat(source_fd).st_mode):
-        raise ValueError("hydrate source is not regular")
+        raise ValueError("upload source is not regular")
     target_fd = os.open(temp_name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644, dir_fd=directory_fd)
     while True:
         chunk = os.read(source_fd, 1024 * 1024)
@@ -951,53 +867,6 @@ finally:
         if result.exit_code not in (0, None):
             raise FileNotFoundError(normalized_path)
 
-    def write_upload_file(self, path: str, content: bytes) -> None:
-        """由受信任服务写入单个 sandbox 附件工作副本。"""
-        self.write_scope_file(UPLOADS_DIR_NAME, path, content)
-
-    def list_output_files(self) -> list[str]:
-        """列出 outputs 下普通文件的规范虚拟路径。"""
-        result = self._get_client().file.list_path(path=_OUTPUTS_ROOT, recursive=True, include_size=True)
-        paths: list[str] = []
-        for entry in result.data.files or []:
-            if entry.is_directory:
-                continue
-            normalized_path = _normalize_path(entry.path)
-            if normalized_path == _OUTPUTS_ROOT or not _is_same_or_child(normalized_path, _OUTPUTS_ROOT):
-                raise ValueError(f"sandbox returned output outside scope: {normalized_path}")
-            self._validate_output_regular_file(normalized_path)
-            paths.append(normalized_path)
-        return sorted(set(paths))
-
-    def _validate_output_regular_file(self, path: str) -> None:
-        """拒绝 symlink 及经 symlink 逃逸 outputs 根目录的发布来源。"""
-        path_b64 = base64.b64encode(path.encode("utf-8")).decode("ascii")
-        root_b64 = base64.b64encode(_OUTPUTS_ROOT.encode("utf-8")).decode("ascii")
-        command = (
-            'python3 -c "'
-            "import base64, os, stat; "
-            f"path = base64.b64decode('{path_b64}').decode('utf-8'); "
-            f"root = base64.b64decode('{root_b64}').decode('utf-8'); "
-            "st = os.lstat(path); "
-            "inside = os.path.commonpath([os.path.realpath(path), os.path.realpath(root)]) == os.path.realpath(root); "
-            "raise SystemExit(0 if stat.S_ISREG(st.st_mode) and inside else 2)"
-            '"'
-        )
-        result = self.execute(command)
-        if result.exit_code not in (0, None):
-            raise ValueError(f"output source is not a regular scoped file: {path}")
-
-    def download_output_file_to_path(self, path: str, target_path: str, max_bytes: int) -> int:
-        """原子打开 outputs 来源并在 sandbox 与 worker 两端限制传输大小。"""
-        normalized_path = _normalize_path(path)
-        if normalized_path == _OUTPUTS_ROOT or not _is_same_or_child(normalized_path, _OUTPUTS_ROOT):
-            raise ValueError(f"output path must be under {_OUTPUTS_ROOT}: {normalized_path}")
-        return self._download_scoped_file_to_path(normalized_path, _OUTPUTS_ROOT, target_path, max_bytes)
-
-    def download_user_data_file_to_path(self, path: str, target_path: str, max_bytes: int) -> int:
-        """兼容入口：安全下载 Agent 可读普通文件到 worker 临时路径。"""
-        return self.download_authorized_file_to_path(path, target_path, max_bytes)
-
     def download_authorized_file_to_path(self, path: str, target_path: str, max_bytes: int) -> int:
         """安全下载 Project、User Data 或 Skills 内普通文件到 worker。"""
         normalized_path = _normalize_path(path)
@@ -1049,10 +918,10 @@ finally:
     def _download_scoped_file_to_path(self, normalized_path: str, root: str, target_path: str, max_bytes: int) -> int:
         """通过目录 fd 固化普通文件，再做有界的 sandbox→worker 传输。"""
         if max_bytes < 0:
-            raise ValueError("output download limit must be non-negative")
+            raise ValueError("file download limit must be non-negative")
 
         relative_parts = normalized_path[len(root) + 1 :].split("/")
-        export_path = f"/tmp/.yuxi-output-{uuid.uuid4().hex}"
+        export_path = f"/tmp/.yuxi-file-snapshot-{uuid.uuid4().hex}"
         script = f"""
 import hashlib
 import os
@@ -1086,14 +955,14 @@ try:
             break
         size += len(chunk)
         if size > max_bytes:
-            raise OverflowError("output exceeds transfer limit")
+            raise OverflowError("file exceeds transfer limit")
         digest.update(chunk)
         offset = 0
         while offset < len(chunk):
             offset += os.write(target_fd, chunk[offset:])
     os.close(target_fd)
     target_fd = None
-    print(f"YUXI_OUTPUT_SNAPSHOT {{size}} {{digest.hexdigest()}}")
+    print(f"YUXI_FILE_SNAPSHOT {{size}} {{digest.hexdigest()}}")
 except Exception:
     if target_fd is not None:
         os.close(target_fd)
@@ -1119,7 +988,7 @@ finally:
                     f"authorized file snapshot failed: {normalized_path}",
                 )
             snapshot_line = next(
-                (line for line in str(result.output or "").splitlines() if line.startswith("YUXI_OUTPUT_SNAPSHOT ")),
+                (line for line in str(result.output or "").splitlines() if line.startswith("YUXI_FILE_SNAPSHOT ")),
                 None,
             )
             if snapshot_line is None:
@@ -1133,7 +1002,7 @@ finally:
                     "size=sum((digest.update(chunk) or len(chunk)) "
                     "for chunk in iter(lambda:os.read(fd,1048576),b'')); "
                     "os.close(fd); "
-                    "print(f'YUXI_OUTPUT_SNAPSHOT {size} {digest.hexdigest()}')\""
+                    "print(f'YUXI_FILE_SNAPSHOT {size} {digest.hexdigest()}')\""
                 )
                 if metadata_result.exit_code not in (0, None):
                     _raise_authorized_path_operation_error(
@@ -1145,12 +1014,12 @@ finally:
                     (
                         line
                         for line in str(metadata_result.output or "").splitlines()
-                        if line.startswith("YUXI_OUTPUT_SNAPSHOT ")
+                        if line.startswith("YUXI_FILE_SNAPSHOT ")
                     ),
                     None,
                 )
                 if snapshot_line is None:
-                    raise RuntimeError("sandbox output snapshot did not report size and checksum")
+                    raise RuntimeError("sandbox file snapshot did not report size and checksum")
             _, expected_size_text, expected_digest = snapshot_line.rsplit(" ", 2)
             expected_size = int(expected_size_text)
 
@@ -1164,11 +1033,11 @@ finally:
                 for chunk in chunks:
                     actual_size += len(chunk)
                     if actual_size > max_bytes:
-                        raise FileTransferLimitError(f"output file exceeds transfer limit: {normalized_path}")
+                        raise FileTransferLimitError(f"file exceeds transfer limit: {normalized_path}")
                     actual_digest.update(chunk)
                     target.write(chunk)
             if actual_size != expected_size or actual_digest.hexdigest() != expected_digest:
-                raise ValueError(f"output file changed during transfer: {normalized_path}")
+                raise ValueError(f"file changed during transfer: {normalized_path}")
             return actual_size
         except Exception as exc:
             operation_error = exc
@@ -1184,32 +1053,13 @@ finally:
                     'os.path.exists(p) and os.unlink(p)"'
                 )
                 if cleanup_result.exit_code not in (0, None):
-                    raise RuntimeError(f"sandbox output snapshot cleanup failed: {export_path}")
+                    raise RuntimeError(f"sandbox file snapshot cleanup failed: {export_path}")
             except Exception as exc:  # noqa: BLE001
                 if operation_error is None:
                     with suppress(FileNotFoundError):
                         os.unlink(target_path)
                     raise
-                logger.error("Failed to remove sandbox output snapshot %s: %s", export_path, exc)
-
-    def output_file_size(self, path: str) -> int:
-        """返回 outputs 内普通文件大小。"""
-        normalized_path = _normalize_path(path)
-        if normalized_path == _OUTPUTS_ROOT or not _is_same_or_child(normalized_path, _OUTPUTS_ROOT):
-            raise ValueError(f"output path must be under {_OUTPUTS_ROOT}: {normalized_path}")
-        self._validate_output_regular_file(normalized_path)
-        return self._file_size_bytes(normalized_path)
-
-    def output_file_exists(self, path: str) -> bool:
-        """确认 outputs 内路径是普通文件，不读取文件内容。"""
-        normalized_path = _normalize_path(path)
-        if normalized_path == _OUTPUTS_ROOT or not _is_same_or_child(normalized_path, _OUTPUTS_ROOT):
-            return False
-        try:
-            self.output_file_size(normalized_path)
-        except (FileNotFoundError, IsADirectoryError, RuntimeError, ValueError):
-            return False
-        return True
+                logger.error("Failed to remove sandbox file snapshot %s: %s", export_path, exc)
 
     def download_files(self, paths: list[str]) -> list[FileDownloadResponse]:
         """Download file payloads as raw bytes from the sandbox file API."""

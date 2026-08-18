@@ -12,7 +12,7 @@ from yuxi.agents.backends.sandbox import paths as workspace_paths
 from yuxi.services import chat_service as svc
 
 
-def _empty_agent_context(_thread_id: str, _uid: str) -> str:
+def _empty_agent_context(_uid: str) -> str:
     return ""
 
 
@@ -391,8 +391,8 @@ async def test_build_agent_input_context_loads_all_workspace_agent_context_files
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ):
-    monkeypatch.setenv("SAVE_DIR", str(tmp_path))
-    workspace_paths.ensure_thread_dirs("thread-1", "user-1")
+    monkeypatch.setenv("YUXI_USER_DATA_DIR", str(tmp_path / "threads"))
+    workspace_paths.ensure_user_workspace("user-1")
     agents_dir = tmp_path / "threads" / "shared" / "user-1" / "workspace" / "agents"
     (agents_dir / "AGENTS.md").write_text("行为约束", encoding="utf-8")
     (agents_dir / "USER.md").write_text("用户信息", encoding="utf-8")
@@ -409,7 +409,7 @@ async def test_build_agent_input_context_loads_all_workspace_agent_context_files
 
 @pytest.mark.asyncio
 async def test_build_agent_input_context_merges_workspace_agent_context(monkeypatch: pytest.MonkeyPatch):
-    def fake_agent_context(_thread_id: str, _uid: str) -> str:
+    def fake_agent_context(_uid: str) -> str:
         return (
             "用户工作区 agents/AGENTS.md 内容：\n回答前先读取 AGENTS.md\n\n"
             "用户工作区 agents/USER.md 内容：\n用户偏好中文"

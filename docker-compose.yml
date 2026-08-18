@@ -36,6 +36,9 @@ x-api-worker-env: &api-worker-env
   READINESS_CACHE_TTL_SECONDS: ${READINESS_CACHE_TTL_SECONDS:-1}
   YUXI_CORS_ORIGINS: ${YUXI_CORS_ORIGINS:-}
   YUXI_DATASET_PERSIST_BATCH_SIZE: ${YUXI_DATASET_PERSIST_BATCH_SIZE:-1}
+  YUXI_SKILL_DATA_DIR: /app/skill-sources
+  YUXI_SKILL_PROJECTION_DIR: /app/skill-projections
+  YUXI_CHECKPOINT_DIR: /app/checkpoints
   # 其他环境变量
   NO_PROXY: localhost,127.0.0.1,milvus,graph,minio,milvus-etcd-dev,etcd,mineru,paddlex,sandbox-provisioner,api.siliconflow.cn
   no_proxy: localhost,127.0.0.1,milvus,graph,minio,milvus-etcd-dev,etcd,mineru,paddlex,sandbox-provisioner,api.siliconflow.cn
@@ -51,7 +54,10 @@ services:
     volumes:
       - ./backend/server:/app/server
       - ./backend/package:/app/package
-      - ./docker/volumes/yuxi:/app/saves
+      - ./docker/volumes/yuxi/threads:/app/user-data
+      - ./docker/volumes/yuxi/skill-sources:/app/skill-sources
+      - ./docker/volumes/yuxi/skill-projections:/app/skill-projections
+      - ./docker/volumes/yuxi/checkpoints:/app/checkpoints
       - ./backend/test:/app/test
       - ./backend/scripts:/app/scripts
       - ./docker/sandbox_provisioner:/app/docker/sandbox_provisioner:ro
@@ -69,6 +75,7 @@ services:
     environment:
       <<: *api-worker-env
       YUXI_RUNTIME_DIR: /app/runtime/api
+      YUXI_USER_DATA_DIR: /app/user-data
     # endregion api_envs
     command: uv run --no-sync --no-dev uvicorn server.main:app --host 0.0.0.0 --port 5050 --reload --reload-dir /app/server --reload-dir /app/package --timeout-graceful-shutdown 5
     restart: unless-stopped
@@ -87,6 +94,8 @@ services:
         condition: service_healthy
       sandbox-provisioner:
         condition: service_healthy
+      storage-migrator:
+        condition: service_completed_successfully
 
   worker:
     build:
@@ -98,7 +107,10 @@ services:
     volumes:
       - ./backend/server:/app/server
       - ./backend/package:/app/package
-      - ./docker/volumes/yuxi:/app/saves
+      - ./docker/volumes/yuxi/threads:/app/user-data:ro
+      - ./docker/volumes/yuxi/skill-sources:/app/skill-sources
+      - ./docker/volumes/yuxi/skill-projections:/app/skill-projections
+      - ./docker/volumes/yuxi/checkpoints:/app/checkpoints
       - ./backend/test:/app/test
       - ./backend/scripts:/app/scripts
       - ./docker/sandbox_provisioner:/app/docker/sandbox_provisioner:ro
@@ -114,6 +126,7 @@ services:
     environment:
       <<: *api-worker-env
       YUXI_RUNTIME_DIR: /app/runtime/worker
+      YUXI_USER_DATA_DIR: /app/user-data
     command: watchfiles --filter python "arq server.worker_main.WorkerSettings" /app/server /app/package
     restart: unless-stopped
     healthcheck:
@@ -131,6 +144,41 @@ services:
         condition: service_healthy
       sandbox-provisioner:
         condition: service_healthy
+      storage-migrator:
+        condition: service_completed_successfully
+
+  storage-migrator:
+    build:
+      context: .
+      dockerfile: docker/api.Dockerfile
+    image: yuxi-api:${YUXI_VERSION:-0.7.2.dev0}
+    working_dir: /app
+    volumes:
+      - ./backend/package:/app/package:ro
+      - ./docker/volumes/yuxi:/app/legacy-saves
+      - ./docker/volumes/yuxi/projects:/app/projects
+      - ./docker/volumes/yuxi/threads:/app/user-data
+      - ./docker/volumes/yuxi/skill-sources:/app/skill-sources
+      - ./docker/volumes/yuxi/skill-projections:/app/skill-projections
+      - ./docker/volumes/yuxi/checkpoints:/app/checkpoints
+      - ./.env:/app/.env:ro
+    networks:
+      - app-network
+    env_file:
+      - .env
+    environment:
+      <<: *api-worker-env
+      YUXI_RUNTIME_DIR: /app/runtime/storage-migrator
+      YUXI_LEGACY_STORAGE_DIR: /app/legacy-saves
+      YUXI_PROJECTS_DIR: /app/projects
+      YUXI_USER_DATA_DIR: /app/user-data
+    command: uv run --no-sync --no-dev python -m yuxi.storage_migration
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
 
   sandbox-provisioner:
     build:
@@ -139,7 +187,9 @@ services:
     image: yuxi-sandbox-provisioner:${YUXI_VERSION:-0.7.2.dev0}
     container_name: sandbox-provisioner
     volumes:
-      - ./docker/volumes/yuxi:/app/saves
+      - ./docker/volumes/yuxi/projects:/app/projects
+      - ./docker/volumes/yuxi/threads:/app/user-data
+      - ./docker/volumes/yuxi/skill-projections:/app/skill-projections
       - ./docker/sandbox_provisioner/app.py:/app/app.py:ro
       - ./docker/sandbox_provisioner/sandbox.env:/app/sandbox.env:ro
       - /var/run/docker.sock:/var/run/docker.sock
@@ -167,13 +217,15 @@ services:
       - NO_PROXY=localhost,127.0.0.1,host.docker.internal
       # Docker backend only
       - DOCKER_NETWORK_PREFIX=${SANDBOX_DOCKER_NETWORK_PREFIX:-yuxi-know-sandbox}
-      - DOCKER_THREADS_HOST_PATH=${SANDBOX_DOCKER_THREADS_HOST_PATH:-}
+      - DOCKER_USER_DATA_HOST_PATH=${SANDBOX_DOCKER_USER_DATA_HOST_PATH:-}
+      - DOCKER_PROJECTS_HOST_PATH=${SANDBOX_DOCKER_PROJECTS_HOST_PATH:-}
+      - DOCKER_SKILL_PROJECTIONS_HOST_PATH=${SANDBOX_DOCKER_SKILL_PROJECTIONS_HOST_PATH:-}
       - DOCKER_SANDBOX_PREFIX=${SANDBOX_DOCKER_SANDBOX_PREFIX:-yuxi-sandbox}
       # Kubernetes backend only
       - K8S_NAMESPACE=${SANDBOX_K8S_NAMESPACE:-yuxi-know}
       - NODE_HOST=${SANDBOX_NODE_HOST:-host.docker.internal}
       - KUBECONFIG_PATH=${KUBECONFIG_PATH:-}
-      - THREAD_PVC=${THREAD_PVC:-yuxi-thread}
+      - PROJECT_DATA_PVC=${PROJECT_DATA_PVC:-yuxi-project-data}
       - SKILLS_PVC=${SKILLS_PVC:-yuxi-skills}
     command: >
       sh -lc "python -c 'import docker' >/dev/null 2>&1 || pip install --no-cache-dir 'docker>=7.1.0';
@@ -185,6 +237,9 @@ services:
       retries: 6
       start_period: 10s
     restart: unless-stopped
+    depends_on:
+      storage-migrator:
+        condition: service_completed_successfully
 
   web:
     build:

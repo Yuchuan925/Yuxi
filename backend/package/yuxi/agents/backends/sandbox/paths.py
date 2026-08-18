@@ -4,12 +4,9 @@ import hashlib
 import re
 from pathlib import Path
 
-from yuxi.config import get_save_dir
+from yuxi.config import get_projects_dir, get_user_data_dir
 from yuxi.utils.logging_config import logger
 from yuxi.utils.paths import (
-    OUTPUTS_DIR_NAME,
-    UPLOADS_DIR_NAME,
-    VIRTUAL_PATH_PREFIX,
     WORKSPACE_AGENT_CONTEXT_FILES,
     WORKSPACE_AGENTS_DIR_NAME,
     WORKSPACE_DIR_NAME,
@@ -18,10 +15,6 @@ from yuxi.utils.paths import (
 
 _SAFE_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 PROJECTS_VIRTUAL_ROOT = "/home/gem/projects"
-
-
-def get_virtual_path_prefix() -> str:
-    return "/" + VIRTUAL_PATH_PREFIX.strip("/")
 
 
 def validate_thread_id(thread_id: str) -> str:
@@ -52,14 +45,9 @@ def project_workdir_virtual_dir(workdir_id: str) -> str:
 def project_workdir_host_dir(workdir_id: str) -> Path:
     """返回 Compose 持久卷内的 Project Workdir 根。"""
     safe_workdir_id = validate_workdir_id(workdir_id)
-    projects_root = (get_save_dir() / "projects").resolve(strict=False)
+    projects_root = get_projects_dir().resolve(strict=False)
     target = (projects_root / safe_workdir_id).resolve(strict=False)
     return ensure_within_root(target, projects_root, error_message="workdir path resolved outside projects root")
-
-
-def _thread_root_dir(thread_id: str) -> Path:
-    safe_thread_id = validate_thread_id(thread_id)
-    return get_save_dir() / "threads" / safe_thread_id / "user-data"
 
 
 def workspace_uid_dirname(uid: str) -> str:
@@ -81,34 +69,31 @@ def workspace_uid_dirname(uid: str) -> str:
 def global_user_data_dir(uid: str) -> Path:
     """Return the shared host-side directory used for one user's workspace files."""
     safe_uid = workspace_uid_dirname(uid)
-    return get_save_dir() / "threads" / "shared" / safe_uid
+    return get_user_data_dir() / "shared" / safe_uid
 
 
-def sandbox_user_data_dir(thread_id: str) -> Path:
-    return _thread_root_dir(thread_id)
-
-
-def sandbox_workspace_dir(thread_id: str, uid: str) -> Path:
-    validate_thread_id(thread_id)
+def user_workspace_dir(uid: str) -> Path:
+    """返回用户级实时 Workspace 根。"""
     return global_user_data_dir(uid) / WORKSPACE_DIR_NAME
 
 
-def sandbox_workspace_agent_context_file(thread_id: str, uid: str, filename: str) -> Path:
-    return sandbox_workspace_dir(thread_id, uid) / WORKSPACE_AGENTS_DIR_NAME / filename
+def user_workspace_agent_context_file(uid: str, filename: str) -> Path:
+    """返回用户级 Agent 上下文文件。"""
+    return user_workspace_dir(uid) / WORKSPACE_AGENTS_DIR_NAME / filename
 
 
-def _threads_root_dir() -> Path:
-    return (get_save_dir() / "threads").resolve(strict=False)
+def _user_data_root_dir() -> Path:
+    return get_user_data_dir().resolve(strict=False)
 
 
-def _resolve_threads_child_path(path: Path) -> Path:
-    root = _threads_root_dir()
+def _resolve_user_data_child_path(path: Path) -> Path:
+    root = _user_data_root_dir()
     resolved = path.resolve(strict=False)
-    return ensure_within_root(resolved, root, error_message="path resolved outside threads root")
+    return ensure_within_root(resolved, root, error_message="path resolved outside user data root")
 
 
 def _chmod_writable(path: Path, *, dir: bool = False) -> None:
-    safe_path = _resolve_threads_child_path(path)
+    safe_path = _resolve_user_data_child_path(path)
     mode = 0o777 if dir else 0o666
     try:
         safe_path.chmod(mode)
@@ -117,7 +102,7 @@ def _chmod_writable(path: Path, *, dir: bool = False) -> None:
 
 
 def ensure_workspace_default_files(workspace_dir: Path) -> None:
-    workspace_dir = _resolve_threads_child_path(workspace_dir)
+    workspace_dir = _resolve_user_data_child_path(workspace_dir)
     agents_dir = workspace_dir / WORKSPACE_AGENTS_DIR_NAME
 
     try:
@@ -143,84 +128,9 @@ def ensure_workspace_default_files(workspace_dir: Path) -> None:
             logger.warning(f"工作区默认 {filename} 初始化失败: {exc}")
 
 
-def sandbox_uploads_dir(thread_id: str) -> Path:
-    return _thread_root_dir(thread_id) / UPLOADS_DIR_NAME
-
-
-def sandbox_outputs_dir(thread_id: str) -> Path:
-    return _thread_root_dir(thread_id) / OUTPUTS_DIR_NAME
-
-
-def ensure_thread_dirs(thread_id: str, uid: str) -> None:
-    _resolve_threads_child_path(global_user_data_dir(uid)).mkdir(parents=True, exist_ok=True)
-    workspace_dir = _resolve_threads_child_path(sandbox_workspace_dir(thread_id, uid))
+def ensure_user_workspace(uid: str) -> None:
+    """创建用户级 Workspace 与默认 Agent 上下文文件。"""
+    _resolve_user_data_child_path(global_user_data_dir(uid)).mkdir(parents=True, exist_ok=True)
+    workspace_dir = _resolve_user_data_child_path(user_workspace_dir(uid))
     workspace_dir.mkdir(parents=True, exist_ok=True)
     ensure_workspace_default_files(workspace_dir)
-    _resolve_threads_child_path(sandbox_uploads_dir(thread_id)).mkdir(parents=True, exist_ok=True)
-    _resolve_threads_child_path(sandbox_outputs_dir(thread_id)).mkdir(parents=True, exist_ok=True)
-
-
-def _resolve_user_data_base_dir(thread_id: str, uid: str, relative_path: str) -> tuple[Path, Path]:
-    """Map a virtual user-data path to the correct host-side base directory."""
-    parts = Path(relative_path).parts
-    if not parts:
-        base_dir = sandbox_user_data_dir(thread_id)
-        return base_dir.resolve(), base_dir.resolve()
-
-    namespace = parts[0]
-    if namespace == WORKSPACE_DIR_NAME:
-        # Workspace is shared across one user's threads, so it lives outside the per-thread root.
-        base_dir = sandbox_workspace_dir(thread_id, uid)
-        target_path = base_dir.joinpath(*parts[1:]) if len(parts) > 1 else base_dir
-        return base_dir.resolve(), target_path.resolve()
-    if namespace == UPLOADS_DIR_NAME:
-        base_dir = sandbox_uploads_dir(thread_id)
-        target_path = base_dir.joinpath(*parts[1:]) if len(parts) > 1 else base_dir
-        return base_dir.resolve(), target_path.resolve()
-    if namespace == OUTPUTS_DIR_NAME:
-        base_dir = sandbox_outputs_dir(thread_id)
-        target_path = base_dir.joinpath(*parts[1:]) if len(parts) > 1 else base_dir
-        return base_dir.resolve(), target_path.resolve()
-
-    base_dir = sandbox_user_data_dir(thread_id)
-    return base_dir.resolve(), (base_dir / relative_path).resolve()
-
-
-def resolve_virtual_path(thread_id: str, virtual_path: str, *, uid: str) -> Path:
-    clean_virtual_path = "/" + str(virtual_path or "").strip().lstrip("/")
-    virtual_prefix = get_virtual_path_prefix()
-
-    if clean_virtual_path != virtual_prefix and not clean_virtual_path.startswith(f"{virtual_prefix}/"):
-        raise ValueError(f"path must start with {virtual_prefix}")
-
-    relative_path = clean_virtual_path[len(virtual_prefix) :].lstrip("/")
-    base_dir, target_path = _resolve_user_data_base_dir(thread_id, uid, relative_path)
-
-    ensure_within_root(target_path, base_dir, error_message="path traversal detected")
-
-    return target_path
-
-
-def virtual_path_for_thread_file(thread_id: str, path: str | Path, *, uid: str) -> str:
-    target_path = Path(path).resolve()
-    thread_root = sandbox_user_data_dir(thread_id).resolve()
-    global_workspace_root = sandbox_workspace_dir(thread_id, uid).resolve()
-
-    try:
-        relative_path = target_path.relative_to(global_workspace_root)
-    except ValueError:
-        try:
-            relative_path = target_path.relative_to(thread_root)
-        except ValueError as exc:
-            raise ValueError("file is outside allowed user-data directories") from exc
-        relative_path_str = relative_path.as_posix()
-    else:
-        workspace_relative = relative_path.as_posix()
-        relative_path_str = (
-            WORKSPACE_DIR_NAME if workspace_relative in {"", "."} else f"{WORKSPACE_DIR_NAME}/{workspace_relative}"
-        )
-
-    prefix = get_virtual_path_prefix().rstrip("/")
-    if not relative_path_str:
-        return prefix
-    return f"{prefix}/{relative_path_str}"

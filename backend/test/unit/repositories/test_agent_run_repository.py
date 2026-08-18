@@ -37,6 +37,7 @@ async def _bind_valid_output(
     if run.conversation_id is None:
         conversation = Conversation(
             thread_id=run.conversation_thread_id,
+            workdir_id=f"workdir-{run.conversation_thread_id}",
             uid=run.uid,
             agent_id=run.agent_slug,
             status="active",
@@ -62,6 +63,7 @@ async def _seed_subagent_runs(db, *, relation_child_thread_id: str = "child-thre
     child_run = AgentRun(
         id="child-run",
         conversation_thread_id="child-thread",
+        runtime_scope_id="parent-thread",
         agent_slug="worker",
         uid="user-1",
         status="completed",
@@ -74,8 +76,22 @@ async def _seed_subagent_runs(db, *, relation_child_thread_id: str = "child-thre
     )
     db.add_all(
         [
-            Conversation(id=10, thread_id="parent-thread", uid="user-1", agent_id="main", status="active"),
-            Conversation(id=20, thread_id="child-thread", uid="user-1", agent_id="worker", status="subagent"),
+            Conversation(
+                id=10,
+                thread_id="parent-thread",
+                workdir_id="workdir-parent-thread",
+                uid="user-1",
+                agent_id="main",
+                status="active",
+            ),
+            Conversation(
+                id=20,
+                thread_id="child-thread",
+                workdir_id="workdir-parent-thread",
+                uid="user-1",
+                agent_id="worker",
+                status="subagent",
+            ),
             SubagentThread(
                 id=77,
                 uid="user-1",
@@ -88,6 +104,7 @@ async def _seed_subagent_runs(db, *, relation_child_thread_id: str = "child-thre
             AgentRun(
                 id="parent-run",
                 conversation_thread_id="parent-thread",
+                runtime_scope_id="parent-thread",
                 agent_slug="main",
                 uid="user-1",
                 status="completed",
@@ -164,11 +181,61 @@ async def test_create_subagent_run_persists_explicit_root_runtime_scope(session)
     assert run.runtime_scope_id == "root-thread"
 
 
+async def test_storage_migration_converges_every_nonterminal_run_without_runtime_cleanup(session):
+    repository = AgentRunRepository(session)
+    runs = [
+        AgentRun(
+            id="migration-pending",
+            conversation_thread_id="thread-1",
+            runtime_scope_id="thread-1",
+            agent_slug="main",
+            uid="user-1",
+            status="pending",
+            request_id="migration-request-pending",
+            run_type="chat",
+            input_payload={},
+        ),
+        AgentRun(
+            id="migration-running",
+            conversation_thread_id="thread-2",
+            runtime_scope_id="thread-2",
+            agent_slug="main",
+            uid="user-1",
+            status="running",
+            request_id="migration-request-running",
+            run_type="chat",
+            input_payload={},
+            worker_id="old-worker",
+            heartbeat_at=utc_now_naive(),
+            lease_expires_at=utc_now_naive() + timedelta(minutes=5),
+        ),
+    ]
+    session.add_all(runs)
+    await session.flush()
+
+    migrated_ids = await repository.fail_nonterminal_for_storage_migration()
+
+    assert migrated_ids == ["migration-pending", "migration-running"]
+    for run in runs:
+        assert run.status == "failed"
+        assert run.error_type == "storage_migration"
+        assert run.worker_id is None
+        assert run.lease_expires_at is None
+        assert run.runtime_cleanup_pending is False
+
+
 async def test_set_output_message_rejects_wrong_causal_owner_and_accepts_exact_message(session):
     repository = AgentRunRepository(session)
-    conversation = Conversation(thread_id="output-thread", uid="user-1", agent_id="main", status="active")
+    conversation = Conversation(
+        thread_id="output-thread",
+        workdir_id="workdir-output-thread",
+        uid="user-1",
+        agent_id="main",
+        status="active",
+    )
     other_conversation = Conversation(
         thread_id="other-output-thread",
+        workdir_id="workdir-other-output-thread",
         uid="user-1",
         agent_id="main",
         status="active",
@@ -308,6 +375,7 @@ async def _seed_thread_run(db, *, thread_id: str, run_id: str, status: str, run_
     run = AgentRun(
         id=run_id,
         conversation_thread_id=thread_id,
+        runtime_scope_id=thread_id,
         agent_slug="main",
         uid="user-1",
         status=status,
@@ -339,6 +407,7 @@ async def test_get_latest_top_level_runs_for_threads_scopes_by_user(session):
         AgentRun(
             id="t1-other",
             conversation_thread_id="t1",
+            runtime_scope_id="t1",
             agent_slug="main",
             uid="user-2",
             status="running",
@@ -554,7 +623,13 @@ async def test_expired_owner_cannot_finish_or_release_before_reconciliation(sess
 
 async def test_pending_cancel_is_terminal_without_fake_worker_expiry(session):
     """从未执行的 pending Run 由用户取消后直接形成 cancelled 事实。"""
-    conversation = Conversation(thread_id="cancel-pending-thread", uid="user-1", agent_id="main", status="active")
+    conversation = Conversation(
+        thread_id="cancel-pending-thread",
+        workdir_id="workdir-cancel-pending-thread",
+        uid="user-1",
+        agent_id="main",
+        status="active",
+    )
     session.add(conversation)
     await session.flush()
     message = Message(

@@ -6,6 +6,7 @@ import asyncio
 import os
 import uuid
 from contextlib import asynccontextmanager, suppress
+from pathlib import Path
 
 import pytest
 from sqlalchemy import delete, select, text, update
@@ -63,7 +64,9 @@ async def test_projection_refresh_waits_for_lock_then_reloads_revoked_authorizat
                 raise
 
     monkeypatch.setattr(pg_manager, "get_async_session_context", local_session_context)
-    monkeypatch.setattr(skill_service, "get_save_dir", lambda: tmp_path)
+    monkeypatch.setattr(skill_service, "get_legacy_storage_dir", lambda: tmp_path)
+    monkeypatch.setattr(skill_service, "get_skill_data_dir", lambda: tmp_path / "skill-sources")
+    monkeypatch.setattr(skill_service, "get_skill_projection_dir", lambda: tmp_path / "skill-projections")
 
     async def no_personal_skills(_uid: str, *, refresh: bool = False):
         del refresh
@@ -74,7 +77,7 @@ async def test_projection_refresh_waits_for_lock_then_reloads_revoked_authorizat
     suffix = uuid.uuid4().hex
     uid = f"pytest-skill-user-{suffix}"
     slug = f"pytest-skill-{suffix}"
-    source_dir = tmp_path / "skills" / slug
+    source_dir = tmp_path / "skill-sources/shared" / slug
     source_dir.mkdir(parents=True)
     (source_dir / "SKILL.md").write_text("# authorized\n", encoding="utf-8")
     user_id: int | None = None
@@ -94,7 +97,7 @@ async def test_projection_refresh_waits_for_lock_then_reloads_revoked_authorizat
                 tool_dependencies=[],
                 mcp_dependencies=[],
                 skill_dependencies=[],
-                dir_path=f"skills/{slug}",
+                dir_path=f"shared/{slug}",
                 share_config={
                     "version": 2,
                     "read_scope": {
@@ -232,6 +235,111 @@ async def test_projection_refresh_waits_for_lock_then_reloads_revoked_authorizat
                 task.cancel()
             with suppress(asyncio.CancelledError, Exception):
                 await task
+        async with session_factory() as db:
+            if skill_id is not None:
+                await db.execute(delete(Skill).where(Skill.id == skill_id))
+            if user_id is not None:
+                await db.execute(delete(User).where(User.id == user_id))
+            await db.commit()
+        await engine.dispose()
+
+
+async def test_legacy_skill_sources_migrate_once_without_workspace_fallback(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """旧共享与个人来源必须先安全复制并切换，成功后删除已识别兼容目录。"""
+    engine = create_async_engine(os.environ["POSTGRES_URL"], pool_pre_ping=True)
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+    suffix = uuid.uuid4().hex
+    uid = f"pytest-skill-migration-{suffix}"
+    shared_slug = f"shared-{suffix}"
+    personal_slug = f"personal-{suffix}"
+    monkeypatch.setenv("YUXI_LEGACY_STORAGE_DIR", str(tmp_path))
+    monkeypatch.setenv("YUXI_USER_DATA_DIR", str(tmp_path / "threads"))
+    monkeypatch.setenv("YUXI_SKILL_DATA_DIR", str(tmp_path / "skill-sources"))
+    monkeypatch.setenv("YUXI_SKILL_PROJECTION_DIR", str(tmp_path / "skill-projections"))
+
+    legacy_shared = tmp_path / "skills" / shared_slug
+    legacy_personal = tmp_path / "threads/shared" / uid / "workspace/agents/skills" / personal_slug
+    for path, slug, marker in (
+        (legacy_shared, shared_slug, "shared-marker"),
+        (legacy_personal, personal_slug, "personal-marker"),
+    ):
+        path.mkdir(parents=True)
+        (path / "SKILL.md").write_text(
+            f"---\nname: {slug}\ndescription: migration fixture\n---\n{marker}\n",
+            encoding="utf-8",
+        )
+
+    user_id: int | None = None
+    skill_id: int | None = None
+    try:
+        async with session_factory() as db:
+            user = User(username=uid, uid=uid, password_hash="test", role="user")
+            skill = Skill(
+                slug=shared_slug,
+                name=shared_slug,
+                description="migration fixture",
+                source_type="upload",
+                tool_dependencies=[],
+                mcp_dependencies=[],
+                skill_dependencies=[],
+                dir_path=f"skills/{shared_slug}",
+                share_config={
+                    "version": 2,
+                    "read_scope": {"access_level": "global", "department_ids": [], "user_uids": []},
+                    "manage_scope": None,
+                },
+                enabled=True,
+                created_by=uid,
+            )
+            db.add_all([user, skill])
+            await db.commit()
+            user_id = user.id
+            skill_id = skill.id
+
+        original_rmtree = skill_service.shutil.rmtree
+        cleanup_failed = False
+
+        def fail_shared_cleanup_once(path, *args, **kwargs):
+            nonlocal cleanup_failed
+            if not cleanup_failed and Path(path) == legacy_shared:
+                cleanup_failed = True
+                raise OSError("injected legacy cleanup failure")
+            return original_rmtree(path, *args, **kwargs)
+
+        monkeypatch.setattr(skill_service.shutil, "rmtree", fail_shared_cleanup_once)
+        with pytest.raises(OSError, match="injected legacy cleanup failure"):
+            async with session_factory() as db:
+                await skill_service.migrate_legacy_skill_storage(db, remove_personal_legacy=True)
+
+        async with session_factory() as db:
+            persisted_after_failure = await db.scalar(select(Skill.dir_path).where(Skill.id == skill_id))
+        assert persisted_after_failure == f"shared/{shared_slug}"
+        assert legacy_shared.is_dir()
+
+        monkeypatch.setattr(skill_service.shutil, "rmtree", original_rmtree)
+        async with session_factory() as db:
+            await skill_service.migrate_legacy_skill_storage(db, remove_personal_legacy=True)
+
+        async with session_factory() as db:
+            persisted_path = await db.scalar(select(Skill.dir_path).where(Skill.id == skill_id))
+        assert persisted_path == f"shared/{shared_slug}"
+        assert "shared-marker" in (tmp_path / "skill-sources/shared" / shared_slug / "SKILL.md").read_text(
+            encoding="utf-8"
+        )
+        assert "personal-marker" in (
+            skill_service.get_personal_skills_root_dir(uid) / personal_slug / "SKILL.md"
+        ).read_text(encoding="utf-8")
+        assert not legacy_shared.exists()
+        assert not legacy_personal.parent.exists()
+
+        # 停机迁移重复执行不得恢复已经删除的兼容来源。
+        async with session_factory() as db:
+            await skill_service.migrate_legacy_skill_storage(db, remove_personal_legacy=True)
+        assert not legacy_personal.parent.exists()
+    finally:
         async with session_factory() as db:
             if skill_id is not None:
                 await db.execute(delete(Skill).where(Skill.id == skill_id))

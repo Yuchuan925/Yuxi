@@ -9,17 +9,17 @@ import pytest
 from e2e_helpers import cancel_run, consume_events, skip_if_external_quota, wait_for_run
 from test.live_api_cleanup import remove_e2e_thread_storage
 from yuxi.agents.skills.service import get_personal_skills_root_dir, get_user_skills_root_dir
-from yuxi.utils.paths import VIRTUAL_PATH_WORKSPACE_SKILLS
+from yuxi.utils.paths import VIRTUAL_SKILLS_PATH
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.e2e, pytest.mark.slow]
 
 
-async def test_main_agent_reads_personal_skill_from_workspace(
+async def test_main_agent_reads_personal_skill_from_readonly_projection(
     e2e_client: httpx.AsyncClient,
     e2e_headers: dict[str, str],
     e2e_agent_context: dict[str, str],
 ):
-    """真实主 Agent 应直接从个人工作区读取 SKILL.md。"""
+    """真实主 Agent 应从当前用户只读投影读取个人 SKILL.md。"""
     uid = e2e_agent_context["uid"]
     marker = f"PERSONAL_SKILL_E2E_{uuid.uuid4().hex[:10].upper()}"
     slug = f"pytest-personal-agent-{uuid.uuid4().hex[:8]}"
@@ -52,7 +52,7 @@ async def test_main_agent_reads_personal_skill_from_workspace(
         default_context = ((default_response.json().get("agent") or {}).get("config_json") or {}).get("context") or {}
         context: dict[str, Any] = {
             "system_prompt": (
-                f"收到请求后必须先读取 {VIRTUAL_PATH_WORKSPACE_SKILLS}/{slug}/SKILL.md，"
+                f"收到请求后必须先读取 {VIRTUAL_SKILLS_PATH}/{slug}/SKILL.md，"
                 "然后严格遵循其中的 Verification 指令，不要添加解释。"
             ),
             "tools": [],

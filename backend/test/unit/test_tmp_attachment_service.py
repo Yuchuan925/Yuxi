@@ -6,13 +6,11 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
-
 import pytest
 
 os.environ.setdefault("OPENAI_API_KEY", "test-key")
 os.environ.setdefault(
-    "SAVE_DIR", os.path.join(os.environ.get("CLAUDE_JOB_DIR", tempfile.gettempdir()), "yuxi-test-saves")
+    "YUXI_RUNTIME_DIR", os.path.join(os.environ.get("CLAUDE_JOB_DIR", tempfile.gettempdir()), "yuxi-test-saves")
 )
 
 from yuxi.services import attachment_service as service
@@ -239,11 +237,6 @@ def confirm_attachment_env(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(project_workdir_service, "resolve_project_workdir_binding", resolve_binding)
     fake_repo.workdir_backend = backend
 
-    async def noop_invalidate(thread_id: str):
-        return None
-
-    monkeypatch.setattr(service, "invalidate_mention_cache", noop_invalidate)
-
     return fake_minio, fake_repo
 
 
@@ -439,8 +432,6 @@ async def test_delete_thread_attachment_updates_live_workdir_even_during_runtime
 
     monkeypatch.setattr(service, "ConversationRepository", lambda _db: fake_repo)
     monkeypatch.setattr(project_workdir_service, "resolve_project_workdir_binding", resolve_binding)
-    monkeypatch.setattr(service, "invalidate_mention_cache", AsyncMock())
-
     result = await service.delete_thread_attachment_view(
         thread_id="thread-1", file_id="file-1", db=FakeDB(), current_uid="user-1"
     )

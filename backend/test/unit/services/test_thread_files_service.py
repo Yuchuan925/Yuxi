@@ -70,7 +70,6 @@ def live_files(monkeypatch):
 
     monkeypatch.setattr(svc, "resolve_project_workdir_binding", resolve)
     monkeypatch.setattr(binding.__class__, "create_file_backend", lambda self, **kwargs: backend)
-    monkeypatch.setattr(svc, "invalidate_mention_cache", invalidate)
     monkeypatch.setattr(svc, "invalidate_workspace_mention_cache", invalidate)
     monkeypatch.setattr(
         svc,

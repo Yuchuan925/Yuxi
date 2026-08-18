@@ -50,7 +50,12 @@ def _docker_backend(module, tmp_path, run_container):
     backend._container_prefix = "yuxi-sandbox"
     backend._sandbox_env = {}
     backend._health_timeout_seconds = 1
-    backend._threads_host_path = str(tmp_path)
+    backend._user_data_host_path = str(tmp_path)
+    backend._projects_host_path = str(tmp_path.parent / "projects")
+    backend._skill_projections_host_path = str(tmp_path.parent / "skill-projections")
+    backend._projects_container_path = tmp_path.parent / "container-projects"
+    backend._user_data_container_path = tmp_path.parent / "container-user-data"
+    backend._skill_projections_container_path = tmp_path.parent / "container-skill-projections"
     backend._client = SimpleNamespace(containers=SimpleNamespace(run=run_container))
     return backend
 
@@ -129,6 +134,42 @@ def test_local_container_identity_validation_rejects_unsafe_path_segments(monkey
     for value in ["../workdir", "workdir/name", "workdir name", "workdir;rm", "workdir.name"]:
         with pytest.raises(ValueError):
             backend_cls._validate_workdir_id(value)
+
+
+def test_docker_host_paths_require_explicit_storage_mounts(monkeypatch):
+    monkeypatch.setenv("PROVISIONER_BACKEND", "memory")
+    module = _load_module()
+    backend = object.__new__(module.LocalContainerProvisionerBackend)
+    backend._user_data_host_path = None
+    backend._projects_host_path = None
+    backend._skill_projections_host_path = None
+    backend._client = SimpleNamespace(
+        api=SimpleNamespace(
+            inspect_container=lambda _container_id: {
+                "Mounts": [
+                    {"Destination": "/app/projects", "Source": "/host/projects"},
+                    {"Destination": "/app/user-data", "Source": "/host/user-data"},
+                    {"Destination": "/app/skill-projections", "Source": "/host/skill-projections"},
+                ]
+            }
+        )
+    )
+    monkeypatch.setenv("HOSTNAME", "provisioner")
+
+    backend._resolve_host_paths()
+
+    assert backend._projects_host_path == "/host/projects"
+    assert backend._user_data_host_path == "/host/user-data"
+    assert backend._skill_projections_host_path == "/host/skill-projections"
+
+    backend._user_data_host_path = None
+    backend._projects_host_path = None
+    backend._skill_projections_host_path = None
+    backend._client.api.inspect_container = lambda _container_id: {
+        "Mounts": [{"Destination": "/app/saves", "Source": "/host/legacy"}]
+    }
+    with pytest.raises(RuntimeError, match="explicit Project/User Data/Skill"):
+        backend._resolve_host_paths()
 
 
 def test_memory_backend_accepts_runtime_thread_id(monkeypatch):
@@ -249,7 +290,9 @@ def test_docker_mount_checks_reject_uploads_and_outputs_mounts(monkeypatch, tmp_
     monkeypatch.setenv("PROVISIONER_BACKEND", "memory")
     module = _load_module()
     backend = object.__new__(module.LocalContainerProvisionerBackend)
-    backend._threads_host_path = str(tmp_path)
+    backend._user_data_host_path = str(tmp_path)
+    backend._projects_host_path = str(tmp_path.parent / "projects")
+    backend._skill_projections_host_path = str(tmp_path.parent / "skill-projections")
 
     workspace = tmp_path / "shared" / "user-1" / "workspace"
     skills = tmp_path.parent / "skill-projections" / "user-1"
@@ -338,33 +381,48 @@ def test_docker_rejects_rebinding_existing_runtime_to_another_workdir(monkeypatc
 def test_kubernetes_mount_check_rejects_uploads_and_outputs_mounts(monkeypatch):
     monkeypatch.setenv("PROVISIONER_BACKEND", "memory")
     module = _load_module()
+    backend = object.__new__(module.KubernetesProvisionerBackend)
+    backend._project_data_pvc = "project-data"
+    backend._skill_pvc = "skills"
     pod = SimpleNamespace(
         spec=SimpleNamespace(
+            volumes=[
+                SimpleNamespace(
+                    name="shared-data",
+                    persistent_volume_claim=SimpleNamespace(claim_name="project-data"),
+                ),
+                SimpleNamespace(
+                    name="skills-data",
+                    persistent_volume_claim=SimpleNamespace(claim_name="skills"),
+                ),
+            ],
             containers=[
                 SimpleNamespace(
                     name="sandbox",
                     volume_mounts=[
                         SimpleNamespace(
                             mount_path="/home/gem/user-data/workspace",
-                            sub_path="threads/shared/user-1/workspace",
+                            name="shared-data",
+                            sub_path="user-data/shared/user-1/workspace",
                         ),
                         SimpleNamespace(
                             mount_path="/home/gem/skills",
+                            name="skills-data",
                             sub_path="skill-projections/user-1",
                             read_only=True,
                         ),
                     ],
                 )
-            ]
+            ],
         )
     )
 
-    assert module.KubernetesProvisionerBackend._pod_has_expected_mounts(
+    assert backend._pod_has_expected_mounts(
         pod,
         uid="user-1",
     )
     pod.spec.containers[0].volume_mounts[1].read_only = False
-    assert not module.KubernetesProvisionerBackend._pod_has_expected_mounts(
+    assert not backend._pod_has_expected_mounts(
         pod,
         uid="user-1",
     )
@@ -375,7 +433,7 @@ def test_kubernetes_mount_check_rejects_uploads_and_outputs_mounts(monkeypatch):
             sub_path="threads/parent-thread/user-data/outputs",
         )
     )
-    assert not module.KubernetesProvisionerBackend._pod_has_expected_mounts(
+    assert not backend._pod_has_expected_mounts(
         pod,
         uid="user-1",
     )
@@ -387,9 +445,36 @@ def test_kubernetes_mount_check_rejects_uploads_and_outputs_mounts(monkeypatch):
             sub_path="threads/parent-thread/user-data/uploads",
         )
     )
-    assert not module.KubernetesProvisionerBackend._pod_has_expected_mounts(
+    assert not backend._pod_has_expected_mounts(pod, uid="user-1")
+    pod.spec.containers[0].volume_mounts.pop()
+
+    pod.spec.volumes[0].persistent_volume_claim.claim_name = "old-project-data"
+    assert not backend._pod_has_expected_mounts(pod, uid="user-1")
+
+
+def test_ephemeral_mount_validation_rejects_exact_projects_root(monkeypatch):
+    monkeypatch.setenv("PROVISIONER_BACKEND", "memory")
+    module = _load_module()
+    container = SimpleNamespace(attrs={"Mounts": [{"Destination": "/home/gem/projects"}]})
+
+    assert not module.LocalContainerProvisionerBackend._has_no_persistent_file_mounts(container)
+
+    backend = object.__new__(module.KubernetesProvisionerBackend)
+    pod = SimpleNamespace(
+        spec=SimpleNamespace(
+            volumes=[],
+            containers=[
+                SimpleNamespace(
+                    name="sandbox",
+                    volume_mounts=[SimpleNamespace(mount_path="/home/gem/projects")],
+                )
+            ],
+        )
+    )
+    assert not backend._pod_has_expected_mounts(
         pod,
-        uid="user-1",
+        uid="remote-skill-user",
+        ephemeral_storage=True,
     )
 
 
@@ -600,17 +685,26 @@ def test_docker_backend_uses_private_network_without_published_port(monkeypatch,
     assert "ports" not in captured[0][1]
 
 
-def test_docker_backend_can_disable_sandbox_environment(monkeypatch, tmp_path):
+def test_docker_ephemeral_sandbox_has_no_environment_or_persistent_file_mounts(
+    monkeypatch,
+    tmp_path,
+):
     monkeypatch.setenv("PROVISIONER_BACKEND", "memory")
     _, backend, captured = _docker_backend_with_running_container(monkeypatch, tmp_path)
     backend._sandbox_env = {"GLOBAL_SECRET": "value"}
+    uid = "remote-skill-ephemeral"
 
-    backend.create("sandbox-1", "thread-1", "user-1", {"USER_SECRET": "value"}, inherit_env=False)
+    backend.create("sandbox-1", "thread-1", uid, {"USER_SECRET": "value"}, inherit_env=False)
 
-    assert "environment" not in captured[0][1]
+    run_config = captured[0][1]
+    assert "environment" not in run_config
+    assert run_config["volumes"] == {}
+    assert run_config["labels"]["storage-mode"] == "ephemeral"
+    assert not (backend._user_data_container_path / "shared" / uid).exists()
+    assert not (backend._skill_projections_container_path / uid).exists()
 
 
-def test_kubernetes_sandbox_disables_service_account_token_and_environment(monkeypatch):
+def test_kubernetes_ephemeral_sandbox_uses_only_empty_home(monkeypatch):
     monkeypatch.setenv("PROVISIONER_BACKEND", "memory")
     module = _load_module()
 
@@ -622,7 +716,8 @@ def test_kubernetes_sandbox_disables_service_account_token_and_environment(monke
     backend._client = FakeKubernetesClient()
     backend._sandbox_image = "sandbox-image"
     backend._container_port = 8080
-    backend._thread_pvc = "threads"
+    backend._project_data_pvc = "threads"
+    backend._skill_pvc = "skills"
     backend._sandbox_env = {"GLOBAL_SECRET": "value"}
 
     pod = backend._build_pod_spec(
@@ -636,8 +731,23 @@ def test_kubernetes_sandbox_disables_service_account_token_and_environment(monke
     assert pod.spec.automount_service_account_token is False
     assert pod.spec.containers[0].env == []
     sandbox_mounts = {mount.mount_path for mount in pod.spec.containers[0].volume_mounts}
-    assert "/home/gem/user-data/uploads" not in sandbox_mounts
-    assert "/home/gem/user-data/uploads" in pod.spec.init_containers[0].args[0]
+    assert sandbox_mounts == {"/home/gem"}
+    assert pod.spec.init_containers == []
+    assert [volume.name for volume in pod.spec.volumes] == ["home-dir"]
+    assert pod.metadata.annotations["storage-mode"] == "ephemeral"
+    assert backend._pod_has_expected_mounts(
+        pod,
+        uid="user-1",
+        ephemeral_storage=True,
+    )
+    pod.spec.containers[0].volume_mounts.append(
+        SimpleNamespace(mount_path="/home/gem/skills", name="skills-data", sub_path="skill-projections/user-1")
+    )
+    assert not backend._pod_has_expected_mounts(
+        pod,
+        uid="user-1",
+        ephemeral_storage=True,
+    )
 
 
 def test_kubernetes_project_workdir_contract_uses_rwx_subpaths(monkeypatch):
@@ -652,7 +762,8 @@ def test_kubernetes_project_workdir_contract_uses_rwx_subpaths(monkeypatch):
     backend._client = FakeKubernetesClient()
     backend._sandbox_image = "sandbox-image"
     backend._container_port = 8080
-    backend._thread_pvc = "threads-rwx"
+    backend._project_data_pvc = "threads-rwx"
+    backend._skill_pvc = "skills-rwx"
     backend._sandbox_env = {}
 
     pod = backend._build_pod_spec(
@@ -668,11 +779,19 @@ def test_kubernetes_project_workdir_contract_uses_rwx_subpaths(monkeypatch):
     mounts = {mount.mount_path: getattr(mount, "sub_path", None) for mount in sandbox.volume_mounts}
     assert sandbox.working_dir == "/home/gem/projects/project-workdir-1"
     assert mounts["/home/gem/projects/project-workdir-1"] == "projects/workdir-1"
-    assert mounts["/home/gem/user-data"] == "threads/shared/user-1"
+    assert mounts["/home/gem/user-data"] == "user-data/shared/user-1"
     assert mounts["/home/gem/skills"] == "skill-projections/user-1"
     skills_mount = next(mount for mount in sandbox.volume_mounts if mount.mount_path == "/home/gem/skills")
     assert skills_mount.read_only is True
+    assert skills_mount.name == "skills-data"
+    claims = {
+        volume.name: volume.persistent_volume_claim.claim_name
+        for volume in pod.spec.volumes
+        if getattr(volume, "persistent_volume_claim", None) is not None
+    }
+    assert claims == {"shared-data": "threads-rwx", "skills-data": "skills-rwx"}
     assert pod.metadata.annotations["workdir-id"] == "workdir-1"
+    assert pod.metadata.labels["managed-by"] == "yuxi-sandbox-provisioner"
 
 
 def test_kubernetes_rejects_rebinding_existing_runtime_to_another_workdir(monkeypatch):
@@ -952,3 +1071,139 @@ def test_docker_backend_does_not_remove_unowned_network(monkeypatch, tmp_path):
 
     assert disconnected == []
     assert removed == []
+
+
+def test_kubernetes_inventory_includes_pod_without_service_and_fails_closed(
+    monkeypatch,
+):
+    """迁移清理必须以 Pod 为权威事实，不能把 Service 丢失或枚举失败当成空集。"""
+    monkeypatch.setenv("PROVISIONER_BACKEND", "memory")
+    module = _load_module()
+    kubernetes_module = ModuleType("kubernetes")
+    client_module = ModuleType("kubernetes.client")
+    rest_module = ModuleType("kubernetes.client.rest")
+
+    class ApiException(Exception):
+        pass
+
+    rest_module.ApiException = ApiException
+    client_module.rest = rest_module
+    kubernetes_module.client = client_module
+    monkeypatch.setitem(sys.modules, "kubernetes", kubernetes_module)
+    monkeypatch.setitem(sys.modules, "kubernetes.client", client_module)
+    monkeypatch.setitem(sys.modules, "kubernetes.client.rest", rest_module)
+    pod = SimpleNamespace(
+        metadata=SimpleNamespace(
+            labels={
+                "managed-by": "yuxi-sandbox-provisioner",
+                "sandbox-id": "orphan-1",
+            },
+            annotations={"workdir-id": "workdir-1"},
+            uid="pod-generation-1",
+        ),
+        status=SimpleNamespace(phase="Terminating"),
+    )
+
+    class FakeCoreApi:
+        fail = False
+        selectors = []
+
+        def list_namespaced_pod(self, **kwargs):
+            self.selectors.append(kwargs["label_selector"])
+            if self.fail:
+                raise ApiException("inventory unavailable")
+            return SimpleNamespace(items=[pod])
+
+    backend = object.__new__(module.KubernetesProvisionerBackend)
+    backend._core_api = FakeCoreApi()
+    backend._namespace = "yuxi"
+
+    assert backend.list() == [
+        module.SandboxRecord(
+            sandbox_id="orphan-1",
+            sandbox_url="",
+            status="Terminating",
+            generation="pod-generation-1",
+            workdir_id="workdir-1",
+        )
+    ]
+    assert backend._core_api.selectors == ["app=yuxi-sandbox,managed-by=yuxi-sandbox-provisioner"]
+    backend._core_api.fail = True
+    with pytest.raises(ApiException, match="inventory unavailable"):
+        backend.list()
+
+
+def test_quiesce_waits_for_authoritative_inventory_and_blocks_new_creates(
+    monkeypatch,
+):
+    """删除请求返回后仍须看到权威 inventory 归零，且窗口内不得创建新 runtime。"""
+    monkeypatch.setenv("PROVISIONER_BACKEND", "memory")
+    module = _load_module()
+    record = module.SandboxRecord(
+        sandbox_id="sandbox-1",
+        sandbox_url="",
+        status="Terminating",
+        generation="generation-1",
+    )
+
+    class FakeBackend:
+        inventories = iter(([record], [record], []))
+
+        def __init__(self):
+            self.deletes = []
+
+        def list(self):
+            return next(self.inventories)
+
+        def delete(self, sandbox_id, *, expected_generation=None):
+            self.deletes.append((sandbox_id, expected_generation))
+
+    backend = FakeBackend()
+    gate = module.SandboxQuiescenceGate()
+    monkeypatch.setattr(module, "backend_impl", backend)
+    monkeypatch.setattr(module, "sandbox_quiescence_gate", gate)
+    monkeypatch.setattr(module, "sandbox_operation_pins", module.SandboxOperationPins())
+    monkeypatch.setattr(module.idle_reaper, "forget", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(module.time, "sleep", lambda _seconds: None)
+
+    response = module.quiesce_sandboxes(timeout_seconds=1)
+
+    assert response == module.QuiesceSandboxesResponse(ok=True, deleted=1)
+    assert backend.deletes == [
+        ("sandbox-1", "generation-1"),
+        ("sandbox-1", "generation-1"),
+    ]
+    with pytest.raises(module.HTTPException) as exc_info:
+        module.create_sandbox(
+            module.CreateSandboxRequest(
+                sandbox_id="new-sandbox",
+                thread_id="thread-1",
+                uid="user-1",
+            )
+        )
+    assert exc_info.value.status_code == 503
+
+
+def test_quiescence_gate_waits_for_create_already_in_flight():
+    """停机栅栏必须排空先进入的 create，避免判空后又出现新 generation。"""
+    module = _load_module()
+    gate = module.SandboxQuiescenceGate()
+    gate.acquire_create()
+    entered = threading.Event()
+    finished = threading.Event()
+
+    def begin_quiescence():
+        entered.set()
+        gate.begin()
+        finished.set()
+
+    thread = threading.Thread(target=begin_quiescence)
+    thread.start()
+    assert entered.wait(timeout=1)
+    assert not finished.wait(timeout=0.05)
+    gate.release_create()
+    assert finished.wait(timeout=1)
+    thread.join(timeout=1)
+
+    with pytest.raises(RuntimeError, match="quiescing"):
+        gate.acquire_create()

@@ -250,7 +250,7 @@ class Skill(Base):
     tool_dependencies = Column(JSON, nullable=False, default=list, comment="依赖的内置工具名列表")
     mcp_dependencies = Column(JSON, nullable=False, default=list, comment="依赖的 MCP 服务名列表")
     skill_dependencies = Column(JSON, nullable=False, default=list, comment="依赖的其他 skill slug 列表")
-    dir_path = Column(String(512), nullable=False, comment="技能目录路径（相对 save_dir）")
+    dir_path = Column(String(512), nullable=False, comment="共享技能目录路径（相对 Skill 数据根目录）")
     version = Column(String(64), nullable=True, comment="技能版本（内置 skill 使用语义化版本）")
     content_hash = Column(String(128), nullable=True, comment="技能目录内容哈希（内置 skill 安装时计算）")
     share_config = Column(JSON_VALUE, nullable=False, comment="共享权限配置")
@@ -375,7 +375,7 @@ class Conversation(Base):
     last_viewed_run_id = Column(String(64), nullable=True, comment="Latest top-level run id viewed by user")
     workdir_id = Column(
         String(64),
-        nullable=True,
+        nullable=False,
         index=True,
         comment="Project Workdir identity",
     )
@@ -940,7 +940,7 @@ class AgentRun(Base):
 
     id = Column(String(64), primary_key=True, comment="Run ID (UUID)")
     conversation_thread_id = Column(String(64), index=True, nullable=False, comment="Conversation thread ID snapshot")
-    runtime_scope_id = Column(String(64), index=True, nullable=True, comment="Root conversation runtime scope")
+    runtime_scope_id = Column(String(64), index=True, nullable=False, comment="Root conversation runtime scope")
     runtime_cleanup_pending = Column(
         Boolean,
         nullable=False,

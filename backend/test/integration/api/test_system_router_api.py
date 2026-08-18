@@ -12,7 +12,7 @@ from uuid import uuid4
 import pytest
 from sqlalchemy import text, update
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-from yuxi.config import get_runtime_dir, get_save_dir
+from yuxi.config import get_legacy_storage_dir, get_runtime_dir
 from yuxi.config.options import get_option
 from yuxi.config.runtime import knowledge_capability_enabled, lite_mode_enabled
 from yuxi.storage.postgres.models_business import ConfigOption
@@ -35,12 +35,12 @@ async def test_logs_endpoint_returns_only_api_process_log(test_client, admin_hea
     legacy_marker = f"legacy-shared-log-contract-{uuid4()}"
     log_path = Path(LOG_FILE)
     worker_log_path = get_runtime_dir().parent / "worker" / "logs" / log_path.name
-    legacy_log_path = get_save_dir() / "logs" / log_path.name
+    legacy_log_path = get_legacy_storage_dir() / "logs" / log_path.name
     worker_log_original = worker_log_path.read_bytes() if worker_log_path.exists() else None
     legacy_log_original = legacy_log_path.read_bytes() if legacy_log_path.exists() else None
 
     assert log_path.parent == get_runtime_dir() / "logs"
-    assert get_save_dir().resolve() not in log_path.resolve().parents
+    assert get_legacy_storage_dir().resolve() not in log_path.resolve().parents
     log_path.parent.mkdir(parents=True, exist_ok=True)
     with log_path.open("a", encoding="utf-8") as log_file:
         log_file.write(f"2026-08-17 20:00:00 - INFO - test:1 - {api_marker}\n")

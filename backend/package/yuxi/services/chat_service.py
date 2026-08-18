@@ -235,7 +235,7 @@ def _apply_subagent_runtime_context(input_context: dict, meta: dict | None) -> N
     """把子智能体 run 的父线程信息注入运行 context。"""
     meta = meta or {}
     if meta.get("run_type") != "subagent":
-        for key in ("parent_thread_id", "file_thread_id", "is_subagent_runtime"):
+        for key in ("parent_thread_id", "is_subagent_runtime"):
             input_context.pop(key, None)
         return
     parent_thread_id = str(meta.get("parent_thread_id") or "").strip()

@@ -1,12 +1,17 @@
 from copy import deepcopy
 import os
 from pathlib import Path
+import subprocess
 
 import pytest
 import yaml
 
 
-FORBIDDEN_API_WORKER_TARGETS = frozenset({"/app/models", "/var/run/docker.sock"})
+FORBIDDEN_API_WORKER_TARGETS = frozenset({"/app/models", "/app/saves", "/var/run/docker.sock"})
+REQUIRED_STORAGE_TARGETS = {
+    "api": frozenset({"/app/user-data", "/app/skill-sources", "/app/skill-projections", "/app/checkpoints"}),
+    "worker": frozenset({"/app/user-data", "/app/skill-sources", "/app/skill-projections", "/app/checkpoints"}),
+}
 FORBIDDEN_API_WORKER_ENV_KEYS = frozenset({"YUXI_DOCKER_API_BASE"})
 EXPECTED_RUNTIME_DIRS = {"api": "/app/runtime/api", "worker": "/app/runtime/worker"}
 FORBIDDEN_DIRECT_DOCKER_ACCESS_MARKERS = frozenset(
@@ -43,6 +48,13 @@ def _volume_target(volume: object) -> str:
 
     parts = volume.split(":")
     return parts[1] if len(parts) >= 2 else parts[0]
+
+
+def _volume_is_read_only(volume: object) -> bool:
+    """读取 Compose volume 的只读标记。"""
+    if isinstance(volume, dict):
+        return bool(volume.get("read_only"))
+    return isinstance(volume, str) and len(volume.split(":")) >= 3 and volume.split(":")[-1] == "ro"
 
 
 def _forbidden_api_worker_mounts(compose: dict) -> set[tuple[str, str]]:
@@ -86,6 +98,106 @@ def _forbidden_direct_docker_access(source: str) -> set[str]:
 def test_api_and_worker_do_not_mount_unused_host_dependencies(filename: str):
     """API/worker 不得重新依赖模型目录或 Docker daemon。"""
     assert _forbidden_api_worker_mounts(_load_compose(filename)) == set()
+
+
+@pytest.mark.parametrize("filename", ["docker-compose.yml", "docker-compose.prod.yml"])
+def test_api_worker_and_provisioner_use_explicit_storage_domains(filename: str):
+    """shipping 服务不得通过广域 saves 重新获得未声明的文件能力。"""
+    compose = _load_compose(filename)
+    for service_name in ("api", "worker"):
+        targets = {_volume_target(volume) for volume in compose["services"][service_name].get("volumes") or []}
+        assert REQUIRED_STORAGE_TARGETS[service_name] <= targets
+        assert "/app/saves" not in targets
+    provisioner_targets = {
+        _volume_target(volume) for volume in compose["services"]["sandbox-provisioner"].get("volumes") or []
+    }
+    assert {"/app/projects", "/app/user-data", "/app/skill-projections"} <= provisioner_targets
+    assert "/app/saves" not in provisioner_targets
+
+
+@pytest.mark.parametrize("filename", ["docker-compose.yml", "docker-compose.prod.yml"])
+def test_worker_user_data_mount_is_read_only(filename: str) -> None:
+    """worker 只读取用户 Agent 上下文，不得直接修改 User Data。"""
+    volumes = _load_compose(filename)["services"]["worker"].get("volumes") or []
+    user_data_mount = next(volume for volume in volumes if _volume_target(volume) == "/app/user-data")
+
+    assert _volume_is_read_only(user_data_mount) is True
+
+
+@pytest.mark.parametrize("filename", ["docker-compose.yml", "docker-compose.prod.yml"])
+def test_storage_migrator_gates_every_shipping_file_consumer(filename: str) -> None:
+    """文件 consumer 只能在一次性迁移成功后启动。"""
+    compose = _load_compose(filename)
+    for service_name in ("api", "worker", "sandbox-provisioner"):
+        dependency = compose["services"][service_name]["depends_on"]["storage-migrator"]
+        assert dependency["condition"] == "service_completed_successfully"
+    migrator = compose["services"]["storage-migrator"]
+    assert "python -m yuxi.storage_migration" in migrator["command"]
+    migrator_targets = {_volume_target(volume) for volume in migrator.get("volumes") or []}
+    assert {"/app/legacy-saves", "/app/checkpoints"} <= migrator_targets
+
+
+def test_storage_migration_script_quiesces_runtime_before_issuing_proof() -> None:
+    """升级入口必须先停写入者和动态 Sandbox，再运行破坏性迁移。"""
+    script = _project_root() / "scripts" / "migrate-storage.sh"
+    source = script.read_text()
+
+    assert script.stat().st_mode & 0o100
+    assert source.index("stop api worker sandbox-provisioner") < source.index("/api/sandboxes/quiesce")
+    provisioner_stop = source.rindex("stop sandbox-provisioner")
+    assert source.index("/api/sandboxes/quiesce") < provisioner_stop
+    assert provisioner_stop < source.index("YUXI_STORAGE_MIGRATION_QUIESCENCE_TOKEN")
+    assert 'compose=(docker compose "$@")' in source
+    assert "up -d --no-deps --build --wait sandbox-provisioner" in source
+
+
+def test_storage_migration_script_recovers_stopped_production_deployment(
+    tmp_path: Path,
+) -> None:
+    """已 down 的生产部署也必须使用同一 Compose/env 选择器完成受控停机迁移。"""
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    command_log = tmp_path / "docker.log"
+    fake_docker = fake_bin / "docker"
+    fake_docker.write_text(
+        "#!/usr/bin/env bash\n"
+        'printf \'%s\\n\' "$*" >> "$FAKE_DOCKER_LOG"\n'
+        'if [[ " $* " == *" ps --status running --services "* ]]; then exit 0; fi\n'
+        "cat >/dev/null || true\n",
+        encoding="utf-8",
+    )
+    fake_docker.chmod(0o755)
+    env = {
+        **os.environ,
+        "FAKE_DOCKER_LOG": str(command_log),
+        "PATH": f"{fake_bin}:{os.environ['PATH']}",
+    }
+
+    result = subprocess.run(
+        [
+            "bash",
+            str(_project_root() / "scripts" / "migrate-storage.sh"),
+            "-f",
+            "docker-compose.prod.yml",
+            "--env-file",
+            ".env.prod",
+        ],
+        cwd=_project_root(),
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    commands = command_log.read_text(encoding="utf-8").splitlines()
+    prefix = "compose -f docker-compose.prod.yml --env-file .env.prod "
+    assert commands
+    assert all(command.startswith(prefix) for command in commands)
+    assert any("up -d --no-deps --build --wait sandbox-provisioner" in command for command in commands)
+    assert any("exec -T sandbox-provisioner python -" in command for command in commands)
+    assert any("run --rm -e YUXI_STORAGE_MIGRATION_QUIESCENCE_TOKEN=" in command for command in commands)
 
 
 @pytest.mark.parametrize("filename", ["docker-compose.yml", "docker-compose.prod.yml"])

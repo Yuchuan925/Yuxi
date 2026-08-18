@@ -148,7 +148,7 @@ async def test_cleanup_deletes_e2e_threads_before_temporary_agents(tmp_path, mon
 
     deleted_paths: list[str] = []
     run_deletion_threads = await _patch_run_row_deletion(monkeypatch)
-    monkeypatch.setenv("SAVE_DIR", str(tmp_path))
+    monkeypatch.setenv("YUXI_USER_DATA_DIR", str(tmp_path / "threads"))
     (tmp_path / "threads" / "thread-viewer").mkdir(parents=True)
     (tmp_path / "threads" / "thread-marked").mkdir(parents=True)
     responses: dict[str, object] = {
@@ -213,7 +213,7 @@ async def test_cleanup_paginates_active_threads(tmp_path, monkeypatch):
     deleted_paths: list[str] = []
     run_deletion_threads = await _patch_run_row_deletion(monkeypatch)
     offsets: list[str] = []
-    monkeypatch.setenv("SAVE_DIR", str(tmp_path))
+    monkeypatch.setenv("YUXI_USER_DATA_DIR", str(tmp_path / "threads"))
 
     def handle_request(request: httpx.Request) -> httpx.Response:
         """模拟分两页返回线程的清理 API。"""
@@ -261,7 +261,7 @@ async def test_cleanup_removes_deleted_and_subagent_thread_storage(tmp_path, mon
 
     deleted_paths: list[str] = []
     run_deletion_threads = await _patch_run_row_deletion(monkeypatch)
-    monkeypatch.setenv("SAVE_DIR", str(tmp_path))
+    monkeypatch.setenv("YUXI_USER_DATA_DIR", str(tmp_path / "threads"))
     for thread_id in ("thread-deleted", "thread-child"):
         (tmp_path / "threads" / thread_id).mkdir(parents=True)
 
@@ -294,7 +294,7 @@ async def test_cleanup_removes_deleted_and_subagent_thread_storage(tmp_path, mon
 async def test_remove_e2e_thread_storage_rejects_symlink(tmp_path, monkeypatch):
     """沙盒目录是符号链接时必须拒绝删除，避免解析后误删用户目录。"""
 
-    monkeypatch.setenv("SAVE_DIR", str(tmp_path))
+    monkeypatch.setenv("YUXI_USER_DATA_DIR", str(tmp_path / "threads"))
     threads_root = tmp_path / "threads"
     threads_root.mkdir()
     user_dir = threads_root / "user-data"

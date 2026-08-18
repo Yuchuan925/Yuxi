@@ -1165,8 +1165,8 @@ async def test_worker_startup_ensures_builtin_mcp_servers(monkeypatch: pytest.Mo
     async def fake_ensure_builtin_mcp_servers_in_db():
         calls.append("ensure_builtin_mcp_servers_in_db")
 
-    async def fake_ensure_project_workdir_materialized():
-        calls.append("ensure_project_workdir_materialized")
+    async def fake_require_project_workdir_active(_session):
+        calls.append("require_project_workdir_active")
 
     @asynccontextmanager
     async def fake_session_ctx():
@@ -1213,8 +1213,8 @@ async def test_worker_startup_ensures_builtin_mcp_servers(monkeypatch: pytest.Mo
     monkeypatch.setattr(run_worker, "ensure_builtin_mcp_servers_in_db", fake_ensure_builtin_mcp_servers_in_db)
     monkeypatch.setattr(
         materialization_service,
-        "ensure_project_workdir_materialized",
-        fake_ensure_project_workdir_materialized,
+        "require_project_workdir_active",
+        fake_require_project_workdir_active,
     )
     monkeypatch.setattr(run_worker, "init_builtin_skills", fake_init_builtin_skills)
     monkeypatch.setattr(config_options, "ensure_options_in_db", fake_ensure_options_in_db)
@@ -1240,7 +1240,7 @@ async def test_worker_startup_ensures_builtin_mcp_servers(monkeypatch: pytest.Mo
         "initialize",
         "create_business_tables",
         "ensure_business_schema",
-        "ensure_project_workdir_materialized",
+        "require_project_workdir_active",
         "setup_langgraph_checkpointer",
         "ensure_options_in_db",
         "migrate_system_options",
@@ -1319,7 +1319,7 @@ async def test_worker_startup_fails_when_system_options_cannot_migrate(monkeypat
         raise RuntimeError("config load failed")
 
     monkeypatch.setattr(run_worker.pg_manager, "get_async_session_context", fake_session_ctx)
-    monkeypatch.setattr(materialization_service, "ensure_project_workdir_materialized", AsyncMock())
+    monkeypatch.setattr(materialization_service, "require_project_workdir_active", AsyncMock())
     monkeypatch.setattr(config_options, "ensure_options_in_db", AsyncMock())
     monkeypatch.setattr(config_options, "migrate_legacy_system_options", fail_migrate)
 

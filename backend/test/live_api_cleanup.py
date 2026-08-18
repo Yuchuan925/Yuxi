@@ -8,7 +8,7 @@ from pathlib import Path
 
 import asyncpg
 import httpx
-from yuxi.config import get_save_dir
+from yuxi.config import get_user_data_dir
 
 PYTEST_RESOURCE_PREFIXES = ("pytest", "py_test")
 E2E_THREAD_TEST_MARKERS = frozenset(
@@ -138,7 +138,7 @@ def _resolve_e2e_thread_storage(thread_id: str) -> Path:
     if thread_id == "shared":
         raise RuntimeError("E2E conversation cleanup refuses to target the shared workspace")
 
-    threads_root = (get_save_dir() / "threads").resolve()
+    threads_root = get_user_data_dir().resolve()
     raw_thread_root = threads_root / thread_id
     if raw_thread_root.is_symlink():
         raise RuntimeError(f"E2E conversation cleanup refuses to remove symlink: {raw_thread_root}")

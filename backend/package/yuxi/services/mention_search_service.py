@@ -3,16 +3,14 @@ from __future__ import annotations
 import asyncio
 import base64
 import os
-from collections.abc import Sequence
 from pathlib import Path
 
 import ormsgpack
-from yuxi.agents.backends.sandbox.paths import (
-    sandbox_outputs_dir,
-    sandbox_uploads_dir,
-    sandbox_workspace_dir,
-)
+from yuxi.agents.backends.sandbox.paths import user_workspace_dir
+from yuxi.agents.backends.sandbox.paths import validate_thread_id
+from yuxi.repositories.conversation_repository import ConversationRepository
 from yuxi.services.run_queue_service import get_redis_client
+from yuxi.services.viewer_filesystem_service import search_viewer_files
 from yuxi.utils.logging_config import logger
 from yuxi.utils.paths import VIRTUAL_PATH_PREFIX
 
@@ -39,9 +37,14 @@ CACHE_TTL = 60  # 缓存有效期 60 秒
 MAX_CACHED_ENTRIES = 100000
 REDIS_KEY_PREFIX = "yuxi:mention:cache:"
 WORKSPACE_CACHE_PREFIX = f"{REDIS_KEY_PREFIX}workspace:"
-THREAD_CACHE_PREFIX = f"{REDIS_KEY_PREFIX}thread:"
-WORKSPACE_THREAD_PLACEHOLDER = "_workspace"
-MENTION_SOURCES = {"workspace", "thread"}
+
+
+class MentionThreadNotFoundError(LookupError):
+    """当前用户不可见指定 mention thread。"""
+
+
+class InvalidMentionThreadError(ValueError):
+    """mention thread id 不满足运行时 identity 约束。"""
 
 
 def _scan_pruned_files(root: Path, max_entries: int) -> list[tuple[str, str]]:
@@ -116,23 +119,8 @@ async def _write_cached_index(redis, redis_key: str, entries: list[tuple[str, st
         logger.warning(f"Failed to write mention cache {redis_key}: {e}")
 
 
-def _normalize_sources(sources: Sequence[str] | None, *, has_thread: bool) -> tuple[str, ...]:
-    if not sources:
-        return ("thread", "workspace") if has_thread else ("workspace",)
-
-    normalized = []
-    for source in sources:
-        value = str(source or "").strip().lower()
-        if value in MENTION_SOURCES and value not in normalized:
-            normalized.append(value)
-
-    if not has_thread:
-        normalized = [source for source in normalized if source == "workspace"]
-    return tuple(normalized or (["workspace"] if not has_thread else ["thread", "workspace"]))
-
-
 def _workspace_root(uid: str) -> Path:
-    return sandbox_workspace_dir(WORKSPACE_THREAD_PLACEHOLDER, uid)
+    return user_workspace_dir(uid)
 
 
 async def _scan_virtual_root(root: Path, virtual_prefix: str, max_entries: int) -> list[tuple[str, str]]:
@@ -152,49 +140,6 @@ async def get_or_build_workspace_index(uid: str) -> list[tuple[str, str]]:
 
     entries = await _scan_virtual_root(_workspace_root(uid), "workspace", MAX_CACHED_ENTRIES)
     await _write_cached_index(redis, redis_key, entries)
-    return entries
-
-
-async def get_or_build_thread_index(thread_id: str) -> list[tuple[str, str]]:
-    redis = await get_redis_client()
-    redis_key = f"{THREAD_CACHE_PREFIX}{thread_id}"
-    cached = await _read_cached_index(redis, redis_key)
-    if cached is not None:
-        return cached
-
-    entries: list[tuple[str, str]] = []
-    for virtual_prefix, root in (
-        ("uploads", sandbox_uploads_dir(thread_id)),
-        ("outputs", sandbox_outputs_dir(thread_id)),
-    ):
-        needed = MAX_CACHED_ENTRIES - len(entries)
-        if needed <= 0:
-            break
-        entries.extend(await _scan_virtual_root(root, virtual_prefix, needed))
-
-    await _write_cached_index(redis, redis_key, entries)
-    return entries
-
-
-async def get_or_build_file_index(
-    thread_id: str | None,
-    uid: str,
-    sources: Sequence[str] | None = None,
-) -> list[tuple[str, str, str]]:
-    """获取或构建当前可提及文件索引，workspace 与 thread 缓存分离。"""
-    selected_sources = _normalize_sources(sources, has_thread=bool(thread_id))
-    entries: list[tuple[str, str, str]] = []
-
-    for source in selected_sources:
-        if source == "thread" and thread_id:
-            entries.extend(
-                (name, virtual_path, "thread") for name, virtual_path in await get_or_build_thread_index(thread_id)
-            )
-        elif source == "workspace":
-            entries.extend(
-                (name, virtual_path, "workspace") for name, virtual_path in await get_or_build_workspace_index(uid)
-            )
-
     return entries
 
 
@@ -238,25 +183,15 @@ def _rank_mention_entries(index: list[tuple[str, str, str]], query: str) -> list
 
 
 async def search_mention_files_in_index(
-    thread_id: str | None,
     uid: str,
     query: str,
-    sources: Sequence[str] | None = None,
 ) -> list[dict]:
-    """搜索可提及文件；未绑定 thread 时只搜索用户 workspace。"""
+    """搜索用户 Workspace 中可提及文件。"""
     if not query:
         return []
 
-    selected_sources = _normalize_sources(sources, has_thread=bool(thread_id))
-    results: list[dict] = []
-
-    for source in selected_sources:
-        source_index = await get_or_build_file_index(thread_id, uid, [source])
-        source_results = _rank_mention_entries(source_index, query)
-        remaining = MAX_MENTION_RESULTS - len(results)
-        if remaining <= 0:
-            break
-        results.extend(source_results[:remaining])
+    source_index = [(name, virtual_path, "workspace") for name, virtual_path in await get_or_build_workspace_index(uid)]
+    results = _rank_mention_entries(source_index, query)
 
     return [
         {"name": item["name"], "path": item["path"], "is_dir": item["is_dir"], "source": item["source"]}
@@ -264,14 +199,51 @@ async def search_mention_files_in_index(
     ]
 
 
-async def invalidate_mention_cache(thread_id: str) -> None:
-    """清理指定 thread 的提及文件缓存。"""
-    try:
-        redis = await get_redis_client()
-        await redis.delete(f"{THREAD_CACHE_PREFIX}{thread_id}")
-        await redis.delete(f"{REDIS_KEY_PREFIX}{thread_id}")
-    except Exception as e:
-        logger.warning(f"Failed to invalidate mention cache for thread {thread_id}: {e}")
+async def search_mentions(
+    *,
+    thread_id: str | None,
+    query: str,
+    sources: str | None,
+    current_user,
+    db,
+) -> list[dict]:
+    """编排当前 Project 与用户 Workspace 的 mention 搜索。"""
+    uid = str(current_user.uid)
+    effective_thread_id: str | None = None
+    if thread_id:
+        conversation = await ConversationRepository(db).get_conversation_by_thread_id(thread_id)
+        if conversation:
+            if conversation.uid != uid or conversation.status == "deleted":
+                raise MentionThreadNotFoundError("对话线程不存在")
+            effective_thread_id = thread_id
+        else:
+            try:
+                validate_thread_id(thread_id)
+            except ValueError as exc:
+                raise InvalidMentionThreadError("非法的 thread_id 格式") from exc
+
+    source_list = [item.strip().lower() for item in sources.split(",")] if sources else None
+    selected_sources = source_list or (["thread", "workspace"] if effective_thread_id else ["workspace"])
+    results: list[dict] = []
+    if "thread" in selected_sources and effective_thread_id:
+        project_results = await search_viewer_files(
+            thread_id=effective_thread_id,
+            query=query,
+            current_user=current_user,
+            db=db,
+        )
+        results.extend(
+            {
+                "name": item["name"],
+                "path": item["path"],
+                "is_dir": bool(item.get("is_dir")),
+                "source": "thread",
+            }
+            for item in project_results.get("entries") or []
+        )
+    if "workspace" in selected_sources and len(results) < MAX_MENTION_RESULTS:
+        results.extend(await search_mention_files_in_index(uid=uid, query=query))
+    return results[:MAX_MENTION_RESULTS]
 
 
 async def invalidate_workspace_mention_cache(uid: str) -> None:

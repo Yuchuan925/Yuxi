@@ -63,7 +63,7 @@ def _runtime(
 
 @pytest.mark.asyncio
 async def test_ocr_parse_file_writes_markdown_to_outputs(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("SAVE_DIR", str(tmp_path))
+    monkeypatch.setenv("YUXI_USER_DATA_DIR", str(tmp_path / "threads"))
     _mock_system_options(monkeypatch)
 
     def resolve_engine(engine_id, default_engine):
@@ -105,7 +105,7 @@ async def test_ocr_parse_file_writes_markdown_to_outputs(tmp_path, monkeypatch: 
 
 @pytest.mark.asyncio
 async def test_ocr_parse_file_uses_default_engine(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("SAVE_DIR", str(tmp_path))
+    monkeypatch.setenv("YUXI_USER_DATA_DIR", str(tmp_path / "threads"))
     _mock_system_options(monkeypatch)
 
     def resolve_engine(engine_id, default_engine):
@@ -138,7 +138,7 @@ async def test_ocr_parse_file_uses_default_engine(tmp_path, monkeypatch: pytest.
 
 @pytest.mark.asyncio
 async def test_ocr_parse_file_accepts_disable_for_pdf(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("SAVE_DIR", str(tmp_path))
+    monkeypatch.setenv("YUXI_USER_DATA_DIR", str(tmp_path / "threads"))
     _mock_system_options(monkeypatch)
     thread_id = "thread-1"
     uid = "user-1"
@@ -175,7 +175,7 @@ async def test_ocr_parse_file_accepts_disable_for_pdf(tmp_path, monkeypatch: pyt
 async def test_ocr_parse_file_rejects_path_outside_user_data(
     tmp_path, monkeypatch: pytest.MonkeyPatch, file_path: str
 ) -> None:
-    monkeypatch.setenv("SAVE_DIR", str(tmp_path))
+    monkeypatch.setenv("YUXI_USER_DATA_DIR", str(tmp_path / "threads"))
     _mock_system_options(monkeypatch)
 
     with pytest.raises(ValueError, match="只允许解析"):
@@ -184,7 +184,7 @@ async def test_ocr_parse_file_rejects_path_outside_user_data(
 
 @pytest.mark.asyncio
 async def test_ocr_parse_file_rejects_directory(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("SAVE_DIR", str(tmp_path))
+    monkeypatch.setenv("YUXI_USER_DATA_DIR", str(tmp_path / "threads"))
     _mock_system_options(monkeypatch)
     thread_id = "thread-1"
     uid = "user-1"

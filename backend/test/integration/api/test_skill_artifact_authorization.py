@@ -64,7 +64,7 @@ async def test_skill_artifact_rechecks_authorization_after_share_revoke(
                 tool_dependencies=[],
                 mcp_dependencies=[],
                 skill_dependencies=[],
-                dir_path=f"skills/{slug}",
+                dir_path=f"shared/{slug}",
                 share_config={
                     "version": 2,
                     "read_scope": {

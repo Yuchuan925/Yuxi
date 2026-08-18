@@ -47,9 +47,8 @@
 `SkillsMiddleware` 分两步工作：
 
 1. 模型调用前读取 `_prompt_skills`，把可见 Skill 的名称、描述和 `SKILL.md` 路径追加到系统提示。
-2. 工具调用后检查模型是否读取了共享路径 `/home/gem/skills/<slug>/SKILL.md` 或个人路径
-   `/home/gem/user-data/workspace/agents/skills/<slug>/SKILL.md`。如果该 Skill 在 `_readable_skills`
-   范围内，就把它写入 `activated_skills`，并在后续模型调用中追加它声明的工具和 MCP 依赖。
+2. 工具调用后检查模型是否读取了用户授权投影 `/home/gem/skills/<slug>/SKILL.md`。如果该 Skill 在
+   `_readable_skills` 范围内，就把它写入 `activated_skills`，并在后续模型调用中追加它声明的工具和 MCP 依赖。
 
 模型首先看到 Skill 说明；读取并激活 Skill 后，依赖工具才加入后续模型请求。该顺序控制初始工具 schema 的规模。
 

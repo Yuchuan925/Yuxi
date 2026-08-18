@@ -51,7 +51,7 @@ def _skill(
         name=slug,
         description="demo skill",
         source_type=source_type,
-        dir_path=f"skills/{slug}",
+        dir_path=f"shared/{slug}",
         share_config={
             "version": 2,
             "read_scope": {"access_level": "user", "user_uids": user_uids or [created_by]},

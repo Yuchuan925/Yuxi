@@ -88,6 +88,6 @@ tools = await resolve_configured_runtime_tools(context)
 
 ## Skills 集成
 
-Skills 与工具是两种不同的扩展机制。工具是具体的功能实现，而 Skills 是包含提示词、工具依赖和元数据的完整技能包。当前用户授权的共享、内置与个人 Skill 均可从 `/home/gem/skills/<slug>/...` 只读投影读取；个人 Skill 在阶段 5 前同时保留 `/home/gem/user-data/workspace/agents/skills/<slug>/...` 兼容路径。`context.skills` 只决定哪些 Skill 进入 Prompt 并可激活工具。
+Skills 与工具是两种不同的扩展机制。工具是具体的功能实现，而 Skills 是包含提示词、工具依赖和元数据的完整技能包。当前用户授权的共享、内置与个人 Skill 均只从 `/home/gem/skills/<slug>/...` 只读投影读取；`context.skills` 只决定哪些 Skill 进入 Prompt 并可激活工具。
 
 关于 Skills 的详细机制，请参阅 [Skills 管理](./skills-management.md)。

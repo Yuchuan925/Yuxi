@@ -29,6 +29,7 @@ async def session():
 async def _seed_conversation(db, *, thread_id: str, last_viewed_run_id: str | None = None) -> Conversation:
     conversation = Conversation(
         thread_id=thread_id,
+        workdir_id=f"workdir-{thread_id}",
         uid="user-1",
         agent_id="main",
         title=f"conv-{thread_id}",
@@ -45,6 +46,7 @@ async def _seed_run(db, *, thread_id: str, run_id: str, status: str, run_type: s
     run = AgentRun(
         id=run_id,
         conversation_thread_id=thread_id,
+        runtime_scope_id=thread_id,
         agent_slug="main",
         uid="user-1",
         status=status,
@@ -108,6 +110,7 @@ async def test_list_threads_view_ignores_subagent_and_other_users(session):
         AgentRun(
             id="run-other",
             conversation_thread_id="thread-other-user",
+            runtime_scope_id="thread-other-user",
             agent_slug="main",
             uid="user-2",
             status="running",

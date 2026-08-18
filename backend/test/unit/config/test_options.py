@@ -158,37 +158,9 @@ async def test_first_implicit_option_read_initializes_cache_version(monkeypatch)
 
 
 @pytest.mark.asyncio
-async def test_legacy_base_toml_migrates_once(db_session, monkeypatch, tmp_path):
+async def test_legacy_database_system_config_is_migrated_then_removed(db_session, monkeypatch):
     fake_redis = FakeRedis()
     monkeypatch.setattr(options, "get_async_redis_client", lambda: _async_value(fake_redis))
-    monkeypatch.setenv("SAVE_DIR", str(tmp_path))
-    config_dir = tmp_path / "config"
-    config_dir.mkdir()
-    config_file = config_dir / "base.toml"
-    config_file.write_text(
-        'default_model = "legacy:model"\nenable_content_guard = true\nsave_dir = "ignored"\n',
-        encoding="utf-8",
-    )
-    await options.ensure_options_in_db(db_session)
-
-    await options.migrate_legacy_system_options(db_session)
-    record = await options.get_option(db_session, options.system_options.key)
-    config_file.write_text('default_model = "changed:model"\n', encoding="utf-8")
-    await options.migrate_legacy_system_options(db_session)
-
-    assert record.value == {"default_model": "legacy:model", "enable_content_guard": True}
-    assert record.params["base_toml_migrated"] is True
-    assert record.params["migration_version"] == 1
-
-
-@pytest.mark.asyncio
-async def test_legacy_database_system_config_takes_priority(db_session, monkeypatch, tmp_path):
-    fake_redis = FakeRedis()
-    monkeypatch.setattr(options, "get_async_redis_client", lambda: _async_value(fake_redis))
-    monkeypatch.setenv("SAVE_DIR", str(tmp_path))
-    config_dir = tmp_path / "config"
-    config_dir.mkdir()
-    (config_dir / "base.toml").write_text('default_model = "file:model"\n', encoding="utf-8")
     await options.ensure_options_in_db(db_session)
     db_session.add(
         options.ConfigOption(
@@ -205,61 +177,50 @@ async def test_legacy_database_system_config_takes_priority(db_session, monkeypa
     record = await options.get_option(db_session, options.system_options.key)
 
     assert record.value == {"default_model": "database:model", "enable_content_guard": True}
+    assert await options.get_option(db_session, "system_runtime_config") is None
 
 
 @pytest.mark.asyncio
-async def test_legacy_migration_preserves_existing_system_option_values(db_session, monkeypatch, tmp_path):
-    monkeypatch.setenv("SAVE_DIR", str(tmp_path))
-    config_dir = tmp_path / "config"
-    config_dir.mkdir()
-    (config_dir / "base.toml").write_text(
+async def test_missing_legacy_config_does_not_block_migration(db_session):
+    await options.ensure_options_in_db(db_session)
+
+    await options.migrate_legacy_system_options(db_session)
+    record = await options.get_option(db_session, options.system_options.key)
+
+    assert record.value == {}
+    assert record.params["migration_version"] == 1
+
+
+@pytest.mark.asyncio
+async def test_explicit_legacy_base_toml_is_migrated_before_version_is_recorded(db_session, tmp_path):
+    await options.ensure_options_in_db(db_session)
+    config_file = tmp_path / "base.toml"
+    config_file.write_text(
         'default_model = "legacy:model"\nenable_content_guard = true\n',
         encoding="utf-8",
     )
-    await options.ensure_options_in_db(db_session)
-    record = await options.get_option(db_session, options.system_options.key)
-    record.value = {"default_model": "database:model"}
-    await db_session.flush()
 
-    await options.migrate_legacy_system_options(db_session)
-
-    assert record.value == {"default_model": "database:model", "enable_content_guard": True}
-
-
-@pytest.mark.asyncio
-async def test_invalid_legacy_config_does_not_block_migration(db_session, monkeypatch, tmp_path):
-    monkeypatch.setenv("SAVE_DIR", str(tmp_path))
-    config_dir = tmp_path / "config"
-    config_dir.mkdir()
-    (config_dir / "base.toml").write_text('default_ocr_engine = "missing-engine"\n', encoding="utf-8")
-    await options.ensure_options_in_db(db_session)
-
-    await options.migrate_legacy_system_options(db_session)
+    await options.migrate_legacy_system_options(db_session, legacy_config_file=config_file)
     record = await options.get_option(db_session, options.system_options.key)
 
-    assert record.value == {}
+    assert record.value == {
+        "default_model": "legacy:model",
+        "enable_content_guard": True,
+    }
     assert record.params["migration_version"] == 1
 
 
 @pytest.mark.asyncio
-async def test_malformed_legacy_toml_is_retried_after_file_is_fixed(db_session, monkeypatch, tmp_path):
-    monkeypatch.setenv("SAVE_DIR", str(tmp_path))
-    config_dir = tmp_path / "config"
-    config_dir.mkdir()
-    (config_dir / "base.toml").write_text('default_model = "unterminated', encoding="utf-8")
+async def test_invalid_explicit_legacy_base_toml_fails_without_recording_version(db_session, tmp_path):
     await options.ensure_options_in_db(db_session)
+    config_file = tmp_path / "base.toml"
+    config_file.write_text("invalid = [", encoding="utf-8")
 
-    await options.migrate_legacy_system_options(db_session)
+    with pytest.raises(RuntimeError, match="读取历史系统配置失败"):
+        await options.migrate_legacy_system_options(db_session, legacy_config_file=config_file)
+
     record = await options.get_option(db_session, options.system_options.key)
-
-    assert record.value == {}
-    assert record.params.get("migration_version", 0) == 0
-
-    (config_dir / "base.toml").write_text('default_model = "fixed:model"\n', encoding="utf-8")
-    await options.migrate_legacy_system_options(db_session)
-
-    assert record.value == {"default_model": "fixed:model"}
-    assert record.params["migration_version"] == 1
+    assert int(record.params.get("migration_version") or 0) == 0
 
 
 @pytest.mark.asyncio

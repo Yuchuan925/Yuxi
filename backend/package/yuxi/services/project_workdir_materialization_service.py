@@ -15,7 +15,7 @@ from pathlib import Path, PurePosixPath
 from sqlalchemy import func, select, text
 
 from yuxi.agents.backends.sandbox.paths import project_workdir_host_dir, project_workdir_virtual_dir
-from yuxi.config import get_save_dir
+from yuxi.config import get_legacy_storage_dir, get_projects_dir
 from yuxi.repositories.agent_run_repository import TERMINAL_RUN_STATUSES
 from yuxi.repositories.conversation_repository import ConversationRepository
 from yuxi.repositories.project_workdir_repository import (
@@ -350,7 +350,7 @@ async def _download_object_content(bucket_name: str, object_name: str) -> bytes:
 async def _attachment_sources(conversation: Conversation, attachments: list[dict]) -> list[LegacyFileSource]:
     """把旧附件记录收敛为物化来源，不暴露运行时 hydrate 接口。"""
     expected_bucket = get_minio_client().KB_BUCKETS["documents"]
-    legacy_root = get_save_dir() / "threads" / conversation.thread_id / "user-data" / "uploads"
+    legacy_root = get_legacy_storage_dir() / "threads" / conversation.thread_id / "user-data" / "uploads"
     sources: list[LegacyFileSource] = []
     seen_paths: set[str] = set()
     for attachment in attachments:
@@ -475,7 +475,7 @@ async def _conversation_sources(db, conversation: Conversation) -> list[LegacyFi
             await ConversationRepository(db).get_attachments(conversation.id),
         )
     )
-    legacy_root = get_save_dir() / "threads" / conversation.thread_id / "user-data"
+    legacy_root = get_legacy_storage_dir() / "threads" / conversation.thread_id / "user-data"
     sources.extend(await asyncio.to_thread(_scan_host_tree, legacy_root / "uploads", "uploads"))
 
     current_revision = await _legacy_current_output_files(db, conversation)
@@ -730,7 +730,8 @@ async def materialize_inventory_epoch(
     inventories: tuple[WorkdirInventory, ...],
 ) -> None:
     """把一个完整 epoch 写入隔离目录，逐 Workdir 校验后原子替换 inactive 根。"""
-    staging_epoch_root = get_save_dir() / "project-materialization" / epoch_id
+    # activation 依赖原子 rename，staging 必须与最终 Workdir 位于同一个持久挂载。
+    staging_epoch_root = get_projects_dir() / ".materialization" / epoch_id
     await asyncio.to_thread(shutil.rmtree, staging_epoch_root, True)
     staging_epoch_root.mkdir(parents=True, exist_ok=True)
     try:

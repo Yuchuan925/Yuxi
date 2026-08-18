@@ -138,7 +138,7 @@ async def test_install_skill_from_sandbox_installs_as_current_user_private_skill
     }
     assert result.update["messages"][0].content.splitlines() == [
         "✅ 成功安装并激活技能: demo-skill",
-        "📁 安装位置: /home/gem/user-data/workspace/agents/skills/demo-skill",
+        "📁 安装位置: /home/gem/skills/demo-skill",
     ]
     assert runtime.context.skills == ["existing-skill", "demo-skill"]
     assert runtime.context._readable_skills == ["existing-skill", "demo-skill"]
@@ -151,7 +151,7 @@ async def test_install_skill_from_sandbox_installs_as_current_user_private_skill
         "demo-skill": {
             "name": "Demo Skill",
             "description": "demo description",
-            "path": "/home/gem/user-data/workspace/agents/skills/demo-skill/SKILL.md",
+            "path": "/home/gem/skills/demo-skill/SKILL.md",
         }
     }
     assert runtime.context._runtime_skill_dependency_map == {"demo-skill": {"tools": [], "mcps": [], "skills": []}}
@@ -315,11 +315,6 @@ def test_prepare_skill_from_sandbox_uses_sandbox_api_without_host_path_resolutio
             assert paths == [f"{remote_dir}/SKILL.md"]
             return [SimpleNamespace(error=None, content=b"# demo")]
 
-    monkeypatch.setattr(
-        sandbox_backend_module,
-        "resolve_virtual_path",
-        lambda *_args, **_kwargs: pytest.fail("不得将不可信 Sandbox 路径解析为 API 宿主路径"),
-    )
     monkeypatch.setattr(sandbox_backend_module, "ProvisionerSandboxBackend", FakeProvisionerSandboxBackend)
 
     staging = install_skill_module._prepare_skill_from_sandbox(
