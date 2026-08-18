@@ -200,7 +200,6 @@ async def test_sandbox_output_stages_to_minio_publishes_and_rehydrates(monkeypat
         revision_id = await stage_thread_outputs(
             runtime_thread_id=thread_id,
             file_thread_id=thread_id,
-            skills_thread_id=thread_id,
             uid=uid,
             conversation_id=conversation_id,
             run_id=None,
@@ -226,7 +225,6 @@ async def test_sandbox_output_stages_to_minio_publishes_and_rehydrates(monkeypat
         await hydrate_thread_outputs_to_sandbox(
             runtime_thread_id=thread_id,
             file_thread_id=thread_id,
-            skills_thread_id=thread_id,
             uid=uid,
             files=descriptors,
         )
@@ -283,7 +281,6 @@ async def test_legacy_host_outputs_replay_into_first_published_revision(monkeypa
         await hydrate_legacy_thread_outputs_to_sandbox(
             runtime_thread_id=thread_id,
             file_thread_id=thread_id,
-            skills_thread_id=thread_id,
             uid=uid,
             legacy_root=legacy_root,
         )
@@ -295,7 +292,6 @@ async def test_legacy_host_outputs_replay_into_first_published_revision(monkeypa
         staged_revision_id = await stage_thread_outputs(
             runtime_thread_id=thread_id,
             file_thread_id=thread_id,
-            skills_thread_id=thread_id,
             uid=uid,
             conversation_id=conversation_id,
             run_id=None,
@@ -313,7 +309,6 @@ async def test_legacy_host_outputs_replay_into_first_published_revision(monkeypa
         await hydrate_thread_outputs_to_sandbox(
             runtime_thread_id=thread_id,
             file_thread_id=thread_id,
-            skills_thread_id=thread_id,
             uid=uid,
             files=descriptors,
         )
@@ -439,7 +434,6 @@ async def test_parent_child_private_checkpoint_round_trip_reaches_parent_artifac
         parent_checkpoint_id = await stage_thread_outputs(
             runtime_thread_id=thread_id,
             file_thread_id=thread_id,
-            skills_thread_id=thread_id,
             uid=uid,
             conversation_id=conversation_id,
             run_id=None,
@@ -460,7 +454,6 @@ async def test_parent_child_private_checkpoint_round_trip_reaches_parent_artifac
         await hydrate_thread_outputs_to_sandbox(
             runtime_thread_id=thread_id,
             file_thread_id=thread_id,
-            skills_thread_id=thread_id,
             uid=uid,
             files=parent_checkpoint_files,
             sandbox_instance_id=child_instance,
@@ -474,7 +467,6 @@ async def test_parent_child_private_checkpoint_round_trip_reaches_parent_artifac
         child_checkpoint_id = await stage_thread_outputs(
             runtime_thread_id=thread_id,
             file_thread_id=thread_id,
-            skills_thread_id=thread_id,
             uid=uid,
             conversation_id=conversation_id,
             run_id=None,
@@ -492,7 +484,6 @@ async def test_parent_child_private_checkpoint_round_trip_reaches_parent_artifac
         parent_local_id = await stage_thread_outputs(
             runtime_thread_id=thread_id,
             file_thread_id=thread_id,
-            skills_thread_id=thread_id,
             uid=uid,
             conversation_id=conversation_id,
             run_id=None,
@@ -512,7 +503,6 @@ async def test_parent_child_private_checkpoint_round_trip_reaches_parent_artifac
         await hydrate_thread_outputs_to_sandbox(
             runtime_thread_id=thread_id,
             file_thread_id=thread_id,
-            skills_thread_id=thread_id,
             uid=uid,
             files=merged_files,
             sandbox_instance_id=parent_instance,
@@ -525,7 +515,6 @@ async def test_parent_child_private_checkpoint_round_trip_reaches_parent_artifac
             context=SimpleNamespace(
                 thread_id=thread_id,
                 file_thread_id=thread_id,
-                skills_thread_id=thread_id,
                 uid=uid,
                 sandbox_instance_id=parent_instance,
             )

@@ -754,8 +754,6 @@ async def test_download_kb_file_writes_original_to_outputs_and_returns_virtual_p
         {
             "thread_id": "child-thread",
             "uid": "user-1",
-            "file_thread_id": "thread-1",
-            "skills_thread_id": "child-thread",
             "sandbox_instance_id": "child-thread",
             "create_if_missing": False,
         }
@@ -780,7 +778,7 @@ async def test_download_kb_file_passes_save_as_argument(monkeypatch, tmp_path) -
         file_download=_async_get_file_download(b"xlsx bytes", "origin.xlsx"),
     )
 
-    runtime = SimpleNamespace(context=SimpleNamespace(file_thread_id="thread-1", uid="user-1"))
+    runtime = SimpleNamespace(context=SimpleNamespace(thread_id="thread-1", uid="user-1"))
     result = await _run_download_kb_file(kb_id="db-1", file_id="file-1", save_as="renamed.xlsx", runtime=runtime)
 
     assert sandbox.files["/home/gem/user-data/outputs/renamed.xlsx"] == b"xlsx bytes"
@@ -815,7 +813,7 @@ async def test_download_kb_file_rejects_readonly_knowledge_base(monkeypatch) -> 
 
     _patch_download_manager(monkeypatch, kb_type="dify", file_download=_must_not_download)
 
-    runtime = SimpleNamespace(context=SimpleNamespace(file_thread_id="thread-1", uid="user-1"))
+    runtime = SimpleNamespace(context=SimpleNamespace(thread_id="thread-1", uid="user-1"))
     result = await _run_download_kb_file(kb_id="db-1", file_id="file-1", runtime=runtime)
 
     assert not_called["flag"] is False

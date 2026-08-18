@@ -146,6 +146,22 @@ async def test_create_run_persists_origin_snapshot(session):
     assert run.channel == "api"
     assert run.external_id == "external-1"
     assert run.origin_metadata == {"agent_invocation_meta": {"trace_id": "trace-1"}}
+    assert run.runtime_scope_id == "thread-1"
+
+
+async def test_create_subagent_run_persists_explicit_root_runtime_scope(session):
+    run = await AgentRunRepository(session).create_run(
+        run_id="child-run-scope",
+        conversation_thread_id="child-thread",
+        runtime_scope_id="root-thread",
+        agent_slug="worker",
+        uid="user-1",
+        request_id="child-request-scope",
+        input_payload={},
+        run_type="subagent",
+    )
+
+    assert run.runtime_scope_id == "root-thread"
 
 
 async def test_set_output_message_rejects_wrong_causal_owner_and_accepts_exact_message(session):

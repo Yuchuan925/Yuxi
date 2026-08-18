@@ -249,14 +249,10 @@ def _normalize_presented_artifact_path(filepath: str, runtime: ToolRuntime) -> s
     except ValueError as exc:
         raise ValueError(f"只允许展示 {outputs_virtual_prefix}/ 下的文件: {normalized_input}") from exc
 
-    file_thread_id = getattr(runtime_context, "file_thread_id", None) or runtime_thread_id
-    skills_thread_id = getattr(runtime_context, "skills_thread_id", None) or runtime_thread_id
     sandbox_instance_id = getattr(runtime_context, "sandbox_instance_id", None) or runtime_thread_id
     backend = ProvisionerSandboxBackend(
         thread_id=runtime_thread_id,
         uid=str(uid),
-        file_thread_id=file_thread_id,
-        skills_thread_id=skills_thread_id,
         sandbox_instance_id=sandbox_instance_id,
         create_if_missing=False,
     )
@@ -350,15 +346,11 @@ async def ocr_parse_file(file_path: str, runtime: ToolRuntime, ocr_engine: str |
     """Parse a sandbox file with OCR, persist Markdown output, and return only a short result summary."""
     from yuxi.services.ocr_service import parse_document
 
-    runtime_thread_id, file_thread_id, skills_thread_id, uid, sandbox_instance_id = _resolve_runtime_sandbox_scope(
-        runtime
-    )
+    runtime_thread_id, uid, sandbox_instance_id = _resolve_runtime_sandbox_scope(runtime)
     source_virtual_path = _resolve_ocr_source_path(file_path, runtime)
     backend = ProvisionerSandboxBackend(
         thread_id=runtime_thread_id,
         uid=uid,
-        file_thread_id=file_thread_id,
-        skills_thread_id=skills_thread_id,
         sandbox_instance_id=sandbox_instance_id,
         create_if_missing=False,
     )
@@ -432,29 +424,16 @@ def _resolve_ocr_source_path(file_path: str, runtime: ToolRuntime) -> str:
     return clean_virtual_path
 
 
-def _resolve_runtime_file_scope(runtime: ToolRuntime) -> tuple[str, str]:
-    """Read the thread and user scope needed for sandbox path mapping from ToolRuntime."""
-    thread_id = _runtime_scope_value(runtime, "file_thread_id") or _runtime_scope_value(runtime, "thread_id")
-    uid = _runtime_scope_value(runtime, "uid")
-    if not thread_id:
-        raise ValueError("当前运行时缺少 thread_id")
-    if not uid:
-        raise ValueError("当前运行时缺少 uid")
-    return thread_id, uid
-
-
-def _resolve_runtime_sandbox_scope(runtime: ToolRuntime) -> tuple[str, str, str, str, str]:
-    """读取 runtime、文件、Skills 与用户四个 sandbox scope。"""
+def _resolve_runtime_sandbox_scope(runtime: ToolRuntime) -> tuple[str, str, str]:
+    """读取 runtime、用户与实例三个 Sandbox scope。"""
     runtime_thread_id = _runtime_scope_value(runtime, "thread_id")
-    file_thread_id = _runtime_scope_value(runtime, "file_thread_id") or runtime_thread_id
-    skills_thread_id = _runtime_scope_value(runtime, "skills_thread_id") or runtime_thread_id
     uid = _runtime_scope_value(runtime, "uid")
     sandbox_instance_id = _runtime_scope_value(runtime, "sandbox_instance_id") or runtime_thread_id
     if not runtime_thread_id:
         raise ValueError("当前运行时缺少 thread_id")
     if not uid:
         raise ValueError("当前运行时缺少 uid")
-    return runtime_thread_id, str(file_thread_id), str(skills_thread_id), uid, str(sandbox_instance_id)
+    return runtime_thread_id, uid, str(sandbox_instance_id)
 
 
 def _runtime_scope_value(runtime: ToolRuntime, key: str) -> str | None:

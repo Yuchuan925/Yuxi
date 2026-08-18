@@ -631,6 +631,7 @@ async def persist_agent_run_record(
     *,
     agent_slug: str,
     conversation_thread_id: str,
+    runtime_scope_id: str | None = None,
     current_uid: str,
     db: AsyncSession,
     request_id: str,
@@ -652,6 +653,7 @@ async def persist_agent_run_record(
             run = await AgentRunRepository(db).create_run(
                 run_id=run_id,
                 conversation_thread_id=conversation_thread_id,
+                runtime_scope_id=runtime_scope_id,
                 agent_slug=agent_slug,
                 uid=str(current_uid),
                 request_id=request_id,

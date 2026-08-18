@@ -213,7 +213,6 @@ async def test_hydrate_run_file_scopes_replays_complete_snapshot_after_sandbox_d
     await _hydrate_run_file_scopes(
         runtime_thread_id="runtime-thread",
         file_thread_id="file-thread",
-        skills_thread_id="skills-thread",
         uid="user-1",
         attachments=[{"file_id": "attachment-1"}],
         output_files=[{"path": "result.txt"}],

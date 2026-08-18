@@ -880,6 +880,7 @@ async def _dispatch_locked_head(
             await run_repo.create_run(
                 run_id=run_id,
                 conversation_thread_id=thread_id,
+                runtime_scope_id=thread_id,
                 agent_slug=agent_slug,
                 uid=uid,
                 request_id=head.request_id,

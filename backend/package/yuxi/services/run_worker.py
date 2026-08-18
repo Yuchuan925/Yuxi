@@ -214,27 +214,12 @@ class ChunkedEventWriter:
         buffer.last_flush = time.monotonic()
 
 
-def _run_sandbox_scope(run: AgentRun) -> tuple[str, str]:
-    """返回 Run 的文件与 Skills scope；runtime thread 始终由 Run 自身拥有。"""
-    runtime = run.input_payload.get("runtime") if isinstance(run.input_payload, dict) else None
-    runtime = runtime if isinstance(runtime, dict) else {}
-    if run.run_type == "subagent":
-        return (
-            str(runtime.get("file_thread_id") or run.conversation_thread_id),
-            str(runtime.get("skills_thread_id") or run.conversation_thread_id),
-        )
-    return run.conversation_thread_id, run.conversation_thread_id
-
-
 async def _release_run_sandbox(run: AgentRun) -> None:
     """销毁 Run runtime sandbox，阻止遗留进程污染后续 Run。"""
-    file_thread_id, skills_thread_id = _run_sandbox_scope(run)
     await asyncio.to_thread(
         get_sandbox_provider().release,
         run.conversation_thread_id,
         uid=str(run.uid),
-        file_thread_id=file_thread_id,
-        skills_thread_id=skills_thread_id,
         clear_cache_on_delete_failure=True,
         sandbox_instance_id=str(run.id),
     )
@@ -773,7 +758,6 @@ async def process_agent_run(ctx, run_id: str):
             # 缺失会在 chat_service._apply_subagent_runtime_context 处直接报错。
             meta["parent_thread_id"] = runtime.get("parent_thread_id")
             meta["file_thread_id"] = runtime.get("file_thread_id")
-            meta["skills_thread_id"] = runtime.get("skills_thread_id")
             meta["output_base_revision_id"] = runtime.get("output_base_revision_id")
         if input_metadata.get("source"):
             meta["source"] = input_metadata.get("source")

@@ -23,22 +23,14 @@ def sandbox_provisioner_token() -> str:
 
 def sandbox_id_for_thread(
     thread_id: str,
-    skills_thread_id: str | None = None,
     *,
     uid: str | None = None,
-    runtime_thread_id: str | None = None,
     sandbox_instance_id: str | None = None,
 ) -> str:
-    file_thread_id = str(thread_id or "").strip()
-    skills_id = str(skills_thread_id or file_thread_id).strip()
+    runtime_id = str(thread_id or "").strip()
     uid_id = str(uid or "").strip()
-    scope = file_thread_id if skills_id == file_thread_id else f"{file_thread_id}:{skills_id}"
-    runtime_id = str(runtime_thread_id or file_thread_id).strip()
-    if runtime_id != file_thread_id:
-        scope = f"{scope}:{runtime_id}"
     instance_id = str(sandbox_instance_id or runtime_id).strip()
-    if instance_id != runtime_id:
-        scope = f"{scope}:{instance_id}"
+    scope = runtime_id if instance_id == runtime_id else f"{runtime_id}:{instance_id}"
     identity = f"{uid_id}:{scope}" if uid_id else scope
     digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()
     return digest[:12]
@@ -47,11 +39,9 @@ def sandbox_id_for_thread(
 def _sandbox_key(
     uid: str,
     runtime_thread_id: str,
-    file_thread_id: str,
-    skills_thread_id: str,
     sandbox_instance_id: str,
 ) -> str:
-    return f"{uid}::{runtime_thread_id}::{file_thread_id}::{skills_thread_id}::{sandbox_instance_id}"
+    return f"{uid}::{runtime_thread_id}::{sandbox_instance_id}"
 
 
 def normalize_env(env: dict | None) -> dict[str, str]:
@@ -96,11 +86,15 @@ def load_user_agent_env(uid: str) -> dict[str, str]:
 class SandboxConnection:
     cache_key: str
     thread_id: str
-    file_thread_id: str
-    skills_thread_id: str
     uid: str
     sandbox_id: str
     sandbox_url: str
+    generation: str | None = None
+    workdir_id: str | None = None
+
+
+class SandboxIdentityMismatchError(RuntimeError):
+    """Sandbox runtime 的持久挂载身份与请求不一致。"""
 
 
 class ProvisionerSandboxProvider:
@@ -131,19 +125,17 @@ class ProvisionerSandboxProvider:
         *,
         cache_key: str,
         thread_id: str,
-        file_thread_id: str,
-        skills_thread_id: str,
         uid: str,
         record: SandboxRecord,
     ) -> SandboxConnection:
         connection = SandboxConnection(
             cache_key=cache_key,
             thread_id=thread_id,
-            file_thread_id=file_thread_id,
-            skills_thread_id=skills_thread_id,
             uid=uid,
             sandbox_id=record.sandbox_id,
             sandbox_url=record.sandbox_url,
+            generation=record.generation,
+            workdir_id=record.workdir_id,
         )
         self._connections[cache_key] = connection
         self._last_touch_at[cache_key] = time.time()
@@ -162,60 +154,70 @@ class ProvisionerSandboxProvider:
             return True
         is_alive = self._client.touch(connection.sandbox_id)
         self._last_touch_at[connection.cache_key] = time.time()
-        return is_alive
+        if not is_alive:
+            return False
+        record = self._client.discover(connection.sandbox_id)
+        if record is None:
+            return False
+        if record.workdir_id != connection.workdir_id:
+            raise SandboxIdentityMismatchError("sandbox Project Workdir changed within one runtime scope")
+        connection.sandbox_url = record.sandbox_url
+        connection.generation = record.generation
+        return True
 
     def acquire(
         self,
         thread_id: str,
         *,
         uid: str,
-        file_thread_id: str | None = None,
-        skills_thread_id: str | None = None,
         inherit_env: bool = True,
         sandbox_instance_id: str | None = None,
+        workdir_id: str | None = None,
     ) -> str:
-        file_id = str(file_thread_id or thread_id).strip()
-        skills_id = str(skills_thread_id or thread_id).strip()
         instance_id = str(sandbox_instance_id or thread_id).strip()
-        cache_key = _sandbox_key(uid, thread_id, file_id, skills_id, instance_id)
+        normalized_workdir_id = str(workdir_id or "").strip() or None
+        cache_key = _sandbox_key(uid, thread_id, instance_id)
         lock = self._thread_lock(cache_key)
         with lock:
             current = self._connections.get(cache_key)
             if current:
                 if current.uid != uid:
                     raise RuntimeError(f"sandbox scope {cache_key} belongs to uid {current.uid}, not {uid}")
+                if current.workdir_id != normalized_workdir_id:
+                    raise SandboxIdentityMismatchError(
+                        "sandbox Project Workdir does not match the existing runtime scope"
+                    )
                 try:
                     if self._touch_if_needed(current):
                         return current.sandbox_id
                     self._connections.pop(cache_key, None)
                     self._last_touch_at.pop(cache_key, None)
+                except SandboxIdentityMismatchError:
+                    raise
                 except Exception as exc:  # noqa: BLE001
                     logger.warning(f"Failed to touch sandbox {current.sandbox_id} for {cache_key}: {exc}")
                     return current.sandbox_id
 
             sandbox_id = sandbox_id_for_thread(
-                file_id,
-                skills_id,
+                thread_id,
                 uid=uid,
-                runtime_thread_id=thread_id,
                 sandbox_instance_id=instance_id,
             )
-            logger.info(f"Ensuring sandbox {sandbox_id} for file thread {file_id} and skills thread {skills_id}")
+            logger.info(f"Ensuring sandbox {sandbox_id} for runtime thread {thread_id}")
             record = self._client.create(
                 sandbox_id,
                 thread_id,
                 workspace_uid_dirname(uid),
                 load_user_agent_env(uid) if inherit_env else {},
-                file_thread_id=file_id,
-                skills_thread_id=skills_id,
+                workdir_id=normalized_workdir_id,
                 inherit_env=inherit_env,
             )
+            if record.workdir_id != normalized_workdir_id:
+                raise RuntimeError("created sandbox Project Workdir does not match requested scope")
 
             connection = self._record_to_connection(
                 cache_key=cache_key,
                 thread_id=thread_id,
-                file_thread_id=file_id,
-                skills_thread_id=skills_id,
                 uid=uid,
                 record=record,
             )
@@ -227,35 +229,37 @@ class ProvisionerSandboxProvider:
         *,
         uid: str,
         create_if_missing: bool = False,
-        file_thread_id: str | None = None,
-        skills_thread_id: str | None = None,
         inherit_env: bool = True,
         sandbox_instance_id: str | None = None,
+        workdir_id: str | None = None,
     ) -> SandboxConnection | None:
-        file_id = str(file_thread_id or thread_id).strip()
-        skills_id = str(skills_thread_id or thread_id).strip()
         instance_id = str(sandbox_instance_id or thread_id).strip()
-        cache_key = _sandbox_key(uid, thread_id, file_id, skills_id, instance_id)
+        normalized_workdir_id = str(workdir_id or "").strip() or None
+        cache_key = _sandbox_key(uid, thread_id, instance_id)
         lock = self._thread_lock(cache_key)
         with lock:
             current = self._connections.get(cache_key)
             if current:
                 if current.uid != uid:
                     raise RuntimeError(f"sandbox scope {cache_key} belongs to uid {current.uid}, not {uid}")
+                if current.workdir_id != normalized_workdir_id:
+                    raise SandboxIdentityMismatchError(
+                        "sandbox Project Workdir does not match the existing runtime scope"
+                    )
                 try:
                     if self._touch_if_needed(current):
                         return current
                     self._connections.pop(cache_key, None)
                     self._last_touch_at.pop(cache_key, None)
+                except SandboxIdentityMismatchError:
+                    raise
                 except Exception as exc:  # noqa: BLE001
                     logger.warning(f"Failed to touch sandbox {current.sandbox_id} for {cache_key}: {exc}")
                     return current
 
             sandbox_id = sandbox_id_for_thread(
-                file_id,
-                skills_id,
+                thread_id,
                 uid=uid,
-                runtime_thread_id=thread_id,
                 sandbox_instance_id=instance_id,
             )
             if create_if_missing:
@@ -264,20 +268,21 @@ class ProvisionerSandboxProvider:
                     thread_id,
                     workspace_uid_dirname(uid),
                     load_user_agent_env(uid) if inherit_env else {},
-                    file_thread_id=file_id,
-                    skills_thread_id=skills_id,
+                    workdir_id=normalized_workdir_id,
                     inherit_env=inherit_env,
                 )
+                if record.workdir_id != normalized_workdir_id:
+                    raise RuntimeError("created sandbox Project Workdir does not match requested scope")
             else:
                 record = self._client.discover(sandbox_id)
                 if record is None:
                     return None
+                if record.workdir_id != normalized_workdir_id:
+                    raise RuntimeError("discovered sandbox Project Workdir does not match requested scope")
 
             return self._record_to_connection(
                 cache_key=cache_key,
                 thread_id=thread_id,
-                file_thread_id=file_id,
-                skills_thread_id=skills_id,
                 uid=uid,
                 record=record,
             )
@@ -287,32 +292,40 @@ class ProvisionerSandboxProvider:
         thread_id: str,
         *,
         uid: str,
-        file_thread_id: str | None = None,
-        skills_thread_id: str | None = None,
         clear_cache_on_delete_failure: bool = False,
         sandbox_instance_id: str | None = None,
+        workdir_id: str | None = None,
     ) -> None:
         """释放一个指定作用域的 Sandbox，并清理本地连接缓存。"""
-        file_id = str(file_thread_id or thread_id).strip()
-        skills_id = str(skills_thread_id or thread_id).strip()
         instance_id = str(sandbox_instance_id or thread_id).strip()
-        cache_key = _sandbox_key(uid, thread_id, file_id, skills_id, instance_id)
+        normalized_workdir_id = str(workdir_id or "").strip() or None
+        cache_key = _sandbox_key(uid, thread_id, instance_id)
         lock = self._thread_lock(cache_key)
         with lock:
             connection = self._connections.get(cache_key)
-            sandbox_id = (
-                connection.sandbox_id
-                if connection
-                else sandbox_id_for_thread(
-                    file_id,
-                    skills_id,
+            if connection and connection.workdir_id != normalized_workdir_id:
+                raise SandboxIdentityMismatchError(
+                    "sandbox Project Workdir does not match the existing runtime scope"
+                )
+            if connection is None:
+                sandbox_id = sandbox_id_for_thread(
+                    thread_id,
                     uid=uid,
-                    runtime_thread_id=thread_id,
                     sandbox_instance_id=instance_id,
                 )
-            )
+                record = self._client.discover(sandbox_id)
+                if record is None:
+                    return
+                if record.workdir_id != normalized_workdir_id:
+                    raise SandboxIdentityMismatchError(
+                        "sandbox Project Workdir does not match the requested release scope"
+                    )
+                generation = record.generation
+            else:
+                sandbox_id = connection.sandbox_id
+                generation = connection.generation
             try:
-                self._client.delete(sandbox_id)
+                self._client.delete(sandbox_id, expected_generation=generation)
             except Exception:
                 if clear_cache_on_delete_failure:
                     self._connections.pop(cache_key, None)
@@ -329,7 +342,10 @@ class ProvisionerSandboxProvider:
 
         for connection in connections:
             try:
-                self._client.delete(connection.sandbox_id)
+                self._client.delete(
+                    connection.sandbox_id,
+                    expected_generation=connection.generation,
+                )
             except Exception as exc:  # noqa: BLE001
                 logger.warning(f"Failed to release sandbox {connection.sandbox_id} for {connection.cache_key}: {exc}")
 

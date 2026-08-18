@@ -17,6 +17,7 @@ from yuxi.utils.paths import (
 )
 
 _SAFE_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+PROJECTS_VIRTUAL_ROOT = "/home/gem/projects"
 
 
 def get_virtual_path_prefix() -> str:
@@ -30,6 +31,30 @@ def validate_thread_id(thread_id: str) -> str:
     if not _SAFE_ID_RE.match(value):
         raise ValueError("thread_id contains invalid characters")
     return value
+
+
+def validate_workdir_id(workdir_id: str) -> str:
+    """校验 Project Workdir 的单路径段身份。"""
+    value = str(workdir_id or "").strip()
+    if not value:
+        raise ValueError("workdir_id is required")
+    if not _SAFE_ID_RE.fullmatch(value):
+        raise ValueError("workdir_id contains invalid characters")
+    return value
+
+
+def project_workdir_virtual_dir(workdir_id: str) -> str:
+    """返回 Sandbox 内稳定的 Project Workdir 根。"""
+    safe_workdir_id = validate_workdir_id(workdir_id)
+    return f"{PROJECTS_VIRTUAL_ROOT}/project-{safe_workdir_id}"
+
+
+def project_workdir_host_dir(workdir_id: str) -> Path:
+    """返回 Compose 持久卷内的 Project Workdir 根。"""
+    safe_workdir_id = validate_workdir_id(workdir_id)
+    projects_root = (get_save_dir() / "projects").resolve(strict=False)
+    target = (projects_root / safe_workdir_id).resolve(strict=False)
+    return ensure_within_root(target, projects_root, error_message="workdir path resolved outside projects root")
 
 
 def _thread_root_dir(thread_id: str) -> Path:

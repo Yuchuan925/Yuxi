@@ -484,14 +484,11 @@ async def test_hydrate_attachment_records_streams_validated_minio_objects(monkey
         "user-1",
         [parsed, plain],
         file_thread_id="parent-thread",
-        skills_thread_id="child-thread",
     )
 
     assert calls["scope"] == {
         "thread_id": "child-thread",
         "uid": "user-1",
-        "file_thread_id": "parent-thread",
-        "skills_thread_id": "child-thread",
         "sandbox_instance_id": None,
         "create_if_missing": True,
     }

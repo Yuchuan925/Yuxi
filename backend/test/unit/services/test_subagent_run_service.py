@@ -68,7 +68,13 @@ def _agent(slug: str = "worker"):
 
 
 def _parent_run():
-    return SimpleNamespace(id="parent-run", conversation_thread_id="parent-thread", conversation_id=10, run_type="chat")
+    return SimpleNamespace(
+        id="parent-run",
+        conversation_thread_id="parent-thread",
+        runtime_scope_id="parent-thread",
+        conversation_id=10,
+        run_type="chat",
+    )
 
 
 def _relation(
@@ -111,7 +117,14 @@ def _patch_repos(
 ):
     captured = captured if captured is not None else {}
     parent_run = parent_run or _parent_run()
-    child_conversation = child_conversation or SimpleNamespace(id=20, uid="user-1", agent_id="worker", status="active")
+    child_conversation = child_conversation or SimpleNamespace(
+        id=20,
+        uid="user-1",
+        agent_id="worker",
+        status="active",
+        workdir_id=None,
+    )
+    parent_conversation = SimpleNamespace(id=10, uid="user-1", thread_id="parent-thread", workdir_id="workdir-1")
 
     class RunRepo:
         def __init__(self, _db):
@@ -156,6 +169,18 @@ def _patch_repos(
         async def lock_conversation_by_thread_id(self, thread_id: str):
             return await self.get_conversation_by_thread_id(thread_id)
 
+        async def get_conversation_by_id(self, conversation_id: int):
+            if conversation_id == parent_conversation.id:
+                return parent_conversation
+            if conversation_id == child_conversation.id:
+                return child_conversation
+            return None
+
+        async def ensure_default_workdir(self, conversation):
+            if not getattr(conversation, "workdir_id", None):
+                conversation.workdir_id = "workdir-1"
+            return conversation.workdir_id
+
         async def add_conversation(
             self,
             *,
@@ -164,6 +189,7 @@ def _patch_repos(
             title: str,
             thread_id: str,
             metadata: dict,
+            workdir_id: str,
         ):
             captured["conversation"] = {
                 "uid": uid,
@@ -171,8 +197,10 @@ def _patch_repos(
                 "title": title,
                 "thread_id": thread_id,
                 "metadata": metadata,
+                "workdir_id": workdir_id,
             }
             child_conversation.thread_id = thread_id
+            child_conversation.workdir_id = workdir_id
             return child_conversation
 
     class ThreadRepo:
@@ -357,6 +385,8 @@ async def test_subagent_run_service_creates_child_relation_run_and_enqueue(monke
     assert result.relation.child_thread_id == child_thread_id
     assert result.relation is relation
     assert child_conversation.status == "subagent"
+    assert child_conversation.workdir_id == "workdir-1"
+    assert captured["conversation"]["workdir_id"] == "workdir-1"
     assert captured["conversation"]["metadata"]["parent_conversation_id"] == 10
     assert captured["relation"] == {
         "uid": "user-1",
@@ -592,6 +622,7 @@ async def test_subagent_run_service_create_run_record_persists_subagent_context(
     assert db.created_run_kwargs["created_by_run_id"] == "parent-run"
     assert db.created_run_kwargs["subagent_thread_relation_id"] == 77
     assert db.created_run_kwargs["conversation_thread_id"] == "child-thread"
+    assert db.created_run_kwargs["runtime_scope_id"] == "parent-thread"
     assert db.created_run_kwargs["input_message_id"] == 10
     assert db.created_run_kwargs["input_payload"] == {
         "model_spec": "agent-default-model",
@@ -601,7 +632,6 @@ async def test_subagent_run_service_create_run_record_persists_subagent_context(
             "subagent_name": "Worker",
             "parent_thread_id": "parent-thread",
             "file_thread_id": "parent-file-thread",
-            "skills_thread_id": "child-thread",
         },
     }
     assert db.committed is False

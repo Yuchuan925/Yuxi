@@ -40,8 +40,6 @@ def _prepare_skill_from_sandbox(
     thread_id: str,
     uid: str,
     staging_root: Path,
-    file_thread_id: str | None = None,
-    skills_thread_id: str | None = None,
     sandbox_instance_id: str | None = None,
 ) -> Path:
     """从 Sandbox 路径准备 skill 目录，返回本地暂存目录。"""
@@ -59,8 +57,6 @@ def _prepare_skill_from_sandbox(
     backend = ProvisionerSandboxBackend(
         thread_id=thread_id,
         uid=uid,
-        file_thread_id=file_thread_id,
-        skills_thread_id=skills_thread_id,
         sandbox_instance_id=sandbox_instance_id,
         create_if_missing=False,
     )
@@ -144,7 +140,7 @@ async def _run_install_task(
             install_personal_skill_dir,
             list_personal_skills,
             normalize_string_list,
-            sync_thread_readable_skills_async,
+            refresh_user_skill_projection_async,
         )
 
         installed_items = []
@@ -160,8 +156,6 @@ async def _run_install_task(
                     thread_id,
                     uid,
                     Path(tmp),
-                    getattr(runtime_context, "file_thread_id", None),
-                    getattr(runtime_context, "skills_thread_id", None),
                     getattr(runtime_context, "sandbox_instance_id", None),
                 )
                 item = await install_personal_skill_dir(uid, source_dir)
@@ -220,12 +214,8 @@ async def _run_install_task(
         setattr(runtime_context, "_runtime_skill_metadata", prompt_metadata)
         setattr(runtime_context, "_runtime_skill_dependency_map", dependency_map)
 
-        skill_sources = dict(getattr(runtime_context, "_runtime_skill_sources", {}) or {})
-        for slug in installed_slugs:
-            skill_sources.pop(slug, None)
+        skill_sources = await refresh_user_skill_projection_async(uid)
         setattr(runtime_context, "_runtime_skill_sources", skill_sources)
-        projected_skills = [slug for slug in runtime_context._readable_skills if slug in skill_sources]
-        await sync_thread_readable_skills_async(thread_id, projected_skills, skill_sources)
 
         lines = []
         if installed_slugs:

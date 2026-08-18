@@ -31,6 +31,8 @@ API 与 worker 使用下面的变量连接 provisioner；实际默认值和 Comp
 
 ## Provisioner 通用配置
 
+当前仓库里，后端只支持 `SANDBOX_PROVIDER=provisioner`。当某个对话线程第一次需要执行文件操作或命令执行时，后端会基于 uid、当前 runtime thread 和 instance 生成稳定的 `sandbox_id`，然后请求 `sandbox-provisioner` 创建或复用对应沙盒；若请求携带 Workdir，provisioner 还会把它作为不可变挂载身份复核。Skill 选择和旧 `file_thread_id` 都不参与 sandbox identity。应用层拿到返回的 `sandbox_url` 之后，才会真正通过 `agent-sandbox` 客户端去调用远程沙盒的文件 API 和 shell API。
+
 Compose 用宿主变量生成 provisioner 容器变量；直接部署 provisioner 时则设置右侧容器变量：
 
 | Compose/.env 输入 | provisioner 容器变量 | 作用 |
@@ -80,13 +82,13 @@ Kubernetes backend 使用 kubeconfig 或 Pod 内服务账号创建沙盒 Pod 和
 
 ## 五、Docker 本机后端是如何工作的
 
-当 `SANDBOX_PROVISIONER_BACKEND=docker` 时，`sandbox-provisioner` 会进入 `LocalContainerProvisionerBackend`。它会检查 Docker 是否可用，解析自身容器里 `/app/saves` 这个挂载点在宿主机上的真实路径，并据此推导出线程数据目录。随后它为每组文件线程与 skills 线程准备一个稳定的 `sandbox_id`，把容器命名为类似 `yuxi-sandbox-<id>` 的形式，并在 Docker 网络中启动真正的沙盒镜像。
+当 `SANDBOX_PROVISIONER_BACKEND=docker` 时，`sandbox-provisioner` 会进入 `LocalContainerProvisionerBackend`。它会检查 Docker 是否可用，解析自身容器里 `/app/saves` 这个挂载点在宿主机上的真实路径，并据此推导出持久数据目录。随后它按应用层给出的 `sandbox_id` 启动或复用类似 `yuxi-sandbox-<id>` 的容器，并复核用户、Workdir 与挂载身份。
 
 这个沙盒镜像默认来自 `SANDBOX_IMAGE`，容器内部监听的端口默认是 `8080`。provisioner 会为每个动态沙盒创建独立的 Docker bridge 网络，只把 provisioner 和该沙盒接入其中；沙盒之间不能互访，也不能访问承载 PostgreSQL、Redis、Neo4j、MinIO 等服务的 `app-network`。沙盒端口不发布到宿主机，provisioner 通过对应的独立网络访问真实容器，再以需要 Bearer token 的代理地址向 API/worker 提供文件和命令接口。API/worker 不直接持有沙盒容器地址。
 
 这个拓扑把沙箱按“其中代码可能被完全控制”处理。`SANDBOX_PROVISIONER_TOKEN` 只配置给 API、worker 和 provisioner，绝不能写进 `sandbox.env` 或用户级 Agent 环境变量，否则沙箱会重新获得 provisioner 管理权限。
 
-Docker 后端在启动沙盒时，只挂载用户级 workspace 和 skills 线程可见的只读 skills。`/home/gem/user-data/uploads` 与 `outputs` 都位于沙盒临时 `/home/gem` 中：每个 Run 使用由 run ID 区分的 sandbox instance，worker 在执行前分别从 Conversation 当前附件集合和指定 outputs revision 完整重建；执行结束后把 outputs 逐文件上传为 MinIO 不可变对象，并在 Run 终态事务内条件推进 PostgreSQL 当前版本。这样相邻 Run 和父子 Run 的后台进程不会共享临时 home，sandbox 重建不依赖宿主机线程目录，冲突也不会静默覆盖较新版本。容器的 `/home/gem` 使用 `tmpfs`，workspace 仍是当前唯一挂入沙盒的可写持久目录。
+Docker 后端在启动沙盒时，挂载用户级 workspace 和当前 uid 授权全集的只读 Skills 投影。`/home/gem/user-data/uploads` 与 `outputs` 都位于沙盒临时 `/home/gem` 中：每个 Run 使用由 run ID 区分的 sandbox instance，worker 在执行前分别从 Conversation 当前附件集合和指定 outputs revision 完整重建；执行结束后把 outputs 逐文件上传为 MinIO 不可变对象，并在 Run 终态事务内条件推进 PostgreSQL 当前版本。这样相邻 Run 和父子 Run 的后台进程不会共享临时 home，sandbox 重建不依赖宿主机线程目录，冲突也不会静默覆盖较新版本。容器的 `/home/gem` 使用 `tmpfs`，workspace 仍是当前唯一挂入沙盒的可写持久目录。
 
 为了避免长期空闲的沙盒一直占资源，provisioner 还带了一个 idle reaper。它会记录每个沙盒最近一次被 touch 的时间，超过 `SANDBOX_IDLE_TIMEOUT_SECONDS` 之后自动删除。当前默认空闲超时是 120 秒，但如果这个值小于命令执行超时，系统会自动把它提高到“命令超时 + 30 秒”，以免执行中的任务被误回收。
 
@@ -102,9 +104,9 @@ Docker 后端在启动沙盒时，只挂载用户级 workspace 和 skills 线程
 
 当 `SANDBOX_PROVISIONER_BACKEND=kubernetes` 时，`sandbox-provisioner` 会改用 Kubernetes Python 客户端。它会先加载 kubeconfig 或集群内配置，然后在指定的 namespace 中创建一个沙盒 Pod，再创建一个同名的 NodePort Service，把这个 Service 的 `nodePort` 暴露给 Yuxi 后端使用。
 
-Kubernetes 后端下，沙盒还是同一套镜像并暴露相同 HTTP API，但由 Pod 承载。当前真正使用的是 `THREAD_PVC`：Pod 把它挂到 `/mnt/shared-data`，再用 `subPath` 把 `threads/shared/<uid>/workspace` 与 `threads/<skills_thread_id>/skills` 挂到对应虚拟目录。uploads 与 outputs 留在 Pod 的 `emptyDir` home 中，由 worker 从 MinIO/PostgreSQL 指定快照 hydrate；子智能体沿用父对话 `file_thread_id`，但运行在独立 instance，通过父私有 checkpoint 和子终态 revision 同步文件，同时保持自己的 skills scope。
+Kubernetes 后端下，沙盒还是同一套镜像并暴露相同 HTTP API，但由 Pod 承载。当前真正使用的是 `THREAD_PVC`：Pod 把它挂到 `/mnt/shared-data`，再用 `subPath` 把 `threads/shared/<uid>/workspace` 与 `skill-projections/<uid>` 挂到对应虚拟目录。uploads 与 outputs 留在 Pod 的 `emptyDir` home 中，由 worker 从 MinIO/PostgreSQL 指定快照 hydrate；子智能体在旧附件/output 服务中仍沿用父对话 `file_thread_id` 定位快照，但该字段不再传给 provisioner，也不参与 Sandbox 身份。当前父子文件仍通过父私有 checkpoint 和子终态 revision 同步。
 
-需要特别说明的是，代码里虽然读取了 `SKILLS_PVC` 这个环境变量，但当前 Pod 规格实际没有使用单独的 skills PVC，而是统一从 `THREAD_PVC` 中切 `threads/<thread_id>/skills` 这个子路径。因此，如果看到环境变量里同时出现 `SKILLS_PVC` 和 `THREAD_PVC`，应当以 `THREAD_PVC` 的真实挂载语义为准，`SKILLS_PVC` 目前更像一个预留字段。
+需要特别说明的是，代码里虽然读取了 `SKILLS_PVC` 这个环境变量，但当前 Pod 规格实际没有使用单独的 skills PVC，而是统一从 `THREAD_PVC` 中切 `skill-projections/<uid>` 这个子路径。因此，如果看到环境变量里同时出现 `SKILLS_PVC` 和 `THREAD_PVC`，应当以 `THREAD_PVC` 的真实挂载语义为准，`SKILLS_PVC` 目前更像一个预留字段。
 
 Kubernetes 后端还需要一个 `NODE_HOST`。这是因为当前实现使用的是 NodePort Service，而不是 Ingress，也不是 ClusterIP。provisioner 创建完 Service 后会通过 `http://<NODE_HOST>:<nodePort>` 访问目标沙箱，但返回给 Yuxi 后端的仍是 provisioner 认证代理地址。所以 `NODE_HOST` 必须从 provisioner 可达，不需要直接暴露给 API/worker。
 
@@ -180,13 +182,13 @@ Yuxi 不会把整个容器文件系统都开放给 Agent 或 viewer。当前 vie
 
 `/home/gem/user-data` 是主要工作区。它允许模型和工具写入，但推荐语义并不相同。内置 prompt 中已经明确说明，`workspace` 应当放中间文件，`outputs` 应当放最终产物，`uploads` 是用户上传文件的位置。对于普通对话 Agent，文案甚至提示“非必要不要写 workspace，而优先写 outputs”。
 
-`/home/gem/skills` 是共享与内置 Skill 的只读目录。它不是简单地把 `saves/skills` 整个暴露进去，而是按当前运行时最终生效的共享与内置 Skill，将来源同步到 `saves/threads/<skills_thread_id>/skills`，再把线程目录只读挂进沙盒。个人 Skill 不进入这层投影，Agent 直接读取已经挂载的 `/home/gem/user-data/workspace/agents/skills/<slug>`。
+`/home/gem/skills` 是当前用户授权 Skill 的只读目录。它不把全局 `saves/skills` 直接暴露进去，而是将当前用户可达的共享、内置与个人 Skill 来源同步到 `saves/skill-projections/<uid>`，再把该目录只读挂进沙盒。不同用户使用不同投影，Agent 选中列表不改变这个挂载。
 
 知识库访问不属于沙盒文件系统暴露规则。当前 Agent 可见知识库仍由用户权限和 Agent 配置共同决定，但只通过 `query_kb`、`open_kb_document` 等工具访问，不提供沙盒目录投影。
 
 ## 十、skills、知识库、附件是怎么和沙盒结合的
 
-skills 的结合方式分成两层。第一层是提示词层，`prepare_agent_runtime_context` 会先根据当前 Agent 配置的 `context.skills` 展开依赖闭包，`SkillsMiddleware` 再把 `_prompt_skills` 注入到系统提示里，并给出每个 Skill 的真实运行入口。第二层是文件系统层：共享与内置 Skill 由 `sync_thread_readable_skills` 同步到当前 `skills_thread_id` 的线程目录，并只读挂载到 `/home/gem/skills`；个人 Skill 直接使用用户工作区中的 `workspace/agents/skills`，不再生成线程副本。
+skills 的结合方式分成两层。第一层是提示词层，`prepare_agent_runtime_context` 会先根据当前 Agent 配置的 `context.skills` 展开依赖闭包，`SkillsMiddleware` 再把 `_prompt_skills` 注入到系统提示里，并给出每个 Skill 的真实运行入口。第二层是文件系统层：`sync_user_accessible_skills` 把用户授权的共享、内置与个人 Skill 同步到用户级投影，并只读挂载到 `/home/gem/skills`。因此未选中但用户有权访问的 Skill 文件仍可读，但不会自动进入系统提示或激活工具。
 
 附件上传后，原件和可选 Markdown 解析结果保存在 MinIO，Conversation 保存文件 ID、对象名、请求绑定和虚拟路径。`metadata.attachments` 是服务端保留字段；worker 消费前还会校验固定 bucket、`file_thread_id/file_id` 对象前缀和规范虚拟路径，不会仅因记录位于当前 Conversation 就使用全局 MinIO 凭据读取它。worker 在模型执行前先提交业务数据库事务，再读取实际 `file_thread_id` 的当前附件集合，通过受信任 sandbox 文件 API 清空并逐个重建 `/home/gem/user-data/uploads`。任一对象读取、清理或写入失败都会阻止本次执行；部分写入失败或取消后还会等待已启动写入到达终点并再次清空，避免旧 Run 回写新旧混合内容。LangGraph state 中的 `uploads` 列表继续把稳定虚拟路径告诉模型，Agent 通用文件后端仍拒绝写 uploads。缺少 MinIO 元数据的历史附件可以通过不跟随符号链接的读取从旧本地普通文件回填；任一历史文件缺失或不安全会阻止本次执行，统一迁移留给后续阶段。
 
@@ -330,7 +332,7 @@ CHECK_YUXI_SANDBOX_ENV_EXISTS=True
 
 ## 十四、和旧版文档相比，今天最重要的理解方式
 
-当前项目不应再按“应用直接管理一个长期存在的本地 sandbox 服务”去理解。更准确的认识应该是：Yuxi 只管理线程和上下文；provisioner 负责创建线程对应的沙盒实例；文件系统不是简单地暴露一个容器根目录，而是把可写工作区、只读 skills 等组合成一个受控命名空间（知识库不再映射为沙盒目录，改由 `query_kb`/`open_kb_document` 等工具访问）。
+当前项目不应再按“应用直接管理一个长期存在的本地 sandbox 服务”去理解。更准确的认识应该是：Yuxi 管理 Project Workdir、运行上下文和沙盒生命周期；provisioner 为一次顶层运行创建使用该 Workdir 的沙盒实例；文件系统不是简单地暴露一个容器根目录，而是把可写项目目录、用户级只读 Skills 投影等组合成一个受控命名空间（知识库不再映射为沙盒目录，改由 `query_kb`/`open_kb_document` 等工具访问）。
 
 因此，当你在界面上“启用沙盒”或者在文档里“选择 K8s”时，本质上做的不是切换一段业务逻辑，而是在切换 provisioner 的底层实例承载方式。选择 `docker` 时，沙盒由当前部署机上的 Docker daemon 动态创建；选择 `kubernetes` 时，沙盒由目标 K8s 集群动态创建。Yuxi 自己始终只面对一个 provisioner 服务地址。
 

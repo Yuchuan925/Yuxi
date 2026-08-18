@@ -22,6 +22,7 @@ from yuxi.agents.backends.composite import (
 )
 from yuxi.agents.backends.sandbox import ProvisionerSandboxProvider, resolve_virtual_path, sandbox_id_for_thread
 from yuxi.agents.backends.sandbox.backend import ProvisionerSandboxBackend
+from yuxi.agents.backends.sandbox.provider import SandboxIdentityMismatchError
 from yuxi.agents.middlewares.skills import SkillsMiddleware
 from yuxi.utils.paths import VIRTUAL_PATH_CONVERSATION_HISTORY, VIRTUAL_PATH_LARGE_TOOL_RESULTS
 
@@ -71,28 +72,36 @@ def test_create_agent_composite_backend_uses_prepared_readable_skills(monkeypatc
     )
 
     assert isinstance(backend.default, ProvisionerSandboxBackend)
-    assert backend.default._readable_skills == ["reporter"]
+    assert backend.routes["/skills/"]._selected_slugs == {"reporter"}
     assert backend.artifacts_root == "/home/gem/user-data/outputs"
     assert "/skills/" in backend.routes
     assert "/home/gem/kbs/" not in backend.routes
 
 
 def test_sandbox_provider_release_deletes_sandbox_and_clears_cache():
-    deleted: list[str] = []
+    deleted: list[tuple[str, str | None]] = []
     provider = object.__new__(ProvisionerSandboxProvider)
     provider._lock = threading.Lock()
     provider._thread_locks = {}
     provider._connections = {}
     provider._last_touch_at = {}
-    provider._client = SimpleNamespace(delete=deleted.append)
-    connection = SimpleNamespace(sandbox_id="sandbox-1")
-    cache_key = "user-1::thread-1::thread-1::thread-1::thread-1"
+    provider._client = SimpleNamespace(
+        delete=lambda sandbox_id, *, expected_generation=None: deleted.append(
+            (sandbox_id, expected_generation)
+        )
+    )
+    connection = SimpleNamespace(
+        sandbox_id="sandbox-1",
+        workdir_id=None,
+        generation="generation-1",
+    )
+    cache_key = "user-1::thread-1::thread-1"
     provider._connections[cache_key] = connection
     provider._last_touch_at[cache_key] = 1.0
 
     provider.release("thread-1", uid="user-1")
 
-    assert deleted == ["sandbox-1"]
+    assert deleted == [("sandbox-1", "generation-1")]
     assert cache_key not in provider._connections
     assert cache_key not in provider._last_touch_at
 
@@ -117,7 +126,7 @@ def test_sandbox_provider_waiter_keeps_shared_thread_lock_alive():
     provider = object.__new__(ProvisionerSandboxProvider)
     provider._lock = threading.Lock()
     provider._thread_locks = weakref.WeakValueDictionary()
-    cache_key = "user-1::thread-1::thread-1::thread-1::thread-1"
+    cache_key = "user-1::thread-1::thread-1"
     first_lock = provider._thread_lock(cache_key)
     waiter_ready = threading.Event()
     waiter_acquired = threading.Event()
@@ -150,12 +159,17 @@ def test_sandbox_provider_release_on_delete_failure(clear_cache_on_delete_failur
     provider._connections = {}
     provider._last_touch_at = {}
 
-    def fail_delete(_sandbox_id):
+    def fail_delete(_sandbox_id, *, expected_generation=None):
+        _ = expected_generation
         raise RuntimeError("delete failed")
 
     provider._client = SimpleNamespace(delete=fail_delete)
-    connection = SimpleNamespace(sandbox_id="sandbox-1")
-    cache_key = "user-1::thread-1::thread-1::thread-1::thread-1"
+    connection = SimpleNamespace(
+        sandbox_id="sandbox-1",
+        workdir_id=None,
+        generation="generation-1",
+    )
+    cache_key = "user-1::thread-1::thread-1"
     provider._connections[cache_key] = connection
     provider._last_touch_at[cache_key] = 1.0
 
@@ -175,34 +189,53 @@ def test_sandbox_provider_release_on_delete_failure(clear_cache_on_delete_failur
 
 
 @pytest.mark.asyncio
-async def test_sync_agent_context_skills_uses_split_scope_without_blocking(monkeypatch):
-    """Run 初始化应在线程池同步共享 Skill，并使用独立的 Skill 线程作用域。"""
+async def test_sync_agent_context_skills_projects_all_user_authorized_skills(monkeypatch):
+    """Run 初始化应同步用户授权的全部 Skill，不将选中集合作为文件权限。"""
     calls = []
 
-    async def sync_thread_readable_skills_async(thread_id, skills, sources):
-        calls.append((thread_id, skills, sources))
+    async def refresh_user_skill_projection_async(uid):
+        calls.append(uid)
+        return {
+            "worker-skill": "/tmp/worker-skill",
+            "authorized-unselected": "/tmp/authorized-unselected",
+        }
 
     monkeypatch.setattr(
-        "yuxi.agents.backends.composite.sync_thread_readable_skills_async",
-        sync_thread_readable_skills_async,
+        "yuxi.agents.backends.composite.refresh_user_skill_projection_async",
+        refresh_user_skill_projection_async,
     )
     context = SimpleNamespace(
         thread_id="child-thread",
         uid="user-1",
-        skills_thread_id="child-skills-thread",
         _readable_skills=["worker-skill", "personal-skill"],
-        _runtime_skill_sources={"worker-skill": "/tmp/worker-skill"},
+        _runtime_skill_sources={
+            "worker-skill": "/tmp/worker-skill",
+            "authorized-unselected": "/tmp/authorized-unselected",
+        },
     )
 
     await sync_agent_context_skills(context)
 
-    assert calls == [
-        (
-            "child-skills-thread",
-            ["worker-skill"],
-            {"worker-skill": "/tmp/worker-skill"},
-        )
-    ]
+    assert calls == ["user-1"]
+    assert context._runtime_skill_sources == {
+        "worker-skill": "/tmp/worker-skill",
+        "authorized-unselected": "/tmp/authorized-unselected",
+    }
+
+
+@pytest.mark.parametrize("invalid_sources", [None, [], {"": "/tmp/demo"}, {"demo": ""}])
+def test_create_agent_composite_backend_rejects_missing_or_invalid_skill_sources(invalid_sources):
+    """授权来源契约缺失时不得把用户级投影解释为空授权并清理。"""
+    context = SimpleNamespace(uid="user-1")
+    if invalid_sources is not None:
+        context._runtime_skill_sources = invalid_sources
+    runtime = SimpleNamespace(
+        config={"configurable": {"thread_id": "thread-1", "uid": "user-1"}},
+        context=context,
+    )
+
+    with pytest.raises(ValueError, match="_runtime_skill_sources"):
+        create_agent_composite_backend(runtime)
 
 
 def test_create_agent_composite_backend_requires_thread_id():
@@ -215,11 +248,11 @@ def test_create_agent_composite_backend_ignores_unprepared_context_skills(monkey
 
     backend = create_agent_composite_backend(_runtime(skills=["configured"], readable_skills=None))
 
-    assert backend.default._readable_skills == []
+    assert backend.routes["/skills/"]._selected_slugs == set()
 
 
 @pytest.mark.parametrize("scope_source", ["config", "state"])
-def test_create_agent_composite_backend_uses_split_thread_scopes(monkeypatch, scope_source):
+def test_create_agent_composite_backend_ignores_legacy_file_thread_scope(monkeypatch, scope_source):
     monkeypatch.setattr("yuxi.agents.backends.sandbox.backend.get_sandbox_provider", lambda: object())
     runtime = _runtime(
         thread_id="child-thread",
@@ -227,7 +260,7 @@ def test_create_agent_composite_backend_uses_split_thread_scopes(monkeypatch, sc
         readable_skills=["worker-skill"],
         skill_sources={"worker-skill": "/tmp/worker-skill"},
     )
-    split_scopes = {"file_thread_id": "parent-thread", "skills_thread_id": "child-skills-thread"}
+    split_scopes = {"file_thread_id": "parent-thread"}
     if scope_source == "config":
         runtime.config["configurable"].update(split_scopes)
     else:
@@ -236,9 +269,8 @@ def test_create_agent_composite_backend_uses_split_thread_scopes(monkeypatch, sc
     backend = create_agent_composite_backend(runtime)
 
     assert backend.default._thread_id == "child-thread"
-    assert backend.default._file_thread_id == "parent-thread"
-    assert backend.default._skills_thread_id == "child-skills-thread"
-    assert backend.default._readable_skills == ["worker-skill"]
+    assert not hasattr(backend.default, "_file_thread_id")
+    assert backend.routes["/skills/"]._selected_slugs == {"worker-skill"}
 
 
 def test_create_agent_filesystem_middleware_uses_context_scope(monkeypatch):
@@ -247,7 +279,6 @@ def test_create_agent_filesystem_middleware_uses_context_scope(monkeypatch):
         thread_id="child-thread",
         uid="user-1",
         file_thread_id="parent-thread",
-        skills_thread_id="child-skills-thread",
         _readable_skills=["worker-skill"],
         _runtime_skill_sources={"worker-skill": "/tmp/worker-skill"},
     )
@@ -256,9 +287,8 @@ def test_create_agent_filesystem_middleware_uses_context_scope(monkeypatch):
     backend = middleware.backend(None)
 
     assert backend.default._thread_id == "child-thread"
-    assert backend.default._file_thread_id == "parent-thread"
-    assert backend.default._skills_thread_id == "child-skills-thread"
-    assert backend.default._readable_skills == ["worker-skill"]
+    assert not hasattr(backend.default, "_file_thread_id")
+    assert backend.routes["/skills/"]._selected_slugs == {"worker-skill"}
 
 
 def test_context_backend_construction_does_not_sync_skill_projection(monkeypatch, tmp_path) -> None:
@@ -281,8 +311,8 @@ def test_context_backend_construction_does_not_sync_skill_projection(monkeypatch
     middleware.backend(None)
     middleware.backend(None)
 
-    thread_skill = skill_service.get_thread_skills_root_dir("thread-1") / "shared-skill"
-    assert not thread_skill.exists()
+    user_skill = skill_service.get_user_skills_root_dir("user-1") / "shared-skill"
+    assert not user_skill.exists()
 
 
 def test_context_backend_rebuild_drops_shared_projection_after_personal_override(monkeypatch):
@@ -300,24 +330,25 @@ def test_context_backend_rebuild_drops_shared_projection_after_personal_override
     context._runtime_skill_sources.pop("demo")
     after_install = middleware.backend(None)
 
-    assert before_install.default._readable_skills == ["demo"]
-    assert after_install.default._readable_skills == []
+    assert before_install.routes["/skills/"]._selected_slugs == {"demo"}
     assert after_install.routes["/skills/"]._selected_slugs == set()
 
 
-def test_create_agent_composite_backend_does_not_project_personal_skills(monkeypatch):
-    """没有线程投影来源的个人 Skill 不应进入 /skills 路由。"""
+def test_create_agent_composite_backend_exposes_all_authorized_skill_sources(monkeypatch):
+    """用户授权但未选中的 Skill 仍可读，选中状态只由 Prompt 与工具管理。"""
     monkeypatch.setattr("yuxi.agents.backends.sandbox.backend.get_sandbox_provider", lambda: object())
 
     backend = create_agent_composite_backend(
         _runtime(
             readable_skills=["shared-skill", "personal-skill"],
-            skill_sources={"shared-skill": "/tmp/shared-skill"},
+            skill_sources={
+                "shared-skill": "/tmp/shared-skill",
+                "personal-skill": "/tmp/personal-skill",
+            },
         )
     )
 
-    assert backend.default._readable_skills == ["shared-skill"]
-    assert backend.routes["/skills/"]._selected_slugs == {"shared-skill"}
+    assert backend.routes["/skills/"]._selected_slugs == {"shared-skill", "personal-skill"}
 
 
 def test_create_agent_filesystem_middleware_uses_outputs_for_internal_artifacts() -> None:
@@ -431,13 +462,113 @@ def test_sandbox_id_for_thread_is_stable():
     assert len(sid1) == 12
 
 
-def test_sandbox_id_for_thread_includes_skills_scope():
-    parent_only = sandbox_id_for_thread("parent-thread")
-    split_scope = sandbox_id_for_thread("parent-thread", "child-skills-thread")
+def test_provider_revalidates_runtime_generation_after_keepalive(monkeypatch) -> None:
+    class FakeClient:
+        def create(self, sandbox_id, *_args, **kwargs):
+            return SimpleNamespace(
+                sandbox_id=sandbox_id,
+                sandbox_url="http://sandbox/generation-1",
+                generation="generation-1",
+                workdir_id=kwargs["workdir_id"],
+            )
 
-    assert split_scope == sandbox_id_for_thread("parent-thread", "child-skills-thread")
-    assert split_scope != parent_only
-    assert sandbox_id_for_thread("parent-thread", "parent-thread") == parent_only
+        def touch(self, _sandbox_id):
+            return True
+
+        def discover(self, sandbox_id):
+            return SimpleNamespace(
+                sandbox_id=sandbox_id,
+                sandbox_url="http://sandbox/generation-2",
+                generation="generation-2",
+                workdir_id="workdir-1",
+            )
+
+    provider = _make_provider(FakeClient())
+    monkeypatch.setattr("yuxi.agents.backends.sandbox.provider.load_user_agent_env", lambda _uid: {})
+    provider.acquire("root-thread", uid="user-1", workdir_id="workdir-1")
+    connection = next(iter(provider._connections.values()))
+    provider._last_touch_at[connection.cache_key] = 0
+
+    refreshed = provider.get("root-thread", uid="user-1", workdir_id="workdir-1")
+
+    assert refreshed is connection
+    assert refreshed.generation == "generation-2"
+    assert refreshed.sandbox_url == "http://sandbox/generation-2"
+
+
+def test_provider_rejects_project_workdir_drift_after_keepalive(monkeypatch) -> None:
+    class FakeClient:
+        def create(self, sandbox_id, *_args, **kwargs):
+            return SimpleNamespace(
+                sandbox_id=sandbox_id,
+                sandbox_url="http://sandbox/generation-1",
+                generation="generation-1",
+                workdir_id=kwargs["workdir_id"],
+            )
+
+        def touch(self, _sandbox_id):
+            return True
+
+        def discover(self, sandbox_id):
+            return SimpleNamespace(
+                sandbox_id=sandbox_id,
+                sandbox_url="http://sandbox/generation-2",
+                generation="generation-2",
+                workdir_id="workdir-2",
+            )
+
+    provider = _make_provider(FakeClient())
+    monkeypatch.setattr("yuxi.agents.backends.sandbox.provider.load_user_agent_env", lambda _uid: {})
+    provider.acquire("root-thread", uid="user-1", workdir_id="workdir-1")
+    connection = next(iter(provider._connections.values()))
+    provider._last_touch_at[connection.cache_key] = 0
+
+    with pytest.raises(SandboxIdentityMismatchError, match="changed"):
+        provider.get("root-thread", uid="user-1", workdir_id="workdir-1")
+
+
+def test_provider_rejects_rebinding_cached_runtime_to_another_workdir(monkeypatch) -> None:
+    created: list[str | None] = []
+
+    class FakeClient:
+        def create(self, sandbox_id, *_args, **kwargs):
+            created.append(kwargs["workdir_id"])
+            return SimpleNamespace(
+                sandbox_id=sandbox_id,
+                sandbox_url="http://sandbox",
+                generation="generation-1",
+                workdir_id=kwargs["workdir_id"],
+            )
+
+    provider = _make_provider(FakeClient())
+    monkeypatch.setattr("yuxi.agents.backends.sandbox.provider.load_user_agent_env", lambda _uid: {})
+    provider.acquire("root-thread", uid="user-1", workdir_id="workdir-1")
+
+    with pytest.raises(SandboxIdentityMismatchError, match="existing runtime scope"):
+        provider.acquire("root-thread", uid="user-1", workdir_id="workdir-2")
+
+    assert created == ["workdir-1"]
+
+
+def test_provider_release_uses_cached_generation() -> None:
+    deleted: list[tuple[str, str | None]] = []
+
+    class FakeClient:
+        def delete(self, sandbox_id, *, expected_generation=None):
+            deleted.append((sandbox_id, expected_generation))
+
+    provider = _make_provider(FakeClient())
+    cache_key = "user-1::root-thread::root-thread"
+    provider._connections[cache_key] = SimpleNamespace(
+        sandbox_id="sandbox-1",
+        uid="user-1",
+        workdir_id="workdir-1",
+        generation="generation-1",
+    )
+
+    provider.release("root-thread", uid="user-1", workdir_id="workdir-1")
+
+    assert deleted == [("sandbox-1", "generation-1")]
 
 
 def test_provider_uses_distinct_sandbox_scope_for_different_uid(monkeypatch) -> None:
@@ -445,8 +576,13 @@ def test_provider_uses_distinct_sandbox_scope_for_different_uid(monkeypatch) -> 
 
     class FakeClient:
         def create(self, sandbox_id, thread_id, uid, env, **kwargs):
-            created.append((sandbox_id, thread_id, uid, env, kwargs["file_thread_id"], kwargs["skills_thread_id"]))
-            return SimpleNamespace(sandbox_id=sandbox_id, sandbox_url=f"http://sandbox/{uid}")
+            created.append((sandbox_id, thread_id, uid, env))
+            return SimpleNamespace(
+                sandbox_id=sandbox_id,
+                sandbox_url=f"http://sandbox/{uid}",
+                generation="generation-1",
+                workdir_id=kwargs["workdir_id"],
+            )
 
         def touch(self, _sandbox_id):
             return True
@@ -457,14 +593,10 @@ def test_provider_uses_distinct_sandbox_scope_for_different_uid(monkeypatch) -> 
     sandbox_1 = provider.acquire(
         "child-thread",
         uid="user-1",
-        file_thread_id="parent-thread",
-        skills_thread_id="child-skills-thread",
     )
     sandbox_2 = provider.acquire(
         "child-thread",
         uid="user-2",
-        file_thread_id="parent-thread",
-        skills_thread_id="child-skills-thread",
     )
 
     assert sandbox_1 != sandbox_2
@@ -478,9 +610,14 @@ def test_provider_maps_external_uid_only_at_provisioner_filesystem_boundary(monk
     calls = []
 
     class FakeClient:
-        def create(self, sandbox_id, thread_id, uid, env, **_kwargs):
+        def create(self, sandbox_id, thread_id, uid, env, **kwargs):
             calls.append((uid, env))
-            return SimpleNamespace(sandbox_id=sandbox_id, sandbox_url="http://sandbox")
+            return SimpleNamespace(
+                sandbox_id=sandbox_id,
+                sandbox_url="http://sandbox",
+                generation="generation-1",
+                workdir_id=kwargs["workdir_id"],
+            )
 
         def touch(self, _sandbox_id):
             return True
@@ -496,13 +633,18 @@ def test_provider_maps_external_uid_only_at_provisioner_filesystem_boundary(monk
     assert ":" not in calls[0][0]
 
 
-def test_provider_get_create_if_missing_ensures_expected_split_scope(monkeypatch) -> None:
+def test_provider_get_create_if_missing_ensures_expected_runtime_scope(monkeypatch) -> None:
     calls = []
 
     class FakeClient:
         def create(self, sandbox_id, thread_id, uid, env, **kwargs):
-            calls.append((sandbox_id, thread_id, uid, env, kwargs["file_thread_id"], kwargs["skills_thread_id"]))
-            return SimpleNamespace(sandbox_id=sandbox_id, sandbox_url="http://sandbox")
+            calls.append((sandbox_id, thread_id, uid, env))
+            return SimpleNamespace(
+                sandbox_id=sandbox_id,
+                sandbox_url="http://sandbox",
+                generation="generation-1",
+                workdir_id=kwargs["workdir_id"],
+            )
 
         def discover(self, _sandbox_id):
             raise AssertionError("create_if_missing should ensure sandbox through provisioner create")
@@ -514,24 +656,16 @@ def test_provider_get_create_if_missing_ensures_expected_split_scope(monkeypatch
         "child-thread",
         uid="user-1",
         create_if_missing=True,
-        file_thread_id="parent-thread",
-        skills_thread_id="child-skills-thread",
     )
 
-    sandbox_id = sandbox_id_for_thread(
-        "parent-thread", "child-skills-thread", uid="user-1", runtime_thread_id="child-thread"
-    )
+    sandbox_id = sandbox_id_for_thread("child-thread", uid="user-1")
     assert connection.sandbox_id == sandbox_id
-    assert connection.file_thread_id == "parent-thread"
-    assert connection.skills_thread_id == "child-skills-thread"
     assert calls == [
         (
             sandbox_id,
             "child-thread",
             "user-1",
             {"A": "user-1"},
-            "parent-thread",
-            "child-skills-thread",
         )
     ]
 
@@ -542,7 +676,12 @@ def test_provider_can_create_sandbox_without_environment(monkeypatch) -> None:
     class FakeClient:
         def create(self, sandbox_id, thread_id, uid, env, **kwargs):
             calls.append((env, kwargs["inherit_env"]))
-            return SimpleNamespace(sandbox_id=sandbox_id, sandbox_url="http://sandbox")
+            return SimpleNamespace(
+                sandbox_id=sandbox_id,
+                sandbox_url="http://sandbox",
+                generation="generation-1",
+                workdir_id=kwargs["workdir_id"],
+            )
 
     provider = _make_provider(FakeClient())
     monkeypatch.setattr(
@@ -555,7 +694,7 @@ def test_provider_can_create_sandbox_without_environment(monkeypatch) -> None:
     assert calls == [({}, False)]
 
 
-def test_provisioner_uses_file_and_skills_thread_ids(monkeypatch) -> None:
+def test_provisioner_uses_runtime_thread_and_instance(monkeypatch) -> None:
     provider_calls = []
 
     class FakeProvider:
@@ -568,9 +707,6 @@ def test_provisioner_uses_file_and_skills_thread_ids(monkeypatch) -> None:
     backend = ProvisionerSandboxBackend(
         thread_id="child-thread",
         uid="user-1",
-        readable_skills=["worker-skill"],
-        file_thread_id="parent-thread",
-        skills_thread_id="child-skills-thread",
     )
     backend._build_client = MethodType(lambda self, sandbox_url: SimpleNamespace(url=sandbox_url), backend)
 
@@ -583,10 +719,9 @@ def test_provisioner_uses_file_and_skills_thread_ids(monkeypatch) -> None:
             {
                 "uid": "user-1",
                 "create_if_missing": True,
-                "file_thread_id": "parent-thread",
-                "skills_thread_id": "child-skills-thread",
                 "inherit_env": True,
                 "sandbox_instance_id": "child-thread",
+                "workdir_id": None,
             },
         )
     ]
@@ -1153,3 +1288,16 @@ def test_output_snapshot_cleanup_failure_blocks_publication(monkeypatch, tmp_pat
         )
 
     assert not target.exists()
+
+
+def test_project_workdir_paths_use_one_safe_opaque_segment(monkeypatch, tmp_path) -> None:
+    from yuxi.agents.backends.sandbox import paths
+
+    monkeypatch.setattr(paths, "get_save_dir", lambda: tmp_path)
+
+    assert paths.project_workdir_virtual_dir("workdir-1") == "/home/gem/projects/project-workdir-1"
+    assert paths.project_workdir_host_dir("workdir-1") == tmp_path / "projects" / "workdir-1"
+
+    for unsafe in ("../escape", "nested/workdir", "workdir name", "workdir.1"):
+        with pytest.raises(ValueError, match="invalid characters"):
+            paths.project_workdir_virtual_dir(unsafe)

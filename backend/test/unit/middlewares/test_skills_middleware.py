@@ -68,7 +68,10 @@ async def test_resolve_runtime_skills_derives_prompt_and_readable_closure(monkey
     assert (
         scope["runtime_skill_metadata"]["beta"]["path"] == "/home/gem/user-data/workspace/agents/skills/beta/SKILL.md"
     )
-    assert scope["runtime_skill_sources"] == {"alpha": "/tmp/shared/alpha"}
+    assert scope["runtime_skill_sources"] == {
+        "alpha": "/tmp/shared/alpha",
+        "beta": "/tmp/personal/beta",
+    }
     assert scope["runtime_skill_dependency_map"]["alpha"]["skills"] == ["beta"]
 
 

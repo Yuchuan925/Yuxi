@@ -236,12 +236,12 @@ def _apply_subagent_runtime_context(input_context: dict, meta: dict | None) -> N
     """把子智能体 run 的父线程和文件线程信息注入运行 context。"""
     meta = meta or {}
     if meta.get("run_type") != "subagent":
-        for key in ("parent_thread_id", "file_thread_id", "skills_thread_id", "is_subagent_runtime"):
+        for key in ("parent_thread_id", "file_thread_id", "is_subagent_runtime"):
             input_context.pop(key, None)
         return
-    # 这三个线程 ID 由 subagent_run_service 在创建 run 时写入 runtime，
+    # 这两个线程 ID 由 subagent_run_service 在创建 run 时写入 runtime，
     # 是子智能体区别于普通对话的唯一依据；缺失即上游契约被破坏，直接失败而非静默回退。
-    for key in ("parent_thread_id", "file_thread_id", "skills_thread_id"):
+    for key in ("parent_thread_id", "file_thread_id"):
         value = str(meta.get(key) or "").strip()
         if not value:
             raise ValueError(f"子智能体运行缺少必需的 {key}")
@@ -950,7 +950,6 @@ async def _hydrate_run_file_scopes(
     *,
     runtime_thread_id: str,
     file_thread_id: str,
-    skills_thread_id: str,
     uid: str,
     attachments: list[dict],
     output_files: list[dict],
@@ -963,8 +962,6 @@ async def _hydrate_run_file_scopes(
             bootstrap_backend = ProvisionerSandboxBackend(
                 thread_id=runtime_thread_id,
                 uid=uid,
-                file_thread_id=file_thread_id,
-                skills_thread_id=skills_thread_id,
                 sandbox_instance_id=sandbox_instance_id,
             )
             await await_blocking_file_call(bootstrap_backend.ensure_available)
@@ -973,7 +970,6 @@ async def _hydrate_run_file_scopes(
                 uid,
                 attachments,
                 file_thread_id=file_thread_id,
-                skills_thread_id=skills_thread_id,
                 sandbox_instance_id=sandbox_instance_id,
                 create_if_missing=False,
             )
@@ -981,7 +977,6 @@ async def _hydrate_run_file_scopes(
                 await hydrate_thread_outputs_to_sandbox(
                     runtime_thread_id=runtime_thread_id,
                     file_thread_id=file_thread_id,
-                    skills_thread_id=skills_thread_id,
                     uid=uid,
                     files=output_files,
                     sandbox_instance_id=sandbox_instance_id,
@@ -991,7 +986,6 @@ async def _hydrate_run_file_scopes(
                 await hydrate_legacy_thread_outputs_to_sandbox(
                     runtime_thread_id=runtime_thread_id,
                     file_thread_id=file_thread_id,
-                    skills_thread_id=skills_thread_id,
                     uid=uid,
                     legacy_root=legacy_output_root,
                     sandbox_instance_id=sandbox_instance_id,
@@ -1012,7 +1006,6 @@ async def _hydrate_run_file_scopes(
                     runtime_thread_id,
                     uid=uid,
                     file_thread_id=file_thread_id,
-                    skills_thread_id=skills_thread_id,
                     sandbox_instance_id=sandbox_instance_id,
                     clear_cache_on_delete_failure=True,
                 )
@@ -1132,7 +1125,6 @@ async def stream_agent_chat(
         )
 
         file_thread_id = str(input_context.get("file_thread_id") or thread_id)
-        skills_thread_id = str(input_context.get("skills_thread_id") or thread_id)
         thread_attachment_records = await _attachment_records_for_file_thread(
             conv_repo=conv_repo,
             conversation=conversation,
@@ -1203,7 +1195,6 @@ async def stream_agent_chat(
         await _hydrate_run_file_scopes(
             runtime_thread_id=thread_id,
             file_thread_id=file_thread_id,
-            skills_thread_id=skills_thread_id,
             uid=uid,
             attachments=thread_attachment_records,
             output_files=output_files,
@@ -1353,7 +1344,6 @@ async def stream_agent_chat(
             output_revision_id = await stage_thread_outputs(
                 runtime_thread_id=thread_id,
                 file_thread_id=file_thread_id,
-                skills_thread_id=skills_thread_id,
                 uid=uid,
                 conversation_id=file_conversation.id,
                 run_id=meta.get("run_id"),
@@ -1473,7 +1463,6 @@ async def stream_agent_resume(
     await _hydrate_run_file_scopes(
         runtime_thread_id=thread_id,
         file_thread_id=thread_id,
-        skills_thread_id=thread_id,
         uid=uid,
         attachments=thread_attachments,
         output_files=output_files,
@@ -1604,7 +1593,6 @@ async def stream_agent_resume(
             output_revision_id = await stage_thread_outputs(
                 runtime_thread_id=thread_id,
                 file_thread_id=thread_id,
-                skills_thread_id=thread_id,
                 uid=uid,
                 conversation_id=conversation.id,
                 run_id=meta.get("run_id"),

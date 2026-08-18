@@ -8,7 +8,7 @@ import pytest
 
 from e2e_helpers import cancel_run, consume_events, skip_if_external_quota, wait_for_run
 from test.live_api_cleanup import remove_e2e_thread_storage
-from yuxi.agents.skills.service import get_personal_skills_root_dir, get_thread_skills_root_dir
+from yuxi.agents.skills.service import get_personal_skills_root_dir, get_user_skills_root_dir
 from yuxi.utils.paths import VIRTUAL_PATH_WORKSPACE_SKILLS
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.e2e, pytest.mark.slow]
@@ -122,7 +122,9 @@ async def test_main_agent_reads_personal_skill_from_workspace(
 
         personal_skill = get_personal_skills_root_dir(uid) / slug / "SKILL.md"
         assert personal_skill.read_text(encoding="utf-8") == skill_md
-        assert not (get_thread_skills_root_dir(thread_id) / slug).exists()
+        projected_skill = get_user_skills_root_dir(uid) / slug / "SKILL.md"
+        assert projected_skill.read_text(encoding="utf-8") == skill_md
+        assert not projected_skill.is_symlink()
     finally:
         await cancel_run(e2e_client, e2e_headers, run_id)
         if thread_id:

@@ -235,7 +235,6 @@ class SubagentRunService:
             "subagent_name": scope.agent_item.name,
             "parent_thread_id": creator_run.conversation_thread_id,
             "file_thread_id": file_thread_id or creator_run.conversation_thread_id,
-            "skills_thread_id": relation.child_thread_id,
             "output_base_revision_id": output_base_revision_id,
         }
         input_payload = {
@@ -259,6 +258,7 @@ class SubagentRunService:
         return await agent_run_service.persist_agent_run_record(
             agent_slug=relation.subagent_slug,
             conversation_thread_id=relation.child_thread_id,
+            runtime_scope_id=getattr(creator_run, "runtime_scope_id", None) or creator_run.conversation_thread_id,
             current_uid=current_uid,
             db=self.db,
             request_id=request_id,
@@ -279,6 +279,7 @@ class SubagentRunService:
         uid: str,
         agent_item: Agent,
         creator_run: AgentRun,
+        parent_workdir_id: str,
     ):
         """确保子线程有对应 conversation；新线程会创建标记为 subagent 的对话。"""
         conversation = await self.conv_repo.get_conversation_by_thread_id(child_thread_id)
@@ -289,6 +290,11 @@ class SubagentRunService:
                 raise ValueError(f"子智能体线程 {child_thread_id} 已被普通对话占用")
             if conversation.agent_id != agent_item.slug:
                 raise ValueError(f"子智能体线程 {child_thread_id} 属于智能体 {conversation.agent_id}")
+            if getattr(conversation, "workdir_id", None) is None:
+                conversation.workdir_id = parent_workdir_id
+                await self.db.flush()
+            elif conversation.workdir_id != parent_workdir_id:
+                raise ValueError("子智能体线程与父对话的 Project Workdir 不一致")
             return conversation
 
         conversation = await self.conv_repo.add_conversation(
@@ -303,6 +309,7 @@ class SubagentRunService:
                 "parent_conversation_id": creator_run.conversation_id,
                 "subagent_slug": agent_item.slug,
             },
+            workdir_id=parent_workdir_id,
         )
         conversation.status = "subagent"
         await self.db.flush()
@@ -332,6 +339,13 @@ class SubagentRunService:
         continuing: bool,
     ) -> SubagentThread:
         """读取或创建父子线程关系；relation 是后台子 run 的线程归属来源。"""
+        if creator_run.conversation_id is None:
+            raise ValueError("父运行任务缺少 conversation_id，无法创建子智能体线程关系")
+        parent_conversation = await self.conv_repo.get_conversation_by_id(creator_run.conversation_id)
+        if parent_conversation is None or parent_conversation.uid != str(uid):
+            raise ValueError("父运行任务的 Conversation 不存在")
+        parent_workdir_id = await self.conv_repo.ensure_default_workdir(parent_conversation)
+
         existing = await self.thread_repo.get_by_child_thread_for_user(child_thread_id, uid)
         if existing:
             self._validate_thread_relation(
@@ -340,17 +354,23 @@ class SubagentRunService:
                 agent_item=agent_item,
                 creator_run=creator_run,
             )
+            child_conversation = await self.conv_repo.get_conversation_by_id(existing.child_conversation_id)
+            if child_conversation is None or child_conversation.uid != str(uid):
+                raise ValueError("子智能体线程不存在")
+            if getattr(child_conversation, "workdir_id", None) is None:
+                child_conversation.workdir_id = parent_workdir_id
+                await self.db.flush()
+            elif child_conversation.workdir_id != parent_workdir_id:
+                raise ValueError("子智能体线程与父对话的 Project Workdir 不一致")
             return existing
         if continuing:
             raise ValueError(f"无法继续子智能体线程 {child_thread_id}：当前对话中没有找到对应的运行记录")
-        if creator_run.conversation_id is None:
-            raise ValueError("父运行任务缺少 conversation_id，无法创建子智能体线程关系")
-
         child_conversation = await self._ensure_child_conversation(
             child_thread_id=child_thread_id,
             uid=uid,
             agent_item=agent_item,
             creator_run=creator_run,
+            parent_workdir_id=parent_workdir_id,
         )
         return await self.thread_repo.create(
             uid=uid,

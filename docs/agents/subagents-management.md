@@ -121,6 +121,6 @@ class TaskToolSchema(BaseModel):
 | `/home/gem/user-data/workspace` | 当前 `uid` 的共享工作区 | 同一 `uid` 的共享工作区 |
 | `/home/gem/user-data/uploads` | 当前会话文件作用域 | 父会话 `file_thread_id` |
 | `/home/gem/user-data/outputs` | 当前会话文件作用域 | 父会话 `file_thread_id` |
-| `/home/gem/skills` | 当前 Agent 的 Skills 作用域 | 子智能体自己的 `skills_thread_id` |
+| `/home/gem/skills` | 当前用户的授权 Skills 投影 | 同一用户的授权 Skills 投影 |
 
-这保证子智能体可以读取父会话上传、产物也会回到父会话 artifacts 中，同时子智能体的 Skills 不会污染主 Agent。
+这保证子智能体可以读取父会话上传、产物也会回到父会话 artifacts 中。父子 Agent 可读取同一用户授权的 Skill 文件；各自的 Agent 配置仍独立决定哪些 Skill 描述与工具进入模型上下文。

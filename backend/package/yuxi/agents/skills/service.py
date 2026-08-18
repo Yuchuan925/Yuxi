@@ -1,17 +1,21 @@
 from __future__ import annotations
 
 import asyncio
+import errno
+import fcntl
 import hashlib
 import json
+import os
 import re
 import shutil
+import stat
 import tempfile
 import threading
 import time
 import uuid
 import zipfile
 from collections.abc import AsyncIterator, Callable
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
@@ -76,8 +80,9 @@ PERSONAL_SKILL_SCAN_LOCK_TIMEOUT_SECONDS = 30
 PERSONAL_SKILL_SCAN_LOCK_WAIT_SECONDS = 10
 PERSONAL_SKILL_SOURCE_TYPE = "personal"
 WORKSPACE_SKILLS_RELATIVE_DIR = Path("agents") / "skills"
-_THREAD_SKILLS_LOCK = threading.Lock()
-_THREAD_SKILLS_LOCKS: dict[str, threading.Lock] = {}
+_USER_SKILLS_LOCK = threading.Lock()
+_USER_SKILLS_LOCKS: dict[str, threading.Lock] = {}
+_USER_SKILL_PROJECTION_LOCK_SCOPE = "yuxi:skills:user-projection:v1:"
 
 
 @dataclass(frozen=True, slots=True)
@@ -131,13 +136,29 @@ class PersonalSkillSnapshot:
     from_cache: bool
 
 
-def _get_thread_skills_lock(thread_id: str) -> threading.Lock:
-    with _THREAD_SKILLS_LOCK:
-        lock = _THREAD_SKILLS_LOCKS.get(thread_id)
+def _get_user_skills_lock(uid: str) -> threading.Lock:
+    with _USER_SKILLS_LOCK:
+        lock = _USER_SKILLS_LOCKS.get(uid)
         if lock is None:
             lock = threading.Lock()
-            _THREAD_SKILLS_LOCKS[thread_id] = lock
+            _USER_SKILLS_LOCKS[uid] = lock
         return lock
+
+
+@contextmanager
+def _user_skills_file_lock(uid: str):
+    """在共享投影卷上串行化同一用户的目录替换。"""
+    from yuxi.agents.backends.sandbox.paths import workspace_uid_dirname
+
+    lock_dir = get_save_dir() / "skill-projections" / ".locks"
+    lock_dir.mkdir(parents=True, exist_ok=True)
+    lock_path = lock_dir / f"{workspace_uid_dirname(uid)}.lock"
+    with lock_path.open("a+b") as lock_file:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
 
 
 def normalize_string_list(values: list[str] | None) -> list[str]:
@@ -325,88 +346,103 @@ def _load_and_select_draft_items(
     return draft_dir, data, draft_items
 
 
-def get_thread_skills_root_dir(thread_id: str) -> Path:
-    safe_thread_id = str(thread_id or "").strip()
-    if not safe_thread_id:
-        raise ValueError("thread_id is required")
-    if not re.fullmatch(r"[A-Za-z0-9_-]+", safe_thread_id):
-        raise ValueError("thread_id contains invalid characters")
+def get_user_skills_root_dir(uid: str) -> Path:
+    """返回当前用户授权 Skill 的只读投影根目录。"""
+    from yuxi.agents.backends.sandbox.paths import workspace_uid_dirname
 
-    root = get_save_dir() / "threads" / safe_thread_id / "skills"
+    safe_uid = workspace_uid_dirname(uid)
+    root = get_save_dir() / "skill-projections" / safe_uid
     root.mkdir(parents=True, exist_ok=True)
     return root
 
 
-async def sync_thread_readable_skills_async(
-    thread_id: str,
-    selected_slugs: list[str] | None,
-    source_dirs: dict[str, str | Path] | None = None,
+async def sync_user_accessible_skills_async(
+    uid: str,
+    source_dirs: dict[str, str | Path],
 ) -> Path:
-    """在线程池同步共享 Skill 投影，避免阻塞 Agent 事件循环。"""
+    """在线程池同步用户授权 Skill 投影，避免阻塞 Agent 事件循环。"""
     return await asyncio.to_thread(
-        sync_thread_readable_skills,
-        thread_id,
-        selected_slugs,
+        sync_user_accessible_skills,
+        uid,
         source_dirs,
     )
 
 
-def sync_thread_readable_skills(
-    thread_id: str,
-    selected_slugs: list[str] | None,
-    source_dirs: dict[str, str | Path] | None = None,
+async def refresh_user_skill_projection_async(uid: str) -> dict[str, str]:
+    """按数据库中的最新授权快照重建用户 Skill 投影。"""
+    from yuxi.repositories.user_repository import UserRepository
+    from yuxi.storage.postgres.manager import pg_manager
+
+    normalized_uid = str(uid or "").strip()
+    if not normalized_uid:
+        raise ValueError("uid is required to refresh the user Skill projection")
+
+    async with pg_manager.get_async_session_context() as db:
+        await db.execute(
+            text("SELECT pg_advisory_xact_lock(hashtext(:lock_scope))"),
+            {"lock_scope": f"{_USER_SKILL_PROJECTION_LOCK_SCOPE}{normalized_uid}"},
+        )
+        user = await UserRepository().get_by_uid_with_db(db, normalized_uid)
+        if user is None or bool(user.is_deleted):
+            source_dirs: dict[str, str] = {}
+        else:
+            source_dirs = {
+                item.slug: str(item.source_dir)
+                for item in await list_accessible_skills(db, user)
+                if item.slug and item.source_dir
+            }
+        await sync_user_accessible_skills_async(normalized_uid, source_dirs)
+        return source_dirs
+
+
+def sync_user_accessible_skills(
+    uid: str,
+    source_dirs: dict[str, str | Path],
 ) -> Path:
-    """将最终生效的 Skill 来源同步到线程只读目录。"""
-    skills_root = get_skills_root_dir().resolve()
-    thread_skills_root = get_thread_skills_root_dir(thread_id)
-    normalized_slugs = [slug for slug in normalize_string_list(selected_slugs) if is_valid_skill_slug(slug)]
+    """将用户有权访问的 Skill 来源同步到统一只读目录。"""
+    user_skills_root = get_user_skills_root_dir(uid)
     normalized_sources = {
-        slug: Path(path).resolve()
-        for slug, path in (source_dirs or {}).items()
-        if slug in normalized_slugs and isinstance(path, (str, Path))
+        slug: Path(os.path.abspath(os.fspath(path)))
+        for slug, path in source_dirs.items()
+        if is_valid_skill_slug(slug) and isinstance(path, (str, Path))
     }
-    readable_slugs = set(normalized_slugs)
-    with _get_thread_skills_lock(thread_id):
-        for entry in thread_skills_root.iterdir():
-            if entry.name in readable_slugs:
+    accessible_slugs = set(normalized_sources)
+    with _get_user_skills_lock(uid), _user_skills_file_lock(uid):
+        for entry in user_skills_root.iterdir():
+            if entry.name in accessible_slugs:
                 continue
-            if entry.is_dir() and not entry.is_symlink():
-                shutil.rmtree(entry)
-            else:
-                entry.unlink()
+            _remove_skill_projection_entry(entry)
 
-        for slug in normalized_slugs:
-            source_dir = normalized_sources.get(slug, (skills_root / slug).resolve())
-            target_dir = thread_skills_root / slug
-
-            if source_dir.is_symlink() or not source_dir.is_dir() or _dir_contains_symlink(source_dir):
-                logger.warning(f"跳过不存在或包含符号链接的 Skill 来源: slug={slug}")
-                if target_dir.exists() or target_dir.is_symlink():
-                    if target_dir.is_dir() and not target_dir.is_symlink():
-                        shutil.rmtree(target_dir)
-                    else:
-                        target_dir.unlink()
-                continue
-
-            if target_dir.exists():
-                if target_dir.is_symlink():
-                    target_dir.unlink()
-                elif target_dir.is_dir():
-                    if _dirs_equal(target_dir, source_dir):
-                        continue
-                    shutil.rmtree(target_dir)
-                else:
-                    target_dir.unlink()
-
-            temp_target = thread_skills_root / f".{slug}.tmp-{uuid.uuid4().hex[:8]}"
+        for slug, source_dir in normalized_sources.items():
+            target_dir = user_skills_root / slug
+            temp_target = user_skills_root / f".{slug}.tmp-{uuid.uuid4().hex[:8]}"
             try:
-                shutil.copytree(source_dir, temp_target, symlinks=False)
+                _copy_skill_tree_no_symlinks(source_dir, temp_target)
+                if target_dir.is_dir() and not target_dir.is_symlink() and _dirs_equal(target_dir, temp_target):
+                    continue
+                _remove_skill_projection_entry(target_dir)
                 temp_target.rename(target_dir)
+            except FileNotFoundError:
+                logger.warning(f"跳过不存在的 Skill 来源: slug={slug}")
+                _remove_skill_projection_entry(target_dir)
+            except (OSError, ValueError):
+                _remove_skill_projection_entry(target_dir)
+                raise
             finally:
                 if temp_target.exists():
                     shutil.rmtree(temp_target, ignore_errors=True)
 
-    return thread_skills_root
+    return user_skills_root
+
+
+def _remove_skill_projection_entry(path: Path) -> None:
+    """删除一个投影条目，不跟随可能存在的符号链接。"""
+    if not path.exists() and not path.is_symlink():
+        return
+    if path.is_dir() and not path.is_symlink():
+        shutil.rmtree(path)
+    else:
+        path.unlink()
 
 
 def get_builtin_skill_specs() -> list[Any]:
@@ -424,6 +460,84 @@ def _dir_contains_symlink(path: Path) -> bool:
     return any(child.is_symlink() for child in path.rglob("*"))
 
 
+def _open_directory_no_symlinks(path: Path) -> int:
+    """从文件系统根逐层 no-follow 打开目录并返回调用方负责关闭的 fd。"""
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW
+    current_fd = os.open("/", flags)
+    try:
+        for part in Path(os.path.abspath(os.fspath(path))).parts[1:]:
+            try:
+                next_fd = os.open(part, flags, dir_fd=current_fd)
+            except OSError as exc:
+                if exc.errno in {errno.ELOOP, errno.ENOTDIR}:
+                    raise ValueError("Skill 来源路径包含符号链接或非目录组件") from exc
+                raise
+            os.close(current_fd)
+            current_fd = next_fd
+        return current_fd
+    except BaseException:
+        os.close(current_fd)
+        raise
+
+
+def _copy_skill_directory_fd(source_fd: int, target_dir: Path) -> None:
+    """从已固定的目录 fd 复制普通文件树，拒绝链接和特殊文件。"""
+    target_dir.mkdir(mode=0o700)
+    with os.scandir(source_fd) as iterator:
+        names = sorted(entry.name for entry in iterator)
+
+    for name in names:
+        try:
+            child_fd = os.open(
+                name,
+                os.O_RDONLY | os.O_NONBLOCK | os.O_CLOEXEC | os.O_NOFOLLOW,
+                dir_fd=source_fd,
+            )
+        except OSError as exc:
+            if exc.errno in {errno.ELOOP, errno.ENOTDIR}:
+                raise ValueError("Skill 来源包含符号链接或非法路径组件") from exc
+            raise
+        try:
+            child_stat = os.fstat(child_fd)
+            target = target_dir / name
+            if stat.S_ISDIR(child_stat.st_mode):
+                _copy_skill_directory_fd(child_fd, target)
+                continue
+            if not stat.S_ISREG(child_stat.st_mode):
+                raise ValueError("Skill 来源只允许普通文件和目录")
+
+            target_fd = os.open(
+                target,
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC,
+                0o600,
+            )
+            try:
+                while chunk := os.read(child_fd, 1024 * 1024):
+                    view = memoryview(chunk)
+                    while view:
+                        written = os.write(target_fd, view)
+                        view = view[written:]
+                os.fchmod(target_fd, 0o444 | (stat.S_IMODE(child_stat.st_mode) & 0o111))
+            finally:
+                os.close(target_fd)
+        finally:
+            os.close(child_fd)
+
+    target_dir.chmod(0o755)
+
+
+def _copy_skill_tree_no_symlinks(source_dir: Path, target_dir: Path) -> None:
+    """通过 fd-relative no-follow 遍历建立可信 Skill 快照。"""
+    source_fd = _open_directory_no_symlinks(source_dir)
+    try:
+        _copy_skill_directory_fd(source_fd, target_dir)
+    except BaseException:
+        shutil.rmtree(target_dir, ignore_errors=True)
+        raise
+    finally:
+        os.close(source_fd)
+
+
 def _dirs_equal(dir1: Path, dir2: Path) -> bool:
     """检查两个目录的文件路径与内容是否完全一致。"""
     if not dir1.exists() or not dir2.exists():
@@ -433,12 +547,20 @@ def _dirs_equal(dir1: Path, dir2: Path) -> bool:
 
 def _compute_dir_hash(source_dir: Path) -> str:
     hasher = hashlib.sha256()
-    file_paths = sorted(path for path in source_dir.rglob("*") if path.is_file())
-    for file_path in file_paths:
-        relative_path = file_path.relative_to(source_dir).as_posix()
+    entries = sorted(source_dir.rglob("*"), key=lambda path: path.relative_to(source_dir).as_posix())
+    for entry in entries:
+        relative_path = entry.relative_to(source_dir).as_posix()
         hasher.update(relative_path.encode("utf-8"))
         hasher.update(b"\0")
-        with file_path.open("rb") as f:
+        if entry.is_dir():
+            hasher.update(b"directory\0")
+            continue
+        if not entry.is_file():
+            hasher.update(b"other\0")
+            continue
+        hasher.update(b"file\0")
+        hasher.update(bytes([stat.S_IMODE(entry.stat().st_mode) & 0o111]))
+        with entry.open("rb") as f:
             while chunk := f.read(1024 * 1024):
                 hasher.update(chunk)
         hasher.update(b"\0")

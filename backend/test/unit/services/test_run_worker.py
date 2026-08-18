@@ -672,7 +672,7 @@ async def test_process_subagent_run_restores_runtime_context(monkeypatch: pytest
     assert meta["run_type"] == "subagent"
     assert meta["parent_thread_id"] == "parent-thread"
     assert meta["file_thread_id"] == "shared-file-thread"
-    assert meta["skills_thread_id"] == "child-thread"
+    assert "skills_thread_id" not in meta
     assert captured["agent_slug"] == "worker"
     assert captured["thread_id"] == "child-thread"
     assert captured["input_message"].content == "hello"

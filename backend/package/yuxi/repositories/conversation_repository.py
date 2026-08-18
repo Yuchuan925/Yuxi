@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from sqlalchemy.orm.attributes import flag_modified
 
+from yuxi.repositories.project_workdir_repository import ProjectWorkdirRepository
 from yuxi.storage.postgres.models_business import (
     UNVIEWED_RUN_MARKER,
     Conversation,
@@ -94,6 +95,7 @@ class ConversationRepository:
         title: str | None = None,
         thread_id: str | None = None,
         metadata: dict | None = None,
+        workdir_id: str | None = None,
     ) -> Conversation:
         """创建对话和统计记录但只 flush，供外层事务继续绑定关系。"""
         if not thread_id:
@@ -104,6 +106,12 @@ class ConversationRepository:
 
         normalized_title = self._normalize_title(title)
 
+        workdir_repo = ProjectWorkdirRepository(self.db)
+        if workdir_id is None:
+            workdir = await workdir_repo.create_default(uid=str(uid))
+        else:
+            workdir = await workdir_repo.require_for_user(workdir_id, str(uid))
+
         conversation = Conversation(
             thread_id=thread_id,
             uid=str(uid),
@@ -112,6 +120,7 @@ class ConversationRepository:
             status="active",
             extra_metadata=metadata,
             last_viewed_run_id=UNVIEWED_RUN_MARKER,
+            workdir_id=workdir.id,
         )
 
         self.db.add(conversation)
@@ -131,6 +140,7 @@ class ConversationRepository:
         title: str | None = None,
         thread_id: str | None = None,
         metadata: dict | None = None,
+        workdir_id: str | None = None,
     ) -> Conversation:
         """创建并提交一个完整对话，适用于不需要外层事务编排的入口。"""
         conversation = await self.add_conversation(
@@ -139,6 +149,7 @@ class ConversationRepository:
             title=title,
             thread_id=thread_id,
             metadata=metadata,
+            workdir_id=workdir_id,
         )
         await self.db.commit()
         await self.db.refresh(conversation)
@@ -158,6 +169,16 @@ class ConversationRepository:
     async def get_conversation_by_id(self, conversation_id: int) -> Conversation | None:
         result = await self.db.execute(select(Conversation).where(Conversation.id == conversation_id))
         return result.scalar_one_or_none()
+
+    async def ensure_default_workdir(self, conversation: Conversation) -> str:
+        """为过渡期遗留顶层 Conversation 补齐默认 Workdir。"""
+        if conversation.workdir_id:
+            await ProjectWorkdirRepository(self.db).require_for_user(conversation.workdir_id, conversation.uid)
+            return conversation.workdir_id
+        workdir = await ProjectWorkdirRepository(self.db).create_default(uid=conversation.uid)
+        conversation.workdir_id = workdir.id
+        await self.db.flush()
+        return workdir.id
 
     async def mark_thread_viewed(self, thread_id: str, run_id: str) -> Conversation | None:
         """记录用户最近查看过的顶层 run id；重复标记同一 run 时保持幂等。"""

@@ -97,12 +97,11 @@ def build_dependency_map(skills: list) -> dict[str, SkillDependencyNode]:
 
 
 def build_source_map(skills: list) -> dict[str, str]:
-    """构建需要复制到线程只读目录的 Skill 来源映射。"""
+    """构建当前用户授权 Skill 的统一只读投影来源。"""
     return {
         item.slug: str(item.source_dir)
         for item in skills
         if item.slug
-        and getattr(item, "source_scope", None) != PERSONAL_SKILL_SOURCE_TYPE
         and getattr(item, "source_dir", None)
     }
 

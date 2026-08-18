@@ -2,6 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import io
+import json
+import socket
+import subprocess
+import sys
 import zipfile
 from pathlib import Path
 from types import SimpleNamespace
@@ -10,6 +14,71 @@ import pytest
 from yuxi.agents.skills import service as svc
 from yuxi.agents.toolkits import service as tool_service
 from yuxi.storage.postgres.models_business import Skill, User
+
+
+_MULTIPROCESS_SKILL_SYNC_SCRIPT = """
+import json
+import os
+import select
+import sys
+import traceback
+from pathlib import Path
+from yuxi.agents.skills import service
+
+save_dir, uid, encoded_sources = sys.argv[1:]
+sources = json.loads(encoded_sources)
+service.get_save_dir = lambda: Path(save_dir)
+
+ready_read, ready_write = os.pipe()
+release_read, release_write = os.pipe()
+done_read, done_write = os.pipe()
+started_read, started_write = os.pipe()
+
+holder_pid = os.fork()
+if holder_pid == 0:
+    os.close(ready_read)
+    os.close(release_write)
+    os.close(done_read)
+    os.close(done_write)
+    os.close(started_read)
+    os.close(started_write)
+    with service._user_skills_file_lock(uid):
+        os.write(ready_write, b"ready")
+        os.read(release_read, 1)
+    os._exit(0)
+
+os.close(ready_write)
+os.close(release_read)
+os.read(ready_read, 5)
+
+worker_pid = os.fork()
+if worker_pid == 0:
+    os.close(ready_read)
+    os.close(release_write)
+    os.close(done_read)
+    os.close(started_read)
+    try:
+        os.write(started_write, b"started")
+        service.sync_user_accessible_skills(uid, sources)
+        os.write(done_write, b"done")
+    except BaseException:
+        traceback.print_exc()
+        os._exit(1)
+    os._exit(0)
+
+os.close(done_write)
+os.close(started_write)
+os.read(started_read, 7)
+blocked = not bool(select.select([done_read], [], [], 0.5)[0])
+os.write(release_write, b"x")
+os.close(release_write)
+finished = bool(select.select([done_read], [], [], 10)[0])
+holder_code = os.waitstatus_to_exitcode(os.waitpid(holder_pid, 0)[1])
+worker_code = os.waitstatus_to_exitcode(os.waitpid(worker_pid, 0)[1])
+if not blocked or not finished or holder_code or worker_code:
+    raise SystemExit(1)
+raise SystemExit(0)
+"""
 
 
 def _build_zip(files: dict[str, str]) -> bytes:
@@ -542,27 +611,27 @@ def test_is_valid_skill_slug():
         (
             {"skills/alpha": "alpha"},
             None,
-            [(None, None, {})],
+            [({}, {})],
         ),
         (
             {"skills/alpha": "alpha", "skills/beta": "beta"},
             None,
             [
-                (["alpha", "missing", "alpha"], None, {"alpha": "alpha"}),
-                (["beta"], None, {"beta": "beta"}),
+                ({"alpha": "skills/alpha"}, {"alpha": "alpha"}),
+                ({"beta": "skills/beta"}, {"beta": "beta"}),
             ],
         ),
         (
             {"skills/demo": "shared", "personal/demo": "personal"},
             ("personal/demo", "changed"),
             [
-                (["demo"], {"demo": "personal/demo"}, {"demo": "personal"}),
-                (["demo"], {"demo": "personal/demo"}, {"demo": "changed"}),
+                ({"demo": "personal/demo"}, {"demo": "personal"}),
+                ({"demo": "personal/demo"}, {"demo": "changed"}),
             ],
         ),
     ],
 )
-def test_sync_thread_readable_skills(
+def test_sync_user_accessible_skills(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     seed_files: dict[str, str],
@@ -575,25 +644,25 @@ def test_sync_thread_readable_skills(
         skill_dir.mkdir(parents=True, exist_ok=True)
         (skill_dir / "SKILL.md").write_text(content, encoding="utf-8")
 
-    for step_index, (selected, source_dirs, expected_entries) in enumerate(steps):
+    for step_index, (source_dirs, expected_entries) in enumerate(steps):
         if step_index > 0 and mutation is not None:
             rel_path, new_content = mutation
             (tmp_path / rel_path / "SKILL.md").write_text(new_content, encoding="utf-8")
 
-        resolved_sources = {slug: tmp_path / rel for slug, rel in source_dirs.items()} if source_dirs else None
-        thread_root = svc.sync_thread_readable_skills("thread_1", selected, resolved_sources)
+        resolved_sources = {slug: tmp_path / rel for slug, rel in source_dirs.items()}
+        user_root = svc.sync_user_accessible_skills("user_1", resolved_sources)
 
-        assert thread_root == tmp_path / "threads" / "thread_1" / "skills"
-        assert sorted(path.name for path in thread_root.iterdir()) == sorted(expected_entries)
+        assert user_root == tmp_path / "skill-projections" / "user_1"
+        assert sorted(path.name for path in user_root.iterdir()) == sorted(expected_entries)
         for name, content in expected_entries.items():
-            entry = thread_root / name
+            entry = user_root / name
             assert entry.is_dir()
             assert not entry.is_symlink()
             assert (entry / "SKILL.md").read_text(encoding="utf-8") == content
 
 
 @pytest.mark.asyncio
-async def test_sync_thread_readable_skills_async_runs_in_thread(monkeypatch: pytest.MonkeyPatch):
+async def test_sync_user_accessible_skills_async_runs_in_thread(monkeypatch: pytest.MonkeyPatch):
     """异步同步入口必须把目录扫描和复制下沉到工作线程。"""
     calls = []
     expected_root = Path("/tmp/thread-skills")
@@ -604,19 +673,187 @@ async def test_sync_thread_readable_skills_async_runs_in_thread(monkeypatch: pyt
 
     monkeypatch.setattr(svc.asyncio, "to_thread", to_thread)
 
-    result = await svc.sync_thread_readable_skills_async(
-        "thread-1",
-        ["alpha"],
+    result = await svc.sync_user_accessible_skills_async(
+        "user-1",
         {"alpha": "/tmp/alpha"},
     )
 
     assert result == expected_root
     assert calls == [
         (
-            svc.sync_thread_readable_skills,
-            ("thread-1", ["alpha"], {"alpha": "/tmp/alpha"}),
+            svc.sync_user_accessible_skills,
+            ("user-1", {"alpha": "/tmp/alpha"}),
         )
     ]
+
+
+def test_sync_user_accessible_skills_serializes_multiple_processes(tmp_path: Path):
+    """一个进程持有 uid 文件锁时，另一进程的同步必须等待。"""
+    source_dir = tmp_path / "sources" / "skill-a"
+    source_dir.mkdir(parents=True)
+    (source_dir / "SKILL.md").write_text("# skill-a\n", encoding="utf-8")
+    sources = {"skill-a": str(source_dir)}
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            _MULTIPROCESS_SKILL_SYNC_SCRIPT,
+            str(tmp_path),
+            "user-1",
+            json.dumps(sources),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=20,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    projection = tmp_path / "skill-projections" / "user-1"
+    assert sorted(path.name for path in projection.iterdir()) == sorted(sources)
+    assert not list(projection.glob(".*.tmp-*"))
+
+
+def test_sync_user_accessible_skills_rejects_symlink_swap_during_snapshot(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """用户在快照遍历期间替换链接时不得复制边界外字节。"""
+    monkeypatch.setenv("SAVE_DIR", str(tmp_path))
+    slug = "personal-race"
+    source_dir = tmp_path / "sources" / slug
+    source_dir.mkdir(parents=True)
+    (source_dir / "SKILL.md").write_text("# personal\n", encoding="utf-8")
+    payload = source_dir / "payload.txt"
+    payload.write_text("safe", encoding="utf-8")
+    outside = tmp_path / "outside.txt"
+    outside.write_text("outside-boundary", encoding="utf-8")
+
+    projection = svc.sync_user_accessible_skills("user-1", {slug: source_dir})
+    assert (projection / slug / "payload.txt").read_text(encoding="utf-8") == "safe"
+
+    original_scandir = svc.os.scandir
+    swapped = False
+
+    def racing_scandir(path):
+        nonlocal swapped
+        if isinstance(path, int) and not swapped:
+            swapped = True
+            payload.unlink()
+            payload.symlink_to(outside)
+        return original_scandir(path)
+
+    monkeypatch.setattr(svc.os, "scandir", racing_scandir)
+
+    with pytest.raises(ValueError, match="符号链接"):
+        svc.sync_user_accessible_skills("user-1", {slug: source_dir})
+
+    assert swapped is True
+    assert not (projection / slug).exists()
+
+
+def test_sync_user_accessible_skills_rejects_special_files(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setenv("SAVE_DIR", str(tmp_path))
+    slug = "personal-socket"
+    source_dir = tmp_path / "s"
+    source_dir.mkdir(parents=True)
+    (source_dir / "SKILL.md").write_text("# personal\n", encoding="utf-8")
+    projection = svc.sync_user_accessible_skills("user-1", {slug: source_dir})
+    assert (projection / slug / "SKILL.md").is_file()
+
+    unix_socket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    monkeypatch.chdir(source_dir)
+    unix_socket.bind("stream.sock")
+    try:
+        with pytest.raises((OSError, ValueError)):
+            svc.sync_user_accessible_skills("user-1", {slug: source_dir})
+    finally:
+        unix_socket.close()
+
+    assert not (projection / slug).exists()
+
+
+def test_sync_user_accessible_skills_updates_executable_mode(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setenv("SAVE_DIR", str(tmp_path))
+    slug = "personal-script"
+    source_dir = tmp_path / "sources" / slug
+    source_dir.mkdir(parents=True)
+    script = source_dir / "run.sh"
+    script.write_text("#!/bin/sh\n", encoding="utf-8")
+    script.chmod(0o644)
+
+    projection = svc.sync_user_accessible_skills("user-1", {slug: source_dir})
+    projected_script = projection / slug / "run.sh"
+    assert projected_script.stat().st_mode & 0o111 == 0
+
+    script.chmod(0o755)
+    svc.sync_user_accessible_skills("user-1", {slug: source_dir})
+
+    assert projected_script.stat().st_mode & 0o111 == 0o111
+
+
+@pytest.mark.asyncio
+async def test_refresh_user_skill_projection_serializes_authorization_snapshots(monkeypatch: pytest.MonkeyPatch):
+    """旧 Run 不得在较新的撤权同步完成后复活已撤销 Skill。"""
+    from yuxi.repositories import user_repository
+    from yuxi.storage.postgres import manager as postgres_manager
+
+    advisory_lock = asyncio.Lock()
+    first_sync_started = asyncio.Event()
+    allow_first_sync = asyncio.Event()
+    current_items = [SimpleNamespace(slug="legacy", source_dir=Path("/tmp/legacy"))]
+    synchronized_sources: list[dict[str, str]] = []
+
+    class FakeDb:
+        async def execute(self, _statement, parameters):
+            assert parameters["lock_scope"].endswith("user-1")
+            await advisory_lock.acquire()
+
+    class FakeSessionContext:
+        async def __aenter__(self):
+            return FakeDb()
+
+        async def __aexit__(self, *_args):
+            advisory_lock.release()
+
+    async def get_user(_self, _db, uid):
+        assert uid == "user-1"
+        return SimpleNamespace(is_deleted=0)
+
+    async def list_accessible(_db, _user):
+        return list(current_items)
+
+    async def to_thread(_func, _uid, sources):
+        if not synchronized_sources:
+            first_sync_started.set()
+            await allow_first_sync.wait()
+        synchronized_sources.append(dict(sources))
+
+    monkeypatch.setattr(
+        postgres_manager.pg_manager,
+        "get_async_session_context",
+        lambda: FakeSessionContext(),
+    )
+    monkeypatch.setattr(user_repository.UserRepository, "get_by_uid_with_db", get_user)
+    monkeypatch.setattr(svc, "list_accessible_skills", list_accessible)
+    monkeypatch.setattr(svc.asyncio, "to_thread", to_thread)
+
+    old_run = asyncio.create_task(svc.refresh_user_skill_projection_async("user-1"))
+    await first_sync_started.wait()
+    current_items.clear()
+    new_run = asyncio.create_task(svc.refresh_user_skill_projection_async("user-1"))
+    allow_first_sync.set()
+
+    await asyncio.gather(old_run, new_run)
+
+    assert synchronized_sources == [{"legacy": "/tmp/legacy"}, {}]
 
 
 @pytest.mark.asyncio

@@ -582,7 +582,6 @@ async def hydrate_attachment_records_to_sandbox(
     attachments: list[dict],
     *,
     file_thread_id: str | None = None,
-    skills_thread_id: str | None = None,
     sandbox_instance_id: str | None = None,
     create_if_missing: bool = True,
 ) -> None:
@@ -598,8 +597,6 @@ async def hydrate_attachment_records_to_sandbox(
     backend = ProvisionerSandboxBackend(
         thread_id=runtime_thread_id,
         uid=uid,
-        file_thread_id=file_thread_id,
-        skills_thread_id=skills_thread_id,
         sandbox_instance_id=sandbox_instance_id,
         create_if_missing=create_if_missing,
     )

@@ -213,7 +213,9 @@ Skill 加载分为三个阶段：
 2. 递归展开 `skill_dependencies`，派生 `_prompt_skills` 和 `_readable_skills`
 3. 将 `_prompt_skills` 对应的技能说明注入到系统提示词中
 
-配置某个 Skill 后，其依赖 Skill 会立即进入提示词。共享与内置 Skill 投影到沙盒只读路径 `/home/gem/skills`，个人 Skill 直接使用 `/home/gem/user-data/workspace/agents/skills/<slug>`。
+这意味着：只要配置了某个 Skill，它的依赖 Skill 就会立即进入提示词。文件系统权限与选中集合分离：
+当前用户授权的共享、内置与个人 Skill 都进入 `/home/gem/skills` 只读投影；个人 Skill 同时保留
+`/home/gem/user-data/workspace/agents/skills/<slug>` 兼容路径。
 
 **阶段二：技能激活**
 
@@ -240,8 +242,8 @@ Skill 加载分为三个阶段：
 - **pro-skill**：依赖 `advanced-skill`
 
 当在 Agent 配置中只选择 `pro-skill` 时：
-1. 启动阶段：`_readable_skills` = [`pro-skill`, `advanced-skill`, `base-skill`]（自动展开依赖链）
-2. Agent 首次调用任何 skill 时：所有三个 Skill 都可读
+1. 启动阶段：`_readable_skills` = [`pro-skill`, `advanced-skill`, `base-skill`]（自动展开可激活的依赖链）
+2. 文件系统仍可读当前用户授权的其他 Skill，但它们不会因此进入 Prompt 或变成可激活工具
 3. 当 Agent 读取 `pro-skill/SKILL.md` 时：触发激活，工具和 MCP 依赖被加载
 
 ## 权限管理
@@ -279,12 +281,12 @@ Skill 加载分为三个阶段：
 ### Agent 如何使用 Skills
 
 1. **提示词注入**：系统在每次模型请求时动态注入可用 Skills 的描述（请求级注入，避免污染 runtime context）
-2. **文件访问**：共享与内置 Skill 从只读 `/home/gem/skills/<slug>/...` 读取；个人 Skill 直接从工作区读取
+2. **文件访问**：用户授权的共享、内置与个人 Skill 都可从只读 `/home/gem/skills/<slug>/...` 读取；个人 Skill 暂时仍保留工作区兼容路径
 3. **工具调用**：当 Agent 需要使用某个 Skill 时，会先读取对应的 SKILL.md 了解使用方法
 
 ### 文件操作限制
 
-共享与内置 Skill 的运行时 `/home/gem/skills` 路径有以下限制：
+用户授权 Skill 的运行时 `/home/gem/skills` 路径有以下限制：
 - **只读**：Agent 只能读取文件内容
 - **禁止写入**：不能创建、修改或删除文件
 - **路径安全**：所有路径都经过安全校验，防止目录穿越攻击
@@ -293,15 +295,16 @@ Skill 加载分为三个阶段：
 `/home/gem/skills` 对 Agent 是只读的，但沙盒命令工具仍可执行其中的脚本。Skill 应写清依赖、运行方式和产物位置；脚本产生的文件应保存到 workspace 或 outputs，Skill 目录禁止写入。
 :::
 
-个人 Skill 位于 `/home/gem/user-data/workspace/agents/skills`，属于用户可写工作区。运行时不会再把它复制到线程 `/home/gem/skills` 目录，因此工作区中的修改会直接成为后续读取内容。
+个人 Skill 的可写来源仍位于 `/home/gem/user-data/workspace/agents/skills`。Run 初始化会把当前用户授权的
+个人 Skill 与其他 Skill 一起同步到 `/home/gem/skills` 只读投影；工作区路径在阶段 5 兼容迁移前继续可用。
 
-### 会话隔离
+### 选择与授权
 
-每个 Agent 会话都有独立的 Skills 可见集：
-- 不同会话可以配置不同的 Skills
-- 同一会话内修改 `context.skills` 会重建共享与内置 Skill 的只读投影
+- 不同 Agent 可以配置不同的 `context.skills`，该列表只决定 Prompt 和工具激活
+- 文件投影以 uid 授权集合为边界，不随会话或 Agent 选择分叉
+- Run 初始化以 uid 级数据库锁读取最新授权，并以共享卷文件锁串行替换投影；授权上下文缺失时直接失败
 - 个人 Skill 元数据最多缓存 5 分钟；安装、删除和 Skills 页手动刷新会立即更新缓存
-- 每次构建运行时只同步最终生效的共享与内置 Skill；个人版本同名覆盖时直接使用工作区路径
+- 个人版本与共享版本同 slug 时，用户投影和 Prompt 元数据都使用个人版本
 
 ## 维护建议
 

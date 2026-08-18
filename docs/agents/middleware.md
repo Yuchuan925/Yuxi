@@ -57,7 +57,7 @@
 
 附件上传后会先落盘到线程文件系统，并在 LangGraph state 中记录 `uploads`。`AttachmentMiddleware` 只把文件名和可读路径注入提示词，不会把文件内容整体塞进模型上下文。模型需要查看附件时，应通过 `read_file` 读取对应路径。
 
-文件系统中间件负责把 sandbox backend、线程 uploads/outputs、用户工作区和只读 Skills 组合成 Agent 可访问的虚拟文件系统。普通 Agent 默认使用当前 `thread_id` 作为文件作用域；子智能体使用 child `thread_id` 做 checkpoint，同时沿用父线程的 uploads/outputs，并使用子 Agent 自己的 Skills 作用域。
+文件系统中间件负责把 sandbox backend、线程 uploads/outputs、用户工作区和只读 Skills 组合成 Agent 可访问的虚拟文件系统。普通 Agent 默认使用当前 `thread_id` 作为旧文件作用域；子智能体使用 child `thread_id` 做 checkpoint，同时沿用父线程的 uploads/outputs。这个旧文件 scope 不参与 Sandbox identity 或 provisioner wire。父子 Sandbox 都只读挂载同一 uid 的授权 Skill 投影，各 Agent 的选中列表只影响 Prompt 和工具激活。
 
 ## 子智能体任务
 

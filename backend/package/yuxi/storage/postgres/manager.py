@@ -79,6 +79,112 @@ THREAD_OUTPUT_SCHEMA_STATEMENTS = (
     ON thread_output_revisions(thread_id, created_at)
     """,
 )
+PROJECT_WORKDIR_SCHEMA_STATEMENTS = (
+    """
+    CREATE TABLE IF NOT EXISTS project_workdirs (
+        id VARCHAR(64) PRIMARY KEY,
+        uid VARCHAR(64) NOT NULL,
+        storage_key VARCHAR(255) NOT NULL UNIQUE,
+        materialization_status VARCHAR(32) NOT NULL DEFAULT 'pending',
+        materialization_error TEXT,
+        created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT NOW()
+    )
+    """,
+    "ALTER TABLE project_workdirs ALTER COLUMN materialization_status SET DEFAULT 'pending'",
+    "ALTER TABLE project_workdirs ALTER COLUMN created_at SET DEFAULT NOW()",
+    "ALTER TABLE project_workdirs ALTER COLUMN updated_at SET DEFAULT NOW()",
+    """
+    DO $$
+    BEGIN
+        IF NOT EXISTS (
+            SELECT 1 FROM pg_constraint
+            WHERE conname = 'ck_project_workdirs_materialization_status'
+              AND conrelid = 'project_workdirs'::regclass
+        ) THEN
+            ALTER TABLE project_workdirs
+            ADD CONSTRAINT ck_project_workdirs_materialization_status
+            CHECK (materialization_status IN ('pending', 'importing', 'prepared', 'ready', 'error'));
+        END IF;
+    END $$
+    """,
+    "CREATE INDEX IF NOT EXISTS ix_project_workdirs_uid ON project_workdirs(uid)",
+    (
+        "CREATE INDEX IF NOT EXISTS ix_project_workdirs_materialization_status "
+        "ON project_workdirs(materialization_status)"
+    ),
+    "ALTER TABLE IF EXISTS conversations ADD COLUMN IF NOT EXISTS workdir_id VARCHAR(64)",
+    """
+    INSERT INTO project_workdirs (id, uid, storage_key, materialization_status)
+    SELECT
+        'legacy-' || md5(conversation.uid || ':' || conversation.thread_id),
+        conversation.uid,
+        'projects/legacy-' || md5(conversation.uid || ':' || conversation.thread_id),
+        'pending'
+    FROM conversations AS conversation
+    WHERE conversation.workdir_id IS NULL
+      AND NOT EXISTS (
+        SELECT 1 FROM subagent_threads AS relation
+        WHERE relation.child_conversation_id = conversation.id
+    )
+    ON CONFLICT DO NOTHING
+    """,
+    """
+    UPDATE conversations AS conversation
+    SET workdir_id = 'legacy-' || md5(conversation.uid || ':' || conversation.thread_id)
+    WHERE conversation.workdir_id IS NULL
+      AND NOT EXISTS (
+          SELECT 1 FROM subagent_threads AS relation
+          WHERE relation.child_conversation_id = conversation.id
+      )
+    """,
+    """
+    UPDATE conversations AS child
+    SET workdir_id = parent.workdir_id
+    FROM subagent_threads AS relation
+    JOIN conversations AS parent ON parent.id = relation.parent_conversation_id
+    WHERE child.id = relation.child_conversation_id
+      AND child.workdir_id IS DISTINCT FROM parent.workdir_id
+    """,
+    """
+    DO $$
+    BEGIN
+        IF NOT EXISTS (
+            SELECT 1
+            FROM pg_constraint AS fk
+            JOIN pg_attribute AS attribute
+              ON attribute.attrelid = fk.conrelid
+             AND attribute.attnum = ANY(fk.conkey)
+            WHERE fk.contype = 'f'
+              AND fk.conrelid = 'conversations'::regclass
+              AND fk.confrelid = 'project_workdirs'::regclass
+              AND attribute.attname = 'workdir_id'
+        ) THEN
+            ALTER TABLE conversations
+            ADD CONSTRAINT fk_conversations_workdir_id
+            FOREIGN KEY (workdir_id) REFERENCES project_workdirs(id) ON DELETE RESTRICT;
+        END IF;
+    END $$
+    """,
+    "CREATE INDEX IF NOT EXISTS ix_conversations_workdir_id ON conversations(workdir_id)",
+)
+RUNTIME_SCOPE_SCHEMA_STATEMENTS = (
+    "ALTER TABLE IF EXISTS agent_runs ADD COLUMN IF NOT EXISTS runtime_scope_id VARCHAR(64)",
+    """
+    UPDATE agent_runs AS run
+    SET runtime_scope_id = COALESCE(
+        (
+            SELECT parent.thread_id
+            FROM subagent_threads AS relation
+            JOIN conversations AS parent ON parent.id = relation.parent_conversation_id
+            WHERE relation.id = run.subagent_thread_relation_id
+        ),
+        run.conversation_thread_id
+    )
+    WHERE run.runtime_scope_id IS NULL
+    """,
+    "CREATE INDEX IF NOT EXISTS ix_agent_runs_runtime_scope_id ON agent_runs(runtime_scope_id)",
+)
 
 
 class PostgresManager(metaclass=SingletonMeta):
@@ -748,6 +854,7 @@ class PostgresManager(metaclass=SingletonMeta):
                 updated_at TIMESTAMPTZ DEFAULT NOW()
             )
             """,
+            *PROJECT_WORKDIR_SCHEMA_STATEMENTS,
             "ALTER TABLE IF EXISTS agent_runs ADD COLUMN IF NOT EXISTS agent_slug VARCHAR(64)",
             "ALTER TABLE IF EXISTS agent_runs ADD COLUMN IF NOT EXISTS conversation_thread_id VARCHAR(64)",
             "ALTER TABLE IF EXISTS agent_runs ADD COLUMN IF NOT EXISTS created_by_run_id VARCHAR(64)",
@@ -858,6 +965,7 @@ class PostgresManager(metaclass=SingletonMeta):
                 END IF;
             END $$;
             """,
+            *RUNTIME_SCOPE_SCHEMA_STATEMENTS,
             """
             UPDATE subagent_threads st
             SET subagent_slug = c.agent_id

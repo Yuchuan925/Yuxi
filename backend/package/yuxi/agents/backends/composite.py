@@ -12,9 +12,8 @@ from deepagents.backends.protocol import FileInfo, GlobResult
 from deepagents.middleware.filesystem import FilesystemMiddleware
 
 from yuxi.agents.skills.service import (
-    get_thread_skills_root_dir,
-    normalize_string_list,
-    sync_thread_readable_skills_async,
+    get_user_skills_root_dir,
+    refresh_user_skill_projection_async,
 )
 from yuxi.utils.paths import VIRTUAL_PATH_CONVERSATION_HISTORY, VIRTUAL_PATH_LARGE_TOOL_RESULTS, VIRTUAL_PATH_OUTPUTS
 
@@ -121,8 +120,6 @@ class _BackendScope:
     thread_id: str
     uid: str
     skill_sources: dict[str, str]
-    file_thread_id: str
-    skills_thread_id: str
     sandbox_instance_id: str
 
     @classmethod
@@ -156,40 +153,36 @@ class _BackendScope:
         if not uid:
             raise ValueError(f"uid is required in {error_context}")
 
-        selected = getattr(readable_skills_source, "_readable_skills", [])
-        readable_skills = normalize_string_list(selected if isinstance(selected, list) else [])
-        raw_sources = getattr(readable_skills_source, "_runtime_skill_sources", {})
-        skill_sources = {
-            slug: str(path)
-            for slug, path in (raw_sources.items() if isinstance(raw_sources, dict) else [])
-            if slug in readable_skills and isinstance(path, str) and path
-        }
+        if not hasattr(readable_skills_source, "_runtime_skill_sources"):
+            raise ValueError(f"_runtime_skill_sources is required in {error_context}")
+        raw_sources = getattr(readable_skills_source, "_runtime_skill_sources")
+        if not isinstance(raw_sources, dict):
+            raise ValueError(f"_runtime_skill_sources must be a dict in {error_context}")
+        skill_sources: dict[str, str] = {}
+        for slug, path in raw_sources.items():
+            if not isinstance(slug, str) or not slug.strip() or not isinstance(path, str) or not path.strip():
+                raise ValueError(f"_runtime_skill_sources contains an invalid entry in {error_context}")
+            skill_sources[slug.strip()] = path.strip()
         return cls(
             thread_id=thread_id,
             uid=uid,
             skill_sources=skill_sources,
-            file_thread_id=string_value("file_thread_id") or thread_id,
-            skills_thread_id=string_value("skills_thread_id") or thread_id,
             sandbox_instance_id=string_value("sandbox_instance_id") or thread_id,
         )
 
     def create_backend(self) -> CompositeBackend:
-        thread_skills_root = get_thread_skills_root_dir(self.skills_thread_id)
+        user_skills_root = get_user_skills_root_dir(self.uid)
         return CustomCompositeBackend(
             default=ProvisionerSandboxBackend(
                 thread_id=self.thread_id,
                 uid=self.uid,
-                readable_skills=list(self.skill_sources),
-                skill_sources=self.skill_sources,
-                file_thread_id=self.file_thread_id,
-                skills_thread_id=self.skills_thread_id,
                 sandbox_instance_id=self.sandbox_instance_id,
                 create_if_missing=False,
             ),
             routes={
                 "/skills/": SelectedSkillsReadonlyBackend(
                     selected_slugs=list(self.skill_sources),
-                    root_dir=thread_skills_root,
+                    root_dir=user_skills_root,
                 ),
             },
             artifacts_root=VIRTUAL_PATH_OUTPUTS,
@@ -197,17 +190,14 @@ class _BackendScope:
 
 
 async def sync_agent_context_skills(context) -> None:
-    """在 Agent Run 初始化时同步当前上下文的共享 Skill 投影。"""
+    """在 Agent Run 初始化时同步当前用户的授权 Skill 投影。"""
     scope = _BackendScope.from_sources(
         context,
         readable_skills_source=context,
         error_context="runtime context",
     )
-    await sync_thread_readable_skills_async(
-        scope.skills_thread_id,
-        list(scope.skill_sources),
-        scope.skill_sources,
-    )
+    current_sources = await refresh_user_skill_projection_async(scope.uid)
+    setattr(context, "_runtime_skill_sources", current_sources)
 
 
 def create_agent_composite_backend(runtime) -> CompositeBackend:

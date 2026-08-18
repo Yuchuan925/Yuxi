@@ -399,14 +399,12 @@ class YuxiSubAgentMiddleware(AgentMiddleware[Any, ContextT, ResponseT]):
         uid = str(getattr(self.parent_context, "uid", "") or "").strip()
         created_by_run_id = str(getattr(self.parent_context, "run_id", "") or "").strip()
         runtime_thread_id = str(getattr(self.parent_context, "thread_id", "") or "").strip()
-        skills_thread_id = str(getattr(self.parent_context, "skills_thread_id", None) or runtime_thread_id)
         sandbox_instance_id = str(
             getattr(self.parent_context, "sandbox_instance_id", None) or created_by_run_id or runtime_thread_id
         )
         return _ParentRuntime(
             runtime_thread_id=runtime_thread_id,
             file_thread_id=file_thread_id,
-            skills_thread_id=skills_thread_id,
             uid=uid,
             created_by_run_id=created_by_run_id,
             sandbox_instance_id=sandbox_instance_id,
@@ -433,7 +431,6 @@ class YuxiSubAgentMiddleware(AgentMiddleware[Any, ContextT, ResponseT]):
         revision_id = await stage_thread_outputs(
             runtime_thread_id=parent_runtime.runtime_thread_id,
             file_thread_id=parent_runtime.file_thread_id,
-            skills_thread_id=parent_runtime.skills_thread_id,
             uid=parent_runtime.uid,
             conversation_id=conversation_id,
             run_id=parent_runtime.created_by_run_id,
@@ -502,7 +499,6 @@ class YuxiSubAgentMiddleware(AgentMiddleware[Any, ContextT, ResponseT]):
         await hydrate_thread_outputs_to_sandbox(
             runtime_thread_id=parent_runtime.runtime_thread_id,
             file_thread_id=parent_runtime.file_thread_id,
-            skills_thread_id=parent_runtime.skills_thread_id,
             uid=parent_runtime.uid,
             files=files,
             sandbox_instance_id=parent_runtime.sandbox_instance_id,
@@ -616,7 +612,6 @@ class YuxiSubAgentMiddleware(AgentMiddleware[Any, ContextT, ResponseT]):
 class _ParentRuntime:
     runtime_thread_id: str
     file_thread_id: str
-    skills_thread_id: str
     uid: str
     created_by_run_id: str
     sandbox_instance_id: str

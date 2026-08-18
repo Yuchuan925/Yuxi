@@ -211,6 +211,7 @@ class AgentRunRepository:
         *,
         run_id: str,
         conversation_thread_id: str,
+        runtime_scope_id: str | None = None,
         agent_slug: str,
         uid: str,
         request_id: str,
@@ -229,6 +230,7 @@ class AgentRunRepository:
         run = AgentRun(
             id=run_id,
             conversation_thread_id=conversation_thread_id,
+            runtime_scope_id=str(runtime_scope_id or conversation_thread_id),
             agent_slug=agent_slug,
             uid=str(uid),
             request_id=request_id,

@@ -228,7 +228,6 @@ async def test_stage_outputs_rejects_file_count_before_downloading(monkeypatch):
         await output_service.stage_thread_outputs(
             runtime_thread_id="thread-1",
             file_thread_id="thread-1",
-            skills_thread_id="thread-1",
             uid="user-1",
             conversation_id=1,
             run_id=None,

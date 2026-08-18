@@ -42,8 +42,6 @@ async def test_install_skill_from_sandbox_installs_as_current_user_private_skill
         thread_id,
         uid,
         staging_root,
-        file_thread_id,
-        skills_thread_id,
         sandbox_instance_id,
     ):
         calls["prepare_thread_id"] = threading.get_ident()
@@ -52,8 +50,6 @@ async def test_install_skill_from_sandbox_installs_as_current_user_private_skill
             "thread_id": thread_id,
             "uid": uid,
             "staging_root": staging_root,
-            "file_thread_id": file_thread_id,
-            "skills_thread_id": skills_thread_id,
             "sandbox_instance_id": sandbox_instance_id,
         }
         return source_dir
@@ -68,14 +64,19 @@ async def test_install_skill_from_sandbox_installs_as_current_user_private_skill
             tool_dependencies=[],
             mcp_dependencies=[],
             skill_dependencies=[],
+            source_dir=source_dir,
         )
 
     async def enable_skills(db_arg, thread_id, uid, skill_slugs):
         calls["enable"] = {"db": db_arg, "thread_id": thread_id, "uid": uid, "skill_slugs": skill_slugs}
         return True
 
-    async def sync_thread_readable_skills_async(thread_id, skills, sources):
-        calls["sync"] = {"thread_id": thread_id, "skills": skills, "sources": sources}
+    async def refresh_user_skill_projection_async(uid):
+        calls["sync"] = {"uid": uid}
+        return {
+            "existing-skill": "/tmp/shared/existing-skill",
+            "demo-skill": str(source_dir),
+        }
 
     monkeypatch.setattr(
         install_skill_module,
@@ -93,7 +94,11 @@ async def test_install_skill_from_sandbox_installs_as_current_user_private_skill
         lambda: _AsyncSessionContext(db),
     )
     monkeypatch.setattr(skill_service, "install_personal_skill_dir", install_personal_skill_dir)
-    monkeypatch.setattr(skill_service, "sync_thread_readable_skills_async", sync_thread_readable_skills_async)
+    monkeypatch.setattr(
+        skill_service,
+        "refresh_user_skill_projection_async",
+        refresh_user_skill_projection_async,
+    )
 
     runtime = _runtime(
         uid="normal-user",
@@ -131,7 +136,10 @@ async def test_install_skill_from_sandbox_installs_as_current_user_private_skill
     assert runtime.context.skills == ["existing-skill", "demo-skill"]
     assert runtime.context._readable_skills == ["existing-skill", "demo-skill"]
     assert runtime.context._prompt_skills == ["existing-skill", "demo-skill"]
-    assert runtime.context._runtime_skill_sources == {"existing-skill": "/tmp/shared/existing-skill"}
+    assert runtime.context._runtime_skill_sources == {
+        "existing-skill": "/tmp/shared/existing-skill",
+        "demo-skill": str(source_dir),
+    }
     assert runtime.context._runtime_skill_metadata == {
         "demo-skill": {
             "name": "Demo Skill",
@@ -140,11 +148,7 @@ async def test_install_skill_from_sandbox_installs_as_current_user_private_skill
         }
     }
     assert runtime.context._runtime_skill_dependency_map == {"demo-skill": {"tools": [], "mcps": [], "skills": []}}
-    assert calls["sync"] == {
-        "thread_id": "thread-1",
-        "skills": ["existing-skill"],
-        "sources": {"existing-skill": "/tmp/shared/existing-skill"},
-    }
+    assert calls["sync"] == {"uid": "normal-user"}
 
 
 @pytest.mark.asyncio
@@ -286,11 +290,9 @@ def test_prepare_skill_from_sandbox_uses_sandbox_api_without_host_path_resolutio
     remote_dir = "/home/gem/user-data/workspace/demo-skill"
 
     class FakeProvisionerSandboxBackend:
-        def __init__(self, *, thread_id, uid, file_thread_id, skills_thread_id, sandbox_instance_id, create_if_missing):
+        def __init__(self, *, thread_id, uid, sandbox_instance_id, create_if_missing):
             assert thread_id == "thread-1"
             assert uid == "user-1"
-            assert file_thread_id is None
-            assert skills_thread_id is None
             assert sandbox_instance_id is None
             assert create_if_missing is False
 
@@ -326,11 +328,9 @@ def test_prepare_skill_from_sandbox_preserves_download_error_message(monkeypatch
     remote_dir = "/home/gem/user-data/workspace/demo-skill"
 
     class FakeProvisionerSandboxBackend:
-        def __init__(self, *, thread_id, uid, file_thread_id, skills_thread_id, sandbox_instance_id, create_if_missing):
+        def __init__(self, *, thread_id, uid, sandbox_instance_id, create_if_missing):
             assert thread_id == "thread-1"
             assert uid == "user-1"
-            assert file_thread_id is None
-            assert skills_thread_id is None
             assert sandbox_instance_id is None
             assert create_if_missing is False
 

@@ -184,38 +184,26 @@ class ProvisionerSandboxBackend(BaseSandbox):
         thread_id: str,
         *,
         uid: str,
-        readable_skills: list[str] | None = None,
-        skill_sources: dict[str, str] | None = None,
-        file_thread_id: str | None = None,
-        skills_thread_id: str | None = None,
         inherit_env: bool = True,
         create_if_missing: bool = True,
         sandbox_instance_id: str | None = None,
+        workdir_id: str | None = None,
     ):
         self._thread_id = str(thread_id or "").strip()
         if not self._thread_id:
             raise ValueError("thread_id is required for ProvisionerSandboxBackend")
-        self._file_thread_id = str(file_thread_id or self._thread_id).strip()
-        if not self._file_thread_id:
-            raise ValueError("file_thread_id is required for ProvisionerSandboxBackend")
-        self._skills_thread_id = str(skills_thread_id or self._thread_id).strip()
-        if not self._skills_thread_id:
-            raise ValueError("skills_thread_id is required for ProvisionerSandboxBackend")
         self._uid = str(uid or "").strip()
         if not self._uid:
             raise ValueError("uid is required for ProvisionerSandboxBackend")
 
-        self._readable_skills = list(readable_skills or [])
-        self._skill_sources = dict(skill_sources or {})
         self._inherit_env = inherit_env
         self._create_if_missing = create_if_missing
         self._sandbox_instance_id = str(sandbox_instance_id or self._thread_id).strip()
+        self._workdir_id = str(workdir_id or "").strip() or None
         self._provider = get_sandbox_provider()
         self._id = sandbox_id_for_thread(
-            self._file_thread_id,
-            self._skills_thread_id,
+            self._thread_id,
             uid=self._uid,
-            runtime_thread_id=self._thread_id,
             sandbox_instance_id=self._sandbox_instance_id,
         )
         self._client: Any | None = None
@@ -246,10 +234,9 @@ class ProvisionerSandboxBackend(BaseSandbox):
             self._thread_id,
             uid=self._uid,
             create_if_missing=self._create_if_missing,
-            file_thread_id=self._file_thread_id,
-            skills_thread_id=self._skills_thread_id,
             inherit_env=self._inherit_env,
             sandbox_instance_id=self._sandbox_instance_id,
+            workdir_id=self._workdir_id,
         )
         if connection is None:
             raise RuntimeError(f"sandbox is unavailable for thread {self._thread_id}")

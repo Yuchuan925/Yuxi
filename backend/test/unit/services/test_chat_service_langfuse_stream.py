@@ -326,7 +326,6 @@ async def test_attachment_records_use_authorized_file_thread_for_subagent() -> N
 def test_main_run_discards_configured_subagent_file_scope() -> None:
     input_context = {
         "file_thread_id": "other-thread",
-        "skills_thread_id": "other-skills",
         "parent_thread_id": "other-parent",
         "is_subagent_runtime": True,
         "temperature": 0.1,
@@ -447,7 +446,6 @@ async def test_stream_agent_chat_commits_before_stream_and_persists_langfuse_con
         runtime_context={
             "temperature": 0.1,
             "file_thread_id": "configured-other-thread",
-            "skills_thread_id": "configured-other-skills",
         },
         conversation=SimpleNamespace(
             id=1,
@@ -542,7 +540,6 @@ async def test_stream_agent_chat_commits_before_stream_and_persists_langfuse_con
         ],
     }
     assert "file_thread_id" not in calls["stream_input_context"]
-    assert "skills_thread_id" not in calls["stream_input_context"]
     assert calls["saved_state"]["trace_info"] == {
         "langfuse_trace_id": "trace-runtime",
         "langfuse_session_id": "thread-1",
@@ -555,7 +552,6 @@ async def test_stream_agent_chat_commits_before_stream_and_persists_langfuse_con
     assert [attachment["file_id"] for attachment in calls["materialized"]] == ["file-1", "file-2"]
     assert calls["hydrate_scope"] == {
         "file_thread_id": "thread-1",
-        "skills_thread_id": "thread-1",
         "sandbox_instance_id": None,
         "create_if_missing": False,
     }

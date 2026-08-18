@@ -368,13 +368,11 @@ async def download_kb_file(
 
     sandbox_scope = _runtime_sandbox_scope(runtime)
     if sandbox_scope is None:
-        return "无法获取当前会话的沙盒上下文，缺少 file_thread_id 或 uid"
-    runtime_thread_id, file_thread_id, skills_thread_id, uid, sandbox_instance_id = sandbox_scope
+        return "无法获取当前会话的沙盒上下文，缺少 thread_id 或 uid"
+    runtime_thread_id, uid, sandbox_instance_id = sandbox_scope
     backend = ProvisionerSandboxBackend(
         thread_id=runtime_thread_id,
         uid=uid,
-        file_thread_id=file_thread_id,
-        skills_thread_id=skills_thread_id,
         sandbox_instance_id=sandbox_instance_id,
         create_if_missing=False,
     )
@@ -456,14 +454,6 @@ def _find_query_target(
     return normalized_kb_id, None
 
 
-def _runtime_thread_id(runtime: ToolRuntime | None) -> str | None:
-    """从 runtime.context 取 file_thread_id（回退 thread_id）。"""
-    context = getattr(runtime, "context", None) if runtime else None
-    if context is None:
-        return None
-    return getattr(context, "file_thread_id", None) or getattr(context, "thread_id", None)
-
-
 def _runtime_uid(runtime: ToolRuntime | None) -> str | None:
     """从 runtime.context 取 uid。"""
     context = getattr(runtime, "context", None) if runtime else None
@@ -472,22 +462,18 @@ def _runtime_uid(runtime: ToolRuntime | None) -> str | None:
     return getattr(context, "uid", None)
 
 
-def _runtime_sandbox_scope(runtime: ToolRuntime | None) -> tuple[str, str, str, str, str] | None:
-    """返回知识库下载使用的 runtime/file/skills/user scope。"""
+def _runtime_sandbox_scope(runtime: ToolRuntime | None) -> tuple[str, str, str] | None:
+    """返回知识库下载使用的 runtime/user/instance scope。"""
     context = getattr(runtime, "context", None) if runtime else None
     if context is None:
         return None
-    runtime_thread_id = getattr(context, "thread_id", None) or getattr(context, "file_thread_id", None)
-    file_thread_id = getattr(context, "file_thread_id", None) or runtime_thread_id
-    skills_thread_id = getattr(context, "skills_thread_id", None) or runtime_thread_id
+    runtime_thread_id = getattr(context, "thread_id", None)
     uid = getattr(context, "uid", None)
     sandbox_instance_id = getattr(context, "sandbox_instance_id", None) or runtime_thread_id
-    if not runtime_thread_id or not file_thread_id or not skills_thread_id or not uid:
+    if not runtime_thread_id or not uid:
         return None
     return (
         str(runtime_thread_id),
-        str(file_thread_id),
-        str(skills_thread_id),
         str(uid),
         str(sandbox_instance_id),
     )

@@ -160,7 +160,6 @@ async def hydrate_thread_outputs_to_sandbox(
     *,
     runtime_thread_id: str,
     file_thread_id: str,
-    skills_thread_id: str | None,
     uid: str,
     files: list[dict],
     sandbox_instance_id: str | None = None,
@@ -170,8 +169,6 @@ async def hydrate_thread_outputs_to_sandbox(
     backend = ProvisionerSandboxBackend(
         thread_id=runtime_thread_id,
         uid=uid,
-        file_thread_id=file_thread_id,
-        skills_thread_id=skills_thread_id,
         sandbox_instance_id=sandbox_instance_id,
         create_if_missing=create_if_missing,
     )
@@ -189,7 +186,6 @@ async def hydrate_legacy_thread_outputs_to_sandbox(
     *,
     runtime_thread_id: str,
     file_thread_id: str,
-    skills_thread_id: str | None,
     uid: str,
     legacy_root: Path,
     sandbox_instance_id: str | None = None,
@@ -199,8 +195,6 @@ async def hydrate_legacy_thread_outputs_to_sandbox(
     backend = ProvisionerSandboxBackend(
         thread_id=runtime_thread_id,
         uid=uid,
-        file_thread_id=file_thread_id,
-        skills_thread_id=skills_thread_id,
         sandbox_instance_id=sandbox_instance_id,
         create_if_missing=create_if_missing,
     )
@@ -217,7 +211,6 @@ async def stage_thread_outputs(
     *,
     runtime_thread_id: str,
     file_thread_id: str,
-    skills_thread_id: str | None,
     uid: str,
     conversation_id: int,
     run_id: str | None,
@@ -241,8 +234,6 @@ async def stage_thread_outputs(
     backend = ProvisionerSandboxBackend(
         thread_id=runtime_thread_id,
         uid=uid,
-        file_thread_id=file_thread_id,
-        skills_thread_id=skills_thread_id,
         create_if_missing=False,
         sandbox_instance_id=sandbox_instance_id,
     )

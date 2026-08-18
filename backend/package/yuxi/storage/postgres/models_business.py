@@ -6,6 +6,7 @@ from typing import Any
 from sqlalchemy import (
     JSON,
     Boolean,
+    CheckConstraint,
     Column,
     DateTime,
     Float,
@@ -280,6 +281,44 @@ class Skill(Base):
         }
 
 
+class ProjectWorkdir(Base):
+    """Project Workdir 持久文件身份。"""
+
+    __tablename__ = "project_workdirs"
+
+    id = Column(String(64), primary_key=True, comment="Opaque workdir ID")
+    uid = Column(String(64), nullable=False, index=True, comment="Owning UID")
+    storage_key = Column(String(255), nullable=False, unique=True, comment="Persistent POSIX storage key")
+    materialization_status = Column(
+        String(32),
+        nullable=False,
+        default="pending",
+        index=True,
+        comment="pending/importing/prepared/ready/error",
+    )
+    materialization_error = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=utc_now_naive, nullable=False)
+    updated_at = Column(DateTime, default=utc_now_naive, onupdate=utc_now_naive, nullable=False)
+
+    __table_args__ = (
+        CheckConstraint(
+            "materialization_status IN ('pending', 'importing', 'prepared', 'ready', 'error')",
+            name="ck_project_workdirs_materialization_status",
+        ),
+    )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "uid": self.uid,
+            "storage_key": self.storage_key,
+            "materialization_status": self.materialization_status,
+            "materialization_error": self.materialization_error,
+            "created_at": format_utc_datetime(self.created_at),
+            "updated_at": format_utc_datetime(self.updated_at),
+        }
+
+
 class Conversation(Base):
     """Conversation table - 对话表"""
 
@@ -295,6 +334,13 @@ class Conversation(Base):
     is_pinned = Column(Boolean, default=False, nullable=False, index=True, comment="Is pinned to top")
     last_viewed_run_id = Column(String(64), nullable=True, comment="Latest top-level run id viewed by user")
     current_output_revision_id = Column(String(64), nullable=True, comment="当前已发布 outputs revision")
+    workdir_id = Column(
+        String(64),
+        ForeignKey("project_workdirs.id", ondelete="RESTRICT"),
+        nullable=True,
+        index=True,
+        comment="Project Workdir identity",
+    )
     created_at = Column(DateTime, default=utc_now_naive, comment="Creation time")
     updated_at = Column(DateTime, default=utc_now_naive, onupdate=utc_now_naive, comment="Update time")
     extra_metadata = Column(JSON, nullable=True, comment="Additional metadata")
@@ -316,6 +362,7 @@ class Conversation(Base):
             "status": self.status,
             "is_pinned": bool(self.is_pinned),
             "current_output_revision_id": self.current_output_revision_id,
+            "workdir_id": self.workdir_id,
             "created_at": format_utc_datetime(self.created_at),
             "updated_at": format_utc_datetime(self.updated_at),
             "metadata": metadata,
@@ -847,6 +894,7 @@ class AgentRun(Base):
 
     id = Column(String(64), primary_key=True, comment="Run ID (UUID)")
     conversation_thread_id = Column(String(64), index=True, nullable=False, comment="Conversation thread ID snapshot")
+    runtime_scope_id = Column(String(64), index=True, nullable=True, comment="Root conversation runtime scope")
     agent_slug = Column(String(64), index=True, nullable=False, comment="Agent slug")
     uid = Column(String(64), index=True, nullable=False, comment="UID")
     status = Column(
@@ -904,6 +952,7 @@ class AgentRun(Base):
         return {
             "id": self.id,
             "conversation_thread_id": self.conversation_thread_id,
+            "runtime_scope_id": self.runtime_scope_id,
             "agent_slug": self.agent_slug,
             "uid": self.uid,
             "status": self.status,

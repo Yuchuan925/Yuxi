@@ -8,9 +8,11 @@ Owner：docker-compose.yml
 `attachment_service.py`、`thread_output_service.py`、对应 repository 和 provisioner 拥有。本记录保存
 当前开发分支已经实现的边界，不替代这些代码事实。
 
-该决定的阶段 4 尚未部署，并计划由
+该决定的阶段 4 尚未部署。Sandbox identity 与 Skills 投影已经由
+[Project Workdir 与 Sandbox Runtime 基础](2026-08-18-project-workdir-runtime-foundation.md) 取代；实时
+文件主链路仍计划由
 [Project Workdir 与独立 Sandbox Runtime](../proposed/2026-08-18-project-workdir-and-sandbox-runtime.md)
-取代。在替代实现通过验证前，本记录仍描述当前分支行为；新提案不构成当前运行时事实。
+取代。在该主链路通过验证前，本记录仍描述附件与 outputs 的当前分支行为。
 
 ## 问题
 
@@ -34,8 +36,10 @@ outputs 在 Sandbox 重建、父子 Agent 与并发 Run 中也缺少明确的恢
   outputs；冲突、取消、重试、Sandbox 消失和对象确认不明都 fail-closed，不静默推进 current。
 - uploads/outputs 共用的 scoped file primitives 负责授权路径、限长流式传输、hash/size、连接释放、
   symlink 防护和取消边界，但不提供通用 POSIX 文件系统。
-- 用户级 `/home/gem/user-data/workspace` 和线程 Skills 投影仍通过共享 `saves`/PVC 挂入 Sandbox；
-  API/worker 与 provisioner 的最终共享 `saves` 删除尚未完成。
+- 用户级 `/home/gem/user-data/workspace` 和按 uid 汇总的授权 Skills 只读投影仍通过共享 `saves`/PVC
+  挂入 Sandbox；Sandbox 的 Skills identity/wire 已由
+  [2026-08-18 基础决定](2026-08-18-project-workdir-runtime-foundation.md) 接管。附件与 outputs 的旧文件
+  scope 仍由本记录描述，API/worker 与 provisioner 的最终共享 `saves` 删除尚未完成。
 
 ## 替代方案
 

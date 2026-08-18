@@ -3,8 +3,9 @@ from __future__ import annotations
 import importlib.util
 import sys
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 
 import httpx
 import pytest
@@ -42,7 +43,7 @@ def _load_module():
 
 def _docker_backend(module, tmp_path, run_container):
     backend = object.__new__(module.LocalContainerProvisionerBackend)
-    backend._lock = threading.Lock()
+    backend._lock = threading.RLock()
     backend._container_port = 8080
     backend._network_prefix = "yuxi-know-sandbox"
     backend._sandbox_image = "sandbox-image"
@@ -61,6 +62,7 @@ def _docker_backend_with_running_container(monkeypatch, tmp_path):
     class FakeContainer:
         name = "yuxi-sandbox-sandbox-1"
         status = "running"
+        labels = {"thread-id": "thread-1"}
         attrs = {"State": {"Status": "running"}}
 
         def reload(self):
@@ -73,7 +75,7 @@ def _docker_backend_with_running_container(monkeypatch, tmp_path):
     )
     monkeypatch.setattr(backend, "_get_container", lambda _sandbox_id: None)
     monkeypatch.setattr(backend, "_ensure_network", backend._network_name)
-    monkeypatch.setattr(backend, "_ensure_user_data_writable", lambda _container: None)
+    monkeypatch.setattr(backend, "_ensure_user_data_writable", lambda *_args: None)
     monkeypatch.setattr(module, "wait_for_sandbox_ready", lambda _url, timeout_seconds: True)
     return module, backend, captured
 
@@ -114,6 +116,7 @@ def test_local_container_identity_validation_rejects_unsafe_path_segments(monkey
 
     assert backend_cls._validate_thread_id("thread-1_2") == "thread-1_2"
     assert backend_cls._validate_uid("user-1_2") == "user-1_2"
+    assert backend_cls._validate_workdir_id("workdir-1_2") == "workdir-1_2"
 
     for value in ["../escape", "thread/name", "thread name", "thread;rm", "thread.name"]:
         with pytest.raises(ValueError):
@@ -123,8 +126,12 @@ def test_local_container_identity_validation_rejects_unsafe_path_segments(monkey
         with pytest.raises(ValueError):
             backend_cls._validate_uid(value)
 
+    for value in ["../workdir", "workdir/name", "workdir name", "workdir;rm", "workdir.name"]:
+        with pytest.raises(ValueError):
+            backend_cls._validate_workdir_id(value)
 
-def test_memory_backend_accepts_split_thread_ids(monkeypatch):
+
+def test_memory_backend_accepts_runtime_thread_id(monkeypatch):
     monkeypatch.setenv("PROVISIONER_BACKEND", "memory")
     module = _load_module()
     backend = module.MemoryProvisionerBackend()
@@ -133,12 +140,70 @@ def test_memory_backend_accepts_split_thread_ids(monkeypatch):
         "sandbox-1",
         "child-thread",
         "user-1",
-        file_thread_id="parent-thread",
-        skills_thread_id="child-skills-thread",
     )
 
     assert record.sandbox_id == "sandbox-1"
     assert backend.discover("sandbox-1") is record
+
+
+def test_memory_backend_concurrent_get_or_create_returns_one_generation(monkeypatch):
+    monkeypatch.setenv("PROVISIONER_BACKEND", "memory")
+    module = _load_module()
+    backend = module.MemoryProvisionerBackend()
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        records = list(
+            executor.map(
+                lambda _index: backend.create(
+                    "sandbox-shared",
+                    "root-thread",
+                    "user-1",
+                    workdir_id="workdir-1",
+                ),
+                range(32),
+            )
+        )
+
+    assert len({id(record) for record in records}) == 1
+    assert len({record.generation for record in records}) == 1
+    assert records[0].workdir_id == "workdir-1"
+
+    with pytest.raises(ValueError, match="does not match"):
+        backend.create("sandbox-shared", "root-thread", "user-1", workdir_id="workdir-2")
+
+    with pytest.raises(module.SandboxGenerationMismatchError, match="generation"):
+        backend.delete("sandbox-shared", expected_generation="stale-generation")
+    assert backend.discover("sandbox-shared") is records[0]
+
+    backend.delete("sandbox-shared", expected_generation=records[0].generation)
+    assert backend.discover("sandbox-shared") is None
+
+
+def test_idle_reaper_does_not_delete_or_forget_new_generation(monkeypatch):
+    monkeypatch.setenv("PROVISIONER_BACKEND", "memory")
+    module = _load_module()
+
+    class FakeBackend:
+        def __init__(self):
+            self.generation = "generation-2"
+            self.deleted = []
+
+        def delete(self, sandbox_id, *, expected_generation=None):
+            self.deleted.append((sandbox_id, expected_generation))
+            if expected_generation != self.generation:
+                raise module.SandboxGenerationMismatchError("stale generation")
+
+    backend = FakeBackend()
+    reaper = module.SandboxIdleReaper(backend)
+    reaper.touch("sandbox-1", generation="generation-1")
+    reaper._last_activity_at["sandbox-1"] = ("generation-1", 0)
+    expired = reaper._collect_expired_sandboxes()
+    reaper.touch("sandbox-1", generation="generation-2")
+
+    reaper._delete_expired_sandbox(*expired[0])
+
+    assert backend.deleted == [("sandbox-1", "generation-1")]
+    assert reaper._last_activity_at["sandbox-1"][0] == "generation-2"
 
 
 def test_docker_mount_checks_reject_uploads_and_outputs_mounts(monkeypatch, tmp_path):
@@ -148,30 +213,34 @@ def test_docker_mount_checks_reject_uploads_and_outputs_mounts(monkeypatch, tmp_
     backend._threads_host_path = str(tmp_path)
 
     workspace = tmp_path / "shared" / "user-1" / "workspace"
-    skills = tmp_path / "child-skills-thread" / "skills"
+    skills = tmp_path.parent / "skill-projections" / "user-1"
     container = SimpleNamespace(
         attrs={
             "Mounts": [
                 {"Destination": "/home/gem/user-data/workspace", "Source": str(workspace)},
-                {"Destination": "/home/gem/skills", "Source": str(skills)},
+                {"Destination": "/home/gem/skills", "Source": str(skills), "RW": False, "Mode": "ro"},
             ]
         }
     )
 
-    assert backend._has_expected_user_data_mounts(container, "parent-thread", "user-1") is True
-    assert backend._is_expected_skills_mount(container, "child-skills-thread") is True
-    assert backend._is_expected_skills_mount(container, "parent-thread") is False
+    assert backend._has_expected_user_data_mounts(container, "user-1") is True
+    assert backend._is_expected_skills_mount(container, "user-1") is True
+    assert backend._is_expected_skills_mount(container, "user-2") is False
+
+    container.attrs["Mounts"][1]["RW"] = True
+    assert backend._is_expected_skills_mount(container, "user-1") is False
+    container.attrs["Mounts"][1]["RW"] = False
 
     container.attrs["Mounts"].append(
         {"Destination": "/home/gem/user-data/outputs", "Source": str(tmp_path / "legacy-outputs")}
     )
-    assert backend._has_expected_user_data_mounts(container, "parent-thread", "user-1") is False
+    assert backend._has_expected_user_data_mounts(container, "user-1") is False
     container.attrs["Mounts"].pop()
 
     container.attrs["Mounts"].append(
         {"Destination": "/home/gem/user-data/uploads", "Source": str(tmp_path / "legacy-uploads")}
     )
-    assert backend._has_expected_user_data_mounts(container, "parent-thread", "user-1") is False
+    assert backend._has_expected_user_data_mounts(container, "user-1") is False
 
 
 def test_docker_sandbox_mounts_shared_workspace_without_thread_history_projection(monkeypatch, tmp_path):
@@ -189,6 +258,44 @@ def test_docker_sandbox_mounts_shared_workspace_without_thread_history_projectio
     assert all("/agents/chats" not in destination for destination in destinations)
 
 
+def test_docker_project_workdir_contract_mounts_shared_posix_roots(monkeypatch, tmp_path):
+    monkeypatch.setenv("PROVISIONER_BACKEND", "memory")
+    module, backend, captured = _docker_backend_with_running_container(monkeypatch, tmp_path)
+    monkeypatch.setattr(backend, "_ensure_user_data_writable", lambda *_args: None)
+
+    record = backend.create("sandbox-project", "root-thread", "user-1", workdir_id="workdir-1")
+
+    run_kwargs = captured[0][1]
+    destinations = {mount["bind"] for mount in run_kwargs["volumes"].values()}
+    assert destinations == {
+        "/home/gem/user-data",
+        "/home/gem/projects/project-workdir-1",
+        "/home/gem/skills",
+    }
+    assert run_kwargs["working_dir"] == "/home/gem/projects/project-workdir-1"
+    assert run_kwargs["labels"]["workdir-id"] == "workdir-1"
+    assert record.workdir_id is None  # Fake container has no Docker labels; real discover reads the label.
+
+
+def test_docker_rejects_rebinding_existing_runtime_to_another_workdir(monkeypatch, tmp_path):
+    monkeypatch.setenv("PROVISIONER_BACKEND", "memory")
+    module = _load_module()
+
+    class FakeContainer:
+        status = "running"
+        labels = {"thread-id": "root-thread", "workdir-id": "workdir-1"}
+        attrs = {"State": {"Status": "running"}}
+
+        def reload(self):
+            return None
+
+    backend = _docker_backend(module, tmp_path, lambda *_args, **_kwargs: pytest.fail("sandbox was recreated"))
+    monkeypatch.setattr(backend, "_get_container", lambda _sandbox_id: FakeContainer())
+
+    with pytest.raises(ValueError, match="workdir identity"):
+        backend.create("sandbox-project", "root-thread", "user-1", workdir_id="workdir-2")
+
+
 def test_kubernetes_mount_check_rejects_uploads_and_outputs_mounts(monkeypatch):
     monkeypatch.setenv("PROVISIONER_BACKEND", "memory")
     module = _load_module()
@@ -202,7 +309,11 @@ def test_kubernetes_mount_check_rejects_uploads_and_outputs_mounts(monkeypatch):
                             mount_path="/home/gem/user-data/workspace",
                             sub_path="threads/shared/user-1/workspace",
                         ),
-                        SimpleNamespace(mount_path="/home/gem/skills", sub_path="threads/child-skills-thread/skills"),
+                        SimpleNamespace(
+                            mount_path="/home/gem/skills",
+                            sub_path="skill-projections/user-1",
+                            read_only=True,
+                        ),
                     ],
                 )
             ]
@@ -211,10 +322,14 @@ def test_kubernetes_mount_check_rejects_uploads_and_outputs_mounts(monkeypatch):
 
     assert module.KubernetesProvisionerBackend._pod_has_expected_mounts(
         pod,
-        file_thread_id="parent-thread",
-        skills_thread_id="child-skills-thread",
         uid="user-1",
     )
+    pod.spec.containers[0].volume_mounts[1].read_only = False
+    assert not module.KubernetesProvisionerBackend._pod_has_expected_mounts(
+        pod,
+        uid="user-1",
+    )
+    pod.spec.containers[0].volume_mounts[1].read_only = True
     pod.spec.containers[0].volume_mounts.append(
         SimpleNamespace(
             mount_path="/home/gem/user-data/outputs",
@@ -223,8 +338,6 @@ def test_kubernetes_mount_check_rejects_uploads_and_outputs_mounts(monkeypatch):
     )
     assert not module.KubernetesProvisionerBackend._pod_has_expected_mounts(
         pod,
-        file_thread_id="parent-thread",
-        skills_thread_id="child-skills-thread",
         uid="user-1",
     )
     pod.spec.containers[0].volume_mounts.pop()
@@ -237,8 +350,6 @@ def test_kubernetes_mount_check_rejects_uploads_and_outputs_mounts(monkeypatch):
     )
     assert not module.KubernetesProvisionerBackend._pod_has_expected_mounts(
         pod,
-        file_thread_id="parent-thread",
-        skills_thread_id="child-skills-thread",
         uid="user-1",
     )
 
@@ -282,15 +393,29 @@ def test_authenticated_management_api_returns_proxied_sandbox_url(monkeypatch):
             },
         )
         list_response = client.get("/api/sandboxes", headers=headers)
-        delete_response = client.delete(f"/api/sandboxes/{sandbox_id}", headers=headers)
+        stale_delete_response = client.delete(
+            f"/api/sandboxes/{sandbox_id}",
+            headers=headers,
+            params={"expected_generation": "stale-generation"},
+        )
+        delete_response = client.delete(
+            f"/api/sandboxes/{sandbox_id}",
+            headers=headers,
+            params={"expected_generation": create_response.json()["generation"]},
+        )
 
     expected_url = f"http://sandbox-provisioner:8002/api/sandboxes/{sandbox_id}/proxy"
     assert create_response.status_code == 200
     assert create_response.json()["sandbox_url"] == expected_url
     assert list_response.status_code == 200
-    assert list_response.json()["sandboxes"] == [
-        {"sandbox_id": sandbox_id, "sandbox_url": expected_url, "status": "Running"}
-    ]
+    sandboxes = list_response.json()["sandboxes"]
+    assert len(sandboxes) == 1
+    assert sandboxes[0]["sandbox_id"] == sandbox_id
+    assert sandboxes[0]["sandbox_url"] == expected_url
+    assert sandboxes[0]["status"] == "Running"
+    assert sandboxes[0]["generation"]
+    assert sandboxes[0]["workdir_id"] is None
+    assert stale_delete_response.status_code == 409
     assert delete_response.status_code == 200
 
 
@@ -304,7 +429,7 @@ def test_create_sandbox_forwards_environment_policy(monkeypatch):
         return module.SandboxRecord(sandbox_id="sandbox-1", sandbox_url="http://sandbox", status="Running")
 
     monkeypatch.setattr(module, "backend_impl", SimpleNamespace(create=create))
-    monkeypatch.setattr(module.idle_reaper, "touch", lambda _sandbox_id: None)
+    monkeypatch.setattr(module.idle_reaper, "touch", lambda _sandbox_id, **_kwargs: None)
 
     module.create_sandbox(
         module.CreateSandboxRequest(
@@ -466,8 +591,6 @@ def test_kubernetes_sandbox_disables_service_account_token_and_environment(monke
         "thread-1",
         "user-1",
         {"USER_SECRET": "value"},
-        file_thread_id="thread-1",
-        skills_thread_id="thread-1",
         inherit_env=False,
     )
 
@@ -476,6 +599,166 @@ def test_kubernetes_sandbox_disables_service_account_token_and_environment(monke
     sandbox_mounts = {mount.mount_path for mount in pod.spec.containers[0].volume_mounts}
     assert "/home/gem/user-data/uploads" not in sandbox_mounts
     assert "/home/gem/user-data/uploads" in pod.spec.init_containers[0].args[0]
+
+
+def test_kubernetes_project_workdir_contract_uses_rwx_subpaths(monkeypatch):
+    monkeypatch.setenv("PROVISIONER_BACKEND", "memory")
+    module = _load_module()
+
+    class FakeKubernetesClient:
+        def __getattr__(self, _name):
+            return lambda *_args, **kwargs: SimpleNamespace(**kwargs)
+
+    backend = object.__new__(module.KubernetesProvisionerBackend)
+    backend._client = FakeKubernetesClient()
+    backend._sandbox_image = "sandbox-image"
+    backend._container_port = 8080
+    backend._thread_pvc = "threads-rwx"
+    backend._sandbox_env = {}
+
+    pod = backend._build_pod_spec(
+        "sandbox-1",
+        "root-thread",
+        "user-1",
+        {},
+        inherit_env=False,
+        workdir_id="workdir-1",
+    )
+
+    sandbox = pod.spec.containers[0]
+    mounts = {mount.mount_path: getattr(mount, "sub_path", None) for mount in sandbox.volume_mounts}
+    assert sandbox.working_dir == "/home/gem/projects/project-workdir-1"
+    assert mounts["/home/gem/projects/project-workdir-1"] == "projects/workdir-1"
+    assert mounts["/home/gem/user-data"] == "threads/shared/user-1"
+    assert mounts["/home/gem/skills"] == "skill-projections/user-1"
+    skills_mount = next(mount for mount in sandbox.volume_mounts if mount.mount_path == "/home/gem/skills")
+    assert skills_mount.read_only is True
+    assert pod.metadata.annotations["workdir-id"] == "workdir-1"
+
+
+def test_kubernetes_rejects_rebinding_existing_runtime_to_another_workdir(monkeypatch):
+    monkeypatch.setenv("PROVISIONER_BACKEND", "memory")
+    module = _load_module()
+    backend = object.__new__(module.KubernetesProvisionerBackend)
+    backend._lock = threading.Lock()
+    backend._core_api = SimpleNamespace()
+    kubernetes_module = ModuleType("kubernetes")
+    client_module = ModuleType("kubernetes.client")
+    rest_module = ModuleType("kubernetes.client.rest")
+
+    class ApiException(Exception):
+        pass
+
+    rest_module.ApiException = ApiException
+    client_module.rest = rest_module
+    kubernetes_module.client = client_module
+    monkeypatch.setitem(sys.modules, "kubernetes", kubernetes_module)
+    monkeypatch.setitem(sys.modules, "kubernetes.client", client_module)
+    monkeypatch.setitem(sys.modules, "kubernetes.client.rest", rest_module)
+    monkeypatch.setattr(
+        backend,
+        "discover",
+        lambda _sandbox_id: module.SandboxRecord(
+            sandbox_id="sandbox-1",
+            sandbox_url="http://sandbox",
+            generation="generation-1",
+            workdir_id="workdir-1",
+        ),
+    )
+    monkeypatch.setattr(backend, "_discovered_matches_request", lambda *_args, **_kwargs: False)
+    monkeypatch.setattr(backend, "delete", lambda *_args, **_kwargs: pytest.fail("sandbox was deleted"))
+
+    with pytest.raises(ValueError, match="identity does not match"):
+        backend.create("sandbox-1", "root-thread", "user-1", workdir_id="workdir-2")
+
+
+def test_kubernetes_pod_conflict_is_revalidated_before_creating_service(monkeypatch):
+    monkeypatch.setenv("PROVISIONER_BACKEND", "memory")
+    module = _load_module()
+    kubernetes_module = ModuleType("kubernetes")
+    client_module = ModuleType("kubernetes.client")
+    rest_module = ModuleType("kubernetes.client.rest")
+
+    class ApiException(Exception):
+        def __init__(self, status=None):
+            self.status = status
+
+    rest_module.ApiException = ApiException
+    client_module.rest = rest_module
+    kubernetes_module.client = client_module
+    monkeypatch.setitem(sys.modules, "kubernetes", kubernetes_module)
+    monkeypatch.setitem(sys.modules, "kubernetes.client", client_module)
+    monkeypatch.setitem(sys.modules, "kubernetes.client.rest", rest_module)
+
+    class FakeCoreApi:
+        def create_namespaced_pod(self, **_kwargs):
+            raise ApiException(status=409)
+
+        def create_namespaced_service(self, **_kwargs):
+            pytest.fail("service was created before pod identity validation")
+
+    backend = object.__new__(module.KubernetesProvisionerBackend)
+    backend._lock = threading.RLock()
+    backend._core_api = FakeCoreApi()
+    backend._namespace = "yuxi"
+    backend._pod_name = lambda _sandbox_id: "pod-1"
+    backend._service_name = lambda _sandbox_id: "service-1"
+    backend.discover = lambda _sandbox_id: None
+    backend._build_pod_spec = lambda *_args, **_kwargs: SimpleNamespace()
+    backend._discovered_matches_request = lambda *_args, **_kwargs: False
+
+    with pytest.raises(ValueError, match="identity does not match"):
+        backend.create("sandbox-1", "root-thread", "user-1", workdir_id="workdir-2")
+
+
+def test_kubernetes_delete_uses_uid_generation_precondition(monkeypatch):
+    monkeypatch.setenv("PROVISIONER_BACKEND", "memory")
+    module = _load_module()
+    kubernetes_module = ModuleType("kubernetes")
+    client_module = ModuleType("kubernetes.client")
+    rest_module = ModuleType("kubernetes.client.rest")
+
+    class ApiException(Exception):
+        def __init__(self, status=None):
+            self.status = status
+
+    rest_module.ApiException = ApiException
+    client_module.rest = rest_module
+    kubernetes_module.client = client_module
+    monkeypatch.setitem(sys.modules, "kubernetes", kubernetes_module)
+    monkeypatch.setitem(sys.modules, "kubernetes.client", client_module)
+    monkeypatch.setitem(sys.modules, "kubernetes.client.rest", rest_module)
+
+    calls = []
+
+    class FakeCoreApi:
+        def delete_namespaced_pod(self, **kwargs):
+            calls.append(("pod", kwargs))
+
+        def delete_namespaced_service(self, **kwargs):
+            calls.append(("service", kwargs))
+
+    class FakeKubernetesClient:
+        @staticmethod
+        def V1Preconditions(**kwargs):
+            return SimpleNamespace(**kwargs)
+
+        @staticmethod
+        def V1DeleteOptions(**kwargs):
+            return SimpleNamespace(**kwargs)
+
+    backend = object.__new__(module.KubernetesProvisionerBackend)
+    backend._core_api = FakeCoreApi()
+    backend._client = FakeKubernetesClient()
+    backend._lock = threading.RLock()
+    backend._namespace = "yuxi"
+    backend._pod_name = lambda _sandbox_id: "pod-1"
+    backend._service_name = lambda _sandbox_id: "service-1"
+
+    backend.delete("sandbox-1", expected_generation="pod-uid-1")
+
+    assert [kind for kind, _kwargs in calls] == ["pod", "service"]
+    assert calls[0][1]["body"].preconditions.uid == "pod-uid-1"
 
 
 @pytest.mark.parametrize(
@@ -494,6 +777,7 @@ def test_docker_backend_cleans_up_sandbox_and_network_on_failure(monkeypatch, tm
     class FakeContainer:
         name = "yuxi-sandbox-sandbox-1"
         status = "running"
+        labels = {"thread-id": "thread-1"}
         attrs = {"State": {"Status": "running"}}
         removed = False
 
@@ -520,7 +804,7 @@ def test_docker_backend_cleans_up_sandbox_and_network_on_failure(monkeypatch, tm
     monkeypatch.setattr(backend, "_get_container", lambda _sandbox_id: created_container)
     monkeypatch.setattr(backend, "_ensure_network", backend._network_name)
     monkeypatch.setattr(backend, "_delete_network", deleted_networks.append)
-    monkeypatch.setattr(backend, "_ensure_user_data_writable", lambda _container: None)
+    monkeypatch.setattr(backend, "_ensure_user_data_writable", lambda *_args: None)
     monkeypatch.setattr(module, "wait_for_sandbox_ready", lambda _url, timeout_seconds: False)
 
     with pytest.raises(RuntimeError, match=error_match):
@@ -576,6 +860,7 @@ def test_docker_backend_reconnects_provisioner_before_reusing_sandbox(monkeypatc
     class FakeContainer:
         name = "yuxi-sandbox-sandbox-1"
         status = "running"
+        labels = {"thread-id": "thread-1"}
         attrs = {"State": {"Status": "running"}}
 
         def reload(self):
@@ -585,10 +870,10 @@ def test_docker_backend_reconnects_provisioner_before_reusing_sandbox(monkeypatc
     backend._client.networks = SimpleNamespace(get=lambda _name: FakeNetwork())
     backend._provisioner_container = SimpleNamespace(id="provisioner-id")
     monkeypatch.setattr(backend, "_get_container", lambda _sandbox_id: FakeContainer())
-    monkeypatch.setattr(backend, "_is_expected_skills_mount", lambda _container, _thread_id: True)
+    monkeypatch.setattr(backend, "_is_expected_skills_mount", lambda _container, _uid: True)
     monkeypatch.setattr(backend, "_is_on_expected_network", lambda _container, _sandbox_id: True)
-    monkeypatch.setattr(backend, "_has_expected_user_data_mounts", lambda _container, _thread_id, _uid: True)
-    monkeypatch.setattr(backend, "_ensure_user_data_writable", lambda _container: None)
+    monkeypatch.setattr(backend, "_has_expected_user_data_mounts", lambda _container, _uid, _workdir=None: True)
+    monkeypatch.setattr(backend, "_ensure_user_data_writable", lambda *_args: None)
     monkeypatch.setattr(module, "wait_for_sandbox_ready", lambda _url, timeout_seconds: bool(connected))
 
     record = backend.create("sandbox-1", "thread-1", "user-1")
