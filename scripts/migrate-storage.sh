@@ -46,6 +46,7 @@ fi
 
 token="$(openssl rand -hex 32)"
 umask 077
+mkdir -p "$(dirname "$proof_file")"
 printf '%s\n' "$token" > "$proof_file"
 
 "${compose[@]}" run --rm \

@@ -1402,12 +1402,10 @@ async def _worker_startup(ctx):
         from yuxi.config.options import (
             ensure_options_in_db,
             invalidate_option_cache,
-            migrate_legacy_system_options,
             system_options,
         )
 
         await ensure_options_in_db(session)
-        await migrate_legacy_system_options(session)
         await session.commit()
     await invalidate_option_cache(system_options.key)
     try:

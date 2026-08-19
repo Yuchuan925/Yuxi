@@ -7,6 +7,7 @@ import os
 import uuid
 
 import pytest
+from test.live_api_cleanup import make_test_conversation_metadata, make_test_conversation_title, make_test_resource_id
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from yuxi.storage.postgres.models_business import AgentRun, AgentRunRequest, Conversation, Message
@@ -25,7 +26,11 @@ async def _get_default_agent_slug(test_client, headers) -> str:
 async def _create_thread(test_client, headers, agent_slug) -> str:
     resp = await test_client.post(
         "/api/chat/thread",
-        json={"agent_id": agent_slug, "title": f"pytest-queue-{uuid.uuid4().hex[:8]}", "metadata": {}},
+        json={
+            "agent_id": agent_slug,
+            "title": make_test_conversation_title("agent-request-queue"),
+            "metadata": make_test_conversation_metadata("agent-request-queue"),
+        },
         headers=headers,
     )
     assert resp.status_code == 200, resp.text
@@ -74,13 +79,15 @@ async def test_create_run_returns_request_info(test_client, admin_headers, queue
 
 async def test_async_agent_call_uses_request_intake(test_client, admin_headers):
     agent_slug = await _get_default_agent_slug(test_client, admin_headers)
-    request_id = f"agent-call-queue-{uuid.uuid4()}"
+    thread_id = await _create_thread(test_client, admin_headers, agent_slug)
+    request_id = make_test_resource_id("agent-call-queue")
 
     response = await test_client.post(
         "/api/agent-invocation/agent-call/runs",
         json={
             "agent_slug": agent_slug,
             "messages": [{"role": "user", "content": "queue integration"}],
+            "thread_id": thread_id,
             "request_id": request_id,
             "async_mode": True,
         },
@@ -186,6 +193,7 @@ async def test_upgrade_queued_chat_request_to_steer(test_client, admin_headers, 
                 AgentRun(
                     id=active_run_id,
                     conversation_thread_id=thread_id,
+                    runtime_scope_id=thread_id,
                     agent_slug=agent_slug,
                     uid=conversation.uid,
                     status="running",
@@ -274,4 +282,3 @@ async def test_continue_empty_queue_returns_stable_conflict(test_client, admin_h
 
     assert resp.status_code == 409, resp.text
     assert resp.json()["detail"]["code"] == "queue_empty"
-

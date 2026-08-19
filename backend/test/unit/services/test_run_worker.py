@@ -1158,10 +1158,6 @@ async def test_worker_startup_ensures_builtin_mcp_servers(monkeypatch: pytest.Mo
         del session
         calls.append("ensure_options_in_db")
 
-    async def fake_migrate_legacy_system_options(session):
-        del session
-        calls.append("migrate_system_options")
-
     async def fake_invalidate_option_cache(key):
         del key
         calls.append("invalidate_option_cache")
@@ -1191,7 +1187,6 @@ async def test_worker_startup_ensures_builtin_mcp_servers(monkeypatch: pytest.Mo
     monkeypatch.setattr(run_worker, "ensure_builtin_mcp_servers_in_db", fake_ensure_builtin_mcp_servers_in_db)
     monkeypatch.setattr(run_worker, "init_builtin_skills", fake_init_builtin_skills)
     monkeypatch.setattr(config_options, "ensure_options_in_db", fake_ensure_options_in_db)
-    monkeypatch.setattr(config_options, "migrate_legacy_system_options", fake_migrate_legacy_system_options)
     monkeypatch.setattr(config_options, "invalidate_option_cache", fake_invalidate_option_cache)
     monkeypatch.setattr(run_worker, "recover_pending_dispatches", fake_recover_pending_dispatches)
     monkeypatch.setattr(run_worker, "reconcile_expired_run_leases", fake_reconcile_expired_run_leases)
@@ -1215,7 +1210,6 @@ async def test_worker_startup_ensures_builtin_mcp_servers(monkeypatch: pytest.Mo
         "ensure_business_schema",
         "setup_langgraph_checkpointer",
         "ensure_options_in_db",
-        "migrate_system_options",
         "invalidate_option_cache",
         "ensure_builtin_mcp_servers_in_db",
         "init_builtin_skills",
@@ -1276,7 +1270,7 @@ async def test_reconciliation_failure_does_not_refresh_success_lease(monkeypatch
 
 
 @pytest.mark.asyncio
-async def test_worker_startup_fails_when_system_options_cannot_migrate(monkeypatch: pytest.MonkeyPatch):
+async def test_worker_startup_fails_when_system_options_cannot_initialize(monkeypatch: pytest.MonkeyPatch):
 
     monkeypatch.setattr(run_worker.pg_manager, "initialize", lambda: None)
     monkeypatch.setattr(run_worker.pg_manager, "create_business_tables", AsyncMock())
@@ -1287,12 +1281,11 @@ async def test_worker_startup_fails_when_system_options_cannot_migrate(monkeypat
     async def fake_session_ctx():
         yield object()
 
-    async def fail_migrate(_session):
+    async def fail_initialize(_session):
         raise RuntimeError("config load failed")
 
     monkeypatch.setattr(run_worker.pg_manager, "get_async_session_context", fake_session_ctx)
-    monkeypatch.setattr(config_options, "ensure_options_in_db", AsyncMock())
-    monkeypatch.setattr(config_options, "migrate_legacy_system_options", fail_migrate)
+    monkeypatch.setattr(config_options, "ensure_options_in_db", fail_initialize)
 
     with pytest.raises(RuntimeError, match="config load failed"):
         await run_worker._worker_startup({})

@@ -136,7 +136,10 @@ def test_storage_migrator_gates_every_shipping_file_consumer(filename: str) -> N
     assert "python -m yuxi.storage_migration" in migrator["command"]
     migrator_targets = {_volume_target(volume) for volume in migrator.get("volumes") or []}
     assert "/app/legacy-saves" in migrator_targets
+    assert "/app/legacy-projects" not in migrator_targets
     assert "/app/checkpoints" not in migrator_targets
+    assert "YUXI_LEGACY_PROJECTS_DIR" not in (migrator.get("environment") or {})
+    assert "minio" not in (migrator.get("depends_on") or {})
 
 
 def test_storage_migration_script_quiesces_runtime_before_issuing_proof() -> None:
@@ -151,6 +154,19 @@ def test_storage_migration_script_quiesces_runtime_before_issuing_proof() -> Non
     assert provisioner_stop < source.index("YUXI_STORAGE_MIGRATION_QUIESCENCE_TOKEN")
     assert 'compose=(docker compose "$@")' in source
     assert "up -d --no-deps --build --wait sandbox-provisioner" in source
+    assert 'mkdir -p "$(dirname "$proof_file")"' in source
+
+
+def test_v071_options_migration_is_not_part_of_normal_startup() -> None:
+    """一次性配置迁移只能由 storage-migrator 装配。"""
+    root = _project_root()
+    migration_source = (root / "backend/package/yuxi/storage_migration.py").read_text()
+    api_source = (root / "backend/server/utils/lifespan.py").read_text()
+    worker_source = (root / "backend/package/yuxi/services/run_worker.py").read_text()
+
+    assert "migrate_system_options" in migration_source
+    assert "storage_migrations" not in api_source
+    assert "storage_migrations" not in worker_source
 
 
 def test_storage_migration_script_recovers_stopped_production_deployment(

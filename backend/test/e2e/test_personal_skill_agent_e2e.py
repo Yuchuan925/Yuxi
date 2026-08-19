@@ -7,7 +7,11 @@ import httpx
 import pytest
 
 from e2e_helpers import cancel_run, consume_events, skip_if_external_quota, wait_for_run
-from test.live_api_cleanup import remove_e2e_thread_storage
+from test.live_api_cleanup import (
+    make_test_conversation_metadata,
+    make_test_conversation_title,
+    remove_e2e_thread_storage,
+)
 from yuxi.agents.skills.service import get_personal_skills_root_dir, get_user_skills_root_dir
 from yuxi.utils.paths import VIRTUAL_PERSONAL_SKILLS_PATH
 
@@ -88,8 +92,8 @@ async def test_main_agent_reads_personal_skill_directly_from_user_workspace(
             headers=e2e_headers,
             json={
                 "agent_id": agent_slug,
-                "title": f"personal-skill-e2e-{slug[-8:]}",
-                "metadata": {"_yuxi_e2e": True, "test": "personal-skill-e2e"},
+                "title": make_test_conversation_title("personal-skill-e2e"),
+                "metadata": make_test_conversation_metadata("personal-skill-e2e", e2e=True),
             },
         )
         assert thread_response.status_code == 200, thread_response.text

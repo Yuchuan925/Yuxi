@@ -1,4 +1,4 @@
-"""把旧 Project/Thread 文件一次性导入 UserWorkspace。"""
+"""把 v0.7.1 Thread 文件一次性导入 UserWorkspace。"""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ import re
 import shutil
 import uuid
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from sqlalchemy import select, text
 from sqlalchemy.orm.attributes import flag_modified
@@ -23,37 +23,56 @@ from yuxi.storage.postgres.models_business import Conversation, Message, ToolCal
 from yuxi.utils.paths import VIRTUAL_PATH_PREFIX
 
 _SAFE_LEGACY_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
-_LEGACY_ATTACHMENT_STORAGE_FIELDS = {
-    "bucket_name",
-    "original_object_name",
-    "markdown_object_name",
-    "minio_url",
+_CURRENT_ATTACHMENT_FIELDS = {
+    "file_id",
+    "file_name",
+    "file_type",
+    "file_size",
+    "status",
+    "uploaded_at",
+    "path",
+    "original_path",
+    "request_id",
 }
 
 
 @dataclass(frozen=True, slots=True)
-class LegacyWorkdirBinding:
-    """旧 Workdir 的文件身份与所属用户。"""
+class V071WorkdirBinding:
+    """v0.7.1 Conversation 的目标 Workdir 与所属用户。"""
 
     workdir_id: str
     uid: str
 
 
 @dataclass(frozen=True, slots=True)
-class LegacyConversationBinding:
-    """旧 Conversation 到 Workdir 的映射。"""
+class V071ConversationBinding:
+    """v0.7.1 Conversation 到目标 Workdir 的映射。"""
 
     thread_id: str
     uid: str
     workdir_id: str
 
 
-async def read_legacy_bindings(db) -> tuple[tuple[LegacyWorkdirBinding, ...], tuple[LegacyConversationBinding, ...]]:
-    """读取可重放的旧目录映射；新安装返回空集合。"""
+@dataclass(frozen=True, slots=True)
+class V071WorkdirMigrationPlan:
+    """v0.7.1 Workdir schema 与待导入目录计划。"""
+
+    requires_cutover: bool
+    workdirs: tuple[V071WorkdirBinding, ...]
+    conversations: tuple[V071ConversationBinding, ...]
+
+
+async def read_v071_workdir_plan(db) -> V071WorkdirMigrationPlan:
+    """读取 v0.7.1 或迁移重试所需的目录映射。"""
     conversations_table = bool(await db.scalar(text("SELECT to_regclass('conversations') IS NOT NULL")))
     if not conversations_table:
-        return (), ()
-    project_table = bool(await db.scalar(text("SELECT to_regclass('project_workdirs') IS NOT NULL")))
+        return V071WorkdirMigrationPlan(False, (), ())
+
+    unsupported_tables = [
+        table_name
+        for table_name in ("project_workdirs", "file_storage_materializations")
+        if bool(await db.scalar(text(f"SELECT to_regclass('{table_name}') IS NOT NULL")))
+    ]
     workdir_column = bool(
         await db.scalar(
             text(
@@ -63,107 +82,78 @@ async def read_legacy_bindings(db) -> tuple[tuple[LegacyWorkdirBinding, ...], tu
             )
         )
     )
-    workdirs: list[LegacyWorkdirBinding] = []
-    if project_table:
-        phase_table = bool(await db.scalar(text("SELECT to_regclass('file_storage_materializations') IS NOT NULL")))
-        phase = None
-        if phase_table:
-            phase = await db.scalar(
-                text("SELECT phase FROM file_storage_materializations WHERE id = 'project-workdir-v1'")
-            )
-        rows = await db.execute(text("SELECT id, uid, materialization_status FROM project_workdirs ORDER BY id"))
-        workdirs = []
-        for row in rows:
-            workdir_id = _safe_legacy_component(row.id, "Workdir ID")
-            if row.materialization_status != "ready":
-                raise RuntimeError(f"旧 Workdir 尚未完成物化: {workdir_id}")
-            workdirs.append(LegacyWorkdirBinding(workdir_id, str(row.uid)))
-        if workdirs and phase != "active":
-            raise RuntimeError("旧文件存储尚未全局激活，拒绝切换到 UserWorkspace")
-    conversations: list[LegacyConversationBinding] = []
     if workdir_column:
-        rows = await db.execute(
-            text("SELECT thread_id, uid, workdir_id FROM conversations WHERE workdir_id IS NOT NULL ORDER BY id")
-        )
-        conversations = [
-            LegacyConversationBinding(
-                _safe_legacy_component(row.thread_id, "Thread ID"),
-                str(row.uid),
-                _safe_legacy_component(row.workdir_id, "Workdir ID"),
+        unsupported_tables.append("conversations.workdir_id")
+    if unsupported_tables:
+        unsupported = ", ".join(unsupported_tables)
+        raise RuntimeError(f"检测到未发布的 Workdir 中间 schema，不支持自动迁移: {unsupported}")
+
+    workdir_path_column = bool(
+        await db.scalar(
+            text(
+                "SELECT EXISTS (SELECT 1 FROM information_schema.columns "
+                "WHERE table_schema = current_schema() "
+                "AND table_name = 'conversations' AND column_name = 'workdir_path')"
             )
-            for row in rows
-        ]
+        )
+    )
+    conversations: list[V071ConversationBinding] = []
+    if workdir_path_column:
+        rows = await db.execute(text("SELECT thread_id, uid, workdir_path FROM conversations ORDER BY id"))
+        for row in rows:
+            thread_id = str(row.thread_id)
+            if not _legacy_thread_data_exists(thread_id):
+                continue
+            workdir_id = _current_workdir_id(row.workdir_path)
+            if workdir_id is None:
+                raise RuntimeError(f"Conversation {thread_id} 的迁移重试路径无效")
+            conversations.append(V071ConversationBinding(thread_id, str(row.uid), workdir_id))
     else:
-        workdir_path_column = bool(
-            await db.scalar(
+        subagent_table = bool(await db.scalar(text("SELECT to_regclass('subagent_threads') IS NOT NULL")))
+        if subagent_table:
+            rows = await db.execute(
                 text(
-                    "SELECT EXISTS (SELECT 1 FROM information_schema.columns "
-                    "WHERE table_schema = current_schema() "
-                    "AND table_name = 'conversations' AND column_name = 'workdir_path')"
+                    "SELECT child.thread_id, child.uid, "
+                    "COALESCE(parent.thread_id, child.thread_id) AS owner_thread_id, "
+                    "COALESCE(parent.uid, child.uid) AS owner_uid "
+                    "FROM conversations AS child "
+                    "LEFT JOIN subagent_threads AS relation ON relation.child_conversation_id = child.id "
+                    "LEFT JOIN conversations AS parent ON parent.id = relation.parent_conversation_id "
+                    "ORDER BY child.id"
                 )
             )
-        )
-        if workdir_path_column:
-            rows = await db.execute(text("SELECT thread_id, uid, workdir_path FROM conversations ORDER BY id"))
-            for row in rows:
-                workdir_id = _current_workdir_id(row.workdir_path)
-                if workdir_id is None:
-                    continue
-                project_source = Path(os.getenv("YUXI_LEGACY_PROJECTS_DIR", "legacy-projects")) / workdir_id
-                if project_table or project_source.exists() or _legacy_thread_data_exists(str(row.thread_id)):
-                    conversations.append(
-                        LegacyConversationBinding(
-                            _safe_legacy_component(row.thread_id, "Thread ID"),
-                            str(row.uid),
-                            workdir_id,
-                        )
-                    )
         else:
-            subagent_table = bool(await db.scalar(text("SELECT to_regclass('subagent_threads') IS NOT NULL")))
-            if subagent_table:
-                rows = await db.execute(
-                    text(
-                        "SELECT child.thread_id, child.uid, "
-                        "COALESCE(parent.thread_id, child.thread_id) AS owner_thread_id, "
-                        "COALESCE(parent.uid, child.uid) AS owner_uid "
-                        "FROM conversations AS child "
-                        "LEFT JOIN subagent_threads AS relation ON relation.child_conversation_id = child.id "
-                        "LEFT JOIN conversations AS parent ON parent.id = relation.parent_conversation_id "
-                        "ORDER BY child.id"
-                    )
+            rows = await db.execute(
+                text(
+                    "SELECT thread_id, uid, thread_id AS owner_thread_id, uid AS owner_uid "
+                    "FROM conversations ORDER BY id"
                 )
-            else:
-                rows = await db.execute(
-                    text(
-                        "SELECT thread_id, uid, thread_id AS owner_thread_id, uid AS owner_uid "
-                        "FROM conversations ORDER BY id"
-                    )
-                )
-            for row in rows:
-                thread_id = _safe_legacy_component(row.thread_id, "Thread ID")
-                if not _legacy_thread_data_exists(thread_id):
-                    continue
-                owner_uid = str(row.owner_uid)
-                owner_thread_id = _safe_legacy_component(row.owner_thread_id, "Thread ID")
-                workdir_id = f"legacy-{hashlib.md5(f'{owner_uid}:{owner_thread_id}'.encode()).hexdigest()}"
-                conversations.append(LegacyConversationBinding(thread_id, str(row.uid), workdir_id))
-    owners = {item.workdir_id: item.uid for item in workdirs}
+            )
+        for row in rows:
+            thread_id = str(row.thread_id)
+            owner_uid = str(row.owner_uid)
+            owner_thread_id = str(row.owner_thread_id)
+            workdir_id = f"legacy-{hashlib.md5(f'{owner_uid}:{owner_thread_id}'.encode()).hexdigest()}"
+            conversations.append(V071ConversationBinding(thread_id, str(row.uid), workdir_id))
+
+    owners: dict[str, str] = {}
     for item in conversations:
         owner = owners.setdefault(item.workdir_id, item.uid)
         if owner != item.uid:
             raise RuntimeError("旧 Workdir 被不同用户引用，拒绝迁移")
-    return tuple(LegacyWorkdirBinding(workdir_id, uid) for workdir_id, uid in sorted(owners.items())), tuple(
-        conversations
+    return V071WorkdirMigrationPlan(
+        not workdir_path_column,
+        tuple(V071WorkdirBinding(workdir_id, uid) for workdir_id, uid in sorted(owners.items())),
+        tuple(conversations),
     )
 
 
-def import_legacy_workdirs(
-    workdirs: tuple[LegacyWorkdirBinding, ...],
-    conversations: tuple[LegacyConversationBinding, ...],
+def import_v071_workdirs(
+    workdirs: tuple[V071WorkdirBinding, ...],
+    conversations: tuple[V071ConversationBinding, ...],
 ) -> None:
     """原子导入旧目录；所有目标验证成功前保留旧源。"""
-    legacy_projects = Path(os.getenv("YUXI_LEGACY_PROJECTS_DIR", "legacy-projects"))
-    conversations_by_workdir: dict[str, list[LegacyConversationBinding]] = {}
+    conversations_by_workdir: dict[str, list[V071ConversationBinding]] = {}
     for conversation in conversations:
         conversations_by_workdir.setdefault(conversation.workdir_id, []).append(conversation)
 
@@ -184,17 +174,14 @@ def import_legacy_workdirs(
                 if target.is_symlink() or not target.is_dir():
                     raise RuntimeError(f"Workdir 迁移目标不是安全目录: {binding.workdir_id}")
                 _merge_tree(target, staging)
-            project_source = legacy_projects / binding.workdir_id
-            if project_source.exists() or project_source.is_symlink():
-                _merge_tree(project_source, staging)
             for conversation in conversations_by_workdir.get(binding.workdir_id, []):
-                legacy_user_data = get_legacy_storage_dir() / "threads" / conversation.thread_id / "user-data"
+                legacy_user_data = _legacy_thread_user_data(conversation.thread_id)
+                if legacy_user_data is None:
+                    continue
                 for namespace in ("uploads", "outputs"):
                     source = legacy_user_data / namespace
                     if source.exists() or source.is_symlink():
                         _merge_tree(source, staging / namespace)
-            (staging / "uploads").mkdir(exist_ok=True)
-            (staging / "outputs").mkdir(exist_ok=True)
             staged_manifest = _tree_manifest(staging)
             if target.exists() or target.is_symlink():
                 if target.is_symlink() or _tree_manifest(target) != staged_manifest:
@@ -208,28 +195,39 @@ def import_legacy_workdirs(
             shutil.rmtree(staging, ignore_errors=True)
 
 
-def cleanup_legacy_workdir_sources(
-    workdirs: tuple[LegacyWorkdirBinding, ...],
-    conversations: tuple[LegacyConversationBinding, ...],
+def cleanup_v071_thread_sources(
+    conversations: tuple[V071ConversationBinding, ...],
 ) -> None:
     """仅在数据库与最终目录验证提交后删除已导入旧源。"""
-    legacy_projects = Path(os.getenv("YUXI_LEGACY_PROJECTS_DIR", "legacy-projects"))
-    for binding in workdirs:
-        _safe_legacy_component(binding.workdir_id, "Workdir ID")
-        source = legacy_projects / binding.workdir_id
-        if source.is_symlink():
-            raise RuntimeError("旧 Project 来源变成 symlink，拒绝清理")
-        if source.is_dir():
-            shutil.rmtree(source)
     for conversation in conversations:
-        legacy_user_data = get_legacy_storage_dir() / "threads" / conversation.thread_id / "user-data"
+        legacy_user_data = _legacy_thread_user_data(conversation.thread_id)
+        if legacy_user_data is None:
+            continue
         for namespace in ("uploads", "outputs"):
             shutil.rmtree(legacy_user_data / namespace, ignore_errors=True)
 
 
 def _legacy_thread_data_exists(thread_id: str) -> bool:
-    root = get_legacy_storage_dir() / "threads" / thread_id / "user-data"
+    root = _legacy_thread_user_data(thread_id)
+    if root is None:
+        return False
     return any((root / namespace).exists() or (root / namespace).is_symlink() for namespace in ("uploads", "outputs"))
+
+
+def _legacy_thread_user_data(thread_id: object) -> Path | None:
+    """仅为单个安全 POSIX 目录名解析 v0.7.1 Thread 文件根。"""
+    value = str(thread_id or "")
+    pure = PurePosixPath(value)
+    if (
+        not value
+        or "/" in value
+        or pure.is_absolute()
+        or len(pure.parts) != 1
+        or pure.parts[0] in {".", ".."}
+        or "\x00" in value
+    ):
+        return None
+    return get_legacy_storage_dir() / "threads" / value / "user-data"
 
 
 def _current_workdir_id(workdir_path: object) -> str | None:
@@ -241,7 +239,7 @@ def _current_workdir_id(workdir_path: object) -> str | None:
     return _safe_legacy_component(relative, "Workdir ID")
 
 
-async def rewrite_legacy_workdir_paths(db) -> None:
+async def rewrite_v071_workdir_paths(db) -> None:
     """把仍被运行时读取的旧虚拟路径改写到当前 Workdir。"""
     result = await db.execute(select(Conversation).order_by(Conversation.id))
     conversations = list(result.scalars().all())
@@ -252,8 +250,7 @@ async def rewrite_legacy_workdir_paths(db) -> None:
         if isinstance(attachments, list):
             virtual_workdir = workdir_virtual_dir(conversation.workdir_path)
             metadata["attachments"] = [
-                _rewrite_attachment(conversation.thread_id, virtual_workdir, item) if isinstance(item, dict) else item
-                for item in attachments
+                _rewrite_attachment(virtual_workdir, item) if isinstance(item, dict) else item for item in attachments
             ]
             conversation.extra_metadata = metadata
             flag_modified(conversation, "extra_metadata")
@@ -289,27 +286,17 @@ async def verify_workdir_bindings(db) -> None:
             raise RuntimeError(f"Conversation {conversation.thread_id} 的 Workdir 未完成迁移")
 
 
-def _rewrite_attachment(thread_id: str, workdir_path: str, record: dict) -> dict:
-    rewritten = {key: value for key, value in record.items() if key not in _LEGACY_ATTACHMENT_STORAGE_FIELDS}
-    for field in ("path", "original_path", "file_path"):
-        rewritten[field] = _rewrite_path(rewritten.get(field), workdir_path)
-    if isinstance(rewritten.get("path"), str):
-        rewritten["artifact_url"] = f"/api/chat/thread/{thread_id}/artifacts/{rewritten['path'].lstrip('/')}"
-    if isinstance(rewritten.get("original_path"), str):
-        rewritten["original_artifact_url"] = (
-            f"/api/chat/thread/{thread_id}/artifacts/{rewritten['original_path'].lstrip('/')}"
-        )
+def _rewrite_attachment(workdir_path: str, record: dict) -> dict:
+    rewritten = {key: value for key, value in record.items() if key in _CURRENT_ATTACHMENT_FIELDS}
+    for field in ("path", "original_path"):
+        if field in rewritten:
+            rewritten[field] = _rewrite_path(rewritten[field], workdir_path)
     return rewritten
 
 
 def _rewrite_path(path: object, workdir_path: str) -> object:
     if not isinstance(path, str):
         return path
-    relative_workdir = workdir_path.removeprefix("/home/gem/user-data/")
-    workdir_id = relative_workdir.split("/", 1)[-1]
-    old_project = f"/home/gem/projects/project-{workdir_id}"
-    if path == old_project or path.startswith(f"{old_project}/"):
-        return f"{workdir_path}{path[len(old_project) :]}"
     old_workspace = "/home/gem/user-data/workspace"
     if path == old_workspace or path.startswith(f"{old_workspace}/"):
         return f"/home/gem/user-data{path[len(old_workspace) :]}"

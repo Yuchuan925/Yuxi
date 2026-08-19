@@ -13,6 +13,7 @@ from sqlalchemy import delete, select, text, update
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from yuxi.agents.skills import service as skill_service
+from yuxi.storage_migrations import v071_skills
 from yuxi.storage.postgres.manager import pg_manager
 from yuxi.storage.postgres.models_business import Skill, User
 
@@ -309,19 +310,19 @@ async def test_legacy_shared_skill_migrates_without_touching_personal_workspace(
                 raise OSError("injected legacy cleanup failure")
             return original_rmtree(path, *args, **kwargs)
 
-        monkeypatch.setattr(skill_service.shutil, "rmtree", fail_shared_cleanup_once)
+        monkeypatch.setattr(v071_skills.shutil, "rmtree", fail_shared_cleanup_once)
         with pytest.raises(OSError, match="injected legacy cleanup failure"):
             async with session_factory() as db:
-                await skill_service.migrate_legacy_skill_storage(db)
+                await v071_skills.migrate_shared_skills(db)
 
         async with session_factory() as db:
             persisted_after_failure = await db.scalar(select(Skill.dir_path).where(Skill.id == skill_id))
         assert persisted_after_failure == f"shared/{shared_slug}"
         assert legacy_shared.is_dir()
 
-        monkeypatch.setattr(skill_service.shutil, "rmtree", original_rmtree)
+        monkeypatch.setattr(v071_skills.shutil, "rmtree", original_rmtree)
         async with session_factory() as db:
-            await skill_service.migrate_legacy_skill_storage(db)
+            await v071_skills.migrate_shared_skills(db)
 
         async with session_factory() as db:
             persisted_path = await db.scalar(select(Skill.dir_path).where(Skill.id == skill_id))
@@ -337,7 +338,7 @@ async def test_legacy_shared_skill_migrates_without_touching_personal_workspace(
 
         # 停机迁移重复执行也不得扫描或删除个人 Workspace。
         async with session_factory() as db:
-            await skill_service.migrate_legacy_skill_storage(db)
+            await v071_skills.migrate_shared_skills(db)
         assert legacy_personal.is_dir()
     finally:
         async with session_factory() as db:

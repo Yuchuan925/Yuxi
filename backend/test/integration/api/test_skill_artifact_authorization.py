@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from yuxi.agents.skills import service as skill_service
 from yuxi.storage.postgres.models_business import Skill
+from test.live_api_cleanup import make_test_conversation_metadata, make_test_conversation_title
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
 
@@ -25,7 +26,11 @@ async def _create_thread(test_client, headers: dict[str, str], title: str) -> st
     assert agent_id
     response = await test_client.post(
         "/api/chat/thread",
-        json={"agent_id": agent_id, "title": title, "metadata": {}},
+        json={
+            "agent_id": agent_id,
+            "title": make_test_conversation_title(title),
+            "metadata": make_test_conversation_metadata("skill-artifact"),
+        },
         headers=headers,
     )
     assert response.status_code == 200, response.text

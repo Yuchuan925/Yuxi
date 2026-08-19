@@ -4,6 +4,7 @@ import uuid
 from pathlib import Path
 
 import pytest
+from test.live_api_cleanup import make_test_conversation_metadata, make_test_conversation_title
 from yuxi.agents.backends.sandbox.paths import user_workdir_host_dir
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
@@ -21,8 +22,8 @@ async def _create_thread_for_user(test_client, headers: dict[str, str]) -> tuple
         "/api/chat/thread",
         json={
             "agent_id": agent_id,
-            "title": f"viewer-security-test-{uuid.uuid4().hex[:8]}",
-            "metadata": {},
+            "title": make_test_conversation_title("viewer-filesystem-security"),
+            "metadata": make_test_conversation_metadata("viewer-filesystem-security"),
         },
         headers=headers,
     )

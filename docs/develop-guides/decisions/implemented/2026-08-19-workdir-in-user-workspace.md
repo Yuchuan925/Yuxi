@@ -11,9 +11,11 @@ Owner：backend/package/yuxi/services/workdir_service.py
 
 个人 Skill 继续遵循[Skill source convergence](../implemented/2026-08-18-skill-source-convergence.md)：个人 Skill 属于 UserWorkspace，共享 Skill 仍由只读 projection 提供。
 
+发布版升级边界由 [v0.7.1 存储迁移](2026-08-20-v071-storage-migration-boundary.md) 独立拥有。
+
 ## 问题
 
-当前 Workdir 被建模为独立的 `ProjectWorkdir` 存储域：它有自己的数据库表、storage key、物化状态、宿主机目录、容器挂载和 Kubernetes PVC；UserWorkspace 则是另一套用户文件边界。这样产生了两套表示同一用户文件能力的根目录：
+把 Workdir 建模为独立的 `ProjectWorkdir` 存储域，会为同一用户文件能力引入单独的数据库表、storage key、物化状态、宿主机目录、容器挂载和 Kubernetes PVC，并与 UserWorkspace 形成两套根目录：
 
 - Conversation 通过 `workdir_id` 间接定位独立 Project 目录；
 - Agent、Viewer 和 Sandbox 还要在 Project、User Data、Skills 之间做路径和挂载转换；
@@ -111,9 +113,11 @@ Conversation 的附件 JSON 只保存文件 ID、文件名、MIME、大小、状
 
 `storage-migrator` 收敛为一次性旧布局迁移 Owner，而不是正常启动链路中的 Workdir materialization Owner：
 
-- 已部署的 `ProjectWorkdir` 目录按稳定 ID 迁移为 `workspace/projects/<workdir-id>`，Conversation 改写为相应的 `workdir_path`；
-- 旧 thread 文件、对象存储附件和历史路径仍按其现有 Owner 做一次性导入；持久化的 `/home/gem/user-data/workspace/...` 路径改写为 `/home/gem/user-data/...`，旧顶层 `uploads/outputs` 必须归入可确认的 Workdir 或明确的迁移隔离区，不能保留为第二个运行时根；
-- 迁移在 runtime quiescence、目标校验和 activation 后清理旧源；
+- 升级基线是 v0.7.1 的发布状态；每个历史 Conversation 获得确定性的 `projects/legacy-<hash>`，即使没有旧文件也创建目标 Workdir；
+- v0.7.1 thread `uploads/outputs` 导入对应 Workdir，持久化的 `/home/gem/user-data/workspace/...` 改写为 `/home/gem/user-data/...`，旧顶层 `uploads/outputs` 路径改写到当前 Workdir；
+- v0.7.1 `base.toml` 与共享 Skill 在同一停机迁移中切换到当前 PostgreSQL 和 Skill source Owner；
+- 迁移在 runtime quiescence 和目标校验后提交数据库，再清理旧源；已有 `workdir_path` 且旧 thread 源仍存在时按同一目标重试；
+- 未发布的 `ProjectWorkdir`、`FileStorageMaterialization` 与 `workdir_id` 中间 schema 明确拒绝，不执行兼容导入；
 - 新安装直接使用 UserWorkspace 布局，不创建独立 Project schema、Project root 或 Project PVC；
 - 正常 API/worker 启动不扫描旧宿主目录，也不执行破坏性迁移。
 
@@ -140,10 +144,10 @@ Conversation 的附件 JSON 只保存文件 ID、文件名、MIME、大小、状
 | Project 间读取属于同一 UserWorkspace 的正常能力，Prompt 默认禁止未经用户要求的跨 Workdir 写入 | Agent 误把可见性当作默认写权限，或错误宣称 Project 间不可读 | `backend/package/yuxi/agents/buildin/chatbot/prompt.py` | Prompt unit 检查当前 Workdir、跨目录可读和默认写入约束 | Prompt 缺少当前路径；禁止读取其他 Project；允许默认跨 Project 写入 | 通过：Prompt 正向与负向 unit 纳入全量 unit |
 | `runtime_scope_id` 只分组父子 Run 的 execution Sandbox 与清理生命周期，不参与 Workdir 身份 | 共享 Workdir 的顶层 Conversation 错误共享进程，或父子 Run 提前清理 Sandbox | AgentRun repository、SubAgent run service、worker runtime cleanup | AgentRun PostgreSQL integration + execution-tree E2E | 同 Workdir 的两个根 Run 使用同一 scope；子 Run 使用 child thread 作为 scope；子 Run 活跃时销毁 Sandbox | unit、真实双 Sandbox provisioner integration 和顶层 runtime 重建 E2E 通过；完整父子 execution-tree E2E 未运行 |
 | 父子 Conversation 使用同一 Workdir，但 runtime 生命周期仍按既有 scope 规则隔离 | 子 Agent 路径错绑或 runtime cleanup 误删文件 | Conversation Workdir service、worker lifecycle、provisioner | execution-tree E2E，验证最终 POSIX 文件和 runtime cleanup | 子 Conversation 指向不同路径；根 Run 终态删除 Workdir 文件 | E2E 契约收集通过；实际父子链路未运行（本地 deterministic provider 不可连接） |
-| 旧数据迁移只在停机/准入条件满足时执行，并在 activation 后清理旧源 | 迁移期间仍写入、失败后丢源数据 | `storage_migration.py` 与一次性 legacy importer | 迁移 integration、quiescence proof、activation interruption/retry | 非终态 Run、缺少 quiescence、目标校验失败、提前删除旧源 | 通过：真实旧 DDL、schema 二次执行、切换中断重放、早期 Thread-only 布局与 3 个真实 PostgreSQL/文件系统 integration |
+| v0.7.1 数据迁移只在停机条件满足时执行，并在提交后清理旧源 | 无文件 Conversation 漏迁、迁移期间仍写入、失败后丢源数据 | `storage_migration.py` 与一次性 legacy importer | v0.7.1 schema、文件系统 integration、quiescence proof 与重试 | 空 Conversation、缺少 quiescence、未发布中间 schema、目标冲突、提前删除旧源 | 真实 v0.7.1 schema/文件系统 integration 覆盖有文件、空 Conversation、附件字段收敛和重试；相关 unit 与完整 gate 见迁移基线决定 |
 | 个人 Skill 通过 `/home/gem/user-data/agents/skills` 直接属于 UserWorkspace，共享 Skill projection 仍只读 | 个人 Skill 被共享迁移删除或 Sandbox 可写共享 Skill | Skill service、Skill projection、UserWorkspace | 现有 Skill unit/integration/E2E 与 Docker mount inspection | 个人 Skill 被 legacy scan 删除；shared projection 可写；仍生成 `/home/gem/user-data/workspace/agents/skills` | unit 与真实 Docker mount/integration 通过；完整 Agent E2E 未运行（本地 deterministic provider 不可连接） |
 
-旧能力不存在：实现完成后，shipping runtime 不再创建或读取独立 `ProjectWorkdir`、`FileStorageMaterialization`、Project host root、Project mount 或 Project PVC；不再以每个 Workdir 的 materialization status/epoch/fingerprint 作为新请求的准入条件。旧数据迁移可以保留一次性 marker、proof 和 staging 状态，但不得恢复这些运行时存储能力。
+旧能力不存在：shipping runtime 与迁移器都不创建、读取、导入或删除独立 `ProjectWorkdir`、`FileStorageMaterialization`、Project host root、Project mount 或 Project PVC；迁移器只保留对未发布中间 schema 的拒绝检查，以及自身的 proof、marker 和 staging 状态。
 
 重新引入条件：只有产品明确需要 Workdir 级 ACL、配额、重命名、生命周期、跨用户共享元数据，或部署/合规要求独立的物理存储域时，才可重新引入 Workdir resource 或 Project storage domain；届时必须同时提供新的语义 Owner、迁移契约、权限负向案例、并发/恢复证据和真实部署验证。
 

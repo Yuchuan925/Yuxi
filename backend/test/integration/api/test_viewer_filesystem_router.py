@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-import uuid
-
 import pytest
+from test.live_api_cleanup import make_test_conversation_metadata, make_test_conversation_title
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
 
@@ -18,7 +17,11 @@ async def _create_thread(test_client, headers) -> tuple[str, str]:
         pytest.skip("default agent unavailable")
     response = await test_client.post(
         "/api/chat/thread",
-        json={"agent_id": agent_id, "title": f"viewer-{uuid.uuid4().hex[:8]}", "metadata": {}},
+        json={
+            "agent_id": agent_id,
+            "title": make_test_conversation_title("viewer-filesystem"),
+            "metadata": make_test_conversation_metadata("viewer-filesystem"),
+        },
         headers=headers,
     )
     assert response.status_code == 200, response.text

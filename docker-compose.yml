@@ -152,7 +152,6 @@ services:
     volumes:
       - ./backend/package:/app/package:ro
       - ./docker/volumes/yuxi:/app/legacy-saves
-      - ./docker/volumes/yuxi/projects:/app/legacy-projects
       - ./docker/volumes/yuxi/threads:/app/user-data
       - ./docker/volumes/yuxi/skill-sources:/app/skill-sources
       - ./docker/volumes/yuxi/skill-projections:/app/skill-projections
@@ -165,14 +164,11 @@ services:
       <<: *api-worker-env
       YUXI_RUNTIME_DIR: /app/runtime/storage-migrator
       YUXI_LEGACY_STORAGE_DIR: /app/legacy-saves
-      YUXI_LEGACY_PROJECTS_DIR: /app/legacy-projects
       YUXI_USER_DATA_DIR: /app/user-data
     command: uv run --no-sync --no-dev python -m yuxi.storage_migration
     restart: "no"
     depends_on:
       postgres:
-        condition: service_healthy
-      minio:
         condition: service_healthy
 
   sandbox-provisioner:

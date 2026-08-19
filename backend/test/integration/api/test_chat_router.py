@@ -10,6 +10,7 @@ import uuid
 
 import pytest
 from PIL import Image
+from test.live_api_cleanup import make_test_conversation_metadata, make_test_conversation_title
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
 
@@ -121,8 +122,8 @@ async def _create_thread_for_user(test_client, headers: dict[str, str]) -> str:
         "/api/chat/thread",
         json={
             "agent_id": agent_id,
-            "title": f"chat-router-test-{uuid.uuid4().hex[:8]}",
-            "metadata": {},
+            "title": make_test_conversation_title("chat-router"),
+            "metadata": make_test_conversation_metadata("chat-router"),
         },
         headers=headers,
     )

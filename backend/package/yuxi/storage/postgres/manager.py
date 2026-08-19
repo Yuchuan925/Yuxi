@@ -53,37 +53,15 @@ WORKDIR_PATH_SCHEMA_STATEMENTS = (
     """
     DO $$
     BEGIN
-        IF EXISTS (
-            SELECT 1 FROM information_schema.columns
-            WHERE table_schema = current_schema()
-              AND table_name = 'conversations'
-              AND column_name = 'workdir_id'
-        ) THEN
-            RAISE EXCEPTION 'legacy Workdir schema requires storage-migrator cutover';
+        IF EXISTS (SELECT 1 FROM conversations WHERE workdir_path IS NULL) THEN
+            RAISE EXCEPTION 'Conversation workdir_path requires storage-migrator cutover';
         END IF;
     END $$
     """,
     "CREATE INDEX IF NOT EXISTS ix_conversations_workdir_path ON conversations(workdir_path)",
 )
-LEGACY_WORKDIR_CUTOVER_STATEMENTS = (
+V071_WORKDIR_CUTOVER_STATEMENTS = (
     "ALTER TABLE IF EXISTS conversations ADD COLUMN IF NOT EXISTS workdir_path VARCHAR(512)",
-    """
-    DO $$
-    BEGIN
-        IF EXISTS (
-            SELECT 1 FROM information_schema.columns
-            WHERE table_schema = current_schema()
-              AND table_name = 'conversations'
-              AND column_name = 'workdir_id'
-        ) THEN
-            EXECUTE '
-                UPDATE conversations
-                SET workdir_path = ''projects/'' || workdir_id
-                WHERE workdir_path IS NULL AND workdir_id IS NOT NULL
-            ';
-        END IF;
-    END $$
-    """,
     """
     UPDATE conversations
     SET workdir_path = 'projects/legacy-' || md5(uid || ':' || thread_id)
@@ -99,13 +77,6 @@ LEGACY_WORKDIR_CUTOVER_STATEMENTS = (
     """,
     "ALTER TABLE IF EXISTS conversations ALTER COLUMN workdir_path SET NOT NULL",
     "CREATE INDEX IF NOT EXISTS ix_conversations_workdir_path ON conversations(workdir_path)",
-    "ALTER TABLE conversations DROP CONSTRAINT IF EXISTS fk_conversations_workdir_owner",
-    "ALTER TABLE conversations DROP CONSTRAINT IF EXISTS fk_conversations_workdir_id",
-    "ALTER TABLE conversations DROP COLUMN IF EXISTS workdir_id",
-)
-LEGACY_WORKDIR_SCHEMA_DROP_STATEMENTS = (
-    "DROP TABLE IF EXISTS file_storage_materializations",
-    "DROP TABLE IF EXISTS project_workdirs",
 )
 RUNTIME_SCOPE_SCHEMA_STATEMENTS = (
     "ALTER TABLE IF EXISTS agent_runs ADD COLUMN IF NOT EXISTS runtime_scope_id VARCHAR(64)",

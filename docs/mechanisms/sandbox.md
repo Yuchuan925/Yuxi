@@ -73,7 +73,7 @@ Pod 设置 `automount_service_account_token=False`。Memory backend 只登记 UR
 
 API/worker 使用 `SANDBOX_PROVISIONER_TOKEN` 调用 provisioner。该 token 至少 32 个字符，不能进入 `sandbox.env`、用户 Agent 环境或模型上下文。动态 Sandbox 默认获得全局 sandbox 环境和当前 uid 的 Agent 环境；远程 Skill 拉取传入 `inherit_env=False`，不注入这些环境，也不创建持久 uid 根。
 
-provisioner 只需要 User Data 与 Skill projection 的显式宿主路径；旧 `DOCKER_PROJECTS_HOST_PATH` 与 `PROJECT_DATA_PVC` 已移除。`storage-migrator` 可以额外挂载旧 Project 目录，但它只用于停机迁移，不属于 shipping runtime。
+provisioner 只需要 User Data 与 Skill projection 的显式宿主路径；旧 `DOCKER_PROJECTS_HOST_PATH` 与 `PROJECT_DATA_PVC` 已移除。`storage-migrator` 额外挂载 v0.7.1 的 `saves` 根，只用于停机迁移，不属于 shipping runtime。
 
 ## 失败、恢复与观察边界
 
@@ -85,7 +85,7 @@ provisioner 只需要 User Data 与 Skill projection 的显式宿主路径；旧
 | runtime 被 idle/终态回收 | 进程生命周期已结束 | UserWorkspace 文件被删除 |
 | 迁移器成功 | schema、目标目录与路径改写通过回读 | 任意未来 Agent 行为正确 |
 
-旧 Project 与 thread 文件只由 `storage-migrator` 在停机证明后导入。迁移先保留旧表和旧源完成目标复制，再切换 `workdir_path`、回读数据库与最终目录，最后删除旧 schema 与旧源；中断不能让正常 runtime 回退到双存储域。
+v0.7.1 的 `base.toml`、共享 Skill 与 thread `uploads/outputs` 只由 `storage-migrator` 在停机证明后导入。迁移先保留旧源完成目标复制，再切换 `workdir_path` 并回读数据库与最终目录，提交后才清理旧源；中断重试继续校验同一确定性目标。检测到未发布的 Workdir 中间 schema 时迁移明确失败。
 
 ## 源码定位与验证
 

@@ -20,7 +20,11 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from test.live_api_cleanup import cleanup_provisioned_sandboxes, cleanup_pytest_knowledge_resources  # noqa: E402
+from test.live_api_cleanup import (  # noqa: E402
+    cleanup_provisioned_sandboxes,
+    cleanup_pytest_knowledge_resources,
+    cleanup_test_chat_resources,
+)
 from yuxi.config.runtime import lite_mode_enabled  # noqa: E402
 
 load_dotenv(PROJECT_ROOT / ".env", override=False)
@@ -117,7 +121,7 @@ def cleanup_test_knowledge_resources():
     async def run_cleanup() -> None:
         global _ADMIN_TOKEN_CACHE
 
-        if LITE_MODE or not ADMIN_LOGIN or not ADMIN_PASSWORD:
+        if not ADMIN_LOGIN or not ADMIN_PASSWORD:
             return
 
         if not _ADMIN_TOKEN_CACHE:
@@ -142,7 +146,16 @@ def cleanup_test_knowledge_resources():
         headers = {"Authorization": f"Bearer {_ADMIN_TOKEN_CACHE}"}
 
         async with httpx.AsyncClient(base_url=API_BASE_URL, timeout=HTTP_TIMEOUT, follow_redirects=True) as client:
-            await cleanup_pytest_knowledge_resources(client, headers)
+            current_user = await client.get("/api/auth/me", headers=headers)
+            if current_user.status_code != 200:
+                raise RuntimeError(f"Test resource cleanup failed to read current user: {current_user.text}")
+            cleanup_uid = str(current_user.json().get("uid") or "")
+            if not cleanup_uid:
+                raise RuntimeError("Test resource cleanup current user payload is missing uid")
+
+            await cleanup_test_chat_resources(client, headers, owner_uid=cleanup_uid)
+            if not LITE_MODE:
+                await cleanup_pytest_knowledge_resources(client, headers)
 
     anyio.run(run_cleanup)
     yield
@@ -212,6 +225,11 @@ async def standard_user(test_client: httpx.AsyncClient, admin_headers: dict[str,
             "headers": {"Authorization": f"Bearer {access_token}"},
         }
     finally:
+        await cleanup_test_chat_resources(
+            test_client,
+            {"Authorization": f"Bearer {access_token}"},
+            owner_uid=str(user_payload["uid"]),
+        )
         cleanup_error = None
         for _ in range(3):
             response = await test_client.delete(f"/api/auth/users/{user_payload['id']}", headers=admin_headers)

@@ -164,7 +164,7 @@ user-data/
                 └── outputs/  （首次写入交付物时按需创建）
 ```
 
-`user-data/shared/<uid>/workspace` 是当前用户文件的唯一实时 POSIX 根；`projects/<workdir-id>` 只是其中的默认对话目录。旧 Project 与 thread 文件只由一次性 `storage-migrator` 读取，迁移后不再进入 shipping 读写链路。
+`user-data/shared/<uid>/workspace` 是当前用户文件的唯一实时 POSIX 根；`projects/<workdir-id>` 只是其中的默认对话目录。v0.7.1 的 thread `uploads/outputs` 只由一次性 `storage-migrator` 读取，迁移后不再进入 shipping 读写链路。
 
 ## 九、路径暴露规则是什么
 

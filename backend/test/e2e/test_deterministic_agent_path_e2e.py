@@ -13,6 +13,7 @@ import httpx
 import pytest
 
 from e2e_helpers import cancel_run, consume_events, delete_agent, postgres_dsn, wait_for_run
+from test.live_api_cleanup import make_test_conversation_metadata, make_test_conversation_title
 from yuxi.agents.backends.sandbox import ProvisionerSandboxBackend, get_sandbox_provider
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.e2e, pytest.mark.slow]
@@ -270,8 +271,8 @@ async def test_deterministic_agent_path_reaches_persisted_result(
             "/api/chat/thread",
             json={
                 "agent_id": agent_slug,
-                "title": f"deterministic-e2e-{uuid.uuid4().hex[:8]}",
-                "metadata": {"_yuxi_e2e": True, "test": "deterministic-agent-path"},
+                "title": make_test_conversation_title("deterministic-agent-path"),
+                "metadata": make_test_conversation_metadata("deterministic-agent-path", e2e=True),
             },
             headers=e2e_headers,
         )
@@ -339,8 +340,8 @@ async def test_attachment_is_written_to_user_workspace_workdir_and_survives_runt
             "/api/chat/thread",
             json={
                 "agent_id": agent_slug,
-                "title": f"attachment-workdir-e2e-{uuid.uuid4().hex[:8]}",
-                "metadata": {"_yuxi_e2e": True, "test": "attachment-workdir-e2e"},
+                "title": make_test_conversation_title("attachment-workdir"),
+                "metadata": make_test_conversation_metadata("attachment-workdir", e2e=True),
             },
             headers=e2e_headers,
         )

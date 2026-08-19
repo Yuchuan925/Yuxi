@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import uuid
 from pathlib import Path
@@ -12,18 +13,17 @@ from sqlalchemy import select, text
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from yuxi.repositories.conversation_repository import ConversationRepository
 from yuxi.agents.backends.sandbox.paths import ensure_bound_user_workdir
-from yuxi.services.legacy_workdir_importer import (
-    cleanup_legacy_workdir_sources,
-    import_legacy_workdirs,
-    read_legacy_bindings,
-    rewrite_legacy_workdir_paths,
+from yuxi.repositories.conversation_repository import ConversationRepository
+from yuxi.storage_migrations.v071_workdirs import (
+    cleanup_v071_thread_sources,
+    import_v071_workdirs,
+    read_v071_workdir_plan,
+    rewrite_v071_workdir_paths,
     verify_workdir_bindings,
 )
 from yuxi.storage.postgres.manager import (
-    LEGACY_WORKDIR_CUTOVER_STATEMENTS,
-    LEGACY_WORKDIR_SCHEMA_DROP_STATEMENTS,
+    V071_WORKDIR_CUTOVER_STATEMENTS,
     WORKDIR_PATH_SCHEMA_STATEMENTS,
 )
 from yuxi.storage.postgres.models_business import Base, Conversation
@@ -47,9 +47,7 @@ async def test_conversation_default_and_explicit_workdirs_use_user_workspace(mon
             await db.commit()
             assert first.workdir_path.startswith("projects/")
             ensure_bound_user_workdir("user-1", first.workdir_path)
-            first_directory = (
-                tmp_path / "user-data" / "shared" / "user-1" / "workspace" / first.workdir_path
-            )
+            first_directory = tmp_path / "user-data" / "shared" / "user-1" / "workspace" / first.workdir_path
             assert first_directory.is_dir()
 
             second = await ConversationRepository(db).add_conversation(
@@ -72,7 +70,7 @@ async def test_conversation_default_and_explicit_workdirs_use_user_workspace(mon
         await engine.dispose()
 
 
-async def test_legacy_ready_workdir_cutover_is_atomic_and_rewrites_paths(monkeypatch, tmp_path: Path):
+async def test_unreleased_workdir_schema_is_rejected():
     schema_name = f"pytest_workdir_cutover_{uuid.uuid4().hex}"
     admin_engine = create_async_engine(os.environ["POSTGRES_URL"], pool_pre_ping=True)
     engine = create_async_engine(
@@ -80,92 +78,17 @@ async def test_legacy_ready_workdir_cutover_is_atomic_and_rewrites_paths(monkeyp
         pool_pre_ping=True,
         connect_args={"server_settings": {"search_path": schema_name}},
     )
-    legacy_projects = tmp_path / "legacy-projects"
-    source = legacy_projects / "workdir-1"
-    source.mkdir(parents=True)
-    (source / "report.md").write_text("legacy-report", encoding="utf-8")
-    monkeypatch.setenv("YUXI_LEGACY_PROJECTS_DIR", str(legacy_projects))
-    monkeypatch.setenv("YUXI_USER_DATA_DIR", str(tmp_path / "user-data"))
-
     try:
         async with admin_engine.begin() as connection:
             await connection.execute(text(f'CREATE SCHEMA "{schema_name}"'))
         async with engine.begin() as connection:
             await connection.run_sync(Base.metadata.create_all)
-            await connection.execute(text("ALTER TABLE conversations ALTER COLUMN workdir_path DROP NOT NULL"))
             await connection.execute(text("ALTER TABLE conversations ADD COLUMN workdir_id VARCHAR(64)"))
-            await connection.execute(
-                text(
-                    "CREATE TABLE project_workdirs ("
-                    "id VARCHAR(64) PRIMARY KEY, uid VARCHAR(255) NOT NULL, "
-                    "materialization_status VARCHAR(16) NOT NULL)"
-                )
-            )
-            await connection.execute(
-                text(
-                    "CREATE TABLE file_storage_materializations ("
-                    "id VARCHAR(64) PRIMARY KEY, phase VARCHAR(16) NOT NULL)"
-                )
-            )
-            await connection.execute(
-                text(
-                    "INSERT INTO project_workdirs VALUES "
-                    "('workdir-1', 'user-1', 'ready')"
-                )
-            )
-            await connection.execute(
-                text("INSERT INTO file_storage_materializations VALUES ('project-workdir-v1', 'active')")
-            )
-            await connection.execute(
-                text(
-                    "INSERT INTO conversations "
-                    "(thread_id, uid, agent_id, status, is_pinned, workdir_path, extra_metadata) "
-                    "VALUES ('thread-1', 'user-1', 'main', 'active', false, NULL, "
-                    "'{\"attachments\":[{\"file_id\":\"f1\",\"path\":"
-                    "\"/home/gem/projects/project-workdir-1/report.md\"}]}'::jsonb)"
-                )
-            )
-            await connection.execute(
-                text("UPDATE conversations SET workdir_id = 'workdir-1' WHERE thread_id = 'thread-1'")
-            )
 
         factory = async_sessionmaker(engine, expire_on_commit=False)
-        with pytest.raises(DBAPIError, match="storage-migrator cutover"):
-            async with engine.begin() as connection:
-                for statement in WORKDIR_PATH_SCHEMA_STATEMENTS:
-                    await connection.execute(text(statement))
         async with factory() as db:
-            workdirs, conversations = await read_legacy_bindings(db)
-        import_legacy_workdirs(workdirs, conversations)
-        async with engine.begin() as connection:
-            for statement in LEGACY_WORKDIR_CUTOVER_STATEMENTS:
-                await connection.execute(text(statement))
-        async with factory() as db:
-            retry_workdirs, retry_conversations = await read_legacy_bindings(db)
-        assert retry_workdirs == workdirs
-        assert retry_conversations == conversations
-        import_legacy_workdirs(retry_workdirs, retry_conversations)
-        cleanup_legacy_workdir_sources(retry_workdirs, retry_conversations)
-        async with factory() as db:
-            await rewrite_legacy_workdir_paths(db)
-            await verify_workdir_bindings(db)
-            for statement in LEGACY_WORKDIR_SCHEMA_DROP_STATEMENTS:
-                await db.execute(text(statement))
-            await db.commit()
-            conversation = await db.scalar(select(Conversation).where(Conversation.thread_id == "thread-1"))
-            old_table = await db.scalar(text("SELECT to_regclass('project_workdirs')"))
-        async with engine.begin() as connection:
-            for statement in WORKDIR_PATH_SCHEMA_STATEMENTS:
-                await connection.execute(text(statement))
-
-        target = tmp_path / "user-data/shared/user-1/workspace/projects/workdir-1/report.md"
-        assert target.read_text(encoding="utf-8") == "legacy-report"
-        assert conversation.workdir_path == "projects/workdir-1"
-        assert old_table is None
-        assert conversation.extra_metadata["attachments"][0]["path"] == (
-            "/home/gem/user-data/projects/workdir-1/report.md"
-        )
-        assert not source.exists()
+            with pytest.raises(RuntimeError, match="未发布的 Workdir 中间 schema"):
+                await read_v071_workdir_plan(db)
     finally:
         await engine.dispose()
         async with admin_engine.begin() as connection:
@@ -173,7 +96,7 @@ async def test_legacy_ready_workdir_cutover_is_atomic_and_rewrites_paths(monkeyp
         await admin_engine.dispose()
 
 
-async def test_legacy_thread_only_layout_is_imported_and_requires_no_project_table(monkeypatch, tmp_path: Path):
+async def test_v071_thread_layout_migrates_files_empty_workdir_and_attachment_metadata(monkeypatch, tmp_path: Path):
     schema_name = f"pytest_thread_cutover_{uuid.uuid4().hex}"
     admin_engine = create_async_engine(os.environ["POSTGRES_URL"], pool_pre_ping=True)
     engine = create_async_engine(
@@ -185,8 +108,11 @@ async def test_legacy_thread_only_layout_is_imported_and_requires_no_project_tab
     source = legacy_storage / "threads/thread-early/user-data/uploads"
     source.mkdir(parents=True)
     (source / "input.txt").write_text("early-layout", encoding="utf-8")
+    punctuation_source = legacy_storage / "threads/thread.v0:legacy/user-data/outputs"
+    punctuation_source.mkdir(parents=True)
+    (punctuation_source / "result.txt").write_text("punctuation", encoding="utf-8")
     monkeypatch.setattr(
-        "yuxi.services.legacy_workdir_importer.get_legacy_storage_dir",
+        "yuxi.storage_migrations.v071_workdirs.get_legacy_storage_dir",
         lambda: legacy_storage,
     )
     monkeypatch.setenv("YUXI_USER_DATA_DIR", str(tmp_path / "user-data"))
@@ -201,27 +127,97 @@ async def test_legacy_thread_only_layout_is_imported_and_requires_no_project_tab
                 text(
                     "INSERT INTO conversations "
                     "(thread_id, uid, agent_id, status, is_pinned, extra_metadata) "
-                    "VALUES ('thread-early', 'user-early', 'main', 'active', false, '{}')"
-                )
+                    "VALUES ('thread-early', 'user-early', 'main', 'active', false, CAST(:metadata AS JSONB)), "
+                    "('thread-empty', 'user-early', 'main', 'active', false, '{}'), "
+                    "('thread.v0:legacy', 'user-early', 'main', 'active', false, '{}')"
+                ),
+                {
+                    "metadata": json.dumps(
+                        {
+                            "attachments": [
+                                {
+                                    "file_id": "f1",
+                                    "file_name": "input.txt",
+                                    "file_type": "text/plain",
+                                    "file_size": 12,
+                                    "status": "uploaded",
+                                    "uploaded_at": "2026-01-01T00:00:00Z",
+                                    "path": "/home/gem/user-data/uploads/input.txt",
+                                    "original_path": "/home/gem/user-data/uploads/input.txt",
+                                    "storage_path": ("/app/saves/threads/thread-early/user-data/uploads/input.txt"),
+                                    "markdown": "legacy copy",
+                                    "artifact_url": "/api/old",
+                                }
+                            ]
+                        }
+                    )
+                },
             )
 
         factory = async_sessionmaker(engine, expire_on_commit=False)
         async with factory() as db:
-            workdirs, conversations = await read_legacy_bindings(db)
+            plan = await read_v071_workdir_plan(db)
         expected_id = "legacy-" + hashlib.md5(b"user-early:thread-early").hexdigest()
-        assert len(workdirs) == 1
-        assert (workdirs[0].workdir_id, workdirs[0].uid) == (expected_id, "user-early")
-        assert conversations[0].workdir_id == expected_id
+        empty_id = "legacy-" + hashlib.md5(b"user-early:thread-empty").hexdigest()
+        punctuation_id = "legacy-" + hashlib.md5(b"user-early:thread.v0:legacy").hexdigest()
+        assert plan.requires_cutover is True
+        assert {(binding.workdir_id, binding.uid) for binding in plan.workdirs} == {
+            (empty_id, "user-early"),
+            (expected_id, "user-early"),
+            (punctuation_id, "user-early"),
+        }
 
-        import_legacy_workdirs(workdirs, conversations)
+        with pytest.raises(DBAPIError, match="storage-migrator cutover"):
+            async with engine.begin() as connection:
+                for statement in WORKDIR_PATH_SCHEMA_STATEMENTS:
+                    await connection.execute(text(statement))
+
+        import_v071_workdirs(plan.workdirs, plan.conversations)
         async with engine.begin() as connection:
-            for statement in LEGACY_WORKDIR_CUTOVER_STATEMENTS:
+            for statement in V071_WORKDIR_CUTOVER_STATEMENTS:
                 await connection.execute(text(statement))
         async with factory() as db:
+            await rewrite_v071_workdir_paths(db)
             await verify_workdir_bindings(db)
+            await db.commit()
+
+        async with factory() as db:
+            retry_plan = await read_v071_workdir_plan(db)
+        assert retry_plan.requires_cutover is False
+        assert [binding.workdir_id for binding in retry_plan.workdirs] == [expected_id, punctuation_id]
+        import_v071_workdirs(retry_plan.workdirs, retry_plan.conversations)
+        cleanup_v071_thread_sources(retry_plan.conversations)
+
+        async with factory() as db:
+            conversations = list((await db.execute(select(Conversation).order_by(Conversation.id))).scalars())
 
         target = tmp_path / f"user-data/shared/user-early/workspace/projects/{expected_id}/uploads/input.txt"
         assert target.read_text(encoding="utf-8") == "early-layout"
+        empty_target = tmp_path / f"user-data/shared/user-early/workspace/projects/{empty_id}"
+        assert empty_target.is_dir()
+        assert list(empty_target.iterdir()) == []
+        punctuation_target = (
+            tmp_path / f"user-data/shared/user-early/workspace/projects/{punctuation_id}/outputs/result.txt"
+        )
+        assert punctuation_target.read_text(encoding="utf-8") == "punctuation"
+        assert [conversation.workdir_path for conversation in conversations] == [
+            f"projects/{expected_id}",
+            f"projects/{empty_id}",
+            f"projects/{punctuation_id}",
+        ]
+        assert conversations[0].extra_metadata["attachments"] == [
+            {
+                "file_id": "f1",
+                "file_name": "input.txt",
+                "file_type": "text/plain",
+                "file_size": 12,
+                "status": "uploaded",
+                "uploaded_at": "2026-01-01T00:00:00Z",
+                "path": f"/home/gem/user-data/projects/{expected_id}/uploads/input.txt",
+                "original_path": f"/home/gem/user-data/projects/{expected_id}/uploads/input.txt",
+            }
+        ]
+        assert not source.exists()
     finally:
         await engine.dispose()
         async with admin_engine.begin() as connection:

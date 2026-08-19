@@ -6,7 +6,11 @@ from types import SimpleNamespace
 import pytest
 
 from yuxi import storage_migration
-from yuxi.services.legacy_workdir_importer import LegacyConversationBinding, LegacyWorkdirBinding
+from yuxi.storage_migrations.v071_workdirs import (
+    V071ConversationBinding,
+    V071WorkdirBinding,
+    V071WorkdirMigrationPlan,
+)
 
 
 class _Session:
@@ -37,15 +41,15 @@ async def test_storage_migration_reads_legacy_schema_before_cutover(monkeypatch)
         get_async_session_context=session_context,
         close=lambda: _record(calls, "close"),
     )
-    workdirs = (LegacyWorkdirBinding("workdir-1", "user-1"),)
-    conversations = (LegacyConversationBinding("thread-1", "user-1", "workdir-1"),)
+    workdirs = (V071WorkdirBinding("workdir-1", "user-1"),)
+    conversations = (V071ConversationBinding("thread-1", "user-1", "workdir-1"),)
 
     async def read_bindings(_db):
-        calls.append("read_legacy_bindings")
-        return workdirs, conversations
+        calls.append("read_v071_workdir_plan")
+        return V071WorkdirMigrationPlan(True, workdirs, conversations)
 
     monkeypatch.setattr(storage_migration, "pg_manager", manager)
-    monkeypatch.setattr(storage_migration, "read_legacy_bindings", read_bindings)
+    monkeypatch.setattr(storage_migration, "read_v071_workdir_plan", read_bindings)
     monkeypatch.setattr(storage_migration, "_require_quiescence_proof", lambda: calls.append("proof"))
     monkeypatch.setattr(
         storage_migration,
@@ -54,37 +58,32 @@ async def test_storage_migration_reads_legacy_schema_before_cutover(monkeypatch)
     )
     monkeypatch.setattr(
         storage_migration,
-        "import_legacy_workdirs",
-        lambda actual_workdirs, actual_conversations: calls.append(
-            ("import", actual_workdirs, actual_conversations)
-        ),
+        "import_v071_workdirs",
+        lambda actual_workdirs, actual_conversations: calls.append(("import", actual_workdirs, actual_conversations)),
     )
-    monkeypatch.setattr(storage_migration, "rewrite_legacy_workdir_paths", lambda _db: _record(calls, "rewrite"))
+    monkeypatch.setattr(storage_migration, "rewrite_v071_workdir_paths", lambda _db: _record(calls, "rewrite"))
     monkeypatch.setattr(storage_migration, "verify_workdir_bindings", lambda _db: _record(calls, "verify"))
     monkeypatch.setattr(
         storage_migration,
-        "cleanup_legacy_workdir_sources",
-        lambda actual_workdirs, actual_conversations: calls.append(
-            ("cleanup", actual_workdirs, actual_conversations)
-        ),
+        "cleanup_v071_thread_sources",
+        lambda actual_conversations: calls.append(("cleanup", actual_conversations)),
     )
-    monkeypatch.setattr(storage_migration, "migrate_legacy_skill_storage", lambda _db: _record(calls, "skills"))
-    monkeypatch.setattr(storage_migration, "mark_legacy_skill_storage_migrated", lambda: calls.append("mark_skills"))
-    monkeypatch.setattr(storage_migration, "_legacy_project_roots_exist", lambda: False)
+    monkeypatch.setattr(storage_migration, "migrate_shared_skills", lambda _db: _record(calls, "skills"))
+    monkeypatch.setattr(storage_migration, "mark_v071_skills_migrated", lambda: calls.append("mark_skills"))
     monkeypatch.setattr(storage_migration, "_legacy_skill_roots_exist", lambda: False)
     monkeypatch.setattr(storage_migration, "_legacy_system_config_exists", lambda: False)
 
     await storage_migration.main()
 
-    assert calls.index("read_legacy_bindings") < calls.index("ensure_business_schema")
+    assert calls.index("read_v071_workdir_plan") < calls.index("ensure_business_schema")
     assert calls.index("proof") < calls.index(("import", workdirs, conversations))
     assert calls.index(("import", workdirs, conversations)) < calls.index("ensure_business_schema")
-    assert calls.index("verify") < calls.index(("cleanup", workdirs, conversations))
+    assert calls.index("verify") < calls.index(("cleanup", conversations))
     assert calls[-1] == "close"
 
 
 @pytest.mark.asyncio
-async def test_storage_migration_rejects_legacy_files_without_quiescence_proof(monkeypatch, tmp_path):
+async def test_storage_migration_rejects_v071_schema_without_quiescence_proof(monkeypatch, tmp_path):
     calls: list[str] = []
 
     @asynccontextmanager
@@ -99,8 +98,11 @@ async def test_storage_migration_rejects_legacy_files_without_quiescence_proof(m
         close=lambda: _record(calls, "close"),
     )
     monkeypatch.setattr(storage_migration, "pg_manager", manager)
-    monkeypatch.setattr(storage_migration, "read_legacy_bindings", lambda _db: _async_value(((), ())))
-    monkeypatch.setattr(storage_migration, "_legacy_project_roots_exist", lambda: True)
+    monkeypatch.setattr(
+        storage_migration,
+        "read_v071_workdir_plan",
+        lambda _db: _async_value(V071WorkdirMigrationPlan(True, (), ())),
+    )
     monkeypatch.setattr(storage_migration, "_legacy_skill_roots_exist", lambda: False)
     monkeypatch.setattr(storage_migration, "_legacy_system_config_exists", lambda: False)
     monkeypatch.setenv("YUXI_STORAGE_MIGRATION_QUIESCENCE_FILE", str(tmp_path / "missing"))
@@ -112,11 +114,55 @@ async def test_storage_migration_rejects_legacy_files_without_quiescence_proof(m
     assert calls == ["close"]
 
 
+@pytest.mark.asyncio
+async def test_current_schema_does_not_rewrite_workdir_data(monkeypatch):
+    calls: list[str] = []
+    sessions = [_Session(), _Session(), _Session()]
+
+    @asynccontextmanager
+    async def session_context():
+        yield sessions.pop(0)
+
+    manager = SimpleNamespace(
+        initialize=lambda: calls.append("initialize"),
+        create_business_tables=lambda: _record(calls, "create"),
+        ensure_business_schema=lambda: _record(calls, "schema"),
+        get_async_session_context=session_context,
+        close=lambda: _record(calls, "close"),
+    )
+    monkeypatch.setattr(storage_migration, "pg_manager", manager)
+    monkeypatch.setattr(
+        storage_migration,
+        "read_v071_workdir_plan",
+        lambda _db: _async_value(V071WorkdirMigrationPlan(False, (), ())),
+    )
+    monkeypatch.setattr(storage_migration, "_legacy_skill_roots_exist", lambda: False)
+    monkeypatch.setattr(storage_migration, "_legacy_system_config_exists", lambda: False)
+    monkeypatch.setattr(
+        storage_migration,
+        "_converge_database_state",
+        lambda *, fail_nonterminal_runs: _record(calls, f"converge:{fail_nonterminal_runs}"),
+    )
+    monkeypatch.setattr(storage_migration, "import_v071_workdirs", lambda *_args: calls.append("import"))
+    monkeypatch.setattr(storage_migration, "rewrite_v071_workdir_paths", lambda _db: _record(calls, "rewrite"))
+    monkeypatch.setattr(storage_migration, "verify_workdir_bindings", lambda _db: _record(calls, "verify"))
+    monkeypatch.setattr(storage_migration, "cleanup_v071_thread_sources", lambda *_args: calls.append("cleanup"))
+    monkeypatch.setattr(storage_migration, "migrate_shared_skills", lambda _db: _record(calls, "skills"))
+    monkeypatch.setattr(storage_migration, "mark_v071_skills_migrated", lambda: calls.append("mark_skills"))
+
+    await storage_migration.main()
+
+    assert "converge:False" in calls
+    assert "schema" in calls
+    assert "skills" in calls
+    assert {"import", "rewrite", "verify", "cleanup"}.isdisjoint(calls)
+
+
 def test_personal_workspace_skills_never_trigger_shared_skill_migration(monkeypatch, tmp_path):
     personal_skill = tmp_path / "user-data/shared/user-1/workspace/agents/skills/notes"
     personal_skill.mkdir(parents=True)
     monkeypatch.setattr(storage_migration, "get_legacy_storage_dir", lambda: tmp_path / "legacy")
-    monkeypatch.setattr(storage_migration, "legacy_skill_storage_migration_completed", lambda: False)
+    monkeypatch.setattr(storage_migration, "v071_skill_migration_completed", lambda: False)
 
     assert storage_migration._legacy_skill_roots_exist() is False
 

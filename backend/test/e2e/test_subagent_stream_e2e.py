@@ -10,7 +10,11 @@ import httpx
 import pytest
 
 from e2e_helpers import cancel_run, delete_agent, skip_if_external_quota
-from test.live_api_cleanup import remove_e2e_thread_storage
+from test.live_api_cleanup import (
+    make_test_conversation_metadata,
+    make_test_conversation_title,
+    remove_e2e_thread_storage,
+)
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.e2e, pytest.mark.slow]
 
@@ -43,8 +47,8 @@ async def _create_thread(
         "/api/chat/thread",
         json={
             "agent_id": agent_id,
-            "title": f"subagent-stream-e2e-{marker}",
-            "metadata": {"_yuxi_e2e": True, "test": "subagent-stream-e2e", "marker": marker},
+            "title": make_test_conversation_title("subagent-stream-e2e"),
+            "metadata": make_test_conversation_metadata("subagent-stream-e2e", e2e=True, marker=marker),
         },
         headers=headers,
     )

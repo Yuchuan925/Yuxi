@@ -78,13 +78,11 @@ async def _startup(app: FastAPI) -> None:
     from yuxi.config.options import (
         ensure_options_in_db,
         invalidate_option_cache,
-        migrate_legacy_system_options,
         system_options,
     )
 
     async with pg_manager.get_async_session_context() as session:
         await ensure_options_in_db(session)
-        await migrate_legacy_system_options(session)
         await session.commit()
     await invalidate_option_cache(system_options.key)
 

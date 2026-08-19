@@ -9,24 +9,24 @@ from pathlib import Path
 
 from sqlalchemy import text
 
-from yuxi.agents.skills.service import (
-    legacy_skill_storage_migration_completed,
-    mark_legacy_skill_storage_migrated,
-    migrate_legacy_skill_storage,
-)
 from yuxi.config import get_legacy_storage_dir
-from yuxi.config.options import ensure_options_in_db, migrate_legacy_system_options
+from yuxi.config.options import ensure_options_in_db
 from yuxi.repositories.agent_run_repository import AgentRunRepository
-from yuxi.services.legacy_workdir_importer import (
-    cleanup_legacy_workdir_sources,
-    import_legacy_workdirs,
-    read_legacy_bindings,
-    rewrite_legacy_workdir_paths,
+from yuxi.storage_migrations.v071_workdirs import (
+    cleanup_v071_thread_sources,
+    import_v071_workdirs,
+    read_v071_workdir_plan,
+    rewrite_v071_workdir_paths,
     verify_workdir_bindings,
 )
+from yuxi.storage_migrations.v071_options import migrate_system_options
+from yuxi.storage_migrations.v071_skills import (
+    mark_migrated as mark_v071_skills_migrated,
+    migrate_shared_skills,
+    migration_completed as v071_skill_migration_completed,
+)
 from yuxi.storage.postgres.manager import (
-    LEGACY_WORKDIR_CUTOVER_STATEMENTS,
-    LEGACY_WORKDIR_SCHEMA_DROP_STATEMENTS,
+    V071_WORKDIR_CUTOVER_STATEMENTS,
     pg_manager,
 )
 
@@ -36,7 +36,7 @@ _QUIESCENCE_FILE_ENV = "YUXI_STORAGE_MIGRATION_QUIESCENCE_FILE"
 
 def _legacy_skill_roots_exist() -> bool:
     """判断是否仍有会被停机迁移删除的历史共享 Skill 目录。"""
-    if legacy_skill_storage_migration_completed():
+    if v071_skill_migration_completed():
         return False
     shared_skills = get_legacy_storage_dir() / "skills"
     if shared_skills.is_symlink() or (shared_skills.is_dir() and any(shared_skills.iterdir())):
@@ -47,12 +47,6 @@ def _legacy_skill_roots_exist() -> bool:
 def _legacy_system_config_exists() -> bool:
     """判断旧广域目录是否仍保存系统配置。"""
     return (get_legacy_storage_dir() / "config/base.toml").is_file()
-
-
-def _legacy_project_roots_exist() -> bool:
-    """判断旧 Project 挂载中是否仍有待导入目录。"""
-    root = Path(os.getenv("YUXI_LEGACY_PROJECTS_DIR", "legacy-projects"))
-    return root.is_symlink() or (root.is_dir() and any(root.iterdir()))
 
 
 def _require_quiescence_proof() -> None:
@@ -78,7 +72,7 @@ async def _converge_database_state(*, fail_nonterminal_runs: bool) -> None:
         if fail_nonterminal_runs:
             await AgentRunRepository(session).fail_nonterminal_for_storage_migration()
         await ensure_options_in_db(session)
-        await migrate_legacy_system_options(
+        await migrate_system_options(
             session,
             legacy_config_file=get_legacy_storage_dir() / "config" / "base.toml",
         )
@@ -90,8 +84,8 @@ async def main() -> None:
     pg_manager.initialize()
     try:
         async with pg_manager.get_async_session_context() as session:
-            legacy_workdirs, legacy_conversations = await read_legacy_bindings(session)
-        requires_quiescence = bool(legacy_workdirs) or _legacy_project_roots_exist()
+            workdir_plan = await read_v071_workdir_plan(session)
+        requires_quiescence = workdir_plan.requires_cutover or bool(workdir_plan.workdirs)
         requires_quiescence = requires_quiescence or _legacy_skill_roots_exist() or _legacy_system_config_exists()
         if requires_quiescence:
             _require_quiescence_proof()
@@ -100,20 +94,21 @@ async def main() -> None:
         legacy_config_file = get_legacy_storage_dir() / "config/base.toml"
         if legacy_config_file.is_file() and not legacy_config_file.is_symlink():
             legacy_config_file.unlink()
-        await asyncio.to_thread(import_legacy_workdirs, legacy_workdirs, legacy_conversations)
-        async with pg_manager.get_async_session_context() as session:
-            for statement in LEGACY_WORKDIR_CUTOVER_STATEMENTS:
-                await session.execute(text(statement))
-            await rewrite_legacy_workdir_paths(session)
-            await verify_workdir_bindings(session)
-            for statement in LEGACY_WORKDIR_SCHEMA_DROP_STATEMENTS:
-                await session.execute(text(statement))
-            await session.commit()
+        migrates_workdirs = workdir_plan.requires_cutover or bool(workdir_plan.workdirs)
+        if migrates_workdirs:
+            await asyncio.to_thread(import_v071_workdirs, workdir_plan.workdirs, workdir_plan.conversations)
+            async with pg_manager.get_async_session_context() as session:
+                for statement in V071_WORKDIR_CUTOVER_STATEMENTS:
+                    await session.execute(text(statement))
+                await rewrite_v071_workdir_paths(session)
+                await verify_workdir_bindings(session)
+                await session.commit()
         await pg_manager.ensure_business_schema()
-        await asyncio.to_thread(cleanup_legacy_workdir_sources, legacy_workdirs, legacy_conversations)
+        if migrates_workdirs:
+            await asyncio.to_thread(cleanup_v071_thread_sources, workdir_plan.conversations)
         async with pg_manager.get_async_session_context() as session:
-            await migrate_legacy_skill_storage(session)
-        mark_legacy_skill_storage_migrated()
+            await migrate_shared_skills(session)
+        mark_v071_skills_migrated()
     finally:
         await pg_manager.close()
 
