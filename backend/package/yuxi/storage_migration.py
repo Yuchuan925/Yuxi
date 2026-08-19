@@ -12,22 +12,26 @@ from sqlalchemy import text
 from yuxi.config import get_legacy_storage_dir
 from yuxi.config.options import ensure_options_in_db
 from yuxi.repositories.agent_run_repository import AgentRunRepository
+from yuxi.storage.postgres.manager import (
+    V071_WORKDIR_CUTOVER_STATEMENTS,
+    pg_manager,
+)
+from yuxi.storage_migrations.v071_options import migrate_system_options
+from yuxi.storage_migrations.v071_skills import (
+    mark_migrated as mark_v071_skills_migrated,
+)
+from yuxi.storage_migrations.v071_skills import (
+    migrate_shared_skills,
+)
+from yuxi.storage_migrations.v071_skills import (
+    migration_completed as v071_skill_migration_completed,
+)
 from yuxi.storage_migrations.v071_workdirs import (
     cleanup_v071_thread_sources,
     import_v071_workdirs,
     read_v071_workdir_plan,
     rewrite_v071_workdir_paths,
     verify_workdir_bindings,
-)
-from yuxi.storage_migrations.v071_options import migrate_system_options
-from yuxi.storage_migrations.v071_skills import (
-    mark_migrated as mark_v071_skills_migrated,
-    migrate_shared_skills,
-    migration_completed as v071_skill_migration_completed,
-)
-from yuxi.storage.postgres.manager import (
-    V071_WORKDIR_CUTOVER_STATEMENTS,
-    pg_manager,
 )
 
 _QUIESCENCE_TOKEN_ENV = "YUXI_STORAGE_MIGRATION_QUIESCENCE_TOKEN"

@@ -12,6 +12,7 @@ from pathlib import Path, PurePosixPath
 
 from sqlalchemy import select, text
 from sqlalchemy.orm.attributes import flag_modified
+
 from yuxi.agents.backends.sandbox.paths import (
     ensure_user_workspace,
     user_workdir_host_dir,
