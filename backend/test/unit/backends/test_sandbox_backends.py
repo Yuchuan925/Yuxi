@@ -1385,3 +1385,7 @@ def test_workdir_paths_are_workspace_relative_and_reject_symlinks(monkeypatch, t
     (projects / "linked").symlink_to(outside, target_is_directory=True)
     with pytest.raises(ValueError, match="符号链接或非目录组件"):
         paths.user_workdir_host_dir("user-1", "projects/linked")
+
+    (projects / "not-a-directory").write_text("file", encoding="utf-8")
+    with pytest.raises(ValueError, match="符号链接或非目录组件"):
+        paths.user_workdir_host_dir("user-1", "projects/not-a-directory")

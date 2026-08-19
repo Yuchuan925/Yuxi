@@ -1,4 +1,6 @@
+import errno
 import os
+import stat
 from pathlib import Path
 
 _raw_prefix = os.getenv("SANDBOX_VIRTUAL_PATH_PREFIX")
@@ -22,6 +24,41 @@ VIRTUAL_SKILLS_PATH = "/home/gem/skills"
 # 只属于存储实现，不进入模型可见路径。
 VIRTUAL_PATH_WORKSPACE = VIRTUAL_PATH_PREFIX
 VIRTUAL_PERSONAL_SKILLS_PATH = (Path(VIRTUAL_PATH_PREFIX) / WORKSPACE_AGENTS_DIR_NAME / "skills").as_posix()
+
+_DIRECTORY_OPEN_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+
+
+def open_directory_fd(root: Path | int, parts: tuple[str, ...], *, create: bool = False) -> int:
+    """从可信目录逐层 no-follow 打开路径，返回调用方负责关闭的 fd。
+
+    ``parts`` 必须是已校验的单路径组件；传入 fd 时函数复制而不接管原 fd。
+    """
+    directory_fd = os.dup(root) if isinstance(root, int) else os.open(root, _DIRECTORY_OPEN_FLAGS)
+    try:
+        for part in parts:
+            if create:
+                try:
+                    os.mkdir(part, 0o777, dir_fd=directory_fd)
+                except FileExistsError:
+                    pass
+            try:
+                child_fd = os.open(part, _DIRECTORY_OPEN_FLAGS, dir_fd=directory_fd)
+            except OSError as exc:
+                if exc.errno in {errno.ELOOP, errno.ENOTDIR}:
+                    try:
+                        item_stat = os.stat(part, dir_fd=directory_fd, follow_symlinks=False)
+                    except OSError:
+                        raise exc
+                    if stat.S_ISLNK(item_stat.st_mode):
+                        raise OSError(errno.ELOOP, os.strerror(errno.ELOOP), part) from exc
+                raise
+            previous_fd = directory_fd
+            directory_fd = child_fd
+            os.close(previous_fd)
+        return directory_fd
+    except BaseException:
+        os.close(directory_fd)
+        raise
 
 
 def workdir_runtime_paths(workdir_path: str) -> tuple[str, str]:
@@ -53,6 +90,7 @@ __all__ = [
     "CONVERSATION_HISTORY_DIR_NAME",
     "VIRTUAL_PATH_WORKSPACE",
     "VIRTUAL_PERSONAL_SKILLS_PATH",
+    "open_directory_fd",
     "workdir_runtime_paths",
     "VIRTUAL_SKILLS_PATH",
     "ensure_within_root",

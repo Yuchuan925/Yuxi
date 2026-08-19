@@ -37,7 +37,7 @@ from yuxi.permissions import ResourcePermission, normalize_permission_config, re
 from yuxi.storage.postgres.models_business import Skill, User
 from yuxi.storage.redis import get_async_redis_client
 from yuxi.utils.logging_config import logger
-from yuxi.utils.paths import ensure_within_root
+from yuxi.utils.paths import ensure_within_root, open_directory_fd
 
 SKILL_SLUG_PATTERN = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 SKILL_NAME_PATTERN = SKILL_SLUG_PATTERN
@@ -496,21 +496,12 @@ def _dir_contains_symlink(path: Path) -> bool:
 
 def _open_directory_no_symlinks(path: Path) -> int:
     """从文件系统根逐层 no-follow 打开目录并返回调用方负责关闭的 fd。"""
-    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW
-    current_fd = os.open("/", flags)
+    absolute_parts = tuple(Path(os.path.abspath(os.fspath(path))).parts[1:])
     try:
-        for part in Path(os.path.abspath(os.fspath(path))).parts[1:]:
-            try:
-                next_fd = os.open(part, flags, dir_fd=current_fd)
-            except OSError as exc:
-                if exc.errno in {errno.ELOOP, errno.ENOTDIR}:
-                    raise ValueError("Skill 来源路径包含符号链接或非目录组件") from exc
-                raise
-            os.close(current_fd)
-            current_fd = next_fd
-        return current_fd
-    except BaseException:
-        os.close(current_fd)
+        return open_directory_fd(Path("/"), absolute_parts)
+    except OSError as exc:
+        if exc.errno in {errno.ELOOP, errno.ENOTDIR}:
+            raise ValueError("Skill 来源路径包含符号链接或非目录组件") from exc
         raise
 
 
@@ -1073,26 +1064,17 @@ def _personal_skills_root(uid: str):
 
     ensure_user_workspace(uid)
     anchor = global_user_data_dir(uid)
-    current_fd = _open_directory_no_symlinks(anchor)
+    anchor_fd = _open_directory_no_symlinks(anchor)
     try:
-        for component in ("workspace", "agents", "skills"):
-            try:
-                os.mkdir(component, mode=0o777, dir_fd=current_fd)
-            except FileExistsError:
-                pass
-            try:
-                next_fd = os.open(
-                    component,
-                    os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW,
-                    dir_fd=current_fd,
-                )
-            except OSError as exc:
-                if exc.errno in {errno.ELOOP, errno.ENOTDIR}:
-                    raise ValueError("个人 Skill 路径包含符号链接或非目录组件") from exc
-                raise
-            os.close(current_fd)
-            current_fd = next_fd
-
+        try:
+            current_fd = open_directory_fd(anchor_fd, ("workspace", "agents", "skills"), create=True)
+        except OSError as exc:
+            if exc.errno in {errno.ELOOP, errno.ENOTDIR}:
+                raise ValueError("个人 Skill 路径包含符号链接或非目录组件") from exc
+            raise
+    finally:
+        os.close(anchor_fd)
+    try:
         fd_root = Path("/proc/self/fd")
         logical_root = get_personal_skills_root_dir(uid)
         access_root = fd_root / str(current_fd)

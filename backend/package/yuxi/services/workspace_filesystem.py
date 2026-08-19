@@ -11,7 +11,7 @@ from pathlib import Path, PurePosixPath
 from yuxi.agents.backends.sandbox.backend import FileTransferLimitError
 from yuxi.agents.backends.sandbox.paths import user_workspace_dir, workspace_uid_dirname
 from yuxi.config import get_skill_projection_dir
-from yuxi.utils.paths import VIRTUAL_PATH_PREFIX, VIRTUAL_SKILLS_PATH
+from yuxi.utils.paths import VIRTUAL_PATH_PREFIX, VIRTUAL_SKILLS_PATH, open_directory_fd
 
 
 class WorkspaceFilesystem:
@@ -185,30 +185,11 @@ class WorkspaceFilesystem:
 
     @staticmethod
     def _open_directory(base: Path, parts: tuple[str, ...], *, create: bool = False) -> int:
-        directory_fd = os.open(base, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
         try:
-            for part in parts:
-                if create:
-                    try:
-                        os.mkdir(part, 0o777, dir_fd=directory_fd)
-                    except FileExistsError:
-                        pass
-                try:
-                    child_fd = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=directory_fd)
-                except OSError as exc:
-                    if exc.errno in {errno.ELOOP, errno.ENOTDIR}:
-                        try:
-                            item_stat = os.stat(part, dir_fd=directory_fd, follow_symlinks=False)
-                        except OSError:
-                            raise exc
-                        if stat.S_ISLNK(item_stat.st_mode):
-                            raise PermissionError("symlink paths are not allowed") from exc
-                    raise
-                os.close(directory_fd)
-                directory_fd = child_fd
-            return directory_fd
-        except Exception:
-            os.close(directory_fd)
+            return open_directory_fd(base, parts, create=create)
+        except OSError as exc:
+            if exc.errno == errno.ELOOP:
+                raise PermissionError("symlink paths are not allowed") from exc
             raise
 
     @classmethod

@@ -71,3 +71,22 @@ async def test_viewer_upload_blocks_project_symlink_escape(test_client, standard
 
     assert response.status_code == 403, response.text
     assert not (outside_dir / "escape.txt").exists()
+
+
+async def test_viewer_upload_preserves_non_directory_parent_error(test_client, standard_user):
+    headers = standard_user["headers"]
+    uid = str(standard_user["user"]["uid"])
+    thread_id, workdir_path = await _create_thread_for_user(test_client, headers)
+
+    project_root = f"/home/gem/user-data/{workdir_path}"
+    (user_workdir_host_dir(uid, workdir_path) / "occupied").write_text("file", encoding="utf-8")
+
+    response = await test_client.post(
+        "/api/viewer/filesystem/upload",
+        data={"thread_id": thread_id, "parent_path": f"{project_root}/occupied"},
+        files={"files": ("child.txt", b"content", "text/plain")},
+        headers=headers,
+    )
+
+    assert response.status_code == 404, response.text
+    assert response.json()["detail"] == "目录不存在"

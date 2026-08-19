@@ -15,6 +15,7 @@ from yuxi.utils.paths import (
     WORKSPACE_AGENTS_DIR_NAME,
     WORKSPACE_DIR_NAME,
     ensure_within_root,
+    open_directory_fd,
 )
 
 _SAFE_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
@@ -93,14 +94,10 @@ def create_default_user_workdir(uid: str) -> tuple[str, Path]:
     workspace_fd = _open_user_workspace_fd(uid)
     projects_fd = None
     try:
-        try:
-            os.mkdir(WORKDIR_PROJECTS_DIR_NAME, 0o777, dir_fd=workspace_fd)
-        except FileExistsError:
-            pass
-        projects_fd = os.open(
-            WORKDIR_PROJECTS_DIR_NAME,
-            os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
-            dir_fd=workspace_fd,
+        projects_fd = _open_workspace_child_fd(
+            workspace_fd,
+            (WORKDIR_PROJECTS_DIR_NAME,),
+            create=True,
         )
         while True:
             directory_name = str(uuid.uuid4())
@@ -138,26 +135,10 @@ def ensure_bound_user_workdir(uid: str, workdir_path: str) -> Path:
         raise FileNotFoundError("migrated Workdir directory does not exist") from exc
     ensure_user_workspace(uid)
     workspace_fd = _open_user_workspace_fd(uid)
-    projects_fd = None
     try:
-        try:
-            os.mkdir(WORKDIR_PROJECTS_DIR_NAME, 0o777, dir_fd=workspace_fd)
-        except FileExistsError:
-            pass
-        projects_fd = os.open(
-            WORKDIR_PROJECTS_DIR_NAME,
-            os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
-            dir_fd=workspace_fd,
-        )
-        try:
-            os.mkdir(parts[1], 0o777, dir_fd=projects_fd)
-        except FileExistsError:
-            pass
-        directory_fd = os.open(parts[1], os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=projects_fd)
+        directory_fd = _open_workspace_child_fd(workspace_fd, parts, create=True)
         os.close(directory_fd)
     finally:
-        if projects_fd is not None:
-            os.close(projects_fd)
         os.close(workspace_fd)
     return user_workspace_dir(uid) / WORKDIR_PROJECTS_DIR_NAME / parts[1]
 
@@ -166,15 +147,8 @@ def _open_workspace_directory(uid: str, parts: tuple[str, ...]) -> None:
     """逐层以 O_NOFOLLOW 打开 UserWorkspace 目录。"""
     directory_fd = _open_user_workspace_fd(uid)
     try:
-        for part in parts:
-            try:
-                child_fd = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=directory_fd)
-            except OSError as exc:
-                if exc.errno in {errno.ELOOP, errno.ENOTDIR}:
-                    raise ValueError("UserWorkspace 路径包含符号链接或非目录组件") from exc
-                raise
-            os.close(directory_fd)
-            directory_fd = child_fd
+        child_fd = _open_workspace_child_fd(directory_fd, parts)
+        os.close(child_fd)
     finally:
         os.close(directory_fd)
 
@@ -184,40 +158,32 @@ def _open_user_workspace_fd(uid: str, *, create: bool = False) -> int:
     root = get_user_data_dir()
     if create:
         root.mkdir(parents=True, exist_ok=True)
-    directory_fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
     try:
-        for part in ("shared", workspace_uid_dirname(uid), WORKSPACE_DIR_NAME):
-            if create:
-                try:
-                    os.mkdir(part, 0o777, dir_fd=directory_fd)
-                except FileExistsError:
-                    pass
-            try:
-                child_fd = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=directory_fd)
-            except OSError as exc:
-                if exc.errno in {errno.ELOOP, errno.ENOTDIR}:
-                    raise ValueError("UserWorkspace 路径包含符号链接或非目录组件") from exc
-                raise
-            os.close(directory_fd)
-            directory_fd = child_fd
-        return directory_fd
-    except Exception:
-        os.close(directory_fd)
+        return open_directory_fd(
+            root,
+            ("shared", workspace_uid_dirname(uid), WORKSPACE_DIR_NAME),
+            create=create,
+        )
+    except OSError as exc:
+        if exc.errno in {errno.ELOOP, errno.ENOTDIR}:
+            raise ValueError("UserWorkspace 路径包含符号链接或非目录组件") from exc
+        raise
+
+
+def _open_workspace_child_fd(directory_fd: int, parts: tuple[str, ...], *, create: bool = False) -> int:
+    """从已固定的 UserWorkspace fd 打开子目录并翻译边界错误。"""
+    try:
+        return open_directory_fd(directory_fd, parts, create=create)
+    except OSError as exc:
+        if exc.errno in {errno.ELOOP, errno.ENOTDIR}:
+            raise ValueError("UserWorkspace 路径包含符号链接或非目录组件") from exc
         raise
 
 
 def _ensure_workspace_default_files_fd(workspace_fd: int) -> None:
     """通过已校验的 Workspace fd 初始化 Agent 上下文文件。"""
     try:
-        os.mkdir(WORKSPACE_AGENTS_DIR_NAME, 0o777, dir_fd=workspace_fd)
-    except FileExistsError:
-        pass
-    try:
-        agents_fd = os.open(
-            WORKSPACE_AGENTS_DIR_NAME,
-            os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
-            dir_fd=workspace_fd,
-        )
+        agents_fd = open_directory_fd(workspace_fd, (WORKSPACE_AGENTS_DIR_NAME,), create=True)
     except OSError as exc:
         logger.warning(f"工作区默认 Agents 目录初始化失败: {exc}")
         return
