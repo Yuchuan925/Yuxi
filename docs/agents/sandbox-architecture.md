@@ -140,7 +140,7 @@ services:
       - ~/.kube/config:/root/.kube/config:ro
 ```
 
-这段配置表达的意思不是“把整个应用迁到 K8s”，而是“仍然用 Compose 跑 Yuxi 主服务，但沙盒实例改为由远程 Kubernetes 集群承载”。这是当前代码最自然的混合部署方式。
+这段配置保留 Compose 运行 Yuxi 主服务，并让沙盒实例由远程 Kubernetes 集群承载。这是当前代码支持的混合部署方式。
 
 如果 `sandbox-provisioner` 本身就运行在 Kubernetes 集群内部，那么通常不需要显式提供 `KUBECONFIG_PATH`。它会优先尝试 `incluster_config`，也就是使用 Pod 的服务账号权限直接访问 Kubernetes API。此时更需要关注的是 namespace、PVC 和 NodePort 的可达性，而不是 kubeconfig 文件本身。
 
@@ -340,9 +340,9 @@ CHECK_YUXI_SANDBOX_ENV_EXISTS=True
 
 ## 十四、和旧版文档相比，今天最重要的理解方式
 
-当前项目不应再按“应用直接管理一个长期存在的本地 sandbox 服务”去理解。更准确的认识应该是：Yuxi 管理 Project Workdir、运行上下文和沙盒生命周期；provisioner 为一次顶层运行创建使用该 Workdir 的沙盒实例；文件系统不是简单地暴露一个容器根目录，而是把可写项目目录、用户级只读 Skills 投影等组合成一个受控命名空间（知识库不再映射为沙盒目录，改由 `query_kb`/`open_kb_document` 等工具访问）。
+当前项目由 Yuxi 管理 Project Workdir、运行上下文和沙盒生命周期。provisioner 为一次顶层运行创建使用该 Workdir 的沙盒实例。文件系统由可写项目目录、用户级只读 Skills 投影等组成受控命名空间；知识库通过 `query_kb`/`open_kb_document` 等工具访问。
 
-因此，当你在界面上“启用沙盒”或者在文档里“选择 K8s”时，本质上做的不是切换一段业务逻辑，而是在切换 provisioner 的底层实例承载方式。选择 `docker` 时，沙盒由当前部署机上的 Docker daemon 动态创建；选择 `kubernetes` 时，沙盒由目标 K8s 集群动态创建。Yuxi 自己始终只面对一个 provisioner 服务地址。
+因此，当你在界面上“启用沙盒”或者在文档里“选择 K8s”时，实际切换的是 provisioner 的底层实例承载方式。选择 `docker` 时，沙盒由当前部署机上的 Docker daemon 动态创建；选择 `kubernetes` 时，沙盒由目标 K8s 集群动态创建。Yuxi 通过统一的 provisioner 服务地址访问两种后端。
 
 ## 十五、排障时建议先看什么
 
