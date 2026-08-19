@@ -27,8 +27,8 @@ from yuxi.services.legacy_workdir_importer import (
 from yuxi.storage.postgres.manager import (
     LEGACY_WORKDIR_CUTOVER_STATEMENTS,
     LEGACY_WORKDIR_SCHEMA_DROP_STATEMENTS,
+    pg_manager,
 )
-from yuxi.storage.postgres.manager import pg_manager
 
 _QUIESCENCE_TOKEN_ENV = "YUXI_STORAGE_MIGRATION_QUIESCENCE_TOKEN"
 _QUIESCENCE_FILE_ENV = "YUXI_STORAGE_MIGRATION_QUIESCENCE_FILE"

@@ -12,7 +12,6 @@ from urllib.parse import quote
 from fastapi import HTTPException, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from starlette.background import BackgroundTask
-
 from yuxi.agents.backends.sandbox.backend import FileTransferLimitError
 from yuxi.services.file_preview import (
     MAX_BINARY_PREVIEW_SIZE_BYTES,

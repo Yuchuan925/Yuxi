@@ -1,7 +1,7 @@
 from .backend import ProvisionerSandboxBackend
 from .paths import (
-    ensure_workspace_default_files,
     ensure_user_workspace,
+    ensure_workspace_default_files,
     user_workspace_agent_context_file,
     user_workspace_dir,
 )

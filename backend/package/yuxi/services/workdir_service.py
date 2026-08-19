@@ -5,7 +5,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from fastapi import HTTPException
-
 from yuxi.agents.backends.sandbox.paths import ensure_bound_user_workdir, workdir_virtual_dir
 from yuxi.repositories.conversation_repository import ConversationRepository
 from yuxi.services.workspace_filesystem import WorkspaceFilesystem

@@ -13,8 +13,8 @@ from datetime import datetime
 from arq.worker import RetryJob
 from sqlalchemy import select, text
 from sqlalchemy.exc import OperationalError
-from yuxi.agents.mcp.service import ensure_builtin_mcp_servers_in_db
 from yuxi.agents.backends.sandbox.provider import get_sandbox_provider
+from yuxi.agents.mcp.service import ensure_builtin_mcp_servers_in_db
 from yuxi.agents.skills.service import init_builtin_skills
 from yuxi.repositories.agent_run_repository import TERMINAL_RUN_STATUSES, AgentRunRepository
 from yuxi.services.agent_request_queue_service import (
@@ -24,7 +24,6 @@ from yuxi.services.agent_request_queue_service import (
 from yuxi.services.agent_run_manifest_service import build_run_manifest, compute_manifest_fingerprint
 from yuxi.services.chat_service import get_agent_state_view, stream_agent_chat, stream_agent_resume
 from yuxi.services.input_message_service import restore_chat_input_message
-from yuxi.services.workdir_service import WorkdirBinding, resolve_workdir_binding
 from yuxi.services.run_queue_service import (
     RUN_RECONCILIATION_SECONDS,
     WORKER_HEALTH_INTERVAL_SECONDS,
@@ -38,6 +37,7 @@ from yuxi.services.run_queue_service import (
     publish_cancel_signal,
     wait_for_cancel_signal,
 )
+from yuxi.services.workdir_service import WorkdirBinding, resolve_workdir_binding
 from yuxi.storage.postgres.manager import pg_manager
 from yuxi.storage.postgres.models_business import AgentRun, Conversation, Message, User
 from yuxi.storage.redis import get_arq_redis_settings

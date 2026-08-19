@@ -6,8 +6,7 @@ import os
 from pathlib import Path
 
 import ormsgpack
-from yuxi.agents.backends.sandbox.paths import user_workspace_dir
-from yuxi.agents.backends.sandbox.paths import validate_thread_id
+from yuxi.agents.backends.sandbox.paths import user_workspace_dir, validate_thread_id
 from yuxi.repositories.conversation_repository import ConversationRepository
 from yuxi.services.run_queue_service import get_redis_client
 from yuxi.services.viewer_filesystem_service import search_viewer_files

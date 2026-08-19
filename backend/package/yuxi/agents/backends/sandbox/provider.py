@@ -177,9 +177,7 @@ class ProvisionerSandboxProvider:
                 if current.uid != uid:
                     raise RuntimeError(f"sandbox scope {cache_key} belongs to uid {current.uid}, not {uid}")
                 if current.workdir_path != normalized_workdir_path:
-                    raise SandboxIdentityMismatchError(
-                        "sandbox Workdir does not match the existing runtime scope"
-                    )
+                    raise SandboxIdentityMismatchError("sandbox Workdir does not match the existing runtime scope")
                 try:
                     if self._touch_if_needed(current):
                         return current.sandbox_id
@@ -230,9 +228,7 @@ class ProvisionerSandboxProvider:
                 if current.uid != uid:
                     raise RuntimeError(f"sandbox scope {cache_key} belongs to uid {current.uid}, not {uid}")
                 if current.workdir_path != normalized_workdir_path:
-                    raise SandboxIdentityMismatchError(
-                        "sandbox Workdir does not match the existing runtime scope"
-                    )
+                    raise SandboxIdentityMismatchError("sandbox Workdir does not match the existing runtime scope")
                 try:
                     if self._touch_if_needed(current):
                         return current
@@ -292,9 +288,7 @@ class ProvisionerSandboxProvider:
                 if record is None:
                     return
                 if record.workdir_path != normalized_workdir_path:
-                    raise SandboxIdentityMismatchError(
-                        "sandbox Workdir does not match the requested release scope"
-                    )
+                    raise SandboxIdentityMismatchError("sandbox Workdir does not match the requested release scope")
                 generation = record.generation
             else:
                 sandbox_id = connection.sandbox_id

@@ -11,11 +11,11 @@ from deepagents.backends.composite import (
 from deepagents.backends.protocol import FileInfo, GlobResult
 from deepagents.middleware.filesystem import FilesystemMiddleware
 
+from yuxi.agents.backends.sandbox.paths import workdir_virtual_dir
 from yuxi.agents.skills.service import (
     get_user_skills_root_dir,
     refresh_user_skill_projection_async,
 )
-from yuxi.agents.backends.sandbox.paths import workdir_virtual_dir
 from yuxi.utils.paths import workdir_runtime_paths
 
 from .sandbox import ProvisionerSandboxBackend

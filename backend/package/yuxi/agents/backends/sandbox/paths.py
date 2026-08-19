@@ -5,16 +5,15 @@ import hashlib
 import os
 import re
 import uuid
-from pathlib import Path
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 
 from yuxi.config import get_user_data_dir
 from yuxi.utils.logging_config import logger
 from yuxi.utils.paths import (
+    VIRTUAL_PATH_PREFIX,
     WORKSPACE_AGENT_CONTEXT_FILES,
     WORKSPACE_AGENTS_DIR_NAME,
     WORKSPACE_DIR_NAME,
-    VIRTUAL_PATH_PREFIX,
     ensure_within_root,
 )
 

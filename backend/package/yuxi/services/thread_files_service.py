@@ -10,7 +10,6 @@ from pathlib import Path, PurePosixPath
 from fastapi import HTTPException
 from fastapi.responses import FileResponse
 from starlette.background import BackgroundTask
-
 from yuxi.agents.backends.sandbox.backend import FileTransferLimitError
 from yuxi.agents.skills.service import list_accessible_skills
 from yuxi.repositories.user_repository import UserRepository

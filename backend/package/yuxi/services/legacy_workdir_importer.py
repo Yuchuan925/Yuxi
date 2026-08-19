@@ -12,7 +12,6 @@ from pathlib import Path
 
 from sqlalchemy import select, text
 from sqlalchemy.orm.attributes import flag_modified
-
 from yuxi.agents.backends.sandbox.paths import (
     ensure_user_workspace,
     user_workdir_host_dir,
@@ -84,10 +83,7 @@ async def read_legacy_bindings(db) -> tuple[tuple[LegacyWorkdirBinding, ...], tu
     conversations: list[LegacyConversationBinding] = []
     if workdir_column:
         rows = await db.execute(
-            text(
-                "SELECT thread_id, uid, workdir_id FROM conversations "
-                "WHERE workdir_id IS NOT NULL ORDER BY id"
-            )
+            text("SELECT thread_id, uid, workdir_id FROM conversations WHERE workdir_id IS NOT NULL ORDER BY id")
         )
         conversations = [
             LegacyConversationBinding(
@@ -256,9 +252,7 @@ async def rewrite_legacy_workdir_paths(db) -> None:
         if isinstance(attachments, list):
             virtual_workdir = workdir_virtual_dir(conversation.workdir_path)
             metadata["attachments"] = [
-                _rewrite_attachment(conversation.thread_id, virtual_workdir, item)
-                if isinstance(item, dict)
-                else item
+                _rewrite_attachment(conversation.thread_id, virtual_workdir, item) if isinstance(item, dict) else item
                 for item in attachments
             ]
             conversation.extra_metadata = metadata
@@ -315,14 +309,14 @@ def _rewrite_path(path: object, workdir_path: str) -> object:
     workdir_id = relative_workdir.split("/", 1)[-1]
     old_project = f"/home/gem/projects/project-{workdir_id}"
     if path == old_project or path.startswith(f"{old_project}/"):
-        return f"{workdir_path}{path[len(old_project):]}"
+        return f"{workdir_path}{path[len(old_project) :]}"
     old_workspace = "/home/gem/user-data/workspace"
     if path == old_workspace or path.startswith(f"{old_workspace}/"):
-        return f"/home/gem/user-data{path[len(old_workspace):]}"
+        return f"/home/gem/user-data{path[len(old_workspace) :]}"
     for namespace in ("uploads", "outputs"):
         old_root = f"/home/gem/user-data/{namespace}"
         if path == old_root or path.startswith(f"{old_root}/"):
-            return f"{workdir_path}{path[len('/home/gem/user-data'):]}"
+            return f"{workdir_path}{path[len('/home/gem/user-data') :]}"
     return path
 
 
