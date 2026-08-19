@@ -160,9 +160,7 @@ def serialize_attachment(record: dict, *, thread_id: str) -> dict:
         "path": path,
         "artifact_url": _artifact_url(thread_id, path) if isinstance(path, str) else None,
         "original_path": original_path,
-        "original_artifact_url": (
-            _artifact_url(thread_id, original_path) if isinstance(original_path, str) else None
-        ),
+        "original_artifact_url": (_artifact_url(thread_id, original_path) if isinstance(original_path, str) else None),
         "request_id": record.get("request_id"),
     }
 
