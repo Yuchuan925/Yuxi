@@ -696,11 +696,13 @@ async def test_wrap_model_call_emits_started_and_completed(
     messages = _compressing_messages(large_result)
 
     if async_call:
+
         async def handler(request: ModelRequest) -> ModelResponse:
             return ModelResponse(result=[AIMessage(content="ok")])
 
         result = await middleware.awrap_model_call(_model_request(messages), handler)
     else:
+
         def handler(request: ModelRequest) -> ModelResponse:
             return ModelResponse(result=[AIMessage(content="ok")])
 

@@ -456,9 +456,7 @@ def test_skills_middleware_extracts_slug_for_new_paths() -> None:
     ]
     assert middleware._extract_skill_slug_from_skill_md_path("/home/gem/skills/demo-skill/SKILL.md") == "demo-skill"
     assert (
-        middleware._extract_skill_slug_from_skill_md_path(
-            "/home/gem/user-data/agents/skills/personal-skill/SKILL.md"
-        )
+        middleware._extract_skill_slug_from_skill_md_path("/home/gem/user-data/agents/skills/personal-skill/SKILL.md")
         == "personal-skill"
     )
 
