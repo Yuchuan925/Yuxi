@@ -875,23 +875,6 @@ async def test_process_agent_run_retryable_error_retries_then_completes(monkeypa
 
 
 @pytest.mark.asyncio
-async def test_worker_rejects_invalid_checkpointer_backend_before_resources(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Worker 与 API 使用同一个启动期 checkpoint 配置边界。"""
-
-    monkeypatch.setenv("LANGGRAPH_CHECKPOINTER_BACKEND", "unknown")
-
-    def forbidden_initialize() -> None:
-        raise AssertionError("database startup must not begin")
-
-    monkeypatch.setattr(run_worker.pg_manager, "initialize", forbidden_initialize)
-
-    with pytest.raises(ValueError, match="unknown"):
-        await run_worker._worker_startup({})
-
-
-@pytest.mark.asyncio
 async def test_finish_run_terminal_loser_does_not_append_end_event(monkeypatch: pytest.MonkeyPatch):
     events: list[tuple[str, dict]] = []
 

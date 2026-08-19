@@ -16,12 +16,6 @@ def get_runtime_dir() -> Path:
     return Path(tempfile.gettempdir()) / f"yuxi-runtime-{os.getpid()}"
 
 
-def get_checkpoint_dir() -> Path:
-    """读取显式 SQLite LangGraph checkpoint 的共享持久目录。"""
-    configured = os.getenv("YUXI_CHECKPOINT_DIR")
-    return Path(configured) if configured else Path("checkpoints")
-
-
 def get_skill_data_dir() -> Path:
     """读取共享与个人 Skill 持久源目录。"""
     configured = os.getenv("YUXI_SKILL_DATA_DIR")
@@ -57,7 +51,6 @@ __all__ = [
     "UserConfig",
     "UserConfigSchema",
     "get_runtime_dir",
-    "get_checkpoint_dir",
     "get_legacy_storage_dir",
     "get_projects_dir",
     "get_skill_data_dir",

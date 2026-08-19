@@ -5,8 +5,6 @@ from __future__ import annotations
 import asyncio
 import hmac
 import os
-import re
-import shutil
 from pathlib import Path
 
 from sqlalchemy import select, text
@@ -16,7 +14,7 @@ from yuxi.agents.skills.service import (
     mark_legacy_skill_storage_migrated,
     migrate_legacy_skill_storage,
 )
-from yuxi.config import get_checkpoint_dir, get_legacy_storage_dir, get_user_data_dir
+from yuxi.config import get_legacy_storage_dir, get_user_data_dir
 from yuxi.config.options import ensure_options_in_db, migrate_legacy_system_options
 from yuxi.repositories.agent_run_repository import AgentRunRepository
 from yuxi.repositories.project_workdir_repository import FILE_STORAGE_MATERIALIZATION_ID
@@ -26,13 +24,6 @@ from yuxi.storage.postgres.models_business import FileStorageMaterialization
 
 _QUIESCENCE_TOKEN_ENV = "YUXI_STORAGE_MIGRATION_QUIESCENCE_TOKEN"
 _QUIESCENCE_FILE_ENV = "YUXI_STORAGE_MIGRATION_QUIESCENCE_FILE"
-_CHECKPOINT_COMPONENT_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
-_SQLITE_CHECKPOINT_FILES = {
-    "aio_history.db",
-    "aio_history.db-journal",
-    "aio_history.db-shm",
-    "aio_history.db-wal",
-}
 
 
 def _legacy_skill_roots_exist() -> bool:
@@ -52,53 +43,9 @@ def _legacy_skill_roots_exist() -> bool:
     return False
 
 
-def _legacy_persistent_files_exist() -> bool:
-    """判断旧广域目录是否仍保存系统配置或 SQLite checkpoint。"""
-    legacy_root = get_legacy_storage_dir()
-    if (legacy_root / "config/base.toml").is_file():
-        return True
-    agents_root = legacy_root / "agents"
-    return agents_root.is_symlink() or (
-        agents_root.is_dir()
-        and any(path.is_file() or path.is_symlink() for path in agents_root.glob("*/aio_history.db*"))
-    )
-
-
-def _migrate_legacy_sqlite_checkpoints() -> None:
-    """把旧显式 SQLite checkpoint 搬到 API/worker 共享的独立持久域。"""
-    source_root = get_legacy_storage_dir() / "agents"
-    if not source_root.exists() and not source_root.is_symlink():
-        return
-    if source_root.is_symlink() or not source_root.is_dir():
-        raise ValueError(f"历史 checkpoint 根目录非法: {source_root}")
-    target_root = get_checkpoint_dir() / "agents"
-    for component_dir in sorted(source_root.iterdir(), key=lambda path: path.name):
-        if (
-            not _CHECKPOINT_COMPONENT_PATTERN.fullmatch(component_dir.name)
-            or component_dir.is_symlink()
-            or not component_dir.is_dir()
-        ):
-            raise ValueError(f"历史 checkpoint 组件目录非法: {component_dir}")
-        for source in sorted(component_dir.iterdir(), key=lambda path: path.name):
-            if source.name not in _SQLITE_CHECKPOINT_FILES:
-                continue
-            if source.is_symlink() or not source.is_file():
-                raise ValueError(f"历史 checkpoint 文件非法: {source}")
-            target = target_root / component_dir.name / source.name
-            target.parent.mkdir(parents=True, exist_ok=True)
-            if target.exists():
-                if target.is_symlink() or not target.is_file() or target.read_bytes() != source.read_bytes():
-                    raise ValueError(f"SQLite checkpoint 新旧内容冲突: {target}")
-            else:
-                shutil.copy2(source, target, follow_symlinks=False)
-    for component_dir in sorted(source_root.iterdir(), key=lambda path: path.name):
-        for source in sorted(component_dir.iterdir(), key=lambda path: path.name):
-            if source.name in _SQLITE_CHECKPOINT_FILES and source.is_file() and not source.is_symlink():
-                source.unlink()
-        if component_dir.is_dir() and not component_dir.is_symlink() and not any(component_dir.iterdir()):
-            component_dir.rmdir()
-    if not any(source_root.iterdir()):
-        source_root.rmdir()
+def _legacy_system_config_exists() -> bool:
+    """判断旧广域目录是否仍保存系统配置。"""
+    return (get_legacy_storage_dir() / "config/base.toml").is_file()
 
 
 async def _legacy_cutover_pending_before_schema_init() -> bool:
@@ -157,10 +104,9 @@ async def main() -> None:
         legacy_cutover_pending = await _legacy_cutover_pending_before_schema_init()
         await pg_manager.create_business_tables()
         await pg_manager.ensure_business_schema()
-        requires_quiescence = legacy_cutover_pending or _legacy_skill_roots_exist() or _legacy_persistent_files_exist()
+        requires_quiescence = legacy_cutover_pending or _legacy_skill_roots_exist() or _legacy_system_config_exists()
         if requires_quiescence:
             _require_quiescence_proof()
-        _migrate_legacy_sqlite_checkpoints()
         await _converge_database_state(fail_nonterminal_runs=requires_quiescence)
         legacy_config_file = get_legacy_storage_dir() / "config/base.toml"
         if legacy_config_file.is_file() and not legacy_config_file.is_symlink():

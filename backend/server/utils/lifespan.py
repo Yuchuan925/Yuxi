@@ -3,7 +3,6 @@ from collections.abc import Callable
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
-from yuxi.agents.checkpointer_config import resolve_checkpointer_backend
 from yuxi.config.runtime import lite_mode_enabled
 from yuxi.services.task_service import tasker
 from yuxi.agents.mcp.service import ensure_builtin_mcp_servers_in_db
@@ -58,7 +57,6 @@ async def _startup(app: FastAPI) -> None:
     app.state.startup_complete = False
     app.state.startup_components = {}
     lite_mode = lite_mode_enabled()
-    checkpointer_backend = resolve_checkpointer_backend()
 
     await _initialize_startup_component(
         app,
@@ -209,8 +207,7 @@ async def _startup(app: FastAPI) -> None:
         operation=init_sandbox_provider,
     )
 
-    if checkpointer_backend == "postgres":
-        await pg_manager.setup_langgraph_checkpointer()
+    await pg_manager.setup_langgraph_checkpointer()
 
     await tasker.start()
     app.state.startup_complete = True

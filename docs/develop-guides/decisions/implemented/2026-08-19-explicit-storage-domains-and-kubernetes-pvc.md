@@ -18,9 +18,8 @@ PVC/subPath 由 `docker/sandbox_provisioner/app.py` 拥有。
 - shipping 服务不再挂载 `/app/saves`。API 为用户 Workspace UI 挂载显式 User Data，加上 Skill
   source/projection；worker 为 Agent 上下文读取挂载显式 User Data，加上 Skill source/projection；provisioner 只挂载 Project、User Data 与
   Skill projection 三个明确目录。
-- PostgreSQL 仍是默认 LangGraph checkpoint Owner；显式 `sqlite` 使用 API/worker 共享的
-  `/app/checkpoints` 持久域。migrator 会先复制旧 `agents/*/aio_history.db*`，不会把 SQLite 状态放进
-  可丢弃的 service runtime。
+- PostgreSQL 是 LangGraph checkpoint 的唯一 Owner。API、worker 与 Agent 不读取后端选择环境变量，
+  也不挂载本地 checkpoint 目录。
 - `storage-migrator` 是唯一可挂载历史广域目录的停机迁移 Owner。它在 API、worker 与 provisioner
   启动前完成 Project 物化、旧 schema/对象清理、Skill 源迁移和个人 Workspace Skill 旧目录删除；
   shipping 启动只校验 active gate，不再扫描历史宿主目录。旧业务 schema 已存在且切换尚未完成，
@@ -54,6 +53,7 @@ PVC/subPath 由 `docker/sandbox_provisioner/app.py` 拥有。
 ## 后果
 
 - Project、User Data、Skill source 和 Skill projection 有独立配置与挂载；未来可以分别迁移存储类。
+- 历史 SQLite checkpoint 文件不再自动导入或删除；升级后无法从这些文件继续暂停、审批或摘要状态。
 - 升级必须先停止旧 execution runtime，再运行一次性 migrator。迁移失败会阻止 shipping 服务启动，
   不会回退到旧目录。
 - 动态 Kubernetes Pod spec 已使用两个 PVC 并校验 volume name、subPath 与 Skills read-only；真实目标
@@ -65,11 +65,10 @@ PVC/subPath 由 `docker/sandbox_provisioner/app.py` 拥有。
 - Docker/Kubernetes provisioner unit：显式 host root、双 PVC、Project/User subPath、Skill 只读与错误
   volume 绑定均有负向案例。
 - 一次性 migrator unit：Project 先切换、旧 schema 待切换但缺少一次性停机证明时 fail-closed、个人旧
-  Skill 目录只在停机 Owner 中删除，失败仍关闭数据库。旧 `base.toml`、SQLite checkpoint（含 rollback
-  journal）、仅停机切换才执行的非终态 Run
+  Skill 目录只在停机 Owner 中删除，失败仍关闭数据库。旧 `base.toml`、仅停机切换才执行的非终态 Run
   收敛和迁移完成标记均有负向案例；脚本负控覆盖已 down 的生产 Compose 参数；provisioner 负控覆盖
   K8s orphan Pod、错误 PVC claim、枚举失败、Terminating 等待和 quiesce 后拒绝 create。
-- backend non-slow unit：`1384 passed, 34 skipped`；宿主 Compose 配置 contract：`39 passed`；工程
+- backend non-slow unit：`1372 passed, 34 skipped`；宿主 Compose 配置 contract：`39 passed`；工程
   contract：`48 passed`。
 - 真实 PostgreSQL/MinIO/HTTP 与 Docker 集成（迁移、作用域、撤权、Project/User/Skill
   producer-consumer）：`18 passed`；真实主/子 Agent E2E：`2 passed`。远程 Skill 一次性 Sandbox
@@ -82,8 +81,10 @@ PVC/subPath 由 `docker/sandbox_provisioner/app.py` 拥有。
   `git diff --check` 通过。
 - 真实目标 Kubernetes RWX 双 Pod smoke：Not run；当前开发环境没有目标 CSI/PVC。
 
-旧能力不存在：shipping 服务不接受 `SAVE_DIR`、`THREAD_PVC`、`DOCKER_THREADS_HOST_PATH`，不挂载
-`/app/saves`，也不在 API/worker 启动时读取历史宿主目录。
+旧能力不存在：shipping 服务不接受 `SAVE_DIR`、`THREAD_PVC`、`DOCKER_THREADS_HOST_PATH`、
+`LANGGRAPH_CHECKPOINTER_BACKEND` 或 `YUXI_CHECKPOINT_DIR`，不挂载 `/app/saves` 或 `/app/checkpoints`，
+也不包含 SQLite saver 与 SQLite checkpoint 迁移路径。
 
 重新引入条件：只有新的部署契约明确要求同一服务拥有多个存储域，并提供权限、迁移、跨副本并发和
-目标环境证据时，才可增加挂载；不得恢复广域父目录或静默 fallback。
+目标环境证据时，才可增加挂载；不得恢复广域父目录或静默 fallback。重新引入 checkpoint 后端选择
+还必须先证明 API/worker 跨进程一致性、暂停恢复和升级迁移，不得恢复进程本地 SQLite。

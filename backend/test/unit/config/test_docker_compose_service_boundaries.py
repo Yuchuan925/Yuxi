@@ -7,10 +7,10 @@ import pytest
 import yaml
 
 
-FORBIDDEN_API_WORKER_TARGETS = frozenset({"/app/models", "/app/saves", "/var/run/docker.sock"})
+FORBIDDEN_API_WORKER_TARGETS = frozenset({"/app/checkpoints", "/app/models", "/app/saves", "/var/run/docker.sock"})
 REQUIRED_STORAGE_TARGETS = {
-    "api": frozenset({"/app/user-data", "/app/skill-sources", "/app/skill-projections", "/app/checkpoints"}),
-    "worker": frozenset({"/app/user-data", "/app/skill-sources", "/app/skill-projections", "/app/checkpoints"}),
+    "api": frozenset({"/app/user-data", "/app/skill-sources", "/app/skill-projections"}),
+    "worker": frozenset({"/app/user-data", "/app/skill-sources", "/app/skill-projections"}),
 }
 FORBIDDEN_API_WORKER_ENV_KEYS = frozenset({"YUXI_DOCKER_API_BASE"})
 EXPECTED_RUNTIME_DIRS = {"api": "/app/runtime/api", "worker": "/app/runtime/worker"}
@@ -134,7 +134,8 @@ def test_storage_migrator_gates_every_shipping_file_consumer(filename: str) -> N
     migrator = compose["services"]["storage-migrator"]
     assert "python -m yuxi.storage_migration" in migrator["command"]
     migrator_targets = {_volume_target(volume) for volume in migrator.get("volumes") or []}
-    assert {"/app/legacy-saves", "/app/checkpoints"} <= migrator_targets
+    assert "/app/legacy-saves" in migrator_targets
+    assert "/app/checkpoints" not in migrator_targets
 
 
 def test_storage_migration_script_quiesces_runtime_before_issuing_proof() -> None:

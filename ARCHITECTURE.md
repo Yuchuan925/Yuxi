@@ -113,6 +113,6 @@ Yuxi 是一个面向 RAG、知识图谱和多智能体工作流的知识库平�
 
 - **配置**：Compose 和 `.env` 提供部署配置；管理员系统配置、用户配置与模型供应商以 PostgreSQL 为持久化 Owner，Redis 只提供可失效缓存；旧 `base.toml` 仅用于一次性迁移已有系统配置。
 - **权限**：前端路由和页面标签提供体验级约束，FastAPI 认证依赖和 repository 可见性查询提供最终授权。
-- **状态与存储**：PostgreSQL 保存请求、Run、消息、Conversation/Project Workdir 绑定、业务和知识库元数据，也是 Compose 与 Python 默认路径的 LangGraph checkpoint Owner；SQLite 仅在显式选择时使用，初始化失败不会切换为内存语义。Redis 保存短期事件、取消信号、ARQ 和跨进程缓存；持久 RWX POSIX 存储拥有 Project/User 文件字节，MinIO 继续拥有知识库与临时上传对象。
+- **状态与存储**：PostgreSQL 保存请求、Run、消息、Conversation/Project Workdir 绑定、业务和知识库元数据，也是 LangGraph checkpoint 的唯一 Owner。Redis 保存短期事件、取消信号、ARQ 和跨进程缓存；持久 RWX POSIX 存储拥有 Project/User 文件字节，MinIO 继续拥有知识库与临时上传对象。
 - **文档处理**：Agent 附件确认后进入实时 Project Workdir；知识库上传仍先进入对象存储和文件元数据边界，再经过解析、分块和知识库实现。解析器、分块策略和知识库连接器保持可替换。
 - **观测与调试**：优先查看 `api-dev`、`worker-dev` 和相关依赖日志；Langfuse 集中在服务层和 AgentRun 上下文；SSE 问题同时检查 Redis 事件与 PostgreSQL 终态。

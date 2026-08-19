@@ -13,7 +13,6 @@ from datetime import datetime
 from arq.worker import RetryJob
 from sqlalchemy import select, text
 from sqlalchemy.exc import OperationalError
-from yuxi.agents.checkpointer_config import resolve_checkpointer_backend
 from yuxi.agents.mcp.service import ensure_builtin_mcp_servers_in_db
 from yuxi.agents.backends.sandbox.provider import get_sandbox_provider
 from yuxi.agents.skills.service import init_builtin_skills
@@ -1394,7 +1393,6 @@ async def _worker_startup(ctx):
 
     if not isinstance(ctx, dict):
         raise TypeError("ARQ worker context 必须是字典")
-    checkpointer_backend = resolve_checkpointer_backend()
     AuthUtils.require_security_secrets()
     ctx["worker_id"] = WORKER_ID
     pg_manager.initialize()
@@ -1404,8 +1402,7 @@ async def _worker_startup(ctx):
 
     async with pg_manager.get_async_session_context() as session:
         await require_project_workdir_active(session)
-    if checkpointer_backend == "postgres":
-        await pg_manager.setup_langgraph_checkpointer()
+    await pg_manager.setup_langgraph_checkpointer()
     async with pg_manager.get_async_session_context() as session:
         from yuxi.config.options import (
             ensure_options_in_db,

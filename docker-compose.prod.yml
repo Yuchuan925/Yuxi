@@ -3,7 +3,6 @@ x-api-worker-env: &api-worker-env
   LITE_MODE: ${LITE_MODE:-}
   RUNNING_IN_DOCKER: "true"
   YUXI_ENV: production
-  LANGGRAPH_CHECKPOINTER_BACKEND: ${LANGGRAPH_CHECKPOINTER_BACKEND:-postgres}
   PYTHONPATH: /app/package
   JWT_SECRET_KEY: ${JWT_SECRET_KEY:?Set JWT_SECRET_KEY in .env.prod}
   API_KEY_DERIVATION_SECRET: ${API_KEY_DERIVATION_SECRET:?Set API_KEY_DERIVATION_SECRET in .env.prod}
@@ -32,7 +31,6 @@ x-api-worker-env: &api-worker-env
   SANDBOX_MAX_OUTPUT_BYTES: ${SANDBOX_MAX_OUTPUT_BYTES:-262144}
   YUXI_SKILL_DATA_DIR: /app/skill-sources
   YUXI_SKILL_PROJECTION_DIR: /app/skill-projections
-  YUXI_CHECKPOINT_DIR: /app/checkpoints
   NO_PROXY: localhost,127.0.0.1,milvus,graph,minio,milvus-etcd,etcd,mineru,paddlex,sandbox-provisioner,api.siliconflow.cn
   no_proxy: localhost,127.0.0.1,milvus,graph,minio,milvus-etcd,etcd,mineru,paddlex,sandbox-provisioner,api.siliconflow.cn
 
@@ -50,7 +48,6 @@ services:
       - ./docker/volumes/yuxi/threads:/app/user-data
       - ./docker/volumes/yuxi/skill-sources:/app/skill-sources
       - ./docker/volumes/yuxi/skill-projections:/app/skill-projections
-      - ./docker/volumes/yuxi/checkpoints:/app/checkpoints
     extra_hosts:
       - "host.docker.internal:host-gateway"
     env_file:
@@ -94,7 +91,6 @@ services:
       - ./docker/volumes/yuxi/threads:/app/user-data:ro
       - ./docker/volumes/yuxi/skill-sources:/app/skill-sources
       - ./docker/volumes/yuxi/skill-projections:/app/skill-projections
-      - ./docker/volumes/yuxi/checkpoints:/app/checkpoints
     extra_hosts:
       - "host.docker.internal:host-gateway"
     env_file:
@@ -137,7 +133,6 @@ services:
       - ./docker/volumes/yuxi/threads:/app/user-data
       - ./docker/volumes/yuxi/skill-sources:/app/skill-sources
       - ./docker/volumes/yuxi/skill-projections:/app/skill-projections
-      - ./docker/volumes/yuxi/checkpoints:/app/checkpoints
     env_file:
       - .env.prod
     environment:

@@ -232,43 +232,6 @@ def test_completed_skill_cutover_ignores_later_workspace_directory(monkeypatch, 
     assert storage_migration._legacy_skill_roots_exist() is False
 
 
-def test_legacy_sqlite_checkpoints_move_to_explicit_shared_domain(monkeypatch, tmp_path):
-    legacy_root = tmp_path / "legacy"
-    source = legacy_root / "agents/main/aio_history.db"
-    source.parent.mkdir(parents=True)
-    source.write_bytes(b"sqlite-checkpoint")
-    journal = source.with_name("aio_history.db-journal")
-    journal.write_bytes(b"rollback-journal")
-    checkpoint_root = tmp_path / "checkpoints"
-    monkeypatch.setattr(storage_migration, "get_legacy_storage_dir", lambda: legacy_root)
-    monkeypatch.setattr(storage_migration, "get_checkpoint_dir", lambda: checkpoint_root)
-
-    assert storage_migration._legacy_persistent_files_exist() is True
-    storage_migration._migrate_legacy_sqlite_checkpoints()
-
-    assert (checkpoint_root / "agents/main/aio_history.db").read_bytes() == b"sqlite-checkpoint"
-    assert (checkpoint_root / "agents/main/aio_history.db-journal").read_bytes() == b"rollback-journal"
-    assert not source.exists()
-    assert not journal.exists()
-    assert storage_migration._legacy_persistent_files_exist() is False
-
-
-def test_legacy_sqlite_checkpoint_symlink_is_rejected_without_deleting_target(monkeypatch, tmp_path):
-    legacy_root = tmp_path / "legacy"
-    component = legacy_root / "agents/main"
-    component.mkdir(parents=True)
-    outside = tmp_path / "outside.db"
-    outside.write_bytes(b"outside")
-    (component / "aio_history.db").symlink_to(outside)
-    monkeypatch.setattr(storage_migration, "get_legacy_storage_dir", lambda: legacy_root)
-    monkeypatch.setattr(storage_migration, "get_checkpoint_dir", lambda: tmp_path / "checkpoints")
-
-    with pytest.raises(ValueError, match="checkpoint 文件非法"):
-        storage_migration._migrate_legacy_sqlite_checkpoints()
-
-    assert outside.read_bytes() == b"outside"
-
-
 async def _record(calls: list[object], value: str) -> None:
     calls.append(value)
 

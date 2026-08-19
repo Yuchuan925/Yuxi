@@ -13,6 +13,7 @@
 
 - 锁定 Neo4j 5.26.29 与 Redis 7.4.10 镜像版本，补充第三方组件许可证、镜像再分发义务与商业部署边界；完整镜像许可证以实际软件物料清单为准。
 - API 与 worker 的日志及 Office 预览缓存改用各自容器本地运行目录，不再写入共享 `saves`；管理端日志接口与调试面板明确只展示 API 进程日志。历史日志和预览缓存不迁移，worker 日志由容器日志查看。
+- LangGraph checkpoint 固定使用 PostgreSQL，删除 SQLite saver、后端选择环境变量、本地 checkpoint 挂载和旧 SQLite checkpoint 自动迁移。
 - Agent 文件主链路统一为实时 Project Workdir：附件、Agent 写入、Viewer、下载与 artifact 读取同一 POSIX 文件系统；`uploads/outputs` 只保留目录约定，Agent 可覆盖上传，交付物可来自 Project、User Data 或授权 Skill 普通文件。
 - 根 Conversation 与全部子 Agent 共用稳定 Sandbox runtime 和 Workdir，不再通过 output revision、hydrate、checkpoint、projection 或三方合并同步文件；不同顶层 Conversation 仍隔离运行环境，未来可只共享 Workdir。
 - 升级启动期以全局 fence、source fingerprint 和隔离 staging 一次性物化旧附件与 outputs；全部 Workdir 校验 ready 后才激活，随后删除旧正式附件/output 对象、revision 表和 current pointer。缺失、冲突、部分复制或清理失败均阻止服务就绪并可重试。

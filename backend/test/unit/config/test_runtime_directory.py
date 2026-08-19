@@ -2,7 +2,6 @@ from pathlib import Path
 
 from yuxi.config import (
     get_legacy_storage_dir,
-    get_checkpoint_dir,
     get_projects_dir,
     get_runtime_dir,
     get_skill_data_dir,
@@ -41,13 +40,6 @@ def test_skill_storage_directories_support_explicit_domain_mounts(monkeypatch, t
 
     assert get_skill_data_dir() == data_dir
     assert get_skill_projection_dir() == projection_dir
-
-
-def test_sqlite_checkpoint_directory_is_an_explicit_persistent_domain(monkeypatch, tmp_path: Path):
-    checkpoint_dir = tmp_path / "checkpoints"
-    monkeypatch.setenv("YUXI_CHECKPOINT_DIR", str(checkpoint_dir))
-
-    assert get_checkpoint_dir() == checkpoint_dir
 
 
 def test_storage_defaults_do_not_derive_from_legacy_save_dir(monkeypatch, tmp_path: Path):
