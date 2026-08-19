@@ -42,8 +42,7 @@ async def test_install_skill_from_sandbox_installs_as_current_user_private_skill
         thread_id,
         uid,
         staging_root,
-        sandbox_instance_id,
-        workdir_id,
+        workdir_relative_path,
         workdir_path,
     ):
         calls["prepare_thread_id"] = threading.get_ident()
@@ -52,8 +51,7 @@ async def test_install_skill_from_sandbox_installs_as_current_user_private_skill
             "thread_id": thread_id,
             "uid": uid,
             "staging_root": staging_root,
-            "sandbox_instance_id": sandbox_instance_id,
-            "workdir_id": workdir_id,
+            "workdir_relative_path": workdir_relative_path,
             "workdir_path": workdir_path,
         }
         return source_dir
@@ -75,13 +73,6 @@ async def test_install_skill_from_sandbox_installs_as_current_user_private_skill
         calls["enable"] = {"db": db_arg, "thread_id": thread_id, "uid": uid, "skill_slugs": skill_slugs}
         return True
 
-    async def refresh_user_skill_projection_async(uid):
-        calls["sync"] = {"uid": uid}
-        return {
-            "existing-skill": "/tmp/shared/existing-skill",
-            "demo-skill": str(source_dir),
-        }
-
     monkeypatch.setattr(
         install_skill_module,
         "_prepare_skill_from_sandbox",
@@ -98,28 +89,20 @@ async def test_install_skill_from_sandbox_installs_as_current_user_private_skill
         lambda: _AsyncSessionContext(db),
     )
     monkeypatch.setattr(skill_service, "install_personal_skill_dir", install_personal_skill_dir)
-    monkeypatch.setattr(
-        skill_service,
-        "refresh_user_skill_projection_async",
-        refresh_user_skill_projection_async,
-    )
-
     runtime = _runtime(
         uid="normal-user",
         thread_id="thread-1",
-        sandbox_instance_id="thread-1",
-        workdir_id="workdir-1",
-        workdir_path="/home/gem/projects/project-workdir-1",
+        workdir_relative_path="projects/workdir-1",
+        workdir_path="/home/gem/user-data/projects/workdir-1",
         skills=["existing-skill"],
         _readable_skills=["existing-skill", "demo-skill"],
         _prompt_skills=["existing-skill", "demo-skill"],
         _runtime_skill_sources={
             "existing-skill": "/tmp/shared/existing-skill",
-            "demo-skill": "/tmp/shared/demo-skill",
         },
     )
     result = await install_skill_module._run_install_task(
-        " /home/gem/user-data/workspace/demo-skill ",
+        " /home/gem/user-data/demo-skill ",
         runtime,
         "tool-1",
     )
@@ -129,7 +112,7 @@ async def test_install_skill_from_sandbox_installs_as_current_user_private_skill
     assert calls["prepare"]["uid"] == "normal-user"
     assert calls["prepare_thread_id"] != event_loop_thread_id
     assert calls["install"] == {"uid": "normal-user", "source_dir": source_dir}
-    assert calls["prepare"]["source"] == "/home/gem/user-data/workspace/demo-skill"
+    assert calls["prepare"]["source"] == "/home/gem/user-data/demo-skill"
     assert calls["enable"] == {
         "db": db,
         "thread_id": "thread-1",
@@ -138,24 +121,22 @@ async def test_install_skill_from_sandbox_installs_as_current_user_private_skill
     }
     assert result.update["messages"][0].content.splitlines() == [
         "✅ 成功安装并激活技能: demo-skill",
-        "📁 安装位置: /home/gem/skills/demo-skill",
+        "📁 安装位置: /home/gem/user-data/agents/skills/demo-skill",
     ]
     assert runtime.context.skills == ["existing-skill", "demo-skill"]
     assert runtime.context._readable_skills == ["existing-skill", "demo-skill"]
     assert runtime.context._prompt_skills == ["existing-skill", "demo-skill"]
     assert runtime.context._runtime_skill_sources == {
         "existing-skill": "/tmp/shared/existing-skill",
-        "demo-skill": str(source_dir),
     }
     assert runtime.context._runtime_skill_metadata == {
         "demo-skill": {
             "name": "Demo Skill",
             "description": "demo description",
-            "path": "/home/gem/skills/demo-skill/SKILL.md",
+            "path": "/home/gem/user-data/agents/skills/demo-skill/SKILL.md",
         }
     }
     assert runtime.context._runtime_skill_dependency_map == {"demo-skill": {"tools": [], "mcps": [], "skills": []}}
-    assert calls["sync"] == {"uid": "normal-user"}
 
 
 @pytest.mark.asyncio
@@ -170,7 +151,7 @@ async def test_install_skill_rejects_subagent_runtime_before_install(monkeypatch
     )
 
     result = await install_skill_module._run_install_task(
-        "/home/gem/user-data/workspace/demo-skill",
+        "/home/gem/user-data/demo-skill",
         _runtime(uid="user-1", thread_id="child-thread", is_subagent_runtime=True),
         "tool-1",
     )
@@ -294,14 +275,13 @@ async def test_enable_skills_does_not_update_unowned_agent(monkeypatch, runtime_
 
 
 def test_prepare_skill_from_sandbox_uses_sandbox_api_without_host_path_resolution(monkeypatch, tmp_path: Path):
-    remote_dir = "/home/gem/user-data/workspace/demo-skill"
+    remote_dir = "/home/gem/user-data/demo-skill"
 
     class FakeProvisionerSandboxBackend:
-        def __init__(self, *, thread_id, uid, sandbox_instance_id, workdir_id, create_if_missing):
+        def __init__(self, *, thread_id, uid, workdir_path, create_if_missing):
             assert thread_id == "thread-1"
             assert uid == "user-1"
-            assert sandbox_instance_id is None
-            assert workdir_id is None
+            assert workdir_path is None
             assert create_if_missing is False
 
         def ls(self, path):
@@ -328,14 +308,13 @@ def test_prepare_skill_from_sandbox_uses_sandbox_api_without_host_path_resolutio
 
 
 def test_prepare_skill_from_sandbox_preserves_download_error_message(monkeypatch, tmp_path: Path):
-    remote_dir = "/home/gem/user-data/workspace/demo-skill"
+    remote_dir = "/home/gem/user-data/demo-skill"
 
     class FakeProvisionerSandboxBackend:
-        def __init__(self, *, thread_id, uid, sandbox_instance_id, workdir_id, create_if_missing):
+        def __init__(self, *, thread_id, uid, workdir_path, create_if_missing):
             assert thread_id == "thread-1"
             assert uid == "user-1"
-            assert sandbox_instance_id is None
-            assert workdir_id is None
+            assert workdir_path is None
             assert create_if_missing is False
 
         def ls(self, _path):

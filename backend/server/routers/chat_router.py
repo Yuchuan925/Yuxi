@@ -129,6 +129,7 @@ class ThreadCreate(BaseModel):
     title: str | None = None
     agent_id: str
     metadata: dict | None = None
+    workdir_path: str | None = None
 
 
 class ThreadResponse(BaseModel):
@@ -137,6 +138,7 @@ class ThreadResponse(BaseModel):
     agent_id: str
     title: str | None = None
     is_pinned: bool = False
+    workdir_path: str
     created_at: str
     updated_at: str
     metadata: dict[str, Any] = Field(default_factory=dict)
@@ -285,6 +287,7 @@ async def create_thread(
         agent_slug=thread.agent_id,
         title=thread.title,
         metadata=thread.metadata,
+        workdir_path=thread.workdir_path,
         db=db,
         current_uid=str(current_user.uid),
     )

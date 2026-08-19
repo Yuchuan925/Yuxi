@@ -28,11 +28,6 @@ def get_skill_projection_dir() -> Path:
     return Path(configured) if configured else Path("skill-projections")
 
 
-def get_projects_dir() -> Path:
-    """读取 Project Workdir 持久目录。"""
-    return Path(os.getenv("YUXI_PROJECTS_DIR", "projects"))
-
-
 def get_user_data_dir() -> Path:
     """读取用户级实时文件持久目录。"""
     return Path(os.getenv("YUXI_USER_DATA_DIR", "user-data"))
@@ -52,7 +47,6 @@ __all__ = [
     "UserConfigSchema",
     "get_runtime_dir",
     "get_legacy_storage_dir",
-    "get_projects_dir",
     "get_skill_data_dir",
     "get_skill_projection_dir",
     "get_user_data_dir",

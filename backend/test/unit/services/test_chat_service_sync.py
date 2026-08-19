@@ -46,21 +46,12 @@ async def test_resolve_agent_runtime_includes_subagents_only_when_requested(monk
                 agent_id="worker",
                 thread_id=thread_id,
                 status="subagent",
-                workdir_id="workdir-1",
+                workdir_path="projects/workdir-1",
             )
-
-    class FakeProjectWorkdirRepository:
-        def __init__(self, _db):
-            pass
-
-        async def require_for_user(self, workdir_id: str, uid: str):
-            assert workdir_id == "workdir-1"
-            assert uid == "user-1"
-            return SimpleNamespace(id=workdir_id, uid=uid)
 
     monkeypatch.setattr(svc, "AgentRepository", FakeAgentRepository)
     monkeypatch.setattr(svc, "ConversationRepository", FakeConversationRepository)
-    monkeypatch.setattr(svc, "ProjectWorkdirRepository", FakeProjectWorkdirRepository)
+    monkeypatch.setattr(svc, "user_workdir_host_dir", lambda uid, path: Path(f"/{uid}/{path}"))
     monkeypatch.setattr(svc, "normalize_agent_context_config", _fake_normalize_agent_context_config)
     monkeypatch.setattr(
         svc.agent_manager,
@@ -497,7 +488,7 @@ async def test_get_agent_state_view_returns_interrupted_checkpoint_payload(monke
                 uid="user-1",
                 agent_id="main",
                 status="active",
-                workdir_id="workdir-1",
+                workdir_path="projects/workdir-1",
             )
 
     class AgentRepo:
@@ -597,7 +588,7 @@ async def test_get_agent_state_view_includes_subagent_thread_relation(monkeypatc
                     uid="user-1",
                     agent_id="worker",
                     status="subagent",
-                    workdir_id="workdir-1",
+                    workdir_path="projects/workdir-1",
                 )
             return None
 
@@ -738,7 +729,7 @@ async def test_get_agent_state_view_reports_malformed_subagent_run_as_server_err
                 uid="user-1",
                 agent_id="worker",
                 status="subagent",
-                workdir_id="workdir-1",
+                workdir_path="projects/workdir-1",
             )
 
         async def get_conversation_by_id(self, conversation_id: int):

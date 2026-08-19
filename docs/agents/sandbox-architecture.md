@@ -69,8 +69,8 @@ Kubernetes backend 使用 kubeconfig 或 Pod 内服务账号创建沙盒 Pod 和
 | `SANDBOX_K8S_NAMESPACE` | `K8S_NAMESPACE` | 沙盒 Pod 与 Service 所在 namespace |
 | `KUBECONFIG_PATH` | `KUBECONFIG_PATH` | provisioner 容器内 kubeconfig 路径；集群内运行时可留空 |
 | `SANDBOX_NODE_HOST` | `NODE_HOST` | provisioner 能访问 NodePort 的节点地址 |
-| `THREAD_PVC` | `THREAD_PVC` | workspace、uploads、outputs 与 Skills 线程投影使用的共享 PVC |
-| `SKILLS_PVC` | `SKILLS_PVC` | 当前实现读取但未进入 Pod 挂载，属于预留字段 |
+| `USER_DATA_PVC` | `USER_DATA_PVC` | UserWorkspace 使用的共享 PVC |
+| `SKILLS_PVC` | `SKILLS_PVC` | 共享/内置 Skill 投影使用的只读 PVC |
 
 当前返回给 API/worker 的仍是 provisioner 代理 URL；`NODE_HOST` 只需从 provisioner 可达。Pod 禁用 ServiceAccount token 自动挂载，除非未来由明确威胁模型和实现变更调整。PVC 必须支持 provisioner 选择的访问模式和 `subPath` 目录结构。
 
@@ -82,29 +82,29 @@ Kubernetes backend 使用 kubeconfig 或 Pod 内服务账号创建沙盒 Pod 和
 
 ## 五、Docker 本机后端是如何工作的
 
-当 `SANDBOX_PROVISIONER_BACKEND=docker` 时，`sandbox-provisioner` 会进入 `LocalContainerProvisionerBackend`。它会检查 Docker 是否可用，分别解析 `/app/projects`、`/app/user-data` 和 `/app/skill-projections` 三个显式挂载在宿主机上的真实路径。随后它按应用层给出的 `sandbox_id` 启动或复用类似 `yuxi-sandbox-<id>` 的容器，并复核用户、Workdir 与挂载身份。
+当 `SANDBOX_PROVISIONER_BACKEND=docker` 时，`sandbox-provisioner` 会进入 `LocalContainerProvisionerBackend`。它会检查 Docker 是否可用，解析 `/app/user-data` 和 `/app/skill-projections` 两个显式挂载在宿主机上的真实路径。随后它按应用层给出的 `sandbox_id` 启动或复用类似 `yuxi-sandbox-<id>` 的容器，并复核用户、Workdir 与挂载身份。
 
 这个沙盒镜像默认来自 `SANDBOX_IMAGE`，容器内部监听的端口默认是 `8080`。provisioner 会为每个动态沙盒创建独立的 Docker bridge 网络，只把 provisioner 和该沙盒接入其中；沙盒之间不能互访，也不能访问承载 PostgreSQL、Redis、Neo4j、MinIO 等服务的 `app-network`。沙盒端口不发布到宿主机，provisioner 通过对应的独立网络访问真实容器，再以需要 Bearer token 的代理地址向 API/worker 提供文件和命令接口。API/worker 不直接持有沙盒容器地址。
 
 这个拓扑把沙箱按“其中代码可能被完全控制”处理。`SANDBOX_PROVISIONER_TOKEN` 只配置给 API、worker 和 provisioner，绝不能写进 `sandbox.env` 或用户级 Agent 环境变量，否则沙箱会重新获得 provisioner 管理权限。
 
-Docker 后端在启动沙盒时，会把当前 Conversation 绑定的 Project Workdir 挂到 `/home/gem/projects/project-<workdir_id>`，把用户级 User Data 挂到 `/home/gem/user-data`，并只读挂载当前 uid 的授权 Skills 投影。Project Workdir 是默认工作目录，`uploads/`、`outputs/` 都只是其中的可写目录约定。根 Agent 与子 Agent 使用同一个稳定 runtime；不同顶层 Conversation 使用独立容器，但未来可挂载同一 Workdir。runtime 销毁只清理进程、`/tmp` 和依赖状态，不删除持久挂载中的文件。
+Docker 后端把当前 uid 的 UserWorkspace 整体挂到 `/home/gem/user-data`，把授权的共享/内置 Skills 投影只读挂到 `/home/gem/skills`，并把 cwd 设置为 `/home/gem/user-data/<workdir_path>`。每个 Thread 只改变 cwd，不改变挂载形状。根 Agent 与子 Agent 使用同一个稳定 runtime；不同顶层 Conversation 使用独立容器，即使它们绑定同一 Workdir 也只共享文件。runtime 销毁不删除持久文件。
 
 为了避免长期空闲的沙盒一直占资源，provisioner 还带了一个 idle reaper。它会记录每个沙盒最近一次被 touch 的时间，超过 `SANDBOX_IDLE_TIMEOUT_SECONDS` 之后自动删除。当前默认空闲超时是 120 秒，但如果这个值小于命令执行超时，系统会自动把它提高到“命令超时 + 30 秒”，以免执行中的任务被误回收。
 
 对应到 `docker-compose.yml` 和 `docker-compose.prod.yml`，当前 `sandbox-provisioner` 实际会读取的 Docker 后端相关变量主要是这些：
 
 - 通用变量：`PROVISIONER_BACKEND`、`SANDBOX_IMAGE`、`SANDBOX_CONTAINER_PORT`、`SANDBOX_HEALTH_TIMEOUT_SECONDS`、`SANDBOX_IDLE_TIMEOUT_SECONDS`、`SANDBOX_IDLE_CHECK_INTERVAL_SECONDS`、`SANDBOX_EXEC_TIMEOUT_SECONDS`、`MEMORY_SANDBOX_URL_TEMPLATE`
-- Docker 后端变量：`DOCKER_NETWORK_PREFIX`、`DOCKER_PROJECTS_HOST_PATH`、`DOCKER_USER_DATA_HOST_PATH`、`DOCKER_SKILL_PROJECTIONS_HOST_PATH`、`DOCKER_SANDBOX_PREFIX`
+- Docker 后端变量：`DOCKER_NETWORK_PREFIX`、`DOCKER_USER_DATA_HOST_PATH`、`DOCKER_SKILL_PROJECTIONS_HOST_PATH`、`DOCKER_SANDBOX_PREFIX`
 - 容器代理变量：`HTTP_PROXY`、`HTTPS_PROXY`、`NO_PROXY`
 
-`DOCKER_NETWORK_PREFIX` 用于生成每个沙盒的独立网络名称。三个 host path 变量都是 Docker 后端专用；如果不显式传入，provisioner 会从对应的三个容器挂载分别解析，绝不再从共同父目录推导。
+`DOCKER_NETWORK_PREFIX` 用于生成每个沙盒的独立网络名称。两个 host path 变量都是 Docker 后端专用；如果不显式传入，provisioner 会从对应容器挂载分别解析。
 
 ## 六、Kubernetes 后端是如何工作的
 
 当 `SANDBOX_PROVISIONER_BACKEND=kubernetes` 时，`sandbox-provisioner` 会改用 Kubernetes Python 客户端。它会先加载 kubeconfig 或集群内配置，然后在指定的 namespace 中创建一个沙盒 Pod，再创建一个同名的 NodePort Service，把这个 Service 的 `nodePort` 暴露给 Yuxi 后端使用。
 
-Kubernetes 后端下，沙盒还是同一套镜像并暴露相同 HTTP API，但由 Pod 承载。Pod 从 `PROJECT_DATA_PVC` 挂载 `projects/<workdir_id>` 与 `user-data/shared/<uid>`，从独立 `SKILLS_PVC` 只读挂载 `skill-projections/<uid>`。Project 要跨节点实时共享时，Project Data PVC 必须由支持 `ReadWriteMany` 的存储类提供；worker 不再从 MinIO/PostgreSQL hydrate 运行时文件，也不在父子 Agent 之间搬运文件。
+Kubernetes 后端下，沙盒还是同一套镜像并暴露相同 HTTP API，但由 Pod 承载。Pod 从 `USER_DATA_PVC` 的 `shared/<uid>/workspace` subPath 挂载整个 UserWorkspace，从 `SKILLS_PVC` 只读挂载 `skill-projections/<uid>`。init container 以 no-follow 方式确认 uid 与 Workdir 路径。跨节点实时共享时，User Data PVC 必须提供部署所需的共享读写语义。
 
 Kubernetes 后端还需要一个 `NODE_HOST`。这是因为当前实现使用的是 NodePort Service，而不是 Ingress，也不是 ClusterIP。provisioner 创建完 Service 后会通过 `http://<NODE_HOST>:<nodePort>` 访问目标沙箱，但返回给 Yuxi 后端的仍是 provisioner 认证代理地址。所以 `NODE_HOST` 必须从 provisioner 可达，不需要直接暴露给 API/worker。
 
@@ -113,10 +113,10 @@ Kubernetes 后端还需要一个 `NODE_HOST`。这是因为当前实现使用的
 - `K8S_NAMESPACE`
 - `KUBECONFIG_PATH`
 - `NODE_HOST`
-- `PROJECT_DATA_PVC`
+- `USER_DATA_PVC`
 - `SKILLS_PVC`
 
-两个 PVC 都进入实际 Pod spec：Project Data 是可写实时文件域，Skills 是独立来源的只读投影域。
+两个 PVC 都进入实际 Pod spec：User Data 是可写实时文件域，Skills 是独立来源的只读投影域。
 
 ## 七、如果要使用“远程 K8s”，应该怎么接
 
@@ -133,7 +133,7 @@ services:
       - PROVISIONER_BACKEND=kubernetes
       - K8S_NAMESPACE=yuxi-know
       - KUBECONFIG_PATH=/root/.kube/config
-      - PROJECT_DATA_PVC=yuxi-project-data
+      - USER_DATA_PVC=yuxi-user-data
       - SKILLS_PVC=yuxi-skills
       - NODE_HOST=203.0.113.10
     volumes:
@@ -146,48 +146,49 @@ services:
 
 ## 八、当前项目的沙盒文件系统是如何设计的
 
-从模型和工具调用的视角看，Yuxi 向 Agent 暴露三类路径：当前 Project Workdir、`/home/gem/user-data` 和 `/home/gem/skills`。Project 是默认工作目录和 AgentPanel Viewer 的唯一根；User Data 是用户跨 Project 的私有可写目录；Skills 是当前用户授权全集的只读投影。知识库不映射为沙盒文件系统路径，模型应通过知识库工具检索和打开文档。
+从模型和工具调用的视角看，Yuxi 暴露 UserWorkspace 根 `/home/gem/user-data` 和共享 Skill 根 `/home/gem/skills`。Conversation 的 `workdir_path` 选择 UserWorkspace 下的当前 cwd，也是 AgentPanel Viewer 的根；个人 Skill 位于 `agents/skills`。知识库不映射为沙盒文件系统路径。
 
 在宿主机侧，各存储域通过独立挂载提供，目录结构可以概括为下面这样：
 
 ```text
-projects/
-│   └── <workdir_id>/
-│       ├── uploads/
-│       ├── outputs/
-│       └── ...
 skill-projections/
 │   └── <uid>/
 │       └── <skill-slug>/
 user-data/
-│   └── shared/
-│   │   └── <uid>/
-│   │       └── workspace/
+└── shared/
+    └── <uid>/
+        └── workspace/
+            ├── agents/skills/<skill-slug>/
+            └── projects/<workdir-id>/
+                ├── uploads/
+                └── outputs/
 ```
 
-`projects/<workdir_id>` 是实时文件事实源；其 `uploads`、`outputs` 与其他目录都使用同一挂载和权限协议，差异只来自产品约定。`user-data/shared/<uid>` 承载用户级 Workspace。旧 thread uploads/outputs、MinIO 附件对象和 `ThreadOutputRevision` 只由一次性 `storage-migrator` 读取，激活后不再进入 shipping 读写链路。
+`user-data/shared/<uid>/workspace` 是当前用户文件的唯一实时 POSIX 根；`projects/<workdir-id>` 只是其中的默认对话目录。旧 Project 与 thread 文件只由一次性 `storage-migrator` 读取，迁移后不再进入 shipping 读写链路。
 
 ## 九、路径暴露规则是什么
 
-Yuxi 不会把整个容器文件系统都开放给 Agent 或 Viewer。AgentPanel 的 `/` 直接映射当前 Project Workdir，不展示 User Data、Skills、`/tmp` 或容器系统目录。Agent 可以读写 Project 与 User Data；`present_artifacts` 还可读取已授权 Skills 中的普通文件。所有受信任 API 都以 root-to-leaf no-follow 方式拒绝越界路径、symlink 和特殊文件。
+Yuxi 不会把整个容器文件系统都开放给 Agent 或 Viewer。Agent 可以读写当前 uid 的整个 UserWorkspace，并读取共享 Skill projection；AgentPanel 的 `/` 只映射当前 Workdir。所有受信任 API 都以 root-to-leaf no-follow 方式拒绝越界路径、symlink 和特殊文件。
 
-Project Workdir 是主要工作区。内置 prompt 建议把用户上传放在 `uploads/`、最终交付物放在 `outputs/`，但后端不把这些建议提升为权限或发布协议；Agent 可以覆盖上传文件，artifact 也不要求 outputs 前缀。
+当前 Workdir 是主要工作区。内置 prompt 建议把用户上传放在 `uploads/`、最终交付物放在 `outputs/`；同一 uid 的其他 Project 可以读取，但未经用户明确要求不得跨 Workdir 写入。这是模型行为约束，不是安全边界。
 
-API 的 Viewer、附件和 artifact 不复用 execution runtime，而是通过独立的受信任 file-bridge Sandbox 挂载同一 Project Workdir。这样 execution tree 结束时销毁容器不会让实时文件 API 产生删除竞态；file bridge 仍执行相同的 uid、Workdir、no-follow 和普通文件边界，不允许 API/worker 直接读取宿主机路径。
+API 的 Viewer、附件和 artifact 不复用 execution runtime，也不创建 file-bridge Sandbox；它们在验证 uid 与 Conversation ownership 后，通过受信任的 `WorkspaceFilesystem` 直接访问同一字节，并把 Thread 写操作限制在当前 Workdir。
 
 根 Run 进入终态时会在 PostgreSQL 中原子取消仍活跃的后代，并设置 `runtime_cleanup_pending`。下一次顶层 Run、retry attempt 和 SSE `end` 都不能越过这个 fence；worker 删除 runtime 成功后才清除它，周期 reconciler 负责重试失败的清理并重新投递 pending retry。单个子 Run 终态不会删除父子共享 runtime，任何 runtime cleanup 都不删除 Project Workdir。
 
-`/home/gem/skills` 只读挂载当前用户的 `skill-projections/<uid>`；持久源、授权同步和选择/激活语义由
+`/home/gem/skills` 只读挂载当前用户的共享/内置 `skill-projections/<uid>`；个人 Skill 通过 UserWorkspace
+挂载直接保留在 `/home/gem/user-data/agents/skills`。持久源、授权同步和选择/激活语义由
 [Skills 管理](skills-management.md) 唯一说明，Sandbox 不拥有 `skill-sources`。
 
 知识库访问不属于沙盒文件系统暴露规则。当前 Agent 可见知识库仍由用户权限和 Agent 配置共同决定，但只通过 `query_kb`、`open_kb_document` 等工具访问，不提供沙盒目录投影。
 
 ## 十、skills、知识库、附件是怎么和沙盒结合的
 
-Skills 在 Sandbox 中只表现为 `/home/gem/skills` 的只读用户投影；Prompt 与工具激活规则见
+共享/内置 Skill 在 Sandbox 中表现为 `/home/gem/skills` 的只读用户投影，个人 Skill 表现为
+`/home/gem/user-data/agents/skills`；Prompt 与工具激活规则见
 [Skills 管理](skills-management.md)。
 
-附件确认后，原件和可选 Markdown 解析结果直接写入当前 Project Workdir 的 `uploads/`，Conversation 只保留文件 ID、请求绑定、展示名称和实时路径。临时上传对象在确认完成后删除；Agent、Viewer 和父子 Agent 随后读取的是同一份 POSIX 字节。升级前的 MinIO 对象与旧本地附件只由启动期全量物化读取，缺失、冲突或不安全会阻止新文件主链路激活。
+附件确认后，原件和可选 Markdown 解析结果直接写入当前 Workdir 的 `uploads/`，Conversation 只保留文件 ID、请求绑定、展示名称和实时路径。临时上传对象在确认完成后删除；Agent、Viewer 和父子 Agent 随后读取的是同一份 POSIX 字节。升级前的旧文件只由停机期 `storage-migrator` 导入。
 
 知识库不再与沙盒文件系统结合。它不会被复制到每个线程目录，也不会生成虚拟目录；模型通过专门的知识库工具检索，并在需要更完整上下文时用 `open_kb_document` 按 `kb_id` 和 `file_id` 打开文档内容。
 
@@ -215,7 +216,7 @@ curl --fail http://localhost:8002/health
 
 ## Kubernetes 接入步骤
 
-1. 在目标 namespace 创建或确认 `THREAD_PVC`，预先验证 provisioner 与沙盒 Pod 都能访问预期 `subPath`。
+1. 在目标 namespace 创建或确认 `USER_DATA_PVC` 与 `SKILLS_PVC`，预先验证 provisioner 与沙盒 Pod 都能访问预期 `subPath`。
 2. 为 provisioner 提供最小权限的 kubeconfig，或让它在集群内使用受限 ServiceAccount；权限仅覆盖目标 namespace 所需的 Pod 与 Service 操作。
 3. Compose 混合部署设置 `SANDBOX_PROVISIONER_BACKEND=kubernetes`、`SANDBOX_K8S_NAMESPACE`、PVC、`SANDBOX_NODE_HOST` 与 API/worker 可达的 `SANDBOX_PROVISIONER_URL`，并把 kubeconfig 只读挂入 provisioner。直接部署 provisioner 时使用对应的容器变量；集群内部署通常不设置 `KUBECONFIG_PATH`。
 4. 从 provisioner 所在网络验证 Kubernetes API 和 `http://<NODE_HOST>:<nodePort>` 可达。API/worker 无需直接访问 NodePort。
@@ -223,14 +224,13 @@ curl --fail http://localhost:8002/health
 
 当前没有多集群选择 UI、Ingress backend 或自动节点发现。需要这些能力时应作为明确的部署功能实现，不能只通过文档假设存在。
 
-Project Viewer 先把 Conversation 解析成授权的 `workdir_id`，再通过只读 file bridge 访问同一份实时
-Project Workdir；它不再把虚拟路径映射回历史 thread 宿主目录，也不会为了浏览文件而连接 execution
-runtime。User Workspace 由 API 在显式 User Data 挂载中直接管理，不进入 Project Viewer。Artifact 下载则
-按 Project、User Data、Skills 三个授权根选择对应 backend，并在实际读取前再次执行用户与 Skill 授权。
+Project Viewer 先把 Conversation 解析成授权的 `workdir_path`，再通过 `WorkspaceFilesystem` 访问同一份
+实时字节；它不会为了浏览文件而连接 execution runtime。Artifact 下载按 UserWorkspace 与 Skills 授权根
+选择文件，并在实际读取前再次执行用户与 Skill 授权。
 
-因此当前实现是“同一文件事实、不同访问能力”：Agent execution runtime、Viewer file bridge 和 API 可以是
-不同进程或容器，但 Project 看到的是同一 POSIX Workdir；`SelectedSkillsReadonlyBackend` 只负责当前 Agent
-选择项的工具可见性，物理 Skill 投影仍是 uid 授权全集且只读。
+因此当前实现是“同一文件事实、不同访问能力”：Agent execution runtime、Viewer 和 API 可以是
+不同进程或容器，但看到的是同一 POSIX Workdir；`SelectedSkillsReadonlyBackend` 只负责当前 Agent
+选择项的工具可见性，共享/内置 Skill 投影仍是 uid 授权全集且只读；个人 Skill 不进入该投影。
 
 ## 沙盒运行环境
 
@@ -270,8 +270,7 @@ runtime。User Workspace 由 API 在显式 User Data 挂载中直接管理，不
 |--------|------|--------|
 | `DOCKER_NETWORK_PREFIX` | 每沙盒独立网络的名称前缀 | `yuxi-know-sandbox` |
 | `DOCKER_SANDBOX_PREFIX` | 沙盒容器名前缀 | `yuxi-sandbox` |
-| `DOCKER_PROJECTS_HOST_PATH` | Project Workdir 宿主机路径 | 从显式挂载解析 |
-| `DOCKER_USER_DATA_HOST_PATH` | User Data 宿主机路径 | 从显式挂载解析 |
+| `DOCKER_USER_DATA_HOST_PATH` | UserWorkspace 宿主机路径 | 从显式挂载解析 |
 | `DOCKER_SKILL_PROJECTIONS_HOST_PATH` | Skill 投影宿主机路径 | 从显式挂载解析 |
 
 **Kubernetes 后端专用：**
@@ -281,7 +280,7 @@ runtime。User Workspace 由 API 在显式 User Data 挂载中直接管理，不
 | `K8S_NAMESPACE` | Kubernetes namespace | `yuxi-know` |
 | `NODE_HOST` | Kubernetes 节点地址 | `host.docker.internal` |
 | `KUBECONFIG_PATH` | kubeconfig 文件路径 | 空（使用 incluster 配置） |
-| `PROJECT_DATA_PVC` | Project 与 User Data RWX 卷 | `yuxi-project-data` |
+| `USER_DATA_PVC` | UserWorkspace 共享读写卷 | `yuxi-user-data` |
 | `SKILLS_PVC` | Skill 投影卷 | `yuxi-skills` |
 
 ### 环境变量传递链
@@ -340,7 +339,7 @@ CHECK_YUXI_SANDBOX_ENV_EXISTS=True
 
 ## 十四、和旧版文档相比，今天最重要的理解方式
 
-当前项目由 Yuxi 管理 Project Workdir、运行上下文和沙盒生命周期。provisioner 为一次顶层运行创建使用该 Workdir 的沙盒实例。文件系统由可写项目目录、用户级只读 Skills 投影等组成受控命名空间；知识库通过 `query_kb`/`open_kb_document` 等工具访问。
+当前项目由 Yuxi 管理 Conversation 的 UserWorkspace 相对 Workdir、运行上下文和沙盒生命周期。provisioner 为一次顶层执行树创建沙盒实例，挂载当前 uid 的整个 UserWorkspace 和只读共享 Skills；知识库通过 `query_kb`/`open_kb_document` 等工具访问。
 
 因此，当你在界面上“启用沙盒”或者在文档里“选择 K8s”时，实际切换的是 provisioner 的底层实例承载方式。选择 `docker` 时，沙盒由当前部署机上的 Docker daemon 动态创建；选择 `kubernetes` 时，沙盒由目标 K8s 集群动态创建。Yuxi 通过统一的 provisioner 服务地址访问两种后端。
 
@@ -350,4 +349,4 @@ CHECK_YUXI_SANDBOX_ENV_EXISTS=True
 
 如果怀疑是 Docker 地址不可达，先确认每个动态沙箱只连接自己的 `yuxi-know-sandbox-<id>` 网络，provisioner 同时连接该网络，而 API/worker 只在 `app-network`。provisioner 日志中的目标地址应是动态容器名，API/worker 拿到的地址应是 `/api/sandboxes/<id>/proxy`；代理请求必须携带 `SANDBOX_PROVISIONER_TOKEN`。如果怀疑是 Kubernetes 地址不可达，重点检查 `NODE_HOST` 和 NodePort 是否从 provisioner 可达。
 
-如果文件在 Viewer 可见但模型读不到，先检查 Conversation 的 `workdir_id`、Run 的根 `runtime_scope_id`、provisioner generation 与 Project mount；父子绑定必须解析到同一个根 runtime。若 Viewer 与 Sandbox 看到不同字节，检查共享卷/PVC 的实际 subPath 和 RWX 一致性，不要检查已经退出 shipping 链路的 output revision 或 hydrate。User Data 或 Skills 问题仍需检查 uid、授权投影和实际挂载。
+如果文件在 Viewer 可见但模型读不到，先检查 Conversation 的 `workdir_path`、Run 的根 `runtime_scope_id`、provisioner generation 与 UserWorkspace mount；父子绑定必须解析到同一个根 runtime。若 Viewer 与 Sandbox 看到不同字节，检查 `shared/<uid>/workspace` 的实际 bind/PVC subPath。Skills 问题还需检查 uid、授权投影和只读挂载。

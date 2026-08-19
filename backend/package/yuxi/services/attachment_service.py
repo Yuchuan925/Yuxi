@@ -409,10 +409,10 @@ async def confirm_tmp_thread_attachments_view(
 
     conv_repo = ConversationRepository(db)
     conversation = await _require_user_conversation(conv_repo, thread_id, str(current_uid))
-    from yuxi.services.project_workdir_service import resolve_project_workdir_binding
+    from yuxi.services.workdir_service import resolve_workdir_binding
 
-    binding = await resolve_project_workdir_binding(thread_id=thread_id, uid=str(current_uid), db=db)
-    backend = binding.create_file_backend(create_if_missing=True)
+    binding = await resolve_workdir_binding(thread_id=thread_id, uid=str(current_uid), db=db)
+    backend = binding.create_file_backend()
     await asyncio.to_thread(backend.ensure_available)
     minio_client = get_minio_client()
     expected_bucket = _get_tmp_attachment_bucket()
@@ -467,7 +467,7 @@ async def confirm_tmp_thread_attachments_view(
             attachment_record = await _store_attachment(
                 thread_id=thread_id,
                 backend=backend,
-                workdir_path=binding.workdir_path,
+                workdir_path=binding.virtual_path,
                 file_id=file_id,
                 file_name=prepared["file_name"],
                 file_type=prepared["file_type"],
@@ -481,7 +481,7 @@ async def confirm_tmp_thread_attachments_view(
             for path in (record.get("path"), record.get("original_path")):
                 if isinstance(path, str):
                     try:
-                        await asyncio.to_thread(backend.delete_authorized_path, path, root=binding.workdir_path)
+                        await asyncio.to_thread(backend.delete_authorized_path, path, root=binding.virtual_path)
                     except Exception:
                         pass
         raise
@@ -498,7 +498,7 @@ async def confirm_tmp_thread_attachments_view(
                         await asyncio.to_thread(
                             backend.delete_authorized_path,
                             path,
-                            root=binding.workdir_path,
+                            root=binding.virtual_path,
                         )
                     except Exception:
                         pass
@@ -531,10 +531,10 @@ async def upload_thread_attachment_view(
     """上传原始附件并关联到指定对话线程。"""
     conv_repo = ConversationRepository(db)
     conversation = await _require_user_conversation(conv_repo, thread_id, str(current_uid))
-    from yuxi.services.project_workdir_service import resolve_project_workdir_binding
+    from yuxi.services.workdir_service import resolve_workdir_binding
 
-    binding = await resolve_project_workdir_binding(thread_id=thread_id, uid=str(current_uid), db=db)
-    backend = binding.create_file_backend(create_if_missing=True)
+    binding = await resolve_workdir_binding(thread_id=thread_id, uid=str(current_uid), db=db)
+    backend = binding.create_file_backend()
     await asyncio.to_thread(backend.ensure_available)
     if not file.filename:
         raise HTTPException(status_code=400, detail="无法识别的文件名")
@@ -565,7 +565,7 @@ async def upload_thread_attachment_view(
     attachment_record = await _store_attachment(
         thread_id=thread_id,
         backend=backend,
-        workdir_path=binding.workdir_path,
+        workdir_path=binding.virtual_path,
         file_id=file_id,
         file_name=file_name,
         file_type=file.content_type,
@@ -582,7 +582,7 @@ async def upload_thread_attachment_view(
         for path in {attachment_record.get("path"), attachment_record.get("original_path")}:
             if isinstance(path, str):
                 try:
-                    await asyncio.to_thread(backend.delete_authorized_path, path, root=binding.workdir_path)
+                    await asyncio.to_thread(backend.delete_authorized_path, path, root=binding.virtual_path)
                 except Exception:
                     pass
         raise
@@ -619,10 +619,10 @@ async def delete_thread_attachment_view(
     """删除指定对话线程的附件。"""
     conv_repo = ConversationRepository(db)
     conversation = await _require_user_conversation(conv_repo, thread_id, str(current_uid))
-    from yuxi.services.project_workdir_service import resolve_project_workdir_binding
+    from yuxi.services.workdir_service import resolve_workdir_binding
 
-    binding = await resolve_project_workdir_binding(thread_id=thread_id, uid=str(current_uid), db=db)
-    backend = binding.create_file_backend(create_if_missing=True)
+    binding = await resolve_workdir_binding(thread_id=thread_id, uid=str(current_uid), db=db)
+    backend = binding.create_file_backend()
     await asyncio.to_thread(backend.ensure_available)
 
     existing_attachments = await conv_repo.lock_attachments(conversation.id)
@@ -639,7 +639,7 @@ async def delete_thread_attachment_view(
         if not isinstance(path, str):
             continue
         try:
-            await asyncio.to_thread(backend.delete_authorized_path, path, root=binding.workdir_path)
+            await asyncio.to_thread(backend.delete_authorized_path, path, root=binding.virtual_path)
         except FileNotFoundError:
             pass
         except Exception:

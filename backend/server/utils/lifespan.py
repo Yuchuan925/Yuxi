@@ -75,20 +75,6 @@ async def _startup(app: FastAPI) -> None:
     if not lite_mode:
         await pg_manager.ensure_knowledge_schema()
 
-    from yuxi.services.project_workdir_materialization_service import require_project_workdir_active
-
-    async def require_project_workdir_activation() -> None:
-        """确认一次性存储迁移已在服务启动前完成。"""
-        async with pg_manager.get_async_session_context() as session:
-            await require_project_workdir_active(session)
-
-    await _initialize_startup_component(
-        app,
-        name="project_workdir_activation",
-        required=True,
-        operation=require_project_workdir_activation,
-    )
-
     from yuxi.config.options import (
         ensure_options_in_db,
         invalidate_option_cache,

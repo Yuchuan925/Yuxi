@@ -129,7 +129,7 @@ services:
       - app-network
     volumes:
       - ./docker/volumes/yuxi:/app/legacy-saves
-      - ./docker/volumes/yuxi/projects:/app/projects
+      - ./docker/volumes/yuxi/projects:/app/legacy-projects
       - ./docker/volumes/yuxi/threads:/app/user-data
       - ./docker/volumes/yuxi/skill-sources:/app/skill-sources
       - ./docker/volumes/yuxi/skill-projections:/app/skill-projections
@@ -139,7 +139,7 @@ services:
       <<: *api-worker-env
       YUXI_RUNTIME_DIR: /app/runtime/storage-migrator
       YUXI_LEGACY_STORAGE_DIR: /app/legacy-saves
-      YUXI_PROJECTS_DIR: /app/projects
+      YUXI_LEGACY_PROJECTS_DIR: /app/legacy-projects
       YUXI_USER_DATA_DIR: /app/user-data
     command: uv run --no-sync --no-dev python -m yuxi.storage_migration
     restart: "no"
@@ -155,7 +155,6 @@ services:
       dockerfile: Dockerfile
     container_name: sandbox-provisioner
     volumes:
-      - ./docker/volumes/yuxi/projects:/app/projects
       - ./docker/volumes/yuxi/threads:/app/user-data
       - ./docker/volumes/yuxi/skill-projections:/app/skill-projections
       - ./docker/sandbox_provisioner/sandbox.env:/app/sandbox.env:ro
@@ -183,14 +182,13 @@ services:
       # Docker backend only
       - DOCKER_NETWORK_PREFIX=${SANDBOX_DOCKER_NETWORK_PREFIX:-yuxi-know-sandbox}
       - DOCKER_USER_DATA_HOST_PATH=${SANDBOX_DOCKER_USER_DATA_HOST_PATH:-}
-      - DOCKER_PROJECTS_HOST_PATH=${SANDBOX_DOCKER_PROJECTS_HOST_PATH:-}
       - DOCKER_SKILL_PROJECTIONS_HOST_PATH=${SANDBOX_DOCKER_SKILL_PROJECTIONS_HOST_PATH:-}
       - DOCKER_SANDBOX_PREFIX=${SANDBOX_DOCKER_SANDBOX_PREFIX:-yuxi-sandbox}
       # Kubernetes backend only
       - K8S_NAMESPACE=${SANDBOX_K8S_NAMESPACE:-yuxi-know}
       - NODE_HOST=${SANDBOX_NODE_HOST:-host.docker.internal}
       - KUBECONFIG_PATH=${KUBECONFIG_PATH:-}
-      - PROJECT_DATA_PVC=${PROJECT_DATA_PVC:-yuxi-project-data}
+      - USER_DATA_PVC=${USER_DATA_PVC:-yuxi-user-data}
       - SKILLS_PVC=${SKILLS_PVC:-yuxi-skills}
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8002/health').read()"]

@@ -2,7 +2,6 @@ from pathlib import Path
 
 from yuxi.config import (
     get_legacy_storage_dir,
-    get_projects_dir,
     get_runtime_dir,
     get_skill_data_dir,
     get_skill_projection_dir,
@@ -45,12 +44,10 @@ def test_skill_storage_directories_support_explicit_domain_mounts(monkeypatch, t
 def test_storage_defaults_do_not_derive_from_legacy_save_dir(monkeypatch, tmp_path: Path):
     legacy_dir = tmp_path / "legacy-saves"
     monkeypatch.setenv("YUXI_LEGACY_STORAGE_DIR", str(legacy_dir))
-    monkeypatch.delenv("YUXI_PROJECTS_DIR", raising=False)
     monkeypatch.delenv("YUXI_USER_DATA_DIR", raising=False)
     monkeypatch.delenv("YUXI_SKILL_DATA_DIR", raising=False)
     monkeypatch.delenv("YUXI_SKILL_PROJECTION_DIR", raising=False)
 
-    assert get_projects_dir() == Path("projects")
     assert get_user_data_dir() == Path("user-data")
     assert get_skill_data_dir() == Path("skill-sources")
     assert get_skill_projection_dir() == Path("skill-projections")

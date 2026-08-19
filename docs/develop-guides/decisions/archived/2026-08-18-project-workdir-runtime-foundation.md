@@ -1,8 +1,10 @@
 # Project Workdir 与 Sandbox Runtime 基础
 
-状态：implemented
+状态：archived
 类型：simplification
-Owner：backend/package/yuxi/repositories/project_workdir_repository.py
+Owner：docs/develop-guides/decisions/implemented/2026-08-19-workdir-in-user-workspace.md
+
+本记录已被 [Workdir 归属 UserWorkspace 并取消独立 Project 存储域](../implemented/2026-08-19-workdir-in-user-workspace.md) 完全取代，仅保留为历史背景。
 
 `ProjectWorkdir` 与 Conversation/AgentRun 绑定由 PostgreSQL model、repository 和 schema migration 拥有；
 Sandbox identity、generation 和挂载校验由 `agents/backends/sandbox/provider.py` 与
@@ -13,7 +15,7 @@ Sandbox identity、generation 和挂载校验由 `agents/backends/sandbox/provid
 旧 Sandbox identity 同时混入文件 thread、Skills thread 和每 Run instance，文件授权、Agent 选择与运行
 环境生命周期互相耦合。现有用户 workspace 只有隐式路径，没有可供未来多个 Conversation 共享的持久
 工作目录身份；provisioner 也缺少可防止旧实例误删新实例的 generation 契约。Skills 文件按 thread
-复制，既不能表达“用户授权全集”，也会在多 worker 同步和用户可写 personal 来源上产生竞争与越界风险。
+复制，既不能表达“用户授权全集”，也会在多 worker 同步共享来源时产生竞争与越界风险。
 
 ## 决策
 
@@ -28,13 +30,14 @@ Sandbox identity、generation 和挂载校验由 `agents/backends/sandbox/provid
 - Docker 与 Kubernetes 支持可选 Project/User/Skills mount contract。Project Workdir 在 Sandbox 中
   使用 `/home/gem/projects/project-<opaque-id>` 并作为显式 Workdir fixture 的默认目录；Kubernetes
   contract 要求 RWX PVC/subPath。当前 shipping 文件主链路尚未切换到该可选 contract。
-- `/home/gem/skills` 是按 uid 汇总的授权全集只读投影。Agent 配置只控制 Prompt 和工具激活，不改变
+- `/home/gem/skills` 是按 uid 汇总的共享/内置授权全集只读投影；个人 Skill 直接保留在 UserWorkspace。
+  Agent 配置只控制 Prompt 和工具激活，不改变
   Sandbox identity 或文件可见集合。投影刷新在 PostgreSQL uid advisory lock 内重读最新授权，再以
   共享卷 flock 串行替换；授权上下文缺失时 fail-closed。
-- personal Skill 来源使用从文件系统根逐组件 `O_NOFOLLOW` 的 fd-relative 快照，只复制普通文件和
+- 共享 Skill 投影使用从文件系统根逐组件 `O_NOFOLLOW` 的 fd-relative 快照，只复制普通文件和
   真实目录。symlink 竞态、Unix socket、FIFO、设备等特殊项会删除旧 slug 投影并阻止本次刷新。
 - personal Skill 的持久源与单一路径已由
-  [Skill 持久源与只读投影收敛](2026-08-18-skill-source-convergence.md)接管；本记录只保留授权投影的
+  [Skill 持久源与只读投影收敛](../implemented/2026-08-18-skill-source-convergence.md)接管；本记录只保留授权投影的
   并发与安全基础。
 - 本决定落地时附件、outputs、Viewer 和 artifact 暂由旧 Owner 处理；后续
   [实时 Project Workdir 与独立 Sandbox Runtime](2026-08-18-live-project-workdir-and-runtime.md)
@@ -48,16 +51,15 @@ Sandbox identity、generation 和挂载校验由 `agents/backends/sandbox/provid
   gate，局部切换会产生按 Conversation 混跑与空目录假成功。
 - 用 MinIO 或 s3fs 模拟实时 POSIX Workdir：拒绝。对象存储不拥有 rename、partial write、锁和多进程
   可见性所需的完整文件系统语义。
-- personal Skill 继续使用“先扫描 symlink、再 copytree”：拒绝。检查与复制之间可由用户可写 Sandbox
-  替换路径，不能形成可信快照。
+- 把 personal Skill 复制进共享授权投影：拒绝。个人目录由 UserWorkspace 直接提供，投影只承载共享与内置 Skill。
 
 ## 后果
 
 - Project 文件身份与 Sandbox runtime identity 已分离，未来 Project 只需让多个顶层 Conversation
   指向同一 `workdir_id`，无需再次改变文件协议。
-- 同 uid 的父子 Agent 看到相同 Skills 文件全集，但各自 Prompt/工具仍保持选择隔离。
+- 同 uid 的父子 Agent 看到相同共享 Skill 投影与 UserWorkspace 个人 Skill，但各自 Prompt/工具仍保持选择隔离。
 - 实时文件行为由后续 owning decision 负责；本记录只保留 Workdir/runtime identity 与 Skills 投影基础。
-- Skills 投影刷新会执行受限安全复制并跨 worker 串行化，换取授权一致性和用户可写来源的信任边界。
+- Skills 投影刷新会对共享来源执行受限安全复制并跨 worker 串行化，换取授权一致性。
 - 真实 Kubernetes RWX 行为仍需目标集群 smoke；Compose 和 Pod spec 测试不能替代该证据。
 
 ## 验证

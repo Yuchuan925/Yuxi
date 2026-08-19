@@ -11,7 +11,7 @@ class SandboxRecord:
     sandbox_url: str
     status: str | None = None
     generation: str | None = None
-    workdir_id: str | None = None
+    workdir_path: str | None = None
 
 
 class ProvisionerClient:
@@ -40,7 +40,7 @@ class ProvisionerClient:
         uid: str,
         env: dict[str, str] | None = None,
         *,
-        workdir_id: str | None = None,
+        workdir_path: str | None = None,
         inherit_env: bool = True,
     ) -> SandboxRecord:
         response = self._request(
@@ -49,7 +49,7 @@ class ProvisionerClient:
             json={
                 "sandbox_id": sandbox_id,
                 "thread_id": thread_id,
-                "workdir_id": workdir_id,
+                "workdir_path": workdir_path,
                 "uid": uid,
                 "env": env or {},
                 "inherit_env": inherit_env,
@@ -75,7 +75,7 @@ class ProvisionerClient:
             sandbox_url=payload["sandbox_url"],
             status=payload.get("status"),
             generation=payload.get("generation"),
-            workdir_id=payload.get("workdir_id"),
+            workdir_path=payload.get("workdir_path"),
         )
 
     def touch(self, sandbox_id: str) -> bool:

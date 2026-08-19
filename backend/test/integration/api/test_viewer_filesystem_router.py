@@ -9,7 +9,7 @@ import pytest
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
 
 
-async def _create_thread(test_client, headers) -> str:
+async def _create_thread(test_client, headers) -> tuple[str, str]:
     response = await test_client.get("/api/agent/default", headers=headers)
     assert response.status_code == 200, response.text
     agent = response.json().get("agent") or {}
@@ -22,7 +22,8 @@ async def _create_thread(test_client, headers) -> str:
         headers=headers,
     )
     assert response.status_code == 200, response.text
-    return response.json().get("thread_id") or response.json()["id"]
+    payload = response.json()
+    return str(payload.get("thread_id") or payload["id"]), str(payload["workdir_path"])
 
 
 async def test_viewer_tree_requires_authentication(test_client):
@@ -36,7 +37,7 @@ async def test_created_file_is_immediately_visible_to_tree_preview_and_artifact(
     admin_headers,
 ):
     headers = standard_user["headers"]
-    thread_id = await _create_thread(test_client, headers)
+    thread_id, workdir_path = await _create_thread(test_client, headers)
 
     upload = await test_client.post(
         "/api/viewer/filesystem/upload",
@@ -47,7 +48,7 @@ async def test_created_file_is_immediately_visible_to_tree_preview_and_artifact(
     assert upload.status_code == 200, upload.text
     [entry] = upload.json()["entries"]
     file_path = entry["path"]
-    assert file_path.startswith("/home/gem/projects/project-")
+    assert file_path.startswith(f"/home/gem/user-data/{workdir_path}/")
 
     tree = await test_client.get(
         "/api/viewer/filesystem/tree",
@@ -92,10 +93,13 @@ async def test_created_file_is_immediately_visible_to_tree_preview_and_artifact(
     assert missing.status_code == 404
 
 
-async def test_viewer_rejects_user_data_and_other_project_paths(test_client, standard_user):
+async def test_viewer_rejects_paths_outside_current_workdir(test_client, standard_user):
     headers = standard_user["headers"]
-    thread_id = await _create_thread(test_client, headers)
-    for path in ("/home/gem/user-data/workspace/private.txt", "/home/gem/projects/project-other/file.txt"):
+    thread_id, _ = await _create_thread(test_client, headers)
+    for path in (
+        "/home/gem/user-data/agents/skills/private.txt",
+        "/home/gem/user-data/projects/other/file.txt",
+    ):
         response = await test_client.get(
             "/api/viewer/filesystem/file",
             params={"thread_id": thread_id, "path": path},

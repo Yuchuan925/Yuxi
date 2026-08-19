@@ -854,7 +854,6 @@ async def test_unregistered_legacy_skill_is_preserved_as_non_executable_orphan(
     skill_data = tmp_path / "skill-data"
     monkeypatch.setattr(svc, "get_legacy_storage_dir", lambda: legacy_root)
     monkeypatch.setattr(svc, "get_skill_data_dir", lambda: skill_data)
-    monkeypatch.setattr(svc, "get_user_data_dir", lambda: tmp_path / "user-data")
 
     class Result:
         @staticmethod
@@ -890,7 +889,7 @@ async def test_unregistered_legacy_skill_is_preserved_as_non_executable_orphan(
 
 
 @pytest.mark.asyncio
-async def test_unknown_user_personal_skills_are_preserved_as_non_executable_orphans(
+async def test_shared_skill_migration_leaves_personal_workspace_skills_untouched(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ):
@@ -899,10 +898,7 @@ async def test_unknown_user_personal_skills_are_preserved_as_non_executable_orph
     personal_skill = legacy_root / "private-notes"
     personal_skill.mkdir(parents=True)
     (personal_skill / "notes.txt").write_text("preserved", encoding="utf-8")
-    skill_data = tmp_path / "skill-data"
     monkeypatch.setattr(svc, "get_legacy_storage_dir", lambda: tmp_path / "legacy")
-    monkeypatch.setattr(svc, "get_skill_data_dir", lambda: skill_data)
-    monkeypatch.setattr(svc, "get_user_data_dir", lambda: user_data)
 
     class Result:
         @staticmethod
@@ -931,12 +927,10 @@ async def test_unknown_user_personal_skills_are_preserved_as_non_executable_orph
 
     monkeypatch.setattr(svc, "SkillRepository", Repo)
 
-    await svc.migrate_legacy_skill_storage(Db(), remove_personal_legacy=True)
+    await svc.migrate_legacy_skill_storage(Db())
 
-    assert not legacy_root.exists()
-    assert (skill_data / "legacy-orphans/personal/removed-user/private-notes/notes.txt").read_text(
-        encoding="utf-8"
-    ) == "preserved"
+    assert legacy_root.is_dir()
+    assert (personal_skill / "notes.txt").read_text(encoding="utf-8") == "preserved"
 
 
 def test_legacy_skill_migration_marker_is_persistent_and_atomic(
@@ -949,6 +943,96 @@ def test_legacy_skill_migration_marker_is_persistent_and_atomic(
     svc.mark_legacy_skill_storage_migrated()
     assert svc.legacy_skill_storage_migration_completed() is True
     assert not list(tmp_path.glob(".*.tmp"))
+
+
+def test_personal_skill_root_is_inside_user_workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """个人 Skill 的唯一持久路径必须位于对应用户的 UserWorkspace。"""
+    from yuxi.agents.backends.sandbox import paths as sandbox_paths
+
+    monkeypatch.setattr(sandbox_paths, "get_user_data_dir", lambda: tmp_path / "user-data")
+
+    root = svc.get_personal_skills_root_dir("user-1")
+
+    assert root == tmp_path / "user-data/shared/user-1/workspace/agents/skills"
+
+
+@pytest.mark.parametrize("component", ["workspace", "agents", "skills"])
+def test_personal_skill_root_rejects_symlinked_components(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    component: str,
+):
+    """个人 Skill 根不得通过可写路径组件越过当前 UserWorkspace。"""
+    from yuxi.agents.backends.sandbox import paths as sandbox_paths
+
+    user_data = tmp_path / "user-data"
+    user_root = user_data / "shared/user-1"
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    components = ["workspace", "agents", "skills"]
+    index = components.index(component)
+    parent = user_root.joinpath(*components[:index])
+    parent.mkdir(parents=True)
+    (parent / component).symlink_to(outside, target_is_directory=True)
+    monkeypatch.setattr(sandbox_paths, "get_user_data_dir", lambda: user_data)
+
+    with pytest.raises(ValueError, match="符号链接或非目录组件"):
+        svc._scan_personal_skills("user-1")
+
+
+def test_personal_skill_root_stays_pinned_during_operation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """Linux 运行时固定根后，逻辑路径替换不得改变实际写入目标。"""
+    from yuxi.agents.backends.sandbox import paths as sandbox_paths
+
+    user_data = tmp_path / "user-data"
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    monkeypatch.setattr(sandbox_paths, "get_user_data_dir", lambda: user_data)
+
+    with svc._personal_skills_root("user-1") as (logical_root, access_root):
+        if access_root == logical_root:
+            pytest.skip("本地平台不提供 /proc/self/fd 目录视图")
+        detached = logical_root.with_name("skills-original")
+        logical_root.rename(detached)
+        logical_root.symlink_to(outside, target_is_directory=True)
+        svc._resolve_personal_skill_dir(access_root, "pinned").mkdir()
+
+    assert (detached / "pinned").is_dir()
+    assert not (outside / "pinned").exists()
+
+
+@pytest.mark.asyncio
+async def test_read_personal_skill_file_rejects_symlink(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """个人 Skill 文本读取不得跟随链接离开 Skill 目录。"""
+    root = _personal_skill_root(tmp_path, monkeypatch)
+    skill_dir = _write_personal_skill(root, "demo", "personal")
+    outside = tmp_path / "outside.txt"
+    outside.write_text("secret", encoding="utf-8")
+    (skill_dir / "leak.txt").symlink_to(outside)
+
+    with pytest.raises(ValueError, match="越界访问"):
+        await svc.read_personal_skill_file("user-1", "demo", "leak.txt")
+
+
+def test_install_personal_skill_preserves_concurrent_target(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """安装提交遇到并发同名目录时必须保留用户文件并失败。"""
+    root = _personal_skill_root(tmp_path, monkeypatch)
+    source = _write_personal_skill(tmp_path / "source", "demo", "personal")
+    original_copytree = svc.shutil.copytree
+
+    def copytree_with_concurrent_target(source_dir, temp_target, **kwargs):
+        result = original_copytree(source_dir, temp_target, **kwargs)
+        target = Path(temp_target).with_name("demo")
+        target.mkdir()
+        (target / "user-file.txt").write_text("keep", encoding="utf-8")
+        return result
+
+    monkeypatch.setattr(svc.shutil, "copytree", copytree_with_concurrent_target)
+
+    with pytest.raises(ValueError, match="已存在同名 Skill"):
+        svc._install_personal_skill_dir_sync("user-1", source)
+
+    assert (root / "demo/user-file.txt").read_text(encoding="utf-8") == "keep"
 
 
 def test_sync_user_accessible_skills_updates_executable_mode(
@@ -1000,7 +1084,8 @@ async def test_refresh_user_skill_projection_serializes_authorization_snapshots(
         assert uid == "user-1"
         return SimpleNamespace(is_deleted=0)
 
-    async def list_accessible(_db, _user):
+    async def list_shared(_db, _user, *, require_enabled=True):
+        del require_enabled
         return list(current_items)
 
     async def to_thread(_func, _uid, sources):
@@ -1015,7 +1100,8 @@ async def test_refresh_user_skill_projection_serializes_authorization_snapshots(
         lambda: FakeSessionContext(),
     )
     monkeypatch.setattr(user_repository.UserRepository, "get_by_uid_with_db", get_user)
-    monkeypatch.setattr(svc, "list_accessible_skills", list_accessible)
+    monkeypatch.setattr(svc, "_list_accessible_shared_skills", list_shared)
+    monkeypatch.setattr(svc, "_resolve_skill_dir", lambda item: item.source_dir)
     monkeypatch.setattr(svc.asyncio, "to_thread", to_thread)
 
     old_run = asyncio.create_task(svc.refresh_user_skill_projection_async("user-1"))
@@ -1027,6 +1113,52 @@ async def test_refresh_user_skill_projection_serializes_authorization_snapshots(
     await asyncio.gather(old_run, new_run)
 
     assert synchronized_sources == [{"legacy": "/tmp/legacy"}, {}]
+
+
+@pytest.mark.asyncio
+async def test_refresh_user_skill_projection_excludes_personal_skills(monkeypatch: pytest.MonkeyPatch):
+    """共享只读投影不得复制 UserWorkspace 中的个人 Skill。"""
+    from yuxi.repositories import user_repository
+    from yuxi.storage.postgres import manager as postgres_manager
+
+    synchronized_sources: list[dict[str, str]] = []
+    shared = SimpleNamespace(slug="shared")
+
+    class FakeDb:
+        async def execute(self, _statement, _parameters):
+            return None
+
+    class FakeSessionContext:
+        async def __aenter__(self):
+            return FakeDb()
+
+        async def __aexit__(self, *_args):
+            return None
+
+    async def get_user(_self, _db, _uid):
+        return SimpleNamespace(is_deleted=0)
+
+    async def list_shared(_db, _user, *, require_enabled=True):
+        del require_enabled
+        return [shared]
+
+    async def fail_combined_list(*_args, **_kwargs):
+        raise AssertionError("共享投影不得扫描或合并个人 Skill")
+
+    async def sync_projection(_uid, sources):
+        synchronized_sources.append(dict(sources))
+
+    monkeypatch.setattr(postgres_manager.pg_manager, "get_async_session_context", lambda: FakeSessionContext())
+    monkeypatch.setattr(user_repository.UserRepository, "get_by_uid_with_db", get_user)
+    monkeypatch.setattr(svc, "_list_accessible_shared_skills", list_shared)
+    monkeypatch.setattr(svc, "list_accessible_skills", fail_combined_list)
+    monkeypatch.setattr(svc, "_resolve_skill_dir", lambda item: Path(f"/tmp/{item.slug}"))
+    monkeypatch.setattr(svc, "sync_user_accessible_skills_async", sync_projection)
+
+    sources = await svc.refresh_user_skill_projection_async("user-1")
+
+    assert sources == {"shared": "/tmp/shared"}
+    assert synchronized_sources == [{"shared": "/tmp/shared"}]
 
 
 @pytest.mark.asyncio
@@ -2040,20 +2172,28 @@ def _write_personal_skill(root: Path, slug: str, description: str) -> Path:
     return skill_dir
 
 
+def _personal_skill_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, uid: str = "user-1") -> Path:
+    """把 UserWorkspace 根定向到测试临时目录。"""
+    from yuxi.agents.backends.sandbox import paths as sandbox_paths
+
+    user_data = tmp_path / "user-data"
+    monkeypatch.setattr(sandbox_paths, "get_user_data_dir", lambda: user_data)
+    return user_data / "shared" / uid / "workspace" / "agents" / "skills"
+
+
 @pytest.mark.asyncio
 async def test_personal_skill_cache_uses_five_minute_snapshot_and_manual_refresh(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ):
     redis = _FakeRedis()
-    root = tmp_path / "workspace-skills"
+    root = _personal_skill_root(tmp_path, monkeypatch)
     _write_personal_skill(root, "demo", "first")
 
     async def fake_get_redis():
         return redis
 
     monkeypatch.setattr(svc, "get_async_redis_client", fake_get_redis)
-    monkeypatch.setattr(svc, "get_personal_skills_root_dir", lambda _uid: root)
 
     first = await svc.list_personal_skills("user-1")
     _write_personal_skill(root, "demo", "changed")
@@ -2073,7 +2213,7 @@ async def test_personal_skill_cache_miss_scans_once_under_concurrency(
     monkeypatch: pytest.MonkeyPatch,
 ):
     redis = _FakeRedis()
-    root = tmp_path / "workspace-skills"
+    root = _personal_skill_root(tmp_path, monkeypatch)
     _write_personal_skill(root, "demo", "first")
     scan_calls = 0
     original_scan = svc._scan_personal_skills
@@ -2087,7 +2227,6 @@ async def test_personal_skill_cache_miss_scans_once_under_concurrency(
         return original_scan(uid)
 
     monkeypatch.setattr(svc, "get_async_redis_client", fake_get_redis)
-    monkeypatch.setattr(svc, "get_personal_skills_root_dir", lambda _uid: root)
     monkeypatch.setattr(svc, "_scan_personal_skills", counted_scan)
 
     first, second = await asyncio.gather(
@@ -2108,7 +2247,7 @@ async def test_personal_skill_overrides_shared_skill_and_drops_dependencies(
     monkeypatch: pytest.MonkeyPatch,
 ):
     redis = _FakeRedis()
-    personal_root = tmp_path / "personal"
+    personal_root = _personal_skill_root(tmp_path, monkeypatch)
     _write_personal_skill(personal_root, "demo", "personal")
     shared = Skill(
         id=1,
@@ -2141,7 +2280,6 @@ async def test_personal_skill_overrides_shared_skill_and_drops_dependencies(
 
     monkeypatch.setattr(svc, "SkillRepository", FakeRepo)
     monkeypatch.setattr(svc, "get_async_redis_client", fake_get_redis)
-    monkeypatch.setattr(svc, "get_personal_skills_root_dir", lambda _uid: personal_root)
 
     items = await svc.list_accessible_skills(None, _user("user-1", role="user"))
 
@@ -2162,7 +2300,7 @@ async def test_personal_skills_are_isolated_by_uid(
     monkeypatch: pytest.MonkeyPatch,
 ):
     redis = _FakeRedis()
-    roots = {uid: tmp_path / uid for uid in ("user-a", "user-b")}
+    roots = {uid: _personal_skill_root(tmp_path, monkeypatch, uid) for uid in ("user-a", "user-b")}
     _write_personal_skill(roots["user-a"], "demo", "from a")
     _write_personal_skill(roots["user-b"], "demo", "from b")
 
@@ -2170,7 +2308,6 @@ async def test_personal_skills_are_isolated_by_uid(
         return redis
 
     monkeypatch.setattr(svc, "get_async_redis_client", fake_get_redis)
-    monkeypatch.setattr(svc, "get_personal_skills_root_dir", lambda uid: roots[uid])
 
     user_a = await svc.list_personal_skills("user-a")
     user_b = await svc.list_personal_skills("user-b")
@@ -2187,7 +2324,7 @@ async def test_skill_cards_keep_shadowed_shared_item_for_management(
     monkeypatch: pytest.MonkeyPatch,
 ):
     redis = _FakeRedis()
-    personal_root = tmp_path / "personal"
+    personal_root = _personal_skill_root(tmp_path, monkeypatch)
     _write_personal_skill(personal_root, "demo", "personal")
     shared = Skill(
         id=1,
@@ -2213,7 +2350,6 @@ async def test_skill_cards_keep_shadowed_shared_item_for_management(
 
     monkeypatch.setattr(svc, "SkillRepository", FakeRepo)
     monkeypatch.setattr(svc, "get_async_redis_client", fake_get_redis)
-    monkeypatch.setattr(svc, "get_personal_skills_root_dir", lambda _uid: personal_root)
 
     cards, snapshot = await svc.list_skill_cards_for_user(None, _user("user-1", role="user"))
 
@@ -2232,7 +2368,7 @@ async def test_confirm_personal_skill_draft_uses_original_slug_without_database(
     monkeypatch: pytest.MonkeyPatch,
 ):
     redis = _FakeRedis()
-    personal_root = tmp_path / "personal"
+    personal_root = _personal_skill_root(tmp_path, monkeypatch)
     draft_id = "11111111-1111-1111-1111-111111111111"
     draft_dir = tmp_path / "runtime/skill_import_drafts" / draft_id
     item_dir = draft_dir / "items" / "item-1"
@@ -2264,7 +2400,6 @@ async def test_confirm_personal_skill_draft_uses_original_slug_without_database(
         return redis
 
     monkeypatch.setattr(svc, "get_async_redis_client", fake_get_redis)
-    monkeypatch.setattr(svc, "get_personal_skills_root_dir", lambda _uid: personal_root)
     monkeypatch.setenv("YUXI_RUNTIME_DIR", str(tmp_path / "runtime"))
 
     results = await svc.confirm_personal_skill_install_draft(

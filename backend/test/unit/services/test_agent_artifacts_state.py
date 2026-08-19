@@ -14,9 +14,8 @@ def _runtime_with_thread(thread_id: str, uid: str = "user-1"):
         {
             "thread_id": thread_id,
             "runtime_scope_id": thread_id,
-            "sandbox_instance_id": thread_id,
-            "workdir_id": "workdir-1",
-            "workdir_path": "/home/gem/projects/project-workdir-1",
+            "workdir_relative_path": "projects/workdir-1",
+            "workdir_path": "/home/gem/user-data/projects/workdir-1",
             "uid": uid,
         },
     )()
@@ -169,11 +168,11 @@ def test_normalize_presented_artifact_path_accepts_virtual_path(monkeypatch: pyt
     _stub_output_exists(monkeypatch)
 
     normalized = _normalize_presented_artifact_path(
-        "/home/gem/projects/project-workdir-1/outputs/summary.txt",
+        "/home/gem/user-data/projects/workdir-1/outputs/summary.txt",
         _runtime_with_thread(thread_id),
     )
 
-    assert normalized == "/home/gem/projects/project-workdir-1/outputs/summary.txt"
+    assert normalized == "/home/gem/user-data/projects/workdir-1/outputs/summary.txt"
 
 
 def test_normalize_presented_artifact_path_accepts_any_visible_regular_file(monkeypatch: pytest.MonkeyPatch):
@@ -182,10 +181,10 @@ def test_normalize_presented_artifact_path_accepts_any_visible_regular_file(monk
 
     assert (
         _normalize_presented_artifact_path(
-            "/home/gem/projects/project-workdir-1/uploads/note.txt",
+            "/home/gem/user-data/projects/workdir-1/uploads/note.txt",
             _runtime_with_thread(thread_id),
         )
-        == "/home/gem/projects/project-workdir-1/uploads/note.txt"
+        == "/home/gem/user-data/projects/workdir-1/uploads/note.txt"
     )
 
 
@@ -194,5 +193,5 @@ def test_normalize_presented_artifact_path_does_not_special_case_internal_names(
     _stub_output_exists(monkeypatch)
 
     for dir_name in [LARGE_TOOL_RESULTS_DIR_NAME, CONVERSATION_HISTORY_DIR_NAME, "large_tool_history"]:
-        path = f"/home/gem/projects/project-workdir-1/outputs/{dir_name}/stage.txt"
+        path = f"/home/gem/user-data/projects/workdir-1/outputs/{dir_name}/stage.txt"
         assert _normalize_presented_artifact_path(path, _runtime_with_thread(thread_id)) == path

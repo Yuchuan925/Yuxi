@@ -83,10 +83,10 @@ Yuxi 是一个面向 RAG、知识图谱和多智能体工作流的知识库平�
 4. 服务在同一数据库事务中创建用户消息和 AgentRunRequest，并按用户、智能体和线程检查活跃 Run 与 FIFO 队头。
 5. 请求可以立即派发、进入等待队列或按 `reject` 策略拒绝；只有数据库提交成功后才向 ARQ 投递 Run。
 6. `worker-dev` 中的 `run_worker` 使用进程 identity 与 job-attempt token 取得 AgentRun lease；未取得 ownership 的重复任务不会执行。执行期间 heartbeat 在独立事务中续租，再加载智能体配置和运行上下文执行对应 LangGraph。
-7. 智能体通过 middleware 组合实时 Project Workdir、User Data、只读 Skills、MCP、SubAgent、审批、摘要和工具能力。根 Agent 与子 Agent 共享同一个 runtime 和 Workdir；知识库能力主要由内置 `knowledge-base` Skill 及其依赖工具按需开放。
+7. 智能体通过 middleware 组合 UserWorkspace 中的当前 Workdir、只读共享 Skills、MCP、SubAgent、审批、摘要和工具能力。根 Agent 与子 Agent 共享同一个 runtime 和 Workdir；知识库能力主要由内置 `knowledge-base` Skill 及其依赖工具按需开放。
 8. Run 事件写入 Redis Stream，取消通过 Redis key/pubsub 传递；AgentRun、消息投递状态和最终结果写入 PostgreSQL。任何 assistant Message 发布前先在 Run 行锁内验证当前 attempt；正常输出、绑定和 `completed` 同事务提交。worker 失联后，过期 lease 会幂等收敛为带 `worker_lease_expired` 原因的 `failed`。该失败只证明执行 ownership 已丢失，外部副作用仍需按 at-least-once 语义核对。
 9. 前端在排队阶段消费 Request SSE，派发后切换到 Run SSE，并根据数据库状态处理断线恢复和终态补偿。
-10. Project Workdir 的持久 POSIX 字节是 Agent 文件、附件、Viewer 和 artifact 的实时事实源；`uploads/outputs` 只是目录约定。Run 终态清理 runtime 进程但保留 Workdir，文件可见性不等待 revision 发布。
+10. Conversation 保存 UserWorkspace 相对 `workdir_path`；该目录的持久 POSIX 字节是 Agent 文件、附件、Viewer 和 artifact 的实时事实源，`uploads/outputs` 只是目录约定。Run 终态清理 runtime 进程但保留 Workdir。
 
 审批或人机输入产生的 resume 请求会从 LangGraph checkpoint 恢复，并创建新的 AgentRun；它不重新进入普通消息 FIFO 接入流程。
 
@@ -106,13 +106,13 @@ Yuxi 是一个面向 RAG、知识图谱和多智能体工作流的知识库平�
 - 智能体能力通过 context、middleware、toolkits、Skills、MCP 和 backends 组合；不要把知识库、沙盒或扩展逻辑硬编码进单个页面或路由。
 - Skill 依赖工具只有在对应 Skill 激活后才对模型开放；基础工具与受 Skill 门控的工具要保持边界。
 - LITE 模式必须允许跳过知识库、图谱和评估等重依赖能力，新增导入、路由和启动逻辑时要尊重该边界。
-- 沙盒虚拟路径由当前 Project Workdir、User Data 与授权 Skills 根共同约束；用户可见路径、对象存储 URL 与宿主机真实路径不能混用。
+- 沙盒虚拟路径由当前 Project Workdir、User Data 与共享 Skills 根共同约束；个人 Skill 保存在 UserWorkspace 的 `agents/skills`，共享与内置 Skill 才投影到只读 `/home/gem/skills`。用户可见路径、对象存储 URL 与宿主机真实路径不能混用。
 - 面向用户和外部系统的输入在边界校验；内部服务优先依赖已有类型、事务和仓储约束，避免用静默回退掩盖设计错误。
 
 ## 跨切面关注点
 
 - **配置**：Compose 和 `.env` 提供部署配置；管理员系统配置、用户配置与模型供应商以 PostgreSQL 为持久化 Owner，Redis 只提供可失效缓存；旧 `base.toml` 仅用于一次性迁移已有系统配置。
 - **权限**：前端路由和页面标签提供体验级约束，FastAPI 认证依赖和 repository 可见性查询提供最终授权。
-- **状态与存储**：PostgreSQL 保存请求、Run、消息、Conversation/Project Workdir 绑定、业务和知识库元数据，也是 LangGraph checkpoint 的唯一 Owner。Redis 保存短期事件、取消信号、ARQ 和跨进程缓存；持久 RWX POSIX 存储拥有 Project/User 文件字节，MinIO 继续拥有知识库与临时上传对象。
+- **状态与存储**：PostgreSQL 保存请求、Run、消息、Conversation 的 `workdir_path`、业务和知识库元数据，也是 LangGraph checkpoint 的唯一 Owner。Redis 保存短期事件、取消信号、ARQ 和跨进程缓存；每个用户的 UserWorkspace 拥有 Workdir 与个人 Skill 字节，MinIO 继续拥有知识库与临时上传对象。
 - **文档处理**：Agent 附件确认后进入实时 Project Workdir；知识库上传仍先进入对象存储和文件元数据边界，再经过解析、分块和知识库实现。解析器、分块策略和知识库连接器保持可替换。
 - **观测与调试**：优先查看 `api-dev`、`worker-dev` 和相关依赖日志；Langfuse 集中在服务层和 AgentRun 上下文；SSE 问题同时检查 Redis 事件与 PostgreSQL 终态。

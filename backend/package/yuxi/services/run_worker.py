@@ -24,7 +24,7 @@ from yuxi.services.agent_request_queue_service import (
 from yuxi.services.agent_run_manifest_service import build_run_manifest, compute_manifest_fingerprint
 from yuxi.services.chat_service import get_agent_state_view, stream_agent_chat, stream_agent_resume
 from yuxi.services.input_message_service import restore_chat_input_message
-from yuxi.services.project_workdir_service import ProjectWorkdirBinding, resolve_project_workdir_binding
+from yuxi.services.workdir_service import WorkdirBinding, resolve_workdir_binding
 from yuxi.services.run_queue_service import (
     RUN_RECONCILIATION_SECONDS,
     WORKER_HEALTH_INTERVAL_SECONDS,
@@ -68,10 +68,10 @@ class NonRetryableRunError(Exception):
     """Error type that should not trigger ARQ retry."""
 
 
-async def _validate_run_project_binding(run: AgentRun) -> ProjectWorkdirBinding:
-    """在执行器边界验证持久 Run 仍属于 Conversation 的根 runtime。"""
+async def _validate_run_workdir_binding(run: AgentRun) -> WorkdirBinding:
+    """在执行器边界验证持久 Run 仍属于 Conversation 的 Workdir。"""
     async with pg_manager.get_async_session_context() as db:
-        binding = await resolve_project_workdir_binding(
+        binding = await resolve_workdir_binding(
             thread_id=str(run.conversation_thread_id),
             uid=str(run.uid),
             db=db,
@@ -79,8 +79,8 @@ async def _validate_run_project_binding(run: AgentRun) -> ProjectWorkdirBinding:
     if int(binding.conversation_id) != int(run.conversation_id):
         raise NonRetryableRunError("AgentRun 的 Conversation 身份不一致")
     persisted_scope = str(run.runtime_scope_id or "").strip()
-    if not persisted_scope or persisted_scope != binding.runtime_scope_id:
-        raise NonRetryableRunError("AgentRun 的 runtime scope 与 Project Workdir 绑定不一致")
+    if not persisted_scope:
+        raise NonRetryableRunError("AgentRun 缺少 runtime scope")
     return binding
 
 
@@ -239,17 +239,16 @@ async def _release_run_sandbox(run: AgentRun) -> None:
     """销毁 execution tree 的 runtime，持久 Workdir 挂载不受影响。"""
     runtime_scope_id = str(getattr(run, "runtime_scope_id", None) or run.conversation_thread_id)
     async with pg_manager.get_async_session_context() as db:
-        result = await db.execute(select(Conversation.workdir_id).where(Conversation.id == run.conversation_id))
-        workdir_id = result.scalar_one_or_none()
-    if not workdir_id:
+        result = await db.execute(select(Conversation.workdir_path).where(Conversation.id == run.conversation_id))
+        workdir_path = result.scalar_one_or_none()
+    if not workdir_path:
         raise RuntimeError(f"Run {run.id} 缺少 Project Workdir，不能安全释放 runtime")
     await asyncio.to_thread(
         get_sandbox_provider().release,
         runtime_scope_id,
         uid=str(run.uid),
         clear_cache_on_delete_failure=True,
-        sandbox_instance_id=runtime_scope_id,
-        workdir_id=str(workdir_id),
+        workdir_path=str(workdir_path),
     )
 
 
@@ -279,16 +278,17 @@ async def _release_runtime_if_idle(run: AgentRun) -> bool:
         )
         if result.scalar_one_or_none() is not None:
             return False
-        workdir_id = await db.scalar(select(Conversation.workdir_id).where(Conversation.id == current.conversation_id))
-        if not workdir_id:
+        workdir_path = await db.scalar(
+            select(Conversation.workdir_path).where(Conversation.id == current.conversation_id)
+        )
+        if not workdir_path:
             raise RuntimeError(f"Run {run.id} 缺少 Project Workdir，不能安全释放 runtime")
         await asyncio.to_thread(
             get_sandbox_provider().release,
             runtime_scope_id,
             uid=str(current.uid),
             clear_cache_on_delete_failure=True,
-            sandbox_instance_id=runtime_scope_id,
-            workdir_id=str(workdir_id),
+            workdir_path=str(workdir_path),
         )
         current.runtime_cleanup_pending = False
         await db.flush()
@@ -855,7 +855,7 @@ async def process_agent_run(ctx, run_id: str):
             return
 
         try:
-            project_binding = await _validate_run_project_binding(run)
+            workdir_binding = await _validate_run_workdir_binding(run)
         except Exception as exc:  # noqa: BLE001
             await mark_run_terminal(
                 run_id,
@@ -927,9 +927,8 @@ async def process_agent_run(ctx, run_id: str):
             "created_by_run_id": run.created_by_run_id,
             "worker_id": worker_id,
             "runtime_scope_id": str(getattr(run, "runtime_scope_id", None) or thread_id),
-            "sandbox_instance_id": str(getattr(run, "runtime_scope_id", None) or thread_id),
-            "workdir_id": project_binding.workdir_id,
-            "workdir_path": project_binding.workdir_path,
+            "workdir_relative_path": workdir_binding.workdir_path,
+            "workdir_path": workdir_binding.virtual_path,
         }
         if run_type == "subagent":
             meta["parent_thread_id"] = runtime.get("parent_thread_id")
@@ -1398,10 +1397,6 @@ async def _worker_startup(ctx):
     pg_manager.initialize()
     await pg_manager.create_business_tables()
     await pg_manager.ensure_business_schema()
-    from yuxi.services.project_workdir_materialization_service import require_project_workdir_active
-
-    async with pg_manager.get_async_session_context() as session:
-        await require_project_workdir_active(session)
     await pg_manager.setup_langgraph_checkpointer()
     async with pg_manager.get_async_session_context() as session:
         from yuxi.config.options import (

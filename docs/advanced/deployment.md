@@ -62,13 +62,13 @@ docker compose -f docker-compose.prod.yml --profile all up -d --build
 
 ### Kubernetes 存储边界
 
-当前双 PVC contract 面向后续新部署：operator 预先创建 `PROJECT_DATA_PVC` 与 `SKILLS_PVC`，其中
-Project Data 的存储类必须支持 RWX。仓库没有拥有具体集群的 StorageClass、PVC 大小、Secret 或完整
+当前双 PVC contract 面向后续新部署：operator 预先创建 `USER_DATA_PVC` 与 `SKILLS_PVC`，其中
+User Data 的存储类必须支持部署所需的共享读写语义。仓库没有拥有具体集群的 StorageClass、PVC 大小、Secret 或完整
 API/worker Deployment manifest，因此不会自动创建、复制或删除 PVC；真实目标集群 smoke 完成前，
 不能把 Pod spec unit 当作已上线证明。
 
-历史 `THREAD_PVC` 的目录形状与新 `projects/<workdir_id>`、`user-data/shared/<uid>` 不同，不能通过把
-两个新变量指向旧 claim 来升级。当前不提供旧 Kubernetes 部署的自动原地迁移；需要保留旧卷并由
+历史 `THREAD_PVC` 的目录形状与新 `shared/<uid>/workspace/projects/<workdir-id>` 不同，不能只通过改变量名
+完成升级。当前不提供旧 Kubernetes 部署的自动原地迁移；需要保留旧卷并由
 operator 离线导出、校验后导入新布局。Compose 的 `scripts/migrate-storage.sh` 只拥有 Compose 文件域，
 不能冒充 Kubernetes PVC migrator。
 

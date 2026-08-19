@@ -131,7 +131,7 @@ async def get_or_build_workspace_index(uid: str) -> list[tuple[str, str]]:
         user_workspace_dir(uid),
         MAX_CACHED_ENTRIES,
     )
-    entries = [(name, f"workspace/{rel_path}") for name, rel_path in scan_results]
+    entries = scan_results
     await _write_cached_index(redis, redis_key, entries)
     return entries
 

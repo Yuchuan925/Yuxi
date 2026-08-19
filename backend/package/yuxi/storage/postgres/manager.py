@@ -48,153 +48,64 @@ AGENT_RUN_FACT_SCHEMA_STATEMENTS = (
     ),
     "CREATE INDEX IF NOT EXISTS ix_agent_run_attempts_open ON agent_run_attempts(run_id, finished_at)",
 )
-PROJECT_WORKDIR_SCHEMA_STATEMENTS = (
-    """
-    CREATE TABLE IF NOT EXISTS project_workdirs (
-        id VARCHAR(64) PRIMARY KEY,
-        uid VARCHAR(64) NOT NULL,
-        storage_key VARCHAR(255) NOT NULL UNIQUE,
-        materialization_status VARCHAR(32) NOT NULL DEFAULT 'pending',
-        materialization_error TEXT,
-        materialization_epoch_id VARCHAR(64),
-        source_fingerprint VARCHAR(64),
-        created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT NOW(),
-        updated_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT NOW()
-    )
-    """,
-    "ALTER TABLE project_workdirs ALTER COLUMN materialization_status SET DEFAULT 'pending'",
-    "ALTER TABLE project_workdirs ALTER COLUMN created_at SET DEFAULT NOW()",
-    "ALTER TABLE project_workdirs ALTER COLUMN updated_at SET DEFAULT NOW()",
-    "ALTER TABLE project_workdirs ADD COLUMN IF NOT EXISTS materialization_epoch_id VARCHAR(64)",
-    "ALTER TABLE project_workdirs ADD COLUMN IF NOT EXISTS source_fingerprint VARCHAR(64)",
+WORKDIR_PATH_SCHEMA_STATEMENTS = (
+    "ALTER TABLE IF EXISTS conversations ADD COLUMN IF NOT EXISTS workdir_path VARCHAR(512)",
     """
     DO $$
     BEGIN
-        IF NOT EXISTS (
-            SELECT 1 FROM pg_constraint
-            WHERE conname = 'ck_project_workdirs_materialization_status'
-              AND conrelid = 'project_workdirs'::regclass
+        IF EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = current_schema()
+              AND table_name = 'conversations'
+              AND column_name = 'workdir_id'
         ) THEN
-            ALTER TABLE project_workdirs
-            ADD CONSTRAINT ck_project_workdirs_materialization_status
-            CHECK (materialization_status IN ('pending', 'importing', 'prepared', 'ready', 'error'));
+            RAISE EXCEPTION 'legacy Workdir schema requires storage-migrator cutover';
         END IF;
     END $$
     """,
-    "CREATE INDEX IF NOT EXISTS ix_project_workdirs_uid ON project_workdirs(uid)",
-    "CREATE UNIQUE INDEX IF NOT EXISTS uq_project_workdirs_id_uid ON project_workdirs(id, uid)",
-    (
-        "CREATE INDEX IF NOT EXISTS ix_project_workdirs_materialization_status "
-        "ON project_workdirs(materialization_status)"
-    ),
-    (
-        "CREATE INDEX IF NOT EXISTS ix_project_workdirs_materialization_epoch_id "
-        "ON project_workdirs(materialization_epoch_id)"
-    ),
-    "ALTER TABLE IF EXISTS conversations ADD COLUMN IF NOT EXISTS workdir_id VARCHAR(64)",
+    "CREATE INDEX IF NOT EXISTS ix_conversations_workdir_path ON conversations(workdir_path)",
+)
+LEGACY_WORKDIR_CUTOVER_STATEMENTS = (
+    "ALTER TABLE IF EXISTS conversations ADD COLUMN IF NOT EXISTS workdir_path VARCHAR(512)",
     """
-    INSERT INTO project_workdirs (id, uid, storage_key, materialization_status)
-    SELECT
-        'legacy-' || md5(conversation.uid || ':' || conversation.thread_id),
-        conversation.uid,
-        'projects/legacy-' || md5(conversation.uid || ':' || conversation.thread_id),
-        'pending'
-    FROM conversations AS conversation
-    WHERE conversation.workdir_id IS NULL
-      AND NOT EXISTS (
-        SELECT 1 FROM subagent_threads AS relation
-        WHERE relation.child_conversation_id = conversation.id
-    )
-    ON CONFLICT DO NOTHING
+    DO $$
+    BEGIN
+        IF EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = current_schema()
+              AND table_name = 'conversations'
+              AND column_name = 'workdir_id'
+        ) THEN
+            EXECUTE '
+                UPDATE conversations
+                SET workdir_path = ''projects/'' || workdir_id
+                WHERE workdir_path IS NULL AND workdir_id IS NOT NULL
+            ';
+        END IF;
+    END $$
     """,
     """
-    UPDATE conversations AS conversation
-    SET workdir_id = 'legacy-' || md5(conversation.uid || ':' || conversation.thread_id)
-    WHERE conversation.workdir_id IS NULL
-      AND NOT EXISTS (
-          SELECT 1 FROM subagent_threads AS relation
-          WHERE relation.child_conversation_id = conversation.id
-      )
+    UPDATE conversations
+    SET workdir_path = 'projects/legacy-' || md5(uid || ':' || thread_id)
+    WHERE workdir_path IS NULL
     """,
     """
     UPDATE conversations AS child
-    SET workdir_id = parent.workdir_id
+    SET workdir_path = parent.workdir_path
     FROM subagent_threads AS relation
     JOIN conversations AS parent ON parent.id = relation.parent_conversation_id
     WHERE child.id = relation.child_conversation_id
-      AND child.workdir_id IS DISTINCT FROM parent.workdir_id
+      AND child.workdir_path IS DISTINCT FROM parent.workdir_path
     """,
-    "ALTER TABLE IF EXISTS conversations ALTER COLUMN workdir_id SET NOT NULL",
-    """
-    DO $$
-    BEGIN
-        IF NOT EXISTS (
-            SELECT 1
-            FROM pg_constraint AS fk
-            JOIN pg_attribute AS attribute
-              ON attribute.attrelid = fk.conrelid
-             AND attribute.attnum = ANY(fk.conkey)
-            WHERE fk.contype = 'f'
-              AND fk.conrelid = 'conversations'::regclass
-              AND fk.confrelid = 'project_workdirs'::regclass
-              AND attribute.attname = 'workdir_id'
-        ) THEN
-            ALTER TABLE conversations
-            ADD CONSTRAINT fk_conversations_workdir_id
-            FOREIGN KEY (workdir_id) REFERENCES project_workdirs(id) ON DELETE RESTRICT;
-        END IF;
-    END $$
-    """,
-    """
-    DO $$
-    BEGIN
-        IF NOT EXISTS (
-            SELECT 1 FROM pg_constraint
-            WHERE conname = 'fk_conversations_workdir_owner'
-              AND conrelid = 'conversations'::regclass
-        ) THEN
-            ALTER TABLE conversations
-            ADD CONSTRAINT fk_conversations_workdir_owner
-            FOREIGN KEY (workdir_id, uid) REFERENCES project_workdirs(id, uid) ON DELETE RESTRICT;
-        END IF;
-    END $$
-    """,
-    "CREATE INDEX IF NOT EXISTS ix_conversations_workdir_id ON conversations(workdir_id)",
-    """
-    CREATE TABLE IF NOT EXISTS file_storage_materializations (
-        id VARCHAR(64) PRIMARY KEY,
-        phase VARCHAR(32) NOT NULL DEFAULT 'pending',
-        epoch_id VARCHAR(64) UNIQUE,
-        inventory_fingerprint VARCHAR(64),
-        error_message TEXT,
-        activated_at TIMESTAMP WITHOUT TIME ZONE,
-        created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT NOW(),
-        updated_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT NOW()
-    )
-    """,
-    "ALTER TABLE file_storage_materializations ALTER COLUMN phase SET DEFAULT 'pending'",
-    "ALTER TABLE file_storage_materializations ALTER COLUMN created_at SET DEFAULT NOW()",
-    "ALTER TABLE file_storage_materializations ALTER COLUMN updated_at SET DEFAULT NOW()",
-    """
-    DO $$
-    BEGIN
-        IF NOT EXISTS (
-            SELECT 1 FROM pg_constraint
-            WHERE conname = 'ck_file_storage_materializations_phase'
-              AND conrelid = 'file_storage_materializations'::regclass
-        ) THEN
-            ALTER TABLE file_storage_materializations
-            ADD CONSTRAINT ck_file_storage_materializations_phase
-            CHECK (phase IN ('pending', 'fenced', 'preparing', 'active', 'error'));
-        END IF;
-    END $$
-    """,
-    "CREATE INDEX IF NOT EXISTS ix_file_storage_materializations_phase ON file_storage_materializations(phase)",
-    """
-    INSERT INTO file_storage_materializations (id, phase)
-    VALUES ('project-workdir-v1', 'pending')
-    ON CONFLICT (id) DO NOTHING
-    """,
+    "ALTER TABLE IF EXISTS conversations ALTER COLUMN workdir_path SET NOT NULL",
+    "CREATE INDEX IF NOT EXISTS ix_conversations_workdir_path ON conversations(workdir_path)",
+    "ALTER TABLE conversations DROP CONSTRAINT IF EXISTS fk_conversations_workdir_owner",
+    "ALTER TABLE conversations DROP CONSTRAINT IF EXISTS fk_conversations_workdir_id",
+    "ALTER TABLE conversations DROP COLUMN IF EXISTS workdir_id",
+)
+LEGACY_WORKDIR_SCHEMA_DROP_STATEMENTS = (
+    "DROP TABLE IF EXISTS file_storage_materializations",
+    "DROP TABLE IF EXISTS project_workdirs",
 )
 RUNTIME_SCOPE_SCHEMA_STATEMENTS = (
     "ALTER TABLE IF EXISTS agent_runs ADD COLUMN IF NOT EXISTS runtime_scope_id VARCHAR(64)",
@@ -887,7 +798,7 @@ class PostgresManager(metaclass=SingletonMeta):
                 updated_at TIMESTAMPTZ DEFAULT NOW()
             )
             """,
-            *PROJECT_WORKDIR_SCHEMA_STATEMENTS,
+            *WORKDIR_PATH_SCHEMA_STATEMENTS,
             "ALTER TABLE IF EXISTS agent_runs ADD COLUMN IF NOT EXISTS agent_slug VARCHAR(64)",
             "ALTER TABLE IF EXISTS agent_runs ADD COLUMN IF NOT EXISTS conversation_thread_id VARCHAR(64)",
             "ALTER TABLE IF EXISTS agent_runs ADD COLUMN IF NOT EXISTS created_by_run_id VARCHAR(64)",

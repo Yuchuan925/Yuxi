@@ -30,7 +30,6 @@ from yuxi.config.options import system_options
 from yuxi.repositories.agent_repository import AgentRepository
 from yuxi.repositories.agent_run_repository import AgentRunRepository
 from yuxi.repositories.conversation_repository import ConversationRepository
-from yuxi.repositories.project_workdir_repository import ProjectWorkdirRepository
 from yuxi.repositories.subagent_thread_repository import SubagentThreadRepository
 from yuxi.services.attachment_service import serialize_attachment
 from yuxi.services.input_message_service import AgentRunInputMessage
@@ -46,7 +45,7 @@ from yuxi.storage.postgres.manager import pg_manager
 from yuxi.storage.postgres.models_business import Agent, User
 from yuxi.utils.guard import content_guard
 from yuxi.utils.logging_config import logger
-from yuxi.agents.backends.sandbox.paths import project_workdir_virtual_dir
+from yuxi.agents.backends.sandbox.paths import user_workdir_host_dir, workdir_virtual_dir
 from yuxi.utils.question_utils import (
     normalize_questions as _normalize_interrupt_questions,
 )
@@ -842,9 +841,9 @@ async def _resolve_agent_runtime(
             # Conversation.agent_id 是历史字段名，实际保存的是 Agent.slug。
             if requested_agent_slug and requested_agent_slug != conversation.agent_id:
                 raise ValueError("已有线程已绑定智能体，不能切换")
-            if not conversation.workdir_id:
+            if not conversation.workdir_path:
                 raise ValueError("Conversation 缺少 Project Workdir")
-            await ProjectWorkdirRepository(db).require_for_user(conversation.workdir_id, str(user.uid))
+            user_workdir_host_dir(str(user.uid), conversation.workdir_path)
             resolved_agent_slug = conversation.agent_id
 
     if not resolved_agent_slug:
@@ -997,16 +996,14 @@ async def stream_agent_chat(
     _apply_model_override(input_context, meta)
     _apply_input_context_field(input_context, meta, "tool_approval_mode")
     runtime_scope_id = str(meta.get("runtime_scope_id") or thread_id)
-    if not conversation.workdir_id:
+    if not conversation.workdir_path:
         raise ValueError("Conversation 缺少 Project Workdir")
     input_context["runtime_scope_id"] = runtime_scope_id
-    input_context["workdir_id"] = conversation.workdir_id
-    input_context["workdir_path"] = project_workdir_virtual_dir(conversation.workdir_id)
+    input_context["workdir_relative_path"] = conversation.workdir_path
+    input_context["workdir_path"] = workdir_virtual_dir(conversation.workdir_path)
     meta["runtime_scope_id"] = runtime_scope_id
-    meta["workdir_id"] = conversation.workdir_id
+    meta["workdir_relative_path"] = conversation.workdir_path
     meta["workdir_path"] = input_context["workdir_path"]
-    meta["sandbox_instance_id"] = runtime_scope_id
-    _apply_input_context_field(input_context, meta, "sandbox_instance_id")
     _apply_subagent_runtime_context(input_context, meta)
     context = _build_agent_context(agent, input_context)
     langfuse_run = _build_langfuse_run_context(
@@ -1040,7 +1037,7 @@ async def stream_agent_chat(
             if (
                 attachment_conversation is None
                 or attachment_conversation.uid != uid
-                or attachment_conversation.workdir_id != conversation.workdir_id
+                or attachment_conversation.workdir_path != conversation.workdir_path
             ):
                 raise ValueError("子智能体根 Conversation 的 Project Workdir 不可用")
         thread_attachment_records = await conv_repo.get_attachments(attachment_conversation.id)
@@ -1086,8 +1083,7 @@ async def stream_agent_chat(
         bootstrap_backend = ProvisionerSandboxBackend(
             thread_id=runtime_scope_id,
             uid=uid,
-            sandbox_instance_id=runtime_scope_id,
-            workdir_id=conversation.workdir_id,
+            workdir_path=conversation.workdir_path,
         )
         await asyncio.to_thread(bootstrap_backend.ensure_available)
 
@@ -1348,17 +1344,15 @@ async def stream_agent_resume(
     meta["agent_slug"] = agent_item.slug
     meta["backend_id"] = agent_item.backend_id
     runtime_scope_id = str(meta.get("runtime_scope_id") or thread_id)
-    if not conversation.workdir_id:
+    if not conversation.workdir_path:
         raise ValueError("Conversation 缺少 Project Workdir")
     meta["runtime_scope_id"] = runtime_scope_id
-    meta["workdir_id"] = conversation.workdir_id
-    meta["workdir_path"] = project_workdir_virtual_dir(conversation.workdir_id)
-    meta["sandbox_instance_id"] = runtime_scope_id
+    meta["workdir_relative_path"] = conversation.workdir_path
+    meta["workdir_path"] = workdir_virtual_dir(conversation.workdir_path)
     bootstrap_backend = ProvisionerSandboxBackend(
         thread_id=runtime_scope_id,
         uid=uid,
-        sandbox_instance_id=runtime_scope_id,
-        workdir_id=conversation.workdir_id,
+        workdir_path=conversation.workdir_path,
     )
     await asyncio.to_thread(bootstrap_backend.ensure_available)
     input_context = await build_agent_input_context(
@@ -1371,9 +1365,8 @@ async def stream_agent_resume(
     _apply_model_override(input_context, meta)
     _apply_input_context_field(input_context, meta, "tool_approval_mode")
     input_context["runtime_scope_id"] = runtime_scope_id
-    input_context["workdir_id"] = conversation.workdir_id
+    input_context["workdir_relative_path"] = conversation.workdir_path
     input_context["workdir_path"] = meta["workdir_path"]
-    _apply_input_context_field(input_context, meta, "sandbox_instance_id")
     context = _build_agent_context(agent, input_context)
     langfuse_run = _build_langfuse_run_context(
         current_user=current_user,
@@ -1616,7 +1609,7 @@ async def get_agent_state_view(
         response = {
             "agent_state": extract_agent_state(
                 values,
-                workdir_path=project_workdir_virtual_dir(conversation.workdir_id),
+                workdir_path=workdir_virtual_dir(conversation.workdir_path),
             )
         }
         interrupt_info = _extract_interrupt_info(state) if state else None

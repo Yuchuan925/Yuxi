@@ -29,7 +29,7 @@ async def session():
 async def _seed_conversation(db, *, thread_id: str, last_viewed_run_id: str | None = None) -> Conversation:
     conversation = Conversation(
         thread_id=thread_id,
-        workdir_id=f"workdir-{thread_id}",
+        workdir_path=f"projects/workdir-{thread_id}",
         uid="user-1",
         agent_id="main",
         title=f"conv-{thread_id}",

@@ -227,7 +227,7 @@ Graph 构建直接依赖 Context。普通 Agent 在归一化后的 `context.suba
 
 - `_visible_knowledge_bases`：当前会话实际可查询的知识库对象
 - `_prompt_skills`：需要注入提示词的 Skill 闭包
-- `_readable_skills`：当前 Agent 可激活的 Skill 闭包；它不是文件系统权限边界，用户授权的全部 Skill 均在只读投影中可读
+- `_readable_skills`：当前 Agent 可激活的 Skill 闭包；它不是文件系统权限边界。共享/内置 Skill 在只读投影中可读，个人 Skill 在 UserWorkspace 中可读
 
 随后 Graph 构建会直接使用这份 Context：
 
@@ -239,10 +239,10 @@ Graph 构建直接依赖 Context。普通 Agent 在归一化后的 `context.suba
 
 文件系统与沙盒接入同样读取这些运行时字段：
 
-- 普通 Agent 使用根 Conversation 的 `runtime_scope_id` 和 `workdir_id` 连接实时 Project Workdir
+- 普通 Agent 使用根 Conversation 的 `runtime_scope_id` 连接 execution Sandbox，并以 Conversation 的 `workdir_path` 选择 UserWorkspace 中的当前 Workdir
 - 子智能体保留 child `thread_id` 作为 LangGraph checkpoint，但继承根 Conversation 的 runtime 与 Workdir
-- `/home/gem/projects/project-<workdir_id>` 是当前执行树的默认工作目录；`uploads`、`outputs` 只是可写子目录约定
-- `/home/gem/skills` 使用当前用户的授权 Skill 投影；`_readable_skills` 与 `_prompt_skills` 只决定当前 Agent 在 Prompt 和工具层激活哪些 Skill，不改变 sandbox 身份或挂载
+- `/home/gem/user-data/<workdir_path>` 是当前执行树的默认工作目录；`uploads`、`outputs` 只是子目录约定
+- `/home/gem/skills` 使用当前用户的共享/内置 Skill 授权投影；个人 Skill 使用 `/home/gem/user-data/agents/skills`。`_readable_skills` 与 `_prompt_skills` 只决定当前 Agent 在 Prompt 和工具层激活哪些 Skill，不改变 sandbox 身份或挂载
 
 所以 Context 既是输入配置，也是 Graph 创建前整理出的运行时资源上下文。
 

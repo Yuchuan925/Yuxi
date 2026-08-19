@@ -24,7 +24,7 @@ from yuxi.services.file_preview import (
     render_preview_payload,
     render_preview_too_large_payload,
 )
-from yuxi.services.project_workdir_service import ProjectWorkdirBinding, resolve_project_workdir_binding
+from yuxi.services.workdir_service import WorkdirBinding, resolve_workdir_binding
 from yuxi.utils.datetime_utils import utc_isoformat_from_timestamp
 from yuxi.utils.upload_utils import write_upload_to_path
 
@@ -34,30 +34,30 @@ MAX_VIEWER_UPLOAD_BYTES = 100 * 1024 * 1024
 MAX_VIEWER_DOWNLOAD_BYTES = 1024 * 1024 * 1024
 
 
-def _normalize_viewer_path(binding: ProjectWorkdirBinding, path: str | None) -> str:
+def _normalize_viewer_path(binding: WorkdirBinding, path: str | None) -> str:
     raw = str(path or "/").strip() or "/"
     if raw == "/":
-        return binding.workdir_path
+        return binding.virtual_path
     candidate = str(PurePosixPath(raw if raw.startswith("/") else f"/{raw}"))
     if ".." in PurePosixPath(raw).parts:
         raise HTTPException(status_code=403, detail="Access denied")
-    if candidate != binding.workdir_path and not candidate.startswith(f"{binding.workdir_path}/"):
+    if candidate != binding.virtual_path and not candidate.startswith(f"{binding.virtual_path}/"):
         raise HTTPException(status_code=403, detail="Viewer 只允许访问当前 Project Workdir")
     return candidate
 
 
-async def _viewer_state(*, thread_id: str, current_user, db) -> tuple[ProjectWorkdirBinding, object]:
-    binding = await resolve_project_workdir_binding(
+async def _viewer_state(*, thread_id: str, current_user, db) -> tuple[WorkdirBinding, object]:
+    binding = await resolve_workdir_binding(
         thread_id=thread_id,
         uid=str(current_user.uid),
         db=db,
     )
-    backend = binding.create_file_backend(create_if_missing=True)
+    backend = binding.create_file_backend()
     await asyncio.to_thread(backend.ensure_available)
     return binding, backend
 
 
-def _entry(binding: ProjectWorkdirBinding, parent: str, item: dict) -> dict:
+def _entry(binding: WorkdirBinding, parent: str, item: dict) -> dict:
     path = f"{parent.rstrip('/')}/{item['name']}"
     is_dir = bool(item.get("is_dir"))
     return {
@@ -70,9 +70,9 @@ def _entry(binding: ProjectWorkdirBinding, parent: str, item: dict) -> dict:
     }
 
 
-async def _list_directory(binding: ProjectWorkdirBinding, backend, path: str) -> list[dict]:
+async def _list_directory(binding: WorkdirBinding, backend, path: str) -> list[dict]:
     try:
-        items = await asyncio.to_thread(backend.list_authorized_directory, path, root=binding.workdir_path)
+        items = await asyncio.to_thread(backend.list_authorized_directory, path, root=binding.virtual_path)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail="目录不存在") from exc
     return sorted(
@@ -95,7 +95,7 @@ async def search_viewer_files(*, thread_id: str, query: str, current_user, db) -
         return {"entries": []}
     binding, backend = await _viewer_state(thread_id=thread_id, current_user=current_user, db=db)
     matches: list[dict] = []
-    pending = [binding.workdir_path]
+    pending = [binding.virtual_path]
     visited = 0
     while pending and len(matches) < SEARCH_MAX_RESULTS and visited < SEARCH_MAX_DIRECTORIES:
         directory = pending.pop(0)
@@ -162,7 +162,7 @@ async def read_viewer_file_content(*, thread_id: str, path: str, current_user, d
         raise HTTPException(status_code=400, detail="路径不是普通文件") from exc
     except FileTransferLimitError:
         return render_preview_too_large_payload()
-    except (FileNotFoundError, ValueError) as exc:
+    except (FileNotFoundError, NotADirectoryError, ValueError) as exc:
         raise HTTPException(status_code=404, detail="文件不存在") from exc
     try:
         raw_content = await asyncio.to_thread(Path(temp_path).read_bytes)
@@ -183,7 +183,7 @@ async def download_viewer_file(*, thread_id: str, path: str, current_user, db) -
         raise HTTPException(status_code=400, detail="路径不是普通文件") from exc
     except FileTransferLimitError as exc:
         raise HTTPException(status_code=413, detail="文件超过下载大小限制") from exc
-    except (FileNotFoundError, ValueError) as exc:
+    except (FileNotFoundError, NotADirectoryError, ValueError) as exc:
         raise HTTPException(status_code=404, detail="文件不存在") from exc
     file_name = PurePosixPath(normalized).name or "download"
     return FileResponse(
@@ -198,10 +198,10 @@ async def delete_viewer_file(*, thread_id: str, path: str, current_user, db) -> 
     """实时删除 Workdir 内文件或目录。"""
     binding, backend = await _viewer_state(thread_id=thread_id, current_user=current_user, db=db)
     normalized = _normalize_viewer_path(binding, path)
-    if normalized == binding.workdir_path:
+    if normalized == binding.virtual_path:
         raise HTTPException(status_code=400, detail="Project Workdir 根目录不允许删除")
     try:
-        await asyncio.to_thread(backend.delete_authorized_path, normalized, root=binding.workdir_path)
+        await asyncio.to_thread(backend.delete_authorized_path, normalized, root=binding.virtual_path)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail="文件不存在") from exc
     return {"success": True, "path": normalized}
@@ -216,7 +216,7 @@ async def create_viewer_directory(*, thread_id: str, parent_path: str, name: str
             backend.create_authorized_directory,
             parent,
             str(name or "").strip(),
-            root=binding.workdir_path,
+            root=binding.virtual_path,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -254,7 +254,7 @@ async def upload_viewer_files(*, thread_id: str, parent_path: str, files: list[U
                 await asyncio.to_thread(backend.upload_authorized_file_from_path, target, temp_path)
             except PermissionError as exc:
                 raise HTTPException(status_code=403, detail="Access denied") from exc
-            except FileNotFoundError as exc:
+            except (FileNotFoundError, NotADirectoryError) as exc:
                 raise HTTPException(status_code=404, detail="目录不存在") from exc
         finally:
             try:

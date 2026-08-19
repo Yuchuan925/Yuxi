@@ -131,7 +131,7 @@ jobs:
       - name: Verify destructive storage migration and Skill authorization
         run: |
           docker compose exec -T api uv run pytest \
-            test/integration/services/test_project_workdir_materialization.py \
+            test/integration/services/test_workdir_user_workspace.py \
             test/integration/services/test_user_skill_projection.py \
             test/integration/api/test_skill_artifact_authorization.py -q
       - name: Verify real Sandbox storage isolation and shared projections

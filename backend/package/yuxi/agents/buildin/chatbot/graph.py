@@ -46,6 +46,7 @@ async def _build_middlewares(context):
     model_spec = resolve_chat_model_spec(context.model)
     summary_middleware = create_summary_middleware(
         model=load_chat_model(fully_specified_name=model_spec),
+        workdir_path=context.workdir_path,
         trigger=("tokens", summary_trigger_tokens),
         keep=("messages", summary_keep_messages),
         summary_prompt=summary_prompt,

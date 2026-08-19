@@ -18,11 +18,19 @@ LARGE_TOOL_RESULTS_DIR_NAME = "large_tool_results"
 CONVERSATION_HISTORY_DIR_NAME = "conversation_history"
 VIRTUAL_SKILLS_PATH = "/home/gem/skills"
 
-VIRTUAL_PATH_WORKSPACE = (Path(VIRTUAL_PATH_PREFIX) / WORKSPACE_DIR_NAME).as_posix()
-VIRTUAL_PATH_UPLOADS = (Path(VIRTUAL_PATH_PREFIX) / UPLOADS_DIR_NAME).as_posix()
-VIRTUAL_PATH_OUTPUTS = (Path(VIRTUAL_PATH_PREFIX) / OUTPUTS_DIR_NAME).as_posix()
-VIRTUAL_PATH_LARGE_TOOL_RESULTS = (Path(VIRTUAL_PATH_OUTPUTS) / LARGE_TOOL_RESULTS_DIR_NAME).as_posix()
-VIRTUAL_PATH_CONVERSATION_HISTORY = (Path(VIRTUAL_PATH_OUTPUTS) / CONVERSATION_HISTORY_DIR_NAME).as_posix()
+# Sandbox 直接把 UserWorkspace 映射到该根；宿主机布局中的 ``workspace``
+# 只属于存储实现，不进入模型可见路径。
+VIRTUAL_PATH_WORKSPACE = VIRTUAL_PATH_PREFIX
+VIRTUAL_PERSONAL_SKILLS_PATH = (Path(VIRTUAL_PATH_PREFIX) / WORKSPACE_AGENTS_DIR_NAME / "skills").as_posix()
+
+
+def workdir_runtime_paths(workdir_path: str) -> tuple[str, str]:
+    """返回当前 Workdir 的大结果与对话历史目录。"""
+    outputs = (Path(workdir_path) / OUTPUTS_DIR_NAME).as_posix()
+    return (
+        (Path(outputs) / LARGE_TOOL_RESULTS_DIR_NAME).as_posix(),
+        (Path(outputs) / CONVERSATION_HISTORY_DIR_NAME).as_posix(),
+    )
 
 
 def ensure_within_root(path: Path, root: Path, *, error_message: str) -> Path:
@@ -44,10 +52,8 @@ __all__ = [
     "LARGE_TOOL_RESULTS_DIR_NAME",
     "CONVERSATION_HISTORY_DIR_NAME",
     "VIRTUAL_PATH_WORKSPACE",
-    "VIRTUAL_PATH_UPLOADS",
-    "VIRTUAL_PATH_OUTPUTS",
-    "VIRTUAL_PATH_LARGE_TOOL_RESULTS",
-    "VIRTUAL_PATH_CONVERSATION_HISTORY",
+    "VIRTUAL_PERSONAL_SKILLS_PATH",
+    "workdir_runtime_paths",
     "VIRTUAL_SKILLS_PATH",
     "ensure_within_root",
 ]

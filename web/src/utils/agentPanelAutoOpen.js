@@ -1,8 +1,8 @@
-const PROJECT_WORKDIR_PREFIX = '/home/gem/projects/project-'
+const USER_WORKSPACE_PREFIX = '/home/gem/user-data/'
 
 const isTrackedPanelFilePath = (path) => {
   const normalizedPath = String(path || '')
-  return normalizedPath.startsWith(PROJECT_WORKDIR_PREFIX)
+  return normalizedPath.startsWith(USER_WORKSPACE_PREFIX)
 }
 
 export const shouldAutoOpenAgentPanel = (threadFiles) => {
@@ -11,4 +11,4 @@ export const shouldAutoOpenAgentPanel = (threadFiles) => {
   return threadFiles.some((item) => item?.is_dir !== true && isTrackedPanelFilePath(item?.path))
 }
 
-export { PROJECT_WORKDIR_PREFIX }
+export { USER_WORKSPACE_PREFIX }

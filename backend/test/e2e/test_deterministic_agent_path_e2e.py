@@ -6,7 +6,6 @@ import asyncio
 import hashlib
 import json
 import os
-import re
 import uuid
 
 import asyncpg
@@ -179,29 +178,23 @@ async def _assert_persisted_causality(run_id: str, request_id: str) -> None:
 
 
 async def _assert_persistent_workdir_binding(run_id: str, thread_id: str) -> None:
-    """Run 只绑定实时 Workdir，不再为无文件运行发布 outputs revision。"""
+    """Run 复用 Conversation 的 UserWorkspace Workdir 与线程运行域。"""
     conn = await asyncpg.connect(postgres_dsn())
     try:
         row = await conn.fetchrow(
             """
-            SELECT conversation.workdir_id,
-                   workdir.materialization_status,
-                   run.runtime_scope_id,
-                   control.phase
+            SELECT conversation.workdir_path,
+                   run.runtime_scope_id
             FROM conversations conversation
-            JOIN project_workdirs workdir ON workdir.id = conversation.workdir_id
             JOIN agent_runs run ON run.id = $1
-            JOIN file_storage_materializations control ON control.id = 'project-workdir-v1'
             WHERE conversation.thread_id = $2
             """,
             run_id,
             thread_id,
         )
         assert row, f"workdir binding missing for {thread_id}"
-        assert row["workdir_id"]
-        assert row["materialization_status"] == "ready"
+        assert str(row["workdir_path"]).startswith("projects/")
         assert row["runtime_scope_id"] == thread_id
-        assert row["phase"] == "active"
     finally:
         await conn.close()
 
@@ -328,7 +321,7 @@ async def test_deterministic_agent_path_reaches_persisted_result(
         await _delete_provider(e2e_client, e2e_headers)
 
 
-async def test_attachment_is_written_to_project_workdir_and_survives_runtime_recreation(
+async def test_attachment_is_written_to_user_workspace_workdir_and_survives_runtime_recreation(
     e2e_client: httpx.AsyncClient,
     e2e_headers: dict[str, str],
 ) -> None:
@@ -339,7 +332,7 @@ async def test_attachment_is_written_to_project_workdir_and_survives_runtime_rec
 
     agent_slug: str | None = None
     thread_id: str | None = None
-    workdir_id: str | None = None
+    workdir_path: str | None = None
     try:
         agent_slug = await _create_agent(e2e_client, e2e_headers, uid)
         thread_response = await e2e_client.post(
@@ -352,7 +345,9 @@ async def test_attachment_is_written_to_project_workdir_and_survives_runtime_rec
             headers=e2e_headers,
         )
         assert thread_response.status_code == 200, thread_response.text
-        thread_id = str(thread_response.json().get("thread_id") or thread_response.json()["id"])
+        thread_payload = thread_response.json()
+        thread_id = str(thread_payload.get("thread_id") or thread_payload["id"])
+        workdir_path = str(thread_payload["workdir_path"])
 
         expected_content = f"sandbox hydrate {uuid.uuid4()}\n"
         file_name = f"hydrate-{uuid.uuid4().hex[:8]}.txt"
@@ -364,11 +359,9 @@ async def test_attachment_is_written_to_project_workdir_and_survives_runtime_rec
         assert upload_response.status_code == 200, upload_response.text
         attachment = upload_response.json()
         attachment_path = str(attachment["original_path"])
-        workdir_match = re.match(r"^/home/gem/projects/project-([^/]+)/", attachment_path)
-        assert workdir_match, attachment
-        workdir_id = workdir_match.group(1)
+        assert attachment_path.startswith(f"/home/gem/user-data/{workdir_path}/uploads/"), attachment
 
-        sandbox = ProvisionerSandboxBackend(thread_id=thread_id, uid=uid, workdir_id=workdir_id)
+        sandbox = ProvisionerSandboxBackend(thread_id=thread_id, uid=uid, workdir_path=workdir_path)
         uploaded_read = sandbox.read(attachment_path)
         assert uploaded_read.error is None, uploaded_read
         assert uploaded_read.file_data == {"content": expected_content.rstrip(), "encoding": "utf-8"}
@@ -395,7 +388,7 @@ async def test_attachment_is_written_to_project_workdir_and_survives_runtime_rec
         assert read_result.error is None, read_result
         assert read_result.file_data == {"content": overwritten_content, "encoding": "utf-8"}
 
-        get_sandbox_provider().release(thread_id, uid=uid, workdir_id=workdir_id)
+        get_sandbox_provider().release(thread_id, uid=uid, workdir_path=workdir_path)
         await asyncio.sleep(int(os.getenv("SANDBOX_KEEPALIVE_INTERVAL_SECONDS", "30")) + 1)
         await _run_deterministic(
             e2e_client,
@@ -403,7 +396,7 @@ async def test_attachment_is_written_to_project_workdir_and_survives_runtime_rec
             agent_slug=agent_slug,
             thread_id=thread_id,
         )
-        sandbox = ProvisionerSandboxBackend(thread_id=thread_id, uid=uid, workdir_id=workdir_id)
+        sandbox = ProvisionerSandboxBackend(thread_id=thread_id, uid=uid, workdir_path=workdir_path)
         recreated_read = sandbox.read(attachment_path)
         assert recreated_read.error is None, recreated_read
         assert recreated_read.file_data == {"content": overwritten_content, "encoding": "utf-8"}
@@ -425,7 +418,7 @@ async def test_attachment_is_written_to_project_workdir_and_survives_runtime_rec
     finally:
         if thread_id:
             try:
-                get_sandbox_provider().release(thread_id, uid=uid, workdir_id=workdir_id)
+                get_sandbox_provider().release(thread_id, uid=uid, workdir_path=workdir_path)
             except Exception:
                 pass
             thread_delete = await e2e_client.delete(f"/api/chat/thread/{thread_id}", headers=e2e_headers)

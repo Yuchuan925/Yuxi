@@ -176,24 +176,19 @@ class BaseContext:
         metadata={"name": "请求 ID", "configurable": False, "hide": True},
     )
 
-    sandbox_instance_id: str | None = field(
-        default=None,
-        metadata={"name": "Sandbox 实例 ID", "configurable": False, "hide": True},
-    )
-
     runtime_scope_id: str | None = field(
         default=None,
         metadata={"name": "Sandbox Runtime Scope", "configurable": False, "hide": True},
     )
 
-    workdir_id: str | None = field(
+    workdir_relative_path: str | None = field(
         default=None,
-        metadata={"name": "Project Workdir ID", "configurable": False, "hide": True},
+        metadata={"name": "Workdir Relative Path", "configurable": False, "hide": True},
     )
 
     workdir_path: str | None = field(
         default=None,
-        metadata={"name": "Project Workdir Path", "configurable": False, "hide": True},
+        metadata={"name": "Workdir Virtual Path", "configurable": False, "hide": True},
     )
 
     system_prompt: str = field(

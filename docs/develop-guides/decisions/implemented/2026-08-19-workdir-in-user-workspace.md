@@ -1,0 +1,145 @@
+# Workdir 归属 UserWorkspace 并取消独立 Project 存储域
+
+状态：implemented
+类型：simplification
+Owner：backend/package/yuxi/services/workdir_service.py
+
+本决定替代此前关于独立 Project Workdir 和 Project 存储挂载的决定：
+
+- [实时 Project Workdir 与独立 Sandbox Runtime](../archived/2026-08-18-live-project-workdir-and-runtime.md)
+- [显式存储域与 Kubernetes PVC 收敛](../archived/2026-08-19-explicit-storage-domains-and-kubernetes-pvc.md)
+
+个人 Skill 继续遵循[Skill source convergence](../implemented/2026-08-18-skill-source-convergence.md)：个人 Skill 属于 UserWorkspace，共享 Skill 仍由只读 projection 提供。
+
+## 问题
+
+当前 Workdir 被建模为独立的 `ProjectWorkdir` 存储域：它有自己的数据库表、storage key、物化状态、宿主机目录、容器挂载和 Kubernetes PVC；UserWorkspace 则是另一套用户文件边界。这样产生了两套表示同一用户文件能力的根目录：
+
+- Conversation 通过 `workdir_id` 间接定位独立 Project 目录；
+- Agent、Viewer 和 Sandbox 还要在 Project、User Data、Skills 之间做路径和挂载转换；
+- 启动期 materialization 需要维护全局状态、每个 Workdir 状态、epoch 和 inventory fingerprint；
+- Compose、provisioner 和 Kubernetes 需要维护独立的 Project host path、mount 和 PVC。
+
+新的 Thread 创建需求允许指定 UserWorkspace 内的目录；未指定时，系统在 UserWorkspace 的 `projects` 下自动创建目录。独立 Project 根目录与该需求的真实权限边界不一致，也使“选择一个 workspace 目录”错误地变成了“切换一个存储域和挂载域”。
+
+## 决策
+
+### Workdir 是 UserWorkspace 下的相对路径
+
+Workdir 保留为对话的逻辑工作目录绑定，但不再作为独立持久化实体。Conversation 直接保存一个相对于当前用户 `workspace` 的路径：
+
+```text
+workdir_path = projects/<opaque-workdir-id>
+```
+
+宿主机和 Sandbox 的映射由 UserWorkspace Owner 统一完成：
+
+```text
+宿主机：user-data/shared/<uid>/workspace/<workdir_path>
+容器内：/home/gem/user-data/<workdir_path>
+```
+
+`/home/gem/user-data` 直接表示当前用户的 UserWorkspace 根，不再在容器内重复一层 `workspace`。因此默认 Workdir 的容器路径是 `/home/gem/user-data/projects/<opaque-workdir-id>`，个人 Skill 的容器路径是 `/home/gem/user-data/agents/skills/<slug>`。
+
+Workdir 在该设计中是 Conversation 的 cwd 和 Thread 文件 API 的默认视图，不是同一用户不同 Thread 之间的文件授权边界。Sandbox 可以访问当前 uid 的整个 UserWorkspace，uid 挂载负责跨用户隔离；Thread 文件 API 仍只暴露绑定的 `workdir_path`。因此 Project A 读取 Project B 的文件属于设计范围，可用于引用同一用户的其他项目资料。如果产品要求同一用户的不同 Thread 文件互不可见，则不能使用整个 UserWorkspace 的单挂载方案，需要重新引入更窄的挂载或等价的强制访问控制。
+
+系统 Prompt 向 Agent 提供当前 `workdir_path`，并明确以下默认写入约束：
+
+```text
+整个 UserWorkspace 对当前 Sandbox 可见。可以读取其他目录作为参考；未经用户明确要求，
+不得在当前 Workdir 之外创建、修改、移动或删除文件。
+```
+
+该约束定义默认模型行为，不构成安全或授权边界。用户明确要求跨 Project 修改、安装个人 Skill、更新用户上下文或执行其他 UserWorkspace 操作时，可以写入相应目录；后端仍只强制 uid 隔离、路径不越界和具体工具拥有的权限。
+
+默认创建时由服务端生成 opaque UUID，避免依赖客户端 thread ID 的格式、可变性或安全性。默认 Workdir 对每个根 Conversation 独立；显式传入的路径按同一用户 workspace 内的目录引用处理，允许同一用户的多个 Thread 共享该目录，跨用户不允许共享。
+
+父 Conversation 与子 Conversation 继续继承同一个 `workdir_path`。
+
+### Execution runtime scope 与 Workdir 分离
+
+`runtime_scope_id` 是持久化在 `AgentRun` 上的执行树分组键，当前取根 Conversation 的 thread ID：
+
+- 根 Conversation 的 Run 使用自己的 `conversation_thread_id`；
+- SubAgent Run 拥有自己的 `conversation_thread_id`，但继承创建者 Run 的 `runtime_scope_id`；
+- 同一 `runtime_scope_id` 的父子 Run 复用一个 Sandbox runtime，并共享进程、`/tmp`、运行时依赖和环境；
+- 根执行树终态时，worker 用该值确认没有仍活跃的子 Run，再通过同一清理栅栏销毁 Sandbox；
+- 两个顶层 Conversation 即使显式绑定同一个 `workdir_path`，也具有不同的 `runtime_scope_id`，因此只共享文件，不共享运行环境或生命周期。
+
+`runtime_scope_id` 不定义文件路径、文件授权、LangGraph checkpoint identity 或 UserWorkspace 边界。它的语义 Owner 属于 AgentRun 创建、SubAgent 执行树和 worker runtime cleanup，不再由 Workdir binding/service 推导或拥有。
+
+取消 `workdir-files-<id>` 文件桥接 Sandbox 后，正常执行路径直接用 `runtime_scope_id` 标识 execution Sandbox，不再保留 `sandbox_instance_id`。只有未来出现同一执行树必须同时拥有多个独立 Sandbox 实例的真实 consumer 时，才重新引入独立 instance identity。
+
+本阶段不创建 `ProjectWorkdir` 表，也不为仅保存路径的 Workdir 建立第二个 UUID 资源表。只有未来出现 Workdir 级别的 ACL、重命名、配额、生命周期或跨用户共享元数据时，才重新评估独立 Workdir resource。
+
+### Thread 创建接口
+
+Thread 创建接口增加可选的 `workdir_path` 字段：
+
+- 不传时，在 UserWorkspace 中创建 `projects/<opaque-workdir-id>` 并绑定该相对路径；
+- 传入时，只接受当前用户 workspace 内的已存在目录；
+- 路径必须是相对 POSIX 路径，不接受宿主机路径、容器绝对路径、对象 URL 或其他用户的路径；
+- `agents/` 及后续声明的系统目录是保留命名空间，不能作为普通 Workdir；
+- 本阶段只提供后端接口，不实现前端选择器、目录浏览器、目录创建 UI 或跨用户共享。
+
+路径解析和授权由后端 repository/service 与宿主 `WorkspaceFilesystem` 共同闭合。它接收 `uid + workspace-relative path`，不再通过伪造的 Project root 或 `workdir-files-<id>` scope 绕过真实路径 Owner。所有路径组件都在 owning filesystem boundary 内以 no-follow 方式校验，禁止 `..`、symlink 穿越和跨用户访问。
+
+### 挂载边界
+
+Sandbox 的持久文件挂载收敛为两个逻辑域：
+
+```text
+当前用户 UserWorkspace    -> /home/gem/user-data  rw
+共享 Skill projection     -> /home/gem/skills     ro
+```
+
+Sandbox 的 cwd 设置为 `/home/gem/user-data/<workdir_path>`。因此不再需要容器内的 `/home/gem/user-data/workspace` 中间层，也不再需要独立 `/home/gem/projects` 根目录、Project bind mount、`DOCKER_PROJECTS_HOST_PATH` 或 `PROJECT_DATA_PVC`。每个 Thread 只改变 cwd，不改变挂载配置。
+
+API/worker 仍可保留服务自身访问 UserWorkspace 和 Skill source/projection 所需的显式挂载；这些挂载属于服务的 UserWorkspace/Skill 访问，不构成第三个 Project 存储域。`uploads/`、`outputs/` 是当前 Workdir 下的目录约定，路径为 `/home/gem/user-data/<workdir_path>/uploads` 和 `/home/gem/user-data/<workdir_path>/outputs`，不再由 `/home/gem/user-data/uploads`、`/home/gem/user-data/outputs` 表示用户级全局运行时目录。`saved_artifacts` 等用户主动保存的文件可以继续作为 UserWorkspace 内的普通目录存在，但不形成额外挂载或存储协议。
+
+### 旧数据迁移
+
+`storage-migrator` 收敛为一次性旧布局迁移 Owner，而不是正常启动链路中的 Workdir materialization Owner：
+
+- 已部署的 `ProjectWorkdir` 目录按稳定 ID 迁移为 `workspace/projects/<workdir-id>`，Conversation 改写为相应的 `workdir_path`；
+- 旧 thread 文件、对象存储附件和历史路径仍按其现有 Owner 做一次性导入；持久化的 `/home/gem/user-data/workspace/...` 路径改写为 `/home/gem/user-data/...`，旧顶层 `uploads/outputs` 必须归入可确认的 Workdir 或明确的迁移隔离区，不能保留为第二个运行时根；
+- 迁移在 runtime quiescence、目标校验和 activation 后清理旧源；
+- 新安装直接使用 UserWorkspace 布局，不创建独立 Project schema、Project root 或 Project PVC；
+- 正常 API/worker 启动不扫描旧宿主目录，也不执行破坏性迁移。
+
+新安装直接使用新 schema；已有旧数据的兼容只属于迁移器，不反向恢复独立 Project 存储域。
+
+## 替代方案
+
+- **保留独立 `ProjectWorkdir` 表，只把它的 storage key 改到 UserWorkspace。** 拒绝。仅保留一个没有独立元数据和生命周期的 UUID 资源仍会维护第二事实源、复合外键和额外 repository；当前 Conversation 的相对路径已经足够。
+- **继续使用独立 `/home/gem/projects` 挂载，再允许 API 指向 workspace 目录。** 拒绝。一个 Thread 的文件边界会依赖两套根目录，授权、Viewer 和 Sandbox 路径会再次分叉。
+- **把 UserWorkspace 挂载到 `/home/gem/user-data/workspace`。** 拒绝。该路径会在已经由 UserWorkspace Owner 定界的目录外再保留一层兼容命名，使个人 Skill、Workspace API 和 Workdir 都需要重复拼接 `workspace`；直接把同一个宿主目录挂到 `/home/gem/user-data` 即可保持单根语义。
+- **每个 Thread 按用户指定目录动态创建宿主机挂载。** 拒绝。挂载配置不应成为用户输入的副作用；挂载整个当前用户 workspace 后，在容器内选择经过校验的相对路径即可。
+- **把 UserWorkspace 改为对象存储或 FUSE POSIX 层。** 拒绝。实时 Workdir 需要普通 POSIX 的 rename、partial write 和并发可见性；对象存储仍不能成为不可信运行时的 POSIX 事实源。
+- **直接把宿主机路径传给 API、worker 或 Agent。** 拒绝。宿主机路径、容器虚拟路径和对象 URL 继续分层，授权在产生副作用的 executor/`WorkspaceFilesystem` 处最终执行。
+
+## 验证
+
+| 验收主张 | 失败面 | 语义 Owner | 直接证据 / 命令 | 负向案例 | 当前结果 |
+|---|---|---|---|---|---|
+| Thread 默认创建唯一的 `projects/<id>`，显式路径只绑定当前 UserWorkspace 内的目录 | DB 绑定与实际目录不一致 | Conversation repository、Thread service、UserWorkspace path service | 真实 PostgreSQL + 文件系统 integration；检查 Conversation 行与最终目录 | `../`、绝对路径、宿主机路径、其他用户路径、非目录路径 | 通过：3 个真实 PostgreSQL/文件系统 integration；相关 unit 纳入全量 1370 passed |
+| Workdir 路径不会越过 UserWorkspace 或绑定到保留目录 | 路径穿越、symlink 穿越、把 `agents/` 作为 Workdir | `backend/package/yuxi/agents/backends/sandbox/paths.py` 与 file bridge | path resolver unit + 真实 HTTP/Sandbox 文件访问 | `..`、绝对路径、symlink 组件、`agents/`、跨 uid | 通过：no-follow/path unit、5 个真实 HTTP Viewer integration 与 5 个真实 Docker provisioner integration |
+| Sandbox 把当前 UserWorkspace 直接挂载到 `/home/gem/user-data`，并只额外挂载只读共享 Skill projection | Project mount、嵌套 workspace mount 或广域 host root 泄漏 | `docker-compose.yml`、`docker/sandbox_provisioner/app.py` | Compose/provisioner contract、Docker mount inspection、`python3 scripts/verify_engineering_contracts.py` | `/app/projects`、`DOCKER_PROJECTS_HOST_PATH`、`PROJECT_DATA_PVC`、`/home/gem/user-data/workspace` mount、shared root、可写 Skill mount | 通过：Compose 校验、provisioner unit、真实 Docker mount/integration、工程信任检查 |
+| Project 间读取属于同一 UserWorkspace 的正常能力，Prompt 默认禁止未经用户要求的跨 Workdir 写入 | Agent 误把可见性当作默认写权限，或错误宣称 Project 间不可读 | `backend/package/yuxi/agents/buildin/chatbot/prompt.py` | Prompt unit 检查当前 Workdir、跨目录可读和默认写入约束 | Prompt 缺少当前路径；禁止读取其他 Project；允许默认跨 Project 写入 | 通过：Prompt 正向与负向 unit 纳入全量 unit |
+| `runtime_scope_id` 只分组父子 Run 的 execution Sandbox 与清理生命周期，不参与 Workdir 身份 | 共享 Workdir 的顶层 Conversation 错误共享进程，或父子 Run 提前清理 Sandbox | AgentRun repository、SubAgent run service、worker runtime cleanup | AgentRun PostgreSQL integration + execution-tree E2E | 同 Workdir 的两个根 Run 使用同一 scope；子 Run 使用 child thread 作为 scope；子 Run 活跃时销毁 Sandbox | unit、真实双 Sandbox provisioner integration 和顶层 runtime 重建 E2E 通过；完整父子 execution-tree E2E 未运行 |
+| 父子 Conversation 使用同一 Workdir，但 runtime 生命周期仍按既有 scope 规则隔离 | 子 Agent 路径错绑或 runtime cleanup 误删文件 | Conversation Workdir service、worker lifecycle、provisioner | execution-tree E2E，验证最终 POSIX 文件和 runtime cleanup | 子 Conversation 指向不同路径；根 Run 终态删除 Workdir 文件 | E2E 契约收集通过；实际父子链路未运行（本地 deterministic provider 不可连接） |
+| 旧数据迁移只在停机/准入条件满足时执行，并在 activation 后清理旧源 | 迁移期间仍写入、失败后丢源数据 | `storage_migration.py` 与一次性 legacy importer | 迁移 integration、quiescence proof、activation interruption/retry | 非终态 Run、缺少 quiescence、目标校验失败、提前删除旧源 | 通过：真实旧 DDL、schema 二次执行、切换中断重放、早期 Thread-only 布局与 3 个真实 PostgreSQL/文件系统 integration |
+| 个人 Skill 通过 `/home/gem/user-data/agents/skills` 直接属于 UserWorkspace，共享 Skill projection 仍只读 | 个人 Skill 被共享迁移删除或 Sandbox 可写共享 Skill | Skill service、Skill projection、UserWorkspace | 现有 Skill unit/integration/E2E 与 Docker mount inspection | 个人 Skill 被 legacy scan 删除；shared projection 可写；仍生成 `/home/gem/user-data/workspace/agents/skills` | unit 与真实 Docker mount/integration 通过；完整 Agent E2E 未运行（本地 deterministic provider 不可连接） |
+
+旧能力不存在：实现完成后，shipping runtime 不再创建或读取独立 `ProjectWorkdir`、`FileStorageMaterialization`、Project host root、Project mount 或 Project PVC；不再以每个 Workdir 的 materialization status/epoch/fingerprint 作为新请求的准入条件。旧数据迁移可以保留一次性 marker、proof 和 staging 状态，但不得恢复这些运行时存储能力。
+
+重新引入条件：只有产品明确需要 Workdir 级 ACL、配额、重命名、生命周期、跨用户共享元数据，或部署/合规要求独立的物理存储域时，才可重新引入 Workdir resource 或 Project storage domain；届时必须同时提供新的语义 Owner、迁移契约、权限负向案例、并发/恢复证据和真实部署验证。
+
+## 后果
+
+- 显式路径复用会让多个 Thread 共享文件，文件并发和删除责任需要保持保守；本提案不自动删除被引用或无法确认归属的目录。
+- 整个 UserWorkspace 对同一 uid 的 Sandbox 可见；Workdir 只选择 cwd 和 Thread 文件视图，不提供同一用户 Thread 间隔离。若该产品语义变化，本提案的单挂载前提失效。
+- Prompt 的默认写入约束不能阻止有缺陷或被注入的 Agent 跨 Project 写文件；这是接受 Project 间可见与可操作所带来的行为风险，不应使用“已隔离”或“后端禁止写入”描述该边界。
+- 不设 Workdir 表会暂时缺少 Workdir 级别的名称、ACL、配额和 GC 元数据；这些需求出现时需要重新建立资源模型，而不能把路径字符串继续扩展成隐式状态机。
+- `agents/` 是 UserWorkspace 的一部分但不是普通 Workdir；若未来确实允许 Agent 将其作为工作目录，必须重新定义 Skill、context 和系统文件的写权限边界。
+- 旧部署的迁移复杂度不会因为新布局消失，只会从“长期运行时双域”收敛为“有限的一次性导入”。迁移完成前必须保留旧源和可验证的恢复路径。

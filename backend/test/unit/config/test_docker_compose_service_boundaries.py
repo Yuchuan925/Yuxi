@@ -111,7 +111,8 @@ def test_api_worker_and_provisioner_use_explicit_storage_domains(filename: str):
     provisioner_targets = {
         _volume_target(volume) for volume in compose["services"]["sandbox-provisioner"].get("volumes") or []
     }
-    assert {"/app/projects", "/app/user-data", "/app/skill-projections"} <= provisioner_targets
+    assert {"/app/user-data", "/app/skill-projections"} <= provisioner_targets
+    assert "/app/projects" not in provisioner_targets
     assert "/app/saves" not in provisioner_targets
 
 

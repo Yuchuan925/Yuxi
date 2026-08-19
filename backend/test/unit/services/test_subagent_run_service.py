@@ -122,9 +122,14 @@ def _patch_repos(
         uid="user-1",
         agent_id="worker",
         status="active",
-        workdir_id=None,
+        workdir_path=None,
     )
-    parent_conversation = SimpleNamespace(id=10, uid="user-1", thread_id="parent-thread", workdir_id="workdir-1")
+    parent_conversation = SimpleNamespace(
+        id=10,
+        uid="user-1",
+        thread_id="parent-thread",
+        workdir_path="projects/workdir-1",
+    )
 
     class RunRepo:
         def __init__(self, _db):
@@ -180,9 +185,9 @@ def _patch_repos(
             return None
 
         async def ensure_default_workdir(self, conversation):
-            if not getattr(conversation, "workdir_id", None):
-                conversation.workdir_id = "workdir-1"
-            return conversation.workdir_id
+            if not getattr(conversation, "workdir_path", None):
+                conversation.workdir_path = "projects/workdir-1"
+            return conversation.workdir_path
 
         async def add_conversation(
             self,
@@ -192,7 +197,7 @@ def _patch_repos(
             title: str,
             thread_id: str,
             metadata: dict,
-            workdir_id: str,
+            workdir_path: str,
         ):
             captured["conversation"] = {
                 "uid": uid,
@@ -200,10 +205,10 @@ def _patch_repos(
                 "title": title,
                 "thread_id": thread_id,
                 "metadata": metadata,
-                "workdir_id": workdir_id,
+                "workdir_path": workdir_path,
             }
             child_conversation.thread_id = thread_id
-            child_conversation.workdir_id = workdir_id
+            child_conversation.workdir_path = workdir_path
             return child_conversation
 
     class ThreadRepo:
@@ -388,8 +393,8 @@ async def test_subagent_run_service_creates_child_relation_run_and_enqueue(monke
     assert result.relation.child_thread_id == child_thread_id
     assert result.relation is relation
     assert child_conversation.status == "subagent"
-    assert child_conversation.workdir_id == "workdir-1"
-    assert captured["conversation"]["workdir_id"] == "workdir-1"
+    assert child_conversation.workdir_path == "projects/workdir-1"
+    assert captured["conversation"]["workdir_path"] == "projects/workdir-1"
     assert captured["conversation"]["metadata"]["parent_conversation_id"] == 10
     assert captured["relation"] == {
         "uid": "user-1",

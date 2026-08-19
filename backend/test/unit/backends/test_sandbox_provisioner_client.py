@@ -65,7 +65,7 @@ def test_provisioner_client_sends_project_workdir_contract(monkeypatch):
                 "sandbox_id": "sandbox-1",
                 "sandbox_url": "http://sandbox",
                 "generation": "generation-1",
-                "workdir_id": "workdir-1",
+                "workdir_path": "projects/workdir-1",
             },
         )
 
@@ -75,11 +75,11 @@ def test_provisioner_client_sends_project_workdir_contract(monkeypatch):
         token="test-provisioner-token-that-is-long-enough",
     )
 
-    record = client.create("sandbox-1", "root-thread", "user-1", workdir_id="workdir-1")
+    record = client.create("sandbox-1", "root-thread", "user-1", workdir_path="projects/workdir-1")
 
-    assert calls[0]["json"]["workdir_id"] == "workdir-1"
+    assert calls[0]["json"]["workdir_path"] == "projects/workdir-1"
     assert record.generation == "generation-1"
-    assert record.workdir_id == "workdir-1"
+    assert record.workdir_path == "projects/workdir-1"
 
 
 def test_provisioner_client_delete_sends_expected_generation(monkeypatch):

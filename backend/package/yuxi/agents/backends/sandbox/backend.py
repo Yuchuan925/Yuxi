@@ -30,14 +30,11 @@ from yuxi.utils.logging_config import logger
 from yuxi.utils.paths import (
     VIRTUAL_PATH_PREFIX,
     VIRTUAL_SKILLS_PATH,
-    WORKSPACE_DIR_NAME,
 )
 
 from .provider import get_sandbox_provider, sandbox_id_for_thread, sandbox_provisioner_token
-from .paths import project_workdir_virtual_dir
 
 _USER_DATA_ROOT = "/" + VIRTUAL_PATH_PREFIX.strip("/")
-_WORKSPACE_ROOT = f"{_USER_DATA_ROOT}/{WORKSPACE_DIR_NAME}"
 _SKILLS_ROOT = "/" + VIRTUAL_SKILLS_PATH.strip("/")
 _BINARY_PREVIEW_TOO_LARGE_ERROR = f"Binary file exceeds maximum preview size of {MAX_BINARY_BYTES} bytes"
 _IMAGE_EXTENSIONS = frozenset({".gif", ".heic", ".heif", ".jpeg", ".jpg", ".png", ".webp"})
@@ -161,8 +158,7 @@ class ProvisionerSandboxBackend(BaseSandbox):
         uid: str,
         inherit_env: bool = True,
         create_if_missing: bool = True,
-        sandbox_instance_id: str | None = None,
-        workdir_id: str | None = None,
+        workdir_path: str | None = None,
     ):
         self._thread_id = str(thread_id or "").strip()
         if not self._thread_id:
@@ -173,14 +169,11 @@ class ProvisionerSandboxBackend(BaseSandbox):
 
         self._inherit_env = inherit_env
         self._create_if_missing = create_if_missing
-        self._sandbox_instance_id = str(sandbox_instance_id or self._thread_id).strip()
-        self._workdir_id = str(workdir_id or "").strip() or None
-        self._project_root = project_workdir_virtual_dir(self._workdir_id) if self._workdir_id else None
+        self._workdir_path = str(workdir_path or "").strip() or None
         self._provider = get_sandbox_provider()
         self._id = sandbox_id_for_thread(
             self._thread_id,
             uid=self._uid,
-            sandbox_instance_id=self._sandbox_instance_id,
         )
         self._client: Any | None = None
         self._client_url: str | None = None
@@ -188,12 +181,10 @@ class ProvisionerSandboxBackend(BaseSandbox):
         self._max_output_bytes = int(os.getenv("SANDBOX_MAX_OUTPUT_BYTES") or 262_144)
 
     def _readable_roots(self) -> tuple[str, ...]:
-        project_roots = (self._project_root,) if self._project_root else ()
-        return (*project_roots, _USER_DATA_ROOT, _SKILLS_ROOT)
+        return (_USER_DATA_ROOT, _SKILLS_ROOT)
 
     def _writable_roots(self) -> tuple[str, ...]:
-        project_roots = (self._project_root,) if self._project_root else ()
-        return (*project_roots, _USER_DATA_ROOT)
+        return (_USER_DATA_ROOT,)
 
     def _can_read_path(self, path: str) -> bool:
         return any(_is_same_or_child(path, root) for root in self._readable_roots())
@@ -255,8 +246,7 @@ class ProvisionerSandboxBackend(BaseSandbox):
             uid=self._uid,
             create_if_missing=self._create_if_missing,
             inherit_env=self._inherit_env,
-            sandbox_instance_id=self._sandbox_instance_id,
-            workdir_id=self._workdir_id,
+            workdir_path=self._workdir_path,
         )
         if connection is None:
             raise RuntimeError(f"sandbox is unavailable for thread {self._thread_id}")

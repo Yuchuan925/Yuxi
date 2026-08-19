@@ -1,8 +1,12 @@
 # 显式存储域与 Kubernetes PVC 收敛
 
-状态：implemented
+状态：archived
 类型：simplification
-Owner：docker-compose.yml
+Owner：docs/develop-guides/decisions/implemented/2026-08-19-workdir-in-user-workspace.md
+
+本记录中独立 Project 存储域与三挂载/PVC 契约已被
+[Workdir 归属 UserWorkspace 并取消独立 Project 存储域](../implemented/2026-08-19-workdir-in-user-workspace.md)
+取代，仅保留为部署设计演进的历史背景。
 
 ## 问题
 
@@ -21,7 +25,7 @@ PVC/subPath 由 `docker/sandbox_provisioner/app.py` 拥有。
 - PostgreSQL 是 LangGraph checkpoint 的唯一 Owner。API、worker 与 Agent 不读取后端选择环境变量，
   也不挂载本地 checkpoint 目录。
 - `storage-migrator` 是唯一可挂载历史广域目录的停机迁移 Owner。它在 API、worker 与 provisioner
-  启动前完成 Project 物化、旧 schema/对象清理、Skill 源迁移和个人 Workspace Skill 旧目录删除；
+  启动前完成 Project 物化、旧 schema/对象清理和共享 Skill 源迁移；个人 Workspace Skill 原地保留；
   shipping 启动只校验 active gate，不再扫描历史宿主目录。旧业务 schema 已存在且切换尚未完成，
   或仍存在旧 Skill 源时，migrator 还必须校验 `scripts/migrate-storage.sh` 创建的一次性 quiescence
   proof；普通 `docker compose up` 不得执行破坏性删除。首次安装与已 active 的部署由迁移前持久 schema
@@ -52,7 +56,7 @@ PVC/subPath 由 `docker/sandbox_provisioner/app.py` 拥有。
 
 ## 后果
 
-- Project、User Data、Skill source 和 Skill projection 有独立配置与挂载；未来可以分别迁移存储类。
+- Project、User Data、共享 Skill source 和共享 Skill projection 有独立配置与挂载；个人 Skill 属于 User Data。
 - 历史 SQLite checkpoint 文件不再自动导入或删除；升级后无法从这些文件继续暂停、审批或摘要状态。
 - 升级必须先停止旧 execution runtime，再运行一次性 migrator。迁移失败会阻止 shipping 服务启动，
   不会回退到旧目录。
@@ -64,8 +68,8 @@ PVC/subPath 由 `docker/sandbox_provisioner/app.py` 拥有。
 - Compose contract：恢复 API/worker/provisioner `/app/saves` 或缺少显式域会失败。
 - Docker/Kubernetes provisioner unit：显式 host root、双 PVC、Project/User subPath、Skill 只读与错误
   volume 绑定均有负向案例。
-- 一次性 migrator unit：Project 先切换、旧 schema 待切换但缺少一次性停机证明时 fail-closed、个人旧
-  Skill 目录只在停机 Owner 中删除，失败仍关闭数据库。旧 `base.toml`、仅停机切换才执行的非终态 Run
+- 一次性 migrator unit：Project 先切换、旧 schema 待切换但缺少一次性停机证明时 fail-closed、个人
+  Skill 目录不会触发共享迁移且始终原地保留，失败仍关闭数据库。旧 `base.toml`、仅停机切换才执行的非终态 Run
   收敛和迁移完成标记均有负向案例；脚本负控覆盖已 down 的生产 Compose 参数；provisioner 负控覆盖
   K8s orphan Pod、错误 PVC claim、枚举失败、Terminating 等待和 quiesce 后拒绝 create。
 - backend non-slow unit：`1372 passed, 34 skipped`；宿主 Compose 配置 contract：`39 passed`；工程

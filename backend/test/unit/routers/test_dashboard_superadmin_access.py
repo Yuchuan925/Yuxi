@@ -67,7 +67,7 @@ async def dashboard_session():
         now = utc_now_naive()
         conversation_a = Conversation(
             thread_id="thread-a",
-            workdir_id="workdir-thread-a",
+            workdir_path="projects/workdir-thread-a",
             uid="user_a",
             agent_id="agent-shared",
             title="Dept A conversation",
@@ -77,7 +77,7 @@ async def dashboard_session():
         )
         conversation_b = Conversation(
             thread_id="thread-b",
-            workdir_id="workdir-thread-b",
+            workdir_path="projects/workdir-thread-b",
             uid="user_b",
             agent_id="agent-shared",
             title="Dept B conversation",

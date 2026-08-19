@@ -6,7 +6,7 @@ Owner：docker-compose.yml
 
 日志与缓存路径由 `yuxi.config` 和 `logging_config.py` 拥有。本记录继续拥有 Stage 1/2 的进程、日志和
 缓存解耦边界；Stage 3/4 的附件、outputs、Viewer 与 Sandbox 文件协议已经由
-[实时 Project Workdir 与独立 Sandbox Runtime](2026-08-18-live-project-workdir-and-runtime.md)
+[实时 Project Workdir 与独立 Sandbox Runtime](../archived/2026-08-18-live-project-workdir-and-runtime.md)
 取代，不能把下述历史验证中的 MinIO/revision 模型视为当前事实。
 
 ## 问题
@@ -26,7 +26,7 @@ outputs 在 Sandbox 重建、父子 Agent 与并发 Run 中也缺少明确的恢
   未确认的临时附件解析仍可使用用户隔离的 MinIO 前缀。
 - 用户级 `/home/gem/user-data/workspace` 和按 uid 汇总的授权 Skills 只读投影仍通过共享 `saves`/PVC
   挂入 Sandbox；Sandbox 的 Skills identity/wire 已由
-  [2026-08-18 基础决定](2026-08-18-project-workdir-runtime-foundation.md) 接管。附件与 outputs 的旧文件
+  [2026-08-18 基础决定](../archived/2026-08-18-project-workdir-runtime-foundation.md) 接管。附件与 outputs 的旧文件
   scope 仍由本记录描述，API/worker 与 provisioner 的最终共享 `saves` 删除尚未完成。
 
 ## 替代方案

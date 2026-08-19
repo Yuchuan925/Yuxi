@@ -47,7 +47,8 @@
 `SkillsMiddleware` 分两步工作：
 
 1. 模型调用前读取 `_prompt_skills`，把可见 Skill 的名称、描述和 `SKILL.md` 路径追加到系统提示。
-2. 工具调用后检查模型是否读取了用户授权投影 `/home/gem/skills/<slug>/SKILL.md`。如果该 Skill 在
+2. 工具调用后检查模型是否读取了共享投影 `/home/gem/skills/<slug>/SKILL.md` 或个人 UserWorkspace
+   `/home/gem/user-data/agents/skills/<slug>/SKILL.md`。如果该 Skill 在
    `_readable_skills` 范围内，就把它写入 `activated_skills`，并在后续模型调用中追加它声明的工具和 MCP 依赖。
 
 模型首先看到 Skill 说明；读取并激活 Skill 后，依赖工具才加入后续模型请求。该顺序控制初始工具 schema 的规模。
@@ -56,7 +57,7 @@
 
 附件上传后会先落盘到线程文件系统，并在 LangGraph state 中记录 `uploads`。`AttachmentMiddleware` 只把文件名和可读路径注入提示词，不会把文件内容整体塞进模型上下文。模型需要查看附件时，应通过 `read_file` 读取对应路径。
 
-文件系统中间件负责把实时 Project Workdir、User Data 和只读 Skills 组合成 Agent 可访问的虚拟文件系统。普通 Agent 与子智能体使用根 Conversation 的同一个 `runtime_scope_id` 和 `workdir_id`；child `thread_id` 只隔离 LangGraph checkpoint。父子 Agent 直接读取同一份 POSIX 文件，各 Agent 的 Skill 选中列表只影响 Prompt 和工具激活。
+文件系统中间件把当前用户的整个 UserWorkspace 与只读共享 Skills 组合成 Agent 可访问的虚拟文件系统。普通 Agent 与子智能体使用根 Conversation 的同一个 `runtime_scope_id` 和 `workdir_path`；child `thread_id` 只隔离 LangGraph checkpoint。Workdir 选择 cwd，不形成同一 uid 内的文件隔离；各 Agent 的 Skill 选中列表只影响 Prompt 和工具激活。
 
 ## 子智能体任务
 

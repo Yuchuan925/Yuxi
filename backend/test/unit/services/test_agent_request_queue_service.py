@@ -17,7 +17,7 @@ from yuxi.services.agent_request_queue_service import (
     steer_queued_request,
     validate_queue_policy,
 )
-from yuxi.storage.postgres.models_business import AgentRunRequest, Base, FileStorageMaterialization, Message
+from yuxi.storage.postgres.models_business import AgentRunRequest, Base, Message
 from yuxi.utils.datetime_utils import utc_now_naive
 
 pytestmark = [pytest.mark.unit]
@@ -187,8 +187,6 @@ async def session():
         await conn.run_sync(Base.metadata.create_all)
     factory = async_sessionmaker(engine, expire_on_commit=False)
     async with factory() as db:
-        db.add(FileStorageMaterialization(id="project-workdir-v1", phase="active", epoch_id="test-epoch"))
-        await db.commit()
         yield db
     await engine.dispose()
 
@@ -200,7 +198,7 @@ async def _seed_thread(session, *, uid="user-1", msg_id=100, conv_id=10):
         Conversation(
             id=conv_id,
             thread_id="t1",
-            workdir_id=f"workdir-{uid}-t1",
+            workdir_path=f"projects/workdir-{uid}-t1",
             uid=uid,
             agent_id="main",
             status="active",
@@ -511,7 +509,7 @@ async def test_intake_idempotent_rejects_scope_mismatch(session):
         Conversation(
             id=11,
             thread_id="t2",
-            workdir_id="workdir-user-1-t2",
+            workdir_path="projects/workdir-user-1-t2",
             uid="user-1",
             agent_id="other",
             status="active",

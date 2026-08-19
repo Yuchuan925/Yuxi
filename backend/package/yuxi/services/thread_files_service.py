@@ -16,7 +16,7 @@ from yuxi.agents.skills.service import list_accessible_skills
 from yuxi.repositories.user_repository import UserRepository
 from yuxi.services.file_preview import detect_media_type
 from yuxi.services.mention_search_service import invalidate_workspace_mention_cache
-from yuxi.services.project_workdir_service import resolve_project_workdir_binding
+from yuxi.services.workdir_service import resolve_workdir_binding
 from yuxi.utils.paths import VIRTUAL_SKILLS_PATH
 
 MAX_THREAD_FILE_READ_BYTES = 10 * 1024 * 1024
@@ -77,8 +77,8 @@ async def _require_skill_artifact_access(*, normalized_path: str, current_uid: s
 
 
 async def _binding_backend(*, thread_id: str, current_uid: str, db):
-    binding = await resolve_project_workdir_binding(thread_id=thread_id, uid=current_uid, db=db)
-    backend = binding.create_file_backend(create_if_missing=True)
+    binding = await resolve_workdir_binding(thread_id=thread_id, uid=current_uid, db=db)
+    backend = binding.create_file_backend()
     await asyncio.to_thread(backend.ensure_available)
     return binding, backend
 
@@ -93,13 +93,13 @@ async def list_thread_files_view(
 ) -> dict:
     """列出实时 Project Workdir，兼容 thread-files 响应结构。"""
     binding, backend = await _binding_backend(thread_id=thread_id, current_uid=current_uid, db=db)
-    normalized = _normalize_project_path(binding.workdir_path, path)
+    normalized = _normalize_project_path(binding.virtual_path, path)
     if not recursive:
         try:
             items = await asyncio.to_thread(
                 backend.list_authorized_directory,
                 normalized,
-                root=binding.workdir_path,
+                root=binding.virtual_path,
             )
         except FileNotFoundError as exc:
             raise HTTPException(status_code=404, detail="path not found") from exc
@@ -115,7 +115,7 @@ async def list_thread_files_view(
         if visited_directories > MAX_RECURSIVE_DIRECTORIES:
             break
         try:
-            items = await asyncio.to_thread(backend.list_authorized_directory, directory, root=binding.workdir_path)
+            items = await asyncio.to_thread(backend.list_authorized_directory, directory, root=binding.virtual_path)
         except FileNotFoundError as exc:
             raise HTTPException(status_code=404, detail="path not found") from exc
         for item in items:
@@ -140,7 +140,7 @@ async def read_thread_file_content_view(
 ) -> dict:
     """从实时 Workdir 读取文本行。"""
     binding, backend = await _binding_backend(thread_id=thread_id, current_uid=current_uid, db=db)
-    normalized = _normalize_project_path(binding.workdir_path, path)
+    normalized = _normalize_project_path(binding.virtual_path, path)
     descriptor, temp_path = tempfile.mkstemp(prefix="yuxi-thread-file-")
     os.close(descriptor)
     try:
@@ -183,7 +183,7 @@ async def resolve_thread_artifact_view(
 ) -> FileResponse:
     """把实时授权文件导出为自动清理的 HTTP 文件响应。"""
     binding, backend = await _binding_backend(thread_id=thread_id, current_uid=current_uid, db=db)
-    normalized = _normalize_artifact_path(binding.workdir_path, path)
+    normalized = _normalize_artifact_path(binding.virtual_path, path)
     await _require_skill_artifact_access(normalized_path=normalized, current_uid=current_uid, db=db)
     descriptor, temp_path = tempfile.mkstemp(prefix="yuxi-artifact-", suffix=PurePosixPath(normalized).suffix)
     os.close(descriptor)
@@ -233,7 +233,7 @@ async def resolve_thread_artifact_view(
 async def save_thread_artifact_to_workspace_view(*, thread_id: str, current_uid: str, db, path: str) -> dict[str, str]:
     """把可见 artifact 复制到用户级 User Data saved_artifacts。"""
     binding, backend = await _binding_backend(thread_id=thread_id, current_uid=current_uid, db=db)
-    normalized = _normalize_artifact_path(binding.workdir_path, path)
+    normalized = _normalize_artifact_path(binding.virtual_path, path)
     await _require_skill_artifact_access(normalized_path=normalized, current_uid=current_uid, db=db)
     descriptor, temp_path = tempfile.mkstemp(prefix="yuxi-save-artifact-")
     os.close(descriptor)
@@ -254,14 +254,14 @@ async def save_thread_artifact_to_workspace_view(*, thread_id: str, current_uid:
         except (FileNotFoundError, ValueError) as exc:
             raise HTTPException(status_code=404, detail="artifact not found") from exc
         file_name = PurePosixPath(normalized).name or "artifact"
-        target = f"/home/gem/user-data/workspace/saved_artifacts/{file_name}"
+        target = f"/home/gem/user-data/saved_artifacts/{file_name}"
         index = 1
         stem = PurePosixPath(file_name).stem
         suffix = PurePosixPath(file_name).suffix
         while await asyncio.to_thread(backend.regular_file_exists, target):
             if index > MAX_SAVED_ARTIFACT_NAME_ATTEMPTS:
                 raise HTTPException(status_code=409, detail="saved artifact name space is exhausted")
-            target = f"/home/gem/user-data/workspace/saved_artifacts/{stem} ({index}){suffix}"
+            target = f"/home/gem/user-data/saved_artifacts/{stem} ({index}){suffix}"
             index += 1
         await asyncio.to_thread(backend.upload_authorized_file_from_path, target, temp_path)
     finally:

@@ -12,8 +12,9 @@ import aiofiles
 from fastapi import HTTPException, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from yuxi.agents.backends.sandbox.paths import (
-    ensure_workspace_default_files,
+    ensure_user_workspace,
     global_user_data_dir,
+    user_workspace_dir,
     workspace_uid_dirname,
 )
 from yuxi.config import get_runtime_dir
@@ -33,7 +34,6 @@ from yuxi.storage.postgres.models_business import User
 from yuxi.utils.datetime_utils import utc_isoformat_from_timestamp
 from yuxi.utils.paths import (
     VIRTUAL_PATH_WORKSPACE,
-    WORKSPACE_DIR_NAME,
     ensure_within_root,
 )
 from yuxi.utils.upload_utils import MAX_UPLOAD_SIZE_BYTES, write_upload_to_buffer
@@ -247,20 +247,16 @@ async def download_workspace_file(*, path: str, current_user: User) -> Streaming
 
 def _workspace_root(user: User) -> Path:
     try:
-        user_data_root = global_user_data_dir(str(user.uid)).resolve()
-        root = user_data_root / WORKSPACE_DIR_NAME
-    except ValueError as exc:
+        ensure_user_workspace(str(user.uid))
+        root = user_workspace_dir(str(user.uid))
+        user_data_root = global_user_data_dir(str(user.uid))
+    except (OSError, ValueError) as exc:
         raise HTTPException(status_code=403, detail="Access denied") from exc
-    if root.is_symlink():
-        raise HTTPException(status_code=403, detail="Access denied")
-    root.mkdir(parents=True, exist_ok=True)
-    resolved_root = root.resolve()
     try:
-        ensure_within_root(resolved_root, user_data_root, error_message="Access denied")
+        ensure_within_root(root, user_data_root, error_message="Access denied")
     except ValueError as exc:
         raise HTTPException(status_code=403, detail="Access denied") from exc
-    ensure_workspace_default_files(resolved_root)
-    return resolved_root
+    return root
 
 
 def _normalize_workspace_path(path: str | None) -> PurePosixPath:

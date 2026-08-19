@@ -80,8 +80,8 @@ async def test_workspace_index_cache_lifecycle(workspace: Path, fake_redis: _Fak
     first = await mention_service.get_or_build_workspace_index("user-1")
     cache_key = f"{mention_service.WORKSPACE_CACHE_PREFIX}user-1"
     cached = ormsgpack.unpackb(base64.b64decode(fake_redis.data[cache_key]))
-    assert first == [("main.py", "workspace/main.py")]
-    assert cached == [["main.py", "workspace/main.py"]]
+    assert first == [("main.py", "main.py")]
+    assert cached == [["main.py", "main.py"]]
 
     (workspace / "new.py").write_text("new", encoding="utf-8")
     assert len(await mention_service.get_or_build_workspace_index("user-1")) == 1
@@ -109,12 +109,12 @@ async def test_search_workspace_files_is_case_insensitive_and_ranks_directories(
     assert [item["name"] for item in results] == ["test", "test_auth.py", "conftest.py"]
     assert results[0] == {
         "name": "test",
-        "path": "/home/gem/user-data/workspace/test/",
+        "path": "/home/gem/user-data/test/",
         "is_dir": True,
         "source": "workspace",
     }
     assert main_results[0]["name"] == "MAIN.py"
-    assert main_results[0]["path"] == "/home/gem/user-data/workspace/MAIN.py"
+    assert main_results[0]["path"] == "/home/gem/user-data/MAIN.py"
 
 
 @pytest.mark.asyncio
@@ -143,7 +143,7 @@ async def test_search_mentions_orchestrates_project_and_workspace_in_service(mon
             "entries": [
                 {
                     "name": "outputs",
-                    "path": "/home/gem/projects/project-1/outputs/",
+                    "path": "/home/gem/user-data/projects/1/outputs/",
                     "is_dir": True,
                 }
             ]
@@ -168,7 +168,7 @@ async def test_search_mentions_orchestrates_project_and_workspace_in_service(mon
     assert result == [
         {
             "name": "outputs",
-            "path": "/home/gem/projects/project-1/outputs/",
+            "path": "/home/gem/user-data/projects/1/outputs/",
             "is_dir": True,
             "source": "thread",
         }

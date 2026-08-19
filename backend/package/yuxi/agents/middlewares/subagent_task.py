@@ -392,12 +392,10 @@ class YuxiSubAgentMiddleware(AgentMiddleware[Any, ContextT, ResponseT]):
         runtime_scope_id = str(
             getattr(self.parent_context, "runtime_scope_id", None) or self.parent_context.thread_id
         ).strip()
-        workdir_id = str(getattr(self.parent_context, "workdir_id", "") or "").strip()
         return _ParentRuntime(
             runtime_scope_id=runtime_scope_id,
             uid=uid,
             created_by_run_id=created_by_run_id,
-            workdir_id=workdir_id,
         )
 
     def _require_async_parent_runtime(self, error_prefix: str) -> tuple[_ParentRuntime, str | None]:
@@ -407,8 +405,6 @@ class YuxiSubAgentMiddleware(AgentMiddleware[Any, ContextT, ResponseT]):
             return parent_runtime, f"{error_prefix}：当前运行时缺少 uid"
         if not parent_runtime.created_by_run_id:
             return parent_runtime, f"{error_prefix}：当前运行时缺少父运行 ID"
-        if not parent_runtime.workdir_id:
-            return parent_runtime, f"{error_prefix}：当前运行时缺少 Project Workdir"
         return parent_runtime, None
 
     async def _start_subagent(
@@ -480,7 +476,6 @@ class _ParentRuntime:
     runtime_scope_id: str
     uid: str
     created_by_run_id: str
-    workdir_id: str
 
 
 @dataclass(frozen=True)

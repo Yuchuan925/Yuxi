@@ -34,6 +34,7 @@ def _serialize_thread(conversation: Any, *, thread_status: str) -> dict:
         "agent_id": conversation.agent_id,
         "title": conversation.title,
         "is_pinned": bool(conversation.is_pinned),
+        "workdir_path": conversation.workdir_path,
         "created_at": conversation.created_at.isoformat(),
         "updated_at": conversation.updated_at.isoformat(),
         "metadata": conversation.extra_metadata or {},
@@ -60,6 +61,7 @@ async def create_thread_view(
     agent_slug: str,
     title: str | None,
     metadata: dict | None,
+    workdir_path: str | None = None,
     db: AsyncSession,
     current_uid: str,
 ) -> dict:
@@ -80,13 +82,17 @@ async def create_thread_view(
     conv_repo = ConversationRepository(db)
     thread_metadata = dict(metadata or {})
     thread_metadata["backend_id"] = agent_item.backend_id
-    conversation = await conv_repo.create_conversation(
-        uid=str(current_uid),
-        agent_id=agent_item.slug,
-        title=title or "新的对话",
-        thread_id=thread_id,
-        metadata=thread_metadata,
-    )
+    try:
+        conversation = await conv_repo.create_conversation(
+            uid=str(current_uid),
+            agent_id=agent_item.slug,
+            title=title or "新的对话",
+            thread_id=thread_id,
+            metadata=thread_metadata,
+            workdir_path=workdir_path,
+        )
+    except (FileNotFoundError, NotADirectoryError, OSError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     return _serialize_thread(conversation, thread_status="done")
 

@@ -368,12 +368,11 @@ async def download_kb_file(
     sandbox_scope = _runtime_sandbox_scope(runtime)
     if sandbox_scope is None:
         return "无法获取当前会话的沙盒上下文，缺少 thread_id 或 uid"
-    runtime_thread_id, uid, sandbox_instance_id, workdir_id, workdir_path = sandbox_scope
+    runtime_thread_id, uid, workdir_relative_path, workdir_path = sandbox_scope
     backend = ProvisionerSandboxBackend(
         thread_id=runtime_thread_id,
         uid=uid,
-        sandbox_instance_id=sandbox_instance_id,
-        workdir_id=workdir_id,
+        workdir_path=workdir_relative_path,
         create_if_missing=False,
     )
 
@@ -461,23 +460,21 @@ def _runtime_uid(runtime: ToolRuntime | None) -> str | None:
     return getattr(context, "uid", None)
 
 
-def _runtime_sandbox_scope(runtime: ToolRuntime | None) -> tuple[str, str, str, str, str] | None:
-    """返回知识库下载使用的 runtime/user/instance/workdir scope。"""
+def _runtime_sandbox_scope(runtime: ToolRuntime | None) -> tuple[str, str, str, str] | None:
+    """返回知识库下载使用的 runtime、用户和 Workdir 路径。"""
     context = getattr(runtime, "context", None) if runtime else None
     if context is None:
         return None
     runtime_thread_id = getattr(context, "runtime_scope_id", None) or getattr(context, "thread_id", None)
     uid = getattr(context, "uid", None)
-    sandbox_instance_id = getattr(context, "sandbox_instance_id", None) or runtime_thread_id
-    workdir_id = getattr(context, "workdir_id", None)
+    workdir_relative_path = getattr(context, "workdir_relative_path", None)
     workdir_path = getattr(context, "workdir_path", None)
-    if not runtime_thread_id or not uid or not workdir_id or not workdir_path:
+    if not runtime_thread_id or not uid or not workdir_relative_path or not workdir_path:
         return None
     return (
         str(runtime_thread_id),
         str(uid),
-        str(sandbox_instance_id),
-        str(workdir_id),
+        str(workdir_relative_path),
         str(workdir_path),
     )
 

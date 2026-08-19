@@ -16,7 +16,7 @@ from yuxi.repositories.agent_repository import AgentRepository
 from yuxi.repositories.conversation_repository import ConversationRepository
 from yuxi.storage.postgres.manager import pg_manager
 from yuxi.utils.logging_config import logger
-from yuxi.utils.paths import VIRTUAL_SKILLS_PATH
+from yuxi.utils.paths import VIRTUAL_PERSONAL_SKILLS_PATH
 
 SANDBOX_PATH_HINT = "请使用当前 Project Workdir 下的目录，或 /home/gem/user-data/..."
 
@@ -37,8 +37,7 @@ def _prepare_skill_from_sandbox(
     thread_id: str,
     uid: str,
     staging_root: Path,
-    sandbox_instance_id: str | None = None,
-    workdir_id: str | None = None,
+    workdir_relative_path: str | None = None,
     workdir_path: str | None = None,
 ) -> Path:
     """从 Sandbox 路径准备 skill 目录，返回本地暂存目录。"""
@@ -58,8 +57,7 @@ def _prepare_skill_from_sandbox(
     backend = ProvisionerSandboxBackend(
         thread_id=thread_id,
         uid=uid,
-        sandbox_instance_id=sandbox_instance_id,
-        workdir_id=workdir_id,
+        workdir_path=workdir_relative_path,
         create_if_missing=False,
     )
     download_sandbox_directory(
@@ -142,7 +140,6 @@ async def _run_install_task(
             install_personal_skill_dir,
             list_personal_skills,
             normalize_string_list,
-            refresh_user_skill_projection_async,
         )
 
         installed_items = []
@@ -158,8 +155,7 @@ async def _run_install_task(
                     thread_id,
                     uid,
                     Path(tmp),
-                    getattr(runtime_context, "sandbox_instance_id", None),
-                    getattr(runtime_context, "workdir_id", None),
+                    getattr(runtime_context, "workdir_relative_path", None),
                     getattr(runtime_context, "workdir_path", None),
                 )
                 item = await install_personal_skill_dir(uid, source_dir)
@@ -218,14 +214,11 @@ async def _run_install_task(
         setattr(runtime_context, "_runtime_skill_metadata", prompt_metadata)
         setattr(runtime_context, "_runtime_skill_dependency_map", dependency_map)
 
-        skill_sources = await refresh_user_skill_projection_async(uid)
-        setattr(runtime_context, "_runtime_skill_sources", skill_sources)
-
         lines = []
         if installed_slugs:
             lines.append(f"✅ 成功安装并激活技能: {', '.join(installed_slugs)}")
             for slug in installed_slugs:
-                lines.append(f"📁 安装位置: {VIRTUAL_SKILLS_PATH}/{slug}")
+                lines.append(f"📁 安装位置: {VIRTUAL_PERSONAL_SKILLS_PATH}/{slug}")
         if failed_items:
             for item in failed_items:
                 lines.append(f"❌ 安装失败 ({item['slug']}): {item.get('error', '未知错误')}")

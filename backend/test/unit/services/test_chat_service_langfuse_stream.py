@@ -91,11 +91,11 @@ def _patch_stream_scaffolding(
         uid="user-1",
         agent_id="test-agent",
         status="active",
-        workdir_id="workdir-1",
+        workdir_path="projects/workdir-1",
         extra_metadata={},
     )
-    if not hasattr(resolved_conversation, "workdir_id"):
-        resolved_conversation.workdir_id = "workdir-1"
+    if not hasattr(resolved_conversation, "workdir_path"):
+        resolved_conversation.workdir_path = "projects/workdir-1"
 
     async def fake_resolve_agent_runtime(**_kwargs):
         return (
@@ -429,7 +429,8 @@ async def test_stream_agent_chat_commits_before_stream_and_persists_langfuse_con
     assert calls["saved_state"]["context"].temperature == 0.1
     assert calls["saved_state"]["complete_run"] is True
     assert chunks[-1]["status"] == "finished"
-    assert calls["stream_input_context"]["workdir_id"] == "workdir-1"
+    assert calls["stream_input_context"]["workdir_relative_path"] == "projects/workdir-1"
+    assert calls["stream_input_context"]["workdir_path"] == "/home/gem/user-data/projects/workdir-1"
     assert calls["stream_input_context"]["runtime_scope_id"] == "thread-1"
     assert chunks[0]["msg"]["extra_metadata"]["attachments"] == [calls["stream_kwargs"]["uploads"][0]]
     assert calls["flushed"] is True

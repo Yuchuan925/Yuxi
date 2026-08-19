@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-import re
 import uuid
 from typing import Any
 
@@ -34,7 +33,12 @@ async def _create_agent(
     return agent
 
 
-async def _create_thread(client: httpx.AsyncClient, headers: dict[str, str], agent_id: str, marker: str) -> str:
+async def _create_thread(
+    client: httpx.AsyncClient,
+    headers: dict[str, str],
+    agent_id: str,
+    marker: str,
+) -> tuple[str, str]:
     response = await client.post(
         "/api/chat/thread",
         json={
@@ -48,7 +52,9 @@ async def _create_thread(client: httpx.AsyncClient, headers: dict[str, str], age
     payload = response.json()
     thread_id = payload.get("thread_id") or payload.get("id")
     assert thread_id, payload
-    return str(thread_id)
+    workdir_path = payload.get("workdir_path")
+    assert workdir_path, payload
+    return str(thread_id), f"/home/gem/user-data/{workdir_path}"
 
 
 async def _create_run(
@@ -211,22 +217,6 @@ async def _read_thread_file(
     return "\n".join(str(line) for line in content)
 
 
-async def _project_root(client: httpx.AsyncClient, headers: dict[str, str], thread_id: str) -> str:
-    response = await client.get(
-        "/api/viewer/filesystem/tree",
-        params={"thread_id": thread_id, "path": "/"},
-        headers=headers,
-    )
-    _assert_ok(response)
-    entries = response.json().get("entries") or []
-    assert entries, response.text
-    for entry in entries:
-        match = re.match(r"^(/home/gem/projects/project-[^/]+)(?:/|$)", str(entry.get("path") or ""))
-        if match:
-            return match.group(1)
-    raise AssertionError(f"Viewer tree did not expose a Project Workdir root: {entries!r}")
-
-
 async def test_subagent_stream_records_run_and_shares_output_files(
     e2e_client: httpx.AsyncClient,
     e2e_headers: dict[str, str],
@@ -333,8 +323,7 @@ async def test_subagent_stream_records_run_and_shares_output_files(
         }
         assert sub_slug in management_agent_slugs
 
-        thread_id = await _create_thread(e2e_client, e2e_headers, main_slug, marker)
-        project_root = await _project_root(e2e_client, e2e_headers, thread_id)
+        thread_id, project_root = await _create_thread(e2e_client, e2e_headers, main_slug, marker)
         parent_input_path = f"{project_root}/outputs/parent-input.txt"
         output_path = f"{project_root}/outputs/subagents.txt"
         query = (

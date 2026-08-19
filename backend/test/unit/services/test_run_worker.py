@@ -11,7 +11,6 @@ from unittest.mock import AsyncMock
 
 import pytest
 import yuxi.services.run_worker as run_worker
-import yuxi.services.project_workdir_materialization_service as materialization_service
 from arq.worker import RetryJob
 from yuxi.config import options as config_options
 
@@ -76,7 +75,7 @@ async def test_release_run_sandbox_uses_persisted_workdir_binding(monkeypatch: p
     class _Result:
         @staticmethod
         def scalar_one_or_none():
-            return "workdir-1"
+            return "projects/workdir-1"
 
     @asynccontextmanager
     async def fake_session_ctx():
@@ -91,8 +90,7 @@ async def test_release_run_sandbox_uses_persisted_workdir_binding(monkeypatch: p
     await run_worker._release_run_sandbox(run)
 
     assert released["thread_id"] == "thread-1"
-    assert released["sandbox_instance_id"] == "thread-1"
-    assert released["workdir_id"] == "workdir-1"
+    assert released["workdir_path"] == "projects/workdir-1"
 
 
 @pytest.mark.asyncio
@@ -189,11 +187,11 @@ def _patch_common(monkeypatch: pytest.MonkeyPatch, run_obj: SimpleNamespace):
     monkeypatch.setattr(run_worker, "persist_run_manifest", fake_noop)
     monkeypatch.setattr(
         run_worker,
-        "_validate_run_project_binding",
+        "_validate_run_workdir_binding",
         AsyncMock(
             return_value=SimpleNamespace(
-                workdir_id="workdir-1",
-                workdir_path="/home/gem/projects/project-workdir-1",
+                workdir_path="projects/workdir-1",
+                virtual_path="/home/gem/user-data/projects/workdir-1",
             )
         ),
     )
@@ -234,7 +232,7 @@ async def test_process_agent_run_rejects_corrupted_runtime_scope_before_executio
         stream_called = True
         return _BytesAsyncIter([])
 
-    monkeypatch.setattr(run_worker, "_validate_run_project_binding", reject_binding)
+    monkeypatch.setattr(run_worker, "_validate_run_workdir_binding", reject_binding)
     monkeypatch.setattr(run_worker, "mark_run_terminal", fake_mark_terminal)
     monkeypatch.setattr(run_worker, "stream_agent_chat", fake_stream_agent_chat)
 
@@ -944,7 +942,7 @@ async def test_process_subagent_run_restores_runtime_context(monkeypatch: pytest
     assert meta["run_type"] == "subagent"
     assert meta["parent_thread_id"] == "parent-thread"
     assert meta["runtime_scope_id"] == "parent-thread"
-    assert meta["sandbox_instance_id"] == "parent-thread"
+    assert meta["workdir_relative_path"] == "projects/workdir-1"
     assert captured["agent_slug"] == "worker"
     assert captured["thread_id"] == "child-thread"
     assert captured["input_message"].content == "hello"
@@ -1148,9 +1146,6 @@ async def test_worker_startup_ensures_builtin_mcp_servers(monkeypatch: pytest.Mo
     async def fake_ensure_builtin_mcp_servers_in_db():
         calls.append("ensure_builtin_mcp_servers_in_db")
 
-    async def fake_require_project_workdir_active(_session):
-        calls.append("require_project_workdir_active")
-
     @asynccontextmanager
     async def fake_session_ctx():
         yield SimpleNamespace(commit=AsyncMock())
@@ -1194,11 +1189,6 @@ async def test_worker_startup_ensures_builtin_mcp_servers(monkeypatch: pytest.Mo
     monkeypatch.setattr(run_worker.pg_manager, "setup_langgraph_checkpointer", fake_setup_langgraph_checkpointer)
     monkeypatch.setattr(run_worker.pg_manager, "get_async_session_context", fake_session_ctx)
     monkeypatch.setattr(run_worker, "ensure_builtin_mcp_servers_in_db", fake_ensure_builtin_mcp_servers_in_db)
-    monkeypatch.setattr(
-        materialization_service,
-        "require_project_workdir_active",
-        fake_require_project_workdir_active,
-    )
     monkeypatch.setattr(run_worker, "init_builtin_skills", fake_init_builtin_skills)
     monkeypatch.setattr(config_options, "ensure_options_in_db", fake_ensure_options_in_db)
     monkeypatch.setattr(config_options, "migrate_legacy_system_options", fake_migrate_legacy_system_options)
@@ -1223,7 +1213,6 @@ async def test_worker_startup_ensures_builtin_mcp_servers(monkeypatch: pytest.Mo
         "initialize",
         "create_business_tables",
         "ensure_business_schema",
-        "require_project_workdir_active",
         "setup_langgraph_checkpointer",
         "ensure_options_in_db",
         "migrate_system_options",
@@ -1302,7 +1291,6 @@ async def test_worker_startup_fails_when_system_options_cannot_migrate(monkeypat
         raise RuntimeError("config load failed")
 
     monkeypatch.setattr(run_worker.pg_manager, "get_async_session_context", fake_session_ctx)
-    monkeypatch.setattr(materialization_service, "require_project_workdir_active", AsyncMock())
     monkeypatch.setattr(config_options, "ensure_options_in_db", AsyncMock())
     monkeypatch.setattr(config_options, "migrate_legacy_system_options", fail_migrate)
 

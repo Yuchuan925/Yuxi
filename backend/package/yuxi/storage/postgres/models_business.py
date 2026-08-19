@@ -6,12 +6,10 @@ from typing import Any
 from sqlalchemy import (
     JSON,
     Boolean,
-    CheckConstraint,
     Column,
     DateTime,
     Float,
     ForeignKey,
-    ForeignKeyConstraint,
     Index,
     Integer,
     String,
@@ -282,83 +280,6 @@ class Skill(Base):
         }
 
 
-class ProjectWorkdir(Base):
-    """Project Workdir 持久文件身份。"""
-
-    __tablename__ = "project_workdirs"
-
-    id = Column(String(64), primary_key=True, comment="Opaque workdir ID")
-    uid = Column(String(64), nullable=False, index=True, comment="Owning UID")
-    storage_key = Column(String(255), nullable=False, unique=True, comment="Persistent POSIX storage key")
-    materialization_status = Column(
-        String(32),
-        nullable=False,
-        default="pending",
-        index=True,
-        comment="pending/importing/prepared/ready/error",
-    )
-    materialization_error = Column(Text, nullable=True)
-    materialization_epoch_id = Column(String(64), nullable=True, index=True)
-    source_fingerprint = Column(String(64), nullable=True)
-    created_at = Column(DateTime, default=utc_now_naive, nullable=False)
-    updated_at = Column(DateTime, default=utc_now_naive, onupdate=utc_now_naive, nullable=False)
-
-    __table_args__ = (
-        UniqueConstraint("id", "uid", name="uq_project_workdirs_id_uid"),
-        CheckConstraint(
-            "materialization_status IN ('pending', 'importing', 'prepared', 'ready', 'error')",
-            name="ck_project_workdirs_materialization_status",
-        ),
-    )
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "id": self.id,
-            "uid": self.uid,
-            "storage_key": self.storage_key,
-            "materialization_status": self.materialization_status,
-            "materialization_error": self.materialization_error,
-            "materialization_epoch_id": self.materialization_epoch_id,
-            "source_fingerprint": self.source_fingerprint,
-            "created_at": format_utc_datetime(self.created_at),
-            "updated_at": format_utc_datetime(self.updated_at),
-        }
-
-
-class FileStorageMaterialization(Base):
-    """实时 Project Workdir 主链路的全局切换事实。"""
-
-    __tablename__ = "file_storage_materializations"
-
-    id = Column(String(64), primary_key=True)
-    phase = Column(String(32), nullable=False, default="pending", index=True)
-    epoch_id = Column(String(64), nullable=True, unique=True)
-    inventory_fingerprint = Column(String(64), nullable=True)
-    error_message = Column(Text, nullable=True)
-    activated_at = Column(DateTime, nullable=True)
-    created_at = Column(DateTime, default=utc_now_naive, nullable=False)
-    updated_at = Column(DateTime, default=utc_now_naive, onupdate=utc_now_naive, nullable=False)
-
-    __table_args__ = (
-        CheckConstraint(
-            "phase IN ('pending', 'fenced', 'preparing', 'active', 'error')",
-            name="ck_file_storage_materializations_phase",
-        ),
-    )
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "id": self.id,
-            "phase": self.phase,
-            "epoch_id": self.epoch_id,
-            "inventory_fingerprint": self.inventory_fingerprint,
-            "error_message": self.error_message,
-            "activated_at": format_utc_datetime(self.activated_at),
-            "created_at": format_utc_datetime(self.created_at),
-            "updated_at": format_utc_datetime(self.updated_at),
-        }
-
-
 class Conversation(Base):
     """Conversation table - 对话表"""
 
@@ -373,24 +294,15 @@ class Conversation(Base):
     status = Column(String(20), default="active", comment="Status: active/archived/deleted")
     is_pinned = Column(Boolean, default=False, nullable=False, index=True, comment="Is pinned to top")
     last_viewed_run_id = Column(String(64), nullable=True, comment="Latest top-level run id viewed by user")
-    workdir_id = Column(
-        String(64),
+    workdir_path = Column(
+        String(512),
         nullable=False,
         index=True,
-        comment="Project Workdir identity",
+        comment="UserWorkspace-relative Workdir path",
     )
     created_at = Column(DateTime, default=utc_now_naive, comment="Creation time")
     updated_at = Column(DateTime, default=utc_now_naive, onupdate=utc_now_naive, comment="Update time")
     extra_metadata = Column(JSON, nullable=True, comment="Additional metadata")
-
-    __table_args__ = (
-        ForeignKeyConstraint(
-            ["workdir_id", "uid"],
-            ["project_workdirs.id", "project_workdirs.uid"],
-            name="fk_conversations_workdir_owner",
-            ondelete="RESTRICT",
-        ),
-    )
 
     # Relationships
     messages = relationship("Message", back_populates="conversation", cascade="all, delete-orphan")
@@ -408,7 +320,7 @@ class Conversation(Base):
             "title": self.title,
             "status": self.status,
             "is_pinned": bool(self.is_pinned),
-            "workdir_id": self.workdir_id,
+            "workdir_path": self.workdir_path,
             "created_at": format_utc_datetime(self.created_at),
             "updated_at": format_utc_datetime(self.updated_at),
             "metadata": metadata,

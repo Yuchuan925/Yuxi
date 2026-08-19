@@ -37,7 +37,7 @@ async def _bind_valid_output(
     if run.conversation_id is None:
         conversation = Conversation(
             thread_id=run.conversation_thread_id,
-            workdir_id=f"workdir-{run.conversation_thread_id}",
+            workdir_path=f"projects/workdir-{run.conversation_thread_id}",
             uid=run.uid,
             agent_id=run.agent_slug,
             status="active",
@@ -79,7 +79,7 @@ async def _seed_subagent_runs(db, *, relation_child_thread_id: str = "child-thre
             Conversation(
                 id=10,
                 thread_id="parent-thread",
-                workdir_id="workdir-parent-thread",
+                workdir_path="projects/workdir-parent-thread",
                 uid="user-1",
                 agent_id="main",
                 status="active",
@@ -87,7 +87,7 @@ async def _seed_subagent_runs(db, *, relation_child_thread_id: str = "child-thre
             Conversation(
                 id=20,
                 thread_id="child-thread",
-                workdir_id="workdir-parent-thread",
+                workdir_path="projects/workdir-parent-thread",
                 uid="user-1",
                 agent_id="worker",
                 status="subagent",
@@ -228,14 +228,14 @@ async def test_set_output_message_rejects_wrong_causal_owner_and_accepts_exact_m
     repository = AgentRunRepository(session)
     conversation = Conversation(
         thread_id="output-thread",
-        workdir_id="workdir-output-thread",
+        workdir_path="projects/workdir-output-thread",
         uid="user-1",
         agent_id="main",
         status="active",
     )
     other_conversation = Conversation(
         thread_id="other-output-thread",
-        workdir_id="workdir-other-output-thread",
+        workdir_path="projects/workdir-other-output-thread",
         uid="user-1",
         agent_id="main",
         status="active",
@@ -625,7 +625,7 @@ async def test_pending_cancel_is_terminal_without_fake_worker_expiry(session):
     """从未执行的 pending Run 由用户取消后直接形成 cancelled 事实。"""
     conversation = Conversation(
         thread_id="cancel-pending-thread",
-        workdir_id="workdir-cancel-pending-thread",
+        workdir_path="projects/workdir-cancel-pending-thread",
         uid="user-1",
         agent_id="main",
         status="active",

@@ -244,11 +244,11 @@ async def test_projection_refresh_waits_for_lock_then_reloads_revoked_authorizat
         await engine.dispose()
 
 
-async def test_legacy_skill_sources_migrate_once_without_workspace_fallback(
+async def test_legacy_shared_skill_migrates_without_touching_personal_workspace(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
 ):
-    """旧共享与个人来源必须先安全复制并切换，成功后删除已识别兼容目录。"""
+    """旧共享来源完成切换时，UserWorkspace 中的个人 Skill 必须原地保留。"""
     engine = create_async_engine(os.environ["POSTGRES_URL"], pool_pre_ping=True)
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
     suffix = uuid.uuid4().hex
@@ -312,7 +312,7 @@ async def test_legacy_skill_sources_migrate_once_without_workspace_fallback(
         monkeypatch.setattr(skill_service.shutil, "rmtree", fail_shared_cleanup_once)
         with pytest.raises(OSError, match="injected legacy cleanup failure"):
             async with session_factory() as db:
-                await skill_service.migrate_legacy_skill_storage(db, remove_personal_legacy=True)
+                await skill_service.migrate_legacy_skill_storage(db)
 
         async with session_factory() as db:
             persisted_after_failure = await db.scalar(select(Skill.dir_path).where(Skill.id == skill_id))
@@ -321,7 +321,7 @@ async def test_legacy_skill_sources_migrate_once_without_workspace_fallback(
 
         monkeypatch.setattr(skill_service.shutil, "rmtree", original_rmtree)
         async with session_factory() as db:
-            await skill_service.migrate_legacy_skill_storage(db, remove_personal_legacy=True)
+            await skill_service.migrate_legacy_skill_storage(db)
 
         async with session_factory() as db:
             persisted_path = await db.scalar(select(Skill.dir_path).where(Skill.id == skill_id))
@@ -329,16 +329,16 @@ async def test_legacy_skill_sources_migrate_once_without_workspace_fallback(
         assert "shared-marker" in (tmp_path / "skill-sources/shared" / shared_slug / "SKILL.md").read_text(
             encoding="utf-8"
         )
-        assert "personal-marker" in (
-            skill_service.get_personal_skills_root_dir(uid) / personal_slug / "SKILL.md"
-        ).read_text(encoding="utf-8")
+        assert skill_service.get_personal_skills_root_dir(uid) / personal_slug == legacy_personal
+        assert "personal-marker" in (legacy_personal / "SKILL.md").read_text(encoding="utf-8")
         assert not legacy_shared.exists()
-        assert not legacy_personal.parent.exists()
+        assert legacy_personal.is_dir()
+        assert not (tmp_path / "skill-sources/personal" / uid / personal_slug).exists()
 
-        # 停机迁移重复执行不得恢复已经删除的兼容来源。
+        # 停机迁移重复执行也不得扫描或删除个人 Workspace。
         async with session_factory() as db:
-            await skill_service.migrate_legacy_skill_storage(db, remove_personal_legacy=True)
-        assert not legacy_personal.parent.exists()
+            await skill_service.migrate_legacy_skill_storage(db)
+        assert legacy_personal.is_dir()
     finally:
         async with session_factory() as db:
             if skill_id is not None:

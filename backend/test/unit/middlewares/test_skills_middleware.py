@@ -65,11 +65,10 @@ async def test_resolve_runtime_skills_derives_prompt_and_readable_closure(monkey
     assert scope["readable_skills"] == ["alpha", "beta"]
     assert set(scope["runtime_skill_metadata"]) == {"alpha", "beta"}
     assert scope["runtime_skill_metadata"]["alpha"]["path"] == "/home/gem/skills/alpha/SKILL.md"
-    assert scope["runtime_skill_metadata"]["beta"]["path"] == "/home/gem/skills/beta/SKILL.md"
-    assert scope["runtime_skill_sources"] == {
-        "alpha": "/tmp/shared/alpha",
-        "beta": "/tmp/personal/beta",
-    }
+    assert scope["runtime_skill_metadata"]["beta"]["path"] == (
+        "/home/gem/user-data/agents/skills/beta/SKILL.md"
+    )
+    assert scope["runtime_skill_sources"] == {"alpha": "/tmp/shared/alpha"}
     assert scope["runtime_skill_dependency_map"]["alpha"]["skills"] == ["beta"]
 
 
@@ -304,14 +303,14 @@ def test_read_file_activates_only_readable_skill() -> None:
     assert updated.update["activated_skills"] == ["alpha"]
 
 
-def test_workspace_compat_path_no_longer_activates_skill() -> None:
+def test_personal_workspace_path_activates_skill() -> None:
     middleware = SkillsMiddleware()
 
     slug = middleware._extract_skill_slug_from_skill_md_path(
-        "/home/gem/user-data/workspace/agents/skills/alpha/SKILL.md"
+        "/home/gem/user-data/agents/skills/alpha/SKILL.md"
     )
 
-    assert slug is None
+    assert slug == "alpha"
 
 
 def test_read_file_denies_skill_outside_readable_scope() -> None:

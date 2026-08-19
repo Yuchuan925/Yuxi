@@ -62,7 +62,7 @@ def _async_tool_middleware(*, model: str | None = None) -> YuxiSubAgentMiddlewar
     parent_context = SimpleNamespace(
         thread_id="parent-thread",
         runtime_scope_id="parent-thread",
-        workdir_id="workdir-1",
+        workdir_path="projects/workdir-1",
         uid="user-1",
         run_id="parent-run",
     )
@@ -260,7 +260,7 @@ async def test_task_tool_invokes_subagent_with_child_scope(monkeypatch) -> None:
         parent_context=SimpleNamespace(
             thread_id="child-runtime-thread",
             runtime_scope_id="parent-thread",
-            workdir_id="workdir-1",
+            workdir_path="projects/workdir-1",
             uid="user-1",
             run_id="parent-run",
         ),
@@ -304,7 +304,7 @@ async def test_task_tool_inherits_parent_model_when_subagent_model_empty(monkeyp
         parent_context=SimpleNamespace(
             thread_id="parent-thread",
             runtime_scope_id="parent-thread",
-            workdir_id="workdir-1",
+            workdir_path="projects/workdir-1",
             uid="user-1",
             run_id="parent-run",
             model="parent:model",
@@ -338,7 +338,7 @@ async def test_task_tool_records_failed_subagent_run(monkeypatch) -> None:
         parent_context=SimpleNamespace(
             thread_id="parent-thread",
             runtime_scope_id="parent-thread",
-            workdir_id="workdir-1",
+            workdir_path="projects/workdir-1",
             uid="user-1",
             run_id="parent-run",
             model="",
@@ -375,7 +375,7 @@ async def test_task_tool_reports_running_subagent_after_wait_timeout(monkeypatch
         parent_context=SimpleNamespace(
             thread_id="parent-thread",
             runtime_scope_id="parent-thread",
-            workdir_id="workdir-1",
+            workdir_path="projects/workdir-1",
             uid="user-1",
             run_id="parent-run",
             model="",
@@ -415,7 +415,7 @@ async def test_task_tool_continues_existing_subagent_thread(monkeypatch) -> None
         parent_context=SimpleNamespace(
             thread_id="parent-thread",
             runtime_scope_id="parent-thread",
-            workdir_id="workdir-1",
+            workdir_path="projects/workdir-1",
             uid="user-1",
             run_id="parent-run",
             model="",
@@ -460,7 +460,7 @@ async def test_task_tool_rejects_invalid_continuation_thread(monkeypatch) -> Non
         parent_context=SimpleNamespace(
             thread_id="parent-thread",
             runtime_scope_id="parent-thread",
-            workdir_id="workdir-1",
+            workdir_path="projects/workdir-1",
             uid="user-1",
             run_id="parent-run",
         ),
@@ -766,4 +766,4 @@ def test_parent_runtime_keeps_one_shared_runtime_and_workdir() -> None:
     runtime = _async_tool_middleware()._parent_runtime()
 
     assert runtime.runtime_scope_id == "parent-thread"
-    assert runtime.workdir_id == "workdir-1"
+    assert not hasattr(runtime, "workdir_id")

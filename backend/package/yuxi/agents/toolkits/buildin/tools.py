@@ -218,7 +218,7 @@ def _normalize_presented_artifact_path(filepath: str, runtime: ToolRuntime) -> s
     from yuxi.agents.backends.sandbox.backend import ProvisionerSandboxBackend
 
     runtime_context = runtime.context
-    runtime_scope_id, uid, sandbox_instance_id, workdir_id = _resolve_runtime_sandbox_scope(runtime)
+    runtime_scope_id, uid, workdir_relative_path = _resolve_runtime_sandbox_scope(runtime)
 
     normalized_input = str(filepath or "").strip()
     if not normalized_input:
@@ -235,8 +235,7 @@ def _normalize_presented_artifact_path(filepath: str, runtime: ToolRuntime) -> s
     backend = ProvisionerSandboxBackend(
         thread_id=runtime_scope_id,
         uid=str(uid),
-        sandbox_instance_id=sandbox_instance_id,
-        workdir_id=workdir_id,
+        workdir_path=workdir_relative_path,
         create_if_missing=False,
     )
     if not backend.regular_file_exists(normalized_path):
@@ -319,13 +318,12 @@ async def ocr_parse_file(file_path: str, runtime: ToolRuntime, ocr_engine: str |
     """Parse a sandbox file with OCR, persist Markdown output, and return only a short result summary."""
     from yuxi.services.ocr_service import parse_document
 
-    runtime_scope_id, uid, sandbox_instance_id, workdir_id = _resolve_runtime_sandbox_scope(runtime)
+    runtime_scope_id, uid, workdir_relative_path = _resolve_runtime_sandbox_scope(runtime)
     source_virtual_path = _resolve_ocr_source_path(file_path, runtime)
     backend = ProvisionerSandboxBackend(
         thread_id=runtime_scope_id,
         uid=uid,
-        sandbox_instance_id=sandbox_instance_id,
-        workdir_id=workdir_id,
+        workdir_path=workdir_relative_path,
         create_if_missing=False,
     )
     from yuxi.services.ocr_service import resolve_ocr_engine_id
@@ -390,19 +388,18 @@ def _resolve_ocr_source_path(file_path: str, runtime: ToolRuntime) -> str:
     return clean_virtual_path
 
 
-def _resolve_runtime_sandbox_scope(runtime: ToolRuntime) -> tuple[str, str, str, str]:
-    """读取 runtime、用户、实例与 Workdir 四个 Sandbox scope。"""
+def _resolve_runtime_sandbox_scope(runtime: ToolRuntime) -> tuple[str, str, str]:
+    """读取 execution runtime、用户与 Workdir 路径。"""
     runtime_thread_id = _runtime_scope_value(runtime, "runtime_scope_id") or _runtime_scope_value(runtime, "thread_id")
     uid = _runtime_scope_value(runtime, "uid")
-    sandbox_instance_id = _runtime_scope_value(runtime, "sandbox_instance_id") or runtime_thread_id
-    workdir_id = _runtime_scope_value(runtime, "workdir_id")
+    workdir_path = _runtime_scope_value(runtime, "workdir_relative_path")
     if not runtime_thread_id:
         raise ValueError("当前运行时缺少 thread_id")
     if not uid:
         raise ValueError("当前运行时缺少 uid")
-    if not workdir_id:
-        raise ValueError("当前运行时缺少 workdir_id")
-    return runtime_thread_id, uid, str(sandbox_instance_id), workdir_id
+    if not workdir_path:
+        raise ValueError("当前运行时缺少 workdir_relative_path")
+    return runtime_thread_id, uid, workdir_path
 
 
 def _runtime_scope_value(runtime: ToolRuntime, key: str) -> str | None:

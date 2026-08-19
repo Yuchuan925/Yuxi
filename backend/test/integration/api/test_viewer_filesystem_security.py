@@ -1,14 +1,15 @@
 from __future__ import annotations
 
 import uuid
+from pathlib import Path
 
 import pytest
-from yuxi.agents.backends.sandbox import ProvisionerSandboxBackend
+from yuxi.agents.backends.sandbox.paths import user_workdir_host_dir
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
 
 
-async def _create_thread_for_user(test_client, headers: dict[str, str]) -> str:
+async def _create_thread_for_user(test_client, headers: dict[str, str]) -> tuple[str, str]:
     agent_resp = await test_client.get("/api/agent/default", headers=headers)
     assert agent_resp.status_code == 200, agent_resp.text
     agent = agent_resp.json().get("agent") or {}
@@ -29,42 +30,17 @@ async def _create_thread_for_user(test_client, headers: dict[str, str]) -> str:
     payload = create_resp.json()
     thread_id = payload.get("thread_id") or payload.get("id")
     assert thread_id
-    return thread_id
-
-
-async def _project_backend(test_client, headers, thread_id: str, uid: str) -> tuple[ProvisionerSandboxBackend, str]:
-    response = await test_client.post(
-        "/api/viewer/filesystem/upload",
-        data={"thread_id": thread_id, "parent_path": "/"},
-        files={"files": ("probe.txt", b"probe", "text/plain")},
-        headers=headers,
-    )
-    assert response.status_code == 200, response.text
-    path = response.json()["entries"][0]["path"]
-    project_root = path.rsplit("/", 1)[0]
-    workdir_id = project_root.removeprefix("/home/gem/projects/project-")
-    file_scope_id = f"workdir-files-{workdir_id}"
-    return (
-        ProvisionerSandboxBackend(
-            thread_id=file_scope_id,
-            uid=uid,
-            workdir_id=workdir_id,
-            sandbox_instance_id=file_scope_id,
-            create_if_missing=False,
-        ),
-        project_root,
-    )
+    return str(thread_id), str(payload["workdir_path"])
 
 
 async def test_viewer_download_blocks_project_symlink_escape(test_client, standard_user):
     headers = standard_user["headers"]
     uid = str(standard_user["user"]["uid"])
-    thread_id = await _create_thread_for_user(test_client, headers)
+    thread_id, workdir_path = await _create_thread_for_user(test_client, headers)
 
-    backend, project_root = await _project_backend(test_client, headers, thread_id, uid)
+    project_root = f"/home/gem/user-data/{workdir_path}"
     file_path = f"{project_root}/escape.txt"
-    result = backend.execute(f"ln -s /etc/hosts {file_path}")
-    assert result.exit_code == 0, result.output
+    (user_workdir_host_dir(uid, workdir_path) / "escape.txt").symlink_to("/etc/hosts")
 
     response = await test_client.get(
         "/api/viewer/filesystem/download",
@@ -75,16 +51,16 @@ async def test_viewer_download_blocks_project_symlink_escape(test_client, standa
     assert response.status_code == 403, response.text
 
 
-async def test_viewer_upload_blocks_project_symlink_escape(test_client, standard_user):
+async def test_viewer_upload_blocks_project_symlink_escape(test_client, standard_user, tmp_path: Path):
     headers = standard_user["headers"]
     uid = str(standard_user["user"]["uid"])
-    thread_id = await _create_thread_for_user(test_client, headers)
+    thread_id, workdir_path = await _create_thread_for_user(test_client, headers)
 
-    backend, project_root = await _project_backend(test_client, headers, thread_id, uid)
-    outside_dir = f"/tmp/yuxi-viewer-{uuid.uuid4().hex}"
+    project_root = f"/home/gem/user-data/{workdir_path}"
+    outside_dir = tmp_path / f"yuxi-viewer-{uuid.uuid4().hex}"
+    outside_dir.mkdir()
     parent_path = f"{project_root}/escape-dir"
-    result = backend.execute(f"mkdir -p {outside_dir} && ln -s {outside_dir} {parent_path}")
-    assert result.exit_code == 0, result.output
+    (user_workdir_host_dir(uid, workdir_path) / "escape-dir").symlink_to(outside_dir)
 
     response = await test_client.post(
         "/api/viewer/filesystem/upload",
@@ -94,5 +70,4 @@ async def test_viewer_upload_blocks_project_symlink_escape(test_client, standard
     )
 
     assert response.status_code == 403, response.text
-    result = backend.execute(f"test ! -e {outside_dir}/escape.txt")
-    assert result.exit_code == 0, result.output
+    assert not (outside_dir / "escape.txt").exists()

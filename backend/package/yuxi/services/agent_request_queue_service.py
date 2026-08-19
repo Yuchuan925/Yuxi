@@ -831,9 +831,6 @@ async def _dispatch_ready_head(
     expected_request_id: str | None = None,
 ) -> DispatchResult | None:
     """只在 ready 状态派发 FIFO 队头。"""
-    from yuxi.services.project_workdir_materialization_service import require_project_workdir_active
-
-    await require_project_workdir_active(db)
     repo = AgentRunRequestRepository(db)
     head = await repo.get_queue_head(
         uid=uid,

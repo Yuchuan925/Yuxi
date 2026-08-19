@@ -119,8 +119,9 @@ class TaskToolSchema(BaseModel):
 |------|------|------|
 | LangGraph checkpoint | 当前 `thread_id` | child `thread_id` |
 | Sandbox runtime | 根 Conversation `runtime_scope_id` | 同一个根 `runtime_scope_id` |
-| `/home/gem/projects/project-<id>` | 当前 Project Workdir | 同一个 Project Workdir |
-| `/home/gem/user-data` | 当前 `uid` 的 User Data | 同一 `uid` 的 User Data |
-| `/home/gem/skills` | 当前用户的授权 Skills 投影 | 同一用户的授权 Skills 投影 |
+| `/home/gem/user-data/<workdir_path>` | 当前 Workdir（cwd） | 同一个 Workdir（cwd） |
+| `/home/gem/user-data` | 当前 `uid` 的 UserWorkspace | 同一 `uid` 的 UserWorkspace |
+| `/home/gem/skills` | 当前用户的共享/内置 Skills 投影 | 同一用户的共享/内置 Skills 投影 |
+| `/home/gem/user-data/agents/skills` | 当前用户的个人 Skills | 同一用户的个人 Skills |
 
 父子 Agent 因此直接读取同一份实时 POSIX 字节，不经过 checkpoint、复制或合并。各自仍使用独立 LangGraph 上下文，并由 Agent 配置分别决定哪些 Skill 描述与工具进入模型上下文。

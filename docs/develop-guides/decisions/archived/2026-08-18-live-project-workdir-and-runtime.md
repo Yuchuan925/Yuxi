@@ -1,8 +1,10 @@
 # 实时 Project Workdir 与独立 Sandbox Runtime
 
-状态：implemented
+状态：archived
 类型：simplification
-Owner：backend/package/yuxi/services/project_workdir_service.py
+Owner：docs/develop-guides/decisions/implemented/2026-08-19-workdir-in-user-workspace.md
+
+本记录已被 [Workdir 归属 UserWorkspace 并取消独立 Project 存储域](../implemented/2026-08-19-workdir-in-user-workspace.md) 完全取代，仅保留为历史背景。
 
 Project 文件授权与实时读取由 `viewer_filesystem_service.py`、`thread_files_service.py` 和受信任
 file bridge 拥有；Conversation/Run 与 Workdir/runtime 的绑定由 PostgreSQL repository、worker lifecycle
@@ -27,7 +29,7 @@ file bridge 拥有；Conversation/Run 与 Workdir/runtime 的绑定由 PostgreSQ
 - Viewer、搜索、预览、下载、上传、删除和 artifact 通过独立受信任 file bridge 读取实时 Workdir，
   不读取 revision/manifest。AgentPanel 只展示当前 Project；User Data 与当前用户授权 Skills 可由 Agent
   和 artifact 使用，但不进入 Project 树。
-- Skills 文件按 uid 投影授权全集并只读挂载；Agent 选择只决定 Prompt 和工具激活。授权 mutation 与投影
+- 共享/内置 Skills 文件按 uid 投影授权全集并只读挂载；个人 Skill 保留在 UserWorkspace；Agent 选择只决定 Prompt 和工具激活。授权 mutation 与投影
   refresh 使用同一 uid PostgreSQL advisory lock，HTTP artifact 每次重新检查当前授权。
 - 根 Run 终态事务原子取消活跃后代并设置 `runtime_cleanup_pending`。新 Run、retry claim 和 SSE `end`
   不能越过该 fence；cleanup 失败由 durable reconciler 重试。清理 runtime/进程不删除 Workdir 文件。

@@ -24,7 +24,7 @@ from yuxi.agents.skills.service import (
 from yuxi.agents.toolkits import get_all_tool_instances
 from yuxi.storage.postgres.manager import pg_manager
 from yuxi.utils.logging_config import logger
-from yuxi.utils.paths import VIRTUAL_SKILLS_PATH
+from yuxi.utils.paths import VIRTUAL_PERSONAL_SKILLS_PATH, VIRTUAL_SKILLS_PATH
 
 # =============================================================================
 # 类型定义
@@ -64,15 +64,18 @@ async def _list_skills_from_db(db: AsyncSession | None = None, user=None) -> lis
 
 
 def build_prompt_metadata(skills: list) -> dict[str, SkillPromptMetadata]:
-    """构建统一只读 Skill 投影的提示词元数据。"""
+    """按共享投影与个人 UserWorkspace 的真实路径构建提示词元数据。"""
     result: dict[str, SkillPromptMetadata] = {}
     for item in skills:
         if not item.slug:
             continue
+        root = (
+            VIRTUAL_PERSONAL_SKILLS_PATH if getattr(item, "source_scope", None) == "personal" else VIRTUAL_SKILLS_PATH
+        )
         result[item.slug] = {
             "name": item.name,
             "description": item.description,
-            "path": f"{VIRTUAL_SKILLS_PATH}/{item.slug}/SKILL.md",
+            "path": f"{root}/{item.slug}/SKILL.md",
         }
     return result
 
@@ -91,8 +94,12 @@ def build_dependency_map(skills: list) -> dict[str, SkillDependencyNode]:
 
 
 def build_source_map(skills: list) -> dict[str, str]:
-    """构建当前用户授权 Skill 的统一只读投影来源。"""
-    return {item.slug: str(item.source_dir) for item in skills if item.slug and getattr(item, "source_dir", None)}
+    """构建当前用户授权共享 Skill 的只读投影来源。"""
+    return {
+        item.slug: str(item.source_dir)
+        for item in skills
+        if item.slug and getattr(item, "source_dir", None) and getattr(item, "source_scope", None) != "personal"
+    }
 
 
 async def get_prompt_metadata(db: AsyncSession | None = None, user=None) -> dict[str, SkillPromptMetadata]:
@@ -222,12 +229,15 @@ class SkillsMiddleware(AgentMiddleware):
         Args:
             skills_context_name: 上下文中的 skills 列表字段名称（默认 "skills"）
             enable_skills_prompt: 是否启用 skills 提示段注入（默认 True）
-            skills_sources_for_prompt: skills 来源路径（默认展示当前用户授权投影）
+            skills_sources_for_prompt: skills 来源路径（默认展示共享投影与个人 Workspace）
         """
         super().__init__()
         self.skills_context_name = skills_context_name
         self.enable_skills_prompt = enable_skills_prompt
-        self.skills_sources_for_prompt = skills_sources_for_prompt or [f"{VIRTUAL_SKILLS_PATH}/"]
+        self.skills_sources_for_prompt = skills_sources_for_prompt or [
+            f"{VIRTUAL_SKILLS_PATH}/",
+            f"{VIRTUAL_PERSONAL_SKILLS_PATH}/",
+        ]
 
     async def awrap_model_call(
         self, request: ModelRequest, handler: Callable[[ModelRequest], ModelResponse]
@@ -420,19 +430,20 @@ class SkillsMiddleware(AgentMiddleware):
         return self._process_tool_call_result(result, request)
 
     def _extract_skill_slug_from_skill_md_path(self, file_path: Any) -> str | None:
-        """从当前用户只读投影的 SKILL.md 路径中提取 slug。"""
+        """从共享投影或个人 UserWorkspace 的 SKILL.md 路径中提取 slug。"""
         if not isinstance(file_path, str):
             return None
         raw = file_path.strip()
         if not raw:
             return None
         pure = PurePosixPath(raw if raw.startswith("/") else f"/{raw}")
-        try:
-            relative = pure.relative_to(PurePosixPath(VIRTUAL_SKILLS_PATH))
-        except ValueError:
-            return None
-        if len(relative.parts) == 2 and relative.name == "SKILL.md" and is_valid_skill_slug(relative.parts[0]):
-            return relative.parts[0]
+        for root in (VIRTUAL_SKILLS_PATH, VIRTUAL_PERSONAL_SKILLS_PATH):
+            try:
+                relative = pure.relative_to(PurePosixPath(root))
+            except ValueError:
+                continue
+            if len(relative.parts) == 2 and relative.name == "SKILL.md" and is_valid_skill_slug(relative.parts[0]):
+                return relative.parts[0]
         return None
 
     def _get_readable_skills(self, runtime_context) -> set[str]:

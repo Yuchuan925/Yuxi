@@ -39,13 +39,17 @@ TODO_MID_PROMPT = """
 def build_prompt_with_context(context):
     current_date = f"当前日期：{shanghai_now().strftime('%Y-%m-%d')}"
     workdir_path = str(getattr(context, "workdir_path", "") or "").rstrip("/")
+    if not workdir_path:
+        raise ValueError("Agent context 缺少当前 Workdir 路径")
     filesystem_prompt = f"""
 <| 文件系统约束 |>
 当前 Project Workdir 为 {workdir_path}，也是默认工作目录：
 - {workdir_path}/uploads/：用户上传文件的建议目录；Agent 可以覆盖，但非必要不修改原文件
 - {workdir_path}/outputs/：最终交付物的建议目录，不是强制授权边界
-- /home/gem/user-data/：当前用户跨 Project 的私人目录
-- /home/gem/skills/：当前用户已授权 Skill 的只读目录
+- /home/gem/user-data/：当前用户的整个 UserWorkspace；可以读取其他 Project 目录作为参考
+- /home/gem/skills/：当前用户已授权共享/内置 Skill 的只读目录
+- /home/gem/user-data/agents/skills/：当前用户的个人 Skill 目录
+- 未经用户明确要求，不得在当前 Project Workdir 之外创建、修改、移动或删除文件
 - 父子智能体共享同一个 Project Workdir 与执行树 runtime；并发写同一路径遵循真实 POSIX 结果
 """
     system_prompt = (

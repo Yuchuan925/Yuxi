@@ -10,7 +10,7 @@ from dataclasses import dataclass
 
 from yuxi.utils.logging_config import logger
 
-from .paths import workspace_uid_dirname
+from .paths import normalize_workdir_path, workspace_uid_dirname
 from .provisioner_client import ProvisionerClient, SandboxRecord
 
 
@@ -25,13 +25,10 @@ def sandbox_id_for_thread(
     thread_id: str,
     *,
     uid: str | None = None,
-    sandbox_instance_id: str | None = None,
 ) -> str:
     runtime_id = str(thread_id or "").strip()
     uid_id = str(uid or "").strip()
-    instance_id = str(sandbox_instance_id or runtime_id).strip()
-    scope = runtime_id if instance_id == runtime_id else f"{runtime_id}:{instance_id}"
-    identity = f"{uid_id}:{scope}" if uid_id else scope
+    identity = f"{uid_id}:{runtime_id}" if uid_id else runtime_id
     digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()
     return digest[:12]
 
@@ -39,9 +36,8 @@ def sandbox_id_for_thread(
 def _sandbox_key(
     uid: str,
     runtime_thread_id: str,
-    sandbox_instance_id: str,
 ) -> str:
-    return f"{uid}::{runtime_thread_id}::{sandbox_instance_id}"
+    return f"{uid}::{runtime_thread_id}"
 
 
 def normalize_env(env: dict | None) -> dict[str, str]:
@@ -90,7 +86,7 @@ class SandboxConnection:
     sandbox_id: str
     sandbox_url: str
     generation: str | None = None
-    workdir_id: str | None = None
+    workdir_path: str | None = None
 
 
 class SandboxIdentityMismatchError(RuntimeError):
@@ -135,7 +131,7 @@ class ProvisionerSandboxProvider:
             sandbox_id=record.sandbox_id,
             sandbox_url=record.sandbox_url,
             generation=record.generation,
-            workdir_id=record.workdir_id,
+            workdir_path=record.workdir_path,
         )
         self._connections[cache_key] = connection
         self._last_touch_at[cache_key] = time.time()
@@ -158,8 +154,8 @@ class ProvisionerSandboxProvider:
         record = self._client.discover(connection.sandbox_id)
         if record is None:
             return False
-        if record.workdir_id != connection.workdir_id:
-            raise SandboxIdentityMismatchError("sandbox Project Workdir changed within one runtime scope")
+        if record.workdir_path != connection.workdir_path:
+            raise SandboxIdentityMismatchError("sandbox Workdir changed within one runtime scope")
         connection.sandbox_url = record.sandbox_url
         connection.generation = record.generation
         return True
@@ -170,21 +166,19 @@ class ProvisionerSandboxProvider:
         *,
         uid: str,
         inherit_env: bool = True,
-        sandbox_instance_id: str | None = None,
-        workdir_id: str | None = None,
+        workdir_path: str | None = None,
     ) -> str:
-        instance_id = str(sandbox_instance_id or thread_id).strip()
-        normalized_workdir_id = str(workdir_id or "").strip() or None
-        cache_key = _sandbox_key(uid, thread_id, instance_id)
+        normalized_workdir_path = normalize_workdir_path(workdir_path) if workdir_path else None
+        cache_key = _sandbox_key(uid, thread_id)
         lock = self._thread_lock(cache_key)
         with lock:
             current = self._connections.get(cache_key)
             if current:
                 if current.uid != uid:
                     raise RuntimeError(f"sandbox scope {cache_key} belongs to uid {current.uid}, not {uid}")
-                if current.workdir_id != normalized_workdir_id:
+                if current.workdir_path != normalized_workdir_path:
                     raise SandboxIdentityMismatchError(
-                        "sandbox Project Workdir does not match the existing runtime scope"
+                        "sandbox Workdir does not match the existing runtime scope"
                     )
                 try:
                     if self._touch_if_needed(current):
@@ -197,22 +191,18 @@ class ProvisionerSandboxProvider:
                     logger.warning(f"Failed to touch sandbox {current.sandbox_id} for {cache_key}: {exc}")
                     return current.sandbox_id
 
-            sandbox_id = sandbox_id_for_thread(
-                thread_id,
-                uid=uid,
-                sandbox_instance_id=instance_id,
-            )
+            sandbox_id = sandbox_id_for_thread(thread_id, uid=uid)
             logger.info(f"Ensuring sandbox {sandbox_id} for runtime thread {thread_id}")
             record = self._client.create(
                 sandbox_id,
                 thread_id,
                 workspace_uid_dirname(uid),
                 load_user_agent_env(uid) if inherit_env else {},
-                workdir_id=normalized_workdir_id,
+                workdir_path=normalized_workdir_path,
                 inherit_env=inherit_env,
             )
-            if record.workdir_id != normalized_workdir_id:
-                raise RuntimeError("created sandbox Project Workdir does not match requested scope")
+            if record.workdir_path != normalized_workdir_path:
+                raise RuntimeError("created sandbox Workdir does not match requested scope")
 
             connection = self._record_to_connection(
                 cache_key=cache_key,
@@ -229,21 +219,19 @@ class ProvisionerSandboxProvider:
         uid: str,
         create_if_missing: bool = False,
         inherit_env: bool = True,
-        sandbox_instance_id: str | None = None,
-        workdir_id: str | None = None,
+        workdir_path: str | None = None,
     ) -> SandboxConnection | None:
-        instance_id = str(sandbox_instance_id or thread_id).strip()
-        normalized_workdir_id = str(workdir_id or "").strip() or None
-        cache_key = _sandbox_key(uid, thread_id, instance_id)
+        normalized_workdir_path = normalize_workdir_path(workdir_path) if workdir_path else None
+        cache_key = _sandbox_key(uid, thread_id)
         lock = self._thread_lock(cache_key)
         with lock:
             current = self._connections.get(cache_key)
             if current:
                 if current.uid != uid:
                     raise RuntimeError(f"sandbox scope {cache_key} belongs to uid {current.uid}, not {uid}")
-                if current.workdir_id != normalized_workdir_id:
+                if current.workdir_path != normalized_workdir_path:
                     raise SandboxIdentityMismatchError(
-                        "sandbox Project Workdir does not match the existing runtime scope"
+                        "sandbox Workdir does not match the existing runtime scope"
                     )
                 try:
                     if self._touch_if_needed(current):
@@ -256,28 +244,24 @@ class ProvisionerSandboxProvider:
                     logger.warning(f"Failed to touch sandbox {current.sandbox_id} for {cache_key}: {exc}")
                     return current
 
-            sandbox_id = sandbox_id_for_thread(
-                thread_id,
-                uid=uid,
-                sandbox_instance_id=instance_id,
-            )
+            sandbox_id = sandbox_id_for_thread(thread_id, uid=uid)
             if create_if_missing:
                 record = self._client.create(
                     sandbox_id,
                     thread_id,
                     workspace_uid_dirname(uid),
                     load_user_agent_env(uid) if inherit_env else {},
-                    workdir_id=normalized_workdir_id,
+                    workdir_path=normalized_workdir_path,
                     inherit_env=inherit_env,
                 )
-                if record.workdir_id != normalized_workdir_id:
-                    raise RuntimeError("created sandbox Project Workdir does not match requested scope")
+                if record.workdir_path != normalized_workdir_path:
+                    raise RuntimeError("created sandbox Workdir does not match requested scope")
             else:
                 record = self._client.discover(sandbox_id)
                 if record is None:
                     return None
-                if record.workdir_id != normalized_workdir_id:
-                    raise RuntimeError("discovered sandbox Project Workdir does not match requested scope")
+                if record.workdir_path != normalized_workdir_path:
+                    raise RuntimeError("discovered sandbox Workdir does not match requested scope")
 
             return self._record_to_connection(
                 cache_key=cache_key,
@@ -292,30 +276,24 @@ class ProvisionerSandboxProvider:
         *,
         uid: str,
         clear_cache_on_delete_failure: bool = False,
-        sandbox_instance_id: str | None = None,
-        workdir_id: str | None = None,
+        workdir_path: str | None = None,
     ) -> None:
         """释放一个指定作用域的 Sandbox，并清理本地连接缓存。"""
-        instance_id = str(sandbox_instance_id or thread_id).strip()
-        normalized_workdir_id = str(workdir_id or "").strip() or None
-        cache_key = _sandbox_key(uid, thread_id, instance_id)
+        normalized_workdir_path = normalize_workdir_path(workdir_path) if workdir_path else None
+        cache_key = _sandbox_key(uid, thread_id)
         lock = self._thread_lock(cache_key)
         with lock:
             connection = self._connections.get(cache_key)
-            if connection and connection.workdir_id != normalized_workdir_id:
-                raise SandboxIdentityMismatchError("sandbox Project Workdir does not match the existing runtime scope")
+            if connection and connection.workdir_path != normalized_workdir_path:
+                raise SandboxIdentityMismatchError("sandbox Workdir does not match the existing runtime scope")
             if connection is None:
-                sandbox_id = sandbox_id_for_thread(
-                    thread_id,
-                    uid=uid,
-                    sandbox_instance_id=instance_id,
-                )
+                sandbox_id = sandbox_id_for_thread(thread_id, uid=uid)
                 record = self._client.discover(sandbox_id)
                 if record is None:
                     return
-                if record.workdir_id != normalized_workdir_id:
+                if record.workdir_path != normalized_workdir_path:
                     raise SandboxIdentityMismatchError(
-                        "sandbox Project Workdir does not match the requested release scope"
+                        "sandbox Workdir does not match the requested release scope"
                     )
                 generation = record.generation
             else:

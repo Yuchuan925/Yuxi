@@ -9,7 +9,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from sqlalchemy.orm.attributes import flag_modified
 
-from yuxi.repositories.project_workdir_repository import ProjectWorkdirRepository
 from yuxi.storage.postgres.models_business import (
     UNVIEWED_RUN_MARKER,
     Conversation,
@@ -95,9 +94,15 @@ class ConversationRepository:
         title: str | None = None,
         thread_id: str | None = None,
         metadata: dict | None = None,
-        workdir_id: str | None = None,
+        workdir_path: str | None = None,
     ) -> Conversation:
         """创建对话和统计记录但只 flush，供外层事务继续绑定关系。"""
+        from yuxi.agents.backends.sandbox.paths import (
+            allocate_default_user_workdir_path,
+            normalize_workdir_path,
+            user_workdir_host_dir,
+        )
+
         if not thread_id:
             thread_id = str(uuid_lib.uuid4())
 
@@ -106,11 +111,11 @@ class ConversationRepository:
 
         normalized_title = self._normalize_title(title)
 
-        workdir_repo = ProjectWorkdirRepository(self.db)
-        if workdir_id is None:
-            workdir = await workdir_repo.create_default(uid=str(uid))
+        if workdir_path is None:
+            normalized_workdir_path = allocate_default_user_workdir_path()
         else:
-            workdir = await workdir_repo.require_for_user(workdir_id, str(uid))
+            user_workdir_host_dir(str(uid), workdir_path)
+            normalized_workdir_path = normalize_workdir_path(workdir_path)
 
         conversation = Conversation(
             thread_id=thread_id,
@@ -120,7 +125,7 @@ class ConversationRepository:
             status="active",
             extra_metadata=metadata,
             last_viewed_run_id=UNVIEWED_RUN_MARKER,
-            workdir_id=workdir.id,
+            workdir_path=normalized_workdir_path,
         )
 
         self.db.add(conversation)
@@ -140,7 +145,7 @@ class ConversationRepository:
         title: str | None = None,
         thread_id: str | None = None,
         metadata: dict | None = None,
-        workdir_id: str | None = None,
+        workdir_path: str | None = None,
     ) -> Conversation:
         """创建并提交一个完整对话，适用于不需要外层事务编排的入口。"""
         conversation = await self.add_conversation(
@@ -149,10 +154,13 @@ class ConversationRepository:
             title=title,
             thread_id=thread_id,
             metadata=metadata,
-            workdir_id=workdir_id,
+            workdir_path=workdir_path,
         )
         await self.db.commit()
         await self.db.refresh(conversation)
+        from yuxi.agents.backends.sandbox.paths import ensure_bound_user_workdir
+
+        ensure_bound_user_workdir(str(uid), conversation.workdir_path)
         return conversation
 
     async def get_conversation_by_thread_id(self, thread_id: str) -> Conversation | None:
@@ -171,14 +179,16 @@ class ConversationRepository:
         return result.scalar_one_or_none()
 
     async def ensure_default_workdir(self, conversation: Conversation) -> str:
-        """为过渡期遗留顶层 Conversation 补齐默认 Workdir。"""
-        if conversation.workdir_id:
-            await ProjectWorkdirRepository(self.db).require_for_user(conversation.workdir_id, conversation.uid)
-            return conversation.workdir_id
-        workdir = await ProjectWorkdirRepository(self.db).create_default(uid=conversation.uid)
-        conversation.workdir_id = workdir.id
+        """确认 Conversation 的 Workdir 存在，遗留空值则创建默认目录。"""
+        from yuxi.agents.backends.sandbox.paths import create_default_user_workdir, user_workdir_host_dir
+
+        if conversation.workdir_path:
+            user_workdir_host_dir(conversation.uid, conversation.workdir_path)
+            return conversation.workdir_path
+        workdir_path, _ = create_default_user_workdir(conversation.uid)
+        conversation.workdir_path = workdir_path
         await self.db.flush()
-        return workdir.id
+        return workdir_path
 
     async def mark_thread_viewed(self, thread_id: str, run_id: str) -> Conversation | None:
         """记录用户最近查看过的顶层 run id；重复标记同一 run 时保持幂等。"""
