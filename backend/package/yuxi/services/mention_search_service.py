@@ -119,18 +119,6 @@ async def _write_cached_index(redis, redis_key: str, entries: list[tuple[str, st
         logger.warning(f"Failed to write mention cache {redis_key}: {e}")
 
 
-def _workspace_root(uid: str) -> Path:
-    return user_workspace_dir(uid)
-
-
-async def _scan_virtual_root(root: Path, virtual_prefix: str, max_entries: int) -> list[tuple[str, str]]:
-    scan_results = await asyncio.to_thread(_scan_pruned_files, root, max_entries)
-    return [
-        (name, f"{virtual_prefix}/{rel_path}" if rel_path and rel_path != "." else virtual_prefix)
-        for name, rel_path in scan_results
-    ]
-
-
 async def get_or_build_workspace_index(uid: str) -> list[tuple[str, str]]:
     redis = await get_redis_client()
     redis_key = f"{WORKSPACE_CACHE_PREFIX}{uid}"
@@ -138,7 +126,12 @@ async def get_or_build_workspace_index(uid: str) -> list[tuple[str, str]]:
     if cached is not None:
         return cached
 
-    entries = await _scan_virtual_root(_workspace_root(uid), "workspace", MAX_CACHED_ENTRIES)
+    scan_results = await asyncio.to_thread(
+        _scan_pruned_files,
+        user_workspace_dir(uid),
+        MAX_CACHED_ENTRIES,
+    )
+    entries = [(name, f"workspace/{rel_path}") for name, rel_path in scan_results]
     await _write_cached_index(redis, redis_key, entries)
     return entries
 

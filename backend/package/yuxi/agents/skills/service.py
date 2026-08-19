@@ -675,19 +675,10 @@ async def migrate_legacy_skill_storage(
         legacy_path = legacy_shared_root / item.slug
         target_path = get_skills_root_dir() / item.slug
         legacy_path_exists = legacy_path.exists() or legacy_path.is_symlink()
-        if Path(item.dir_path) == Path("skills") / item.slug:
-            if legacy_path_exists:
-                await asyncio.to_thread(
-                    _migrate_legacy_skill_tree,
-                    legacy_path,
-                    target_path,
-                    expected_slug=item.slug,
-                )
-                migrated_sources.append(legacy_path)
-            elif item.source_type != "builtin" and not target_path.is_dir():
-                raise RuntimeError(f"Skill 持久源缺失，拒绝切换: {item.slug}")
-            item.dir_path = (Path("shared") / item.slug).as_posix()
-        elif Path(item.dir_path) == Path("shared") / item.slug and legacy_path_exists:
+        legacy_dir_path = Path("skills") / item.slug
+        current_dir_path = Path("shared") / item.slug
+        uses_legacy_path = Path(item.dir_path) == legacy_dir_path
+        if legacy_path_exists and (uses_legacy_path or Path(item.dir_path) == current_dir_path):
             # 数据库切换与旧目录删除不是同一个事务；重跑时必须继续校验并清理已迁移来源。
             await asyncio.to_thread(
                 _migrate_legacy_skill_tree,
@@ -696,6 +687,10 @@ async def migrate_legacy_skill_storage(
                 expected_slug=item.slug,
             )
             migrated_sources.append(legacy_path)
+        if uses_legacy_path:
+            if not legacy_path_exists and item.source_type != "builtin" and not target_path.is_dir():
+                raise RuntimeError(f"Skill 持久源缺失，拒绝切换: {item.slug}")
+            item.dir_path = current_dir_path.as_posix()
 
     registered_shared_names = {item.slug for item in shared_items}
     if legacy_shared_root.is_dir():

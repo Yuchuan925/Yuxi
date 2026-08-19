@@ -40,6 +40,19 @@ HOP_BY_HOP_HEADERS = frozenset(
         "upgrade",
     }
 )
+PERSISTENT_SANDBOX_MOUNT_ROOTS = (
+    "/home/gem/skills",
+    "/home/gem/user-data",
+    "/home/gem/projects",
+)
+
+
+def _is_persistent_sandbox_mount_path(path: str) -> bool:
+    """判断 Sandbox 路径是否落入任一持久文件挂载根。"""
+    return any(
+        path == root or path.startswith(f"{root}/")
+        for root in PERSISTENT_SANDBOX_MOUNT_ROOTS
+    )
 
 
 def canonical_backend_name(backend: str) -> str:
@@ -493,15 +506,7 @@ class LocalContainerProvisionerBackend:
         """一次性 Sandbox 不得获得 User Data、Project 或 Skill 持久卷。"""
         for mount in container.attrs.get("Mounts") or []:
             destination = str((mount.get("Destination") or "").rstrip("/"))
-            if destination in {
-                "/home/gem/skills",
-                "/home/gem/user-data",
-                "/home/gem/projects",
-            }:
-                return False
-            if destination.startswith(
-                ("/home/gem/skills/", "/home/gem/user-data/", "/home/gem/projects/")
-            ):
+            if _is_persistent_sandbox_mount_path(destination):
                 return False
         return True
 
@@ -1123,19 +1128,13 @@ class KubernetesProvisionerBackend:
                             self._client.V1VolumeMount(
                                 name="home-dir", mount_path="/home/gem"
                             ),
-                            *(
-                                [
-                                    self._client.V1VolumeMount(
-                                        name="shared-data",
-                                        mount_path="/mnt/shared-data",
-                                    ),
-                                    self._client.V1VolumeMount(
-                                        name="skills-data",
-                                        mount_path="/mnt/skills-data",
-                                    ),
-                                ]
-                                if not ephemeral_storage
-                                else []
+                            self._client.V1VolumeMount(
+                                name="shared-data",
+                                mount_path="/mnt/shared-data",
+                            ),
+                            self._client.V1VolumeMount(
+                                name="skills-data",
+                                mount_path="/mnt/skills-data",
                             ),
                         ],
                     ),
@@ -1242,20 +1241,7 @@ class KubernetesProvisionerBackend:
                     for mount in getattr(container, "volume_mounts", []) or []
                 }
                 return not any(
-                    path
-                    in {
-                        "/home/gem/skills",
-                        "/home/gem/user-data",
-                        "/home/gem/projects",
-                    }
-                    or path.startswith(
-                        (
-                            "/home/gem/skills/",
-                            "/home/gem/user-data/",
-                            "/home/gem/projects/",
-                        )
-                    )
-                    for path in destinations
+                    _is_persistent_sandbox_mount_path(path) for path in destinations
                 )
             return False
         actual_claims = {
