@@ -22,7 +22,6 @@ from yuxi.agents.middlewares import (
     ImageInputCompatibilityMiddleware,
     TokenUsageMiddleware,
     create_summary_middleware,
-    save_attachments_to_fs,
 )
 from yuxi.agents.middlewares.skills import SkillsMiddleware
 from yuxi.agents.tool_approval import SENSITIVE_BACKEND_TOOLS, normalize_tool_approval_mode
@@ -92,7 +91,6 @@ async def _build_middlewares(context, tool_approval_mode: str):
             getattr(context, "tool_token_limit", DEFAULT_TOOL_RESULT_EVICTION_K_TOKENS) * 1024,
             context=context,
         ),
-        save_attachments_to_fs,
         SkillsMiddleware(),
         summary_middleware,
         TodoListMiddleware(system_prompt=TODO_MID_PROMPT),

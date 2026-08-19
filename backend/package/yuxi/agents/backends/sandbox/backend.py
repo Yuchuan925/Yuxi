@@ -462,6 +462,32 @@ class ProvisionerSandboxBackend(BaseSandbox):
             infos.append(info)
         return LsResult(entries=self._filter_readable_infos(infos))
 
+    def _ensure_parent_directory(self, file_path: str) -> None:
+        """在 UserWorkspace 内按需创建父目录，且不跟随符号链接。"""
+        relative_parts = tuple(PurePosixPath(file_path[len(_USER_DATA_ROOT) :].lstrip("/")).parts[:-1])
+        if not relative_parts:
+            return
+        script = f"""
+import os
+
+directory_fd = os.open({_USER_DATA_ROOT!r}, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+try:
+    for part in {relative_parts!r}:
+        try:
+            os.mkdir(part, 0o755, dir_fd=directory_fd)
+        except FileExistsError:
+            pass
+        child_fd = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=directory_fd)
+        os.close(directory_fd)
+        directory_fd = child_fd
+finally:
+    os.close(directory_fd)
+"""
+        encoded_script = base64.b64encode(script.encode("utf-8")).decode("ascii")
+        result = self.execute(f"python3 -c \"import base64;exec(base64.b64decode('{encoded_script}'))\"")
+        if result.exit_code not in (0, None):
+            raise PermissionError(result.output or file_path)
+
     def write(self, file_path: str, content: str) -> WriteResult:
         """Write a new text file.
 
@@ -484,6 +510,7 @@ class ProvisionerSandboxBackend(BaseSandbox):
             return WriteResult(error=f"Error: File '{file_path}' already exists")
 
         try:
+            self._ensure_parent_directory(normalized_path)
             result = self._get_client().file.write_file(file=normalized_path, content=content)
             if not result.success:
                 return WriteResult(error=result.message or f"Failed to write file '{file_path}'")
@@ -610,6 +637,7 @@ class ProvisionerSandboxBackend(BaseSandbox):
                 if not self._can_write_path(normalized_path):
                     responses.append(FileUploadResponse(path=normalized_path, error="permission_denied"))
                     continue
+                self._ensure_parent_directory(normalized_path)
                 result = self._get_client().file.write_file(
                     file=normalized_path,
                     content=base64.b64encode(content).decode("ascii"),

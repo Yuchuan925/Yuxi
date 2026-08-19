@@ -94,9 +94,7 @@ async def _upload(
         json={
             "attachments": [
                 {
-                    "file_name": uploaded["file_name"],
                     "file_type": uploaded.get("file_type"),
-                    "bucket_name": uploaded["bucket_name"],
                     "object_name": uploaded["object_name"],
                 }
             ]

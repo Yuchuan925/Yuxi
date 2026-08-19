@@ -263,10 +263,8 @@ class BaseAgent:
             with suppress(asyncio.CancelledError):
                 await route_task
 
-    async def stream_messages_with_state(self, messages: list[str], input_context=None, uploads=None, **kwargs):
+    async def stream_messages_with_state(self, messages: list[str], input_context=None, **kwargs):
         graph_input = {"messages": messages}
-        if uploads is not None:
-            graph_input["uploads"] = uploads
         async for event in self._stream_input_with_state(graph_input, input_context, **kwargs):
             yield event
 

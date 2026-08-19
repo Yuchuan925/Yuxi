@@ -53,7 +53,7 @@ Sandbox 的持久挂载只有两个：
 | `/home/gem/user-data` | `user-data/shared/<safe_uid>/workspace` | 读写 | 当前用户的整个 UserWorkspace |
 | `/home/gem/skills` | `skill-projections/<safe_uid>` | 只读 | 当前用户获授权的共享与内置 Skill |
 
-默认 Workdir 是 `/home/gem/user-data/projects/<uuid>`；`uploads/` 和 `outputs/` 是 Workdir 内的目录约定。个人 Skill 位于 `/home/gem/user-data/agents/skills/<slug>`，不复制到共享 projection。
+默认 Workdir 是 `/home/gem/user-data/projects/<uuid>`；`uploads/` 和 `outputs/` 是 Workdir 内按首次使用创建的目录约定，provisioner 不预建它们。个人 Skill 位于 `/home/gem/user-data/agents/skills/<slug>`，不复制到共享 projection。
 
 整个 UserWorkspace 对同一 uid 的 Sandbox 可见，因而 Project A 可以读取 Project B。Prompt 要求 Agent 未经用户明确要求不得写入当前 Workdir 之外，但这只是默认行为约束，不是安全隔离。真正的授权边界是 uid 挂载、后端 ownership 查询和具体工具的文件根限制。
 
@@ -65,7 +65,7 @@ Sandbox 的持久挂载只有两个：
 
 Docker backend 为每个 Sandbox 创建独立 bridge 网络，不发布容器端口，也不加入应用网络。`/home/gem` 使用临时 tmpfs；provisioner 只 bind mount 当前 uid 的 UserWorkspace 和只读 Skill projection。已发现实例必须精确匹配 uid、runtime thread、Workdir、网络和这两个持久挂载；存在旧 `/home/gem/projects`、嵌套 user-data 子挂载或可写 Skills 挂载时会拒绝复用。
 
-Kubernetes backend 创建 Pod 与 NodePort Service。Pod 从 `USER_DATA_PVC` 的 `shared/<uid>/workspace` subPath 挂载 `/home/gem/user-data`，从 `SKILLS_PVC` 的 `skill-projections/<uid>` subPath 只读挂载 `/home/gem/skills`。init container 使用 dirfd 与 `O_NOFOLLOW` 创建 uid 目录并验证 Workdir，不通过 `mkdir -p` 跟随不可信中间路径。User Data PVC 在跨节点部署时必须支持实际所需的共享读写语义。
+Kubernetes backend 创建 Pod 与 NodePort Service。Pod 从 `USER_DATA_PVC` 的 `shared/<uid>/workspace` subPath 挂载 `/home/gem/user-data`，从 `SKILLS_PVC` 的 `skill-projections/<uid>` subPath 只读挂载 `/home/gem/skills`。init container 使用 dirfd 与 `O_NOFOLLOW` 创建 uid 目录并验证 Workdir，不创建业务子目录。Docker 也只调整挂载根和当前 Workdir 的目录权限，不递归 chmod 整个 UserWorkspace。User Data PVC 在跨节点部署时必须支持实际所需的共享读写语义。
 
 Pod 设置 `automount_service_account_token=False`。Memory backend 只登记 URL，不创建隔离环境或准备目录，不能作为生产隔离承诺。
 

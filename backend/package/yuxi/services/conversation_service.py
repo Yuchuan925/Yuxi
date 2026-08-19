@@ -305,7 +305,9 @@ async def get_thread_history_view(
             request_id = attachment.get("request_id")
             if not request_id or str(request_id) not in message_request_ids:
                 continue
-            attachments_by_request_id.setdefault(str(request_id), []).append(serialize_attachment(attachment))
+            attachments_by_request_id.setdefault(str(request_id), []).append(
+                serialize_attachment(attachment, thread_id=thread_id)
+            )
 
     history: list[dict] = []
     role_type_map = {"user": "human", "assistant": "ai", "tool": "tool", "system": "system"}

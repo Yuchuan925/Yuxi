@@ -352,12 +352,26 @@ async def test_attachment_is_written_to_user_workspace_workdir_and_survives_runt
         expected_content = f"sandbox hydrate {uuid.uuid4()}\n"
         file_name = f"hydrate-{uuid.uuid4().hex[:8]}.txt"
         upload_response = await e2e_client.post(
-            f"/api/chat/thread/{thread_id}/attachments",
+            "/api/chat/attachments/tmp",
             files={"file": (file_name, expected_content.encode(), "text/plain")},
             headers=e2e_headers,
         )
         assert upload_response.status_code == 200, upload_response.text
-        attachment = upload_response.json()
+        uploaded = upload_response.json()
+        confirm_response = await e2e_client.post(
+            f"/api/chat/thread/{thread_id}/attachments/confirm",
+            json={
+                "attachments": [
+                    {
+                        "file_type": uploaded.get("file_type"),
+                        "object_name": uploaded["object_name"],
+                    }
+                ]
+            },
+            headers=e2e_headers,
+        )
+        assert confirm_response.status_code == 200, confirm_response.text
+        attachment = confirm_response.json()["attachments"][0]
         attachment_path = str(attachment["original_path"])
         assert attachment_path.startswith(f"/home/gem/user-data/{workdir_path}/uploads/"), attachment
 

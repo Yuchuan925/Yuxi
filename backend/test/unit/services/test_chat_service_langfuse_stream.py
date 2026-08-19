@@ -347,8 +347,18 @@ async def test_stream_agent_chat_commits_before_stream_and_persists_langfuse_con
             status="active",
             extra_metadata={
                 "attachments": [
-                    {"file_id": "file-1", "file_name": "current.txt", "request_id": "req-1"},
-                    {"file_id": "file-2", "file_name": "history.txt", "request_id": "req-old"},
+                    {
+                        "file_id": "file-1",
+                        "file_name": "current.txt",
+                        "path": "/home/gem/user-data/projects/workdir-1/uploads/current.txt",
+                        "request_id": "req-1",
+                    },
+                    {
+                        "file_id": "file-2",
+                        "file_name": "history.txt",
+                        "path": "/home/gem/user-data/projects/workdir-1/uploads/history.txt",
+                        "request_id": "req-old",
+                    },
                 ]
             },
         ),
@@ -391,35 +401,11 @@ async def test_stream_agent_chat_commits_before_stream_and_persists_langfuse_con
         "callbacks": ["handler-1"],
         "metadata": {"langfuse_user_id": "user-1", "langfuse_session_id": "thread-1"},
         "tags": ["yuxi", "chat"],
-        "uploads": [
-            {
-                "file_id": "file-1",
-                "file_name": "current.txt",
-                "file_type": None,
-                "file_size": 0,
-                "status": "uploaded",
-                "uploaded_at": None,
-                "path": None,
-                "artifact_url": None,
-                "original_path": None,
-                "original_artifact_url": None,
-                "request_id": "req-1",
-            },
-            {
-                "file_id": "file-2",
-                "file_name": "history.txt",
-                "file_type": None,
-                "file_size": 0,
-                "status": "uploaded",
-                "uploaded_at": None,
-                "path": None,
-                "artifact_url": None,
-                "original_path": None,
-                "original_artifact_url": None,
-                "request_id": "req-old",
-            },
-        ],
     }
+    model_message = calls["stream_messages"][0]
+    assert model_message.content.startswith("hello\n\n<attachment_context>")
+    assert "current.txt" in model_message.content
+    assert "history.txt" in model_message.content
     assert calls["saved_state"]["trace_info"] == {
         "langfuse_trace_id": "trace-runtime",
         "langfuse_session_id": "thread-1",
@@ -432,7 +418,9 @@ async def test_stream_agent_chat_commits_before_stream_and_persists_langfuse_con
     assert calls["stream_input_context"]["workdir_relative_path"] == "projects/workdir-1"
     assert calls["stream_input_context"]["workdir_path"] == "/home/gem/user-data/projects/workdir-1"
     assert calls["stream_input_context"]["runtime_scope_id"] == "thread-1"
-    assert chunks[0]["msg"]["extra_metadata"]["attachments"] == [calls["stream_kwargs"]["uploads"][0]]
+    [init_attachment] = chunks[0]["msg"]["extra_metadata"]["attachments"]
+    assert init_attachment["file_name"] == "current.txt"
+    assert init_attachment["path"].endswith("/uploads/current.txt")
     assert calls["flushed"] is True
     assert isinstance(calls["stream_messages"][0], HumanMessage)
 

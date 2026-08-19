@@ -4,6 +4,7 @@ import io
 import os
 import tempfile
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 import pytest
@@ -46,6 +47,7 @@ class FakeMinioClient:
         self.uploads: list[dict] = []
         self.deleted: list[tuple[str, str]] = []
         self.deleted_prefixes: list[tuple[str, str]] = []
+        self.object_metadata: list[dict] = []
 
     async def aupload_file(self, bucket_name: str, object_name: str, data: bytes, content_type: str | None = None):
         self.objects[(bucket_name, object_name)] = data
@@ -101,6 +103,10 @@ class FakeMinioClient:
             self.objects.pop(key)
         self.deleted_prefixes.append((bucket_name, prefix))
         return len(keys)
+
+    async def alist_object_metadata(self, bucket_name: str, prefix: str) -> list[dict]:
+        del bucket_name, prefix
+        return list(self.object_metadata)
 
 
 @dataclass
@@ -178,10 +184,37 @@ async def test_upload_tmp_attachment_writes_user_scoped_minio_object(monkeypatch
         current_uid="user-1",
     )
 
-    assert response["bucket_name"] == "knowledgebases"
     assert response["object_name"].startswith("tmp/chat_attachments/user-1/")
     assert response["parse_methods"][0] == "disable"
     assert fake_minio.objects[("knowledgebases", response["object_name"])] == b"pdf-bytes"
+
+
+@pytest.mark.asyncio
+async def test_upload_tmp_attachment_cleans_only_expired_user_tmp_groups(monkeypatch):
+    fake_minio = FakeMinioClient()
+    now = datetime.now(UTC)
+    fake_minio.object_metadata = [
+        {
+            "object_name": "tmp/chat_attachments/user-1/expired/original/old.pdf",
+            "last_modified": now - service.TMP_ATTACHMENT_TTL - timedelta(seconds=1),
+        },
+        {
+            "object_name": "tmp/chat_attachments/user-1/recent/original/new.pdf",
+            "last_modified": now,
+        },
+        {
+            "object_name": "tmp/chat_attachments/user-2/foreign/original/no.pdf",
+            "last_modified": now - service.TMP_ATTACHMENT_TTL - timedelta(seconds=1),
+        },
+    ]
+    monkeypatch.setattr(service, "get_minio_client", lambda: fake_minio)
+
+    await service.upload_tmp_attachment_view(
+        file=FakeUpload("demo.txt", b"text", "text/plain"),
+        current_uid="user-1",
+    )
+
+    assert fake_minio.deleted_prefixes == [("knowledgebases", "tmp/chat_attachments/user-1/expired/")]
 
 
 @pytest.mark.asyncio
@@ -201,9 +234,7 @@ async def test_parse_tmp_attachment_uses_selected_method_and_uploads_markdown(mo
 
     response = await service.parse_tmp_attachment_view(
         object_name=object_name,
-        file_name="demo.pdf",
         parse_method="disable",
-        bucket_name="knowledgebases",
         current_uid="user-1",
     )
 
@@ -253,12 +284,9 @@ async def test_confirm_tmp_thread_attachments_writes_realtime_workdir(confirm_at
         thread_id="thread-1",
         attachments=[
             {
-                "file_name": "demo.pdf",
                 "file_type": "application/pdf",
-                "bucket_name": "knowledgebases",
                 "object_name": original_object,
                 "parsed_object_name": parsed_object,
-                "truncated": False,
             }
         ],
         db=FakeDB(),
@@ -268,6 +296,16 @@ async def test_confirm_tmp_thread_attachments_writes_realtime_workdir(confirm_at
     [attachment] = response["attachments"]
     assert attachment["status"] == "parsed"
     stored = fake_repo.attachments[0]
+    assert set(stored) == {
+        "file_id",
+        "file_name",
+        "file_type",
+        "file_size",
+        "status",
+        "uploaded_at",
+        "path",
+        "original_path",
+    }
     assert stored["original_path"].startswith("/home/gem/user-data/projects/workdir-1/uploads/")
     assert stored["path"].startswith("/home/gem/user-data/projects/workdir-1/uploads/attachments/")
     assert fake_repo.workdir_backend.files[stored["original_path"]] == b"pdf-bytes"
@@ -285,9 +323,7 @@ async def test_parse_tmp_attachment_uses_object_name_for_type_validation(monkeyp
     with pytest.raises(service.HTTPException) as exc_info:
         await service.parse_tmp_attachment_view(
             object_name=object_name,
-            file_name="demo.pdf",
             parse_method="disable",
-            bucket_name="knowledgebases",
             current_uid="user-1",
         )
 
@@ -312,9 +348,7 @@ async def test_parse_tmp_attachment_handles_url_metacharacters(monkeypatch):
 
     response = await service.parse_tmp_attachment_view(
         object_name=object_name,
-        file_name="ignored.pdf",
         parse_method="disable",
-        bucket_name="knowledgebases",
         current_uid="user-1",
     )
 
@@ -333,9 +367,7 @@ async def test_confirm_tmp_thread_attachments_rejects_non_parsed_object(confirm_
             thread_id="thread-1",
             attachments=[
                 {
-                    "file_name": "demo.pdf",
                     "file_type": "application/pdf",
-                    "bucket_name": "knowledgebases",
                     "object_name": original_object,
                     "parsed_object_name": original_object,
                 }
@@ -359,8 +391,8 @@ async def test_confirm_tmp_thread_attachments_validates_batch_before_commit(conf
         await service.confirm_tmp_thread_attachments_view(
             thread_id="thread-1",
             attachments=[
-                {"file_name": "valid.pdf", "bucket_name": "knowledgebases", "object_name": valid_object},
-                {"file_name": "missing.pdf", "bucket_name": "knowledgebases", "object_name": missing_object},
+                {"object_name": valid_object},
+                {"object_name": missing_object},
             ],
             db=None,
             current_uid="user-1",
@@ -381,8 +413,8 @@ async def test_confirm_tmp_thread_attachments_keeps_duplicate_names_separate(con
     response = await service.confirm_tmp_thread_attachments_view(
         thread_id="thread-1",
         attachments=[
-            {"file_name": "report.pdf", "bucket_name": "knowledgebases", "object_name": first_object},
-            {"file_name": "report.pdf", "bucket_name": "knowledgebases", "object_name": second_object},
+            {"object_name": first_object},
+            {"object_name": second_object},
         ],
         db=FakeDB(),
         current_uid="user-1",
@@ -401,7 +433,6 @@ async def test_store_attachment_normalizes_persisted_file_name(monkeypatch):
     backend = FakeWorkdirBackend()
 
     record = await service._store_attachment(
-        thread_id="thread-1",
         backend=backend,
         workdir_path="/home/gem/user-data/projects/workdir-1",
         file_id="file-1",

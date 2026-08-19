@@ -58,6 +58,16 @@ async def test_image_upload_composites_transparent_png_pixels_on_white(test_clie
     assert rgb_image.getpixel((1, 0)) == (50, 87, 244)
 
 
+async def test_legacy_direct_thread_attachment_upload_is_removed(test_client, admin_headers):
+    response = await test_client.post(
+        f"/api/chat/thread/{uuid.uuid4()}/attachments",
+        headers=admin_headers,
+        files={"file": ("legacy.txt", b"legacy", "text/plain")},
+    )
+
+    assert response.status_code == 405
+
+
 async def test_thread_artifact_uses_image_signature_for_content_type(test_client, admin_headers):
     thread_id = await _create_thread_for_user(test_client, admin_headers)
     image = Image.new("RGBA", (2, 2), (255, 255, 255, 0))
@@ -67,13 +77,27 @@ async def test_thread_artifact_uses_image_signature_for_content_type(test_client
         image_bytes = buffer.getvalue()
 
     upload_response = await test_client.post(
-        f"/api/chat/thread/{thread_id}/attachments",
+        "/api/chat/attachments/tmp",
         headers=admin_headers,
         files={"file": ("mislabeled.jpg", image_bytes, "image/jpeg")},
     )
 
     assert upload_response.status_code == 200, upload_response.text
-    attachment = upload_response.json()
+    uploaded = upload_response.json()
+    confirm_response = await test_client.post(
+        f"/api/chat/thread/{thread_id}/attachments/confirm",
+        headers=admin_headers,
+        json={
+            "attachments": [
+                {
+                    "file_type": uploaded.get("file_type"),
+                    "object_name": uploaded["object_name"],
+                }
+            ]
+        },
+    )
+    assert confirm_response.status_code == 200, confirm_response.text
+    attachment = confirm_response.json()["attachments"][0]
 
     artifact_response = await test_client.get(attachment["original_artifact_url"], headers=admin_headers)
 
@@ -251,7 +275,7 @@ async def test_save_thread_artifact_to_workspace_copies_output_file(test_client,
     payload = response.json()
     assert payload["name"] == filename
     assert payload["source_path"] == source_path
-    assert payload["saved_path"] == f"/home/gem/user-data/workspace/saved_artifacts/{filename}"
+    assert payload["saved_path"] == f"/home/gem/user-data/saved_artifacts/{filename}"
 
     download_response = await test_client.get(payload["saved_artifact_url"], headers=headers)
     assert download_response.status_code == 200, download_response.text
@@ -283,8 +307,8 @@ async def test_save_thread_artifact_to_workspace_auto_renames_conflicts(test_cli
 
     first_payload = first_response.json()
     second_payload = second_response.json()
-    assert first_payload["saved_path"] == f"/home/gem/user-data/workspace/saved_artifacts/{filename}"
-    assert second_payload["saved_path"] == f"/home/gem/user-data/workspace/saved_artifacts/{renamed_filename}"
+    assert first_payload["saved_path"] == f"/home/gem/user-data/saved_artifacts/{filename}"
+    assert second_payload["saved_path"] == f"/home/gem/user-data/saved_artifacts/{renamed_filename}"
 
     first_download = await test_client.get(first_payload["saved_artifact_url"], headers=headers)
     second_download = await test_client.get(second_payload["saved_artifact_url"], headers=headers)

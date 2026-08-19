@@ -16,7 +16,6 @@ from yuxi.services.attachment_service import (
     delete_thread_attachment_view,
     list_thread_attachments_view,
     parse_tmp_attachment_view,
-    upload_thread_attachment_view,
     upload_tmp_attachment_view,
 )
 from yuxi.services.chat_service import get_agent_state_view
@@ -191,13 +190,10 @@ class AttachmentListResponse(BaseModel):
 
 
 class TmpAttachmentResponse(BaseModel):
-    tmp_file_id: str
     file_name: str
     file_type: str | None = None
     file_size: int
-    bucket_name: str
     object_name: str
-    minio_url: str
     uploaded_at: str
     parse_supported: bool = False
     parse_methods: list[str] = Field(default_factory=list)
@@ -205,30 +201,20 @@ class TmpAttachmentResponse(BaseModel):
 
 class TmpAttachmentParseRequest(BaseModel):
     object_name: str
-    file_name: str
     parse_method: str | None = None
-    bucket_name: str | None = None
 
 
 class TmpAttachmentParseResponse(BaseModel):
-    tmp_file_id: str
-    file_name: str
-    bucket_name: str
-    object_name: str
     parsed_object_name: str
-    parsed_minio_url: str
     parse_method: str
     status: str
     truncated: bool = False
 
 
 class TmpAttachmentConfirmItem(BaseModel):
-    file_name: str
     file_type: str | None = None
-    bucket_name: str
     object_name: str
     parsed_object_name: str | None = None
-    truncated: bool = False
 
 
 class TmpAttachmentConfirmRequest(BaseModel):
@@ -392,9 +378,7 @@ async def parse_tmp_attachment(
     """解析 tmp 附件并返回解析后的 tmp URL。"""
     return await parse_tmp_attachment_view(
         object_name=request.object_name,
-        file_name=request.file_name,
         parse_method=request.parse_method,
-        bucket_name=request.bucket_name,
         current_uid=str(current_user.uid),
     )
 
@@ -410,22 +394,6 @@ async def confirm_tmp_thread_attachments(
     return await confirm_tmp_thread_attachments_view(
         thread_id=thread_id,
         attachments=[item.model_dump() for item in request.attachments],
-        db=db,
-        current_uid=str(current_user.uid),
-    )
-
-
-@chat.post("/thread/{thread_id}/attachments", response_model=AttachmentResponse)
-async def upload_thread_attachment(
-    thread_id: str,
-    file: UploadFile = File(...),
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_required_user),
-):
-    """上传原始附件并关联到指定对话线程。"""
-    return await upload_thread_attachment_view(
-        thread_id=thread_id,
-        file=file,
         db=db,
         current_uid=str(current_user.uid),
     )

@@ -16,10 +16,9 @@ import asyncio
 import json
 import uuid
 from collections.abc import AsyncIterator
-from datetime import UTC, datetime
 from typing import Any, Literal
 
-from langchain.messages import AIMessage, AIMessageChunk
+from langchain.messages import AIMessage, AIMessageChunk, HumanMessage
 from langgraph.types import Command
 from yuxi.agents.backends.sandbox import ProvisionerSandboxBackend
 from yuxi.agents.backends.sandbox.paths import user_workdir_host_dir, workdir_virtual_dir
@@ -52,39 +51,29 @@ from yuxi.utils.question_utils import (
 from yuxi.utils.thread_utils import extract_thread_id as _metadata_thread_id
 
 
-def _build_state_files(attachments: list[dict]) -> dict:
-    """将附件列表转换为 StateBackend 格式的 files 字典
+def _with_attachment_context(message: HumanMessage, attachments: list[dict]) -> HumanMessage:
+    """把线程附件路径追加到本轮模型输入，不污染持久化用户消息。"""
+    attachment_lines = [
+        f"- {item.get('file_name') or '未知文件'}: {item['path']}"
+        for item in attachments
+        if isinstance(item.get("path"), str) and item["path"].strip()
+    ]
+    if not attachment_lines:
+        return message
 
-    StateBackend 期望的格式:
-    {
-        "/attachments/file.md": {
-            "content": ["line1", "line2", ...],
-            "created_at": "...",
-            "modified_at": "...",
-        }
-    }
-    """
-    files = {}
-    for attachment in attachments:
-        if attachment.get("status") != "parsed":
-            continue
-
-        file_path = attachment.get("file_path")
-        markdown = attachment.get("markdown")
-
-        if not file_path or not markdown:
-            continue
-
-        now = datetime.now(UTC).isoformat()
-        # 将 markdown 内容按行拆分
-        content_lines = markdown.split("\n")
-        files[file_path] = {
-            "content": content_lines,
-            "created_at": attachment.get("uploaded_at", now),
-            "modified_at": attachment.get("uploaded_at", now),
-        }
-
-    return files
+    context = "\n".join(
+        [
+            "<attachment_context>",
+            "以下是本线程当前可用的历史附件。需要内容时，请使用 read_file 读取对应路径：",
+            *attachment_lines,
+            "</attachment_context>",
+        ]
+    )
+    if isinstance(message.content, str):
+        content: str | list = f"{message.content}\n\n{context}"
+    else:
+        content = [*message.content, {"type": "text", "text": context}]
+    return message.model_copy(update={"content": content})
 
 
 def _build_agent_context(agent, input_context: dict):
@@ -396,11 +385,10 @@ def _message_payload_yuxi_events(
     )
 
 
-async def _stream_agent_events(agent, messages, *, input_context=None, uploads=None, **kwargs):
+async def _stream_agent_events(agent, messages, *, input_context=None, **kwargs):
     async for mode, payload in agent.stream_messages_with_state(
         messages,
         input_context=input_context,
-        uploads=uploads,
         **kwargs,
     ):
         yield mode, payload
@@ -985,7 +973,6 @@ async def stream_agent_chat(
         }
     )
 
-    messages = [human_message]
     input_context = await build_agent_input_context(
         agent_config,
         thread_id=thread_id,
@@ -1044,8 +1031,13 @@ async def stream_agent_chat(
         request_attachment_records = [
             attachment for attachment in thread_attachment_records if attachment.get("request_id") == meta["request_id"]
         ]
-        request_attachments = [serialize_attachment(attachment) for attachment in request_attachment_records]
-        thread_uploads = [serialize_attachment(attachment) for attachment in thread_attachment_records]
+        request_attachments = [
+            serialize_attachment(attachment, thread_id=thread_id) for attachment in request_attachment_records
+        ]
+        thread_attachments = [
+            serialize_attachment(attachment, thread_id=thread_id) for attachment in thread_attachment_records
+        ]
+        messages = [_with_attachment_context(human_message, thread_attachments)]
 
         init_msg = {
             "role": "user",
@@ -1095,7 +1087,6 @@ async def stream_agent_chat(
             agent,
             messages,
             input_context=input_context,
-            uploads=thread_uploads,
             callbacks=langfuse_run.callbacks,
             metadata=langfuse_run.metadata,
             tags=langfuse_run.tags,
@@ -1333,11 +1324,7 @@ async def stream_agent_resume(
         yield make_resume_chunk(status="error", error_type="invalid_thread", error_message="对话线程不存在", meta=meta)
         return
     conv_repo = ConversationRepository(db)
-    thread_attachments = await conv_repo.get_attachments(conversation.id)
-    resume_command = Command(
-        resume=resume_input,
-        update={"uploads": [serialize_attachment(attachment) for attachment in thread_attachments]},
-    )
+    resume_command = Command(resume=resume_input)
 
     # 恢复流执行期间不访问业务数据库，先结束运行时解析事务并归还连接池。
     await db.commit()

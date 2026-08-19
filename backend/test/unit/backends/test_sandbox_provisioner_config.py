@@ -806,7 +806,27 @@ def test_kubernetes_workdir_contract_uses_user_workspace_subpath(monkeypatch):
     assert init.command == ["python", "-c"]
     assert "os.O_NOFOLLOW" in init.args[0]
     assert "('projects', 'workdir-1')" in init.args[0]
+    assert "'uploads'" not in init.args[0]
+    assert "'outputs'" not in init.args[0]
     compile(init.args[0], "<kubernetes-storage-init>", "exec")
+
+
+def test_docker_writable_check_does_not_create_runtime_directories_or_recurse(monkeypatch):
+    monkeypatch.setenv("PROVISIONER_BACKEND", "memory")
+    module = _load_module()
+    calls = []
+    container = SimpleNamespace(
+        exec_run=lambda command, user: calls.append((command, user)) or SimpleNamespace(exit_code=0, output=b"")
+    )
+
+    module.LocalContainerProvisionerBackend._ensure_user_data_writable(container, "projects/workdir-1")
+
+    [(command, user)] = calls
+    assert user == "0:0"
+    assert command[:2] == ["sh", "-lc"]
+    assert command[2] == "chmod a+rwx /home/gem/user-data /home/gem/user-data/projects/workdir-1"
+    assert "mkdir" not in command[2]
+    assert "chmod -R" not in command[2]
 
 
 def test_kubernetes_rejects_rebinding_existing_runtime_to_another_workdir(monkeypatch):

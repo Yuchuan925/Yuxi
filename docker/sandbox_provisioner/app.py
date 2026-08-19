@@ -118,17 +118,7 @@ os.close(skills_fd)
 workdir_parts = {workdir_parts!r}
 if workdir_parts:
     workdir_fd = open_path('/mnt/user-data', {('shared', uid, 'workspace')!r} + workdir_parts)
-    try:
-        for name in ('uploads', 'outputs'):
-            try:
-                os.mkdir(name, 0o777, dir_fd=workdir_fd)
-            except FileExistsError:
-                pass
-            child = os.open(name, FLAGS, dir_fd=workdir_fd)
-            os.fchmod(child, 0o777)
-            os.close(child)
-    finally:
-        os.close(workdir_fd)
+    os.close(workdir_fd)
 """.strip()
 
 
@@ -685,10 +675,7 @@ class LocalContainerProvisionerBackend:
     def _ensure_user_data_writable(container, workdir_path: str | None = None) -> None:
         if workdir_path:
             sandbox_workdir = shlex.quote(f"/home/gem/user-data/{workdir_path}")
-            cmd = (
-                f"mkdir -p {sandbox_workdir}/uploads {sandbox_workdir}/outputs "
-                f"&& chmod -R a+rwx {sandbox_workdir} /home/gem/user-data"
-            )
+            cmd = f"chmod a+rwx /home/gem/user-data {sandbox_workdir}"
         else:
             cmd = "chmod a+rwx /home/gem/user-data"
         result = container.exec_run(["sh", "-lc", cmd], user="0:0")

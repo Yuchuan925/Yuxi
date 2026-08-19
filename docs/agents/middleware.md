@@ -1,6 +1,6 @@
 # 中间件系统
 
-中间件是 Yuxi 扩展智能体运行行为的主要机制。它工作在 LangGraph Agent 的模型调用、工具调用、状态更新和文件系统访问路径上，用来把知识库、Skills、附件、子智能体、上下文压缩和运行观测接入同一条执行链路。
+中间件是 Yuxi 扩展智能体运行行为的主要机制。它工作在 LangGraph Agent 的模型调用、工具调用、状态更新和文件系统访问路径上，用来把知识库、Skills、子智能体、上下文压缩和运行观测接入同一条执行链路。
 
 内置 `ChatbotAgent` 与 `SubAgentBackend` 都会在 `get_graph()` 中构建中间件列表。`prepare_agent_runtime_context` 在 Graph 创建前完成资源过滤，中间件随后消费已经归一化的运行时配置。
 
@@ -22,7 +22,6 @@
 | 中间件 | 作用 |
 | --- | --- |
 | `create_agent_filesystem_middleware` | 接入实时 Project Workdir、User Data 与只读 Skills 路由，并在工具结果过大时把内容写入 Project `outputs/large_tool_results` |
-| `save_attachments_to_fs` / `AttachmentMiddleware` | 从 LangGraph state 的 `uploads` 读取附件路径，把可读路径注入系统提示，提示模型按需使用 `read_file` |
 | `SkillsMiddleware` | 注入可见 Skill 的提示段，监听读取 `SKILL.md` 后的 Skill 激活，并按依赖追加工具和 MCP 工具；知识库工具由内置 `knowledge-base` Skill 按需加载 |
 | `YuxiSubAgentMiddleware` | 仅主 Agent 在存在可见子智能体时挂载，提供 `task` 工具调用真实子 Agent graph |
 | `YuxiSummarizationMiddleware` | 基于 DeepAgents `SummarizationMiddleware` 做长上下文压缩，并清洗被摘要历史里的工具结果 |
@@ -55,7 +54,7 @@
 
 ## 附件与文件系统
 
-附件上传后会先落盘到线程文件系统，并在 LangGraph state 中记录 `uploads`。`AttachmentMiddleware` 只把文件名和可读路径注入提示词，不会把文件内容整体塞进模型上下文。模型需要查看附件时，应通过 `read_file` 读取对应路径。
+附件确认后会落盘到当前 Workdir。每个新 Run 都把线程全部历史附件的文件名和实时路径追加到本轮模型可见的 `HumanMessage`，不会修改系统提示词，也不会把文件内容复制进模型上下文。数据库 Message、流式 `init` 事件和历史接口仍保留原始用户文本，因此前端不渲染这段模型专用上下文。模型需要查看附件时，应通过 `read_file` 读取对应路径；中断恢复沿用 checkpoint 中原有的本轮消息。
 
 文件系统中间件把当前用户的整个 UserWorkspace 与只读共享 Skills 组合成 Agent 可访问的虚拟文件系统。普通 Agent 与子智能体使用根 Conversation 的同一个 `runtime_scope_id` 和 `workdir_path`；child `thread_id` 只隔离 LangGraph checkpoint。Workdir 选择 cwd，不形成同一 uid 内的文件隔离；各 Agent 的 Skill 选中列表只影响 Prompt 和工具激活。
 

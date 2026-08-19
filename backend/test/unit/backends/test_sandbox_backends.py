@@ -796,6 +796,7 @@ def test_provisioner_allows_project_upload_writes(monkeypatch) -> None:
 
     client = SimpleNamespace(file=SimpleNamespace(read_file=read_file, write_file=write_file))
     monkeypatch.setattr(backend, "_get_client", lambda: client)
+    monkeypatch.setattr(backend, "_ensure_parent_directory", lambda _path: None)
 
     root = "/home/gem/user-data/projects/workdir-1/uploads"
     write_result = backend.write(f"{root}/note.txt", "content")
@@ -804,6 +805,38 @@ def test_provisioner_allows_project_upload_writes(monkeypatch) -> None:
     assert write_result.error is None
     assert upload_result[0].error is None
     assert written == [f"{root}/note.txt", f"{root}/data.bin"]
+
+
+def test_provisioner_creates_write_parent_without_following_symlinks(monkeypatch) -> None:
+    monkeypatch.setattr("yuxi.agents.backends.sandbox.backend.get_sandbox_provider", lambda: object())
+    backend = ProvisionerSandboxBackend(thread_id="thread-1", uid="user-1")
+    commands: list[str] = []
+
+    def execute(command: str, **_kwargs):
+        commands.append(command)
+        return SimpleNamespace(exit_code=0, output="")
+
+    monkeypatch.setattr(backend, "execute", execute)
+
+    backend._ensure_parent_directory(f"{WORKDIR_PATH}/outputs/reports/result.md")
+
+    encoded = commands[0].split("b64decode('", 1)[1].split("')", 1)[0]
+    script = base64.b64decode(encoded).decode()
+    assert "('projects', 'workdir-1', 'outputs', 'reports')" in script
+    assert "os.O_NOFOLLOW" in script
+
+
+def test_provisioner_rejects_parent_directory_symlink_failure(monkeypatch) -> None:
+    monkeypatch.setattr("yuxi.agents.backends.sandbox.backend.get_sandbox_provider", lambda: object())
+    backend = ProvisionerSandboxBackend(thread_id="thread-1", uid="user-1")
+    monkeypatch.setattr(
+        backend,
+        "execute",
+        lambda *_args, **_kwargs: SimpleNamespace(exit_code=1, output="Too many levels of symbolic links"),
+    )
+
+    with pytest.raises(PermissionError, match="symbolic links"):
+        backend._ensure_parent_directory(f"{WORKDIR_PATH}/outputs/result.md")
 
 
 def test_provisioner_allows_outputs_writes(monkeypatch) -> None:
@@ -823,6 +856,7 @@ def test_provisioner_allows_outputs_writes(monkeypatch) -> None:
 
     fake_client = SimpleNamespace(file=SimpleNamespace(write_file=_write_file))
     backend._get_client = MethodType(lambda self: fake_client, backend)
+    backend._ensure_parent_directory = MethodType(lambda self, _path: None, backend)
 
     result = backend.write("/home/gem/user-data/outputs/report.md", "ok")
 

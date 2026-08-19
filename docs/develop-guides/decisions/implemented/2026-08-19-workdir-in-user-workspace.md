@@ -95,7 +95,17 @@ Sandbox 的持久文件挂载收敛为两个逻辑域：
 
 Sandbox 的 cwd 设置为 `/home/gem/user-data/<workdir_path>`。因此不再需要容器内的 `/home/gem/user-data/workspace` 中间层，也不再需要独立 `/home/gem/projects` 根目录、Project bind mount、`DOCKER_PROJECTS_HOST_PATH` 或 `PROJECT_DATA_PVC`。每个 Thread 只改变 cwd，不改变挂载配置。
 
-API/worker 仍可保留服务自身访问 UserWorkspace 和 Skill source/projection 所需的显式挂载；这些挂载属于服务的 UserWorkspace/Skill 访问，不构成第三个 Project 存储域。`uploads/`、`outputs/` 是当前 Workdir 下的目录约定，路径为 `/home/gem/user-data/<workdir_path>/uploads` 和 `/home/gem/user-data/<workdir_path>/outputs`，不再由 `/home/gem/user-data/uploads`、`/home/gem/user-data/outputs` 表示用户级全局运行时目录。`saved_artifacts` 等用户主动保存的文件可以继续作为 UserWorkspace 内的普通目录存在，但不形成额外挂载或存储协议。
+API/worker 仍可保留服务自身访问 UserWorkspace 和 Skill source/projection 所需的显式挂载；这些挂载属于服务的 UserWorkspace/Skill 访问，不构成第三个 Project 存储域。`uploads/`、`outputs/` 是当前 Workdir 下的目录约定，路径为 `/home/gem/user-data/<workdir_path>/uploads` 和 `/home/gem/user-data/<workdir_path>/outputs`，不再由 `/home/gem/user-data/uploads`、`/home/gem/user-data/outputs` 表示用户级全局运行时目录。两者都按首次使用创建：附件确认创建所需的 `uploads` 父目录，标准文件写入创建所需的 `outputs` 父目录；Sandbox provisioner 只验证挂载与 cwd，不预建业务目录，也不递归修改整个 UserWorkspace 权限。`saved_artifacts` 等用户主动保存的文件可以继续作为 UserWorkspace 内的普通目录存在，但不形成额外挂载或存储协议。
+
+### 附件只有一条确认链路
+
+附件入口收敛为 `MinIO tmp -> 可选解析 -> 确认写入 Workdir`。旧的“直接上传到 Thread 并由后端静默解析”接口和前端死方法删除。确认后，原件写入当前 Workdir 的 `uploads/`，可选 Markdown 写入 `uploads/attachments/`；Workdir 是正式字节 Owner，MinIO 只拥有未确认临时对象。
+
+Conversation 的附件 JSON 只保存文件 ID、文件名、MIME、大小、状态、上传时间、当前路径、原件路径和后续绑定的 `request_id`。完整 Markdown、hash、兼容 `file_path`、截断信息以及可由 `thread_id + path` 派生的 artifact URL 都不再持久化。旧记录中的额外字段无需运行时迁移；新写入不再产生它们，序列化继续只输出当前契约字段。
+
+每个新 Agent Run 可以获知该线程全部历史附件，但附件名称和路径只追加到本轮模型可见的 `HumanMessage`。数据库 Message、流式 `init` 事件和历史接口仍保存原始用户输入，前端无需展示或过滤模型专用上下文；系统提示词和 LangGraph state 不再承载附件列表。中断恢复沿用 checkpoint 中该轮已有的用户消息，不重复注入。
+
+确认接口不限制附件数量。服务逐项下载、校验并写入 Workdir，不把整个批次同时保存在内存；任一项失败时删除本批已写文件，数据库只在整批完成后提交。确认成功后尽力删除对应 tmp 分组。未确认对象采用最小过期策略：用户下一次上传时，顺手删除该用户最后修改时间超过 24 小时的 tmp 分组，不新增 scheduler、数据库状态或生命周期服务。
 
 ### 旧数据迁移
 
@@ -125,6 +135,8 @@ API/worker 仍可保留服务自身访问 UserWorkspace 和 Skill source/project
 | Thread 默认创建唯一的 `projects/<id>`，显式路径只绑定当前 UserWorkspace 内的目录 | DB 绑定与实际目录不一致 | Conversation repository、Thread service、UserWorkspace path service | 真实 PostgreSQL + 文件系统 integration；检查 Conversation 行与最终目录 | `../`、绝对路径、宿主机路径、其他用户路径、非目录路径 | 通过：3 个真实 PostgreSQL/文件系统 integration；相关 unit 纳入全量 1370 passed |
 | Workdir 路径不会越过 UserWorkspace 或绑定到保留目录 | 路径穿越、symlink 穿越、把 `agents/` 作为 Workdir | `backend/package/yuxi/agents/backends/sandbox/paths.py` 与 file bridge | path resolver unit + 真实 HTTP/Sandbox 文件访问 | `..`、绝对路径、symlink 组件、`agents/`、跨 uid | 通过：no-follow/path unit、5 个真实 HTTP Viewer integration 与 5 个真实 Docker provisioner integration |
 | Sandbox 把当前 UserWorkspace 直接挂载到 `/home/gem/user-data`，并只额外挂载只读共享 Skill projection | Project mount、嵌套 workspace mount 或广域 host root 泄漏 | `docker-compose.yml`、`docker/sandbox_provisioner/app.py` | Compose/provisioner contract、Docker mount inspection、`python3 scripts/verify_engineering_contracts.py` | `/app/projects`、`DOCKER_PROJECTS_HOST_PATH`、`PROJECT_DATA_PVC`、`/home/gem/user-data/workspace` mount、shared root、可写 Skill mount | 通过：Compose 校验、provisioner unit、真实 Docker mount/integration、工程信任检查 |
+| `uploads/outputs` 只在首次使用时创建，provisioner 不拥有业务目录 | 空 Thread 启动 Sandbox 后出现目录，或每次启动递归 chmod 全部项目 | Sandbox backend、attachment service、provisioner | backend/provisioner unit + Docker integration | K8s init 或 Docker command 包含预建 `uploads/outputs`、`chmod -R /home/gem/user-data` | 通过：provisioner/backend 正负向 unit 与真实附件 runtime 重建 E2E |
+| 附件正式字节、最小索引与模型上下文分别由 Workdir、Conversation 和本轮用户消息拥有 | JSON 复制 Markdown，系统提示反复增长，旧直传入口绕过确认流程 | attachment/chat service、Conversation repository | attachment unit、chat message unit、真实 HTTP integration/E2E | 非路径附件进入上下文、持久化 Markdown/hash、跨用户 tmp 路径、批次中途失败残留正式文件 | 通过：附件/消息 unit、15 个真实 HTTP integration 与附件 runtime 重建 E2E；旧直传端点返回 405 |
 | Project 间读取属于同一 UserWorkspace 的正常能力，Prompt 默认禁止未经用户要求的跨 Workdir 写入 | Agent 误把可见性当作默认写权限，或错误宣称 Project 间不可读 | `backend/package/yuxi/agents/buildin/chatbot/prompt.py` | Prompt unit 检查当前 Workdir、跨目录可读和默认写入约束 | Prompt 缺少当前路径；禁止读取其他 Project；允许默认跨 Project 写入 | 通过：Prompt 正向与负向 unit 纳入全量 unit |
 | `runtime_scope_id` 只分组父子 Run 的 execution Sandbox 与清理生命周期，不参与 Workdir 身份 | 共享 Workdir 的顶层 Conversation 错误共享进程，或父子 Run 提前清理 Sandbox | AgentRun repository、SubAgent run service、worker runtime cleanup | AgentRun PostgreSQL integration + execution-tree E2E | 同 Workdir 的两个根 Run 使用同一 scope；子 Run 使用 child thread 作为 scope；子 Run 活跃时销毁 Sandbox | unit、真实双 Sandbox provisioner integration 和顶层 runtime 重建 E2E 通过；完整父子 execution-tree E2E 未运行 |
 | 父子 Conversation 使用同一 Workdir，但 runtime 生命周期仍按既有 scope 规则隔离 | 子 Agent 路径错绑或 runtime cleanup 误删文件 | Conversation Workdir service、worker lifecycle、provisioner | execution-tree E2E，验证最终 POSIX 文件和 runtime cleanup | 子 Conversation 指向不同路径；根 Run 终态删除 Workdir 文件 | E2E 契约收集通过；实际父子链路未运行（本地 deterministic provider 不可连接） |
@@ -143,3 +155,5 @@ API/worker 仍可保留服务自身访问 UserWorkspace 和 Skill source/project
 - 不设 Workdir 表会暂时缺少 Workdir 级别的名称、ACL、配额和 GC 元数据；这些需求出现时需要重新建立资源模型，而不能把路径字符串继续扩展成隐式状态机。
 - `agents/` 是 UserWorkspace 的一部分但不是普通 Workdir；若未来确实允许 Agent 将其作为工作目录，必须重新定义 Skill、context 和系统文件的写权限边界。
 - 旧部署的迁移复杂度不会因为新布局消失，只会从“长期运行时双域”收敛为“有限的一次性导入”。迁移完成前必须保留旧源和可验证的恢复路径。
+- 临时附件过期清理是上传触发的尽力而为机制；长期没有后续上传的用户，其未确认对象可能超过 24 小时继续存在。若对象规模证明需要强时效，再由存储生命周期规则接管，而不是先引入应用层调度状态机。
+- 附件数量不设产品上限；逐项处理降低确认时的内存峰值，但总处理时长仍随附件数线性增长。

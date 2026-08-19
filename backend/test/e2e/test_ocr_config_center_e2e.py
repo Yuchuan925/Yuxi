@@ -70,8 +70,6 @@ async def test_admin_ocr_config_drives_real_tmp_attachment_parse(
             "/api/chat/attachments/tmp/parse",
             json={
                 "object_name": uploaded["object_name"],
-                "file_name": uploaded["file_name"],
-                "bucket_name": uploaded["bucket_name"],
                 "parse_method": None,
             },
             headers=e2e_headers,
@@ -85,9 +83,7 @@ async def test_admin_ocr_config_drives_real_tmp_attachment_parse(
             json={
                 "attachments": [
                     {
-                        "file_name": uploaded["file_name"],
                         "file_type": uploaded["file_type"],
-                        "bucket_name": uploaded["bucket_name"],
                         "object_name": uploaded["object_name"],
                         "parsed_object_name": parsed["parsed_object_name"],
                     }
@@ -163,7 +159,7 @@ async def _cleanup_created_resources(
         if parsed:
             object_names.append(parsed["parsed_object_name"])
         for object_name in object_names:
-            assert await minio_client.adelete_file(uploaded["bucket_name"], object_name)
+            assert await minio_client.adelete_file(minio_client.KB_BUCKETS["documents"], object_name)
 
     if thread_id:
         response = await e2e_client.delete(f"/api/chat/thread/{thread_id}", headers=e2e_headers)

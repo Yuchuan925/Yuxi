@@ -235,7 +235,7 @@ Graph 构建直接依赖 Context。普通 Agent 在归一化后的 `context.suba
 - `build_prompt_with_context(context)` 生成系统提示词
 - `resolve_configured_runtime_tools(context)` 组装已配置的内置工具和 MCP 工具
 - `SkillsMiddleware` 根据 `_prompt_skills` 注入 Skill 提示段，并在 Skill 被激活后按需让模型看见其工具与 MCP 依赖；知识库工具由内置 `knowledge-base` Skill 提供
-- `save_attachments_to_fs` 将线程附件转换为运行时可读的文件提示
+- Chat service 将线程历史附件的文件名和路径追加到本轮模型可见的用户消息，持久化消息保持原文
 
 文件系统与沙盒接入同样读取这些运行时字段：
 

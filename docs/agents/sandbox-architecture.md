@@ -160,8 +160,8 @@ user-data/
         └── workspace/
             ├── agents/skills/<skill-slug>/
             └── projects/<workdir-id>/
-                ├── uploads/
-                └── outputs/
+                ├── uploads/  （确认首个附件时按需创建）
+                └── outputs/  （首次写入交付物时按需创建）
 ```
 
 `user-data/shared/<uid>/workspace` 是当前用户文件的唯一实时 POSIX 根；`projects/<workdir-id>` 只是其中的默认对话目录。旧 Project 与 thread 文件只由一次性 `storage-migrator` 读取，迁移后不再进入 shipping 读写链路。
@@ -188,7 +188,7 @@ API 的 Viewer、附件和 artifact 不复用 execution runtime，也不创建 f
 `/home/gem/user-data/agents/skills`；Prompt 与工具激活规则见
 [Skills 管理](skills-management.md)。
 
-附件确认后，原件和可选 Markdown 解析结果直接写入当前 Workdir 的 `uploads/`，Conversation 只保留文件 ID、请求绑定、展示名称和实时路径。临时上传对象在确认完成后删除；Agent、Viewer 和父子 Agent 随后读取的是同一份 POSIX 字节。升级前的旧文件只由停机期 `storage-migrator` 导入。
+附件确认后，原件和可选 Markdown 解析结果直接写入当前 Workdir 的 `uploads/`，Conversation 只保留文件 ID、请求绑定、展示名称、状态和实时路径。Agent 每轮通过当前用户消息获得线程全部历史附件的名称与路径，不修改系统提示词。临时上传对象在确认完成后删除；未确认对象在该用户下一次上传时顺手清理超过 24 小时的分组，不引入定时任务。升级前的旧文件只由停机期 `storage-migrator` 导入。
 
 知识库不再与沙盒文件系统结合。它不会被复制到每个线程目录，也不会生成虚拟目录；模型通过专门的知识库工具检索，并在需要更完整上下文时用 `open_kb_document` 按 `kb_id` 和 `file_id` 打开文档内容。
 

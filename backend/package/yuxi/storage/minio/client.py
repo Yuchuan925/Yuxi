@@ -358,6 +358,23 @@ class MinIOClient:
         """在线程池中列出指定前缀下的对象名。"""
         return await asyncio.to_thread(self.list_object_names, bucket_name, prefix)
 
+    def list_object_metadata(self, bucket_name: str, prefix: str) -> list[dict]:
+        """列出过期清理所需的最小对象元数据。"""
+        try:
+            return [
+                {
+                    "object_name": str(item.object_name),
+                    "last_modified": item.last_modified,
+                }
+                for item in self.client.list_objects(bucket_name, prefix=prefix, recursive=True)
+            ]
+        except S3Error as exc:
+            raise StorageError(f"列出对象前缀失败: {bucket_name}/{prefix}: {exc}") from exc
+
+    async def alist_object_metadata(self, bucket_name: str, prefix: str) -> list[dict]:
+        """在线程池中列出过期清理所需的对象元数据。"""
+        return await asyncio.to_thread(self.list_object_metadata, bucket_name, prefix)
+
     async def adelete_bucket(self, bucket_name: str) -> bool:
         """
         删除 bucket（先删除所有对象，再删除 bucket）

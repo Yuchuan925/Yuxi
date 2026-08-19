@@ -428,21 +428,6 @@ export const threadApi = {
     apiPost(`/api/chat/thread/${threadId}/attachments/confirm`, { attachments }),
 
   /**
-   * 上传附件
-   * @param {string} threadId
-   * @param {File} file
-   * @returns {Promise}
-   */
-  uploadThreadAttachment: (threadId, file) => {
-    const formData = new FormData()
-    formData.append('file', file)
-    return apiRequest(`/api/chat/thread/${threadId}/attachments`, {
-      method: 'POST',
-      body: formData
-    })
-  },
-
-  /**
    * 删除附件
    * @param {string} threadId
    * @param {string} fileId
