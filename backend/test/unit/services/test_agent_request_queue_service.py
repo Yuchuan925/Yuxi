@@ -11,8 +11,10 @@ from sqlalchemy import func as sa_func
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from yuxi.services.agent_request_queue_service import (
+    DispatchResult,
     NOT_IMPLEMENTED_QUEUE_POLICIES,
     cancel_queued_request,
+    finalize_dispatch,
     intake_request,
     steer_queued_request,
     validate_queue_policy,
@@ -21,6 +23,46 @@ from yuxi.storage.postgres.models_business import AgentRunRequest, Base, Message
 from yuxi.utils.datetime_utils import utc_now_naive
 
 pytestmark = [pytest.mark.unit]
+
+
+# ── finalize ordering ──
+
+
+@pytest.mark.asyncio
+async def test_finalize_dispatch_materializes_workdir_after_commit_before_enqueue(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    events: list[str] = []
+
+    class Db:
+        async def commit(self):
+            events.append("commit")
+
+    def ensure_workdir(uid: str, workdir_path: str):
+        assert uid == "user-1"
+        assert workdir_path == "projects/workdir-1"
+        events.append("materialize")
+
+    async def enqueue(run_id: str):
+        assert run_id == "run-1"
+        events.append("enqueue")
+
+    from yuxi.services import agent_request_queue_service as service
+
+    monkeypatch.setattr(service, "ensure_bound_user_workdir", ensure_workdir)
+    monkeypatch.setattr(service, "enqueue_agent_run", enqueue)
+
+    await finalize_dispatch(
+        db=Db(),
+        dispatch=DispatchResult(
+            request_id="request-1",
+            run_id="run-1",
+            uid="user-1",
+            workdir_path="projects/workdir-1",
+        ),
+    )
+
+    assert events == ["commit", "materialize", "enqueue"]
 
 
 # ── validate_queue_policy ──
@@ -583,6 +625,7 @@ async def test_dispatch_sets_delivery_status_dispatched(session):
         agent_slug="main",
         thread_id="t1",
         conversation_id=10,
+        workdir_path="projects/workdir-user-1-t1",
     )
     assert dispatched is not None
 
@@ -621,6 +664,7 @@ async def test_dispatches_multiple_queued_requests_one_at_a_time(session):
         agent_slug="main",
         thread_id="t1",
         conversation_id=10,
+        workdir_path="projects/workdir-user-1-t1",
     )
     await session.commit()
     assert dispatched_b is not None
@@ -663,6 +707,7 @@ async def test_dispatches_multiple_queued_requests_one_at_a_time(session):
         agent_slug="main",
         thread_id="t1",
         conversation_id=10,
+        workdir_path="projects/workdir-user-1-t1",
     )
     assert blocked_c is None
     persisted_b = await run_repository.get_run(run_b)
@@ -674,6 +719,7 @@ async def test_dispatches_multiple_queued_requests_one_at_a_time(session):
         agent_slug="main",
         thread_id="t1",
         conversation_id=10,
+        workdir_path="projects/workdir-user-1-t1",
     )
     await session.commit()
 
@@ -907,6 +953,8 @@ async def test_continue_dispatches_only_paused_fifo_head(session):
 
     repo = AgentRunRequestRepository(session)
     assert dispatched.request_id == "request-b"
+    assert dispatched.uid == "user-1"
+    assert dispatched.workdir_path == "projects/workdir-user-1-t1"
     assert (await repo.get_by_request_id("request-b")).status == "dispatched"
     assert await repo.get_queue_position("request-c") == 1
 

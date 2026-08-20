@@ -20,9 +20,12 @@ Skill 持久目录配置由 `yuxi.config` 拥有；Prompt 与激活路径由
   `YUXI_SKILL_DATA_DIR`。Redis 只缓存个人目录扫描得到的临时元数据。
 - `YUXI_SKILL_PROJECTION_DIR/<safe-uid>` 只物化当前 uid 获授权的共享与内置 Skill，并只读暴露为
   `/home/gem/skills`。个人 Skill 由既有 UserWorkspace mount 直接暴露为
-  `/home/gem/user-data/workspace/agents/skills`。
+  `/home/gem/user-data/agents/skills`。
 - Agent 选择只影响 Prompt 与工具激活；个人与共享 Skill 同 slug 时，逻辑解析仍由个人版本覆盖共享版本，
   但不会把个人目录复制到共享投影。
+- API 与 worker 都是受信任的个人 Skill service consumer，并以固定 `1000:1000` 写 UserWorkspace；worker
+  的写能力用于主 Agent `install_skill` 工具的原子安装。共享 Skill projection 继续只读，Sandbox 的普通
+  Project 文件写入仍通过其受限 UserWorkspace 挂载与文件边界执行。
 - Skill 安装草稿属于进程可丢弃状态，使用 `YUXI_RUNTIME_DIR/skill_import_drafts`，不再进入持久卷。
 - 一次性 `storage-migrator` 在 PostgreSQL advisory lock 下只迁移已识别的旧共享来源。迁移使用
   fd-relative `O_NOFOLLOW` 快照、校验 `SKILL.md` slug，并在目标冲突时拒绝切换。UserWorkspace 中的
@@ -43,7 +46,7 @@ Skill 持久目录配置由 `yuxi.config` 拥有；Prompt 与激活路径由
 ## 后果
 
 - 共享/内置 Skill 从 `/home/gem/skills/<slug>` 读取；个人 Skill 从
-  `/home/gem/user-data/workspace/agents/skills/<slug>` 读取。
+  `/home/gem/user-data/agents/skills/<slug>` 读取。
 - 共享 Skill source/projection 可以在 Compose/Kubernetes 中使用独立语义挂载；个人 Skill 随 User Data
   持久域和 UserWorkspace 生命周期存在。
 - 历史来源损坏、包含链接/特殊路径或与新 Owner 内容冲突时，启动 fail-closed 并保留旧数据；不会静默
@@ -59,6 +62,10 @@ Skill 持久目录配置由 `yuxi.config` 拥有；Prompt 与激活路径由
   共享迁移保留个人 UserWorkspace 目录、个人目录不触发共享迁移、共享投影不调用个人 Skill 合并均有负向案例。
 - 真实主 Agent 个人 Skill E2E：`1 passed`，同时证明个人文件保留在 UserWorkspace 且不存在同 slug 投影副本。
 - 负向测试覆盖 UserWorkspace 根路径链接、个人文件链接越界和安装期间并发同名目录保留。
+- Compose 契约覆盖 development/production worker 的 UserWorkspace 可写挂载，防止受支持的 Agent 内安装
+  因只读文件系统退化；共享 Skill projection 的只读契约保持不变。Runtime System Tests 还以 shipping
+  worker 的固定身份在真实个人 Skill 目录写入、回读并清理探针，闭合 mount、uid 与宿主权限；两份 Compose
+  契约 `2 passed`，重建后的 shipping worker mount inspection 为 `RW:true`，ARQ health check 通过。
 - docs build、Ruff check/format、工程 contract 脚本及其 `62 passed` unittest、`git diff --check` 通过。
 
 旧能力不存在：生产代码不再把个人 Skill 写入 `skill-sources/personal`，不把个人 Skill 复制到

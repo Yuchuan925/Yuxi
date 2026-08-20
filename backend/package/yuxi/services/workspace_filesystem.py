@@ -84,7 +84,13 @@ class WorkspaceFilesystem:
                 os.close(source_fd)
             os.close(parent_fd)
 
-    def upload_authorized_file_from_path(self, path: str, source_path: str) -> None:
+    def upload_authorized_file_from_path(
+        self,
+        path: str,
+        source_path: str,
+        *,
+        overwrite: bool = True,
+    ) -> None:
         """从受信任服务临时文件原子写入 UserWorkspace。"""
         base, parts = self._resolve_virtual_path(path, writable=True)
         if not parts:
@@ -106,7 +112,17 @@ class WorkspaceFilesystem:
                 self._write_all(target_fd, chunk)
             os.close(target_fd)
             target_fd = None
-            os.rename(temp_name, parts[-1], src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
+            if overwrite:
+                os.rename(temp_name, parts[-1], src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
+            else:
+                os.link(
+                    temp_name,
+                    parts[-1],
+                    src_dir_fd=parent_fd,
+                    dst_dir_fd=parent_fd,
+                    follow_symlinks=False,
+                )
+                os.unlink(temp_name, dir_fd=parent_fd)
         finally:
             if target_fd is not None:
                 os.close(target_fd)

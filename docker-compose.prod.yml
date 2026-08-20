@@ -90,7 +90,7 @@ services:
     networks:
       - app-network
     volumes:
-      - ./docker/volumes/yuxi/threads:/app/user-data:ro
+      - ./docker/volumes/yuxi/threads:/app/user-data
       - ./docker/volumes/yuxi/skill-sources:/app/skill-sources
       - ./docker/volumes/yuxi/skill-projections:/app/skill-projections
     extra_hosts:

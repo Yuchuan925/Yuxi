@@ -53,6 +53,14 @@ async def test_created_file_is_immediately_visible_to_tree_preview_and_artifact(
     file_path = entry["path"]
     assert file_path.startswith(f"/home/gem/user-data/{workdir_path}/")
 
+    collision = await test_client.post(
+        "/api/viewer/filesystem/upload",
+        data={"thread_id": thread_id, "parent_path": "/"},
+        files={"files": ("live.txt", b"replacement", "text/plain")},
+        headers=headers,
+    )
+    assert collision.status_code == 409, collision.text
+
     tree = await test_client.get(
         "/api/viewer/filesystem/tree",
         params={"thread_id": thread_id, "path": "/"},

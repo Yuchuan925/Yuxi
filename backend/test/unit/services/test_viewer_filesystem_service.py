@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
+from starlette.datastructures import UploadFile
 
 import yuxi.services.viewer_filesystem_service as svc
 from yuxi.agents.backends.sandbox.backend import FileTransferLimitError
@@ -13,6 +15,7 @@ from yuxi.services.workdir_service import WorkdirBinding
 
 class _Backend:
     def __init__(self):
+        self.uploads = []
         self.files = {
             "/home/gem/user-data/projects/workdir-1/report.txt": b"hello\nworld\n",
         }
@@ -51,7 +54,10 @@ class _Backend:
         if self.files.pop(path, None) is None:
             raise FileNotFoundError(path)
 
-    def upload_authorized_file_from_path(self, path, source):
+    def upload_authorized_file_from_path(self, path, source, *, overwrite=True):
+        if not overwrite and path in self.files:
+            raise FileExistsError(path)
+        self.uploads.append(path)
         self.files[path] = Path(source).read_bytes()
 
 
@@ -157,3 +163,51 @@ async def test_viewer_search_walks_current_workdir(realtime_viewer):
     )
     assert directory_result["entries"][0]["name"] == "outputs"
     assert directory_result["entries"][0]["is_dir"] is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "files",
+    [
+        [UploadFile(filename="report.txt", file=BytesIO(b"replacement"))],
+        [
+            UploadFile(filename="duplicate.txt", file=BytesIO(b"first")),
+            UploadFile(filename="duplicate.txt", file=BytesIO(b"second")),
+        ],
+    ],
+)
+async def test_viewer_upload_rejects_existing_and_batch_duplicate_names_without_writing(
+    realtime_viewer,
+    files,
+):
+    original = dict(realtime_viewer.files)
+
+    with pytest.raises(HTTPException) as exc:
+        await svc.upload_viewer_files(
+            thread_id="thread-1",
+            parent_path="/",
+            files=files,
+            current_user=SimpleNamespace(uid="user-1"),
+            db=object(),
+        )
+
+    assert exc.value.status_code == 409
+    assert realtime_viewer.uploads == []
+    assert realtime_viewer.files == original
+
+
+@pytest.mark.asyncio
+async def test_viewer_upload_maps_final_no_clobber_conflict_to_409(realtime_viewer):
+    realtime_viewer.directories["/home/gem/user-data/projects/workdir-1"] = []
+
+    with pytest.raises(HTTPException) as exc:
+        await svc.upload_viewer_files(
+            thread_id="thread-1",
+            parent_path="/",
+            files=[UploadFile(filename="report.txt", file=BytesIO(b"replacement"))],
+            current_user=SimpleNamespace(uid="user-1"),
+            db=object(),
+        )
+
+    assert exc.value.status_code == 409
+    assert realtime_viewer.files["/home/gem/user-data/projects/workdir-1/report.txt"] == b"hello\nworld\n"

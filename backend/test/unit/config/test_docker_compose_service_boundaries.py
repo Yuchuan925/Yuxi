@@ -134,12 +134,12 @@ def test_api_worker_and_provisioner_use_explicit_storage_domains(filename: str):
 
 
 @pytest.mark.parametrize("filename", ["docker-compose.yml", "docker-compose.prod.yml"])
-def test_worker_user_data_mount_is_read_only(filename: str) -> None:
-    """worker 只读取用户 Agent 上下文，不得直接修改 User Data。"""
+def test_worker_user_data_mount_is_writable_for_personal_skill_install(filename: str) -> None:
+    """worker 需要在主 Agent 工具调用中原子安装个人 Skill。"""
     volumes = _load_compose(filename)["services"]["worker"].get("volumes") or []
     user_data_mount = next(volume for volume in volumes if _volume_target(volume) == "/app/user-data")
 
-    assert _volume_is_read_only(user_data_mount) is True
+    assert _volume_is_read_only(user_data_mount) is False
 
 
 @pytest.mark.parametrize("filename", ["docker-compose.yml", "docker-compose.prod.yml"])

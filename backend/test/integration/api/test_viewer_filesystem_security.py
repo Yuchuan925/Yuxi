@@ -91,3 +91,25 @@ async def test_viewer_upload_preserves_non_directory_parent_error(test_client, s
 
     assert response.status_code == 404, response.text
     assert response.json()["detail"] == "目录不存在"
+
+
+async def test_viewer_upload_does_not_replace_hidden_target_symlink(test_client, standard_user, tmp_path: Path):
+    headers = standard_user["headers"]
+    uid = str(standard_user["user"]["uid"])
+    thread_id, workdir_path = await _create_thread_for_user(test_client, headers)
+
+    outside = tmp_path / f"yuxi-viewer-target-{uuid.uuid4().hex}.txt"
+    outside.write_text("outside", encoding="utf-8")
+    target = user_workdir_host_dir(uid, workdir_path) / "hidden.txt"
+    target.symlink_to(outside)
+
+    response = await test_client.post(
+        "/api/viewer/filesystem/upload",
+        data={"thread_id": thread_id, "parent_path": "/"},
+        files={"files": ("hidden.txt", b"replacement", "text/plain")},
+        headers=headers,
+    )
+
+    assert response.status_code == 409, response.text
+    assert target.is_symlink()
+    assert outside.read_text(encoding="utf-8") == "outside"

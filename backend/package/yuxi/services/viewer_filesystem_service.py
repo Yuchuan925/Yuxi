@@ -72,7 +72,9 @@ def _entry(binding: WorkdirBinding, parent: str, item: dict) -> dict:
 async def _list_directory(binding: WorkdirBinding, backend, path: str) -> list[dict]:
     try:
         items = await asyncio.to_thread(backend.list_authorized_directory, path, root=binding.virtual_path)
-    except FileNotFoundError as exc:
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail="Access denied") from exc
+    except (FileNotFoundError, NotADirectoryError, ValueError) as exc:
         raise HTTPException(status_code=404, detail="目录不存在") from exc
     return sorted(
         (_entry(binding, path, item) for item in items),
@@ -234,11 +236,30 @@ async def upload_viewer_files(*, thread_id: str, parent_path: str, files: list[U
     """把用户上传直接写入实时 Workdir。"""
     binding, backend = await _viewer_state(thread_id=thread_id, current_user=current_user, db=db)
     parent = _normalize_viewer_path(binding, parent_path)
+    file_names = [PurePosixPath(str(upload.filename or "")).name for upload in files]
+    if any(not name or name in {".", ".."} for name in file_names):
+        raise HTTPException(status_code=400, detail="无法识别的文件名")
+    if len(file_names) != len(set(file_names)):
+        raise HTTPException(status_code=409, detail="同一次上传不能包含重名文件")
+    try:
+        existing_names = {
+            str(item["name"])
+            for item in await asyncio.to_thread(
+                backend.list_authorized_directory,
+                parent,
+                root=binding.virtual_path,
+            )
+        }
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail="Access denied") from exc
+    except (FileNotFoundError, NotADirectoryError, ValueError) as exc:
+        raise HTTPException(status_code=404, detail="目录不存在") from exc
+    collisions = existing_names.intersection(file_names)
+    if collisions:
+        raise HTTPException(status_code=409, detail=f"文件已存在: {', '.join(sorted(collisions))}")
+
     entries: list[dict] = []
-    for upload in files:
-        file_name = PurePosixPath(str(upload.filename or "")).name
-        if not file_name or file_name in {".", ".."}:
-            raise HTTPException(status_code=400, detail="无法识别的文件名")
+    for upload, file_name in zip(files, file_names, strict=True):
         descriptor, temp_path = tempfile.mkstemp(prefix="yuxi-viewer-upload-")
         os.close(descriptor)
         try:
@@ -250,7 +271,14 @@ async def upload_viewer_files(*, thread_id: str, parent_path: str, files: list[U
             )
             target = f"{parent.rstrip('/')}/{file_name}"
             try:
-                await asyncio.to_thread(backend.upload_authorized_file_from_path, target, temp_path)
+                await asyncio.to_thread(
+                    backend.upload_authorized_file_from_path,
+                    target,
+                    temp_path,
+                    overwrite=False,
+                )
+            except FileExistsError as exc:
+                raise HTTPException(status_code=409, detail=f"文件已存在: {file_name}") from exc
             except PermissionError as exc:
                 raise HTTPException(status_code=403, detail="Access denied") from exc
             except (FileNotFoundError, NotADirectoryError) as exc:

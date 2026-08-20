@@ -311,11 +311,15 @@ async def test_dispatch_retry_reenqueues_existing_pending_run(monkeypatch: pytes
     engine = create_async_engine(os.environ["POSTGRES_URL"], pool_pre_ping=True)
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
     enqueue_calls: list[str] = []
+    materialized_workdirs: list[tuple[str, str]] = []
 
     async def flaky_enqueue(run_id: str):
         enqueue_calls.append(run_id)
         if len(enqueue_calls) == 1:
             raise ConnectionError("simulated Redis outage after commit")
+
+    def materialize_workdir(bound_uid: str, workdir_path: str):
+        materialized_workdirs.append((bound_uid, workdir_path))
 
     @asynccontextmanager
     async def session_context():
@@ -328,6 +332,7 @@ async def test_dispatch_retry_reenqueues_existing_pending_run(monkeypatch: pytes
                 raise
 
     monkeypatch.setattr(agent_request_queue_service, "enqueue_agent_run", flaky_enqueue)
+    monkeypatch.setattr(agent_request_queue_service, "ensure_bound_user_workdir", materialize_workdir)
     monkeypatch.setattr(agent_request_queue_service.pg_manager, "get_async_session_context", session_context)
 
     async with session_factory() as db:
@@ -375,6 +380,7 @@ async def test_dispatch_retry_reenqueues_existing_pending_run(monkeypatch: pytes
         assert run.status == "pending"
         assert recovered_run_id == run.id
         assert enqueue_calls == [run.id, run.id]
+        assert materialized_workdirs == [(uid, conversation.workdir_path), (uid, conversation.workdir_path)]
     finally:
         await _cleanup_queue_test_thread(session_factory, engine, thread_id)
 
@@ -392,6 +398,7 @@ async def test_startup_recovery_reenqueues_pending_runs_without_queue_requests(m
     engine = create_async_engine(os.environ["POSTGRES_URL"], pool_pre_ping=True)
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
     enqueue_calls: list[str] = []
+    materialized_workdirs: list[tuple[str, str]] = []
 
     @asynccontextmanager
     async def session_context():
@@ -406,7 +413,11 @@ async def test_startup_recovery_reenqueues_pending_runs_without_queue_requests(m
     async def fake_enqueue(run_id: str):
         enqueue_calls.append(run_id)
 
+    def materialize_workdir(bound_uid: str, workdir_path: str):
+        materialized_workdirs.append((bound_uid, workdir_path))
+
     monkeypatch.setattr(agent_request_queue_service, "enqueue_agent_run", fake_enqueue)
+    monkeypatch.setattr(agent_request_queue_service, "ensure_bound_user_workdir", materialize_workdir)
     monkeypatch.setattr(agent_request_queue_service.pg_manager, "get_async_session_context", session_context)
 
     async with session_factory() as db:
@@ -479,6 +490,9 @@ async def test_startup_recovery_reenqueues_pending_runs_without_queue_requests(m
             )
 
         assert sorted(enqueue_calls) == sorted(pending_run_ids)
+        assert sorted(materialized_workdirs) == sorted(
+            [(uid, resume_conversation.workdir_path), (uid, child_conversation.workdir_path)]
+        )
         assert request_count == 0
     finally:
         async with session_factory() as db:

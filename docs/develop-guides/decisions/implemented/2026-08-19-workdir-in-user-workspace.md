@@ -56,6 +56,8 @@ Workdir 在该设计中是 Conversation 的 cwd 和 Thread 文件 API 的默认�
 
 默认创建时由服务端生成 opaque UUID，避免依赖客户端 thread ID 的格式、可变性或安全性。默认 Workdir 对每个根 Conversation 独立；显式传入的路径按同一用户 workspace 内的目录引用处理，允许同一用户的多个 Thread 共享该目录，跨用户不允许共享。
 
+需要在同一事务中同时创建 Conversation、Message、Request 和 Run 的 Agent Call、Channel 与 Evaluation 入口，事务内只分配并持久化 `workdir_path`。调用方提交 PostgreSQL 后由可写 API 进程实体化该目录，确认成功后才向 ARQ 发布 Run；实体化失败时保留已提交的 pending Run 供恢复扫描重试，不允许先发布给只读或无目录的 worker。
+
 父 Conversation 与子 Conversation 继续继承同一个 `workdir_path`。
 
 ### Execution runtime scope 与 Workdir 分离
@@ -105,6 +107,8 @@ API/worker 仍可保留服务自身访问 UserWorkspace 和 Skill source/project
 
 API、worker 与 Sandbox 数据面统一使用数值身份 `1000:1000` 访问同一 UserWorkspace。新目录和文件遵循 owner-only 权限；旧数据由 root storage migrator 在运行时启动前一次性收敛所有权与权限，provisioner 不再承担运行时权限修复。身份与迁移契约见[统一 Workspace 运行身份并删除权限补丁](./2026-08-20-unified-workspace-runtime-identity.md)。
 
+Viewer 批量上传在写入前校验完整文件名集合，并拒绝同批重名或目标目录中的既有同名条目。实时 Workdir backend 还必须在最终目录 fd 上以原子 no-clobber 写入闭合并发创建和列表过滤 symlink 的竞态；冲突返回 409，不能用原子 rename 的覆盖语义替换用户或 Agent 已有文件。
+
 ### 附件只有一条确认链路
 
 附件入口收敛为 `MinIO tmp -> 可选解析 -> 确认写入 Workdir`。旧的“直接上传到 Thread 并由后端静默解析”接口和前端死方法删除。确认后，原件写入当前 Workdir 的 `uploads/`，可选 Markdown 写入 `uploads/attachments/`；Workdir 是正式字节 Owner，MinIO 只拥有未确认临时对象。
@@ -143,9 +147,11 @@ Conversation 的附件 JSON 只保存文件 ID、文件名、MIME、大小、状
 | 验收主张 | 失败面 | 语义 Owner | 直接证据 / 命令 | 负向案例 | 当前结果 |
 |---|---|---|---|---|---|
 | Thread 默认创建唯一的 `projects/<id>`，显式路径只绑定当前 UserWorkspace 内的目录 | DB 绑定与实际目录不一致 | Conversation repository、Thread service、UserWorkspace path service | 真实 PostgreSQL + 文件系统 integration；检查 Conversation 行与最终目录 | `../`、绝对路径、宿主机路径、其他用户路径、非目录路径 | 通过：3 个真实 PostgreSQL/文件系统 integration；相关 unit 纳入全量 1370 passed |
+| 自动创建 Conversation 的 Run 在提交后、ARQ 发布前实体化 Workdir | worker 先收到 Run，但其边界中不存在 UUID 目录并以 `invalid_runtime_scope` 失败 | Run submission、request queue finalize 与 Workdir path service | finalize 顺序 unit + 自动创建 Conversation 的真实 HTTP/PostgreSQL/POSIX integration + queue recovery integration | 删除实体化步骤后事件顺序缺少 `materialize`；自动创建后宿主目录不存在；恢复 pending Run 时跳过实体化；提交前创建或创建前 enqueue | 通过：unit 证明 `commit -> materialize -> enqueue`，真实 Agent Call 自动创建后回读 Conversation 与最终目录，queue integration 覆盖恢复派发 |
 | Workdir 路径不会越过 UserWorkspace 或绑定到保留目录 | 路径穿越、symlink 穿越、把 `agents/` 作为 Workdir | `backend/package/yuxi/agents/backends/sandbox/paths.py` 与 file bridge | path resolver unit + 真实 HTTP/Sandbox 文件访问 | `..`、绝对路径、symlink 组件、`agents/`、跨 uid | 通过：no-follow/path unit、5 个真实 HTTP Viewer integration 与 5 个真实 Docker provisioner integration |
 | Sandbox 把当前 UserWorkspace 直接挂载到 `/home/gem/user-data`，并只额外挂载只读共享 Skill projection | Project mount、嵌套 workspace mount 或广域 host root 泄漏 | `docker-compose.yml`、`docker/sandbox_provisioner/app.py` | Compose/provisioner contract、Docker mount inspection、`python3 scripts/verify_engineering_contracts.py` | `/app/projects`、`DOCKER_PROJECTS_HOST_PATH`、`PROJECT_DATA_PVC`、`/home/gem/user-data/workspace` mount、shared root、可写 Skill mount | 通过：Compose 校验、provisioner unit、真实 Docker mount/integration、工程信任检查 |
 | `uploads/outputs` 只在首次使用时创建，provisioner 不拥有业务目录 | 空 Thread 启动 Sandbox 后出现目录，或每次启动递归 chmod 全部项目 | Sandbox backend、attachment service、provisioner | backend/provisioner unit + Docker integration | K8s init 或 Docker command 包含预建 `uploads/outputs`、`chmod -R /home/gem/user-data` | 通过：provisioner/backend 正负向 unit 与真实附件 runtime 重建 E2E |
+| Viewer 批量上传不覆盖既有文件，也不接受同批重名 | 两个响应条目指向同一最终文件，或用户/Agent 产物被静默替换 | Viewer filesystem service 与实时 Workdir backend | Viewer unit + 真实 HTTP/POSIX integration | 既有文件名、同批重复 basename、目录快照后并发创建、被列表过滤的目标 symlink；冲突后回读原字节或链接 | 通过：预检与最终 no-clobber 负向 unit；真实 HTTP 验证既有文件和目标 symlink 均返回 409 且原对象不变 |
 | 附件正式字节、最小索引与模型上下文分别由 Workdir、Conversation 和本轮用户消息拥有 | JSON 复制 Markdown，系统提示反复增长，旧直传入口绕过确认流程 | attachment/chat service、Conversation repository | attachment unit、chat message unit、真实 HTTP integration/E2E | 非路径附件进入上下文、持久化 Markdown/hash、跨用户 tmp 路径、批次中途失败残留正式文件 | 通过：附件/消息 unit、15 个真实 HTTP integration 与附件 runtime 重建 E2E；旧直传端点返回 405 |
 | Project 间读取属于同一 UserWorkspace 的正常能力，Prompt 默认禁止未经用户要求的跨 Workdir 写入 | Agent 误把可见性当作默认写权限，或错误宣称 Project 间不可读 | `backend/package/yuxi/agents/buildin/chatbot/prompt.py` | Prompt unit 检查当前 Workdir、跨目录可读和默认写入约束 | Prompt 缺少当前路径；禁止读取其他 Project；允许默认跨 Project 写入 | 通过：Prompt 正向与负向 unit 纳入全量 unit |
 | `runtime_scope_id` 只分组父子 Run 的 execution Sandbox 与清理生命周期，不参与 Workdir 身份 | 共享 Workdir 的顶层 Conversation 错误共享进程，或子 Run 尚未确认停止时提前清理 Sandbox | AgentRun repository、SubAgent run service、worker runtime cleanup | AgentRun PostgreSQL integration + execution-tree E2E | 同 Workdir 的两个根 Run 使用同一 scope；子 Run 使用 child thread 作为 scope；子 Run 尚未确认停止时销毁 Sandbox | unit、真实双 Sandbox provisioner integration 和顶层 runtime 重建 E2E 通过；完整父子 execution-tree E2E 未运行 |
