@@ -1590,6 +1590,12 @@ async def get_agent_state_view(
             tool_approval_mode = latest_run.input_payload.get("tool_approval_mode")
             if tool_approval_mode:
                 input_context["tool_approval_mode"] = tool_approval_mode
+        if not conversation.workdir_path:
+            raise ValueError("Conversation 缺少 Project Workdir")
+        runtime_scope_id = str(getattr(latest_run, "runtime_scope_id", None) or thread_id)
+        input_context["runtime_scope_id"] = runtime_scope_id
+        input_context["workdir_relative_path"] = conversation.workdir_path
+        input_context["workdir_path"] = workdir_virtual_dir(conversation.workdir_path)
         context = _build_agent_context(agent, input_context)
         state = await _read_checkpoint_state(agent, uid=current_uid, thread_id=thread_id, context=context)
         values = getattr(state, "values", {}) if state else {}

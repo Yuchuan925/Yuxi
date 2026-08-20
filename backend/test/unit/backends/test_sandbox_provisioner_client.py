@@ -52,6 +52,12 @@ def test_provisioner_client_can_disable_sandbox_environment(monkeypatch):
     client.create("sandbox-1", "thread-1", "user-1", {"SECRET": "value"}, inherit_env=False)
 
     assert calls[0]["json"]["inherit_env"] is False
+    create_timeout = calls[0]["timeout"]
+    assert create_timeout is client._create_timeout
+    assert create_timeout.connect == 20
+    assert create_timeout.write == 20
+    assert create_timeout.pool == 20
+    assert create_timeout.read is None
 
 
 def test_provisioner_client_sends_project_workdir_contract(monkeypatch):

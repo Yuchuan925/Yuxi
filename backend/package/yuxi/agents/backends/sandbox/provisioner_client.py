@@ -15,16 +15,25 @@ class SandboxRecord:
 
 
 class ProvisionerClient:
-    def __init__(self, base_url: str, *, token: str, timeout_seconds: int = 20):
+    def __init__(
+        self,
+        base_url: str,
+        *,
+        token: str,
+        timeout_seconds: int = 20,
+    ):
         self._base_url = base_url.rstrip("/")
         self._timeout = httpx.Timeout(timeout_seconds)
+        # create 是同步长操作，镜像拉取和 Sandbox 健康等待由 provisioner
+        # 拥有；仅取消响应读取上限，连接、写入和连接池仍快速失败。
+        self._create_timeout = httpx.Timeout(timeout_seconds, read=None)
         self._headers = {"Authorization": f"Bearer {token}"}
 
-    def _request(self, method: str, path: str, **kwargs) -> httpx.Response:
+    def _request(self, method: str, path: str, *, timeout: httpx.Timeout | None = None, **kwargs) -> httpx.Response:
         return httpx.request(
             method=method,
             url=f"{self._base_url}{path}",
-            timeout=self._timeout,
+            timeout=timeout or self._timeout,
             headers=self._headers,
             **kwargs,
         )
@@ -46,6 +55,7 @@ class ProvisionerClient:
         response = self._request(
             "POST",
             "/api/sandboxes",
+            timeout=self._create_timeout,
             json={
                 "sandbox_id": sandbox_id,
                 "thread_id": thread_id,

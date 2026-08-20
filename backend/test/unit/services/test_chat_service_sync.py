@@ -551,7 +551,10 @@ async def test_get_agent_state_view_returns_interrupted_checkpoint_payload(monke
         ],
     )
 
-    async def read_checkpoint_state(*_args, **_kwargs):
+    async def read_checkpoint_state(*_args, context, **_kwargs):
+        assert context.runtime_scope_id == thread_id
+        assert context.workdir_relative_path == "projects/workdir-1"
+        assert context.workdir_path == "/home/gem/user-data/projects/workdir-1"
         return checkpoint_state
 
     monkeypatch.setattr(svc, "ConversationRepository", ConvRepo)
@@ -571,6 +574,69 @@ async def test_get_agent_state_view_returns_interrupted_checkpoint_payload(monke
     assert result["interrupt"]["status"] == "human_approval_required"
     assert result["interrupt"]["run_id"] == "run-1"
     assert result["interrupt"]["approval"]["action_requests"][0]["name"] == "execute"
+
+
+@pytest.mark.asyncio
+async def test_get_agent_state_view_rejects_conversation_without_workdir(monkeypatch: pytest.MonkeyPatch):
+    class ConvRepo:
+        def __init__(self, _db):
+            pass
+
+        async def get_conversation_by_thread_id(self, thread_id: str):
+            assert thread_id == "thread-1"
+            return SimpleNamespace(
+                id=20,
+                uid="user-1",
+                agent_id="main",
+                status="active",
+                workdir_path=None,
+            )
+
+    class AgentRepo:
+        def __init__(self, _db):
+            pass
+
+        async def get_by_slug(self, slug: str):
+            assert slug == "main"
+            return SimpleNamespace(backend_id="ChatBot", config_json={"context": {}})
+
+    class RunRepo:
+        def __init__(self, _db):
+            pass
+
+        async def get_latest_run_by_thread_for_user(self, thread_id: str, uid: str):
+            assert thread_id == "thread-1"
+            assert uid == "user-1"
+            return None
+
+    class Context:
+        def __init__(self, *, thread_id="", uid=""):
+            self.thread_id = thread_id
+            self.uid = uid
+
+        def update(self, data: dict):
+            for key, value in data.items():
+                setattr(self, key, value)
+
+    class Agent:
+        context_schema = Context
+
+    async def unexpected_checkpoint_read(*_args, **_kwargs):
+        raise AssertionError("缺少 Workdir 时不得读取 checkpoint")
+
+    monkeypatch.setattr(svc, "ConversationRepository", ConvRepo)
+    monkeypatch.setattr(svc, "AgentRepository", AgentRepo)
+    monkeypatch.setattr(svc, "AgentRunRepository", RunRepo)
+    monkeypatch.setattr(svc, "normalize_agent_context_config", _fake_normalize_agent_context_config)
+    monkeypatch.setattr(svc, "_read_checkpoint_state", unexpected_checkpoint_read)
+    monkeypatch.setattr(svc.agent_manager, "get_agent", lambda backend_id: Agent())
+
+    with pytest.raises(ValueError, match="Conversation 缺少 Project Workdir"):
+        await svc.get_agent_state_view(
+            thread_id="thread-1",
+            current_user=SimpleNamespace(uid="user-1"),
+            db=object(),
+        )
 
 
 @pytest.mark.asyncio
@@ -636,7 +702,11 @@ async def test_get_agent_state_view_includes_subagent_thread_relation(monkeypatc
         async def get_latest_run_by_thread_for_user(self, thread_id: str, uid: str):
             assert thread_id == child_thread_id
             assert uid == "user-1"
-            return SimpleNamespace(status="running", input_payload={"model_spec": "provider:run-model"})
+            return SimpleNamespace(
+                status="running",
+                runtime_scope_id="parent-thread",
+                input_payload={"model_spec": "provider:run-model"},
+            )
 
         async def get_latest_subagent_run_by_thread_for_user(self, thread_id: str, uid: str):
             assert thread_id == child_thread_id
@@ -689,6 +759,9 @@ async def test_get_agent_state_view_includes_subagent_thread_relation(monkeypatc
             assert context.thread_id == child_thread_id
             assert context.uid == "user-1"
             assert context.model == "provider:run-model"
+            assert context.runtime_scope_id == "parent-thread"
+            assert context.workdir_relative_path == "projects/workdir-1"
+            assert context.workdir_path == "/home/gem/user-data/projects/workdir-1"
             return Graph()
 
     monkeypatch.setattr(svc, "ConversationRepository", ConvRepo)

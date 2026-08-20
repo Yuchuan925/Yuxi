@@ -70,6 +70,8 @@ Workdir 在该设计中是 Conversation 的 cwd 和 Thread 文件 API 的默认�
 
 `runtime_scope_id` 不定义文件路径、文件授权、LangGraph checkpoint identity 或 UserWorkspace 边界。它的语义 Owner 属于 AgentRun 创建、SubAgent 执行树和 worker runtime cleanup，不再由 Workdir binding/service 推导或拥有。
 
+读取 LangGraph checkpoint 状态时仍需重建当前 Agent context：checkpoint thread 使用当前 Conversation 的 thread ID，Sandbox context 使用最新 AgentRun 持久化的 `runtime_scope_id`，并注入该 Conversation 的 `workdir_path`。缺失 Workdir 时读取失败，不构造一个没有当前工作目录的降级上下文。
+
 取消 `workdir-files-<id>` 文件桥接 Sandbox 后，正常执行路径直接用 `runtime_scope_id` 标识 execution Sandbox，不再保留 `sandbox_instance_id`。只有未来出现同一执行树必须同时拥有多个独立 Sandbox 实例的真实 consumer 时，才重新引入独立 instance identity。
 
 本阶段不创建 `ProjectWorkdir` 表，也不为仅保存路径的 Workdir 建立第二个 UUID 资源表。只有未来出现 Workdir 级别的 ACL、重命名、配额、生命周期或跨用户共享元数据时，才重新评估独立 Workdir resource。
@@ -96,6 +98,8 @@ Sandbox 的持久文件挂载收敛为两个逻辑域：
 ```
 
 Sandbox 的 cwd 设置为 `/home/gem/user-data/<workdir_path>`。因此不再需要容器内的 `/home/gem/user-data/workspace` 中间层，也不再需要独立 `/home/gem/projects` 根目录、Project bind mount、`DOCKER_PROJECTS_HOST_PATH` 或 `PROJECT_DATA_PVC`。每个 Thread 只改变 cwd，不改变挂载配置。
+
+Sandbox create 是 provisioner 拥有的同步长操作，可能包含镜像拉取与健康等待。调用方保留连接、写入和连接池的短超时，但不以更短的 read timeout 抢先终止服务端创建；普通 health、discover、touch 和 delete 请求仍使用短超时。
 
 API/worker 仍可保留服务自身访问 UserWorkspace 和 Skill source/projection 所需的显式挂载；这些挂载属于服务的 UserWorkspace/Skill 访问，不构成第三个 Project 存储域。`uploads/`、`outputs/` 是当前 Workdir 下的目录约定，路径为 `/home/gem/user-data/<workdir_path>/uploads` 和 `/home/gem/user-data/<workdir_path>/outputs`，不再由 `/home/gem/user-data/uploads`、`/home/gem/user-data/outputs` 表示用户级全局运行时目录。两者都按首次使用创建：附件确认创建所需的 `uploads` 父目录，标准文件写入创建所需的 `outputs` 父目录；Sandbox provisioner 只验证挂载与 cwd，不预建业务目录，也不递归修改整个 UserWorkspace 权限。`saved_artifacts` 等用户主动保存的文件可以继续作为 UserWorkspace 内的普通目录存在，但不形成额外挂载或存储协议。
 
@@ -143,6 +147,7 @@ Conversation 的附件 JSON 只保存文件 ID、文件名、MIME、大小、状
 | 附件正式字节、最小索引与模型上下文分别由 Workdir、Conversation 和本轮用户消息拥有 | JSON 复制 Markdown，系统提示反复增长，旧直传入口绕过确认流程 | attachment/chat service、Conversation repository | attachment unit、chat message unit、真实 HTTP integration/E2E | 非路径附件进入上下文、持久化 Markdown/hash、跨用户 tmp 路径、批次中途失败残留正式文件 | 通过：附件/消息 unit、15 个真实 HTTP integration 与附件 runtime 重建 E2E；旧直传端点返回 405 |
 | Project 间读取属于同一 UserWorkspace 的正常能力，Prompt 默认禁止未经用户要求的跨 Workdir 写入 | Agent 误把可见性当作默认写权限，或错误宣称 Project 间不可读 | `backend/package/yuxi/agents/buildin/chatbot/prompt.py` | Prompt unit 检查当前 Workdir、跨目录可读和默认写入约束 | Prompt 缺少当前路径；禁止读取其他 Project；允许默认跨 Project 写入 | 通过：Prompt 正向与负向 unit 纳入全量 unit |
 | `runtime_scope_id` 只分组父子 Run 的 execution Sandbox 与清理生命周期，不参与 Workdir 身份 | 共享 Workdir 的顶层 Conversation 错误共享进程，或父子 Run 提前清理 Sandbox | AgentRun repository、SubAgent run service、worker runtime cleanup | AgentRun PostgreSQL integration + execution-tree E2E | 同 Workdir 的两个根 Run 使用同一 scope；子 Run 使用 child thread 作为 scope；子 Run 活跃时销毁 Sandbox | unit、真实双 Sandbox provisioner integration 和顶层 runtime 重建 E2E 通过；完整父子 execution-tree E2E 未运行 |
+| 状态读取与同步 Sandbox 创建保留当前 Workdir/runtime scope，并由 provisioner 完成长操作 | 状态读取缺少 Workdir；子 Agent 使用 child scope；冷启动被客户端短 read timeout 中断 | Chat service 状态读取、provisioner client/create endpoint | chat/provisioner unit + deterministic assembled-path E2E | 缺失 Workdir；子 Run 的父 scope；create 只放宽 read timeout | unit 通过；真实冷启动由 PR Runtime System Tests 验证 |
 | 父子 Conversation 使用同一 Workdir，但 runtime 生命周期仍按既有 scope 规则隔离 | 子 Agent 路径错绑或 runtime cleanup 误删文件 | Conversation Workdir service、worker lifecycle、provisioner | execution-tree E2E，验证最终 POSIX 文件和 runtime cleanup | 子 Conversation 指向不同路径；根 Run 终态删除 Workdir 文件 | E2E 契约收集通过；实际父子链路未运行（本地 deterministic provider 不可连接） |
 | v0.7.1 数据迁移只在停机条件满足时执行，并在提交后清理旧源 | 无文件 Conversation 漏迁、迁移期间仍写入、失败后丢源数据 | `storage_migration.py` 与一次性 legacy importer | v0.7.1 schema、文件系统 integration、quiescence proof 与重试 | 空 Conversation、缺少 quiescence、未发布中间 schema、目标冲突、提前删除旧源 | 真实 v0.7.1 schema/文件系统 integration 覆盖有文件、空 Conversation、附件字段收敛和重试；相关 unit 与完整 gate 见迁移基线决定 |
 | 个人 Skill 通过 `/home/gem/user-data/agents/skills` 直接属于 UserWorkspace，共享 Skill projection 仍只读 | 个人 Skill 被共享迁移删除或 Sandbox 可写共享 Skill | Skill service、Skill projection、UserWorkspace | 现有 Skill unit/integration/E2E 与 Docker mount inspection | 个人 Skill 被 legacy scan 删除；shared projection 可写；仍生成 `/home/gem/user-data/workspace/agents/skills` | unit 与真实 Docker mount/integration 通过；完整 Agent E2E 未运行（本地 deterministic provider 不可连接） |
