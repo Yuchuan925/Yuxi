@@ -4,6 +4,7 @@ import asyncio
 import contextlib
 import hashlib
 import io
+import os
 import shutil
 from pathlib import Path, PurePosixPath
 from urllib.parse import quote
@@ -30,6 +31,7 @@ from yuxi.services.file_preview import (
     render_preview_too_large_payload,
 )
 from yuxi.services.mention_search_service import invalidate_workspace_mention_cache
+from yuxi.services.workspace_filesystem import WorkspaceFilesystem
 from yuxi.storage.postgres.models_business import User
 from yuxi.utils.datetime_utils import utc_isoformat_from_timestamp
 from yuxi.utils.paths import (
@@ -185,9 +187,20 @@ async def create_workspace_directory(*, parent_path: str, name: str, current_use
     directory_name = _validate_child_name(name, field_name="文件夹名")
     parent = _resolve_parent_directory(current_user, parent_path)
     target = _resolve_new_child(root, parent, directory_name)
+    normalized_parent = _normalize_workspace_path(parent_path).as_posix()
+    virtual_parent = (
+        VIRTUAL_PATH_WORKSPACE
+        if normalized_parent == "/"
+        else f"{VIRTUAL_PATH_WORKSPACE.rstrip('/')}{normalized_parent}"
+    )
 
     try:
-        await asyncio.to_thread(target.mkdir)
+        await asyncio.to_thread(
+            WorkspaceFilesystem(str(current_user.uid)).create_authorized_directory,
+            virtual_parent,
+            directory_name,
+            root=VIRTUAL_PATH_WORKSPACE,
+        )
     except FileExistsError as exc:
         raise HTTPException(status_code=400, detail="同名文件或文件夹已存在") from exc
     except PermissionError as exc:
@@ -367,6 +380,7 @@ async def _write_workspace_upload(file: UploadFile, target: Path) -> None:
     try:
         async with aiofiles.open(target, "xb") as buffer:
             created_file = True
+            os.fchmod(buffer.fileno(), 0o666)
             await write_upload_to_buffer(
                 file,
                 buffer,

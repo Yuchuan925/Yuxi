@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import errno
 import hashlib
 import os
@@ -202,12 +203,20 @@ def _ensure_workspace_default_files_fd(workspace_fd: int) -> None:
                 logger.warning(f"工作区默认 {filename} 初始化失败: {exc}")
                 continue
             try:
+                os.fchmod(file_fd, 0o666)
                 content = default_content.encode("utf-8")
                 offset = 0
                 while offset < len(content):
                     offset += os.write(file_fd, content[offset:])
-            finally:
+            except BaseException:
                 os.close(file_fd)
+                file_fd = None
+                with contextlib.suppress(FileNotFoundError):
+                    os.unlink(filename, dir_fd=agents_fd)
+                raise
+            finally:
+                if file_fd is not None:
+                    os.close(file_fd)
     finally:
         os.close(agents_fd)
 

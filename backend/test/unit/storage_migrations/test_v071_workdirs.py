@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -8,21 +9,28 @@ import yuxi.storage_migrations.v071_workdirs as svc
 
 
 def test_import_moves_v071_thread_files_into_user_workspace(monkeypatch, tmp_path: Path):
-    legacy_storage = tmp_path / "legacy"
-    uploads = legacy_storage / "threads" / "thread-1" / "user-data" / "uploads"
-    uploads.mkdir(parents=True)
-    (uploads / "input.txt").write_text("input", encoding="utf-8")
-    user_data = tmp_path / "user-data"
+    previous_umask = os.umask(0o077)
+    try:
+        legacy_storage = tmp_path / "legacy"
+        uploads = legacy_storage / "threads" / "thread-1" / "user-data" / "uploads"
+        uploads.mkdir(parents=True)
+        (uploads / "input.txt").write_text("input", encoding="utf-8")
+        user_data = tmp_path / "user-data"
 
-    monkeypatch.setenv("YUXI_USER_DATA_DIR", str(user_data))
-    monkeypatch.setattr(svc, "get_legacy_storage_dir", lambda: legacy_storage)
-    workdirs = (svc.V071WorkdirBinding("legacy-workdir-1", "user-1"),)
-    conversations = (svc.V071ConversationBinding("thread-1", "user-1", "legacy-workdir-1"),)
+        monkeypatch.setenv("YUXI_USER_DATA_DIR", str(user_data))
+        monkeypatch.setattr(svc, "get_legacy_storage_dir", lambda: legacy_storage)
+        workdirs = (svc.V071WorkdirBinding("legacy-workdir-1", "user-1"),)
+        conversations = (svc.V071ConversationBinding("thread-1", "user-1", "legacy-workdir-1"),)
 
-    svc.import_v071_workdirs(workdirs, conversations)
+        svc.import_v071_workdirs(workdirs, conversations)
+    finally:
+        os.umask(previous_umask)
 
     target = user_data / "shared" / "user-1" / "workspace" / "projects" / "legacy-workdir-1"
     assert (target / "uploads" / "input.txt").read_text(encoding="utf-8") == "input"
+    assert target.stat().st_mode & 0o777 == 0o777
+    assert (target / "uploads").stat().st_mode & 0o777 == 0o777
+    assert (target / "uploads" / "input.txt").stat().st_mode & 0o777 == 0o666
     assert not (target / "outputs").exists()
     assert uploads.is_dir()
 
@@ -37,6 +45,7 @@ def test_import_creates_empty_workdir_without_eager_business_directories(monkeyp
 
     target = tmp_path / "user-data/shared/user-1/workspace/projects/legacy-empty"
     assert target.is_dir()
+    assert target.stat().st_mode & 0o777 == 0o777
     assert list(target.iterdir()) == []
 
 
