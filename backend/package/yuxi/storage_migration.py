@@ -89,8 +89,8 @@ async def main() -> None:
     try:
         async with pg_manager.get_async_session_context() as session:
             workdir_plan = await read_v071_workdir_plan(session)
-        requires_quiescence = workdir_plan.requires_cutover or bool(workdir_plan.workdirs)
-        requires_quiescence = requires_quiescence or _legacy_skill_roots_exist() or _legacy_system_config_exists()
+        migrates_workdirs = workdir_plan.requires_cutover or bool(workdir_plan.workdirs)
+        requires_quiescence = migrates_workdirs or _legacy_skill_roots_exist() or _legacy_system_config_exists()
         if requires_quiescence:
             _require_quiescence_proof()
         await pg_manager.create_business_tables()
@@ -98,7 +98,6 @@ async def main() -> None:
         legacy_config_file = get_legacy_storage_dir() / "config/base.toml"
         if legacy_config_file.is_file() and not legacy_config_file.is_symlink():
             legacy_config_file.unlink()
-        migrates_workdirs = workdir_plan.requires_cutover or bool(workdir_plan.workdirs)
         if migrates_workdirs:
             await asyncio.to_thread(import_v071_workdirs, workdir_plan.workdirs, workdir_plan.conversations)
             async with pg_manager.get_async_session_context() as session:

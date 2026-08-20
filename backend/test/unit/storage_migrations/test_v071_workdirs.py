@@ -126,6 +126,26 @@ def test_import_rejects_thread_symlink_without_replacing_existing_target(monkeyp
     assert outside.read_text(encoding="utf-8") == "secret"
 
 
+def test_import_rejects_symlinked_legacy_thread_parent(monkeypatch, tmp_path: Path):
+    legacy_storage = tmp_path / "legacy"
+    threads = legacy_storage / "threads"
+    threads.mkdir(parents=True)
+    outside = tmp_path / "outside"
+    (outside / "user-data" / "uploads").mkdir(parents=True)
+    (outside / "user-data" / "uploads" / "secret.txt").write_text("secret", encoding="utf-8")
+    (threads / "thread-1").symlink_to(outside, target_is_directory=True)
+    monkeypatch.setenv("YUXI_USER_DATA_DIR", str(tmp_path / "user-data"))
+    monkeypatch.setattr(svc, "get_legacy_storage_dir", lambda: legacy_storage)
+
+    with pytest.raises(RuntimeError, match="symlink"):
+        svc.import_v071_workdirs(
+            (svc.V071WorkdirBinding("safe-target", "user-1"),),
+            (svc.V071ConversationBinding("thread-1", "user-1", "safe-target"),),
+        )
+
+    assert (outside / "user-data" / "uploads" / "secret.txt").read_text(encoding="utf-8") == "secret"
+
+
 def test_import_rejects_unsafe_legacy_identity(monkeypatch, tmp_path: Path):
     monkeypatch.setenv("YUXI_USER_DATA_DIR", str(tmp_path / "user-data"))
 
@@ -183,3 +203,14 @@ def test_cleanup_removes_only_imported_v071_thread_sources(monkeypatch, tmp_path
     svc.cleanup_v071_thread_sources(conversations)
 
     assert not source.exists()
+
+
+def test_cleanup_v071_thread_sources_surfaces_delete_failure(monkeypatch, tmp_path: Path):
+    legacy_storage = tmp_path / "legacy"
+    source = legacy_storage / "threads" / "thread-1" / "user-data" / "uploads"
+    source.mkdir(parents=True)
+    monkeypatch.setattr(svc, "get_legacy_storage_dir", lambda: legacy_storage)
+    monkeypatch.setattr(svc.shutil, "rmtree", lambda _path: (_ for _ in ()).throw(PermissionError("denied")))
+
+    with pytest.raises(PermissionError, match="denied"):
+        svc.cleanup_v071_thread_sources((svc.V071ConversationBinding("thread-1", "user-1", "workdir-1"),))

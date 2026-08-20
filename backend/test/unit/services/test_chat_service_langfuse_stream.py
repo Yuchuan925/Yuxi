@@ -172,6 +172,7 @@ class _FakeConvRepo:
                 agent_id="test-agent",
                 thread_id=thread_id,
                 status="active",
+                workdir_path="projects/workdir-1",
                 extra_metadata={},
             ),
         )
@@ -212,6 +213,7 @@ class _FakeConvRepo:
             agent_id=agent_id,
             thread_id=thread_id,
             status="active",
+            workdir_path="projects/workdir-1",
             extra_metadata=metadata or {},
         )
         self.conversations[thread_id] = conversation
@@ -423,6 +425,66 @@ async def test_stream_agent_chat_commits_before_stream_and_persists_langfuse_con
     assert init_attachment["path"].endswith("/uploads/current.txt")
     assert calls["flushed"] is True
     assert isinstance(calls["stream_messages"][0], HumanMessage)
+
+
+@pytest.mark.asyncio
+async def test_stream_agent_chat_creates_conversation_before_reading_workdir(
+    stub_system_options,
+    stub_content_guard,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    class FakeAgent:
+        context_schema = _FakeContext
+
+        async def stream_messages_with_state(self, messages, input_context=None, **kwargs):
+            del messages, input_context, kwargs
+            yield "messages", (AIMessageChunk(content="created"), {"node": "llm"})
+
+        async def get_graph(self, *, context=None):
+            del context
+
+            class FakeGraph:
+                async def aget_state(self, _config):
+                    return SimpleNamespace(values={"messages": []})
+
+            return FakeGraph()
+
+    _patch_stream_scaffolding(monkeypatch, agent=FakeAgent())
+    repository_holder: dict[str, _FakeConvRepo] = {}
+
+    class NewThreadConversationRepository(_FakeConvRepo):
+        def __init__(self, db):
+            super().__init__(db)
+            repository_holder["repo"] = self
+
+        async def get_conversation_by_thread_id(self, thread_id: str):
+            del thread_id
+            return None
+
+    async def resolve_new_thread(**_kwargs):
+        return (
+            SimpleNamespace(slug="test-agent", backend_id="ChatbotAgent"),
+            FakeAgent(),
+            {},
+            None,
+        )
+
+    monkeypatch.setattr(svc, "ConversationRepository", NewThreadConversationRepository)
+    monkeypatch.setattr(svc, "_resolve_agent_runtime", resolve_new_thread)
+
+    chunks = []
+    async for chunk in svc.stream_agent_chat(
+        agent_slug="test-agent",
+        thread_id="new-thread",
+        meta={"request_id": "new-request"},
+        input_message=build_chat_input_message("hello"),
+        current_user=SimpleNamespace(id=1, uid="user-1", role="user", department_id="dept-1"),
+        db=_FakeSession(),
+    ):
+        chunks.append(json.loads(chunk.decode("utf-8")))
+
+    assert chunks[-1]["status"] == "finished"
+    assert repository_holder["repo"].conversations["new-thread"].workdir_path == "projects/workdir-1"
 
 
 @pytest.mark.asyncio

@@ -10,6 +10,8 @@ from fastapi import HTTPException, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 from yuxi.config.options import system_options
 from yuxi.knowledge.parser.factory import DocumentProcessorFactory
+from yuxi.repositories.agent_run_repository import AgentRunRepository
+from yuxi.repositories.agent_run_request_repository import AgentRunRequestRepository
 from yuxi.repositories.conversation_repository import ConversationRepository
 from yuxi.storage.minio import StorageError, get_minio_client
 from yuxi.utils.datetime_utils import utc_isoformat
@@ -499,9 +501,24 @@ async def delete_thread_attachment_view(
     if target_attachment is None:
         raise HTTPException(status_code=404, detail="附件不存在或已被删除")
 
+    request_id = target_attachment.get("request_id")
+    if isinstance(request_id, str) and request_id:
+        request = await AgentRunRequestRepository(db).get_by_request_id(request_id)
+        if request and request.status == "queued":
+            raise HTTPException(status_code=409, detail="附件正在被请求使用，暂时不能删除")
+
+    active_run = await AgentRunRepository(db).get_active_run_by_thread_for_user(
+        agent_slug=conversation.agent_id,
+        conversation_thread_id=thread_id,
+        uid=str(current_uid),
+    )
+    if active_run:
+        raise HTTPException(status_code=409, detail="对话正在运行，暂时不能删除附件")
+
     removed = await conv_repo.remove_attachment(conversation.id, file_id)
     if not removed:
         raise HTTPException(status_code=404, detail="附件不存在或已被删除")
+
     await db.commit()
 
     for path in {target_attachment.get("path"), target_attachment.get("original_path")}:

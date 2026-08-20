@@ -738,11 +738,11 @@ async def test_terminal_root_atomically_cancels_active_execution_tree_descendant
     cancelled = await repo.cancel_active_execution_tree_descendants(parent)
 
     assert cancelled == [(child.id, child.conversation_thread_id)]
-    assert child.status == "cancelled"
+    assert child.status == "cancel_requested"
     assert child.error_type == "execution_tree_closed"
-    assert child.worker_id is None
-    assert child.heartbeat_at is None
-    assert child.lease_expires_at is None
+    assert child.worker_id == "child-worker"
+    assert child.heartbeat_at is not None
+    assert child.lease_expires_at is not None
 
 
 async def _seed_running_run(db, *, run_id: str = "attempt-run", request_id: str = "attempt-request") -> AgentRun:

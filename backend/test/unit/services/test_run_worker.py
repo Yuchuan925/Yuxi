@@ -68,36 +68,9 @@ def _build_run() -> SimpleNamespace:
 
 
 @pytest.mark.asyncio
-async def test_release_run_sandbox_uses_persisted_workdir_binding(monkeypatch: pytest.MonkeyPatch):
-    run = _build_run()
-    released: dict[str, object] = {}
-
-    class _Result:
-        @staticmethod
-        def scalar_one_or_none():
-            return "projects/workdir-1"
-
-    @asynccontextmanager
-    async def fake_session_ctx():
-        yield SimpleNamespace(execute=AsyncMock(return_value=_Result()))
-
-    def fake_release(thread_id, **kwargs):
-        released.update(thread_id=thread_id, **kwargs)
-
-    monkeypatch.setattr(run_worker.pg_manager, "get_async_session_context", fake_session_ctx)
-    monkeypatch.setattr(run_worker, "get_sandbox_provider", lambda: SimpleNamespace(release=fake_release))
-
-    await run_worker._release_run_sandbox(run)
-
-    assert released["thread_id"] == "thread-1"
-    assert released["workdir_path"] == "projects/workdir-1"
-
-
-@pytest.mark.asyncio
 async def test_cancelling_subagent_preserves_shared_runtime(monkeypatch: pytest.MonkeyPatch):
     run = _build_run()
     run.run_type = "subagent"
-    released = False
 
     async def fake_noop(*args, **kwargs):
         del args, kwargs
@@ -107,18 +80,12 @@ async def test_cancelling_subagent_preserves_shared_runtime(monkeypatch: pytest.
         del args, kwargs
         return True
 
-    async def fake_release(*args, **kwargs):
-        nonlocal released
-        del args, kwargs
-        released = True
-
     async def fake_mark_terminal(*args, **kwargs):
         del args, kwargs
         return run_worker.TerminalTransition(status="cancelled", changed=True)
 
     monkeypatch.setattr(run_worker, "_flush_writer_best_effort", fake_noop)
     monkeypatch.setattr(run_worker, "_finish_execution_tree_children", fake_tree_finished)
-    monkeypatch.setattr(run_worker, "_release_run_sandbox", fake_release)
     monkeypatch.setattr(run_worker, "mark_run_terminal", fake_mark_terminal)
     monkeypatch.setattr(run_worker, "_append_run_event_best_effort", fake_noop)
     monkeypatch.setattr(run_worker, "_append_end_event", fake_noop)
@@ -132,8 +99,6 @@ async def test_cancelling_subagent_preserves_shared_runtime(monkeypatch: pytest.
         writer=SimpleNamespace(),
         run=run,
     )
-
-    assert released is False
 
 
 def _patch_common(monkeypatch: pytest.MonkeyPatch, run_obj: SimpleNamespace):
@@ -196,7 +161,6 @@ def _patch_common(monkeypatch: pytest.MonkeyPatch, run_obj: SimpleNamespace):
         ),
     )
     monkeypatch.setattr(run_worker, "_finish_execution_tree_children", fake_tree_finished)
-    monkeypatch.setattr(run_worker, "_release_run_sandbox", fake_noop)
     monkeypatch.setattr(run_worker, "_release_runtime_if_idle", fake_cleanup)
     monkeypatch.setattr(run_worker, "clear_cancel_signal", fake_noop)
     monkeypatch.setattr(run_worker, "stream_agent_chat", lambda **kwargs: object())

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import errno
 import hashlib
 import os
 import re
@@ -21,7 +22,7 @@ from yuxi.agents.backends.sandbox.paths import (
 from yuxi.config import get_legacy_storage_dir
 from yuxi.services.workspace_filesystem import WorkspaceFilesystem
 from yuxi.storage.postgres.models_business import Conversation, Message, ToolCall
-from yuxi.utils.paths import VIRTUAL_PATH_PREFIX
+from yuxi.utils.paths import VIRTUAL_PATH_PREFIX, open_directory_fd
 
 _SAFE_LEGACY_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 _CURRENT_ATTACHMENT_FIELDS = {
@@ -206,7 +207,10 @@ def cleanup_v071_thread_sources(
         if legacy_user_data is None:
             continue
         for namespace in ("uploads", "outputs"):
-            shutil.rmtree(legacy_user_data / namespace, ignore_errors=True)
+            source = legacy_user_data / namespace
+            if not source.exists() and not source.is_symlink():
+                continue
+            shutil.rmtree(source)
 
 
 def _legacy_thread_data_exists(thread_id: str) -> bool:
@@ -229,7 +233,18 @@ def _legacy_thread_user_data(thread_id: object) -> Path | None:
         or "\x00" in value
     ):
         return None
-    return get_legacy_storage_dir() / "threads" / value / "user-data"
+    root = get_legacy_storage_dir() / "threads"
+    try:
+        directory_fd = open_directory_fd(root, (value, "user-data"))
+    except FileNotFoundError:
+        return None
+    except OSError as exc:
+        if exc.errno in {errno.ELOOP, errno.ENOTDIR}:
+            raise RuntimeError("旧 Thread 文件根包含 symlink 或非目录组件") from exc
+        raise
+    else:
+        os.close(directory_fd)
+    return root / value / "user-data"
 
 
 def _current_workdir_id(workdir_path: object) -> str | None:

@@ -158,6 +158,30 @@ class FakeDB:
         self.rollback_count += 1
 
 
+class EmptyAgentRunRequestRepository:
+    def __init__(self, db):
+        del db
+
+    async def get_by_request_id(self, request_id: str):
+        del request_id
+        return None
+
+
+class EmptyAgentRunRepository:
+    def __init__(self, db):
+        del db
+
+    async def get_active_run_by_thread_for_user(self, **kwargs):
+        del kwargs
+        return None
+
+
+@pytest.fixture(autouse=True)
+def stub_attachment_usage_checks(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(service, "AgentRunRequestRepository", EmptyAgentRunRequestRepository)
+    monkeypatch.setattr(service, "AgentRunRepository", EmptyAgentRunRepository)
+
+
 class FakeWorkdirBackend:
     def __init__(self):
         self.files: dict[str, bytes] = {}
@@ -172,6 +196,18 @@ class FakeWorkdirBackend:
         assert root == "/home/gem/user-data/projects/workdir-1"
         if self.files.pop(path, None) is None:
             raise FileNotFoundError(path)
+
+
+class QueuedAgentRunRequestRepository(EmptyAgentRunRequestRepository):
+    async def get_by_request_id(self, request_id: str):
+        del request_id
+        return SimpleNamespace(status="queued")
+
+
+class ActiveAgentRunRepository(EmptyAgentRunRepository):
+    async def get_active_run_by_thread_for_user(self, **kwargs):
+        del kwargs
+        return SimpleNamespace(id="active-run")
 
 
 @pytest.mark.asyncio
@@ -472,6 +508,74 @@ async def test_delete_thread_attachment_updates_live_workdir_even_during_runtime
     assert result == {"message": "附件已删除"}
     assert fake_repo.attachments == []
     assert backend.files == {}
+
+
+@pytest.mark.asyncio
+async def test_delete_thread_attachment_rejects_queued_request_use(monkeypatch):
+    fake_repo = FakeConversationRepository(db=None)
+    backend = FakeWorkdirBackend()
+    original = "/home/gem/user-data/projects/workdir-1/uploads/file-1_demo.pdf"
+    backend.files = {original: b"pdf"}
+    attachment = {
+        "file_id": "file-1",
+        "file_name": "demo.pdf",
+        "original_path": original,
+        "path": original,
+        "request_id": "request-1",
+    }
+    fake_repo.attachments = [attachment]
+
+    async def resolve_binding(**kwargs):
+        del kwargs
+        return SimpleNamespace(
+            workdir_path="projects/workdir-1",
+            virtual_path="/home/gem/user-data/projects/workdir-1",
+            create_file_backend=lambda **_kwargs: backend,
+        )
+
+    monkeypatch.setattr(service, "ConversationRepository", lambda _db: fake_repo)
+    monkeypatch.setattr(workdir_service, "resolve_workdir_binding", resolve_binding)
+    monkeypatch.setattr(service, "AgentRunRequestRepository", QueuedAgentRunRequestRepository)
+
+    with pytest.raises(service.HTTPException) as exc_info:
+        await service.delete_thread_attachment_view(
+            thread_id="thread-1", file_id="file-1", db=FakeDB(), current_uid="user-1"
+        )
+
+    assert exc_info.value.status_code == 409
+    assert fake_repo.attachments == [attachment]
+    assert backend.files == {original: b"pdf"}
+
+
+@pytest.mark.asyncio
+async def test_delete_thread_attachment_rejects_active_thread_run(monkeypatch):
+    fake_repo = FakeConversationRepository(db=None)
+    backend = FakeWorkdirBackend()
+    original = "/home/gem/user-data/projects/workdir-1/uploads/file-1_demo.pdf"
+    backend.files = {original: b"pdf"}
+    attachment = {"file_id": "file-1", "file_name": "demo.pdf", "original_path": original, "path": original}
+    fake_repo.attachments = [attachment]
+
+    async def resolve_binding(**kwargs):
+        del kwargs
+        return SimpleNamespace(
+            workdir_path="projects/workdir-1",
+            virtual_path="/home/gem/user-data/projects/workdir-1",
+            create_file_backend=lambda **_kwargs: backend,
+        )
+
+    monkeypatch.setattr(service, "ConversationRepository", lambda _db: fake_repo)
+    monkeypatch.setattr(workdir_service, "resolve_workdir_binding", resolve_binding)
+    monkeypatch.setattr(service, "AgentRunRepository", ActiveAgentRunRepository)
+
+    with pytest.raises(service.HTTPException) as exc_info:
+        await service.delete_thread_attachment_view(
+            thread_id="thread-1", file_id="file-1", db=FakeDB(), current_uid="user-1"
+        )
+
+    assert exc_info.value.status_code == 409
+    assert fake_repo.attachments == [attachment]
+    assert backend.files == {original: b"pdf"}
 
 
 @pytest.mark.asyncio

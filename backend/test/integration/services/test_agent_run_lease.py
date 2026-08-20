@@ -194,11 +194,11 @@ async def test_root_terminal_atomically_cancels_live_child_and_clears_lease(
         assert child_acquired is True
         assert transition.changed is True
         assert parent.status == "failed"
-        assert child.status == "cancelled"
+        assert child.status == "cancel_requested"
         assert child.error_type == "execution_tree_closed"
-        assert child.worker_id is None
-        assert child.lease_expires_at is None
-        assert child_message.delivery_status == "cancelled"
+        assert child.worker_id == child_owner
+        assert child.lease_expires_at is not None
+        assert child_message.delivery_status == "dispatched"
         publish_cancel.assert_awaited_once_with(child_id)
     finally:
         await _cleanup_runs(session_factory, [parent_thread_id, child_thread_id])
@@ -310,7 +310,7 @@ async def test_expired_root_reconciliation_cancels_live_child_before_runtime_rel
             run_worker.pg_manager, "get_async_session_context", lambda: _session_context(session_factory)
         )
         publish_cancel = AsyncMock()
-        release_runtime = AsyncMock(return_value=True)
+        release_runtime = AsyncMock(return_value=False)
         monkeypatch.setattr(run_worker, "publish_cancel_signal", publish_cancel)
         monkeypatch.setattr(run_worker, "_release_runtime_if_idle", release_runtime)
 
@@ -323,9 +323,10 @@ async def test_expired_root_reconciliation_cancels_live_child_before_runtime_rel
 
         assert reconciled_ids == [parent_id]
         assert parent.status == "failed"
-        assert child.status == "cancelled"
-        assert child.worker_id is None
-        assert child_message.delivery_status == "cancelled"
+        assert child.status == "cancel_requested"
+        assert child.worker_id == "worker-live-tree-child"
+        assert child.lease_expires_at is not None
+        assert child_message.delivery_status == "dispatched"
         publish_cancel.assert_awaited_once_with(child_id)
         release_runtime.assert_awaited_once()
         assert release_runtime.await_args.args[0].id == parent_id

@@ -174,7 +174,7 @@ Yuxi 不会把整个容器文件系统都开放给 Agent 或 Viewer。Agent 可�
 
 API 的 Viewer、附件和 artifact 不复用 execution runtime，也不创建 file-bridge Sandbox；它们在验证 uid 与 Conversation ownership 后，通过受信任的 `WorkspaceFilesystem` 直接访问同一字节，并把 Thread 写操作限制在当前 Workdir。
 
-根 Run 进入终态时会在 PostgreSQL 中原子取消仍活跃的后代，并设置 `runtime_cleanup_pending`。下一次顶层 Run、retry attempt 和 SSE `end` 都不能越过这个 fence；worker 删除 runtime 成功后才清除它，周期 reconciler 负责重试失败的清理并重新投递 pending retry。单个子 Run 终态不会删除父子共享 runtime，任何 runtime cleanup 都不删除 Project Workdir。
+根 Run 进入终态时会在 PostgreSQL 中原子请求仍活跃的后代停止：尚未被 worker 接管的待执行后代可直接终态化，仍持有 owner/lease 的后代保留 `cancel_requested`，直到 worker 确认停止。根 Run 同时设置 `runtime_cleanup_pending`；下一次顶层 Run、retry attempt 和 SSE `end` 都不能越过这个 fence，worker 删除 runtime 成功后才清除它，周期 reconciler 负责重试失败的清理并重新投递 pending retry。单个子 Run 终态不会删除父子共享 runtime，任何 runtime cleanup 都不删除 Project Workdir。
 
 `/home/gem/skills` 只读挂载当前用户的共享/内置 `skill-projections/<uid>`；个人 Skill 通过 UserWorkspace
 挂载直接保留在 `/home/gem/user-data/agents/skills`。持久源、授权同步和选择/激活语义由

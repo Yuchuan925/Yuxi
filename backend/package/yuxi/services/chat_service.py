@@ -973,36 +973,6 @@ async def stream_agent_chat(
         }
     )
 
-    input_context = await build_agent_input_context(
-        agent_config,
-        thread_id=thread_id,
-        uid=uid,
-        run_id=meta.get("run_id"),
-        request_id=meta.get("request_id"),
-    )
-    _apply_model_override(input_context, meta)
-    _apply_input_context_field(input_context, meta, "tool_approval_mode")
-    runtime_scope_id = str(meta.get("runtime_scope_id") or thread_id)
-    if not conversation.workdir_path:
-        raise ValueError("Conversation 缺少 Project Workdir")
-    input_context["runtime_scope_id"] = runtime_scope_id
-    input_context["workdir_relative_path"] = conversation.workdir_path
-    input_context["workdir_path"] = workdir_virtual_dir(conversation.workdir_path)
-    meta["runtime_scope_id"] = runtime_scope_id
-    meta["workdir_relative_path"] = conversation.workdir_path
-    meta["workdir_path"] = input_context["workdir_path"]
-    _apply_subagent_runtime_context(input_context, meta)
-    context = _build_agent_context(agent, input_context)
-    langfuse_run = _build_langfuse_run_context(
-        current_user=current_user,
-        thread_id=thread_id,
-        agent_id=agent_item.slug,
-        backend_id=agent_item.backend_id,
-        request_id=meta["request_id"],
-        operation="agent_chat_stream",
-        message_type=message_type,
-        meta=meta,
-    )
     full_msg = None
     accumulated_content: list[str] = []
     trace_info: dict[str, Any] = {}
@@ -1016,6 +986,36 @@ async def stream_agent_chat(
             thread_id=thread_id,
             uid=uid,
             agent_item=agent_item,
+        )
+        input_context = await build_agent_input_context(
+            agent_config,
+            thread_id=thread_id,
+            uid=uid,
+            run_id=meta.get("run_id"),
+            request_id=meta.get("request_id"),
+        )
+        _apply_model_override(input_context, meta)
+        _apply_input_context_field(input_context, meta, "tool_approval_mode")
+        runtime_scope_id = str(meta.get("runtime_scope_id") or thread_id)
+        if not conversation.workdir_path:
+            raise ValueError("Conversation 缺少 Project Workdir")
+        input_context["runtime_scope_id"] = runtime_scope_id
+        input_context["workdir_relative_path"] = conversation.workdir_path
+        input_context["workdir_path"] = workdir_virtual_dir(conversation.workdir_path)
+        meta["runtime_scope_id"] = runtime_scope_id
+        meta["workdir_relative_path"] = conversation.workdir_path
+        meta["workdir_path"] = input_context["workdir_path"]
+        _apply_subagent_runtime_context(input_context, meta)
+        context = _build_agent_context(agent, input_context)
+        langfuse_run = _build_langfuse_run_context(
+            current_user=current_user,
+            thread_id=thread_id,
+            agent_id=agent_item.slug,
+            backend_id=agent_item.backend_id,
+            request_id=meta["request_id"],
+            operation="agent_chat_stream",
+            message_type=message_type,
+            meta=meta,
         )
 
         attachment_conversation = conversation

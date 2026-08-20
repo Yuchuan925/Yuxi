@@ -595,7 +595,7 @@ class AgentRunRepository:
         return run
 
     async def cancel_active_execution_tree_descendants(self, root_run: AgentRun) -> list[tuple[str, str]]:
-        """在父 Run 状态事务内收敛仍活跃的 execution tree 后代。"""
+        """在父 Run 状态事务内请求仍活跃的 execution tree 后代停止。"""
 
         if root_run.run_type == "subagent":
             return []
@@ -623,22 +623,25 @@ class AgentRunRepository:
                     continue
                 seen_ids.add(child.id)
                 pending_parent_ids.append(child.id)
-                child.status = "cancelled"
                 child.error_type = "execution_tree_closed"
-                child.error_message = "父运行已结束，共享执行树已停止"
-                child.finished_at = current_time
+                child.error_message = "父运行已结束，请停止共享执行树"
+                if child.status == "pending" and child.worker_id is None and child.started_at is None:
+                    child.status = "cancelled"
+                    child.finished_at = current_time
+                    child.worker_id = None
+                    child.heartbeat_at = None
+                    child.lease_expires_at = None
+                    await self._project_input_delivery_status(child)
+                    await self._close_open_attempts(
+                        child.id,
+                        outcome="cancelled",
+                        error_type=child.error_type,
+                        error_message=child.error_message,
+                        now=current_time,
+                    )
+                else:
+                    child.status = "cancel_requested"
                 child.updated_at = current_time
-                child.worker_id = None
-                child.heartbeat_at = None
-                child.lease_expires_at = None
-                await self._project_input_delivery_status(child)
-                await self._close_open_attempts(
-                    child.id,
-                    outcome="cancelled",
-                    error_type=child.error_type,
-                    error_message=child.error_message,
-                    now=current_time,
-                )
                 cancelled.append((child.id, child.conversation_thread_id))
 
         if cancelled:

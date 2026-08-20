@@ -235,23 +235,6 @@ class ChunkedEventWriter:
         buffer.last_flush = time.monotonic()
 
 
-async def _release_run_sandbox(run: AgentRun) -> None:
-    """销毁 execution tree 的 runtime，持久 Workdir 挂载不受影响。"""
-    runtime_scope_id = str(getattr(run, "runtime_scope_id", None) or run.conversation_thread_id)
-    async with pg_manager.get_async_session_context() as db:
-        result = await db.execute(select(Conversation.workdir_path).where(Conversation.id == run.conversation_id))
-        workdir_path = result.scalar_one_or_none()
-    if not workdir_path:
-        raise RuntimeError(f"Run {run.id} 缺少 Project Workdir，不能安全释放 runtime")
-    await asyncio.to_thread(
-        get_sandbox_provider().release,
-        runtime_scope_id,
-        uid=str(run.uid),
-        clear_cache_on_delete_failure=True,
-        workdir_path=str(workdir_path),
-    )
-
-
 async def _release_runtime_if_idle(run: AgentRun) -> bool:
     """在 PostgreSQL cleanup fence 内串行销毁根 execution runtime。"""
     if run.run_type == "subagent":
