@@ -65,7 +65,6 @@ async def test_projection_refresh_waits_for_lock_then_reloads_revoked_authorizat
                 raise
 
     monkeypatch.setattr(pg_manager, "get_async_session_context", local_session_context)
-    monkeypatch.setattr(skill_service, "get_legacy_storage_dir", lambda: tmp_path)
     monkeypatch.setattr(skill_service, "get_skill_data_dir", lambda: tmp_path / "skill-sources")
     monkeypatch.setattr(skill_service, "get_skill_projection_dir", lambda: tmp_path / "skill-projections")
 

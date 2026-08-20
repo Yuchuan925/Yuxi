@@ -27,7 +27,6 @@ from yuxi.agents.skills import service
 
 save_dir, uid, encoded_sources = sys.argv[1:]
 sources = json.loads(encoded_sources)
-service.get_legacy_storage_dir = lambda: Path(save_dir)
 service.get_skill_projection_dir = lambda: Path(save_dir) / "skill-projections"
 
 ready_read, ready_write = os.pipe()
