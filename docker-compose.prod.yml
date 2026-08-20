@@ -42,6 +42,7 @@ services:
     image: yuxi-api:${YUXI_VERSION:-0.7.2.dev0}
     container_name: api-prod
     working_dir: /app
+    user: "1000:1000"
     networks:
       - app-network
     volumes:
@@ -85,6 +86,7 @@ services:
     image: yuxi-api:${YUXI_VERSION:-0.7.2.dev0}
     container_name: worker-prod
     working_dir: /app
+    user: "1000:1000"
     networks:
       - app-network
     volumes:
@@ -125,6 +127,7 @@ services:
       dockerfile: docker/api.Dockerfile
     image: yuxi-api:${YUXI_VERSION:-0.7.2.dev0}
     working_dir: /app
+    user: "0:0"
     networks:
       - app-network
     volumes:

@@ -29,6 +29,8 @@ API 与 worker 使用下面的变量连接 provisioner；实际默认值和 Comp
 
 `SANDBOX_PROVISIONER_TOKEN` 只能提供给 API、worker 和 provisioner。不要把它写进 `sandbox.env`、Agent 用户环境、Skill、日志或文档示例。
 
+API 与 worker 固定以 `1000:1000` 运行。动态 Sandbox 的镜像入口保留 root bootstrap，但 provisioner 会在合并全局和用户环境后强制覆盖 `USER=gem`、`USER_UID=1000`、`USER_GID=1000`，实际文件 API 与 shell 服务以该身份运行。升级 Compose/Docker 持久目录时必须先执行 `scripts/migrate-storage.sh`；storage migrator 在停写窗口一次性迁移所有权并发布 marker，之后 Docker backend 只验证目录，不再创建目录或执行 `chmod`。远程 Kubernetes PVC 的 root init 迁移契约见下文。
+
 ## Provisioner 通用配置
 
 当前仓库里，后端只支持 `SANDBOX_PROVIDER=provisioner`。当某个对话线程第一次需要执行文件操作或命令执行时，后端会基于 uid、根 runtime scope 和 instance 生成稳定的 `sandbox_id`，然后请求 `sandbox-provisioner` 创建或复用对应沙盒；provisioner 还会把 Workdir 作为不可漂移的挂载身份复核。Skill 选择不参与 sandbox identity。应用层拿到返回的 `sandbox_url` 之后，才会真正通过 `agent-sandbox` 客户端去调用远程沙盒的文件 API 和 shell API。
@@ -104,7 +106,7 @@ Docker 后端把当前 uid 的 UserWorkspace 整体挂到 `/home/gem/user-data`�
 
 当 `SANDBOX_PROVISIONER_BACKEND=kubernetes` 时，`sandbox-provisioner` 会改用 Kubernetes Python 客户端。它会先加载 kubeconfig 或集群内配置，然后在指定的 namespace 中创建一个沙盒 Pod，再创建一个同名的 NodePort Service，把这个 Service 的 `nodePort` 暴露给 Yuxi 后端使用。
 
-Kubernetes 后端下，沙盒还是同一套镜像并暴露相同 HTTP API，但由 Pod 承载。Pod 从 `USER_DATA_PVC` 的 `shared/<uid>/workspace` subPath 挂载整个 UserWorkspace，从 `SKILLS_PVC` 只读挂载 `skill-projections/<uid>`。init container 以 no-follow 方式确认 uid 与 Workdir 路径。跨节点实时共享时，User Data PVC 必须提供部署所需的共享读写语义。
+Kubernetes 后端下，沙盒还是同一套镜像并暴露相同 HTTP API，但由 Pod 承载。Pod 从 `USER_DATA_PVC` 的 `shared/<uid>/workspace` subPath 挂载整个 UserWorkspace，从 `SKILLS_PVC` 只读挂载 `skill-projections/<uid>`。由于远程 PVC 不经过 Compose storage migrator，root init container 以 no-follow 方式对当前 uid 子树执行带 marker 的一次性 `1000:1000` 迁移，再确认 Workdir 路径；它不扫描其他用户子树，也不预建 `uploads/outputs`。跨节点实时共享时，User Data PVC 必须提供部署所需的共享读写语义。
 
 Kubernetes 后端还需要一个 `NODE_HOST`。这是因为当前实现使用的是 NodePort Service，而不是 Ingress，也不是 ClusterIP。provisioner 创建完 Service 后会通过 `http://<NODE_HOST>:<nodePort>` 访问目标沙箱，但返回给 Yuxi 后端的仍是 provisioner 认证代理地址。所以 `NODE_HOST` 必须从 provisioner 可达，不需要直接暴露给 API/worker。
 

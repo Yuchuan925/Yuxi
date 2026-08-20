@@ -99,10 +99,9 @@ class WorkspaceFilesystem:
             target_fd = os.open(
                 temp_name,
                 os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
-                0o666,
+                0o600,
                 dir_fd=parent_fd,
             )
-            os.fchmod(target_fd, 0o666)
             while chunk := os.read(source_fd, 1024 * 1024):
                 self._write_all(target_fd, chunk)
             os.close(target_fd)
@@ -126,24 +125,9 @@ class WorkspaceFilesystem:
         self._require_within(parent_path, root)
         base, parts = self._resolve_virtual_path(parent_path, writable=True)
         parent_fd = self._open_directory(base, parts)
-        child_fd = None
         try:
-            os.mkdir(name, 0o777, dir_fd=parent_fd)
-            try:
-                child_fd = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent_fd)
-                os.fchmod(child_fd, 0o777)
-            except BaseException:
-                if child_fd is not None:
-                    os.close(child_fd)
-                    child_fd = None
-                try:
-                    os.rmdir(name, dir_fd=parent_fd)
-                except OSError:
-                    pass
-                raise
+            os.mkdir(name, 0o700, dir_fd=parent_fd)
         finally:
-            if child_fd is not None:
-                os.close(child_fd)
             os.close(parent_fd)
         return f"{parent_path.rstrip('/')}/{name}"
 

@@ -135,7 +135,7 @@ async def _run_install_task(
         )
 
     try:
-        from yuxi.agents.middlewares.skills import build_dependency_map, build_prompt_metadata
+        from yuxi.agents.skills.runtime import build_dependency_map, build_prompt_metadata
         from yuxi.agents.skills.service import (
             install_personal_skill_dir,
             list_personal_skills,

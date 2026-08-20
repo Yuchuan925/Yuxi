@@ -5,7 +5,6 @@ import logging
 import os
 import re
 import secrets
-import shlex
 import threading
 import time
 from collections.abc import AsyncIterator
@@ -86,12 +85,16 @@ def normalize_workdir_path(workdir_path: str) -> str:
 
 
 def kubernetes_storage_init_script(uid: str, workdir_path: str | None) -> str:
-    """生成通过 dirfd/O_NOFOLLOW 初始化 PVC 子目录的脚本。"""
+    """生成 K8s PVC 子树的一次性身份迁移与 no-follow 校验脚本。"""
     workdir_parts = tuple(PurePosixPath(workdir_path).parts) if workdir_path else ()
     return f"""
 import os
+import stat
 
 FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+UID = 1000
+GID = 1000
+MARKER_DIR = '.v072-runtime-identity'
 
 def open_path(root, parts, create=False):
     fd = os.open(root, FLAGS)
@@ -99,25 +102,64 @@ def open_path(root, parts, create=False):
         for part in parts:
             if create:
                 try:
-                    os.mkdir(part, 0o777, dir_fd=fd)
+                    os.mkdir(part, 0o700, dir_fd=fd)
                 except FileExistsError:
                     pass
             child = os.open(part, FLAGS, dir_fd=fd)
             os.close(fd)
             fd = child
-            os.fchmod(fd, 0o777)
         return fd
     except Exception:
         os.close(fd)
         raise
 
-workspace_fd = open_path('/mnt/user-data', {('shared', uid, 'workspace')!r}, create=True)
-os.close(workspace_fd)
-skills_fd = open_path('/mnt/skills-data', {('skill-projections', uid)!r}, create=True)
-os.close(skills_fd)
+def normalize(fd):
+    os.fchown(fd, UID, GID)
+    os.fchmod(fd, 0o700)
+    for name in os.listdir(fd):
+        item = os.stat(name, dir_fd=fd, follow_symlinks=False)
+        if stat.S_ISLNK(item.st_mode):
+            os.chown(name, UID, GID, dir_fd=fd, follow_symlinks=False)
+        elif stat.S_ISDIR(item.st_mode):
+            child = os.open(name, FLAGS, dir_fd=fd)
+            try:
+                normalize(child)
+            finally:
+                os.close(child)
+        else:
+            mode = 0o700 if item.st_mode & 0o111 else 0o600
+            os.chown(name, UID, GID, dir_fd=fd, follow_symlinks=False)
+            os.chmod(name, mode, dir_fd=fd, follow_symlinks=False)
+
+def migrate(root, parts, marker_name):
+    target_fd = open_path(root, parts, create=True)
+    marker_fd = open_path(root, (MARKER_DIR,), create=True)
+    try:
+        try:
+            completed = os.open(marker_name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=marker_fd)
+        except FileNotFoundError:
+            normalize(target_fd)
+            try:
+                completed = os.open(
+                    marker_name,
+                    os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                    0o600,
+                    dir_fd=marker_fd,
+                )
+            except FileExistsError:
+                completed = os.open(
+                    marker_name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=marker_fd
+                )
+        os.close(completed)
+    finally:
+        os.close(marker_fd)
+        os.close(target_fd)
+
+migrate('/mnt/user-data', {("shared", uid, "workspace")!r}, {"workspace-" + uid!r})
+migrate('/mnt/skills-data', {("skill-projections", uid)!r}, {"skills-" + uid!r})
 workdir_parts = {workdir_parts!r}
 if workdir_parts:
-    workdir_fd = open_path('/mnt/user-data', {('shared', uid, 'workspace')!r} + workdir_parts)
+    workdir_fd = open_path('/mnt/user-data', {("shared", uid, "workspace")!r} + workdir_parts)
     os.close(workdir_fd)
 """.strip()
 
@@ -303,7 +345,9 @@ class MemoryProvisionerBackend:
         _ = uid
         _ = env
         _ = inherit_env
-        normalized_workdir_path = normalize_workdir_path(workdir_path) if workdir_path else None
+        normalized_workdir_path = (
+            normalize_workdir_path(workdir_path) if workdir_path else None
+        )
         with self._lock:
             existing = self._records.get(sandbox_id)
             if existing is not None:
@@ -467,32 +511,9 @@ class LocalContainerProvisionerBackend:
         return Path(self._user_data_host_path) / "shared" / uid / "workspace"
 
     @staticmethod
-    def _ensure_directory_without_symlinks(root: Path, parts: tuple[str, ...]) -> None:
-        """从已挂载根逐层创建目录，并拒绝任意 symlink 组件。"""
-        directory_fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
-        try:
-            try:
-                for part in parts:
-                    try:
-                        os.mkdir(part, 0o777, dir_fd=directory_fd)
-                    except FileExistsError:
-                        pass
-                    child_fd = os.open(
-                        part,
-                        os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
-                        dir_fd=directory_fd,
-                    )
-                    os.close(directory_fd)
-                    directory_fd = child_fd
-            except OSError as exc:
-                raise ValueError(
-                    "persistent storage path must contain directories without symlinks"
-                ) from exc
-        finally:
-            os.close(directory_fd)
-
-    @staticmethod
-    def _validate_directory_without_symlinks(root: Path, parts: tuple[str, ...]) -> None:
+    def _validate_directory_without_symlinks(
+        root: Path, parts: tuple[str, ...]
+    ) -> None:
         """从已挂载根逐层打开既有目录，并拒绝任意 symlink 组件。"""
         directory_fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
         try:
@@ -593,9 +614,7 @@ class LocalContainerProvisionerBackend:
                 self._skill_projections_host_path,
             )
         ):
-            raise RuntimeError(
-                "cannot infer explicit UserWorkspace/Skill host paths"
-            )
+            raise RuntimeError("cannot infer explicit UserWorkspace/Skill host paths")
 
     def _is_on_expected_network(self, container, sandbox_id: str) -> bool:
         networks = (container.attrs.get("NetworkSettings") or {}).get("Networks") or {}
@@ -671,24 +690,6 @@ class LocalContainerProvisionerBackend:
             workdir_path=str(labels.get("workdir-path") or "").strip() or None,
         )
 
-    @staticmethod
-    def _ensure_user_data_writable(container, workdir_path: str | None = None) -> None:
-        if workdir_path:
-            sandbox_workdir = shlex.quote(f"/home/gem/user-data/{workdir_path}")
-            cmd = f"chmod a+rwx /home/gem/user-data {sandbox_workdir}"
-        else:
-            cmd = "chmod a+rwx /home/gem/user-data"
-        result = container.exec_run(["sh", "-lc", cmd], user="0:0")
-        if result.exit_code != 0:
-            output = (
-                result.output.decode("utf-8", errors="ignore")
-                if isinstance(result.output, bytes)
-                else str(result.output)
-            )
-            raise RuntimeError(
-                f"failed to ensure writable thread user-data mount: {output}"
-            )
-
     def _get_container(self, sandbox_id: str):
         from docker.errors import NotFound
 
@@ -711,7 +712,9 @@ class LocalContainerProvisionerBackend:
         with self._lock:
             safe_thread_id = self._validate_thread_id(thread_id)
             safe_uid = self._validate_uid(uid)
-            safe_workdir_path = normalize_workdir_path(workdir_path) if workdir_path else None
+            safe_workdir_path = (
+                normalize_workdir_path(workdir_path) if workdir_path else None
+            )
             ephemeral_storage = not inherit_env and safe_workdir_path is None
             existing = self._get_container(sandbox_id)
             if existing is not None:
@@ -721,7 +724,9 @@ class LocalContainerProvisionerBackend:
                     raise ValueError(
                         "sandbox runtime identity does not match existing generation"
                     )
-                existing_workdir_path = str(labels.get("workdir-path") or "").strip() or None
+                existing_workdir_path = (
+                    str(labels.get("workdir-path") or "").strip() or None
+                )
                 if existing_workdir_path != safe_workdir_path:
                     raise ValueError(
                         "sandbox workdir identity does not match existing generation"
@@ -768,8 +773,6 @@ class LocalContainerProvisionerBackend:
                 self._ensure_network(sandbox_id)
                 if existing.status == "running":
                     try:
-                        if not ephemeral_storage:
-                            self._ensure_user_data_writable(existing, safe_workdir_path)
                         record = self._to_record(existing, sandbox_id)
                         if not wait_for_sandbox_ready(
                             record.sandbox_url,
@@ -796,11 +799,11 @@ class LocalContainerProvisionerBackend:
             shared_workspace = None
             user_skills = None
             if not ephemeral_storage:
-                self._ensure_directory_without_symlinks(
+                self._validate_directory_without_symlinks(
                     self._user_data_container_path,
                     ("shared", safe_uid, "workspace"),
                 )
-                self._ensure_directory_without_symlinks(
+                self._validate_directory_without_symlinks(
                     self._skill_projections_container_path,
                     (safe_uid,),
                 )
@@ -844,20 +847,20 @@ class LocalContainerProvisionerBackend:
                     "mode": "rw",
                 }
                 if safe_workdir_path:
-                    run_kwargs["working_dir"] = f"/home/gem/user-data/{safe_workdir_path}"
+                    run_kwargs["working_dir"] = (
+                        f"/home/gem/user-data/{safe_workdir_path}"
+                    )
             sandbox_env = (
                 merged_sandbox_env(self._sandbox_env, env or {}) if inherit_env else {}
             )
-            if sandbox_env:
-                run_kwargs["environment"] = sandbox_env
+            sandbox_env.update({"USER": "gem", "USER_UID": "1000", "USER_GID": "1000"})
+            run_kwargs["environment"] = sandbox_env
 
             try:
                 container = self._client.containers.run(
                     self._sandbox_image, **run_kwargs
                 )
                 container.reload()
-                if not ephemeral_storage:
-                    self._ensure_user_data_writable(container, safe_workdir_path)
                 record = self._to_record(container, sandbox_id)
                 if not wait_for_sandbox_ready(
                     record.sandbox_url, timeout_seconds=self._health_timeout_seconds
@@ -893,7 +896,9 @@ class LocalContainerProvisionerBackend:
             return None
         self._validate_thread_id(thread_id)
         safe_uid = self._validate_uid(uid)
-        safe_workdir_path = normalize_workdir_path(workdir_path) if workdir_path else None
+        safe_workdir_path = (
+            normalize_workdir_path(workdir_path) if workdir_path else None
+        )
         if not self._is_on_expected_network(container, sandbox_id):
             logger.info(
                 "Discarding stale sandbox %s on an unexpected network", sandbox_id
@@ -937,7 +942,9 @@ class LocalContainerProvisionerBackend:
                     exc,
                 )
             return None
-        if not ephemeral_storage and not self._has_expected_user_data_mounts(container, safe_uid):
+        if not ephemeral_storage and not self._has_expected_user_data_mounts(
+            container, safe_uid
+        ):
             logger.info(
                 "Discarding stale sandbox %s with unexpected user-data mounts",
                 sandbox_id,
@@ -1042,11 +1049,14 @@ class KubernetesProvisionerBackend:
     ):
         pod_name = self._pod_name(sandbox_id)
         sandbox_env = merged_sandbox_env(self._sandbox_env, env) if inherit_env else {}
+        sandbox_env.update({"USER": "gem", "USER_UID": "1000", "USER_GID": "1000"})
         env_vars = [
             self._client.V1EnvVar(name=key, value=value)
             for key, value in sandbox_env.items()
         ]
-        sandbox_workdir = f"/home/gem/user-data/{workdir_path}" if workdir_path else None
+        sandbox_workdir = (
+            f"/home/gem/user-data/{workdir_path}" if workdir_path else None
+        )
         ephemeral_storage = not inherit_env and workdir_path is None
         if ephemeral_storage:
             init_command = None
@@ -1080,7 +1090,6 @@ class KubernetesProvisionerBackend:
                 automount_service_account_token=False,
                 restart_policy="Never",
                 security_context=self._client.V1PodSecurityContext(
-                    fs_group=0,
                     run_as_user=0,
                 ),
                 init_containers=[]
@@ -1303,7 +1312,9 @@ class KubernetesProvisionerBackend:
                 thread_id
             )
             safe_uid = LocalContainerProvisionerBackend._validate_uid(uid)
-            safe_workdir_path = normalize_workdir_path(workdir_path) if workdir_path else None
+            safe_workdir_path = (
+                normalize_workdir_path(workdir_path) if workdir_path else None
+            )
             ephemeral_storage = not inherit_env and safe_workdir_path is None
             discovered = self.discover(sandbox_id)
             if discovered is not None:
@@ -1409,7 +1420,9 @@ class KubernetesProvisionerBackend:
             return None
         LocalContainerProvisionerBackend._validate_thread_id(thread_id)
         safe_uid = LocalContainerProvisionerBackend._validate_uid(uid)
-        safe_workdir_path = normalize_workdir_path(workdir_path) if workdir_path else None
+        safe_workdir_path = (
+            normalize_workdir_path(workdir_path) if workdir_path else None
+        )
         if not self._pod_has_expected_mounts(
             pod,
             uid=safe_uid,

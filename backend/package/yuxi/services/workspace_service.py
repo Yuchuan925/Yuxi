@@ -4,7 +4,6 @@ import asyncio
 import contextlib
 import hashlib
 import io
-import os
 import shutil
 from pathlib import Path, PurePosixPath
 from urllib.parse import quote
@@ -380,7 +379,6 @@ async def _write_workspace_upload(file: UploadFile, target: Path) -> None:
     try:
         async with aiofiles.open(target, "xb") as buffer:
             created_file = True
-            os.fchmod(buffer.fileno(), 0o666)
             await write_upload_to_buffer(
                 file,
                 buffer,

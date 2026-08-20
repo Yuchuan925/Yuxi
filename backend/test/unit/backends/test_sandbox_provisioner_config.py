@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import os
 import sys
 import threading
 from concurrent.futures import ThreadPoolExecutor
@@ -78,9 +79,10 @@ def _docker_backend_with_running_container(monkeypatch, tmp_path):
         tmp_path,
         lambda image, **kwargs: captured.append((image, kwargs)) or FakeContainer(),
     )
+    (tmp_path / "shared/user-1/workspace").mkdir(parents=True, exist_ok=True)
+    (tmp_path.parent / "skill-projections/user-1").mkdir(parents=True, exist_ok=True)
     monkeypatch.setattr(backend, "_get_container", lambda _sandbox_id: None)
     monkeypatch.setattr(backend, "_ensure_network", backend._network_name)
-    monkeypatch.setattr(backend, "_ensure_user_data_writable", lambda *_args: None)
     monkeypatch.setattr(module, "wait_for_sandbox_ready", lambda _url, timeout_seconds: True)
     return module, backend, captured
 
@@ -338,7 +340,6 @@ def test_docker_sandbox_mounts_shared_workspace_without_thread_history_projectio
 def test_docker_project_workdir_contract_mounts_shared_posix_roots(monkeypatch, tmp_path):
     monkeypatch.setenv("PROVISIONER_BACKEND", "memory")
     module, backend, captured = _docker_backend_with_running_container(monkeypatch, tmp_path)
-    monkeypatch.setattr(backend, "_ensure_user_data_writable", lambda *_args: None)
 
     workdir = tmp_path / "shared" / "user-1" / "workspace" / "projects" / "workdir-1"
     workdir.mkdir(parents=True)
@@ -352,6 +353,11 @@ def test_docker_project_workdir_contract_mounts_shared_posix_roots(monkeypatch, 
     }
     assert run_kwargs["working_dir"] == "/home/gem/user-data/projects/workdir-1"
     assert run_kwargs["labels"]["workdir-path"] == "projects/workdir-1"
+    assert {key: run_kwargs["environment"][key] for key in ("USER", "USER_UID", "USER_GID")} == {
+        "USER": "gem",
+        "USER_UID": "1000",
+        "USER_GID": "1000",
+    }
     assert record.workdir_path is None  # Fake container has no Docker labels; real discover reads the label.
 
 
@@ -362,6 +368,8 @@ def test_docker_rejects_symlink_in_workspace_identity_path(monkeypatch, tmp_path
     outside = tmp_path.parent / "outside-user-workspace"
     shared.mkdir(exist_ok=True)
     outside.mkdir()
+    (shared / "user-1/workspace").rmdir()
+    (shared / "user-1").rmdir()
     (shared / "user-1").symlink_to(outside, target_is_directory=True)
 
     with pytest.raises(ValueError, match="without symlinks"):
@@ -696,7 +704,7 @@ def test_docker_backend_uses_private_network_without_published_port(monkeypatch,
     assert "ports" not in captured[0][1]
 
 
-def test_docker_ephemeral_sandbox_has_no_environment_or_persistent_file_mounts(
+def test_docker_ephemeral_sandbox_has_only_runtime_identity_environment_and_no_persistent_mounts(
     monkeypatch,
     tmp_path,
 ):
@@ -708,7 +716,7 @@ def test_docker_ephemeral_sandbox_has_no_environment_or_persistent_file_mounts(
     backend.create("sandbox-1", "thread-1", uid, {"USER_SECRET": "value"}, inherit_env=False)
 
     run_config = captured[0][1]
-    assert "environment" not in run_config
+    assert run_config["environment"] == {"USER": "gem", "USER_UID": "1000", "USER_GID": "1000"}
     assert run_config["volumes"] == {}
     assert run_config["labels"]["storage-mode"] == "ephemeral"
     assert not (backend._user_data_container_path / "shared" / uid).exists()
@@ -740,7 +748,11 @@ def test_kubernetes_ephemeral_sandbox_uses_only_empty_home(monkeypatch):
     )
 
     assert pod.spec.automount_service_account_token is False
-    assert pod.spec.containers[0].env == []
+    assert {item.name: item.value for item in pod.spec.containers[0].env} == {
+        "USER": "gem",
+        "USER_UID": "1000",
+        "USER_GID": "1000",
+    }
     sandbox_mounts = {mount.mount_path for mount in pod.spec.containers[0].volume_mounts}
     assert sandbox_mounts == {"/home/gem"}
     assert pod.spec.init_containers == []
@@ -802,31 +814,74 @@ def test_kubernetes_workdir_contract_uses_user_workspace_subpath(monkeypatch):
     assert claims == {"user-data": "threads-rwx", "skills-data": "skills-rwx"}
     assert pod.metadata.annotations["workdir-path"] == "projects/workdir-1"
     assert pod.metadata.labels["managed-by"] == "yuxi-sandbox-provisioner"
+    assert pod.spec.security_context.run_as_user == 0
+    assert getattr(pod.spec.security_context, "fs_group", None) is None
+    sandbox_env = {item.name: item.value for item in sandbox.env}
+    assert {key: sandbox_env[key] for key in ("USER", "USER_UID", "USER_GID")} == {
+        "USER": "gem",
+        "USER_UID": "1000",
+        "USER_GID": "1000",
+    }
     init = pod.spec.init_containers[0]
     assert init.command == ["python", "-c"]
     assert "os.O_NOFOLLOW" in init.args[0]
     assert "('projects', 'workdir-1')" in init.args[0]
+    assert "MARKER_DIR = '.v072-runtime-identity'" in init.args[0]
+    assert "os.mkdir(part, 0o700" in init.args[0]
+    assert "os.fchmod(fd, 0o700)" in init.args[0]
+    assert "follow_symlinks=False" in init.args[0]
     assert "'uploads'" not in init.args[0]
     assert "'outputs'" not in init.args[0]
     compile(init.args[0], "<kubernetes-storage-init>", "exec")
 
 
-def test_docker_writable_check_does_not_create_runtime_directories_or_recurse(monkeypatch):
+def test_kubernetes_storage_init_migrates_only_real_entries(tmp_path, monkeypatch):
     monkeypatch.setenv("PROVISIONER_BACKEND", "memory")
     module = _load_module()
-    calls = []
-    container = SimpleNamespace(
-        exec_run=lambda command, user: calls.append((command, user)) or SimpleNamespace(exit_code=0, output=b"")
-    )
+    user_data = tmp_path / "user-data"
+    skills_data = tmp_path / "skills-data"
+    user_data.mkdir()
+    skills_data.mkdir()
+    workspace = user_data / "shared/user-1/workspace"
+    workspace.mkdir(parents=True)
+    (workspace / "projects/workdir-1").mkdir(parents=True)
+    document = workspace / "old.txt"
+    document.write_text("old", encoding="utf-8")
+    document.chmod(0o666)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (workspace / "linked").symlink_to(outside, target_is_directory=True)
 
-    module.LocalContainerProvisionerBackend._ensure_user_data_writable(container, "projects/workdir-1")
+    script = module.kubernetes_storage_init_script("user-1", "projects/workdir-1")
+    script = script.replace("/mnt/user-data", str(user_data)).replace("/mnt/skills-data", str(skills_data))
+    script = script.replace("UID = 1000", f"UID = {os.getuid()}").replace("GID = 1000", f"GID = {os.getgid()}")
 
-    [(command, user)] = calls
-    assert user == "0:0"
-    assert command[:2] == ["sh", "-lc"]
-    assert command[2] == "chmod a+rwx /home/gem/user-data /home/gem/user-data/projects/workdir-1"
-    assert "mkdir" not in command[2]
-    assert "chmod -R" not in command[2]
+    exec(compile(script, "<kubernetes-storage-init>", "exec"), {})
+
+    assert document.stat().st_mode & 0o777 == 0o600
+    assert (workspace / "linked").is_symlink()
+    assert outside.stat().st_mode & 0o777 == 0o755
+    assert (workspace / "projects/workdir-1").is_dir()
+    assert (skills_data / "skill-projections/user-1").is_dir()
+    assert (user_data / ".v072-runtime-identity/workspace-user-1").exists()
+    assert (skills_data / ".v072-runtime-identity/skills-user-1").exists()
+
+
+def test_kubernetes_storage_init_rejects_missing_authoritative_workdir(tmp_path, monkeypatch):
+    monkeypatch.setenv("PROVISIONER_BACKEND", "memory")
+    module = _load_module()
+    user_data = tmp_path / "user-data"
+    skills_data = tmp_path / "skills-data"
+    user_data.mkdir()
+    skills_data.mkdir()
+    script = module.kubernetes_storage_init_script("user-1", "projects/missing")
+    script = script.replace("/mnt/user-data", str(user_data)).replace("/mnt/skills-data", str(skills_data))
+    script = script.replace("UID = 1000", f"UID = {os.getuid()}").replace("GID = 1000", f"GID = {os.getgid()}")
+
+    with pytest.raises(FileNotFoundError):
+        exec(compile(script, "<kubernetes-storage-init>", "exec"), {})
+
+    assert not (user_data / "shared/user-1/workspace/projects/missing").exists()
 
 
 def test_kubernetes_rejects_rebinding_existing_runtime_to_another_workdir(monkeypatch):
@@ -994,10 +1049,11 @@ def test_docker_backend_cleans_up_sandbox_and_network_on_failure(monkeypatch, tm
         return created_container
 
     backend = _docker_backend(module, tmp_path, run_container)
+    (tmp_path / "shared/user-1/workspace").mkdir(parents=True)
+    (tmp_path.parent / "skill-projections/user-1").mkdir(parents=True, exist_ok=True)
     monkeypatch.setattr(backend, "_get_container", lambda _sandbox_id: created_container)
     monkeypatch.setattr(backend, "_ensure_network", backend._network_name)
     monkeypatch.setattr(backend, "_delete_network", deleted_networks.append)
-    monkeypatch.setattr(backend, "_ensure_user_data_writable", lambda *_args: None)
     monkeypatch.setattr(module, "wait_for_sandbox_ready", lambda _url, timeout_seconds: False)
 
     with pytest.raises(RuntimeError, match=error_match):
@@ -1066,7 +1122,6 @@ def test_docker_backend_reconnects_provisioner_before_reusing_sandbox(monkeypatc
     monkeypatch.setattr(backend, "_is_expected_skills_mount", lambda _container, _uid: True)
     monkeypatch.setattr(backend, "_is_on_expected_network", lambda _container, _sandbox_id: True)
     monkeypatch.setattr(backend, "_has_expected_user_data_mounts", lambda _container, _uid, _workdir=None: True)
-    monkeypatch.setattr(backend, "_ensure_user_data_writable", lambda *_args: None)
     monkeypatch.setattr(module, "wait_for_sandbox_ready", lambda _url, timeout_seconds: bool(connected))
 
     record = backend.create("sandbox-1", "thread-1", "user-1")

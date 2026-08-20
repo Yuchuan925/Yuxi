@@ -1,7 +1,6 @@
 from .backend import ProvisionerSandboxBackend
 from .paths import (
     ensure_user_workspace,
-    ensure_workspace_default_files,
     user_workspace_agent_context_file,
     user_workspace_dir,
 )
@@ -19,7 +18,6 @@ __all__ = [
     "ProvisionerSandboxProvider",
     "SandboxConnection",
     "ensure_user_workspace",
-    "ensure_workspace_default_files",
     "get_sandbox_provider",
     "init_sandbox_provider",
     "sandbox_id_for_thread",

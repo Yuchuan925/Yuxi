@@ -36,11 +36,9 @@ def open_directory_fd(root: Path | int, parts: tuple[str, ...], *, create: bool 
     directory_fd = os.dup(root) if isinstance(root, int) else os.open(root, _DIRECTORY_OPEN_FLAGS)
     try:
         for part in parts:
-            created = False
             if create:
                 try:
-                    os.mkdir(part, 0o777, dir_fd=directory_fd)
-                    created = True
+                    os.mkdir(part, 0o700, dir_fd=directory_fd)
                 except FileExistsError:
                     pass
             try:
@@ -54,16 +52,6 @@ def open_directory_fd(root: Path | int, parts: tuple[str, ...], *, create: bool 
                     if stat.S_ISLNK(item_stat.st_mode):
                         raise OSError(errno.ELOOP, os.strerror(errno.ELOOP), part) from exc
                 raise
-            if created:
-                try:
-                    os.fchmod(child_fd, 0o777)
-                except BaseException:
-                    os.close(child_fd)
-                    try:
-                        os.rmdir(part, dir_fd=directory_fd)
-                    except OSError:
-                        pass
-                    raise
             previous_fd = directory_fd
             directory_fd = child_fd
             os.close(previous_fd)

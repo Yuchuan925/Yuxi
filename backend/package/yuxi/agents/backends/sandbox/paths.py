@@ -15,7 +15,6 @@ from yuxi.utils.paths import (
     WORKSPACE_AGENT_CONTEXT_FILES,
     WORKSPACE_AGENTS_DIR_NAME,
     WORKSPACE_DIR_NAME,
-    ensure_within_root,
     open_directory_fd,
 )
 
@@ -103,7 +102,7 @@ def create_default_user_workdir(uid: str) -> tuple[str, Path]:
         while True:
             directory_name = str(uuid.uuid4())
             try:
-                os.mkdir(directory_name, 0o777, dir_fd=projects_fd)
+                os.mkdir(directory_name, 0o700, dir_fd=projects_fd)
                 break
             except FileExistsError:
                 continue
@@ -194,7 +193,7 @@ def _ensure_workspace_default_files_fd(workspace_fd: int) -> None:
                 file_fd = os.open(
                     filename,
                     os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
-                    0o666,
+                    0o600,
                     dir_fd=agents_fd,
                 )
             except FileExistsError:
@@ -203,7 +202,6 @@ def _ensure_workspace_default_files_fd(workspace_fd: int) -> None:
                 logger.warning(f"工作区默认 {filename} 初始化失败: {exc}")
                 continue
             try:
-                os.fchmod(file_fd, 0o666)
                 content = default_content.encode("utf-8")
                 offset = 0
                 while offset < len(content):
@@ -224,52 +222,6 @@ def _ensure_workspace_default_files_fd(workspace_fd: int) -> None:
 def user_workspace_agent_context_file(uid: str, filename: str) -> Path:
     """返回用户级 Agent 上下文文件。"""
     return user_workspace_dir(uid) / WORKSPACE_AGENTS_DIR_NAME / filename
-
-
-def _user_data_root_dir() -> Path:
-    return get_user_data_dir().resolve(strict=False)
-
-
-def _resolve_user_data_child_path(path: Path) -> Path:
-    root = _user_data_root_dir()
-    resolved = path.resolve(strict=False)
-    return ensure_within_root(resolved, root, error_message="path resolved outside user data root")
-
-
-def _chmod_writable(path: Path, *, dir: bool = False) -> None:
-    safe_path = _resolve_user_data_child_path(path)
-    mode = 0o777 if dir else 0o666
-    try:
-        safe_path.chmod(mode)
-    except OSError:
-        pass
-
-
-def ensure_workspace_default_files(workspace_dir: Path) -> None:
-    workspace_dir = _resolve_user_data_child_path(workspace_dir)
-    agents_dir = workspace_dir / WORKSPACE_AGENTS_DIR_NAME
-
-    try:
-        agents_dir.mkdir(parents=True, exist_ok=True)
-        _chmod_writable(agents_dir, dir=True)
-    except FileExistsError:
-        logger.warning("工作区默认 Agents 目录创建失败：路径已被文件占用")
-        return
-    except OSError as exc:
-        logger.warning(f"工作区默认 Agents 目录初始化失败: {exc}")
-        return
-
-    for filename, default_content in WORKSPACE_AGENT_CONTEXT_FILES.items():
-        context_file = agents_dir / filename
-        try:
-            with context_file.open("x", encoding="utf-8") as buffer:
-                buffer.write(default_content)
-            _chmod_writable(context_file)
-        except FileExistsError:
-            if context_file.is_dir():
-                logger.warning(f"工作区默认 {filename} 创建失败：路径已被目录占用")
-        except OSError as exc:
-            logger.warning(f"工作区默认 {filename} 初始化失败: {exc}")
 
 
 def ensure_user_workspace(uid: str) -> None:

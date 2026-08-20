@@ -28,9 +28,8 @@ def test_import_moves_v071_thread_files_into_user_workspace(monkeypatch, tmp_pat
 
     target = user_data / "shared" / "user-1" / "workspace" / "projects" / "legacy-workdir-1"
     assert (target / "uploads" / "input.txt").read_text(encoding="utf-8") == "input"
-    assert target.stat().st_mode & 0o777 == 0o777
-    assert (target / "uploads").stat().st_mode & 0o777 == 0o777
-    assert (target / "uploads" / "input.txt").stat().st_mode & 0o777 == 0o666
+    assert target.stat().st_mode & 0o777 == 0o700
+    assert (target / "uploads").stat().st_mode & 0o777 == 0o700
     assert not (target / "outputs").exists()
     assert uploads.is_dir()
 
@@ -45,7 +44,7 @@ def test_import_creates_empty_workdir_without_eager_business_directories(monkeyp
 
     target = tmp_path / "user-data/shared/user-1/workspace/projects/legacy-empty"
     assert target.is_dir()
-    assert target.stat().st_mode & 0o777 == 0o777
+    assert target.stat().st_mode & 0o777 == 0o700
     assert list(target.iterdir()) == []
 
 

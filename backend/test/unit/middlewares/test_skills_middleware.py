@@ -7,11 +7,8 @@ from langchain_core.messages import SystemMessage, ToolMessage
 from langgraph.types import Command
 
 import yuxi.agents.middlewares.skills as skills_middleware
-from yuxi.agents.middlewares.skills import (
-    SkillsMiddleware,
-    resolve_runtime_skills_for_context,
-    resolve_skill_gated_tools,
-)
+from yuxi.agents.middlewares.skills import SkillsMiddleware
+from yuxi.agents.skills.runtime import resolve_skill_gated_tools
 from yuxi.agents.toolkits.service import resolve_configured_runtime_tools
 
 _KB_TOOL_NAMES = {
@@ -25,49 +22,6 @@ _KB_TOOL_NAMES = {
 
 def _system_message_text(message: SystemMessage) -> str:
     return "\n".join(block.get("text", "") for block in message.content_blocks if isinstance(block, dict))
-
-
-@pytest.mark.asyncio
-async def test_resolve_runtime_skills_derives_prompt_and_readable_closure(monkeypatch):
-    async def fake_list_skills_from_db(db=None, user=None):
-        del db, user
-        return [
-            SimpleNamespace(
-                slug="alpha",
-                name="Alpha",
-                description="alpha desc",
-                source_scope="shared",
-                source_dir="/tmp/shared/alpha",
-                tool_dependencies=[],
-                mcp_dependencies=[],
-                skill_dependencies=["beta"],
-            ),
-            SimpleNamespace(
-                slug="beta",
-                name="Beta",
-                description="beta desc",
-                source_scope="personal",
-                source_dir="/tmp/personal/beta",
-                tool_dependencies=[],
-                mcp_dependencies=[],
-                skill_dependencies=[],
-            ),
-        ]
-
-    monkeypatch.setattr(skills_middleware, "_list_skills_from_db", fake_list_skills_from_db)
-
-    context = SimpleNamespace(skills=["alpha", "missing"])
-
-    scope = await resolve_runtime_skills_for_context(context)
-
-    assert scope["context_skills"] == ["alpha"]
-    assert scope["prompt_skills"] == ["alpha", "beta"]
-    assert scope["readable_skills"] == ["alpha", "beta"]
-    assert set(scope["runtime_skill_metadata"]) == {"alpha", "beta"}
-    assert scope["runtime_skill_metadata"]["alpha"]["path"] == "/home/gem/skills/alpha/SKILL.md"
-    assert scope["runtime_skill_metadata"]["beta"]["path"] == ("/home/gem/user-data/agents/skills/beta/SKILL.md")
-    assert scope["runtime_skill_sources"] == {"alpha": "/tmp/shared/alpha"}
-    assert scope["runtime_skill_dependency_map"]["alpha"]["skills"] == ["beta"]
 
 
 @pytest.mark.asyncio

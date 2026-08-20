@@ -33,6 +33,10 @@ from yuxi.storage_migrations.v071_workdirs import (
     rewrite_v071_workdir_paths,
     verify_workdir_bindings,
 )
+from yuxi.storage_migrations.v072_runtime_identity import (
+    migrate_runtime_storage_identity,
+    runtime_storage_requires_quiescence,
+)
 
 _QUIESCENCE_TOKEN_ENV = "YUXI_STORAGE_MIGRATION_QUIESCENCE_TOKEN"
 _QUIESCENCE_FILE_ENV = "YUXI_STORAGE_MIGRATION_QUIESCENCE_FILE"
@@ -90,7 +94,12 @@ async def main() -> None:
         async with pg_manager.get_async_session_context() as session:
             workdir_plan = await read_v071_workdir_plan(session)
         migrates_workdirs = workdir_plan.requires_cutover or bool(workdir_plan.workdirs)
-        requires_quiescence = migrates_workdirs or _legacy_skill_roots_exist() or _legacy_system_config_exists()
+        requires_quiescence = (
+            migrates_workdirs
+            or _legacy_skill_roots_exist()
+            or _legacy_system_config_exists()
+            or runtime_storage_requires_quiescence()
+        )
         if requires_quiescence:
             _require_quiescence_proof()
         await pg_manager.create_business_tables()
@@ -112,6 +121,7 @@ async def main() -> None:
         async with pg_manager.get_async_session_context() as session:
             await migrate_shared_skills(session)
         mark_v071_skills_migrated()
+        await asyncio.to_thread(migrate_runtime_storage_identity)
     finally:
         await pg_manager.close()
 

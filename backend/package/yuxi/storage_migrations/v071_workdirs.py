@@ -170,8 +170,7 @@ def import_v071_workdirs(
         projects_root = user_workdir_host_dir(binding.uid, "projects")
         target = projects_root / binding.workdir_id
         staging = projects_root / f".import-{binding.workdir_id}-{uuid.uuid4().hex}"
-        staging.mkdir()
-        _set_created_mode(staging, 0o777)
+        staging.mkdir(mode=0o700)
         try:
             if target.exists() or target.is_symlink():
                 if target.is_symlink() or not target.is_dir():
@@ -328,12 +327,10 @@ def _merge_tree(source: Path, target: Path) -> None:
     if source.is_symlink() or not source.is_dir():
         raise RuntimeError(f"旧 Workdir 来源不是安全目录: {source.name}")
     try:
-        target.mkdir()
+        target.mkdir(mode=0o700)
     except FileExistsError:
         if target.is_symlink() or not target.is_dir():
             raise RuntimeError(f"Workdir 迁移目标不是安全目录: {target.name}") from None
-    else:
-        _set_created_mode(target, 0o777)
     for entry in source.iterdir():
         if entry.is_symlink():
             raise RuntimeError(f"旧 Workdir 包含 symlink: {entry.name}")
@@ -346,21 +343,8 @@ def _merge_tree(source: Path, target: Path) -> None:
                     raise RuntimeError(f"旧 Workdir 文件冲突: {entry.name}")
             else:
                 shutil.copy2(entry, destination)
-                _set_created_mode(destination, 0o666)
         else:
             raise RuntimeError(f"旧 Workdir 包含非常规文件: {entry.name}")
-
-
-def _set_created_mode(path: Path, mode: int) -> None:
-    """通过 no-follow 文件描述符固定迁移新对象权限。"""
-    flags = os.O_RDONLY | os.O_NOFOLLOW
-    if path.is_dir():
-        flags |= os.O_DIRECTORY
-    item_fd = os.open(path, flags)
-    try:
-        os.fchmod(item_fd, mode)
-    finally:
-        os.close(item_fd)
 
 
 def _tree_manifest(root: Path) -> tuple[tuple[str, str], ...]:

@@ -4,6 +4,7 @@ x-api-worker-env: &api-worker-env
   RUNNING_IN_DOCKER: "true"
   YUXI_ENV: development
   API_KEY_DERIVATION_SECRET: ${API_KEY_DERIVATION_SECRET:?Set API_KEY_DERIVATION_SECRET in .env [v0.7.2+], or rerun `bash scripts/init.sh`.}
+  NLTK_DATA: /home/yuxi/nltk_data
   # DBs and other services
   POSTGRES_URL: ${POSTGRES_URL:-postgresql+asyncpg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-yuxi}}
   REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
@@ -49,6 +50,7 @@ services:
     image: yuxi-api:${YUXI_VERSION:-0.7.2.dev0}
     container_name: api-dev
     working_dir: /app
+    user: "1000:1000"
     volumes:
       - ./backend/server:/app/server
       - ./backend/package:/app/package
@@ -58,8 +60,7 @@ services:
       - ./backend/test:/app/test
       - ./backend/scripts:/app/scripts
       - ./docker/sandbox_provisioner:/app/docker/sandbox_provisioner:ro
-      - ./.env:/app/.env
-      - nltk_data:/root/nltk_data  # 使用命名卷持久化NLTK数据，避免路径展开差异
+      - nltk_data:/home/yuxi/nltk_data
     ports:
       - "5050:5050"
     networks:
@@ -101,6 +102,7 @@ services:
     image: yuxi-api:${YUXI_VERSION:-0.7.2.dev0}
     container_name: worker-dev
     working_dir: /app
+    user: "1000:1000"
     volumes:
       - ./backend/server:/app/server
       - ./backend/package:/app/package
@@ -110,7 +112,6 @@ services:
       - ./backend/test:/app/test
       - ./backend/scripts:/app/scripts
       - ./docker/sandbox_provisioner:/app/docker/sandbox_provisioner:ro
-      - ./.env:/app/.env
       - ./backend/pyproject.toml:/app/pyproject.toml
       - ./backend/uv.lock:/app/uv.lock
     networks:
@@ -149,13 +150,14 @@ services:
       dockerfile: docker/api.Dockerfile
     image: yuxi-api:${YUXI_VERSION:-0.7.2.dev0}
     working_dir: /app
+    user: "0:0"
     volumes:
       - ./backend/package:/app/package:ro
       - ./docker/volumes/yuxi:/app/legacy-saves
       - ./docker/volumes/yuxi/threads:/app/user-data
       - ./docker/volumes/yuxi/skill-sources:/app/skill-sources
       - ./docker/volumes/yuxi/skill-projections:/app/skill-projections
-      - ./.env:/app/.env:ro
+      - nltk_data:/home/yuxi/nltk_data
     networks:
       - app-network
     env_file:

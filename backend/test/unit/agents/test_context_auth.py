@@ -332,7 +332,7 @@ async def test_prepare_agent_runtime_context_filters_resources_and_derives_runti
     )
     monkeypatch.setitem(
         sys.modules,
-        "yuxi.agents.middlewares.skills",
+        "yuxi.agents.skills.runtime",
         types.SimpleNamespace(resolve_runtime_skills_for_context=fake_resolve_runtime_skills_for_context),
     )
     monkeypatch.setitem(
@@ -427,7 +427,7 @@ async def test_prepare_agent_runtime_context_clears_resources_for_missing_user(m
     )
     monkeypatch.setitem(
         sys.modules,
-        "yuxi.agents.middlewares.skills",
+        "yuxi.agents.skills.runtime",
         types.SimpleNamespace(resolve_runtime_skills_for_context=lambda _context, db=None, user=None: None),
     )
     monkeypatch.setitem(

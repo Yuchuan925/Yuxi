@@ -21,6 +21,17 @@ SANDBOX_CLEANUP_OWNER_PATHS = (
     "backend/test/integration/conftest.py",
     "backend/test/live_api_cleanup.py",
 )
+WORKSPACE_PERMISSION_OWNER_PATHS = (
+    "backend/package/yuxi/utils/paths.py",
+    "backend/package/yuxi/agents/backends/sandbox/paths.py",
+    "backend/package/yuxi/services/workspace_filesystem.py",
+    "backend/package/yuxi/services/workspace_service.py",
+    "backend/package/yuxi/storage_migrations/v071_workdirs.py",
+    "docker/sandbox_provisioner/app.py",
+)
+LEGACY_WORKSPACE_PERMISSION_MARKERS = frozenset(
+    {"0o777", "0o666", "chmod a+rwx", "_ensure_user_data_writable", "_chmod_writable"}
+)
 
 
 def _project_root() -> Path:
@@ -94,6 +105,11 @@ def _forbidden_direct_docker_access(source: str) -> set[str]:
     return {marker for marker in FORBIDDEN_DIRECT_DOCKER_ACCESS_MARKERS if marker in source}
 
 
+def _legacy_workspace_permission_markers(source: str) -> set[str]:
+    """识别已由统一运行身份取代的权限补丁。"""
+    return {marker for marker in LEGACY_WORKSPACE_PERMISSION_MARKERS if marker in source}
+
+
 @pytest.mark.parametrize("filename", ["docker-compose.yml", "docker-compose.prod.yml"])
 def test_api_and_worker_do_not_mount_unused_host_dependencies(filename: str):
     """API/worker 不得重新依赖模型目录或 Docker daemon。"""
@@ -108,6 +124,7 @@ def test_api_worker_and_provisioner_use_explicit_storage_domains(filename: str):
         targets = {_volume_target(volume) for volume in compose["services"][service_name].get("volumes") or []}
         assert REQUIRED_STORAGE_TARGETS[service_name] <= targets
         assert "/app/saves" not in targets
+        assert "/app/.env" not in targets
     provisioner_targets = {
         _volume_target(volume) for volume in compose["services"]["sandbox-provisioner"].get("volumes") or []
     }
@@ -123,6 +140,40 @@ def test_worker_user_data_mount_is_read_only(filename: str) -> None:
     user_data_mount = next(volume for volume in volumes if _volume_target(volume) == "/app/user-data")
 
     assert _volume_is_read_only(user_data_mount) is True
+
+
+@pytest.mark.parametrize("filename", ["docker-compose.yml", "docker-compose.prod.yml"])
+def test_workspace_consumers_use_fixed_runtime_identity_after_root_migration(filename: str) -> None:
+    """普通文件 consumer 使用 1000:1000，只有一次性 migrator 保留 root。"""
+    services = _load_compose(filename)["services"]
+
+    assert services["api"]["user"] == "1000:1000"
+    assert services["worker"]["user"] == "1000:1000"
+    assert services["storage-migrator"]["user"] == "0:0"
+
+
+def test_api_image_applies_owner_only_umask_before_dropping_to_runtime_identity() -> None:
+    """镜像身份与 umask 必须由 shipping 入口显式拥有。"""
+    root = _project_root()
+    dockerfile = (root / "docker/api.Dockerfile").read_text()
+    entrypoint = (root / "docker/api-entrypoint.sh").read_text()
+
+    assert "USER 1000:1000" in dockerfile
+    assert 'ENTRYPOINT ["/usr/local/bin/yuxi-entrypoint"]' in dockerfile
+    assert "umask 077" in entrypoint
+    assert 'exec "$@"' in entrypoint
+
+
+def test_workspace_owners_do_not_reintroduce_cross_uid_permission_patches() -> None:
+    """运行时 Owner 不得重新承担部署身份兼容。"""
+    source = "\n".join((_project_root() / path).read_text() for path in WORKSPACE_PERMISSION_OWNER_PATHS)
+
+    assert _legacy_workspace_permission_markers(source) == set()
+
+
+def test_workspace_permission_guard_detects_reintroduced_world_writable_mode() -> None:
+    """负控证明旧权限模式会被 guard 拒绝。"""
+    assert _legacy_workspace_permission_markers("os.mkdir(name, 0o777)") == {"0o777"}
 
 
 @pytest.mark.parametrize("filename", ["docker-compose.yml", "docker-compose.prod.yml"])

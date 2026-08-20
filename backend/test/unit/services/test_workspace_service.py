@@ -35,27 +35,9 @@ def test_workspace_root_creates_default_agent_context_files(tmp_path: Path, monk
         "# MEMORY\n\n以下是 Agent 需要记住的一些信息\n"
     )
     assert {path.name for path in (root / "agents").iterdir()} == {"AGENTS.md", "USER.md", "MEMORY.md"}
-    assert (root / "agents").stat().st_mode & 0o777 == 0o777
+    assert (root / "agents").stat().st_mode & 0o777 == 0o700
     for filename in ("AGENTS.md", "USER.md", "MEMORY.md"):
-        assert (root / "agents" / filename).stat().st_mode & 0o777 == 0o666
-
-
-def test_workspace_default_file_permission_failure_removes_partial_file(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setenv("YUXI_USER_DATA_DIR", str(tmp_path / "threads"))
-    original_fchmod = os.fchmod
-
-    def fail_file_permission(file_fd: int, mode: int) -> None:
-        if mode == 0o666:
-            raise OSError("permission update failed")
-        original_fchmod(file_fd, mode)
-
-    monkeypatch.setattr(workspace_paths.os, "fchmod", fail_file_permission)
-
-    with pytest.raises(OSError, match="permission update failed"):
-        workspace_paths.ensure_user_workspace("user-1")
-
-    agents_dir = tmp_path / "threads/shared/user-1/workspace/agents"
-    assert not (agents_dir / "AGENTS.md").exists()
+        assert (root / "agents" / filename).stat().st_mode & 0o777 == 0o600
 
 
 def test_external_uid_uses_stable_path_safe_workspace_directory(tmp_path: Path, monkeypatch) -> None:
@@ -105,16 +87,6 @@ def test_workspace_root_rejects_symlink_root(tmp_path: Path, monkeypatch) -> Non
         svc._workspace_root(_user())
 
     assert exc_info.value.status_code == 403
-
-
-def test_ensure_workspace_default_files_rejects_path_outside_threads_root(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    monkeypatch.setenv("YUXI_USER_DATA_DIR", str(tmp_path / "saves" / "threads"))
-
-    with pytest.raises(ValueError):
-        workspace_paths.ensure_workspace_default_files(tmp_path / "outside-workspace")
 
 
 @pytest.mark.parametrize(
@@ -357,12 +329,12 @@ async def test_upload_workspace_files_writes_files(tmp_path: Path, monkeypatch) 
     assert result["entries"][0]["size"] == 5
     assert (root / "demo.txt").read_bytes() == b"hello"
     assert (root / "notes.md").read_bytes() == b"# notes"
-    assert (root / "demo.txt").stat().st_mode & 0o777 == 0o666
-    assert (root / "notes.md").stat().st_mode & 0o777 == 0o666
+    assert (root / "demo.txt").stat().st_mode & 0o777 == 0o600
+    assert (root / "notes.md").stat().st_mode & 0o777 == 0o600
 
 
 @pytest.mark.asyncio
-async def test_create_workspace_directory_is_writable_across_runtime_uid(tmp_path: Path, monkeypatch) -> None:
+async def test_create_workspace_directory_uses_owner_only_mode(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("YUXI_USER_DATA_DIR", str(tmp_path / "threads"))
 
     previous_umask = os.umask(0o077)
@@ -377,7 +349,7 @@ async def test_create_workspace_directory_is_writable_across_runtime_uid(tmp_pat
 
     target = tmp_path / "threads/shared/user-1/workspace/project"
     assert result["entry"]["path"] == "/project/"
-    assert target.stat().st_mode & 0o777 == 0o777
+    assert target.stat().st_mode & 0o777 == 0o700
 
 
 @pytest.mark.asyncio

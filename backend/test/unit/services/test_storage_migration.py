@@ -70,8 +70,14 @@ async def test_storage_migration_reads_legacy_schema_before_cutover(monkeypatch)
     )
     monkeypatch.setattr(storage_migration, "migrate_shared_skills", lambda _db: _record(calls, "skills"))
     monkeypatch.setattr(storage_migration, "mark_v071_skills_migrated", lambda: calls.append("mark_skills"))
+    monkeypatch.setattr(
+        storage_migration,
+        "migrate_runtime_storage_identity",
+        lambda: calls.append("runtime_identity"),
+    )
     monkeypatch.setattr(storage_migration, "_legacy_skill_roots_exist", lambda: False)
     monkeypatch.setattr(storage_migration, "_legacy_system_config_exists", lambda: False)
+    monkeypatch.setattr(storage_migration, "runtime_storage_requires_quiescence", lambda: True)
 
     await storage_migration.main()
 
@@ -79,6 +85,7 @@ async def test_storage_migration_reads_legacy_schema_before_cutover(monkeypatch)
     assert calls.index("proof") < calls.index(("import", workdirs, conversations))
     assert calls.index(("import", workdirs, conversations)) < calls.index("ensure_business_schema")
     assert calls.index("verify") < calls.index(("cleanup", conversations))
+    assert calls.index("mark_skills") < calls.index("runtime_identity")
     assert calls[-1] == "close"
 
 
@@ -105,6 +112,7 @@ async def test_storage_migration_rejects_v071_schema_without_quiescence_proof(mo
     )
     monkeypatch.setattr(storage_migration, "_legacy_skill_roots_exist", lambda: False)
     monkeypatch.setattr(storage_migration, "_legacy_system_config_exists", lambda: False)
+    monkeypatch.setattr(storage_migration, "runtime_storage_requires_quiescence", lambda: False)
     monkeypatch.setenv("YUXI_STORAGE_MIGRATION_QUIESCENCE_FILE", str(tmp_path / "missing"))
     monkeypatch.delenv("YUXI_STORAGE_MIGRATION_QUIESCENCE_TOKEN", raising=False)
 
@@ -138,6 +146,7 @@ async def test_current_schema_does_not_rewrite_workdir_data(monkeypatch):
     )
     monkeypatch.setattr(storage_migration, "_legacy_skill_roots_exist", lambda: False)
     monkeypatch.setattr(storage_migration, "_legacy_system_config_exists", lambda: False)
+    monkeypatch.setattr(storage_migration, "runtime_storage_requires_quiescence", lambda: False)
     monkeypatch.setattr(
         storage_migration,
         "_converge_database_state",
@@ -149,12 +158,18 @@ async def test_current_schema_does_not_rewrite_workdir_data(monkeypatch):
     monkeypatch.setattr(storage_migration, "cleanup_v071_thread_sources", lambda *_args: calls.append("cleanup"))
     monkeypatch.setattr(storage_migration, "migrate_shared_skills", lambda _db: _record(calls, "skills"))
     monkeypatch.setattr(storage_migration, "mark_v071_skills_migrated", lambda: calls.append("mark_skills"))
+    monkeypatch.setattr(
+        storage_migration,
+        "migrate_runtime_storage_identity",
+        lambda: calls.append("runtime_identity"),
+    )
 
     await storage_migration.main()
 
     assert "converge:False" in calls
     assert "schema" in calls
     assert "skills" in calls
+    assert "runtime_identity" in calls
     assert {"import", "rewrite", "verify", "cleanup"}.isdisjoint(calls)
 
 
