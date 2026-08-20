@@ -63,7 +63,13 @@ async def _create_run(
     thread_id = f"pytest-lease-{uuid.uuid4()}"
     uid = f"pytest-user-{uuid.uuid4()}"
     async with session_factory() as db:
-        conversation = Conversation(thread_id=thread_id, uid=uid, agent_id="main", status="active")
+        conversation = Conversation(
+            thread_id=thread_id,
+            uid=uid,
+            agent_id="main",
+            status="active",
+            workdir_path=f"projects/{thread_id}",
+        )
         db.add(conversation)
         await db.flush()
         message = Message(
@@ -113,11 +119,14 @@ async def test_root_terminal_atomically_cancels_live_child_and_clears_lease(
     try:
         async with session_factory() as db:
             parent = await db.get(AgentRun, parent_id)
+            parent_conversation = await db.get(Conversation, parent.conversation_id)
+            assert parent_conversation is not None
             child_conversation = Conversation(
                 thread_id=child_thread_id,
                 uid=parent.uid,
                 agent_id="worker",
                 status="subagent",
+                workdir_path=parent_conversation.workdir_path,
             )
             db.add(child_conversation)
             await db.flush()
@@ -219,11 +228,14 @@ async def _create_live_child(
     child_thread_id = f"pytest-tree-child-{uuid.uuid4()}"
     async with session_factory() as db:
         parent = await db.get(AgentRun, parent_id)
+        parent_conversation = await db.get(Conversation, parent.conversation_id)
+        assert parent_conversation is not None
         child_conversation = Conversation(
             thread_id=child_thread_id,
             uid=parent.uid,
             agent_id="worker",
             status="subagent",
+            workdir_path=parent_conversation.workdir_path,
         )
         db.add(child_conversation)
         await db.flush()
