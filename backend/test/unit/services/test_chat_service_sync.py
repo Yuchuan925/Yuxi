@@ -20,6 +20,27 @@ async def _fake_normalize_agent_context_config(context, **_kwargs):
     return dict(context or {})
 
 
+def test_build_agent_context_applies_runtime_input_to_declared_fields() -> None:
+    agent = SimpleNamespace(context_schema=agent_context.BaseContext)
+
+    context = svc._build_agent_context(
+        agent,
+        {
+            "thread_id": "thread-1",
+            "uid": "user-1",
+            "system_prompt": "runtime prompt",
+            "unknown_field": "ignored",
+            "update": "must not shadow the method",
+        },
+    )
+
+    assert context.thread_id == "thread-1"
+    assert context.uid == "user-1"
+    assert context.system_prompt == "runtime prompt"
+    assert not hasattr(context, "unknown_field")
+    assert callable(context.update)
+
+
 @pytest.mark.asyncio
 async def test_resolve_agent_runtime_includes_subagents_only_when_requested(monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[str] = []

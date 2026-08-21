@@ -152,6 +152,13 @@ class BaseContext:
     2. 类默认配置：最低优先级，类中定义的默认值
     """
 
+    def update(self, data: dict):
+        """用运行时输入更新已声明的配置字段。"""
+        declared_fields = {item.name for item in fields(self)}
+        for key, value in data.items():
+            if key in declared_fields:
+                setattr(self, key, value)
+
     thread_id: str = field(
         default_factory=lambda: str(uuid.uuid4()),
         metadata={"name": "线程ID", "configurable": False, "description": "用来唯一标识一个对话线程"},
