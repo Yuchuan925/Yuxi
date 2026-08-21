@@ -119,10 +119,6 @@ def is_office_pdf_preview_file(path: str) -> bool:
     return PurePosixPath(path).suffix.lower() in _OFFICE_PDF_PREVIEW_EXTENSIONS
 
 
-def is_binary_preview_type(preview_type: str) -> bool:
-    return preview_type in {"image", "pdf"}
-
-
 def preview_too_large() -> PreviewResult:
     return PreviewResult(
         content=None,
@@ -237,7 +233,15 @@ def detect_preview_type(path: str, raw_content: bytes) -> tuple[str, bool, str |
 def render_preview(path: str, raw_content: bytes) -> PreviewResult:
     """把文件字节渲染为中立 Preview 结果。"""
     preview_type, supported, message = detect_preview_type(path, raw_content)
-    if is_binary_preview_type(preview_type) or not supported:
+    if preview_type in {"image", "pdf"}:
+        return PreviewResult(
+            content=raw_content,
+            preview_type=preview_type,
+            supported=True,
+            media_type=detect_media_type(path, raw_content),
+            filename=PurePosixPath(path).name or "preview",
+        )
+    if not supported:
         return PreviewResult(
             content=None,
             preview_type=preview_type,

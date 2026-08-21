@@ -81,16 +81,11 @@ def _runtime_entry(entry: dict, runtime_path: str) -> dict:
     return {**entry, "path": path}
 
 
-async def _search_filesystem(
-    filesystem: Workspace,
-    root_path: str,
-    query: str,
-    source: str,
-) -> list[dict]:
+async def _search_workspace(uid: str, query: str) -> list[dict]:
     try:
         entries = await asyncio.to_thread(
-            filesystem.search_authorized_tree,
-            root_path,
+            Workspace(uid).search_authorized_tree,
+            "/",
             query,
             exclude_directories=MENTION_EXCLUDE_DIRS,
             exclude_hidden=True,
@@ -98,15 +93,8 @@ async def _search_filesystem(
         )
     except FileNotFoundError:
         return []
-    return _rank_entries(entries, query, source)
-
-
-async def _search_workspace(uid: str, query: str) -> list[dict]:
-    entries = await _search_filesystem(Workspace(uid), "/", query, "workspace")
-    return [
-        _runtime_entry(entry, runtime_user_data_path(str(entry["path"])))
-        for entry in entries
-    ]
+    ranked = _rank_entries(entries, query, "workspace")
+    return [_runtime_entry(entry, runtime_user_data_path(str(entry["path"]))) for entry in ranked]
 
 
 async def _search_workdir(workdir, query: str) -> list[dict]:

@@ -5,11 +5,11 @@ import uuid
 from dataclasses import MISSING, dataclass, field, fields
 from typing import Any, get_origin
 
-from yuxi.workspace.filesystem import Workspace
 from yuxi.agents.tool_approval import DEFAULT_TOOL_APPROVAL_MODE
 from yuxi.config.options import system_options
 from yuxi.config.runtime import lite_mode_enabled
 from yuxi.utils.logging_config import logger
+from yuxi.workspace.filesystem import Workspace
 from yuxi.workspace.paths import WORKSPACE_AGENT_CONTEXT_FILES
 
 WORKSPACE_AGENTS_PROMPT_MAX_BYTES = 64 * 1024
@@ -151,12 +151,6 @@ class BaseContext:
     1. 运行时配置(RunnableConfig)：最高优先级，直接从函数参数传入
     2. 类默认配置：最低优先级，类中定义的默认值
     """
-
-    def update(self, data: dict):
-        """更新配置字段"""
-        for key, value in data.items():
-            if hasattr(self, key):
-                setattr(self, key, value)
 
     thread_id: str = field(
         default_factory=lambda: str(uuid.uuid4()),

@@ -760,10 +760,3 @@ async def test_subagent_await_reports_timeout_when_run_is_still_active(monkeypat
     assert payload["result"]["status"] == "running"
     assert captured["await"] == {"run_id": "child-run", "current_uid": "user-1"}
     assert len(captured["loads"]) == 2
-
-
-def test_parent_runtime_keeps_one_shared_runtime_and_workdir() -> None:
-    runtime = _async_tool_middleware()._parent_runtime()
-
-    assert runtime.runtime_scope_id == "parent-thread"
-    assert not hasattr(runtime, "workdir_id")

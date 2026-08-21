@@ -95,13 +95,13 @@ def allocate_default_user_workdir_path() -> str:
 
 def ensure_bound_user_workdir(uid: str, workdir_path: str) -> None:
     """物化已提交数据库绑定的 canonical Workdir。"""
+    normalized = normalize_workdir_path(workdir_path)
+    parts = PurePosixPath(normalized).parts
     try:
-        user_workdir_host_dir(uid, workdir_path)
+        _open_workspace_directory(uid, parts)
         return
     except FileNotFoundError:
         pass
-    normalized = normalize_workdir_path(workdir_path)
-    parts = PurePosixPath(normalized).parts
     ensure_user_workspace(uid)
     workspace_fd = _open_user_workspace_fd(uid)
     try:

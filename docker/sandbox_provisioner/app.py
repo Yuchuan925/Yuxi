@@ -1337,9 +1337,6 @@ class KubernetesProvisionerBackend:
                     return discovered
                 raise ValueError("sandbox identity does not match existing generation")
 
-            self._pod_name(sandbox_id)
-            self._service_name(sandbox_id)
-
             try:
                 self._core_api.create_namespaced_pod(
                     namespace=self._namespace,
@@ -1471,16 +1468,11 @@ class KubernetesProvisionerBackend:
         )
 
     def list(self) -> list[SandboxRecord]:
-        from kubernetes.client.rest import ApiException
-
-        try:
-            pod_list = self._core_api.list_namespaced_pod(
-                namespace=self._namespace,
-                # 升级窗口内旧 Pod 尚无 managed-by 标签；inventory 必须仍能枚举并清理它们。
-                label_selector="app=yuxi-sandbox",
-            )
-        except ApiException:
-            raise
+        pod_list = self._core_api.list_namespaced_pod(
+            namespace=self._namespace,
+            # 升级窗口内旧 Pod 尚无 managed-by 标签；inventory 必须仍能枚举并清理它们。
+            label_selector="app=yuxi-sandbox",
+        )
 
         records: list[SandboxRecord] = []
         for pod in pod_list.items:

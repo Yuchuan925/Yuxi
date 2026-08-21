@@ -6,7 +6,6 @@ import io
 from urllib.parse import quote
 
 from fastapi.responses import StreamingResponse
-
 from yuxi.utils.filepreview import PreviewResult
 from yuxi.workspace.preview import preview_workspace_file
 

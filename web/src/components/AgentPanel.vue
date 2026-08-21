@@ -207,7 +207,10 @@ import SubagentThreadView from '@/components/SubagentThreadView.vue'
 import {
   createFilesystemRefreshGate,
   expandedKeysAfterFilesystemRefresh,
+  reloadPreviewAfterOrderedCacheEntryInvalidation,
+  replacePreviewCacheEntryIfCurrent,
   refreshExpandedTree,
+  settlePreviewCacheLoad,
   shouldRefreshActivePreview,
   startAgentPanelFilesystemPolling
 } from '@/utils/agentPanelFilesystemPolling'
@@ -546,13 +549,6 @@ const revokeCurrentPreviewUrl = () => {
 
 const previewCacheKey = (filePath, threadId = props.threadId) => `${threadId}:${filePath}`
 
-const invalidateLocalPreviewCache = (filePath, threadId = props.threadId) => {
-  const cacheKey = previewCacheKey(filePath, threadId)
-  const cachedEntry = props.previewCache.get(cacheKey)
-  if (cachedEntry?.file?.previewUrl) window.URL.revokeObjectURL(cachedEntry.file.previewUrl)
-  props.previewCache.delete(cacheKey)
-}
-
 const prunePreviewCache = (activeKey) => {
   const readyEntries = [...props.previewCache.entries()]
     .filter(([, entry]) => entry.status === 'ready')
@@ -566,7 +562,7 @@ const prunePreviewCache = (activeKey) => {
   }
 }
 
-const loadActivePreview = async ({ force = false, baseFileOverride = null } = {}) => {
+const loadActivePreview = async ({ baseFileOverride = null } = {}) => {
   const requestedThreadId = props.threadId
   const filePath = props.activePreviewPath
   const requestSeq = ++previewRequestSeq
@@ -601,7 +597,6 @@ const loadActivePreview = async ({ force = false, baseFileOverride = null } = {}
   }
 
   const cacheKey = previewCacheKey(filePath, requestedThreadId)
-  if (force) invalidateLocalPreviewCache(filePath, requestedThreadId)
   const cachedEntry = props.previewCache.get(cacheKey)
   if (cachedEntry?.status === 'ready') {
     cachedEntry.lastAccessed = Date.now()
@@ -612,10 +607,19 @@ const loadActivePreview = async ({ force = false, baseFileOverride = null } = {}
   if (cachedEntry?.status === 'loading') {
     try {
       const cachedFile = await cachedEntry.promise
-      if (requestIsCurrent()) currentFile.value = cachedFile
+      const currentEntry = props.previewCache.get(cacheKey)
+      const cacheStillOwnsFile =
+        currentEntry === cachedEntry ||
+        (currentEntry?.status === 'ready' && currentEntry.file === cachedFile)
+      if (requestIsCurrent() && cacheStillOwnsFile) currentFile.value = cachedFile
     } catch {
-      props.previewCache.delete(cacheKey)
-      if (requestIsCurrent()) {
+      const removed = replacePreviewCacheEntryIfCurrent(
+        props.previewCache,
+        cacheKey,
+        cachedEntry,
+        null
+      )
+      if (requestIsCurrent() && (removed || !props.previewCache.has(cacheKey))) {
         currentFile.value = {
           ...baseFile,
           content: '文件预览失败',
@@ -635,21 +639,30 @@ const loadActivePreview = async ({ force = false, baseFileOverride = null } = {}
       : await getViewerFileContent(requestedThreadId, filePath)
     return normalizePreviewResponse(res, baseFile)
   })()
-  props.previewCache.set(cacheKey, { status: 'loading', promise: loadPromise })
+  const loadingEntry = { status: 'loading', promise: loadPromise }
+  props.previewCache.set(cacheKey, loadingEntry)
 
   try {
     const nextFile = await loadPromise
-    if (!requestIsCurrent()) {
-      if (nextFile?.previewUrl) window.URL.revokeObjectURL(nextFile.previewUrl)
-      if (props.previewCache.get(cacheKey)?.promise === loadPromise) props.previewCache.delete(cacheKey)
-      return
-    }
-    props.previewCache.set(cacheKey, { status: 'ready', file: nextFile, lastAccessed: Date.now() })
+    const published = settlePreviewCacheLoad({
+      previewCache: props.previewCache,
+      cacheKey,
+      loadingEntry,
+      nextFile,
+      lastAccessed: Date.now(),
+      revokeObjectURL: window.URL.revokeObjectURL.bind(window.URL)
+    })
+    if (!published) return
     prunePreviewCache(cacheKey)
-    currentFile.value = nextFile
+    if (requestIsCurrent()) currentFile.value = nextFile
   } catch (error) {
-    if (props.previewCache.get(cacheKey)?.promise === loadPromise) props.previewCache.delete(cacheKey)
-    if (!requestIsCurrent()) return
+    const removed = replacePreviewCacheEntryIfCurrent(
+      props.previewCache,
+      cacheKey,
+      loadingEntry,
+      null
+    )
+    if (!requestIsCurrent() || !removed) return
 
     currentFile.value = {
       ...baseFile,
@@ -688,9 +701,22 @@ const refreshActivePreviewIfChanged = async (nodes, requestedThreadId) => {
     }
   }
   if (!shouldRefreshActivePreview(tab, latestFile)) return
+  if (
+    requestedThreadId !== props.threadId ||
+    tab.path !== props.activePreviewPath ||
+    tab !== activePreviewTab.value
+  ) {
+    return
+  }
   const nextTab = { ...tab, ...(latestFile || {}) }
-  emit('open-preview', nextTab, props.viewMode === 'tree')
-  await loadActivePreview({ force: true, baseFileOverride: nextTab })
+  const cacheKey = previewCacheKey(tab.path, requestedThreadId)
+  await reloadPreviewAfterOrderedCacheEntryInvalidation({
+    previewCache: props.previewCache,
+    cacheKey,
+    revokeObjectURL: window.URL.revokeObjectURL.bind(window.URL),
+    notifyPreviewChanged: () => emit('open-preview', nextTab, props.viewMode === 'tree'),
+    reloadPreview: () => loadActivePreview({ baseFileOverride: nextTab })
+  })
 }
 
 const onFileSelect = (nextSelectedKeys, { node }) => {
@@ -766,7 +792,7 @@ const emitRefresh = async () => {
     if (key.startsWith(`${props.threadId}:`)) props.previewCache.delete(key)
   }
   await refreshFileSystem()
-  if (props.activePreviewPath) await loadActivePreview({ force: true })
+  if (props.activePreviewPath) await loadActivePreview()
   emit('refresh', props.threadId)
 }
 
@@ -837,7 +863,6 @@ const stopResize = (e) => {
 onMounted(() => {
   refreshFileSystem()
   stopFilesystemPolling = startAgentPanelFilesystemPolling({
-    canRefresh: () => Boolean(props.threadId) && !filesystemRefreshGate.isInFlight(props.threadId),
     refresh: () => refreshFileSystem({ silent: true })
   })
 })

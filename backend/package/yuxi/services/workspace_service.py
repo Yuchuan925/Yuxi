@@ -11,11 +11,9 @@ from fastapi import HTTPException, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from starlette.background import BackgroundTask
 from yuxi.agents.backends.paths import runtime_user_data_path
-from yuxi.workspace.errors import FileTransferLimitError
-from yuxi.workspace.paths import (
-    ensure_user_workspace,
-)
 from yuxi.services.file_preview import render_file_preview
+from yuxi.storage.postgres.models_business import User
+from yuxi.utils.datetime_utils import utc_isoformat_from_timestamp
 from yuxi.utils.filepreview import (
     MAX_BINARY_PREVIEW_SIZE_BYTES,
     OfficePreviewConversionError,
@@ -23,10 +21,12 @@ from yuxi.utils.filepreview import (
     detect_preview_type,
     preview_too_large,
 )
-from yuxi.workspace.filesystem import Workspace
-from yuxi.storage.postgres.models_business import User
-from yuxi.utils.datetime_utils import utc_isoformat_from_timestamp
 from yuxi.utils.upload_utils import MAX_UPLOAD_SIZE_BYTES, write_upload_to_path
+from yuxi.workspace.errors import FileTransferLimitError
+from yuxi.workspace.filesystem import Workspace
+from yuxi.workspace.paths import (
+    ensure_user_workspace,
+)
 
 EDITABLE_WORKSPACE_SUFFIXES = {".md", ".markdown", ".mdx", ".txt"}
 MAX_WORKSPACE_UPLOAD_SIZE_BYTES = MAX_UPLOAD_SIZE_BYTES

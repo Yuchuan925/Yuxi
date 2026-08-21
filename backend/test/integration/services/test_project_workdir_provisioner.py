@@ -21,12 +21,13 @@ from yuxi.config import get_skill_projection_dir, get_user_data_dir
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
 
 
-def _create_workdir(uid: str, name: str):
+def _create_workdir(uid: str):
     """在真实 UserWorkspace 中创建测试 Workdir。"""
     ensure_user_workspace(uid)
     get_user_skills_root_dir(uid)
-    workdir_path = f"projects/{name}"
-    host_workdir = user_workspace_dir(uid) / "projects" / name
+    workdir_id = str(uuid.uuid4())
+    workdir_path = f"projects/{workdir_id}"
+    host_workdir = user_workspace_dir(uid) / "projects" / workdir_id
     host_workdir.mkdir(parents=True)
     return workdir_path, host_workdir
 
@@ -74,7 +75,7 @@ async def test_ephemeral_remote_skill_sandbox_does_not_create_persistent_uid_roo
 async def test_two_sandboxes_share_project_files_but_not_runtime_state():
     suffix = uuid.uuid4().hex
     uid = f"pytest-project-{suffix}"
-    workdir_path, _ = _create_workdir(uid, f"workdir-{suffix}")
+    workdir_path, _ = _create_workdir(uid)
     first_scope = f"pytest-runtime-a-{suffix}"
     second_scope = f"pytest-runtime-b-{suffix}"
     project_root = f"/home/gem/user-data/{workdir_path}"
@@ -135,7 +136,7 @@ async def test_two_sandboxes_share_project_files_but_not_runtime_state():
 async def test_recreated_runtime_keeps_project_files_and_drops_process_state():
     suffix = uuid.uuid4().hex
     uid = f"pytest-project-recreate-{suffix}"
-    workdir_path, _ = _create_workdir(uid, f"workdir-{suffix}")
+    workdir_path, _ = _create_workdir(uid)
     first_scope = f"pytest-runtime-before-{suffix}"
     second_scope = f"pytest-runtime-after-{suffix}"
     project_root = f"/home/gem/user-data/{workdir_path}"
@@ -186,7 +187,7 @@ async def test_workspace_file_remains_available_when_execution_runtime_is_releas
     """执行 runtime 被删除后，UserWorkspace 中的文件仍由宿主持有。"""
     suffix = uuid.uuid4().hex
     uid = f"pytest-file-bridge-{suffix}"
-    workdir_path, host_workdir = _create_workdir(uid, f"workdir-{suffix}")
+    workdir_path, host_workdir = _create_workdir(uid)
     runtime_scope = f"pytest-runtime-{suffix}"
     project_root = f"/home/gem/user-data/{workdir_path}"
     project_file = f"{project_root}/outputs/realtime.txt"

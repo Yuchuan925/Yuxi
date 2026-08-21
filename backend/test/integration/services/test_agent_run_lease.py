@@ -903,7 +903,9 @@ async def test_cancel_execution_tree_locks_root_before_descendants(lease_databas
         assert await asyncio.wait_for(cancel_task, timeout=5) == [root_id, child_id]
         async with session_factory() as db:
             statuses = dict(
-                (await db.execute(select(AgentRun.id, AgentRun.status).where(AgentRun.id.in_([root_id, child_id])))).all()
+                (
+                    await db.execute(select(AgentRun.id, AgentRun.status).where(AgentRun.id.in_([root_id, child_id])))
+                ).all()
             )
         assert statuses == {root_id: "cancelled", child_id: "cancel_requested"}
     finally:

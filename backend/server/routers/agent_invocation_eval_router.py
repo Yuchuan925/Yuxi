@@ -71,7 +71,7 @@ async def create_agent_eval_run(
     run_response = await submit_run_command(
         command=RunSubmissionCommand(
             agent_slug=agent_slug,
-            thread_id=str(payload.thread_id or "").strip()
+            thread_id=(payload.thread_id or "").strip()
             or hash_id("invocation_", f"{current_user.uid}:{agent_slug}:{request_id}", length=64),
             request_id=request_id,
             input_message=build_chat_input_message(payload.query, payload.image_content),

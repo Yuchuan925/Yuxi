@@ -82,7 +82,7 @@ async def _converge_database_state(*, fail_nonterminal_runs: bool) -> None:
         await ensure_options_in_db(session)
         await migrate_system_options(
             session,
-            legacy_config_file=get_legacy_storage_dir() / "config" / "base.toml",
+            legacy_config_file=get_legacy_storage_dir() / "config/base.toml",
         )
         await session.commit()
 

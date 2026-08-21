@@ -26,7 +26,7 @@ Conversation 的 `workdir_path` 在 0.7.1 cutover 后由数据库 `NOT NULL` 约
 
 `workspace.preview` 从已经授权读取的 UserWorkspace 字节产生 `PreviewResult` 并管理本地 Office cache；Service 只负责 HTTP 映射。格式识别和 Office 转换原语属于 `utils.filepreview`，其渲染入口直接返回 `PreviewResult`，不在 Owner 之间往返转换字典。Knowledge 的 MinIO Preview 属于 `knowledge.preview`。Workspace、Viewer 与 Mention 复用同一个 fd-relative 有界实时扫描，限制目录数、深度、每目录实际迭代数、总 entry 数和返回数，并拒绝 symlink 与特殊文件。Mention 的 Redis 文件索引、序列化、TTL 和失效链全部删除。
 
-保留 `dir_fd`、`O_NOFOLLOW`、普通文件/目录检查、原子写、no-clobber、大小限制与失败清理。边界收敛是本次主目标；代码量只按实际 diff 报告，不把移动文件或 Owner 更清晰表述为净删行。
+保留 `dir_fd`、`O_NOFOLLOW`、普通文件/目录检查、原子写、no-clobber、大小限制与失败清理。Owner 收敛不以文件移动或代码行数代替 consumer 与边界审计。
 
 ## 替代方案
 
@@ -50,7 +50,7 @@ Conversation 的 `workdir_path` 在 0.7.1 cutover 后由数据库 `NOT NULL` 约
 | Mention 不依赖 Redis 文件索引且立即观察最终文件状态 | 缓存陈旧或写入口漏失效 | `Workspace` 扫描与 `mention_search_service` | 新增/删除实时可见 unit | 无失效调用时新增立即可见、删除立即消失 | Passed |
 | 实时扫描限制实际目录迭代 | 宽目录先全量枚举或 stat 再切片 | `yuxi.workspace.filesystem` | counting `scandir` unit | 深度、宽度、总 entry 和 symlink 用例 | Passed |
 | 普通 Service 不获得 UserWorkspace host `Path` | 上层绕过 owning filesystem 再次打开宿主路径 | `yuxi.workspace` 与工程 gate | `verify_engineering_contracts.py` | Service 导入 host-path provider 或读取宿主根环境变量时 gate 失败 | Passed |
-| 实现形成单一 Owner，代码量按类别如实报告 | 新包复制旧 Owner 或把结构收敛冒充净删行 | 完整 production diff | `git diff --numstat`；生产、测试/gate、文档分开统计 | 恢复旧 Thread、Mention cache、preview 或 path owner 时拒绝 | Inspected |
+| 实现形成单一 Owner | 新包复制旧 Owner，形成第二份可编辑事实 | 完整 production diff | consumer 与 Owner 全局搜索 | 恢复旧 Thread、Mention cache、preview 或 path owner 时拒绝 | Inspected |
 
 旧能力不存在：Thread `/files` 与 `/files/content` 路由及 schema、旧前端 API、`threadFilesMap`、Mention Redis 文件索引与失效函数、Service 私有的重复 preview renderer、`yuxi.agents.backends.sandbox.paths` 中的 UserWorkspace/Workdir Owner 均不存在。全局搜索只允许 0.7.1 migration、历史 decision 或明确的负向测试提及已删除名称。
 
@@ -62,8 +62,6 @@ Conversation 的 `workdir_path` 在 0.7.1 cutover 后由数据库 `NOT NULL` 约
 
 实时扫描在极大 Workspace 上仍可能比索引慢；扫描预算保证实际枚举和 stat 数有界，预算耗尽后可能漏掉较晚条目。若真实观测表明不可接受，再以明确的一致性 Owner 引入索引。
 
-Owner 迁移触及 Workspace、Agent context、Personal Skill、migration 和测试 imports。实现沿完整 consumer 链迁移，不用旧模块 re-export 维持两套位置；v0.7.1 migration 在经过 no-follow 验证的 `projects` dir fd 下 staging 和 rename，拒绝父目录 symlink。
+Workspace、Agent context、Personal Skill、migration 和测试 imports 只引用当前 Owner，不用旧模块 re-export 维持两套位置；v0.7.1 migration 在经过 no-follow 验证的 `projects` dir fd 下 staging 和 rename，拒绝父目录 symlink。
 
-验证结果分开记录：当前 container unit 全量 1418 passed、39 skipped；此前 host unit 全量 1453 passed。环境出现既存 noncanonical 数据行之前，真实 Viewer/Workdir/v0.7.1 integration 命令为 11 passed；最终重跑同一组 11 个测试时，全部在 setup 被 `projects/legacy-*` 数据行阻断，没有运行测试本体。artifact integration 的 5 个测试本体在此前命令中通过，但 suite teardown 被同一数据阻断，因此该命令不记为 passed；Agent E2E 也在清理前置处阻断，未运行测试本体。工程 verifier、其 64 个 unit、前端 lint/52 unit/build 与 docs build 均通过。
-
-最终 diff（含新增决策记录）分类为：production `+1473/-1516`，净 `-43`；tests/gates `+1332/-812`，净 `+520`；docs（含 `ARCHITECTURE.md`、不含生成图）`+140/-39`，净 `+101`；生成图文本单独为 `+13518/-0`。本次同时完成持久化文件事实的 Owner 收敛，以及 Thread 浏览协议、Mention cache/失效链、空 Workdir 兼容状态、重复 preview 和路径解析责任的净删除。
+验证结果：container unit 全量 1417 passed、39 skipped；此前 host unit 全量 1453 passed；工程 verifier、其 61 个 unit、前端 lint/52 unit/build 与 docs build 通过。Viewer/Workdir/v0.7.1 integration 的最新执行在 setup 被既存 `projects/legacy-*` 数据阻断，结果为 `Not run`。artifact integration 的测试本体结果不能替代失败的 suite 命令，因此不记为 Passed；Agent E2E 在清理前置处阻断，结果为 `Not run`。

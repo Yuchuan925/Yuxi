@@ -15,16 +15,16 @@ from sqlalchemy import select, text
 from sqlalchemy.orm.attributes import flag_modified
 
 from yuxi.agents.backends.paths import runtime_workdir_path
+from yuxi.config import get_legacy_storage_dir
+from yuxi.storage.postgres.models_business import Conversation, Message, ToolCall
+from yuxi.utils.paths import open_directory_fd
+from yuxi.workspace.filesystem import Workspace
 from yuxi.workspace.paths import (
     ensure_user_workspace,
     normalize_workdir_path,
-    user_workspace_dir,
     user_workdir_host_dir,
+    user_workspace_dir,
 )
-from yuxi.config import get_legacy_storage_dir
-from yuxi.workspace.filesystem import Workspace
-from yuxi.storage.postgres.models_business import Conversation, Message, ToolCall
-from yuxi.utils.paths import open_directory_fd
 
 _SAFE_LEGACY_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 _CURRENT_ATTACHMENT_FIELDS = {

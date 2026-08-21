@@ -1,4 +1,4 @@
-export const FILESYSTEM_REFRESH_INTERVAL_MS = 1000
+const FILESYSTEM_REFRESH_INTERVAL_MS = 1000
 
 export const createFilesystemRefreshGate = () => {
   const inFlightThreads = new Set()
@@ -11,9 +11,6 @@ export const createFilesystemRefreshGate = () => {
     },
     finish(threadId) {
       inFlightThreads.delete(String(threadId || ''))
-    },
-    isInFlight(threadId) {
-      return inFlightThreads.has(String(threadId || ''))
     },
     canCommit(requestedThreadId, currentThreadId) {
       return Boolean(requestedThreadId) && requestedThreadId === currentThreadId
@@ -62,14 +59,69 @@ export const shouldRefreshActivePreview = (currentFile, latestFile) => {
   )
 }
 
+export const invalidatePreviewCacheEntryBeforeReload = (
+  previewCache,
+  cacheKey,
+  revokeObjectURL
+) => {
+  const cachedEntry = previewCache.get(cacheKey)
+  if (!cachedEntry) return false
+
+  previewCache.delete(cacheKey)
+  if (cachedEntry.status === 'ready' && cachedEntry.file?.previewUrl) {
+    revokeObjectURL(cachedEntry.file.previewUrl)
+  }
+  return true
+}
+
+export const reloadPreviewAfterOrderedCacheEntryInvalidation = async ({
+  previewCache,
+  cacheKey,
+  revokeObjectURL,
+  notifyPreviewChanged,
+  reloadPreview
+}) => {
+  invalidatePreviewCacheEntryBeforeReload(previewCache, cacheKey, revokeObjectURL)
+  notifyPreviewChanged()
+  await reloadPreview()
+}
+
+export const replacePreviewCacheEntryIfCurrent = (
+  previewCache,
+  cacheKey,
+  currentEntry,
+  nextEntry
+) => {
+  if (previewCache.get(cacheKey) !== currentEntry) return false
+  if (nextEntry) previewCache.set(cacheKey, nextEntry)
+  else previewCache.delete(cacheKey)
+  return true
+}
+
+export const settlePreviewCacheLoad = ({
+  previewCache,
+  cacheKey,
+  loadingEntry,
+  nextFile,
+  lastAccessed,
+  revokeObjectURL
+}) => {
+  const published = replacePreviewCacheEntryIfCurrent(previewCache, cacheKey, loadingEntry, {
+    status: 'ready',
+    file: nextFile,
+    lastAccessed
+  })
+  if (!published && nextFile?.previewUrl) revokeObjectURL(nextFile.previewUrl)
+  return published
+}
+
 export const startAgentPanelFilesystemPolling = ({
-  canRefresh,
   refresh,
   setIntervalFn = window.setInterval.bind(window),
   clearIntervalFn = window.clearInterval.bind(window)
 }) => {
   const timer = setIntervalFn(() => {
-    if (canRefresh()) void refresh()
+    void refresh()
   }, FILESYSTEM_REFRESH_INTERVAL_MS)
   return () => clearIntervalFn(timer)
 }

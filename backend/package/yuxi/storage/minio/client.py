@@ -181,43 +181,6 @@ class MinIOClient:
         except Exception as e:
             raise StorageError(f"从路径上传文件失败: {e}")
 
-    def upload_file_from_path_streaming(
-        self,
-        bucket_name: str,
-        object_name: str,
-        file_path: str,
-        content_type: str | None = None,
-    ) -> UploadResult:
-        """通过 MinIO fput_object 流式上传本地临时文件。"""
-        try:
-            self.ensure_bucket_exists(bucket_name=bucket_name)
-            self.client.fput_object(
-                bucket_name=bucket_name,
-                object_name=object_name,
-                file_path=file_path,
-                content_type=content_type or self._guess_content_type(object_name),
-            )
-            url = f"http://{self.public_endpoint}/{bucket_name}/{object_name}"
-            return UploadResult(url, bucket_name, object_name)
-        except S3Error as exc:
-            raise StorageError(f"上传文件 '{object_name}' 失败: {exc}") from exc
-
-    async def aupload_file_from_path_streaming(
-        self,
-        bucket_name: str,
-        object_name: str,
-        file_path: str,
-        content_type: str | None = None,
-    ) -> UploadResult:
-        """异步执行流式路径上传。"""
-        return await asyncio.to_thread(
-            self.upload_file_from_path_streaming,
-            bucket_name,
-            object_name,
-            file_path,
-            content_type,
-        )
-
     def _guess_content_type(self, object_name: str) -> str:
         """根据文件名猜测 MIME 类型"""
         guessed_type, _ = mimetypes.guess_type(object_name)
@@ -345,35 +308,22 @@ class MinIOClient:
         await asyncio.to_thread(_delete_objects)
         return deleted_count
 
-    def list_object_names(self, bucket_name: str, prefix: str) -> list[str]:
-        """列出指定前缀下的对象名。"""
-        try:
-            return [
-                str(item.object_name) for item in self.client.list_objects(bucket_name, prefix=prefix, recursive=True)
-            ]
-        except S3Error as exc:
-            raise StorageError(f"列出对象前缀失败: {bucket_name}/{prefix}: {exc}") from exc
-
-    async def alist_object_names(self, bucket_name: str, prefix: str) -> list[str]:
-        """在线程池中列出指定前缀下的对象名。"""
-        return await asyncio.to_thread(self.list_object_names, bucket_name, prefix)
-
-    def list_object_metadata(self, bucket_name: str, prefix: str) -> list[dict]:
-        """列出过期清理所需的最小对象元数据。"""
-        try:
-            return [
-                {
-                    "object_name": str(item.object_name),
-                    "last_modified": item.last_modified,
-                }
-                for item in self.client.list_objects(bucket_name, prefix=prefix, recursive=True)
-            ]
-        except S3Error as exc:
-            raise StorageError(f"列出对象前缀失败: {bucket_name}/{prefix}: {exc}") from exc
-
     async def alist_object_metadata(self, bucket_name: str, prefix: str) -> list[dict]:
         """在线程池中列出过期清理所需的对象元数据。"""
-        return await asyncio.to_thread(self.list_object_metadata, bucket_name, prefix)
+
+        def list_metadata() -> list[dict]:
+            try:
+                return [
+                    {
+                        "object_name": str(item.object_name),
+                        "last_modified": item.last_modified,
+                    }
+                    for item in self.client.list_objects(bucket_name, prefix=prefix, recursive=True)
+                ]
+            except S3Error as exc:
+                raise StorageError(f"列出对象前缀失败: {bucket_name}/{prefix}: {exc}") from exc
+
+        return await asyncio.to_thread(list_metadata)
 
     async def adelete_bucket(self, bucket_name: str) -> bool:
         """

@@ -80,10 +80,6 @@ def _tmp_attachment_prefix(uid: str, tmp_file_id: str) -> str:
     return f"{TMP_ATTACHMENT_PREFIX}/{uid}/{tmp_file_id}"
 
 
-def _get_tmp_attachment_bucket() -> str:
-    return get_minio_client().KB_BUCKETS["documents"]
-
-
 def _make_tmp_attachment_object(uid: str, file_name: str) -> tuple[str, str]:
     """生成用户隔离的 tmp 对象路径。"""
     tmp_file_id = uuid.uuid4().hex
@@ -195,7 +191,7 @@ async def _store_attachment(
 ) -> dict:
     """将正式附件直接写入实时 Project Workdir。"""
     file_name = _safe_file_name(file_name)
-    storage_name = f"{file_id}_{_safe_file_name(file_name)}"
+    storage_name = f"{file_id}_{file_name}"
     original_scope = f"/uploads/{storage_name}"
     await _write_workdir_file(workdir, original_scope, file_content)
     original_path = runtime_path_for_workdir_scope(workdir.relative_path, original_scope)
@@ -226,6 +222,19 @@ async def _store_attachment(
         }
     )
     return record
+
+
+async def _rollback_stored_attachments(workdir, records: list[dict]) -> None:
+    """尽力删除本批尚未提交的附件文件。"""
+    for record in records:
+        for path in {record.get("path"), record.get("original_path")}:
+            if not isinstance(path, str):
+                continue
+            try:
+                scope = workdir_scope_from_runtime_path(workdir.relative_path, path)
+                await asyncio.to_thread(workdir.delete, scope)
+            except Exception:
+                pass
 
 
 async def _cleanup_expired_tmp_attachments(minio_client, bucket_name: str, uid: str) -> None:
@@ -285,7 +294,7 @@ async def upload_tmp_attachment_view(*, file: UploadFile, current_uid: str) -> d
     file_size = len(file_content)
     tmp_file_id, object_name = _make_tmp_attachment_object(str(current_uid), file_name)
     minio_client = get_minio_client()
-    bucket_name = _get_tmp_attachment_bucket()
+    bucket_name = minio_client.KB_BUCKETS["documents"]
     try:
         upload_result = await minio_client.aupload_file(
             bucket_name=bucket_name,
@@ -324,7 +333,7 @@ async def parse_tmp_attachment_view(
 ) -> dict:
     """解析用户 tmp 附件并把 markdown 写回 tmp。"""
     minio_client = get_minio_client()
-    bucket_name = _get_tmp_attachment_bucket()
+    bucket_name = minio_client.KB_BUCKETS["documents"]
 
     tmp_file_id, safe_name = _require_tmp_object_section(object_name, str(current_uid), "original")
     default_ocr_engine = "rapid_ocr"
@@ -374,7 +383,7 @@ async def confirm_tmp_thread_attachments_view(
     binding = await resolve_authorized_workdir(thread_id=thread_id, uid=str(current_uid), db=db)
     workdir = binding.workdir
     minio_client = get_minio_client()
-    bucket_name = _get_tmp_attachment_bucket()
+    bucket_name = minio_client.KB_BUCKETS["documents"]
     added_records: list[dict] = []
     confirmed_tmp_ids: list[str] = []
     try:
@@ -417,14 +426,7 @@ async def confirm_tmp_thread_attachments_view(
             added_records.append(attachment_record)
             confirmed_tmp_ids.append(tmp_file_id)
     except Exception:
-        for record in added_records:
-            for path in {record.get("path"), record.get("original_path")}:
-                if isinstance(path, str):
-                    try:
-                        scope = workdir_scope_from_runtime_path(workdir.relative_path, path)
-                        await asyncio.to_thread(workdir.delete, scope)
-                    except Exception:
-                        pass
+        await _rollback_stored_attachments(workdir, added_records)
         raise
 
     try:
@@ -432,16 +434,7 @@ async def confirm_tmp_thread_attachments_view(
         await db.commit()
     except Exception:
         await db.rollback()
-        for record in added_records:
-            for path in {record.get("path"), record.get("original_path")}:
-                if isinstance(path, str):
-                    try:
-                        await asyncio.to_thread(
-                            workdir.delete,
-                            workdir_scope_from_runtime_path(workdir.relative_path, path),
-                        )
-                    except Exception:
-                        pass
+        await _rollback_stored_attachments(workdir, added_records)
         raise
 
     delete_results = await asyncio.gather(

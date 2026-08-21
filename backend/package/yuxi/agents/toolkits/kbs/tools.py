@@ -452,14 +452,6 @@ def _find_query_target(
     return normalized_kb_id, None
 
 
-def _runtime_uid(runtime: ToolRuntime | None) -> str | None:
-    """从 runtime.context 取 uid。"""
-    context = getattr(runtime, "context", None) if runtime else None
-    if context is None:
-        return None
-    return getattr(context, "uid", None)
-
-
 def _runtime_sandbox_scope(runtime: ToolRuntime | None) -> tuple[str, str, str, str] | None:
     """返回知识库下载使用的 runtime、用户和 Workdir 路径。"""
     context = getattr(runtime, "context", None) if runtime else None

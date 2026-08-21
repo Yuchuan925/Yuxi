@@ -9,8 +9,6 @@ from yuxi.utils.filepreview import (
     MAX_BINARY_PREVIEW_SIZE_BYTES,
     OfficePreviewConversionError,
     convert_office_to_pdf,
-    detect_media_type,
-    is_binary_preview_type,
     is_office_pdf_preview_file,
     preview_too_large,
     render_preview,
@@ -66,14 +64,14 @@ async def read_knowledge_file_preview(kb_id: str, file_id: str) -> dict:
     if len(raw_content) > MAX_BINARY_PREVIEW_SIZE_BYTES:
         return {**response, **preview_too_large().payload()}
     result = render_preview(filename, raw_content)
-    if is_binary_preview_type(result.preview_type) and result.supported:
+    if isinstance(result.content, bytes):
         return {
             **response,
-            "content": raw_content,
-            "media_type": detect_media_type(filename, raw_content),
+            "content": result.content,
+            "media_type": result.media_type,
             "preview_type": result.preview_type,
-            "supported": True,
-            "message": None,
+            "supported": result.supported,
+            "message": result.message,
             "binary": True,
         }
     return {**response, **result.payload()}

@@ -159,6 +159,12 @@ class FakeDB:
         self.rollback_count += 1
 
 
+class FailingCommitDB(FakeDB):
+    async def commit(self):
+        self.commit_count += 1
+        raise RuntimeError("commit failed")
+
+
 class EmptyAgentRunRequestRepository:
     def __init__(self, db):
         del db
@@ -428,6 +434,30 @@ async def test_confirm_tmp_thread_attachments_rejects_non_parsed_object(confirm_
 
     assert exc_info.value.status_code == 400
     assert fake_repo.attachments == []
+    assert fake_repo.workdir_backend.files == {}
+
+
+@pytest.mark.asyncio
+async def test_confirm_tmp_thread_attachments_rolls_back_workdir_on_commit_failure(confirm_attachment_env):
+    fake_minio, fake_repo = confirm_attachment_env
+    original_object = "tmp/chat_attachments/user-1/tmp-1/original/demo.pdf"
+    parsed_object = "tmp/chat_attachments/user-1/tmp-1/parsed/demo.md"
+    fake_minio.objects[("knowledgebases", original_object)] = b"pdf-bytes"
+    fake_minio.objects[("knowledgebases", parsed_object)] = b"# parsed"
+    db = FailingCommitDB()
+
+    with pytest.raises(RuntimeError, match="commit failed"):
+        await service.confirm_tmp_thread_attachments_view(
+            thread_id="thread-1",
+            attachments=[{"object_name": original_object, "parsed_object_name": parsed_object}],
+            db=db,
+            current_uid="user-1",
+        )
+
+    assert db.commit_count == 1
+    assert db.rollback_count == 1
+    assert fake_repo.workdir_backend.files == {}
+    assert fake_minio.deleted_prefixes == []
 
 
 @pytest.mark.asyncio

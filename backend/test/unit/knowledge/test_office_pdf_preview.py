@@ -157,6 +157,24 @@ async def test_non_docx_pptx_office_files_do_not_get_pdf_preview(monkeypatch: py
 
 
 @pytest.mark.asyncio
+async def test_read_binary_preview_uses_complete_renderer_result(monkeypatch: pytest.MonkeyPatch) -> None:
+    stub_file_record(monkeypatch, make_file_record(filename="report.bin", file_size=16))
+    minio_client = FakeMinioClient()
+    content = b"%PDF-1.4\nreport"
+    minio_client.objects[("knowledgebases", "db1/upload/demo.docx")] = content
+    monkeypatch.setattr(preview, "get_minio_client", lambda: minio_client)
+
+    response = await preview.read_knowledge_file_preview("db1", "file1")
+
+    assert response["content"] == content
+    assert response["preview_type"] == "pdf"
+    assert response["supported"] is True
+    assert response["media_type"] == "application/pdf"
+    assert response["binary"] is True
+    assert response["filename"] == "report.bin"
+
+
+@pytest.mark.asyncio
 async def test_read_file_preview_rejects_large_original_before_download(monkeypatch: pytest.MonkeyPatch) -> None:
     stub_file_record(
         monkeypatch,

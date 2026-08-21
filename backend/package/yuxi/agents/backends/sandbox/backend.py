@@ -26,11 +26,11 @@ from deepagents.backends.protocol import (
 from deepagents.backends.sandbox import MAX_BINARY_BYTES, BaseSandbox
 from deepagents.backends.utils import _get_file_type
 
-from yuxi.utils.logging_config import logger
 from yuxi.agents.backends.paths import (
     VIRTUAL_PATH_PREFIX,
     VIRTUAL_SKILLS_PATH,
 )
+from yuxi.utils.logging_config import logger
 from yuxi.workspace.errors import FileTransferLimitError
 
 from .provider import get_sandbox_provider, sandbox_id_for_thread, sandbox_provisioner_token
@@ -168,10 +168,6 @@ class ProvisionerSandboxBackend(BaseSandbox):
         self._create_if_missing = create_if_missing
         self._workdir_path = str(workdir_path or "").strip() or None
         self._provider = get_sandbox_provider()
-        self._id = sandbox_id_for_thread(
-            self._thread_id,
-            uid=self._uid,
-        )
         self._client: Any | None = None
         self._client_url: str | None = None
         self._command_timeout_seconds = int(os.getenv("SANDBOX_EXEC_TIMEOUT_SECONDS") or 180)
@@ -221,7 +217,7 @@ class ProvisionerSandboxBackend(BaseSandbox):
 
     @property
     def id(self) -> str:
-        return self._id
+        return sandbox_id_for_thread(self._thread_id, uid=self._uid)
 
     def _build_client(self, sandbox_url: str):
         try:
@@ -257,7 +253,7 @@ class ProvisionerSandboxBackend(BaseSandbox):
     def ensure_available(self) -> str:
         """显式确保本实例 sandbox 已创建并返回稳定 ID。"""
         self._get_client()
-        return self._id
+        return self.id
 
     def _read_binary(self, path: str, offset: int = 0, limit: int | None = None) -> bytes:
         """Read file content from the sandbox file API and normalize it to bytes.
@@ -661,24 +657,9 @@ finally:
     def upload_authorized_file_from_path(self, path: str, source_path: str) -> None:
         """从受信任服务向 Project 或 User Data 写入普通文件。"""
         normalized_path = _normalize_path(path)
-        root = next(
-            (
-                candidate
-                for candidate in self._writable_roots()
-                if normalized_path != candidate and _is_same_or_child(normalized_path, candidate)
-            ),
-            None,
-        )
-        if root is None:
+        if normalized_path == _USER_DATA_ROOT or not _is_same_or_child(normalized_path, _USER_DATA_ROOT):
             raise ValueError(f"write path is outside authorized roots: {normalized_path}")
-        self._upload_file_from_path_at_root(root, normalized_path, source_path)
-
-    def _upload_file_from_path_at_root(self, root: str, path: str, source_path: str) -> None:
-        """通过 root-to-leaf no-follow 边界原子写入单个文件。"""
-        normalized_path = _normalize_path(path)
-        if normalized_path == root or not _is_same_or_child(normalized_path, root):
-            raise ValueError(f"file path must be under {root}: {normalized_path}")
-        relative_parts = normalized_path[len(root) + 1 :].split("/")
+        relative_parts = normalized_path[len(_USER_DATA_ROOT) + 1 :].split("/")
         export_path = f"/tmp/.yuxi-file-upload-{uuid.uuid4().hex}"
         with open(source_path, "rb") as source:
             result = self._get_client().file.upload_file(
@@ -692,7 +673,7 @@ finally:
 import os
 import stat
 
-root = {root!r}
+root = {_USER_DATA_ROOT!r}
 parts = {relative_parts!r}
 source_path = {export_path!r}
 temp_name = {f".yuxi-write-{uuid.uuid4().hex}"!r}

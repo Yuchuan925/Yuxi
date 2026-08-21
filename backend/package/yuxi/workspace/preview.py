@@ -10,8 +10,6 @@ from yuxi.config import get_runtime_dir
 from yuxi.utils.filepreview import (
     PreviewResult,
     convert_office_to_pdf,
-    detect_media_type,
-    is_binary_preview_type,
     is_office_pdf_preview_file,
     render_preview,
 )
@@ -34,16 +32,7 @@ async def preview_workspace_file(
             filename=f"{PurePosixPath(path).stem or 'preview'}.pdf",
         )
 
-    result = render_preview(path, raw_content)
-    if is_binary_preview_type(result.preview_type) and result.supported:
-        return PreviewResult(
-            content=raw_content,
-            preview_type=result.preview_type,
-            supported=True,
-            media_type=detect_media_type(path, raw_content),
-            filename=PurePosixPath(path).name or "preview",
-        )
-    return result
+    return render_preview(path, raw_content)
 
 
 async def _convert_office_to_pdf_cached(path: str, content: bytes, cache_key: str) -> bytes:

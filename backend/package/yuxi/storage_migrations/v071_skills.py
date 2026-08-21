@@ -3,6 +3,7 @@
 import asyncio
 import shutil
 import uuid
+from collections.abc import Callable
 from pathlib import Path
 
 from sqlalchemy import text
@@ -84,34 +85,48 @@ def _migrate_skill_tree(source_dir: Path, target_dir: Path, *, expected_slug: st
     """安全复制一个 v0.7.1 Skill 源。"""
     if source_dir.is_symlink() or not source_dir.is_dir():
         raise ValueError(f"历史 Skill 来源不是可信目录: {source_dir}")
-    target_dir.parent.mkdir(parents=True, exist_ok=True)
-    temp_target = target_dir.with_name(f".{target_dir.name}.migrate-{uuid.uuid4().hex[:8]}")
-    try:
-        copy_skill_tree_no_symlinks(source_dir, temp_target)
+
+    def validate(temp_target: Path) -> None:
         metadata = parse_skill_dir_metadata(temp_target)
         if metadata["slug"] != expected_slug:
             raise ValueError(f"历史 Skill slug 不一致: expected={expected_slug}, actual={metadata['slug']}")
-        if target_dir.exists() or target_dir.is_symlink():
-            if target_dir.is_symlink() or not target_dir.is_dir() or not skill_dirs_equal(target_dir, temp_target):
-                raise ValueError(f"Skill 新旧持久源内容冲突: {expected_slug}")
-            return
-        temp_target.rename(target_dir)
-    finally:
-        if temp_target.exists():
-            shutil.rmtree(temp_target, ignore_errors=True)
+
+    _copy_tree_atomically(
+        source_dir,
+        target_dir,
+        validate=validate,
+        conflict_error=f"Skill 新旧持久源内容冲突: {expected_slug}",
+    )
 
 
 def _migrate_orphan_tree(source_dir: Path, target_dir: Path) -> None:
     """保留未登记 v0.7.1 Skill 字节但不注册为可执行 Skill。"""
     if source_dir.is_symlink() or not source_dir.is_dir():
         raise ValueError(f"未登记 Skill 历史来源非法: {source_dir}")
+    _copy_tree_atomically(
+        source_dir,
+        target_dir,
+        conflict_error=f"未登记 Skill 新旧持久源内容冲突: {source_dir.name}",
+    )
+
+
+def _copy_tree_atomically(
+    source_dir: Path,
+    target_dir: Path,
+    *,
+    conflict_error: str,
+    validate: Callable[[Path], None] | None = None,
+) -> None:
+    """复制并验证目录树，再原子发布或确认幂等目标。"""
     target_dir.parent.mkdir(parents=True, exist_ok=True)
     temp_target = target_dir.with_name(f".{target_dir.name}.migrate-{uuid.uuid4().hex[:8]}")
     try:
         copy_skill_tree_no_symlinks(source_dir, temp_target)
+        if validate is not None:
+            validate(temp_target)
         if target_dir.exists() or target_dir.is_symlink():
             if target_dir.is_symlink() or not target_dir.is_dir() or not skill_dirs_equal(target_dir, temp_target):
-                raise ValueError(f"未登记 Skill 新旧持久源内容冲突: {source_dir.name}")
+                raise ValueError(conflict_error)
             return
         temp_target.rename(target_dir)
     finally:

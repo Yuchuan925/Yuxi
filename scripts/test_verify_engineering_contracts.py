@@ -535,61 +535,36 @@ jobs:
             )
         )
 
-    def test_service_workspace_host_path_import_is_rejected(self) -> None:
-        self._write(
-            "backend/package/yuxi/services/invalid_service.py",
-            "from yuxi.workspace.paths import user_workdir_host_dir\n",
+    def test_service_workspace_host_path_bypasses_are_rejected(self) -> None:
+        cases = (
+            (
+                "from yuxi.workspace.paths import user_workdir_host_dir\n",
+                "普通 Service/Repository 不得取得 UserWorkspace 宿主 Path",
+            ),
+            (
+                "import yuxi.workspace.paths as workspace_paths\n",
+                "普通 Service/Repository 不得取得 UserWorkspace 宿主 Path",
+            ),
+            (
+                "from yuxi.config import get_user_data_dir\n"
+                "def scan():\n"
+                "    return list((get_user_data_dir() / 'shared').iterdir())\n",
+                "普通 Service/Repository 不得取得 UserWorkspace 宿主 Path",
+            ),
+            (
+                "import os\nfrom pathlib import Path\n"
+                "def scan():\n"
+                "    return list(Path(os.environ['YUXI_USER_DATA_DIR']).iterdir())\n",
+                "不得读取 UserWorkspace 宿主根环境变量",
+            ),
         )
-
-        self.assertTrue(
-            any(
-                "普通 Service/Repository 不得取得 UserWorkspace 宿主 Path" in error
-                for error in self._errors()
-            )
-        )
-
-    def test_service_workspace_paths_module_import_is_rejected(self) -> None:
-        self._write(
-            "backend/package/yuxi/services/invalid_service.py",
-            "import yuxi.workspace.paths as workspace_paths\n",
-        )
-
-        self.assertTrue(
-            any(
-                "普通 Service/Repository 不得取得 UserWorkspace 宿主 Path" in error
-                for error in self._errors()
-            )
-        )
-
-    def test_service_config_host_root_bypass_is_rejected(self) -> None:
-        self._write(
-            "backend/package/yuxi/services/bypass.py",
-            "from yuxi.config import get_user_data_dir\n"
-            "def scan():\n"
-            "    return list((get_user_data_dir() / 'shared').iterdir())\n",
-        )
-
-        self.assertTrue(
-            any(
-                "普通 Service/Repository 不得取得 UserWorkspace 宿主 Path" in error
-                for error in self._errors()
-            )
-        )
-
-    def test_service_host_root_environment_bypass_is_rejected(self) -> None:
-        self._write(
-            "backend/package/yuxi/services/bypass.py",
-            "import os\nfrom pathlib import Path\n"
-            "def scan():\n"
-            "    return list(Path(os.environ['YUXI_USER_DATA_DIR']).iterdir())\n",
-        )
-
-        self.assertTrue(
-            any(
-                "不得读取 UserWorkspace 宿主根环境变量" in error
-                for error in self._errors()
-            )
-        )
+        path = "backend/package/yuxi/services/invalid_service.py"
+        for source, expected_error in cases:
+            with self.subTest(source=source):
+                self._write(path, source)
+                self.assertTrue(
+                    any(expected_error in error for error in self._errors())
+                )
 
     def test_agents_instruction_file_missing_is_rejected(self) -> None:
         (self.root / "backend/AGENTS.md").unlink()

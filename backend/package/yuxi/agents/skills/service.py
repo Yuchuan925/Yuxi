@@ -69,7 +69,6 @@ TEXT_FILE_EXTENSIONS = {
 }
 
 BUILTIN_SKILL_OPERATOR = "builtin-system"
-SKILL_SOURCE_TYPES = {"builtin", "upload", "remote"}
 ADMIN_ROLES = {"admin", "superadmin"}
 DEFAULT_SKILL_SHARE_CONFIG = {"access_level": "user", "department_ids": [], "user_uids": []}
 BUILTIN_SKILL_SHARE_CONFIG = {"access_level": "global", "department_ids": [], "user_uids": []}
@@ -274,24 +273,6 @@ def get_skill_drafts_root_dir() -> Path:
     root = get_runtime_dir() / "skill_import_drafts"
     root.mkdir(parents=True, exist_ok=True)
     return root
-
-
-def _cleanup_expired_skill_drafts() -> None:
-    root = get_skill_drafts_root_dir()
-    now = time.time()
-    for entry in root.iterdir():
-        if not entry.is_dir():
-            continue
-        metadata_path = entry / "metadata.json"
-        try:
-            if not metadata_path.exists() or now - entry.stat().st_mtime > SKILL_DRAFT_TTL_SECONDS:
-                shutil.rmtree(entry, ignore_errors=True)
-                continue
-            data = json.loads(metadata_path.read_text(encoding="utf-8"))
-            if data.get("expires_at", 0) < now:
-                shutil.rmtree(entry, ignore_errors=True)
-        except Exception:
-            shutil.rmtree(entry, ignore_errors=True)
 
 
 def _load_skill_draft(draft_id: str) -> tuple[Path, dict]:
@@ -611,11 +592,6 @@ async def list_skill_cards_for_user(
         _resolved_shared_skill(item, shadowed_by_personal=item.slug in personal_slugs) for item in shared_items
     ]
     return [*personal_cards, *shared_cards]
-
-
-async def list_manageable_skills(db: AsyncSession, user: User) -> list[Skill]:
-    repo = SkillRepository(db)
-    return [item for item in await repo.list_all() if user_can_manage_skill(user, item)]
 
 
 async def list_visible_skills_for_management(db: AsyncSession, user: User) -> list[Skill]:
@@ -1124,48 +1100,6 @@ def _build_default_share_payload(operator: User) -> dict[str, Any]:
     }
 
 
-async def _import_skill_dir_impl(
-    db: AsyncSession,
-    *,
-    source_skill_dir: Path,
-    created_by: str | None,
-    source_type: str,
-    share_config: dict,
-) -> Skill:
-    repo = SkillRepository(db)
-    skills_root = get_skills_root_dir()
-    parsed = parse_skill_dir_metadata(source_skill_dir)
-    final_slug = await _generate_available_slug(repo, parsed["slug"])
-    temp_target = skills_root / f".{final_slug}.tmp-{uuid.uuid4().hex[:8]}"
-    final_dir = skills_root / final_slug
-    try:
-        _copy_skill_snapshot(source_skill_dir, temp_target, final_slug=final_slug)
-        if final_dir.exists():
-            raise ValueError(f"技能目录冲突，请重试: {final_slug}")
-        temp_target.rename(final_dir)
-        item = await repo.create(
-            slug=final_slug,
-            name=parsed["name"],
-            description=parsed["description"],
-            source_type=source_type,
-            tool_dependencies=parsed["tool_dependencies"],
-            mcp_dependencies=parsed["mcp_dependencies"],
-            skill_dependencies=parsed["skill_dependencies"],
-            dir_path=(Path("shared") / final_slug).as_posix(),
-            share_config=share_config,
-            enabled=True,
-            created_by=created_by,
-        )
-        await db.commit()
-        return item
-    except Exception:
-        await db.rollback()
-        await asyncio.to_thread(shutil.rmtree, final_dir, ignore_errors=True)
-        raise
-    finally:
-        await asyncio.to_thread(shutil.rmtree, temp_target, ignore_errors=True)
-
-
 def _resolve_skill_dir(item: Skill) -> Path:
     dir_path = Path(item.dir_path)
     if dir_path.is_absolute():
@@ -1489,33 +1423,6 @@ async def discard_skill_install_draft(*, draft_id: str, operator: User) -> None:
     shutil.rmtree(draft_dir, ignore_errors=True)
 
 
-async def import_skill_dir(
-    db: AsyncSession,
-    *,
-    source_dir: Path | str,
-    created_by: str | None,
-    source_type: str = "upload",
-    share_config: dict | None = None,
-) -> Skill:
-    source_skill_dir = Path(source_dir).resolve()
-    tmp_root = Path(tempfile.gettempdir()).resolve()
-    if not source_skill_dir.is_relative_to(tmp_root):
-        raise ValueError("技能目录路径不合法")
-    if not source_skill_dir.exists() or not source_skill_dir.is_dir():
-        raise ValueError("技能目录不存在")
-    return await _import_skill_dir_impl(
-        db,
-        source_skill_dir=source_skill_dir,
-        created_by=created_by,
-        source_type=source_type,
-        share_config=normalize_skill_share_config(
-            share_config,
-            operator_uid=created_by or "",
-            source_type=source_type,
-        ),
-    )
-
-
 async def get_skill_or_raise(db: AsyncSession, slug: str) -> Skill:
     slug = slug.strip() if isinstance(slug, str) else ""
     if not is_valid_skill_slug(slug):
@@ -1525,13 +1432,6 @@ async def get_skill_or_raise(db: AsyncSession, slug: str) -> Skill:
     item = await repo.get_by_slug(slug)
     if not item:
         raise ValueError(f"技能 '{slug}' 不存在")
-    return item
-
-
-async def get_accessible_skill_or_raise(db: AsyncSession, user: User, slug: str) -> Skill:
-    item = await get_skill_or_raise(db, slug)
-    if not user_can_access_skill(user, item):
-        raise ValueError(f"技能 '{slug}' 不存在或无权访问")
     return item
 
 

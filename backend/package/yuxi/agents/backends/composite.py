@@ -11,9 +11,8 @@ from deepagents.backends.composite import (
 from deepagents.backends.protocol import FileInfo, GlobResult
 from deepagents.middleware.filesystem import FilesystemMiddleware
 
-from yuxi.agents.backends.paths import runtime_workdir_path
+from yuxi.agents.backends.paths import runtime_workdir_path, workdir_runtime_paths
 from yuxi.agents.skills.service import refresh_user_skill_projection_async
-from yuxi.agents.backends.paths import workdir_runtime_paths
 
 from .sandbox import ProvisionerSandboxBackend
 

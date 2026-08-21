@@ -2,10 +2,13 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import {
-  FILESYSTEM_REFRESH_INTERVAL_MS,
   createFilesystemRefreshGate,
   expandedKeysAfterFilesystemRefresh,
+  invalidatePreviewCacheEntryBeforeReload,
+  reloadPreviewAfterOrderedCacheEntryInvalidation,
+  replacePreviewCacheEntryIfCurrent,
   refreshExpandedTree,
+  settlePreviewCacheLoad,
   shouldRefreshActivePreview,
   startAgentPanelFilesystemPolling
 } from '../../src/utils/agentPanelFilesystemPolling.js'
@@ -14,11 +17,9 @@ test('agent panel polls live files every second and stops on cleanup', async () 
   let callback
   let interval
   let cleared
-  let allowed = false
   let refreshes = 0
 
   const stop = startAgentPanelFilesystemPolling({
-    canRefresh: () => allowed,
     refresh: async () => {
       refreshes += 1
     },
@@ -32,11 +33,7 @@ test('agent panel polls live files every second and stops on cleanup', async () 
     }
   })
 
-  assert.equal(interval, FILESYSTEM_REFRESH_INTERVAL_MS)
-  callback()
-  assert.equal(refreshes, 0)
-
-  allowed = true
+  assert.equal(interval, 1000)
   callback()
   await Promise.resolve()
   assert.equal(refreshes, 1)
@@ -116,4 +113,107 @@ test('active preview refreshes only when Project metadata changes', () => {
     ),
     true
   )
+})
+
+test('metadata refresh invalidates one ready preview before reload and revokes its URL', async () => {
+  const cacheKey = 'thread-a:/project/report.txt'
+  const staleFile = { content: 'stale', previewUrl: 'blob:stale' }
+  const previewCache = new Map([
+    [cacheKey, { status: 'ready', file: staleFile, lastAccessed: 1 }],
+    ['thread-b:/project/report.txt', { status: 'ready', file: { content: 'other' } }]
+  ])
+  const revokedUrls = []
+  const events = []
+
+  await reloadPreviewAfterOrderedCacheEntryInvalidation({
+    previewCache,
+    cacheKey,
+    revokeObjectURL: (url) => {
+      revokedUrls.push(url)
+      events.push('revoke')
+    },
+    notifyPreviewChanged: () => {
+      assert.equal(previewCache.has(cacheKey), false)
+      events.push('notify')
+    },
+    reloadPreview: async () => {
+      assert.equal(previewCache.has(cacheKey), false)
+      events.push('reload')
+    }
+  })
+
+  assert.deepEqual(events, ['revoke', 'notify', 'reload'])
+  assert.deepEqual(revokedUrls, ['blob:stale'])
+  assert.equal(previewCache.has('thread-b:/project/report.txt'), true)
+})
+
+test('invalidated in-flight preview cannot delete or overwrite its replacement entry', () => {
+  const cacheKey = 'thread-a:/project/report.txt'
+  const oldLoadingEntry = { status: 'loading', promise: Promise.resolve() }
+  const replacementEntry = { status: 'loading', promise: Promise.resolve() }
+  const previewCache = new Map([[cacheKey, oldLoadingEntry]])
+
+  invalidatePreviewCacheEntryBeforeReload(previewCache, cacheKey, () => {})
+  previewCache.set(cacheKey, replacementEntry)
+
+  assert.equal(
+    replacePreviewCacheEntryIfCurrent(previewCache, cacheKey, oldLoadingEntry, {
+      status: 'ready',
+      file: { content: 'stale' }
+    }),
+    false
+  )
+  assert.equal(
+    replacePreviewCacheEntryIfCurrent(previewCache, cacheKey, oldLoadingEntry, null),
+    false
+  )
+  assert.equal(previewCache.get(cacheKey), replacementEntry)
+})
+
+test('a stale preview requester still publishes a shared load for the current waiter', () => {
+  const cacheKey = 'thread-a:/project/report.txt'
+  const loadingEntry = { status: 'loading', promise: Promise.resolve() }
+  const nextFile = { content: 'fresh', previewUrl: 'blob:fresh' }
+  const previewCache = new Map([[cacheKey, loadingEntry]])
+  const revokedUrls = []
+
+  assert.equal(
+    settlePreviewCacheLoad({
+      previewCache,
+      cacheKey,
+      loadingEntry,
+      nextFile,
+      lastAccessed: 2,
+      revokeObjectURL: (url) => revokedUrls.push(url)
+    }),
+    true
+  )
+  assert.deepEqual(previewCache.get(cacheKey), {
+    status: 'ready',
+    file: nextFile,
+    lastAccessed: 2
+  })
+  assert.deepEqual(revokedUrls, [])
+})
+
+test('an invalidated preview load cannot publish and revokes only its own result URL', () => {
+  const cacheKey = 'thread-a:/project/report.txt'
+  const oldLoadingEntry = { status: 'loading', promise: Promise.resolve() }
+  const replacementEntry = { status: 'loading', promise: Promise.resolve() }
+  const previewCache = new Map([[cacheKey, replacementEntry]])
+  const revokedUrls = []
+
+  assert.equal(
+    settlePreviewCacheLoad({
+      previewCache,
+      cacheKey,
+      loadingEntry: oldLoadingEntry,
+      nextFile: { content: 'stale', previewUrl: 'blob:stale-load' },
+      lastAccessed: 2,
+      revokeObjectURL: (url) => revokedUrls.push(url)
+    }),
+    false
+  )
+  assert.equal(previewCache.get(cacheKey), replacementEntry)
+  assert.deepEqual(revokedUrls, ['blob:stale-load'])
 })

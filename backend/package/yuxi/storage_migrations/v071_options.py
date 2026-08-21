@@ -41,13 +41,12 @@ async def migrate_system_options(db: AsyncSession, *, legacy_config_file: Path) 
         raw = {}
 
     migrated = dict(record.value or {})
-    allowed = {field["key"] for field in system_options.fields}
+    fields_by_key = {field["key"]: field for field in system_options.fields}
     for key, value in raw.items():
-        if key not in allowed or key in migrated:
+        if key not in fields_by_key or key in migrated:
             continue
-        field = next(field for field in system_options.fields if field["key"] == key)
         try:
-            migrated[key] = normalize_option_value(field, value)
+            migrated[key] = normalize_option_value(fields_by_key[key], value)
         except ValueError as exc:
             logger.warning(f"Skipped invalid legacy config field {key}: {exc}")
 

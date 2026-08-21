@@ -4,10 +4,10 @@
 类型：architecture
 Owner：docker-compose.yml
 
-日志与缓存路径由 `yuxi.config` 和 `logging_config.py` 拥有。本记录继续拥有 Stage 1/2 的进程、日志和
-缓存解耦边界；Stage 3/4 的附件、outputs、Viewer 与 Sandbox 文件协议已经由
-[实时 Project Workdir 与独立 Sandbox Runtime](../archived/2026-08-18-live-project-workdir-and-runtime.md)
-取代，不能把下述历史验证中的 MinIO/revision 模型视为当前事实。
+日志与缓存路径由 `yuxi.config` 和 `logging_config.py` 拥有。本记录拥有 API、worker 与 provisioner 的
+进程权限、日志和缓存解耦边界；当前文件边界由
+[Workdir 归属 UserWorkspace](2026-08-19-workdir-in-user-workspace.md)与
+[Workspace Owner 收敛](2026-08-21-workspace-owner-convergence.md)拥有。
 
 ## 问题
 
@@ -21,13 +21,12 @@ outputs 在 Sandbox 重建、父子 Agent 与并发 Run 中也缺少明确的恢
   Docker daemon 权限。测试清理通过 provisioner 的鉴权管理 API 完成。
 - API 与 worker 使用独立 `YUXI_RUNTIME_DIR`。日志和 Office 预览缓存位于各自容器本地运行目录，
   不写入共享 `saves`；管理端日志接口只读取 API 进程日志。
-- Conversation 附件与 outputs 当前直接使用实时 Project Workdir；MinIO 正式附件、output revision、
-  父子 checkpoint/projection/merge 和 scoped hydrate 属于已被后续决定删除的历史 Stage 3/4 实现。
-  未确认的临时附件解析仍可使用用户隔离的 MinIO 前缀。
-- 用户级 `/home/gem/user-data/workspace` 和按 uid 汇总的授权 Skills 只读投影仍通过共享 `saves`/PVC
-  挂入 Sandbox；Sandbox 的 Skills identity/wire 已由
-  [2026-08-18 基础决定](../archived/2026-08-18-project-workdir-runtime-foundation.md) 接管。附件与 outputs 的旧文件
-  scope 仍由本记录描述，API/worker 与 provisioner 的最终共享 `saves` 删除尚未完成。
+- Conversation 附件与 outputs 直接使用 UserWorkspace 中的 Workdir。未确认的临时附件解析仍可使用
+  用户隔离的 MinIO 前缀。
+- 用户级 `/home/gem/user-data` 和按 uid 汇总的授权 Skills 只读投影通过显式 UserWorkspace 与 Skill
+  projection 挂载进入 Sandbox；当前 Skill source/projection 边界由
+  [共享 Skill 持久源与个人 UserWorkspace 边界](2026-08-18-skill-source-convergence.md)拥有。API/worker 与
+  provisioner 不共享 shipping `saves` 数据根；`storage-migrator` 的 v0.7.1 legacy mount 属于一次性升级边界。
 
 ## 替代方案
 
@@ -38,33 +37,22 @@ outputs 在 Sandbox 重建、父子 Agent 与并发 Run 中也缺少明确的恢
   和锁语义，并会扩大凭据边界。
 - 整体重放旧 `feat/filestore-decouple`：拒绝。旧实现没有当前 RunAttempt、revision 与确认不明事实，
   且与附件、Viewer 和调度实现冲突。
-- 共享 Project RWX POSIX 文件系统：本决定实施时未采用，随后已由 2026-08-18 实时 Workdir 决定
-  取代 Stage 3/4 文件模型并删除双重事实源。
+- 共享 Project RWX POSIX 文件系统：文件事实已收敛到 UserWorkspace 中的 Workdir，不再维护独立
+  Project 存储域。
 
 ## 后果
 
-- 阶段 1 至阶段 3 已减少 API/worker 权限和宿主机耦合，日志/缓存与附件主链路可以独立部署和重建。
+- API/worker 权限和宿主机耦合减少，日志、缓存与文件主链路可以独立部署和重建。
 - API 日志不是 worker 日志聚合；历史日志留存由容器平台负责。Office 缓存和本地 runtime 可在重建时
   丢失。
-- 实时 Project Workdir 已删除每 Run 文件副本、父子 projection/merge 与发布前 404；这些后果由后续
-  owning decision 记录。
-- 真实 Kubernetes RWX、Skills 兼容路径和最终共享 `saves` 删除仍未完成。
+- UserWorkspace Workdir 删除每 Run 文件副本、父子 projection/merge 与发布前 404；这些后果由当前
+  Workdir owning decision 记录。
+- 真实 Kubernetes 部署仍需要目标集群 smoke；一次性 legacy mount 不构成 shipping runtime 共享根。
 
 ## 验证
 
-- 阶段 1：Compose/cleanup 相关 37 tests、公开 health integration、确定性 Agent E2E 2 tests、backend
-  non-slow 1293 passed/22 skipped；真实容器 mounts 证明 API/worker 无 models/socket，provisioner 保留
-  socket。工程 gate、Compose config、docs build 和 diff 检查通过。
-- 阶段 2：配置、Compose 与 workspace 61 tests；真实日志/Office HTTP integration 2 tests；backend
-  non-slow 1295 passed/26 skipped；确定性 Agent E2E 2 tests；Web lint/unit/build 与工程 gate 通过。
-  真实登录管理页面截图未执行，结果为 `Not run`。
-- 阶段 3：附件/service/provisioner 151 tests；真实 HTTP、PostgreSQL、MinIO、worker 与 Sandbox
-  assembled-path E2E 3 tests；backend non-slow 1312 passed/26 skipped。Docker 动态 Sandbox 无 uploads
-  mount；Kind/Kubernetes 真实 smoke 为 `Not run`。
-- 阶段 4：backend non-slow 1349 passed/26 skipped；真实 PostgreSQL/MinIO/provisioner integration
-  5 tests；Viewer HTTP 36 tests；确定性 Agent E2E 3 tests。覆盖 output revision、冲突/合并、legacy
-  首次发布、对象恢复、父子双向 producer-consumer、取消/重试隔离、限长与 symlink 边界。
-- 阶段 4 的外部模型 subagent 探针两次没有完成要求的完整工具链，因此记录为失败，不替代确定性证据；
-  真实 Kubernetes smoke 为 `Not run`。
-- 各阶段提交：`681019f1`、`54f75050`、`6a3ac434`、`8a7f2b11`。均经过独立 Reviewer 与用户
-  Review；当前分支未 push、未创建 PR，阶段 4 未部署。
+- Compose 与容器 mount inspection 验证 API/worker 不持有 Docker socket 或 models mount，Docker
+  provisioner 保留 daemon 权限；配置、cleanup、health、日志与 Office cache 测试覆盖对应边界。
+- 真实 HTTP、PostgreSQL、MinIO、worker、Viewer 与 Sandbox integration/E2E 覆盖附件和 Workdir 主链路；
+  当前文件事实的完整证据归属 Workdir 与 Workspace owning records。
+- 真实 Kubernetes 部署 smoke 为 `Not run`，不能由 Compose、Pod spec 或 unit 结果替代。

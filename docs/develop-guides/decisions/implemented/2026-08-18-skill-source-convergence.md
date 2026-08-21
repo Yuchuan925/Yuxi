@@ -17,7 +17,7 @@ Skill 持久目录配置由 `yuxi.config` 拥有；Prompt 与激活路径由
 
 - `YUXI_SKILL_DATA_DIR/shared/<slug>` 只保存共享与内置 Skill；其元数据和授权由 PostgreSQL `skills` 表拥有。
 - 个人 Skill 始终保存在 UserWorkspace 的 `workspace/agents/skills/<slug>`，不进入 PostgreSQL，也不进入
-  `YUXI_SKILL_DATA_DIR`。Redis 只缓存个人目录扫描得到的临时元数据。
+  `YUXI_SKILL_DATA_DIR`。个人 Skill 列表按请求直接扫描该目录，不维护 Redis metadata cache。
 - `YUXI_SKILL_PROJECTION_DIR/<safe-uid>` 只物化当前 uid 获授权的共享与内置 Skill，并只读暴露为
   `/home/gem/skills`。个人 Skill 由既有 UserWorkspace mount 直接暴露为
   `/home/gem/user-data/agents/skills`。
@@ -51,8 +51,8 @@ Skill 持久目录配置由 `yuxi.config` 拥有；Prompt 与激活路径由
   持久域和 UserWorkspace 生命周期存在。
 - 历史来源损坏、包含链接/特殊路径或与新 Owner 内容冲突时，启动 fail-closed 并保留旧数据；不会静默
   选择任一版本。个人目录不属于该迁移器的删除范围。
-- Kubernetes 与共享卷边界由
-  [显式存储域与 Kubernetes PVC 收敛](../archived/2026-08-19-explicit-storage-domains-and-kubernetes-pvc.md)拥有。
+- Kubernetes 与共享卷装配由 `docker/sandbox_provisioner/app.py` 和 shipping deployment config 拥有；
+  数据面身份由[统一 Workspace 运行身份](2026-08-20-unified-workspace-runtime-identity.md)拥有。
 
 ## 验证
 

@@ -6,11 +6,11 @@ from typing import TypedDict
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from yuxi.agents.backends.paths import VIRTUAL_PERSONAL_SKILLS_PATH, VIRTUAL_SKILLS_PATH
 from yuxi.agents.skills.service import list_accessible_skills, normalize_string_list
 from yuxi.agents.toolkits import get_all_tool_instances
 from yuxi.storage.postgres.models_business import User
 from yuxi.utils.logging_config import logger
-from yuxi.agents.backends.paths import VIRTUAL_PERSONAL_SKILLS_PATH, VIRTUAL_SKILLS_PATH
 
 
 class RuntimeSkill(TypedDict):

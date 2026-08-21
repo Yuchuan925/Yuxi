@@ -13,28 +13,17 @@ from langchain.agents.middleware import AgentMiddleware, ModelRequest, ModelResp
 from langchain.tools.tool_node import ToolCallRequest
 from langgraph.types import Command
 
+from yuxi.agents.backends.paths import VIRTUAL_PERSONAL_SKILLS_PATH, VIRTUAL_SKILLS_PATH
 from yuxi.agents.mcp.service import get_enabled_mcp_tools
 from yuxi.agents.skills.runtime import RuntimeSkill, build_dependency_bundle
 from yuxi.agents.skills.service import is_valid_skill_slug, normalize_string_list
 from yuxi.agents.toolkits import get_all_tool_instances
 from yuxi.utils.logging_config import logger
-from yuxi.agents.backends.paths import VIRTUAL_PERSONAL_SKILLS_PATH, VIRTUAL_SKILLS_PATH
 
 
 def _activated_skills_reducer(left: list[str] | None, right: list[str] | None) -> list[str]:
     """合并 activated_skills 列表"""
-    merged: list[str] = []
-    seen: set[str] = set()
-    for group in (left or [], right or []):
-        for value in group:
-            if not isinstance(value, str):
-                continue
-            slug = value.strip()
-            if not slug or slug in seen:
-                continue
-            seen.add(slug)
-            merged.append(slug)
-    return merged
+    return normalize_string_list([*(left or []), *(right or [])])
 
 
 class SkillsState(AgentState):
@@ -144,24 +133,13 @@ class SkillsMiddleware(AgentMiddleware):
     def _collect_prompt_metadata(self, slugs: list[str], runtime_context) -> list[RuntimeSkill]:
         """收集指定 slugs 的提示词元数据"""
         runtime_skills = self._get_runtime_skills(runtime_context)
-
         result: list[RuntimeSkill] = []
-        seen: set[str] = set()
-
         for slug in slugs:
-            if not isinstance(slug, str):
-                continue
-            normalized = slug.strip()
-            if not normalized or normalized in seen:
-                continue
-            seen.add(normalized)
-
-            item = runtime_skills.get(normalized)
+            item = runtime_skills.get(slug)
             if not item:
-                logger.debug(f"Skill slug not found in prompt metadata, skip: {normalized}")
+                logger.debug(f"Skill slug not found in prompt metadata, skip: {slug}")
                 continue
             result.append(dict(item))
-
         return result
 
     async def _get_mcp_tools_from_context(
@@ -217,7 +195,7 @@ class SkillsMiddleware(AgentMiddleware):
         if not slug:
             return result
 
-        if not self._is_visible_skill_slug(request, slug):
+        if slug not in self._get_effective_skills(request.runtime.context):
             logger.warning(f"SkillsMiddleware: deny skill activation for invisible slug: {slug}")
             return result
 
@@ -266,10 +244,6 @@ class SkillsMiddleware(AgentMiddleware):
     def _get_runtime_skills(self, runtime_context) -> dict[str, RuntimeSkill]:
         runtime_skills = getattr(runtime_context, "_runtime_skills", {})
         return runtime_skills if isinstance(runtime_skills, dict) else {}
-
-    def _is_visible_skill_slug(self, request: ToolCallRequest, slug: str) -> bool:
-        """检查 slug 是否可见"""
-        return slug in self._get_effective_skills(request.runtime.context)
 
     def _merge_activated_skill_update(self, result: Any, slug: str):
         """合并动态激活的 skill 更新"""

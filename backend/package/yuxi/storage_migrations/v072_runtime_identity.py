@@ -124,7 +124,6 @@ def _write_marker(root: Path, marker_name: str) -> None:
     """在已迁移根中原子发布完成标记。"""
     root_fd = os.open(root, _DIRECTORY_FLAGS)
     temp_name = f".{marker_name}-{uuid.uuid4().hex}"
-    marker_fd = None
     try:
         marker_fd = os.open(
             temp_name,
@@ -134,18 +133,15 @@ def _write_marker(root: Path, marker_name: str) -> None:
         )
         content = _MARKER_CONTENT.encode("ascii")
         offset = 0
-        while offset < len(content):
-            offset += os.write(marker_fd, content[offset:])
-        os.close(marker_fd)
-        marker_fd = os.open(temp_name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=root_fd)
-        os.fchown(marker_fd, RUNTIME_UID, RUNTIME_GID)
-        os.fchmod(marker_fd, 0o600)
-        os.close(marker_fd)
-        marker_fd = None
+        try:
+            while offset < len(content):
+                offset += os.write(marker_fd, content[offset:])
+            os.fchown(marker_fd, RUNTIME_UID, RUNTIME_GID)
+            os.fchmod(marker_fd, 0o600)
+        finally:
+            os.close(marker_fd)
         os.rename(temp_name, marker_name, src_dir_fd=root_fd, dst_dir_fd=root_fd)
     finally:
-        if marker_fd is not None:
-            os.close(marker_fd)
         try:
             os.unlink(temp_name, dir_fd=root_fd)
         except FileNotFoundError:

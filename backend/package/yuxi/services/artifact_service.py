@@ -11,7 +11,6 @@ from pathlib import PurePosixPath
 from fastapi import HTTPException
 from fastapi.responses import FileResponse
 from starlette.background import BackgroundTask
-from yuxi.workspace.errors import FileTransferLimitError
 from yuxi.agents.backends.paths import (
     VIRTUAL_PATH_PREFIX,
     VIRTUAL_SKILLS_PATH,
@@ -23,6 +22,7 @@ from yuxi.repositories.user_repository import UserRepository
 from yuxi.services.workdir_service import resolve_authorized_workdir
 from yuxi.utils.filepreview import detect_media_type
 from yuxi.utils.paths import open_regular_file_fd
+from yuxi.workspace.errors import FileTransferLimitError
 
 MAX_ARTIFACT_DOWNLOAD_BYTES = 1024 * 1024 * 1024
 MAX_SAVED_ARTIFACT_NAME_ATTEMPTS = 1000
@@ -33,9 +33,7 @@ def _normalize_artifact_path(workdir_path: str, path: str) -> str:
     normalized = str(PurePosixPath(raw if raw.startswith("/") else f"/{raw}"))
     if ".." in PurePosixPath(raw).parts:
         raise HTTPException(status_code=403, detail="access denied")
-    allowed = normalized.startswith(f"{workdir_path}/") or normalized.startswith(
-        f"{VIRTUAL_PATH_PREFIX.rstrip('/')}/"
-    )
+    allowed = normalized.startswith(f"{workdir_path}/") or normalized.startswith(f"{VIRTUAL_PATH_PREFIX.rstrip('/')}/")
     allowed = allowed or normalized.startswith(f"{VIRTUAL_SKILLS_PATH}/")
     if not allowed:
         raise HTTPException(status_code=403, detail="artifact is outside the current user's visible roots")
@@ -126,9 +124,7 @@ async def resolve_thread_artifact_view(
     """把实时授权文件导出为自动清理的 HTTP 文件响应。"""
     access = await resolve_authorized_workdir(thread_id=thread_id, uid=current_uid, db=db)
     normalized = _normalize_artifact_path(runtime_user_data_path(access.workdir.root_path), path)
-    skill_source = await _require_skill_artifact_access(
-        normalized_path=normalized, current_uid=current_uid, db=db
-    )
+    skill_source = await _require_skill_artifact_access(normalized_path=normalized, current_uid=current_uid, db=db)
     descriptor, temp_path = tempfile.mkstemp(prefix="yuxi-artifact-", suffix=PurePosixPath(normalized).suffix)
     os.close(descriptor)
     try:
@@ -153,9 +149,7 @@ async def save_thread_artifact_to_workspace_view(*, thread_id: str, current_uid:
     """把可见 artifact 复制到用户级 User Data saved_artifacts。"""
     access = await resolve_authorized_workdir(thread_id=thread_id, uid=current_uid, db=db)
     normalized = _normalize_artifact_path(runtime_user_data_path(access.workdir.root_path), path)
-    skill_source = await _require_skill_artifact_access(
-        normalized_path=normalized, current_uid=current_uid, db=db
-    )
+    skill_source = await _require_skill_artifact_access(normalized_path=normalized, current_uid=current_uid, db=db)
     descriptor, temp_path = tempfile.mkstemp(prefix="yuxi-save-artifact-")
     os.close(descriptor)
     try:

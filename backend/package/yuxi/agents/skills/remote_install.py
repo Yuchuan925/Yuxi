@@ -8,21 +8,15 @@ import tempfile
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
-from sqlalchemy.ext.asyncio import AsyncSession
-
-from yuxi.agents.backends.sandbox import ProvisionerSandboxBackend
 from yuxi.agents.backends.paths import VIRTUAL_PATH_PREFIX
+from yuxi.agents.backends.sandbox import ProvisionerSandboxBackend
 from yuxi.agents.backends.sandbox.download import download_sandbox_directory
 from yuxi.agents.backends.sandbox.provider import get_sandbox_provider
-from yuxi.agents.skills.service import import_skill_dir, is_valid_skill_slug
+from yuxi.agents.skills.service import is_valid_skill_slug
 from yuxi.config.options import remote_skill_source_policy
 from yuxi.utils.logging_config import logger
-
-if TYPE_CHECKING:
-    from yuxi.storage.postgres.models_business import Skill
 
 ANSI_ESCAPE_RE = re.compile(r"\x1B\[[0-?]*[ -/]*[@-~]")
 CONTROL_SEQUENCE_RE = re.compile(r"\x1B\][^\x07]*(?:\x07|\x1B\\)|\x1B[\(\)][A-Za-z0-9]")
@@ -226,72 +220,6 @@ async def list_remote_skills(source: str) -> list[dict[str, str]]:
     if not skills:
         raise ValueError("未发现可安装的 skills")
     return skills
-
-
-async def install_remote_skill(
-    db: AsyncSession,
-    *,
-    source: str,
-    skill: str,
-    created_by: str | None,
-) -> Skill:
-    normalized_skill = _normalize_skill_name(skill)
-    preparation = await prepare_remote_skills_batch(source=source, skills=[normalized_skill])
-    try:
-        result = preparation.results[0]
-        if not result.get("success"):
-            raise ValueError(result.get("error") or f"远程仓库中不存在 skill: {normalized_skill}")
-
-        return await import_skill_dir(
-            db,
-            source_dir=result["source_dir"],
-            created_by=created_by,
-        )
-    finally:
-        await preparation.cleanup()
-
-
-async def install_remote_skills_batch(
-    db: AsyncSession,
-    *,
-    source: str,
-    skills: list[str],
-    created_by: str | None,
-) -> list[dict]:
-    """批量从同一个远程仓库安装多个 skills（仅一次克隆）。
-
-    Args:
-        db: 数据库会话。
-        source: 远程 Skill 来源，如 ``owner/repo`` 或允许的 HTTPS URL。
-        skills: 需要安装的 skill 名称列表。
-        created_by: 操作者标识。
-
-    Returns:
-        每个 skill 的安装结果列表，顺序与请求一致: ``[{slug, success, error?}, ...]``
-    """
-    preparation = await prepare_remote_skills_batch(source=source, skills=skills)
-    try:
-        results = preparation.results
-        for index, result in enumerate(results):
-            if not result.get("success"):
-                continue
-
-            source_dir = result.get("source_dir")
-            try:
-                item = await import_skill_dir(
-                    db,
-                    source_dir=source_dir,
-                    created_by=created_by,
-                )
-                results[index] = {"slug": item.slug, "success": True}
-            except Exception as e:
-                if hasattr(db, "rollback"):
-                    await db.rollback()
-                results[index] = {"slug": result["slug"], "success": False, "error": str(e)}
-
-        return results
-    finally:
-        await preparation.cleanup()
 
 
 async def prepare_remote_skills_batch(

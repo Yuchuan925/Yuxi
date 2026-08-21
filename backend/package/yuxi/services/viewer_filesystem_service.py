@@ -13,16 +13,16 @@ from fastapi import HTTPException, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from starlette.background import BackgroundTask
 from yuxi.agents.backends.paths import is_runtime_path, runtime_path_for_workdir_scope
-from yuxi.workspace.errors import FileTransferLimitError
 from yuxi.services.file_preview import render_file_preview
+from yuxi.services.workdir_service import AuthorizedWorkdir, resolve_authorized_workdir
+from yuxi.utils.datetime_utils import utc_isoformat_from_timestamp
 from yuxi.utils.filepreview import (
     MAX_BINARY_PREVIEW_SIZE_BYTES,
     OfficePreviewConversionError,
     preview_too_large,
 )
-from yuxi.services.workdir_service import AuthorizedWorkdir, resolve_authorized_workdir
-from yuxi.utils.datetime_utils import utc_isoformat_from_timestamp
 from yuxi.utils.upload_utils import write_upload_to_path
+from yuxi.workspace.errors import FileTransferLimitError
 
 SEARCH_MAX_RESULTS = 100
 SEARCH_MAX_DIRECTORIES = 600
@@ -244,7 +244,7 @@ async def upload_viewer_files(*, thread_id: str, parent_path: str, files: list[U
         descriptor, temp_path = tempfile.mkstemp(prefix="yuxi-viewer-upload-")
         os.close(descriptor)
         try:
-            size = await write_upload_to_path(
+            await write_upload_to_path(
                 upload,
                 Path(temp_path),
                 max_size_bytes=MAX_VIEWER_UPLOAD_BYTES,
@@ -269,6 +269,5 @@ async def upload_viewer_files(*, thread_id: str, parent_path: str, files: list[U
                 os.unlink(temp_path)
             except FileNotFoundError:
                 pass
-        metadata["size"] = size
         entries.append(_entry(access, parent_path, {"name": file_name, **metadata}))
     return {"entries": entries}

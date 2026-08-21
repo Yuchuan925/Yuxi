@@ -31,13 +31,13 @@ Owner：backend/package/yuxi/storage_migration.py
 | v0.7.1 schema 即使没有旧文件也要求停机并收敛非终态 Run | 旧 runtime 与 schema 切换并发 | storage migrator | `test_storage_migration.py` unit + 真实 PostgreSQL migration integration | 无旧文件但缺少停机证明 | Passed |
 | 附件迁移只保留当前持久字段并重写 v0.7.1 虚拟路径 | 旧宿主路径、Markdown 或派生 URL 继续持久化 | v0.7.1 Workdir migration | unit + integration 回读 JSON | 注入 v0.7.1 全量旧字段 | Passed |
 | API/worker 不再执行一次性 Options 迁移 | 正常启动继续携带旧版本兼容副作用 | API lifespan、worker startup、storage migrator | 启动 unit 与负向符号搜索 | 启动入口重新导入迁移模块 | Passed |
-| 分支中间态兼容和挂载不存在 | 未发布表、路径或依赖继续扩大维护面 | v0.7.1 migrations、schema、Compose、文档 | `rg` 负向搜索 + Compose boundary unit | 恢复任一 `legacy-projects`/Project 表处理 | Passed（28 tests） |
+| 分支中间态兼容和挂载不存在 | 未发布表、路径或依赖继续扩大维护面 | v0.7.1 migrations、schema、Compose、文档 | `rg` 负向搜索 + Compose boundary unit | 恢复 `conversations.workdir_id` 持久列、Project 表或 `legacy-projects` 挂载 | Passed（28 tests） |
 
-旧能力不存在：shipping 代码不导入、删除或挂载 `ProjectWorkdir`、`FileStorageMaterialization`、`workdir_id`、`legacy-projects` 或 `/home/gem/projects/project-*`，也不迁移 `system_runtime_config` 数据库记录。
+旧能力不存在：shipping schema、ORM 与部署不创建、读取、删除或挂载 `conversations.workdir_id`、`project_workdirs`、`file_storage_materializations`、`legacy-projects` 或 `/home/gem/projects/project-*`，也不迁移 `system_runtime_config` 数据库记录。迁移器保留对未发布 schema 名称的拒绝检查；canonical Workdir UUID 的局部变量不构成持久资源或兼容路径。
 
 重新引入条件：只有某个已发布版本或受支持部署被证明持久化了这些状态，并提供真实 fixture、升级承诺和恢复验证时，才重新引入对应兼容路径。
 
-补充验证：迁移相关 unit 共 89 项通过；共享 Skill 的真实 PostgreSQL integration 1 项通过；backend 非 slow unit 共 1381 项通过、35 项跳过。独立 Reviewer 提出的标点 thread ID 与斜杠路径别名问题均已修复并复审通过。
+补充验证：迁移相关 unit 共 89 项通过；共享 Skill 的真实 PostgreSQL integration 1 项通过；backend 非 slow unit 共 1381 项通过、35 项跳过。负向案例覆盖标点 thread ID 与斜杠路径别名。
 
 ## 后果
 

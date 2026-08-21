@@ -26,8 +26,8 @@ from langgraph.config import get_stream_writer
 from langgraph.constants import TAG_NOSTREAM
 
 from yuxi.agents.backends.composite import create_agent_composite_backend
-from yuxi.utils.logging_config import logger
 from yuxi.agents.backends.paths import workdir_runtime_paths
+from yuxi.utils.logging_config import logger
 
 _APPROX_CHARS_PER_TOKEN = 4
 _DEFAULT_SUMMARY_TOOL_RESULT_LIMIT_TOKENS = 300

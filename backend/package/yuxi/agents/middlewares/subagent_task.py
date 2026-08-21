@@ -389,11 +389,7 @@ class YuxiSubAgentMiddleware(AgentMiddleware[Any, ContextT, ResponseT]):
         """从父智能体 context 中抽取子智能体运行所需的最小父运行信息。"""
         uid = str(getattr(self.parent_context, "uid", "") or "").strip()
         created_by_run_id = str(getattr(self.parent_context, "run_id", "") or "").strip()
-        runtime_scope_id = str(
-            getattr(self.parent_context, "runtime_scope_id", None) or self.parent_context.thread_id
-        ).strip()
         return _ParentRuntime(
-            runtime_scope_id=runtime_scope_id,
             uid=uid,
             created_by_run_id=created_by_run_id,
         )
@@ -473,7 +469,6 @@ class YuxiSubAgentMiddleware(AgentMiddleware[Any, ContextT, ResponseT]):
 
 @dataclass(frozen=True)
 class _ParentRuntime:
-    runtime_scope_id: str
     uid: str
     created_by_run_id: str
 

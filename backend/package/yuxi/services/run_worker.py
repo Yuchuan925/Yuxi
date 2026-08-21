@@ -13,8 +13,8 @@ from datetime import datetime
 from arq.worker import RetryJob
 from sqlalchemy import select, text
 from sqlalchemy.exc import OperationalError
-from yuxi.agents.backends.sandbox.provider import get_sandbox_provider
 from yuxi.agents.backends.paths import runtime_workdir_path
+from yuxi.agents.backends.sandbox.provider import get_sandbox_provider
 from yuxi.agents.mcp.service import ensure_builtin_mcp_servers_in_db
 from yuxi.agents.skills.service import init_builtin_skills
 from yuxi.repositories.agent_run_repository import TERMINAL_RUN_STATUSES, AgentRunRepository
@@ -309,9 +309,9 @@ async def _release_runtime_if_idle(run: AgentRun) -> bool:
     return True
 
 
-async def _release_runtime_before_terminal_event(run: AgentRun | None, *, tree_finished: bool) -> None:
+async def _release_runtime_before_terminal_event(run: AgentRun | None) -> None:
     """在终态事件可见前收敛 runtime，避免客户端撞上随后发生的删除。"""
-    if run is None or run.run_type == "subagent" or not tree_finished:
+    if run is None or run.run_type == "subagent":
         return
     await _require_runtime_cleanup(run, f"Run {run.id} 的 execution tree 尚未完成 runtime cleanup")
 
@@ -326,22 +326,13 @@ async def _require_runtime_cleanup(run: AgentRun, message: str) -> None:
         raise RuntimeCleanupPendingError(message)
 
 
-async def _finish_execution_tree_children(run: AgentRun) -> bool:
+async def _finish_execution_tree_children(run: AgentRun) -> None:
     """收敛 execution tree 后代的数据库终态并通知其停止执行。"""
     async with pg_manager.get_async_session_context() as db:
         repo = AgentRunRepository(db)
         descendants = await repo.cancel_active_execution_tree_descendants(run)
         await db.commit()
-    if not descendants:
-        return True
-    results = await asyncio.gather(
-        *(publish_cancel_signal(child_id) for child_id, _thread_id in descendants),
-        return_exceptions=True,
-    )
-    for (child_id, _thread_id), result in zip(descendants, results, strict=True):
-        if isinstance(result, BaseException):
-            logger.warning("Failed to publish execution-tree cancel signal: run=%s", child_id, exc_info=result)
-    return True
+    await _publish_execution_tree_cancel_signals(descendants)
 
 
 async def _get_run(run_id: str):
@@ -390,6 +381,20 @@ async def _clear_cancel_signal_best_effort(run_id: str) -> None:
         await clear_cancel_signal(run_id)
     except Exception:
         logger.warning(f"Failed to clear non-authoritative AgentRun cancel signal: run={run_id}", exc_info=True)
+
+
+async def _publish_execution_tree_cancel_signals(cancelled: list[tuple[str, str]]) -> None:
+    """尽力通知已由 PostgreSQL 收敛的后代 Run 停止执行。"""
+
+    if not cancelled:
+        return
+    results = await asyncio.gather(
+        *(publish_cancel_signal(run_id) for run_id, _thread_id in cancelled),
+        return_exceptions=True,
+    )
+    for (run_id, _thread_id), result in zip(cancelled, results, strict=True):
+        if isinstance(result, BaseException):
+            logger.warning("Failed to publish execution-tree cancel signal: run=%s", run_id, exc_info=result)
 
 
 async def mark_run_running(run_id: str, worker_id: str) -> bool:
@@ -453,14 +458,7 @@ async def mark_run_terminal(
         if changed and run is not None:
             cancelled_descendants = await repo.cancel_active_execution_tree_descendants(run)
         persisted_status = run.status if run else None
-    if cancelled_descendants:
-        results = await asyncio.gather(
-            *(publish_cancel_signal(child_id) for child_id, _thread_id in cancelled_descendants),
-            return_exceptions=True,
-        )
-        for (child_id, _thread_id), result in zip(cancelled_descendants, results, strict=True):
-            if isinstance(result, BaseException):
-                logger.warning("Failed to publish execution-tree cancel signal: run=%s", child_id, exc_info=result)
+    await _publish_execution_tree_cancel_signals(cancelled_descendants)
     return TerminalTransition(status=persisted_status, changed=changed)
 
 
@@ -684,7 +682,7 @@ async def _finish_run(
     )
     if transition.status in TERMINAL_RUN_STATUSES:
         committed_run = await _get_run(run_id)
-        await _release_runtime_before_terminal_event(committed_run or run, tree_finished=True)
+        await _release_runtime_before_terminal_event(committed_run or run)
     if publish_end and transition.changed and transition.status:
         await _append_end_event(run_id, transition.status, thread_id=thread_id, payload={"chunk": chunk})
     return transition
@@ -720,7 +718,7 @@ async def _finish_user_cancel(
         worker_id=worker_id,
     )
     if run.run_type != "subagent":
-        await _release_runtime_before_terminal_event(run, tree_finished=True)
+        await _release_runtime_before_terminal_event(run)
     if transition.changed:
         await _append_run_event_best_effort(
             run_id,
@@ -759,13 +757,13 @@ async def process_agent_run(ctx, run_id: str):
         return
 
     if run.status in TERMINAL_RUN_STATUSES:
-        tree_finished = await _finish_execution_tree_children(run)
+        await _finish_execution_tree_children(run)
         cleanup_was_pending = bool(getattr(run, "runtime_cleanup_pending", False))
         if cleanup_was_pending:
             await _require_runtime_cleanup(run, f"Run {run_id} 的 execution tree 尚未完成 runtime cleanup")
         if cleanup_was_pending:
             await _append_end_event(run_id, run.status, thread_id=run.conversation_thread_id)
-        if run.status == "completed" and tree_finished:
+        if run.status == "completed":
             await dispatch_next_request(
                 uid=run.uid,
                 agent_slug=run.agent_slug,
@@ -1029,13 +1027,9 @@ async def process_agent_run(ctx, run_id: str):
                     if status == "finished":
                         if chunk.get("terminal_committed") is True:
                             committed_run = await _get_run(run_id)
-                            committed_tree_finished = True
                             if committed_run is not None:
-                                committed_tree_finished = await _finish_execution_tree_children(committed_run)
-                            await _release_runtime_before_terminal_event(
-                                committed_run,
-                                tree_finished=committed_tree_finished,
-                            )
+                                await _finish_execution_tree_children(committed_run)
+                            await _release_runtime_before_terminal_event(committed_run)
                             await _append_end_event(
                                 run_id,
                                 "completed",
@@ -1348,13 +1342,12 @@ async def process_agent_run(ctx, run_id: str):
         except Exception:
             logger.error(f"Failed to load AgentRun during lifecycle cleanup: run={run_id}", exc_info=True)
             final_run = None
-        tree_finished = True
         if final_run and final_run.status in TERMINAL_RUN_STATUSES:
-            tree_finished = await _finish_execution_tree_children(final_run)
+            await _finish_execution_tree_children(final_run)
         if final_run and final_run.status == "cancelled":
             await _clear_cancel_signal_best_effort(run_id)
         # completed 后尝试派发线程的下一个排队请求
-        if final_run and final_run.status == "completed" and tree_finished and not final_run.runtime_cleanup_pending:
+        if final_run and final_run.status == "completed" and not final_run.runtime_cleanup_pending:
             await dispatch_next_request(
                 uid=uid,
                 agent_slug=agent_slug,

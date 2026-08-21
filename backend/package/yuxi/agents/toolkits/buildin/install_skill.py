@@ -10,11 +10,11 @@ from langgraph.prebuilt.tool_node import ToolRuntime
 from langgraph.types import Command
 from pydantic import BaseModel, Field
 
+from yuxi.agents.backends.paths import VIRTUAL_PATH_PREFIX, VIRTUAL_PERSONAL_SKILLS_PATH
 from yuxi.agents.backends.sandbox.download import download_sandbox_directory
 from yuxi.agents.toolkits.registry import tool
 from yuxi.storage.postgres.manager import pg_manager
 from yuxi.utils.logging_config import logger
-from yuxi.agents.backends.paths import VIRTUAL_PATH_PREFIX, VIRTUAL_PERSONAL_SKILLS_PATH
 
 SANDBOX_PATH_HINT = "请使用当前 Project Workdir 下的目录，或 /home/gem/user-data/..."
 
@@ -130,8 +130,7 @@ async def _run_install_task(
                 item = await install_personal_skill_dir(uid, source_dir)
                 installed_slugs = [item.slug]
         else:
-            _skill_names = skill_names or []
-            if not _skill_names:
+            if not skill_names:
                 return Command(
                     update={
                         "messages": [
@@ -145,7 +144,7 @@ async def _run_install_task(
 
             from yuxi.agents.skills.remote_install import prepare_remote_skills_batch
 
-            preparation = await prepare_remote_skills_batch(source=source, skills=_skill_names)
+            preparation = await prepare_remote_skills_batch(source=source, skills=skill_names)
             try:
                 for result in preparation.results:
                     if not result.get("success"):

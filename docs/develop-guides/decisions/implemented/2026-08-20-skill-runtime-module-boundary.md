@@ -21,7 +21,7 @@ Skill 的存储和授权边界已经由共享 Skill 投影与个人 UserWorkspac
 加载和 `read_file` 动态激活。Agent context、工具注册和安装工具直接依赖 runtime 模块，
 不再把 Middleware 当作解析 API。
 
-本次收敛删除未使用的 `skills_context_name` 初始化参数、无调用的 `get_prompt_metadata()` 和
+实现删除未使用的 `skills_context_name` 初始化参数、无调用的 `get_prompt_metadata()` 和
 `get_dependency_map()`，以及依赖包中没有消费者的 `skills` 字段；仓库没有旧 Python API 的
 公开兼容承诺，因此不保留 re-export 或第二份实现。
 

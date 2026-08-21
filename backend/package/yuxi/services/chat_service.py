@@ -20,9 +20,8 @@ from typing import Any, Literal
 
 from langchain.messages import AIMessage, AIMessageChunk, HumanMessage
 from langgraph.types import Command
-from yuxi.agents.backends.sandbox import ProvisionerSandboxBackend
 from yuxi.agents.backends.paths import runtime_workdir_path
-from yuxi.workspace.paths import ensure_bound_user_workdir
+from yuxi.agents.backends.sandbox import ProvisionerSandboxBackend
 from yuxi.agents.base import _json_safe
 from yuxi.agents.buildin import agent_manager
 from yuxi.agents.context import build_agent_input_context, normalize_agent_context_config
@@ -51,6 +50,7 @@ from yuxi.utils.question_utils import (
     normalize_questions as _normalize_interrupt_questions,
 )
 from yuxi.utils.thread_utils import extract_thread_id as _metadata_thread_id
+from yuxi.workspace.paths import ensure_bound_user_workdir
 
 
 def _with_attachment_context(message: HumanMessage, attachments: list[dict]) -> HumanMessage:
@@ -606,19 +606,18 @@ async def save_messages_from_langgraph_state(
         raise ValueError("AgentRun 不能同时完成和中断")
 
     run_repo = AgentRunRepository(conv_repo.db) if run_id else None
-    staged_run = None
     cancelled_descendants: list[tuple[str, str]] = []
     try:
         if run_id:
             if not worker_id or not request_id:
                 raise ValueError("持久化 AgentRun 输出需要 worker、thread 和 request 因果归属")
-            staged_run = await run_repo.lock_output_persistence(
+            locked_run = await run_repo.lock_output_persistence(
                 run_id,
                 worker_id=worker_id,
                 conversation_thread_id=thread_id,
                 request_id=request_id,
             )
-            if staged_run is None:
+            if locked_run is None:
                 raise ValueError(f"AgentRun 不存在: {run_id}")
 
         messages = await _get_langgraph_messages(agent_instance, config_dict, context=context)
@@ -666,7 +665,6 @@ async def save_messages_from_langgraph_state(
                     last_ai_message.id,
                     worker_id=worker_id,
                 )
-        if run_id:
             terminal_status = "completed" if complete_run else "interrupted" if interrupt_run else None
             if terminal_status:
                 terminal_run, changed = await run_repo.set_terminal_status(

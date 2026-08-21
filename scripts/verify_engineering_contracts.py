@@ -939,10 +939,9 @@ def _validate_workspace_host_path_boundary(root: Path, errors: list[str]) -> int
         for path in sorted(source_root.rglob("*.py")):
             checked += 1
             relative = path.relative_to(root)
+            source = path.read_text(encoding="utf-8")
             try:
-                tree = ast.parse(
-                    path.read_text(encoding="utf-8"), filename=str(relative)
-                )
+                tree = ast.parse(source, filename=str(relative))
             except SyntaxError:
                 continue
             for node in ast.walk(tree):
@@ -975,7 +974,7 @@ def _validate_workspace_host_path_boundary(root: Path, errors: list[str]) -> int
                         "普通 Service/Repository 不得取得 UserWorkspace 宿主 Path："
                         f"{relative}:{node.lineno} -> {', '.join(sorted(forbidden))}"
                     )
-            if "YUXI_USER_DATA_DIR" in path.read_text(encoding="utf-8"):
+            if "YUXI_USER_DATA_DIR" in source:
                 errors.append(
                     "普通 Service/Repository 不得读取 UserWorkspace 宿主根环境变量："
                     f"{relative}"

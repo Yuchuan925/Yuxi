@@ -21,15 +21,6 @@ class SkillRepository:
         )
         return list(result.scalars().all())
 
-    async def list_by_slugs(self, slugs: list[str]) -> list[Skill]:
-        normalized = [slug for slug in dict.fromkeys(slugs) if isinstance(slug, str) and slug]
-        if not normalized:
-            return []
-        result = await self.db.execute(select(Skill).where(Skill.slug.in_(normalized)))
-        items = list(result.scalars().all())
-        item_map = {item.slug: item for item in items}
-        return [item_map[slug] for slug in normalized if slug in item_map]
-
     async def get_by_slug(self, slug: str, *, for_update: bool = False) -> Skill | None:
         stmt = select(Skill).where(Skill.slug == slug)
         if for_update:
