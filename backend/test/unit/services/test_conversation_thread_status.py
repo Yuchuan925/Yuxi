@@ -52,6 +52,8 @@ async def _seed_run(db, *, thread_id: str, run_id: str, status: str, run_type: s
         status=status,
         request_id=f"req-{run_id}",
         run_type=run_type,
+        created_by_run_id="root-run" if run_type == "subagent" else None,
+        subagent_thread_relation_id=1 if run_type == "subagent" else None,
         input_payload={},
     )
     db.add(run)

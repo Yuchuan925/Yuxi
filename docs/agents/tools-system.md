@@ -42,7 +42,7 @@ from yuxi.agents.toolkits import buildin, debug  # 触发模块内 @tool 装饰�
 | `ask_user_question` | 向用户发起交互式提问 |
 | `ocr_parse_file` | 将 Project Workdir、User Data 或授权 Skill 中的 PDF、Office 或图片文件转换为 Markdown |
 | `present_artifacts` | 展示当前用户可见范围内的任意普通文件，推荐使用 Project `outputs/` |
-| `install_skill` | 从沙盒路径或 Git 来源安装当前用户私有 Skill，并激活当前主智能体会话；子智能体禁用 |
+| `install_skill` | 从沙盒路径或 Git 来源安装当前用户私有 Skill，并返回 `SKILL.md` 路径供当前主智能体读取；子智能体禁用 |
 | `tavily_search` | Tavily 网页搜索（需配置 `TAVILY_API_KEY`） |
 
 Qwen-Image 生成能力已迁移为内置 Skill `image-gen`。模型调用与图片下载在 Agent 沙盒中完成，生成后的图片保存到当前 Project Workdir 的 `outputs/`，再通过 `present_artifacts` 展示。

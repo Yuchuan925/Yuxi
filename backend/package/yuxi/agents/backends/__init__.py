@@ -15,12 +15,10 @@ from .sandbox import (
     sandbox_id_for_thread,
     shutdown_sandbox_provider,
 )
-from .skills_backend import SelectedSkillsReadonlyBackend
 
 __all__ = [
     "CompositeBackend",
     "StateBackend",
-    "SelectedSkillsReadonlyBackend",
     "create_agent_composite_backend",
     "create_agent_filesystem_middleware",
     "sync_agent_context_skills",

@@ -15,10 +15,18 @@ from test.live_api_cleanup import make_test_conversation_metadata, make_test_con
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
 
 
-async def _upload_project_file(test_client, headers, thread_id: str, name: str, content: bytes) -> str:
+async def _upload_project_file(
+    test_client,
+    headers,
+    thread_id: str,
+    name: str,
+    content: bytes,
+    *,
+    parent_path: str = "/",
+) -> str:
     response = await test_client.post(
         "/api/viewer/filesystem/upload",
-        data={"thread_id": thread_id, "parent_path": "/"},
+        data={"thread_id": thread_id, "parent_path": parent_path},
         files={"files": (name, content, "text/plain")},
         headers=headers,
     )
@@ -298,10 +306,23 @@ async def test_save_thread_artifact_to_workspace_auto_renames_conflicts(test_cli
     )
     assert first_response.status_code == 200, first_response.text
 
-    await _upload_project_file(test_client, headers, thread_id, filename, b"second\n")
+    directory = await test_client.post(
+        "/api/viewer/filesystem/directory",
+        json={"thread_id": thread_id, "parent_path": "/", "name": "second-source"},
+        headers=headers,
+    )
+    assert directory.status_code == 200, directory.text
+    second_source_path = await _upload_project_file(
+        test_client,
+        headers,
+        thread_id,
+        filename,
+        b"second\n",
+        parent_path=directory.json()["entry"]["path"],
+    )
     second_response = await test_client.post(
         f"/api/chat/thread/{thread_id}/artifacts/save",
-        json={"path": source_path},
+        json={"path": second_source_path},
         headers=headers,
     )
     assert second_response.status_code == 200, second_response.text

@@ -59,7 +59,7 @@ UserWorkspace，按 uid 隔离，不进入共享 Skill 数据表，并使用 Red
 2. **ZIP / SKILL.md 上传**：上传后先解析为安装草稿，再选择安装到个人 Skill 源或共享 Skill 库
 3. **远程仓库安装**：填写 skills 仓库地址、ModelScope Skill 地址或合集地址，下载并解析后选择安装位置
 4. **在线编辑**：对已有且可管理的 Skill 在线创建目录、编辑文件和维护依赖
-5. **Agent 内安装**：主智能体可通过 `install_skill` 工具安装个人 Skill；子智能体禁用该工具
+5. **Agent 内安装**：主智能体可通过 `install_skill` 工具安装个人 Skill，并读取工具返回的 `SKILL.md` 路径；子智能体禁用该工具
 
 个人 Skill 不解析 `tool_dependencies`、`mcp_dependencies` 或 `skill_dependencies`。需要平台依赖、共享范围或在线管理时，应选择共享安装。
 
@@ -213,8 +213,8 @@ Skill 加载分为三个阶段：
 
 当 Agent 会话启动时，系统会：
 1. 在创建 Graph 前读取已过滤的 `context.skills` 列表
-2. 递归展开 `skill_dependencies`，派生 `_prompt_skills` 和 `_readable_skills`
-3. 将 `_prompt_skills` 对应的技能说明注入到系统提示词中
+2. 递归展开 `skill_dependencies`，派生统一的 `_effective_skill_slugs`
+3. 将有效 Skill 对应的技能说明注入到系统提示词中
 
 这意味着：只要配置了某个 Skill，它的依赖 Skill 就会立即进入提示词。文件系统权限与选中集合分离：
 当前用户授权的共享、内置 Skill 进入 `/home/gem/skills` 只读投影，个人 Skill 保留在
@@ -246,7 +246,7 @@ Skill 加载分为三个阶段：
 - **pro-skill**：依赖 `advanced-skill`
 
 当在 Agent 配置中只选择 `pro-skill` 时：
-1. 启动阶段：`_readable_skills` = [`pro-skill`, `advanced-skill`, `base-skill`]（自动展开可激活的依赖链）
+1. 启动阶段：`_effective_skill_slugs` = [`pro-skill`, `advanced-skill`, `base-skill`]（自动展开可激活的依赖链）
 2. 文件系统仍可读当前用户授权的其他 Skill，但它们不会因此进入 Prompt 或变成可激活工具
 3. 当 Agent 读取 `pro-skill/SKILL.md` 时：触发激活，工具和 MCP 依赖被加载
 
@@ -304,10 +304,10 @@ Skill 加载分为三个阶段：
 
 ### 选择与授权
 
+- `context.skills=None` 表示选择当前用户可访问的全部 Skill，`[]` 表示不选择 Skill，非空列表表示显式白名单
 - 不同 Agent 可以配置不同的 `context.skills`，该列表只决定 Prompt 和工具激活
 - 共享文件投影以 uid 授权集合为边界，不随会话或 Agent 选择分叉；个人 Skill 不进入该投影
 - Run 初始化以 uid 级数据库锁读取最新授权，并以共享卷文件锁串行替换投影；授权上下文缺失时直接失败
-- 个人 Skill 元数据最多缓存 5 分钟；安装、删除和 Skills 页手动刷新会立即更新缓存
 - 个人版本与共享版本同 slug 时，Prompt 元数据使用个人路径，共享投影不复制个人版本
 
 ## 维护建议

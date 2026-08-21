@@ -177,13 +177,14 @@ class SubagentRunService:
 
     async def get_run_for_creator(self, *, uid: str, created_by_run_id: str, run_id: str) -> AgentRun:
         """在父 run 作用域内读取子智能体 run，防止工具访问其它对话的子任务。"""
-        run = await self.run_repo.get_subagent_run_for_creator(
+        execution_pair = await self.run_repo.get_subagent_run_with_creator(
             uid=uid,
             created_by_run_id=created_by_run_id,
             run_id=run_id,
         )
-        if not run:
+        if not execution_pair:
             raise ValueError("子智能体运行不存在或不属于当前父运行")
+        _creator_run, run = execution_pair
         return run
 
     async def _create_run_record(

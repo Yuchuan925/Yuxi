@@ -89,7 +89,6 @@ class WorkflowContract:
     required_paths: tuple[str, ...] = ()
     unfiltered_pull_request: bool = False
 
-
 WORKFLOW_CONTRACTS = (
     WorkflowContract(
         path=".github/workflows/trust.yml",
@@ -108,6 +107,7 @@ WORKFLOW_CONTRACTS = (
         required_paths=(
             ".env.template",
             "backend/**",
+            "docker/**",
             "scripts/init.sh",
             "scripts/init.ps1",
             "scripts/test_init_security.ps1",
@@ -128,6 +128,8 @@ WORKFLOW_CONTRACTS = (
             "docker compose exec -T api uv run --no-sync --no-dev pytest test/integration/api/test_agent_run_result_causality.py -q",
             "docker compose exec -T -e E2E_USERNAME -e E2E_PASSWORD api uv run --no-sync --no-dev pytest test/e2e/test_deterministic_agent_path_e2e.py -q",
             "docker compose exec -T api uv run --no-sync --no-dev pytest test/integration/services/test_identity_admin_service.py test/integration/services/test_api_key_schema_migration.py test/integration/services/test_api_key_user_lifecycle.py test/integration/api/test_apikey_router.py -q",
+            "docker compose exec -T api uv run --no-sync --no-dev pytest test/integration/services/test_workdir_user_workspace.py test/integration/services/test_user_skill_projection.py test/integration/api/test_skill_artifact_authorization.py -q",
+            "docker compose exec -T api uv run --no-sync --no-dev pytest test/integration/services/test_project_workdir_provisioner.py -q",
         ),
         required_paths=(
             "backend/package/yuxi/**",
@@ -135,6 +137,7 @@ WORKFLOW_CONTRACTS = (
             "backend/test/integration/**",
             "backend/test/e2e/**",
             "backend/test/support/**",
+            "docker/**",
             ".github/workflows/system-tests.yml",
         ),
     ),
@@ -178,7 +181,7 @@ def _require_repository_path(
 
 
 def _normalized(text: str) -> str:
-    return " ".join(text.split())
+    return " ".join(text.replace("\\\n", " ").split())
 
 
 def _yaml_scalar(value: str) -> str:
@@ -483,7 +486,6 @@ def _validate_workflows(root: Path, errors: list[str]) -> list[dict[str, Any]]:
                 errors.append(
                     f"workflow 命令只存在于被跳过或吞错的 step：{contract.path} -> {command}"
                 )
-
         paths: list[str] | None = None
         if contract.trigger == "pull_request":
             has_pr, paths, paths_ignore = _workflow_pull_request_filters(text)

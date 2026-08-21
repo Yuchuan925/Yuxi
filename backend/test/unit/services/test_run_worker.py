@@ -64,7 +64,83 @@ def _build_run() -> SimpleNamespace:
         runtime_scope_id="thread-1",
         runtime_cleanup_pending=False,
         created_by_run_id=None,
+        subagent_thread_relation_id=None,
     )
+
+
+@pytest.mark.asyncio
+async def test_validate_run_workdir_binding_rejects_top_level_foreign_runtime_scope(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    run = _build_run()
+    run.runtime_scope_id = "other-thread"
+
+    @asynccontextmanager
+    async def fake_session():
+        yield object()
+
+    async def fake_resolve(**_kwargs):
+        return SimpleNamespace(conversation_id=run.conversation_id)
+
+    monkeypatch.setattr(run_worker.pg_manager, "get_async_session_context", fake_session)
+    monkeypatch.setattr(run_worker, "resolve_workdir_binding", fake_resolve)
+
+    with pytest.raises(run_worker.NonRetryableRunError, match="Chat AgentRun"):
+        await run_worker._validate_run_workdir_binding(run)
+
+
+@pytest.mark.asyncio
+async def test_validate_run_workdir_binding_requires_subagent_creator_tree(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    run = _build_run()
+    run.run_type = "subagent"
+    run.conversation_thread_id = "child-thread"
+    run.runtime_scope_id = "root-thread"
+    run.created_by_run_id = "creator-run"
+    run.subagent_thread_relation_id = 3
+    creator = SimpleNamespace(
+        id="creator-run",
+        run_type="chat",
+        conversation_thread_id="root-thread",
+        runtime_scope_id="root-thread",
+        conversation_id=2,
+        created_by_run_id=None,
+        subagent_thread_relation_id=None,
+    )
+
+    @asynccontextmanager
+    async def fake_session():
+        yield object()
+
+    async def fake_resolve(**kwargs):
+        if kwargs["thread_id"] == "child-thread":
+            return SimpleNamespace(conversation_id=run.conversation_id, workdir_path="projects/shared")
+        assert kwargs["thread_id"] == "root-thread"
+        return SimpleNamespace(conversation_id=creator.conversation_id, workdir_path="projects/shared")
+
+    class RunRepo:
+        def __init__(self, _db):
+            pass
+
+        async def get_subagent_run_with_creator(self, **kwargs):
+            assert kwargs == {
+                "uid": "user-1",
+                "created_by_run_id": "creator-run",
+                "run_id": "run-1",
+            }
+            return creator, run
+
+    monkeypatch.setattr(run_worker.pg_manager, "get_async_session_context", fake_session)
+    monkeypatch.setattr(run_worker, "resolve_workdir_binding", fake_resolve)
+    monkeypatch.setattr(run_worker, "AgentRunRepository", RunRepo)
+
+    binding = await run_worker._validate_run_workdir_binding(run)
+    assert binding.conversation_id == run.conversation_id
+
+    creator.runtime_scope_id = "corrupted-root"
+    with pytest.raises(run_worker.NonRetryableRunError, match="SubAgent Run"):
+        await run_worker._validate_run_workdir_binding(run)
 
 
 @pytest.mark.asyncio

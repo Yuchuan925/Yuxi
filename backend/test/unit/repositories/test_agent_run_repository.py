@@ -120,22 +120,25 @@ async def _seed_subagent_runs(db, *, relation_child_thread_id: str = "child-thre
     return child_run
 
 
-async def test_get_subagent_run_for_creator_returns_child_run(session):
+async def test_get_subagent_run_with_creator_returns_execution_pair(session):
     child_run = await _seed_subagent_runs(session)
 
-    result = await AgentRunRepository(session).get_subagent_run_for_creator(
+    result = await AgentRunRepository(session).get_subagent_run_with_creator(
         uid="user-1",
         created_by_run_id="parent-run",
         run_id="child-run",
     )
 
-    assert result is child_run
+    assert result is not None
+    creator_run, persisted_child_run = result
+    assert creator_run.id == "parent-run"
+    assert persisted_child_run is child_run
 
 
-async def test_get_subagent_run_for_creator_returns_none_for_relation_mismatch(session):
+async def test_get_subagent_run_with_creator_returns_none_for_relation_mismatch(session):
     await _seed_subagent_runs(session, relation_child_thread_id="other-child-thread")
 
-    result = await AgentRunRepository(session).get_subagent_run_for_creator(
+    result = await AgentRunRepository(session).get_subagent_run_with_creator(
         uid="user-1",
         created_by_run_id="parent-run",
         run_id="child-run",
@@ -176,6 +179,8 @@ async def test_create_subagent_run_persists_explicit_root_runtime_scope(session)
         request_id="child-request-scope",
         input_payload={},
         run_type="subagent",
+        created_by_run_id="root-run",
+        subagent_thread_relation_id=1,
     )
 
     assert run.runtime_scope_id == "root-thread"
@@ -381,6 +386,8 @@ async def _seed_thread_run(db, *, thread_id: str, run_id: str, status: str, run_
         status=status,
         request_id=f"req-{run_id}",
         run_type=run_type,
+        created_by_run_id="root-run" if run_type == "subagent" else None,
+        subagent_thread_relation_id=1 if run_type == "subagent" else None,
         input_payload={},
     )
     db.add(run)
@@ -652,11 +659,16 @@ async def test_pending_cancel_is_terminal_without_fake_worker_expiry(session):
         input_message_id=message.id,
     )
 
-    cancelled = await repo.request_cancel(run.id)
+    cancelled, cancelled_ids = await repo.request_cancel_execution_tree(
+        run_id=run.id,
+        uid="user-1",
+        cascade_descendants=False,
+    )
     reconciled, cancelled_descendants = await repo.reconcile_expired_leases(now=utc_now_naive() + timedelta(minutes=5))
     await session.refresh(message)
 
     assert cancelled is run
+    assert cancelled_ids == [run.id]
     assert run.status == "cancelled"
     assert run.error_type == "cancelled"
     assert run.worker_id is None
@@ -684,7 +696,11 @@ async def test_durable_cancel_wins_terminal_race_for_live_owner(session):
         lease_seconds=60,
         now=now,
     )
-    requested = await repo.request_cancel(run.id)
+    requested, cancelled_ids = await repo.request_cancel_execution_tree(
+        run_id=run.id,
+        uid="user-1",
+        cascade_descendants=False,
+    )
 
     _, completed = await repo.set_terminal_status(
         run.id,
@@ -701,6 +717,7 @@ async def test_durable_cancel_wins_terminal_race_for_live_owner(session):
     )
 
     assert acquired is True
+    assert cancelled_ids == [run.id]
     assert requested is run
     assert completed is False
     assert cancelled is True
@@ -712,7 +729,7 @@ async def test_terminal_root_atomically_cancels_active_execution_tree_descendant
     now = utc_now_naive()
     parent = await repo.create_run(
         run_id="tree-parent-run",
-        conversation_thread_id="tree-parent-thread",
+        conversation_thread_id="tree-runtime",
         runtime_scope_id="tree-runtime",
         agent_slug="main",
         uid="user-1",
@@ -728,6 +745,7 @@ async def test_terminal_root_atomically_cancels_active_execution_tree_descendant
         request_id="tree-child-request",
         input_payload={},
         created_by_run_id=parent.id,
+        subagent_thread_relation_id=1,
         run_type="subagent",
     )
     await repo.mark_running(parent.id, worker_id="parent-worker", lease_seconds=60, now=now)

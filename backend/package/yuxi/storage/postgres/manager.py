@@ -8,7 +8,12 @@ from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from psycopg_pool import AsyncConnectionPool
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from yuxi.storage.postgres.models_business import AGENT_RUN_TERMINAL_STATUSES, UNVIEWED_RUN_MARKER
+from yuxi.storage.postgres.models_business import (
+    AGENT_RUN_SHAPE_CONSTRAINT_NAME,
+    AGENT_RUN_SHAPE_CONSTRAINT_SQL,
+    AGENT_RUN_TERMINAL_STATUSES,
+    UNVIEWED_RUN_MARKER,
+)
 from yuxi.storage.postgres.models_business import Base as BusinessBase
 from yuxi.storage.postgres.models_knowledge import Base as KnowledgeBase
 from yuxi.utils import logger
@@ -100,6 +105,25 @@ RUNTIME_SCOPE_SCHEMA_STATEMENTS = (
     "ALTER TABLE IF EXISTS agent_runs ALTER COLUMN runtime_scope_id SET NOT NULL",
     "CREATE INDEX IF NOT EXISTS ix_agent_runs_runtime_scope_id ON agent_runs(runtime_scope_id)",
     ("CREATE INDEX IF NOT EXISTS ix_agent_runs_runtime_cleanup_pending ON agent_runs(runtime_cleanup_pending)"),
+    f"""
+    DO $$
+    BEGIN
+        IF NOT EXISTS (
+            SELECT 1
+            FROM pg_constraint
+            WHERE conname = '{AGENT_RUN_SHAPE_CONSTRAINT_NAME}'
+              AND conrelid = 'agent_runs'::regclass
+        ) THEN
+            BEGIN
+                ALTER TABLE agent_runs
+                ADD CONSTRAINT {AGENT_RUN_SHAPE_CONSTRAINT_NAME}
+                CHECK ({AGENT_RUN_SHAPE_CONSTRAINT_SQL}) NOT VALID;
+            EXCEPTION WHEN duplicate_object THEN
+                NULL;
+            END;
+        END IF;
+    END $$
+    """,
 )
 
 

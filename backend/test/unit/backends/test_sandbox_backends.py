@@ -36,10 +36,6 @@ def _runtime(
     *,
     thread_id: str | None = "thread-1",
     uid: str | None = "user-1",
-    skills: list[str] | None = None,
-    readable_skills: list[str] | None = None,
-    skill_sources: dict[str, str] | None = None,
-    visible_kbs: list[dict] | None = None,
 ):
     configurable = (
         {
@@ -55,10 +51,6 @@ def _runtime(
     return SimpleNamespace(
         config={"configurable": configurable},
         context=SimpleNamespace(
-            skills=skills or [],
-            _readable_skills=readable_skills,
-            _runtime_skill_sources=skill_sources or {},
-            _visible_knowledge_bases=visible_kbs or [],
             uid=uid,
             thread_id=thread_id,
             runtime_scope_id=thread_id,
@@ -79,22 +71,24 @@ def _make_provider(client) -> ProvisionerSandboxProvider:
     return provider
 
 
-def test_create_agent_composite_backend_uses_prepared_readable_skills(monkeypatch):
+def test_create_agent_composite_backend_uses_sandbox_filesystem(monkeypatch):
     monkeypatch.setattr("yuxi.agents.backends.sandbox.backend.get_sandbox_provider", lambda: object())
 
-    backend = create_agent_composite_backend(
-        _runtime(
-            readable_skills=["reporter"],
-            skill_sources={"reporter": "/tmp/reporter"},
-            visible_kbs=[{"slug": "db-1", "name": "Docs"}],
-        )
-    )
+    backend = create_agent_composite_backend(_runtime())
 
     assert isinstance(backend.default, ProvisionerSandboxBackend)
-    assert backend.routes["/skills/"]._selected_slugs == {"reporter"}
+    assert backend.routes == {}
     assert backend.artifacts_root == "/home/gem/user-data/projects/workdir-1"
-    assert "/skills/" in backend.routes
-    assert "/home/gem/kbs/" not in backend.routes
+
+
+def test_create_agent_composite_backend_derives_virtual_workdir_from_relative_path(monkeypatch):
+    monkeypatch.setattr("yuxi.agents.backends.sandbox.backend.get_sandbox_provider", lambda: object())
+    runtime = _runtime()
+    runtime.config["configurable"]["workdir_path"] = "/home/gem/user-data/projects/stale"
+
+    backend = create_agent_composite_backend(runtime)
+
+    assert backend.artifacts_root == WORKDIR_PATH
 
 
 def test_sandbox_provider_release_deletes_sandbox_and_clears_cache():
@@ -227,48 +221,16 @@ async def test_sync_agent_context_skills_projects_all_user_authorized_skills(mon
         workdir_relative_path=WORKDIR_RELATIVE_PATH,
         workdir_path=WORKDIR_PATH,
         uid="user-1",
-        _readable_skills=["worker-skill", "personal-skill"],
-        _runtime_skill_sources={
-            "worker-skill": "/tmp/worker-skill",
-            "authorized-unselected": "/tmp/authorized-unselected",
-        },
     )
 
     await sync_agent_context_skills(context)
 
     assert calls == ["user-1"]
-    assert context._runtime_skill_sources == {
-        "worker-skill": "/tmp/worker-skill",
-        "authorized-unselected": "/tmp/authorized-unselected",
-    }
-
-
-@pytest.mark.parametrize("invalid_sources", [None, [], {"": "/tmp/demo"}, {"demo": ""}])
-def test_create_agent_composite_backend_rejects_missing_or_invalid_skill_sources(invalid_sources):
-    """授权来源契约缺失时不得把用户级投影解释为空授权并清理。"""
-    context = SimpleNamespace(uid="user-1")
-    if invalid_sources is not None:
-        context._runtime_skill_sources = invalid_sources
-    runtime = SimpleNamespace(
-        config={"configurable": {"thread_id": "thread-1", "uid": "user-1"}},
-        context=context,
-    )
-
-    with pytest.raises(ValueError, match="_runtime_skill_sources"):
-        create_agent_composite_backend(runtime)
 
 
 def test_create_agent_composite_backend_requires_thread_id():
     with pytest.raises(ValueError, match="thread_id is required"):
         create_agent_composite_backend(_runtime(thread_id=None))
-
-
-def test_create_agent_composite_backend_ignores_unprepared_context_skills(monkeypatch):
-    monkeypatch.setattr("yuxi.agents.backends.sandbox.backend.get_sandbox_provider", lambda: object())
-
-    backend = create_agent_composite_backend(_runtime(skills=["configured"], readable_skills=None))
-
-    assert backend.routes["/skills/"]._selected_slugs == set()
 
 
 def test_create_agent_filesystem_middleware_uses_context_scope(monkeypatch):
@@ -279,15 +241,12 @@ def test_create_agent_filesystem_middleware_uses_context_scope(monkeypatch):
         workdir_relative_path=WORKDIR_RELATIVE_PATH,
         workdir_path=WORKDIR_PATH,
         uid="user-1",
-        _readable_skills=["worker-skill"],
-        _runtime_skill_sources={"worker-skill": "/tmp/worker-skill"},
     )
 
     middleware = create_agent_filesystem_middleware(context=context)
     backend = middleware.backend(None)
 
     assert backend.default._thread_id == "parent-thread"
-    assert backend.routes["/skills/"]._selected_slugs == {"worker-skill"}
 
 
 def test_context_backend_construction_does_not_sync_skill_projection(monkeypatch, tmp_path) -> None:
@@ -305,8 +264,6 @@ def test_context_backend_construction_does_not_sync_skill_projection(monkeypatch
         workdir_relative_path=WORKDIR_RELATIVE_PATH,
         workdir_path=WORKDIR_PATH,
         uid="user-1",
-        _readable_skills=["shared-skill"],
-        _runtime_skill_sources={"shared-skill": str(source_dir)},
     )
 
     middleware = create_agent_filesystem_middleware(context=context)
@@ -315,45 +272,6 @@ def test_context_backend_construction_does_not_sync_skill_projection(monkeypatch
 
     user_skill = skill_service.get_user_skills_root_dir("user-1") / "shared-skill"
     assert not user_skill.exists()
-
-
-def test_context_backend_rebuild_drops_shared_projection_after_personal_override(monkeypatch):
-    """运行中同名个人 Skill 生效后，后续文件工具不得恢复旧共享投影。"""
-    monkeypatch.setattr("yuxi.agents.backends.sandbox.backend.get_sandbox_provider", lambda: object())
-    context = SimpleNamespace(
-        thread_id="thread-1",
-        runtime_scope_id="thread-1",
-        workdir_relative_path=WORKDIR_RELATIVE_PATH,
-        workdir_path=WORKDIR_PATH,
-        uid="user-1",
-        _readable_skills=["demo"],
-        _runtime_skill_sources={"demo": "/tmp/shared-demo"},
-    )
-    middleware = create_agent_filesystem_middleware(context=context)
-
-    before_install = middleware.backend(None)
-    context._runtime_skill_sources.pop("demo")
-    after_install = middleware.backend(None)
-
-    assert before_install.routes["/skills/"]._selected_slugs == {"demo"}
-    assert after_install.routes["/skills/"]._selected_slugs == set()
-
-
-def test_create_agent_composite_backend_exposes_all_authorized_skill_sources(monkeypatch):
-    """用户授权但未选中的 Skill 仍可读，选中状态只由 Prompt 与工具管理。"""
-    monkeypatch.setattr("yuxi.agents.backends.sandbox.backend.get_sandbox_provider", lambda: object())
-
-    backend = create_agent_composite_backend(
-        _runtime(
-            readable_skills=["shared-skill", "personal-skill"],
-            skill_sources={
-                "shared-skill": "/tmp/shared-skill",
-                "personal-skill": "/tmp/personal-skill",
-            },
-        )
-    )
-
-    assert backend.routes["/skills/"]._selected_slugs == {"shared-skill", "personal-skill"}
 
 
 def test_create_agent_filesystem_middleware_uses_outputs_for_internal_artifacts() -> None:
@@ -777,6 +695,16 @@ def test_provisioner_denies_reads_outside_allowed_roots(monkeypatch) -> None:
     result = backend.read("/etc/passwd")
 
     assert result.error == "permission denied for read on '/etc/passwd'"
+
+
+def test_provisioner_rejects_skill_projection_writes(monkeypatch) -> None:
+    monkeypatch.setattr("yuxi.agents.backends.sandbox.backend.get_sandbox_provider", lambda: object())
+    backend = ProvisionerSandboxBackend(thread_id="thread-1", uid="user-1")
+    skill_path = "/home/gem/skills/demo/SKILL.md"
+
+    assert "permission denied" in backend.write(skill_path, "content").error
+    assert "permission denied" in backend.edit(skill_path, "old", "new").error
+    assert backend.upload_files([(skill_path, b"content")])[0].error == "permission_denied"
 
 
 def test_provisioner_allows_project_upload_writes(monkeypatch) -> None:

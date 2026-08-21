@@ -12,8 +12,6 @@ from pydantic import BaseModel, Field
 
 from yuxi.agents.backends.sandbox.download import download_sandbox_directory
 from yuxi.agents.toolkits.registry import tool
-from yuxi.repositories.agent_repository import AgentRepository
-from yuxi.repositories.conversation_repository import ConversationRepository
 from yuxi.storage.postgres.manager import pg_manager
 from yuxi.utils.logging_config import logger
 from yuxi.utils.paths import VIRTUAL_PERSONAL_SKILLS_PATH
@@ -73,32 +71,6 @@ def _prepare_skill_from_sandbox(
     return staging
 
 
-async def _enable_skills_in_current_config(db, thread_id: str, uid: str, skill_slugs: list[str]) -> bool:
-    """在当前会话绑定且当前用户拥有的 Agent 配置中启用新安装的 skill。"""
-    conv_repo = ConversationRepository(db)
-    conv = await conv_repo.get_conversation_by_thread_id(thread_id)
-    if not conv or str(conv.uid) != str(uid):
-        return False
-
-    agent_repo = AgentRepository(db)
-    agent = await agent_repo.get_by_slug(conv.agent_id)
-    if not agent or agent.created_by != str(uid):
-        return False
-
-    config_json = dict(agent.config_json or {})
-    context = dict(config_json.get("context") or {})
-    skills = [item for item in context.get("skills") or [] if isinstance(item, str) and item.strip()]
-    seen = set(skills)
-    for slug in skill_slugs:
-        if slug not in seen:
-            skills.append(slug)
-            seen.add(slug)
-    context["skills"] = skills
-    config_json["context"] = context
-    await agent_repo.update(agent, config_json=config_json, updated_by=str(uid))
-    return True
-
-
 async def _run_install_task(
     source: str,
     runtime: ToolRuntime,
@@ -135,14 +107,11 @@ async def _run_install_task(
         )
 
     try:
-        from yuxi.agents.skills.runtime import build_dependency_map, build_prompt_metadata
         from yuxi.agents.skills.service import (
+            enable_personal_skills_for_agent_config,
             install_personal_skill_dir,
-            list_personal_skills,
-            normalize_string_list,
         )
 
-        installed_items = []
         installed_slugs: list[str] = []
         failed_items: list[dict] = []
         config_success = True
@@ -159,10 +128,7 @@ async def _run_install_task(
                     getattr(runtime_context, "workdir_path", None),
                 )
                 item = await install_personal_skill_dir(uid, source_dir)
-                installed_items = [item]
                 installed_slugs = [item.slug]
-                async with pg_manager.get_async_session_context() as db:
-                    config_success = await _enable_skills_in_current_config(db, thread_id, uid, installed_slugs)
         else:
             _skill_names = skill_names or []
             if not _skill_names:
@@ -170,7 +136,7 @@ async def _run_install_task(
                     update={
                         "messages": [
                             ToolMessage(
-                                content="❌ 错误: 从 Git 安装时必须通过 skill_names 指定技能名称",
+                                content="错误：从 Git 安装时必须通过 skill_names 指定技能名称",
                                 tool_call_id=tool_call_id,
                             )
                         ]
@@ -186,50 +152,35 @@ async def _run_install_task(
                         failed_items.append(result)
                         continue
                     try:
-                        item = await install_personal_skill_dir(
-                            uid,
-                            result["source_dir"],
-                            refresh_cache=False,
-                        )
-                        installed_items.append(item)
+                        item = await install_personal_skill_dir(uid, result["source_dir"])
                         installed_slugs.append(item.slug)
                     except Exception as e:
                         failed_items.append({"slug": result["slug"], "success": False, "error": str(e)})
 
-                if installed_slugs:
-                    await list_personal_skills(uid, refresh=True)
-                    async with pg_manager.get_async_session_context() as db:
-                        config_success = await _enable_skills_in_current_config(db, thread_id, uid, installed_slugs)
             finally:
                 await preparation.cleanup()
 
-        for attr_name in ("skills", "_prompt_skills", "_readable_skills"):
-            current = normalize_string_list(getattr(runtime_context, attr_name, None))
-            setattr(runtime_context, attr_name, normalize_string_list(current + installed_slugs))
-
-        prompt_metadata = dict(getattr(runtime_context, "_runtime_skill_metadata", {}) or {})
-        dependency_map = dict(getattr(runtime_context, "_runtime_skill_dependency_map", {}) or {})
-        prompt_metadata.update(build_prompt_metadata(installed_items))
-        dependency_map.update(build_dependency_map(installed_items))
-        setattr(runtime_context, "_runtime_skill_metadata", prompt_metadata)
-        setattr(runtime_context, "_runtime_skill_dependency_map", dependency_map)
+        if installed_slugs:
+            async with pg_manager.get_async_session_context() as db:
+                config_success = await enable_personal_skills_for_agent_config(
+                    db, thread_id=thread_id, uid=uid, skill_slugs=installed_slugs
+                )
 
         lines = []
         if installed_slugs:
-            lines.append(f"✅ 成功安装并激活技能: {', '.join(installed_slugs)}")
+            lines.append(f"已安装 Skill: {', '.join(installed_slugs)}")
             for slug in installed_slugs:
-                lines.append(f"📁 安装位置: {VIRTUAL_PERSONAL_SKILLS_PATH}/{slug}")
+                lines.append(f"Skill 路径: {VIRTUAL_PERSONAL_SKILLS_PATH}/{slug}/SKILL.md")
         if failed_items:
             for item in failed_items:
-                lines.append(f"❌ 安装失败 ({item['slug']}): {item.get('error', '未知错误')}")
+                lines.append(f"安装失败 ({item['slug']}): {item.get('error', '未知错误')}")
         if not config_success:
-            lines.append("⚠️ Skill 已持久安装到个人 Skill 源，并在当前会话激活；当前 Agent 配置未更新")
+            lines.append("Skill 已安装，但当前 Agent 配置未更新，请手动启用")
         if not installed_slugs and not failed_items:
-            lines.append("ℹ️ 未发现需要安装的技能")
+            lines.append("未发现需要安装的 Skill")
 
         return Command(
             update={
-                "activated_skills": installed_slugs,
                 "messages": [ToolMessage(content="\n".join(lines), tool_call_id=tool_call_id)],
             }
         )
@@ -240,7 +191,7 @@ async def _run_install_task(
             update={
                 "messages": [
                     ToolMessage(
-                        content=f"❌ 安装异常: {str(e)}",
+                        content=f"安装异常：{str(e)}",
                         tool_call_id=tool_call_id,
                     )
                 ]
@@ -260,5 +211,5 @@ async def install_skill(
     runtime: ToolRuntime = None,
     tool_call_id: Annotated[str, InjectedToolCallId] = "",
 ) -> Command:
-    """安装新的 Skill 到当前用户的私有空间，并在当前主智能体会话中激活。"""
+    """安装新的 Skill 到当前用户私有空间，并返回可直接读取的 Skill 路径。"""
     return await _run_install_task(source, runtime, tool_call_id, skill_names)

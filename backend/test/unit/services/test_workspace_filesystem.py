@@ -78,7 +78,7 @@ def test_create_authorized_directory_uses_owner_only_mode(
 
     previous_umask = os.umask(0o077)
     try:
-        path = WorkspaceFilesystem("user-1").create_authorized_directory(
+        metadata = WorkspaceFilesystem("user-1").create_authorized_directory(
             "/home/gem/user-data",
             "project",
             root="/home/gem/user-data",
@@ -86,5 +86,27 @@ def test_create_authorized_directory_uses_owner_only_mode(
     finally:
         os.umask(previous_umask)
 
-    assert path == "/home/gem/user-data/project"
+    assert metadata["is_dir"] is True
+    assert metadata["size"] == 0
     assert (workspace_root / "project").stat().st_mode & 0o777 == 0o700
+
+
+def test_write_rejects_final_symlink_without_touching_target(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    workspace_root = tmp_path / "workspace"
+    workdir = workspace_root / "projects" / "workdir-1"
+    workdir.mkdir(parents=True)
+    outside = tmp_path / "outside.txt"
+    outside.write_text("outside", encoding="utf-8")
+    (workdir / "note.txt").symlink_to(outside)
+    monkeypatch.setattr(workspace_filesystem_module, "user_workspace_dir", lambda _uid: workspace_root)
+
+    with pytest.raises(PermissionError, match="symlink"):
+        WorkspaceFilesystem("user-1").write_authorized_file(
+            "/home/gem/user-data/projects/workdir-1/note.txt",
+            b"replacement",
+        )
+
+    assert outside.read_text(encoding="utf-8") == "outside"

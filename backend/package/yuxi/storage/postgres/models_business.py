@@ -6,6 +6,7 @@ from typing import Any
 from sqlalchemy import (
     JSON,
     Boolean,
+    CheckConstraint,
     Column,
     DateTime,
     Float,
@@ -29,6 +30,27 @@ JSON_VALUE = JSON().with_variant(JSONB, "postgresql")
 MAX_LOGIN_FAILED_ATTEMPTS = 5
 LOGIN_LOCK_DURATION_SECONDS = 300
 AGENT_RUN_TERMINAL_STATUSES = ("completed", "failed", "cancelled", "interrupted")
+AGENT_RUN_SHAPE_CONSTRAINT_NAME = "ck_agent_runs_nonterminal_shape"
+AGENT_RUN_SHAPE_CONSTRAINT_SQL = """
+status IN ('completed', 'failed', 'cancelled', 'interrupted')
+OR (
+    runtime_scope_id <> ''
+ AND conversation_thread_id <> ''
+ AND ((run_type = 'chat'
+     AND runtime_scope_id = conversation_thread_id
+     AND created_by_run_id IS NULL
+     AND subagent_thread_relation_id IS NULL)
+ OR (run_type = 'resume'
+     AND runtime_scope_id = conversation_thread_id
+     AND created_by_run_id IS NOT NULL
+     AND subagent_thread_relation_id IS NULL)
+ OR (run_type = 'subagent'
+     AND created_by_run_id IS NOT NULL
+     AND subagent_thread_relation_id IS NOT NULL))
+)
+"""
+
+
 # 新建线程的初始已查看标记，用于区分"尚无任何 Run"与"上线前的历史会话"，
 # 避免 startup 回填把后续新产生的未读状态误清为已读。不会与真实 Run id 冲突。
 UNVIEWED_RUN_MARKER = "__unviewed__"
@@ -913,6 +935,13 @@ class AgentRun(Base):
     finished_at = Column(DateTime, nullable=True, comment="Finish time")
     created_at = Column(DateTime, default=utc_now_naive, comment="Creation time")
     updated_at = Column(DateTime, default=utc_now_naive, onupdate=utc_now_naive, comment="Update time")
+
+    __table_args__ = (
+        CheckConstraint(
+            AGENT_RUN_SHAPE_CONSTRAINT_SQL,
+            name=AGENT_RUN_SHAPE_CONSTRAINT_NAME,
+        ),
+    )
 
     def to_dict(self) -> dict[str, Any]:
         return {

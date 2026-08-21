@@ -11,21 +11,16 @@ from pathlib import Path, PurePosixPath
 from yuxi.agents.backends.sandbox.backend import FileTransferLimitError
 from yuxi.agents.backends.sandbox.paths import user_workspace_dir, workspace_uid_dirname
 from yuxi.config import get_skill_projection_dir
-from yuxi.utils.paths import VIRTUAL_PATH_PREFIX, VIRTUAL_SKILLS_PATH, open_directory_fd
+from yuxi.utils.paths import VIRTUAL_PATH_PREFIX, VIRTUAL_SKILLS_PATH, open_directory_fd, open_regular_file_fd
 
 
 class WorkspaceFilesystem:
     """以 uid 为边界直接访问 UserWorkspace 与只读 Skill projection。"""
 
     def __init__(self, uid: str):
-        self.uid = str(uid)
-        self.workspace_root = user_workspace_dir(self.uid)
-        self.skills_root = get_skill_projection_dir() / workspace_uid_dirname(self.uid)
-
-    def ensure_available(self) -> None:
-        """确认 UserWorkspace 根是未经过 symlink 的真实目录。"""
-        directory_fd = os.open(self.workspace_root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
-        os.close(directory_fd)
+        uid = str(uid)
+        self._workspace_root = user_workspace_dir(uid)
+        self._skills_root = get_skill_projection_dir() / workspace_uid_dirname(uid)
 
     def list_authorized_directory(self, path: str, *, root: str) -> list[dict]:
         """列出 Workdir 内的普通文件与真实目录。"""
@@ -38,14 +33,7 @@ class WorkspaceFilesystem:
                 item_stat = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
                 if not (stat.S_ISDIR(item_stat.st_mode) or stat.S_ISREG(item_stat.st_mode)):
                     continue
-                entries.append(
-                    {
-                        "name": name,
-                        "is_dir": stat.S_ISDIR(item_stat.st_mode),
-                        "size": 0 if stat.S_ISDIR(item_stat.st_mode) else item_stat.st_size,
-                        "modified_at": item_stat.st_mtime,
-                    }
-                )
+                entries.append({"name": name, **self._metadata_from_stat(item_stat)})
             return entries
         finally:
             os.close(directory_fd)
@@ -54,35 +42,64 @@ class WorkspaceFilesystem:
         """把授权普通文件有界复制到服务临时文件。"""
         if max_bytes < 0:
             raise ValueError("file download limit must be non-negative")
-        base, parts = self._resolve_virtual_path(path, writable=False)
-        if not parts:
-            raise IsADirectoryError(path)
-        parent_fd = self._open_directory(base, parts[:-1])
-        source_fd = target_fd = None
-        try:
+        target_fd = None
+        with self._open_authorized_regular_file(path, writable=False) as (source_fd, _source_stat):
             try:
-                source_fd = os.open(parts[-1], os.O_RDONLY | os.O_NOFOLLOW, dir_fd=parent_fd)
-            except OSError as exc:
-                if exc.errno == errno.ELOOP:
-                    raise PermissionError("symlink paths are not allowed") from exc
-                raise
-            source_stat = os.fstat(source_fd)
-            if not stat.S_ISREG(source_stat.st_mode):
-                raise IsADirectoryError(path) if stat.S_ISDIR(source_stat.st_mode) else PermissionError(path)
-            target_fd = os.open(target_path, os.O_WRONLY | os.O_TRUNC | os.O_NOFOLLOW)
+                target_fd = os.open(target_path, os.O_WRONLY | os.O_TRUNC | os.O_NOFOLLOW)
+                total = 0
+                while chunk := os.read(source_fd, 1024 * 1024):
+                    total += len(chunk)
+                    if total > max_bytes:
+                        raise FileTransferLimitError("file exceeds transfer limit")
+                    self._write_all(target_fd, chunk)
+                return total
+            finally:
+                if target_fd is not None:
+                    os.close(target_fd)
+
+    def read_authorized_file(self, path: str, max_bytes: int) -> bytes:
+        """在 no-follow 边界内有界读取普通文件。"""
+        if max_bytes < 0:
+            raise ValueError("file read limit must be non-negative")
+        with self._open_authorized_regular_file(path, writable=False) as (source_fd, source_stat):
+            if source_stat.st_size > max_bytes:
+                raise FileTransferLimitError("file exceeds transfer limit")
+            chunks: list[bytes] = []
             total = 0
             while chunk := os.read(source_fd, 1024 * 1024):
                 total += len(chunk)
                 if total > max_bytes:
                     raise FileTransferLimitError("file exceeds transfer limit")
-                self._write_all(target_fd, chunk)
-            return total
-        finally:
-            if target_fd is not None:
-                os.close(target_fd)
-            if source_fd is not None:
-                os.close(source_fd)
-            os.close(parent_fd)
+                chunks.append(chunk)
+            return b"".join(chunks)
+
+    def write_authorized_file(self, path: str, content: bytes) -> dict:
+        """通过已打开的普通文件描述符覆盖内容，拒绝 symlink 与目录。"""
+        with self._open_authorized_regular_file(path, writable=True) as (target_fd, _target_stat):
+            os.ftruncate(target_fd, 0)
+            self._write_all(target_fd, content)
+            final_stat = os.fstat(target_fd)
+            return self._metadata_from_stat(final_stat)
+
+    def stat_authorized_path(self, path: str, *, root: str) -> dict:
+        """在 no-follow 边界内读取普通文件或真实目录元数据。"""
+        self._require_within(path, root)
+        base, parts = self._resolve_virtual_path(path, writable=False)
+        if not parts:
+            item_stat = os.stat(base, follow_symlinks=False)
+            is_dir = stat.S_ISDIR(item_stat.st_mode)
+        else:
+            parent_fd = self._open_directory(base, parts[:-1])
+            try:
+                item_stat = os.stat(parts[-1], dir_fd=parent_fd, follow_symlinks=False)
+            finally:
+                os.close(parent_fd)
+            if stat.S_ISLNK(item_stat.st_mode):
+                raise PermissionError("symlink paths are not allowed")
+            is_dir = stat.S_ISDIR(item_stat.st_mode)
+        if not (is_dir or stat.S_ISREG(item_stat.st_mode)):
+            raise PermissionError("only regular files and directories are allowed")
+        return self._metadata_from_stat(item_stat)
 
     def upload_authorized_file_from_path(
         self,
@@ -90,7 +107,7 @@ class WorkspaceFilesystem:
         source_path: str,
         *,
         overwrite: bool = True,
-    ) -> None:
+    ) -> dict:
         """从受信任服务临时文件原子写入 UserWorkspace。"""
         base, parts = self._resolve_virtual_path(path, writable=True)
         if not parts:
@@ -110,6 +127,7 @@ class WorkspaceFilesystem:
             )
             while chunk := os.read(source_fd, 1024 * 1024):
                 self._write_all(target_fd, chunk)
+            final_stat = os.fstat(target_fd)
             os.close(target_fd)
             target_fd = None
             if overwrite:
@@ -123,6 +141,7 @@ class WorkspaceFilesystem:
                     follow_symlinks=False,
                 )
                 os.unlink(temp_name, dir_fd=parent_fd)
+            return self._metadata_from_stat(final_stat)
         finally:
             if target_fd is not None:
                 os.close(target_fd)
@@ -134,7 +153,7 @@ class WorkspaceFilesystem:
                 pass
             os.close(parent_fd)
 
-    def create_authorized_directory(self, parent_path: str, name: str, *, root: str) -> str:
+    def create_authorized_directory(self, parent_path: str, name: str, *, root: str) -> dict:
         """在 Workdir 内创建一个单层目录。"""
         if not name or name in {".", ".."} or "/" in name or "\\" in name:
             raise ValueError("directory name must be one path component")
@@ -143,9 +162,10 @@ class WorkspaceFilesystem:
         parent_fd = self._open_directory(base, parts)
         try:
             os.mkdir(name, 0o700, dir_fd=parent_fd)
+            item_stat = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
         finally:
             os.close(parent_fd)
-        return f"{parent_path.rstrip('/')}/{name}"
+        return self._metadata_from_stat(item_stat)
 
     def delete_authorized_path(self, path: str, *, root: str) -> None:
         """递归删除 Workdir 内的真实文件或目录，不允许删除根。"""
@@ -157,20 +177,10 @@ class WorkspaceFilesystem:
         finally:
             os.close(parent_fd)
 
-    def regular_file_exists(self, path: str) -> bool:
-        """确认路径是授权根内未经过 symlink 的普通文件。"""
-        try:
-            base, parts = self._resolve_virtual_path(path, writable=False)
-            if not parts:
-                return False
-            parent_fd = self._open_directory(base, parts[:-1])
-            try:
-                item_stat = os.stat(parts[-1], dir_fd=parent_fd, follow_symlinks=False)
-                return stat.S_ISREG(item_stat.st_mode)
-            finally:
-                os.close(parent_fd)
-        except (FileNotFoundError, NotADirectoryError, PermissionError, ValueError):
-            return False
+    def _open_authorized_regular_file(self, path: str, *, writable: bool):
+        """固定父目录与最终普通文件，统一拒绝 symlink、目录和特殊文件。"""
+        base, parts = self._resolve_virtual_path(path, writable=writable)
+        return open_regular_file_fd(base, parts, writable=writable)
 
     def _resolve_virtual_path(self, path: str, *, writable: bool) -> tuple[Path, tuple[str, ...]]:
         raw = str(path or "").strip()
@@ -181,11 +191,11 @@ class WorkspaceFilesystem:
         workspace_prefix = VIRTUAL_PATH_PREFIX.rstrip("/")
         skills_prefix = VIRTUAL_SKILLS_PATH.rstrip("/")
         if normalized == workspace_prefix:
-            return self.workspace_root, ()
+            return self._workspace_root, ()
         if normalized.startswith(f"{workspace_prefix}/"):
-            return self.workspace_root, tuple(PurePosixPath(normalized[len(workspace_prefix) + 1 :]).parts)
+            return self._workspace_root, tuple(PurePosixPath(normalized[len(workspace_prefix) + 1 :]).parts)
         if not writable and normalized.startswith(f"{skills_prefix}/"):
-            return self.skills_root, tuple(PurePosixPath(normalized[len(skills_prefix) + 1 :]).parts)
+            return self._skills_root, tuple(PurePosixPath(normalized[len(skills_prefix) + 1 :]).parts)
         raise PermissionError("path is outside the current UserWorkspace")
 
     @staticmethod
@@ -198,6 +208,15 @@ class WorkspaceFilesystem:
             raise ValueError("operation cannot target the Workdir root")
         if not normalized_path.startswith(f"{normalized_root}/"):
             raise ValueError("path is outside the Workdir")
+
+    @staticmethod
+    def _metadata_from_stat(item_stat: os.stat_result) -> dict:
+        is_dir = stat.S_ISDIR(item_stat.st_mode)
+        return {
+            "is_dir": is_dir,
+            "size": 0 if is_dir else item_stat.st_size,
+            "modified_at": item_stat.st_mtime,
+        }
 
     @staticmethod
     def _open_directory(base: Path, parts: tuple[str, ...], *, create: bool = False) -> int:

@@ -9,6 +9,7 @@ on:
       - 'backend/test/integration/**'
       - 'backend/test/e2e/**'
       - 'backend/test/support/**'
+      - 'docker/**'
       - 'docker-compose.yml'
       - 'docker-compose.prod.yml'
       - 'scripts/migrate-storage.sh'
@@ -22,6 +23,7 @@ on:
       - 'backend/test/integration/**'
       - 'backend/test/e2e/**'
       - 'backend/test/support/**'
+      - 'docker/**'
       - 'docker-compose.yml'
       - 'docker-compose.prod.yml'
       - 'scripts/migrate-storage.sh'
@@ -67,7 +69,7 @@ jobs:
             sleep 2
           done
           docker compose ps
-          docker compose logs api worker --tail 200
+          docker compose logs api worker sandbox-provisioner --tail 200
           exit 1
       - name: Initialize isolated E2E administrator
         run: |
@@ -153,7 +155,7 @@ jobs:
         run: docker compose exec -T api uv run --no-sync --no-dev pytest test/integration/services/test_project_workdir_provisioner.py -q
       - name: Runtime logs on failure
         if: failure()
-        run: docker compose logs api worker --tail 300
+        run: docker compose logs api worker sandbox-provisioner --tail 300
       - name: Stop runtime topology
         if: always()
         run: docker compose down -v

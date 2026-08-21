@@ -51,14 +51,14 @@ class AgentRunRepository:
         )
         return result.scalar_one_or_none()
 
-    async def get_subagent_run_for_creator(
+    async def get_subagent_run_with_creator(
         self,
         *,
         uid: str,
         created_by_run_id: str,
         run_id: str,
-    ) -> AgentRun | None:
-        """读取当前父 run 作用域内的子智能体 run，并校验线程关系一致性。"""
+    ) -> tuple[AgentRun, AgentRun] | None:
+        """读取父子 Run，并校验当前执行树的线程关系一致性。"""
         creator_run = await self.get_run_for_user(created_by_run_id, uid)
         if not creator_run:
             return None
@@ -81,9 +81,12 @@ class AgentRunRepository:
         relation = result.scalar_one_or_none()
         if not relation or relation.parent_conversation_id != creator_run.conversation_id:
             return None
-        if relation.child_thread_id != run.conversation_thread_id:
+        if (
+            relation.child_conversation_id != run.conversation_id
+            or relation.child_thread_id != run.conversation_thread_id
+        ):
             return None
-        return run
+        return creator_run, run
 
     async def get_latest_subagent_run_by_thread_for_user(
         self, conversation_thread_id: str, uid: str
@@ -180,19 +183,6 @@ class AgentRunRepository:
         )
         return list(result.scalars().all())
 
-    async def list_active_child_runs_for_user(self, created_by_run_id: str, uid: str) -> list[AgentRun]:
-        """列出由指定 run 创建且尚未结束的子 run，用于父 run 取消时级联处理。"""
-        result = await self.db.execute(
-            select(AgentRun)
-            .where(
-                AgentRun.created_by_run_id == created_by_run_id,
-                AgentRun.uid == str(uid),
-                AgentRun.status.notin_(TERMINAL_RUN_STATUSES),
-            )
-            .order_by(AgentRun.created_at.asc(), AgentRun.id.asc())
-        )
-        return list(result.scalars().all())
-
     async def get_active_run_by_thread_for_user(
         self,
         *,
@@ -260,10 +250,11 @@ class AgentRunRepository:
         input_message_id: int | None = None,
     ) -> AgentRun:
         """登记一条 run 记录；输入正文和图片应通过 input_message_id 指向 Message。"""
+        runtime_scope = str(conversation_thread_id) if runtime_scope_id is None else str(runtime_scope_id).strip()
         run = AgentRun(
             id=run_id,
             conversation_thread_id=conversation_thread_id,
-            runtime_scope_id=str(runtime_scope_id or conversation_thread_id),
+            runtime_scope_id=runtime_scope,
             agent_slug=agent_slug,
             uid=str(uid),
             request_id=request_id,
@@ -571,13 +562,29 @@ class AgentRunRepository:
             await self.db.flush()
         return run_ids
 
-    async def request_cancel(self, run_id: str) -> AgentRun | None:
-        """持久化用户取消；未开始的 Run 直接形成 cancelled 终态。"""
-        run = await self._lock_run(run_id)
-        if not run:
-            return None
+    async def request_cancel_execution_tree(
+        self,
+        *,
+        run_id: str,
+        uid: str,
+        cascade_descendants: bool,
+    ) -> tuple[AgentRun | None, list[str]]:
+        """按 root 到 descendants 的固定锁顺序取消一棵执行树。"""
+        run = await self.lock_run_for_user(run_id, str(uid))
+        if run is None:
+            return None, []
+        await self._request_cancel_locked(run)
+        cancelled_ids = [run.id]
+        if cascade_descendants:
+            cancelled_ids.extend(
+                child_id for child_id, _thread_id in await self.cancel_active_execution_tree_descendants(run)
+            )
+        return run, cancelled_ids
+
+    async def _request_cancel_locked(self, run: AgentRun) -> None:
+        """转换一条已由当前事务锁定的 Run。"""
         if run.status in TERMINAL_RUN_STATUSES:
-            return run
+            return
         current_time = utc_now_naive()
         if run.status == "pending" and run.worker_id is None and run.started_at is None:
             run.status = "cancelled"
@@ -588,11 +595,10 @@ class AgentRunRepository:
             run.runtime_cleanup_pending = False
             await self._project_input_delivery_status(run)
             await self.db.flush()
-            return run
+            return
         run.status = "cancel_requested"
         run.updated_at = current_time
         await self.db.flush()
-        return run
 
     async def cancel_active_execution_tree_descendants(self, root_run: AgentRun) -> list[tuple[str, str]]:
         """在父 Run 状态事务内请求仍活跃的 execution tree 后代停止。"""

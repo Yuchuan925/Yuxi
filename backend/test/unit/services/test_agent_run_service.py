@@ -1404,19 +1404,12 @@ async def test_cancel_agent_run_view_cascades_children(monkeypatch: pytest.Monke
         def __init__(self, db):
             self.db = db
 
-        async def get_run_for_user(self, run_id: str, uid: str):
+        async def request_cancel_execution_tree(self, *, run_id: str, uid: str, cascade_descendants: bool):
             assert run_id == "parent-run"
             assert uid == "user-1"
-            return parent_run
-
-        async def list_active_child_runs_for_user(self, created_by_run_id: str, uid: str):
-            assert created_by_run_id == "parent-run"
-            assert uid == "user-1"
-            return child_runs
-
-        async def request_cancel(self, run_id: str):
-            requested.append(run_id)
-            return parent_run if run_id == "parent-run" else SimpleNamespace(id=run_id)
+            assert cascade_descendants is True
+            requested.extend(["parent-run", *(child.id for child in child_runs)])
+            return parent_run, list(requested)
 
     async def fake_publish_cancel_signal(run_id: str):
         signals.append((run_id, db.committed))
@@ -1432,8 +1425,8 @@ async def test_cancel_agent_run_view_cascades_children(monkeypatch: pytest.Monke
     )
 
     assert result["run"]["id"] == "parent-run"
-    assert requested == ["child-1", "child-2", "parent-run"]
-    assert signals == [("child-1", True), ("child-2", True), ("parent-run", True)]
+    assert requested == ["parent-run", "child-1", "child-2"]
+    assert signals == [("parent-run", True), ("child-1", True), ("child-2", True)]
 
 
 @pytest.mark.asyncio

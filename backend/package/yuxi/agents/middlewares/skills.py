@@ -14,11 +14,7 @@ from langchain.tools.tool_node import ToolCallRequest
 from langgraph.types import Command
 
 from yuxi.agents.mcp.service import get_enabled_mcp_tools
-from yuxi.agents.skills.runtime import (
-    SkillDependencyNode,
-    SkillPromptMetadata,
-    build_dependency_bundle,
-)
+from yuxi.agents.skills.runtime import RuntimeSkill, build_dependency_bundle
 from yuxi.agents.skills.service import is_valid_skill_slug, normalize_string_list
 from yuxi.agents.toolkits import get_all_tool_instances
 from yuxi.utils.logging_config import logger
@@ -84,24 +80,27 @@ class SkillsMiddleware(AgentMiddleware):
         runtime_context = request.runtime.context
 
         if self.enable_skills_prompt:
-            prompt_skills = getattr(runtime_context, "_prompt_skills", None)
-            if isinstance(prompt_skills, list):
-                prompt_skills = normalize_string_list(prompt_skills)
-                if prompt_skills:
-                    skills_meta = self._collect_prompt_metadata(prompt_skills, runtime_context)
-                    skills_section = self._build_skills_section(skills_meta)
-                    system_message = append_to_system_message(getattr(request, "system_message", None), skills_section)
-                    request = request.override(system_message=system_message)
+            effective_skills = getattr(runtime_context, "_effective_skill_slugs", None)
+            if isinstance(effective_skills, list):
+                effective_skills = normalize_string_list(effective_skills)
+                if effective_skills:
+                    skills_meta = self._collect_prompt_metadata(effective_skills, runtime_context)
+                    if skills_meta:
+                        skills_section = self._build_skills_section(skills_meta)
+                        system_message = append_to_system_message(
+                            getattr(request, "system_message", None), skills_section
+                        )
+                        request = request.override(system_message=system_message)
 
         state = request.state if isinstance(request.state, dict) else {}
         activated = state.get("activated_skills", []) or []
         if not isinstance(activated, list):
             activated = []
 
-        readable_skills = self._get_readable_skills(runtime_context)
-        activated = [slug for slug in normalize_string_list(activated) if slug in readable_skills]
+        effective_skills = self._get_effective_skills(runtime_context)
+        activated = [slug for slug in normalize_string_list(activated) if slug in effective_skills]
 
-        deps_bundle = build_dependency_bundle(activated, self._get_runtime_dependency_map(runtime_context))
+        deps_bundle = build_dependency_bundle(activated, self._get_runtime_skills(runtime_context))
         activated_tool_names = set(deps_bundle["tools"])
 
         # 门控：未激活 Skill 的依赖工具对模型不可见（保持按需加载）。
@@ -134,19 +133,19 @@ class SkillsMiddleware(AgentMiddleware):
 
     def _resolve_gated_tool_names(self, runtime_context) -> set[str]:
         """所有可见 Skill 依赖、且不属于基础工具集的工具名集合（即「仅经 Skill 激活才放出」的工具）。"""
-        dependency_map = self._get_runtime_dependency_map(runtime_context)
-        readable_skills = self._get_readable_skills(runtime_context)
+        runtime_skills = self._get_runtime_skills(runtime_context)
+        effective_skills = self._get_effective_skills(runtime_context)
         base_tool_names = set(normalize_string_list(getattr(runtime_context, "tools", None)))
         gated: set[str] = set()
-        for slug in readable_skills:
-            gated.update(dependency_map.get(slug, {}).get("tools", []))
+        for slug in effective_skills:
+            gated.update(runtime_skills.get(slug, {}).get("tools", []))
         return gated - base_tool_names
 
-    def _collect_prompt_metadata(self, slugs: list[str], runtime_context) -> list[SkillPromptMetadata]:
+    def _collect_prompt_metadata(self, slugs: list[str], runtime_context) -> list[RuntimeSkill]:
         """收集指定 slugs 的提示词元数据"""
-        prompt_metadata = self._get_runtime_prompt_metadata(runtime_context)
+        runtime_skills = self._get_runtime_skills(runtime_context)
 
-        result: list[SkillPromptMetadata] = []
+        result: list[RuntimeSkill] = []
         seen: set[str] = set()
 
         for slug in slugs:
@@ -157,7 +156,7 @@ class SkillsMiddleware(AgentMiddleware):
                 continue
             seen.add(normalized)
 
-            item = prompt_metadata.get(normalized)
+            item = runtime_skills.get(normalized)
             if not item:
                 logger.debug(f"Skill slug not found in prompt metadata, skip: {normalized}")
                 continue
@@ -260,21 +259,17 @@ class SkillsMiddleware(AgentMiddleware):
                 return relative.parts[0]
         return None
 
-    def _get_readable_skills(self, runtime_context) -> set[str]:
-        selected = getattr(runtime_context, "_readable_skills", [])
+    def _get_effective_skills(self, runtime_context) -> set[str]:
+        selected = getattr(runtime_context, "_effective_skill_slugs", [])
         return set(normalize_string_list(selected if isinstance(selected, list) else []))
 
-    def _get_runtime_prompt_metadata(self, runtime_context) -> dict[str, SkillPromptMetadata]:
-        metadata = getattr(runtime_context, "_runtime_skill_metadata", {})
-        return metadata if isinstance(metadata, dict) else {}
-
-    def _get_runtime_dependency_map(self, runtime_context) -> dict[str, SkillDependencyNode]:
-        dependency_map = getattr(runtime_context, "_runtime_skill_dependency_map", {})
-        return dependency_map if isinstance(dependency_map, dict) else {}
+    def _get_runtime_skills(self, runtime_context) -> dict[str, RuntimeSkill]:
+        runtime_skills = getattr(runtime_context, "_runtime_skills", {})
+        return runtime_skills if isinstance(runtime_skills, dict) else {}
 
     def _is_visible_skill_slug(self, request: ToolCallRequest, slug: str) -> bool:
         """检查 slug 是否可见"""
-        return slug in self._get_readable_skills(request.runtime.context)
+        return slug in self._get_effective_skills(request.runtime.context)
 
     def _merge_activated_skill_update(self, result: Any, slug: str):
         """合并动态激活的 skill 更新"""

@@ -24,23 +24,36 @@ def _system_message_text(message: SystemMessage) -> str:
     return "\n".join(block.get("text", "") for block in message.content_blocks if isinstance(block, dict))
 
 
+def _runtime_skill(
+    slug: str,
+    *,
+    name: str | None = None,
+    description: str = "",
+    tools: list[str] | None = None,
+) -> dict:
+    return {
+        "name": name or slug,
+        "description": description,
+        "path": f"/home/gem/skills/{slug}/SKILL.md",
+        "tools": tools or [],
+        "mcps": [],
+        "skills": [],
+    }
+
+
 @pytest.mark.asyncio
-async def test_skills_prompt_uses_prepared_prompt_skills_at_request_level():
+async def test_skills_prompt_uses_effective_skills_at_request_level():
     context = SimpleNamespace(
         system_prompt="context base",
         skills=["configured-only"],
-        _prompt_skills=["alpha"],
-        _runtime_skill_metadata={
-            "alpha": {
-                "name": "Alpha",
-                "description": "alpha desc",
-                "path": "/home/gem/skills/alpha/SKILL.md",
-            },
-            "configured-only": {
-                "name": "Configured Only",
-                "description": "should not appear",
-                "path": "/home/gem/skills/configured-only/SKILL.md",
-            },
+        _effective_skill_slugs=["alpha"],
+        _runtime_skills={
+            "alpha": _runtime_skill("alpha", name="Alpha", description="alpha desc"),
+            "configured-only": _runtime_skill(
+                "configured-only",
+                name="Configured Only",
+                description="should not appear",
+            ),
         },
     )
 
@@ -87,10 +100,10 @@ async def test_awrap_model_call_mounts_dependencies_only_for_readable_activated_
         def __init__(self, tools=None):
             self.runtime = SimpleNamespace(
                 context=SimpleNamespace(
-                    _readable_skills=["alpha"],
-                    _runtime_skill_dependency_map={
-                        "alpha": {"tools": ["tool-a"], "mcps": [], "skills": []},
-                        "beta": {"tools": ["tool-b"], "mcps": [], "skills": []},
+                    _effective_skill_slugs=["alpha"],
+                    _runtime_skills={
+                        "alpha": _runtime_skill("alpha", tools=["tool-a"]),
+                        "beta": _runtime_skill("beta", tools=["tool-b"]),
                     },
                     mcps=[],
                 )
@@ -110,7 +123,7 @@ async def test_awrap_model_call_mounts_dependencies_only_for_readable_activated_
         captured["tools"] = [tool.name for tool in request.tools]
         return "ok"
 
-    result = await SkillsMiddleware().awrap_model_call(FakeRequest(), handler)
+    result = await SkillsMiddleware(enable_skills_prompt=False).awrap_model_call(FakeRequest(), handler)
 
     assert result == "ok"
     assert captured["tools"] == ["tool-a"]
@@ -122,19 +135,18 @@ async def test_awrap_model_call_mounts_knowledge_base_skill_tools():
         def __init__(self, tools=None):
             self.runtime = SimpleNamespace(
                 context=SimpleNamespace(
-                    _readable_skills=["knowledge-base"],
-                    _runtime_skill_dependency_map={
-                        "knowledge-base": {
-                            "tools": [
+                    _effective_skill_slugs=["knowledge-base"],
+                    _runtime_skills={
+                        "knowledge-base": _runtime_skill(
+                            "knowledge-base",
+                            tools=[
                                 "list_kbs",
                                 "query_kb",
                                 "find_kb_document",
                                 "open_kb_document",
                                 "get_mindmap",
                             ],
-                            "mcps": [],
-                            "skills": [],
-                        }
+                        )
                     },
                     mcps=[],
                 )
@@ -154,7 +166,7 @@ async def test_awrap_model_call_mounts_knowledge_base_skill_tools():
         captured["tools"] = {tool.name for tool in request.tools}
         return "ok"
 
-    result = await SkillsMiddleware().awrap_model_call(FakeRequest(), handler)
+    result = await SkillsMiddleware(enable_skills_prompt=False).awrap_model_call(FakeRequest(), handler)
 
     assert result == "ok"
     assert captured["tools"] == {
@@ -173,8 +185,8 @@ async def test_resolve_skill_gated_tools_registers_kb_tools():
     context = SimpleNamespace(
         tools=None,
         mcps=None,
-        _readable_skills=["knowledge-base"],
-        _runtime_skill_dependency_map={"knowledge-base": {"tools": sorted(_KB_TOOL_NAMES), "mcps": [], "skills": []}},
+        _effective_skill_slugs=["knowledge-base"],
+        _runtime_skills={"knowledge-base": _runtime_skill("knowledge-base", tools=sorted(_KB_TOOL_NAMES))},
     )
 
     gated_tools = resolve_skill_gated_tools(context)
@@ -192,9 +204,9 @@ def _make_gated_request(activated):
         def __init__(self, tools):
             self.runtime = SimpleNamespace(
                 context=SimpleNamespace(
-                    _readable_skills=["knowledge-base"],
-                    _runtime_skill_dependency_map={
-                        "knowledge-base": {"tools": ["list_kbs", "query_kb"], "mcps": [], "skills": []}
+                    _effective_skill_slugs=["knowledge-base"],
+                    _runtime_skills={
+                        "knowledge-base": _runtime_skill("knowledge-base", tools=["list_kbs", "query_kb"])
                     },
                     mcps=[],
                 )
@@ -222,7 +234,7 @@ async def test_awrap_model_call_hides_gated_tools_until_activated():
         captured["tools"] = {tool.name for tool in req.tools}
         return "ok"
 
-    await SkillsMiddleware().awrap_model_call(request, handler)
+    await SkillsMiddleware(enable_skills_prompt=False).awrap_model_call(request, handler)
 
     assert captured["tools"] == {"read_file"}
 
@@ -236,7 +248,7 @@ async def test_awrap_model_call_keeps_gated_tools_when_activated():
         captured["tools"] = {tool.name for tool in req.tools}
         return "ok"
 
-    await SkillsMiddleware().awrap_model_call(request, handler)
+    await SkillsMiddleware(enable_skills_prompt=False).awrap_model_call(request, handler)
 
     assert captured["tools"] == {"read_file", "list_kbs", "query_kb"}
 
@@ -245,7 +257,7 @@ def test_read_file_activates_only_readable_skill() -> None:
     middleware = SkillsMiddleware()
     result = ToolMessage(content="ok", tool_call_id="tool-1", name="read_file")
     request = SimpleNamespace(
-        runtime=SimpleNamespace(context=SimpleNamespace(_readable_skills=["alpha"])),
+        runtime=SimpleNamespace(context=SimpleNamespace(_effective_skill_slugs=["alpha"])),
         tool_call={"name": "read_file", "args": {"file_path": "/home/gem/skills/alpha/SKILL.md"}},
     )
 
@@ -267,7 +279,7 @@ def test_read_file_denies_skill_outside_readable_scope() -> None:
     middleware = SkillsMiddleware()
     result = ToolMessage(content="ok", tool_call_id="tool-1", name="read_file")
     request = SimpleNamespace(
-        runtime=SimpleNamespace(context=SimpleNamespace(_readable_skills=["alpha"])),
+        runtime=SimpleNamespace(context=SimpleNamespace(_effective_skill_slugs=["alpha"])),
         tool_call={"name": "read_file", "args": {"file_path": "/home/gem/skills/beta/SKILL.md"}},
     )
 

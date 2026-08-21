@@ -15,7 +15,7 @@ from yuxi.agents.backends.sandbox.paths import (
     user_workspace_dir,
     workspace_uid_dirname,
 )
-from yuxi.agents.skills.service import sync_user_accessible_skills_async
+from yuxi.agents.skills.service import get_user_skills_root_dir, sync_user_accessible_skills_async
 from yuxi.config import get_skill_projection_dir, get_user_data_dir
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
@@ -24,6 +24,7 @@ pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
 def _create_workdir(uid: str, name: str):
     """在真实 UserWorkspace 中创建测试 Workdir。"""
     ensure_user_workspace(uid)
+    get_user_skills_root_dir(uid)
     workdir_path = f"projects/{name}"
     host_workdir = user_workspace_dir(uid) / "projects" / name
     host_workdir.mkdir(parents=True)
@@ -247,6 +248,8 @@ async def test_user_skill_projection_is_shared_across_sandboxes_but_isolated_by_
         },
     )
     await sync_user_accessible_skills_async(other_uid, {})
+    ensure_user_workspace(uid)
+    ensure_user_workspace(other_uid)
 
     first = ProvisionerSandboxBackend(thread_id=first_scope, uid=uid)
     second = ProvisionerSandboxBackend(thread_id=second_scope, uid=uid)

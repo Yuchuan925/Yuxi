@@ -69,18 +69,48 @@ class NonRetryableRunError(Exception):
 
 
 async def _validate_run_workdir_binding(run: AgentRun) -> WorkdirBinding:
-    """在执行器边界验证持久 Run 仍属于 Conversation 的 Workdir。"""
+    """在执行器边界验证持久 Run 的 Conversation、执行树与 Workdir 归属。"""
     async with pg_manager.get_async_session_context() as db:
         binding = await resolve_workdir_binding(
             thread_id=str(run.conversation_thread_id),
             uid=str(run.uid),
             db=db,
         )
-    if int(binding.conversation_id) != int(run.conversation_id):
-        raise NonRetryableRunError("AgentRun 的 Conversation 身份不一致")
-    persisted_scope = str(run.runtime_scope_id or "").strip()
-    if not persisted_scope:
-        raise NonRetryableRunError("AgentRun 缺少 runtime scope")
+        if int(binding.conversation_id) != int(run.conversation_id):
+            raise NonRetryableRunError("AgentRun 的 Conversation 身份不一致")
+
+        persisted_scope = str(run.runtime_scope_id or "").strip()
+        if not persisted_scope:
+            raise NonRetryableRunError("AgentRun 缺少 runtime scope")
+        if run.run_type in {"chat", "resume"} and persisted_scope != str(run.conversation_thread_id):
+            raise NonRetryableRunError(f"{str(run.run_type).capitalize()} AgentRun 的 runtime scope 非法")
+
+        if run.run_type == "subagent":
+            creator_id = str(run.created_by_run_id or "").strip()
+            if not creator_id:
+                raise NonRetryableRunError("SubAgent Run 缺少创建者")
+            repo = AgentRunRepository(db)
+            execution_pair = await repo.get_subagent_run_with_creator(
+                uid=str(run.uid),
+                created_by_run_id=creator_id,
+                run_id=str(run.id),
+            )
+            if execution_pair is None:
+                raise NonRetryableRunError("SubAgent Run 的线程关系非法")
+            creator_run, _persisted_run = execution_pair
+            if creator_run.run_type not in {"chat", "resume"}:
+                raise NonRetryableRunError("SubAgent Run 的创建者非法")
+            creator_binding = await resolve_workdir_binding(
+                thread_id=str(creator_run.conversation_thread_id),
+                uid=str(run.uid),
+                db=db,
+            )
+            if (
+                persisted_scope != str(creator_run.runtime_scope_id)
+                or int(creator_binding.conversation_id) != int(creator_run.conversation_id)
+                or creator_binding.workdir_path != binding.workdir_path
+            ):
+                raise NonRetryableRunError("SubAgent Run 的 runtime scope 不属于创建者执行树")
     return binding
 
 

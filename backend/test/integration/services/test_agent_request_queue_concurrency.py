@@ -19,7 +19,7 @@ from yuxi.repositories.agent_run_repository import AgentRunRepository
 from yuxi.services import agent_request_queue_service
 from yuxi.services import run_worker
 from yuxi.services.input_message_service import build_chat_input_message
-from yuxi.storage.postgres.models_business import AgentRun, AgentRunRequest, Conversation, Message
+from yuxi.storage.postgres.models_business import AgentRun, AgentRunRequest, Conversation, Message, SubagentThread
 from yuxi.utils.datetime_utils import utc_now_naive
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
@@ -390,6 +390,7 @@ async def test_startup_recovery_reenqueues_pending_runs_without_queue_requests(m
     resume_thread_id = f"pytest-resume-{uuid.uuid4()}"
     parent_thread_id = f"pytest-subagent-parent-{uuid.uuid4()}"
     child_thread_id = f"pytest-subagent-{uuid.uuid4()}"
+    resume_creator_run_id = str(uuid.uuid4())
     resume_run_id = str(uuid.uuid4())
     parent_run_id = str(uuid.uuid4())
     child_run_id = str(uuid.uuid4())
@@ -429,6 +430,45 @@ async def test_startup_recovery_reenqueues_pending_runs_without_queue_requests(m
         child_conversation.workdir_path = parent_workdir_path
         db.add_all([resume_conversation, parent_conversation, child_conversation])
         await db.flush()
+        resume_creator = AgentRun(
+            id=resume_creator_run_id,
+            conversation_thread_id=resume_thread_id,
+            runtime_scope_id=resume_thread_id,
+            agent_slug="main",
+            uid=uid,
+            request_id=f"startup-resume-creator-{uuid.uuid4()}",
+            conversation_id=resume_conversation.id,
+            input_payload={"model_spec": "model"},
+            status="interrupted",
+            run_type="chat",
+        )
+        parent_run = AgentRun(
+            id=parent_run_id,
+            conversation_thread_id=parent_thread_id,
+            runtime_scope_id=parent_thread_id,
+            agent_slug="main",
+            uid=uid,
+            request_id=f"startup-parent-{uuid.uuid4()}",
+            conversation_id=parent_conversation.id,
+            input_payload={"model_spec": "model"},
+            status="running",
+            run_type="chat",
+            worker_id=f"worker-parent:{uuid.uuid4()}",
+            heartbeat_at=utc_now_naive(),
+            lease_expires_at=utc_now_naive() + timedelta(minutes=5),
+        )
+        db.add_all([resume_creator, parent_run])
+        await db.flush()
+        relation = SubagentThread(
+            uid=uid,
+            parent_conversation_id=parent_conversation.id,
+            child_conversation_id=child_conversation.id,
+            child_thread_id=child_thread_id,
+            subagent_slug="worker",
+            created_by_run_id=parent_run_id,
+        )
+        db.add(relation)
+        await db.flush()
         db.add_all(
             [
                 AgentRun(
@@ -442,21 +482,7 @@ async def test_startup_recovery_reenqueues_pending_runs_without_queue_requests(m
                     input_payload={"model_spec": "model"},
                     status="pending",
                     run_type="resume",
-                ),
-                AgentRun(
-                    id=parent_run_id,
-                    conversation_thread_id=parent_thread_id,
-                    runtime_scope_id=parent_thread_id,
-                    agent_slug="main",
-                    uid=uid,
-                    request_id=f"startup-parent-{uuid.uuid4()}",
-                    conversation_id=parent_conversation.id,
-                    input_payload={"model_spec": "model"},
-                    status="running",
-                    run_type="chat",
-                    worker_id=f"worker-parent:{uuid.uuid4()}",
-                    heartbeat_at=utc_now_naive(),
-                    lease_expires_at=utc_now_naive() + timedelta(minutes=5),
+                    created_by_run_id=resume_creator_run_id,
                 ),
                 AgentRun(
                     id=child_run_id,
@@ -467,6 +493,7 @@ async def test_startup_recovery_reenqueues_pending_runs_without_queue_requests(m
                     request_id=f"startup-subagent-{uuid.uuid4()}",
                     conversation_id=child_conversation.id,
                     created_by_run_id=parent_run_id,
+                    subagent_thread_relation_id=relation.id,
                     input_payload={"model_spec": "model"},
                     status="pending",
                     run_type="subagent",
@@ -496,7 +523,12 @@ async def test_startup_recovery_reenqueues_pending_runs_without_queue_requests(m
         assert request_count == 0
     finally:
         async with session_factory() as db:
-            await db.execute(delete(AgentRun).where(AgentRun.id.in_([resume_run_id, child_run_id, parent_run_id])))
+            await db.execute(
+                delete(AgentRun).where(
+                    AgentRun.id.in_([resume_creator_run_id, resume_run_id, child_run_id, parent_run_id])
+                )
+            )
+            await db.execute(delete(SubagentThread).where(SubagentThread.child_thread_id == child_thread_id))
             await db.execute(delete(Conversation).where(Conversation.thread_id.in_(thread_ids)))
             await db.commit()
         await engine.dispose()

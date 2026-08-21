@@ -575,11 +575,8 @@ async def prepare_agent_runtime_context(
                 if hasattr(context, field_name):
                     setattr(context, field_name, [])
             setattr(context, "_visible_knowledge_bases", [])
-            setattr(context, "_prompt_skills", [])
-            setattr(context, "_readable_skills", [])
-            setattr(context, "_runtime_skill_metadata", {})
-            setattr(context, "_runtime_skill_dependency_map", {})
-            setattr(context, "_runtime_skill_sources", {})
+            setattr(context, "_effective_skill_slugs", [])
+            setattr(context, "_runtime_skills", {})
             return context
 
         raw_resources = {
@@ -606,10 +603,7 @@ async def prepare_agent_runtime_context(
             await resolve_visible_knowledge_bases_for_context(context)
         skill_scope = await resolve_runtime_skills_for_context(context, db=db, user=user)
         context.skills = skill_scope["context_skills"]
-        setattr(context, "_prompt_skills", skill_scope["prompt_skills"])
-        setattr(context, "_readable_skills", skill_scope["readable_skills"])
-        setattr(context, "_runtime_skill_metadata", skill_scope["runtime_skill_metadata"])
-        setattr(context, "_runtime_skill_dependency_map", skill_scope["runtime_skill_dependency_map"])
-        setattr(context, "_runtime_skill_sources", skill_scope.get("runtime_skill_sources", {}))
+        setattr(context, "_effective_skill_slugs", skill_scope["effective_skills"])
+        setattr(context, "_runtime_skills", skill_scope["runtime_skills"])
 
     return context

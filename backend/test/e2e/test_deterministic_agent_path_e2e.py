@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 import json
 import os
+import shutil
 import uuid
 
 import asyncpg
@@ -15,6 +16,8 @@ import pytest
 from e2e_helpers import cancel_run, consume_events, delete_agent, postgres_dsn, wait_for_run
 from test.live_api_cleanup import make_test_conversation_metadata, make_test_conversation_title
 from yuxi.agents.backends.sandbox import ProvisionerSandboxBackend, get_sandbox_provider
+from yuxi.agents.backends.sandbox.paths import workspace_uid_dirname
+from yuxi.config import get_skill_projection_dir
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.e2e, pytest.mark.slow]
 
@@ -267,31 +270,24 @@ async def test_deterministic_agent_path_reaches_persisted_result(
     run_completed = False
     try:
         agent_slug = await _create_agent(e2e_client, e2e_headers, uid)
-        thread_response = await e2e_client.post(
-            "/api/chat/thread",
-            json={
-                "agent_id": agent_slug,
-                "title": make_test_conversation_title("deterministic-agent-path"),
-                "metadata": make_test_conversation_metadata("deterministic-agent-path", e2e=True),
-            },
-            headers=e2e_headers,
-        )
-        assert thread_response.status_code == 200, thread_response.text
-        thread_id = str(thread_response.json().get("thread_id") or thread_response.json()["id"])
-
+        projection_root = get_skill_projection_dir() / workspace_uid_dirname(uid)
+        shutil.rmtree(projection_root, ignore_errors=True)
+        assert not projection_root.exists(), "冷启动用例必须从缺失 uid Skill projection 开始"
         request_id = f"deterministic-e2e-{uuid.uuid4()}"
         run_response = await e2e_client.post(
-            "/api/agent/runs",
+            "/api/agent-invocation/agent-call/runs",
             json={
-                "query": f"只输出 {EXPECTED_OUTPUT}",
                 "agent_slug": agent_slug,
-                "thread_id": thread_id,
-                "meta": {"request_id": request_id},
+                "messages": [{"role": "user", "content": f"只输出 {EXPECTED_OUTPUT}"}],
+                "request_id": request_id,
+                "async_mode": True,
             },
             headers=e2e_headers,
         )
         assert run_response.status_code == 200, run_response.text
-        run_id = str(run_response.json()["run_id"])
+        run_payload = run_response.json()
+        run_id = str(run_payload["run_id"])
+        thread_id = str(run_payload["thread_id"])
 
         event_counts = await consume_events(e2e_client, e2e_headers, run_id)
         assert event_counts.get("messages", 0) > 0, event_counts
@@ -300,6 +296,7 @@ async def test_deterministic_agent_path_reaches_persisted_result(
         run = await wait_for_run(e2e_client, e2e_headers, run_id)
         assert run["status"] == "completed", run
         assert run["request_id"] == request_id
+        assert projection_root.is_dir(), "worker bootstrap 必须在首次 Sandbox 创建前物化 uid projection"
 
         result = await e2e_client.get(f"/api/agent/runs/{run_id}/result", headers=e2e_headers)
         assert result.status_code == 200, result.text

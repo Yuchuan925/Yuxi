@@ -83,6 +83,7 @@ jobs:
     paths:
       - '.env.template'
       - 'backend/**'
+      - 'docker/**'
       - 'scripts/init.sh'
       - 'scripts/init.ps1'
       - 'scripts/test_init_security.ps1'
@@ -119,6 +120,7 @@ jobs:
       - 'backend/test/integration/**'
       - 'backend/test/e2e/**'
       - 'backend/test/support/**'
+      - 'docker/**'
       - '.github/workflows/system-tests.yml'
 jobs:
   system:
@@ -129,6 +131,12 @@ jobs:
       - run: docker compose exec -T api uv run --no-sync --no-dev pytest test/integration/api/test_agent_run_result_causality.py -q
       - run: docker compose exec -T -e E2E_USERNAME -e E2E_PASSWORD api uv run --no-sync --no-dev pytest test/e2e/test_deterministic_agent_path_e2e.py -q
       - run: docker compose exec -T api uv run --no-sync --no-dev pytest test/integration/services/test_identity_admin_service.py test/integration/services/test_api_key_schema_migration.py test/integration/services/test_api_key_user_lifecycle.py test/integration/api/test_apikey_router.py -q
+      - run: |
+          docker compose exec -T api uv run --no-sync --no-dev pytest \\
+          test/integration/services/test_workdir_user_workspace.py \\
+          test/integration/services/test_user_skill_projection.py \\
+          test/integration/api/test_skill_artifact_authorization.py -q
+      - run: docker compose exec -T api uv run --no-sync --no-dev pytest test/integration/services/test_project_workdir_provisioner.py -q
 """,
         )
         self._write(
@@ -415,65 +423,42 @@ jobs:
 
     def test_system_workflow_cannot_narrow_owning_paths(self) -> None:
         path = self.root / ".github/workflows/system-tests.yml"
-        path.write_text(
-            path.read_text(encoding="utf-8").replace(
-                "      - 'backend/package/yuxi/**'\n", ""
-            ),
-            encoding="utf-8",
-        )
+        original = path.read_text(encoding="utf-8")
+        for owning_path in (
+            "backend/package/yuxi/**",
+            "backend/test/e2e/**",
+            "backend/test/support/**",
+            "docker/**",
+        ):
+            with self.subTest(owning_path=owning_path):
+                path.write_text(
+                    original.replace(f"      - '{owning_path}'\n", ""),
+                    encoding="utf-8",
+                )
+                self.assertTrue(
+                    any(
+                        "workflow PR paths 缺少 owning scope" in error
+                        and owning_path in error
+                        for error in self._errors()
+                    )
+                )
 
-        self.assertTrue(
-            any(
-                "workflow PR paths 缺少 owning scope" in error
-                for error in self._errors()
-            )
-        )
-
-    def test_system_workflow_cannot_ignore_e2e_changes(self) -> None:
+    def test_system_workflow_required_command_cannot_be_removed(self) -> None:
         path = self.root / ".github/workflows/system-tests.yml"
-        path.write_text(
-            path.read_text(encoding="utf-8").replace(
-                "      - 'backend/test/e2e/**'\n", ""
-            ),
-            encoding="utf-8",
-        )
-
-        self.assertTrue(
-            any(
-                "workflow PR paths 缺少 owning scope" in error
-                and "backend/test/e2e/**" in error
-                for error in self._errors()
-            )
-        )
-
-    def test_system_workflow_cannot_ignore_e2e_support_changes(self) -> None:
-        path = self.root / ".github/workflows/system-tests.yml"
-        path.write_text(
-            path.read_text(encoding="utf-8").replace(
-                "      - 'backend/test/support/**'\n", ""
-            ),
-            encoding="utf-8",
-        )
-
-        self.assertTrue(
-            any(
-                "workflow PR paths 缺少 owning scope" in error
-                and "backend/test/support/**" in error
-                for error in self._errors()
-            )
-        )
-
-    def test_deterministic_e2e_command_cannot_be_removed(self) -> None:
-        path = self.root / ".github/workflows/system-tests.yml"
-        path.write_text(
-            path.read_text(encoding="utf-8").replace(
-                "test/e2e/test_deterministic_agent_path_e2e.py",
-                "test/e2e/test_other_path.py",
-            ),
-            encoding="utf-8",
-        )
-
-        self.assertTrue(any("缺少实际 run step" in error for error in self._errors()))
+        original = path.read_text(encoding="utf-8")
+        for test_path in (
+            "test/integration/services/test_project_workdir_provisioner.py",
+            "test/e2e/test_deterministic_agent_path_e2e.py",
+        ):
+            with self.subTest(test_path=test_path):
+                path.write_text(
+                    original.replace(
+                        test_path,
+                        "test/integration/services/test_removed_contract.py",
+                    ),
+                    encoding="utf-8",
+                )
+                self.assertTrue(any("缺少实际 run step" in error for error in self._errors()))
 
     def test_real_provider_probe_requires_manual_trigger(self) -> None:
         path = self.root / ".github/workflows/real-provider-probe.yml"

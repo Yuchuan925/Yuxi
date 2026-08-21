@@ -8,7 +8,7 @@
 
 运行时准备发生在中间件装配之前，负责确定后续中间件可见的资源。内置 Agent 创建 Graph 前依次执行：
 
-- `prepare_agent_runtime_context`：按当前用户权限过滤工具、知识库、MCP、Skills 和子智能体，并派生 `_visible_knowledge_bases`、`_prompt_skills`、`_readable_skills` 与最终 `_runtime_skill_sources`
+- `prepare_agent_runtime_context`：按当前用户权限过滤工具、知识库、MCP、Skills 和子智能体，并派生 `_visible_knowledge_bases`、`_effective_skill_slugs` 与 `_runtime_skills`
 - `build_prompt_with_context`：基于 Context 生成系统提示词
 - `load_chat_model(context.model)`：加载主模型
 - `resolve_configured_runtime_tools(context)`：加载已配置的内置工具和 MCP 工具
@@ -21,7 +21,7 @@
 
 | 中间件 | 作用 |
 | --- | --- |
-| `create_agent_filesystem_middleware` | 接入实时 Project Workdir、User Data 与只读 Skills 路由，并在工具结果过大时把内容写入 Project `outputs/large_tool_results` |
+| `create_agent_filesystem_middleware` | 通过 Sandbox 接入实时 Project Workdir、User Data 与只读 Skills，并在工具结果过大时把内容写入 Project `outputs/large_tool_results` |
 | `SkillsMiddleware` | 注入可见 Skill 的提示段，监听读取 `SKILL.md` 后的 Skill 激活，并按依赖追加工具和 MCP 工具；知识库工具由内置 `knowledge-base` Skill 按需加载 |
 | `YuxiSubAgentMiddleware` | 仅主 Agent 在存在可见子智能体时挂载，提供 `task` 工具调用真实子 Agent graph |
 | `YuxiSummarizationMiddleware` | 基于 DeepAgents `SummarizationMiddleware` 做长上下文压缩，并清洗被摘要历史里的工具结果 |
@@ -45,10 +45,10 @@
 
 `SkillsMiddleware` 分两步工作：
 
-1. 模型调用前读取 `_prompt_skills`，把可见 Skill 的名称、描述和 `SKILL.md` 路径追加到系统提示。
+1. 模型调用前读取 `_effective_skill_slugs`，把有效 Skill 的名称、描述和 `SKILL.md` 路径追加到系统提示。
 2. 工具调用后检查模型是否读取了共享投影 `/home/gem/skills/<slug>/SKILL.md` 或个人 UserWorkspace
    `/home/gem/user-data/agents/skills/<slug>/SKILL.md`。如果该 Skill 在
-   `_readable_skills` 范围内，就把它写入 `activated_skills`，并在后续模型调用中追加它声明的工具和 MCP 依赖。
+   `_effective_skill_slugs` 范围内，就把它写入 `activated_skills`，并在后续模型调用中追加它声明的工具和 MCP 依赖。
 
 模型首先看到 Skill 说明；读取并激活 Skill 后，依赖工具才加入后续模型请求。该顺序控制初始工具 schema 的规模。
 
@@ -56,7 +56,7 @@
 
 附件确认后会落盘到当前 Workdir。每个新 Run 都把线程全部历史附件的文件名和实时路径追加到本轮模型可见的 `HumanMessage`，不会修改系统提示词，也不会把文件内容复制进模型上下文。数据库 Message、流式 `init` 事件和历史接口仍保留原始用户文本，因此前端不渲染这段模型专用上下文。模型需要查看附件时，应通过 `read_file` 读取对应路径；中断恢复沿用 checkpoint 中原有的本轮消息。
 
-文件系统中间件把当前用户的整个 UserWorkspace 与只读共享 Skills 组合成 Agent 可访问的虚拟文件系统。普通 Agent 与子智能体使用根 Conversation 的同一个 `runtime_scope_id` 和 `workdir_path`；child `thread_id` 只隔离 LangGraph checkpoint。Workdir 选择 cwd，不形成同一 uid 内的文件隔离；各 Agent 的 Skill 选中列表只影响 Prompt 和工具激活。
+文件系统中间件通过 Sandbox 暴露当前用户的整个 UserWorkspace 与只读共享 Skills。普通 Agent 与子智能体使用根 Conversation 的同一个 `runtime_scope_id` 和 `workdir_path`；child `thread_id` 只隔离 LangGraph checkpoint。Workdir 选择 cwd，不形成同一 uid 内的文件隔离；各 Agent 的 Skill 选中列表只影响 Prompt 和工具激活。
 
 ## 子智能体任务
 

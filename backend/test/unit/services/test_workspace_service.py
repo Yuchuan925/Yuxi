@@ -17,12 +17,17 @@ def _user() -> SimpleNamespace:
     return SimpleNamespace(id="db-id-1", uid="user-1")
 
 
+def _workspace_root(user: SimpleNamespace) -> Path:
+    svc._workspace_backend(user)
+    return workspace_paths.user_workspace_dir(str(user.uid))
+
+
 def test_workspace_root_creates_default_agent_context_files(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("YUXI_USER_DATA_DIR", str(tmp_path / "threads"))
 
     previous_umask = os.umask(0o077)
     try:
-        root = svc._workspace_root(_user())
+        root = _workspace_root(_user())
     finally:
         os.umask(previous_umask)
 
@@ -69,7 +74,7 @@ def test_workspace_root_keeps_existing_agents_prompt_file(tmp_path: Path, monkey
     agents_file = agents_dir / "AGENTS.md"
     agents_file.write_text("保留已有内容", encoding="utf-8")
 
-    root = svc._workspace_root(_user())
+    root = _workspace_root(_user())
 
     assert root == tmp_path / "threads" / "shared" / "user-1" / "workspace"
     assert agents_file.read_text(encoding="utf-8") == "保留已有内容"
@@ -84,7 +89,7 @@ def test_workspace_root_rejects_symlink_root(tmp_path: Path, monkeypatch) -> Non
     (user_root / "workspace").symlink_to(outside_root, target_is_directory=True)
 
     with pytest.raises(HTTPException) as exc_info:
-        svc._workspace_root(_user())
+        svc._workspace_backend(_user())
 
     assert exc_info.value.status_code == 403
 
@@ -105,7 +110,7 @@ async def test_read_workspace_file_content_returns_unsupported_for_unreadable_fi
 ) -> None:
     monkeypatch.setenv("YUXI_USER_DATA_DIR", str(tmp_path / "threads"))
     user = _user()
-    root = svc._workspace_root(user)
+    root = _workspace_root(user)
     target = root / filename
     target.write_bytes(content)
 
@@ -123,7 +128,7 @@ async def test_read_workspace_file_content_returns_pdf_preview_for_office_file(
 ) -> None:
     monkeypatch.setenv("YUXI_USER_DATA_DIR", str(tmp_path / "threads"))
     user = _user()
-    root = svc._workspace_root(user)
+    root = _workspace_root(user)
     target = root / "demo.docx"
     target.write_bytes(b"office")
 
@@ -151,7 +156,7 @@ async def test_read_workspace_file_content_rejects_xlsx_preview(
 ) -> None:
     monkeypatch.setenv("YUXI_USER_DATA_DIR", str(tmp_path / "threads"))
     user = _user()
-    root = svc._workspace_root(user)
+    root = _workspace_root(user)
     target = root / "sheet.xlsx"
     target.write_bytes(b"PK\x03\x04excel")
 
@@ -181,7 +186,7 @@ async def test_preview_workspace_file_caches_office_pdf_conversion(
     monkeypatch.setenv("YUXI_USER_DATA_DIR", str(save_dir / "threads"))
     monkeypatch.setenv("YUXI_RUNTIME_DIR", str(runtime_dir))
     user = _user()
-    root = svc._workspace_root(user)
+    root = _workspace_root(user)
     target = root / filename
     target.write_bytes(content)
 
@@ -222,14 +227,13 @@ async def test_download_workspace_file_keeps_office_original_file(
 ) -> None:
     monkeypatch.setenv("YUXI_USER_DATA_DIR", str(tmp_path / "threads"))
     user = _user()
-    root = svc._workspace_root(user)
+    root = _workspace_root(user)
     target = root / "slides.pptx"
     target.write_bytes(b"presentation")
 
     response = await svc.download_workspace_file(path="/slides.pptx", current_user=user)
-    body = b""
-    async for chunk in response.body_iterator:
-        body += chunk
+    body = Path(response.path).read_bytes()
+    await response.background()
 
     assert response.media_type == "application/vnd.openxmlformats-officedocument.presentationml.presentation"
     assert body == b"presentation"
@@ -252,7 +256,7 @@ async def test_write_workspace_file_content_updates_file(
 ) -> None:
     monkeypatch.setenv("YUXI_USER_DATA_DIR", str(tmp_path / "threads"))
     user = _user()
-    root = svc._workspace_root(user)
+    root = _workspace_root(user)
     target = root / f"note.{extension}"
     target.write_text(original, encoding="utf-8")
 
@@ -268,7 +272,7 @@ async def test_write_workspace_file_content_updates_file(
 async def test_write_workspace_file_content_rejects_unsupported_suffix(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("YUXI_USER_DATA_DIR", str(tmp_path / "threads"))
     user = _user()
-    root = svc._workspace_root(user)
+    root = _workspace_root(user)
     target = root / "script.py"
     target.write_text("print('hello')", encoding="utf-8")
 
@@ -312,7 +316,7 @@ async def test_write_workspace_file_content_blocks_path_traversal(tmp_path: Path
 async def test_upload_workspace_files_writes_files(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("YUXI_USER_DATA_DIR", str(tmp_path / "threads"))
     user = _user()
-    root = svc._workspace_root(user)
+    root = _workspace_root(user)
     uploads = [
         UploadFile(filename="demo.txt", file=BytesIO(b"hello")),
         UploadFile(filename="notes.md", file=BytesIO(b"# notes")),
@@ -360,7 +364,7 @@ async def test_upload_workspace_files_rejects_oversized_file_and_cleans_partial_
     monkeypatch.setenv("YUXI_USER_DATA_DIR", str(tmp_path / "threads"))
     monkeypatch.setattr(svc, "MAX_WORKSPACE_UPLOAD_SIZE_BYTES", 5)
     user = _user()
-    root = svc._workspace_root(user)
+    root = _workspace_root(user)
     uploads = [
         UploadFile(filename="small.txt", file=BytesIO(b"12345")),
         UploadFile(filename="large.txt", file=BytesIO(b"123456")),
@@ -406,7 +410,7 @@ def _make_thread_files(tmp_path: Path, thread_id: str) -> Path:
 @pytest.mark.asyncio
 async def test_search_workspace_files_matches_filenames(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("YUXI_USER_DATA_DIR", str(tmp_path / "threads"))
-    root = svc._workspace_root(_user())
+    root = _workspace_root(_user())
     (root / "notes").mkdir(parents=True, exist_ok=True)
     (root / "notes" / "meeting-record.md").write_text("记录", encoding="utf-8")
     (root / "agents" / "MEMORY.md").write_text("记忆", encoding="utf-8")  # 已有默认文件

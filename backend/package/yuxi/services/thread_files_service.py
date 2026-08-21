@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import os
 import tempfile
-from pathlib import Path, PurePosixPath
+from pathlib import PurePosixPath
 
 from fastapi import HTTPException
 from fastapi.responses import FileResponse
@@ -140,26 +141,17 @@ async def read_thread_file_content_view(
     """从实时 Workdir 读取文本行。"""
     binding, backend = await _binding_backend(thread_id=thread_id, current_uid=current_uid, db=db)
     normalized = _normalize_project_path(binding.virtual_path, path)
-    descriptor, temp_path = tempfile.mkstemp(prefix="yuxi-thread-file-")
-    os.close(descriptor)
     try:
-        await asyncio.to_thread(
-            backend.download_authorized_file_to_path,
+        content = await asyncio.to_thread(
+            backend.read_authorized_file,
             normalized,
-            temp_path,
             MAX_THREAD_FILE_READ_BYTES,
         )
-        text = await asyncio.to_thread(Path(temp_path).read_text, encoding="utf-8", errors="replace")
     except FileTransferLimitError as exc:
         raise HTTPException(status_code=413, detail="file exceeds transfer limit") from exc
     except (FileNotFoundError, ValueError) as exc:
         raise HTTPException(status_code=404, detail="file not found") from exc
-    finally:
-        try:
-            os.unlink(temp_path)
-        except FileNotFoundError:
-            pass
-    lines = text.splitlines()
+    lines = content.decode("utf-8", errors="replace").splitlines()
     start = max(0, int(offset))
     count = min(max(1, int(limit)), 5000)
     return {
@@ -194,28 +186,20 @@ async def resolve_thread_artifact_view(
             MAX_ARTIFACT_DOWNLOAD_BYTES,
         )
     except PermissionError as exc:
-        try:
+        with contextlib.suppress(FileNotFoundError):
             os.unlink(temp_path)
-        except FileNotFoundError:
-            pass
         raise HTTPException(status_code=403, detail="artifact access denied") from exc
     except IsADirectoryError as exc:
-        try:
+        with contextlib.suppress(FileNotFoundError):
             os.unlink(temp_path)
-        except FileNotFoundError:
-            pass
         raise HTTPException(status_code=400, detail="artifact path is not a regular file") from exc
     except FileTransferLimitError as exc:
-        try:
+        with contextlib.suppress(FileNotFoundError):
             os.unlink(temp_path)
-        except FileNotFoundError:
-            pass
         raise HTTPException(status_code=413, detail="artifact exceeds transfer limit") from exc
     except (FileNotFoundError, ValueError) as exc:
-        try:
+        with contextlib.suppress(FileNotFoundError):
             os.unlink(temp_path)
-        except FileNotFoundError:
-            pass
         raise HTTPException(status_code=404, detail="artifact not found") from exc
     file_name = PurePosixPath(normalized).name or "artifact"
     with open(temp_path, "rb") as artifact_file:
@@ -253,21 +237,26 @@ async def save_thread_artifact_to_workspace_view(*, thread_id: str, current_uid:
         except (FileNotFoundError, ValueError) as exc:
             raise HTTPException(status_code=404, detail="artifact not found") from exc
         file_name = PurePosixPath(normalized).name or "artifact"
-        target = f"/home/gem/user-data/saved_artifacts/{file_name}"
-        index = 1
         stem = PurePosixPath(file_name).stem
         suffix = PurePosixPath(file_name).suffix
-        while await asyncio.to_thread(backend.regular_file_exists, target):
-            if index > MAX_SAVED_ARTIFACT_NAME_ATTEMPTS:
-                raise HTTPException(status_code=409, detail="saved artifact name space is exhausted")
-            target = f"/home/gem/user-data/saved_artifacts/{stem} ({index}){suffix}"
-            index += 1
-        await asyncio.to_thread(backend.upload_authorized_file_from_path, target, temp_path)
+        for index in range(MAX_SAVED_ARTIFACT_NAME_ATTEMPTS + 1):
+            candidate_name = file_name if index == 0 else f"{stem} ({index}){suffix}"
+            target = f"/home/gem/user-data/saved_artifacts/{candidate_name}"
+            try:
+                await asyncio.to_thread(
+                    backend.upload_authorized_file_from_path,
+                    target,
+                    temp_path,
+                    overwrite=False,
+                )
+                break
+            except FileExistsError:
+                continue
+        else:
+            raise HTTPException(status_code=409, detail="saved artifact name space is exhausted")
     finally:
-        try:
+        with contextlib.suppress(FileNotFoundError):
             os.unlink(temp_path)
-        except FileNotFoundError:
-            pass
     await invalidate_workspace_mention_cache(current_uid)
     return {
         "name": PurePosixPath(target).name,

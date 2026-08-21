@@ -12,14 +12,10 @@ from deepagents.backends.protocol import FileInfo, GlobResult
 from deepagents.middleware.filesystem import FilesystemMiddleware
 
 from yuxi.agents.backends.sandbox.paths import workdir_virtual_dir
-from yuxi.agents.skills.service import (
-    get_user_skills_root_dir,
-    refresh_user_skill_projection_async,
-)
+from yuxi.agents.skills.service import refresh_user_skill_projection_async
 from yuxi.utils.paths import workdir_runtime_paths
 
 from .sandbox import ProvisionerSandboxBackend
-from .skills_backend import SelectedSkillsReadonlyBackend
 
 _TOOL_RESULT_EVICTION_EXEMPT_TOOLS = frozenset({"read_file", "open_kb_document"})
 
@@ -118,12 +114,13 @@ class YuxiFilesystemMiddleware(FilesystemMiddleware):
 
 @dataclass(frozen=True)
 class _BackendScope:
-    thread_id: str
     runtime_scope_id: str
     workdir_relative_path: str
-    workdir_path: str
     uid: str
-    skill_sources: dict[str, str]
+
+    @property
+    def workdir_path(self) -> str:
+        return workdir_virtual_dir(self.workdir_relative_path)
 
     @classmethod
     def from_runtime(cls, runtime) -> _BackendScope:
@@ -135,12 +132,11 @@ class _BackendScope:
             configurable if isinstance(configurable, dict) else {},
             context,
             state if isinstance(state, dict) else {},
-            readable_skills_source=context,
             error_context="runtime configurable context",
         )
 
     @classmethod
-    def from_sources(cls, *sources, readable_skills_source, error_context: str) -> _BackendScope:
+    def from_sources(cls, *sources, error_context: str) -> _BackendScope:
         def string_value(key: str) -> str | None:
             for source in sources:
                 value = source.get(key) if isinstance(source, dict) else getattr(source, key, None)
@@ -156,31 +152,17 @@ class _BackendScope:
         if not uid:
             raise ValueError(f"uid is required in {error_context}")
 
-        if not hasattr(readable_skills_source, "_runtime_skill_sources"):
-            raise ValueError(f"_runtime_skill_sources is required in {error_context}")
-        raw_sources = getattr(readable_skills_source, "_runtime_skill_sources")
-        if not isinstance(raw_sources, dict):
-            raise ValueError(f"_runtime_skill_sources must be a dict in {error_context}")
-        skill_sources: dict[str, str] = {}
-        for slug, path in raw_sources.items():
-            if not isinstance(slug, str) or not slug.strip() or not isinstance(path, str) or not path.strip():
-                raise ValueError(f"_runtime_skill_sources contains an invalid entry in {error_context}")
-            skill_sources[slug.strip()] = path.strip()
         runtime_scope_id = string_value("runtime_scope_id") or thread_id
         relative_path = string_value("workdir_relative_path") or ""
         return cls(
-            thread_id=thread_id,
             runtime_scope_id=runtime_scope_id,
             workdir_relative_path=relative_path,
-            workdir_path=string_value("workdir_path") or (workdir_virtual_dir(relative_path) if relative_path else ""),
             uid=uid,
-            skill_sources=skill_sources,
         )
 
     def create_backend(self) -> CompositeBackend:
-        if not self.workdir_relative_path or not self.workdir_path:
+        if not self.workdir_relative_path:
             raise ValueError("workdir path is required in runtime context")
-        user_skills_root = get_user_skills_root_dir(self.uid)
         return CustomCompositeBackend(
             default=ProvisionerSandboxBackend(
                 thread_id=self.runtime_scope_id,
@@ -188,25 +170,15 @@ class _BackendScope:
                 workdir_path=self.workdir_relative_path,
                 create_if_missing=False,
             ),
-            routes={
-                "/skills/": SelectedSkillsReadonlyBackend(
-                    selected_slugs=list(self.skill_sources),
-                    root_dir=user_skills_root,
-                ),
-            },
+            routes={},
             artifacts_root=self.workdir_path,
         )
 
 
 async def sync_agent_context_skills(context) -> None:
     """在 Agent Run 初始化时同步当前用户获授权的共享 Skill 投影。"""
-    scope = _BackendScope.from_sources(
-        context,
-        readable_skills_source=context,
-        error_context="runtime context",
-    )
-    current_sources = await refresh_user_skill_projection_async(scope.uid)
-    setattr(context, "_runtime_skill_sources", current_sources)
+    scope = _BackendScope.from_sources(context, error_context="runtime context")
+    await refresh_user_skill_projection_async(scope.uid)
 
 
 def create_agent_composite_backend(runtime) -> CompositeBackend:
@@ -218,22 +190,18 @@ def create_agent_filesystem_middleware(
     *,
     context,
 ) -> FilesystemMiddleware:
+    scope = _BackendScope.from_sources(
+        context,
+        error_context="runtime context",
+    )
+
     def build_context_backend(_runtime):
         """按可变运行上下文重建文件作用域，读取已同步的共享 Skill 投影。"""
-        return _BackendScope.from_sources(
-            context,
-            readable_skills_source=context,
-            error_context="runtime context",
-        ).create_backend()
+        return scope.create_backend()
 
     middleware = YuxiFilesystemMiddleware(
         backend=build_context_backend,
         tool_token_limit_before_evict=tool_token_limit_before_evict,
-    )
-    scope = _BackendScope.from_sources(
-        context,
-        readable_skills_source=context,
-        error_context="runtime context",
     )
     large_results, history = workdir_runtime_paths(scope.workdir_path)
     middleware._large_tool_results_prefix = large_results

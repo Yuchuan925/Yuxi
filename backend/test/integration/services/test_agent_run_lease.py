@@ -14,13 +14,14 @@ import pytest
 import pytest_asyncio
 from langchain.messages import AIMessage
 from sqlalchemy import delete, select, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from yuxi.repositories.agent_run_repository import AgentRunRepository
 from yuxi.repositories.conversation_repository import ConversationRepository
 from yuxi.services import chat_service, run_worker
-from yuxi.storage.postgres.manager import AGENT_RUN_LEASE_SCHEMA_STATEMENTS
-from yuxi.storage.postgres.models_business import AgentRun, Conversation, Message
+from yuxi.storage.postgres.manager import AGENT_RUN_LEASE_SCHEMA_STATEMENTS, RUNTIME_SCOPE_SCHEMA_STATEMENTS
+from yuxi.storage.postgres.models_business import AgentRun, Conversation, Message, SubagentThread
 from yuxi.utils.datetime_utils import utc_now_naive
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
@@ -33,6 +34,7 @@ async def lease_database():
         for _ in range(2):
             for statement in AGENT_RUN_LEASE_SCHEMA_STATEMENTS:
                 await connection.execute(text(statement))
+        await connection.execute(text(RUNTIME_SCOPE_SCHEMA_STATEMENTS[-1]))
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
     try:
         yield engine, session_factory
@@ -139,6 +141,16 @@ async def test_root_terminal_atomically_cancels_live_child_and_clears_lease(
             )
             db.add(child_message)
             await db.flush()
+            relation = SubagentThread(
+                uid=parent.uid,
+                parent_conversation_id=parent_conversation.id,
+                child_conversation_id=child_conversation.id,
+                child_thread_id=child_thread_id,
+                subagent_slug="worker",
+                created_by_run_id=parent.id,
+            )
+            db.add(relation)
+            await db.flush()
             child = AgentRun(
                 id=str(uuid.uuid4()),
                 conversation_thread_id=child_thread_id,
@@ -148,6 +160,7 @@ async def test_root_terminal_atomically_cancels_live_child_and_clears_lease(
                 request_id=child_message.request_id,
                 conversation_id=child_conversation.id,
                 created_by_run_id=parent.id,
+                subagent_thread_relation_id=relation.id,
                 run_type="subagent",
                 input_message_id=child_message.id,
                 input_payload={},
@@ -212,6 +225,7 @@ async def _cleanup_runs(session_factory, thread_ids: list[str]) -> None:
         if conversation_ids:
             await db.execute(delete(Message).where(Message.conversation_id.in_(conversation_ids)))
         await db.execute(delete(AgentRun).where(AgentRun.conversation_thread_id.in_(thread_ids)))
+        await db.execute(delete(SubagentThread).where(SubagentThread.child_thread_id.in_(thread_ids)))
         await db.execute(delete(Conversation).where(Conversation.thread_id.in_(thread_ids)))
         await db.commit()
 
@@ -248,6 +262,16 @@ async def _create_live_child(
         )
         db.add(child_message)
         await db.flush()
+        relation = SubagentThread(
+            uid=parent.uid,
+            parent_conversation_id=parent.conversation_id,
+            child_conversation_id=child_conversation.id,
+            child_thread_id=child_thread_id,
+            subagent_slug="worker",
+            created_by_run_id=parent.id,
+        )
+        db.add(relation)
+        await db.flush()
         child = AgentRun(
             id=str(uuid.uuid4()),
             conversation_thread_id=child_thread_id,
@@ -257,6 +281,7 @@ async def _create_live_child(
             request_id=child_message.request_id,
             conversation_id=child_conversation.id,
             created_by_run_id=parent.id,
+            subagent_thread_relation_id=relation.id,
             run_type="subagent",
             input_message_id=child_message.id,
             input_payload={},
@@ -635,7 +660,12 @@ async def test_pending_cancel_is_terminal_and_durable_cancel_wins_completion_rac
 
     try:
         async with session_factory() as db:
-            pending = await AgentRunRepository(db).request_cancel(pending_run_id)
+            pending_uid = (await db.get(AgentRun, pending_run_id)).uid
+            pending, pending_cancelled_ids = await AgentRunRepository(db).request_cancel_execution_tree(
+                run_id=pending_run_id,
+                uid=pending_uid,
+                cascade_descendants=False,
+            )
             await db.commit()
         async with session_factory() as db:
             pending_reconciled, cancelled_descendants = await AgentRunRepository(db).reconcile_expired_leases(
@@ -652,7 +682,12 @@ async def test_pending_cancel_is_terminal_and_durable_cancel_wins_completion_rac
             )
             await db.commit()
         async with session_factory() as db:
-            requested = await AgentRunRepository(db).request_cancel(running_run_id)
+            running_uid = (await db.get(AgentRun, running_run_id)).uid
+            requested, running_cancelled_ids = await AgentRunRepository(db).request_cancel_execution_tree(
+                run_id=running_run_id,
+                uid=running_uid,
+                cascade_descendants=False,
+            )
             await db.commit()
         async with session_factory() as db:
             _, completed = await AgentRunRepository(db).set_terminal_status(
@@ -679,12 +714,14 @@ async def test_pending_cancel_is_terminal_and_durable_cancel_wins_completion_rac
             running_message = await db.get(Message, running_message_id)
 
         assert pending.status == "cancelled"
+        assert pending_cancelled_ids == [pending_run_id]
         assert pending_reconciled == []
         assert cancelled_descendants == []
         assert pending_persisted.status == "cancelled"
         assert pending_message.delivery_status == "cancelled"
         assert acquired is True
         assert requested.status == "cancel_requested"
+        assert running_cancelled_ids == [running_run_id]
         assert completed is False
         assert cancelled is True
         assert running_persisted.status == "cancelled"
@@ -757,3 +794,120 @@ async def test_concurrent_reconciliation_fails_each_expired_lease_once_and_proje
             assert persisted_messages[message_id].delivery_status == "failed"
     finally:
         await _cleanup_runs(session_factory, [item[1] for item in all_runs])
+
+
+async def test_nonterminal_run_shape_constraint_preserves_terminal_legacy_rows(lease_database):
+    """数据库允许历史终态形状，但拒绝新的非法非终态写入。"""
+    _, session_factory = lease_database
+    suffix = uuid.uuid4().hex
+    legacy_id = f"shape-legacy-{suffix}"
+    async with session_factory() as db:
+        legacy = AgentRun(
+            id=legacy_id,
+            conversation_thread_id=f"legacy-thread-{suffix}",
+            runtime_scope_id=f"foreign-scope-{suffix}",
+            agent_slug="main",
+            uid=f"shape-user-{suffix}",
+            status="completed",
+            request_id=f"shape-legacy-request-{suffix}",
+            run_type="subagent",
+            input_payload={},
+        )
+        db.add(legacy)
+        await db.commit()
+
+        db.add(
+            AgentRun(
+                id=f"shape-invalid-{suffix}",
+                conversation_thread_id=f"invalid-thread-{suffix}",
+                runtime_scope_id=f"foreign-scope-{suffix}",
+                agent_slug="main",
+                uid=f"shape-user-{suffix}",
+                status="pending",
+                request_id=f"shape-invalid-request-{suffix}",
+                run_type="chat",
+                input_payload={},
+            )
+        )
+        with pytest.raises(IntegrityError):
+            await db.flush()
+        await db.rollback()
+
+        persisted = await db.get(AgentRun, legacy_id)
+        assert persisted is not None
+        await db.delete(persisted)
+        await db.commit()
+
+
+async def test_cancel_execution_tree_locks_root_before_descendants(lease_database):
+    """取消执行树等待 root 时不能提前持有 child 行锁。"""
+    _, session_factory = lease_database
+    suffix = uuid.uuid4().hex
+    application_name = f"yuxi-lock-order-{suffix}"
+    now = utc_now_naive()
+    root_id, root_thread, _ = await _create_run(session_factory)
+    async with session_factory() as db:
+        uid = (await db.get(AgentRun, root_id)).uid
+    child_id, child_thread, _ = await _create_live_child(
+        session_factory,
+        parent_id=root_id,
+        runtime_scope_id=root_thread,
+        owner="worker-lock-child",
+        now=now,
+        lease_seconds=60,
+    )
+
+    cancel_started = asyncio.Event()
+
+    async def cancel_tree():
+        async with session_factory() as db:
+            await db.execute(
+                text("SELECT set_config('application_name', :name, true)"),
+                {"name": application_name},
+            )
+            cancel_started.set()
+            _run, cancelled_ids = await AgentRunRepository(db).request_cancel_execution_tree(
+                run_id=root_id,
+                uid=uid,
+                cascade_descendants=True,
+            )
+            await db.commit()
+            return cancelled_ids
+
+    cancel_task = None
+    try:
+        async with session_factory() as root_locker:
+            await root_locker.execute(select(AgentRun).where(AgentRun.id == root_id).with_for_update())
+            cancel_task = asyncio.create_task(cancel_tree())
+            await asyncio.wait_for(cancel_started.wait(), timeout=2)
+
+            async with session_factory() as observer:
+                for _ in range(100):
+                    wait_event = await observer.scalar(
+                        text("SELECT wait_event_type FROM pg_stat_activity WHERE application_name = :name"),
+                        {"name": application_name},
+                    )
+                    if wait_event == "Lock":
+                        break
+                    await asyncio.sleep(0.02)
+                else:
+                    pytest.fail("取消事务没有在 root 行锁上等待")
+
+            async with session_factory() as child_probe:
+                assert await child_probe.scalar(
+                    select(AgentRun).where(AgentRun.id == child_id).with_for_update(nowait=True)
+                )
+                await child_probe.rollback()
+            await root_locker.rollback()
+
+        assert await asyncio.wait_for(cancel_task, timeout=5) == [root_id, child_id]
+        async with session_factory() as db:
+            statuses = dict(
+                (await db.execute(select(AgentRun.id, AgentRun.status).where(AgentRun.id.in_([root_id, child_id])))).all()
+            )
+        assert statuses == {root_id: "cancelled", child_id: "cancel_requested"}
+    finally:
+        if cancel_task is not None and not cancel_task.done():
+            cancel_task.cancel()
+            await asyncio.gather(cancel_task, return_exceptions=True)
+        await _cleanup_runs(session_factory, [root_thread, child_thread])

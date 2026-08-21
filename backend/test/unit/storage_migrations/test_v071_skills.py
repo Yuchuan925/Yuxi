@@ -15,8 +15,6 @@ class _Db:
 
 
 class _EmptyRepo:
-    autocommit = True
-
     def __init__(self, _db):
         pass
 

@@ -4,17 +4,17 @@ import asyncio
 import contextlib
 import hashlib
 import io
-import shutil
+import os
+import tempfile
 from pathlib import Path, PurePosixPath
 from urllib.parse import quote
 
-import aiofiles
 from fastapi import HTTPException, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
+from starlette.background import BackgroundTask
+from yuxi.agents.backends.sandbox.backend import FileTransferLimitError
 from yuxi.agents.backends.sandbox.paths import (
     ensure_user_workspace,
-    global_user_data_dir,
-    user_workspace_dir,
     workspace_uid_dirname,
 )
 from yuxi.config import get_runtime_dir
@@ -33,15 +33,13 @@ from yuxi.services.mention_search_service import invalidate_workspace_mention_ca
 from yuxi.services.workspace_filesystem import WorkspaceFilesystem
 from yuxi.storage.postgres.models_business import User
 from yuxi.utils.datetime_utils import utc_isoformat_from_timestamp
-from yuxi.utils.paths import (
-    VIRTUAL_PATH_WORKSPACE,
-    ensure_within_root,
-)
-from yuxi.utils.upload_utils import MAX_UPLOAD_SIZE_BYTES, write_upload_to_buffer
+from yuxi.utils.paths import VIRTUAL_PATH_WORKSPACE
+from yuxi.utils.upload_utils import MAX_UPLOAD_SIZE_BYTES, write_upload_to_path
 
 EDITABLE_WORKSPACE_SUFFIXES = {".md", ".markdown", ".mdx", ".txt"}
 MAX_WORKSPACE_UPLOAD_SIZE_BYTES = MAX_UPLOAD_SIZE_BYTES
 MAX_WORKSPACE_UPLOAD_FILES = 50
+MAX_WORKSPACE_DOWNLOAD_SIZE_BYTES = 1024 * 1024 * 1024
 
 # 搜索返回条数上限，避免超大工作区一次性返回过多结果
 WORKSPACE_SEARCH_MAX_RESULTS = 100
@@ -72,48 +70,78 @@ async def list_workspace_tree(
     files_only: bool = False,
     current_user: User,
 ) -> dict:
-    root = _workspace_root(current_user)
-    target = _resolve_workspace_path(current_user, path)
-    if not target.exists():
+    backend = _workspace_backend(current_user)
+    virtual_path = _workspace_virtual_path(path)
+    try:
+        entries = await asyncio.to_thread(
+            _list_workspace_directory,
+            backend,
+            virtual_path,
+            recursive=recursive,
+            files_only=files_only,
+        )
+    except FileNotFoundError:
         return {"entries": []}
-    if not target.is_dir():
-        raise HTTPException(status_code=400, detail="当前路径不是目录")
-    entries = await asyncio.to_thread(_list_directory, root, target, recursive=recursive, files_only=files_only)
+    except NotADirectoryError as exc:
+        raise HTTPException(status_code=400, detail="当前路径不是目录") from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail="Access denied") from exc
     return {"entries": entries}
 
 
-def resolve_workspace_file_path(*, path: str, current_user: User) -> Path:
-    target = _resolve_workspace_path(current_user, path)
-    if not target.exists():
-        raise HTTPException(status_code=404, detail=f"工作区文件不存在: {path}")
-    if not target.is_file():
-        raise HTTPException(status_code=400, detail=f"当前路径不是文件: {path}")
-    return target
+async def read_workspace_file_bytes(*, path: str, current_user: User) -> tuple[str, bytes]:
+    """在 no-follow Workspace 边界内读取知识库导入文件。"""
+    backend = _workspace_backend(current_user)
+    virtual_path = _workspace_virtual_path(path)
+    try:
+        content = await asyncio.to_thread(
+            backend.read_authorized_file,
+            virtual_path,
+            MAX_WORKSPACE_UPLOAD_SIZE_BYTES,
+        )
+    except FileTransferLimitError as exc:
+        raise HTTPException(status_code=400, detail="文件过大，当前仅支持 100 MB 以内的工作区文件") from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=f"工作区文件不存在: {path}") from exc
+    except IsADirectoryError as exc:
+        raise HTTPException(status_code=400, detail=f"当前路径不是文件: {path}") from exc
+    except (PermissionError, NotADirectoryError, ValueError) as exc:
+        raise HTTPException(status_code=403, detail="Access denied") from exc
+    return PurePosixPath(virtual_path).name, content
 
 
 async def read_workspace_file_content(*, path: str, current_user: User) -> dict | StreamingResponse:
-    target = resolve_workspace_file_path(path=path, current_user=current_user)
-    if not target.exists():
-        raise HTTPException(status_code=404, detail="文件不存在")
-
-    stat = await asyncio.to_thread(target.stat)
-    if stat.st_size > MAX_BINARY_PREVIEW_SIZE_BYTES:
+    backend = _workspace_backend(current_user)
+    virtual_path = _workspace_virtual_path(path)
+    try:
+        raw_content = await asyncio.to_thread(
+            backend.read_authorized_file,
+            virtual_path,
+            MAX_BINARY_PREVIEW_SIZE_BYTES,
+        )
+    except FileTransferLimitError:
         return render_preview_too_large_payload()
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="文件不存在") from exc
+    except IsADirectoryError as exc:
+        raise HTTPException(status_code=400, detail="当前路径不是文件") from exc
+    except (PermissionError, NotADirectoryError, ValueError) as exc:
+        raise HTTPException(status_code=403, detail="Access denied") from exc
 
     if is_office_pdf_preview_file(path):
-        pdf_content = await _convert_workspace_office_to_pdf(current_user, target, target.name)
+        file_name = PurePosixPath(virtual_path).name
+        pdf_content = await _convert_workspace_office_to_pdf(current_user, virtual_path, file_name, raw_content)
         return _preview_binary_response(
-            filename=f"{target.stem or 'preview'}.pdf",
+            filename=f"{PurePosixPath(file_name).stem or 'preview'}.pdf",
             content=pdf_content,
             media_type="application/pdf",
             preview_type="pdf",
         )
 
-    raw_content = await asyncio.to_thread(target.read_bytes)
     preview_type, supported, message = detect_preview_type(path, raw_content)
     if is_binary_preview_type(preview_type) and supported:
         return _preview_binary_response(
-            filename=target.name or "preview",
+            filename=PurePosixPath(virtual_path).name or "preview",
             content=raw_content,
             media_type=detect_media_type(path, raw_content),
             preview_type=preview_type,
@@ -131,16 +159,23 @@ async def read_workspace_file_content(*, path: str, current_user: User) -> dict 
 
 
 async def write_workspace_file_content(*, path: str, content: str, current_user: User) -> dict:
-    root = _workspace_root(current_user)
-    target = _resolve_workspace_path(current_user, path)
-    if not target.exists():
-        raise HTTPException(status_code=404, detail="文件不存在")
-    if not target.is_file():
-        raise HTTPException(status_code=400, detail="当前路径是目录")
-    if target.suffix.lower() not in EDITABLE_WORKSPACE_SUFFIXES:
+    backend = _workspace_backend(current_user)
+    virtual_path = _workspace_virtual_path(path)
+    if PurePosixPath(virtual_path).suffix.lower() not in EDITABLE_WORKSPACE_SUFFIXES:
         raise HTTPException(status_code=400, detail="当前文件类型不支持编辑")
 
-    raw_content = await asyncio.to_thread(target.read_bytes)
+    try:
+        raw_content = await asyncio.to_thread(
+            backend.read_authorized_file,
+            virtual_path,
+            MAX_WORKSPACE_UPLOAD_SIZE_BYTES,
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="文件不存在") from exc
+    except IsADirectoryError as exc:
+        raise HTTPException(status_code=400, detail="当前路径是目录") from exc
+    except (PermissionError, NotADirectoryError, ValueError) as exc:
+        raise HTTPException(status_code=403, detail="Access denied") from exc
     preview_type, supported, _message = detect_preview_type(path, raw_content)
     if preview_type not in {"markdown", "text"} or not supported:
         raise HTTPException(status_code=400, detail="当前文件类型不支持编辑")
@@ -150,63 +185,64 @@ async def write_workspace_file_content(*, path: str, content: str, current_user:
         raise HTTPException(status_code=400, detail="当前文件不是 UTF-8 文本") from exc
 
     try:
-        await asyncio.to_thread(target.write_text, content, encoding="utf-8")
-    except PermissionError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        item = await asyncio.to_thread(backend.write_authorized_file, virtual_path, content.encode("utf-8"))
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="文件不存在") from exc
+    except IsADirectoryError as exc:
+        raise HTTPException(status_code=400, detail="当前路径是目录") from exc
+    except (PermissionError, NotADirectoryError, ValueError) as exc:
+        raise HTTPException(status_code=403, detail="Access denied") from exc
 
     return {
         "success": True,
         "path": _normalize_workspace_path(path).as_posix(),
-        "entry": _entry_for_path(root, target),
+        "entry": _entry_from_metadata(virtual_path, item),
     }
 
 
 async def delete_workspace_path(*, path: str, current_user: User) -> dict:
-    root = _workspace_root(current_user)
-    target = _resolve_workspace_path(current_user, path)
-    if target == root:
+    backend = _workspace_backend(current_user)
+    virtual_path = _workspace_virtual_path(path)
+    if virtual_path == VIRTUAL_PATH_WORKSPACE:
         raise HTTPException(status_code=400, detail="工作区根目录不允许删除")
-    if not target.exists():
-        raise HTTPException(status_code=404, detail="文件不存在")
 
     try:
-        if target.is_dir():
-            await asyncio.to_thread(shutil.rmtree, target)
-        else:
-            await asyncio.to_thread(target.unlink)
-    except PermissionError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        await asyncio.to_thread(
+            backend.delete_authorized_path,
+            virtual_path,
+            root=VIRTUAL_PATH_WORKSPACE,
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="文件不存在") from exc
+    except (PermissionError, NotADirectoryError, ValueError) as exc:
+        raise HTTPException(status_code=403, detail="Access denied") from exc
 
     await invalidate_workspace_mention_cache(str(current_user.uid))
     return {"success": True, "path": _normalize_workspace_path(path).as_posix()}
 
 
 async def create_workspace_directory(*, parent_path: str, name: str, current_user: User) -> dict:
-    root = _workspace_root(current_user)
+    backend = _workspace_backend(current_user)
     directory_name = _validate_child_name(name, field_name="文件夹名")
-    parent = _resolve_parent_directory(current_user, parent_path)
-    target = _resolve_new_child(root, parent, directory_name)
-    normalized_parent = _normalize_workspace_path(parent_path).as_posix()
-    virtual_parent = (
-        VIRTUAL_PATH_WORKSPACE
-        if normalized_parent == "/"
-        else f"{VIRTUAL_PATH_WORKSPACE.rstrip('/')}{normalized_parent}"
-    )
+    virtual_parent = _workspace_virtual_path(parent_path)
+    target = f"{virtual_parent.rstrip('/')}/{directory_name}"
 
     try:
-        await asyncio.to_thread(
-            WorkspaceFilesystem(str(current_user.uid)).create_authorized_directory,
+        item = await asyncio.to_thread(
+            backend.create_authorized_directory,
             virtual_parent,
             directory_name,
             root=VIRTUAL_PATH_WORKSPACE,
         )
     except FileExistsError as exc:
         raise HTTPException(status_code=400, detail="同名文件或文件夹已存在") from exc
-    except PermissionError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="目标目录不存在") from exc
+    except (PermissionError, NotADirectoryError, ValueError) as exc:
+        raise HTTPException(status_code=403, detail="Access denied") from exc
 
     await invalidate_workspace_mention_cache(str(current_user.uid))
-    return {"success": True, "entry": _entry_for_path(root, target)}
+    return {"success": True, "entry": _entry_from_metadata(target, item)}
 
 
 async def upload_workspace_files(*, parent_path: str, files: list[UploadFile], current_user: User) -> dict:
@@ -215,60 +251,89 @@ async def upload_workspace_files(*, parent_path: str, files: list[UploadFile], c
     if len(files) > MAX_WORKSPACE_UPLOAD_FILES:
         raise HTTPException(status_code=400, detail=f"一次最多上传 {MAX_WORKSPACE_UPLOAD_FILES} 个文件")
 
-    root = _workspace_root(current_user)
-    parent = _resolve_parent_directory(current_user, parent_path)
+    backend = _workspace_backend(current_user)
+    parent = _workspace_virtual_path(parent_path)
+    try:
+        parent_stat = await asyncio.to_thread(backend.stat_authorized_path, parent, root=VIRTUAL_PATH_WORKSPACE)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="目标目录不存在") from exc
+    except (PermissionError, NotADirectoryError, ValueError) as exc:
+        raise HTTPException(status_code=403, detail="Access denied") from exc
+    if not parent_stat["is_dir"]:
+        raise HTTPException(status_code=400, detail="目标路径不是目录")
     seen_names = set()
-    upload_targets: list[tuple[UploadFile, Path]] = []
+    upload_targets: list[tuple[UploadFile, str]] = []
 
     for file in files:
         file_name = _validate_child_name(Path(file.filename or "").name, field_name="文件名")
         if file_name in seen_names:
             raise HTTPException(status_code=400, detail=f"选择的文件中存在重复文件名: {file_name}")
         seen_names.add(file_name)
-        upload_targets.append((file, _resolve_new_child(root, parent, file_name)))
+        upload_targets.append((file, f"{parent.rstrip('/')}/{file_name}"))
 
-    completed_targets: list[Path] = []
+    completed_entries: list[tuple[str, dict]] = []
     try:
         for file, target in upload_targets:
-            await _write_workspace_upload(file, target)
-            completed_targets.append(target)
+            item = await _write_workspace_upload(file, backend, target)
+            completed_entries.append((target, item))
     except HTTPException:
-        for target in completed_targets:
+        for target, _item in completed_entries:
             with contextlib.suppress(OSError):
-                await asyncio.to_thread(target.unlink)
+                await asyncio.to_thread(
+                    backend.delete_authorized_path,
+                    target,
+                    root=VIRTUAL_PATH_WORKSPACE,
+                )
         raise
 
     await invalidate_workspace_mention_cache(str(current_user.uid))
-    return {"success": True, "entries": [_entry_for_path(root, target) for _file, target in upload_targets]}
+    entries = [_entry_from_metadata(target, item) for target, item in completed_entries]
+    return {"success": True, "entries": entries}
 
 
-async def download_workspace_file(*, path: str, current_user: User) -> StreamingResponse | FileResponse:
-    target = resolve_workspace_file_path(path=path, current_user=current_user)
-    if not target.exists():
-        raise HTTPException(status_code=404, detail="文件不存在")
-
-    file_name = target.name or "download"
+async def download_workspace_file(*, path: str, current_user: User) -> FileResponse:
+    backend = _workspace_backend(current_user)
+    virtual_path = _workspace_virtual_path(path)
+    file_name = PurePosixPath(virtual_path).name or "download"
     media_type = detect_media_type(file_name)
     headers = {"Content-Disposition": f"attachment; filename*=UTF-8''{quote(file_name)}"}
-    if target.stat().st_size > 1024 * 1024 * 16:
-        return FileResponse(path=target, media_type=media_type, headers=headers)
+    descriptor, temp_path = tempfile.mkstemp(prefix="yuxi-workspace-download-", suffix=PurePosixPath(file_name).suffix)
+    os.close(descriptor)
+    try:
+        await asyncio.to_thread(
+            backend.download_authorized_file_to_path,
+            virtual_path,
+            temp_path,
+            MAX_WORKSPACE_DOWNLOAD_SIZE_BYTES,
+        )
+    except FileNotFoundError as exc:
+        with contextlib.suppress(FileNotFoundError):
+            os.unlink(temp_path)
+        raise HTTPException(status_code=404, detail="文件不存在") from exc
+    except FileTransferLimitError as exc:
+        with contextlib.suppress(FileNotFoundError):
+            os.unlink(temp_path)
+        raise HTTPException(status_code=413, detail="文件超过下载大小限制") from exc
+    except (PermissionError, IsADirectoryError, NotADirectoryError, ValueError) as exc:
+        with contextlib.suppress(FileNotFoundError):
+            os.unlink(temp_path)
+        raise HTTPException(status_code=403, detail="Access denied") from exc
+    return FileResponse(
+        path=temp_path,
+        media_type=media_type,
+        headers=headers,
+        background=BackgroundTask(os.unlink, temp_path),
+    )
 
-    content = await asyncio.to_thread(target.read_bytes)
-    return StreamingResponse(io.BytesIO(content), media_type=media_type, headers=headers)
 
-
-def _workspace_root(user: User) -> Path:
+def _workspace_backend(user: User) -> WorkspaceFilesystem:
+    """物化并返回 uid 级 no-follow 文件系统。"""
+    backend = WorkspaceFilesystem(str(user.uid))
     try:
         ensure_user_workspace(str(user.uid))
-        root = user_workspace_dir(str(user.uid))
-        user_data_root = global_user_data_dir(str(user.uid))
     except (OSError, ValueError) as exc:
         raise HTTPException(status_code=403, detail="Access denied") from exc
-    try:
-        ensure_within_root(root, user_data_root, error_message="Access denied")
-    except ValueError as exc:
-        raise HTTPException(status_code=403, detail="Access denied") from exc
-    return root
+    return backend
 
 
 def _normalize_workspace_path(path: str | None) -> PurePosixPath:
@@ -281,36 +346,11 @@ def _normalize_workspace_path(path: str | None) -> PurePosixPath:
     return normalized
 
 
-def _resolve_workspace_path(user: User, path: str | None) -> Path:
-    root = _workspace_root(user)
+def _workspace_virtual_path(path: str | None) -> str:
     normalized = _normalize_workspace_path(path)
-    relative_parts = [part for part in normalized.parts if part not in {"/", ""}]
-    target = (root.joinpath(*relative_parts) if relative_parts else root).resolve(strict=False)
-    try:
-        ensure_within_root(target, root, error_message="Access denied")
-    except ValueError as exc:
-        raise HTTPException(status_code=403, detail="Access denied") from exc
-    return target
-
-
-def _resolve_parent_directory(user: User, parent_path: str) -> Path:
-    parent = _resolve_workspace_path(user, parent_path)
-    if not parent.exists():
-        raise HTTPException(status_code=404, detail="目标目录不存在")
-    if not parent.is_dir():
-        raise HTTPException(status_code=400, detail="目标路径不是目录")
-    return parent
-
-
-def _resolve_new_child(root: Path, parent: Path, name: str) -> Path:
-    target = parent / name
-    try:
-        ensure_within_root(target.resolve(strict=False), root, error_message="Access denied")
-    except ValueError as exc:
-        raise HTTPException(status_code=403, detail="Access denied") from exc
-    if target.exists():
-        raise HTTPException(status_code=400, detail="同名文件或文件夹已存在")
-    return target
+    if normalized.as_posix() == "/":
+        return VIRTUAL_PATH_WORKSPACE
+    return f"{VIRTUAL_PATH_WORKSPACE.rstrip('/')}{normalized.as_posix()}"
 
 
 def _validate_child_name(name: str, *, field_name: str) -> str:
@@ -324,42 +364,53 @@ def _validate_child_name(name: str, *, field_name: str) -> str:
     return clean_name
 
 
-def _entry_for_path(root: Path, path: Path) -> dict:
-    stat = path.stat()
-    is_dir = path.is_dir()
-    relative = path.relative_to(root).as_posix()
-    display_path = f"/{relative}" if relative else "/"
+def _entry_from_metadata(virtual_path: str, item: dict) -> dict:
+    is_dir = bool(item["is_dir"])
+    relative = PurePosixPath(virtual_path).relative_to(PurePosixPath(VIRTUAL_PATH_WORKSPACE)).as_posix()
+    display_path = f"/{relative}" if relative != "." else "/"
     if is_dir and display_path != "/" and not display_path.endswith("/"):
         display_path = f"{display_path}/"
-    virtual_path = VIRTUAL_PATH_WORKSPACE if display_path == "/" else f"{VIRTUAL_PATH_WORKSPACE}{display_path}"
-    entry = {
+    display_virtual_path = VIRTUAL_PATH_WORKSPACE if display_path == "/" else f"{VIRTUAL_PATH_WORKSPACE}{display_path}"
+    return {
         "path": display_path,
-        "virtual_path": virtual_path,
-        "name": path.name or "工作区",
+        "virtual_path": display_virtual_path,
+        "name": PurePosixPath(display_virtual_path.rstrip("/")).name or "工作区",
         "is_dir": is_dir,
-        "size": 0 if is_dir else stat.st_size,
-        "modified_at": utc_isoformat_from_timestamp(stat.st_mtime) or "",
+        "size": 0 if is_dir else int(item.get("size") or 0),
+        "modified_at": utc_isoformat_from_timestamp(float(item.get("modified_at") or 0)) or "",
     }
-    return entry
 
 
 def _sort_entries(entries: list[dict]) -> list[dict]:
     return sorted(entries, key=lambda item: (not bool(item.get("is_dir")), str(item.get("name") or "").lower()))
 
 
-def _list_directory(
-    root: Path,
-    target: Path,
+def _list_workspace_directory(
+    backend: WorkspaceFilesystem,
+    target: str,
     *,
     recursive: bool = False,
     files_only: bool = False,
 ) -> list[dict]:
-    children = list(target.iterdir())
-    entries = [_entry_for_path(root, child) for child in children if not files_only or child.is_file()]
+    children = backend.list_authorized_directory(target, root=VIRTUAL_PATH_WORKSPACE)
+    entries = []
+    child_directories = []
+    for child in children:
+        child_path = f"{target.rstrip('/')}/{child['name']}"
+        if not files_only or not child["is_dir"]:
+            entries.append(_entry_from_metadata(child_path, child))
+        if child["is_dir"]:
+            child_directories.append(child_path)
     if recursive:
-        for child in children:
-            if child.is_dir() and not child.is_symlink():
-                entries.extend(_list_directory(root, child, recursive=True, files_only=files_only))
+        for child_path in child_directories:
+            entries.extend(
+                _list_workspace_directory(
+                    backend,
+                    child_path,
+                    recursive=True,
+                    files_only=files_only,
+                )
+            )
     return _sort_entries(entries)
 
 
@@ -372,20 +423,22 @@ def _preview_binary_response(*, filename: str, content: bytes, media_type: str, 
     return StreamingResponse(io.BytesIO(content), media_type=media_type, headers=headers)
 
 
-async def _write_workspace_upload(file: UploadFile, target: Path) -> None:
-    created_file = False
-    upload_completed = False
-
+async def _write_workspace_upload(file: UploadFile, backend: WorkspaceFilesystem, target: str) -> dict:
+    descriptor, temp_path = tempfile.mkstemp(prefix="yuxi-workspace-upload-")
+    os.close(descriptor)
     try:
-        async with aiofiles.open(target, "xb") as buffer:
-            created_file = True
-            await write_upload_to_buffer(
-                file,
-                buffer,
-                max_size_bytes=MAX_WORKSPACE_UPLOAD_SIZE_BYTES,
-                too_large_message="文件过大，当前仅支持 100 MB 以内的文件",
-            )
-        upload_completed = True
+        await write_upload_to_path(
+            file,
+            Path(temp_path),
+            max_size_bytes=MAX_WORKSPACE_UPLOAD_SIZE_BYTES,
+            too_large_message="文件过大，当前仅支持 100 MB 以内的文件",
+        )
+        return await asyncio.to_thread(
+            backend.upload_authorized_file_from_path,
+            target,
+            temp_path,
+            overwrite=False,
+        )
     except FileExistsError as exc:
         raise HTTPException(status_code=400, detail="同名文件或文件夹已存在") from exc
     except ValueError as exc:
@@ -393,22 +446,26 @@ async def _write_workspace_upload(file: UploadFile, target: Path) -> None:
     except PermissionError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     finally:
-        if created_file and not upload_completed and target.exists():
-            with contextlib.suppress(OSError):
-                await asyncio.to_thread(target.unlink)
+        with contextlib.suppress(FileNotFoundError):
+            os.unlink(temp_path)
 
 
-async def _convert_workspace_office_to_pdf(user: User, target: Path, file_name: str) -> bytes:
+async def _convert_workspace_office_to_pdf(
+    user: User,
+    virtual_path: str,
+    file_name: str,
+    content: bytes,
+) -> bytes:
     cache_dir = get_runtime_dir() / "cache" / "office-previews" / workspace_uid_dirname(str(user.uid))
-    stat = await asyncio.to_thread(target.stat)
-    digest = hashlib.sha256(str(target).encode("utf-8")).hexdigest()
-    cache_path = cache_dir / f"{digest}-{stat.st_mtime_ns}-{stat.st_size}.pdf"
+    digest = hashlib.sha256(virtual_path.encode("utf-8")).hexdigest()
+    content_digest = hashlib.sha256(content).hexdigest()
+    cache_path = cache_dir / f"{digest}-{content_digest}.pdf"
 
-    cached = await asyncio.to_thread(lambda: cache_path.read_bytes() if cache_path.exists() else None)
-    if cached is not None:
-        return cached
+    try:
+        return await asyncio.to_thread(cache_path.read_bytes)
+    except FileNotFoundError:
+        pass
 
-    content = await asyncio.to_thread(target.read_bytes)
     try:
         pdf_content = await convert_office_to_pdf(file_name, content)
     except OfficePreviewConversionError as exc:

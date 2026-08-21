@@ -142,9 +142,9 @@ def _patch_repos(
         async def lock_run_for_user(self, run_id: str, uid: str):
             return await self.get_run_for_user(run_id, uid)
 
-        async def get_subagent_run_for_creator(self, *, uid: str, created_by_run_id: str, run_id: str):
+        async def get_subagent_run_with_creator(self, *, uid: str, created_by_run_id: str, run_id: str):
             assert uid == "user-1"
-            captured["get_subagent_run_for_creator"] = {
+            captured["get_subagent_run_with_creator"] = {
                 "uid": uid,
                 "created_by_run_id": created_by_run_id,
                 "run_id": run_id,
@@ -162,7 +162,7 @@ def _patch_repos(
                 return None
             if relation_by_id.child_thread_id != run.conversation_thread_id:
                 return None
-            return run
+            return creator_run, run
 
     class ConvRepo:
         def __init__(self, _db):

@@ -61,6 +61,19 @@ def _docker_backend(module, tmp_path, run_container):
     return backend
 
 
+def test_directory_validation_identifies_missing_mount_prerequisite(tmp_path):
+    module = _load_module()
+    root = tmp_path / "skill-projections"
+    root.mkdir()
+
+    with pytest.raises(ValueError, match="^skill projection must reference"):
+        module.LocalContainerProvisionerBackend._validate_directory_without_symlinks(
+            root,
+            ("fresh-user",),
+            label="skill projection",
+        )
+
+
 def _docker_backend_with_running_container(monkeypatch, tmp_path):
     module = _load_module()
     captured = []
@@ -1185,7 +1198,7 @@ def test_kubernetes_inventory_includes_pod_without_service_and_fails_closed(
     pod = SimpleNamespace(
         metadata=SimpleNamespace(
             labels={
-                "managed-by": "yuxi-sandbox-provisioner",
+                "app": "yuxi-sandbox",
                 "sandbox-id": "orphan-1",
             },
             annotations={"workdir-path": "projects/workdir-1"},
@@ -1217,7 +1230,7 @@ def test_kubernetes_inventory_includes_pod_without_service_and_fails_closed(
             workdir_path="projects/workdir-1",
         )
     ]
-    assert backend._core_api.selectors == ["app=yuxi-sandbox,managed-by=yuxi-sandbox-provisioner"]
+    assert backend._core_api.selectors == ["app=yuxi-sandbox"]
     backend._core_api.fail = True
     with pytest.raises(ApiException, match="inventory unavailable"):
         backend.list()

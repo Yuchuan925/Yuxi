@@ -119,6 +119,7 @@ def _patch_stream_scaffolding(
     monkeypatch.setattr(svc.content_guard, "check", _fake_guard_check)
     monkeypatch.setattr(svc.content_guard, "check_with_keywords", _fake_guard_check_with_keywords)
     monkeypatch.setattr(svc, "check_and_handle_interrupts", _fake_interrupts)
+    monkeypatch.setattr(svc, "get_user_skills_root_dir", lambda _uid: None)
 
     class FakeSandboxBackend:
         def __init__(self, **_kwargs):

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import threading
 from pathlib import Path
 
 import pytest
@@ -12,6 +14,7 @@ from yuxi.services.workdir_service import WorkdirBinding
 
 class _Backend:
     def __init__(self):
+        self._write_lock = threading.Lock()
         self.files = {
             "/home/gem/user-data/projects/workdir-1/report.md": b"one\ntwo\n",
             "/home/gem/user-data/notes.txt": b"private",
@@ -42,11 +45,20 @@ class _Backend:
         Path(target).write_bytes(content)
         return len(content)
 
-    def regular_file_exists(self, path):
-        return path in self.files
+    def read_authorized_file(self, path, max_bytes):
+        content = self.files.get(path)
+        if content is None:
+            raise FileNotFoundError(path)
+        if len(content) > max_bytes:
+            raise FileTransferLimitError("file exceeds transfer limit")
+        return content
 
-    def upload_authorized_file_from_path(self, path, source):
-        self.files[path] = Path(source).read_bytes()
+    def upload_authorized_file_from_path(self, path, source, *, overwrite=True):
+        content = Path(source).read_bytes()
+        with self._write_lock:
+            if not overwrite and path in self.files:
+                raise FileExistsError(path)
+            self.files[path] = content
 
 
 @pytest.fixture
@@ -130,7 +142,7 @@ async def test_thread_file_transfer_limit_is_not_reported_as_missing(live_files,
     def reject_large_file(*_args, **_kwargs):
         raise FileTransferLimitError("file exceeds transfer limit")
 
-    monkeypatch.setattr(live_files, "download_authorized_file_to_path", reject_large_file)
+    monkeypatch.setattr(live_files, "read_authorized_file", reject_large_file)
     with pytest.raises(HTTPException) as exc:
         await svc.read_thread_file_content_view(
             thread_id="thread-1",
@@ -229,3 +241,33 @@ async def test_save_artifact_copies_live_bytes_to_user_data(live_files):
     )
     assert result["saved_path"] == "/home/gem/user-data/saved_artifacts/report.md"
     assert live_files.files[result["saved_path"]] == b"one\ntwo\n"
+
+
+@pytest.mark.asyncio
+async def test_concurrent_artifact_saves_use_distinct_atomic_names(live_files):
+    second_source = "/home/gem/user-data/projects/workdir-1/outputs/report.md"
+    live_files.files[second_source] = b"second"
+
+    first, second = await asyncio.gather(
+        svc.save_thread_artifact_to_workspace_view(
+            thread_id="thread-1",
+            current_uid="user-1",
+            db=object(),
+            path="/home/gem/user-data/projects/workdir-1/report.md",
+        ),
+        svc.save_thread_artifact_to_workspace_view(
+            thread_id="thread-1",
+            current_uid="user-1",
+            db=object(),
+            path=second_source,
+        ),
+    )
+
+    assert {first["saved_path"], second["saved_path"]} == {
+        "/home/gem/user-data/saved_artifacts/report.md",
+        "/home/gem/user-data/saved_artifacts/report (1).md",
+    }
+    assert set(live_files.files[path] for path in (first["saved_path"], second["saved_path"])) == {
+        b"one\ntwo\n",
+        b"second",
+    }

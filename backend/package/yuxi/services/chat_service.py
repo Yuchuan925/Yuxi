@@ -25,6 +25,7 @@ from yuxi.agents.backends.sandbox.paths import user_workdir_host_dir, workdir_vi
 from yuxi.agents.base import _json_safe
 from yuxi.agents.buildin import agent_manager
 from yuxi.agents.context import build_agent_input_context, normalize_agent_context_config
+from yuxi.agents.skills.service import get_user_skills_root_dir
 from yuxi.agents.state import AgentStatePayload
 from yuxi.config.options import system_options
 from yuxi.repositories.agent_repository import AgentRepository
@@ -392,6 +393,18 @@ async def _stream_agent_events(agent, messages, *, input_context=None, **kwargs)
         **kwargs,
     ):
         yield mode, payload
+
+
+async def _ensure_persistent_sandbox(*, runtime_scope_id: str, uid: str, workdir_path: str) -> None:
+    """物化 Sandbox 的用户级挂载根并确认持久 runtime 可用。"""
+    # Workdir 已在 ARQ 发布前物化；这里只补齐首次构图前缺失的 Skill 投影根。
+    await asyncio.to_thread(get_user_skills_root_dir, uid)
+    backend = ProvisionerSandboxBackend(
+        thread_id=runtime_scope_id,
+        uid=uid,
+        workdir_path=workdir_path,
+    )
+    await asyncio.to_thread(backend.ensure_available)
 
 
 async def _get_existing_message_ids(conv_repo: ConversationRepository, thread_id: str) -> set[str]:
@@ -1072,12 +1085,11 @@ async def stream_agent_chat(
 
         # 智能体流式执行期间不访问业务数据库，先结束预处理事务并归还连接池。
         await db.commit()
-        bootstrap_backend = ProvisionerSandboxBackend(
-            thread_id=runtime_scope_id,
+        await _ensure_persistent_sandbox(
+            runtime_scope_id=runtime_scope_id,
             uid=uid,
             workdir_path=conversation.workdir_path,
         )
-        await asyncio.to_thread(bootstrap_backend.ensure_available)
 
         # 先构建 langgraph_config
         langgraph_config = {"configurable": {"thread_id": thread_id, "uid": uid}}
@@ -1336,12 +1348,11 @@ async def stream_agent_resume(
     meta["runtime_scope_id"] = runtime_scope_id
     meta["workdir_relative_path"] = conversation.workdir_path
     meta["workdir_path"] = workdir_virtual_dir(conversation.workdir_path)
-    bootstrap_backend = ProvisionerSandboxBackend(
-        thread_id=runtime_scope_id,
+    await _ensure_persistent_sandbox(
+        runtime_scope_id=runtime_scope_id,
         uid=uid,
         workdir_path=conversation.workdir_path,
     )
-    await asyncio.to_thread(bootstrap_backend.ensure_available)
     input_context = await build_agent_input_context(
         agent_config or {},
         thread_id=thread_id,

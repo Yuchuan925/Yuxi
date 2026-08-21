@@ -276,6 +276,7 @@ async def _seed_active_run(session, *, source="chat", status="running", run_type
             request_id="active-request",
             conversation_id=10,
             run_type=run_type,
+            created_by_run_id="interrupted-run" if run_type == "resume" else None,
             input_payload={},
         )
     )

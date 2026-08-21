@@ -512,26 +512,29 @@ class LocalContainerProvisionerBackend:
 
     @staticmethod
     def _validate_directory_without_symlinks(
-        root: Path, parts: tuple[str, ...]
+        root: Path, parts: tuple[str, ...], *, label: str
     ) -> None:
         """从已挂载根逐层打开既有目录，并拒绝任意 symlink 组件。"""
-        directory_fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        directory_fd = None
         try:
-            try:
-                for part in parts:
-                    child_fd = os.open(
-                        part,
-                        os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
-                        dir_fd=directory_fd,
-                    )
-                    os.close(directory_fd)
-                    directory_fd = child_fd
-            except OSError as exc:
-                raise ValueError(
-                    "workdir_path must reference an existing directory without symlinks"
-                ) from exc
+            directory_fd = os.open(
+                root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+            )
+            for part in parts:
+                child_fd = os.open(
+                    part,
+                    os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                    dir_fd=directory_fd,
+                )
+                os.close(directory_fd)
+                directory_fd = child_fd
+        except OSError as exc:
+            raise ValueError(
+                f"{label} must reference an existing directory without symlinks"
+            ) from exc
         finally:
-            os.close(directory_fd)
+            if directory_fd is not None:
+                os.close(directory_fd)
 
     def _is_expected_skills_mount(self, container, uid: str) -> bool:
         expected_source = str(self._user_skills_host_path(uid))
@@ -802,10 +805,12 @@ class LocalContainerProvisionerBackend:
                 self._validate_directory_without_symlinks(
                     self._user_data_container_path,
                     ("shared", safe_uid, "workspace"),
+                    label="user workspace",
                 )
                 self._validate_directory_without_symlinks(
                     self._skill_projections_container_path,
                     (safe_uid,),
+                    label="skill projection",
                 )
                 shared_workspace = self._shared_workspace_host_path(safe_uid)
                 user_skills = self._user_skills_host_path(safe_uid)
@@ -813,6 +818,7 @@ class LocalContainerProvisionerBackend:
                 self._validate_directory_without_symlinks(
                     self._user_data_container_path / "shared" / safe_uid / "workspace",
                     PurePosixPath(safe_workdir_path).parts,
+                    label="workdir_path",
                 )
             network_name = self._ensure_network(sandbox_id)
 
@@ -1467,7 +1473,8 @@ class KubernetesProvisionerBackend:
         try:
             pod_list = self._core_api.list_namespaced_pod(
                 namespace=self._namespace,
-                label_selector="app=yuxi-sandbox,managed-by=yuxi-sandbox-provisioner",
+                # 升级窗口内旧 Pod 尚无 managed-by 标签；inventory 必须仍能枚举并清理它们。
+                label_selector="app=yuxi-sandbox",
             )
         except ApiException:
             raise

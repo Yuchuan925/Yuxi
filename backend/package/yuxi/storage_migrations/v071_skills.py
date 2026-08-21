@@ -27,7 +27,6 @@ async def migrate_shared_skills(db: AsyncSession) -> None:
         await db.execute(text("SELECT pg_advisory_xact_lock(:lock_key)"), {"lock_key": SKILL_STORAGE_LOCK})
 
     repo = SkillRepository(db)
-    repo.autocommit = False
     migrated_sources: list[Path] = []
     legacy_shared_root = get_legacy_storage_dir() / "skills"
     if legacy_shared_root.is_symlink():
