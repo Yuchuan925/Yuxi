@@ -14,6 +14,7 @@ os.environ.setdefault(
     "YUXI_RUNTIME_DIR", os.path.join(os.environ.get("CLAUDE_JOB_DIR", tempfile.gettempdir()), "yuxi-test-saves")
 )
 
+from yuxi.agents.backends.paths import workdir_scope_from_runtime_path
 from yuxi.services import attachment_service as service
 from yuxi.services import workdir_service
 
@@ -182,20 +183,33 @@ def stub_attachment_usage_checks(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(service, "AgentRunRepository", EmptyAgentRunRepository)
 
 
-class FakeWorkdirBackend:
+WORKDIR_RELATIVE_PATH = "projects/11111111-1111-4111-8111-111111111111"
+
+
+def _scope_path(runtime_path: str) -> str:
+    return workdir_scope_from_runtime_path(WORKDIR_RELATIVE_PATH, runtime_path)
+
+
+class FakeWorkdirStorage:
     def __init__(self):
         self.files: dict[str, bytes] = {}
 
-    def ensure_available(self):
-        return "sandbox-1"
 
-    def upload_authorized_file_from_path(self, path: str, source_path: str):
-        self.files[path] = Path(source_path).read_bytes()
+class FakeWorkdir:
+    """只向附件用例暴露 Workdir scope，运行时路径仅用于核对持久记录。"""
 
-    def delete_authorized_path(self, path: str, *, root: str):
-        assert root == "/home/gem/user-data/projects/workdir-1"
-        if self.files.pop(path, None) is None:
-            raise FileNotFoundError(path)
+    relative_path = WORKDIR_RELATIVE_PATH
+
+    def __init__(self, storage: FakeWorkdirStorage):
+        self.storage = storage
+
+    def copy_file_from_path(self, scope: str, source_path: str, *, overwrite: bool = True):
+        del overwrite
+        self.storage.files[scope] = Path(source_path).read_bytes()
+
+    def delete(self, scope: str) -> None:
+        if self.storage.files.pop(scope, None) is None:
+            raise FileNotFoundError(scope)
 
 
 class QueuedAgentRunRequestRepository(EmptyAgentRunRequestRepository):
@@ -289,20 +303,16 @@ def confirm_attachment_env(monkeypatch: pytest.MonkeyPatch):
     """构造 confirm 流程所需的 MinIO 与仓库假实现，并挂载到 service 模块。"""
     fake_minio = FakeMinioClient()
     fake_repo = FakeConversationRepository(db=None)
-    backend = FakeWorkdirBackend()
+    backend = FakeWorkdirStorage()
 
     monkeypatch.setattr(service, "get_minio_client", lambda: fake_minio)
     monkeypatch.setattr(service, "ConversationRepository", lambda db: fake_repo)
 
     async def resolve_binding(**kwargs):
         del kwargs
-        return SimpleNamespace(
-            workdir_path="projects/workdir-1",
-            virtual_path="/home/gem/user-data/projects/workdir-1",
-            create_file_backend=lambda **_kwargs: backend,
-        )
+        return SimpleNamespace(workdir=FakeWorkdir(backend))
 
-    monkeypatch.setattr(workdir_service, "resolve_workdir_binding", resolve_binding)
+    monkeypatch.setattr(workdir_service, "resolve_authorized_workdir", resolve_binding)
     fake_repo.workdir_backend = backend
 
     return fake_minio, fake_repo
@@ -342,10 +352,14 @@ async def test_confirm_tmp_thread_attachments_writes_realtime_workdir(confirm_at
         "path",
         "original_path",
     }
-    assert stored["original_path"].startswith("/home/gem/user-data/projects/workdir-1/uploads/")
-    assert stored["path"].startswith("/home/gem/user-data/projects/workdir-1/uploads/attachments/")
-    assert fake_repo.workdir_backend.files[stored["original_path"]] == b"pdf-bytes"
-    assert fake_repo.workdir_backend.files[stored["path"]] == b"# parsed"
+    assert stored["original_path"].startswith(
+        "/home/gem/user-data/projects/11111111-1111-4111-8111-111111111111/uploads/"
+    )
+    assert stored["path"].startswith(
+        "/home/gem/user-data/projects/11111111-1111-4111-8111-111111111111/uploads/attachments/"
+    )
+    assert fake_repo.workdir_backend.files[_scope_path(stored["original_path"])] == b"pdf-bytes"
+    assert fake_repo.workdir_backend.files[_scope_path(stored["path"])] == b"# parsed"
     assert fake_minio.deleted_prefixes == [("knowledgebases", "tmp/chat_attachments/user-1/tmp-1/")]
 
 
@@ -459,18 +473,17 @@ async def test_confirm_tmp_thread_attachments_keeps_duplicate_names_separate(con
     first, second = response["attachments"]
     assert first["original_path"] != second["original_path"]
     first_record, second_record = fake_repo.attachments
-    assert fake_repo.workdir_backend.files[first_record["original_path"]] == b"first"
-    assert fake_repo.workdir_backend.files[second_record["original_path"]] == b"second"
+    assert fake_repo.workdir_backend.files[_scope_path(first_record["original_path"])] == b"first"
+    assert fake_repo.workdir_backend.files[_scope_path(second_record["original_path"])] == b"second"
 
 
 @pytest.mark.asyncio
 async def test_store_attachment_normalizes_persisted_file_name(monkeypatch):
     del monkeypatch
-    backend = FakeWorkdirBackend()
+    backend = FakeWorkdirStorage()
 
     record = await service._store_attachment(
-        backend=backend,
-        workdir_path="/home/gem/user-data/projects/workdir-1",
+        workdir=FakeWorkdir(backend),
         file_id="file-1",
         file_name=" report.txt",
         file_type="text/plain",
@@ -478,29 +491,28 @@ async def test_store_attachment_normalizes_persisted_file_name(monkeypatch):
     )
 
     assert record["file_name"] == "report.txt"
-    assert record["original_path"] == "/home/gem/user-data/projects/workdir-1/uploads/file-1_report.txt"
-    assert backend.files[record["original_path"]] == b"content"
+    assert (
+        record["original_path"]
+        == "/home/gem/user-data/projects/11111111-1111-4111-8111-111111111111/uploads/file-1_report.txt"
+    )
+    assert backend.files[_scope_path(record["original_path"])] == b"content"
 
 
 @pytest.mark.asyncio
 async def test_delete_thread_attachment_updates_live_workdir_even_during_runtime(monkeypatch):
     fake_repo = FakeConversationRepository(db=None)
-    backend = FakeWorkdirBackend()
-    original = "/home/gem/user-data/projects/workdir-1/uploads/file-1_demo.pdf"
-    parsed = "/home/gem/user-data/projects/workdir-1/uploads/attachments/file-1_demo.md"
-    backend.files = {original: b"pdf", parsed: b"markdown"}
+    backend = FakeWorkdirStorage()
+    original = "/home/gem/user-data/projects/11111111-1111-4111-8111-111111111111/uploads/file-1_demo.pdf"
+    parsed = "/home/gem/user-data/projects/11111111-1111-4111-8111-111111111111/uploads/attachments/file-1_demo.md"
+    backend.files = {_scope_path(original): b"pdf", _scope_path(parsed): b"markdown"}
     fake_repo.attachments = [{"file_id": "file-1", "file_name": "demo.pdf", "original_path": original, "path": parsed}]
 
     async def resolve_binding(**kwargs):
         del kwargs
-        return SimpleNamespace(
-            workdir_path="projects/workdir-1",
-            virtual_path="/home/gem/user-data/projects/workdir-1",
-            create_file_backend=lambda **_kwargs: backend,
-        )
+        return SimpleNamespace(workdir=FakeWorkdir(backend))
 
     monkeypatch.setattr(service, "ConversationRepository", lambda _db: fake_repo)
-    monkeypatch.setattr(workdir_service, "resolve_workdir_binding", resolve_binding)
+    monkeypatch.setattr(workdir_service, "resolve_authorized_workdir", resolve_binding)
     result = await service.delete_thread_attachment_view(
         thread_id="thread-1", file_id="file-1", db=FakeDB(), current_uid="user-1"
     )
@@ -513,9 +525,9 @@ async def test_delete_thread_attachment_updates_live_workdir_even_during_runtime
 @pytest.mark.asyncio
 async def test_delete_thread_attachment_rejects_queued_request_use(monkeypatch):
     fake_repo = FakeConversationRepository(db=None)
-    backend = FakeWorkdirBackend()
-    original = "/home/gem/user-data/projects/workdir-1/uploads/file-1_demo.pdf"
-    backend.files = {original: b"pdf"}
+    backend = FakeWorkdirStorage()
+    original = "/home/gem/user-data/projects/11111111-1111-4111-8111-111111111111/uploads/file-1_demo.pdf"
+    backend.files = {_scope_path(original): b"pdf"}
     attachment = {
         "file_id": "file-1",
         "file_name": "demo.pdf",
@@ -527,14 +539,10 @@ async def test_delete_thread_attachment_rejects_queued_request_use(monkeypatch):
 
     async def resolve_binding(**kwargs):
         del kwargs
-        return SimpleNamespace(
-            workdir_path="projects/workdir-1",
-            virtual_path="/home/gem/user-data/projects/workdir-1",
-            create_file_backend=lambda **_kwargs: backend,
-        )
+        return SimpleNamespace(workdir=FakeWorkdir(backend))
 
     monkeypatch.setattr(service, "ConversationRepository", lambda _db: fake_repo)
-    monkeypatch.setattr(workdir_service, "resolve_workdir_binding", resolve_binding)
+    monkeypatch.setattr(workdir_service, "resolve_authorized_workdir", resolve_binding)
     monkeypatch.setattr(service, "AgentRunRequestRepository", QueuedAgentRunRequestRepository)
 
     with pytest.raises(service.HTTPException) as exc_info:
@@ -544,28 +552,24 @@ async def test_delete_thread_attachment_rejects_queued_request_use(monkeypatch):
 
     assert exc_info.value.status_code == 409
     assert fake_repo.attachments == [attachment]
-    assert backend.files == {original: b"pdf"}
+    assert backend.files == {_scope_path(original): b"pdf"}
 
 
 @pytest.mark.asyncio
 async def test_delete_thread_attachment_rejects_active_thread_run(monkeypatch):
     fake_repo = FakeConversationRepository(db=None)
-    backend = FakeWorkdirBackend()
-    original = "/home/gem/user-data/projects/workdir-1/uploads/file-1_demo.pdf"
-    backend.files = {original: b"pdf"}
+    backend = FakeWorkdirStorage()
+    original = "/home/gem/user-data/projects/11111111-1111-4111-8111-111111111111/uploads/file-1_demo.pdf"
+    backend.files = {_scope_path(original): b"pdf"}
     attachment = {"file_id": "file-1", "file_name": "demo.pdf", "original_path": original, "path": original}
     fake_repo.attachments = [attachment]
 
     async def resolve_binding(**kwargs):
         del kwargs
-        return SimpleNamespace(
-            workdir_path="projects/workdir-1",
-            virtual_path="/home/gem/user-data/projects/workdir-1",
-            create_file_backend=lambda **_kwargs: backend,
-        )
+        return SimpleNamespace(workdir=FakeWorkdir(backend))
 
     monkeypatch.setattr(service, "ConversationRepository", lambda _db: fake_repo)
-    monkeypatch.setattr(workdir_service, "resolve_workdir_binding", resolve_binding)
+    monkeypatch.setattr(workdir_service, "resolve_authorized_workdir", resolve_binding)
     monkeypatch.setattr(service, "AgentRunRepository", ActiveAgentRunRepository)
 
     with pytest.raises(service.HTTPException) as exc_info:
@@ -575,15 +579,15 @@ async def test_delete_thread_attachment_rejects_active_thread_run(monkeypatch):
 
     assert exc_info.value.status_code == 409
     assert fake_repo.attachments == [attachment]
-    assert backend.files == {original: b"pdf"}
+    assert backend.files == {_scope_path(original): b"pdf"}
 
 
 @pytest.mark.asyncio
 async def test_delete_thread_attachment_does_not_delete_bytes_before_metadata_commit(monkeypatch):
     fake_repo = FakeConversationRepository(db=None)
-    backend = FakeWorkdirBackend()
-    original = "/home/gem/user-data/projects/workdir-1/uploads/file-1_demo.pdf"
-    backend.files = {original: b"pdf"}
+    backend = FakeWorkdirStorage()
+    original = "/home/gem/user-data/projects/11111111-1111-4111-8111-111111111111/uploads/file-1_demo.pdf"
+    backend.files = {_scope_path(original): b"pdf"}
     fake_repo.attachments = [
         {"file_id": "file-1", "file_name": "demo.pdf", "original_path": original, "path": original}
     ]
@@ -595,14 +599,10 @@ async def test_delete_thread_attachment_does_not_delete_bytes_before_metadata_co
 
     async def resolve_binding(**kwargs):
         del kwargs
-        return SimpleNamespace(
-            workdir_path="projects/workdir-1",
-            virtual_path="/home/gem/user-data/projects/workdir-1",
-            create_file_backend=lambda **_kwargs: backend,
-        )
+        return SimpleNamespace(workdir=FakeWorkdir(backend))
 
     monkeypatch.setattr(service, "ConversationRepository", lambda _db: fake_repo)
-    monkeypatch.setattr(workdir_service, "resolve_workdir_binding", resolve_binding)
+    monkeypatch.setattr(workdir_service, "resolve_authorized_workdir", resolve_binding)
 
     with pytest.raises(RuntimeError, match="database unavailable"):
         await service.delete_thread_attachment_view(
@@ -612,4 +612,4 @@ async def test_delete_thread_attachment_does_not_delete_bytes_before_metadata_co
             current_uid="user-1",
         )
 
-    assert backend.files == {original: b"pdf"}
+    assert backend.files == {_scope_path(original): b"pdf"}

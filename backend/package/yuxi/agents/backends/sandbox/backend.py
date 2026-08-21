@@ -27,10 +27,11 @@ from deepagents.backends.sandbox import MAX_BINARY_BYTES, BaseSandbox
 from deepagents.backends.utils import _get_file_type
 
 from yuxi.utils.logging_config import logger
-from yuxi.utils.paths import (
+from yuxi.agents.backends.paths import (
     VIRTUAL_PATH_PREFIX,
     VIRTUAL_SKILLS_PATH,
 )
+from yuxi.workspace.errors import FileTransferLimitError
 
 from .provider import get_sandbox_provider, sandbox_id_for_thread, sandbox_provisioner_token
 
@@ -77,10 +78,6 @@ def _glob_for_search_root(pattern: str, root: str) -> str:
 
 def _permission_error(operation: str, path: str) -> str:
     return f"permission denied for {operation} on '{path}'"
-
-
-class FileTransferLimitError(ValueError):
-    """受信任文件传输超过调用方声明的字节上限。"""
 
 
 def _raise_authorized_path_operation_error(output: str | None, path: str, fallback: str) -> None:

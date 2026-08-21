@@ -161,10 +161,10 @@ jobs:
             "# 根约定\n\n见 [架构](ARCHITECTURE.md) 与 [决策](docs/develop-guides/decisions/README.md)。\n",
         )
         self._write("ARCHITECTURE.md", "# 架构\n")
+        self._write("docs/develop-guides/decisions/README.md", "# 决策记录\n")
         self._write(
-            "docs/develop-guides/decisions/README.md", "# 决策记录\n"
+            "backend/AGENTS.md", "# Backend 约定\n见 [根约定](../AGENTS.md)。\n"
         )
-        self._write("backend/AGENTS.md", "# Backend 约定\n见 [根约定](../AGENTS.md)。\n")
         self._write("web/AGENTS.md", "# Web 约定\n见 [根约定](../AGENTS.md)。\n")
         self._write("docs/AGENTS.md", "# 文档约定\n见 [根约定](../AGENTS.md)。\n")
 
@@ -245,9 +245,7 @@ jobs:
             / "docs/develop-guides/decisions/implemented/2026-08-15-valid-decision.md"
         )
         path.write_text(
-            path.read_text(encoding="utf-8").replace(
-                "类型：process", "类型：refactor"
-            ),
+            path.read_text(encoding="utf-8").replace("类型：process", "类型：refactor"),
             encoding="utf-8",
         )
 
@@ -458,19 +456,21 @@ jobs:
                     ),
                     encoding="utf-8",
                 )
-                self.assertTrue(any("缺少实际 run step" in error for error in self._errors()))
+                self.assertTrue(
+                    any("缺少实际 run step" in error for error in self._errors())
+                )
 
     def test_real_provider_probe_requires_manual_trigger(self) -> None:
         path = self.root / ".github/workflows/real-provider-probe.yml"
         path.write_text(
-            path.read_text(encoding="utf-8").replace(
-                "workflow_dispatch:", "push:"
-            ),
+            path.read_text(encoding="utf-8").replace("workflow_dispatch:", "push:"),
             encoding="utf-8",
         )
 
         self.assertTrue(
-            any("workflow 不监听 workflow_dispatch" in error for error in self._errors())
+            any(
+                "workflow 不监听 workflow_dispatch" in error for error in self._errors()
+            )
         )
 
     def test_real_provider_probe_command_cannot_be_removed(self) -> None:
@@ -535,6 +535,62 @@ jobs:
             )
         )
 
+    def test_service_workspace_host_path_import_is_rejected(self) -> None:
+        self._write(
+            "backend/package/yuxi/services/invalid_service.py",
+            "from yuxi.workspace.paths import user_workdir_host_dir\n",
+        )
+
+        self.assertTrue(
+            any(
+                "普通 Service/Repository 不得取得 UserWorkspace 宿主 Path" in error
+                for error in self._errors()
+            )
+        )
+
+    def test_service_workspace_paths_module_import_is_rejected(self) -> None:
+        self._write(
+            "backend/package/yuxi/services/invalid_service.py",
+            "import yuxi.workspace.paths as workspace_paths\n",
+        )
+
+        self.assertTrue(
+            any(
+                "普通 Service/Repository 不得取得 UserWorkspace 宿主 Path" in error
+                for error in self._errors()
+            )
+        )
+
+    def test_service_config_host_root_bypass_is_rejected(self) -> None:
+        self._write(
+            "backend/package/yuxi/services/bypass.py",
+            "from yuxi.config import get_user_data_dir\n"
+            "def scan():\n"
+            "    return list((get_user_data_dir() / 'shared').iterdir())\n",
+        )
+
+        self.assertTrue(
+            any(
+                "普通 Service/Repository 不得取得 UserWorkspace 宿主 Path" in error
+                for error in self._errors()
+            )
+        )
+
+    def test_service_host_root_environment_bypass_is_rejected(self) -> None:
+        self._write(
+            "backend/package/yuxi/services/bypass.py",
+            "import os\nfrom pathlib import Path\n"
+            "def scan():\n"
+            "    return list(Path(os.environ['YUXI_USER_DATA_DIR']).iterdir())\n",
+        )
+
+        self.assertTrue(
+            any(
+                "不得读取 UserWorkspace 宿主根环境变量" in error
+                for error in self._errors()
+            )
+        )
+
     def test_agents_instruction_file_missing_is_rejected(self) -> None:
         (self.root / "backend/AGENTS.md").unlink()
 
@@ -544,13 +600,9 @@ jobs:
 
     def test_agents_instruction_broken_link_is_rejected(self) -> None:
         path = self.root / "AGENTS.md"
-        path.write_text(
-            "# 根约定\n\n见 [断链](missing-guide.md)。\n", encoding="utf-8"
-        )
+        path.write_text("# 根约定\n\n见 [断链](missing-guide.md)。\n", encoding="utf-8")
 
-        self.assertTrue(
-            any("AGENTS 指令引用失效" in error for error in self._errors())
-        )
+        self.assertTrue(any("AGENTS 指令引用失效" in error for error in self._errors()))
 
     def test_agents_instruction_external_link_is_allowed(self) -> None:
         path = self.root / "AGENTS.md"
@@ -568,17 +620,13 @@ jobs:
             encoding="utf-8",
         )
 
-        self.assertTrue(
-            any("必须有且只有一个 H1" in error for error in self._errors())
-        )
+        self.assertTrue(any("必须有且只有一个 H1" in error for error in self._errors()))
 
     def test_agents_instruction_budget_overflow_is_rejected(self) -> None:
         for relative in AGENTS_FILE_BUDGETS:
             with self.subTest(relative=relative):
                 path = self.root / relative
-                path.write_text(
-                    "# 标题\n\n" + "规则" * 3000 + "\n", encoding="utf-8"
-                )
+                path.write_text("# 标题\n\n" + "规则" * 3000 + "\n", encoding="utf-8")
 
                 self.assertTrue(
                     any(
@@ -661,9 +709,7 @@ jobs:
             "# 缩进示例\n\n    ```text\n\n系统不是缓存层，而是最终事实源。\n",
         )
 
-        self.assertTrue(
-            any("禁止对举式否定" in error for error in self._errors())
-        )
+        self.assertTrue(any("禁止对举式否定" in error for error in self._errors()))
 
     def test_shorter_fence_cannot_close_longer_fence(self) -> None:
         self._write(
@@ -679,9 +725,7 @@ jobs:
             "# 引用示例\n\n> ```text\n> 示例\n系统不是缓存层，而是最终事实源。\n",
         )
 
-        self.assertTrue(
-            any("禁止对举式否定" in error for error in self._errors())
-        )
+        self.assertTrue(any("禁止对举式否定" in error for error in self._errors()))
 
     def test_unclosed_list_fence_cannot_hide_following_prose(self) -> None:
         self._write(
@@ -689,9 +733,7 @@ jobs:
             "# 列表示例\n\n- 示例\n\n    ```text\n    示例\n\n系统不是缓存层，而是最终事实源。\n",
         )
 
-        self.assertTrue(
-            any("禁止对举式否定" in error for error in self._errors())
-        )
+        self.assertTrue(any("禁止对举式否定" in error for error in self._errors()))
 
     def test_nested_list_fence_cannot_hide_outer_item_prose(self) -> None:
         self._write(
@@ -701,9 +743,7 @@ jobs:
             "  系统不是缓存层，而是最终事实源。\n",
         )
 
-        self.assertTrue(
-            any("禁止对举式否定" in error for error in self._errors())
-        )
+        self.assertTrue(any("禁止对举式否定" in error for error in self._errors()))
 
     def test_vibe_drafts_are_excluded_from_prose_check(self) -> None:
         self._write(
@@ -758,7 +798,9 @@ Owner：owner.md
         )
 
         self.assertTrue(
-            any("proposed 验收标准缺少证据矩阵表头" in error for error in self._errors())
+            any(
+                "proposed 验收标准缺少证据矩阵表头" in error for error in self._errors()
+            )
         )
 
     def test_proposed_decision_empty_evidence_matrix_is_rejected(self) -> None:
@@ -789,7 +831,10 @@ Owner：owner.md
         )
 
         self.assertTrue(
-            any("proposed 验收标准缺少证据矩阵数据行" in error for error in self._errors())
+            any(
+                "proposed 验收标准缺少证据矩阵数据行" in error
+                for error in self._errors()
+            )
         )
 
     def test_proposed_evidence_matrix_empty_cell_is_rejected(self) -> None:
@@ -821,7 +866,9 @@ Owner：owner.md
         )
 
         self.assertTrue(
-            any("proposed 证据矩阵必须填写全部六列" in error for error in self._errors())
+            any(
+                "proposed 证据矩阵必须填写全部六列" in error for error in self._errors()
+            )
         )
 
     def test_proposed_evidence_matrix_unknown_result_is_rejected(self) -> None:
@@ -903,8 +950,18 @@ Owner：owner.md
         )
 
         errors = self._errors()
-        self.assertTrue(any("simplification ## 验证 缺少：旧能力不存在：" in error for error in errors))
-        self.assertTrue(any("simplification ## 验证 缺少：重新引入条件：" in error for error in errors))
+        self.assertTrue(
+            any(
+                "simplification ## 验证 缺少：旧能力不存在：" in error
+                for error in errors
+            )
+        )
+        self.assertTrue(
+            any(
+                "simplification ## 验证 缺少：重新引入条件：" in error
+                for error in errors
+            )
+        )
 
     def test_postmortem_readme_missing_is_rejected(self) -> None:
         (self.root / "docs/develop-guides/postmortems/README.md").unlink()
@@ -928,7 +985,10 @@ Owner：owner.md
         )
 
         self.assertTrue(
-            any("postmortem 模板缺少标题：## 防复发措施" in error for error in self._errors())
+            any(
+                "postmortem 模板缺少标题：## 防复发措施" in error
+                for error in self._errors()
+            )
         )
 
     def test_postmortem_template_empty_heading_is_rejected(self) -> None:
@@ -941,7 +1001,10 @@ Owner：owner.md
         )
 
         self.assertTrue(
-            any("postmortem 模板标题下没有内容：## 防复发措施" in error for error in self._errors())
+            any(
+                "postmortem 模板标题下没有内容：## 防复发措施" in error
+                for error in self._errors()
+            )
         )
 
     def test_rejected_decision_missing_rejection_reason_is_rejected(self) -> None:

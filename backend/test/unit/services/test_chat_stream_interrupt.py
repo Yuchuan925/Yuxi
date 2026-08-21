@@ -239,7 +239,7 @@ async def test_stream_agent_resume_commits_before_stream_and_routes_subagent_chu
                 id=1,
                 uid="user-1",
                 status="active",
-                workdir_path="projects/workdir-1",
+                workdir_path="projects/11111111-1111-4111-8111-111111111111",
                 extra_metadata={"attachments": []},
             ),
         )
@@ -273,7 +273,7 @@ async def test_stream_agent_resume_commits_before_stream_and_routes_subagent_chu
                 id=1,
                 uid="user-1",
                 status="active",
-                workdir_path="projects/workdir-1",
+                workdir_path="projects/11111111-1111-4111-8111-111111111111",
                 extra_metadata={"attachments": []},
             )
 

@@ -43,8 +43,8 @@ def _runtime(
     configurable = {
         "thread_id": thread_id,
         "runtime_scope_id": thread_id,
-        "workdir_relative_path": "projects/workdir-1",
-        "workdir_path": "/home/gem/user-data/projects/workdir-1",
+        "workdir_relative_path": "projects/11111111-1111-4111-8111-111111111111",
+        "workdir_path": "/home/gem/user-data/projects/11111111-1111-4111-8111-111111111111",
         "uid": uid,
     }
     return SimpleNamespace(
@@ -52,8 +52,8 @@ def _runtime(
         context=SimpleNamespace(
             thread_id=thread_id,
             runtime_scope_id=thread_id,
-            workdir_relative_path="projects/workdir-1",
-            workdir_path="/home/gem/user-data/projects/workdir-1",
+            workdir_relative_path="projects/11111111-1111-4111-8111-111111111111",
+            workdir_path="/home/gem/user-data/projects/11111111-1111-4111-8111-111111111111",
             uid=uid,
         ),
         state={},
@@ -72,7 +72,7 @@ async def test_ocr_parse_file_writes_markdown_to_outputs(tmp_path, monkeypatch: 
     monkeypatch.setattr(ocr_service, "resolve_ocr_engine_id", resolve_engine)
     thread_id = "thread-1"
     uid = "user-1"
-    source_virtual_path = "/home/gem/user-data/projects/workdir-1/scan.png"
+    source_virtual_path = "/home/gem/user-data/projects/11111111-1111-4111-8111-111111111111/scan.png"
     sandbox_files = _patch_sandbox_backend(monkeypatch, {source_virtual_path: b"fake image"})
     captured: dict[str, object] = {}
 
@@ -90,7 +90,7 @@ async def test_ocr_parse_file_writes_markdown_to_outputs(tmp_path, monkeypatch: 
         runtime=_runtime(thread_id=thread_id, uid=uid),
     )
 
-    output_virtual_path = "/home/gem/user-data/projects/workdir-1/outputs/ocr/scan.md"
+    output_virtual_path = "/home/gem/user-data/projects/11111111-1111-4111-8111-111111111111/outputs/ocr/scan.md"
     assert sandbox_files[output_virtual_path].decode("utf-8").startswith("识别结果")
     assert result["source_path"] == source_virtual_path
     assert result["parsed_path"] == output_virtual_path
@@ -115,7 +115,7 @@ async def test_ocr_parse_file_uses_default_engine(tmp_path, monkeypatch: pytest.
     monkeypatch.setattr(ocr_service, "resolve_ocr_engine_id", resolve_engine)
     thread_id = "thread-1"
     uid = "user-1"
-    source_virtual_path = "/home/gem/user-data/projects/workdir-1/uploads/upload.pdf"
+    source_virtual_path = "/home/gem/user-data/projects/11111111-1111-4111-8111-111111111111/uploads/upload.pdf"
     _patch_sandbox_backend(monkeypatch, {source_virtual_path: b"fake pdf"})
     captured: dict[str, object] = {}
 
@@ -141,7 +141,7 @@ async def test_ocr_parse_file_accepts_disable_for_pdf(tmp_path, monkeypatch: pyt
     _mock_system_options(monkeypatch)
     thread_id = "thread-1"
     uid = "user-1"
-    source_virtual_path = "/home/gem/user-data/projects/workdir-1/uploads/text-layer.pdf"
+    source_virtual_path = "/home/gem/user-data/projects/11111111-1111-4111-8111-111111111111/uploads/text-layer.pdf"
     _patch_sandbox_backend(monkeypatch, {source_virtual_path: b"fake pdf"})
     captured: dict[str, object] = {}
 
@@ -187,7 +187,7 @@ async def test_ocr_parse_file_rejects_directory(tmp_path, monkeypatch: pytest.Mo
     _mock_system_options(monkeypatch)
     thread_id = "thread-1"
     uid = "user-1"
-    dir_virtual_path = "/home/gem/user-data/projects/workdir-1/directory"
+    dir_virtual_path = "/home/gem/user-data/projects/11111111-1111-4111-8111-111111111111/directory"
     _patch_sandbox_backend(monkeypatch, {})
 
     with pytest.raises(ValueError, match="不存在或不是普通文件"):

@@ -10,17 +10,18 @@ from pathlib import Path, PurePosixPath
 
 from yuxi.config import get_user_data_dir
 from yuxi.utils.logging_config import logger
-from yuxi.utils.paths import (
-    VIRTUAL_PATH_PREFIX,
-    WORKSPACE_AGENT_CONTEXT_FILES,
-    WORKSPACE_AGENTS_DIR_NAME,
-    WORKSPACE_DIR_NAME,
-    open_directory_fd,
-)
+from yuxi.utils.paths import open_directory_fd
+
+WORKSPACE_DIR_NAME = "workspace"
+WORKSPACE_AGENTS_DIR_NAME = "agents"
+WORKSPACE_AGENT_CONTEXT_FILES = {
+    "AGENTS.md": "# AGENTS\n\n以下是约束 Agent 行为的一些要求\n",
+    "USER.md": "# USER\n\n以下是有关用户的一些信息\n",
+    "MEMORY.md": "# MEMORY\n\n以下是 Agent 需要记住的一些信息\n",
+}
 
 _SAFE_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 WORKDIR_PROJECTS_DIR_NAME = "projects"
-RESERVED_WORKDIR_ROOTS = frozenset({WORKSPACE_AGENTS_DIR_NAME})
 
 
 def validate_thread_id(thread_id: str) -> str:
@@ -33,21 +34,20 @@ def validate_thread_id(thread_id: str) -> str:
 
 
 def normalize_workdir_path(workdir_path: str) -> str:
-    """校验并规范化 UserWorkspace 相对 Workdir 路径。"""
+    """规范化数据库中的 ``projects/<uuid>`` Workdir 路径。"""
     raw = str(workdir_path or "").strip()
     pure = PurePosixPath(raw)
     if not raw or pure.is_absolute() or "\\" in raw or "://" in raw:
         raise ValueError("workdir_path must be a relative POSIX path")
     if any(part in {"", ".", ".."} for part in raw.split("/")):
         raise ValueError("workdir_path contains invalid path components")
-    if not pure.parts or pure.parts[0] in RESERVED_WORKDIR_ROOTS:
-        raise ValueError("workdir_path uses a reserved workspace directory")
-    return pure.as_posix()
-
-
-def workdir_virtual_dir(workdir_path: str) -> str:
-    """返回 Workdir 在 Sandbox 内的绝对路径。"""
-    return f"{VIRTUAL_PATH_PREFIX.rstrip('/')}/{normalize_workdir_path(workdir_path)}"
+    if len(pure.parts) != 2 or pure.parts[0] != WORKDIR_PROJECTS_DIR_NAME:
+        raise ValueError("workdir_path must use projects/<uuid>")
+    try:
+        workdir_id = uuid.UUID(pure.parts[1])
+    except ValueError as exc:
+        raise ValueError("workdir_path must use projects/<uuid>") from exc
+    return f"{WORKDIR_PROJECTS_DIR_NAME}/{workdir_id}"
 
 
 def workspace_uid_dirname(uid: str) -> str:
@@ -88,51 +88,20 @@ def user_workdir_host_dir(uid: str, workdir_path: str) -> Path:
     return target
 
 
-def create_default_user_workdir(uid: str) -> tuple[str, Path]:
-    """在 UserWorkspace/projects 中创建唯一默认 Workdir。"""
-    ensure_user_workspace(uid)
-    workspace_fd = _open_user_workspace_fd(uid)
-    projects_fd = None
-    try:
-        projects_fd = _open_workspace_child_fd(
-            workspace_fd,
-            (WORKDIR_PROJECTS_DIR_NAME,),
-            create=True,
-        )
-        while True:
-            directory_name = str(uuid.uuid4())
-            try:
-                os.mkdir(directory_name, 0o700, dir_fd=projects_fd)
-                break
-            except FileExistsError:
-                continue
-    finally:
-        if projects_fd is not None:
-            os.close(projects_fd)
-        os.close(workspace_fd)
-    relative_path = f"{WORKDIR_PROJECTS_DIR_NAME}/{directory_name}"
-    return relative_path, user_workspace_dir(uid) / WORKDIR_PROJECTS_DIR_NAME / directory_name
-
-
 def allocate_default_user_workdir_path() -> str:
     """分配默认 Workdir 相对路径，不在数据库事务提交前创建目录。"""
     return f"{WORKDIR_PROJECTS_DIR_NAME}/{uuid.uuid4()}"
 
 
-def ensure_bound_user_workdir(uid: str, workdir_path: str) -> Path:
-    """确保已由 Conversation 绑定的默认 Workdir 存在；显式路径只校验。"""
+def ensure_bound_user_workdir(uid: str, workdir_path: str) -> None:
+    """物化已提交数据库绑定的 canonical Workdir。"""
     try:
-        return user_workdir_host_dir(uid, workdir_path)
+        user_workdir_host_dir(uid, workdir_path)
+        return
     except FileNotFoundError:
         pass
     normalized = normalize_workdir_path(workdir_path)
     parts = PurePosixPath(normalized).parts
-    if len(parts) != 2 or parts[0] != WORKDIR_PROJECTS_DIR_NAME:
-        raise FileNotFoundError("explicit workdir_path does not exist")
-    try:
-        uuid.UUID(parts[1])
-    except ValueError as exc:
-        raise FileNotFoundError("migrated Workdir directory does not exist") from exc
     ensure_user_workspace(uid)
     workspace_fd = _open_user_workspace_fd(uid)
     try:
@@ -140,7 +109,6 @@ def ensure_bound_user_workdir(uid: str, workdir_path: str) -> Path:
         os.close(directory_fd)
     finally:
         os.close(workspace_fd)
-    return user_workspace_dir(uid) / WORKDIR_PROJECTS_DIR_NAME / parts[1]
 
 
 def _open_workspace_directory(uid: str, parts: tuple[str, ...]) -> None:
@@ -217,11 +185,6 @@ def _ensure_workspace_default_files_fd(workspace_fd: int) -> None:
                     os.close(file_fd)
     finally:
         os.close(agents_fd)
-
-
-def user_workspace_agent_context_file(uid: str, filename: str) -> Path:
-    """返回用户级 Agent 上下文文件。"""
-    return user_workspace_dir(uid) / WORKSPACE_AGENTS_DIR_NAME / filename
 
 
 def ensure_user_workspace(uid: str) -> None:

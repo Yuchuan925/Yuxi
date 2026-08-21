@@ -204,21 +204,28 @@ def _find_tool_result_contents(value: Any, tool_call_ids: set[str]) -> list[str]
     return contents
 
 
-async def _read_thread_file(
+async def _read_viewer_file(
     client: httpx.AsyncClient,
     headers: dict[str, str],
     thread_id: str,
     path: str,
 ) -> str:
     response = await client.get(
-        f"/api/chat/thread/{thread_id}/files/content",
-        params={"path": path},
+        "/api/viewer/filesystem/file",
+        params={"thread_id": thread_id, "path": path},
         headers=headers,
     )
     _assert_ok(response)
     content = response.json().get("content")
-    assert isinstance(content, list), response.text
-    return "\n".join(str(line) for line in content)
+    assert isinstance(content, str), response.text
+    return content
+
+
+def _viewer_scope_path(project_root: str, runtime_path: str) -> str:
+    """把 Agent runtime 路径转换为 Viewer 的当前 Workdir 相对路径。"""
+    prefix = f"{project_root.rstrip('/')}/"
+    assert runtime_path.startswith(prefix), (project_root, runtime_path)
+    return f"/{runtime_path[len(prefix) :]}"
 
 
 async def test_subagent_stream_records_run_and_shares_output_files(
@@ -239,6 +246,8 @@ async def test_subagent_stream_records_run_and_shares_output_files(
     main_slug = f"e2e-main-{suffix}"
     parent_input_path: str | None = None
     output_path: str | None = None
+    parent_input_viewer_path: str | None = None
+    output_viewer_path: str | None = None
     expected_content = "由这个子智能体创建"
     runtime_content = f"runtime-shared-{suffix}"
     runtime_marker = f"/tmp/yuxi-execution-tree-{suffix}"
@@ -330,6 +339,8 @@ async def test_subagent_stream_records_run_and_shares_output_files(
         thread_id, project_root = await _create_thread(e2e_client, e2e_headers, main_slug, marker)
         parent_input_path = f"{project_root}/outputs/parent-input.txt"
         output_path = f"{project_root}/outputs/subagents.txt"
+        parent_input_viewer_path = _viewer_scope_path(project_root, parent_input_path)
+        output_viewer_path = _viewer_scope_path(project_root, output_path)
         query = (
             f"请严格依次完成：1）你先用 execute 执行 `printf '%s' '{runtime_content}' > '{runtime_marker}'`；"
             f"2）用 write_file 创建 {parent_input_path}，内容只有一行“{expected_content}”；"
@@ -438,34 +449,23 @@ async def test_subagent_stream_records_run_and_shares_output_files(
         assert "execute" in history_text and runtime_marker in history_text
         assert "read_file" in history_text and output_path in history_text
 
-        files_response = await e2e_client.get(
-            f"/api/chat/thread/{thread_id}/files",
-            params={"path": f"{project_root}/outputs", "recursive": "true"},
-            headers=e2e_headers,
-        )
-        _assert_ok(files_response)
-        files_payload = files_response.json()
-        file_paths = {str(item.get("path") or "") for item in files_payload.get("files") or []}
-        assert output_path in file_paths, {
-            "output_path": output_path,
-            "files": files_payload,
-            "subagent_run": completed_run,
-        }
-        assert (await _read_thread_file(e2e_client, e2e_headers, thread_id, output_path)).strip() == expected_content
-        parent_content = await _read_thread_file(e2e_client, e2e_headers, thread_id, parent_input_path)
+        assert (
+            await _read_viewer_file(e2e_client, e2e_headers, thread_id, output_viewer_path)
+        ).strip() == expected_content
+        parent_content = await _read_viewer_file(e2e_client, e2e_headers, thread_id, parent_input_viewer_path)
         assert parent_content.strip() == expected_content
 
         tree_response = await e2e_client.get(
             "/api/viewer/filesystem/tree",
-            params={"thread_id": thread_id, "path": f"{project_root}/outputs"},
+            params={"thread_id": thread_id, "path": "/outputs"},
             headers=e2e_headers,
         )
         _assert_ok(tree_response)
-        assert output_path in json.dumps(tree_response.json(), ensure_ascii=False)
+        assert output_viewer_path in json.dumps(tree_response.json(), ensure_ascii=False)
 
         viewer_file_response = await e2e_client.get(
             "/api/viewer/filesystem/file",
-            params={"thread_id": thread_id, "path": output_path},
+            params={"thread_id": thread_id, "path": output_viewer_path},
             headers=e2e_headers,
         )
         _assert_ok(viewer_file_response)
@@ -476,7 +476,7 @@ async def test_subagent_stream_records_run_and_shares_output_files(
         if not run_completed:
             await cancel_run(e2e_client, e2e_headers, run_id)
         if thread_id:
-            for path in (parent_input_path, output_path):
+            for path in (parent_input_viewer_path, output_viewer_path):
                 if path:
                     await e2e_client.delete(
                         "/api/viewer/filesystem/file",

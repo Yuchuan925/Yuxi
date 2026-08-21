@@ -11,7 +11,7 @@ Owner：backend/package/yuxi/storage_migration.py
 ## 决策
 
 - 一次性 `storage-migrator` 只接受 v0.7.1 的 `Conversation` 无 `workdir_path` schema、当前 schema 和全新数据库；检测到 `workdir_id`、`project_workdirs` 或 `file_storage_materializations` 时明确拒绝未发布中间 schema。
-- v0.7.1 的每个 Conversation 都获得确定性的 `projects/legacy-<hash>`，即使旧 thread 目录为空也创建 Workdir；仅在旧 uploads/outputs 存在时复制文件。已有 `workdir_path` 且旧 thread 源仍存在时允许幂等重放。
+- v0.7.1 的每个 Conversation 都获得由 owner uid + owner thread id 确定性派生的 canonical `projects/<uuid>`，即使旧 thread 目录为空也创建 Workdir；子线程与 owner 共用 Workdir，仅在旧 uploads/outputs 存在时复制文件。已有 `workdir_path` 且旧 thread 源仍存在时允许幂等重放。
 - 停机条件由 v0.7.1 schema、旧 shared Skill、旧 `base.toml` 或待导入 thread 文件共同触发；schema 切换不依赖旧文件是否存在。
 - 附件记录按当前持久字段白名单重建，清除 v0.7.1 的宿主路径、Markdown 和派生 URL；只重写 v0.7.1 使用的 `/home/gem/user-data/...` 虚拟路径。
 - Options 迁移只读取 v0.7.1 的 `config/base.toml`，且只由 `storage-migrator` 执行；API 和 worker 正常启动只同步当前配置定义。

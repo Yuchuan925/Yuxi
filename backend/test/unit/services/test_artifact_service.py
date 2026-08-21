@@ -7,35 +7,23 @@ from pathlib import Path
 import pytest
 from fastapi import HTTPException
 
-import yuxi.services.thread_files_service as svc
-from yuxi.agents.backends.sandbox.backend import FileTransferLimitError
-from yuxi.services.workdir_service import WorkdirBinding
+import yuxi.services.artifact_service as svc
+from yuxi.agents.backends.paths import workspace_scope_from_runtime_path
+from yuxi.workspace.errors import FileTransferLimitError
+from yuxi.services.workdir_service import AuthorizedWorkdir
+from yuxi.workspace.workdir import Workdir
 
 
-class _Backend:
-    def __init__(self):
+class _Workspace:
+    def __init__(self, skill_root: Path):
         self._write_lock = threading.Lock()
         self.files = {
-            "/home/gem/user-data/projects/workdir-1/report.md": b"one\ntwo\n",
-            "/home/gem/user-data/notes.txt": b"private",
-            "/home/gem/skills/reporter/SKILL.md": b"skill",
+            "/projects/11111111-1111-4111-8111-111111111111/report.md": b"one\ntwo\n",
+            "/notes.txt": b"private",
         }
-        self.directories = {
-            "/home/gem/user-data/projects/workdir-1": [
-                {"name": "outputs", "is_dir": True, "size": 0},
-                {"name": "report.md", "is_dir": False, "size": 8},
-            ],
-            "/home/gem/user-data/projects/workdir-1/outputs": [{"name": "nested.txt", "is_dir": False, "size": 3}],
-        }
-
-    def ensure_available(self):
-        return "sandbox-1"
-
-    def list_authorized_directory(self, path, *, root):
-        assert root == "/home/gem/user-data/projects/workdir-1"
-        if path not in self.directories:
-            raise FileNotFoundError(path)
-        return self.directories[path]
+        self.skill_root = skill_root
+        skill_root.mkdir()
+        (skill_root / "SKILL.md").write_bytes(b"skill")
 
     def download_authorized_file_to_path(self, path, target, max_bytes):
         content = self.files.get(path)
@@ -45,14 +33,6 @@ class _Backend:
         Path(target).write_bytes(content)
         return len(content)
 
-    def read_authorized_file(self, path, max_bytes):
-        content = self.files.get(path)
-        if content is None:
-            raise FileNotFoundError(path)
-        if len(content) > max_bytes:
-            raise FileTransferLimitError("file exceeds transfer limit")
-        return content
-
     def upload_authorized_file_from_path(self, path, source, *, overwrite=True):
         content = Path(source).read_bytes()
         with self._write_lock:
@@ -60,28 +40,30 @@ class _Backend:
                 raise FileExistsError(path)
             self.files[path] = content
 
+    def expected_bytes(self, runtime_path: str) -> bytes:
+        if runtime_path.startswith("/home/gem/skills/reporter/"):
+            return (self.skill_root / runtime_path.rsplit("/", 1)[-1]).read_bytes()
+        return self.files[workspace_scope_from_runtime_path(runtime_path)]
+
+    def add_runtime_file(self, runtime_path: str, content: bytes) -> None:
+        self.files[workspace_scope_from_runtime_path(runtime_path)] = content
+
 
 @pytest.fixture
-def live_files(monkeypatch):
-    backend = _Backend()
-    binding = WorkdirBinding(
+def live_files(monkeypatch, tmp_path):
+    backend = _Workspace(tmp_path / "reporter")
+    binding = AuthorizedWorkdir(
         conversation_id=1,
         thread_id="thread-1",
-        workdir_path="projects/workdir-1",
-        virtual_path="/home/gem/user-data/projects/workdir-1",
         uid="user-1",
+        workdir=Workdir("projects/11111111-1111-4111-8111-111111111111", backend),
     )
 
     async def resolve(**kwargs):
         assert kwargs["uid"] == "user-1"
         return binding
 
-    async def invalidate(*args, **kwargs):
-        del args, kwargs
-
-    monkeypatch.setattr(svc, "resolve_workdir_binding", resolve)
-    monkeypatch.setattr(binding.__class__, "create_file_backend", lambda self, **kwargs: backend)
-    monkeypatch.setattr(svc, "invalidate_workspace_mention_cache", invalidate)
+    monkeypatch.setattr(svc, "resolve_authorized_workdir", resolve)
     monkeypatch.setattr(
         svc,
         "UserRepository",
@@ -94,7 +76,9 @@ def live_files(monkeypatch):
     monkeypatch.setattr(
         svc,
         "list_accessible_skills",
-        lambda _db, _user: _async_value([type("Skill", (), {"slug": "reporter"})()]),
+        lambda _db, _user: _async_value(
+            [type("Skill", (), {"slug": "reporter", "source_dir": backend.skill_root})()]
+        ),
     )
     return backend
 
@@ -104,74 +88,24 @@ async def _async_value(value):
 
 
 @pytest.mark.asyncio
-async def test_list_thread_files_reads_live_project_tree(live_files):
-    result = await svc.list_thread_files_view(
-        thread_id="thread-1", current_uid="user-1", db=object(), path="/", recursive=False
-    )
-    assert [item["name"] for item in result["files"]] == ["outputs", "report.md"]
-    assert result["path"] == "/home/gem/user-data/projects/workdir-1"
-
-
-@pytest.mark.asyncio
-async def test_recursive_thread_files_includes_nested_current_files(live_files):
-    result = await svc.list_thread_files_view(
-        thread_id="thread-1", current_uid="user-1", db=object(), path="/", recursive=True
-    )
-    assert [item["path"] for item in result["files"]] == [
-        "/home/gem/user-data/projects/workdir-1/outputs/",
-        "/home/gem/user-data/projects/workdir-1/report.md",
-        "/home/gem/user-data/projects/workdir-1/outputs/nested.txt",
-    ]
-
-
-@pytest.mark.asyncio
-async def test_read_thread_file_uses_live_workdir(live_files):
-    result = await svc.read_thread_file_content_view(
-        thread_id="thread-1",
-        current_uid="user-1",
-        db=object(),
-        path="/home/gem/user-data/projects/workdir-1/report.md",
-        offset=1,
-        limit=1,
-    )
-    assert result["content"] == ["two"]
-
-
-@pytest.mark.asyncio
-async def test_thread_file_transfer_limit_is_not_reported_as_missing(live_files, monkeypatch):
-    def reject_large_file(*_args, **_kwargs):
-        raise FileTransferLimitError("file exceeds transfer limit")
-
-    monkeypatch.setattr(live_files, "read_authorized_file", reject_large_file)
-    with pytest.raises(HTTPException) as exc:
-        await svc.read_thread_file_content_view(
-            thread_id="thread-1",
-            current_uid="user-1",
-            db=object(),
-            path="/home/gem/user-data/projects/workdir-1/report.md",
-        )
-    assert exc.value.status_code == 413
-
-
-@pytest.mark.asyncio
 async def test_artifact_allows_project_user_data_and_authorized_skills(live_files):
     for path in (
-        "/home/gem/user-data/projects/workdir-1/report.md",
+        "/home/gem/user-data/projects/11111111-1111-4111-8111-111111111111/report.md",
         "/home/gem/user-data/notes.txt",
         "/home/gem/skills/reporter/SKILL.md",
     ):
         response = await svc.resolve_thread_artifact_view(
             thread_id="thread-1", current_uid="user-1", db=object(), path=path
         )
-        assert Path(response.path).read_bytes() == live_files.files[path]
+        assert Path(response.path).read_bytes() == live_files.expected_bytes(path)
         await response.background()
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("file_name", ["报告.txt", 'quoted"name.txt', "line\nbreak.txt"])
 async def test_artifact_download_encodes_untrusted_posix_filename(live_files, file_name):
-    path = f"/home/gem/user-data/projects/workdir-1/{file_name}"
-    live_files.files[path] = b"safe"
+    path = f"/home/gem/user-data/projects/11111111-1111-4111-8111-111111111111/{file_name}"
+    live_files.add_runtime_file(path, b"safe")
 
     response = await svc.resolve_thread_artifact_view(
         thread_id="thread-1",
@@ -226,7 +160,7 @@ async def test_artifact_transfer_limit_is_not_reported_as_missing(live_files, mo
             thread_id="thread-1",
             current_uid="user-1",
             db=object(),
-            path="/home/gem/user-data/projects/workdir-1/report.md",
+            path="/home/gem/user-data/projects/11111111-1111-4111-8111-111111111111/report.md",
         )
     assert exc.value.status_code == 413
 
@@ -237,23 +171,23 @@ async def test_save_artifact_copies_live_bytes_to_user_data(live_files):
         thread_id="thread-1",
         current_uid="user-1",
         db=object(),
-        path="/home/gem/user-data/projects/workdir-1/report.md",
+        path="/home/gem/user-data/projects/11111111-1111-4111-8111-111111111111/report.md",
     )
     assert result["saved_path"] == "/home/gem/user-data/saved_artifacts/report.md"
-    assert live_files.files[result["saved_path"]] == b"one\ntwo\n"
+    assert live_files.expected_bytes(result["saved_path"]) == b"one\ntwo\n"
 
 
 @pytest.mark.asyncio
 async def test_concurrent_artifact_saves_use_distinct_atomic_names(live_files):
-    second_source = "/home/gem/user-data/projects/workdir-1/outputs/report.md"
-    live_files.files[second_source] = b"second"
+    second_source = "/home/gem/user-data/projects/11111111-1111-4111-8111-111111111111/outputs/report.md"
+    live_files.add_runtime_file(second_source, b"second")
 
     first, second = await asyncio.gather(
         svc.save_thread_artifact_to_workspace_view(
             thread_id="thread-1",
             current_uid="user-1",
             db=object(),
-            path="/home/gem/user-data/projects/workdir-1/report.md",
+            path="/home/gem/user-data/projects/11111111-1111-4111-8111-111111111111/report.md",
         ),
         svc.save_thread_artifact_to_workspace_view(
             thread_id="thread-1",
@@ -267,7 +201,7 @@ async def test_concurrent_artifact_saves_use_distinct_atomic_names(live_files):
         "/home/gem/user-data/saved_artifacts/report.md",
         "/home/gem/user-data/saved_artifacts/report (1).md",
     }
-    assert set(live_files.files[path] for path in (first["saved_path"], second["saved_path"])) == {
+    assert set(live_files.expected_bytes(path) for path in (first["saved_path"], second["saved_path"])) == {
         b"one\ntwo\n",
         b"second",
     }

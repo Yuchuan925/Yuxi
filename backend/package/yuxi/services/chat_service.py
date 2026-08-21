@@ -21,7 +21,8 @@ from typing import Any, Literal
 from langchain.messages import AIMessage, AIMessageChunk, HumanMessage
 from langgraph.types import Command
 from yuxi.agents.backends.sandbox import ProvisionerSandboxBackend
-from yuxi.agents.backends.sandbox.paths import user_workdir_host_dir, workdir_virtual_dir
+from yuxi.agents.backends.paths import runtime_workdir_path
+from yuxi.workspace.paths import ensure_bound_user_workdir
 from yuxi.agents.base import _json_safe
 from yuxi.agents.buildin import agent_manager
 from yuxi.agents.context import build_agent_input_context, normalize_agent_context_config
@@ -844,7 +845,7 @@ async def _resolve_agent_runtime(
                 raise ValueError("已有线程已绑定智能体，不能切换")
             if not conversation.workdir_path:
                 raise ValueError("Conversation 缺少 Project Workdir")
-            user_workdir_host_dir(str(user.uid), conversation.workdir_path)
+            ensure_bound_user_workdir(str(user.uid), conversation.workdir_path)
             resolved_agent_slug = conversation.agent_id
 
     if not resolved_agent_slug:
@@ -1014,7 +1015,7 @@ async def stream_agent_chat(
             raise ValueError("Conversation 缺少 Project Workdir")
         input_context["runtime_scope_id"] = runtime_scope_id
         input_context["workdir_relative_path"] = conversation.workdir_path
-        input_context["workdir_path"] = workdir_virtual_dir(conversation.workdir_path)
+        input_context["workdir_path"] = runtime_workdir_path(conversation.workdir_path)
         meta["runtime_scope_id"] = runtime_scope_id
         meta["workdir_relative_path"] = conversation.workdir_path
         meta["workdir_path"] = input_context["workdir_path"]
@@ -1347,7 +1348,7 @@ async def stream_agent_resume(
         raise ValueError("Conversation 缺少 Project Workdir")
     meta["runtime_scope_id"] = runtime_scope_id
     meta["workdir_relative_path"] = conversation.workdir_path
-    meta["workdir_path"] = workdir_virtual_dir(conversation.workdir_path)
+    meta["workdir_path"] = runtime_workdir_path(conversation.workdir_path)
     await _ensure_persistent_sandbox(
         runtime_scope_id=runtime_scope_id,
         uid=uid,
@@ -1606,14 +1607,14 @@ async def get_agent_state_view(
         runtime_scope_id = str(getattr(latest_run, "runtime_scope_id", None) or thread_id)
         input_context["runtime_scope_id"] = runtime_scope_id
         input_context["workdir_relative_path"] = conversation.workdir_path
-        input_context["workdir_path"] = workdir_virtual_dir(conversation.workdir_path)
+        input_context["workdir_path"] = runtime_workdir_path(conversation.workdir_path)
         context = _build_agent_context(agent, input_context)
         state = await _read_checkpoint_state(agent, uid=current_uid, thread_id=thread_id, context=context)
         values = getattr(state, "values", {}) if state else {}
         response = {
             "agent_state": extract_agent_state(
                 values,
-                workdir_path=workdir_virtual_dir(conversation.workdir_path),
+                workdir_path=runtime_workdir_path(conversation.workdir_path),
             )
         }
         interrupt_info = _extract_interrupt_info(state) if state else None

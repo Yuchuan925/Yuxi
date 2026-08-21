@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 from test.live_api_cleanup import make_test_conversation_metadata, make_test_conversation_title
-from yuxi.agents.backends.sandbox.paths import user_workdir_host_dir
+from yuxi.workspace.paths import user_workdir_host_dir
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
 
@@ -79,12 +79,11 @@ async def test_viewer_upload_preserves_non_directory_parent_error(test_client, s
     uid = str(standard_user["user"]["uid"])
     thread_id, workdir_path = await _create_thread_for_user(test_client, headers)
 
-    project_root = f"/home/gem/user-data/{workdir_path}"
     (user_workdir_host_dir(uid, workdir_path) / "occupied").write_text("file", encoding="utf-8")
 
     response = await test_client.post(
         "/api/viewer/filesystem/upload",
-        data={"thread_id": thread_id, "parent_path": f"{project_root}/occupied"},
+        data={"thread_id": thread_id, "parent_path": "/occupied"},
         files={"files": ("child.txt", b"content", "text/plain")},
         headers=headers,
     )

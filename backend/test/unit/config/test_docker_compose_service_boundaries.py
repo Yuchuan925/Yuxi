@@ -23,8 +23,8 @@ SANDBOX_CLEANUP_OWNER_PATHS = (
 )
 WORKSPACE_PERMISSION_OWNER_PATHS = (
     "backend/package/yuxi/utils/paths.py",
-    "backend/package/yuxi/agents/backends/sandbox/paths.py",
-    "backend/package/yuxi/services/workspace_filesystem.py",
+    "backend/package/yuxi/workspace/paths.py",
+    "backend/package/yuxi/workspace/filesystem.py",
     "backend/package/yuxi/services/workspace_service.py",
     "backend/package/yuxi/storage_migrations/v071_workdirs.py",
     "docker/sandbox_provisioner/app.py",

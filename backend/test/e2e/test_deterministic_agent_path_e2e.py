@@ -16,7 +16,7 @@ import pytest
 from e2e_helpers import cancel_run, consume_events, delete_agent, postgres_dsn, wait_for_run
 from test.live_api_cleanup import make_test_conversation_metadata, make_test_conversation_title
 from yuxi.agents.backends.sandbox import ProvisionerSandboxBackend, get_sandbox_provider
-from yuxi.agents.backends.sandbox.paths import workspace_uid_dirname
+from yuxi.workspace.paths import workspace_uid_dirname
 from yuxi.config import get_skill_projection_dir
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.e2e, pytest.mark.slow]

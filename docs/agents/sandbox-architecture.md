@@ -174,7 +174,7 @@ Yuxi 不会把整个容器文件系统都开放给 Agent 或 Viewer。Agent 可�
 
 当前 Workdir 是主要工作区。内置 prompt 建议把用户上传放在 `uploads/`、最终交付物放在 `outputs/`；同一 uid 的其他 Project 可以读取，但未经用户明确要求不得跨 Workdir 写入。这是模型行为约束，不是安全边界。
 
-API 的 Viewer、附件和 artifact 不复用 execution runtime，也不创建 file-bridge Sandbox；它们在验证 uid 与 Conversation ownership 后，通过受信任的 `WorkspaceFilesystem` 直接访问同一字节，并把 Thread 写操作限制在当前 Workdir。
+API 的 Viewer、附件和 artifact 不复用 execution runtime，也不创建 file-bridge Sandbox；它们在验证 uid 与 Conversation ownership 后，通过 `yuxi.workspace.Workspace` 及其持久化 `Workdir` 视图直接访问同一字节，并把 Thread 写操作限制在当前 Workdir。只有 artifact URL 和传给 Agent 的路径会在 Service 边界转换成 Backend runtime 路径。
 
 根 Run 进入终态时会在 PostgreSQL 中原子请求仍活跃的后代停止：尚未被 worker 接管的待执行后代可直接终态化，仍持有 owner/lease 的后代保留 `cancel_requested`，直到 worker 确认停止。根 Run 同时设置 `runtime_cleanup_pending`；下一次顶层 Run、retry attempt 和 SSE `end` 都不能越过这个 fence，worker 删除 runtime 成功后才清除它，周期 reconciler 负责重试失败的清理并重新投递 pending retry。单个子 Run 终态不会删除父子共享 runtime，任何 runtime cleanup 都不删除 Project Workdir。
 
@@ -226,8 +226,8 @@ curl --fail http://localhost:8002/health
 
 当前没有多集群选择 UI、Ingress backend 或自动节点发现。需要这些能力时应作为明确的部署功能实现，不能只通过文档假设存在。
 
-Project Viewer 先把 Conversation 解析成授权的 `workdir_path`，再通过 `WorkspaceFilesystem` 访问同一份
-实时字节；它不会为了浏览文件而连接 execution runtime。Artifact 下载按 UserWorkspace 与 Skills 授权根
+Project Viewer 先把 Conversation 解析成授权的持久化 `Workdir`，再通过 `Workspace` 访问同一份
+实时字节；Viewer 的 `/` 始终是当前 Workdir 根，它不会为了浏览文件而连接 execution runtime。Artifact 下载按 UserWorkspace 与 Skills 授权根
 选择文件，并在实际读取前再次执行用户与 Skill 授权。
 
 因此当前实现是“同一文件事实、不同访问能力”：Agent execution runtime、Viewer 和 API 可以是

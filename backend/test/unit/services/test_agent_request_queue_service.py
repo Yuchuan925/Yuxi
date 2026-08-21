@@ -40,7 +40,7 @@ async def test_finalize_dispatch_materializes_workdir_after_commit_before_enqueu
 
     def ensure_workdir(uid: str, workdir_path: str):
         assert uid == "user-1"
-        assert workdir_path == "projects/workdir-1"
+        assert workdir_path == "projects/11111111-1111-4111-8111-111111111111"
         events.append("materialize")
 
     async def enqueue(run_id: str):
@@ -58,7 +58,7 @@ async def test_finalize_dispatch_materializes_workdir_after_commit_before_enqueu
             request_id="request-1",
             run_id="run-1",
             uid="user-1",
-            workdir_path="projects/workdir-1",
+            workdir_path="projects/11111111-1111-4111-8111-111111111111",
         ),
     )
 

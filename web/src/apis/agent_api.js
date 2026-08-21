@@ -334,31 +334,6 @@ export const threadApi = {
   getThreadAttachments: (threadId) => apiGet(`/api/chat/thread/${threadId}/attachments`),
 
   /**
-   * 列出线程文件（目录）
-   * @param {string} threadId
-   * @param {string} path
-   * @param {boolean} recursive
-   * @returns {Promise}
-   */
-  listThreadFiles: (threadId, path = '/', recursive = false) =>
-    apiGet(
-      `/api/chat/thread/${threadId}/files?path=${encodeURIComponent(path)}&recursive=${recursive}`
-    ),
-
-  /**
-   * 读取线程文本文件内容（分页）
-   * @param {string} threadId
-   * @param {string} path
-   * @param {number} offset
-   * @param {number} limit
-   * @returns {Promise}
-   */
-  readThreadFile: (threadId, path, offset = 0, limit = 2000) =>
-    apiGet(
-      `/api/chat/thread/${threadId}/files/content?path=${encodeURIComponent(path)}&offset=${offset}&limit=${limit}`
-    ),
-
-  /**
    * 获取线程文件下载/预览 URL
    * @param {string} threadId
    * @param {string} path

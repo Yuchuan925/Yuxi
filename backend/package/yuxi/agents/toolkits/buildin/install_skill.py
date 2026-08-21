@@ -14,7 +14,7 @@ from yuxi.agents.backends.sandbox.download import download_sandbox_directory
 from yuxi.agents.toolkits.registry import tool
 from yuxi.storage.postgres.manager import pg_manager
 from yuxi.utils.logging_config import logger
-from yuxi.utils.paths import VIRTUAL_PERSONAL_SKILLS_PATH
+from yuxi.agents.backends.paths import VIRTUAL_PATH_PREFIX, VIRTUAL_PERSONAL_SKILLS_PATH
 
 SANDBOX_PATH_HINT = "请使用当前 Project Workdir 下的目录，或 /home/gem/user-data/..."
 
@@ -46,7 +46,7 @@ def _prepare_skill_from_sandbox(
     if not is_valid_skill_slug(slug):
         raise ValueError(f"slug '{slug}' 不合法（仅允许小写字母、数字和连字符）")
 
-    allowed = sandbox_path.startswith("/home/gem/user-data/")
+    allowed = sandbox_path.startswith(f"{VIRTUAL_PATH_PREFIX.rstrip('/')}/")
     allowed = allowed or bool(workdir_path and sandbox_path.startswith(f"{workdir_path.rstrip('/')}/"))
     if not allowed:
         raise ValueError(f"不支持的沙盒路径: {sandbox_path}。{SANDBOX_PATH_HINT}")

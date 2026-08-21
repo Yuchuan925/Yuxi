@@ -22,13 +22,13 @@ flowchart LR
     Provisioner --> Runtime["Docker container 或 Kubernetes Pod"]
     Runtime --> Workspace["UserWorkspace -> /home/gem/user-data rw"]
     Runtime --> Skills["共享 Skill projection -> /home/gem/skills ro"]
-    Viewer["Viewer / artifact / attachment API"] --> HostFS["WorkspaceFilesystem\nuid + Workdir no-follow"]
+    Viewer["Viewer / artifact / attachment API"] --> HostFS["Workspace + Workdir\npersistent no-follow"]
     HostFS --> Workspace
 ```
 
 Graph 构建时，文件系统中间件用 `runtime_scope_id`、`uid` 和 `workdir_path` 创建 `ProvisionerSandboxBackend`。真实实例惰性创建；API/worker 只访问带 Bearer 认证的 provisioner 代理，不直接访问容器或 NodePort 地址。
 
-Viewer、artifact 和附件服务不创建 file-bridge Sandbox。它们在鉴权后通过 `WorkspaceFilesystem` 直接访问同一 UserWorkspace 字节，并把 Thread 操作限制在 Conversation 绑定的 Workdir 内。
+Viewer、artifact 和附件服务不创建 file-bridge Sandbox。它们在鉴权后通过 `Workspace` 与持久化 `Workdir` 直接访问同一 UserWorkspace 字节，并把 Thread 操作限制在 Conversation 绑定的 Workdir 内。Viewer scope `/foo` 不经过 `/home/gem`；只有面向 Agent/artifact 协议的 Service 才调用 Backend 路径映射。
 
 ## identity、Workdir 与生命周期
 

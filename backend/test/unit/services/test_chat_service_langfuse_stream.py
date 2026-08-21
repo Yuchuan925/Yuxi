@@ -91,11 +91,11 @@ def _patch_stream_scaffolding(
         uid="user-1",
         agent_id="test-agent",
         status="active",
-        workdir_path="projects/workdir-1",
+        workdir_path="projects/11111111-1111-4111-8111-111111111111",
         extra_metadata={},
     )
     if not hasattr(resolved_conversation, "workdir_path"):
-        resolved_conversation.workdir_path = "projects/workdir-1"
+        resolved_conversation.workdir_path = "projects/11111111-1111-4111-8111-111111111111"
 
     async def fake_resolve_agent_runtime(**_kwargs):
         return (
@@ -173,7 +173,7 @@ class _FakeConvRepo:
                 agent_id="test-agent",
                 thread_id=thread_id,
                 status="active",
-                workdir_path="projects/workdir-1",
+                workdir_path="projects/11111111-1111-4111-8111-111111111111",
                 extra_metadata={},
             ),
         )
@@ -214,7 +214,7 @@ class _FakeConvRepo:
             agent_id=agent_id,
             thread_id=thread_id,
             status="active",
-            workdir_path="projects/workdir-1",
+            workdir_path="projects/11111111-1111-4111-8111-111111111111",
             extra_metadata=metadata or {},
         )
         self.conversations[thread_id] = conversation
@@ -353,13 +353,13 @@ async def test_stream_agent_chat_commits_before_stream_and_persists_langfuse_con
                     {
                         "file_id": "file-1",
                         "file_name": "current.txt",
-                        "path": "/home/gem/user-data/projects/workdir-1/uploads/current.txt",
+                        "path": "/home/gem/user-data/projects/11111111-1111-4111-8111-111111111111/uploads/current.txt",
                         "request_id": "req-1",
                     },
                     {
                         "file_id": "file-2",
                         "file_name": "history.txt",
-                        "path": "/home/gem/user-data/projects/workdir-1/uploads/history.txt",
+                        "path": "/home/gem/user-data/projects/11111111-1111-4111-8111-111111111111/uploads/history.txt",
                         "request_id": "req-old",
                     },
                 ]
@@ -418,8 +418,11 @@ async def test_stream_agent_chat_commits_before_stream_and_persists_langfuse_con
     assert calls["saved_state"]["context"].temperature == 0.1
     assert calls["saved_state"]["complete_run"] is True
     assert chunks[-1]["status"] == "finished"
-    assert calls["stream_input_context"]["workdir_relative_path"] == "projects/workdir-1"
-    assert calls["stream_input_context"]["workdir_path"] == "/home/gem/user-data/projects/workdir-1"
+    assert calls["stream_input_context"]["workdir_relative_path"] == "projects/11111111-1111-4111-8111-111111111111"
+    assert (
+        calls["stream_input_context"]["workdir_path"]
+        == "/home/gem/user-data/projects/11111111-1111-4111-8111-111111111111"
+    )
     assert calls["stream_input_context"]["runtime_scope_id"] == "thread-1"
     [init_attachment] = chunks[0]["msg"]["extra_metadata"]["attachments"]
     assert init_attachment["file_name"] == "current.txt"
@@ -485,7 +488,10 @@ async def test_stream_agent_chat_creates_conversation_before_reading_workdir(
         chunks.append(json.loads(chunk.decode("utf-8")))
 
     assert chunks[-1]["status"] == "finished"
-    assert repository_holder["repo"].conversations["new-thread"].workdir_path == "projects/workdir-1"
+    assert (
+        repository_holder["repo"].conversations["new-thread"].workdir_path
+        == "projects/11111111-1111-4111-8111-111111111111"
+    )
 
 
 @pytest.mark.asyncio

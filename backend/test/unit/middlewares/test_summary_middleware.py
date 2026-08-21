@@ -15,9 +15,9 @@ from yuxi.agents.middlewares.summary import (
     create_summary_middleware,
     sanitize_messages_for_summary,
 )
-from yuxi.utils.paths import workdir_runtime_paths
+from yuxi.agents.backends.paths import workdir_runtime_paths
 
-WORKDIR_PATH = "/home/gem/user-data/projects/workdir-1"
+WORKDIR_PATH = "/home/gem/user-data/projects/11111111-1111-4111-8111-111111111111"
 VIRTUAL_PATH_LARGE_TOOL_RESULTS, VIRTUAL_PATH_CONVERSATION_HISTORY = workdir_runtime_paths(WORKDIR_PATH)
 
 

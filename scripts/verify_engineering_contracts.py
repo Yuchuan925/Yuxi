@@ -59,6 +59,13 @@ ROUTER_DB_METHODS = frozenset(
     }
 )
 ROUTER_DB_RECEIVERS = frozenset({"db", "session", "connection", "database"})
+WORKSPACE_HOST_PATH_EXPORTS = frozenset(
+    {
+        "global_user_data_dir",
+        "user_workspace_dir",
+        "user_workdir_host_dir",
+    }
+)
 DIRECT_WEB_API_LITERAL = re.compile(r"(?P<quote>['\"`])/api(?:[/ ?]|(?P=quote))")
 AGENTS_FILE_BUDGETS = {
     "AGENTS.md": 5000,
@@ -88,6 +95,7 @@ class WorkflowContract:
     trigger: str = "pull_request"
     required_paths: tuple[str, ...] = ()
     unfiltered_pull_request: bool = False
+
 
 WORKFLOW_CONTRACTS = (
     WorkflowContract(
@@ -492,7 +500,9 @@ def _validate_workflows(root: Path, errors: list[str]) -> list[dict[str, Any]]:
             if not has_pr:
                 errors.append(f"workflow 不监听 pull_request：{contract.path}")
             if contract.unfiltered_pull_request and (paths is not None or paths_ignore):
-                errors.append(f"全仓信任 workflow 不得使用 path filter：{contract.path}")
+                errors.append(
+                    f"全仓信任 workflow 不得使用 path filter：{contract.path}"
+                )
             if paths_ignore:
                 errors.append(
                     f"阻断 workflow 不得用 paths-ignore 隐藏变更：{contract.path}"
@@ -556,7 +566,9 @@ def _markdown_body_line(
             stripped = body[active_list_indent:]
             nested_item = MARKDOWN_LIST_ITEM.match(stripped)
             if nested_item:
-                content_indent = active_list_indent + _list_item_content_indent(nested_item)
+                content_indent = active_list_indent + _list_item_content_indent(
+                    nested_item
+                )
                 return nested_item.group("content"), quote_depth, content_indent
             return stripped, quote_depth, active_list_indent
         active_list_indent = None
@@ -674,7 +686,9 @@ def _evidence_rows(lines: list[str]) -> list[list[str]]:
         stripped = line.strip()
         if not stripped.startswith("|"):
             break
-        rows.append([cell.strip().strip("`") for cell in stripped.strip("|").split("|")])
+        rows.append(
+            [cell.strip().strip("`") for cell in stripped.strip("|").split("|")]
+        )
     return rows
 
 
@@ -736,7 +750,9 @@ def _validate_decisions(root: Path, errors: list[str]) -> list[dict[str, str]]:
                         errors.append(f"{relative} proposed 验收标准缺少证据矩阵数据行")
                     for row in rows:
                         if len(row) != 6 or not all(row):
-                            errors.append(f"{relative} proposed 证据矩阵必须填写全部六列")
+                            errors.append(
+                                f"{relative} proposed 证据矩阵必须填写全部六列"
+                            )
                             continue
                         if row[-1] not in EVIDENCE_RESULTS:
                             errors.append(
@@ -817,9 +833,7 @@ def _validate_agents_files(root: Path, errors: list[str]) -> list[dict[str, Any]
                 if not (path.parent / target).resolve().exists():
                     errors.append(f"AGENTS 指令引用失效：{relative} -> {link}")
         if len(text) > budget:
-            errors.append(
-                f"AGENTS 指令超出字符预算：{relative} {len(text)} > {budget}"
-            )
+            errors.append(f"AGENTS 指令超出字符预算：{relative} {len(text)} > {budget}")
         projection.append({"path": relative, "chars": len(text), "budget": budget})
     return projection
 
@@ -914,6 +928,61 @@ def _validate_web_api_boundary(root: Path, errors: list[str]) -> int:
     return checked
 
 
+def _validate_workspace_host_path_boundary(root: Path, errors: list[str]) -> int:
+    """普通 use-case 与 repository 不得取得 UserWorkspace 宿主路径。"""
+
+    checked = 0
+    for source_root in (
+        root / "backend/package/yuxi/services",
+        root / "backend/package/yuxi/repositories",
+    ):
+        for path in sorted(source_root.rglob("*.py")):
+            checked += 1
+            relative = path.relative_to(root)
+            try:
+                tree = ast.parse(
+                    path.read_text(encoding="utf-8"), filename=str(relative)
+                )
+            except SyntaxError:
+                continue
+            for node in ast.walk(tree):
+                forbidden: set[str] = set()
+                if (
+                    isinstance(node, ast.ImportFrom)
+                    and node.module == "yuxi.workspace.paths"
+                ):
+                    forbidden.update(
+                        WORKSPACE_HOST_PATH_EXPORTS.intersection(
+                            alias.name for alias in node.names
+                        )
+                    )
+                elif isinstance(node, ast.ImportFrom) and node.module == "yuxi.config":
+                    if any(alias.name == "get_user_data_dir" for alias in node.names):
+                        forbidden.add("get_user_data_dir")
+                elif (
+                    isinstance(node, ast.ImportFrom) and node.module == "yuxi.workspace"
+                ):
+                    if any(alias.name == "paths" for alias in node.names):
+                        forbidden.add("paths module")
+                elif isinstance(node, ast.Import):
+                    imported = {alias.name for alias in node.names}
+                    if "yuxi.workspace.paths" in imported:
+                        forbidden.add("paths module")
+                    if "yuxi.config" in imported:
+                        forbidden.add("config module")
+                if forbidden:
+                    errors.append(
+                        "普通 Service/Repository 不得取得 UserWorkspace 宿主 Path："
+                        f"{relative}:{node.lineno} -> {', '.join(sorted(forbidden))}"
+                    )
+            if "YUXI_USER_DATA_DIR" in path.read_text(encoding="utf-8"):
+                errors.append(
+                    "普通 Service/Repository 不得读取 UserWorkspace 宿主根环境变量："
+                    f"{relative}"
+                )
+    return checked
+
+
 def verify(root: Path) -> tuple[list[str], dict[str, Any]]:
     """验证 Owner-local 契约，并返回按需派生的审计投影。"""
 
@@ -931,6 +1000,9 @@ def verify(root: Path) -> tuple[list[str], dict[str, Any]]:
     document_files = _validate_document_prose(resolved_root, errors)
     router_files = _validate_router_boundaries(resolved_root, errors)
     web_files = _validate_web_api_boundary(resolved_root, errors)
+    workspace_boundary_files = _validate_workspace_host_path_boundary(
+        resolved_root, errors
+    )
     projection = {
         "derived": True,
         "authority": "owner-local code, tests, decisions and workflows",
@@ -942,6 +1014,7 @@ def verify(root: Path) -> tuple[list[str], dict[str, Any]]:
             "document_files_checked": document_files,
             "router_files_checked": router_files,
             "web_source_files_checked": web_files,
+            "workspace_boundary_files_checked": workspace_boundary_files,
         },
     }
     return errors, projection

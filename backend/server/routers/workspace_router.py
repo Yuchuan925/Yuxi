@@ -197,8 +197,11 @@ async def get_workspace_knowledge_file(
     current_user: User = Depends(get_required_user),
 ):
     await _ensure_knowledge_read_access(current_user, kb_id)
+    await _ensure_knowledge_supports_documents(kb_id)
     try:
-        return _preview_response(await _get_knowledge_base().read_file_preview(kb_id=kb_id, file_id=file_id))
+        from yuxi.knowledge.preview import read_knowledge_file_preview
+
+        return _preview_response(await read_knowledge_file_preview(kb_id=kb_id, file_id=file_id))
     except ValueError as error:
         _raise_knowledge_read_error(error)
 

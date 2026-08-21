@@ -6,7 +6,7 @@ Owner：docker/api.Dockerfile
 
 ## 问题
 
-API、storage migrator 与 execution Sandbox 以不同 POSIX 身份写入同一 UserWorkspace。当前实现因此在文件创建、目录创建、旧数据迁移和 Sandbox 启动处反复使用 `0o777`、`0o666`、`fchmod` 与 `chmod a+rwx` 修复跨身份可写性。这些补丁把部署身份约束扩散进 `yuxi.utils.paths`、`WorkspaceFilesystem`、Workspace API 和 provisioner，并让每个新写入入口都必须重复维护权限与失败回滚。
+API、storage migrator 与 execution Sandbox 以不同 POSIX 身份写入同一 UserWorkspace。当前实现因此在文件创建、目录创建、旧数据迁移和 Sandbox 启动处反复使用 `0o777`、`0o666`、`fchmod` 与 `chmod a+rwx` 修复跨身份可写性。这些补丁把部署身份约束扩散进 `yuxi.utils.paths`、`Workspace`、Workspace API 和 provisioner，并让每个新写入入口都必须重复维护权限与失败回滚。
 
 路径授权、root-to-leaf no-follow、普通文件检查和原子写入仍是 UserWorkspace 的安全边界，不属于本次删除对象。
 
@@ -32,7 +32,7 @@ API、storage migrator 与 execution Sandbox 以不同 POSIX 身份写入同一 
 | API、worker 与 Sandbox 数据面服务使用 `1000:1000` | 任一文件写入者仍依赖未固定的镜像默认身份或 root | Dockerfile、Compose、provisioner 环境与镜像 supervisor 契约 | Compose 配置单测、provisioner unit、真实镜像身份探针 | 删除 Compose user 或固定 `USER_UID/USER_GID` 后测试失败 | Passed：配置契约与真实 API/Sandbox 镜像探针通过 |
 | 旧持久数据在 API 启动前一次性迁移为统一身份且不跟随 symlink | marker 提前发布、递归跟随 symlink 或旧数据仍不可写 | storage migration、Kubernetes uid init 与 `storage_migration.main` | migration/provisioner unit 与隔离目录探针 | symlink 保留且目标不变；失败中断可重试 | Passed：迁移 unit 与 bind mount 身份探针通过；真实 PVC 待部署环境验证 |
 | 运行时写入不再执行权限修复 | `fchmod`、`chmod a+rwx` 或 world-writable mode 从其他入口残留 | Workspace/provisioner 创建代码 | `rg` 负向搜索与相关 unit | 重新加入旧调用后静态契约失败 | Passed：静态负向契约与相关 unit 通过 |
-| 路径安全与原子写入保持不变 | 简化误删 no-follow、越界授权或失败清理 | `open_directory_fd`、`WorkspaceFilesystem` | 相关 unit 与文件 E2E | symlink、目录冒充文件、失败写入仍被拒绝 | Passed：相关 unit 与真实跨进程 rename 探针通过 |
+| 路径安全与原子写入保持不变 | 简化误删 no-follow、越界授权或失败清理 | `open_directory_fd`、`Workspace` | 相关 unit 与文件 E2E | symlink、目录冒充文件、失败写入仍被拒绝 | Passed：相关 unit 与真实跨进程 rename 探针通过 |
 | Skill 基线不受权限简化影响 | 当前未提交 Skill 重构被混入或破坏 | Skill runtime 与 middleware | 指定 Skill unit 以及后端相关回归 | Skill 依赖闭包/门控测试恢复缺陷时失败 | Passed（21 tests） |
 
 旧能力不存在：生产路径不包含为跨 UID 可写而设置 `0o777`、`0o666`、`fchmod(..., 0o777/0o666)` 或 `chmod a+rwx` 的逻辑；测试不再把 world-writable 权限作为成功契约。

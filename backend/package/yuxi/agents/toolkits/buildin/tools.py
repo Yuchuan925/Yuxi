@@ -18,7 +18,8 @@ from yuxi.agents.backends.sandbox import ProvisionerSandboxBackend
 from yuxi.agents.toolkits.registry import ToolExtraMetadata, _all_tool_instances, _extra_registry, tool
 from yuxi.config.options import system_options
 from yuxi.utils import logger
-from yuxi.utils.paths import (
+from yuxi.agents.backends.paths import (
+    VIRTUAL_PATH_PREFIX,
     VIRTUAL_SKILLS_PATH,
 )
 from yuxi.utils.question_utils import normalize_questions
@@ -228,7 +229,9 @@ def _normalize_presented_artifact_path(filepath: str, runtime: ToolRuntime) -> s
         PurePosixPath(normalized_input if normalized_input.startswith("/") else f"/{normalized_input}")
     )
     workdir_path = str(getattr(runtime_context, "workdir_path", "") or "").rstrip("/")
-    allowed = normalized_path.startswith(f"{workdir_path}/") or normalized_path.startswith("/home/gem/user-data/")
+    allowed = normalized_path.startswith(f"{workdir_path}/") or normalized_path.startswith(
+        f"{VIRTUAL_PATH_PREFIX.rstrip('/')}/"
+    )
     allowed = allowed or normalized_path.startswith(f"{VIRTUAL_SKILLS_PATH}/")
     if not workdir_path or not allowed:
         raise ValueError(f"文件不在当前用户可见范围内: {normalized_input}")
@@ -380,7 +383,9 @@ def _resolve_ocr_source_path(file_path: str, runtime: ToolRuntime) -> str:
 
     clean_virtual_path = "/" + normalized_input.lstrip("/")
     workdir_path = str(_runtime_scope_value(runtime, "workdir_path") or "").rstrip("/")
-    allowed = clean_virtual_path.startswith(f"{workdir_path}/") or clean_virtual_path.startswith("/home/gem/user-data/")
+    allowed = clean_virtual_path.startswith(f"{workdir_path}/") or clean_virtual_path.startswith(
+        f"{VIRTUAL_PATH_PREFIX.rstrip('/')}/"
+    )
     allowed = allowed or clean_virtual_path.startswith(f"{VIRTUAL_SKILLS_PATH}/")
     if not workdir_path or not allowed:
         raise ValueError("只允许解析当前用户可见范围内的文件")

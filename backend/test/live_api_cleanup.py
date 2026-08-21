@@ -11,7 +11,7 @@ from pathlib import PurePosixPath
 
 import asyncpg
 import httpx
-from yuxi.agents.backends.sandbox.paths import normalize_workdir_path, user_workdir_host_dir
+from yuxi.workspace.paths import normalize_workdir_path, user_workdir_host_dir
 from yuxi.config import get_user_data_dir
 from yuxi.storage.postgres.models_business import AGENT_RUN_TERMINAL_STATUSES
 

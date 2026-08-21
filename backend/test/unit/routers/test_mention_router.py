@@ -21,7 +21,7 @@ async def test_thread_mentions_use_live_project_viewer(monkeypatch: pytest.Monke
         return [
             {
                 "name": "report.md",
-                "path": "/home/gem/user-data/projects/workdir-1/outputs/report.md",
+                "path": "/home/gem/user-data/projects/11111111-1111-4111-8111-111111111111/outputs/report.md",
                 "is_dir": False,
                 "source": "thread",
             }
@@ -39,7 +39,7 @@ async def test_thread_mentions_use_live_project_viewer(monkeypatch: pytest.Monke
     )
 
     assert [item["path"] for item in results] == [
-        "/home/gem/user-data/projects/workdir-1/outputs/report.md",
+        "/home/gem/user-data/projects/11111111-1111-4111-8111-111111111111/outputs/report.md",
     ]
 
 

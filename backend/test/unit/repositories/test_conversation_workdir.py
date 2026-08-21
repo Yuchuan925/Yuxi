@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
@@ -9,6 +10,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from yuxi.repositories.conversation_repository import ConversationRepository
 from yuxi.storage.postgres.models_business import Base
+from yuxi.workspace.workdir import Workdir
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.unit]
 
@@ -25,11 +27,12 @@ async def session():
 
 
 async def test_top_level_conversation_creates_default_workdir(session, monkeypatch, tmp_path: Path):
-    created = tmp_path / "projects" / "opaque-id"
+    workdir_path = "projects/11111111-1111-4111-8111-111111111111"
+    created = tmp_path / workdir_path
     created.mkdir(parents=True)
     monkeypatch.setattr(
-        "yuxi.agents.backends.sandbox.paths.allocate_default_user_workdir_path",
-        lambda: "projects/opaque-id",
+        "yuxi.workspace.paths.allocate_default_user_workdir_path",
+        lambda: workdir_path,
     )
 
     conversation = await ConversationRepository(session).add_conversation(
@@ -38,36 +41,40 @@ async def test_top_level_conversation_creates_default_workdir(session, monkeypat
         thread_id="thread-1",
     )
 
-    assert conversation.workdir_path == "projects/opaque-id"
+    assert conversation.workdir_path == workdir_path
 
 
-async def test_same_user_can_share_existing_explicit_workdir(session, monkeypatch, tmp_path: Path):
-    shared = tmp_path / "shared"
-    shared.mkdir()
-    checked = []
-    monkeypatch.setattr(
-        "yuxi.agents.backends.sandbox.paths.user_workdir_host_dir",
-        lambda uid, path: checked.append((uid, path)) or shared,
-    )
+async def test_same_user_can_share_existing_explicit_workdir(session, monkeypatch):
+    workdir_path = "projects/22222222-2222-4222-8222-222222222222"
+    opened = []
+
+    def open_existing(_cls, uid, path):
+        opened.append((uid, path))
+        return SimpleNamespace(relative_path=workdir_path)
+
+    monkeypatch.setattr(Workdir, "open_existing", classmethod(open_existing))
 
     first = await ConversationRepository(session).add_conversation(
         uid="user-1",
         agent_id="main",
         thread_id="thread-1",
-        workdir_path="shared",
+        workdir_path=workdir_path,
     )
     second = await ConversationRepository(session).add_conversation(
         uid="user-1",
         agent_id="main",
         thread_id="thread-2",
-        workdir_path="shared",
+        workdir_path=workdir_path,
     )
 
-    assert first.workdir_path == second.workdir_path == "shared"
-    assert checked == [("user-1", "shared"), ("user-1", "shared")]
+    assert first.workdir_path == second.workdir_path == workdir_path
+    assert opened == [("user-1", workdir_path), ("user-1", workdir_path)]
 
 
-@pytest.mark.parametrize("path", ["../outside", "/tmp/host", "agents/skills", "https://example.com/a"])
+@pytest.mark.parametrize(
+    "path",
+    ["../outside", "/tmp/host", "agents/skills", "projects/opaque-id", "https://example.com/a"],
+)
 async def test_explicit_workdir_rejects_invalid_path(session, path):
     with pytest.raises((ValueError, FileNotFoundError, NotADirectoryError, OSError)):
         await ConversationRepository(session).add_conversation(
@@ -79,10 +86,11 @@ async def test_explicit_workdir_rejects_invalid_path(session, path):
 
 
 async def test_failed_conversation_flush_does_not_create_unbound_workdir(session, monkeypatch, tmp_path: Path):
-    created = tmp_path / "projects/opaque-id"
+    workdir_path = "projects/33333333-3333-4333-8333-333333333333"
+    created = tmp_path / workdir_path
     monkeypatch.setattr(
-        "yuxi.agents.backends.sandbox.paths.allocate_default_user_workdir_path",
-        lambda: "projects/opaque-id",
+        "yuxi.workspace.paths.allocate_default_user_workdir_path",
+        lambda: workdir_path,
     )
     monkeypatch.setattr(session, "flush", AsyncMock(side_effect=RuntimeError("db failure")))
 
@@ -97,14 +105,15 @@ async def test_failed_conversation_flush_does_not_create_unbound_workdir(session
 
 
 async def test_failed_commit_does_not_materialize_default_workdir(session, monkeypatch, tmp_path: Path):
-    created = tmp_path / "projects/opaque-id"
+    workdir_path = "projects/44444444-4444-4444-8444-444444444444"
+    created = tmp_path / workdir_path
     materialized: list[tuple[str, str]] = []
     monkeypatch.setattr(
-        "yuxi.agents.backends.sandbox.paths.allocate_default_user_workdir_path",
-        lambda: "projects/opaque-id",
+        "yuxi.workspace.paths.allocate_default_user_workdir_path",
+        lambda: workdir_path,
     )
     monkeypatch.setattr(
-        "yuxi.agents.backends.sandbox.paths.ensure_bound_user_workdir",
+        "yuxi.workspace.paths.ensure_bound_user_workdir",
         lambda uid, path: materialized.append((uid, path)),
     )
     monkeypatch.setattr(session, "commit", AsyncMock(side_effect=RuntimeError("commit failure")))
@@ -121,10 +130,11 @@ async def test_failed_commit_does_not_materialize_default_workdir(session, monke
 
 
 async def test_outer_transaction_rollback_leaves_no_default_directory(session, monkeypatch, tmp_path: Path):
-    created = tmp_path / "projects/opaque-id"
+    workdir_path = "projects/55555555-5555-4555-8555-555555555555"
+    created = tmp_path / workdir_path
     monkeypatch.setattr(
-        "yuxi.agents.backends.sandbox.paths.allocate_default_user_workdir_path",
-        lambda: "projects/opaque-id",
+        "yuxi.workspace.paths.allocate_default_user_workdir_path",
+        lambda: workdir_path,
     )
 
     await ConversationRepository(session).add_conversation(

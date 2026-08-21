@@ -9,8 +9,8 @@ import weakref
 from dataclasses import dataclass
 
 from yuxi.utils.logging_config import logger
+from yuxi.workspace.paths import normalize_workdir_path, workspace_uid_dirname
 
-from .paths import normalize_workdir_path, workspace_uid_dirname
 from .provisioner_client import ProvisionerClient, SandboxRecord
 
 

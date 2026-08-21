@@ -505,12 +505,13 @@ async def test_cleanup_stops_when_cancelled_request_remains_queued(tmp_path, mon
 
 
 async def test_remove_test_workdir_stays_inside_project_boundary(tmp_path, monkeypatch):
-    project = tmp_path / "projects" / "test-project"
+    workdir_path = "projects/11111111-1111-4111-8111-111111111111"
+    project = tmp_path / workdir_path
     project.mkdir(parents=True)
     (project / "artifact.txt").write_text("test", encoding="utf-8")
     monkeypatch.setattr("test.live_api_cleanup.user_workdir_host_dir", lambda _uid, _path: project)
 
-    remove_test_workdir("test-user", "projects/test-project")
+    remove_test_workdir("test-user", workdir_path)
 
     assert not project.exists()
 
@@ -531,22 +532,24 @@ async def test_remove_test_workdir_rejects_symlink(tmp_path, monkeypatch):
 
     target = tmp_path / "user-files"
     target.mkdir()
-    symlink = tmp_path / "projects" / "linked"
+    workdir_path = "projects/22222222-2222-4222-8222-222222222222"
+    symlink = tmp_path / workdir_path
     symlink.parent.mkdir()
     symlink.symlink_to(target, target_is_directory=True)
     monkeypatch.setattr("test.live_api_cleanup.user_workdir_host_dir", lambda _uid, _path: symlink)
 
     with pytest.raises(RuntimeError, match="symlink Workdir"):
-        remove_test_workdir("test-user", "projects/linked")
+        remove_test_workdir("test-user", workdir_path)
 
     assert target.exists()
 
 
 async def test_remove_test_workdir_is_idempotent_when_directory_is_gone(tmp_path, monkeypatch):
-    missing = tmp_path / "projects" / "already-removed"
+    workdir_path = "projects/33333333-3333-4333-8333-333333333333"
+    missing = tmp_path / workdir_path
     monkeypatch.setattr("test.live_api_cleanup.user_workdir_host_dir", lambda _uid, _path: missing)
 
-    remove_test_workdir("test-user", "projects/already-removed")
+    remove_test_workdir("test-user", workdir_path)
 
     assert not missing.exists()
 

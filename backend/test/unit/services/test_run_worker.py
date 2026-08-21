@@ -83,7 +83,7 @@ async def test_validate_run_workdir_binding_rejects_top_level_foreign_runtime_sc
         return SimpleNamespace(conversation_id=run.conversation_id)
 
     monkeypatch.setattr(run_worker.pg_manager, "get_async_session_context", fake_session)
-    monkeypatch.setattr(run_worker, "resolve_workdir_binding", fake_resolve)
+    monkeypatch.setattr(run_worker, "resolve_authorized_workdir", fake_resolve)
 
     with pytest.raises(run_worker.NonRetryableRunError, match="Chat AgentRun"):
         await run_worker._validate_run_workdir_binding(run)
@@ -132,7 +132,7 @@ async def test_validate_run_workdir_binding_requires_subagent_creator_tree(
             return creator, run
 
     monkeypatch.setattr(run_worker.pg_manager, "get_async_session_context", fake_session)
-    monkeypatch.setattr(run_worker, "resolve_workdir_binding", fake_resolve)
+    monkeypatch.setattr(run_worker, "resolve_authorized_workdir", fake_resolve)
     monkeypatch.setattr(run_worker, "AgentRunRepository", RunRepo)
 
     binding = await run_worker._validate_run_workdir_binding(run)
@@ -231,8 +231,8 @@ def _patch_common(monkeypatch: pytest.MonkeyPatch, run_obj: SimpleNamespace):
         "_validate_run_workdir_binding",
         AsyncMock(
             return_value=SimpleNamespace(
-                workdir_path="projects/workdir-1",
-                virtual_path="/home/gem/user-data/projects/workdir-1",
+                workdir_path="projects/11111111-1111-4111-8111-111111111111",
+                virtual_path="/home/gem/user-data/projects/11111111-1111-4111-8111-111111111111",
             )
         ),
     )
@@ -982,7 +982,7 @@ async def test_process_subagent_run_restores_runtime_context(monkeypatch: pytest
     assert meta["run_type"] == "subagent"
     assert meta["parent_thread_id"] == "parent-thread"
     assert meta["runtime_scope_id"] == "parent-thread"
-    assert meta["workdir_relative_path"] == "projects/workdir-1"
+    assert meta["workdir_relative_path"] == "projects/11111111-1111-4111-8111-111111111111"
     assert captured["agent_slug"] == "worker"
     assert captured["thread_id"] == "child-thread"
     assert captured["input_message"].content == "hello"

@@ -19,14 +19,14 @@ def test_import_moves_v071_thread_files_into_user_workspace(monkeypatch, tmp_pat
 
         monkeypatch.setenv("YUXI_USER_DATA_DIR", str(user_data))
         monkeypatch.setattr(svc, "get_legacy_storage_dir", lambda: legacy_storage)
-        workdirs = (svc.V071WorkdirBinding("legacy-workdir-1", "user-1"),)
-        conversations = (svc.V071ConversationBinding("thread-1", "user-1", "legacy-workdir-1"),)
+        workdirs = (svc.V071WorkdirBinding("11111111-1111-4111-8111-111111111111", "user-1"),)
+        conversations = (svc.V071ConversationBinding("thread-1", "user-1", "11111111-1111-4111-8111-111111111111"),)
 
         svc.import_v071_workdirs(workdirs, conversations)
     finally:
         os.umask(previous_umask)
 
-    target = user_data / "shared" / "user-1" / "workspace" / "projects" / "legacy-workdir-1"
+    target = user_data / "shared" / "user-1" / "workspace" / "projects" / "11111111-1111-4111-8111-111111111111"
     assert (target / "uploads" / "input.txt").read_text(encoding="utf-8") == "input"
     assert target.stat().st_mode & 0o777 == 0o700
     assert (target / "uploads").stat().st_mode & 0o777 == 0o700
@@ -37,12 +37,12 @@ def test_import_moves_v071_thread_files_into_user_workspace(monkeypatch, tmp_pat
 def test_import_creates_empty_workdir_without_eager_business_directories(monkeypatch, tmp_path: Path):
     monkeypatch.setenv("YUXI_USER_DATA_DIR", str(tmp_path / "user-data"))
     monkeypatch.setattr(svc, "get_legacy_storage_dir", lambda: tmp_path / "legacy")
-    workdirs = (svc.V071WorkdirBinding("legacy-empty", "user-1"),)
-    conversations = (svc.V071ConversationBinding("thread-empty", "user-1", "legacy-empty"),)
+    workdirs = (svc.V071WorkdirBinding("22222222-2222-4222-8222-222222222222", "user-1"),)
+    conversations = (svc.V071ConversationBinding("thread-empty", "user-1", "22222222-2222-4222-8222-222222222222"),)
 
     svc.import_v071_workdirs(workdirs, conversations)
 
-    target = tmp_path / "user-data/shared/user-1/workspace/projects/legacy-empty"
+    target = tmp_path / "user-data/shared/user-1/workspace/projects/22222222-2222-4222-8222-222222222222"
     assert target.is_dir()
     assert target.stat().st_mode & 0o777 == 0o700
     assert list(target.iterdir()) == []
@@ -57,11 +57,13 @@ def test_import_accepts_v071_thread_id_with_filename_safe_punctuation(monkeypatc
     monkeypatch.setattr(svc, "get_legacy_storage_dir", lambda: legacy_storage)
 
     svc.import_v071_workdirs(
-        (svc.V071WorkdirBinding("legacy-punctuation", "user-1"),),
-        (svc.V071ConversationBinding("thread.v0:legacy", "user-1", "legacy-punctuation"),),
+        (svc.V071WorkdirBinding("33333333-3333-4333-8333-333333333333", "user-1"),),
+        (svc.V071ConversationBinding("thread.v0:legacy", "user-1", "33333333-3333-4333-8333-333333333333"),),
     )
 
-    target = tmp_path / "user-data/shared/user-1/workspace/projects/legacy-punctuation/outputs/result.txt"
+    target = (
+        tmp_path / "user-data/shared/user-1/workspace/projects/33333333-3333-4333-8333-333333333333/outputs/result.txt"
+    )
     assert target.read_text(encoding="utf-8") == "result"
 
 
@@ -74,11 +76,11 @@ def test_import_does_not_resolve_unsafe_thread_id_outside_threads_root(monkeypat
     monkeypatch.setattr(svc, "get_legacy_storage_dir", lambda: legacy_storage)
 
     svc.import_v071_workdirs(
-        (svc.V071WorkdirBinding("legacy-safe-target", "user-1"),),
-        (svc.V071ConversationBinding("../escape", "user-1", "legacy-safe-target"),),
+        (svc.V071WorkdirBinding("44444444-4444-4444-8444-444444444444", "user-1"),),
+        (svc.V071ConversationBinding("../escape", "user-1", "44444444-4444-4444-8444-444444444444"),),
     )
 
-    target = tmp_path / "user-data/shared/user-1/workspace/projects/legacy-safe-target"
+    target = tmp_path / "user-data/shared/user-1/workspace/projects/44444444-4444-4444-8444-444444444444"
     assert list(target.iterdir()) == []
     assert (outside / "secret.txt").read_text(encoding="utf-8") == "secret"
 
@@ -92,11 +94,11 @@ def test_import_does_not_fold_thread_id_onto_another_thread_directory(monkeypatc
     monkeypatch.setattr(svc, "get_legacy_storage_dir", lambda: legacy_storage)
 
     svc.import_v071_workdirs(
-        (svc.V071WorkdirBinding("legacy-no-alias", "user-1"),),
-        (svc.V071ConversationBinding("thread/", "user-1", "legacy-no-alias"),),
+        (svc.V071WorkdirBinding("55555555-5555-4555-8555-555555555555", "user-1"),),
+        (svc.V071ConversationBinding("thread/", "user-1", "55555555-5555-4555-8555-555555555555"),),
     )
 
-    target = tmp_path / "user-data/shared/user-1/workspace/projects/legacy-no-alias"
+    target = tmp_path / "user-data/shared/user-1/workspace/projects/55555555-5555-4555-8555-555555555555"
     assert list(target.iterdir()) == []
     assert (other_thread / "secret.txt").read_text(encoding="utf-8") == "secret"
 
@@ -109,14 +111,14 @@ def test_import_rejects_thread_symlink_without_replacing_existing_target(monkeyp
     outside.write_text("secret", encoding="utf-8")
     (uploads / "escape.txt").symlink_to(outside)
     user_data = tmp_path / "user-data"
-    target = user_data / "shared" / "user-1" / "workspace" / "projects" / "legacy-workdir-1"
+    target = user_data / "shared" / "user-1" / "workspace" / "projects" / "11111111-1111-4111-8111-111111111111"
     target.mkdir(parents=True)
     (target / "keep.txt").write_text("keep", encoding="utf-8")
 
     monkeypatch.setenv("YUXI_USER_DATA_DIR", str(user_data))
     monkeypatch.setattr(svc, "get_legacy_storage_dir", lambda: legacy_storage)
-    workdirs = (svc.V071WorkdirBinding("legacy-workdir-1", "user-1"),)
-    conversations = (svc.V071ConversationBinding("thread-1", "user-1", "legacy-workdir-1"),)
+    workdirs = (svc.V071WorkdirBinding("11111111-1111-4111-8111-111111111111", "user-1"),)
+    conversations = (svc.V071ConversationBinding("thread-1", "user-1", "11111111-1111-4111-8111-111111111111"),)
 
     with pytest.raises(RuntimeError, match="symlink"):
         svc.import_v071_workdirs(workdirs, conversations)
@@ -143,6 +145,25 @@ def test_import_rejects_symlinked_legacy_thread_parent(monkeypatch, tmp_path: Pa
         )
 
     assert (outside / "user-data" / "uploads" / "secret.txt").read_text(encoding="utf-8") == "secret"
+
+
+def test_import_rejects_symlinked_projects_parent(monkeypatch, tmp_path: Path):
+    user_data = tmp_path / "user-data"
+    workspace = user_data / "shared" / "user-1" / "workspace"
+    workspace.mkdir(parents=True)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (workspace / "projects").symlink_to(outside, target_is_directory=True)
+    monkeypatch.setenv("YUXI_USER_DATA_DIR", str(user_data))
+    monkeypatch.setattr(svc, "get_legacy_storage_dir", lambda: tmp_path / "legacy")
+
+    with pytest.raises(RuntimeError, match="projects.*symlink"):
+        svc.import_v071_workdirs(
+            (svc.V071WorkdirBinding("66666666-6666-4666-8666-666666666666", "user-1"),),
+            (),
+        )
+
+    assert list(outside.iterdir()) == []
 
 
 def test_import_rejects_unsafe_legacy_identity(monkeypatch, tmp_path: Path):
@@ -174,7 +195,7 @@ def test_rewrite_attachment_keeps_only_current_fields_and_v071_virtual_paths():
     }
 
     rewritten = svc._rewrite_attachment(
-        "/home/gem/user-data/projects/legacy-workdir-1",
+        "/home/gem/user-data/projects/11111111-1111-4111-8111-111111111111",
         record,
     )
 
@@ -185,8 +206,8 @@ def test_rewrite_attachment_keeps_only_current_fields_and_v071_virtual_paths():
         "file_size": 12,
         "status": "parsed",
         "uploaded_at": "2026-01-01T00:00:00Z",
-        "path": "/home/gem/user-data/projects/legacy-workdir-1/uploads/attachments/report.md",
-        "original_path": "/home/gem/user-data/projects/legacy-workdir-1/uploads/report.txt",
+        "path": "/home/gem/user-data/projects/11111111-1111-4111-8111-111111111111/uploads/attachments/report.md",
+        "original_path": "/home/gem/user-data/projects/11111111-1111-4111-8111-111111111111/uploads/report.txt",
         "request_id": "request-1",
     }
 
@@ -197,7 +218,7 @@ def test_cleanup_removes_only_imported_v071_thread_sources(monkeypatch, tmp_path
     source.mkdir(parents=True)
     (source / "report.txt").write_text("report", encoding="utf-8")
     monkeypatch.setattr(svc, "get_legacy_storage_dir", lambda: legacy_storage)
-    conversations = (svc.V071ConversationBinding("thread-1", "user-1", "legacy-workdir-1"),)
+    conversations = (svc.V071ConversationBinding("thread-1", "user-1", "11111111-1111-4111-8111-111111111111"),)
 
     svc.cleanup_v071_thread_sources(conversations)
 

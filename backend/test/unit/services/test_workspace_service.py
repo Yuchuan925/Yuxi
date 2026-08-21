@@ -9,7 +9,8 @@ from types import SimpleNamespace
 import pytest
 from fastapi import HTTPException, UploadFile
 
-from yuxi.agents.backends.sandbox import paths as workspace_paths
+import yuxi.workspace.preview as file_preview
+from yuxi.workspace import paths as workspace_paths
 from yuxi.services import workspace_service as svc
 
 
@@ -137,7 +138,8 @@ async def test_read_workspace_file_content_returns_pdf_preview_for_office_file(
         assert content == b"office"
         return b"%PDF-1.4\npreview"
 
-    monkeypatch.setattr(svc, "convert_office_to_pdf", fake_convert)
+    monkeypatch.setenv("YUXI_RUNTIME_DIR", str(tmp_path / "runtime"))
+    monkeypatch.setattr(file_preview, "convert_office_to_pdf", fake_convert)
 
     result = await svc.read_workspace_file_content(path="/demo.docx", current_user=user)
     body = b""
@@ -198,7 +200,7 @@ async def test_preview_workspace_file_caches_office_pdf_conversion(
         convert_calls += 1
         return b"%PDF-1.4\npreview"
 
-    monkeypatch.setattr(svc, "convert_office_to_pdf", fake_convert)
+    monkeypatch.setattr(file_preview, "convert_office_to_pdf", fake_convert)
 
     async def read_pdf() -> bytes:
         response = await svc.read_workspace_file_content(path=f"/{filename}", current_user=user)
@@ -420,6 +422,18 @@ async def test_search_workspace_files_matches_filenames(tmp_path: Path, monkeypa
     names = [entry["name"] for entry in response["entries"]]
     assert names == ["MEMORY.md"]
     assert response["entries"][0]["path"] == "/agents/MEMORY.md"
+    assert response["entries"][0]["virtual_path"] == "/home/gem/user-data/agents/MEMORY.md"
 
     empty = await svc.search_workspace_files(query="   ", current_user=_user())
     assert empty["entries"] == []
+
+
+def test_workspace_entry_preserves_v071_virtual_path_contract() -> None:
+    metadata = {"is_dir": True, "size": 0, "modified_at": 0}
+
+    root = svc._entry_from_metadata("/", metadata)
+    directory = svc._entry_from_metadata("/notes", metadata)
+
+    assert root["virtual_path"] == "/home/gem/user-data"
+    assert directory["path"] == "/notes/"
+    assert directory["virtual_path"] == "/home/gem/user-data/notes/"

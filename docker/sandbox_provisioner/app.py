@@ -7,6 +7,7 @@ import re
 import secrets
 import threading
 import time
+import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -72,16 +73,20 @@ def normalize_env(env: dict | None) -> dict[str, str]:
 
 
 def normalize_workdir_path(workdir_path: str) -> str:
-    """校验 Sandbox wire 中的 UserWorkspace 相对 Workdir。"""
+    """校验 Sandbox wire 中 canonical ``projects/<uuid>`` Workdir。"""
     raw = str(workdir_path or "").strip()
     pure = PurePosixPath(raw)
     if not raw or pure.is_absolute() or "\\" in raw or "://" in raw:
         raise ValueError("workdir_path must be a relative POSIX path")
     if any(part in {"", ".", ".."} for part in raw.split("/")):
         raise ValueError("workdir_path contains invalid path components")
-    if not pure.parts or pure.parts[0] == "agents":
-        raise ValueError("workdir_path uses a reserved workspace directory")
-    return pure.as_posix()
+    if len(pure.parts) != 2 or pure.parts[0] != "projects":
+        raise ValueError("workdir_path must use projects/<uuid>")
+    try:
+        workdir_id = uuid.UUID(pure.parts[1])
+    except ValueError as exc:
+        raise ValueError("workdir_path must use projects/<uuid>") from exc
+    return f"projects/{workdir_id}"
 
 
 def kubernetes_storage_init_script(uid: str, workdir_path: str | None) -> str:
@@ -517,9 +522,7 @@ class LocalContainerProvisionerBackend:
         """从已挂载根逐层打开既有目录，并拒绝任意 symlink 组件。"""
         directory_fd = None
         try:
-            directory_fd = os.open(
-                root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
-            )
+            directory_fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
             for part in parts:
                 child_fd = os.open(
                     part,

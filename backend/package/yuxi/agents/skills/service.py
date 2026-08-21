@@ -135,7 +135,7 @@ def _get_user_skills_lock(uid: str) -> threading.Lock:
 @contextmanager
 def _user_skills_file_lock(uid: str):
     """在共享投影卷上串行化同一用户的目录替换。"""
-    from yuxi.agents.backends.sandbox.paths import workspace_uid_dirname
+    from yuxi.workspace.paths import workspace_uid_dirname
 
     lock_dir = get_skill_projection_dir() / ".locks"
     lock_dir.mkdir(parents=True, exist_ok=True)
@@ -337,7 +337,7 @@ def _load_and_select_draft_items(
 
 def get_user_skills_root_dir(uid: str) -> Path:
     """返回当前用户获授权的共享 Skill 只读投影根目录。"""
-    from yuxi.agents.backends.sandbox.paths import workspace_uid_dirname
+    from yuxi.workspace.paths import workspace_uid_dirname
 
     safe_uid = workspace_uid_dirname(uid)
     root = get_skill_projection_dir() / safe_uid
@@ -394,7 +394,7 @@ def _remove_skill_from_user_projection(uid: str, slug: str) -> None:
 
 async def apply_skill_projection_policy_change(db: AsyncSession, slug: str) -> None:
     """提交 Skill 授权变更，并同步所有已存在的 uid 投影。"""
-    from yuxi.agents.backends.sandbox.paths import workspace_uid_dirname
+    from yuxi.workspace.paths import workspace_uid_dirname
 
     result = await db.execute(select(User.uid).where(User.is_deleted == 0).order_by(User.id))
     projection_root = get_skill_projection_dir()
@@ -885,14 +885,14 @@ def parse_skill_dir_metadata(source_skill_dir: Path) -> dict[str, Any]:
 
 def get_personal_skills_root_dir(uid: str) -> Path:
     """返回 UserWorkspace 内认证用户唯一的个人 Skill 目录。"""
-    from yuxi.agents.backends.sandbox.paths import user_workspace_dir
+    from yuxi.workspace.paths import user_workspace_dir
 
     return user_workspace_dir(uid) / "agents" / "skills"
 
 
 def _personal_skills_root(uid: str) -> Path:
     """返回已创建且位于当前用户工作区内的个人 Skill 根。"""
-    from yuxi.agents.backends.sandbox.paths import ensure_user_workspace, user_workspace_dir
+    from yuxi.workspace.paths import ensure_user_workspace, user_workspace_dir
 
     ensure_user_workspace(uid)
     workspace_root = user_workspace_dir(uid).resolve()

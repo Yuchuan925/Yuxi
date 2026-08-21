@@ -14,6 +14,7 @@ from arq.worker import RetryJob
 from sqlalchemy import select, text
 from sqlalchemy.exc import OperationalError
 from yuxi.agents.backends.sandbox.provider import get_sandbox_provider
+from yuxi.agents.backends.paths import runtime_workdir_path
 from yuxi.agents.mcp.service import ensure_builtin_mcp_servers_in_db
 from yuxi.agents.skills.service import init_builtin_skills
 from yuxi.repositories.agent_run_repository import TERMINAL_RUN_STATUSES, AgentRunRepository
@@ -37,7 +38,7 @@ from yuxi.services.run_queue_service import (
     publish_cancel_signal,
     wait_for_cancel_signal,
 )
-from yuxi.services.workdir_service import WorkdirBinding, resolve_workdir_binding
+from yuxi.services.workdir_service import AuthorizedWorkdir, resolve_authorized_workdir
 from yuxi.storage.postgres.manager import pg_manager
 from yuxi.storage.postgres.models_business import AgentRun, Conversation, Message, User
 from yuxi.storage.redis import get_arq_redis_settings
@@ -68,10 +69,10 @@ class NonRetryableRunError(Exception):
     """Error type that should not trigger ARQ retry."""
 
 
-async def _validate_run_workdir_binding(run: AgentRun) -> WorkdirBinding:
+async def _validate_run_workdir_binding(run: AgentRun) -> AuthorizedWorkdir:
     """在执行器边界验证持久 Run 的 Conversation、执行树与 Workdir 归属。"""
     async with pg_manager.get_async_session_context() as db:
-        binding = await resolve_workdir_binding(
+        binding = await resolve_authorized_workdir(
             thread_id=str(run.conversation_thread_id),
             uid=str(run.uid),
             db=db,
@@ -100,7 +101,7 @@ async def _validate_run_workdir_binding(run: AgentRun) -> WorkdirBinding:
             creator_run, _persisted_run = execution_pair
             if creator_run.run_type not in {"chat", "resume"}:
                 raise NonRetryableRunError("SubAgent Run 的创建者非法")
-            creator_binding = await resolve_workdir_binding(
+            creator_binding = await resolve_authorized_workdir(
                 thread_id=str(creator_run.conversation_thread_id),
                 uid=str(run.uid),
                 db=db,
@@ -941,7 +942,7 @@ async def process_agent_run(ctx, run_id: str):
             "worker_id": worker_id,
             "runtime_scope_id": str(getattr(run, "runtime_scope_id", None) or thread_id),
             "workdir_relative_path": workdir_binding.workdir_path,
-            "workdir_path": workdir_binding.virtual_path,
+            "workdir_path": runtime_workdir_path(workdir_binding.workdir_path),
         }
         if run_type == "subagent":
             meta["parent_thread_id"] = runtime.get("parent_thread_id")

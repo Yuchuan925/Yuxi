@@ -790,7 +790,7 @@ def test_sync_user_accessible_skills_rejects_special_files(
 
 def test_personal_skill_root_is_inside_user_workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     """个人 Skill 的唯一持久路径必须位于对应用户的 UserWorkspace。"""
-    from yuxi.agents.backends.sandbox import paths as sandbox_paths
+    from yuxi.workspace import paths as sandbox_paths
 
     monkeypatch.setattr(sandbox_paths, "get_user_data_dir", lambda: tmp_path / "user-data")
 
@@ -806,7 +806,7 @@ def test_personal_skill_root_rejects_symlinked_components(
     component: str,
 ):
     """个人 Skill 根不得通过可写路径组件越过当前 UserWorkspace。"""
-    from yuxi.agents.backends.sandbox import paths as sandbox_paths
+    from yuxi.workspace import paths as sandbox_paths
 
     user_data = tmp_path / "user-data"
     user_root = user_data / "shared/user-1"
@@ -1978,7 +1978,7 @@ def _write_personal_skill(root: Path, slug: str, description: str) -> Path:
 
 def _personal_skill_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, uid: str = "user-1") -> Path:
     """把 UserWorkspace 根定向到测试临时目录。"""
-    from yuxi.agents.backends.sandbox import paths as sandbox_paths
+    from yuxi.workspace import paths as sandbox_paths
 
     user_data = tmp_path / "user-data"
     monkeypatch.setattr(sandbox_paths, "get_user_data_dir", lambda: user_data)

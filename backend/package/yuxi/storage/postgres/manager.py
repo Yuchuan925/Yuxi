@@ -69,7 +69,7 @@ V071_WORKDIR_CUTOVER_STATEMENTS = (
     "ALTER TABLE IF EXISTS conversations ADD COLUMN IF NOT EXISTS workdir_path VARCHAR(512)",
     """
     UPDATE conversations
-    SET workdir_path = 'projects/legacy-' || md5(uid || ':' || thread_id)
+    SET workdir_path = 'projects/' || (md5(uid || ':' || thread_id)::uuid)::text
     WHERE workdir_path IS NULL
     """,
     """

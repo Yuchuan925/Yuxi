@@ -10,7 +10,7 @@ def test_chatbot_prompt_does_not_duplicate_html_preview_skill_instructions():
 def test_chatbot_prompt_declares_workspace_visibility_and_default_write_boundary():
     prompt = build_prompt_with_context(
         SimpleNamespace(
-            workdir_path="/home/gem/user-data/projects/workdir-1",
+            workdir_path="/home/gem/user-data/projects/11111111-1111-4111-8111-111111111111",
             system_prompt="",
         )
     )

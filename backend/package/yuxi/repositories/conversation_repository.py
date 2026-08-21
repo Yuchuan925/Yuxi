@@ -97,11 +97,8 @@ class ConversationRepository:
         workdir_path: str | None = None,
     ) -> Conversation:
         """创建对话和统计记录但只 flush，供外层事务继续绑定关系。"""
-        from yuxi.agents.backends.sandbox.paths import (
-            allocate_default_user_workdir_path,
-            normalize_workdir_path,
-            user_workdir_host_dir,
-        )
+        from yuxi.workspace.paths import allocate_default_user_workdir_path
+        from yuxi.workspace.workdir import Workdir
 
         if not thread_id:
             thread_id = str(uuid_lib.uuid4())
@@ -114,8 +111,7 @@ class ConversationRepository:
         if workdir_path is None:
             normalized_workdir_path = allocate_default_user_workdir_path()
         else:
-            user_workdir_host_dir(str(uid), workdir_path)
-            normalized_workdir_path = normalize_workdir_path(workdir_path)
+            normalized_workdir_path = Workdir.open_existing(str(uid), workdir_path).relative_path
 
         conversation = Conversation(
             thread_id=thread_id,
@@ -158,7 +154,7 @@ class ConversationRepository:
         )
         await self.db.commit()
         await self.db.refresh(conversation)
-        from yuxi.agents.backends.sandbox.paths import ensure_bound_user_workdir
+        from yuxi.workspace.paths import ensure_bound_user_workdir
 
         ensure_bound_user_workdir(str(uid), conversation.workdir_path)
         return conversation
@@ -177,18 +173,6 @@ class ConversationRepository:
     async def get_conversation_by_id(self, conversation_id: int) -> Conversation | None:
         result = await self.db.execute(select(Conversation).where(Conversation.id == conversation_id))
         return result.scalar_one_or_none()
-
-    async def ensure_default_workdir(self, conversation: Conversation) -> str:
-        """确认 Conversation 的 Workdir 存在，遗留空值则创建默认目录。"""
-        from yuxi.agents.backends.sandbox.paths import create_default_user_workdir, user_workdir_host_dir
-
-        if conversation.workdir_path:
-            user_workdir_host_dir(conversation.uid, conversation.workdir_path)
-            return conversation.workdir_path
-        workdir_path, _ = create_default_user_workdir(conversation.uid)
-        conversation.workdir_path = workdir_path
-        await self.db.flush()
-        return workdir_path
 
     async def mark_thread_viewed(self, thread_id: str, run_id: str) -> Conversation | None:
         """记录用户最近查看过的顶层 run id；重复标记同一 run 时保持幂等。"""

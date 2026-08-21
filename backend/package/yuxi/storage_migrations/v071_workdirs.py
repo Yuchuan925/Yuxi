@@ -14,15 +14,17 @@ from pathlib import Path, PurePosixPath
 from sqlalchemy import select, text
 from sqlalchemy.orm.attributes import flag_modified
 
-from yuxi.agents.backends.sandbox.paths import (
+from yuxi.agents.backends.paths import runtime_workdir_path
+from yuxi.workspace.paths import (
     ensure_user_workspace,
+    normalize_workdir_path,
+    user_workspace_dir,
     user_workdir_host_dir,
-    workdir_virtual_dir,
 )
 from yuxi.config import get_legacy_storage_dir
-from yuxi.services.workspace_filesystem import WorkspaceFilesystem
+from yuxi.workspace.filesystem import Workspace
 from yuxi.storage.postgres.models_business import Conversation, Message, ToolCall
-from yuxi.utils.paths import VIRTUAL_PATH_PREFIX, open_directory_fd
+from yuxi.utils.paths import open_directory_fd
 
 _SAFE_LEGACY_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 _CURRENT_ATTACHMENT_FIELDS = {
@@ -135,7 +137,7 @@ async def read_v071_workdir_plan(db) -> V071WorkdirMigrationPlan:
             thread_id = str(row.thread_id)
             owner_uid = str(row.owner_uid)
             owner_thread_id = str(row.owner_thread_id)
-            workdir_id = f"legacy-{hashlib.md5(f'{owner_uid}:{owner_thread_id}'.encode()).hexdigest()}"
+            workdir_id = str(uuid.UUID(hashlib.md5(f"{owner_uid}:{owner_thread_id}".encode()).hexdigest()))
             conversations.append(V071ConversationBinding(thread_id, str(row.uid), workdir_id))
 
     owners: dict[str, str] = {}
@@ -162,16 +164,23 @@ def import_v071_workdirs(
     for binding in workdirs:
         _safe_legacy_component(binding.workdir_id, "Workdir ID")
         ensure_user_workspace(binding.uid)
-        workspace_files = WorkspaceFilesystem(binding.uid)
+        workspace_files = Workspace(binding.uid)
         try:
-            workspace_files.create_authorized_directory(VIRTUAL_PATH_PREFIX, "projects", root=VIRTUAL_PATH_PREFIX)
+            workspace_files.create_authorized_directory("/", "projects", root="/")
         except FileExistsError:
             pass
-        projects_root = user_workdir_host_dir(binding.uid, "projects")
-        target = projects_root / binding.workdir_id
-        staging = projects_root / f".import-{binding.workdir_id}-{uuid.uuid4().hex}"
-        staging.mkdir(mode=0o700)
         try:
+            projects_fd = open_directory_fd(user_workspace_dir(binding.uid), ("projects",))
+        except OSError as exc:
+            if exc.errno in {errno.ELOOP, errno.ENOTDIR}:
+                raise RuntimeError("Workdir 迁移目标 projects 包含 symlink 或非目录组件") from exc
+            raise
+        projects_root = user_workspace_dir(binding.uid) / "projects"
+        target = projects_root / binding.workdir_id
+        staging_name = f".import-{binding.workdir_id}-{uuid.uuid4().hex}"
+        staging = projects_root / staging_name
+        try:
+            os.mkdir(staging_name, mode=0o700, dir_fd=projects_fd)
             if target.exists() or target.is_symlink():
                 if target.is_symlink() or not target.is_dir():
                     raise RuntimeError(f"Workdir 迁移目标不是安全目录: {binding.workdir_id}")
@@ -190,11 +199,12 @@ def import_v071_workdirs(
                     raise RuntimeError(f"Workdir 迁移目标冲突: {binding.workdir_id}")
                 shutil.rmtree(staging)
             else:
-                os.replace(staging, target)
+                os.replace(staging.name, target.name, src_dir_fd=projects_fd, dst_dir_fd=projects_fd)
             if _tree_manifest(target) != staged_manifest:
                 raise RuntimeError(f"Workdir 迁移校验失败: {binding.workdir_id}")
         finally:
             shutil.rmtree(staging, ignore_errors=True)
+            os.close(projects_fd)
 
 
 def cleanup_v071_thread_sources(
@@ -247,12 +257,13 @@ def _legacy_thread_user_data(thread_id: object) -> Path | None:
 
 
 def _current_workdir_id(workdir_path: object) -> str | None:
-    if not isinstance(workdir_path, str) or not workdir_path.startswith("projects/"):
+    if not isinstance(workdir_path, str):
         return None
-    relative = workdir_path.removeprefix("projects/")
-    if "/" in relative:
+    try:
+        normalized = normalize_workdir_path(workdir_path)
+    except ValueError:
         return None
-    return _safe_legacy_component(relative, "Workdir ID")
+    return normalized.removeprefix("projects/")
 
 
 async def rewrite_v071_workdir_paths(db) -> None:
@@ -264,7 +275,7 @@ async def rewrite_v071_workdir_paths(db) -> None:
         metadata = dict(conversation.extra_metadata or {})
         attachments = metadata.get("attachments")
         if isinstance(attachments, list):
-            virtual_workdir = workdir_virtual_dir(conversation.workdir_path)
+            virtual_workdir = runtime_workdir_path(conversation.workdir_path)
             metadata["attachments"] = [
                 _rewrite_attachment(virtual_workdir, item) if isinstance(item, dict) else item for item in attachments
             ]
@@ -283,7 +294,7 @@ async def rewrite_v071_workdir_paths(db) -> None:
         tool_input = dict(tool_call.tool_input or {})
         filepaths = tool_input.get("filepaths")
         if isinstance(filepaths, list):
-            virtual_workdir = workdir_virtual_dir(conversation.workdir_path)
+            virtual_workdir = runtime_workdir_path(conversation.workdir_path)
             tool_input["filepaths"] = [_rewrite_path(path, virtual_workdir) for path in filepaths]
             tool_call.tool_input = tool_input
     await db.flush()

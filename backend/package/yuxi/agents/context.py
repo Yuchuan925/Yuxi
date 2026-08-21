@@ -5,12 +5,12 @@ import uuid
 from dataclasses import MISSING, dataclass, field, fields
 from typing import Any, get_origin
 
-from yuxi.agents.backends.sandbox.paths import user_workspace_agent_context_file
+from yuxi.workspace.filesystem import Workspace
 from yuxi.agents.tool_approval import DEFAULT_TOOL_APPROVAL_MODE
 from yuxi.config.options import system_options
 from yuxi.config.runtime import lite_mode_enabled
 from yuxi.utils.logging_config import logger
-from yuxi.utils.paths import WORKSPACE_AGENT_CONTEXT_FILES
+from yuxi.workspace.paths import WORKSPACE_AGENT_CONTEXT_FILES
 
 WORKSPACE_AGENTS_PROMPT_MAX_BYTES = 64 * 1024
 DEFAULT_SUMMARY_THRESHOLD_K = 100  # 100K tokens
@@ -64,11 +64,13 @@ def _role_can_access(auth: str | None, role: str | None) -> bool:
 
 def _load_workspace_agent_context(uid: str) -> str:
     sections: list[str] = []
+    filesystem = Workspace(uid)
     for filename in WORKSPACE_AGENT_CONTEXT_FILES:
-        context_file = user_workspace_agent_context_file(uid, filename)
         try:
-            with context_file.open("rb") as buffer:
-                content = buffer.read(WORKSPACE_AGENTS_PROMPT_MAX_BYTES + 1)
+            content, truncated = filesystem.read_authorized_file_prefix(
+                f"/agents/{filename}",
+                WORKSPACE_AGENTS_PROMPT_MAX_BYTES,
+            )
         except FileNotFoundError:
             continue
         except IsADirectoryError:
@@ -81,7 +83,7 @@ def _load_workspace_agent_context(uid: str) -> str:
         prompt = content[:WORKSPACE_AGENTS_PROMPT_MAX_BYTES].decode("utf-8", errors="replace").strip()
         if not prompt:
             continue
-        if len(content) > WORKSPACE_AGENTS_PROMPT_MAX_BYTES:
+        if truncated:
             prompt = f"{prompt}\n\n[{filename} 内容已截断]"
         sections.append(f"用户工作区 agents/{filename} 内容：\n{prompt}")
     return "\n\n".join(sections)

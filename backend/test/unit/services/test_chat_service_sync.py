@@ -8,7 +8,7 @@ from fastapi import HTTPException
 from langchain.messages import AIMessage, HumanMessage
 
 from yuxi.agents import context as agent_context
-from yuxi.agents.backends.sandbox import paths as workspace_paths
+from yuxi.workspace import paths as workspace_paths
 from yuxi.services import chat_service as svc
 
 
@@ -46,12 +46,12 @@ async def test_resolve_agent_runtime_includes_subagents_only_when_requested(monk
                 agent_id="worker",
                 thread_id=thread_id,
                 status="subagent",
-                workdir_path="projects/workdir-1",
+                workdir_path="projects/11111111-1111-4111-8111-111111111111",
             )
 
     monkeypatch.setattr(svc, "AgentRepository", FakeAgentRepository)
     monkeypatch.setattr(svc, "ConversationRepository", FakeConversationRepository)
-    monkeypatch.setattr(svc, "user_workdir_host_dir", lambda uid, path: Path(f"/{uid}/{path}"))
+    monkeypatch.setattr(svc, "ensure_bound_user_workdir", lambda _uid, _path: None)
     monkeypatch.setattr(svc, "normalize_agent_context_config", _fake_normalize_agent_context_config)
     monkeypatch.setattr(
         svc.agent_manager,
@@ -488,7 +488,7 @@ async def test_get_agent_state_view_returns_interrupted_checkpoint_payload(monke
                 uid="user-1",
                 agent_id="main",
                 status="active",
-                workdir_path="projects/workdir-1",
+                workdir_path="projects/11111111-1111-4111-8111-111111111111",
             )
 
     class AgentRepo:
@@ -553,8 +553,8 @@ async def test_get_agent_state_view_returns_interrupted_checkpoint_payload(monke
 
     async def read_checkpoint_state(*_args, context, **_kwargs):
         assert context.runtime_scope_id == thread_id
-        assert context.workdir_relative_path == "projects/workdir-1"
-        assert context.workdir_path == "/home/gem/user-data/projects/workdir-1"
+        assert context.workdir_relative_path == "projects/11111111-1111-4111-8111-111111111111"
+        assert context.workdir_path == "/home/gem/user-data/projects/11111111-1111-4111-8111-111111111111"
         return checkpoint_state
 
     monkeypatch.setattr(svc, "ConversationRepository", ConvRepo)
@@ -654,7 +654,7 @@ async def test_get_agent_state_view_includes_subagent_thread_relation(monkeypatc
                     uid="user-1",
                     agent_id="worker",
                     status="subagent",
-                    workdir_path="projects/workdir-1",
+                    workdir_path="projects/11111111-1111-4111-8111-111111111111",
                 )
             return None
 
@@ -760,8 +760,8 @@ async def test_get_agent_state_view_includes_subagent_thread_relation(monkeypatc
             assert context.uid == "user-1"
             assert context.model == "provider:run-model"
             assert context.runtime_scope_id == "parent-thread"
-            assert context.workdir_relative_path == "projects/workdir-1"
-            assert context.workdir_path == "/home/gem/user-data/projects/workdir-1"
+            assert context.workdir_relative_path == "projects/11111111-1111-4111-8111-111111111111"
+            assert context.workdir_path == "/home/gem/user-data/projects/11111111-1111-4111-8111-111111111111"
             return Graph()
 
     monkeypatch.setattr(svc, "ConversationRepository", ConvRepo)
@@ -802,7 +802,7 @@ async def test_get_agent_state_view_reports_malformed_subagent_run_as_server_err
                 uid="user-1",
                 agent_id="worker",
                 status="subagent",
-                workdir_path="projects/workdir-1",
+                workdir_path="projects/11111111-1111-4111-8111-111111111111",
             )
 
         async def get_conversation_by_id(self, conversation_id: int):

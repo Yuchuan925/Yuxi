@@ -8,6 +8,7 @@ from urllib.parse import quote
 
 from fastapi import HTTPException, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
+from yuxi.agents.backends.paths import runtime_path_for_workdir_scope, workdir_scope_from_runtime_path
 from yuxi.config.options import system_options
 from yuxi.knowledge.parser.factory import DocumentProcessorFactory
 from yuxi.repositories.agent_run_repository import AgentRunRepository
@@ -167,14 +168,14 @@ def serialize_attachment(record: dict, *, thread_id: str) -> dict:
     }
 
 
-async def _write_workdir_file(backend, path: str, content: bytes) -> None:
+async def _write_workdir_file(workdir, path: str, content: bytes) -> None:
     """通过受信任 no-follow 文件边界写入实时 Workdir。"""
     temp_path = ""
     try:
         with tempfile.NamedTemporaryFile(prefix="yuxi-attachment-", delete=False) as temp_file:
             temp_path = temp_file.name
             temp_file.write(content)
-        await asyncio.to_thread(backend.upload_authorized_file_from_path, path, temp_path)
+        await asyncio.to_thread(workdir.copy_file_from_path, path, temp_path)
     finally:
         if temp_path:
             try:
@@ -185,8 +186,7 @@ async def _write_workdir_file(backend, path: str, content: bytes) -> None:
 
 async def _store_attachment(
     *,
-    backend,
-    workdir_path: str,
+    workdir,
     file_id: str,
     file_name: str,
     file_type: str | None,
@@ -196,8 +196,9 @@ async def _store_attachment(
     """将正式附件直接写入实时 Project Workdir。"""
     file_name = _safe_file_name(file_name)
     storage_name = f"{file_id}_{_safe_file_name(file_name)}"
-    original_path = f"{workdir_path}/uploads/{storage_name}"
-    await _write_workdir_file(backend, original_path, file_content)
+    original_scope = f"/uploads/{storage_name}"
+    await _write_workdir_file(workdir, original_scope, file_content)
+    original_path = runtime_path_for_workdir_scope(workdir.relative_path, original_scope)
     record = {
         "file_id": file_id,
         "file_name": file_name,
@@ -211,11 +212,12 @@ async def _store_attachment(
     if parsed_markdown is None:
         return record
 
-    markdown_path = f"{workdir_path}/uploads/attachments/{_make_attachment_path(storage_name)}"
+    markdown_scope = f"/uploads/attachments/{_make_attachment_path(storage_name)}"
+    markdown_path = runtime_path_for_workdir_scope(workdir.relative_path, markdown_scope)
     try:
-        await _write_workdir_file(backend, markdown_path, parsed_markdown.encode("utf-8"))
+        await _write_workdir_file(workdir, markdown_scope, parsed_markdown.encode("utf-8"))
     except Exception:
-        await asyncio.to_thread(backend.delete_authorized_path, original_path, root=workdir_path)
+        await asyncio.to_thread(workdir.delete, original_scope)
         raise
     record.update(
         {
@@ -367,11 +369,10 @@ async def confirm_tmp_thread_attachments_view(
 
     conv_repo = ConversationRepository(db)
     conversation = await _require_user_conversation(conv_repo, thread_id, str(current_uid))
-    from yuxi.services.workdir_service import resolve_workdir_binding
+    from yuxi.services.workdir_service import resolve_authorized_workdir
 
-    binding = await resolve_workdir_binding(thread_id=thread_id, uid=str(current_uid), db=db)
-    backend = binding.create_file_backend()
-    await asyncio.to_thread(backend.ensure_available)
+    binding = await resolve_authorized_workdir(thread_id=thread_id, uid=str(current_uid), db=db)
+    workdir = binding.workdir
     minio_client = get_minio_client()
     bucket_name = _get_tmp_attachment_bucket()
     added_records: list[dict] = []
@@ -406,8 +407,7 @@ async def confirm_tmp_thread_attachments_view(
 
             file_id = uuid.uuid4().hex
             attachment_record = await _store_attachment(
-                backend=backend,
-                workdir_path=binding.virtual_path,
+                workdir=workdir,
                 file_id=file_id,
                 file_name=file_name,
                 file_type=item.get("file_type"),
@@ -421,7 +421,8 @@ async def confirm_tmp_thread_attachments_view(
             for path in {record.get("path"), record.get("original_path")}:
                 if isinstance(path, str):
                     try:
-                        await asyncio.to_thread(backend.delete_authorized_path, path, root=binding.virtual_path)
+                        scope = workdir_scope_from_runtime_path(workdir.relative_path, path)
+                        await asyncio.to_thread(workdir.delete, scope)
                     except Exception:
                         pass
         raise
@@ -436,9 +437,8 @@ async def confirm_tmp_thread_attachments_view(
                 if isinstance(path, str):
                     try:
                         await asyncio.to_thread(
-                            backend.delete_authorized_path,
-                            path,
-                            root=binding.virtual_path,
+                            workdir.delete,
+                            workdir_scope_from_runtime_path(workdir.relative_path, path),
                         )
                     except Exception:
                         pass
@@ -490,11 +490,10 @@ async def delete_thread_attachment_view(
     """删除指定对话线程的附件。"""
     conv_repo = ConversationRepository(db)
     conversation = await _require_user_conversation(conv_repo, thread_id, str(current_uid))
-    from yuxi.services.workdir_service import resolve_workdir_binding
+    from yuxi.services.workdir_service import resolve_authorized_workdir
 
-    binding = await resolve_workdir_binding(thread_id=thread_id, uid=str(current_uid), db=db)
-    backend = binding.create_file_backend()
-    await asyncio.to_thread(backend.ensure_available)
+    binding = await resolve_authorized_workdir(thread_id=thread_id, uid=str(current_uid), db=db)
+    workdir = binding.workdir
 
     existing_attachments = await conv_repo.lock_attachments(conversation.id)
     target_attachment = next((item for item in existing_attachments if item.get("file_id") == file_id), None)
@@ -525,7 +524,8 @@ async def delete_thread_attachment_view(
         if not isinstance(path, str):
             continue
         try:
-            await asyncio.to_thread(backend.delete_authorized_path, path, root=binding.virtual_path)
+            scope = workdir_scope_from_runtime_path(workdir.relative_path, path)
+            await asyncio.to_thread(workdir.delete, scope)
         except FileNotFoundError:
             pass
         except Exception:

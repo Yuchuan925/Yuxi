@@ -88,7 +88,7 @@ Thread 创建接口增加可选的 `workdir_path` 字段：
 - `agents/` 及后续声明的系统目录是保留命名空间，不能作为普通 Workdir；
 - 本阶段只提供后端接口，不实现前端选择器、目录浏览器、目录创建 UI 或跨用户共享。
 
-路径解析和授权由后端 repository/service 与宿主 `WorkspaceFilesystem` 共同闭合。它接收 `uid + workspace-relative path`，不再通过伪造的 Project root 或 `workdir-files-<id>` scope 绕过真实路径 Owner。所有路径组件都在 owning filesystem boundary 内以 no-follow 方式校验，禁止 `..`、symlink 穿越和跨用户访问。
+路径解析和授权由后端 repository/service 与宿主 `Workspace` 共同闭合。它接收 `uid + workspace-relative path`，不再通过伪造的 Project root 或 `workdir-files-<id>` scope 绕过真实路径 Owner。所有路径组件都在 owning filesystem boundary 内以 no-follow 方式校验，禁止 `..`、symlink 穿越和跨用户访问。
 
 ### 挂载边界
 
@@ -123,7 +123,7 @@ Conversation 的附件 JSON 只保存文件 ID、文件名、MIME、大小、状
 
 `storage-migrator` 收敛为一次性旧布局迁移 Owner，而不是正常启动链路中的 Workdir materialization Owner：
 
-- 升级基线是 v0.7.1 的发布状态；每个历史 Conversation 获得确定性的 `projects/legacy-<hash>`，即使没有旧文件也创建目标 Workdir；
+- 升级基线是 v0.7.1 的发布状态；每个历史 Conversation 获得由 owner uid + owner thread id 确定性派生的 canonical `projects/<uuid>`，子线程与 owner 共用 Workdir，即使没有旧文件也创建目标 Workdir；
 - v0.7.1 thread `uploads/outputs` 导入对应 Workdir，持久化的 `/home/gem/user-data/workspace/...` 改写为 `/home/gem/user-data/...`，旧顶层 `uploads/outputs` 路径改写到当前 Workdir；
 - v0.7.1 `base.toml` 与共享 Skill 在同一停机迁移中切换到当前 PostgreSQL 和 Skill source Owner；
 - 迁移在 runtime quiescence 和目标校验后提交数据库，再清理旧源；已有 `workdir_path` 且旧 thread 源仍存在时按同一目标重试；
@@ -140,7 +140,7 @@ Conversation 的附件 JSON 只保存文件 ID、文件名、MIME、大小、状
 - **把 UserWorkspace 挂载到 `/home/gem/user-data/workspace`。** 拒绝。该路径会在已经由 UserWorkspace Owner 定界的目录外再保留一层兼容命名，使个人 Skill、Workspace API 和 Workdir 都需要重复拼接 `workspace`；直接把同一个宿主目录挂到 `/home/gem/user-data` 即可保持单根语义。
 - **每个 Thread 按用户指定目录动态创建宿主机挂载。** 拒绝。挂载配置不应成为用户输入的副作用；挂载整个当前用户 workspace 后，在容器内选择经过校验的相对路径即可。
 - **把 UserWorkspace 改为对象存储或 FUSE POSIX 层。** 拒绝。实时 Workdir 需要普通 POSIX 的 rename、partial write 和并发可见性；对象存储仍不能成为不可信运行时的 POSIX 事实源。
-- **直接把宿主机路径传给 API、worker 或 Agent。** 拒绝。宿主机路径、容器虚拟路径和对象 URL 继续分层，授权在产生副作用的 executor/`WorkspaceFilesystem` 处最终执行。
+- **直接把宿主机路径传给 API、worker 或 Agent。** 拒绝。宿主机路径、容器虚拟路径和对象 URL 继续分层，授权在产生副作用的 executor/`Workspace` 处最终执行。
 
 ## 验证
 

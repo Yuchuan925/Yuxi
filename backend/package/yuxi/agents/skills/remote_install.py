@@ -14,6 +14,7 @@ from urllib.parse import urlparse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from yuxi.agents.backends.sandbox import ProvisionerSandboxBackend
+from yuxi.agents.backends.paths import VIRTUAL_PATH_PREFIX
 from yuxi.agents.backends.sandbox.download import download_sandbox_directory
 from yuxi.agents.backends.sandbox.provider import get_sandbox_provider
 from yuxi.agents.skills.service import import_skill_dir, is_valid_skill_slug
@@ -29,7 +30,7 @@ CLI_TIMEOUT_SECONDS = 300
 GITHUB_REPO_PATTERN = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?/(?!\.{1,2}$)[A-Za-z0-9_.-]+$")
 GITHUB_HOST = "github.com"
 INVALID_SOURCE_MESSAGE = "source 仅支持远程 Skill 来源白名单中的 HTTPS 地址"
-REMOTE_SKILL_SANDBOX_ROOT = "/home/gem/user-data/outputs"
+REMOTE_SKILL_SANDBOX_ROOT = f"{VIRTUAL_PATH_PREFIX.rstrip('/')}/outputs"
 
 
 @dataclass(slots=True)

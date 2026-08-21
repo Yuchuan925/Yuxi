@@ -92,8 +92,8 @@ async def test_install_skill_from_sandbox_installs_as_current_user_private_skill
     runtime = _runtime(
         uid="normal-user",
         thread_id="thread-1",
-        workdir_relative_path="projects/workdir-1",
-        workdir_path="/home/gem/user-data/projects/workdir-1",
+        workdir_relative_path="projects/11111111-1111-4111-8111-111111111111",
+        workdir_path="/home/gem/user-data/projects/11111111-1111-4111-8111-111111111111",
         skills=["existing-skill"],
     )
     result = await install_skill_module._run_install_task(

@@ -40,7 +40,7 @@ async def test_created_file_is_immediately_visible_to_tree_preview_and_artifact(
     admin_headers,
 ):
     headers = standard_user["headers"]
-    thread_id, workdir_path = await _create_thread(test_client, headers)
+    thread_id, _workdir_path = await _create_thread(test_client, headers)
 
     upload = await test_client.post(
         "/api/viewer/filesystem/upload",
@@ -51,7 +51,7 @@ async def test_created_file_is_immediately_visible_to_tree_preview_and_artifact(
     assert upload.status_code == 200, upload.text
     [entry] = upload.json()["entries"]
     file_path = entry["path"]
-    assert file_path.startswith(f"/home/gem/user-data/{workdir_path}/")
+    assert file_path == "/live.txt"
 
     collision = await test_client.post(
         "/api/viewer/filesystem/upload",
@@ -77,17 +77,11 @@ async def test_created_file_is_immediately_visible_to_tree_preview_and_artifact(
     assert preview.status_code == 200, preview.text
     assert preview.json()["content"] == "live bytes\n"
 
-    artifact = await test_client.get(
-        f"/api/chat/thread/{thread_id}/artifacts/{file_path.lstrip('/')}",
-        headers=headers,
-    )
+    artifact = await test_client.get(entry["artifact_url"], headers=headers)
     assert artifact.status_code == 200, artifact.text
     assert artifact.content == b"live bytes\n"
 
-    cross_user = await test_client.get(
-        f"/api/chat/thread/{thread_id}/artifacts/{file_path.lstrip('/')}",
-        headers=admin_headers,
-    )
+    cross_user = await test_client.get(entry["artifact_url"], headers=admin_headers)
     assert cross_user.status_code == 404
 
     deleted = await test_client.delete(
@@ -117,3 +111,45 @@ async def test_viewer_rejects_paths_outside_current_workdir(test_client, standar
             headers=headers,
         )
         assert response.status_code == 403
+
+
+async def test_mention_search_observes_live_viewer_files_without_cache(test_client, standard_user):
+    headers = standard_user["headers"]
+    thread_id, workdir_path = await _create_thread(test_client, headers)
+    filename = "mention-live-file.txt"
+    upload = await test_client.post(
+        "/api/viewer/filesystem/upload",
+        data={"thread_id": thread_id, "parent_path": "/"},
+        files={"files": (filename, b"live", "text/plain")},
+        headers=headers,
+    )
+    assert upload.status_code == 200, upload.text
+
+    found = await test_client.get(
+        "/api/mention/search",
+        params={"thread_id": thread_id, "query": "mention-live", "sources": "thread"},
+        headers=headers,
+    )
+    assert found.status_code == 200, found.text
+    assert found.json() == [
+        {
+            "name": filename,
+            "path": f"/home/gem/user-data/{workdir_path}/{filename}",
+            "is_dir": False,
+            "source": "thread",
+        }
+    ]
+
+    deleted = await test_client.delete(
+        "/api/viewer/filesystem/file",
+        params={"thread_id": thread_id, "path": f"/{filename}"},
+        headers=headers,
+    )
+    assert deleted.status_code == 200, deleted.text
+    missing = await test_client.get(
+        "/api/mention/search",
+        params={"thread_id": thread_id, "query": "mention-live", "sources": "thread"},
+        headers=headers,
+    )
+    assert missing.status_code == 200, missing.text
+    assert missing.json() == []

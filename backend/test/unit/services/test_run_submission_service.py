@@ -87,7 +87,7 @@ async def test_submit_run_command_shares_conversation_intake_and_finalize(monkey
             return SimpleNamespace(
                 id=1,
                 thread_id=kwargs["thread_id"],
-                workdir_path="projects/workdir-1",
+                workdir_path="projects/11111111-1111-4111-8111-111111111111",
             )
 
     async def fake_intake_request(**kwargs):
@@ -163,7 +163,7 @@ async def test_submit_run_command_shares_conversation_intake_and_finalize(monkey
     }
     assert calls["finalize"]["intake"].run_id == "run-1"
     assert calls["finalize"]["uid"] == "user-1"
-    assert calls["finalize"]["workdir_path"] == "projects/workdir-1"
+    assert calls["finalize"]["workdir_path"] == "projects/11111111-1111-4111-8111-111111111111"
 
 
 @pytest.mark.asyncio

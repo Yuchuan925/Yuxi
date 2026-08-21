@@ -13,7 +13,7 @@ from sqlalchemy import select, text
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from yuxi.agents.backends.sandbox.paths import ensure_bound_user_workdir
+from yuxi.workspace.paths import ensure_bound_user_workdir
 from yuxi.repositories.conversation_repository import ConversationRepository
 from yuxi.storage_migrations.v071_workdirs import (
     cleanup_v071_thread_sources,
@@ -58,6 +58,17 @@ async def test_conversation_default_and_explicit_workdirs_use_user_workspace(mon
             )
             await db.commit()
             assert second.workdir_path == first.workdir_path
+
+            missing_path = f"projects/{uuid.uuid4()}"
+            missing_directory = tmp_path / "user-data" / "shared" / "user-1" / "workspace" / missing_path
+            with pytest.raises(FileNotFoundError):
+                await ConversationRepository(db).add_conversation(
+                    uid="user-1",
+                    agent_id="main",
+                    thread_id="thread-missing",
+                    workdir_path=missing_path,
+                )
+            assert not missing_directory.exists()
 
             with pytest.raises(ValueError):
                 await ConversationRepository(db).add_conversation(
@@ -157,9 +168,9 @@ async def test_v071_thread_layout_migrates_files_empty_workdir_and_attachment_me
         factory = async_sessionmaker(engine, expire_on_commit=False)
         async with factory() as db:
             plan = await read_v071_workdir_plan(db)
-        expected_id = "legacy-" + hashlib.md5(b"user-early:thread-early").hexdigest()
-        empty_id = "legacy-" + hashlib.md5(b"user-early:thread-empty").hexdigest()
-        punctuation_id = "legacy-" + hashlib.md5(b"user-early:thread.v0:legacy").hexdigest()
+        expected_id = str(uuid.UUID(hashlib.md5(b"user-early:thread-early").hexdigest()))
+        empty_id = str(uuid.UUID(hashlib.md5(b"user-early:thread-empty").hexdigest()))
+        punctuation_id = str(uuid.UUID(hashlib.md5(b"user-early:thread.v0:legacy").hexdigest()))
         assert plan.requires_cutover is True
         assert {(binding.workdir_id, binding.uid) for binding in plan.workdirs} == {
             (empty_id, "user-early"),
