@@ -11,8 +11,7 @@ import uuid
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
-from sqlalchemy import select, text
-from sqlalchemy.orm.attributes import flag_modified
+from sqlalchemy import select, text, update
 
 from yuxi.agents.backends.paths import runtime_workdir_path
 from yuxi.config import get_legacy_storage_dir
@@ -290,22 +289,27 @@ def _current_workdir_id(workdir_path: object) -> str | None:
 async def rewrite_v071_workdir_paths(db) -> None:
     """把仍被运行时读取的旧虚拟路径改写到当前 Workdir。"""
     result = await db.execute(
-        select(Conversation, Project.workdir_path)
+        select(
+            Conversation.id,
+            Conversation.extra_metadata,
+            Project.workdir_path,
+        )
         .join(Project, (Project.id == Conversation.project_id) & (Project.uid == Conversation.uid))
         .order_by(Conversation.id)
     )
     conversations = list(result.all())
-    by_id = {conversation.id: (conversation, workdir_path) for conversation, workdir_path in conversations}
-    for conversation, workdir_path in conversations:
-        metadata = dict(conversation.extra_metadata or {})
+    by_id = {conversation_id: workdir_path for conversation_id, _metadata, workdir_path in conversations}
+    for conversation_id, extra_metadata, workdir_path in conversations:
+        metadata = dict(extra_metadata or {})
         attachments = metadata.get("attachments")
         if isinstance(attachments, list):
             virtual_workdir = runtime_workdir_path(workdir_path)
             metadata["attachments"] = [
                 _rewrite_attachment(virtual_workdir, item) if isinstance(item, dict) else item for item in attachments
             ]
-            conversation.extra_metadata = metadata
-            flag_modified(conversation, "extra_metadata")
+            await db.execute(
+                update(Conversation).where(Conversation.id == conversation_id).values(extra_metadata=metadata)
+            )
 
     if not by_id:
         return
@@ -315,7 +319,7 @@ async def rewrite_v071_workdir_paths(db) -> None:
         .where(Message.conversation_id.in_(list(by_id)), ToolCall.tool_name == "present_artifacts")
     )
     for tool_call, conversation_id in rows.all():
-        conversation, workdir_path = by_id[conversation_id]
+        workdir_path = by_id[conversation_id]
         tool_input = dict(tool_call.tool_input or {})
         filepaths = tool_input.get("filepaths")
         if isinstance(filepaths, list):
@@ -328,18 +332,23 @@ async def rewrite_v071_workdir_paths(db) -> None:
 async def verify_workdir_bindings(db) -> None:
     """回读 Conversation 行与最终目录，确认 schema 和文件一致。"""
     result = await db.execute(
-        select(Conversation, Project.workdir_path)
+        select(
+            Conversation.thread_id,
+            Conversation.uid,
+            Conversation.status,
+            Project.workdir_path,
+        )
         .join(Project, (Project.id == Conversation.project_id) & (Project.uid == Conversation.uid))
         .where(Conversation.status != "deleted")
     )
-    for conversation, workdir_path in result:
+    for thread_id, uid, _status, workdir_path in result:
         expected_prefix = "projects/"
         if not workdir_path.startswith(expected_prefix):
             continue
         try:
-            user_workdir_host_dir(conversation.uid, workdir_path)
+            user_workdir_host_dir(uid, workdir_path)
         except (OSError, ValueError):
-            raise RuntimeError(f"Conversation {conversation.thread_id} 的 Workdir 未完成迁移")
+            raise RuntimeError(f"Conversation {thread_id} 的 Workdir 未完成迁移")
 
 
 def _rewrite_attachment(workdir_path: str, record: dict) -> dict:

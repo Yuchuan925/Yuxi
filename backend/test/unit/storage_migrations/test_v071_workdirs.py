@@ -15,6 +15,8 @@ def test_cutover_creates_project_only_conversation_binding():
 
     assert "ADD COLUMN IF NOT EXISTS project_id" in sql
     assert "INSERT INTO projects" in sql
+    assert "created_at, updated_at" in sql
+    assert sql.count("CURRENT_TIMESTAMP") == 2
     assert "ALTER COLUMN project_id SET NOT NULL" in sql
     assert "ADD COLUMN IF NOT EXISTS workdir_path" not in sql
 

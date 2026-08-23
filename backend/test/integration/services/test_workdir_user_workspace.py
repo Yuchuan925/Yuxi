@@ -128,6 +128,7 @@ async def test_v071_thread_layout_migrates_files_empty_workdir_and_attachment_me
             await connection.run_sync(Base.metadata.create_all)
             await connection.execute(text("ALTER TABLE conversations DROP CONSTRAINT fk_conversations_project_uid"))
             await connection.execute(text("ALTER TABLE conversations DROP COLUMN project_id"))
+            await connection.execute(text("ALTER TABLE conversations DROP COLUMN creation_request_id"))
             await connection.execute(
                 text(
                     "INSERT INTO users (username, uid, password_hash, role, login_failed_count, is_deleted) "
@@ -191,6 +192,9 @@ async def test_v071_thread_layout_migrates_files_empty_workdir_and_attachment_me
             await rewrite_v071_workdir_paths(db)
             await verify_workdir_bindings(db)
             await db.commit()
+
+        async with engine.begin() as connection:
+            await connection.execute(text("ALTER TABLE conversations ADD COLUMN creation_request_id VARCHAR(64)"))
 
         async with factory() as db:
             retry_plan = await read_v071_workdir_plan(db)

@@ -137,7 +137,8 @@ V071_WORKDIR_CUTOVER_STATEMENTS = (
         LEFT JOIN conversations AS parent ON parent.id = relation.parent_conversation_id
     )
     INSERT INTO projects (
-        id, uid, name, selection_status, workdir_path, directory_mode, idempotency_key
+        id, uid, name, selection_status, workdir_path, directory_mode, idempotency_key,
+        created_at, updated_at
     )
     SELECT DISTINCT
         (md5('project:' || uid || ':' || owner_thread_id)::uuid)::text,
@@ -146,7 +147,9 @@ V071_WORKDIR_CUTOVER_STATEMENTS = (
         'implicit',
         'projects/' || (md5(uid || ':' || owner_thread_id)::uuid)::text,
         'managed',
-        NULL
+        NULL,
+        CURRENT_TIMESTAMP,
+        CURRENT_TIMESTAMP
     FROM bindings
     ON CONFLICT (id) DO NOTHING
     """,

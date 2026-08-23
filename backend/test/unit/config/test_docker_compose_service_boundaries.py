@@ -205,8 +205,11 @@ def test_storage_migration_script_quiesces_runtime_before_issuing_proof() -> Non
     assert provisioner_stop < source.index("YUXI_STORAGE_MIGRATION_QUIESCENCE_TOKEN")
     assert 'compose=(docker compose "$@")' in source
     assert "up -d --no-deps --build --wait sandbox-provisioner" in source
-    assert "mktemp" in source
-    assert '-v "$proof_file:/app/legacy-saves/.storage-migration-quiesced:ro"' in source
+    assert 'proof_file="$repo_root/docker/volumes/yuxi/.storage-migration-quiesced"' in source
+    assert "set -o noclobber" in source
+    assert 'find "$storage_root" -type d -exec chmod u+rwx {} +' in source
+    assert 'find "$storage_root" -type f -exec chmod u+rw {} +' in source
+    assert '-v "$proof_file:/app/legacy-saves/.storage-migration-quiesced:ro"' not in source
 
 
 def test_v071_options_migration_is_not_part_of_normal_startup() -> None:
@@ -237,6 +240,9 @@ def test_storage_migration_script_recovers_stopped_production_deployment(
         encoding="utf-8",
     )
     fake_docker.chmod(0o755)
+    fake_chmod = fake_bin / "chmod"
+    fake_chmod.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    fake_chmod.chmod(0o755)
     env = {
         **os.environ,
         "FAKE_DOCKER_LOG": str(command_log),
@@ -269,11 +275,10 @@ def test_storage_migration_script_recovers_stopped_production_deployment(
     assert any("exec -T sandbox-provisioner python -" in command for command in commands)
     assert any(
         "run --rm" in command
-        and "-v " in command
-        and ":/app/legacy-saves/.storage-migration-quiesced:ro" in command
         and "-e YUXI_STORAGE_MIGRATION_QUIESCENCE_TOKEN=" in command
         for command in commands
     )
+    assert all(":/app/legacy-saves/.storage-migration-quiesced:ro" not in command for command in commands)
 
 
 @pytest.mark.parametrize("filename", ["docker-compose.yml", "docker-compose.prod.yml"])
