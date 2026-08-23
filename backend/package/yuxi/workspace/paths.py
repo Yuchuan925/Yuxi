@@ -24,7 +24,9 @@ _SAFE_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 WORKDIR_PROJECTS_DIR_NAME = "projects"
 
 _raw_virtual_prefix = os.getenv("SANDBOX_VIRTUAL_PATH_PREFIX")
-VIRTUAL_PATH_PREFIX = (_raw_virtual_prefix.strip() if _raw_virtual_prefix else "/home/gem/user-data") or "/home/gem/user-data"
+VIRTUAL_PATH_PREFIX = (
+    _raw_virtual_prefix.strip() if _raw_virtual_prefix else "/home/gem/user-data"
+) or "/home/gem/user-data"
 if not VIRTUAL_PATH_PREFIX.startswith("/"):
     VIRTUAL_PATH_PREFIX = f"/{VIRTUAL_PATH_PREFIX}"
 

@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-import os
 from pathlib import PurePosixPath
 
-from yuxi.workspace.paths import VIRTUAL_PATH_PREFIX, normalize_workdir_path, runtime_workdir_path
+from yuxi.workspace.paths import VIRTUAL_PATH_PREFIX, normalize_workdir_path
 
 VIRTUAL_SKILLS_PATH = "/home/gem/skills"
 VIRTUAL_PERSONAL_SKILLS_PATH = f"{VIRTUAL_PATH_PREFIX.rstrip('/')}/agents/skills"
