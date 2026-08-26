@@ -1235,6 +1235,9 @@ async def test_worker_startup_ensures_builtin_mcp_servers(monkeypatch: pytest.Mo
     async def fake_reconciliation_loop():
         calls.append("reconciliation_loop")
 
+    async def fake_scheduled_reconciliation_once():
+        calls.append("scheduled_reconciliation_once")
+
     monkeypatch.setattr(run_worker.pg_manager, "initialize", fake_initialize)
     monkeypatch.setattr(run_worker.pg_manager, "require_current_schema", fake_require_current_schema)
     monkeypatch.setattr(run_worker.pg_manager, "get_async_session_context", fake_session_ctx)
@@ -1251,6 +1254,7 @@ async def test_worker_startup_ensures_builtin_mcp_servers(monkeypatch: pytest.Mo
     )
     monkeypatch.setattr(run_worker, "_publish_reconciliation_health", fake_publish_reconciliation_health)
     monkeypatch.setattr(run_worker, "_reconcile_agent_run_leases_forever", fake_reconciliation_loop)
+    monkeypatch.setattr(run_worker, "_run_scheduled_agent_reconciliation_once", fake_scheduled_reconciliation_once)
     options_module = importlib.import_module("yuxi.config.options")
     monkeypatch.setattr(options_module, "ensure_options_in_db", fake_ensure_options_in_db)
 
@@ -1269,6 +1273,7 @@ async def test_worker_startup_ensures_builtin_mcp_servers(monkeypatch: pytest.Mo
         "reconcile_pending_runtime_cleanups",
         "recover_pending_dispatches",
         "publish_reconciliation_health",
+        "scheduled_reconciliation_once",
         "reconciliation_loop",
     ]
     assert ctx["worker_id"] == run_worker.WORKER_ID
