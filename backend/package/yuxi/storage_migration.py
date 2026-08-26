@@ -92,7 +92,8 @@ async def _converge_database_state(*, fail_nonterminal_runs: bool) -> None:
 
 def _require_supported_version(domain: str, actual: int | None, expected: int) -> None:
     """只接受未版本化 legacy baseline 或当前精确版本。"""
-    if actual not in (None, expected):
+    supported = (None, expected) if expected == 1 else (None, expected - 1, expected)
+    if actual not in supported:
         raise RuntimeError(f"Unsupported {domain} schema version: {actual}; expected {expected}")
 
 
@@ -130,9 +131,11 @@ async def main() -> None:
                     await rewrite_v071_workdir_paths(session)
                     await verify_workdir_bindings(session)
                     await session.commit()
-            if business_version is None:
+            if business_version != BUSINESS_SCHEMA_VERSION:
                 await pg_manager.ensure_business_schema()
+            if business_version is None:
                 await pg_manager.setup_langgraph_checkpointer()
+            if business_version != BUSINESS_SCHEMA_VERSION:
                 await pg_manager.record_schema_version("business", BUSINESS_SCHEMA_VERSION)
 
             if not lite_mode_enabled() and versions.get("knowledge") is None:

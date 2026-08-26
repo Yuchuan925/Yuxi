@@ -58,6 +58,12 @@ API/worker 不信任浏览器内存中的完整配置。请求可以提供受限
 
 Viewer、附件和 artifact API 通过持久化 Workspace/Workdir 读取文件，不连接 Agent execution runtime。沙盒虚拟路径、Viewer scope、对象 URL 和宿主机路径在各自边界中转换，不能互相替代。
 
+## 用户定时 Agent
+
+用户定时 Agent 由 `scheduled_agent_jobs` 保存任务定义，由 worker 周期读取到期任务并在 PostgreSQL 行锁下创建唯一触发记录。触发记录提交后复用统一 AgentRun Request/Run 链路；Redis/ARQ 只负责唤醒，AgentRun 的消息、Workdir、lease 和最终输出仍由普通运行链路拥有。
+
+任务 API 只返回当前用户拥有的任务。绑定 Agent 时服务端重新执行可见性查询；停用或删除只阻止未来触发，不删除已产生的 Conversation、Message 或 AgentRun。任务支持 5 段 cron 和 IANA 时区，数据库保存 UTC 下一次触发时间。
+
 ## 恢复和失败
 
 审批或用户问题中断时，系统把中断信息保存在对应 Run/checkpoint。resume 会根据线程绑定的 Agent 和当前用户重新构建 Context，再创建新的 Run；它不会从相邻 Run 猜测模型、工具或文件结果。

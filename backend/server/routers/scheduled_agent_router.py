@@ -1,0 +1,95 @@
+"""用户 Agent 定时任务 HTTP 适配层。"""
+
+from __future__ import annotations
+
+from typing import Any
+
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from server.utils.auth_middleware import get_db, get_required_user
+from yuxi.services.scheduled_agent_service import (
+    create_scheduled_job,
+    delete_scheduled_job,
+    get_scheduled_job,
+    list_scheduled_jobs,
+    update_scheduled_job,
+)
+from yuxi.storage.postgres.models_business import User
+
+scheduled_agents = APIRouter(prefix="/scheduled-agents", tags=["scheduled-agents"])
+
+
+class ScheduledAgentCreate(BaseModel):
+    """创建定时 Agent 请求。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(..., max_length=255)
+    agent_slug: str = Field(..., max_length=64)
+    prompt: str = Field(..., max_length=32_000)
+    cron_expression: str = Field(..., max_length=100)
+    timezone: str = Field(..., max_length=64)
+    enabled: bool = True
+
+
+class ScheduledAgentUpdate(BaseModel):
+    """更新定时 Agent 请求。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str | None = Field(None, max_length=255)
+    agent_slug: str | None = Field(None, max_length=64)
+    prompt: str | None = Field(None, max_length=32_000)
+    cron_expression: str | None = Field(None, max_length=100)
+    timezone: str | None = Field(None, max_length=64)
+    enabled: bool | None = None
+
+
+@scheduled_agents.get("")
+async def list_jobs(current_user: User = Depends(get_required_user), db: AsyncSession = Depends(get_db)):
+    """列出当前用户的定时 Agent。"""
+    return await list_scheduled_jobs(user=current_user, db=db)
+
+
+@scheduled_agents.post("")
+async def create_job(
+    payload: ScheduledAgentCreate,
+    current_user: User = Depends(get_required_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """创建一个用户自有的定时 Agent。"""
+    return await create_scheduled_job(user=current_user, db=db, data=payload.model_dump())
+
+
+@scheduled_agents.get("/{job_id}")
+async def get_job(job_id: str, current_user: User = Depends(get_required_user), db: AsyncSession = Depends(get_db)):
+    """读取定时 Agent 与最近触发记录。"""
+    result = await get_scheduled_job(job_id=job_id, user=current_user, db=db)
+    if result is None:
+        raise HTTPException(status_code=404, detail="定时任务不存在")
+    return result
+
+
+@scheduled_agents.patch("/{job_id}")
+async def update_job(
+    job_id: str,
+    payload: ScheduledAgentUpdate,
+    current_user: User = Depends(get_required_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """更新定时 Agent。"""
+    data: dict[str, Any] = payload.model_dump(exclude_unset=True)
+    result = await update_scheduled_job(job_id=job_id, user=current_user, db=db, data=data)
+    if result is None:
+        raise HTTPException(status_code=404, detail="定时任务不存在")
+    return result
+
+
+@scheduled_agents.delete("/{job_id}")
+async def delete_job(job_id: str, current_user: User = Depends(get_required_user), db: AsyncSession = Depends(get_db)):
+    """删除定时 Agent 定义。"""
+    if not await delete_scheduled_job(job_id=job_id, user=current_user, db=db):
+        raise HTTPException(status_code=404, detail="定时任务不存在")
+    return {"deleted": True, "job_id": job_id}

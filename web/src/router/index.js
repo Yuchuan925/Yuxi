@@ -86,6 +86,19 @@ const router = createRouter({
       ]
     },
     {
+      path: '/scheduled-agents',
+      name: 'scheduled-agents',
+      component: AppLayout,
+      children: [
+        {
+          path: '',
+          name: 'ScheduledAgentsComp',
+          component: () => import('../views/ScheduledAgentsView.vue'),
+          meta: { keepAlive: false, requiresAuth: true }
+        }
+      ]
+    },
+    {
       path: '/agent-manage',
       name: 'agent-manage',
       component: AppLayout,

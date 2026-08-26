@@ -11,7 +11,8 @@ import {
   PanelLeft,
   PanelLeftOpen,
   MessageCirclePlus,
-  Search
+  Search,
+  Clock3
 } from 'lucide-vue-next'
 
 import { useConfigStore } from '@/stores/config'
@@ -173,6 +174,14 @@ const mainList = computed(() => {
     path: '/agent-manage',
     icon: Box,
     activeIcon: Box
+  })
+
+  items.push({
+    name: '定时 Agent',
+    path: '/scheduled-agents',
+    activePaths: ['/scheduled-agents'],
+    icon: Clock3,
+    activeIcon: Clock3
   })
 
   items.push({

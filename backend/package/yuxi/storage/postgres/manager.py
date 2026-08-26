@@ -20,7 +20,7 @@ from yuxi.utils import logger
 from yuxi.utils.singleton import SingletonMeta
 
 AGENT_RUN_TERMINAL_STATUS_SQL = ", ".join(f"'{status}'" for status in AGENT_RUN_TERMINAL_STATUSES)
-BUSINESS_SCHEMA_VERSION = 1
+BUSINESS_SCHEMA_VERSION = 2
 KNOWLEDGE_SCHEMA_VERSION = 1
 SCHEMA_VERSION_TABLE = "yuxi_schema_migrations"
 AGENT_RUN_LEASE_SCHEMA_STATEMENTS = (
@@ -905,6 +905,44 @@ class PostgresManager(metaclass=SingletonMeta):
             "CREATE INDEX IF NOT EXISTS ix_agents_backend_id ON agents(backend_id)",
             "CREATE INDEX IF NOT EXISTS ix_agents_is_subagent ON agents(is_subagent)",
             "CREATE INDEX IF NOT EXISTS ix_agents_created_by ON agents(created_by)",
+            """
+            CREATE TABLE IF NOT EXISTS scheduled_agent_jobs (
+                id VARCHAR(64) PRIMARY KEY,
+                uid VARCHAR(64) NOT NULL REFERENCES users(uid) ON DELETE CASCADE,
+                agent_slug VARCHAR(64) NOT NULL,
+                thread_id VARCHAR(64) NOT NULL UNIQUE,
+                name VARCHAR(255) NOT NULL,
+                prompt TEXT NOT NULL,
+                cron_expression VARCHAR(100) NOT NULL,
+                timezone VARCHAR(64) NOT NULL,
+                enabled BOOLEAN NOT NULL DEFAULT TRUE,
+                next_run_at TIMESTAMP WITHOUT TIME ZONE NOT NULL,
+                last_run_at TIMESTAMP WITHOUT TIME ZONE,
+                created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT NOW(),
+                updated_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT NOW()
+            )
+            """,
+            "CREATE INDEX IF NOT EXISTS ix_scheduled_agent_jobs_uid ON scheduled_agent_jobs(uid)",
+            "CREATE INDEX IF NOT EXISTS ix_scheduled_agent_jobs_due ON scheduled_agent_jobs(enabled, next_run_at)",
+            """
+            CREATE TABLE IF NOT EXISTS scheduled_agent_runs (
+                id VARCHAR(64) PRIMARY KEY,
+                job_id VARCHAR(64) NOT NULL REFERENCES scheduled_agent_jobs(id) ON DELETE CASCADE,
+                request_id VARCHAR(64) NOT NULL UNIQUE,
+                scheduled_for TIMESTAMP WITHOUT TIME ZONE NOT NULL,
+                prompt TEXT NOT NULL,
+                status VARCHAR(32) NOT NULL DEFAULT 'dispatching',
+                run_id VARCHAR(64),
+                error_message TEXT,
+                created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT NOW(),
+                completed_at TIMESTAMP WITHOUT TIME ZONE,
+                CONSTRAINT uq_scheduled_agent_runs_job_time UNIQUE (job_id, scheduled_for)
+            )
+            """,
+            (
+                "CREATE INDEX IF NOT EXISTS ix_scheduled_agent_runs_job_created "
+                "ON scheduled_agent_runs(job_id, created_at)"
+            ),
             """
             CREATE UNIQUE INDEX IF NOT EXISTS uq_agents_default
             ON agents(is_default)

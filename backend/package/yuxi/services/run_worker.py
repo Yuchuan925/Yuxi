@@ -26,6 +26,11 @@ from yuxi.services.agent_request_queue_service import (
 from yuxi.services.agent_run_manifest_service import build_run_manifest_result, compute_manifest_fingerprint
 from yuxi.services.chat_service import get_agent_state_view, stream_agent_chat, stream_agent_resume
 from yuxi.services.input_message_service import restore_chat_input_message
+from yuxi.services.scheduled_agent_service import (
+    claim_and_dispatch_due_jobs,
+    reconcile_scheduled_run_results,
+    recover_scheduled_dispatches,
+)
 from yuxi.services.run_queue_service import (
     RUN_RECONCILIATION_SECONDS,
     WORKER_HEALTH_INTERVAL_SECONDS,
@@ -60,6 +65,7 @@ RUN_HEARTBEAT_SECONDS = 30
 SUPPORTED_RUN_TYPES = {"chat", "resume", "subagent"}
 WORKER_ID = f"worker-{uuid.uuid4().hex}"
 _RECONCILIATION_TASK_KEY = "agent_run_reconciliation_task"
+_SCHEDULED_AGENT_RECONCILIATION_TASK_KEY = "scheduled_agent_reconciliation_task"
 
 
 class RetryableRunError(RetryJob):
@@ -1406,6 +1412,30 @@ async def _reconcile_agent_run_leases_forever() -> None:
             logger.error("Failed to reconcile expired AgentRun leases", exc_info=True)
 
 
+async def _reconcile_scheduled_agents_forever() -> None:
+    """周期触发用户定时 Agent，并回写已完成触发记录。"""
+    while True:
+        await asyncio.sleep(5)
+        try:
+            await recover_scheduled_dispatches()
+            await claim_and_dispatch_due_jobs()
+            await reconcile_scheduled_run_results()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.error("Failed to reconcile scheduled agents", exc_info=True)
+
+
+async def _run_scheduled_agent_reconciliation_once() -> None:
+    """启动时尽力恢复定时任务；调度异常不能阻止 AgentRun worker 启动。"""
+    try:
+        await recover_scheduled_dispatches()
+        await claim_and_dispatch_due_jobs()
+        await reconcile_scheduled_run_results()
+    except Exception:
+        logger.error("Failed to recover scheduled agents at startup", exc_info=True)
+
+
 async def _publish_reconciliation_health() -> None:
     """续租 worker 的 AgentRun lease 收敛能力；持续失败后 readiness 自动失效。"""
 
@@ -1452,16 +1482,23 @@ async def _worker_startup(ctx):
     await recover_pending_dispatches()
     await _publish_reconciliation_health()
     ctx[_RECONCILIATION_TASK_KEY] = asyncio.create_task(_reconcile_agent_run_leases_forever())
+    await _run_scheduled_agent_reconciliation_once()
+    ctx[_SCHEDULED_AGENT_RECONCILIATION_TASK_KEY] = asyncio.create_task(_reconcile_scheduled_agents_forever())
 
 
 async def _worker_shutdown(ctx):
     """关闭 worker 共享连接。"""
 
     if isinstance(ctx, dict):
-        reconciliation_task = ctx.pop(_RECONCILIATION_TASK_KEY, None)
-        if reconciliation_task is not None:
-            reconciliation_task.cancel()
-            await asyncio.gather(reconciliation_task, return_exceptions=True)
+        reconciliation_tasks = [
+            ctx.pop(_RECONCILIATION_TASK_KEY, None),
+            ctx.pop(_SCHEDULED_AGENT_RECONCILIATION_TASK_KEY, None),
+        ]
+        for reconciliation_task in reconciliation_tasks:
+            if reconciliation_task is not None:
+                reconciliation_task.cancel()
+        if any(reconciliation_tasks):
+            await asyncio.gather(*(task for task in reconciliation_tasks if task is not None), return_exceptions=True)
     from yuxi.services.run_queue_service import close_queue_clients
 
     await close_queue_clients()

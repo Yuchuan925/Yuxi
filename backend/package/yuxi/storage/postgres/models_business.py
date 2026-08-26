@@ -840,6 +840,79 @@ class TaskRecord(Base):
         return data
 
 
+class ScheduledAgentJob(Base):
+    """用户自建 Agent 定时任务。"""
+
+    __tablename__ = "scheduled_agent_jobs"
+
+    id = Column(String(64), primary_key=True)
+    uid = Column(String(64), ForeignKey("users.uid", ondelete="CASCADE"), nullable=False, index=True)
+    agent_slug = Column(String(64), nullable=False, index=True)
+    thread_id = Column(String(64), nullable=False, unique=True, index=True)
+    name = Column(String(255), nullable=False)
+    prompt = Column(Text, nullable=False)
+    cron_expression = Column(String(100), nullable=False)
+    timezone = Column(String(64), nullable=False)
+    enabled = Column(Boolean, nullable=False, default=True, index=True)
+    next_run_at = Column(DateTime, nullable=False, index=True)
+    last_run_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=utc_now_naive, nullable=False)
+    updated_at = Column(DateTime, default=utc_now_naive, onupdate=utc_now_naive, nullable=False)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "uid": self.uid,
+            "agent_slug": self.agent_slug,
+            "thread_id": self.thread_id,
+            "name": self.name,
+            "prompt": self.prompt,
+            "cron_expression": self.cron_expression,
+            "timezone": self.timezone,
+            "enabled": bool(self.enabled),
+            "next_run_at": format_utc_datetime(self.next_run_at),
+            "last_run_at": format_utc_datetime(self.last_run_at),
+            "created_at": format_utc_datetime(self.created_at),
+            "updated_at": format_utc_datetime(self.updated_at),
+        }
+
+
+class ScheduledAgentRun(Base):
+    """一次定时触发的持久记录，避免多 worker 重复生成 Request。"""
+
+    __tablename__ = "scheduled_agent_runs"
+    __table_args__ = (
+        UniqueConstraint("job_id", "scheduled_for", name="uq_scheduled_agent_runs_job_time"),
+        UniqueConstraint("request_id", name="uq_scheduled_agent_runs_request"),
+        Index("ix_scheduled_agent_runs_job_created", "job_id", "created_at"),
+    )
+
+    id = Column(String(64), primary_key=True)
+    job_id = Column(String(64), ForeignKey("scheduled_agent_jobs.id", ondelete="CASCADE"), nullable=False, index=True)
+    request_id = Column(String(64), nullable=False)
+    scheduled_for = Column(DateTime, nullable=False)
+    prompt = Column(Text, nullable=False)
+    status = Column(String(32), nullable=False, default="dispatching", index=True)
+    run_id = Column(String(64), nullable=True, index=True)
+    error_message = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=utc_now_naive, nullable=False)
+    completed_at = Column(DateTime, nullable=True)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "job_id": self.job_id,
+            "request_id": self.request_id,
+            "scheduled_for": format_utc_datetime(self.scheduled_for),
+            "prompt": self.prompt,
+            "status": self.status,
+            "run_id": self.run_id,
+            "error_message": self.error_message,
+            "created_at": format_utc_datetime(self.created_at),
+            "completed_at": format_utc_datetime(self.completed_at),
+        }
+
+
 class APIKey(Base):
     """API Key 模型"""
 
