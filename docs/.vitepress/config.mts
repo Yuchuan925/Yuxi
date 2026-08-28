@@ -77,10 +77,19 @@ export default defineConfig({
         text: '机制详解',
         items: [
           { text: '阅读路径', link: '/mechanisms/' },
+          { text: 'Build agents on your knowledge', link: '/mechanisms/public-architecture-brief' },
+          { text: 'Agent Harness', link: '/mechanisms/agent-harness' },
+          { text: '上下文工程', link: '/mechanisms/context-engineering' },
+          { text: 'AgentRun', link: '/mechanisms/agent-run' },
+          { text: '可观测性', link: '/mechanisms/observability' },
+          { text: '用户 Memory', link: '/mechanisms/memory' },
+          { text: 'Skills 运行机制', link: '/mechanisms/skills' },
+          { text: '子智能体调度', link: '/mechanisms/subagents' },
           { text: 'Agent 运行时上下文', link: '/mechanisms/agent-runtime' },
           { text: '沙盒与文件系统', link: '/mechanisms/sandbox' },
           { text: '上下文压缩', link: '/mechanisms/context-compression' },
-          { text: '知识库', link: '/mechanisms/knowledge-base' }
+          { text: '知识库', link: '/mechanisms/knowledge-base' },
+          { text: '知识图谱', link: '/mechanisms/knowledge-graph' }
         ]
       },
       {
