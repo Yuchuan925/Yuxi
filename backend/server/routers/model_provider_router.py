@@ -57,6 +57,7 @@ class ModelProviderPayload(BaseModel):
     extra_json: dict[str, Any] | None = Field(None, description="扩展配置")
     is_enabled: bool | None = Field(None, description="是否启用")
     is_builtin: bool | None = Field(None, description="是否内置")
+    include_user_uid: bool | None = Field(None, description="聊天模型请求是否注入带 HMAC 签名的用户 UID 头")
 
 
 @model_providers.get("")

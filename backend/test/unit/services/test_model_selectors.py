@@ -1,4 +1,8 @@
+import base64
+import hashlib
+import hmac
 import json
+import time
 from types import SimpleNamespace
 
 import httpx
@@ -28,6 +32,7 @@ def _chat_model_info(
     model_id: str,
     provider_type: str = "openai",
     request_body_overrides: dict | None = None,
+    include_user_uid: bool = False,
 ) -> ModelInfo:
     return ModelInfo(
         provider_id=provider_id,
@@ -38,6 +43,7 @@ def _chat_model_info(
         base_url="https://example.com/v1",
         provider_type=provider_type,
         request_body_overrides=request_body_overrides or {},
+        include_user_uid=include_user_uid,
     )
 
 
@@ -269,6 +275,158 @@ def test_opencode_standalone_models_have_distinct_stable_sessions(monkeypatch):
     second = load_chat_model("opencode-go:test-model")
     assert first.default_headers["x-opencode-session"]
     assert first.default_headers["x-opencode-session"] != second.default_headers["x-opencode-session"]
+
+
+@pytest.mark.parametrize(
+    ("include_user_uid", "uid", "expected"),
+    [
+        (True, "user-42", "user-42"),
+        (False, "user-42", None),
+        (True, None, None),
+        (True, "   ", None),
+    ],
+)
+def test_load_chat_model_user_uid_header_follows_opt_in(monkeypatch, include_user_uid, uid, expected):
+    """按开关与 uid 存在性注入 x-yuxi-uid；缺 uid 的路径不注入也不伪造身份。"""
+    monkeypatch.setenv("YUXI_UID_SIGNATURE_SECRET", "unit-test-signing-secret")
+    monkeypatch.setattr(
+        "yuxi.models.chat.model_cache.get_model_info",
+        lambda _spec: _chat_model_info("uid-provider", "test-model", include_user_uid=include_user_uid),
+    )
+
+    model = load_chat_model("uid-provider:test-model", uid=uid)
+
+    if expected is None:
+        assert "x-yuxi-uid" not in (model.default_headers or {})
+    else:
+        assert model.default_headers["x-yuxi-uid"] == expected
+
+
+def test_load_chat_model_rejects_header_unsafe_uid(monkeypatch):
+    """含 CR/LF 等头注入字符的 uid 显式失败，不发出畸形请求。"""
+    monkeypatch.setattr(
+        "yuxi.models.chat.model_cache.get_model_info",
+        lambda _spec: _chat_model_info("uid-provider", "test-model", include_user_uid=True),
+    )
+
+    with pytest.raises(ValueError, match="x-yuxi-uid"):
+        load_chat_model("uid-provider:test-model", uid="user-42\r\nX-Evil: 1")
+
+
+def test_load_chat_model_signs_user_uid_header(monkeypatch):
+    """开启开关后，UID 头附带时间戳与可独立重算的 HMAC-SHA256 签名。"""
+    monkeypatch.setenv("YUXI_UID_SIGNATURE_SECRET", "unit-test-signing-secret")
+    monkeypatch.setattr(
+        "yuxi.models.chat.model_cache.get_model_info",
+        lambda _spec: _chat_model_info("uid-provider", "test-model", include_user_uid=True),
+    )
+
+    model = load_chat_model("uid-provider:test-model", uid="user-42")
+
+    uid = model.default_headers["x-yuxi-uid"]
+    timestamp = model.default_headers["x-yuxi-uid-ts"]
+    assert abs(int(timestamp) - int(time.time())) <= 5
+    expected = base64.b64encode(
+        hmac.new(
+            b"unit-test-signing-secret",
+            f"uid={uid}\nts={timestamp}".encode(),
+            hashlib.sha256,
+        ).digest()
+    ).decode()
+    assert model.default_headers["x-yuxi-uid-sig"] == expected
+
+
+def test_load_chat_model_rejects_signing_without_secret(monkeypatch):
+    """开启 UID 头但固定签名密钥缺失时拒绝发请求，不静默降级为未签名。"""
+    monkeypatch.delenv("YUXI_UID_SIGNATURE_SECRET", raising=False)
+    monkeypatch.setattr(
+        "yuxi.models.chat.model_cache.get_model_info",
+        lambda _spec: _chat_model_info("uid-provider", "test-model", include_user_uid=True),
+    )
+
+    with pytest.raises(ValueError, match="YUXI_UID_SIGNATURE_SECRET"):
+        load_chat_model("uid-provider:test-model", uid="user-42")
+
+
+def test_user_uid_signature_binds_uid_and_timestamp():
+    """签名绑定 uid 与时间戳：任意一侧被篡改，网关侧重算即失配。"""
+    secret = "unit-test-signing-secret"
+    uid, timestamp = "user-42", "1758537600"
+    message = f"uid={uid}\nts={timestamp}"
+    signature = base64.b64encode(hmac.new(secret.encode(), message.encode(), hashlib.sha256).digest()).decode()
+
+    def gateway_verify(signed_uid: str, signed_ts: str) -> bool:
+        expected = base64.b64encode(
+            hmac.new(secret.encode(), f"uid={signed_uid}\nts={signed_ts}".encode(), hashlib.sha256).digest()
+        ).decode()
+        return hmac.compare_digest(expected, signature)
+
+    assert gateway_verify(uid, timestamp) is True
+    assert gateway_verify("attacker-99", timestamp) is False
+    assert gateway_verify(uid, "1758537999") is False
+
+
+@pytest.mark.asyncio
+async def test_user_uid_header_reaches_real_stream_and_regular_requests(monkeypatch):
+    """开启后流式与非流式出站请求都携带 x-yuxi-uid，调用方已有请求头保留。"""
+    monkeypatch.setenv("YUXI_UID_SIGNATURE_SECRET", "unit-test-signing-secret")
+    monkeypatch.setattr(
+        "yuxi.models.chat.model_cache.get_model_info",
+        lambda _spec: _chat_model_info("uid-provider", "test-model", include_user_uid=True),
+    )
+    requests_seen = []
+
+    def respond(request):
+        """捕获出站协议并返回确定性模型结果。"""
+        requests_seen.append(request)
+        body = json.loads(request.content)
+        if body.get("stream"):
+            event = {
+                "id": "chatcmpl-test",
+                "object": "chat.completion.chunk",
+                "created": 0,
+                "model": "test-model",
+                "choices": [{"index": 0, "delta": {"content": "ok"}, "finish_reason": "stop"}],
+            }
+            return httpx.Response(
+                200,
+                headers={"content-type": "text/event-stream"},
+                text=f"data: {json.dumps(event)}\n\ndata: [DONE]\n\n",
+            )
+        return httpx.Response(
+            200,
+            json={
+                "id": "chatcmpl-test",
+                "object": "chat.completion",
+                "created": 0,
+                "model": "test-model",
+                "choices": [{"index": 0, "message": {"role": "assistant", "content": "ok"}, "finish_reason": "stop"}],
+            },
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+        model = load_chat_model(
+            "uid-provider:test-model",
+            uid="user-42",
+            http_async_client=client,
+            default_headers={"X-Test": "preserved"},
+        )
+        assert (await model.ainvoke("hi")).text == "ok"
+        assert "".join([chunk.text async for chunk in model.astream("hi")]) == "ok"
+
+    assert len(requests_seen) == 2
+    for request in requests_seen:
+        assert request.headers["x-yuxi-uid"] == "user-42"
+        assert request.headers["X-Test"] == "preserved"
+        timestamp = request.headers["x-yuxi-uid-ts"]
+        expected_sig = base64.b64encode(
+            hmac.new(
+                b"unit-test-signing-secret",
+                f"uid=user-42\nts={timestamp}".encode(),
+                hashlib.sha256,
+            ).digest()
+        ).decode()
+        assert request.headers["x-yuxi-uid-sig"] == expected_sig
 
 
 def test_load_chat_model_merges_request_body_overrides_into_extra_body(monkeypatch):

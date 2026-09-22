@@ -1,5 +1,10 @@
 """聊天模型加载、供应商协议适配与通用调用入口。"""
 
+import base64
+import hashlib
+import hmac
+import os
+import time
 from uuid import uuid4
 
 from langchain.chat_models import BaseChatModel
@@ -8,8 +13,45 @@ from langchain_openai import ChatOpenAI
 from pydantic import Field, SecretStr
 
 from yuxi import get_version
-from yuxi.models.providers.cache import model_cache
+from yuxi.models.providers.cache import USER_UID_SIGNATURE_SECRET_ENV, model_cache
 from yuxi.utils import get_docker_safe_url, logger
+
+USER_UID_HEADER = "x-yuxi-uid"
+USER_UID_TIMESTAMP_HEADER = "x-yuxi-uid-ts"
+USER_UID_SIGNATURE_HEADER = "x-yuxi-uid-sig"
+
+
+def _sign_user_uid(secret: str, uid: str, timestamp: str) -> str:
+    """对 uid 与时间戳计算 HMAC-SHA256 签名；规范化消息即外部网关的验签契约。"""
+    message = f"uid={uid}\nts={timestamp}"
+    return base64.b64encode(hmac.new(secret.encode(), message.encode(), hashlib.sha256).digest()).decode()
+
+
+def _build_user_uid_headers(info, uid: str | None) -> dict[str, str]:
+    """按 provider 开关构造带签名的 UID 请求头；未开启或没有 uid 时返回空 dict。
+
+    uid 含 HTTP 头非法字符、或固定签名密钥读不到值时显式失败，不发出未签名请求。
+    """
+    if not info.include_user_uid:
+        return {}
+    header_uid = (uid or "").strip()
+    if not header_uid:
+        return {}
+    if any(ord(char) < 0x20 or ord(char) == 0x7F for char in header_uid):
+        raise ValueError(f"uid 含 HTTP 头非法字符，不能注入 {USER_UID_HEADER}")
+
+    secret = (os.getenv(USER_UID_SIGNATURE_SECRET_ENV) or "").strip()
+    if not secret:
+        raise ValueError(
+            f"UID 签名密钥环境变量 {USER_UID_SIGNATURE_SECRET_ENV} 未设置或为空，已拒绝发送未签名的 {USER_UID_HEADER}"
+        )
+
+    timestamp = str(int(time.time()))
+    return {
+        USER_UID_HEADER: header_uid,
+        USER_UID_TIMESTAMP_HEADER: timestamp,
+        USER_UID_SIGNATURE_HEADER: _sign_user_uid(secret, header_uid, timestamp),
+    }
 
 
 def resolve_chat_model_spec(model_spec: str | None, *, fallback: str | None = None) -> str:
@@ -24,8 +66,14 @@ def resolve_chat_model_spec(model_spec: str | None, *, fallback: str | None = No
     raise ValueError("model spec 不能为空")
 
 
-def load_chat_model(fully_specified_name: str | None, *, session_id: str | None = None, **kwargs) -> BaseChatModel:
-    """加载模型，为 OpenCode 请求绑定稳定会话路由。"""
+def load_chat_model(
+    fully_specified_name: str | None,
+    *,
+    session_id: str | None = None,
+    uid: str | None = None,
+    **kwargs,
+) -> BaseChatModel:
+    """加载模型，为 OpenCode 请求绑定稳定会话路由，按 provider 开关注入用户 UID 头。"""
     fully_specified_name = resolve_chat_model_spec(fully_specified_name)
 
     info = model_cache.get_model_info(fully_specified_name)
@@ -52,6 +100,13 @@ def load_chat_model(fully_specified_name: str | None, *, session_id: str | None 
         extra_body = dict(kwargs.get("extra_body") or {})
         extra_body.update(info.request_body_overrides)
         kwargs = {**kwargs, "extra_body": extra_body}
+
+    uid_headers = _build_user_uid_headers(info, uid)
+    if uid_headers:
+        kwargs["default_headers"] = {
+            **(kwargs.get("default_headers") or {}),
+            **uid_headers,
+        }
 
     metadata = dict(kwargs.pop("metadata", {}) or {})
     metadata.update(
