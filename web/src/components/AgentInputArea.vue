@@ -140,8 +140,7 @@ const emit = defineEmits([
 ])
 
 const inputRef = ref(null)
-// 已上传成功的图片（每项就是 uploadMultimodalImage 的返回值 + localId）。
-// 只放成功项：上传中与失败由 message 提示承担，避免列表里出现不可用的空卡片。
+// 按选择顺序保存上传占位和成功结果，上传中的项也占用名额。
 const currentImages = ref([])
 let localIdSeed = 0
 const nextLocalId = () => `image-${(localIdSeed += 1)}`

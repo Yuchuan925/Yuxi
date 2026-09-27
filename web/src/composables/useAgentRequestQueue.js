@@ -63,7 +63,13 @@ export function useAgentRequestQueue({
       const requests = resp?.requests || []
       const knownIds = new Set(requests.map((request) => request.request_id))
       ts.queuedRequests = [
-        ...requests,
+        ...requests.map((request) => {
+          const localMessage = ts.queuedRequests?.find(
+            (item) => item.request_id === request.request_id
+          )?.message
+          // 队列接口只投影状态与文字，本地用户消息随队列项保留到派发或取消。
+          return localMessage ? { ...request, message: localMessage } : request
+        }),
         ...(ts.queuedRequests || []).filter(
           (request) => request.status === 'sending' && !knownIds.has(request.request_id)
         )
@@ -74,19 +80,21 @@ export function useAgentRequestQueue({
     }
   }
 
-  /** 同步线程队列后恢复仍在途的请求流。 */
-  const resumeQueuedRequests = async (threadId, agentSlug) => {
-    if (!threadId || !agentSlug) return
-
-    await syncQueuedRequests(threadId, agentSlug)
-    const latestTs = getThreadState(threadId)
-    if (!latestTs) return
-
-    for (const request of latestTs.queuedRequests || []) {
+  /** 为已接入请求建立订阅，在队列快照移除已派发项前接住本地消息。 */
+  const subscribeQueuedRequests = (threadId) => {
+    for (const request of getThreadState(threadId)?.queuedRequests || []) {
       if (request?.request_id && request.status !== 'sending') {
         void startRequestStream(threadId, request.request_id)
       }
     }
+  }
+
+  /** 同步前保留本地请求，同步后订阅服务端新增项。 */
+  const resumeQueuedRequests = async (threadId, agentSlug) => {
+    if (!threadId || !agentSlug) return
+    subscribeQueuedRequests(threadId)
+    await syncQueuedRequests(threadId, agentSlug)
+    subscribeQueuedRequests(threadId)
   }
 
   const startRequestStream = async (threadId, requestId) => {
@@ -95,10 +103,14 @@ export function useAgentRequestQueue({
     if (!ts) return
 
     ts.requestStreams = ts.requestStreams || {}
-    if (ts.requestStreams[requestId]) return
+    const message = ts.queuedRequests?.find((request) => request.request_id === requestId)?.message
+    if (ts.requestStreams[requestId]) {
+      ts.requestStreams[requestId].message ||= message
+      return
+    }
 
     const controller = new AbortController()
-    const entry = { controller, position: 0, status: 'queued' }
+    const entry = { controller, position: 0, status: 'queued', message }
     ts.requestStreams[requestId] = entry
 
     try {
@@ -123,12 +135,9 @@ export function useAgentRequestQueue({
           entry.status = 'dispatched'
           if (data.run_id) {
             const request = tsInner.queuedRequests?.find((item) => item.request_id === requestId)
-            // 派发时若本地已无该请求的消息（发送时的乐观消息可能已被重置清掉），
-            // 就用请求重新拼一条；图片来自排队记录自带的 image_contents，
-            // 不另设缓存——独立缓存需要覆盖所有终态清理，容易漏。
-            const localImages = request?.image_contents || []
             const requestMessages =
               tsInner.onGoingConv?.msgChunks?.[requestId] ||
+              (innerEntry.message ? [innerEntry.message] : null) ||
               (request
                 ? [
                     {
@@ -136,14 +145,7 @@ export function useAgentRequestQueue({
                       type: 'human',
                       request_id: requestId,
                       content: request.content,
-                      created_at: request.created_at,
-                      ...(localImages.length
-                        ? {
-                            message_type: 'multimodal_image',
-                            image_contents: localImages,
-                            image_content: request?.image_content || localImages[0]
-                          }
-                        : {})
+                      created_at: request.created_at
                     }
                   ]
                 : null)
@@ -194,6 +196,7 @@ export function useAgentRequestQueue({
     if (!ts || !threadId || !agentSlug || ts.continueQueueInFlight) return false
 
     ts.continueQueueInFlight = true
+    subscribeQueuedRequests(threadId)
     try {
       const response = await agentApi.continueThreadQueue(threadId, agentSlug)
       await syncQueuedRequests(threadId, agentSlug)
@@ -213,6 +216,7 @@ export function useAgentRequestQueue({
     const ts = getThreadState(threadId)
     if (!ts || !threadId || !agentSlug || !requestId) return false
 
+    void startRequestStream(threadId, requestId)
     try {
       await agentApi.steerRequest(requestId)
       await syncQueuedRequests(threadId, agentSlug)

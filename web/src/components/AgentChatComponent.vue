@@ -2535,25 +2535,11 @@ const buildOptimisticHumanMessage = ({
   }
 
   if (imageContents.length) {
-    // 必须用列表键：用单值键时 2..10 张在乐观阶段只显示第一张
     message.image_contents = imageContents
     message.image_content = imageContents[0]
   }
 
   return message
-}
-
-// 发送 runs 前先在前端插入一条用户消息，避免等待 worker 轮询后消息才出现。
-const insertOptimisticHumanMessage = (
-  threadState,
-  { requestId, text, imageContents = [], attachments = [] }
-) => {
-  if (!threadState || !requestId) return
-  threadState.pendingRequestId = requestId
-  threadState.replyLoadingVisible = false
-  threadState.onGoingConv.msgChunks[requestId] = [
-    buildOptimisticHumanMessage({ requestId, text, imageContents, attachments })
-  ]
 }
 
 const markAttachmentsRequestId = (threadId, attachments, requestId) => {
@@ -3375,28 +3361,24 @@ const handleSendMessage = async ({ images = [], queuePolicy = 'enqueue' } = {}) 
 
   const requestId = createClientRequestId()
   const previousAttachments = markAttachmentsRequestId(threadId, pendingAttachments, requestId)
+  const inputMessage = buildOptimisticHumanMessage({
+    requestId,
+    text,
+    imageContents,
+    attachments: pendingAttachments.map((attachment) => ({ ...attachment, request_id: requestId }))
+  })
   if (!hadActiveRun) {
     resetOnGoingConv(threadId)
-    insertOptimisticHumanMessage(threadState, {
-      requestId,
-      text,
-      imageContents,
-      attachments: pendingAttachments.map((attachment) => ({
-        ...attachment,
-        request_id: requestId
-      }))
-    })
+    threadState.pendingRequestId = requestId
+    threadState.onGoingConv.msgChunks[requestId] = [inputMessage]
     threadState.isStreaming = true
   } else {
     threadState.queuedRequests.push({
       request_id: requestId,
       status: 'sending',
       content: text,
-      created_at: new Date().toISOString(),
-      // 图片必须一并记住：这条本地排队项会在派发时被用来重建用户消息
-      ...(imageContents.length
-        ? { message_type: 'multimodal_image', image_contents: imageContents, image_content: imageContents[0] }
-        : {})
+      created_at: inputMessage.created_at,
+      message: inputMessage
     })
   }
 
@@ -3416,9 +3398,6 @@ const handleSendMessage = async ({ images = [], queuePolicy = 'enqueue' } = {}) 
     })
     const status = runResp?.status
     const runId = runResp?.run_id
-    const sendingRequest = threadState.queuedRequests.find(
-      (request) => request.request_id === requestId
-    )
     threadState.queuedRequests = threadState.queuedRequests.filter(
       (request) => request.request_id !== requestId
     )
@@ -3430,9 +3409,7 @@ const handleSendMessage = async ({ images = [], queuePolicy = 'enqueue' } = {}) 
       }
     }
     if (status === 'queued' || (!runId && status !== 'rejected')) {
-      for (const msg of threadState.onGoingConv.msgChunks[requestId] || []) {
-        if (msg.type === 'human') msg.delivery_status = 'queued'
-      }
+      inputMessage.delivery_status = 'queued'
       threadState.queuedRequests = threadState.queuedRequests || []
       threadState.queuedRequests.push({
         request_id: requestId,
@@ -3440,7 +3417,8 @@ const handleSendMessage = async ({ images = [], queuePolicy = 'enqueue' } = {}) 
         queue_policy: runResp?.queue_policy || queuePolicy,
         queue_position: runResp?.queue_position || 1,
         content: text,
-        created_at: sendingRequest?.created_at
+        created_at: inputMessage.created_at,
+        message: inputMessage
       })
       if (!hadActiveRun) {
         threadState.isStreaming = false
@@ -3448,19 +3426,7 @@ const handleSendMessage = async ({ images = [], queuePolicy = 'enqueue' } = {}) 
       }
       await resumeQueuedRequests(threadId, resolveAgentSlugForThread(threadId))
     } else if (runId) {
-      if (sendingRequest) {
-        threadState.onGoingConv.msgChunks[requestId] = [
-          {
-            ...buildOptimisticHumanMessage({
-              requestId,
-              text,
-              imageContents,
-              attachments: pendingAttachments
-            }),
-            created_at: sendingRequest.created_at
-          }
-        ]
-      }
+      threadState.onGoingConv.msgChunks[requestId] = [inputMessage]
       threadState.pendingRequestId = requestId
       await startRunStream(threadId, runId, 0, { requestId })
     } else {

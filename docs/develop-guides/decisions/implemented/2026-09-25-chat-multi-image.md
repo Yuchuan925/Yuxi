@@ -4,6 +4,8 @@
 类型：feature
 Owner：backend/package/yuxi/services/input_message_service.py
 
+前端排队与派发的消息归属由[聊天多图的本地消息归属](./2026-09-27-chat-image-message-ownership.md)进一步收敛。
+
 ## 问题
 
 聊天输入框原先一次只能携带**一张**图片，限制写在四层：前端 file input 单选、前端单值状态、请求体 `image_content: str | None`、消息构造单参数。模型侧不是瓶颈——`deepseek-flash` 单请求上限 600 张，且实测能直读图片。

@@ -22,7 +22,25 @@ async (page) => {
 
   const previews = () => page.locator('.image-preview-list img')
   const attachmentCards = () => page.locator('.attachment-file-card')
-  const composer = page.locator('.input-box')
+  // 使用真实 FileList 构造拖拽事件，避免依赖 CLI 专有 drop 命令。
+  const dropFile = async (path) => {
+    await page.evaluate(() => {
+      const input = document.createElement('input')
+      input.type = 'file'
+      input.id = 'test-drop-file'
+      input.hidden = true
+      document.body.append(input)
+    })
+    await page.locator('#test-drop-file').setInputFiles(path)
+    await page.locator('#test-drop-file').evaluate((input) => {
+      const dataTransfer = new DataTransfer()
+      for (const file of input.files) dataTransfer.items.add(file)
+      document.querySelector('.input-box').dispatchEvent(
+        new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer })
+      )
+      input.remove()
+    })
+  }
 
   // toast 生命周期只有 3 秒，而工具往返更久，所以先记账再触发
   await page.evaluate(() => {
@@ -39,45 +57,23 @@ async (page) => {
   // ---- 1. 菜单多选：一次投两张 ----
   await page.getByRole('button', { name: '添加内容' }).click()
   await page.waitForTimeout(600)
-  await page.getByText('上传图片', { exact: true }).click()
-  await page.waitForTimeout(400)
-  const chooser = await page.waitForEvent('filechooser')
+  const [chooser] = await Promise.all([
+    page.waitForEvent('filechooser'),
+    page.getByText('上传图片', { exact: true }).click()
+  ])
   check(chooser.isMultiple(), '菜单里的图片选择器不是多选，一次只能选一张')
   await chooser.setFiles([`${FIXTURES}/imgA.png`, `${FIXTURES}/imgB.png`])
   await page.waitForTimeout(6000)
   check((await previews().count()) === 2, '两张图片没有同时出现在输入区')
   check((await attachmentCards().count()) === 0, '图片被误当成附件')
 
-  // ---- 2. 运行开始后用户消息必须一直带着图片 ----
-  // 回归守卫：运行开始时的消息重建只认得服务端请求对象（其中没有图片字段），
-  // 一旦重建路径丢图，运行期间用户消息会只剩文字、运行结束后才被历史刷新补回。
-  await page.evaluate(() => {
-    window.__imgSamples = []
-    const timer = setInterval(() => {
-      const humans = Array.from(document.querySelectorAll('.message-box.human'))
-      window.__imgSamples.push({
-        humanBoxes: humans.length,
-        msgImgs: document.querySelectorAll('.message-image img').length
-      })
-    }, 150)
-    window.__stopImgSampling = () => clearInterval(timer)
-  })
-  await page.waitForTimeout(15000)
-  await page.evaluate(() => window.__stopImgSampling && window.__stopImgSampling())
-  const imgSamples = await page.evaluate(() => window.__imgSamples || [])
-  const strandedWithoutImages = imgSamples.filter((s) => s.humanBoxes > 0 && s.msgImgs === 0).length
-  check(
-    strandedWithoutImages === 0,
-    `运行期间有 ${strandedWithoutImages} 次采样显示用户消息没有图片（运行中丢图）`
-  )
-
   // ---- 3. 拖拽分流：图片进 vision，PDF 进附件 ----
-  await composer.drop({ files: `${FIXTURES}/imgA.png` })
+  await dropFile(`${FIXTURES}/imgA.png`)
   await page.waitForTimeout(5000)
   check((await previews().count()) === 3, '拖入图片没有进入图片通道')
   check((await attachmentCards().count()) === 0, '拖入图片被误当成附件')
 
-  await composer.drop({ files: `${FIXTURES}/sample.pdf` })
+  await dropFile(`${FIXTURES}/sample.pdf`)
   await page.waitForTimeout(4000)
   check((await page.locator('.ant-modal-wrap:visible').count()) === 1, '拖入 PDF 没有打开附件弹窗')
   check((await previews().count()) === 3, '拖入 PDF 被误当成图片')
@@ -101,10 +97,36 @@ async (page) => {
   })
 
   await page.locator('.input-box textarea, .user-input.mention-editor').first().click()
-  await page.keyboard.type('这两张图分别写了什么字？只回答图片上的文字。')
+  await page.keyboard.type('这三张图分别写了什么字？只回答图片上的文字。')
   await page.waitForTimeout(500)
+  // 发送前开始采样，发送后检查本次消息的全部图片。
+  // 回归守卫：运行开始时的消息重建只认得服务端请求对象（其中没有图片字段），
+  // 一旦重建路径丢图，运行期间用户消息会只剩文字、运行结束后才被历史刷新补回。
+  await page.evaluate(() => {
+    window.__imgSamples = []
+    const timer = setInterval(() => {
+      const humans = Array.from(document.querySelectorAll('.message-box.human')).filter(
+        (element) => element.textContent.includes('这三张图分别写了什么字')
+      )
+      window.__imgSamples.push({
+        humanBoxes: humans.length,
+        msgImgs: humans[0]?.previousElementSibling?.querySelectorAll('img').length || 0
+      })
+    }, 150)
+    window.__stopImgSampling = () => clearInterval(timer)
+  })
   await page.keyboard.press('Enter')
   await page.waitForTimeout(45000)
+  await page.evaluate(() => window.__stopImgSampling && window.__stopImgSampling())
+  const imgSamples = await page.evaluate(() => window.__imgSamples || [])
+  check(imgSamples.some((s) => s.humanBoxes > 0), '采样期间未观察到本次用户消息')
+  const strandedWithoutImages = imgSamples.filter((s) => s.humanBoxes > 0 && s.msgImgs !== 3).length
+  check(
+    strandedWithoutImages === 0,
+    `运行期间有 ${strandedWithoutImages} 次采样显示用户消息没有图片（运行中丢图）`
+  )
+
+
 
   const sent = posted.at(-1)
   check(Array.isArray(sent) && sent.length === 3, `请求体里的 image_content 不是 3 张的数组：${JSON.stringify(sent)?.slice(0, 60)}`)
@@ -153,9 +175,10 @@ async (page) => {
   const runsBefore = posted.length
   await page.getByRole('button', { name: '添加内容' }).click()
   await page.waitForTimeout(500)
-  await page.getByText('上传图片', { exact: true }).click()
-  await page.waitForTimeout(300)
-  const streamingChooser = await page.waitForEvent('filechooser')
+  const [streamingChooser] = await Promise.all([
+    page.waitForEvent('filechooser'),
+    page.getByText('上传图片', { exact: true }).click()
+  ])
   await streamingChooser.setFiles([`${FIXTURES}/imgA.png`])
   await page.waitForTimeout(5000)
   check((await previews().count()) >= 1, '运行中添加图片没有进入输入区，无法验证该场景')
@@ -183,9 +206,10 @@ async (page) => {
   const eleven = Array.from({ length: 11 }, () => `${FIXTURES}/imgA.png`)
   await page.getByRole('button', { name: '添加内容' }).click()
   await page.waitForTimeout(600)
-  await page.getByText('上传图片', { exact: true }).click()
-  await page.waitForTimeout(400)
-  const secondChooser = await page.waitForEvent('filechooser')
+  const [secondChooser] = await Promise.all([
+    page.waitForEvent('filechooser'),
+    page.getByText('上传图片', { exact: true }).click()
+  ])
   await secondChooser.setFiles(eleven)
   await page.waitForTimeout(8000)
 
