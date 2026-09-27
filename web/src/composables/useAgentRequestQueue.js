@@ -123,6 +123,10 @@ export function useAgentRequestQueue({
           entry.status = 'dispatched'
           if (data.run_id) {
             const request = tsInner.queuedRequests?.find((item) => item.request_id === requestId)
+            // 派发时若本地已无该请求的消息（发送时的乐观消息可能已被重置清掉），
+            // 就用请求重新拼一条；图片来自排队记录自带的 image_contents，
+            // 不另设缓存——独立缓存需要覆盖所有终态清理，容易漏。
+            const localImages = request?.image_contents || []
             const requestMessages =
               tsInner.onGoingConv?.msgChunks?.[requestId] ||
               (request
@@ -132,7 +136,14 @@ export function useAgentRequestQueue({
                       type: 'human',
                       request_id: requestId,
                       content: request.content,
-                      created_at: request.created_at
+                      created_at: request.created_at,
+                      ...(localImages.length
+                        ? {
+                            message_type: 'multimodal_image',
+                            image_contents: localImages,
+                            image_content: request?.image_content || localImages[0]
+                          }
+                        : {})
                     }
                   ]
                 : null)
