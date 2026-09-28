@@ -343,7 +343,9 @@ def test_agent_show_does_not_guess_missing_resource_defaults(tmp_path):
             return result
 
     console = _console()
-    run_agent_show(_store(tmp_path), None, "research-agent", console, client_factory=DefaultClient)
+    run_agent_show(
+        _store(tmp_path), None, "research-agent", console, client_factory=DefaultClient
+    )
     line = next(line for line in _output(console).splitlines() if "Subagents" in line)
     assert "默认（由服务端决定）" in line
     assert "全部可用" not in line
