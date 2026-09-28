@@ -265,7 +265,7 @@ class BaseContext:
         metadata={
             "name": "Skills",
             "options": [],
-            "description": "可选 Skill 拓展列表，默认选择当前用户可用的全部 Skill 拓展。"
+            "description": "选择共享和内置 Skill，默认全部；个人 Skill 始终可用，无需选择。"
             "Skill 的本地工具和 MCP 依赖在激活后开放；预加载 Skill 从首轮开放依赖。",
             "type": "list",
             "kind": "skills",
@@ -278,7 +278,7 @@ class BaseContext:
             "name": "预加载 Skills",
             "options": [],
             "description": "创建 Agent Graph 时加载完整 Skill 说明，并从首轮开放其依赖工具。"
-            "默认不预加载；选择全部时预加载当前已启用的全部 Skill。",
+            "默认不预加载；选择全部时预加载当前已选的共享 Skill。",
             "type": "list",
             "kind": "skills",
         },
@@ -460,9 +460,9 @@ async def resolve_agent_resource_options(
             if server.slug in enabled_slugs
         ]
     if "skills" in fields_to_load:
-        from yuxi.agents.skills.service import list_accessible_skills
+        from yuxi.agents.skills.service import list_accessible_shared_skills
 
-        skills = await list_accessible_skills(db, user)
+        skills = await list_accessible_shared_skills(db, user)
         options["skills"] = [
             _resource_option(skill.slug, skill.name, skill.description) for skill in skills if skill.slug
         ]

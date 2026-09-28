@@ -1002,7 +1002,7 @@ async def test_refresh_user_skill_projection_serializes_authorization_snapshots(
         lambda: FakeSessionContext(),
     )
     monkeypatch.setattr(user_repository.UserRepository, "get_by_uid_with_db", get_user)
-    monkeypatch.setattr(svc, "_list_accessible_shared_skills", list_shared)
+    monkeypatch.setattr(svc, "list_accessible_shared_skills", list_shared)
     monkeypatch.setattr(svc, "_resolve_skill_dir", lambda item: item.source_dir)
     monkeypatch.setattr(svc.asyncio, "to_thread", to_thread)
 
@@ -1052,7 +1052,7 @@ async def test_refresh_user_skill_projection_excludes_personal_skills(monkeypatc
 
     monkeypatch.setattr(postgres_manager.pg_manager, "get_async_session_context", lambda: FakeSessionContext())
     monkeypatch.setattr(user_repository.UserRepository, "get_by_uid_with_db", get_user)
-    monkeypatch.setattr(svc, "_list_accessible_shared_skills", list_shared)
+    monkeypatch.setattr(svc, "list_accessible_shared_skills", list_shared)
     monkeypatch.setattr(svc, "list_accessible_skills", fail_combined_list)
     monkeypatch.setattr(svc, "_resolve_skill_dir", lambda item: Path(f"/tmp/{item.slug}"))
     monkeypatch.setattr(svc, "sync_user_accessible_skills_async", sync_projection)
@@ -1530,7 +1530,7 @@ async def test_update_skill_dependencies(monkeypatch: pytest.MonkeyPatch):
         return [item, dependency]
 
     monkeypatch.setattr(svc, "get_manageable_skill_or_raise", fake_get_skill_or_raise)
-    monkeypatch.setattr(svc, "_list_accessible_shared_skills", fake_list_accessible_shared_skills)
+    monkeypatch.setattr(svc, "list_accessible_shared_skills", fake_list_accessible_shared_skills)
     monkeypatch.setattr(svc, "SkillRepository", FakeRepo)
 
     updated = await svc.update_skill_dependencies(

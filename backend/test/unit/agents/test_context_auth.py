@@ -226,7 +226,7 @@ async def test_normalize_agent_context_config_defaults_mcps_off_and_filters_expl
     monkeypatch.setitem(
         sys.modules,
         "yuxi.agents.skills.service",
-        types.SimpleNamespace(list_accessible_skills=fake_list_skills),
+        types.SimpleNamespace(list_accessible_shared_skills=fake_list_skills),
     )
     monkeypatch.setitem(
         sys.modules,
@@ -440,7 +440,7 @@ async def test_prepare_agent_runtime_context_filters_resources_and_derives_runti
     monkeypatch.setitem(
         sys.modules,
         "yuxi.agents.skills.service",
-        types.SimpleNamespace(list_accessible_skills=fake_list_skills),
+        types.SimpleNamespace(list_accessible_shared_skills=fake_list_skills),
     )
     monkeypatch.setitem(
         sys.modules,

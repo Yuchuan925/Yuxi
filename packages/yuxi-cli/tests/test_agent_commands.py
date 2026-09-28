@@ -331,3 +331,19 @@ def test_agent_show_renders_dynamic_all_selection(tmp_path):
     )
     line = next(line for line in _output(console).splitlines() if "Subagents" in line)
     assert "全部可用（含新增）" in line
+
+
+def test_agent_show_does_not_guess_missing_resource_defaults(tmp_path):
+    """字段缺省时 CLI 不把子智能体范围误报为全部。"""
+
+    class DefaultClient(FakeAgentClient):
+        def get_agent(self, agent_slug):
+            result = super().get_agent(agent_slug)
+            result["agent"]["config_json"]["context"].pop("subagents")
+            return result
+
+    console = _console()
+    run_agent_show(_store(tmp_path), None, "research-agent", console, client_factory=DefaultClient)
+    line = next(line for line in _output(console).splitlines() if "Subagents" in line)
+    assert "默认（由服务端决定）" in line
+    assert "全部可用" not in line

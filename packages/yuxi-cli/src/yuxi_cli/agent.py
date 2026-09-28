@@ -154,7 +154,7 @@ def _selection(value: Any) -> Text:
     if value == "all":
         return Text("全部可用（含新增）")
     if value is None:
-        return Text("默认（全部可用）")
+        return Text("默认（由服务端决定）")
     if isinstance(value, list):
         value = ", ".join(str(item) for item in value) if value else "无"
     return Text(_safe_terminal_text(str(value)))

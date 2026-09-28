@@ -23,7 +23,6 @@ import yaml
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from yuxi.agents.context import validate_resource_selection
 from yuxi.agents.mcp.service import get_enabled_mcp_server_slugs
 from yuxi.agents.skills.buildin import BUILTIN_SKILLS_DIR
 from yuxi.agents.skills.repository import SkillRepository
@@ -362,7 +361,7 @@ async def refresh_user_skill_projection_async(uid: str) -> dict[str, str]:
         else:
             source_dirs = {
                 item.slug: str(_resolve_skill_dir(item))
-                for item in await _list_accessible_shared_skills(db, user)
+                for item in await list_accessible_shared_skills(db, user)
                 if item.slug
             }
         await sync_user_accessible_skills_async(normalized_uid, source_dirs)
@@ -594,7 +593,7 @@ async def list_accessible_skills(
 ) -> list[ResolvedSkill]:
     """返回当前用户最终生效的共享与个人 Skill。"""
     shared_items, personal_items = await asyncio.gather(
-        _list_accessible_shared_skills(db, user, require_enabled=require_enabled),
+        list_accessible_shared_skills(db, user, require_enabled=require_enabled),
         list_personal_skills(str(user.uid)),
     )
     personal_by_slug = {item.slug: item for item in personal_items}
@@ -680,7 +679,7 @@ async def get_skill_dependency_options(
     }
 
 
-async def _list_accessible_shared_skills(
+async def list_accessible_shared_skills(
     db: AsyncSession,
     user: User,
     *,
@@ -694,7 +693,7 @@ async def _list_accessible_shared_skills(
 
 async def _list_shared_skill_slugs(db: AsyncSession, user: User) -> list[str]:
     """返回依赖配置可引用的共享 Skill slug。"""
-    return [item.slug for item in await _list_accessible_shared_skills(db, user) if isinstance(item.slug, str)]
+    return [item.slug for item in await list_accessible_shared_skills(db, user) if isinstance(item.slug, str)]
 
 
 def _get_all_tool_names() -> list[str]:
@@ -754,7 +753,7 @@ async def update_skill_dependencies(
     item = await get_manageable_skill_or_raise(db, operator, slug)
     _ensure_non_builtin(item)
     repo = SkillRepository(db)
-    skill_items = await _list_accessible_shared_skills(db, operator)
+    skill_items = await list_accessible_shared_skills(db, operator)
     available_skills = {skill.slug: skill for skill in skill_items}
     tools, mcps, skills = await _validate_dependencies(
         parent=item,
@@ -963,44 +962,6 @@ async def delete_personal_skill(uid: str, slug: str) -> None:
     if not skill_dir.is_dir():
         raise ValueError("个人 Skill 不存在")
     await asyncio.to_thread(shutil.rmtree, skill_dir)
-
-
-async def enable_personal_skills_for_agent_config(
-    db: AsyncSession,
-    *,
-    thread_id: str,
-    uid: str,
-    skill_slugs: list[str],
-) -> bool:
-    """为显式 Skill 白名单追加个人 Skill；全部模式无需写入。"""
-    from yuxi.repositories.agent_repository import AgentRepository
-    from yuxi.repositories.conversation_repository import ConversationRepository
-
-    conversation = await ConversationRepository(db).get_conversation_by_thread_id(thread_id)
-    if not conversation or str(conversation.uid) != str(uid):
-        return False
-    agent_repo = AgentRepository(db)
-    agent = await agent_repo.get_by_slug(conversation.agent_id)
-    if not agent or agent.created_by != str(uid):
-        return False
-
-    context = (agent.config_json or {}).get("context") or {}
-    configured_skills = validate_resource_selection("skills", context.get("skills", "all"))
-    if configured_skills == "all":
-        return True
-
-    selected_skills = configured_skills
-    updated_skills = normalize_string_list([*selected_skills, *skill_slugs])
-    if updated_skills == selected_skills:
-        return True
-
-    await agent_repo.update(
-        agent,
-        config_json={"context": {"skills": updated_skills}},
-        config_resource_access={"skills": set(skill_slugs)},
-        updated_by=str(uid),
-    )
-    return True
 
 
 def _resolved_shared_skill(item: Skill, *, shadowed_by_personal: bool = False) -> ResolvedSkill:

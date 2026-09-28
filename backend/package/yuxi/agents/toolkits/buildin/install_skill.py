@@ -13,7 +13,6 @@ from pydantic import BaseModel, Field
 from yuxi.agents.backends.paths import VIRTUAL_PATH_PREFIX, VIRTUAL_PERSONAL_SKILLS_PATH
 from yuxi.agents.backends.sandbox.download import download_sandbox_directory
 from yuxi.agents.toolkits.registry import tool
-from yuxi.storage.postgres.manager import pg_manager
 from yuxi.utils.logging_config import logger
 
 SANDBOX_PATH_HINT = "请使用当前 Project Workdir 下的目录，或 /home/gem/user-data/..."
@@ -107,14 +106,10 @@ async def _run_install_task(
         )
 
     try:
-        from yuxi.agents.skills.service import (
-            enable_personal_skills_for_agent_config,
-            install_personal_skill_dir,
-        )
+        from yuxi.agents.skills.service import install_personal_skill_dir
 
         installed_slugs: list[str] = []
         failed_items: list[dict] = []
-        config_success = True
 
         if source.startswith("/"):
             with tempfile.TemporaryDirectory(prefix=".skill-install-") as tmp:
@@ -159,12 +154,6 @@ async def _run_install_task(
             finally:
                 await preparation.cleanup()
 
-        if installed_slugs:
-            async with pg_manager.get_async_session_context() as db:
-                config_success = await enable_personal_skills_for_agent_config(
-                    db, thread_id=thread_id, uid=uid, skill_slugs=installed_slugs
-                )
-
         lines = []
         if installed_slugs:
             lines.append(f"已安装 Skill: {', '.join(installed_slugs)}")
@@ -173,8 +162,6 @@ async def _run_install_task(
         if failed_items:
             for item in failed_items:
                 lines.append(f"安装失败 ({item['slug']}): {item.get('error', '未知错误')}")
-        if not config_success:
-            lines.append("Skill 已安装，但当前 Agent 配置未更新，请手动启用")
         if not installed_slugs and not failed_items:
             lines.append("未发现需要安装的 Skill")
 

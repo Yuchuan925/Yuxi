@@ -10,11 +10,11 @@ Owner：backend/package/yuxi/repositories/agent_repository.py
 
 ## 决策
 
-保存接口将 `config_json.context` 作为字段补丁处理，省略字段保留原值。`agent_config_service` 按 Context Schema 和用户角色过滤可写字段，并复用运行时资源选项解析访问范围；运行时资源字段集合由 `yuxi.agents.context` 导出，保存边界额外处理预加载 Skill。创建和更新均经过资源校验，个人 Skill 自动启用入口只提交对应字段补丁。
+保存接口将 `config_json.context` 作为字段补丁处理，省略字段保留原值。`agent_config_service` 按 Context Schema 和用户角色过滤可写字段，并复用资源选项解析访问范围；资源字段由 Context 类型与 `metadata.kind` 声明，预加载 Skill 候选范围受当前共享 Skill 选择约束。创建和更新均经过资源校验。个人 Skill 由运行时按用户目录合并，安装不修改 Agent 配置；完整选择协议见[统一资源选择决策](./2026-09-27-explicit-resource-selection.md)。
 
 `AgentRepository` 在 PostgreSQL 行锁内读取最新配置并合并。非空列表允许增删可见项，保留旧的不可见引用，拒绝新增无权访问的引用。仍保留的旧引用维持原相对顺序，新选择按请求顺序追加，避免改变 Skill 和预加载说明的加载顺序。
 
-显式 `null`、空列表表示整体切换该字段的资源策略。工具、知识库和 Skill 的空列表表示禁用；子智能体保留空列表表示全部可访问的兼容语义。MCP 缺省与空列表的运行语义由[MCP 显式选择决策](../implemented/2026-09-25-mcp-explicit-opt-in.md)维护。前端普通列表编辑保留隐藏引用，取消最后一个可见项不会自动变成清空全部；清空操作显式移除全部引用。子智能体对应操作显示为“使用全部”，空列表与 null 均展示全部可访问项。
+显式 `"all"` 表示动态全部，空列表表示禁用该字段的共享或直接选择；新写入拒绝 `null`。前端普通列表编辑保留隐藏引用，取消最后一个可见项不会自动变成清空全部；清空操作显式移除全部引用。个人 Skill 不由 Agent 的 `skills` 列表控制。
 
 编辑页只提交变化的配置字段，保存后采用后端返回的合并配置建立基线。运行期继续计算期望选择与操作者可访问资源的交集，运行归一化不改写持久配置。用户操作参考由[配置智能体](../../../agents/agents-config.md#资源选择语义)维护。
 
@@ -24,7 +24,7 @@ Owner：backend/package/yuxi/repositories/agent_repository.py
 
 ## 后果
 
-不可见的失效引用会继续保留，拥有相应访问权限的管理者可以移除可见选择，显式策略切换可以整体清空引用。字段补丁和行锁保护并发更新的最新隐藏引用；同一可见字段的并发编辑仍按最后提交的补丁生效，不引入配置版本协议。空列表与 null 的差异继续由各资源字段契约拥有，不统一改变子智能体兼容行为。
+不可见的失效引用会继续保留，拥有相应访问权限的管理者可以移除可见选择，显式策略切换可以整体清空引用。字段补丁和行锁保护并发更新的最新隐藏引用；同一可见字段的并发编辑仍按最后提交的补丁生效，不引入配置版本协议。`"all"` 与空列表的运行解释由 Context 统一拥有。
 
 ## 验证
 
@@ -36,7 +36,7 @@ Owner：backend/package/yuxi/repositories/agent_repository.py
 | B 的运行配置只包含交集，数据库保留完整期望选择 | normalize_agent_context_config | 使用真实数据库用户与资源归一化，交集为 5，持久列表为 10 | 无权资源进入有效配置或持久列表收缩 | Passed |
 | 名称与模型保存不回写未修改资源，明确清空与全部策略 | AgentEditModal、配置表单与 store | 浏览器捕获真实 PUT，随后 GET 与 PostgreSQL 回读；前端 unit | 旧 store 整体提交在变动字段断言处失败 | Passed |
 
-相关后端回归位于 `test/unit/repositories/test_agent_repository.py`、`test/unit/services/test_agent_config_service.py`、`test/unit/toolkits/test_install_skill.py` 和 `test/integration/api/test_agent_config_resource_authorization.py`。前端回归位于 `web/test/unit/agentConfigSave.test.js` 与 `web/test/unit/agentConfigUtils.test.js`。
+相关后端回归位于 `test/unit/repositories/test_agent_repository.py`、`test/unit/services/test_agent_config_service.py` 和 `test/integration/api/test_agent_config_resource_authorization.py`。个人 Skill 自动可用的验证由[统一资源选择决策](./2026-09-27-explicit-resource-selection.md)记录。前端回归位于 `web/test/unit/agentConfigSave.test.js` 与 `web/test/unit/agentConfigUtils.test.js`。
 
 真实 HTTP 集成测试在独立 Compose 槽位中完成，1 passed。最终简化后，在 main 开发环境运行 `docker compose exec -u 0 -T api uv run --no-sync --group test pytest test/unit -m "not slow" -q -o faulthandler_timeout=30`，1782 passed、50 skipped。默认用户的标准 `uv run --group test` 命令因容器内 lock 文件不可写而失败，使用现有依赖完成验证，没有修改依赖锁文件。默认用户的一次完整 unit 和 integration 停滞后被中断，不计为通过；以上结果来自后续串行完成的运行。
 

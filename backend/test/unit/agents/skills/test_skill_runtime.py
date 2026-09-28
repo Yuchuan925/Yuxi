@@ -6,6 +6,94 @@ import yuxi.agents.skills.runtime as skill_runtime
 from yuxi.agents.skills.runtime import build_dependency_bundle, expand_skill_closure, resolve_runtime_skills_for_context
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("selection", [[], ["shared"], "all"])
+@pytest.mark.parametrize("preloads", [[], "all"])
+async def test_personal_skills_are_available_independently_of_shared_selection(
+    tmp_path, monkeypatch, selection, preloads
+):
+    """真实个人目录始终参与运行，选项仅共享且其他用户目录不可见。"""
+    from yuxi.agents.context import normalize_agent_context_config, resolve_agent_resource_options
+    from yuxi.agents.skills import service
+    from yuxi.storage.postgres.models_business import Skill
+    from yuxi.workspace import paths
+
+    monkeypatch.setattr(paths, "get_user_data_dir", lambda: tmp_path / "user-data")
+    monkeypatch.setattr(service, "get_skill_data_dir", lambda: tmp_path / "shared")
+    shared_dir = tmp_path / "shared" / "extra"
+    shared_dir.mkdir(parents=True)
+    (shared_dir / "SKILL.md").write_text("# Extra shared body", encoding="utf-8")
+    shared = Skill(
+        id=1,
+        slug="shared",
+        name="Shared title",
+        description="shared description",
+        source_type="upload",
+        dir_path="shared",
+        enabled=True,
+        created_by="user-a",
+        share_config={"version": 2, "read_scope": {"access_level": "global"}, "manage_scope": None},
+        tool_dependencies=[],
+        mcp_dependencies=[],
+        skill_dependencies=[],
+    )
+    extra = Skill(
+        id=2,
+        slug="extra",
+        name="Extra",
+        description="extra shared",
+        source_type="upload",
+        dir_path="extra",
+        enabled=True,
+        created_by="user-a",
+        share_config=shared.share_config,
+        tool_dependencies=[],
+        mcp_dependencies=[],
+        skill_dependencies=[],
+    )
+
+    class SkillRepository:
+        """提供共享记录，个人来源由真实目录扫描。"""
+
+        def __init__(self, db):
+            """接收测试会话。"""
+
+        async def list_enabled(self):
+            """返回测试共享记录。"""
+            return [shared, extra]
+
+    monkeypatch.setattr(service, "SkillRepository", SkillRepository)
+    for uid, slug in [("user-a", "personal"), ("user-a", "shared"), ("user-b", "other-user")]:
+        directory = service.get_personal_skills_root_dir(uid) / slug
+        directory.mkdir(parents=True)
+        (directory / "SKILL.md").write_text(
+            f"---\nname: {slug}\ndescription: personal {slug}\n---\nPersonal body", encoding="utf-8"
+        )
+    user = SimpleNamespace(uid="user-a", role="user", department_id=None)
+    options = await resolve_agent_resource_options({"skills"}, db=None, user=user)
+    assert options["skills"] == [
+        {"key": "shared", "name": "Shared title", "description": "shared description"},
+        {"key": "extra", "name": "Extra", "description": "extra shared"},
+    ]
+    config = {"tools": [], "knowledges": [], "skills": selection, "preload_skills": preloads}
+    normalized = await normalize_agent_context_config(config, db=None, user=user)
+    assert normalized["skills"] == (["shared", "extra"] if selection == "all" else selection)
+    scope = await resolve_runtime_skills_for_context(SimpleNamespace(**normalized), db=None, user=user)
+    expected = {"shared", "personal", "extra"} if selection == "all" else {"shared", "personal"}
+    assert set(scope["context_skills"]) == expected
+    assert set(scope["effective_skills"]) == expected
+    assert scope["runtime_skills"]["shared"]["description"] == "personal shared"
+    assert scope["runtime_skills"]["shared"]["path"] == "/home/gem/user-data/agents/skills/shared/SKILL.md"
+    assert "other-user" not in scope["runtime_skills"]
+    expected_contents = {}
+    if preloads == "all" and selection:
+        expected_contents["shared"] = "---\nname: shared\ndescription: personal shared\n---\nPersonal body"
+        if selection == "all":
+            expected_contents["extra"] = "# Extra shared body"
+    assert scope["preloaded_skill_contents"] == expected_contents
+    assert config["skills"] == selection
+
+
 def _skill(tmp_path, slug: str, *, dependencies: list[str] | None = None, content: str | None = None):
     source_dir = tmp_path / slug
     source_dir.mkdir()
@@ -22,6 +110,25 @@ def _skill(tmp_path, slug: str, *, dependencies: list[str] | None = None, conten
         mcp_dependencies=[],
         skill_dependencies=dependencies or [],
     )
+
+
+@pytest.mark.asyncio
+async def test_personal_skill_is_not_a_direct_preload_candidate(tmp_path, monkeypatch):
+    """自动加入的个人 Skill 不扩大显式预加载范围。"""
+    personal = _skill(tmp_path, "personal")
+    personal.source_scope = "personal"
+
+    async def accessible(_db, _user):
+        return [personal]
+
+    monkeypatch.setattr(skill_runtime, "list_accessible_skills", accessible)
+    scope = await resolve_runtime_skills_for_context(
+        SimpleNamespace(skills=[], preload_skills=["personal"]), db=None, user=None
+    )
+
+    assert scope["context_skills"] == ["personal"]
+    assert scope["context_preload_skills"] == []
+    assert scope["preloaded_skill_contents"] == {}
 
 
 @pytest.mark.asyncio
@@ -66,7 +173,7 @@ async def test_resolve_runtime_skills_derives_authorized_scope(monkeypatch):
         user=object(),
     )
 
-    assert scope["context_skills"] == ["alpha"]
+    assert scope["context_skills"] == ["alpha", "beta"]
     assert scope["effective_skills"] == ["alpha", "beta"]
     assert set(scope["runtime_skills"]) == {"alpha", "beta"}
     assert scope["runtime_skills"]["alpha"]["path"] == "/home/gem/skills/alpha/SKILL.md"
@@ -187,7 +294,7 @@ async def test_preload_all_reads_only_enabled_authorized_skill_closure(tmp_path,
     async def accessible(db, user):
         return skills
 
-    monkeypatch.setattr(service, "list_accessible_skills", accessible)
+    monkeypatch.setattr(service, "list_accessible_shared_skills", accessible)
     monkeypatch.setattr(skill_runtime, "list_accessible_skills", accessible)
     normalized = await normalize_agent_context_config(
         {"tools": [], "knowledges": [], "skills": selection, "preload_skills": "all"},

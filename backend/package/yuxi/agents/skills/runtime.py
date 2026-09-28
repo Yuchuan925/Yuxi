@@ -90,15 +90,18 @@ async def resolve_runtime_skills_for_context(
     db: AsyncSession,
     user: User,
 ) -> dict:
-    """从已授权 Skill 派生当前 Agent Run 的运行时 scope 与预加载快照。"""
+    """合并已选共享与全部个人 Skill，派生运行范围和预加载快照。"""
     skill_items = [item for item in await list_accessible_skills(db, user) if item.slug]
     runtime_skills = build_runtime_skills(skill_items)
     available = set(runtime_skills)
     selected = normalize_string_list(getattr(context, "skills", None))
-    context_skills = [slug for slug in selected if slug in available]
+    shared_skills = [slug for slug in selected if slug in available]
+    context_skills = normalize_string_list(
+        [*shared_skills, *(item.slug for item in skill_items if item.source_scope == "personal")]
+    )
     effective_skills = expand_skill_closure(context_skills, runtime_skills)
     configured_preloads = normalize_string_list(getattr(context, "preload_skills", None))
-    context_preload_skills = [slug for slug in configured_preloads if slug in context_skills]
+    context_preload_skills = [slug for slug in configured_preloads if slug in shared_skills]
     preloaded_skills = expand_skill_closure(context_preload_skills, runtime_skills)
     items_by_slug = {item.slug: item for item in skill_items}
     preloaded_contents = (

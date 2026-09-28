@@ -42,7 +42,7 @@ metadata 可以定义展示名称、说明、控件类型、选项和角色权�
 | `tools` | 可使用的内置工具 |
 | `knowledges` | 可检索的知识库范围 |
 | `mcps` | 直接添加到 Agent 的已启用 MCP 服务器 |
-| `skills` | 可见并可激活的 Skill |
+| `skills` | 选择共享和内置 Skill；个人 Skill 始终可用 |
 | `preload_skills` | 从首轮请求加载完整说明和依赖的 Skill 子集 |
 | `summary_threshold`、`summary_keep_messages` | 上下文压缩的唯一压力阈值和摘要后保留消息数 |
 | `summary_prompt`、`summary_tool_result_token_limit` | 摘要提示词和工具结果预览上限 |
@@ -50,7 +50,7 @@ metadata 可以定义展示名称、说明、控件类型、选项和角色权�
 
 ## 资源选择语义
 
-资源字段 `tools`、`knowledges`、`skills`、`subagents`、`mcps` 和 `preload_skills` 接受 `"all"` 或字符串数组。`"all"` 表示每次运行使用当前用户可访问的全部资源，包括之后新增的资源；`[]` 表示不选择；非空数组表示固定范围，运行时只使用其中仍有权限且可用的资源。新写入拒绝 `null`、未知字符串和非字符串数组成员。创建时省略字段使用其默认值：工具、知识库和 Skill 为 `"all"`，子智能体为 `["general-purpose"]`（通用任务），MCP 和预加载 Skill 为 `[]`。MCP 选择控制直接加载，已激活 Skill 的 MCP 依赖仍按需加载。预加载候选项限于当前 Agent 已启用且可访问的 Skill；`preload_skills="all"` 在每次运行预加载该范围及其授权依赖的完整说明，并从首轮开放依赖工具。`skills=[]` 时预加载全部仍得到空列表。
+资源字段 `tools`、`knowledges`、`skills`、`subagents`、`mcps` 和 `preload_skills` 接受 `"all"` 或字符串数组。`"all"` 表示每次运行使用当前用户可访问的全部资源，包括之后新增的资源；`[]` 表示不选择；非空数组表示固定范围，运行时只使用其中仍有权限且可用的资源。新写入拒绝 `null`、未知字符串和非字符串数组成员。创建时省略字段使用其默认值：工具、知识库和 Skill 为 `"all"`，子智能体为 `["general-purpose"]`（通用任务），MCP 和预加载 Skill 为 `[]`。MCP 选择控制直接加载，已激活 Skill 的 MCP 依赖仍按需加载。Skill 选择器只列共享和内置 Skill；运行时自动合并当前用户全部个人 Skill，`skills=[]` 只关闭共享选择。预加载候选项限于已选且可访问的共享 Skill；`preload_skills="all"` 在每次运行预加载该范围及其授权依赖的完整说明，并从首轮开放依赖工具。`skills=[]` 时预加载全部仍得到空列表，个人 Skill 继续按需读取正文。
 
 界面的“全部（含新增）”保存 `"all"`；逐项勾选保存固定数组，即使勾选了当前所有选项也不会自动转换成全部模式。“清空全部”保存 `[]`，子智能体同样可以全部禁用。子智能体不能继续调用下一层子智能体。
 
