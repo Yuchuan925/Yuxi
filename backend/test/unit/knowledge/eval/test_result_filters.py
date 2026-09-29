@@ -3,9 +3,9 @@ from types import SimpleNamespace
 import pytest
 from fastapi import HTTPException
 
-from server.routers import knowledge_eval_router
-from server.routers.knowledge_eval_router import get_evaluation_run_results
-from yuxi.knowledge.eval.service import EvaluationService
+import yuxi.api.routers.knowledge.evaluation as knowledge_eval_router
+from yuxi.api.routers.knowledge.evaluation import get_evaluation_run_results
+from yuxi.modules.knowledge.evaluation.service import EvaluationService
 
 
 def make_item(item_index: int, *, score: float = 1.0, recall: float = 1.0):

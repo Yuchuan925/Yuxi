@@ -3,8 +3,8 @@ import os
 from pathlib import Path
 import pytest
 
-from yuxi.utils import paths as paths_module
-from yuxi.utils.paths import ensure_within_root, open_directory_fd
+from yuxi.infrastructure import filesystem as paths_module
+from yuxi.infrastructure.filesystem import ensure_within_root, open_directory_fd
 
 
 def test_open_directory_fd_creates_nested_directories_without_taking_root_fd(tmp_path: Path) -> None:

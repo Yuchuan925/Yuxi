@@ -9,13 +9,13 @@ import pytest
 import pytest_asyncio
 from sqlalchemy import delete
 
-from yuxi.knowledge.eval.service import EvaluationService
-from yuxi.repositories.evaluation_repository import EvaluationRepository
-from yuxi.repositories.task_repository import TaskRepository
-from yuxi.services import task_service
-from yuxi.storage.postgres.manager import pg_manager
-from yuxi.storage.postgres.models_business import TaskRecord
-from yuxi.storage.postgres.models_knowledge import KnowledgeBase
+from yuxi.modules.knowledge.evaluation.service import EvaluationService
+from yuxi.modules.knowledge.repositories.evaluation import EvaluationRepository
+from yuxi.modules.tasks.repository import TaskRepository
+import yuxi.modules.tasks.service as task_service
+from yuxi.infrastructure.postgres.manager import pg_manager
+from yuxi.modules.tasks.models import TaskRecord
+from yuxi.modules.knowledge.models import KnowledgeBase
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
 

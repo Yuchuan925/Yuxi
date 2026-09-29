@@ -6,8 +6,8 @@ import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from yuxi.repositories.conversation_repository import ConversationRepository
-from yuxi.storage.postgres.models_business import Base
+from yuxi.modules.agents.repositories.threads import ConversationRepository
+from yuxi.infrastructure.postgres.base import Base
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.unit]
 

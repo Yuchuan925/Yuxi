@@ -1,6 +1,6 @@
 import pytest
 
-from yuxi.knowledge.utils.kb_utils import build_kb_image_proxy_url, prepare_item_metadata
+from yuxi.modules.knowledge.utils.kb_utils import build_kb_image_proxy_url, prepare_item_metadata
 
 
 def test_build_kb_image_proxy_url_uses_private_bucket_proxy_path():

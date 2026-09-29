@@ -3,8 +3,8 @@
 import pytest
 from fastapi import HTTPException
 
-from server.routers.public_v1.agents.events import public_stream_response
-from yuxi.services.agents.scope import ActorScope
+from yuxi.api.routers.public_v1.agents.events import public_stream_response
+from yuxi.modules.agents.services.scope import ActorScope
 
 
 def test_invalid_cursor_rejected_before_streaming_response():

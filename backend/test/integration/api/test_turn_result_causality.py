@@ -8,8 +8,8 @@ import pytest
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from test.live_api_cleanup import make_test_conversation_title
-from yuxi.services.agents.scope import ActorScope
-from yuxi.services.agents.turns import get_turn_snapshot
+from yuxi.modules.agents.services.scope import ActorScope
+from yuxi.modules.agents.services.turns import get_turn_snapshot
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
 

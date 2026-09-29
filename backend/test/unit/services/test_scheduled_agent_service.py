@@ -4,8 +4,8 @@ from types import SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
-from yuxi.services import scheduled_agent_service as service
-from yuxi.services.scheduled_agent_service import next_run_at, validate_schedule
+import yuxi.modules.schedules.service as service
+from yuxi.modules.schedules.service import next_run_at, validate_schedule
 
 
 def test_next_run_at_uses_timezone_and_returns_utc_naive_datetime():
@@ -74,7 +74,7 @@ async def test_validate_agent_rejects_agent_outside_user_visibility(monkeypatch)
 
 
 def test_scheduled_run_model_owns_execution_configuration_snapshot():
-    from yuxi.storage.postgres.models_business import ScheduledAgentRun
+    from yuxi.modules.schedules.models import ScheduledAgentRun
 
     assert {"project_id", "agent_slug", "conversation_title", "prompt", "tool_approval_mode", "model_spec"}.issubset(
         ScheduledAgentRun.__table__.c.keys()
@@ -82,7 +82,7 @@ def test_scheduled_run_model_owns_execution_configuration_snapshot():
 
 
 def test_scheduled_run_model_uses_unique_thread_per_execution_and_preserves_history():
-    from yuxi.storage.postgres.models_business import ScheduledAgentJob, ScheduledAgentRun
+    from yuxi.modules.schedules.models import ScheduledAgentJob, ScheduledAgentRun
 
     project_fk = next(
         constraint

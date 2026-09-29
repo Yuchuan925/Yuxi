@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import pytest
 from fastapi import HTTPException
 
-from server.routers import knowledge_router
+import yuxi.api.routers.knowledge.management as knowledge_router
 
 pytestmark = pytest.mark.asyncio
 

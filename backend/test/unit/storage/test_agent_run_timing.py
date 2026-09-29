@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta
 
-from yuxi.storage.postgres.models_business import AgentRun, build_agent_run_timing
+from yuxi.modules.agents.models.runs import AgentRun, build_agent_run_timing
 
 
 def test_agent_run_timing_derives_stage_latencies_from_authoritative_timestamps():

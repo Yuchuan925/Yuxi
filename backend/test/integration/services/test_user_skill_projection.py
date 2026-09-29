@@ -6,16 +6,15 @@ import asyncio
 import os
 import uuid
 from contextlib import asynccontextmanager, suppress
-from pathlib import Path
 
 import pytest
 from sqlalchemy import delete, select, text, update
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from yuxi.agents.skills import service as skill_service
-from yuxi.storage_migrations import v071_skills
-from yuxi.storage.postgres.manager import pg_manager
-from yuxi.storage.postgres.models_business import Skill, User
+from yuxi.modules.extensions.skills import service as skill_service
+from yuxi.infrastructure.postgres.manager import pg_manager
+from yuxi.modules.extensions.skills.models import Skill
+from yuxi.modules.identity.models import User
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
 
@@ -234,111 +233,6 @@ async def test_projection_refresh_waits_for_lock_then_reloads_revoked_authorizat
                 task.cancel()
             with suppress(asyncio.CancelledError, Exception):
                 await task
-        async with session_factory() as db:
-            if skill_id is not None:
-                await db.execute(delete(Skill).where(Skill.id == skill_id))
-            if user_id is not None:
-                await db.execute(delete(User).where(User.id == user_id))
-            await db.commit()
-        await engine.dispose()
-
-
-async def test_legacy_shared_skill_migrates_without_touching_personal_workspace(
-    tmp_path,
-    monkeypatch: pytest.MonkeyPatch,
-):
-    """旧共享来源完成切换时，UserWorkspace 中的个人 Skill 必须原地保留。"""
-    engine = create_async_engine(os.environ["POSTGRES_URL"], pool_pre_ping=True)
-    session_factory = async_sessionmaker(engine, expire_on_commit=False)
-    suffix = uuid.uuid4().hex
-    uid = f"pytest-skill-migration-{suffix}"
-    shared_slug = f"shared-{suffix}"
-    personal_slug = f"personal-{suffix}"
-    monkeypatch.setenv("YUXI_LEGACY_STORAGE_DIR", str(tmp_path))
-    monkeypatch.setenv("YUXI_USER_DATA_DIR", str(tmp_path / "threads"))
-    monkeypatch.setenv("YUXI_SKILL_DATA_DIR", str(tmp_path / "skill-sources"))
-    monkeypatch.setenv("YUXI_SKILL_PROJECTION_DIR", str(tmp_path / "skill-projections"))
-
-    legacy_shared = tmp_path / "skills" / shared_slug
-    legacy_personal = tmp_path / "threads/shared" / uid / "workspace/agents/skills" / personal_slug
-    for path, slug, marker in (
-        (legacy_shared, shared_slug, "shared-marker"),
-        (legacy_personal, personal_slug, "personal-marker"),
-    ):
-        path.mkdir(parents=True)
-        (path / "SKILL.md").write_text(
-            f"---\nname: {slug}\ndescription: migration fixture\n---\n{marker}\n",
-            encoding="utf-8",
-        )
-
-    user_id: int | None = None
-    skill_id: int | None = None
-    try:
-        async with session_factory() as db:
-            user = User(username=uid, uid=uid, password_hash="test", role="user")
-            skill = Skill(
-                slug=shared_slug,
-                name=shared_slug,
-                description="migration fixture",
-                source_type="upload",
-                tool_dependencies=[],
-                mcp_dependencies=[],
-                skill_dependencies=[],
-                dir_path=f"skills/{shared_slug}",
-                share_config={
-                    "version": 2,
-                    "read_scope": {"access_level": "global", "department_ids": [], "user_uids": []},
-                    "manage_scope": None,
-                },
-                enabled=True,
-                created_by=uid,
-            )
-            db.add_all([user, skill])
-            await db.commit()
-            user_id = user.id
-            skill_id = skill.id
-
-        original_rmtree = skill_service.shutil.rmtree
-        cleanup_failed = False
-
-        def fail_shared_cleanup_once(path, *args, **kwargs):
-            nonlocal cleanup_failed
-            if not cleanup_failed and Path(path) == legacy_shared:
-                cleanup_failed = True
-                raise OSError("injected legacy cleanup failure")
-            return original_rmtree(path, *args, **kwargs)
-
-        monkeypatch.setattr(v071_skills.shutil, "rmtree", fail_shared_cleanup_once)
-        with pytest.raises(OSError, match="injected legacy cleanup failure"):
-            async with session_factory() as db:
-                await v071_skills.migrate_shared_skills(db)
-
-        async with session_factory() as db:
-            persisted_after_failure = await db.scalar(select(Skill.dir_path).where(Skill.id == skill_id))
-        assert persisted_after_failure == f"shared/{shared_slug}"
-        assert legacy_shared.is_dir()
-
-        monkeypatch.setattr(v071_skills.shutil, "rmtree", original_rmtree)
-        async with session_factory() as db:
-            await v071_skills.migrate_shared_skills(db)
-
-        async with session_factory() as db:
-            persisted_path = await db.scalar(select(Skill.dir_path).where(Skill.id == skill_id))
-        assert persisted_path == f"shared/{shared_slug}"
-        assert "shared-marker" in (tmp_path / "skill-sources/shared" / shared_slug / "SKILL.md").read_text(
-            encoding="utf-8"
-        )
-        assert skill_service.get_personal_skills_root_dir(uid) / personal_slug == legacy_personal
-        assert "personal-marker" in (legacy_personal / "SKILL.md").read_text(encoding="utf-8")
-        assert not legacy_shared.exists()
-        assert legacy_personal.is_dir()
-        assert not (tmp_path / "skill-sources/personal" / uid / personal_slug).exists()
-
-        # 停机迁移重复执行也不得扫描或删除个人 Workspace。
-        async with session_factory() as db:
-            await v071_skills.migrate_shared_skills(db)
-        assert legacy_personal.is_dir()
-    finally:
         async with session_factory() as db:
             if skill_id is not None:
                 await db.execute(delete(Skill).where(Skill.id == skill_id))

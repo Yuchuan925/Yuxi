@@ -32,7 +32,7 @@ PORT_MARKERS = {
 LOCAL_IMAGE_SUFFIXES = {
     "api": "-api:",
     "worker": "-api:",
-    "storage-migrator": "-api:",
+    "schema-init": "-api:",
     "sandbox-provisioner": "-sandbox-provisioner:",
     "web": "-web:",
     "mineru-api": "-mineru:",

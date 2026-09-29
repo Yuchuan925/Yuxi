@@ -1,6 +1,6 @@
 # 生产部署
 
-本页说明如何用 Docker Compose 部署 Yuxi、验证服务状态，以及从 v0.7.1 或 v0.7.2 升级到 `v0.7.3`。重要数据上线前请先在备份环境演练恢复。
+本页说明如何用 Docker Compose 全新部署 Yuxi 并验证服务状态。重要数据上线前请先在备份环境演练恢复。
 
 ## 前置条件
 
@@ -75,70 +75,13 @@ docker compose --env-file .env.prod -f docker-compose.prod.yml up -d --build
 docker compose --env-file .env.prod -f docker-compose.prod.yml --profile all up -d --build
 ```
 
-`storage-migrator` 是启动依赖的一部分。迁移器成功后会退出，退出码为 0 是正常结果；API、worker 和 provisioner 会等待它成功。
+`schema-init` 是当前 Schema 的初始化进程。它只接受空数据库或已经标记为当前 Schema 版本的数据库；旧版本和未版本化的旧表会使启动失败。初始化成功后进程以退出码 0 结束，API、worker 和 provisioner 才会启动。
 
-## 3. 升级到 v0.7.3
+## 3. 数据库与文件目录
 
-### 从 v0.7.2 升级的变化
+新部署应使用空 PostgreSQL 数据库和独立的 Yuxi 文件目录。Schema 初始化进程负责建立当前表结构、版本标记和 LangGraph checkpoint 表。已有当前版本数据库可以直接重启同版本服务；旧版本数据和未版本化的旧表不受支持，需使用对应旧版部署处理数据后再规划独立的数据导入。
 
-`v0.7.2` 正式版的 Schema 基线是 business=2、knowledge=1。迁移器一次补齐业务结构并记录 business=7，知识域升级到 knowledge=2；无需逐级执行 3～6。业务版本号保留开发期间的 revision，不与产品版本号一一对应。未发布的中间 Schema 会被明确拒绝；不要手工修改版本表绕过结构校验。
-
-- LITE 模式已移除，原 LITE 部署须补齐 Milvus、etcd、Neo4j 等完整拓扑资源，并清理失效的 LITE 配置。
-- Sandbox 默认规格为 `SANDBOX_RUNTIME_PROFILE=core`，不启动浏览器、browser MCP、VNC、Jupyter、code-server 或 NodeJS REPL 服务。依赖网页自动化的部署在 `.env.prod` 设置 `SANDBOX_RUNTIME_PROFILE=browser`；需要完整交互式开发环境时设置 `full`。升级时重新创建 provisioner，规格对随后创建的沙盒生效；能力范围见[沙盒配置](sandbox-operations.md)。
-- 通用后台任务改由独立 worker 执行。迁移后须用同一版本协调启动 API 与 worker；混用旧 worker 不能满足新版本的就绪条件。
-- 旧知识文件中没有执行 owner 的 `parsing` / `indexing` 状态会收敛为 `error_parsing` / `error_indexing`，升级后检查失败文件并显式重试，不假定旧任务会自动续跑。
-- 新建托管 Project 使用可读的时间戳目录名；既有 UUID 目录继续有效，无需重命名。
-
-### 停机、备份与迁移
-
-升级前安排停机窗口，先结束运行中的任务与沙盒会话，再使用旧部署的 Compose 配置停止 API、worker 和 provisioner，确认没有业务写入后再做同一时点的备份：
-
-- PostgreSQL 数据目录；
-- MinIO 数据目录；
-- Milvus、etcd、Neo4j 等已启用服务的持久数据；
-- `docker/volumes/yuxi` 中的历史文件、UserWorkspace 和 Skill 数据；
-- 当前 Compose、`.env.prod` 和目标版本代码。
-
-使用各存储服务支持的一致性备份方式；直接复制数据目录时，先停止对应存储服务，备份完成后按原配置启动存储依赖，业务服务保持停止。备份后至少做一次成套恢复演练。只恢复数据库或只恢复文件卷，会让数据库记录与文件字节不一致。
-
-目标 tag 发布后检出该版本，再运行仓库提供的迁移入口；脚本会停止 API、worker 和 provisioner：
-
-```bash
-git checkout v0.7.3
-docker compose --env-file .env.prod -f docker-compose.prod.yml build storage-migrator
-bash scripts/migrate-storage.sh \
-  --env-file .env.prod \
-  -f docker-compose.prod.yml
-```
-
-迁移脚本会使用同一组 Compose、env file 和 profile 参数建立停机证明，阻止新的沙盒创建，等待现有沙盒清空，然后运行 storage migrator。迁移成功前不要启动新的 API 或 worker。
-
-迁移按 PostgreSQL、对象存储和文件卷分别提交，不是跨存储的单事务。命令失败时保持服务停止并保留日志；修复冲突后使用完全相同的参数重跑，迁移器会校验已提交的确定性目标并继续。
-
-迁移成功后，用相同的配置启动目标版本，再完成下节的就绪与真实对话验证：
-
-```bash
-docker compose --env-file .env.prod -f docker-compose.prod.yml up -d --build
-```
-
-使用可选 profile 的部署在迁移和重启时保持相同参数。
-
-需要放弃升级时，保持服务停止，检出旧版本，并从同一停机时点的成套备份恢复。不要只恢复其中一个存储域。
-
-### 从 v0.7.1 升级的额外影响
-
-迁移还会处理历史 Conversation 的 Project/Workdir 绑定、附件和产物路径、系统配置、共享 Skill 以及持久目录的所有权；未完成的历史 AgentRun 会被收敛为可观察失败，旧 SQLite checkpoint 不会迁移。
-
-历史知识库 Markdown 中的 `http://localhost:9000/public/...` 或其他 `<host>:9000/public/...` 图片地址会在前端转换为同源 `/minio/public/...`，无需仅为更新 URL 而重新解析 PDF。对象仍在公开的 `public` bucket 中；敏感知识库需要重新解析、核对图片权限并清理旧公开对象，URL 转换不改变访问权限。
-
-### Kubernetes 存储
-
-当前仓库只提供沙盒 provisioner 的 Kubernetes backend，不提供完整的应用 Deployment、StorageClass、Secret 或旧 PVC 原地迁移工具。新部署需要由集群运维预先创建：
-
-- `USER_DATA_PVC`：承载每个用户的 UserWorkspace，必须提供部署所需的共享读写能力；
-- `SKILLS_PVC`：承载按用户投影的共享/内置 Skill。
-
-旧版 `THREAD_PVC` 的目录形状与当前 `shared/<uid>/workspace/projects/<workdir-id>` 不同，不能只改变量名升级。请离线导出、校验并导入新布局，再启动新 provisioner。
+当前仓库只提供沙盒 provisioner 的 Kubernetes backend，不提供完整的应用 Deployment、StorageClass 或 Secret。部署时预先创建 `USER_DATA_PVC` 承载用户 Workspace，并创建 `SKILLS_PVC` 承载 Skill 数据。
 
 ## 4. 验证部署
 
@@ -243,7 +186,7 @@ docker compose --env-file .env.prod -f docker-compose.prod.yml \
 
 ### 常用检查顺序
 
-1. `docker compose ps`：确认迁移器成功、API/worker/provisioner 在运行。
+1. `docker compose ps`：确认Schema 初始化成功、API/worker/provisioner 在运行。
 2. `docker compose logs`：从最先失败的服务开始看，不只看最后一条 API 错误。
 3. `/api/system/ready`：确认接流量前置条件。
 4. 真实登录、对话和文件操作：确认业务链路。
@@ -280,9 +223,3 @@ NEO4J_ACCEPT_LICENSE_AGREEMENT=yes
 ```
 
 同时按 Neo4j 官方订阅协议确认许可范围；替换镜像不会自动迁移或改变现有数据卷。以上是工程侧边界，不构成法律意见；再分发、修改组件或对外托管前请让法务按具体版本和交付方式确认。
-
-### 资源选择配置升级
-
-Business schema 9 由 `storage-migrator` 将 Agent 已存配置中的工具、知识库、Skill、子智能体 `null` 转为 `"all"`，子智能体空数组也转为 `"all"`；MCP 和预加载 Skill 的 `null` 转为空数组。省略字段与固定列表保持原样。配置与版本标记在同一事务提交，后续启动保留新写入的空数组。
-
-升级前停止旧 API 和 worker 写入，按本页的迁移流程运行迁移器后再启动新进程。API 客户端按[资源选择契约](../agents/agents-config.md)发送 `"all"` 或数组，新写入不接受 `null`。降级需要恢复升级前数据库备份并使用对应旧代码，不能只回退代码或修改版本标记。

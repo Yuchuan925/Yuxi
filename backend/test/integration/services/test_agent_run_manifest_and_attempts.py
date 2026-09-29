@@ -12,21 +12,16 @@ from sqlalchemy import delete, select, text, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from yuxi.repositories.agent_run_repository import AgentRunRepository
-from yuxi.storage.postgres.manager import AGENT_RUN_FACT_SCHEMA_STATEMENTS, AGENT_RUN_TIMING_SCHEMA_STATEMENTS
-from yuxi.storage.postgres.models_business import (
-    AgentInput,
-    AgentInputMessage,
-    AgentInputReceipt,
-    AgentRun,
-    AgentRunAttempt,
-    AgentTurn,
-    Conversation,
-    Message,
-    Project,
-    User,
-)
-from yuxi.utils.datetime_utils import utc_now_naive
+from yuxi.modules.agents.repositories.runs import AgentRunRepository
+from yuxi.infrastructure.postgres.manager import AGENT_RUN_FACT_SCHEMA_STATEMENTS, AGENT_RUN_TIMING_SCHEMA_STATEMENTS
+from yuxi.modules.agents.models.inputs import AgentInput, AgentInputMessage, AgentInputReceipt
+from yuxi.modules.agents.models.runs import AgentRun, AgentRunAttempt
+from yuxi.modules.agents.models.turns import AgentTurn
+from yuxi.modules.agents.models.threads import Conversation
+from yuxi.modules.agents.models.messages import Message
+from yuxi.modules.workspace.models import Project
+from yuxi.modules.identity.models import User
+from yuxi.shared.datetime import utc_now_naive
 
 from agent_run_test_helpers import create_agent_run
 

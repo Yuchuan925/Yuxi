@@ -16,12 +16,12 @@ _PKG = Path(__file__).resolve().parents[2] / "package"
 
 _STUB_NAMES = [
     "yuxi",
-    "yuxi.knowledge",
-    "yuxi.knowledge.chunking",
-    "yuxi.knowledge.chunking.ragflow_like",
-    "yuxi.knowledge.chunking.ragflow_like.parsers",
-    "yuxi.knowledge.chunking.ragflow_like.nlp",
-    "yuxi.knowledge.chunking.ragflow_like.parsers.general",
+    "yuxi.modules.knowledge",
+    "yuxi.modules.knowledge.chunking",
+    "yuxi.modules.knowledge.chunking.ragflow_like",
+    "yuxi.modules.knowledge.chunking.ragflow_like.parsers",
+    "yuxi.modules.knowledge.chunking.ragflow_like.nlp",
+    "yuxi.modules.knowledge.chunking.ragflow_like.parsers.general",
 ]
 
 # 由 _isolated_modules fixture 在运行时注入
@@ -45,13 +45,13 @@ def _isolated_modules():
         return mod
 
     _nlp = _load(
-        "yuxi.knowledge.chunking.ragflow_like.nlp",
+        "yuxi.modules.knowledge.chunking.ragflow_like.nlp",
         "yuxi/knowledge/chunking/ragflow_like/nlp.py",
     )
-    sys.modules["yuxi.knowledge.chunking.ragflow_like"].nlp = _nlp  # type: ignore[attr-defined]
+    sys.modules["yuxi.modules.knowledge.chunking.ragflow_like"].nlp = _nlp  # type: ignore[attr-defined]
 
     _general = _load(
-        "yuxi.knowledge.chunking.ragflow_like.parsers.general",
+        "yuxi.modules.knowledge.chunking.ragflow_like.parsers.general",
         "yuxi/knowledge/chunking/ragflow_like/parsers/general.py",
     )
 

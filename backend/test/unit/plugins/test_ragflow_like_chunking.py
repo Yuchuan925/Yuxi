@@ -3,10 +3,10 @@ from __future__ import annotations
 import random
 
 import pytest
-from yuxi.knowledge.chunking.ragflow_like import nlp
-from yuxi.knowledge.chunking.ragflow_like.dispatcher import chunk_markdown
-from yuxi.knowledge.chunking.ragflow_like.nlp import bullets_category, count_tokens
-from yuxi.knowledge.chunking.ragflow_like.presets import (
+from yuxi.modules.knowledge.chunking.ragflow_like import nlp
+from yuxi.modules.knowledge.chunking.ragflow_like.dispatcher import chunk_markdown
+from yuxi.modules.knowledge.chunking.ragflow_like.nlp import bullets_category, count_tokens
+from yuxi.modules.knowledge.chunking.ragflow_like.presets import (
     CHUNK_ENGINE_VERSION,
     CHUNK_PRESET_IDS,
     CHUNK_PRESETS,
@@ -15,8 +15,11 @@ from yuxi.knowledge.chunking.ragflow_like.presets import (
     map_to_internal_parser_id,
     resolve_chunk_processing_params,
 )
-from yuxi.knowledge.chunking.ragflow_like.utils.semantic_utils import split_mixed_sentences, split_sentences_chinese
-from yuxi.knowledge.utils.kb_utils import resolve_processing_params, sanitize_processing_params
+from yuxi.modules.knowledge.chunking.ragflow_like.utils.semantic_utils import (
+    split_mixed_sentences,
+    split_sentences_chinese,
+)
+from yuxi.modules.knowledge.utils.kb_utils import resolve_processing_params, sanitize_processing_params
 
 
 def test_general_maps_to_naive() -> None:

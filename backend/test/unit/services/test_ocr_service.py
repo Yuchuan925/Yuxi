@@ -4,10 +4,11 @@ import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from yuxi.config.options import ensure_options_in_db, update_option_value
-from yuxi.knowledge.parser.capabilities import PARSER_CAPABILITIES
-from yuxi.services import ocr_service
-from yuxi.storage.postgres.models_business import Base, ModelProvider
+from yuxi.modules.system.options import ensure_options_in_db, update_option_value
+from yuxi.infrastructure.document_parsing.capabilities import PARSER_CAPABILITIES
+import yuxi.modules.documents.service as ocr_service
+from yuxi.infrastructure.postgres.base import Base
+from yuxi.modules.models.tables import ModelProvider
 
 
 @pytest_asyncio.fixture

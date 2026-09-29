@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import pytest
 from langchain_core.messages import AIMessage
 
-from yuxi.services.agents.turns import _drain_waitpoint_checkpoint
+from yuxi.modules.agents.services.turns import _drain_waitpoint_checkpoint
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.unit]
 

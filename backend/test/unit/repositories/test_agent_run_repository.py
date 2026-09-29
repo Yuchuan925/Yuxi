@@ -7,23 +7,21 @@ import pytest_asyncio
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from yuxi.repositories.agent_run_repository import AgentRunRepository
-from yuxi.storage.postgres.models_business import (
-    AgentRun,
-    AgentRunAttempt,
-    AgentTurn,
-    Base,
-    Conversation,
-    Message,
-    SubagentThread,
-)
-from yuxi.utils.datetime_utils import utc_now_naive
+from yuxi.modules.agents.repositories.runs import AgentRunRepository
+from yuxi.modules.agents.models.runs import AgentRun, AgentRunAttempt
+from yuxi.modules.agents.models.turns import AgentTurn
+from yuxi.infrastructure.postgres.base import Base
+from yuxi.bootstrap.models import load_models
+from yuxi.modules.agents.models.threads import Conversation, SubagentThread
+from yuxi.modules.agents.models.messages import Message
+from yuxi.shared.datetime import utc_now_naive
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.unit]
 
 
 @pytest_asyncio.fixture()
 async def session():
+    load_models()
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
@@ -279,56 +277,6 @@ async def test_create_subagent_run_persists_explicit_root_runtime_scope(session)
     )
 
     assert run.runtime_scope_id == "root-thread"
-
-
-async def test_storage_migration_converges_every_nonterminal_run_without_runtime_cleanup(session):
-    repository = AgentRunRepository(session)
-    session.add_all(
-        [
-            AgentTurn(id="migration-turn-pending", conversation_thread_id="thread-1", uid="user-1"),
-            AgentTurn(id="migration-turn-running", conversation_thread_id="thread-2", uid="user-1"),
-        ]
-    )
-    await session.flush()
-    runs = [
-        AgentRun(
-            id="migration-pending",
-            conversation_thread_id="thread-1",
-            runtime_scope_id="thread-1",
-            agent_slug="main",
-            uid="user-1",
-            status="pending",
-            turn_id="migration-turn-pending",
-            run_type="chat",
-            input_payload={},
-        ),
-        AgentRun(
-            id="migration-running",
-            conversation_thread_id="thread-2",
-            runtime_scope_id="thread-2",
-            agent_slug="main",
-            uid="user-1",
-            status="running",
-            turn_id="migration-turn-running",
-            run_type="chat",
-            input_payload={},
-            worker_id="old-worker",
-            heartbeat_at=utc_now_naive(),
-            lease_expires_at=utc_now_naive() + timedelta(minutes=5),
-        ),
-    ]
-    session.add_all(runs)
-    await session.flush()
-
-    migrated_ids = await repository.fail_nonterminal_for_storage_migration()
-
-    assert migrated_ids == ["migration-pending", "migration-running"]
-    for run in runs:
-        assert run.status == "failed"
-        assert run.error_type == "storage_migration"
-        assert run.worker_id is None
-        assert run.lease_expires_at is None
-        assert run.runtime_cleanup_pending is False
 
 
 async def test_set_output_message_rejects_wrong_causal_owner_and_accepts_exact_message(session):

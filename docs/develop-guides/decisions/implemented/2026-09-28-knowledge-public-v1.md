@@ -2,7 +2,7 @@
 
 状态：implemented
 类型：architecture
-Owner：backend/server/routers/public_v1/knowledge.py
+Owner：backend/yuxi/api/routers/public_v1/knowledge.py
 
 ## 问题
 

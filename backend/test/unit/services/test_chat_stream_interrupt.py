@@ -5,17 +5,17 @@ from types import SimpleNamespace
 
 import pytest
 
-from yuxi.services.agents.execution import (
+from yuxi.modules.agents.services.execution import (
     _build_ask_user_question_payload,
     _build_tool_approval_payload,
     _normalize_interrupt_questions,
     stream_agent_resume,
 )
 from test.unit.agent_context_fixtures import prepared_execution
-from yuxi.services.agents import execution as svc
-from yuxi.services.agents.execution import RunExecutionResult
-from yuxi.services.langfuse_service import LangfuseRunContext
-from yuxi.utils.question_utils import normalize_options
+import yuxi.modules.agents.services.execution as svc
+from yuxi.modules.agents.services.execution import RunExecutionResult
+from yuxi.modules.agents.services.tracing import LangfuseRunContext
+from yuxi.modules.agents.runtime.questions import normalize_options
 
 
 def _chunk(event):

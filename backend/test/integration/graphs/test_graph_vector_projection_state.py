@@ -6,10 +6,11 @@ import pytest
 import pytest_asyncio
 from sqlalchemy import select
 
-from yuxi.repositories.knowledge_chunk_repository import KnowledgeChunkRepository
-from yuxi.repositories.knowledge_graph_repository import KnowledgeGraphRepository
-from yuxi.storage.postgres.manager import pg_manager
-from yuxi.storage.postgres.models_knowledge import (
+from yuxi.modules.knowledge.repositories.chunks import KnowledgeChunkRepository
+from yuxi.modules.knowledge.repositories.graphs import KnowledgeGraphRepository
+from yuxi.infrastructure.postgres.manager import pg_manager
+from yuxi.migrations.schema import ensure_knowledge_schema
+from yuxi.modules.knowledge.models import (
     KnowledgeBase,
     KnowledgeChunk,
     KnowledgeFile,
@@ -26,7 +27,7 @@ async def pg_pool():
     pg_manager.async_engine = None
     pg_manager.AsyncSession = None
     pg_manager.initialize()
-    await pg_manager.ensure_knowledge_schema()
+    await ensure_knowledge_schema(pg_manager)
     yield
     await pg_manager.async_engine.dispose()
     pg_manager._initialized = False

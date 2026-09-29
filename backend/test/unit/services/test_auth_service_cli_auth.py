@@ -6,15 +6,16 @@ import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from yuxi.services.auth_service import (
+from yuxi.modules.identity.services.cli_auth import (
     CLIAuthError,
     approve_cli_auth_session,
     create_cli_auth_session,
     exchange_cli_auth_token,
     get_cli_auth_session_for_user,
 )
-from yuxi.storage.postgres.models_business import APIKey, Base, Department, User
-from yuxi.utils.datetime_utils import utc_now_naive
+from yuxi.modules.identity.models import APIKey, Department, User
+from yuxi.infrastructure.postgres.base import Base
+from yuxi.shared.datetime import utc_now_naive
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.unit]
 

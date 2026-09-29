@@ -1,0 +1,211 @@
+"""线程级主动上下文压缩用例。"""
+
+from __future__ import annotations
+
+import asyncio
+from typing import Any
+
+from fastapi import HTTPException
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+from yuxi.modules.agents.runtime.backends import create_agent_composite_backend
+from yuxi.modules.agents.runtime.backends.paths import runtime_workdir_path
+from yuxi.modules.agents.runtime.backends.sandbox import ProvisionerSandboxBackend, get_sandbox_provider
+from yuxi.modules.agents.runtime.builtin import AgentBackendNotFoundError, get_agent_backend
+from yuxi.modules.agents.runtime.context import DEFAULT_SUMMARY_THRESHOLD_K, BaseContext, prepare_agent_runtime_context
+from yuxi.modules.agents.runtime.middlewares import create_summary_middleware_from_context
+from yuxi.modules.agents.runtime.middlewares.token_usage import TOKEN_USAGE_CONTEXT_FIELDS
+from yuxi.modules.extensions.skills.projection import get_user_skills_root_dir
+from yuxi.modules.agents.repositories.definitions import AgentRepository
+from yuxi.modules.agents.repositories.state import AgentStateRepository
+from yuxi.modules.agents.repositories.threads import ConversationRepository
+from yuxi.modules.agents.services.input_config import resolve_agent_run_model_spec
+from yuxi.modules.workspace.services.bindings import ensure_conversation_workdir_available
+from yuxi.modules.agents.models.inputs import AgentInput
+from yuxi.modules.agents.models.turns import AgentTurn
+from yuxi.modules.identity.models import User
+from yuxi.infrastructure.observability.logging import logger
+
+
+async def compress_thread_context(
+    *,
+    thread_id: str,
+    current_user: User,
+    db: AsyncSession,
+    app_id: str | None = None,
+) -> dict[str, Any]:
+    """在线程空闲时压缩 checkpoint；同线程新请求由 Conversation 行锁串行化。"""
+    uid = str(current_user.uid)
+    conversation = await ConversationRepository(db).lock_conversation_by_thread_id(thread_id)
+    if (
+        conversation is None
+        or conversation.uid != uid
+        or getattr(conversation, "app_id", None) != app_id
+        or conversation.status != "active"
+    ):
+        raise HTTPException(status_code=404, detail="对话线程不存在")
+
+    agent_slug = conversation.agent_id
+    await _ensure_thread_idle(db=db, thread_id=thread_id)
+
+    agent_item = await AgentRepository(db).get_visible_by_slug(
+        slug=agent_slug,
+        user=current_user,
+        kind="main",
+    )
+    if agent_item is None:
+        raise HTTPException(status_code=404, detail="智能体不存在")
+    try:
+        agent = get_agent_backend(agent_item.backend_id)
+    except AgentBackendNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    if "context_compression" not in getattr(agent, "capabilities", []):
+        raise HTTPException(status_code=422, detail="当前智能体不支持主动上下文压缩")
+
+    context = agent.context_schema()
+    context.update_config((agent_item.config_json or {}).get("context") or {})
+    model_spec = await resolve_agent_run_model_spec(
+        (conversation.extra_metadata or {}).get("model_spec"),
+        context.model,
+        db,
+    )
+    workdir_path = await ensure_conversation_workdir_available(
+        conversation=conversation,
+        uid=uid,
+        db=db,
+    )
+    context.update(
+        {
+            "uid": uid,
+            "thread_id": thread_id,
+            "model": model_spec,
+            "runtime_scope_id": thread_id,
+            "workdir_relative_path": workdir_path,
+            "workdir_path": runtime_workdir_path(workdir_path),
+        }
+    )
+    result = await _compress_agent_checkpoint_in_runtime(
+        agent=agent,
+        context=context,
+        thread_id=thread_id,
+        uid=uid,
+        workdir_path=workdir_path,
+    )
+    await db.commit()
+    return result
+
+
+async def _ensure_thread_idle(*, db: AsyncSession, thread_id: str) -> None:
+    """在 Thread 锁内拒绝活跃 Turn 和待消费 Input。"""
+    active_turn = await db.scalar(
+        select(AgentTurn.id)
+        .where(
+            AgentTurn.conversation_thread_id == thread_id,
+            AgentTurn.status.in_(("running", "waiting", "cancelling")),
+        )
+        .limit(1)
+    )
+    pending_input = await db.scalar(
+        select(AgentInput.id)
+        .where(AgentInput.conversation_thread_id == thread_id, AgentInput.status == "pending")
+        .limit(1)
+    )
+    if active_turn is None and pending_input is None:
+        return
+    raise HTTPException(
+        status_code=409,
+        detail={"code": "thread_busy", "message": "线程仍有运行、交互或排队输入，暂时不能压缩"},
+    )
+
+
+async def _compress_agent_checkpoint_in_runtime(
+    *,
+    agent,
+    context: BaseContext,
+    thread_id: str,
+    uid: str,
+    workdir_path: str,
+) -> dict[str, Any]:
+    """在一次性 Sandbox 生命周期内压缩 checkpoint。"""
+    try:
+        await prepare_agent_runtime_context(context)
+        await _ensure_runtime_available(thread_id=thread_id, uid=uid, workdir_path=workdir_path)
+        result = await _compress_agent_checkpoint(agent=agent, context=context)
+    except BaseException:
+        try:
+            await _release_runtime(thread_id=thread_id, uid=uid, workdir_path=workdir_path)
+        except BaseException as release_error:
+            logger.error(f"主动压缩失败后释放 Sandbox 失败: {release_error}")
+        raise
+    else:
+        await _release_runtime(thread_id=thread_id, uid=uid, workdir_path=workdir_path)
+        return result
+
+
+async def _ensure_runtime_available(*, thread_id: str, uid: str, workdir_path: str) -> None:
+    """确保主动压缩可以通过 Agent backend 写入可恢复历史。"""
+    await asyncio.to_thread(get_user_skills_root_dir, uid)
+    backend = ProvisionerSandboxBackend(thread_id=thread_id, uid=uid, workdir_path=workdir_path)
+    await asyncio.to_thread(backend.ensure_available)
+
+
+async def _release_runtime(*, thread_id: str, uid: str, workdir_path: str) -> None:
+    """释放主动压缩创建或复用的 Sandbox。"""
+    await asyncio.to_thread(
+        get_sandbox_provider().release,
+        thread_id,
+        uid=uid,
+        clear_cache_on_delete_failure=True,
+        workdir_path=workdir_path,
+    )
+
+
+async def _compress_agent_checkpoint(*, agent, context: BaseContext) -> dict[str, Any]:
+    """使用当前 Agent 配置生成摘要并通过 canonical graph 更新 checkpoint。"""
+    graph = await agent.get_graph(context=context)
+    compressor = create_summary_middleware_from_context(
+        context,
+        backend=create_agent_composite_backend(context),
+    )
+    state_repository = AgentStateRepository(
+        graph,
+        uid=str(context.uid),
+        thread_id=str(context.thread_id),
+    )
+    values = await state_repository.get_values()
+    update, result = await compressor.aforce_summarize(values)
+    if update:
+        trigger_tokens = getattr(context, "summary_threshold", DEFAULT_SUMMARY_THRESHOLD_K) * 1024
+        await state_repository.update(
+            _with_compression_usage(
+                update,
+                previous_values=values,
+                result=result,
+                summary_trigger_tokens=trigger_tokens,
+            )
+        )
+    return result
+
+
+def _with_compression_usage(
+    update: dict[str, Any],
+    *,
+    previous_values: dict[str, Any],
+    result: dict[str, Any],
+    summary_trigger_tokens: int,
+) -> dict[str, Any]:
+    """把主动压缩结果合并进下一轮上下文压力指标。"""
+    previous_usage = previous_values.get("token_usage")
+    token_usage = {
+        key: value
+        for key, value in (previous_usage.items() if isinstance(previous_usage, dict) else ())
+        if key not in TOKEN_USAGE_CONTEXT_FIELDS
+    }
+    token_usage.update(
+        {
+            "compression": dict(result),
+            "summary_active": True,
+            "summary_trigger_tokens": summary_trigger_tokens,
+        }
+    )
+    return {**update, "token_usage": token_usage}

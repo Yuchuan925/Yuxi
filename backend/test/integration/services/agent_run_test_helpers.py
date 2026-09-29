@@ -6,10 +6,15 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from yuxi.repositories.agents.input import AgentInputRepository
-from yuxi.repositories.agents.input_receipt import AgentInputReceiptRepository
-from yuxi.storage.postgres.models_business import AgentRun, AgentTurn, Conversation, Message, Project, User
-from yuxi.utils.datetime_utils import utc_now_naive
+from yuxi.modules.agents.repositories.input import AgentInputRepository
+from yuxi.modules.agents.repositories.input_receipt import AgentInputReceiptRepository
+from yuxi.modules.agents.models.runs import AgentRun
+from yuxi.modules.agents.models.turns import AgentTurn
+from yuxi.modules.agents.models.threads import Conversation
+from yuxi.modules.agents.models.messages import Message
+from yuxi.modules.workspace.models import Project
+from yuxi.modules.identity.models import User
+from yuxi.shared.datetime import utc_now_naive
 
 
 async def create_agent_run(

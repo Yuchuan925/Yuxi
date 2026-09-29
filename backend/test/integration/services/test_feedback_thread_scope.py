@@ -8,16 +8,13 @@ from fastapi import HTTPException
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from yuxi.services.feedback_service import submit_message_feedback_view
-from yuxi.storage.postgres.models_business import (
-    AgentRun,
-    AgentTurn,
-    Conversation,
-    Message,
-    MessageFeedback,
-    Project,
-    User,
-)
+from yuxi.modules.agents.services.feedback import submit_message_feedback_view
+from yuxi.modules.agents.models.runs import AgentRun
+from yuxi.modules.agents.models.turns import AgentTurn
+from yuxi.modules.agents.models.threads import Conversation
+from yuxi.modules.agents.models.messages import Message, MessageFeedback
+from yuxi.modules.workspace.models import Project
+from yuxi.modules.identity.models import User
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
 

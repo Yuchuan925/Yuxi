@@ -6,16 +6,16 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 from pymilvus import CollectionSchema, DataType, FieldSchema, Function, FunctionType
 
-import yuxi.knowledge.implementations.milvus as milvus_module
-from yuxi.knowledge.base import FileStatus, KnowledgeBase
-from yuxi.knowledge.chunking.ragflow_like.nlp import count_tokens
-from yuxi.knowledge.implementations.milvus import (
+import yuxi.modules.knowledge.implementations.milvus as milvus_module
+from yuxi.modules.knowledge.base import FileStatus, KnowledgeBase
+from yuxi.modules.knowledge.chunking.ragflow_like.nlp import count_tokens
+from yuxi.modules.knowledge.implementations.milvus import (
     CONTENT_ANALYZER_PARAMS,
     CONTENT_SPARSE_FIELD,
     VECTOR_METRIC_TYPE,
     MilvusKB,
 )
-from yuxi.knowledge.read_models import KnowledgeBaseConfig
+from yuxi.modules.knowledge.read_models import KnowledgeBaseConfig
 
 EMBEDDING_MODEL_SPEC = "test-provider:test-embedding"
 
@@ -158,8 +158,8 @@ class FakeKnowledgeFileRepository:
 
 
 def patch_file_repository(monkeypatch, file_repo: FakeKnowledgeFileRepository) -> None:
-    monkeypatch.setattr("yuxi.repositories.knowledge_file_repository.KnowledgeFileRepository", lambda: file_repo)
-    monkeypatch.setattr("yuxi.knowledge.implementations.milvus.KnowledgeFileRepository", lambda: file_repo)
+    monkeypatch.setattr("yuxi.modules.knowledge.repositories.files.KnowledgeFileRepository", lambda: file_repo)
+    monkeypatch.setattr("yuxi.modules.knowledge.implementations.milvus.KnowledgeFileRepository", lambda: file_repo)
 
 
 def make_chunk(index: int, content: str = "content") -> dict:
@@ -184,11 +184,11 @@ async def test_cleanup_database_resources_offloads_milvus_cleanup(monkeypatch):
         calls.append(name)
 
     monkeypatch.setattr(
-        "yuxi.knowledge.implementations.milvus.utility.has_collection",
+        "yuxi.modules.knowledge.implementations.milvus.utility.has_collection",
         lambda kb_id, using: record_cleanup("has_collection") or True,
     )
     monkeypatch.setattr(
-        "yuxi.knowledge.implementations.milvus.utility.drop_collection",
+        "yuxi.modules.knowledge.implementations.milvus.utility.drop_collection",
         lambda kb_id, using: record_cleanup("drop_collection"),
     )
 
@@ -200,7 +200,7 @@ async def test_cleanup_database_resources_offloads_milvus_cleanup(monkeypatch):
             record_cleanup("drop_graph_collections")
 
     monkeypatch.setattr(
-        "yuxi.knowledge.graphs.milvus_graph_vector_store.MilvusGraphVectorStore",
+        "yuxi.modules.knowledge.graphs.milvus_graph_vector_store.MilvusGraphVectorStore",
         FakeGraphVectorStore,
     )
 
@@ -399,7 +399,7 @@ async def test_cancellation_marks_file_retryable(monkeypatch, operation, expecte
             started.set()
             await asyncio.Event().wait()
 
-        monkeypatch.setattr("yuxi.services.ocr_service.parse_document", cancelled_step)
+        monkeypatch.setattr("yuxi.modules.documents.service.parse_document", cancelled_step)
         task = asyncio.create_task(
             kb.parse_file(
                 "db",
@@ -465,7 +465,7 @@ async def test_delete_file_chunks_only_resets_file_stats(monkeypatch):
             self.delete_calls.append(file_id)
             return 2
 
-    monkeypatch.setattr("yuxi.knowledge.implementations.milvus.KnowledgeChunkRepository", FakeChunkRepo)
+    monkeypatch.setattr("yuxi.modules.knowledge.implementations.milvus.KnowledgeChunkRepository", FakeChunkRepo)
     file_repo = FakeKnowledgeFileRepository(
         {"file-1": make_file_record(chunk_count=2, token_count=10, status=FileStatus.INDEXED)}
     )
@@ -498,7 +498,8 @@ async def test_delete_file_keeps_metadata_when_external_deletion_fails(monkeypat
     file_repo = FakeKnowledgeFileRepository({"file-1": make_file_record(chunk_count=2, token_count=10)})
     patch_file_repository(monkeypatch, file_repo)
     monkeypatch.setattr(
-        "yuxi.knowledge.graphs.milvus_graph_service.MilvusGraphService.delete_file_graph", AsyncMock(side_effect=error)
+        "yuxi.modules.knowledge.graphs.milvus_graph_service.MilvusGraphService.delete_file_graph",
+        AsyncMock(side_effect=error),
     )
     kb = make_kb(FakeCollection())
     kb._get_existing_milvus_collection = AsyncMock(return_value=FakeCollection())
@@ -521,7 +522,7 @@ async def test_database_cleanup_stops_when_collection_drop_fails(monkeypatch):
     monkeypatch.setattr(milvus_module.utility, "drop_collection", Mock(side_effect=error))
     graph_cleanup = Mock()
     monkeypatch.setattr(
-        "yuxi.knowledge.graphs.milvus_graph_vector_store.MilvusGraphVectorStore",
+        "yuxi.modules.knowledge.graphs.milvus_graph_vector_store.MilvusGraphVectorStore",
         lambda: types.SimpleNamespace(drop_graph_collections=graph_cleanup),
     )
     base_cleanup = AsyncMock(return_value={"message": "success"})
@@ -595,7 +596,7 @@ async def test_insert_chunks_to_stores_writes_pg_first_then_milvus_upsert(monkey
             event_log.append("pg")
             return []
 
-    monkeypatch.setattr("yuxi.knowledge.implementations.milvus.KnowledgeChunkRepository", FakeChunkRepo)
+    monkeypatch.setattr("yuxi.modules.knowledge.implementations.milvus.KnowledgeChunkRepository", FakeChunkRepo)
     kb = MilvusKB.__new__(MilvusKB)
     collection = FakeCollection()
 
@@ -637,7 +638,7 @@ async def test_insert_chunks_to_stores_retries_milvus_upsert_and_keeps_pg_facts(
             self.delete_calls.append(file_id)
             return 0
 
-    monkeypatch.setattr("yuxi.knowledge.implementations.milvus.KnowledgeChunkRepository", FakeChunkRepo)
+    monkeypatch.setattr("yuxi.modules.knowledge.implementations.milvus.KnowledgeChunkRepository", FakeChunkRepo)
     kb = MilvusKB.__new__(MilvusKB)
 
     class FlakyCollection(FakeCollection):
@@ -681,7 +682,7 @@ async def test_insert_chunks_to_stores_raises_after_retry_exhaustion_without_rol
             self.delete_calls.append(file_id)
             return 0
 
-    monkeypatch.setattr("yuxi.knowledge.implementations.milvus.KnowledgeChunkRepository", FakeChunkRepo)
+    monkeypatch.setattr("yuxi.modules.knowledge.implementations.milvus.KnowledgeChunkRepository", FakeChunkRepo)
     kb = MilvusKB.__new__(MilvusKB)
 
     class FailingCollection(FakeCollection):
@@ -711,7 +712,7 @@ async def test_insert_chunks_to_stores_propagates_pg_failure_without_milvus_writ
         async def batch_upsert(self, chunks):
             raise RuntimeError("pg boom")
 
-    monkeypatch.setattr("yuxi.knowledge.implementations.milvus.KnowledgeChunkRepository", FakeChunkRepo)
+    monkeypatch.setattr("yuxi.modules.knowledge.implementations.milvus.KnowledgeChunkRepository", FakeChunkRepo)
     kb = MilvusKB.__new__(MilvusKB)
     collection = FakeCollection()
     chunks = [make_chunk(index) for index in range(2)]

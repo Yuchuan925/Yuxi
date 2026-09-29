@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from yuxi.services import langfuse_service as svc
+import yuxi.modules.agents.services.tracing as svc
 
 
 class _FakeLangfuseClient:

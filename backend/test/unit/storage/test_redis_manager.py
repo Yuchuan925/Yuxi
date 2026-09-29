@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import pytest
-import yuxi.storage.redis.manager as redis_manager
-from yuxi.storage.redis import RedisConfig
+import yuxi.infrastructure.redis.manager as redis_manager
+from yuxi.infrastructure.redis import RedisConfig
 
 pytestmark = pytest.mark.unit
 

@@ -7,10 +7,10 @@ import pytest
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import END, START, MessagesState, StateGraph
-from yuxi.models.chat import load_chat_model
-from yuxi.models.utils import parse_assistant_message_body
-from yuxi.models.providers.cache import ModelInfo
-from yuxi.services.agents.execution import _protocol_event_yuxi_event
+from yuxi.modules.models.chat import load_chat_model
+from yuxi.modules.models.utils import parse_assistant_message_body
+from yuxi.modules.models.providers.cache import ModelInfo
+from yuxi.modules.agents.services.execution import _protocol_event_yuxi_event
 
 REASONING = " First\nthen check. "
 TOOL = {"type": "function", "function": {"name": "inspect_code", "parameters": {"type": "object", "properties": {}}}}
@@ -94,7 +94,7 @@ def make_model(monkeypatch, provider, field="reasoning_content", *, enabled=True
         )
 
     info = ModelInfo(provider, "test", "chat", "Test", "test-key", "https://example.com/v1", "openai")
-    monkeypatch.setattr("yuxi.models.chat.model_cache.get_model_info", lambda _: info)
+    monkeypatch.setattr("yuxi.modules.models.chat.model_cache.get_model_info", lambda _: info)
     transport = httpx.MockTransport(respond)
     model = load_chat_model(
         info.spec,

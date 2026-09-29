@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from yuxi.models.rerank import DashscopeReranker, OpenAIReranker
+from yuxi.modules.models.rerank import DashscopeReranker, OpenAIReranker
 
 
 @pytest.fixture(params=[OpenAIReranker, DashscopeReranker])

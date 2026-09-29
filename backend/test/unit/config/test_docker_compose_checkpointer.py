@@ -133,7 +133,7 @@ def test_worker_healthcheck_uses_arq_health_contract_in_development_and_producti
             "CMD",
             "python",
             "-m",
-            "yuxi.services.worker_health",
+            "yuxi.workers.health",
         ]
 
 
@@ -142,7 +142,7 @@ def test_worker_starts_owned_entrypoint_in_development_and_production():
     project_root = _project_root()
     for filename in ("docker-compose.yml", "docker-compose.prod.yml"):
         compose = yaml.safe_load((project_root / filename).read_text())
-        assert "python -m server.worker_main" in compose["services"]["worker"]["command"]
+        assert "python -m yuxi.workers.main" in compose["services"]["worker"]["command"]
 
 
 def test_arq_dependency_changes_trigger_real_dispatch_regression():

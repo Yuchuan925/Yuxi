@@ -46,11 +46,12 @@ def ensure_live_api_schema():
         return
 
     async def verify_schema_version() -> None:
-        from yuxi.storage.postgres.manager import pg_manager
+        from yuxi.infrastructure.postgres.manager import pg_manager
+        from yuxi.infrastructure.postgres.schema import require_current_schema
 
         pg_manager.initialize()
         try:
-            await pg_manager.require_current_schema()
+            await require_current_schema(pg_manager)
         finally:
             # 池必须在创建它的临时事件循环退出前关闭。
             await pg_manager.close()

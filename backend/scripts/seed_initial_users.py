@@ -47,7 +47,7 @@ def load_project_env() -> None:
 
 
 async def ensure_uninitialized(session) -> None:
-    from yuxi.storage.postgres.models_business import User
+    from yuxi.modules.identity.models import User
 
     user_count = await session.scalar(select(func.count(User.id)))
     if user_count:
@@ -59,10 +59,10 @@ async def ensure_uninitialized(session) -> None:
 
 
 async def seed_initial_users() -> None:
-    from yuxi.utils.auth_utils import AuthUtils
-    from yuxi.storage.postgres.manager import pg_manager
-    from yuxi.storage.postgres.models_business import Department, User
-    from yuxi.utils.datetime_utils import utc_now_naive
+    from yuxi.modules.identity.security import AuthUtils
+    from yuxi.infrastructure.postgres.manager import pg_manager
+    from yuxi.modules.identity.models import Department, User
+    from yuxi.shared.datetime import utc_now_naive
 
     try:
         pg_manager.initialize()

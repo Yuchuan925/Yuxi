@@ -7,13 +7,13 @@ import pytest
 from fastapi import HTTPException
 from langchain.messages import AIMessage, HumanMessage, ToolMessage
 
-from yuxi.agents import context as agent_context
-from yuxi.workspace import paths as workspace_paths
+from yuxi.modules.agents.runtime import context as agent_context
+from yuxi.modules.workspace import paths as workspace_paths
 from test.unit.agent_context_fixtures import prepared_execution
-from yuxi.services.agents import execution as svc
-from yuxi.services.agents import messages as message_svc
-from yuxi.services.agents import state as state_svc
-from yuxi.services.agents import runs as lifecycle_runs
+import yuxi.modules.agents.services.execution as svc
+import yuxi.modules.agents.services.messages as message_svc
+import yuxi.modules.agents.services.state as state_svc
+import yuxi.modules.agents.services.runs as lifecycle_runs
 
 
 def _empty_agent_context(_uid: str) -> str:

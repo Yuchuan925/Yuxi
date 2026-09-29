@@ -5,8 +5,8 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from yuxi.knowledge.manager import KnowledgeBaseManager
-from yuxi.knowledge.read_models import KnowledgeBaseConfig
+from yuxi.modules.knowledge.manager import KnowledgeBaseManager
+from yuxi.modules.knowledge.read_models import KnowledgeBaseConfig
 
 pytestmark = pytest.mark.asyncio
 
@@ -21,7 +21,7 @@ async def test_executor_construction_is_offloaded_from_event_loop(tmp_path, monk
         construction_threads.append(threading.get_ident())
         return executor
 
-    monkeypatch.setattr("yuxi.knowledge.manager.KnowledgeBaseFactory.create", create_executor)
+    monkeypatch.setattr("yuxi.modules.knowledge.manager.KnowledgeBaseFactory.create", create_executor)
 
     assert await manager._get_or_create_kb_instance("fake") is executor
     assert construction_threads and construction_threads[0] != event_loop_thread
@@ -37,7 +37,7 @@ async def test_concurrent_executor_construction_is_deduplicated(tmp_path, monkey
         construction_count += 1
         return executor
 
-    monkeypatch.setattr("yuxi.knowledge.manager.KnowledgeBaseFactory.create", create_executor)
+    monkeypatch.setattr("yuxi.modules.knowledge.manager.KnowledgeBaseFactory.create", create_executor)
 
     results = await asyncio.gather(
         manager._get_or_create_kb_instance("fake"),
@@ -66,7 +66,7 @@ async def test_delete_database_cleans_resources_before_deleting_record(tmp_path,
 
     monkeypatch.setattr(manager, "get_kb_executor", get_kb_executor)
     monkeypatch.setattr(
-        "yuxi.repositories.knowledge_base_repository.KnowledgeBaseRepository",
+        "yuxi.modules.knowledge.repositories.bases.KnowledgeBaseRepository",
         FakeRepository,
     )
 
@@ -121,7 +121,7 @@ async def test_update_query_params_delegates_persistence_to_manager(tmp_path, mo
             return object()
 
     monkeypatch.setattr(
-        "yuxi.repositories.knowledge_base_repository.KnowledgeBaseRepository",
+        "yuxi.modules.knowledge.repositories.bases.KnowledgeBaseRepository",
         FakeRepository,
     )
 
@@ -148,7 +148,7 @@ async def test_consistency_check_delegates_type_resources_to_executor(tmp_path, 
 
     manager.kb_instances["milvus"] = FakeExecutor()
     monkeypatch.setattr(
-        "yuxi.repositories.knowledge_base_repository.KnowledgeBaseRepository",
+        "yuxi.modules.knowledge.repositories.bases.KnowledgeBaseRepository",
         FakeRepository,
     )
 

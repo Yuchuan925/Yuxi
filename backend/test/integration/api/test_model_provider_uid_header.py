@@ -11,10 +11,11 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from server.main import app
-from server.routers import model_provider_router
-from server.utils.auth_middleware import get_admin_user, get_db
-from yuxi.storage.postgres.manager import PostgresManager
+from yuxi.api.main import app
+import yuxi.api.routers.models as model_provider_router
+from yuxi.api.dependencies.auth import get_admin_user, get_db
+from yuxi.infrastructure.postgres.manager import PostgresManager
+from yuxi.migrations.schema import create_business_tables
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
 
@@ -63,7 +64,7 @@ async def test_provider_uid_header_http_round_trip_and_rejections(monkeypatch):
     async def no_cache_refresh():
         return None
 
-    await manager.create_business_tables()
+    await create_business_tables(manager)
     previous_overrides = app.dependency_overrides.copy()
     app.dependency_overrides[get_db] = provide_db
     app.dependency_overrides[get_admin_user] = provide_admin
@@ -86,7 +87,9 @@ async def test_provider_uid_header_http_round_trip_and_rejections(monkeypatch):
             assert "YUXI_UID_SIGNATURE_SECRET" in missing_secret.json()["detail"]
 
             monkeypatch.setenv("YUXI_UID_SIGNATURE_SECRET", "integration-test-signing-secret")
-            invalid_type = await client.post(path, json={**provider, "provider_id": f"pytest-invalid-{uid}", "include_user_uid": "true"})
+            invalid_type = await client.post(
+                path, json={**provider, "provider_id": f"pytest-invalid-{uid}", "include_user_uid": "true"}
+            )
             assert invalid_type.status_code == 422
 
             gemini = await client.post(

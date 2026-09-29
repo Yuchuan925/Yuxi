@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import os
 import uuid
 
@@ -11,29 +10,20 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from yuxi.storage.postgres.manager import BUSINESS_SCHEMA_VERSION, KNOWLEDGE_SCHEMA_VERSION, PostgresManager
-from yuxi.storage.postgres.models_knowledge import KnowledgeBase
+from yuxi.infrastructure.postgres.schema import BUSINESS_SCHEMA_VERSION, KNOWLEDGE_SCHEMA_VERSION
+from yuxi.migrations import main as schema_bootstrap
+from yuxi.migrations.schema import (
+    create_business_tables,
+    create_knowledge_tables,
+    create_schema_version_table,
+    ensure_business_schema,
+    record_schema_version,
+)
+from yuxi.infrastructure.postgres.schema import get_schema_versions, require_current_schema
+from yuxi.infrastructure.postgres.manager import PostgresManager
+from yuxi.modules.knowledge.models import KnowledgeBase
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
-
-LEGACY_TASK_TABLE_SQL = """
-CREATE TABLE tasks (
-    id VARCHAR(32) PRIMARY KEY,
-    name VARCHAR(255) NOT NULL,
-    type VARCHAR(64) NOT NULL,
-    status VARCHAR(32) NOT NULL,
-    progress DOUBLE PRECISION NOT NULL DEFAULT 0,
-    message TEXT NOT NULL DEFAULT '',
-    payload JSONB,
-    result JSONB,
-    error TEXT,
-    cancel_requested INTEGER NOT NULL DEFAULT 0,
-    created_at TIMESTAMP WITHOUT TIME ZONE DEFAULT NOW(),
-    updated_at TIMESTAMP WITHOUT TIME ZONE DEFAULT NOW(),
-    started_at TIMESTAMP WITHOUT TIME ZONE,
-    completed_at TIMESTAMP WITHOUT TIME ZONE
-)
-"""
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -124,9 +114,9 @@ async def test_fresh_business_schema_contains_input_lifecycle_without_request_ta
     """新环境只建立 Input、Receipt、Turn 和 Run 关系，重复收敛不回建 Request。"""
     schema, admin_engine, scoped_engine, manager = await _create_isolated_manager("pytest_agent_schema")
     try:
-        await manager.create_business_tables()
-        await manager.ensure_business_schema()
-        await manager.ensure_business_schema()
+        await create_business_tables(manager)
+        await ensure_business_schema(manager)
+        await ensure_business_schema(manager)
         async with scoped_engine.connect() as connection:
             tables = set(
                 (
@@ -188,242 +178,11 @@ async def test_fresh_business_schema_contains_input_lifecycle_without_request_ta
         await _drop_isolated_schema(schema, admin_engine, scoped_engine)
 
 
-async def test_v9_conversation_app_scope_does_not_trust_legacy_metadata() -> None:
-    """旧产品 metadata 即使伪造 APP 和 Public 来源也不能回填可信 APP 列。"""
-    schema, admin_engine, scoped_engine, manager = await _create_isolated_manager("pytest_public_app_scope")
-    try:
-        await manager.create_business_tables()
-        async with scoped_engine.begin() as connection:
-            await connection.execute(text("ALTER TABLE conversations DROP COLUMN app_id"))
-            await connection.execute(
-                text(
-                    "INSERT INTO users (username, uid, password_hash, role, login_failed_count, is_deleted) "
-                    "VALUES ('legacy-user', 'legacy-user', 'hash', 'user', 0, 0)"
-                )
-            )
-            await connection.execute(
-                text(
-                    "INSERT INTO projects (id, uid, selection_status, workdir_path, directory_mode) "
-                    "VALUES ('legacy-project', 'legacy-user', 'implicit', 'projects/legacy-project', 'managed')"
-                )
-            )
-            await connection.execute(
-                text(
-                    "INSERT INTO conversations (thread_id, uid, agent_id, project_id, is_pinned, extra_metadata) "
-                    "VALUES ('legacy-product-thread', 'legacy-user', 'main', 'legacy-project', false, "
-                    "CAST(:metadata AS json))"
-                ),
-                {"metadata": json.dumps({"app_id": "integration-app", "source": "public_api"})},
-            )
-
-        await manager.ensure_business_schema()
-        await manager.ensure_business_schema()
-        async with scoped_engine.connect() as connection:
-            row = (
-                await connection.execute(
-                    text(
-                        "SELECT app_id, extra_metadata::text AS metadata_json "
-                        "FROM conversations WHERE thread_id = 'legacy-product-thread'"
-                    )
-                )
-            ).one()
-        assert row.app_id is None
-        assert json.loads(row.metadata_json) == {"app_id": "integration-app", "source": "public_api"}
-    finally:
-        await _drop_isolated_schema(schema, admin_engine, scoped_engine)
-
-
-async def test_api_key_knowledge_scope_upgrades_legacy_constraint_idempotently() -> None:
-    """旧约束经历史 schema 收敛后仍需升级，重复迁移保持同一约束。"""
-    schema, admin_engine, scoped_engine, manager = await _create_isolated_manager("pytest_key_scope")
-    try:
-        await manager.create_business_tables()
-        async with scoped_engine.begin() as connection:
-            await connection.execute(text("ALTER TABLE api_keys DROP CONSTRAINT ck_api_keys_access_level"))
-            await connection.execute(
-                text(
-                    "ALTER TABLE api_keys ADD CONSTRAINT ck_api_keys_access_level "
-                    "CHECK (access_level IN ('full', 'agents'))"
-                )
-            )
-        await manager.ensure_business_schema()
-        async with scoped_engine.connect() as connection:
-            before_upgrade = await connection.scalar(
-                text(
-                    "SELECT pg_get_constraintdef(oid) FROM pg_constraint "
-                    "WHERE conrelid = 'api_keys'::regclass AND conname = 'ck_api_keys_access_level'"
-                )
-            )
-        assert before_upgrade is not None and "'knowledge'" not in before_upgrade
-        for _ in range(2):
-            await manager.ensure_api_key_knowledge_scope()
-        async with scoped_engine.connect() as connection:
-            definition = await connection.scalar(
-                text(
-                    "SELECT pg_get_constraintdef(oid) FROM pg_constraint "
-                    "WHERE conrelid = 'api_keys'::regclass AND conname = 'ck_api_keys_access_level'"
-                )
-            )
-        assert definition is not None and "'knowledge'" in definition
-    finally:
-        await _drop_isolated_schema(schema, admin_engine, scoped_engine)
-
-
-async def test_release_upgrade_adds_audit_columns_idempotently() -> None:
-    """发布版缺失的 Trace 与 Message 审计列由完整升级补齐，且可安全重放。"""
-    schema, admin_engine, scoped_engine, manager = await _create_isolated_manager("pytest_audit_schema")
-    try:
-        await manager.create_business_tables()
-        async with scoped_engine.begin() as connection:
-            await connection.execute(text("ALTER TABLE agent_runs DROP COLUMN langfuse_trace_id"))
-            audit_columns = (
-                "operation_id",
-                "started_at",
-                "finished_at",
-                "duration_ms",
-                "sequence",
-                "execution_status",
-                "usage",
-            )
-            for column in audit_columns:
-                await connection.execute(text(f"ALTER TABLE messages DROP COLUMN {column}"))
-
-        await manager.ensure_business_schema()
-        async with scoped_engine.begin() as connection:
-            await connection.execute(text("DROP INDEX uq_messages_run_role_operation_id"))
-            await connection.execute(
-                text(
-                    "CREATE UNIQUE INDEX uq_messages_run_operation_id "
-                    "ON messages(run_id, operation_id) WHERE operation_id IS NOT NULL"
-                )
-            )
-        await manager.ensure_business_schema()
-
-        async with scoped_engine.connect() as connection:
-            columns = set(
-                (
-                    await connection.execute(
-                        text(
-                            "SELECT table_name, column_name FROM information_schema.columns "
-                            "WHERE table_schema = :schema AND table_name IN ('agent_runs', 'messages')"
-                        ),
-                        {"schema": schema},
-                    )
-                ).all()
-            )
-            audit_indexes = {
-                name: definition
-                for name, definition in (
-                    await connection.execute(
-                        text(
-                            "SELECT indexname, indexdef FROM pg_indexes "
-                            "WHERE schemaname = :schema AND tablename = 'messages' "
-                            "AND indexname LIKE 'uq_messages_run%operation_id'"
-                        ),
-                        {"schema": schema},
-                    )
-                ).all()
-            }
-        assert ("agent_runs", "langfuse_trace_id") in columns
-        assert {("messages", column) for column in audit_columns} <= columns
-        assert "uq_messages_run_operation_id" not in audit_indexes
-        assert "(run_id, role, operation_id)" in audit_indexes["uq_messages_run_role_operation_id"]
-    finally:
-        await _drop_isolated_schema(schema, admin_engine, scoped_engine)
-
-
-async def test_public_end_user_columns_upgrade_existing_users_idempotently() -> None:
-    """现有用户保持 human，终端用户唯一键与形状约束可重放迁移。"""
-    schema, admin_engine, scoped_engine, manager = await _create_isolated_manager("pytest_public_end_user")
-    try:
-        await manager.create_business_tables()
-        async with scoped_engine.begin() as connection:
-            await connection.execute(
-                text(
-                    "INSERT INTO users (username, uid, password_hash, role, login_failed_count, is_deleted) "
-                    "VALUES ('old', 'old', 'hash', 'user', 0, 0)"
-                )
-            )
-            await connection.execute(text("ALTER TABLE users DROP CONSTRAINT uq_users_public_end_user_identity"))
-            await connection.execute(text("ALTER TABLE users DROP CONSTRAINT ck_users_public_end_user_shape"))
-            await connection.execute(text("ALTER TABLE users DROP CONSTRAINT fk_users_owner_user_id"))
-            for column in ("user_kind", "owner_user_id", "app_id", "end_user_id"):
-                await connection.execute(text(f"ALTER TABLE users DROP COLUMN {column}"))
-
-        await manager.ensure_business_schema()
-        await manager.ensure_business_schema()
-        async with scoped_engine.connect() as connection:
-            row = (
-                await connection.execute(text("SELECT user_kind, owner_user_id, app_id, end_user_id FROM users"))
-            ).one()
-            constraint_names = set(
-                (
-                    await connection.execute(
-                        text("SELECT conname FROM pg_constraint WHERE conrelid = 'users'::regclass")
-                    )
-                ).scalars()
-            )
-            index_names = set(
-                (await connection.execute(text("SELECT indexname FROM pg_indexes WHERE tablename = 'users'"))).scalars()
-            )
-        assert tuple(row) == ("human", None, None, None)
-        assert {"fk_users_owner_user_id", "ck_users_public_end_user_shape"}.issubset(constraint_names)
-        assert "uq_users_public_end_user_identity" in index_names
-    finally:
-        await _drop_isolated_schema(schema, admin_engine, scoped_engine)
-
-
-async def test_knowledge_v1_to_v2_adds_file_attempt_owner_idempotently() -> None:
-    """知识 schema 相邻升级为文件中间态增加 Task attempt fencing。"""
-    schema, admin_engine, scoped_engine, manager = await _create_isolated_manager("pytest_knowledge_schema")
-    try:
-        async with scoped_engine.begin() as connection:
-            await connection.execute(
-                text(
-                    "CREATE TABLE knowledge_files ("
-                    "id SERIAL PRIMARY KEY, file_id VARCHAR(64) NOT NULL, status VARCHAR(32), "
-                    "error_message TEXT, updated_at TIMESTAMPTZ)"
-                )
-            )
-            await connection.execute(
-                text("INSERT INTO knowledge_files (file_id, status) VALUES ('legacy-file', 'parsing')")
-            )
-
-        await manager.upgrade_knowledge_schema_v1_to_v2()
-        await manager.upgrade_knowledge_schema_v1_to_v2()
-
-        async with scoped_engine.connect() as connection:
-            columns = set(
-                (
-                    await connection.execute(
-                        text(
-                            "SELECT column_name FROM information_schema.columns "
-                            "WHERE table_schema = :schema AND table_name = 'knowledge_files'"
-                        ),
-                        {"schema": schema},
-                    )
-                ).scalars()
-            )
-            legacy = (
-                await connection.execute(
-                    text("SELECT status, error_message FROM knowledge_files WHERE file_id = 'legacy-file'")
-                )
-            ).one()
-        assert {"processing_task_id", "processing_owner"} <= columns
-        assert tuple(legacy) == (
-            "error_parsing",
-            "service_interrupted: 旧执行实例中断，处理结果未知，请重试",
-        )
-        assert KNOWLEDGE_SCHEMA_VERSION == 2
-    finally:
-        await _drop_isolated_schema(schema, admin_engine, scoped_engine)
-
-
 async def test_knowledge_timestamp_defaults_match_database_clock_in_non_utc_session() -> None:
     """带时区字段不依赖 PostgreSQL 会话时区解释无时区 UTC。"""
     schema, admin_engine, scoped_engine, manager = await _create_isolated_manager("pytest_knowledge_clock")
     try:
-        await manager.create_knowledge_tables()
+        await create_knowledge_tables(manager)
         session_factory = async_sessionmaker(scoped_engine, expire_on_commit=False)
         async with session_factory.begin() as session:
             await session.execute(text("SET TIME ZONE 'Asia/Shanghai'"))
@@ -444,73 +203,16 @@ async def test_knowledge_timestamp_defaults_match_database_clock_in_non_utc_sess
         await _drop_isolated_schema(schema, admin_engine, scoped_engine)
 
 
-async def test_unversioned_knowledge_baseline_adds_timestamp_before_owner_convergence() -> None:
-    """未版本化的旧表缺少 updated_at 时仍能收敛中间态。"""
-    schema, admin_engine, scoped_engine, manager = await _create_isolated_manager("pytest_knowledge_baseline")
+async def test_unversioned_existing_yuxi_table_blocks_fresh_schema_initialization(monkeypatch) -> None:
+    """未版本化的旧表不得被空库初始化误认为全新部署。"""
+    schema, admin_engine, scoped_engine, manager = await _create_isolated_manager("pytest_fresh_only")
+    monkeypatch.setattr(schema_bootstrap, "pg_manager", manager)
     try:
-        await manager.create_knowledge_tables()
+        await schema_bootstrap._require_empty_database()
         async with scoped_engine.begin() as connection:
-            await connection.execute(
-                text("INSERT INTO knowledge_bases (kb_id, name, kb_type) VALUES ('legacy-kb', 'legacy', 'milvus')")
-            )
-            await connection.execute(
-                text(
-                    "INSERT INTO knowledge_files (file_id, kb_id, filename, status) "
-                    "VALUES ('legacy-file', 'legacy-kb', 'legacy.txt', 'indexing')"
-                )
-            )
-            await connection.execute(text("ALTER TABLE knowledge_files DROP COLUMN processing_task_id"))
-            await connection.execute(text("ALTER TABLE knowledge_files DROP COLUMN processing_owner"))
-            await connection.execute(text("ALTER TABLE knowledge_files DROP COLUMN updated_at"))
-
-        await manager.create_knowledge_tables()
-        await manager.ensure_knowledge_schema()
-
-        async with scoped_engine.connect() as connection:
-            row = (
-                await connection.execute(
-                    text(
-                        "SELECT status, error_message, updated_at, processing_task_id, processing_owner "
-                        "FROM knowledge_files WHERE file_id = 'legacy-file'"
-                    )
-                )
-            ).one()
-        assert row.status == "error_indexing"
-        assert row.error_message == "service_interrupted: 旧执行实例中断，处理结果未知，请重试"
-        assert row.updated_at is not None
-        assert row.processing_task_id is None
-        assert row.processing_owner is None
-    finally:
-        await _drop_isolated_schema(schema, admin_engine, scoped_engine)
-
-
-async def test_unversioned_baseline_repairs_existing_legacy_task_table() -> None:
-    """未版本化数据库的 create_all + ensure 路径必须补齐旧 tasks 表。"""
-    schema, admin_engine, scoped_engine, manager = await _create_isolated_manager("pytest_task_baseline")
-
-    try:
-        await manager.create_business_tables()
-        async with scoped_engine.begin() as connection:
-            await connection.execute(text("DROP TABLE tasks"))
-            await connection.execute(text(LEGACY_TASK_TABLE_SQL))
-            await connection.execute(
-                text(
-                    "INSERT INTO tasks (id, name, type, status) "
-                    "VALUES ('legacy-pending', 'legacy', 'knowledge_parse', 'pending')"
-                )
-            )
-
-        await manager.ensure_business_schema()
-
-        async with scoped_engine.connect() as connection:
-            row = (
-                await connection.execute(
-                    text(
-                        "SELECT status, error, handler_version, lease_expires_at FROM tasks WHERE id = 'legacy-pending'"
-                    )
-                )
-            ).one()
-        assert tuple(row) == ("pending", None, 0, None)
+            await connection.execute(text("CREATE TABLE conversations (id integer PRIMARY KEY)"))
+        with pytest.raises(RuntimeError, match="conversations"):
+            await schema_bootstrap._require_empty_database()
     finally:
         await _drop_isolated_schema(schema, admin_engine, scoped_engine)
 
@@ -521,100 +223,22 @@ async def test_schema_version_is_persisted_and_runtime_validation_fails_closed()
 
     try:
         with pytest.raises(RuntimeError, match="business=missing"):
-            await manager.require_current_schema()
+            await require_current_schema(manager)
 
-        await manager.create_schema_version_table()
-        await manager.record_schema_version("business", BUSINESS_SCHEMA_VERSION + 1)
+        await create_schema_version_table(manager)
+        await record_schema_version(manager, "business", BUSINESS_SCHEMA_VERSION + 1)
         with pytest.raises(RuntimeError, match=f"business={BUSINESS_SCHEMA_VERSION + 1}"):
-            await manager.require_current_schema()
+            await require_current_schema(manager)
 
-        await manager.record_schema_version("business", BUSINESS_SCHEMA_VERSION)
+        await record_schema_version(manager, "business", BUSINESS_SCHEMA_VERSION)
         with pytest.raises(RuntimeError, match="knowledge=missing"):
-            await manager.require_current_schema()
+            await require_current_schema(manager)
 
-        await manager.record_schema_version("knowledge", KNOWLEDGE_SCHEMA_VERSION)
-        await manager.require_current_schema()
-        assert await manager.get_schema_versions() == {
+        await record_schema_version(manager, "knowledge", KNOWLEDGE_SCHEMA_VERSION)
+        await require_current_schema(manager)
+        assert await get_schema_versions(manager) == {
             "business": BUSINESS_SCHEMA_VERSION,
             "knowledge": KNOWLEDGE_SCHEMA_VERSION,
         }
     finally:
         await _drop_isolated_schema(schema, admin_engine, scoped_engine)
-
-
-@pytest.mark.parametrize("column_type", ["json", "jsonb"])
-@pytest.mark.parametrize("fail_version_write", [False, True])
-async def test_resource_selection_migration_is_atomic_and_does_not_repeat(fail_version_write, column_type):
-    """真实 PostgreSQL 保留旧配置语义，版本失败回滚且重试不改新空数组。"""
-    schema, admin_engine, engine, manager = await _create_isolated_manager("resource_selection")
-    try:
-        await manager.create_schema_version_table()
-        await manager.record_schema_version("business", 8)
-        async with engine.begin() as conn:
-            await conn.execute(text(f"CREATE TABLE agents (id integer PRIMARY KEY, config_json {column_type})"))
-            await conn.execute(
-                text("INSERT INTO agents (id, config_json) VALUES (:id, CAST(:config AS jsonb))"),
-                [
-                    {"id": index, "config": json.dumps(config)}
-                    for index, config in enumerate(
-                        [
-                            {
-                                "context": {
-                                    "tools": None,
-                                    "knowledges": None,
-                                    "skills": None,
-                                    "subagents": [],
-                                    "mcps": None,
-                                    "preload_skills": None,
-                                },
-                                "extra": 42,
-                            },
-                            {"context": {"tools": [], "skills": ["fixed"], "subagents": ["fixed"]}},
-                            {"context": {}},
-                            {"context": {"subagents": None}},
-                        ],
-                        start=1,
-                    )
-                ],
-            )
-            if fail_version_write:
-                await conn.execute(
-                    text("ALTER TABLE yuxi_schema_migrations ADD CONSTRAINT reject_v9 CHECK (version < 9)")
-                )
-        if fail_version_write:
-            from sqlalchemy.exc import IntegrityError
-
-            with pytest.raises(IntegrityError):
-                await manager.upgrade_agent_resource_selection()
-            async with engine.connect() as conn:
-                old = await conn.scalar(text("SELECT config_json FROM agents WHERE id = 1"))
-            assert old["context"]["subagents"] == []
-            assert old["context"]["tools"] is None
-            assert await manager.get_schema_versions() == {"business": 8}
-            return
-        await manager.upgrade_agent_resource_selection()
-        async with engine.begin() as conn:
-            rows = dict((await conn.execute(text("SELECT id, config_json FROM agents"))).all())
-            assert rows[1] == {
-                "context": {
-                    "tools": "all",
-                    "knowledges": "all",
-                    "skills": "all",
-                    "subagents": "all",
-                    "mcps": [],
-                    "preload_skills": [],
-                },
-                "extra": 42,
-            }
-            assert rows[2] == {"context": {"tools": [], "skills": ["fixed"], "subagents": ["fixed"]}}
-            assert rows[3] == {"context": {}}
-            assert rows[4] == {"context": {"subagents": "all"}}
-            await conn.execute(text("""UPDATE agents SET config_json = '{"context":{"subagents":[]}}' WHERE id = 1"""))
-        await manager.upgrade_agent_resource_selection()
-        async with engine.connect() as conn:
-            assert await conn.scalar(text("SELECT config_json FROM agents WHERE id = 1")) == {
-                "context": {"subagents": []}
-            }
-        assert await manager.get_schema_versions() == {"business": 9}
-    finally:
-        await _drop_isolated_schema(schema, admin_engine, engine)

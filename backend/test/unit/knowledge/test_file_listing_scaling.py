@@ -2,8 +2,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from yuxi.knowledge.manager import KnowledgeBaseManager
-from yuxi.permissions import ResourcePermission
+from yuxi.modules.knowledge.manager import KnowledgeBaseManager
+from yuxi.modules.identity.permissions import ResourcePermission
 
 pytestmark = pytest.mark.asyncio
 
@@ -140,23 +140,23 @@ def patch_repositories(monkeypatch):
     FakeKnowledgeFileRepository.exists_calls = []
     FakeKnowledgeFileRepository.action_id_calls = []
     monkeypatch.setattr(
-        "yuxi.repositories.knowledge_base_repository.KnowledgeBaseRepository",
+        "yuxi.modules.knowledge.repositories.bases.KnowledgeBaseRepository",
         FakeKnowledgeBaseRepository,
     )
     monkeypatch.setattr(
-        "yuxi.repositories.knowledge_file_repository.KnowledgeFileRepository",
+        "yuxi.modules.knowledge.repositories.files.KnowledgeFileRepository",
         FakeKnowledgeFileRepository,
     )
     monkeypatch.setattr(
-        "yuxi.repositories.user_repository.UserRepository",
+        "yuxi.modules.identity.repositories.users.UserRepository",
         FakeUserRepository,
     )
     monkeypatch.setattr(
-        "yuxi.knowledge.manager.KnowledgeBaseFactory.is_type_supported",
+        "yuxi.modules.knowledge.manager.KnowledgeBaseFactory.is_type_supported",
         staticmethod(lambda _kb_type: True),
     )
     monkeypatch.setattr(
-        "yuxi.knowledge.manager.KnowledgeBaseFactory.get_kb_class",
+        "yuxi.modules.knowledge.manager.KnowledgeBaseFactory.get_kb_class",
         staticmethod(lambda _kb_type: FakeKnowledgeBaseClass),
     )
 
@@ -230,11 +230,11 @@ async def test_get_databases_skips_rows_with_invalid_metadata(monkeypatch):
             ]
 
     monkeypatch.setattr(
-        "yuxi.knowledge.manager.KnowledgeBaseFactory.get_kb_class",
+        "yuxi.modules.knowledge.manager.KnowledgeBaseFactory.get_kb_class",
         staticmethod(lambda kb_type: BrokenKnowledgeBaseClass if kb_type == "notion" else FakeKnowledgeBaseClass),
     )
     monkeypatch.setattr(
-        "yuxi.repositories.knowledge_base_repository.KnowledgeBaseRepository",
+        "yuxi.modules.knowledge.repositories.bases.KnowledgeBaseRepository",
         MultiKnowledgeBaseRepository,
     )
 
@@ -253,7 +253,7 @@ async def test_get_databases_by_user_sets_permission_and_redacts_readonly_secret
             return [record]
 
     monkeypatch.setattr(
-        "yuxi.repositories.knowledge_base_repository.KnowledgeBaseRepository",
+        "yuxi.modules.knowledge.repositories.bases.KnowledgeBaseRepository",
         SecretKnowledgeBaseRepository,
     )
     manager = KnowledgeBaseManager("/tmp/yuxi-test")

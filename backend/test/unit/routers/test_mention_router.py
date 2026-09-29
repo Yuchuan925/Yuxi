@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
-router = importlib.import_module("server.routers.mention_router")
+router = importlib.import_module("yuxi.api.routers.agents.mentions")
 
 
 @pytest.mark.asyncio

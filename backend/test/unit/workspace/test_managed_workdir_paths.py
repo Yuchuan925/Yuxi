@@ -4,7 +4,7 @@ from uuid import UUID
 
 import pytest
 
-from yuxi.workspace import paths
+from yuxi.modules.workspace import paths
 
 
 @pytest.mark.parametrize(

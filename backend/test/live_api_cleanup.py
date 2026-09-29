@@ -12,9 +12,9 @@ from pathlib import PurePosixPath
 
 import asyncpg
 import httpx
-from yuxi.workspace.paths import normalize_workdir_path, user_workdir_host_dir
-from yuxi.config import get_user_data_dir
-from yuxi.storage.postgres.models_business import AGENT_RUN_TERMINAL_STATUSES
+from yuxi.modules.workspace.paths import normalize_workdir_path, user_workdir_host_dir
+from yuxi.infrastructure.runtime_settings import get_user_data_dir
+from yuxi.modules.agents.models.runs import AGENT_RUN_TERMINAL_STATUSES
 
 TEST_RESOURCE_PREFIX = "YUXI_TEST_"
 TEST_CONVERSATION_TITLE_PREFIX = f"{TEST_RESOURCE_PREFIX}CONVERSATION_"

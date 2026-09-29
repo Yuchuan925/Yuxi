@@ -9,18 +9,15 @@ import pytest_asyncio
 from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from yuxi.services.agents.messages import get_thread_history
-from yuxi.services.agents.scope import ActorScope
-from yuxi.storage.postgres.models_business import (
-    AgentInput,
-    AgentRun,
-    AgentTurn,
-    Base,
-    Conversation,
-    Message,
-    Project,
-    ToolCall,
-)
+from yuxi.modules.agents.services.messages import get_thread_history
+from yuxi.modules.agents.services.scope import ActorScope
+from yuxi.modules.agents.models.inputs import AgentInput
+from yuxi.modules.agents.models.runs import AgentRun
+from yuxi.modules.agents.models.turns import AgentTurn
+from yuxi.infrastructure.postgres.base import Base
+from yuxi.modules.agents.models.threads import Conversation
+from yuxi.modules.agents.models.messages import Message, ToolCall
+from yuxi.modules.workspace.models import Project
 
 pytestmark = [pytest.mark.unit, pytest.mark.asyncio]
 SCOPE = ActorScope(uid="user-1", app_id=None)

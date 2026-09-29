@@ -8,15 +8,15 @@ import uuid
 
 import pytest
 
-from yuxi.agents.backends.sandbox import ProvisionerSandboxBackend, get_sandbox_provider
-from yuxi.workspace.paths import (
+from yuxi.modules.agents.runtime.backends.sandbox import ProvisionerSandboxBackend, get_sandbox_provider
+from yuxi.modules.workspace.paths import (
     ensure_user_workspace,
     global_user_data_dir,
     user_workspace_dir,
     workspace_uid_dirname,
 )
-from yuxi.agents.skills.service import get_user_skills_root_dir, sync_user_accessible_skills_async
-from yuxi.config import get_skill_projection_dir, get_user_data_dir
+from yuxi.modules.extensions.skills.projection import get_user_skills_root_dir, sync_user_accessible_skills_async
+from yuxi.infrastructure.runtime_settings import get_skill_projection_dir, get_user_data_dir
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
 

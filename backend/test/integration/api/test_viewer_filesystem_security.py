@@ -7,7 +7,7 @@ from pathlib import Path
 import asyncpg
 import pytest
 from test.live_api_cleanup import make_test_conversation_title
-from yuxi.workspace.paths import user_workdir_host_dir
+from yuxi.modules.workspace.paths import user_workdir_host_dir
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
 

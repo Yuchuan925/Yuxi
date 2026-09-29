@@ -141,27 +141,29 @@ def install(probe, app=None):
         return
     _installed = True
     modules = (
-        "yuxi.services.agents.inputs",
-        "yuxi.services.agents.scheduler",
-        "yuxi.services.agents.turns",
-        "yuxi.services.agents.runs",
-        "yuxi.services.agents.preparation",
-        "yuxi.services.workdir_service",
-        "yuxi.services.memory_service",
-        "yuxi.services.agents.transport",
-        "yuxi.agents.context",
-        "yuxi.agents.skills.runtime",
-        "yuxi.agents.skills.service",
-        "yuxi.agents.backends.composite",
-        "yuxi.agents.buildin.chatbot.graph",
-        "server.utils.auth_middleware",
+        "yuxi.modules.agents.services.inputs",
+        "yuxi.modules.agents.services.scheduler",
+        "yuxi.modules.agents.services.turns",
+        "yuxi.modules.agents.services.runs",
+        "yuxi.modules.agents.services.preparation",
+        "yuxi.modules.workspace.services.bindings",
+        "yuxi.modules.agents.services.memory",
+        "yuxi.modules.agents.services.transport",
+        "yuxi.modules.agents.runtime.context",
+        "yuxi.modules.extensions.skills.runtime",
+        "yuxi.modules.extensions.skills.service",
+        "yuxi.modules.agents.runtime.backends.composite",
+        "yuxi.modules.agents.runtime.builtin.chatbot.graph",
+        "yuxi.api.dependencies.auth",
     )
     for name in modules:
         importlib.import_module(name)
 
     replacements = {}
     for module_name, module in list(sys.modules.items()):
-        if module is None or not (module_name in modules or module_name.startswith("yuxi.repositories.")):
+        if module is None or not (
+            module_name in modules or ".repositories." in module_name and module_name.startswith("yuxi.modules.")
+        ):
             continue
         for value in vars(module).copy().values():
             if inspect.isfunction(value) and value.__module__ == module_name:

@@ -2,7 +2,7 @@
 
 状态：implemented
 类型：bug-fix
-Owner：backend/package/yuxi/knowledge/parser/unified.py
+Owner：backend/yuxi/infrastructure/document_parsing/unified.py
 
 ## 问题
 

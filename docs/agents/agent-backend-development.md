@@ -4,7 +4,7 @@
 
 ## 新增预置角色
 
-仅改变提示词、模型或能力选择时，在 `backend/package/yuxi/agents/presets/` 新增一个 Python 文件并导出 `PRESET`；子智能体定义放在其 `subagents/` 子目录。发现逻辑递归读取文件，角色类型仍由 `backend_id` 决定：
+仅改变提示词、模型或能力选择时，在 `backend/yuxi/modules/agents/runtime/presets/` 新增一个 Python 文件并导出 `PRESET`；子智能体定义放在其 `subagents/` 子目录。发现逻辑递归读取文件，角色类型仍由 `backend_id` 决定：
 
 ```python
 from yuxi.agents.presets import AgentPreset
@@ -32,7 +32,7 @@ API 启动时按文件名发现所有非下划线开头的 Python 模块，校�
 随服务发布的 Agent 后端放在：
 
 ```text
-backend/package/yuxi/agents/buildin/<your_agent>/
+backend/yuxi/modules/agents/runtime/builtin/<your_agent>/
 ├── __init__.py
 ├── context.py
 └── graph.py
@@ -109,10 +109,10 @@ worker 和主动压缩在执行入口显式调用 `prepare_agent_runtime_context
 
 ## 源码和测试
 
-- [BaseAgent](https://github.com/xerrors/Yuxi/blob/main/backend/package/yuxi/agents/base.py)
-- [Context](https://github.com/xerrors/Yuxi/blob/main/backend/package/yuxi/agents/context.py)
-- [Chatbot graph](https://github.com/xerrors/Yuxi/blob/main/backend/package/yuxi/agents/buildin/chatbot/graph.py)
-- [执行后端显式注册](https://github.com/xerrors/Yuxi/blob/main/backend/package/yuxi/agents/buildin/__init__.py)
+- [BaseAgent](https://github.com/xerrors/Yuxi/blob/main/backend/yuxi/modules/agents/runtime/base.py)
+- [Context](https://github.com/xerrors/Yuxi/blob/main/backend/yuxi/modules/agents/runtime/context.py)
+- [Chatbot graph](https://github.com/xerrors/Yuxi/blob/main/backend/yuxi/modules/agents/runtime/builtin/chatbot/graph.py)
+- [执行后端显式注册](https://github.com/xerrors/Yuxi/blob/main/backend/yuxi/modules/agents/runtime/builtin/__init__.py)
 - [Agent unit tests](https://github.com/xerrors/Yuxi/tree/main/backend/test/unit/agents)
 - [Agent integration/E2E](https://github.com/xerrors/Yuxi/tree/main/backend/test/e2e)
 

@@ -14,14 +14,15 @@ from fastapi import FastAPI
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from yuxi.knowledge.manager import KnowledgeBaseManager
-from yuxi.knowledge.implementations.milvus import MilvusKB
-from yuxi.repositories import knowledge_base_repository, knowledge_file_repository
-from yuxi.repositories.knowledge_base_repository import KnowledgeBaseRepository
-from yuxi.repositories.knowledge_file_repository import KnowledgeFileRepository
-from yuxi.storage.postgres.models_knowledge import KnowledgeBase, KnowledgeChunk, KnowledgeFile
-from yuxi.storage.redis import close_async_redis_client, get_async_redis_client
-from server.routers import knowledge_router
+from yuxi.modules.knowledge.manager import KnowledgeBaseManager
+from yuxi.modules.knowledge.implementations.milvus import MilvusKB
+import yuxi.modules.knowledge.repositories.bases as knowledge_base_repository
+import yuxi.modules.knowledge.repositories.files as knowledge_file_repository
+from yuxi.modules.knowledge.repositories.bases import KnowledgeBaseRepository
+from yuxi.modules.knowledge.repositories.files import KnowledgeFileRepository
+from yuxi.modules.knowledge.models import KnowledgeBase, KnowledgeChunk, KnowledgeFile
+from yuxi.infrastructure.redis import close_async_redis_client, get_async_redis_client
+import yuxi.api.routers.knowledge.management as knowledge_router
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
 

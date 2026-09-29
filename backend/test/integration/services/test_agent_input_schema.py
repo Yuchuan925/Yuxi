@@ -10,14 +10,16 @@ from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from yuxi.repositories.agent_run_repository import AgentRunRepository
-from yuxi.repositories.agents.input import AgentInputRepository
-from yuxi.repositories.agents.input_receipt import AgentInputReceiptRepository
-from yuxi.repositories.agents.turn import AgentTurnRepository
-from yuxi.services.agents.scheduler import claim_follow_up
-from yuxi.services.workdir_service import WorkdirBinding
-from yuxi.storage.postgres.manager import PostgresManager
-from yuxi.storage.postgres.models_business import AgentInput, AgentRun, AgentTurn, Conversation, Message, SubagentThread
+from yuxi.modules.agents.repositories.runs import AgentRunRepository
+from yuxi.modules.agents.repositories.input import AgentInputRepository
+from yuxi.modules.agents.repositories.input_receipt import AgentInputReceiptRepository
+from yuxi.modules.agents.repositories.turn import AgentTurnRepository
+from yuxi.infrastructure.postgres.manager import PostgresManager
+from yuxi.migrations.schema import create_business_tables
+from yuxi.modules.agents.models.inputs import AgentInput
+from yuxi.modules.agents.models.turns import AgentTurn
+from yuxi.modules.agents.models.threads import Conversation, SubagentThread
+from yuxi.modules.agents.models.messages import Message
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
 
@@ -54,7 +56,7 @@ async def _create_schema():
     PostgresManager.__init__(manager)
     manager.async_engine = engine
     manager._initialized = True
-    await manager.create_business_tables()
+    await create_business_tables(manager)
     async with engine.begin() as connection:
         await connection.execute(
             text(
@@ -516,81 +518,5 @@ async def test_turn_usage_counts_parent_and_child_published_model_output_with_ex
                 key: sum(message.usage[key] for message in audits)
                 for key in ("input_tokens", "output_tokens", "total_tokens")
             } == {"input_tokens": 9, "output_tokens": 6, "total_tokens": 15}
-    finally:
-        await _drop_schema(schema, admin_engine, engine)
-
-
-async def test_input_api_key_origin_survives_same_version_migration_and_fifo_claim() -> None:
-    """同版本补列后，Key 与 JWT Input 的首次来源按 FIFO 固定到各自 Run。"""
-    schema, admin_engine, engine = await _create_schema()
-    try:
-        async with engine.begin() as connection:
-            await connection.execute(text("ALTER TABLE agent_inputs DROP COLUMN api_key_id"))
-        manager = object.__new__(PostgresManager)
-        PostgresManager.__init__(manager)
-        manager.async_engine = engine
-        manager._initialized = True
-        await manager.ensure_agent_input_api_key_id()
-        await manager.ensure_agent_input_api_key_id()
-
-        sessions = async_sessionmaker(engine, expire_on_commit=False)
-        async with sessions() as db:
-            conversation = await db.scalar(select(Conversation).where(Conversation.thread_id == "input-thread"))
-            input_repo = AgentInputRepository(db)
-            receipt_repo = AgentInputReceiptRepository(db)
-            for input_id, api_key_id in (("key-input", 42), ("jwt-input", None)):
-                item = await input_repo.create(
-                    input_id=input_id,
-                    thread_id=conversation.thread_id,
-                    uid=conversation.uid,
-                    app_id=None,
-                    api_key_id=api_key_id,
-                    agent_slug="main",
-                    kind="follow_up",
-                )
-                receipt = await receipt_repo.create(
-                    receipt_id=f"{input_id}-receipt",
-                    idempotency_key=f"{input_id}-key",
-                    uid=conversation.uid,
-                    app_id=None,
-                    thread_id=conversation.thread_id,
-                    event_type="message",
-                    intent_hash=f"{input_id}-hash",
-                    input_id=item.id,
-                )
-                message = Message(conversation_id=conversation.id, role="user", content=input_id)
-                db.add(message)
-                await db.flush()
-                await input_repo.add_messages(input_id=item.id, receipt_id=receipt.id, message_ids=[message.id])
-            await db.commit()
-
-        binding = WorkdirBinding(
-            conversation_id=conversation.id,
-            thread_id=conversation.thread_id,
-            uid=conversation.uid,
-            project_id="input-project",
-            workdir_path="projects/input-project",
-            directory_mode="managed",
-        )
-        async with sessions() as db:
-            conversation = await db.scalar(select(Conversation).where(Conversation.thread_id == "input-thread"))
-            first_dispatch = await claim_follow_up(db=db, conversation=conversation, binding=binding)
-            assert first_dispatch is not None
-            first_run = await db.get(AgentRun, first_dispatch.run_id)
-            first_run.status = "completed"
-            first_turn = await db.get(AgentTurn, first_run.turn_id)
-            await AgentTurnRepository(db).set_terminal(first_turn, status="completed", result_run_id=first_run.id)
-            second_dispatch = await claim_follow_up(db=db, conversation=conversation, binding=binding)
-            assert second_dispatch is not None
-            await db.commit()
-
-        async with sessions() as db:
-            key_input = await db.get(AgentInput, "key-input")
-            jwt_input = await db.get(AgentInput, "jwt-input")
-            first_run = await db.get(AgentRun, first_dispatch.run_id)
-            second_run = await db.get(AgentRun, second_dispatch.run_id)
-            assert (key_input.api_key_id, first_run.input_id, first_run.api_key_id) == (42, key_input.id, 42)
-            assert (jwt_input.api_key_id, second_run.input_id, second_run.api_key_id) == (None, jwt_input.id, None)
-            assert key_input.status == jwt_input.status == "consumed"
     finally:
         await _drop_schema(schema, admin_engine, engine)

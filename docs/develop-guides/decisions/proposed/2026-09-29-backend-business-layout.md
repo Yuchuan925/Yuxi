@@ -6,19 +6,19 @@ Owner：backend/pyproject.toml
 
 ## 问题
 
-本提案面向后端维护者，基于 2026-09-29 工作目录中的实际源码，定义从 `backend/yuxi/` 开始的目标文件树和来源映射。工作目录包含进行中的 Agent 生命周期调整；本提案描述待实施结构，不代表目录迁移或行为验证已经完成。
+本提案面向后端维护者，基于 2026-09-29 工作目录中的实际源码，定义从 `backend/yuxi/` 开始的目标文件树和来源映射。目标目录现已落到工作树；本文保留逐文件来源映射。生产链路的完整验收尚未执行，故记录仍处于 proposed。
 
 后端入口与业务实现分别位于 `backend/server` 和 `backend/package/yuxi`，业务服务、repository、运行时和资源管理采用不同归组方式。目标是合并后端项目边界，以业务模块组织用例与持久化，并明确 HTTP、worker、技术设施和启动装配的位置。
 
-非目标：本次不移动生产代码，不修改公开协议、数据库表、队列状态、权限规则与部署行为；不引入微服务、通用事件总线、统一状态机或全量抽象接口。
+非目标：本次目录迁移不主动修改公开协议、数据库表、队列状态与权限规则；不引入微服务、通用事件总线、统一状态机或全量抽象接口。
 
 ## 提案
 
 ### 实现方案
 
-保留一个 Python 导入命名空间 `yuxi` 和一份后端项目配置。HTTP 与 worker 作为应用入口；业务模块拥有用例、事务和 repository；基础设施提供连接与技术适配；bootstrap 拥有启动装配。共享迁移入口，保留当前 business 与 knowledge 两套 PostgreSQL metadata；业务 ORM 定义随其业务模块归组。
+保留一个 Python 导入命名空间 `yuxi` 和一份后端项目配置。HTTP 与 worker 作为应用入口；业务模块拥有用例、事务和 repository；基础设施提供连接与技术适配；bootstrap 拥有启动装配。共享 Schema 初始化入口，保留当前 business 与 knowledge 两套 PostgreSQL metadata；业务 ORM 定义随其业务模块归组。
 
-项目装配事实来自 后端项目配置（`backend/pyproject.toml`）、API 入口（`backend/server/main.py`）、worker 执行与装配（`backend/package/yuxi/services/run_worker.py`） 和 Compose（`docker-compose.yml`）。当前业务边界仍由 ARCHITECTURE.md（`ARCHITECTURE.md`） 与源码拥有；本文件仅保存候选迁移设计。
+项目装配事实来自后端项目配置（`backend/pyproject.toml`）、API 入口（`backend/yuxi/api/main.py`）、worker 执行与装配（`backend/yuxi/workers/main.py`、`backend/yuxi/bootstrap/worker.py`）和 Compose（`docker-compose.yml`）。当前业务边界由 ARCHITECTURE.md 与源码拥有；本文件保存来源与目标的迁移映射。
 
 普通输入继续由 Agent 模块接收并持久化，经 FIFO 创建 Turn/Run，在事务提交后投递 worker；worker 调用同域 runner 执行、收敛终态并发布事件。知识文件和聊天附件共同调用 documents 的配置感知解析入口，再调用 infrastructure 的解析引擎；知识文件的状态、分块与索引仍由 knowledge 拥有。schedules 调用统一 Agent 输入用例，tasks 保留独立持久任务状态。
 
@@ -73,16 +73,13 @@ backend/yuxi/
 │   │   └── tasks.py  # [移改] S/routers/system_task_router.py；URL、认证依赖与响应契约保留
 │   ├── lifespan.py  # [拆] S/utils/lifespan.py；FastAPI lifespan 与 app.state 适配
 │   ├── main.py  # [移改] S/main.py；FastAPI 应用与现有中间件装配
-│   └── sse.py  # [拆] Y/utils/sse_utils.py；仅 format_sse、format_heartbeat；订阅时序配置归 config
+│   └── sse.py  # [拆] Y/utils/sse_utils.py；仅 format_sse、format_heartbeat；订阅时序配置归 Agent events
 ├── bootstrap/
 │   ├── api.py  # [拆] S/utils/lifespan.py；组件初始化、关闭顺序与必需/可选组件结果
 │   ├── environment.py  # [拆] Y/__init__.py；load_dotenv；三个进程入口在依赖初始化前调用
 │   ├── models.py  # [新] 无旧文件；显式导入各业务 ORM，装配两套既有 metadata；不修改 schema 域
 │   ├── task_handlers.py  # [拆] Y/services/task_registry.py；_TASK_DEFINITIONS 注册；保持 task_type/handler_version 与惰性导入
 │   └── worker.py  # [拆] Y/services/run_worker.py；startup/shutdown、恢复循环启动与共享资源释放
-├── config/
-│   ├── static/  # [整移] Y/config/static/；内部结构保留，仅修正导入与资源定位
-│   └── __init__.py  # [合] Y/config/__init__.py + Y/utils/sse_utils.py；环境读取、runtime 路径与 SSE 时序配置；持久配置别名改为业务导入
 ├── infrastructure/
 │   ├── document_parsing/
 │   │   ├── __init__.py  # [移] Y/knowledge/parser/__init__.py；保留引擎协议；与 ZIP/图片处理新入口接线
@@ -114,12 +111,12 @@ backend/yuxi/
 │   ├── document_preview.py  # [移改] Y/utils/filepreview.py；格式识别、文本预览、Office 转换原语
 │   ├── filesystem.py  # [移改] Y/utils/paths.py；跨 Workspace/Skills 的 no-follow 文件描述符原语
 │   ├── images.py  # [移改] Y/utils/image_processor.py；图像校验、压缩与缩略图
+│   ├── runtime_settings.py  # [移改] Y/config/__init__.py；进程环境与运行目录配置，不再转发用户配置
 │   ├── object_urls.py  # [拆] Y/knowledge/utils/kb_utils.py；is_minio_url、parse_minio_url 等通用对象定位；不接收知识库权限决策
 │   └── uploads.py  # [移改] Y/utils/upload_utils.py；有界异步流读取与写入；参数依赖 read/seek 协议，移除 FastAPI 类型依赖
 ├── migrations/
-│   ├── legacy/  # [整移] Y/storage_migrations/；受支持历史迁移保持顺序、版本与幂等语义
-│   ├── main.py  # [移改] Y/storage_migration.py；现有唯一迁移入口、静默窗口校验与历史状态收敛
-│   └── schema.py  # [拆] Y/storage/postgres/manager.py；迁移锁、版本写入、建表和 upgrade/ensure DDL；仅 migrator 调用
+│   ├── main.py  # [移改] Y/storage_migration.py；仅为全新部署初始化当前 Schema，拒绝旧版本
+│   └── schema.py  # [拆] Y/storage/postgres/manager.py；初始化锁、版本写入、建表和当前 Schema DDL；仅 schema-init 调用
 ├── modules/
 │   ├── agents/
 │   │   ├── models/
@@ -278,6 +275,8 @@ backend/yuxi/
 │   │   ├── repository.py  # [移改] Y/repositories/scheduled_agent_repository.py
 │   │   └── service.py  # [移改] Y/services/scheduled_agent_service.py；定时定义、occurrence、到期领取、调用统一 Agent 输入用例
 │   ├── system/
+│   │   ├── static/
+│   │   │   └── info.template.yaml  # [移改] Y/config/static/info.template.yaml；站点品牌模板
 │   │   ├── repositories/
 │   │   │   └── dashboard.py  # [移改] Y/repositories/dashboard_repository.py；跨域只读统计；不写其他业务状态
 │   │   ├── dashboard.py  # [移改] Y/services/dashboard_service.py
@@ -328,7 +327,7 @@ backend/yuxi/
 |---|---|---|
 | `Y/services/run_worker.py` | `workers/settings.py` 承接 WorkerSettings 与并发参数；`bootstrap/worker.py` 承接 startup/shutdown、周期循环与健康发布的接线；`modules/agents/services/leases.py` 承接 mark_run_running、renew_run_lease、release_run_lease_for_retry、reconcile_expired_run_leases、reconcile_pending_runtime_cleanups，以及公开命名后的 release_runtime_if_idle；`event_writer.py` 承接 ChunkedEventWriter、chunk 映射、append_run_event 及发布/flush/end helper，共享 helper 去掉私有前缀；`runner.py` 承接 process_agent_run、RunContext、mark_run_terminal、清理异常包装、取消及其余执行 helper。 | runner → leases/event_writer，leases 可调用事件发布与同域清理原语，但不回引 runner。lease 与终态事务只拥有一份实现。worker 注册原 job 名称；bootstrap 只启动周期循环。 |
 | `S/utils/lifespan.py` | `bootstrap/api.py` 承接初始化/关闭操作及其必需性策略；`api/lifespan.py` 承接 FastAPI lifespan 与 app.state 发布。 | 保留依赖初始化顺序、失败退出、结构化 readiness 信息及共享资源释放。 |
-| `Y/storage/postgres/manager.py` | `infrastructure/postgres/manager.py` 保留连接、session、关闭与运行期辅助；`checkpointer.py` 承接 checkpoint pool/saver；`schema.py` 承接版本常量、查询与 require_current_schema；`migrations/schema.py` 承接迁移锁、schema 版本写入、建表、DDL 与升级方法，包括 ensure_business_schema、ensure_knowledge_schema。 | API/worker 只校验 schema；DDL 仍由唯一 migrator 执行。运行期代码不导入迁移执行模块。 |
+| `Y/storage/postgres/manager.py` | `infrastructure/postgres/manager.py` 保留连接、session、关闭与运行期辅助；`checkpointer.py` 承接 checkpoint pool/saver；`schema.py` 承接版本常量、查询与 require_current_schema；`migrations/schema.py` 承接初始化锁、schema 版本写入、建表与当前 DDL，包括 ensure_business_schema、ensure_knowledge_schema。 | API/worker 只校验 schema；DDL 仍由唯一 schema-init 执行。运行期代码不导入迁移执行模块。 |
 | `Y/storage/postgres/models_business.py`、`models_knowledge.py` | 按树中列出的类归属拆 ORM；两个 Base 与 JSON_VALUE 进入 `infrastructure/postgres/base.py`；`bootstrap/models.py` 显式加载全部 ORM。 | 保留两个 registry/metadata、表名、约束名、FK、默认值及 relationship 字符串。每个映射类只注册一次。UNVIEWED_RUN_MARKER 跟随 threads，权限锁定常量跟随 identity，其余常量按树中归属移动。 |
 | `Y/services/ocr_service.py` | 整体重命名为 `modules/documents/service.py`，保留 parse_document、OCR 配置解析和 check_all_ocr_health。 | 这是知识库与附件已经共同使用的入口。配置和凭据解析在实际解析调用时发生；HTTP health 路由仍调用同一配置解析策略。 |
 | `Y/knowledge/parser/unified.py`、`zip_utils.py` | 格式转换与 ZIP 安全提取留在 `infrastructure/document_parsing`；图片上传和 Markdown 链接处理集中到 `modules/documents/assets.py`；调用方以普通 callable 提供资产保存/URL 构造能力。`modules/documents/service.py` 负责组装这些能力，底层 parser 不导入 documents 或 knowledge。 | 保留同步/异步解析调用方式、临时文件清理、图片 bucket/prefix 和现有受鉴权保护的图片 URL。不引入完整 ports 框架，不把图片直接改成公开对象 URL。 |
@@ -341,8 +340,8 @@ backend/yuxi/
 | `Y/services/file_preview.py`、artifact/workspace/viewer service | `api/responses/files.py` 统一装配 FileResponse/StreamingResponse 与 BackgroundTask；原业务 service 保留授权、文件读取/准备和保存操作，返回 `shared/files.py` 的文件结果。 | 服务准备失败时自行清理；交付给 HTTP 后，响应装配负责关闭与临时文件清理。取消、断开和响应构造失败都要验证；不提前删除流正在读取的文件。 |
 | `Y/utils/logging_config.py`、`S/utils/common_utils.py` | 合并到 `infrastructure/observability/logging.py`，保留现有 logger 导出与 setup_logging 入口，由 bootstrap 显式调用。 | 保留应用 logger 与 Uvicorn/标准 logging 的各自配置，不借合并替换日志库或修改输出格式。 |
 | `Y/services/task_registry.py` | `modules/tasks/registry.py` 保留 TaskDefinition、解析版本与加载行为；`bootstrap/task_handlers.py` 保留实际业务 handler 注册表，API/worker 初始化时显式注册。 | 任务 type/version 不变；模块路径随迁移更新，handler 继续惰性加载。registry 未完成装配时显式报错，不能以空表伪装可用。 |
-| `Y/__init__.py`、`Y/config/__init__.py` | 根 initializer 保留版本查询；dotenv 加载进入 bootstrap/environment；环境与运行目录配置留在 config；持久系统配置进入 system/options，用户配置进入 identity/preferences。 | API、worker、migrator 在导入会读取配置的模块前加载环境；保留当前环境覆盖语义。生产 metadata 仍能正确返回 Yuxi 版本。 |
-| `Y/utils/sse_utils.py` | format_sse、format_heartbeat 进入 `api/sse.py`；SSE_HEARTBEAT_SECONDS、SSE_MAX_CONNECTION_MINUTES、SSE_POLL_INTERVAL_SECONDS 归 `config/__init__.py`。 | Agent events 与 HTTP 层均从 config 读取订阅时序；业务事件模块不导入 api。SSE 编码仍只在 HTTP 边界发生一次。 |
+| `Y/__init__.py`、`Y/config/__init__.py` | 根 initializer 保留版本查询；dotenv 加载进入 bootstrap/environment；进程环境与运行目录配置进入 infrastructure/runtime_settings；持久系统配置进入 system/options，用户配置进入 identity/preferences。 | API、worker、schema-init 在导入会读取配置的模块前加载环境；保留当前环境覆盖语义。生产 metadata 仍能正确返回 Yuxi 版本。 |
+| `Y/utils/sse_utils.py` | format_sse、format_heartbeat 进入 `api/sse.py`；使用中的 SSE_HEARTBEAT_SECONDS、SSE_MAX_CONNECTION_MINUTES 由 `modules/agents/services/events.py` 拥有。 | SSE 编码仍只在 HTTP 边界发生一次；无人使用的轮询配置不再导出。 |
 
 拆分的直接检查点来自 worker（`backend/package/yuxi/services/run_worker.py`）、解析配置入口（`backend/package/yuxi/services/ocr_service.py`）、parser（`backend/package/yuxi/knowledge/parser/unified.py`）、Skills 授权与投影（`backend/package/yuxi/agents/skills/service.py`） 和 数据库 manager（`backend/package/yuxi/storage/postgres/manager.py`）。这些文件仍是当前行为的 Owner。
 
@@ -350,7 +349,7 @@ backend/yuxi/
 
 | 来源 | 去向与移除条件 |
 |---|---|
-| `Y/main.py` | 仅输出 Hello from yuxi 的占位入口退役；正式入口改为 API、worker 和 migrator。当前仓库内未找到该模块作为进程入口的调用。 |
+| `Y/main.py` | 仅输出 Hello from yuxi 的占位入口退役；正式入口改为 API、worker 和 schema-init。当前仓库内未找到该模块作为进程入口的调用。 |
 | `Y/repositories/__init__.py` | 全局 repository 聚合目录取消；调用方导入所属业务模块。 |
 | `Y/utils/__init__.py` | logger/hashstr 等聚合导出按树中归属显式导入；不建立新的万能 utils 聚合包。 |
 | `S/utils/__init__.py` | 工具按 dependencies、responses、middleware 与 bootstrap 分配后取消空聚合包。 |
@@ -366,7 +365,7 @@ backend/yuxi/
 | `backend/pyproject.toml`、`backend/package/pyproject.toml`、`backend/uv.lock` | 合并项目元数据、运行依赖、包资源、测试依赖与约束，移除 workspace 对本地 package 的自依赖；重新生成锁文件。保留 distribution 版本查询、Python 版本范围与显式包发现配置。 |
 | `backend/package/README.md` | 核对包说明并归入唯一后端说明位置或根 README；删除旧子项目目录前明确其去向。 |
 | `docker/api.Dockerfile`、`docker/api-entrypoint.sh` | COPY/安装路径改为 backend/yuxi；核对工作目录、用户权限与 package data。 |
-| `docker-compose.yml`、`docker-compose.prod.yml` | 源码挂载、reload 范围、API 启动指向 `yuxi.api.main:app`；worker 指向 `yuxi.workers.main`；migrator 指向 `yuxi.migrations.main`；healthcheck 路径同步。保持服务拓扑与依赖门禁。 |
+| `docker-compose.yml`、`docker-compose.prod.yml` | 源码挂载、reload 范围、API 启动指向 `yuxi.api.main:app`；worker 指向 `yuxi.workers.main`；schema-init 指向 `yuxi.migrations.main`；healthcheck 路径同步。保持服务拓扑与依赖门禁。 |
 | `backend/test`、`backend/scripts`、根 `scripts`、`.github/workflows`、`Makefile` | 导入、monkeypatch 字符串、静态源码路径、Ruff 范围、pytest pythonpath、镜像构建和测试选择器随迁移同步。仍保留现有 unit/integration/E2E 分层。 |
 | 根与 backend `AGENTS.md`、`ARCHITECTURE.md`、开发与机制文档 | 实施后更新 `yuxi.services`、`yuxi.repositories` 等路径约定及源码链接。提案阶段继续以现有规则为准。 |
 | `packages/yuxi-cli`、`web` | HTTP 协议保持不变，原则上无需随 Python 目录迁移改动；搜索是否存在路径假设后再判断。 |
@@ -384,50 +383,26 @@ backend/yuxi/
 | 验收主张 | 失败面 | 语义 Owner | 直接证据 / 命令 | 负向案例 | 当前结果 |
 |---|---|---|---|---|---|
 | 每个源文件有目标或明确退役说明 | 遗漏入口、资源文件或拆分余项 | 本提案来源映射、实际源文件 | 源目录枚举与映射覆盖检查，310 个源文件全部覆盖 | 删除 main.py 映射后检出遗漏；加入不存在来源后拒绝 | Passed |
-| 迁移保留生命周期和信任边界 | 更换目录时改变事务、权限、恢复 | 源码与既有集成/E2E 测试 | 实施阶段执行相关真实链路测试；本次仅撰写提案 | FIFO 越序、越权、失联 Run、错误结果归属 | Not run |
+| 迁移保留生命周期和信任边界 | 更换目录时改变事务、权限、恢复 | 源码与既有集成/E2E 测试 | 当前只执行静态检查；后续执行相关真实链路测试 | FIFO 越序、越权、失联 Run、错误结果归属 | Not run |
 | 文档能构建且来源可定位 | 无效文档引用或树内来源不存在 | 本文件、文档构建 | 来源路径检查、docs build、空白检查；构建结果见验证记录 | 不存在的来源路径被覆盖检查拒绝 | Passed |
 
-### 来源覆盖的复核方式
+### 来源覆盖与当前范围
 
-树中的来源注释与退役表构成此次迁移提案的文件映射；不另存一份可独立编辑的清单。下面的只读命令在仓库根目录执行，随着源码增删会暴露需重新调研的差异。
-
-```bash
-python3 - <<'PY'
-import re
-import subprocess
-from pathlib import Path
-
-document = Path('docs/develop-guides/decisions/proposed/2026-09-29-backend-business-layout.md')
-text = document.read_text()
-prefixes = {'Y': 'backend/package/yuxi', 'S': 'backend/server'}
-actual = set(subprocess.check_output(['rg', '--files', *prefixes.values()], text=True).splitlines())
-tree = text.split('```text\nbackend/yuxi/\n', 1)[1].split('\n```', 1)[0]
-retired = text.split('### 不进入目标树的文件与旧导出', 1)[1].split('### 树外', 1)[0]
-covered = set()
-for prefix, relative in set(re.findall(r'\b([YS])/([\w./-]+)', tree + '\n' + retired)):
-    source = prefixes[prefix] + '/' + relative
-    matches = {p for p in actual if p.startswith(source)} if source.endswith('/') else {source} & actual
-    assert matches, f'来源不存在: {source}'
-    covered.update(matches)
-assert actual == covered, f'未覆盖: {sorted(actual - covered)}'
-print(f'来源覆盖通过: {len(actual)} 个文件')
-PY
-```
-
-覆盖检查只证明文件有去向，不证明拆分时已经保留文件中的全部逻辑。实施各项拆分时仍需逐符号对照 diff 和实际调用方，执行对应的负向测试。
+迁移前对 310 个源文件核对了目标或退役说明；目标树中列出的目标文件当前均已存在。来源前缀 `Y/`、`S/` 保留为历史映射，不能再作为当前目录执行命令。此次只进行静态、打包与少量配置测试；PostgreSQL、HTTP、worker 和 E2E 语义待后续变更完成后统一验证。
 
 ### 验证记录
 
 | 检查 | 结果与范围 |
 |---|---|
-| 上述 `python3 -` 来源覆盖命令 | Passed：310 个源文件均有去向；另对树执行目标重复与 Python 模块/目录同名检查，通过。 |
-| 来源覆盖负向检查 | Passed：删除 API main 的来源映射可检出遗漏；添加不存在的源文件可检出无效来源。 |
-| `python3 scripts/verify_engineering_contracts.py` | Passed。 |
-| `python3 -m unittest scripts.test_verify_engineering_contracts` | Passed：63 个测试。 |
-| 在 `docs` 中执行 `pnpm run build` | Passed；构建输出有体积提示，无死链或构建错误。 |
-| `git diff --check -- docs/develop-guides/decisions/proposed/2026-09-29-backend-business-layout.md` 与新文件文本检查 | Passed：新文件未暂存，额外直接检查了每行尾部空白与单个文件末尾换行。 |
-| 后端 unit / integration / E2E | Not run：本次仅新增目录提案，没有迁移生产代码；这些结果不能用来声明目标结构运行通过。实施时按[测试规范](../../testing-guidelines.md)补齐实际入口、数据库、worker、文件与协议证据。 |
+| 源文件映射与目标文件存在性 | Passed：迁移前 310 个源文件均有去向，当前目标文件均存在。 |
+| `ruff check yuxi`、`ruff format yuxi --check`、`compileall` | Passed：迁移后的生产代码与测试均可静态解析。 |
+| `pytest test/unit --collect-only -q` | Passed：2366 个单测可收集；不代表测试行为通过。 |
+| Compose 边界单测 | Passed：45 个测试。 |
+| 工程信任脚本及其 unittest、`git diff --check` | Passed。 |
+| `uv build --offline` | Passed：源码包与 wheel 成功构建，内置 Skill 与静态配置资源存在。 |
+| `docs/pnpm run build` | Passed。 |
+| 后端完整 unit / integration / E2E | Not run：依用户要求，待其他调整完成后统一验证。 |
 
 ## 风险
 
-源工作目录仍在变化，实施前需要重新核对文件与符号；动态任务注册、ORM relationship、内置资源路径和镜像入口均可能使用字符串路径。目录搬迁与行为调整分开实施；提案中的拆分必须保留原事务、异常与资源释放边界。
+后续调整仍可能改变已迁移的文件与符号；动态任务注册、ORM relationship、内置资源路径和镜像入口均可能使用字符串路径。目录搬迁与行为调整分开实施；提案中的拆分必须保留原事务、异常与资源释放边界。

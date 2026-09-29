@@ -5,7 +5,7 @@ from itertools import count
 import pytest
 from sqlalchemy import event
 
-from yuxi.storage.postgres.models_business import AgentRun
+from yuxi.modules.agents.models.runs import AgentRun
 
 
 @pytest.fixture(autouse=True)

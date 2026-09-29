@@ -6,9 +6,9 @@ import pytest
 import pytest_asyncio
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-from yuxi.agents.mcp import service as mcp_service
-from yuxi.storage.postgres import manager as postgres_manager
-from yuxi.storage.postgres.models_business import MCPServer
+from yuxi.modules.extensions.mcp import service as mcp_service
+import yuxi.infrastructure.postgres.manager as postgres_manager
+from yuxi.modules.extensions.mcp.models import MCPServer
 
 
 class _AsyncSessionContext:

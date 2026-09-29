@@ -4,7 +4,7 @@ import pytest
 
 os.environ.setdefault("OPENAI_API_KEY", "test-key")
 
-from yuxi.knowledge.eval.metrics import EvaluationMetricsCalculator
+from yuxi.modules.knowledge.evaluation.metrics import EvaluationMetricsCalculator
 
 
 def test_retrieval_metrics_use_metadata_chunk_id():

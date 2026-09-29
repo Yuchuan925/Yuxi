@@ -5,10 +5,11 @@ import sys
 
 import pytest
 
-from yuxi.agents import buildin, presets
-from yuxi.agents.buildin.chatbot.graph import ChatbotAgent
-from yuxi.agents.buildin.subagent.graph import SubAgentBackend
-from yuxi.agents.skills import service as skill_service
+from yuxi.modules.agents.runtime import builtin as buildin
+from yuxi.modules.agents import presets
+from yuxi.modules.agents.runtime.builtin.chatbot.graph import ChatbotAgent
+from yuxi.modules.agents.runtime.builtin.subagent.graph import SubAgentBackend
+from yuxi.modules.extensions.skills import service as skill_service
 
 
 @pytest.fixture(autouse=True)
@@ -17,7 +18,7 @@ def clean_discovery_test_modules():
     before = set(sys.modules)
     yield
     for name in set(sys.modules) - before:
-        if name.startswith(("yuxi.agents.presets.test_", "yuxi.agents.buildin.test_")):
+        if name.startswith(("yuxi.modules.agents.presets.test_", "yuxi.modules.agents.runtime.builtin.test_")):
             del sys.modules[name]
 
 
@@ -43,7 +44,7 @@ def test_new_preset_file_is_discovered_without_registry(tmp_path, monkeypatch):
     monkeypatch.setattr(presets, "__file__", str(tmp_path / "__init__.py"))
     monkeypatch.setattr(presets, "__path__", [str(tmp_path)])
     (tmp_path / "test_new_role.py").write_text(
-        "from yuxi.agents.presets import AgentPreset\n"
+        "from yuxi.modules.agents.presets import AgentPreset\n"
         'PRESET = AgentPreset(slug="new-role", name="新增角色", description="测试发现")\n'
     )
     invalidate_caches()
@@ -75,7 +76,7 @@ def test_duplicate_preset_slug_is_rejected(tmp_path, monkeypatch):
     monkeypatch.setattr(presets, "__path__", [str(tmp_path)])
     for name in ("test_duplicate_a", "test_duplicate_b"):
         (tmp_path / f"{name}.py").write_text(
-            "from yuxi.agents.presets import AgentPreset\n"
+            "from yuxi.modules.agents.presets import AgentPreset\n"
             'PRESET = AgentPreset(slug="duplicate", name="重复", description="测试")\n'
         )
     invalidate_caches()
@@ -126,7 +127,7 @@ def test_backend_import_does_not_scan_or_create_instances():
     code = """
 from importlib import reload
 from unittest.mock import patch
-from yuxi.agents import buildin
+import yuxi.modules.agents.runtime.builtin as buildin
 with patch('pathlib.Path.iterdir', side_effect=AssertionError('directory scan')), \
      patch.object(buildin.ChatbotAgent, '__init__', side_effect=AssertionError('eager instance')):
     reload(buildin)

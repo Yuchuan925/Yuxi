@@ -1,6 +1,6 @@
 import pytest
 
-from yuxi.config import get_int_env
+from yuxi.infrastructure.runtime_settings import get_int_env
 
 
 def test_get_int_env_reads_configured_value(monkeypatch):

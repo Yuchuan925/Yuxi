@@ -7,10 +7,15 @@ from datetime import datetime
 import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-from yuxi.services.agents.messages import get_thread_history
-from yuxi.services.agents.scope import ActorScope
-from yuxi.services.agents.input_messages import build_chat_input_message
-from yuxi.storage.postgres.models_business import AgentRun, AgentTurn, Base, Conversation, Message, Project
+from yuxi.modules.agents.services.messages import get_thread_history
+from yuxi.modules.agents.services.scope import ActorScope
+from yuxi.modules.agents.services.input_messages import build_chat_input_message
+from yuxi.modules.agents.models.runs import AgentRun
+from yuxi.modules.agents.models.turns import AgentTurn
+from yuxi.infrastructure.postgres.base import Base
+from yuxi.modules.agents.models.threads import Conversation
+from yuxi.modules.agents.models.messages import Message
+from yuxi.modules.workspace.models import Project
 
 pytestmark = [pytest.mark.unit, pytest.mark.asyncio]
 

@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.testclient import TestClient
 
-from server.main import _build_cors_options, _parse_cors_origins
+from yuxi.api.main import _build_cors_options, _parse_cors_origins
 
 
 def _client_for_origins(origins: list[str]) -> TestClient:

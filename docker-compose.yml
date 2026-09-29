@@ -54,8 +54,7 @@ services:
     working_dir: /app
     user: "1000:1000"
     volumes:
-      - ./backend/server:/app/server
-      - ./backend/package:/app/package
+      - ./backend/yuxi:/app/yuxi
       - type: bind
         source: ${YUXI_STATE_DIR:-./docker/volumes}/yuxi/threads
         target: /app/user-data
@@ -88,7 +87,7 @@ services:
       LANGGRAPH_POSTGRES_POOL_TIMEOUT_SECONDS: ${API_LANGGRAPH_POSTGRES_POOL_TIMEOUT_SECONDS:-30}
       REDIS_MAX_CONNECTIONS: ${API_REDIS_MAX_CONNECTIONS:-256}
     # endregion api_envs
-    command: uv run --no-sync --no-dev uvicorn server.main:app --host 0.0.0.0 --port 5050 --reload --reload-dir /app/server --reload-dir /app/package --timeout-graceful-shutdown 5
+    command: uv run --no-sync --no-dev uvicorn yuxi.api.main:app --host 0.0.0.0 --port 5050 --reload --reload-dir /app/yuxi --timeout-graceful-shutdown 5
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:5050/api/system/ready || exit 1"]
@@ -105,7 +104,7 @@ services:
         condition: service_healthy
       sandbox-provisioner:
         condition: service_healthy
-      storage-migrator:
+      schema-init:
         condition: service_completed_successfully
 
   worker:
@@ -116,8 +115,7 @@ services:
     working_dir: /app
     user: "1000:1000"
     volumes:
-      - ./backend/server:/app/server
-      - ./backend/package:/app/package
+      - ./backend/yuxi:/app/yuxi
       - type: bind
         source: ${YUXI_STATE_DIR:-./docker/volumes}/yuxi/threads
         target: /app/user-data
@@ -149,10 +147,10 @@ services:
       POSTGRES_POOL_TIMEOUT_SECONDS: ${WORKER_POSTGRES_POOL_TIMEOUT_SECONDS:-30}
       LANGGRAPH_POSTGRES_POOL_SIZE: ${WORKER_LANGGRAPH_POSTGRES_POOL_SIZE:-120}
       LANGGRAPH_POSTGRES_POOL_TIMEOUT_SECONDS: ${WORKER_LANGGRAPH_POSTGRES_POOL_TIMEOUT_SECONDS:-30}
-    command: watchfiles --filter python "python -m server.worker_main" /app/server /app/package
+    command: watchfiles --filter python "python -m yuxi.workers.main" /app/yuxi
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "python", "-m", "yuxi.services.worker_health"]
+      test: ["CMD", "python", "-m", "yuxi.workers.health"]
       interval: 10s
       timeout: 10s
       retries: 6
@@ -166,40 +164,24 @@ services:
         condition: service_healthy
       sandbox-provisioner:
         condition: service_healthy
-      storage-migrator:
+      schema-init:
         condition: service_completed_successfully
 
-  storage-migrator:
+  schema-init:
     build:
       context: .
       dockerfile: docker/api.Dockerfile
     image: ${COMPOSE_PROJECT_NAME:-yuxi}-api:${YUXI_VERSION:-0.7.3}
     working_dir: /app
-    user: "0:0"
     volumes:
-      - ./backend/package:/app/package:ro
-      - type: bind
-        source: ${YUXI_STATE_DIR:-./docker/volumes}/yuxi
-        target: /app/legacy-saves
-      - type: bind
-        source: ${YUXI_STATE_DIR:-./docker/volumes}/yuxi/threads
-        target: /app/user-data
-      - type: bind
-        source: ${YUXI_STATE_DIR:-./docker/volumes}/yuxi/skill-sources
-        target: /app/skill-sources
-      - type: bind
-        source: ${YUXI_STATE_DIR:-./docker/volumes}/yuxi/skill-projections
-        target: /app/skill-projections
+      - ./backend/yuxi:/app/yuxi:ro
     networks:
       - app-network
     env_file:
       - ${YUXI_ENV_FILE:-.env}
     environment:
       <<: *api-worker-env
-      YUXI_RUNTIME_DIR: /app/runtime/storage-migrator
-      YUXI_LEGACY_STORAGE_DIR: /app/legacy-saves
-      YUXI_USER_DATA_DIR: /app/user-data
-    command: uv run --no-sync --no-dev python -m yuxi.storage_migration
+    command: uv run --no-sync --no-dev python -m yuxi.migrations.main
     restart: "no"
     depends_on:
       postgres:
@@ -275,7 +257,7 @@ services:
       start_period: 10s
     restart: unless-stopped
     depends_on:
-      storage-migrator:
+      schema-init:
         condition: service_completed_successfully
 
   web:

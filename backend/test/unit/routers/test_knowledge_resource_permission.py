@@ -3,9 +3,9 @@ from types import SimpleNamespace
 import pytest
 from fastapi import HTTPException
 
-from server.routers import knowledge_router
-from server.utils.knowledge_response import serialize_knowledge_base
-from yuxi.knowledge.read_models import KnowledgeBaseSummary
+import yuxi.api.routers.knowledge.management as knowledge_router
+from yuxi.api.responses.knowledge import serialize_knowledge_base
+from yuxi.modules.knowledge.read_models import KnowledgeBaseSummary
 
 
 def test_serialize_knowledge_base_redacts_credentials_from_compatibility_fields():

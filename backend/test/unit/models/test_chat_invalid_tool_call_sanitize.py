@@ -18,7 +18,7 @@ from pydantic import SecretStr
 
 os.environ.setdefault("OPENAI_API_KEY", "test-key")
 
-from yuxi.models.chat import ChatCompletionsAdapter, _sanitize_wire_invalid_tool_calls
+from yuxi.modules.models.chat import ChatCompletionsAdapter, _sanitize_wire_invalid_tool_calls
 
 
 def _adapter() -> ChatCompletionsAdapter:

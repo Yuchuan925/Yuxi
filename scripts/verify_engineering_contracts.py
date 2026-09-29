@@ -143,20 +143,18 @@ WORKFLOW_CONTRACTS = (
             "docker compose exec -T -e E2E_USERNAME -e E2E_PASSWORD api uv run --no-sync --no-dev pytest test/e2e/test_agent_lifecycle_extended_e2e.py -q --durations=10",
             "docker compose exec -T -e E2E_USERNAME -e E2E_PASSWORD api uv run --no-sync --no-dev pytest test/e2e/test_agent_lifecycle_subagent_boundaries_e2e.py -q --durations=10",
             "docker compose exec -T -e E2E_USERNAME -e E2E_PASSWORD api uv run --no-sync --no-dev pytest test/e2e/test_agent_lifecycle_key_scope_e2e.py -q --durations=10",
-            'docker compose exec -T -e TEST_USERNAME="$E2E_USERNAME" -e TEST_PASSWORD="$E2E_PASSWORD" api uv run --no-sync --no-dev pytest test/integration/services/test_identity_admin_service.py test/integration/services/test_api_key_schema_migration.py test/integration/services/test_api_key_user_lifecycle.py test/integration/api/test_apikey_router.py -q',
+            'docker compose exec -T -e TEST_USERNAME="$E2E_USERNAME" -e TEST_PASSWORD="$E2E_PASSWORD" api uv run --no-sync --no-dev pytest test/integration/services/test_identity_admin_service.py test/integration/services/test_api_key_user_lifecycle.py test/integration/api/test_apikey_router.py -q',
             'docker compose exec -T -e TEST_USERNAME="$E2E_USERNAME" -e TEST_PASSWORD="$E2E_PASSWORD" api uv run --no-sync --no-dev pytest test/integration/services/test_workdir_user_workspace.py test/integration/services/test_user_skill_projection.py test/integration/api/test_skill_artifact_authorization.py -q',
             "docker compose exec -T api uv run --no-sync --no-dev pytest test/integration/services/test_project_workdir_provisioner.py -q",
         ),
         required_paths=(
-            "backend/package/yuxi/**",
-            "backend/server/**",
+            "backend/yuxi/**",
             "backend/test/integration/**",
             "backend/test/e2e/**",
             "backend/test/support/**",
             "docker/**",
             "scripts/ci_prepare_system_tests_env.sh",
             "scripts/ci_build_topology_images.sh",
-            "scripts/migrate-storage.sh",
             ".github/workflows/system-tests.yml",
         ),
     ),
@@ -877,7 +875,7 @@ def _validate_document_prose(root: Path, errors: list[str]) -> int:
 
 
 def _validate_router_boundaries(root: Path, errors: list[str]) -> int:
-    routers_root = root / "backend/server/routers"
+    routers_root = root / "backend/yuxi/api/routers"
     checked = 0
     for path in sorted(routers_root.rglob("*.py")):
         checked += 1
@@ -943,10 +941,7 @@ def _validate_workspace_host_path_boundary(root: Path, errors: list[str]) -> int
     """普通 use-case 与 repository 不得取得 UserWorkspace 宿主路径。"""
 
     checked = 0
-    for source_root in (
-        root / "backend/package/yuxi/services",
-        root / "backend/package/yuxi/repositories",
-    ):
+    for source_root in sorted((root / "backend/yuxi/modules").glob("*/services")) + sorted((root / "backend/yuxi/modules").glob("*/repositories")):
         for path in sorted(source_root.rglob("*.py")):
             checked += 1
             relative = path.relative_to(root)
@@ -959,27 +954,27 @@ def _validate_workspace_host_path_boundary(root: Path, errors: list[str]) -> int
                 forbidden: set[str] = set()
                 if (
                     isinstance(node, ast.ImportFrom)
-                    and node.module == "yuxi.workspace.paths"
+                    and node.module == "yuxi.modules.workspace.paths"
                 ):
                     forbidden.update(
                         WORKSPACE_HOST_PATH_EXPORTS.intersection(
                             alias.name for alias in node.names
                         )
                     )
-                elif isinstance(node, ast.ImportFrom) and node.module == "yuxi.config":
+                elif isinstance(node, ast.ImportFrom) and node.module == "yuxi.infrastructure.runtime_settings":
                     if any(alias.name == "get_user_data_dir" for alias in node.names):
                         forbidden.add("get_user_data_dir")
                 elif (
-                    isinstance(node, ast.ImportFrom) and node.module == "yuxi.workspace"
+                    isinstance(node, ast.ImportFrom) and node.module == "yuxi.modules.workspace"
                 ):
                     if any(alias.name == "paths" for alias in node.names):
                         forbidden.add("paths module")
                 elif isinstance(node, ast.Import):
                     imported = {alias.name for alias in node.names}
-                    if "yuxi.workspace.paths" in imported:
+                    if "yuxi.modules.workspace.paths" in imported:
                         forbidden.add("paths module")
-                    if "yuxi.config" in imported:
-                        forbidden.add("config module")
+                    if "yuxi.infrastructure.runtime_settings" in imported:
+                        forbidden.add("runtime settings module")
                 if forbidden:
                     errors.append(
                         "普通 Service/Repository 不得取得 UserWorkspace 宿主 Path："

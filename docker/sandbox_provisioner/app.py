@@ -11,7 +11,6 @@ import threading
 import time
 import weakref
 from collections.abc import AsyncIterator
-from concurrent.futures import FIRST_EXCEPTION, ThreadPoolExecutor, wait
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
@@ -406,11 +405,6 @@ class ListSandboxesResponse(BaseModel):
     count: int
 
 
-class QuiesceSandboxesResponse(BaseModel):
-    ok: bool
-    deleted: int
-
-
 @dataclass(slots=True)
 class SandboxRecord:
     sandbox_id: str
@@ -426,10 +420,6 @@ class SandboxGenerationMismatchError(RuntimeError):
 
 class SandboxCapacityError(RuntimeError):
     """Sandbox 基础设施容量已耗尽。"""
-
-
-class SandboxQuiesceTimeoutError(RuntimeError):
-    """Sandbox 全局静默未在调用方 deadline 内完成。"""
 
 
 class SandboxOperationPins:
@@ -465,35 +455,6 @@ class SandboxOperationPins:
         with self._condition:
             self._deleting.discard(sandbox_id)
             self._condition.notify_all()
-
-
-class SandboxQuiescenceGate:
-    """迁移停机后拒绝创建新的 Sandbox generation。"""
-
-    def __init__(self):
-        self._condition = threading.Condition()
-        self._started = False
-        self._active_creates = 0
-
-    def begin(self) -> None:
-        with self._condition:
-            self._started = True
-            while self._active_creates:
-                self._condition.wait()
-
-    def acquire_create(self) -> None:
-        with self._condition:
-            if self._started:
-                raise RuntimeError(
-                    "sandbox provisioner is quiescing for storage migration"
-                )
-            self._active_creates += 1
-
-    def release_create(self) -> None:
-        with self._condition:
-            self._active_creates -= 1
-            if not self._active_creates:
-                self._condition.notify_all()
 
 
 class MemoryProvisionerBackend:
@@ -1937,7 +1898,6 @@ def _build_backend():
 runtime_profile_name = sandbox_runtime_profile()
 backend_impl, backend_name = _build_backend()
 sandbox_operation_pins = SandboxOperationPins()
-sandbox_quiescence_gate = SandboxQuiescenceGate()
 idle_reaper = SandboxIdleReaper(backend_impl, sandbox_operation_pins)
 
 
@@ -1989,33 +1949,26 @@ def health():
     dependencies=[Depends(require_provisioner_auth)],
 )
 def create_sandbox(payload: CreateSandboxRequest):
+    sandbox_operation_pins.acquire(payload.sandbox_id)
     try:
-        sandbox_quiescence_gate.acquire_create()
-    except RuntimeError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-    try:
-        sandbox_operation_pins.acquire(payload.sandbox_id)
         try:
-            try:
-                # Backend.create() already handles container reuse (discovers existing container first)
-                record = backend_impl.create(
-                    payload.sandbox_id,
-                    payload.thread_id,
-                    payload.uid,
-                    payload.env,
-                    workdir_path=payload.workdir_path,
-                    inherit_env=payload.inherit_env,
-                )
-            except ValueError as exc:
-                raise HTTPException(status_code=400, detail=str(exc)) from exc
-            except SandboxCapacityError as exc:
-                raise HTTPException(status_code=503, detail=str(exc)) from exc
-            except Exception as exc:  # noqa: BLE001
-                raise HTTPException(status_code=500, detail=str(exc)) from exc
-        finally:
-            sandbox_operation_pins.release(payload.sandbox_id)
+            # Backend.create() already handles container reuse (discovers existing container first)
+            record = backend_impl.create(
+                payload.sandbox_id,
+                payload.thread_id,
+                payload.uid,
+                payload.env,
+                workdir_path=payload.workdir_path,
+                inherit_env=payload.inherit_env,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except SandboxCapacityError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
     finally:
-        sandbox_quiescence_gate.release_create()
+        sandbox_operation_pins.release(payload.sandbox_id)
     idle_reaper.touch(record.sandbox_id, generation=record.generation)
     return sandbox_response(record)
 
@@ -2075,108 +2028,6 @@ def list_sandboxes():
 
     sandboxes = [sandbox_response(record) for record in records]
     return ListSandboxesResponse(sandboxes=sandboxes, count=len(sandboxes))
-
-
-@app.post(
-    "/api/sandboxes/quiesce",
-    response_model=QuiesceSandboxesResponse,
-    dependencies=[Depends(require_provisioner_auth)],
-)
-def quiesce_sandboxes(timeout_seconds: int = 180):
-    """禁止新建运行时，删除全部 Sandbox 并等待权威枚举归零。"""
-    if timeout_seconds < 1 or timeout_seconds > 900:
-        raise HTTPException(status_code=400, detail="invalid quiesce timeout")
-    sandbox_quiescence_gate.begin()
-    deadline = time.monotonic() + timeout_seconds
-    deleted_ids: set[str] = set()
-    while True:
-        try:
-            records = backend_impl.list()
-        except Exception as exc:  # noqa: BLE001
-            raise HTTPException(status_code=500, detail=str(exc)) from exc
-        if not records:
-            return QuiesceSandboxesResponse(ok=True, deleted=len(deleted_ids))
-        remaining_seconds = deadline - time.monotonic()
-        if remaining_seconds <= 0:
-            raise HTTPException(
-                status_code=504,
-                detail="timed out waiting for sandbox runtimes to terminate",
-            )
-        try:
-            deleted_ids.update(
-                _delete_sandbox_records_for_quiescence(
-                    records,
-                    timeout_seconds=remaining_seconds,
-                )
-            )
-        except SandboxQuiesceTimeoutError as exc:
-            raise HTTPException(
-                status_code=504,
-                detail="timed out waiting for sandbox runtimes to terminate",
-            ) from exc
-        except Exception as exc:  # noqa: BLE001
-            raise HTTPException(status_code=500, detail=str(exc)) from exc
-        time.sleep(min(0.25, max(0.0, deadline - time.monotonic())))
-
-
-def _delete_sandbox_records_for_quiescence(
-    records: list[SandboxRecord],
-    *,
-    timeout_seconds: float,
-) -> set[str]:
-    """在同一 deadline 内有界并行删除一次权威 Sandbox inventory。"""
-
-    if not records:
-        return set()
-    executor = ThreadPoolExecutor(
-        max_workers=min(sandbox_delete_concurrency(), len(records)),
-        thread_name_prefix="sandbox-quiesce",
-    )
-    futures = [
-        executor.submit(_delete_sandbox_record_for_quiescence, record)
-        for record in records
-    ]
-    try:
-        done, pending = wait(
-            futures,
-            timeout=max(0.0, timeout_seconds),
-            return_when=FIRST_EXCEPTION,
-        )
-        failed = next(
-            (future for future in done if future.exception() is not None),
-            None,
-        )
-        if failed is not None:
-            failed.result()
-        if pending:
-            raise SandboxQuiesceTimeoutError
-        return {
-            sandbox_id
-            for future in done
-            if (sandbox_id := future.result()) is not None
-        }
-    finally:
-        executor.shutdown(wait=False, cancel_futures=True)
-
-
-def _delete_sandbox_record_for_quiescence(record: SandboxRecord) -> str | None:
-    """带 operation pin 和 generation fence 删除一条 Sandbox inventory。"""
-
-    sandbox_operation_pins.begin_delete(record.sandbox_id)
-    try:
-        backend_impl.delete(
-            record.sandbox_id,
-            expected_generation=record.generation,
-        )
-    except SandboxGenerationMismatchError:
-        return None
-    finally:
-        sandbox_operation_pins.end_delete(record.sandbox_id)
-    idle_reaper.forget(
-        record.sandbox_id,
-        expected_generation=record.generation,
-    )
-    return record.sandbox_id
 
 
 @app.delete(

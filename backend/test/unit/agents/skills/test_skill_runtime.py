@@ -2,8 +2,12 @@ from types import SimpleNamespace
 
 import pytest
 
-import yuxi.agents.skills.runtime as skill_runtime
-from yuxi.agents.skills.runtime import build_dependency_bundle, expand_skill_closure, resolve_runtime_skills_for_context
+import yuxi.modules.extensions.skills.runtime as skill_runtime
+from yuxi.modules.extensions.skills.runtime import (
+    build_dependency_bundle,
+    expand_skill_closure,
+    resolve_runtime_skills_for_context,
+)
 
 
 @pytest.mark.asyncio
@@ -13,10 +17,10 @@ async def test_personal_skills_are_available_independently_of_shared_selection(
     tmp_path, monkeypatch, selection, preloads
 ):
     """真实个人目录始终参与运行，选项仅共享且其他用户目录不可见。"""
-    from yuxi.agents.context import normalize_agent_context_config, resolve_agent_resource_options
-    from yuxi.agents.skills import service
-    from yuxi.storage.postgres.models_business import Skill
-    from yuxi.workspace import paths
+    from yuxi.modules.agents.runtime.context import normalize_agent_context_config, resolve_agent_resource_options
+    from yuxi.modules.extensions.skills import service
+    from yuxi.modules.extensions.skills.models import Skill
+    from yuxi.modules.workspace import paths
 
     monkeypatch.setattr(paths, "get_user_data_dir", lambda: tmp_path / "user-data")
     monkeypatch.setattr(service, "get_skill_data_dir", lambda: tmp_path / "shared")
@@ -254,7 +258,7 @@ async def test_preload_rejects_symlinked_source_ancestor(tmp_path, monkeypatch):
 @pytest.mark.asyncio
 async def test_manifest_retains_metadata_from_authorized_resolution(tmp_path, monkeypatch):
     """源记录更新后，manifest 仍使用首次解析的版本与内容摘要。"""
-    from yuxi.services.agents.preparation import build_skill_manifest_entries
+    from yuxi.modules.agents.services.preparation import build_skill_manifest_entries
 
     item = _skill(tmp_path, "alpha", content="original body")
 
@@ -282,8 +286,8 @@ async def test_manifest_retains_metadata_from_authorized_resolution(tmp_path, mo
 )
 async def test_preload_all_reads_only_enabled_authorized_skill_closure(tmp_path, monkeypatch, selection, expected):
     """全部预加载沿真实解析链读取已启用 Skill 及其授权依赖的文件。"""
-    from yuxi.agents.context import normalize_agent_context_config
-    from yuxi.agents.skills import service
+    from yuxi.modules.agents.runtime.context import normalize_agent_context_config
+    from yuxi.modules.extensions.skills import service
 
     skills = [
         _skill(tmp_path, "alpha", dependencies=["beta"]),

@@ -17,7 +17,7 @@ class EngineeringContractVerifierTest(unittest.TestCase):
         self.root = Path(self.tempdir.name)
         self._write("owner.md", "owner\n")
         self._write(
-            "backend/server/routers/valid_router.py",
+            "backend/yuxi/api/routers/valid_router.py",
             "async def route():\n    return None\n",
         )
         self._write(
@@ -115,15 +115,13 @@ jobs:
             """on:
   pull_request:
     paths:
-      - 'backend/package/yuxi/**'
-      - 'backend/server/**'
+      - 'backend/yuxi/**'
       - 'backend/test/integration/**'
       - 'backend/test/e2e/**'
       - 'backend/test/support/**'
       - 'docker/**'
       - 'scripts/ci_prepare_system_tests_env.sh'
       - 'scripts/ci_build_topology_images.sh'
-      - 'scripts/migrate-storage.sh'
       - '.github/workflows/system-tests.yml'
 jobs:
   system:
@@ -141,7 +139,7 @@ jobs:
       - run: docker compose exec -T -e E2E_USERNAME -e E2E_PASSWORD api uv run --no-sync --no-dev pytest test/e2e/test_agent_lifecycle_extended_e2e.py -q --durations=10
       - run: docker compose exec -T -e E2E_USERNAME -e E2E_PASSWORD api uv run --no-sync --no-dev pytest test/e2e/test_agent_lifecycle_subagent_boundaries_e2e.py -q --durations=10
       - run: docker compose exec -T -e E2E_USERNAME -e E2E_PASSWORD api uv run --no-sync --no-dev pytest test/e2e/test_agent_lifecycle_key_scope_e2e.py -q --durations=10
-      - run: docker compose exec -T -e TEST_USERNAME="$E2E_USERNAME" -e TEST_PASSWORD="$E2E_PASSWORD" api uv run --no-sync --no-dev pytest test/integration/services/test_identity_admin_service.py test/integration/services/test_api_key_schema_migration.py test/integration/services/test_api_key_user_lifecycle.py test/integration/api/test_apikey_router.py -q
+      - run: docker compose exec -T -e TEST_USERNAME="$E2E_USERNAME" -e TEST_PASSWORD="$E2E_PASSWORD" api uv run --no-sync --no-dev pytest test/integration/services/test_identity_admin_service.py test/integration/services/test_api_key_user_lifecycle.py test/integration/api/test_apikey_router.py -q
       - run: |
           docker compose exec -T -e TEST_USERNAME="$E2E_USERNAME" -e TEST_PASSWORD="$E2E_PASSWORD" api uv run --no-sync --no-dev pytest \\
           test/integration/services/test_workdir_user_workspace.py \\
@@ -434,7 +432,7 @@ jobs:
         path = self.root / ".github/workflows/system-tests.yml"
         original = path.read_text(encoding="utf-8")
         for owning_path in (
-            "backend/package/yuxi/**",
+            "backend/yuxi/**",
             "backend/test/e2e/**",
             "backend/test/support/**",
             "docker/**",
@@ -564,7 +562,7 @@ jobs:
 
     def test_router_sqlalchemy_query_builder_is_rejected(self) -> None:
         self._write(
-            "backend/server/routers/invalid_router.py",
+            "backend/yuxi/api/routers/invalid_router.py",
             "from sqlalchemy import select\n",
         )
 
@@ -577,7 +575,7 @@ jobs:
 
     def test_router_execute_and_delete_are_rejected(self) -> None:
         self._write(
-            "backend/server/routers/invalid_router.py",
+            "backend/yuxi/api/routers/invalid_router.py",
             """async def route(db, user):
     await db.execute('query')
     await db.delete(user)
@@ -603,15 +601,15 @@ jobs:
     def test_service_workspace_host_path_bypasses_are_rejected(self) -> None:
         cases = (
             (
-                "from yuxi.workspace.paths import user_workdir_host_dir\n",
+                "from yuxi.modules.workspace.paths import user_workdir_host_dir\n",
                 "普通 Service/Repository 不得取得 UserWorkspace 宿主 Path",
             ),
             (
-                "import yuxi.workspace.paths as workspace_paths\n",
+                "import yuxi.modules.workspace.paths as workspace_paths\n",
                 "普通 Service/Repository 不得取得 UserWorkspace 宿主 Path",
             ),
             (
-                "from yuxi.config import get_user_data_dir\n"
+                "from yuxi.infrastructure.runtime_settings import get_user_data_dir\n"
                 "def scan():\n"
                 "    return list((get_user_data_dir() / 'shared').iterdir())\n",
                 "普通 Service/Repository 不得取得 UserWorkspace 宿主 Path",
@@ -623,7 +621,7 @@ jobs:
                 "不得读取 UserWorkspace 宿主根环境变量",
             ),
         )
-        path = "backend/package/yuxi/services/invalid_service.py"
+        path = "backend/yuxi/modules/agents/services/invalid_service.py"
         for source, expected_error in cases:
             with self.subTest(source=source):
                 self._write(path, source)

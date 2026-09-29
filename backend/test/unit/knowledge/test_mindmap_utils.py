@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock
 import pytest
 from fastapi import HTTPException
 
-from yuxi.knowledge.utils import mindmap_utils as mm
+from yuxi.modules.knowledge.utils import mindmap_utils as mm
 
 
 def make_kb(**overrides):
@@ -62,7 +62,7 @@ async def test_get_mindmap_diff_keeps_tracked_file_outside_first_page(monkeypatc
 
     monkeypatch.setattr(mm, "KnowledgeBaseRepository", lambda: kb_repo)
     monkeypatch.setattr(
-        "yuxi.repositories.knowledge_file_repository.KnowledgeFileRepository",
+        "yuxi.modules.knowledge.repositories.files.KnowledgeFileRepository",
         FakeFileRepository,
     )
 
@@ -93,7 +93,7 @@ async def test_generate_database_mindmap_loads_selected_file_ids_directly(monkey
 
     monkeypatch.setattr(mm, "KnowledgeBaseRepository", lambda: kb_repo)
     monkeypatch.setattr(
-        "yuxi.repositories.knowledge_file_repository.KnowledgeFileRepository",
+        "yuxi.modules.knowledge.repositories.files.KnowledgeFileRepository",
         FakeFileRepository,
     )
     monkeypatch.setattr(mm, "select_model", lambda model_spec: FakeModel())
@@ -131,7 +131,7 @@ async def test_generate_database_mindmap_includes_nested_files_when_root_is_empt
 
     monkeypatch.setattr(mm, "KnowledgeBaseRepository", lambda: kb_repo)
     monkeypatch.setattr(
-        "yuxi.repositories.knowledge_file_repository.KnowledgeFileRepository",
+        "yuxi.modules.knowledge.repositories.files.KnowledgeFileRepository",
         FakeFileRepository,
     )
     monkeypatch.setattr(mm, "select_model", lambda model_spec: FakeModel())
@@ -158,7 +158,7 @@ async def test_generate_database_mindmap_rejects_missing_selected_files(monkeypa
 
     monkeypatch.setattr(mm, "KnowledgeBaseRepository", lambda: kb_repo)
     monkeypatch.setattr(
-        "yuxi.repositories.knowledge_file_repository.KnowledgeFileRepository",
+        "yuxi.modules.knowledge.repositories.files.KnowledgeFileRepository",
         FakeFileRepository,
     )
 
@@ -190,7 +190,7 @@ async def test_mindmap_success_requires_saved_state(monkeypatch, incremental, ou
     monkeypatch.setattr(mm, "_load_mindmap_current_files", AsyncMock(return_value=({}, 0)))
     files = {"new": {"filename": "new.pdf", "file_type": "pdf"}}
     file_repository = SimpleNamespace(search_files=AsyncMock(return_value=([make_file("new", "new.pdf")], 1)))
-    monkeypatch.setattr("yuxi.repositories.knowledge_file_repository.KnowledgeFileRepository", lambda: file_repository)
+    monkeypatch.setattr("yuxi.modules.knowledge.repositories.files.KnowledgeFileRepository", lambda: file_repository)
     monkeypatch.setattr(
         mm, "system_options", SimpleNamespace(get=AsyncMock(return_value={"default_model": "test:model"}))
     )

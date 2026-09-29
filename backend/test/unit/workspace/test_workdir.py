@@ -2,8 +2,8 @@ from pathlib import Path
 
 import pytest
 
-from yuxi.workspace import filesystem as workspace_filesystem_module
-from yuxi.workspace.workdir import Workdir
+from yuxi.modules.workspace import filesystem as workspace_filesystem_module
+from yuxi.modules.workspace.workdir import Workdir
 
 
 def test_open_existing_returns_workdir_capability(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

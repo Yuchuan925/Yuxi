@@ -12,7 +12,7 @@ from pathlib import Path
 import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
-from yuxi.knowledge.chunking.ragflow_like.presets import CHUNK_PRESET_IDS
+from yuxi.modules.knowledge.chunking.ragflow_like.presets import CHUNK_PRESET_IDS
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
 
@@ -608,7 +608,7 @@ async def test_kb_image_proxy_requires_auth_and_streams_private_image(
     test_client, admin_headers, knowledge_database
 ):
     """知识库图片代理：未登录不可访问，鉴权后可读取私有 bucket 图片"""
-    from yuxi.storage.minio.client import MinIOClient, get_minio_client
+    from yuxi.infrastructure.minio.client import MinIOClient, get_minio_client
 
     kb_id = knowledge_database["kb_id"]
     image_name = f"proxy_{uuid.uuid4().hex[:8]}.png"

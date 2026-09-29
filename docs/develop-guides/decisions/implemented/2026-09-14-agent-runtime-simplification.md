@@ -2,7 +2,7 @@
 
 状态：implemented
 类型：simplification
-Owner：backend/package/yuxi/services/agents/preparation.py
+Owner：backend/yuxi/modules/agents/services/preparation.py
 
 ## 问题
 

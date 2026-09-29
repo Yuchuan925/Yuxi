@@ -14,9 +14,9 @@ os.environ.setdefault(
     "YUXI_RUNTIME_DIR", os.path.join(os.environ.get("CLAUDE_JOB_DIR", tempfile.gettempdir()), "yuxi-test-saves")
 )
 
-from yuxi.agents.backends.paths import workdir_scope_from_runtime_path
-from yuxi.services import attachment_service as service
-from yuxi.services import workdir_service
+from yuxi.modules.agents.runtime.backends.paths import workdir_scope_from_runtime_path
+import yuxi.modules.agents.services.attachments as service
+import yuxi.modules.workspace.services.bindings as workdir_service
 
 pytestmark = pytest.mark.unit
 
@@ -34,7 +34,7 @@ async def test_tmp_attachment_parse_preserves_http_exception(monkeypatch):
         raise error
 
     monkeypatch.setattr(service, "get_minio_client", lambda: minio_client)
-    monkeypatch.setattr("yuxi.services.ocr_service.parse_document", parse)
+    monkeypatch.setattr("yuxi.modules.documents.service.parse_document", parse)
 
     with pytest.raises(HTTPException) as caught:
         await service.parse_tmp_attachment_view(
@@ -351,7 +351,7 @@ async def test_parse_tmp_attachment_uses_selected_method_and_uploads_markdown(mo
         parse_calls.append({"source": source, "params": params})
         return "# parsed"
 
-    from yuxi.services import ocr_service
+    import yuxi.modules.documents.service as ocr_service
 
     monkeypatch.setattr(ocr_service, "parse_document", fake_parse)
 
@@ -467,7 +467,7 @@ async def test_parse_tmp_attachment_handles_url_metacharacters(monkeypatch):
         parse_calls.append(source)
         return "# parsed"
 
-    from yuxi.services import ocr_service
+    import yuxi.modules.documents.service as ocr_service
 
     monkeypatch.setattr(ocr_service, "parse_document", fake_parse)
 

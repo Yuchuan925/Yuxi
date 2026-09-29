@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # 预构建 Runtime System Tests 所需镜像并启用层缓存。
-# api/worker/storage-migrator 共用 docker/api.Dockerfile 产出的同一镜像，只需构建一次。
+# api/worker/schema-init 共用 docker/api.Dockerfile 产出的同一镜像，只需构建一次。
 # 镜像名从 compose 配置解析，跟随 docker-compose.yml 与 .env.template，不硬编码版本。
 # $1/$2/$3 为可选的 buildkit 本地缓存目录（分别对应 api、sandbox-provisioner 与 minio 镜像）：
 # type=local 缓存的 manifest 槽位按镜像隔离，各镜像不得共用目录，否则后导出者覆盖前者。

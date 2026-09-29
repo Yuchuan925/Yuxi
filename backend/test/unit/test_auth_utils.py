@@ -6,9 +6,9 @@ from datetime import timedelta
 
 import jwt
 import pytest
-from yuxi.utils.datetime_utils import utc_now
+from yuxi.shared.datetime import utc_now
 
-from yuxi.utils.auth_utils import JWT_ALGORITHM, JWT_AUDIENCE, AuthUtils
+from yuxi.modules.identity.security import JWT_ALGORITHM, JWT_AUDIENCE, AuthUtils
 
 
 def test_generate_api_key_returns_secret_hash_and_prefix():

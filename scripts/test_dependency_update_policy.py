@@ -45,7 +45,7 @@ def verify_policy(root: Path) -> list[str]:
         '".github/workflows/dependency-audit.yml"',
         '"Makefile"',
         '"backend/pyproject.toml"',
-        '"backend/package/pyproject.toml"',
+        '"backend/pyproject.toml"',
         '"backend/uv.lock"',
         '"packages/yuxi-cli/pyproject.toml"',
         '"packages/yuxi-cli/uv.lock"',

@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
-import yuxi.services.mention_search_service as mention_service
+import yuxi.modules.agents.services.mentions as mention_service
 
 
 @pytest.fixture

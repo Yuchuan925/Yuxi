@@ -12,7 +12,7 @@
 
 ## 1. 获取代码
 
-仓库当前默认配置对应 `v0.7.3`。用于重要数据前，请先阅读[生产部署与升级](../advanced/deployment.md)中的备份和迁移说明。
+仓库当前默认配置对应 `v0.7.3`。用于重要数据前，请先阅读[生产部署](../advanced/deployment.md)中的数据库与文件目录说明。
 
 ```bash
 git clone --branch v0.7.3 --depth 1 https://github.com/xerrors/Yuxi.git
@@ -88,14 +88,14 @@ curl --fail http://localhost:5050/api/system/ready
 
 ### 容器没有变成 healthy
 
-先确认迁移器、API、worker 和 provisioner 的日志：
+先确认 Schema 初始化进程、API、worker 和 provisioner 的日志：
 
 ```bash
 docker compose ps
-docker compose logs --tail=100 storage-migrator api worker sandbox-provisioner
+docker compose logs --tail=100 schema-init api worker sandbox-provisioner
 ```
 
-`storage-migrator` 是一次性服务，成功后会退出，这是正常状态。API 和 worker 必须在它成功后才能启动。
+`schema-init` 是一次性 Schema 初始化服务，成功后会退出，这是正常状态。API 和 worker 必须在它成功后才能启动。
 
 ### 镜像拉取失败
 
@@ -135,5 +135,5 @@ docker compose logs --tail=100 milvus etcd minio graph
 - [模型配置](./model-config.md)：接入聊天、嵌入和重排模型。
 - [知识库与知识图谱](./knowledge-base.md)：上传文档并验证检索。
 - [命令行工具](./cli.md)：用 CLI 管理实例和运行任务。
-- [生产部署](../advanced/deployment.md)：配置生产环境、升级和备份。
+- [生产部署](../advanced/deployment.md)：配置生产环境和验证部署。
 - [机制详解](../mechanisms/index.md)：理解运行、文件和存储边界。

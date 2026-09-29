@@ -12,15 +12,22 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from test.integration.services.test_agent_input_schema import _create_schema, _drop_schema
-from yuxi.repositories.agent_run_repository import AgentRunRepository
-from yuxi.repositories.agents.input import AgentInputRepository
-from yuxi.repositories.agents.input_receipt import AgentInputReceiptRepository
-from yuxi.repositories.conversation_repository import ConversationRepository
-from yuxi.services.agents import inputs, runs, scheduler, threads, turns
-from yuxi.services.agents.scope import ActorScope
-from yuxi.services.agents.input_messages import build_chat_input_message
-from yuxi.services.workdir_service import WorkdirBinding
-from yuxi.storage.postgres.models_business import AgentInput, AgentRun, AgentTurn, Message
+from yuxi.modules.agents.repositories.runs import AgentRunRepository
+from yuxi.modules.agents.repositories.input import AgentInputRepository
+from yuxi.modules.agents.repositories.input_receipt import AgentInputReceiptRepository
+from yuxi.modules.agents.repositories.threads import ConversationRepository
+import yuxi.modules.agents.services.inputs as inputs
+import yuxi.modules.agents.services.runs as runs
+import yuxi.modules.agents.services.scheduler as scheduler
+import yuxi.modules.agents.services.threads as threads
+import yuxi.modules.agents.services.turns as turns
+from yuxi.modules.agents.services.scope import ActorScope
+from yuxi.modules.agents.services.input_messages import build_chat_input_message
+from yuxi.modules.workspace.services.bindings import WorkdirBinding
+from yuxi.modules.agents.models.inputs import AgentInput
+from yuxi.modules.agents.models.runs import AgentRun
+from yuxi.modules.agents.models.turns import AgentTurn
+from yuxi.modules.agents.models.messages import Message
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
 

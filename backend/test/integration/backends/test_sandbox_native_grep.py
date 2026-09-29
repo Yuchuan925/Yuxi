@@ -9,9 +9,9 @@ from agent_sandbox import Sandbox
 from deepagents.backends import CompositeBackend
 from langgraph.prebuilt.tool_node import ToolRuntime
 
-import yuxi.agents.backends.sandbox.backend as backend_module
-from yuxi.agents.backends.sandbox.backend import ProvisionerSandboxBackend
-from yuxi.agents.backends.composite import create_agent_filesystem_middleware
+import yuxi.modules.agents.runtime.backends.sandbox.backend as backend_module
+from yuxi.modules.agents.runtime.backends.sandbox.backend import ProvisionerSandboxBackend
+from yuxi.modules.agents.runtime.backends.composite import create_agent_filesystem_middleware
 
 
 @pytest.mark.asyncio

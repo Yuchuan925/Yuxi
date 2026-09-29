@@ -4,8 +4,8 @@ from unittest.mock import AsyncMock
 import pytest
 from fastapi import HTTPException
 
-from yuxi.knowledge.read_models import KnowledgeBaseDetail
-from yuxi.knowledge.utils import sample_question_utils as sq
+from yuxi.modules.knowledge.read_models import KnowledgeBaseDetail
+from yuxi.modules.knowledge.utils import sample_question_utils as sq
 
 
 def _database_detail(files: dict | None = None, *, name: str = "测试知识库") -> KnowledgeBaseDetail:

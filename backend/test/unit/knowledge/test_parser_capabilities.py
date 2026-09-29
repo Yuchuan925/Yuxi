@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from yuxi.knowledge.parser.capabilities import (
+from yuxi.infrastructure.document_parsing.capabilities import (
     IMAGE_FILE_EXTENSIONS,
     PARSER_CAPABILITIES,
     SUPPORTED_FILE_EXTENSIONS,
@@ -35,10 +35,10 @@ def test_capability_lookup_does_not_load_concrete_parser_modules() -> None:
     script = f"""
 import sys
 sys.path.insert(0, {str(package_dir)!r})
-from yuxi.knowledge.parser.capabilities import get_parser_capability
+from yuxi.infrastructure.document_parsing.capabilities import get_parser_capability
 
 get_parser_capability("rapid_ocr")
-assert "yuxi.knowledge.parser.rapid_ocr" not in sys.modules
+assert "yuxi.infrastructure.document_parsing.rapid_ocr" not in sys.modules
 assert "docling" not in sys.modules
 """
 
@@ -52,11 +52,11 @@ def test_knowledge_router_import_does_not_load_docling_or_ocr_provider() -> None
 import sys
 sys.path.insert(0, {str(package_dir)!r})
 sys.path.insert(0, {str(backend_dir)!r})
-import server.routers.knowledge_router
+import yuxi.api.routers.knowledge_router
 
 assert "docling" not in sys.modules
-assert "yuxi.knowledge.parser.rapid_ocr" not in sys.modules
-assert "yuxi.knowledge.parser.mineru" not in sys.modules
+assert "yuxi.infrastructure.document_parsing.rapid_ocr" not in sys.modules
+assert "yuxi.infrastructure.document_parsing.mineru" not in sys.modules
 """
 
     subprocess.run([sys.executable, "-c", script], check=True)
@@ -67,7 +67,7 @@ async def test_parse_document_rejects_ocr_engine_without_format_capability(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from yuxi.services import ocr_service
+    import yuxi.modules.documents.service as ocr_service
 
     source = tmp_path / "scan.webp"
     source.write_bytes(b"not an image")
@@ -96,7 +96,7 @@ def test_capability_registry_declares_shipping_processors() -> None:
 
 @pytest.mark.asyncio
 async def test_zip_parser_returns_markdown_text_without_sidecar_metadata(tmp_path: Path) -> None:
-    from yuxi.knowledge.parser.zip_utils import process_zip_file
+    from yuxi.infrastructure.document_parsing.zip_utils import process_zip_file
 
     archive = tmp_path / "result.zip"
     with zipfile.ZipFile(archive, "w") as zip_file:

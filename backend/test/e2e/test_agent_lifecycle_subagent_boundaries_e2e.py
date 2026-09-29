@@ -12,7 +12,7 @@ import pytest
 
 from e2e_helpers import archive_public_thread, delete_agent, postgres_dsn
 from test.live_api_cleanup import make_test_conversation_title
-from yuxi.workspace.paths import user_workspace_dir
+from yuxi.modules.workspace.paths import user_workspace_dir
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.e2e, pytest.mark.slow, pytest.mark.timeout(240)]
 

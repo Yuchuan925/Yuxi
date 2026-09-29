@@ -5,14 +5,14 @@ from contextlib import asynccontextmanager
 from types import SimpleNamespace
 
 import pytest
-import yuxi.agents.middlewares.subagent_task as subagent_task_middleware
-import yuxi.services.subagent_run_service as subagent_run_service
+import yuxi.modules.agents.runtime.middlewares.subagent_task as subagent_task_middleware
+import yuxi.modules.agents.services.subagents as subagent_run_service
 from langgraph.prebuilt.tool_node import ToolRuntime
 from langgraph.types import Command
-from yuxi.agents.middlewares.subagent_task import YuxiSubAgentMiddleware
-from yuxi.repositories.agent_repository import SUB_AGENT_BACKEND_ID
-from yuxi.services.agents.input_messages import AgentRunInputMessage
-from yuxi.utils.hash_utils import subagent_child_thread_id
+from yuxi.modules.agents.runtime.middlewares.subagent_task import YuxiSubAgentMiddleware
+from yuxi.modules.agents.repositories.definitions import SUB_AGENT_BACKEND_ID
+from yuxi.modules.agents.services.input_messages import AgentRunInputMessage
+from yuxi.shared.hashing import subagent_child_thread_id
 
 
 def make_child_thread_id(parent_thread_id: str, agent_slug: str, tool_call_id: str) -> str:
@@ -177,9 +177,9 @@ async def test_chatbot_assembly_respects_resolved_subagent_selection(monkeypatch
     """经过资源解析与真实中间件装配，空范围不会重新开放子智能体工具。"""
     from unittest.mock import AsyncMock
     from langchain.agents.middleware.types import AgentMiddleware
-    from yuxi.agents import context as context_module
-    from yuxi.agents.buildin.chatbot import graph
-    from yuxi.agents.buildin.chatbot.context import ChatBotContext
+    from yuxi.modules.agents.runtime import context as context_module
+    from yuxi.modules.agents.runtime.builtin.chatbot import graph
+    from yuxi.modules.agents.runtime.builtin.chatbot.context import ChatBotContext
 
     worker = SimpleNamespace(
         slug="worker", name="Worker", description="work", config_json={}, backend_id=SUB_AGENT_BACKEND_ID

@@ -2,7 +2,7 @@
 
 from types import SimpleNamespace
 
-from yuxi.services.agents.messages import _visible_metadata
+from yuxi.modules.agents.services.messages import _visible_metadata
 
 
 def test_published_model_history_hides_internal_audit_metadata():

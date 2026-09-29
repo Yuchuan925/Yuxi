@@ -6,16 +6,20 @@ from fastapi import HTTPException
 from fastapi.routing import APIRoute
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from server.routers.dashboard_router import (
+from yuxi.api.routers.dashboard import (
     dashboard,
     get_all_conversations,
     get_conversation_detail,
     get_tool_call_stats,
     get_user_activity_stats,
 )
-from server.utils.auth_middleware import get_superadmin_user
-from yuxi.storage.postgres.models_business import Agent, Base, Conversation, Department, Message, ToolCall, User
-from yuxi.utils.datetime_utils import utc_now_naive
+from yuxi.api.dependencies.auth import get_superadmin_user
+from yuxi.modules.agents.models.definitions import Agent
+from yuxi.infrastructure.postgres.base import Base
+from yuxi.modules.agents.models.threads import Conversation
+from yuxi.modules.identity.models import Department, User
+from yuxi.modules.agents.models.messages import Message, ToolCall
+from yuxi.shared.datetime import utc_now_naive
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.unit]
 

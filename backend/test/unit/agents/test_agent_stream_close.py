@@ -6,9 +6,9 @@ import pytest
 from langgraph.config import get_stream_writer
 from langgraph.graph import END, START, MessagesState, StateGraph
 
-from yuxi.agents.base import BaseAgent
-from yuxi.agents.context import BaseContext
-from yuxi.services.run_worker import RunContext, _consume_stream_with_cancel
+from yuxi.modules.agents.runtime.base import BaseAgent
+from yuxi.modules.agents.runtime.context import BaseContext
+from yuxi.modules.agents.services.runner import RunContext, _consume_stream_with_cancel
 from contextlib import aclosing
 
 

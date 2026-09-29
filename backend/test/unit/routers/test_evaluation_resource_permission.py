@@ -4,10 +4,10 @@ import pytest
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
-from server.routers import knowledge_eval_router
-from server.utils.auth_middleware import get_required_user
-from server.utils import knowledge_permissions
-from yuxi.permissions import ResourcePermission
+import yuxi.api.routers.knowledge.evaluation as knowledge_eval_router
+from yuxi.api.dependencies.auth import get_required_user
+import yuxi.api.dependencies.knowledge as knowledge_permissions
+from yuxi.modules.identity.permissions import ResourcePermission
 
 
 @pytest.mark.asyncio

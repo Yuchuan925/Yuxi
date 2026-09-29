@@ -10,9 +10,9 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from yuxi.agents.buildin.chatbot.context import ChatBotContext
-from yuxi.agents.context import normalize_agent_context_config
-from yuxi.storage.postgres.models_business import User
+from yuxi.modules.agents.runtime.builtin.chatbot.context import ChatBotContext
+from yuxi.modules.agents.runtime.context import normalize_agent_context_config
+from yuxi.modules.identity.models import User
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
 
@@ -388,7 +388,7 @@ async def test_personal_skills_are_automatic_and_absent_from_agent_options(test_
     """真实 HTTP 选项只含共享，个人文件自动进入空、固定和全部运行范围。"""
     from types import SimpleNamespace
 
-    from yuxi.agents.skills.runtime import resolve_runtime_skills_for_context
+    from yuxi.modules.extensions.skills.runtime import resolve_runtime_skills_for_context
 
     uid = str(standard_user["user"]["uid"])
     headers = standard_user["headers"]

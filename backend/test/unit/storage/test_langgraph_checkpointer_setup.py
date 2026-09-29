@@ -2,8 +2,8 @@ from contextlib import asynccontextmanager
 from types import SimpleNamespace
 
 import pytest
-from yuxi.storage.postgres import manager as manager_module
-from yuxi.storage.postgres.manager import PostgresManager
+import yuxi.infrastructure.postgres.manager as manager_module
+from yuxi.infrastructure.postgres.manager import PostgresManager
 
 
 def test_langgraph_pool_checks_connections_before_checkout(monkeypatch):

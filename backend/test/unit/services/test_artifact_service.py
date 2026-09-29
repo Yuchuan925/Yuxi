@@ -7,11 +7,11 @@ from pathlib import Path
 import pytest
 from fastapi import HTTPException
 
-import yuxi.services.artifact_service as svc
-from yuxi.agents.backends.paths import workspace_scope_from_runtime_path
-from yuxi.workspace.errors import FileTransferLimitError
-from yuxi.services.workdir_service import AuthorizedWorkdir
-from yuxi.workspace.workdir import Workdir
+import yuxi.modules.agents.services.artifacts as svc
+from yuxi.modules.agents.runtime.backends.paths import workspace_scope_from_runtime_path
+from yuxi.modules.workspace.errors import FileTransferLimitError
+from yuxi.modules.workspace.services.bindings import AuthorizedWorkdir
+from yuxi.modules.workspace.workdir import Workdir
 
 
 class _Workspace:

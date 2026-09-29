@@ -1,0 +1,57 @@
+"""业务 PostgreSQL 映射。"""
+
+from sqlalchemy import (
+    CheckConstraint,
+    Column,
+    DateTime,
+    ForeignKey,
+    ForeignKeyConstraint,
+    String,
+)
+from yuxi.shared.datetime import utc_now_naive
+
+from yuxi.infrastructure.postgres.base import BusinessBase as Base, JSON_VALUE
+
+
+class AgentTurn(Base):
+    """线程内一轮工作的状态、当前执行和最终结果。"""
+
+    __tablename__ = "agent_turns"
+
+    id = Column(String(64), primary_key=True)
+    conversation_thread_id = Column(
+        String(64), ForeignKey("conversations.thread_id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    uid = Column(String(64), nullable=False, index=True)
+    app_id = Column(String(64), nullable=True, index=True)
+    status = Column(String(32), nullable=False, default="running")
+    current_run_id = Column(String(64), nullable=True)
+    result_run_id = Column(String(64), nullable=True)
+    langfuse_root_observation_id = Column(String(16), nullable=True)
+    waitpoint = Column(JSON_VALUE, nullable=True)
+    created_at = Column(DateTime, nullable=False, default=utc_now_naive)
+    finished_at = Column(DateTime, nullable=True)
+    cancelled_at = Column(DateTime, nullable=True)
+
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('running', 'waiting', 'cancelling', 'completed', 'failed', 'cancelled')",
+            name="ck_agent_turns_status",
+        ),
+        ForeignKeyConstraint(
+            ["id", "current_run_id"],
+            ["agent_runs.turn_id", "agent_runs.id"],
+            name="fk_agent_turns_current_run",
+            use_alter=True,
+            deferrable=True,
+            initially="DEFERRED",
+        ),
+        ForeignKeyConstraint(
+            ["id", "result_run_id"],
+            ["agent_runs.turn_id", "agent_runs.id"],
+            name="fk_agent_turns_result_run",
+            use_alter=True,
+            deferrable=True,
+            initially="DEFERRED",
+        ),
+    )

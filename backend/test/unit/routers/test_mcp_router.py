@@ -2,11 +2,11 @@ from __future__ import annotations
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from yuxi.agents.mcp.service import MCPServerNotFoundError
-from yuxi.storage.postgres.models_business import User
+from yuxi.modules.extensions.mcp.service import MCPServerNotFoundError
+from yuxi.modules.identity.models import User
 
-from server.routers.mcp_router import mcp
-from server.utils.auth_middleware import get_admin_user, get_db, get_required_user
+from yuxi.api.routers.extensions.mcp import mcp
+from yuxi.api.dependencies.auth import get_admin_user, get_db, get_required_user
 
 
 def _build_app(*, allow_admin: bool = True) -> FastAPI:
@@ -60,7 +60,7 @@ def test_update_mcp_server_status(monkeypatch):
         captured["updated_by"] = updated_by
         return enabled, DummyServer(enabled)
 
-    monkeypatch.setattr("server.routers.mcp_router.set_server_enabled", fake_set_server_enabled)
+    monkeypatch.setattr("yuxi.api.routers.extensions.mcp.set_server_enabled", fake_set_server_enabled)
 
     client = TestClient(_build_app())
     resp = client.put("/api/system/mcp-servers/demo-mcp/status", json={"enabled": False})
@@ -76,7 +76,7 @@ def test_update_mcp_server_status_not_found(monkeypatch):
     async def fake_set_server_enabled(db, name, enabled, updated_by=None):
         raise MCPServerNotFoundError(f"Server '{name}' does not exist")
 
-    monkeypatch.setattr("server.routers.mcp_router.set_server_enabled", fake_set_server_enabled)
+    monkeypatch.setattr("yuxi.api.routers.extensions.mcp.set_server_enabled", fake_set_server_enabled)
 
     client = TestClient(_build_app())
     resp = client.put("/api/system/mcp-servers/missing/status", json={"enabled": True})
@@ -87,7 +87,7 @@ def test_update_mcp_server_status_rejects_legacy_stdio(monkeypatch):
     async def fake_set_server_enabled(db, name, enabled, updated_by=None):
         raise ValueError("历史 stdio MCP 已被禁用")
 
-    monkeypatch.setattr("server.routers.mcp_router.set_server_enabled", fake_set_server_enabled)
+    monkeypatch.setattr("yuxi.api.routers.extensions.mcp.set_server_enabled", fake_set_server_enabled)
 
     client = TestClient(_build_app())
     resp = client.put("/api/system/mcp-servers/legacy-stdio/status", json={"enabled": True})
@@ -124,7 +124,7 @@ def test_get_mcp_servers_normal_user_is_stripped(monkeypatch):
     async def fake_get_all_mcp_servers(db):
         return [DummyServer()]
 
-    monkeypatch.setattr("server.routers.mcp_router.get_all_mcp_servers", fake_get_all_mcp_servers)
+    monkeypatch.setattr("yuxi.api.routers.extensions.mcp.get_all_mcp_servers", fake_get_all_mcp_servers)
 
     # 1. 管理员请求，应该返回全部字段
     client_admin = TestClient(_build_app(allow_admin=True))
@@ -201,7 +201,7 @@ def test_update_builtin_mcp_server_rejects_connection_changes(monkeypatch):
     async def fake_update_mcp_server(db, slug, **kwargs):
         raise PermissionError("系统内置 MCP 的连接配置由代码管理，无法通过接口修改")
 
-    monkeypatch.setattr("server.routers.mcp_router.update_mcp_server", fake_update_mcp_server)
+    monkeypatch.setattr("yuxi.api.routers.extensions.mcp.update_mcp_server", fake_update_mcp_server)
 
     client = TestClient(_build_app())
     resp = client.put(
@@ -219,7 +219,7 @@ def test_update_mcp_server_not_found(monkeypatch):
     async def fake_update_mcp_server(db, slug, **kwargs):
         raise MCPServerNotFoundError(f"Server '{slug}' does not exist")
 
-    monkeypatch.setattr("server.routers.mcp_router.update_mcp_server", fake_update_mcp_server)
+    monkeypatch.setattr("yuxi.api.routers.extensions.mcp.update_mcp_server", fake_update_mcp_server)
 
     client = TestClient(_build_app())
     resp = client.put(

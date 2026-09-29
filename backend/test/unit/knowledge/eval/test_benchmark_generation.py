@@ -8,8 +8,8 @@ from conftest import FakeGenerationKnowledgeBase, NoQueryKnowledgeBase, Tracking
 
 os.environ.setdefault("OPENAI_API_KEY", "test-key")
 
-from yuxi.knowledge.eval import benchmark_generation
-from yuxi.knowledge.eval.benchmark_generation import (
+from yuxi.modules.knowledge.evaluation import benchmark_generation
+from yuxi.modules.knowledge.evaluation.benchmark_generation import (
     build_benchmark_generation_prompt,
     clamp_neighbors_count,
     collect_kb_chunks,
@@ -45,7 +45,7 @@ def fake_chunk_repository(monkeypatch):
             return [chunk for chunk in self.chunks if chunk.kb_id == kb_id]
 
     monkeypatch.setattr(
-        "yuxi.repositories.knowledge_chunk_repository.KnowledgeChunkRepository",
+        "yuxi.modules.knowledge.repositories.chunks.KnowledgeChunkRepository",
         FakeChunkRepository,
     )
     return FakeChunkRepository
@@ -161,7 +161,7 @@ async def test_select_graph_enhanced_chunks_expands_by_ppr_with_anchor_bias(monk
         return [("anchor", 0.9), ("neighbor_1", 0.8), ("neighbor_2", 0.7)]
 
     monkeypatch.setattr(
-        "yuxi.knowledge.graphs.milvus_graph_service.MilvusGraphService.query_and_rank_chunks_by_ppr",
+        "yuxi.modules.knowledge.graphs.milvus_graph_service.MilvusGraphService.query_and_rank_chunks_by_ppr",
         fake_rank,
     )
     chunks_by_id = {
@@ -217,7 +217,7 @@ async def test_iter_generated_benchmark_items_graph_mode_uses_graph_indexed_anch
     fake_llm = FakeLlm(gold_chunk_id="graph_neighbor")
     monkeypatch.setattr(benchmark_generation, "select_model", lambda model_spec: fake_llm)
     monkeypatch.setattr(
-        "yuxi.knowledge.graphs.milvus_graph_service.MilvusGraphService.query_and_rank_chunks_by_ppr",
+        "yuxi.modules.knowledge.graphs.milvus_graph_service.MilvusGraphService.query_and_rank_chunks_by_ppr",
         fake_rank,
     )
     kb = FakeGraphGenerationKnowledgeBase()

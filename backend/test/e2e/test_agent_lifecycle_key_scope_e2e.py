@@ -14,7 +14,7 @@ from test.live_api_cleanup import (
     validate_test_runs_terminal,
 )
 from test_agent_lifecycle_e2e import MODEL, OUTPUT, _agent, _message, _provider, _turn
-from yuxi.workspace.paths import user_workspace_dir
+from yuxi.modules.workspace.paths import user_workspace_dir
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.e2e, pytest.mark.slow, pytest.mark.timeout(240)]
 

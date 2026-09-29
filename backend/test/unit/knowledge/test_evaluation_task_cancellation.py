@@ -3,8 +3,8 @@ from copy import deepcopy
 
 import pytest
 
-from yuxi.knowledge.eval import service as evaluation_module
-from yuxi.knowledge.eval.service import EvaluationService
+from yuxi.modules.knowledge.evaluation import service as evaluation_module
+from yuxi.modules.knowledge.evaluation.service import EvaluationService
 
 
 class FakeContext:

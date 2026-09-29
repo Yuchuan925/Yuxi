@@ -6,10 +6,10 @@ import pytest
 
 from conftest import NoQueryKnowledgeBase, TrackingLlm, make_chunk
 
-from yuxi.knowledge.eval import benchmark_generation
-from yuxi.knowledge.eval import service as eval_service_module
-from yuxi.knowledge.eval.benchmark_generation import iter_generated_benchmark_items
-from yuxi.knowledge.eval.service import EvaluationService
+from yuxi.modules.knowledge.evaluation import benchmark_generation
+from yuxi.modules.knowledge.evaluation import service as eval_service_module
+from yuxi.modules.knowledge.evaluation.benchmark_generation import iter_generated_benchmark_items
+from yuxi.modules.knowledge.evaluation.service import EvaluationService
 
 
 @pytest.fixture(autouse=True)
@@ -21,7 +21,7 @@ def fake_chunk_repository(monkeypatch):
             return [chunk for chunk in self.chunks if chunk.kb_id == kb_id]
 
     monkeypatch.setattr(
-        "yuxi.repositories.knowledge_chunk_repository.KnowledgeChunkRepository",
+        "yuxi.modules.knowledge.repositories.chunks.KnowledgeChunkRepository",
         FakeChunkRepository,
     )
     return FakeChunkRepository

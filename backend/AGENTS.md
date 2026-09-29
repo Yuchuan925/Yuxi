@@ -4,7 +4,7 @@
 
 ## 边界与所有权
 
-- `server/routers` 只处理 HTTP 模型、认证依赖、状态码和响应装配；跨 repository 的用例进入 `package/yuxi/services`。
+- `yuxi/api/routers` 只处理 HTTP 模型、认证依赖、状态码和响应装配；跨 repository 的用例进入 对应 `yuxi/modules/<业务域>/services`。
 - PostgreSQL 是 Thread、Turn、Input、Receipt、Run、Message、权限和业务终态的 Owner；Redis/ARQ 是投递与短期事件平面。
 - 写入事实、提交事务、发布队列/事件的顺序必须显式；通知不能早于 owning transaction 的 commit point。
 - 跨 repository 用例只有一个事务 Owner；需要经 HTTP 返回的一次性 secret 必须可由幂等请求安全重放，不能先不可逆消费再祈望响应送达。凭据撤销必须保留足以阻止同一幂等请求复活 secret 的 tombstone。
@@ -30,8 +30,8 @@
 docker compose exec api uv run --group test pytest test/unit -m "not slow"
 docker compose exec api uv run --group test pytest test/integration
 docker compose exec api uv run --group test pytest test/e2e -m e2e
-docker compose exec api uv run ruff check package
-docker compose exec api uv run ruff format package --check
+docker compose exec api uv run ruff check yuxi
+docker compose exec api uv run ruff format yuxi --check
 ```
 
 并发、事务、锁、lease、schema 与 PostgreSQL 专属语义必须在真实 PostgreSQL 上验证；API 行为通过真实 HTTP integration 证明；关键 Run/worker/文件副作用通过 E2E 证明。

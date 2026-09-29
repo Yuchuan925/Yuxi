@@ -6,19 +6,12 @@ import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from yuxi.repositories.conversation_repository import (
-    MEMORY_HISTORY_READ_RESPONSE_MAX_BYTES,
-    ConversationRepository,
-)
-from yuxi.storage.postgres.models_business import (
-    AgentRun,
-    AgentTurn,
-    Base,
-    Conversation,
-    Message,
-    SubagentThread,
-    ToolCall,
-)
+from yuxi.modules.agents.repositories.threads import MEMORY_HISTORY_READ_RESPONSE_MAX_BYTES, ConversationRepository
+from yuxi.modules.agents.models.runs import AgentRun
+from yuxi.modules.agents.models.turns import AgentTurn
+from yuxi.infrastructure.postgres.base import Base
+from yuxi.modules.agents.models.threads import Conversation, SubagentThread
+from yuxi.modules.agents.models.messages import Message, ToolCall
 
 pytestmark = pytest.mark.unit
 

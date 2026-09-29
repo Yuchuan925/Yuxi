@@ -23,11 +23,11 @@ def test_common_filepreview_does_not_import_domain_storage_or_http() -> None:
     imports = _imports("utils/filepreview.py")
 
     assert not any(
-        module.startswith(("yuxi.workspace", "yuxi.knowledge", "yuxi.storage", "fastapi", "starlette"))
+        module.startswith(("yuxi.modules.workspace", "yuxi.modules.knowledge", "yuxi.storage", "fastapi", "starlette"))
         for module in imports
     )
 
 
 def test_knowledge_and_artifact_do_not_import_workspace_preview() -> None:
     for relative_path in ("knowledge/base.py", "knowledge/preview.py", "services/artifact_service.py"):
-        assert "yuxi.workspace.preview" not in _imports(relative_path)
+        assert "yuxi.modules.workspace.preview" not in _imports(relative_path)

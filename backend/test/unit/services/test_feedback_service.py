@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from yuxi.services import feedback_service as svc
+import yuxi.modules.agents.services.feedback as svc
 
 
 class _FakeResult:

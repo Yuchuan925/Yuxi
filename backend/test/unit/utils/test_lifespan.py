@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 from fastapi import FastAPI
 
-from server.utils import lifespan as lifespan_module
+import yuxi.api.lifespan as lifespan_module
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.unit]
 

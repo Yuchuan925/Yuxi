@@ -1,7 +1,7 @@
 from types import SimpleNamespace
 
-from yuxi.knowledge.chunking.ragflow_like.parsers import semantic
-from yuxi.knowledge.chunking.ragflow_like.utils.md_parser_utils import infer_heading_level
+from yuxi.modules.knowledge.chunking.ragflow_like.parsers import semantic
+from yuxi.modules.knowledge.chunking.ragflow_like.utils.md_parser_utils import infer_heading_level
 
 
 def test_heading_inference():

@@ -8,7 +8,7 @@ set -euo pipefail
 # 示例: ./scripts/bump-version.sh 0.6.2
 # 示例: ./scripts/bump-version.sh --dev 0.6.2.dev1
 #
-# 该脚本从 backend/package/pyproject.toml 读取当前版本，
+# 该脚本从 backend/pyproject.toml 读取当前版本，
 # 自动同步所有需要硬编码版本号的位置。
 # --dev 模式不会更新 README、快速开始、部署指南和文档首页中的发布版本引用。
 #
@@ -18,7 +18,7 @@ set -euo pipefail
 #    - 用户给完整版本号时，直接使用该版本，例如 0.7.1.dev2。
 #    - 用户只说“更新到 dev2”时，沿用当前主版本号 x.y.z，目标版本为 x.y.z.dev2。
 #      例如当前是 0.7.1.dev1，则运行: ./scripts/bump-version.sh --dev 0.7.1.dev2
-#    - 用户只说“更新 tag”或“添加 tag”时，先读取 backend/package/pyproject.toml:
+#    - 用户只说“更新 tag”或“添加 tag”时，先读取 backend/pyproject.toml:
 #      * 如果当前是 x.y.z.dev0，默认推断为要发布第一个开发 tag，目标版本是 x.y.z.dev1。
 #      * 如果当前已经是 x.y.z.devN（N >= 1）或 x.y.z，默认给当前版本打 tag。
 #      * 如果上下文里提到 dev2/dev3 等，则按提到的 devN 推断目标版本。
@@ -30,13 +30,13 @@ set -euo pipefail
 #
 # 3. 脚本运行后必须检查:
 #    - git diff，确认只有预期版本文件变化。
-#    - backend/package/pyproject.toml、backend/pyproject.toml、web/package.json、
+#    - backend/pyproject.toml、backend/pyproject.toml、web/package.json、
 #      docker-compose*.yml、backend/uv.lock 中的 Yuxi 版本一致。
 #    - dev 模式下 README.md、README.en.md、docs/intro/quick-start.md 和文档首页
 #      不应被更新。
 #
 # 4. 必须先提交版本更新，再创建 tag。tag 要指向包含版本更新的提交:
-#    git add backend/package/pyproject.toml backend/pyproject.toml backend/uv.lock docker-compose.yml docker-compose.prod.yml web/package.json
+#    git add backend/pyproject.toml backend/pyproject.toml backend/uv.lock docker-compose.yml docker-compose.prod.yml web/package.json
 #    git commit -m 'chore(release): 升级版本到 0.7.1.dev2'
 #    git tag v0.7.1.dev2
 #
@@ -76,8 +76,8 @@ if [[ ! "$NEW_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(\.[a-zA-Z0-9]+)?$ ]]; then
     exit 1
 fi
 
-# 读取当前版本号（以 backend/package/pyproject.toml 为 SSOT）
-PYPROJECT_FILE="${PROJECT_ROOT}/backend/package/pyproject.toml"
+# 读取当前版本号（以 backend/pyproject.toml 为 SSOT）
+PYPROJECT_FILE="${PROJECT_ROOT}/backend/pyproject.toml"
 if [ ! -f "$PYPROJECT_FILE" ]; then
     echo "错误: 找不到 ${PYPROJECT_FILE}"
     exit 1
@@ -97,7 +97,6 @@ fi
 
 echo "准备将版本号从 ${CURRENT_VERSION} 升级到 ${NEW_VERSION}"
 echo "受影响的文件:"
-echo "  - backend/package/pyproject.toml"
 echo "  - backend/pyproject.toml"
 echo "  - web/package.json"
 echo "  - docker-compose.yml"
@@ -118,19 +117,13 @@ if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
 fi
 
 # -----------------------------------------------------------------------------
-# 1. 更新 Python 包版本 (backend/package/pyproject.toml)
-# -----------------------------------------------------------------------------
-echo "→ 更新 backend/package/pyproject.toml"
-perl -pi -e "s/^version = \"[^\"]+\"/version = \"${NEW_VERSION}\"/" \
-    "${PROJECT_ROOT}/backend/package/pyproject.toml"
-
-# -----------------------------------------------------------------------------
-# 2. 更新后端工作区版本 (backend/pyproject.toml)
+# 1. 更新后端版本 (backend/pyproject.toml)
 # -----------------------------------------------------------------------------
 echo "→ 更新 backend/pyproject.toml"
 perl -pi -e "s/^version = \"[^\"]+\"/version = \"${NEW_VERSION}\"/" \
     "${PROJECT_ROOT}/backend/pyproject.toml"
 
+# -----------------------------------------------------------------------------
 # -----------------------------------------------------------------------------
 # 3. 更新前端版本 (web/package.json)
 # -----------------------------------------------------------------------------
@@ -155,9 +148,6 @@ perl -pi -e "s/\\\$\\{YUXI_VERSION:-[^}]+\\}/\\\${YUXI_VERSION:-${NEW_VERSION}}/
 echo "→ 更新 backend/uv.lock"
 # yuxi 包版本
 perl -0pi -e "s/(^name = \"yuxi\"\nversion = \")[^\"]+/\${1}${NEW_VERSION}/m" \
-    "${PROJECT_ROOT}/backend/uv.lock"
-# yuxi-workspace 版本
-perl -0pi -e "s/(^name = \"yuxi-workspace\"\nversion = \")[^\"]+/\${1}${NEW_VERSION}/m" \
     "${PROJECT_ROOT}/backend/uv.lock"
 
 # -----------------------------------------------------------------------------
@@ -195,9 +185,6 @@ fi
 echo ""
 echo "版本号升级完成，验证结果:"
 echo ""
-
-echo "  backend/package/pyproject.toml:"
-grep -E "^version = \"" "${PROJECT_ROOT}/backend/package/pyproject.toml" | head -1 | sed 's/^/    /'
 
 echo "  backend/pyproject.toml:"
 grep -E "^version = \"" "${PROJECT_ROOT}/backend/pyproject.toml" | head -1 | sed 's/^/    /'

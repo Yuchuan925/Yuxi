@@ -11,7 +11,7 @@ from test.live_api_cleanup import (
     make_test_conversation_title,
     remove_e2e_thread_storage,
 )
-from yuxi.storage.minio.client import get_minio_client
+from yuxi.infrastructure.minio.client import get_minio_client
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.e2e]
 

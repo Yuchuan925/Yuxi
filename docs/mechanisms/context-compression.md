@@ -103,13 +103,13 @@ Summary 触发使用近似 token 统计；主模型返回的 `usage_metadata` �
 
 ## 源码定位与验证
 
-- [Summary middleware](https://github.com/xerrors/Yuxi/blob/main/backend/package/yuxi/agents/middlewares/summary.py)
-- [主动压缩 service](https://github.com/xerrors/Yuxi/blob/main/backend/package/yuxi/services/context_compression_service.py)
-- [Agent 执行器](https://github.com/xerrors/Yuxi/blob/main/backend/package/yuxi/services/agents/execution.py)
-- [Agent state repository](https://github.com/xerrors/Yuxi/blob/main/backend/package/yuxi/repositories/agent_state_repository.py)
-- [Agent 配置](https://github.com/xerrors/Yuxi/blob/main/backend/package/yuxi/agents/context.py)
-- [Chatbot graph](https://github.com/xerrors/Yuxi/blob/main/backend/package/yuxi/agents/buildin/chatbot/graph.py)
-- [Token usage](https://github.com/xerrors/Yuxi/blob/main/backend/package/yuxi/agents/middlewares/token_usage.py)
+- [Summary middleware](https://github.com/xerrors/Yuxi/blob/main/backend/yuxi/modules/agents/runtime/middlewares/summary.py)
+- [主动压缩 service](https://github.com/xerrors/Yuxi/blob/main/backend/yuxi/modules/agents/services/compression.py)
+- [Agent 执行器](https://github.com/xerrors/Yuxi/blob/main/backend/yuxi/modules/agents/services/execution.py)
+- [Agent state repository](https://github.com/xerrors/Yuxi/blob/main/backend/yuxi/modules/agents/repositories/state.py)
+- [Agent 配置](https://github.com/xerrors/Yuxi/blob/main/backend/yuxi/modules/agents/runtime/context.py)
+- [Chatbot graph](https://github.com/xerrors/Yuxi/blob/main/backend/yuxi/modules/agents/runtime/builtin/chatbot/graph.py)
+- [Token usage](https://github.com/xerrors/Yuxi/blob/main/backend/yuxi/modules/agents/runtime/middlewares/token_usage.py)
 - [Summary unit tests](https://github.com/xerrors/Yuxi/tree/main/backend/test/unit/middlewares)
 - [主动压缩 service tests](https://github.com/xerrors/Yuxi/blob/main/backend/test/unit/services/test_context_compression_service.py)
 - [真实模型 integration test](https://github.com/xerrors/Yuxi/blob/main/backend/test/integration/services/test_summary_middleware_real_model.py)

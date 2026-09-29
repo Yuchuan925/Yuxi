@@ -11,11 +11,8 @@ from deepagents.middleware.summarization import SummarizationMiddleware
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage, get_buffer_string
 from langchain_core.exceptions import ContextOverflowError
 
-from yuxi.agents.middlewares.summary import (
-    YuxiSummarizationMiddleware,
-    create_summary_middleware,
-)
-from yuxi.agents.backends.paths import workdir_runtime_paths
+from yuxi.modules.agents.runtime.middlewares.summary import YuxiSummarizationMiddleware, create_summary_middleware
+from yuxi.modules.agents.runtime.backends.paths import workdir_runtime_paths
 
 WORKDIR_PATH = "/home/gem/user-data/projects/11111111-1111-4111-8111-111111111111"
 VIRTUAL_PATH_LARGE_TOOL_RESULTS, VIRTUAL_PATH_CONVERSATION_HISTORY = workdir_runtime_paths(WORKDIR_PATH)
@@ -191,7 +188,7 @@ def compression_events(monkeypatch: pytest.MonkeyPatch) -> list[dict]:
     """捕获 YuxiSummarizationMiddleware 通过 stream writer 推送的压缩事件。"""
     emitted: list[dict] = []
     monkeypatch.setattr(
-        "yuxi.agents.middlewares.summary.get_stream_writer",
+        "yuxi.modules.agents.runtime.middlewares.summary.get_stream_writer",
         lambda: lambda payload: emitted.append(payload),
     )
     return emitted

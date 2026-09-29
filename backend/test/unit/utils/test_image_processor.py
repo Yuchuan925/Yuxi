@@ -5,7 +5,7 @@ import io
 
 from PIL import Image
 
-from yuxi.utils.image_processor import process_uploaded_image
+from yuxi.infrastructure.images import process_uploaded_image
 
 
 def test_process_uploaded_image_composites_transparent_png_pixels_on_white():

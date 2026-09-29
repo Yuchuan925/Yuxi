@@ -8,8 +8,8 @@ from typing import TypedDict
 import pytest
 from langgraph.graph import START, StateGraph
 from psycopg_pool import AsyncConnectionPool
-from yuxi.agents.base import BaseAgent
-from yuxi.storage.postgres.manager import PostgresManager
+from yuxi.modules.agents.runtime.base import BaseAgent
+from yuxi.infrastructure.postgres.manager import PostgresManager
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
 
@@ -31,7 +31,7 @@ async def test_graphs_share_pool_not_lock_and_restore_independent_history(monkey
         manager.__init__()
         manager._initialized = True
         manager.langgraph_pool = pool
-        monkeypatch.setattr("yuxi.agents.base.pg_manager", manager)
+        monkeypatch.setattr("yuxi.modules.agents.runtime.base.pg_manager", manager)
         agent = object.__new__(BaseAgent)
         first = await agent._get_checkpointer()
         second = await agent._get_checkpointer()

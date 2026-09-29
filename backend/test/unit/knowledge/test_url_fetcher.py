@@ -6,8 +6,8 @@ import socket
 import httpcore
 import httpx
 import pytest
-from yuxi.knowledge.utils import url_fetcher
-from yuxi.knowledge.utils.url_fetcher import (
+from yuxi.modules.knowledge.utils import url_fetcher
+from yuxi.modules.knowledge.utils.url_fetcher import (
     SSRFGuardBackend,
     assert_no_blocked_address,
     is_blocked_address,

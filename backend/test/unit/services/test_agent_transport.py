@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 
 import pytest
-import yuxi.services.agents.transport as transport
+import yuxi.modules.agents.services.transport as transport
 
 
 class _FakeStreamRedis:

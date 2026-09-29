@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 from redis.exceptions import ConnectionError as RedisConnectionError
-from yuxi.knowledge.manager import KnowledgeBaseManager
+from yuxi.modules.knowledge.manager import KnowledgeBaseManager
 
 pytestmark = pytest.mark.unit
 
@@ -36,7 +36,7 @@ class _FakeKnowledgeBase:
 
 def _patch_supported_type(monkeypatch):
     monkeypatch.setattr(
-        "yuxi.knowledge.manager.KnowledgeBaseFactory.is_type_supported",
+        "yuxi.modules.knowledge.manager.KnowledgeBaseFactory.is_type_supported",
         classmethod(lambda cls, kb_type: kb_type == "milvus"),
     )
 
@@ -78,9 +78,9 @@ async def test_retrieve_uses_cached_config_without_postgres(monkeypatch, tmp_pat
     async def fail_postgres(_self, _kb_id: str):
         raise AssertionError("Redis 命中时不应查询 PostgreSQL")
 
-    monkeypatch.setattr("yuxi.knowledge.manager.get_cached_kb_config", fake_get_cached)
+    monkeypatch.setattr("yuxi.modules.knowledge.manager.get_cached_kb_config", fake_get_cached)
     monkeypatch.setattr(
-        "yuxi.repositories.knowledge_base_repository.KnowledgeBaseRepository.get_by_kb_id",
+        "yuxi.modules.knowledge.repositories.bases.KnowledgeBaseRepository.get_by_kb_id",
         fail_postgres,
     )
     monkeypatch.setattr(manager, "_get_or_create_kb_instance", AsyncMock(return_value=fake_kb))
@@ -119,11 +119,11 @@ async def test_retrieve_falls_back_to_postgres_and_populates_cache(monkeypatch, 
         assert kb_id == "kb_1"
         yield
 
-    monkeypatch.setattr("yuxi.knowledge.manager.get_cached_kb_config", fake_get_cached)
-    monkeypatch.setattr("yuxi.knowledge.manager.cache_kb_config", fake_cache_row)
-    monkeypatch.setattr("yuxi.knowledge.manager.kb_config_cache_lock", fake_cache_lock)
+    monkeypatch.setattr("yuxi.modules.knowledge.manager.get_cached_kb_config", fake_get_cached)
+    monkeypatch.setattr("yuxi.modules.knowledge.manager.cache_kb_config", fake_cache_row)
+    monkeypatch.setattr("yuxi.modules.knowledge.manager.kb_config_cache_lock", fake_cache_lock)
     monkeypatch.setattr(
-        "yuxi.repositories.knowledge_base_repository.KnowledgeBaseRepository.get_by_kb_id",
+        "yuxi.modules.knowledge.repositories.bases.KnowledgeBaseRepository.get_by_kb_id",
         fake_get_by_kb_id,
     )
     monkeypatch.setattr(manager, "_get_or_create_kb_instance", AsyncMock(return_value=fake_kb))
@@ -164,10 +164,10 @@ async def test_cache_miss_rechecks_snapshot_after_acquiring_lock(monkeypatch, tm
     async def fail_postgres(_self, _kb_id: str):
         raise AssertionError("锁内缓存已有新值时不应回源 PostgreSQL")
 
-    monkeypatch.setattr("yuxi.knowledge.manager.get_cached_kb_config", fake_get_cached)
-    monkeypatch.setattr("yuxi.knowledge.manager.kb_config_cache_lock", fake_cache_lock)
+    monkeypatch.setattr("yuxi.modules.knowledge.manager.get_cached_kb_config", fake_get_cached)
+    monkeypatch.setattr("yuxi.modules.knowledge.manager.kb_config_cache_lock", fake_cache_lock)
     monkeypatch.setattr(
-        "yuxi.repositories.knowledge_base_repository.KnowledgeBaseRepository.get_by_kb_id",
+        "yuxi.modules.knowledge.repositories.bases.KnowledgeBaseRepository.get_by_kb_id",
         fail_postgres,
     )
     monkeypatch.setattr(manager, "_get_or_create_kb_instance", AsyncMock(return_value=fake_kb))
@@ -199,11 +199,11 @@ async def test_cache_lock_connection_failure_reads_postgres_without_refill(monke
     async def fail_cache_row(_row):
         raise AssertionError("Redis 故障回源时不应尝试回填缓存")
 
-    monkeypatch.setattr("yuxi.knowledge.manager.get_cached_kb_config", fake_get_cached)
-    monkeypatch.setattr("yuxi.knowledge.manager.kb_config_cache_lock", fail_cache_lock)
-    monkeypatch.setattr("yuxi.knowledge.manager.cache_kb_config", fail_cache_row)
+    monkeypatch.setattr("yuxi.modules.knowledge.manager.get_cached_kb_config", fake_get_cached)
+    monkeypatch.setattr("yuxi.modules.knowledge.manager.kb_config_cache_lock", fail_cache_lock)
+    monkeypatch.setattr("yuxi.modules.knowledge.manager.cache_kb_config", fail_cache_row)
     monkeypatch.setattr(
-        "yuxi.repositories.knowledge_base_repository.KnowledgeBaseRepository.get_by_kb_id",
+        "yuxi.modules.knowledge.repositories.bases.KnowledgeBaseRepository.get_by_kb_id",
         fake_get_by_kb_id,
     )
     monkeypatch.setattr(manager, "_get_or_create_kb_instance", AsyncMock(return_value=fake_kb))
@@ -238,7 +238,7 @@ async def test_retrieve_refreshes_runtime_config_on_each_call(monkeypatch, tmp_p
     async def fake_get_cached(_kb_id: str):
         return snapshots.pop(0)
 
-    monkeypatch.setattr("yuxi.knowledge.manager.get_cached_kb_config", fake_get_cached)
+    monkeypatch.setattr("yuxi.modules.knowledge.manager.get_cached_kb_config", fake_get_cached)
     monkeypatch.setattr(manager, "_get_or_create_kb_instance", AsyncMock(return_value=fake_kb))
 
     await manager.retrieve("kb_1", "first")

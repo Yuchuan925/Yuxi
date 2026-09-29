@@ -2,7 +2,7 @@
 
 状态：proposed
 类型：feature
-Owner：backend/package/yuxi/services/knowledge_folder_service.py
+Owner：backend/yuxi/modules/knowledge/services/folders.py
 
 ## 问题
 

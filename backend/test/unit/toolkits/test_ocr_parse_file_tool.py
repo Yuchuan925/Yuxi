@@ -5,9 +5,9 @@ from pathlib import Path
 
 import pytest
 
-from yuxi.services import ocr_service
-from yuxi.agents.toolkits.buildin import tools as buildin_tools
-from yuxi.agents.toolkits.buildin.tools import ocr_parse_file
+import yuxi.modules.documents.service as ocr_service
+from yuxi.modules.extensions.tools.builtin import tools as buildin_tools
+from yuxi.modules.extensions.tools.builtin.tools import ocr_parse_file
 
 pytestmark = pytest.mark.unit
 
@@ -196,7 +196,7 @@ async def test_ocr_parse_file_rejects_directory(tmp_path, monkeypatch: pytest.Mo
 
 
 def _mock_system_options(monkeypatch: pytest.MonkeyPatch) -> None:
-    from yuxi.config.options import Option, system_options
+    from yuxi.modules.system.options import Option, system_options
 
     async def get_options(option, _db=None):
         assert option is system_options

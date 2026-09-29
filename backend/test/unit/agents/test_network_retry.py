@@ -8,7 +8,7 @@ from types import SimpleNamespace
 import pytest
 from langchain_core.exceptions import ModelError
 
-from yuxi.agents.middlewares.network_retry import NetworkRetryMiddleware, _is_network_error
+from yuxi.modules.agents.runtime.middlewares.network_retry import NetworkRetryMiddleware, _is_network_error
 
 pytestmark = [pytest.mark.unit]
 
@@ -140,7 +140,7 @@ async def test_non_retryable_model_error_propagates():
 @pytest.mark.asyncio
 async def test_network_budget_honored_and_fails_explicitly(monkeypatch):
     """持续网络错误下，单中间件按预算退避重试，耗尽后显式抛出而非"假完成"。"""
-    import yuxi.agents.middlewares.network_retry as module
+    import yuxi.modules.agents.runtime.middlewares.network_retry as module
 
     clock = {"t": 0.0}
     sleeps: list[float] = []
@@ -210,7 +210,7 @@ async def test_network_then_non_network_error_routes_to_parent_retry():
 @pytest.mark.asyncio
 async def test_network_budget_survives_parent_retry(monkeypatch):
     """网络异常 → 非网络异常 → 网络异常：预算起点跨父类重试保持，不被重置放大。"""
-    import yuxi.agents.middlewares.network_retry as module
+    import yuxi.modules.agents.runtime.middlewares.network_retry as module
 
     clock = {"t": 0.0}
     sleeps: list[float] = []

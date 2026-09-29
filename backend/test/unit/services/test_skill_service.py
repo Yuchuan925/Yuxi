@@ -11,9 +11,10 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from yuxi.agents.skills import service as svc
-from yuxi.agents.toolkits import service as tool_service
-from yuxi.storage.postgres.models_business import Skill, User
+from yuxi.modules.extensions.skills import service as svc
+from yuxi.modules.extensions.tools import catalog as tool_service
+from yuxi.modules.extensions.skills.models import Skill
+from yuxi.modules.identity.models import User
 
 
 _MULTIPROCESS_SKILL_SYNC_SCRIPT = """
@@ -23,7 +24,7 @@ import select
 import sys
 import traceback
 from pathlib import Path
-from yuxi.agents.skills import service
+from yuxi.modules.extensions.skills import service
 
 save_dir, uid, encoded_sources = sys.argv[1:]
 sources = json.loads(encoded_sources)
@@ -104,7 +105,6 @@ class _UnitOfWork:
 @pytest.fixture(autouse=True)
 def _isolated_skill_storage(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     """每个 Skill unit 使用独立的显式存储域。"""
-    monkeypatch.setenv("YUXI_LEGACY_STORAGE_DIR", str(tmp_path))
     monkeypatch.setenv("YUXI_SKILL_DATA_DIR", str(tmp_path / "skill-sources"))
     monkeypatch.setenv("YUXI_SKILL_PROJECTION_DIR", str(tmp_path / "skill-projections"))
     monkeypatch.setenv("YUXI_RUNTIME_DIR", str(tmp_path / "runtime"))
@@ -156,7 +156,7 @@ async def test_prepare_remote_skill_install_stages_success_and_failure(
 
     monkeypatch.setattr(svc, "SkillRepository", FakeRepo)
     monkeypatch.setattr(
-        "yuxi.agents.skills.remote_install.prepare_remote_skills_batch",
+        "yuxi.modules.extensions.skills.remote_install.prepare_remote_skills_batch",
         fake_prepare_remote_skills_batch,
     )
     draft = await svc.prepare_remote_skill_install(
@@ -870,7 +870,7 @@ def test_sync_user_accessible_skills_rejects_special_files(
 
 def test_personal_skill_root_is_inside_user_workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     """个人 Skill 的唯一持久路径必须位于对应用户的 UserWorkspace。"""
-    from yuxi.workspace import paths as sandbox_paths
+    from yuxi.modules.workspace import paths as sandbox_paths
 
     monkeypatch.setattr(sandbox_paths, "get_user_data_dir", lambda: tmp_path / "user-data")
 
@@ -886,7 +886,7 @@ def test_personal_skill_root_rejects_symlinked_components(
     component: str,
 ):
     """个人 Skill 根不得通过可写路径组件越过当前 UserWorkspace。"""
-    from yuxi.workspace import paths as sandbox_paths
+    from yuxi.modules.workspace import paths as sandbox_paths
 
     user_data = tmp_path / "user-data"
     user_root = user_data / "shared/user-1"
@@ -961,8 +961,8 @@ def test_sync_user_accessible_skills_updates_executable_mode(
 @pytest.mark.asyncio
 async def test_refresh_user_skill_projection_serializes_authorization_snapshots(monkeypatch: pytest.MonkeyPatch):
     """旧 Run 不得在较新的撤权同步完成后复活已撤销 Skill。"""
-    from yuxi.repositories import user_repository
-    from yuxi.storage.postgres import manager as postgres_manager
+    import yuxi.modules.identity.repositories.users as user_repository
+    import yuxi.infrastructure.postgres.manager as postgres_manager
 
     advisory_lock = asyncio.Lock()
     first_sync_started = asyncio.Event()
@@ -1020,8 +1020,8 @@ async def test_refresh_user_skill_projection_serializes_authorization_snapshots(
 @pytest.mark.asyncio
 async def test_refresh_user_skill_projection_excludes_personal_skills(monkeypatch: pytest.MonkeyPatch):
     """共享只读投影不得复制 UserWorkspace 中的个人 Skill。"""
-    from yuxi.repositories import user_repository
-    from yuxi.storage.postgres import manager as postgres_manager
+    import yuxi.modules.identity.repositories.users as user_repository
+    import yuxi.infrastructure.postgres.manager as postgres_manager
 
     synchronized_sources: list[dict[str, str]] = []
     shared = SimpleNamespace(slug="shared")
@@ -2018,7 +2018,7 @@ def _write_personal_skill(root: Path, slug: str, description: str) -> Path:
 
 def _personal_skill_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, uid: str = "user-1") -> Path:
     """把 UserWorkspace 根定向到测试临时目录。"""
-    from yuxi.workspace import paths as sandbox_paths
+    from yuxi.modules.workspace import paths as sandbox_paths
 
     user_data = tmp_path / "user-data"
     monkeypatch.setattr(sandbox_paths, "get_user_data_dir", lambda: user_data)

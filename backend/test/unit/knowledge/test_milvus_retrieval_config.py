@@ -1,5 +1,5 @@
-from yuxi.knowledge.graphs.milvus_graph_service import MilvusGraphService
-from yuxi.knowledge.implementations.milvus import MilvusKB, _retrieval_config_options
+from yuxi.modules.knowledge.graphs.milvus_graph_service import MilvusGraphService
+from yuxi.modules.knowledge.implementations.milvus import MilvusKB, _retrieval_config_options
 
 
 def test_milvus_retrieval_config_exposes_graph_and_dependencies():

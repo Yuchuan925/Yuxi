@@ -11,18 +11,18 @@ from types import SimpleNamespace
 
 import pandas as pd
 import pytest
-import yuxi.knowledge.parser.factory as factory_module
-import yuxi.knowledge.parser.unified as parser_unified
+import yuxi.infrastructure.document_parsing.factory as factory_module
+import yuxi.infrastructure.document_parsing.unified as parser_unified
 from docx import Document
 from PIL import Image
 
-from yuxi.knowledge.parser.base import DocumentParserException
-from yuxi.knowledge.parser.capabilities import PARSER_CAPABILITIES
-from yuxi.knowledge.parser.factory import DocumentProcessorFactory
-from yuxi.knowledge.parser.mineru import MinerUParser
-from yuxi.knowledge.parser.mineru_official import MinerUOfficialParser
-from yuxi.knowledge.parser.rapid_ocr import RapidOCRParser
-from yuxi.services.ocr_service import parse_document
+from yuxi.infrastructure.document_parsing.base import DocumentParserException
+from yuxi.infrastructure.document_parsing.capabilities import PARSER_CAPABILITIES
+from yuxi.infrastructure.document_parsing.factory import DocumentProcessorFactory
+from yuxi.infrastructure.document_parsing.mineru import MinerUParser
+from yuxi.infrastructure.document_parsing.mineru_official import MinerUOfficialParser
+from yuxi.infrastructure.document_parsing.rapid_ocr import RapidOCRParser
+from yuxi.modules.documents.service import parse_document
 
 PARSER_FIXTURES = Path(__file__).parents[2] / "data"
 
@@ -67,7 +67,7 @@ def test_mineru_parser_normalizes_trailing_slash():
 
 def test_mineru_official_health_check_does_not_create_task(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(
-        "yuxi.knowledge.parser.mineru_official.requests.post",
+        "yuxi.infrastructure.document_parsing.mineru_official.requests.post",
         lambda *args, **kwargs: pytest.fail("健康检查不应创建解析任务"),
     )
 
@@ -101,7 +101,7 @@ def test_mineru_official_parsing_uses_shared_zip_processor(
         return "parsed markdown"
 
     monkeypatch.setattr(
-        "yuxi.knowledge.parser.mineru_official.process_zip_file_sync",
+        "yuxi.infrastructure.document_parsing.mineru_official.process_zip_file_sync",
         _process_zip_file,
     )
 
@@ -133,7 +133,7 @@ def test_mineru_official_does_not_fallback_when_shared_zip_processing_fails(
         raise RuntimeError("malformed result archive")
 
     monkeypatch.setattr(
-        "yuxi.knowledge.parser.mineru_official.process_zip_file_sync",
+        "yuxi.infrastructure.document_parsing.mineru_official.process_zip_file_sync",
         _raise_zip_processing_error,
     )
 
@@ -145,7 +145,7 @@ def test_mineru_official_does_not_fallback_when_shared_zip_processing_fails(
 
 def test_rapid_ocr_health_check_does_not_load_model(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(
-        "yuxi.knowledge.parser.rapid_ocr.RapidOCR",
+        "yuxi.infrastructure.document_parsing.rapid_ocr.RapidOCR",
         lambda *args, **kwargs: pytest.fail("健康检查不应加载 OCR 模型"),
     )
 
@@ -201,7 +201,7 @@ def _build_docx(file_path: Path, text: str) -> None:
 
 def test_pdfreader_preserves_page_order_blank_pages_and_trimming(tmp_path: Path):
     """文本提取保留空页分隔并去除逐页首尾空白。"""
-    from yuxi.knowledge.parser.unified import pdfreader
+    from yuxi.infrastructure.document_parsing.unified import pdfreader
 
     file_path = tmp_path / "pages.pdf"
     _build_pdf(file_path, ["  First page  ", "", "Last page"])
@@ -211,7 +211,7 @@ def test_pdfreader_preserves_page_order_blank_pages_and_trimming(tmp_path: Path)
 def test_pdfreader_rejects_corrupt_pdf(tmp_path: Path):
     """损坏 PDF 显式失败，不返回伪成功空文本。"""
     from pypdf.errors import PdfReadError
-    from yuxi.knowledge.parser.unified import pdfreader
+    from yuxi.infrastructure.document_parsing.unified import pdfreader
 
     file_path = tmp_path / "broken.pdf"
     file_path.write_bytes(b"%PDF-1.4\ninvalid")
@@ -514,7 +514,7 @@ async def test_parse_document_png_returns_markdown_text_with_mocked_ocr(
         return params or {}
 
     monkeypatch.setattr(parser_unified, "parse_image_async", _fake_parse_image_async)
-    monkeypatch.setattr("yuxi.services.ocr_service.resolve_ocr_task_params", _resolve_params)
+    monkeypatch.setattr("yuxi.modules.documents.service.resolve_ocr_task_params", _resolve_params)
 
     markdown = await parse_document(str(file_path), params={"ocr_engine": "rapid_ocr"})
 
@@ -616,9 +616,9 @@ async def test_parse_document_uses_config_default_ocr_when_engine_missing(
     async def _system_options_get(_option, _db=None):
         return {"default_ocr_engine": "mineru_ocr"}
 
-    monkeypatch.setattr("yuxi.config.options.Option.get", _system_options_get)
+    monkeypatch.setattr("yuxi.modules.system.options.Option.get", _system_options_get)
     monkeypatch.setattr(DocumentProcessorFactory, "process_file", _fake_process_file)
-    monkeypatch.setattr("yuxi.services.ocr_service._build_processor_kwargs", _build_processor_kwargs)
+    monkeypatch.setattr("yuxi.modules.documents.service._build_processor_kwargs", _build_processor_kwargs)
 
     result = await parse_document(str(file_path), params={}, db=object())
 

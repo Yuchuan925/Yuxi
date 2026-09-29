@@ -11,22 +11,22 @@ from types import MethodType, SimpleNamespace
 
 import httpx
 import pytest
-import yuxi.agents.backends.sandbox.backend as sandbox_backend_module
+import yuxi.modules.agents.runtime.backends.sandbox.backend as sandbox_backend_module
 from deepagents.backends import CompositeBackend
 from deepagents.backends.protocol import GlobResult, GrepResult, ReadResult
 from deepagents.backends.sandbox import MAX_BINARY_BYTES
 from langchain_core.messages import ToolMessage
 from langgraph.prebuilt.tool_node import ToolRuntime
-from yuxi.agents.backends.composite import (
+from yuxi.modules.agents.runtime.backends.composite import (
     create_agent_composite_backend,
     create_agent_filesystem_middleware,
     sync_agent_context_skills,
 )
-from yuxi.agents.backends.sandbox import ProvisionerSandboxProvider, sandbox_id_for_thread
-from yuxi.agents.backends.sandbox.backend import ProvisionerSandboxBackend
-from yuxi.agents.backends.sandbox.provider import SandboxIdentityMismatchError
-from yuxi.agents.middlewares.skills import SkillsMiddleware
-from yuxi.agents.backends.paths import workdir_runtime_paths
+from yuxi.modules.agents.runtime.backends.sandbox import ProvisionerSandboxProvider, sandbox_id_for_thread
+from yuxi.modules.agents.runtime.backends.sandbox.backend import ProvisionerSandboxBackend
+from yuxi.modules.agents.runtime.backends.sandbox.provider import SandboxIdentityMismatchError
+from yuxi.modules.agents.runtime.middlewares.skills import SkillsMiddleware
+from yuxi.modules.agents.runtime.backends.paths import workdir_runtime_paths
 
 WORKDIR_RELATIVE_PATH = "projects/11111111-1111-4111-8111-111111111111"
 WORKDIR_PATH = "/home/gem/user-data/projects/11111111-1111-4111-8111-111111111111"
@@ -97,7 +97,7 @@ def _make_provider(client) -> ProvisionerSandboxProvider:
 
 
 def test_create_agent_composite_backend_uses_sandbox_filesystem(monkeypatch):
-    monkeypatch.setattr("yuxi.agents.backends.sandbox.backend.get_sandbox_provider", lambda: object())
+    monkeypatch.setattr("yuxi.modules.agents.runtime.backends.sandbox.backend.get_sandbox_provider", lambda: object())
 
     backend = create_agent_composite_backend(_runtime().context)
 
@@ -108,7 +108,7 @@ def test_create_agent_composite_backend_uses_sandbox_filesystem(monkeypatch):
 
 
 def test_create_agent_composite_backend_derives_virtual_workdir_from_relative_path(monkeypatch):
-    monkeypatch.setattr("yuxi.agents.backends.sandbox.backend.get_sandbox_provider", lambda: object())
+    monkeypatch.setattr("yuxi.modules.agents.runtime.backends.sandbox.backend.get_sandbox_provider", lambda: object())
     context = _runtime().context
     context.workdir_path = "/home/gem/user-data/projects/stale"
 
@@ -238,7 +238,7 @@ async def test_sync_agent_context_skills_projects_all_user_authorized_skills(mon
         }
 
     monkeypatch.setattr(
-        "yuxi.agents.backends.composite.refresh_user_skill_projection_async",
+        "yuxi.modules.agents.runtime.backends.composite.refresh_user_skill_projection_async",
         refresh_user_skill_projection_async,
     )
     context = SimpleNamespace(
@@ -260,7 +260,7 @@ def test_create_agent_composite_backend_requires_thread_id():
 
 
 def test_create_agent_filesystem_middleware_uses_context_scope(monkeypatch):
-    monkeypatch.setattr("yuxi.agents.backends.sandbox.backend.get_sandbox_provider", lambda: object())
+    monkeypatch.setattr("yuxi.modules.agents.runtime.backends.sandbox.backend.get_sandbox_provider", lambda: object())
     context = SimpleNamespace(
         thread_id="child-thread",
         runtime_scope_id="parent-thread",
@@ -278,9 +278,9 @@ def test_create_agent_filesystem_middleware_uses_context_scope(monkeypatch):
 
 def test_context_backend_construction_does_not_sync_skill_projection(monkeypatch, tmp_path) -> None:
     """每轮模型调用重建 backend 时不得扫描或复制 Skill。"""
-    from yuxi.agents.skills import service as skill_service
+    from yuxi.modules.extensions.skills import service as skill_service
 
-    monkeypatch.setattr("yuxi.agents.backends.sandbox.backend.get_sandbox_provider", lambda: object())
+    monkeypatch.setattr("yuxi.modules.agents.runtime.backends.sandbox.backend.get_sandbox_provider", lambda: object())
     monkeypatch.setenv("YUXI_USER_DATA_DIR", str(tmp_path / "threads"))
     source_dir = tmp_path / "source" / "shared-skill"
     source_dir.mkdir(parents=True)
@@ -521,7 +521,7 @@ def test_provider_revalidates_runtime_generation_after_keepalive(monkeypatch) ->
             )
 
     provider = _make_provider(FakeClient())
-    monkeypatch.setattr("yuxi.agents.backends.sandbox.provider.load_user_agent_env", lambda _uid: {})
+    monkeypatch.setattr("yuxi.modules.agents.runtime.backends.sandbox.provider.load_user_agent_env", lambda _uid: {})
     provider.get(
         "root-thread",
         uid="user-1",
@@ -559,7 +559,7 @@ def test_provider_recreates_cross_process_deleted_generation_before_touch_interv
             raise AssertionError("fresh cache must revalidate generation without keepalive touch")
 
     provider = _make_provider(FakeClient())
-    monkeypatch.setattr("yuxi.agents.backends.sandbox.provider.load_user_agent_env", lambda _uid: {})
+    monkeypatch.setattr("yuxi.modules.agents.runtime.backends.sandbox.provider.load_user_agent_env", lambda _uid: {})
     provider.get(
         "root-thread",
         uid="user-1",
@@ -601,7 +601,7 @@ def test_provider_rejects_project_workdir_drift_after_keepalive(monkeypatch) -> 
             )
 
     provider = _make_provider(FakeClient())
-    monkeypatch.setattr("yuxi.agents.backends.sandbox.provider.load_user_agent_env", lambda _uid: {})
+    monkeypatch.setattr("yuxi.modules.agents.runtime.backends.sandbox.provider.load_user_agent_env", lambda _uid: {})
     provider.get(
         "root-thread",
         uid="user-1",
@@ -629,7 +629,7 @@ def test_provider_rejects_rebinding_cached_runtime_to_another_workdir(monkeypatc
             )
 
     provider = _make_provider(FakeClient())
-    monkeypatch.setattr("yuxi.agents.backends.sandbox.provider.load_user_agent_env", lambda _uid: {})
+    monkeypatch.setattr("yuxi.modules.agents.runtime.backends.sandbox.provider.load_user_agent_env", lambda _uid: {})
     provider.get(
         "root-thread",
         uid="user-1",
@@ -686,7 +686,9 @@ def test_provider_uses_distinct_sandbox_scope_for_different_uid(monkeypatch) -> 
             return True
 
     provider = _make_provider(FakeClient())
-    monkeypatch.setattr("yuxi.agents.backends.sandbox.provider.load_user_agent_env", lambda uid: {"A": uid})
+    monkeypatch.setattr(
+        "yuxi.modules.agents.runtime.backends.sandbox.provider.load_user_agent_env", lambda uid: {"A": uid}
+    )
 
     sandbox_1 = provider.get(
         "child-thread",
@@ -705,7 +707,7 @@ def test_provider_uses_distinct_sandbox_scope_for_different_uid(monkeypatch) -> 
 
 
 def test_provider_maps_external_uid_only_at_provisioner_filesystem_boundary(monkeypatch) -> None:
-    from yuxi.workspace.paths import workspace_uid_dirname
+    from yuxi.modules.workspace.paths import workspace_uid_dirname
 
     calls = []
 
@@ -724,7 +726,9 @@ def test_provider_maps_external_uid_only_at_provisioner_filesystem_boundary(monk
 
     provider = _make_provider(FakeClient())
     logical_uid = "oidc:12345678-1234-1234-1234-123456789abc"
-    monkeypatch.setattr("yuxi.agents.backends.sandbox.provider.load_user_agent_env", lambda uid: {"OWNER": uid})
+    monkeypatch.setattr(
+        "yuxi.modules.agents.runtime.backends.sandbox.provider.load_user_agent_env", lambda uid: {"OWNER": uid}
+    )
 
     provider.get("thread-1", uid=logical_uid, create_if_missing=True)
 
@@ -750,7 +754,9 @@ def test_provider_get_create_if_missing_ensures_expected_runtime_scope(monkeypat
             raise AssertionError("create_if_missing should ensure sandbox through provisioner create")
 
     provider = _make_provider(FakeClient())
-    monkeypatch.setattr("yuxi.agents.backends.sandbox.provider.load_user_agent_env", lambda uid: {"A": uid})
+    monkeypatch.setattr(
+        "yuxi.modules.agents.runtime.backends.sandbox.provider.load_user_agent_env", lambda uid: {"A": uid}
+    )
 
     connection = provider.get(
         "child-thread",
@@ -785,7 +791,7 @@ def test_provider_can_create_sandbox_without_environment(monkeypatch) -> None:
 
     provider = _make_provider(FakeClient())
     monkeypatch.setattr(
-        "yuxi.agents.backends.sandbox.provider.load_user_agent_env",
+        "yuxi.modules.agents.runtime.backends.sandbox.provider.load_user_agent_env",
         lambda _uid: pytest.fail("隔离 Sandbox 不应加载用户环境变量"),
     )
 
@@ -802,7 +808,9 @@ def test_provisioner_uses_runtime_scope_directly(monkeypatch) -> None:
             provider_calls.append((thread_id, kwargs))
             return SimpleNamespace(sandbox_url="http://sandbox")
 
-    monkeypatch.setattr("yuxi.agents.backends.sandbox.backend.get_sandbox_provider", lambda: FakeProvider())
+    monkeypatch.setattr(
+        "yuxi.modules.agents.runtime.backends.sandbox.backend.get_sandbox_provider", lambda: FakeProvider()
+    )
 
     backend = ProvisionerSandboxBackend(
         thread_id="child-thread",
@@ -827,7 +835,7 @@ def test_provisioner_uses_runtime_scope_directly(monkeypatch) -> None:
 
 
 def test_provisioner_denies_reads_outside_allowed_roots(monkeypatch) -> None:
-    monkeypatch.setattr("yuxi.agents.backends.sandbox.backend.get_sandbox_provider", lambda: object())
+    monkeypatch.setattr("yuxi.modules.agents.runtime.backends.sandbox.backend.get_sandbox_provider", lambda: object())
     backend = ProvisionerSandboxBackend(
         thread_id="thread-1", uid="user-1", workdir_path="projects/11111111-1111-4111-8111-111111111111"
     )
@@ -838,7 +846,7 @@ def test_provisioner_denies_reads_outside_allowed_roots(monkeypatch) -> None:
 
 
 def test_provisioner_rejects_skill_projection_writes(monkeypatch) -> None:
-    monkeypatch.setattr("yuxi.agents.backends.sandbox.backend.get_sandbox_provider", lambda: object())
+    monkeypatch.setattr("yuxi.modules.agents.runtime.backends.sandbox.backend.get_sandbox_provider", lambda: object())
     backend = ProvisionerSandboxBackend(thread_id="thread-1", uid="user-1")
     skill_path = "/home/gem/skills/demo/SKILL.md"
 
@@ -848,7 +856,7 @@ def test_provisioner_rejects_skill_projection_writes(monkeypatch) -> None:
 
 
 def test_provisioner_allows_project_upload_writes(monkeypatch) -> None:
-    monkeypatch.setattr("yuxi.agents.backends.sandbox.backend.get_sandbox_provider", lambda: object())
+    monkeypatch.setattr("yuxi.modules.agents.runtime.backends.sandbox.backend.get_sandbox_provider", lambda: object())
     backend = ProvisionerSandboxBackend(
         thread_id="thread-1", uid="user-1", workdir_path="projects/11111111-1111-4111-8111-111111111111"
     )
@@ -876,7 +884,7 @@ def test_provisioner_allows_project_upload_writes(monkeypatch) -> None:
 
 
 def test_provisioner_creates_write_parent_without_following_symlinks(monkeypatch) -> None:
-    monkeypatch.setattr("yuxi.agents.backends.sandbox.backend.get_sandbox_provider", lambda: object())
+    monkeypatch.setattr("yuxi.modules.agents.runtime.backends.sandbox.backend.get_sandbox_provider", lambda: object())
     backend = ProvisionerSandboxBackend(thread_id="thread-1", uid="user-1")
     commands: list[str] = []
 
@@ -895,7 +903,7 @@ def test_provisioner_creates_write_parent_without_following_symlinks(monkeypatch
 
 
 def test_provisioner_rejects_parent_directory_symlink_failure(monkeypatch) -> None:
-    monkeypatch.setattr("yuxi.agents.backends.sandbox.backend.get_sandbox_provider", lambda: object())
+    monkeypatch.setattr("yuxi.modules.agents.runtime.backends.sandbox.backend.get_sandbox_provider", lambda: object())
     backend = ProvisionerSandboxBackend(thread_id="thread-1", uid="user-1")
     monkeypatch.setattr(
         backend,
@@ -908,7 +916,7 @@ def test_provisioner_rejects_parent_directory_symlink_failure(monkeypatch) -> No
 
 
 def test_provisioner_allows_outputs_writes(monkeypatch) -> None:
-    monkeypatch.setattr("yuxi.agents.backends.sandbox.backend.get_sandbox_provider", lambda: object())
+    monkeypatch.setattr("yuxi.modules.agents.runtime.backends.sandbox.backend.get_sandbox_provider", lambda: object())
     backend = ProvisionerSandboxBackend(thread_id="thread-1", uid="user-1")
 
     def _missing_file(path, offset=0, limit=None):
@@ -934,7 +942,7 @@ def test_provisioner_allows_outputs_writes(monkeypatch) -> None:
 
 
 def test_provisioner_glob_root_searches_readable_roots(monkeypatch) -> None:
-    monkeypatch.setattr("yuxi.agents.backends.sandbox.backend.get_sandbox_provider", lambda: object())
+    monkeypatch.setattr("yuxi.modules.agents.runtime.backends.sandbox.backend.get_sandbox_provider", lambda: object())
     backend = ProvisionerSandboxBackend(thread_id="thread-1", uid="user-1")
     calls = []
 
@@ -962,7 +970,7 @@ def test_provisioner_glob_root_searches_readable_roots(monkeypatch) -> None:
     ],
 )
 def test_provisioner_read_binary_preserves_or_decodes_base64_content(monkeypatch, encoding, expected) -> None:
-    monkeypatch.setattr("yuxi.agents.backends.sandbox.backend.get_sandbox_provider", lambda: object())
+    monkeypatch.setattr("yuxi.modules.agents.runtime.backends.sandbox.backend.get_sandbox_provider", lambda: object())
     backend = ProvisionerSandboxBackend(thread_id="thread-1", uid="user-1")
 
     fake_client = SimpleNamespace(
@@ -976,7 +984,7 @@ def test_provisioner_read_binary_preserves_or_decodes_base64_content(monkeypatch
 
 
 def test_provisioner_read_file_base64_reads_temp_file_not_shell_output(monkeypatch) -> None:
-    monkeypatch.setattr("yuxi.agents.backends.sandbox.backend.get_sandbox_provider", lambda: object())
+    monkeypatch.setattr("yuxi.modules.agents.runtime.backends.sandbox.backend.get_sandbox_provider", lambda: object())
     backend = ProvisionerSandboxBackend(thread_id="thread-1", uid="user-1")
     expected = base64.b64encode(b"\x89PNG\r\n\x1a\nimage-bytes").decode("ascii")
     shell_calls = []
@@ -1016,7 +1024,7 @@ def test_provisioner_read_file_base64_reads_temp_file_not_shell_output(monkeypat
     ],
 )
 def test_provisioner_read_treats_image_files_as_base64(monkeypatch, path, base64_content) -> None:
-    monkeypatch.setattr("yuxi.agents.backends.sandbox.backend.get_sandbox_provider", lambda: object())
+    monkeypatch.setattr("yuxi.modules.agents.runtime.backends.sandbox.backend.get_sandbox_provider", lambda: object())
     backend = ProvisionerSandboxBackend(thread_id="thread-1", uid="user-1")
     monkeypatch.setattr(backend, "_file_size_bytes", lambda _path: 6)
     monkeypatch.setattr(backend, "_read_binary", lambda path, offset=0, limit=None: pytest.fail("file API used"))
@@ -1028,7 +1036,7 @@ def test_provisioner_read_treats_image_files_as_base64(monkeypatch, path, base64
 
 
 def test_provisioner_read_rejects_large_known_binary_before_read(monkeypatch) -> None:
-    monkeypatch.setattr("yuxi.agents.backends.sandbox.backend.get_sandbox_provider", lambda: object())
+    monkeypatch.setattr("yuxi.modules.agents.runtime.backends.sandbox.backend.get_sandbox_provider", lambda: object())
     backend = ProvisionerSandboxBackend(thread_id="thread-1", uid="user-1")
     read_calls: list[tuple[str, int, int | None]] = []
     monkeypatch.setattr(backend, "_file_size_bytes", lambda _path: MAX_BINARY_BYTES + 1)
@@ -1048,7 +1056,7 @@ def test_provisioner_read_rejects_large_known_binary_before_read(monkeypatch) ->
 
 
 def test_provisioner_read_rejects_unknown_binary(monkeypatch) -> None:
-    monkeypatch.setattr("yuxi.agents.backends.sandbox.backend.get_sandbox_provider", lambda: object())
+    monkeypatch.setattr("yuxi.modules.agents.runtime.backends.sandbox.backend.get_sandbox_provider", lambda: object())
     backend = ProvisionerSandboxBackend(thread_id="thread-1", uid="user-1")
     read_calls: list[tuple[str, int, int | None]] = []
 
@@ -1066,7 +1074,7 @@ def test_provisioner_read_rejects_unknown_binary(monkeypatch) -> None:
 
 
 def test_provisioner_read_rejects_unknown_file_on_sandbox_utf8_decode_failure(monkeypatch) -> None:
-    monkeypatch.setattr("yuxi.agents.backends.sandbox.backend.get_sandbox_provider", lambda: object())
+    monkeypatch.setattr("yuxi.modules.agents.runtime.backends.sandbox.backend.get_sandbox_provider", lambda: object())
     backend = ProvisionerSandboxBackend(thread_id="thread-1", uid="user-1")
 
     def _read_binary_raises(path, offset=0, limit=None):
@@ -1082,7 +1090,7 @@ def test_provisioner_read_rejects_unknown_file_on_sandbox_utf8_decode_failure(mo
 
 @pytest.mark.parametrize("extension", ["pdf", "doc", "docx", "ppt", "pptx", "xls", "xlsx"])
 def test_provisioner_read_routes_documents_to_ocr(monkeypatch, extension: str) -> None:
-    monkeypatch.setattr("yuxi.agents.backends.sandbox.backend.get_sandbox_provider", lambda: object())
+    monkeypatch.setattr("yuxi.modules.agents.runtime.backends.sandbox.backend.get_sandbox_provider", lambda: object())
     backend = ProvisionerSandboxBackend(thread_id="thread-1", uid="user-1")
     monkeypatch.setattr(backend, "_file_size_bytes", lambda _path: 8)
     monkeypatch.setattr(backend, "_read_binary", lambda *_args, **_kwargs: pytest.fail("document was read"))
@@ -1097,7 +1105,7 @@ def test_provisioner_read_routes_documents_to_ocr(monkeypatch, extension: str) -
 
 @pytest.mark.parametrize("extension", ["mp3", "mp4", "wav"])
 def test_provisioner_read_rejects_other_known_modalities(monkeypatch, extension: str) -> None:
-    monkeypatch.setattr("yuxi.agents.backends.sandbox.backend.get_sandbox_provider", lambda: object())
+    monkeypatch.setattr("yuxi.modules.agents.runtime.backends.sandbox.backend.get_sandbox_provider", lambda: object())
     backend = ProvisionerSandboxBackend(thread_id="thread-1", uid="user-1")
     monkeypatch.setattr(backend, "_file_size_bytes", lambda _path: 8)
     monkeypatch.setattr(backend, "_read_file_base64", lambda _path: pytest.fail("binary file was read"))
@@ -1138,7 +1146,7 @@ def test_read_file_tool_returns_multimodal_block_for_small_binary() -> None:
 
 
 def test_provisioner_read_reports_invalid_path(monkeypatch) -> None:
-    monkeypatch.setattr("yuxi.agents.backends.sandbox.backend.get_sandbox_provider", lambda: object())
+    monkeypatch.setattr("yuxi.modules.agents.runtime.backends.sandbox.backend.get_sandbox_provider", lambda: object())
     backend = ProvisionerSandboxBackend(thread_id="thread-1", uid="user-1")
 
     result = backend.read("secret.txt")
@@ -1147,7 +1155,7 @@ def test_provisioner_read_reports_invalid_path(monkeypatch) -> None:
 
 
 def test_provisioner_read_reports_path_traversal(monkeypatch) -> None:
-    monkeypatch.setattr("yuxi.agents.backends.sandbox.backend.get_sandbox_provider", lambda: object())
+    monkeypatch.setattr("yuxi.modules.agents.runtime.backends.sandbox.backend.get_sandbox_provider", lambda: object())
     backend = ProvisionerSandboxBackend(thread_id="thread-1", uid="user-1")
 
     result = backend.read("/home/gem/user-data/../secret.txt")
@@ -1156,7 +1164,7 @@ def test_provisioner_read_reports_path_traversal(monkeypatch) -> None:
 
 
 def test_provisioner_read_returns_pagination_window(monkeypatch) -> None:
-    monkeypatch.setattr("yuxi.agents.backends.sandbox.backend.get_sandbox_provider", lambda: object())
+    monkeypatch.setattr("yuxi.modules.agents.runtime.backends.sandbox.backend.get_sandbox_provider", lambda: object())
     backend = ProvisionerSandboxBackend(thread_id="thread-1", uid="user-1")
     lines = [f"line-{index}" for index in range(10)]
     read_calls: list[tuple[int, int | None]] = []
@@ -1179,7 +1187,7 @@ def test_provisioner_read_returns_pagination_window(monkeypatch) -> None:
 
 
 def test_provisioner_read_non_positive_limit_reports_no_lines_requested(monkeypatch) -> None:
-    monkeypatch.setattr("yuxi.agents.backends.sandbox.backend.get_sandbox_provider", lambda: object())
+    monkeypatch.setattr("yuxi.modules.agents.runtime.backends.sandbox.backend.get_sandbox_provider", lambda: object())
     backend = ProvisionerSandboxBackend(thread_id="thread-1", uid="user-1")
     monkeypatch.setattr(backend, "_read_binary", lambda *_args, **_kwargs: pytest.fail("file was inspected"))
 
@@ -1190,7 +1198,7 @@ def test_provisioner_read_non_positive_limit_reports_no_lines_requested(monkeypa
 
 
 def test_provisioner_read_negative_offset_clamps_to_first_line(monkeypatch) -> None:
-    monkeypatch.setattr("yuxi.agents.backends.sandbox.backend.get_sandbox_provider", lambda: object())
+    monkeypatch.setattr("yuxi.modules.agents.runtime.backends.sandbox.backend.get_sandbox_provider", lambda: object())
     backend = ProvisionerSandboxBackend(thread_id="thread-1", uid="user-1")
     read_calls: list[tuple[int, int | None]] = []
 
@@ -1210,7 +1218,7 @@ def test_provisioner_read_negative_offset_clamps_to_first_line(monkeypatch) -> N
 
 @pytest.mark.asyncio
 async def test_provisioner_aread_rejects_outside_path_before_async_client(monkeypatch) -> None:
-    monkeypatch.setattr("yuxi.agents.backends.sandbox.backend.get_sandbox_provider", lambda: object())
+    monkeypatch.setattr("yuxi.modules.agents.runtime.backends.sandbox.backend.get_sandbox_provider", lambda: object())
     backend = ProvisionerSandboxBackend(thread_id="thread-1", uid="user-1")
     monkeypatch.setattr(
         sandbox_backend_module.httpx,
@@ -1225,7 +1233,7 @@ async def test_provisioner_aread_rejects_outside_path_before_async_client(monkey
 
 @pytest.mark.asyncio
 async def test_provisioner_aread_returns_pagination_and_closes_http_client(monkeypatch) -> None:
-    monkeypatch.setattr("yuxi.agents.backends.sandbox.backend.get_sandbox_provider", lambda: object())
+    monkeypatch.setattr("yuxi.modules.agents.runtime.backends.sandbox.backend.get_sandbox_provider", lambda: object())
     backend = ProvisionerSandboxBackend(thread_id="thread-1", uid="user-1")
     read_calls: list[dict] = []
 
@@ -1257,7 +1265,7 @@ async def test_provisioner_aread_returns_pagination_and_closes_http_client(monke
 
 @pytest.mark.asyncio
 async def test_provisioner_aread_image_streams_native_download_without_shell(monkeypatch) -> None:
-    monkeypatch.setattr("yuxi.agents.backends.sandbox.backend.get_sandbox_provider", lambda: object())
+    monkeypatch.setattr("yuxi.modules.agents.runtime.backends.sandbox.backend.get_sandbox_provider", lambda: object())
     backend = ProvisionerSandboxBackend(thread_id="thread-1", uid="user-1")
     download_calls: list[dict] = []
 
@@ -1284,7 +1292,7 @@ async def test_provisioner_aread_image_streams_native_download_without_shell(mon
 
 @pytest.mark.asyncio
 async def test_provisioner_aread_image_rejects_stream_over_limit(monkeypatch) -> None:
-    monkeypatch.setattr("yuxi.agents.backends.sandbox.backend.get_sandbox_provider", lambda: object())
+    monkeypatch.setattr("yuxi.modules.agents.runtime.backends.sandbox.backend.get_sandbox_provider", lambda: object())
     monkeypatch.setattr(sandbox_backend_module, "MAX_BINARY_BYTES", 5)
     backend = ProvisionerSandboxBackend(thread_id="thread-1", uid="user-1")
 
@@ -1316,7 +1324,7 @@ async def test_provisioner_aread_image_rejects_stream_over_limit(monkeypatch) ->
     ],
 )
 async def test_provisioner_aread_preserves_known_binary_type_errors(monkeypatch, path, expected_error) -> None:
-    monkeypatch.setattr("yuxi.agents.backends.sandbox.backend.get_sandbox_provider", lambda: object())
+    monkeypatch.setattr("yuxi.modules.agents.runtime.backends.sandbox.backend.get_sandbox_provider", lambda: object())
     backend = ProvisionerSandboxBackend(thread_id="thread-1", uid="user-1")
 
     async def download_file(**_kwargs):
@@ -1332,7 +1340,7 @@ async def test_provisioner_aread_preserves_known_binary_type_errors(monkeypatch,
 
 @pytest.mark.asyncio
 async def test_provisioner_aread_rejects_unknown_binary_decode_failure(monkeypatch) -> None:
-    monkeypatch.setattr("yuxi.agents.backends.sandbox.backend.get_sandbox_provider", lambda: object())
+    monkeypatch.setattr("yuxi.modules.agents.runtime.backends.sandbox.backend.get_sandbox_provider", lambda: object())
     backend = ProvisionerSandboxBackend(thread_id="thread-1", uid="user-1")
 
     async def read_file(**_kwargs):
@@ -1347,7 +1355,7 @@ async def test_provisioner_aread_rejects_unknown_binary_decode_failure(monkeypat
 
 
 def test_provisioner_grep_applies_global_max_count_across_roots(monkeypatch) -> None:
-    monkeypatch.setattr("yuxi.agents.backends.sandbox.backend.get_sandbox_provider", lambda: object())
+    monkeypatch.setattr("yuxi.modules.agents.runtime.backends.sandbox.backend.get_sandbox_provider", lambda: object())
     backend = ProvisionerSandboxBackend(thread_id="thread-1", uid="user-1")
     grep_calls: list[dict] = []
 
@@ -1462,7 +1470,7 @@ def test_provisioner_grep_handles_native_failures(monkeypatch, native_grep_backe
 @pytest.mark.parametrize(("path", "glob"), [("/etc", None), ("/home/gem/user-data", "../private/*")])
 def test_provisioner_grep_rejects_outside_requests_before_native_call(monkeypatch, path, glob) -> None:
     """非法请求必须在调用搜索服务前被拒绝。"""
-    monkeypatch.setattr("yuxi.agents.backends.sandbox.backend.get_sandbox_provider", lambda: object())
+    monkeypatch.setattr("yuxi.modules.agents.runtime.backends.sandbox.backend.get_sandbox_provider", lambda: object())
     backend = ProvisionerSandboxBackend(thread_id="thread-1", uid="user-1")
 
     def unexpected_client():
@@ -1477,7 +1485,7 @@ def test_provisioner_grep_rejects_outside_requests_before_native_call(monkeypatc
 @pytest.mark.asyncio
 async def test_provisioner_agrep_preserves_timeout(monkeypatch) -> None:
     """异步搜索停滞时恢复 DeepAgents 的有界工具响应。"""
-    monkeypatch.setattr("yuxi.agents.backends.sandbox.backend.get_sandbox_provider", lambda: object())
+    monkeypatch.setattr("yuxi.modules.agents.runtime.backends.sandbox.backend.get_sandbox_provider", lambda: object())
     monkeypatch.setattr(sandbox_backend_module, "ASYNC_GREP_TIMEOUT", 0.01)
     backend = ProvisionerSandboxBackend(thread_id="thread-1", uid="user-1")
     release = threading.Event()
@@ -1496,7 +1504,7 @@ async def test_provisioner_agrep_preserves_timeout(monkeypatch) -> None:
 
 
 def test_provisioner_download_files_distinguishes_invalid_path_from_read_failure(monkeypatch) -> None:
-    monkeypatch.setattr("yuxi.agents.backends.sandbox.backend.get_sandbox_provider", lambda: object())
+    monkeypatch.setattr("yuxi.modules.agents.runtime.backends.sandbox.backend.get_sandbox_provider", lambda: object())
     backend = ProvisionerSandboxBackend(thread_id="thread-1", uid="user-1")
 
     def download_file(**_kwargs):
@@ -1514,7 +1522,7 @@ def test_provisioner_download_files_distinguishes_invalid_path_from_read_failure
 
 
 def test_provisioner_download_files_treats_sandbox_404_as_missing(monkeypatch) -> None:
-    monkeypatch.setattr("yuxi.agents.backends.sandbox.backend.get_sandbox_provider", lambda: object())
+    monkeypatch.setattr("yuxi.modules.agents.runtime.backends.sandbox.backend.get_sandbox_provider", lambda: object())
     backend = ProvisionerSandboxBackend(thread_id="thread-1", uid="user-1")
 
     def download_file(**_kwargs):
@@ -1531,7 +1539,7 @@ def test_provisioner_download_files_treats_sandbox_404_as_missing(monkeypatch) -
 
 
 def test_provisioner_execute_returns_error_response_on_client_failure(monkeypatch) -> None:
-    monkeypatch.setattr("yuxi.agents.backends.sandbox.backend.get_sandbox_provider", lambda: object())
+    monkeypatch.setattr("yuxi.modules.agents.runtime.backends.sandbox.backend.get_sandbox_provider", lambda: object())
     backend = ProvisionerSandboxBackend(thread_id="thread-1", uid="user-1")
 
     class _FakeClient:
@@ -1548,7 +1556,7 @@ def test_provisioner_execute_returns_error_response_on_client_failure(monkeypatc
 
 
 def test_provisioner_execute_applies_timeout_to_command_and_http_request(monkeypatch) -> None:
-    monkeypatch.setattr("yuxi.agents.backends.sandbox.backend.get_sandbox_provider", lambda: object())
+    monkeypatch.setattr("yuxi.modules.agents.runtime.backends.sandbox.backend.get_sandbox_provider", lambda: object())
     backend = ProvisionerSandboxBackend(thread_id="thread-1", uid="user-1")
     calls: list[dict] = []
 
@@ -1573,7 +1581,7 @@ def test_provisioner_execute_applies_timeout_to_command_and_http_request(monkeyp
 
 
 def test_provisioner_download_files_streams_binary_bytes(monkeypatch) -> None:
-    monkeypatch.setattr("yuxi.agents.backends.sandbox.backend.get_sandbox_provider", lambda: object())
+    monkeypatch.setattr("yuxi.modules.agents.runtime.backends.sandbox.backend.get_sandbox_provider", lambda: object())
     backend = ProvisionerSandboxBackend(thread_id="thread-1", uid="user-1")
     calls: list[dict] = []
 
@@ -1598,7 +1606,7 @@ def test_provisioner_download_files_streams_binary_bytes(monkeypatch) -> None:
 
 
 def test_authorized_download_enforces_limit_during_actual_transfer(monkeypatch, tmp_path) -> None:
-    monkeypatch.setattr("yuxi.agents.backends.sandbox.backend.get_sandbox_provider", lambda: object())
+    monkeypatch.setattr("yuxi.modules.agents.runtime.backends.sandbox.backend.get_sandbox_provider", lambda: object())
     backend = ProvisionerSandboxBackend(
         thread_id="thread-1", uid="user-1", workdir_path="projects/11111111-1111-4111-8111-111111111111"
     )
@@ -1644,7 +1652,7 @@ def test_authorized_download_maps_sandbox_overflow_to_stable_limit_error() -> No
 
 
 def test_authorized_snapshot_attempts_cleanup_after_snapshot_command_failure(monkeypatch, tmp_path) -> None:
-    monkeypatch.setattr("yuxi.agents.backends.sandbox.backend.get_sandbox_provider", lambda: object())
+    monkeypatch.setattr("yuxi.modules.agents.runtime.backends.sandbox.backend.get_sandbox_provider", lambda: object())
     backend = ProvisionerSandboxBackend(
         thread_id="thread-1", uid="user-1", workdir_path="projects/11111111-1111-4111-8111-111111111111"
     )
@@ -1668,7 +1676,7 @@ def test_authorized_snapshot_attempts_cleanup_after_snapshot_command_failure(mon
 
 
 def test_authorized_download_preserves_missing_and_symlink_boundary_errors(monkeypatch, tmp_path) -> None:
-    monkeypatch.setattr("yuxi.agents.backends.sandbox.backend.get_sandbox_provider", lambda: object())
+    monkeypatch.setattr("yuxi.modules.agents.runtime.backends.sandbox.backend.get_sandbox_provider", lambda: object())
     backend = ProvisionerSandboxBackend(
         thread_id="thread-1", uid="user-1", workdir_path="projects/11111111-1111-4111-8111-111111111111"
     )
@@ -1694,7 +1702,7 @@ def test_authorized_download_preserves_missing_and_symlink_boundary_errors(monke
 
 
 def test_authorized_download_recovers_snapshot_metadata_when_first_stdout_is_missing(monkeypatch, tmp_path) -> None:
-    monkeypatch.setattr("yuxi.agents.backends.sandbox.backend.get_sandbox_provider", lambda: object())
+    monkeypatch.setattr("yuxi.modules.agents.runtime.backends.sandbox.backend.get_sandbox_provider", lambda: object())
     backend = ProvisionerSandboxBackend(
         thread_id="thread-1", uid="user-1", workdir_path="projects/11111111-1111-4111-8111-111111111111"
     )
@@ -1725,7 +1733,7 @@ def test_authorized_download_recovers_snapshot_metadata_when_first_stdout_is_mis
 
 
 def test_authorized_upload_rejects_symlink_parent_as_permission_error(monkeypatch, tmp_path) -> None:
-    monkeypatch.setattr("yuxi.agents.backends.sandbox.backend.get_sandbox_provider", lambda: object())
+    monkeypatch.setattr("yuxi.modules.agents.runtime.backends.sandbox.backend.get_sandbox_provider", lambda: object())
     backend = ProvisionerSandboxBackend(
         thread_id="thread-1", uid="user-1", workdir_path="projects/11111111-1111-4111-8111-111111111111"
     )
@@ -1751,7 +1759,7 @@ def test_authorized_upload_rejects_symlink_parent_as_permission_error(monkeypatc
 
 
 def test_authorized_snapshot_cleanup_failure_blocks_download(monkeypatch, tmp_path) -> None:
-    monkeypatch.setattr("yuxi.agents.backends.sandbox.backend.get_sandbox_provider", lambda: object())
+    monkeypatch.setattr("yuxi.modules.agents.runtime.backends.sandbox.backend.get_sandbox_provider", lambda: object())
     backend = ProvisionerSandboxBackend(
         thread_id="thread-1", uid="user-1", workdir_path="projects/11111111-1111-4111-8111-111111111111"
     )
@@ -1784,8 +1792,8 @@ def test_authorized_snapshot_cleanup_failure_blocks_download(monkeypatch, tmp_pa
 
 
 def test_workdir_paths_are_workspace_relative_and_reject_symlinks(monkeypatch, tmp_path) -> None:
-    from yuxi.agents.backends import paths as backend_paths
-    from yuxi.workspace import paths
+    from yuxi.modules.agents.runtime.backends import paths as backend_paths
+    from yuxi.modules.workspace import paths
 
     monkeypatch.setattr(paths, "get_user_data_dir", lambda: tmp_path / "user-data")
     paths.ensure_user_workspace("user-1")

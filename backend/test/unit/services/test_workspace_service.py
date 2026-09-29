@@ -9,9 +9,9 @@ from types import SimpleNamespace
 import pytest
 from fastapi import HTTPException, UploadFile
 
-import yuxi.workspace.preview as file_preview
-from yuxi.workspace import paths as workspace_paths
-from yuxi.services import workspace_service as svc
+import yuxi.modules.workspace.preview as file_preview
+from yuxi.modules.workspace import paths as workspace_paths
+import yuxi.modules.workspace.services.files as svc
 
 
 def _user() -> SimpleNamespace:
@@ -416,7 +416,7 @@ async def test_search_workspace_files_matches_filenames(tmp_path: Path, monkeypa
     assert empty["entries"] == []
 
 
-def test_workspace_entry_preserves_v071_virtual_path_contract() -> None:
+def test_workspace_entry_preserves_current_virtual_path_contract() -> None:
     metadata = {"is_dir": True, "size": 0, "modified_at": 0}
 
     root = svc._entry_from_metadata("/", metadata)

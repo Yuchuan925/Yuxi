@@ -13,8 +13,8 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
 from langchain_core.tools import tool
 from langgraph.checkpoint.memory import InMemorySaver
-from yuxi.agents.middlewares.steer import SteerMiddleware
-from yuxi.services.agents import runs
+from yuxi.modules.agents.runtime.middlewares.steer import SteerMiddleware
+import yuxi.modules.agents.services.runs as runs
 
 pytestmark = [pytest.mark.unit, pytest.mark.asyncio]
 

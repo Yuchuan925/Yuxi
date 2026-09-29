@@ -4,14 +4,14 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-import server.routers.system_router as system_router
-from server.routers.system_router import system
+import yuxi.api.routers.system as system_router
+from yuxi.api.routers.system import system
 
 pytestmark = pytest.mark.unit
 
 
 def test_discovery_endpoint_is_public(monkeypatch):
-    monkeypatch.setattr("server.routers.system_router.get_version", lambda: "0.7.1.dev0")
+    monkeypatch.setattr("yuxi.api.routers.system.get_version", lambda: "0.7.1.dev0")
 
     app = FastAPI()
     app.include_router(system, prefix="/api")
@@ -62,3 +62,16 @@ def test_serialize_system_config_includes_field_metadata():
 
     assert result["default_model"] == "test-provider:latest"
     assert result["_config_items"]["default_model"]["type"] == "model"
+
+
+@pytest.mark.asyncio
+async def test_brand_info_uses_packaged_template_outside_project_directory(monkeypatch, tmp_path):
+    """品牌模板从包内读取，不依赖 API 进程的工作目录。"""
+    monkeypatch.delenv("YUXI_BRAND_FILE_PATH", raising=False)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(system_router, "get_version", lambda: "0.7.3")
+
+    config = await system_router.load_info_config()
+
+    assert config["branding"]["name"] == "Yuxi"
+    assert config["footer"]["copyright"].endswith("v0.7.3")

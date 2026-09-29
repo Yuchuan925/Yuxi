@@ -4,10 +4,9 @@ on:
   pull_request:
     paths:
       - '.env.template'
-      - 'backend/package/yuxi/**'
+      - 'backend/yuxi/**'
       - 'backend/pyproject.toml'
       - 'backend/uv.lock'
-      - 'backend/server/**'
       - 'backend/test/integration/**'
       - 'backend/test/e2e/**'
       - 'backend/test/support/**'
@@ -16,17 +15,15 @@ on:
       - 'docker-compose.prod.yml'
       - 'scripts/ci_prepare_system_tests_env.sh'
       - 'scripts/ci_build_topology_images.sh'
-      - 'scripts/migrate-storage.sh'
       - '.github/workflows/system-tests.yml'
   push:
     tags: ['v[0-9]*']
     branches: [main]
     paths:
       - '.env.template'
-      - 'backend/package/yuxi/**'
+      - 'backend/yuxi/**'
       - 'backend/pyproject.toml'
       - 'backend/uv.lock'
-      - 'backend/server/**'
       - 'backend/test/integration/**'
       - 'backend/test/e2e/**'
       - 'backend/test/support/**'
@@ -35,7 +32,6 @@ on:
       - 'docker-compose.prod.yml'
       - 'scripts/ci_prepare_system_tests_env.sh'
       - 'scripts/ci_build_topology_images.sh'
-      - 'scripts/migrate-storage.sh'
       - '.github/workflows/system-tests.yml'
   workflow_dispatch:
 
@@ -120,7 +116,7 @@ jobs:
       - name: Verify Durable Task worker path
         run: |
           docker compose stop api worker
-          docker compose run --rm storage-migrator
+          docker compose run --rm schema-init
           docker compose run --rm --no-deps api \
             uv run --no-sync --no-dev pytest test/integration/services/test_durable_task_repository.py -q
           docker compose run --rm --no-deps \
@@ -234,7 +230,7 @@ jobs:
           done
           exit 1
       - name: Verify worker shipping health
-        run: docker compose exec -T worker uv run --no-sync --no-dev arq --check server.worker_main.WorkerSettings
+        run: docker compose exec -T worker uv run --no-sync --no-dev arq --check yuxi.workers.main.WorkerSettings
       - name: Verify local job filtering preserves ARQ dispatch and retry
         run: docker compose exec -T api uv run --no-sync --no-dev pytest test/integration/services/test_arq_worker_dispatch.py -q
       - name: Verify worker can write personal Skill UserWorkspace
@@ -286,7 +282,7 @@ jobs:
         run: docker compose exec -T api uv run --no-sync --no-dev pytest test/integration/api/test_system_router_api.py::test_health_endpoint_is_public test/integration/api/test_system_router_api.py::test_readiness_endpoint_proves_core_runtime_dependencies test/integration/api/test_system_router_api.py::test_discovery_and_openapi_declare_full_knowledge_capabilities -q
       - name: Verify MCP management connection contract
         run: docker compose exec -T -e TEST_USERNAME="$E2E_USERNAME" -e TEST_PASSWORD="$E2E_PASSWORD" api uv run --no-sync --no-dev pytest test/integration/api/test_mcp_router.py -q
-      - name: Verify versioned Schema migration contract
+      - name: Verify current Schema initialization contract
         run: docker compose exec -T api uv run --no-sync --no-dev pytest test/integration/services/test_schema_migration_version.py -q
       - name: Verify knowledge statistics projection
         run: docker compose exec -T api uv run --no-sync --no-dev pytest test/integration/services/test_knowledge_stats_refresh.py -q
@@ -337,8 +333,8 @@ jobs:
         timeout-minutes: 6
         run: docker compose exec -T -e E2E_USERNAME -e E2E_PASSWORD api uv run --no-sync --no-dev pytest test/e2e/test_agent_lifecycle_key_scope_e2e.py -q --durations=10
       - name: Verify identity transaction and replayable secret publication
-        run: docker compose exec -T -e TEST_USERNAME="$E2E_USERNAME" -e TEST_PASSWORD="$E2E_PASSWORD" api uv run --no-sync --no-dev pytest test/integration/services/test_identity_admin_service.py test/integration/services/test_api_key_schema_migration.py test/integration/services/test_api_key_user_lifecycle.py test/integration/api/test_apikey_router.py -q
-      - name: Verify destructive storage migration and Skill authorization
+        run: docker compose exec -T -e TEST_USERNAME="$E2E_USERNAME" -e TEST_PASSWORD="$E2E_PASSWORD" api uv run --no-sync --no-dev pytest test/integration/services/test_identity_admin_service.py test/integration/services/test_api_key_user_lifecycle.py test/integration/api/test_apikey_router.py -q
+      - name: Verify Workdir and Skill authorization
         run: |
           docker compose exec -T -e TEST_USERNAME="$E2E_USERNAME" -e TEST_PASSWORD="$E2E_PASSWORD" api uv run --no-sync --no-dev pytest \
             test/integration/services/test_workdir_user_workspace.py \

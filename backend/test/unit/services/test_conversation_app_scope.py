@@ -5,8 +5,8 @@ from types import SimpleNamespace
 import pytest
 from fastapi import HTTPException
 
-from yuxi.services.agents import threads
-from yuxi.services.agents.scope import ActorScope
+import yuxi.modules.agents.services.threads as threads
+from yuxi.modules.agents.services.scope import ActorScope
 
 
 @pytest.mark.unit

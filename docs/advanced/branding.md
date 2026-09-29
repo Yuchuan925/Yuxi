@@ -9,8 +9,8 @@ Yuxi 的品牌配置分为两部分：后端读取的站点信息，以及前端
 复制模板。`info.local.yaml` 通常是本地未跟踪文件；如果目标文件已经存在，不要覆盖它，直接编辑或先备份：
 
 ```bash
-cp -n backend/package/yuxi/config/static/info.template.yaml \
-  backend/package/yuxi/config/static/info.local.yaml
+cp -n backend/yuxi/modules/system/static/info.template.yaml \
+  backend/yuxi/modules/system/static/info.local.yaml
 ```
 
 在 `info.local.yaml` 中修改：
@@ -36,20 +36,20 @@ footer:
 图片和协议页面放在 `web/public` 下，路径从网站根目录开始写，例如 `/logo.svg`。Compose 中 API 的工作目录是 `/app`，因此默认配置路径可以写成：
 
 ```bash
-YUXI_BRAND_FILE_PATH=package/yuxi/config/static/info.local.yaml
+YUXI_BRAND_FILE_PATH=yuxi/modules/system/static/info.local.yaml
 ```
 
 也可以在 `.env` 中设置绝对路径，但文件必须挂载到 API 容器中。路径不存在时，API 会回退到 `info.template.yaml`；它不会把两个 YAML 文件合并。
 
 ### 2. 重新加载
 
-开发环境的 API 直接挂载 `backend/package`，修改 YAML 后重启 API 即可：
+开发环境的 API 直接挂载 `backend/yuxi`，修改 YAML 后重启 API 即可：
 
 ```bash
 docker compose restart api
 ```
 
-生产 Compose 不挂载仓库源码，品牌 YAML 会在构建 API 镜像时复制进去。修改 `backend/package/yuxi/config/static/info.local.yaml` 后，需要重新构建并创建 API/worker 容器：
+生产 Compose 不挂载仓库源码，品牌 YAML 会在构建 API 镜像时复制进去。修改 `backend/yuxi/modules/system/static/info.local.yaml` 后，需要重新构建并创建 API/worker 容器：
 
 ```bash
 docker compose --env-file .env.prod -f docker-compose.prod.yml \

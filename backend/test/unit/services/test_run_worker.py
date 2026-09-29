@@ -10,11 +10,11 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
-import yuxi.services.run_worker as run_worker
+import yuxi.modules.agents.services.runner as run_worker
 from arq.worker import RetryJob
-from yuxi.config import options as config_options
-from yuxi.services import task_service
-from yuxi.services.agents.execution import RunExecutionResult
+from yuxi.modules.system import options as config_options
+import yuxi.modules.tasks.service as task_service
+from yuxi.modules.agents.services.execution import RunExecutionResult
 
 
 @pytest.fixture(autouse=True)
@@ -165,8 +165,8 @@ def test_durable_task_shipping_worker_accepts_default_above_24_hours():
     env = os.environ.copy()
     env["TASKER_DEFAULT_TIMEOUT_SECONDS"] = "172800"
     script = """
-from yuxi.services.run_worker import WorkerSettings
-from yuxi.services.task_service import tasker
+from yuxi.workers.settings import WorkerSettings
+from yuxi.modules.tasks.service import tasker
 
 durable = next(
     function
@@ -425,7 +425,7 @@ def _patch_common(monkeypatch: pytest.MonkeyPatch, run_obj: SimpleNamespace):
         )
         if run.run_type == "subagent":
             from dataclasses import asdict, replace
-            from yuxi.agents.buildin.subagent.context import SubAgentContext
+            from yuxi.modules.agents.runtime.builtin.subagent.context import SubAgentContext
 
             execution = replace(
                 execution,
@@ -713,7 +713,7 @@ async def test_cleanup_reconciler_keeps_pending_run_for_dispatch_recovery(
     monkeypatch.setattr(run_worker, "_release_runtime_if_idle", cleanup)
     monkeypatch.setattr(run_worker, "dispatch_next_input", dispatch)
     monkeypatch.setattr(run_worker, "_append_end_event", append_end)
-    from yuxi.services.agents import turns
+    import yuxi.modules.agents.services.turns as turns
 
     monkeypatch.setattr(turns, "reconcile_cancelling_turns", AsyncMock())
 
@@ -1249,7 +1249,7 @@ async def test_process_subagent_run_restores_runtime_context(monkeypatch: pytest
     _patch_common(monkeypatch, run_obj)
 
     from test.unit.agent_context_fixtures import prepared_execution
-    from yuxi.agents.buildin.subagent.context import SubAgentContext
+    from yuxi.modules.agents.runtime.builtin.subagent.context import SubAgentContext
     from dataclasses import asdict, replace
 
     prepared = prepared_execution(
@@ -1606,7 +1606,7 @@ async def test_worker_startup_ensures_builtin_mcp_servers(monkeypatch: pytest.Mo
     monkeypatch.setattr(run_worker, "_reconcile_durable_tasks_forever", fake_task_reconciliation_loop)
     monkeypatch.setattr(run_worker, "recover_scheduled_dispatches", fake_recover_scheduled_dispatches)
     monkeypatch.setattr(run_worker, "claim_and_dispatch_due_jobs", fake_claim_and_dispatch_due_jobs)
-    options_module = importlib.import_module("yuxi.config.options")
+    options_module = importlib.import_module("yuxi.modules.system.options")
     monkeypatch.setattr(options_module, "ensure_options_in_db", fake_ensure_options_in_db)
 
     ctx = {}
@@ -1688,7 +1688,7 @@ def test_worker_settings_reject_invalid_redis_dsn_instead_of_using_arq_default()
     env["REDIS_URL"] = "http://configured-redis.invalid:6379/0"
 
     completed = subprocess.run(
-        [sys.executable, "-c", "import yuxi.services.run_worker"],
+        [sys.executable, "-c", "import yuxi.modules.agents.services.runner"],
         env=env,
         capture_output=True,
         text=True,
@@ -1757,7 +1757,7 @@ async def test_worker_shutdown_closes_queue_clients_before_postgres(monkeypatch:
     async def fake_close_postgres():
         calls.append("postgres")
 
-    monkeypatch.setattr("yuxi.services.agents.transport.close_queue_clients", fake_close_queue_clients)
+    monkeypatch.setattr("yuxi.modules.agents.services.transport.close_queue_clients", fake_close_queue_clients)
     monkeypatch.setattr(run_worker.pg_manager, "close", fake_close_postgres)
 
     await run_worker._worker_shutdown({run_worker._RECONCILIATION_TASK_KEY: reconciliation_task})

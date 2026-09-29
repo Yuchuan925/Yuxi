@@ -2,7 +2,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from yuxi.knowledge.base import KnowledgeBase
+from yuxi.modules.knowledge.base import KnowledgeBase
 
 
 class FakeKnowledgeBase(KnowledgeBase):
@@ -88,7 +88,7 @@ async def test_update_file_params_lazy_loads_single_file(monkeypatch, tmp_path):
             )
 
     file_repo = FakeFileRepo()
-    monkeypatch.setattr("yuxi.repositories.knowledge_file_repository.KnowledgeFileRepository", lambda: file_repo)
+    monkeypatch.setattr("yuxi.modules.knowledge.repositories.files.KnowledgeFileRepository", lambda: file_repo)
 
     await kb.update_file_params(
         "db",

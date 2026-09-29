@@ -3,7 +3,7 @@
 import pytest
 from pydantic import ValidationError
 
-from server.routers.public_v1.agents.schemas import ThreadEventCreate
+from yuxi.api.routers.public_v1.agents.schemas import ThreadEventCreate
 
 
 def _resume_body(answer):

@@ -13,8 +13,8 @@ import httpx
 import pytest
 from langchain_core.messages import HumanMessage, ToolMessage
 
-from yuxi.models.chat import load_chat_model
-from yuxi.models.providers.cache import model_cache
+from yuxi.modules.models.chat import load_chat_model
+from yuxi.modules.models.providers.cache import model_cache
 
 MODEL_SPECS = [spec.strip() for spec in os.getenv("YUXI_REASONING_PROBE_MODELS", "").split(",") if spec.strip()]
 

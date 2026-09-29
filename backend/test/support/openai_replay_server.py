@@ -113,9 +113,17 @@ def _stream_payloads(model: str, messages: list[dict]) -> list[dict]:
     }
     if "DETERMINISTIC_CANCEL_FOLLOWUP" in serialized_messages:
         return [
-            {**common, "choices": [{"index": 0, "delta": {"role": "assistant", "content": EXPECTED_OUTPUT}, "finish_reason": None}]},
-            {**common, "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
-             "usage": {"prompt_tokens": 8, "completion_tokens": 4, "total_tokens": 12}},
+            {
+                **common,
+                "choices": [
+                    {"index": 0, "delta": {"role": "assistant", "content": EXPECTED_OUTPUT}, "finish_reason": None}
+                ],
+            },
+            {
+                **common,
+                "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+                "usage": {"prompt_tokens": 8, "completion_tokens": 4, "total_tokens": 12},
+            },
         ]
     parent = (
         "DETERMINISTIC_SUBAGENT_PARENT:" in serialized_messages
@@ -150,10 +158,15 @@ def _stream_payloads(model: str, messages: list[dict]) -> list[dict]:
     tool_name = "execute" if large_result else EXPECTED_PRELOADED_TOOL
     if "DETERMINISTIC_ASK_USER" in serialized_messages:
         tool_call_id, tool_name = "call-ask-user", "ask_user_question"
-        tool_arguments = json.dumps({"questions": [
-            {"question_id": "q-1", "question": "第一题？"},
-            {"question_id": "q-2", "question": "第二题？"},
-        ]}, ensure_ascii=False)
+        tool_arguments = json.dumps(
+            {
+                "questions": [
+                    {"question_id": "q-1", "question": "第一题？"},
+                    {"question_id": "q-2", "question": "第二题？"},
+                ]
+            },
+            ensure_ascii=False,
+        )
     elif waiting_call:
         started = json.loads(tool_results[waiting_call])
         tool_call_id, tool_name = f"await-{waiting_call}", "subagent_await"

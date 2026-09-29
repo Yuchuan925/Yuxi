@@ -7,7 +7,7 @@ from langchain.agents.middleware.types import ModelRequest, ModelResponse
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_openai import ChatOpenAI
 
-from yuxi.agents.middlewares.model_input import ImageInputCompatibilityMiddleware
+from yuxi.modules.agents.runtime.middlewares.model_input import ImageInputCompatibilityMiddleware
 
 
 def _request(model, messages) -> ModelRequest:

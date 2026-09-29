@@ -6,8 +6,8 @@ from types import SimpleNamespace
 
 import pytest
 
-import yuxi.services.subagent_run_service as module
-from yuxi.services.agents.input_messages import build_chat_input_message
+import yuxi.modules.agents.services.subagents as module
+from yuxi.modules.agents.services.input_messages import build_chat_input_message
 
 
 @pytest.mark.asyncio

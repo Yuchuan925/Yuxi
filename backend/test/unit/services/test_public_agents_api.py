@@ -6,15 +6,11 @@ import pytest
 from fastapi import HTTPException
 from pydantic import ValidationError
 
-from server.routers.public_v1.agents.schemas import (
-    InputMessage,
-    ThreadEventCreate,
-    input_messages_to_domain,
-)
-from server.routers.public_v1.agents.sessions import SessionEventCreate
-from server.routers.public_v1.agents.auth import require_public_context
-from yuxi.services.agents.inputs import thread_id_for_creation
-from yuxi.services.agents.scope import ActorScope
+from yuxi.api.routers.public_v1.agents.schemas import InputMessage, ThreadEventCreate, input_messages_to_domain
+from yuxi.api.routers.public_v1.agents.sessions import SessionEventCreate
+from yuxi.api.routers.public_v1.agents.auth import require_public_context
+from yuxi.modules.agents.services.inputs import thread_id_for_creation
+from yuxi.modules.agents.services.scope import ActorScope
 
 
 def test_creation_key_is_stable_and_isolated_by_app():
@@ -34,7 +30,7 @@ async def test_unbound_full_key_uses_product_user_without_end_user(monkeypatch):
         raise AssertionError("产品 Key 不应解析终端用户")
 
     monkeypatch.setattr(
-        "server.routers.public_v1.agents.auth.resolve_public_user", unexpected_end_user
+        "yuxi.api.routers.public_v1.agents.auth.resolve_public_user", unexpected_end_user
     )
     owner = SimpleNamespace(uid="owner-1", role="user")
     key = SimpleNamespace(id=17, access_level="full", app_id=None)

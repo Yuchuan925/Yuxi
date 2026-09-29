@@ -5,8 +5,12 @@ import uuid
 
 import pytest
 
-from yuxi.services.agents.transport import RUN_EVENTS_STREAM_TTL_SECONDS, append_run_stream_event, get_redis_client
-from yuxi.storage.redis import close_async_redis_client
+from yuxi.modules.agents.services.transport import (
+    RUN_EVENTS_STREAM_TTL_SECONDS,
+    append_run_stream_event,
+    get_redis_client,
+)
+from yuxi.infrastructure.redis import close_async_redis_client
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
 

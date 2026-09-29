@@ -1,0 +1,25 @@
+from yuxi.bootstrap.api import _startup, _shutdown_component, _close_neo4j_connection
+
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI
+from yuxi.modules.agents.services.transport import close_queue_clients
+from yuxi.infrastructure.postgres.manager import pg_manager
+from yuxi.modules.agents.runtime.backends.sandbox import shutdown_sandbox_provider
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """确保 startup 任意阶段失败时仍执行已取得资源的补偿清理。"""
+
+    app.state.startup_complete = False
+    app.state.startup_components = {}
+    try:
+        await _startup(app)
+        yield
+    finally:
+        app.state.startup_complete = False
+        await _shutdown_component("sandbox_provider", shutdown_sandbox_provider)
+        await _shutdown_component("queue_clients", close_queue_clients)
+        await _shutdown_component("neo4j", _close_neo4j_connection)
+        await _shutdown_component("postgres", pg_manager.close)

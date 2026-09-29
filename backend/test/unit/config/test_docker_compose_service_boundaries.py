@@ -2,7 +2,6 @@ from copy import deepcopy
 import os
 import re
 from pathlib import Path
-import subprocess
 
 import pytest
 import yaml
@@ -42,11 +41,10 @@ SANDBOX_CLEANUP_OWNER_PATHS = (
     "backend/test/live_api_cleanup.py",
 )
 WORKSPACE_PERMISSION_OWNER_PATHS = (
-    "backend/package/yuxi/utils/paths.py",
-    "backend/package/yuxi/workspace/paths.py",
-    "backend/package/yuxi/workspace/filesystem.py",
-    "backend/package/yuxi/services/workspace_service.py",
-    "backend/package/yuxi/storage_migrations/v071_workdirs.py",
+    "backend/yuxi/infrastructure/filesystem.py",
+    "backend/yuxi/modules/workspace/paths.py",
+    "backend/yuxi/modules/workspace/filesystem.py",
+    "backend/yuxi/modules/workspace/services/files.py",
     "docker/sandbox_provisioner/app.py",
 )
 LEGACY_WORKSPACE_PERMISSION_MARKERS = frozenset(
@@ -217,12 +215,12 @@ def test_worker_user_data_mount_is_writable_for_personal_skill_install(filename:
 
 @pytest.mark.parametrize("filename", ["docker-compose.yml", "docker-compose.prod.yml"])
 def test_workspace_consumers_use_fixed_runtime_identity_after_root_migration(filename: str) -> None:
-    """普通文件 consumer 使用 1000:1000，只有一次性 migrator 保留 root。"""
+    """文件 consumer 和 Schema 初始化进程均使用镜像的非 root 身份。"""
     services = _load_compose(filename)["services"]
 
     assert services["api"]["user"] == "1000:1000"
     assert services["worker"]["user"] == "1000:1000"
-    assert services["storage-migrator"]["user"] == "0:0"
+    assert "user" not in services["schema-init"]
 
 
 def test_api_image_applies_owner_only_umask_before_dropping_to_runtime_identity() -> None:
@@ -250,57 +248,34 @@ def test_workspace_permission_guard_detects_reintroduced_world_writable_mode() -
 
 
 @pytest.mark.parametrize("filename", ["docker-compose.yml", "docker-compose.prod.yml"])
-def test_storage_migrator_gates_every_shipping_file_consumer(filename: str) -> None:
-    """文件 consumer 只能在一次性迁移成功后启动。"""
+def test_schema_initializer_gates_every_shipping_file_consumer(filename: str) -> None:
+    """文件 consumer 只能在 Schema 初始化成功后启动。"""
     compose = _load_compose(filename)
     for service_name in ("api", "worker", "sandbox-provisioner"):
-        dependency = compose["services"][service_name]["depends_on"]["storage-migrator"]
+        dependency = compose["services"][service_name]["depends_on"]["schema-init"]
         assert dependency["condition"] == "service_completed_successfully"
-    migrator = compose["services"]["storage-migrator"]
-    assert "python -m yuxi.storage_migration" in migrator["command"]
-    migrator_targets = {_volume_target(volume) for volume in migrator.get("volumes") or []}
-    assert "/app/legacy-saves" in migrator_targets
-    assert "/app/legacy-projects" not in migrator_targets
-    assert "/app/checkpoints" not in migrator_targets
-    assert "YUXI_LEGACY_PROJECTS_DIR" not in (migrator.get("environment") or {})
-    assert "minio" not in (migrator.get("depends_on") or {})
-
-
-def test_storage_migration_script_quiesces_runtime_before_issuing_proof() -> None:
-    """升级入口必须先停写入者和动态 Sandbox，再运行破坏性迁移。"""
-    script = _project_root() / "scripts" / "migrate-storage.sh"
-    source = script.read_text()
-
-    assert script.stat().st_mode & 0o100
-    assert source.index("stop api worker sandbox-provisioner") < source.index("/api/sandboxes/quiesce")
-    provisioner_stop = source.rindex("stop sandbox-provisioner")
-    assert source.index("/api/sandboxes/quiesce") < provisioner_stop
-    assert provisioner_stop < source.index("YUXI_STORAGE_MIGRATION_QUIESCENCE_TOKEN")
-    assert 'compose=(docker compose "$@")' in source
-    assert "up -d --no-deps --build --wait sandbox-provisioner" in source
-    assert "mktemp" in source
-    assert '-v "$proof_file:/app/legacy-saves/.storage-migration-quiesced:ro"' in source
-
-
-def test_v071_options_migration_is_not_part_of_normal_startup() -> None:
-    """一次性配置迁移只能由 storage-migrator 装配。"""
-    root = _project_root()
-    migration_source = (root / "backend/package/yuxi/storage_migration.py").read_text()
-    api_source = (root / "backend/server/utils/lifespan.py").read_text()
-    worker_source = (root / "backend/package/yuxi/services/run_worker.py").read_text()
-
-    assert "migrate_system_options" in migration_source
-    assert "storage_migrations" not in api_source
-    assert "storage_migrations" not in worker_source
+    initializer = compose["services"]["schema-init"]
+    assert "python -m yuxi.migrations.main" in initializer["command"]
+    initializer_targets = {_volume_target(volume) for volume in initializer.get("volumes") or []}
+    assert "/app/legacy-saves" not in initializer_targets
+    assert not any(target.startswith("/app/legacy-") for target in initializer_targets)
+    assert "/app/user-data" not in initializer_targets
+    assert "/app/skill-sources" not in initializer_targets
+    assert "/app/skill-projections" not in initializer_targets
+    assert "YUXI_LEGACY_STORAGE_DIR" not in (initializer.get("environment") or {})
+    assert "/app/legacy-projects" not in initializer_targets
+    assert "/app/checkpoints" not in initializer_targets
+    assert "YUXI_LEGACY_PROJECTS_DIR" not in (initializer.get("environment") or {})
+    assert "minio" not in (initializer.get("depends_on") or {})
 
 
 def test_runtime_processes_only_validate_schema_version() -> None:
     """API 与 worker 不得重新取得建表、DDL 收敛或 checkpoint setup ownership。"""
     root = _project_root()
-    migration_source = (root / "backend/package/yuxi/storage_migration.py").read_text()
+    migration_source = (root / "backend/yuxi/migrations/main.py").read_text()
     runtime_sources = {
-        "api": (root / "backend/server/utils/lifespan.py").read_text(),
-        "worker": (root / "backend/package/yuxi/services/run_worker.py").read_text(),
+        "api": (root / "backend/yuxi/bootstrap/api.py").read_text(),
+        "worker": (root / "backend/yuxi/bootstrap/worker.py").read_text(),
     }
     ddl_markers = (
         "create_business_tables(",
@@ -314,61 +289,6 @@ def test_runtime_processes_only_validate_schema_version() -> None:
     for source in runtime_sources.values():
         assert "require_current_schema(" in source
         assert all(marker not in source for marker in ddl_markers)
-
-
-def test_storage_migration_script_recovers_stopped_production_deployment(
-    tmp_path: Path,
-) -> None:
-    """已 down 的生产部署也必须使用同一 Compose/env 选择器完成受控停机迁移。"""
-    fake_bin = tmp_path / "bin"
-    fake_bin.mkdir()
-    command_log = tmp_path / "docker.log"
-    fake_docker = fake_bin / "docker"
-    fake_docker.write_text(
-        "#!/usr/bin/env bash\n"
-        'printf \'%s\\n\' "$*" >> "$FAKE_DOCKER_LOG"\n'
-        'if [[ " $* " == *" ps --status running --services "* ]]; then exit 0; fi\n'
-        "cat >/dev/null || true\n",
-        encoding="utf-8",
-    )
-    fake_docker.chmod(0o755)
-    env = {
-        **os.environ,
-        "FAKE_DOCKER_LOG": str(command_log),
-        "PATH": f"{fake_bin}:{os.environ['PATH']}",
-    }
-
-    result = subprocess.run(
-        [
-            "bash",
-            str(_project_root() / "scripts" / "migrate-storage.sh"),
-            "-f",
-            "docker-compose.prod.yml",
-            "--env-file",
-            ".env.prod",
-        ],
-        cwd=_project_root(),
-        env=env,
-        capture_output=True,
-        text=True,
-        timeout=30,
-        check=False,
-    )
-
-    assert result.returncode == 0, result.stderr
-    commands = command_log.read_text(encoding="utf-8").splitlines()
-    prefix = "compose -f docker-compose.prod.yml --env-file .env.prod "
-    assert commands
-    assert all(command.startswith(prefix) for command in commands)
-    assert any("up -d --no-deps --build --wait sandbox-provisioner" in command for command in commands)
-    assert any("exec -T sandbox-provisioner python -" in command for command in commands)
-    assert any(
-        "run --rm" in command
-        and "-v " in command
-        and ":/app/legacy-saves/.storage-migration-quiesced:ro" in command
-        and "-e YUXI_STORAGE_MIGRATION_QUIESCENCE_TOKEN=" in command
-        for command in commands
-    )
 
 
 @pytest.mark.parametrize("filename", ["docker-compose.yml", "docker-compose.prod.yml"])

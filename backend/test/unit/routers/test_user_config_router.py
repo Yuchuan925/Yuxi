@@ -4,9 +4,10 @@ import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from server.routers.user_router import get_user_config, update_user_config
-from yuxi.config import UserConfigSchema
-from yuxi.storage.postgres.models_business import Base, Department, User
+from yuxi.api.routers.identity.users import get_user_config, update_user_config
+from yuxi.modules.identity.preferences import UserConfigSchema
+from yuxi.infrastructure.postgres.base import Base
+from yuxi.modules.identity.models import Department, User
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.unit]
 

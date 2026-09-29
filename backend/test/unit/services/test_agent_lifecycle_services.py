@@ -5,9 +5,9 @@ from types import SimpleNamespace
 import pytest
 from fastapi import HTTPException
 
-from yuxi.services.agents.events import _Cursor, _parse_cursor
-from yuxi.services.agents.scheduler import Dispatch, deliver
-from yuxi.services.agents.turns import _summarize_turn_usage, _validate_resume_response
+from yuxi.modules.agents.services.events import _Cursor, _parse_cursor
+from yuxi.modules.agents.services.scheduler import Dispatch, deliver
+from yuxi.modules.agents.services.turns import _summarize_turn_usage, _validate_resume_response
 
 
 def test_thread_cursor_round_trip_across_receipt_run_and_redis_positions():
@@ -85,14 +85,14 @@ async def test_dispatch_materializes_bound_workdir_before_publishing(monkeypatch
     """Run 已由事务创建后，目录物化先于同一个 Run 的队列投递。"""
     calls = []
     monkeypatch.setattr(
-        "yuxi.services.agents.scheduler.ensure_bound_user_workdir",
+        "yuxi.modules.agents.services.scheduler.ensure_bound_user_workdir",
         lambda uid, path: calls.append(("workdir", uid, path)),
     )
 
     async def enqueue(run_id):
         calls.append(("publish", run_id))
 
-    monkeypatch.setattr("yuxi.services.agents.transport.enqueue_agent_run", enqueue)
+    monkeypatch.setattr("yuxi.modules.agents.services.transport.enqueue_agent_run", enqueue)
     binding = SimpleNamespace(materialize_managed=True, uid="user-1", workdir_path="projects/p-1")
     await deliver(Dispatch(run_id="run-1", binding=binding))
     assert calls == [("workdir", "user-1", "projects/p-1"), ("publish", "run-1")]

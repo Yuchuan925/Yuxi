@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
-import yuxi.services.agents.scheduler as scheduler
+import yuxi.modules.agents.services.scheduler as scheduler
 
 
 @pytest.mark.asyncio

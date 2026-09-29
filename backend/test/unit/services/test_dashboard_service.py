@@ -8,19 +8,13 @@ import pytest_asyncio
 from sqlalchemy import event
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from yuxi.services.dashboard_service import DashboardService
-from yuxi.storage.postgres.models_business import (
-    Agent,
-    Base,
-    Conversation,
-    ConversationStats,
-    Department,
-    Message,
-    MessageFeedback,
-    ToolCall,
-    User,
-)
-from yuxi.utils.datetime_utils import utc_now_naive
+from yuxi.modules.system.dashboard import DashboardService
+from yuxi.modules.agents.models.definitions import Agent
+from yuxi.infrastructure.postgres.base import Base
+from yuxi.modules.agents.models.threads import Conversation, ConversationStats
+from yuxi.modules.identity.models import Department, User
+from yuxi.modules.agents.models.messages import Message, MessageFeedback, ToolCall
+from yuxi.shared.datetime import utc_now_naive
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.unit]
 
@@ -489,7 +483,8 @@ async def test_dashboard_service_conversation_detail(dashboard_db):
 async def test_conversation_tokens_use_runs_and_expose_missing_usage(dashboard_db):
     """审计累加同会话 Run，忽略旧汇总并区分真实零和未知。"""
     from sqlalchemy import select
-    from yuxi.storage.postgres.models_business import AgentRun, AgentTurn
+    from yuxi.modules.agents.models.runs import AgentRun
+    from yuxi.modules.agents.models.turns import AgentTurn
 
     conversation = (
         await dashboard_db.execute(select(Conversation).where(Conversation.thread_id == "thread-102"))

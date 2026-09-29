@@ -4,9 +4,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from yuxi.knowledge import preview
-from yuxi.knowledge.base import KnowledgeBase
-from yuxi.utils.filepreview import MAX_BINARY_PREVIEW_SIZE_BYTES
+from yuxi.modules.knowledge import preview
+from yuxi.modules.knowledge.base import KnowledgeBase
+from yuxi.infrastructure.document_preview import MAX_BINARY_PREVIEW_SIZE_BYTES
 
 
 class FakeKnowledgeBase(KnowledgeBase):

@@ -1,6 +1,6 @@
 import pytest
 
-from yuxi.services.task_registry import get_failure_task_definition
+from yuxi.modules.tasks.registry import get_failure_task_definition
 
 
 def test_failure_hook_fallback_is_limited_to_migrated_legacy_version() -> None:

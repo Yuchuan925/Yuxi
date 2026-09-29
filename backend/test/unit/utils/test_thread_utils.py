@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from yuxi.utils.thread_utils import extract_thread_id
+from yuxi.modules.agents.runtime.thread_metadata import extract_thread_id
 
 
 def test_extract_thread_id_reads_stable_event_paths():

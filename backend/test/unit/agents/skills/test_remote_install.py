@@ -4,7 +4,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from yuxi.agents.skills import remote_install as svc
+from yuxi.modules.extensions.skills import remote_install as svc
 
 
 @pytest.fixture(autouse=True)

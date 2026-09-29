@@ -6,9 +6,10 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from server.routers.auth_router import auth
-from server.utils.auth_middleware import get_db, get_required_user
-from yuxi.storage.postgres.models_business import Base, Department, User
+from yuxi.api.routers.identity.auth import auth
+from yuxi.api.dependencies.auth import get_db, get_required_user
+from yuxi.infrastructure.postgres.base import Base
+from yuxi.modules.identity.models import Department, User
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.unit]
 

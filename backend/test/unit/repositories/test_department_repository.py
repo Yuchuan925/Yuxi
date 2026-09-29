@@ -7,9 +7,10 @@ import pytest_asyncio
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from yuxi.repositories.department_repository import DepartmentRepository
-from yuxi.storage.postgres.models_business import APIKey, Base, Department, User
-from yuxi.utils.auth_utils import AuthUtils
+from yuxi.modules.identity.repositories.departments import DepartmentRepository
+from yuxi.modules.identity.models import APIKey, Department, User
+from yuxi.infrastructure.postgres.base import Base
+from yuxi.modules.identity.security import AuthUtils
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.unit]
 

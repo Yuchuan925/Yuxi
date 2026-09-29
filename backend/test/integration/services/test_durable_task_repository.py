@@ -11,20 +11,20 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from yuxi.knowledge.eval.service import EvaluationService, finish_dataset_generation_task
-from yuxi.repositories import evaluation_repository as evaluation_repository_module
-from yuxi.repositories import knowledge_file_repository as knowledge_file_repository_module
-from yuxi.repositories import task_repository as task_repository_module
-from yuxi.repositories.evaluation_repository import EvaluationRepository
-from yuxi.repositories.knowledge_file_repository import KnowledgeFileRepository
-from yuxi.repositories.task_repository import TaskRepository
-from yuxi.services import task_queue_service
-from yuxi.services.task_queue_service import finalize_task_failure
-from yuxi.services.task_service import TaskContext, Tasker
-from yuxi.storage.postgres.manager import PostgresManager
-from yuxi.storage.postgres.models_business import TaskRecord
-from yuxi.storage.postgres.models_knowledge import EvaluationDataset, EvaluationRun, KnowledgeBase, KnowledgeFile
-from yuxi.utils.datetime_utils import utc_now_naive
+from yuxi.modules.knowledge.evaluation.service import EvaluationService, finish_dataset_generation_task
+import yuxi.modules.knowledge.repositories.evaluation as evaluation_repository_module
+import yuxi.modules.knowledge.repositories.files as knowledge_file_repository_module
+import yuxi.modules.tasks.repository as task_repository_module
+from yuxi.modules.knowledge.repositories.evaluation import EvaluationRepository
+from yuxi.modules.knowledge.repositories.files import KnowledgeFileRepository
+from yuxi.modules.tasks.repository import TaskRepository
+import yuxi.modules.tasks.queue as task_queue_service
+from yuxi.modules.tasks.queue import finalize_task_failure
+from yuxi.modules.tasks.service import TaskContext, Tasker
+from yuxi.infrastructure.postgres.manager import PostgresManager
+from yuxi.modules.tasks.models import TaskRecord
+from yuxi.modules.knowledge.models import EvaluationDataset, EvaluationRun, KnowledgeBase, KnowledgeFile
+from yuxi.shared.datetime import utc_now_naive
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
 

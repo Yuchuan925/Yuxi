@@ -4,7 +4,8 @@ import asyncio
 
 import pytest
 
-from yuxi.services import readiness_service, task_queue_service
+import yuxi.modules.system.readiness as readiness_service
+import yuxi.modules.tasks.queue as task_queue_service
 
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.unit]

@@ -15,24 +15,18 @@ from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from agent_run_test_helpers import create_agent_run
-from yuxi.repositories.agent_run_repository import AgentRunRepository
-from yuxi.repositories.model_message_audit_repository import ModelMessageAuditRepository
-from yuxi.repositories.tool_message_audit_repository import ToolMessageAuditRepository
-from yuxi.services import run_worker
-from yuxi.storage.postgres.models_business import (
-    AgentInput,
-    AgentInputMessage,
-    AgentInputReceipt,
-    AgentRun,
-    AgentTurn,
-    Conversation,
-    Message,
-    Project,
-    SubagentThread,
-    ToolCall,
-    User,
-)
-from yuxi.utils.datetime_utils import utc_now_naive
+from yuxi.modules.agents.repositories.runs import AgentRunRepository
+from yuxi.modules.agents.repositories.model_audit import ModelMessageAuditRepository
+from yuxi.modules.agents.repositories.tool_audit import ToolMessageAuditRepository
+import yuxi.modules.agents.services.runner as run_worker
+from yuxi.modules.agents.models.inputs import AgentInput, AgentInputMessage, AgentInputReceipt
+from yuxi.modules.agents.models.runs import AgentRun
+from yuxi.modules.agents.models.turns import AgentTurn
+from yuxi.modules.agents.models.threads import Conversation, SubagentThread
+from yuxi.modules.agents.models.messages import Message, ToolCall
+from yuxi.modules.workspace.models import Project
+from yuxi.modules.identity.models import User
+from yuxi.shared.datetime import utc_now_naive
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
 

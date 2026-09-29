@@ -8,7 +8,7 @@ class TestMinIOClientStatFile:
     """Test MinIOClient.stat_file and astat_file methods."""
 
     def test_stat_file_returns_size(self):
-        from yuxi.storage.minio.client import MinIOClient
+        from yuxi.infrastructure.minio.client import MinIOClient
 
         client = MinIOClient()
         mock_stat = MagicMock()
@@ -28,7 +28,7 @@ class TestMinIOClientStatFile:
         from minio.error import S3Error
         from urllib3 import HTTPResponse
 
-        from yuxi.storage.minio.client import MinIOClient
+        from yuxi.infrastructure.minio.client import MinIOClient
 
         client = MinIOClient()
         client._client = MagicMock()
@@ -42,7 +42,7 @@ class TestMinIOClientStatFile:
 
     @pytest.mark.asyncio
     async def test_astat_file_returns_size(self):
-        from yuxi.storage.minio.client import MinIOClient
+        from yuxi.infrastructure.minio.client import MinIOClient
 
         client = MinIOClient()
         mock_stat = MagicMock()
@@ -59,7 +59,7 @@ class TestAddFileRecordSizeFallback:
     """Test that add_file_record fills size from MinIO when not provided."""
 
     def _make_test_kb(self, work_dir="/tmp/test_kb"):
-        from yuxi.knowledge.base import KnowledgeBase
+        from yuxi.modules.knowledge.base import KnowledgeBase
 
         class TestKB(KnowledgeBase):
             @property
@@ -112,7 +112,7 @@ class TestAddFileRecordSizeFallback:
         mock_minio = AsyncMock()
         mock_minio.astat_file.return_value = 9999
 
-        with patch("yuxi.storage.minio.get_minio_client", return_value=mock_minio):
+        with patch("yuxi.infrastructure.minio.get_minio_client", return_value=mock_minio):
             metadata = await kb.add_file_record(
                 "db1",
                 item,
@@ -136,7 +136,7 @@ class TestAddFileRecordSizeFallback:
 
         mock_minio = AsyncMock()
 
-        with patch("yuxi.storage.minio.get_minio_client", return_value=mock_minio):
+        with patch("yuxi.infrastructure.minio.get_minio_client", return_value=mock_minio):
             metadata = await kb.add_file_record(
                 "db1",
                 item,
@@ -160,7 +160,7 @@ class TestAddFileRecordSizeFallback:
         mock_minio = AsyncMock()
         mock_minio.astat_file.side_effect = Exception("MinIO connection error")
 
-        with patch("yuxi.storage.minio.get_minio_client", return_value=mock_minio):
+        with patch("yuxi.infrastructure.minio.get_minio_client", return_value=mock_minio):
             metadata = await kb.add_file_record(
                 "db1",
                 item,

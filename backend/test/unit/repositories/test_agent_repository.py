@@ -4,10 +4,10 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
-from yuxi.agents.buildin.chatbot.context import ChatBotContext
+from yuxi.modules.agents.runtime.builtin.chatbot.context import ChatBotContext
 
-from yuxi.agents.presets.subagents.general_purpose import PRESET as GENERAL_PURPOSE
-from yuxi.repositories.agent_repository import (
+from yuxi.modules.agents.presets.subagents.general_purpose import PRESET as GENERAL_PURPOSE
+from yuxi.modules.agents.repositories.definitions import (
     AgentRepository,
     DEFAULT_AGENT_DESCRIPTION,
     DEFAULT_SHARE_CONFIG,
@@ -16,7 +16,8 @@ from yuxi.repositories.agent_repository import (
     user_can_access_agent,
     user_can_manage_agent,
 )
-from yuxi.storage.postgres.models_business import Agent, User
+from yuxi.modules.agents.models.definitions import Agent
+from yuxi.modules.identity.models import User
 
 
 class FakeDb:

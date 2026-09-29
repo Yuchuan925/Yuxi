@@ -2,7 +2,7 @@
 
 状态：implemented
 类型：simplification
-Owner：backend/package/yuxi/agents/buildin/__init__.py
+Owner：backend/yuxi/modules/agents/runtime/builtin/__init__.py
 
 ## 问题
 

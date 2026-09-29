@@ -6,11 +6,11 @@ from types import MethodType, SimpleNamespace
 
 import pytest
 
-from yuxi.agents.toolkits.kbs import tools
-from yuxi.knowledge.base import KnowledgeBase
-from yuxi.knowledge.manager import KnowledgeBaseManager
-from yuxi.knowledge.read_models import KnowledgeBaseDetail
-from yuxi.repositories.knowledge_base_repository import KnowledgeBaseRepository
+from yuxi.modules.extensions.tools.knowledge import tools
+from yuxi.modules.knowledge.base import KnowledgeBase
+from yuxi.modules.knowledge.manager import KnowledgeBaseManager
+from yuxi.modules.knowledge.read_models import KnowledgeBaseDetail
+from yuxi.modules.knowledge.repositories.bases import KnowledgeBaseRepository
 
 
 def _tool_callable(tool):
@@ -543,7 +543,7 @@ async def test_search_file_requires_kb_name_or_query(monkeypatch) -> None:
     ],
 )
 async def test_search_file_returns_files(monkeypatch, kwargs: dict, fake_files, expected_filenames: list[str]) -> None:
-    from yuxi.repositories.knowledge_file_repository import KnowledgeFileRepository
+    from yuxi.modules.knowledge.repositories.files import KnowledgeFileRepository
 
     monkeypatch.setattr(tools, "_resolve_visible_knowledge_bases_for_query", _fake_visible_kbs)
 
@@ -602,7 +602,7 @@ async def test_search_file_pagination(monkeypatch) -> None:
         del self, kb_id, filename_query, statuses, files_only
         return fake_files[offset : offset + limit], len(fake_files)
 
-    from yuxi.repositories.knowledge_file_repository import KnowledgeFileRepository
+    from yuxi.modules.knowledge.repositories.files import KnowledgeFileRepository
 
     monkeypatch.setattr(KnowledgeFileRepository, "search_files", _fake_search_files)
 
@@ -677,7 +677,7 @@ async def test_search_file_total_reflects_full_set_not_page(monkeypatch) -> None
         del self, kb_id, filename_query, statuses, files_only
         return fake_files[offset : offset + limit], len(fake_files)
 
-    from yuxi.repositories.knowledge_file_repository import KnowledgeFileRepository
+    from yuxi.modules.knowledge.repositories.files import KnowledgeFileRepository
 
     monkeypatch.setattr(KnowledgeFileRepository, "search_files", _fake_search_files)
 

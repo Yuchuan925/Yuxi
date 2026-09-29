@@ -15,11 +15,9 @@ class BumpVersionScriptTests(unittest.TestCase):
         shutil.copy2(Path(__file__).with_name("bump-version.sh"), script)
 
         fixtures = {
-            "backend/package/pyproject.toml": 'version = "0.7.2.beta1"\n',
             "backend/pyproject.toml": 'version = "0.7.2.beta1"\n',
             "backend/uv.lock": (
-                'name = "yuxi"\nversion = "0.7.2b1"\n\n'
-                'name = "yuxi-workspace"\nversion = "0.7.2b1"\n'
+                'name = "yuxi"\nversion = "0.7.2b1"\n'
             ),
             "web/package.json": '{\n  "version": "0.7.2.beta1"\n}\n',
             "docker-compose.yml": "\n".join(
@@ -78,7 +76,6 @@ class BumpVersionScriptTests(unittest.TestCase):
             )
 
             current_paths = [
-                "backend/package/pyproject.toml",
                 "backend/pyproject.toml",
                 "backend/uv.lock",
                 "web/package.json",
@@ -121,7 +118,7 @@ class BumpVersionScriptTests(unittest.TestCase):
 
             self.assertIn(
                 'version = "0.7.2.dev2"',
-                (root / "backend/package/pyproject.toml").read_text(),
+                (root / "backend/pyproject.toml").read_text(),
             )
             for relative_path in (
                 "README.md",

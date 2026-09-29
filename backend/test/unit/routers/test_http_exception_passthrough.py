@@ -7,18 +7,16 @@ import pytest
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
-from server.routers import (
-    auth_router,
-    external_kb_router,
-    graph_router,
-    knowledge_dashboard_router,
-    knowledge_eval_router,
-    knowledge_router,
-    mcp_router,
-    model_provider_router,
-    skill_router,
-    system_router,
-)
+import yuxi.api.routers.identity.auth as auth_router
+import yuxi.api.routers.knowledge.external as external_kb_router
+import yuxi.api.routers.knowledge.graphs as graph_router
+import yuxi.api.routers.knowledge.dashboard as knowledge_dashboard_router
+import yuxi.api.routers.knowledge.evaluation as knowledge_eval_router
+import yuxi.api.routers.knowledge.management as knowledge_router
+import yuxi.api.routers.extensions.mcp as mcp_router
+import yuxi.api.routers.models as model_provider_router
+import yuxi.api.routers.extensions.skills as skill_router
+import yuxi.api.routers.system as system_router
 
 
 @pytest.mark.parametrize("status_code", [403, 404, 429])

@@ -9,14 +9,14 @@ from pathlib import Path
 
 import pytest
 
-_PKG = Path(__file__).resolve().parents[2] / "package"
+_PKG = Path(__file__).resolve().parents[2]
 
 
 def _load_qa_parser():
     """按文件路径隔离加载 qa parser；其仅依赖标准库，无需注册 sys.modules。"""
     spec = importlib.util.spec_from_file_location(
         "qa_parser_under_test",
-        _PKG / "yuxi/knowledge/chunking/ragflow_like/parsers/qa.py",
+        _PKG / "yuxi/modules/knowledge/chunking/ragflow_like/parsers/qa.py",
     )
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)

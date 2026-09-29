@@ -1,13 +1,13 @@
 from __future__ import annotations
 
-from yuxi.agents.context import BaseContext
+from yuxi.modules.agents.runtime.context import BaseContext
 
 from contextlib import aclosing
 from types import SimpleNamespace
 
 import pytest
 
-from yuxi.agents.base import BaseAgent
+from yuxi.modules.agents.runtime.base import BaseAgent
 
 
 class _FakeGraph:
@@ -69,7 +69,7 @@ class _TestAgent(BaseAgent):
         return self._graph
 
 
-_TestAgent.__module__ = "yuxi.agents.tests.fake"
+_TestAgent.__module__ = "yuxi.modules.agents.runtime.tests.fake"
 
 
 @pytest.mark.asyncio

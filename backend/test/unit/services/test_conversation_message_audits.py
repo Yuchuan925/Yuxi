@@ -3,8 +3,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from yuxi.services.agents import messages
-from yuxi.services.agents.scope import ActorScope
+import yuxi.modules.agents.services.messages as messages
+from yuxi.modules.agents.services.scope import ActorScope
 
 
 @pytest.mark.asyncio

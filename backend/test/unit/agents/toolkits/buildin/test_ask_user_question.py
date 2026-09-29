@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from yuxi.agents.toolkits.buildin import tools
+from yuxi.modules.extensions.tools.builtin import tools
 
 
 def test_ask_user_question_interrupt_payload_and_result_format(monkeypatch):

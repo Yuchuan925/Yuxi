@@ -11,10 +11,10 @@ import pytest
 from langchain.messages import AIMessageChunk, HumanMessage
 
 from test.unit.agent_context_fixtures import prepared_execution
-from yuxi.services.agents import execution as svc
-from yuxi.services.agents.execution import RunExecutionResult
-from yuxi.services.agents.input_messages import build_chat_input_message
-from yuxi.services.langfuse_service import LangfuseRunContext
+import yuxi.modules.agents.services.execution as svc
+from yuxi.modules.agents.services.execution import RunExecutionResult
+from yuxi.modules.agents.services.input_messages import build_chat_input_message
+from yuxi.modules.agents.services.tracing import LangfuseRunContext
 
 
 def _chunk(event):
@@ -83,8 +83,8 @@ async def test_service_consumer_cancel_closes_real_graph(monkeypatch, mode):
     from langgraph.config import get_stream_writer
     from langgraph.graph import END, START, MessagesState, StateGraph
     from langgraph.types import interrupt
-    from yuxi.agents.base import BaseAgent
-    from yuxi.services.run_worker import RunContext, _consume_stream_with_cancel
+    from yuxi.modules.agents.runtime.base import BaseAgent
+    from yuxi.modules.agents.services.runner import RunContext, _consume_stream_with_cancel
 
     consuming, release, closed = (asyncio.Event() for _ in range(3))
     effects, runs = [], []

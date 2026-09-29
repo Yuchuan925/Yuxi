@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from yuxi.services import subagent_run_service
+import yuxi.modules.agents.services.subagents as subagent_run_service
 
 
 @pytest.mark.asyncio

@@ -14,9 +14,9 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
 from langchain_core.tools import tool
 from psycopg_pool import AsyncConnectionPool
-from yuxi.agents.middlewares.steer import SteerMiddleware
-from yuxi.services.agents import runs
-from yuxi.storage.postgres.manager import PostgresManager
+from yuxi.modules.agents.runtime.middlewares.steer import SteerMiddleware
+import yuxi.modules.agents.services.runs as runs
+from yuxi.infrastructure.postgres.manager import PostgresManager
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
 

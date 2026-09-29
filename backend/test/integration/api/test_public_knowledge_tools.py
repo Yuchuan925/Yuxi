@@ -8,10 +8,10 @@ import pytest
 import pytest_asyncio
 from sqlalchemy import select
 
-from yuxi.storage.minio import get_minio_client
-from yuxi.storage.minio.client import MinIOClient
-from yuxi.storage.postgres.manager import pg_manager
-from yuxi.storage.postgres.models_knowledge import KnowledgeBase, KnowledgeFile
+from yuxi.infrastructure.minio import get_minio_client
+from yuxi.infrastructure.minio.client import MinIOClient
+from yuxi.infrastructure.postgres.manager import pg_manager
+from yuxi.modules.knowledge.models import KnowledgeBase, KnowledgeFile
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
 

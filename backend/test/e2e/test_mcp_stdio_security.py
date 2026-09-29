@@ -7,9 +7,9 @@ import pytest
 import pytest_asyncio
 from sqlalchemy import delete, select
 
-from yuxi.agents.mcp.service import ensure_builtin_mcp_servers_in_db, get_mcp_tools
-from yuxi.storage.postgres.manager import pg_manager
-from yuxi.storage.postgres.models_business import MCPServer
+from yuxi.modules.extensions.mcp.service import ensure_builtin_mcp_servers_in_db, get_mcp_tools
+from yuxi.infrastructure.postgres.manager import pg_manager
+from yuxi.modules.extensions.mcp.models import MCPServer
 
 pytestmark = pytest.mark.e2e
 
@@ -107,7 +107,7 @@ async def test_legacy_stdio_mcp_is_disabled_without_starting_process(
 
 async def test_direct_stdio_config_cannot_start_process(tmp_path):
     """直接传入内置标识的 stdio 配置也不能启动命令。"""
-    from yuxi.agents.mcp.service import get_mcp_client
+    from yuxi.modules.extensions.mcp.service import get_mcp_client
 
     marker = tmp_path / "stdio.marker"
     config = {"deepwiki-official": {"transport": "stdio", "command": "sh", "args": ["-c", f"touch {marker}"]}}
@@ -158,7 +158,7 @@ async def test_retired_chart_removed_and_deepwiki_registered(current_loop_pg_man
 
 async def test_official_builtin_preserves_user_deepwiki(current_loop_pg_manager):
     """官方内置标识不占用已有用户 deepwiki 配置。"""
-    from yuxi.agents.mcp.service import get_enabled_mcp_server_config, is_builtin_mcp_server
+    from yuxi.modules.extensions.mcp.service import get_enabled_mcp_server_config, is_builtin_mcp_server
 
     async with current_loop_pg_manager.get_async_session_context() as db:
         assert await db.scalar(select(MCPServer.id).where(MCPServer.slug == "deepwiki")) is None, (

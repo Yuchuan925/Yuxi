@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from yuxi.services.channel_command_service import parse_slash_command
+from yuxi.modules.agents.services.commands import parse_slash_command
 
 
 def test_parse_plain_text_returns_none():

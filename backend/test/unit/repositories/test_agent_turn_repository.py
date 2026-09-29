@@ -4,8 +4,12 @@ import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from yuxi.repositories.agents.turn import AgentTurnRepository
-from yuxi.storage.postgres.models_business import AgentRun, AgentTurn, Base, Conversation, Message, SubagentThread
+from yuxi.modules.agents.repositories.turn import AgentTurnRepository
+from yuxi.modules.agents.models.runs import AgentRun
+from yuxi.modules.agents.models.turns import AgentTurn
+from yuxi.infrastructure.postgres.base import Base
+from yuxi.modules.agents.models.threads import Conversation, SubagentThread
+from yuxi.modules.agents.models.messages import Message
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.unit]
 

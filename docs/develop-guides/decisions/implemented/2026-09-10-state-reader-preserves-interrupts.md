@@ -2,7 +2,7 @@
 
 状态：implemented
 类型：bug-fix
-Owner：backend/package/yuxi/services/agents/state.py
+Owner：backend/yuxi/modules/agents/services/state.py
 
 ## 问题
 

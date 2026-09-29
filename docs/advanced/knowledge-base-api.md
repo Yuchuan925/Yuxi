@@ -100,9 +100,9 @@ yuxi kb find --kb-id <kb-id> --file-id <file-id> --pattern "年假"
 
 ## 验证入口
 
-- [知识库路由](https://github.com/xerrors/Yuxi/blob/main/backend/server/routers/knowledge_router.py)
-- [外部查询路由](https://github.com/xerrors/Yuxi/blob/main/backend/server/routers/external_kb_router.py)
-- [知识库权限解析](https://github.com/xerrors/Yuxi/blob/main/backend/package/yuxi/permissions/resource_permission.py)
+- [知识库路由](https://github.com/xerrors/Yuxi/blob/main/backend/yuxi/api/routers/knowledge/management.py)
+- [外部查询路由](https://github.com/xerrors/Yuxi/blob/main/backend/yuxi/api/routers/knowledge/external.py)
+- [知识库权限解析](https://github.com/xerrors/Yuxi/blob/main/backend/yuxi/modules/identity/permissions/resource_permission.py)
 - [知识库 HTTP integration](https://github.com/xerrors/Yuxi/blob/main/backend/test/integration/api/test_knowledge_router.py)
 - [外部知识库 integration](https://github.com/xerrors/Yuxi/blob/main/backend/test/integration/api/test_knowledge_external_router.py)
 

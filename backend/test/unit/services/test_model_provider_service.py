@@ -5,8 +5,8 @@ import pytest
 
 os.environ.setdefault("OPENAI_API_KEY", "test-key")
 
-from yuxi.models.providers.builtin import BUILTIN_PROVIDERS
-from yuxi.models.providers.service import (
+from yuxi.modules.models.providers.builtin import BUILTIN_PROVIDERS
+from yuxi.modules.models.providers.service import (
     _normalize_payload,
     _normalize_remote_model,
     _validate_request_body_overrides_scope,
@@ -88,8 +88,8 @@ async def test_create_provider_config_rejects_uid_header_without_signature_secre
     async def fail_write(*args, **kwargs):
         pytest.fail("不应在签名密钥缺失时写入 provider")
 
-    monkeypatch.setattr("yuxi.models.providers.service.get_model_provider", fake_get_model_provider)
-    monkeypatch.setattr("yuxi.models.providers.service.create_model_provider", fail_write)
+    monkeypatch.setattr("yuxi.modules.models.providers.service.get_model_provider", fake_get_model_provider)
+    monkeypatch.setattr("yuxi.modules.models.providers.service.create_model_provider", fail_write)
 
     with pytest.raises(ValueError, match="YUXI_UID_SIGNATURE_SECRET"):
         await create_provider_config(
@@ -107,6 +107,7 @@ async def test_create_provider_config_rejects_uid_header_without_signature_secre
 @pytest.mark.asyncio
 async def test_create_provider_config_rejects_gemini_uid_header(monkeypatch):
     """创建 Gemini provider 时不接受无法生效的 UID 请求头选项。"""
+
     async def missing_provider(db, provider_id):
         del db, provider_id
         return None
@@ -114,8 +115,8 @@ async def test_create_provider_config_rejects_gemini_uid_header(monkeypatch):
     async def fail_write(*args, **kwargs):
         pytest.fail("Gemini 不支持 UID 头时不应写入 provider")
 
-    monkeypatch.setattr("yuxi.models.providers.service.get_model_provider", missing_provider)
-    monkeypatch.setattr("yuxi.models.providers.service.create_model_provider", fail_write)
+    monkeypatch.setattr("yuxi.modules.models.providers.service.get_model_provider", missing_provider)
+    monkeypatch.setattr("yuxi.modules.models.providers.service.create_model_provider", fail_write)
 
     with pytest.raises(ValueError, match="Gemini.*不支持"):
         await create_provider_config(
@@ -143,8 +144,8 @@ async def test_update_provider_config_checks_effective_uid_header_flag(monkeypat
     async def fail_write(*args, **kwargs):
         pytest.fail("不应在签名密钥缺失时写入 provider")
 
-    monkeypatch.setattr("yuxi.models.providers.service.get_model_provider", existing_provider)
-    monkeypatch.setattr("yuxi.models.providers.service.update_model_provider", fail_write)
+    monkeypatch.setattr("yuxi.modules.models.providers.service.get_model_provider", existing_provider)
+    monkeypatch.setattr("yuxi.modules.models.providers.service.update_model_provider", fail_write)
 
     with pytest.raises(ValueError, match="YUXI_UID_SIGNATURE_SECRET"):
         await update_provider_config(None, "uid-provider", {"display_name": "UID Provider"}, "tester")
@@ -153,6 +154,7 @@ async def test_update_provider_config_checks_effective_uid_header_flag(monkeypat
 @pytest.mark.asyncio
 async def test_update_provider_config_rejects_gemini_when_uid_header_is_enabled(monkeypatch):
     """把已启用 UID 头的供应商改成 Gemini 时拒绝保存无效组合。"""
+
     async def existing_provider(db, provider_id):
         del db, provider_id
         return SimpleNamespace(include_user_uid=True, provider_type="openai", enabled_models=[])
@@ -160,8 +162,8 @@ async def test_update_provider_config_rejects_gemini_when_uid_header_is_enabled(
     async def fail_write(*args, **kwargs):
         pytest.fail("切换到 Gemini 后不应保留不生效的 UID 头设置")
 
-    monkeypatch.setattr("yuxi.models.providers.service.get_model_provider", existing_provider)
-    monkeypatch.setattr("yuxi.models.providers.service.update_model_provider", fail_write)
+    monkeypatch.setattr("yuxi.modules.models.providers.service.get_model_provider", existing_provider)
+    monkeypatch.setattr("yuxi.modules.models.providers.service.update_model_provider", fail_write)
 
     with pytest.raises(ValueError, match="Gemini.*不支持"):
         await update_provider_config(None, "uid-provider", {"provider_type": "gemini"}, "tester")
@@ -191,8 +193,8 @@ async def test_provider_uid_header_save_passes_when_signature_secret_present(mon
         writes["update"] = data
         return SimpleNamespace(include_user_uid=True)
 
-    monkeypatch.setattr("yuxi.models.providers.service.get_model_provider", missing_provider)
-    monkeypatch.setattr("yuxi.models.providers.service.create_model_provider", fake_create_model_provider)
+    monkeypatch.setattr("yuxi.modules.models.providers.service.get_model_provider", missing_provider)
+    monkeypatch.setattr("yuxi.modules.models.providers.service.create_model_provider", fake_create_model_provider)
 
     await create_provider_config(
         None,
@@ -207,8 +209,8 @@ async def test_provider_uid_header_save_passes_when_signature_secret_present(mon
 
     assert writes["create"]["include_user_uid"] is True
 
-    monkeypatch.setattr("yuxi.models.providers.service.get_model_provider", existing_provider)
-    monkeypatch.setattr("yuxi.models.providers.service.update_model_provider", fake_update_model_provider)
+    monkeypatch.setattr("yuxi.modules.models.providers.service.get_model_provider", existing_provider)
+    monkeypatch.setattr("yuxi.modules.models.providers.service.update_model_provider", fake_update_model_provider)
 
     await update_provider_config(None, "uid-provider", {"display_name": "UID Provider 2"}, "tester")
 
@@ -305,8 +307,8 @@ async def test_update_provider_config_rejects_provider_type_change_with_existing
     async def fail_update_model_provider(db, provider, data):
         pytest.fail("不应在非法 request_body_overrides 范围下写入 provider")
 
-    monkeypatch.setattr("yuxi.models.providers.service.get_model_provider", fake_get_model_provider)
-    monkeypatch.setattr("yuxi.models.providers.service.update_model_provider", fail_update_model_provider)
+    monkeypatch.setattr("yuxi.modules.models.providers.service.get_model_provider", fake_get_model_provider)
+    monkeypatch.setattr("yuxi.modules.models.providers.service.update_model_provider", fail_update_model_provider)
 
     with pytest.raises(ValueError, match="仅支持 OpenAI 兼容供应商"):
         await update_provider_config(None, "openai-local", {"provider_type": "anthropic"}, "tester")
@@ -394,7 +396,7 @@ async def test_fetch_remote_models_loads_embedding_only_when_capability_enabled(
         calls.append((endpoint, model_type))
         return [{"id": f"{model_type}-model", "type": model_type}]
 
-    monkeypatch.setattr("yuxi.models.providers.service._fetch_models_from_endpoint", fake_fetch)
+    monkeypatch.setattr("yuxi.modules.models.providers.service._fetch_models_from_endpoint", fake_fetch)
 
     class Provider:
         base_url = "https://example.com/v1"

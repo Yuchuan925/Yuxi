@@ -5,7 +5,7 @@ from io import BytesIO
 import pytest
 from docx import Document
 
-from yuxi.utils.filepreview import (
+from yuxi.infrastructure.document_preview import (
     MAX_TEXT_PREVIEW_CHARS,
     detect_preview_type,
     is_office_pdf_preview_file,

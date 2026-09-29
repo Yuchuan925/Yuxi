@@ -13,10 +13,10 @@ import pytest_asyncio
 from sqlalchemy import update
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from yuxi.services import login_rate_limit_service as login_limiter
-from yuxi.storage.postgres.models_business import User as UserModel
-from yuxi.storage.redis import close_async_redis_client, create_async_redis_client, get_async_redis_client
-from yuxi.utils.datetime_utils import utc_now_naive
+import yuxi.modules.identity.services.login_limits as login_limiter
+from yuxi.modules.identity.models import User as UserModel
+from yuxi.infrastructure.redis import close_async_redis_client, create_async_redis_client, get_async_redis_client
+from yuxi.shared.datetime import utc_now_naive
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
 

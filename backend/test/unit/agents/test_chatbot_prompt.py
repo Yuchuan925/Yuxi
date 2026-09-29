@@ -1,6 +1,6 @@
 from types import SimpleNamespace
 
-from yuxi.agents.buildin.chatbot.prompt import PROMPT, build_prompt_with_context
+from yuxi.modules.agents.runtime.builtin.chatbot.prompt import PROMPT, build_prompt_with_context
 
 
 def test_chatbot_prompt_prefers_complete_explanatory_paragraphs():

@@ -23,28 +23,20 @@ from test.live_api_cleanup import (
     validate_test_runs_terminal,
     validate_test_workdirs_exclusive,
 )
-from yuxi.repositories.agent_run_repository import AgentRunRepository
-from yuxi.repositories.agents.input import AgentInputRepository
-from yuxi.repositories.agents.input_receipt import AgentInputReceiptRepository
-from yuxi.repositories.agents.turn import AgentTurnRepository
-from yuxi.services import project_service
-from yuxi.storage.postgres.models_business import (
-    AgentInput,
-    AgentInputMessage,
-    AgentInputReceipt,
-    AgentRun,
-    AgentRunAttempt,
-    AgentTurn,
-    Conversation,
-    ConversationStats,
-    Message,
-    MessageFeedback,
-    Project,
-    ToolCall,
-    User,
-)
-from yuxi.workspace.paths import ensure_bound_user_workdir, user_workdir_host_dir
-from yuxi.utils.datetime_utils import utc_now_naive
+from yuxi.modules.agents.repositories.runs import AgentRunRepository
+from yuxi.modules.agents.repositories.input import AgentInputRepository
+from yuxi.modules.agents.repositories.input_receipt import AgentInputReceiptRepository
+from yuxi.modules.agents.repositories.turn import AgentTurnRepository
+import yuxi.modules.workspace.services.projects as project_service
+from yuxi.modules.agents.models.inputs import AgentInput, AgentInputMessage, AgentInputReceipt
+from yuxi.modules.agents.models.runs import AgentRun, AgentRunAttempt
+from yuxi.modules.agents.models.turns import AgentTurn
+from yuxi.modules.agents.models.threads import Conversation, ConversationStats
+from yuxi.modules.agents.models.messages import Message, MessageFeedback, ToolCall
+from yuxi.modules.workspace.models import Project
+from yuxi.modules.identity.models import User
+from yuxi.modules.workspace.paths import ensure_bound_user_workdir, user_workdir_host_dir
+from yuxi.shared.datetime import utc_now_naive
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
 

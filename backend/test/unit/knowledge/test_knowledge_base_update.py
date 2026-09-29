@@ -3,10 +3,10 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from yuxi.knowledge.base import KnowledgeBase
-from yuxi.knowledge.chunking.ragflow_like.nlp import count_tokens
-from yuxi.knowledge.manager import KnowledgeBaseManager
-from yuxi.knowledge.read_models import KnowledgeBaseDetail
+from yuxi.modules.knowledge.base import KnowledgeBase
+from yuxi.modules.knowledge.chunking.ragflow_like.nlp import count_tokens
+from yuxi.modules.knowledge.manager import KnowledgeBaseManager
+from yuxi.modules.knowledge.read_models import KnowledgeBaseDetail
 
 
 class FakeKnowledgeBase(KnowledgeBase):
@@ -56,7 +56,7 @@ class FakeKnowledgeBaseRepository:
 
     async def refresh_stats(self, kb_id: str):
         assert kb_id == "db"
-        from yuxi.repositories.knowledge_file_repository import KnowledgeFileRepository
+        from yuxi.modules.knowledge.repositories.files import KnowledgeFileRepository
 
         stats = await KnowledgeFileRepository().get_kb_file_stats(kb_id)
         self.update_calls.append({"stats": stats})
@@ -163,7 +163,7 @@ async def test_create_database_persists_allowed_record_fields(tmp_path, monkeypa
             raise AssertionError("create_database should insert new database metadata")
 
     monkeypatch.setattr(
-        "yuxi.repositories.knowledge_base_repository.KnowledgeBaseRepository",
+        "yuxi.modules.knowledge.repositories.bases.KnowledgeBaseRepository",
         FakeKnowledgeBaseRepository,
     )
 
@@ -181,11 +181,11 @@ async def test_create_database_persists_allowed_record_fields(tmp_path, monkeypa
     monkeypatch.setattr(manager, "database_name_exists", database_name_available)
     monkeypatch.setattr(manager, "_get_or_create_kb_instance", AsyncMock(return_value=kb))
     monkeypatch.setattr(
-        "yuxi.knowledge.manager.KnowledgeBaseFactory.is_type_supported",
+        "yuxi.modules.knowledge.manager.KnowledgeBaseFactory.is_type_supported",
         classmethod(lambda cls, _kb_type: True),
     )
     monkeypatch.setattr(
-        "yuxi.models.providers.cache.model_cache.get_model_info",
+        "yuxi.modules.models.providers.cache.model_cache.get_model_info",
         lambda _spec: types.SimpleNamespace(model_type="embedding"),
     )
 
@@ -244,11 +244,11 @@ async def test_manager_refresh_database_stats_persists_metadata(tmp_path, monkey
     kb_repo = FakeKnowledgeBaseRepository()
 
     monkeypatch.setattr(
-        "yuxi.repositories.knowledge_file_repository.KnowledgeFileRepository",
+        "yuxi.modules.knowledge.repositories.files.KnowledgeFileRepository",
         lambda: file_repo,
     )
     monkeypatch.setattr(
-        "yuxi.repositories.knowledge_base_repository.KnowledgeBaseRepository",
+        "yuxi.modules.knowledge.repositories.bases.KnowledgeBaseRepository",
         lambda: kb_repo,
     )
 
@@ -374,13 +374,13 @@ async def test_repair_missing_file_stats_updates_indexed_and_skips_unindexed_fil
             assert file_ids == expected_token_file_ids
             return [types.SimpleNamespace(file_id=file_id, content=content) for file_id, content in token_chunks]
 
-    monkeypatch.setattr("yuxi.repositories.knowledge_chunk_repository.KnowledgeChunkRepository", FakeChunkRepo)
+    monkeypatch.setattr("yuxi.modules.knowledge.repositories.chunks.KnowledgeChunkRepository", FakeChunkRepo)
     monkeypatch.setattr(
-        "yuxi.repositories.knowledge_file_repository.KnowledgeFileRepository",
+        "yuxi.modules.knowledge.repositories.files.KnowledgeFileRepository",
         lambda: file_repo,
     )
     monkeypatch.setattr(
-        "yuxi.repositories.knowledge_base_repository.KnowledgeBaseRepository",
+        "yuxi.modules.knowledge.repositories.bases.KnowledgeBaseRepository",
         lambda: kb_repo,
     )
 

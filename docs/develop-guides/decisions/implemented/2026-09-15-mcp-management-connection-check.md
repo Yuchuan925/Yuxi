@@ -2,7 +2,7 @@
 
 状态：implemented
 类型：bug-fix
-Owner：backend/package/yuxi/agents/mcp/service.py
+Owner：backend/yuxi/modules/extensions/mcp/service.py
 
 ## 问题
 

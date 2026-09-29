@@ -14,8 +14,8 @@ import pytest
 
 from e2e_helpers import archive_public_thread, delete_agent, postgres_dsn
 from test.live_api_cleanup import make_test_conversation_title
-from yuxi.config import get_skill_projection_dir
-from yuxi.workspace.paths import workspace_uid_dirname
+from yuxi.infrastructure.runtime_settings import get_skill_projection_dir
+from yuxi.modules.workspace.paths import workspace_uid_dirname
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.e2e, pytest.mark.slow, pytest.mark.timeout(240)]
 

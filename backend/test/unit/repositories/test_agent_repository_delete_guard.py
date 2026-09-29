@@ -7,9 +7,15 @@ from sqlalchemy import select, text
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from server.routers.agent_router import delete_agent
-from yuxi.repositories.agent_repository import AgentRepository
-from yuxi.storage.postgres.models_business import Agent, AgentInput, AgentRun, AgentTurn, Base, Conversation, User
+from yuxi.api.routers.agents.management import delete_agent
+from yuxi.modules.agents.repositories.definitions import AgentRepository
+from yuxi.modules.agents.models.definitions import Agent
+from yuxi.modules.agents.models.inputs import AgentInput
+from yuxi.modules.agents.models.runs import AgentRun
+from yuxi.modules.agents.models.turns import AgentTurn
+from yuxi.infrastructure.postgres.base import Base
+from yuxi.modules.agents.models.threads import Conversation
+from yuxi.modules.identity.models import User
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.unit]
 

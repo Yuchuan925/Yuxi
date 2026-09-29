@@ -5,9 +5,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from yuxi.services import memory_service
-from yuxi.workspace import paths as workspace_paths
-from yuxi.workspace.filesystem import Workspace
+import yuxi.modules.agents.services.memory as memory_service
+from yuxi.modules.workspace import paths as workspace_paths
+from yuxi.modules.workspace.filesystem import Workspace
 
 pytestmark = pytest.mark.unit
 
@@ -56,7 +56,7 @@ def test_replace_authorized_file_is_atomic_on_publish_failure(tmp_path, monkeypa
     def fail_rename(*_args, **_kwargs):
         raise OSError("publish failed")
 
-    monkeypatch.setattr("yuxi.workspace.filesystem.os.rename", fail_rename)
+    monkeypatch.setattr("yuxi.modules.workspace.filesystem.os.rename", fail_rename)
 
     with pytest.raises(OSError, match="publish failed"):
         workspace.replace_authorized_file(memory_service.MEMORY_PATH, b"new")

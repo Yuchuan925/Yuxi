@@ -4,10 +4,10 @@ from types import SimpleNamespace
 import pytest
 from fastapi import HTTPException, UploadFile
 
-from server.routers import knowledge_router
-from yuxi.knowledge.read_models import KnowledgeBaseDetail
-from yuxi.services import knowledge_task_service
-from yuxi.services.task_registry import get_task_definition
+import yuxi.api.routers.knowledge.management as knowledge_router
+from yuxi.modules.knowledge.read_models import KnowledgeBaseDetail
+import yuxi.modules.knowledge.services.tasks as knowledge_task_service
+from yuxi.modules.tasks.registry import get_task_definition
 
 pytestmark = pytest.mark.asyncio
 

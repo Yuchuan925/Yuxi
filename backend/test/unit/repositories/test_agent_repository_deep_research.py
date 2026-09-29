@@ -5,12 +5,8 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from yuxi.agents.presets import discover_agent_presets
-from yuxi.repositories.agent_repository import (
-    AgentRepository,
-    DEFAULT_AGENT_BACKEND_ID,
-    SUB_AGENT_BACKEND_ID,
-)
+from yuxi.modules.agents.presets import discover_agent_presets
+from yuxi.modules.agents.repositories.definitions import AgentRepository, DEFAULT_AGENT_BACKEND_ID, SUB_AGENT_BACKEND_ID
 
 
 class CollectingDb:

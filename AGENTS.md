@@ -24,7 +24,7 @@ Yuxi 是基于 LangGraph、FastAPI、Vue 和多种持久化服务构建的知识
 
 ## 不能破坏的系统事实
 
-- HTTP 路由保持薄；用例流程属于 `yuxi.services`，持久化查询属于 `yuxi.repositories`。
+- HTTP 路由保持薄；用例流程属于 各业务域的 `services`，持久化查询属于 各业务域的 `repositories`。
 - 普通输入先在 PostgreSQL 中持久化 Input、Receipt 和 Message；只有 ready FIFO 队头创建 Turn 与首个 Run，且每次投递 ARQ 前 owning transaction 都已提交。Redis 负责投递、短期事件、取消和缓存，不拥有最终业务状态。
 - 同一用户、APP、Agent、Thread 的 follow-up Input 按 FIFO 串行派发；steer Input 固定当前 Turn，在安全边界聚合接管。等待中的 Turn 禁止普通消息。
 - Turn 的最终输出必须来自 result_run_id 指向的顶层 Run；Run 的输出、事件、artifact 和错误绑定同一 Turn/Run，禁止从相邻 Run 猜测结果。

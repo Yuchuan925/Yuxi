@@ -13,23 +13,18 @@ import pytest_asyncio
 from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from yuxi.repositories.conversation_repository import ConversationRepository
-from yuxi.services import memory_service
-from yuxi.storage.postgres.manager import pg_manager
-from yuxi.storage.postgres.models_business import (
-    AgentRun,
-    AgentTurn,
-    Conversation,
-    Message,
-    Project,
-    SubagentThread,
-    ToolCall,
-    User,
-    UserConfig,
-)
-from yuxi.utils.datetime_utils import utc_now_naive
-from yuxi.workspace import paths as workspace_paths
-from yuxi.workspace.filesystem import Workspace
+from yuxi.modules.agents.repositories.threads import ConversationRepository
+import yuxi.modules.agents.services.memory as memory_service
+from yuxi.infrastructure.postgres.manager import pg_manager
+from yuxi.modules.agents.models.runs import AgentRun
+from yuxi.modules.agents.models.turns import AgentTurn
+from yuxi.modules.agents.models.threads import Conversation, SubagentThread
+from yuxi.modules.agents.models.messages import Message, ToolCall
+from yuxi.modules.workspace.models import Project
+from yuxi.modules.identity.models import User, UserConfig
+from yuxi.shared.datetime import utc_now_naive
+from yuxi.modules.workspace import paths as workspace_paths
+from yuxi.modules.workspace.filesystem import Workspace
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
 

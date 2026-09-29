@@ -1,7 +1,6 @@
 from pathlib import Path
 
-from yuxi.config import (
-    get_legacy_storage_dir,
+from yuxi.infrastructure.runtime_settings import (
     get_runtime_dir,
     get_skill_data_dir,
     get_skill_projection_dir,
@@ -20,12 +19,10 @@ def test_runtime_directory_uses_explicit_environment(monkeypatch, tmp_path: Path
 def test_runtime_directory_default_does_not_fall_back_to_save_dir(monkeypatch, tmp_path: Path):
     """缺少配置时，可丢弃运行数据不得回落到持久保存目录。"""
     save_dir = tmp_path / "saves"
-    monkeypatch.setenv("YUXI_LEGACY_STORAGE_DIR", str(save_dir))
     monkeypatch.delenv("YUXI_RUNTIME_DIR", raising=False)
 
     runtime_dir = get_runtime_dir()
 
-    assert runtime_dir != get_legacy_storage_dir()
     assert save_dir not in runtime_dir.parents
     assert runtime_dir.name.startswith("yuxi-runtime-")
 
@@ -41,9 +38,7 @@ def test_skill_storage_directories_support_explicit_domain_mounts(monkeypatch, t
     assert get_skill_projection_dir() == projection_dir
 
 
-def test_storage_defaults_do_not_derive_from_legacy_save_dir(monkeypatch, tmp_path: Path):
-    legacy_dir = tmp_path / "legacy-saves"
-    monkeypatch.setenv("YUXI_LEGACY_STORAGE_DIR", str(legacy_dir))
+def test_storage_defaults_use_current_domain_directories(monkeypatch, tmp_path: Path):
     monkeypatch.delenv("YUXI_USER_DATA_DIR", raising=False)
     monkeypatch.delenv("YUXI_SKILL_DATA_DIR", raising=False)
     monkeypatch.delenv("YUXI_SKILL_PROJECTION_DIR", raising=False)

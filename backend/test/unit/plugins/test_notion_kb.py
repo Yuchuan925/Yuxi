@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import pytest
 
-from yuxi.knowledge.implementations.notion import NOTION_DEFAULT_VERSION, NotionAPIError, NotionKB
-from yuxi.knowledge.read_models import KnowledgeBaseConfig
+from yuxi.modules.knowledge.implementations.notion import NOTION_DEFAULT_VERSION, NotionAPIError, NotionKB
+from yuxi.modules.knowledge.read_models import KnowledgeBaseConfig
 
 
 PAGE_ID = "page-1"
@@ -146,7 +146,7 @@ def test_notion_validation_rejects_missing_params(monkeypatch):
 @pytest.mark.asyncio
 async def test_notion_kb_aquery_maps_pages(monkeypatch, notion_kb):
     kb, config = notion_kb
-    monkeypatch.setattr("yuxi.knowledge.implementations.notion._NotionClient", _FakeNotionClient)
+    monkeypatch.setattr("yuxi.modules.knowledge.implementations.notion._NotionClient", _FakeNotionClient)
 
     result = await kb.aquery(
         "reasoning",
@@ -166,7 +166,7 @@ async def test_notion_kb_aquery_maps_pages(monkeypatch, notion_kb):
 @pytest.mark.asyncio
 async def test_notion_open_file_content_uses_page_markdown(monkeypatch, notion_kb):
     kb, config = notion_kb
-    monkeypatch.setattr("yuxi.knowledge.implementations.notion._NotionClient", _FakeNotionClient)
+    monkeypatch.setattr("yuxi.modules.knowledge.implementations.notion._NotionClient", _FakeNotionClient)
 
     result = await kb.open_file_content(
         "kb_notion",
@@ -185,7 +185,7 @@ async def test_notion_open_file_content_uses_page_markdown(monkeypatch, notion_k
 @pytest.mark.asyncio
 async def test_notion_find_file_content_uses_page_markdown(monkeypatch, notion_kb):
     kb, config = notion_kb
-    monkeypatch.setattr("yuxi.knowledge.implementations.notion._NotionClient", _FakeNotionClient)
+    monkeypatch.setattr("yuxi.modules.knowledge.implementations.notion._NotionClient", _FakeNotionClient)
 
     result = await kb.find_file_content(
         "kb_notion",
@@ -204,7 +204,7 @@ async def test_notion_find_file_content_uses_page_markdown(monkeypatch, notion_k
 @pytest.mark.asyncio
 async def test_notion_open_file_content_rejects_unknown_parent(monkeypatch, notion_kb):
     kb, config = notion_kb
-    monkeypatch.setattr("yuxi.knowledge.implementations.notion._NotionClient", _UnknownParentNotionClient)
+    monkeypatch.setattr("yuxi.modules.knowledge.implementations.notion._NotionClient", _UnknownParentNotionClient)
 
     with pytest.raises(ValueError, match="不属于当前 Data Source"):
         await kb.open_file_content("kb_notion", PAGE_ID, additional_params=config.additional_params)
@@ -213,7 +213,7 @@ async def test_notion_open_file_content_rejects_unknown_parent(monkeypatch, noti
 @pytest.mark.asyncio
 async def test_notion_kb_aquery_error_returns_empty(monkeypatch, notion_kb):
     kb, config = notion_kb
-    monkeypatch.setattr("yuxi.knowledge.implementations.notion._NotionClient", _FailingNotionClient)
+    monkeypatch.setattr("yuxi.modules.knowledge.implementations.notion._NotionClient", _FailingNotionClient)
 
     result = await kb.aquery(
         "reasoning",
