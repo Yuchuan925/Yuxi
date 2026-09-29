@@ -456,9 +456,9 @@ async def resolve_agent_resource_options(
             if server.slug in enabled_slugs
         ]
     if "skills" in fields_to_load:
-        from yuxi.modules.extensions.skills.service import list_accessible_shared_skills
+        from yuxi.modules.extensions.skills.repository import SkillRepository
 
-        skills = await list_accessible_shared_skills(db, user)
+        skills = await SkillRepository(db).list_enabled_readable(user)
         options["skills"] = [
             _resource_option(skill.slug, skill.name, skill.description) for skill in skills if skill.slug
         ]

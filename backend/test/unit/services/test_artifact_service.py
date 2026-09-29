@@ -5,12 +5,13 @@ import threading
 from pathlib import Path
 
 import pytest
-from fastapi import HTTPException
-
 import yuxi.modules.agents.services.artifacts as svc
+from fastapi import HTTPException
+from yuxi.api.responses.files import render_file_result
 from yuxi.modules.agents.runtime.backends.paths import workspace_scope_from_runtime_path
-from yuxi.modules.workspace.errors import FileTransferLimitError
+from yuxi.modules.extensions.skills import edit as skill_edit
 from yuxi.modules.workspace.services.bindings import AuthorizedWorkdir
+from yuxi.modules.workspace.errors import FileTransferLimitError
 from yuxi.modules.workspace.workdir import Workdir
 
 
@@ -67,7 +68,9 @@ class _Workspace:
 
 @pytest.fixture
 def live_files(monkeypatch, tmp_path):
-    backend = _Workspace(tmp_path / "reporter")
+    (tmp_path / "shared").mkdir()
+    backend = _Workspace(tmp_path / "shared/reporter")
+    monkeypatch.setattr(skill_edit, "get_skill_data_dir", lambda: tmp_path)
     binding = AuthorizedWorkdir(
         conversation_id=1,
         thread_id="thread-1",
@@ -93,8 +96,12 @@ def live_files(monkeypatch, tmp_path):
     )
     monkeypatch.setattr(
         svc,
-        "list_accessible_skills",
-        lambda _db, _user: _async_value([type("Skill", (), {"slug": "reporter", "source_dir": backend.skill_root})()]),
+        "lock_accessible_shared_skill_for_file",
+        lambda _db, _user, slug: _async_value(
+            type("Skill", (), {"slug": "reporter", "dir_path": "shared/reporter", "source_type": "upload"})()
+            if slug == "reporter"
+            else None
+        ),
     )
     return backend
 
@@ -114,6 +121,7 @@ async def test_artifact_allows_project_user_data_and_authorized_skills(live_file
             thread_id="thread-1", current_uid="user-1", db=object(), path=path
         )
         assert Path(response.path).read_bytes() == live_files.expected_bytes(path)
+        response = render_file_result(response)
         await response.background()
 
 
@@ -132,7 +140,7 @@ async def test_artifact_preview_uses_shared_file_renderer(live_files, monkeypatc
         )
         return sentinel
 
-    monkeypatch.setattr(svc, "render_file_preview", render_preview)
+    monkeypatch.setattr(svc, "preview_workspace_file", render_preview)
 
     response = await svc.resolve_thread_artifact_view(
         thread_id="thread-1",
@@ -162,7 +170,7 @@ async def test_artifact_preview_reports_oversized_file_without_rendering(live_fi
         raise AssertionError("oversized preview must not reach the renderer")
 
     monkeypatch.setattr(live_files, "download_authorized_file_to_path", reject_large_file)
-    monkeypatch.setattr(svc, "render_file_preview", reject_render)
+    monkeypatch.setattr(svc, "preview_workspace_file", reject_render)
 
     response = await svc.resolve_thread_artifact_view(
         thread_id="thread-1",
@@ -189,6 +197,7 @@ async def test_artifact_download_encodes_untrusted_posix_filename(live_files, fi
         download=True,
     )
 
+    response = render_file_result(response)
     disposition = response.headers["content-disposition"]
     assert disposition.startswith("attachment;")
     assert "\r" not in disposition and "\n" not in disposition
@@ -223,7 +232,7 @@ async def test_artifact_rejects_workdir_viewer_scope(live_files):
 
 @pytest.mark.asyncio
 async def test_artifact_rechecks_current_skill_authorization(live_files, monkeypatch):
-    monkeypatch.setattr(svc, "list_accessible_skills", lambda _db, _user: _async_value([]))
+    monkeypatch.setattr(svc, "lock_accessible_shared_skill_for_file", lambda _db, _user, _slug: _async_value(None))
 
     with pytest.raises(HTTPException) as exc:
         await svc.resolve_thread_artifact_view(

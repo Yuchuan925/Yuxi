@@ -6,7 +6,7 @@ from yuxi.infrastructure.postgres.schema import require_current_schema
 
 import asyncio
 from yuxi.modules.extensions.mcp.service import ensure_builtin_mcp_servers_in_db
-from yuxi.modules.extensions.skills.service import init_builtin_skills
+from yuxi.modules.extensions.skills.shared import init_builtin_skills
 from yuxi.modules.agents.services.scheduler import recover_pending_dispatches
 from yuxi.modules.agents.services.transport import (
     RUN_RECONCILIATION_SECONDS,

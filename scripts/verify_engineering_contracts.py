@@ -66,6 +66,7 @@ WORKSPACE_HOST_PATH_EXPORTS = frozenset(
         "user_workdir_host_dir",
     }
 )
+PERSONAL_SKILL_WORKSPACE_OWNER = Path("backend/yuxi/modules/extensions/skills/personal.py")
 DIRECT_WEB_API_LITERAL = re.compile(r"(?P<quote>['\"`])/api(?:[/ ?]|(?P=quote))")
 AGENTS_FILE_BUDGETS = {
     "AGENTS.md": 5000,
@@ -941,7 +942,7 @@ def _validate_workspace_host_path_boundary(root: Path, errors: list[str]) -> int
     """普通 use-case 与 repository 不得取得 UserWorkspace 宿主路径。"""
 
     checked = 0
-    for source_root in sorted((root / "backend/yuxi/modules").glob("*/services")) + sorted((root / "backend/yuxi/modules").glob("*/repositories")):
+    for source_root in sorted((root / "backend/yuxi/modules").glob("*/services")) + sorted((root / "backend/yuxi/modules").glob("*/repositories")) + [root / "backend/yuxi/modules/extensions/skills"]:
         for path in sorted(source_root.rglob("*.py")):
             checked += 1
             relative = path.relative_to(root)
@@ -961,6 +962,8 @@ def _validate_workspace_host_path_boundary(root: Path, errors: list[str]) -> int
                             alias.name for alias in node.names
                         )
                     )
+                    if relative == PERSONAL_SKILL_WORKSPACE_OWNER:
+                        forbidden.discard("user_workspace_dir")
                 elif isinstance(node, ast.ImportFrom) and node.module == "yuxi.infrastructure.runtime_settings":
                     if any(alias.name == "get_user_data_dir" for alias in node.names):
                         forbidden.add("get_user_data_dir")

@@ -119,7 +119,7 @@ def run():
     from yuxi.workers.arq import run_worker
     from yuxi.modules.agents.runtime import BaseAgent
     from yuxi.modules.agents.runtime.builtin.chatbot import graph
-    from yuxi.modules.extensions.skills import service
+    from yuxi.modules.extensions.skills import projection as service
     import yuxi.modules.agents.services.runner as worker
     import yuxi.modules.agents.services.execution as execution
     import yuxi.modules.agents.services.preparation as preparation

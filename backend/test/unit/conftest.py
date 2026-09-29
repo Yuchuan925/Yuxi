@@ -1,4 +1,4 @@
-"""为 SQLite 单测提供 PostgreSQL Run 序号的最小替身。"""
+"""注册分域 ORM，并为 SQLite 单测提供 Run 序号替身。"""
 
 from itertools import count
 
@@ -6,6 +6,9 @@ import pytest
 from sqlalchemy import event
 
 from yuxi.modules.agents.models.runs import AgentRun
+from yuxi.bootstrap.models import load_models
+
+load_models()
 
 
 @pytest.fixture(autouse=True)

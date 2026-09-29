@@ -10,7 +10,7 @@ from deepagents.middleware.filesystem import (
 )
 
 from yuxi.modules.agents.runtime.backends.paths import runtime_workdir_path
-from yuxi.modules.extensions.skills.service import refresh_user_skill_projection_async
+from yuxi.modules.extensions.skills.projection import refresh_user_skill_projection_async
 
 from yuxi.modules.agents.runtime.backends.sandbox import ProvisionerSandboxBackend
 

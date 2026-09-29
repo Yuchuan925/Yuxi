@@ -198,11 +198,17 @@ backend/yuxi/
 │   │   │   ├── builtin/  # [整移] Y/agents/skills/buildin/；内置 SKILL.md 与 scripts 原样保留；仅目录名 buildin → builtin
 │   │   │   ├── __init__.py  # [移] Y/agents/skills/__init__.py
 │   │   │   ├── models.py  # [拆] Y/storage/postgres/models_business.py；Skill
-│   │   │   ├── projection.py  # [拆] Y/agents/skills/service.py；slug 路径校验、已授权来源的投影物化、文件锁、安全复制、hash 与原子替换；不查询授权
-│   │   │   ├── remote_install.py  # [移] Y/agents/skills/remote_install.py
-│   │   │   ├── repository.py  # [移] Y/agents/skills/repository.py
-│   │   │   ├── runtime.py  # [移] Y/agents/skills/runtime.py
-│   │   │   └── service.py  # [拆] Y/agents/skills/service.py；配置、权限、列表、安装/更新/删除的完整用例与事务
+│   │   │   ├── catalog.py  # [拆] Y/services/skills/catalog.py；共享与个人 Skill 的展示目录
+│   │   │   ├── draft.py  # [拆] Y/services/skills/draft.py；安装草稿与可确认条目
+│   │   │   ├── edit.py  # [拆] Y/services/skills/edit.py；修订值、共享文件编辑、回滚与锁
+│   │   │   ├── package.py  # [拆] Y/services/skills/package.py；包解析与安全复制
+│   │   │   ├── personal.py  # [拆] Y/services/skills/personal.py；个人 Skill 用例与 UserWorkspace 边界
+│   │   │   ├── projection.py  # [合] Y/services/skills/projection.py；授权快照、共享行锁与用户投影发布
+│   │   │   ├── remote.py  # [移改] Y/services/skills/remote.py；远程发现与目录下载
+│   │   │   ├── repository.py  # [移] Y/repositories/skill_repository.py；可见性与行锁查询
+│   │   │   ├── resolved.py  # [拆] Y/services/skills/resolved.py；Skill 来源描述
+│   │   │   ├── runtime.py  # [移] Y/agents/skills/runtime.py；持锁读取运行快照
+│   │   │   └── shared.py  # [拆] Y/services/skills/shared.py；共享索引、授权、安装与内置同步
 │   │   └── tools/
 │   │       ├── builtin/  # [整移] Y/agents/toolkits/buildin/；内部结构保留，仅修正导入与资源定位
 │   │       ├── debug/  # [整移] Y/agents/toolkits/debug/；内部结构保留，仅修正导入与资源定位
@@ -332,7 +338,7 @@ backend/yuxi/
 | `Y/services/ocr_service.py` | 整体重命名为 `modules/documents/service.py`，保留 parse_document、OCR 配置解析和 check_all_ocr_health。 | 这是知识库与附件已经共同使用的入口。配置和凭据解析在实际解析调用时发生；HTTP health 路由仍调用同一配置解析策略。 |
 | `Y/knowledge/parser/unified.py`、`zip_utils.py` | 格式转换与 ZIP 安全提取留在 `infrastructure/document_parsing`；图片上传和 Markdown 链接处理集中到 `modules/documents/assets.py`；调用方以普通 callable 提供资产保存/URL 构造能力。`modules/documents/service.py` 负责组装这些能力，底层 parser 不导入 documents 或 knowledge。 | 保留同步/异步解析调用方式、临时文件清理、图片 bucket/prefix 和现有受鉴权保护的图片 URL。不引入完整 ports 框架，不把图片直接改成公开对象 URL。 |
 | `Y/knowledge/utils/kb_utils.py` | `is_minio_url`、`parse_minio_url` 进入 `infrastructure/object_urls.py`；知识库图片 URL、文件元数据与处理参数留在 `modules/knowledge/utils/kb_utils.py`。 | URL 字符串解析不授权对象访问；授权仍在读取与执行边界。共享 parser 不再反向依赖 knowledge。 |
-| `Y/agents/skills/service.py` | `modules/extensions/skills/projection.py` 承接 is_valid_skill_slug 与已经授权来源的文件物化：sync_user_accessible_skills、文件锁、copy_skill_tree_no_symlinks、hash/原子替换及其私有文件 helper。`service.py` 保留安装、草稿、CRUD、列表、权限、refresh_user_skill_projection_async、apply_skill_projection_policy_change 及其余业务流程。 | 授权快照查询、PG advisory lock 和 commit 时序留在 service；service 调用 projection 的 slug 路径校验，projection 不反向查询 service，也不复制权限判断。 |
+| `Y/agents/skills/service.py` 与上游 `Y/services/skills/` | 用例归组于 `modules/extensions/skills`，按 shared、personal、draft、edit、projection、catalog 和 package 分工。详见[Skill 模块边界](../implemented/2026-09-29-skill-module-ownership.md)。 | 投影用例拥有授权快照与锁顺序；编辑与运行时采用同一共享行锁协议。 |
 | `Y/agents/mcp/service.py` | `modules/extensions/mcp/repository.py` 承接 SQL 查询/写入；`runtime.py` 承接 MultiServerMCPClient、工具缓存、加载和过滤；`service.py` 保留内置同步、CRUD/启停编排、运行配置与资源策略。 | service 解析配置后传给 runtime；runtime 不反向导入 service。缓存失效、transport 限制、工具名称与 disabled_tools 行为保留。 |
 | `Y/agents/toolkits/service.py` | `modules/extensions/tools/catalog.py` 承接元数据缓存与目录查询；`runtime.py` 承接 resolve_configured_runtime_tools。 | 本地、MCP、Skill 工具仍使用同一冲突判定与运行装配；builtin 重命名只改目录，保留已有工具 ID、类别值与内置 slug。 |
 | `Y/services/oidc_service.py` | `modules/identity/oidc.py` 保留 OIDCConfig、用户绑定/恢复/创建、state/nonce、一次性交换码和其余登录业务；`infrastructure/oidc/client.py` 承接 ProviderMetadata、discovery、token/userinfo 网络与协议操作；`api/routers/identity/oidc.py` 承接 handler 的 HTTP 参数/响应与重定向。 | OIDCUtils 按方法职责拆分，不整类搬到 infrastructure。保留 state/nonce、一次性消费和失败路径，不在本次重做认证策略。 |
@@ -343,7 +349,7 @@ backend/yuxi/
 | `Y/__init__.py`、`Y/config/__init__.py` | 根 initializer 保留版本查询；dotenv 加载进入 bootstrap/environment；进程环境与运行目录配置进入 infrastructure/runtime_settings；持久系统配置进入 system/options，用户配置进入 identity/preferences。 | API、worker、schema-init 在导入会读取配置的模块前加载环境；保留当前环境覆盖语义。生产 metadata 仍能正确返回 Yuxi 版本。 |
 | `Y/utils/sse_utils.py` | format_sse、format_heartbeat 进入 `api/sse.py`；使用中的 SSE_HEARTBEAT_SECONDS、SSE_MAX_CONNECTION_MINUTES 由 `modules/agents/services/events.py` 拥有。 | SSE 编码仍只在 HTTP 边界发生一次；无人使用的轮询配置不再导出。 |
 
-拆分的直接检查点来自 worker（`backend/package/yuxi/services/run_worker.py`）、解析配置入口（`backend/package/yuxi/services/ocr_service.py`）、parser（`backend/package/yuxi/knowledge/parser/unified.py`）、Skills 授权与投影（`backend/package/yuxi/agents/skills/service.py`） 和 数据库 manager（`backend/package/yuxi/storage/postgres/manager.py`）。这些文件仍是当前行为的 Owner。
+拆分的直接检查点来自 worker（`backend/package/yuxi/services/run_worker.py`）、解析配置入口（`backend/package/yuxi/services/ocr_service.py`）、parser（`backend/package/yuxi/knowledge/parser/unified.py`）、Skills 授权与投影（`backend/package/yuxi/agents/skills/service.py`） 和 数据库 manager（`backend/package/yuxi/storage/postgres/manager.py`）。这些路径记录迁移前来源；当前 Owner 由目标树与 ARCHITECTURE.md 指定。
 
 ### 不进入目标树的文件与旧导出
 

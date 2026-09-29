@@ -13,7 +13,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from yuxi.modules.agents.repositories.runs import AgentRunRepository
-from yuxi.infrastructure.postgres.manager import AGENT_RUN_FACT_SCHEMA_STATEMENTS, AGENT_RUN_TIMING_SCHEMA_STATEMENTS
+from yuxi.migrations.schema import AGENT_RUN_FACT_SCHEMA_STATEMENTS, AGENT_RUN_TIMING_SCHEMA_STATEMENTS
 from yuxi.modules.agents.models.inputs import AgentInput, AgentInputMessage, AgentInputReceipt
 from yuxi.modules.agents.models.runs import AgentRun, AgentRunAttempt
 from yuxi.modules.agents.models.turns import AgentTurn

@@ -68,7 +68,7 @@ def test_list_visible_skills_route_returns_allowed_levels_and_can_manage(monkeyp
         return [_skill()]
 
     monkeypatch.setattr(
-        "yuxi.api.routers.extensions.skills.list_visible_skills_for_management",
+        "yuxi.modules.extensions.skills.repository.SkillRepository.list_visible_for_management",
         fake_list_visible_skills_for_management,
     )
 
@@ -92,7 +92,7 @@ def test_list_visible_skills_route_allows_normal_user_readonly_items(monkeypatch
         ]
 
     monkeypatch.setattr(
-        "yuxi.api.routers.extensions.skills.list_visible_skills_for_management",
+        "yuxi.modules.extensions.skills.repository.SkillRepository.list_visible_for_management",
         fake_list_visible_skills_for_management,
     )
 
@@ -169,16 +169,18 @@ def test_personal_skill_confirm_and_delete_routes(monkeypatch):
     assert delete_resp.status_code == 200, delete_resp.text
 
 
-def test_prepare_skill_upload_route(monkeypatch):
+def test_create_uploaded_skill_draft_route(monkeypatch):
     captured: dict[str, object] = {}
 
-    async def fake_prepare_skill_upload(_db, *, filename, file_bytes, operator):
+    async def fake_create_uploaded_skill_draft(*, filename, file_bytes, operator):
         captured["filename"] = filename
         captured["file_bytes"] = file_bytes.decode("utf-8")
         captured["operator_uid"] = operator.uid
-        return {"draft_id": "draft-1", "items": [{"slug": "demo", "success": True}]}
+        return {"draft_id": "draft-1", "items": [{"slug": "demo"}], "failures": []}
 
-    monkeypatch.setattr("yuxi.api.routers.extensions.skills.prepare_skill_upload", fake_prepare_skill_upload)
+    monkeypatch.setattr(
+        "yuxi.api.routers.extensions.skills.create_uploaded_skill_draft", fake_create_uploaded_skill_draft
+    )
 
     client = TestClient(_build_app(role="user"))
     resp = client.post(
@@ -198,9 +200,9 @@ def test_prepare_skill_upload_route(monkeypatch):
 def test_remote_skill_prepare_and_admin_confirm_routes(monkeypatch):
     captured: dict[str, object] = {}
 
-    async def fake_prepare_remote_skill_install(_db, *, source, skills, operator):
+    async def fake_create_remote_skill_draft(*, source, skills, operator):
         captured["prepare"] = {"source": source, "skills": skills, "operator_uid": operator.uid}
-        return {"draft_id": "draft-remote", "items": [{"slug": "frontend-design", "success": True}]}
+        return {"draft_id": "draft-remote", "items": [{"slug": "frontend-design"}], "failures": []}
 
     async def fake_confirm_skill_install_draft(_db, *, draft_id, share_config, slugs, operator):
         captured["confirm"] = {
@@ -214,9 +216,7 @@ def test_remote_skill_prepare_and_admin_confirm_routes(monkeypatch):
             {"slug": "broken", "success": False, "error": "解析失败"},
         ]
 
-    monkeypatch.setattr(
-        "yuxi.api.routers.extensions.skills.prepare_remote_skill_install", fake_prepare_remote_skill_install
-    )
+    monkeypatch.setattr("yuxi.api.routers.extensions.skills.create_remote_skill_draft", fake_create_remote_skill_draft)
     monkeypatch.setattr(
         "yuxi.api.routers.extensions.skills.confirm_skill_install_draft", fake_confirm_skill_install_draft
     )
@@ -342,23 +342,27 @@ def test_skill_export_route_still_checks_manage_permission(monkeypatch, tmp_path
 def test_update_skill_dependencies_route_passes_operator(monkeypatch):
     captured: dict[str, object] = {}
 
-    async def fake_update_skill_dependencies(
+    async def fake_edit_shared_skill_dependencies(
         _db,
         *,
         slug,
         tool_dependencies,
         mcp_dependencies,
         skill_dependencies,
+        expected_revision,
         operator,
     ):
         captured["slug"] = slug
         captured["tool_dependencies"] = tool_dependencies
         captured["mcp_dependencies"] = mcp_dependencies
         captured["skill_dependencies"] = skill_dependencies
+        captured["expected_revision"] = expected_revision
         captured["operator_uid"] = operator.uid
-        return _skill(slug=slug)
+        return _skill(slug=slug), "next-revision"
 
-    monkeypatch.setattr("yuxi.api.routers.extensions.skills.update_skill_dependencies", fake_update_skill_dependencies)
+    monkeypatch.setattr(
+        "yuxi.api.routers.extensions.skills.edit_shared_skill_dependencies", fake_edit_shared_skill_dependencies
+    )
 
     client = TestClient(_build_app())
     resp = client.put(
@@ -367,6 +371,7 @@ def test_update_skill_dependencies_route_passes_operator(monkeypatch):
             "tool_dependencies": ["calculator"],
             "mcp_dependencies": ["mcp-a"],
             "skill_dependencies": ["other-skill"],
+            "expected_revision": "old-revision",
         },
     )
 
@@ -376,8 +381,10 @@ def test_update_skill_dependencies_route_passes_operator(monkeypatch):
         "tool_dependencies": ["calculator"],
         "mcp_dependencies": ["mcp-a"],
         "skill_dependencies": ["other-skill"],
+        "expected_revision": "old-revision",
         "operator_uid": "admin",
     }
+    assert resp.json()["data"]["revision"] == "next-revision"
 
 
 def test_builtin_routes_require_admin():

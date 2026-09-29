@@ -45,6 +45,8 @@ Yuxi 始终交付完整知识能力。API 注册知识库、图谱、评估、Da
 - `modules/identity` 拥有用户、部门、权限、凭据与 OIDC 账号用例；`modules/extensions` 拥有 Skills、MCP 与工具目录；`modules/models` 拥有模型适配和供应商配置。
 - `modules/schedules` 拥有用户定时 Agent 定义和 occurrence；`modules/tasks` 拥有独立 Durable Task 状态、registry 和投递；`modules/system` 拥有系统配置、Dashboard 与操作记录。
 
+`modules/extensions/skills` 按共享索引、个人来源、草稿、文件编辑和投影组织用例。共享编辑通过文件修订值拒绝过期保存，读取、运行快照与投影复制持有共享行锁；授权变更按共享行锁、用户投影锁的顺序提交并刷新投影。个人 Skill 文件由 `personal.py` 在 UserWorkspace 边界访问。
+
 ### 共享技术边界
 
 `infrastructure/postgres` 管理业务 session 与 LangGraph checkpoint pool；`redis` 提供连接，业务 key 与事件语义留在对应模块；`minio`、`neo4j` 和 `oidc` 封装远端客户端；`observability` 封装日志与 Langfuse SDK。`shared` 只保存不依赖业务域与 HTTP 的小型公共契约。`infrastructure/runtime_settings.py` 管理进程环境与运行目录；system 模块拥有品牌模板和持久系统配置。`api/responses` 负责文件与知识响应，业务服务提供已经授权的读取结果。
