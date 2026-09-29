@@ -300,7 +300,7 @@ Yuxi 把知识进入系统、Agent 执行任务和团队治理放在一条完整
 
 **模型供应商与统一凭据管理**
 
-支持接入主流大模型供应商（OpenAI、Anthropic、DeepSeek、Qwen、本地 Ollama/vLLM 等），集中维护 API Key 凭据并统一分配模型能力，密钥对普通成员完全脱敏。
+支持接入主流大模型供应商（OpenAI、Anthropic、DeepSeek、Qwen 及 OpenAI 兼容自建端点如 vLLM 等），集中维护 API Key 凭据并统一分配模型能力，密钥对普通成员完全脱敏。
 
 ![模型供应商与模型能力](https://xerrors.oss-cn-shanghai.aliyuncs.com/github/image-20260825152458034.png)
 
