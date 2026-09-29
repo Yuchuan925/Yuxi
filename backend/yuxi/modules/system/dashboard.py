@@ -8,12 +8,10 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 from yuxi.modules.agents.repositories.threads import ConversationRepository
 from yuxi.modules.system.repositories.dashboard import DashboardRepository
-from yuxi.infrastructure.minio.client import normalize_public_minio_url
-from yuxi.shared.datetime import format_utc_datetime
 
 
 class DashboardService:
-    """封装 Dashboard 统计读模型、会话查询、反馈列表与时间序列分析。"""
+    """封装 Dashboard 统计读模型、会话查询与时间序列分析。"""
 
     def __init__(self, db: AsyncSession):
         self.db = db
@@ -21,7 +19,7 @@ class DashboardService:
         self.conv_repo = ConversationRepository(db)
 
     async def get_basic_stats(self) -> dict[str, Any]:
-        """读取基础统计指标（会话数、消息数、用户数、满意度）。"""
+        """读取基础统计指标（会话数、消息数、用户数）。"""
         return await self.repo.get_basic_stats()
 
     async def get_user_activity_stats(self, *, now: datetime | None = None) -> dict[str, Any]:
@@ -33,28 +31,8 @@ class DashboardService:
         return await self.repo.get_tool_call_stats(now=now)
 
     async def get_agent_analytics(self) -> dict[str, Any]:
-        """汇总智能体对话、满意度与工具使用情况。"""
+        """汇总智能体对话与工具使用情况。"""
         return await self.repo.get_agent_analytics()
-
-    async def get_feedbacks(self, *, rating: str | None = None, agent_id: str | None = None) -> list[dict[str, Any]]:
-        """按可选评分和智能体过滤并装配用户反馈列表。"""
-        rows = await self.repo.list_feedbacks(rating=rating, agent_id=agent_id)
-        return [
-            {
-                "id": feedback.id,
-                "message_id": feedback.message_id,
-                "uid": feedback.uid,
-                "username": user.username if user else None,
-                "avatar": normalize_public_minio_url(user.avatar) if user else None,
-                "rating": feedback.rating,
-                "reason": feedback.reason,
-                "created_at": format_utc_datetime(feedback.created_at) or "",
-                "message_content": message.content if message else "",
-                "conversation_title": conversation.title if conversation else None,
-                "agent_id": conversation.agent_id if conversation else "",
-            }
-            for feedback, message, conversation, user in rows
-        ]
 
     async def get_call_timeseries(self, *, metric_type: str, time_range: str = "14days") -> dict[str, Any]:
         """查询调用分析时间序列。"""

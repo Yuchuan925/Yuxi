@@ -13,9 +13,6 @@ class _FakeLangfuseClient:
 
     def __init__(self, **kwargs):
         self.kwargs = kwargs
-        self.scores = []
-        self.flush_count = 0
-        self.raise_on_score = False
         self.observations = []
         self.__class__.instances.append(self)
 
@@ -28,19 +25,10 @@ class _FakeLangfuseClient:
         self.observations.append(observation)
         return observation
 
-    def create_score(self, **kwargs) -> None:
-        if self.raise_on_score:
-            raise RuntimeError("score failed")
-        self.scores.append(kwargs)
-
     def get_trace_url(self, *, trace_id: str | None = None) -> str | None:
         if trace_id is None:
             return None
         return f"https://langfuse.local/trace/{trace_id}"
-
-    def flush(self) -> None:
-        self.flush_count += 1
-
 
 class _FakeCallbackHandler:
     def __init__(self, *, public_key=None, trace_context=None):
@@ -296,67 +284,3 @@ async def test_get_trace_url_by_id_async_accepts_default_cloud_origin(run_contex
     trace_url = await svc.get_trace_url_by_id_async("trace-runtime")
 
     assert trace_url == "https://cloud.langfuse.com/project/1/traces/trace-runtime"
-
-
-def test_submit_user_feedback_score_creates_boolean_score(monkeypatch):
-    _FakeLangfuseClient.instances.clear()
-    monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "pk-test")
-    monkeypatch.setenv("LANGFUSE_SECRET_KEY", "sk-test")
-    monkeypatch.setattr(svc, "Langfuse", _FakeLangfuseClient)
-    monkeypatch.setattr(svc, "CallbackHandler", _FakeCallbackHandler)
-    svc.get_langfuse_client.cache_clear()
-
-    created = svc.submit_user_feedback_score(
-        trace_id="trace-1",
-        feedback_id=12,
-        message_id=34,
-        conversation_id=56,
-        uid="user-1",
-        rating="dislike",
-        reason="答案不准确",
-    )
-
-    client = _FakeLangfuseClient.instances[-1]
-    assert created is True
-    assert client.scores == [
-        {
-            "trace_id": "trace-1",
-            "score_id": "yuxi-message-feedback-12",
-            "name": "user-feedback",
-            "value": 0,
-            "data_type": "BOOLEAN",
-            "comment": "答案不准确",
-            "metadata": {
-                "source": "yuxi",
-                "feedback_id": 12,
-                "message_id": 34,
-                "conversation_id": 56,
-                "uid": "user-1",
-                "rating": "dislike",
-            },
-        }
-    ]
-    assert client.flush_count == 1
-
-
-def test_submit_user_feedback_score_returns_false_when_langfuse_fails(monkeypatch):
-    _FakeLangfuseClient.instances.clear()
-    monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "pk-test")
-    monkeypatch.setenv("LANGFUSE_SECRET_KEY", "sk-test")
-    monkeypatch.setattr(svc, "Langfuse", _FakeLangfuseClient)
-    monkeypatch.setattr(svc, "CallbackHandler", _FakeCallbackHandler)
-    svc.get_langfuse_client.cache_clear()
-    client = svc.get_langfuse_client()
-    client.raise_on_score = True
-
-    created = svc.submit_user_feedback_score(
-        trace_id="trace-1",
-        feedback_id=12,
-        message_id=34,
-        conversation_id=56,
-        uid="user-1",
-        rating="like",
-    )
-
-    assert created is False
-    assert client.flush_count == 0

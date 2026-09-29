@@ -13,7 +13,7 @@ from yuxi.modules.agents.models.definitions import Agent
 from yuxi.infrastructure.postgres.base import Base
 from yuxi.modules.agents.models.threads import Conversation, ConversationStats
 from yuxi.modules.identity.models import Department, User
-from yuxi.modules.agents.models.messages import Message, MessageFeedback, ToolCall
+from yuxi.modules.agents.models.messages import Message, ToolCall
 from yuxi.shared.datetime import utc_now_naive
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.unit]
@@ -198,26 +198,6 @@ async def dashboard_db():
             created_at=now,
         )
 
-        feedback1 = MessageFeedback(message=msg2, uid="uid-alice", rating="like", created_at=yesterday)
-        hidden_model_feedback = MessageFeedback(
-            message=hidden_model_audit,
-            uid="uid-bob",
-            rating="dislike",
-            created_at=now,
-        )
-        hidden_tool_feedback = MessageFeedback(
-            message=hidden_tool_audit,
-            uid="uid-bob",
-            rating="like",
-            created_at=now,
-        )
-        removed_agent_feedback = MessageFeedback(
-            message=removed_agent_message,
-            uid="uid-alice",
-            rating="dislike",
-            created_at=now,
-        )
-
         db.add_all(
             [
                 dept,
@@ -246,10 +226,6 @@ async def dashboard_db():
                 removed_agent_message,
                 tool1,
                 removed_agent_tool,
-                feedback1,
-                hidden_model_feedback,
-                hidden_tool_feedback,
-                removed_agent_feedback,
             ]
         )
         await db.commit()
@@ -265,8 +241,7 @@ async def test_dashboard_service_basic_stats(dashboard_db):
     assert stats["active_conversations"] == 2
     assert stats["total_messages"] == 4
     assert stats["total_users"] == 3
-    assert stats["feedback_stats"]["total_feedbacks"] == 1
-    assert stats["feedback_stats"]["satisfaction_rate"] == 100.0
+    assert "feedback_stats" not in stats
 
     tool_stats = await service.get_tool_call_stats()
     assert tool_stats["total_calls"] == 1
@@ -275,10 +250,6 @@ async def test_dashboard_service_basic_stats(dashboard_db):
     assert len(user_stats["daily_active_users"]) == 120
     assert user_stats["daily_active_users"][0]["date"] < user_stats["daily_active_users"][-1]["date"]
 
-    feedbacks = await service.get_feedbacks()
-    assert len(feedbacks) == 1
-
-
 async def test_agent_analytics_omits_removed_top_performers_contract(dashboard_db):
     """智能体统计保留概览字段且不再生成 TOP 5 排行。"""
     analytics = await DashboardService(dashboard_db).get_agent_analytics()
@@ -286,7 +257,6 @@ async def test_agent_analytics_omits_removed_top_performers_contract(dashboard_d
     assert set(analytics) == {
         "total_agents",
         "agent_conversation_counts",
-        "agent_satisfaction_rates",
         "agent_tool_usage",
         "agent_names",
     }
@@ -294,14 +264,6 @@ async def test_agent_analytics_omits_removed_top_performers_contract(dashboard_d
     assert analytics["agent_names"] == {
         "agent-helper": "Helper Agent",
         "agent-coder": "Coder Agent",
-    }
-    coder_satisfaction = next(
-        item for item in analytics["agent_satisfaction_rates"] if item["agent_id"] == "agent-coder"
-    )
-    assert coder_satisfaction == {
-        "agent_id": "agent-coder",
-        "satisfaction_rate": 100,
-        "total_feedbacks": 0,
     }
 
 
@@ -458,12 +420,6 @@ async def test_dashboard_audit_timestamps_carry_timezone_designator(dashboard_db
     assert detail["updated_at"].endswith("Z")
     for message in detail["messages"]:
         assert message["created_at"].endswith("Z")
-
-    feedbacks = await service.get_feedbacks()
-    assert feedbacks
-    for feedback in feedbacks:
-        assert feedback["created_at"].endswith("Z")
-
 
 async def test_dashboard_service_conversation_detail(dashboard_db):
     service = DashboardService(dashboard_db)

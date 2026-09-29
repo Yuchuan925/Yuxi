@@ -58,7 +58,6 @@
       v-if="overviewActivated"
       v-show="activeTab === 'overview'"
       :basic-stats="basicStats"
-      @open-feedback="handleOpenFeedback"
     />
 
     <!-- Tab 1: 系统概览主要内容区域 -->
@@ -112,8 +111,6 @@
       <ThreadStatsComponent ref="threadStatsRef" />
     </div>
 
-    <!-- 反馈模态框 -->
-    <FeedbackModalComponent ref="feedbackModal" />
   </div>
 </template>
 
@@ -136,7 +133,6 @@ import KnowledgeStatsComponent from '@/components/dashboard/KnowledgeStatsCompon
 import AgentStatsComponent from '@/components/dashboard/AgentStatsComponent.vue'
 import CallStatsComponent from '@/components/dashboard/CallStatsComponent.vue'
 import StatsOverviewComponent from '@/components/dashboard/StatsOverviewComponent.vue'
-import FeedbackModalComponent from '@/components/dashboard/FeedbackModalComponent.vue'
 import ThreadStatsComponent from '@/components/dashboard/ThreadStatsComponent.vue'
 
 const route = useRoute()
@@ -151,7 +147,6 @@ const overviewActivated = ref(activeTab.value === 'overview')
 const threadActivated = ref(activeTab.value === 'threads')
 
 // 组件引用
-const feedbackModal = ref(null)
 const taskerStore = useTaskerStore()
 const themeStore = useThemeStore()
 const userStore = useUserStore()
@@ -256,11 +251,6 @@ const toggleTheme = () => {
 
 const openTaskCenter = () => {
   taskerStore.openDrawer()
-}
-
-// 打开反馈详情弹窗
-const handleOpenFeedback = () => {
-  feedbackModal.value?.show()
 }
 
 // 清理所有子组件的图表实例

@@ -82,7 +82,6 @@ class Message(Base):
     # Relationships
     conversation = relationship("Conversation", back_populates="messages")
     tool_calls = relationship("ToolCall", back_populates="message", cascade="all, delete-orphan")
-    feedbacks = relationship("MessageFeedback", back_populates="message", cascade="all, delete-orphan")
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -143,33 +142,5 @@ class ToolCall(Base):
             "tool_output": self.tool_output,
             "status": self.status,
             "error_message": self.error_message,
-            "created_at": format_utc_datetime(self.created_at),
-        }
-
-
-class MessageFeedback(Base):
-    """Message feedback table - 消息反馈表"""
-
-    __tablename__ = "message_feedbacks"
-
-    id = Column(Integer, primary_key=True, autoincrement=True, comment="Primary key")
-    message_id = Column(
-        Integer, ForeignKey("messages.id"), nullable=False, index=True, comment="Message ID being rated"
-    )
-    uid = Column(String(64), nullable=False, index=True, comment="UID who provided feedback")
-    rating = Column(String(10), nullable=False, comment="Feedback rating: like or dislike")
-    reason = Column(Text, nullable=True, comment="Optional reason for dislike feedback")
-    created_at = Column(DateTime, default=utc_now_naive, comment="Feedback creation time")
-
-    # Relationships
-    message = relationship("Message", back_populates="feedbacks")
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "id": self.id,
-            "message_id": self.message_id,
-            "uid": self.uid,
-            "rating": self.rating,
-            "reason": self.reason,
             "created_at": format_utc_datetime(self.created_at),
         }

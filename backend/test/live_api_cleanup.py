@@ -588,7 +588,6 @@ async def _delete_test_conversation_rows(conn: asyncpg.Connection, thread_ids_li
         thread_ids_list,
     )
     await conn.execute("DELETE FROM tool_calls WHERE message_id = ANY($1::int[])", message_ids)
-    await conn.execute("DELETE FROM message_feedbacks WHERE message_id = ANY($1::int[])", message_ids)
     await conn.execute("DELETE FROM messages WHERE id = ANY($1::int[])", message_ids)
     await conn.execute(
         "UPDATE agent_turns SET current_run_id = NULL, result_run_id = NULL WHERE id = ANY($1::text[])",

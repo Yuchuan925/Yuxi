@@ -74,14 +74,13 @@ async def test_dashboard_rejects_invalid_query_ranges(test_client, admin_headers
 
 
 async def test_agent_stats_http_omits_removed_top_performers_contract(test_client, admin_headers):
-    """智能体统计 HTTP 契约保留概览字段且不再发布 TOP 5 排行。"""
+    """智能体统计 HTTP 契约只发布对话与工具使用概览。"""
     response = await test_client.get("/api/dashboard/stats/agents", headers=admin_headers)
 
     assert response.status_code == 200, response.text
     assert set(response.json()) == {
         "total_agents",
         "agent_conversation_counts",
-        "agent_satisfaction_rates",
         "agent_tool_usage",
         "agent_names",
     }
@@ -188,13 +187,6 @@ async def test_dashboard_http_applies_subagent_and_deleted_conversation_scopes(t
     assert deleted_audit.status_code == 200, deleted_audit.text
     assert {item["thread_id"] for item in default_audit.json()["items"]} == set(thread_ids[:2])
     assert {item["thread_id"] for item in deleted_audit.json()["items"]} == {thread_ids[2]}
-
-
-async def test_admin_can_fetch_feedbacks(test_client, admin_headers):
-    """Test that feedback endpoint returns 200 and handles the User join correctly."""
-    response = await test_client.get("/api/dashboard/feedbacks", headers=admin_headers)
-    assert response.status_code == 200, f"feedbacks failed: {response.text}"
-    assert isinstance(response.json(), list)
 
 
 async def test_dashboard_http_reads_run_token_totals(test_client, admin_headers):

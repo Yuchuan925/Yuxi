@@ -32,7 +32,7 @@ from yuxi.modules.agents.models.inputs import AgentInput, AgentInputMessage, Age
 from yuxi.modules.agents.models.runs import AgentRun, AgentRunAttempt
 from yuxi.modules.agents.models.turns import AgentTurn
 from yuxi.modules.agents.models.threads import Conversation, ConversationStats
-from yuxi.modules.agents.models.messages import Message, MessageFeedback, ToolCall
+from yuxi.modules.agents.models.messages import Message, ToolCall
 from yuxi.modules.workspace.models import Project
 from yuxi.modules.identity.models import User
 from yuxi.modules.workspace.paths import ensure_bound_user_workdir, user_workdir_host_dir
@@ -154,7 +154,6 @@ async def _seed_thread(session_factory, *, thread_prefix: str) -> dict:
         db.add(output_message)
         await db.flush()
         db.add(ToolCall(message_id=output_message.id, tool_name="fs", tool_input={}))
-        db.add(MessageFeedback(message_id=output_message.id, uid=uid, rating="like"))
         attempt = AgentRunAttempt(
             run_id=run_id,
             attempt_no=1,
@@ -221,12 +220,6 @@ async def test_delete_test_conversation_rows_removes_history_and_preserves_neigh
             )
             assert (
                 await db.scalar(select(ToolCall.id).where(ToolCall.message_id == target["output_message_id"])) is None
-            )
-            assert (
-                await db.scalar(
-                    select(MessageFeedback.id).where(MessageFeedback.message_id == target["output_message_id"])
-                )
-                is None
             )
     finally:
         await _cleanup_seed(cleanup_database, [target, neighbor])

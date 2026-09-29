@@ -380,7 +380,6 @@ class ConversationRepository:
             select(Message)
             .options(
                 selectinload(Message.tool_calls),
-                selectinload(Message.feedbacks),
             )
             .where(
                 Message.conversation_id == conversation_id,
@@ -865,7 +864,6 @@ class ConversationRepository:
         conversation_id: int,
         tokens_used: int | None = None,
         model_used: str | None = None,
-        user_feedback: dict | None = None,
     ) -> ConversationStats | None:
         stats = await self.get_stats(conversation_id)
         if not stats:
@@ -875,9 +873,6 @@ class ConversationRepository:
             stats.total_tokens += tokens_used
         if model_used is not None:
             stats.model_used = model_used
-        if user_feedback is not None:
-            stats.user_feedback = user_feedback
-
         stats.updated_at = utc_now_naive()
         await self.db.commit()
         await self.db.refresh(stats)

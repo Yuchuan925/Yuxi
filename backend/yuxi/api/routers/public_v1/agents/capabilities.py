@@ -1,4 +1,4 @@
-"""Thread 范围内的文件、上下文与反馈能力。"""
+"""Thread 范围内的文件、上下文与状态能力。"""
 
 from __future__ import annotations
 
@@ -22,7 +22,6 @@ from yuxi.modules.agents.services.attachments import (
 )
 from yuxi.modules.agents.services.state import get_agent_state_view
 from yuxi.modules.agents.services.compression import compress_thread_context as compress_context
-from yuxi.modules.agents.services.feedback import get_message_feedback_view, submit_message_feedback_view
 from yuxi.infrastructure.images import process_uploaded_image
 
 router = APIRouter(dependencies=[Depends(require_public_context)])
@@ -58,14 +57,6 @@ class SaveArtifact(BaseModel):
     model_config = ConfigDict(extra="forbid")
     path: str
     destination_path: str | None = None
-
-
-class MessageFeedback(BaseModel):
-    """用户对一条结果消息的评价。"""
-
-    model_config = ConfigDict(extra="forbid")
-    rating: str
-    reason: str | None = None
 
 
 @router.post("/attachments/tmp")
@@ -221,43 +212,4 @@ async def retrieve_thread_artifact(
             preview=preview,
             app_id=context.scope.app_id,
         )
-    )
-
-
-@router.post("/threads/{thread_id}/messages/{message_id}/feedback")
-async def submit_message_feedback(
-    thread_id: str,
-    message_id: int,
-    payload: MessageFeedback,
-    context: PublicAgentContext = Depends(require_public_context),
-    db: AsyncSession = Depends(get_db),
-):
-    """仅对本 Thread 的结果消息保存反馈。"""
-    await get_thread_snapshot(db=db, scope=context.scope, thread_id=thread_id)
-    return await submit_message_feedback_view(
-        message_id=message_id,
-        rating=payload.rating,
-        reason=payload.reason,
-        db=db,
-        current_uid=context.scope.uid,
-        thread_id=thread_id,
-        app_id=context.scope.app_id,
-    )
-
-
-@router.get("/threads/{thread_id}/messages/{message_id}/feedback")
-async def retrieve_message_feedback(
-    thread_id: str,
-    message_id: int,
-    context: PublicAgentContext = Depends(require_public_context),
-    db: AsyncSession = Depends(get_db),
-):
-    """按 Thread 与 APP 作用域读取当前用户反馈。"""
-    await get_thread_snapshot(db=db, scope=context.scope, thread_id=thread_id)
-    return await get_message_feedback_view(
-        message_id=message_id,
-        db=db,
-        current_uid=context.scope.uid,
-        thread_id=thread_id,
-        app_id=context.scope.app_id,
     )

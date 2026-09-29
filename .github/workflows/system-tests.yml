@@ -301,7 +301,6 @@ jobs:
             test/integration/api/test_public_agents_key_boundary.py \
             test/integration/api/test_public_thread_alias.py \
             test/integration/services/test_agent_input_schema.py \
-            test/integration/services/test_feedback_thread_scope.py \
             test/integration/services/test_project_thread_archive.py \
             test/integration/services/test_run_stream_redis.py -q
       - name: Verify Knowledge Key HTTP boundary without optional knowledge runtime

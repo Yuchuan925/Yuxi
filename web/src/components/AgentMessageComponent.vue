@@ -74,7 +74,6 @@
       >
         <RefsComponent
           :message="message"
-          :thread-id="threadId"
           :show-refs="showRefs"
           :is-latest-message="isLatestMessage"
           :sources="messageSources"

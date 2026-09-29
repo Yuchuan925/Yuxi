@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from yuxi.modules.agents.repositories.definitions import AgentRepository
 from yuxi.infrastructure.minio.client import normalize_public_minio_url
-from yuxi.modules.agents.models.messages import AUDIT_MESSAGE_TYPES, Message, MessageFeedback, ToolCall
+from yuxi.modules.agents.models.messages import AUDIT_MESSAGE_TYPES, Message, ToolCall
 from yuxi.modules.agents.models.definitions import Agent
 from yuxi.modules.agents.models.runs import AgentRun
 from yuxi.modules.agents.models.threads import Conversation, ConversationStats
@@ -375,26 +375,6 @@ class DashboardRepository:
         ).all()
         conversation_counts = {agent_id: int(count or 0) for agent_id, count in conversation_rows}
 
-        feedback_rows = (
-            await self.db_session.execute(
-                select(
-                    Conversation.agent_id,
-                    func.count(MessageFeedback.id).label("total"),
-                    func.sum(case((MessageFeedback.rating == "like", 1), else_=0)).label("positive"),
-                )
-                .join(Message, MessageFeedback.message_id == Message.id)
-                .join(Conversation, Message.conversation_id == Conversation.id)
-                .join(User, Conversation.uid == User.uid)
-                .join(Agent, Conversation.agent_id == Agent.slug)
-                .where(
-                    *valid_filters,
-                    or_(Message.message_type.is_(None), Message.message_type.notin_(AUDIT_MESSAGE_TYPES)),
-                )
-                .group_by(Conversation.agent_id)
-            )
-        ).all()
-        feedback_by_agent = {row.agent_id: (int(row.total or 0), int(row.positive or 0)) for row in feedback_rows}
-
         tool_rows = (
             await self.db_session.execute(
                 select(Conversation.agent_id, func.count(ToolCall.id))
@@ -409,26 +389,15 @@ class DashboardRepository:
         tool_counts = {agent_id: int(count or 0) for agent_id, count in tool_rows}
 
         conversation_stats = []
-        satisfaction_stats = []
         tool_usage = []
         for agent in agents:
             conversation_count = conversation_counts.get(agent.slug, 0)
-            total_feedbacks, positive_feedbacks = feedback_by_agent.get(agent.slug, (0, 0))
-            satisfaction_rate = round(positive_feedbacks / total_feedbacks * 100, 2) if total_feedbacks else 100
             conversation_stats.append({"agent_id": agent.slug, "conversation_count": conversation_count})
-            satisfaction_stats.append(
-                {
-                    "agent_id": agent.slug,
-                    "satisfaction_rate": satisfaction_rate,
-                    "total_feedbacks": total_feedbacks,
-                }
-            )
             tool_usage.append({"agent_id": agent.slug, "tool_usage_count": tool_counts.get(agent.slug, 0)})
 
         return {
             "total_agents": len(agents),
             "agent_conversation_counts": conversation_stats,
-            "agent_satisfaction_rates": satisfaction_stats,
             "agent_tool_usage": tool_usage,
             "agent_names": {agent.slug: agent.name for agent in agents},
         }
@@ -459,65 +428,12 @@ class DashboardRepository:
             )
         )
         total_users_result = await self.db_session.execute(select(func.count(User.id)).where(User.is_deleted == 0))
-        total_feedbacks_result = await self.db_session.execute(
-            select(func.count(MessageFeedback.id))
-            .join(Message, MessageFeedback.message_id == Message.id)
-            .join(Conversation, Message.conversation_id == Conversation.id)
-            .join(User, Conversation.uid == User.uid)
-            .join(Agent, Conversation.agent_id == Agent.slug)
-            .where(
-                *valid_filters,
-                or_(Message.message_type.is_(None), Message.message_type.notin_(AUDIT_MESSAGE_TYPES)),
-            )
-        )
-        like_count_result = await self.db_session.execute(
-            select(func.count(MessageFeedback.id))
-            .join(Message, MessageFeedback.message_id == Message.id)
-            .join(Conversation, Message.conversation_id == Conversation.id)
-            .join(User, Conversation.uid == User.uid)
-            .join(Agent, Conversation.agent_id == Agent.slug)
-            .where(
-                *valid_filters,
-                or_(Message.message_type.is_(None), Message.message_type.notin_(AUDIT_MESSAGE_TYPES)),
-                MessageFeedback.rating == "like",
-            )
-        )
-        total_feedbacks = total_feedbacks_result.scalar() or 0
-        like_count = like_count_result.scalar() or 0
         return {
             "total_conversations": total_conversations_result.scalar() or 0,
             "active_conversations": active_conversations_result.scalar() or 0,
             "total_messages": total_messages_result.scalar() or 0,
             "total_users": total_users_result.scalar() or 0,
-            "feedback_stats": {
-                "total_feedbacks": total_feedbacks,
-                "satisfaction_rate": round(like_count / total_feedbacks * 100, 2) if total_feedbacks else 100,
-            },
         }
-
-    async def list_feedbacks(
-        self, *, rating: str | None, agent_id: str | None
-    ) -> list[tuple[MessageFeedback, Message, Conversation, User | None]]:
-        """按可选评分和智能体过滤反馈关联数据。"""
-        query = (
-            select(MessageFeedback, Message, Conversation, User)
-            .join(Message, MessageFeedback.message_id == Message.id)
-            .join(Conversation, Message.conversation_id == Conversation.id)
-            .join(User, MessageFeedback.uid == User.uid)
-            .join(Agent, Conversation.agent_id == Agent.slug)
-            .where(
-                Conversation.status.notin_(("deleted", "subagent")),
-                User.is_deleted == 0,
-                or_(Message.message_type.is_(None), Message.message_type.notin_(AUDIT_MESSAGE_TYPES)),
-            )
-        )
-        if rating and rating in {"like", "dislike"}:
-            query = query.where(MessageFeedback.rating == rating)
-        if agent_id:
-            query = query.where(Conversation.agent_id == agent_id)
-        query = query.order_by(MessageFeedback.created_at.desc())
-        result = await self.db_session.execute(query)
-        return list(result.all())
 
     async def get_call_timeseries(
         self,

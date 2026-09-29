@@ -128,7 +128,6 @@ class ConversationStats(Base):
     message_count = Column(Integer, default=0, comment="Total message count")
     total_tokens = Column(Integer, default=0, comment="Total tokens used")
     model_used = Column(String(100), nullable=True, comment="Model used")
-    user_feedback = Column(JSON, nullable=True, comment="User feedback")
     created_at = Column(DateTime, default=utc_now_naive, comment="Creation time")
     updated_at = Column(DateTime, default=utc_now_naive, onupdate=utc_now_naive, comment="Update time")
 
@@ -142,7 +141,6 @@ class ConversationStats(Base):
             "message_count": self.message_count,
             "total_tokens": self.total_tokens,
             "model_used": self.model_used,
-            "user_feedback": self.user_feedback or {},
             "created_at": format_utc_datetime(self.created_at),
             "updated_at": format_utc_datetime(self.updated_at),
         }

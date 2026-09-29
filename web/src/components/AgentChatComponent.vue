@@ -127,7 +127,6 @@
                 <RefsComponent
                   v-if="shouldShowRefs(row.conv)"
                   :message="getLastMessage(row.conv)"
-                  :thread-id="currentChatId"
                   :run="getMessageRun(getLastMessage(row.conv))"
                   :show-refs="['model', 'copy', 'sources']"
                   :is-latest-message="false"

@@ -39,7 +39,6 @@ class AgentAnalytics(BaseModel):
 
     total_agents: int
     agent_conversation_counts: list[dict]
-    agent_satisfaction_rates: list[dict]
     agent_tool_usage: list[dict]
     agent_names: dict[str, str] = {}
 
@@ -114,21 +113,6 @@ class ConversationDetailResponse(BaseModel):
     total_tokens: int | None
     token_usage_complete: bool = False
     messages: list[dict]
-
-
-class FeedbackListItem(BaseModel):
-    """反馈列表项。"""
-
-    id: int
-    uid: str
-    username: str | None
-    avatar: str | None
-    rating: str
-    reason: str | None
-    created_at: str
-    message_content: str
-    conversation_title: str | None
-    agent_id: str
 
 
 class TimeSeriesStats(BaseModel):
@@ -264,17 +248,6 @@ async def get_thread_analytics_stats(
         include_subagents=include_subagents,
     )
     return ThreadAnalyticsResponse(**data)
-
-
-@dashboard.get("/feedbacks", response_model=list[FeedbackListItem])
-async def get_all_feedbacks(
-    rating: str | None = None,
-    agent_id: str | None = None,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_superadmin_user),
-):
-    """获取所有反馈记录（超级管理员权限）。"""
-    return await DashboardService(db).get_feedbacks(rating=rating, agent_id=agent_id)
 
 
 @dashboard.get("/conversations/options", response_model=ConversationFilterOptionsResponse)

@@ -3,50 +3,36 @@
     <DashboardMetricGrid>
       <DashboardMetricCard
         :icon="MessageCircle"
-        :value="formatNumber(basicStats?.total_conversations)"
+        :value="formatNumber(props.basicStats?.total_conversations)"
         label="累计会话"
         tone="primary"
       >
-        <template #meta v-if="basicStats?.conversation_trend">
-          <span class="metric-trend" :class="basicStats.conversation_trend > 0 ? 'up' : 'down'">
-            <TrendingUp v-if="basicStats.conversation_trend > 0" />
+        <template #meta v-if="props.basicStats?.conversation_trend">
+          <span class="metric-trend" :class="props.basicStats.conversation_trend > 0 ? 'up' : 'down'">
+            <TrendingUp v-if="props.basicStats.conversation_trend > 0" />
             <TrendingDown v-else />
-            {{ Math.abs(basicStats.conversation_trend) }}%
+            {{ Math.abs(props.basicStats.conversation_trend) }}%
           </span>
         </template>
       </DashboardMetricCard>
 
       <DashboardMetricCard
         :icon="Activity"
-        :value="formatNumber(basicStats?.active_conversations)"
+        :value="formatNumber(props.basicStats?.active_conversations)"
         label="活跃对话"
         tone="success"
       />
       <DashboardMetricCard
         :icon="Mail"
-        :value="formatNumber(basicStats?.total_messages)"
+        :value="formatNumber(props.basicStats?.total_messages)"
         label="总消息数"
         tone="info"
       />
       <DashboardMetricCard
         :icon="Users"
-        :value="formatNumber(basicStats?.total_users)"
+        :value="formatNumber(props.basicStats?.total_users)"
         label="用户数"
         tone="warning"
-      />
-      <DashboardMetricCard
-        :icon="BarChart3"
-        :value="formatNumber(basicStats?.feedback_stats?.total_feedbacks)"
-        label="总反馈数"
-        tone="accent"
-        clickable
-        @click="handleFeedbackClick"
-      />
-      <DashboardMetricCard
-        :icon="Heart"
-        :value="`${basicStats?.feedback_stats?.satisfaction_rate || 0}%`"
-        label="满意度"
-        :tone="getSatisfactionTone()"
       />
     </DashboardMetricGrid>
   </div>
@@ -58,8 +44,6 @@ import {
   Activity,
   Mail,
   Users,
-  BarChart3,
-  Heart,
   TrendingUp,
   TrendingDown
 } from '@lucide/vue'
@@ -74,18 +58,6 @@ const props = defineProps({
   }
 })
 
-const emit = defineEmits(['open-feedback'])
-
-const handleFeedbackClick = () => {
-  emit('open-feedback')
-}
-
-const getSatisfactionTone = () => {
-  const rate = props.basicStats?.feedback_stats?.satisfaction_rate || 0
-  if (rate >= 80) return 'success'
-  if (rate >= 60) return 'warning'
-  return 'neutral'
-}
 </script>
 
 <style lang="less" scoped>

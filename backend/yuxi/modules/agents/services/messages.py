@@ -93,19 +93,6 @@ async def get_thread_history(*, db: AsyncSession, scope: ActorScope, thread_id: 
             "image_content": message.image_content,
             "image_contents": extract_image_contents(metadata.get("raw_message"))
             or ([message.image_content] if message.image_content else []),
-            "feedback": next(
-                (
-                    {
-                        "id": feedback.id,
-                        "rating": feedback.rating,
-                        "reason": feedback.reason,
-                        "created_at": format_utc_datetime(feedback.created_at),
-                    }
-                    for feedback in message.feedbacks
-                    if feedback.uid == scope.uid
-                ),
-                None,
-            ),
         }
         if message.role == "assistant":
             item.update(parse_assistant_message_body(message.content, metadata))

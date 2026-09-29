@@ -55,21 +55,6 @@ export const dashboardApi = {
   },
 
   /**
-   * 获取用户反馈列表
-   * @param {Object} params - 查询参数
-   * @param {string} [params.rating] - 反馈类型过滤 (like/dislike/all)
-   * @param {string} [params.agent_id] - 智能体ID过滤
-   * @returns {Promise<Array>} - 反馈列表
-   */
-  getFeedbacks: (params = {}) => {
-    const queryParams = new URLSearchParams()
-    if (params.rating && params.rating !== 'all') queryParams.append('rating', params.rating)
-    if (params.agent_id) queryParams.append('agent_id', params.agent_id)
-
-    return apiAdminGet(`/api/dashboard/feedbacks?${queryParams.toString()}`)
-  },
-
-  /**
    * 获取用户活跃度统计
    * @returns {Promise<Object>} - 用户活跃度统计信息
    */

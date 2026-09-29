@@ -63,24 +63,6 @@ export const agentApi = {
    */
   compressThreadContext: (threadId) => apiPost(`/api/v1/agents/threads/${threadId}/compress`, {}),
 
-  /**
-   * Submit feedback for a message
-   * @param {number} messageId - Message ID
-   * @param {string} rating - 'like' or 'dislike'
-   * @param {string|null} reason - Optional reason for dislike
-   * @returns {Promise} - Feedback response
-   */
-  submitMessageFeedback: (threadId, messageId, rating, reason = null) =>
-    apiPost(`/api/v1/agents/threads/${threadId}/messages/${messageId}/feedback`, { rating, reason }),
-
-  /**
-   * Get feedback status for a message
-   * @param {number} messageId - Message ID
-   * @returns {Promise} - Feedback status
-   */
-  getMessageFeedback: (threadId, messageId) =>
-    apiGet(`/api/v1/agents/threads/${threadId}/messages/${messageId}/feedback`),
-
   createAgent: (payload) => apiPost('/api/agent', payload),
 
   updateAgent: (agentId, payload) => apiPut(`/api/agent/${agentId}`, payload),

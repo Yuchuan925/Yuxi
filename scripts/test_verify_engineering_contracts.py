@@ -131,7 +131,7 @@ jobs:
       - run: docker compose exec -T api uv run --no-sync --no-dev pytest test/integration/services/test_agent_input_concurrency.py -q
       - run: docker compose exec -T api uv run --no-sync --no-dev pytest test/integration/services/test_agent_run_lease.py -q
       - run: docker compose exec -T -e TEST_USERNAME="$E2E_USERNAME" -e TEST_PASSWORD="$E2E_PASSWORD" api uv run --no-sync --no-dev pytest test/integration/api/test_turn_result_causality.py -q
-      - run: docker compose exec -T -e TEST_USERNAME="$E2E_USERNAME" -e TEST_PASSWORD="$E2E_PASSWORD" api uv run --no-sync --no-dev pytest test/integration/api/test_public_agent_auth.py test/integration/api/test_public_agents_key_boundary.py test/integration/api/test_public_thread_alias.py test/integration/services/test_agent_input_schema.py test/integration/services/test_feedback_thread_scope.py test/integration/services/test_project_thread_archive.py test/integration/services/test_run_stream_redis.py -q
+      - run: docker compose exec -T -e TEST_USERNAME="$E2E_USERNAME" -e TEST_PASSWORD="$E2E_PASSWORD" api uv run --no-sync --no-dev pytest test/integration/api/test_public_agent_auth.py test/integration/api/test_public_agents_key_boundary.py test/integration/api/test_public_thread_alias.py test/integration/services/test_agent_input_schema.py test/integration/services/test_project_thread_archive.py test/integration/services/test_run_stream_redis.py -q
       - run: docker compose exec -T -e TEST_USERNAME="$E2E_USERNAME" -e TEST_PASSWORD="$E2E_PASSWORD" api uv run --no-sync --no-dev pytest test/integration/api/test_public_knowledge_key_boundary.py::test_knowledge_key_is_limited_to_public_knowledge_api test/integration/api/test_public_knowledge_key_boundary.py::test_agents_key_cannot_access_public_knowledge_api test/integration/api/test_public_knowledge_key_boundary.py::test_public_knowledge_does_not_expose_management_routes test/integration/api/test_public_knowledge_tools.py::test_knowledge_key_tool_route_boundary_without_kb -q
       - run: docker compose exec -T -e TEST_USERNAME="$E2E_USERNAME" -e TEST_PASSWORD="$E2E_PASSWORD" api uv run --no-sync --no-dev pytest test/integration/api/test_chat_router.py::test_thread_message_audits_return_persisted_facts_without_leaking_into_history -q --setup-show -o faulthandler_timeout=60
       - run: docker compose exec -T -e TEST_USERNAME="$E2E_USERNAME" -e TEST_PASSWORD="$E2E_PASSWORD" api uv run --no-sync --no-dev pytest test/integration/api/test_chat_router.py::test_thread_artifact_uses_image_signature_for_content_type -q
@@ -486,7 +486,6 @@ jobs:
             "test/integration/api/test_public_knowledge_tools.py",
             "test/integration/api/test_public_thread_alias.py",
             "test/integration/services/test_agent_input_schema.py",
-            "test/integration/services/test_feedback_thread_scope.py",
             "test/integration/services/test_project_thread_archive.py",
             "test/integration/services/test_run_stream_redis.py",
         ):
