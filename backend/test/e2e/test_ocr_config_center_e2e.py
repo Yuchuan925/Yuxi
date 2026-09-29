@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 from pathlib import Path
+from uuid import uuid4
 
 import httpx
 import pytest
 from PIL import Image, ImageDraw, ImageFont
 
 from test.live_api_cleanup import (
-    make_test_conversation_metadata,
     make_test_conversation_title,
     remove_e2e_thread_storage,
 )
@@ -47,21 +47,19 @@ async def test_admin_ocr_config_drives_real_tmp_attachment_parse(
         assert options_response.json()["default_engine"] == "rapid_ocr"
 
         thread_response = await e2e_client.post(
-            "/api/chat/thread",
+            "/api/v1/agents/threads",
             json={
                 "agent_id": e2e_agent_context["agent_slug"],
                 "title": make_test_conversation_title("ocr-config-e2e"),
-                "metadata": make_test_conversation_metadata("ocr-config-e2e", e2e=True),
             },
-            headers=e2e_headers,
+            headers={**e2e_headers, "Idempotency-Key": f"ocr-config-{uuid4().hex}"},
         )
         assert thread_response.status_code == 200, thread_response.text
-        thread_payload = thread_response.json()
-        thread_id = str(thread_payload.get("thread_id") or thread_payload["id"])
+        thread_id = str(thread_response.json()["thread_id"])
 
         with image_path.open("rb") as image_file:
             upload_response = await e2e_client.post(
-                "/api/chat/attachments/tmp",
+                "/api/v1/agents/attachments/tmp",
                 files={"file": (image_path.name, image_file, "image/png")},
                 headers=e2e_headers,
             )
@@ -70,7 +68,7 @@ async def test_admin_ocr_config_drives_real_tmp_attachment_parse(
         assert "rapid_ocr" in uploaded["parse_methods"]
 
         parse_response = await e2e_client.post(
-            "/api/chat/attachments/tmp/parse",
+            "/api/v1/agents/attachments/tmp/parse",
             json={
                 "object_name": uploaded["object_name"],
                 "parse_method": None,
@@ -82,7 +80,7 @@ async def test_admin_ocr_config_drives_real_tmp_attachment_parse(
         assert parsed["parse_method"] == "rapid_ocr"
 
         confirm_response = await e2e_client.post(
-            f"/api/chat/thread/{thread_id}/attachments/confirm",
+            f"/api/v1/agents/threads/{thread_id}/attachments/confirm",
             json={
                 "attachments": [
                     {
@@ -151,7 +149,7 @@ async def _cleanup_created_resources(
 
     if thread_id and attachment:
         response = await e2e_client.delete(
-            f"/api/chat/thread/{thread_id}/attachments/{attachment['file_id']}",
+            f"/api/v1/agents/threads/{thread_id}/attachments/{attachment['file_id']}",
             headers=e2e_headers,
         )
         assert response.status_code == 200, response.text
@@ -165,6 +163,6 @@ async def _cleanup_created_resources(
             assert await minio_client.adelete_file(minio_client.KB_BUCKETS["documents"], object_name)
 
     if thread_id:
-        response = await e2e_client.delete(f"/api/chat/thread/{thread_id}", headers=e2e_headers)
+        response = await e2e_client.post(f"/api/v1/agents/threads/{thread_id}/archive", headers=e2e_headers)
         assert response.status_code == 200, response.text
         remove_e2e_thread_storage(thread_id)

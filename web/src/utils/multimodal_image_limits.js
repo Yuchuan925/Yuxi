@@ -3,7 +3,7 @@
  *
  * 刻意不依赖任何 I/O 与提示组件：策略要能被直接单测，而上传与提示留在
  * `multimodal_image_upload.js`。后端是权威（见
- * backend/package/yuxi/services/input_message_service.py 的 MAX_CHAT_IMAGES /
+ * backend/package/yuxi/services/agents/input_messages.py 的 MAX_CHAT_IMAGES /
  * MAX_CHAT_IMAGE_TOTAL_BYTES），这里同值前置一份，好在发请求之前就给出提示。
  */
 

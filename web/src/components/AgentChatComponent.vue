@@ -90,6 +90,7 @@
                   <AgentMessageComponent
                     v-if="displayItem.type === 'message'"
                     :message="displayItem.message"
+                    :thread-id="currentChatId"
                     :is-processing="isDisplayMessageProcessing(row.conv, displayItem)"
                     :show-refs="showMsgRefs(displayItem.message, row.conv)"
                     :hide-tool-calls="true"
@@ -126,6 +127,7 @@
                 <RefsComponent
                   v-if="shouldShowRefs(row.conv)"
                   :message="getLastMessage(row.conv)"
+                  :thread-id="currentChatId"
                   :run="getMessageRun(getLastMessage(row.conv))"
                   :show-refs="['model', 'copy', 'sources']"
                   :is-latest-message="false"
@@ -170,7 +172,7 @@
               </div>
 
               <section
-                v-if="currentQueuedRequests.length"
+                v-if="currentQueuedInputs.length"
                 class="queued-request-panel"
                 aria-label="排队请求"
               >
@@ -190,42 +192,29 @@
                   </button>
                 </div>
                 <div
-                  v-else-if="currentQueueSnapshot.status === 'interrupted'"
+                  v-else-if="isWaitingForUserAction"
                   class="queued-request-notice"
                 >
-                  当前任务正在等待回答或审批，完成后将继续处理后续请求。
+                  当前任务正在等待回答或审批，完成后将继续处理后续输入。
                 </div>
                 <div class="queued-request-list">
                   <div
-                    v-for="request in currentQueuedRequests"
-                    :key="request.request_id"
+                    v-for="input in currentQueuedInputs"
+                    :key="input.input_id"
                     class="queued-request-row"
                   >
                     <CornerDownRight :size="16" class="queued-request-icon" aria-hidden="true" />
-                    <span class="queued-request-content" :title="request.content || '排队请求'">
-                      {{ request.content || '排队请求' }}
+                    <span class="queued-request-content" :title="input.content || '排队输入'">
+                      {{ input.content || '排队输入' }}
                     </span>
                     <div class="queued-request-actions">
-                      <span v-if="request.queue_policy === 'steer'" class="queued-request-position">
-                        引导 · 下一条执行
-                      </span>
                       <button
-                        v-if="canSteerQueuedRequest(request)"
-                        type="button"
-                        class="queued-request-steer"
-                        :disabled="steeringRequestIds.has(request.request_id)"
-                        @click="handleSteerQueuedRequest(request.request_id)"
-                      >
-                        <CornerDownRight :size="14" aria-hidden="true" />
-                        引导
-                      </button>
-                      <button
-                        v-if="canCancelQueuedRequest(request)"
+                        v-if="canCancelQueuedInput(input)"
                         type="button"
                         class="queued-request-delete lucide-icon-btn"
-                        :disabled="cancellingRequestIds.has(request.request_id)"
-                        :aria-label="`删除排队请求：${request.content || '排队请求'}`"
-                        @click="handleCancelQueuedRequest(request.request_id)"
+                        :disabled="cancellingInputIds.has(input.input_id)"
+                        :aria-label="`取消排队输入：${input.content || '排队输入'}`"
+                        @click="handleCancelQueuedInput(input.input_id)"
                       >
                         <Trash2 :size="16" />
                       </button>
@@ -519,7 +508,7 @@
                           :disabled="
                             isContextCompressionPending ||
                             isProcessing ||
-                            hasQueuedRequests ||
+                            hasQueuedInputs ||
                             isWaitingForUserAction
                           "
                           @click="handleContextCompression"
@@ -896,22 +885,22 @@ import { useInfoStore } from '@/stores/info'
 import { useUserStore } from '@/stores/user'
 import { storeToRefs } from 'pinia'
 import {
-  getMessageRequestId,
+  getMessageInputId,
   getMessageRunId,
   mergeMessageDebugMessages,
-  bindMessageRequestRun
+  bindMessageInputRun
 } from '@/utils/messageDebug'
 import { MessageProcessor } from '@/utils/messageProcessor'
 import dayjs, { parseToShanghai } from '@/utils/time'
 import { agentApi, threadApi } from '@/apis'
 import HumanApprovalModal from '@/components/HumanApprovalModal.vue'
-import { extractPendingInterrupt, useApproval } from '@/composables/useApproval'
+import { extractPendingInterrupt, pendingInterruptFromWaitpoint, useApproval } from '@/composables/useApproval'
 import { useAgentThreadState, IDLE_QUEUE_SNAPSHOT } from '@/composables/useAgentThreadState'
 import { useAgentRunStream } from '@/composables/useAgentRunStream'
 import { useSubagentRuns } from '@/composables/useSubagentRuns'
 import { useAgentStreamHandler } from '@/composables/useAgentStreamHandler'
 import { useStreamSmoother } from '@/composables/useStreamSmoother'
-import { useAgentRequestQueue } from '@/composables/useAgentRequestQueue'
+import { useAgentInputQueue } from '@/composables/useAgentInputQueue'
 import { useAgentMentionConfig } from '@/composables/useAgentMentionConfig'
 import AgentArtifactsCard from '@/components/AgentArtifactsCard.vue'
 import AgentPanel from '@/components/AgentPanel.vue'
@@ -976,8 +965,7 @@ const userInput = ref(threadDraftStore.read(currentThreadId.value || DRAFT_THREA
 watch(userInput, (text) => threadDraftSession.saveInput(text))
 const agentInputAreaRef = ref(null)
 const sendCooldownActive = ref(false)
-const cancellingRequestIds = reactive(new Set())
-const steeringRequestIds = reactive(new Set())
+const cancellingInputIds = reactive(new Set())
 let sendCooldownTimer = null
 // 预设的打招呼文本
 const greetingMessages = [
@@ -1766,7 +1754,7 @@ const currentThreadAttachments = computed(() => {
   return threadAttachmentsMap.value[currentChatId.value] || []
 })
 const currentPendingThreadAttachments = computed(() =>
-  currentThreadAttachments.value.filter((attachment) => !attachment?.request_id)
+  currentThreadAttachments.value.filter((attachment) => !attachment?.input_id)
 )
 const currentArtifacts = computed(() => {
   const artifacts = currentAgentState.value?.artifacts
@@ -2018,7 +2006,7 @@ const currentDebugMessages = computed(() =>
   mergeMessageDebugMessages(
     currentThreadMessages.value,
     onGoingConvMessages.value,
-    currentThreadState.value?.queuedRequests || []
+    currentThreadState.value?.queuedInputs || []
   )
 )
 
@@ -2200,11 +2188,11 @@ function mergeOngoingUserMessageIntoHistory(historyConvs, ongoingMessages) {
   if (historyHumanIndex === -1) return { historyConvs, ongoingMessages }
 
   const historyHuman = historyMessages[historyHumanIndex]
-  const historyRequestId = getMessageRequestId(historyHuman, { allowMessageIdFallback: true })
-  const ongoingRequestId = getMessageRequestId(firstOngoingMessage, {
+  const historyInputId = getMessageInputId(historyHuman, { allowMessageIdFallback: true })
+  const ongoingInputId = getMessageInputId(firstOngoingMessage, {
     allowMessageIdFallback: true
   })
-  if (!historyRequestId || !ongoingRequestId || historyRequestId !== ongoingRequestId) {
+  if (!historyInputId || !ongoingInputId || historyInputId !== ongoingInputId) {
     return { historyConvs, ongoingMessages }
   }
 
@@ -2261,15 +2249,15 @@ function mergeActiveRunOngoingIntoHistory(historyConvs, ongoingMessages, activeR
   const lastHuman = lastMessages.find((message) => message?.type === 'human')
   if (!lastHuman) return { historyConvs: filteredHistoryConvs, ongoingMessages }
 
-  const historyRequestId = getMessageRequestId(lastHuman, { allowMessageIdFallback: true })
-  const ongoingRequestId = getMessageRequestId(firstOngoingMessage, {
+  const historyInputId = getMessageInputId(lastHuman, { allowMessageIdFallback: true })
+  const ongoingInputId = getMessageInputId(firstOngoingMessage, {
     allowMessageIdFallback: true
   })
   const sameActiveRun =
     getMessageRunId(lastHuman) === activeRunId ||
-    (Boolean(historyRequestId) &&
-      Boolean(ongoingRequestId) &&
-      ongoingRequestId === historyRequestId)
+    (Boolean(historyInputId) &&
+      Boolean(ongoingInputId) &&
+      ongoingInputId === historyInputId)
   if (!sameActiveRun) return { historyConvs: filteredHistoryConvs, ongoingMessages }
 
   const patchedHistoryConvs = [...filteredHistoryConvs]
@@ -2362,25 +2350,16 @@ const isStreaming = computed(() => {
   const threadState = currentThreadState.value
   return threadState ? threadState.isStreaming : false
 })
-const currentQueuedRequests = computed(() => currentThreadState.value?.queuedRequests || [])
-const hasPendingSteer = computed(() =>
-  currentQueuedRequests.value.some(
-    (request) => request?.queue_policy === 'steer' && request?.status === 'queued'
-  )
-)
+const currentQueuedInputs = computed(() => currentThreadState.value?.queuedInputs || [])
 const currentQueueSnapshot = computed(
   () => currentThreadState.value?.queueSnapshot || IDLE_QUEUE_SNAPSHOT
 )
-const queuedRequestCount = computed(() => currentQueuedRequests.value.length)
-const hasQueuedRequests = computed(() => queuedRequestCount.value > 0)
+const queuedInputCount = computed(() => currentQueuedInputs.value.length)
+const hasQueuedInputs = computed(() => queuedInputCount.value > 0)
 const isWaitingForUserAction = computed(() =>
   isThreadWaitingForUserAction(currentThreadState.value)
 )
-const queuePausedMessage = computed(() =>
-  currentQueueSnapshot.value.paused_reason === 'cancelled'
-    ? '当前任务已停止，后续队列已暂停。'
-    : '上一个任务失败，后续队列已暂停。'
-)
+const queuePausedMessage = '后续队列已暂停，请手动继续。'
 const shouldShowStopButton = computed(
   () => isStreaming.value && !String(userInput.value || '').trim()
 )
@@ -2389,21 +2368,10 @@ const canSubmitSteer = computed(
     isStreaming.value &&
     currentThreadState.value?.activeRunSteerable === true &&
     Boolean(String(userInput.value || '').trim()) &&
-    !hasPendingSteer.value &&
     !sendCooldownActive.value &&
     !isWaitingForUserAction.value
 )
-const canSteerQueuedRequest = (request) =>
-  isStreaming.value &&
-  currentThreadState.value?.activeRunSteerable === true &&
-  !hasPendingSteer.value &&
-  request?.status === 'queued' &&
-  request?.queue_policy === 'enqueue' &&
-  request?.source === 'chat'
-const canCancelQueuedRequest = (request) =>
-  request?.status !== 'sending' &&
-  (request?.queue_policy !== 'steer' ||
-    (!isStreaming.value && currentQueueSnapshot.value.status !== 'running'))
+const canCancelQueuedInput = (input) => input?.status !== 'sending'
 const shouldRefreshStateWhileStreaming = computed(
   () => Boolean(currentChatId.value) && isStreaming.value && statePanelOpen.value
 )
@@ -2431,7 +2399,7 @@ const agentPanelFilesystemPollingActive = computed(() =>
 )
 const isProcessing = computed(
   () =>
-    isStreaming.value || (hasQueuedRequests.value && currentQueueSnapshot.value.status !== 'paused')
+    isStreaming.value || (hasQueuedInputs.value && currentQueueSnapshot.value.status !== 'paused')
 )
 const isReplyLoading = computed(() => {
   const threadState = currentThreadState.value
@@ -2440,7 +2408,7 @@ const isReplyLoading = computed(() => {
 const replyLoadingText = computed(() => {
   const threadState = currentThreadState.value
   if (threadState?.contextCompressing) return '正在压缩上下文...'
-  if (hasQueuedRequests.value) return `排队中（${queuedRequestCount.value} 条）...`
+  if (hasQueuedInputs.value) return `排队中（${queuedInputCount.value} 条）...`
   return '正在生成回复...'
 })
 const replyElapsedSeconds = ref(0)
@@ -2490,6 +2458,7 @@ const isSendButtonDisabled = computed(() => {
   return (
     sendCooldownActive.value ||
     props.sendDisabled ||
+    isLoadingMessages.value ||
     isWaitingForUserAction.value ||
     (!userInput.value && !isProcessing.value) ||
     !currentAgent.value
@@ -2515,13 +2484,13 @@ const createClientRequestId = () => {
 }
 
 const buildOptimisticHumanMessage = ({
-  requestId,
+  inputId,
   text,
   imageContents = [],
   attachments = []
 }) => {
   const message = {
-    id: requestId,
+    id: inputId,
     role: 'user',
     type: 'human',
     created_at: new Date().toISOString(),
@@ -2529,7 +2498,7 @@ const buildOptimisticHumanMessage = ({
     content: text,
     message_type: imageContents.length ? 'multimodal_image' : 'text',
     extra_metadata: {
-      request_id: requestId,
+      input_id: inputId,
       attachments
     }
   }
@@ -2542,12 +2511,12 @@ const buildOptimisticHumanMessage = ({
   return message
 }
 
-const markAttachmentsRequestId = (threadId, attachments, requestId) => {
+const markAttachmentsInputId = (threadId, attachments, inputId) => {
   if (!threadId || !attachments.length) return null
   const previousAttachments = threadAttachmentsMap.value[threadId] || []
   const fileIds = new Set(attachments.map((attachment) => attachment.file_id).filter(Boolean))
   threadAttachmentsMap.value[threadId] = previousAttachments.map((attachment) =>
-    fileIds.has(attachment.file_id) ? { ...attachment, request_id: requestId } : attachment
+    fileIds.has(attachment.file_id) ? { ...attachment, input_id: inputId } : attachment
   )
   return previousAttachments
 }
@@ -2871,6 +2840,10 @@ const fetchThreadMessages = async ({ agentId, threadId, delay = 0 }) => {
     const history = response.history || []
     threadMessages.value[threadId] = history
     threadRuns.value[threadId] = response.runs
+    const state = getThreadState(threadId)
+    if (state && !state.isStreaming) {
+      state.turnStatus = response.thread?.current_turn?.status || null
+    }
     chatThreadsStore.upsertThread(response.thread)
   } catch (error) {
     handleChatError(error, 'load')
@@ -3068,9 +3041,6 @@ const restorePendingInterruptForThread = (threadId) => {
   return restoreInterruptFromThreadState(threadId)
 }
 
-const resolveAgentSlugForThread = (threadId) =>
-  threads.value.find((thread) => thread.id === threadId)?.agent_id || currentAgentId.value
-
 const { handleStreamChunk } = useAgentStreamHandler({
   getThreadState,
   processApprovalInStream,
@@ -3087,9 +3057,16 @@ const { startRunStream, resumeActiveRunForThread, stopRunStreamSubscription } = 
   resetOnGoingConv,
   onScrollToBottom: () => scrollController.scrollToBottom(),
   streamSmoother,
-  onInterruptDetected: ({ threadId }) => {
-    restorePendingInterruptForThread(threadId)
-    void resumeQueuedRequests(threadId, resolveAgentSlugForThread(threadId))
+  onInterruptDetected: ({ threadId, turn }) => {
+    void (async () => {
+      const state = getThreadState(threadId)
+      const turnId = state?.currentTurnId
+      const waitingTurn = turn || (turnId && await agentApi.getThreadTurn(threadId, turnId))
+      if (!state || state.currentTurnId !== turnId || waitingTurn?.status !== 'waiting') return
+      state.pendingInterrupt = pendingInterruptFromWaitpoint(waitingTurn.waitpoint, threadId)
+      if (currentChatId.value === threadId) restorePendingInterruptForThread(threadId)
+    })().catch((error) => console.warn('Failed to restore Turn waitpoint:', error))
+    void resumeQueuedInputs(threadId)
     if (threadId === currentThreadId.value) {
       void chatThreadsStore.markThreadViewed(threadId)
       agentPanelFilesystemRefreshVersion.value += 1
@@ -3099,60 +3076,46 @@ const { startRunStream, resumeActiveRunForThread, stopRunStreamSubscription } = 
     if (approvalState.threadId === threadId || touchedThreadIds.includes(approvalState.threadId)) {
       hideApprovalState()
     }
-    void resumeQueuedRequests(threadId, resolveAgentSlugForThread(threadId))
+    void resumeQueuedInputs(threadId)
     // 仅当终态事件属于当前正在查看的线程时才自动标记已读；后台线程保留 ready 态
     if (runId && threadId === currentThreadId.value) {
       void chatThreadsStore.markThreadViewed(threadId)
       agentPanelFilesystemRefreshVersion.value += 1
     }
   },
-  onRunStarted: ({ threadId, runId, requestId }) => {
+  onRunStarted: ({ threadId, runId, inputId }) => {
     const chunks = getThreadState(threadId)?.onGoingConv?.msgChunks || {}
-    bindMessageRequestRun(Object.values(chunks).flat(), requestId, runId)
-    bindMessageRequestRun(threadMessages.value[threadId], requestId, runId)
+    bindMessageInputRun(Object.values(chunks).flat(), inputId, runId)
+    bindMessageInputRun(threadMessages.value[threadId], inputId, runId)
     chatThreadsStore.setThreadStatus(threadId, 'loading')
   }
 })
-const { stopAllRequestStreams, cancelRequest, resumeQueuedRequests, continueQueue, steerRequest } =
-  useAgentRequestQueue({
+const { stopAllInputMonitors, cancelInput, resumeQueuedInputs, continueQueue, startInputMonitor } =
+  useAgentInputQueue({
     getThreadState,
     resetOnGoingConv,
     startRunStream,
     onStreamError: () => {}
   })
 
-const handleCancelQueuedRequest = async (requestId) => {
+const handleCancelQueuedInput = async (inputId) => {
   const threadId = currentChatId.value
-  if (!threadId || !requestId || cancellingRequestIds.has(requestId)) return
+  if (!threadId || !inputId || cancellingInputIds.has(inputId)) return
 
-  cancellingRequestIds.add(requestId)
-  const cancelled = await cancelRequest(threadId, requestId)
-  cancellingRequestIds.delete(requestId)
+  cancellingInputIds.add(inputId)
+  const cancelled = await cancelInput(threadId, inputId)
+  cancellingInputIds.delete(inputId)
   if (cancelled) {
-    await resumeQueuedRequests(threadId, resolveAgentSlugForThread(threadId))
-    message.success('已删除排队请求')
-  }
-}
-
-const handleSteerQueuedRequest = async (requestId) => {
-  const threadId = currentChatId.value
-  const agentSlug = resolveAgentSlugForThread(threadId)
-  if (!threadId || !agentSlug || !requestId || steeringRequestIds.has(requestId)) return
-
-  steeringRequestIds.add(requestId)
-  const steered = await steerRequest(threadId, agentSlug, requestId)
-  steeringRequestIds.delete(requestId)
-  if (steered) {
-    message.success('已设为下一条引导请求')
+    await resumeQueuedInputs(threadId)
+    message.success('已取消排队输入')
   }
 }
 
 const handleContinueQueue = async () => {
   const threadId = currentChatId.value
-  const agentSlug = resolveAgentSlugForThread(threadId)
-  if (!threadId || !agentSlug || currentThreadState.value?.continueQueueInFlight) return
+  if (!threadId || currentThreadState.value?.continueQueueInFlight) return
 
-  if (await continueQueue(threadId, agentSlug)) {
+  if (await continueQueue(threadId)) {
     message.success('队列已继续')
   }
 }
@@ -3164,7 +3127,7 @@ const resumeCurrentRunForVisiblePage = async () => {
 
   try {
     await resumeActiveRunForThread(threadId)
-    await resumeQueuedRequests(threadId, resolveAgentSlugForThread(threadId))
+    await resumeQueuedInputs(threadId)
     restorePendingInterruptForThread(threadId)
   } catch (error) {
     console.warn('Failed to resume current run after page became visible:', error)
@@ -3205,7 +3168,7 @@ const selectChat = async (chatId) => {
   if (previousThreadId && previousThreadId !== chatId) {
     stopThreadStream(previousThreadId)
     stopRunStreamSubscription(previousThreadId)
-    stopAllRequestStreams(previousThreadId)
+    stopAllInputMonitors(previousThreadId)
   }
 
   if (previousThreadId !== chatId) {
@@ -3249,7 +3212,7 @@ const selectChat = async (chatId) => {
   await handleAgentStateRefresh(chatId)
   syncThreadConfigSnapshot(chatId, { overwrite: false })
   await resumeActiveRunForThread(chatId)
-  await resumeQueuedRequests(chatId, resolveAgentSlugForThread(chatId))
+  await resumeQueuedInputs(chatId)
   restorePendingInterruptForThread(chatId)
   await scrollController.scrollToBottomStaticForce()
   return true
@@ -3266,7 +3229,7 @@ const selectThreadFromRoute = async (threadId) => {
     if (previousThreadId) {
       stopThreadStream(previousThreadId)
       stopRunStreamSubscription(previousThreadId)
-      stopAllRequestStreams(previousThreadId)
+      stopAllInputMonitors(previousThreadId)
     }
     resetAgentPanelState()
     setCurrentThreadId(null)
@@ -3286,7 +3249,7 @@ const selectThreadFromRoute = async (threadId) => {
   return true
 }
 
-const handleSendMessage = async ({ images = [], queuePolicy = 'enqueue' } = {}) => {
+const handleSendMessage = async ({ images = [], mode = 'follow_up' } = {}) => {
   const text = userInput.value.trim()
   const imageContents = images.map((item) => item.imageContent).filter(Boolean)
   if (
@@ -3294,6 +3257,7 @@ const handleSendMessage = async ({ images = [], queuePolicy = 'enqueue' } = {}) 
     !currentAgent.value ||
     sendCooldownActive.value ||
     props.sendDisabled ||
+    isLoadingMessages.value ||
     isWaitingForUserAction.value
   )
     return
@@ -3314,7 +3278,7 @@ const handleSendMessage = async ({ images = [], queuePolicy = 'enqueue' } = {}) 
     // 该线程由草稿发送创建，清理新建对话草稿，避免已发送文本再次还原
     threadDraftSession.clearDraftThread()
   }
-  // 每次请求都下发输入框展示的模型，后端在同一事务内绑定到 Conversation。
+  // 接收时冻结输入框展示的执行配置。
   const modelSpec = currentModelSpec.value || null
   const toolApprovalMode = currentToolApprovalMode.value
 
@@ -3336,45 +3300,31 @@ const handleSendMessage = async ({ images = [], queuePolicy = 'enqueue' } = {}) 
     .map((attachment) => attachment.file_id)
     .filter(Boolean)
 
-  if ((threadMessages.value[threadId] || []).length === 0) {
+  if ((threadMessages.value[threadId] || []).length === 0 &&
+      !threadState.activeRunId && !threadState.queuedInputs.length &&
+      Object.keys(threadState.onGoingConv.msgChunks).length === 0) {
     const autoTitle = text.replace(/\s+/g, ' ').trim().slice(0, 2000)
     if (autoTitle) {
-      void (async () => {
-        try {
-          const generatedTitle = await agentApi.generateTitle(
-            autoTitle,
-            configStore.config?.fast_model
-          )
-          if (generatedTitle) {
-            const finalTitle = generatedTitle.slice(0, 30).replace(/\s+/g, ' ').trim()
-            if (finalTitle) {
-              void chatThreadsStore.updateThread(threadId, finalTitle).catch(() => {})
-            }
-          }
-        } catch (e) {
-          console.error('Title generation failed:', e)
-          void chatThreadsStore.updateThread(threadId, autoTitle.slice(0, 30)).catch(() => {})
-        }
-      })()
+      void chatThreadsStore.updateThread(threadId, autoTitle.slice(0, 30)).catch(() => {})
     }
   }
 
-  const requestId = createClientRequestId()
-  const previousAttachments = markAttachmentsRequestId(threadId, pendingAttachments, requestId)
+  const clientKey = createClientRequestId()
+  const previousAttachments = markAttachmentsInputId(threadId, pendingAttachments, clientKey)
   const inputMessage = buildOptimisticHumanMessage({
-    requestId,
+    inputId: clientKey,
     text,
     imageContents,
-    attachments: pendingAttachments.map((attachment) => ({ ...attachment, request_id: requestId }))
+    attachments: pendingAttachments.map((attachment) => ({ ...attachment, input_id: clientKey }))
   })
   if (!hadActiveRun) {
     resetOnGoingConv(threadId)
-    threadState.pendingRequestId = requestId
-    threadState.onGoingConv.msgChunks[requestId] = [inputMessage]
+    threadState.pendingInputId = clientKey
+    threadState.onGoingConv.msgChunks[clientKey] = [inputMessage]
     threadState.isStreaming = true
   } else {
-    threadState.queuedRequests.push({
-      request_id: requestId,
+    threadState.queuedInputs.push({
+      input_id: clientKey,
       status: 'sending',
       content: text,
       created_at: inputMessage.created_at,
@@ -3382,64 +3332,97 @@ const handleSendMessage = async ({ images = [], queuePolicy = 'enqueue' } = {}) 
     })
   }
 
+  let acceptedInputId = clientKey
   try {
-    const runResp = await agentApi.createAgentRun({
+    const accepted = await agentApi.sendThreadMessage(threadId, {
       query: text,
-      agent_slug: currentAgentId.value,
-      thread_id: threadId,
-      meta: {
-        request_id: requestId,
-        attachment_file_ids: pendingAttachmentFileIds
-      },
+      idempotency_key: clientKey,
+      attachment_file_ids: pendingAttachmentFileIds,
       image_content: imageContents.length ? imageContents : null,
       model_spec: modelSpec,
       tool_approval_mode: toolApprovalMode,
-      queue_policy: queuePolicy
+      mode,
+      ...(mode === 'steer' ? { turn_id: threadState.currentTurnId } : {})
     })
-    const status = runResp?.status
-    const runId = runResp?.run_id
-    threadState.queuedRequests = threadState.queuedRequests.filter(
-      (request) => request.request_id !== requestId
+    acceptedInputId = accepted.input_id
+    if (!acceptedInputId) throw new Error('Public API 未返回 input_id')
+    if (acceptedInputId !== clientKey) {
+      const optimistic = threadState.onGoingConv.msgChunks[clientKey]
+      if (optimistic) {
+        threadState.onGoingConv.msgChunks[acceptedInputId] = optimistic.map((item) => ({
+          ...item,
+          id: item.id === clientKey ? acceptedInputId : item.id,
+          extra_metadata: {
+            ...item.extra_metadata,
+            input_id: acceptedInputId,
+            attachments: (item.extra_metadata?.attachments || []).map((attachment) => ({
+              ...attachment, input_id: acceptedInputId
+            }))
+          }
+        }))
+        delete threadState.onGoingConv.msgChunks[clientKey]
+      }
+      markAttachmentsInputId(threadId, pendingAttachments, acceptedInputId)
+    }
+    const acceptedMessage = acceptedInputId === clientKey
+      ? inputMessage
+      : {
+          ...inputMessage,
+          id: acceptedInputId,
+          extra_metadata: {
+            ...inputMessage.extra_metadata,
+            input_id: acceptedInputId,
+            attachments: (inputMessage.extra_metadata?.attachments || []).map((attachment) => ({
+              ...attachment, input_id: acceptedInputId
+            }))
+          }
+        }
+    const runId = accepted.run_id
+    threadState.queuedInputs = threadState.queuedInputs.filter(
+      (input) => input.input_id !== clientKey
     )
-    if (status !== 'rejected' && modelSpec) {
+    if (modelSpec) {
       const thread = threads.value.find((item) => item.id === threadId)
       if (thread) {
         thread.metadata = { ...(thread.metadata || {}), model_spec: modelSpec }
         delete selectedModelByThread[threadId]
       }
+      void chatThreadsStore.updateThread(threadId, null, undefined, undefined, modelSpec)
+        .catch(() => {})
     }
-    if (status === 'queued' || (!runId && status !== 'rejected')) {
-      inputMessage.delivery_status = 'queued'
-      threadState.queuedRequests = threadState.queuedRequests || []
-      threadState.queuedRequests.push({
-        request_id: requestId,
-        status: 'queued',
-        queue_policy: runResp?.queue_policy || queuePolicy,
-        queue_position: runResp?.queue_position || 1,
+    if (!runId) {
+      for (const msg of threadState.onGoingConv.msgChunks[acceptedInputId] || []) {
+        if (msg.type === 'human') msg.delivery_status = 'queued'
+      }
+      acceptedMessage.delivery_status = 'queued'
+      threadState.queuedInputs = threadState.queuedInputs || []
+      threadState.queuedInputs.push({
+        input_id: acceptedInputId,
+        status: 'pending',
+        kind: mode,
         content: text,
         created_at: inputMessage.created_at,
-        message: inputMessage
+        message: acceptedMessage
       })
       if (!hadActiveRun) {
         threadState.isStreaming = false
         threadState.replyLoadingVisible = false
       }
-      await resumeQueuedRequests(threadId, resolveAgentSlugForThread(threadId))
-    } else if (runId) {
-      threadState.onGoingConv.msgChunks[requestId] = [inputMessage]
-      threadState.pendingRequestId = requestId
-      await startRunStream(threadId, runId, 0, { requestId })
+      startInputMonitor(threadId, acceptedInputId)
+      await resumeQueuedInputs(threadId)
     } else {
-      throw new Error('创建 run 失败：缺少 run_id')
+      threadState.onGoingConv.msgChunks[acceptedInputId] ||= [acceptedMessage]
+      threadState.pendingInputId = acceptedInputId
+      await startRunStream(threadId, runId, null, { inputId: acceptedInputId, turnId: accepted.turn_id })
     }
   } catch (error) {
-    threadState.queuedRequests = threadState.queuedRequests.filter(
-      (request) => request.request_id !== requestId
+    threadState.queuedInputs = threadState.queuedInputs.filter(
+      (input) => ![clientKey, acceptedInputId].includes(input.input_id)
     )
     if (!hadActiveRun) {
       threadState.isStreaming = false
       threadState.replyLoadingVisible = false
-      threadState.pendingRequestId = null
+      threadState.pendingInputId = null
       resetOnGoingConv(threadId)
     }
     rollbackAttachments(threadId, previousAttachments)
@@ -3457,7 +3440,7 @@ const handleSendMessage = async ({ images = [], queuePolicy = 'enqueue' } = {}) 
         message.error('审批状态恢复失败，请刷新页面后重试')
       }
     }
-    if (queuePolicy === 'steer' && currentChatId.value === threadId && !userInput.value) {
+    if (mode === 'steer' && currentChatId.value === threadId && !userInput.value) {
       userInput.value = text
     }
     handleChatError(error, 'send')
@@ -3466,7 +3449,7 @@ const handleSendMessage = async ({ images = [], queuePolicy = 'enqueue' } = {}) 
 
 const handleDirectSteer = async () => {
   if (!canSubmitSteer.value) return
-  await handleSendMessage({ queuePolicy: 'steer' })
+  await handleSendMessage({ mode: 'steer' })
 }
 
 const handleContextCompression = async () => {
@@ -3477,7 +3460,7 @@ const handleContextCompression = async () => {
     !threadState ||
     isContextCompressionPending.value ||
     isProcessing.value ||
-    hasQueuedRequests.value ||
+    hasQueuedInputs.value ||
     isWaitingForUserAction.value
   )
     return
@@ -3507,7 +3490,10 @@ const handleSendOrStop = async (payload) => {
   const hasNewInput = Boolean(String(userInput.value || '').trim() || payload?.images?.length)
   if (threadState?.activeRunId && threadState?.isStreaming && !hasNewInput) {
     try {
-      await agentApi.cancelAgentRun(threadState.activeRunId)
+      await agentApi.cancelThreadTurn(
+        threadId, threadState.currentTurnId,
+        `cancel-${threadState.currentTurnId}`, threadState.activeRunId
+      )
       threadState.pendingInterrupt = null
       if (approvalState.threadId === threadId) {
         hideApprovalState()
@@ -3547,31 +3533,65 @@ const handleApprovalWithStream = async (answer) => {
   const pendingInterrupt = threadState.pendingInterrupt
 
   try {
+    const thread = await agentApi.getPublicThread(threadId)
+    const turnId = thread.current_turn?.turn_id
+    if (!turnId) throw new Error('当前线程没有等待中的 Turn')
+    const turn = await agentApi.getThreadTurn(threadId, turnId)
+    const waitpoint = turn.waitpoint
+    if (turn.status !== 'waiting' || turn.current_run_id !== interruptedRunId ||
+        !waitpoint?.id || waitpoint.run_id !== interruptedRunId) {
+      throw new Error('当前审批所属 Turn 已变化，请刷新后重试')
+    }
+    let response
+    if (approvalState.kind === 'tool_approval') {
+      const calls = waitpoint.calls || []
+      const selected = answer?.decisions || []
+      if (!calls.length || calls.length !== selected.length) {
+        throw new Error('审批请求已变化，请刷新后重试')
+      }
+      response = {
+        type: 'approval',
+        decisions: calls.map((call, index) => ({
+          call_id: call.call_id,
+          decision: selected[index].type
+        }))
+      }
+    } else {
+      const questions = waitpoint.questions || []
+      if (!questions.length || questions.some((question) =>
+        !Object.hasOwn(answer || {}, question.question_id))) {
+        throw new Error('请回答全部问题后再提交')
+      }
+      response = {
+        type: 'answer',
+        answers: questions.map((question) => ({
+          question_id: question.question_id,
+          answer: answer[question.question_id]
+        }))
+      }
+    }
+    const accepted = await agentApi.resumeThreadTurn(threadId, {
+      turn_id: turnId,
+      waitpoint_id: waitpoint.id,
+      response,
+      idempotency_key: `resume-${waitpoint.id}`
+    })
+    const runId = accepted?.run_id
+    if (!runId) {
+      throw new Error('恢复已接收但未创建 Run，请刷新后查看 Turn 状态')
+    }
     invalidateAgentStateRequest(threadId)
     hideApprovalState()
     threadState.pendingInterrupt = null
     threadState.isStreaming = true
-    resetOnGoingConv(threadId, { preserveRequestStreams: true })
-    const requestId = createClientRequestId()
-    const runResp = await agentApi.createAgentRun({
-      query: null,
-      agent_slug: currentAgentId.value,
-      thread_id: threadId,
-      meta: { request_id: requestId },
-      resume: answer,
-      created_by_run_id: interruptedRunId
-    })
-    const runId = runResp?.run_id
-    if (!runId) {
-      throw new Error('创建 resume run 失败：缺少 run_id')
-    }
+    resetOnGoingConv(threadId, { preserveInputMonitors: true })
     // 首个流事件前读取已持久化的续跑关系；读取失败不能把已创建的 Run 当成创建失败。
     try {
       await fetchThreadMessages({ agentId: currentAgentId.value, threadId })
     } catch (error) {
       console.warn('Failed to refresh history before resume stream:', error)
     }
-    await startRunStream(threadId, runId, '0-0')
+    await startRunStream(threadId, runId, null, { turnId })
   } catch (error) {
     if (pendingInterrupt) {
       threadState.pendingInterrupt = pendingInterrupt
@@ -3587,8 +3607,24 @@ const handleQuestionSubmit = (answer) => {
   handleApprovalWithStream(answer)
 }
 
-const handleQuestionCancel = () => {
-  handleApprovalWithStream('reject')
+const handleQuestionCancel = async () => {
+  const threadId = approvalState.threadId
+  if (!threadId) return
+  try {
+    const thread = await agentApi.getPublicThread(threadId)
+    const turnId = thread.current_turn?.turn_id
+    if (!turnId) throw new Error('当前线程没有等待中的 Turn')
+    await agentApi.cancelThreadTurn(
+      threadId, turnId,
+      `cancel-${turnId}`, approvalState.interruptedRunId
+    )
+    hideApprovalState()
+    getThreadState(threadId).pendingInterrupt = null
+    await resumeQueuedInputs(threadId)
+    message.info('已取消当前任务，后续队列已暂停')
+  } catch (error) {
+    handleChatError(error, 'stop')
+  }
 }
 
 const buildExportPayload = () => {

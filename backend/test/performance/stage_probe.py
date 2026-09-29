@@ -128,7 +128,7 @@ def measured(original, trace, *, name=None, greenlet=False):
 
 def emit_spans(probe, state):
     """请求结束后分块输出，避免大量序列化阻塞首次 HTTP 发送。"""
-    identity = {key: state[key] for key in ("request_id", "run_id") if key in state}
+    identity = {key: state[key] for key in ("event_key", "run_id") if key in state}
     for offset in range(0, len(state["spans"]), 30):
         probe.emit({"event": "stage_spans", **identity, "spans": state["spans"][offset : offset + 30]})
     probe.emit({"event": "stages_done", **identity})
@@ -141,12 +141,14 @@ def install(probe, app=None):
         return
     _installed = True
     modules = (
-        "yuxi.services.agent_request_service",
-        "yuxi.services.agent_request_queue_service",
-        "yuxi.services.agent_run_manifest_service",
+        "yuxi.services.agents.inputs",
+        "yuxi.services.agents.scheduler",
+        "yuxi.services.agents.turns",
+        "yuxi.services.agents.runs",
+        "yuxi.services.agents.preparation",
         "yuxi.services.workdir_service",
         "yuxi.services.memory_service",
-        "yuxi.services.run_queue_service",
+        "yuxi.services.agents.transport",
         "yuxi.agents.context",
         "yuxi.agents.skills.runtime",
         "yuxi.agents.skills.service",

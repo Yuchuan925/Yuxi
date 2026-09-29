@@ -1059,6 +1059,7 @@ def test_docker_ephemeral_sandbox_has_runtime_profile_and_identity_without_persi
 ):
     monkeypatch.setenv("PROVISIONER_BACKEND", "memory")
     module, backend, captured = _docker_backend_with_running_container(monkeypatch, tmp_path)
+    monkeypatch.setattr(module, "runtime_profile_name", "core")
     backend._sandbox_env = {"GLOBAL_SECRET": "value"}
     uid = "remote-skill-ephemeral"
 
@@ -1080,6 +1081,7 @@ def test_docker_ephemeral_sandbox_has_runtime_profile_and_identity_without_persi
 def test_kubernetes_ephemeral_sandbox_uses_profile_and_only_empty_home(monkeypatch):
     monkeypatch.setenv("PROVISIONER_BACKEND", "memory")
     module = _load_module()
+    monkeypatch.setattr(module, "runtime_profile_name", "core")
 
     class FakeKubernetesClient:
         def __getattr__(self, _name):

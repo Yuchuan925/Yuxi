@@ -8,18 +8,41 @@ from datetime import timedelta
 
 import pytest
 import pytest_asyncio
-from sqlalchemy import delete, select, text
+from sqlalchemy import delete, select, text, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from yuxi.repositories.agent_run_repository import AgentRunRepository
 from yuxi.storage.postgres.manager import AGENT_RUN_FACT_SCHEMA_STATEMENTS, AGENT_RUN_TIMING_SCHEMA_STATEMENTS
-from yuxi.storage.postgres.models_business import AgentRun, AgentRunAttempt, Conversation, Message, Project, User
+from yuxi.storage.postgres.models_business import (
+    AgentInput,
+    AgentInputMessage,
+    AgentInputReceipt,
+    AgentRun,
+    AgentRunAttempt,
+    AgentTurn,
+    Conversation,
+    Message,
+    Project,
+    User,
+)
 from yuxi.utils.datetime_utils import utc_now_naive
 
 from agent_run_test_helpers import create_agent_run
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
+
+
+@pytest.fixture(scope="session", autouse=True)
+def cleanup_test_knowledge_resources():
+    """本文件仅使用 PostgreSQL，不创建 HTTP 知识资源。"""
+    yield
+
+
+@pytest.fixture(scope="session", autouse=True)
+def cleanup_test_sandboxes():
+    """本文件不创建 Sandbox。"""
+    yield
 
 
 @pytest_asyncio.fixture()
@@ -57,9 +80,18 @@ async def _cleanup_runs(session_factory, thread_ids: list[str]) -> None:
         conversation_ids = list(
             (await db.scalars(select(Conversation.id).where(Conversation.thread_id.in_(thread_ids)))).all()
         )
+        input_ids = list(
+            (await db.scalars(select(AgentInput.id).where(AgentInput.conversation_thread_id.in_(thread_ids)))).all()
+        )
+        await db.execute(update(AgentRun).where(AgentRun.conversation_thread_id.in_(thread_ids)).values(input_id=None))
+        if input_ids:
+            await db.execute(delete(AgentInputMessage).where(AgentInputMessage.input_id.in_(input_ids)))
+            await db.execute(delete(AgentInputReceipt).where(AgentInputReceipt.input_id.in_(input_ids)))
+            await db.execute(delete(AgentInput).where(AgentInput.id.in_(input_ids)))
         if conversation_ids:
             await db.execute(delete(Message).where(Message.conversation_id.in_(conversation_ids)))
         await db.execute(delete(AgentRun).where(AgentRun.conversation_thread_id.in_(thread_ids)))
+        await db.execute(delete(AgentTurn).where(AgentTurn.conversation_thread_id.in_(thread_ids)))
         await db.execute(delete(Conversation).where(Conversation.thread_id.in_(thread_ids)))
         await db.execute(delete(Project).where(Project.id.in_([row.project_id for row in rows])))
         await db.execute(delete(User).where(User.uid.in_([row.uid for row in rows])))
@@ -160,12 +192,12 @@ async def test_attempt_history_survives_retry_takeover_and_reconciliation(fact_d
         reconciled_at = now + timedelta(seconds=30)
         async with session_factory() as db:
             repository = AgentRunRepository(db)
-            reconciled, cancelled_descendants = await repository.reconcile_expired_leases(now=reconciled_at)
+            reconciled, cancelled_descendants = await repository.reconcile_expired_lease(run_id, now=reconciled_at)
             await db.commit()
 
         attempts = await _persisted_attempts(session_factory, run_id)
 
-        assert [run.id for run in reconciled] == [run_id]
+        assert reconciled is not None and reconciled.id == run_id
         assert cancelled_descendants == []
         assert [attempt.attempt_no for attempt in attempts] == [1, 2]
         first, second = attempts

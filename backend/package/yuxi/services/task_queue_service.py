@@ -3,7 +3,7 @@ from __future__ import annotations
 from functools import partial
 
 from yuxi.repositories.task_repository import TaskRepository
-from yuxi.services.run_queue_service import get_arq_pool
+from yuxi.services.agents.transport import get_arq_pool
 from yuxi.services.task_registry import get_failure_task_definition, get_task_definition
 from yuxi.utils.logging_config import logger
 

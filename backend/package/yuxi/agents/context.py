@@ -171,11 +171,6 @@ class BaseContext:
         metadata={"name": "运行 ID", "configurable": False, "hide": True},
     )
 
-    request_id: str | None = field(
-        default=None,
-        metadata={"name": "请求 ID", "configurable": False, "hide": True},
-    )
-
     worker_id: str | None = field(
         default=None,
         metadata={"name": "Worker Attempt Owner", "configurable": False, "hide": True},

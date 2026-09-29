@@ -14,7 +14,7 @@ from langchain_core.outputs import ChatGeneration, ChatResult
 from langchain_core.tools import tool
 from langgraph.checkpoint.memory import InMemorySaver
 from yuxi.agents.middlewares.steer import SteerMiddleware
-from yuxi.services import agent_request_queue_service
+from yuxi.services.agents import runs
 
 pytestmark = [pytest.mark.unit, pytest.mark.asyncio]
 
@@ -160,7 +160,7 @@ async def test_tool_free_model_turn_keeps_steer_intent_for_handoff(monkeypatch: 
         checks += 1
         return checks >= 2
 
-    monkeypatch.setattr(agent_request_queue_service, "should_end_run_for_steer", should_end)
+    monkeypatch.setattr(runs, "should_yield_for_steer", should_end)
     model = _FinalAnswerModel()
     checkpointer = InMemorySaver()
     agent = create_agent(

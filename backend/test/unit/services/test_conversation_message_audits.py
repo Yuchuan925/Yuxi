@@ -3,7 +3,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from yuxi.services import conversation_service
+from yuxi.services.agents import messages
+from yuxi.services.agents.scope import ActorScope
 
 
 @pytest.mark.asyncio
@@ -14,7 +15,7 @@ async def test_get_thread_message_audits_view_serializes_model_and_tool_facts(mo
         content="模型输出",
         created_at=datetime(2026, 8, 30, 1, 0, 0),
         run_id="run-1",
-        request_id="request-1",
+        turn_id="turn-1",
         message_type="model_audit",
         operation_id="model-1",
         started_at=datetime(2026, 8, 30, 1, 0, 1),
@@ -39,7 +40,7 @@ async def test_get_thread_message_audits_view_serializes_model_and_tool_facts(mo
         content="查询结果",
         created_at=datetime(2026, 8, 30, 1, 0, 2),
         run_id="run-1",
-        request_id="request-1",
+        turn_id="turn-1",
         message_type="tool_audit",
         operation_id="call-1",
         started_at=datetime(2026, 8, 30, 1, 0, 2),
@@ -76,23 +77,29 @@ async def test_get_thread_message_audits_view_serializes_model_and_tool_facts(mo
             pass
 
         async def get_conversation_by_thread_id(self, _thread_id):
-            return SimpleNamespace(id=7, uid="user-1", status="active")
+            return SimpleNamespace(id=7, uid="user-1", app_id=None, status="active")
 
         async def list_message_audits(self, conversation_id, *, limit):
             assert conversation_id == 7
-            assert limit == conversation_service.MESSAGE_AUDIT_LIMIT
+            assert limit == messages.MESSAGE_AUDIT_LIMIT
             return [model_message, tool_message], True
 
         async def list_agent_runs_for_trace(self, conversation_id, *, limit):
             assert conversation_id == 7
-            assert limit == conversation_service.AGENT_RUN_TRACE_LIMIT
+            assert limit == messages.AGENT_RUN_TRACE_LIMIT
             return [run], True
 
-    monkeypatch.setattr(conversation_service, "ConversationRepository", FakeConversationRepository)
+    monkeypatch.setattr(messages, "ConversationRepository", FakeConversationRepository)
 
-    result = await conversation_service.get_thread_message_audits_view(
+    async def visible_thread(**_kwargs):
+        """模拟已通过完整作用域查询的 Thread。"""
+        return SimpleNamespace(id=7)
+
+    monkeypatch.setattr(messages, "require_thread", visible_thread)
+
+    result = await messages.get_thread_audits(
         thread_id="thread-1",
-        current_uid="user-1",
+        scope=ActorScope(uid="user-1", app_id=None, is_superadmin=True),
         db=object(),
     )
 
@@ -125,7 +132,7 @@ async def test_get_thread_message_audits_view_serializes_model_and_tool_facts(mo
         "content": "模型输出",
         "created_at": "2026-08-30T01:00:00Z",
         "run_id": "run-1",
-        "request_id": "request-1",
+        "turn_id": "turn-1",
         "message_type": "model_audit",
         "operation_id": "model-1",
         "started_at": "2026-08-30T01:00:01Z",
@@ -148,7 +155,7 @@ async def test_get_thread_message_audits_view_serializes_model_and_tool_facts(mo
         "content": "查询结果",
         "created_at": "2026-08-30T01:00:02Z",
         "run_id": "run-1",
-        "request_id": "request-1",
+        "turn_id": "turn-1",
         "message_type": "tool_audit",
         "operation_id": "call-1",
         "tool_call_id": "call-1",
@@ -177,7 +184,7 @@ async def test_get_thread_message_audits_view_uses_agent_run_terminal_status(mon
         content="",
         created_at=datetime(2026, 8, 30, 1, 0, 0),
         run_id="run-cancelled",
-        request_id="request-cancelled",
+        turn_id="turn-cancelled",
         message_type="model_audit",
         operation_id="model-cancelled",
         started_at=datetime(2026, 8, 30, 1, 0, 0),
@@ -204,21 +211,27 @@ async def test_get_thread_message_audits_view_uses_agent_run_terminal_status(mon
             pass
 
         async def get_conversation_by_thread_id(self, _thread_id):
-            return SimpleNamespace(id=7, uid="user-1", status="active")
+            return SimpleNamespace(id=7, uid="user-1", app_id=None, status="active")
 
         async def list_message_audits(self, _conversation_id, *, limit):
-            assert limit == conversation_service.MESSAGE_AUDIT_LIMIT
+            assert limit == messages.MESSAGE_AUDIT_LIMIT
             return [audit], False
 
         async def list_agent_runs_for_trace(self, _conversation_id, *, limit):
-            assert limit == conversation_service.AGENT_RUN_TRACE_LIMIT
+            assert limit == messages.AGENT_RUN_TRACE_LIMIT
             return [run], False
 
-    monkeypatch.setattr(conversation_service, "ConversationRepository", FakeConversationRepository)
+    monkeypatch.setattr(messages, "ConversationRepository", FakeConversationRepository)
 
-    result = await conversation_service.get_thread_message_audits_view(
+    async def visible_thread(**_kwargs):
+        """模拟已通过完整作用域查询的 Thread。"""
+        return SimpleNamespace(id=7)
+
+    monkeypatch.setattr(messages, "require_thread", visible_thread)
+
+    result = await messages.get_thread_audits(
         thread_id="thread-1",
-        current_uid="user-1",
+        scope=ActorScope(uid="user-1", app_id=None, is_superadmin=True),
         db=object(),
     )
 

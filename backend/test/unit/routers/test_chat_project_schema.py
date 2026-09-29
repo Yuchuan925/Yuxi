@@ -1,7 +1,7 @@
 import pytest
 from pydantic import ValidationError
 
-from server.routers.chat_router import ThreadCreate, ThreadUpdate
+from server.routers.public_v1.agents.schemas import ThreadCreate, ThreadUpdate
 
 
 def test_thread_create_rejects_legacy_direct_workdir_path():

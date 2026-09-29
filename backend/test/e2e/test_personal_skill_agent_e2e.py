@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import uuid
 from typing import Any
@@ -8,9 +9,14 @@ import asyncpg
 import httpx
 import pytest
 
-from e2e_helpers import cancel_run, consume_events, postgres_dsn, skip_if_external_quota, wait_for_run
+from e2e_helpers import (
+    RUN_TIMEOUT_SECONDS,
+    archive_public_thread,
+    iter_public_thread_events,
+    postgres_dsn,
+    skip_if_external_quota,
+)
 from test.live_api_cleanup import (
-    make_test_conversation_metadata,
     make_test_conversation_title,
     remove_e2e_thread_storage,
 )
@@ -34,6 +40,7 @@ async def test_main_agent_reads_personal_skill_directly_from_user_workspace(
         f"# Verification\nWhen the user asks for the personal Skill marker, reply with exactly `{marker}`.\n"
     )
     run_id: str | None = None
+    turn_id: str | None = None
     thread_id: str | None = None
     agent_created = False
 
@@ -89,41 +96,63 @@ async def test_main_agent_reads_personal_skill_directly_from_user_workspace(
         agent_created = True
 
         thread_response = await e2e_client.post(
-            "/api/chat/thread",
-            headers=e2e_headers,
+            "/api/v1/agents/threads",
+            headers={**e2e_headers, "Idempotency-Key": f"personal-skill-create-{uuid.uuid4().hex}"},
             json={
                 "agent_id": agent_slug,
                 "title": make_test_conversation_title("personal-skill-e2e"),
-                "metadata": make_test_conversation_metadata("personal-skill-e2e", e2e=True),
             },
         )
         assert thread_response.status_code == 200, thread_response.text
-        thread_payload = thread_response.json()
-        thread_id = str(thread_payload.get("thread_id") or thread_payload["id"])
+        thread_id = str(thread_response.json()["thread_id"])
 
         run_response = await e2e_client.post(
-            "/api/agent/runs",
-            headers=e2e_headers,
+            f"/api/v1/agents/threads/{thread_id}/events",
+            headers={**e2e_headers, "Idempotency-Key": f"personal-skill-input-{uuid.uuid4().hex}"},
             json={
-                "query": "请读取并返回 personal Skill marker。",
-                "agent_slug": agent_slug,
-                "thread_id": thread_id,
-                "meta": {"request_id": f"personal-skill-e2e-{uuid.uuid4()}"},
+                "events": [
+                    {
+                        "type": "agent.thread.input.message",
+                        "mode": "follow_up",
+                        "input": [
+                            {
+                                "role": "user",
+                                "content": [{"type": "input_text", "text": "请读取并返回 personal Skill marker。"}],
+                            }
+                        ],
+                    }
+                ],
             },
         )
-        assert run_response.status_code == 200, run_response.text
+        assert run_response.status_code == 202, run_response.text
         run_id = str(run_response.json()["run_id"])
+        turn_id = str(run_response.json()["turn_id"])
 
-        event_counts = await consume_events(e2e_client, e2e_headers, run_id)
-        assert event_counts.get("messages", 0) > 0, event_counts
-        run_payload = await wait_for_run(e2e_client, e2e_headers, run_id)
-        if run_payload.get("status") != "completed":
-            skip_if_external_quota(run_payload.get("error_message"))
-        assert run_payload.get("status") == "completed", run_payload
+        async def consume_output() -> int:
+            """观察本 Run 的模型增量直到同一 Turn 终态。"""
+            message_events = 0
+            async for event in iter_public_thread_events(e2e_client, e2e_headers, thread_id):
+                if event["run_id"] == run_id and event["type"] == "agent.thread.output":
+                    message_events += event["payload"].get("event") == "messages"
+                if event["turn_id"] == turn_id and event["type"] in {
+                    "agent.thread.turn.completed",
+                    "agent.thread.turn.failed",
+                    "agent.thread.turn.cancelled",
+                }:
+                    return message_events
+            pytest.fail("个人 Skill 的 Thread SSE 在终态前断开")
 
-        result_response = await e2e_client.get(f"/api/agent/runs/{run_id}/result", headers=e2e_headers)
-        assert result_response.status_code == 200, result_response.text
-        assert marker in str(result_response.json().get("output") or ""), result_response.text
+        event_count = await asyncio.wait_for(consume_output(), timeout=RUN_TIMEOUT_SECONDS)
+        assert event_count > 0, event_count
+        turn_response = await e2e_client.get(f"/api/v1/agents/threads/{thread_id}/turns/{turn_id}", headers=e2e_headers)
+        assert turn_response.status_code == 200, turn_response.text
+        turn = turn_response.json()
+        if turn["status"] != "completed":
+            skip_if_external_quota((turn.get("error") or {}).get("message"))
+        assert turn["status"] == "completed", turn
+        assert turn["result_run_id"] == run_id, turn
+
+        assert marker in str((turn.get("output") or {}).get("content") or ""), turn
 
         conn = await asyncpg.connect(postgres_dsn())
         try:
@@ -138,10 +167,8 @@ async def test_main_agent_reads_personal_skill_directly_from_user_workspace(
         projected_skill = get_user_skills_root_dir(uid) / slug / "SKILL.md"
         assert not projected_skill.exists()
     finally:
-        await cancel_run(e2e_client, e2e_headers, run_id)
         if thread_id:
-            thread_delete = await e2e_client.delete(f"/api/chat/thread/{thread_id}", headers=e2e_headers)
-            assert thread_delete.status_code in {200, 404}, thread_delete.text
+            await archive_public_thread(e2e_client, e2e_headers, thread_id, turn_id=turn_id)
             remove_e2e_thread_storage(thread_id)
         if agent_created:
             agent_delete = await e2e_client.delete(f"/api/agent/{agent_slug}", headers=e2e_headers)

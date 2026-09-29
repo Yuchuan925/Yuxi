@@ -29,7 +29,7 @@ test('模型选择按当前选择、Conversation、智能体默认的顺序解�
   )
 })
 
-test('发送当前展示模型并在请求被接受后同步 Conversation metadata', () => {
+test('发送当前展示模型并在 Input 被接受后同步 Conversation metadata', () => {
   const sendBlock = source.slice(
     source.indexOf('const handleSendMessage'),
     source.indexOf('const handleDirectSteer')
@@ -37,7 +37,7 @@ test('发送当前展示模型并在请求被接受后同步 Conversation metada
 
   assert.match(sendBlock, /const modelSpec = currentModelSpec\.value \|\| null/)
   assert.match(sendBlock, /model_spec: modelSpec/)
-  assert.match(sendBlock, /status !== 'rejected' && modelSpec/)
+  assert.match(sendBlock, /if \(modelSpec\) \{/)
   assert.match(sendBlock, /thread\.metadata = \{ \.\.\.\(thread\.metadata \|\| \{\}\), model_spec: modelSpec \}/)
 })
 

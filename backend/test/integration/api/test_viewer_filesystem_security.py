@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import os
 import uuid
 from pathlib import Path
 
+import asyncpg
 import pytest
-from test.live_api_cleanup import make_test_conversation_metadata, make_test_conversation_title
+from test.live_api_cleanup import make_test_conversation_title
 from yuxi.workspace.paths import user_workdir_host_dir
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
@@ -19,19 +21,28 @@ async def _create_thread_for_user(test_client, headers: dict[str, str]) -> tuple
         pytest.skip("Default agent payload missing id field.")
 
     create_resp = await test_client.post(
-        "/api/chat/thread",
+        "/api/v1/agents/threads",
         json={
             "agent_id": agent_id,
             "title": make_test_conversation_title("viewer-filesystem-security"),
-            "metadata": make_test_conversation_metadata("viewer-filesystem-security"),
         },
-        headers=headers,
+        headers={**headers, "Idempotency-Key": str(uuid.uuid4())},
     )
     assert create_resp.status_code == 200, create_resp.text
     payload = create_resp.json()
     thread_id = payload.get("thread_id") or payload.get("id")
     assert thread_id
-    return str(thread_id), str(payload["workdir_path"])
+    connection = await asyncpg.connect(os.environ["POSTGRES_URL"].replace("+asyncpg", ""))
+    try:
+        workdir_path = await connection.fetchval(
+            "SELECT p.workdir_path FROM conversations c JOIN projects p ON p.id = c.project_id "
+            "WHERE c.thread_id = $1",
+            thread_id,
+        )
+    finally:
+        await connection.close()
+    assert workdir_path
+    return str(thread_id), str(workdir_path)
 
 
 async def test_viewer_download_blocks_project_symlink_escape(test_client, standard_user):

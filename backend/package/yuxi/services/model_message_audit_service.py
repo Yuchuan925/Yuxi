@@ -24,9 +24,9 @@ class _ModelOperation:
 class ModelMessageAuditCollector:
     """按 message lifecycle 串行提交 Model 审计短事务。"""
 
-    def __init__(self, *, run_id: str, request_id: str, thread_id: str, worker_id: str):
+    def __init__(self, *, run_id: str, thread_id: str, worker_id: str):
+        """绑定当前 Run 与执行 owner，供审计短事务校验。"""
         self.run_id = run_id
-        self.request_id = request_id
         self.thread_id = thread_id
         self.worker_id = worker_id
         self._operations: dict[tuple[str, str], _ModelOperation] = {}
@@ -87,7 +87,6 @@ class ModelMessageAuditCollector:
         async with pg_manager.get_async_session_context() as db:
             _message, created = await ModelMessageAuditRepository(db).start(
                 run_id=self.run_id,
-                request_id=self.request_id,
                 thread_id=self.thread_id,
                 worker_id=self.worker_id,
                 operation_id=operation_id,
@@ -129,7 +128,6 @@ class ModelMessageAuditCollector:
         async with pg_manager.get_async_session_context() as db:
             await ModelMessageAuditRepository(db).finish(
                 run_id=self.run_id,
-                request_id=self.request_id,
                 thread_id=self.thread_id,
                 worker_id=self.worker_id,
                 operation_id=operation.operation_id,

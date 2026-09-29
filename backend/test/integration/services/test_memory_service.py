@@ -18,6 +18,7 @@ from yuxi.services import memory_service
 from yuxi.storage.postgres.manager import pg_manager
 from yuxi.storage.postgres.models_business import (
     AgentRun,
+    AgentTurn,
     Conversation,
     Message,
     Project,
@@ -54,13 +55,35 @@ async def memory_database(tmp_path, monkeypatch: pytest.MonkeyPatch):
 
     uid = f"pytest-memory-{uuid.uuid4().hex}"
     thread_id = f"thread-{uuid.uuid4().hex}"
+    turn_id = f"turn-{uuid.uuid4().hex}"
     run_id = f"run-{uuid.uuid4().hex}"
-    request_id = f"request-{uuid.uuid4().hex}"
+    project_id = str(uuid.uuid4())
     worker_id = f"worker-{uuid.uuid4().hex}"
     async with session_factory() as db:
         db.add(User(username=uid, uid=uid, password_hash="test", role="user"))
         await db.flush()
         db.add(UserConfig(uid=uid, enable_memory=True))
+        db.add(
+            Project(
+                id=project_id,
+                uid=uid,
+                selection_status="implicit",
+                workdir_path=f"projects/{project_id}",
+                directory_mode="managed",
+            )
+        )
+        await db.flush()
+        conversation = Conversation(
+            thread_id=thread_id,
+            uid=uid,
+            project_id=project_id,
+            agent_id="main",
+            status="active",
+        )
+        db.add(conversation)
+        await db.flush()
+        db.add(AgentTurn(id=turn_id, conversation_thread_id=thread_id, uid=uid, status="running"))
+        await db.flush()
         db.add(
             AgentRun(
                 id=run_id,
@@ -69,7 +92,8 @@ async def memory_database(tmp_path, monkeypatch: pytest.MonkeyPatch):
                 agent_slug="main",
                 uid=uid,
                 status="running",
-                request_id=request_id,
+                turn_id=turn_id,
+                conversation_id=conversation.id,
                 run_type="chat",
                 input_payload={},
                 worker_id=worker_id,
@@ -84,7 +108,6 @@ async def memory_database(tmp_path, monkeypatch: pytest.MonkeyPatch):
         "uid": uid,
         "thread_id": thread_id,
         "run_id": run_id,
-        "request_id": request_id,
         "worker_id": worker_id,
     }
     try:
@@ -92,6 +115,7 @@ async def memory_database(tmp_path, monkeypatch: pytest.MonkeyPatch):
     finally:
         async with session_factory() as db:
             await db.execute(delete(AgentRun).where(AgentRun.id == run_id))
+            await db.execute(delete(AgentTurn).where(AgentTurn.id == turn_id))
             await db.execute(delete(SubagentThread).where(SubagentThread.uid == uid))
             owned_message_ids = select(Message.id).join(Conversation).where(Conversation.uid == uid)
             await db.execute(delete(ToolCall).where(ToolCall.message_id.in_(owned_message_ids)))

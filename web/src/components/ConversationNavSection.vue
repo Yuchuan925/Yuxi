@@ -118,7 +118,7 @@
                         :current-chat-id="currentChatId"
                         nested
                         @select-chat="$emit('select-chat', $event)"
-                        @delete-chat="$emit('delete-chat', $event)"
+                        @archive-chat="$emit('archive-chat', $event)"
                         @rename-chat="$emit('rename-chat', $event)"
                         @toggle-pin="$emit('toggle-pin', $event)"
                       />
@@ -160,7 +160,7 @@
                   :chat="chat"
                   :current-chat-id="currentChatId"
                   @select-chat="$emit('select-chat', $event)"
-                  @delete-chat="$emit('delete-chat', $event)"
+                  @archive-chat="$emit('archive-chat', $event)"
                   @rename-chat="$emit('rename-chat', $event)"
                   @toggle-pin="$emit('toggle-pin', $event)"
                 />
@@ -216,7 +216,7 @@ const props = defineProps({
 
 const emit = defineEmits([
   'select-chat',
-  'delete-chat',
+  'archive-chat',
   'rename-chat',
   'toggle-pin',
   'load-more-chats',
@@ -296,7 +296,7 @@ const confirmDeleteProject = (project) => {
     okText: '删除项目',
     okButtonProps: { danger: true },
     cancelText: '取消',
-    content: '项目中的对话会被删除，项目文件夹和其中的文件会保留。',
+    content: '项目中的对话会被归档，项目文件夹和其中的文件会保留。',
     onOk: () => emit('delete-project', project.id)
   })
 }

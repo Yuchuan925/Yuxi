@@ -16,7 +16,7 @@ from pydantic import BaseModel
 from yuxi.repositories.agent_repository import AgentRepository
 from yuxi.repositories.agent_run_repository import TERMINAL_RUN_STATUSES
 from yuxi.repositories.user_repository import UserRepository
-from yuxi.services.input_message_service import build_chat_input_message
+from yuxi.services.agents.input_messages import build_chat_input_message
 from yuxi.storage.postgres.manager import pg_manager
 from yuxi.storage.postgres.models_business import Agent
 
@@ -181,7 +181,7 @@ class YuxiSubAgentMiddleware(AgentMiddleware[Any, ContextT, ResponseT]):
                 "run_status": result.run.status,
                 "continuing": result.continuing,
                 "subagent_thread_relation_id": result.relation.id,
-                **subagent_service.subagent_run_urls(result.run.id),
+                **subagent_service.subagent_run_urls(result.run.id, result.relation.child_thread_id),
             }
             subagent_run = subagent_service.serialize_subagent_run_state(result.run)
             return _json_tool_command(payload, runtime.tool_call_id, subagent_run=subagent_run)
@@ -190,7 +190,7 @@ class YuxiSubAgentMiddleware(AgentMiddleware[Any, ContextT, ResponseT]):
             run_id: Annotated[str, SUBAGENT_RUN_ID_ARG],
             runtime: ToolRuntime,
         ) -> str | Command:
-            from yuxi.services.agent_run_service import get_agent_run_progress, get_agent_run_result
+            from yuxi.services.subagent_run_service import get_agent_run_progress, get_agent_run_result
 
             parent_runtime, runtime_error = self._require_parent_runtime("无法查询子智能体")
             if runtime_error:
@@ -219,7 +219,7 @@ class YuxiSubAgentMiddleware(AgentMiddleware[Any, ContextT, ResponseT]):
                 "subagent_slug": run.agent_slug,
                 "error": run.error_message,
                 "progress": await get_agent_run_progress(run.id),
-                **subagent_service.subagent_run_urls(run.id),
+                **subagent_service.subagent_run_urls(run.id, run.conversation_thread_id),
             }
             if result:
                 payload["result"] = result
@@ -230,7 +230,7 @@ class YuxiSubAgentMiddleware(AgentMiddleware[Any, ContextT, ResponseT]):
             run_id: Annotated[str, SUBAGENT_RUN_ID_ARG],
             runtime: ToolRuntime,
         ) -> str | Command:
-            from yuxi.services.agent_run_service import request_cancel_agent_run
+            from yuxi.services.subagent_run_service import request_cancel_agent_run
 
             parent_runtime, runtime_error = self._require_parent_runtime("无法取消子智能体")
             if runtime_error:
@@ -254,7 +254,7 @@ class YuxiSubAgentMiddleware(AgentMiddleware[Any, ContextT, ResponseT]):
                 "status": run.status,
                 "run_id": run.id,
                 "thread_id": run.conversation_thread_id,
-                **subagent_service.subagent_run_urls(run.id),
+                **subagent_service.subagent_run_urls(run.id, run.conversation_thread_id),
             }
             subagent_run = subagent_service.serialize_subagent_run_state(run)
             return _json_tool_command(payload, runtime.tool_call_id, subagent_run=subagent_run)
@@ -263,7 +263,7 @@ class YuxiSubAgentMiddleware(AgentMiddleware[Any, ContextT, ResponseT]):
             run_id: Annotated[str, SUBAGENT_RUN_ID_ARG],
             runtime: ToolRuntime,
         ) -> str | Command:
-            from yuxi.services.agent_run_service import AgentRunWaitTimeout, await_agent_run_result
+            from yuxi.services.subagent_run_service import AgentRunWaitTimeout, await_agent_run_result
 
             parent_runtime, runtime_error = self._require_parent_runtime("无法等待子智能体")
             if runtime_error:

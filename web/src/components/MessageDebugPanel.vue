@@ -650,7 +650,7 @@ const baseGroups = computed(() =>
     return {
       ...group,
       index,
-      requestId: group.requestId || runTrace?.request_id || null,
+      inputId: group.inputId || runTrace?.input_id || null,
       runTrace,
       timing,
       timingRows: buildRunTimingRows(timing),
@@ -922,14 +922,14 @@ const emptyTimelineText = computed(() => {
 const runStatus = (group) => {
   if (group.runTrace?.status) return group.runTrace.status
   if (props.runActive && props.activeRunId && group.runId === props.activeRunId) return 'running'
-  if (!group.runId && group.requestId) {
+  if (!group.runId && group.inputId) {
     return group.items.find((item) => item.role === 'human')?.raw?.delivery_status || ''
   }
   return ''
 }
 const runTitle = (group) => {
   if (group.runId) return `运行 ${group.index + 1}`
-  if (group.requestId) return runStatus(group) ? formatExecutionStatus(runStatus(group)) : '请求'
+  if (group.inputId) return runStatus(group) ? formatExecutionStatus(runStatus(group)) : '输入'
   return '未关联运行'
 }
 const isRunActiveStatus = (status) =>
@@ -1020,7 +1020,7 @@ const selectedTargetData = computed(() => {
   return {
     ...group.runTrace,
     run_id: group.runId,
-    request_id: group.requestId || null,
+    input_id: group.inputId || null,
     status: runStatus(group) || null,
     timing: group.timing,
     records: group.items.map((item) => item.raw)
@@ -1091,11 +1091,11 @@ const openRunInLangfuse = async (runId) => {
   setLangfuseRunOpening(runId, true)
 
   try {
-    const result = await agentApi.getAgentRunLangfuseLink(runId)
+    const result = await agentApi.getAgentRun(props.threadId, runId)
     const traceUrl = resolveLangfuseRunUrl(result)
     if (!traceUrl) {
       targetWindow.close()
-      if (result?.reason === 'trace_not_available') {
+      if (!result?.langfuse_trace_id) {
         message.warning('该 Run 暂无可用的 Langfuse Trace')
       } else {
         message.error('Langfuse 当前不可用，请检查配置或稍后重试')

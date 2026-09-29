@@ -15,6 +15,9 @@ class _FakeResult:
     def scalar_one_or_none(self):
         return self.value
 
+    def one_or_none(self):
+        return self.value
+
 
 class _FakeSession:
     def __init__(self, results):
@@ -48,7 +51,7 @@ async def test_submit_message_feedback_syncs_langfuse_score(monkeypatch: pytest.
         extra_metadata={"langfuse_trace_id": "trace-1"},
     )
     conversation = SimpleNamespace(id=7, uid="user-1")
-    db = _FakeSession([message, conversation, None])
+    db = _FakeSession([(message, conversation), None])
     calls = []
 
     monkeypatch.setattr(svc, "submit_user_feedback_score", lambda **kwargs: calls.append(kwargs) or True)
@@ -59,6 +62,8 @@ async def test_submit_message_feedback_syncs_langfuse_score(monkeypatch: pytest.
         reason=None,
         db=db,
         current_uid="user-1",
+        thread_id="thread-1",
+        app_id=None,
     )
 
     assert result == {
@@ -87,7 +92,7 @@ async def test_submit_message_feedback_syncs_langfuse_score(monkeypatch: pytest.
 async def test_submit_message_feedback_skips_langfuse_without_trace_id(monkeypatch: pytest.MonkeyPatch):
     message = SimpleNamespace(id=3, conversation_id=7, extra_metadata={})
     conversation = SimpleNamespace(id=7, uid="user-1")
-    db = _FakeSession([message, conversation, None])
+    db = _FakeSession([(message, conversation), None])
     calls = []
 
     monkeypatch.setattr(svc, "submit_user_feedback_score", lambda **kwargs: calls.append(kwargs) or True)
@@ -98,6 +103,8 @@ async def test_submit_message_feedback_skips_langfuse_without_trace_id(monkeypat
         reason="不相关",
         db=db,
         current_uid="user-1",
+        thread_id="thread-1",
+        app_id=None,
     )
 
     assert result["rating"] == "dislike"

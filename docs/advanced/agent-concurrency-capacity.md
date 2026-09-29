@@ -4,13 +4,13 @@
 
 ## 当前运行模型
 
-- 普通请求先持久化到 PostgreSQL，再由 ARQ 投递给 worker；`ARQ_MAX_JOBS` 是单个 worker 供 AgentRun、Durable Task 与控制面工作共用的执行槽上限。Durable Task 另受 PostgreSQL 最多 4 个并发 claim 的约束。
+- 普通输入先作为 Message 和 Input 持久化到 PostgreSQL；调度器领取 FIFO 队头时创建 Turn/Run，提交后由 ARQ 投递给 worker。`ARQ_MAX_JOBS` 是单个 worker 供 AgentRun、Durable Task 与控制面工作共用的执行槽上限。Durable Task 另受 PostgreSQL 最多 4 个并发 claim 的约束。
 - Run 事件写入 Redis Stream，SSE 使用自适应 `XRANGE` 轮询；PostgreSQL 低频补偿权威终态。
 - 取消请求先提交 PostgreSQL durable 状态，再写入带 TTL 的 Redis key。每个运行中的 Run 约每 200ms 读取该 key，另有约 1 秒的 PostgreSQL durable watcher；模型事件循环只检查进程内 Event。
 - 取消链路不使用 Redis Pub/Sub，也不为每个 Run 长期占用一个 Redis 连接。100 个活跃 Run 的取消 key 读取上界约为 500 次/秒。
 - Sandbox 只在第一次文件或命令操作时创建。Docker backend 为每个 Sandbox 创建独立容器和网络，因而 Sandbox 工作负载通常先受宿主机内存和 Docker IPAM 限制。
 
-PostgreSQL 是 Run、Request 和终态的事实来源。Redis Stream、取消 key、健康 key 和缓存都是可恢复的短期状态，不能用 Redis 命中代替 PostgreSQL 终态验证。
+PostgreSQL 是 Input、Turn、Run 和终态的事实来源。Redis Stream、取消 key、健康 key 和缓存都是可恢复的短期状态，不能用 Redis 命中代替 PostgreSQL 终态验证。
 
 ## 默认推荐配置
 
@@ -65,7 +65,7 @@ AgentRun 另行持久保存服务端权威时间点，用于历史诊断；它�
 | `first_output_latency_ms` | `created_at` → `first_output_at` | 服务端从 Run 创建到首次语义输出 |
 | `total_latency_ms` | `created_at` → `finished_at` | 服务端 Run 总时延 |
 
-`prepared_at` 与 `first_output_at` 只由当前 lease owner 写入一次。观测失败不阻断 Run，历史 Run 或缺少阶段的值保持 `null`，API 不用负数或 0 掩盖缺失。`GET /api/agent/runs/{run_id}`、结果接口与对话历史返回同一 `timing` 投影；前端消息底部和折叠过程只使用 `total_latency_ms`，五段明细在消息调试面板的 Run 分组中按需展示，不会为每条历史消息新增请求。 History 将时间放在独立 `runs[].timing`，消息只通过 `run_id` 关联；完整响应边界见[线程阅读数据](../mechanisms/agent-runtime.md#线程阅读数据)。
+`prepared_at` 与 `first_output_at` 只由当前 lease owner 写入一次。观测失败不阻断 Run，缺少阶段的值保持 `null`，API 不用负数或 0 掩盖缺失。`GET /api/v1/agents/threads/{thread_id}/runs/{run_id}` 和管理员按需读取的 Thread 审计返回 Run 的 `timing` 投影；普通 History 只返回 Run 归属，不附带完整时延。前端调试面板按需读取审计，按 Run 展示五段明细；消息通过 `run_id` 关联。完整响应边界见[线程阅读数据](../mechanisms/agent-runtime.md#线程阅读数据)。
 
 上述服务端时间点在事务内产生：`created_at` 是 Run 行创建时间，`finished_at` 是终态转换时间，二者分别在 owning transaction 提交后可见并成为权威事实。因此 `total_latency_ms` 不包含终态写入后的 runtime cleanup、SSE 读取或浏览器渲染等待。
 
@@ -125,4 +125,4 @@ python -m backend.test.performance load \
   --collect-local-resources
 ```
 
-通过条件包括所有 Request/Run 因果标识一致、SSE 工具生命周期完整、PostgreSQL 权威终态正确、readiness 最终恢复，并且 ARQ、Sandbox 容器和动态网络均已清理。脚本退出码或 HTTP 200 只能作为辅助信号。压测工具的协议和输出字段见 `backend/test/performance/load.py`。
+通过条件包括 Input/Turn/Run 因果标识一致、SSE 工具生命周期完整、PostgreSQL 权威终态正确、readiness 最终恢复，并且 ARQ、Sandbox 容器和动态网络均已清理。脚本退出码或 HTTP 200 只能作为辅助信号。压测工具的协议和输出字段见 `backend/test/performance/load.py`。

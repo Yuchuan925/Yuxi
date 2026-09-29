@@ -6,6 +6,7 @@ import asyncio
 import os
 
 import pytest
+import pytest_asyncio
 from sqlalchemy import delete
 
 from yuxi.knowledge.eval.service import EvaluationService
@@ -17,6 +18,14 @@ from yuxi.storage.postgres.models_business import TaskRecord
 from yuxi.storage.postgres.models_knowledge import KnowledgeBase
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def close_test_postgres_pool():
+    """每个 pytest 事件循环退出前关闭当前循环的 PostgreSQL 连接。"""
+
+    yield
+    await pg_manager.close()
 
 
 @pytest.fixture(scope="session", autouse=True)

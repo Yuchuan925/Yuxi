@@ -9,7 +9,7 @@ from langchain.messages import HumanMessage
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from langgraph.graph import END, START, StateGraph
 
-from test.live_api_cleanup import make_test_conversation_metadata, make_test_conversation_title
+from test.live_api_cleanup import make_test_conversation_title
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
 
@@ -25,7 +25,7 @@ class DisplayState(TypedDict):
 
 
 async def test_state_view_reads_postgres_snapshot_and_rejects_other_users(test_client, admin_headers, standard_user):
-    """无模型配置也可读快照，未知、删除和其他用户线程均拒绝读取。"""
+    """无模型配置也可读快照，未知和其他用户线程拒绝读取。"""
     slug = f"pytest-checkpoint-{uuid.uuid4().hex[:8]}"
     created = await test_client.post(
         "/api/agent",
@@ -38,17 +38,16 @@ async def test_state_view_reads_postgres_snapshot_and_rejects_other_users(test_c
     async with AsyncPostgresSaver.from_conn_string(dsn) as saver:
         try:
             created_thread = await test_client.post(
-                "/api/chat/thread",
+                "/api/v1/agents/threads",
                 json={
                     "agent_id": slug,
                     "title": make_test_conversation_title("checkpoint"),
-                    "metadata": make_test_conversation_metadata("checkpoint"),
                 },
-                headers=admin_headers,
+                headers={**admin_headers, "Idempotency-Key": str(uuid.uuid4())},
             )
             assert created_thread.status_code == 200, created_thread.text
             thread_id = created_thread.json()["id"]
-            url = f"/api/chat/thread/{thread_id}/state"
+            url = f"/api/v1/agents/threads/{thread_id}/state"
             empty = await test_client.get(url, headers=admin_headers)
             assert empty.status_code == 200, empty.text
             assert empty.json()["agent_state"] == {
@@ -75,22 +74,26 @@ async def test_state_view_reads_postgres_snapshot_and_rejects_other_users(test_c
             response = await test_client.get(url, params={"include_messages": "true"}, headers=admin_headers)
             assert response.status_code == 200, response.text
             assert response.json()["agent_state"] == {
-                key: value for key, value in payload.items() if key != "messages"
-            } | {"files": {}}
+                key: value for key, value in payload.items() if key not in {"messages", "subagent_runs"}
+            } | {"files": {}, "subagent_runs": []}
             assert response.json()["messages"][0]["content"] == "persisted checkpoint message"
             assert "interrupt" not in response.json()
             assert (await test_client.get(url)).status_code == 401
             assert (await test_client.get(url, headers=standard_user["headers"])).status_code == 404
             assert (
-                await test_client.get(f"/api/chat/thread/{uuid.uuid4()}/state", headers=admin_headers)
+                await test_client.get(f"/api/v1/agents/threads/{uuid.uuid4()}/state", headers=admin_headers)
             ).status_code == 404
-            deleted = await test_client.delete(f"/api/chat/thread/{thread_id}", headers=admin_headers)
-            assert deleted.status_code == 200, deleted.text
-            assert (await test_client.get(url, headers=admin_headers)).status_code == 404
+            archived = await test_client.post(f"/api/v1/agents/threads/{thread_id}/archive", headers=admin_headers)
+            assert archived.status_code == 200, archived.text
+            preserved = await test_client.get(url, headers=admin_headers)
+            assert preserved.status_code == 200, preserved.text
+            assert preserved.json()["agent_state"]["todos"] == payload["todos"]
         finally:
             if thread_id:
                 await saver.adelete_thread(thread_id)
-                deleted = await test_client.delete(f"/api/chat/thread/{thread_id}", headers=admin_headers)
-                assert deleted.status_code in (200, 404), deleted.text
+                archived = await test_client.post(
+                    f"/api/v1/agents/threads/{thread_id}/archive", headers=admin_headers
+                )
+                assert archived.status_code in (200, 404), archived.text
             deleted_agent = await test_client.delete(f"/api/agent/{slug}", headers=admin_headers)
             assert deleted_agent.status_code in (200, 404), deleted_agent.text

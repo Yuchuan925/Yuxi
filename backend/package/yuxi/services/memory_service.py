@@ -50,7 +50,6 @@ async def remember_memory(
     uid: str,
     thread_id: str,
     run_id: str,
-    request_id: str,
     worker_id: str,
     content: str,
     replaces: str | None = None,
@@ -59,9 +58,8 @@ async def remember_memory(
     normalized_uid = str(uid or "").strip()
     normalized_thread_id = str(thread_id or "").strip()
     normalized_run_id = str(run_id or "").strip()
-    normalized_request_id = str(request_id or "").strip()
     normalized_worker_id = str(worker_id or "").strip()
-    if not all((normalized_uid, normalized_thread_id, normalized_run_id, normalized_request_id, normalized_worker_id)):
+    if not all((normalized_uid, normalized_thread_id, normalized_run_id, normalized_worker_id)):
         raise ValueError("Memory 写入缺少可信运行身份")
 
     normalized_content = _validate_argument(content, name="content").strip()
@@ -77,7 +75,6 @@ async def remember_memory(
             uid=normalized_uid,
             worker_id=normalized_worker_id,
             conversation_thread_id=normalized_thread_id,
-            request_id=normalized_request_id,
         )
         if run is None:
             raise ValueError("Memory 写入对应的 AgentRun 不存在")

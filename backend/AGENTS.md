@@ -5,7 +5,7 @@
 ## 边界与所有权
 
 - `server/routers` 只处理 HTTP 模型、认证依赖、状态码和响应装配；跨 repository 的用例进入 `package/yuxi/services`。
-- PostgreSQL 是 Request、Run、Message、权限和业务终态的 Owner；Redis/ARQ 是投递与短期事件平面。
+- PostgreSQL 是 Thread、Turn、Input、Receipt、Run、Message、权限和业务终态的 Owner；Redis/ARQ 是投递与短期事件平面。
 - 写入事实、提交事务、发布队列/事件的顺序必须显式；通知不能早于 owning transaction 的 commit point。
 - 跨 repository 用例只有一个事务 Owner；需要经 HTTP 返回的一次性 secret 必须可由幂等请求安全重放，不能先不可逆消费再祈望响应送达。凭据撤销必须保留足以阻止同一幂等请求复活 secret 的 tombstone。
 - parser、HTTP、模型/tool JSON、持久化、worker、process、wire 和用户路径是运行时校验边界；已由 Python 类型和同进程调用保证的内部值不重复 hostile validation。

@@ -17,21 +17,22 @@ from yuxi.utils.hash_utils import subagent_child_thread_id
 from yuxi.utils.thread_utils import extract_thread_id as _metadata_thread_id
 
 
-def _json_safe(value: Any) -> Any:
+def json_safe(value: Any) -> Any:
+    """把工具事件值转换成可序列化的数据。"""
     if value is None or isinstance(value, str | int | float | bool):
         return value
     if isinstance(value, dict):
-        return {str(key): _json_safe(child) for key, child in value.items()}
+        return {str(key): json_safe(child) for key, child in value.items()}
     if isinstance(value, list | tuple):
-        return [_json_safe(child) for child in value]
+        return [json_safe(child) for child in value]
     if hasattr(value, "model_dump"):
-        return _json_safe(value.model_dump())
+        return json_safe(value.model_dump())
     return str(value)
 
 
 def _normalize_tool_event_data(data: Any) -> Any:
     """规整 tools 流事件：write_todos / task 等返回 Command 的工具，其 tool-finished
-    output 是 Command 对象，_json_safe 只能退化成 repr 字符串，前端无法关联结果。
+    output 是 Command 对象，json_safe 只能退化成 repr 字符串，前端无法关联结果。
     这里从 Command.update["messages"] 取出真正的 ToolMessage，使其与普通工具一致。"""
     if not isinstance(data, dict) or data.get("event") != "tool-finished":
         return data
@@ -250,7 +251,7 @@ class BaseAgent:
                             "namespace": namespace,
                             "seq": sequence,
                             "timestamp": timestamp,
-                            "data": _json_safe(data),
+                            "data": json_safe(data),
                         }
                         actual_thread_id = (subagent_route or {}).get("thread_id") or _metadata_thread_id(params)
                         if subagent_route:

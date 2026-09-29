@@ -7,9 +7,10 @@ from datetime import datetime
 import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-from yuxi.services.conversation_service import get_thread_history_view
-from yuxi.services.input_message_service import build_chat_input_message
-from yuxi.storage.postgres.models_business import AgentRun, Base, Conversation, Message, Project
+from yuxi.services.agents.messages import get_thread_history
+from yuxi.services.agents.scope import ActorScope
+from yuxi.services.agents.input_messages import build_chat_input_message
+from yuxi.storage.postgres.models_business import AgentRun, AgentTurn, Base, Conversation, Message, Project
 
 pytestmark = [pytest.mark.unit, pytest.mark.asyncio]
 
@@ -43,13 +44,23 @@ async def session():
             )
         )
         db.add(
+            AgentTurn(
+                id="turn-images",
+                conversation_thread_id="thread-images",
+                uid="user-1",
+                status="completed",
+                current_run_id="run-images",
+                result_run_id="run-images",
+            )
+        )
+        db.add(
             AgentRun(
                 id="run-images",
                 conversation_thread_id="thread-images",
                 runtime_scope_id="thread-images",
                 agent_slug="main",
                 uid="user-1",
-                request_id="request-images",
+                turn_id="turn-images",
                 conversation_id=1,
                 input_payload={},
                 status="completed",
@@ -62,7 +73,7 @@ async def session():
 
 
 async def _history(session) -> list[dict]:
-    view = await get_thread_history_view(thread_id="thread-images", current_uid="user-1", db=session)
+    view = await get_thread_history(thread_id="thread-images", scope=ActorScope(uid="user-1", app_id=None), db=session)
     return view["history"]
 
 
@@ -74,12 +85,12 @@ async def test_多图历史行的投影按顺序给出全部图片(session):
             conversation_id=1,
             role="user",
             content=built.content,
-            request_id="request-images",
+            turn_id="turn-images",
             run_id="run-images",
             message_type=built.message_type,
             image_content=built.image_content,
-            extra_metadata={"request_id": "request-images", "raw_message": built.raw_message()},
-            delivery_status="complete",
+            extra_metadata={"raw_message": built.raw_message()},
+            delivery_status="dispatched",
             created_at=STARTED_AT,
         )
     )
@@ -100,12 +111,12 @@ async def test_旧单值历史行退化为一张图(session):
             conversation_id=1,
             role="user",
             content="看图",
-            request_id="request-images",
+            turn_id="turn-images",
             run_id="run-images",
             message_type="multimodal_image",
             image_content="OLD",
-            extra_metadata={"request_id": "request-images"},
-            delivery_status="complete",
+            extra_metadata={},
+            delivery_status="dispatched",
             created_at=STARTED_AT,
         )
     )
@@ -126,11 +137,11 @@ async def test_纯文本历史行不产生图片(session):
             conversation_id=1,
             role="user",
             content=built.content,
-            request_id="request-images",
+            turn_id="turn-images",
             run_id="run-images",
             message_type=built.message_type,
-            extra_metadata={"request_id": "request-images", "raw_message": built.raw_message()},
-            delivery_status="complete",
+            extra_metadata={"raw_message": built.raw_message()},
+            delivery_status="dispatched",
             created_at=STARTED_AT,
         )
     )
@@ -151,12 +162,12 @@ async def test_投影不外泄_raw_message_的原始形状(session):
             conversation_id=1,
             role="user",
             content=built.content,
-            request_id="request-images",
+            turn_id="turn-images",
             run_id="run-images",
             message_type=built.message_type,
             image_content=built.image_content,
-            extra_metadata={"request_id": "request-images", "raw_message": built.raw_message()},
-            delivery_status="complete",
+            extra_metadata={"raw_message": built.raw_message()},
+            delivery_status="dispatched",
             created_at=STARTED_AT,
         )
     )

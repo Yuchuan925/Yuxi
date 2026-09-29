@@ -2,7 +2,7 @@
 
 状态：implemented
 类型：bug-fix
-Owner：backend/package/yuxi/services/chat_service.py
+Owner：backend/package/yuxi/services/agents/state.py
 
 ## 问题
 

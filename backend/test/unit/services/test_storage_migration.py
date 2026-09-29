@@ -39,13 +39,12 @@ async def test_storage_migration_reads_legacy_schema_before_cutover(monkeypatch)
         schema_migration_lock=lambda: _async_context(calls, "schema_lock"),
         create_schema_version_table=lambda: _record(calls, "create_schema_version_table"),
         get_schema_versions=lambda: _async_value({}),
-        upgrade_agent_resource_selection=lambda: _record(
-            calls, f"version:business:{storage_migration.BUSINESS_SCHEMA_VERSION}"
-        ),
+        upgrade_agent_resource_selection=lambda: _record(calls, "version:business:9"),
         record_schema_version=lambda domain, version: _record(calls, f"version:{domain}:{version}"),
         create_business_tables=lambda: _record(calls, "create_business_tables"),
         create_knowledge_tables=lambda: _record(calls, "create_knowledge_tables"),
         ensure_business_schema=lambda: _record(calls, "ensure_business_schema"),
+        ensure_api_key_knowledge_scope=lambda: _record(calls, "api_key_scope"),
         ensure_knowledge_schema=lambda: _record(calls, "ensure_knowledge_schema"),
         setup_langgraph_checkpointer=lambda: _record(calls, "setup_langgraph_checkpointer"),
         get_async_session_context=session_context,
@@ -143,7 +142,7 @@ async def test_storage_migration_rejects_v071_schema_without_quiescence_proof(mo
 
 
 @pytest.mark.asyncio
-async def test_current_schema_skips_schema_ddl(monkeypatch):
+async def test_current_schema_ensures_lifecycle_columns_without_rewriting_data(monkeypatch):
     calls: list[str] = []
     sessions = [_Session(), _Session(), _Session()]
 
@@ -168,6 +167,8 @@ async def test_current_schema_skips_schema_ddl(monkeypatch):
         create_business_tables=lambda: _record(calls, "create_business"),
         create_knowledge_tables=lambda: _record(calls, "create_knowledge"),
         ensure_business_schema=lambda: _record(calls, "business_schema"),
+        ensure_agent_run_execution_sequence=lambda: _record(calls, "run_execution_sequence"),
+        ensure_agent_input_api_key_id=lambda: _record(calls, "input_api_key_id"),
         ensure_knowledge_schema=lambda: _record(calls, "knowledge_schema"),
         setup_langgraph_checkpointer=lambda: _record(calls, "checkpoint"),
         get_async_session_context=session_context,
@@ -202,11 +203,17 @@ async def test_current_schema_skips_schema_ddl(monkeypatch):
         f"version:business:{storage_migration.BUSINESS_SCHEMA_VERSION}",
         f"version:knowledge:{storage_migration.KNOWLEDGE_SCHEMA_VERSION}",
     }.isdisjoint(calls)
+    assert "run_execution_sequence" in calls
+    assert "input_api_key_id" in calls
+    assert calls.index("run_execution_sequence") < calls.index("converge:False")
+    assert calls.index("input_api_key_id") < calls.index("converge:False")
     assert "converge:False" in calls
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("unsupported_version", [1, 3, 4, 5, 6, storage_migration.BUSINESS_SCHEMA_VERSION + 1])
+@pytest.mark.parametrize(
+    "unsupported_version", [1, 2, 3, 4, 5, 6, 7, 8, 9, storage_migration.BUSINESS_SCHEMA_VERSION + 1]
+)
 async def test_main_rejects_unsupported_business_schema_before_ddl(monkeypatch, unsupported_version: int):
     calls: list[str] = []
 
@@ -238,60 +245,6 @@ async def test_main_rejects_unsupported_business_schema_before_ddl(monkeypatch, 
         await storage_migration.main()
 
     assert calls == ["initialize", "schema_lock", "create_schema_version_table", "close"]
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("business_version", [2, 7, 8])
-async def test_supported_legacy_business_schema_is_converged_and_versioned_as_current(monkeypatch, business_version):
-    calls: list[str] = []
-    sessions = [_Session(), _Session(), _Session()]
-
-    @asynccontextmanager
-    async def session_context():
-        yield sessions.pop(0)
-
-    manager = SimpleNamespace(
-        initialize=lambda: calls.append("initialize"),
-        schema_migration_lock=lambda: _async_context(calls, "schema_lock"),
-        create_schema_version_table=lambda: _record(calls, "create_schema_version_table"),
-        get_schema_versions=lambda: _async_value(
-            {"business": business_version, "knowledge": storage_migration.KNOWLEDGE_SCHEMA_VERSION}
-        ),
-        upgrade_agent_resource_selection=lambda: _record(
-            calls, f"version:business:{storage_migration.BUSINESS_SCHEMA_VERSION}"
-        ),
-        record_schema_version=lambda domain, version: _record(calls, f"version:{domain}:{version}"),
-        create_business_tables=lambda: _record(calls, "create_business"),
-        create_knowledge_tables=lambda: _record(calls, "create_knowledge"),
-        ensure_business_schema=lambda: _record(calls, "business_schema"),
-        ensure_knowledge_schema=lambda: _record(calls, "knowledge_schema"),
-        setup_langgraph_checkpointer=lambda: _record(calls, "checkpoint"),
-        get_async_session_context=session_context,
-        close=lambda: _record(calls, "close"),
-    )
-    monkeypatch.setattr(storage_migration, "pg_manager", manager)
-    monkeypatch.setattr(
-        storage_migration,
-        "read_v071_workdir_plan",
-        lambda _db: _async_value(V071WorkdirMigrationPlan(False, (), ())),
-    )
-    monkeypatch.setattr(storage_migration, "_legacy_skill_roots_exist", lambda: False)
-    monkeypatch.setattr(storage_migration, "_legacy_system_config_exists", lambda: False)
-    monkeypatch.setattr(storage_migration, "runtime_storage_requires_quiescence", lambda: False)
-    monkeypatch.setattr(
-        storage_migration,
-        "_converge_database_state",
-        lambda *, fail_nonterminal_runs: _record(calls, f"converge:{fail_nonterminal_runs}"),
-    )
-    monkeypatch.setattr(storage_migration, "migrate_shared_skills", lambda _db: _record(calls, "skills"))
-    monkeypatch.setattr(storage_migration, "mark_v071_skills_migrated", lambda: calls.append("mark_skills"))
-    monkeypatch.setattr(storage_migration, "migrate_runtime_storage_identity", lambda: calls.append("runtime_identity"))
-
-    await storage_migration.main()
-
-    assert ("business_schema" in calls) is (business_version in {2, 7})
-    assert f"version:business:{storage_migration.BUSINESS_SCHEMA_VERSION}" in calls
-    assert {"create_business", "checkpoint", "knowledge_schema"}.isdisjoint(calls)
 
 
 @pytest.mark.asyncio
@@ -363,6 +316,7 @@ async def test_current_schema_does_not_rewrite_workdir_data(monkeypatch):
         create_business_tables=lambda: _record(calls, "create"),
         create_knowledge_tables=lambda: _record(calls, "create_knowledge"),
         ensure_business_schema=lambda: _record(calls, "schema"),
+        ensure_api_key_knowledge_scope=lambda: _record(calls, "api_key_scope"),
         ensure_knowledge_schema=lambda: _record(calls, "knowledge_schema"),
         setup_langgraph_checkpointer=lambda: _record(calls, "checkpoint"),
         get_async_session_context=session_context,

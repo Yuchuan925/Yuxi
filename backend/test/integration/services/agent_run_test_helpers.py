@@ -6,7 +6,9 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from yuxi.storage.postgres.models_business import AgentRun, Conversation, Message, Project, User
+from yuxi.repositories.agents.input import AgentInputRepository
+from yuxi.repositories.agents.input_receipt import AgentInputReceiptRepository
+from yuxi.storage.postgres.models_business import AgentRun, AgentTurn, Conversation, Message, Project, User
 from yuxi.utils.datetime_utils import utc_now_naive
 
 
@@ -22,7 +24,8 @@ async def create_agent_run(
 ) -> tuple[str, str, int]:
     """创建供 AgentRun 集成测试使用的最小持久化链路。"""
     run_id = str(uuid.uuid4())
-    request_id = f"{prefix}-{uuid.uuid4()}"
+    input_id = f"{prefix}-{uuid.uuid4()}"
+    turn_id = f"{prefix}-{uuid.uuid4()}"
     thread_id = f"pytest-{prefix}-{uuid.uuid4()}"
     uid = f"pytest-user-{uuid.uuid4()}"
     project_id = str(uuid.uuid4())
@@ -49,14 +52,37 @@ async def create_agent_run(
         )
         db.add(conversation)
         await db.flush()
+        input_repo = AgentInputRepository(db)
+        await input_repo.create(
+            input_id=input_id,
+            thread_id=thread_id,
+            uid=uid,
+            app_id=None,
+            agent_slug="main",
+            kind="follow_up",
+            input_payload=dict(input_payload),
+        )
+        receipt = await AgentInputReceiptRepository(db).create(
+            receipt_id=str(uuid.uuid4()),
+            idempotency_key=str(uuid.uuid4()),
+            uid=uid,
+            app_id=None,
+            thread_id=thread_id,
+            event_type="message",
+            intent_hash="test-intent",
+            input_id=input_id,
+        )
         message = Message(
             conversation_id=conversation.id,
             role="user",
             content=message_content,
-            request_id=request_id,
-            delivery_status="dispatched",
+            delivery_status="queued",
         )
         db.add(message)
+        await db.flush()
+        await input_repo.add_messages(input_id=input_id, receipt_id=receipt.id, message_ids=[message.id])
+        turn = AgentTurn(id=turn_id, conversation_thread_id=thread_id, uid=uid, app_id=None, status="running")
+        db.add(turn)
         await db.flush()
         db.add(
             AgentRun(
@@ -65,7 +91,8 @@ async def create_agent_run(
                 runtime_scope_id=thread_id,
                 agent_slug="main",
                 uid=uid,
-                request_id=request_id,
+                turn_id=turn_id,
+                input_id=input_id,
                 conversation_id=conversation.id,
                 input_message_id=message.id,
                 input_payload=dict(input_payload),
@@ -75,6 +102,14 @@ async def create_agent_run(
                 heartbeat_at=utc_now_naive() if worker_id else None,
                 lease_expires_at=lease_expires_at,
             )
+        )
+        await db.flush()
+        turn.current_run_id = run_id
+        await input_repo.consume(
+            input_id=input_id,
+            turn_id=turn_id,
+            run_id=run_id,
+            cutoff_seq=receipt.receive_seq,
         )
         await db.commit()
         return run_id, thread_id, message.id

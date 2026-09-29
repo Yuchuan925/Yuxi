@@ -7,7 +7,7 @@ import uuid
 from fastapi import HTTPException
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
-from yuxi.repositories.project_repository import ProjectRepository
+from yuxi.repositories.project_repository import ProjectHasPendingAgentWorkError, ProjectRepository
 from yuxi.storage.postgres.models_business import Project
 from yuxi.utils.datetime_utils import utc_now_naive
 from yuxi.workspace.paths import allocate_default_user_workdir_path, normalize_workdir_path
@@ -171,18 +171,21 @@ async def rename_project_view(*, uid: str, project_id: str, name: str, db) -> di
 
 
 async def delete_project_view(*, uid: str, project_id: str, db) -> dict:
-    """软删除 Project 及其 Conversation，保留 Workdir 字节。"""
+    """删除 Project 前归档全部空闲 Thread，保留历史和文件。"""
     repository = ProjectRepository(db)
     project = await repository.lock_active_selectable_for_user(project_id, str(uid))
     if project is None:
         raise HTTPException(status_code=404, detail="Project 不存在")
 
-    deleted_conversations = await repository.soft_delete_with_conversations(
-        project,
-        deleted_at=utc_now_naive(),
-    )
+    try:
+        archived_threads = await repository.delete_project_and_archive_threads(
+            project,
+            deleted_at=utc_now_naive(),
+        )
+    except ProjectHasPendingAgentWorkError as exc:
+        raise HTTPException(status_code=409, detail="项目内仍有执行或待处理输入，暂不能归档") from exc
     await db.commit()
-    return {"message": "删除成功", "deleted_conversations": deleted_conversations}
+    return {"message": "项目已删除，其中对话已归档", "archived_threads": archived_threads}
 
 
 async def list_history_candidates_view(*, uid: str, db, query: str = "", limit: int = 20, offset: int = 0) -> dict:

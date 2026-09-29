@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from yuxi.agents.mcp.service import ensure_builtin_mcp_servers_in_db
 from yuxi.models.providers.service import ensure_builtin_model_providers_in_db
-from yuxi.services.run_queue_service import close_queue_clients, get_redis_client
+from yuxi.services.agents.transport import close_queue_clients, get_redis_client
 from yuxi.storage.postgres.manager import pg_manager
 from yuxi.utils import logger
 from yuxi.agents.backends.sandbox import init_sandbox_provider, shutdown_sandbox_provider

@@ -129,6 +129,7 @@ import { formatRunTimingDuration, getRunTotalLatencyMs } from '@/utils/runTiming
 
 const emit = defineEmits(['retry', 'openRefs'])
 const props = defineProps({
+  threadId: { type: String, default: '' },
   message: Object,
   run: { type: Object, default: null },
   showRefs: {
@@ -292,7 +293,7 @@ const likeThisResponse = async (msg) => {
 
   try {
     submittingFeedback.value = true
-    await agentApi.submitMessageFeedback(msg.id, 'like', null)
+    await agentApi.submitMessageFeedback(props.threadId, msg.id, 'like', null)
 
     feedbackState.hasSubmitted = true
     feedbackState.rating = 'like'
@@ -332,7 +333,7 @@ const dislikeThisResponse = async (msg) => {
 const submitDislikeFeedback = async () => {
   try {
     submittingFeedback.value = true
-    await agentApi.submitMessageFeedback(msg.value.id, 'dislike', dislikeReason.value || null)
+    await agentApi.submitMessageFeedback(props.threadId, msg.value.id, 'dislike', dislikeReason.value || null)
 
     feedbackState.hasSubmitted = true
     feedbackState.rating = 'dislike'

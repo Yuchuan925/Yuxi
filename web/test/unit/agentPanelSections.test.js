@@ -120,8 +120,8 @@ test('暂停队列仍有请求时禁用上下文压缩', () => {
     source.indexOf('// 发送或中断')
   )
 
-  assert.match(action, /:disabled="[^"]*hasQueuedRequests/s)
-  assert.match(handler, /hasQueuedRequests\.value/)
+  assert.match(action, /:disabled="[^"]*hasQueuedInputs/s)
+  assert.match(handler, /hasQueuedInputs\.value/)
 })
 
 test('文件树仅在页面可见的运行期文件视图中轮询', () => {

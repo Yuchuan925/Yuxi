@@ -2,11 +2,21 @@
 
 from datetime import datetime
 
-from sqlalchemy import select, update
+from sqlalchemy import or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from yuxi.repositories.conversation_repository import INVOCATION_CONVERSATION_SOURCES
-from yuxi.storage.postgres.models_business import Conversation, Project
+from yuxi.storage.postgres.models_business import (
+    AGENT_RUN_TERMINAL_STATUSES,
+    AgentInput,
+    AgentRun,
+    AgentTurn,
+    Conversation,
+    Project,
+)
+
+
+class ProjectHasPendingAgentWorkError(Exception):
+    """Project 内仍有不能归档的执行或输入。"""
 
 
 class ProjectRepository:
@@ -91,22 +101,60 @@ class ProjectRepository:
                 Conversation.uid == str(uid),
                 Conversation.status == "active",
                 Project.status == "active",
-                (
-                    Conversation.extra_metadata.is_(None)
-                    | Conversation.extra_metadata["source"].as_string().is_(None)
-                    | Conversation.extra_metadata["source"].as_string().notin_(INVOCATION_CONVERSATION_SOURCES)
-                ),
             )
             .order_by(Conversation.updated_at.desc(), Conversation.id.desc())
         )
         return list(result.all())
 
-    async def soft_delete_with_conversations(self, project: Project, *, deleted_at: datetime) -> int:
-        """在调用方事务内软删除 Project 及其全部 Conversation。"""
+    async def delete_project_and_archive_threads(self, project: Project, *, deleted_at: datetime) -> int:
+        """锁定关联 Thread，确认空闲后归档并软删除 Project。"""
+        rows = await self.db.execute(
+            select(Conversation.thread_id)
+            .where(Conversation.uid == project.uid, Conversation.project_id == project.id)
+            .order_by(Conversation.thread_id)
+            .with_for_update()
+        )
+        thread_ids = list(rows.scalars())
+        if thread_ids:
+            active_turn = await self.db.scalar(
+                select(AgentTurn.id)
+                .where(
+                    AgentTurn.conversation_thread_id.in_(thread_ids),
+                    AgentTurn.status.in_(("running", "waiting", "cancelling")),
+                )
+                .limit(1)
+            )
+            pending_input = await self.db.scalar(
+                select(AgentInput.id)
+                .where(AgentInput.conversation_thread_id.in_(thread_ids), AgentInput.status == "pending")
+                .limit(1)
+            )
+            active_run = await self.db.scalar(
+                select(AgentRun.id)
+                .where(
+                    AgentRun.uid == project.uid,
+                    or_(
+                        AgentRun.conversation_thread_id.in_(thread_ids),
+                        AgentRun.runtime_scope_id.in_(thread_ids),
+                    ),
+                    or_(
+                        AgentRun.status.notin_(AGENT_RUN_TERMINAL_STATUSES),
+                        AgentRun.runtime_cleanup_pending.is_(True),
+                    ),
+                )
+                .limit(1)
+            )
+            if active_turn or pending_input or active_run:
+                raise ProjectHasPendingAgentWorkError
+
         result = await self.db.execute(
             update(Conversation)
-            .where(Conversation.uid == project.uid, Conversation.project_id == project.id)
-            .values(status="deleted", updated_at=deleted_at)
+            .where(
+                Conversation.uid == project.uid,
+                Conversation.project_id == project.id,
+                Conversation.status.in_(("active", "subagent")),
+            )
+            .values(status="archived", updated_at=deleted_at)
         )
         project.status = "deleted"
         project.deleted_at = deleted_at

@@ -6,6 +6,12 @@ echo "Yuxi 测试运行器"
 echo "========================"
 
 PYTEST_CMD=("docker" "compose" "exec" "api" "uv" "run" "--group" "test" "pytest")
+LIFECYCLE_E2E_TESTS=(
+    test/e2e/test_agent_lifecycle_e2e.py
+    test/e2e/test_agent_lifecycle_extended_e2e.py
+    test/e2e/test_agent_lifecycle_subagent_boundaries_e2e.py
+    test/e2e/test_agent_lifecycle_key_scope_e2e.py
+)
 
 check_server() {
     echo "检查测试服务是否就绪..."
@@ -33,7 +39,7 @@ run_integration_tests() {
 run_e2e_tests() {
     echo "运行确定性 Agent 端到端测试..."
     check_server
-    "${PYTEST_CMD[@]}" test/e2e/test_deterministic_agent_path_e2e.py -m e2e
+    "${PYTEST_CMD[@]}" "${LIFECYCLE_E2E_TESTS[@]}" -m e2e
 }
 
 run_all_e2e_tests() {
@@ -45,7 +51,7 @@ run_all_e2e_tests() {
 run_all_tests() {
     echo "运行全部测试..."
     check_server
-    "${PYTEST_CMD[@]}" test/unit test/integration test/e2e/test_deterministic_agent_path_e2e.py
+    "${PYTEST_CMD[@]}" test/unit test/integration "${LIFECYCLE_E2E_TESTS[@]}"
 }
 
 show_help() {

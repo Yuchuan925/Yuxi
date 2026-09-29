@@ -88,7 +88,7 @@ docker compose logs --tail=100 api
 ```bash
 docker compose exec api uv run --group test pytest test/unit -m "not slow"
 docker compose exec api uv run --group test pytest test/integration
-docker compose exec api uv run --group test pytest test/e2e/test_deterministic_agent_path_e2e.py -m e2e
+backend/test/run_tests.sh e2e
 docker compose exec api uv run --group test pytest test
 ```
 

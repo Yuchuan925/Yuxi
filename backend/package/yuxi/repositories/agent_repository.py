@@ -6,14 +6,22 @@ import uuid
 from collections.abc import Collection
 from typing import Any, Literal
 
-from sqlalchemy import select, update
+from sqlalchemy import or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from yuxi.agents.context import BaseContext, validate_resource_selection
 from yuxi.agents.presets import AgentPreset
 from yuxi.agents.presets.default_chatbot import PRESET as DEFAULT_AGENT
 from yuxi.permissions import ResourcePermission, normalize_permission_config, resolve_agent_permission
-from yuxi.storage.postgres.models_business import Agent, User
+from yuxi.storage.postgres.models_business import (
+    AGENT_RUN_TERMINAL_STATUSES,
+    Agent,
+    AgentInput,
+    AgentRun,
+    AgentTurn,
+    Conversation,
+    User,
+)
 from yuxi.utils.datetime_utils import utc_now_naive
 
 DEFAULT_AGENT_SLUG = DEFAULT_AGENT.slug
@@ -153,26 +161,36 @@ class AgentRepository:
 
     async def list_visible(self, *, user: User, include_subagent_definitions: bool = False) -> list[Agent]:
         """列出用户可见的主智能体，只有显式请求时才包含子智能体定义。"""
+        visibility_user = await self._visibility_user(user)
+        if visibility_user is None:
+            return []
         stmt = select(Agent)
         if not include_subagent_definitions:
             stmt = stmt.where(Agent.is_subagent.is_(False))
         result = await self.db.execute(stmt.order_by(Agent.is_default.desc(), Agent.id.asc()))
         agents = list(result.scalars().all())
-        if user.role == "superadmin":
+        if visibility_user.role == "superadmin":
             return agents
-        return [agent for agent in agents if user_can_access_agent(user, agent)]
+        return [agent for agent in agents if user_can_access_agent(visibility_user, agent)]
 
     async def list_visible_subagents(self, *, user: User) -> list[Agent]:
+        visibility_user = await self._visibility_user(user)
+        if visibility_user is None:
+            return []
         result = await self.db.execute(
             select(Agent).where(Agent.is_subagent.is_(True)).order_by(Agent.name.asc(), Agent.id.asc())
         )
         agents = list(result.scalars().all())
-        if user.role == "superadmin":
+        if visibility_user.role == "superadmin":
             return agents
-        return [agent for agent in agents if user_can_access_agent(user, agent)]
+        return [agent for agent in agents if user_can_access_agent(visibility_user, agent)]
 
-    async def get_by_slug(self, slug: str) -> Agent | None:
-        result = await self.db.execute(select(Agent).where(Agent.slug == slug))
+    async def get_by_slug(self, slug: str, *, for_key_share: bool = False) -> Agent | None:
+        """读取 Agent，创建 Thread 时可持有共享键锁直到提交。"""
+        statement = select(Agent).where(Agent.slug == slug)
+        if for_key_share:
+            statement = statement.with_for_update(read=True, key_share=True).execution_options(populate_existing=True)
+        result = await self.db.execute(statement)
         return result.scalar_one_or_none()
 
     async def list_by_slugs(self, slugs: list[str]) -> list[Agent]:
@@ -180,13 +198,21 @@ class AgentRepository:
         return list(result.scalars().all())
 
     async def get_visible_by_slug(
-        self, *, slug: str, user: User, kind: Literal["main", "subagent", "any"] = "main"
+        self,
+        *,
+        slug: str,
+        user: User,
+        kind: Literal["main", "subagent", "any"] = "main",
+        for_key_share: bool = False,
     ) -> Agent | None:
         """按 slug 读取用户可见智能体，并按入口语义过滤主/子智能体。"""
-        agent = await self.get_by_slug(slug)
+        visibility_user = await self._visibility_user(user)
+        if visibility_user is None:
+            return None
+        agent = await self.get_by_slug(slug, for_key_share=for_key_share)
         if not agent:
             return None
-        if not user_can_access_agent(user, agent):
+        if not user_can_access_agent(visibility_user, agent):
             return None
         if kind == "any":
             return agent
@@ -195,6 +221,18 @@ class AgentRepository:
         if kind == "subagent":
             return agent if agent.is_subagent else None
         raise ValueError(f"未知智能体入口类型: {kind}")
+
+    async def _visibility_user(self, user: User) -> User | None:
+        """终端用户只借用 Key 用户的 Agent 可见性，执行 UID 保持不变。"""
+        if getattr(user, "user_kind", "human") != "end_user":
+            return user
+        return await self.db.scalar(
+            select(User).where(
+                User.id == user.owner_user_id,
+                User.user_kind == "human",
+                User.is_deleted == 0,
+            )
+        )
 
     async def get_default(self) -> Agent | None:
         result = await self.db.execute(select(Agent).where(Agent.is_default.is_(True)))
@@ -355,8 +393,57 @@ class AgentRepository:
         await self.db.refresh(agent)
         return agent
 
-    async def delete(self, *, agent: Agent) -> None:
-        await self.db.delete(agent)
+    async def delete(self, *, agent: Agent, user: User) -> None:
+        """锁定 Agent 与已有 Thread，拒绝仍由该 Agent 拥有的工作。"""
+        current = await self.db.scalar(
+            select(Agent).where(Agent.id == agent.id).with_for_update().execution_options(populate_existing=True)
+        )
+        if current is None:
+            raise LookupError("智能体不存在")
+        if not user_can_manage_agent(user, current):
+            raise PermissionError("不能删除非自己创建的智能体")
+        if is_builtin_agent(current):
+            raise ValueError("内置智能体不能删除")
+
+        # Thread 是接收与调度的先行锁；按共同顺序锁定，随后读取持久工作事实。
+        result = await self.db.execute(
+            select(Conversation.thread_id)
+            .where(Conversation.agent_id == current.slug)
+            .order_by(Conversation.thread_id)
+            .with_for_update()
+        )
+        thread_ids = list(result.scalars())
+        active_turn = await self.db.scalar(
+            select(AgentTurn.id)
+            .where(
+                AgentTurn.conversation_thread_id.in_(thread_ids),
+                AgentTurn.status.in_(("running", "waiting", "cancelling")),
+            )
+            .limit(1)
+        )
+        pending_input = await self.db.scalar(
+            select(AgentInput.id)
+            .where(
+                or_(AgentInput.agent_slug == current.slug, AgentInput.conversation_thread_id.in_(thread_ids)),
+                AgentInput.status == "pending",
+            )
+            .limit(1)
+        )
+        active_run = await self.db.scalar(
+            select(AgentRun.id)
+            .where(
+                or_(AgentRun.agent_slug == current.slug, AgentRun.runtime_scope_id.in_(thread_ids)),
+                or_(
+                    AgentRun.status.notin_(AGENT_RUN_TERMINAL_STATUSES),
+                    AgentRun.runtime_cleanup_pending.is_(True),
+                ),
+            )
+            .limit(1)
+        )
+        if active_turn or pending_input or active_run:
+            raise ValueError("智能体仍有活跃执行或待处理输入")
+
+        await self.db.delete(current)
         await self.db.commit()
 
     async def serialize(

@@ -23,7 +23,7 @@ from yuxi.utils import logger
 from yuxi.utils.singleton import SingletonMeta
 
 AGENT_RUN_TERMINAL_STATUS_SQL = ", ".join(f"'{status}'" for status in AGENT_RUN_TERMINAL_STATUSES)
-BUSINESS_SCHEMA_VERSION = 9
+BUSINESS_SCHEMA_VERSION = 10
 KNOWLEDGE_SCHEMA_VERSION = 2
 SCHEMA_VERSION_TABLE = "yuxi_schema_migrations"
 AGENT_RUN_LEASE_SCHEMA_STATEMENTS = (
@@ -31,6 +31,18 @@ AGENT_RUN_LEASE_SCHEMA_STATEMENTS = (
     "ALTER TABLE IF EXISTS agent_runs ADD COLUMN IF NOT EXISTS heartbeat_at TIMESTAMP WITHOUT TIME ZONE",
     "ALTER TABLE IF EXISTS agent_runs ADD COLUMN IF NOT EXISTS lease_expires_at TIMESTAMP WITHOUT TIME ZONE",
     "CREATE INDEX IF NOT EXISTS ix_agent_runs_status_lease_expires ON agent_runs(status, lease_expires_at)",
+)
+AGENT_RUN_EXECUTION_SEQ_SCHEMA_STATEMENTS = (
+    "CREATE SEQUENCE IF NOT EXISTS agent_runs_execution_seq",
+    "ALTER TABLE IF EXISTS agent_runs ADD COLUMN IF NOT EXISTS execution_seq BIGINT",
+    "ALTER TABLE IF EXISTS agent_runs ALTER COLUMN execution_seq SET DEFAULT nextval('agent_runs_execution_seq')",
+    "UPDATE agent_runs SET execution_seq = nextval('agent_runs_execution_seq') WHERE execution_seq IS NULL",
+    "ALTER TABLE IF EXISTS agent_runs ALTER COLUMN execution_seq SET NOT NULL",
+    "CREATE UNIQUE INDEX IF NOT EXISTS ix_agent_runs_execution_seq_unique ON agent_runs(execution_seq)",
+    (
+        "CREATE INDEX IF NOT EXISTS ix_agent_runs_thread_execution_seq "
+        "ON agent_runs(conversation_thread_id, execution_seq)"
+    ),
 )
 AGENT_RUN_LANGFUSE_SCHEMA_STATEMENTS = (
     "ALTER TABLE IF EXISTS agent_runs ADD COLUMN IF NOT EXISTS langfuse_trace_id VARCHAR(64)",
@@ -559,6 +571,31 @@ class PostgresManager(metaclass=SingletonMeta):
             await conn.run_sync(BusinessBase.metadata.create_all)
         logger.info("PostgreSQL business tables created/checked")
 
+    async def ensure_agent_run_execution_sequence(self) -> None:
+        """对已标记 v10 的库幂等补齐 Run 订阅序号约束。"""
+        self._check_initialized()
+        async with self.async_engine.begin() as conn:
+            for statement in AGENT_RUN_EXECUTION_SEQ_SCHEMA_STATEMENTS:
+                await conn.execute(text(statement))
+
+    async def ensure_agent_input_api_key_id(self) -> None:
+        """对已标记 v10 的库幂等补齐 Input 首次接收来源。"""
+        self._check_initialized()
+        async with self.async_engine.begin() as conn:
+            await conn.execute(text("ALTER TABLE IF EXISTS agent_inputs ADD COLUMN IF NOT EXISTS api_key_id INTEGER"))
+
+    async def ensure_api_key_knowledge_scope(self) -> None:
+        """将现有 API Key 约束升级为包含知识库权限。"""
+        self._check_initialized()
+        async with self.async_engine.begin() as conn:
+            await conn.execute(text("ALTER TABLE api_keys DROP CONSTRAINT IF EXISTS ck_api_keys_access_level"))
+            await conn.execute(
+                text(
+                    "ALTER TABLE api_keys ADD CONSTRAINT ck_api_keys_access_level "
+                    "CHECK (access_level IN ('full', 'agents', 'knowledge'))"
+                )
+            )
+
     async def upgrade_knowledge_schema_v1_to_v2(self) -> None:
         """为知识文件处理中间态增加 Durable Task attempt owner。"""
         self._check_initialized()
@@ -975,6 +1012,7 @@ class PostgresManager(metaclass=SingletonMeta):
             "ALTER TABLE IF EXISTS skills ADD COLUMN IF NOT EXISTS content_hash VARCHAR(128)",
             "ALTER TABLE IF EXISTS conversations ADD COLUMN IF NOT EXISTS is_pinned BOOLEAN NOT NULL DEFAULT FALSE",
             "ALTER TABLE IF EXISTS conversations ADD COLUMN IF NOT EXISTS last_viewed_run_id VARCHAR(64)",
+            "ALTER TABLE IF EXISTS conversations ADD COLUMN IF NOT EXISTS app_id VARCHAR(64)",
             "ALTER TABLE IF EXISTS mcp_servers ADD COLUMN IF NOT EXISTS env JSONB",
             *AGENT_RUN_CURSOR_SCHEMA_STATEMENTS,
             """
@@ -1041,6 +1079,60 @@ class PostgresManager(metaclass=SingletonMeta):
             "ALTER TABLE IF EXISTS api_keys ADD COLUMN IF NOT EXISTS request_id VARCHAR(64)",
             "ALTER TABLE IF EXISTS api_keys ADD COLUMN IF NOT EXISTS intent_hash VARCHAR(64)",
             "ALTER TABLE IF EXISTS api_keys ADD COLUMN IF NOT EXISTS revoked_at TIMESTAMP WITHOUT TIME ZONE",
+            "ALTER TABLE IF EXISTS api_keys ADD COLUMN IF NOT EXISTS access_level VARCHAR(16) NOT NULL DEFAULT 'full'",
+            "ALTER TABLE IF EXISTS api_keys ADD COLUMN IF NOT EXISTS app_id VARCHAR(64)",
+            "ALTER TABLE IF EXISTS users ADD COLUMN IF NOT EXISTS user_kind VARCHAR(16) NOT NULL DEFAULT 'human'",
+            "ALTER TABLE IF EXISTS users ADD COLUMN IF NOT EXISTS owner_user_id INTEGER",
+            "ALTER TABLE IF EXISTS users ADD COLUMN IF NOT EXISTS app_id VARCHAR(64)",
+            "ALTER TABLE IF EXISTS users ADD COLUMN IF NOT EXISTS end_user_id VARCHAR(128)",
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_users_public_end_user_identity "
+            "ON users(owner_user_id, app_id, end_user_id)",
+            """
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM pg_constraint
+                    WHERE conname = 'fk_users_owner_user_id'
+                      AND conrelid = 'users'::regclass
+                ) THEN
+                    ALTER TABLE users ADD CONSTRAINT fk_users_owner_user_id
+                    FOREIGN KEY (owner_user_id) REFERENCES users(id);
+                END IF;
+            END $$
+            """,
+            """
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM pg_constraint
+                    WHERE conname = 'ck_users_public_end_user_shape'
+                      AND conrelid = 'users'::regclass
+                ) THEN
+                    ALTER TABLE users ADD CONSTRAINT ck_users_public_end_user_shape CHECK (
+                        (user_kind = 'human' AND owner_user_id IS NULL AND app_id IS NULL AND end_user_id IS NULL)
+                        OR (user_kind = 'end_user' AND owner_user_id IS NOT NULL AND app_id IS NOT NULL
+                            AND end_user_id IS NOT NULL AND role = 'user')
+                    );
+                END IF;
+            END $$
+            """,
+            "ALTER TABLE IF EXISTS agent_runs ADD COLUMN IF NOT EXISTS app_id VARCHAR(64)",
+            "ALTER TABLE IF EXISTS agent_runs ADD COLUMN IF NOT EXISTS api_key_id INTEGER",
+            "CREATE INDEX IF NOT EXISTS ix_agent_runs_app_id ON agent_runs(app_id)",
+            "CREATE INDEX IF NOT EXISTS ix_agent_runs_api_key_id ON agent_runs(api_key_id)",
+            """
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM pg_constraint
+                    WHERE conname = 'ck_api_keys_access_level'
+                      AND conrelid = 'api_keys'::regclass
+                ) THEN
+                    ALTER TABLE api_keys ADD CONSTRAINT ck_api_keys_access_level
+                    CHECK (access_level IN ('full', 'agents', 'knowledge'));
+                END IF;
+            END $$
+            """,
             """
             UPDATE api_keys AS api_key
             SET is_enabled = FALSE,
@@ -1091,7 +1183,7 @@ class PostgresManager(metaclass=SingletonMeta):
             CREATE TABLE IF NOT EXISTS scheduled_agent_runs (
                 id VARCHAR(64) PRIMARY KEY,
                 job_id VARCHAR(64) NOT NULL REFERENCES scheduled_agent_jobs(id) ON DELETE CASCADE,
-                request_id VARCHAR(64) NOT NULL,
+                input_id VARCHAR(64) NOT NULL,
                 thread_id VARCHAR(64) NOT NULL,
                 trigger VARCHAR(16) NOT NULL DEFAULT 'scheduled',
                 occurrence_key VARCHAR(128) NOT NULL,
@@ -1106,7 +1198,7 @@ class PostgresManager(metaclass=SingletonMeta):
                 error_message TEXT,
                 created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT NOW(),
                 CONSTRAINT uq_scheduled_agent_runs_job_occurrence UNIQUE (job_id, occurrence_key),
-                CONSTRAINT uq_scheduled_agent_runs_request UNIQUE (request_id),
+                CONSTRAINT uq_scheduled_agent_runs_input UNIQUE (input_id),
                 CONSTRAINT uq_scheduled_agent_runs_thread UNIQUE (thread_id)
             )
             """,
@@ -1203,15 +1295,6 @@ class PostgresManager(metaclass=SingletonMeta):
             (
                 "ALTER TABLE IF EXISTS agent_runs ADD COLUMN IF NOT EXISTS "
                 "token_usage JSONB NOT NULL DEFAULT '{}'::jsonb"
-            ),
-            (
-                "ALTER TABLE IF EXISTS agent_run_requests ADD COLUMN IF NOT EXISTS "
-                "channel VARCHAR(32) NOT NULL DEFAULT 'web'"
-            ),
-            "ALTER TABLE IF EXISTS agent_run_requests ADD COLUMN IF NOT EXISTS external_id VARCHAR(128)",
-            (
-                "ALTER TABLE IF EXISTS agent_run_requests ADD COLUMN IF NOT EXISTS "
-                "origin_metadata JSONB NOT NULL DEFAULT '{}'::jsonb"
             ),
             "ALTER TABLE IF EXISTS subagent_threads ADD COLUMN IF NOT EXISTS subagent_slug VARCHAR(64)",
             "ALTER TABLE IF EXISTS subagent_threads ADD COLUMN IF NOT EXISTS created_by_run_id VARCHAR(64)",
@@ -1431,31 +1514,9 @@ class PostgresManager(metaclass=SingletonMeta):
             "CREATE INDEX IF NOT EXISTS ix_conversations_is_pinned ON conversations(is_pinned)",
             "CREATE UNIQUE INDEX IF NOT EXISTS ix_model_providers_provider_id ON model_providers(provider_id)",
             "CREATE INDEX IF NOT EXISTS ix_model_providers_is_enabled ON model_providers(is_enabled)",
-            """
-            CREATE TABLE IF NOT EXISTS agent_run_requests (
-                id SERIAL PRIMARY KEY,
-                request_id VARCHAR(64) NOT NULL,
-                uid VARCHAR(64) NOT NULL,
-                agent_slug VARCHAR(64) NOT NULL,
-                conversation_thread_id VARCHAR(64) NOT NULL,
-                source VARCHAR(32) NOT NULL DEFAULT 'chat',
-                queue_policy VARCHAR(16) NOT NULL DEFAULT 'enqueue',
-                status VARCHAR(32) NOT NULL DEFAULT 'queued',
-                input_message_id INTEGER NOT NULL REFERENCES messages(id),
-                dispatched_run_id VARCHAR(64) REFERENCES agent_runs(id),
-                input_payload JSONB NOT NULL DEFAULT '{}'::jsonb,
-                error_message TEXT,
-                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                dispatched_at TIMESTAMPTZ,
-                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-            )
-            """,
-            "CREATE UNIQUE INDEX IF NOT EXISTS ix_agent_run_requests_request_id ON agent_run_requests(request_id)",
-            """
-            CREATE INDEX IF NOT EXISTS ix_agent_run_requests_queue
-            ON agent_run_requests(uid, agent_slug, conversation_thread_id, status, created_at, id)
-            """,
-            "CREATE INDEX IF NOT EXISTS ix_agent_run_requests_dispatched_run_id ON agent_run_requests(dispatched_run_id)",  # noqa: E501
+            "ALTER TABLE IF EXISTS conversations ADD COLUMN IF NOT EXISTS queue_paused BOOLEAN NOT NULL DEFAULT FALSE",
+            *AGENT_RUN_EXECUTION_SEQ_SCHEMA_STATEMENTS,
+            "ALTER TABLE IF EXISTS agent_runs ADD COLUMN IF NOT EXISTS langfuse_observation_id VARCHAR(16)",
             *TASK_DURABLE_SCHEMA_STATEMENTS,
         ]
         async with self.async_engine.begin() as conn:
@@ -1502,8 +1563,7 @@ class PostgresManager(metaclass=SingletonMeta):
                         "WHERE c.thread_id = r.thread_id AND c.last_viewed_run_id IS NULL"
                     )
                 )
-                # 没有 chat/resume Run 的历史会话（如 agent_call / agent_evaluation 调用、
-                # 从未真正对话过的线程）写入未读哨兵，使上面的探测条件在首次回填后自然收敛，
+                # 没有 chat/resume Run 的会话写入未读哨兵，使上面的探测条件在首次回填后自然收敛，
                 # 避免每次启动都重复对 agent_runs 做全表聚合。
                 await conn.execute(
                     text("UPDATE conversations SET last_viewed_run_id = :marker WHERE last_viewed_run_id IS NULL"),

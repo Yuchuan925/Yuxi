@@ -31,12 +31,9 @@ async def test_logs_endpoint_returns_only_api_process_log(test_client, admin_hea
 
     api_marker = f"api-log-contract-{uuid4()}"
     worker_marker = f"worker-log-contract-{uuid4()}"
-    legacy_marker = f"legacy-shared-log-contract-{uuid4()}"
     log_path = Path(LOG_FILE)
     worker_log_path = get_runtime_dir().parent / "worker" / "logs" / log_path.name
-    legacy_log_path = get_legacy_storage_dir() / "logs" / log_path.name
     worker_log_original = worker_log_path.read_bytes() if worker_log_path.exists() else None
-    legacy_log_original = legacy_log_path.read_bytes() if legacy_log_path.exists() else None
 
     assert log_path.parent == get_runtime_dir() / "logs"
     assert get_legacy_storage_dir().resolve() not in log_path.resolve().parents
@@ -46,9 +43,6 @@ async def test_logs_endpoint_returns_only_api_process_log(test_client, admin_hea
     worker_log_path.parent.mkdir(parents=True, exist_ok=True)
     with worker_log_path.open("a", encoding="utf-8") as worker_log:
         worker_log.write(f"2026-08-17 20:00:00 - INFO - worker:1 - {worker_marker}\n")
-    legacy_log_path.parent.mkdir(parents=True, exist_ok=True)
-    with legacy_log_path.open("a", encoding="utf-8") as legacy_log:
-        legacy_log.write(f"2026-08-17 20:00:00 - INFO - legacy:1 - {legacy_marker}\n")
 
     try:
         response = await test_client.get("/api/system/logs?levels=INFO", headers=admin_headers)
@@ -59,16 +53,11 @@ async def test_logs_endpoint_returns_only_api_process_log(test_client, admin_hea
         assert payload["log_file"] == LOG_FILE
         assert api_marker in payload["log"]
         assert worker_marker not in payload["log"]
-        assert legacy_marker not in payload["log"]
     finally:
         if worker_log_original is None:
             worker_log_path.unlink(missing_ok=True)
         else:
             worker_log_path.write_bytes(worker_log_original)
-        if legacy_log_original is None:
-            legacy_log_path.unlink(missing_ok=True)
-        else:
-            legacy_log_path.write_bytes(legacy_log_original)
 
 
 async def test_readiness_endpoint_proves_core_runtime_dependencies(test_client):

@@ -304,6 +304,7 @@
         <textarea id="input" placeholder="输入消息，Enter 发送，Shift + Enter 换行" autofocus></textarea>
         <div class="composer-row">
           <span id="status">就绪</span>
+          <button id="continue-queue" class="secondary" type="button" hidden>继续队列</button>
           <button id="send" type="submit">发送</button>
         </div>
       </form>
@@ -316,11 +317,15 @@
       const composer = document.querySelector("#composer");
       const input = document.querySelector("#input");
       const send = document.querySelector("#send");
+      const continueQueue = document.querySelector("#continue-queue");
       const status = document.querySelector("#status");
       document.querySelector("#agent").textContent = agentSlug;
 
       let threadId = null;
       let running = false;
+      let waitingForAction = false;
+      let pausedInputId = null;
+      let pausedOutput = null;
       let restingStatus = "就绪";
 
       function addMessage(role, content = "") {
@@ -347,8 +352,10 @@
 
       function setRunning(value) {
         running = value;
-        send.disabled = value;
-        input.disabled = value;
+        send.disabled = value || waitingForAction;
+        input.disabled = value || waitingForAction;
+        continueQueue.hidden = !pausedInputId;
+        continueQueue.disabled = value;
         status.textContent = value ? "生成中" : restingStatus;
       }
 
@@ -371,17 +378,26 @@
               output.textContent += event.content;
               messages.scrollTop = messages.scrollHeight;
             }
+            if (event.type === "snapshot") output.textContent = event.content;
             if (event.type === "command") {
               output.textContent = JSON.stringify(event.result, null, 2);
             }
             if (event.type === "approval_required") {
               const separator = output.textContent ? "\n\n" : "";
               output.textContent += `${separator}${event.message}`;
-              restingStatus = "等待审批 · 输入 /approve";
+              waitingForAction = true;
+              restingStatus = "等待操作 · 请在 Yuxi 网页继续";
+            }
+            if (event.type === "queue_paused") {
+              pausedInputId = event.input_id;
+              pausedOutput = output;
+              output.textContent = "队列已暂停，点击“继续队列”处理这条消息。";
+              waitingForAction = true;
+              restingStatus = "队列已暂停";
             }
             if (event.type === "error") throw new Error(event.message);
             if (event.type === "done") {
-              completed = ["completed", "waiting_approval"].includes(event.status);
+              completed = ["completed", "waiting", "paused"].includes(event.status);
             }
           }
           if (done) break;
@@ -391,7 +407,7 @@
 
       async function submitMessage() {
         const message = input.value.trim();
-        if (!message || running) return;
+        if (!message || running || waitingForAction) return;
         restingStatus = "就绪";
         input.value = "";
         addMessage("user", message);
@@ -421,6 +437,40 @@
         }
       }
 
+      async function resumeQueue() {
+        if (!pausedInputId || !pausedOutput || running || !threadId) return;
+        const inputId = pausedInputId;
+        const output = pausedOutput;
+        setRunning(true);
+        try {
+          const response = await fetch("/api/chat/continue", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-Yuxi-Chat-Token": sessionToken
+            },
+            body: JSON.stringify({ thread_id: threadId, input_id: inputId })
+          });
+          if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.error || `请求失败：${response.status}`);
+          }
+          pausedInputId = null;
+          pausedOutput = null;
+          waitingForAction = false;
+          restingStatus = "就绪";
+          output.textContent = "";
+          await readEvents(response, output);
+        } catch (error) {
+          addMessage("error", error.message || String(error));
+        } finally {
+          setRunning(false);
+          input.focus();
+        }
+      }
+
+      continueQueue.addEventListener("click", resumeQueue);
+
       composer.addEventListener("submit", (event) => {
         event.preventDefault();
         submitMessage();
@@ -436,6 +486,12 @@
       document.querySelector("#new-chat").addEventListener("click", () => {
         if (running) return;
         threadId = null;
+        waitingForAction = false;
+        pausedInputId = null;
+        pausedOutput = null;
+        send.disabled = false;
+        input.disabled = false;
+        continueQueue.hidden = true;
         restingStatus = "就绪";
         status.textContent = restingStatus;
         messages.innerHTML = '<div class="empty">暂无消息<br />输入内容开始本地调试</div>';

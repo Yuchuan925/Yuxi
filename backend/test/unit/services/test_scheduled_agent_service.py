@@ -110,25 +110,27 @@ def test_execution_projection_reads_terminal_status_from_agent_run():
             "completed_at": None,
         },
     )
-    request = SimpleNamespace(status="dispatched", dispatched_run_id="run-1", error_message=None)
+    input_item = SimpleNamespace(status="consumed", turn_id="turn-1")
     run = SimpleNamespace(
+        id="run-1",
         status="failed",
         error_message="模型不可用",
         finished_at=datetime(2026, 8, 27, 10, 0),
     )
 
-    result = service._execution_to_dict(scheduled_run, request, run)
+    result = service._execution_to_dict(scheduled_run, input_item, run)
 
     assert result == {
         "status": "failed",
         "run_id": "run-1",
+        "turn_id": "turn-1",
         "error_message": "模型不可用",
         "completed_at": "2026-08-27T10:00:00Z",
         "conversation_available": True,
     }
 
 
-def test_execution_projection_does_not_offer_conversation_before_request_exists():
+def test_execution_projection_does_not_offer_conversation_before_input_exists():
     scheduled_run = SimpleNamespace(
         status="failed",
         to_dict=lambda: {"status": "failed", "thread_id": "reserved-thread"},
@@ -186,7 +188,7 @@ async def test_run_now_rejects_request_id_reused_for_another_job(monkeypatch):
             return job
 
         async def get_run(self, run_id):
-            assert run_id == service.build_request_id("scheduled-run", "user-1:manual:manual-request-1")
+            assert run_id == service.build_stable_id("scheduled-run", "user-1:manual:manual-request-1")
             return existing_run
 
     monkeypatch.setattr(service, "ScheduledAgentRepository", lambda _db: Repository())

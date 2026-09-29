@@ -19,8 +19,9 @@ from yuxi.agents.tool_approval import normalize_tool_approval_mode
 from yuxi.repositories.agent_repository import AgentRepository
 from yuxi.repositories.project_repository import ProjectRepository
 from yuxi.repositories.scheduled_agent_repository import ScheduledAgentRepository
-from yuxi.services.agent_request_service import AgentRequestInput, RunOrigin, submit_agent_request
-from yuxi.services.input_message_service import build_chat_input_message
+from yuxi.services.agents.inputs import create_thread
+from yuxi.services.agents.scope import ActorScope
+from yuxi.services.agents.input_messages import build_chat_input_message
 from yuxi.storage.postgres.manager import pg_manager
 from yuxi.storage.postgres.models_business import ScheduledAgentJob, ScheduledAgentRun, User
 from yuxi.utils.datetime_utils import format_utc_datetime, utc_now_naive
@@ -32,7 +33,7 @@ MAX_NAME_LENGTH = 255
 REQUEST_ID_PATTERN = re.compile(r"^[A-Za-z0-9._:-]+$")
 
 
-def build_request_id(prefix: str, value: str) -> str:
+def build_stable_id(prefix: str, value: str) -> str:
     """为调度对象生成稳定、长度受限的 ID。"""
     return f"{prefix[:16]}-{hashlib.sha256(value.encode()).hexdigest()[:47]}"
 
@@ -122,10 +123,10 @@ def _new_scheduled_run(
     """从任务快照创建一次触发意图。"""
     identity = identity or f"{job.id}:{occurrence_key}"
     return ScheduledAgentRun(
-        id=build_request_id("scheduled-run", identity),
+        id=build_stable_id("scheduled-run", identity),
         job_id=job.id,
-        request_id=build_request_id("scheduled-request", identity),
-        thread_id=build_request_id("scheduled-thread", identity),
+        input_id=build_stable_id("scheduled-input", identity),
+        thread_id=build_stable_id("scheduled-thread", identity),
         trigger=trigger,
         occurrence_key=occurrence_key,
         scheduled_for=scheduled_for,
@@ -165,8 +166,8 @@ async def list_scheduled_jobs(*, user: User, db: AsyncSession) -> dict:
     repo = ScheduledAgentRepository(db)
     jobs = await repo.list_jobs(str(user.uid))
     runs_by_job: dict[str, list[dict]] = {job.id: [] for job in jobs}
-    for scheduled_run, request, run in await repo.list_recent_runs([job.id for job in jobs], str(user.uid), 3):
-        runs_by_job[scheduled_run.job_id].append(_execution_to_dict(scheduled_run, request, run))
+    for scheduled_run, input_item, run in await repo.list_recent_runs([job.id for job in jobs], str(user.uid), 3):
+        runs_by_job[scheduled_run.job_id].append(_execution_to_dict(scheduled_run, input_item, run))
     result = []
     for job in jobs:
         item = job.to_dict()
@@ -175,17 +176,17 @@ async def list_scheduled_jobs(*, user: User, db: AsyncSession) -> dict:
     return {"jobs": result}
 
 
-def _execution_to_dict(scheduled_run, request, run) -> dict:
-    """以 Request/Run 为执行状态事实源，装配调度记录摘要。"""
+def _execution_to_dict(scheduled_run, input_item, run) -> dict:
+    """从 Input 与当前 Turn/Run 装配调度记录摘要。"""
     data = scheduled_run.to_dict()
-    data["conversation_available"] = request is not None
-    if scheduled_run.status != "submitted" or request is None:
+    data["conversation_available"] = input_item is not None
+    if scheduled_run.status != "submitted" or input_item is None:
         return data
 
-    data["run_id"] = request.dispatched_run_id
-    if request.status != "dispatched" or run is None:
-        data["status"] = request.status
-        data["error_message"] = request.error_message
+    data["turn_id"] = input_item.turn_id
+    data["run_id"] = run.id if run else None
+    if input_item.status == "pending" or run is None:
+        data["status"] = "queued" if input_item.status == "pending" else input_item.status
         return data
 
     data["status"] = run.status
@@ -334,7 +335,7 @@ async def run_scheduled_job_now(
     if not job:
         return None
     identity = f"{user.uid}:manual:{request_id}"
-    run_id = build_request_id("scheduled-run", identity)
+    run_id = build_stable_id("scheduled-run", identity)
     run = await repo.get_run(run_id)
     if run is not None and run.job_id != job.id:
         raise HTTPException(status_code=409, detail="request_id 已用于其他立即运行意图")
@@ -374,29 +375,29 @@ async def _settle_dispatch_error(
     *,
     terminal: bool,
 ) -> dict | None:
-    """串行重查 Request；仅明确不可重试错误终结触发记录。"""
+    """串行重查 Input；仅明确不可恢复错误终结触发记录。"""
     async with pg_manager.get_async_session_context() as db:
         scheduled_run = await db.scalar(
             select(ScheduledAgentRun).where(ScheduledAgentRun.id == scheduled_run_id).with_for_update()
         )
         if scheduled_run is None:
             return None
-        request = None
+        input_item = None
         run = None
         if scheduled_run.status == "dispatching":
-            request, run = await ScheduledAgentRepository(db).get_request_and_run(scheduled_run.request_id)
-            if request is not None:
+            input_item, run = await ScheduledAgentRepository(db).get_input_and_run(scheduled_run.input_id)
+            if input_item is not None:
                 scheduled_run.status = "submitted"
             elif terminal:
                 scheduled_run.status = "failed"
                 scheduled_run.error_message = str(error)
-            if request is not None or terminal:
+            if input_item is not None or terminal:
                 await db.commit()
-        return _execution_to_dict(scheduled_run, request, run)
+        return _execution_to_dict(scheduled_run, input_item, run)
 
 
 async def dispatch_scheduled_run(*, scheduled_run_id: str) -> dict | None:
-    """将持久触发意图幂等提交到统一 AgentRun 链路。"""
+    """用同一 Thread 接入用例提交定时任务的首批输入。"""
     try:
         async with pg_manager.get_async_session_context() as db:
             scheduled_run = await db.scalar(
@@ -422,34 +423,53 @@ async def dispatch_scheduled_run(*, scheduled_run_id: str) -> dict | None:
                 return scheduled_run.to_dict()
             await _validate_project(scheduled_run.project_id, user, db)
             await _validate_agent(scheduled_run.agent_slug, user, db)
-            await submit_agent_request(
-                request_input=AgentRequestInput(
-                    agent_slug=scheduled_run.agent_slug,
-                    thread_id=scheduled_run.thread_id,
-                    request_id=scheduled_run.request_id,
-                    input_message=build_chat_input_message(scheduled_run.prompt),
-                    origin=RunOrigin(
-                        source=SCHEDULED_AGENT_SOURCE,
-                        channel="worker",
-                        external_id=scheduled_run.id,
-                        metadata={"scheduled_job_id": job.id, "scheduled_run_id": scheduled_run.id},
-                    ),
-                    request_metadata={"scheduled_job_id": job.id, "scheduled_run_id": scheduled_run.id},
-                    tool_approval_mode=scheduled_run.tool_approval_mode,
-                    model_spec=scheduled_run.model_spec,
-                    queue_policy="enqueue",
-                    create_conversation=True,
-                    conversation_title=scheduled_run.conversation_title,
-                    conversation_project_id=scheduled_run.project_id,
-                ),
-                current_user=user,
-                db=db,
-            )
-            scheduled_run.status = "submitted"
-            job.updated_at = utc_now_naive()
+            intent = {
+                "uid": str(user.uid),
+                "agent_slug": scheduled_run.agent_slug,
+                "thread_id": scheduled_run.thread_id,
+                "idempotency_key": scheduled_run.id,
+                "project_id": scheduled_run.project_id,
+                "title": scheduled_run.conversation_title,
+                "prompt": scheduled_run.prompt,
+                "model_spec": scheduled_run.model_spec,
+                "tool_approval_mode": scheduled_run.tool_approval_mode,
+                "job_id": job.id,
+            }
             await db.commit()
-            request, run = await ScheduledAgentRepository(db).get_request_and_run(scheduled_run.request_id)
-            return _execution_to_dict(scheduled_run, request, run)
+
+        async with pg_manager.get_async_session_context() as input_db:
+            accepted = await create_thread(
+                db=input_db,
+                scope=ActorScope(uid=intent["uid"], app_id=None),
+                agent_slug=intent["agent_slug"],
+                thread_id=intent["thread_id"],
+                idempotency_key=intent["idempotency_key"],
+                project_id=intent["project_id"],
+                title=intent["title"],
+                messages=[build_chat_input_message(intent["prompt"])],
+                model_spec=intent["model_spec"],
+                tool_approval_mode=intent["tool_approval_mode"],
+                source=SCHEDULED_AGENT_SOURCE,
+                channel="worker",
+                external_id=scheduled_run_id,
+                origin_metadata={"scheduled_job_id": intent["job_id"], "scheduled_run_id": scheduled_run_id},
+            )
+
+        async with pg_manager.get_async_session_context() as result_db:
+            current = await result_db.scalar(
+                select(ScheduledAgentRun).where(ScheduledAgentRun.id == scheduled_run_id).with_for_update()
+            )
+            if current is None:
+                return None
+            current.input_id = accepted["input_id"]
+            current.status = "submitted"
+            current.error_message = None
+            current_job = await result_db.get(ScheduledAgentJob, current.job_id)
+            if current_job is not None:
+                current_job.updated_at = utc_now_naive()
+            await result_db.commit()
+            input_item, run = await ScheduledAgentRepository(result_db).get_input_and_run(current.input_id)
+            return _execution_to_dict(current, input_item, run)
     except HTTPException as exc:
         settled = await _settle_dispatch_error(scheduled_run_id, exc, terminal=True)
         if settled is None:

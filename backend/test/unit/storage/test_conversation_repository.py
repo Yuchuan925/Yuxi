@@ -9,10 +9,17 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from yuxi.repositories.conversation_repository import (
     ConversationRepository,
-    INVOCATION_CONVERSATION_SOURCES,
     MAX_CONVERSATION_TITLE_LENGTH,
 )
-from yuxi.storage.postgres.models_business import AgentRun, Base, Conversation, ConversationStats, Message, ToolCall
+from yuxi.storage.postgres.models_business import (
+    AgentRun,
+    AgentTurn,
+    Base,
+    Conversation,
+    ConversationStats,
+    Message,
+    ToolCall,
+)
 from yuxi.utils.datetime_utils import utc_now_naive
 
 pytestmark = pytest.mark.unit
@@ -63,6 +70,12 @@ async def test_list_agent_runs_for_trace_returns_latest_bounded_window_in_order(
     )
     conversation_session.add(conversation)
     await conversation_session.flush()
+    conversation_session.add(
+        AgentTurn(
+            id="turn-trace", conversation_thread_id=conversation.thread_id, uid=conversation.uid, status="completed"
+        )
+    )
+    await conversation_session.flush()
     for index in range(3):
         created_at = now + timedelta(seconds=index)
         conversation_session.add(
@@ -73,7 +86,7 @@ async def test_list_agent_runs_for_trace_returns_latest_bounded_window_in_order(
                 agent_slug="main",
                 uid=conversation.uid,
                 status="completed",
-                request_id=f"request-trace-{index}",
+                turn_id="turn-trace",
                 conversation_id=conversation.id,
                 input_payload={},
                 created_at=created_at,
@@ -131,7 +144,7 @@ async def test_lock_conversation_refreshes_cached_lifecycle_state(tmp_path):
         await engine.dispose()
 
 
-def _seed_invocation_excluding_conversations() -> tuple[Conversation, Conversation, Conversation, datetime]:
+def _seed_source_filter_conversations() -> tuple[Conversation, Conversation, Conversation, datetime]:
     now = utc_now_naive()
     normal = Conversation(
         thread_id="thread-normal",
@@ -144,30 +157,30 @@ def _seed_invocation_excluding_conversations() -> tuple[Conversation, Conversati
         updated_at=now,
         extra_metadata={},
     )
-    agent_call = Conversation(
-        thread_id="thread-call",
-        project_id="project-thread-call",
+    subagent = Conversation(
+        thread_id="thread-subagent",
+        project_id="project-thread-subagent",
         uid="user-a",
         agent_id="agent-a",
-        title="Agent Call Run",
+        title="Subagent Thread",
         status="active",
         is_pinned=True,
         created_at=now,
         updated_at=now + timedelta(minutes=2),
-        extra_metadata={"source": "agent_call"},
+        extra_metadata={"source": "subagent"},
     )
-    agent_eval = Conversation(
-        thread_id="thread-eval",
-        project_id="project-thread-eval",
+    public_api = Conversation(
+        thread_id="thread-public",
+        project_id="project-thread-public",
         uid="user-a",
         agent_id="agent-a",
-        title="Agent Evaluation Run",
+        title="Public API Thread",
         status="active",
         created_at=now,
         updated_at=now + timedelta(minutes=1),
-        extra_metadata={"source": "agent_evaluation"},
+        extra_metadata={"source": "public_api"},
     )
-    return normal, agent_call, agent_eval, now
+    return normal, subagent, public_api, now
 
 
 @pytest.mark.asyncio
@@ -245,6 +258,10 @@ async def test_only_state_proven_terminal_model_audit_keeps_tool_call_visible(co
     )
     conversation_session.add(conversation)
     await conversation_session.flush()
+    conversation_session.add(
+        AgentTurn(id="turn-tool-audit", conversation_thread_id=conversation.thread_id, uid=conversation.uid)
+    )
+    await conversation_session.flush()
     runs = [
         AgentRun(
             id="run-active",
@@ -253,7 +270,7 @@ async def test_only_state_proven_terminal_model_audit_keeps_tool_call_visible(co
             agent_slug="main",
             uid=conversation.uid,
             status="running",
-            request_id="request-active",
+            turn_id="turn-tool-audit",
             conversation_id=conversation.id,
             input_payload={},
         ),
@@ -264,7 +281,7 @@ async def test_only_state_proven_terminal_model_audit_keeps_tool_call_visible(co
             agent_slug="main",
             uid=conversation.uid,
             status="completed",
-            request_id="request-unproven",
+            turn_id="turn-tool-audit",
             conversation_id=conversation.id,
             input_payload={},
         ),
@@ -275,7 +292,7 @@ async def test_only_state_proven_terminal_model_audit_keeps_tool_call_visible(co
             agent_slug="main",
             uid=conversation.uid,
             status="interrupted",
-            request_id="request-proven",
+            turn_id="turn-tool-audit",
             conversation_id=conversation.id,
             input_payload={},
         ),
@@ -335,9 +352,9 @@ async def test_only_state_proven_terminal_model_audit_keeps_tool_call_visible(co
 
 
 @pytest.mark.asyncio
-async def test_list_conversations_excludes_invocation_sources(conversation_session):
-    normal, agent_call, agent_eval, _ = _seed_invocation_excluding_conversations()
-    conversation_session.add_all([normal, agent_call, agent_eval])
+async def test_list_conversations_excludes_subagent_source(conversation_session):
+    normal, subagent, public_api, _ = _seed_source_filter_conversations()
+    conversation_session.add_all([normal, subagent, public_api])
     await conversation_session.commit()
 
     repo = ConversationRepository(conversation_session)
@@ -345,10 +362,10 @@ async def test_list_conversations_excludes_invocation_sources(conversation_sessi
         uid="user-a",
         limit=20,
         offset=0,
-        exclude_sources=INVOCATION_CONVERSATION_SOURCES,
+        exclude_sources=("subagent",),
     )
 
-    assert [item.thread_id for item in items] == ["thread-normal"]
+    assert {item.thread_id for item in items} == {"thread-normal", "thread-public"}
 
 
 @pytest.mark.asyncio
@@ -484,22 +501,22 @@ async def test_search_conversations_by_message_content_filters_user_status_and_t
 
 
 @pytest.mark.asyncio
-async def test_search_conversations_by_message_content_excludes_invocation_sources(conversation_session):
-    normal, agent_call, agent_eval, now = _seed_invocation_excluding_conversations()
-    conversation_session.add_all([normal, agent_call, agent_eval])
+async def test_search_conversations_by_message_content_excludes_subagent_source(conversation_session):
+    normal, subagent, public_api, now = _seed_source_filter_conversations()
+    conversation_session.add_all([normal, subagent, public_api])
     await conversation_session.flush()
     conversation_session.add_all(
         [
             Message(conversation=normal, role="user", content="导航隐藏检查", message_type="text", created_at=now),
             Message(
-                conversation=agent_call,
+                conversation=subagent,
                 role="user",
                 content="导航隐藏检查 call",
                 message_type="text",
                 created_at=now,
             ),
             Message(
-                conversation=agent_eval,
+                conversation=public_api,
                 role="user",
                 content="导航隐藏检查 eval",
                 message_type="text",
@@ -515,11 +532,11 @@ async def test_search_conversations_by_message_content_excludes_invocation_sourc
         query="导航隐藏检查",
         limit=20,
         offset=0,
-        exclude_sources=INVOCATION_CONVERSATION_SOURCES,
+        exclude_sources=("subagent",),
     )
 
     assert has_more is False
-    assert [item["conversation"].thread_id for item in items] == ["thread-normal"]
+    assert {item["conversation"].thread_id for item in items} == {"thread-normal", "thread-public"}
 
 
 @pytest.mark.asyncio

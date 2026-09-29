@@ -13,6 +13,8 @@ from yuxi.storage.postgres.models_business import (
     TOOL_AUDIT_MESSAGE_TYPE,
     AgentRun,
     AgentRunAttempt,
+    AgentInputMessage,
+    AgentTurn,
     Message,
     SubagentThread,
     ToolCall,
@@ -25,6 +27,7 @@ RUN_STATUS_TO_DELIVERY_STATUS = {
     "completed": "complete",
     "failed": "failed",
     "cancelled": "cancelled",
+    "yielded": "complete",
 }
 
 TOP_LEVEL_RUN_TYPES = ("chat", "resume")
@@ -38,19 +41,65 @@ class AgentRunRepository:
         result = await self.db.execute(select(AgentRun).where(AgentRun.id == run_id))
         return result.scalar_one_or_none()
 
-    async def get_run_by_request_id(self, request_id: str) -> AgentRun | None:
-        result = await self.db.execute(select(AgentRun).where(AgentRun.request_id == request_id))
-        return result.scalar_one_or_none()
-
     async def get_run_for_user(self, run_id: str, uid: str) -> AgentRun | None:
         result = await self.db.execute(select(AgentRun).where(and_(AgentRun.id == run_id, AgentRun.uid == str(uid))))
         return result.scalar_one_or_none()
+
+    async def get_run_for_scope(self, *, run_id: str, thread_id: str, uid: str, app_id: str | None) -> AgentRun | None:
+        """按完整 Thread 作用域读取 Run。"""
+        result = await self.db.execute(
+            select(AgentRun).where(
+                AgentRun.id == run_id,
+                AgentRun.conversation_thread_id == thread_id,
+                AgentRun.uid == uid,
+                AgentRun.app_id == app_id,
+            )
+        )
+        return result.scalar_one_or_none()
+
+    async def list_top_level_runs_after_sequence(
+        self, *, thread_id: str, uid: str, app_id: str | None, after_sequence: int, limit: int = 100
+    ) -> list[AgentRun]:
+        """按持久执行序号读取线程后续的顶层 Run。"""
+        result = await self.db.execute(
+            select(AgentRun)
+            .where(
+                AgentRun.conversation_thread_id == thread_id,
+                AgentRun.uid == uid,
+                AgentRun.app_id == app_id,
+                AgentRun.run_type.in_(TOP_LEVEL_RUN_TYPES),
+                AgentRun.execution_seq > after_sequence,
+            )
+            .order_by(AgentRun.execution_seq)
+            .limit(limit)
+        )
+        return list(result.scalars())
+
+    async def list_thread_runs_after_sequence(
+        self, *, thread_id: str, uid: str, app_id: str | None, after_sequence: int, limit: int = 100
+    ) -> list[AgentRun]:
+        """按当前 Thread 的执行序号读取顶层或子智能体 Run。"""
+        result = await self.db.execute(
+            select(AgentRun)
+            .where(
+                AgentRun.conversation_thread_id == thread_id,
+                AgentRun.uid == uid,
+                AgentRun.app_id == app_id,
+                AgentRun.execution_seq > after_sequence,
+            )
+            .order_by(AgentRun.execution_seq)
+            .limit(limit)
+        )
+        return list(result.scalars())
 
     async def lock_run_for_user(self, run_id: str, uid: str) -> AgentRun | None:
         """锁定用户 Run，串行化 execution tree 创建与父 Run 终态提交。"""
 
         result = await self.db.execute(
-            select(AgentRun).where(and_(AgentRun.id == run_id, AgentRun.uid == str(uid))).with_for_update()
+            select(AgentRun)
+            .where(and_(AgentRun.id == run_id, AgentRun.uid == str(uid)))
+            .with_for_update()
+            .execution_options(populate_existing=True)
         )
         return result.scalar_one_or_none()
 
@@ -256,19 +305,28 @@ class AgentRunRepository:
         runtime_scope_id: str | None = None,
         agent_slug: str,
         uid: str,
-        request_id: str,
+        turn_id: str,
         input_payload: dict,
+        input_id: str | None = None,
         source: str = "chat",
         channel: str = "web",
         external_id: str | None = None,
         origin_metadata: dict | None = None,
         conversation_id: int | None = None,
         created_by_run_id: str | None = None,
+        resume_from_run_id: str | None = None,
         subagent_thread_relation_id: int | None = None,
         run_type: str = "chat",
         input_message_id: int | None = None,
+        app_id: str | None = None,
+        api_key_id: int | None = None,
     ) -> AgentRun:
-        """登记一条 run 记录；输入正文和图片应通过 input_message_id 指向 Message。"""
+        """登记直接绑定 Turn 的执行段。"""
+        turn = await self.db.get(AgentTurn, turn_id)
+        if turn is None or turn.uid != str(uid) or turn.app_id != app_id:
+            raise ValueError("Run 缺少同作用域 Turn")
+        if run_type != "subagent" and turn.conversation_thread_id != conversation_thread_id:
+            raise ValueError("顶层 Run 必须属于 Turn 的 Thread")
         runtime_scope = str(conversation_thread_id) if runtime_scope_id is None else str(runtime_scope_id).strip()
         run = AgentRun(
             id=run_id,
@@ -276,13 +334,17 @@ class AgentRunRepository:
             runtime_scope_id=runtime_scope,
             agent_slug=agent_slug,
             uid=str(uid),
-            request_id=request_id,
+            turn_id=turn_id,
+            input_id=input_id,
+            app_id=app_id,
+            api_key_id=api_key_id,
             source=source,
             channel=channel,
             external_id=external_id,
             origin_metadata=origin_metadata or {},
             conversation_id=conversation_id,
             created_by_run_id=created_by_run_id,
+            resume_from_run_id=resume_from_run_id,
             subagent_thread_relation_id=subagent_thread_relation_id,
             run_type=run_type,
             input_message_id=input_message_id,
@@ -292,6 +354,7 @@ class AgentRunRepository:
         )
         self.db.add(run)
         await self.db.flush()
+        await self.db.refresh(run, ["execution_seq"])
         return run
 
     async def set_langfuse_trace_id(
@@ -323,6 +386,30 @@ class AgentRunRepository:
         await self.db.flush()
         return run
 
+    async def set_langfuse_observation_id(
+        self,
+        run_id: str,
+        observation_id: str,
+        *,
+        worker_id: str,
+        now: datetime | None = None,
+    ) -> AgentRun | None:
+        """由当前 owner 一次性固定 Run observation 身份。"""
+        normalized_id = observation_id.strip()
+        if not normalized_id or len(normalized_id) > 16:
+            raise ValueError("observation_id 长度无效")
+        run = await self._lock_run(run_id)
+        if run is None:
+            return None
+        current_time = now or utc_now_naive()
+        self._require_lease_owner(run, worker_id=worker_id, now=current_time, action="固化 Langfuse observation")
+        if run.langfuse_observation_id not in (None, normalized_id):
+            raise ValueError("Run 已绑定不同的 Langfuse observation")
+        run.langfuse_observation_id = normalized_id
+        run.updated_at = current_time
+        await self.db.flush()
+        return run
+
     async def set_output_message(
         self,
         run_id: str,
@@ -345,7 +432,7 @@ class AgentRunRepository:
 
         message = await self._get_matching_output_message(run, message_id)
         if message is None:
-            raise ValueError("输出消息必须属于同一 conversation、Run 和 request，且角色为 assistant")
+            raise ValueError("输出消息必须属于同一 conversation、Turn 和 Run，且角色为 assistant")
 
         run.output_message_id = message_id
         run.updated_at = current_time
@@ -358,7 +445,6 @@ class AgentRunRepository:
         *,
         worker_id: str,
         conversation_thread_id: str,
-        request_id: str,
         now: datetime | None = None,
     ) -> AgentRun | None:
         """在任何输出写入前锁定并验证当前 attempt 的完整因果边界。"""
@@ -370,8 +456,8 @@ class AgentRunRepository:
             return None
 
         self._require_lease_owner(run, worker_id=worker_id, now=now or utc_now_naive(), action="持久化输出消息")
-        if run.conversation_thread_id != conversation_thread_id or run.request_id != request_id:
-            raise ValueError("AgentRun 输出必须属于同一 thread 和 request")
+        if run.conversation_thread_id != conversation_thread_id:
+            raise ValueError("AgentRun 输出必须属于同一 thread")
         if run.conversation_id is None:
             raise ValueError("AgentRun 输出缺少 conversation 归属")
         return run
@@ -383,7 +469,6 @@ class AgentRunRepository:
         uid: str,
         worker_id: str,
         conversation_thread_id: str,
-        request_id: str,
         now: datetime | None = None,
     ) -> AgentRun | None:
         """锁定并验证允许写入用户 Memory 的当前顶层 attempt。"""
@@ -397,10 +482,9 @@ class AgentRunRepository:
         if (
             run.uid != str(uid)
             or run.conversation_thread_id != conversation_thread_id
-            or run.request_id != request_id
             or run.run_type not in TOP_LEVEL_RUN_TYPES
         ):
-            raise ValueError("Memory 写入必须属于当前用户的同一顶层 Run、thread 和 request")
+            raise ValueError("Memory 写入必须属于当前用户的同一顶层 Run 和 thread")
         return run
 
     async def mark_running(
@@ -543,66 +627,58 @@ class AgentRunRepository:
         await self.db.flush()
         return True
 
-    async def reconcile_expired_leases(
-        self,
-        *,
-        now: datetime | None = None,
-    ) -> tuple[list[AgentRun], list[tuple[str, str]]]:
-        """把失去 owner 的活跃 Run 原子收敛为失败事实。"""
+    async def list_expired_lease_candidates(
+        self, *, now: datetime | None = None
+    ) -> list[tuple[str, str, str, str | None]]:
+        """只读失联候选，供 worker 按 Thread→Turn→Run 锁顺序处理。"""
         current_time = now or utc_now_naive()
-        lease_missing_or_expired = or_(
-            AgentRun.lease_expires_at.is_(None),
-            AgentRun.lease_expires_at <= current_time,
+        result = await self.db.execute(
+            select(AgentRun.id, AgentRun.runtime_scope_id, AgentRun.uid, AgentRun.app_id)
+            .where(self._expired_lease_condition(current_time))
+            .order_by(
+                AgentRun.runtime_scope_id,
+                AgentRun.created_at,
+                AgentRun.id,
+            )
         )
+        return [(str(run_id), str(root_thread_id), str(uid), app_id) for run_id, root_thread_id, uid, app_id in result]
+
+    async def reconcile_expired_lease(
+        self, run_id: str, *, now: datetime | None = None
+    ) -> tuple[AgentRun | None, list[tuple[str, str]]]:
+        """在调用方已锁 Thread 和 Turn 后，锁单 Run 并收敛失联事实。"""
+        current_time = now or utc_now_naive()
         result = await self.db.execute(
             select(AgentRun)
-            .where(
-                or_(
-                    and_(AgentRun.status == "running", lease_missing_or_expired),
-                    and_(
-                        AgentRun.status == "cancel_requested",
-                        AgentRun.worker_id.is_not(None),
-                        lease_missing_or_expired,
-                    ),
-                    and_(
-                        AgentRun.status == "cancel_requested",
-                        AgentRun.worker_id.is_(None),
-                        AgentRun.started_at.is_not(None),
-                    ),
-                )
-            )
-            .with_for_update(skip_locked=True)
+            .where(AgentRun.id == run_id, self._expired_lease_condition(current_time))
+            .with_for_update()
+            .execution_options(populate_existing=True)
         )
-        runs = list(result.scalars().all())
-        runs.sort(key=lambda run: run.created_by_run_id is not None)
-        reconciled_runs: list[AgentRun] = []
-        cancelled_descendants: list[tuple[str, str]] = []
-        for run in runs:
-            if run.status in TERMINAL_RUN_STATUSES:
-                continue
-            run.status = "failed"
-            run.error_type = "worker_lease_expired"
-            run.error_message = "执行 worker 的 lease 已过期；本次运行结果未知，需按 at-least-once 语义检查副作用。"
-            run.finished_at = current_time
-            run.updated_at = current_time
-            run.worker_id = None
-            run.heartbeat_at = None
-            run.lease_expires_at = None
-            run.runtime_cleanup_pending = run.run_type != "subagent"
-            await self._project_input_delivery_status(run)
-            await self._close_running_audits(run.id, execution_status="abandoned", now=current_time)
-            await self._close_open_attempts(
-                run.id,
-                outcome="lease_expired",
-                error_type="worker_lease_expired",
-                error_message="执行 worker 的 lease 已过期；本次运行结果未知。",
-                now=current_time,
-            )
-            reconciled_runs.append(run)
-            cancelled_descendants.extend(await self.cancel_active_execution_tree_descendants(run))
-        if reconciled_runs:
-            await self.db.flush()
-        return reconciled_runs, cancelled_descendants
+        run = result.scalar_one_or_none()
+        if run is None:
+            return None, []
+
+        run.status = "failed"
+        run.error_type = "worker_lease_expired"
+        run.error_message = "执行 worker 的 lease 已过期；本次运行结果未知，需按 at-least-once 语义检查副作用。"
+        run.finished_at = current_time
+        run.updated_at = current_time
+        run.worker_id = None
+        run.heartbeat_at = None
+        run.lease_expires_at = None
+        run.runtime_cleanup_pending = run.run_type != "subagent"
+        await self._project_input_delivery_status(run)
+        await self._close_running_audits(run.id, execution_status="abandoned", now=current_time)
+        await self._close_open_attempts(
+            run.id,
+            outcome="lease_expired",
+            error_type="worker_lease_expired",
+            error_message="执行 worker 的 lease 已过期；本次运行结果未知。",
+            now=current_time,
+        )
+        cancelled_descendants = await self.cancel_active_execution_tree_descendants(run)
+        await self.db.flush()
+        return run, cancelled_descendants
 
     async def fail_nonterminal_for_storage_migration(self) -> list[str]:
         """停机迁移时把已失去运行环境的 Run 收敛为可观察失败事实。"""
@@ -648,8 +724,8 @@ class AgentRunRepository:
     ) -> tuple[AgentRun | None, list[str]]:
         """按 root 到 descendants 的固定锁顺序取消一棵执行树。"""
         run = await self.lock_run_for_user(run_id, str(uid))
-        if run is None:
-            return None, []
+        if run is None or run.status in TERMINAL_RUN_STATUSES:
+            return run, []
         await self._request_cancel_locked(run)
         cancelled_ids = [run.id]
         if cascade_descendants:
@@ -786,13 +862,14 @@ class AgentRunRepository:
         run.worker_id = None
         run.heartbeat_at = None
         run.lease_expires_at = None
-        run.runtime_cleanup_pending = run.run_type != "subagent"
+        run.runtime_cleanup_pending = run.run_type != "subagent" and status != "yielded"
         await self._project_input_delivery_status(run)
         audit_status = {
             "completed": "abandoned",
             "failed": "failed",
             "cancelled": "interrupted",
             "interrupted": "interrupted",
+            "yielded": "interrupted",
         }[status]
         await self._close_running_audits(
             run.id,
@@ -870,11 +947,17 @@ class AgentRunRepository:
     async def _project_input_delivery_status(self, run: AgentRun) -> None:
         """在 owning transaction 内同步输入消息的终态投影。"""
         delivery_status = RUN_STATUS_TO_DELIVERY_STATUS.get(run.status)
-        if run.input_message_id is None or delivery_status is None:
+        if delivery_status is None:
             return
-        await self.db.execute(
-            update(Message).where(Message.id == run.input_message_id).values(delivery_status=delivery_status)
-        )
+        if run.input_id is not None:
+            message_ids = select(AgentInputMessage.message_id).where(AgentInputMessage.input_id == run.input_id)
+            await self.db.execute(
+                update(Message).where(Message.id.in_(message_ids)).values(delivery_status=delivery_status)
+            )
+        elif run.input_message_id is not None:
+            await self.db.execute(
+                update(Message).where(Message.id == run.input_message_id).values(delivery_status=delivery_status)
+            )
 
     async def record_run_manifest(
         self,
@@ -1063,11 +1146,25 @@ class AgentRunRepository:
                 Message.id == message_id,
                 Message.conversation_id == run.conversation_id,
                 Message.run_id == run.id,
-                Message.request_id == run.request_id,
+                Message.turn_id == run.turn_id,
                 Message.role == "assistant",
             )
         )
         return result.scalar_one_or_none()
+
+    @staticmethod
+    def _expired_lease_condition(now: datetime):
+        """候选读取与锁内复核共用同一失联判定。"""
+        lease_expired = or_(AgentRun.lease_expires_at.is_(None), AgentRun.lease_expires_at <= now)
+        return or_(
+            and_(AgentRun.status == "running", lease_expired),
+            and_(AgentRun.status == "cancel_requested", AgentRun.worker_id.is_not(None), lease_expired),
+            and_(
+                AgentRun.status == "cancel_requested",
+                AgentRun.worker_id.is_(None),
+                AgentRun.started_at.is_not(None),
+            ),
+        )
 
     @staticmethod
     def _require_lease_owner(run: AgentRun, *, worker_id: str, now: datetime, action: str) -> None:
@@ -1080,5 +1177,7 @@ class AgentRunRepository:
             raise ValueError(f"只有当前有效 AgentRun lease owner 可以{action}")
 
     async def _lock_run(self, run_id: str) -> AgentRun | None:
-        result = await self.db.execute(select(AgentRun).where(AgentRun.id == run_id).with_for_update())
+        result = await self.db.execute(
+            select(AgentRun).where(AgentRun.id == run_id).with_for_update().execution_options(populate_existing=True)
+        )
         return result.scalar_one_or_none()

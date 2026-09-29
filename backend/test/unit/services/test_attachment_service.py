@@ -47,6 +47,24 @@ async def test_tmp_attachment_parse_preserves_http_exception(monkeypatch):
     assert minio_client.uploads == []
 
 
+@pytest.mark.asyncio
+async def test_tmp_attachment_rejects_same_user_from_other_app(monkeypatch):
+    """同一 UID 的不同 APP 无法解析彼此临时对象。"""
+    from fastapi import HTTPException
+
+    monkeypatch.setattr(service, "get_minio_client", FakeMinioClient)
+    uploaded = await service.upload_tmp_attachment_view(
+        file=FakeUpload("report.pdf", b"content", "application/pdf"),
+        current_uid="user-1",
+        app_id="app-a",
+    )
+    with pytest.raises(HTTPException) as exc:
+        await service.parse_tmp_attachment_view(
+            object_name=uploaded["object_name"], parse_method="disable", current_uid="user-1", app_id="app-b"
+        )
+    assert exc.value.status_code == 403
+
+
 class FakeUpload:
     def __init__(self, filename: str, content: bytes, content_type: str | None = None):
         self.filename = filename
@@ -142,6 +160,7 @@ class FakeConversation:
     uid: str = "user-1"
     agent_id: str = "agent-1"
     status: str = "active"
+    app_id: str | None = None
     extra_metadata: dict | None = None
 
 
@@ -173,6 +192,19 @@ class FakeConversationRepository:
         return len(self.attachments) != before
 
 
+@pytest.mark.asyncio
+async def test_thread_attachment_rejects_same_user_from_other_app(monkeypatch):
+    """附件读取在 service 边界拒绝同 UID 的跨 APP Thread。"""
+    repo = FakeConversationRepository(None)
+    repo.conversation.app_id = "app-a"
+    monkeypatch.setattr(service, "ConversationRepository", lambda _db: repo)
+    with pytest.raises(service.HTTPException) as exc:
+        await service.list_thread_attachments_view(
+            thread_id="thread-1", db=FakeDB(), current_uid="user-1", app_id="app-b"
+        )
+    assert exc.value.status_code == 404
+
+
 class FakeDB:
     def __init__(self):
         self.commit_count = 0
@@ -191,12 +223,12 @@ class FailingCommitDB(FakeDB):
         raise RuntimeError("commit failed")
 
 
-class EmptyAgentRunRequestRepository:
+class EmptyAgentInputRepository:
     def __init__(self, db):
         del db
 
-    async def get_by_request_id(self, request_id: str):
-        del request_id
+    async def get_for_scope(self, **kwargs):
+        del kwargs
         return None
 
 
@@ -211,7 +243,7 @@ class EmptyAgentRunRepository:
 
 @pytest.fixture(autouse=True)
 def stub_attachment_usage_checks(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr(service, "AgentRunRequestRepository", EmptyAgentRunRequestRepository)
+    monkeypatch.setattr(service, "AgentInputRepository", EmptyAgentInputRepository)
     monkeypatch.setattr(service, "AgentRunRepository", EmptyAgentRunRepository)
 
 
@@ -244,10 +276,10 @@ class FakeWorkdir:
             raise FileNotFoundError(scope)
 
 
-class QueuedAgentRunRequestRepository(EmptyAgentRunRequestRepository):
-    async def get_by_request_id(self, request_id: str):
-        del request_id
-        return SimpleNamespace(status="queued")
+class PendingAgentInputRepository(EmptyAgentInputRepository):
+    async def get_for_scope(self, **kwargs):
+        del kwargs
+        return SimpleNamespace(status="pending")
 
 
 class ActiveAgentRunRepository(EmptyAgentRunRepository):
@@ -590,7 +622,7 @@ async def test_delete_thread_attachment_updates_live_workdir_even_during_runtime
 
 
 @pytest.mark.asyncio
-async def test_delete_thread_attachment_rejects_queued_request_use(monkeypatch):
+async def test_delete_thread_attachment_rejects_pending_input_use(monkeypatch):
     fake_repo = FakeConversationRepository(db=None)
     backend = FakeWorkdirStorage()
     original = "/home/gem/user-data/projects/11111111-1111-4111-8111-111111111111/uploads/file-1_demo.pdf"
@@ -600,7 +632,7 @@ async def test_delete_thread_attachment_rejects_queued_request_use(monkeypatch):
         "file_name": "demo.pdf",
         "original_path": original,
         "path": original,
-        "request_id": "request-1",
+        "input_id": "input-1",
     }
     fake_repo.attachments = [attachment]
 
@@ -610,7 +642,7 @@ async def test_delete_thread_attachment_rejects_queued_request_use(monkeypatch):
 
     monkeypatch.setattr(service, "ConversationRepository", lambda _db: fake_repo)
     monkeypatch.setattr(workdir_service, "resolve_authorized_conversation_workdir", resolve_binding)
-    monkeypatch.setattr(service, "AgentRunRequestRepository", QueuedAgentRunRequestRepository)
+    monkeypatch.setattr(service, "AgentInputRepository", PendingAgentInputRepository)
 
     with pytest.raises(service.HTTPException) as exc_info:
         await service.delete_thread_attachment_view(

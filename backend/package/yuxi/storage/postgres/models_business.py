@@ -13,8 +13,10 @@ from sqlalchemy import (
     Float,
     ForeignKey,
     ForeignKeyConstraint,
+    Identity,
     Index,
     Integer,
+    Sequence,
     String,
     Text,
     UniqueConstraint,
@@ -32,14 +34,12 @@ JSON_VALUE = JSON().with_variant(JSONB, "postgresql")
 
 MAX_LOGIN_FAILED_ATTEMPTS = 5
 LOGIN_LOCK_DURATION_SECONDS = 300
-AGENT_RUN_TERMINAL_STATUSES = ("completed", "failed", "cancelled", "interrupted")
+AGENT_RUN_TERMINAL_STATUSES = ("completed", "failed", "cancelled", "interrupted", "yielded")
 MODEL_AUDIT_MESSAGE_TYPE = "model_audit"
 TOOL_AUDIT_MESSAGE_TYPE = "tool_audit"
 AUDIT_MESSAGE_TYPES = (MODEL_AUDIT_MESSAGE_TYPE, TOOL_AUDIT_MESSAGE_TYPE)
 AGENT_RUN_SHAPE_CONSTRAINT_NAME = "ck_agent_runs_nonterminal_shape"
 AGENT_RUN_SHAPE_CONSTRAINT_SQL = """
-status IN ('completed', 'failed', 'cancelled', 'interrupted')
-OR (
     runtime_scope_id <> ''
  AND conversation_thread_id <> ''
  AND ((run_type = 'chat'
@@ -48,12 +48,13 @@ OR (
      AND subagent_thread_relation_id IS NULL)
  OR (run_type = 'resume'
      AND runtime_scope_id = conversation_thread_id
-     AND created_by_run_id IS NOT NULL
+     AND created_by_run_id IS NULL
+     AND resume_from_run_id IS NOT NULL
      AND subagent_thread_relation_id IS NULL)
  OR (run_type = 'subagent'
      AND created_by_run_id IS NOT NULL
+     AND resume_from_run_id IS NULL
      AND subagent_thread_relation_id IS NOT NULL))
-)
 """
 PROJECT_STATUS_CONSTRAINT_NAME = "ck_projects_status"
 PROJECT_STATUS_CONSTRAINT_SQL = "status IN ('active', 'deleted')"
@@ -166,6 +167,15 @@ class User(Base):
     """用户模型"""
 
     __tablename__ = "users"
+    __table_args__ = (
+        UniqueConstraint("owner_user_id", "app_id", "end_user_id", name="uq_users_public_end_user_identity"),
+        CheckConstraint(
+            "(user_kind = 'human' AND owner_user_id IS NULL AND app_id IS NULL AND end_user_id IS NULL) "
+            "OR (user_kind = 'end_user' AND owner_user_id IS NOT NULL AND app_id IS NOT NULL "
+            "AND end_user_id IS NOT NULL AND role = 'user')",
+            name="ck_users_public_end_user_shape",
+        ),
+    )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     username = Column(String, nullable=False, unique=True, index=True)  # 显示名称
@@ -174,6 +184,10 @@ class User(Base):
     avatar = Column(String, nullable=True)  # 头像URL
     password_hash = Column(String, nullable=False)
     role = Column(String, nullable=False, default="user")  # 角色: superadmin, admin, user
+    user_kind = Column(String(16), nullable=False, default="human", server_default="human")
+    owner_user_id = Column(Integer, ForeignKey("users.id", name="fk_users_owner_user_id"), nullable=True)
+    app_id = Column(String(64), nullable=True)
+    end_user_id = Column(String(128), nullable=True)
     department_id = Column(Integer, ForeignKey("departments.id"), nullable=True)  # 部门ID
     created_at = Column(DateTime, default=utc_now_naive)
     last_login = Column(DateTime, nullable=True)
@@ -207,6 +221,7 @@ class User(Base):
             "phone_number": self.phone_number,
             "avatar": normalize_public_minio_url(self.avatar),
             "role": self.role,
+            "user_kind": self.user_kind,
             "department_id": self.department_id,
             "created_at": format_utc_datetime(self.created_at),
             "last_login": format_utc_datetime(self.last_login),
@@ -403,10 +418,12 @@ class Conversation(Base):
     thread_id = Column(String(64), unique=True, index=True, nullable=False, comment="Thread ID (UUID)")
     creation_request_id = Column(String(64), nullable=True, comment="新建 Conversation 幂等请求 ID")
     uid = Column(String(64), index=True, nullable=False, comment="UID")
+    app_id = Column(String(64), nullable=True, comment="Public API 可信 APP 归属")
     # 历史字段名，实际保存的是 Agent.slug。
     agent_id = Column(String(64), index=True, nullable=False, comment="Agent slug (legacy column name: agent_id)")
     title = Column(String(255), nullable=True, comment="Conversation title")
     status = Column(String(20), default="active", comment="Status: active/archived/deleted")
+    queue_paused = Column(Boolean, nullable=False, default=False, server_default="false")
     is_pinned = Column(Boolean, default=False, nullable=False, index=True, comment="Is pinned to top")
     last_viewed_run_id = Column(String(64), nullable=True, comment="Latest top-level run id viewed by user")
     project_id = Column(String(64), nullable=False, index=True, comment="Conversation 绑定的 Project ID")
@@ -440,12 +457,192 @@ class Conversation(Base):
             "agent_id": self.agent_id,
             "title": self.title,
             "status": self.status,
+            "queue_paused": bool(self.queue_paused),
             "is_pinned": bool(self.is_pinned),
             "project_id": self.project_id,
             "created_at": format_utc_datetime(self.created_at),
             "updated_at": format_utc_datetime(self.updated_at),
             "metadata": metadata,
         }
+
+
+class AgentTurn(Base):
+    """线程内一轮工作的状态、当前执行和最终结果。"""
+
+    __tablename__ = "agent_turns"
+
+    id = Column(String(64), primary_key=True)
+    conversation_thread_id = Column(
+        String(64), ForeignKey("conversations.thread_id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    uid = Column(String(64), nullable=False, index=True)
+    app_id = Column(String(64), nullable=True, index=True)
+    status = Column(String(32), nullable=False, default="running")
+    current_run_id = Column(String(64), nullable=True)
+    result_run_id = Column(String(64), nullable=True)
+    langfuse_root_observation_id = Column(String(16), nullable=True)
+    waitpoint = Column(JSON_VALUE, nullable=True)
+    created_at = Column(DateTime, nullable=False, default=utc_now_naive)
+    finished_at = Column(DateTime, nullable=True)
+    cancelled_at = Column(DateTime, nullable=True)
+
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('running', 'waiting', 'cancelling', 'completed', 'failed', 'cancelled')",
+            name="ck_agent_turns_status",
+        ),
+        ForeignKeyConstraint(
+            ["id", "current_run_id"],
+            ["agent_runs.turn_id", "agent_runs.id"],
+            name="fk_agent_turns_current_run",
+            use_alter=True,
+            deferrable=True,
+            initially="DEFERRED",
+        ),
+        ForeignKeyConstraint(
+            ["id", "result_run_id"],
+            ["agent_runs.turn_id", "agent_runs.id"],
+            name="fk_agent_turns_result_run",
+            use_alter=True,
+            deferrable=True,
+            initially="DEFERRED",
+        ),
+    )
+
+
+Index(
+    "uq_agent_turns_one_active_per_thread",
+    AgentTurn.conversation_thread_id,
+    unique=True,
+    postgresql_where=AgentTurn.status.in_(("running", "waiting", "cancelling")),
+    sqlite_where=AgentTurn.status.in_(("running", "waiting", "cancelling")),
+)
+
+
+class AgentInput(Base):
+    """持久输入只记录排队、消费和取消事实。"""
+
+    __tablename__ = "agent_inputs"
+
+    id = Column(String(64), primary_key=True)
+    received_seq = Column(BigInteger, Identity(), nullable=False, unique=True)
+    conversation_thread_id = Column(String(64), ForeignKey("conversations.thread_id"), nullable=False, index=True)
+    uid = Column(String(64), nullable=False)
+    app_id = Column(String(64), nullable=True)
+    api_key_id = Column(Integer, nullable=True, comment="首次接收 Input 的 API Key ID 快照")
+    agent_slug = Column(String(64), nullable=False)
+    kind = Column(String(16), nullable=False)
+    status = Column(String(16), nullable=False, default="pending")
+    turn_id = Column(String(64), ForeignKey("agent_turns.id"), nullable=True, index=True)
+    consumed_run_id = Column(String(64), ForeignKey("agent_runs.id"), nullable=True, unique=True)
+    cutoff_seq = Column(BigInteger, nullable=True)
+    input_payload = Column(JSON_VALUE, nullable=False, default=dict)
+    source = Column(String(32), nullable=False, default="chat")
+    channel = Column(String(32), nullable=False, default="web")
+    external_id = Column(String(128), nullable=True)
+    origin_metadata = Column(JSON_VALUE, nullable=False, default=dict)
+    created_at = Column(DateTime, nullable=False, default=utc_now_naive)
+    consumed_at = Column(DateTime, nullable=True)
+    cancelled_at = Column(DateTime, nullable=True)
+
+    __table_args__ = (
+        CheckConstraint("kind IN ('follow_up', 'steer')", name="ck_agent_inputs_kind"),
+        CheckConstraint(
+            "(status = 'pending' AND consumed_run_id IS NULL AND cutoff_seq IS NULL AND consumed_at IS NULL "
+            "AND ((kind = 'steer' AND turn_id IS NOT NULL) OR (kind = 'follow_up' AND turn_id IS NULL))) "
+            "OR (status = 'consumed' AND turn_id IS NOT NULL AND consumed_run_id IS NOT NULL "
+            "AND cutoff_seq IS NOT NULL AND consumed_at IS NOT NULL) "
+            "OR (status = 'cancelled' AND consumed_run_id IS NULL AND cancelled_at IS NOT NULL)",
+            name="ck_agent_inputs_delivery",
+        ),
+        ForeignKeyConstraint(
+            ["turn_id", "consumed_run_id"],
+            ["agent_runs.turn_id", "agent_runs.id"],
+            name="fk_agent_inputs_consumed_run_turn",
+            use_alter=True,
+        ),
+    )
+
+
+Index(
+    "uq_agent_inputs_pending_steer_per_turn",
+    AgentInput.turn_id,
+    unique=True,
+    postgresql_where=text("kind = 'steer' AND status = 'pending'"),
+    sqlite_where=text("kind = 'steer' AND status = 'pending'"),
+)
+Index(
+    "ix_agent_inputs_follow_up_queue",
+    AgentInput.conversation_thread_id,
+    AgentInput.status,
+    AgentInput.received_seq,
+    postgresql_where=text("kind = 'follow_up'"),
+    sqlite_where=text("kind = 'follow_up'"),
+)
+
+
+class AgentInputReceipt(Base):
+    """独立接收序号和作用域幂等事实。"""
+
+    __tablename__ = "agent_input_receipts"
+
+    id = Column(String(64), primary_key=True)
+    receive_seq = Column(BigInteger, Identity(), nullable=False, unique=True)
+    idempotency_key = Column(String(128), nullable=False)
+    uid = Column(String(64), nullable=False)
+    app_id = Column(String(64), nullable=True)
+    conversation_thread_id = Column(String(64), ForeignKey("conversations.thread_id"), nullable=False)
+    event_type = Column(String(48), nullable=False)
+    intent_hash = Column(String(64), nullable=False)
+    input_id = Column(String(64), ForeignKey("agent_inputs.id"), nullable=True)
+    turn_id = Column(String(64), ForeignKey("agent_turns.id"), nullable=True)
+    run_id = Column(String(64), ForeignKey("agent_runs.id"), nullable=True)
+    created_at = Column(DateTime, nullable=False, default=utc_now_naive)
+
+    __table_args__ = (UniqueConstraint("id", "input_id", name="uq_agent_input_receipts_id_input"),)
+
+
+Index(
+    "uq_agent_input_receipts_product_key",
+    AgentInputReceipt.uid,
+    AgentInputReceipt.conversation_thread_id,
+    AgentInputReceipt.idempotency_key,
+    unique=True,
+    postgresql_where=AgentInputReceipt.app_id.is_(None),
+    sqlite_where=AgentInputReceipt.app_id.is_(None),
+)
+Index(
+    "uq_agent_input_receipts_app_key",
+    AgentInputReceipt.uid,
+    AgentInputReceipt.app_id,
+    AgentInputReceipt.conversation_thread_id,
+    AgentInputReceipt.idempotency_key,
+    unique=True,
+    postgresql_where=AgentInputReceipt.app_id.is_not(None),
+    sqlite_where=AgentInputReceipt.app_id.is_not(None),
+)
+
+
+class AgentInputMessage(Base):
+    """保存每次接收事件中的原始消息及顺序。"""
+
+    __tablename__ = "agent_input_messages"
+
+    id = Column(BigInteger, Identity(), primary_key=True)
+    input_id = Column(String(64), nullable=False)
+    receipt_id = Column(String(64), nullable=False)
+    message_id = Column(Integer, ForeignKey("messages.id"), nullable=False, unique=True)
+    position = Column(Integer, nullable=False)
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["receipt_id", "input_id"],
+            ["agent_input_receipts.id", "agent_input_receipts.input_id"],
+            name="fk_agent_input_messages_receipt_input",
+        ),
+        UniqueConstraint("receipt_id", "position", name="uq_agent_input_messages_receipt_position"),
+        CheckConstraint("position >= 0", name="ck_agent_input_messages_position"),
+    )
 
 
 class SubagentThread(Base):
@@ -526,7 +723,7 @@ class Message(Base):
     extra_metadata = Column(JSON, nullable=True, comment="Additional metadata (complete message dump)")
     image_content = Column(Text, nullable=True, comment="Base64 encoded image content for multimodal messages")
     run_id = Column(String(64), ForeignKey("agent_runs.id"), nullable=True, index=True, comment="Agent run ID")
-    request_id = Column(String(64), nullable=True, index=True, comment="Request ID for idempotency")
+    turn_id = Column(String(64), ForeignKey("agent_turns.id"), nullable=True, index=True)
     delivery_status = Column(String(32), nullable=False, default="complete", comment="Message status")
     operation_id = Column(String(128), nullable=True, comment="同一 Run 内的 Model/Tool 稳定来源键")
     started_at = Column(DateTime, nullable=True, comment="Yuxi 观察到操作开始的 wall-clock 时间")
@@ -553,7 +750,7 @@ class Message(Base):
             "metadata": self.extra_metadata or {},
             "image_content": self.image_content,
             "run_id": self.run_id,
-            "request_id": self.request_id,
+            "turn_id": self.turn_id,
             "status": self.delivery_status,
             "operation_id": self.operation_id,
             "started_at": format_utc_datetime(self.started_at),
@@ -980,12 +1177,12 @@ class ScheduledAgentJob(Base):
 
 
 class ScheduledAgentRun(Base):
-    """一次定时或手动触发意图，保存配置快照并关联统一 Request。"""
+    """一次定时或手动触发意图，保存配置快照并关联统一 Input。"""
 
     __tablename__ = "scheduled_agent_runs"
     __table_args__ = (
         UniqueConstraint("job_id", "occurrence_key", name="uq_scheduled_agent_runs_job_occurrence"),
-        UniqueConstraint("request_id", name="uq_scheduled_agent_runs_request"),
+        UniqueConstraint("input_id", name="uq_scheduled_agent_runs_input"),
         UniqueConstraint("thread_id", name="uq_scheduled_agent_runs_thread"),
         Index("ix_scheduled_agent_runs_job_created", "job_id", "created_at"),
         Index("ix_scheduled_agent_runs_dispatching", "status", "created_at"),
@@ -997,7 +1194,7 @@ class ScheduledAgentRun(Base):
         ForeignKey("scheduled_agent_jobs.id", ondelete="CASCADE"),
         nullable=False,
     )
-    request_id = Column(String(64), nullable=False)
+    input_id = Column(String(64), nullable=False)
     thread_id = Column(String(64), nullable=False)
     trigger = Column(String(16), nullable=False, default="scheduled")
     occurrence_key = Column(String(128), nullable=False)
@@ -1016,7 +1213,7 @@ class ScheduledAgentRun(Base):
         return {
             "id": self.id,
             "job_id": self.job_id,
-            "request_id": self.request_id,
+            "input_id": self.input_id,
             "thread_id": self.thread_id,
             "trigger": self.trigger,
             "scheduled_for": format_utc_datetime(self.scheduled_for),
@@ -1032,6 +1229,9 @@ class APIKey(Base):
     """API Key 模型"""
 
     __tablename__ = "api_keys"
+    __table_args__ = (
+        CheckConstraint("access_level IN ('full', 'agents', 'knowledge')", name="ck_api_keys_access_level"),
+    )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     key_hash = Column(String(64), nullable=False, unique=True, index=True)
@@ -1039,6 +1239,8 @@ class APIKey(Base):
     request_id = Column(String(64), nullable=True, unique=True, index=True)
     intent_hash = Column(String(64), nullable=True)
     name = Column(String(100), nullable=False)
+    access_level = Column(String(16), nullable=False, default="full", server_default="full")
+    app_id = Column(String(64), nullable=True)
 
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
     department_id = Column(Integer, ForeignKey("departments.id"), nullable=True, index=True)
@@ -1060,6 +1262,8 @@ class APIKey(Base):
             "id": self.id,
             "key_prefix": self.key_prefix,
             "name": self.name,
+            "access_level": self.access_level,
+            "app_id": self.app_id,
             "user_id": self.user_id,
             "department_id": self.department_id,
             "expires_at": format_utc_datetime(self.expires_at),
@@ -1118,11 +1322,17 @@ class CLIAuthSession(Base):
 
 
 class AgentRun(Base):
-    """AgentRun table - 运行任务表"""
+    """保存 Turn 内一段执行及其独立结果。"""
 
     __tablename__ = "agent_runs"
 
     id = Column(String(64), primary_key=True, comment="Run ID (UUID)")
+    execution_seq = Column(
+        BigInteger,
+        Sequence("agent_runs_execution_seq"),
+        nullable=False,
+        comment="跨 Run 订阅的持久执行顺序",
+    )
     conversation_thread_id = Column(String(64), index=True, nullable=False, comment="Conversation thread ID snapshot")
     runtime_scope_id = Column(String(64), index=True, nullable=False, comment="Root conversation runtime scope")
     runtime_cleanup_pending = Column(
@@ -1140,9 +1350,12 @@ class AgentRun(Base):
         index=True,
         nullable=False,
         default="pending",
-        comment="Run status: pending/running/completed/failed/cancel_requested/cancelled/interrupted",
+        comment="Run status: pending/running/completed/failed/cancel_requested/cancelled/interrupted/yielded",
     )
-    request_id = Column(String(64), unique=True, index=True, nullable=False, comment="Idempotency request ID")
+    turn_id = Column(String(64), ForeignKey("agent_turns.id", name="fk_agent_runs_turn"), nullable=False, index=True)
+    input_id = Column(String(64), ForeignKey("agent_inputs.id"), nullable=True, unique=True)
+    app_id = Column(String(64), nullable=True, index=True, comment="API Key 来源快照")
+    api_key_id = Column(Integer, nullable=True, index=True, comment="发起调用的 API Key ID 快照")
     source = Column(String(32), nullable=False, default="chat", comment="Run source snapshot")
     channel = Column(String(32), nullable=False, default="web", comment="Run channel snapshot")
     external_id = Column(String(128), nullable=True, index=True, comment="Source-specific external ID snapshot")
@@ -1151,6 +1364,7 @@ class AgentRun(Base):
         Integer, ForeignKey("conversations.id"), nullable=True, index=True, comment="Conversation ID"
     )
     created_by_run_id = Column(String(64), nullable=True, index=True, comment="Run that created this run")
+    resume_from_run_id = Column(String(64), ForeignKey("agent_runs.id"), nullable=True)
     subagent_thread_relation_id = Column(
         Integer,
         ForeignKey("subagent_threads.id"),
@@ -1169,6 +1383,7 @@ class AgentRun(Base):
     input_payload = Column(JSON, nullable=False, default=dict, comment="Original input payload")
     token_usage = Column(JSON_VALUE, nullable=False, default=dict, comment="Run token usage grouped by model")
     langfuse_trace_id = Column(String(64), nullable=True, comment="Langfuse trace ID")
+    langfuse_observation_id = Column(String(16), nullable=True, comment="本 Run 的 Langfuse observation ID")
     error_type = Column(String(64), nullable=True, comment="Error type")
     error_message = Column(Text, nullable=True, comment="Error message")
     worker_id = Column(String(128), nullable=True, comment="稳定 worker identity 与 attempt UUID 组成的 owner token")
@@ -1190,6 +1405,19 @@ class AgentRun(Base):
     updated_at = Column(DateTime, default=utc_now_naive, onupdate=utc_now_naive, comment="Update time")
 
     __table_args__ = (
+        UniqueConstraint("turn_id", "id", name="uq_agent_runs_turn_id_id"),
+        ForeignKeyConstraint(
+            ["turn_id", "created_by_run_id"],
+            ["agent_runs.turn_id", "agent_runs.id"],
+            name="fk_agent_runs_parent_same_turn",
+            use_alter=True,
+        ),
+        ForeignKeyConstraint(
+            ["turn_id", "resume_from_run_id"],
+            ["agent_runs.turn_id", "agent_runs.id"],
+            name="fk_agent_runs_resume_same_turn",
+            use_alter=True,
+        ),
         CheckConstraint(
             AGENT_RUN_SHAPE_CONSTRAINT_SQL,
             name=AGENT_RUN_SHAPE_CONSTRAINT_NAME,
@@ -1199,19 +1427,24 @@ class AgentRun(Base):
     def to_dict(self) -> dict[str, Any]:
         return {
             "id": self.id,
+            "execution_seq": self.execution_seq,
             "conversation_thread_id": self.conversation_thread_id,
             "runtime_scope_id": self.runtime_scope_id,
             "runtime_cleanup_pending": bool(self.runtime_cleanup_pending),
             "agent_slug": self.agent_slug,
             "uid": self.uid,
             "status": self.status,
-            "request_id": self.request_id,
+            "turn_id": self.turn_id,
+            "input_id": self.input_id,
+            "app_id": self.app_id,
+            "api_key_id": self.api_key_id,
             "source": self.source,
             "channel": self.channel,
             "external_id": self.external_id,
             "origin_metadata": self.origin_metadata or {},
             "conversation_id": self.conversation_id,
             "created_by_run_id": self.created_by_run_id,
+            "resume_from_run_id": self.resume_from_run_id,
             "subagent_thread_relation_id": self.subagent_thread_relation_id,
             "run_type": self.run_type,
             "input_message_id": self.input_message_id,
@@ -1219,6 +1452,7 @@ class AgentRun(Base):
             "input_payload": self.input_payload or {},
             "token_usage": self.token_usage or {},
             "langfuse_trace_id": self.langfuse_trace_id,
+            "langfuse_observation_id": self.langfuse_observation_id,
             "error_type": self.error_type,
             "error_message": self.error_message,
             "manifest": self.manifest,
@@ -1242,6 +1476,11 @@ class AgentRun(Base):
 
 
 Index(
+    "ix_agent_runs_execution_seq_unique",
+    AgentRun.execution_seq,
+    unique=True,
+)
+Index(
     "uq_agent_runs_one_active_per_thread",
     AgentRun.uid,
     AgentRun.agent_slug,
@@ -1251,6 +1490,7 @@ Index(
     sqlite_where=AgentRun.status.notin_(AGENT_RUN_TERMINAL_STATUSES),
 )
 Index("ix_agent_runs_status_lease_expires", AgentRun.status, AgentRun.lease_expires_at)
+Index("ix_agent_runs_thread_execution_seq", AgentRun.conversation_thread_id, AgentRun.execution_seq)
 
 
 class AgentRunAttempt(Base):
@@ -1307,85 +1547,3 @@ class AgentRunAttempt(Base):
             "created_at": format_utc_datetime(self.created_at),
             "updated_at": format_utc_datetime(self.updated_at),
         }
-
-
-class AgentRunRequest(Base):
-    """AgentRunRequest table - 智能体线程请求队列表。
-
-    表示一次用户/外部请求；派发后由对应 AgentRun 表达执行状态。
-    外部统一以 request_id 作为幂等键引用；id 为自增主键，仅用于 FIFO 排序。
-    """
-
-    __tablename__ = "agent_run_requests"
-
-    id = Column(Integer, primary_key=True, autoincrement=True, comment="Primary key")
-    request_id = Column(String(64), unique=True, index=True, nullable=False, comment="幂等请求 ID")
-    uid = Column(String(64), nullable=False, comment="UID")
-    agent_slug = Column(String(64), nullable=False, comment="Agent slug")
-    conversation_thread_id = Column(String(64), nullable=False, comment="Conversation thread ID")
-    source = Column(String(32), nullable=False, default="chat", comment="请求来源: chat/agent_call/eval")
-    channel = Column(String(32), nullable=False, default="web", comment="请求通道: web/api/im/internal")
-    external_id = Column(String(128), nullable=True, index=True, comment="来源侧消息或调用 ID")
-    origin_metadata = Column(JSON, nullable=False, default=dict, comment="来源 metadata 快照")
-    queue_policy = Column(
-        String(16),
-        nullable=False,
-        default="enqueue",
-        comment="排队策略: enqueue/reject/steer",
-    )
-    status = Column(
-        String(32),
-        nullable=False,
-        default="queued",
-        comment="请求状态: queued/dispatched/cancelled/rejected/failed",
-    )
-    input_message_id = Column(Integer, ForeignKey("messages.id"), nullable=False, comment="关联输入消息 ID")
-    dispatched_run_id = Column(String(64), ForeignKey("agent_runs.id"), nullable=True, comment="已派发的 AgentRun ID")
-    input_payload = Column(
-        JSON, nullable=False, default=dict, comment="接入时解析的模型与审批配置；消息由 input_message_id 关联"
-    )
-    error_message = Column(Text, nullable=True, comment="rejected/failed 时的错误信息")
-    created_at = Column(DateTime, nullable=False, default=utc_now_naive, comment="创建时间")
-    dispatched_at = Column(DateTime, nullable=True, comment="派发时间")
-    updated_at = Column(
-        DateTime,
-        nullable=False,
-        default=utc_now_naive,
-        onupdate=utc_now_naive,
-        comment="更新时间",
-    )
-
-    # Relationships
-    input_message = relationship("Message", foreign_keys=[input_message_id])
-    dispatched_run = relationship("AgentRun", foreign_keys=[dispatched_run_id])
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "request_id": self.request_id,
-            "uid": self.uid,
-            "agent_slug": self.agent_slug,
-            "thread_id": self.conversation_thread_id,
-            "source": self.source,
-            "channel": self.channel,
-            "external_id": self.external_id,
-            "origin_metadata": self.origin_metadata or {},
-            "queue_policy": self.queue_policy,
-            "status": self.status,
-            "input_message_id": self.input_message_id,
-            "dispatched_run_id": self.dispatched_run_id,
-            "error_message": self.error_message,
-            "created_at": format_utc_datetime(self.created_at),
-            "dispatched_at": format_utc_datetime(self.dispatched_at),
-            "updated_at": format_utc_datetime(self.updated_at),
-        }
-
-
-Index(
-    "ix_agent_run_requests_queue",
-    AgentRunRequest.uid,
-    AgentRunRequest.agent_slug,
-    AgentRunRequest.conversation_thread_id,
-    AgentRunRequest.status,
-    AgentRunRequest.created_at,
-    AgentRunRequest.id,
-)

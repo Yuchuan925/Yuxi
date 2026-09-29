@@ -12,7 +12,7 @@ from sqlalchemy import update
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from yuxi.storage.postgres.models_business import Conversation
 
-from test.live_api_cleanup import make_test_conversation_metadata, make_test_conversation_title
+from test.live_api_cleanup import make_test_conversation_title
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
 
@@ -157,12 +157,11 @@ async def test_dashboard_http_applies_subagent_and_deleted_conversation_scopes(t
     thread_ids = []
     for status in ("active", "subagent", "deleted"):
         response = await test_client.post(
-            "/api/chat/thread",
-            headers=admin_headers,
+            "/api/v1/agents/threads",
+            headers={**admin_headers, "Idempotency-Key": f"{marker}-{status}"},
             json={
                 "agent_id": agent_id,
                 "title": make_test_conversation_title(f"{marker}-{status}"),
-                "metadata": make_test_conversation_metadata(marker),
             },
         )
         assert response.status_code == 200, response.text
@@ -201,7 +200,7 @@ async def test_admin_can_fetch_feedbacks(test_client, admin_headers):
 async def test_dashboard_http_reads_run_token_totals(test_client, admin_headers):
     """真实 HTTP 返回 PostgreSQL 同会话 Run 用量和缺失标记。"""
     from sqlalchemy import select
-    from yuxi.storage.postgres.models_business import AgentRun, ConversationStats
+    from yuxi.storage.postgres.models_business import AgentRun, AgentTurn, ConversationStats
 
     default_agent = await test_client.get("/api/agent/default", headers=admin_headers)
     assert default_agent.status_code == 200
@@ -209,12 +208,11 @@ async def test_dashboard_http_reads_run_token_totals(test_client, admin_headers)
     agent_id = str(agent.get("slug") or agent["agent_id"])
     marker = f"dashboard-usage-{uuid.uuid4().hex[:10]}"
     response = await test_client.post(
-        "/api/chat/thread",
-        headers=admin_headers,
+        "/api/v1/agents/threads",
+        headers={**admin_headers, "Idempotency-Key": marker},
         json={
             "agent_id": agent_id,
             "title": make_test_conversation_title(marker),
-            "metadata": make_test_conversation_metadata(marker),
         },
     )
     assert response.status_code == 200
@@ -236,13 +234,27 @@ async def test_dashboard_http_reads_run_token_totals(test_client, admin_headers)
                     {"total": {"total_tokens": 80}, "complete": True, "usage_reported_call_count": 1},
                 ]
             ):
+                run_id = f"{marker}-{index}"
+                db.add(
+                    AgentTurn(
+                        id=f"turn-{run_id}",
+                        conversation_thread_id=thread_id,
+                        uid=conversation.uid,
+                        status="completed",
+                        current_run_id=run_id,
+                        result_run_id=run_id,
+                    )
+                )
+                await db.flush()
                 db.add(
                     AgentRun(
-                        id=f"{marker}-{index}",
-                        request_id=f"{marker}-request-{index}",
+                        id=run_id,
                         conversation_id=conversation.id,
                         conversation_thread_id=thread_id,
                         runtime_scope_id=thread_id,
+                        turn_id=f"turn-{run_id}",
+                        run_type="chat",
+                        input_payload={},
                         uid=conversation.uid,
                         agent_slug=agent_id,
                         status="completed",

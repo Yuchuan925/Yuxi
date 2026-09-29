@@ -1,4 +1,4 @@
-"""真实 PostgreSQL 上的 E2E 测试 run 行清理语义测试。"""
+"""真实 PostgreSQL 上测试资源清理的归属和物理删除语义。"""
 
 from __future__ import annotations
 
@@ -15,7 +15,6 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from test import live_api_cleanup as cleanup_module
 from test.live_api_cleanup import (
-    delete_e2e_run_rows,
     delete_test_conversation_resources,
     delete_test_conversation_rows,
     list_test_conversation_resources,
@@ -24,10 +23,18 @@ from test.live_api_cleanup import (
     validate_test_runs_terminal,
     validate_test_workdirs_exclusive,
 )
+from yuxi.repositories.agent_run_repository import AgentRunRepository
+from yuxi.repositories.agents.input import AgentInputRepository
+from yuxi.repositories.agents.input_receipt import AgentInputReceiptRepository
+from yuxi.repositories.agents.turn import AgentTurnRepository
 from yuxi.services import project_service
 from yuxi.storage.postgres.models_business import (
+    AgentInput,
+    AgentInputMessage,
+    AgentInputReceipt,
     AgentRun,
-    AgentRunRequest,
+    AgentRunAttempt,
+    AgentTurn,
     Conversation,
     ConversationStats,
     Message,
@@ -37,38 +44,54 @@ from yuxi.storage.postgres.models_business import (
     User,
 )
 from yuxi.workspace.paths import ensure_bound_user_workdir, user_workdir_host_dir
+from yuxi.utils.datetime_utils import utc_now_naive
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
 
 
+@pytest.fixture(scope="session", autouse=True)
+def ensure_live_api_schema():
+    """本文件只在已迁移的隔离 PostgreSQL 中运行。"""
+
+
+@pytest.fixture(scope="session", autouse=True)
+def cleanup_test_knowledge_resources():
+    """独立仓储测试不创建知识库资源。"""
+    yield
+
+
+@pytest.fixture(scope="session", autouse=True)
+def cleanup_test_sandboxes():
+    """独立仓储测试不创建沙盒资源。"""
+    yield
+
+
 @pytest_asyncio.fixture()
 async def cleanup_database():
+    """为测试提供独立连接池。"""
     engine = create_async_engine(os.environ["POSTGRES_URL"], pool_pre_ping=True)
-    session_factory = async_sessionmaker(engine, expire_on_commit=False)
     try:
-        yield session_factory
+        yield async_sessionmaker(engine, expire_on_commit=False)
     finally:
         await engine.dispose()
 
 
 async def _seed_thread(session_factory, *, thread_prefix: str) -> dict:
-    """构造一个带输入消息、run、输出消息、tool_call、feedback 与请求的完整线程。"""
+    """构造有完整 Input、Turn、Run 与审计消息的测试线程。"""
     thread_id = f"{thread_prefix}-{uuid.uuid4()}"
     uid = f"pytest-user-{uuid.uuid4()}"
-    run_id = str(uuid.uuid4())
-    request_id = f"cleanup-req-{uuid.uuid4()}"
-    workdir_path = f"projects/YUXI_TEST_cleanup-{uuid.uuid4()}"
     project_id = str(uuid.uuid4())
+    input_id = f"cleanup-input-{uuid.uuid4()}"
+    receipt_id = f"cleanup-receipt-{uuid.uuid4()}"
+    turn_id = f"cleanup-turn-{uuid.uuid4()}"
+    run_id = str(uuid.uuid4())
+    workdir_path = f"projects/YUXI_TEST_cleanup-{uuid.uuid4()}"
     async with session_factory() as db:
         db.add(User(username=uid, uid=uid, password_hash="test"))
         await db.flush()
         db.add(
             Project(
-                id=project_id,
-                uid=uid,
-                selection_status="implicit",
-                workdir_path=workdir_path,
-                directory_mode="managed",
+                id=project_id, uid=uid, selection_status="implicit", workdir_path=workdir_path, directory_mode="managed"
             )
         )
         conversation = Conversation(
@@ -85,34 +108,53 @@ async def _seed_thread(session_factory, *, thread_prefix: str) -> dict:
         stats = ConversationStats(conversation_id=conversation.id)
         db.add(stats)
         await db.flush()
-        input_message = Message(
-            conversation_id=conversation.id,
-            role="user",
-            content="input",
-            request_id=request_id,
-            delivery_status="dispatched",
+        input_repo = AgentInputRepository(db)
+        receipt_repo = AgentInputReceiptRepository(db)
+        turn_repo = AgentTurnRepository(db)
+        await input_repo.create(
+            input_id=input_id,
+            thread_id=thread_id,
+            uid=uid,
+            app_id=None,
+            agent_slug="main",
+            kind="follow_up",
+            input_payload={},
         )
+        receipt = await receipt_repo.create(
+            receipt_id=receipt_id,
+            idempotency_key=f"YUXI_TEST_cleanup-{uuid.uuid4()}",
+            uid=uid,
+            app_id=None,
+            thread_id=thread_id,
+            event_type="message",
+            intent_hash="test",
+            input_id=input_id,
+        )
+        input_message = Message(conversation_id=conversation.id, role="user", content="input", delivery_status="queued")
         db.add(input_message)
         await db.flush()
-        run = AgentRun(
-            id=run_id,
+        await input_repo.add_messages(input_id=input_id, receipt_id=receipt_id, message_ids=[input_message.id])
+        turn = await turn_repo.create(turn_id=turn_id, thread_id=thread_id, uid=uid, app_id=None)
+        run = await AgentRunRepository(db).create_run(
+            run_id=run_id,
             conversation_thread_id=thread_id,
-            runtime_scope_id=thread_id,
             agent_slug="main",
             uid=uid,
-            request_id=request_id,
+            turn_id=turn_id,
+            input_id=input_id,
+            input_payload={},
             conversation_id=conversation.id,
             input_message_id=input_message.id,
-            input_payload={},
-            status="completed",
-            run_type="chat",
         )
-        db.add(run)
+        await turn_repo.set_current(turn, run_id=run.id)
+        await input_repo.consume(input_id=input_id, turn_id=turn_id, run_id=run.id, cutoff_seq=receipt.receive_seq)
+        run.status = "completed"
         await db.flush()
+        await turn_repo.set_terminal(turn, status="completed", result_run_id=run_id)
         output_message = Message(
             conversation_id=conversation.id,
             run_id=run_id,
-            request_id=request_id,
+            turn_id=turn_id,
             role="assistant",
             content="output",
             delivery_status="complete",
@@ -121,18 +163,15 @@ async def _seed_thread(session_factory, *, thread_prefix: str) -> dict:
         await db.flush()
         db.add(ToolCall(message_id=output_message.id, tool_name="fs", tool_input={}))
         db.add(MessageFeedback(message_id=output_message.id, uid=uid, rating="like"))
-        db.add(
-            AgentRunRequest(
-                request_id=request_id,
-                uid=uid,
-                agent_slug="main",
-                conversation_thread_id=thread_id,
-                input_message_id=input_message.id,
-                input_payload={},
-                status="dispatched",
-                dispatched_run_id=run_id,
-            )
+        attempt = AgentRunAttempt(
+            run_id=run_id,
+            attempt_no=1,
+            worker_id="test-owner",
+            started_at=utc_now_naive(),
+            finished_at=utc_now_naive(),
+            outcome="completed",
         )
+        db.add(attempt)
         await db.commit()
         return {
             "thread_id": thread_id,
@@ -140,197 +179,108 @@ async def _seed_thread(session_factory, *, thread_prefix: str) -> dict:
             "project_id": project_id,
             "workdir_path": workdir_path,
             "conversation_id": conversation.id,
+            "input_id": input_id,
+            "receipt_id": receipt_id,
+            "turn_id": turn_id,
             "run_id": run_id,
+            "attempt_id": attempt.id,
             "input_message_id": input_message.id,
             "output_message_id": output_message.id,
-            "request_id": request_id,
             "stats_id": stats.id,
         }
 
 
 async def _cleanup_seed(session_factory, seeds: list[dict]) -> None:
+    """仅清理本测试创建的线程及用户。"""
+    await delete_test_conversation_rows({seed["thread_id"] for seed in seeds})
     async with session_factory() as db:
-        conversation_ids = [seed["conversation_id"] for seed in seeds]
-        run_ids = [seed["run_id"] for seed in seeds]
-        message_ids = [
-            message_id for seed in seeds for message_id in (seed["input_message_id"], seed["output_message_id"])
-        ]
-        await db.execute(delete(ToolCall).where(ToolCall.message_id.in_(message_ids)))
-        await db.execute(delete(MessageFeedback).where(MessageFeedback.message_id.in_(message_ids)))
-        await db.execute(delete(AgentRunRequest).where(AgentRunRequest.dispatched_run_id.in_(run_ids)))
-        await db.execute(delete(Message).where(Message.id.in_(message_ids)))
-        await db.execute(delete(AgentRun).where(AgentRun.id.in_(run_ids)))
-        await db.execute(delete(ConversationStats).where(ConversationStats.conversation_id.in_(conversation_ids)))
-        await db.execute(delete(Conversation).where(Conversation.id.in_(conversation_ids)))
         await db.execute(delete(Project).where(Project.id.in_([seed["project_id"] for seed in seeds])))
         await db.execute(delete(User).where(User.uid.in_([seed["uid"] for seed in seeds])))
         await db.commit()
 
 
-async def test_delete_e2e_run_rows_removes_target_and_preserves_neighbor(cleanup_database):
-    """目标线程的 run 及外键依赖全部删除、attempt 级联；相邻线程与无 run 消息保留。"""
-    session_factory = cleanup_database
-    target = await _seed_thread(session_factory, thread_prefix="pytest-cleanup-target")
-    neighbor = await _seed_thread(session_factory, thread_prefix="pytest-cleanup-neighbor")
-
-    try:
-        await delete_e2e_run_rows({target["thread_id"]})
-
-        async with session_factory() as db:
-            remaining_runs = set(
-                (
-                    await db.scalars(select(AgentRun.id).where(AgentRun.id.in_([target["run_id"], neighbor["run_id"]])))
-                ).all()
-            )
-            remaining_target_messages = set(
-                (
-                    await db.scalars(
-                        select(Message.id).where(
-                            Message.id.in_([target["input_message_id"], target["output_message_id"]])
-                        )
-                    )
-                ).all()
-            )
-            remaining_requests = await db.scalar(
-                select(AgentRunRequest.id).where(AgentRunRequest.dispatched_run_id == target["run_id"])
-            )
-            remaining_tool_calls = await db.scalar(
-                select(ToolCall.id).where(ToolCall.message_id == target["output_message_id"])
-            )
-            remaining_feedbacks = await db.scalar(
-                select(MessageFeedback.id).where(MessageFeedback.message_id == target["output_message_id"])
-            )
-            neighbor_run = await db.get(AgentRun, neighbor["run_id"])
-            neighbor_output = await db.get(Message, neighbor["output_message_id"])
-            neighbor_input = await db.get(Message, neighbor["input_message_id"])
-            target_conversation = await db.get(Conversation, target["conversation_id"])
-
-        assert remaining_runs == {neighbor["run_id"]}
-        assert remaining_target_messages == {target["input_message_id"]}
-        assert remaining_requests is None
-        assert remaining_tool_calls is None
-        assert remaining_feedbacks is None
-        assert neighbor_run is not None
-        assert neighbor_output is not None
-        assert neighbor_input is not None
-        # 对话行由应用软删除生命周期管理，清理只删 run 级审计事实。
-        assert target_conversation is not None
-    finally:
-        await _cleanup_seed(session_factory, [target, neighbor])
-
-
-async def test_delete_e2e_run_rows_is_noop_for_unknown_threads(cleanup_database):
-    """不存在的线程 id 不产生任何副作用。"""
-    session_factory = cleanup_database
-    seed = await _seed_thread(session_factory, thread_prefix="pytest-cleanup-unknown")
-
-    try:
-        await delete_e2e_run_rows({"pytest-cleanup-does-not-exist"})
-
-        async with session_factory() as db:
-            run = await db.get(AgentRun, seed["run_id"])
-            output = await db.get(Message, seed["output_message_id"])
-            conversation = await db.get(Conversation, seed["conversation_id"])
-
-        assert run is not None
-        assert output is not None
-        assert conversation is not None
-    finally:
-        await _cleanup_seed(session_factory, [seed])
-
-
-async def test_delete_e2e_run_rows_is_idempotent(cleanup_database):
-    """重复执行同一清理不报错（事务内删除，第二次命中 0 行）。"""
-    session_factory = cleanup_database
-    target = await _seed_thread(session_factory, thread_prefix="pytest-cleanup-idem")
-
-    try:
-        await delete_e2e_run_rows({target["thread_id"]})
-        await delete_e2e_run_rows({target["thread_id"]})
-
-        async with session_factory() as db:
-            remaining = await db.get(AgentRun, target["run_id"])
-
-        assert remaining is None
-    finally:
-        await _cleanup_seed(session_factory, [target])
-
-
 async def test_delete_test_conversation_rows_removes_history_and_preserves_neighbor(cleanup_database):
-    """物理清理删除目标对话的完整历史，但保留相邻对话。"""
-    session_factory = cleanup_database
-    target = await _seed_thread(session_factory, thread_prefix="pytest-conv-target")
-    neighbor = await _seed_thread(session_factory, thread_prefix="pytest-conv-neighbor")
-
+    """物理清理删除目标整条生命周期历史，同时保留相邻线程。"""
+    target = await _seed_thread(cleanup_database, thread_prefix="pytest-conv-target")
+    neighbor = await _seed_thread(cleanup_database, thread_prefix="pytest-conv-neighbor")
     try:
         await delete_test_conversation_rows({target["thread_id"]})
-
-        async with session_factory() as db:
-            target_conversation = await db.get(Conversation, target["conversation_id"])
-            target_stats = await db.get(ConversationStats, target["stats_id"])
-            target_run = await db.get(AgentRun, target["run_id"])
-            target_input = await db.get(Message, target["input_message_id"])
-            target_output = await db.get(Message, target["output_message_id"])
-            target_request = await db.scalar(
-                select(AgentRunRequest.id).where(AgentRunRequest.request_id == target["request_id"])
+        async with cleanup_database() as db:
+            for model, key in (
+                (Conversation, "conversation_id"),
+                (ConversationStats, "stats_id"),
+                (AgentInput, "input_id"),
+                (AgentInputReceipt, "receipt_id"),
+                (AgentTurn, "turn_id"),
+                (AgentRun, "run_id"),
+                (AgentRunAttempt, "attempt_id"),
+                (Message, "input_message_id"),
+                (Message, "output_message_id"),
+            ):
+                assert await db.get(model, target[key]) is None
+                assert await db.get(model, neighbor[key]) is not None
+            assert (
+                await db.scalar(select(AgentInputMessage.id).where(AgentInputMessage.input_id == target["input_id"]))
+                is None
             )
-            neighbor_conversation = await db.get(Conversation, neighbor["conversation_id"])
-            neighbor_stats = await db.get(ConversationStats, neighbor["stats_id"])
-            neighbor_run = await db.get(AgentRun, neighbor["run_id"])
-            neighbor_output = await db.get(Message, neighbor["output_message_id"])
-
-        assert target_conversation is None
-        assert target_stats is None
-        assert target_run is None
-        assert target_input is None
-        assert target_output is None
-        assert target_request is None
-        assert neighbor_conversation is not None
-        assert neighbor_stats is not None
-        assert neighbor_run is not None
-        assert neighbor_output is not None
+            assert (
+                await db.scalar(select(AgentInputMessage.id).where(AgentInputMessage.input_id == neighbor["input_id"]))
+                is not None
+            )
+            assert (
+                await db.scalar(select(ToolCall.id).where(ToolCall.message_id == target["output_message_id"])) is None
+            )
+            assert (
+                await db.scalar(
+                    select(MessageFeedback.id).where(MessageFeedback.message_id == target["output_message_id"])
+                )
+                is None
+            )
     finally:
-        await _cleanup_seed(session_factory, [target, neighbor])
+        await _cleanup_seed(cleanup_database, [target, neighbor])
+
+
+async def test_delete_test_conversation_rows_is_idempotent(cleanup_database):
+    """重复清理同一测试线程仍保持物理删除。"""
+    target = await _seed_thread(cleanup_database, thread_prefix="pytest-conv-idem")
+    try:
+        await delete_test_conversation_rows({target["thread_id"]})
+        await delete_test_conversation_rows({target["thread_id"]})
+        async with cleanup_database() as db:
+            assert await db.get(Conversation, target["conversation_id"]) is None
+    finally:
+        await _cleanup_seed(cleanup_database, [target])
 
 
 async def test_delete_test_conversation_rows_preserves_selectable_project(cleanup_database):
-    """删除最后一个 Conversation 时不得连带删除用户可选择的 Project。"""
-
-    session_factory = cleanup_database
-    target = await _seed_thread(session_factory, thread_prefix="pytest-selectable-project")
+    """删除最后一个 Conversation 时保留可选择的 Project。"""
+    target = await _seed_thread(cleanup_database, thread_prefix="pytest-selectable-project")
     try:
-        async with session_factory() as db:
+        async with cleanup_database() as db:
             project = await db.get(Project, target["project_id"])
-            assert project is not None
             project.selection_status = "selectable"
             project.name = "Test selectable project"
             await db.commit()
-
         await delete_test_conversation_rows({target["thread_id"]})
-
-        async with session_factory() as db:
+        async with cleanup_database() as db:
             assert await db.get(Project, target["project_id"]) is not None
     finally:
-        await _cleanup_seed(session_factory, [target])
+        await _cleanup_seed(cleanup_database, [target])
 
 
-async def test_request_prefix_matching_treats_underscores_literally(cleanup_database):
-    """统一 request_id 前缀按字面 starts-with 匹配，不把下划线当 SQL 通配符。"""
-
-    session_factory = cleanup_database
+async def test_receipt_prefix_matching_treats_underscores_literally(cleanup_database):
+    """Receipt 幂等键前缀按字面匹配，不把下划线当 SQL 通配符。"""
     uid = f"pytest-prefix-user-{uuid.uuid4()}"
     valid_thread_id = f"pytest-prefix-valid-{uuid.uuid4()}"
     ordinary_thread_id = f"pytest-prefix-ordinary-{uuid.uuid4()}"
-    conversation_ids: list[int] = []
     project_ids = [str(uuid.uuid4()), str(uuid.uuid4())]
-    message_ids: list[int] = []
-    request_ids = [f"YUXI_TEST_valid_{uuid.uuid4()}", f"YUXI-TEST-ordinary-{uuid.uuid4()}"]
+    receipt_ids = [str(uuid.uuid4()), str(uuid.uuid4())]
     try:
-        async with session_factory() as db:
+        async with cleanup_database() as db:
             db.add(User(username=uid, uid=uid, password_hash="test"))
             await db.flush()
-            db.add_all(
-                [
+            for project_id, thread_id in zip(project_ids, (valid_thread_id, ordinary_thread_id), strict=True):
+                db.add(
                     Project(
                         id=project_id,
                         uid=uid,
@@ -338,77 +288,55 @@ async def test_request_prefix_matching_treats_underscores_literally(cleanup_data
                         workdir_path=f"projects/{thread_id}",
                         directory_mode="managed",
                     )
-                    for project_id, thread_id in zip(
-                        project_ids,
-                        (valid_thread_id, ordinary_thread_id),
-                        strict=True,
-                    )
-                ]
-            )
-            conversations = [
-                Conversation(
-                    thread_id=valid_thread_id,
-                    uid=uid,
-                    project_id=project_ids[0],
-                    agent_id="main",
-                    title="ordinary valid",
-                ),
-                Conversation(
-                    thread_id=ordinary_thread_id,
-                    uid=uid,
-                    project_id=project_ids[1],
-                    agent_id="main",
-                    title="ordinary neighbor",
-                ),
-            ]
-            db.add_all(conversations)
-            await db.flush()
-            conversation_ids = [conversation.id for conversation in conversations]
-            messages = [
-                Message(
-                    conversation_id=conversation.id,
-                    request_id=request_id,
-                    role="user",
-                    content="input",
-                    delivery_status="cancelled",
                 )
-                for conversation, request_id in zip(conversations, request_ids, strict=True)
-            ]
-            db.add_all(messages)
-            await db.flush()
-            message_ids = [message.id for message in messages]
             db.add_all(
                 [
-                    AgentRunRequest(
-                        request_id=request_id,
+                    Conversation(
+                        thread_id=valid_thread_id,
                         uid=uid,
-                        agent_slug="main",
-                        conversation_thread_id=conversation.thread_id,
-                        input_message_id=message.id,
-                        input_payload={},
-                        status="cancelled",
-                    )
-                    for conversation, message, request_id in zip(
-                        conversations,
-                        messages,
-                        request_ids,
-                        strict=True,
-                    )
+                        project_id=project_ids[0],
+                        agent_id="main",
+                        title="ordinary valid",
+                    ),
+                    Conversation(
+                        thread_id=ordinary_thread_id,
+                        uid=uid,
+                        project_id=project_ids[1],
+                        agent_id="main",
+                        title="ordinary neighbor",
+                    ),
+                ]
+            )
+            await db.flush()
+            db.add_all(
+                [
+                    AgentInputReceipt(
+                        id=receipt_ids[0],
+                        idempotency_key=f"YUXI_TEST_valid_{uuid.uuid4()}",
+                        uid=uid,
+                        app_id=None,
+                        conversation_thread_id=valid_thread_id,
+                        event_type="control",
+                        intent_hash="test",
+                    ),
+                    AgentInputReceipt(
+                        id=receipt_ids[1],
+                        idempotency_key=f"YUXI-TEST-ordinary-{uuid.uuid4()}",
+                        uid=uid,
+                        app_id=None,
+                        conversation_thread_id=ordinary_thread_id,
+                        event_type="control",
+                        intent_hash="test",
+                    ),
                 ]
             )
             await db.commit()
-
         resources = await list_test_conversation_resources(uid)
-
         assert valid_thread_id in resources
         assert ordinary_thread_id not in resources
     finally:
-        async with session_factory() as db:
-            await db.execute(delete(AgentRunRequest).where(AgentRunRequest.request_id.in_(request_ids)))
-            if message_ids:
-                await db.execute(delete(Message).where(Message.id.in_(message_ids)))
-            if conversation_ids:
-                await db.execute(delete(Conversation).where(Conversation.id.in_(conversation_ids)))
+        await delete_test_conversation_rows({valid_thread_id, ordinary_thread_id})
+        async with cleanup_database() as db:
             await db.execute(delete(Project).where(Project.id.in_(project_ids)))
             await db.execute(delete(User).where(User.uid == uid))
             await db.commit()
@@ -488,6 +416,85 @@ async def test_run_guard_rejects_nonterminal_run(cleanup_database):
             await db.commit()
 
         with pytest.raises(RuntimeError, match="not terminal"):
+            await validate_test_runs_terminal({target["thread_id"]})
+    finally:
+        await _cleanup_seed(session_factory, [target])
+
+
+async def test_run_guard_waits_for_interrupted_history_runtime_cleanup(cleanup_database):
+    """恢复后的旧 interrupted 段只需等待 runtime owner 释放。"""
+    session_factory = cleanup_database
+    target = await _seed_thread(session_factory, thread_prefix="pytest-resumed-guard")
+    resume_id = str(uuid.uuid4())
+    try:
+        async with session_factory() as db:
+            old_run = await db.get(AgentRun, target["run_id"])
+            turn = await db.get(AgentTurn, target["turn_id"])
+            old_run.status = "interrupted"
+            old_run.runtime_cleanup_pending = True
+            db.add(
+                AgentRun(
+                    id=resume_id,
+                    conversation_thread_id=target["thread_id"],
+                    runtime_scope_id=target["thread_id"],
+                    agent_slug="main",
+                    uid=target["uid"],
+                    status="completed",
+                    turn_id=target["turn_id"],
+                    resume_from_run_id=target["run_id"],
+                    input_payload={},
+                )
+            )
+            turn.current_run_id = resume_id
+            turn.result_run_id = resume_id
+            await db.commit()
+
+        async def release_runtime() -> None:
+            """模拟中断段 owner 在 Turn 完成后释放运行时。"""
+            await asyncio.sleep(0.3)
+            async with session_factory() as db:
+                old_run = await db.get(AgentRun, target["run_id"])
+                old_run.runtime_cleanup_pending = False
+                await db.commit()
+
+        release = asyncio.create_task(release_runtime())
+        await validate_test_runs_terminal({target["thread_id"]})
+        await release
+    finally:
+        await _cleanup_seed(session_factory, [target])
+
+
+async def test_run_guard_rejects_waiting_turn_with_interrupted_run(cleanup_database):
+    """尚在等待输入的 Turn 不能因为 Run 已 interrupted 而被清理。"""
+    session_factory = cleanup_database
+    target = await _seed_thread(session_factory, thread_prefix="pytest-waiting-guard")
+    try:
+        async with session_factory() as db:
+            run = await db.get(AgentRun, target["run_id"])
+            turn = await db.get(AgentTurn, target["turn_id"])
+            run.status = "interrupted"
+            turn.status = "waiting"
+            turn.result_run_id = None
+            await db.commit()
+
+        with pytest.raises(RuntimeError, match="Turn is not terminal"):
+            await validate_test_runs_terminal({target["thread_id"]})
+    finally:
+        await _cleanup_seed(session_factory, [target])
+
+
+async def test_run_guard_rejects_unreleased_runtime_after_deadline(cleanup_database, monkeypatch):
+    """运行时长期未释放时，清理仍保持失败关闭。"""
+    session_factory = cleanup_database
+    target = await _seed_thread(session_factory, thread_prefix="pytest-runtime-guard")
+    monkeypatch.setattr(cleanup_module, "RUN_CLEANUP_WAIT_SECONDS", 0.1)
+    try:
+        async with session_factory() as db:
+            run = await db.get(AgentRun, target["run_id"])
+            run.runtime_cleanup_pending = True
+            await db.commit()
+
+        with pytest.raises(RuntimeError, match="runtime cleanup did not finish"):
             await validate_test_runs_terminal({target["thread_id"]})
     finally:
         await _cleanup_seed(session_factory, [target])

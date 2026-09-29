@@ -23,7 +23,6 @@ class ModelMessageAuditRepository:
         self,
         *,
         run_id: str,
-        request_id: str,
         thread_id: str,
         worker_id: str,
         operation_id: str,
@@ -42,14 +41,13 @@ class ModelMessageAuditRepository:
             run_id,
             worker_id=worker_id,
             conversation_thread_id=thread_id,
-            request_id=request_id,
         )
         if run is None:
             raise ValueError(f"AgentRun 不存在: {run_id}")
 
         existing = await self._get(run_id, normalized_operation_id)
         if existing is not None:
-            self._require_same_owner(existing, conversation_id=run.conversation_id, request_id=request_id)
+            self._require_same_owner(existing, conversation_id=run.conversation_id, turn_id=run.turn_id)
             self._require_same_start(existing, sequence=sequence)
             return existing, False
 
@@ -60,7 +58,7 @@ class ModelMessageAuditRepository:
             message_type=MODEL_AUDIT_MESSAGE_TYPE,
             extra_metadata=dict(metadata or {}),
             run_id=run.id,
-            request_id=request_id,
+            turn_id=run.turn_id,
             delivery_status="complete",
             operation_id=normalized_operation_id,
             started_at=started_at,
@@ -76,7 +74,6 @@ class ModelMessageAuditRepository:
         self,
         *,
         run_id: str,
-        request_id: str,
         thread_id: str,
         worker_id: str,
         operation_id: str,
@@ -97,7 +94,6 @@ class ModelMessageAuditRepository:
             run_id,
             worker_id=worker_id,
             conversation_thread_id=thread_id,
-            request_id=request_id,
         )
         if run is None:
             raise ValueError(f"AgentRun 不存在: {run_id}")
@@ -105,7 +101,7 @@ class ModelMessageAuditRepository:
         message = await self._get(run_id, normalized_operation_id)
         if message is None:
             raise ValueError("Model finish 缺少对应的 start 事实")
-        self._require_same_owner(message, conversation_id=run.conversation_id, request_id=request_id)
+        self._require_same_owner(message, conversation_id=run.conversation_id, turn_id=run.turn_id)
 
         normalized_usage = dict(usage) if isinstance(usage, dict) else None
         if message.execution_status == "completed":
@@ -153,14 +149,14 @@ class ModelMessageAuditRepository:
         return result.scalar_one_or_none()
 
     @staticmethod
-    def _require_same_owner(message: Message, *, conversation_id: int, request_id: str) -> None:
+    def _require_same_owner(message: Message, *, conversation_id: int, turn_id: str) -> None:
         if (
             message.conversation_id != conversation_id
-            or message.request_id != request_id
+            or message.turn_id != turn_id
             or message.role != "assistant"
             or message.message_type != MODEL_AUDIT_MESSAGE_TYPE
         ):
-            raise ValueError("Model 审计消息必须属于同一 Run、request 和 conversation")
+            raise ValueError("Model 审计消息必须属于同一 Turn 和 conversation")
 
     @staticmethod
     def _require_same_start(message: Message, *, sequence: int) -> None:

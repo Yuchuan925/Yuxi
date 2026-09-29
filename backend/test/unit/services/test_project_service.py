@@ -310,7 +310,7 @@ async def test_rename_project_rejects_blank_name_before_write():
     assert exc.value.status_code == 422
 
 
-async def test_delete_project_soft_deletes_all_conversations_in_one_commit(monkeypatch):
+async def test_delete_project_archives_idle_threads_in_one_commit(monkeypatch):
     project = SimpleNamespace(id="project-1")
     calls = []
 
@@ -322,7 +322,7 @@ async def test_delete_project_soft_deletes_all_conversations_in_one_commit(monke
             assert (project_id, uid) == ("project-1", "user-1")
             return project
 
-        async def soft_delete_with_conversations(self, actual_project, *, deleted_at):
+        async def delete_project_and_archive_threads(self, actual_project, *, deleted_at):
             calls.append((actual_project, deleted_at))
             return 3
 
@@ -331,6 +331,6 @@ async def test_delete_project_soft_deletes_all_conversations_in_one_commit(monke
 
     result = await svc.delete_project_view(uid="user-1", project_id="project-1", db=db)
 
-    assert result == {"message": "删除成功", "deleted_conversations": 3}
+    assert result == {"message": "项目已删除，其中对话已归档", "archived_threads": 3}
     assert calls[0][0] is project
     assert db.commits == 1

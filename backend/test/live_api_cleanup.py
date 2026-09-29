@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import re
@@ -51,6 +52,7 @@ E2E_AGENT_SLUG_PREFIXES = (
     "pytest-personal-agent-",
 )
 SAFE_THREAD_ID = re.compile(r"^[A-Za-z0-9_-]+$")
+RUN_CLEANUP_WAIT_SECONDS = 10
 
 
 @dataclass(frozen=True, slots=True)
@@ -201,12 +203,6 @@ def _is_test_thread(thread: object) -> bool:
     return _has_prefix(thread.get("agent_id") or thread.get("agent_slug") or "", E2E_AGENT_SLUG_PREFIXES)
 
 
-def _is_e2e_thread(thread: object) -> bool:
-    """兼容旧测试调用方的 E2E 线程识别入口。"""
-
-    return _is_test_thread(thread)
-
-
 def _is_e2e_agent(agent: object, owner_uid: str) -> bool:
     """判断智能体是否是当前清理用户创建的 E2E 临时智能体。"""
 
@@ -280,65 +276,23 @@ def remove_test_workdir(uid: str, workdir_path: str) -> None:
         raise RuntimeError(f"Test conversation cleanup left Workdir behind: {workdir}")
 
 
-async def delete_e2e_run_rows(thread_ids: set[str]) -> None:
-    """删除 E2E 测试线程对应的 agent_runs 审计行。
-
-    线程删除 API 只软删对话，run 行作为审计事实不会级联；测试 run 若不
-    清理会永久残留并污染运行历史，因此按已识别（带 _yuxi_e2e 标记）的
-    线程 id 直接删除。外键链 agent_run_requests/messages/tool_calls/
-    message_feedbacks 均无级联，按叶子到根的顺序删除；attempt 由级联
-    外键一并删除。
-    """
-    if not thread_ids:
-        return
-    thread_ids_list = sorted(thread_ids)
-    run_ids_sql = "SELECT id FROM agent_runs WHERE conversation_thread_id = ANY($1::text[])"
-    message_ids_sql = f"SELECT id FROM messages WHERE run_id IN ({run_ids_sql})"
-    conn = await asyncpg.connect(_postgres_dsn())
-    try:
-        async with conn.transaction():
-            await conn.execute(
-                f"DELETE FROM tool_calls WHERE message_id IN ({message_ids_sql})",
-                thread_ids_list,
-            )
-            await conn.execute(
-                f"DELETE FROM message_feedbacks WHERE message_id IN ({message_ids_sql})",
-                thread_ids_list,
-            )
-            await conn.execute(
-                "DELETE FROM agent_run_requests "
-                f"WHERE conversation_thread_id = ANY($1::text[]) OR dispatched_run_id IN ({run_ids_sql})",
-                thread_ids_list,
-            )
-            await conn.execute(
-                f"DELETE FROM messages WHERE run_id IN ({run_ids_sql})",
-                thread_ids_list,
-            )
-            await conn.execute(
-                "DELETE FROM agent_runs WHERE conversation_thread_id = ANY($1::text[])",
-                thread_ids_list,
-            )
-    finally:
-        await conn.close()
-
-
 async def list_test_conversation_resources(owner_uid: str) -> dict[str, CleanupConversationResource]:
     """读取当前测试用户的测试 Conversation、状态和真实 Workdir。"""
 
     conn = await asyncpg.connect(_postgres_dsn())
     try:
-        request_rows = await conn.fetch(
+        receipt_rows = await conn.fetch(
             "SELECT DISTINCT conversation_thread_id "
-            "FROM agent_run_requests "
+            "FROM agent_input_receipts "
             "WHERE uid = $1 AND ("
-            "left(request_id, char_length($2)) = $2 "
-            "OR left(request_id, char_length($3)) = $3"
+            "left(idempotency_key, char_length($2)) = $2 "
+            "OR left(idempotency_key, char_length($3)) = $3"
             ")",
             owner_uid,
             TEST_RESOURCE_PREFIX,
             "agent-call-queue-",
         )
-        request_thread_ids = {str(row["conversation_thread_id"] or "") for row in request_rows}
+        receipt_thread_ids = {str(row["conversation_thread_id"] or "") for row in receipt_rows}
         rows = await conn.fetch(
             "SELECT c.id, c.project_id, c.thread_id, c.uid, c.status, c.title, "
             "p.workdir_path, p.directory_mode, p.selection_status, c.extra_metadata, c.agent_id "
@@ -358,7 +312,7 @@ async def list_test_conversation_resources(owner_uid: str) -> dict[str, CleanupC
                         "agent_id": row["agent_id"],
                     }
                 )
-                and thread_id not in request_thread_ids
+                and thread_id not in receipt_thread_ids
             ):
                 continue
             marked_parent_ids.append(int(row["id"]))
@@ -380,12 +334,18 @@ async def list_test_conversation_resources(owner_uid: str) -> dict[str, CleanupC
         if marked_parent_ids:
             child_rows = await conn.fetch(
                 """
+                WITH RECURSIVE descendants(id) AS (
+                    SELECT child_conversation_id FROM subagent_threads
+                    WHERE parent_conversation_id = ANY($1::int[])
+                    UNION
+                    SELECT st.child_conversation_id FROM subagent_threads st
+                    JOIN descendants parent ON parent.id = st.parent_conversation_id
+                )
                 SELECT child.id, child.project_id, child.thread_id, child.uid, child.status,
                        project.workdir_path, project.directory_mode, project.selection_status
-                FROM subagent_threads st
-                JOIN conversations child ON child.id = st.child_conversation_id
+                FROM descendants
+                JOIN conversations child ON child.id = descendants.id
                 JOIN projects project ON project.id = child.project_id AND project.uid = child.uid
-                WHERE st.parent_conversation_id = ANY($1::int[])
                 """,
                 marked_parent_ids,
             )
@@ -408,15 +368,6 @@ async def list_test_conversation_resources(owner_uid: str) -> dict[str, CleanupC
         return resources
     finally:
         await conn.close()
-
-
-async def _list_e2e_thread_statuses(owner_uid: str) -> dict[str, str]:
-    """兼容旧调用方，返回测试线程状态。"""
-
-    resources = await list_test_conversation_resources(owner_uid)
-    return {
-        thread_id: resource.status for thread_id, resource in resources.items() if SAFE_THREAD_ID.fullmatch(thread_id)
-    }
 
 
 async def validate_test_workdirs_exclusive(
@@ -482,39 +433,59 @@ async def _validate_test_workdirs_exclusive(
 
 
 async def validate_test_runs_terminal(thread_ids: set[str]) -> None:
-    """阻止清理流程删除仍由 worker 执行的测试 Run。"""
+    """等待历史 Run 释放运行时，并拒绝仍活跃的 Turn 或 Run。"""
 
     if not thread_ids:
         return
     conn = await asyncpg.connect(_postgres_dsn())
     try:
-        rows = await conn.fetch(
-            "SELECT id, status FROM agent_runs "
-            "WHERE conversation_thread_id = ANY($1::text[]) AND status <> ALL($2::text[])",
-            sorted(thread_ids),
-            list(AGENT_RUN_TERMINAL_STATUSES),
-        )
-        if rows:
-            details = ", ".join(f"{row['id']}={row['status']}" for row in rows)
-            raise RuntimeError(f"test Run is not terminal: {details}")
+        deadline = asyncio.get_running_loop().time() + RUN_CLEANUP_WAIT_SECONDS
+        target_ids = sorted(thread_ids)
+        while True:
+            turns = await conn.fetch(
+                "SELECT id, status FROM agent_turns WHERE conversation_thread_id = ANY($1::text[]) "
+                "AND status IN ('running', 'waiting', 'cancelling')",
+                target_ids,
+            )
+            if turns:
+                details = ", ".join(f"{row['id']}={row['status']}" for row in turns)
+                raise RuntimeError(f"test Turn is not terminal: {details}")
+
+            rows = await conn.fetch(
+                "SELECT id, status, runtime_cleanup_pending FROM agent_runs "
+                "WHERE conversation_thread_id = ANY($1::text[]) "
+                "AND (status <> ALL($2::text[]) OR runtime_cleanup_pending)",
+                target_ids,
+                list(AGENT_RUN_TERMINAL_STATUSES),
+            )
+            nonterminal = [row for row in rows if row["status"] not in AGENT_RUN_TERMINAL_STATUSES]
+            if nonterminal:
+                details = ", ".join(f"{row['id']}={row['status']}" for row in nonterminal)
+                raise RuntimeError(f"test Run is not terminal: {details}")
+            if not rows:
+                return
+            if asyncio.get_running_loop().time() >= deadline:
+                details = ", ".join(str(row["id"]) for row in rows)
+                raise RuntimeError(f"test Run runtime cleanup did not finish: {details}")
+            await asyncio.sleep(0.2)
     finally:
         await conn.close()
 
 
-async def list_test_queued_request_ids(thread_ids: set[str]) -> list[str]:
-    """读取待清理 Conversation 尚未派发的请求。"""
+async def list_test_pending_inputs(thread_ids: set[str]) -> list[tuple[str, str]]:
+    """读取目标 Thread 尚未领取的 follow-up Input。"""
 
     if not thread_ids:
         return []
     conn = await asyncpg.connect(_postgres_dsn())
     try:
         rows = await conn.fetch(
-            "SELECT request_id FROM agent_run_requests "
-            "WHERE conversation_thread_id = ANY($1::text[]) AND status = 'queued' "
-            "ORDER BY created_at, id",
+            "SELECT conversation_thread_id, id FROM agent_inputs "
+            "WHERE conversation_thread_id = ANY($1::text[]) AND kind = 'follow_up' AND status = 'pending' "
+            "ORDER BY received_seq",
             sorted(thread_ids),
         )
-        return [str(row["request_id"]) for row in rows]
+        return [(str(row["conversation_thread_id"]), str(row["id"])) for row in rows]
     finally:
         await conn.close()
 
@@ -591,31 +562,43 @@ async def _delete_test_conversation_rows(conn: asyncpg.Connection, thread_ids_li
         if row["project_id"] and row["selection_status"] == "implicit"
     ]
     run_rows = await conn.fetch(
-        "SELECT id FROM agent_runs WHERE conversation_thread_id = ANY($1::text[]) OR conversation_id = ANY($2::int[])",
+        "SELECT id FROM agent_runs WHERE conversation_thread_id = ANY($1::text[])",
         thread_ids_list,
-        conversation_ids,
     )
     run_ids = [str(row["id"]) for row in run_rows]
+    turn_rows = await conn.fetch(
+        "SELECT id FROM agent_turns WHERE conversation_thread_id = ANY($1::text[])",
+        thread_ids_list,
+    )
+    turn_ids = [str(row["id"]) for row in turn_rows]
+    input_rows = await conn.fetch(
+        "SELECT id FROM agent_inputs WHERE conversation_thread_id = ANY($1::text[])",
+        thread_ids_list,
+    )
+    input_ids = [str(row["id"]) for row in input_rows]
     message_rows = await conn.fetch(
-        "SELECT id FROM messages WHERE conversation_id = ANY($1::int[]) OR run_id = ANY($2::text[])",
+        "SELECT id FROM messages WHERE conversation_id = ANY($1::int[])",
         conversation_ids,
-        run_ids,
     )
     message_ids = [int(row["id"]) for row in message_rows]
 
+    await conn.execute("DELETE FROM agent_input_messages WHERE input_id = ANY($1::text[])", input_ids)
     await conn.execute(
-        "DELETE FROM agent_run_requests "
-        "WHERE conversation_thread_id = ANY($1::text[]) "
-        "OR input_message_id = ANY($2::int[]) "
-        "OR dispatched_run_id = ANY($3::text[])",
+        "DELETE FROM agent_input_receipts WHERE conversation_thread_id = ANY($1::text[])",
         thread_ids_list,
-        message_ids,
-        run_ids,
     )
     await conn.execute("DELETE FROM tool_calls WHERE message_id = ANY($1::int[])", message_ids)
     await conn.execute("DELETE FROM message_feedbacks WHERE message_id = ANY($1::int[])", message_ids)
     await conn.execute("DELETE FROM messages WHERE id = ANY($1::int[])", message_ids)
+    await conn.execute(
+        "UPDATE agent_turns SET current_run_id = NULL, result_run_id = NULL WHERE id = ANY($1::text[])",
+        turn_ids,
+    )
+    await conn.execute("UPDATE agent_runs SET input_id = NULL WHERE id = ANY($1::text[])", run_ids)
+    await conn.execute("DELETE FROM agent_inputs WHERE id = ANY($1::text[])", input_ids)
     await conn.execute("DELETE FROM agent_runs WHERE id = ANY($1::text[])", run_ids)
+    await conn.execute("DELETE FROM agent_turns WHERE id = ANY($1::text[])", turn_ids)
+    await conn.execute("DELETE FROM scheduled_agent_runs WHERE thread_id = ANY($1::text[])", thread_ids_list)
     await conn.execute(
         "DELETE FROM subagent_threads "
         "WHERE parent_conversation_id = ANY($1::int[]) "
@@ -672,56 +655,10 @@ async def cleanup_test_chat_resources(
 ) -> None:
     """删除测试对话、消息/run 历史、Project Workdir 和临时智能体。"""
 
-    page_size = 500
-    offset = 0
-    threads: list[dict] = []
-    seen_thread_ids: set[str] = set()
-    while True:
-        threads_response = await client.get(
-            "/api/chat/threads",
-            params={"limit": page_size, "offset": offset},
-            headers=headers,
-        )
-        if threads_response.status_code != 200:
-            raise RuntimeError(f"Failed to list E2E conversations for cleanup: {threads_response.text}")
-
-        page = threads_response.json()
-        if not isinstance(page, list):
-            raise RuntimeError("E2E conversation cleanup response must be a list")
-        threads.extend(
-            thread
-            for thread in page
-            if isinstance(thread, dict)
-            and str(thread.get("id") or thread.get("thread_id") or "") not in seen_thread_ids
-        )
-        seen_thread_ids.update(
-            str(thread.get("id") or thread.get("thread_id"))
-            for thread in page
-            if isinstance(thread, dict) and (thread.get("id") or thread.get("thread_id"))
-        )
-
-        non_pinned_count = sum(not bool(thread.get("is_pinned")) for thread in page if isinstance(thread, dict))
-        if len(page) < page_size or non_pinned_count == 0:
-            break
-        offset += non_pinned_count
-
-    active_test_thread_ids = {
-        str(thread.get("id") or thread.get("thread_id") or "") for thread in threads if _is_test_thread(thread)
-    }
-    if "" in active_test_thread_ids:
-        raise RuntimeError("Test conversation cleanup entry is missing thread id")
-
     try:
         resources = await list_test_conversation_resources(owner_uid)
     except Exception as exc:  # noqa: BLE001
         raise RuntimeError(f"Failed to list persisted test conversation resources: {exc}") from exc
-
-    missing_resources = active_test_thread_ids - resources.keys()
-    if missing_resources:
-        raise RuntimeError(
-            "Test conversation cleanup could not verify persisted ownership for: "
-            + ", ".join(sorted(missing_resources))
-        )
 
     target_thread_ids = set(resources)
     workdir_targets: dict[tuple[str, str], set[str]] = {}
@@ -737,26 +674,29 @@ async def cleanup_test_chat_resources(
     await validate_test_workdirs_exclusive(workdir_targets, workdir_project_ids)
     await validate_test_runs_terminal(target_thread_ids)
 
-    for request_id in await list_test_queued_request_ids(target_thread_ids):
-        cancel_response = await client.post(f"/api/agent/requests/{request_id}/cancel", headers=headers)
-        if cancel_response.status_code not in {200, 404}:
-            raise RuntimeError(f"Failed to cancel queued test request {request_id}: {cancel_response.text}")
+    for thread_id, input_id in await list_test_pending_inputs(target_thread_ids):
+        cancel_response = await client.post(
+            f"/api/v1/agents/threads/{thread_id}/events",
+            headers={**headers, "Idempotency-Key": f"cleanup:{input_id}"},
+            json={"events": [{"type": "yuxi.thread.input.cancel_input", "input_id": input_id}]},
+        )
+        if cancel_response.status_code not in {200, 202}:
+            raise RuntimeError(f"Failed to cancel pending test Input {input_id}: {cancel_response.text}")
 
-    remaining_queued_request_ids = await list_test_queued_request_ids(target_thread_ids)
-    if remaining_queued_request_ids:
+    remaining_inputs = await list_test_pending_inputs(target_thread_ids)
+    if remaining_inputs:
         raise RuntimeError(
-            "Test conversation cleanup left queued requests behind: " + ", ".join(remaining_queued_request_ids)
+            "Test conversation cleanup left pending Inputs behind: "
+            + ", ".join(input_id for _, input_id in remaining_inputs)
         )
     await validate_test_runs_terminal(target_thread_ids)
 
     for resource in resources.values():
-        if resource.status in {"deleted", ""}:
+        if resource.status != "active":
             continue
-        delete_response = await client.delete(f"/api/chat/thread/{resource.thread_id}", headers=headers)
-        if delete_response.status_code not in {200, 404}:
-            raise RuntimeError(
-                f"Failed to delete persisted test conversation {resource.thread_id}: {delete_response.text}"
-            )
+        archive_response = await client.post(f"/api/v1/agents/threads/{resource.thread_id}/archive", headers=headers)
+        if archive_response.status_code != 200:
+            raise RuntimeError(f"Failed to archive persisted test Thread {resource.thread_id}: {archive_response.text}")
 
     await delete_test_conversation_resources(workdir_targets, target_thread_ids, workdir_project_ids)
     await delete_orphaned_test_projects(owner_uid)
@@ -788,21 +728,6 @@ async def cleanup_test_chat_resources(
 
     if failures:
         raise RuntimeError("; ".join(failures))
-
-
-async def cleanup_e2e_chat_resources(
-    client: httpx.AsyncClient,
-    headers: dict[str, str],
-    *,
-    owner_uid: str,
-) -> None:
-    """兼容旧 E2E fixture 的测试聊天清理入口。"""
-
-    await cleanup_test_chat_resources(
-        client,
-        headers,
-        owner_uid=owner_uid,
-    )
 
 
 async def cleanup_pytest_knowledge_resources(

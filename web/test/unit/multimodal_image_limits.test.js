@@ -66,7 +66,7 @@ test('总量判定是闭区间边界：正好等于预算算通过，超一字�
   assert.equal(isWithinBase64Budget([], 10), true)
 })
 
-test('默认预算与后端约定一致（后端是权威，见 input_message_service）', () => {
+test('默认预算与后端约定一致（后端是权威，见 agents/input_messages）', () => {
   assert.equal(MAX_MULTIMODAL_IMAGES, 10)
   assert.equal(MAX_MULTIMODAL_TOTAL_BASE64_BYTES, 80 * 1024 * 1024)
   assert.equal(remainingImageSlots([]), MAX_MULTIMODAL_IMAGES)

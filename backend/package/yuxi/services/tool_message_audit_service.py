@@ -14,9 +14,9 @@ from yuxi.storage.postgres.manager import pg_manager
 class ToolMessageAuditCollector:
     """按 tools lifecycle 串行提交 ToolMessage 审计短事务。"""
 
-    def __init__(self, *, run_id: str, request_id: str, thread_id: str, worker_id: str):
+    def __init__(self, *, run_id: str, thread_id: str, worker_id: str):
+        """绑定当前 Run 与执行 owner，供审计短事务校验。"""
         self.run_id = run_id
-        self.request_id = request_id
         self.thread_id = thread_id
         self.worker_id = worker_id
         self._operations: dict[str, float | None] = {}
@@ -53,7 +53,6 @@ class ToolMessageAuditCollector:
         async with pg_manager.get_async_session_context() as db:
             _message, created = await ToolMessageAuditRepository(db).start(
                 run_id=self.run_id,
-                request_id=self.request_id,
                 thread_id=self.thread_id,
                 worker_id=self.worker_id,
                 tool_call_id=tool_call_id,
@@ -112,7 +111,6 @@ class ToolMessageAuditCollector:
         )
         kwargs = {
             "run_id": self.run_id,
-            "request_id": self.request_id,
             "thread_id": self.thread_id,
             "worker_id": self.worker_id,
             "tool_call_id": tool_call_id,
@@ -127,7 +125,6 @@ class ToolMessageAuditCollector:
             if wait_for_run_terminal:
                 await repository.observe_error(
                     run_id=self.run_id,
-                    request_id=self.request_id,
                     thread_id=self.thread_id,
                     worker_id=self.worker_id,
                     tool_call_id=tool_call_id,

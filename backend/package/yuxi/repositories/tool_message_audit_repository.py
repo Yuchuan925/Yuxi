@@ -29,7 +29,6 @@ class ToolMessageAuditRepository:
         self,
         *,
         run_id: str,
-        request_id: str,
         thread_id: str,
         worker_id: str,
         tool_call_id: str,
@@ -51,13 +50,12 @@ class ToolMessageAuditRepository:
 
         run = await self._lock_run(
             run_id=run_id,
-            request_id=request_id,
             thread_id=thread_id,
             worker_id=worker_id,
         )
         existing = await self._get(run_id, operation_id)
         if existing is not None:
-            self._require_same_owner(existing, conversation_id=run.conversation_id, request_id=request_id)
+            self._require_same_owner(existing, conversation_id=run.conversation_id, turn_id=run.turn_id)
             self._require_same_start(
                 existing,
                 tool_name=normalized_name,
@@ -84,7 +82,7 @@ class ToolMessageAuditRepository:
             message_type=TOOL_AUDIT_MESSAGE_TYPE,
             extra_metadata=audit_metadata,
             run_id=run.id,
-            request_id=request_id,
+            turn_id=run.turn_id,
             delivery_status="complete",
             operation_id=operation_id,
             started_at=started_at,
@@ -120,7 +118,6 @@ class ToolMessageAuditRepository:
         self,
         *,
         run_id: str,
-        request_id: str,
         thread_id: str,
         worker_id: str,
         tool_call_id: str,
@@ -133,7 +130,6 @@ class ToolMessageAuditRepository:
         """完成同一 ToolMessage，并同步成功 ToolCall 投影。"""
         return await self._finish(
             run_id=run_id,
-            request_id=request_id,
             thread_id=thread_id,
             worker_id=worker_id,
             tool_call_id=tool_call_id,
@@ -151,7 +147,6 @@ class ToolMessageAuditRepository:
         self,
         *,
         run_id: str,
-        request_id: str,
         thread_id: str,
         worker_id: str,
         tool_call_id: str,
@@ -165,7 +160,6 @@ class ToolMessageAuditRepository:
         """关闭失败 ToolMessage；终态 State 可补全 stream error 缺少的 ToolMessage 内容。"""
         return await self._finish(
             run_id=run_id,
-            request_id=request_id,
             thread_id=thread_id,
             worker_id=worker_id,
             tool_call_id=tool_call_id,
@@ -183,7 +177,6 @@ class ToolMessageAuditRepository:
         self,
         *,
         run_id: str,
-        request_id: str,
         thread_id: str,
         worker_id: str,
         tool_call_id: str,
@@ -202,14 +195,13 @@ class ToolMessageAuditRepository:
             raise ValueError("Tool finished_sequence 不能为负数")
         run = await self._lock_run(
             run_id=run_id,
-            request_id=request_id,
             thread_id=thread_id,
             worker_id=worker_id,
         )
         message = await self._get(run_id, operation_id)
         if message is None:
             raise ValueError("Tool error 缺少对应的 start 事实")
-        self._require_same_owner(message, conversation_id=run.conversation_id, request_id=request_id)
+        self._require_same_owner(message, conversation_id=run.conversation_id, turn_id=run.turn_id)
         if message.execution_status != "running":
             metadata = message.extra_metadata if isinstance(message.extra_metadata, dict) else {}
             if metadata.get("error_message") != error_message:
@@ -244,7 +236,6 @@ class ToolMessageAuditRepository:
         self,
         *,
         run_id: str,
-        request_id: str,
         thread_id: str,
         worker_id: str,
         tool_call_id: str,
@@ -268,14 +259,13 @@ class ToolMessageAuditRepository:
 
         run = await self._lock_run(
             run_id=run_id,
-            request_id=request_id,
             thread_id=thread_id,
             worker_id=worker_id,
         )
         message = await self._get(run_id, operation_id)
         if message is None:
             raise ValueError("Tool terminal 缺少对应的 start 事实")
-        self._require_same_owner(message, conversation_id=run.conversation_id, request_id=request_id)
+        self._require_same_owner(message, conversation_id=run.conversation_id, turn_id=run.turn_id)
 
         metadata = dict(message.extra_metadata or {})
         if message.execution_status == execution_status:
@@ -309,12 +299,11 @@ class ToolMessageAuditRepository:
         await self.db.refresh(message)
         return message
 
-    async def _lock_run(self, *, run_id: str, request_id: str, thread_id: str, worker_id: str):
+    async def _lock_run(self, *, run_id: str, thread_id: str, worker_id: str):
         run = await self.run_repo.lock_output_persistence(
             run_id,
             worker_id=worker_id,
             conversation_thread_id=thread_id,
-            request_id=request_id,
         )
         if run is None:
             raise ValueError(f"AgentRun 不存在: {run_id}")
@@ -365,7 +354,7 @@ class ToolMessageAuditRepository:
         """返回同 Conversation 内无环的 resume 来源链。"""
         source_run_ids = [run.id]
         seen = {run.id}
-        parent_id = run.created_by_run_id if run.run_type == "resume" else None
+        parent_id = run.resume_from_run_id if run.run_type == "resume" else None
         while parent_id:
             if parent_id in seen:
                 raise ValueError("Resume Run ancestry 存在循环")
@@ -374,7 +363,7 @@ class ToolMessageAuditRepository:
                 raise ValueError("Resume Run ancestry 与当前 conversation 不一致")
             source_run_ids.append(parent.id)
             seen.add(parent.id)
-            parent_id = parent.created_by_run_id if parent.run_type == "resume" else None
+            parent_id = parent.resume_from_run_id if parent.run_type == "resume" else None
         return source_run_ids
 
     async def _require_compatibility_tool_call(
@@ -390,14 +379,14 @@ class ToolMessageAuditRepository:
         return tool_call
 
     @staticmethod
-    def _require_same_owner(message: Message, *, conversation_id: int, request_id: str) -> None:
+    def _require_same_owner(message: Message, *, conversation_id: int, turn_id: str) -> None:
         if (
             message.conversation_id != conversation_id
-            or message.request_id != request_id
+            or message.turn_id != turn_id
             or message.role != "tool"
             or message.message_type != TOOL_AUDIT_MESSAGE_TYPE
         ):
-            raise ValueError("Tool 审计消息必须属于同一 Run、request 和 conversation")
+            raise ValueError("Tool 审计消息必须属于同一 Turn 和 conversation")
 
     @staticmethod
     def _require_same_start(

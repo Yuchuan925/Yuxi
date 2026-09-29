@@ -10,7 +10,7 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 from sqlalchemy import text
-from yuxi.services.run_queue_service import (
+from yuxi.services.agents.transport import (
     WORKER_RECONCILIATION_HEALTH_KEY,
     WORKER_RECONCILIATION_HEALTH_TTL_SECONDS,
     get_redis_client,

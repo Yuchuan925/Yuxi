@@ -6,13 +6,12 @@ from types import SimpleNamespace
 
 import pytest
 import yuxi.agents.middlewares.subagent_task as subagent_task_middleware
-import yuxi.services.agent_run_service as agent_run_service
 import yuxi.services.subagent_run_service as subagent_run_service
 from langgraph.prebuilt.tool_node import ToolRuntime
 from langgraph.types import Command
 from yuxi.agents.middlewares.subagent_task import YuxiSubAgentMiddleware
 from yuxi.repositories.agent_repository import SUB_AGENT_BACKEND_ID
-from yuxi.services.input_message_service import AgentRunInputMessage
+from yuxi.services.agents.input_messages import AgentRunInputMessage
 from yuxi.utils.hash_utils import subagent_child_thread_id
 
 
@@ -169,7 +168,7 @@ def _patch_start(monkeypatch, captured: dict, *, thread_id: str = "child-thread"
 
     _patch_session(monkeypatch)
     _patch_subagent_run_service(monkeypatch, Service)
-    monkeypatch.setattr(agent_run_service, "await_agent_run_result", reject_wait)
+    monkeypatch.setattr(subagent_run_service, "await_agent_run_result", reject_wait)
 
 
 @pytest.mark.asyncio
@@ -449,7 +448,8 @@ async def test_subagent_start_creates_child_run_and_enqueues(monkeypatch) -> Non
     assert payload["status"] == "started"
     assert payload["run_id"] == "child-run"
     assert payload["thread_id"] == child_thread_id
-    assert payload["events_url"] == "/api/agent/runs/child-run/events"
+    assert payload["events_url"] == f"/api/v1/agents/threads/{child_thread_id}/events"
+    assert payload["result_url"] == f"/api/v1/agents/threads/{child_thread_id}/runs/child-run"
     assert payload["subagent_thread_relation_id"] == 77
     assert captured["start"]["uid"] == "user-1"
     assert captured["start"]["created_by_run_id"] == "parent-run"
@@ -519,8 +519,8 @@ async def test_subagent_status_returns_terminal_result(monkeypatch) -> None:
 
     _patch_session(monkeypatch)
     _patch_subagent_run_service(monkeypatch, _SubagentRunService)
-    monkeypatch.setattr(agent_run_service, "get_agent_run_result", fake_get_agent_run_result)
-    monkeypatch.setattr(agent_run_service, "get_agent_run_progress", fake_get_agent_run_progress)
+    monkeypatch.setattr(subagent_run_service, "get_agent_run_result", fake_get_agent_run_result)
+    monkeypatch.setattr(subagent_run_service, "get_agent_run_progress", fake_get_agent_run_progress)
 
     tool = next(item for item in _async_tool_middleware().tools if item.name == "subagent_status")
     result = await tool.coroutine(run_id="child-run", runtime=SimpleNamespace(tool_call_id="status-call"))
@@ -545,8 +545,8 @@ async def test_subagent_status_returns_terminal_result(monkeypatch) -> None:
             "subagent_name": "Worker",
             "child_thread_id": "child-thread",
             "status": "completed",
-            "events_url": "/api/agent/runs/child-run/events",
-            "result_url": "/api/agent/runs/child-run/result",
+            "events_url": "/api/v1/agents/threads/child-thread/events",
+            "result_url": "/api/v1/agents/threads/child-thread/runs/child-run",
         }
     ]
 
@@ -578,8 +578,8 @@ async def test_subagent_status_returns_progress_for_running_run(monkeypatch) -> 
 
     _patch_session(monkeypatch)
     _patch_subagent_run_service(monkeypatch, _SubagentRunService)
-    monkeypatch.setattr(agent_run_service, "get_agent_run_result", fake_get_agent_run_result)
-    monkeypatch.setattr(agent_run_service, "get_agent_run_progress", fake_get_agent_run_progress)
+    monkeypatch.setattr(subagent_run_service, "get_agent_run_result", fake_get_agent_run_result)
+    monkeypatch.setattr(subagent_run_service, "get_agent_run_progress", fake_get_agent_run_progress)
 
     tool = next(item for item in _async_tool_middleware().tools if item.name == "subagent_status")
     result = await tool.coroutine(run_id="child-run", runtime=SimpleNamespace(tool_call_id="status-call"))
@@ -621,8 +621,8 @@ async def test_subagent_cancel_and_await_use_parent_run_scope(monkeypatch) -> No
 
     _patch_session(monkeypatch)
     monkeypatch.setattr(YuxiSubAgentMiddleware, "_get_verified_subagent_run", fake_get_verified_subagent_run)
-    monkeypatch.setattr(agent_run_service, "request_cancel_agent_run", fake_request_cancel_agent_run)
-    monkeypatch.setattr(agent_run_service, "await_agent_run_result", fake_await_agent_run_result)
+    monkeypatch.setattr(subagent_run_service, "request_cancel_agent_run", fake_request_cancel_agent_run)
+    monkeypatch.setattr(subagent_run_service, "await_agent_run_result", fake_await_agent_run_result)
 
     tools = {item.name: item for item in _async_tool_middleware().tools}
 
@@ -665,13 +665,13 @@ async def test_subagent_await_reports_timeout_when_run_is_still_active(monkeypat
 
     async def fake_await_agent_run_result(*, run_id: str, current_uid: str):
         captured["await"] = {"run_id": run_id, "current_uid": current_uid}
-        raise agent_run_service.AgentRunWaitTimeout(
+        raise subagent_run_service.AgentRunWaitTimeout(
             {"status": "running", "agent_run_id": run_id, "thread_id": "child-thread", "output": ""}
         )
 
     _patch_session(monkeypatch)
     monkeypatch.setattr(YuxiSubAgentMiddleware, "_get_verified_subagent_run", fake_get_verified_subagent_run)
-    monkeypatch.setattr(agent_run_service, "await_agent_run_result", fake_await_agent_run_result)
+    monkeypatch.setattr(subagent_run_service, "await_agent_run_result", fake_await_agent_run_result)
 
     result = await {item.name: item for item in _async_tool_middleware().tools}["subagent_await"].coroutine(
         run_id="child-run",

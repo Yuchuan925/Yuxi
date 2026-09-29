@@ -60,7 +60,9 @@ test('tool approval modes and interrupt payloads follow their state contracts', 
     }),
     true
   )
-  assert.equal(isThreadWaitingForUserAction({ queueSnapshot: { status: 'interrupted' } }), true)
+  assert.equal(isThreadWaitingForUserAction({ queueSnapshot: { status: 'running' } }), false)
+  assert.equal(isThreadWaitingForUserAction({ turnStatus: 'waiting', pendingInterrupt: null }), true)
+  assert.equal(isThreadWaitingForUserAction({ turnStatus: 'running', pendingInterrupt: null }), false)
   assert.equal(
     isThreadWaitingForUserAction({
       pendingInterrupt: null,

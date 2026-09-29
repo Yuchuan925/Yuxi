@@ -114,6 +114,26 @@ async def test_compress_thread_context_uses_locked_idle_thread(monkeypatch: pyte
 
 @pytest.mark.unit
 @pytest.mark.asyncio
+async def test_compress_rejects_same_user_from_other_app(monkeypatch: pytest.MonkeyPatch) -> None:
+    """压缩副作用在 service 锁内重新核对 APP。"""
+
+    class ConversationRepo:
+        def __init__(self, _db):
+            pass
+
+        async def lock_conversation_by_thread_id(self, _thread_id):
+            return SimpleNamespace(uid="user-1", app_id="app-a", status="active")
+
+    monkeypatch.setattr(service, "ConversationRepository", ConversationRepo)
+    with pytest.raises(HTTPException) as exc:
+        await service.compress_thread_context(
+            thread_id="thread-1", current_user=SimpleNamespace(uid="user-1"), db=object(), app_id="app-b"
+        )
+    assert exc.value.status_code == 404
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
 async def test_runtime_is_released_when_checkpoint_compression_fails(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -238,39 +258,24 @@ async def test_compresses_checkpoint_through_canonical_graph(monkeypatch: pytest
 @pytest.mark.unit
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("active_run", "latest_run", "queued_requests"),
+    ("active_turn", "pending_input"),
     [
-        (SimpleNamespace(status="running"), None, []),
-        (None, SimpleNamespace(status="interrupted"), []),
-        (None, None, [SimpleNamespace(status="queued")]),
+        ("turn-running", None),
+        ("turn-waiting", None),
+        (None, "input-pending"),
     ],
 )
-async def test_rejects_non_idle_thread(active_run, latest_run, queued_requests, monkeypatch) -> None:
-    class RunRepo:
-        def __init__(self, _db):
-            pass
+async def test_rejects_non_idle_thread(active_turn, pending_input) -> None:
+    class Db:
+        def __init__(self):
+            self.results = [active_turn, pending_input]
 
-        async def get_active_run_by_thread_for_user(self, **_kwargs):
-            return active_run
-
-        async def get_latest_chat_or_resume_run(self, **_kwargs):
-            return latest_run
-
-    class RequestRepo:
-        def __init__(self, _db):
-            pass
-
-        async def list_queued(self, **_kwargs):
-            return queued_requests
-
-    monkeypatch.setattr(service, "AgentRunRepository", RunRepo)
-    monkeypatch.setattr(service, "AgentRunRequestRepository", RequestRepo)
+        async def scalar(self, _statement):
+            return self.results.pop(0)
 
     with pytest.raises(HTTPException) as exc_info:
         await service._ensure_thread_idle(
-            db=object(),
-            uid="user-1",
-            agent_slug="main",
+            db=Db(),
             thread_id="thread-1",
         )
 

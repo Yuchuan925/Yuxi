@@ -1,15 +1,13 @@
 const createOnGoingConvState = () => ({
   msgChunks: {},
-  currentRequestKey: null,
+  currentInputKey: null,
   currentAssistantKey: null,
   toolCallBuffers: {}
 })
 
 const IDLE_QUEUE_SNAPSHOT = Object.freeze({
-  status: 'idle',
-  paused_reason: null,
-  blocking_run_id: null,
-  can_continue: false
+  status: 'ready',
+  queue_paused: false
 })
 
 export function useAgentThreadState({
@@ -22,7 +20,7 @@ export function useAgentThreadState({
   const resetThreadUiState = (threadState) => {
     if (!threadState) return
     threadState.replyLoadingVisible = false
-    threadState.pendingRequestId = null
+    threadState.pendingInputId = null
   }
 
   const getThreadState = (threadId) => {
@@ -31,21 +29,23 @@ export function useAgentThreadState({
       chatState.threadStates[threadId] = {
         isStreaming: false,
         runStreamAbortController: null,
+        runReconnectTimer: null,
         activeRunId: null,
+        currentTurnId: null,
+        turnStatus: null,
         activeRunSteerable: false,
-        runLastSeq: '0-0',
-        lastRetryableJobTry: null,
+        threadCursor: null,
         replyLoadingVisible: false,
-        pendingRequestId: null,
+        pendingInputId: null,
         pendingInterrupt: null,
         agentStateRequestVersion: 0,
         onGoingConv: createOnGoingConvState(),
         agentState: null,
         contextCompressing: false,
-        queuedRequests: [],
+        queuedInputs: [],
         queueSnapshot: { ...IDLE_QUEUE_SNAPSHOT },
         continueQueueInFlight: false,
-        requestStreams: {}
+        inputMonitors: {}
       }
     }
     return chatState.threadStates[threadId]
@@ -58,11 +58,13 @@ export function useAgentThreadState({
     }
   }
 
-  const abortAllRequestStreams = (threadState) => {
-    if (!threadState?.requestStreams) return
-    for (const entry of Object.values(threadState.requestStreams)) {
+  const abortAllInputMonitors = (threadState) => {
+    if (!threadState) return
+    for (const entry of Object.values(threadState.inputMonitors || {})) {
       entry.controller?.abort()
+      clearTimeout(entry.timer)
     }
+    threadState.inputMonitors = {}
   }
 
   const cleanupThreadState = (threadId) => {
@@ -77,11 +79,12 @@ export function useAgentThreadState({
     if (threadState.runStreamAbortController) {
       threadState.runStreamAbortController.abort()
     }
-    abortAllRequestStreams(threadState)
+    clearTimeout(threadState.runReconnectTimer)
+    abortAllInputMonitors(threadState)
     delete chatState.threadStates[threadId]
   }
 
-  const resetOnGoingConv = (threadId = null, { preserveRequestStreams = false } = {}) => {
+  const resetOnGoingConv = (threadId = null, { preserveInputMonitors = false } = {}) => {
     const targetThreadId =
       threadId || (typeof getCurrentThreadId === 'function' ? getCurrentThreadId() : null)
 
@@ -97,9 +100,11 @@ export function useAgentThreadState({
         threadState.runStreamAbortController.abort()
         threadState.runStreamAbortController = null
       }
-      if (!preserveRequestStreams && threadState.requestStreams) {
-        abortAllRequestStreams(threadState)
-        threadState.requestStreams = {}
+      clearTimeout(threadState.runReconnectTimer)
+      threadState.runReconnectTimer = null
+      if (!preserveInputMonitors) {
+        abortAllInputMonitors(threadState)
+        threadState.inputMonitors = {}
       }
 
       threadState.onGoingConv = createOnGoingConvState()

@@ -18,10 +18,11 @@ class SteerMiddleware(AgentMiddleware):
         return await self._jump_if_steer_requested(runtime)
 
     async def _jump_if_steer_requested(self, runtime):
-        from yuxi.services.agent_request_queue_service import should_end_run_for_steer
+        """在模型调用边界读取持久待接管事实。"""
+        from yuxi.services.agents.runs import should_yield_for_steer
 
         run_id = getattr(runtime.context, "run_id", None)
-        if not run_id or not await should_end_run_for_steer(run_id):
+        if not run_id or not await should_yield_for_steer(run_id):
             return None
         return {"jump_to": "end"}
 

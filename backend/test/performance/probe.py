@@ -28,15 +28,20 @@ class ApiProbe:
         self.app = app
 
     async def __call__(self, scope, receive, send):
-        """只测量明确携带实验标记的 Run 提交请求。"""
+        """只测量明确携带实验标记的 Public Input 提交。"""
         received_ns = time.time_ns()
         state = None
-        if scope["type"] == "http" and scope.get("method") == "POST" and scope.get("path") == "/api/agent/runs":
+        if (
+            scope["type"] == "http"
+            and scope.get("method") == "POST"
+            and scope.get("path", "").startswith("/api/v1/agents/threads/")
+            and scope.get("path", "").endswith("/events")
+        ):
             marker = dict(scope["headers"]).get(b"x-load-test-id", b"").decode("ascii", errors="ignore")
             if marker.startswith("matrix-") and len(marker) <= 64:
-                emit({"event": "api_received", "request_id": marker, "time_ns": received_ns})
+                emit({"event": "api_received", "event_key": marker, "time_ns": received_ns})
                 if FINE:
-                    state = {"request_id": marker, "start_ns": received_ns, "spans": [], "sent": False}
+                    state = {"event_key": marker, "start_ns": received_ns, "spans": [], "sent": False}
         token = trace.set(state)
         try:
             await self.app(scope, receive, send)
@@ -115,7 +120,8 @@ def run():
     from yuxi.agents import BaseAgent
     from yuxi.agents.buildin.chatbot import graph
     from yuxi.agents.skills import service
-    from yuxi.services import agent_run_manifest_service, chat_service, run_worker as worker
+    from yuxi.services import run_worker as worker
+    from yuxi.services.agents import execution, preparation
     from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
     if FINE:
@@ -126,7 +132,7 @@ def run():
     for name in (
         "_get_run",
         "mark_run_running",
-        "_load_input_message",
+        "_load_run_input_messages",
         "_load_user",
         "_validate_run_workdir_binding",
         "prepare_and_record_run_execution",
@@ -134,8 +140,8 @@ def run():
     ):
         wrap(worker, name)
     for name in ("_resolve_agent_runtime", "_persist_agent_run_langfuse_trace"):
-        wrap(chat_service, name)
-    wrap(agent_run_manifest_service, "prepare_agent_runtime_context")
+        wrap(execution, name)
+    wrap(preparation, "prepare_run_execution")
     for name in (
         "sync_agent_context_skills",
         "load_chat_model",

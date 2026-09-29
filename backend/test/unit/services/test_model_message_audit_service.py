@@ -42,7 +42,6 @@ async def test_collector_projects_real_v3_message_lifecycle(monkeypatch):
 
     collector = ModelMessageAuditCollector(
         run_id="run-1",
-        request_id="request-1",
         thread_id="thread-1",
         worker_id="worker-1",
     )
@@ -101,7 +100,6 @@ async def test_collector_projects_real_v3_message_lifecycle(monkeypatch):
         "finish",
         {
             "run_id": "run-1",
-            "request_id": "request-1",
             "thread_id": "thread-1",
             "worker_id": "worker-1",
             "operation_id": "lc_run--model-message-1",
@@ -124,7 +122,6 @@ async def test_collector_projects_real_v3_message_lifecycle(monkeypatch):
 async def test_collector_rejects_start_without_protocol_sequence():
     collector = ModelMessageAuditCollector(
         run_id="run-1",
-        request_id="request-1",
         thread_id="thread-1",
         worker_id="worker-1",
     )
@@ -165,7 +162,6 @@ async def test_duplicate_start_preserves_collected_content_and_monotonic_clock(m
 
     collector = ModelMessageAuditCollector(
         run_id="run-1",
-        request_id="request-1",
         thread_id="thread-1",
         worker_id="worker-1",
     )
@@ -214,7 +210,6 @@ async def test_active_lifecycle_rejects_replacement_operation_id(monkeypatch):
 
     collector = ModelMessageAuditCollector(
         run_id="run-1",
-        request_id="request-1",
         thread_id="thread-1",
         worker_id="worker-1",
     )

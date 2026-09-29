@@ -83,21 +83,27 @@ def _validate_workdir_binding(binding: WorkdirBinding, *, conversation: Conversa
         raise RuntimeError("传入的 Workdir 绑定与 Conversation 不一致")
 
 
-async def resolve_authorized_workdir(*, thread_id: str, uid: str, db) -> AuthorizedWorkdir:
-    """按公共 Thread ID 授权并打开持久化 Workdir。"""
+async def resolve_authorized_workdir(*, thread_id: str, uid: str, db, app_id: str | None = None) -> AuthorizedWorkdir:
+    """按 Thread 的用户与 APP 身份授权并打开持久 Workdir。"""
     conversation = await ConversationRepository(db).get_conversation_by_thread_id(thread_id)
     return await resolve_authorized_conversation_workdir(
         conversation=conversation,
         uid=uid,
         db=db,
+        app_id=app_id,
     )
 
 
 async def resolve_authorized_conversation_workdir(
-    *, conversation: Conversation | None, uid: str, db
+    *, conversation: Conversation | None, uid: str, db, app_id: str | None = None
 ) -> AuthorizedWorkdir:
-    """复用已查询的 Conversation，重新校验归属后打开 Workdir。"""
-    if conversation is None or conversation.uid != str(uid) or conversation.status == "deleted":
+    """复用已查询的 Thread，重新校验完整作用域后打开 Workdir。"""
+    if (
+        conversation is None
+        or conversation.uid != str(uid)
+        or getattr(conversation, "app_id", None) != app_id
+        or conversation.status == "deleted"
+    ):
         raise HTTPException(status_code=404, detail="对话线程不存在")
     binding = await resolve_conversation_workdir_binding(
         conversation=conversation,

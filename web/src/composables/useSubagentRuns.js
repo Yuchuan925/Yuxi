@@ -1,7 +1,6 @@
 import { computed, onScopeDispose, ref, watch } from 'vue'
 import { agentApi } from '@/apis'
 import { processRunSseResponse } from './useAgentRunStream'
-import { normalizeRunSeq } from '@/utils/runStreamResume'
 
 const TERMINAL = new Set(['completed', 'failed', 'cancelled', 'interrupted'])
 // HTTP/1.1 下给父流、状态查询和取消请求保留同源连接；额外子 Run 每 2 秒回读。
@@ -27,7 +26,9 @@ export function useSubagentRuns({ scope, runs, enabled = ref(true) }) {
   const refresh = (entry) => {
     if (entry.refreshing) return entry.refreshing
     entry.refreshing = (async () => {
-      const { run } = await agentApi.getAgentRun(entry.id, { signal: entry.controller.signal })
+      const run = await agentApi.getAgentRun(entry.threadId, entry.id, {
+        signal: entry.controller.signal
+      })
       if (!isCurrent(entry)) return
       records.value[entry.id] = {
         ...records.value[entry.id],
@@ -57,14 +58,20 @@ export function useSubagentRuns({ scope, runs, enabled = ref(true) }) {
       if ([...subscriptions.values()].filter((item) => item.streaming).length >= MAX_CHILD_STREAMS)
         return
       entry.streaming = true
-      const response = await agentApi.streamAgentRunEvents(entry.id, entry.cursor, {
+      const response = await agentApi.streamThreadEvents(entry.threadId, entry.cursor, {
         signal: entry.controller.signal
       })
       if (!response.ok) throw new Error(`子任务订阅失败: ${response.status}`)
-      await processRunSseResponse(response, (event, _data, eventId) => {
+      await processRunSseResponse(response, (_event, data, eventId) => {
         if (!isCurrent(entry)) return
-        if (eventId) entry.cursor = normalizeRunSeq(eventId)
-        if (event === 'metadata') void refresh(entry).catch(() => markUnavailable(entry))
+        if (eventId) entry.cursor = eventId
+        if (data?.type === 'agent.thread.resync') {
+          void refresh(entry).catch(() => markUnavailable(entry))
+          return
+        }
+        if (data?.run_id === entry.id && data?.type?.startsWith('agent.thread.run.')) {
+          void refresh(entry).catch(() => markUnavailable(entry))
+        }
       })
       // 流结束后重新回读终态；不复用结束事件之前尚在途的状态查询。
       await entry.refreshing
@@ -83,8 +90,13 @@ export function useSubagentRuns({ scope, runs, enabled = ref(true) }) {
     ([currentScope, active, discovered]) => {
       if (!currentScope || !active) return
       for (const run of discovered || []) {
-        if (!run.run_id || subscriptions.has(run.run_id)) continue
-        const entry = { id: run.run_id, controller: new AbortController(), cursor: '0-0' }
+        if (!run.run_id || !run.child_thread_id || subscriptions.has(run.run_id)) continue
+        const entry = {
+          id: run.run_id,
+          threadId: run.child_thread_id,
+          controller: new AbortController(),
+          cursor: null
+        }
         subscriptions.set(entry.id, entry)
         records.value[entry.id] = { ...run }
         void observe(entry)

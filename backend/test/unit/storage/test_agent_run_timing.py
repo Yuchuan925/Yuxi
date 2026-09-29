@@ -56,7 +56,7 @@ def test_agent_run_dict_uses_the_shared_timing_projection():
         runtime_scope_id="thread-1",
         agent_slug="main",
         uid="user-1",
-        request_id="request-1",
+        turn_id="turn-1",
         input_payload={},
         created_at=created_at,
         started_at=created_at + timedelta(seconds=1),

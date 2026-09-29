@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs'
 import test from 'node:test'
 
 import {
-  bindMessageRequestRun,
+  bindMessageInputRun,
   buildMessageDebugTraceSpans,
   buildMessageDebugEntries,
   constrainMessageDebugInspectorHeight,
@@ -11,7 +11,7 @@ import {
   extractMessageToolNames,
   formatAuditDuration,
   formatMessageDebugContent,
-  getMessageRequestId,
+  getMessageInputId,
   getMessageRunId,
   groupMessageDebugEntries,
   getMessageDebugEntryTimeRange,
@@ -70,19 +70,19 @@ test('消息身份按 metadata 优先，并显式控制 human id fallback', () =
   const message = {
     id: 'human-1',
     type: 'human',
-    request_id: 'request-direct',
+    input_id: 'input-direct',
     run_id: 'run-direct',
     extra_metadata: {
-      request_id: 'request-meta',
+      input_id: 'input-meta',
       run_id: 'run-meta'
     }
   }
 
-  assert.equal(getMessageRequestId(message), 'request-meta')
+  assert.equal(getMessageInputId(message), 'input-meta')
   assert.equal(getMessageRunId(message), 'run-meta')
-  assert.equal(getMessageRequestId({ id: 'human-2', type: 'human' }), null)
+  assert.equal(getMessageInputId({ id: 'human-2', type: 'human' }), null)
   assert.equal(
-    getMessageRequestId({ id: 'human-2', type: 'human' }, { allowMessageIdFallback: true }),
+    getMessageInputId({ id: 'human-2', type: 'human' }, { allowMessageIdFallback: true }),
     'human-2'
   )
 })
@@ -190,17 +190,16 @@ test('模型调试条目只保留模型自身时间，Run 由独立列表分组'
   assert.equal(entry.runId, 'run-a')
 })
 
-test('Langfuse Run 地址仅接受后端确认的 HTTP(S) URL', () => {
+test('Langfuse Run 地址仅接受 Run 详情中的 HTTP(S) URL', () => {
   assert.equal(
     resolveLangfuseRunUrl({
-      available: true,
-      url: 'https://langfuse.example/project/project-1/traces/trace-1'
+      langfuse_url: 'https://langfuse.example/project/project-1/traces/trace-1'
     }),
     'https://langfuse.example/project/project-1/traces/trace-1'
   )
-  assert.equal(resolveLangfuseRunUrl({ available: true, url: 'javascript:alert(1)' }), null)
+  assert.equal(resolveLangfuseRunUrl({ langfuse_url: 'javascript:alert(1)' }), null)
   assert.equal(
-    resolveLangfuseRunUrl({ available: false, url: 'https://langfuse.example/trace-1' }),
+    resolveLangfuseRunUrl({ langfuse_url: null }),
     null
   )
 })
@@ -213,7 +212,7 @@ test('Run 详情保留按稳定 run_id 打开 Langfuse Trace 的入口', () => {
 
   assert.match(source, /打开 Langfuse Trace/)
   assert.match(source, /openRunInLangfuse\(selectedTarget\.group\.runId\)/)
-  assert.match(source, /agentApi\.getAgentRunLangfuseLink\(runId\)/)
+  assert.match(source, /agentApi\.getAgentRun\(props\.threadId, runId\)/)
   assert.match(source, /resolveLangfuseRunUrl\(result\)/)
 })
 
@@ -235,7 +234,7 @@ test('Run 行只读取审计接口返回的 AgentRun 状态而不从消息终态
 
 test('没有稳定身份时不按 AI 位置替换实时投影', () => {
   const history = [
-    { id: 'user-1', type: 'human', request_id: 'request-1' },
+    { id: 'user-1', type: 'human', input_id: 'input-1' },
     { id: 'ai-db', type: 'ai', run_id: 'run-1', content: '中间投影' },
     { id: 'tool-1', type: 'tool', run_id: 'run-1', content: '工具结果' }
   ]
@@ -263,23 +262,23 @@ test('active run 没有流式 AI 时保留持久化 AI', () => {
   )
 })
 
-test('同 request_id 的实时 User 将 Run 关联补入旧持久快照', () => {
+test('同 input_id 的实时 User 将 Run 关联补入旧持久快照', () => {
   const history = [
     {
       id: 41,
       type: 'human',
-      request_id: 'request-1',
+      input_id: 'input-1',
       content: '快排',
-      extra_metadata: { request_id: 'request-1' }
+      extra_metadata: { input_id: 'input-1' }
     }
   ]
   const ongoing = [
     {
-      id: 'request-1',
+      id: 'input-1',
       type: 'human',
       run_id: 'run-1',
       content: '快排',
-      extra_metadata: { request_id: 'request-1', run_id: 'run-1' }
+      extra_metadata: { input_id: 'input-1', run_id: 'run-1' }
     }
   ]
 
@@ -293,7 +292,7 @@ test('同 request_id 的实时 User 将 Run 关联补入旧持久快照', () => 
 
 test('active run 尚无持久化 AI 时保持流式 Human 到 AI 的顺序', () => {
   const ongoing = [
-    { id: 'user-live', type: 'human', request_id: 'request-live' },
+    { id: 'user-live', type: 'human', input_id: 'input-live' },
     { id: 'ai-live', type: 'ai', run_id: 'run-live' }
   ]
 
@@ -701,16 +700,16 @@ test('待运行请求独立分组，Run 到达后保持分组和用户记录标�
     {
       id: 'req-a',
       type: 'human',
-      request_id: 'req-a',
+      input_id: 'req-a',
       created_at: '2026-09-05T06:32:00Z',
       content: 'A'
     },
-    { id: 'req-b', type: 'human', request_id: 'req-b', delivery_status: 'queued', content: 'B' }
+    { id: 'req-b', type: 'human', input_id: 'req-b', delivery_status: 'queued', content: 'B' }
   ]
   const before = groupMessageDebugEntries(buildMessageDebugEntries(messages))
   assert.equal(before.length, 2)
-  assert.equal(before[0].requestId, 'req-a')
-  assert.equal(before[1].requestId, 'req-b')
+  assert.equal(before[0].inputId, 'req-a')
+  assert.equal(before[1].inputId, 'req-b')
   const after = groupMessageDebugEntries(
     buildMessageDebugEntries([
       { ...messages[0], id: 101, run_id: 'run-a' },
@@ -727,32 +726,32 @@ test('待运行请求独立分组，Run 到达后保持分组和用户记录标�
 
 test('明确接入关联只更新对应用户消息，保留已有运行事实', () => {
   const messages = [
-    { type: 'human', request_id: 'req-a', created_at: '2026-09-05T06:32:00Z' },
-    { type: 'human', request_id: 'req-b' },
-    { type: 'ai', request_id: 'req-a' },
-    { type: 'human', request_id: 'req-a', run_id: 'existing-run' }
+    { type: 'human', input_id: 'req-a', created_at: '2026-09-05T06:32:00Z' },
+    { type: 'human', input_id: 'req-b' },
+    { type: 'ai', input_id: 'req-a' },
+    { type: 'human', input_id: 'req-a', run_id: 'existing-run' }
   ]
-  bindMessageRequestRun(messages, 'req-a', 'run-a')
+  bindMessageInputRun(messages, 'req-a', 'run-a')
   assert.equal(getMessageRunId(messages[0]), 'run-a')
   assert.equal(messages[0].created_at, '2026-09-05T06:32:00Z')
   assert.equal(getMessageRunId(messages[1]), null)
   assert.equal(getMessageRunId(messages[2]), null)
   assert.equal(getMessageRunId(messages[3]), 'existing-run')
-  bindMessageRequestRun(messages, 'req-b', null)
+  bindMessageInputRun(messages, 'req-b', null)
   assert.equal(getMessageRunId(messages[1]), null)
 })
 
 test('活跃 Run 中的新请求通过队列投影独立展示且不重复已有消息', () => {
   const requests = [
     {
-      request_id: 'req-b',
+      input_id: 'req-b',
       status: 'queued',
       content: '排队消息',
       created_at: '2026-09-05T06:32:00Z'
     }
   ]
   const history = [
-    { id: 1, type: 'human', request_id: 'req-a', run_id: 'run-a', content: '运行中' }
+    { id: 1, type: 'human', input_id: 'req-a', run_id: 'run-a', content: '运行中' }
   ]
   const projected = mergeMessageDebugMessages(history, [], requests)
   assert.equal(projected.length, 2)
@@ -760,7 +759,7 @@ test('活跃 Run 中的新请求通过队列投影独立展示且不重复已有
   assert.equal(projected[1].delivery_status, 'queued')
   const groups = groupMessageDebugEntries(buildMessageDebugEntries(projected))
   assert.equal(groups.length, 2)
-  assert.equal(groups[1].requestId, 'req-b')
+  assert.equal(groups[1].inputId, 'req-b')
   assert.equal(groups[1].runId, null)
   const ongoing = [{ ...projected[1], run_id: 'run-b' }]
   const merged = mergeMessageDebugMessages(history, ongoing, requests)
@@ -772,9 +771,9 @@ test('活跃 Run 中的新请求通过队列投影独立展示且不重复已有
 test('非连续同请求分段具有独立 key，不抢占其他分段的选择', () => {
   const groups = groupMessageDebugEntries(
     buildMessageDebugEntries([
-      { id: 1, type: 'human', request_id: 'req-a', run_id: 'run-a' },
-      { id: 2, type: 'human', request_id: 'req-b' },
-      { id: 3, type: 'ai', request_id: 'req-a', run_id: 'run-a' }
+      { id: 1, type: 'human', input_id: 'req-a', run_id: 'run-a' },
+      { id: 2, type: 'human', input_id: 'req-b' },
+      { id: 3, type: 'ai', input_id: 'req-a', run_id: 'run-a' }
     ])
   )
   assert.equal(groups.length, 3)

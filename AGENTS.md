@@ -25,9 +25,9 @@ Yuxi 是基于 LangGraph、FastAPI、Vue 和多种持久化服务构建的知识
 ## 不能破坏的系统事实
 
 - HTTP 路由保持薄；用例流程属于 `yuxi.services`，持久化查询属于 `yuxi.repositories`。
-- 普通请求先在 PostgreSQL 中持久化 Message 和 AgentRunRequest；只有 ready FIFO 队头创建 AgentRun，且每次投递 ARQ 前 owning transaction 都已提交。Redis 负责投递、短期事件、取消和缓存，不拥有最终业务状态。
-- 同一用户、Agent、线程的普通请求按 FIFO 串行派发；Request 和 Run 是不同状态模型。
-- AgentRun 的输出、事件、artifact 和错误必须绑定同一 request/run；禁止从相邻 Run 猜测结果。
+- 普通输入先在 PostgreSQL 中持久化 Input、Receipt 和 Message；只有 ready FIFO 队头创建 Turn 与首个 Run，且每次投递 ARQ 前 owning transaction 都已提交。Redis 负责投递、短期事件、取消和缓存，不拥有最终业务状态。
+- 同一用户、APP、Agent、Thread 的 follow-up Input 按 FIFO 串行派发；steer Input 固定当前 Turn，在安全边界聚合接管。等待中的 Turn 禁止普通消息。
+- Turn 的最终输出必须来自 result_run_id 指向的顶层 Run；Run 的输出、事件、artifact 和错误绑定同一 Turn/Run，禁止从相邻 Run 猜测结果。
 - 非终态 Run 必须有明确执行 Owner、lease/heartbeat 或等价机制，以及崩溃后的可观察结局。
 - `/api/system/health` 只表达进程 liveness；接流量前置条件由 `/api/system/ready` 证明，业务正确性仍由真实链路测试证明。
 - LangGraph checkpoint 只使用 PostgreSQL；API、worker 与 Agent 不提供本地后端选择或静默降级。

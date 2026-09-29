@@ -1,0 +1,124 @@
+"""按授权 Thread 读取 LangGraph checkpoint 与持久执行关系。"""
+
+from __future__ import annotations
+
+from typing import Any
+
+from fastapi import HTTPException
+from yuxi.agents.backends.paths import runtime_workdir_path
+from yuxi.repositories.agent_run_repository import AgentRunRepository
+from yuxi.repositories.conversation_repository import ConversationRepository
+from yuxi.repositories.subagent_thread_repository import SubagentThreadRepository
+from yuxi.services.agents.execution import build_pending_interrupt_payload, extract_agent_state
+from yuxi.services.subagent_run_service import serialize_subagent_run_state
+from yuxi.services.workdir_service import resolve_conversation_workdir_path
+from yuxi.storage.postgres.manager import pg_manager
+from yuxi.storage.postgres.models_business import User
+from yuxi.utils.logging_config import logger
+
+
+def _serialize_state_messages(values: dict[str, Any]) -> list[dict[str, Any]]:
+    """将 checkpoint 消息复制为只读响应载荷。"""
+    messages = values.get("messages") if isinstance(values, dict) else None
+    if not isinstance(messages, list):
+        return []
+    serialized = []
+    for message in messages:
+        if hasattr(message, "model_dump"):
+            serialized.append(message.model_dump())
+        elif isinstance(message, dict):
+            serialized.append(dict(message))
+        else:
+            serialized.append({"type": "unknown", "content": str(message)})
+    return serialized
+
+
+async def _read_checkpoint_state(*, uid: str, thread_id: str) -> tuple[dict, Any | None]:
+    """读取完整 checkpoint 快照与同批中断；调用方先校验线程可见性。"""
+    checkpointer = pg_manager.get_langgraph_checkpointer()
+    saved = await checkpointer.aget_tuple({"configurable": {"uid": uid, "thread_id": thread_id, "checkpoint_ns": ""}})
+    if saved is None:
+        return {}, None
+
+    # 面板只展示完整快照，pending writes 中的业务增量留给执行图合并。
+    interrupt_info = None
+    for _task_id, channel, interrupts in saved.pending_writes or []:
+        if channel == "__interrupt__" and interrupts:
+            interrupt_info = interrupts[0]
+            break
+    return saved.checkpoint["channel_values"], interrupt_info
+
+
+async def get_agent_state_view(
+    *,
+    thread_id: str,
+    current_user: User,
+    db,
+    app_id: str | None = None,
+    include_messages: bool = False,
+    include_relations: bool = True,
+) -> dict:
+    """按用户和 APP 作用域读取 checkpoint 及持久执行关系。"""
+    current_uid = str(current_user.uid)
+    conv_repo = ConversationRepository(db)
+    run_repo = AgentRunRepository(db)
+    conversation = await conv_repo.get_conversation_by_thread_id(thread_id)
+    if conversation:
+        if conversation.uid != str(current_uid) or conversation.app_id != app_id or conversation.status == "deleted":
+            raise HTTPException(status_code=404, detail="对话线程不存在")
+
+        latest_run = await run_repo.get_latest_run_by_thread_for_user(thread_id, current_uid)
+        workdir_path = await resolve_conversation_workdir_path(
+            conversation=conversation,
+            uid=current_uid,
+            db=db,
+        )
+        runtime_workdir = runtime_workdir_path(workdir_path)
+        values, interrupt_info = await _read_checkpoint_state(uid=current_uid, thread_id=thread_id)
+        response = {
+            "agent_state": extract_agent_state(
+                values,
+                workdir_path=runtime_workdir,
+            )
+        }
+        if latest_run and latest_run.status == "interrupted" and interrupt_info:
+            response["interrupt"] = {
+                **build_pending_interrupt_payload(interrupt_info, thread_id),
+                "run_id": latest_run.id,
+            }
+        if include_relations:
+            # checkpoint 保存模型上下文；页面加载以持久 Run 的身份与状态为准。
+            child_runs = await run_repo.list_subagent_runs_for_conversation(conversation.id, current_uid)
+            response["agent_state"]["subagent_runs"] = [serialize_subagent_run_state(run) for run in child_runs]
+            relation = await SubagentThreadRepository(db).get_by_child_conversation_for_user(
+                conversation.id,
+                str(current_uid),
+            )
+            if relation:
+                parent_conversation = await conv_repo.get_conversation_by_id(relation.parent_conversation_id)
+                if (
+                    not parent_conversation
+                    or parent_conversation.uid != str(current_uid)
+                    or parent_conversation.app_id != app_id
+                    or parent_conversation.status == "deleted"
+                ):
+                    raise HTTPException(status_code=404, detail="父对话线程不存在")
+                response["parent_thread_id"] = parent_conversation.thread_id
+                response["subagent_thread"] = relation.to_dict()
+                latest_run = await run_repo.get_latest_subagent_run_by_thread_for_user(
+                    thread_id,
+                    str(current_uid),
+                )
+                if latest_run:
+                    try:
+                        response["subagent_run"] = serialize_subagent_run_state(latest_run)
+                    except ValueError as exc:
+                        logger.error(f"子智能体运行记录格式异常: thread_id={thread_id}, run_id={latest_run.id}, {exc}")
+                        raise HTTPException(status_code=500, detail="子智能体运行记录格式异常") from exc
+        if include_messages:
+            response["messages"] = _serialize_state_messages(values)
+        return response
+
+    # 子智能体线程在创建时必然同时写入子对话与线程关系（见 SubagentRunService.start），
+    # 由上面的 conversation 分支统一处理；走到这里说明该 thread 没有对应对话，即线程不存在。
+    raise HTTPException(status_code=404, detail="对话线程不存在")

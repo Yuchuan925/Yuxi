@@ -133,11 +133,12 @@ async def resolve_thread_artifact_view(
     current_uid: str,
     db,
     path: str,
+    app_id: str | None = None,
     download: bool = False,
     preview: bool = False,
 ) -> FileResponse | StreamingResponse | dict:
     """把实时授权文件导出为自动清理的 HTTP 文件响应。"""
-    access = await resolve_authorized_workdir(thread_id=thread_id, uid=current_uid, db=db)
+    access = await resolve_authorized_workdir(thread_id=thread_id, uid=current_uid, db=db, app_id=app_id)
     normalized = _normalize_artifact_path(runtime_user_data_path(access.workdir.root_path), path)
     skill_source = await _require_skill_artifact_access(normalized_path=normalized, current_uid=current_uid, db=db)
     is_preview = preview and not download
@@ -189,10 +190,11 @@ async def resolve_thread_artifact_view(
 
 
 async def save_thread_artifact_to_workspace_view(
-    *, thread_id: str, current_uid: str, db, path: str, destination_path: str | None = None
+    *, thread_id: str, current_uid: str, db, path: str, destination_path: str | None = None,
+    app_id: str | None = None,
 ) -> dict[str, str]:
     """把可见 artifact 复制到用户选择的工作区目录。"""
-    access = await resolve_authorized_workdir(thread_id=thread_id, uid=current_uid, db=db)
+    access = await resolve_authorized_workdir(thread_id=thread_id, uid=current_uid, db=db, app_id=app_id)
     normalized = _normalize_artifact_path(runtime_user_data_path(access.workdir.root_path), path)
     raw_destination = str(destination_path or DEFAULT_ARTIFACT_DESTINATION).strip()
     destination = PurePosixPath(raw_destination)
@@ -259,5 +261,5 @@ async def save_thread_artifact_to_workspace_view(
         "name": PurePosixPath(target).name,
         "source_path": normalized,
         "saved_path": target,
-        "saved_artifact_url": f"/api/chat/thread/{thread_id}/artifacts/{target.lstrip('/')}",
+        "saved_artifact_url": f"/api/v1/agents/threads/{thread_id}/artifacts/{target.lstrip('/')}",
     }

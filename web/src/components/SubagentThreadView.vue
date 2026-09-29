@@ -46,11 +46,12 @@ const runs = ref([])
 const currentRunId = ref('')
 const currentRunStatus = ref('')
 const streamActive = ref(false)
-const lastEventId = ref('0-0')
+const lastEventId = ref(null)
 const scrollContainerRef = ref(null)
 const contentRef = ref(null)
 const streamState = reactive({ threadStates: {} })
 let streamAbortController = null
+let runLookupAbortController = null
 let resizeObserver = null
 let reconnectTimer = null
 let loadVersion = 0
@@ -64,11 +65,11 @@ const getStreamThreadState = (threadId) => {
     streamState.threadStates[threadId] = {
       isStreaming: false,
       replyLoadingVisible: false,
-      pendingRequestId: null,
+      pendingInputId: null,
       pendingInterrupt: null,
       onGoingConv: {
         msgChunks: {},
-        currentRequestKey: null,
+        currentInputKey: null,
         currentAssistantKey: null,
         toolCallBuffers: {}
       },
@@ -128,6 +129,8 @@ const resetStreamState = () => {
 const stopRunStream = () => {
   streamAbortController?.abort()
   streamAbortController = null
+  runLookupAbortController?.abort()
+  runLookupAbortController = null
   streamActive.value = false
   if (reconnectTimer) {
     clearTimeout(reconnectTimer)
@@ -159,7 +162,9 @@ const loadThread = async () => {
       : threadRuns.at(-1)
     const run =
       props.runId && !selectedRun
-        ? (await agentApi.getAgentRun(props.runId, { signal: controller.signal })).run
+        ? await agentApi.getAgentRun(props.threadId, props.runId, {
+            signal: controller.signal
+          })
         : selectedRun
     if (!isCurrent()) return
     currentRunId.value = run?.run_id || run?.id || props.runId || ''
@@ -194,7 +199,7 @@ const scheduleReconnect = (runId) => {
     void startRunStream(runId, lastEventId.value, false)
   }, 1000)
 }
-const startRunStream = async (runId, afterSeq = '0-0', resetMessages = false) => {
+const startRunStream = async (runId, afterSeq = null, resetMessages = false) => {
   stopRunStream()
   if (disposed || !props.active || !runId) return
   if (resetMessages) resetStreamState()
@@ -202,15 +207,21 @@ const startRunStream = async (runId, afterSeq = '0-0', resetMessages = false) =>
   streamAbortController = controller
   streamActive.value = true
   getStreamThreadState(props.threadId).isStreaming = true
+  let terminalSeen = false
 
   try {
-    const response = await agentApi.streamAgentRunEvents(runId, afterSeq, {
+    const response = await agentApi.streamThreadEvents(props.threadId, afterSeq, {
       signal: controller.signal
     })
     if (!response.ok) throw new Error(`SSE response not ok: ${response.status}`)
     await processRunSseResponse(response, (event, data, eventId) => {
       if (controller.signal.aborted || !props.active || !data) return
       if (eventId) lastEventId.value = String(eventId)
+      if (data.type === 'agent.thread.resync') {
+        void loadThread()
+        return
+      }
+      if (data.run_id !== runId) return
       const payload = data.payload || {}
       const isRetryableError =
         event === 'error' && (payload.retryable === true || payload.chunk?.retryable === true)
@@ -224,7 +235,12 @@ const startRunStream = async (runId, afterSeq = '0-0', resetMessages = false) =>
           handleStreamChunk(chunk, threadId)
         }
       })
-      if (event === 'end') streamActive.value = false
+      if (data.type?.startsWith('agent.thread.run.') &&
+          isTerminalRunStatus(data.type.split('.').at(-1))) {
+        terminalSeen = true
+        streamActive.value = false
+        controller.abort()
+      }
     })
   } catch (streamError) {
     if (streamError?.name !== 'AbortError') {
@@ -232,17 +248,23 @@ const startRunStream = async (runId, afterSeq = '0-0', resetMessages = false) =>
     }
   } finally {
     if (streamAbortController === controller) streamActive.value = false
-    if (!controller.signal.aborted && !disposed && props.active) {
+    if ((terminalSeen || !controller.signal.aborted) && !disposed && props.active) {
       streamSmoother.flushThread(props.threadId)
+      const lookupController = new AbortController()
+      runLookupAbortController = lookupController
       try {
-        const runResponse = await agentApi.getAgentRun(runId, { signal: controller.signal })
-        if (!disposed && !controller.signal.aborted && props.active) {
-          const status = normalizeRunStatus(runResponse?.run?.status)
+        const runResponse = await agentApi.getAgentRun(props.threadId, runId, {
+          signal: lookupController.signal
+        })
+        if (!disposed && props.active) {
+          const status = normalizeRunStatus(runResponse?.status)
           if (isTerminalRunStatus(status)) await loadThread()
           else scheduleReconnect(runId)
         }
       } catch {
-        if (!controller.signal.aborted) scheduleReconnect(runId)
+        if (!disposed && props.active) scheduleReconnect(runId)
+      } finally {
+        if (runLookupAbortController === lookupController) runLookupAbortController = null
       }
     }
     if (streamAbortController === controller) streamAbortController = null
@@ -252,7 +274,7 @@ const startRunStream = async (runId, afterSeq = '0-0', resetMessages = false) =>
 watch([() => props.threadId, () => props.runId], () => {
   stopRunStream()
   resetStreamState()
-  lastEventId.value = '0-0'
+  lastEventId.value = null
   messages.value = []
   loadThread()
 })

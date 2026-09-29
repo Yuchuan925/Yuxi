@@ -69,11 +69,11 @@ export function extractMessageToolNames(message) {
   ]
 }
 
-export function getMessageRequestId(message, { allowMessageIdFallback = false } = {}) {
-  const metadataId = message?.extra_metadata?.request_id
+export function getMessageInputId(message, { allowMessageIdFallback = false } = {}) {
+  const metadataId = message?.extra_metadata?.input_id
   if (typeof metadataId === 'string' && metadataId.trim()) return metadataId.trim()
-  if (typeof message?.request_id === 'string' && message.request_id.trim()) {
-    return message.request_id.trim()
+  if (typeof message?.input_id === 'string' && message.input_id.trim()) {
+    return message.input_id.trim()
   }
   if (allowMessageIdFallback && message?.type === 'human' && typeof message.id === 'string') {
     const messageId = message.id.trim()
@@ -90,44 +90,44 @@ export function getMessageRunId(message) {
 }
 
 /** 只用接入响应或派发事件中的明确关联补齐对应用户消息。 */
-export function bindMessageRequestRun(messages, requestId, runId) {
-  if (!requestId || !runId) return
+export function bindMessageInputRun(messages, inputId, runId) {
+  if (!inputId || !runId) return
   for (const message of messages || []) {
     if (!['human', 'user'].includes(message.type || message.role)) continue
-    if (getMessageRequestId(message) !== requestId || getMessageRunId(message)) continue
+    if (getMessageInputId(message) !== inputId || getMessageRunId(message)) continue
     message.run_id = runId
     message.extra_metadata = { ...message.extra_metadata, run_id: runId }
   }
 }
 
 /** 合并普通历史与实时投影；只按已有稳定 ID 去重，不按 AI 位置猜测。 */
-export function mergeMessageDebugMessages(history, ongoing, requests = []) {
+export function mergeMessageDebugMessages(history, ongoing, inputs = []) {
   const persisted = Array.isArray(history) ? history : []
   const live = [
     ...(Array.isArray(ongoing) ? ongoing : []),
-    ...requests
+    ...inputs
       .filter(
-        (request) =>
-          !(ongoing || []).some((message) => getMessageRequestId(message) === request.request_id)
+        (input) =>
+          !(ongoing || []).some((message) => getMessageInputId(message) === input.input_id)
       )
-      .map((request) => ({
-        id: request.input_message_id || request.request_id,
+      .map((input) => ({
+        id: input.input_message_id || input.input_id,
         type: 'human',
-        request_id: request.request_id,
-        content: request.content,
-        created_at: request.created_at,
-        delivery_status: request.status
+        input_id: input.input_id,
+        content: input.content,
+        created_at: input.created_at,
+        delivery_status: input.status
       }))
   ]
-  const liveHumanByRequestId = new Map(
+  const liveHumanByInputId = new Map(
     live
       .filter((message) => message?.type === 'human')
-      .map((message) => [getMessageRequestId(message), message])
-      .filter(([requestId]) => requestId)
+      .map((message) => [getMessageInputId(message), message])
+      .filter(([inputId]) => inputId)
   )
   const mergedPersisted = persisted.map((message) => {
     if (message?.type !== 'human' || getMessageRunId(message)) return message
-    const liveMessage = liveHumanByRequestId.get(getMessageRequestId(message))
+    const liveMessage = liveHumanByInputId.get(getMessageInputId(message))
     const liveRunId = getMessageRunId(liveMessage)
     if (!liveRunId) return message
     return {
@@ -140,15 +140,15 @@ export function mergeMessageDebugMessages(history, ongoing, requests = []) {
     }
   })
   const persistedIds = new Set(mergedPersisted.map((message) => String(message?.id ?? '')))
-  const persistedRequestIds = new Set(
+  const persistedInputIds = new Set(
     mergedPersisted
       .filter((message) => message?.type === 'human')
-      .map(getMessageRequestId)
+      .map(getMessageInputId)
       .filter(Boolean)
   )
   const pending = live.filter((message) => {
     if (persistedIds.has(String(message?.id ?? ''))) return false
-    return message?.type !== 'human' || !persistedRequestIds.has(getMessageRequestId(message))
+    return message?.type !== 'human' || !persistedInputIds.has(getMessageInputId(message))
   })
   return [...mergedPersisted, ...pending]
 }
@@ -312,16 +312,16 @@ export function buildMessageDebugEntries(messages) {
   return source.map((message, index) => {
     const type = message?.type || message?.role || 'unknown'
     const runId = getMessageRunId(message)
-    const requestId = getMessageRequestId(message)
+    const inputId = getMessageInputId(message)
     const operationId =
       typeof message?.operation_id === 'string' && message.operation_id.trim()
         ? message.operation_id.trim()
         : null
     const common = {
-      requestId,
+      inputId,
       id:
-        ['human', 'user'].includes(type) && requestId
-          ? `request:${requestId}:human`
+        ['human', 'user'].includes(type) && inputId
+          ? `input:${inputId}:human`
           : operationId
             ? `${runId || 'unassigned'}:${auditRole(message) || 'unknown'}:${operationId}`
             : String(message?.id ?? `message-${index}`),
@@ -423,9 +423,9 @@ export function formatAuditDuration(durationMs) {
 
 /** 从后端响应中读取可安全打开的 Langfuse HTTP(S) 地址。 */
 export function resolveLangfuseRunUrl(payload) {
-  if (payload?.available !== true || typeof payload?.url !== 'string') return null
+  if (typeof payload?.langfuse_url !== 'string') return null
 
-  const value = payload.url.trim()
+  const value = payload.langfuse_url.trim()
   if (!value) return null
   try {
     const parsed = new URL(value)
@@ -439,20 +439,20 @@ export function resolveLangfuseRunUrl(payload) {
 export function groupMessageDebugEntries(entries) {
   const source = Array.isArray(entries) ? entries : []
   const groups = []
-  const requestOccurrences = new Map()
+  const inputOccurrences = new Map()
 
   source.forEach((item) => {
     const runId = typeof item?.runId === 'string' && item.runId.trim() ? item.runId.trim() : null
     let group = groups.at(-1)
-    const requestId = item?.requestId || null
-    if (!group || group.runId !== runId || (!runId && group.requestId !== requestId)) {
-      const occurrence = requestOccurrences.get(requestId) || 0
-      if (requestId) requestOccurrences.set(requestId, occurrence + 1)
+    const inputId = item?.inputId || null
+    if (!group || group.runId !== runId || (!runId && group.inputId !== inputId)) {
+      const occurrence = inputOccurrences.get(inputId) || 0
+      if (inputId) inputOccurrences.set(inputId, occurrence + 1)
       group = {
-        key: requestId
-          ? `request:${requestId}:${occurrence}`
+        key: inputId
+          ? `input:${inputId}:${occurrence}`
           : `${runId || 'unassigned'}-${groups.length}`,
-        requestId,
+        inputId,
         runId,
         items: []
       }

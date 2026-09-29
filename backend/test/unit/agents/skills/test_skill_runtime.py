@@ -254,7 +254,7 @@ async def test_preload_rejects_symlinked_source_ancestor(tmp_path, monkeypatch):
 @pytest.mark.asyncio
 async def test_manifest_retains_metadata_from_authorized_resolution(tmp_path, monkeypatch):
     """源记录更新后，manifest 仍使用首次解析的版本与内容摘要。"""
-    from yuxi.services.agent_run_manifest_service import build_skill_manifest_entries
+    from yuxi.services.agents.preparation import build_skill_manifest_entries
 
     item = _skill(tmp_path, "alpha", content="original body")
 

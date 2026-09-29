@@ -8,7 +8,7 @@ import pytest
 from test.live_api_cleanup import (
     TEST_CONVERSATION_TITLE_PREFIX,
     CleanupConversationResource,
-    cleanup_e2e_chat_resources,
+    cleanup_test_chat_resources,
     cleanup_provisioned_sandboxes,
     cleanup_pytest_knowledge_resources,
     is_test_conversation_title,
@@ -94,7 +94,7 @@ async def _patch_chat_cleanup_database(
     async def fake_validate(*_args, **_kwargs) -> None:
         return None
 
-    async def fake_list_queued(_thread_ids: set[str]) -> list[str]:
+    async def fake_list_pending(_thread_ids: set[str]) -> list[tuple[str, str]]:
         return []
 
     async def fake_delete_resources(workdirs, thread_ids: set[str], _project_ids: set[str]) -> None:
@@ -107,7 +107,7 @@ async def _patch_chat_cleanup_database(
     monkeypatch.setattr("test.live_api_cleanup.list_test_conversation_resources", fake_list_resources)
     monkeypatch.setattr("test.live_api_cleanup.validate_test_workdirs_exclusive", fake_validate)
     monkeypatch.setattr("test.live_api_cleanup.validate_test_runs_terminal", fake_validate)
-    monkeypatch.setattr("test.live_api_cleanup.list_test_queued_request_ids", fake_list_queued)
+    monkeypatch.setattr("test.live_api_cleanup.list_test_pending_inputs", fake_list_pending)
     monkeypatch.setattr("test.live_api_cleanup.delete_test_conversation_resources", fake_delete_resources)
     monkeypatch.setattr("test.live_api_cleanup.delete_orphaned_test_projects", fake_validate)
     return collected
@@ -193,26 +193,6 @@ async def test_cleanup_deletes_e2e_threads_before_temporary_agents(tmp_path, mon
     (tmp_path / "threads" / "thread-viewer").mkdir(parents=True)
     (tmp_path / "threads" / "thread-marked").mkdir(parents=True)
     responses: dict[str, object] = {
-        "/api/chat/threads": [
-            {
-                "id": "thread-viewer",
-                "title": "viewer-fs-e2e-deadbeef",
-                "agent_id": "default-chatbot",
-                "metadata": {"_yuxi_e2e": True, "test": "viewer-fs-e2e"},
-            },
-            {
-                "id": "thread-user",
-                "title": "用户自己的对话",
-                "agent_id": "default-chatbot",
-                "metadata": {},
-            },
-            {
-                "id": "thread-marked",
-                "title": "未使用固定前缀",
-                "agent_id": "e2e-main-deadbeef",
-                "metadata": {"_yuxi_e2e": True, "marker": "YUXI_SUBAGENT_STREAM_E2E_deadbeef"},
-            },
-        ],
         "/api/agent": {
             "agents": [
                 {"slug": "e2e-main-deadbeef", "created_by": "test-user"},
@@ -225,21 +205,21 @@ async def test_cleanup_deletes_e2e_threads_before_temporary_agents(tmp_path, mon
     def handle_request(request: httpx.Request) -> httpx.Response:
         """返回对话与智能体清理 API 的最小响应。"""
 
-        if request.method == "DELETE":
+        if request.method in {"DELETE", "POST"}:
             deleted_paths.append(request.url.path)
             return httpx.Response(200, json={})
         return httpx.Response(200, json=responses[request.url.path])
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handle_request), base_url="http://test") as client:
-        await cleanup_e2e_chat_resources(
+        await cleanup_test_chat_resources(
             client,
             {"Authorization": "test"},
             owner_uid="test-user",
         )
 
     assert deleted_paths == [
-        "/api/chat/thread/thread-viewer",
-        "/api/chat/thread/thread-marked",
+        "/api/v1/agents/threads/thread-viewer/archive",
+        "/api/v1/agents/threads/thread-marked/archive",
         "/api/agent/e2e-main-deadbeef",
     ]
     assert deleted_row_threads == [{"thread-viewer", "thread-marked"}]
@@ -282,84 +262,48 @@ async def test_cleanup_only_exempts_projects_whose_managed_workdir_is_deleted(tm
     monkeypatch.setattr("test.live_api_cleanup.validate_test_workdirs_exclusive", capture_validation)
 
     def handle_request(request: httpx.Request) -> httpx.Response:
-        if request.method == "DELETE":
+        if request.method in {"DELETE", "POST"}:
             return httpx.Response(200, json={})
-        if request.url.path == "/api/chat/threads":
-            return httpx.Response(
-                200,
-                json=[
-                    {"id": thread_id, "metadata": {"_yuxi_test": True}}
-                    for thread_id in resources
-                ],
-            )
         if request.url.path == "/api/agent":
             return httpx.Response(200, json={"agents": []})
         raise AssertionError(f"unexpected request: {request.method} {request.url}")
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handle_request), base_url="http://test") as client:
-        await cleanup_e2e_chat_resources(client, {"Authorization": "test"}, owner_uid="test-user")
+        await cleanup_test_chat_resources(client, {"Authorization": "test"}, owner_uid="test-user")
 
     assert validated_project_ids == [{"project-managed"}]
 
 
-async def test_cleanup_paginates_active_threads(tmp_path, monkeypatch):
-    """活动线程超过单页上限时仍需清理后续页面的 E2E 对话。"""
+async def test_cleanup_uses_persisted_discovery_for_archived_threads(tmp_path, monkeypatch):
+    """不依赖活动列表分页，已归档测试 Thread 仍能物理清理。"""
 
-    deleted_paths: list[str] = []
     deleted_row_threads = await _patch_chat_cleanup_database(
         monkeypatch,
         {
-            "thread-page-2": CleanupConversationResource(
+            "thread-archived": CleanupConversationResource(
                 conversation_id=1,
-                project_id="project-page-2",
-                thread_id="thread-page-2",
+                project_id="project-archived",
+                thread_id="thread-archived",
                 uid="test-user",
-                status="active",
+                status="archived",
                 workdir_path=None,
             )
         },
     )
-    offsets: list[str] = []
     monkeypatch.setenv("YUXI_USER_DATA_DIR", str(tmp_path / "threads"))
+    observed_paths: list[str] = []
 
     def handle_request(request: httpx.Request) -> httpx.Response:
-        """模拟分两页返回线程的清理 API。"""
-
-        if request.method == "DELETE":
-            deleted_paths.append(request.url.path)
-            return httpx.Response(200, json={})
-        if request.url.path == "/api/chat/threads":
-            offset = request.url.params.get("offset") or "0"
-            offsets.append(offset)
-            if offset == "0":
-                return httpx.Response(
-                    200,
-                    json=[{"id": f"thread-{index}", "is_pinned": False} for index in range(500)],
-                )
-            return httpx.Response(
-                200,
-                json=[
-                    {
-                        "id": "thread-page-2",
-                        "title": "任意标题",
-                        "metadata": {"_yuxi_e2e": True, "test": "viewer-fs-e2e"},
-                    }
-                ],
-            )
+        observed_paths.append(request.url.path)
         if request.url.path == "/api/agent":
             return httpx.Response(200, json={"agents": []})
         raise AssertionError(f"unexpected request: {request.method} {request.url}")
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handle_request), base_url="http://test") as client:
-        await cleanup_e2e_chat_resources(
-            client,
-            {"Authorization": "test"},
-            owner_uid="test-user",
-        )
+        await cleanup_test_chat_resources(client, {"Authorization": "test"}, owner_uid="test-user")
 
-    assert offsets == ["0", "500"]
-    assert deleted_paths == ["/api/chat/thread/thread-page-2"]
-    assert deleted_row_threads == [{"thread-page-2"}]
+    assert observed_paths == ["/api/agent"]
+    assert deleted_row_threads == [{"thread-archived"}]
 
 
 async def test_cleanup_removes_deleted_and_subagent_thread_storage(tmp_path, monkeypatch):
@@ -394,23 +338,21 @@ async def test_cleanup_removes_deleted_and_subagent_thread_storage(tmp_path, mon
     def handle_request(request: httpx.Request) -> httpx.Response:
         """模拟无 active 线程但存在持久化线程的清理 API。"""
 
-        if request.method == "DELETE":
+        if request.method in {"DELETE", "POST"}:
             deleted_paths.append(request.url.path)
             return httpx.Response(200, json={})
-        if request.url.path == "/api/chat/threads":
-            return httpx.Response(200, json=[])
         if request.url.path == "/api/agent":
             return httpx.Response(200, json={"agents": []})
         raise AssertionError(f"unexpected request: {request.method} {request.url}")
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handle_request), base_url="http://test") as client:
-        await cleanup_e2e_chat_resources(
+        await cleanup_test_chat_resources(
             client,
             {"Authorization": "test"},
             owner_uid="test-user",
         )
 
-    assert deleted_paths == ["/api/chat/thread/thread-child"]
+    assert deleted_paths == []
     assert deleted_row_threads == [{"thread-child", "thread-deleted"}]
     assert not (tmp_path / "threads" / "thread-deleted").exists()
     assert not (tmp_path / "threads" / "thread-child").exists()
@@ -466,18 +408,13 @@ async def test_cleanup_discovery_failure_has_no_destructive_side_effect(tmp_path
         if request.method == "DELETE":
             destructive_paths.append(request.url.path)
             return httpx.Response(200, json={})
-        if request.url.path == "/api/chat/threads":
-            return httpx.Response(
-                200,
-                json=[{"id": "thread-marked", "metadata": {"_yuxi_test": True}}],
-            )
         if request.url.path == "/api/agent":
             raise AssertionError("agent cleanup must not run after discovery failure")
         raise AssertionError(f"unexpected request: {request.method} {request.url}")
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handle_request), base_url="http://test") as client:
         with pytest.raises(RuntimeError, match="Failed to list persisted"):
-            await cleanup_e2e_chat_resources(client, {"Authorization": "test"}, owner_uid="test-user")
+            await cleanup_test_chat_resources(client, {"Authorization": "test"}, owner_uid="test-user")
 
     assert destructive_paths == []
 
@@ -517,22 +454,20 @@ async def test_cleanup_guard_failure_has_no_destructive_side_effect(tmp_path, mo
         if request.method == "DELETE":
             destructive_paths.append(request.url.path)
             return httpx.Response(200, json={})
-        if request.url.path == "/api/chat/threads":
-            return httpx.Response(200, json=[{"id": "thread-marked", "metadata": {"_yuxi_test": True}}])
         if request.url.path == "/api/agent":
             raise AssertionError("agent cleanup must not run after guard failure")
         raise AssertionError(f"unexpected request: {request.method} {request.url}")
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handle_request), base_url="http://test") as client:
         with pytest.raises(RuntimeError, match="not terminal"):
-            await cleanup_e2e_chat_resources(client, {"Authorization": "test"}, owner_uid="test-user")
+            await cleanup_test_chat_resources(client, {"Authorization": "test"}, owner_uid="test-user")
 
     assert destructive_paths == []
     assert legacy_dir.exists()
 
 
-async def test_cleanup_stops_when_cancelled_request_remains_queued(tmp_path, monkeypatch):
-    """取消 API 未真正收敛 queued 请求时，不得继续删除会话、文件或历史。"""
+async def test_cleanup_stops_when_cancelled_input_remains_pending(tmp_path, monkeypatch):
+    """取消 API 未真正收敛 pending Input 时，不得继续删除会话、文件或历史。"""
 
     destructive_paths: list[str] = []
     legacy_dir = tmp_path / "threads" / "thread-marked"
@@ -554,29 +489,31 @@ async def test_cleanup_stops_when_cancelled_request_remains_queued(tmp_path, mon
     async def fake_validate(*_args):
         return None
 
-    async def still_queued(_thread_ids: set[str]) -> list[str]:
-        return ["YUXI_TEST_queued_request"]
+    async def still_pending(_thread_ids: set[str]) -> list[tuple[str, str]]:
+        return [("thread-marked", "YUXI_TEST_pending_input")]
 
     monkeypatch.setattr("test.live_api_cleanup.list_test_conversation_resources", fake_list_resources)
     monkeypatch.setattr("test.live_api_cleanup.validate_test_workdirs_exclusive", fake_validate)
     monkeypatch.setattr("test.live_api_cleanup.validate_test_runs_terminal", fake_validate)
-    monkeypatch.setattr("test.live_api_cleanup.list_test_queued_request_ids", still_queued)
+    monkeypatch.setattr("test.live_api_cleanup.list_test_pending_inputs", still_pending)
 
     def handle_request(request: httpx.Request) -> httpx.Response:
-        if request.url.path == "/api/chat/threads":
-            return httpx.Response(200, json=[{"id": "thread-marked", "metadata": {"_yuxi_test": True}}])
-        if request.method == "POST" and request.url.path.endswith("/cancel"):
-            return httpx.Response(200, json={"status": "cancelled"})
+        if request.method == "POST" and request.url.path == "/api/v1/agents/threads/thread-marked/events":
+            assert request.headers["Idempotency-Key"] == "cleanup:YUXI_TEST_pending_input"
+            assert request.content == (
+                b'{"events":[{"type":"yuxi.thread.input.cancel_input","input_id":"YUXI_TEST_pending_input"}]}'
+            )
+            return httpx.Response(202, json={"status": "cancelled"})
         if request.method == "DELETE":
             destructive_paths.append(request.url.path)
             return httpx.Response(200, json={})
         if request.url.path == "/api/agent":
-            raise AssertionError("agent cleanup must not run while a request remains queued")
+            raise AssertionError("agent cleanup must not run while an Input remains pending")
         raise AssertionError(f"unexpected request: {request.method} {request.url}")
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handle_request), base_url="http://test") as client:
-        with pytest.raises(RuntimeError, match="left queued requests behind"):
-            await cleanup_e2e_chat_resources(client, {"Authorization": "test"}, owner_uid="test-user")
+        with pytest.raises(RuntimeError, match="left pending Inputs behind"):
+            await cleanup_test_chat_resources(client, {"Authorization": "test"}, owner_uid="test-user")
 
     assert destructive_paths == []
     assert legacy_dir.exists()
@@ -632,8 +569,8 @@ async def test_remove_test_workdir_is_idempotent_when_directory_is_gone(tmp_path
     assert not missing.exists()
 
 
-async def test_is_e2e_thread_recognizes_marker_or_e2e_agent_prefix():
-    from test.live_api_cleanup import _is_e2e_thread
+async def test_is_test_thread_recognizes_marker_or_e2e_agent_prefix():
+    from test.live_api_cleanup import _is_test_thread
 
     marked = {"id": "t1", "agent_id": "default-chatbot", "metadata": {"_yuxi_e2e": True, "test": "viewer-fs-e2e"}}
     agent_prefix = {"id": "invocation_x", "agent_id": "e2e-agent-call-deadbeef"}
@@ -641,9 +578,9 @@ async def test_is_e2e_thread_recognizes_marker_or_e2e_agent_prefix():
     explicit = {"id": "t4", "metadata": {"_yuxi_test": True}}
     plain = {"id": "t2", "agent_id": "default-chatbot"}
 
-    assert _is_e2e_thread(marked)
-    assert _is_e2e_thread(agent_prefix)
-    assert _is_e2e_thread(unified)
-    assert _is_e2e_thread(explicit)
-    assert not _is_e2e_thread(plain)
-    assert not _is_e2e_thread("not-a-dict")
+    assert _is_test_thread(marked)
+    assert _is_test_thread(agent_prefix)
+    assert _is_test_thread(unified)
+    assert _is_test_thread(explicit)
+    assert not _is_test_thread(plain)
+    assert not _is_test_thread("not-a-dict")

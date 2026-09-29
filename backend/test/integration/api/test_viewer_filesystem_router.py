@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+import uuid
+
 import pytest
-from test.live_api_cleanup import make_test_conversation_metadata, make_test_conversation_title
+from test.live_api_cleanup import make_test_conversation_title
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
 
 
-async def _create_thread(test_client, headers) -> tuple[str, str]:
+async def _create_thread(test_client, headers) -> str:
     response = await test_client.get("/api/agent/default", headers=headers)
     assert response.status_code == 200, response.text
     agent = response.json().get("agent") or {}
@@ -16,17 +18,16 @@ async def _create_thread(test_client, headers) -> tuple[str, str]:
     if not agent_id:
         pytest.skip("default agent unavailable")
     response = await test_client.post(
-        "/api/chat/thread",
+        "/api/v1/agents/threads",
         json={
             "agent_id": agent_id,
             "title": make_test_conversation_title("viewer-filesystem"),
-            "metadata": make_test_conversation_metadata("viewer-filesystem"),
         },
-        headers=headers,
+        headers={**headers, "Idempotency-Key": str(uuid.uuid4())},
     )
     assert response.status_code == 200, response.text
     payload = response.json()
-    return str(payload.get("thread_id") or payload["id"]), str(payload["workdir_path"])
+    return str(payload.get("thread_id") or payload["id"])
 
 
 async def test_viewer_tree_requires_authentication(test_client):
@@ -40,7 +41,7 @@ async def test_created_file_is_immediately_visible_to_tree_preview_and_artifact(
     admin_headers,
 ):
     headers = standard_user["headers"]
-    thread_id, _workdir_path = await _create_thread(test_client, headers)
+    thread_id = await _create_thread(test_client, headers)
 
     upload = await test_client.post(
         "/api/viewer/filesystem/upload",
@@ -100,7 +101,7 @@ async def test_created_file_is_immediately_visible_to_tree_preview_and_artifact(
 
 async def test_viewer_rejects_paths_outside_current_workdir(test_client, standard_user):
     headers = standard_user["headers"]
-    thread_id, _ = await _create_thread(test_client, headers)
+    thread_id = await _create_thread(test_client, headers)
     for path in (
         "/home/gem/user-data/agents/skills/private.txt",
         "/home/gem/user-data/projects/other/file.txt",
@@ -115,7 +116,7 @@ async def test_viewer_rejects_paths_outside_current_workdir(test_client, standar
 
 async def test_mention_search_observes_live_viewer_files_without_cache(test_client, standard_user):
     headers = standard_user["headers"]
-    thread_id, workdir_path = await _create_thread(test_client, headers)
+    thread_id = await _create_thread(test_client, headers)
     filename = "mention-live-file.txt"
     upload = await test_client.post(
         "/api/viewer/filesystem/upload",
@@ -124,6 +125,7 @@ async def test_mention_search_observes_live_viewer_files_without_cache(test_clie
         headers=headers,
     )
     assert upload.status_code == 200, upload.text
+    artifact_path = upload.json()["entries"][0]["artifact_url"].split("/artifacts/", 1)[1]
 
     found = await test_client.get(
         "/api/mention/search",
@@ -134,7 +136,7 @@ async def test_mention_search_observes_live_viewer_files_without_cache(test_clie
     assert found.json() == [
         {
             "name": filename,
-            "path": f"/home/gem/user-data/{workdir_path}/{filename}",
+            "path": f"/{artifact_path}",
             "is_dir": False,
             "source": "thread",
         }

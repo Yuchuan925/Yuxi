@@ -90,6 +90,7 @@ export class ErrorHandler {
       send: '发送消息',
       create: '创建对话',
       delete: '删除对话',
+      archive: '归档对话',
       rename: '重命名对话',
       load: '加载对话',
       export: '导出对话',

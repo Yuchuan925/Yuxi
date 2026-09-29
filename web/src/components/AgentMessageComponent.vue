@@ -74,6 +74,7 @@
       >
         <RefsComponent
           :message="message"
+          :thread-id="threadId"
           :show-refs="showRefs"
           :is-latest-message="isLatestMessage"
           :sources="messageSources"
@@ -139,6 +140,7 @@ import FileTypeIcon from '@/components/common/FileTypeIcon.vue'
 import { enrichTaskToolCalls } from '@/components/ToolCallingResult/toolRegistry'
 
 const props = defineProps({
+  threadId: { type: String, default: '' },
   // 消息角色：'user'|'assistant'|'sent'|'received'
   message: {
     type: Object,

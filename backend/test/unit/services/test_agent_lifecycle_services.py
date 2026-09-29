@@ -1,0 +1,98 @@
+"""生命周期服务的纯逻辑边界；持久因果另由真实 PG/worker 测试证明。"""
+
+from types import SimpleNamespace
+
+import pytest
+from fastapi import HTTPException
+
+from yuxi.services.agents.events import _Cursor, _parse_cursor
+from yuxi.services.agents.scheduler import Dispatch, deliver
+from yuxi.services.agents.turns import _summarize_turn_usage, _validate_resume_response
+
+
+def test_thread_cursor_round_trip_across_receipt_run_and_redis_positions():
+    """接收序号、Run 序号和 Redis 位置能独立恢复。"""
+    cursor = _Cursor(receipt_seq=31, run_seq=12, event_seq="172-4", run_phase=1)
+    assert _parse_cursor(cursor.encode()) == cursor
+    with pytest.raises(HTTPException) as error:
+        _parse_cursor("12-0")
+    assert error.value.status_code == 422
+
+
+def test_turn_usage_counts_only_completed_audits_with_real_token_numbers():
+    """未知/失败的模型审计不能推算或计入 Turn 用量。"""
+    audits = [
+        SimpleNamespace(
+            operation_id="model-1",
+            execution_status="completed",
+            usage={"input_tokens": 8, "output_tokens": 4, "total_tokens": 12},
+        ),
+        SimpleNamespace(
+            operation_id="model-2",
+            execution_status="failed",
+            usage={"input_tokens": 99, "output_tokens": 99, "total_tokens": 198},
+        ),
+        SimpleNamespace(operation_id=None, execution_status="completed", usage={"total_tokens": 50}),
+    ]
+    assert _summarize_turn_usage(audits) == {
+        "available": True,
+        "complete": False,
+        "operations": 1,
+        "missing_operations": 2,
+        "input_tokens": 8,
+        "output_tokens": 4,
+        "total_tokens": 12,
+    }
+
+
+def test_waitpoint_rejects_partial_or_reordered_answers():
+    """恢复命令必须与等待点问题顺序和数量完全一致。"""
+    waitpoint = {"kind": "answer", "questions": [{"question_id": "q-1"}, {"question_id": "q-2"}]}
+    for answers in (
+        [{"question_id": "q-1", "answer": "yes"}],
+        [{"question_id": "q-2", "answer": "later"}, {"question_id": "q-1", "answer": "yes"}],
+    ):
+        with pytest.raises(HTTPException) as error:
+            _validate_resume_response(waitpoint, {"type": "answer", "answers": answers})
+        assert error.value.status_code == 422
+
+
+def test_waitpoint_rejects_unlisted_approval_decision():
+    """审批只能回答等待点中同序的全部 call_id 和允许的决定。"""
+    waitpoint = {
+        "kind": "approval",
+        "calls": [
+            {"call_id": "call-1", "allowed_decisions": ["approve", "reject"]},
+            {"call_id": "call-2", "allowed_decisions": ["approve", "reject"]},
+        ],
+    }
+    with pytest.raises(HTTPException) as error:
+        _validate_resume_response(
+            waitpoint,
+            {
+                "type": "approval",
+                "decisions": [
+                    {"call_id": "call-1", "decision": "approve"},
+                    {"call_id": "call-2", "decision": "skip"},
+                ],
+            },
+        )
+    assert error.value.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_dispatch_materializes_bound_workdir_before_publishing(monkeypatch):
+    """Run 已由事务创建后，目录物化先于同一个 Run 的队列投递。"""
+    calls = []
+    monkeypatch.setattr(
+        "yuxi.services.agents.scheduler.ensure_bound_user_workdir",
+        lambda uid, path: calls.append(("workdir", uid, path)),
+    )
+
+    async def enqueue(run_id):
+        calls.append(("publish", run_id))
+
+    monkeypatch.setattr("yuxi.services.agents.transport.enqueue_agent_run", enqueue)
+    binding = SimpleNamespace(materialize_managed=True, uid="user-1", workdir_path="projects/p-1")
+    await deliver(Dispatch(run_id="run-1", binding=binding))
+    assert calls == [("workdir", "user-1", "projects/p-1"), ("publish", "run-1")]

@@ -79,7 +79,6 @@ class YuxiMemoryMiddleware(AgentMiddleware[Any, ContextT, ResponseT]):
                     uid=getattr(context, "uid", None),
                     thread_id=getattr(context, "thread_id", None),
                     run_id=getattr(context, "run_id", None),
-                    request_id=getattr(context, "request_id", None),
                     worker_id=getattr(context, "worker_id", None),
                     content=content,
                     replaces=replaces,

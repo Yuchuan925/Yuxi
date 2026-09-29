@@ -89,13 +89,13 @@ test('完成详情只读历史并严格显示指定 Run，不请求 checkpoint',
 test('隐藏 Tab 不加载，激活订阅，停用关闭，重开从已有游标续接', async (t) => {
   const requests = []
   t.mock.method(api, 'getAgentHistory', async () => history())
-  t.mock.method(api, 'streamAgentRunEvents', async (id, cursor, { signal }) => {
-    requests.push({ id, cursor, signal })
+  t.mock.method(api, 'streamThreadEvents', async (threadId, cursor, { signal }) => {
+    requests.push({ threadId, cursor, signal })
     return new Response(
       new ReadableStream({
         start(controller) {
           controller.enqueue(
-            new TextEncoder().encode('id: 12-0\nevent: metadata\ndata: {"payload":{}}\n\n')
+            new TextEncoder().encode('id: 12-0\nevent: agent.thread.output\ndata: {"type":"agent.thread.output","run_id":"selected","payload":{}}\n\n')
           )
           signal.addEventListener(
             'abort',
@@ -163,8 +163,8 @@ test('工具行采用独立观察到的 Run 状态，启动快照不覆盖终态
 test('SSE 结束后终态查询尚未返回时隐藏 Tab，仍取消在途查询', async (t) => {
   let signal, resolveRequest
   t.mock.method(api, 'getAgentHistory', async () => history())
-  t.mock.method(api, 'streamAgentRunEvents', async () => new Response(''))
-  t.mock.method(api, 'getAgentRun', (_id, options) => {
+  t.mock.method(api, 'streamThreadEvents', async () => new Response(''))
+  t.mock.method(api, 'getAgentRun', (_threadId, _id, options) => {
     signal = options?.signal
     return new Promise((resolve) => {
       resolveRequest = resolve
@@ -174,6 +174,6 @@ test('SSE 结束后终态查询尚未返回时隐藏 Tab，仍取消在途查询
   await settle()
   h.props.active = false
   await settle()
-  resolveRequest({ run: { status: 'running' } })
+  resolveRequest({ status: 'running' })
   assert.equal(signal?.aborted, true)
 })

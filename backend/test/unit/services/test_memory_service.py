@@ -100,7 +100,6 @@ async def test_remember_memory_validates_run_and_publishes_append(
         uid="user-1",
         thread_id="thread-1",
         run_id="run-1",
-        request_id="request-1",
         worker_id="worker-1",
         content="请使用中文",
     )
@@ -145,7 +144,6 @@ async def test_remember_memory_fails_closed_when_config_disabled(tmp_path, monke
             uid="user-1",
             thread_id="thread-1",
             run_id="run-1",
-            request_id="request-1",
             worker_id="worker-1",
             content="不应写入",
         )
@@ -194,7 +192,6 @@ async def test_remember_memory_recreates_deleted_file(tmp_path, monkeypatch: pyt
         uid="user-1",
         thread_id="thread-1",
         run_id="run-1",
-        request_id="request-1",
         worker_id="worker-1",
         content="重建后的第一条记忆",
     )

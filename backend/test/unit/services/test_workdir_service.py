@@ -114,6 +114,17 @@ async def test_binding_rejects_cross_user_conversation(monkeypatch: pytest.Monke
 
 
 @pytest.mark.asyncio
+async def test_binding_rejects_same_user_from_other_app():
+    """Workdir executor 不接受同 UID 的另一个 APP 身份。"""
+    conversation = SimpleNamespace(uid="user-1", app_id="app-a", status="active")
+    with pytest.raises(HTTPException) as exc:
+        await svc.resolve_authorized_conversation_workdir(
+            conversation=conversation, uid="user-1", app_id="app-b", db=object()
+        )
+    assert exc.value.status_code == 404
+
+
+@pytest.mark.asyncio
 async def test_binding_resolves_project_workdir_without_conversation_path(monkeypatch: pytest.MonkeyPatch):
     conversation = SimpleNamespace(
         id=1,

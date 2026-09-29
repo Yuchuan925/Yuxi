@@ -11,15 +11,15 @@ import {
 test('关联续跑组成连续回答，消息归属不变且只累计执行耗时', () => {
   const groups = [
     {
-      run: { run_id: 'a', timing: { total_latency_ms: 1000 } },
+      run: { run_id: 'a', turn_id: 'turn-1', timing: { total_latency_ms: 1000 } },
       status: 'finished',
       messages: [{ id: 'a1', run_id: 'a', type: 'ai', isLast: true }]
     },
     {
       run: {
         run_id: 'b',
+        turn_id: 'turn-1',
         run_type: 'resume',
-        created_by_run_id: 'a',
         timing: { total_latency_ms: 2000 }
       },
       status: 'finished',
@@ -28,8 +28,8 @@ test('关联续跑组成连续回答，消息归属不变且只累计执行耗�
     {
       run: {
         run_id: 'c',
+        turn_id: 'turn-1',
         run_type: 'resume',
-        created_by_run_id: 'b',
         timing: { total_latency_ms: 3000 }
       },
       status: 'streaming',
@@ -53,27 +53,28 @@ test('关联续跑组成连续回答，消息归属不变且只累计执行耗�
   assert.equal(groupConversationContinuations(groups)[0].processTiming.total_latency_ms, null)
 })
 
-test('新用户、独立 Run、未知关系及零消息失败不并入前一回答', () => {
-  const first = { run: { run_id: 'a' }, messages: [{ type: 'ai' }] }
+test('新用户、独立 Turn、未知归属及零消息失败不并入前一回答', () => {
+  const first = { run: { run_id: 'a', turn_id: 'turn-1' }, messages: [{ type: 'ai' }] }
   for (const next of [
-    { run: { run_id: 'b', run_type: 'chat', created_by_run_id: 'a' }, messages: [{ type: 'ai' }] },
+    { run: { run_id: 'b', turn_id: 'turn-1', run_type: 'chat' }, messages: [{ type: 'ai' }] },
     {
-      run: { run_id: 'b', run_type: 'resume', created_by_run_id: 'other' },
+      run: { run_id: 'b', turn_id: 'turn-2', run_type: 'resume', created_by_run_id: 'a' },
       messages: [{ type: 'ai' }]
     },
+    { run: { run_id: 'b', run_type: 'resume' }, messages: [{ type: 'ai' }] },
     { messages: [{ type: 'ai' }] },
     {
-      run: { run_id: 'b', run_type: 'resume', created_by_run_id: 'a' },
+      run: { run_id: 'b', turn_id: 'turn-1', run_type: 'resume' },
       messages: [{ type: 'human' }, { type: 'ai' }]
     },
     {
-      run: { run_id: 'b', run_type: 'resume', created_by_run_id: 'a', status: 'failed' },
+      run: { run_id: 'b', turn_id: 'turn-1', run_type: 'resume', status: 'failed' },
       messages: []
     }
   ]) {
     assert.deepEqual(groupConversationContinuations([first, next]), [first, next])
   }
-  const resume = { run: { run_id: 'b', run_type: 'resume', created_by_run_id: 'a' }, messages: [{ type: 'ai' }] }
+  const resume = { run: { run_id: 'b', turn_id: 'turn-1', run_type: 'resume' }, messages: [{ type: 'ai' }] }
   for (const previous of [{ messages: [{ type: 'ai' }] }, { run: { run_id: 'a', status: 'failed' }, messages: [] }]) {
     assert.deepEqual(groupConversationContinuations([previous, resume]), [previous, resume])
   }
@@ -153,11 +154,14 @@ test('formatProcessDuration: 复用 Run 时延格式', () => {
 
 
 test('零消息后续 Run 不隐藏上一条完成回答的操作栏，关联 resume 仍等待续写', () => {
-  const answer = { run: { run_id: 'run-a', status: 'completed' }, messages: [{ type: 'human' }, { type: 'ai' }] }
+  const answer = { run: { run_id: 'run-a', turn_id: 'turn-1', status: 'completed' }, messages: [{ type: 'human' }, { type: 'ai' }] }
   const empty = { run: { run_id: 'run-b', run_type: 'chat', status: 'failed' }, messages: [] }
   assert.equal(isConversationSettled([answer, empty], answer), true)
-  const resume = { run: { run_id: 'resume', run_type: 'resume', created_by_run_id: 'run-a' }, messages: [] }
+  const resume = { run: { run_id: 'resume', turn_id: 'turn-1', run_type: 'resume' }, messages: [] }
   assert.equal(isConversationSettled([answer, resume], answer), false)
+  assert.equal(isConversationSettled([
+    answer, { ...resume, run: { ...resume.run, turn_id: 'turn-2', created_by_run_id: 'run-a' } }
+  ], answer), true)
   assert.equal(isConversationSettled([answer], answer, true), false)
   assert.equal(formatEmptyRunStatus(empty.run.status), '本次运行失败')
   assert.equal(formatEmptyRunStatus('cancelled'), '本次运行已取消')

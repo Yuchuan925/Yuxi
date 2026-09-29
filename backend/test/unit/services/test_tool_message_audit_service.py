@@ -46,7 +46,6 @@ async def test_collector_projects_tool_start_and_successful_finish(monkeypatch):
 
     collector = ToolMessageAuditCollector(
         run_id="run-1",
-        request_id="request-1",
         thread_id="thread-1",
         worker_id="worker-1",
     )
@@ -85,7 +84,6 @@ async def test_collector_projects_tool_start_and_successful_finish(monkeypatch):
         "start",
         {
             "run_id": "run-1",
-            "request_id": "request-1",
             "thread_id": "thread-1",
             "worker_id": "worker-1",
             "tool_call_id": "call-1",
@@ -100,7 +98,6 @@ async def test_collector_projects_tool_start_and_successful_finish(monkeypatch):
         "complete",
         {
             "run_id": "run-1",
-            "request_id": "request-1",
             "thread_id": "thread-1",
             "worker_id": "worker-1",
             "tool_call_id": "call-1",
@@ -152,7 +149,6 @@ async def test_duplicate_start_preserves_original_monotonic_clock(monkeypatch):
 
     collector = ToolMessageAuditCollector(
         run_id="run-1",
-        request_id="request-1",
         thread_id="thread-1",
         worker_id="worker-1",
     )
@@ -213,7 +209,6 @@ async def test_collector_treats_error_tool_message_as_failed_finish(monkeypatch)
 
     collector = ToolMessageAuditCollector(
         run_id="run-1",
-        request_id="request-1",
         thread_id="thread-1",
         worker_id="worker-1",
     )
@@ -278,7 +273,6 @@ async def test_raw_tool_error_waits_for_run_terminal(monkeypatch):
 
     collector = ToolMessageAuditCollector(
         run_id="run-1",
-        request_id="request-1",
         thread_id="thread-1",
         worker_id="worker-1",
     )
@@ -317,7 +311,6 @@ async def test_raw_tool_error_waits_for_run_terminal(monkeypatch):
 async def test_collector_rejects_tool_start_without_object_input():
     collector = ToolMessageAuditCollector(
         run_id="run-1",
-        request_id="request-1",
         thread_id="thread-1",
         worker_id="worker-1",
     )

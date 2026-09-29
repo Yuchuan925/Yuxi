@@ -281,15 +281,15 @@ const handleSearchSelectFile = (entry) => {
   router.push({ name: 'WorkspaceComp', query: { open: entry.path } })
 }
 
-const handleDeleteChat = async (threadId) => {
+const handleArchiveChat = async (threadId) => {
   if (!threadId) return
   try {
-    await chatThreadsStore.deleteThread(threadId)
+    await chatThreadsStore.archiveThread(threadId)
     if (route.params.thread_id === threadId) {
       await router.replace({ name: 'AgentComp' })
     }
   } catch (error) {
-    console.warn('删除对话失败:', error)
+    console.warn('归档对话失败:', error)
   }
 }
 
@@ -339,7 +339,7 @@ const handleDeleteProject = async (projectId) => {
     if (removedThreadIds.includes(route.params.thread_id)) {
       await router.replace({ name: 'AgentComp' })
     }
-    message.success('项目及其中对话已删除，项目文件夹已保留')
+    message.success('项目已删除，其中对话已归档，项目文件夹已保留')
   } catch (error) {
     message.error(error?.message || '删除项目失败')
   } finally {
@@ -471,7 +471,7 @@ provide('settingsModal', {
           :has-more-chats="hasMoreThreads"
           :is-loading-more="isLoadingMoreThreads"
           @select-chat="handleSelectChat"
-          @delete-chat="handleDeleteChat"
+          @archive-chat="handleArchiveChat"
           @rename-chat="handleRenameChat"
           @toggle-pin="handleTogglePinChat"
           @rename-project="handleRenameProject"

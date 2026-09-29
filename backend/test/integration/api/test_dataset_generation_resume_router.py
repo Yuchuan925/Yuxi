@@ -19,11 +19,12 @@ pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
 @pytest.fixture(autouse=True)
 async def reinit_pg_manager():
     """重新初始化 pg_manager 异步引擎，使其绑定到当前测试的事件循环。"""
-    if pg_manager.async_engine:
-        await pg_manager.async_engine.dispose()
-    pg_manager._initialized = False
+    await pg_manager.close()
     pg_manager.initialize()
-    yield
+    try:
+        yield
+    finally:
+        await pg_manager.close()
 
 
 async def _create_failed_dataset(*, kb_id: str, dataset_id: str, name: str) -> None:

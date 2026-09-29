@@ -24,7 +24,7 @@ import httpx
 FINAL_MARKER = "LOAD_TEST_OK"
 TOOL_MARKER = "LOAD_TEST_TOOL_OK"
 CHAT_MIN_OUTPUT_CHARS = 500
-TERMINAL_STATUSES = {"completed", "failed", "cancelled", "interrupted"}
+TERMINAL_STATUSES = {"completed", "failed", "cancelled"}
 
 
 class LoadTestError(RuntimeError):
@@ -55,8 +55,10 @@ class TaskResult:
 
     level: int
     task_index: int
-    request_id: str
+    event_key: str
     thread_id: str | None = None
+    input_id: str | None = None
+    turn_id: str | None = None
     run_id: str | None = None
     status: str = "client_failed"
     success: bool = False
@@ -453,18 +455,27 @@ def evaluate_result(
     *,
     scenario: str,
     payload: dict[str, Any],
-    request_id: str,
+    input_id: str,
+    turn_id: str,
     run_id: str,
+    turn_payload: dict[str, Any],
     evidence: ToolEvidence,
 ) -> tuple[bool, str | None, int]:
-    """按同一 Request/Run 因果关系与场景标记判定最终结果。"""
+    """按 Input、Turn、Run 和输出消息的明确关系判定结果。"""
 
     status = str(payload.get("status") or "")
     output = payload.get("output")
-    output_text = output if isinstance(output, str) else ""
+    output_text = str(output.get("content") or "") if isinstance(output, dict) else ""
     checks = [
-        (payload.get("request_id") == request_id, "结果 request_id 与提交请求不一致"),
-        (payload.get("agent_run_id") == run_id, "结果 agent_run_id 与 SSE Run 不一致"),
+        (payload.get("id") == run_id, "Run 结果与 SSE Run 不一致"),
+        (payload.get("input_id") == input_id, "Run 未绑定提交的 Input"),
+        (payload.get("turn_id") == turn_id, "Run 未绑定目标 Turn"),
+        (turn_payload.get("result_run_id") == run_id, "Turn 结果与 Run 不一致"),
+        (turn_payload.get("status") == "completed", "Turn 尚未完成"),
+        (
+            isinstance(output, dict) and output.get("run_id") == run_id and output.get("turn_id") == turn_id,
+            "输出消息没有绑定目标 Turn/Run",
+        ),
         (status == "completed", f"Run 终态不是 completed：{status or 'missing'}"),
         (FINAL_MARKER in output_text, "最终输出缺少 LOAD_TEST_OK"),
     ]
@@ -544,18 +555,16 @@ class AgentLoadClient:
         self.headers = headers
         self.timeout_seconds = timeout_seconds
 
-    async def create_thread(self, agent_slug: str, request_id: str) -> str:
+    async def create_thread(self, agent_slug: str, event_key: str) -> str:
         """创建一个独立压测 Thread。"""
 
         response = await self.client.post(
-            "/api/chat/thread",
+            "/api/v1/agents/threads",
             json={
-                "request_id": f"thread-{request_id}"[:64],
-                "title": f"Load test {request_id[-12:]}",
                 "agent_id": agent_slug,
-                "metadata": {"source": "agent_load_test"},
+                "title": f"Load test {event_key[-12:]}",
             },
-            headers=self.headers,
+            headers={**self.headers, "Idempotency-Key": f"thread-{event_key}"[:64]},
         )
         _raise_for_status(response, "创建 Thread")
         thread_id = str(response.json().get("id") or "")
@@ -563,59 +572,66 @@ class AgentLoadClient:
             raise LoadTestError("创建 Thread 响应缺少 id")
         return thread_id
 
-    async def submit_run(
+    async def submit_input(
         self,
         *,
-        agent_slug: str,
         thread_id: str,
-        request_id: str,
+        event_key: str,
         prompt: str,
     ) -> tuple[dict[str, Any], float]:
-        """提交普通 Chat Request 并返回协议响应与请求耗时。"""
+        """向现有 Thread 提交一批 follow-up 输入。"""
 
         started = time.perf_counter()
         response = await self.client.post(
-            "/api/agent/runs",
+            f"/api/v1/agents/threads/{thread_id}/events",
             json={
-                "query": prompt,
-                "agent_slug": agent_slug,
-                "thread_id": thread_id,
-                "meta": {"request_id": request_id, "source": "agent_load_test"},
-                "tool_approval_mode": "always_trust",
-                "queue_policy": "enqueue",
+                "events": [
+                    {
+                        "type": "agent.thread.input.message",
+                        "mode": "follow_up",
+                        "input": [{"role": "user", "content": [{"type": "input_text", "text": prompt}]}],
+                        "tool_approval_mode": "always_trust",
+                    }
+                ],
             },
-            headers=self.headers,
+            headers={**self.headers, "Idempotency-Key": event_key},
         )
         elapsed_ms = (time.perf_counter() - started) * 1000
-        _raise_for_status(response, "提交 Agent Run")
+        _raise_for_status(response, "提交 Agent Input")
         payload = response.json()
-        if payload.get("request_id") != request_id:
-            raise LoadTestError("提交响应 request_id 与请求不一致")
+        if payload.get("thread_id") != thread_id or not payload.get("input_id"):
+            raise LoadTestError("提交响应缺少目标 Thread/Input")
         return payload, elapsed_ms
 
-    async def wait_for_run_id(self, request_id: str, events_url: str) -> str:
-        """消费 Request SSE，直到排队请求创建其自身 Run。"""
+    async def wait_for_run_id(self, thread_id: str, input_id: str) -> tuple[str, str]:
+        """消费 Thread SSE，直到目标 Input 固定 Turn 和 Run。"""
 
-        async with self.client.stream("GET", events_url, headers=self.headers) as response:
-            await _raise_for_stream_status(response, "读取 Request SSE")
+        async with self.client.stream(
+            "GET", f"/api/v1/agents/threads/{thread_id}/events", headers=self.headers
+        ) as response:
+            await _raise_for_stream_status(response, "读取 Thread SSE")
             async for event in iter_sse(response.aiter_lines()):
-                if event.data.get("request_id") not in {None, request_id}:
-                    raise LoadTestError("Request SSE 包含其他 request_id")
-                if event.name == "run_created":
+                if event.data.get("thread_id") != thread_id:
+                    raise LoadTestError("Thread SSE 串入其他 Thread")
+                if event.data.get("input_id") != input_id:
+                    continue
+                if event.name == "agent.thread.input.consumed":
                     run_id = str(event.data.get("run_id") or "")
-                    if not run_id:
-                        raise LoadTestError("run_created 事件缺少 run_id")
-                    return run_id
-                if event.name in {"error", "cancelled", "superseded"}:
-                    raise LoadTestError(f"Request SSE 以 {event.name} 结束")
-        raise LoadTestError("Request SSE 结束但没有 run_created")
+                    turn_id = str(event.data.get("turn_id") or "")
+                    if not run_id or not turn_id:
+                        raise LoadTestError("Input 消费事件缺少 Turn/Run")
+                    return run_id, turn_id
+                if event.name == "agent.thread.input.cancelled":
+                    raise LoadTestError("目标 Input 已取消")
+        raise LoadTestError("Thread SSE 结束但目标 Input 尚未消费")
 
     async def consume_run_events(
         self,
+        thread_id: str,
         run_id: str,
         submit_started: float,
     ) -> tuple[dict[str, int], ToolEvidence, float | None, float | None, float]:
-        """消费 Run SSE 到 end，并返回准备、首输出与工具证据。"""
+        """消费 Thread SSE 到目标 Run 与 Turn 终态。"""
 
         counts: dict[str, int] = {}
         evidence = ToolEvidence()
@@ -624,22 +640,26 @@ class AgentLoadClient:
         stream_started = time.perf_counter()
         async with self.client.stream(
             "GET",
-            f"/api/agent/runs/{run_id}/events?verbose=false",
+            f"/api/v1/agents/threads/{thread_id}/events",
             headers=self.headers,
         ) as response:
             await _raise_for_stream_status(response, "读取 Run SSE")
             async for event in iter_sse(response.aiter_lines()):
+                if event.data.get("thread_id") != thread_id:
+                    raise LoadTestError("Thread SSE 串入其他 Thread")
+                if event.data.get("run_id") != run_id:
+                    continue
                 if first_event_ms is None:
                     first_event_ms = (time.perf_counter() - submit_started) * 1000
-                if event.data.get("run_id") not in {None, run_id}:
-                    raise LoadTestError("Run SSE 包含其他 run_id")
                 counts[event.name] = counts.get(event.name, 0) + 1
                 observe_tool_evidence(event.data, evidence)
                 if first_token_ms is None and contains_model_output(event.data):
                     first_token_ms = (time.perf_counter() - submit_started) * 1000
-                if event.name == "error":
-                    raise LoadTestError("Run SSE 收到 error 事件")
-                if event.name == "end":
+                if event.name in {
+                    "agent.thread.turn.completed",
+                    "agent.thread.turn.failed",
+                    "agent.thread.turn.cancelled",
+                }:
                     return (
                         counts,
                         evidence,
@@ -647,34 +667,49 @@ class AgentLoadClient:
                         first_token_ms,
                         (time.perf_counter() - stream_started) * 1000,
                     )
-        raise LoadTestError("Run SSE 结束但没有 end 事件")
+        raise LoadTestError("Thread SSE 结束但目标 Turn 尚未结束")
 
-    async def get_run_result(self, run_id: str) -> dict[str, Any]:
+    async def get_run_result(self, thread_id: str, run_id: str) -> dict[str, Any]:
         """从同一 Run 的结果接口回读最终业务事实。"""
 
-        response = await self.client.get(f"/api/agent/runs/{run_id}/result", headers=self.headers)
+        response = await self.client.get(f"/api/v1/agents/threads/{thread_id}/runs/{run_id}", headers=self.headers)
         _raise_for_status(response, "读取 Run 结果")
         payload = response.json()
         if not isinstance(payload, dict):
             raise LoadTestError("Run 结果必须是对象")
         return payload
 
-    async def cancel_request(self, request_id: str) -> None:
-        """尽力取消尚未派发的精确 Request。"""
+    async def get_turn_result(self, thread_id: str, turn_id: str) -> dict[str, Any]:
+        """回读目标 Turn 的最终归属。"""
+        response = await self.client.get(f"/api/v1/agents/threads/{thread_id}/turns/{turn_id}", headers=self.headers)
+        _raise_for_status(response, "读取 Turn 结果")
+        return response.json()
 
-        await self.client.post(f"/api/agent/requests/{request_id}/cancel", headers=self.headers)
+    async def cancel_input(self, thread_id: str, input_id: str, event_key: str) -> None:
+        """尽力取消尚未领取的目标 Input。"""
 
-    async def cancel_run(self, run_id: str) -> None:
-        """尽力取消尚未终结的精确 Run。"""
+        response = await self.client.post(
+            f"/api/v1/agents/threads/{thread_id}/events",
+            headers={**self.headers, "Idempotency-Key": f"cancel:{event_key}"},
+            json={"events": [{"type": "yuxi.thread.input.cancel_input", "input_id": input_id}]},
+        )
+        _raise_for_status(response, "取消 Input")
 
-        await self.client.post(f"/api/agent/runs/{run_id}/cancel", headers=self.headers)
+    async def cancel_turn(self, thread_id: str, turn_id: str, event_key: str, run_id: str | None = None) -> None:
+        """尽力取消目标 Turn 和其当前执行段。"""
 
-    async def delete_thread(self, thread_id: str) -> None:
-        """删除本任务创建的精确 Thread。"""
+        response = await self.client.post(
+            f"/api/v1/agents/threads/{thread_id}/events",
+            headers={**self.headers, "Idempotency-Key": f"cancel:{event_key}"},
+            json={"events": [{"type": "yuxi.thread.input.cancel", "turn_id": turn_id, "expected_run_id": run_id}]},
+        )
+        _raise_for_status(response, "取消 Turn")
 
-        response = await self.client.delete(f"/api/chat/thread/{thread_id}", headers=self.headers)
-        if response.status_code not in {200, 404}:
-            _raise_for_status(response, "删除 Thread")
+    async def archive_thread(self, thread_id: str) -> None:
+        """通过 Public API 归档本任务创建的精确 Thread。"""
+
+        response = await self.client.post(f"/api/v1/agents/threads/{thread_id}/archive", headers=self.headers)
+        _raise_for_status(response, "归档 Thread")
 
 
 async def run_one(
@@ -688,35 +723,35 @@ async def run_one(
     session_id: str,
     keep_threads: bool,
 ) -> TaskResult:
-    """执行一个虚拟用户的完整 Thread → Request → Run → Result 链路。"""
+    """执行一个虚拟用户的 Thread → Input → Turn → Run 链路。"""
 
-    request_id = f"load-{session_id}-{level}-{task_index}-{uuid.uuid4().hex[:8]}"
-    result = TaskResult(level=level, task_index=task_index, request_id=request_id)
+    event_key = f"load-{session_id}-{level}-{task_index}-{uuid.uuid4().hex[:8]}"
+    result = TaskResult(level=level, task_index=task_index, event_key=event_key)
     task_started = time.perf_counter()
     submit_started: float | None = None
     submit_started_at: datetime | None = None
     terminal = False
     try:
         async with asyncio.timeout(load_client.timeout_seconds):
-            result.thread_id = await load_client.create_thread(agent_slug, request_id)
+            result.thread_id = await load_client.create_thread(agent_slug, event_key)
             result.thread_create_ms = (time.perf_counter() - task_started) * 1000
             submit_started = time.perf_counter()
             submit_started_at = datetime.now(UTC)
-            payload, result.submit_ms = await load_client.submit_run(
-                agent_slug=agent_slug,
+            payload, result.submit_ms = await load_client.submit_input(
                 thread_id=result.thread_id,
-                request_id=request_id,
-                prompt=build_prompt(scenario, task_seconds, request_id),
+                event_key=event_key,
+                prompt=build_prompt(scenario, task_seconds, event_key),
             )
+            result.input_id = str(payload["input_id"])
             result.run_id = str(payload.get("run_id") or "") or None
+            result.turn_id = str(payload.get("turn_id") or "") or None
             if result.run_id:
+                if result.turn_id is None:
+                    raise LoadTestError("消费响应缺少 turn_id")
                 result.request_queue_ms = 0.0
             else:
-                events_url = str(payload.get("request_events_url") or "")
-                if not events_url:
-                    raise LoadTestError("排队响应同时缺少 run_id 与 request_events_url")
                 queue_started = time.perf_counter()
-                result.run_id = await load_client.wait_for_run_id(request_id, events_url)
+                result.run_id, result.turn_id = await load_client.wait_for_run_id(result.thread_id, result.input_id)
                 result.request_queue_ms = (time.perf_counter() - queue_started) * 1000
 
             (
@@ -725,9 +760,10 @@ async def run_one(
                 result.first_run_event_ms,
                 result.first_token_ms,
                 result.run_sse_ms,
-            ) = await load_client.consume_run_events(result.run_id, submit_started)
+            ) = await load_client.consume_run_events(result.thread_id, result.run_id, submit_started)
             result.preparation_ms = result.first_run_event_ms
-            final_payload = await load_client.get_run_result(result.run_id)
+            final_payload = await load_client.get_run_result(result.thread_id, result.run_id)
+            turn_payload = await load_client.get_turn_result(result.thread_id, result.turn_id)
             result.status = str(final_payload.get("status") or "missing")
             if submit_started_at is not None:
                 record_run_timing(result, submit_started_at, final_payload)
@@ -735,8 +771,10 @@ async def run_one(
             result.success, result.error, result.output_chars = evaluate_result(
                 scenario=scenario,
                 payload=final_payload,
-                request_id=request_id,
+                input_id=result.input_id,
+                turn_id=result.turn_id,
                 run_id=result.run_id,
+                turn_payload=turn_payload,
                 evidence=evidence,
             )
     except TimeoutError:
@@ -748,15 +786,15 @@ async def run_one(
             result.total_ms = (time.perf_counter() - submit_started) * 1000
         if not terminal:
             try:
-                if result.run_id:
-                    await load_client.cancel_run(result.run_id)
-                else:
-                    await load_client.cancel_request(request_id)
-            except httpx.HTTPError:
+                if result.thread_id and result.turn_id:
+                    await load_client.cancel_turn(result.thread_id, result.turn_id, event_key, result.run_id)
+                elif result.thread_id and result.input_id:
+                    await load_client.cancel_input(result.thread_id, result.input_id, event_key)
+            except (httpx.HTTPError, LoadTestError):
                 pass
         if result.thread_id and not keep_threads:
             try:
-                await load_client.delete_thread(result.thread_id)
+                await load_client.archive_thread(result.thread_id)
             except (httpx.HTTPError, LoadTestError) as exc:
                 cleanup_error = f"清理 Thread 失败：{_safe_error(exc)}"
                 result.error = f"{result.error}; {cleanup_error}" if result.error else cleanup_error

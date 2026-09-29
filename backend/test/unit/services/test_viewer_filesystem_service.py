@@ -266,7 +266,7 @@ async def test_viewer_upload_returns_scope_path_and_artifact_url(realtime_viewer
             "size": 7,
             "modified_at": "1970-01-01T00:00:00+00:00",
             "artifact_url": (
-                "/api/chat/thread/thread-1/artifacts/home/gem/user-data/"
+                "/api/v1/agents/threads/thread-1/artifacts/home/gem/user-data/"
                 "projects/11111111-1111-4111-8111-111111111111/new.txt"
             ),
         }

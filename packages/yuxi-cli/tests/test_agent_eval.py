@@ -2,11 +2,16 @@ from __future__ import annotations
 
 import io
 from types import SimpleNamespace
+from typing import ClassVar
 
 import pytest
 from rich.console import Console
-
-from yuxi_cli.agent_eval import AgentEvalError, AgentEvalOptions, extract_query, run_langfuse_agent_experiment
+from yuxi_cli.agent_eval import (
+    AgentEvalError,
+    AgentEvalOptions,
+    extract_query,
+    run_langfuse_agent_experiment,
+)
 from yuxi_cli.config import ConfigStore, Remote
 
 
@@ -65,7 +70,7 @@ class FakeLangfuse:
 
 
 class FakeYuxiClient:
-    calls = []
+    calls: ClassVar[list[dict]] = []
 
     def __init__(self, remote: Remote, timeout: float = 30.0):
         self.remote = remote
@@ -77,9 +82,23 @@ class FakeYuxiClient:
     def __exit__(self, *_exc):
         return None
 
-    def run_agent_eval(self, **kwargs):
-        self.calls.append({"remote": self.remote, "client_timeout": self.timeout, "kwargs": kwargs})
-        return {"status": "completed", "output": "final answer"}
+    def create_agent_thread(self, *, agent_slug, idempotency_key):
+        self.calls.append({
+            "remote": self.remote, "client_timeout": self.timeout,
+            "method": "create", "agent_slug": agent_slug, "key": idempotency_key,
+        })
+        return {"thread_id": "thread-1"}
+
+    def send_agent_message(self, thread_id, message, *, idempotency_key):
+        self.calls.append({
+            "method": "message", "thread_id": thread_id,
+            "message": message, "key": idempotency_key,
+        })
+        return {"input_id": "input-1", "turn_id": "turn-1"}
+
+    def get_agent_turn(self, thread_id, turn_id):
+        self.calls.append({"method": "turn", "thread_id": thread_id, "turn_id": turn_id})
+        return {"status": "completed", "output": {"content": "final answer"}}
 
 
 def _console():
@@ -135,16 +154,11 @@ def test_run_langfuse_agent_experiment_uses_remote_api_key(tmp_path):
     call = FakeYuxiClient.calls[0]
     assert call["remote"].name == "local"
     assert call["client_timeout"] == 123
-    assert call["kwargs"]["query"] == "2+2=?"
-    assert call["kwargs"]["agent_slug"] == "default-chatbot"
-    assert "api_key" not in call["kwargs"]
-    assert call["kwargs"]["timeout_seconds"] == 123
-    assert call["kwargs"]["evaluation"] == {
-        "dataset_name": "agent-eval-smoke",
-        "dataset_item_id": "item-1",
-        "experiment_name": "exp-1",
-    }
-    assert call["kwargs"]["meta"]["request_id"].startswith("eval-")
+    assert call["agent_slug"] == "default-chatbot"
+    assert call["key"].startswith("eval-")
+    assert FakeYuxiClient.calls[1]["message"] == "2+2=?"
+    assert FakeYuxiClient.calls[1]["key"] == f"{call['key']}-message"
+    assert [entry["method"] for entry in FakeYuxiClient.calls] == ["create", "message", "turn"]
     assert "formatted: final answer" in console.file.getvalue()
     assert langfuse.flushed == 1
 

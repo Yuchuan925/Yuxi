@@ -13,7 +13,7 @@
       :aria-current="currentChatId === chat.id ? 'page' : undefined"
       @click="$emit('select-chat', chat.id)"
       @dblclick.stop="renameChat"
-      @click.middle="$emit('delete-chat', chat.id)"
+      @click.middle="$emit('archive-chat', chat.id)"
     >
       <span class="conversation-title">{{ chat.title || '新的对话' }}</span>
       <span class="actions-mask"></span>
@@ -51,11 +51,11 @@
               重命名
             </a-menu-item>
             <a-menu-item
-              key="delete"
-              :icon="h(Trash2, { size: 14 })"
-              @click.stop="$emit('delete-chat', chat.id)"
+              key="archive"
+              :icon="h(Archive, { size: 14 })"
+              @click.stop="$emit('archive-chat', chat.id)"
             >
-              删除
+              归档
             </a-menu-item>
           </a-menu>
         </template>
@@ -73,7 +73,7 @@
 <script setup>
 import { h } from 'vue'
 import { message, Modal } from 'ant-design-vue'
-import { Loader2, MoreVertical, Pin, PinOff, SquarePen, Trash2 } from '@lucide/vue'
+import { Archive, Loader2, MoreVertical, Pin, PinOff, SquarePen } from '@lucide/vue'
 
 const props = defineProps({
   chat: { type: Object, required: true },
@@ -81,7 +81,7 @@ const props = defineProps({
   nested: { type: Boolean, default: false }
 })
 
-const emit = defineEmits(['select-chat', 'delete-chat', 'rename-chat', 'toggle-pin'])
+const emit = defineEmits(['select-chat', 'archive-chat', 'rename-chat', 'toggle-pin'])
 
 const renameChat = () => {
   let newTitle = props.chat.title || ''

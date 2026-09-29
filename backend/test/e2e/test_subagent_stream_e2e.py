@@ -6,15 +6,15 @@ import os
 import uuid
 from typing import Any
 
+import asyncpg
 import httpx
 import pytest
 
-from e2e_helpers import cancel_run, delete_agent, skip_if_external_quota
+from e2e_helpers import delete_agent, postgres_dsn, skip_if_external_quota
 from test.live_api_cleanup import (
-    make_test_conversation_metadata,
     make_test_conversation_title,
-    remove_e2e_thread_storage,
 )
+from yuxi.agents.backends.paths import runtime_workdir_path
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.e2e, pytest.mark.slow]
 
@@ -43,72 +43,65 @@ async def _create_thread(
     agent_id: str,
     marker: str,
 ) -> tuple[str, str]:
+    """创建 Public Thread，并从持久 Project 读取其 runtime Workdir。"""
     response = await client.post(
-        "/api/chat/thread",
+        "/api/v1/agents/threads",
         json={
             "agent_id": agent_id,
-            "title": make_test_conversation_title("subagent-stream-e2e"),
-            "metadata": make_test_conversation_metadata("subagent-stream-e2e", e2e=True, marker=marker),
+            "title": make_test_conversation_title(f"subagent-stream-e2e-{marker}"),
         },
-        headers=headers,
+        headers={**headers, "Idempotency-Key": f"subagent-thread-{uuid.uuid4().hex}"},
     )
     _assert_ok(response)
     payload = response.json()
-    thread_id = payload.get("thread_id") or payload.get("id")
+    thread_id = payload.get("thread_id")
     assert thread_id, payload
-    workdir_path = payload.get("workdir_path")
+    conn = await asyncpg.connect(postgres_dsn())
+    try:
+        workdir_path = await conn.fetchval(
+            "SELECT p.workdir_path FROM projects p "
+            "JOIN conversations c ON c.project_id = p.id WHERE c.thread_id = $1",
+            thread_id,
+        )
+    finally:
+        await conn.close()
     assert workdir_path, payload
-    return str(thread_id), f"/home/gem/user-data/{workdir_path}"
+    return str(thread_id), runtime_workdir_path(str(workdir_path))
 
 
 async def _create_run(
     client: httpx.AsyncClient,
     headers: dict[str, str],
     *,
-    agent_slug: str,
     thread_id: str,
     query: str,
-) -> str:
+) -> dict:
+    """经 Public Input 创建顶层 Turn 与首段 Run。"""
     response = await client.post(
-        "/api/agent/runs",
+        f"/api/v1/agents/threads/{thread_id}/events",
         json={
-            "query": query,
-            "agent_slug": agent_slug,
-            "thread_id": thread_id,
-            "tool_approval_mode": "always_trust",
-            "meta": {"request_id": f"subagent-stream-e2e-{uuid.uuid4()}"},
+            "events": [{
+                "type": "agent.thread.input.message",
+                "mode": "follow_up",
+                "input": [{"role": "user", "content": [{"type": "input_text", "text": query}]}],
+                "tool_approval_mode": "always_trust",
+            }],
         },
-        headers=headers,
+        headers={**headers, "Idempotency-Key": f"subagent-input-{uuid.uuid4().hex}"},
     )
-    _assert_ok(response)
-    run_id = response.json().get("run_id")
-    assert run_id, response.text
-    return str(run_id)
+    assert response.status_code == 202, response.text
+    accepted = response.json()
+    assert accepted["input_id"] and accepted["turn_id"] and accepted["run_id"], accepted
+    return accepted
 
 
-async def _iter_sse(client: httpx.AsyncClient, headers: dict[str, str], run_id: str):
-    async with client.stream("GET", f"/api/agent/runs/{run_id}/events", headers=headers) as response:
+async def _iter_sse(client: httpx.AsyncClient, headers: dict[str, str], thread_id: str):
+    """把 Public Thread SSE 的 data 行解析为结构化事件。"""
+    async with client.stream("GET", f"/api/v1/agents/threads/{thread_id}/events", headers=headers) as response:
         _assert_ok(response)
-        event = "message"
-        event_id = None
-        data_lines: list[str] = []
         async for line in response.aiter_lines():
-            if not line:
-                if data_lines:
-                    data_text = "\n".join(data_lines)
-                    yield event, json.loads(data_text), event_id
-                event = "message"
-                event_id = None
-                data_lines = []
-                continue
-            if line.startswith(":"):
-                continue
-            if line.startswith("event:"):
-                event = line[len("event:") :].strip() or "message"
-            elif line.startswith("id:"):
-                event_id = line[len("id:") :].strip()
-            elif line.startswith("data:"):
-                data_lines.append(line[len("data:") :].strip())
+            if line.startswith("data: "):
+                yield json.loads(line[6:])
 
 
 def _collect_message_chunks(payload: dict[str, Any]) -> list[dict[str, Any]]:
@@ -125,8 +118,11 @@ def _collect_message_chunks(payload: dict[str, Any]) -> list[dict[str, Any]]:
 async def _consume_run_stream(
     client: httpx.AsyncClient,
     headers: dict[str, str],
+    thread_id: str,
+    turn_id: str,
     run_id: str,
 ) -> tuple[dict[str, int], dict[str, Any], list[dict[str, Any]]]:
+    """消费顶层 Turn 流，只记录其 Run 增量与终态。"""
     event_counts: dict[str, int] = {}
     latest_agent_state: dict[str, Any] = {}
     message_chunks: list[dict[str, Any]] = []
@@ -134,25 +130,55 @@ async def _consume_run_stream(
 
     async def consume() -> None:
         nonlocal latest_agent_state, terminal_status
-        async for event, payload, _event_id in _iter_sse(client, headers, run_id):
-            event_counts[event] = event_counts.get(event, 0) + 1
-            if event == "messages":
+        async for event in _iter_sse(client, headers, thread_id):
+            if event.get("turn_id") != turn_id:
+                continue
+            event_type = event["type"]
+            event_counts[event_type] = event_counts.get(event_type, 0) + 1
+            payload = event.get("payload") or {}
+            if (
+                event_type == "agent.thread.output"
+                and event.get("run_id") == run_id
+                and payload.get("event") == "messages"
+            ):
                 message_chunks.extend(_collect_message_chunks(payload))
-            if event == "custom" and payload.get("name") == "yuxi.agent_state":
+            if payload.get("event") == "custom" and payload.get("name") == "yuxi.agent_state":
                 agent_state = payload.get("agent_state")
                 if isinstance(agent_state, dict):
                     latest_agent_state = agent_state
-            if event == "error":
-                skip_if_external_quota(payload)
-                assert event != "error", payload
-            if event == "end":
-                event_payload = payload.get("payload") if isinstance(payload.get("payload"), dict) else payload
-                terminal_status = str(event_payload.get("status") or "")
+            if event_type == "agent.thread.run.failed":
+                skip_if_external_quota(payload.get("error_message"))
+            if event_type in {
+                "agent.thread.turn.completed", "agent.thread.turn.failed", "agent.thread.turn.cancelled"
+            }:
+                terminal_status = str(payload.get("status") or "")
                 return
 
     await asyncio.wait_for(consume(), timeout=RUN_TIMEOUT_SECONDS)
     assert terminal_status == "completed", {"status": terminal_status, "event_counts": event_counts}
     return event_counts, latest_agent_state, message_chunks
+
+
+async def _assert_child_stream(
+    client: httpx.AsyncClient, headers: dict[str, str], child_thread_id: str, child_run_id: str
+) -> None:
+    """子 Thread 的 Public 流能单独观察子 Run 的输出与终态。"""
+    seen_output = False
+    seen_terminal = False
+
+    async def consume() -> None:
+        nonlocal seen_output, seen_terminal
+        async for event in _iter_sse(client, headers, child_thread_id):
+            if event.get("run_id") != child_run_id:
+                continue
+            if event["type"] == "agent.thread.output":
+                seen_output = True
+            if event["type"] == "agent.thread.run.completed":
+                seen_terminal = True
+                return
+
+    await asyncio.wait_for(consume(), timeout=RUN_TIMEOUT_SECONDS)
+    assert seen_output and seen_terminal
 
 
 def _find_tool_call_ids(value: Any) -> set[str]:
@@ -253,6 +279,7 @@ async def test_subagent_stream_records_run_and_shares_output_files(
     runtime_marker = f"/tmp/yuxi-execution-tree-{suffix}"
     created_agents: list[str] = []
     run_id: str | None = None
+    turn_id: str | None = None
     thread_id: str | None = None
     child_thread_id: str | None = None
     run_completed = False
@@ -349,31 +376,49 @@ async def test_subagent_stream_records_run_and_shares_output_files(
             f"4）subagent_await 等待完成后，你必须用 read_file 读取 {output_path}；"
             f"5）最后调用 present_artifacts 展示 {output_path}。不要省略任何一步。"
         )
-        run_id = await _create_run(
+        accepted = await _create_run(
             e2e_client,
             e2e_headers,
-            agent_slug=main_slug,
             thread_id=thread_id,
             query=query,
         )
+        run_id, turn_id = accepted["run_id"], accepted["turn_id"]
 
         event_counts, stream_agent_state, message_chunks = await _consume_run_stream(
             e2e_client,
             e2e_headers,
+            thread_id,
+            turn_id,
             run_id,
         )
-        assert event_counts.get("messages", 0) > 0
+        assert event_counts.get("agent.thread.output", 0) > 0
+        assert event_counts.get("agent.thread.turn.completed") == 1
 
-        run_response = await e2e_client.get(f"/api/agent/runs/{run_id}", headers=e2e_headers)
+        turn_response = await e2e_client.get(
+            f"/api/v1/agents/threads/{thread_id}/turns/{turn_id}", headers=e2e_headers
+        )
+        _assert_ok(turn_response)
+        parent_turn = turn_response.json()
+        assert parent_turn["status"] == "completed"
+        assert parent_turn["result_run_id"] == run_id
+
+        run_response = await e2e_client.get(
+            f"/api/v1/agents/threads/{thread_id}/runs/{run_id}", headers=e2e_headers
+        )
         _assert_ok(run_response)
-        parent_run = run_response.json().get("run") or {}
+        parent_run = run_response.json()
         assert parent_run.get("status") == "completed"
         assert parent_run.get("runtime_scope_id") == thread_id
+        assert parent_run.get("turn_id") == turn_id
 
-        state_response = await e2e_client.get(f"/api/chat/thread/{thread_id}/state", headers=e2e_headers)
+        state_response = await e2e_client.get(
+            f"/api/v1/agents/threads/{thread_id}/state", headers=e2e_headers
+        )
         _assert_ok(state_response)
         final_agent_state = state_response.json().get("agent_state") or stream_agent_state
-        history_response = await e2e_client.get(f"/api/chat/thread/{thread_id}/history", headers=e2e_headers)
+        history_response = await e2e_client.get(
+            f"/api/v1/agents/threads/{thread_id}/history", headers=e2e_headers
+        )
         _assert_ok(history_response)
         history_payload = history_response.json()
         subagent_runs = final_agent_state.get("subagent_runs") or []
@@ -391,7 +436,7 @@ async def test_subagent_stream_records_run_and_shares_output_files(
 
         child_thread_id = str(completed_run["child_thread_id"])
         child_state_response = await e2e_client.get(
-            f"/api/chat/thread/{child_thread_id}/state",
+            f"/api/v1/agents/threads/{child_thread_id}/state",
             params={"include_messages": "true"},
             headers=e2e_headers,
         )
@@ -402,16 +447,23 @@ async def test_subagent_stream_records_run_and_shares_output_files(
         assert child_subagent_run.get("child_thread_id") == child_thread_id
         assert child_subagent_run.get("run_id")
         child_run_response = await e2e_client.get(
-            f"/api/agent/runs/{child_subagent_run['run_id']}",
+            f"/api/v1/agents/threads/{child_thread_id}/runs/{child_subagent_run['run_id']}",
             headers=e2e_headers,
         )
         _assert_ok(child_run_response)
-        child_run = child_run_response.json().get("run") or {}
+        child_run = child_run_response.json()
         assert child_run.get("run_type") == "subagent"
         assert child_run.get("conversation_thread_id") == child_thread_id
         assert child_run.get("created_by_run_id") == run_id
         assert child_run.get("status") == "completed"
         assert child_run.get("runtime_scope_id") == thread_id
+        assert child_run.get("turn_id") == turn_id
+        wrong_thread_response = await e2e_client.get(
+            f"/api/v1/agents/threads/{thread_id}/runs/{child_subagent_run['run_id']}",
+            headers=e2e_headers,
+        )
+        assert wrong_thread_response.status_code == 404, wrong_thread_response.text
+        await _assert_child_stream(e2e_client, e2e_headers, child_thread_id, child_subagent_run["run_id"])
         assert child_state_payload.get("messages"), child_state_payload
         child_messages_text = json.dumps(child_state_payload["messages"], ensure_ascii=False, default=str)
         assert all(
@@ -470,11 +522,23 @@ async def test_subagent_stream_records_run_and_shares_output_files(
         )
         _assert_ok(viewer_file_response)
         assert expected_content in json.dumps(viewer_file_response.json(), ensure_ascii=False)
+        artifact_response = await e2e_client.get(
+            f"/api/v1/agents/threads/{thread_id}/artifacts/{output_path.lstrip('/')}",
+            headers=e2e_headers,
+        )
+        _assert_ok(artifact_response)
+        assert artifact_response.content.decode("utf-8").strip() == expected_content
         run_completed = True
 
     finally:
-        if not run_completed:
-            await cancel_run(e2e_client, e2e_headers, run_id)
+        if not run_completed and thread_id and turn_id:
+            await e2e_client.post(
+                f"/api/v1/agents/threads/{thread_id}/events",
+                json={"events": [{
+                    "type": "yuxi.thread.input.cancel", "turn_id": turn_id, "expected_run_id": run_id,
+                }]},
+                headers={**e2e_headers, "Idempotency-Key": f"subagent-cancel-{uuid.uuid4().hex}"},
+            )
         if thread_id:
             for path in (parent_input_viewer_path, output_viewer_path):
                 if path:
@@ -483,13 +547,10 @@ async def test_subagent_stream_records_run_and_shares_output_files(
                         params={"thread_id": thread_id, "path": path},
                         headers=e2e_headers,
                     )
-        for cleanup_thread_id in (thread_id, child_thread_id):
-            if cleanup_thread_id:
-                delete_response = await e2e_client.delete(
-                    f"/api/chat/thread/{cleanup_thread_id}",
-                    headers=e2e_headers,
-                )
-                assert delete_response.status_code in {200, 404}, delete_response.text
-                remove_e2e_thread_storage(cleanup_thread_id)
+        if thread_id and run_completed:
+            archive_response = await e2e_client.post(
+                f"/api/v1/agents/threads/{thread_id}/archive", headers=e2e_headers
+            )
+            assert archive_response.status_code == 200, archive_response.text
         for slug in reversed(created_agents):
             await delete_agent(e2e_client, e2e_headers, slug)

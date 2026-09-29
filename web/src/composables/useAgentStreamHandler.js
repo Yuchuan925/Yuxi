@@ -87,7 +87,7 @@ export function useAgentStreamHandler({
    * @returns {Boolean} - Returns true if processing should stop (e.g. error, finished, interrupted)
    */
   const handleStreamChunk = (chunk, threadId) => {
-    const { status, msg, request_id, message: chunkMessage } = chunk
+    const { status, msg, input_id, message: chunkMessage } = chunk
     const threadState = getThreadState(threadId)
 
     if (!threadState) return false
@@ -95,25 +95,25 @@ export function useAgentStreamHandler({
     switch (status) {
       case 'init':
         {
-          const resolvedRequestId = request_id || threadState.pendingRequestId
-          if (resolvedRequestId) {
-            threadState.pendingRequestId = resolvedRequestId
+          const resolvedInputId = input_id || threadState.pendingInputId
+          if (resolvedInputId) {
+            threadState.pendingInputId = resolvedInputId
           }
-          if (resolvedRequestId && msg && msg.type !== 'system') {
-            const localHumanMessage = threadState.onGoingConv.msgChunks[resolvedRequestId]?.find(
+          if (resolvedInputId && msg && msg.type !== 'system') {
+            const localHumanMessage = threadState.onGoingConv.msgChunks[resolvedInputId]?.find(
               (item) => item?.type === 'human' || item?.role === 'user'
             )
             const resolvedRunId =
-              request_id && chunk.stream_thread_id === threadId ? chunk.stream_run_id : null
+              input_id && chunk.stream_thread_id === threadId ? chunk.stream_run_id : null
             const initMetadata = { ...(msg?.extra_metadata || {}) }
             delete initMetadata.run_id
             const initMessage = {
               ...msg,
-              id: msg?.id || resolvedRequestId,
+              id: msg?.id || resolvedInputId,
               created_at: msg.created_at || localHumanMessage?.created_at,
               extra_metadata: {
                 ...initMetadata,
-                request_id: resolvedRequestId
+                input_id: resolvedInputId
               }
             }
             delete initMessage.run_id
@@ -129,7 +129,7 @@ export function useAgentStreamHandler({
               initMessage.image_contents = localImages
               initMessage.image_content = localHumanMessage.image_content || localImages[0]
             }
-            threadState.onGoingConv.msgChunks[resolvedRequestId] = [initMessage]
+            threadState.onGoingConv.msgChunks[resolvedInputId] = [initMessage]
           }
           threadState.replyLoadingVisible = true
           threadState.contextCompressing = false
@@ -145,7 +145,7 @@ export function useAgentStreamHandler({
             messageChunk.extra_metadata = {
               ...(messageChunk.extra_metadata || {}),
               ...(chunk.run_id ? { run_id: chunk.run_id } : {}),
-              ...(chunk.request_id ? { request_id: chunk.request_id } : {}),
+              ...(chunk.input_id ? { input_id: chunk.input_id } : {}),
               ...(threadId ? { thread_id: threadId } : {})
             }
             if (streamSmoother) {
@@ -181,7 +181,7 @@ export function useAgentStreamHandler({
         if (threadState) {
           threadState.isStreaming = false
           threadState.replyLoadingVisible = false
-          threadState.pendingRequestId = null
+          threadState.pendingInputId = null
           threadState.pendingInterrupt = null
           threadState.contextCompressing = false
         }
@@ -236,7 +236,7 @@ export function useAgentStreamHandler({
         if (threadState) {
           threadState.isStreaming = false
           threadState.replyLoadingVisible = false
-          threadState.pendingRequestId = null
+          threadState.pendingInputId = null
           threadState.pendingInterrupt = null
           threadState.contextCompressing = false
           console.log(`${debugPrefix}[finished]`, {
@@ -268,7 +268,7 @@ export function useAgentStreamHandler({
         if (threadState) {
           threadState.isStreaming = false
           threadState.replyLoadingVisible = false
-          threadState.pendingRequestId = null
+          threadState.pendingInputId = null
           threadState.contextCompressing = false
           const pendingInterrupt = extractPendingInterrupt(chunk, threadId)
           if (pendingInterrupt) {

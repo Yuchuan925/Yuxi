@@ -6,10 +6,10 @@ import os
 import uuid
 
 import pytest
-from sqlalchemy import delete
+from sqlalchemy import delete, update
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from yuxi.storage.postgres.models_business import AgentRun, Conversation, Project, SubagentThread
+from yuxi.storage.postgres.models_business import AgentRun, AgentTurn, Conversation, Project, SubagentThread
 from yuxi.utils.datetime_utils import utc_now_naive
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
@@ -23,6 +23,7 @@ async def test_state_recovers_children_without_checkpoint_and_rejects_other_user
     project_id = str(uuid.uuid4())
     parent_thread, child_thread = (f"pytest-subagent-state-{uuid.uuid4()}" for _ in range(2))
     parent_id, child_id = (str(uuid.uuid4()) for _ in range(2))
+    turn_id = str(uuid.uuid4())
     engine = create_async_engine(os.environ["POSTGRES_URL"])
     sessions = async_sessionmaker(engine, expire_on_commit=False)
     try:
@@ -46,6 +47,17 @@ async def test_state_recovers_children_without_checkpoint_and_rejects_other_user
             db.add_all([parent, child])
             await db.flush()
             db.add(
+                AgentTurn(
+                    id=turn_id,
+                    conversation_thread_id=parent_thread,
+                    uid=uid,
+                    status="completed",
+                    current_run_id=parent_id,
+                    result_run_id=parent_id,
+                )
+            )
+            await db.flush()
+            db.add(
                 AgentRun(
                     id=parent_id,
                     uid=uid,
@@ -54,7 +66,7 @@ async def test_state_recovers_children_without_checkpoint_and_rejects_other_user
                     conversation_id=parent.id,
                     conversation_thread_id=parent_thread,
                     runtime_scope_id=parent_thread,
-                    request_id=parent_id,
+                    turn_id=turn_id,
                     status="completed",
                     finished_at=utc_now_naive(),
                     input_payload={},
@@ -80,7 +92,7 @@ async def test_state_recovers_children_without_checkpoint_and_rejects_other_user
                     conversation_id=child.id,
                     conversation_thread_id=child_thread,
                     runtime_scope_id=parent_thread,
-                    request_id=child_id,
+                    turn_id=turn_id,
                     status="completed",
                     finished_at=utc_now_naive(),
                     created_by_run_id=parent_id,
@@ -90,24 +102,36 @@ async def test_state_recovers_children_without_checkpoint_and_rejects_other_user
             )
             await db.commit()
 
-        response = await test_client.get(f"/api/chat/thread/{parent_thread}/state", headers=standard_user["headers"])
+        response = await test_client.get(
+            f"/api/v1/agents/threads/{parent_thread}/state", headers=standard_user["headers"]
+        )
         assert response.status_code == 200, response.text
         runs = response.json()["agent_state"]["subagent_runs"]
         assert len(runs) == 1, response.json()
         assert runs[0]["run_id"] == child_id
         assert runs[0]["status"] == "completed"
-        assert runs[0]["events_url"] == f"/api/agent/runs/{child_id}/events"
-        run_response = await test_client.get(f"/api/agent/runs/{child_id}", headers=standard_user["headers"])
-        assert run_response.json()["run"]["status"] == "completed"
-        for url in (f"/api/chat/thread/{parent_thread}/state", f"/api/agent/runs/{child_id}"):
+        assert runs[0]["events_url"] == f"/api/v1/agents/threads/{child_thread}/events"
+        child_run_url = f"/api/v1/agents/threads/{child_thread}/runs/{child_id}"
+        run_response = await test_client.get(child_run_url, headers=standard_user["headers"])
+        assert run_response.status_code == 200, run_response.text
+        assert run_response.json()["status"] == "completed"
+        async with sessions() as db:
+            persisted = await db.get(AgentRun, child_id)
+            assert persisted is not None and persisted.turn_id == turn_id
+            assert persisted.created_by_run_id == parent_id
+        for url in (f"/api/v1/agents/threads/{parent_thread}/state", child_run_url):
             denied = await test_client.get(url, headers=admin_headers)
             assert denied.status_code == 404, denied.text
             assert child_id not in denied.text
     finally:
         async with sessions() as db:
+            await db.execute(
+                update(AgentTurn).where(AgentTurn.id == turn_id).values(current_run_id=None, result_run_id=None)
+            )
             await db.execute(delete(AgentRun).where(AgentRun.id == child_id))
             await db.execute(delete(SubagentThread).where(SubagentThread.child_thread_id == child_thread))
             await db.execute(delete(AgentRun).where(AgentRun.id == parent_id))
+            await db.execute(delete(AgentTurn).where(AgentTurn.id == turn_id))
             await db.execute(delete(Conversation).where(Conversation.thread_id.in_([parent_thread, child_thread])))
             await db.execute(delete(Project).where(Project.id == project_id))
             await db.commit()

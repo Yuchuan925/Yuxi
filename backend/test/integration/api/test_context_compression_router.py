@@ -17,7 +17,7 @@ from langgraph.graph.message import add_messages
 from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from server.routers.chat_router import chat
+from server.routers.public_v1.agents import public_agents_router
 from server.utils.auth_middleware import get_db, get_required_user
 from yuxi.services import context_compression_service
 from yuxi.storage.postgres.manager import pg_manager
@@ -42,6 +42,7 @@ async def test_compress_thread_persists_canonical_checkpoint_through_http(
     project_id = str(uuid.uuid4())
     engine = create_async_engine(os.environ["POSTGRES_URL"], pool_pre_ping=True)
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
+    await pg_manager.close()
     pg_manager.initialize()
     checkpointer = await pg_manager.setup_langgraph_checkpointer()
 
@@ -149,7 +150,7 @@ async def test_compress_thread_persists_canonical_checkpoint_through_http(
     )
 
     app = FastAPI()
-    app.include_router(chat, prefix="/api")
+    app.include_router(public_agents_router, prefix="/api")
 
     async def override_db():
         async with session_factory() as db:
@@ -163,7 +164,7 @@ async def test_compress_thread_persists_canonical_checkpoint_through_http(
             transport=httpx.ASGITransport(app=app),
             base_url="http://test",
         ) as client:
-            response = await client.post(f"/api/chat/thread/{thread_id}/compress", json={})
+            response = await client.post(f"/api/v1/agents/threads/{thread_id}/compress", json={})
 
         assert response.status_code == 200, response.text
         assert response.json()["status"] == "completed"

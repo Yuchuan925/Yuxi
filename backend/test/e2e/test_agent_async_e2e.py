@@ -1,6 +1,10 @@
+"""真实 Public Thread 流、Turn 结果与持久归属端到端验证。"""
+
 from __future__ import annotations
 
+import asyncio
 import json
+import os
 import uuid
 from typing import Any
 
@@ -8,22 +12,17 @@ import asyncpg
 import httpx
 import pytest
 
-from e2e_helpers import (
-    cancel_run,
-    consume_events,
-    delete_agent,
-    postgres_dsn,
-    skip_if_external_quota,
-    wait_for_run,
-)
-from test.live_api_cleanup import make_test_conversation_metadata, make_test_conversation_title
+from e2e_helpers import delete_agent, postgres_dsn, skip_if_external_quota
+from test.live_api_cleanup import make_test_conversation_title
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.e2e, pytest.mark.slow]
 
 EXPECTED_OUTPUT = "ASYNC_AGENT_E2E_OK"
+RUN_TIMEOUT_SECONDS = int(os.getenv("E2E_RUN_TIMEOUT_SECONDS", "240"))
 
 
 async def _create_agent(client: httpx.AsyncClient, headers: dict[str, str], uid: str) -> str:
+    """创建只输出固定标记的临时 Agent。"""
     default_response = await client.get("/api/agent/default", headers=headers)
     assert default_response.status_code == 200, default_response.text
     default_context = ((default_response.json().get("agent") or {}).get("config_json") or {}).get("context") or {}
@@ -62,86 +61,101 @@ async def _create_agent(client: httpx.AsyncClient, headers: dict[str, str], uid:
 
 
 async def _create_thread(client: httpx.AsyncClient, headers: dict[str, str], agent_slug: str) -> str:
+    """通过 Public API 创建独立测试 Thread。"""
     response = await client.post(
-        "/api/chat/thread",
-        json={
-            "agent_id": agent_slug,
-            "title": make_test_conversation_title("agent-async-e2e"),
-            "metadata": make_test_conversation_metadata("agent-async-e2e", e2e=True),
-        },
-        headers=headers,
+        "/api/v1/agents/threads",
+        json={"agent_id": agent_slug, "title": make_test_conversation_title("agent-async-e2e")},
+        headers={**headers, "Idempotency-Key": f"async-thread-{uuid.uuid4().hex}"},
     )
     assert response.status_code == 200, response.text
-    payload = response.json()
-    thread_id = payload.get("thread_id") or payload.get("id")
-    assert thread_id, payload
+    thread_id = response.json().get("thread_id")
+    assert thread_id, response.text
     return str(thread_id)
 
 
-async def _create_run(
+async def _submit_input(client: httpx.AsyncClient, headers: dict[str, str], thread_id: str) -> dict:
+    """提交一条 follow_up，保留 Input、Turn 和 Run 回执。"""
+    response = await client.post(
+        f"/api/v1/agents/threads/{thread_id}/events",
+        json={
+            "events": [{
+                "type": "agent.thread.input.message",
+                "mode": "follow_up",
+                "input": [{
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": f"请只回复 {EXPECTED_OUTPUT}，不要添加任何解释。"}],
+                }],
+            }]
+        },
+        headers={**headers, "Idempotency-Key": f"async-input-{uuid.uuid4().hex}"},
+    )
+    assert response.status_code == 202, response.text
+    accepted = response.json()
+    assert accepted["thread_id"] == thread_id
+    assert accepted["input_id"] and accepted["turn_id"] and accepted["run_id"], accepted
+    return accepted
+
+
+async def _stream_until_terminal(
     client: httpx.AsyncClient,
     headers: dict[str, str],
-    *,
-    agent_slug: str,
     thread_id: str,
-) -> tuple[str, str]:
-    request_id = f"agent-async-e2e-{uuid.uuid4()}"
-    response = await client.post(
-        "/api/agent/runs",
-        json={
-            "query": f"请只回复 {EXPECTED_OUTPUT}，不要添加任何解释。",
-            "agent_slug": agent_slug,
-            "thread_id": thread_id,
-            "meta": {"request_id": request_id},
-        },
-        headers=headers,
-    )
-    assert response.status_code == 200, response.text
-    run_id = response.json().get("run_id")
-    assert run_id, response.text
-    assert response.json().get("stream_url") == f"/api/agent/runs/{run_id}/events"
-    assert response.json().get("request_id") == request_id
-    return str(run_id), request_id
+    turn_id: str,
+    *,
+    after_cursor: str | None = None,
+) -> list[dict]:
+    """读取目标 Turn 的结构化 SSE，终态后立即关闭无限流。"""
+    stream_headers = {**headers, **({"Last-Event-ID": after_cursor} if after_cursor else {})}
+    events: list[dict] = []
+
+    async def consume() -> None:
+        async with client.stream(
+            "GET", f"/api/v1/agents/threads/{thread_id}/events", headers=stream_headers
+        ) as response:
+            assert response.status_code == 200, await response.aread()
+            async for line in response.aiter_lines():
+                if not line.startswith("data: "):
+                    continue
+                event = json.loads(line[6:])
+                if event.get("turn_id") != turn_id:
+                    continue
+                assert event["thread_id"] == thread_id
+                assert event["cursor"]
+                events.append(event)
+                if event["type"] == "agent.thread.run.failed":
+                    skip_if_external_quota((event.get("payload") or {}).get("error_message"))
+                if event["type"] in {
+                    "agent.thread.turn.completed",
+                    "agent.thread.turn.failed",
+                    "agent.thread.turn.cancelled",
+                }:
+                    return
+
+    await asyncio.wait_for(consume(), timeout=RUN_TIMEOUT_SECONDS)
+    assert events and events[-1]["type"].startswith("agent.thread.turn."), events
+    return events
 
 
 async def _assert_run_persisted(
-    *,
-    run_id: str,
-    request_id: str,
-    thread_id: str,
-    agent_slug: str,
-    uid: str,
+    *, run_id: str, input_id: str, turn_id: str, thread_id: str, agent_slug: str, uid: str
 ) -> None:
+    """独立查询 PostgreSQL，核实同一 Input/Turn/Run 的消息归属。"""
     conn = await asyncpg.connect(postgres_dsn())
     try:
         row = await conn.fetchrow(
             """
-            SELECT
-                ar.id,
-                ar.request_id,
-                ar.status,
-                ar.error_message,
-                ar.run_type,
-                ar.agent_slug,
-                ar.uid,
-                ar.conversation_thread_id,
-                ar.conversation_id,
-                ar.input_message_id,
-                ar.output_message_id,
-                ar.created_at,
-                ar.started_at,
-                ar.prepared_at,
-                ar.first_output_at,
-                ar.finished_at,
-                input_msg.role AS input_role,
-                input_msg.request_id AS input_request_id,
-                output_msg.role AS output_role,
-                output_msg.run_id AS output_run_id,
-                output_msg.request_id AS output_request_id,
-                output_msg.conversation_id AS output_conversation_id,
-                output_msg.content AS output_content,
-                conv.thread_id AS persisted_thread_id
+            SELECT ar.id, ar.status, ar.error_message, ar.run_type, ar.agent_slug, ar.uid,
+                   ar.conversation_thread_id, ar.turn_id, ar.input_id, ar.conversation_id,
+                   ar.input_message_id, ar.output_message_id, ar.created_at, ar.started_at,
+                   ar.finished_at, ai.status AS input_status, ai.turn_id AS input_turn_id,
+                   ai.consumed_run_id, at.status AS turn_status, at.result_run_id,
+                   input_msg.role AS input_role, input_msg.extra_metadata->>'input_id' AS message_input_id,
+                   output_msg.role AS output_role, output_msg.run_id AS output_run_id,
+                   output_msg.turn_id AS output_turn_id, output_msg.content AS output_content,
+                   conv.thread_id AS persisted_thread_id
             FROM agent_runs ar
+            JOIN agent_inputs ai ON ai.id = ar.input_id
+            JOIN agent_turns at ON at.id = ar.turn_id
             JOIN conversations conv ON conv.id = ar.conversation_id
             LEFT JOIN messages input_msg ON input_msg.id = ar.input_message_id
             LEFT JOIN messages output_msg ON output_msg.id = ar.output_message_id
@@ -150,27 +164,22 @@ async def _assert_run_persisted(
             run_id,
         )
         assert row, f"agent_runs row missing for {run_id}"
-        assert row["request_id"] == request_id
         if row["status"] != "completed":
             skip_if_external_quota(row["error_message"])
-        assert row["status"] == "completed"
+        assert row["status"] == row["turn_status"] == "completed"
         assert row["run_type"] == "chat"
-        assert row["agent_slug"] == agent_slug
-        assert row["uid"] == uid
-        assert row["conversation_thread_id"] == thread_id
-        assert row["conversation_id"] is not None
-        assert row["input_message_id"] is not None
-        assert row["output_message_id"] is not None
-        assert row["created_at"] <= row["started_at"] <= row["prepared_at"]
-        assert row["prepared_at"] <= row["first_output_at"] <= row["finished_at"]
-        assert row["input_role"] == "user"
-        assert row["input_request_id"] == request_id
+        assert (row["agent_slug"], row["uid"]) == (agent_slug, uid)
+        assert row["conversation_thread_id"] == row["persisted_thread_id"] == thread_id
+        assert row["turn_id"] == row["input_turn_id"] == turn_id
+        assert row["input_id"] == input_id
+        assert row["input_status"] == "consumed" and row["consumed_run_id"] == run_id
+        assert row["result_run_id"] == run_id
+        assert row["input_message_id"] and row["output_message_id"]
+        assert row["input_role"] == "user" and row["message_input_id"] == input_id
         assert row["output_role"] == "assistant"
-        assert row["output_run_id"] == run_id
-        assert row["output_request_id"] == request_id
-        assert row["output_conversation_id"] == row["conversation_id"]
+        assert row["output_run_id"] == run_id and row["output_turn_id"] == turn_id
         assert EXPECTED_OUTPUT in row["output_content"]
-        assert row["persisted_thread_id"] == thread_id
+        assert row["created_at"] <= row["started_at"] <= row["finished_at"]
     finally:
         await conn.close()
 
@@ -180,82 +189,70 @@ async def test_async_agent_run_stream_result_and_persistence(
     e2e_headers: dict[str, str],
     e2e_agent_context: dict[str, str],
 ):
+    """Public 流、游标重连和 Turn 结果指向同一持久 Run。"""
     uid = e2e_agent_context["uid"]
     agent_slug = await _create_agent(e2e_client, e2e_headers, uid)
-    run_id: str | None = None
-    run_completed = False
-
+    thread_id: str | None = None
+    accepted: dict | None = None
+    completed = False
     try:
         thread_id = await _create_thread(e2e_client, e2e_headers, agent_slug)
-        run_id, request_id = await _create_run(
-            e2e_client,
-            e2e_headers,
-            agent_slug=agent_slug,
-            thread_id=thread_id,
+        accepted = await _submit_input(e2e_client, e2e_headers, thread_id)
+        run_id, turn_id, input_id = accepted["run_id"], accepted["turn_id"], accepted["input_id"]
+
+        streamed = await _stream_until_terminal(e2e_client, e2e_headers, thread_id, turn_id)
+        assert any(event["type"] == "agent.thread.output" and event["run_id"] == run_id for event in streamed)
+        assert streamed[-1]["type"] == "agent.thread.turn.completed", streamed[-1]
+        assert streamed[-1]["run_id"] == run_id and streamed[-1]["input_id"] == input_id
+
+        turn_response = await e2e_client.get(
+            f"/api/v1/agents/threads/{thread_id}/turns/{turn_id}", headers=e2e_headers
         )
+        assert turn_response.status_code == 200, turn_response.text
+        turn = turn_response.json()
+        if turn["status"] != "completed":
+            skip_if_external_quota(turn.get("error"))
+        assert turn["status"] == "completed", turn
+        assert turn["result_run_id"] == run_id
+        assert EXPECTED_OUTPUT in turn["output"]["content"]
 
-        event_counts = await consume_events(e2e_client, e2e_headers, run_id)
-        assert event_counts.get("messages", 0) > 0, event_counts
-        assert event_counts.get("end", 0) == 1, event_counts
+        run_response = await e2e_client.get(f"/api/v1/agents/threads/{thread_id}/runs/{run_id}", headers=e2e_headers)
+        assert run_response.status_code == 200, run_response.text
+        run = run_response.json()
+        assert run["status"] == "completed" and run["turn_id"] == turn_id
+        assert run["input_id"] == input_id and run["output"]["run_id"] == run_id
 
-        run_payload = await wait_for_run(e2e_client, e2e_headers, run_id)
-        assert run_payload.get("status") == "completed", run_payload
-        assert run_payload.get("request_id") == request_id
-
-        result_response = await e2e_client.get(f"/api/agent/runs/{run_id}/result", headers=e2e_headers)
-        assert result_response.status_code == 200, result_response.text
-        result_payload = result_response.json()
-        assert result_payload.get("status") == "completed", result_payload
-        assert result_payload.get("agent_run_id") == run_id
-        assert result_payload.get("thread_id") == thread_id
-        assert result_payload.get("request_id") == request_id
-        assert EXPECTED_OUTPUT in str(result_payload.get("output") or ""), result_payload
-        assert result_payload["timing"]["preparation_latency_ms"] is not None
-        assert result_payload["timing"]["first_output_latency_ms"] is not None
-        assert result_payload["timing"]["model_first_output_latency_ms"] is not None
-
-        history_response = await e2e_client.get(f"/api/chat/thread/{thread_id}/history", headers=e2e_headers)
+        history_response = await e2e_client.get(f"/api/v1/agents/threads/{thread_id}/history", headers=e2e_headers)
         assert history_response.status_code == 200, history_response.text
-        history_payload = history_response.json()
-        history_text = json.dumps(history_payload, ensure_ascii=False)
-        assert request_id in history_text, history_text
-        assert EXPECTED_OUTPUT in history_text, history_text
-        assistant_message = next(
-            message
-            for message in history_payload["history"]
-            if message.get("run_id") == run_id and message.get("type") == "ai"
+        history = history_response.json()
+        assert any(item["input_id"] == input_id and item["turn_id"] == turn_id for item in history["history"])
+        assert any(
+            item["run_id"] == run_id and item["turn_id"] == turn_id and EXPECTED_OUTPUT in item["content"]
+            for item in history["history"] if item["type"] == "ai"
         )
-        assert "run_timing" not in assistant_message
-        history_run = next(run for run in history_response.json()["runs"] if run["run_id"] == run_id)
-        assert history_run["timing"]["first_output_latency_ms"] is not None
+        assert any(item["run_id"] == run_id and item["turn_id"] == turn_id for item in history["runs"])
 
         await _assert_run_persisted(
-            run_id=run_id,
-            request_id=request_id,
-            thread_id=thread_id,
-            agent_slug=agent_slug,
-            uid=uid,
+            run_id=run_id, input_id=input_id, turn_id=turn_id,
+            thread_id=thread_id, agent_slug=agent_slug, uid=uid,
         )
 
-        replay = await e2e_client.get(f"/api/agent/runs/{run_id}/events", headers=e2e_headers)
-        assert replay.status_code == 200, replay.text
-        event_ids = [line.removeprefix("id: ") for line in replay.text.splitlines() if line.startswith("id: ")]
-        assert event_ids, "真实 worker 事件必须携带 Redis 游标"
-        for _ in range(2):
-            resumed = await e2e_client.get(
-                f"/api/agent/runs/{run_id}/events",
-                headers={**e2e_headers, "Last-Event-ID": event_ids[-1]},
-            )
-            assert resumed.status_code == 200, resumed.text
-            assert resumed.text.count("event: end\n") == 1
-            assert "\nid:" not in resumed.text
-            data = next(line.removeprefix("data: ") for line in resumed.text.splitlines() if line.startswith("data: "))
-            terminal = json.loads(data)
-            assert terminal["run_id"] == run_id
-            assert terminal["payload"]["status"] == "completed"
-            assert terminal["payload"]["request_id"] == request_id
-        run_completed = True
+        first_cursor = next(event["cursor"] for event in streamed if event["type"] == "agent.thread.output")
+        replayed = await _stream_until_terminal(
+            e2e_client, e2e_headers, thread_id, turn_id, after_cursor=first_cursor
+        )
+        assert replayed[-1]["type"] == "agent.thread.turn.completed"
+        assert replayed[-1]["run_id"] == run_id and replayed[-1]["input_id"] == input_id
+        completed = True
     finally:
-        if not run_completed:
-            await cancel_run(e2e_client, e2e_headers, run_id)
+        if accepted and thread_id and not completed:
+            await e2e_client.post(
+                f"/api/v1/agents/threads/{thread_id}/events",
+                json={"events": [{
+                    "type": "yuxi.thread.input.cancel",
+                    "turn_id": accepted["turn_id"],
+                    "expected_run_id": accepted["run_id"],
+                }]},
+                headers={**e2e_headers, "Idempotency-Key": f"async-cancel-{uuid.uuid4().hex}"},
+            )
         await delete_agent(e2e_client, e2e_headers, agent_slug)

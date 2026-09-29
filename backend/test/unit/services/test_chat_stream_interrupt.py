@@ -1,19 +1,26 @@
-"""测试 chat_service 中的 interrupt 相关函数"""
+"""测试执行器中的等待点恢复与中断投影。"""
 
 import json
 from types import SimpleNamespace
 
 import pytest
 
-from yuxi.services.chat_service import (
+from yuxi.services.agents.execution import (
     _build_ask_user_question_payload,
     _build_tool_approval_payload,
     _normalize_interrupt_questions,
     stream_agent_resume,
 )
 from test.unit.agent_context_fixtures import prepared_execution
-from yuxi.services import chat_service as svc
+from yuxi.services.agents import execution as svc
+from yuxi.services.agents.execution import RunExecutionResult
+from yuxi.services.langfuse_service import LangfuseRunContext
 from yuxi.utils.question_utils import normalize_options
+
+
+def _chunk(event):
+    """展开执行终结结果，保留原始结构化增量。"""
+    return event.chunk if isinstance(event, RunExecutionResult) else event
 
 
 class _FakeSession:
@@ -224,12 +231,12 @@ async def test_stream_agent_resume_init_does_not_render_resume_input():
         prepared_execution=prepared_execution(),
         thread_id="thread-1",
         resume_input={"language": "python"},
-        meta={"request_id": "req-1"},
+        meta={"turn_id": "turn-1", "run_id": "run-1", "worker_id": "worker-1"},
         current_user=SimpleNamespace(uid="user-1"),
         db=object(),
     )
 
-    first_chunk = json.loads((await stream.__anext__()).decode("utf-8"))
+    first_chunk = _chunk(await stream.__anext__())
     await stream.aclose()
 
     assert first_chunk["status"] == "init"
@@ -307,7 +314,7 @@ async def test_stream_agent_resume_commits_before_stream_and_routes_subagent_chu
     monkeypatch.setattr(
         svc,
         "_build_langfuse_run_context",
-        lambda **_kwargs: SimpleNamespace(callbacks=[], metadata={}, tags=[], trace_id=None),
+        lambda **_kwargs: LangfuseRunContext(),
     )
     monkeypatch.setattr(svc, "check_and_handle_interrupts", fake_check_and_handle_interrupts)
     monkeypatch.setattr(svc, "save_messages_from_langgraph_state", fake_save_messages_from_langgraph_state)
@@ -354,7 +361,7 @@ async def test_stream_agent_resume_commits_before_stream_and_routes_subagent_chu
         prepared_execution=prepared_execution(),
         thread_id="parent-thread",
         resume_input={"ok": True},
-        meta={"request_id": "req-1"},
+        meta={"turn_id": "turn-1", "run_id": "run-1", "worker_id": "worker-1"},
         current_user=SimpleNamespace(uid="user-1"),
         db=db,
         on_prepared=on_prepared,
@@ -363,7 +370,7 @@ async def test_stream_agent_resume_commits_before_stream_and_routes_subagent_chu
     chunks = []
     loading = None
     async for raw in stream:
-        chunk = json.loads(raw.decode("utf-8"))
+        chunk = _chunk(raw)
         chunks.append(chunk)
         if chunk.get("status") == "loading":
             loading = chunk
@@ -399,14 +406,14 @@ async def test_stream_agent_resume_commits_before_stream_and_routes_subagent_chu
         resume_input={"ok": True},
         meta={
             "run_id": "resume-output-error",
-            "request_id": "resume-request-error",
+            "turn_id": "resume-turn-error",
             "worker_id": "resume-worker:attempt-1",
         },
         current_user=SimpleNamespace(uid="user-1"),
         db=db,
         on_prepared=on_prepared,
     ):
-        failing_chunks.append(json.loads(raw.decode("utf-8")))
+        failing_chunks.append(_chunk(raw))
 
     assert failing_chunks[-1]["status"] == "error"
     assert failing_chunks[-1]["error_type"] == "output_persistence_error"

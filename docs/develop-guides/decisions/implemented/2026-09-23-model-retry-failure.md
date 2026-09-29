@@ -12,7 +12,7 @@ Owner：backend/package/yuxi/agents/middlewares/network_retry.py
 
 本决定部分取代[网络重试预算](./2026-09-10-network-retry-budget-ownership.md)中的次数重试耗尽策略；该记录拥有的网络预算、退避计时与异常分类规则继续有效。
 
-统一中间件使用上游的 on_failure="error"，保留次数重试和网络预算，耗尽后抛出原异常。Run service/worker 拥有失败终态、错误与清理，chat_service 保留输出关联检查。已有部分输出由失败通道保存，带 is_error 和当前错误元数据。范围不含限流调度、并发配额或历史 checkpoint 迁移。
+统一中间件使用上游的 on_failure="error"，保留次数重试和网络预算，耗尽后抛出原异常。Run 用例和 worker 拥有失败终态、错误与清理，`agents/messages.py` 保留输出关联检查。已有部分输出由失败通道保存，带 is_error 和当前错误元数据。范围不含限流调度、并发配额或历史 checkpoint 迁移。
 
 ## 替代方案
 
@@ -31,6 +31,6 @@ Owner：backend/package/yuxi/agents/middlewares/network_retry.py
 | 重试耗尽抛出原异常，恢复后正常返回 | 合成错误回答或关闭重试 | network_retry.py | 同步/异步 unit；相关集合 70 passed | 修改前四个耗尽断言均因 DID NOT RAISE 失败 | Passed |
 | 429 Run 失败且父任务可处理、清理、继续请求 | 空成功或级联失败 | run_worker.py / Run repository | deterministic E2E 四种场景、HTTP / SSE / PG 回读 | 恢复 continue 后父任务读取的错误为持久化失败，原始 429 断言失败 | Passed |
 
-最小回归命令：`docker compose exec -T api uv run --no-sync --no-dev pytest test/unit/agents/test_network_retry.py test/unit/services/test_chat_service_sync.py -q`；真实链路：`docker compose exec -T api uv run --no-sync --no-dev pytest test/e2e/test_deterministic_agent_path_e2e.py -k model_retry_exhaustion -q`。E2E 位于现有 `system-tests.yml` 整文件 gate 中。
+最小回归命令：`docker compose exec -T api uv run --no-sync --no-dev pytest test/unit/agents/test_network_retry.py test/unit/services/test_chat_service_sync.py -q`；真实链路：`docker compose exec -T api uv run --no-sync --no-dev pytest test/e2e/test_agent_lifecycle_e2e.py test/e2e/test_agent_lifecycle_subagent_boundaries_e2e.py -k 'model_rate_limit_failure or child_model_retry_exhaustion' -q`。两个 E2E 文件均由 `system-tests.yml` 的独立步骤运行。
 
 真实豆包限流、五子任务并发与历史 execution tree 清理崩溃未复现；验证覆盖正常装配的首次/工具调用后失败、普通/子 Run 和相同线程重复请求。

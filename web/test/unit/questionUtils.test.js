@@ -125,6 +125,11 @@ test('选择题答案保持单选、多选和自行填写格式', () => {
     text: '秋天',
     selected: []
   })
+  assert.deepEqual(buildQuestionAnswer(multiple, ['杭州'], '  苏州  ', true), {
+    type: 'other',
+    text: '苏州',
+    selected: ['杭州']
+  })
   assert.equal(
     buildQuestionAnswer({ ...single, allowOther: false }, [], '补充说明', true),
     undefined

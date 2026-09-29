@@ -120,40 +120,18 @@ async def test_schema_migration_lock_serializes_real_postgres_sessions() -> None
         await engine.dispose()
 
 
-async def test_v072_business_converges_current_schema_idempotently() -> None:
-    """v0.7.2 发布结构一次补齐当前字段与约束，重复执行保持幂等。"""
-    schema, admin_engine, scoped_engine, manager = await _create_isolated_manager("pytest_task_schema")
-
+async def test_fresh_business_schema_contains_input_lifecycle_without_request_table() -> None:
+    """新环境只建立 Input、Receipt、Turn 和 Run 关系，重复收敛不回建 Request。"""
+    schema, admin_engine, scoped_engine, manager = await _create_isolated_manager("pytest_agent_schema")
     try:
         await manager.create_business_tables()
-        async with scoped_engine.begin() as connection:
-            # v0.7.2 tag 没有这些字段，不能用当前 ORM 预建它们来证明迁移。
-            for column in ("prepared_at", "first_output_at", "first_model_request_at"):
-                await connection.execute(text(f"ALTER TABLE agent_runs DROP COLUMN {column}"))
-            await connection.execute(text("ALTER TABLE model_providers DROP COLUMN include_user_uid"))
-            await connection.execute(text("ALTER TABLE agent_runs ADD COLUMN last_event_id VARCHAR(64)"))
-            await connection.execute(text("DROP TABLE scheduled_agent_runs"))
-            await connection.execute(text("DROP TABLE scheduled_agent_jobs"))
-            await connection.execute(text("DROP TABLE tasks"))
-            await connection.execute(text(LEGACY_TASK_TABLE_SQL))
-            await connection.execute(
-                text(
-                    "INSERT INTO tasks (id, name, type, status) "
-                    "VALUES ('legacy-running', 'legacy', 'knowledge_parse', 'running')"
-                )
-            )
-
         await manager.ensure_business_schema()
         await manager.ensure_business_schema()
-
         async with scoped_engine.connect() as connection:
-            task_columns = set(
+            tables = set(
                 (
                     await connection.execute(
-                        text(
-                            "SELECT column_name FROM information_schema.columns "
-                            "WHERE table_schema = :schema AND table_name = 'tasks'"
-                        ),
+                        text("SELECT table_name FROM information_schema.tables WHERE table_schema = :schema"),
                         {"schema": schema},
                     )
                 ).scalars()
@@ -169,120 +147,124 @@ async def test_v072_business_converges_current_schema_idempotently() -> None:
                     )
                 ).scalars()
             )
-            provider_columns = set(
+            input_columns = set(
                 (
                     await connection.execute(
                         text(
                             "SELECT column_name FROM information_schema.columns "
-                            "WHERE table_schema = :schema AND table_name = 'model_providers'"
+                            "WHERE table_schema = :schema AND table_name = 'agent_inputs'"
                         ),
                         {"schema": schema},
                     )
                 ).scalars()
             )
-            row = (
-                await connection.execute(
-                    text("SELECT status, error, handler_version, attempt_count FROM tasks WHERE id = 'legacy-running'")
-                )
-            ).one()
-            scheduled_tables = set(
-                (
-                    await connection.execute(
-                        text(
-                            "SELECT table_name FROM information_schema.tables "
-                            "WHERE table_schema = :schema "
-                            "AND table_name IN ('scheduled_agent_jobs', 'scheduled_agent_runs')"
-                        ),
-                        {"schema": schema},
-                    )
-                ).scalars()
+            execution_seq_nullable = await connection.scalar(
+                text(
+                    "SELECT is_nullable FROM information_schema.columns "
+                    "WHERE table_schema = :schema AND table_name = 'agent_runs' "
+                    "AND column_name = 'execution_seq'"
+                ),
+                {"schema": schema},
             )
-            scheduled_columns = {
-                (row.table_name, row.column_name)
-                for row in (
-                    await connection.execute(
-                        text(
-                            "SELECT table_name, column_name FROM information_schema.columns "
-                            "WHERE table_schema = :schema "
-                            "AND table_name IN ('scheduled_agent_jobs', 'scheduled_agent_runs')"
-                        ),
-                        {"schema": schema},
-                    )
+            execution_seq_default = await connection.scalar(
+                text(
+                    "SELECT column_default FROM information_schema.columns "
+                    "WHERE table_schema = :schema AND table_name = 'agent_runs' "
+                    "AND column_name = 'execution_seq'"
+                ),
+                {"schema": schema},
+            )
+        assert {"agent_turns", "agent_runs", "agent_inputs", "agent_input_receipts", "agent_input_messages"} <= tables
+        assert "agent_run_requests" not in tables
+        assert "agent_session_input_receipts" not in tables
+        assert {"turn_id", "input_id", "resume_from_run_id"} <= run_columns
+        assert execution_seq_nullable == "NO"
+        assert execution_seq_default and "nextval" in execution_seq_default
+        assert "agent_runs_execution_seq" in execution_seq_default
+        assert "request_id" not in run_columns
+        assert {"kind", "status", "turn_id", "consumed_run_id", "cutoff_seq", "received_seq"} <= input_columns
+        assert BUSINESS_SCHEMA_VERSION == 10
+    finally:
+        await _drop_isolated_schema(schema, admin_engine, scoped_engine)
+
+
+async def test_v9_conversation_app_scope_does_not_trust_legacy_metadata() -> None:
+    """旧产品 metadata 即使伪造 APP 和 Public 来源也不能回填可信 APP 列。"""
+    schema, admin_engine, scoped_engine, manager = await _create_isolated_manager("pytest_public_app_scope")
+    try:
+        await manager.create_business_tables()
+        async with scoped_engine.begin() as connection:
+            await connection.execute(text("ALTER TABLE conversations DROP COLUMN app_id"))
+            await connection.execute(
+                text(
+                    "INSERT INTO users (username, uid, password_hash, role, login_failed_count, is_deleted) "
+                    "VALUES ('legacy-user', 'legacy-user', 'hash', 'user', 0, 0)"
                 )
-            }
-            scheduled_constraints = {
-                row.conname: row.definition
-                for row in (
-                    await connection.execute(
-                        text(
-                            """
-                            SELECT con.conname, pg_get_constraintdef(con.oid) AS definition
-                            FROM pg_constraint AS con
-                            JOIN pg_namespace AS ns ON ns.oid = con.connamespace
-                            WHERE ns.nspname = :schema
-                              AND con.conname IN (
-                                  'fk_scheduled_agent_jobs_project_uid',
-                                  'uq_scheduled_agent_jobs_uid_creation_request',
-                                  'scheduled_agent_runs_job_id_fkey',
-                                  'uq_scheduled_agent_runs_job_occurrence',
-                                  'uq_scheduled_agent_runs_request',
-                                  'uq_scheduled_agent_runs_thread'
-                              )
-                            """
-                        ),
-                        {"schema": schema},
-                    )
+            )
+            await connection.execute(
+                text(
+                    "INSERT INTO projects (id, uid, selection_status, workdir_path, directory_mode) "
+                    "VALUES ('legacy-project', 'legacy-user', 'implicit', 'projects/legacy-project', 'managed')"
                 )
-            }
-            scheduled_indexes = set(
-                (
-                    await connection.execute(
-                        text(
-                            "SELECT indexname FROM pg_indexes "
-                            "WHERE schemaname = :schema "
-                            "AND tablename IN ('scheduled_agent_jobs', 'scheduled_agent_runs')"
-                        ),
-                        {"schema": schema},
-                    )
-                ).scalars()
+            )
+            await connection.execute(
+                text(
+                    "INSERT INTO conversations (thread_id, uid, agent_id, project_id, is_pinned, extra_metadata) "
+                    "VALUES ('legacy-product-thread', 'legacy-user', 'main', 'legacy-project', false, "
+                    "CAST(:metadata AS json))"
+                ),
+                {"metadata": json.dumps({"app_id": "integration-app", "source": "public_api"})},
             )
 
-        assert {
-            "handler_version",
-            "dedupe_key",
-            "attempt_count",
-            "worker_id",
-            "heartbeat_at",
-            "lease_expires_at",
-            "timeout_seconds",
-        } <= task_columns
-        assert {"prepared_at", "first_output_at", "first_model_request_at"} <= run_columns
-        assert {"include_user_uid"} <= provider_columns
-        assert "last_event_id" not in run_columns
-        assert tuple(row) == ("running", None, 0, 0)
-        assert scheduled_tables == {"scheduled_agent_jobs", "scheduled_agent_runs"}
-        assert {
-            ("scheduled_agent_jobs", "creation_request_id"),
-            ("scheduled_agent_jobs", "creation_intent_hash"),
-            ("scheduled_agent_jobs", "model_spec"),
-            ("scheduled_agent_runs", "model_spec"),
-        }.issubset(scheduled_columns)
-        assert "ON DELETE CASCADE" in scheduled_constraints["fk_scheduled_agent_jobs_project_uid"]
-        assert "ON DELETE CASCADE" in scheduled_constraints["scheduled_agent_runs_job_id_fkey"]
-        assert (
-            "UNIQUE (uid, creation_request_id)" in scheduled_constraints["uq_scheduled_agent_jobs_uid_creation_request"]
-        )
-        assert {
-            "uq_scheduled_agent_runs_job_occurrence",
-            "uq_scheduled_agent_runs_request",
-            "uq_scheduled_agent_runs_thread",
-        }.issubset(scheduled_constraints)
-        assert {
-            "ix_scheduled_agent_jobs_due",
-            "ix_scheduled_agent_runs_job_created",
-            "ix_scheduled_agent_runs_dispatching",
-        }.issubset(scheduled_indexes)
-        assert BUSINESS_SCHEMA_VERSION == 9
+        await manager.ensure_business_schema()
+        await manager.ensure_business_schema()
+        async with scoped_engine.connect() as connection:
+            row = (
+                await connection.execute(
+                    text(
+                        "SELECT app_id, extra_metadata::text AS metadata_json "
+                        "FROM conversations WHERE thread_id = 'legacy-product-thread'"
+                    )
+                )
+            ).one()
+        assert row.app_id is None
+        assert json.loads(row.metadata_json) == {"app_id": "integration-app", "source": "public_api"}
+    finally:
+        await _drop_isolated_schema(schema, admin_engine, scoped_engine)
+
+
+async def test_api_key_knowledge_scope_upgrades_legacy_constraint_idempotently() -> None:
+    """旧约束经历史 schema 收敛后仍需升级，重复迁移保持同一约束。"""
+    schema, admin_engine, scoped_engine, manager = await _create_isolated_manager("pytest_key_scope")
+    try:
+        await manager.create_business_tables()
+        async with scoped_engine.begin() as connection:
+            await connection.execute(text("ALTER TABLE api_keys DROP CONSTRAINT ck_api_keys_access_level"))
+            await connection.execute(
+                text(
+                    "ALTER TABLE api_keys ADD CONSTRAINT ck_api_keys_access_level "
+                    "CHECK (access_level IN ('full', 'agents'))"
+                )
+            )
+        await manager.ensure_business_schema()
+        async with scoped_engine.connect() as connection:
+            before_upgrade = await connection.scalar(
+                text(
+                    "SELECT pg_get_constraintdef(oid) FROM pg_constraint "
+                    "WHERE conrelid = 'api_keys'::regclass AND conname = 'ck_api_keys_access_level'"
+                )
+            )
+        assert before_upgrade is not None and "'knowledge'" not in before_upgrade
+        for _ in range(2):
+            await manager.ensure_api_key_knowledge_scope()
+        async with scoped_engine.connect() as connection:
+            definition = await connection.scalar(
+                text(
+                    "SELECT pg_get_constraintdef(oid) FROM pg_constraint "
+                    "WHERE conrelid = 'api_keys'::regclass AND conname = 'ck_api_keys_access_level'"
+                )
+            )
+        assert definition is not None and "'knowledge'" in definition
     finally:
         await _drop_isolated_schema(schema, admin_engine, scoped_engine)
 
@@ -346,6 +328,47 @@ async def test_release_upgrade_adds_audit_columns_idempotently() -> None:
         assert {("messages", column) for column in audit_columns} <= columns
         assert "uq_messages_run_operation_id" not in audit_indexes
         assert "(run_id, role, operation_id)" in audit_indexes["uq_messages_run_role_operation_id"]
+    finally:
+        await _drop_isolated_schema(schema, admin_engine, scoped_engine)
+
+
+async def test_public_end_user_columns_upgrade_existing_users_idempotently() -> None:
+    """现有用户保持 human，终端用户唯一键与形状约束可重放迁移。"""
+    schema, admin_engine, scoped_engine, manager = await _create_isolated_manager("pytest_public_end_user")
+    try:
+        await manager.create_business_tables()
+        async with scoped_engine.begin() as connection:
+            await connection.execute(
+                text(
+                    "INSERT INTO users (username, uid, password_hash, role, login_failed_count, is_deleted) "
+                    "VALUES ('old', 'old', 'hash', 'user', 0, 0)"
+                )
+            )
+            await connection.execute(text("ALTER TABLE users DROP CONSTRAINT uq_users_public_end_user_identity"))
+            await connection.execute(text("ALTER TABLE users DROP CONSTRAINT ck_users_public_end_user_shape"))
+            await connection.execute(text("ALTER TABLE users DROP CONSTRAINT fk_users_owner_user_id"))
+            for column in ("user_kind", "owner_user_id", "app_id", "end_user_id"):
+                await connection.execute(text(f"ALTER TABLE users DROP COLUMN {column}"))
+
+        await manager.ensure_business_schema()
+        await manager.ensure_business_schema()
+        async with scoped_engine.connect() as connection:
+            row = (
+                await connection.execute(text("SELECT user_kind, owner_user_id, app_id, end_user_id FROM users"))
+            ).one()
+            constraint_names = set(
+                (
+                    await connection.execute(
+                        text("SELECT conname FROM pg_constraint WHERE conrelid = 'users'::regclass")
+                    )
+                ).scalars()
+            )
+            index_names = set(
+                (await connection.execute(text("SELECT indexname FROM pg_indexes WHERE tablename = 'users'"))).scalars()
+            )
+        assert tuple(row) == ("human", None, None, None)
+        assert {"fk_users_owner_user_id", "ck_users_public_end_user_shape"}.issubset(constraint_names)
+        assert "uq_users_public_end_user_identity" in index_names
     finally:
         await _drop_isolated_schema(schema, admin_engine, scoped_engine)
 

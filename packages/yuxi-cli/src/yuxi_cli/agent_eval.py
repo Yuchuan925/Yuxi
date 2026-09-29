@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import time
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -80,8 +81,6 @@ def run_langfuse_agent_experiment(
         return _run_agent_eval_item(
             remote=remote,
             agent_slug=options.agent_slug,
-            dataset_name=options.dataset_name,
-            experiment_name=experiment_name,
             item=item,
             timeout_seconds=options.timeout_seconds,
             client_factory=client_factory,
@@ -110,29 +109,32 @@ def _run_agent_eval_item(
     *,
     remote,
     agent_slug: str,
-    dataset_name: str,
-    experiment_name: str,
     item: Any,
     timeout_seconds: float,
     client_factory,
 ) -> str:
     query = extract_query(item.input)
     item_id = str(getattr(item, "id", "") or "")
-    request_id = f"eval-{uuid.uuid4()}"
-    evaluation = {
-        "dataset_name": dataset_name,
-        "dataset_item_id": item_id,
-        "experiment_name": experiment_name,
-    }
+    event_key = f"eval-{uuid.uuid4()}"
     with client_factory(remote, timeout=timeout_seconds) as client:
-        result = client.run_agent_eval(
-            query=query,
-            agent_slug=agent_slug,
-            evaluation=evaluation,
-            meta={"request_id": request_id},
-            timeout_seconds=timeout_seconds,
-        )
-
-    if result.get("status") != "completed":
-        raise AgentEvalError(f"Agent eval run failed for dataset item {item_id}: {result}")
-    return str(result.get("output") or "")
+        thread = client.create_agent_thread(agent_slug=agent_slug, idempotency_key=event_key)
+        thread_id = str(thread["thread_id"])
+        accepted = client.send_agent_message(thread_id, query, idempotency_key=f"{event_key}-message")
+        input_id = str(accepted["input_id"])
+        turn_id = accepted.get("turn_id")
+        deadline = time.monotonic() + timeout_seconds
+        while time.monotonic() < deadline:
+            if not turn_id:
+                received = client.get_agent_input(thread_id, input_id)
+                if received.get("status") == "cancelled":
+                    raise AgentEvalError(f"Agent eval input cancelled for dataset item {item_id}")
+                turn_id = received.get("turn_id")
+            if turn_id:
+                turn = client.get_agent_turn(thread_id, str(turn_id))
+                status = turn.get("status")
+                if status == "completed":
+                    return str((turn.get("output") or {}).get("content") or "")
+                if status in {"failed", "cancelled", "waiting"}:
+                    raise AgentEvalError(f"Agent eval turn {status} for dataset item {item_id}: {turn}")
+            time.sleep(0.5)
+    raise AgentEvalError(f"Agent eval timed out for dataset item {item_id} after {timeout_seconds}s")

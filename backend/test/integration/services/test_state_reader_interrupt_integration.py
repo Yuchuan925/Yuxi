@@ -15,9 +15,9 @@ from typing import TypedDict
 
 import pytest
 from langgraph.graph import END, START, StateGraph
-from langgraph.types import interrupt
+from langgraph.types import Command, interrupt
 from psycopg_pool import AsyncConnectionPool
-from yuxi.services import chat_service as svc
+from yuxi.services.agents import state as svc
 from yuxi.storage.postgres.manager import PostgresManager
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
@@ -46,7 +46,7 @@ def _new_manager() -> PostgresManager:
 async def test_pending_interrupt_recovered_from_real_postgres_checkpoint(monkeypatch):
     """真实 PG：停在 interrupt 的 checkpoint，其 pending writes 里的中断可被恢复。"""
     manager = _new_manager()
-    monkeypatch.setattr("yuxi.services.chat_service.pg_manager", manager)
+    monkeypatch.setattr("yuxi.services.agents.state.pg_manager", manager)
     thread_id = f"pytest-interrupt-{uuid.uuid4()}"
     uid = "pytest-user"
 
@@ -75,7 +75,7 @@ async def test_pending_interrupt_recovered_from_real_postgres_checkpoint(monkeyp
 async def test_completed_checkpoint_returns_no_interrupt(monkeypatch):
     """真实 PG：已完成、无中断的 checkpoint 不得被误判为等待审批。"""
     manager = _new_manager()
-    monkeypatch.setattr("yuxi.services.chat_service.pg_manager", manager)
+    monkeypatch.setattr("yuxi.services.agents.state.pg_manager", manager)
     thread_id = f"pytest-complete-{uuid.uuid4()}"
     uid = "pytest-user"
 
@@ -98,3 +98,51 @@ async def test_completed_checkpoint_returns_no_interrupt(monkeypatch):
         assert interrupt_info is None
 
         await manager.get_langgraph_checkpointer().adelete_thread(thread_id)
+
+
+async def test_explicit_waitpoint_cleanup_keeps_context_without_executing_approval(monkeypatch):
+    """跳过等待节点后保留历史，旧恢复命令不能执行被取消的副作用。"""
+    manager = _new_manager()
+    monkeypatch.setattr("yuxi.services.agents.state.pg_manager", manager)
+    thread_id = f"pytest-wait-cleanup-{uuid.uuid4()}"
+    uid = "pytest-user"
+    effects: list[str] = []
+
+    def approval(state):
+        """只有明确恢复审批才产生工具效果。"""
+        decision = interrupt({"question": "是否执行？"})
+        if decision == "approve":
+            effects.append("executed")
+        return {"messages": [*state["messages"], decision]}
+
+    async with (
+        asyncio.timeout(20),
+        AsyncConnectionPool(_pg_url(), min_size=1, max_size=2, open=False, kwargs={"autocommit": True}) as pool,
+    ):
+        manager.langgraph_pool = pool
+        saver = manager.get_langgraph_checkpointer()
+        graph = StateGraph(_State)
+        graph.add_node("approval", approval)
+        graph.add_edge(START, "approval")
+        graph.add_edge("approval", END)
+        compiled = graph.compile(checkpointer=saver)
+        config = {"configurable": {"uid": uid, "thread_id": thread_id}}
+
+        try:
+            await compiled.ainvoke({"messages": ["prior-context"]}, config)
+            _values, pending = await svc._read_checkpoint_state(uid=uid, thread_id=thread_id)
+            assert pending is not None
+
+            await compiled.aupdate_state(config, {}, as_node="approval")
+            values, pending = await svc._read_checkpoint_state(uid=uid, thread_id=thread_id)
+            assert values["messages"] == ["prior-context"]
+            assert pending is None
+            assert (await compiled.aget_state(config)).next == ()
+
+            await compiled.ainvoke(Command(resume="approve"), config)
+            assert effects == []
+            values, pending = await svc._read_checkpoint_state(uid=uid, thread_id=thread_id)
+            assert values["messages"] == ["prior-context"]
+            assert pending is None
+        finally:
+            await saver.adelete_thread(thread_id)

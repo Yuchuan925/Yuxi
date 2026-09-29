@@ -8,8 +8,9 @@ from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from yuxi.storage.postgres.models_business import (
+    AgentInput,
     AgentRun,
-    AgentRunRequest,
+    AgentTurn,
     ScheduledAgentJob,
     ScheduledAgentRun,
     User,
@@ -72,8 +73,8 @@ class ScheduledAgentRepository:
         job_ids: list[str],
         uid: str,
         limit_per_job: int,
-    ) -> list[tuple[ScheduledAgentRun, AgentRunRequest | None, AgentRun | None]]:
-        """批量读取每个任务最近的触发记录及其 Request/Run。"""
+    ) -> list[tuple[ScheduledAgentRun, AgentInput | None, AgentRun | None]]:
+        """批量读取最近触发记录及其 Input 和当前顶层 Run。"""
         if not job_ids:
             return []
         ranked_runs = (
@@ -90,11 +91,12 @@ class ScheduledAgentRepository:
             .subquery()
         )
         result = await self.db.execute(
-            select(ScheduledAgentRun, AgentRunRequest, AgentRun)
+            select(ScheduledAgentRun, AgentInput, AgentRun)
             .join(ranked_runs, ranked_runs.c.scheduled_run_id == ScheduledAgentRun.id)
             .join(ScheduledAgentJob, ScheduledAgentJob.id == ScheduledAgentRun.job_id)
-            .outerjoin(AgentRunRequest, AgentRunRequest.request_id == ScheduledAgentRun.request_id)
-            .outerjoin(AgentRun, AgentRun.id == AgentRunRequest.dispatched_run_id)
+            .outerjoin(AgentInput, AgentInput.id == ScheduledAgentRun.input_id)
+            .outerjoin(AgentTurn, AgentTurn.id == AgentInput.turn_id)
+            .outerjoin(AgentRun, AgentRun.id == AgentTurn.current_run_id)
             .where(
                 ScheduledAgentRun.job_id.in_(job_ids),
                 ScheduledAgentJob.uid == str(uid),
@@ -108,13 +110,14 @@ class ScheduledAgentRepository:
         )
         return list(result.all())
 
-    async def get_request_and_run(self, request_id: str) -> tuple[AgentRunRequest | None, AgentRun | None]:
-        """读取触发记录对应的统一 Request/Run。"""
+    async def get_input_and_run(self, input_id: str) -> tuple[AgentInput | None, AgentRun | None]:
+        """读取定时输入及其当前顶层执行段。"""
         row = (
             await self.db.execute(
-                select(AgentRunRequest, AgentRun)
-                .outerjoin(AgentRun, AgentRun.id == AgentRunRequest.dispatched_run_id)
-                .where(AgentRunRequest.request_id == request_id)
+                select(AgentInput, AgentRun)
+                .outerjoin(AgentTurn, AgentTurn.id == AgentInput.turn_id)
+                .outerjoin(AgentRun, AgentRun.id == AgentTurn.current_run_id)
+                .where(AgentInput.id == input_id)
             )
         ).one_or_none()
         return row if row else (None, None)
@@ -136,11 +139,11 @@ class ScheduledAgentRepository:
         )
 
     async def has_active_run(self, job_id: str) -> bool:
-        """按统一 Request/Run 事实判断任务是否已有非终态执行。"""
+        """按 Input/Turn 事实判断任务是否已有未结束工作。"""
         run_id = await self.db.scalar(
             select(ScheduledAgentRun.id)
-            .outerjoin(AgentRunRequest, AgentRunRequest.request_id == ScheduledAgentRun.request_id)
-            .outerjoin(AgentRun, AgentRun.id == AgentRunRequest.dispatched_run_id)
+            .outerjoin(AgentInput, AgentInput.id == ScheduledAgentRun.input_id)
+            .outerjoin(AgentTurn, AgentTurn.id == AgentInput.turn_id)
             .where(
                 ScheduledAgentRun.job_id == job_id,
                 or_(
@@ -148,13 +151,13 @@ class ScheduledAgentRepository:
                     and_(
                         ScheduledAgentRun.status == "submitted",
                         or_(
-                            AgentRunRequest.id.is_(None),
-                            AgentRunRequest.status == "queued",
+                            AgentInput.id.is_(None),
+                            AgentInput.status == "pending",
                             and_(
-                                AgentRunRequest.status == "dispatched",
+                                AgentInput.status == "consumed",
                                 or_(
-                                    AgentRun.id.is_(None),
-                                    AgentRun.status.not_in({"completed", "failed", "cancelled", "interrupted"}),
+                                    AgentTurn.id.is_(None),
+                                    AgentTurn.status.in_(("running", "waiting", "cancelling")),
                                 ),
                             ),
                         ),

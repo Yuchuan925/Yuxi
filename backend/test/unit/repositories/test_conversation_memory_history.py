@@ -10,7 +10,15 @@ from yuxi.repositories.conversation_repository import (
     MEMORY_HISTORY_READ_RESPONSE_MAX_BYTES,
     ConversationRepository,
 )
-from yuxi.storage.postgres.models_business import AgentRun, Base, Conversation, Message, SubagentThread, ToolCall
+from yuxi.storage.postgres.models_business import (
+    AgentRun,
+    AgentTurn,
+    Base,
+    Conversation,
+    Message,
+    SubagentThread,
+    ToolCall,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -40,10 +48,10 @@ async def _conversation(db, *, thread_id: str, uid: str = "user-1", metadata: di
     return conversation
 
 
-async def test_memory_search_excludes_hidden_subagent_and_non_user_messages(session):
+async def test_memory_search_includes_public_source_and_excludes_hidden_messages(session):
     visible = await _conversation(session, thread_id="visible")
     other = await _conversation(session, thread_id="other", uid="user-2")
-    invocation = await _conversation(session, thread_id="invocation", metadata={"source": "agent_call"})
+    public = await _conversation(session, thread_id="public", metadata={"source": "public_api"})
     parent = await _conversation(session, thread_id="parent")
     child = await _conversation(session, thread_id="child")
     session.add(
@@ -62,7 +70,7 @@ async def test_memory_search_excludes_hidden_subagent_and_non_user_messages(sess
             Message(conversation_id=visible.id, role="tool", content="needle tool", message_type="text"),
             Message(conversation_id=visible.id, role="assistant", content="needle result", message_type="tool_result"),
             Message(conversation_id=other.id, role="user", content="needle other", message_type="text"),
-            Message(conversation_id=invocation.id, role="user", content="needle invocation", message_type="text"),
+            Message(conversation_id=public.id, role="user", content="needle public", message_type="text"),
             Message(conversation_id=child.id, role="assistant", content="needle child", message_type="text"),
         ]
     )
@@ -70,11 +78,13 @@ async def test_memory_search_excludes_hidden_subagent_and_non_user_messages(sess
 
     result = await ConversationRepository(session).search_memory_messages(uid="user-1", query="needle")
 
-    assert [item["thread_id"] for item in result["items"]] == ["visible"]
-    assert result["items"][0]["content"] == "needle visible"
-    assert "truncated" not in result["items"][0]
+    assert {item["thread_id"]: item["content"] for item in result["items"]} == {
+        "visible": "needle visible",
+        "public": "needle public",
+    }
+    assert all("truncated" not in item for item in result["items"])
     assert "truncated" not in result
-    assert set(result["items"][0]) == {"thread_id", "title", "message_id", "role", "content"}
+    assert all(set(item) == {"thread_id", "title", "message_id", "role", "content"} for item in result["items"])
 
 
 async def test_memory_read_uses_allowlist_and_only_explicit_toolcall_table(session):
@@ -174,6 +184,14 @@ async def test_memory_tools_exclude_unproven_or_active_model_audits(session):
     conversation = await _conversation(session, thread_id="audits")
     session.add_all(
         [
+            AgentTurn(id="turn-active", conversation_thread_id="audits", uid="user-1", status="running"),
+            AgentTurn(id="turn-unproven", conversation_thread_id="audits", uid="user-1", status="completed"),
+            AgentTurn(id="turn-proven", conversation_thread_id="audits", uid="user-1", status="cancelled"),
+        ]
+    )
+    await session.flush()
+    session.add_all(
+        [
             AgentRun(
                 id="run-active",
                 conversation_thread_id="audits",
@@ -181,7 +199,7 @@ async def test_memory_tools_exclude_unproven_or_active_model_audits(session):
                 agent_slug="main",
                 uid="user-1",
                 status="running",
-                request_id="request-active",
+                turn_id="turn-active",
                 conversation_id=conversation.id,
                 input_payload={},
             ),
@@ -192,7 +210,7 @@ async def test_memory_tools_exclude_unproven_or_active_model_audits(session):
                 agent_slug="main",
                 uid="user-1",
                 status="completed",
-                request_id="request-unproven",
+                turn_id="turn-unproven",
                 conversation_id=conversation.id,
                 input_payload={},
             ),
@@ -203,7 +221,7 @@ async def test_memory_tools_exclude_unproven_or_active_model_audits(session):
                 agent_slug="main",
                 uid="user-1",
                 status="interrupted",
-                request_id="request-proven",
+                turn_id="turn-proven",
                 conversation_id=conversation.id,
                 input_payload={},
             ),
@@ -218,14 +236,14 @@ async def test_memory_tools_exclude_unproven_or_active_model_audits(session):
             message_type="model_audit",
             extra_metadata={"state_reconciled": proven},
             run_id=run_id,
-            request_id=request_id,
+            turn_id=turn_id,
             operation_id=f"model-{label}",
             execution_status="completed",
         )
-        for label, run_id, request_id, proven in [
-            ("active", "run-active", "request-active", True),
-            ("unproven", "run-unproven", "request-unproven", False),
-            ("proven", "run-proven", "request-proven", True),
+        for label, run_id, turn_id, proven in [
+            ("active", "run-active", "turn-active", True),
+            ("unproven", "run-unproven", "turn-unproven", False),
+            ("proven", "run-proven", "turn-proven", True),
         ]
     ]
     session.add_all(messages)

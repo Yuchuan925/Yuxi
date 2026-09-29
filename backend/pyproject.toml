@@ -55,10 +55,7 @@ markers = [
     "auth: marks tests that require authentication",
     "slow: marks tests as slow",
     "integration: marks tests as integration tests",
-    "e2e: marks tests as end-to-end tests",
-    "e2e_smoke: deterministic Run, scheduling and tool result stage",
-    "e2e_lifecycle: deterministic failure, resume and cancellation stage",
-    "e2e_boundaries: deterministic SubAgent and Workdir stage"
+    "e2e: marks tests as end-to-end tests"
 ]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"

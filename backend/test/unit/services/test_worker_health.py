@@ -51,7 +51,7 @@ import importlib.abc
 import sys
 class BlockBusiness(importlib.abc.MetaPathFinder):
     def find_spec(self, fullname, path=None, target=None):
-        blocked = ('yuxi.services.run_worker', 'yuxi.services.run_queue_service',
+        blocked = ('yuxi.services.run_worker', 'yuxi.services.agents.transport',
                    'langgraph', 'sqlalchemy', 'tiktoken')
         if fullname.startswith(blocked):
             raise AssertionError('health probe imported business runtime: ' + fullname)

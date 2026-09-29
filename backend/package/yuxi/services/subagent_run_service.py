@@ -1,33 +1,28 @@
-"""Subagent run orchestration service.
-
-This module owns parent/child agent-thread relationships. It decides whether a
-task starts a new child thread or continues an existing one, records the
-``SubagentThread`` relation and builds the subagent-only runtime payload.
-
-It deliberately delegates durable run mechanics to ``agent_run_service``:
-request id idempotency, active-run conflict checks, input message persistence,
-AgentRun row creation and queue enqueueing all stay in the shared AgentRun
-lifecycle boundary.
-"""
+"""子智能体线程关系和根 Turn 下的子 Run 创建。"""
 
 from __future__ import annotations
 
-import json
+import asyncio
 from dataclasses import dataclass
 from typing import Any
 
-import yuxi.services.agent_run_service as agent_run_service
 from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from yuxi.agents.tool_approval import DEFAULT_TOOL_APPROVAL_MODE
-from yuxi.repositories.agent_run_repository import AgentRunRepository
+from yuxi.repositories.agent_repository import AgentRepository
+from yuxi.repositories.agent_run_repository import TERMINAL_RUN_STATUSES, AgentRunRepository
+from yuxi.repositories.agents.turn import AgentTurnRepository
 from yuxi.repositories.conversation_repository import ConversationRepository
 from yuxi.repositories.project_repository import ProjectRepository
 from yuxi.repositories.subagent_thread_repository import SubagentThreadRepository
-from yuxi.services.input_message_service import AgentRunInputMessage
-from yuxi.storage.postgres.models_business import Agent, AgentRun, SubagentThread
+from yuxi.services.agents.input_config import load_agent_run_context, resolve_agent_run_model_spec
+from yuxi.services.agents.input_messages import AgentRunInputMessage
+from yuxi.services.agents.transport import enqueue_agent_run, list_recent_run_stream_events, publish_cancel_signals
+from yuxi.storage.postgres.manager import pg_manager
+from yuxi.storage.postgres.models_business import Agent, AgentRun, Message, SubagentThread
 from yuxi.utils.datetime_utils import format_utc_datetime
 from yuxi.utils.hash_utils import hash_id, subagent_child_thread_id
+from yuxi.utils.logging_config import logger
 
 
 @dataclass(frozen=True)
@@ -55,11 +50,19 @@ class SubagentRunBusy(Exception):
         }
 
 
-def subagent_run_urls(run_id: str) -> dict[str, str]:
+class AgentRunWaitTimeout(Exception):
+    """等待子执行超时且 Run 仍未终结。"""
+
+    def __init__(self, result: dict[str, Any]) -> None:
+        self.result = result
+        super().__init__(f"AgentRun {result.get('agent_run_id')} 尚未终结")
+
+
+def subagent_run_urls(run_id: str, thread_id: str) -> dict[str, str]:
     """生成子智能体 run 对外暴露的事件流和结果查询 URL。"""
     return {
-        "events_url": f"/api/agent/runs/{run_id}/events",
-        "result_url": f"/api/agent/runs/{run_id}/result",
+        "events_url": f"/api/v1/agents/threads/{thread_id}/events",
+        "result_url": f"/api/v1/agents/threads/{thread_id}/runs/{run_id}",
     }
 
 
@@ -89,9 +92,113 @@ def serialize_subagent_run_state(run: AgentRun) -> dict:
         "created_at": format_utc_datetime(run.created_at),
         "completed_at": format_utc_datetime(run.finished_at),
         "error": run.error_message,
-        **subagent_run_urls(run.id),
+        **subagent_run_urls(run.id, run.conversation_thread_id),
     }
     return {key: value for key, value in state.items() if value is not None}
+
+
+async def get_agent_run_result(*, run_id: str, current_uid: str, db: AsyncSession) -> dict:
+    """只从 Run 明确绑定的输出消息读取子执行结果。"""
+    run = await AgentRunRepository(db).get_run_for_user(run_id, str(current_uid))
+    if run is None:
+        return {
+            "status": "failed",
+            "agent_run_id": run_id,
+            "output": "",
+            "error": {"type": "run_not_found", "message": "运行任务不存在"},
+        }
+    output = await db.get(Message, run.output_message_id) if run.output_message_id else None
+    if output is not None and (
+        output.run_id != run.id or output.turn_id != run.turn_id or output.conversation_id != run.conversation_id
+    ):
+        raise ValueError("Run 输出消息归属不一致")
+    result = {
+        "status": run.status,
+        "output": output.content if output else "",
+        "agent_slug": run.agent_slug,
+        "thread_id": run.conversation_thread_id,
+        "conversation_id": run.conversation_id,
+        "agent_run_id": run.id,
+        "turn_id": run.turn_id,
+        "final_message_id": output.id if output else None,
+        "langfuse_trace_id": run.langfuse_trace_id,
+        "token_usage": run.token_usage or {},
+    }
+    if run.error_type or run.error_message:
+        result["error"] = {"type": run.error_type, "message": run.error_message}
+    return result
+
+
+async def get_agent_run_progress(run_id: str, *, message_limit: int = 3) -> dict:
+    """从短期 Run 事件读取子工具的最近文本进度。"""
+    try:
+        events = await list_recent_run_stream_events(run_id, limit=100)
+    except Exception as exc:
+        logger.warning("读取 Run 进度失败: run=%s error=%s", run_id, exc)
+        return {"last_seq": "0-0", "messages": []}
+    messages: list[dict] = []
+    for event in events:
+        if event.get("event_type") != "messages":
+            continue
+        payload = event.get("payload", {}).get("payload", {})
+        chunks = payload.get("items") if isinstance(payload.get("items"), list) else [payload.get("chunk")]
+        for chunk in reversed(chunks):
+            stream_event = chunk.get("stream_event") if isinstance(chunk, dict) else None
+            if not isinstance(stream_event, dict):
+                continue
+            kind = stream_event.get("type")
+            if kind == "message_delta":
+                content = (
+                    stream_event.get("content")
+                    or stream_event.get("reasoning_content")
+                    or stream_event.get("additional_reasoning_content")
+                )
+                progress_kind = "assistant_message" if stream_event.get("content") else "assistant_reasoning"
+            elif kind in {"tool_call", "tool_call_delta"}:
+                tool_name = stream_event.get("name") or stream_event.get("tool_call_id") or "工具"
+                content = f"调用工具 {tool_name}" if kind == "tool_call" else f"正在准备工具 {tool_name}"
+                progress_kind = kind
+            else:
+                continue
+            if content and str(content).strip():
+                item = {"content": str(content).strip()[:800], "kind": progress_kind, "seq": event.get("seq")}
+                for key in ("message_id", "tool_call_id"):
+                    if stream_event.get(key):
+                        item[key] = str(stream_event[key])
+                messages.append(item)
+            if len(messages) >= message_limit:
+                break
+        if len(messages) >= message_limit:
+            break
+    return {"last_seq": events[0]["seq"] if events else "0-0", "messages": list(reversed(messages))}
+
+
+async def await_agent_run_result(*, run_id: str, current_uid: str) -> dict:
+    """有限等待子 Run 终态；超时仍返回明确的非终态错误。"""
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + 30 * 60
+    while True:
+        async with pg_manager.get_async_session_context() as db:
+            result = await get_agent_run_result(run_id=run_id, current_uid=current_uid, db=db)
+        if result["status"] in TERMINAL_RUN_STATUSES:
+            return result
+        if loop.time() >= deadline:
+            raise AgentRunWaitTimeout(result)
+        await asyncio.sleep(0.5)
+
+
+async def request_cancel_agent_run(*, run_id: str, current_uid: str, db: AsyncSession):
+    """供已验证父 Run 关系的子工具取消目标子执行。"""
+    repo = AgentRunRepository(db)
+    run = await repo.get_run_for_user(run_id, str(current_uid))
+    if run is None or run.run_type != "subagent":
+        raise HTTPException(status_code=404, detail="子执行不存在")
+    run, cancelled_ids = await repo.request_cancel_execution_tree(
+        run_id=run_id, uid=str(current_uid), cascade_descendants=False
+    )
+    await db.commit()
+    await publish_cancel_signals(cancelled_ids)
+    return run
 
 
 class SubagentRunService:
@@ -114,9 +221,46 @@ class SubagentRunService:
     ) -> SubagentStartResult:
         """启动或继续一个后台子智能体 run，并在新建时入队 worker。"""
 
-        creator_run = await self.run_repo.lock_run_for_user(created_by_run_id, uid)
+        creator_run = await self.run_repo.get_run_for_user(created_by_run_id, uid)
         if not creator_run:
             raise ValueError("父运行任务不存在")
+        root_snapshot = await self.conv_repo.get_conversation_by_thread_id(creator_run.runtime_scope_id)
+        if (
+            root_snapshot is None
+            or root_snapshot.uid != uid
+            or root_snapshot.app_id != creator_run.app_id
+            or root_snapshot.status != "active"
+        ):
+            raise ValueError("父运行的根 Thread 不存在")
+        # 与 Agent 删除和普通 Thread 创建同序：Agent → Project → Thread。
+        locked_agent = await AgentRepository(self.db).get_by_slug(agent_item.slug, for_key_share=True)
+        if locked_agent is None or locked_agent.id != agent_item.id or not locked_agent.is_subagent:
+            raise ValueError("子智能体不存在")
+        agent_item = locked_agent
+        project = await self.project_repo.lock_active_for_user(root_snapshot.project_id, uid)
+        if project is None:
+            raise ValueError("父运行任务的 Project 不存在")
+        root_thread = await self.conv_repo.lock_conversation_by_thread_id(creator_run.runtime_scope_id)
+        if (
+            root_thread is None
+            or root_thread.uid != uid
+            or root_thread.app_id != creator_run.app_id
+            or root_thread.status != "active"
+            or root_thread.id != creator_run.conversation_id
+            or root_thread.thread_id != creator_run.conversation_thread_id
+            or root_thread.project_id != project.id
+        ):
+            raise ValueError("父运行的根 Thread 不存在")
+        turn = await AgentTurnRepository(self.db).get_for_scope(
+            turn_id=creator_run.turn_id,
+            thread_id=root_thread.thread_id,
+            uid=uid,
+            app_id=creator_run.app_id,
+            for_update=True,
+        )
+        if turn is None or turn.current_run_id != creator_run.id or turn.status != "running":
+            raise ValueError("父运行的 Turn 不再接受子执行")
+        creator_run = await self.run_repo.lock_run_for_user(created_by_run_id, uid)
         if getattr(creator_run, "status", "running") != "running":
             raise ValueError("父运行已结束，不能再创建子智能体")
         if getattr(creator_run, "run_type", None) == "subagent":
@@ -142,31 +286,19 @@ class SubagentRunService:
         )
 
         # 创建数据库记录
-        request_id = hash_id("req:", f"{creator_run.id}:{child_thread_id}:{tool_call_id}")
-        try:
-            run, created = await self._create_run_record(
-                input_message=input_message,
-                request_id=request_id,
-                current_uid=uid,
-                creator_run=creator_run,
-                relation=relation,
-                tool_call_id=tool_call_id,
-            )
-        except HTTPException as exc:
-            detail = exc.detail
-            if exc.status_code == 409 and isinstance(detail, dict) and detail.get("code") == "run_busy":
-                raise SubagentRunBusy(
-                    thread_id=str(detail.get("thread_id") or child_thread_id),
-                    active_run_id=detail.get("active_run_id"),
-                    active_run_status=detail.get("active_run_status"),
-                    message=detail.get("message"),
-                ) from exc
-            raise ValueError(detail if isinstance(detail, str) else json.dumps(detail, ensure_ascii=False)) from exc
+        run, created = await self._create_run_record(
+            input_message=input_message,
+            current_uid=uid,
+            creator_run=creator_run,
+            relation=relation,
+            agent_item=agent_item,
+            tool_call_id=tool_call_id,
+        )
 
         # 创建成功后入队 worker 执行；幂等命中已有 run 时不重复入队。
         if created:
             await self.db.commit()
-            await agent_run_service.enqueue_agent_run(run.id)
+            await enqueue_agent_run(run.id)
 
         return SubagentStartResult(
             run=run,
@@ -191,44 +323,46 @@ class SubagentRunService:
         self,
         *,
         input_message: AgentRunInputMessage,
-        request_id: str,
         current_uid: str,
         creator_run: AgentRun,
         relation: SubagentThread,
+        agent_item: Agent,
         tool_call_id: str,
-    ) -> tuple[Any, bool]:
+    ) -> tuple[AgentRun, bool]:
         """创建后台子智能体 run，并把规范化输入消息保存为该 run 的输入。"""
         if not input_message.content:
             raise HTTPException(status_code=422, detail="input_message 不能为空")
 
-        scope = await agent_run_service.prepare_agent_run_creation_scope(
+        child_conversation = await self.conv_repo.get_conversation_by_thread_id(relation.child_thread_id)
+        if child_conversation is None or child_conversation.id != relation.child_conversation_id:
+            raise ValueError("subagent thread relation 与本次运行不匹配")
+        run_id = hash_id("subrun:", f"{creator_run.id}:{relation.child_thread_id}:{tool_call_id}", length=64)
+        existing = await self.run_repo.get_run(run_id)
+        if existing is not None:
+            if existing.created_by_run_id != creator_run.id or existing.subagent_thread_relation_id != relation.id:
+                raise ValueError("子执行幂等键冲突")
+            return existing, False
+        busy = await self.run_repo.get_active_run_by_thread_for_user(
             agent_slug=relation.subagent_slug,
             conversation_thread_id=relation.child_thread_id,
-            request_id=request_id,
-            current_uid=current_uid,
-            db=self.db,
-            run_type="subagent",
-            agent_kind="subagent",
-            created_by_run_id=creator_run.id,
-            subagent_thread_relation_id=relation.id,
+            uid=current_uid,
         )
-        if relation.child_conversation_id != scope.conversation.id:
-            raise HTTPException(status_code=409, detail="subagent thread relation 与本次运行不匹配")
-        if scope.existing_run:
-            return scope.existing_run, False
-
+        if busy is not None:
+            raise SubagentRunBusy(relation.child_thread_id, busy.id, busy.status, "子智能体线程已有执行")
         if creator_run.conversation_id != relation.parent_conversation_id:
-            raise HTTPException(status_code=409, detail="subagent thread relation 与本次运行不匹配")
+            raise ValueError("subagent thread relation 与本次运行不匹配")
 
-        context = agent_run_service.load_agent_run_context(scope.agent_item, scope.agent_backend)
-        resolved_model_spec = await agent_run_service.resolve_agent_run_model_spec(
+        from yuxi.agents.buildin import get_agent_backend
+
+        context = load_agent_run_context(agent_item, get_agent_backend(agent_item.backend_id))
+        resolved_model_spec = await resolve_agent_run_model_spec(
             getattr(context, "model", None),
             creator_run.input_payload.get("model_spec"),
             self.db,
         )
         runtime_payload = {
             "tool_call_id": tool_call_id,
-            "subagent_name": scope.agent_item.name,
+            "subagent_name": agent_item.name,
             "parent_thread_id": creator_run.conversation_thread_id,
         }
         input_payload = {
@@ -238,33 +372,42 @@ class SubagentRunService:
         }
         subagent_input_message = input_message.with_metadata(
             {
-                "request_id": request_id,
                 "source": "subagent",
                 "raw_message": input_message.raw_message(),
             }
         )
-        persisted_input_message = await agent_run_service.create_agent_run_input_message(
-            db=self.db,
-            conversation_id=scope.conversation.id,
-            request_id=request_id,
-            input_message=subagent_input_message,
+        persisted_input_message = await self.conv_repo.add_message(
+            conversation_id=child_conversation.id,
+            role="user",
+            content=subagent_input_message.content,
+            message_type=subagent_input_message.message_type,
+            extra_metadata=subagent_input_message.extra_metadata,
+            image_content=subagent_input_message.image_content,
+            turn_id=creator_run.turn_id,
+            delivery_status="dispatched",
+            commit=False,
         )
-        return await agent_run_service.persist_agent_run_record(
+        run = await self.run_repo.create_run(
+            run_id=run_id,
             agent_slug=relation.subagent_slug,
             conversation_thread_id=relation.child_thread_id,
             runtime_scope_id=getattr(creator_run, "runtime_scope_id", None) or creator_run.conversation_thread_id,
-            current_uid=current_uid,
-            db=self.db,
-            request_id=request_id,
-            conversation_id=scope.conversation.id,
+            uid=current_uid,
+            turn_id=creator_run.turn_id,
+            app_id=creator_run.app_id,
+            api_key_id=creator_run.api_key_id,
+            conversation_id=child_conversation.id,
             run_type="subagent",
             input_payload=input_payload,
-            persisted_input_message=persisted_input_message,
+            input_message_id=persisted_input_message.id,
             created_by_run_id=creator_run.id,
             subagent_thread_relation_id=relation.id,
             source="subagent",
             channel="internal",
         )
+        persisted_input_message.run_id = run.id
+        await self.db.flush()
+        return run, True
 
     async def _ensure_child_conversation(
         self,
@@ -278,7 +421,7 @@ class SubagentRunService:
         """确保子线程有对应 conversation；新线程会创建标记为 subagent 的对话。"""
         conversation = await self.conv_repo.get_conversation_by_thread_id(child_thread_id)
         if conversation:
-            if conversation.uid != str(uid) or conversation.status == "deleted":
+            if conversation.uid != str(uid) or conversation.app_id != creator_run.app_id:
                 raise ValueError("子智能体线程不存在")
             if conversation.status != "subagent":
                 raise ValueError(f"子智能体线程 {child_thread_id} 已被普通对话占用")
@@ -301,6 +444,7 @@ class SubagentRunService:
                 "subagent_slug": agent_item.slug,
             },
             project_id=parent_project_id,
+            app_id=creator_run.app_id,
         )
         conversation.status = "subagent"
         await self.db.flush()
@@ -346,7 +490,8 @@ class SubagentRunService:
             parent_conversation is None
             or parent_conversation.id != creator_run.conversation_id
             or parent_conversation.uid != str(uid)
-            or parent_conversation.status == "deleted"
+            or parent_conversation.status != "active"
+            or parent_conversation.app_id != creator_run.app_id
             or parent_conversation.project_id != parent_project.id
         ):
             raise ValueError("父运行任务的 Conversation 不存在")
@@ -364,7 +509,8 @@ class SubagentRunService:
             if (
                 child_conversation is None
                 or child_conversation.uid != str(uid)
-                or child_conversation.status == "deleted"
+                or child_conversation.status != "subagent"
+                or child_conversation.app_id != creator_run.app_id
             ):
                 raise ValueError("子智能体线程不存在")
             if child_conversation.project_id != parent_project_id:

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import httpx
 import pytest
-
 from yuxi_cli.client import ClientError, YuxiClient, _iter_sse_events
 from yuxi_cli.config import Remote
 
@@ -19,54 +18,57 @@ def _patched_client(monkeypatch):
     return client, calls
 
 
-def test_run_agent_eval_uses_invocation_endpoint(monkeypatch):
+def test_create_thread_and_follow_up_use_public_api(monkeypatch):
     client, calls = _patched_client(monkeypatch)
     try:
-        result = client.run_agent_eval(
-            query="2+2=?",
-            agent_slug="default-chatbot",
-            evaluation={"dataset_name": "dataset-1"},
-            meta={"request_id": "req-1"},
-            timeout_seconds=123,
+        client.create_agent_thread(agent_slug="default-chatbot", idempotency_key="create-key")
+        client.send_agent_message(
+            "thread-1", "你好", idempotency_key="message-key"
         )
+        client.get_agent_input("thread-1", "input-1")
+        client.get_agent_turn("thread-1", "turn-1")
     finally:
         client.close()
 
-    assert result["method"] == "POST"
-    assert result["path"] == "/agent-invocation/eval/runs"
-    call = calls[-1]
-    assert call["timeout"] == 123
-    assert call["json"]["query"] == "2+2=?"
-    assert call["json"]["agent_slug"] == "default-chatbot"
-    assert call["json"]["evaluation"] == {"dataset_name": "dataset-1"}
-    assert call["json"]["meta"] == {"request_id": "req-1"}
+    assert [call["path"] for call in calls] == [
+        "/v1/agents/threads",
+        "/v1/agents/threads/thread-1/events",
+        "/v1/agents/threads/thread-1/inputs/input-1",
+        "/v1/agents/threads/thread-1/turns/turn-1",
+    ]
+    assert calls[0]["json"] == {"agent_id": "default-chatbot"}
+    assert calls[0]["headers"] == {"Idempotency-Key": "create-key"}
+    assert calls[1]["headers"] == {"Idempotency-Key": "message-key"}
+    assert calls[1]["json"] == {"events": [{
+        "type": "agent.thread.input.message",
+        "mode": "follow_up",
+        "input": [{"role": "user", "content": [{"type": "input_text", "text": "你好"}]}],
+    }]}
 
 
-def test_create_agent_chat_run_uses_channel_endpoint(monkeypatch):
+def test_structured_resume_and_cancel_use_public_thread_events(monkeypatch):
     client, calls = _patched_client(monkeypatch)
-    try:
-        client.create_agent_chat_run(
-            message="你好",
-            agent_slug="default-chatbot",
-            thread_id="thread-1",
-            request_id="request-1",
-        )
-    finally:
-        client.close()
-
-    call = calls[-1]
-    assert call["method"] == "POST"
-    assert call["path"] == "/agent-invocation/channel/messages"
-    assert call["json"] == {
-        "channel": "cli",
-        "account_id": "local",
-        "chat_id": "cli",
-        "agent_slug": "default-chatbot",
-        "thread_id": "thread-1",
-        "message_id": "request-1",
-        "request_id": "request-1",
-        "message": {"type": "text", "text": "你好"},
+    resume = {
+        "type": "yuxi.thread.input.resume",
+        "turn_id": "turn-1",
+        "waitpoint_id": "waitpoint-1",
+        "response": {"type": "answer", "answers": [{"question_id": "q1", "answer": "可以"}]},
     }
+    cancel = {"type": "yuxi.thread.input.cancel", "turn_id": "turn-1"}
+    try:
+        client.submit_agent_event("thread-1", resume, idempotency_key="resume-key")
+        client.submit_agent_event("thread-1", cancel, idempotency_key="cancel-key")
+    finally:
+        client.close()
+
+    assert [call["path"] for call in calls] == [
+        "/v1/agents/threads/thread-1/events",
+        "/v1/agents/threads/thread-1/events",
+    ]
+    assert calls[0]["json"] == {"events": [resume]}
+    assert calls[0]["headers"] == {"Idempotency-Key": "resume-key"}
+    assert calls[1]["json"] == {"events": [cancel]}
+    assert calls[1]["headers"] == {"Idempotency-Key": "cancel-key"}
 
 
 def test_iter_sse_events_supports_multiline_data_and_ignores_heartbeat():
@@ -91,16 +93,16 @@ def test_iter_sse_events_supports_multiline_data_and_ignores_heartbeat():
     ]
 
 
-def test_stream_agent_run_events_sends_auth_and_uses_compact_events():
+def test_stream_agent_thread_events_sends_auth_and_cursor():
     remote = Remote(name="local", url="http://localhost:5173", api_key="yxkey_test")
 
     def handler(request: httpx.Request) -> httpx.Response:
-        assert request.url.path == "/api/agent/runs/run-1/events"
-        assert request.url.params["verbose"] == "false"
+        assert request.url.path == "/api/v1/agents/threads/thread-1/events"
         assert request.headers["Authorization"] == "Bearer yxkey_test"
+        assert request.headers["Last-Event-ID"] == "cursor-4"
         return httpx.Response(
             200,
-            text='event: end\ndata: {"payload":{"status":"completed"}}\n\n',
+            text='event: agent.thread.turn.completed\nid: cursor-5\ndata: {"turn_id":"turn-1"}\n\n',
             headers={"Content-Type": "text/event-stream"},
         )
 
@@ -108,11 +110,13 @@ def test_stream_agent_run_events_sends_auth_and_uses_compact_events():
     client.client.close()
     client.client = httpx.Client(transport=httpx.MockTransport(handler))
     try:
-        events = list(client.stream_agent_run_events("run-1"))
+        events = list(client.stream_agent_thread_events("thread-1", after_cursor="cursor-4"))
     finally:
         client.close()
 
-    assert events == [{"event": "end", "data": '{"payload":{"status":"completed"}}'}]
+    assert events == [{
+        "event": "agent.thread.turn.completed", "id": "cursor-5", "data": '{"turn_id":"turn-1"}'
+    }]
 
 
 def test_list_external_databases_uses_external_path(monkeypatch):
@@ -122,7 +126,18 @@ def test_list_external_databases_uses_external_path(monkeypatch):
     finally:
         client.close()
     assert calls[-1]["method"] == "GET"
-    assert calls[-1]["path"] == "/knowledge/databases/external"
+    assert calls[-1]["path"] == "/v1/knowledge/databases/external"
+
+
+def test_list_public_agents_uses_public_path(monkeypatch):
+    client, calls = _patched_client(monkeypatch)
+    try:
+        client.list_public_agents(api_key="yxkey_agents")
+    finally:
+        client.close()
+    assert calls[-1]["method"] == "GET"
+    assert calls[-1]["path"] == "/v1/agents"
+    assert calls[-1]["api_key"] == "yxkey_agents"
 
 
 def test_list_agents_uses_visible_agent_path(monkeypatch):
@@ -190,7 +205,7 @@ def test_list_external_files_passes_query_params(monkeypatch):
         client.close()
     call = calls[-1]
     assert call["method"] == "GET"
-    assert call["path"] == "/knowledge/databases/external/kb_1/files"
+    assert call["path"] == "/v1/knowledge/databases/external/kb_1/files"
     params = call["params"]
     assert params["query"] == "report"
     assert params["offset"] == 10
@@ -206,7 +221,7 @@ def test_retrieve_external_posts_json_body(monkeypatch):
         client.close()
     call = calls[-1]
     assert call["method"] == "POST"
-    assert call["path"] == "/knowledge/databases/external/kb_1/retrieve"
+    assert call["path"] == "/v1/knowledge/databases/external/kb_1/retrieve"
     assert call["json"] == {"query": "hello", "file_name": "a.md", "options": {"final_top_k": 5}}
 
 
@@ -218,7 +233,7 @@ def test_open_external_file_passes_offset_limit(monkeypatch):
         client.close()
     call = calls[-1]
     assert call["method"] == "GET"
-    assert call["path"] == "/knowledge/databases/external/kb_1/files/file_1/open"
+    assert call["path"] == "/v1/knowledge/databases/external/kb_1/files/file_1/open"
     assert call["params"] == {"offset": 20, "limit": 80}
 
 
@@ -238,7 +253,7 @@ def test_find_external_file_posts_patterns(monkeypatch):
         client.close()
     call = calls[-1]
     assert call["method"] == "POST"
-    assert call["path"] == "/knowledge/databases/external/kb_1/files/file_1/find"
+    assert call["path"] == "/v1/knowledge/databases/external/kb_1/files/file_1/find"
     assert call["json"]["patterns"] == ["foo", "bar"]
     assert call["json"]["use_regex"] is True
     assert call["json"]["case_sensitive"] is True

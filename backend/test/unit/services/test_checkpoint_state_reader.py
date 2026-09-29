@@ -9,7 +9,7 @@ from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command, interrupt
 from yuxi.agents.buildin.chatbot.state import ChatBotState
-from yuxi.services import chat_service as svc
+from yuxi.services.agents import state as svc
 
 pytestmark = [pytest.mark.unit, pytest.mark.asyncio]
 
@@ -30,8 +30,6 @@ def checkpoint_reader(monkeypatch):
     """使用真实内存 saver，并封锁所有执行准备入口。"""
     saver = InMemorySaver()
     monkeypatch.setattr(svc.pg_manager, "get_langgraph_checkpointer", lambda: saver)
-    monkeypatch.setattr(svc, "get_agent_backend", _unexpected_runtime)
-    monkeypatch.setattr(svc, "AgentRepository", _unexpected_runtime)
     return saver
 
 
@@ -98,7 +96,7 @@ async def test_state_view_reads_persisted_fields_without_agent_runtime(checkpoin
 
     async def conversation(thread_id):
         """返回已授权的持久化线程。"""
-        return SimpleNamespace(id=1, uid="user", status="active")
+        return SimpleNamespace(id=1, uid="user", app_id=None, status="active")
 
     async def latest_run(thread_id, uid):
         """返回已完成运行。"""
@@ -136,7 +134,7 @@ async def test_state_view_rejects_invisible_thread_before_checkpoint(monkeypatch
 
     async def conversation(thread_id):
         """返回不可见的线程。"""
-        return SimpleNamespace(uid=owner, status=status)
+        return SimpleNamespace(uid=owner, app_id=None, status=status)
 
     monkeypatch.setattr(
         svc, "ConversationRepository", lambda db: SimpleNamespace(get_conversation_by_thread_id=conversation)

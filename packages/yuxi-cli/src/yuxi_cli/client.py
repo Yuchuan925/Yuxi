@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Self
 from urllib.parse import quote, urlencode
 
 import httpx
@@ -41,7 +41,7 @@ class YuxiClient:
     def close(self) -> None:
         self.client.close()
 
-    def __enter__(self) -> YuxiClient:
+    def __enter__(self) -> Self:
         return self
 
     def __exit__(self, *_exc) -> None:
@@ -109,8 +109,13 @@ class YuxiClient:
             json={"items": items, "params": params},
         )
 
-    def list_external_databases(self) -> dict:
-        return self._request("GET", "/knowledge/databases/external")
+    def list_external_databases(self, api_key: str | None = None) -> dict:
+        """列出 external 知识库，也可使用尚未保存的 Key 验证访问。"""
+        return self._request("GET", "/v1/knowledge/databases/external", api_key=api_key)
+
+    def list_public_agents(self, api_key: str | None = None) -> dict:
+        """读取 Public Agent 目录，也可验证尚未保存的 Agents Key。"""
+        return self._request("GET", "/v1/agents", api_key=api_key)
 
     def list_agents(self) -> dict:
         """读取当前用户可调用的主 Agent。"""
@@ -132,7 +137,7 @@ class YuxiClient:
         params: dict[str, Any] = {"offset": offset, "limit": limit, "status": status}
         if query:
             params["query"] = query
-        return self._request("GET", f"/knowledge/databases/external/{kb_id}/files", params=params)
+        return self._request("GET", f"/v1/knowledge/databases/external/{kb_id}/files", params=params)
 
     def retrieve_external(
         self,
@@ -144,14 +149,14 @@ class YuxiClient:
     ) -> dict:
         return self._request(
             "POST",
-            f"/knowledge/databases/external/{kb_id}/retrieve",
+            f"/v1/knowledge/databases/external/{kb_id}/retrieve",
             json={"query": query, "file_name": file_name, "options": options or {}},
         )
 
     def open_external_file(self, kb_id: str, file_id: str, *, offset: int = 0, limit: int = 200) -> dict:
         return self._request(
             "GET",
-            f"/knowledge/databases/external/{kb_id}/files/{file_id}/open",
+            f"/v1/knowledge/databases/external/{kb_id}/files/{file_id}/open",
             params={"offset": offset, "limit": limit},
         )
 
@@ -168,7 +173,7 @@ class YuxiClient:
     ) -> dict:
         return self._request(
             "POST",
-            f"/knowledge/databases/external/{kb_id}/files/{file_id}/find",
+            f"/v1/knowledge/databases/external/{kb_id}/files/{file_id}/find",
             json={
                 "patterns": patterns,
                 "use_regex": use_regex,
@@ -178,76 +183,85 @@ class YuxiClient:
             },
         )
 
-    def run_agent_eval(
+    def create_agent_thread(
         self,
         *,
-        query: str,
         agent_slug: str,
-        evaluation: dict,
-        meta: dict | None = None,
-        image_content: str | None = None,
-        model_spec: str | None = None,
-        timeout_seconds: float = 900,
+        idempotency_key: str,
     ) -> dict:
-        payload = {
-            "query": query,
-            "agent_slug": agent_slug,
-            "evaluation": evaluation,
-            "meta": meta or {},
-            "image_content": image_content,
-            "model_spec": model_spec,
-        }
-        return self._request("POST", "/agent-invocation/eval/runs", json=payload, timeout=timeout_seconds)
-
-    def create_agent_chat_run(
-        self,
-        *,
-        message: str,
-        agent_slug: str,
-        thread_id: str | None,
-        request_id: str,
-    ) -> dict:
-        """通过纯文本 Channel 入口发送 CLI Chat 消息。"""
+        """通过 Public API 创建新的 Agent Thread。"""
         return self._request(
             "POST",
-            "/agent-invocation/channel/messages",
-            json={
-                "channel": "cli",
-                "account_id": self.remote.name,
-                "chat_id": "cli" if thread_id else request_id,
-                "agent_slug": agent_slug,
-                "thread_id": thread_id,
-                "message_id": request_id,
-                "request_id": request_id,
-                "message": {"type": "text", "text": message},
-            },
+            "/v1/agents/threads",
+            json={"agent_id": agent_slug},
+            headers={"Idempotency-Key": idempotency_key},
         )
 
-    def stream_agent_run_events(self, run_id: str) -> Iterator[dict[str, str]]:
-        """读取 Agent Run SSE，并逐条返回解析后的事件。"""
-        yield from self._stream_events(f"/agent/runs/{run_id}/events", params={"verbose": "false"})
+    def send_agent_message(self, thread_id: str, message: str, *, idempotency_key: str) -> dict:
+        """接收一条 follow-up 消息，返回持久输入回执。"""
+        return self.submit_agent_event(
+            thread_id,
+            {
+                "type": "agent.thread.input.message",
+                "mode": "follow_up",
+                "input": [{"role": "user", "content": [{"type": "input_text", "text": message}]}],
+            },
+            idempotency_key=idempotency_key,
+        )
 
-    def stream_agent_request_events(self, request_events_url: str) -> Iterator[dict[str, str]]:
-        """读取 Agent Request SSE，直到请求派发或进入终态。"""
-        path = request_events_url.strip()
-        if not path:
-            raise ClientError("request_events_url 不能为空")
-        if path.startswith("http://") or path.startswith("https://"):
-            raise ClientError("request_events_url 必须是相对路径")
-        if path.startswith("/api/"):
-            path = path[4:]
-        yield from self._stream_events(path)
+    def submit_agent_event(
+        self, thread_id: str, event: dict, *, idempotency_key: str
+    ) -> dict:
+        """提交 Thread 输入或控制事件，并保留调用方的结构化字段。"""
+        return self._request(
+            "POST",
+            f"/v1/agents/threads/{quote(thread_id, safe='')}/events",
+            json={"events": [event]},
+            headers={"Idempotency-Key": idempotency_key},
+        )
+
+    def get_agent_thread(self, thread_id: str) -> dict:
+        """读取 Thread 当前持久状态。"""
+        return self._request("GET", f"/v1/agents/threads/{quote(thread_id, safe='')}")
+
+    def get_agent_turn(self, thread_id: str, turn_id: str) -> dict:
+        """读取 Turn 当前持久状态和明确结果。"""
+        return self._request(
+            "GET", f"/v1/agents/threads/{quote(thread_id, safe='')}/turns/{quote(turn_id, safe='')}"
+        )
+
+    def get_agent_thread_queue(self, thread_id: str) -> dict:
+        """读取待消费 Input 及其消费关联。"""
+        return self._request("GET", f"/v1/agents/threads/{quote(thread_id, safe='')}/queue")
+
+    def get_agent_input(self, thread_id: str, input_id: str) -> dict:
+        """读取 Input 的持久消费关联。"""
+        return self._request(
+            "GET", f"/v1/agents/threads/{quote(thread_id, safe='')}/inputs/{quote(input_id, safe='')}"
+        )
+
+    def stream_agent_thread_events(
+        self, thread_id: str, *, after_cursor: str | None = None
+    ) -> Iterator[dict[str, str]]:
+        """订阅 Thread 中跨 Run 的结构化事件。"""
+        yield from self._stream_events(
+            f"/v1/agents/threads/{quote(thread_id, safe='')}/events",
+            last_event_id=after_cursor,
+        )
 
     def _stream_events(
         self,
         path: str,
         *,
         params: dict[str, str] | None = None,
+        last_event_id: str | None = None,
     ) -> Iterator[dict[str, str]]:
         """连接远端 SSE 接口并返回解析后的事件。"""
         headers = {}
         if self.remote.api_key:
             headers["Authorization"] = f"Bearer {self.remote.api_key}"
+        if last_event_id:
+            headers["Last-Event-ID"] = last_event_id
         url = f"{self.remote.api_base_url}{path if path.startswith('/') else f'/{path}'}"
 
         try:
@@ -287,14 +301,15 @@ class YuxiClient:
         files: dict | None = None,
         data: dict | None = None,
         timeout: float | None = None,
+        headers: dict[str, str] | None = None,
     ) -> dict:
-        headers = {}
+        request_headers = dict(headers or {})
         token = api_key if api_key is not None else self.remote.api_key
         if auth and token:
-            headers["Authorization"] = f"Bearer {token}"
+            request_headers["Authorization"] = f"Bearer {token}"
 
         url = f"{self.remote.api_base_url}{path if path.startswith('/') else f'/{path}'}"
-        request_kwargs: dict[str, Any] = {"headers": headers}
+        request_kwargs: dict[str, Any] = {"headers": request_headers}
         if params is not None:
             request_kwargs["params"] = params
         if files is not None:

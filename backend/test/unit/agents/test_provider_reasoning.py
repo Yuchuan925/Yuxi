@@ -10,7 +10,7 @@ from langgraph.graph import END, START, MessagesState, StateGraph
 from yuxi.models.chat import load_chat_model
 from yuxi.models.utils import parse_assistant_message_body
 from yuxi.models.providers.cache import ModelInfo
-from yuxi.services.chat_service import _protocol_event_yuxi_event
+from yuxi.services.agents.execution import _protocol_event_yuxi_event
 
 REASONING = " First\nthen check. "
 TOOL = {"type": "function", "function": {"name": "inspect_code", "parameters": {"type": "object", "properties": {}}}}

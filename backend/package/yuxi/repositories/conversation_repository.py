@@ -38,7 +38,7 @@ MESSAGE_SEARCH_EXCLUDED_TYPES = (
     MODEL_AUDIT_MESSAGE_TYPE,
     TOOL_AUDIT_MESSAGE_TYPE,
 )
-INVOCATION_CONVERSATION_SOURCES = ("agent_call", "agent_evaluation")
+ALL_APP_SCOPES = object()
 
 # ==== 历史对话检索参数 ====
 MEMORY_HISTORY_SEARCH_MAX_LIMIT = 10  # 单次历史搜索最多返回的消息条数。
@@ -136,6 +136,7 @@ class ConversationRepository:
         metadata: dict | None = None,
         project_id: str,
         creation_request_id: str | None = None,
+        app_id: str | None = None,
     ) -> Conversation:
         """创建对话和统计记录但只 flush，供外层事务继续绑定关系。"""
         if not thread_id:
@@ -150,6 +151,7 @@ class ConversationRepository:
             thread_id=thread_id,
             creation_request_id=creation_request_id,
             uid=str(uid),
+            app_id=app_id,
             agent_id=agent_id,
             title=normalized_title or "New Conversation",
             status="active",
@@ -263,7 +265,7 @@ class ConversationRepository:
         extra_metadata: dict | None = None,
         image_content: str | None = None,
         run_id: str | None = None,
-        request_id: str | None = None,
+        turn_id: str | None = None,
         delivery_status: str = "complete",
         commit: bool = True,
     ) -> Message:
@@ -275,7 +277,7 @@ class ConversationRepository:
             extra_metadata=extra_metadata or {},
             image_content=image_content,
             run_id=run_id,
-            request_id=request_id,
+            turn_id=turn_id,
             delivery_status=delivery_status,
         )
 
@@ -303,7 +305,7 @@ class ConversationRepository:
         extra_metadata: dict | None = None,
         image_content: str | None = None,
         run_id: str | None = None,
-        request_id: str | None = None,
+        turn_id: str | None = None,
         delivery_status: str = "complete",
         commit: bool = True,
     ) -> Message | None:
@@ -320,7 +322,7 @@ class ConversationRepository:
             extra_metadata=extra_metadata,
             image_content=image_content,
             run_id=run_id,
-            request_id=request_id,
+            turn_id=turn_id,
             delivery_status=delivery_status,
             commit=commit,
         )
@@ -439,7 +441,7 @@ class ConversationRepository:
             .options(
                 load_only(
                     AgentRun.id,
-                    AgentRun.request_id,
+                    AgentRun.turn_id,
                     AgentRun.run_type,
                     AgentRun.created_by_run_id,
                     AgentRun.status,
@@ -486,6 +488,7 @@ class ConversationRepository:
         limit: int | None = None,
         offset: int = 0,
         exclude_sources: tuple[str, ...] = (),
+        app_id: str | None | object = ALL_APP_SCOPES,
     ) -> list[Conversation]:
         """List conversations with pinned conversations always included first.
 
@@ -498,6 +501,8 @@ class ConversationRepository:
             base_conditions.append(Conversation.uid == str(uid))
         if agent_id:
             base_conditions.append(Conversation.agent_id == agent_id)
+        if app_id is not ALL_APP_SCOPES:
+            base_conditions.append(Conversation.app_id == app_id)
         base_conditions.extend(self._exclude_source_conditions(exclude_sources))
 
         # First, get all pinned conversations (no limit)
@@ -545,6 +550,7 @@ class ConversationRepository:
         limit: int = 20,
         offset: int = 0,
         exclude_sources: tuple[str, ...] = (),
+        app_id: str | None | object = ALL_APP_SCOPES,
     ) -> tuple[list[dict], bool]:
         normalized_query = str(query or "").strip()
         if not normalized_query:
@@ -556,6 +562,8 @@ class ConversationRepository:
         ]
         if agent_id:
             conversation_conditions.append(Conversation.agent_id == agent_id)
+        if app_id is not ALL_APP_SCOPES:
+            conversation_conditions.append(Conversation.app_id == app_id)
         conversation_conditions.extend(self._exclude_source_conditions(exclude_sources))
 
         message_conditions = self._message_search_conditions(normalized_query)
@@ -755,12 +763,11 @@ class ConversationRepository:
         return payload
 
     def _memory_conversation_conditions(self, uid: str) -> list:
-        """构建用户可见普通主 Agent Conversation 条件。"""
+        """构建用户可见主 Agent Conversation 条件。"""
         child_thread_exists = select(SubagentThread.id).where(SubagentThread.child_conversation_id == Conversation.id)
         return [
             Conversation.uid == str(uid),
             Conversation.status == "active",
-            *self._exclude_source_conditions(INVOCATION_CONVERSATION_SOURCES),
             ~child_thread_exists.exists(),
         ]
 
@@ -850,54 +857,6 @@ class ConversationRepository:
         while _json_size(payload) > MEMORY_HISTORY_READ_RESPONSE_MAX_BYTES and payload["messages"]:
             payload["messages"].pop(0)
             payload["truncated"] = True
-
-    async def update_conversation(
-        self,
-        thread_id: str,
-        title: str | None = None,
-        status: str | None = None,
-        metadata: dict | None = None,
-        is_pinned: bool | None = None,
-    ) -> Conversation | None:
-        conversation = await self.get_conversation_by_thread_id(thread_id)
-        if not conversation:
-            return None
-
-        normalized_title = self._normalize_title(title)
-        if normalized_title is not None:
-            conversation.title = normalized_title
-        if status is not None:
-            conversation.status = status
-        if is_pinned is not None:
-            conversation.is_pinned = is_pinned
-
-        if metadata is not None:
-            current_metadata = dict(conversation.extra_metadata or {})
-            current_metadata.update(metadata)
-            conversation.extra_metadata = current_metadata
-
-        conversation.updated_at = utc_now_naive()
-        await self.db.commit()
-        await self.db.refresh(conversation)
-
-        logger.info(f"Updated conversation {thread_id}")
-        return conversation
-
-    async def delete_conversation(self, thread_id: str, soft_delete: bool = True) -> bool:
-        conversation = await self.get_conversation_by_thread_id(thread_id)
-        if not conversation:
-            return False
-
-        if soft_delete:
-            conversation.status = "deleted"
-            await self.db.commit()
-            logger.info(f"Soft deleted conversation {thread_id}")
-        else:
-            self.db.delete(conversation)
-            await self.db.commit()
-            logger.info(f"Permanently deleted conversation {thread_id}")
-
-        return True
 
     async def get_stats(self, conversation_id: int) -> ConversationStats | None:
         result = await self.db.execute(
@@ -1049,11 +1008,10 @@ class ConversationRepository:
             await self._save_metadata(conversation, metadata)
         return target
 
-    async def bind_attachments_to_request(
-        self, conversation_id: int, request_id: str, file_ids: list[str]
-    ) -> list[dict]:
+    async def bind_attachments_to_input(self, conversation_id: int, input_id: str, file_ids: list[str]) -> list[dict]:
+        """在当前线程锁内把附件固定到持久 Input。"""
         conversation = await self._lock_conversation_by_id(conversation_id)
-        if not conversation or not request_id or not file_ids:
+        if not conversation or not input_id or not file_ids:
             return []
 
         file_id_set = {str(file_id).strip() for file_id in file_ids if str(file_id).strip()}
@@ -1067,19 +1025,20 @@ class ConversationRepository:
         for item in attachments:
             if item.get("file_id") not in file_id_set:
                 continue
-            if item.get("request_id"):
+            if item.get("input_id"):
                 continue
-            item["request_id"] = request_id
+            item["input_id"] = input_id
             changed = True
 
         if changed:
             metadata["attachments"] = attachments
             await self._save_metadata(conversation, metadata)
-        return [dict(item) for item in attachments if item.get("request_id") == request_id]
+        return [dict(item) for item in attachments if item.get("input_id") == input_id]
 
-    async def get_attachments_by_request_id(self, conversation_id: int, request_id: str) -> list[dict]:
+    async def get_attachments_by_input_id(self, conversation_id: int, input_id: str) -> list[dict]:
+        """读取同一 Input 已固定的附件。"""
         attachments = await self.get_attachments(conversation_id)
-        return [item for item in attachments if item.get("request_id") == request_id]
+        return [item for item in attachments if item.get("input_id") == input_id]
 
     async def remove_attachment(self, conversation_id: int, file_id: str) -> bool:
         conversation = await self._lock_conversation_by_id(conversation_id)

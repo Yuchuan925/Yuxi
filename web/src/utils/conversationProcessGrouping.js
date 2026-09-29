@@ -1,14 +1,14 @@
 import { formatRunTimingDuration, getRunTotalLatencyMs } from './runTiming.js'
 
-/** 在展示层连接具有明确父子关系的相邻续跑。 */
+/** 在展示层连接同一 Turn 的相邻续跑。 */
 export const groupConversationContinuations = (conversations) => {
   const groups = []
   for (const conv of conversations) {
     const previous = groups.at(-1)
     if (
       conv.run?.run_type !== 'resume' ||
-      !previous?.run?.run_id ||
-      conv.run.created_by_run_id !== previous.run.run_id ||
+      !conv.run.turn_id ||
+      conv.run.turn_id !== previous?.run?.turn_id ||
       !previous.messages.length ||
       !conv.messages.length ||
       conv.messages.some((message) => message.type === 'human')
@@ -85,13 +85,13 @@ export const collapseConversationProcess = (items, enabled = false, runTiming = 
   ]
 }
 
-/** 只有关联到本次运行的后续 resume 才延后当前回答的操作栏。 */
+/** 只有同一 Turn 的后续 resume 才延后当前回答的操作栏。 */
 export const isConversationSettled = (conversations, conv, isProcessing = false) => {
   const index = conversations.indexOf(conv)
   if (index === -1) return false
   const next = conversations[index + 1]
   if (next?.run) {
-    return !(next.run.run_type === 'resume' && next.run.created_by_run_id === conv.run?.run_id)
+    return !(next.run.run_type === 'resume' && next.run.turn_id && next.run.turn_id === conv.run?.turn_id)
   }
   if (next) return next.messages?.[0]?.type === 'human'
   return !isProcessing

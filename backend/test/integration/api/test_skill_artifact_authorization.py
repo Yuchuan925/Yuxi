@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from yuxi.agents.skills import service as skill_service
 from yuxi.storage.postgres.models_business import Skill
-from test.live_api_cleanup import make_test_conversation_metadata, make_test_conversation_title
+from test.live_api_cleanup import make_test_conversation_title
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
 
@@ -25,13 +25,12 @@ async def _create_thread(test_client, headers: dict[str, str], title: str) -> st
     agent_id = agent.get("slug") or agent.get("agent_id") or agent.get("id")
     assert agent_id
     response = await test_client.post(
-        "/api/chat/thread",
+        "/api/v1/agents/threads",
         json={
             "agent_id": agent_id,
             "title": make_test_conversation_title(title),
-            "metadata": make_test_conversation_metadata("skill-artifact"),
         },
-        headers=headers,
+        headers={**headers, "Idempotency-Key": str(uuid.uuid4())},
     )
     assert response.status_code == 200, response.text
     return response.json().get("thread_id") or response.json()["id"]
@@ -92,8 +91,8 @@ async def test_skill_artifact_rechecks_authorization_after_share_revoke(
         admin_thread = await _create_thread(test_client, admin_headers, f"skill-artifact-admin-{suffix[:8]}")
         user_thread = await _create_thread(test_client, user_headers, f"skill-artifact-user-{suffix[:8]}")
         artifact_path = f"home/gem/skills/{slug}/SKILL.md"
-        admin_url = f"/api/chat/thread/{admin_thread}/artifacts/{artifact_path}"
-        user_url = f"/api/chat/thread/{user_thread}/artifacts/{artifact_path}"
+        admin_url = f"/api/v1/agents/threads/{admin_thread}/artifacts/{artifact_path}"
+        user_url = f"/api/v1/agents/threads/{user_thread}/artifacts/{artifact_path}"
 
         admin_before = await test_client.get(admin_url, headers=admin_headers)
         user_before = await test_client.get(user_url, headers=user_headers)

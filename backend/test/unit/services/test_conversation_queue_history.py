@@ -1,18 +1,35 @@
+"""Public Thread 历史按 Input、Turn 和 Run 明确归属。"""
+
 from __future__ import annotations
 
 from datetime import datetime, timedelta
 
 import pytest
 import pytest_asyncio
+from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-from yuxi.services.conversation_service import get_thread_history_view
-from yuxi.storage.postgres.models_business import AgentRun, Base, Conversation, Message, Project, ToolCall
+
+from yuxi.services.agents.messages import get_thread_history
+from yuxi.services.agents.scope import ActorScope
+from yuxi.storage.postgres.models_business import (
+    AgentInput,
+    AgentRun,
+    AgentTurn,
+    Base,
+    Conversation,
+    Message,
+    Project,
+    ToolCall,
+)
 
 pytestmark = [pytest.mark.unit, pytest.mark.asyncio]
+SCOPE = ActorScope(uid="user-1", app_id=None)
+STARTED_AT = datetime(2026, 9, 29, 9, 0, 0)
 
 
 @pytest_asyncio.fixture()
 async def session():
+    """为真实 ORM 查询建立独立内存数据库。"""
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
     async with engine.begin() as connection:
         await connection.run_sync(Base.metadata.create_all)
@@ -27,35 +44,64 @@ async def session():
                 workdir_path="projects/project-thread-1",
             )
         )
+        db.add(
+            Conversation(
+                id=1,
+                thread_id="thread-1",
+                project_id="project-thread-1",
+                uid="user-1",
+                agent_id="main",
+                status="active",
+            )
+        )
         await db.commit()
         yield db
     await engine.dispose()
 
 
-async def test_queue_history_keeps_each_request_with_its_reply(session):
-    started_at = datetime(2026, 7, 12, 9, 0, 0)
-    session.add(
-        Conversation(
-            id=1,
-            thread_id="thread-1",
-            project_id="project-thread-1",
-            uid="user-1",
-            agent_id="main",
-            status="active",
-        )
+def _turn_run(*, turn_id: str, run_id: str, created_at: datetime) -> tuple[AgentTurn, AgentRun]:
+    """建立一轮已完成的顶层执行。"""
+    turn = AgentTurn(
+        id=turn_id,
+        conversation_thread_id="thread-1",
+        uid="user-1",
+        status="completed",
+        current_run_id=run_id,
+        result_run_id=run_id,
     )
+    run = AgentRun(
+        id=run_id,
+        turn_id=turn_id,
+        conversation_thread_id="thread-1",
+        runtime_scope_id="thread-1",
+        agent_slug="main",
+        uid="user-1",
+        conversation_id=1,
+        run_type="chat",
+        input_payload={},
+        status="completed",
+        created_at=created_at,
+    )
+    return turn, run
+
+
+async def test_history_shows_pending_input_and_later_binds_its_own_reply(session):
+    """排队消息可见；领取后仅与其自身 Turn/Run 和回复关联。"""
+    turn_a, run_a = _turn_run(turn_id="turn-a", run_id="run-a", created_at=STARTED_AT)
+    session.add_all([turn_a, run_a])
     session.add(
-        AgentRun(
-            id="run-a",
+        AgentInput(
+            id="input-b",
+            received_seq=2,
             conversation_thread_id="thread-1",
-            runtime_scope_id="thread-1",
-            agent_slug="main",
             uid="user-1",
-            request_id="request-a",
-            conversation_id=1,
+            agent_slug="main",
+            kind="follow_up",
+            status="pending",
             input_payload={},
-            status="completed",
-            created_at=started_at,
+            source="chat",
+            channel="web",
+            origin_metadata={},
         )
     )
     session.add_all(
@@ -65,287 +111,106 @@ async def test_queue_history_keeps_each_request_with_its_reply(session):
                 conversation_id=1,
                 role="user",
                 content="A",
-                request_id="request-a",
+                turn_id="turn-a",
                 run_id="run-a",
-                delivery_status="complete",
-                created_at=started_at,
+                delivery_status="dispatched",
+                created_at=STARTED_AT,
             ),
             Message(
                 id=2,
                 conversation_id=1,
-                role="user",
-                content="B",
-                request_id="request-b",
-                delivery_status="queued",
-                created_at=started_at + timedelta(seconds=1),
+                role="assistant",
+                content="A reply",
+                turn_id="turn-a",
+                run_id="run-a",
+                delivery_status="complete",
+                created_at=STARTED_AT + timedelta(seconds=1),
             ),
             Message(
                 id=3,
                 conversation_id=1,
-                role="assistant",
-                content="A reply",
-                extra_metadata={"additional_kwargs": {"reasoning_content": "A reasoning"}},
-                run_id="run-a",
-                delivery_status="complete",
-                created_at=started_at + timedelta(seconds=2),
+                role="user",
+                content="B",
+                delivery_status="queued",
+                extra_metadata={"input_id": "input-b"},
+                created_at=STARTED_AT + timedelta(seconds=2),
             ),
         ]
     )
     await session.commit()
 
-    queued_history = await get_thread_history_view(
-        thread_id="thread-1",
-        current_uid="user-1",
-        db=session,
-    )
-    assert [message["content"] for message in queued_history["history"]] == ["A", "A reply"]
-    assert [message.get("reasoning_content", "") for message in queued_history["history"]] == ["", "A reasoning"]
+    pending = await get_thread_history(db=session, scope=SCOPE, thread_id="thread-1")
+    assert [item["content"] for item in pending["history"]] == ["A", "A reply", "B"]
+    assert pending["history"][-1]["run_id"] is None
+    assert pending["thread"]["queued_input_count"] == 1
 
-    request_b = await session.get(Message, 2)
-    request_b.run_id = "run-b"
-    request_b.delivery_status = "complete"
-    session.add(
-        AgentRun(
-            id="run-b",
-            conversation_thread_id="thread-1",
-            runtime_scope_id="thread-1",
-            agent_slug="main",
-            uid="user-1",
-            request_id="request-b",
-            conversation_id=1,
-            input_payload={},
-            status="completed",
-            created_at=started_at + timedelta(seconds=3),
-        )
-    )
+    turn_b, run_b = _turn_run(turn_id="turn-b", run_id="run-b", created_at=STARTED_AT + timedelta(seconds=3))
+    run_b.input_id = "input-b"
+    session.add_all([turn_b, run_b])
+    queued_message = await session.get(Message, 3)
+    queued_message.turn_id = "turn-b"
+    queued_message.run_id = "run-b"
+    queued_message.delivery_status = "dispatched"
+    input_b = await session.get(AgentInput, "input-b")
+    input_b.status = "consumed"
+    input_b.turn_id = "turn-b"
+    input_b.consumed_run_id = "run-b"
+    input_b.cutoff_seq = 2
+    input_b.consumed_at = STARTED_AT + timedelta(seconds=3)
     session.add(
         Message(
             id=4,
             conversation_id=1,
             role="assistant",
             content="B reply",
+            turn_id="turn-b",
             run_id="run-b",
             delivery_status="complete",
-            created_at=started_at + timedelta(seconds=4),
+            created_at=STARTED_AT + timedelta(seconds=4),
         )
     )
     await session.commit()
 
-    completed_history = await get_thread_history_view(
-        thread_id="thread-1",
-        current_uid="user-1",
-        db=session,
-    )
-    assert [message["content"] for message in completed_history["history"]] == [
-        "A",
-        "A reply",
-        "B",
-        "B reply",
+    completed = await get_thread_history(db=session, scope=SCOPE, thread_id="thread-1")
+    assert [item["content"] for item in completed["history"]] == ["A", "A reply", "B", "B reply"]
+    assert [(item["turn_id"], item["run_id"]) for item in completed["history"]] == [
+        ("turn-a", "run-a"),
+        ("turn-a", "run-a"),
+        ("turn-b", "run-b"),
+        ("turn-b", "run-b"),
+    ]
+    assert completed["thread"]["queued_input_count"] == 0
+    assert [(item["turn_id"], item["run_id"]) for item in completed["runs"]] == [
+        ("turn-a", "run-a"),
+        ("turn-b", "run-b"),
     ]
 
 
-async def test_thread_history_returns_run_timing_separately_from_messages(session):
-    started_at = datetime(2026, 7, 12, 9, 0, 0)
-    run_started_at = started_at + timedelta(seconds=10)
-    run_prepared_at = started_at + timedelta(seconds=12)
-    run_first_output_at = started_at + timedelta(seconds=16)
-    run_finished_at = started_at + timedelta(seconds=22)
-    session.add(
-        Conversation(
-            id=1,
-            thread_id="thread-1",
-            project_id="project-thread-1",
-            uid="user-1",
-            agent_id="main",
-            status="active",
-        )
-    )
-    session.add(
-        AgentRun(
-            id="run-a",
-            conversation_thread_id="thread-1",
-            runtime_scope_id="thread-1",
-            agent_slug="main",
-            uid="user-1",
-            request_id="request-a",
-            conversation_id=1,
-            input_payload={},
-            status="completed",
-            created_at=started_at,
-            started_at=run_started_at,
-            prepared_at=run_prepared_at,
-            first_output_at=run_first_output_at,
-            finished_at=run_finished_at,
-        )
-    )
-    session.add_all(
-        [
-            Message(
-                id=1,
-                conversation_id=1,
-                role="user",
-                content="A",
-                request_id="request-a",
-                run_id="run-a",
-                delivery_status="complete",
-                created_at=started_at,
-            ),
-            Message(
-                id=2,
-                conversation_id=1,
-                role="assistant",
-                content="A reply",
-                run_id="run-a",
-                delivery_status="complete",
-                created_at=run_finished_at,
-            ),
-        ]
-    )
-    await session.commit()
-
-    history = await get_thread_history_view(
-        thread_id="thread-1",
-        current_uid="user-1",
-        db=session,
-    )
-
-    assistant_message = next(message for message in history["history"] if message["type"] == "ai")
-    assert assistant_message["run_id"] == "run-a"
-    assert history["thread"]["id"] == "thread-1"
-    assert history["thread"]["thread_status"] == "ready"
-    assert len(history["runs"]) == 1
-    assert history["runs"][0]["run_id"] == "run-a"
-    assert history["runs"][0]["status"] == "completed"
-    assert history["runs"][0]["timing"] == {
-        "created_at": "2026-07-12T09:00:00Z",
-        "started_at": "2026-07-12T09:00:10Z",
-        "prepared_at": "2026-07-12T09:00:12Z",
-        "first_model_request_at": None,
-        "first_output_at": "2026-07-12T09:00:16Z",
-        "finished_at": "2026-07-12T09:00:22Z",
-        "dispatch_latency_ms": 10000,
-        "preparation_latency_ms": 2000,
-        "first_model_request_latency_ms": None,
-        "model_first_output_latency_ms": 4000,
-        "first_output_latency_ms": 16000,
-        "total_latency_ms": 22000,
-    }
-
-    for message in history["history"]:
-        assert {"run_started_at", "run_finished_at", "run_timing"}.isdisjoint(message)
-
-
-async def test_thread_history_handles_run_without_timing_fields(session):
-    started_at = datetime(2026, 7, 12, 9, 0, 0)
-    session.add(
-        Conversation(
-            id=1,
-            thread_id="thread-1",
-            project_id="project-thread-1",
-            uid="user-1",
-            agent_id="main",
-            status="active",
-        )
-    )
-    session.add(
-        AgentRun(
-            id="run-a",
-            conversation_thread_id="thread-1",
-            runtime_scope_id="thread-1",
-            agent_slug="main",
-            uid="user-1",
-            request_id="request-a",
-            conversation_id=1,
-            input_payload={},
-            status="completed",
-            created_at=started_at,
-            started_at=None,
-            finished_at=None,
-        )
-    )
-    session.add(
-        Message(
-            id=1,
-            conversation_id=1,
-            role="assistant",
-            content="A reply",
-            run_id="run-a",
-            delivery_status="complete",
-            created_at=started_at,
-        )
-    )
-    await session.commit()
-
-    history = await get_thread_history_view(
-        thread_id="thread-1",
-        current_uid="user-1",
-        db=session,
-    )
-    assistant_message = next(message for message in history["history"] if message["type"] == "ai")
-    assert "run_timing" not in assistant_message
-    assert history["runs"][0]["timing"] == {
-        "created_at": "2026-07-12T09:00:00Z",
-        "started_at": None,
-        "prepared_at": None,
-        "first_model_request_at": None,
-        "first_output_at": None,
-        "finished_at": None,
-        "dispatch_latency_ms": None,
-        "preparation_latency_ms": None,
-        "first_model_request_latency_ms": None,
-        "model_first_output_latency_ms": None,
-        "first_output_latency_ms": None,
-        "total_latency_ms": None,
-    }
-
-
-async def test_thread_history_hides_internal_metadata_from_published_model_audit(session):
-    """已发布 Model 输出保留产品 metadata，不暴露 lifecycle 字段。"""
-    session.add(
-        Conversation(
-            id=1,
-            thread_id="thread-1",
-            project_id="project-thread-1",
-            uid="user-1",
-            agent_id="main",
-            status="active",
-        )
-    )
-    session.add(
-        AgentRun(
-            id="run-a",
-            conversation_thread_id="thread-1",
-            runtime_scope_id="thread-1",
-            agent_slug="main",
-            uid="user-1",
-            request_id="request-a",
-            conversation_id=1,
-            input_payload={},
-            status="interrupted",
-        )
-    )
-    audit = Message(
+async def test_history_exposes_tool_result_without_internal_model_metadata(session):
+    """历史消息不泄露模型运行内部 metadata。"""
+    turn, run = _turn_run(turn_id="turn-a", run_id="run-a", created_at=STARTED_AT)
+    session.add_all([turn, run])
+    answer = Message(
         conversation_id=1,
         role="assistant",
         content="answer",
+        turn_id="turn-a",
+        run_id="run-a",
         message_type="text",
+        operation_id="model-a",
+        delivery_status="complete",
         extra_metadata={
-            "state_reconciled": True,
             "model_run_id": "private-model-run",
-            "start_metadata": {"provider": "private-provider"},
-            "finish_metadata": {"model_name": "private-model"},
+            "start_metadata": {"provider": "private"},
+            "finish_metadata": {"model_name": "private"},
             "langfuse_trace_id": "trace-safe",
         },
-        run_id="run-a",
-        request_id="request-a",
-        operation_id="model-a",
-        execution_status="completed",
     )
-    session.add(audit)
+    session.add(answer)
     await session.flush()
     session.add(
         ToolCall(
-            message_id=audit.id,
+            message_id=answer.id,
             langgraph_tool_call_id="call-a",
             tool_name="search",
             tool_input={"q": "Yuxi"},
@@ -355,15 +220,18 @@ async def test_thread_history_hides_internal_metadata_from_published_model_audit
     )
     await session.commit()
 
-    history = await get_thread_history_view(
-        thread_id="thread-1",
-        current_uid="user-1",
-        db=session,
-    )
-
-    assert len(history["history"]) == 1
-    message = history["history"][0]
-    assert message["extra_metadata"] == {"langfuse_trace_id": "trace-safe"}
-    assert message["tool_calls"][0]["tool_call_result"] == {"content": "safe result"}
+    history = await get_thread_history(db=session, scope=SCOPE, thread_id="thread-1")
+    item = history["history"][0]
+    assert item["extra_metadata"] == {"langfuse_trace_id": "trace-safe"}
+    assert item["tool_calls"][0]["tool_call_result"] == {"content": "safe result"}
     assert "private-model-run" not in str(history)
-    assert "private-provider" not in str(history)
+
+
+async def test_history_rejects_other_app_scope(session):
+    """相同用户的另一 APP 也不能读取 Thread 历史。"""
+    conversation = await session.get(Conversation, 1)
+    conversation.app_id = "other-app"
+    await session.commit()
+    with pytest.raises(HTTPException) as failure:
+        await get_thread_history(db=session, scope=SCOPE, thread_id="thread-1")
+    assert failure.value.status_code == 404

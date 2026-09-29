@@ -71,7 +71,9 @@ export class MessageProcessor {
 
     for (const item of serverHistory) {
       if (item.type === 'tool' ||
-          (item.type === 'human' && item.extra_metadata?.source === 'ask_user_question_resume')) {
+          (item.type === 'human' && (
+            item.message_type === 'resume' || item.extra_metadata?.source === 'ask_user_question_resume'
+          ))) {
         continue
       }
       const runId = item.run_id || item.extra_metadata?.run_id

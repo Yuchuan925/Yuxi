@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import secrets
+import time
 import uuid
 import webbrowser
 from collections.abc import Callable, Iterator
@@ -16,6 +17,8 @@ from yuxi_cli.client import ClientError, YuxiClient
 from yuxi_cli.config import ConfigStore
 
 MAX_MESSAGE_BYTES = 32 * 1024
+LOOKUP_FAILURE_TIMEOUT = 60
+TURN_TERMINAL_STATUSES = {"completed", "failed", "cancelled", "waiting"}
 
 
 class ChatWebError(Exception):
@@ -23,7 +26,7 @@ class ChatWebError(Exception):
 
 
 class ChatWebServer(ThreadingHTTPServer):
-    """仅监听本机并代理 Yuxi Agent 请求的临时 HTTP 服务。"""
+    """仅监听本机并代理 Public Thread 请求的临时 HTTP 服务。"""
 
     daemon_threads = True
 
@@ -46,7 +49,7 @@ class ChatWebServer(ThreadingHTTPServer):
 
 
 class ChatRequestHandler(BaseHTTPRequestHandler):
-    """提供单页界面，并将聊天请求转换为浏览器可读的增量事件。"""
+    """提供单页界面，并将 Thread 事件转为浏览器可读的增量事件。"""
 
     server: ChatWebServer
 
@@ -73,7 +76,8 @@ class ChatRequestHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_POST(self) -> None:
-        if urlsplit(self.path).path != "/api/chat":
+        path = urlsplit(self.path).path
+        if path not in {"/api/chat", "/api/chat/continue"}:
             self.send_error(404)
             return
         if not self._is_local_request():
@@ -87,30 +91,37 @@ class ChatRequestHandler(BaseHTTPRequestHandler):
 
         try:
             payload = self._read_payload()
-            message = str(payload.get("message") or "").strip()
-            if not message:
-                raise ChatWebError("消息不能为空")
-            thread_id = str(payload.get("thread_id") or "").strip() or None
-            run = self.server.client.create_agent_chat_run(
-                message=message,
-                agent_slug=self.server.agent_slug,
-                thread_id=thread_id,
-                request_id=str(uuid.uuid4()),
-            )
-            if run.get("kind") == "command":
-                command_name = str(run.get("command") or "")
-                if command_name == "state":
-                    self._write_command_response(run, thread_id=thread_id)
-                    return
-                if command_name == "approve":
-                    run = run.get("run") if isinstance(run.get("run"), dict) else {}
-            run_id = str(run.get("run_id") or "").strip()
-            if not run_id and run.get("request_events_url"):
-                run = self._wait_queued_run(run)
-                run_id = str(run.get("run_id") or "").strip()
-            if not run_id:
-                raise ChatWebError(str(run.get("error") or "远端未返回 run_id"))
-        except (ChatWebError, ClientError, json.JSONDecodeError) as exc:
+            thread_id = str(payload.get("thread_id") or "").strip()
+            if path == "/api/chat":
+                message = str(payload.get("message") or "").strip()
+                if not message:
+                    raise ChatWebError("消息不能为空")
+                if not thread_id:
+                    created = self.server.client.create_agent_thread(
+                        agent_slug=self.server.agent_slug,
+                        idempotency_key=str(uuid.uuid4()),
+                    )
+                    thread_id = str(created["thread_id"])
+                accepted = self.server.client.send_agent_message(
+                    thread_id, message, idempotency_key=str(uuid.uuid4())
+                )
+                input_id = str(accepted["input_id"])
+            else:
+                input_id = str(payload.get("input_id") or "").strip()
+                if not thread_id or not input_id:
+                    raise ChatWebError("继续队列需要 Thread 和 Input")
+                received = self.server.client.get_agent_input(thread_id, input_id)
+                if received.get("status") != "pending":
+                    raise ChatWebError("排队输入已变化")
+                if not self.server.client.get_agent_thread_queue(thread_id).get("queue_paused"):
+                    raise ChatWebError("队列未暂停")
+                self.server.client.submit_agent_event(
+                    thread_id,
+                    {"type": "yuxi.thread.input.continue"},
+                    idempotency_key=str(uuid.uuid4()),
+                )
+                accepted = {}
+        except (ChatWebError, ClientError, KeyError, json.JSONDecodeError) as exc:
             self._send_json_error(400, str(exc))
             return
 
@@ -119,73 +130,66 @@ class ChatRequestHandler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         self.send_header("Connection", "close")
         self.end_headers()
-
         try:
-            self._write_event(
-                {
-                    "type": "meta",
-                    "run_id": run_id,
-                    "thread_id": run.get("thread_id"),
-                }
-            )
-            for event in _browser_events(
-                self.server.client.stream_agent_run_events(run_id),
-                thread_id=str(run.get("thread_id") or "") or None,
-            ):
+            self._write_event({"type": "meta", "thread_id": thread_id})
+            turn_id = str(accepted.get("turn_id") or "") or self._wait_for_turn(thread_id, input_id)
+            if turn_id is None:
+                self._write_event({"type": "queue_paused", "input_id": input_id})
+                self._write_event({"type": "done", "status": "paused"})
+                return
+            for event in self._follow_turn(thread_id, turn_id):
                 self._write_event(event)
         except (BrokenPipeError, ConnectionResetError):
             return
         except (ChatWebError, ClientError) as exc:
             self._write_event({"type": "error", "message": str(exc)})
 
-    def _write_command_response(
-        self, response: dict[str, Any], *, thread_id: str | None
-    ) -> None:
-        """将不创建 Run 的 Channel command 结果返回给浏览器。"""
-        self.send_response(200)
-        self.send_header("Content-Type", "application/x-ndjson; charset=utf-8")
-        self.send_header("Cache-Control", "no-store")
-        self.send_header("Connection", "close")
-        self.end_headers()
-        self._write_event({"type": "meta", "thread_id": thread_id})
-        self._write_event(
-            {
-                "type": "command",
-                "command": response.get("command"),
-                "result": response.get("state") or response,
-            }
-        )
-        self._write_event({"type": "done", "status": "completed"})
+    def _wait_for_turn(self, thread_id: str, input_id: str) -> str | None:
+        """等待 Input 领取；队列暂停时把继续操作交还给用户。"""
+        while True:
+            received = self.server.client.get_agent_input(thread_id, input_id)
+            if received.get("turn_id"):
+                return str(received["turn_id"])
+            if received.get("status") == "cancelled":
+                raise ChatWebError("排队输入已取消")
+            if self.server.client.get_agent_thread_queue(thread_id).get("queue_paused"):
+                return None
+            time.sleep(0.5)
 
-    def _wait_queued_run(self, response: dict[str, Any]) -> dict[str, Any]:
-        """跟随 Request SSE，直到排队请求真正创建 Run。"""
-        request_events_url = str(response.get("request_events_url") or "").strip()
-        if not request_events_url:
-            raise ChatWebError("远端未返回 request_events_url")
-
-        for event in self.server.client.stream_agent_request_events(request_events_url):
+    def _follow_turn(self, thread_id: str, turn_id: str) -> Iterator[dict[str, Any]]:
+        """跟随跨 Run 事件，断线后以持久 Turn 快照核对终态。"""
+        cursor = None
+        unavailable_since = None
+        while True:
+            turn = self.server.client.get_agent_turn(thread_id, turn_id)
+            if turn.get("status") in TURN_TERMINAL_STATUSES:
+                yield from _turn_result_events(turn)
+                return
             try:
-                data = json.loads(event.get("data") or "{}")
-            except json.JSONDecodeError as exc:
-                raise ChatWebError("远端返回了无效的排队事件") from exc
-            if not isinstance(data, dict):
-                continue
-
-            event_type = event.get("event") or "message"
-            if event_type == "run_created":
-                run_id = str(data.get("run_id") or "").strip()
-                if not run_id:
-                    raise ChatWebError("排队事件缺少 run_id")
-                return {
-                    **response,
-                    "run_id": run_id,
-                    "thread_id": data.get("thread_id") or response.get("thread_id"),
-                }
-            if event_type in {"cancelled", "rejected", "failed", "error"}:
-                message = data.get("message") or data.get("status") or event_type
-                raise ChatWebError(f"排队请求结束：{message}")
-
-        raise ChatWebError("排队事件流在创建 Run 前断开，请重试")
+                for event in self.server.client.stream_agent_thread_events(
+                    thread_id, after_cursor=cursor
+                ):
+                    cursor = event.get("id") or cursor
+                    if event.get("event") == "agent.thread.resync":
+                        turn = self.server.client.get_agent_turn(thread_id, turn_id)
+                        if turn.get("status") in TURN_TERMINAL_STATUSES:
+                            yield from _turn_result_events(turn)
+                            return
+                        continue
+                    for browser_event in _browser_events(iter((event,)), turn_id=turn_id):
+                        if browser_event["type"] == "done":
+                            turn = self.server.client.get_agent_turn(thread_id, turn_id)
+                            yield from _turn_result_events(turn)
+                            return
+                        yield browser_event
+                unavailable_since = None
+            except ClientError as exc:
+                if exc.status_code is not None and exc.status_code < 500 and exc.status_code != 429:
+                    raise
+                unavailable_since = unavailable_since or time.monotonic()
+                if time.monotonic() - unavailable_since >= LOOKUP_FAILURE_TIMEOUT:
+                    raise ChatWebError(f"事件流持续不可用: {exc}") from exc
+            time.sleep(0.5)
 
     def _is_local_request(self) -> bool:
         origin = self.headers.get("Origin")
@@ -208,9 +212,7 @@ class ChatRequestHandler(BaseHTTPRequestHandler):
         return payload
 
     def _write_event(self, payload: dict[str, Any]) -> None:
-        self.wfile.write(
-            json.dumps(payload, ensure_ascii=False).encode("utf-8") + b"\n"
-        )
+        self.wfile.write(json.dumps(payload, ensure_ascii=False).encode("utf-8") + b"\n")
         self.wfile.flush()
 
     def _send_json_error(self, status: int, message: str) -> None:
@@ -225,79 +227,52 @@ class ChatRequestHandler(BaseHTTPRequestHandler):
         return
 
 
-def _browser_events(
-    events: Iterator[dict[str, str]],
-    *,
-    thread_id: str | None = None,
-) -> Iterator[dict[str, Any]]:
-    """把远端 Run SSE 压缩为页面需要的文本增量与终态。"""
-    saw_terminal = False
-    waiting_for_approval = False
+def _turn_result_events(turn: dict[str, Any]) -> Iterator[dict[str, Any]]:
+    """根据持久 Turn 状态输出最终结果或等待提示。"""
+    status = turn.get("status")
+    if status == "completed":
+        yield {"type": "snapshot", "content": str((turn.get("output") or {}).get("content") or "")}
+        yield {"type": "done", "status": "completed"}
+    elif status == "waiting":
+        yield {"type": "approval_required", "message": "等待用户操作，请在 Yuxi 网页继续"}
+        yield {"type": "done", "status": "waiting"}
+    elif status in {"failed", "cancelled"}:
+        runs = turn.get("runs") or []
+        failure = runs[-1].get("error_message") if runs else None
+        yield {"type": "error", "message": str(failure or status)}
+    else:
+        raise ChatWebError("Turn 尚未结束，无法读取最终结果")
 
+
+def _browser_events(
+    events: Iterator[dict[str, str]], *, turn_id: str
+) -> Iterator[dict[str, Any]]:
+    """从目标 Turn 的事件提取文本增量和终态通知。"""
     for event in events:
         try:
             data = json.loads(event.get("data") or "{}")
         except json.JSONDecodeError as exc:
             raise ChatWebError("远端返回了无效的流事件") from exc
-        if not isinstance(data, dict):
+        if not isinstance(data, dict) or data.get("turn_id") != turn_id:
             continue
-        if thread_id and data.get("thread_id") not in {None, thread_id}:
-            continue
-
-        event_type = event.get("event") or "message"
+        event_type = str(data.get("type") or event.get("event") or "")
         payload = data.get("payload") if isinstance(data.get("payload"), dict) else {}
-        chunks = (
-            payload.get("items")
-            if isinstance(payload.get("items"), list)
-            else [payload.get("chunk")]
-        )
+        chunks = payload.get("items") if isinstance(payload.get("items"), list) else [payload.get("chunk")]
         for chunk in chunks:
             if not isinstance(chunk, dict):
                 continue
-            if (
-                chunk.get("status") == "human_approval_required"
-                and not waiting_for_approval
-            ):
-                waiting_for_approval = True
-                yield {
-                    "type": "approval_required",
-                    "message": "等待工具审批，请输入 /approve 继续",
-                }
             stream_event = chunk.get("stream_event")
-            if (
-                isinstance(stream_event, dict)
-                and stream_event.get("type") == "message_delta"
-            ):
+            if isinstance(stream_event, dict) and stream_event.get("type") == "message_delta":
                 content = stream_event.get("content")
                 if isinstance(content, str) and content:
                     yield {"type": "delta", "content": content}
-
-        if event_type == "error":
-            chunk = (
-                payload.get("chunk") if isinstance(payload.get("chunk"), dict) else {}
-            )
-            if chunk.get("retryable") is True or payload.get("retryable") is True:
-                continue
-            message = (
-                chunk.get("error_message")
-                or chunk.get("message")
-                or data.get("message")
-                or "运行失败"
-            )
-            yield {"type": "error", "message": str(message)}
-            return
-        elif event_type == "end":
-            saw_terminal = True
-            status = str(payload.get("status") or "completed")
-            if status == "interrupted" and waiting_for_approval:
-                yield {"type": "done", "status": "waiting_approval"}
-                continue
-            if status != "completed":
-                yield {"type": "error", "message": f"运行结束：{status}"}
-            yield {"type": "done", "status": status}
-
-    if not saw_terminal:
-        raise ChatWebError("运行事件流在终态前断开，请重试")
+        if event_type in {
+            "agent.thread.turn.completed",
+            "agent.thread.turn.waiting",
+            "agent.thread.turn.failed",
+            "agent.thread.turn.cancelled",
+        }:
+            yield {"type": "done", "status": event_type.rsplit(".", 1)[-1]}
 
 
 def run_web_chat(

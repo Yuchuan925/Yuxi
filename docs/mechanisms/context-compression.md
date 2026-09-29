@@ -52,7 +52,7 @@ checkpoint 只拥有模型继续运行所需的压缩视图；PostgreSQL Message
 
 声明 `context_compression` capability 的 Agent 会在聊天状态面板显示“压缩上下文”按钮。按钮发起一次同步维护请求，不创建 AgentRun、排队请求或新的 Run 类型。
 
-服务从检查空闲到 checkpoint 更新期间持有 Conversation 行锁。线程存在运行中 Run、等待交互的 Run 或排队 Request 时返回 `409 thread_busy`；普通请求接入使用同一把锁，因此不会与主动压缩并发修改同一线程。
+服务从检查空闲到 checkpoint 更新期间持有 Conversation 行锁。线程存在运行中 Run、等待交互的 Run 或排队 Input 时返回 `409 thread_busy`；普通输入接入使用同一把锁，因此不会与主动压缩并发修改同一线程。
 
 服务通过当前 Agent 的 canonical compiled graph 读取和更新 state，不直接操作 checkpoint 表。压缩期间创建或复用的 Sandbox 在请求结束时释放。成功后前端重新读取 Agent state；由于这次维护请求没有完整主模型请求形状，上一次 system/tool 压力估算会失效，下一次主模型调用重新生成完整压力数据。
 
@@ -64,7 +64,7 @@ checkpoint 只拥有模型继续运行所需的压缩视图；PostgreSQL Message
 - `completed`：压缩处理后的主模型调用成功；
 - `failed`：压缩过程中出现未处理异常。
 
-`chat_service` 把它们映射为 SSE 的 `context_compression` 事件。SSE 只负责实时提示；可恢复的摘要状态以对应 Run 的 checkpoint 为准，历史内容以 Workdir 文件为准。内部摘要模型带有 `TAG_NOSTREAM`，不会作为用户可见的助手消息流出。
+执行器将它们映射为 SSE 的 `context_compression` 事件。SSE 只负责实时提示；可恢复的摘要状态以对应 Run 的 checkpoint 为准，历史内容以 Workdir 文件为准。内部摘要模型带有 `TAG_NOSTREAM`，不会作为用户可见的助手消息流出。
 
 状态面板使用下一轮模型输入的近似 token 与 `summary_threshold` 计算压力。达到阈值的 85% 时显示手动压缩建议；85% 只影响提示，不参与自动压缩。
 
@@ -95,7 +95,7 @@ Summary 触发使用近似 token 统计；主模型返回的 `usage_metadata` �
 | --- | --- |
 | 事件显示开始但没有完成 | 同一 Run 的 error 事件、worker 日志和主模型错误 |
 | 摘要后找不到旧内容 | checkpoint 的 `_summarization_event.file_path` 和 Workdir 中的历史文件 |
-| 主动压缩返回 `thread_busy` | 同线程的活跃 Run、等待交互状态和 FIFO 排队请求 |
+| 主动压缩返回 `thread_busy` | 同线程的活跃 Run、等待交互状态和 FIFO 排队 Input |
 | 任务仍提示上下文过大 | 确定性压缩视图、保留消息数、工具 schemas 和目标模型上下文上限 |
 | 前端出现摘要文本 | 检查是否把内部摘要流误当成 messages 事件 |
 
@@ -105,6 +105,7 @@ Summary 触发使用近似 token 统计；主模型返回的 `usage_metadata` �
 
 - [Summary middleware](https://github.com/xerrors/Yuxi/blob/main/backend/package/yuxi/agents/middlewares/summary.py)
 - [主动压缩 service](https://github.com/xerrors/Yuxi/blob/main/backend/package/yuxi/services/context_compression_service.py)
+- [Agent 执行器](https://github.com/xerrors/Yuxi/blob/main/backend/package/yuxi/services/agents/execution.py)
 - [Agent state repository](https://github.com/xerrors/Yuxi/blob/main/backend/package/yuxi/repositories/agent_state_repository.py)
 - [Agent 配置](https://github.com/xerrors/Yuxi/blob/main/backend/package/yuxi/agents/context.py)
 - [Chatbot graph](https://github.com/xerrors/Yuxi/blob/main/backend/package/yuxi/agents/buildin/chatbot/graph.py)

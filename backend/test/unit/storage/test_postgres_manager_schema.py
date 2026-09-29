@@ -74,7 +74,7 @@ def test_agent_run_serialization_does_not_project_removed_redis_cursor():
         runtime_scope_id="thread-1",
         agent_slug="main",
         uid="user-1",
-        request_id="request-1",
+        turn_id="turn-1",
         input_payload={},
     )
 
@@ -233,9 +233,26 @@ async def test_ensure_business_schema_adds_run_origin_snapshot_columns():
     assert "agent_runs ADD COLUMN IF NOT EXISTS channel VARCHAR(32)" in statements
     assert "agent_runs ADD COLUMN IF NOT EXISTS external_id VARCHAR(128)" in statements
     assert "agent_runs ADD COLUMN IF NOT EXISTS origin_metadata JSONB" in statements
-    assert "agent_run_requests ADD COLUMN IF NOT EXISTS channel VARCHAR(32)" in statements
-    assert "agent_run_requests ADD COLUMN IF NOT EXISTS external_id VARCHAR(128)" in statements
-    assert "agent_run_requests ADD COLUMN IF NOT EXISTS origin_metadata JSONB" in statements
+    assert "agent_run_requests" not in BusinessBase.metadata.tables
+    inputs = BusinessBase.metadata.tables["agent_inputs"]
+    assert {"source", "channel", "external_id", "origin_metadata"} <= set(inputs.c.keys())
+
+
+@pytest.mark.asyncio
+async def test_ensure_business_schema_requires_persistent_run_execution_sequence():
+    """每段 Run 都必须有跨重连的持久执行序号。"""
+    async with _recording_manager() as (manager, connection):
+        await manager.ensure_business_schema()
+
+    statements = connection.statements
+    assert (
+        "UPDATE agent_runs SET execution_seq = nextval('agent_runs_execution_seq') WHERE execution_seq IS NULL"
+        in statements
+    )
+    assert "ALTER TABLE IF EXISTS agent_runs ALTER COLUMN execution_seq SET NOT NULL" in statements
+    assert statements.index(
+        "UPDATE agent_runs SET execution_seq = nextval('agent_runs_execution_seq') WHERE execution_seq IS NULL"
+    ) < statements.index("ALTER TABLE IF EXISTS agent_runs ALTER COLUMN execution_seq SET NOT NULL")
 
 
 @pytest.mark.asyncio

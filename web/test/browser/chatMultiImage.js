@@ -86,10 +86,14 @@ async (page) => {
   // ---- 4. 发送：请求体是数组，且模型确实读到了两张 ----
   const posted = []
   page.on('request', (request) => {
-    if (request.url().includes('/api/agent/runs') && request.method() === 'POST') {
+    if (/\/api\/v1\/agents\/threads\/[^/]+\/events$/.test(request.url()) && request.method() === 'POST') {
       try {
         const body = JSON.parse(request.postData() || '{}')
-        posted.push(body.image_content)
+        const message = body.events?.find((event) => event.type === 'agent.thread.input.message')
+        if (message) {
+          const content = message.input?.[0]?.content || []
+          posted.push(content.filter((part) => part.type === 'input_image').map((part) => part.image_url))
+        }
       } catch {
         posted.push('无法解析请求体')
       }
@@ -125,11 +129,8 @@ async (page) => {
     strandedWithoutImages === 0,
     `运行期间有 ${strandedWithoutImages} 次采样显示用户消息没有图片（运行中丢图）`
   )
-
-
-
   const sent = posted.at(-1)
-  check(Array.isArray(sent) && sent.length === 3, `请求体里的 image_content 不是 3 张的数组：${JSON.stringify(sent)?.slice(0, 60)}`)
+  check(Array.isArray(sent) && sent.length === 3, `Public Input 中的 input_image 不是 3 张：${JSON.stringify(sent)?.slice(0, 60)}`)
   const reply = await page.locator('.message-box, .message-md').allInnerTexts()
   const joinedText = reply.join('\n')
   check(joinedText.includes('IMG-A'), '模型回复里没有第一张图的文字')
@@ -143,7 +144,7 @@ async (page) => {
 
   const dto = await page.evaluate(async (id) => {
     const token = localStorage.getItem('user_token')
-    const response = await fetch(`/api/chat/thread/${id}/history`, {
+    const response = await fetch(`/api/v1/agents/threads/${id}/history`, {
       headers: { Authorization: `Bearer ${token}` }
     })
     const data = await response.json()

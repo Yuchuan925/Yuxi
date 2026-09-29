@@ -489,11 +489,20 @@ async def test_dashboard_service_conversation_detail(dashboard_db):
 async def test_conversation_tokens_use_runs_and_expose_missing_usage(dashboard_db):
     """审计累加同会话 Run，忽略旧汇总并区分真实零和未知。"""
     from sqlalchemy import select
-    from yuxi.storage.postgres.models_business import AgentRun
+    from yuxi.storage.postgres.models_business import AgentRun, AgentTurn
 
     conversation = (
         await dashboard_db.execute(select(Conversation).where(Conversation.thread_id == "thread-102"))
     ).scalar_one()
+    dashboard_db.add(
+        AgentTurn(
+            id="usage-turn",
+            conversation_thread_id=conversation.thread_id,
+            uid=conversation.uid,
+            status="completed",
+        )
+    )
+    await dashboard_db.flush()
     for index, usage in enumerate(
         [
             {"total": {"total_tokens": 120}, "complete": True, "usage_reported_call_count": 1},
@@ -508,11 +517,14 @@ async def test_conversation_tokens_use_runs_and_expose_missing_usage(dashboard_d
                 runtime_scope_id=conversation.thread_id,
                 agent_slug=conversation.agent_id,
                 uid=conversation.uid,
-                status="completed",
-                request_id=f"usage-request-{index}",
+                status="yielded" if index == 0 else "completed",
+                turn_id="usage-turn",
+                run_type="chat" if index == 0 else "resume",
+                resume_from_run_id="usage-run-0" if index else None,
                 token_usage=usage,
             )
         )
+        await dashboard_db.flush()
     await dashboard_db.commit()
     service = DashboardService(dashboard_db)
     detail = await service.get_conversation_detail(conversation.thread_id)

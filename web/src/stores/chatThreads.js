@@ -141,20 +141,20 @@ export const useChatThreadsStore = defineStore('chatThreads', () => {
     }
   }
 
-  const deleteThread = async (threadId) => {
+  const archiveThread = async (threadId) => {
     if (!threadId) return
 
     try {
-      await threadApi.deleteThread(threadId)
+      await threadApi.archiveThread(threadId)
       threads.value = threads.value.filter((thread) => thread.id !== threadId)
-      // 线程已删除，同步清理其输入草稿
+      // 归档后清理当前线程的本地草稿。
       threadDraftStore.remove(threadId)
       if (currentThreadId.value === threadId) {
         setCurrentThreadId(null)
       }
     } catch (error) {
-      console.error('Failed to delete thread:', error)
-      handleChatError(error, 'delete')
+      console.error('Failed to archive thread:', error)
+      handleChatError(error, 'archive')
       throw error
     }
   }
@@ -180,19 +180,21 @@ export const useChatThreadsStore = defineStore('chatThreads', () => {
     return removedIds
   }
 
-  const updateThread = async (threadId, title, isPinned, toolApprovalMode) => {
+  const updateThread = async (threadId, title, isPinned, toolApprovalMode, modelSpec) => {
     if (!threadId) return
 
     const normalizedTitle = title ? String(title).replace(/\s+/g, ' ').trim().slice(0, 255) : null
     if (title && !normalizedTitle) return
-    if (!normalizedTitle && isPinned === undefined && toolApprovalMode === undefined) return
+    if (!normalizedTitle && isPinned === undefined && toolApprovalMode === undefined &&
+        modelSpec === undefined) return
 
     try {
       const updatedThread = await threadApi.updateThread(
         threadId,
         normalizedTitle,
         isPinned,
-        toolApprovalMode
+        toolApprovalMode,
+        modelSpec
       )
       upsertThread(updatedThread)
       return updatedThread
@@ -219,7 +221,7 @@ export const useChatThreadsStore = defineStore('chatThreads', () => {
     loadThreads,
     loadMoreThreads,
     createThread,
-    deleteThread,
+    archiveThread,
     removeThreadsByProject,
     updateThread
   }

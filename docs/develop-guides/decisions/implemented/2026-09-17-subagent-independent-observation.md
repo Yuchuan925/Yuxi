@@ -12,7 +12,7 @@ Owner：backend/package/yuxi/agents/middlewares/subagent_task.py
 
 模型仅获得 subagent_start/status/await/cancel。start 立即返回并写入 subagent_runs，await 只等待已有 Run。state 提供身份，页面用现有 Run HTTP/SSE 读取当前状态，不向父流复制子 Run 生命周期。父 Run 终态级联取消、FIFO、lease、runtime cleanup 和工具恢复归属保持原有策略。
 
-AgentRunRepository 按用户和父 Conversation 的持久关系查询子 Run；chat_service 的状态 HTTP 入口据此补齐记录，覆盖创建提交后尚未写入 checkpoint 的窗口。查询包含历史 Run，以创建时间和 ID 稳定排序。
+AgentRunRepository 按用户和父 Conversation 的持久关系查询子 Run；`agents/state.py` 的状态读取用例据此补齐记录，覆盖创建提交后尚未写入 checkpoint 的窗口。查询包含历史 Run，以创建时间和 ID 稳定排序。
 
 useSubagentRuns 按 run_id 独立保存观察结果，不被父 checkpoint 的旧状态覆盖。页面切换用户、会话或停用时关闭订阅；迟到 HTTP 响应不能写入新视图。HTTP/1.1 下最多保留三个子 Run SSE，为父流和普通请求留出连接；其余活跃子 Run 每两秒回读，连接空缺后建立订阅。已有子流无事件时每十五秒核对状态，终态关闭连接，故障显示重连提示。
 
@@ -35,7 +35,7 @@ useSubagentRuns 按 run_id 独立保存观察结果，不被父 checkpoint 的�
 
 - `docker compose exec -T api uv run --no-sync --group test pytest test/unit -m 'not slow'`：Passed，2152 passed、53 skipped；覆盖工具装配、立即派发、未知历史工具拒绝、状态与权限相关纯逻辑。标准不带 `--no-sync` 的命令因容器系统 site-packages 无写权限而失败，使用已安装依赖完成验证。
 - `docker compose exec -T api uv run --no-sync pytest test/integration/api/test_subagent_state_recovery.py -q`：Passed，1 passed；真实 PostgreSQL/HTTP 从没有父 checkpoint 的持久关系恢复子 Run，其他用户收到 404。该测试加入 Runtime System Tests。integration/E2E 共享清理 fixture，必须串行执行，避免一个测试会话清理另一个会话的活跃测试 Run。
-- `docker compose exec -T api uv run --no-sync pytest test/e2e/test_deterministic_agent_path_e2e.py -k 'subagent_worker_enforces_inherited_write_policy or subagent_end_is_observable' -q`：Passed，3 passed；确定性 replay 验证 start/await、两种审批模式、子输出消息，以及父 await/慢子任务仍 running 时快子任务已完成并可独立订阅终态。该文件由既有 Runtime System Tests 选择。
+- `docker compose exec -T api uv run --no-sync pytest test/e2e/test_deterministic_agent_path_e2e.py -k 'subagent_worker_enforces_inherited_write_policy or subagent_end_is_observable' -q`：Passed，3 passed；确定性 replay 验证 start/await、两种审批模式、子输出消息，以及父 await/慢子任务仍 running 时快子任务已完成并可独立订阅终态。当时该文件由 Runtime System Tests 选择；当前对应场景由 [SubAgent 边界 E2E](https://github.com/xerrors/Yuxi/blob/main/backend/test/e2e/test_agent_lifecycle_subagent_boundaries_e2e.py) 覆盖。
 - `docker compose exec -T web pnpm run lint:check`、`docker compose exec -T web pnpm run test:unit`、`docker compose exec -T web pnpm run build`：Passed，341 项前端测试通过；观察器验证快慢任务、旧快照、同子线程新 Run、重连游标、迟到响应、清理、查询失败与八任务连接上限。
 - Playwright 真实页面验证：Passed；使用相同确定性快慢子任务，DOM 一项完成、一项运行中，同时 HTTP 回读父 Run 为 running；释放慢任务后回读父子最终结果。八任务连接上限由前端单测覆盖，未执行八个真实 worker 的浏览器压力测试。
 - `pnpm --dir docs run build`、`python3 scripts/verify_engineering_contracts.py`、`python3 -m unittest scripts.test_verify_engineering_contracts`：Passed，工程契约 unit 62 项通过；校验相对链接、decision 生命周期和 workflow 接线。真实外部模型未运行，确定性 replay 不替代 provider 行为校准。

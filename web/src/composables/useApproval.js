@@ -53,6 +53,31 @@ export const extractPendingInterrupt = (chunk, threadId) => {
   }
 }
 
+/** 从持久 Turn 等待点恢复可提交的审批界面。 */
+export const pendingInterruptFromWaitpoint = (waitpoint, threadId) => {
+  if (!waitpoint?.id || !waitpoint.run_id) return null
+  if (waitpoint.kind === 'approval' && waitpoint.calls?.length) {
+    return {
+      kind: 'tool_approval',
+      actionRequests: waitpoint.calls,
+      status: 'human_approval_required',
+      threadId,
+      interruptedRunId: waitpoint.run_id
+    }
+  }
+  const questions = normalizeQuestions(waitpoint.questions || [])
+  if (waitpoint.kind === 'answer' && questions.length) {
+    return {
+      kind: 'question',
+      questions,
+      status: 'ask_user_question_required',
+      threadId,
+      interruptedRunId: waitpoint.run_id
+    }
+  }
+  return null
+}
+
 export function useApproval({ getThreadState, fetchThreadMessages }) {
   const approvalState = reactive({
     showModal: false,
@@ -112,7 +137,7 @@ export function useApproval({ getThreadState, fetchThreadMessages }) {
 
     threadState.isStreaming = false
     threadState.replyLoadingVisible = false
-    threadState.pendingRequestId = null
+    threadState.pendingInputId = null
     applyInterruptToApprovalState(pendingInterrupt, threadId)
     return true
   }

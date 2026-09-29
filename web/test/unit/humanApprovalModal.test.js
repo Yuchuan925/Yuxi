@@ -58,7 +58,7 @@ const find = (node, predicate) => {
 const textContent = (node) =>
   [node.text, ...(node.children || []).map((child) => textContent(child))].join('')
 
-test('问题弹窗提交纯文本，并在跳过时省略当前题答案', async () => {
+test('问题弹窗按顺序收集全部答案', async () => {
   globalThis.window = {
     getComputedStyle: () => ({
       lineHeight: '20',
@@ -146,38 +146,6 @@ test('问题弹窗提交纯文本，并在跳过时省略当前题答案', async
 
     app.unmount()
     submissions.length = 0
-    const skippedHost = makeNode('root')
-    app = renderer.createApp(() =>
-      h(HumanApprovalModal, {
-        visible: true,
-        questions,
-        onSubmit: (answerValue) => submissions.push(answerValue)
-      })
-    )
-    app.mount(skippedHost)
-    await nextTick()
-    const skip = find(
-      skippedHost,
-      (node) => node.type === 'button' && node.props.class === 'btn btn-skip'
-    )
-    skip.props.onClick()
-    await nextTick()
-    const skippedSpring = find(
-      skippedHost,
-      (node) => node.type === 'input' && node.props.value === '春天'
-    )
-    skippedSpring.props.onChange()
-    await nextTick()
-    const skippedSubmit = find(
-      skippedHost,
-      (node) => node.type === 'button' && node.props.class === 'btn btn-approve'
-    )
-    skippedSubmit.props.onClick()
-
-    assert.deepEqual(submissions, [{ season: '春天' }])
-
-    app.unmount()
-    submissions.length = 0
     const customHost = makeNode('root')
     app = renderer.createApp(() =>
       h(HumanApprovalModal, {
@@ -188,7 +156,11 @@ test('问题弹窗提交纯文本，并在跳过时省略当前题答案', async
     )
     app.mount(customHost)
     await nextTick()
-    find(customHost, (node) => node.type === 'button' && node.props.class === 'btn btn-skip').props.onClick()
+    find(customHost, (node) => node.props.placeholder === '请输入你的回答…')
+      .props.onInput({ target: { value: '杭州' } })
+    await nextTick()
+    find(customHost, (node) => node.type === 'button' && node.props.class === 'btn btn-approve')
+      .props.onClick()
     await nextTick()
     const customAnswer = find(
       customHost,
@@ -202,7 +174,7 @@ test('问题弹窗提交纯文本，并在跳过时省略当前题答案', async
     ).props.onClick()
 
     assert.deepEqual(submissions, [
-      { season: { type: 'other', text: '秋天', selected: [] } }
+      { destination: '杭州', season: { type: 'other', text: '秋天', selected: [] } }
     ])
 
     app.unmount()

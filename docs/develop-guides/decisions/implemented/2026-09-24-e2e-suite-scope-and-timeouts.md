@@ -14,7 +14,7 @@ Owner：backend/test/e2e/e2e_helpers.py
 - 附件上传、确认、列表的接口断言由 `backend/test/integration/api/test_chat_router.py` 覆盖，删除原 API-only E2E。replay 协议拒绝条件改由 unit 直接检查。
 - 重试矩阵缩为两种配置、共三个真实 Run：普通 Agent 在首次调用失败后验证同线程后续派发，子 Run 在工具后失败并由父 Run 消费。附件场景只提交一个 Run，通过显式释放 runtime 验证文件跨实例保留。保留正常 Run、同线程审计因果、执行限制、定时 Run、恢复、取消、工具错误、SubAgent 策略与独立可见性。
 - `wait_for_run` 的状态请求同时受剩余 Run deadline 和 10 秒单请求上限约束；确定性 pytest 项有 360 秒整项上限。
-- `.github/workflows/system-tests.yml` 顺序运行 smoke、lifecycle、boundaries 三阶段，各有 step timeout；额外收集步骤拒绝未归属的确定性场景。工程契约检查登记三个实际阻断步骤。
+- `.github/workflows/system-tests.yml` 顺序运行 lifecycle、extended、SubAgent/Workdir 和 Key scope 四组确定性 E2E，各有 step timeout；工程契约检查登记四个实际阻断步骤。
 
 ## 替代方案
 
@@ -24,7 +24,7 @@ Owner：backend/test/e2e/e2e_helpers.py
 
 ## 后果
 
-常规入口不再隐式调用外部模型，失败步骤能指出主要场景。三阶段仍顺序复用一个 Compose 栈，不共享并行数据库。端到端用例数量减少，但仍保留完整跨进程主链路；产品代码和持久化格式不变。
+常规入口不再隐式调用外部模型，失败步骤能指出主要场景。四组 E2E 顺序复用一个 Compose 栈，不共享并行数据库。端到端用例数量减少，但仍保留完整跨进程主链路；产品代码和持久化格式不变。
 
 旧能力不存在：附件接口专用 E2E、replay HTTP 自检 E2E、四组重试矩阵与附件用例中的固定 keepalive 等待已移除。
 

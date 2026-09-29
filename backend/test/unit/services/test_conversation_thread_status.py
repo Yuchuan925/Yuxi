@@ -1,50 +1,56 @@
-"""
-Conversation thread status mapping and viewed-marking unit tests.
-"""
+"""Public Thread 状态、已读与作用域的单元测试。"""
 
 from __future__ import annotations
 
-from types import SimpleNamespace
+from datetime import datetime, timedelta
 
 import pytest
 import pytest_asyncio
+from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from yuxi.repositories.conversation_repository import ConversationRepository, UNVIEWED_RUN_MARKER
-from yuxi.services import conversation_service as svc
-from yuxi.storage.postgres.models_business import AgentRun, Base, Conversation, Project
+from yuxi.services.agents.scope import ActorScope
+from yuxi.services.agents.threads import archive_thread, get_thread_snapshot, list_threads, mark_thread_viewed
+from yuxi.storage.postgres.models_business import AgentRun, AgentTurn, Base, Conversation, Project
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.unit]
+SCOPE = ActorScope(uid="user-1", app_id=None)
 
 
 @pytest_asyncio.fixture()
 async def session():
+    """创建与生产 ORM 同形的独立内存数据库。"""
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
     factory = async_sessionmaker(engine, expire_on_commit=False)
     async with factory() as db:
         yield db
     await engine.dispose()
 
 
-async def _seed_conversation(db, *, thread_id: str, last_viewed_run_id: str | None = None) -> Conversation:
+async def _seed_thread(
+    db, thread_id: str, *, uid: str = "user-1", app_id: str | None = None, last_viewed_run_id: str | None = None
+) -> Conversation:
+    """创建一个完整作用域的活动 Thread。"""
     project_id = f"project-{thread_id}"
     db.add(
         Project(
             id=project_id,
-            uid="user-1",
+            uid=uid,
             selection_status="implicit",
-            workdir_path=f"projects/workdir-{thread_id}",
+            workdir_path=f"projects/{project_id}",
             directory_mode="managed",
         )
     )
     conversation = Conversation(
         thread_id=thread_id,
         project_id=project_id,
-        uid="user-1",
+        uid=uid,
+        app_id=app_id,
         agent_id="main",
-        title=f"conv-{thread_id}",
+        title=thread_id,
         status="active",
         extra_metadata={},
         last_viewed_run_id=last_viewed_run_id,
@@ -54,149 +60,124 @@ async def _seed_conversation(db, *, thread_id: str, last_viewed_run_id: str | No
     return conversation
 
 
-async def _seed_run(db, *, thread_id: str, run_id: str, status: str, run_type: str = "chat") -> AgentRun:
+async def _seed_run(
+    db, conversation: Conversation, run_id: str, status: str, *, created_at: datetime | None = None
+) -> AgentRun:
+    """建立显式 Turn→Run 关系供状态读取。"""
+    turn = AgentTurn(
+        id=f"turn-{run_id}",
+        conversation_thread_id=conversation.thread_id,
+        uid=conversation.uid,
+        app_id=conversation.app_id,
+        status="running" if status in {"pending", "running", "cancel_requested"} else "completed",
+        result_run_id=run_id if status == "completed" else None,
+        current_run_id=run_id,
+    )
     run = AgentRun(
         id=run_id,
-        conversation_thread_id=thread_id,
-        runtime_scope_id=thread_id,
+        conversation_thread_id=conversation.thread_id,
+        runtime_scope_id=conversation.thread_id,
         agent_slug="main",
-        uid="user-1",
-        status=status,
-        request_id=f"req-{run_id}",
-        run_type=run_type,
-        created_by_run_id="root-run" if run_type == "subagent" else None,
-        subagent_thread_relation_id=1 if run_type == "subagent" else None,
+        uid=conversation.uid,
+        app_id=conversation.app_id,
+        turn_id=turn.id,
+        conversation_id=conversation.id,
+        run_type="chat",
         input_payload={},
+        status=status,
+        created_at=created_at,
     )
-    db.add(run)
+    db.add_all([turn, run])
     await db.flush()
     return run
 
 
-@pytest.mark.parametrize(
-    ("run_id", "run_status", "last_viewed_run_id", "expected"),
-    [
-        (None, None, None, "done"),
-        ("r1", "running", None, "loading"),
-        ("r1", "pending", None, "loading"),
-        ("r1", "cancel_requested", None, "loading"),
-        ("r1", "completed", None, "ready"),
-        ("r1", "completed", "r1", "done"),
-        ("r1", "failed", None, "ready"),
-        ("r1", "cancelled", None, "ready"),
-        ("r1", "interrupted", None, "ready"),
-        ("r1", "interrupted", "r1", "done"),
-    ],
-)
-async def test_thread_status_mapping(run_id, run_status, last_viewed_run_id, expected):
-    assert svc._thread_status(run_id, run_status, last_viewed_run_id) == expected
-
-
-async def test_list_threads_view_maps_run_states(session):
-    await _seed_conversation(session, thread_id="thread-running")
-    await _seed_run(session, thread_id="thread-running", run_id="run-running", status="running")
-
-    await _seed_conversation(session, thread_id="thread-ready")
-    await _seed_run(session, thread_id="thread-ready", run_id="run-ready", status="completed")
-
-    await _seed_conversation(session, thread_id="thread-done", last_viewed_run_id="run-done")
-    await _seed_run(session, thread_id="thread-done", run_id="run-done", status="completed")
-
-    await _seed_conversation(session, thread_id="thread-no-run")
+async def test_public_list_maps_run_states_and_enforces_scope(session):
+    """侧边栏仅使用可见 Thread 的最新顶层 Run 计算状态。"""
+    running = await _seed_thread(session, "thread-running")
+    await _seed_run(session, running, "run-running", "running")
+    ready = await _seed_thread(session, "thread-ready")
+    await _seed_run(session, ready, "run-ready", "completed")
+    done = await _seed_thread(session, "thread-done", last_viewed_run_id="run-done")
+    await _seed_run(session, done, "run-done", "completed")
+    await _seed_thread(session, "thread-empty")
+    await _seed_thread(session, "thread-other-app", app_id="app-2")
+    await _seed_thread(session, "thread-other-user", uid="user-2")
     await session.commit()
 
-    items = await svc.list_threads_view(db=session, current_uid="user-1", agent_slug=None, limit=100)
+    items = await list_threads(db=session, scope=SCOPE)
     status_by_id = {item["id"]: item["thread_status"] for item in items}
+    assert status_by_id == {
+        "thread-running": "loading",
+        "thread-ready": "ready",
+        "thread-done": "done",
+        "thread-empty": "done",
+    }
 
-    assert status_by_id["thread-running"] == "loading"
-    assert status_by_id["thread-ready"] == "ready"
-    assert status_by_id["thread-done"] == "done"
-    assert status_by_id["thread-no-run"] == "done"
 
-
-async def test_list_threads_view_uses_joined_projects_without_per_thread_lookup(session, monkeypatch):
-    """线程列表批量联查 Project，不按 Conversation 逐条解析。"""
-
-    await _seed_conversation(session, thread_id="thread-one")
-    await _seed_conversation(session, thread_id="thread-two")
+async def test_latest_run_wins_and_viewed_mark_tracks_exact_run(session):
+    """新 Run 产生后旧已读标记不掩盖未读结果。"""
+    thread = await _seed_thread(session, "thread-latest", last_viewed_run_id="run-old")
+    created_at = datetime(2026, 9, 29, 8, 0, 0)
+    await _seed_run(session, thread, "run-old", "completed", created_at=created_at)
+    await _seed_run(session, thread, "run-new", "completed", created_at=created_at + timedelta(seconds=1))
     await session.commit()
 
-    async def reject_individual_lookup(**_kwargs):
-        raise AssertionError("线程列表不应逐条查询 Project")
-
-    monkeypatch.setattr(svc, "resolve_conversation_workdir_path", reject_individual_lookup)
-
-    items = await svc.list_threads_view(db=session, current_uid="user-1", agent_slug=None, limit=100)
-
-    assert {item["id"] for item in items} == {"thread-one", "thread-two"}
-
-
-async def test_list_threads_view_ignores_subagent_and_other_users(session):
-    await _seed_conversation(session, thread_id="thread-main")
-    await _seed_run(session, thread_id="thread-main", run_id="run-main", status="completed")
-    await _seed_run(session, thread_id="thread-main", run_id="run-sub", status="running", run_type="subagent")
-    await _seed_conversation(session, thread_id="thread-other-user")
-    db = session
-    db.add(
-        AgentRun(
-            id="run-other",
-            conversation_thread_id="thread-other-user",
-            runtime_scope_id="thread-other-user",
-            agent_slug="main",
-            uid="user-2",
-            status="running",
-            request_id="req-other",
-            run_type="chat",
-            input_payload={},
-        )
-    )
-    await db.commit()
-
-    items = await svc.list_threads_view(db=session, current_uid="user-1", agent_slug=None, limit=100)
-    status_by_id = {item["id"]: item["thread_status"] for item in items}
-
-    assert status_by_id["thread-main"] == "ready"
-    assert status_by_id["thread-other-user"] == "done"
+    before = await list_threads(db=session, scope=SCOPE)
+    assert before[0]["thread_status"] == "ready"
+    viewed = await mark_thread_viewed(db=session, thread_id=thread.thread_id, scope=SCOPE)
+    assert viewed["thread_status"] == "done"
+    after = await list_threads(db=session, scope=SCOPE)
+    assert after[0]["thread_status"] == "done"
+    assert thread.last_viewed_run_id == "run-new"
 
 
-async def test_latest_run_wins_when_multiple_runs_exist(session):
-    await _seed_conversation(session, thread_id="thread-latest", last_viewed_run_id="run-old")
-    await _seed_run(session, thread_id="thread-latest", run_id="run-old", status="completed")
-    await _seed_run(session, thread_id="thread-latest", run_id="run-new", status="completed")
+async def test_viewed_mark_does_not_complete_active_run(session):
+    """活动 Run 仍保持加载状态，不能被查看操作伪装为完成。"""
+    thread = await _seed_thread(session, "thread-active")
+    await _seed_run(session, thread, "run-active", "running")
     await session.commit()
 
-    items = await svc.list_threads_view(db=session, current_uid="user-1", agent_slug=None, limit=100)
-    item = next(item for item in items if item["id"] == "thread-latest")
+    viewed = await mark_thread_viewed(db=session, thread_id=thread.thread_id, scope=SCOPE)
+    snapshot = await get_thread_snapshot(db=session, scope=SCOPE, thread_id=thread.thread_id)
+    assert viewed["thread_status"] == "loading"
+    assert snapshot["current_turn"] == {
+        "turn_id": "turn-run-active",
+        "status": "running",
+        "run_id": "run-active",
+        "run_status": "running",
+        "waitpoint": None,
+        "result_run_id": None,
+    }
 
-    assert item["thread_status"] == "ready"
 
-
-async def test_mark_thread_viewed_turns_ready_to_done(session):
-    await _seed_conversation(session, thread_id="thread-view")
-    await _seed_run(session, thread_id="thread-view", run_id="run-view", status="completed")
+async def test_public_archive_refuses_active_turn(session):
+    """归档不能绕过尚未结束的 Turn。"""
+    thread = await _seed_thread(session, "thread-active")
+    await _seed_run(session, thread, "run-active", "running")
     await session.commit()
 
-    before = await svc.list_threads_view(db=session, current_uid="user-1", agent_slug=None, limit=100)
-    assert next(item for item in before if item["id"] == "thread-view")["thread_status"] == "ready"
-
-    result = await svc.mark_thread_viewed_view(db=session, thread_id="thread-view", current_uid="user-1")
-    assert result["thread_status"] == "done"
-
-    after = await svc.list_threads_view(db=session, current_uid="user-1", agent_slug=None, limit=100)
-    assert next(item for item in after if item["id"] == "thread-view")["thread_status"] == "done"
+    with pytest.raises(HTTPException) as failure:
+        await archive_thread(db=session, scope=SCOPE, thread_id=thread.thread_id)
+    assert failure.value.status_code == 409
+    assert thread.status == "active"
 
 
-async def test_mark_thread_viewed_keeps_loading_when_run_active(session):
-    await _seed_conversation(session, thread_id="thread-active")
-    await _seed_run(session, thread_id="thread-active", run_id="run-active", status="running")
+async def test_public_archive_refuses_pending_runtime_cleanup(session):
+    """Turn 已完成时仍须等待顶层 Run 释放运行时。"""
+    thread = await _seed_thread(session, "thread-cleanup")
+    run = await _seed_run(session, thread, "run-cleanup", "completed")
+    run.runtime_cleanup_pending = True
     await session.commit()
 
-    result = await svc.mark_thread_viewed_view(db=session, thread_id="thread-active", current_uid="user-1")
-
-    assert result["thread_status"] == "loading"
+    with pytest.raises(HTTPException) as failure:
+        await archive_thread(db=session, scope=SCOPE, thread_id=thread.thread_id)
+    assert failure.value.status_code == 409
+    assert thread.status == "active"
 
 
 async def test_new_thread_creation_uses_unviewed_marker(session):
+    """新建 Conversation 有专门的未读标记。"""
     conversation = await ConversationRepository(session).add_conversation(
         uid="user-1",
         agent_id="main",
@@ -204,11 +185,11 @@ async def test_new_thread_creation_uses_unviewed_marker(session):
         thread_id="thread-new",
         project_id="11111111-1111-4111-8111-111111111111",
     )
-
     assert conversation.last_viewed_run_id == UNVIEWED_RUN_MARKER
 
 
-async def test_new_thread_creation_cannot_seed_attachment_records(session):
+async def test_new_thread_cannot_seed_attachment_records(session):
+    """客户端 metadata 不能伪造已经确认的附件。"""
     conversation = await ConversationRepository(session).add_conversation(
         uid="user-1",
         agent_id="main",
@@ -216,176 +197,4 @@ async def test_new_thread_creation_cannot_seed_attachment_records(session):
         metadata={"attachments": [{"bucket_name": "private", "object_name": "secret"}]},
         project_id="22222222-2222-4222-8222-222222222222",
     )
-
     assert conversation.extra_metadata["attachments"] == []
-
-
-async def test_create_thread_view_rejects_client_attachment_metadata():
-    with pytest.raises(svc.HTTPException, match="服务端保留字段"):
-        await svc.create_thread_view(
-            agent_slug="main",
-            request_id=None,
-            title="malicious",
-            metadata={"attachments": [{"bucket_name": "private", "object_name": "secret"}]},
-            db=None,
-            current_uid="user-1",
-        )
-
-
-async def test_explicit_project_creation_locks_project_until_commit(monkeypatch):
-    project = SimpleNamespace(
-        id="project-1",
-        uid="user-1",
-        status="active",
-        selection_status="selectable",
-        directory_mode="linked",
-        workdir_path="clients/acme",
-    )
-    conversation = SimpleNamespace(
-        id=1,
-        thread_id="thread-1",
-        project_id="project-1",
-        uid="user-1",
-    )
-    lock_calls = []
-
-    class _Db:
-        async def execute(self, _statement):
-            return SimpleNamespace(scalar_one_or_none=lambda: SimpleNamespace(uid="user-1"))
-
-        async def commit(self):
-            return None
-
-    class _AgentRepository:
-        def __init__(self, _db):
-            pass
-
-        async def get_visible_by_slug(self, **_kwargs):
-            return SimpleNamespace(slug="main", backend_id="ChatbotAgent")
-
-    class _ProjectRepository:
-        def __init__(self, _db):
-            pass
-
-        async def lock_active_selectable_for_user(self, project_id, uid):
-            lock_calls.append((project_id, uid, True))
-            return project
-
-    class _ConversationRepository:
-        def __init__(self, _db):
-            pass
-
-        async def add_conversation(self, **_kwargs):
-            return conversation
-
-    async def serialize_thread(*_args, **_kwargs):
-        return {"id": "thread-1"}
-
-    monkeypatch.setattr(svc, "AgentRepository", _AgentRepository)
-    monkeypatch.setattr(svc, "ProjectRepository", _ProjectRepository)
-    monkeypatch.setattr(svc, "ConversationRepository", _ConversationRepository)
-    monkeypatch.setattr(svc.Workdir, "open_existing", lambda *_args: None)
-    monkeypatch.setattr(svc, "_serialize_thread", serialize_thread)
-
-    result = await svc.create_thread_view(
-        agent_slug="main",
-        request_id=None,
-        title="title",
-        metadata={},
-        project_id="project-1",
-        db=_Db(),
-        current_uid="user-1",
-    )
-
-    assert result == {"id": "thread-1"}
-    assert lock_calls == [("project-1", "user-1", True)]
-
-
-async def test_create_thread_replay_restores_managed_workdir(monkeypatch):
-    project = SimpleNamespace(
-        id="project-1",
-        uid="user-1",
-        status="active",
-        selection_status="implicit",
-        directory_mode="managed",
-        workdir_path="projects/11111111-1111-4111-8111-111111111111",
-    )
-    conversation = SimpleNamespace(
-        id=1,
-        thread_id="thread-1",
-        uid="user-1",
-        agent_id="main",
-        title="title",
-        status="active",
-        is_pinned=False,
-        project_id=project.id,
-        created_at=SimpleNamespace(isoformat=lambda: "created"),
-        updated_at=SimpleNamespace(isoformat=lambda: "updated"),
-        extra_metadata={},
-    )
-
-    class _Db:
-        async def execute(self, _statement):
-            return SimpleNamespace(scalar_one_or_none=lambda: SimpleNamespace(uid="user-1"))
-
-    class _AgentRepository:
-        def __init__(self, _db):
-            pass
-
-        async def get_visible_by_slug(self, **_kwargs):
-            return SimpleNamespace(slug="main", backend_id="ChatbotAgent")
-
-    class _ConversationRepository:
-        def __init__(self, _db):
-            pass
-
-        async def get_conversation_by_creation_request_id(self, _uid, _request_id):
-            return conversation
-
-    class _ProjectRepository:
-        def __init__(self, _db):
-            pass
-
-        async def get_for_user(self, _project_id, _uid):
-            return project
-
-    restored = []
-
-    async def ensure_available(**kwargs):
-        restored.append(kwargs["conversation"].thread_id)
-        return project.workdir_path
-
-    async def serialize_thread(_conversation, **_kwargs):
-        return {"id": _conversation.thread_id}
-
-    monkeypatch.setattr(svc, "AgentRepository", _AgentRepository)
-    monkeypatch.setattr(svc, "ConversationRepository", _ConversationRepository)
-    monkeypatch.setattr(svc, "ProjectRepository", _ProjectRepository)
-    monkeypatch.setattr(svc, "ensure_conversation_workdir_available", ensure_available)
-    monkeypatch.setattr(svc, "_serialize_thread", serialize_thread)
-
-    result = await svc.create_thread_view(
-        agent_slug="main",
-        request_id="request-1",
-        title="title",
-        metadata={},
-        project_id=None,
-        db=_Db(),
-        current_uid="user-1",
-    )
-
-    assert result == {"id": "thread-1"}
-    assert restored == ["thread-1"]
-
-
-async def test_marker_thread_with_terminal_run_shows_ready_then_done(session):
-    await _seed_conversation(session, thread_id="thread-marker", last_viewed_run_id=UNVIEWED_RUN_MARKER)
-    await _seed_run(session, thread_id="thread-marker", run_id="run-marker", status="completed")
-    await session.commit()
-
-    before = await svc.list_threads_view(db=session, current_uid="user-1", agent_slug=None, limit=100)
-    assert next(item for item in before if item["id"] == "thread-marker")["thread_status"] == "ready"
-
-    await svc.mark_thread_viewed_view(db=session, thread_id="thread-marker", current_uid="user-1")
-    after = await svc.list_threads_view(db=session, current_uid="user-1", agent_slug=None, limit=100)
-    assert next(item for item in after if item["id"] == "thread-marker")["thread_status"] == "done"

@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import os
 import tempfile
 import uuid
@@ -16,7 +17,7 @@ from yuxi.knowledge.parser.capabilities import (
     get_ocr_engines_for_extension,
 )
 from yuxi.repositories.agent_run_repository import AgentRunRepository
-from yuxi.repositories.agent_run_request_repository import AgentRunRequestRepository
+from yuxi.repositories.agents.input import AgentInputRepository
 from yuxi.repositories.conversation_repository import ConversationRepository
 from yuxi.storage.minio import StorageError, get_minio_client
 from yuxi.utils.datetime_utils import utc_isoformat
@@ -32,11 +33,27 @@ TMP_ATTACHMENT_IMAGE_EXTENSIONS = IMAGE_FILE_EXTENSIONS
 TMP_ATTACHMENT_TTL = timedelta(hours=24)
 
 
-async def _require_user_conversation(conv_repo: ConversationRepository, thread_id: str, uid: str):
+async def _require_user_conversation(
+    conv_repo: ConversationRepository, thread_id: str, uid: str, app_id: str | None = None
+):
+    """在附件副作用边界校验 Thread 的用户与 APP 归属。"""
     conversation = await conv_repo.get_conversation_by_thread_id(thread_id)
-    if not conversation or conversation.uid != str(uid) or conversation.status == "deleted":
+    if (
+        not conversation
+        or conversation.uid != str(uid)
+        or getattr(conversation, "app_id", None) != app_id
+        or conversation.status == "deleted"
+    ):
         raise HTTPException(status_code=404, detail="对话线程不存在")
     return conversation
+
+
+def _tmp_attachment_owner(uid: str, app_id: str | None) -> str:
+    """让同一用户的产品与不同 APP 临时对象互不可用。"""
+    if app_id is None:
+        return str(uid)
+    digest = hashlib.sha256(app_id.encode()).hexdigest()
+    return f"{uid}-app-{digest}"
 
 
 def _truncate_markdown(markdown: str) -> tuple[str, bool]:
@@ -67,7 +84,7 @@ def _make_attachment_path(file_name: str) -> str:
 
 
 def _artifact_url(thread_id: str, virtual_path: str) -> str:
-    return f"/api/chat/thread/{thread_id}/artifacts/{virtual_path.lstrip('/')}"
+    return f"/api/v1/agents/threads/{thread_id}/artifacts/{quote(virtual_path.lstrip('/'), safe='/')}"
 
 
 def _tmp_attachment_prefix(uid: str, tmp_file_id: str) -> str:
@@ -153,7 +170,7 @@ def serialize_attachment(record: dict, *, thread_id: str) -> dict:
         "artifact_url": _artifact_url(thread_id, path) if isinstance(path, str) else None,
         "original_path": original_path,
         "original_artifact_url": (_artifact_url(thread_id, original_path) if isinstance(original_path, str) else None),
-        "request_id": record.get("request_id"),
+        "input_id": record.get("input_id"),
     }
 
 
@@ -269,7 +286,7 @@ async def _cleanup_expired_tmp_attachments(minio_client, bucket_name: str, uid: 
             logger.warning("清理过期临时附件失败: uid=%s tmp_file_id=%s error=%s", uid, tmp_file_id, result)
 
 
-async def upload_tmp_attachment_view(*, file: UploadFile, current_uid: str) -> dict:
+async def upload_tmp_attachment_view(*, file: UploadFile, current_uid: str, app_id: str | None = None) -> dict:
     """上传附件到用户隔离的 MinIO tmp 路径。"""
     if not file.filename:
         raise HTTPException(status_code=400, detail="无法识别的文件名")
@@ -285,7 +302,8 @@ async def upload_tmp_attachment_view(*, file: UploadFile, current_uid: str) -> d
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     file_size = len(file_content)
-    tmp_file_id, object_name = _make_tmp_attachment_object(str(current_uid), file_name)
+    tmp_owner = _tmp_attachment_owner(str(current_uid), app_id)
+    tmp_file_id, object_name = _make_tmp_attachment_object(tmp_owner, file_name)
     minio_client = get_minio_client()
     bucket_name = minio_client.KB_BUCKETS["documents"]
     try:
@@ -297,7 +315,7 @@ async def upload_tmp_attachment_view(*, file: UploadFile, current_uid: str) -> d
         )
     except StorageError as exc:
         raise HTTPException(status_code=500, detail=f"临时附件上传失败: {exc}") from exc
-    await _cleanup_expired_tmp_attachments(minio_client, bucket_name, str(current_uid))
+    await _cleanup_expired_tmp_attachments(minio_client, bucket_name, tmp_owner)
 
     suffix = Path(file_name).suffix.lower()
     if suffix in TMP_ATTACHMENT_PARSE_EXTENSIONS:
@@ -323,12 +341,14 @@ async def parse_tmp_attachment_view(
     object_name: str,
     parse_method: str | None,
     current_uid: str,
+    app_id: str | None = None,
 ) -> dict:
     """解析用户 tmp 附件并把 markdown 写回 tmp。"""
     minio_client = get_minio_client()
     bucket_name = minio_client.KB_BUCKETS["documents"]
 
-    tmp_file_id, safe_name = _require_tmp_object_section(object_name, str(current_uid), "original")
+    tmp_owner = _tmp_attachment_owner(str(current_uid), app_id)
+    tmp_file_id, safe_name = _require_tmp_object_section(object_name, tmp_owner, "original")
     default_ocr_engine = "rapid_ocr"
     if parse_method is None and Path(safe_name).suffix.lower() in TMP_ATTACHMENT_IMAGE_EXTENSIONS:
         default_ocr_engine = (await system_options.get())["default_ocr_engine"]
@@ -339,7 +359,7 @@ async def parse_tmp_attachment_view(
 
         markdown = await parse_document(_minio_source(bucket_name, object_name), params={"ocr_engine": method})
         markdown, truncated = _truncate_markdown(markdown)
-        parsed_object_name = _make_tmp_parsed_object(str(current_uid), tmp_file_id, safe_name)
+        parsed_object_name = _make_tmp_parsed_object(tmp_owner, tmp_file_id, safe_name)
         upload_result = await minio_client.aupload_file(
             bucket_name=bucket_name,
             object_name=parsed_object_name,
@@ -368,29 +388,34 @@ async def confirm_tmp_thread_attachments_view(
     attachments: list[dict],
     db: AsyncSession,
     current_uid: str,
+    app_id: str | None = None,
 ) -> dict:
     """将选中的 tmp 附件正式关联到对话线程。"""
     if not attachments:
         raise HTTPException(status_code=400, detail="请选择要添加的附件")
 
     conv_repo = ConversationRepository(db)
-    conversation = await _require_user_conversation(conv_repo, thread_id, str(current_uid))
+    conversation = await _require_user_conversation(conv_repo, thread_id, str(current_uid), app_id)
+    if conversation.status != "active":
+        raise HTTPException(status_code=409, detail="Thread 已归档")
     from yuxi.services.workdir_service import resolve_authorized_conversation_workdir
 
     binding = await resolve_authorized_conversation_workdir(
         conversation=conversation,
         uid=str(current_uid),
         db=db,
+        app_id=app_id,
     )
     workdir = binding.workdir
     minio_client = get_minio_client()
     bucket_name = minio_client.KB_BUCKETS["documents"]
     added_records: list[dict] = []
     confirmed_tmp_ids: list[str] = []
+    tmp_owner = _tmp_attachment_owner(str(current_uid), app_id)
     try:
         for item in attachments:
             object_name = str(item.get("object_name") or "")
-            tmp_file_id, file_name = _require_tmp_object_section(object_name, str(current_uid), "original")
+            tmp_file_id, file_name = _require_tmp_object_section(object_name, tmp_owner, "original")
             try:
                 file_content = await minio_client.adownload_file(bucket_name, object_name)
             except StorageError as exc:
@@ -403,8 +428,8 @@ async def confirm_tmp_thread_attachments_view(
             parsed_markdown = None
             parsed_object_name = str(item.get("parsed_object_name") or "")
             if parsed_object_name:
-                _require_tmp_object_section(parsed_object_name, str(current_uid), "parsed", tmp_file_id)
-                expected_parsed_object = _make_tmp_parsed_object(str(current_uid), tmp_file_id, file_name)
+                _require_tmp_object_section(parsed_object_name, tmp_owner, "parsed", tmp_file_id)
+                expected_parsed_object = _make_tmp_parsed_object(tmp_owner, tmp_file_id, file_name)
                 if parsed_object_name != expected_parsed_object:
                     raise HTTPException(status_code=400, detail="解析附件路径无效")
                 try:
@@ -442,7 +467,7 @@ async def confirm_tmp_thread_attachments_view(
         *(
             minio_client.adelete_objects_by_prefix(
                 bucket_name,
-                f"{_tmp_attachment_prefix(str(current_uid), tmp_file_id)}/",
+                f"{_tmp_attachment_prefix(tmp_owner, tmp_file_id)}/",
             )
             for tmp_file_id in confirmed_tmp_ids
         ),
@@ -460,10 +485,11 @@ async def list_thread_attachments_view(
     thread_id: str,
     db: AsyncSession,
     current_uid: str,
+    app_id: str | None = None,
 ) -> dict:
     """列出指定对话线程的附件。"""
     conv_repo = ConversationRepository(db)
-    conversation = await _require_user_conversation(conv_repo, thread_id, str(current_uid))
+    conversation = await _require_user_conversation(conv_repo, thread_id, str(current_uid), app_id)
     attachments = await conv_repo.get_attachments(conversation.id)
     return {
         "attachments": [serialize_attachment(item, thread_id=thread_id) for item in attachments],
@@ -480,16 +506,18 @@ async def delete_thread_attachment_view(
     file_id: str,
     db: AsyncSession,
     current_uid: str,
+    app_id: str | None = None,
 ) -> dict:
     """删除指定对话线程的附件。"""
     conv_repo = ConversationRepository(db)
-    conversation = await _require_user_conversation(conv_repo, thread_id, str(current_uid))
+    conversation = await _require_user_conversation(conv_repo, thread_id, str(current_uid), app_id)
     from yuxi.services.workdir_service import resolve_authorized_conversation_workdir
 
     binding = await resolve_authorized_conversation_workdir(
         conversation=conversation,
         uid=str(current_uid),
         db=db,
+        app_id=app_id,
     )
     workdir = binding.workdir
 
@@ -498,11 +526,16 @@ async def delete_thread_attachment_view(
     if target_attachment is None:
         raise HTTPException(status_code=404, detail="附件不存在或已被删除")
 
-    request_id = target_attachment.get("request_id")
-    if isinstance(request_id, str) and request_id:
-        request = await AgentRunRequestRepository(db).get_by_request_id(request_id)
-        if request and request.status == "queued":
-            raise HTTPException(status_code=409, detail="附件正在被请求使用，暂时不能删除")
+    input_id = target_attachment.get("input_id")
+    if isinstance(input_id, str) and input_id:
+        input_item = await AgentInputRepository(db).get_for_scope(
+            input_id=input_id,
+            thread_id=thread_id,
+            uid=str(current_uid),
+            app_id=conversation.app_id,
+        )
+        if input_item and input_item.status == "pending":
+            raise HTTPException(status_code=409, detail="附件正在被输入使用，暂时不能删除")
 
     active_run = await AgentRunRepository(db).get_active_run_by_thread_for_user(
         agent_slug=conversation.agent_id,

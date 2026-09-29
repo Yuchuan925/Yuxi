@@ -22,14 +22,19 @@ const settle = async () => {
 
 /** 用真实 SSE 字节驱动观察器，父 state 保持冻结。 */
 function setup(t, initial) {
-  const states = new Map(initial.map((run) => [run.run_id, run.status]))
+  const discovered = initial.map((run) => ({
+    ...run,
+    child_thread_id: run.child_thread_id || `thread-${run.run_id}`
+  }))
+  const states = new Map(discovered.map((run) => [run.run_id, run.status]))
   const streams = new Map()
   const requests = []
   const originalGet = agentApi.getAgentRun
-  const originalStream = agentApi.streamAgentRunEvents
-  agentApi.getAgentRun = async (id) => ({ run: { id, status: states.get(id) } })
-  agentApi.streamAgentRunEvents = async (id, cursor, { signal }) => {
-    requests.push({ id, cursor, signal })
+  const originalStream = agentApi.streamThreadEvents
+  agentApi.getAgentRun = async (_threadId, id) => ({ id, status: states.get(id) })
+  agentApi.streamThreadEvents = async (threadId, cursor, { signal }) => {
+    const id = discovered.find((run) => run.child_thread_id === threadId)?.run_id
+    requests.push({ id, threadId, cursor, signal })
     return new Response(
       new ReadableStream({
         start(controller) {
@@ -45,20 +50,20 @@ function setup(t, initial) {
   }
   const scope = effectScope()
   const thread = ref('user:parent')
-  const runs = ref(initial)
+  const runs = ref(discovered)
   const enabled = ref(true)
   const observed = scope.run(() => useSubagentRuns({ scope: thread, runs, enabled }))
   t.after(() => {
     scope.stop()
     agentApi.getAgentRun = originalGet
-    agentApi.streamAgentRunEvents = originalStream
+    agentApi.streamThreadEvents = originalStream
   })
   const emit = (id, event, seq = '100-1') =>
     streams
       .get(id)
       .enqueue(
         new TextEncoder().encode(
-          `id: ${seq}\nevent: ${event}\ndata: ${JSON.stringify({ run_id: id, payload: {} })}\n\n`
+          `id: ${seq}\nevent: ${event}\ndata: ${JSON.stringify({ type: event, run_id: id, payload: {} })}\n\n`
         )
       )
   return { states, streams, requests, thread, runs, enabled, observed, scope, emit }
@@ -71,7 +76,7 @@ test('父 await 的 state 冻结时，快子任务先完成，慢任务仍运行
   ])
   await settle()
   h.states.set('fast', 'completed')
-  h.emit('fast', 'end')
+  h.emit('fast', 'agent.thread.run.completed')
   h.streams.get('fast').close()
   await settle()
   assert.deepEqual(
@@ -104,18 +109,18 @@ test('切线程时关闭旧连接，延迟状态查询不能污染新会话', as
   const h = setup(t, [{ run_id: 'old', status: 'running' }])
   await settle()
   let resolveOld
-  agentApi.getAgentRun = (id) =>
+  agentApi.getAgentRun = (_threadId, id) =>
     id === 'old'
       ? new Promise((resolve) => {
           resolveOld = resolve
         })
-      : Promise.resolve({ run: { status: 'completed' } })
-  h.emit('old', 'metadata')
+      : Promise.resolve({ status: 'completed' })
+  h.emit('old', 'agent.thread.run.completed')
   await settle()
   h.thread.value = 'user:new-thread'
-  h.runs.value = [{ run_id: 'new', status: 'pending' }]
+  h.runs.value = [{ run_id: 'new', child_thread_id: 'thread-new', status: 'pending' }]
   await settle()
-  resolveOld({ run: { status: 'failed' } })
+  resolveOld({ status: 'failed' })
   await settle()
   assert.equal(h.requests[0].signal.aborted, true)
   assert.deepEqual(
@@ -129,7 +134,7 @@ test('断流回读当前状态并携带子 Run 自己的游标重连', async (t)
   t.mock.timers.enable({ apis: ['setTimeout', 'setInterval'] })
   const h = setup(t, [{ run_id: 'child', status: 'running' }])
   await settle()
-  h.emit('child', 'messages', '200-3')
+  h.emit('child', 'agent.thread.output', '200-3')
   h.streams.get('child').close()
   await settle()
   t.mock.timers.tick(2000)
@@ -164,7 +169,7 @@ test('HTTP 故障明确显示未知状态并在重试后恢复', async (t) => {
   h.streams.get('child').error(new Error('offline'))
   await settle()
   assert.equal(h.observed.value[0].observation_error, true)
-  agentApi.getAgentRun = async () => ({ run: { status: 'completed' } })
+  agentApi.getAgentRun = async () => ({ status: 'completed' })
   t.mock.timers.tick(2000)
   await settle()
   assert.equal(h.observed.value[0].status, 'completed')
@@ -213,7 +218,7 @@ test('八个活跃子任务最多占用三个 SSE，剩余任务仍可回读完�
   assert.equal(h.observed.value.find((run) => run.run_id === 'child-7').status, 'completed')
   assert.equal(h.requests.length, 3)
   h.states.set('child-0', 'completed')
-  h.emit('child-0', 'end')
+  h.emit('child-0', 'agent.thread.run.completed')
   h.streams.get('child-0').close()
   await settle()
   t.mock.timers.tick(2000)
@@ -226,18 +231,18 @@ test('切换会话取消在途 HTTP 状态查询，释放请求连接', async (t
   const h = setup(t, [{ run_id: 'old', status: 'running' }])
   await settle()
   let signal, resolveRequest
-  agentApi.getAgentRun = (_id, options) => {
+  agentApi.getAgentRun = (_threadId, _id, options) => {
     signal = options?.signal
     return new Promise((resolve) => {
       resolveRequest = resolve
     })
   }
-  h.emit('old', 'metadata')
+  h.emit('old', 'agent.thread.run.completed')
   await settle()
   const oldSignal = signal
   h.runs.value = []
   h.thread.value = 'user:other'
   await settle()
-  resolveRequest({ run: { status: 'completed' } })
+  resolveRequest({ status: 'completed' })
   assert.equal(oldSignal?.aborted, true)
 })

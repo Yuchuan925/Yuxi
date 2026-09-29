@@ -214,9 +214,6 @@
             </template>
             <span v-else class="response-bar-spacer" aria-hidden="true"></span>
             <div class="question-inline-actions">
-              <button class="btn btn-skip" @click="handleSkip" :disabled="isProcessing">
-                跳过
-              </button>
               <button
                 class="btn btn-approve"
                 @click="handlePrimaryAction"
@@ -299,7 +296,6 @@ const isProcessing = ref(false)
 const activeQuestionIndex = ref(0)
 const selectedValues = ref({})
 const answerTexts = ref({})
-const skippedQuestionIds = ref([])
 const customAnswerQuestionIds = ref([])
 const otherTextareaRef = ref(null)
 const answerTextareaRef = ref(null)
@@ -339,7 +335,6 @@ const resetForm = () => {
   activeQuestionIndex.value = 0
   selectedValues.value = {}
   answerTexts.value = {}
-  skippedQuestionIds.value = []
   customAnswerQuestionIds.value = []
   toolArgsExpanded.value = false
   toolDecisions.value = {}
@@ -374,16 +369,11 @@ const focusActiveQuestion = () => {
   questionTitleRef.value?.focus()
 }
 
-const markQuestionAnswered = (questionId) => {
-  skippedQuestionIds.value = skippedQuestionIds.value.filter((id) => id !== questionId)
-}
-
 const handleTextInput = (questionId, event) => {
   answerTexts.value[questionId] = event.target.value
   if (activeQuestion.value?.answerMode !== 'text') {
     selectOtherAnswer(questionId)
   }
-  markQuestionAnswered(questionId)
   adjustOtherTextareaHeight()
 }
 
@@ -395,7 +385,6 @@ const selectOtherAnswer = (questionId) => {
   if (!customAnswerQuestionIds.value.includes(questionId)) {
     customAnswerQuestionIds.value = [...customAnswerQuestionIds.value, questionId]
   }
-  markQuestionAnswered(questionId)
 }
 
 const setActiveQuestion = (index) => {
@@ -411,7 +400,6 @@ const setActiveQuestion = (index) => {
 const syncAnswersWithQuestions = () => {
   const nextSelectedValues = {}
   const nextOtherTexts = {}
-  const validQuestionIds = new Set(normalizedQuestions.value.map((question) => question.questionId))
   const eligibleCustomAnswerIds = new Set(
     normalizedQuestions.value
       .filter((question) => question.answerMode !== 'text' && question.allowOther)
@@ -447,7 +435,6 @@ const syncAnswersWithQuestions = () => {
 
   selectedValues.value = nextSelectedValues
   answerTexts.value = nextOtherTexts
-  skippedQuestionIds.value = skippedQuestionIds.value.filter((id) => validQuestionIds.has(id))
   customAnswerQuestionIds.value = customAnswerQuestionIds.value.filter((id) =>
     eligibleCustomAnswerIds.has(id)
   )
@@ -510,7 +497,6 @@ const toggleSelect = (questionId, value) => {
   } else {
     selectedValues.value[questionId] = [...current, value]
   }
-  markQuestionAnswered(questionId)
   nextTick(() => {
     adjustOtherTextareaHeight()
   })
@@ -520,7 +506,6 @@ const setSingle = (questionId, value) => {
   if (isProcessing.value) return
   selectedValues.value[questionId] = [value]
   customAnswerQuestionIds.value = customAnswerQuestionIds.value.filter((id) => id !== questionId)
-  markQuestionAnswered(questionId)
   nextTick(() => {
     adjustOtherTextareaHeight()
   })
@@ -535,17 +520,11 @@ const isQuestionAnswered = (questionItem) => {
   )
 }
 
-const isQuestionSkipped = (questionItem) =>
-  skippedQuestionIds.value.includes(questionItem.questionId)
-
-const isQuestionComplete = (questionItem) =>
-  isQuestionAnswered(questionItem) || isQuestionSkipped(questionItem)
-
 const isSubmitDisabled = computed(() => {
   if (isProcessing.value) return true
   if (normalizedQuestions.value.length === 0) return true
 
-  return normalizedQuestions.value.some((questionItem) => !isQuestionComplete(questionItem))
+  return normalizedQuestions.value.some((questionItem) => !isQuestionAnswered(questionItem))
 })
 
 const isLastQuestion = computed(() => {
@@ -583,7 +562,7 @@ const getQuestionAnswer = (questionItem) => {
 const buildAnswer = () => {
   const answer = {}
   normalizedQuestions.value.forEach((questionItem) => {
-    if (isQuestionAnswered(questionItem) && !isQuestionSkipped(questionItem)) {
+    if (isQuestionAnswered(questionItem)) {
       answer[questionItem.questionId] = getQuestionAnswer(questionItem)
     }
   })
@@ -610,22 +589,6 @@ const handlePrimaryAction = () => {
 const handleCancel = () => {
   if (isProcessing.value) return
   emit('cancel')
-}
-
-const handleSkip = () => {
-  if (isProcessing.value || !activeQuestion.value) return
-
-  const questionId = activeQuestion.value.questionId
-  if (!skippedQuestionIds.value.includes(questionId)) {
-    skippedQuestionIds.value = [...skippedQuestionIds.value, questionId]
-  }
-
-  if (isLastQuestion.value) {
-    handleSubmit()
-    return
-  }
-
-  setActiveQuestion(activeQuestionIndex.value + 1)
 }
 
 const handleToolDecision = (decision) => {
@@ -1223,17 +1186,6 @@ const formattedToolArgs = computed(() => formatToolApprovalArgs(activeToolReques
   border: 1px solid var(--gray-200);
   background: var(--gray-25);
   color: var(--gray-700);
-}
-
-.btn-skip {
-  border: 1px solid var(--gray-200);
-  background: var(--gray-0);
-  color: var(--color-text);
-}
-
-.btn-skip:hover:not(:disabled) {
-  border-color: var(--gray-300);
-  background: var(--gray-25);
 }
 
 .btn-reject:hover:not(:disabled) {

@@ -6,6 +6,7 @@ import asyncio
 from typing import Any
 
 from fastapi import HTTPException
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from yuxi.agents.backends import create_agent_composite_backend
 from yuxi.agents.backends.paths import runtime_workdir_path
@@ -20,13 +21,11 @@ from yuxi.agents.middlewares import create_summary_middleware_from_context
 from yuxi.agents.middlewares.token_usage import TOKEN_USAGE_CONTEXT_FIELDS
 from yuxi.agents.skills.service import get_user_skills_root_dir
 from yuxi.repositories.agent_repository import AgentRepository
-from yuxi.repositories.agent_run_repository import AgentRunRepository
-from yuxi.repositories.agent_run_request_repository import AgentRunRequestRepository
 from yuxi.repositories.agent_state_repository import AgentStateRepository
 from yuxi.repositories.conversation_repository import ConversationRepository
-from yuxi.services.agent_run_service import resolve_agent_run_model_spec
+from yuxi.services.agents.input_config import resolve_agent_run_model_spec
 from yuxi.services.workdir_service import ensure_conversation_workdir_available
-from yuxi.storage.postgres.models_business import User
+from yuxi.storage.postgres.models_business import AgentInput, AgentTurn, User
 from yuxi.utils.logging_config import logger
 
 
@@ -35,15 +34,21 @@ async def compress_thread_context(
     thread_id: str,
     current_user: User,
     db: AsyncSession,
+    app_id: str | None = None,
 ) -> dict[str, Any]:
     """在线程空闲时压缩 checkpoint；同线程新请求由 Conversation 行锁串行化。"""
     uid = str(current_user.uid)
     conversation = await ConversationRepository(db).lock_conversation_by_thread_id(thread_id)
-    if conversation is None or conversation.uid != uid or conversation.status == "deleted":
+    if (
+        conversation is None
+        or conversation.uid != uid
+        or getattr(conversation, "app_id", None) != app_id
+        or conversation.status != "active"
+    ):
         raise HTTPException(status_code=404, detail="对话线程不存在")
 
     agent_slug = conversation.agent_id
-    await _ensure_thread_idle(db=db, uid=uid, agent_slug=agent_slug, thread_id=thread_id)
+    await _ensure_thread_idle(db=db, thread_id=thread_id)
 
     agent_item = await AgentRepository(db).get_visible_by_slug(
         slug=agent_slug,
@@ -92,29 +97,26 @@ async def compress_thread_context(
     return result
 
 
-async def _ensure_thread_idle(*, db: AsyncSession, uid: str, agent_slug: str, thread_id: str) -> None:
-    """拒绝会与 checkpoint 维护竞争的运行、等待交互和排队请求。"""
-    run_repo = AgentRunRepository(db)
-    active_run = await run_repo.get_active_run_by_thread_for_user(
-        uid=uid,
-        agent_slug=agent_slug,
-        conversation_thread_id=thread_id,
+async def _ensure_thread_idle(*, db: AsyncSession, thread_id: str) -> None:
+    """在 Thread 锁内拒绝活跃 Turn 和待消费 Input。"""
+    active_turn = await db.scalar(
+        select(AgentTurn.id)
+        .where(
+            AgentTurn.conversation_thread_id == thread_id,
+            AgentTurn.status.in_(("running", "waiting", "cancelling")),
+        )
+        .limit(1)
     )
-    latest_run = await run_repo.get_latest_chat_or_resume_run(
-        uid=uid,
-        agent_slug=agent_slug,
-        conversation_thread_id=thread_id,
+    pending_input = await db.scalar(
+        select(AgentInput.id)
+        .where(AgentInput.conversation_thread_id == thread_id, AgentInput.status == "pending")
+        .limit(1)
     )
-    queued_requests = await AgentRunRequestRepository(db).list_queued(
-        uid=uid,
-        agent_slug=agent_slug,
-        conversation_thread_id=thread_id,
-    )
-    if active_run is None and not queued_requests and (latest_run is None or latest_run.status != "interrupted"):
+    if active_turn is None and pending_input is None:
         return
     raise HTTPException(
         status_code=409,
-        detail={"code": "thread_busy", "message": "线程仍有运行、交互或排队请求，暂时不能压缩"},
+        detail={"code": "thread_busy", "message": "线程仍有运行、交互或排队输入，暂时不能压缩"},
     )
 
 
