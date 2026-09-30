@@ -8,9 +8,7 @@ import uuid
 import warnings
 from io import BytesIO
 
-from fastapi import UploadFile
 from PIL import Image, UnidentifiedImageError
-from yuxi.infrastructure.uploads import read_upload_with_limit
 
 from yuxi.infrastructure.minio.client import aupload_file_to_minio
 
@@ -29,17 +27,15 @@ def generate_unique_filename(original_name: str) -> str:
 
 
 async def upload_image_to_minio(
-    upload: UploadFile,
+    file_content: bytes,
     *,
     object_prefix: str,
     max_size_bytes: int,
     too_large_message: str,
 ) -> str:
-    file_content = await read_upload_with_limit(
-        upload,
-        max_size_bytes=max_size_bytes,
-        too_large_message=too_large_message,
-    )
+    """验证图片内容并保存到公共对象存储。"""
+    if len(file_content) > max_size_bytes:
+        raise ValueError(too_large_message)
 
     allowed_formats = {"PNG": "png", "JPEG": "jpg", "WEBP": "webp", "GIF": "gif"}
     try:

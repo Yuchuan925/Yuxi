@@ -5,14 +5,16 @@
 """
 
 from yuxi.api.responses.files import render_file_result
+from yuxi.api.uploads import prepare_upload_files
 
 
-from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from yuxi.api.dependencies.auth import get_db, get_required_user
 from yuxi.modules.workspace.services.viewer import (
+    MAX_VIEWER_UPLOAD_BYTES,
     create_viewer_directory,
     delete_viewer_file,
     download_viewer_file,
@@ -102,10 +104,18 @@ async def upload_viewer_files_route(
     current_user: User = Depends(get_required_user),
     db: AsyncSession = Depends(get_db),
 ):
+    try:
+        inputs = await prepare_upload_files(
+            files,
+            max_size_bytes=MAX_VIEWER_UPLOAD_BYTES,
+            too_large_message="文件过大",
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return await upload_viewer_files(
         thread_id=thread_id,
         parent_path=parent_path,
-        files=files,
+        files=inputs,
         current_user=current_user,
         db=db,
     )

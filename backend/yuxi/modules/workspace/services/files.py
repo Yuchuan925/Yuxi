@@ -6,12 +6,13 @@ import os
 import tempfile
 from pathlib import Path, PurePosixPath
 
-from fastapi import HTTPException, UploadFile
+from fastapi import HTTPException
 from yuxi.modules.agents.runtime.sandbox.paths import runtime_user_data_path
 from yuxi.modules.workspace.repositories.projects import ProjectRepository
 from yuxi.modules.workspace.preview import preview_workspace_file
 from yuxi.infrastructure.document_preview import PreviewResult
-from yuxi.shared.files import PreparedFile
+from yuxi.shared.files import FileInput, PreparedFile
+from yuxi.infrastructure.filesystem import await_io
 from yuxi.modules.identity.models import User
 from yuxi.shared.datetime import utc_isoformat_from_timestamp
 from yuxi.infrastructure.document_preview import (
@@ -21,13 +22,12 @@ from yuxi.infrastructure.document_preview import (
     detect_preview_type,
     preview_too_large,
 )
-from yuxi.infrastructure.uploads import MAX_UPLOAD_SIZE_BYTES, write_upload_to_path
 from yuxi.modules.workspace.errors import FileTransferLimitError
 from yuxi.modules.workspace.filesystem import Workspace
 from yuxi.modules.workspace.paths import ensure_user_workspace
 
 EDITABLE_WORKSPACE_SUFFIXES = {".md", ".markdown", ".mdx", ".txt"}
-MAX_WORKSPACE_UPLOAD_SIZE_BYTES = MAX_UPLOAD_SIZE_BYTES
+MAX_WORKSPACE_UPLOAD_SIZE_BYTES = 100 * 1024 * 1024
 MAX_WORKSPACE_UPLOAD_FILES = 50
 MAX_WORKSPACE_DOWNLOAD_SIZE_BYTES = 1024 * 1024 * 1024
 
@@ -251,7 +251,8 @@ async def create_workspace_directory(*, parent_path: str, name: str, current_use
     return {"success": True, "entry": _entry_from_metadata(target, item)}
 
 
-async def upload_workspace_files(*, parent_path: str, files: list[UploadFile], current_user: User) -> dict:
+async def upload_workspace_files(*, parent_path: str, files: list[FileInput], current_user: User) -> dict:
+    """把借用的文件流写入用户工作区，失败时撤销本批次已写入文件。"""
     if not files:
         raise HTTPException(status_code=400, detail="请选择至少一个文件")
     if len(files) > MAX_WORKSPACE_UPLOAD_FILES:
@@ -268,7 +269,7 @@ async def upload_workspace_files(*, parent_path: str, files: list[UploadFile], c
     if not parent_stat["is_dir"]:
         raise HTTPException(status_code=400, detail="目标路径不是目录")
     seen_names = set()
-    upload_targets: list[tuple[UploadFile, str]] = []
+    upload_targets: list[tuple[FileInput, str]] = []
 
     for file in files:
         file_name = _validate_child_name(Path(file.filename or "").name, field_name="文件名")
@@ -402,28 +403,21 @@ def _list_workspace_directory(
     return _sort_entries(entries)
 
 
-async def _write_workspace_upload(file: UploadFile, backend: Workspace, target: str) -> dict:
-    descriptor, temp_path = tempfile.mkstemp(prefix="yuxi-workspace-upload-")
-    os.close(descriptor)
+async def _write_workspace_upload(file: FileInput, backend: Workspace, target: str) -> dict:
+    """等待文件 I/O 完成后归还输入流，保留原子写入与冲突语义。"""
     try:
-        await write_upload_to_path(
-            file,
-            Path(temp_path),
-            max_size_bytes=MAX_WORKSPACE_UPLOAD_SIZE_BYTES,
-            too_large_message="文件过大，当前仅支持 100 MB 以内的文件",
-        )
-        return await asyncio.to_thread(
-            backend.upload_authorized_file_from_path,
-            target,
-            temp_path,
-            overwrite=False,
+        return await await_io(
+            asyncio.to_thread(
+                backend.upload_authorized_file_from_stream,
+                target,
+                file.source,
+                max_bytes=MAX_WORKSPACE_UPLOAD_SIZE_BYTES,
+                overwrite=False,
+            )
         )
     except FileExistsError as exc:
         raise HTTPException(status_code=400, detail="同名文件或文件夹已存在") from exc
-    except ValueError as exc:
+    except FileTransferLimitError as exc:
+        raise HTTPException(status_code=400, detail="文件过大，当前仅支持 100 MB 以内的文件") from exc
+    except (ValueError, PermissionError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except PermissionError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    finally:
-        with contextlib.suppress(FileNotFoundError):
-            os.unlink(temp_path)

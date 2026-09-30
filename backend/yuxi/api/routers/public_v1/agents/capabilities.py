@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from yuxi.api.responses.files import render_file_result
+from yuxi.api.uploads import read_upload_with_limit
 
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
@@ -14,6 +15,7 @@ from yuxi.api.dependencies.auth import get_db
 from yuxi.modules.agents.services.threads import get_thread_snapshot
 from yuxi.modules.agents.services.artifacts import resolve_thread_artifact_view, save_thread_artifact_to_workspace_view
 from yuxi.modules.agents.services.attachments import (
+    MAX_ATTACHMENT_SIZE_BYTES,
     confirm_tmp_thread_attachments_view,
     delete_thread_attachment_view,
     list_thread_attachments_view,
@@ -64,7 +66,23 @@ async def upload_tmp_attachment(
     file: UploadFile = File(...), context: PublicAgentContext = Depends(require_public_context)
 ):
     """把待确认附件上传到当前资源用户的临时空间。"""
-    return await upload_tmp_attachment_view(file=file, current_uid=context.scope.uid, app_id=context.scope.app_id)
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="无法识别的文件名")
+    try:
+        content = await read_upload_with_limit(
+            file,
+            max_size_bytes=MAX_ATTACHMENT_SIZE_BYTES,
+            too_large_message="附件过大，当前仅支持 5 MB 以内的文件",
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return await upload_tmp_attachment_view(
+        file_content=content,
+        filename=file.filename,
+        content_type=file.content_type,
+        current_uid=context.scope.uid,
+        app_id=context.scope.app_id,
+    )
 
 
 @router.post("/attachments/tmp/parse")

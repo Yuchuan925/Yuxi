@@ -10,6 +10,7 @@ import tempfile
 import uuid
 from contextlib import ExitStack
 from pathlib import Path, PurePosixPath
+from typing import BinaryIO
 
 from yuxi.infrastructure.filesystem import (
     copy_directory_fd,
@@ -251,23 +252,41 @@ class Workspace:
         create_parents: bool = True,
     ) -> dict:
         """从受信任服务临时文件原子写入 UserWorkspace。"""
+        with os.fdopen(os.open(source_path, os.O_RDONLY | os.O_NOFOLLOW), "rb") as source:
+            if not stat.S_ISREG(os.fstat(source.fileno()).st_mode):
+                raise ValueError("upload source is not a regular file")
+            return self.upload_authorized_file_from_stream(
+                path, source, max_bytes=None, overwrite=overwrite, create_parents=create_parents
+            )
+
+    def upload_authorized_file_from_stream(
+        self,
+        path: str,
+        source: BinaryIO,
+        *,
+        max_bytes: int | None,
+        overwrite: bool = True,
+        create_parents: bool = True,
+    ) -> dict:
+        """分块消费借用的文件流，超限或读取失败时回收未发布文件。"""
         base, parts = self._resolve_path(path)
         if not parts:
             raise IsADirectoryError(path)
         parent_fd = self._open_directory(base, parts[:-1], create=create_parents)
-        source_fd = target_fd = None
+        target_fd = None
         temp_name = f".yuxi-write-{uuid.uuid4().hex}"
         try:
-            source_fd = os.open(source_path, os.O_RDONLY | os.O_NOFOLLOW)
-            if not stat.S_ISREG(os.fstat(source_fd).st_mode):
-                raise ValueError("upload source is not a regular file")
             target_fd = os.open(
                 temp_name,
                 os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
                 0o600,
                 dir_fd=parent_fd,
             )
-            while chunk := os.read(source_fd, 1024 * 1024):
+            written = 0
+            while chunk := source.read(1024 * 1024):
+                written += len(chunk)
+                if max_bytes is not None and written > max_bytes:
+                    raise FileTransferLimitError("file exceeds limit")
                 self._write_all(target_fd, chunk)
             final_stat = os.fstat(target_fd)
             os.close(target_fd)
@@ -287,8 +306,6 @@ class Workspace:
         finally:
             if target_fd is not None:
                 os.close(target_fd)
-            if source_fd is not None:
-                os.close(source_fd)
             try:
                 os.unlink(temp_name, dir_fd=parent_fd)
             except FileNotFoundError:

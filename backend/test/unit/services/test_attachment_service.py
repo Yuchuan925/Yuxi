@@ -54,7 +54,9 @@ async def test_tmp_attachment_rejects_same_user_from_other_app(monkeypatch):
 
     monkeypatch.setattr(service, "get_minio_client", FakeMinioClient)
     uploaded = await service.upload_tmp_attachment_view(
-        file=FakeUpload("report.pdf", b"content", "application/pdf"),
+        file_content=b"content",
+        filename="report.pdf",
+        content_type="application/pdf",
         current_uid="user-1",
         app_id="app-a",
     )
@@ -63,25 +65,6 @@ async def test_tmp_attachment_rejects_same_user_from_other_app(monkeypatch):
             object_name=uploaded["object_name"], parse_method="disable", current_uid="user-1", app_id="app-b"
         )
     assert exc.value.status_code == 403
-
-
-class FakeUpload:
-    def __init__(self, filename: str, content: bytes, content_type: str | None = None):
-        self.filename = filename
-        self.content_type = content_type
-        self._content = content
-        self._offset = 0
-
-    async def seek(self, offset: int) -> None:
-        self._offset = offset
-
-    async def read(self, size: int = -1) -> bytes:
-        if self._offset >= len(self._content):
-            return b""
-        end = len(self._content) if size < 0 else min(len(self._content), self._offset + size)
-        chunk = self._content[self._offset : end]
-        self._offset = end
-        return chunk
 
 
 class FakeMinioClient:
@@ -299,18 +282,37 @@ class ActiveAgentRunRepository(EmptyAgentRunRepository):
 
 
 @pytest.mark.asyncio
+async def test_upload_tmp_attachment_rejects_oversize_before_storage(monkeypatch):
+    """直接调用服务也不能绕过附件大小限制。"""
+    fake_minio = FakeMinioClient()
+    monkeypatch.setattr(service, "get_minio_client", lambda: fake_minio)
+    monkeypatch.setattr(service, "MAX_ATTACHMENT_SIZE_BYTES", 5)
+    with pytest.raises(service.HTTPException) as caught:
+        await service.upload_tmp_attachment_view(
+            file_content=b"123456", filename="file.txt", content_type="text/plain", current_uid="user-1"
+        )
+    assert caught.value.status_code == 400
+    assert fake_minio.objects == {}
+
+
+@pytest.mark.asyncio
 async def test_upload_tmp_attachment_writes_user_scoped_minio_object(monkeypatch):
     fake_minio = FakeMinioClient()
     monkeypatch.setattr(service, "get_minio_client", lambda: fake_minio)
 
     response = await service.upload_tmp_attachment_view(
-        file=FakeUpload("demo.pdf", b"pdf-bytes", "application/pdf"),
+        file_content=b"pdf-bytes",
+        filename="demo.pdf",
+        content_type="application/pdf",
         current_uid="user-1",
     )
 
     assert response["object_name"].startswith("tmp/chat_attachments/user-1/")
     assert response["parse_methods"][0] == "disable"
     assert fake_minio.objects[("knowledgebases", response["object_name"])] == b"pdf-bytes"
+    assert response["file_name"] == "demo.pdf"
+    assert response["file_type"] == "application/pdf"
+    assert response["file_size"] == len(b"pdf-bytes")
 
 
 @pytest.mark.asyncio
@@ -334,7 +336,9 @@ async def test_upload_tmp_attachment_cleans_only_expired_user_tmp_groups(monkeyp
     monkeypatch.setattr(service, "get_minio_client", lambda: fake_minio)
 
     await service.upload_tmp_attachment_view(
-        file=FakeUpload("demo.txt", b"text", "text/plain"),
+        file_content=b"text",
+        filename="demo.txt",
+        content_type="text/plain",
         current_uid="user-1",
     )
 

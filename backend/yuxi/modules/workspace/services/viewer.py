@@ -6,13 +6,14 @@ import asyncio
 import mimetypes
 import os
 import tempfile
-from pathlib import Path, PurePosixPath
+from pathlib import PurePosixPath
 
-from fastapi import HTTPException, UploadFile
+from fastapi import HTTPException
 from yuxi.modules.agents.runtime.sandbox.paths import is_runtime_path, runtime_path_for_workdir_scope
 from yuxi.modules.workspace.preview import preview_workspace_file
 from yuxi.infrastructure.document_preview import PreviewResult
-from yuxi.shared.files import PreparedFile
+from yuxi.shared.files import FileInput, PreparedFile
+from yuxi.infrastructure.filesystem import await_io
 from yuxi.modules.workspace.services.bindings import AuthorizedWorkdir, resolve_authorized_workdir
 from yuxi.shared.datetime import utc_isoformat_from_timestamp
 from yuxi.infrastructure.document_preview import (
@@ -20,7 +21,6 @@ from yuxi.infrastructure.document_preview import (
     OfficePreviewConversionError,
     preview_too_large,
 )
-from yuxi.infrastructure.uploads import write_upload_to_path
 from yuxi.modules.workspace.errors import FileTransferLimitError
 
 SEARCH_MAX_RESULTS = 100
@@ -212,7 +212,7 @@ async def create_viewer_directory(*, thread_id: str, parent_path: str, name: str
     }
 
 
-async def upload_viewer_files(*, thread_id: str, parent_path: str, files: list[UploadFile], current_user, db) -> dict:
+async def upload_viewer_files(*, thread_id: str, parent_path: str, files: list[FileInput], current_user, db) -> dict:
     """把用户上传直接写入实时 Workdir。"""
     access = await _viewer_state(thread_id=thread_id, current_user=current_user, db=db)
     _validate_viewer_path(access, parent_path)
@@ -239,33 +239,24 @@ async def upload_viewer_files(*, thread_id: str, parent_path: str, files: list[U
 
     entries: list[dict] = []
     for upload, file_name in zip(files, file_names, strict=True):
-        descriptor, temp_path = tempfile.mkstemp(prefix="yuxi-viewer-upload-")
-        os.close(descriptor)
+        target = f"{parent_path.rstrip('/')}/{file_name}"
         try:
-            await write_upload_to_path(
-                upload,
-                Path(temp_path),
-                max_size_bytes=MAX_VIEWER_UPLOAD_BYTES,
-                too_large_message="文件过大",
-            )
-            target = f"{parent_path.rstrip('/')}/{file_name}"
-            try:
-                metadata = await asyncio.to_thread(
-                    access.workdir.copy_file_from_path,
+            metadata = await await_io(
+                asyncio.to_thread(
+                    access.workdir.copy_file_from_stream,
                     target,
-                    temp_path,
+                    upload.source,
+                    max_bytes=MAX_VIEWER_UPLOAD_BYTES,
                     overwrite=False,
                 )
-            except FileExistsError as exc:
-                raise HTTPException(status_code=409, detail=f"文件已存在: {file_name}") from exc
-            except PermissionError as exc:
-                raise HTTPException(status_code=403, detail="Access denied") from exc
-            except (FileNotFoundError, NotADirectoryError) as exc:
-                raise HTTPException(status_code=404, detail="目录不存在") from exc
-        finally:
-            try:
-                os.unlink(temp_path)
-            except FileNotFoundError:
-                pass
+            )
+        except FileTransferLimitError as exc:
+            raise HTTPException(status_code=400, detail="文件过大") from exc
+        except FileExistsError as exc:
+            raise HTTPException(status_code=409, detail=f"文件已存在: {file_name}") from exc
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail="Access denied") from exc
+        except (FileNotFoundError, NotADirectoryError) as exc:
+            raise HTTPException(status_code=404, detail="目录不存在") from exc
         entries.append(_entry(access, parent_path, {"name": file_name, **metadata}))
     return {"entries": entries}

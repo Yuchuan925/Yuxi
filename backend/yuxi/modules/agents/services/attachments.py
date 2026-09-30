@@ -7,7 +7,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from urllib.parse import quote, unquote
 
-from fastapi import HTTPException, UploadFile
+from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from yuxi.infrastructure.document_parsing import IMAGE_FILE_EXTENSIONS, PDF_FILE_EXTENSIONS
@@ -16,7 +16,6 @@ from yuxi.infrastructure.document_parsing.engines import get_ocr_engines_for_ext
 from yuxi.infrastructure.filesystem import await_io
 from yuxi.infrastructure.minio import StorageError, get_minio_client
 from yuxi.infrastructure.observability.logging import logger
-from yuxi.infrastructure.uploads import read_upload_with_limit
 from yuxi.modules.agents.repositories.input import AgentInputRepository
 from yuxi.modules.agents.repositories.runs import AgentRunRepository
 from yuxi.modules.agents.repositories.threads import ConversationRepository
@@ -54,22 +53,22 @@ def serialize_attachment(record: dict, *, thread_id: str) -> dict:
     }
 
 
-async def upload_tmp_attachment_view(*, file: UploadFile, current_uid: str, app_id: str | None = None) -> dict:
+async def upload_tmp_attachment_view(
+    *,
+    file_content: bytes,
+    filename: str,
+    content_type: str | None,
+    current_uid: str,
+    app_id: str | None = None,
+) -> dict:
     """上传附件到用户隔离的 MinIO tmp 路径。"""
-    if not file.filename:
+    if not filename:
         raise HTTPException(status_code=400, detail="无法识别的文件名")
 
-    file_name = _safe_file_name(file.filename)
-    try:
-        file_content = await read_upload_with_limit(
-            file,
-            max_size_bytes=MAX_ATTACHMENT_SIZE_BYTES,
-            too_large_message="附件过大，当前仅支持 5 MB 以内的文件",
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
+    file_name = _safe_file_name(filename)
     file_size = len(file_content)
+    if file_size > MAX_ATTACHMENT_SIZE_BYTES:
+        raise HTTPException(status_code=400, detail="附件过大，当前仅支持 5 MB 以内的文件")
     tmp_owner = _tmp_attachment_owner(str(current_uid), app_id)
     tmp_file_id, object_name = _make_tmp_attachment_object(tmp_owner, file_name)
     minio_client = get_minio_client()
@@ -80,7 +79,7 @@ async def upload_tmp_attachment_view(*, file: UploadFile, current_uid: str, app_
                 bucket_name=bucket_name,
                 object_name=object_name,
                 data=file_content,
-                content_type=file.content_type,
+                content_type=content_type,
             )
         )
     except StorageError as exc:
@@ -97,7 +96,7 @@ async def upload_tmp_attachment_view(*, file: UploadFile, current_uid: str, app_
 
     return {
         "file_name": file_name,
-        "file_type": file.content_type,
+        "file_type": content_type,
         "file_size": file_size,
         "object_name": upload_result.object_name,
         "uploaded_at": utc_isoformat(),

@@ -1,12 +1,80 @@
 from __future__ import annotations
 
 import os
+from io import BytesIO
 from pathlib import Path
 
 import pytest
 
 from yuxi.modules.workspace import filesystem as workspace_filesystem_module
 from yuxi.modules.workspace.filesystem import Workspace
+from yuxi.modules.workspace.errors import FileTransferLimitError
+
+
+@pytest.mark.parametrize("failure", ["oversize", "read_error"])
+def test_upload_stream_failure_preserves_target_and_removes_staging(tmp_path, monkeypatch, failure):
+    """累计超限或中途读取失败都不发布半成品，也不关闭借用的输入。"""
+    monkeypatch.setattr(workspace_filesystem_module, "user_workspace_dir", lambda _uid: tmp_path)
+    target = tmp_path / "file.txt"
+    target.write_bytes(b"original")
+
+    class ChunkedSource(BytesIO):
+        """限制每次读取长度，并按需注入中途失败。"""
+
+        def read(self, size=-1):
+            """真实消费者必须分块读取；失败发生在写过首块之后。"""
+            assert 0 < size <= 1024 * 1024
+            if failure == "read_error" and self.tell() >= 3:
+                raise OSError("source failed")
+            return super().read(min(size, 3))
+
+    source = ChunkedSource(b"123456")
+    expected = FileTransferLimitError if failure == "oversize" else OSError
+    with pytest.raises(expected):
+        Workspace("user-1").upload_authorized_file_from_stream("/file.txt", source, max_bytes=5)
+    assert target.read_bytes() == b"original"
+    assert sorted(path.name for path in tmp_path.iterdir()) == ["file.txt"]
+    assert not source.closed
+
+
+@pytest.mark.parametrize("existing_kind", ["file", "symlink"])
+def test_upload_stream_no_clobber_and_limit(tmp_path, monkeypatch, existing_kind):
+    """流入口也在最终发布处拒绝覆盖文件及 symlink。"""
+    monkeypatch.setattr(workspace_filesystem_module, "user_workspace_dir", lambda _uid: tmp_path)
+    outside = tmp_path / "outside.txt"
+    outside.write_bytes(b"original")
+    target = tmp_path / "file.txt"
+    if existing_kind == "symlink":
+        target.symlink_to(outside)
+    else:
+        target.write_bytes(b"original")
+    with pytest.raises(FileExistsError):
+        Workspace("user-1").upload_authorized_file_from_stream(
+            "/file.txt", BytesIO(b"12345"), max_bytes=5, overwrite=False
+        )
+    assert target.read_bytes() == b"original"
+    assert outside.read_bytes() == b"original"
+    assert not list(tmp_path.glob(".yuxi-write-*"))
+
+    result = Workspace("user-1").upload_authorized_file_from_stream(
+        "/new.txt", BytesIO(b"12345"), max_bytes=5, overwrite=False
+    )
+    assert result["size"] == 5
+    assert (tmp_path / "new.txt").read_bytes() == b"12345"
+    assert (tmp_path / "new.txt").stat().st_mode & 0o777 == 0o600
+
+
+def test_upload_stream_rejects_symlink_parent(tmp_path, monkeypatch):
+    """直接调用流写入也无法沿目录链接越过 workspace 边界。"""
+    root = tmp_path / "workspace"
+    root.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (root / "linked").symlink_to(outside, target_is_directory=True)
+    monkeypatch.setattr(workspace_filesystem_module, "user_workspace_dir", lambda _uid: root)
+    with pytest.raises(PermissionError):
+        Workspace("user-1").upload_authorized_file_from_stream("/linked/file.txt", BytesIO(b"content"), max_bytes=10)
+    assert list(outside.iterdir()) == []
 
 
 def test_upload_authorized_file_uses_owner_only_mode(

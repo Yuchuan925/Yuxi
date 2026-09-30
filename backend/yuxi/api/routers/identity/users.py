@@ -18,6 +18,7 @@ from yuxi.modules.identity.repositories.api_keys import (
     APIKeySubjectUnavailable,
 )
 from yuxi.infrastructure.minio import upload_image_to_minio
+from yuxi.api.uploads import read_upload_with_limit
 from yuxi.modules.identity.models import User
 from yuxi.modules.identity.security import AuthUtils
 from yuxi.shared.datetime import coerce_any_to_utc_datetime, format_utc_datetime, utc_now_naive
@@ -110,8 +111,13 @@ async def update_user_config(
 @user_router.post("/upload-image", response_model=dict)
 async def upload_user_image(file: UploadFile = File(...), current_user: User = Depends(get_required_user)):
     try:
-        image_url = await upload_image_to_minio(
+        content = await read_upload_with_limit(
             file,
+            max_size_bytes=MAX_USER_IMAGE_SIZE_BYTES,
+            too_large_message="图片大小不能超过 5MB",
+        )
+        image_url = await upload_image_to_minio(
+            content,
             object_prefix=f"images/{current_user.uid}",
             max_size_bytes=MAX_USER_IMAGE_SIZE_BYTES,
             too_large_message="图片大小不能超过 5MB",

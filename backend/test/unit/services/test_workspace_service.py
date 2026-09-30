@@ -7,7 +7,8 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from fastapi import HTTPException, UploadFile
+from fastapi import HTTPException
+from yuxi.shared.files import FileInput
 
 import yuxi.modules.workspace.preview as file_preview
 from yuxi.modules.workspace import paths as workspace_paths
@@ -314,8 +315,8 @@ async def test_upload_workspace_files_writes_files(tmp_path: Path, monkeypatch) 
     user = _user()
     root = _workspace_root(user)
     uploads = [
-        UploadFile(filename="demo.txt", file=BytesIO(b"hello")),
-        UploadFile(filename="notes.md", file=BytesIO(b"# notes")),
+        FileInput(filename="demo.txt", source=BytesIO(b"hello")),
+        FileInput(filename="notes.md", source=BytesIO(b"# notes")),
     ]
 
     previous_umask = os.umask(0o077)
@@ -362,8 +363,8 @@ async def test_upload_workspace_files_rejects_oversized_file_and_cleans_partial_
     user = _user()
     root = _workspace_root(user)
     uploads = [
-        UploadFile(filename="small.txt", file=BytesIO(b"12345")),
-        UploadFile(filename="large.txt", file=BytesIO(b"123456")),
+        FileInput(filename="small.txt", source=BytesIO(b"12345")),
+        FileInput(filename="large.txt", source=BytesIO(b"123456")),
     ]
 
     with pytest.raises(HTTPException) as exc_info:
@@ -380,7 +381,7 @@ async def test_upload_workspace_files_rejects_more_than_limit(tmp_path: Path, mo
     monkeypatch.setenv("YUXI_USER_DATA_DIR", str(tmp_path / "threads"))
     user = _user()
     uploads = [
-        UploadFile(filename=f"demo-{index}.txt", file=BytesIO(b"hello"))
+        FileInput(filename=f"demo-{index}.txt", source=BytesIO(b"hello"))
         for index in range(svc.MAX_WORKSPACE_UPLOAD_FILES + 1)
     ]
 

@@ -1,10 +1,11 @@
 """验证路由保留显式 HTTP 错误与已有业务异常映射。"""
 
+from io import BytesIO
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, UploadFile
 from fastapi.testclient import TestClient
 
 import yuxi.api.routers.identity.auth as auth_router
@@ -62,7 +63,12 @@ import yuxi.api.routers.system as system_router
             model_provider_router,
             "test_model_status_by_spec",
         ),
-        (auth_router.upload_user_avatar, {"file": None, "db": None}, auth_router, "upload_image_to_minio"),
+        (
+            auth_router.upload_user_avatar,
+            {"file": UploadFile(filename="avatar.png", file=BytesIO(b"image")), "db": None},
+            auth_router,
+            "upload_image_to_minio",
+        ),
         (
             external_kb_router.open_external_file,
             {"kb_id": "kb-1", "file_id": "file-1", "offset": 0, "limit": 100},

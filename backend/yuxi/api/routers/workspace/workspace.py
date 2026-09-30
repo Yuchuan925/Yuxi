@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from yuxi.api.responses.files import render_file_result
+from yuxi.api.uploads import prepare_upload_files
 
 import io
 from urllib.parse import quote
@@ -11,6 +12,7 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from yuxi.api.dependencies.auth import get_db, get_required_user
 from yuxi.modules.workspace.services.files import (
+    MAX_WORKSPACE_UPLOAD_SIZE_BYTES,
     create_workspace_directory,
     delete_workspace_path,
     download_workspace_file,
@@ -272,7 +274,15 @@ async def upload_workspace_files_route(
     files: list[UploadFile] = File(..., description="上传文件列表"),
     current_user: User = Depends(get_required_user),
 ):
-    return await upload_workspace_files(parent_path=parent_path, files=files, current_user=current_user)
+    try:
+        inputs = await prepare_upload_files(
+            files,
+            max_size_bytes=MAX_WORKSPACE_UPLOAD_SIZE_BYTES,
+            too_large_message="文件过大，当前仅支持 100 MB 以内的文件",
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return await upload_workspace_files(parent_path=parent_path, files=inputs, current_user=current_user)
 
 
 @workspace.get("/download")

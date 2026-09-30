@@ -33,7 +33,7 @@ from yuxi.modules.workspace.services.files import read_workspace_file_bytes
 from yuxi.infrastructure.minio.client import MinIOClient, StorageError, aupload_file_to_minio, get_minio_client
 from yuxi.modules.identity.models import User
 from yuxi.infrastructure.observability.logging import logger
-from yuxi.infrastructure.uploads import MAX_UPLOAD_SIZE_BYTES, read_upload_with_limit, write_upload_to_path
+from yuxi.api.uploads import read_upload_with_limit
 
 from yuxi.api.dependencies.auth import get_admin_user, get_db, get_required_user
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -48,6 +48,7 @@ knowledge = APIRouter(prefix="/knowledge", tags=["knowledge"])
 
 ACTIVE_GRAPH_BUILD_STATUSES = {"pending", "running"}
 MAX_DIRECT_DOCUMENT_ACTION_FILE_IDS = 1000
+MAX_UPLOAD_SIZE_BYTES = 100 * 1024 * 1024
 PENDING_PARSE_STATUSES = ["uploaded"]
 PENDING_INDEX_STATUSES = ["parsed", "error_indexing"]
 

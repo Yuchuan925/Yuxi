@@ -32,6 +32,7 @@ from yuxi.modules.identity.services.administration import (
 )
 from yuxi.modules.identity.services.usernames import generate_unique_uid, is_valid_phone_number, validate_username
 from yuxi.infrastructure.minio import upload_image_to_minio
+from yuxi.api.uploads import read_upload_with_limit
 from yuxi.infrastructure.minio.client import normalize_public_minio_url
 from yuxi.modules.identity.models import User
 from yuxi.modules.identity.repositories.departments import DepartmentRepository
@@ -892,8 +893,13 @@ async def upload_user_avatar(
 ):
     """上传用户头像"""
     try:
-        avatar_url = await upload_image_to_minio(
+        content = await read_upload_with_limit(
             file,
+            max_size_bytes=5 * 1024 * 1024,
+            too_large_message="文件大小不能超过5MB",
+        )
+        avatar_url = await upload_image_to_minio(
+            content,
             object_prefix=f"avatar/{current_user.id}",
             max_size_bytes=5 * 1024 * 1024,
             too_large_message="文件大小不能超过5MB",

@@ -6,6 +6,7 @@ import asyncio
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
+from typing import BinaryIO
 
 from yuxi.infrastructure.filesystem import await_io
 from yuxi.modules.workspace.filesystem import Workspace
@@ -82,6 +83,12 @@ class Workdir:
             self.resolve_path(path),
             source_path,
             overwrite=overwrite,
+        )
+
+    def copy_file_from_stream(self, path: str, source: BinaryIO, *, max_bytes: int, overwrite: bool = True) -> dict:
+        """把借用的文件流限量写入当前 Workdir。"""
+        return self.workspace.upload_authorized_file_from_stream(
+            self.resolve_path(path), source, max_bytes=max_bytes, overwrite=overwrite
         )
 
     async def acopy_directory_from_path(self, source_path: str | Path, target_path: str) -> None:

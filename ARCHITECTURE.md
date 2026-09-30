@@ -26,7 +26,7 @@ Yuxi 是一个面向 RAG、知识图谱和多智能体工作流的知识库平�
 
 ## 后端代码地图
 
-后端只有一个 `backend/yuxi` Python 包，项目配置与构建元数据由 `backend/pyproject.toml` 拥有。`api` 和 `workers` 是进程适配层；`modules` 按业务域组织用例与持久化；`infrastructure` 提供技术连接与解析引擎；`bootstrap` 负责启动资源装配；`migrations` 独占 Schema 修改。HTTP 路由只处理协议、认证上下文和响应装配。
+后端只有一个 `backend/yuxi` Python 包，项目配置与构建元数据由 `backend/pyproject.toml` 拥有。`api` 和 `workers` 是进程适配层；`modules` 按业务域组织用例与持久化；`infrastructure` 提供技术连接与解析引擎；`bootstrap` 负责启动资源装配；`migrations` 独占 Schema 修改。HTTP 路由只处理协议、认证上下文和响应装配。上传的 `UploadFile` 在 `api/uploads.py` 转为小文件字节或借用的二进制文件流；业务服务消费中立输入，workspace 文件边界负责限量、原子落盘。输入流由 HTTP 请求拥有，服务在请求结束前完成消费，不保存上传对象。
 
 ### 进程入口与启动装配
 

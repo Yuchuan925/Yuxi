@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
-from starlette.datastructures import UploadFile
+from yuxi.shared.files import FileInput
 
 import yuxi.modules.workspace.services.viewer as svc
 from yuxi.modules.workspace.errors import FileTransferLimitError
@@ -73,11 +73,14 @@ class _Backend:
         if self.files.pop(path, None) is None:
             raise FileNotFoundError(path)
 
-    def upload_authorized_file_from_path(self, path, source, *, overwrite=True):
+    def upload_authorized_file_from_stream(self, path, source, *, max_bytes, overwrite=True):
+        content = source.read()
+        if len(content) > max_bytes:
+            raise FileTransferLimitError("file exceeds limit")
         if not overwrite and path in self.files:
             raise FileExistsError(path)
         self.uploads.append(path)
-        self.files[path] = Path(source).read_bytes()
+        self.files[path] = content
         return {"is_dir": False, "size": len(self.files[path]), "modified_at": 0}
 
 
@@ -203,10 +206,10 @@ async def test_viewer_search_walks_current_workdir(realtime_viewer):
 @pytest.mark.parametrize(
     "files",
     [
-        [UploadFile(filename="report.txt", file=BytesIO(b"replacement"))],
+        [FileInput(filename="report.txt", source=BytesIO(b"replacement"))],
         [
-            UploadFile(filename="duplicate.txt", file=BytesIO(b"first")),
-            UploadFile(filename="duplicate.txt", file=BytesIO(b"second")),
+            FileInput(filename="duplicate.txt", source=BytesIO(b"first")),
+            FileInput(filename="duplicate.txt", source=BytesIO(b"second")),
         ],
     ],
 )
@@ -238,7 +241,7 @@ async def test_viewer_upload_maps_final_no_clobber_conflict_to_409(realtime_view
         await svc.upload_viewer_files(
             thread_id="thread-1",
             parent_path="/",
-            files=[UploadFile(filename="report.txt", file=BytesIO(b"replacement"))],
+            files=[FileInput(filename="report.txt", source=BytesIO(b"replacement"))],
             current_user=SimpleNamespace(uid="user-1"),
             db=object(),
         )
@@ -253,7 +256,7 @@ async def test_viewer_upload_returns_scope_path_and_artifact_url(realtime_viewer
     result = await svc.upload_viewer_files(
         thread_id="thread-1",
         parent_path="/",
-        files=[UploadFile(filename="new.txt", file=BytesIO(b"content"))],
+        files=[FileInput(filename="new.txt", source=BytesIO(b"content"))],
         current_user=SimpleNamespace(uid="user-1"),
         db=object(),
     )
@@ -271,7 +274,4 @@ async def test_viewer_upload_returns_scope_path_and_artifact_url(realtime_viewer
             ),
         }
     ]
-    assert (
-        realtime_viewer.files["/projects/11111111-1111-4111-8111-111111111111/report.txt"]
-        == b"hello\nworld\n"
-    )
+    assert realtime_viewer.files["/projects/11111111-1111-4111-8111-111111111111/report.txt"] == b"hello\nworld\n"
