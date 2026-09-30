@@ -8,7 +8,7 @@ from langchain.agents.middleware.types import AgentMiddleware, ModelRequest, Mod
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_openai import ChatOpenAI
 
-from yuxi.modules.extensions.tools.builtin.tools import ocr_parse_file
+from yuxi.modules.extensions.tools.builtin.ocr_parse_file import ocr_parse_file
 
 _TOOL_IMAGE_USER_TEXT = "Images returned by read_file are attached below. Inspect them when answering."
 _IMAGE_ERROR_TERMS = ("image", "vision", "multimodal", "multi-modal")

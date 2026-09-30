@@ -1,6 +1,6 @@
 from unittest.mock import MagicMock, patch
 
-from yuxi.modules.extensions.tools.builtin.tools import (
+from yuxi.modules.extensions.tools.builtin.web_search import (
     _all_tool_instances,
     _create_doubao_search,
     _extra_registry,

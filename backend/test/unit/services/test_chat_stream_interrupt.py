@@ -8,14 +8,12 @@ import pytest
 from yuxi.modules.agents.services.execution import (
     _build_ask_user_question_payload,
     _build_tool_approval_payload,
-    _normalize_interrupt_questions,
     stream_agent_resume,
 )
 from test.unit.agent_context_fixtures import prepared_execution
 import yuxi.modules.agents.services.execution as svc
 from yuxi.modules.agents.services.execution import RunExecutionResult
 from yuxi.modules.agents.services.tracing import LangfuseRunContext
-from yuxi.modules.agents.runtime.questions import normalize_options
 
 
 def _chunk(event):
@@ -41,188 +39,52 @@ def test_build_tool_approval_payload_rejects_mismatched_lists():
     assert _build_tool_approval_payload({"action_requests": [{}], "review_configs": []}, "thread-1") is None
 
 
-class TestNormalizeInterruptOptions:
-    """测试 _normalize_interrupt_options 函数"""
-
-    def test_empty_input(self):
-        assert normalize_options(None) == []
-        assert normalize_options([]) == []
-
-    def test_deeply_nested_json_is_rejected(self):
-        raw = "[" * 10_000 + "0" + "]" * 10_000
-        assert normalize_options(raw) == []
-
-    @pytest.mark.parametrize(
-        ("raw", "expected"),
-        [
-            (
-                [{"label": "选项1", "value": "option1"}, {"label": "选项2", "value": "option2"}],
-                [{"label": "选项1", "value": "option1"}, {"label": "选项2", "value": "option2"}],
-            ),
-            (
-                ["选项1", "选项2", "选项3"],
-                [
-                    {"label": "选项1", "value": "选项1"},
-                    {"label": "选项2", "value": "选项2"},
-                    {"label": "选项3", "value": "选项3"},
-                ],
-            ),
-            (
-                [{"label": "选项1", "value": "option1"}, "选项2"],
-                [{"label": "选项1", "value": "option1"}, {"label": "选项2", "value": "选项2"}],
-            ),
-        ],
+def test_question_projection_preserves_checkpoint_structure_and_ids():
+    """服务层只投影标准等待点，不重新规范化或生成回答键。"""
+    questions = [
+        {
+            "question_id": "destination",
+            "question": "你想去哪个城市？",
+            "options": [],
+            "multi_select": False,
+            "allow_other": True,
+        },
+        {
+            "question_id": "style",
+            "question": "选择风格",
+            "options": [{"label": "简洁", "value": "simple", "description": "简洁布局"}],
+            "multi_select": True,
+            "allow_other": False,
+            "operation": "确认风格",
+        },
+    ]
+    result = svc.build_pending_interrupt_payload(
+        SimpleNamespace(value={"questions": questions, "source": "ask_user_question"}), "thread-1"
     )
-    def test_options_normalized(self, raw, expected):
-        assert normalize_options(raw) == expected
-
-    def test_invalid_options(self):
-        raw = [{"label": "只有label"}, {}, "  "]
-        result = normalize_options(raw)
-        assert len(result) == 1  # 只有有效的选项
-        assert result[0] == {"label": "只有label", "value": "只有label"}
-
-    def test_value_only(self):
-        raw = [{"value": "only_value"}]
-        result = normalize_options(raw)
-        assert len(result) == 1
-        assert result[0] == {"label": "only_value", "value": "only_value"}
-
-    def test_wrapper_item_dict(self):
-        raw = {
-            "item": [
-                {"label": "选项1 (Recommended)", "value": "v1", "description": "描述1"},
-                {"label": "选项2", "value": "v2", "description": "描述2"},
-            ]
-        }
-        result = normalize_options(raw)
-        assert len(result) == 2
-        assert result[0] == {"label": "选项1 (Recommended)", "value": "v1", "description": "描述1"}
-        assert result[1] == {"label": "选项2", "value": "v2", "description": "描述2"}
-
-    def test_string_bool_questions_normalization(self):
-        info = {
-            "questions": [
-                {
-                    "question": "本次调研分析的最终落点是什么？",
-                    "options": {
-                        "item": [
-                            {"label": "建议", "value": "strategy", "description": "战略描述"},
-                        ]
-                    },
-                    "multi_select": "false",
-                    "allow_other": "false",
-                    "question_id": "final_deliverable",
-                }
-            ]
-        }
-        result = _build_ask_user_question_payload(info, "thread-123")
-        assert len(result["questions"]) == 1
-        q = result["questions"][0]
-        assert q["question_id"] == "final_deliverable"
-        assert q["multi_select"] is False
-        assert q["allow_other"] is False
-        assert q["options"] == [{"label": "建议", "value": "strategy", "description": "战略描述"}]
+    assert result == {
+        "status": "ask_user_question_required",
+        "questions": questions,
+        "source": "ask_user_question",
+        "thread_id": "thread-1",
+    }
+    assert result["questions"] is questions
 
 
-class TestBuildAskUserQuestionPayload:
-    """测试 _build_ask_user_question_payload 函数"""
-
-    def test_basic_questions(self):
-        info = {
-            "questions": [
-                {
-                    "question": "请确认是否继续？",
-                    "options": [
-                        {"label": "确认", "value": "yes"},
-                        {"label": "取消", "value": "no"},
-                    ],
-                }
-            ],
-        }
-        result = _build_ask_user_question_payload(info, "thread-123")
-
-        assert len(result["questions"]) == 1
-        assert result["questions"][0]["question"] == "请确认是否继续？"
-        assert len(result["questions"][0]["options"]) == 2
-        assert result["questions"][0]["options"][0] == {"label": "确认", "value": "yes"}
-        assert result["questions"][0]["options"][1] == {"label": "取消", "value": "no"}
-        assert result["source"] == "interrupt"
-        assert result["thread_id"] == "thread-123"
-
-    def test_questions_with_source(self):
-        info = {
-            "questions": [{"question": "选择一个选项", "options": ["A", "B", "C"]}],
-            "source": "ask_user_question",
-        }
-        result = _build_ask_user_question_payload(info, "thread-456")
-
-        assert result["source"] == "ask_user_question"
-        assert len(result["questions"][0]["options"]) == 3
-
-    @pytest.mark.parametrize(
-        ("extra", "expected"),
-        [
-            ({"multi_select": True}, {"multi_select": True}),
-            ({"allow_other": False}, {"allow_other": False}),
-            ({"operation": "删除文件"}, {"operation": "删除文件"}),
-        ],
-    )
-    def test_single_field_pass_through(self, extra, expected):
-        info = {
-            "questions": [
-                {
-                    "question": "请确认？",
-                    "options": ["A", "B"],
-                    **extra,
-                }
-            ]
-        }
-        result = _build_ask_user_question_payload(info, "thread-param")
-
-        for key, value in expected.items():
-            assert result["questions"][0][key] == value
-
-    def test_default_question_when_questions_missing(self):
-        info = {}
-        result = _build_ask_user_question_payload(info, "thread-no-opt")
-
-        assert len(result["questions"]) == 1
-        assert result["questions"][0]["question"] == "请选择一个选项"
-        assert result["questions"][0]["options"] == []
-        assert result["source"] == "interrupt"
-
-    def test_question_id_generation(self):
-        """测试 question_id 自动生成"""
-        info = {"questions": [{"question": "测试？"}]}
-        result = _build_ask_user_question_payload(info, "thread-id")
-
-        assert len(result["questions"][0]["question_id"]) > 0
+@pytest.mark.parametrize("payload", [{}, {"questions": []}, {"questions": None}, {"questions": "[]"}])
+def test_question_projection_rejects_missing_questions_instead_of_inventing_placeholder(payload):
+    """无效中断不能伪装为可回答的占位题。"""
+    with pytest.raises(ValueError, match="缺少标准 questions"):
+        _build_ask_user_question_payload(payload, "thread-1")
 
 
-class TestNormalizeInterruptQuestions:
-    """测试 _normalize_interrupt_questions 函数"""
-
-    def test_empty_input(self):
-        assert _normalize_interrupt_questions(None) == []
-        assert _normalize_interrupt_questions([]) == []
-
-    def test_normalize_basic_question(self):
-        raw = [{"question": "Q1", "options": ["A", "B"]}]
-        result = _normalize_interrupt_questions(raw)
-
-        assert len(result) == 1
-        assert result[0]["question"] == "Q1"
-        assert result[0]["options"][0] == {"label": "A", "value": "A"}
-        assert result[0]["multi_select"] is False
-        assert result[0]["allow_other"] is True
-
-    def test_invalid_question_filtered(self):
-        raw = [{"question": "  "}, "Q2", {"question": "有效问题"}]
-        result = _normalize_interrupt_questions(raw)
-
-        assert len(result) == 1
-        assert result[0]["question"] == "有效问题"
+def test_approval_projection_keeps_approval_protocol():
+    """提问契约收敛不影响工具审批。"""
+    approval = {
+        "action_requests": [{"name": "execute", "args": {"command": "pwd"}}],
+        "review_configs": [{"action_name": "execute", "allowed_decisions": ["approve", "reject"]}],
+    }
+    result = svc.build_pending_interrupt_payload(approval, "thread-1")
+    assert result == {"status": "human_approval_required", "approval": approval, "thread_id": "thread-1"}
 
 
 @pytest.mark.asyncio

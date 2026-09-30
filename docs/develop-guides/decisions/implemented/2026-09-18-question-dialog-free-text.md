@@ -2,13 +2,15 @@
 
 状态：implemented
 类型：feature
-Owner：backend/yuxi/modules/extensions/tools/builtin/tools.py
+Owner：backend/yuxi/modules/extensions/tools/builtin/ask_user_question.py
 
 ## 问题
 
 `ask_user_question` 过去只向模型说明带选项的问题，前端也把自行填写编码为特殊“其他”选项，因此 Agent 无法直接提出需要用户自由填写的纯问答，问题导航和逐题跳过也不清晰。
 
 ## 决策
+
+参数入口和标准结构的收敛由[内置工具与提问契约决策](2026-09-30-builtin-tool-question-contract.md)维护，本记录继续拥有纯问答与弹窗交互取舍。
 
 - 保持 `questions` 与 resume object 的单一协议：规范化后的 `options` 为空时是纯问答，有选项时由 `multi_select` 判别单选或多选。
 - `options` 只保存真实业务选项，不注入或识别“其他”选项或 sentinel。`allow_other` 独立控制选择题底部的自行填写入口。

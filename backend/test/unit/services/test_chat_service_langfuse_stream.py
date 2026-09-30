@@ -1023,6 +1023,59 @@ async def test_stream_agent_chat_maps_raw_protocol_events_to_yuxi_stream_events(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("container", ["configurable", "metadata", "stream_event", "meta"])
+async def test_execution_keeps_unrouted_nested_thread_fields_out_of_parent_output(monkeypatch, container):
+    """未路由 namespace 的嵌套线程数据不能污染父线程输出。"""
+
+    class Agent:
+        """提供明确子消息、未路由消息与根消息。"""
+
+        async def stream_messages_with_state(self, *_args, **_kwargs):
+            """只在顶层 thread_id 声明子线程归属。"""
+            yield (
+                "messages",
+                (
+                    AIMessageChunk(content="unrouted", id="unrouted"),
+                    {"namespace": ["child:task"], container: {"thread_id": "thread-1"}},
+                ),
+            )
+            yield (
+                "messages",
+                (
+                    AIMessageChunk(content="child", id="child"),
+                    {"namespace": ["child:task"], "thread_id": "child-thread"},
+                ),
+            )
+            yield (
+                "messages",
+                (
+                    AIMessageChunk(content="parent", id="parent"),
+                    {container: {"thread_id": "child-thread"}},
+                ),
+            )
+
+    _patch_stream_scaffolding(monkeypatch, agent=Agent())
+    chunks = [
+        _chunk(chunk)
+        async for chunk in svc.stream_agent_chat(
+            prepared_execution=prepared_execution(),
+            agent_slug="test-agent",
+            thread_id="thread-1",
+            meta={"turn_id": "turn-1", "run_id": "run-1", "worker_id": "worker-1"},
+            input_messages=[build_chat_input_message("hello")],
+            current_user=SimpleNamespace(uid="user-1", role="user", department_id=None),
+            db=_FakeSession(),
+        )
+    ]
+
+    assert [(chunk["thread_id"], chunk["response"]) for chunk in chunks if chunk["status"] == "loading"] == [
+        ("child-thread", "child"),
+        ("thread-1", "parent"),
+    ]
+    assert chunks[-1]["status"] == "finished" and chunks[-1]["thread_id"] == "thread-1"
+
+
+@pytest.mark.asyncio
 async def test_stream_agent_chat_emits_realtime_agent_state_from_values(
     monkeypatch: pytest.MonkeyPatch,
 ):

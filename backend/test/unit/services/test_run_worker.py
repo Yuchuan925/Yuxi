@@ -669,6 +669,42 @@ async def test_worker_rejects_success_without_final_checkpoint(monkeypatch: pyte
     assert "checkpoint" in terminals[0][2]
 
 
+async def test_worker_fails_chunk_without_top_level_thread_id(monkeypatch):
+    """执行器契约缺失必须形成失败，不能借用嵌套字段继续完成。"""
+    run_obj = _build_run()
+    _patch_common(monkeypatch, run_obj)
+    terminals = []
+    events = []
+
+    async def mark_terminal(run_id, status, error_type=None, error_message=None, **_kwargs):
+        """保存失败原因以核对错误收敛结果。"""
+        terminals.append((run_id, status, error_type, error_message))
+        return run_worker.TerminalTransition(status=status, changed=True)
+
+    async def append_event(_run_id, event_type, payload, **_kwargs):
+        """捕获协议结果，确认未发布缺失归属的模型输出。"""
+        events.append((event_type, payload))
+
+    monkeypatch.setattr(run_worker, "mark_run_terminal", mark_terminal)
+    monkeypatch.setattr(event_writer, "append_run_event", append_event)
+    monkeypatch.setattr(
+        run_worker,
+        "stream_agent_chat",
+        lambda **_kwargs: _ExecutionAsyncIter(
+            [
+                {"status": "loading", "response": "unrouted", "metadata": {"thread_id": "thread-1"}},
+                _terminal_result(),
+            ]
+        ),
+    )
+
+    await run_worker.process_agent_run({"job_try": 1}, run_obj.id)
+
+    assert terminals == [(run_obj.id, "failed", "worker_error", "'thread_id'")]
+    assert not any(event_type == "messages" for event_type, _payload in events)
+    assert events[-1] == ("end", {"status": "failed", "chunk": events[-2][1]["chunk"]})
+
+
 async def test_worker_rejects_waitpoint_without_postgres_terminal(monkeypatch: pytest.MonkeyPatch):
     """checkpoint 中断事件不能代替 PostgreSQL 的等待终态。"""
     run_obj = _build_run()
@@ -1422,7 +1458,7 @@ async def test_chunked_event_writer_flushes_loading_chunks_by_thread(monkeypatch
 
     monkeypatch.setattr(event_writer, "append_run_event", fake_append_run_event)
 
-    writer = run_worker.ChunkedEventWriter("run-1", "parent-thread")
+    writer = run_worker.ChunkedEventWriter("run-1")
     await writer.append({"status": "loading", "response": "parent", "thread_id": "parent-thread"})
     await writer.append({"status": "loading", "response": "child", "thread_id": "child-thread"})
     await writer.flush()
@@ -1444,6 +1480,18 @@ async def test_chunked_event_writer_flushes_loading_chunks_by_thread(monkeypatch
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("container", ["configurable", "metadata", "stream_event", "meta"])
+async def test_chunked_event_writer_rejects_missing_top_level_thread_id(container):
+    """嵌套线程字段不能掩盖内部 chunk 缺少归属。"""
+    writer = run_worker.ChunkedEventWriter("run-1")
+
+    with pytest.raises(KeyError, match="thread_id"):
+        await writer.append({"status": "loading", "response": "child", container: {"thread_id": "child-thread"}})
+
+    assert writer.thread_buffers == {}
+
+
+@pytest.mark.asyncio
 async def test_chunked_event_writer_flushes_semantic_tool_call_immediately(monkeypatch: pytest.MonkeyPatch):
     events: list[dict] = []
 
@@ -1452,7 +1500,7 @@ async def test_chunked_event_writer_flushes_semantic_tool_call_immediately(monke
 
     monkeypatch.setattr(event_writer, "append_run_event", fake_append_run_event)
 
-    writer = run_worker.ChunkedEventWriter("run-1", "parent-thread")
+    writer = run_worker.ChunkedEventWriter("run-1")
     chunk = {
         "status": "loading",
         "response": "",

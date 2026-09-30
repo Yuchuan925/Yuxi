@@ -3,7 +3,7 @@ import pytest
 from yuxi.modules.agents.runtime.sandbox import backend as sandbox_backend
 from yuxi.modules.agents.runtime.agent_backends.chatbot.state import merge_subagent_runs
 from yuxi.modules.agents.runtime.state import merge_artifacts
-from yuxi.modules.extensions.tools.builtin.tools import _normalize_presented_artifact_path
+from yuxi.modules.extensions.tools.builtin.present_artifacts import _normalize_presented_artifact_path
 from yuxi.modules.agents.runtime.sandbox.paths import CONVERSATION_HISTORY_DIR_NAME, LARGE_TOOL_RESULTS_DIR_NAME
 
 

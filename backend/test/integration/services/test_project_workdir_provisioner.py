@@ -316,7 +316,7 @@ async def test_ocr_directory_copy_is_visible_in_real_sandbox(tmp_path):
     from yuxi.bootstrap.models import load_models
     from yuxi.infrastructure.postgres.manager import pg_manager
     from yuxi.modules.agents.runtime.sandbox.paths import runtime_workdir_path
-    from yuxi.modules.extensions.tools.builtin.tools import ocr_parse_file
+    from yuxi.modules.extensions.tools.builtin.ocr_parse_file import ocr_parse_file
 
     load_models()
     suffix = uuid.uuid4().hex

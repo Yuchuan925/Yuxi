@@ -144,7 +144,6 @@ backend/yuxi/
 │   │   │   ├── context.py  # [移] Y/agents/context.py
 │   │   │   ├── questions.py  # [移改] Y/utils/question_utils.py；人工问题规范化与展示数据
 │   │   │   ├── state.py  # [移] Y/agents/state.py
-│   │   │   ├── thread_metadata.py  # [移改] Y/utils/thread_utils.py；从运行元数据提取 thread_id
 │   │   │   └── tool_approval.py  # [移] Y/agents/tool_approval.py
 │   │   └── services/
 │   │       ├── artifacts.py  # [拆] Y/services/artifact_service.py；保留授权、文件读取与业务结果；HTTP 下载/预览响应并入 api/responses/files.py

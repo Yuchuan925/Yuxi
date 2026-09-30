@@ -44,8 +44,6 @@ from yuxi.modules.agents.models.threads import Conversation
 from yuxi.modules.identity.models import User
 from yuxi.shared.hashing import hash_id
 from yuxi.infrastructure.observability.logging import logger
-from yuxi.modules.agents.runtime.questions import normalize_questions as _normalize_interrupt_questions
-from yuxi.modules.agents.runtime.thread_metadata import extract_thread_id as _metadata_thread_id
 
 
 def _with_attachment_context(message: HumanMessage, attachments: list[dict]) -> HumanMessage:
@@ -449,18 +447,10 @@ def _coerce_interrupt_payload(info: Any) -> dict:
 def _build_ask_user_question_payload(payload: dict, thread_id: str) -> dict[str, Any]:
     """将已标准化的 interrupt payload 转换为 ask_user_question_required 载荷。"""
 
-    questions = _normalize_interrupt_questions(payload.get("questions"))
-
-    if not questions:
-        questions = [
-            {
-                "question_id": str(uuid.uuid4()),
-                "question": "请选择一个选项",
-                "options": [],
-                "multi_select": False,
-                "allow_other": True,
-            }
-        ]
+    # checkpoint 中的问题已在工具入口校验；投影不重新生成 ID 或修复参数。
+    questions = payload.get("questions")
+    if not isinstance(questions, list) or not questions:
+        raise ValueError("提问等待点缺少标准 questions 列表")
 
     source = str(payload.get("source") or payload.get("tool_name") or "interrupt")
 
@@ -681,7 +671,7 @@ async def _stream_agent_execution(
 
     def make_chunk(content=None, **kwargs) -> dict[str, Any]:
         """构造尚未经过 Redis/SSE 序列化的执行增量。"""
-        chunk_thread_id = kwargs.pop("thread_id", None) or meta.get("thread_id") or thread_id
+        chunk_thread_id = kwargs.pop("thread_id", None) or thread_id
         if "meta" in kwargs:
             kwargs["meta"] = dict(kwargs["meta"])
         return {
@@ -844,7 +834,7 @@ async def _stream_agent_execution(
                 msg, metadata = payload
                 metadata = dict(metadata or {})
                 namespace = _metadata_namespace(metadata)
-                chunk_thread_id = _metadata_thread_id(metadata, thread_id if not namespace else None)
+                chunk_thread_id = metadata.get("thread_id") or (thread_id if not namespace else None)
                 if namespace and not chunk_thread_id:
                     continue
                 is_subagent_chunk = bool(chunk_thread_id and chunk_thread_id != thread_id)

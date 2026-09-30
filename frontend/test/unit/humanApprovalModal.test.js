@@ -100,14 +100,48 @@ test('问题弹窗按顺序收集全部答案', async () => {
       'virtual:human-approval-modal-test'
     )
     const submissions = []
-    const questions = [
-      { question_id: 'destination', question: '你想去哪个城市？' },
+    const wireQuestions = [
+      {
+        question_id: 'destination',
+        question: '你想去哪个城市？',
+        options: [],
+        multi_select: false,
+        allow_other: true
+      },
       {
         question_id: 'season',
         question: '你最喜欢哪个季节？',
-        options: ['春天', '夏天']
+        options: [
+          { label: '春天', value: '春天' },
+          { label: '夏天', value: '夏天' }
+        ],
+        multi_select: false,
+        allow_other: true
       }
     ]
+    const { pendingInterruptFromWaitpoint, extractPendingInterrupt } = await server.ssrLoadModule(
+      '/src/composables/useApproval.js'
+    )
+    const pending = pendingInterruptFromWaitpoint(
+      {
+        id: 'waitpoint-1',
+        run_id: 'run-1',
+        kind: 'answer',
+        questions: wireQuestions
+      },
+      'thread-1'
+    )
+    const streamed = extractPendingInterrupt(
+      {
+        status: 'ask_user_question_required',
+        questions: wireQuestions,
+        run_id: 'run-1'
+      },
+      'thread-1'
+    )
+    assert.equal(pending.questions, wireQuestions)
+    assert.equal(streamed.questions, wireQuestions)
+    const questions = pending.questions
     const host = makeNode('root')
     app = renderer.createApp(() =>
       h(HumanApprovalModal, {
@@ -124,7 +158,10 @@ test('问题弹窗按顺序收集全部答案', async () => {
     answer.props.onInput({ target: { value: '  杭州  ' } })
     await nextTick()
 
-    const next = find(host, (node) => node.type === 'button' && node.props.class === 'btn btn-approve')
+    const next = find(
+      host,
+      (node) => node.type === 'button' && node.props.class === 'btn btn-approve'
+    )
     assert.equal(textContent(next), '下一步')
     assert.equal(next.props.disabled, false)
     assert.equal(next.parent?.parent?.props.class, 'question-response-bar free-text-answer')
@@ -132,13 +169,13 @@ test('问题弹窗按顺序收集全部答案', async () => {
     await nextTick()
 
     assert.ok(find(host, (node) => node.props.placeholder === '或自行填写回答'))
-    const spring = find(
-      host,
-      (node) => node.type === 'input' && node.props.value === '春天'
-    )
+    const spring = find(host, (node) => node.type === 'input' && node.props.value === '春天')
     spring.props.onChange()
     await nextTick()
-    const submit = find(host, (node) => node.type === 'button' && node.props.class === 'btn btn-approve')
+    const submit = find(
+      host,
+      (node) => node.type === 'button' && node.props.class === 'btn btn-approve'
+    )
     assert.equal(textContent(submit), '提交')
     assert.equal(submit.parent?.parent?.props.class, 'question-response-bar other-input')
     submit.props.onClick()
@@ -156,16 +193,16 @@ test('问题弹窗按顺序收集全部答案', async () => {
     )
     app.mount(customHost)
     await nextTick()
-    find(customHost, (node) => node.props.placeholder === '请输入你的回答…')
-      .props.onInput({ target: { value: '杭州' } })
+    find(customHost, (node) => node.props.placeholder === '请输入你的回答…').props.onInput({
+      target: { value: '杭州' }
+    })
     await nextTick()
-    find(customHost, (node) => node.type === 'button' && node.props.class === 'btn btn-approve')
-      .props.onClick()
-    await nextTick()
-    const customAnswer = find(
+    find(
       customHost,
-      (node) => node.props.placeholder === '或自行填写回答'
-    )
+      (node) => node.type === 'button' && node.props.class === 'btn btn-approve'
+    ).props.onClick()
+    await nextTick()
+    const customAnswer = find(customHost, (node) => node.props.placeholder === '或自行填写回答')
     customAnswer.props.onInput({ target: { value: '  秋天  ' } })
     await nextTick()
     find(
@@ -187,8 +224,12 @@ test('问题弹窗按顺序收集全部答案', async () => {
           {
             question_id: 'cities',
             question: '你想去哪些城市？',
-            options: ['杭州', '上海'],
-            multi_select: true
+            options: [
+              { label: '杭州', value: '杭州' },
+              { label: '上海', value: '上海' }
+            ],
+            multi_select: true,
+            allow_other: true
           }
         ],
         onSubmit: (answerValue) => submissions.push(answerValue)
@@ -207,7 +248,10 @@ test('问题弹窗按顺序收集全部答案', async () => {
     )
     multipleCustomAnswer.props.onInput({ target: { value: '苏州' } })
     await nextTick()
-    find(multipleHost, (node) => node.type === 'input' && node.props.value === '杭州').props.onChange()
+    find(
+      multipleHost,
+      (node) => node.type === 'input' && node.props.value === '杭州'
+    ).props.onChange()
     await nextTick()
 
     const multipleSubmit = find(

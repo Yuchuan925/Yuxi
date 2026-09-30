@@ -19,7 +19,7 @@ def example_tool(text: str) -> str:
 - `category` 用于前端分组，常见值是 `builtin` 和 `knowledge`；
 - `tags` 用于展示和筛选；
 - `display_name` 是给用户看的名称，工具 ID 是给代码和模型协议使用的稳定名称；
-- 工具模块需要被 `toolkits` 包导入，装饰器才会执行注册。
+- 内置工具模块由 `yuxi.modules.extensions.tools.builtin` 包显式导入，装饰器在进程加载时执行注册。
 
 工具的注册不等于授权。产生文件、网络或数据库副作用的工具必须在执行边界再次校验当前用户和目标资源。
 
@@ -38,6 +38,30 @@ def example_tool(text: str) -> str:
 文件读写和命令执行由 Agent 的 Sandbox backend 提供。`present_artifacts` 推荐展示当前 Project 的 `outputs/` 文件；`large_tool_results` 和会话摘要等内部文件不会作为交付物展示。
 
 图片生成能力由内置 `image-gen` Skill 提供，不再作为独立的 Python 工具注册。具体依赖和文件位置由该 Skill 说明。
+
+## 内置工具：向用户提问
+
+`ask_user_question` 的 `questions` 参数是包含 1-5 个问题的列表，每项必须提供非空 `question`。纯问答省略 `options`；选择题的 `options` 是最多 5 项的对象列表，每项提供非空 `label` 和 `value`，可附带 `description`。`multi_select` 和 `allow_other` 使用 JSON 布尔值，分别默认 `false` 和 `true`。
+
+```json
+{
+  "questions": [
+    {"question": "交付物面向哪些读者？"},
+    {
+      "question_id": "format",
+      "question": "选择交付格式",
+      "options": [{"label": "Markdown", "value": "markdown"}, {"label": "PDF", "value": "pdf"}],
+      "allow_other": false
+    }
+  ]
+}
+```
+
+工具入口校验参数、去除文本首尾空白并补齐默认字段；省略 `question_id` 时按问题位置生成 `q-1` 等稳定 ID。整组问题的 ID 必须唯一，显式 ID 与生成 ID 冲突也会拒绝。JSON 字符串、包装对象、字段别名、字符串选项和字符串布尔值会产生工具参数错误，不创建等待点。
+
+收窄工具参数 schema 的部署升级前，需要停止接收新的提问，并完成或取消已有提问等待点，再替换 API 和 worker。LangGraph 恢复会重放 checkpoint 中的原始工具调用参数；旧入口接受的字符串选项等参数会被新 schema 拒绝，即使等待点问题已标准化也不能直接恢复。升级不自动迁移或取消这些调用。
+
+LangGraph checkpoint 保存标准问题结构，执行服务将其投影为持久等待点。Web、CLI 和 API 客户端使用等待点中的 `question_id` 提交回答；Web 只转换展示字段和推导文本、单选、多选类型，不重新生成 ID。恢复沿用同一 Turn，协议入口见 [Public API](../advanced/agents-public-api.md)。参数契约与工具实现在[提问模块](https://github.com/xerrors/Yuxi/blob/main/backend/yuxi/modules/extensions/tools/builtin/ask_user_question.py)，完整恢复链路由[生命周期 E2E](https://github.com/xerrors/Yuxi/blob/main/backend/test/e2e/test_agent_lifecycle_e2e.py)验证。
 
 ## 知识库工具
 
@@ -79,7 +103,7 @@ DOUBAO_SEARCH_API_KEY=<your-doubao-key>
 
 工具在 API 和 worker 进程加载时注册，修改环境变量后需要 `docker compose up -d --force-recreate api worker`。验证方式：在智能体详情确认工具列表出现「网页搜索」，用一个需要最新信息的问题发起真实对话，并检查工具调用返回的 URL、标题和摘要。没有该工具时检查 `WEB_SEARCH_PROVIDER` 拼写、对应 Key 是否存在以及容器是否已重建。
 
-实现入口：[网页搜索工具](https://github.com/xerrors/Yuxi/blob/main/backend/yuxi/modules/extensions/tools/builtin/tools.py)。
+实现入口：[网页搜索工具](https://github.com/xerrors/Yuxi/blob/main/backend/yuxi/modules/extensions/tools/builtin/web_search.py)。
 
 ## 工具组装流程
 

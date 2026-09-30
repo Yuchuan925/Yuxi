@@ -50,7 +50,6 @@ from yuxi.modules.agents.services.event_writer import (
     append_run_event_best_effort,
     flush_writer_best_effort,
     contains_model_output,
-    chunk_thread_id,
     map_chunk_to_run_event,
 )
 from yuxi.modules.agents.services.leases import (
@@ -614,7 +613,6 @@ async def process_agent_run(ctx, run_id: str):
     run_ctx = RunContext(run_id=run_id, worker_id=worker_id)
     writer = ChunkedEventWriter(
         run_id=run_id,
-        thread_id=thread_id,
         interval_ms=LOADING_FLUSH_INTERVAL_MS,
         max_chars=LOADING_FLUSH_MAX_CHARS,
     )
@@ -854,12 +852,12 @@ async def process_agent_run(ctx, run_id: str):
                             "human_approval_required",
                         }:
                             raise RuntimeError("终结执行结果缺少最终 checkpoint")
-                    target_thread_id = chunk_thread_id(chunk, thread_id)
+                    target_thread_id = chunk["thread_id"]
                     if chunk.get("status") == "loading":
                         if not first_output_observed and target_thread_id == thread_id and contains_model_output(chunk):
                             first_output_observed = True
                             first_output_at = utc_now_naive()
-                            await writer.append(chunk, thread_id=target_thread_id)
+                            await writer.append(chunk)
                             await writer.flush(target_thread_id)
                             await _record_run_timing_best_effort(
                                 run_id,
@@ -868,7 +866,7 @@ async def process_agent_run(ctx, run_id: str):
                                 observed_at=first_output_at,
                             )
                             continue
-                        await writer.append(chunk, thread_id=target_thread_id)
+                        await writer.append(chunk)
                         continue
 
                     await writer.flush(target_thread_id)

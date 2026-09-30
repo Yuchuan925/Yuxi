@@ -16,7 +16,6 @@ from yuxi.modules.agents.runtime.context import DEFAULT_MAX_EXECUTION_STEPS, Bas
 from yuxi.infrastructure.postgres.manager import pg_manager
 from yuxi.infrastructure.observability.logging import logger
 from yuxi.shared.hashing import subagent_child_thread_id
-from yuxi.modules.agents.runtime.thread_metadata import extract_thread_id as _metadata_thread_id
 
 
 def json_safe(value: Any) -> Any:
@@ -78,12 +77,8 @@ async def _collect_subagent_routes(run, parent_thread_id: str, routes: dict[tupl
             tool_call_id = (
                 cause.get("tool_call_id") if isinstance(cause, dict) else getattr(subagent, "trigger_call_id", None)
             )
-            state = getattr(subagent, "state", None)
-            metadata = getattr(subagent, "metadata", None)
-            thread_id = _metadata_thread_id(metadata) or _metadata_thread_id(state)
-            if not thread_id and isinstance(subagent_slug, str) and isinstance(tool_call_id, str) and tool_call_id:
+            if path and isinstance(subagent_slug, str) and isinstance(tool_call_id, str) and tool_call_id:
                 thread_id = subagent_child_thread_id(parent_thread_id, subagent_slug, tool_call_id)
-            if path and isinstance(subagent_slug, str) and isinstance(tool_call_id, str) and tool_call_id and thread_id:
                 routes[path] = {
                     "thread_id": thread_id,
                     "parent_thread_id": parent_thread_id,
@@ -197,7 +192,6 @@ class BaseAgent:
                     if method == "messages":
                         msg, metadata = data
                         metadata = dict(metadata or {})
-                        actual_thread_id = (subagent_route or {}).get("thread_id") or _metadata_thread_id(metadata)
                         metadata["namespace"] = namespace
                         metadata["stream_event"] = {
                             "method": method,
@@ -207,8 +201,6 @@ class BaseAgent:
                         }
                         if subagent_route:
                             metadata.update(subagent_route)
-                        if actual_thread_id:
-                            metadata["thread_id"] = actual_thread_id
                         yield "messages", (msg, metadata)
                     elif method == "values" and not namespace:
                         yield "values", data
@@ -222,11 +214,8 @@ class BaseAgent:
                             "timestamp": timestamp,
                             "data": json_safe(data),
                         }
-                        actual_thread_id = (subagent_route or {}).get("thread_id") or _metadata_thread_id(params)
                         if subagent_route:
                             event_payload.update(subagent_route)
-                        if actual_thread_id:
-                            event_payload["thread_id"] = actual_thread_id
                         yield "stream_event", event_payload
             finally:
                 route_task.cancel()

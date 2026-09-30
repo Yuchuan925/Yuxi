@@ -1,13 +1,15 @@
 from __future__ import annotations
 
+import importlib
 from types import SimpleNamespace
 from pathlib import Path
 
 import pytest
 
 import yuxi.modules.documents.service as ocr_service
-from yuxi.modules.extensions.tools.builtin import tools as builtin_tools
-from yuxi.modules.extensions.tools.builtin.tools import ocr_parse_file
+from yuxi.modules.extensions.tools.builtin.ocr_parse_file import ocr_parse_file
+
+builtin_tools = importlib.import_module("yuxi.modules.extensions.tools.builtin.ocr_parse_file")
 
 pytestmark = pytest.mark.unit
 

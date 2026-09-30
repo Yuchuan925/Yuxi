@@ -1,5 +1,4 @@
 import { reactive } from 'vue'
-import { normalizeQuestions } from '@/utils/questionUtils'
 import { hasPendingInterruptPayload } from '@/utils/toolApproval'
 
 const APPROVAL_REQUIRED_STATUSES = new Set([
@@ -11,7 +10,7 @@ const extractQuestionPayload = (chunk) => {
   const interruptInfo = chunk?.interrupt_info || {}
   const rawQuestions = chunk?.questions || interruptInfo?.questions || []
   const source = chunk?.source || interruptInfo?.source || 'interrupt'
-  const questions = normalizeQuestions(rawQuestions)
+  const questions = Array.isArray(rawQuestions) ? rawQuestions : []
 
   return {
     questions,
@@ -65,7 +64,7 @@ export const pendingInterruptFromWaitpoint = (waitpoint, threadId) => {
       interruptedRunId: waitpoint.run_id
     }
   }
-  const questions = normalizeQuestions(waitpoint.questions || [])
+  const questions = Array.isArray(waitpoint.questions) ? waitpoint.questions : []
   if (waitpoint.kind === 'answer' && questions.length) {
     return {
       kind: 'question',

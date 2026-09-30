@@ -69,7 +69,7 @@
 <script setup>
 import { computed } from 'vue'
 import BaseToolCall from '../BaseToolCall.vue'
-import { normalizeQuestions } from '@/utils/questionUtils'
+import { mapQuestionsForDisplay } from '@/utils/questionUtils'
 import { parseToolCallArgs } from '../toolRegistry'
 
 const props = defineProps({
@@ -107,15 +107,10 @@ const parsedResult = computed(() => {
 })
 
 const questions = computed(() => {
-  const args = parsedArgs.value
-  const fromArgs = normalizeQuestions(args?.questions ?? args)
-  if (fromArgs.length) return fromArgs
-
+  // 执行结果包含入口补齐的 ID；等待期间只展示模型原始参数。
   const result = parsedResult.value
-  const fromResult = normalizeQuestions(result?.questions ?? result)
-  if (fromResult.length) return fromResult
-
-  return []
+  if (Array.isArray(result?.questions)) return mapQuestionsForDisplay(result.questions)
+  return mapQuestionsForDisplay(parsedArgs.value?.questions)
 })
 
 const shortQuestionSummary = computed(() => {

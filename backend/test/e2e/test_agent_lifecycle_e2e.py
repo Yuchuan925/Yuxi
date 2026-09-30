@@ -7,6 +7,8 @@ import json
 import os
 import uuid
 from datetime import datetime, UTC
+from http.server import ThreadingHTTPServer
+from threading import Thread
 
 import asyncpg
 import httpx
@@ -14,6 +16,7 @@ import pytest
 
 from e2e_helpers import delete_agent, postgres_dsn
 from test.live_api_cleanup import make_test_conversation_title
+from test.support.openai_replay_server import ReplayHandler
 from yuxi.modules.agents.runtime.sandbox import ProvisionerSandboxBackend, get_sandbox_provider
 from yuxi.modules.agents.services.transport import get_redis_client
 from yuxi.modules.agents.services.tracing import get_langfuse_client
@@ -25,16 +28,18 @@ OUTPUT = "DETERMINISTIC_AGENT_E2E_OK"
 MODEL = "ci-replay:deterministic-chat"
 
 
-async def _provider(client: httpx.AsyncClient, headers: dict) -> None:
+async def _provider(
+    client: httpx.AsyncClient, headers: dict, *, base_url: str = "http://api:8765/v1", provider_id: str = "ci-replay"
+) -> None:
     """注册不依赖外部密钥的模型重放服务。"""
     response = await client.post(
         "/api/system/model-providers",
         headers=headers,
         json={
-            "provider_id": "ci-replay",
+            "provider_id": provider_id,
             "display_name": "CI deterministic replay",
             "provider_type": "openai",
-            "base_url": "http://api:8765/v1",
+            "base_url": base_url,
             "api_key": "ci-replay-key",
             "capabilities": ["chat"],
             "enabled_models": [
@@ -44,13 +49,13 @@ async def _provider(client: httpx.AsyncClient, headers: dict) -> None:
         },
     )
     assert response.status_code == 200 or (
-        response.status_code == 400 and response.json().get("detail") == "供应商 ci-replay 已存在"
+        response.status_code == 400 and response.json().get("detail") == f"供应商 {provider_id} 已存在"
     ), response.text
 
 
 async def _agent(
     client: httpx.AsyncClient, headers: dict, uid: str, *,
-    tools: list[str] | None = None, system_prompt_suffix: str = "",
+    tools: list[str] | None = None, system_prompt_suffix: str = "", model_spec: str = MODEL,
 ) -> str:
     """创建含预加载技能但不访问可选外部服务的主 Agent。"""
     slug = f"ci-lifecycle-{uuid.uuid4().hex[:8]}"
@@ -64,7 +69,7 @@ async def _agent(
             "description": "生命周期 E2E",
             "config_json": {
                 "context": {
-                    "model": MODEL,
+                    "model": model_spec,
                     "system_prompt": f"不要调用工具，只输出 {OUTPUT}。{system_prompt_suffix}",
                     "tools": tools or [],
                     "knowledges": [],
@@ -626,7 +631,10 @@ async def test_waiting_turn_requires_complete_answers_and_resumes_same_turn(e2e_
         waitpoint = waiting["waitpoint"]
         waiting_at = datetime.now(UTC)
         assert waitpoint["run_id"] == initial["run_id"]
-        assert [item["question_id"] for item in waitpoint["questions"]] == ["q-1", "q-2"]
+        assert waitpoint["questions"] == [
+            {"question_id": "q-1", "question": "第一题？", "options": [], "multi_select": False, "allow_other": True},
+            {"question_id": "q-2", "question": "第二题？", "options": [], "multi_select": False, "allow_other": True},
+        ]
 
         def resume_event(answers: list[dict]) -> dict:
             """构建与等待点绑定的多题回答事件。"""
@@ -749,6 +757,78 @@ async def test_waiting_turn_requires_complete_answers_and_resumes_same_turn(e2e_
                 assert cancelled.status_code == 202, cancelled.text
         await delete_agent(e2e_client, e2e_headers, slug)
         deleted = await e2e_client.delete("/api/system/model-providers/ci-replay", headers=e2e_headers)
+        assert deleted.status_code in {200, 404}, deleted.text
+
+
+@pytest.fixture
+def question_replay_url():
+    """为提问场景启动独占的真实 HTTP replay，不重启共享测试服务。"""
+    server = ThreadingHTTPServer(("0.0.0.0", 0), ReplayHandler)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"http://api:{server.server_port}/v1"
+    finally:
+        server.shutdown()
+        thread.join()
+        server.server_close()
+
+
+async def test_invalid_question_parameters_return_tool_error_without_waitpoint(
+    e2e_client, e2e_headers, question_replay_url
+):
+    """真实工具入口拒绝字符串布尔值，工具错误落库且不产生人工等待。"""
+    me = await e2e_client.get("/api/auth/me", headers=e2e_headers)
+    assert me.status_code == 200, me.text
+    provider_id = f"ci-replay-question-{uuid.uuid4().hex[:8]}"
+    model_spec = f"{provider_id}:deterministic-chat"
+    await _provider(e2e_client, e2e_headers, base_url=question_replay_url, provider_id=provider_id)
+    slug = await _agent(
+        e2e_client, e2e_headers, str(me.json()["uid"]), tools=["ask_user_question"], model_spec=model_spec
+    )
+    try:
+        created = await e2e_client.post(
+            "/api/v1/agents/threads",
+            headers={**e2e_headers, "Idempotency-Key": f"invalid-question-{uuid.uuid4().hex}"},
+            json={
+                "agent_id": slug,
+                "title": make_test_conversation_title("invalid-question"),
+                "model_spec": model_spec,
+                "input": [_message(f"{OUTPUT} DETERMINISTIC_ASK_USER_INVALID")],
+            },
+        )
+        assert created.status_code == 200, created.text
+        accepted = created.json()
+        for _ in range(150):
+            response = await e2e_client.get(
+                f"/api/v1/agents/threads/{accepted['thread_id']}/turns/{accepted['turn_id']}",
+                headers=e2e_headers,
+            )
+            assert response.status_code == 200, response.text
+            turn = response.json()
+            assert turn["status"] != "waiting", "非法问题参数不能被兼容解析成等待点"
+            if turn["status"] in {"completed", "failed", "cancelled"}:
+                break
+            await asyncio.sleep(0.2)
+        else:
+            pytest.fail("非法工具参数处理未终结")
+        assert turn["status"] == "completed" and turn["waitpoint"] is None, turn
+        assert turn["result_run_id"] == accepted["run_id"] and OUTPUT in turn["output"]["content"]
+        conn = await asyncpg.connect(postgres_dsn())
+        try:
+            audit = await conn.fetchrow(
+                "SELECT execution_status, content, turn_id FROM messages "
+                "WHERE run_id = $1 AND message_type = 'tool_audit' AND operation_id = 'call-ask-user'",
+                accepted["run_id"],
+            )
+        finally:
+            await conn.close()
+        assert audit and audit["execution_status"] == "failed"
+        assert audit["turn_id"] == accepted["turn_id"]
+        assert "ValidationError" in audit["content"] or "multi_select" in audit["content"]
+    finally:
+        await delete_agent(e2e_client, e2e_headers, slug)
+        deleted = await e2e_client.delete(f"/api/system/model-providers/{provider_id}", headers=e2e_headers)
         assert deleted.status_code in {200, 404}, deleted.text
 
 

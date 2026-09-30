@@ -268,7 +268,7 @@ import {
 import {
   buildQuestionAnswer as buildQuestionAnswerValue,
   isQuestionAnswered as hasQuestionAnswer,
-  normalizeQuestions
+  mapQuestionsForDisplay
 } from '@/utils/questionUtils'
 import { getToolIcon } from '@/components/ToolCallingResult/toolRegistry'
 import {
@@ -307,7 +307,7 @@ const activeToolIndex = ref(0)
 const OTHER_TEXTAREA_MAX_ROWS = 4
 
 const normalizedQuestions = computed(() => {
-  return normalizeQuestions(props.questions)
+  return mapQuestionsForDisplay(props.questions)
 })
 const isToolApproval = computed(() => props.kind === 'tool_approval')
 const activeToolRequest = computed(() => props.actionRequests[activeToolIndex.value] || null)

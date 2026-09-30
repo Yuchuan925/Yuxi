@@ -8,7 +8,6 @@ from yuxi.modules.agents.services.transport import (
     append_run_stream_event,
 )
 from yuxi.infrastructure.observability.logging import logger
-from yuxi.modules.agents.runtime.thread_metadata import extract_thread_id
 
 
 LOADING_FLUSH_INTERVAL_MS = 100
@@ -28,18 +27,15 @@ class _ThreadBuffer:
 
 
 class ChunkedEventWriter:
-    def __init__(self, run_id: str, thread_id: str | None, interval_ms: int = 100, max_chars: int = 512):
+    def __init__(self, run_id: str, interval_ms: int = 100, max_chars: int = 512):
         self.run_id = run_id
-        self.thread_id = thread_id
         self.interval_seconds = interval_ms / 1000
         self.max_chars = max_chars
-        self.thread_buffers: dict[str | None, _ThreadBuffer] = {}
+        self.thread_buffers: dict[str, _ThreadBuffer] = {}
 
-    def _target_thread_id(self, thread_id: str | None = None) -> str | None:
-        return thread_id or self.thread_id
-
-    async def append(self, chunk: dict, *, thread_id: str | None = None):
-        target_thread_id = self._target_thread_id(thread_id or extract_thread_id(chunk))
+    async def append(self, chunk: dict):
+        """按执行增量的明确线程归属缓冲。"""
+        target_thread_id = chunk["thread_id"]
         buffer = self.thread_buffers.setdefault(target_thread_id, _ThreadBuffer())
         buffer.items.append(chunk)
         buffer.chars += _loading_chunk_size(chunk)
@@ -50,7 +46,7 @@ class ChunkedEventWriter:
         if (time.monotonic() - buffer.last_flush) >= self.interval_seconds or buffer.chars >= self.max_chars:
             await self.flush(target_thread_id)
 
-    async def flush(self, thread_id: str | None | object = _ALL_THREADS):
+    async def flush(self, thread_id: str | object = _ALL_THREADS):
         if thread_id is _ALL_THREADS:
             for target_thread_id in list(self.thread_buffers):
                 await self.flush(target_thread_id)
@@ -140,10 +136,6 @@ def contains_model_output(chunk: dict) -> bool:
 def _flush_loading_chunk_immediately(chunk: dict) -> bool:
     stream_event = chunk.get("stream_event")
     return isinstance(stream_event, dict) and stream_event.get("type") == "tool_call"
-
-
-def chunk_thread_id(chunk: dict, fallback: str | None) -> str | None:
-    return extract_thread_id(chunk, fallback)
 
 
 def map_chunk_to_run_event(chunk: dict) -> tuple[str, dict]:

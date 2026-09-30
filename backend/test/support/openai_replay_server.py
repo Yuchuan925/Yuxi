@@ -156,7 +156,10 @@ def _stream_payloads(model: str, messages: list[dict]) -> list[dict]:
     large_result = LARGE_TOOL_RESULT_MARKER in serialized_messages
     tool_call_id = LARGE_TOOL_CALL_ID if large_result else EXPECTED_TOOL_CALL_ID
     tool_name = "execute" if large_result else EXPECTED_PRELOADED_TOOL
-    if "DETERMINISTIC_ASK_USER" in serialized_messages:
+    if "DETERMINISTIC_ASK_USER_INVALID" in serialized_messages:
+        tool_call_id, tool_name = "call-ask-user", "ask_user_question"
+        tool_arguments = json.dumps({"questions": [{"question": "选择风格？", "multi_select": "false"}]})
+    elif "DETERMINISTIC_ASK_USER" in serialized_messages:
         tool_call_id, tool_name = "call-ask-user", "ask_user_question"
         tool_arguments = json.dumps(
             {
