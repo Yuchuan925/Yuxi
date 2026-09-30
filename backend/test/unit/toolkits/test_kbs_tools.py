@@ -128,6 +128,36 @@ async def _fake_visible_kbs(runtime):
     return [{"kb_id": "db-1", "name": "FAQ", "kb_type": "milvus"}]
 
 
+@pytest.mark.asyncio
+async def test_tool_rechecks_permissions_instead_of_context_snapshot(monkeypatch):
+    """撤权后工具不复用准备阶段的可读快照。"""
+    from unittest.mock import AsyncMock
+
+    from yuxi.modules.knowledge.runtime import knowledge_base
+
+    readable = [SimpleNamespace(kb_id="db-1", name="FAQ", description=None, kb_type="milvus")]
+    monkeypatch.setattr(knowledge_base, "get_databases_by_uid", AsyncMock(side_effect=[readable, []]))
+    context = SimpleNamespace(uid="u1", knowledges=["db-1"], _visible_knowledge_bases=await _fake_visible_kbs(None))
+    runtime = SimpleNamespace(context=context)
+
+    assert [kb["kb_id"] for kb in await tools._resolve_visible_knowledge_bases_for_query(runtime)] == ["db-1"]
+    assert await tools._resolve_visible_knowledge_bases_for_query(runtime) == []
+
+
+@pytest.mark.asyncio
+async def test_tool_permission_failure_is_observable(monkeypatch):
+    """权限查询失败不伪装成空范围。"""
+    from unittest.mock import AsyncMock
+
+    from yuxi.modules.knowledge.runtime import knowledge_base
+
+    monkeypatch.setattr(
+        knowledge_base, "get_databases_by_uid", AsyncMock(side_effect=RuntimeError("storage unavailable"))
+    )
+    runtime = SimpleNamespace(context=SimpleNamespace(uid="u1", knowledges="all"))
+    with pytest.raises(RuntimeError, match="storage unavailable"):
+        await tools._resolve_visible_knowledge_bases_for_query(runtime)
+
 
 @pytest.mark.asyncio
 async def test_query_kb_returns_search_schema_without_sandbox_paths(monkeypatch) -> None:

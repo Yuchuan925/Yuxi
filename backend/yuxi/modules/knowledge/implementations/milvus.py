@@ -1243,6 +1243,7 @@ class MilvusKB(KnowledgeBase):
         # 先删除 Milvus 中的 chunks 数据
         await self.delete_file_chunks_only(kb_id, file_id)
 
+        await self.cleanup_file_resources(kb_id, file_id)
         await KnowledgeFileRepository().delete(file_id)
 
     async def get_file_basic_info(self, kb_id: str, file_id: str) -> dict:

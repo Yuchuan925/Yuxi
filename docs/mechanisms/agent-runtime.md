@@ -40,7 +40,7 @@ API/worker 不信任浏览器内存中的完整配置。请求可以提供受限
 | LangGraph state | Graph 执行和中间件 | 当前 checkpoint thread |
 | PostgreSQL Input/Receipt/Turn/Run/Message | 接收服务、调度器和 worker 提交 | 业务接收、执行与最终结果 |
 
-`_visible_knowledge_bases` 与 `_skill_runtime_snapshot` 中的授权 Skill、依赖和预加载内容在 Context 准备时派生；中间件在运行期间维护 token 等状态。身份与运行标记由 worker 注入，持久 Agent 配置通过 `update_config` 仅装载 configurable 字段。接入和执行使用同一装载规则。运行事件的模型、审批与 Workdir 元数据从准备后的 Context 投影。
+`_skill_runtime_snapshot` 中的授权 Skill、依赖和预加载内容在 Context 准备时派生；中间件在运行期间维护 token 等状态。身份与运行标记由 worker 注入，持久 Agent 配置通过 `update_config` 仅装载 configurable 字段。接入和执行使用同一装载规则。运行事件的模型、审批与 Workdir 元数据从准备后的 Context 投影。
 
 普通输入模型依次取显式输入值、Thread 保存值、Agent 配置和系统默认；接收时确定并保存在 Input 的配置快照中，Run 消费该快照。SubAgent 创建服务依次取子 Agent 模型配置、父 Run 输入中的模型和系统默认，middleware 只提交调用信息。
 
@@ -50,7 +50,7 @@ manifest v2 的配置摘要来自准备后的可配置字段，包含模型覆�
 
 - Context 准备阶段将 `"all"` 展开为当前执行用户可用的资源列表，将固定列表与可用资源取交集，空列表保持为空；后续构图消费解析后的列表。字段默认值、界面操作与 API 写入规则见[智能体配置](../agents/agents-config.md)。
 - MCP 选择控制直接加载的服务器；有效 Skill 激活后仍可按需加载其 MCP 依赖。
-- Agent 的知识库选择只能缩小用户已经拥有的读取权限。
+- Agent 的知识库选择只能缩小用户已经拥有的读取权限。Context 准备阶段只保存归一化后的知识库 ID；知识工具在每次执行时按当前用户权限与会话选择重新解析，撤权后的资源不能继续读取。权限查询失败通过工具错误边界暴露，具体机制见[知识库与检索](./knowledge-base.md#agent-如何看到知识库)。
 - Skill 选择控制 Prompt 和工具激活；共享 Skill 的文件投影按用户授权生成，个人 Skill 位于 UserWorkspace。
 资源快照只解决运行时“能看见哪些资源”。产生文件、知识库、MCP 或外部系统副作用的工具还要在执行处校验具体目标和当前身份。
 

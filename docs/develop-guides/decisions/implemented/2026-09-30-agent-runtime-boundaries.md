@@ -14,7 +14,7 @@ Owner：backend/yuxi/modules/agents/runtime/agent_backends/__init__.py
 
 `runtime/agent_backends/` 拥有执行实现与显式注册，`AGENT_BACKENDS` 的稳定 ID 保持 `ChatbotAgent` 和 `SubAgentBackend`。注册、实例独立性与配置契约沿用[显式注册决定](2026-09-17-builtin-discovery.md)。类名与持久化 ID 保持不变。
 
-`runtime/sandbox/` 聚合沙盒执行、provider、provisioner client、下载、虚拟路径与 CompositeBackend 装配。`runtime/middlewares/filesystem.py` 拥有文件工具注册与大结果处理策略，文件和摘要 middleware 仍共用本次构图创建的后端。Context 与知识工具共用 `runtime/knowledge.py` 的知识资源解析；查询与授权仍由 knowledge 模块执行。
+`runtime/sandbox/` 聚合沙盒执行、provider、provisioner client、下载、虚拟路径与 CompositeBackend 装配。`runtime/middlewares/filesystem.py` 拥有文件工具注册与大结果处理策略，文件和摘要 middleware 仍共用本次构图创建的后端。Context 装配属于 `runtime/context.py`，知识库范围解析与工具执行授权由[知识库可见范围决定](2026-09-30-knowledge-access-resolution.md)部分取代本记录中的资源解析归属。
 
 沙盒装配入口合并到 `sandbox/backend.py`，运行作用域必须显式提供，具体取舍与验证由[后端直接装配决定](2026-09-30-sandbox-backend-assembly.md)维护。
 

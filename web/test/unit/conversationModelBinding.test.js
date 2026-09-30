@@ -7,6 +7,17 @@ const source = readFileSync(
   'utf8'
 )
 
+test('新建对话按智能体 slug 解析当前智能体并启用输入框', () => {
+  const agentBlock = source.slice(
+    source.indexOf('const currentAgent = computed'),
+    source.indexOf('const currentChatId = computed')
+  )
+
+  assert.match(agentBlock, /agents\.value\.find\(\(agent\) => agent\.agent_id === currentAgentId\.value\)/)
+  assert.doesNotMatch(agentBlock, /agent\.id === currentAgentId\.value/)
+  assert.match(source, /:disabled="!currentAgent \|\| currentToolApprovalVisible"/)
+})
+
 test('模型选择按当前选择、Conversation、智能体默认的顺序解析', () => {
   const modelBlock = source.slice(
     source.indexOf('const currentModelSpec = computed'),

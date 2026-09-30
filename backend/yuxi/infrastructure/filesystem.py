@@ -1,11 +1,38 @@
+import asyncio
+import ctypes
 import errno
 import os
+import shutil
 import stat
-from collections.abc import Iterator
+from collections.abc import Awaitable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
 _DIRECTORY_OPEN_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+
+
+async def await_io[T](operation: Awaitable[T]) -> T:
+    """取消时等待当前 I/O 结束，让调用方随后可靠回收副作用。"""
+    task = asyncio.ensure_future(operation)
+    cancelled = False
+    while True:
+        try:
+            result = await asyncio.shield(task)
+            break
+        except asyncio.CancelledError:
+            cancelled = True
+            if task.done():
+                break
+        except Exception:
+            if cancelled:
+                raise asyncio.CancelledError() from None
+            raise
+    if cancelled:
+        # 取走线程异常，避免取消后留下未消费的任务异常。
+        if not task.cancelled():
+            task.exception()
+        raise asyncio.CancelledError()
+    return result
 
 
 def open_directory_fd(root: Path | int, parts: tuple[str, ...], *, create: bool = False) -> int:
@@ -78,6 +105,38 @@ def open_regular_file_fd(
         os.close(parent_fd)
 
 
+def copy_directory_fd(source_fd: int, target_fd: int) -> None:
+    """在已打开的目录间递归复制，不跟随链接且不覆盖目标。"""
+    for name in sorted(os.listdir(source_fd)):
+        item_stat = os.stat(name, dir_fd=source_fd, follow_symlinks=False)
+        if stat.S_ISDIR(item_stat.st_mode):
+            os.mkdir(name, 0o700, dir_fd=target_fd)
+            child_source = open_directory_fd(source_fd, (name,))
+            try:
+                child_target = open_directory_fd(target_fd, (name,))
+                try:
+                    copy_directory_fd(child_source, child_target)
+                finally:
+                    os.close(child_target)
+            finally:
+                os.close(child_source)
+        else:
+            with open_regular_file_fd(source_fd, (name,)) as (file_fd, _):
+                copied_fd = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=target_fd)
+                with os.fdopen(copied_fd, "wb") as target, os.fdopen(os.dup(file_fd), "rb") as source:
+                    shutil.copyfileobj(source, target)
+
+
+def publish_directory_fd(source_fd: int, name: str, target_fd: int, target_name: str) -> None:
+    """在 Linux 上原子发布目录，已有目标即使为空也不能覆盖。"""
+    renameat2 = ctypes.CDLL(None, use_errno=True).renameat2
+    renameat2.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint]
+    renameat2.restype = ctypes.c_int
+    if renameat2(source_fd, os.fsencode(name), target_fd, os.fsencode(target_name), 1) != 0:  # RENAME_NOREPLACE
+        code = ctypes.get_errno()
+        raise OSError(code, os.strerror(code), target_name)
+
+
 def ensure_within_root(path: Path, root: Path, *, error_message: str) -> Path:
     """确认真实路径位于指定根目录内，否则拒绝越界访问。"""
     try:
@@ -88,6 +147,8 @@ def ensure_within_root(path: Path, root: Path, *, error_message: str) -> Path:
 
 
 __all__ = [
+    "copy_directory_fd",
+    "publish_directory_fd",
     "open_directory_fd",
     "open_regular_file_fd",
     "ensure_within_root",

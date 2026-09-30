@@ -2,9 +2,9 @@ import asyncio
 import os
 import re
 import tempfile
-from contextlib import suppress
 from pathlib import Path, PurePosixPath
 from typing import Annotated
+from uuid import uuid4
 
 import httpx
 from langchain.tools import InjectedToolCallId
@@ -14,12 +14,15 @@ from langgraph.prebuilt.tool_node import ToolRuntime
 from langgraph.types import Command, interrupt
 from pydantic import BaseModel, Field
 
-from yuxi.modules.agents.runtime.sandbox.paths import VIRTUAL_PATH_PREFIX, VIRTUAL_SKILLS_PATH
-from yuxi.modules.agents.runtime.sandbox import ProvisionerSandboxBackend
-from yuxi.modules.extensions.tools.registry import ToolExtraMetadata, _all_tool_instances, _extra_registry, tool
-from yuxi.modules.system.options import system_options
+from yuxi.infrastructure.filesystem import await_io
 from yuxi.infrastructure.observability.logging import logger
 from yuxi.modules.agents.runtime.questions import normalize_questions
+from yuxi.modules.agents.runtime.sandbox import ProvisionerSandboxBackend
+from yuxi.modules.agents.runtime.sandbox.paths import VIRTUAL_PATH_PREFIX, VIRTUAL_SKILLS_PATH, runtime_workdir_path
+from yuxi.modules.extensions.tools.registry import ToolExtraMetadata, _all_tool_instances, _extra_registry, tool
+from yuxi.modules.system.options import system_options
+from yuxi.modules.workspace.filesystem import Workspace
+from yuxi.modules.workspace.workdir import Workdir
 
 _OCR_OUTPUT_DIR_NAME = "ocr"
 _OCR_PREVIEW_LIMIT = 1200
@@ -315,8 +318,8 @@ OCR_PARSE_FILE_DESCRIPTION = """
     args_schema=OcrParseFileInput,
 )
 async def ocr_parse_file(file_path: str, runtime: ToolRuntime, ocr_engine: str | None = None) -> dict:
-    """Parse a sandbox file with OCR, persist Markdown output, and return only a short result summary."""
-    from yuxi.modules.documents.service import parse_document
+    """解析文件并整体保存到当前 Workdir，返回入口路径与短预览。"""
+    from yuxi.modules.documents.service import parse
 
     runtime_scope_id, uid, workdir_relative_path = _resolve_runtime_sandbox_scope(runtime)
     source_virtual_path = _resolve_ocr_source_path(file_path, runtime)
@@ -329,34 +332,28 @@ async def ocr_parse_file(file_path: str, runtime: ToolRuntime, ocr_engine: str |
     from yuxi.modules.documents.service import resolve_ocr_engine_id
 
     engine = resolve_ocr_engine_id(ocr_engine, (await system_options.get())["default_ocr_engine"])
-    source_temp = ""
-    output_temp = ""
-    try:
+    with tempfile.TemporaryDirectory(prefix="yuxi-ocr-") as directory:
         suffix = PurePosixPath(source_virtual_path).suffix
-        with tempfile.NamedTemporaryFile(prefix="yuxi-ocr-source-", suffix=suffix, delete=False) as temp_file:
-            source_temp = temp_file.name
+        source_temp = f"{directory}/source{suffix}"
         try:
-            await asyncio.to_thread(
-                backend.download_authorized_file_to_path,
-                source_virtual_path,
-                source_temp,
-                100 * 1024 * 1024,
+            await await_io(
+                asyncio.to_thread(
+                    backend.download_authorized_file_to_path,
+                    source_virtual_path,
+                    source_temp,
+                    100 * 1024 * 1024,
+                )
             )
         except ValueError as exc:
             raise ValueError(f"文件不存在或不是普通文件: {source_virtual_path}") from exc
-        markdown = await parse_document(source_temp, params={"ocr_engine": engine})
-        workdir_path = str(_runtime_scope_value(runtime, "workdir_path") or "").rstrip("/")
-        parsed_path = _next_ocr_output_path(backend, workdir_path, PurePosixPath(source_virtual_path))
-        with tempfile.NamedTemporaryFile(prefix="yuxi-ocr-output-", delete=False) as temp_file:
-            output_temp = temp_file.name
-            temp_file.write(markdown.encode("utf-8"))
-        await asyncio.to_thread(backend.upload_authorized_file_from_path, parsed_path, output_temp)
-    finally:
-        for temp_path in (source_temp, output_temp):
-            if temp_path:
-                with suppress(FileNotFoundError):
-                    await asyncio.to_thread(os.unlink, temp_path)
-    preview, truncated = _ocr_preview(markdown)
+        result = await parse(source_temp, Path(directory) / "parsed", params={"ocr_engine": engine})
+        base_name = _safe_ocr_output_stem(PurePosixPath(source_virtual_path))
+        output_directory = f"/outputs/{_OCR_OUTPUT_DIR_NAME}/{base_name}_{uuid4().hex}"
+        workdir = Workdir(workdir_relative_path, Workspace(uid))
+        parsed_path = f"{runtime_workdir_path(workdir_relative_path)}{output_directory}/document.md"
+        markdown = await await_io(asyncio.to_thread(result.markdown_path.read_text, encoding="utf-8"))
+        preview, truncated = _ocr_preview(markdown)
+        await workdir.acopy_directory_from_path(result.directory, output_directory)
 
     return {
         "source_path": source_virtual_path,
@@ -418,17 +415,6 @@ def _runtime_scope_value(runtime: ToolRuntime, key: str) -> str | None:
         if isinstance(value, str) and value.strip():
             return value.strip()
     return None
-
-
-def _next_ocr_output_path(backend, workdir_path: str, source_path: PurePosixPath) -> str:
-    """在当前 Project outputs 中选择不冲突的 Markdown 路径。"""
-    base_name = _safe_ocr_output_stem(source_path)
-    candidate = f"{workdir_path}/outputs/{_OCR_OUTPUT_DIR_NAME}/{base_name}.md"
-    index = 1
-    while backend.regular_file_exists(candidate):
-        candidate = f"{workdir_path}/outputs/{_OCR_OUTPUT_DIR_NAME}/{base_name}-{index}.md"
-        index += 1
-    return candidate
 
 
 def _safe_ocr_output_stem(source_path: Path) -> str:

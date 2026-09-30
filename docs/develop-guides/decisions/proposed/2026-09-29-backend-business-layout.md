@@ -82,20 +82,13 @@ backend/yuxi/
 │   └── worker.py  # [拆] Y/services/run_worker.py；startup/shutdown、恢复循环启动与共享资源释放
 ├── infrastructure/
 │   ├── document_parsing/
-│   │   ├── __init__.py  # [移] Y/knowledge/parser/__init__.py；保留引擎协议；与 ZIP/图片处理新入口接线
-│   │   ├── base.py  # [移] Y/knowledge/parser/base.py；保留引擎协议；与 ZIP/图片处理新入口接线
-│   │   ├── capabilities.py  # [移] Y/knowledge/parser/capabilities.py；保留引擎协议；与 ZIP/图片处理新入口接线
-│   │   ├── deepseek_ocr.py  # [移] Y/knowledge/parser/deepseek_ocr.py；保留引擎协议；与 ZIP/图片处理新入口接线
-│   │   ├── factory.py  # [移] Y/knowledge/parser/factory.py；保留引擎协议；与 ZIP/图片处理新入口接线
-│   │   ├── mineru.py  # [移] Y/knowledge/parser/mineru.py；保留引擎协议；与 ZIP/图片处理新入口接线
-│   │   ├── mineru_official.py  # [移] Y/knowledge/parser/mineru_official.py；保留引擎协议；与 ZIP/图片处理新入口接线
-│   │   ├── paddleocr_api.py  # [移] Y/knowledge/parser/paddleocr_api.py；保留引擎协议；与 ZIP/图片处理新入口接线
-│   │   ├── pdf_utils.py  # [移改] Y/knowledge/utils/pdf_utils.py；PDF page tree 校验
-│   │   ├── pp_structure_v3.py  # [移] Y/knowledge/parser/pp_structure_v3.py；保留引擎协议；与 ZIP/图片处理新入口接线
-│   │   ├── rapid_ocr.py  # [移] Y/knowledge/parser/rapid_ocr.py；保留引擎协议；与 ZIP/图片处理新入口接线
-│   │   ├── unified.py  # [拆] Y/knowledge/parser/unified.py；格式分派、PDF/Office/HTML 等转换；对象寻址下沉、图片 URL 从调用方传入
-│   │   └── zip_utils.py  # [拆] Y/knowledge/parser/zip_utils.py；ZIP 安全校验、Markdown/图片提取；不导入 knowledge URL helper
+│   │   ├── __init__.py  # 轻量 ParseOptions、ParseResult 与异常契约
+│   │   ├── parser.py  # 唯一本地解析流程与格式转换
+│   │   ├── artifacts.py  # 相对资源、Markdown 引用与 ZIP 安全提取
+│   │   ├── pdf_utils.py  # PDF page tree 校验
+│   │   └── engines/  # 引擎契约、元数据、惰性装配与具体 OCR 适配器
 │   ├── minio/  # [整移] Y/storage/minio/；内部结构保留，仅修正导入与资源定位
+│   │   └── object_urls.py  # MinIO URL 识别与解析，共享对象定位，不执行知识库权限决策
 │   ├── neo4j/  # [整移] Y/storage/neo4j/；内部结构保留，仅修正导入与资源定位
 │   ├── observability/
 │   │   ├── langfuse.py  # [拆] Y/services/langfuse_service.py；SDK/client、启用检测、flush、远端 URL/score 传输；不读取业务终态
@@ -112,7 +105,7 @@ backend/yuxi/
 │   ├── filesystem.py  # [移改] Y/utils/paths.py；跨 Workspace/Skills 的 no-follow 文件描述符原语
 │   ├── images.py  # [移改] Y/utils/image_processor.py；图像校验、压缩与缩略图
 │   ├── runtime_settings.py  # [移改] Y/config/__init__.py；进程环境与运行目录配置，不再转发用户配置
-│   ├── object_urls.py  # [拆] Y/knowledge/utils/kb_utils.py；is_minio_url、parse_minio_url 等通用对象定位；不接收知识库权限决策
+│   ├── object_urls.py  # 删除；MinIO URL 识别与解析归入 infrastructure/minio/object_urls.py，不接收知识库权限决策
 │   └── uploads.py  # [移改] Y/utils/upload_utils.py；有界异步流读取与写入；参数依赖 read/seek 协议，移除 FastAPI 类型依赖
 ├── migrations/
 │   ├── main.py  # [移改] Y/storage_migration.py；仅为全新部署初始化当前 Schema，拒绝旧版本
@@ -184,8 +177,8 @@ backend/yuxi/
 │   │       ├── transport.py  # [移] Y/services/agents/transport.py；保留现有职责
 │   │       └── turns.py  # [移] Y/services/agents/turns.py；保留现有职责
 │   ├── documents/
-│   │   ├── assets.py  # [合] Y/knowledge/parser/unified.py + Y/knowledge/parser/zip_utils.py；解析图片存储与 Markdown 链接替换；调用方明确提供图片 URL 构造规则
-│   │   └── service.py  # [移改] Y/services/ocr_service.py；唯一配置感知解析入口、引擎配置/凭据解析和健康检查；重型 parser 惰性加载
+│   │   ├── assets.py  # [合] Y/knowledge/parser/unified.py + Y/knowledge/parser/zip_utils.py；按明确 bucket/prefix 上传完整解析资源并构造 hosted Markdown
+│   │   └── service.py  # [移改] Y/services/ocr_service.py；配置感知 parse、parse_to_hosted_markdown、引擎配置/凭据解析和健康检查；重型 parser 惰性加载
 │   ├── extensions/
 │   │   ├── mcp/
 │   │   │   ├── __init__.py  # [移] Y/agents/mcp/__init__.py
@@ -333,9 +326,8 @@ backend/yuxi/
 | `S/utils/lifespan.py` | `bootstrap/api.py` 承接初始化/关闭操作及其必需性策略；`api/lifespan.py` 承接 FastAPI lifespan 与 app.state 发布。 | 保留依赖初始化顺序、失败退出、结构化 readiness 信息及共享资源释放。 |
 | `Y/storage/postgres/manager.py` | `infrastructure/postgres/manager.py` 保留连接、session、关闭与运行期辅助；`checkpointer.py` 承接 checkpoint pool/saver；`schema.py` 承接版本常量、查询与 require_current_schema；`migrations/schema.py` 承接初始化锁、schema 版本写入、建表与当前 DDL，包括 ensure_business_schema、ensure_knowledge_schema。 | API/worker 只校验 schema；DDL 仍由唯一 schema-init 执行。运行期代码不导入迁移执行模块。 |
 | `Y/storage/postgres/models_business.py`、`models_knowledge.py` | 按树中列出的类归属拆 ORM；两个 Base 与 JSON_VALUE 进入 `infrastructure/postgres/base.py`；`bootstrap/models.py` 显式加载全部 ORM。 | 保留两个 registry/metadata、表名、约束名、FK、默认值及 relationship 字符串。每个映射类只注册一次。UNVIEWED_RUN_MARKER 跟随 threads，权限锁定常量跟随 identity，其余常量按树中归属移动。 |
-| `Y/services/ocr_service.py` | 整体重命名为 `modules/documents/service.py`，保留 parse_document、OCR 配置解析和 check_all_ocr_health。 | 这是知识库与附件已经共同使用的入口。配置和凭据解析在实际解析调用时发生；HTTP health 路由仍调用同一配置解析策略。 |
-| `Y/knowledge/parser/unified.py`、`zip_utils.py` | 格式转换与 ZIP 安全提取留在 `infrastructure/document_parsing`；图片上传和 Markdown 链接处理集中到 `modules/documents/assets.py`；调用方以普通 callable 提供资产保存/URL 构造能力。`modules/documents/service.py` 负责组装这些能力，底层 parser 不导入 documents 或 knowledge。 | 保留同步/异步解析调用方式、临时文件清理、图片 bucket/prefix 和现有受鉴权保护的图片 URL。不引入完整 ports 框架，不把图片直接改成公开对象 URL。 |
-| `Y/knowledge/utils/kb_utils.py` | `is_minio_url`、`parse_minio_url` 进入 `infrastructure/object_urls.py`；知识库图片 URL、文件元数据与处理参数留在 `modules/knowledge/utils/kb_utils.py`。 | URL 字符串解析不授权对象访问；授权仍在读取与执行边界。共享 parser 不再反向依赖 knowledge。 |
+| `Y/knowledge/parser/unified.py`、`Y/services/ocr_service.py` | `infrastructure/document_parsing/parser.py` 生成完整本地目录；`modules/documents/service.py` 解析配置与 MinIO 输入，`assets.py` 按明确归属发布资源。 | 解析不上传图片，聊天完整保存本地目录，知识库在发布阶段提供文档归属与代理 URL。详见[文档解析边界](../implemented/2026-09-30-document-parsing-artifacts.md)。 |
+| `Y/knowledge/utils/kb_utils.py` | `is_minio_url`、`parse_minio_url` 进入 `infrastructure/minio/object_urls.py`；知识库图片 URL、文件元数据与处理参数留在 `modules/knowledge/utils/kb_utils.py`。 | URL 字符串解析不授权对象访问；授权仍在读取与执行边界。共享 parser 不再反向依赖 knowledge。 |
 | `Y/agents/skills/service.py` 与上游 `Y/services/skills/` | 用例归组于 `modules/extensions/skills`，按 shared、personal、draft、edit、projection、catalog 和 package 分工。详见[Skill 模块边界](../implemented/2026-09-29-skill-module-ownership.md)。 | 投影用例拥有授权快照与锁顺序；编辑与运行时采用同一共享行锁协议。 |
 | `Y/agents/mcp/service.py` | `modules/extensions/mcp/repository.py` 承接 SQL 查询/写入；`runtime.py` 承接 MultiServerMCPClient、工具缓存、加载和过滤；`service.py` 保留内置同步、CRUD/启停编排、运行配置与资源策略。 | service 解析配置后传给 runtime；runtime 不反向导入 service。缓存失效、transport 限制、工具名称与 disabled_tools 行为保留。 |
 | `Y/agents/toolkits/service.py` | `modules/extensions/tools/catalog.py` 承接元数据缓存与目录查询；`runtime.py` 承接 resolve_configured_runtime_tools。 | 本地、MCP、Skill 工具仍使用同一冲突判定与运行装配；builtin 重命名只改目录，保留已有工具 ID、类别值与内置 slug。 |

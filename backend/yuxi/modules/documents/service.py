@@ -3,24 +3,23 @@
 from __future__ import annotations
 
 import asyncio
+import tempfile
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
-from yuxi.modules.system.options import (
+
+from yuxi.infrastructure.document_parsing import OCR_FILE_EXTENSIONS, ParseOptions, ParseResult
+from yuxi.infrastructure.document_parsing.engines import ENGINE_SPECS, get_engine, get_engine_spec
+from yuxi.modules.documents.options import (
     mineru_ocr_host_opts,
     mineru_official_api_opts,
     paddleocr_api_opts,
     pp_structure_v3_ocr_host_opts,
-    system_options,
 )
-from yuxi.infrastructure.document_parsing.capabilities import (
-    OCR_FILE_EXTENSIONS,
-    PARSER_CAPABILITIES,
-    get_parser_capability,
-)
-from yuxi.infrastructure.document_parsing.factory import DocumentProcessorFactory
 from yuxi.modules.models.providers.service import get_model_provider_by_id, resolve_api_key
+from yuxi.modules.system.options import system_options
 
 
 async def get_ocr_options(db: AsyncSession | None = None) -> dict[str, Any]:
@@ -34,7 +33,7 @@ async def get_ocr_options(db: AsyncSession | None = None) -> dict[str, Any]:
                 "display_name": capability.display_name,
                 "supported_extensions": list(capability.supported_extensions),
             }
-            for engine_id, capability in PARSER_CAPABILITIES.items()
+            for engine_id, capability in ENGINE_SPECS.items()
         ],
     }
 
@@ -43,7 +42,7 @@ def resolve_ocr_engine_id(engine_id: str | None, default_engine: str) -> str:
     resolved = str(engine_id or default_engine).strip() or default_engine
     if resolved == "disable":
         return resolved
-    if resolved not in PARSER_CAPABILITIES:
+    if resolved not in ENGINE_SPECS:
         raise ValueError(f"不支持的 OCR 引擎: {resolved}")
     return resolved
 
@@ -76,58 +75,55 @@ async def resolve_ocr_task_params(
     return resolved
 
 
-async def parse_document(
+async def parse(
     source: str,
+    output_dir: str | Path,
+    params: dict[str, Any] | None = None,
+    db: AsyncSession | None = None,
+) -> ParseResult:
+    """解析本地或 MinIO 输入，返回完整本地产物，不发布图片。"""
+    suffix = Path(source.split("?", 1)[0]).suffix.lower()
+    resolved = dict(params or {})
+    if suffix in OCR_FILE_EXTENSIONS:
+        resolved = await resolve_ocr_task_params(params, db)
+        engine_id = resolved["ocr_engine"]
+        if engine_id != "disable" and suffix not in get_engine_spec(engine_id).supported_extensions:
+            raise ValueError(f"OCR 引擎 {engine_id} 不支持文件类型 {suffix}")
+    options = ParseOptions(
+        ocr_engine=resolved.pop("ocr_engine", "disable"),
+        processor_kwargs=resolved.pop("_ocr_processor_kwargs", {}),
+        params=resolved,
+    )
+    from yuxi.infrastructure.document_parsing.parser import parse as parse_local
+    from yuxi.infrastructure.minio.object_urls import is_minio_url, parse_minio_url
+
+    if not is_minio_url(source):
+        return await parse_local(source, output_dir, options)
+    from yuxi.infrastructure.minio import get_minio_client
+
+    with tempfile.TemporaryDirectory(prefix="yuxi-parse-input-") as directory:
+        local_path = Path(directory) / f"source{suffix}"
+        bucket, object_name = parse_minio_url(source)
+        content = await get_minio_client().adownload_file(bucket, object_name)
+        await asyncio.to_thread(local_path.write_bytes, content)
+        return await parse_local(local_path, output_dir, options)
+
+
+async def parse_to_hosted_markdown(
+    source: str,
+    *,
+    image_bucket: str,
+    image_prefix: str,
+    url_builder: Callable[[str], str],
     params: dict[str, Any] | None = None,
     db: AsyncSession | None = None,
 ) -> str:
-    """使用当前运行时配置将文件解析为 Markdown。
+    """解析并发布图片；上传位置与访问 URL 由已授权调用方提供。"""
+    from yuxi.modules.documents.assets import upload_resources
 
-    这是业务代码唯一应调用的文档解析入口。函数负责区分应用层配置解析和
-    底层文件转换：对于 PDF 与图片等 OCR 文件，先确定最终 OCR 引擎，再从
-    数据库 Options、环境变量或模型供应商中解析该引擎的构造参数；对于普通
-    文本、Office、表格等文件，参数保持原样并直接交给统一解析器。
-
-    底层 parser 只接收已经准备好的 ``ocr_engine`` 和
-    ``_ocr_processor_kwargs``，不查询数据库，也不关心配置值来自何处。调用方
-    不应直接调用 ``yuxi.infrastructure.document_parsing.unified`` 中的内部解析入口，否则会
-    绕过数据库配置、环境变量回退和默认 OCR 引擎解析。
-
-    Args:
-        source: 本地文件路径或系统支持的 MinIO 文件地址。
-        params: 文件解析参数。可以包含 ``ocr_engine``、图片存储位置和各解析器
-            支持的业务参数；未指定 OCR 引擎时使用系统默认值。
-        db: 可选的异步数据库会话。已有事务的调用方可以传入以复用会话；未传入
-            时仅在 OCR 配置解析需要查询数据库时创建独立会话。
-
-    Returns:
-        解析后的 Markdown 文本。
-
-    Raises:
-        ValueError: OCR 引擎无效、图片禁用 OCR 或文件类型不受支持。
-        DocumentProcessorException: OCR 或文档解析器执行失败。
-        StorageError: MinIO 文件读取失败。
-    """
-
-    resolved_params = params
-    suffix = Path(source.split("?", 1)[0]).suffix.lower()
-    if suffix in OCR_FILE_EXTENSIONS:
-        resolved_params = await resolve_ocr_task_params(params, db)
-        engine_id = resolved_params["ocr_engine"]
-        if engine_id != "disable" and suffix not in get_parser_capability(engine_id).supported_extensions:
-            raise ValueError(f"OCR 引擎 {engine_id} 不支持文件类型 {suffix}")
-
-    from functools import partial
-    from yuxi.infrastructure.document_parsing.unified import parse_resolved_document
-    from yuxi.modules.documents.assets import upload_image_to_minio, parse_data_uri, process_images, replace_image_links
-    from yuxi.modules.knowledge.utils.kb_utils import build_kb_image_proxy_url
-
-    resolved_params = dict(resolved_params or {})
-    resolved_params["image_upload"] = partial(upload_image_to_minio, url_builder=build_kb_image_proxy_url)
-    resolved_params["parse_data_uri"] = parse_data_uri
-    resolved_params["zip_image_processor"] = partial(process_images, url_builder=build_kb_image_proxy_url)
-    resolved_params["replace_image_links"] = replace_image_links
-    return await parse_resolved_document(source=source, params=resolved_params)
+    with tempfile.TemporaryDirectory(prefix="yuxi-hosted-markdown-") as directory:
+        result = await parse(source, Path(directory) / "parsed", params, db)
+        return await upload_resources(result, image_bucket, image_prefix, url_builder)
 
 
 async def check_all_ocr_health(db: AsyncSession) -> dict[str, Any]:
@@ -135,7 +131,7 @@ async def check_all_ocr_health(db: AsyncSession) -> dict[str, Any]:
 
     configured = []
     results = {}
-    for engine_id in PARSER_CAPABILITIES:
+    for engine_id in ENGINE_SPECS:
         try:
             kwargs = await _build_processor_kwargs(db, engine_id)
             configured.append((engine_id, kwargs))
@@ -144,7 +140,7 @@ async def check_all_ocr_health(db: AsyncSession) -> dict[str, Any]:
 
     async def check(engine_id: str, kwargs: dict[str, Any]) -> tuple[str, dict[str, Any]]:
         try:
-            result = await asyncio.to_thread(DocumentProcessorFactory.check_health, engine_id, **kwargs)
+            result = await asyncio.to_thread(get_engine(engine_id, **kwargs).check_health)
         except Exception as exc:
             result = {"status": "error", "message": str(exc), "details": {}}
         return engine_id, result

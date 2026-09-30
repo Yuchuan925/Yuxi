@@ -103,7 +103,8 @@ async def _worker_startup(ctx):
     pg_manager.initialize()
     await require_current_schema(pg_manager)
     async with pg_manager.get_async_session_context() as session:
-        from yuxi.modules.system.options import ensure_options_in_db, invalidate_option_cache, system_options
+        from yuxi.modules.system.options import ensure_options_in_db, invalidate_option_cache
+        from yuxi.modules.system.options import system_options
 
         await ensure_options_in_db(session)
         await session.commit()

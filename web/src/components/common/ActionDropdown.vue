@@ -42,8 +42,7 @@
               allow-clear
               autocomplete="off"
               @update:value="emit('update:search', $event)"
-              @keydown.stop
-              @keydown.esc.prevent="closeAndFocus"
+              @keydown="handleSearchKeydown"
             >
               <template #prefix><Search :size="14" /></template>
               <template v-if="$slots['search-suffix']" #suffix
@@ -118,6 +117,15 @@ function setOpen(value) {
 function closeAndFocus() {
   openState.value = false
   triggerRef.value?.querySelector('button')?.focus()
+}
+
+/** 搜索框消费键盘事件，并将 Escape 作为弹层关闭操作处理。 */
+function handleSearchKeydown(event) {
+  event.stopPropagation()
+  if (event.key === 'Escape') {
+    event.preventDefault()
+    closeAndFocus()
+  }
 }
 
 const panelVisible = useElementVisibility(panelRef)

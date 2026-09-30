@@ -1,6 +1,6 @@
 """知识库工具模块。"""
 
-from yuxi.infrastructure.object_urls import is_minio_url, parse_minio_url
+from yuxi.infrastructure.minio.object_urls import is_minio_url, parse_minio_url
 
 
 from yuxi.modules.knowledge.utils.kb_utils import (

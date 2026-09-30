@@ -302,3 +302,67 @@ async def test_user_skill_projection_is_shared_across_sandboxes_but_isolated_by_
                 pass
         _cleanup_user_storage(uid)
         _cleanup_user_storage(other_uid)
+
+
+async def test_ocr_directory_copy_is_visible_in_real_sandbox(tmp_path):
+    """真实 OCR 工具复制 Office 目录，沙盒可直接读取 Markdown 和图片。"""
+    import io
+    from pathlib import PurePosixPath
+    from types import SimpleNamespace
+
+    from docx import Document
+    from PIL import Image
+
+    from yuxi.bootstrap.models import load_models
+    from yuxi.infrastructure.postgres.manager import pg_manager
+    from yuxi.modules.agents.runtime.sandbox.paths import runtime_workdir_path
+    from yuxi.modules.extensions.tools.builtin.tools import ocr_parse_file
+
+    load_models()
+    suffix = uuid.uuid4().hex
+    uid = f"pytest-ocr-copy-{suffix}"
+    runtime_scope = f"pytest-ocr-copy-{suffix}"
+    workdir_path, host_workdir = _create_workdir(uid)
+    backend = ProvisionerSandboxBackend(thread_id=runtime_scope, uid=uid, workdir_path=workdir_path)
+    try:
+        picture = tmp_path / "chart.png"
+        Image.new("RGB", (20, 20), "red").save(picture)
+        document = Document()
+        document.add_paragraph("directory copy fixture")
+        document.add_picture(str(picture))
+        document.save(host_workdir / "source.docx")
+        runtime_path = runtime_workdir_path(workdir_path)
+        context = {
+            "runtime_scope_id": runtime_scope,
+            "uid": uid,
+            "workdir_relative_path": workdir_path,
+            "workdir_path": runtime_path,
+        }
+        runtime = SimpleNamespace(config={"configurable": context}, context=SimpleNamespace(**context), state={})
+        result = await ocr_parse_file.coroutine(
+            file_path=f"{runtime_path}/source.docx", runtime=runtime, ocr_engine="disable"
+        )
+        [markdown_response] = await asyncio.to_thread(backend.download_files, [result["parsed_path"]])
+        assert markdown_response.error is None
+        markdown = markdown_response.content.decode()
+        assert "directory copy fixture" in markdown
+        assert "![image](images/figure-001.png)" in markdown
+        image_path = str(PurePosixPath(result["parsed_path"]).parent / "images/figure-001.png")
+        [image_response] = await asyncio.to_thread(backend.download_files, [image_path])
+        assert image_response.error is None
+        with Image.open(io.BytesIO(image_response.content)) as image:
+            assert image.size == (20, 20)
+            assert image.convert("RGB").getpixel((0, 0)) == (255, 0, 0)
+        host_output = host_workdir / result["parsed_path"].removeprefix(runtime_path + "/")
+        assert host_output.read_bytes() == markdown_response.content
+        assert host_output.with_name("images").joinpath("figure-001.png").read_bytes() == image_response.content
+    finally:
+        await asyncio.to_thread(
+            get_sandbox_provider().release,
+            runtime_scope,
+            uid=uid,
+            workdir_path=workdir_path,
+            clear_cache_on_delete_failure=True,
+        )
+        _cleanup_user_storage(uid)
+        await pg_manager.close()

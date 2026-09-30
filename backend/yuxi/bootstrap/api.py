@@ -67,7 +67,8 @@ async def _startup(app: FastAPI) -> None:
     pg_manager.initialize()
     await require_current_schema(pg_manager)
 
-    from yuxi.modules.system.options import ensure_options_in_db, invalidate_option_cache, system_options
+    from yuxi.modules.system.options import ensure_options_in_db, invalidate_option_cache
+    from yuxi.modules.system.options import system_options
 
     async with pg_manager.get_async_session_context() as session:
         await ensure_options_in_db(session)

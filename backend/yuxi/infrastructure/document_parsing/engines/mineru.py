@@ -11,20 +11,16 @@ from pathlib import Path
 
 import requests
 
-from yuxi.infrastructure.document_parsing.base import BaseDocumentProcessor, DocumentParserException
-from yuxi.infrastructure.document_parsing.capabilities import get_parser_capability
-from yuxi.infrastructure.document_parsing.zip_utils import process_zip_file_sync
+from yuxi.infrastructure.document_parsing import DocumentParserException
+from yuxi.infrastructure.document_parsing.artifacts import extract_markdown_archive
+from yuxi.infrastructure.document_parsing.engines import DocumentEngine
 from yuxi.infrastructure.observability.logging import logger
 
-_CAPABILITY = get_parser_capability("mineru_ocr")
 
-
-class MinerUParser(BaseDocumentProcessor):
+class MinerUParser(DocumentEngine):
     """MinerU 文档解析器 - 使用 HTTP API 进行文档理解和解析"""
 
-    service_name = _CAPABILITY.service_name
-    display_name = _CAPABILITY.display_name
-    supported_extensions = list(_CAPABILITY.supported_extensions)
+    engine_id = "mineru_ocr"
 
     def __init__(self, server_url: str | None = None):
         self.server_url = (server_url or os.getenv("MINERU_API_URI") or "http://localhost:30001").rstrip("/")
@@ -90,7 +86,7 @@ class MinerUParser(BaseDocumentProcessor):
                 "details": {"server_url": self.server_url, "error": str(e)},
             }
 
-    def process_file(self, file_path: str, params: dict | None = None) -> str:
+    def process_file(self, file_path: str, output_dir: Path, params: dict | None = None) -> str:
         """
         使用 MinerU 处理文档
 
@@ -190,18 +186,7 @@ class MinerUParser(BaseDocumentProcessor):
                     tmp_zip.flush()
 
                     try:
-                        from yuxi.infrastructure.minio import get_minio_client
-
-                        image_bucket = params.get("image_bucket") or get_minio_client().KB_BUCKETS["images"]
-                        image_prefix = params.get("image_prefix") or "unknown/kb-images"
-
-                        processed = process_zip_file_sync(
-                            tmp_zip.name,
-                            image_bucket=image_bucket,
-                            image_prefix=image_prefix,
-                            process_images=params.get("zip_image_processor"),
-                            replace_links=params.get("replace_image_links"),
-                        )
+                        processed = extract_markdown_archive(tmp_zip.name, output_dir)
                         text = processed
                     finally:
                         os.unlink(tmp_zip.name)

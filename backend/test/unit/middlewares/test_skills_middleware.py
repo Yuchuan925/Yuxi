@@ -192,6 +192,7 @@ async def test_awrap_model_call_mounts_knowledge_base_skill_tools():
                         "runtime_skills": {
                             "knowledge-base": _runtime_skill(
                                 "knowledge-base",
+                                tools=sorted(_KB_TOOL_NAMES),
                             )
                         },
                     },

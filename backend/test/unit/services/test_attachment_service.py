@@ -34,7 +34,7 @@ async def test_tmp_attachment_parse_preserves_http_exception(monkeypatch):
         raise error
 
     monkeypatch.setattr(service, "get_minio_client", lambda: minio_client)
-    monkeypatch.setattr("yuxi.modules.documents.service.parse_document", parse)
+    monkeypatch.setattr("yuxi.modules.documents.service.parse", parse)
 
     with pytest.raises(HTTPException) as caught:
         await service.parse_tmp_attachment_view(
@@ -272,8 +272,18 @@ class FakeWorkdir:
         self.storage.files[scope] = Path(source_path).read_bytes()
 
     def delete(self, scope: str) -> None:
-        if self.storage.files.pop(scope, None) is None:
+        keys = [key for key in self.storage.files if key == scope or key.startswith(scope + "/")]
+        if not keys:
             raise FileNotFoundError(scope)
+        for key in keys:
+            del self.storage.files[key]
+
+    def copy_directory_from(self, source, target_path, *, max_file_bytes):
+        for item in source.list_directory("/"):
+            if not item["is_dir"]:
+                self.storage.files[f"{target_path}/{item['name']}"] = source.read_file(
+                    f"/{item['name']}", max_file_bytes
+                )
 
 
 class PendingAgentInputRepository(EmptyAgentInputRepository):
@@ -347,13 +357,13 @@ async def test_parse_tmp_attachment_uses_selected_method_and_uploads_markdown(mo
 
     parse_calls = []
 
-    async def fake_parse(source: str, params: dict | None = None) -> str:
+    async def fake_parse(source: str, output_dir: Path, params: dict | None = None) -> str:
         parse_calls.append({"source": source, "params": params})
-        return "# parsed"
+        return _write_parse_result(output_dir, "# parsed")
 
     import yuxi.modules.documents.service as ocr_service
 
-    monkeypatch.setattr(ocr_service, "parse_document", fake_parse)
+    monkeypatch.setattr(ocr_service, "parse", fake_parse)
 
     response = await service.parse_tmp_attachment_view(
         object_name=object_name,
@@ -367,8 +377,9 @@ async def test_parse_tmp_attachment_uses_selected_method_and_uploads_markdown(mo
             "params": {"ocr_engine": "disable"},
         }
     ]
-    assert response["parsed_object_name"] == "tmp/chat_attachments/user-1/tmp-1/parsed/demo.md"
-    assert fake_minio.objects[("knowledgebases", response["parsed_object_name"])] == b"# parsed"
+    assert response["parsed_object_name"].endswith("/document.md")
+    assert service.Workspace("user-1").read_authorized_file("/" + response["parsed_object_name"], 1024) == b"# parsed"
+    assert fake_minio.uploads == []
 
 
 @pytest.fixture
@@ -395,9 +406,9 @@ def confirm_attachment_env(monkeypatch: pytest.MonkeyPatch):
 async def test_confirm_tmp_thread_attachments_writes_realtime_workdir(confirm_attachment_env):
     fake_minio, fake_repo = confirm_attachment_env
     original_object = "tmp/chat_attachments/user-1/tmp-1/original/demo.pdf"
-    parsed_object = "tmp/chat_attachments/user-1/tmp-1/parsed/demo.md"
+    parsed_object = "tmp/chat_attachments/user-1/tmp-1/parsed/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/document.md"
     fake_minio.objects[("knowledgebases", original_object)] = b"pdf-bytes"
-    fake_minio.objects[("knowledgebases", parsed_object)] = b"# parsed"
+    _write_local_parsed_object(parsed_object, b"# parsed")
 
     response = await service.confirm_tmp_thread_attachments_view(
         thread_id="thread-1",
@@ -424,6 +435,7 @@ async def test_confirm_tmp_thread_attachments_writes_realtime_workdir(confirm_at
         "uploaded_at",
         "path",
         "original_path",
+        "parsed_directory",
     }
     assert stored["original_path"].startswith(
         "/home/gem/user-data/projects/11111111-1111-4111-8111-111111111111/uploads/"
@@ -463,13 +475,13 @@ async def test_parse_tmp_attachment_handles_url_metacharacters(monkeypatch):
 
     parse_calls = []
 
-    async def fake_parse(source: str, params: dict | None = None) -> str:
+    async def fake_parse(source: str, output_dir: Path, params: dict | None = None) -> str:
         parse_calls.append(source)
-        return "# parsed"
+        return _write_parse_result(output_dir, "# parsed")
 
     import yuxi.modules.documents.service as ocr_service
 
-    monkeypatch.setattr(ocr_service, "parse_document", fake_parse)
+    monkeypatch.setattr(ocr_service, "parse", fake_parse)
 
     response = await service.parse_tmp_attachment_view(
         object_name=object_name,
@@ -478,7 +490,7 @@ async def test_parse_tmp_attachment_handles_url_metacharacters(monkeypatch):
     )
 
     assert parse_calls == ["minio://knowledgebases/tmp/chat_attachments/user-1/tmp-1/original/q1%3F.pdf"]
-    assert response["parsed_object_name"] == "tmp/chat_attachments/user-1/tmp-1/parsed/q1?.md"
+    assert response["parsed_object_name"].endswith("/document.md")
 
 
 @pytest.mark.asyncio
@@ -510,9 +522,9 @@ async def test_confirm_tmp_thread_attachments_rejects_non_parsed_object(confirm_
 async def test_confirm_tmp_thread_attachments_rolls_back_workdir_on_commit_failure(confirm_attachment_env):
     fake_minio, fake_repo = confirm_attachment_env
     original_object = "tmp/chat_attachments/user-1/tmp-1/original/demo.pdf"
-    parsed_object = "tmp/chat_attachments/user-1/tmp-1/parsed/demo.md"
+    parsed_object = "tmp/chat_attachments/user-1/tmp-1/parsed/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/document.md"
     fake_minio.objects[("knowledgebases", original_object)] = b"pdf-bytes"
-    fake_minio.objects[("knowledgebases", parsed_object)] = b"# parsed"
+    _write_local_parsed_object(parsed_object, b"# parsed")
     db = FailingCommitDB()
 
     with pytest.raises(RuntimeError, match="commit failed"):
@@ -712,3 +724,64 @@ async def test_delete_thread_attachment_does_not_delete_bytes_before_metadata_co
         )
 
     assert backend.files == {_scope_path(original): b"pdf"}
+
+
+@pytest.fixture(autouse=True)
+def isolate_attachment_workspace(tmp_path, monkeypatch):
+    """隔离真实文件边界，避免不同测试共享解析目录。"""
+    monkeypatch.setenv("YUXI_USER_DATA_DIR", str(tmp_path / "user-data"))
+    service.ensure_user_workspace("user-1")
+
+
+def _write_parse_result(output_dir, markdown):
+    """构造可回读的解析产物。"""
+    from yuxi.infrastructure.document_parsing import ParseResult
+
+    output_dir.mkdir()
+    path = output_dir / "document.md"
+    path.write_text(markdown)
+    return ParseResult(output_dir, path, ())
+
+
+def _write_local_parsed_object(object_name, content):
+    """把测试解析入口写入真实 Workspace 边界。"""
+    with tempfile.TemporaryDirectory() as directory:
+        path = Path(directory) / "document.md"
+        path.write_bytes(content)
+        service.Workspace("user-1").upload_authorized_file_from_path("/" + object_name, str(path))
+
+
+@pytest.mark.asyncio
+async def test_cancelled_attachment_write_reclaims_uncommitted_original(tmp_path, monkeypatch):
+    """用真实文件边界验证取消不会留下尚未提交的原附件。"""
+    import asyncio
+    import threading
+    from yuxi.modules.workspace.filesystem import Workspace
+    from yuxi.modules.workspace.paths import ensure_user_workspace
+    from yuxi.modules.workspace.workdir import Workdir
+
+    monkeypatch.setenv("YUXI_USER_DATA_DIR", str(tmp_path))
+    ensure_user_workspace("cancel-user")
+    workdir = Workdir("projects/cancel", Workspace("cancel-user"))
+    started, release = threading.Event(), threading.Event()
+    real_copy = Workdir.copy_file_from_path
+
+    def copy(self, *args, **kwargs):
+        started.set()
+        assert release.wait(5)
+        return real_copy(self, *args, **kwargs)
+
+    monkeypatch.setattr(Workdir, "copy_file_from_path", copy)
+    task = asyncio.create_task(
+        service._store_attachment(
+            workdir=workdir, file_id="file-id", file_name="input.txt", file_type="text/plain", file_content=b"original"
+        )
+    )
+    assert await asyncio.to_thread(started.wait, 5)
+    task.cancel()
+    await asyncio.sleep(0)
+    release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    with pytest.raises(FileNotFoundError):
+        workdir.read_file("/uploads/file-id_input.txt", 1024)

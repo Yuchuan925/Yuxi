@@ -233,7 +233,7 @@
         />
       </template>
       <template v-else-if="isMarkdown">
-        <MarkdownPreview :content="formatContent(file?.content)" />
+        <MarkdownPreview :content="formatContent(file?.content)" :resource-base-url="file?.resourceBaseUrl" />
       </template>
       <template v-else>
         <pre v-if="Array.isArray(file?.content)" class="file-content-pre">{{
@@ -348,7 +348,7 @@
               />
             </template>
             <template v-else-if="isMarkdown">
-              <MarkdownPreview :content="formatContent(file?.content)" />
+              <MarkdownPreview :content="formatContent(file?.content)" :resource-base-url="file?.resourceBaseUrl" />
             </template>
             <template v-else>
               <pre v-if="Array.isArray(file?.content)" class="file-content-pre">{{

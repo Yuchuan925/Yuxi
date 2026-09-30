@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
+import tempfile
 from dataclasses import dataclass
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 
+from yuxi.infrastructure.filesystem import await_io
 from yuxi.modules.workspace.filesystem import Workspace
 from yuxi.modules.workspace.paths import normalize_workdir_path
 
@@ -81,12 +84,51 @@ class Workdir:
             overwrite=overwrite,
         )
 
+    async def acopy_directory_from_path(self, source_path: str | Path, target_path: str) -> None:
+        """整体复制服务目录；取消时等复制结束，再回收本次产物。"""
+        copy = asyncio.create_task(
+            asyncio.to_thread(
+                self.workspace.copy_authorized_directory_from_path, self.resolve_path(target_path), source_path
+            )
+        )
+        try:
+            await await_io(copy)
+        except asyncio.CancelledError:
+            if not copy.cancelled() and copy.exception() is None:
+                await await_io(
+                    asyncio.to_thread(
+                        self.workspace.delete_authorized_path,
+                        self.resolve_path(target_path),
+                        root=self.root_path,
+                        expected_identity=copy.result(),
+                    )
+                )
+            raise
+
     def create_directory(self, parent_path: str, name: str) -> dict:
         return self.workspace.create_authorized_directory(
             self.resolve_path(parent_path),
             name,
             root=self.root_path,
         )
+
+    def copy_directory_from(self, source: Workdir, target_path: str, *, max_file_bytes: int) -> None:
+        """通过 no-follow 文件边界复制完整目录，不暴露用户宿主路径。"""
+        pending = [("/", target_path)]
+        with tempfile.TemporaryDirectory(prefix="yuxi-workdir-copy-") as directory:
+            temporary_file = f"{directory}/file"
+            with open(temporary_file, "xb"):
+                pass
+            while pending:
+                source_path, destination_path = pending.pop()
+                for item in source.list_directory(source_path):
+                    source_child = f"{source_path.rstrip('/')}/{item['name']}"
+                    destination_child = f"{destination_path.rstrip('/')}/{item['name']}"
+                    if item["is_dir"]:
+                        pending.append((source_child, destination_child))
+                    else:
+                        source.copy_file_to_path(source_child, temporary_file, max_file_bytes)
+                        self.copy_file_from_path(destination_child, temporary_file, overwrite=False)
 
     def delete(self, path: str) -> None:
         self.workspace.delete_authorized_path(self.resolve_path(path), root=self.root_path)

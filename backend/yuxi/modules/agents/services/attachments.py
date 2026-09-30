@@ -5,154 +5,34 @@ import tempfile
 import uuid
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from urllib.parse import quote
+from urllib.parse import quote, unquote
 
 from fastapi import HTTPException, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
-from yuxi.modules.agents.runtime.sandbox.paths import runtime_path_for_workdir_scope, workdir_scope_from_runtime_path
-from yuxi.modules.system.options import system_options
-from yuxi.infrastructure.document_parsing.capabilities import (
-    IMAGE_FILE_EXTENSIONS,
-    PDF_FILE_EXTENSIONS,
-    get_ocr_engines_for_extension,
-)
-from yuxi.modules.agents.repositories.runs import AgentRunRepository
-from yuxi.modules.agents.repositories.input import AgentInputRepository
-from yuxi.modules.agents.repositories.threads import ConversationRepository
+
+from yuxi.infrastructure.document_parsing import IMAGE_FILE_EXTENSIONS, PDF_FILE_EXTENSIONS
+from yuxi.infrastructure.document_parsing.artifacts import local_image_links, resource_path
+from yuxi.infrastructure.document_parsing.engines import get_ocr_engines_for_extension
+from yuxi.infrastructure.filesystem import await_io
 from yuxi.infrastructure.minio import StorageError, get_minio_client
-from yuxi.shared.datetime import utc_isoformat
 from yuxi.infrastructure.observability.logging import logger
 from yuxi.infrastructure.uploads import read_upload_with_limit
+from yuxi.modules.agents.repositories.input import AgentInputRepository
+from yuxi.modules.agents.repositories.runs import AgentRunRepository
+from yuxi.modules.agents.repositories.threads import ConversationRepository
+from yuxi.modules.agents.runtime.sandbox.paths import runtime_path_for_workdir_scope, workdir_scope_from_runtime_path
+from yuxi.modules.system.options import system_options
+from yuxi.modules.workspace.filesystem import Workspace
+from yuxi.modules.workspace.paths import ensure_user_workspace
+from yuxi.modules.workspace.workdir import Workdir
+from yuxi.shared.datetime import utc_isoformat
 
 ATTACHMENT_ALLOWED_EXTENSIONS: tuple[str, ...] = ()
 MAX_ATTACHMENT_SIZE_BYTES = 5 * 1024 * 1024  # 5 MB
-MAX_ATTACHMENT_MARKDOWN_CHARS = 32_000  # TODO: 转 MARKDOWN的时候，不应该裁剪
 TMP_ATTACHMENT_PREFIX = "tmp/chat_attachments"
 TMP_ATTACHMENT_PARSE_EXTENSIONS = (*PDF_FILE_EXTENSIONS, *IMAGE_FILE_EXTENSIONS)
 TMP_ATTACHMENT_IMAGE_EXTENSIONS = IMAGE_FILE_EXTENSIONS
 TMP_ATTACHMENT_TTL = timedelta(hours=24)
-
-
-async def _require_user_conversation(
-    conv_repo: ConversationRepository, thread_id: str, uid: str, app_id: str | None = None
-):
-    """在附件副作用边界校验 Thread 的用户与 APP 归属。"""
-    conversation = await conv_repo.get_conversation_by_thread_id(thread_id)
-    if (
-        not conversation
-        or conversation.uid != str(uid)
-        or getattr(conversation, "app_id", None) != app_id
-        or conversation.status == "deleted"
-    ):
-        raise HTTPException(status_code=404, detail="对话线程不存在")
-    return conversation
-
-
-def _tmp_attachment_owner(uid: str, app_id: str | None) -> str:
-    """让同一用户的产品与不同 APP 临时对象互不可用。"""
-    if app_id is None:
-        return str(uid)
-    digest = hashlib.sha256(app_id.encode()).hexdigest()
-    return f"{uid}-app-{digest}"
-
-
-def _truncate_markdown(markdown: str) -> tuple[str, bool]:
-    if len(markdown) <= MAX_ATTACHMENT_MARKDOWN_CHARS:
-        return markdown, False
-
-    truncated_content = markdown[: MAX_ATTACHMENT_MARKDOWN_CHARS - 100].rstrip()
-    truncated_content = f"{truncated_content}\n\n[内容已截断，超出 {MAX_ATTACHMENT_MARKDOWN_CHARS} 字符限制]"
-    return truncated_content, True
-
-
-def _safe_file_name(file_name: str | None, default: str = "attachment.bin") -> str:
-    safe_name = Path(file_name or "").name.replace("/", "_").replace("\\", "_").strip(" .")
-    return safe_name or default
-
-
-def _make_attachment_path(file_name: str) -> str:
-    """生成附件在沙盒用户目录中的统一路径。"""
-    file_name = _safe_file_name(file_name)
-    base_name = file_name
-    for ext in [".docx", ".txt", ".html", ".htm", ".pdf", ".md"]:
-        if file_name.lower().endswith(ext):
-            base_name = file_name[: -len(ext)]
-            break
-
-    safe_name = base_name.replace("/", "_").replace("\\", "_")
-    return f"{safe_name}.md"
-
-
-def _artifact_url(thread_id: str, virtual_path: str) -> str:
-    return f"/api/v1/agents/threads/{thread_id}/artifacts/{quote(virtual_path.lstrip('/'), safe='/')}"
-
-
-def _tmp_attachment_prefix(uid: str, tmp_file_id: str) -> str:
-    return f"{TMP_ATTACHMENT_PREFIX}/{uid}/{tmp_file_id}"
-
-
-def _make_tmp_attachment_object(uid: str, file_name: str) -> tuple[str, str]:
-    """生成用户隔离的 tmp 对象路径。"""
-    tmp_file_id = uuid.uuid4().hex
-    safe_name = _safe_file_name(file_name)
-    return tmp_file_id, f"{_tmp_attachment_prefix(uid, tmp_file_id)}/original/{safe_name}"
-
-
-def _make_tmp_parsed_object(uid: str, tmp_file_id: str, file_name: str) -> str:
-    stem = Path(_safe_file_name(file_name)).stem or "attachment"
-    return f"{_tmp_attachment_prefix(uid, tmp_file_id)}/parsed/{stem}.md"
-
-
-def _minio_source(bucket_name: str, object_name: str) -> str:
-    return f"minio://{bucket_name}/{quote(object_name, safe='/')}"
-
-
-def _parse_user_tmp_object(object_name: str, uid: str) -> tuple[str, str, str]:
-    if not object_name or "\\" in object_name:
-        raise HTTPException(status_code=400, detail="无效的临时附件路径")
-
-    user_prefix = f"{TMP_ATTACHMENT_PREFIX}/{uid}/"
-    if not object_name.startswith(user_prefix):
-        raise HTTPException(status_code=403, detail="无权访问该临时附件")
-
-    parts = object_name[len(user_prefix) :].split("/")
-    if len(parts) != 3 or any(not part or part in {".", ".."} for part in parts):
-        raise HTTPException(status_code=400, detail="无效的临时附件路径")
-
-    return parts[0], parts[1], parts[2]
-
-
-def _require_tmp_object_section(
-    object_name: str,
-    uid: str,
-    section: str,
-    tmp_file_id: str | None = None,
-) -> tuple[str, str]:
-    current_tmp_file_id, current_section, object_file_name = _parse_user_tmp_object(object_name, uid)
-    if current_section != section or (tmp_file_id is not None and current_tmp_file_id != tmp_file_id):
-        raise HTTPException(status_code=400, detail="无效的临时附件路径")
-    if section == "parsed" and Path(object_file_name).suffix.lower() != ".md":
-        raise HTTPException(status_code=400, detail="无效的解析附件路径")
-    return current_tmp_file_id, object_file_name
-
-
-def _normalize_parse_method(file_name: str, parse_method: str | None, default_ocr_engine: str) -> str:
-    """按文件类型确定临时附件解析方式。"""
-    suffix = Path(file_name).suffix.lower()
-    if suffix not in TMP_ATTACHMENT_PARSE_EXTENSIONS:
-        raise HTTPException(status_code=400, detail="当前仅支持 PDF 和图片附件解析")
-
-    allowed_methods = get_ocr_engines_for_extension(suffix)
-    if suffix in TMP_ATTACHMENT_IMAGE_EXTENSIONS:
-        method = parse_method or ("rapid_ocr" if default_ocr_engine == "disable" else default_ocr_engine)
-    else:
-        method = parse_method or "disable"
-        allowed_methods = ("disable", *allowed_methods)
-
-    if method not in allowed_methods:
-        allowed = ", ".join(allowed_methods)
-        raise HTTPException(status_code=400, detail=f"不支持的解析方法: {method}，可选: {allowed}")
-    return method
 
 
 def serialize_attachment(record: dict, *, thread_id: str) -> dict:
@@ -172,118 +52,6 @@ def serialize_attachment(record: dict, *, thread_id: str) -> dict:
         "original_artifact_url": (_artifact_url(thread_id, original_path) if isinstance(original_path, str) else None),
         "input_id": record.get("input_id"),
     }
-
-
-async def _write_workdir_file(workdir, path: str, content: bytes) -> None:
-    """通过受信任 no-follow 文件边界写入实时 Workdir。"""
-    temp_path = ""
-    try:
-        with tempfile.NamedTemporaryFile(prefix="yuxi-attachment-", delete=False) as temp_file:
-            temp_path = temp_file.name
-            temp_file.write(content)
-        await asyncio.to_thread(workdir.copy_file_from_path, path, temp_path)
-    finally:
-        if temp_path:
-            try:
-                os.unlink(temp_path)
-            except FileNotFoundError:
-                pass
-
-
-async def _store_attachment(
-    *,
-    workdir,
-    file_id: str,
-    file_name: str,
-    file_type: str | None,
-    file_content: bytes,
-    parsed_markdown: str | None = None,
-) -> dict:
-    """将正式附件直接写入实时 Project Workdir。"""
-    file_name = _safe_file_name(file_name)
-    storage_name = f"{file_id}_{file_name}"
-    original_scope = f"/uploads/{storage_name}"
-    await _write_workdir_file(workdir, original_scope, file_content)
-    original_path = runtime_path_for_workdir_scope(workdir.relative_path, original_scope)
-    record = {
-        "file_id": file_id,
-        "file_name": file_name,
-        "file_type": file_type,
-        "file_size": len(file_content),
-        "status": "uploaded",
-        "uploaded_at": utc_isoformat(),
-        "path": original_path,
-        "original_path": original_path,
-    }
-    if parsed_markdown is None:
-        return record
-
-    markdown_scope = f"/uploads/attachments/{_make_attachment_path(storage_name)}"
-    markdown_path = runtime_path_for_workdir_scope(workdir.relative_path, markdown_scope)
-    try:
-        await _write_workdir_file(workdir, markdown_scope, parsed_markdown.encode("utf-8"))
-    except Exception:
-        await asyncio.to_thread(workdir.delete, original_scope)
-        raise
-    record.update(
-        {
-            "status": "parsed",
-            "path": markdown_path,
-        }
-    )
-    return record
-
-
-async def _rollback_stored_attachments(workdir, records: list[dict]) -> None:
-    """尽力删除本批尚未提交的附件文件。"""
-    for record in records:
-        for path in {record.get("path"), record.get("original_path")}:
-            if not isinstance(path, str):
-                continue
-            try:
-                scope = workdir_scope_from_runtime_path(workdir.relative_path, path)
-                await asyncio.to_thread(workdir.delete, scope)
-            except Exception:
-                pass
-
-
-async def _cleanup_expired_tmp_attachments(minio_client, bucket_name: str, uid: str) -> None:
-    """上传时顺手清理当前用户 24 小时前遗留的临时附件。"""
-    prefix = f"{TMP_ATTACHMENT_PREFIX}/{uid}/"
-    try:
-        objects = await minio_client.alist_object_metadata(bucket_name, prefix)
-    except StorageError as exc:
-        logger.warning("列出过期临时附件失败: uid=%s error=%s", uid, exc)
-        return
-
-    latest_by_tmp_id: dict[str, datetime] = {}
-    for item in objects:
-        object_name = item.get("object_name")
-        modified_at = item.get("last_modified")
-        if not isinstance(object_name, str) or not isinstance(modified_at, datetime):
-            continue
-        try:
-            tmp_file_id, _, _ = _parse_user_tmp_object(object_name, uid)
-        except HTTPException:
-            continue
-        if modified_at.tzinfo is None:
-            modified_at = modified_at.replace(tzinfo=UTC)
-        previous = latest_by_tmp_id.get(tmp_file_id)
-        if previous is None or modified_at > previous:
-            latest_by_tmp_id[tmp_file_id] = modified_at
-
-    cutoff = datetime.now(UTC) - TMP_ATTACHMENT_TTL
-    expired_ids = [tmp_file_id for tmp_file_id, modified_at in latest_by_tmp_id.items() if modified_at <= cutoff]
-    results = await asyncio.gather(
-        *(
-            minio_client.adelete_objects_by_prefix(bucket_name, f"{_tmp_attachment_prefix(uid, tmp_file_id)}/")
-            for tmp_file_id in expired_ids
-        ),
-        return_exceptions=True,
-    )
-    for tmp_file_id, result in zip(expired_ids, results):
-        if isinstance(result, Exception):
-            logger.warning("清理过期临时附件失败: uid=%s tmp_file_id=%s error=%s", uid, tmp_file_id, result)
 
 
 async def upload_tmp_attachment_view(*, file: UploadFile, current_uid: str, app_id: str | None = None) -> dict:
@@ -307,15 +75,17 @@ async def upload_tmp_attachment_view(*, file: UploadFile, current_uid: str, app_
     minio_client = get_minio_client()
     bucket_name = minio_client.KB_BUCKETS["documents"]
     try:
-        upload_result = await minio_client.aupload_file(
-            bucket_name=bucket_name,
-            object_name=object_name,
-            data=file_content,
-            content_type=file.content_type,
+        upload_result = await await_io(
+            minio_client.aupload_file(
+                bucket_name=bucket_name,
+                object_name=object_name,
+                data=file_content,
+                content_type=file.content_type,
+            )
         )
     except StorageError as exc:
         raise HTTPException(status_code=500, detail=f"临时附件上传失败: {exc}") from exc
-    await _cleanup_expired_tmp_attachments(minio_client, bucket_name, tmp_owner)
+    await _cleanup_expired_tmp_attachments(minio_client, bucket_name, tmp_owner, str(current_uid))
 
     suffix = Path(file_name).suffix.lower()
     if suffix in TMP_ATTACHMENT_PARSE_EXTENSIONS:
@@ -354,31 +124,41 @@ async def parse_tmp_attachment_view(
         default_ocr_engine = (await system_options.get())["default_ocr_engine"]
     method = _normalize_parse_method(safe_name, parse_method, default_ocr_engine)
 
+    parsed_object_name = _make_tmp_parsed_object(tmp_owner, tmp_file_id)
+    parsed_directory = str(Path(parsed_object_name).parent)
+    await asyncio.to_thread(ensure_user_workspace, str(current_uid))
+    workspace = Workspace(str(current_uid))
     try:
-        from yuxi.modules.documents.service import parse_document
+        from yuxi.modules.documents.service import parse
 
-        markdown = await parse_document(_minio_source(bucket_name, object_name), params={"ocr_engine": method})
-        markdown, truncated = _truncate_markdown(markdown)
-        parsed_object_name = _make_tmp_parsed_object(tmp_owner, tmp_file_id, safe_name)
-        upload_result = await minio_client.aupload_file(
-            bucket_name=bucket_name,
-            object_name=parsed_object_name,
-            data=markdown.encode("utf-8"),
-            content_type="text/markdown; charset=utf-8",
-        )
-    except StorageError as exc:
-        raise HTTPException(status_code=400, detail=f"读取临时附件失败: {exc}") from exc
-    except HTTPException:
-        raise
-    except Exception as exc:  # noqa: BLE001
-        logger.warning(f"Tmp attachment parse failed for {safe_name}: {exc}")
-        raise HTTPException(status_code=400, detail=f"附件解析失败: {exc}") from exc
+        with tempfile.TemporaryDirectory(prefix="yuxi-chat-parse-") as temporary:
+            result = await parse(
+                _minio_source(bucket_name, object_name), Path(temporary) / "parsed", params={"ocr_engine": method}
+            )
+            for relative in (*result.resources, "document.md"):
+                await await_io(
+                    asyncio.to_thread(
+                        workspace.upload_authorized_file_from_path,
+                        f"/{parsed_directory}/{relative}",
+                        str(result.directory / relative),
+                        overwrite=False,
+                    )
+                )
+    except BaseException as exc:
+        try:
+            await asyncio.to_thread(workspace.delete_authorized_path, f"/{parsed_directory}", root="/")
+        except FileNotFoundError:
+            pass
+        if isinstance(exc, (asyncio.CancelledError, HTTPException)):
+            raise
+        logger.warning("Tmp attachment parse failed for %s: %s", safe_name, exc)
+        raise HTTPException(status_code=400, detail="附件解析失败") from exc
 
     return {
-        "parsed_object_name": upload_result.object_name,
+        "parsed_object_name": parsed_object_name,
         "parse_method": method,
         "status": "parsed",
-        "truncated": truncated,
+        "truncated": False,
     }
 
 
@@ -425,20 +205,15 @@ async def confirm_tmp_thread_attachments_view(
                 max_size_mb = MAX_ATTACHMENT_SIZE_BYTES // (1024 * 1024)
                 raise HTTPException(status_code=400, detail=f"附件过大，当前仅支持 {max_size_mb} MB 以内的文件")
 
-            parsed_markdown = None
+            parsed_source = None
             parsed_object_name = str(item.get("parsed_object_name") or "")
             if parsed_object_name:
                 _require_tmp_object_section(parsed_object_name, tmp_owner, "parsed", tmp_file_id)
-                expected_parsed_object = _make_tmp_parsed_object(tmp_owner, tmp_file_id, file_name)
-                if parsed_object_name != expected_parsed_object:
-                    raise HTTPException(status_code=400, detail="解析附件路径无效")
+                parsed_source = Workdir(str(Path(parsed_object_name).parent), Workspace(str(current_uid)))
                 try:
-                    parsed_bytes = await minio_client.adownload_file(bucket_name, parsed_object_name)
-                    parsed_markdown = parsed_bytes.decode("utf-8")
-                except StorageError as exc:
-                    raise HTTPException(status_code=400, detail=f"读取解析附件失败: {exc}") from exc
-                except UnicodeDecodeError as exc:
-                    raise HTTPException(status_code=400, detail="解析附件内容不是有效的 Markdown 文本") from exc
+                    await asyncio.to_thread(parsed_source.stat, "/document.md")
+                except FileNotFoundError as exc:
+                    raise HTTPException(status_code=400, detail="解析附件不存在") from exc
 
             file_id = uuid.uuid4().hex
             attachment_record = await _store_attachment(
@@ -447,18 +222,18 @@ async def confirm_tmp_thread_attachments_view(
                 file_name=file_name,
                 file_type=item.get("file_type"),
                 file_content=file_content,
-                parsed_markdown=parsed_markdown,
+                parsed_source=parsed_source,
             )
             added_records.append(attachment_record)
             confirmed_tmp_ids.append(tmp_file_id)
-    except Exception:
+    except (Exception, asyncio.CancelledError):
         await _rollback_stored_attachments(workdir, added_records)
         raise
 
     try:
         await conv_repo.add_attachments(conversation.id, added_records)
         await db.commit()
-    except Exception:
+    except (Exception, asyncio.CancelledError):
         await db.rollback()
         await _rollback_stored_attachments(workdir, added_records)
         raise
@@ -476,6 +251,17 @@ async def confirm_tmp_thread_attachments_view(
     for tmp_file_id, result in zip(confirmed_tmp_ids, delete_results):
         if isinstance(result, Exception):
             logger.warning("清理已确认临时附件失败: tmp_file_id=%s error=%s", tmp_file_id, result)
+
+    workspace = Workspace(str(current_uid))
+    for tmp_file_id in confirmed_tmp_ids:
+        try:
+            await asyncio.to_thread(
+                workspace.delete_authorized_path, f"/{_tmp_attachment_prefix(tmp_owner, tmp_file_id)}", root="/"
+            )
+        except FileNotFoundError:
+            pass
+        except Exception as exc:
+            logger.warning("清理已确认解析目录失败: tmp_file_id=%s error=%s", tmp_file_id, exc)
 
     return {"attachments": [serialize_attachment(item, thread_id=thread_id) for item in added_records]}
 
@@ -551,7 +337,10 @@ async def delete_thread_attachment_view(
 
     await db.commit()
 
-    for path in {target_attachment.get("path"), target_attachment.get("original_path")}:
+    for path in {
+        target_attachment.get("parsed_directory") or target_attachment.get("path"),
+        target_attachment.get("original_path"),
+    }:
         if not isinstance(path, str):
             continue
         try:
@@ -564,3 +353,248 @@ async def delete_thread_attachment_view(
             logger.warning("附件元数据已删除，但 Workdir 文件清理失败: thread=%s path=%s", thread_id, path)
 
     return {"message": "附件已删除"}
+
+
+async def _require_user_conversation(
+    conv_repo: ConversationRepository, thread_id: str, uid: str, app_id: str | None = None
+):
+    """在附件副作用边界校验 Thread 的用户与 APP 归属。"""
+    conversation = await conv_repo.get_conversation_by_thread_id(thread_id)
+    if (
+        not conversation
+        or conversation.uid != str(uid)
+        or getattr(conversation, "app_id", None) != app_id
+        or conversation.status == "deleted"
+    ):
+        raise HTTPException(status_code=404, detail="对话线程不存在")
+    return conversation
+
+
+def _tmp_attachment_owner(uid: str, app_id: str | None) -> str:
+    """让同一用户的产品与不同 APP 临时对象互不可用。"""
+    if app_id is None:
+        return str(uid)
+    digest = hashlib.sha256(app_id.encode()).hexdigest()
+    return f"{uid}-app-{digest}"
+
+
+def _safe_file_name(file_name: str | None, default: str = "attachment.bin") -> str:
+    safe_name = Path(file_name or "").name.replace("/", "_").replace("\\", "_").strip(" .")
+    return safe_name or default
+
+
+def _artifact_url(thread_id: str, virtual_path: str) -> str:
+    return f"/api/v1/agents/threads/{thread_id}/artifacts/{quote(virtual_path.lstrip('/'), safe='/')}"
+
+
+def _tmp_attachment_prefix(uid: str, tmp_file_id: str) -> str:
+    return f"{TMP_ATTACHMENT_PREFIX}/{uid}/{tmp_file_id}"
+
+
+def _make_tmp_attachment_object(uid: str, file_name: str) -> tuple[str, str]:
+    """生成用户隔离的 tmp 对象路径。"""
+    tmp_file_id = uuid.uuid4().hex
+    safe_name = _safe_file_name(file_name)
+    return tmp_file_id, f"{_tmp_attachment_prefix(uid, tmp_file_id)}/original/{safe_name}"
+
+
+def _make_tmp_parsed_object(uid: str, tmp_file_id: str) -> str:
+    """生成用户隔离的本地解析入口标识。"""
+    return f"{_tmp_attachment_prefix(uid, tmp_file_id)}/parsed/{uuid.uuid4().hex}/document.md"
+
+
+def _minio_source(bucket_name: str, object_name: str) -> str:
+    return f"minio://{bucket_name}/{quote(object_name, safe='/')}"
+
+
+def _parse_user_tmp_object(object_name: str, uid: str) -> tuple[str, str, str]:
+    if not object_name or "\\" in object_name:
+        raise HTTPException(status_code=400, detail="无效的临时附件路径")
+
+    user_prefix = f"{TMP_ATTACHMENT_PREFIX}/{uid}/"
+    if not object_name.startswith(user_prefix):
+        raise HTTPException(status_code=403, detail="无权访问该临时附件")
+
+    parts = object_name[len(user_prefix) :].split("/")
+    if len(parts) not in {3, 4} or any(not part or part in {".", ".."} for part in parts):
+        raise HTTPException(status_code=400, detail="无效的临时附件路径")
+
+    return parts[0], parts[1], "/".join(parts[2:])
+
+
+def _require_tmp_object_section(
+    object_name: str,
+    uid: str,
+    section: str,
+    tmp_file_id: str | None = None,
+) -> tuple[str, str]:
+    current_tmp_file_id, current_section, object_file_name = _parse_user_tmp_object(object_name, uid)
+    if current_section != section or (tmp_file_id is not None and current_tmp_file_id != tmp_file_id):
+        raise HTTPException(status_code=400, detail="无效的临时附件路径")
+    if section == "parsed" and (
+        len(object_file_name.split("/")) != 2
+        or object_file_name.split("/")[1] != "document.md"
+        or len(object_file_name.split("/")[0]) != 32
+        or any(c not in "0123456789abcdef" for c in object_file_name.split("/")[0])
+    ):
+        raise HTTPException(status_code=400, detail="无效的解析附件路径")
+    return current_tmp_file_id, object_file_name
+
+
+def _normalize_parse_method(file_name: str, parse_method: str | None, default_ocr_engine: str) -> str:
+    """按文件类型确定临时附件解析方式。"""
+    suffix = Path(file_name).suffix.lower()
+    if suffix not in TMP_ATTACHMENT_PARSE_EXTENSIONS:
+        raise HTTPException(status_code=400, detail="当前仅支持 PDF 和图片附件解析")
+
+    allowed_methods = get_ocr_engines_for_extension(suffix)
+    if suffix in TMP_ATTACHMENT_IMAGE_EXTENSIONS:
+        method = parse_method or ("rapid_ocr" if default_ocr_engine == "disable" else default_ocr_engine)
+    else:
+        method = parse_method or "disable"
+        allowed_methods = ("disable", *allowed_methods)
+
+    if method not in allowed_methods:
+        allowed = ", ".join(allowed_methods)
+        raise HTTPException(status_code=400, detail=f"不支持的解析方法: {method}，可选: {allowed}")
+    return method
+
+
+async def _write_workdir_file(workdir, path: str, content: bytes) -> None:
+    """通过受信任 no-follow 文件边界写入实时 Workdir。"""
+    temp_path = ""
+    try:
+        with tempfile.NamedTemporaryFile(prefix="yuxi-attachment-", delete=False) as temp_file:
+            temp_path = temp_file.name
+            temp_file.write(content)
+        await await_io(asyncio.to_thread(workdir.copy_file_from_path, path, temp_path))
+    finally:
+        if temp_path:
+            try:
+                os.unlink(temp_path)
+            except FileNotFoundError:
+                pass
+
+
+async def _store_attachment(
+    *,
+    workdir,
+    file_id: str,
+    file_name: str,
+    file_type: str | None,
+    file_content: bytes,
+    parsed_source: Workdir | None = None,
+) -> dict:
+    """将正式附件直接写入实时 Project Workdir。"""
+    file_name = _safe_file_name(file_name)
+    storage_name = f"{file_id}_{file_name}"
+    original_scope = f"/uploads/{storage_name}"
+    directory_scope = f"/uploads/attachments/{file_id}"
+    markdown_scope = f"{directory_scope}/document.md"
+    markdown_path = runtime_path_for_workdir_scope(workdir.relative_path, markdown_scope)
+    try:
+        await _write_workdir_file(workdir, original_scope, file_content)
+        original_path = runtime_path_for_workdir_scope(workdir.relative_path, original_scope)
+        record = {
+            "file_id": file_id,
+            "file_name": file_name,
+            "file_type": file_type,
+            "file_size": len(file_content),
+            "status": "uploaded",
+            "uploaded_at": utc_isoformat(),
+            "path": original_path,
+            "original_path": original_path,
+        }
+        if parsed_source is None:
+            return record
+
+        # 客户端只能选择入口；每个文件仍在源与目标 owning filesystem boundary 校验。
+        markdown = await asyncio.to_thread(parsed_source.read_file, "/document.md", 100 * 1024 * 1024)
+        for link in local_image_links(markdown.decode("utf-8")):
+            relative = resource_path(unquote(link))
+            await asyncio.to_thread(parsed_source.read_file, f"/{relative}", 100 * 1024 * 1024)
+        await await_io(
+            asyncio.to_thread(
+                workdir.copy_directory_from, parsed_source, directory_scope, max_file_bytes=100 * 1024 * 1024
+            )
+        )
+    except BaseException:
+        try:
+            await asyncio.to_thread(workdir.delete, original_scope)
+        except FileNotFoundError:
+            pass
+        try:
+            await asyncio.to_thread(workdir.delete, directory_scope)
+        except FileNotFoundError:
+            pass
+        raise
+    record.update(
+        {
+            "status": "parsed",
+            "path": markdown_path,
+            "parsed_directory": runtime_path_for_workdir_scope(workdir.relative_path, directory_scope),
+        }
+    )
+    return record
+
+
+async def _rollback_stored_attachments(workdir, records: list[dict]) -> None:
+    """尽力删除本批尚未提交的附件文件。"""
+    for record in records:
+        for path in {record.get("parsed_directory") or record.get("path"), record.get("original_path")}:
+            if not isinstance(path, str):
+                continue
+            try:
+                scope = workdir_scope_from_runtime_path(workdir.relative_path, path)
+                await asyncio.to_thread(workdir.delete, scope)
+            except Exception:
+                pass
+
+
+async def _cleanup_expired_tmp_attachments(minio_client, bucket_name: str, uid: str, workspace_uid: str) -> None:
+    """上传时顺手清理当前用户 24 小时前遗留的临时附件。"""
+    prefix = f"{TMP_ATTACHMENT_PREFIX}/{uid}/"
+    try:
+        objects = await minio_client.alist_object_metadata(bucket_name, prefix)
+    except StorageError as exc:
+        logger.warning("列出过期临时附件失败: uid=%s error=%s", uid, exc)
+        return
+
+    latest_by_tmp_id: dict[str, datetime] = {}
+    for item in objects:
+        object_name = item.get("object_name")
+        modified_at = item.get("last_modified")
+        if not isinstance(object_name, str) or not isinstance(modified_at, datetime):
+            continue
+        try:
+            tmp_file_id, _, _ = _parse_user_tmp_object(object_name, uid)
+        except HTTPException:
+            continue
+        if modified_at.tzinfo is None:
+            modified_at = modified_at.replace(tzinfo=UTC)
+        previous = latest_by_tmp_id.get(tmp_file_id)
+        if previous is None or modified_at > previous:
+            latest_by_tmp_id[tmp_file_id] = modified_at
+
+    cutoff = datetime.now(UTC) - TMP_ATTACHMENT_TTL
+    expired_ids = [tmp_file_id for tmp_file_id, modified_at in latest_by_tmp_id.items() if modified_at <= cutoff]
+    results = await asyncio.gather(
+        *(
+            minio_client.adelete_objects_by_prefix(bucket_name, f"{_tmp_attachment_prefix(uid, tmp_file_id)}/")
+            for tmp_file_id in expired_ids
+        ),
+        return_exceptions=True,
+    )
+    for tmp_file_id in expired_ids:
+        try:
+            workspace = Workspace(workspace_uid)
+            await asyncio.to_thread(
+                workspace.delete_authorized_path, f"/{_tmp_attachment_prefix(uid, tmp_file_id)}", root="/"
+            )
+        except FileNotFoundError:
+            pass
+        except Exception as exc:
+            logger.warning("清理临时解析目录失败: tmp_file_id=%s error=%s", tmp_file_id, exc)
+    for tmp_file_id, result in zip(expired_ids, results):
+        if isinstance(result, Exception):
+            logger.warning("清理过期临时附件失败: uid=%s tmp_file_id=%s error=%s", uid, tmp_file_id, result)

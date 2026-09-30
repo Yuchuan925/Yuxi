@@ -6,6 +6,7 @@ import httpx
 import pytest
 from fastapi import FastAPI
 
+from yuxi.api.routers.public_v1 import knowledge as knowledge_router
 from yuxi.api.routers.public_v1.knowledge import tool_router
 from yuxi.api.dependencies.auth import get_required_user
 from yuxi.modules.knowledge.base import KBNotFoundError
@@ -31,7 +32,7 @@ async def test_tool_distinguishes_deleted_resource_from_service_failure(monkeypa
         """模拟可见性检查后的存储边界失败。"""
         raise failure
 
-    monkeypatch.setattr(knowledge_tools, "visible_knowledge_bases", visible)
+    monkeypatch.setattr(knowledge_router, "visible_knowledge_bases", visible)
     monkeypatch.setattr(knowledge_tools, "query_kb", fail_query)
 
     transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)

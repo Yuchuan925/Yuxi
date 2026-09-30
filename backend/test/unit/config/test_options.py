@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 
+from yuxi.modules.documents.options import mineru_official_api_opts
+
 import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
@@ -103,12 +105,12 @@ async def test_sensitive_option_does_not_use_redis(db_session, monkeypatch):
     await options.ensure_options_in_db(db_session)
     await options.update_option_value(
         db_session,
-        options.mineru_official_api_opts.key,
+        mineru_official_api_opts.key,
         {"api_key": "database-secret"},
         "tester",
     )
 
-    values = await options.mineru_official_api_opts.get(db_session)
+    values = await mineru_official_api_opts.get(db_session)
 
     assert values["api_key"] == "database-secret"
     assert fake_redis.values == {}

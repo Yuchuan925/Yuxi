@@ -6,10 +6,17 @@ import errno
 import itertools
 import os
 import stat
+import tempfile
 import uuid
+from contextlib import ExitStack
 from pathlib import Path, PurePosixPath
 
-from yuxi.infrastructure.filesystem import open_directory_fd, open_regular_file_fd
+from yuxi.infrastructure.filesystem import (
+    copy_directory_fd,
+    open_directory_fd,
+    open_regular_file_fd,
+    publish_directory_fd,
+)
 
 from yuxi.modules.workspace.errors import FileTransferLimitError
 from yuxi.modules.workspace.paths import user_workspace_dir
@@ -288,6 +295,28 @@ class Workspace:
                 pass
             os.close(parent_fd)
 
+    def copy_authorized_directory_from_path(self, path: str, source_path: str | Path) -> tuple[int, int]:
+        """复制服务临时目录到独占的新目录，失败时回收本次产物。"""
+        base, parts = self._resolve_path(path)
+        if not parts:
+            raise IsADirectoryError(path)
+        # Workspace 的父目录由服务拥有，不挂载进沙盒；半成品只在这里存在。
+        with tempfile.TemporaryDirectory(prefix=".yuxi-copy-", dir=base.parent) as staging, ExitStack() as stack:
+            source_fd = open_directory_fd(Path(source_path), ())
+            stack.callback(os.close, source_fd)
+            parent_fd = self._open_directory(base, parts[:-1], create=True)
+            stack.callback(os.close, parent_fd)
+            staging_fd = open_directory_fd(Path(staging), ())
+            stack.callback(os.close, staging_fd)
+            os.mkdir("directory", 0o700, dir_fd=staging_fd)
+            target_fd = open_directory_fd(staging_fd, ("directory",))
+            stack.callback(os.close, target_fd)
+            target_stat = os.fstat(target_fd)
+            identity = (target_stat.st_dev, target_stat.st_ino)
+            copy_directory_fd(source_fd, target_fd)
+            publish_directory_fd(staging_fd, "directory", parent_fd, parts[-1])
+            return identity
+
     def create_authorized_directory(self, parent_path: str, name: str, *, root: str) -> dict:
         """在 Workdir 内创建一个单层目录。"""
         if not name or name in {".", ".."} or "/" in name or "\\" in name:
@@ -302,13 +331,13 @@ class Workspace:
             os.close(parent_fd)
         return self._metadata_from_stat(item_stat)
 
-    def delete_authorized_path(self, path: str, *, root: str) -> None:
+    def delete_authorized_path(self, path: str, *, root: str, expected_identity: tuple[int, int] | None = None) -> None:
         """递归删除 Workdir 内的真实文件或目录，不允许删除根。"""
         self._require_within(path, root, allow_root=False)
         base, parts = self._resolve_path(path)
         parent_fd = self._open_directory(base, parts[:-1])
         try:
-            self._remove_entry(parent_fd, parts[-1])
+            self._remove_entry(parent_fd, parts[-1], expected_identity=expected_identity)
         finally:
             os.close(parent_fd)
 
@@ -360,8 +389,15 @@ class Workspace:
             raise
 
     @classmethod
-    def _remove_entry(cls, parent_fd: int, name: str) -> None:
-        item_stat = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+    def _remove_entry(cls, parent_fd: int, name: str, *, expected_identity: tuple[int, int] | None = None) -> None:
+        try:
+            item_stat = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            if expected_identity is not None:
+                return
+            raise
+        if expected_identity is not None and (item_stat.st_dev, item_stat.st_ino) != expected_identity:
+            return
         if stat.S_ISLNK(item_stat.st_mode):
             raise PermissionError("symlink paths are not allowed")
         if not stat.S_ISDIR(item_stat.st_mode):
@@ -371,10 +407,20 @@ class Workspace:
             return
         child_fd = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent_fd)
         try:
+            opened_stat = os.fstat(child_fd)
+            if expected_identity is not None and (opened_stat.st_dev, opened_stat.st_ino) != expected_identity:
+                return
             for child_name in os.listdir(child_fd):
                 cls._remove_entry(child_fd, child_name)
         finally:
             os.close(child_fd)
+        if expected_identity is not None:
+            try:
+                remaining_stat = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+            except FileNotFoundError:
+                return
+            if (remaining_stat.st_dev, remaining_stat.st_ino) != expected_identity:
+                return
         os.rmdir(name, dir_fd=parent_fd)
 
     @staticmethod

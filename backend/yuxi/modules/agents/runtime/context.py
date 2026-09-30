@@ -534,7 +534,6 @@ async def prepare_agent_runtime_context(
             for field_name in resource_fields:
                 setattr(context, field_name, [])
             context._skill_runtime_snapshot = {}
-            setattr(context, "_visible_knowledge_bases", [])
             return context
 
         raw_resources = {field_name: getattr(context, field_name, None) for field_name in resource_fields}
@@ -547,11 +546,6 @@ async def prepare_agent_runtime_context(
         for field_name in resource_fields:
             setattr(context, field_name, normalized[field_name])
 
-        from yuxi.modules.agents.runtime.knowledge import (
-            resolve_visible_knowledge_bases_for_context,
-        )
-
-        await resolve_visible_knowledge_bases_for_context(context)
         skill_scope = await resolve_runtime_skills_for_context(context, db=db, user=user)
         setattr(context, "_skill_runtime_snapshot", skill_scope)
         context.skills = skill_scope["context_skills"]

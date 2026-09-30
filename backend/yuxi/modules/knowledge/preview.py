@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from yuxi.infrastructure.object_urls import is_minio_url, parse_minio_url
+from yuxi.infrastructure.minio.object_urls import is_minio_url, parse_minio_url
 from yuxi.modules.knowledge.repositories.files import KnowledgeFileRepository
 from yuxi.infrastructure.minio import get_minio_client
 from yuxi.infrastructure.document_preview import (

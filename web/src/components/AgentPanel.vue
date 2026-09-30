@@ -836,6 +836,8 @@ const loadActivePreview = async ({ baseFileOverride = null } = {}) => {
     ...(activePreviewTab.value || {}),
     ...(baseFileOverride || {}),
     path: filePath,
+    resourceBaseUrl: (baseFileOverride?.artifact_url || activePreviewTab.value?.artifact_url) ||
+      (requestedThreadId ? threadApi.getThreadArtifactUrl(requestedThreadId, filePath, false) : ''),
     name: activePreviewTab.value?.name || getFileName({ path: filePath }),
     type: 'file'
   }

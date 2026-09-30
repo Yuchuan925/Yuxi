@@ -1,6 +1,6 @@
 # 文档处理与 OCR
 
-Yuxi 把文档处理拆成两步：先把原文件保存到知识库，再根据文件类型和 OCR 配置生成 Markdown。知识库索引使用生成后的内容；附件解析只把结果写回当前 Workdir，不会创建知识库文件记录。
+文档解析生成一个完整目录：`document.md` 与它引用的图片，图片使用相对路径。知识库随后把图片与 Markdown 发布到 MinIO，再使用生成后的内容索引；聊天附件确认时把完整目录保存到当前 Project Workdir，OCR 工具也在 Workdir 中生成完整目录。
 
 文件状态和存储归属见[知识库机制详解](../mechanisms/knowledge-base.md)，第一次上传文档见[创建并使用知识库](../intro/knowledge-base.md)。
 
@@ -14,9 +14,9 @@ Yuxi 把文档处理拆成两步：先把原文件保存到知识库，再根据
 - 图片：`.jpg`、`.jpeg`、`.png`、`.bmp`、`.tiff`、`.tif`、`.webp`；
 - ZIP：压缩包内必须包含 UTF-8 编码的 `.md` 文件。
 
-Office 文件不走 OCR 引擎：系统用内置的 docling-slim 在本地把它们转成 Markdown（`.docx`、`.pptx`、`.xlsx`、`.xls` 都有对应解析后端，API 镜像已附带所需的 LibreOffice 组件）。选择 MinerU Official 引擎时，`.docx` 和 `.pptx` 也可以直接交给该云服务解析。其余类型中，图片文件必须使用 OCR 引擎；PDF 可以选择 OCR，选择 `disable` 时系统尝试直接读取 PDF 文本层，扫描版 PDF 通常得不到内容。
+Office 文件使用本地转换：`.docx`、`.pptx`、`.xlsx` 由 Docling Slim 提取正文与图片，`.xls` 使用 pandas + xlrd 保留工作表内容。图片文件必须启用 OCR；PDF 选择 `disable` 时读取文本层，扫描版 PDF 通常得不到内容。
 
-ZIP 处理会优先使用名为 `full.md` 的 Markdown 文件，否则使用压缩包中找到的第一个 `.md` 文件，并把 `images/` 下的图片上传到知识库图片存储。压缩包内的绝对路径和 `..` 路径会被拒绝。
+ZIP 优先选择名为 `full.md` 的文件，否则选择按路径排序的第一个 `.md`，并按完整路径提取正文引用的资源。绝对路径、`..`、重复归档路径、符号链接和缺失图片均拒绝整个结果。解析失败时回收输出目录。
 
 ## 从 URL 导入网页
 
@@ -44,7 +44,7 @@ YUXI_URL_WHITELIST=github.com,docs.example.com,*.wikipedia.org
 
 ## 在页面配置
 
-管理员进入“设置 → OCR 配置”可以设置默认引擎，并配置自托管服务地址或云端凭证。知识库上传和附件解析时可以单独选择引擎；没有单独选择时，使用系统默认值。
+管理员进入“设置 → OCR 配置”可以设置默认引擎，并配置自托管服务地址或云端凭证。OCR 配置定义由 documents 模块拥有，system 模块统一管理持久化、脱敏和缓存。知识库上传和附件解析时可以单独选择引擎；没有单独选择时，使用系统默认值。
 
 配置字段的读取规则是：数据库中保存的非空值优先，数据库没有值时读取对应环境变量。保存为空会清除数据库值并回到环境变量。API 不会回显环境变量中的密钥；数据库凭证只显示脱敏预览。
 
@@ -113,7 +113,9 @@ PADDLEOCR_API_URL=https://paddleocr.aistudio-app.com/api/v2/ocr/jobs
 
 ## 图片访问
 
-解析器生成的知识库图片保存在私有 `kb-images` bucket，通过带知识库权限校验的后端路径访问。不要把 MinIO 对象地址直接写成公开 URL，也不要为方便预览而开放整个 MinIO 管理端口。头像等公开图片使用 `/minio/public/...` 同源只读代理，二者边界不同。
+知识库发布阶段把图片保存到私有 `kb-images` bucket，通过带知识库权限校验的后端路径访问。图片与 Markdown 按文档和解析尝试归属，持久化新结果后回收旧产物；失败只回收本次尝试，删除文档回收该文档的全部解析资源。不要把 MinIO 对象地址直接写成公开 URL，也不要为方便预览而开放整个 MinIO 管理端口。头像等公开图片使用 `/minio/public/...` 同源只读代理，二者边界不同。
+
+聊天解析产物保存在用户隔离的本地目录，确认后连同图片复制到 Project Workdir。预览图片通过当前 Thread 的鉴权 artifact 接口读取，删除附件同时删除整个解析目录。
 
 ## 文件限制与排查
 

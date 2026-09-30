@@ -1353,7 +1353,7 @@ const currentAgentName = computed(() => {
 
 const currentAgent = computed(() => {
   if (!currentAgentId.value || !agents.value || !agents.value.length) return null
-  return agents.value.find((a) => a.id === currentAgentId.value) || null
+  return agents.value.find((agent) => agent.agent_id === currentAgentId.value) || null
 })
 const currentChatId = computed(() => currentThreadId.value)
 

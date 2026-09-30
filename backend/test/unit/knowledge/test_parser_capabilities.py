@@ -7,13 +7,12 @@ from pathlib import Path
 
 import pytest
 
-from yuxi.infrastructure.document_parsing.capabilities import (
+from yuxi.infrastructure.document_parsing import (
     IMAGE_FILE_EXTENSIONS,
-    PARSER_CAPABILITIES,
     SUPPORTED_FILE_EXTENSIONS,
-    get_ocr_engines_for_extension,
     is_supported_file_extension,
 )
+from yuxi.infrastructure.document_parsing.engines import ENGINE_SPECS, get_ocr_engines_for_extension
 
 pytestmark = pytest.mark.unit
 
@@ -35,10 +34,10 @@ def test_capability_lookup_does_not_load_concrete_parser_modules() -> None:
     script = f"""
 import sys
 sys.path.insert(0, {str(package_dir)!r})
-from yuxi.infrastructure.document_parsing.capabilities import get_parser_capability
+from yuxi.infrastructure.document_parsing.engines import get_engine_spec
 
-get_parser_capability("rapid_ocr")
-assert "yuxi.infrastructure.document_parsing.rapid_ocr" not in sys.modules
+get_engine_spec("rapid_ocr")
+assert "yuxi.infrastructure.document_parsing.engines.rapid_ocr" not in sys.modules
 assert "docling" not in sys.modules
 """
 
@@ -53,8 +52,8 @@ sys.path.insert(0, {str(backend_dir)!r})
 import yuxi.api.routers.knowledge
 
 assert "docling" not in sys.modules
-assert "yuxi.infrastructure.document_parsing.rapid_ocr" not in sys.modules
-assert "yuxi.infrastructure.document_parsing.mineru" not in sys.modules
+assert "yuxi.infrastructure.document_parsing.engines.rapid_ocr" not in sys.modules
+assert "yuxi.infrastructure.document_parsing.engines.mineru" not in sys.modules
 """
 
     subprocess.run([sys.executable, "-c", script], check=True)
@@ -77,11 +76,11 @@ async def test_parse_document_rejects_ocr_engine_without_format_capability(
     monkeypatch.setattr(ocr_service, "resolve_ocr_task_params", _resolve_rapid_ocr)
 
     with pytest.raises(ValueError, match=r"不支持文件类型 \.webp"):
-        await ocr_service.parse_document(str(source), params={"ocr_engine": "rapid_ocr"})
+        await ocr_service.parse(str(source), tmp_path / "parsed", params={"ocr_engine": "rapid_ocr"})
 
 
 def test_capability_registry_declares_shipping_processors() -> None:
-    assert tuple(PARSER_CAPABILITIES) == (
+    assert tuple(ENGINE_SPECS) == (
         "rapid_ocr",
         "mineru_ocr",
         "mineru_official",
@@ -94,13 +93,54 @@ def test_capability_registry_declares_shipping_processors() -> None:
 
 @pytest.mark.asyncio
 async def test_zip_parser_returns_markdown_text_without_sidecar_metadata(tmp_path: Path) -> None:
-    from yuxi.infrastructure.document_parsing.zip_utils import process_zip_file
+    from yuxi.infrastructure.document_parsing.artifacts import extract_markdown_archive
 
     archive = tmp_path / "result.zip"
     with zipfile.ZipFile(archive, "w") as zip_file:
         zip_file.writestr("full.md", "# Parsed ZIP document")
 
-    result = await process_zip_file(str(archive))
+    result = extract_markdown_archive(str(archive), tmp_path)
 
     assert result == "# Parsed ZIP document"
     assert isinstance(result, str)
+
+
+def test_concurrent_engine_configuration_returns_each_requested_instance(monkeypatch):
+    """共享缓存被另一配置替换时，每个调用仍返回自己请求的引擎。"""
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+    from types import SimpleNamespace
+
+    from yuxi.infrastructure.document_parsing import engines
+
+    first_written, second_finished = Event(), Event()
+
+    class ConfiguredEngine:
+        """保留构造配置，作为返回实例的独立断言依据。"""
+
+        def __init__(self, server_url):
+            self.server_url = server_url
+
+    class Cache(dict):
+        """在第一次发布实例后固定交错顺序。"""
+
+        def __setitem__(self, key, value):
+            super().__setitem__(key, value)
+            if value[1].server_url == "https://first.example.test":
+                first_written.set()
+                assert second_finished.wait(5)
+
+    monkeypatch.setattr(engines, "_ENGINE_CACHE", Cache())
+    spec = engines.get_engine_spec("mineru_ocr")
+    monkeypatch.setattr(
+        engines, "import_module", lambda _module: SimpleNamespace(**{spec.class_name: ConfiguredEngine})
+    )
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(engines.get_engine, "mineru_ocr", server_url="https://first.example.test")
+        try:
+            assert first_written.wait(5)
+            second = pool.submit(engines.get_engine, "mineru_ocr", server_url="https://second.example.test").result(5)
+        finally:
+            second_finished.set()
+        assert first.result(5).server_url == "https://first.example.test"
+        assert second.server_url == "https://second.example.test"

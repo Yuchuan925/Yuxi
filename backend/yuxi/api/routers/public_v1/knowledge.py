@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 from yuxi.modules.knowledge.base import KBNotFoundError
 from yuxi.modules.knowledge.schemas import FindInputSchema, OpenInputSchema, SearchInputSchema
 from yuxi.modules.knowledge.services import tools as knowledge_tools
+from yuxi.modules.knowledge.services.access import visible_knowledge_bases
 from yuxi.modules.identity.models import User
 
 from yuxi.api.dependencies.auth import get_required_user
@@ -29,11 +30,6 @@ class FileSearchInput(BaseModel):
     limit: int = Field(default=300, ge=1, le=5000)
 
 
-async def _visible(uid: str) -> list[dict[str, Any]]:
-    """从用户权限取得本次调用的可见知识库。"""
-    return await knowledge_tools.visible_knowledge_bases(uid)
-
-
 async def _result(operation: Awaitable[Any]) -> Any:
     """将服务层输入与权限错误转换为 HTTP 结果。"""
     try:
@@ -49,7 +45,7 @@ async def _result(operation: Awaitable[Any]) -> Any:
 @tool_router.get("/list_kbs")
 async def list_kbs(current_user: User = Depends(get_required_user)):
     """列出当前用户可见的知识库。"""
-    return knowledge_tools.list_kbs(await _visible(current_user.uid))
+    return knowledge_tools.list_kbs(await visible_knowledge_bases(current_user.uid))
 
 
 @tool_router.post("/query_kb")
@@ -59,7 +55,7 @@ async def query_kb(payload: SearchInputSchema, current_user: User = Depends(get_
         knowledge_tools.query_kb(
             payload.kb_id,
             payload.query_text,
-            await _visible(current_user.uid),
+            await visible_knowledge_bases(current_user.uid),
             file_name=payload.file_name,
         )
     )
@@ -72,7 +68,7 @@ async def open_kb_document(payload: OpenInputSchema, current_user: User = Depend
         knowledge_tools.open_kb_document(
             payload.kb_id,
             payload.file_id,
-            await _visible(current_user.uid),
+            await visible_knowledge_bases(current_user.uid),
             line=payload.line,
             offset=payload.offset,
             window_size=payload.window_size,
@@ -88,7 +84,7 @@ async def find_kb_document(payload: FindInputSchema, current_user: User = Depend
             payload.kb_id,
             payload.file_id,
             payload.patterns,
-            await _visible(current_user.uid),
+            await visible_knowledge_bases(current_user.uid),
             use_regex=payload.use_regex,
             case_sensitive=payload.case_sensitive,
             max_windows=payload.max_windows,
@@ -102,7 +98,7 @@ async def search_file(payload: FileSearchInput, current_user: User = Depends(get
     """按名称搜索当前用户可见的知识库文件。"""
     return await _result(
         knowledge_tools.search_file(
-            await _visible(current_user.uid),
+            await visible_knowledge_bases(current_user.uid),
             kb_name=payload.kb_name,
             query=payload.query,
             offset=payload.offset,

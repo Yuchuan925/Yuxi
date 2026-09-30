@@ -14,7 +14,7 @@ from yuxi.modules.agents.runtime.sandbox.paths import VIRTUAL_PATH_PREFIX
 from yuxi.modules.agents.runtime.sandbox import ProvisionerSandboxBackend
 from yuxi.modules.agents.runtime.sandbox.download import download_sandbox_directory
 from yuxi.modules.agents.runtime.sandbox.provider import get_sandbox_provider
-from yuxi.modules.system.options import remote_skill_source_policy
+from yuxi.modules.extensions.options import remote_skill_source_policy
 from yuxi.modules.extensions.skills.package import is_valid_skill_slug
 from yuxi.infrastructure.observability.logging import logger
 

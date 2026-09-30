@@ -12,24 +12,19 @@ from urllib.parse import urlparse
 
 import requests
 
-from yuxi.infrastructure.document_parsing.base import BaseDocumentProcessor, DocumentParserException
-from yuxi.infrastructure.document_parsing.capabilities import get_parser_capability
-from yuxi.infrastructure.minio import get_minio_client
+from yuxi.infrastructure.document_parsing import DocumentParserException
+from yuxi.infrastructure.document_parsing.artifacts import replace_image_links, save_resource
+from yuxi.infrastructure.document_parsing.engines import DocumentEngine
 from yuxi.infrastructure.observability.logging import logger
 
 DEFAULT_PADDLEOCR_API_URL = "https://paddleocr.aistudio-app.com/api/v2/ocr/jobs"
-_VL_CAPABILITY = get_parser_capability("paddleocr_vl_1_6")
-_OCRV6_CAPABILITY = get_parser_capability("paddleocr_pp_ocrv6")
 
 
-class PaddleOCRAPIParser(BaseDocumentProcessor):
+class PaddleOCRAPIParser(DocumentEngine):
     """Base parser for PaddleOCR cloud jobs API."""
 
     model = ""
-    service_name = ""
-    display_name = ""
     default_optional_payload: dict[str, bool] = {}
-    supported_extensions = list(_VL_CAPABILITY.supported_extensions)
 
     def __init__(self, api_token: str | None = None, api_url: str | None = None):
         self.api_token = api_token or os.getenv("PADDLEOCR_API_TOKEN")
@@ -49,7 +44,7 @@ class PaddleOCRAPIParser(BaseDocumentProcessor):
             "details": {"api_url": self.api_url, "model": self.model},
         }
 
-    def process_file(self, file_path: str, params: dict[str, Any] | None = None) -> str:
+    def process_file(self, file_path: str, output_dir: Path, params: dict[str, Any] | None = None) -> str:
         if not os.path.exists(file_path) and not file_path.startswith(("http://", "https://")):
             raise DocumentParserException(f"文件不存在: {file_path}", self.get_service_name(), "file_not_found")
 
@@ -72,7 +67,7 @@ class PaddleOCRAPIParser(BaseDocumentProcessor):
                 max_wait_seconds=float(params.get("max_wait_seconds") or 600),
             )
             rows = self._download_jsonl(result_url)
-            text = self._extract_markdown(rows, params)
+            text = self._extract_markdown(rows, output_dir, params)
 
             processing_time = time.time() - start_time
             logger.info(
@@ -215,10 +210,11 @@ class PaddleOCRAPIParser(BaseDocumentProcessor):
 
         return rows
 
-    def _extract_markdown(self, rows: list[dict[str, Any]], params: dict[str, Any]) -> str:
+    def _extract_markdown(self, rows: list[dict[str, Any]], output_dir: Path, params: dict[str, Any]) -> str:
         raise NotImplementedError
 
-    def _upload_markdown_image(self, image_url: str, image_path: str, params: dict[str, Any]) -> str:
+    def _download_markdown_image(self, image_url: str, output_dir: Path) -> str:
+        """下载引擎资源并保存为本地相对路径。"""
         response = requests.get(image_url, timeout=60)
         if response.status_code != 200:
             raise DocumentParserException(
@@ -226,43 +222,25 @@ class PaddleOCRAPIParser(BaseDocumentProcessor):
                 self.get_service_name(),
                 "image_download_failed",
             )
+        content_type = response.headers.get("Content-Type", "image/png").split(";")[0]
+        suffix = mimetypes.guess_extension(content_type) or ".png"
+        from uuid import uuid4
 
-        image_bucket = params.get("image_bucket") or get_minio_client().KB_BUCKETS["images"]
-        image_prefix = str(params.get("image_prefix") or "unknown/kb-images").strip("/") or "unknown/kb-images"
-        filename = Path(image_path).name or "paddleocr_image"
-        suffix = Path(filename).suffix
-        if not suffix:
-            content_type = response.headers.get("Content-Type") or ""
-            suffix = mimetypes.guess_extension(content_type.split(";")[0].strip()) or ".jpg"
-            filename = f"{filename}{suffix}"
-
-        object_name = f"{image_prefix}/{int(time.time() * 1000000)}_{filename}"
-        minio_client = get_minio_client()
-        minio_client.ensure_bucket_exists(image_bucket)
-        minio_client.upload_file(
-            bucket_name=image_bucket,
-            object_name=object_name,
-            data=response.content,
-        )
-        from yuxi.modules.knowledge.utils.kb_utils import build_kb_image_proxy_url
-
-        return build_kb_image_proxy_url(object_name)
+        return save_resource(output_dir, f"images/{uuid4().hex}{suffix}", response.content)
 
 
 class PaddleOCRVLParser(PaddleOCRAPIParser):
     """PaddleOCR-VL parser that returns layout Markdown."""
 
     model = "PaddleOCR-VL-1.6"
-    service_name = _VL_CAPABILITY.service_name
-    display_name = _VL_CAPABILITY.display_name
-    supported_extensions = list(_VL_CAPABILITY.supported_extensions)
+    engine_id = "paddleocr_vl_1_6"
     default_optional_payload = {
         "useDocOrientationClassify": False,
         "useDocUnwarping": False,
         "useChartRecognition": False,
     }
 
-    def _extract_markdown(self, rows: list[dict[str, Any]], params: dict[str, Any]) -> str:
+    def _extract_markdown(self, rows: list[dict[str, Any]], output_dir: Path, params: dict[str, Any]) -> str:
         markdown_parts: list[str] = []
 
         for row in rows:
@@ -273,12 +251,14 @@ class PaddleOCRVLParser(PaddleOCRAPIParser):
                 if not isinstance(text, str):
                     continue
 
+                mapping = {}
                 for image_path, image_url in (markdown.get("images") or {}).items():
                     if not image_path or not image_url:
                         continue
-                    uploaded_url = self._upload_markdown_image(str(image_url), str(image_path), params)
-                    text = text.replace(f"]({image_path})", f"]({uploaded_url})")
-                    text = text.replace(str(image_url), uploaded_url)
+                    local_path = self._download_markdown_image(str(image_url), output_dir)
+                    mapping[str(image_path)] = local_path
+                    mapping[str(image_url)] = local_path
+                text = replace_image_links(text, mapping)
 
                 if text.strip():
                     markdown_parts.append(text.strip())
@@ -290,16 +270,14 @@ class PaddleOCRPPOCRv6Parser(PaddleOCRAPIParser):
     """PP-OCRv6 parser that returns plain OCR text."""
 
     model = "PP-OCRv6"
-    service_name = _OCRV6_CAPABILITY.service_name
-    display_name = _OCRV6_CAPABILITY.display_name
-    supported_extensions = list(_OCRV6_CAPABILITY.supported_extensions)
+    engine_id = "paddleocr_pp_ocrv6"
     default_optional_payload = {
         "useDocOrientationClassify": False,
         "useDocUnwarping": False,
         "useTextlineOrientation": False,
     }
 
-    def _extract_markdown(self, rows: list[dict[str, Any]], params: dict[str, Any]) -> str:
+    def _extract_markdown(self, rows: list[dict[str, Any]], output_dir: Path, params: dict[str, Any]) -> str:
         lines: list[str] = []
 
         for row in rows:

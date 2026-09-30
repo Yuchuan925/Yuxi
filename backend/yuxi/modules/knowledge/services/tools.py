@@ -15,15 +15,6 @@ class KnowledgeToolError(ValueError):
         self.not_found = not_found
 
 
-async def visible_knowledge_bases(uid: str) -> list[dict[str, Any]]:
-    """从权限查询取得当前用户可读取的知识库。"""
-    summaries = await knowledge_base.get_databases_by_uid(uid)
-    return [
-        {"kb_id": item.kb_id, "name": item.name, "description": item.description, "kb_type": item.kb_type}
-        for item in summaries
-    ]
-
-
 def list_kbs(visible_kbs: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """列出可见知识库的工具展示字段。"""
     return [

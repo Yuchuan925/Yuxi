@@ -399,7 +399,8 @@ async def test_cancellation_marks_file_retryable(monkeypatch, operation, expecte
             started.set()
             await asyncio.Event().wait()
 
-        monkeypatch.setattr("yuxi.modules.documents.service.parse_document", cancelled_step)
+        monkeypatch.setattr("yuxi.modules.documents.service.parse_to_hosted_markdown", cancelled_step)
+        monkeypatch.setattr(kb, "_cleanup_parse_attempt", AsyncMock())
         task = asyncio.create_task(
             kb.parse_file(
                 "db",
@@ -980,3 +981,23 @@ async def test_query_filters_orphaned_chunks_from_search_results(monkeypatch):
 
     assert len(chunks) == 1
     assert chunks[0]["content"] == "live content"
+
+
+async def test_cancelled_old_attempt_cleanup_preserves_published_result(monkeypatch):
+    """PG 发布成功后取消旧资源回收，不回滚当前解析产物。"""
+    kb = MilvusKB.__new__(MilvusKB)
+    previous_url = "http://minio:9000/knowledgebases/db/parsed/file-1/old-attempt/document.md"
+    current_url = "http://minio:9000/knowledgebases/db/parsed/file-1/new-attempt/document.md"
+    repository = FakeKnowledgeFileRepository(
+        {"file-1": make_file_record(status=FileStatus.UPLOADED, markdown_file=previous_url)}
+    )
+    patch_file_repository(monkeypatch, repository)
+    monkeypatch.setattr("yuxi.modules.documents.service.parse_to_hosted_markdown", AsyncMock(return_value="text"))
+    monkeypatch.setattr(kb, "_save_markdown_to_minio", AsyncMock(return_value=current_url))
+    cleanup = AsyncMock(side_effect=asyncio.CancelledError())
+    monkeypatch.setattr(kb, "_cleanup_parse_attempt", cleanup)
+    with pytest.raises(asyncio.CancelledError):
+        await kb.parse_file("db", "file-1", additional_params={})
+    assert repository.records["file-1"].status == FileStatus.PARSED
+    assert repository.records["file-1"].markdown_file == current_url
+    assert [call.args[2] for call in cleanup.await_args_list] == ["old-attempt"]

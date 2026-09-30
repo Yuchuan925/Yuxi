@@ -75,6 +75,8 @@ stateDiagram-v2
 | Neo4j | 可选的实体、关系和 chunk 关联 | 原文件、权限和检索排序 |
 | Redis / ARQ | Task 投递与 worker 唤醒、知识库最小运行配置缓存 | Task 最终状态、配置最终值、文件状态 |
 
+知识库解析先生成本地 Markdown 目录，再将图片和 Markdown 写入该文档本次解析的独占 MinIO 前缀。文件记录提交 `parsed` 与新 Markdown 路径后，服务回收旧尝试；失败或 owner 丢失只回收未发布的当前尝试，旧产物保持可读。取消发生在结果发布后的旧资源回收阶段时，已发布结果仍然有效。删除文档按文档前缀回收解析资源，其他文档的资源保留。
+
 Milvus 索引会把 chunk 写入 PostgreSQL 和 Milvus。它不是跨存储事务：任一侧失败时会尝试补偿并把文件置为 `error_indexing`，排查时需要同时查看两侧。
 
 ## Durable Task 和恢复
@@ -87,7 +89,7 @@ worker 用唯一 attempt token claim Task 并续租 lease；重复投递和失�
 
 ## Agent 如何看到知识库
 
-运行时准备阶段先按用户权限读取知识库，再与 Agent 的 `Context.knowledges` 求交集，结果保存为 `_visible_knowledge_bases`。工具的 `kb_id`、`file_id` 和文件名必须属于这份运行时快照；新的 Run 会重新计算权限，正在运行的 Context 不会因中途撤权而自动刷新。
+知识库 service 按当前用户的读取权限查询资源，再与调用方的全部或显式选择求交集。Agent 准备阶段只保存归一化后的 `Context.knowledges` ID 列表；知识工具每次执行时重新解析当前权限与该列表的交集，配置列表不作为执行授权。Public API 使用同一 service，按本次请求的用户身份解析全部可读知识库。工具目标必须属于本次解析的范围，文档归属由知识库查询实现校验。撤销读取权限后，后续工具调用拒绝该资源；权限查询失败向调用边界传播，不返回空列表掩盖存储故障。授权查询与实际数据读取遵循各自事务边界。
 
 知识库工具由内置 `knowledge-base` Skill 提供。模型读取该 Skill 的 `SKILL.md` 后，才会看到：
 

@@ -15,19 +15,15 @@ from typing import Any
 import pypdfium2 as pdfium
 import requests
 
-from yuxi.infrastructure.document_parsing.base import BaseDocumentProcessor, DocumentParserException
-from yuxi.infrastructure.document_parsing.capabilities import get_parser_capability
+from yuxi.infrastructure.document_parsing import DocumentParserException
+from yuxi.infrastructure.document_parsing.engines import DocumentEngine
 from yuxi.infrastructure.observability.logging import logger
 
-_CAPABILITY = get_parser_capability("deepseek_ocr")
 
-
-class DeepSeekOCRParser(BaseDocumentProcessor):
+class DeepSeekOCRParser(DocumentEngine):
     """DeepSeek OCR Parser using SiliconFlow API"""
 
-    service_name = _CAPABILITY.service_name
-    display_name = _CAPABILITY.display_name
-    supported_extensions = list(_CAPABILITY.supported_extensions)
+    engine_id = "deepseek_ocr"
 
     # MIME type mapping for supported formats
     MIME_TYPE_MAP = {
@@ -80,7 +76,7 @@ class DeepSeekOCRParser(BaseDocumentProcessor):
         except Exception as e:
             return {"status": "unavailable", "message": f"Connection failed: {str(e)}", "details": {"error": str(e)}}
 
-    def process_file(self, file_path: str, params: dict[str, Any] | None = None) -> str:
+    def process_file(self, file_path: str, output_dir: Path, params: dict[str, Any] | None = None) -> str:
         """
         Process file using DeepSeek OCR via SiliconFlow
         """

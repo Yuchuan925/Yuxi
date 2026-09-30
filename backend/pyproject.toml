@@ -22,6 +22,7 @@ dependencies = [
     "dashscope>=1.23.2",
     "deepagents>=0.7.7,<0.8",
     "docling-slim[format-office,format-pdf-pypdfium2]==2.122.0",
+    "pylatexenc>=2.10,<3",
     "pandas>=2.2.0",
     "httpx>=0.27.0",
     # SSRFGuardTransport 依赖 httpcore 的 pool network_backend 接线，

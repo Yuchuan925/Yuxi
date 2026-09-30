@@ -14,61 +14,19 @@ import pypdfium2 as pdfium
 from PIL import Image
 from rapidocr import EngineType, LangDet, LangRec, ModelType, OCRVersion, RapidOCR
 
-from yuxi.infrastructure.document_parsing.base import BaseDocumentProcessor, OCRException
-from yuxi.infrastructure.document_parsing.capabilities import get_parser_capability
+from yuxi.infrastructure.document_parsing import OCRException
+from yuxi.infrastructure.document_parsing.engines import DocumentEngine
 from yuxi.infrastructure.observability.logging import logger
 
-_CAPABILITY = get_parser_capability("rapid_ocr")
 
-
-class RapidOCRParser(BaseDocumentProcessor):
+class RapidOCRParser(DocumentEngine):
     """RapidOCR 解析器 - 使用 ONNX 模型进行文字识别"""
 
-    service_name = _CAPABILITY.service_name
-    display_name = _CAPABILITY.display_name
-    supported_extensions = list(_CAPABILITY.supported_extensions)
+    engine_id = "rapid_ocr"
 
     def __init__(self, det_box_thresh: float = 0.3):
         self.ocr = None
         self.det_box_thresh = det_box_thresh
-
-    @staticmethod
-    def _resolve_model_dir() -> Path:
-        """获取并确保可写的 RapidOCR 模型存放目录。"""
-        env_dir = os.getenv("RAPIDOCR_MODEL_DIR")
-        if env_dir:
-            model_dir = Path(env_dir).expanduser().resolve()
-            model_dir.mkdir(parents=True, exist_ok=True)
-            return model_dir
-
-        try:
-            import rapidocr
-
-            default_dir = Path(rapidocr.__file__).resolve().parent / "models"
-            if default_dir.exists() and os.access(default_dir, os.W_OK):
-                return default_dir
-        except Exception:
-            pass
-
-        cache_dir = Path.home() / ".cache" / "rapidocr" / "models"
-        cache_dir.mkdir(parents=True, exist_ok=True)
-        return cache_dir
-
-    def _get_model_params(self) -> dict[str, object]:
-        model_dir = self._resolve_model_dir()
-        return {
-            "Global.model_root_dir": str(model_dir),
-            "Det.engine_type": EngineType.ONNXRUNTIME,
-            "Det.lang_type": LangDet.CH,
-            "Det.model_type": ModelType.MOBILE,
-            "Det.ocr_version": OCRVersion.PPOCRV5,
-            "Det.box_thresh": self.det_box_thresh,
-            "Cls.engine_type": EngineType.ONNXRUNTIME,
-            "Rec.engine_type": EngineType.ONNXRUNTIME,
-            "Rec.lang_type": LangRec.CH,
-            "Rec.model_type": ModelType.MOBILE,
-            "Rec.ocr_version": OCRVersion.PPOCRV5,
-        }
 
     def check_health(self) -> dict:
         """报告本地组件状态，避免选择器刷新时重复加载模型。"""
@@ -82,19 +40,6 @@ class RapidOCRParser(BaseDocumentProcessor):
                 "det_box_thresh": self.det_box_thresh,
             },
         }
-
-    def _load_model(self):
-        """延迟加载 OCR 模型"""
-        if self.ocr is not None:
-            return
-
-        logger.info("加载 RapidOCR 模型...")
-
-        try:
-            self.ocr = RapidOCR(params=self._get_model_params())
-            logger.info(f"RapidOCR PP-OCRv5 模型加载成功 (det_box_thresh={self.det_box_thresh})")
-        except Exception as e:
-            raise OCRException(f"RapidOCR模型加载失败: {str(e)}", self.get_service_name(), "load_failed")
 
     def process_image(self, image, params: dict | None = None) -> str:
         """
@@ -153,25 +98,6 @@ class RapidOCRParser(BaseDocumentProcessor):
             logger.error(error_msg)
             raise OCRException(error_msg, self.get_service_name(), "processing_failed")
 
-    def _create_temp_image_file(self, image) -> str:
-        """将图像数据保存为临时文件"""
-        try:
-            # 使用系统临时目录
-            with tempfile.NamedTemporaryFile(mode="wb", suffix=".png", delete=False) as tmp_file:
-                temp_path = tmp_file.name
-
-                if isinstance(image, Image.Image):
-                    image.save(temp_path)
-                elif isinstance(image, np.ndarray):
-                    Image.fromarray(image).save(temp_path)
-                else:
-                    raise ValueError("不支持的图像类型,必须是 PIL.Image 或 numpy.ndarray")
-
-                return temp_path
-
-        except Exception as e:
-            raise OCRException(f"临时图像文件创建失败: {str(e)}", self.get_service_name(), "temp_file_error")
-
     def process_pdf(self, pdf_path: str, params: dict | None = None) -> str:
         """
         处理 PDF 文件并提取文本 (流式处理,避免内存占用)
@@ -224,7 +150,7 @@ class RapidOCRParser(BaseDocumentProcessor):
             logger.error(error_msg)
             raise OCRException(error_msg, self.get_service_name(), "pdf_processing_failed")
 
-    def process_file(self, file_path: str, params: dict | None = None) -> str:
+    def process_file(self, file_path: str, output_dir: Path, params: dict | None = None) -> str:
         """
         处理文件 (PDF 或图像)
 
@@ -244,3 +170,73 @@ class RapidOCRParser(BaseDocumentProcessor):
             return self.process_pdf(file_path, params)
         else:
             return self.process_image(file_path, params)
+
+    @staticmethod
+    def _resolve_model_dir() -> Path:
+        """获取并确保可写的 RapidOCR 模型存放目录。"""
+        env_dir = os.getenv("RAPIDOCR_MODEL_DIR")
+        if env_dir:
+            model_dir = Path(env_dir).expanduser().resolve()
+            model_dir.mkdir(parents=True, exist_ok=True)
+            return model_dir
+
+        try:
+            import rapidocr
+
+            default_dir = Path(rapidocr.__file__).resolve().parent / "models"
+            if default_dir.exists() and os.access(default_dir, os.W_OK):
+                return default_dir
+        except Exception:
+            pass
+
+        cache_dir = Path.home() / ".cache" / "rapidocr" / "models"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        return cache_dir
+
+    def _get_model_params(self) -> dict[str, object]:
+        model_dir = self._resolve_model_dir()
+        return {
+            "Global.model_root_dir": str(model_dir),
+            "Det.engine_type": EngineType.ONNXRUNTIME,
+            "Det.lang_type": LangDet.CH,
+            "Det.model_type": ModelType.MOBILE,
+            "Det.ocr_version": OCRVersion.PPOCRV5,
+            "Det.box_thresh": self.det_box_thresh,
+            "Cls.engine_type": EngineType.ONNXRUNTIME,
+            "Rec.engine_type": EngineType.ONNXRUNTIME,
+            "Rec.lang_type": LangRec.CH,
+            "Rec.model_type": ModelType.MOBILE,
+            "Rec.ocr_version": OCRVersion.PPOCRV5,
+        }
+
+    def _load_model(self):
+        """延迟加载 OCR 模型"""
+        if self.ocr is not None:
+            return
+
+        logger.info("加载 RapidOCR 模型...")
+
+        try:
+            self.ocr = RapidOCR(params=self._get_model_params())
+            logger.info(f"RapidOCR PP-OCRv5 模型加载成功 (det_box_thresh={self.det_box_thresh})")
+        except Exception as e:
+            raise OCRException(f"RapidOCR模型加载失败: {str(e)}", self.get_service_name(), "load_failed")
+
+    def _create_temp_image_file(self, image) -> str:
+        """将图像数据保存为临时文件"""
+        try:
+            # 使用系统临时目录
+            with tempfile.NamedTemporaryFile(mode="wb", suffix=".png", delete=False) as tmp_file:
+                temp_path = tmp_file.name
+
+                if isinstance(image, Image.Image):
+                    image.save(temp_path)
+                elif isinstance(image, np.ndarray):
+                    Image.fromarray(image).save(temp_path)
+                else:
+                    raise ValueError("不支持的图像类型,必须是 PIL.Image 或 numpy.ndarray")
+
+                return temp_path
+
+        except Exception as e:
+            raise OCRException(f"临时图像文件创建失败: {str(e)}", self.get_service_name(), "temp_file_error")

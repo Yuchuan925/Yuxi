@@ -9,7 +9,6 @@
 `prepare_agent_runtime_context` 会根据当前用户和 Agent 配置：
 
 - 过滤内置工具、知识库、MCP、Skills 和子智能体；
-- 生成 `_visible_knowledge_bases`；
 - 展开 Skill 依赖，生成 `_effective_skill_slugs` 和 `_runtime_skills`；
 - 使用系统默认模型补齐空的模型配置。
 

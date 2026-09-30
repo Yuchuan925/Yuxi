@@ -117,9 +117,8 @@ async def test_upload_file_rejects_jsonl_uploads():
     "call_upload",
     [
         lambda upload: knowledge_router.upload_file(upload, kb_id="kb_1", current_user=SimpleNamespace(uid="user_1")),
-        lambda upload: knowledge_router.mark_it_down(upload, current_user=SimpleNamespace(uid="user_1")),
     ],
-    ids=["upload_file", "mark_it_down"],
+    ids=["upload_file"],
 )
 async def test_rejects_oversized_file(monkeypatch, call_upload):
     monkeypatch.setattr(knowledge_router, "MAX_UPLOAD_SIZE_BYTES", 5)

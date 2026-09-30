@@ -12,21 +12,17 @@ from typing import Any
 
 import requests
 
-from yuxi.infrastructure.document_parsing.base import BaseDocumentProcessor, DocumentParserException
-from yuxi.infrastructure.document_parsing.capabilities import get_parser_capability
-from yuxi.infrastructure.document_parsing.zip_utils import process_zip_file_sync
-from yuxi.shared.hashing import hashstr
+from yuxi.infrastructure.document_parsing import DocumentParserException
+from yuxi.infrastructure.document_parsing.artifacts import extract_markdown_archive
+from yuxi.infrastructure.document_parsing.engines import DocumentEngine
 from yuxi.infrastructure.observability.logging import logger
+from yuxi.shared.hashing import hashstr
 
-_CAPABILITY = get_parser_capability("mineru_official")
 
-
-class MinerUOfficialParser(BaseDocumentProcessor):
+class MinerUOfficialParser(DocumentEngine):
     """MinerU 官方 API 解析器"""
 
-    service_name = _CAPABILITY.service_name
-    display_name = _CAPABILITY.display_name
-    supported_extensions = list(_CAPABILITY.supported_extensions)
+    engine_id = "mineru_official"
 
     def __init__(self, api_key: str | None = None, api_base: str | None = None):
         """使用配置中心解析后的凭证和官方端点初始化解析器。"""
@@ -50,7 +46,7 @@ class MinerUOfficialParser(BaseDocumentProcessor):
             "details": {"api_base": self.api_base},
         }
 
-    def process_file(self, file_path: str, params: dict[str, Any] | None = None) -> str:
+    def process_file(self, file_path: str, output_dir: Path, params: dict[str, Any] | None = None) -> str:
         """
         使用 MinerU 官方 API 处理文件
 
@@ -100,18 +96,7 @@ class MinerUOfficialParser(BaseDocumentProcessor):
             zip_url = result.get("full_zip_url")
             zip_path = self._download_zip(zip_url)
             try:
-                from yuxi.infrastructure.minio import get_minio_client
-
-                image_bucket = params.get("image_bucket") or get_minio_client().KB_BUCKETS["images"]
-                image_prefix = params.get("image_prefix") or "unknown/kb-images"
-
-                processed = process_zip_file_sync(
-                    zip_path,
-                    image_bucket=image_bucket,
-                    image_prefix=image_prefix,
-                    process_images=params.get("zip_image_processor"),
-                    replace_links=params.get("replace_image_links"),
-                )
+                processed = extract_markdown_archive(zip_path, output_dir)
                 text = processed
             finally:
                 try:

@@ -13,12 +13,16 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useThemeStore } from '@/stores/theme'
-import { useUserStore } from '@/stores/user'
-import { renderMarkdown } from '@/utils/markdown_preview'
+import { apiGet } from '@/apis/base'
+import { renderMarkdown, resolveMarkdownImageUrl } from '@/utils/markdown_preview'
 import { HTML_PREVIEW_MAX_HEIGHT, HTML_PREVIEW_MIN_HEIGHT } from '@/utils/htmlPreviewRenderer'
 import 'katex/dist/katex.min.css'
 const props = defineProps({
   content: {
+    type: String,
+    default: ''
+  },
+  resourceBaseUrl: {
     type: String,
     default: ''
   },
@@ -33,17 +37,15 @@ const props = defineProps({
 })
 
 const themeStore = useThemeStore()
-const userStore = useUserStore()
 const shikiTheme = computed(() => (themeStore.isDark ? 'github-dark' : 'github-light'))
 const previewRef = ref(null)
 const copiedTimers = new WeakMap()
 const htmlPreviewFrames = new Map()
-const kbImageBlobUrls = new Set()
+const imageBlobUrls = new Set()
 let pendingMarkdownHtml = null
 
 const HTML_PREVIEW_HEIGHT_MESSAGE = 'yuxi-html-preview-height'
 
-const KB_IMAGE_PROXY_PATH_RE = /\/api\/knowledge\/databases\/[^/]+\/images\//
 
 const getHtmlPreviewCssNumber = (slot, property, fallback) => {
   const preview = slot.closest('.html-preview-render')
@@ -315,21 +317,22 @@ const enhanceHtmlPreviews = () => {
   })
 }
 
-const revokeKbImageBlobUrls = () => {
-  kbImageBlobUrls.forEach((url) => URL.revokeObjectURL(url))
-  kbImageBlobUrls.clear()
+const revokeImageBlobUrls = () => {
+  imageBlobUrls.forEach((url) => URL.revokeObjectURL(url))
+  imageBlobUrls.clear()
 }
 
-const enhanceKbImages = () => {
+const enhanceDocumentImages = () => {
   const root = previewRef.value
   if (!root) return
 
   root.querySelectorAll('img').forEach((img) => {
     const src = img.getAttribute('src')
-    if (!src || !KB_IMAGE_PROXY_PATH_RE.test(src) || img.dataset.kbImageLoaded) return
+    const imageUrl = resolveMarkdownImageUrl(src, props.resourceBaseUrl, window.location.origin)
+    if (!imageUrl || img.dataset.documentImageLoaded) return
 
-    img.dataset.kbImageLoading = 'true'
-    fetch(src, { headers: userStore.getAuthHeaders() })
+    img.dataset.documentImageLoading = 'true'
+    apiGet(imageUrl, {}, true, 'blob')
       .then((response) => {
         if (!response.ok) throw new Error(`HTTP ${response.status}`)
         return response.blob()
@@ -337,15 +340,15 @@ const enhanceKbImages = () => {
       .then((blob) => {
         if (!img.isConnected) return
         const objectUrl = URL.createObjectURL(blob)
-        kbImageBlobUrls.add(objectUrl)
+        imageBlobUrls.add(objectUrl)
         img.src = objectUrl
-        img.dataset.kbImageLoaded = 'true'
+        img.dataset.documentImageLoaded = 'true'
       })
       .catch((error) => {
-        console.error('加载知识库图片失败:', src, error)
+        console.error('加载文档图片失败:', imageUrl, error)
       })
       .finally(() => {
-        delete img.dataset.kbImageLoading
+        delete img.dataset.documentImageLoading
       })
   })
 }
@@ -356,7 +359,7 @@ onMounted(async () => {
   replaceHtmlPreservingPreviews(pendingMarkdownHtml)
   await nextTick()
   enhanceHtmlPreviews()
-  enhanceKbImages()
+  enhanceDocumentImages()
   if (props.codeCopy) enhanceCodeBlocks()
 })
 
@@ -365,11 +368,11 @@ window.addEventListener('message', handleHtmlPreviewHeight)
 onBeforeUnmount(() => {
   window.removeEventListener('message', handleHtmlPreviewHeight)
   htmlPreviewFrames.clear()
-  revokeKbImageBlobUrls()
+  revokeImageBlobUrls()
 })
 
 watch(
-  [() => props.content, shikiTheme, () => props.codeCopy],
+  [() => props.content, shikiTheme, () => props.codeCopy, () => props.resourceBaseUrl],
   async ([content, theme, codeCopy], _, onCleanup) => {
     let expired = false
     onCleanup(() => {
@@ -378,7 +381,7 @@ watch(
 
     if (!content) {
       htmlPreviewFrames.clear()
-      revokeKbImageBlobUrls()
+      revokeImageBlobUrls()
       replaceHtmlPreservingPreviews('')
       return
     }
@@ -386,13 +389,13 @@ watch(
     const html = await renderMarkdown(content, { theme })
     if (!expired) {
       replaceHtmlPreservingPreviews(html)
-      revokeKbImageBlobUrls()
+      revokeImageBlobUrls()
       cleanupHtmlPreviewFrames()
 
       await nextTick()
       if (expired) return
       enhanceHtmlPreviews()
-      enhanceKbImages()
+      enhanceDocumentImages()
       if (codeCopy) enhanceCodeBlocks()
       cleanupHtmlPreviewFrames()
     }

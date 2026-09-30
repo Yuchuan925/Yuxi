@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import base64
 import re
 import shutil
 import time
@@ -11,51 +10,20 @@ from types import SimpleNamespace
 
 import pandas as pd
 import pytest
-import yuxi.infrastructure.document_parsing.factory as factory_module
-import yuxi.infrastructure.document_parsing.unified as parser_unified
+import yuxi.infrastructure.document_parsing.engines as engines
+import yuxi.infrastructure.document_parsing.parser as parser_unified
 from docx import Document
 from PIL import Image
 
-from yuxi.infrastructure.document_parsing.base import DocumentParserException
-from yuxi.infrastructure.document_parsing.capabilities import PARSER_CAPABILITIES
-from yuxi.infrastructure.document_parsing.factory import DocumentProcessorFactory
-from yuxi.infrastructure.document_parsing.mineru import MinerUParser
-from yuxi.infrastructure.document_parsing.mineru_official import MinerUOfficialParser
-from yuxi.infrastructure.document_parsing.rapid_ocr import RapidOCRParser
-from yuxi.modules.documents.service import parse_document
+from yuxi.infrastructure.document_parsing import DocumentParserException
+from yuxi.infrastructure.document_parsing.engines.mineru import MinerUParser
+from yuxi.infrastructure.document_parsing.engines.mineru_official import MinerUOfficialParser
+from yuxi.infrastructure.document_parsing.engines.rapid_ocr import RapidOCRParser
+from yuxi.modules.documents.service import parse
+from yuxi.infrastructure.document_parsing import ParseOptions
+import tempfile
 
 PARSER_FIXTURES = Path(__file__).parents[2] / "data"
-
-
-def test_factory_cache_key_does_not_contain_credential():
-    cache_key = DocumentProcessorFactory._build_cache_key("deepseek_ocr", {"api_key": "top-secret"})
-
-    assert cache_key.startswith("deepseek_ocr|")
-    assert "top-secret" not in cache_key
-
-
-def test_clear_cache_can_target_single_engine(monkeypatch: pytest.MonkeyPatch):
-    first = SimpleNamespace()
-    second = SimpleNamespace()
-    monkeypatch.setattr(
-        factory_module,
-        "_PROCESSOR_CACHE",
-        {"rapid_ocr|one": first, "mineru_ocr|two": second},
-    )
-
-    DocumentProcessorFactory.clear_cache("rapid_ocr")
-
-    assert factory_module._PROCESSOR_CACHE == {"mineru_ocr|two": second}
-
-
-def test_parser_capabilities_match_concrete_parser_classes():
-    capability = PARSER_CAPABILITIES["rapid_ocr"]
-
-    assert capability.service_name == RapidOCRParser.service_name
-    assert capability.display_name == RapidOCRParser.display_name
-    assert list(capability.supported_extensions) == RapidOCRParser.supported_extensions
-    assert all(item.service_name == engine_id for engine_id, item in PARSER_CAPABILITIES.items())
-    assert all(item.display_name for item in PARSER_CAPABILITIES.values())
 
 
 def test_mineru_parser_normalizes_trailing_slash():
@@ -67,7 +35,7 @@ def test_mineru_parser_normalizes_trailing_slash():
 
 def test_mineru_official_health_check_does_not_create_task(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(
-        "yuxi.infrastructure.document_parsing.mineru_official.requests.post",
+        "yuxi.infrastructure.document_parsing.engines.mineru_official.requests.post",
         lambda *args, **kwargs: pytest.fail("健康检查不应创建解析任务"),
     )
 
@@ -95,17 +63,17 @@ def test_mineru_official_parsing_uses_shared_zip_processor(
     monkeypatch.setattr(parser, "_download_zip", lambda *args, **kwargs: str(zip_path))
     processed_paths: list[str] = []
 
-    def _process_zip_file(zip_file_path: str, **kwargs) -> str:
+    def _process_zip_file(zip_file_path: str, output_dir: Path, **kwargs) -> str:
         del kwargs
         processed_paths.append(zip_file_path)
         return "parsed markdown"
 
     monkeypatch.setattr(
-        "yuxi.infrastructure.document_parsing.mineru_official.process_zip_file_sync",
+        "yuxi.infrastructure.document_parsing.engines.mineru_official.extract_markdown_archive",
         _process_zip_file,
     )
 
-    assert parser.process_file(str(file_path)) == "parsed markdown"
+    assert parser.process_file(str(file_path), tmp_path) == "parsed markdown"
     assert processed_paths == [str(zip_path)]
     assert not zip_path.exists()
 
@@ -133,19 +101,19 @@ def test_mineru_official_does_not_fallback_when_shared_zip_processing_fails(
         raise RuntimeError("malformed result archive")
 
     monkeypatch.setattr(
-        "yuxi.infrastructure.document_parsing.mineru_official.process_zip_file_sync",
+        "yuxi.infrastructure.document_parsing.engines.mineru_official.extract_markdown_archive",
         _raise_zip_processing_error,
     )
 
     with pytest.raises(DocumentParserException, match="malformed result archive"):
-        parser.process_file(str(file_path))
+        parser.process_file(str(file_path), tmp_path)
 
     assert not zip_path.exists()
 
 
 def test_rapid_ocr_health_check_does_not_load_model(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(
-        "yuxi.infrastructure.document_parsing.rapid_ocr.RapidOCR",
+        "yuxi.infrastructure.document_parsing.engines.rapid_ocr.RapidOCR",
         lambda *args, **kwargs: pytest.fail("健康检查不应加载 OCR 模型"),
     )
 
@@ -201,22 +169,22 @@ def _build_docx(file_path: Path, text: str) -> None:
 
 def test_pdfreader_preserves_page_order_blank_pages_and_trimming(tmp_path: Path):
     """文本提取保留空页分隔并去除逐页首尾空白。"""
-    from yuxi.infrastructure.document_parsing.unified import pdfreader
+    from yuxi.infrastructure.document_parsing.parser import _parse_ocr
 
     file_path = tmp_path / "pages.pdf"
     _build_pdf(file_path, ["  First page  ", "", "Last page"])
-    assert pdfreader(file_path) == "First page\n\n\n\nLast page"
+    assert _parse_ocr(file_path, tmp_path, ParseOptions()) == "First page\n\n\n\nLast page"
 
 
 def test_pdfreader_rejects_corrupt_pdf(tmp_path: Path):
     """损坏 PDF 显式失败，不返回伪成功空文本。"""
     from pypdf.errors import PdfReadError
-    from yuxi.infrastructure.document_parsing.unified import pdfreader
+    from yuxi.infrastructure.document_parsing.parser import _parse_ocr
 
     file_path = tmp_path / "broken.pdf"
     file_path.write_bytes(b"%PDF-1.4\ninvalid")
     with pytest.raises(PdfReadError):
-        pdfreader(file_path)
+        _parse_ocr(file_path, tmp_path, ParseOptions())
 
 
 def _build_png(file_path: Path) -> None:
@@ -229,47 +197,10 @@ async def test_parse_document_pdf_returns_markdown_text(tmp_path: Path):
     file_path = tmp_path / "parser_test.pdf"
     _build_pdf(file_path, "Parser PDF content")
 
-    markdown = await parse_document(str(file_path), params={"ocr_engine": "disable"})
+    markdown = await _parse_markdown(str(file_path), params={"ocr_engine": "disable"})
 
     assert "Parser" in markdown
     assert "content" in markdown
-
-
-@pytest.mark.asyncio
-async def test_unified_zip_parser_returns_markdown_string(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    archive = tmp_path / "parser_test.zip"
-    with zipfile.ZipFile(archive, "w") as zip_file:
-        zip_file.writestr("full.md", "# ZIP content")
-
-    async def _process_zip_file(*args, **kwargs) -> str:
-        del args, kwargs
-        return "# ZIP content"
-
-    monkeypatch.setattr(parser_unified, "_process_zip_file", _process_zip_file)
-
-    markdown = await parser_unified.parse_resolved_document(
-        str(archive),
-        params={"image_bucket": "images", "image_prefix": "kb/test"},
-    )
-
-    assert markdown == "# ZIP content"
-    assert isinstance(markdown, str)
-
-
-@pytest.mark.asyncio
-async def test_parse_document_docx_returns_markdown_text(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    file_path = tmp_path / "parser_test.docx"
-    _build_docx(file_path, "Parser DOCX content")
-
-    # 避免测试依赖 docling 行为，直接验证统一 parser 可回退到 python-docx。
-    def _raise_docling_error(*args, **kwargs):
-        raise RuntimeError("force fallback to python-docx")
-
-    monkeypatch.setattr(parser_unified, "_convert_with_docling", _raise_docling_error)
-
-    markdown = await parse_document(str(file_path))
-
-    assert "Parser DOCX content" in markdown
 
 
 @pytest.mark.parametrize(
@@ -316,7 +247,7 @@ async def test_parse_resolved_document_routes_xls_to_pandas(
 
     monkeypatch.setattr(parser_unified, "_convert_with_docling", _fake_docling)
 
-    markdown = await parser_unified.parse_resolved_document(str(PARSER_FIXTURES / "测试旧表格.xls"))
+    markdown = await _parse_markdown(str(PARSER_FIXTURES / "测试旧表格.xls"))
 
     assert "Docling Slim" in markdown
     assert not docling_calls
@@ -324,7 +255,7 @@ async def test_parse_resolved_document_routes_xls_to_pandas(
 
 async def test_xls_preserves_single_row_text_and_blank_cells() -> None:
     """真实多 sheet 文件保留单行内容、文本编号与空白，跳过空表。"""
-    markdown = await parser_unified.parse_resolved_document(str(PARSER_FIXTURES / "xls-cell-preservation.xls"))
+    markdown = await _parse_markdown(str(PARSER_FIXTURES / "xls-cell-preservation.xls"))
 
     assert "## 单行" in markdown
     assert "## 文本与空白" in markdown
@@ -361,35 +292,6 @@ def test_slim_office_backend_unloads_after_conversion_error(
     assert unloaded
 
 
-def test_slim_docx_preserves_embedded_image_bytes_and_markdown_position(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    uploaded_images: list[bytes] = []
-
-    def _capture_upload(image_data, filename, bucket_name, object_prefix):
-        del filename, bucket_name, object_prefix
-        uploaded_images.append(image_data)
-        return "https://example.test/docx-image.png"
-
-    image_params = {
-        "parse_data_uri": lambda uri: (
-            base64.b64decode(uri.split(",", 1)[1]),
-            uri.split(":", 1)[1].split(";", 1)[0],
-        ),
-        "image_upload": _capture_upload,
-    }
-
-    markdown = parser_unified._convert_with_docling(PARSER_FIXTURES / "测试文档.docx", params=image_params)
-
-    assert len(uploaded_images) == 1
-    assert uploaded_images[0].startswith(b"\x89PNG\r\n\x1a\n")
-    assert re.search(
-        r"20XX个人述职报告[\s\S]+!\[image_\d+\.png\]\(https://example\.test/docx-image\.png\)"
-        r"[\s\S]+测试图片",
-        markdown,
-    )
-
-
 @pytest.mark.asyncio
 async def test_pdf_never_enters_office_backend(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     file_path = tmp_path / "parser_test.pdf"
@@ -400,7 +302,7 @@ async def test_pdf_never_enters_office_backend(tmp_path: Path, monkeypatch: pyte
         lambda *_args, **_kwargs: pytest.fail("PDF 不得进入 Office backend"),
     )
 
-    markdown = await parse_document(str(file_path), params={"ocr_engine": "disable"})
+    markdown = await _parse_markdown(str(file_path), params={"ocr_engine": "disable"})
 
     assert "Existing PDF path" in markdown
 
@@ -439,151 +341,6 @@ def test_convert_csv_to_markdown_preserves_column_dtypes(
     assert str(captured_dtypes[0]["id"]) == "int64"
 
 
-def test_convert_with_docling_reinserts_image_links_in_document_order(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-):
-    file_path = tmp_path / "parser_test.docx"
-    file_path.write_bytes(b"fake docx")
-    first_image = base64.b64encode(b"first image").decode()
-    second_image = base64.b64encode(b"second image").decode()
-    fake_doc = SimpleNamespace(
-        pictures=[
-            SimpleNamespace(image=SimpleNamespace(uri=f"data:image/png;base64,{first_image}")),
-            SimpleNamespace(image=SimpleNamespace(uri="https://example.test/remote.png")),
-            SimpleNamespace(image=SimpleNamespace(uri=f"data:image/png;base64,{second_image}")),
-        ],
-        export_to_markdown=lambda: "before\n<!-- image -->\nremote\n<!-- image -->\nbetween\n<!-- image -->\nafter",
-    )
-    uploaded_images: list[bytes] = []
-
-    def _fake_image_upload(image_data, filename, bucket_name, object_prefix):
-        uploaded_images.append(image_data)
-        return f"https://example.test/{len(uploaded_images)}.png"
-
-    image_params = {
-        "parse_data_uri": lambda uri: (
-            base64.b64decode(uri.split(",", 1)[1]),
-            uri.split(":", 1)[1].split(";", 1)[0],
-        ),
-        "image_upload": _fake_image_upload,
-    }
-    monkeypatch.setattr(parser_unified, "_convert_office_document", lambda _path: fake_doc)
-    image_timestamps = iter([1.0, 2.0])
-    monkeypatch.setattr(parser_unified.time, "time", lambda: next(image_timestamps))
-
-    markdown = parser_unified._convert_with_docling(file_path, params=image_params)
-
-    assert uploaded_images == [b"first image", b"second image"]
-    assert markdown == (
-        "before\n"
-        "![image_1000000.png](https://example.test/1.png)\n"
-        "remote\n"
-        "\n"
-        "between\n"
-        "![image_2000000.png](https://example.test/2.png)\n"
-        "after"
-    )
-
-
-def test_convert_with_docling_keeps_image_placeholder_when_upload_fails(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-):
-    file_path = tmp_path / "parser_test.docx"
-    file_path.write_bytes(b"fake docx")
-    image = base64.b64encode(b"image data").decode()
-    fake_doc = SimpleNamespace(
-        pictures=[SimpleNamespace(image=SimpleNamespace(uri=f"data:image/png;base64,{image}"))],
-        export_to_markdown=lambda: "before\n<!-- image -->\nafter",
-    )
-
-    def _raise_upload_error(*args, **kwargs):
-        raise RuntimeError("upload failed")
-
-    image_params = {
-        "parse_data_uri": lambda uri: (
-            base64.b64decode(uri.split(",", 1)[1]),
-            uri.split(":", 1)[1].split(";", 1)[0],
-        ),
-        "image_upload": _raise_upload_error,
-    }
-    monkeypatch.setattr(parser_unified, "_convert_office_document", lambda _path: fake_doc)
-    monkeypatch.setattr(parser_unified.time, "time", lambda: 1.0)
-
-    markdown = parser_unified._convert_with_docling(file_path, params=image_params)
-
-    assert markdown == "before\n[图片: image_1000000.png]\nafter"
-
-
-@pytest.mark.asyncio
-async def test_parse_document_png_returns_markdown_text_with_mocked_ocr(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-):
-    file_path = tmp_path / "parser_test.png"
-    _build_png(file_path)
-
-    async def _fake_parse_image_async(file, params=None):
-        return "Parser PNG content"
-
-    async def _resolve_params(params=None, db=None):
-        del db
-        return params or {}
-
-    monkeypatch.setattr(parser_unified, "parse_image_async", _fake_parse_image_async)
-    monkeypatch.setattr("yuxi.modules.documents.service.resolve_ocr_task_params", _resolve_params)
-
-    markdown = await parse_document(str(file_path), params={"ocr_engine": "rapid_ocr"})
-
-    assert "Parser PNG content" in markdown
-
-
-def test_parse_image_ignores_ocr_engine_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    file_path = tmp_path / "parser_test.png"
-    _build_png(file_path)
-    captured = {}
-
-    def _fake_process_file(processor_type, file, params=None, processor_kwargs=None):
-        captured["processor_type"] = processor_type
-        captured["file"] = file
-        captured["params"] = params
-        return "OCR content"
-
-    monkeypatch.setattr(DocumentProcessorFactory, "process_file", _fake_process_file)
-
-    result = parser_unified.parse_image(
-        str(file_path),
-        params={
-            "ocr_engine": "mineru_ocr",
-            "backend": "old-backend",
-            "ocr_engine_config": {"backend": "pipeline", "formula_enable": False},
-        },
-    )
-
-    assert result == "OCR content"
-    assert captured["processor_type"] == "mineru_ocr"
-    assert captured["file"] == str(file_path)
-    assert captured["params"]["backend"] == "old-backend"
-    assert "formula_enable" not in captured["params"]
-
-
-def test_parse_image_ignores_enable_ocr(tmp_path: Path) -> None:
-    file_path = tmp_path / "parser_test.png"
-    _build_png(file_path)
-
-    with pytest.raises(ValueError, match="必须启用OCR"):
-        parser_unified.parse_image(str(file_path), params={"ocr_engine": "disable", "enable_ocr": "rapid_ocr"})
-
-
-def test_low_level_pdf_parser_requires_resolved_ocr_engine(tmp_path: Path) -> None:
-    file_path = tmp_path / "parser_test.pdf"
-    _build_pdf(file_path, "Parser PDF content")
-
-    with pytest.raises(ValueError, match="请通过 parse_document"):
-        parser_unified.parse_pdf(str(file_path), params={})
-
-
 @pytest.mark.asyncio
 async def test_parse_document_docx_does_not_block_event_loop(
     tmp_path: Path,
@@ -597,8 +354,8 @@ async def test_parse_document_docx_does_not_block_event_loop(
         time.sleep(0.1)
         return "Async DOCX content"
 
-    async def _parse_document() -> None:
-        await parse_document(str(file_path))
+    async def __parse_markdown() -> None:
+        await _parse_markdown(str(file_path))
         completion_order.append("parse")
 
     async def _record_event_loop_progress() -> None:
@@ -607,53 +364,9 @@ async def test_parse_document_docx_does_not_block_event_loop(
 
     monkeypatch.setattr(parser_unified, "_convert_with_docling", _slow_docling_conversion)
 
-    await asyncio.gather(_parse_document(), _record_event_loop_progress())
+    await asyncio.gather(__parse_markdown(), _record_event_loop_progress())
 
     assert completion_order == ["event_loop", "parse"]
-
-
-@pytest.mark.asyncio
-async def test_parse_document_uses_config_default_ocr_when_engine_missing(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    file_path = tmp_path / "parser_test.pdf"
-    _build_pdf(file_path, "Parser PDF content")
-    captured = {}
-
-    def _fake_process_file(processor_type, file, params=None, processor_kwargs=None):
-        captured["processor_type"] = processor_type
-        captured["file"] = file
-        captured["params"] = params
-        return "default OCR content"
-
-    async def _build_processor_kwargs(db, engine_id):
-        del db, engine_id
-        return {}
-
-    async def _system_options_get(_option, _db=None):
-        return {"default_ocr_engine": "mineru_ocr"}
-
-    monkeypatch.setattr("yuxi.modules.system.options.Option.get", _system_options_get)
-    monkeypatch.setattr(DocumentProcessorFactory, "process_file", _fake_process_file)
-    monkeypatch.setattr("yuxi.modules.documents.service._build_processor_kwargs", _build_processor_kwargs)
-
-    result = await parse_document(str(file_path), params={}, db=object())
-
-    assert result == "default OCR content"
-    assert captured["processor_type"] == "mineru_ocr"
-    assert captured["file"] == str(file_path)
-
-
-def test_parse_pdf_keeps_explicit_disable_when_default_ocr_enabled(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    file_path = tmp_path / "parser_test.pdf"
-    _build_pdf(file_path, "Parser PDF content")
-    result = parser_unified.parse_pdf(str(file_path), params={"ocr_engine": "disable"})
-
-    assert "Parser PDF content" in result
 
 
 def test_rapid_ocr_resolves_model_dir_from_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -664,3 +377,190 @@ def test_rapid_ocr_resolves_model_dir_from_env(tmp_path: Path, monkeypatch: pyte
 
     assert params["Global.model_root_dir"] == str(target_dir)
     assert target_dir.exists()
+
+
+async def _parse_markdown(source, params=None, db=None):
+    """回读真实解析入口，保留文本格式测试的独立断言。"""
+    with tempfile.TemporaryDirectory() as temporary:
+        result = await parse(str(source), Path(temporary) / "parsed", params, db)
+        return result.markdown_path.read_text()
+
+
+@pytest.mark.asyncio
+async def test_docx_directory_preserves_embedded_image_and_position(tmp_path):
+    """真实 DOCX 产物保留图片字节及正文顺序。"""
+    result = await parse(str(PARSER_FIXTURES / "测试文档.docx"), tmp_path / "parsed")
+    markdown = result.markdown_path.read_text()
+    assert result.resources == ("images/figure-001.png",)
+    assert (result.directory / result.resources[0]).read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
+    assert re.search(r"20XX个人述职报告[\s\S]+!\[image\]\(images/figure-001.png\)[\s\S]+测试图片", markdown)
+
+
+@pytest.mark.asyncio
+async def test_office_resource_failure_rejects_partial_directory(tmp_path, monkeypatch):
+    """资源失败不能退回纯文本并报告成功。"""
+    source = tmp_path / "source.docx"
+    source.write_bytes(b"fixture")
+    fake = SimpleNamespace(pictures=[SimpleNamespace(image=None)], export_to_markdown=lambda: "before\n<!-- image -->")
+    monkeypatch.setattr(parser_unified, "_convert_office_document", lambda _: fake)
+    with pytest.raises(ValueError, match="缺少图像数据"):
+        await parse(str(source), tmp_path / "parsed")
+    assert not (tmp_path / "parsed").exists()
+
+
+@pytest.mark.asyncio
+async def test_zip_preserves_distinct_paths_and_reference_titles(tmp_path):
+    """同名图片保持完整路径，引用式图片与标题也保持可读。"""
+    source = tmp_path / "source.zip"
+    with zipfile.ZipFile(source, "w") as archive:
+        archive.writestr("nested/full.md", '![](a/chart.png "first")\n![second][fig]\n\n[fig]: b/chart.png "second"')
+        archive.writestr("nested/a/chart.png", b"first")
+        archive.writestr("nested/b/chart.png", b"second")
+    result = await parse(str(source), tmp_path / "parsed")
+    markdown = result.markdown_path.read_text()
+    assert '![](images/nested/a/chart.png "first")' in markdown
+    assert '[fig]: images/nested/b/chart.png "second"' in markdown
+    assert (result.directory / "images/nested/a/chart.png").read_bytes() == b"first"
+    assert (result.directory / "images/nested/b/chart.png").read_bytes() == b"second"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("bad_path", ["../outside.png", "/absolute.png", "images/../outside.png", "C:\\outside.png"])
+async def test_zip_rejects_unsafe_paths_before_writing(tmp_path, bad_path):
+    """恢复路径穿越缺陷时，测试必须因拒绝缺失而失败。"""
+    source = tmp_path / "source.zip"
+    with zipfile.ZipFile(source, "w") as archive:
+        archive.writestr("full.md", "# content")
+        archive.writestr(bad_path, b"escape")
+    with pytest.raises(ValueError, match="不安全的资源路径"):
+        await parse(str(source), tmp_path / "parsed")
+    assert not (tmp_path / "parsed").exists()
+    assert not (tmp_path / "outside.png").exists()
+
+
+@pytest.mark.asyncio
+async def test_missing_image_rejects_successful_text(tmp_path):
+    """正文引用不存在的图片时拒绝完整成功。"""
+    source = tmp_path / "source.zip"
+    with zipfile.ZipFile(source, "w") as archive:
+        archive.writestr("full.md", "![](missing.png)")
+    with pytest.raises(ValueError, match="缺少 Markdown 资源"):
+        await parse(str(source), tmp_path / "parsed")
+    assert not (tmp_path / "parsed").exists()
+
+
+@pytest.mark.asyncio
+async def test_default_engine_resolves_database_config_before_conversion(tmp_path, monkeypatch):
+    """应用层解析默认引擎，底层只接收有效值。"""
+    source = tmp_path / "source.pdf"
+    _build_pdf(source, "text")
+
+    async def config(*args):
+        return {"default_ocr_engine": "mineru_ocr"}
+
+    async def kwargs(*args):
+        return {"server_url": "http://configured.test"}
+
+    captured = {}
+
+    def get_engine(engine_id, **kwargs):
+        captured.update(engine=engine_id, kwargs=kwargs)
+        return SimpleNamespace(process_file=lambda *args: "configured OCR text")
+
+    monkeypatch.setattr("yuxi.modules.system.options.Option.get", config)
+    monkeypatch.setattr("yuxi.modules.documents.service._build_processor_kwargs", kwargs)
+    monkeypatch.setattr(engines, "get_engine", get_engine)
+    result = await parse(str(source), tmp_path / "parsed", db=object())
+    assert result.markdown_path.read_text() == "configured OCR text"
+    assert captured == {"engine": "mineru_ocr", "kwargs": {"server_url": "http://configured.test"}}
+
+
+@pytest.mark.asyncio
+async def test_cancel_waits_for_converter_before_removing_directory(tmp_path, monkeypatch):
+    """取消后没有仍能重新创建资源目录的引擎线程。"""
+    import threading
+    from yuxi.infrastructure.document_parsing.artifacts import save_resource
+
+    source = tmp_path / "source.png"
+    source.write_bytes(b"image")
+    started, release = threading.Event(), threading.Event()
+
+    def converter(source, output, options):
+        started.set()
+        assert release.wait(5)
+        save_resource(output, "images/late.png", b"late")
+        return "![](images/late.png)"
+
+    monkeypatch.setattr(parser_unified, "_parse_ocr", converter)
+    task = asyncio.create_task(parser_unified.parse(source, tmp_path / "parsed", ParseOptions(ocr_engine="rapid_ocr")))
+    assert await asyncio.to_thread(started.wait, 5)
+    task.cancel()
+    await asyncio.sleep(0)
+    assert not task.done()
+    release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert not (tmp_path / "parsed").exists()
+
+
+@pytest.mark.asyncio
+async def test_zip_rewrite_keeps_identity_and_legal_destinations(tmp_path):
+    """一次替换原始引用，编码空格和括号且保留两张不同图片。"""
+    from yuxi.infrastructure.document_parsing.artifacts import local_image_links
+    from urllib.parse import unquote
+
+    source = tmp_path / "source.zip"
+    with zipfile.ZipFile(source, "w") as archive:
+        archive.writestr(
+            "full.md", r"![](chart.png)" + "\n![](images/chart.png)\n![](image%20one.png)\n" + r"![](image\(1\).png)"
+        )
+        for name, data in {
+            "chart.png": b"first",
+            "images/chart.png": b"second",
+            "image one.png": b"space",
+            "image(1).png": b"parentheses",
+        }.items():
+            archive.writestr(name, data)
+    result = await parser_unified.parse(source, tmp_path / "parsed")
+    links = local_image_links(result.markdown_path.read_text())
+    assert len(links) == 4
+    assert [(result.directory / unquote(link)).read_bytes() for link in links] == [
+        b"first",
+        b"second",
+        b"space",
+        b"parentheses",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_local_destinations_encode_url_delimiters_without_changing_hosted_urls(tmp_path):
+    """本地文件名与已编码代理 URL 保持各自身份。"""
+    from urllib.parse import quote, unquote
+    from yuxi.infrastructure.document_parsing.artifacts import local_image_links, replace_image_links
+
+    names = ["chart#one.png", "chart?one.png", "chart%20one.png", "chart one.png"]
+    source = tmp_path / "source.zip"
+    with zipfile.ZipFile(source, "w") as archive:
+        archive.writestr("full.md", "\n".join(f"![]({quote(name, safe='/')})" for name in names))
+        for name in names:
+            archive.writestr(name, name.encode())
+    result = await parser_unified.parse(source, tmp_path / "parsed")
+    links = local_image_links(result.markdown_path.read_text())
+    assert len(links) == len(names)
+    assert [(result.directory / unquote(link)).read_bytes() for link in links] == [name.encode() for name in names]
+    hosted = "/api/knowledge/databases/kb/images/chart%23one.png"
+    assert replace_image_links("![](chart.png)", {"chart.png": hosted}) == f"![]({hosted})"
+
+
+@pytest.mark.asyncio
+async def test_image_alt_brackets_do_not_change_resource_identity(tmp_path):
+    """图片说明中的合法方括号不影响资源引用改写。"""
+    source = tmp_path / "source.zip"
+    with zipfile.ZipFile(source, "w") as archive:
+        archive.writestr("full.md", r"![chart [section A]](chart.png)" + "\n" + r"![chart \[section A\]](chart.png)")
+        archive.writestr("chart.png", b"image")
+    result = await parser_unified.parse(source, tmp_path / "parsed")
+    markdown = result.markdown_path.read_text()
+    assert markdown.count("(images/chart.png)") == 2
+    assert "[section A]" in markdown
+    assert (result.directory / "images/chart.png").read_bytes() == b"image"

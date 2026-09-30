@@ -3,13 +3,16 @@ import mimetypes
 import os
 import re
 from abc import ABC, abstractmethod
+from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
+from yuxi.infrastructure.filesystem import await_io
+from yuxi.infrastructure.observability.logging import logger
 from yuxi.modules.knowledge.chunking.ragflow_like.presets import ensure_chunk_defaults_in_additional_params
 from yuxi.modules.knowledge.read_models import KnowledgeBaseConfig
 from yuxi.modules.knowledge.schemas import FindOutputSchema, FindWindowSchema, SearchOutputSchema, SearchResultSchema
 from yuxi.modules.knowledge.utils import resolve_processing_params, sanitize_processing_params
-from yuxi.infrastructure.observability.logging import logger
 from yuxi.shared.datetime import utc_isoformat
 
 
@@ -201,8 +204,8 @@ class KnowledgeBase(ABC):
         # Fallback: fetch file size from MinIO if not provided
         if metadata.get("size") is None and content_type == "file":
             try:
-                from yuxi.infrastructure.object_urls import is_minio_url, parse_minio_url
                 from yuxi.infrastructure.minio import get_minio_client
+                from yuxi.infrastructure.minio.object_urls import is_minio_url, parse_minio_url
 
                 file_path = metadata.get("path") or item
                 if is_minio_url(file_path):
@@ -300,8 +303,11 @@ class KnowledgeBase(ABC):
                 raise asyncio.CancelledError("File processing owner was lost")
             raise ValueError(message)
 
+        attempt_id = uuid4().hex
+        previous_markdown = file_meta.get("markdown_file")
         try:
-            from yuxi.modules.documents.service import parse_document
+            from yuxi.modules.documents.service import parse_to_hosted_markdown
+            from yuxi.modules.knowledge.utils.kb_utils import build_kb_image_proxy_url
 
             # Prepare params
             params = resolve_processing_params(
@@ -310,16 +316,16 @@ class KnowledgeBase(ABC):
             )
             from yuxi.infrastructure.minio import get_minio_client
 
-            params["image_bucket"] = get_minio_client().KB_BUCKETS["images"]
-            params["image_prefix"] = f"{kb_id}/kb-images"
-
-            markdown_content = await parse_document(
+            markdown_content = await parse_to_hosted_markdown(
                 source=file_path,
                 params=params,
+                image_bucket=get_minio_client().KB_BUCKETS["images"],
+                image_prefix=f"{kb_id}/kb-images/{file_id}/{attempt_id}/",
+                url_builder=build_kb_image_proxy_url,
             )
 
             # Save Markdown to MinIO
-            markdown_file_path = await self._save_markdown_to_minio(kb_id, file_id, markdown_content)
+            markdown_file_path = await self._save_markdown_to_minio(kb_id, file_id, attempt_id, markdown_content)
 
             # Update metadata
             file_meta["status"] = FileStatus.PARSED
@@ -347,13 +353,12 @@ class KnowledgeBase(ABC):
             if updated_record is None:
                 raise asyncio.CancelledError("File processing owner was lost")
 
-            return file_meta
-
         except (Exception, asyncio.CancelledError) as e:
             if isinstance(e, asyncio.CancelledError):
                 current_task = asyncio.current_task()
                 if current_task is not None and current_task.cancelling():
                     current_task.uncancel()
+            await self._cleanup_parse_attempt(kb_id, file_id, attempt_id)
             error_msg = "File parsing was cancelled" if isinstance(e, asyncio.CancelledError) else str(e)
             logger.error(f"Failed to parse file {file_id}: {error_msg}")
 
@@ -381,6 +386,14 @@ class KnowledgeBase(ABC):
                 raise asyncio.CancelledError("File processing owner was lost")
 
             raise
+
+        if previous_markdown:
+            from yuxi.infrastructure.minio.object_urls import parse_minio_url
+
+            _, previous_object = parse_minio_url(previous_markdown)
+            previous_attempt = Path(previous_object).parent.name
+            await self._cleanup_parse_attempt(kb_id, file_id, previous_attempt)
+        return file_meta
 
     async def update_file_params(
         self,
@@ -422,7 +435,17 @@ class KnowledgeBase(ABC):
         if record is None:
             raise ValueError(f"File {file_id} not found")
 
-    async def _save_markdown_to_minio(self, kb_id: str, file_id: str, content: str) -> str:
+    async def cleanup_file_resources(self, kb_id: str, file_id: str) -> None:
+        """删除单个文档拥有的全部解析产物。"""
+        from yuxi.infrastructure.minio import get_minio_client
+
+        client = get_minio_client()
+        await asyncio.gather(
+            client.adelete_objects_by_prefix(client.KB_BUCKETS["images"], f"{kb_id}/kb-images/{file_id}/"),
+            client.adelete_objects_by_prefix(client.KB_BUCKETS["parsed"], f"{kb_id}/parsed/{file_id}/"),
+        )
+
+    async def _save_markdown_to_minio(self, kb_id: str, file_id: str, attempt_id: str, content: str) -> str:
         """Save markdown content to MinIO and return HTTP URL"""
         from yuxi.infrastructure.minio import get_minio_client
 
@@ -430,21 +453,39 @@ class KnowledgeBase(ABC):
         bucket_name = minio_client.KB_BUCKETS["parsed"]
         await asyncio.to_thread(minio_client.ensure_bucket_exists, bucket_name)
 
-        object_name = f"{kb_id}/parsed/{file_id}.md"
+        object_name = f"{kb_id}/parsed/{file_id}/{attempt_id}/document.md"
         data = content.encode("utf-8")
 
         # Return standard HTTP URL from UploadResult
-        upload_result = await minio_client.aupload_file(
-            bucket_name=bucket_name,
-            object_name=object_name,
-            data=data,
+        upload_result = await await_io(
+            minio_client.aupload_file(
+                bucket_name=bucket_name,
+                object_name=object_name,
+                data=data,
+            )
         )
 
         return upload_result.url
 
-    async def _read_minio_bytes(self, file_path: str) -> bytes:
-        from yuxi.infrastructure.object_urls import is_minio_url, parse_minio_url
+    async def _cleanup_parse_attempt(self, kb_id: str, file_id: str, attempt_id: str) -> None:
+        """尽力回收指定解析尝试，清理失败形成可观察日志。"""
         from yuxi.infrastructure.minio import get_minio_client
+
+        client = get_minio_client()
+        results = await asyncio.gather(
+            client.adelete_objects_by_prefix(client.KB_BUCKETS["images"], f"{kb_id}/kb-images/{file_id}/{attempt_id}/"),
+            client.adelete_objects_by_prefix(client.KB_BUCKETS["parsed"], f"{kb_id}/parsed/{file_id}/{attempt_id}/"),
+            return_exceptions=True,
+        )
+        for result in results:
+            if isinstance(result, Exception):
+                logger.warning(
+                    "解析产物清理失败: kb=%s file=%s attempt=%s error=%s", kb_id, file_id, attempt_id, result
+                )
+
+    async def _read_minio_bytes(self, file_path: str) -> bytes:
+        from yuxi.infrastructure.minio import get_minio_client
+        from yuxi.infrastructure.minio.object_urls import is_minio_url, parse_minio_url
 
         if not file_path or not is_minio_url(file_path):
             raise ValueError(f"Invalid MinIO path format: {file_path}")
@@ -783,9 +824,9 @@ class KnowledgeBase(ABC):
         Returns:
             操作结果
         """
-        from yuxi.infrastructure.object_urls import is_minio_url, parse_minio_url
-        from yuxi.modules.knowledge.repositories.files import KnowledgeFileRepository
         from yuxi.infrastructure.minio import get_minio_client
+        from yuxi.infrastructure.minio.object_urls import is_minio_url, parse_minio_url
+        from yuxi.modules.knowledge.repositories.files import KnowledgeFileRepository
 
         minio_client = get_minio_client()
         file_repo = KnowledgeFileRepository()
@@ -798,7 +839,6 @@ class KnowledgeBase(ABC):
                 break
             after_file_id = records[-1].file_id
             for record in records:
-                file_id = record.file_id
                 file_path = record.minio_url or record.path
                 if file_path and is_minio_url(file_path):
                     try:
@@ -806,10 +846,6 @@ class KnowledgeBase(ABC):
                         await minio_client.adelete_file(bucket_name, object_name)
                     except Exception as e:
                         logger.warning(f"Failed to delete MinIO file {file_path}: {e}")
-
-                # 删除解析后的 markdown 文件
-                parsed_object = f"{kb_id}/parsed/{file_id}.md"
-                await minio_client.adelete_file(minio_client.KB_BUCKETS["parsed"], parsed_object)
 
         # 2. 并行删除所有知识库 bucket 中该 kb_id 下的文件
         prefix = f"{kb_id}/"

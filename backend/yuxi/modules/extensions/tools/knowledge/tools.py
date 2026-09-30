@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 from yuxi.modules.agents.runtime.sandbox import ProvisionerSandboxBackend
 from yuxi.modules.extensions.tools.registry import tool
 from yuxi.modules.knowledge.schemas import FindInputSchema, OpenInputSchema, SearchInputSchema
+from yuxi.modules.knowledge.services.access import visible_knowledge_bases
 from yuxi.modules.knowledge.services import tools as knowledge_tools
 from yuxi.infrastructure.observability.logging import logger
 
@@ -309,6 +310,7 @@ def _get_knowledge_base():
 
 
 async def _resolve_visible_knowledge_bases_for_query(runtime: ToolRuntime | None) -> list[dict[str, Any]]:
+    """在工具执行时复查当前读取权限，并按会话选择收窄范围。"""
     if runtime is None:
         return []
 
@@ -316,19 +318,10 @@ async def _resolve_visible_knowledge_bases_for_query(runtime: ToolRuntime | None
     if context is None:
         return []
 
-    visible_kbs = getattr(context, "_visible_knowledge_bases", None)
-    if isinstance(visible_kbs, list):
-        return visible_kbs
-
-    try:
-        from yuxi.modules.agents.runtime.knowledge import (
-            resolve_visible_knowledge_bases_for_context,
-        )
-
-        return await resolve_visible_knowledge_bases_for_context(context)
-    except Exception as exc:  # noqa: BLE001
-        logger.warning(f"解析会话可见知识库失败: {exc}")
-        return []
+    return await visible_knowledge_bases(
+        getattr(context, "uid", ""),
+        selection=getattr(context, "knowledges", []),
+    )
 
 
 def _find_query_target(

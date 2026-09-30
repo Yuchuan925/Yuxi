@@ -14,7 +14,7 @@ from yuxi.modules.knowledge.base import KBNameConflictError, KBNotFoundError
 from yuxi.modules.knowledge.chunking.ragflow_like.presets import get_chunk_preset_options
 from yuxi.modules.knowledge.graphs.milvus_graph_service import GRAPH_TASK_TYPE, MilvusGraphService
 from yuxi.modules.knowledge.read_models import KnowledgeBaseDetail
-from yuxi.infrastructure.document_parsing.capabilities import SUPPORTED_FILE_EXTENSIONS, is_supported_file_extension
+from yuxi.infrastructure.document_parsing import SUPPORTED_FILE_EXTENSIONS, is_supported_file_extension
 from yuxi.modules.knowledge.runtime import knowledge_base
 from yuxi.modules.knowledge.utils import (
     calculate_content_hash,
@@ -28,7 +28,6 @@ from yuxi.modules.knowledge.utils.sample_question_utils import (
 )
 from yuxi.modules.knowledge.utils.url_fetcher import fetch_url_content
 from yuxi.modules.identity.permissions import ResourcePermission, resolve_knowledge_base_permission
-from yuxi.modules.documents.service import parse_document
 from yuxi.modules.tasks.service import tasker
 from yuxi.modules.workspace.services.files import read_workspace_file_bytes
 from yuxi.infrastructure.minio.client import MinIOClient, StorageError, aupload_file_to_minio, get_minio_client
@@ -1556,45 +1555,6 @@ async def upload_file(
 async def get_supported_file_types(current_user: User = Depends(get_admin_user)):
     """获取当前支持的文件类型"""
     return {"message": "success", "file_types": sorted(SUPPORTED_FILE_EXTENSIONS)}
-
-
-@knowledge.post("/files/markdown")
-async def mark_it_down(file: UploadFile = File(...), current_user: User = Depends(get_admin_user)):
-    """调用统一 Parser 将文件解析为 markdown，需要管理员权限"""
-    import tempfile
-
-    if not file.filename:
-        raise HTTPException(status_code=400, detail="无法识别文件名")
-
-    suffix = os.path.splitext(file.filename)[1].lower()
-    temp_path = None
-
-    try:
-        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as temp_file:
-            temp_path = temp_file.name
-
-        await write_upload_to_path(
-            file,
-            temp_path,
-            max_size_bytes=MAX_UPLOAD_SIZE_BYTES,
-            too_large_message="文件过大，当前仅支持 100 MB 以内的文件",
-        )
-
-        markdown_content = await parse_document(temp_path)
-        return {"markdown_content": markdown_content, "message": "success"}
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"文件解析失败 {e}, {traceback.format_exc()}")
-        raise HTTPException(status_code=500, detail="文件解析失败") from e
-    finally:
-        if temp_path and os.path.exists(temp_path):
-            try:
-                os.unlink(temp_path)
-            except Exception as cleanup_error:
-                logger.warning(f"临时文件清理失败 {temp_path}: {cleanup_error}")
 
 
 # =============================================================================

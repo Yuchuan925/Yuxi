@@ -15,9 +15,9 @@ from pydantic import HttpUrl, TypeAdapter
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from yuxi.modules.system.models import ConfigOption
-from yuxi.infrastructure.redis import get_async_redis_client
 from yuxi.infrastructure.observability.logging import logger
+from yuxi.infrastructure.redis import get_async_redis_client
+from yuxi.modules.system.models import ConfigOption
 
 OPTION_CACHE_PREFIX = "yuxi:config_option:"
 OPTION_CACHE_VERSION_PREFIX = "yuxi:config_option_version:"
@@ -125,114 +125,13 @@ system_options = Option(
 )
 
 
-mineru_ocr_host_opts = Option(
-    key="mineru_ocr_host_opts",
-    name="MinerU 服务",
-    description="配置自托管 MinerU 服务地址。",
-    params={
-        "fields": [
-            {
-                "key": "server_url",
-                "label": "服务地址",
-                "type": "url",
-                "environment": "MINERU_API_URI",
-                "placeholder": "http://mineru-api:30001",
-                "help": "留空时读取 MINERU_API_URI。",
-            }
-        ]
-    },
-)
+def get_option_definitions() -> dict[str, Option]:
+    """显式汇总各模块配置，系统管理机制不拥有领域定义。"""
+    from yuxi.modules.documents.options import DOCUMENT_OPTIONS
+    from yuxi.modules.extensions.options import remote_skill_source_policy
 
-mineru_official_api_opts = Option(
-    key="mineru_official_api_opts",
-    name="MinerU Official",
-    description="配置 MinerU 官方云服务凭证。",
-    params={
-        "fields": [
-            {
-                "key": "api_key",
-                "label": "API Key",
-                "type": "password",
-                "environment": "MINERU_API_KEY",
-                "sensitive": True,
-                "help": "留空时读取 MINERU_API_KEY，建议优先使用环境变量。",
-            }
-        ]
-    },
-)
+    return {option.key: option for option in (*DOCUMENT_OPTIONS, remote_skill_source_policy, system_options)}
 
-pp_structure_v3_ocr_host_opts = Option(
-    key="pp_structure_v3_ocr_host_opts",
-    name="PP-Structure-V3 服务",
-    description="配置自托管 PaddleX 服务地址。",
-    params={
-        "fields": [
-            {
-                "key": "server_url",
-                "label": "服务地址",
-                "type": "url",
-                "environment": "PADDLEX_URI",
-                "placeholder": "http://paddlex:8080",
-                "help": "留空时读取 PADDLEX_URI。",
-            }
-        ]
-    },
-)
-
-paddleocr_api_opts = Option(
-    key="paddleocr_api_opts",
-    name="PaddleOCR API",
-    description="PaddleOCR-VL 和 PP-OCRv6 共用此配置。",
-    params={
-        "fields": [
-            {
-                "key": "api_url",
-                "label": "API 地址",
-                "type": "url",
-                "environment": "PADDLEOCR_API_URL",
-                "placeholder": "https://paddleocr.aistudio-app.com/api/v2/ocr/jobs",
-                "help": "留空时读取 PADDLEOCR_API_URL。",
-            },
-            {
-                "key": "api_token",
-                "label": "Access Token",
-                "type": "password",
-                "environment": "PADDLEOCR_API_TOKEN",
-                "sensitive": True,
-                "help": "留空时读取 PADDLEOCR_API_TOKEN，建议优先使用环境变量。",
-            },
-        ]
-    },
-)
-
-remote_skill_source_policy = Option(
-    key="remote_skill_source_policy",
-    name="远程 Skill 来源",
-    description="配置允许远程安装 Skill 的来源域名。",
-    params={
-        "fields": [
-            {
-                "key": "allowed_hosts",
-                "label": "允许的来源域名",
-                "type": "list[str]",
-                "default": ["github.com", "modelscope.cn"],
-                "help": "仅精确匹配域名；保存空列表会关闭远程安装。",
-            }
-        ]
-    },
-)
-
-OPTION_DEFINITIONS = {
-    option.key: option
-    for option in (
-        mineru_ocr_host_opts,
-        mineru_official_api_opts,
-        pp_structure_v3_ocr_host_opts,
-        paddleocr_api_opts,
-        remote_skill_source_policy,
-        system_options,
-    )
-}
 
 _URL_ADAPTER = TypeAdapter(HttpUrl)
 
@@ -243,10 +142,11 @@ async def ensure_options_in_db(db: AsyncSession) -> list[ConfigOption]:
     if db.bind and db.bind.dialect.name == "postgresql":
         await db.execute(text("SELECT pg_advisory_xact_lock(94721801)"))
 
-    result = await db.execute(select(ConfigOption).where(ConfigOption.key.in_(OPTION_DEFINITIONS)))
+    definitions = get_option_definitions()
+    result = await db.execute(select(ConfigOption).where(ConfigOption.key.in_(definitions)))
     existing = {record.key: record for record in result.scalars().all()}
     synced = []
-    for key, definition in OPTION_DEFINITIONS.items():
+    for key, definition in definitions.items():
         record = existing.get(key)
         if record is None:
             record = ConfigOption(
@@ -359,10 +259,6 @@ async def invalidate_option_cache(key: str) -> None:
         logger.warning(f"Failed to invalidate option cache {key}: {exc}")
 
 
-def _fields(record: ConfigOption) -> list[dict[str, Any]]:
-    return list((record.params or {}).get("fields") or [])
-
-
 def normalize_option_value(field: dict[str, Any], value: Any) -> Any:
     if field.get("type") == "list[str]":
         if not isinstance(value, list):
@@ -375,11 +271,15 @@ def normalize_option_value(field: dict[str, Any], value: Any) -> Any:
     if field.get("type") == "url" and normalized:
         return str(_URL_ADAPTER.validate_python(normalized))
     if field.get("type") == "ocr_engine" and normalized:
-        from yuxi.infrastructure.document_parsing.capabilities import get_ocr_engine_ids
+        from yuxi.infrastructure.document_parsing.engines import get_ocr_engine_ids
 
         if normalized not in {"disable", *get_ocr_engine_ids()}:
             raise ValueError(f"不支持的默认 OCR 引擎: {normalized}")
     return normalized
+
+
+def _fields(record: ConfigOption) -> list[dict[str, Any]]:
+    return list((record.params or {}).get("fields") or [])
 
 
 async def _load_cached_value(key: str) -> dict[str, Any] | None:

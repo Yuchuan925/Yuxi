@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pypdfium2 as pdfium
 
-from yuxi.infrastructure.document_parsing.base import DocumentParserException
+from yuxi.infrastructure.document_parsing import DocumentParserException
 
 
 @dataclass(slots=True)

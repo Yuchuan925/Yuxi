@@ -338,11 +338,6 @@ async def test_prepare_agent_runtime_context_filters_resources_and_derives_runti
             types.SimpleNamespace(slug="skill-b", name="Skill B", description=""),
         ]
 
-    async def fake_resolve_visible_knowledge_bases(context):
-        assert context.knowledges == ["kb-a"]
-        context._visible_knowledge_bases = [{"slug": "kb-a", "name": "Docs A"}]
-        return context._visible_knowledge_bases
-
     async def fake_resolve_runtime_skills_for_context(
         context,
         *,
@@ -398,11 +393,6 @@ async def test_prepare_agent_runtime_context_filters_resources_and_derives_runti
             assert user.uid == "u1"
             return [types.SimpleNamespace(slug="research-agent", name="Research", description="")]
 
-    monkeypatch.setitem(
-        sys.modules,
-        "yuxi.modules.agents.runtime.knowledge",
-        types.SimpleNamespace(resolve_visible_knowledge_bases_for_context=fake_resolve_visible_knowledge_bases),
-    )
     monkeypatch.setitem(
         sys.modules,
         "yuxi.modules.extensions.skills.runtime",
@@ -476,7 +466,7 @@ async def test_prepare_agent_runtime_context_filters_resources_and_derives_runti
     assert prepared.skills == ["skill-a"]
     assert prepared.preload_skills == ["skill-a"]
     assert prepared.subagents == ["research-agent"]
-    assert prepared._visible_knowledge_bases == [{"slug": "kb-a", "name": "Docs A"}]
+    assert not hasattr(prepared, "_visible_knowledge_bases")
     assert prepared._skill_runtime_snapshot.get("effective_skills", []) == ["skill-a", "skill-b"]
     assert prepared._skill_runtime_snapshot.get("runtime_skills", {})["skill-a"]["name"] == "Skill A"
     assert prepared._skill_runtime_snapshot.get("runtime_skills", {})["skill-a"]["skills"] == ["skill-b"]
@@ -525,11 +515,6 @@ async def test_prepare_agent_runtime_context_clears_resources_for_missing_user(m
 
     monkeypatch.setitem(
         sys.modules,
-        "yuxi.modules.agents.runtime.knowledge",
-        types.SimpleNamespace(resolve_visible_knowledge_bases_for_context=lambda _context: None),
-    )
-    monkeypatch.setitem(
-        sys.modules,
         "yuxi.modules.extensions.skills.runtime",
         types.SimpleNamespace(resolve_runtime_skills_for_context=lambda _context, db=None, user=None: None),
     )
@@ -562,7 +547,7 @@ async def test_prepare_agent_runtime_context_clears_resources_for_missing_user(m
     assert prepared.skills == []
     assert prepared.preload_skills == []
     assert prepared.subagents == []
-    assert prepared._visible_knowledge_bases == []
+    assert not hasattr(prepared, "_visible_knowledge_bases")
     assert prepared._skill_runtime_snapshot.get("effective_skills", []) == []
     assert prepared._skill_runtime_snapshot.get("runtime_skills", {}) == {}
 

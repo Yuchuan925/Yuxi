@@ -29,3 +29,17 @@ metadata:
   assert.match(html, /Use this skill when visual quality and design identity matter for a PDF\./)
   assert.match(html, /document-generation/)
 })
+
+test('relative document images resolve beside their artifact with the same authorization boundary', async () => {
+  const { resolveMarkdownImageUrl } = await import('../../src/utils/markdown_preview.js')
+  const base = '/api/v1/agents/threads/thread-1/artifacts/home/gem/user-data/project/parsed/document.md'
+  const origin = 'https://yuxi.example'
+  assert.equal(
+    resolveMarkdownImageUrl('images/chart.png', base, origin),
+    '/api/v1/agents/threads/thread-1/artifacts/home/gem/user-data/project/parsed/images/chart.png'
+  )
+  assert.equal(resolveMarkdownImageUrl('images/chart.png', '', origin), null)
+  assert.equal(resolveMarkdownImageUrl('https://outside.example/api/knowledge/databases/a/images/x.png', base, origin), null)
+  assert.equal(resolveMarkdownImageUrl('//outside.example/x.png', base, origin), null)
+  assert.equal(resolveMarkdownImageUrl('/api/knowledge/databases/kb/images/kb-images/chart.png', '', origin), '/api/knowledge/databases/kb/images/kb-images/chart.png')
+})
