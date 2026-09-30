@@ -591,7 +591,7 @@ async def test_stream_agent_chat_commits_before_stream_and_persists_langfuse_con
         async def get_graph(self, *, context=None):
             class FakeGraph:
                 async def aget_state(self, config):
-                    return SimpleNamespace(values={"messages": [], "files": {}, "artifacts": []})
+                    return SimpleNamespace(values={"messages": [], "artifacts": []})
 
             return FakeGraph()
 
@@ -715,7 +715,7 @@ async def test_stream_agent_chat_commits_before_stream_and_persists_langfuse_con
         "langfuse_trace_id": "trace-seeded",
         "langfuse_session_id": "thread-1",
     }
-    assert calls["saved_state"]["state"].values == {"messages": [], "files": {}, "artifacts": []}
+    assert calls["saved_state"]["state"].values == {"messages": [], "artifacts": []}
     assert calls["saved_state"]["complete_run"] is True
     assert chunks[-1]["status"] == "finished"
     assert calls["stream_input_context"]["workdir_relative_path"] == "projects/11111111-1111-4111-8111-111111111111"
@@ -920,7 +920,7 @@ async def test_stream_agent_chat_maps_raw_protocol_events_to_yuxi_stream_events(
 ):
     class FakeGraph:
         async def aget_state(self, _config):
-            return SimpleNamespace(values={"messages": [], "files": {}, "artifacts": []})
+            return SimpleNamespace(values={"messages": [], "artifacts": []})
 
     class FakeAgent:
         context_schema = _FakeContext
@@ -1028,13 +1028,25 @@ async def test_stream_agent_chat_emits_realtime_agent_state_from_values(
 ):
     class FakeGraph:
         async def aget_state(self, _config):
-            return SimpleNamespace(values={"todos": [{"content": "done", "status": "completed"}]})
+            return SimpleNamespace(
+                values={
+                    "todos": [{"content": "done", "status": "completed"}],
+                    "files": {"legacy.txt": {"content": ["old checkpoint content"]}},
+                }
+            )
 
     class FakeAgent:
         context_schema = _FakeContext
 
         async def stream_messages_with_state(self, messages, input_context=None, **kwargs):
-            yield "values", {"messages": [], "todos": [{"content": "step 1", "status": "pending"}]}
+            yield (
+                "values",
+                {
+                    "messages": [],
+                    "todos": [{"content": "step 1", "status": "pending"}],
+                    "files": {"legacy.txt": {"content": ["old checkpoint content"]}},
+                },
+            )
             yield "values", {"messages": [], "todos": [{"content": "step 1", "status": "in_progress"}]}
             yield "values", {"messages": [], "todos": [{"content": "step 1", "status": "in_progress"}]}
             yield "messages", (AIMessageChunk(content="hello"), {"node": "llm"})
@@ -1058,6 +1070,7 @@ async def test_stream_agent_chat_emits_realtime_agent_state_from_values(
 
     agent_state_chunks = [chunk for chunk in chunks if chunk.get("status") == "agent_state"]
     assert len(agent_state_chunks) == 3
+    assert all("files" not in chunk["agent_state"] for chunk in agent_state_chunks)
     assert agent_state_chunks[0]["agent_state"]["todos"][0]["status"] == "pending"
     assert agent_state_chunks[1]["agent_state"]["todos"][0]["status"] == "in_progress"
     assert agent_state_chunks[2]["agent_state"]["todos"][0]["status"] == "completed"

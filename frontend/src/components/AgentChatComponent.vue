@@ -1886,10 +1886,6 @@ const currentStateFiles = computed(() => {
     })
   }
 
-  const rawFiles = currentAgentState.value?.files || {}
-  if (typeof rawFiles === 'object' && !Array.isArray(rawFiles)) {
-    Object.entries(rawFiles).forEach(([path, fileData]) => pushFile({ path, ...fileData }))
-  }
   currentThreadAttachments.value.forEach((attachment) => pushFile(attachment, '附件'))
 
   return files
@@ -1910,7 +1906,6 @@ const hasVisibleStateSections = computed(
 )
 
 const { mentionConfig } = useAgentMentionConfig({
-  currentAgentState,
   currentThreadAttachments,
   configurableItems,
   agentConfig

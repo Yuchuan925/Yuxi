@@ -199,7 +199,7 @@ async def _persist_agent_run_langfuse_trace(*, db, meta: dict, run_context: Lang
 def extract_agent_state(values: dict) -> AgentStatePayload:
     """从 LangGraph state 中提取 agent 状态"""
     if not isinstance(values, dict):
-        return {"todos": [], "files": {}, "artifacts": [], "subagent_runs": [], "token_usage": None}
+        return {"todos": [], "artifacts": [], "subagent_runs": [], "token_usage": None}
 
     # 直接获取，信任 state 的数据结构
     todos = values.get("todos")
@@ -208,7 +208,6 @@ def extract_agent_state(values: dict) -> AgentStatePayload:
     token_usage = values.get("token_usage")
     result: AgentStatePayload = {
         "todos": list(todos)[:20] if todos else [],
-        "files": values.get("files") or {},
         "artifacts": list(artifacts) if artifacts else [],
         "subagent_runs": list(subagent_runs) if subagent_runs else [],
         "token_usage": dict(token_usage) if isinstance(token_usage, dict) else None,

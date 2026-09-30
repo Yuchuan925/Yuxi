@@ -45,14 +45,8 @@ const normalizeMentionResource = (option, kind) => {
   }
 }
 
-export function useAgentMentionConfig({
-  currentAgentState,
-  currentThreadAttachments,
-  configurableItems,
-  agentConfig
-}) {
+export function useAgentMentionConfig({ currentThreadAttachments, configurableItems, agentConfig }) {
   const mentionConfig = computed(() => {
-    const rawFiles = currentAgentState.value?.files || {}
     const files = []
     const seenPaths = new Set()
 
@@ -61,15 +55,6 @@ export function useAgentMentionConfig({
       if (!path || seenPaths.has(path)) return
       seenPaths.add(path)
       files.push(entry)
-    }
-
-    if (typeof rawFiles === 'object' && !Array.isArray(rawFiles) && rawFiles !== null) {
-      Object.entries(rawFiles).forEach(([filePath, fileData]) => {
-        pushFile({
-          path: filePath,
-          ...fileData
-        })
-      })
     }
 
     const attachments = Array.isArray(currentThreadAttachments?.value)

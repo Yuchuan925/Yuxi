@@ -3,6 +3,50 @@ import test from 'node:test'
 import { ref } from 'vue'
 import { createServer } from 'vite'
 
+test('文件 mention 来自附件元数据并按路径去重', async () => {
+  const server = await createServer({
+    server: { middlewareMode: true, hmr: false },
+    appType: 'custom'
+  })
+  try {
+    const { useAgentMentionConfig } = await server.ssrLoadModule(
+      '/src/composables/useAgentMentionConfig.js'
+    )
+    const attachments = ref([
+      {
+        path: '/home/gem/user-data/projects/example/report.txt',
+        file_name: 'report.txt',
+        file_size: 42,
+        uploaded_at: '2026-09-30T00:00:00Z',
+        artifact_url: '/api/example/artifact',
+        status: 'ready'
+      },
+      { path: '/home/gem/user-data/projects/example/report.txt', file_name: 'duplicate.txt' },
+      { file_name: 'missing-path.txt' }
+    ])
+    const { mentionConfig } = useAgentMentionConfig({
+      currentThreadAttachments: attachments,
+      configurableItems: ref({}),
+      agentConfig: ref({})
+    })
+
+    assert.deepEqual(mentionConfig.value.files, [
+      {
+        path: '/home/gem/user-data/projects/example/report.txt',
+        file_name: 'report.txt',
+        size: 42,
+        modified_at: '2026-09-30T00:00:00Z',
+        artifact_url: '/api/example/artifact',
+        status: 'ready'
+      }
+    ])
+    attachments.value = []
+    assert.deepEqual(mentionConfig.value.files, [])
+  } finally {
+    await server.close()
+  }
+})
+
 test('资源 mention 按智能体选择生成，不把预加载 Skills 当成可提及资源', async () => {
   const server = await createServer({
     server: { middlewareMode: true, hmr: false },
@@ -14,7 +58,6 @@ test('资源 mention 按智能体选择生成，不把预加载 Skills 当成可
     )
     const getMentionMcps = (agentConfig) => {
       const { mentionConfig } = useAgentMentionConfig({
-        currentAgentState: ref({}),
         currentThreadAttachments: ref([]),
         configurableItems: ref({
           mcps: {
@@ -42,7 +85,6 @@ test('资源 mention 按智能体选择生成，不把预加载 Skills 当成可
         { key: 'skill-b', name: 'Skill B' }
       ]
       const { mentionConfig } = useAgentMentionConfig({
-        currentAgentState: ref({}),
         currentThreadAttachments: ref([]),
         configurableItems: ref({
           skills: { kind: 'skills', options, default: 'all', supports_all: true },
@@ -68,7 +110,6 @@ test('资源 mention 按智能体选择生成，不把预加载 Skills 当成可
 
     const getMentionSubagents = (agentConfig) => {
       const { mentionConfig } = useAgentMentionConfig({
-        currentAgentState: ref({}),
         currentThreadAttachments: ref([]),
         configurableItems: ref({
           subagents: {

@@ -15,10 +15,11 @@ pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
 
 
 class DisplayState(TypedDict):
-    """面板已保存的业务字段。"""
+    """面板业务字段及旧 checkpoint 的文件镜像。"""
 
     messages: list
     todos: list
+    files: dict
     artifacts: list
     subagent_runs: list
     token_usage: dict
@@ -52,7 +53,6 @@ async def test_state_view_reads_postgres_snapshot_and_rejects_other_users(test_c
             assert empty.status_code == 200, empty.text
             assert empty.json()["agent_state"] == {
                 "todos": [],
-                "files": {},
                 "artifacts": [],
                 "subagent_runs": [],
                 "token_usage": None,
@@ -61,6 +61,7 @@ async def test_state_view_reads_postgres_snapshot_and_rejects_other_users(test_c
             payload = {
                 "messages": [HumanMessage(content="persisted checkpoint message")],
                 "todos": [{"content": "persisted todo", "status": "completed"}],
+                "files": {"legacy.txt": {"content": ["old checkpoint content"]}},
                 "artifacts": ["result.txt"],
                 "subagent_runs": [{"run_id": "saved-child"}],
                 "token_usage": {"total": 17},
@@ -74,8 +75,8 @@ async def test_state_view_reads_postgres_snapshot_and_rejects_other_users(test_c
             response = await test_client.get(url, params={"include_messages": "true"}, headers=admin_headers)
             assert response.status_code == 200, response.text
             assert response.json()["agent_state"] == {
-                key: value for key, value in payload.items() if key not in {"messages", "subagent_runs"}
-            } | {"files": {}, "subagent_runs": []}
+                key: payload[key] for key in ("todos", "artifacts", "token_usage")
+            } | {"subagent_runs": []}
             assert response.json()["messages"][0]["content"] == "persisted checkpoint message"
             assert "interrupt" not in response.json()
             assert (await test_client.get(url)).status_code == 401

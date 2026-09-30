@@ -69,7 +69,7 @@ async def test_state_view_reads_persisted_fields_without_agent_runtime(checkpoin
     from typing import TypedDict
 
     class DisplayState(TypedDict):
-        """包含面板消费字段的测试图。"""
+        """包含面板字段及旧文件镜像的测试图。"""
 
         messages: list
         todos: list
@@ -82,7 +82,7 @@ async def test_state_view_reads_persisted_fields_without_agent_runtime(checkpoin
     payload = {
         "messages": [HumanMessage(content="saved message")],
         "todos": [{"content": "saved todo", "status": "pending"}],
-        "files": {},
+        "files": {"legacy.txt": {"content": ["old checkpoint content"]}},
         "artifacts": ["saved.txt"],
         "subagent_runs": [{"run_id": "child-run"}],
         "token_usage": {"total": 123},
@@ -116,7 +116,7 @@ async def test_state_view_reads_persisted_fields_without_agent_runtime(checkpoin
         include_relations=False,
     )
     assert response["agent_state"] == {
-        key: payload[key] for key in ("todos", "files", "artifacts", "subagent_runs", "token_usage")
+        key: payload[key] for key in ("todos", "artifacts", "subagent_runs", "token_usage")
     }
     assert response["messages"][0]["content"] == "saved message"
     assert "interrupt" not in response
