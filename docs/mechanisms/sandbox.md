@@ -28,6 +28,8 @@ flowchart LR
 
 Graph 创建时，Agent backend 取得 `uid`、根运行 scope 和 `workdir_path`。实际沙盒惰性创建；API/worker 只持有 provisioner 代理地址，不直接访问动态容器或 NodePort。
 
+[`sandbox/backend.py`](https://github.com/xerrors/Yuxi/blob/main/backend/yuxi/modules/agents/runtime/sandbox/backend.py) 按已准备的 Context 装配 CompositeBackend，文件与摘要 middleware 共用构图创建的实例。装配要求显式提供 `runtime_scope_id` 和 `workdir_relative_path`，缺失值直接失败；runtime scope 不从 checkpoint thread 推断。产物根由持久化 Workdir 相对路径映射为 runtime 路径后追加 `outputs`，大工具结果与对话历史分别写入其 `large_tool_results` 和 `conversation_history` 子目录。装配取舍见[后端直接装配决定](../develop-guides/decisions/implemented/2026-09-30-sandbox-backend-assembly.md)。
+
 ## Identity、Workdir 和生命周期
 
 `runtime_scope_id` 是一次顶层执行树的沙盒分组键，当前使用根 Conversation 的 thread ID。根 Agent 和子 Agent 共享这个 scope，因此可以共享同一个运行时、`/tmp`、环境和文件挂载；子 Agent 的 child thread 只隔离 LangGraph checkpoint。
@@ -88,11 +90,11 @@ Viewer 和 Agent 看到不同内容时，先核对同一 `uid`、Conversation �
 
 ## 源码定位与验证
 
-- [Sandbox provider](https://github.com/xerrors/Yuxi/blob/main/backend/yuxi/modules/agents/runtime/backends/sandbox/provider.py)：runtime identity、缓存和 keepalive
+- [Sandbox provider](https://github.com/xerrors/Yuxi/blob/main/backend/yuxi/modules/agents/runtime/sandbox/provider.py)：runtime identity、缓存和 keepalive
 - [Workspace 路径](https://github.com/xerrors/Yuxi/blob/main/backend/yuxi/modules/workspace/paths.py)：uid 与 Workdir 映射
 - [Workspace 文件系统](https://github.com/xerrors/Yuxi/blob/main/backend/yuxi/modules/workspace/filesystem.py)：宿主 no-follow 文件原语
 - [provisioner](https://github.com/xerrors/Yuxi/blob/main/docker/sandbox_provisioner/app.py)：Docker/Kubernetes 创建、代理和回收
-- [Sandbox backend unit tests](https://github.com/xerrors/Yuxi/tree/main/backend/test/unit/backends)
+- [Sandbox backend unit tests](https://github.com/xerrors/Yuxi/tree/main/backend/test/unit/sandbox)
 - [Workspace/Workdir unit tests](https://github.com/xerrors/Yuxi/tree/main/backend/test/unit/workspace)
 - [Project Workdir provisioner integration](https://github.com/xerrors/Yuxi/blob/main/backend/test/integration/services/test_project_workdir_provisioner.py)
 

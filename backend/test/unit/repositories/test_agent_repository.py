@@ -4,7 +4,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
-from yuxi.modules.agents.runtime.builtin.chatbot.context import ChatBotContext
+from yuxi.modules.agents.runtime.agent_backends.chatbot.context import ChatBotContext
 
 from yuxi.modules.agents.presets.subagents.general_purpose import PRESET as GENERAL_PURPOSE
 from yuxi.modules.agents.repositories.definitions import (

@@ -7,7 +7,7 @@ import tempfile
 from pathlib import Path, PurePosixPath
 
 from fastapi import HTTPException, UploadFile
-from yuxi.modules.agents.runtime.backends.paths import runtime_user_data_path
+from yuxi.modules.agents.runtime.sandbox.paths import runtime_user_data_path
 from yuxi.modules.workspace.repositories.projects import ProjectRepository
 from yuxi.modules.workspace.preview import preview_workspace_file
 from yuxi.infrastructure.document_preview import PreviewResult

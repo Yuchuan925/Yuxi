@@ -2,7 +2,7 @@
 
 状态：implemented
 类型：simplification
-Owner：backend/yuxi/modules/agents/runtime/backends/sandbox/backend.py
+Owner：backend/yuxi/modules/agents/runtime/sandbox/backend.py
 
 ## 问题
 

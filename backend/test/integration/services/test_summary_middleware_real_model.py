@@ -12,7 +12,7 @@ from yuxi.modules.models.chat import load_chat_model
 from yuxi.modules.agents.runtime.middlewares.summary import YuxiSummarizationMiddleware
 from yuxi.modules.models.providers.cache import ModelInfo
 from yuxi.modules.models.providers.builtin import BUILTIN_PROVIDERS
-from yuxi.modules.agents.runtime.backends.paths import workdir_runtime_paths
+from yuxi.modules.agents.runtime.sandbox.paths import workdir_runtime_paths
 
 VIRTUAL_PATH_LARGE_TOOL_RESULTS, VIRTUAL_PATH_CONVERSATION_HISTORY = workdir_runtime_paths(
     "/home/gem/user-data/projects/11111111-1111-4111-8111-111111111111"

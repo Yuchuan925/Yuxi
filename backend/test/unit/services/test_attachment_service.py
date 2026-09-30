@@ -14,7 +14,7 @@ os.environ.setdefault(
     "YUXI_RUNTIME_DIR", os.path.join(os.environ.get("CLAUDE_JOB_DIR", tempfile.gettempdir()), "yuxi-test-saves")
 )
 
-from yuxi.modules.agents.runtime.backends.paths import workdir_scope_from_runtime_path
+from yuxi.modules.agents.runtime.sandbox.paths import workdir_scope_from_runtime_path
 import yuxi.modules.agents.services.attachments as service
 import yuxi.modules.workspace.services.bindings as workdir_service
 

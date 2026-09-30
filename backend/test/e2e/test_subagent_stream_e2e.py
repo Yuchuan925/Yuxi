@@ -14,7 +14,7 @@ from e2e_helpers import delete_agent, postgres_dsn, skip_if_external_quota
 from test.live_api_cleanup import (
     make_test_conversation_title,
 )
-from yuxi.modules.agents.runtime.backends.paths import runtime_workdir_path
+from yuxi.modules.agents.runtime.sandbox.paths import runtime_workdir_path
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.e2e, pytest.mark.slow]
 

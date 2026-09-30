@@ -400,7 +400,7 @@ async def test_prepare_agent_runtime_context_filters_resources_and_derives_runti
 
     monkeypatch.setitem(
         sys.modules,
-        "yuxi.modules.agents.runtime.backends.knowledge_base_backend",
+        "yuxi.modules.agents.runtime.knowledge",
         types.SimpleNamespace(resolve_visible_knowledge_bases_for_context=fake_resolve_visible_knowledge_bases),
     )
     monkeypatch.setitem(
@@ -525,7 +525,7 @@ async def test_prepare_agent_runtime_context_clears_resources_for_missing_user(m
 
     monkeypatch.setitem(
         sys.modules,
-        "yuxi.modules.agents.runtime.backends.knowledge_base_backend",
+        "yuxi.modules.agents.runtime.knowledge",
         types.SimpleNamespace(resolve_visible_knowledge_bases_for_context=lambda _context: None),
     )
     monkeypatch.setitem(
@@ -582,7 +582,7 @@ def test_persistent_config_cannot_replace_runtime_identity():
 @pytest.mark.asyncio
 async def test_normalized_persistent_config_drops_subagent_runtime_flags():
     """状态查询与主动压缩的配置归一化不接受运行标记。"""
-    from yuxi.modules.agents.runtime.builtin.subagent.context import SubAgentContext
+    from yuxi.modules.agents.runtime.agent_backends.subagent.context import SubAgentContext
     from yuxi.modules.agents.runtime.context import normalize_agent_context_config
 
     normalized = await normalize_agent_context_config(
@@ -713,7 +713,7 @@ async def test_resource_field_declarations_drive_write_runtime_and_schema(monkey
 )
 async def test_chatbot_defaults_to_general_purpose_subagent(monkeypatch, selection, expected):
     """真实 Chatbot 默认仅通用角色，显式全部与空选择保持原意。"""
-    from yuxi.modules.agents.runtime.builtin.chatbot.context import ChatBotContext
+    from yuxi.modules.agents.runtime.agent_backends.chatbot.context import ChatBotContext
 
     async def options(names, **kwargs):
         return {name: [{"key": slug} for slug in ["general-purpose", "specialist"]] for name in names}
@@ -728,7 +728,7 @@ async def test_chatbot_defaults_to_general_purpose_subagent(monkeypatch, selecti
 @pytest.mark.asyncio
 async def test_invisible_default_subagent_does_not_enable_other_roles(monkeypatch):
     """默认通用角色不可见时不扩大选择范围。"""
-    from yuxi.modules.agents.runtime.builtin.chatbot.context import ChatBotContext
+    from yuxi.modules.agents.runtime.agent_backends.chatbot.context import ChatBotContext
 
     async def options(names, **kwargs):
         return {name: [{"key": "specialist"}] for name in names}

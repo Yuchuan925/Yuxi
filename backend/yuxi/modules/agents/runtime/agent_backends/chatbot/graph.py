@@ -3,12 +3,10 @@ from langchain.agents import create_agent
 from langchain.agents.middleware import TodoListMiddleware
 
 from yuxi.modules.agents.runtime import BaseAgent
-from yuxi.modules.agents.runtime.backends import (
-    create_agent_composite_backend,
-    create_agent_filesystem_middleware,
-    sync_agent_context_skills,
-)
-from yuxi.modules.agents.runtime.backends.paths import runtime_workdir_path
+from yuxi.modules.agents.runtime.sandbox.backend import create_agent_composite_backend
+from yuxi.modules.agents.runtime.middlewares.filesystem import create_agent_filesystem_middleware
+from yuxi.modules.extensions.skills.runtime import sync_agent_context_skills
+from yuxi.modules.agents.runtime.sandbox.paths import runtime_workdir_path
 from yuxi.modules.agents.runtime.context import DEFAULT_TOOL_RESULT_EVICTION_K_TOKENS
 from yuxi.modules.agents.runtime.middlewares import (
     ImageInputCompatibilityMiddleware,
@@ -25,9 +23,9 @@ from yuxi.modules.agents.runtime.tool_approval import create_tool_approval_middl
 from yuxi.modules.extensions.tools.runtime import resolve_configured_runtime_tools
 from yuxi.modules.models.chat import load_chat_model, resolve_chat_model_spec
 
-from yuxi.modules.agents.runtime.builtin.chatbot.context import ChatBotContext
-from yuxi.modules.agents.runtime.builtin.chatbot.prompt import TODO_MID_PROMPT, build_prompt_with_context
-from yuxi.modules.agents.runtime.builtin.chatbot.state import ChatBotState
+from yuxi.modules.agents.runtime.agent_backends.chatbot.context import ChatBotContext
+from yuxi.modules.agents.runtime.agent_backends.chatbot.prompt import TODO_MID_PROMPT, build_prompt_with_context
+from yuxi.modules.agents.runtime.agent_backends.chatbot.state import ChatBotState
 
 
 async def _build_middlewares(context, backend):
@@ -83,8 +81,6 @@ class ChatbotAgent(BaseAgent):
             raise ValueError("构图需要已准备的 Context")
         await sync_agent_context_skills(context)
 
-        # DeepAgents 0.7 移除 backend factory：每次 graph 构造创建本 Run 独享的
-        # CompositeBackend，filesystem 与 summary middleware 共用同一实例。
         backend = create_agent_composite_backend(context)
         model_spec = resolve_chat_model_spec(context.model)
         graph = create_agent(

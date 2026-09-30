@@ -14,7 +14,7 @@ import pytest
 
 from e2e_helpers import delete_agent, postgres_dsn
 from test.live_api_cleanup import make_test_conversation_title
-from yuxi.modules.agents.runtime.backends.sandbox import ProvisionerSandboxBackend, get_sandbox_provider
+from yuxi.modules.agents.runtime.sandbox import ProvisionerSandboxBackend, get_sandbox_provider
 from yuxi.modules.agents.services.transport import get_redis_client
 from yuxi.modules.agents.services.tracing import get_langfuse_client
 from yuxi.modules.workspace.paths import user_workspace_dir

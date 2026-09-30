@@ -5,10 +5,10 @@ import sys
 
 import pytest
 
-from yuxi.modules.agents.runtime import builtin as builtin
+from yuxi.modules.agents.runtime import agent_backends
 from yuxi.modules.agents import presets
-from yuxi.modules.agents.runtime.builtin.chatbot.graph import ChatbotAgent
-from yuxi.modules.agents.runtime.builtin.subagent.graph import SubAgentBackend
+from yuxi.modules.agents.runtime.agent_backends.chatbot.graph import ChatbotAgent
+from yuxi.modules.agents.runtime.agent_backends.subagent.graph import SubAgentBackend
 from yuxi.modules.extensions.skills import shared as skill_service
 
 
@@ -18,7 +18,7 @@ def clean_discovery_test_modules():
     before = set(sys.modules)
     yield
     for name in set(sys.modules) - before:
-        if name.startswith(("yuxi.modules.agents.presets.test_", "yuxi.modules.agents.runtime.builtin.test_")):
+        if name.startswith(("yuxi.modules.agents.presets.test_", "yuxi.modules.agents.runtime.agent_backends.test_")):
             del sys.modules[name]
 
 
@@ -86,13 +86,13 @@ def test_duplicate_preset_slug_is_rejected(tmp_path, monkeypatch):
 
 def test_explicit_backend_ids_create_independent_instances():
     """后端工厂不共享可变实例状态。"""
-    assert builtin.BUILTIN_BACKENDS == {
+    assert agent_backends.AGENT_BACKENDS == {
         "ChatbotAgent": ChatbotAgent,
         "SubAgentBackend": SubAgentBackend,
     }
-    for backend_id, expected_type in builtin.BUILTIN_BACKENDS.items():
-        first = builtin.get_agent_backend(backend_id)
-        second = builtin.get_agent_backend(backend_id)
+    for backend_id, expected_type in agent_backends.AGENT_BACKENDS.items():
+        first = agent_backends.get_agent_backend(backend_id)
+        second = agent_backends.get_agent_backend(backend_id)
         assert type(first) is expected_type and type(second) is expected_type
         assert first is not second
         first.test_state = "first-run"
@@ -101,8 +101,8 @@ def test_explicit_backend_ids_create_independent_instances():
 
 def test_unregistered_backend_is_unavailable():
     """未知后端使用明确领域错误，供调用入口映射响应。"""
-    with pytest.raises(builtin.AgentBackendNotFoundError, match="UnregisteredBackend"):
-        builtin.get_agent_backend("UnregisteredBackend")
+    with pytest.raises(agent_backends.AgentBackendNotFoundError, match="UnregisteredBackend"):
+        agent_backends.get_agent_backend("UnregisteredBackend")
 
 
 @pytest.mark.asyncio
@@ -112,8 +112,8 @@ async def test_backend_info_uses_registry_id_after_class_rename(monkeypatch):
     class RenamedBackend(ChatbotAgent):
         """使用不同 Python 类名模拟内部重命名。"""
 
-    monkeypatch.setattr(builtin, "BUILTIN_BACKENDS", {"stable-backend-id": RenamedBackend})
-    infos = await builtin.list_agent_backend_info()
+    monkeypatch.setattr(agent_backends, "AGENT_BACKENDS", {"stable-backend-id": RenamedBackend})
+    infos = await agent_backends.list_agent_backend_info()
     assert len(infos) == 1
     assert infos[0]["backend_id"] == "stable-backend-id"
     assert "id" not in infos[0]
@@ -128,11 +128,11 @@ def test_backend_import_does_not_scan_or_create_instances():
     code = """
 from importlib import reload
 from unittest.mock import patch
-import yuxi.modules.agents.runtime.builtin as builtin
+import yuxi.modules.agents.runtime.agent_backends as agent_backends
 with patch('pathlib.Path.iterdir', side_effect=AssertionError('directory scan')), \
-     patch.object(builtin.ChatbotAgent, '__init__', side_effect=AssertionError('eager instance')):
-    reload(builtin)
-assert set(builtin.BUILTIN_BACKENDS) == {'ChatbotAgent', 'SubAgentBackend'}
+     patch.object(agent_backends.ChatbotAgent, '__init__', side_effect=AssertionError('eager instance')):
+    reload(agent_backends)
+assert set(agent_backends.AGENT_BACKENDS) == {'ChatbotAgent', 'SubAgentBackend'}
 """
     result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
@@ -147,7 +147,7 @@ async def test_each_graph_uses_its_own_run_context(monkeypatch, backend_id):
     from unittest.mock import AsyncMock
     from langchain_core.language_models.fake_chat_models import FakeListChatModel
 
-    backend = builtin.get_agent_backend(backend_id)
+    backend = agent_backends.get_agent_backend(backend_id)
     module = import_module(type(backend).__module__)
     monkeypatch.setattr(module, "sync_agent_context_skills", AsyncMock())
     monkeypatch.setattr(module, "resolve_configured_runtime_tools", AsyncMock(return_value=[]))
@@ -174,6 +174,57 @@ async def test_each_graph_uses_its_own_run_context(monkeypatch, backend_id):
         assert result["messages"][-1].content == thread_id
         graphs.append(graph)
     assert graphs[0] is not graphs[1]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("backend_id", ["ChatbotAgent", "SubAgentBackend"])
+async def test_reused_prepared_context_refreshes_skills_before_each_graph(monkeypatch, tmp_path, backend_id):
+    """准备后的 Context 复用时，每次构图仍发布最新 Skill 投影。"""
+    from importlib import import_module
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from langchain_core.language_models.fake_chat_models import FakeListChatModel
+    from yuxi.modules.extensions.skills import runtime as skill_runtime
+
+    source = tmp_path / "source.md"
+    projection = tmp_path / "projection.md"
+
+    async def refresh_projection(uid):
+        """用真实文件模拟已有 Skill 发布入口。"""
+        assert uid == "test-uid"
+        projection.write_text(source.read_text())
+
+    backend = agent_backends.get_agent_backend(backend_id)
+    module = import_module(type(backend).__module__)
+    monkeypatch.setattr(skill_runtime, "refresh_user_skill_projection_async", refresh_projection)
+    monkeypatch.setattr(module, "resolve_configured_runtime_tools", AsyncMock(return_value=[]))
+    monkeypatch.setattr(module, "_build_middlewares", AsyncMock(return_value=[]))
+    monkeypatch.setattr(module, "create_agent_composite_backend", lambda _context: object())
+    monkeypatch.setattr(module, "resolve_chat_model_spec", lambda spec: spec)
+    monkeypatch.setattr(module, "build_prompt_with_context", lambda context: "test prompt")
+    monkeypatch.setattr(
+        module,
+        "load_chat_model",
+        lambda **kwargs: FakeListChatModel(responses=[projection.read_text()]),
+    )
+    monkeypatch.setattr(backend, "_get_checkpointer", AsyncMock(return_value=None))
+    context = SimpleNamespace(_runtime_prepared=True, model="test:model", thread_id="test-thread", uid="test-uid")
+
+    for content in ["first skill revision", "second skill revision"]:
+        source.write_text(content)
+        graph = await backend.get_graph(context=context)
+        result = await graph.ainvoke({"messages": [("user", "hello")]})
+        assert projection.read_text() == content
+        assert result["messages"][-1].content == content
+
+    async def fail_projection(uid):
+        """模拟投影发布失败。"""
+        raise RuntimeError("skill projection failed")
+
+    monkeypatch.setattr(skill_runtime, "refresh_user_skill_projection_async", fail_projection)
+    with pytest.raises(RuntimeError, match="skill projection failed"):
+        await backend.get_graph(context=context)
 
 
 def test_shipping_skills_keep_required_dependencies():

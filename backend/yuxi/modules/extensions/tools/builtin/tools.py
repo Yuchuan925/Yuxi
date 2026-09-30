@@ -14,8 +14,8 @@ from langgraph.prebuilt.tool_node import ToolRuntime
 from langgraph.types import Command, interrupt
 from pydantic import BaseModel, Field
 
-from yuxi.modules.agents.runtime.backends.paths import VIRTUAL_PATH_PREFIX, VIRTUAL_SKILLS_PATH
-from yuxi.modules.agents.runtime.backends.sandbox import ProvisionerSandboxBackend
+from yuxi.modules.agents.runtime.sandbox.paths import VIRTUAL_PATH_PREFIX, VIRTUAL_SKILLS_PATH
+from yuxi.modules.agents.runtime.sandbox import ProvisionerSandboxBackend
 from yuxi.modules.extensions.tools.registry import ToolExtraMetadata, _all_tool_instances, _extra_registry, tool
 from yuxi.modules.system.options import system_options
 from yuxi.infrastructure.observability.logging import logger
@@ -213,7 +213,7 @@ class PresentArtifactsInput(BaseModel):
 
 
 def _normalize_presented_artifact_path(filepath: str, runtime: ToolRuntime) -> str:
-    from yuxi.modules.agents.runtime.backends.sandbox.backend import ProvisionerSandboxBackend
+    from yuxi.modules.agents.runtime.sandbox.backend import ProvisionerSandboxBackend
 
     runtime_context = runtime.context
     runtime_scope_id, uid, workdir_relative_path = _resolve_runtime_sandbox_scope(runtime)

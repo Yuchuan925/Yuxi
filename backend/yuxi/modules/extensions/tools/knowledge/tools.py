@@ -10,7 +10,7 @@ from typing import Any
 from langgraph.prebuilt.tool_node import ToolRuntime
 from pydantic import BaseModel, Field
 
-from yuxi.modules.agents.runtime.backends.sandbox import ProvisionerSandboxBackend
+from yuxi.modules.agents.runtime.sandbox import ProvisionerSandboxBackend
 from yuxi.modules.extensions.tools.registry import tool
 from yuxi.modules.knowledge.schemas import FindInputSchema, OpenInputSchema, SearchInputSchema
 from yuxi.modules.knowledge.services import tools as knowledge_tools
@@ -321,7 +321,7 @@ async def _resolve_visible_knowledge_bases_for_query(runtime: ToolRuntime | None
         return visible_kbs
 
     try:
-        from yuxi.modules.agents.runtime.backends.knowledge_base_backend import (
+        from yuxi.modules.agents.runtime.knowledge import (
             resolve_visible_knowledge_bases_for_context,
         )
 

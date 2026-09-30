@@ -1,9 +1,12 @@
+"""Agent Context 的可见知识资源解析。"""
+
 from __future__ import annotations
 
 from typing import Any
 
 
 async def resolve_visible_knowledge_bases_for_context(context) -> list[dict[str, Any]]:
+    """解析当前用户可见且被 Context 选中的知识库。"""
     from yuxi.modules.knowledge.services.tools import visible_knowledge_bases
 
     uid = getattr(context, "uid", None)

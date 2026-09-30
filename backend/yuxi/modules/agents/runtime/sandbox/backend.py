@@ -9,9 +9,10 @@ import uuid
 from contextlib import aclosing, suppress
 from datetime import datetime
 from pathlib import PurePosixPath
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import httpx
+from deepagents.backends import CompositeBackend
 from deepagents.backends.protocol import (
     ASYNC_GREP_TIMEOUT,
     EditResult,
@@ -29,15 +30,41 @@ from deepagents.backends.protocol import (
 from deepagents.backends.sandbox import MAX_BINARY_BYTES, BaseSandbox
 from deepagents.backends.utils import _get_file_type
 
-from yuxi.modules.agents.runtime.backends.paths import VIRTUAL_PATH_PREFIX, VIRTUAL_SKILLS_PATH
+from yuxi.modules.agents.runtime.sandbox.paths import VIRTUAL_PATH_PREFIX, VIRTUAL_SKILLS_PATH, runtime_workdir_path
 from yuxi.infrastructure.observability.logging import logger
 from yuxi.modules.workspace.errors import FileTransferLimitError
 
-from yuxi.modules.agents.runtime.backends.sandbox.provider import (
+from yuxi.modules.agents.runtime.sandbox.provider import (
     get_sandbox_provider,
     sandbox_id_for_thread,
     sandbox_provisioner_token,
 )
+
+if TYPE_CHECKING:
+    from yuxi.modules.agents.runtime.context import BaseContext
+
+
+def create_agent_composite_backend(context: BaseContext) -> CompositeBackend:
+    """按显式运行作用域装配文件与摘要中间件共用的沙盒后端。"""
+    runtime_scope_id = (context.runtime_scope_id or "").strip()
+    if not runtime_scope_id:
+        raise ValueError("runtime_scope_id is required in agent context")
+    if not context.workdir_relative_path:
+        raise ValueError("workdir_relative_path is required in agent context")
+
+    workdir_path = runtime_workdir_path(context.workdir_relative_path)
+    # DeepAgents 只从 CompositeBackend 读取产物根；保留此包装以统一落盘路径。
+    return CompositeBackend(
+        default=ProvisionerSandboxBackend(
+            thread_id=runtime_scope_id,
+            uid=context.uid,
+            workdir_path=context.workdir_relative_path,
+            create_if_missing=True,
+        ),
+        routes={},
+        artifacts_root=f"{workdir_path}/outputs",
+    )
+
 
 _USER_DATA_ROOT = "/" + VIRTUAL_PATH_PREFIX.strip("/")
 _SKILLS_ROOT = "/" + VIRTUAL_SKILLS_PATH.strip("/")

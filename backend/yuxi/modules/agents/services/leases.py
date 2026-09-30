@@ -6,7 +6,7 @@ import asyncio
 import uuid
 from datetime import datetime
 from sqlalchemy import select, text
-from yuxi.modules.agents.runtime.backends.sandbox.provider import get_sandbox_provider
+from yuxi.modules.agents.runtime.sandbox.provider import get_sandbox_provider
 from yuxi.modules.agents.repositories.runs import TERMINAL_RUN_STATUSES, AgentRunRepository
 from yuxi.modules.agents.repositories.input import AgentInputRepository
 from yuxi.modules.agents.repositories.turn import AgentTurnRepository

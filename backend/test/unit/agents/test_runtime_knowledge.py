@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
-import yuxi.modules.agents.runtime.backends.knowledge_base_backend as knowledge_base_backend
+import yuxi.modules.agents.runtime.knowledge as knowledge_base_backend
 from yuxi.modules.knowledge.read_models import KnowledgeBaseSummary
 
 

@@ -10,7 +10,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from yuxi.modules.agents import presets
-from yuxi.modules.agents.runtime.builtin import AgentBackendNotFoundError
+from yuxi.modules.agents.runtime.agent_backends import AgentBackendNotFoundError
 from yuxi.modules.extensions.skills import shared as skill_service
 from yuxi.modules.agents.services.configuration import initialize_agent_presets
 from yuxi.modules.agents.models.definitions import Agent

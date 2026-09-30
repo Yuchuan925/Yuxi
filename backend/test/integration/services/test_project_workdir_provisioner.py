@@ -8,7 +8,7 @@ import uuid
 
 import pytest
 
-from yuxi.modules.agents.runtime.backends.sandbox import ProvisionerSandboxBackend, get_sandbox_provider
+from yuxi.modules.agents.runtime.sandbox import ProvisionerSandboxBackend, get_sandbox_provider
 from yuxi.modules.workspace.paths import (
     ensure_user_workspace,
     global_user_data_dir,

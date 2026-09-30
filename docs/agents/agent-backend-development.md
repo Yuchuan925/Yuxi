@@ -4,7 +4,7 @@
 
 ## 新增预置角色
 
-仅改变提示词、模型或能力选择时，在 `backend/yuxi/modules/agents/runtime/presets/` 新增一个 Python 文件并导出 `PRESET`；子智能体定义放在其 `subagents/` 子目录。发现逻辑递归读取文件，角色类型仍由 `backend_id` 决定：
+仅改变提示词、模型或能力选择时，在 `backend/yuxi/modules/agents/presets/` 新增一个 Python 文件并导出 `PRESET`；子智能体定义放在其 `subagents/` 子目录。发现逻辑递归读取文件，角色类型仍由 `backend_id` 决定：
 
 ```python
 from yuxi.modules.agents.presets import AgentPreset
@@ -29,19 +29,21 @@ API 启动时按文件名发现所有非下划线开头的 Python 模块，校�
 
 ## 后端放在哪里
 
+Agent 定义保存角色配置，执行后端提供 Context schema、构图、流式执行与恢复接口。执行后端按运行 Context 装配模型、工具和 middleware；沙盒文件与命令能力由 `runtime/sandbox/` 提供，文件工具策略由 `runtime/middlewares/filesystem.py` 拥有。Context 与知识资源解析留在 runtime，知识库查询与授权由 knowledge 模块执行。共享 Skill 投影由 extensions/skills 的运行时入口在每次构图前刷新。
+
 随服务发布的 Agent 后端放在：
 
 ```text
-backend/yuxi/modules/agents/runtime/builtin/<your_agent>/
+backend/yuxi/modules/agents/runtime/agent_backends/<your_agent>/
 ├── __init__.py
 ├── context.py
 └── graph.py
 ```
 
-执行后端由 `yuxi/modules/agents/runtime/builtin/__init__.py` 中的显式字典注册：
+执行后端由 `yuxi/modules/agents/runtime/agent_backends/__init__.py` 中的显式字典注册：
 
 ```python
-BUILTIN_BACKENDS = {
+AGENT_BACKENDS = {
     "ChatbotAgent": ChatbotAgent,
     "SubAgentBackend": SubAgentBackend,
 }
@@ -100,7 +102,7 @@ worker 和主动压缩在执行入口显式调用 `prepare_agent_runtime_context
 
 ## 检查清单
 
-- `BaseAgent` 子类在 `BUILTIN_BACKENDS` 中通过稳定 ID 显式注册；
+- `BaseAgent` 子类在 `AGENT_BACKENDS` 中通过稳定 ID 显式注册；
 - `context_schema` 的默认值、字段权限和选项能被前端正确渲染；
 - Graph 使用 Yuxi 的模型、工具、文件和 checkpoint 装配入口；
 - 工具副作用在执行处验证用户、路径和资源；
@@ -111,8 +113,8 @@ worker 和主动压缩在执行入口显式调用 `prepare_agent_runtime_context
 
 - [BaseAgent](https://github.com/xerrors/Yuxi/blob/main/backend/yuxi/modules/agents/runtime/base.py)
 - [Context](https://github.com/xerrors/Yuxi/blob/main/backend/yuxi/modules/agents/runtime/context.py)
-- [Chatbot graph](https://github.com/xerrors/Yuxi/blob/main/backend/yuxi/modules/agents/runtime/builtin/chatbot/graph.py)
-- [执行后端显式注册](https://github.com/xerrors/Yuxi/blob/main/backend/yuxi/modules/agents/runtime/builtin/__init__.py)
+- [Chatbot graph](https://github.com/xerrors/Yuxi/blob/main/backend/yuxi/modules/agents/runtime/agent_backends/chatbot/graph.py)
+- [执行后端显式注册](https://github.com/xerrors/Yuxi/blob/main/backend/yuxi/modules/agents/runtime/agent_backends/__init__.py)
 - [Agent unit tests](https://github.com/xerrors/Yuxi/tree/main/backend/test/unit/agents)
 - [Agent integration/E2E](https://github.com/xerrors/Yuxi/tree/main/backend/test/e2e)
 

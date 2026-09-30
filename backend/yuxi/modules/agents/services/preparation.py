@@ -15,8 +15,8 @@ from dataclasses import dataclass, fields
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
-from yuxi.modules.agents.runtime.backends.paths import runtime_workdir_path
-from yuxi.modules.agents.runtime.builtin import get_agent_backend
+from yuxi.modules.agents.runtime.sandbox.paths import runtime_workdir_path
+from yuxi.modules.agents.runtime.agent_backends import get_agent_backend
 from yuxi.modules.agents.runtime.context import BaseContext, prepare_agent_runtime_context
 from yuxi.modules.extensions.skills.personal import PERSONAL_SKILL_SOURCE_TYPE
 from yuxi.modules.agents.repositories.definitions import AgentRepository

@@ -2,7 +2,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from yuxi.modules.agents.runtime.builtin.chatbot import graph as chatbot_graph
+from yuxi.modules.agents.runtime.agent_backends.chatbot import graph as chatbot_graph
 from yuxi.modules.agents.runtime.tool_approval import create_tool_approval_middleware, normalize_tool_approval_mode
 
 PROJECT_ROOT = "/home/gem/user-data/projects/11111111-1111-4111-8111-111111111111"

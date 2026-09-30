@@ -547,7 +547,7 @@ async def prepare_agent_runtime_context(
         for field_name in resource_fields:
             setattr(context, field_name, normalized[field_name])
 
-        from yuxi.modules.agents.runtime.backends.knowledge_base_backend import (
+        from yuxi.modules.agents.runtime.knowledge import (
             resolve_visible_knowledge_bases_for_context,
         )
 

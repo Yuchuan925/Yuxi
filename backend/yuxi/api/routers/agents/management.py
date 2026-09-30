@@ -4,7 +4,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
-from yuxi.modules.agents.runtime.builtin import AgentBackendNotFoundError, get_agent_backend, list_agent_backend_info
+from yuxi.modules.agents.runtime.agent_backends import AgentBackendNotFoundError, get_agent_backend, list_agent_backend_info
 from yuxi.modules.agents.runtime.context import filter_declared_config
 from yuxi.modules.agents.repositories.definitions import (
     AgentRepository,

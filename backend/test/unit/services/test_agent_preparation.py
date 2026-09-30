@@ -199,7 +199,7 @@ async def test_manifest_uses_prepared_context_and_persisted_overrides(monkeypatc
     import hashlib
     from types import SimpleNamespace
     from unittest.mock import AsyncMock
-    from yuxi.modules.agents.runtime.builtin.subagent.context import SubAgentContext
+    from yuxi.modules.agents.runtime.agent_backends.subagent.context import SubAgentContext
     import yuxi.modules.agents.services.preparation as service
 
     agent = SimpleNamespace(
@@ -297,7 +297,7 @@ async def test_execution_preparation_rejects_missing_dependencies(monkeypatch, m
     """缺少执行依赖必须失败，不能固化空配置并进入执行。"""
     from types import SimpleNamespace
     from unittest.mock import AsyncMock
-    from yuxi.modules.agents.runtime.builtin.subagent.context import SubAgentContext
+    from yuxi.modules.agents.runtime.agent_backends.subagent.context import SubAgentContext
     import yuxi.modules.agents.services.preparation as service
 
     agent = None if missing == "agent" else SimpleNamespace(backend_id="backend", config_json={})
@@ -308,7 +308,7 @@ async def test_execution_preparation_rejects_missing_dependencies(monkeypatch, m
 
     def get_backend(name):
         """模拟工厂的明确缺失错误，保留其他依赖测试。"""
-        from yuxi.modules.agents.runtime.builtin import AgentBackendNotFoundError
+        from yuxi.modules.agents.runtime.agent_backends import AgentBackendNotFoundError
 
         if backend is None:
             raise AgentBackendNotFoundError(f"智能体后端 {name} 不存在")

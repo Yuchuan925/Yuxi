@@ -1,5 +1,5 @@
-from yuxi.modules.agents.runtime.backends.sandbox.backend import ProvisionerSandboxBackend
-from yuxi.modules.agents.runtime.backends.sandbox.provider import (
+from yuxi.modules.agents.runtime.sandbox.backend import ProvisionerSandboxBackend
+from yuxi.modules.agents.runtime.sandbox.provider import (
     ProvisionerSandboxProvider,
     SandboxConnection,
     get_sandbox_provider,

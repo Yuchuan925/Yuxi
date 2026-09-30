@@ -361,8 +361,8 @@ async def reconcile_cancelling_turns() -> list[str]:
 
 async def _clear_waitpoint_checkpoint(run: AgentRun) -> None:
     """移除未执行的工具调用，再推进等待节点而不执行工具。"""
-    from yuxi.modules.agents.runtime.backends.paths import runtime_workdir_path
-    from yuxi.modules.agents.runtime.builtin import get_agent_backend
+    from yuxi.modules.agents.runtime.sandbox.paths import runtime_workdir_path
+    from yuxi.modules.agents.runtime.agent_backends import get_agent_backend
     from yuxi.modules.agents.runtime.context import prepare_agent_runtime_context
     from yuxi.modules.agents.repositories.definitions import AgentRepository
     from yuxi.modules.workspace.services.bindings import resolve_conversation_workdir_binding

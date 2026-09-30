@@ -21,8 +21,8 @@ from langchain_core.outputs import ChatGeneration, ChatResult
 from langchain_core.tools import tool
 from langgraph.errors import GraphBubbleUp
 from langgraph.types import interrupt
-from yuxi.modules.agents.runtime.builtin.chatbot import graph as chatbot_graph
-from yuxi.modules.agents.runtime.builtin.subagent import graph as subagent_graph
+from yuxi.modules.agents.runtime.agent_backends.chatbot import graph as chatbot_graph
+from yuxi.modules.agents.runtime.agent_backends.subagent import graph as subagent_graph
 from yuxi.modules.agents.runtime.middlewares import ToolErrorGuardMiddleware
 
 pytestmark = [pytest.mark.unit, pytest.mark.asyncio]

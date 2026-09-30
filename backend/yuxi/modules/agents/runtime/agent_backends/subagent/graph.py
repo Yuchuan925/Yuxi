@@ -7,13 +7,11 @@ from langchain.agents.middleware.types import AgentMiddleware
 from langchain_core.messages import ToolMessage
 
 from yuxi.modules.agents.runtime import BaseAgent, BaseState
-from yuxi.modules.agents.runtime.backends import (
-    create_agent_composite_backend,
-    create_agent_filesystem_middleware,
-    sync_agent_context_skills,
-)
-from yuxi.modules.agents.runtime.builtin.chatbot.prompt import TODO_MID_PROMPT, build_prompt_with_context
-from yuxi.modules.agents.runtime.builtin.subagent.context import SubAgentContext
+from yuxi.modules.agents.runtime.sandbox.backend import create_agent_composite_backend
+from yuxi.modules.agents.runtime.middlewares.filesystem import create_agent_filesystem_middleware
+from yuxi.modules.extensions.skills.runtime import sync_agent_context_skills
+from yuxi.modules.agents.runtime.agent_backends.chatbot.prompt import TODO_MID_PROMPT, build_prompt_with_context
+from yuxi.modules.agents.runtime.agent_backends.subagent.context import SubAgentContext
 from yuxi.modules.agents.runtime.context import DEFAULT_TOOL_RESULT_EVICTION_K_TOKENS
 from yuxi.modules.agents.runtime.middlewares import (
     ImageInputCompatibilityMiddleware,

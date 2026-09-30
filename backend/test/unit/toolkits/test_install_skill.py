@@ -11,7 +11,7 @@ from yuxi.modules.extensions.skills import personal as personal_service
 from yuxi.modules.workspace.paths import user_workspace_dir
 
 install_skill_module = importlib.import_module("yuxi.modules.extensions.tools.builtin.install_skill")
-sandbox_backend_module = importlib.import_module("yuxi.modules.agents.runtime.backends.sandbox")
+sandbox_backend_module = importlib.import_module("yuxi.modules.agents.runtime.sandbox")
 
 
 def _runtime(**context_values):

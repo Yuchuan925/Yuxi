@@ -9,7 +9,7 @@ import tempfile
 from pathlib import PurePosixPath
 
 from fastapi import HTTPException
-from yuxi.modules.agents.runtime.backends.paths import (
+from yuxi.modules.agents.runtime.sandbox.paths import (
     VIRTUAL_PATH_PREFIX,
     VIRTUAL_SKILLS_PATH,
     is_runtime_path,

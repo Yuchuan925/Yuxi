@@ -9,7 +9,7 @@ from urllib.parse import quote
 
 from fastapi import HTTPException, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
-from yuxi.modules.agents.runtime.backends.paths import runtime_path_for_workdir_scope, workdir_scope_from_runtime_path
+from yuxi.modules.agents.runtime.sandbox.paths import runtime_path_for_workdir_scope, workdir_scope_from_runtime_path
 from yuxi.modules.system.options import system_options
 from yuxi.infrastructure.document_parsing.capabilities import (
     IMAGE_FILE_EXTENSIONS,

@@ -14,7 +14,7 @@ from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
-from yuxi.modules.agents.runtime.builtin import AgentBackendNotFoundError, get_agent_backend
+from yuxi.modules.agents.runtime.agent_backends import AgentBackendNotFoundError, get_agent_backend
 from yuxi.modules.agents.runtime.tool_approval import normalize_tool_approval_mode
 from yuxi.modules.agents.repositories.definitions import AgentRepository
 from yuxi.modules.workspace.repositories.projects import ProjectRepository

@@ -9,7 +9,7 @@ from yuxi.modules.models.providers.service import ensure_builtin_model_providers
 from yuxi.modules.agents.services.transport import get_redis_client
 from yuxi.infrastructure.postgres.manager import pg_manager
 from yuxi.infrastructure.observability.logging import logger
-from yuxi.modules.agents.runtime.backends.sandbox import init_sandbox_provider
+from yuxi.modules.agents.runtime.sandbox import init_sandbox_provider
 from yuxi import get_version
 from yuxi.modules.identity.security import AuthUtils
 

@@ -8,7 +8,7 @@ from contextlib import suppress
 
 import asyncpg
 import pytest
-from yuxi.modules.agents.runtime.backends.paths import runtime_user_data_path
+from yuxi.modules.agents.runtime.sandbox.paths import runtime_user_data_path
 from yuxi.modules.workspace.filesystem import Workspace
 from test.live_api_cleanup import delete_test_conversation_resources, validate_test_runs_terminal
 

@@ -435,7 +435,7 @@ def _patch_common(monkeypatch: pytest.MonkeyPatch, run_obj: SimpleNamespace):
         )
         if run.run_type == "subagent":
             from dataclasses import asdict, replace
-            from yuxi.modules.agents.runtime.builtin.subagent.context import SubAgentContext
+            from yuxi.modules.agents.runtime.agent_backends.subagent.context import SubAgentContext
 
             execution = replace(
                 execution,
@@ -1274,7 +1274,7 @@ async def test_process_subagent_run_restores_runtime_context(monkeypatch: pytest
     _patch_common(monkeypatch, run_obj)
 
     from test.unit.agent_context_fixtures import prepared_execution
-    from yuxi.modules.agents.runtime.builtin.subagent.context import SubAgentContext
+    from yuxi.modules.agents.runtime.agent_backends.subagent.context import SubAgentContext
     from dataclasses import asdict, replace
 
     prepared = prepared_execution(

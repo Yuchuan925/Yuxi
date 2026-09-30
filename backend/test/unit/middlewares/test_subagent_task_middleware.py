@@ -178,8 +178,8 @@ async def test_chatbot_assembly_respects_resolved_subagent_selection(monkeypatch
     from unittest.mock import AsyncMock
     from langchain.agents.middleware.types import AgentMiddleware
     from yuxi.modules.agents.runtime import context as context_module
-    from yuxi.modules.agents.runtime.builtin.chatbot import graph
-    from yuxi.modules.agents.runtime.builtin.chatbot.context import ChatBotContext
+    from yuxi.modules.agents.runtime.agent_backends.chatbot import graph
+    from yuxi.modules.agents.runtime.agent_backends.chatbot.context import ChatBotContext
 
     worker = SimpleNamespace(
         slug="worker", name="Worker", description="work", config_json={}, backend_id=SUB_AGENT_BACKEND_ID

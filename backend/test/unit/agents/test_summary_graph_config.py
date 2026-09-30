@@ -5,8 +5,8 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from yuxi.modules.agents.runtime.builtin.chatbot import graph as chatbot_graph
-from yuxi.modules.agents.runtime.builtin.subagent import graph as subagent_graph
+from yuxi.modules.agents.runtime.agent_backends.chatbot import graph as chatbot_graph
+from yuxi.modules.agents.runtime.agent_backends.subagent import graph as subagent_graph
 from yuxi.modules.agents.runtime.middlewares import summary as summary_module
 
 

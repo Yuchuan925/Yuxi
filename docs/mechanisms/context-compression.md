@@ -108,7 +108,7 @@ Summary 触发使用近似 token 统计；主模型返回的 `usage_metadata` �
 - [Agent 执行器](https://github.com/xerrors/Yuxi/blob/main/backend/yuxi/modules/agents/services/execution.py)
 - [Agent state repository](https://github.com/xerrors/Yuxi/blob/main/backend/yuxi/modules/agents/repositories/state.py)
 - [Agent 配置](https://github.com/xerrors/Yuxi/blob/main/backend/yuxi/modules/agents/runtime/context.py)
-- [Chatbot graph](https://github.com/xerrors/Yuxi/blob/main/backend/yuxi/modules/agents/runtime/builtin/chatbot/graph.py)
+- [Chatbot graph](https://github.com/xerrors/Yuxi/blob/main/backend/yuxi/modules/agents/runtime/agent_backends/chatbot/graph.py)
 - [Token usage](https://github.com/xerrors/Yuxi/blob/main/backend/yuxi/modules/agents/runtime/middlewares/token_usage.py)
 - [Summary unit tests](https://github.com/xerrors/Yuxi/tree/main/backend/test/unit/middlewares)
 - [主动压缩 service tests](https://github.com/xerrors/Yuxi/blob/main/backend/test/unit/services/test_context_compression_service.py)

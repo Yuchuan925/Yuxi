@@ -10,7 +10,7 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from yuxi.modules.agents.runtime.builtin.chatbot.context import ChatBotContext
+from yuxi.modules.agents.runtime.agent_backends.chatbot.context import ChatBotContext
 from yuxi.modules.agents.runtime.context import normalize_agent_context_config
 from yuxi.modules.identity.models import User
 

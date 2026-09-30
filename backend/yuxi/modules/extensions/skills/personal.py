@@ -10,8 +10,8 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from yuxi.modules.agents.runtime.backends.paths import VIRTUAL_PATH_PREFIX
-from yuxi.modules.agents.runtime.backends.sandbox.download import download_sandbox_directory
+from yuxi.modules.agents.runtime.sandbox.paths import VIRTUAL_PATH_PREFIX
+from yuxi.modules.agents.runtime.sandbox.download import download_sandbox_directory
 from yuxi.modules.extensions.skills.draft import consume_installed_draft_items, load_and_select_draft_items
 from yuxi.modules.extensions.skills.package import (
     TEXT_FILE_EXTENSIONS,
@@ -261,7 +261,7 @@ def _download_sandbox_skill(
     workdir_path: str | None = None,
 ) -> Path:
     """从当前用户沙盒下载 Skill 目录到本地暂存区。"""
-    from yuxi.modules.agents.runtime.backends.sandbox import ProvisionerSandboxBackend
+    from yuxi.modules.agents.runtime.sandbox import ProvisionerSandboxBackend
 
     allowed = sandbox_path.startswith(f"{VIRTUAL_PATH_PREFIX.rstrip('/')}/")
     allowed = allowed or bool(workdir_path and sandbox_path.startswith(f"{workdir_path.rstrip('/')}/"))

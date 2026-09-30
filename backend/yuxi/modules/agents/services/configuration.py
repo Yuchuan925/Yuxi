@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
-from yuxi.modules.agents.runtime.builtin import get_agent_backend
+from yuxi.modules.agents.runtime.agent_backends import get_agent_backend
 from yuxi.modules.agents.runtime.context import BaseContext, filter_config_by_role, resolve_agent_resource_options
 from yuxi.modules.agents.presets import discover_agent_presets
 from yuxi.modules.agents.repositories.definitions import AgentRepository

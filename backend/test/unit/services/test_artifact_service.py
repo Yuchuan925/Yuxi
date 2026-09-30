@@ -8,7 +8,7 @@ import pytest
 import yuxi.modules.agents.services.artifacts as svc
 from fastapi import HTTPException
 from yuxi.api.responses.files import render_file_result
-from yuxi.modules.agents.runtime.backends.paths import workspace_scope_from_runtime_path
+from yuxi.modules.agents.runtime.sandbox.paths import workspace_scope_from_runtime_path
 from yuxi.modules.extensions.skills import edit as skill_edit
 from yuxi.modules.workspace.services.bindings import AuthorizedWorkdir
 from yuxi.modules.workspace.errors import FileTransferLimitError

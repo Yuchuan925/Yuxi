@@ -2,7 +2,7 @@
 
 状态：implemented
 类型：feature
-Owner：backend/yuxi/modules/agents/runtime/builtin/chatbot/prompt.py
+Owner：backend/yuxi/modules/agents/runtime/agent_backends/chatbot/prompt.py
 
 ## 问题
 

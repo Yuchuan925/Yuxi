@@ -2,7 +2,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from yuxi.modules.agents.runtime.backends.sandbox.download import (
+from yuxi.modules.agents.runtime.sandbox.download import (
     MAX_SANDBOX_TREE_BYTES,
     MAX_SANDBOX_TREE_DEPTH,
     MAX_SANDBOX_TREE_ENTRIES,
@@ -166,7 +166,7 @@ def test_download_sandbox_directory_rejects_actual_size_over_limit(monkeypatch, 
         def download_files(self, _paths):
             return [SimpleNamespace(error=None, content=b"oversized")]
 
-    monkeypatch.setattr("yuxi.modules.agents.runtime.backends.sandbox.download.MAX_SANDBOX_TREE_BYTES", 5)
+    monkeypatch.setattr("yuxi.modules.agents.runtime.sandbox.download.MAX_SANDBOX_TREE_BYTES", 5)
     target = tmp_path / "skill"
 
     with pytest.raises(ValueError, match="总大小超过限制"):

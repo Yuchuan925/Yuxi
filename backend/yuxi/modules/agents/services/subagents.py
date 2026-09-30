@@ -358,7 +358,7 @@ class SubagentRunService:
         if creator_run.conversation_id != relation.parent_conversation_id:
             raise ValueError("subagent thread relation 与本次运行不匹配")
 
-        from yuxi.modules.agents.runtime.builtin import get_agent_backend
+        from yuxi.modules.agents.runtime.agent_backends import get_agent_backend
 
         context = load_agent_run_context(agent_item, get_agent_backend(agent_item.backend_id))
         resolved_model_spec = await resolve_agent_run_model_spec(

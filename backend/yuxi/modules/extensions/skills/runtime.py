@@ -9,9 +9,10 @@ from typing import Any, TypedDict
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from yuxi.modules.agents.runtime.backends.paths import VIRTUAL_PERSONAL_SKILLS_PATH, VIRTUAL_SKILLS_PATH
+from yuxi.modules.agents.runtime.sandbox.paths import VIRTUAL_PERSONAL_SKILLS_PATH, VIRTUAL_SKILLS_PATH
 from yuxi.modules.extensions.tools import get_all_tool_instances
 from yuxi.modules.extensions.skills.package import normalize_string_list
+from yuxi.modules.extensions.skills.projection import refresh_user_skill_projection_async
 from yuxi.modules.extensions.skills.personal import list_personal_skills
 from yuxi.modules.extensions.skills.shared import lock_accessible_shared_skills_for_runtime, resolved_shared_skill
 from yuxi.modules.identity.models import User
@@ -28,6 +29,17 @@ class RuntimeSkill(TypedDict):
     tools: list[str]
     mcps: list[str]
     skills: list[str]
+
+
+async def sync_agent_context_skills(context) -> None:
+    """构图前校验运行身份，并刷新用户获授权的共享 Skill 投影。"""
+    thread_id = context.get("thread_id") if isinstance(context, dict) else getattr(context, "thread_id", None)
+    if not isinstance(thread_id, str) or not thread_id.strip():
+        raise ValueError("thread_id is required in runtime context")
+    uid = context.get("uid") if isinstance(context, dict) else getattr(context, "uid", None)
+    if not isinstance(uid, str) or not uid.strip():
+        raise ValueError("uid is required in runtime context")
+    await refresh_user_skill_projection_async(uid.strip())
 
 
 async def resolve_runtime_skills_for_context(

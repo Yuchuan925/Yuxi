@@ -302,7 +302,7 @@ class AgentRepository:
         if is_default and (normalized_share_config.get("read_scope") or {}).get("access_level") != "global":
             raise ValueError("默认智能体必须全局共享")
 
-        from yuxi.modules.agents.runtime.builtin import get_agent_backend
+        from yuxi.modules.agents.runtime.agent_backends import get_agent_backend
 
         agent = Agent(
             slug=await self._unique_slug(slug, name),
@@ -358,7 +358,7 @@ class AgentRepository:
         if pics is not None:
             agent.pics = pics
         if config_json is not None:
-            from yuxi.modules.agents.runtime.builtin import get_agent_backend
+            from yuxi.modules.agents.runtime.agent_backends import get_agent_backend
 
             result = await self.db.execute(select(Agent.config_json).where(Agent.id == agent.id).with_for_update())
             row = result.one_or_none()
@@ -458,7 +458,7 @@ class AgentRepository:
         data["is_builtin"] = is_builtin
         data["permission_locked"] = is_builtin
 
-        from yuxi.modules.agents.runtime.builtin import get_agent_backend
+        from yuxi.modules.agents.runtime.agent_backends import get_agent_backend
 
         backend = get_agent_backend(agent.backend_id)
         cache_key = (agent.backend_id, include_configurable_items, user.role)

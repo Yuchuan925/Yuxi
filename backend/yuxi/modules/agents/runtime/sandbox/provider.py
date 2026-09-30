@@ -12,7 +12,7 @@ from yuxi.infrastructure.runtime_settings import get_int_env
 from yuxi.infrastructure.observability.logging import logger
 from yuxi.modules.workspace.paths import normalize_workdir_path, workspace_uid_dirname
 
-from yuxi.modules.agents.runtime.backends.sandbox.provisioner_client import ProvisionerClient, SandboxRecord
+from yuxi.modules.agents.runtime.sandbox.provisioner_client import ProvisionerClient, SandboxRecord
 
 
 def sandbox_provisioner_token() -> str:

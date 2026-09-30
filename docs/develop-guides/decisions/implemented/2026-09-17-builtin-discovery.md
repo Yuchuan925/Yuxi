@@ -2,7 +2,7 @@
 
 状态：implemented
 类型：simplification
-Owner：backend/yuxi/modules/agents/runtime/builtin/__init__.py
+Owner：backend/yuxi/modules/agents/runtime/agent_backends/__init__.py
 
 ## 问题
 
@@ -10,7 +10,9 @@ Owner：backend/yuxi/modules/agents/runtime/builtin/__init__.py
 
 ## 决策
 
-执行后端由 `BUILTIN_BACKENDS` 显式字典声明，稳定后端 ID 映射到 Python 类。`get_agent_backend` 按需创建轻量对象，`list_agent_backend_info` 返回以字典键为 ID 的基础信息。后端不使用单例、实例缓存、全量初始化或重载，BaseAgent 不持有 Graph 缓存，也不根据类名生成对外 ID。每次运行的 Context、Graph 和 middleware 持有本次状态，知识库增删无需重载后端。
+执行后端与沙盒的目录职责见[运行时边界决定](2026-09-30-agent-runtime-boundaries.md)。
+
+执行后端由 `AGENT_BACKENDS` 显式字典声明，稳定后端 ID 映射到 Python 类。`get_agent_backend` 按需创建轻量对象，`list_agent_backend_info` 返回以字典键为 ID 的基础信息。后端不使用单例、实例缓存、全量初始化或重载，BaseAgent 不持有 Graph 缓存，也不根据类名生成对外 ID。每次运行的 Context、Graph 和 middleware 持有本次状态，知识库增删无需重载后端。
 
 未知后端抛出 `AgentBackendNotFoundError`。HTTP 接入与配置边界转换为 404；角色更新在任何字段修改或提交前解析后端，未知后端不会产生部分更新。worker 中的配置错误仍进入既有失败收敛流程。
 

@@ -12,7 +12,7 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage, get_bu
 from langchain_core.exceptions import ContextOverflowError
 
 from yuxi.modules.agents.runtime.middlewares.summary import YuxiSummarizationMiddleware, create_summary_middleware
-from yuxi.modules.agents.runtime.backends.paths import workdir_runtime_paths
+from yuxi.modules.agents.runtime.sandbox.paths import workdir_runtime_paths
 
 WORKDIR_PATH = "/home/gem/user-data/projects/11111111-1111-4111-8111-111111111111"
 VIRTUAL_PATH_LARGE_TOOL_RESULTS, VIRTUAL_PATH_CONVERSATION_HISTORY = workdir_runtime_paths(WORKDIR_PATH)

@@ -13,7 +13,7 @@ from langchain.agents.middleware import AgentMiddleware, ModelRequest, ModelResp
 from langchain.tools.tool_node import ToolCallRequest
 from langgraph.types import Command
 
-from yuxi.modules.agents.runtime.backends.paths import VIRTUAL_PERSONAL_SKILLS_PATH, VIRTUAL_SKILLS_PATH
+from yuxi.modules.agents.runtime.sandbox.paths import VIRTUAL_PERSONAL_SKILLS_PATH, VIRTUAL_SKILLS_PATH
 from yuxi.modules.extensions.mcp.service import get_enabled_mcp_tools
 from yuxi.modules.extensions.skills.runtime import RuntimeSkill, build_dependency_bundle
 from yuxi.modules.extensions.skills.package import is_valid_skill_slug

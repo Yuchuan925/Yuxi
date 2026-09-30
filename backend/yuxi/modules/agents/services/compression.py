@@ -8,10 +8,10 @@ from typing import Any
 from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from yuxi.modules.agents.runtime.backends import create_agent_composite_backend
-from yuxi.modules.agents.runtime.backends.paths import runtime_workdir_path
-from yuxi.modules.agents.runtime.backends.sandbox import ProvisionerSandboxBackend, get_sandbox_provider
-from yuxi.modules.agents.runtime.builtin import AgentBackendNotFoundError, get_agent_backend
+from yuxi.modules.agents.runtime.sandbox.backend import create_agent_composite_backend
+from yuxi.modules.agents.runtime.sandbox.paths import runtime_workdir_path
+from yuxi.modules.agents.runtime.sandbox import ProvisionerSandboxBackend, get_sandbox_provider
+from yuxi.modules.agents.runtime.agent_backends import AgentBackendNotFoundError, get_agent_backend
 from yuxi.modules.agents.runtime.context import DEFAULT_SUMMARY_THRESHOLD_K, BaseContext, prepare_agent_runtime_context
 from yuxi.modules.agents.runtime.middlewares import create_summary_middleware_from_context
 from yuxi.modules.agents.runtime.middlewares.token_usage import TOKEN_USAGE_CONTEXT_FIELDS
