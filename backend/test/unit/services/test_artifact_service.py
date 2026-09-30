@@ -135,7 +135,7 @@ async def test_artifact_preview_converts_office_file(live_files, monkeypatch):
         captured.update(filename=filename, raw_content=raw_content)
         return b"%PDF-1.4 preview"
 
-    monkeypatch.setattr(svc, "is_office_pdf_preview_file", lambda _path: True)
+    monkeypatch.setattr(svc, "is_office_pdf_convertible", lambda _path: True)
     monkeypatch.setattr(svc, "convert_office_to_pdf", convert_office_to_pdf)
 
     response = await svc.resolve_thread_artifact_view(
@@ -156,7 +156,7 @@ async def test_artifact_preview_reports_oversized_file_without_rendering(live_fi
     path = "/home/gem/user-data/projects/11111111-1111-4111-8111-111111111111/report.docx"
 
     def reject_large_file(_path, _target, max_bytes):
-        assert max_bytes == svc.MAX_BINARY_PREVIEW_SIZE_BYTES
+        assert max_bytes == svc.MAX_FILE_PREVIEW_BYTES
         raise FileTransferLimitError("file exceeds transfer limit")
 
     monkeypatch.setattr(live_files, "download_authorized_file_to_path", reject_large_file)

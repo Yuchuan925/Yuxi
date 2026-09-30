@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import mimetypes
 import os
 import tempfile
 from pathlib import PurePosixPath
@@ -11,16 +10,12 @@ from pathlib import PurePosixPath
 from fastapi import HTTPException
 from yuxi.modules.agents.runtime.sandbox.paths import is_runtime_path, runtime_path_for_workdir_scope
 from yuxi.modules.workspace.preview import preview_workspace_file
-from yuxi.infrastructure.document_preview import PreviewResult
-from yuxi.shared.files import FileInput, PreparedFile
+from yuxi.shared.files import MAX_FILE_PREVIEW_BYTES, FileInput, PreparedFile, PreviewResult, detect_media_type
 from yuxi.infrastructure.filesystem import await_io
 from yuxi.modules.workspace.services.bindings import AuthorizedWorkdir, resolve_authorized_workdir
 from yuxi.shared.datetime import utc_isoformat_from_timestamp
-from yuxi.infrastructure.document_preview import (
-    MAX_BINARY_PREVIEW_SIZE_BYTES,
-    OfficePreviewConversionError,
-    preview_too_large,
-)
+from yuxi.infrastructure.file_preview import preview_too_large
+from yuxi.infrastructure.office_conversion import OfficeConversionError
 from yuxi.modules.workspace.errors import FileTransferLimitError
 
 SEARCH_MAX_RESULTS = 100
@@ -132,7 +127,7 @@ async def read_viewer_file_content(*, thread_id: str, path: str, current_user, d
         raw_content = await asyncio.to_thread(
             access.workdir.read_file,
             path,
-            MAX_BINARY_PREVIEW_SIZE_BYTES,
+            MAX_FILE_PREVIEW_BYTES,
         )
     except PermissionError as exc:
         raise HTTPException(status_code=403, detail="Access denied") from exc
@@ -148,7 +143,7 @@ async def read_viewer_file_content(*, thread_id: str, path: str, current_user, d
             raw_content,
             office_cache_key=f"viewer:{access.uid}:{access.workdir_path}:{path}",
         )
-    except OfficePreviewConversionError as exc:
+    except OfficeConversionError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
@@ -169,7 +164,7 @@ async def download_viewer_file(*, thread_id: str, path: str, current_user, db) -
     file_name = PurePosixPath(path).name or "download"
     return PreparedFile(
         temp_path,
-        media_type=mimetypes.guess_type(file_name)[0] or "application/octet-stream",
+        media_type=detect_media_type(file_name),
         filename=file_name,
         explicit_disposition=True,
     )

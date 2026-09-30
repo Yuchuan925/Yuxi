@@ -11,6 +11,10 @@ from pathlib import Path
 _DIRECTORY_OPEN_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
 
 
+class FileTransferLimitError(ValueError):
+    """文件传输超过调用方声明的字节上限。"""
+
+
 async def await_io[T](operation: Awaitable[T]) -> T:
     """取消时等待当前 I/O 结束，让调用方随后可靠回收副作用。"""
     task = asyncio.ensure_future(operation)
@@ -105,6 +109,29 @@ def open_regular_file_fd(
         os.close(parent_fd)
 
 
+def copy_file_fd(source_fd: int, target_fd: int, *, max_bytes: int) -> int:
+    """从当前偏移有界复制已授权 fd；调用方负责打开、截断、关闭与失败清理。"""
+    if max_bytes < 0:
+        raise ValueError("file copy limit must be non-negative")
+    total = 0
+    while chunk := os.read(source_fd, min(1024 * 1024, max_bytes - total + 1)):
+        total += len(chunk)
+        if total > max_bytes:
+            raise FileTransferLimitError("file exceeds transfer limit")
+        write_all_fd(target_fd, chunk)
+    return total
+
+
+def write_all_fd(file_fd: int, content: bytes) -> None:
+    """完整写入借用 fd，处理部分写入并在无进展时失败。"""
+    remaining = memoryview(content)
+    while remaining:
+        written = os.write(file_fd, remaining)
+        if written == 0:
+            raise OSError(errno.EIO, "file write made no progress")
+        remaining = remaining[written:]
+
+
 def copy_directory_fd(source_fd: int, target_fd: int) -> None:
     """在已打开的目录间递归复制，不跟随链接且不覆盖目标。"""
     for name in sorted(os.listdir(source_fd)):
@@ -147,6 +174,9 @@ def ensure_within_root(path: Path, root: Path, *, error_message: str) -> Path:
 
 
 __all__ = [
+    "FileTransferLimitError",
+    "copy_file_fd",
+    "write_all_fd",
     "copy_directory_fd",
     "publish_directory_fd",
     "open_directory_fd",

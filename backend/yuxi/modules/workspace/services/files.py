@@ -10,18 +10,12 @@ from fastapi import HTTPException
 from yuxi.modules.agents.runtime.sandbox.paths import runtime_user_data_path
 from yuxi.modules.workspace.repositories.projects import ProjectRepository
 from yuxi.modules.workspace.preview import preview_workspace_file
-from yuxi.infrastructure.document_preview import PreviewResult
-from yuxi.shared.files import FileInput, PreparedFile
+from yuxi.shared.files import MAX_FILE_PREVIEW_BYTES, FileInput, PreparedFile, PreviewResult, detect_media_type
 from yuxi.infrastructure.filesystem import await_io
 from yuxi.modules.identity.models import User
 from yuxi.shared.datetime import utc_isoformat_from_timestamp
-from yuxi.infrastructure.document_preview import (
-    MAX_BINARY_PREVIEW_SIZE_BYTES,
-    OfficePreviewConversionError,
-    detect_media_type,
-    detect_preview_type,
-    preview_too_large,
-)
+from yuxi.infrastructure.file_preview import detect_preview_type, preview_too_large
+from yuxi.infrastructure.office_conversion import OfficeConversionError
 from yuxi.modules.workspace.errors import FileTransferLimitError
 from yuxi.modules.workspace.filesystem import Workspace
 from yuxi.modules.workspace.paths import ensure_user_workspace
@@ -145,7 +139,7 @@ async def read_workspace_file_content(*, path: str, current_user: User) -> dict 
         raw_content = await asyncio.to_thread(
             backend.read_authorized_file,
             workspace_path,
-            MAX_BINARY_PREVIEW_SIZE_BYTES,
+            MAX_FILE_PREVIEW_BYTES,
         )
     except FileTransferLimitError:
         return preview_too_large().payload()
@@ -162,7 +156,7 @@ async def read_workspace_file_content(*, path: str, current_user: User) -> dict 
             raw_content,
             office_cache_key=f"workspace:{current_user.uid}:{workspace_path}",
         )
-    except OfficePreviewConversionError as exc:
+    except OfficeConversionError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 

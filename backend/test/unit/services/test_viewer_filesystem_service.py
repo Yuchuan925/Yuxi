@@ -138,6 +138,44 @@ async def test_viewer_reads_live_file_without_revision(realtime_viewer):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("filename", ["large.txt", "large.docx"])
+async def test_viewer_preview_rejects_large_source_before_content_preparation(realtime_viewer, monkeypatch, filename):
+    path = f"/projects/11111111-1111-4111-8111-111111111111/{filename}"
+    realtime_viewer.files[path] = b"123456789"
+    monkeypatch.setattr(svc, "MAX_FILE_PREVIEW_BYTES", 8)
+
+    async def fail_preparation(*_args, **_kwargs):
+        raise AssertionError("over-budget source must not reach content preparation")
+
+    monkeypatch.setattr(svc, "preview_workspace_file", fail_preparation)
+
+    result = await svc.read_viewer_file_content(
+        thread_id="thread-1", path=f"/{filename}", current_user=SimpleNamespace(uid="user-1"), db=object()
+    )
+
+    assert result == svc.preview_too_large().payload()
+    assert realtime_viewer.files[path] == b"123456789"
+
+
+@pytest.mark.asyncio
+async def test_viewer_download_uses_shared_media_type_fallback(realtime_viewer, monkeypatch):
+    """Viewer 下载复用共享 fallback 并完整保存临时文件字节。"""
+    from yuxi.shared import files
+
+    monkeypatch.setattr(files.mimetypes, "guess_type", lambda _path: (None, None))
+    realtime_viewer.files["/projects/11111111-1111-4111-8111-111111111111/report.MD"] = b"# hello"
+    result = await svc.download_viewer_file(
+        thread_id="thread-1", path="/report.MD", current_user=SimpleNamespace(uid="user-1"), db=object()
+    )
+    try:
+        assert result.media_type == "text/markdown"
+        assert result.filename == "report.MD"
+        assert Path(result.path).read_bytes() == b"# hello"
+    finally:
+        Path(result.path).unlink()
+
+
+@pytest.mark.asyncio
 async def test_viewer_rejects_other_workdir_runtime_identity(realtime_viewer):
     with pytest.raises(HTTPException) as exc:
         await svc.read_viewer_file_content(

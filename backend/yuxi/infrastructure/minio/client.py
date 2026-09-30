@@ -5,7 +5,6 @@ MinIO 存储客户端
 
 import asyncio
 import json
-import mimetypes
 import os
 from contextlib import asynccontextmanager
 from datetime import timedelta
@@ -14,6 +13,7 @@ from urllib.parse import quote, urlsplit
 
 from urllib3 import BaseHTTPResponse
 from yuxi.infrastructure.observability.logging import logger
+from yuxi.shared.files import detect_media_type
 
 from minio import Minio
 from minio.error import S3Error
@@ -23,6 +23,10 @@ class StorageError(Exception):
     """存储相关异常基类"""
 
     pass
+
+
+class ObjectSizeLimitError(StorageError):
+    """对象字节数超过调用方指定的读取上限。"""
 
 
 class UploadResult:
@@ -129,7 +133,7 @@ class MinIOClient:
         try:
             self.ensure_bucket_exists(bucket_name=bucket_name)
 
-            resolved_content_type = content_type or self._guess_content_type(object_name)
+            resolved_content_type = content_type or detect_media_type(object_name)
             data_stream = BytesIO(data)
             result = self.client.put_object(
                 bucket_name=bucket_name,
@@ -177,33 +181,16 @@ class MinIOClient:
         except Exception as e:
             raise StorageError(f"从路径上传文件失败: {e}")
 
-    def _guess_content_type(self, object_name: str) -> str:
-        """根据文件名猜测 MIME 类型"""
-        guessed_type, _ = mimetypes.guess_type(object_name)
-        if guessed_type:
-            return guessed_type
-
-        ext = object_name.split(".")[-1].lower()
-        content_types = {
-            "md": "text/markdown",
-            "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-            "pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-            "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            "xls": "application/vnd.ms-excel",
-            "zip": "application/zip",
-            "webp": "image/webp",
-            "bmp": "image/bmp",
-            "tif": "image/tiff",
-            "tiff": "image/tiff",
-        }
-        return content_types.get(ext, "application/octet-stream")
-
-    def download_file(self, bucket_name: str, object_name: str) -> bytes:
-        """下载文件"""
+    def download_file(self, bucket_name: str, object_name: str, *, max_bytes: int | None = None) -> bytes:
+        """读取对象；指定上限时最多读取上限加一字节以判断超限。"""
+        if max_bytes is not None and max_bytes < 0:
+            raise ValueError("object read limit must be non-negative")
         response = None
         try:
             response = self.client.get_object(bucket_name=bucket_name, object_name=object_name)
-            data = response.read()
+            data = response.read() if max_bytes is None else response.read(max_bytes + 1)
+            if max_bytes is not None and len(data) > max_bytes:
+                raise ObjectSizeLimitError("object exceeds read limit")
             logger.info(f"成功下载 '{object_name}' 从存储桶 '{bucket_name}'")
             return data
 
@@ -231,23 +218,9 @@ class MinIOClient:
                 raise StorageError(f"对象 '{object_name}' 在存储桶 '{bucket_name}' 中不存在")
             raise StorageError(f"下载文件失败: {e}")
 
-    async def adownload_file(self, bucket_name: str, object_name: str) -> bytes:
-        """异步下载文件"""
-        response = None
-        try:
-            response = await asyncio.to_thread(self.client.get_object, bucket_name=bucket_name, object_name=object_name)
-            data = await asyncio.to_thread(response.read)
-            logger.info(f"成功下载 '{object_name}' 从存储桶 '{bucket_name}'")
-            return data
-
-        except S3Error as e:
-            if e.code == "NoSuchKey":
-                raise StorageError(f"对象 '{object_name}' 在存储桶 '{bucket_name}' 中不存在")
-            raise StorageError(f"下载文件失败: {e}")
-        finally:
-            if response is not None:
-                response.close()
-                response.release_conn()
+    async def adownload_file(self, bucket_name: str, object_name: str, *, max_bytes: int | None = None) -> bytes:
+        """在线程内读取并关闭对象响应，支持调用方指定字节上限。"""
+        return await asyncio.to_thread(self.download_file, bucket_name, object_name, max_bytes=max_bytes)
 
     def get_presigned_url(self, bucket_name: str, object_name: str, days=7) -> str:
         """将minio放在内网访问，外部通过返回代理链接访问"""

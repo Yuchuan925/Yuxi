@@ -101,7 +101,8 @@ backend/yuxi/
 │   │   ├── manager.py  # [拆] Y/storage/postgres/manager.py；业务 engine/session/连接生命周期；迁移方法移出
 │   │   └── schema.py  # [拆] Y/storage/postgres/manager.py；schema 版本常量、读取和兼容检查；API/worker 只读检查
 │   ├── redis/  # [整移] Y/storage/redis/；内部结构保留，仅修正导入与资源定位
-│   ├── document_preview.py  # [移改] Y/utils/filepreview.py；格式识别、文本预览、Office 转换原语
+│   ├── file_preview.py  # [拆] Y/utils/filepreview.py；展示类型判断与预览内容准备，公共文件结果与 MIME 识别归 shared/files.py
+│   ├── office_conversion.py  # [拆] Y/utils/filepreview.py；独立 Office 到 PDF 转换工具
 │   ├── filesystem.py  # [移改] Y/utils/paths.py；跨 Workspace/Skills 的 no-follow 文件描述符原语
 │   ├── images.py  # [移改] Y/utils/image_processor.py；图像校验、压缩与缩略图
 │   ├── runtime_settings.py  # [移改] Y/config/__init__.py；进程环境与运行目录配置，不再转发用户配置

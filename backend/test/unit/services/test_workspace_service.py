@@ -218,6 +218,26 @@ async def test_preview_workspace_file_caches_office_pdf_conversion(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("filename", ["large.txt", "large.docx"])
+async def test_workspace_preview_rejects_large_source_before_content_preparation(tmp_path, monkeypatch, filename):
+    monkeypatch.setenv("YUXI_USER_DATA_DIR", str(tmp_path / "threads"))
+    user = _user()
+    target = _workspace_root(user) / filename
+    target.write_bytes(b"123456789")
+    monkeypatch.setattr(svc, "MAX_FILE_PREVIEW_BYTES", 8)
+
+    async def fail_preparation(*_args, **_kwargs):
+        raise AssertionError("over-budget source must not reach content preparation")
+
+    monkeypatch.setattr(svc, "preview_workspace_file", fail_preparation)
+
+    result = await svc.read_workspace_file_content(path=f"/{filename}", current_user=user)
+
+    assert result == svc.preview_too_large().payload()
+    assert target.read_bytes() == b"123456789"
+
+
+@pytest.mark.asyncio
 async def test_download_workspace_file_keeps_office_original_file(
     tmp_path: Path,
     monkeypatch,

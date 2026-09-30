@@ -6,6 +6,7 @@ MinIO 存储模块
 # 导出核心功能
 from yuxi.infrastructure.minio.client import (
     MinIOClient,
+    ObjectSizeLimitError,
     StorageError,
     UploadResult,
     aupload_file_to_minio,
@@ -20,6 +21,7 @@ __all__ = [
     "get_minio_client",
     "aupload_file_to_minio",
     # 异常类
+    "ObjectSizeLimitError",
     "StorageError",
     "UploadResult",
     # 工具函数

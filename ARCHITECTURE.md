@@ -49,7 +49,7 @@ Yuxi 始终交付完整知识能力。API 注册知识库、图谱、评估、Da
 
 ### 共享技术边界
 
-`infrastructure/postgres` 管理业务 session 与 LangGraph checkpoint pool；`redis` 提供连接，业务 key 与事件语义留在对应模块；`minio`、`neo4j` 和 `oidc` 封装远端客户端；`observability` 封装日志与 Langfuse SDK。`shared` 只保存不依赖业务域与 HTTP 的小型公共契约。`infrastructure/runtime_settings.py` 管理进程环境与运行目录；system 模块拥有品牌模板和持久系统配置。`api/responses` 负责文件与知识响应，业务服务提供已经授权的读取结果。
+`infrastructure/postgres` 管理业务 session 与 LangGraph checkpoint pool；`redis` 提供连接，业务 key 与事件语义留在对应模块；`minio`、`neo4j` 和 `oidc` 封装远端客户端；`observability` 封装日志与 Langfuse SDK。`infrastructure/file_preview.py` 准备浏览器展示内容，`infrastructure/office_conversion.py` 独立执行 Office 到 PDF 转换；Workspace 与 Knowledge 拥有各自的预览缓存。`shared` 只保存不依赖业务域与 HTTP 的小型公共契约与通用逻辑，`shared/files.py` 拥有文件输入、文件结果、MIME 识别与共用原文件预览预算；各预览读取用例把预算传给文件或对象存储边界执行有界读取。`infrastructure/runtime_settings.py` 管理进程环境与运行目录；system 模块拥有品牌模板和持久系统配置。`api/responses` 负责文件与知识响应，业务服务提供已经授权的读取结果。
 
 ### 后台任务
 

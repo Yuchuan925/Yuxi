@@ -4,14 +4,13 @@ from __future__ import annotations
 
 from yuxi.infrastructure.minio.object_urls import is_minio_url, parse_minio_url
 from yuxi.modules.knowledge.repositories.files import KnowledgeFileRepository
-from yuxi.infrastructure.minio import get_minio_client
-from yuxi.infrastructure.document_preview import (
-    MAX_BINARY_PREVIEW_SIZE_BYTES,
-    OfficePreviewConversionError,
+from yuxi.infrastructure.minio import ObjectSizeLimitError, get_minio_client
+from yuxi.infrastructure.file_preview import prepare_file_preview, preview_too_large
+from yuxi.shared.files import MAX_FILE_PREVIEW_BYTES
+from yuxi.infrastructure.office_conversion import (
+    OfficeConversionError,
     convert_office_to_pdf,
-    is_office_pdf_preview_file,
-    preview_too_large,
-    render_preview,
+    is_office_pdf_convertible,
 )
 
 
@@ -44,26 +43,28 @@ async def read_knowledge_file_preview(kb_id: str, file_id: str) -> dict:
     file_size = file_record.file_size
     if file_size is None:
         file_size = await _get_minio_file_size(original_path)
-    if file_size is not None and int(file_size) > MAX_BINARY_PREVIEW_SIZE_BYTES:
+    if file_size is not None and int(file_size) > MAX_FILE_PREVIEW_BYTES:
         return {**response, **preview_too_large().payload()}
 
-    if is_office_pdf_preview_file(filename):
-        pdf_content = await _read_office_pdf_preview(kb_id, file_id, filename, original_path)
-        return {
-            **response,
-            "content": pdf_content,
-            "filename": f"{filename.rsplit('.', 1)[0] or file_id}.pdf",
-            "media_type": "application/pdf",
-            "preview_type": "pdf",
-            "supported": True,
-            "message": None,
-            "binary": True,
-        }
+    try:
+        if is_office_pdf_convertible(filename):
+            pdf_content = await _read_office_pdf_preview(kb_id, file_id, filename, original_path)
+            return {
+                **response,
+                "content": pdf_content,
+                "filename": f"{filename.rsplit('.', 1)[0] or file_id}.pdf",
+                "media_type": "application/pdf",
+                "preview_type": "pdf",
+                "supported": True,
+                "message": None,
+                "binary": True,
+            }
 
-    raw_content = await _read_minio_bytes(original_path)
-    if len(raw_content) > MAX_BINARY_PREVIEW_SIZE_BYTES:
+        raw_content = await _read_minio_bytes(original_path)
+    except ObjectSizeLimitError:
         return {**response, **preview_too_large().payload()}
-    result = render_preview(filename, raw_content)
+
+    result = prepare_file_preview(filename, raw_content)
     if isinstance(result.content, bytes):
         return {
             **response,
@@ -83,6 +84,7 @@ async def _read_office_pdf_preview(
     filename: str,
     original_path: str,
 ) -> bytes:
+    """将 Office 文件转换为 PDF 并缓存到 MinIO。"""
     minio_client = get_minio_client()
     bucket_name = minio_client.KB_BUCKETS["parsed"]
     object_name = f"{kb_id}/preview/{file_id}.pdf"
@@ -92,8 +94,9 @@ async def _read_office_pdf_preview(
     raw_content = await _read_minio_bytes(original_path)
     try:
         pdf_content = await convert_office_to_pdf(filename, raw_content)
-    except OfficePreviewConversionError as exc:
+    except OfficeConversionError as exc:
         raise ValueError(str(exc)) from exc
+
     await minio_client.aupload_file(
         bucket_name=bucket_name,
         object_name=object_name,
@@ -110,7 +113,7 @@ async def _get_minio_file_size(file_path: str) -> int | None:
 
 async def _read_minio_bytes(file_path: str) -> bytes:
     bucket_name, object_name = _parse_minio_path(file_path)
-    return await get_minio_client().adownload_file(bucket_name, object_name)
+    return await get_minio_client().adownload_file(bucket_name, object_name, max_bytes=MAX_FILE_PREVIEW_BYTES)
 
 
 def _parse_minio_path(file_path: str) -> tuple[str, str]:

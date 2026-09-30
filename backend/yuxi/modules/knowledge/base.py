@@ -1,5 +1,4 @@
 import asyncio
-import mimetypes
 import os
 import re
 from abc import ABC, abstractmethod
@@ -8,6 +7,7 @@ from typing import Any
 from uuid import uuid4
 
 from yuxi.infrastructure.filesystem import await_io
+from yuxi.shared.files import detect_media_type
 from yuxi.infrastructure.observability.logging import logger
 from yuxi.modules.knowledge.chunking.ragflow_like.presets import ensure_chunk_defaults_in_additional_params
 from yuxi.modules.knowledge.read_models import KnowledgeBaseConfig
@@ -607,7 +607,7 @@ class KnowledgeBase(ABC):
         original_path = self._original_file_path(file_meta)
         if not original_path:
             raise ValueError("文件没有可下载的原始内容")
-        media_type = file_meta.get("content_type") or mimetypes.guess_type(filename)[0] or "application/octet-stream"
+        media_type = file_meta.get("content_type") or detect_media_type(filename)
         return {
             "filename": filename,
             "content": await self._read_minio_bytes(original_path),

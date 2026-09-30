@@ -8,8 +8,7 @@ from urllib.parse import quote
 
 from fastapi.responses import FileResponse, StreamingResponse
 from starlette.background import BackgroundTask
-from yuxi.infrastructure.document_preview import PreviewResult
-from yuxi.shared.files import PreparedFile
+from yuxi.shared.files import PreparedFile, PreviewResult
 
 
 def render_file_result(result: PreparedFile | PreviewResult | dict):

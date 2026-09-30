@@ -20,19 +20,15 @@ from yuxi.modules.extensions.skills.models import Skill
 from yuxi.modules.extensions.skills.edit import open_shared_skill_dir
 from yuxi.modules.extensions.skills.shared import lock_accessible_shared_skill_for_file
 from yuxi.modules.identity.repositories.users import UserRepository
-from yuxi.infrastructure.document_preview import PreviewResult
-from yuxi.shared.files import PreparedFile
+from yuxi.shared.files import MAX_FILE_PREVIEW_BYTES, PreparedFile, PreviewResult, detect_media_type
 from yuxi.modules.workspace.services.bindings import resolve_authorized_workdir
-from yuxi.infrastructure.document_preview import (
-    MAX_BINARY_PREVIEW_SIZE_BYTES,
-    OfficePreviewConversionError,
+from yuxi.infrastructure.file_preview import prepare_file_preview, preview_too_large
+from yuxi.infrastructure.office_conversion import (
+    OfficeConversionError,
     convert_office_to_pdf,
-    detect_media_type,
-    is_office_pdf_preview_file,
-    preview_too_large,
-    render_preview,
+    is_office_pdf_convertible,
 )
-from yuxi.infrastructure.filesystem import open_regular_file_fd
+from yuxi.infrastructure.filesystem import copy_file_fd, open_regular_file_fd
 from yuxi.modules.workspace.errors import FileTransferLimitError
 
 MAX_ARTIFACT_DOWNLOAD_BYTES = 1024 * 1024 * 1024
@@ -79,28 +75,6 @@ def _copy_skill_file_to_path(skill: Skill, relative_path: str, target_path: str,
         return _copy_from_shared_skill_fd(skill_fd, parts, target_path, max_bytes)
     finally:
         os.close(skill_fd)
-
-
-def _copy_from_shared_skill_fd(skill_fd: int, parts: tuple[str, ...], target_path: str, max_bytes: int) -> int:
-    """从已打开的共享目录复制普通文件。"""
-    target_fd = None
-    with open_regular_file_fd(skill_fd, parts) as (source_fd, source_stat):
-        if source_stat.st_size > max_bytes:
-            raise FileTransferLimitError("file exceeds transfer limit")
-        try:
-            target_fd = os.open(target_path, os.O_WRONLY | os.O_TRUNC | os.O_NOFOLLOW)
-            total = 0
-            while chunk := os.read(source_fd, 1024 * 1024):
-                total += len(chunk)
-                if total > max_bytes:
-                    raise FileTransferLimitError("file exceeds transfer limit")
-                offset = 0
-                while offset < len(chunk):
-                    offset += os.write(target_fd, chunk[offset:])
-            return total
-        finally:
-            if target_fd is not None:
-                os.close(target_fd)
 
 
 async def _copy_artifact_to_path(
@@ -160,7 +134,7 @@ async def resolve_thread_artifact_view(
             normalized,
             skill_source,
             temp_path,
-            MAX_BINARY_PREVIEW_SIZE_BYTES if is_preview else MAX_ARTIFACT_DOWNLOAD_BYTES,
+            MAX_FILE_PREVIEW_BYTES if is_preview else MAX_ARTIFACT_DOWNLOAD_BYTES,
         )
     except HTTPException as exc:
         with contextlib.suppress(FileNotFoundError):
@@ -177,7 +151,7 @@ async def resolve_thread_artifact_view(
         try:
             with open(temp_path, "rb") as artifact_file:
                 raw_content = artifact_file.read()
-            if is_office_pdf_preview_file(normalized):
+            if is_office_pdf_convertible(normalized):
                 return PreviewResult(
                     content=await convert_office_to_pdf(PurePosixPath(normalized).name, raw_content),
                     preview_type="pdf",
@@ -185,8 +159,8 @@ async def resolve_thread_artifact_view(
                     media_type="application/pdf",
                     filename=f"{PurePosixPath(normalized).stem or 'preview'}.pdf",
                 )
-            return render_preview(normalized, raw_content)
-        except OfficePreviewConversionError as exc:
+            return prepare_file_preview(normalized, raw_content)
+        except OfficeConversionError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         finally:
             with contextlib.suppress(FileNotFoundError):
@@ -280,3 +254,17 @@ async def save_thread_artifact_to_workspace_view(
         "saved_path": target,
         "saved_artifact_url": f"/api/v1/agents/threads/{thread_id}/artifacts/{target.lstrip('/')}",
     }
+
+
+def _copy_from_shared_skill_fd(skill_fd: int, parts: tuple[str, ...], target_path: str, max_bytes: int) -> int:
+    """从已打开的共享目录复制普通文件。"""
+    target_fd = None
+    with open_regular_file_fd(skill_fd, parts) as (source_fd, source_stat):
+        if source_stat.st_size > max_bytes:
+            raise FileTransferLimitError("file exceeds transfer limit")
+        try:
+            target_fd = os.open(target_path, os.O_WRONLY | os.O_TRUNC | os.O_NOFOLLOW)
+            return copy_file_fd(source_fd, target_fd, max_bytes=max_bytes)
+        finally:
+            if target_fd is not None:
+                os.close(target_fd)

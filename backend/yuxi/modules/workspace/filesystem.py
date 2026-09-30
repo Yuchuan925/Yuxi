@@ -14,9 +14,11 @@ from typing import BinaryIO
 
 from yuxi.infrastructure.filesystem import (
     copy_directory_fd,
+    copy_file_fd,
     open_directory_fd,
     open_regular_file_fd,
     publish_directory_fd,
+    write_all_fd,
 )
 
 from yuxi.modules.workspace.errors import FileTransferLimitError
@@ -128,13 +130,7 @@ class Workspace:
         with self._open_regular_file(path, writable=False) as (source_fd, _source_stat):
             try:
                 target_fd = os.open(target_path, os.O_WRONLY | os.O_TRUNC | os.O_NOFOLLOW)
-                total = 0
-                while chunk := os.read(source_fd, 1024 * 1024):
-                    total += len(chunk)
-                    if total > max_bytes:
-                        raise FileTransferLimitError("file exceeds transfer limit")
-                    self._write_all(target_fd, chunk)
-                return total
+                return copy_file_fd(source_fd, target_fd, max_bytes=max_bytes)
             finally:
                 if target_fd is not None:
                     os.close(target_fd)
@@ -175,7 +171,7 @@ class Workspace:
         """通过已打开的普通文件描述符覆盖内容，拒绝 symlink 与目录。"""
         with self._open_regular_file(path, writable=True) as (target_fd, _target_stat):
             os.ftruncate(target_fd, 0)
-            self._write_all(target_fd, content)
+            write_all_fd(target_fd, content)
             final_stat = os.fstat(target_fd)
             return self._metadata_from_stat(final_stat)
 
@@ -206,7 +202,7 @@ class Workspace:
                 0o600,
                 dir_fd=parent_fd,
             )
-            self._write_all(target_fd, content)
+            write_all_fd(target_fd, content)
             os.fsync(target_fd)
             final_stat = os.fstat(target_fd)
             os.close(target_fd)
@@ -287,7 +283,7 @@ class Workspace:
                 written += len(chunk)
                 if max_bytes is not None and written > max_bytes:
                     raise FileTransferLimitError("file exceeds limit")
-                self._write_all(target_fd, chunk)
+                write_all_fd(target_fd, chunk)
             final_stat = os.fstat(target_fd)
             os.close(target_fd)
             target_fd = None
@@ -439,9 +435,3 @@ class Workspace:
             if (remaining_stat.st_dev, remaining_stat.st_ino) != expected_identity:
                 return
         os.rmdir(name, dir_fd=parent_fd)
-
-    @staticmethod
-    def _write_all(file_fd: int, content: bytes) -> None:
-        offset = 0
-        while offset < len(content):
-            offset += os.write(file_fd, content[offset:])
