@@ -50,7 +50,7 @@ services:
     build:
       context: .
       dockerfile: docker/api.Dockerfile
-    image: ${COMPOSE_PROJECT_NAME:-yuxi}-api:${YUXI_VERSION:-0.7.3}
+    image: ${COMPOSE_PROJECT_NAME:-yuxi}-api:${YUXI_VERSION:-0.8.0.dev0}
     working_dir: /app
     user: "1000:1000"
     volumes:
@@ -111,7 +111,7 @@ services:
     build:
       context: .
       dockerfile: docker/api.Dockerfile
-    image: ${COMPOSE_PROJECT_NAME:-yuxi}-api:${YUXI_VERSION:-0.7.3}
+    image: ${COMPOSE_PROJECT_NAME:-yuxi}-api:${YUXI_VERSION:-0.8.0.dev0}
     working_dir: /app
     user: "1000:1000"
     volumes:
@@ -171,7 +171,7 @@ services:
     build:
       context: .
       dockerfile: docker/api.Dockerfile
-    image: ${COMPOSE_PROJECT_NAME:-yuxi}-api:${YUXI_VERSION:-0.7.3}
+    image: ${COMPOSE_PROJECT_NAME:-yuxi}-api:${YUXI_VERSION:-0.8.0.dev0}
     working_dir: /app
     volumes:
       - ./backend/yuxi:/app/yuxi:ro
@@ -191,7 +191,7 @@ services:
     build:
       context: ./docker/sandbox_provisioner
       dockerfile: Dockerfile
-    image: ${COMPOSE_PROJECT_NAME:-yuxi}-sandbox-provisioner:${YUXI_VERSION:-0.7.3}
+    image: ${COMPOSE_PROJECT_NAME:-yuxi}-sandbox-provisioner:${YUXI_VERSION:-0.8.0.dev0}
     volumes:
       - type: bind
         source: ${YUXI_STATE_DIR:-./docker/volumes}/yuxi/threads
@@ -265,7 +265,7 @@ services:
       context: .
       dockerfile: docker/web.Dockerfile
       target: development
-    image: ${COMPOSE_PROJECT_NAME:-yuxi}-web:${YUXI_VERSION:-0.7.3}
+    image: ${COMPOSE_PROJECT_NAME:-yuxi}-web:${YUXI_VERSION:-0.8.0.dev0}
     volumes:
       - ./web/src:/app/src
       - ./web/test:/app/test

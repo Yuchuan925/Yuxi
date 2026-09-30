@@ -142,7 +142,7 @@ async def _compress_agent_checkpoint_in_runtime(
 
 async def _ensure_runtime_available(*, thread_id: str, uid: str, workdir_path: str) -> None:
     """确保主动压缩可以通过 Agent backend 写入可恢复历史。"""
-    await asyncio.to_thread(get_user_skills_root_dir, uid)
+    await asyncio.to_thread(get_user_skills_root_dir(uid).mkdir, parents=True, exist_ok=True)
     backend = ProvisionerSandboxBackend(thread_id=thread_id, uid=uid, workdir_path=workdir_path)
     await asyncio.to_thread(backend.ensure_available)
 

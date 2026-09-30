@@ -30,7 +30,6 @@ from yuxi.modules.identity.services.administration import (
     initialize_system_admin,
     list_managed_users_page,
 )
-from yuxi.modules.system.operation_log import log_operation
 from yuxi.modules.identity.services.usernames import generate_unique_uid, is_valid_phone_number, validate_username
 from yuxi.infrastructure.minio import upload_image_to_minio
 from yuxi.infrastructure.minio.client import normalize_public_minio_url
@@ -272,8 +271,6 @@ async def login_for_access_token(
         user.increment_failed_login()
         await user_repository.save(user)
 
-        # 记录失败操作
-        await log_operation(db, user.id if user else None, "登录失败", f"密码错误，失败次数: {user.login_failed_count}")
         await db.commit()
 
         # 检查是否需要锁定
@@ -300,9 +297,6 @@ async def login_for_access_token(
     # 生成访问令牌
     token_data = {"sub": str(user.id)}
     access_token = AuthUtils.create_access_token(token_data)
-
-    # 记录登录操作
-    await log_operation(db, user.id, "登录")
 
     # 获取部门名称
     department_name = None
@@ -453,12 +447,10 @@ async def read_users_me(current_user: User = Depends(get_required_user), db: Asy
 @auth.put("/profile", response_model=UserResponse)
 async def update_profile(
     profile_data: UserProfileUpdate,
-    request: Request,
     current_user: User = Depends(get_required_user),
     db: AsyncSession = Depends(get_db),
 ):
     """更新当前用户的个人资料"""
-    update_details = []
     user_repository = UserRepository(db)
 
     # 更新用户名（仅允许修改显示名，不修改 user_id）
@@ -480,7 +472,6 @@ async def update_profile(
             )
 
         current_user.username = profile_data.username
-        update_details.append(f"用户名: {profile_data.username}")
 
     # 更新手机号
     if profile_data.phone_number is not None:
@@ -495,13 +486,9 @@ async def update_profile(
                 raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="手机号已被其他用户使用")
 
         current_user.phone_number = profile_data.phone_number
-        update_details.append(f"手机号: {profile_data.phone_number or '已清空'}")
 
     await user_repository.save(current_user)
 
-    # 记录操作
-    if update_details:
-        await log_operation(db, current_user.id, "更新个人资料", f"更新个人资料: {', '.join(update_details)}", request)
     await db.commit()
 
     return current_user.to_dict()
@@ -516,7 +503,6 @@ async def update_profile(
 @auth.post("/users", response_model=UserResponse)
 async def create_user(
     user_data: UserCreate,
-    request: Request,
     current_user: User = Depends(get_admin_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -605,10 +591,6 @@ async def create_user(
         }
     )
 
-    # 记录操作
-    await log_operation(
-        db, current_user.id, "创建用户", f"创建用户: {user_data.username}, 角色: {user_data.role}", request
-    )
     await db.commit()
 
     return new_user.to_dict()
@@ -723,7 +705,6 @@ async def read_user(
 async def update_user(
     user_id: int,
     user_data: UserUpdate,
-    request: Request,
     current_user: User = Depends(get_admin_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -752,8 +733,6 @@ async def update_user(
             )
 
     # 更新信息
-    update_details = []
-
     if user_data.username is not None:
         # 检查用户名是否已被其他用户使用
         existing_user = await user_repository.get_by_username(user_data.username, exclude_user_id=user_id)
@@ -763,19 +742,15 @@ async def update_user(
                 detail="用户名已存在",
             )
         user.username = user_data.username
-        update_details.append(f"用户名: {user_data.username}")
 
     if user_data.password is not None:
         user.password_hash = AuthUtils.hash_password(user_data.password)
-        update_details.append("密码已更新")
 
     if user_data.phone_number is not None:
         user.phone_number = user_data.phone_number
-        update_details.append(f"手机号: {user_data.phone_number or '已清空'}")
 
     if user_data.avatar is not None:
         user.avatar = user_data.avatar
-        update_details.append(f"头像: {user_data.avatar or '已清空'}")
 
     # 部门修改权限控制（只有超级管理员可以修改用户部门）
     if user_data.department_id is not None and user_data.department_id != user.department_id:
@@ -797,12 +772,9 @@ async def update_user(
                 )
 
         user.department_id = user_data.department_id
-        update_details.append(f"部门ID: {user_data.department_id}")
 
     await user_repository.save(user)
 
-    # 记录操作
-    await log_operation(db, current_user.id, "更新用户", f"更新用户ID {user_id}: {', '.join(update_details)}", request)
     await db.commit()
 
     return user.to_dict()
@@ -812,7 +784,6 @@ async def update_user(
 @auth.delete("/users/{user_id}", response_model=dict)
 async def delete_user(
     user_id: int,
-    request: Request,
     current_user: User = Depends(get_admin_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -862,12 +833,8 @@ async def delete_user(
             detail="该用户已经被删除",
         )
 
-    deletion_detail = f"删除用户: {user.username}, ID: {user.id}, 角色: {user.role}"
-
     await user_repository.delete_for_admin(user)
 
-    # 记录操作
-    await log_operation(db, current_user.id, "删除用户", deletion_detail, request)
     await db.commit()
 
     return {"success": True, "message": "用户已删除"}
@@ -934,7 +901,6 @@ async def upload_user_avatar(
 
         current_user.avatar = avatar_url
         await UserRepository(db).save(current_user)
-        await log_operation(db, current_user.id, "上传头像", f"更新头像: {avatar_url}")
         await db.commit()
 
         return {"success": True, "avatar_url": avatar_url, "message": "头像上传成功"}
@@ -951,7 +917,6 @@ async def upload_user_avatar(
 @auth.post("/impersonate/{user_id}", response_model=Token)
 async def impersonate_user(
     user_id: int,
-    request: Request,
     current_user: User = Depends(get_superadmin_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -980,8 +945,6 @@ async def impersonate_user(
     if target_user.department_id:
         department_name = await DepartmentRepository(db).get_name_by_id(target_user.department_id)
 
-    # 记录操作（危险操作标记）
-    await log_operation(db, current_user.id, "⚠️ 危险操作-模拟用户", f"模拟用户: {target_user.username}", request)
     await db.commit()
 
     # 控制台警告日志
@@ -1019,9 +982,9 @@ async def get_oidc_login_url(redirect_path: str = "/"):
 
 
 @auth.get("/oidc/callback", response_class=RedirectResponse)
-async def oidc_callback(request: Request, code: str, state: str, db: AsyncSession = Depends(get_db)):
+async def oidc_callback(code: str, state: str, db: AsyncSession = Depends(get_db)):
     """处理 OIDC 回调 - 重定向到前端 Vue 路由"""
-    return await oidc_callback_handler(code, state, db, request)
+    return await oidc_callback_handler(code, state, db)
 
 
 @auth.post("/oidc/exchange-code", response_model=OIDCLoginResponse)

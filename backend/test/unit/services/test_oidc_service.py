@@ -116,12 +116,8 @@ async def test_oidc_callback_allows_only_human_binding_when_sub_contains_colon(o
     async def fake_userinfo(cls, access_token):
         return {"sub": "tenant:user", "preferred_username": user.uid}
 
-    async def fake_log_operation(db, user_id, operation, request=None):
-        return None
-
     monkeypatch.setattr(oidc_service.OIDCUtils, "exchange_code_for_token", classmethod(fake_exchange))
     monkeypatch.setattr(oidc_service.OIDCUtils, "get_userinfo", classmethod(fake_userinfo))
-    monkeypatch.setattr(oidc_service, "log_operation", fake_log_operation)
 
     response = await oidc_callback_handler("dummy-code", "dummy-state", oidc_session)
 

@@ -22,15 +22,8 @@ def test_creation_key_is_stable_and_isolated_by_app():
 
 
 @pytest.mark.asyncio
-async def test_unbound_full_key_uses_product_user_without_end_user(monkeypatch):
+async def test_unbound_full_key_uses_product_user_without_end_user():
     """CLI 浏览器登录的完整 Key 可进入产品 Thread 作用域。"""
-    async def unexpected_end_user(**_kwargs):
-        """产品 Key 不应创建 APP 终端用户。"""
-        raise AssertionError("产品 Key 不应解析终端用户")
-
-    monkeypatch.setattr(
-        "yuxi.api.routers.public_v1.agents.auth.resolve_public_user", unexpected_end_user
-    )
     owner = SimpleNamespace(uid="owner-1", role="user")
     key = SimpleNamespace(id=17, access_level="full", app_id=None)
     request = SimpleNamespace(state=SimpleNamespace(api_key=key))
@@ -85,3 +78,16 @@ def test_wire_rejects_unknown_fields_and_remote_images():
     with pytest.raises(HTTPException) as exc:
         input_messages_to_domain([message])
     assert exc.value.status_code == 422
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("external_id", ["", " leading", "trailing ", "a" * 129])
+async def test_invalid_end_user_id_maps_identity_error_to_422(external_id):
+    """非法外部身份在访问数据库前返回既有 HTTP 错误。"""
+    owner = SimpleNamespace(uid="owner-1", role="user")
+    key = SimpleNamespace(id=19, access_level="agents", app_id="app-1")
+    request = SimpleNamespace(state=SimpleNamespace(api_key=key))
+    with pytest.raises(HTTPException) as exc:
+        await require_public_context(request, end_user_id=external_id, owner=owner, db=object())
+    assert exc.value.status_code == 422
+    assert exc.value.detail == "X-End-User-Id 必须为 1 至 128 个无首尾空白的字符"

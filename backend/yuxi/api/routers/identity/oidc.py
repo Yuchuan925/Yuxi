@@ -1,7 +1,7 @@
 """OIDC HTTP 回调和重定向响应。"""
 
 from urllib.parse import urlencode
-from fastapi import HTTPException, Request, status
+from fastapi import HTTPException, status
 from fastapi.responses import RedirectResponse
 
 from yuxi.modules.identity.oidc import (
@@ -34,7 +34,7 @@ async def get_oidc_config_handler():
     return {"enabled": True, "provider_name": provider_name}
 
 
-async def oidc_callback_handler(code: str, state: str, db, request: Request | None = None):
+async def oidc_callback_handler(code: str, state: str, db):
     """处理 OIDC 回调 - 重定向到前端 Vue 路由"""
 
     if not oidc_config.is_token_exchange_configured():
@@ -61,7 +61,7 @@ async def oidc_callback_handler(code: str, state: str, db, request: Request | No
     if not sub:
         return _redirect_to_login_with_error("无法获取用户标识，请返回登录页重试")
 
-    response_data, error = await build_oidc_login_response(db, extracted_info, request)
+    response_data, error = await build_oidc_login_response(db, extracted_info)
     if error:
         return _redirect_to_login_with_error(error)
 

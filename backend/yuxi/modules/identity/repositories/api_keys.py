@@ -39,6 +39,11 @@ class APIKeyRepository:
     def __init__(self, db_session: AsyncSession):
         self.db_session = db_session
 
+    async def get_by_hash(self, key_hash: str) -> APIKey | None:
+        """按凭据摘要读取 API Key。"""
+        result = await self.db_session.execute(select(APIKey).where(APIKey.key_hash == key_hash))
+        return result.scalar_one_or_none()
+
     @staticmethod
     def _intent_hash(
         *,

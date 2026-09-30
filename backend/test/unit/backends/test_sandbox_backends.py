@@ -282,6 +282,7 @@ def test_context_backend_construction_does_not_sync_skill_projection(monkeypatch
 
     monkeypatch.setattr("yuxi.modules.agents.runtime.backends.sandbox.backend.get_sandbox_provider", lambda: object())
     monkeypatch.setenv("YUXI_USER_DATA_DIR", str(tmp_path / "threads"))
+    monkeypatch.setenv("YUXI_SKILL_PROJECTION_DIR", str(tmp_path / "skill-projections"))
     source_dir = tmp_path / "source" / "shared-skill"
     source_dir.mkdir(parents=True)
     (source_dir / "SKILL.md").write_text("# Shared", encoding="utf-8")
@@ -298,6 +299,7 @@ def test_context_backend_construction_does_not_sync_skill_projection(monkeypatch
 
     user_skill = projection_service.get_user_skills_root_dir("user-1") / "shared-skill"
     assert not user_skill.exists()
+    assert not (tmp_path / "skill-projections").exists()
 
 
 def test_create_agent_filesystem_middleware_uses_outputs_for_internal_artifacts() -> None:

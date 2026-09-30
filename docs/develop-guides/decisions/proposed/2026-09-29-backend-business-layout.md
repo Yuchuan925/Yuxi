@@ -285,8 +285,7 @@ backend/yuxi/
 │   │   ├── repositories/
 │   │   │   └── dashboard.py  # [移改] Y/repositories/dashboard_repository.py；跨域只读统计；不写其他业务状态
 │   │   ├── dashboard.py  # [移改] Y/services/dashboard_service.py
-│   │   ├── models.py  # [拆] Y/storage/postgres/models_business.py；ConfigOption、OperationLog
-│   │   ├── operation_log.py  # [移改] Y/services/operation_log_service.py
+│   │   ├── models.py  # [拆] Y/storage/postgres/models_business.py；ConfigOption
 │   │   ├── options.py  # [移改] Y/config/options.py；系统级持久配置、缓存与失效
 │   │   └── readiness.py  # [移改] Y/services/readiness_service.py
 │   ├── tasks/

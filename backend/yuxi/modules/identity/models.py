@@ -85,9 +85,6 @@ class User(Base):
     is_deleted = Column(Integer, nullable=False, default=0, index=True)  # 是否已删除：0=否，1=是
     deleted_at = Column(DateTime, nullable=True)  # 删除时间
 
-    # 关联操作日志
-    operation_logs = relationship("OperationLog", back_populates="user", cascade="all, delete-orphan")
-
     # 关联部门
     department = relationship("Department", back_populates="users")
 

@@ -42,8 +42,8 @@ Yuxi 始终交付完整知识能力。API 注册知识库、图谱、评估、Da
 - `modules/agents` 拥有 Input 接收、FIFO 调度、Turn/Run、消息、事件、运行租约与 LangGraph Agent runtime。`services` 编排用例，`repositories` 查询持久状态，`models` 定义 ORM；`runtime` 放 graph、middleware、backends 和上下文。
 - `modules/knowledge` 拥有知识库、分块、检索、图谱与评估的业务状态；`modules/documents` 负责文档格式与资源处理，调用 `infrastructure/document_parsing` 中的 OCR、PDF、Office 和 ZIP 引擎。
 - `modules/workspace` 拥有 UserWorkspace 的路径映射、no-follow 文件操作、Workdir 和预览；Agent 沙盒的 runtime 虚拟路径由 Agent backend 单独拥有。
-- `modules/identity` 拥有用户、部门、权限、凭据与 OIDC 账号用例；`modules/extensions` 拥有 Skills、MCP 与工具目录；`modules/models` 拥有模型适配和供应商配置。
-- `modules/schedules` 拥有用户定时 Agent 定义和 occurrence；`modules/tasks` 拥有独立 Durable Task 状态、registry 和投递；`modules/system` 拥有系统配置、Dashboard 与操作记录。
+- `modules/identity` 拥有用户、部门、权限、凭据与 OIDC 账号用例，以及 Public API 的 Key 校验与 App/end_user 身份解析；`modules/extensions` 拥有 Skills、MCP 与工具目录；`modules/models` 拥有模型适配和供应商配置。
+- `modules/schedules` 拥有用户定时 Agent 定义和 occurrence；`modules/tasks` 拥有独立 Durable Task 状态、registry 和投递；`modules/system` 拥有系统配置与 Dashboard。
 
 `modules/extensions/skills` 按共享索引、个人来源、草稿、文件编辑和投影组织用例。共享编辑通过文件修订值拒绝过期保存，读取、运行快照与投影复制持有共享行锁；授权变更按共享行锁、用户投影锁的顺序提交并刷新投影。个人 Skill 文件由 `personal.py` 在 UserWorkspace 边界访问。
 
@@ -102,7 +102,7 @@ Yuxi 始终交付完整知识能力。API 注册知识库、图谱、评估、Da
 - `/api/system/health` 只表达 API 进程 liveness；Compose 以 `/api/system/ready` 判断启动完成、PostgreSQL/Redis 可用且存在完成启动的兼容 worker。worker 同时续租短 TTL ARQ 消费健康、AgentRun lease reconciliation 与 Durable Task reconciliation 成功事实；持久 key、超长 TTL、错误 Redis DSN 或持续无法收敛失联执行都不能维持 readiness。业务正确性仍由真实链路测试证明。
 - Yuxi 数据库 Schema 只由 `schema-init` 在 PostgreSQL advisory lock 内修改并记录 business/knowledge 域版本；API 与 worker 不建表或执行收敛 DDL，并在任一域版本缺失、过旧或过新时拒绝启动。
 - 内置 Skills 是默认 Agent shipping contract 的 required 组成，API/worker 通过 PostgreSQL advisory lock 串行同步；内置 MCP 定义是 optional，但失败必须形成可观测 degraded 而非被组件内部吞掉。
-- 跨 repository 的身份管理用例只有一个 service 事务 Owner；Department、User 与强制 OperationLog 同一提交。API Key 由独立服务端主密钥和客户端幂等 ID 确定性派生，只保存 hash；原始创建意图使用不可变指纹校验，撤销保留 request-id tombstone，同一请求可恢复响应但不能复活已撤销凭据。
+- 跨 repository 的身份管理用例只有一个 service 事务 Owner；Department 与 User 同一提交。API Key 由独立服务端主密钥和客户端幂等 ID 确定性派生，只保存 hash；原始创建意图使用不可变指纹校验，撤销保留 request-id tombstone，同一请求可恢复响应但不能复活已撤销凭据。
 - 前端 API 调用集中在 `web/src/apis`，组件不要散落拼接普通 HTTP 接口。
 - 智能体能力通过 context、middleware、toolkits、Skills、MCP 和 backends 组合；不要把知识库、沙盒或扩展逻辑硬编码进单个页面或路由。
 - Skill 的依赖工具只有在对应 Skill 被显式预加载或动态激活后才对模型开放；基础工具与受 Skill 门控的工具保持边界。

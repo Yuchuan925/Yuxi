@@ -50,7 +50,7 @@ services:
     build:
       context: .
       dockerfile: docker/api.Dockerfile
-    image: ${COMPOSE_PROJECT_NAME:-yuxi}-api:${YUXI_VERSION:-0.7.3}
+    image: ${COMPOSE_PROJECT_NAME:-yuxi}-api:${YUXI_VERSION:-0.8.0.dev0}
     working_dir: /app
     user: "1000:1000"
     networks:
@@ -99,7 +99,7 @@ services:
     build:
       context: .
       dockerfile: docker/api.Dockerfile
-    image: ${COMPOSE_PROJECT_NAME:-yuxi}-api:${YUXI_VERSION:-0.7.3}
+    image: ${COMPOSE_PROJECT_NAME:-yuxi}-api:${YUXI_VERSION:-0.8.0.dev0}
     working_dir: /app
     user: "1000:1000"
     networks:
@@ -147,7 +147,7 @@ services:
     build:
       context: .
       dockerfile: docker/api.Dockerfile
-    image: ${COMPOSE_PROJECT_NAME:-yuxi}-api:${YUXI_VERSION:-0.7.3}
+    image: ${COMPOSE_PROJECT_NAME:-yuxi}-api:${YUXI_VERSION:-0.8.0.dev0}
     working_dir: /app
     networks:
       - app-network
@@ -167,7 +167,7 @@ services:
     build:
       context: ./docker/sandbox_provisioner
       dockerfile: Dockerfile
-    image: ${COMPOSE_PROJECT_NAME:-yuxi}-sandbox-provisioner:${YUXI_VERSION:-0.7.3}
+    image: ${COMPOSE_PROJECT_NAME:-yuxi}-sandbox-provisioner:${YUXI_VERSION:-0.8.0.dev0}
     volumes:
       - ${YUXI_STATE_DIR:-./docker/volumes}/yuxi/threads:/app/user-data
       - ${YUXI_STATE_DIR:-./docker/volumes}/yuxi/skill-projections:/app/skill-projections
@@ -232,7 +232,7 @@ services:
       context: .
       dockerfile: docker/web.Dockerfile
       target: production
-    image: ${COMPOSE_PROJECT_NAME:-yuxi}-web:${YUXI_VERSION:-0.7.3}
+    image: ${COMPOSE_PROJECT_NAME:-yuxi}-web:${YUXI_VERSION:-0.8.0.dev0}
     ports:
       - "${YUXI_WEB_PORT:-80}:80"
     depends_on:

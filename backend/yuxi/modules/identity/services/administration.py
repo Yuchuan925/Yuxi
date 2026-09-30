@@ -2,13 +2,11 @@
 
 from dataclasses import dataclass
 
-from fastapi import Request
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from yuxi.modules.identity.repositories.departments import DepartmentRepository
 from yuxi.modules.identity.repositories.users import UserRepository
-from yuxi.modules.system.operation_log import log_operation
 from yuxi.modules.identity.models import Department, User
 from yuxi.modules.identity.security import AuthUtils
 from yuxi.shared.datetime import utc_now_naive
@@ -70,10 +68,8 @@ async def create_department_with_admin(
     admin_uid: str,
     admin_password: str,
     admin_phone: str | None,
-    actor_user_id: int,
-    request: Request | None = None,
 ) -> DepartmentAdminCreation:
-    """原子创建部门、首位管理员和强制审计事实。"""
+    """原子创建部门和首位管理员。"""
 
     password_hash = AuthUtils.hash_password(admin_password)
     try:
@@ -97,13 +93,6 @@ async def create_department_with_admin(
         except IntegrityError as exc:
             raise IdentityConflictError("部门名称、管理员用户ID、用户名或手机号已存在") from exc
 
-        await log_operation(
-            db,
-            actor_user_id,
-            "创建部门",
-            f"创建部门: {name}，并创建管理员: {admin_uid}",
-            request,
-        )
         await db.commit()
         return DepartmentAdminCreation(department=department, admin=admin)
     except Exception:
@@ -118,7 +107,7 @@ async def initialize_system_admin(
     password: str,
     phone_number: str | None,
 ) -> DepartmentAdminCreation:
-    """串行、原子地创建默认部门、超级管理员和初始化审计。"""
+    """串行、原子地创建默认部门和超级管理员。"""
 
     password_hash = AuthUtils.hash_password(password)
     try:
@@ -151,7 +140,6 @@ async def initialize_system_admin(
         except IntegrityError as exc:
             raise IdentityConflictError("初始化身份事实与现有数据库约束冲突") from exc
 
-        await log_operation(db, admin.id, "系统初始化", "创建超级管理员账户")
         await db.commit()
         return DepartmentAdminCreation(department=department, admin=admin)
     except SystemAlreadyInitializedError:

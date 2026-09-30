@@ -694,6 +694,23 @@ def test_sync_user_accessible_skills(
             assert (entry / "SKILL.md").read_text(encoding="utf-8") == content
 
 
+def test_get_user_skills_root_dir_does_not_create_directory(tmp_path: Path):
+    """查询投影路径不创建用户目录或存储根目录。"""
+    root = projection_service.get_user_skills_root_dir("user-1")
+
+    assert root == tmp_path / "skill-projections" / "user-1"
+    assert not root.parent.exists()
+
+
+def test_sync_empty_skill_projection_creates_directory(tmp_path: Path):
+    """没有授权 Skill 时，同步仍创建可挂载的空投影目录。"""
+    root = projection_service.sync_user_accessible_skills("user-1", {})
+
+    assert root == tmp_path / "skill-projections" / "user-1"
+    assert root.is_dir()
+    assert list(root.iterdir()) == []
+
+
 def test_unchanged_skill_projection_does_not_create_staging(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     """重复刷新直接保留既有文件，不再复制内容相同的 staging。"""
     source = tmp_path / "sources/demo"

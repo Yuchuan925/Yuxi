@@ -24,7 +24,7 @@ pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
 def _create_workdir(uid: str):
     """在真实 UserWorkspace 中创建测试 Workdir。"""
     ensure_user_workspace(uid)
-    get_user_skills_root_dir(uid)
+    get_user_skills_root_dir(uid).mkdir(parents=True, exist_ok=True)
     workdir_id = str(uuid.uuid4())
     workdir_path = f"projects/{workdir_id}"
     host_workdir = user_workspace_dir(uid) / "projects" / workdir_id

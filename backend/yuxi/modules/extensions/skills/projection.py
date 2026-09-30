@@ -92,6 +92,7 @@ def sync_user_accessible_skills(
     }
     accessible_slugs = set(normalized_sources)
     with _get_user_skills_lock(uid), _user_skills_file_lock(uid):
+        user_skills_root.mkdir(parents=True, exist_ok=True)
         for entry in user_skills_root.iterdir():
             if entry.name in accessible_slugs:
                 continue
@@ -132,13 +133,11 @@ async def lock_accessible_shared_skills_for_projection(db: AsyncSession, user: U
 
 
 def get_user_skills_root_dir(uid: str) -> Path:
-    """返回当前用户获授权的共享 Skill 只读投影根目录。"""
+    """计算当前用户共享 Skill 投影根路径，不创建目录。"""
     from yuxi.modules.workspace.paths import workspace_uid_dirname
 
     safe_uid = workspace_uid_dirname(uid)
-    root = get_skill_projection_dir() / safe_uid
-    root.mkdir(parents=True, exist_ok=True)
-    return root
+    return get_skill_projection_dir() / safe_uid
 
 
 def skill_dirs_equal(dir1: Path, dir2: Path) -> bool:

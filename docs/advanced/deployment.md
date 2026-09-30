@@ -81,6 +81,8 @@ docker compose --env-file .env.prod -f docker-compose.prod.yml --profile all up 
 
 新部署应使用空 PostgreSQL 数据库和独立的 Yuxi 文件目录。Schema 初始化进程负责建立当前表结构、版本标记和 LangGraph checkpoint 表。已有当前版本数据库可以直接重启同版本服务；旧版本数据和未版本化的旧表不受支持，需使用对应旧版部署处理数据后再规划独立的数据导入。
 
+应用不再写入身份操作日志，新库不创建 `operation_logs` 表。已有数据库中的历史表可在备份并停止旧版服务后执行 `DROP TABLE IF EXISTS operation_logs;` 清理；此操作永久删除历史记录，Schema 初始化进程不会自动执行。
+
 当前仓库只提供沙盒 provisioner 的 Kubernetes backend，不提供完整的应用 Deployment、StorageClass 或 Secret。部署时预先创建 `USER_DATA_PVC` 承载用户 Workspace，并创建 `SKILLS_PVC` 承载 Skill 数据。
 
 ## 4. 验证部署

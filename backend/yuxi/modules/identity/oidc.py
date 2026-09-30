@@ -4,7 +4,6 @@
 """
 
 from yuxi.infrastructure.oidc.client import OIDCProviderMetadata, exchange_code_for_token, get_userinfo
-from yuxi.modules.system.operation_log import log_operation
 
 
 import hashlib
@@ -662,7 +661,7 @@ async def get_oidc_department_name(db, department_id: int) -> str | None:
     return result.scalar_one_or_none()
 
 
-async def build_oidc_login_response(db, extracted_info: dict, request: Any = None) -> tuple[dict | None, str | None]:
+async def build_oidc_login_response(db, extracted_info: dict) -> tuple[dict | None, str | None]:
     """验证账号绑定并构造一次性 code 的登录数据。"""
     # 查找用户：总是先通过 sub 查找，保证绑定关系可验证
     sub = extracted_info["sub"]
@@ -741,8 +740,6 @@ async def build_oidc_login_response(db, extracted_info: dict, request: Any = Non
 
     token_data = {"sub": str(user.id)}
     jwt_token = AuthUtils.create_access_token(token_data)
-
-    await log_operation(db, user.id, "OIDC 登录", request=request)
 
     department_name = None
     if user.department_id:

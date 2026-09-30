@@ -1,11 +1,10 @@
-import hashlib
-
 from fastapi import Depends, Header, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from yuxi.infrastructure.postgres.manager import pg_manager
-from yuxi.modules.identity.models import APIKey, User
+from yuxi.modules.identity.models import User
+from yuxi.modules.identity.services.public_auth import verify_api_key
 from yuxi.shared.datetime import utc_now_naive
 
 from yuxi.modules.identity.security import AuthUtils
@@ -29,33 +28,6 @@ KNOWLEDGE_TOOL_PATHS = frozenset(
 async def get_db():
     async with pg_manager.get_async_session_context() as db:
         yield db
-
-
-async def _verify_api_key(key: str, db: AsyncSession) -> tuple[User | None, APIKey | None]:
-    """验证 API Key 并返回关联用户和 APIKey 对象"""
-    key_hash = hashlib.sha256(key.encode()).hexdigest()
-
-    result = await db.execute(select(APIKey).filter(APIKey.key_hash == key_hash))
-    api_key = result.scalar_one_or_none()
-
-    if api_key is None:
-        return None, None
-
-    if not api_key.is_enabled or api_key.revoked_at is not None:
-        return None, None
-
-    if api_key.expires_at and utc_now_naive() > api_key.expires_at:
-        return None, None
-
-    if not api_key.user_id:
-        return None, None
-
-    result = await db.execute(select(User).filter(User.id == api_key.user_id))
-    user = result.scalar_one_or_none()
-    if user and not user.is_deleted and user.user_kind == "human":
-        return user, api_key
-
-    return None, None
 
 
 # 获取当前用户（异步版本）
@@ -83,7 +55,7 @@ async def get_current_user(
     # 根据 token 前缀判断认证方式
     if token.startswith("yxkey_"):
         # API Key 认证
-        user, api_key_obj = await _verify_api_key(token, db)
+        user, api_key_obj = await verify_api_key(token, db)
         if user is not None and api_key_obj is not None:
             request.state.api_key = api_key_obj
             request.state.app_id = api_key_obj.app_id

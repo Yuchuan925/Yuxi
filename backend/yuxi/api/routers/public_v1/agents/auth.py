@@ -6,9 +6,9 @@ from fastapi import Depends, Header, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from yuxi.api.dependencies.auth import get_db, get_required_user
-from yuxi.modules.agents.services.directory import resolve_public_user
 from yuxi.modules.agents.services.scope import ActorScope
 from yuxi.modules.identity.models import APIKey, User
+from yuxi.modules.identity.services.public_auth import InvalidEndUserId, PublicIdentityDenied, resolve_public_user
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,15 +38,10 @@ async def require_public_context(
 ) -> PublicAgentContext:
     """将产品 JWT、完整 Key 和 APP Key 映射到各自的用户作用域。"""
     api_key = getattr(request.state, "api_key", None)
-    if api_key is None:
-        if end_user_id is not None:
-            raise HTTPException(status_code=403, detail="X-End-User-Id 仅适用于 API Key")
-        return PublicAgentContext(user=owner, owner=owner, api_key=None)
-    if not api_key.app_id:
-        if api_key.access_level != "full":
-            raise HTTPException(status_code=403, detail="Agents Public API 需要绑定 app_id 的 API Key")
-        if end_user_id is not None:
-            raise HTTPException(status_code=403, detail="无 APP 的 full Key 不接受 X-End-User-Id")
-        return PublicAgentContext(user=owner, owner=owner, api_key=api_key)
-    user = await resolve_public_user(owner=owner, api_key=api_key, end_user_id=end_user_id, db=db)
+    try:
+        user = await resolve_public_user(owner=owner, api_key=api_key, end_user_id=end_user_id, db=db)
+    except InvalidEndUserId as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except PublicIdentityDenied as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
     return PublicAgentContext(user=user, owner=owner, api_key=api_key)

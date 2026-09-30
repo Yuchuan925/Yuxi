@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import timedelta
+
 import pytest
 import pytest_asyncio
 from fastapi import HTTPException
@@ -7,11 +9,12 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from yuxi.api.routers.identity.auth import delete_user
 from yuxi.api.routers.identity.users import APIKeyCreate, create_api_key, get_accessible_api_key
-from yuxi.api.dependencies.auth import _verify_api_key
+from yuxi.modules.identity.services.public_auth import verify_api_key
 from yuxi.modules.identity.repositories.api_keys import APIKeyRepository
 from yuxi.modules.identity.models import APIKey, Department, User
 from yuxi.infrastructure.postgres.base import Base
 from yuxi.modules.identity.security import AuthUtils
+from yuxi.shared.datetime import utc_now_naive
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.unit]
 
@@ -107,7 +110,7 @@ async def test_api_key_rejects_deleted_bound_user_without_department_or_superadm
     db.add(api_key)
     await db.commit()
 
-    user, verified_key = await _verify_api_key(secret, db)
+    user, verified_key = await verify_api_key(secret, db)
 
     assert user is None
     assert verified_key is None
@@ -125,7 +128,7 @@ async def test_api_key_without_user_binding_is_rejected_before_department_mappin
     )
     fake_db = _FakeApiKeySession(api_key)
 
-    user, verified_key = await _verify_api_key(secret, fake_db)
+    user, verified_key = await verify_api_key(secret, fake_db)
 
     assert user is None
     assert verified_key is None
@@ -218,8 +221,32 @@ async def test_delete_user_disables_owned_api_keys(session):
     await db.commit()
     await db.refresh(api_key)
 
-    result = await delete_user(session["regular_user"].id, None, session["superadmin"], db)
+    result = await delete_user(session["regular_user"].id, session["superadmin"], db)
     await db.refresh(api_key)
 
     assert result["success"] is True
     assert api_key.is_enabled is False
+
+
+@pytest.mark.parametrize("key_state", ["valid", "disabled", "revoked", "expired"])
+async def test_identity_verifies_api_key_lifecycle(session, key_state):
+    """只有未停用、未撤销、未过期的凭据返回绑定身份。"""
+    db = session["db"]
+    owner = session["regular_user"]
+    secret, key_hash, key_prefix = AuthUtils.generate_api_key()
+    key = APIKey(
+        key_hash=key_hash,
+        key_prefix=key_prefix,
+        name="lifecycle key",
+        user_id=owner.id,
+        created_by=str(owner.id),
+        is_enabled=key_state != "disabled",
+        revoked_at=utc_now_naive() if key_state == "revoked" else None,
+        expires_at=utc_now_naive() - timedelta(seconds=1) if key_state == "expired" else None,
+    )
+    db.add(key)
+    await db.commit()
+
+    result = await verify_api_key(secret, db)
+    assert result == ((owner, key) if key_state == "valid" else (None, None))
+    assert await verify_api_key("yxkey_unknown", db) == (None, None)

@@ -5,7 +5,7 @@
 
 import re
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -13,7 +13,6 @@ from yuxi.api.dependencies.auth import get_admin_user, get_db, get_superadmin_us
 from yuxi.modules.identity.repositories.departments import DepartmentRepository
 from yuxi.modules.identity.repositories.users import UserRepository
 from yuxi.modules.identity.services.administration import IdentityConflictError, create_department_with_admin
-from yuxi.modules.system.operation_log import log_operation
 from yuxi.modules.identity.services.usernames import is_valid_phone_number
 from yuxi.modules.identity.models import User
 
@@ -82,7 +81,6 @@ async def get_department(
 @department.post("", response_model=DepartmentResponse, status_code=status.HTTP_201_CREATED)
 async def create_department(
     department_data: DepartmentCreate,
-    request: Request,
     current_user: User = Depends(get_superadmin_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -134,8 +132,6 @@ async def create_department(
             admin_uid=admin_uid,
             admin_password=department_data.admin_password,
             admin_phone=admin_phone,
-            actor_user_id=current_user.id,
-            request=request,
         )
     except IdentityConflictError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
@@ -147,7 +143,6 @@ async def create_department(
 async def update_department(
     department_id: int,
     department_data: DepartmentUpdate,
-    request: Request,
     current_user: User = Depends(get_superadmin_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -173,9 +168,6 @@ async def update_department(
     if department is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="部门不存在")
 
-    # 记录操作
-    await log_operation(db, current_user.id, "更新部门", f"更新部门: {department.name}", request)
-
     # 获取部门下用户数量
     user_count = await repository.count_users(department_id)
     await db.commit()
@@ -186,7 +178,6 @@ async def update_department(
 @department.delete("/{department_id}", status_code=status.HTTP_200_OK)
 async def delete_department(
     department_id: int,
-    request: Request,
     current_user: User = Depends(get_superadmin_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -205,12 +196,6 @@ async def delete_department(
     if deletion is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="部门不存在")
 
-    # 记录操作
-    if deletion.migrated_user_count:
-        detail = f"删除部门: {deletion.name}，迁移 {deletion.migrated_user_count} 个用户到默认部门"
-    else:
-        detail = f"删除部门: {deletion.name}"
-    await log_operation(db, current_user.id, "删除部门", detail, request)
     await db.commit()
 
     return {"success": True, "message": "部门已删除"}
