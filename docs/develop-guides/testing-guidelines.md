@@ -9,7 +9,7 @@
 | Unit | `backend/test/unit` | 纯逻辑、边界值、状态转换和失败分支 | 不依赖运行中的 Docker 服务 |
 | Integration | `backend/test/integration` | 真实 HTTP、认证、事务、锁、Schema、lease 和服务副作用 | 依赖 Docker Compose |
 | E2E | `backend/test/e2e` | Run、SSE、worker、文件落盘和完整用户链路 | 依赖完整 Compose，数量少、速度慢 |
-| Web unit | `web/test/unit` | 前端状态、组件和交互逻辑 | 通过 `pnpm test:unit` |
+| Web unit | `frontend/test/unit` | 前端状态、组件和交互逻辑 | 通过 `pnpm test:unit` |
 | CLI | `packages/yuxi-cli/tests` | CLI 配置、命令和客户端行为 | 独立 Python 包 |
 
 同一个子项目只保留一个测试根目录，不要同时创建 `test` 和 `tests`。
@@ -105,9 +105,9 @@ backend/test/run_tests.sh all
 前端：
 
 ```bash
-docker compose exec web pnpm run lint:check
-docker compose exec web pnpm run test:unit
-docker compose exec web pnpm run build
+docker compose exec frontend pnpm run lint:check
+docker compose exec frontend pnpm run test:unit
+docker compose exec frontend pnpm run build
 ```
 
 CLI：

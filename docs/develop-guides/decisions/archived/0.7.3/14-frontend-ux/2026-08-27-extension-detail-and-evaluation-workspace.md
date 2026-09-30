@@ -2,7 +2,7 @@
 
 状态：archived
 类型：feature
-Owner：web/src/components/shared/ExtensionDetailLayout.vue
+Owner：frontend/src/components/shared/ExtensionDetailLayout.vue
 
 ## 问题
 
@@ -12,7 +12,7 @@ Skill、MCP 与知识库详情分别维护标题栏、Tab、内容宽度和响�
 
 ## 决策
 
-将详情布局收敛到 `web/src/components/shared/ExtensionDetailLayout.vue`。该组件只拥有全高页面、breadcrumb、actions、受控 Tabs、loading、empty、内容宽度和响应式装配，不读取业务数据、不判断权限、不发起 API。标准详情内容使用 768px 阅读宽度；知识库 panel 由调用方保持 100% 可用宽度。操作按钮颜色继续由 `web/src/assets/css/extensions.less` 持有，避免出现第二个视觉 Owner。
+将详情布局收敛到 `frontend/src/components/shared/ExtensionDetailLayout.vue`。该组件只拥有全高页面、breadcrumb、actions、受控 Tabs、loading、empty、内容宽度和响应式装配，不读取业务数据、不判断权限、不发起 API。标准详情内容使用 768px 阅读宽度；知识库 panel 由调用方保持 100% 可用宽度。操作按钮颜色继续由 `frontend/src/assets/css/extensions.less` 持有，避免出现第二个视觉 Owner。
 
 Skill 与 MCP 使用同一布局。Skill 将生效范围和运行依赖合并到“配置”页，但保留两个既有 API 的独立保存边界；项目结构默认隐藏，展开后作为唯一有完整边界的辅助区域。文件预览隐藏通用 header，由项目结构操作区调用 `AgentFilePreview.startEditing`，保存和取消仍由预览组件持有。MCP 信息、编辑和工具列表移除重复外层卡片，测试连接、编辑和工具开关仍由 `McpDetailView.vue` 持有。
 
@@ -47,4 +47,4 @@ Skill 与 MCP 使用同一布局。Skill 将生效范围和运行依赖合并到
 | 思维导图只从文件工具栏打开，卸载后停止渲染；只读连接器不能进入无效详情 | 导图仍占一级 Tab、关闭后继续任务，或直接 URL 停留在空详情 | `FileTable.vue`、`MindMapSection.vue`、知识库列表与详情 | 知识库布局 unit、真实弹窗与路由检查 | 恢复 mindmap Tab、删除卸载守卫或只读回跳后失败 | Passed；真实 connector 数据未验证 |
 | 评估二级页统一展示基准与近期运行，基准三级页可深链接、只读取关联结果并刷新运行中记录 | 两个一级评估 Tab、恢复浮层、混入其他基准运行、运行状态永久停滞或卸载后继续轮询 | 评估工作台、三级页与路由 | 评估 source unit；真实基准及多运行切换待补 | 恢复 benchmarks Tab、删除 dataset 过滤、串行轮询、迟到响应守卫或卸载清理后 source unit 失败 | Source unit passed；真实运行中页面未验证 |
 | 三种结果筛选在服务端分页前执行并返回准确总数 | 前端只过滤当前页，或答案错误与低召回语义混淆 | 评估 router/service | 后端筛选分页 unit 与非法值负向测试 | 对同一结果集切换三种筛选并核对记录与总数 | Passed；真实 HTTP integration 未运行 |
-| 改动符合 token、暗色、响应式、Lint、unit、build 与工程契约 | 硬编码主题、页面横向溢出、模板或决策链接失效 | `web/`、工程契约脚本 | 浅/深色与 375px 页面；Lint、153 个前端 Unit、1597 个后端 Unit、前端与文档 build、工程契约 | 任一 gate 或页面检查失败即拒绝交付 | Passed |
+| 改动符合 token、暗色、响应式、Lint、unit、build 与工程契约 | 硬编码主题、页面横向溢出、模板或决策链接失效 | `frontend/`、工程契约脚本 | 浅/深色与 375px 页面；Lint、153 个前端 Unit、1597 个后端 Unit、前端与文档 build、工程契约 | 任一 gate 或页面检查失败即拒绝交付 | Passed |

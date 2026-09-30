@@ -36,10 +36,10 @@ Owner：backend/package/yuxi/repositories/agent_repository.py
 | B 的运行配置只包含交集，数据库保留完整期望选择 | normalize_agent_context_config | 使用真实数据库用户与资源归一化，交集为 5，持久列表为 10 | 无权资源进入有效配置或持久列表收缩 | Passed |
 | 名称与模型保存不回写未修改资源，明确清空与全部策略 | AgentEditModal、配置表单与 store | 浏览器捕获真实 PUT，随后 GET 与 PostgreSQL 回读；前端 unit | 旧 store 整体提交在变动字段断言处失败 | Passed |
 
-相关后端回归位于 `test/unit/repositories/test_agent_repository.py`、`test/unit/services/test_agent_config_service.py` 和 `test/integration/api/test_agent_config_resource_authorization.py`。个人 Skill 自动可用的验证由[统一资源选择决策](../../../implemented/2026-09-27-explicit-resource-selection.md)记录。前端回归位于 `web/test/unit/agentConfigSave.test.js` 与 `web/test/unit/agentConfigUtils.test.js`。
+相关后端回归位于 `test/unit/repositories/test_agent_repository.py`、`test/unit/services/test_agent_config_service.py` 和 `test/integration/api/test_agent_config_resource_authorization.py`。个人 Skill 自动可用的验证由[统一资源选择决策](../../../implemented/2026-09-27-explicit-resource-selection.md)记录。前端回归位于 `frontend/test/unit/agentConfigSave.test.js` 与 `frontend/test/unit/agentConfigUtils.test.js`。
 
 真实 HTTP 集成测试在独立 Compose 槽位中完成，1 passed。最终简化后，在 main 开发环境运行 `docker compose exec -u 0 -T api uv run --no-sync --group test pytest test/unit -m "not slow" -q -o faulthandler_timeout=30`，1782 passed、50 skipped。默认用户的标准 `uv run --group test` 命令因容器内 lock 文件不可写而失败，使用现有依赖完成验证，没有修改依赖锁文件。默认用户的一次完整 unit 和 integration 停滞后被中断，不计为通过；以上结果来自后续串行完成的运行。
 
-`docker compose exec web pnpm run lint:check`、`pnpm run test:unit`（269 passed）和 `pnpm run build` 通过；工程契约检查及其 61 项单元测试、Ruff 0.16.4 对变动 Python 文件的检查与格式检查、相对链接检查、`pnpm --dir docs run build` 和 `git diff --check` 通过。浏览器验证覆盖浅深色和 1440、1024、768、375 像素宽度；375 像素下编辑弹窗无横向溢出，底层管理页已有页头溢出不在本次范围。
+`docker compose exec frontend pnpm run lint:check`、`pnpm run test:unit`（269 passed）和 `pnpm run build` 通过；工程契约检查及其 61 项单元测试、Ruff 0.16.4 对变动 Python 文件的检查与格式检查、相对链接检查、`pnpm --dir docs run build` 和 `git diff --check` 通过。浏览器验证覆盖浅深色和 1440、1024、768、375 像素宽度；375 像素下编辑弹窗无横向溢出，底层管理页已有页头溢出不在本次范围。
 
 本次没有执行真实 worker E2E，运行资源交集证据止于使用真实身份和数据库的归一化入口，不将其表述为完整模型调用验证。

@@ -2,7 +2,7 @@
 
 状态：archived
 类型：feature
-Owner：web/src/utils/messageGrouping.js
+Owner：frontend/src/utils/messageGrouping.js
 
 ## 问题
 
@@ -30,7 +30,7 @@ Owner：web/src/utils/messageGrouping.js
 
 ## 验证
 
-- `docker compose exec web node --test test/unit/agentRequestQueue.test.js`：覆盖纯推理、相邻推理与工具的顺序、正文和错误独立、原始消息不变，以及同消息不同分组的稳定唯一 key。旧实现因多出独立推理消息而失败。
-- `docker compose exec web node --test test/unit/toolRendering.test.js`：覆盖错误优先级、JSON/对象结果、分组失败计数、专用错误详情、子智能体覆盖、子运行失败与外层计数一致、0/false 结果及普通文本负例；旧实现的错误图标、文案、计数和详情断言失败。
-- `docker compose exec web pnpm run lint:check`、`docker compose exec web pnpm run test:unit`、`docker compose exec web pnpm run build` 验证前端回归与编译。
+- `docker compose exec frontend node --test test/unit/agentRequestQueue.test.js`：覆盖纯推理、相邻推理与工具的顺序、正文和错误独立、原始消息不变，以及同消息不同分组的稳定唯一 key。旧实现因多出独立推理消息而失败。
+- `docker compose exec frontend node --test test/unit/toolRendering.test.js`：覆盖错误优先级、JSON/对象结果、分组失败计数、专用错误详情、子智能体覆盖、子运行失败与外层计数一致、0/false 结果及普通文本负例；旧实现的错误图标、文案、计数和详情断言失败。
+- `docker compose exec frontend pnpm run lint:check`、`docker compose exec frontend pnpm run test:unit`、`docker compose exec frontend pnpm run build` 验证前端回归与编译。
 - 当前已执行上述两个 Node/Vite 真实组件渲染测试，以及 Web lint、unit 和 build；尚未执行 Playwright 浏览器探针，因此不同视口、主题和真实模型聊天链路仍未验证。

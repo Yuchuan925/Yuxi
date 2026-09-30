@@ -1,4 +1,4 @@
-# Web 约定
+# Frontend 约定
 
 本目录是 Vue 3 / Vite 前端。先阅读根 [AGENTS.md](../AGENTS.md)、[设计规范](../docs/develop-guides/design.md) 和 [ARCHITECTURE.md](../ARCHITECTURE.md)。
 
@@ -11,9 +11,9 @@
 提交前运行：
 
 ```bash
-docker compose exec web pnpm run lint:check
-docker compose exec web pnpm run test:unit
-docker compose exec web pnpm run build
+docker compose exec frontend pnpm run lint:check
+docker compose exec frontend pnpm run test:unit
+docker compose exec frontend pnpm run build
 ```
 
 UI 改动必须在真实页面验证，并提供最终截图或录屏；适用时覆盖浅/深色、响应式、loading、empty 和 error 状态。

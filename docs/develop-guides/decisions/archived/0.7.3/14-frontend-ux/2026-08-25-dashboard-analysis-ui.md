@@ -2,7 +2,7 @@
 
 状态：archived
 类型：feature
-Owner：web/src/components/dashboard/DashboardMetricCard.vue
+Owner：frontend/src/components/dashboard/DashboardMetricCard.vue
 
 ## 问题
 
@@ -30,14 +30,14 @@ Owner：web/src/components/dashboard/DashboardMetricCard.vue
 
 | 验收主张 | 直接证据 | 结果 |
 |---|---|---|
-| 两个 Dashboard Tab 共享指标卡、网格和普通数字结构 | `rg -n "<a-statistic|ant-statistic" web/src/components/dashboard web/src/assets/css/dashboard.css` 无匹配；`DashboardMetricCard` 与 `DashboardMetricGrid` 同时由系统概览和会话分析导入 | Passed |
+| 两个 Dashboard Tab 共享指标卡、网格和普通数字结构 | `rg -n "<a-statistic|ant-statistic" frontend/src/components/dashboard frontend/src/assets/css/dashboard.css` 无匹配；`DashboardMetricCard` 与 `DashboardMetricGrid` 同时由系统概览和会话分析导入 | Passed |
 | 会话统计可切换是否包含子智能体，且失败请求不提交新口径 | API、服务、仓储单元与 HTTP integration；`dashboard_thread_stats.test.js` 检查范围只在最新响应后提交 | Passed |
 | 审计列表默认排除删除项且可显式检索 | Dashboard service unit 与 `test_dashboard_router.py` HTTP integration | Passed |
 | 用户/智能体缺少头像时使用统一 fallback | `dashboard_thread_stats.test.js` 检查用户排行、智能体排行和审计列表的 `FallbackAvatar` 装配 | Passed |
 | 刷新与子智能体控件语义、摘要和排行结构成立 | `dashboard_thread_stats.test.js` 检查无刷新 spinner、switch、四项非 Token 摘要和共享色板 | Passed |
 | 用户活跃度返回 120 天并按连续月份分段 | 后端 unit；`buildHeatmapMonthSegments` unit | Passed |
 | 存储容量最多四位有效数字且单位分离 | `dashboard_thread_stats.test.js` 覆盖 KB、GB、PB 与零值 | Passed |
-| 前端工程检查 | `cd web && pnpm run lint:check && pnpm run test:unit && pnpm run build` | Passed；构建仅保留既有第三方注释和大 chunk warning |
+| 前端工程检查 | `cd frontend && pnpm run lint:check && pnpm run test:unit && pnpm run build` | Passed；构建仅保留既有第三方注释和大 chunk warning |
 | 1440px 浅色/深色与 1024px 响应式布局成立 | 真实 Compose 页面检查摘要为 4/2 列、图表为 2/1 列，1024px 文档无横向溢出；子智能体开关成功后更新为“包含” | Inspected |
 | 375px 窄屏摘要切为单列 | 真实 Compose 页面为单列；应用壳仍受既有 `--min-width: 450px` 约束而产生横向裁切 | Inspected；全局窄屏限制不由本决定拥有 |
 

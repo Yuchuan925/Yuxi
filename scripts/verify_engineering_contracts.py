@@ -67,11 +67,11 @@ WORKSPACE_HOST_PATH_EXPORTS = frozenset(
     }
 )
 PERSONAL_SKILL_WORKSPACE_OWNER = Path("backend/yuxi/modules/extensions/skills/personal.py")
-DIRECT_WEB_API_LITERAL = re.compile(r"(?P<quote>['\"`])/api(?:[/ ?]|(?P=quote))")
+DIRECT_FRONTEND_API_LITERAL = re.compile(r"(?P<quote>['\"`])/api(?:[/ ?]|(?P=quote))")
 AGENTS_FILE_BUDGETS = {
     "AGENTS.md": 5000,
     "backend/AGENTS.md": 2400,
-    "web/AGENTS.md": 1000,
+    "frontend/AGENTS.md": 1000,
     "docs/AGENTS.md": 3200,
 }
 AGENTS_LINK_PATTERN = re.compile(r"\[[^\]]+\]\(([^)\s]+)\)")
@@ -124,9 +124,9 @@ WORKFLOW_CONTRACTS = (
         ),
     ),
     WorkflowContract(
-        path=".github/workflows/web.yml",
+        path=".github/workflows/frontend.yml",
         commands=("pnpm run lint:check && pnpm run test:unit && pnpm run build",),
-        required_paths=("web/**", ".github/workflows/web.yml"),
+        required_paths=("frontend/**", ".github/workflows/frontend.yml"),
     ),
     WorkflowContract(
         path=".github/workflows/system-tests.yml",
@@ -919,8 +919,8 @@ def _validate_router_boundaries(root: Path, errors: list[str]) -> int:
     return checked
 
 
-def _validate_web_api_boundary(root: Path, errors: list[str]) -> int:
-    source_root = root / "web/src"
+def _validate_frontend_api_boundary(root: Path, errors: list[str]) -> int:
+    source_root = root / "frontend/src"
     checked = 0
     for path in sorted(source_root.rglob("*")):
         if not path.is_file() or path.suffix not in {".js", ".ts", ".vue"}:
@@ -931,9 +931,9 @@ def _validate_web_api_boundary(root: Path, errors: list[str]) -> int:
         for line_number, line in enumerate(
             path.read_text(encoding="utf-8").splitlines(), start=1
         ):
-            if DIRECT_WEB_API_LITERAL.search(line):
+            if DIRECT_FRONTEND_API_LITERAL.search(line):
                 errors.append(
-                    f"web/src/apis 外不得拥有 /api 路径：{path.relative_to(root)}:{line_number}"
+                    f"frontend/src/apis 外不得拥有 /api 路径：{path.relative_to(root)}:{line_number}"
                 )
     return checked
 
@@ -1007,7 +1007,7 @@ def verify(root: Path) -> tuple[list[str], dict[str, Any]]:
     agents_files = _validate_agents_files(resolved_root, errors)
     document_files = _validate_document_prose(resolved_root, errors)
     router_files = _validate_router_boundaries(resolved_root, errors)
-    web_files = _validate_web_api_boundary(resolved_root, errors)
+    frontend_files = _validate_frontend_api_boundary(resolved_root, errors)
     workspace_boundary_files = _validate_workspace_host_path_boundary(
         resolved_root, errors
     )
@@ -1021,7 +1021,7 @@ def verify(root: Path) -> tuple[list[str], dict[str, Any]]:
         "boundaries": {
             "document_files_checked": document_files,
             "router_files_checked": router_files,
-            "web_source_files_checked": web_files,
+            "frontend_source_files_checked": frontend_files,
             "workspace_boundary_files_checked": workspace_boundary_files,
         },
     }
@@ -1054,7 +1054,7 @@ def main() -> int:
             f"{len(projection['agents_files'])} agents files / "
             f"{projection['boundaries']['document_files_checked']} docs / "
             f"{projection['boundaries']['router_files_checked']} routers / "
-            f"{projection['boundaries']['web_source_files_checked']} web sources"
+            f"{projection['boundaries']['frontend_source_files_checked']} frontend sources"
         )
     return 0
 

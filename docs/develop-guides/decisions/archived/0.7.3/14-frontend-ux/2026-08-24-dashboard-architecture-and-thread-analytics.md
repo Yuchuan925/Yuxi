@@ -44,5 +44,5 @@ Owner：backend/package/yuxi/services/dashboard_service.py
 |---|---|---|---|---|---|
 | Dashboard 路由仅作为薄适配层，业务逻辑下沉至 Service | 路由内出现直接仓库组装或跨表计算 | `backend/server/routers/dashboard_router.py` | `uv run --group test pytest test/unit/services/test_dashboard_service.py` | 路由抛出未捕获内部错误 | Passed |
 | 知识库统计使用 SQL 聚合且排除文件夹 | 虚拟目录被计入文件数或 N+1 循环回退 | `backend/package/yuxi/services/knowledge_dashboard_service.py` | `uv run --group test pytest test/integration/api/test_dashboard_router.py` | 文件夹记录计入 file_type 聚合 | Passed |
-| 会话多维分析统计与审计抽屉正常加载 | 时序或深度分布维度缺失或无法展开工具调用 | `web/src/components/dashboard/ThreadStatsComponent.vue` | `pnpm run lint:check`；`pnpm run build`；`node --test test/**/*.test.js` | 缺少必要字段或图表销毁泄漏 | Passed |
+| 会话多维分析统计与审计抽屉正常加载 | 时序或深度分布维度缺失或无法展开工具调用 | `frontend/src/components/dashboard/ThreadStatsComponent.vue` | `pnpm run lint:check`；`pnpm run build`；`node --test test/**/*.test.js` | 缺少必要字段或图表销毁泄漏 | Passed |
 | 会话趋势与分页不会随范围线性放大 SQL 或伪造总数 | 90 天趋势逐日查询；末页与下一页判断错误 | `backend/package/yuxi/repositories/dashboard_repository.py` | `uv run --group test pytest test/unit/services/test_dashboard_service.py`；真实 HTTP integration | 恢复逐日循环或数组响应后统计/契约测试失败 | Passed |

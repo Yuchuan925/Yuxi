@@ -12,7 +12,7 @@ Yuxi 是一个面向 RAG、知识图谱和多智能体工作流的知识库平�
 
 核心开发服务包括：
 
-- `web`：Vue 3 / Vite 前端，挂载 `web/src` 并热重载。
+- `frontend`：Vue 3 / Vite 前端，挂载 `frontend/src` 并热重载。
 - `api`：FastAPI API 服务，挂载 `backend/yuxi` 和测试目录并热重载。
 - `worker`：ARQ worker，执行已经派发的 AgentRun 与注册的 Durable Task，并周期触发用户自建 Agent 定时任务；三者分别使用 PostgreSQL 中的运行租约、任务租约和调度锁闭合并发与恢复。
 - `schema-init`：Compose 中唯一修改 Yuxi 数据库 Schema 的一次性初始化进程，只为全新部署建立当前 Schema；API 与 worker 等待其成功后只校验 Schema 版本。
@@ -63,7 +63,7 @@ Yuxi 始终交付完整知识能力。API 注册知识库、图谱、评估、Da
 
 ## 前端代码地图
 
-前端是 Vue 3 + Vite 应用，业务入口集中在 `web/src`。
+前端是 Vue 3 + Vite 应用，业务入口集中在 `frontend/src`。
 
 - `main.js` 挂载应用，`App.vue` 是根组件。
 - `router` 定义公开首页、登录、智能体、工作区、智能体管理、扩展和仪表盘路由，并负责认证、管理员和超级管理员守卫。
@@ -79,7 +79,7 @@ Yuxi 始终交付完整知识能力。API 注册知识库、图谱、评估、Da
 
 一次普通智能体输入经过以下边界：
 
-1. `AgentView` 和 `AgentChatComponent` 收集文本、图片、附件、模型与审批配置，`web/src/apis/agent_api.js` 调用 Public Thread API。Session 路径只是同一 Thread 用例的协议命名适配。
+1. `AgentView` 和 `AgentChatComponent` 收集文本、图片、附件、模型与审批配置，`frontend/src/apis/agent_api.js` 调用 Public Thread API。Session 路径只是同一 Thread 用例的协议命名适配。
 2. `api/routers/public_v1/agents` 将 JWT 或 API Key 身份转为完整 ActorScope，并把有序消息和配置交给 `modules/agents/services/inputs.py`。接入事务锁定 Thread，验证作用域与幂等回执，保存 Input、Message 和 Receipt；配置在接收时冻结。
 3. `modules/agents/services/scheduler.py` 在线程锁下领取未暂停队列的 follow-up 队头，原子创建 Turn 与首个 pending Run。排队 Input 不预建 Turn。steer 绑定当前 Turn 并聚合到尚未领取的批次；等待回答或审批时拒绝普通消息。
 4. owning transaction 提交后才向 ARQ 投递 pending Run。恢复扫描可补投未成功投递的同一个 Run，不自动重试已经失败的工作。
@@ -103,7 +103,7 @@ Yuxi 始终交付完整知识能力。API 注册知识库、图谱、评估、Da
 - Yuxi 数据库 Schema 只由 `schema-init` 在 PostgreSQL advisory lock 内修改并记录 business/knowledge 域版本；API 与 worker 不建表或执行收敛 DDL，并在任一域版本缺失、过旧或过新时拒绝启动。
 - 内置 Skills 是默认 Agent shipping contract 的 required 组成，API/worker 通过 PostgreSQL advisory lock 串行同步；内置 MCP 定义是 optional，但失败必须形成可观测 degraded 而非被组件内部吞掉。
 - 跨 repository 的身份管理用例只有一个 service 事务 Owner；Department 与 User 同一提交。API Key 由独立服务端主密钥和客户端幂等 ID 确定性派生，只保存 hash；原始创建意图使用不可变指纹校验，撤销保留 request-id tombstone，同一请求可恢复响应但不能复活已撤销凭据。
-- 前端 API 调用集中在 `web/src/apis`，组件不要散落拼接普通 HTTP 接口。
+- 前端 API 调用集中在 `frontend/src/apis`，组件不要散落拼接普通 HTTP 接口。
 - 智能体能力通过 context、middleware、toolkits、Skills、MCP 和 backends 组合；不要把知识库、沙盒或扩展逻辑硬编码进单个页面或路由。
 - Skill 的依赖工具只有在对应 Skill 被显式预加载或动态激活后才对模型开放；基础工具与受 Skill 门控的工具保持边界。
 - Shipping 进程始终装配知识库、图谱和评估能力；解析器等只服务实际动作的重运行时继续保持惰性加载。

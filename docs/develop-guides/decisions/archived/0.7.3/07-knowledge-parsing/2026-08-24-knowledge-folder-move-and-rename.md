@@ -30,8 +30,8 @@ Owner：backend/package/yuxi/knowledge/base.py
 
 - `docker compose exec api uv run --no-sync --group test pytest test/integration/api/test_knowledge_router.py -k 'folder_rename_and_move or folder_mutations or concurrent_folder_moves or folder_move_waits'`：Passed；真实 HTTP 和 PostgreSQL 覆盖新建文件夹的创建时间与创建人、精确字段更新后的子文件夹名称与父关系、移动到文件夹、移动到根目录、缺失目标字段、非法名称、顺序目录环、并发相向移动，以及外部持有同一 advisory lock 时移动请求确定等待的负控。
 - `cd backend && uv run --group test pytest test/unit/plugins/test_dify_kb.py -k folder_rename`：Passed；验证只读 connector 拒绝重命名。
-- `cd web && pnpm exec node --test --test-concurrency=1 test/unit/knowledge_file_mutations.test.js`：Passed；验证前端 PUT 请求契约。
-- `docker compose exec web pnpm run lint:check`：Passed。
-- `docker compose exec web pnpm run build`：Passed；仅有既有编译宏和大 chunk 警告。
+- `cd frontend && pnpm exec node --test --test-concurrency=1 test/unit/knowledge_file_mutations.test.js`：Passed；验证前端 PUT 请求契约。
+- `docker compose exec frontend pnpm run lint:check`：Passed。
+- `docker compose exec frontend pnpm run build`：Passed；仅有既有编译宏和大 chunk 警告。
 - 真实浏览器：Passed；用户确认拖放和重命名通过，另以 Playwright 验证从真实子目录拖到“全部文件”后，服务端刷新显示子文件夹已位于根目录；验证数据均已清理。
 - `python3 scripts/verify_engineering_contracts.py`：Passed。

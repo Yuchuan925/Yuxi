@@ -10,7 +10,7 @@ Yuxi 是基于 LangGraph、FastAPI、Vue 和多种持久化服务构建的知识
 - [测试规范](docs/develop-guides/testing-guidelines.md)：unit、integration、E2E 的职责与命令。
 - [贡献指南](docs/develop-guides/contributing.md)：分支、独立 Review、commit 和 PR 流程。
 - [并行工作树与隔离运行环境](docs/develop-guides/parallel-worktree-environments.md)：同时运行多个分支、复用长期数据或处理 Schema 不兼容时加载。
-- 用户在当前任务中的明确要求优先于本文件；修改 `backend/`、`web/` 或 `docs/` 时同时遵循该子树的 `AGENTS.md`。子树规则只补充本目录，不复制回根文件。
+- 用户在当前任务中的明确要求优先于本文件；修改 `backend/`、`frontend/` 或 `docs/` 时同时遵循该子树的 `AGENTS.md`。子树规则只补充本目录，不复制回根文件。
 
 ## 任务与决策
 
@@ -58,7 +58,7 @@ docker compose exec api uv run --group test pytest test/unit -m "not slow"
 | 纯 Python / JS 逻辑 | 相关 unit，断言业务结果 | 触及数据库、缓存或文件副作用时补 integration |
 | API / 权限 / 持久化 | 真实 HTTP integration | 跨 worker、队列或用户主链路时补 E2E |
 | Run / FIFO / SSE / 沙盒 / 恢复 | E2E，验证最终状态与产物 | 依赖外部可选服务时记录环境与未验证范围 |
-| 前端交互 | lint + unit（[web/AGENTS.md](web/AGENTS.md)） | 行为关键时补 build 与真实页面验证 |
+| 前端交互 | lint + unit（[frontend/AGENTS.md](frontend/AGENTS.md)） | 行为关键时补 build 与真实页面验证 |
 | 文档与导航 | 相对链接检查 + docs build | 公开行为变化时与代码验证一起执行 |
 
 完整命令由 [测试规范](docs/develop-guides/testing-guidelines.md) 维护。

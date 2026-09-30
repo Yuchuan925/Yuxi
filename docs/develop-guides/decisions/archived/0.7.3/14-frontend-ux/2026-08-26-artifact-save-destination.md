@@ -10,7 +10,7 @@ Owner：backend/package/yuxi/services/artifact_service.py
 
 ## 决策
 
-后端服务拥有目标路径校验与文件写入；`web/src/components/AgentArtifactsCard.vue` 拥有保存交互。保存按钮打开目标目录弹窗，默认选中 `/saved_artifacts`，并复用 `WorkspacePathPicker` 浏览和新建工作区目录。
+后端服务拥有目标路径校验与文件写入；`frontend/src/components/AgentArtifactsCard.vue` 拥有保存交互。保存按钮打开目标目录弹窗，默认选中 `/saved_artifacts`，并复用 `WorkspacePathPicker` 浏览和新建工作区目录。
 
 保存 API 接受可选的 `destination_path`，以 Workspace scope 的绝对路径表示。字段缺省或显式选择 `/saved_artifacts` 时保持默认入口可按需创建的兼容行为；其他显式目标必须是已存在的真实目录。服务端拒绝父目录跳转、runtime 路径、URL、反斜杠路径、普通文件和不可访问目标，并通过 Workspace no-follow 文件能力复制内容。显式目标写入禁止创建父目录，因此目录在校验后被删除时保存失败。目标同名文件存在时沿用原有自动改名语义。
 

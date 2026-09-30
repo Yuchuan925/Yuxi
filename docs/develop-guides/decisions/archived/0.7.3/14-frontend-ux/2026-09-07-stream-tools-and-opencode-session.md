@@ -2,7 +2,7 @@
 
 状态：archived
 类型：bug-fix
-Owner：web/src/composables/useAgentStreamHandler.js
+Owner：frontend/src/composables/useAgentStreamHandler.js
 
 ## 问题
 
@@ -10,7 +10,7 @@ Owner：web/src/composables/useAgentStreamHandler.js
 
 ## 决策
 
-前端 loading 只消费当前语义 stream_event；`web/src/utils/messageProcessor.js` 统一使用 name/args，首块也参与归并，完整事件覆盖对应工具快照，增量仅追加参数。工具结果按同一 Run 的调用 ID 关联，不添加旧 msg 格式兼容。展开内容采用现有 8px 间距节奏，收起不留空白。
+前端 loading 只消费当前语义 stream_event；`frontend/src/utils/messageProcessor.js` 统一使用 name/args，首块也参与归并，完整事件覆盖对应工具快照，增量仅追加参数。工具结果按同一 Run 的调用 ID 关联，不添加旧 msg 格式兼容。展开内容采用现有 8px 间距节奏，收起不留空白。
 
 `backend/package/yuxi/models/chat.py` 为 OpenCode 与 OpenCode Go 的请求附加 Yuxi User-Agent 和 x-opencode-session，遵循[官方客户端要求](https://opencode.ai/docs/go/#where-can-i-use-it)。Agent 主模型、动态模型与摘要器显式传入 Thread ID；无会话的独立模型操作使用实例级随机 ID。其他供应商不附加该头，不更改认证或持久化配置。
 

@@ -2,7 +2,7 @@
 
 状态：archived
 类型：feature
-Owner：web/src/components/AgentInputArea.vue
+Owner：frontend/src/components/AgentInputArea.vue
 
 ## 问题
 

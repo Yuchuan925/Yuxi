@@ -19,7 +19,7 @@ class BumpVersionScriptTests(unittest.TestCase):
             "backend/uv.lock": (
                 'name = "yuxi"\nversion = "0.7.2b1"\n'
             ),
-            "web/package.json": '{\n  "version": "0.7.2.beta1"\n}\n',
+            "frontend/package.json": '{\n  "version": "0.7.2.beta1"\n}\n',
             "docker-compose.yml": "\n".join(
                 f"image: ${{COMPOSE_PROJECT_NAME:-yuxi}}-{name}:${{YUXI_VERSION:-0.7.2.beta1}}"
                 for name in (
@@ -27,13 +27,13 @@ class BumpVersionScriptTests(unittest.TestCase):
                     "api",
                     "api",
                     "sandbox-provisioner",
-                    "web",
+                    "frontend",
                 )
             )
             + "\n",
             "docker-compose.prod.yml": "\n".join(
                 f"image: ${{COMPOSE_PROJECT_NAME:-yuxi}}-{name}:${{YUXI_VERSION:-0.7.2.beta1}}"
-                for name in ("api", "api", "api", "sandbox-provisioner", "web")
+                for name in ("api", "api", "api", "sandbox-provisioner", "frontend")
             )
             + "\n",
             "README.md": (
@@ -78,7 +78,7 @@ class BumpVersionScriptTests(unittest.TestCase):
             current_paths = [
                 "backend/pyproject.toml",
                 "backend/uv.lock",
-                "web/package.json",
+                "frontend/package.json",
                 "docker-compose.yml",
                 "docker-compose.prod.yml",
                 "README.md",

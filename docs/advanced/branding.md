@@ -33,7 +33,7 @@ footer:
   privacy_policy_url: "/protocols/privacy-policy.html"
 ```
 
-图片和协议页面放在 `web/public` 下，路径从网站根目录开始写，例如 `/logo.svg`。Compose 中 API 的工作目录是 `/app`，因此默认配置路径可以写成：
+图片和协议页面放在 `frontend/public` 下，路径从网站根目录开始写，例如 `/logo.svg`。Compose 中 API 的工作目录是 `/app`，因此默认配置路径可以写成：
 
 ```bash
 YUXI_BRAND_FILE_PATH=yuxi/modules/system/static/info.local.yaml
@@ -64,8 +64,8 @@ docker compose --env-file .env.prod -f docker-compose.prod.yml \
 
 仓库提供了两个模板：
 
-- `web/public/protocols/user-agreement.template.html`
-- `web/public/protocols/privacy-policy.template.html`
+- `frontend/public/protocols/user-agreement.template.html`
+- `frontend/public/protocols/privacy-policy.template.html`
 
 可以直接替换模板内容和其中的 `{{ORG_NAME}}`、`{{PRODUCT_NAME}}`、`{{EFFECTIVE_DATE}}` 等占位符，也可以把配置指向自定义的站内或外部页面。正式上线前请让法务审核协议文本。
 
@@ -73,17 +73,17 @@ docker compose --env-file .env.prod -f docker-compose.prod.yml \
 
 主题色变量位于：
 
-- `web/src/assets/css/base.css`：浅色模式；
-- `web/src/assets/css/base.dark.css`：暗色模式；
-- `web/src/stores/theme.js`：主题选择器的默认配置。
+- `frontend/src/assets/css/base.css`：浅色模式；
+- `frontend/src/assets/css/base.dark.css`：暗色模式；
+- `frontend/src/stores/theme.js`：主题选择器的默认配置。
 
-优先修改已有 CSS 变量，不要在组件中散落新的硬编码颜色。当前主题的主要变量包括 `--main-1000`、`--main-900` 和 `--main-color`；如果调整主色，还要同步修改 `web/src/stores/theme.js` 中的 `colorPrimary`，否则 Ant Design 组件和自定义样式可能出现颜色不一致。新增颜色时，同时检查浅色、暗色、hover、focus、禁用和错误状态的对比度。
+优先修改已有 CSS 变量，不要在组件中散落新的硬编码颜色。当前主题的主要变量包括 `--main-1000`、`--main-900` 和 `--main-color`；如果调整主色，还要同步修改 `frontend/src/stores/theme.js` 中的 `colorPrimary`，否则 Ant Design 组件和自定义样式可能出现颜色不一致。新增颜色时，同时检查浅色、暗色、hover、focus、禁用和错误状态的对比度。
 
 开发环境会通过 Vite 热更新样式；生产环境需要重新构建 Web 镜像：
 
 ```bash
 docker compose -f docker-compose.prod.yml --env-file .env.prod \
-  up -d --build web
+  up -d --build frontend
 ```
 
 品牌 YAML、主题颜色和图标属于不同配置面：YAML 影响站点信息接口，CSS 和 `theme.js` 影响前端资源。修改其中一项不会自动改动另一项。

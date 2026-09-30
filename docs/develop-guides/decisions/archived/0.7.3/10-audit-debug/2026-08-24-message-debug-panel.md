@@ -2,7 +2,7 @@
 
 状态：archived
 类型：feature
-Owner：web/src/components/AgentChatComponent.vue
+Owner：frontend/src/components/AgentChatComponent.vue
 
 ## 问题
 
@@ -28,7 +28,7 @@ Owner：web/src/components/AgentChatComponent.vue
 
 ## 验证
 
-- `web/test/unit/messageDebug.test.js` 证明调试转换保持输入顺序、保留独立 tool/system 消息、按连续 `run_id` 分组且不猜测无 ID 消息的归属，并解析去重工具名称与安全的 Langfuse HTTP(S) URL；删除 tool 映射、移除 Run 分组、放宽外链协议或重新按聊天轮次过滤会使测试失败。
-- `web/test/unit/jsonTree.test.js` 证明字符串值与键名按 JSON 语法转义；恢复字符串拼接会使测试失败。
-- `web/test/unit/clipboard.test.js` 证明非安全上下文和 Clipboard API 拒绝都会进入传统复制路径；删除降级会使测试失败。
+- `frontend/test/unit/messageDebug.test.js` 证明调试转换保持输入顺序、保留独立 tool/system 消息、按连续 `run_id` 分组且不猜测无 ID 消息的归属，并解析去重工具名称与安全的 Langfuse HTTP(S) URL；删除 tool 映射、移除 Run 分组、放宽外链协议或重新按聊天轮次过滤会使测试失败。
+- `frontend/test/unit/jsonTree.test.js` 证明字符串值与键名按 JSON 语法转义；恢复字符串拼接会使测试失败。
+- `frontend/test/unit/clipboard.test.js` 证明非安全上下文和 Clipboard API 拒绝都会进入传统复制路径；删除降级会使测试失败。
 - 前端只读 lint、unit、build 和真实页面验证共同检查装配、交互与视觉结果；未执行的页面状态必须在交付说明中明确记录。

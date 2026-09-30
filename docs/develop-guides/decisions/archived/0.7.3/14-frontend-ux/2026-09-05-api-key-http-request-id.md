@@ -2,7 +2,7 @@
 
 状态：archived
 类型：bug-fix
-Owner：web/src/components/ApiKeyManagementComponent.vue
+Owner：frontend/src/components/ApiKeyManagementComponent.vue
 
 ## 问题
 
@@ -22,4 +22,4 @@ Owner：web/src/components/ApiKeyManagementComponent.vue
 
 ## 验证
 
-`web/test/unit/apiKeyManagement.test.js` 在没有 randomUUID 的环境执行真实组件脚本，验证弹窗、请求载荷、失败重试、成功清理和已有 UUID 的兼容。恢复直接调用 randomUUID 时，测试因原始 TypeError 失败。运行命令：`docker compose exec web pnpm run test:unit`。浏览器验证负责确认普通 HTTP 环境中的真实 DOM 点击行为；该前端修复不改变后端密钥派生与持久化语义。
+`frontend/test/unit/apiKeyManagement.test.js` 在没有 randomUUID 的环境执行真实组件脚本，验证弹窗、请求载荷、失败重试、成功清理和已有 UUID 的兼容。恢复直接调用 randomUUID 时，测试因原始 TypeError 失败。运行命令：`docker compose exec frontend pnpm run test:unit`。浏览器验证负责确认普通 HTTP 环境中的真实 DOM 点击行为；该前端修复不改变后端密钥派生与持久化语义。

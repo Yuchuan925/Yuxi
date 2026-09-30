@@ -365,7 +365,7 @@ backend/yuxi/
 | `docker-compose.yml`、`docker-compose.prod.yml` | 源码挂载、reload 范围、API 启动指向 `yuxi.api.main:app`；worker 指向 `yuxi.workers.main`；schema-init 指向 `yuxi.migrations.main`；healthcheck 路径同步。保持服务拓扑与依赖门禁。 |
 | `backend/test`、`backend/scripts`、根 `scripts`、`.github/workflows`、`Makefile` | 导入、monkeypatch 字符串、静态源码路径、Ruff 范围、pytest pythonpath、镜像构建和测试选择器随迁移同步。仍保留现有 unit/integration/E2E 分层。 |
 | 根与 backend `AGENTS.md`、`ARCHITECTURE.md`、开发与机制文档 | 实施后更新 `yuxi.services`、`yuxi.repositories` 等路径约定及源码链接。提案阶段继续以现有规则为准。 |
-| `packages/yuxi-cli`、`web` | HTTP 协议保持不变，原则上无需随 Python 目录迁移改动；搜索是否存在路径假设后再判断。 |
+| `packages/yuxi-cli`、`frontend` | HTTP 协议保持不变，原则上无需随 Python 目录迁移改动；搜索是否存在路径假设后再判断。 |
 
 内置 Skill 的 Markdown、脚本和相对资源路径属于交付资源；保留目录内容不等于自动保证镜像携带这些资源，必须从构建后的运行环境回读。数据库 task_type、handler_version、工具 slug、Agent backend_id、模型 provider ID 和公开 URL 不跟随 Python 目录重命名。
 

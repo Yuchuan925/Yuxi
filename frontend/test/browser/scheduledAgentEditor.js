@@ -1,4 +1,4 @@
-// 已登录开发环境：playwright-cli -s=<session> run-code --filename=web/test/browser/scheduledAgentEditor.js
+// 已登录开发环境：playwright-cli -s=<session> run-code --filename=frontend/test/browser/scheduledAgentEditor.js
 // 仅拦截列表读取；不创建、修改或运行真实任务。
 // prettier-ignore
 async (page) => {

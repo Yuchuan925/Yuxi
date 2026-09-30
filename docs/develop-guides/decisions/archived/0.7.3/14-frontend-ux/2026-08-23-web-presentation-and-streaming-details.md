@@ -2,7 +2,7 @@
 
 状态：archived
 类型：feature
-Owner：web/src/views/HomeView.vue
+Owner：frontend/src/views/HomeView.vue
 
 ## 问题
 
@@ -31,7 +31,7 @@ Owner：web/src/views/HomeView.vue
 
 | 验收主张 | 失败面 | 语义 Owner | 直接证据 / 命令 | 负向案例 | 当前结果 |
 |---|---|---|---|---|---|
-| 流式小增量按帧释放，历史大文本快速放行，flush 后内容完整 | 历史消息长时间重放或终态缺字 | `web/src/composables/useStreamSmoother.js` | `pnpm run test:unit` | 删除 fast-forward 或 flush 后对应单测失败 | Passed |
-| 同名知识库文件按真实身份独立分组 | 不同 `kb_id/file_id` 的结果被合并并打开错误文件 | `web/src/utils/kbResultGroups.js` | `pnpm run test:unit` | 两个知识库中的 `guide.md` 必须形成两个分组 | Passed |
-| 查看片段、完整文件和关闭弹窗均可由语义按钮触发 | 键盘或辅助技术无法识别主要动作 | `web/src/components/sources/KbResultGroupedList.vue` | `pnpm run lint:check`；真实页面检查 | 删除按钮可访问名称后 Review 失败 | Inspected |
-| 视觉与交互更新不破坏前端构建 | 未使用导入、样式错误或组件装配失败 | `web/` | `pnpm run lint:check`；`pnpm run test:unit`；`pnpm run build` | 任一 gate 失败即拒绝提交 | Passed |
+| 流式小增量按帧释放，历史大文本快速放行，flush 后内容完整 | 历史消息长时间重放或终态缺字 | `frontend/src/composables/useStreamSmoother.js` | `pnpm run test:unit` | 删除 fast-forward 或 flush 后对应单测失败 | Passed |
+| 同名知识库文件按真实身份独立分组 | 不同 `kb_id/file_id` 的结果被合并并打开错误文件 | `frontend/src/utils/kbResultGroups.js` | `pnpm run test:unit` | 两个知识库中的 `guide.md` 必须形成两个分组 | Passed |
+| 查看片段、完整文件和关闭弹窗均可由语义按钮触发 | 键盘或辅助技术无法识别主要动作 | `frontend/src/components/sources/KbResultGroupedList.vue` | `pnpm run lint:check`；真实页面检查 | 删除按钮可访问名称后 Review 失败 | Inspected |
+| 视觉与交互更新不破坏前端构建 | 未使用导入、样式错误或组件装配失败 | `frontend/` | `pnpm run lint:check`；`pnpm run test:unit`；`pnpm run build` | 任一 gate 失败即拒绝提交 | Passed |

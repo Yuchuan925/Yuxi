@@ -47,14 +47,14 @@ format:
 	cd backend && UV_PYTHON=$(BACKEND_PYTHON) uv run ruff format yuxi
 	cd backend && UV_PYTHON=$(BACKEND_PYTHON) uv run ruff check yuxi --fix
 	cd backend && UV_PYTHON=$(BACKEND_PYTHON) uv run ruff check --select I yuxi --fix
-	cd web && pnpm run format
-	cd web && pnpm run lint
+	cd frontend && pnpm run format
+	cd frontend && pnpm run lint
 
 # 只检查不修改，供提交前与 CI 使用（与 ruff.yml 的命令保持一致）
 lint:
 	cd backend && UV_PYTHON=$(BACKEND_PYTHON) uv run ruff check yuxi
 	cd backend && UV_PYTHON=$(BACKEND_PYTHON) uv run ruff check --select I yuxi
-	cd web && pnpm run lint:check
+	cd frontend && pnpm run lint:check
 
 # 后端单元测试（不依赖 docker 服务）；integration/e2e 需在容器环境运行
 test:
@@ -67,7 +67,7 @@ verify-trust:
 audit-dependencies:
 	cd backend && uv audit --locked --no-dev
 	cd packages/yuxi-cli && uv audit --locked --no-dev
-	cd web && pnpm audit --audit-level=high --prod
+	cd frontend && pnpm audit --audit-level=high --prod
 	cd docs && pnpm audit --audit-level=high --prod
 	@if uv audit --script scripts/dependency-audit-fixtures/vulnerable.py > /tmp/yuxi-python-audit-negative.log 2>&1; then echo "Expected the vulnerable Python fixture to fail"; exit 1; fi
 	grep -q "aiohttp 3.14.1 has" /tmp/yuxi-python-audit-negative.log

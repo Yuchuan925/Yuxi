@@ -2,7 +2,7 @@
 
 状态：archived
 类型：feature
-Owner：web/src/components/AgentPanel.vue
+Owner：frontend/src/components/AgentPanel.vue
 
 ## 问题
 
@@ -31,8 +31,8 @@ AgentPanel 使用扁平一级 Tabs：文件树、每个文件预览和每个子�
 | 隐藏 AgentPanel 不卸载 Section，关闭 Tab 才结束生命周期 | 隐藏面板导致 SSE abort，或异步 state 返回后在卸载组件中重新订阅 | `AgentPanel.vue` 与 `SubagentThreadView.vue` | 真实页面隐藏/重开；组件卸载版本检查 | 隐藏后组件仍存在；卸载后的异步结果不得启动 SSE | Inspected |
 | 文件树、文件预览和子智能体为平级 Tab，激活 Tab 保持可见 | 文件预览仍嵌套在文件 Section，或新建 Tab 落在滚动视口外 | `AgentPanel.vue` | 真实页面检查文件树、两个文件和子智能体 Tab | 点击树中文件必须新增、激活并滚动到可见范围 | Passed |
 | 文件预览填满 Tab 剩余高度并保持内容可滚动 | Markdown 最后几行被遮挡，或 PDF/HTML iframe 未填满面板 | `AgentPanel.vue` 与 `AgentFilePreview.vue` | Playwright 回读四层容器高度 | `tab-content`、preview shell、内容区底边必须与面板底边一致 | Passed |
-| Skill Markdown 在代码高亮能力暂不可用时仍保持结构化渲染 | Shiki 加载失败导致整篇文档退回源码 `<pre>` | `web/src/utils/markdown_preview.js` | 前端 unit；真实 `pptx/SKILL.md` 页面检查 | 无高亮器时标题、frontmatter 和代码块结构仍存在 | Passed |
-| lint、unit、build 与工程契约通过 | 新 Section 未接线或 decision 生命周期失效 | `web/` 与工程 gate | 标准前端和工程契约命令 | 删除 Section 分支或矩阵后 gate 失败 | Passed |
+| Skill Markdown 在代码高亮能力暂不可用时仍保持结构化渲染 | Shiki 加载失败导致整篇文档退回源码 `<pre>` | `frontend/src/utils/markdown_preview.js` | 前端 unit；真实 `pptx/SKILL.md` 页面检查 | 无高亮器时标题、frontmatter 和代码块结构仍存在 | Passed |
+| lint、unit、build 与工程契约通过 | 新 Section 未接线或 decision 生命周期失效 | `frontend/` 与工程 gate | 标准前端和工程契约命令 | 删除 Section 分支或矩阵后 gate 失败 | Passed |
 
 ## 风险
 

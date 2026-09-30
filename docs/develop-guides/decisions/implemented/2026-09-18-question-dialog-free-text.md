@@ -33,8 +33,8 @@ Owner：backend/yuxi/modules/extensions/tools/builtin/tools.py
 ## 验证
 
 - `docker compose exec api pytest test/unit/agents/toolkits/buildin/test_ask_user_question.py test/unit/services/test_chat_stream_interrupt.py -q`：26 passed；纯问答测试同时约束模型可见说明和 interrupt payload。
-- `docker compose exec web node --test --test-concurrency=1 test/unit/questionUtils.test.js test/unit/humanApprovalModal.test.js`：6 passed；覆盖纯文本、选择、自行填写、内嵌操作区、从自行填写切回多选、选择题焦点与逐题跳过。
+- `docker compose exec frontend node --test --test-concurrency=1 test/unit/questionUtils.test.js test/unit/humanApprovalModal.test.js`：6 passed；覆盖纯文本、选择、自行填写、内嵌操作区、从自行填写切回多选、选择题焦点与逐题跳过。
 - `docker compose exec api pytest test/unit -m 'not slow'`：2181 passed、54 skipped、7 subtests passed。
-- `docker compose exec web pnpm run test:unit`：351 passed。
-- `docker compose exec web pnpm run lint:check` 与 `docker compose exec web pnpm run build`：通过；构建仅保留既有 chunk size 提示。
+- `docker compose exec frontend pnpm run test:unit`：351 passed。
+- `docker compose exec frontend pnpm run lint:check` 与 `docker compose exec frontend pnpm run build`：通过；构建仅保留既有 chunk size 提示。
 - Playwright 在 1440×900 浅色、375×812 暗色和 812×375 横屏检查真实组件；横屏 `scrollWidth` 等于 `clientWidth`，图标按钮有可访问名称，输入获得可见焦点。

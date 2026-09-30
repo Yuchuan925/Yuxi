@@ -10,7 +10,7 @@ STATE_ROOT = "${YUXI_STATE_DIR:-./docker/volumes}"
 IMAGE_PREFIX = "${COMPOSE_PROJECT_NAME:-yuxi}"
 PORT_MARKERS = {
     "api": {"${YUXI_API_PORT:-5050}:5050"},
-    "web": {"${YUXI_WEB_PORT:-5173}:5173"},
+    "frontend": {"${YUXI_FRONTEND_PORT:-5173}:5173"},
     "sandbox-provisioner": {"127.0.0.1:${YUXI_SANDBOX_PORT:-8002}:8002"},
     "graph": {
         "127.0.0.1:${YUXI_NEO4J_HTTP_PORT:-7474}:7474",
@@ -34,7 +34,7 @@ LOCAL_IMAGE_SUFFIXES = {
     "worker": "-api:",
     "schema-init": "-api:",
     "sandbox-provisioner": "-sandbox-provisioner:",
-    "web": "-web:",
+    "frontend": "-frontend:",
     "mineru-api": "-mineru:",
     "paddlex": "-paddlex:",
 }
@@ -139,7 +139,7 @@ def test_production_compose_scopes_images_by_project_with_legacy_default() -> No
     compose = _load_compose("docker-compose.prod.yml")
 
     assert compose["services"]["api"]["image"].startswith("${COMPOSE_PROJECT_NAME:-yuxi}-api:${YUXI_VERSION:-")
-    assert compose["services"]["web"]["image"].startswith("${COMPOSE_PROJECT_NAME:-yuxi}-web:${YUXI_VERSION:-")
+    assert compose["services"]["frontend"]["image"].startswith("${COMPOSE_PROJECT_NAME:-yuxi}-frontend:${YUXI_VERSION:-")
 
 
 def test_host_test_runner_probes_current_compose_slot() -> None:

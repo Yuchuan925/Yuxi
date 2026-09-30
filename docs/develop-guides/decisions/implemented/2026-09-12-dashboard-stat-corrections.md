@@ -29,6 +29,6 @@ ToolStatsComponent 使用全宽名称、次数和占比表，替代重复且受�
 - `docker compose exec -T api uv run --no-sync --group test pytest test/unit/services/test_dashboard_service.py -q`：8 项通过。回归测试先复现旧汇总 3500 覆盖 Run 实测 200，再验证多 Run、部分缺失、全部缺失和真实零。
 - `docker compose exec -T api timeout 120s uv run --no-sync --group test pytest test/integration/api/test_dashboard_router.py -q -s`：12 项通过；真实 PostgreSQL 写入与 HTTP 回读证明列表和详情在旧汇总冲突时仍返回 Run 总量及完整性。
 - `docker compose exec -T api timeout 180s uv run --no-sync --group test pytest test/unit -m 'not slow' -s`：1935 项通过，53 项按既有测试条件跳过；跳过项不计为通过。默认 capture 模式在既有异步清理阶段挂起，关闭 capture 后完成。
-- `docker compose exec -T web pnpm run test:unit`：330 项通过；`docker compose exec -T web pnpm run build` 通过。
-- `playwright-cli -s=dashboard-fix run-code --filename=web/test/browser/dashboardStats.js`：页面验证覆盖 1440、1024、768、375 宽度、长工具名、八类文件、深色与空数据；图表边界使用显式合成响应，会话状态另由真实接口回读。
+- `docker compose exec -T frontend pnpm run test:unit`：330 项通过；`docker compose exec -T frontend pnpm run build` 通过。
+- `playwright-cli -s=dashboard-fix run-code --filename=frontend/test/browser/dashboardStats.js`：页面验证覆盖 1440、1024、768、375 宽度、长工具名、八类文件、深色与空数据；图表边界使用显式合成响应，会话状态另由真实接口回读。
 - 修改文件 ESLint、Ruff、工程契约及其 62 项单测通过。全量 ESLint 被未修改的 pdfPreviewAssets.test.js 中 Buffer 未声明阻断。标准 uv run 依赖同步因容器安装目录权限失败，测试使用已安装依赖和 --no-sync。

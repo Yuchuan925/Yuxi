@@ -21,7 +21,7 @@ class EngineeringContractVerifierTest(unittest.TestCase):
             "async def route():\n    return None\n",
         )
         self._write(
-            "web/src/components/ValidComponent.vue",
+            "frontend/src/components/ValidComponent.vue",
             "<template><div>ok</div></template>\n",
         )
         for lifecycle in ("proposed", "implemented", "rejected", "archived"):
@@ -98,14 +98,14 @@ jobs:
 """,
         )
         self._write(
-            ".github/workflows/web.yml",
+            ".github/workflows/frontend.yml",
             """on:
   pull_request:
     paths:
-      - 'web/**'
-      - '.github/workflows/web.yml'
+      - 'frontend/**'
+      - '.github/workflows/frontend.yml'
 jobs:
-  web:
+  frontend:
     steps:
       - run: pnpm run lint:check && pnpm run test:unit && pnpm run build
 """,
@@ -174,7 +174,7 @@ jobs:
         self._write(
             "backend/AGENTS.md", "# Backend 约定\n见 [根约定](../AGENTS.md)。\n"
         )
-        self._write("web/AGENTS.md", "# Web 约定\n见 [根约定](../AGENTS.md)。\n")
+        self._write("frontend/AGENTS.md", "# Frontend 约定\n见 [根约定](../AGENTS.md)。\n")
         self._write("docs/AGENTS.md", "# 文档约定\n见 [根约定](../AGENTS.md)。\n")
 
     def _write_valid_postmortem_files(self) -> None:
@@ -585,15 +585,15 @@ jobs:
         self.assertTrue(any("db.execute" in error for error in errors))
         self.assertTrue(any("db.delete" in error for error in errors))
 
-    def test_web_api_literal_outside_api_owner_is_rejected(self) -> None:
+    def test_frontend_api_literal_outside_api_owner_is_rejected(self) -> None:
         self._write(
-            "web/src/components/InvalidComponent.vue",
+            "frontend/src/components/InvalidComponent.vue",
             "<script>fetch('/api/users')</script>\n",
         )
 
         self.assertTrue(
             any(
-                "web/src/apis 外不得拥有 /api 路径" in error for error in self._errors()
+                "frontend/src/apis 外不得拥有 /api 路径" in error for error in self._errors()
             )
         )
 
@@ -660,9 +660,9 @@ jobs:
         self.assertEqual(self._errors(), [])
 
     def test_agents_instruction_multiple_h1_is_rejected(self) -> None:
-        path = self.root / "web/AGENTS.md"
+        path = self.root / "frontend/AGENTS.md"
         path.write_text(
-            "# Web 约定\n\n# 重复标题\n见 [根约定](../AGENTS.md)。\n",
+            "# Frontend 约定\n\n# 重复标题\n见 [根约定](../AGENTS.md)。\n",
             encoding="utf-8",
         )
 
@@ -1117,7 +1117,7 @@ Owner：owner.md
             {
                 ".github/workflows/trust.yml",
                 ".github/workflows/test.yml",
-                ".github/workflows/web.yml",
+                ".github/workflows/frontend.yml",
                 ".github/workflows/system-tests.yml",
                 ".github/workflows/real-provider-probe.yml",
             },

@@ -31,11 +31,11 @@ Tag、远端推送和 CI 属于提交后的外部状态；tag 只能在本地门
 - `make format`：通过；backend 233 files unchanged，Web 只格式化两个 `@lucide/vue` import。
 - `make lint`：通过。
 - `make test`：1590 passed。
-- `cd web && pnpm run test:unit && pnpm run build`：136 passed，build 通过。
+- `cd frontend && pnpm run test:unit && pnpm run build`：136 passed，build 通过。
 - `cd packages/yuxi-cli && uv run --python 3.13 --group test pytest`：90 passed。
 - `cd docs && pnpm run build`：通过；保留既有 VitePress/Rolldown 警告。
 - `make verify-trust`、`scripts.test_dependency_update_policy`：通过；版本脚本 3 个隔离案例全部通过。
 - `make audit-dependencies`：backend、CLI、Web、docs 生产依赖无已知漏洞，Python/Node 漏洞负控按预期命中。
-- backend/web/docs frozen lock、dev Compose 和带临时非敏感占位变量的 production Compose config：通过。
+- backend/frontend/docs frozen lock、dev Compose 和带临时非敏感占位变量的 production Compose config：通过。
 - 版本 Owner oracle、uv lock check、脚本幂等检查和 `git diff --check`：通过。
 - 独立 Reviewer 指出的决策状态、重复入口/dev/非法输入测试覆盖和审计证据均已收敛。

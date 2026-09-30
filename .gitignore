@@ -64,6 +64,6 @@ cache
 
 *.pdf
 */package-lock.json
-web/package-lock.json
+frontend/package-lock.json
 docker/volumes
 docs/vibe

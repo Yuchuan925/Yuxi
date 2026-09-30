@@ -23,7 +23,7 @@ class ReleaseWorkflowTests(unittest.TestCase):
         for name in (
             "trust",
             "test",
-            "web",
+            "frontend",
             "ruff",
             "system-tests",
             "dependency-audit",
@@ -68,7 +68,7 @@ class ReleaseWorkflowTests(unittest.TestCase):
         for name in (
             "trust",
             "test",
-            "web",
+            "frontend",
             "ruff",
             "system-tests",
             "dependency-audit",

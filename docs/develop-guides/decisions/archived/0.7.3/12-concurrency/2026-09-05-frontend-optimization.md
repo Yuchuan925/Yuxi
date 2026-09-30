@@ -2,7 +2,7 @@
 
 状态：archived
 类型：simplification
-Owner：web/src/components/AgentChatComponent.vue
+Owner：frontend/src/components/AgentChatComponent.vue
 
 ## 问题
 

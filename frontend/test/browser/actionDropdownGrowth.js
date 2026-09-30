@@ -1,4 +1,4 @@
-// 使用已登录开发环境：playwright-cli -s=<session> run-code --filename=web/test/browser/actionDropdownGrowth.js
+// 使用已登录开发环境：playwright-cli -s=<session> run-code --filename=frontend/test/browser/actionDropdownGrowth.js
 // 文件内容由 CLI 作为函数表达式执行，不添加前导分号。
 // prettier-ignore
 async (page) => {

@@ -24,5 +24,5 @@ Owner：backend/package/yuxi/repositories/conversation_repository.py
 
 - `backend/test/unit/services/test_agent_request_queue_service.py` 验证已接受请求把解析模型写入 Conversation、后续请求继承 Conversation 模型，且立即拒绝或派发竞争失败的 rejected 请求都不覆盖已有绑定。
 - `backend/test/unit/services/test_chat_service_sync.py` 验证状态读取使用 Conversation 模型而不是旧 AgentRun 模型。
-- `web/test/unit/conversationModelBinding.test.js` 验证组件从 Conversation metadata 读取模型、每次发送当前展示模型并同步线程 metadata。
+- `frontend/test/unit/conversationModelBinding.test.js` 验证组件从 Conversation metadata 读取模型、每次发送当前展示模型并同步线程 metadata。
 - 恢复为只保存 AgentRun 或仅使用智能体默认模型时，对应测试失败。

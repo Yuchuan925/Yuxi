@@ -1,10 +1,10 @@
-// 使用已登录开发环境：playwright-cli -s=<session> run-code --filename=web/test/browser/chatMultiImage.js
+// 使用已登录开发环境：playwright-cli -s=<session> run-code --filename=frontend/test/browser/chatMultiImage.js
 // 文件内容由 CLI 作为函数表达式执行，不添加前导分号。
 //
 // 覆盖聊天框多图（≤10 张）：菜单多选、上限提示不静默丢弃、拖拽分流（图片进
 // vision、其它文件进附件）、发送后历史回显。
 //
-// 前置：`web/test/browser/fixtures/` 下的 imgA.png / imgB.png（图上分别写着 IMG-A、
+// 前置：`frontend/test/browser/fixtures/` 下的 imgA.png / imgB.png（图上分别写着 IMG-A、
 // IMG-B）与 sample.pdf；需一个支持视觉输入的模型。路径相对仓库根，请在仓库根启动 playwright-cli。
 // 脚本只做发送与删除，不修改既有会话数据：发送会新建一个线程，最后清空输入区。
 // prettier-ignore
@@ -12,11 +12,11 @@ async (page) => {
   const check = (condition, message) => {
     if (!condition) throw new Error(message)
   }
-  const web = 'http://localhost:5173'
-  const FIXTURES = 'web/test/browser/fixtures'
+  const frontend = 'http://localhost:5173'
+  const FIXTURES = 'frontend/test/browser/fixtures'
 
   await page.unrouteAll({ behavior: 'ignoreErrors' })
-  await page.goto(`${web}/agent`)
+  await page.goto(`${frontend}/agent`)
   await page.setViewportSize({ width: 1440, height: 900 })
   await page.waitForTimeout(3000)
 

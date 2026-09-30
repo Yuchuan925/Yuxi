@@ -2,7 +2,7 @@
 
 状态：archived
 类型：process
-Owner：web/package.json
+Owner：frontend/package.json
 
 ## 问题
 
@@ -10,9 +10,9 @@ Owner：web/package.json
 
 ## 决策
 
-直接依赖替换为当前稳定版 `@lucide/vue@^1.34.0`，所有静态命名导入的 module specifier 从旧包机械替换为 `@lucide/vue`。不建立本地 wrapper，不批量重命名图标，也不改变组件属性、尺寸、样式或页面布局。`web/AGENTS.md`、设计规范和贡献指南同步使用当前包名，避免继续引入旧包。
+直接依赖替换为当前稳定版 `@lucide/vue@^1.34.0`，所有静态命名导入的 module specifier 从旧包机械替换为 `@lucide/vue`。不建立本地 wrapper，不批量重命名图标，也不改变组件属性、尺寸、样式或页面布局。`frontend/AGENTS.md`、设计规范和贡献指南同步使用当前包名，避免继续引入旧包。
 
-新版包的真实 ESM exports 是导入兼容性的 oracle。迁移脚本从 `web/src` 和 `web/test` 收集到 167 个实际使用的命名导出，全部存在于新版包；生产 build 同时证明 Vue 组件编译和 tree-shaking 链路可用。现有 CSS 只依赖新版继续提供的 `.lucide` 稳定类，没有依赖图标专属类名。
+新版包的真实 ESM exports 是导入兼容性的 oracle。迁移脚本从 `frontend/src` 和 `frontend/test` 收集到 167 个实际使用的命名导出，全部存在于新版包；生产 build 同时证明 Vue 组件编译和 tree-shaking 链路可用。现有 CSS 只依赖新版继续提供的 `.lucide` 稳定类，没有依赖图标专属类名。
 
 ## 替代方案
 
@@ -32,8 +32,8 @@ Owner：web/package.json
 - 官方 npm 元数据：`lucide-vue-next@1.0.0` deprecated 并指向 `@lucide/vue`；当前稳定版为 1.34.0，仓库均为 `lucide-icons/lucide`。
 - `pnpm install --frozen-lockfile`：通过；`pnpm list` 只包含 `@lucide/vue@1.34.0`，旧 package/import 搜索为空。
 - 命名导出 oracle：167 个实际导入全部存在于新版 6101 个 ESM exports。
-- `cd web && pnpm run lint:check && pnpm run test:unit && pnpm run build`：通过，136 tests passed。
-- `pnpm --dir web audit --prod --audit-level=moderate`：无已知漏洞；`pnpm outdated` 为空。
-- `docker build -f docker/web.Dockerfile --target build-stage -t yuxi-web:lucide-vue-test .`：frozen install 和生产 build 通过。
+- `cd frontend && pnpm run lint:check && pnpm run test:unit && pnpm run build`：通过，136 tests passed。
+- `pnpm --dir frontend audit --prod --audit-level=moderate`：无已知漏洞；`pnpm outdated` 为空。
+- `docker build -f docker/frontend.Dockerfile --target build-stage -t yuxi-frontend:lucide-vue-test .`：frozen install 和生产 build 通过。
 - 工程契约、相关策略测试、docs build 与 `git diff --check`：通过。
 - 独立 Reviewer：No blocking findings；指出活动开发文档仍引用旧包，已同步修复。

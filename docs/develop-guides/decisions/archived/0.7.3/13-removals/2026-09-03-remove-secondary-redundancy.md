@@ -2,16 +2,16 @@
 
 状态：archived
 类型：simplification
-Owner：web/src/components/ToolCallingResult/toolRegistry.js
+Owner：frontend/src/components/ToolCallingResult/toolRegistry.js
 
 相关事实由下列源码 Owner 分别持有：
 
 - Agent 运行上下文装配：`backend/package/yuxi/services/chat_service.py`
 - 消息反馈事务与查询：`backend/package/yuxi/services/feedback_service.py`、`backend/package/yuxi/repositories/dashboard_repository.py`
-- Mention 配置与搜索：`web/src/composables/useAgentMentionConfig.js`、`web/src/components/MessageInputComponent.vue`
+- Mention 配置与搜索：`frontend/src/composables/useAgentMentionConfig.js`、`frontend/src/components/MessageInputComponent.vue`
 - 知识库管理：`backend/package/yuxi/knowledge/manager.py`
 - Sandbox 获取与缓存：`backend/package/yuxi/agents/backends/sandbox/provider.py`
-- 工具调用参数解析：`web/src/components/ToolCallingResult/toolRegistry.js`
+- 工具调用参数解析：`frontend/src/components/ToolCallingResult/toolRegistry.js`
 - Run 取消信号：`backend/package/yuxi/services/run_queue_service.py`
 - 正式文档页面发现：`docs/.vitepress/config.mts`
 

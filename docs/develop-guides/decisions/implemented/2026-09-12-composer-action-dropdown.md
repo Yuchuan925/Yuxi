@@ -2,7 +2,7 @@
 
 状态：implemented
 类型：feature
-Owner：web/src/components/common/ActionDropdown.vue
+Owner：frontend/src/components/common/ActionDropdown.vue
 
 ## 问题
 
@@ -28,10 +28,10 @@ Owner：web/src/components/common/ActionDropdown.vue
 
 ## 验证
 
-`web/test/unit/modelSelectorLoading.test.js` 验证慢请求立即展开、关闭后不重开、可选元数据不阻塞目录、失败重试、模型类型、禁用行为及包装器事件契约。恢复旧的等待请求后展开实现，立即展开断言失败，等待元数据案例超时。
+`frontend/test/unit/modelSelectorLoading.test.js` 验证慢请求立即展开、关闭后不重开、可选元数据不阻塞目录、失败重试、模型类型、禁用行为及包装器事件契约。恢复旧的等待请求后展开实现，立即展开断言失败，等待元数据案例超时。
 
-`web/test/unit/actionDropdownPosition.test.js` 验证默认自适应、向上约束、水平边界与可视区域偏移；样式归属测试确认消费者接入共享弹层。真实开发页面在 1440×900、390×844、844×390 和 768×320 检查五类输入区菜单的上下及水平边界、Escape、搜索、慢请求和失败重试。设置页检查四个模型控件等宽、32px，以及默认向下展开；输入区检查 30px、无边框。浅色和暗色截图验证主题外观。移动端检查使用浏览器视口模拟，不等价于实体设备软键盘验收。
+`frontend/test/unit/actionDropdownPosition.test.js` 验证默认自适应、向上约束、水平边界与可视区域偏移；样式归属测试确认消费者接入共享弹层。真实开发页面在 1440×900、390×844、844×390 和 768×320 检查五类输入区菜单的上下及水平边界、Escape、搜索、慢请求和失败重试。设置页检查四个模型控件等宽、32px，以及默认向下展开；输入区检查 30px、无边框。浅色和暗色截图验证主题外观。移动端检查使用浏览器视口模拟，不等价于实体设备软键盘验收。
 
-`web/test/browser/actionDropdownGrowth.js` 通过延迟目录响应及筛选缩小列表，逐帧检查弹层底边相对触发按钮的偏移不超过 1px。恢复普通流布局时，旧实现的底边漂移约 266px；固定底边后最大漂移约 0.03px。脚本仅在已登录的开发浏览器内拦截目录响应，不调用模型。
+`frontend/test/browser/actionDropdownGrowth.js` 通过延迟目录响应及筛选缩小列表，逐帧检查弹层底边相对触发按钮的偏移不超过 1px。恢复普通流布局时，旧实现的底边漂移约 266px；固定底边后最大漂移约 0.03px。脚本仅在已登录的开发浏览器内拦截目录响应，不调用模型。
 
-命令包括 `docker compose exec web pnpm run lint:check`、`docker compose exec web pnpm run test:unit`、`docker compose exec web pnpm run build`、工程契约检查及文档构建；实际结果与未验证范围写入交付报告。
+命令包括 `docker compose exec frontend pnpm run lint:check`、`docker compose exec frontend pnpm run test:unit`、`docker compose exec frontend pnpm run build`、工程契约检查及文档构建；实际结果与未验证范围写入交付报告。

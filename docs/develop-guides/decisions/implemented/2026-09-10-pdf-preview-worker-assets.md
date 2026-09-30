@@ -2,7 +2,7 @@
 
 状态：implemented
 类型：bug-fix
-Owner：web/src/components/common/PdfPreview.vue
+Owner：frontend/src/components/common/PdfPreview.vue
 
 ## 问题
 
@@ -18,8 +18,8 @@ PDF 预览偶发提示「无法加载 PDF 文件或文件格式受损」，但�
 
 ## 后果
 
-Web 静态产物增加约 1.6 MB CMap 资源；`cMapUrl` 指向同源路径，升级 pdfjs-dist 时 CMap 随 lockfile 同步更新。Nginx 变更需要重建并重新部署 web 镜像才进入生产。
+Web 静态产物增加约 1.6 MB CMap 资源；`cMapUrl` 指向同源路径，升级 pdfjs-dist 时 CMap 随 lockfile 同步更新。Nginx 变更需要重建并重新部署 frontend 镜像才进入生产。
 
 ## 验证
 
-`web/test/unit/pdfPreviewErrors.test.js` 覆盖错误映射，Worker 失败不得再显示格式受损。`web/test/unit/pdfPreviewAssets.test.js` 与 `backend/test/unit/config/test_nginx_static_assets.py` 作为负向控制：删除本地 CMap、恢复 CDN 地址或移除 `.mjs` 映射都会使对应断言失败。`.mjs` MIME 行为在真实 nginx:alpine 容器中以 curl 验证。真实浏览器下多页文档渲染与快速切换场景待人工复核。
+`frontend/test/unit/pdfPreviewErrors.test.js` 覆盖错误映射，Worker 失败不得再显示格式受损。`frontend/test/unit/pdfPreviewAssets.test.js` 与 `backend/test/unit/config/test_nginx_static_assets.py` 作为负向控制：删除本地 CMap、恢复 CDN 地址或移除 `.mjs` 映射都会使对应断言失败。`.mjs` MIME 行为在真实 nginx:alpine 容器中以 curl 验证。真实浏览器下多页文档渲染与快速切换场景待人工复核。

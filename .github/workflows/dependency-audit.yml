@@ -9,9 +9,9 @@ on:
       - "backend/uv.lock"
       - "packages/yuxi-cli/pyproject.toml"
       - "packages/yuxi-cli/uv.lock"
-      - "web/package.json"
-      - "web/pnpm-lock.yaml"
-      - "web/pnpm-workspace.yaml"
+      - "frontend/package.json"
+      - "frontend/pnpm-lock.yaml"
+      - "frontend/pnpm-workspace.yaml"
       - "docs/package.json"
       - "docs/pnpm-lock.yaml"
       - "docs/pnpm-workspace.yaml"
@@ -26,9 +26,9 @@ on:
       - "backend/uv.lock"
       - "packages/yuxi-cli/pyproject.toml"
       - "packages/yuxi-cli/uv.lock"
-      - "web/package.json"
-      - "web/pnpm-lock.yaml"
-      - "web/pnpm-workspace.yaml"
+      - "frontend/package.json"
+      - "frontend/pnpm-lock.yaml"
+      - "frontend/pnpm-workspace.yaml"
       - "docs/package.json"
       - "docs/pnpm-lock.yaml"
       - "docs/pnpm-workspace.yaml"
@@ -83,7 +83,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        project: [web, docs]
+        project: [frontend, docs]
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6

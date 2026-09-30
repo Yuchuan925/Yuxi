@@ -260,20 +260,20 @@ services:
       schema-init:
         condition: service_completed_successfully
 
-  web:
+  frontend:
     build:
       context: .
-      dockerfile: docker/web.Dockerfile
+      dockerfile: docker/frontend.Dockerfile
       target: development
-    image: ${COMPOSE_PROJECT_NAME:-yuxi}-web:${YUXI_VERSION:-0.8.0.dev0}
+    image: ${COMPOSE_PROJECT_NAME:-yuxi}-frontend:${YUXI_VERSION:-0.8.0.dev0}
     volumes:
-      - ./web/src:/app/src
-      - ./web/test:/app/test
-      - ./web/public:/app/public
-      - ./web/index.html:/app/index.html
-      - ./web/vite.config.js:/app/vite.config.js
+      - ./frontend/src:/app/src
+      - ./frontend/test:/app/test
+      - ./frontend/public:/app/public
+      - ./frontend/index.html:/app/index.html
+      - ./frontend/vite.config.js:/app/vite.config.js
     ports:
-      - "${YUXI_WEB_PORT:-5173}:5173"
+      - "${YUXI_FRONTEND_PORT:-5173}:5173"
     depends_on:
       - api
     networks:

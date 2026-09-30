@@ -49,7 +49,7 @@ docker compose ps
 docker compose logs --tail=100 api
 ```
 
-`api` 和 `web` 服务默认支持热重载。容器名由 Compose project 生成；使用 `docker compose logs api web` 查看当前槽位日志。修改本地代码后通常不需要手动重启。
+`api` 和 `frontend` 服务默认支持热重载。容器名由 Compose project 生成；使用 `docker compose logs api frontend` 查看当前槽位日志。修改本地代码后通常不需要手动重启。
 
 ## 3. 实现原则
 
@@ -68,9 +68,9 @@ docker compose logs --tail=100 api
 
 ### 前端
 
-前端代码位于 `web/`，使用 `pnpm` 和 LESS：
+前端代码位于 `frontend/`，使用 `pnpm` 和 LESS：
 
-- API 封装放在 `web/src/apis`；
+- API 封装放在 `frontend/src/apis`；
 - 图标优先使用 `@lucide/vue`；
 - 颜色优先使用 `base.css` 和 `base.dark.css` 的变量；
 - 浅色、暗色、loading、empty、error、focus 和响应式状态都要检查；
@@ -101,9 +101,9 @@ docker compose exec api uv run --group test pytest test/e2e -m e2e
 前端常用命令：
 
 ```bash
-docker compose exec web pnpm run lint:check
-docker compose exec web pnpm run test:unit
-docker compose exec web pnpm run build
+docker compose exec frontend pnpm run lint:check
+docker compose exec frontend pnpm run test:unit
+docker compose exec frontend pnpm run build
 ```
 
 项目统一格式化命令会修改工作树，完成格式化后应重新查看 diff：

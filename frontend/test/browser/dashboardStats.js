@@ -1,4 +1,4 @@
-// 已登录开发环境：playwright-cli -s=<session> run-code --filename=web/test/browser/dashboardStats.js
+// 已登录开发环境：playwright-cli -s=<session> run-code --filename=frontend/test/browser/dashboardStats.js
 // prettier-ignore
 async (page) => {
   const check = (condition, message) => { if (!condition) throw new Error(message) }

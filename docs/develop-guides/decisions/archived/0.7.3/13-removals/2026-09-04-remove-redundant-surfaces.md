@@ -2,27 +2,27 @@
 
 状态：archived
 类型：simplification
-Owner：web/src/apis/base.js
+Owner：frontend/src/apis/base.js
 
 相关事实由下列源码 Owner 分别持有：
 
-- 前端组件可达性：`web/src` 的显式导入、路由和工具渲染注册表
-- Web 测试入口：`web/package.json` 与 `.github/workflows/web.yml`
-- 对话队列恢复：`web/src/composables/useAgentRequestQueue.js`
-- 下载与 Agent 字段归一化：`web/src/utils/file_utils.js`、`web/src/utils/agentConfigUtils.js`
-- MySQL 展示与连接：`web/src/components/ToolCallingResult/tools/mysqlResultFormatter.js`、`backend/package/yuxi/agents/skills/buildin/mysql-reporter/scripts/_mysql_common.py`
+- 前端组件可达性：`frontend/src` 的显式导入、路由和工具渲染注册表
+- Web 测试入口：`frontend/package.json` 与 `.github/workflows/frontend.yml`
+- 对话队列恢复：`frontend/src/composables/useAgentRequestQueue.js`
+- 下载与 Agent 字段归一化：`frontend/src/utils/file_utils.js`、`frontend/src/utils/agentConfigUtils.js`
+- MySQL 展示与连接：`frontend/src/components/ToolCallingResult/tools/mysqlResultFormatter.js`、`backend/package/yuxi/agents/skills/buildin/mysql-reporter/scripts/_mysql_common.py`
 - 后端运行时能力：各 service、repository、model factory 与持久化模型
 - Shipping 配置与 Docs 工具链：`docker-compose.yml`、`docker-compose.prod.yml`、`docs/package.json`、`.github/workflows/deploy.yml`
 
 ## 问题
 
-仓库保留了无生产消费者的 Vue 组件、utility export、Python helper、异常和测试专用 service/repository 包装，也同时维护正式 `web/test` 与未被 CI 收集的 `web/src/utils/__tests__`。查询编码、队列恢复、下载文件名、Agent 字段映射、MySQL 结果展示与连接逻辑分别存在多份等价或轻微漂移的实现。五个 Sigma/Graphology 依赖、旧样式和若干 Compose 环境变量已经没有读取方，Docs Pages 仍绕过现有 pnpm lockfile 使用 npm。这些表面没有独立语义，却形成虚假的第二 Owner 并增加排障与修改成本。
+仓库保留了无生产消费者的 Vue 组件、utility export、Python helper、异常和测试专用 service/repository 包装，也同时维护正式 `frontend/test` 与未被 CI 收集的 `frontend/src/utils/__tests__`。查询编码、队列恢复、下载文件名、Agent 字段映射、MySQL 结果展示与连接逻辑分别存在多份等价或轻微漂移的实现。五个 Sigma/Graphology 依赖、旧样式和若干 Compose 环境变量已经没有读取方，Docs Pages 仍绕过现有 pnpm lockfile 使用 npm。这些表面没有独立语义，却形成虚假的第二 Owner 并增加排障与修改成本。
 
 ## 决策
 
-- 删除经导入、路由、动态加载和注册表搜索确认无消费者的组件、样式、utility export、Python helper、异常与测试专用便利 API。仍有价值的 Web 测试迁入唯一正式根 `web/test/unit`，同主题用例合并；空测试包删除。
+- 删除经导入、路由、动态加载和注册表搜索确认无消费者的组件、样式、utility export、Python helper、异常与测试专用便利 API。仍有价值的 Web 测试迁入唯一正式根 `frontend/test/unit`，同主题用例合并；空测试包删除。
 - 队列恢复的“同步持久状态、重读最新线程状态、恢复请求流”由 `useAgentRequestQueue` 持有；组件只提供线程和 Agent 身份。消息工具结果 JSON 解析只保留一个私有 helper。
-- 查询参数过滤与编码由 `web/src/apis/base.js` 持有，并保留 `0`、`false`、空值和 endpoint 问号语义。六个下载入口统一使用一个 Content-Disposition parser，同时继续拥有各自默认文件名；Agent identity、backend option 和三个 MySQL renderer 分别使用单一纯函数。
+- 查询参数过滤与编码由 `frontend/src/apis/base.js` 持有，并保留 `0`、`false`、空值和 endpoint 问号语义。六个下载入口统一使用一个 Content-Disposition parser，同时继续拥有各自默认文件名；Agent identity、backend option 和三个 MySQL renderer 分别使用单一纯函数。
 - 下载 parser 优先解析 `filename*` UTF-8，失败时告警并回退普通 `filename`；普通文件名解码 percent encoding，失败时保留原值。Agent ID 保持 `agent_id`、`slug`、`id` 优先级并保留已有 slug，MySQL formatter 保持空值、JSON、对象和 primitive 展示。
 - 后端测试直接读取持久化模型、能力常量或生产入口，不为测试保留第二套 API。等价 linked workdir 包装由通用规范化函数取代；附件 parser 只在真实解析分支惰性导入。
 - MySQL Reporter 保留三个独立 PEP 723 入口，共享同目录配置、异常和连接重试；Skill 投影复制完整目录。

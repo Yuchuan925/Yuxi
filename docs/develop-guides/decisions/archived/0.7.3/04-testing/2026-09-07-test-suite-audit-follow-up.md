@@ -35,7 +35,7 @@ Backend 测试保留业务、权限、事务、队列、文件隔离、恢复和
 - Prompt、分块和 benchmark generation 相关单元测试：36 passed。
 - `ruff check` 与改动文件 `ruff format --check`：通过。
 - 将已删除的 `test_semantic_chunking_empty_heading.py` 引用改为合并后的 `test_semantic_chunking.py`。
-- Web 守卫测试同时覆盖正常放行与拒绝；配置合并读取检查具体返回值和 Store 状态；模型优先级源码检查先确认表达式存在；轮询生命周期检查请求完成后再次调度及停止后的清理。测试入口仍使用 `web/package.json` 的全目录 selector，未跳过或排除测试。
+- Web 守卫测试同时覆盖正常放行与拒绝；配置合并读取检查具体返回值和 Store 状态；模型优先级源码检查先确认表达式存在；轮询生命周期检查请求完成后再次调度及停止后的清理。测试入口仍使用 `frontend/package.json` 的全目录 selector，未跳过或排除测试。
 - 共享详情框架的运行时测试检查具名面板内容实际渲染、删除 Tab 后对应内容消失；在内存中移除动态内容插槽的负控会因面板内容缺失而失败。
 - Backend QA parser 合并后仍保留原有全部用例；后端测试目录的静态审计确认 6 个数据 fixture 均被解析或真实知识库路由使用，其中 `测试图片.png` 作为 `测试文档.docx` 的嵌入资源由转换结果间接校验。未删除仍被真实知识库路由或解析测试使用的 fixture。合并测试不改变 import 隔离、默认上限精确 token oracle 或解析围栏边界。
 - 第二轮静态引用检查确认删除的 `FakeKnowledgeBase`、`_ChildContext` 和 `_make_thread_files` 在仓库内无消费者；附件服务更名后仍收集相同的 16 个用例，队列策略测试覆盖 `enqueue/reject/steer` 三个有效值的具体返回结果。

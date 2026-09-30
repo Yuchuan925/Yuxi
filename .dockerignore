@@ -18,7 +18,7 @@ env/
 backend/.venv/
 
 # 忽略 node_modules 文件夹（前端项目）
-web/node_modules/
+frontend/node_modules/
 
 # 忽略 Docker 运行时数据卷
 docker/volumes/

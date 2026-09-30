@@ -2,7 +2,7 @@
 
 状态：archived
 类型：bug-fix
-Owner：web/vite.config.js
+Owner：frontend/vite.config.js
 
 ## 问题
 
@@ -10,7 +10,7 @@ Owner：web/vite.config.js
 
 ## 决策
 
-构建与加载：`web/vite.config.js` 从锁定模型快照投影展示字段，保持模型覆盖；`dashboardCharts.js` 只注册实际使用的图表。路由、知识库次级面板与设置内容按需加载，共享 `asyncPanel.js` 的加载和失败提示。设置弹窗保留已访问页的表单状态，关闭后销毁，重开仅挂载当前项。
+构建与加载：`frontend/vite.config.js` 从锁定模型快照投影展示字段，保持模型覆盖；`dashboardCharts.js` 只注册实际使用的图表。路由、知识库次级面板与设置内容按需加载，共享 `asyncPanel.js` 的加载和失败提示。设置弹窗保留已访问页的表单状态，关闭后销毁，重开仅挂载当前项。
 
 请求调度：`info.js` 合并进行中的配置读取，`AppLayout.vue` 独立启动无依赖的初始化请求。`tasker.js` 拥有轮询、请求代次与会话失效；任务提交入口在发送前捕获会话，旧回执不得登记到新会话。轮询在请求完成后调度，失败退避，隐藏页面暂停请求；退出和销毁清理计时器及回写资格。后端仍拥有权限、任务执行和持久状态。
 

@@ -1,6 +1,6 @@
 # 产品体验与界面设计规范
 
-本文档定义 Yuxi 的产品体验与界面设计规范，适用于需求设计、交互方案、视觉设计、`web/src` 下的新页面、新组件和现有 UI 调整。它同时面向产品、设计、人类开发者和 AI coding agent：开始实现前先说明用户目标、信息层级和交互语义，再复用现有组件、CSS 变量和交互模式。
+本文档定义 Yuxi 的产品体验与界面设计规范，适用于需求设计、交互方案、视觉设计、`frontend/src` 下的新页面、新组件和现有 UI 调整。它同时面向产品、设计、人类开发者和 AI coding agent：开始实现前先说明用户目标、信息层级和交互语义，再复用现有组件、CSS 变量和交互模式。
 
 ## 0. 产品判断先于界面实现
 
@@ -25,7 +25,7 @@ Yuxi 是知识库、知识图谱与 Agent 开发平台，界面应保持克制�
 
 ## 2. 颜色与 Token
 
-颜色必须优先使用 `web/src/assets/css/base.css` 和 `web/src/assets/css/base.dark.css` 中定义的 CSS 变量。不要在组件中随意新增硬编码色值；确需新增全局色值时，先补充 token 并说明用途。
+颜色必须优先使用 `frontend/src/assets/css/base.css` 和 `frontend/src/assets/css/base.dark.css` 中定义的 CSS 变量。不要在组件中随意新增硬编码色值；确需新增全局色值时，先补充 token 并说明用途。
 
 ### 主色
 
@@ -88,7 +88,7 @@ Yuxi 通过 `:root.dark` 覆盖同名 token。新增 UI 必须使用 CSS 变量�
 
 ## 3. 字体与文本层级
 
-全局字体栈定义在 `web/src/assets/css/main.css`，新增组件不要私自引入新字体。代码、命令、路径和技术标识可使用 monospace，优先复用现有 `@mono-font` 或系统 monospace 栈。
+全局字体栈定义在 `frontend/src/assets/css/main.css`，新增组件不要私自引入新字体。代码、命令、路径和技术标识可使用 monospace，优先复用现有 `@mono-font` 或系统 monospace 栈。
 
 建议层级：
 
@@ -328,7 +328,7 @@ AI agent 修改或生成 Yuxi UI 时，优先按这一节执行。
 
 ## 参考资料
 
-- `web/src/assets/css/base.css`：浅色模式 token
-- `web/src/assets/css/base.dark.css`：暗色模式 token
-- `web/src/assets/css/main.css`：全局字体、布局基础样式和 `lucide-icon-btn`
+- `frontend/src/assets/css/base.css`：浅色模式 token
+- `frontend/src/assets/css/base.dark.css`：暗色模式 token
+- `frontend/src/assets/css/main.css`：全局字体、布局基础样式和 `lucide-icon-btn`
 - [Awesome DESIGN.md](https://github.com/VoltAgent/awesome-design-md)：面向 AI agent 的 `DESIGN.md` 样例集合

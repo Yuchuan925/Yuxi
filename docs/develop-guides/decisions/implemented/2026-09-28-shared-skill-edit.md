@@ -37,6 +37,6 @@ Owner：backend/yuxi/modules/extensions/skills/edit.py
 
 `docker compose exec -T api uv run --no-sync --group test pytest test/integration/api/test_shared_skill_edit_router.py test/integration/api/test_skill_artifact_authorization.py test/integration/services/test_user_skill_projection.py -q -p no:cacheprovider --timeout=120` 通过：7 passed，覆盖修订值冲突、文件/索引回读、共享锁、个人覆盖与 artifact 授权。`docker compose exec -T api uv run --no-sync --group test pytest test/e2e/test_shared_skill_edit_e2e.py -q -p no:cacheprovider --timeout=360` 通过：1 passed，使用确定性 replay provider，回读真实 worker 的投影内容与 PostgreSQL Run 清单。
 
-前端 `docker compose exec -T web pnpm run lint:check`、`pnpm run test:unit` 和 `pnpm run build` 通过，unit 为 394 passed。真实浏览器验证文件保存并从 HTTP 回读、取消切页保留草稿、409 后保留编辑内容。工程契约检查及 63 项测试、锁定版本 Ruff 的 lint/format/import 检查、`pnpm --dir docs run build` 与 `git diff --check` 通过。
+前端 `docker compose exec -T frontend pnpm run lint:check`、`pnpm run test:unit` 和 `pnpm run build` 通过，unit 为 394 passed。真实浏览器验证文件保存并从 HTTP 回读、取消切页保留草稿、409 后保留编辑内容。工程契约检查及 63 项测试、锁定版本 Ruff 的 lint/format/import 检查、`pnpm --dir docs run build` 与 `git diff --check` 通过。
 
 完整 integration/E2E 套件、真实外部模型 provider 与进程崩溃恢复未验证；单测跳过项不计入通过结果。

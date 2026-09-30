@@ -7,15 +7,15 @@ ENV TZ=Asia/Shanghai
 RUN npm install -g pnpm@11.24.0
 
 # 复制 pnpm 依赖声明与锁文件
-COPY ./web/package*.json ./
-COPY ./web/pnpm-lock.yaml* ./
-COPY ./web/pnpm-workspace.yaml ./
+COPY ./frontend/package*.json ./
+COPY ./frontend/pnpm-lock.yaml* ./
+COPY ./frontend/pnpm-workspace.yaml ./
 
 # 安装依赖（--frozen-lockfile 保证 dev 与 build/CI 三处依赖与 pnpm-lock.yaml 一致，避免漂移）
 RUN pnpm install --frozen-lockfile --registry=https://registry.npmmirror.com
 
 # 复制源代码
-COPY ./web .
+COPY ./frontend .
 
 # 暴露端口
 EXPOSE 5173
@@ -30,15 +30,15 @@ WORKDIR /app
 RUN npm install -g pnpm@11.24.0
 
 # 复制依赖文件
-COPY ./web/package*.json ./
-COPY ./web/pnpm-lock.yaml* ./
-COPY ./web/pnpm-workspace.yaml ./
+COPY ./frontend/package*.json ./
+COPY ./frontend/pnpm-lock.yaml* ./
+COPY ./frontend/pnpm-workspace.yaml ./
 
 # 安装依赖
 RUN pnpm install --frozen-lockfile --registry=https://registry.npmmirror.com
 
 # 复制源代码并构建
-COPY ./web .
+COPY ./frontend .
 RUN pnpm run build
 
 # 生产环境运行阶段

@@ -29,7 +29,7 @@ Yuxi 不维护可独立编辑的中央 risk/claim inventory，也不要求 claim
 python3 scripts/verify_engineering_contracts.py --report
 ```
 
-该输出由仓库事实重新生成，不提交、不手工编辑，也不反向定义事实。删除投影后应能从同一代码、测试、decision 和 workflow 得到相同结果。Verifier 只证明引用、接线和部分边界检查真实存在；router/web 边界检查只覆盖静态可判部分，service 层事务、锁与 lease 语义仍由真实 PostgreSQL integration 证明。它也不判断目标是否值得、测试断言是否正确、oracle 是否真正独立、远端是否把检查设为 required，或某个 diff 是否被错误归类为 trivial。这些语义仍由 Reviewer 结合真实系统证据裁决。
+该输出由仓库事实重新生成，不提交、不手工编辑，也不反向定义事实。删除投影后应能从同一代码、测试、decision 和 workflow 得到相同结果。Verifier 只证明引用、接线和部分边界检查真实存在；router/frontend 边界检查只覆盖静态可判部分，service 层事务、锁与 lease 语义仍由真实 PostgreSQL integration 证明。它也不判断目标是否值得、测试断言是否正确、oracle 是否真正独立、远端是否把检查设为 required，或某个 diff 是否被错误归类为 trivial。这些语义仍由 Reviewer 结合真实系统证据裁决。
 
 ## 证据等级
 

@@ -2,7 +2,7 @@
 
 状态：archived
 类型：bug-fix
-Owner：web/src/components/AgentChatComponent.vue
+Owner：frontend/src/components/AgentChatComponent.vue
 
 ## 问题
 
@@ -18,7 +18,7 @@ Owner：web/src/components/AgentChatComponent.vue
 - 待办统一使用中性的空心圆和浅灰实心圆；进行中为空心圆内辅助色闪烁圆点，并在 reduced-motion 下停止动画；已取消项使用中性虚线圆并保留“已取消”的无障碍文案。附件与产物卡片使用较小文件图标，只保留单行名称。
 - artifact 下载继续返回原始文件；预览请求显式携带 `preview=true`，在既有授权检查后复用 Workspace 文件预览适配器，使 DOCX/PPTX 与文件树一样转换为 PDF，不建立第二套格式判断。
 
-其中状态面板展示由 `web/src/components/AgentChatComponent.vue` 拥有，交付物预览授权与响应由 `backend/package/yuxi/services/artifact_service.py` 拥有。Artifact 只把已授权字节交给预览适配器，runtime Office 缓存仍由 [`yuxi.workspace.preview`](../05-storage-workdir/2026-08-21-preview-owner-separation.md) 拥有。
+其中状态面板展示由 `frontend/src/components/AgentChatComponent.vue` 拥有，交付物预览授权与响应由 `backend/package/yuxi/services/artifact_service.py` 拥有。Artifact 只把已授权字节交给预览适配器，runtime Office 缓存仍由 [`yuxi.workspace.preview`](../05-storage-workdir/2026-08-21-preview-owner-separation.md) 拥有。
 
 ## 替代方案
 
@@ -39,7 +39,7 @@ Owner：web/src/components/AgentChatComponent.vue
 | 已完成、进行中、待处理与已取消状态保持独立语义 | `agentPanelSections.test.js` 检查 cancelled 文案和中性虚线状态 | Passed |
 | 交付物预览保留原始下载语义 | artifact service/router unit 覆盖预览 renderer、超限和查询参数；`test_chat_router.py` 通过真实 HTTP 验证 Markdown JSON preview 与原始字节下载 | Passed |
 | DOCX/PPTX artifact 在真实 HTTP 中转换为 PDF 并由浏览器展示 | 未执行真实 Office 转换和页面验证 | Not run |
-| 前端 lint、unit 与生产构建成立 | `cd web && pnpm run lint:check && pnpm run test:unit && pnpm run build` | Passed；构建仅有既有第三方注释和大 chunk warning |
+| 前端 lint、unit 与生产构建成立 | `cd frontend && pnpm run lint:check && pnpm run test:unit && pnpm run build` | Passed；构建仅有既有第三方注释和大 chunk warning |
 | 决策记录可由文档站点完整构建 | `cd docs && pnpm run build` | Passed；保留既有语法高亮、Rolldown 插件和大 chunk warning |
 | 工程契约与 staged diff 格式成立 | `python3 scripts/verify_engineering_contracts.py`；`python3 -m unittest scripts.test_verify_engineering_contracts`；`git diff --cached --check` | Passed |
 | 状态面板在真实历史对话中按内容收缩 | 真实 Compose 页面打开含一个附件的状态面板，面板为 340×131px，body 的 clientHeight 与 scrollHeight 均为 89px，不占满聊天区 | Inspected |

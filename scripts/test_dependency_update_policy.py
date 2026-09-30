@@ -22,7 +22,7 @@ def verify_policy(root: Path) -> list[str]:
     update_entries = (
         ("uv", "/backend", "/backend"),
         ("uv", "/packages/yuxi-cli", "/packages/yuxi-cli"),
-        ("npm", "/web", "/web"),
+        ("npm", "/frontend", "/frontend"),
         ("npm", "/docs", "/docs"),
         ("docker", None, "docker"),
         ("docker-compose", None, "docker-compose"),
@@ -49,9 +49,9 @@ def verify_policy(root: Path) -> list[str]:
         '"backend/uv.lock"',
         '"packages/yuxi-cli/pyproject.toml"',
         '"packages/yuxi-cli/uv.lock"',
-        '"web/package.json"',
-        '"web/pnpm-lock.yaml"',
-        '"web/pnpm-workspace.yaml"',
+        '"frontend/package.json"',
+        '"frontend/pnpm-lock.yaml"',
+        '"frontend/pnpm-workspace.yaml"',
         '"docs/package.json"',
         '"docs/pnpm-lock.yaml"',
         '"docs/pnpm-workspace.yaml"',
@@ -125,12 +125,12 @@ class DependencyUpdatePolicyTest(unittest.TestCase):
             path = root / ".github/workflows/dependency-audit.yml"
             content = path.read_text(encoding="utf-8")
             path.write_text(
-                content.replace('      - "web/pnpm-lock.yaml"\n', "", 1),
+                content.replace('      - "frontend/pnpm-lock.yaml"\n', "", 1),
                 encoding="utf-8",
             )
 
             self.assertIn(
-                'dependency audit 的 PR paths 缺少："web/pnpm-lock.yaml"',
+                'dependency audit 的 PR paths 缺少："frontend/pnpm-lock.yaml"',
                 verify_policy(root),
             )
 

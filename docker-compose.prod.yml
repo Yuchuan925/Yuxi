@@ -227,14 +227,14 @@ services:
       schema-init:
         condition: service_completed_successfully
 
-  web:
+  frontend:
     build:
       context: .
-      dockerfile: docker/web.Dockerfile
+      dockerfile: docker/frontend.Dockerfile
       target: production
-    image: ${COMPOSE_PROJECT_NAME:-yuxi}-web:${YUXI_VERSION:-0.8.0.dev0}
+    image: ${COMPOSE_PROJECT_NAME:-yuxi}-frontend:${YUXI_VERSION:-0.8.0.dev0}
     ports:
-      - "${YUXI_WEB_PORT:-80}:80"
+      - "${YUXI_FRONTEND_PORT:-80}:80"
     depends_on:
       - api
     networks:

@@ -23,7 +23,7 @@ from yuxi.modules.identity.security import AuthUtils
 from yuxi.shared.datetime import utc_now_naive
 from yuxi.infrastructure.observability.logging import logger
 
-# 前端 OIDC 回调路由路径（与 web/src/router/index.js 中的路由保持一致）
+# 前端 OIDC 回调路由路径（与 frontend/src/router/index.js 中的路由保持一致）
 FRONTEND_CALLBACK_PATH = "/auth/oidc/callback"
 # 登录页路径
 FRONTEND_LOGIN_PATH = "/login"

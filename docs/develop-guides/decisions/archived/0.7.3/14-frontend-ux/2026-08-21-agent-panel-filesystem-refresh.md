@@ -2,7 +2,7 @@
 
 状态：archived
 类型：bug-fix
-Owner：web/src/components/AgentPanel.vue
+Owner：frontend/src/components/AgentPanel.vue
 
 ## 问题
 
@@ -36,6 +36,6 @@ AgentPanel 同时预览 Viewer Workdir scope、UserWorkspace scope 和跨 Projec
 | 文件树仅在页面可见的运行期文件视图中轮询，所有 Run 终态保证补一次刷新 | 隐藏、空闲或 deactivated 后仍请求，或 interrupted/终态竞态丢失最终刷新 | `AgentChatComponent.vue`、`AgentPanel.vue` | 前端 helper unit；源码装配检查；前端 lint/build | completed 与 interrupted 都触发刷新；在途 Viewer 刷新结束后补刷 | Inspected |
 | Workspace 树重新进入后读取最新事实 | 保存 artifact 或离页期间的变化永久停留在旧快照 | `AgentPanel.vue` | 真实页面验证 | 首次加载后新增文件，切回用户目录即可见 | Not run |
 | 每轮已预取目录最多读取一次 | 展开的 outputs/uploads 同轮重复请求 | `agentPanelFilesystemPolling.js` | 前端目标 unit | outputs 已预取且展开时加载函数只调用嵌套未加载目录 | Passed |
-| 前端静态检查、构建与工程契约有效 | 装配错误或决策生命周期无效 | `web/` 与工程 gate | `pnpm run lint:check`、`pnpm run build`、`python3 scripts/verify_engineering_contracts.py`、`python3 -m unittest scripts.test_verify_engineering_contracts` | 删除来源判定、轮询 guard 或记录接线后检查失败 | Passed |
+| 前端静态检查、构建与工程契约有效 | 装配错误或决策生命周期无效 | `frontend/` 与工程 gate | `pnpm run lint:check`、`pnpm run build`、`python3 scripts/verify_engineering_contracts.py`、`python3 -m unittest scripts.test_verify_engineering_contracts` | 删除来源判定、轮询 guard 或记录接线后检查失败 | Passed |
 | 本地真实页面目录切换、展开与预览行为 | DOM 或请求仍与单元契约不一致 | 本地 Compose 页面 | Playwright 打开 `/agent/{thread_id}` 并保留截图 | 覆盖目录切换、loading、empty、error、预览和窄视口 | Not run |
 | 后端 Ruff 与文档构建 gate | Python 风格或文档链接/构建错误只在 CI 暴露 | `backend/pyproject.toml`、`docs/` | `ruff check`、`ruff format --check`、`pnpm run build` | 不适用 | Not run |

@@ -9,8 +9,8 @@ Owner：backend/package/yuxi/knowledge/parser/capabilities.py
 - 解析格式与 provider 能力：`backend/package/yuxi/knowledge/parser/capabilities.py`
 - Conversation/Project/Workdir 授权映射：`backend/package/yuxi/services/workdir_service.py`
 - Redis Run 事件行协议：`backend/package/yuxi/services/run_queue_service.py`
-- 前端 Run 事件投影与终态收敛：`web/src/composables/useAgentRunStream.js`
-- 当前 Thread 与 Project 列表：`web/src/stores/chatThreads.js`、`web/src/stores/projects.js`
+- 前端 Run 事件投影与终态收敛：`frontend/src/composables/useAgentRunStream.js`
+- 当前 Thread 与 Project 列表：`frontend/src/stores/chatThreads.js`、`frontend/src/stores/projects.js`
 - AgentRun 持久字段与业务 Schema 迁移：`backend/package/yuxi/storage/postgres/models_business.py`、`backend/package/yuxi/storage/postgres/manager.py`
 
 ## 问题

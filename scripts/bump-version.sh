@@ -30,13 +30,13 @@ set -euo pipefail
 #
 # 3. 脚本运行后必须检查:
 #    - git diff，确认只有预期版本文件变化。
-#    - backend/pyproject.toml、backend/pyproject.toml、web/package.json、
+#    - backend/pyproject.toml、backend/pyproject.toml、frontend/package.json、
 #      docker-compose*.yml、backend/uv.lock 中的 Yuxi 版本一致。
 #    - dev 模式下 README.md、README.en.md、docs/intro/quick-start.md 和文档首页
 #      不应被更新。
 #
 # 4. 必须先提交版本更新，再创建 tag。tag 要指向包含版本更新的提交:
-#    git add backend/pyproject.toml backend/pyproject.toml backend/uv.lock docker-compose.yml docker-compose.prod.yml web/package.json
+#    git add backend/pyproject.toml backend/pyproject.toml backend/uv.lock docker-compose.yml docker-compose.prod.yml frontend/package.json
 #    git commit -m 'chore(release): 升级版本到 0.7.1.dev2'
 #    git tag v0.7.1.dev2
 #
@@ -98,7 +98,7 @@ fi
 echo "准备将版本号从 ${CURRENT_VERSION} 升级到 ${NEW_VERSION}"
 echo "受影响的文件:"
 echo "  - backend/pyproject.toml"
-echo "  - web/package.json"
+echo "  - frontend/package.json"
 echo "  - docker-compose.yml"
 echo "  - docker-compose.prod.yml"
 echo "  - backend/uv.lock"
@@ -125,11 +125,11 @@ perl -pi -e "s/^version = \"[^\"]+\"/version = \"${NEW_VERSION}\"/" \
 
 # -----------------------------------------------------------------------------
 # -----------------------------------------------------------------------------
-# 3. 更新前端版本 (web/package.json)
+# 3. 更新前端版本 (frontend/package.json)
 # -----------------------------------------------------------------------------
-echo "→ 更新 web/package.json"
+echo "→ 更新 frontend/package.json"
 perl -pi -e "s/\"version\": \"[^\"]+\"/\"version\": \"${NEW_VERSION}\"/" \
-    "${PROJECT_ROOT}/web/package.json"
+    "${PROJECT_ROOT}/frontend/package.json"
 
 # -----------------------------------------------------------------------------
 # 4. 更新 Docker Compose 镜像标签默认值
@@ -189,14 +189,14 @@ echo ""
 echo "  backend/pyproject.toml:"
 grep -E "^version = \"" "${PROJECT_ROOT}/backend/pyproject.toml" | head -1 | sed 's/^/    /'
 
-echo "  web/package.json:"
-grep -E '"version"' "${PROJECT_ROOT}/web/package.json" | head -1 | sed 's/^/    /'
+echo "  frontend/package.json:"
+grep -E '"version"' "${PROJECT_ROOT}/frontend/package.json" | head -1 | sed 's/^/    /'
 
 echo "  docker-compose.yml (api):"
 grep -E "image: .*api:.*YUXI_VERSION" "${PROJECT_ROOT}/docker-compose.yml" | head -1 | sed 's/^/    /'
 
-echo "  docker-compose.prod.yml (web):"
-grep -E "image: .*web:.*YUXI_VERSION" "${PROJECT_ROOT}/docker-compose.prod.yml" | head -1 | sed 's/^/    /'
+echo "  docker-compose.prod.yml (frontend):"
+grep -E "image: .*frontend:.*YUXI_VERSION" "${PROJECT_ROOT}/docker-compose.prod.yml" | head -1 | sed 's/^/    /'
 
 echo ""
 echo "后续步骤:"

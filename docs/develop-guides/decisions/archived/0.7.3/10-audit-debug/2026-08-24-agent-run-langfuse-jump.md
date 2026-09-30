@@ -34,5 +34,5 @@ Langfuse URL API 是超级管理员调试能力，同时继续按 uid 隔离 Run
 - `backend/test/unit/services/test_agent_run_service.py` 证明 Run 入口优先使用 Run 自身 trace、兼容历史输出消息、在远端调用前结束只读事务，并区分无 trace、Langfuse 不可用和 Run 不存在。
 - `backend/test/unit/services/test_langfuse_service.py` 证明 trace URL 按 ID 解析，并拒绝非 HTTP(S) URL 与跨源 HTTPS URL。
 - `backend/test/integration/api/test_agent_run_result_causality.py` 通过真实 HTTP 与 PostgreSQL 证明普通用户返回 403、跨超级管理员 uid 返回 404，错误输出绑定不会读取同会话其他 Run 的 trace。
-- `web/test/unit/messageDebug.test.js` 证明前端只接受后端确认的 HTTP(S) URL；前端 lint、unit 和 build 验证装配。
+- `frontend/test/unit/messageDebug.test.js` 证明前端只接受后端确认的 HTTP(S) URL；前端 lint、unit 和 build 验证装配。
 - 真实页面验证证明浅色与暗色 Run 分组均显示稳定按钮；点击完成 Run 与失败 Run 分别打开各自的 Langfuse `/project/.../traces/<trace-id>` 页面；无 trace mock 关闭空白标签页并显示可恢复提示。

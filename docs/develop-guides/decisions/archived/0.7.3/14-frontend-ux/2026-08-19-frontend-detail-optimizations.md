@@ -2,7 +2,7 @@
 
 状态：archived
 类型：feature
-Owner：web/src/components/AgentChatComponent.vue
+Owner：frontend/src/components/AgentChatComponent.vue
 
 ## 问题
 
@@ -26,12 +26,12 @@ xhome #36 汇总了 HTML 流式预览占位、侧边栏搜索入口、Agent 文�
 
 | 验收主张 | 失败面 | 语义 Owner | 直接证据 / 命令 | 负向案例 | 当前结果 |
 |---|---|---|---|---|---|
-| HTML 流式预览 loading 高度约为正式预览默认高度的一半 | loading 继续占用 360px 或改变正式 iframe 自适应高度 | `web/src/utils/htmlPreviewRenderer.js` | `pnpm run test:unit` | 恢复 loading 高度为正式预览高度后单测失败 | Passed |
-| 侧边栏搜索与折叠操作在品牌区形成按钮组，折叠后仍保留搜索入口 | 搜索仍占用展开态主导航行，或折叠入口丢失 | `web/src/layouts/AppLayout.vue` | Playwright 1280px 展开态与折叠态页面快照 | 删除折叠态搜索按钮后真实页面检查失败 | Inspected |
-| 文件面板可最大化并还原原宽度，最大化时不触发拖拽 | 普通 75% 上限仍限制最大化，或还原丢失用户宽度 | `web/src/components/AgentChatComponent.vue` | `pnpm run build`；Playwright 文件面板最大化检查 | 最大化时拖拽手柄仍可用或主聊天最小宽度导致溢出 | Passed |
-| 已收尾对话默认收起最终助手消息前的中间处理过程，并以耗时分隔行展开 | 运行中、等待用户动作或没有最终回答时错误收起 | `web/src/utils/messageGrouping.js` | `pnpm run test:unit`；Playwright 历史工具对话检查 | streaming、尾部工具调用和无最终助手消息均不得生成过程组 | Passed |
-| 知识库按类型、配置、权限三步创建，失败时保留输入且只有成功才关闭 | 空名称进入下一步、切类型清空通用字段、store 返回 false 仍关闭 | `web/src/components/knowledge/DatabaseCreateFlowModal.vue` | `pnpm run test:unit`；Playwright 桌面与 375px 检查 | 必填动态字段为空已验证；创建返回 false、API 抛错后的组件事件未自动化验证 | Inspected |
-| 前端 lint、unit、build 与工程契约不回归 | 新组件未接入、样式或 decision 生命周期失效 | `web/` 与工程契约脚本 | `pnpm run lint:check`；`pnpm run test:unit`；`pnpm run build`；工程契约命令 | 删除 decision 证据矩阵或恢复未使用 import 后 gate 失败 | Passed |
+| HTML 流式预览 loading 高度约为正式预览默认高度的一半 | loading 继续占用 360px 或改变正式 iframe 自适应高度 | `frontend/src/utils/htmlPreviewRenderer.js` | `pnpm run test:unit` | 恢复 loading 高度为正式预览高度后单测失败 | Passed |
+| 侧边栏搜索与折叠操作在品牌区形成按钮组，折叠后仍保留搜索入口 | 搜索仍占用展开态主导航行，或折叠入口丢失 | `frontend/src/layouts/AppLayout.vue` | Playwright 1280px 展开态与折叠态页面快照 | 删除折叠态搜索按钮后真实页面检查失败 | Inspected |
+| 文件面板可最大化并还原原宽度，最大化时不触发拖拽 | 普通 75% 上限仍限制最大化，或还原丢失用户宽度 | `frontend/src/components/AgentChatComponent.vue` | `pnpm run build`；Playwright 文件面板最大化检查 | 最大化时拖拽手柄仍可用或主聊天最小宽度导致溢出 | Passed |
+| 已收尾对话默认收起最终助手消息前的中间处理过程，并以耗时分隔行展开 | 运行中、等待用户动作或没有最终回答时错误收起 | `frontend/src/utils/messageGrouping.js` | `pnpm run test:unit`；Playwright 历史工具对话检查 | streaming、尾部工具调用和无最终助手消息均不得生成过程组 | Passed |
+| 知识库按类型、配置、权限三步创建，失败时保留输入且只有成功才关闭 | 空名称进入下一步、切类型清空通用字段、store 返回 false 仍关闭 | `frontend/src/components/knowledge/DatabaseCreateFlowModal.vue` | `pnpm run test:unit`；Playwright 桌面与 375px 检查 | 必填动态字段为空已验证；创建返回 false、API 抛错后的组件事件未自动化验证 | Inspected |
+| 前端 lint、unit、build 与工程契约不回归 | 新组件未接入、样式或 decision 生命周期失效 | `frontend/` 与工程契约脚本 | `pnpm run lint:check`；`pnpm run test:unit`；`pnpm run build`；工程契约命令 | 删除 decision 证据矩阵或恢复未使用 import 后 gate 失败 | Passed |
 
 ## 风险
 

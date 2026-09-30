@@ -26,11 +26,11 @@ Agent 的静态字符串列表重复声明平台提供的上传、文件和主�
 
 后端针对性验证：`docker compose exec -T api uv run --no-sync --group test pytest test/unit/repositories/test_agent_repository.py test/unit/agents/test_builtin_discovery.py test/unit/services/test_context_compression_service.py -q`，74 passed。真实主子后端的发现与角色序列化响应断言字段不存在；无能力属性的压缩测试继续验证结果，跨 APP 与繁忙线程的负向案例保留。
 
-前端验证：`docker compose exec -T web pnpm run lint:check` 通过；`docker compose exec -T web pnpm run test:unit`，384 passed。SSE 状态测试直接省略能力参数，仍回读状态与请求版本。
+前端验证：`docker compose exec -T frontend pnpm run lint:check` 通过；`docker compose exec -T frontend pnpm run test:unit`，384 passed。SSE 状态测试直接省略能力参数，仍回读状态与请求版本。
 
 工程与文档验证：`python3 scripts/verify_engineering_contracts.py`、`python3 -m unittest scripts.test_verify_engineering_contracts`（64 tests）、`cd docs && pnpm run build` 与 `git diff --check` 通过。
 
-完整证据受环境与工作树其余改动限制：标准 `uv run --group test` 在容器内因 `/app/package/yuxi.egg-info` 不可写而构建失败，针对性测试使用现有环境的 `--no-sync`。`docker compose exec -T api uv run --no-sync --group test pytest test/unit -m "not slow"` 结果为 2189 passed、29 failed、27 errors、55 skipped，未达到全量通过。`docker compose exec -T api uv run --no-sync --group test pytest test/integration/services/test_builtin_discovery.py test/integration/api/test_context_compression_router.py -q` 的四个案例均被 fixture 缺失 `agent_input_receipts` 表阻塞。`docker compose exec -T web pnpm run build` 被 KnowledgeGraphSection 对已删除 graph_api 的导入阻塞。
+完整证据受环境与工作树其余改动限制：标准 `uv run --group test` 在容器内因 `/app/package/yuxi.egg-info` 不可写而构建失败，针对性测试使用现有环境的 `--no-sync`。`docker compose exec -T api uv run --no-sync --group test pytest test/unit -m "not slow"` 结果为 2189 passed、29 failed、27 errors、55 skipped，未达到全量通过。`docker compose exec -T api uv run --no-sync --group test pytest test/integration/services/test_builtin_discovery.py test/integration/api/test_context_compression_router.py -q` 的四个案例均被 fixture 缺失 `agent_input_receipts` 表阻塞。`docker compose exec -T frontend pnpm run build` 被 KnowledgeGraphSection 对已删除 graph_api 的导入阻塞。
 
 真实浏览器登录聊天页并回读 DOM，上传菜单存在；API 500 使页面未就绪，完整上传、文件产物与压缩的端到端结果未验证。通过 playwright-cli 在同一浏览器独立挂载实际 AgentInputArea SFC，省略能力参数时附件和图片菜单 enabled，拖拽文本文件发出 upload-attachment 事件，disabled 后两项菜单均禁用；独立组件验证不替代后端持久化与端到端证据。
 
