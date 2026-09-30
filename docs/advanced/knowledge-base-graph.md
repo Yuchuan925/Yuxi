@@ -1,14 +1,6 @@
-# 知识导图与知识图谱
+# 知识图谱
 
-本页说明 Milvus 知识库的导图、示例问题和图谱运维。它面向管理员和需要查看结果的用户；文档导入和 API 见[文档导入与查询 API](./knowledge-base-api.md)，状态和存储边界见[知识库机制](../mechanisms/knowledge-base.md)。
-
-## 知识导图
-
-在知识库详情页的“知识导图”中生成或查看层次化导图。系统根据文件列表和元数据组织分类，最多使用 200 个文件；结果保存到知识库的 `mindmap` 字段，Agent 可以通过 `get_mindmap` 读取。
-
-新增文件时可以执行增量更新；纯删除可以直接移除对应叶子节点，不需要再次调用模型。导图只说明文件的组织关系，不代表系统已经阅读或总结全部正文。要回答内容问题，仍需检索 chunk 或打开原文。
-
-只读用户可以查看已经生成的导图。生成、增量更新和重置属于写操作，需要知识库管理权限。
+本页说明 Milvus 知识库示例问题和图谱运维。它面向管理员和需要查看结果的用户；文档导入和 API 见[文档导入与查询 API](./knowledge-base-api.md)，状态和存储边界见[知识库机制](../mechanisms/knowledge-base.md)。
 
 ## 示例问题
 
@@ -51,9 +43,6 @@ Durable Task 的 `success` 只表示 worker 已完成编排，不能单独证明
 
 | 方法 | 路径 | 作用 |
 | --- | --- | --- |
-| `GET` | `/api/knowledge/databases/{kb_id}/mindmap` | 读取导图 |
-| `GET` | `/api/knowledge/databases/{kb_id}/mindmap/diff` | 检查导图文件变更 |
-| `POST` | `/api/knowledge/databases/{kb_id}/mindmap/generate` | 生成或更新导图 |
 | `GET` | `/api/knowledge/databases/{kb_id}/graph-build/status` | 查看图谱构建状态 |
 | `POST` | `/api/knowledge/databases/{kb_id}/graph-build/config` | 保存抽取配置 |
 | `POST` | `/api/knowledge/databases/{kb_id}/graph-build/index` | 提交图谱构建 |
@@ -65,7 +54,6 @@ Durable Task 的 `success` 只表示 worker 已完成编排，不能单独证明
 ## 源码和测试
 
 - [知识库路由](https://github.com/xerrors/Yuxi/blob/main/backend/yuxi/api/routers/knowledge/management.py)
-- [导图工具](https://github.com/xerrors/Yuxi/blob/main/backend/yuxi/modules/knowledge/utils/mindmap_utils.py)
 - [图谱服务](https://github.com/xerrors/Yuxi/blob/main/backend/yuxi/modules/knowledge/graphs/milvus_graph_service.py)
 - [知识库 unit tests](https://github.com/xerrors/Yuxi/tree/main/backend/test/unit/knowledge)
 - [图谱和知识库 integration](https://github.com/xerrors/Yuxi/tree/main/backend/test/integration/api)

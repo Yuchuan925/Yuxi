@@ -23,7 +23,7 @@ class InstallSkillInput(BaseModel):
 
 
 @tool(
-    category="buildin",
+    category="builtin",
     tags=["skill", "安装"],
     display_name="安装技能",
     args_schema=InstallSkillInput,

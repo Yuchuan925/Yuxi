@@ -29,7 +29,7 @@ def _unexpected_runtime(*args, **kwargs):
 def checkpoint_reader(monkeypatch):
     """使用真实内存 saver，并封锁所有执行准备入口。"""
     saver = InMemorySaver()
-    monkeypatch.setattr(svc.pg_manager, "get_langgraph_checkpointer", lambda: saver)
+    monkeypatch.setattr(svc, "get_langgraph_checkpointer", lambda _manager: saver)
     return saver
 
 
@@ -102,17 +102,12 @@ async def test_state_view_reads_persisted_fields_without_agent_runtime(checkpoin
         """返回已完成运行。"""
         return SimpleNamespace(status="completed")
 
-    async def workdir(**kwargs):
-        """返回所属 Project 的 Workdir。"""
-        return "projects/test"
-
     monkeypatch.setattr(
         svc, "ConversationRepository", lambda db: SimpleNamespace(get_conversation_by_thread_id=conversation)
     )
     monkeypatch.setattr(
         svc, "AgentRunRepository", lambda db: SimpleNamespace(get_latest_run_by_thread_for_user=latest_run)
     )
-    monkeypatch.setattr(svc, "resolve_conversation_workdir_path", workdir)
     response = await svc.get_agent_state_view(
         thread_id="thread",
         current_user=SimpleNamespace(uid="user"),
@@ -139,7 +134,7 @@ async def test_state_view_rejects_invisible_thread_before_checkpoint(monkeypatch
     monkeypatch.setattr(
         svc, "ConversationRepository", lambda db: SimpleNamespace(get_conversation_by_thread_id=conversation)
     )
-    monkeypatch.setattr(svc.pg_manager, "get_langgraph_checkpointer", _unexpected_runtime)
+    monkeypatch.setattr(svc, "get_langgraph_checkpointer", lambda _manager: _unexpected_runtime())
     with pytest.raises(HTTPException) as exc:
         await svc.get_agent_state_view(thread_id="thread", current_user=SimpleNamespace(uid="user"), db=None)
     assert exc.value.status_code == 404

@@ -130,21 +130,24 @@ test('知识库来源与历史消息保持独立的归一化语义', () => {
   assert.equal(idxA < idxB, true)
 
   const conversations = MessageProcessor.convertServerHistoryToMessages([
-    { type: 'human', content: '请选择语言' },
-    { type: 'ai', content: '请选择输出语言' },
+    { type: 'human', content: '排队输入一' },
+    { type: 'human', content: '排队输入二' },
     {
       type: 'human',
       content: '{"language":"python"}',
       extra_metadata: { source: 'ask_user_question_resume' }
     },
-    { type: 'ai', content: '这是 Python 版本' }
+    { type: 'ai', content: '这是 Python 版本', run_id: 'run-1' }
   ])
 
-  assert.equal(conversations.length, 1)
-  assert.equal(conversations[0].messages.length, 3)
-  assert.equal(conversations[0].messages.at(-1).content, '这是 Python 版本')
-  assert.equal(conversations[0].messages.at(-1).isLast, true)
-  assert.equal(conversations[0].status, 'finished')
+  assert.equal(conversations.length, 3)
+  assert.equal(conversations[0].messages.length, 1)
+  assert.equal(conversations[0].messages[0].content, '排队输入一')
+  assert.equal(conversations[1].messages.length, 1)
+  assert.equal(conversations[1].messages[0].content, '排队输入二')
+  assert.equal(conversations[2].messages.at(-1).content, '这是 Python 版本')
+  assert.equal(conversations[2].messages.at(-1).isLast, true)
+  assert.equal(conversations[2].status, 'finished')
 
   assert.deepEqual(
     MessageProcessor.parseAssistantMessageBody({

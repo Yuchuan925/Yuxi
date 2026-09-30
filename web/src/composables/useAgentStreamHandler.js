@@ -76,7 +76,6 @@ export function useAgentStreamHandler({
   getThreadState,
   processApprovalInStream,
   currentAgentId,
-  supportsFiles,
   streamSmoother
 }) {
   const debugPrefix = '[AgentStateDebug]'
@@ -201,7 +200,6 @@ export function useAgentStreamHandler({
       case 'agent_state':
         console.log(`${debugPrefix}[agent_state_chunk]`, {
           threadId,
-          supportsFiles: unref(supportsFiles),
           currentAgentId: unref(currentAgentId),
           hasAgentState: !!chunk.agent_state,
           todoCount: Array.isArray(chunk.agent_state?.todos) ? chunk.agent_state.todos.length : 0
@@ -216,7 +214,6 @@ export function useAgentStreamHandler({
         } else {
           console.warn(`${debugPrefix}[agent_state_skip]`, {
             reason: 'empty_state',
-            supportsFiles: unref(supportsFiles),
             hasAgentState: !!chunk.agent_state,
             currentAgentId: unref(currentAgentId),
             threadId
@@ -242,10 +239,9 @@ export function useAgentStreamHandler({
           console.log(`${debugPrefix}[finished]`, {
             threadId,
             currentAgentId: unref(currentAgentId),
-            hasThreadAgentState: !!threadState.agentState,
-            supportsFiles: unref(supportsFiles)
+            hasThreadAgentState: !!threadState.agentState
           })
-          if (unref(supportsFiles) && threadState.agentState) {
+          if (threadState.agentState) {
             console.log(
               `[AgentState|Final] ${new Date().toLocaleTimeString()}.${new Date().getMilliseconds()}`,
               {

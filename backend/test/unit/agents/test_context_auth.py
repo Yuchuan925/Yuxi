@@ -216,11 +216,13 @@ async def test_normalize_agent_context_config_defaults_mcps_off_and_filters_expl
     )
     monkeypatch.setitem(
         sys.modules,
+        "yuxi.modules.extensions.mcp.repository",
+        types.SimpleNamespace(get_all_mcp_servers=fake_get_all_mcp_servers),
+    )
+    monkeypatch.setitem(
+        sys.modules,
         "yuxi.modules.extensions.mcp.service",
-        types.SimpleNamespace(
-            get_all_mcp_servers=fake_get_all_mcp_servers,
-            get_enabled_mcp_server_slugs=fake_get_enabled_mcp_server_slugs,
-        ),
+        types.SimpleNamespace(get_enabled_mcp_server_slugs=fake_get_enabled_mcp_server_slugs),
     )
     monkeypatch.setitem(
         sys.modules,
@@ -434,11 +436,13 @@ async def test_prepare_agent_runtime_context_filters_resources_and_derives_runti
     )
     monkeypatch.setitem(
         sys.modules,
+        "yuxi.modules.extensions.mcp.repository",
+        types.SimpleNamespace(get_all_mcp_servers=fake_get_all_mcp_servers),
+    )
+    monkeypatch.setitem(
+        sys.modules,
         "yuxi.modules.extensions.mcp.service",
-        types.SimpleNamespace(
-            get_all_mcp_servers=fake_get_all_mcp_servers,
-            get_enabled_mcp_server_slugs=fake_get_enabled_mcp_server_slugs,
-        ),
+        types.SimpleNamespace(get_enabled_mcp_server_slugs=fake_get_enabled_mcp_server_slugs),
     )
     monkeypatch.setitem(
         sys.modules,

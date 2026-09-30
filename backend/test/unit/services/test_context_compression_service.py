@@ -45,7 +45,7 @@ async def test_compress_thread_context_uses_locked_idle_thread(monkeypatch: pyte
         agent_id="assistant",
         extra_metadata={"model_spec": "provider:model"},
     )
-    agent = SimpleNamespace(capabilities=["context_compression"], context_schema=_Context)
+    agent = SimpleNamespace(context_schema=_Context)
 
     class Db:
         async def commit(self):

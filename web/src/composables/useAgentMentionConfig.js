@@ -32,7 +32,7 @@ const normalizeMentionResource = (option, kind) => {
   if (kind === 'subagents') {
     return {
       id: value,
-      slug: typeof option === 'object' && option !== null ? option.slug || value : value,
+      slug: value,
       name,
       description
     }

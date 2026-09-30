@@ -26,12 +26,13 @@ async def test_backend_http_contract_rejects_unknown_ids(test_client, admin_head
     backends = {item["backend_id"]: item for item in response.json()["backends"]}
     assert set(backends) == {"ChatbotAgent", "SubAgentBackend"}
     assert backends["ChatbotAgent"]["name"] == "智能助手"
-    assert "context_compression" in backends["ChatbotAgent"]["capabilities"]
+    assert all("capabilities" not in item for item in backends.values())
     assert all("id" not in item for item in backends.values())
     response = await test_client.get("/api/agent/backends/SubAgentBackend", headers=admin_headers)
     assert response.status_code == 200, response.text
     assert response.json()["backend_id"] == "SubAgentBackend"
     assert "configurable_items" in response.json()
+    assert "capabilities" not in response.json()
 
     slug = f"pytest-unknown-backend-{uuid.uuid4().hex}"
     engine = create_async_engine(os.environ["POSTGRES_URL"])
@@ -166,6 +167,7 @@ async def test_discovered_content_persists_and_preserves_customization(
         response = await test_client.get(f"/api/agent/{role_slug}", headers=admin_headers)
         assert response.status_code == 200, response.text
         assert response.json()["agent"]["name"] == "管理员定制"
+        assert "capabilities" not in response.json()["agent"]
         assert response.json()["agent"]["config_json"]["context"]["system_prompt"] == "定制提示词"
 
         skill_md.write_text(skill_md.read_text().replace("初始描述", "更新描述").replace('"1.0"', '"2.0"'))

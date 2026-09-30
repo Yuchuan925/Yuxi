@@ -712,7 +712,6 @@ class MilvusKB(KnowledgeBase):
             FileStatus.PARSED,
             FileStatus.ERROR_INDEXING,
             FileStatus.INDEXED,
-            "done",
         }
         params = resolve_processing_params(
             kb_additional_params=additional_params,

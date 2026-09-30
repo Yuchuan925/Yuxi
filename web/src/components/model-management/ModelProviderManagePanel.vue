@@ -273,10 +273,9 @@ const remoteModelTypeOptions = computed(() => {
 })
 
 // Model Config Modal 的 type 下拉选项：基于 provider.capabilities 限定
-// 旧数据 capabilities 为空时回退到全集，保持现状
 const editingModelTypeOptions = computed(() => {
   const caps = currentProviderForModels.value?.capabilities
-  const types = Array.isArray(caps) && caps.length ? caps : ['chat', 'embedding', 'rerank']
+  const types = Array.isArray(caps) ? caps : []
   return types.map((c) => ({ value: c, label: c }))
 })
 
@@ -319,7 +318,7 @@ function getUserUidHeaderDisplay(provider) {
 function getProviderInfo(provider) {
   return [
     { label: 'Base URL', value: provider.base_url || '-' },
-    { label: '能力', value: provider.capabilities?.join(', ') || 'chat' },
+    { label: '能力', value: (provider.capabilities || []).join(', ') },
     { label: '请求用户 ID', value: getUserUidHeaderDisplay(provider) }
   ]
 }
@@ -370,7 +369,7 @@ const openEditProviderModal = (provider) => {
     rerank_models_endpoint: provider.rerank_models_endpoint ?? '',
     api_key_env: provider.api_key_env || '',
     api_key: provider.api_key || '',
-    capabilities: provider.capabilities?.length ? provider.capabilities : ['chat'],
+    capabilities: provider.capabilities || [],
     is_enabled: provider.is_enabled !== false,
     include_user_uid: provider.include_user_uid === true,
     headers_text: formatJsonText(provider.headers_json),
@@ -640,7 +639,7 @@ const openModelConfigModal = (model) => {
 // 手动添加模型：弹出与编辑共用的 Model Config Modal，但 id 字段可编辑、type 选项受 provider 能力约束
 const openCreateModal = (provider) => {
   if (!provider) return
-  const types = provider.capabilities?.length ? provider.capabilities : ['chat']
+  const types = provider.capabilities || []
   const defaultType = types[0]
   Object.assign(editingModel.value, {
     id: '',

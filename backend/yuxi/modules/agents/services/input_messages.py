@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass, field, replace
 from typing import Any
 
@@ -186,34 +185,23 @@ def extract_image_contents(raw_message: dict[str, Any] | None) -> list[str]:
     return images
 
 
-def build_resume_input_message(resume: object) -> AgentRunInputMessage:
-    return AgentRunInputMessage(
-        content=json.dumps(resume, ensure_ascii=False),
-        message_type="resume",
-        image_content=None,
-    )
-
-
 def restore_chat_input_message(*, content: str, image_content: str | None, metadata: dict) -> AgentRunInputMessage:
     raw_message = metadata.get("raw_message")
-    if isinstance(raw_message, dict):
-        try:
-            langchain_message = HumanMessage.model_validate(raw_message)
-        except Exception as exc:
-            raise ValueError("invalid raw_message for chat input message") from exc
-        raw_content = raw_message.get("content")
-        message_type = "multimodal_image" if image_content or _has_image_url_content_part(raw_content) else "text"
-        return AgentRunInputMessage(
-            content=content,
-            message_type=message_type,
-            image_content=image_content,
-            langchain_message=langchain_message,
-            extra_metadata=dict(metadata),
-        )
-
-    # 更早的历史行只有单值 image_content（raw_message 是后来的 refactor 才引入的），
-    # 单值分支由 build_chat_input_message 的归一承接，旧行仍能显示那一张图。
-    return build_chat_input_message(content, image_content)
+    if not isinstance(raw_message, dict):
+        raise ValueError("missing raw_message for chat input message")
+    try:
+        langchain_message = HumanMessage.model_validate(raw_message)
+    except Exception as exc:
+        raise ValueError("invalid raw_message for chat input message") from exc
+    raw_content = raw_message.get("content")
+    message_type = "multimodal_image" if image_content or _has_image_url_content_part(raw_content) else "text"
+    return AgentRunInputMessage(
+        content=content,
+        message_type=message_type,
+        image_content=image_content,
+        langchain_message=langchain_message,
+        extra_metadata=dict(metadata),
+    )
 
 
 def _has_image_url_content_part(content: object) -> bool:

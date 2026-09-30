@@ -20,15 +20,17 @@ from yuxi.modules.extensions.skills.models import Skill
 from yuxi.modules.extensions.skills.edit import open_shared_skill_dir
 from yuxi.modules.extensions.skills.shared import lock_accessible_shared_skill_for_file
 from yuxi.modules.identity.repositories.users import UserRepository
-from yuxi.modules.workspace.preview import preview_workspace_file
 from yuxi.infrastructure.document_preview import PreviewResult
 from yuxi.shared.files import PreparedFile
 from yuxi.modules.workspace.services.bindings import resolve_authorized_workdir
 from yuxi.infrastructure.document_preview import (
     MAX_BINARY_PREVIEW_SIZE_BYTES,
     OfficePreviewConversionError,
+    convert_office_to_pdf,
     detect_media_type,
+    is_office_pdf_preview_file,
     preview_too_large,
+    render_preview,
 )
 from yuxi.infrastructure.filesystem import open_regular_file_fd
 from yuxi.modules.workspace.errors import FileTransferLimitError
@@ -175,11 +177,15 @@ async def resolve_thread_artifact_view(
         try:
             with open(temp_path, "rb") as artifact_file:
                 raw_content = artifact_file.read()
-            return await preview_workspace_file(
-                normalized,
-                raw_content,
-                office_cache_key=f"artifact:{current_uid}:{normalized}",
-            )
+            if is_office_pdf_preview_file(normalized):
+                return PreviewResult(
+                    content=await convert_office_to_pdf(PurePosixPath(normalized).name, raw_content),
+                    preview_type="pdf",
+                    supported=True,
+                    media_type="application/pdf",
+                    filename=f"{PurePosixPath(normalized).stem or 'preview'}.pdf",
+                )
+            return render_preview(normalized, raw_content)
         except OfficePreviewConversionError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         finally:

@@ -10,7 +10,7 @@
 
 Thread 是长期对话，Turn 是一轮工作，Run 是其中一段有执行 owner 的运行。普通 `follow_up` 消息先保存为 Input；线程空闲且队列未暂停时领取 FIFO 队头并创建 Turn/Run。`steer` 指向当前 Turn，多次输入可合并为一个待消费批次，安全接管后在同一 Turn 创建下一 Run。回答或审批消费明确等待点，也在同一 Turn 创建下一 Run。接收响应中的 `event_id`、`input_id` 和状态只证明持久接收；工作结果通过 Turn 查询。
 
-`/api/v1/agents/threads` 是主协议。`/api/v1/agents/sessions` 是相同 Thread 的命名适配：`session_id` 等于 `thread_id`，认证、幂等键、调度和存储完全相同。Session 事件类型只在 HTTP 边界映射。
+`/api/v1/agents/threads` 是主协议。
 
 | 方法 | 路径 | 用途 |
 | --- | --- | --- |
@@ -26,11 +26,11 @@ Thread 是长期对话，Turn 是一轮工作，Run 是其中一段有执行 own
 | `GET` | `/api/v1/agents/threads/{thread_id}/runs/{run_id}` | 查看指定执行段 |
 | `GET` | `/api/v1/agents/threads/{thread_id}/history` | 查看持久历史及轻量 Run 列表 |
 
-Thread 和 Session 的创建、事件提交都必须提供长度为 1–128 的 `Idempotency-Key`。同一身份、Thread 和键重复提交相同意图返回首次回执；改变命令、目标或内容返回 `409`。创建时同键经 Thread 或 Session 路径产生相同 Thread。未知字段、批量事件或无效内容返回 `422`。
+Thread 的创建、事件提交都必须提供长度为 1–128 的 `Idempotency-Key`。同一身份、Thread 和键重复提交相同意图返回首次回执；改变命令、目标或内容返回 `409`。未知字段、批量事件或无效内容返回 `422`。
 
 ## 创建与提交消息
 
-创建可传 `agent_id`、`title`、`project_id`、`model_spec`、`tool_approval_mode`、`input` 和 `stream`。`agent_id` 使用可见 Agent slug；`input` 是有序的 `user` 消息数组，内容块支持 `input_text` 与内联 `data:image/...;base64,...` 的 `input_image`。每条消息最多 10 张图片，图片内容总量最多 80 MiB；内置 nginx 对 Thread/Session 创建和消息事件放行 100 MiB 请求体，外层代理也需配置相应上限。`stream=true` 要求同时提供输入。带输入创建把 Thread、Message、Input、回执和首个 Turn/Run 在同一数据库事务提交；提交后才投递 worker。
+创建可传 `agent_id`、`title`、`project_id`、`model_spec`、`tool_approval_mode`、`input` 和 `stream`。`agent_id` 使用可见 Agent slug；`input` 是有序的 `user` 消息数组，内容块支持 `input_text` 与内联 `data:image/...;base64,...` 的 `input_image`。每条消息最多 10 张图片，图片内容总量最多 80 MiB；内置 nginx 对 Thread 创建和消息事件放行 100 MiB 请求体，外层代理也需配置相应上限。`stream=true` 要求同时提供输入。带输入创建把 Thread、Message、Input、回执和首个 Turn/Run 在同一数据库事务提交；提交后才投递 worker。
 
 ```bash
 curl --fail "$BASE_URL/api/v1/agents/threads" \
@@ -66,4 +66,4 @@ Turn `waiting` 时普通消息被拒绝。Turn 快照的 `waitpoint` 提供 `id`
 
 `GET /threads/{thread_id}` 返回 Thread 状态、`current_turn`、`queue_paused` 和 `queued_input_count`。Turn 结果从 `result_run_id` 指向的顶层 Run 的 `output_message_id` 读取；`interrupted` 或 `yielded` Run 结束不表示 Turn 完成。历史包含原始用户消息、已交付输出及轻量 Run 归属；模型与工具审计另由超级管理员 JWT 查询。
 
-`GET /threads/{thread_id}/events` 订阅整个 Thread。结构化 SSE 事件携带 `type`、`thread_id`、适用的 `turn_id`、`input_id`、`run_id`、`cursor` 和 `payload`。`Last-Event-ID` 用于续订。输入接收、输入消费、Run 结束与 Turn 结束是不同事件；Redis 增量短期保留，断线后的业务终态以 Input、Turn、Run 和历史查询为准。Session 路径输出 `session_id` 和 `agent.session.*` 类型，不建立另一条事件流。
+`GET /threads/{thread_id}/events` 订阅整个 Thread。结构化 SSE 事件携带 `type`、`thread_id`、适用的 `turn_id`、`input_id`、`run_id`、`cursor` 和 `payload`。`Last-Event-ID` 用于续订。输入接收、输入消费、Run 结束与 Turn 结束是不同事件；Redis 增量短期保留，断线后的业务终态以 Input、Turn、Run 和历史查询为准。

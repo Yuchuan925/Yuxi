@@ -881,67 +881,6 @@ async def test_dify_query_params_and_documents_readonly(test_client, admin_heade
 
 
 # =============================================================================
-# === Mindmap Tests ===
-# =============================================================================
-
-
-async def test_get_databases_overview(test_client, admin_headers, knowledge_database):
-    """测试获取所有知识库概览"""
-    response = await test_client.get("/api/knowledge/mindmap/databases", headers=admin_headers)
-    assert response.status_code == 200, response.text
-    payload = response.json()
-    assert payload["message"] == "success"
-    assert "databases" in payload
-    assert "total" in payload
-
-    # 验证知识库在列表中
-    kb_ids = [db["kb_id"] for db in payload["databases"]]
-    assert knowledge_database["kb_id"] in kb_ids
-
-
-async def test_get_database_files(test_client, admin_headers, knowledge_database):
-    """测试获取知识库文件列表"""
-    kb_id = knowledge_database["kb_id"]
-    response = await test_client.get(f"/api/knowledge/databases/{kb_id}/mindmap/files", headers=admin_headers)
-    assert response.status_code == 200, response.text
-    payload = response.json()
-    assert payload["message"] == "success"
-    assert payload["kb_id"] == kb_id
-    assert "files" in payload
-    assert "total" in payload
-    assert payload["db_name"] == knowledge_database["name"]
-
-
-async def test_get_database_files_not_found(test_client, admin_headers):
-    """测试获取不存在的知识库文件列表"""
-    response = await test_client.get("/api/knowledge/databases/nonexistent_kb_id/mindmap/files", headers=admin_headers)
-    assert response.status_code == 404
-
-
-async def test_generate_mindmap_empty_files(test_client, admin_headers, knowledge_database):
-    """测试空文件列表生成思维导图"""
-    kb_id = knowledge_database["kb_id"]
-    response = await test_client.post(
-        f"/api/knowledge/databases/{kb_id}/mindmap/generate",
-        json={"file_ids": [], "user_prompt": ""},
-        headers=admin_headers,
-    )
-    # 空文件应该返回400错误
-    assert response.status_code == 400
-    assert "中没有文件" in response.json()["detail"]
-
-
-async def test_get_database_mindmap_not_exists(test_client, admin_headers, knowledge_database):
-    """测试获取不存在的思维导图"""
-    kb_id = knowledge_database["kb_id"]
-    response = await test_client.get(f"/api/knowledge/databases/{kb_id}/mindmap", headers=admin_headers)
-    assert response.status_code == 200, response.text
-    payload = response.json()
-    assert payload["kb_id"] == kb_id
-    assert payload["mindmap"] is None  # 尚未生成思维导图
-
-
-# =============================================================================
 # === Knowledge Router Additional Tests ===
 # =============================================================================
 
@@ -1142,26 +1081,6 @@ async def test_sample_questions_endpoints(test_client, admin_headers, knowledge_
     assert generate_response.status_code == 400
     assert "中没有文件" in generate_response.json()["detail"]
 
-
-async def test_mindmap_permissions(test_client, standard_user, knowledge_database):
-    """测试思维导图接口的权限控制"""
-    kb_id = knowledge_database["kb_id"]
-
-    # 普通用户应该无法访问
-    forbidden_list = await test_client.get("/api/knowledge/mindmap/databases", headers=standard_user["headers"])
-    _assert_forbidden_response(forbidden_list)
-
-    forbidden_files = await test_client.get(
-        f"/api/knowledge/databases/{kb_id}/mindmap/files", headers=standard_user["headers"]
-    )
-    _assert_forbidden_response(forbidden_files)
-
-    forbidden_generate = await test_client.post(
-        f"/api/knowledge/databases/{kb_id}/mindmap/generate",
-        json={"file_ids": []},
-        headers=standard_user["headers"],
-    )
-    _assert_forbidden_response(forbidden_generate)
 
 
 @pytest.mark.parametrize(

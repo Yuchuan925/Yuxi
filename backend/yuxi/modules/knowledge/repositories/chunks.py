@@ -49,36 +49,6 @@ class KnowledgeChunkRepository:
             )
             return list(result.scalars().all())
 
-    async def list_by_file_ids(self, file_ids: list[str]) -> list[KnowledgeChunk]:
-        if not file_ids:
-            return []
-
-        chunks: list[KnowledgeChunk] = []
-        async with pg_manager.get_async_session_context() as session:
-            for batch in self._iter_batches(file_ids):
-                result = await session.execute(
-                    select(KnowledgeChunk)
-                    .where(KnowledgeChunk.file_id.in_(batch))
-                    .order_by(KnowledgeChunk.file_id.asc(), KnowledgeChunk.chunk_index.asc())
-                )
-                chunks.extend(result.scalars().all())
-        return sorted(chunks, key=lambda chunk: (chunk.file_id, chunk.chunk_index))
-
-    async def count_by_file_ids(self, file_ids: list[str]) -> dict[str, int]:
-        if not file_ids:
-            return {}
-
-        counts: dict[str, int] = {}
-        async with pg_manager.get_async_session_context() as session:
-            for batch in self._iter_batches(file_ids):
-                result = await session.execute(
-                    select(KnowledgeChunk.file_id, func.count())
-                    .where(KnowledgeChunk.file_id.in_(batch))
-                    .group_by(KnowledgeChunk.file_id)
-                )
-                counts.update({str(file_id): int(count or 0) for file_id, count in result.all()})
-        return counts
-
     async def list_by_kb_id(self, kb_id: str) -> list[KnowledgeChunk]:
         async with pg_manager.get_async_session_context() as session:
             result = await session.execute(

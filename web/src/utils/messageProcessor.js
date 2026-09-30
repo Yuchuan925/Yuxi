@@ -67,7 +67,6 @@ export class MessageProcessor {
       status: terminalStatuses.has(run.status) ? 'finished' : 'loading'
     }))
     const byRunId = new Map(conversations.map((conv) => [conv.run.run_id, conv]))
-    let legacyConv = null
 
     for (const item of serverHistory) {
       if (item.type === 'tool' ||
@@ -76,16 +75,14 @@ export class MessageProcessor {
           ))) {
         continue
       }
-      const runId = item.run_id || item.extra_metadata?.run_id
-      let conv = runId ? byRunId.get(runId) : legacyConv
-      if (!conv || (!runId && item.type === 'human')) {
+      const runId = item.run_id
+      let conv = runId ? byRunId.get(runId) : null
+      if (!conv) {
         conv = { messages: [], status: 'loading' }
         conversations.push(conv)
         if (runId) byRunId.set(runId, conv)
       }
       conv.messages.push({ ...item })
-      // 没有 Run 关联的旧历史仍按用户轮次展示，不能挂到相邻 Run 上。
-      legacyConv = runId ? null : conv
     }
 
     conversations.sort((left, right) => {

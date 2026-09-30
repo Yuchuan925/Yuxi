@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-_PKG = Path(__file__).resolve().parents[2] / "package"
+_PKG = Path(__file__).resolve().parents[2]
 
 _STUB_NAMES = [
     "yuxi",
@@ -46,13 +46,13 @@ def _isolated_modules():
 
     _nlp = _load(
         "yuxi.modules.knowledge.chunking.ragflow_like.nlp",
-        "yuxi/knowledge/chunking/ragflow_like/nlp.py",
+        "yuxi/modules/knowledge/chunking/ragflow_like/nlp.py",
     )
     sys.modules["yuxi.modules.knowledge.chunking.ragflow_like"].nlp = _nlp  # type: ignore[attr-defined]
 
     _general = _load(
         "yuxi.modules.knowledge.chunking.ragflow_like.parsers.general",
-        "yuxi/knowledge/chunking/ragflow_like/parsers/general.py",
+        "yuxi/modules/knowledge/chunking/ragflow_like/parsers/general.py",
     )
 
     # 注入模块级变量供测试用例访问

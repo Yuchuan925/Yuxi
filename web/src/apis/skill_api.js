@@ -1,4 +1,4 @@
-import { apiGet, apiPost, apiPut, apiDelete, apiAdminGet, apiAdminPost } from './base'
+import { apiGet, apiPost, apiPut, apiDelete } from './base'
 
 const BASE_URL = '/api/system/skills'
 const USER_BASE_URL = '/api/skills'
@@ -8,10 +8,6 @@ export const listSkills = async () => {
 }
 
 export const listSkillCards = async () => apiGet(USER_BASE_URL)
-
-export const listAccessibleSkills = async () => {
-  return apiGet(`${USER_BASE_URL}/accessible`)
-}
 
 export const prepareSkillUpload = async (file) => {
   const formData = new FormData()
@@ -56,14 +52,6 @@ export const getSkillDependencyOptions = async (slug) => {
   return apiGet(`${BASE_URL}/dependency-options${query}`)
 }
 
-export const listBuiltinSkills = async () => {
-  return apiAdminGet(`${BASE_URL}/builtin`)
-}
-
-export const syncBuiltinSkills = async () => {
-  return apiAdminPost(`${BASE_URL}/builtin/sync`)
-}
-
 export const getSkillTree = async (slug) => {
   return apiGet(`${BASE_URL}/${encodeURIComponent(slug)}/tree`)
 }
@@ -100,10 +88,6 @@ export const updateSkillEnabled = async (slug, enabled) => {
   return apiPut(`${BASE_URL}/${encodeURIComponent(slug)}/enabled`, { enabled })
 }
 
-export const deleteSkillFile = async (slug, path) => {
-  return apiDelete(`${BASE_URL}/${encodeURIComponent(slug)}/file?path=${encodeURIComponent(path)}`)
-}
-
 export const exportSkill = async (slug) => {
   return apiGet(`${BASE_URL}/${encodeURIComponent(slug)}/export`, {}, true, 'blob')
 }
@@ -123,7 +107,6 @@ export const deleteSkillsBatch = async (slugs) => {
 export const skillApi = {
   listSkills,
   listSkillCards,
-  listAccessibleSkills,
   prepareSkillUpload,
   listRemoteSkills,
   prepareRemoteSkills,
@@ -132,8 +115,6 @@ export const skillApi = {
   confirmPersonalSkillInstallDraft,
   discardSkillInstallDraft,
   getSkillDependencyOptions,
-  listBuiltinSkills,
-  syncBuiltinSkills,
   getSkillTree,
   getSkillFile,
   getPersonalSkillFile,
@@ -142,7 +123,6 @@ export const skillApi = {
   updateSkillDependencies,
   updateSkillShareConfig,
   updateSkillEnabled,
-  deleteSkillFile,
   exportSkill,
   deleteSkill,
   deletePersonalSkill,

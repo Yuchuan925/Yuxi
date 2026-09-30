@@ -18,7 +18,6 @@ import yuxi.modules.tasks.repository as task_repository_module
 from yuxi.modules.knowledge.repositories.evaluation import EvaluationRepository
 from yuxi.modules.knowledge.repositories.files import KnowledgeFileRepository
 from yuxi.modules.tasks.repository import TaskRepository
-import yuxi.modules.tasks.queue as task_queue_service
 from yuxi.modules.tasks.queue import finalize_task_failure
 from yuxi.modules.tasks.service import TaskContext, Tasker
 from yuxi.infrastructure.postgres.manager import PostgresManager
@@ -351,88 +350,6 @@ async def test_knowledge_task_failure_fences_file_intermediate_state(durable_tas
     assert file_record.status == "error_parsing"
     assert file_record.processing_task_id is None
     assert file_record.processing_owner is None
-
-
-async def test_full_worker_fails_legacy_task_through_current_domain_hook(
-    durable_task_schema,
-    monkeypatch,
-) -> None:
-    dataset_id = f"dataset_{uuid.uuid4().hex[:8]}"
-    kb_id = f"kb_{uuid.uuid4().hex[:8]}"
-    task_id = uuid.uuid4().hex
-    async with durable_task_schema.get_async_session_context() as session:
-        session.add(KnowledgeBase(kb_id=kb_id, name="pytest", kb_type="milvus"))
-        await session.flush()
-        session.add(
-            EvaluationDataset(
-                dataset_id=dataset_id,
-                kb_id=kb_id,
-                name="pytest",
-                item_count=0,
-                build_metadata={"source": "generated", "status": "pending", "task_id": task_id},
-            )
-        )
-
-    await TaskRepository().create(
-        task_id,
-        {
-            **_task_data(),
-            "type": "dataset_generation",
-            "handler_version": 0,
-            "payload": {"dataset_id": dataset_id},
-        },
-    )
-    published = False
-
-    async def reject_publish(_task_id: str) -> None:
-        nonlocal published
-        published = True
-
-    monkeypatch.setattr(task_queue_service, "publish_task", reject_publish)
-    await task_queue_service.publish_pending_tasks()
-
-    assert published is False
-    assert (await TaskRepository().get_by_id(task_id)).status == "failed"
-    dataset = await EvaluationRepository().get_dataset(dataset_id)
-    assert dataset.build_metadata["status"] == "failed"
-
-
-async def test_full_worker_cancels_legacy_pending_cancel_intent_with_domain_hook(
-    durable_task_schema,
-) -> None:
-    dataset_id = f"dataset_{uuid.uuid4().hex[:8]}"
-    kb_id = f"kb_{uuid.uuid4().hex[:8]}"
-    task_id = uuid.uuid4().hex
-    async with durable_task_schema.get_async_session_context() as session:
-        session.add(KnowledgeBase(kb_id=kb_id, name="pytest", kb_type="milvus"))
-        await session.flush()
-        session.add(
-            EvaluationDataset(
-                dataset_id=dataset_id,
-                kb_id=kb_id,
-                name="pytest",
-                item_count=0,
-                build_metadata={"source": "generated", "status": "pending", "task_id": task_id},
-            )
-        )
-
-    await TaskRepository().create(
-        task_id,
-        {
-            **_task_data(),
-            "type": "dataset_generation",
-            "handler_version": 0,
-            "cancel_requested": 1,
-            "payload": {"dataset_id": dataset_id},
-        },
-    )
-
-    await task_queue_service.publish_pending_tasks()
-
-    assert (await TaskRepository().get_by_id(task_id)).status == "cancelled"
-    dataset = await EvaluationRepository().get_dataset(dataset_id)
-    assert dataset.build_metadata["status"] == "failed"
-    assert dataset.build_metadata["message"] == "任务已取消"
 
 
 async def test_pending_dataset_cancel_commits_domain_and_task_terminal_together(durable_task_schema) -> None:

@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from yuxi.modules.system.dashboard import DashboardService
 from yuxi.modules.agents.models.definitions import Agent
 from yuxi.infrastructure.postgres.base import Base
-from yuxi.modules.agents.models.threads import Conversation, ConversationStats
+from yuxi.modules.agents.models.threads import Conversation
 from yuxi.modules.identity.models import Department, User
 from yuxi.modules.agents.models.messages import Message, ToolCall
 from yuxi.shared.datetime import utc_now_naive
@@ -147,10 +147,6 @@ async def dashboard_db():
             updated_at=now,
         )
 
-        stats1 = ConversationStats(conversation=conv1, message_count=4, total_tokens=1200)
-        stats2 = ConversationStats(conversation=conv2, message_count=8, total_tokens=3500)
-        stats3 = ConversationStats(conversation=conv3, message_count=1, total_tokens=300)
-
         msg1 = Message(conversation=conv1, role="user", content="Hello", created_at=yesterday)
         msg2 = Message(conversation=conv1, role="assistant", content="Hi there!", created_at=yesterday)
         msg3 = Message(conversation=conv2, role="user", content="Write code", created_at=now)
@@ -214,9 +210,6 @@ async def dashboard_db():
                 deleted_user_conversation,
                 missing_agent_conversation,
                 subagent_conversation,
-                stats1,
-                stats2,
-                stats3,
                 msg1,
                 msg2,
                 msg3,
@@ -276,16 +269,17 @@ async def test_dashboard_service_thread_analytics(dashboard_db):
     assert summary["active_threads"] >= 1
     assert summary["pinned_threads"] == 1
     assert summary["total_messages"] == 4
-    assert summary["total_tokens"] == 5000
+    assert summary["total_tokens"] == 0  # 无 Run 用量事实时不再回退旧汇总表
     assert summary["avg_messages_per_thread"] > 0
-    assert summary["avg_tokens_per_thread"] > 0
+    assert summary["avg_tokens_per_thread"] == 0
 
     assert len(analytics["daily_trends"]) == 7
 
     depth = analytics["depth_distribution"]
-    assert depth["1-2 条"] == 1  # conv3 has 1 message
-    assert depth["3-5 条"] == 1  # conv1 has 4 messages
-    assert depth["6-10 条"] == 1  # conv2 has 8 messages
+    assert depth["0 条"] == 1  # conv3 无消息
+    assert depth["1-2 条"] == 2  # conv1/conv2 各 2 条
+    assert depth["3-5 条"] == 0
+    assert depth["6-10 条"] == 0
 
     agents = analytics["agent_distribution"]
     assert len(agents) == 2
@@ -427,7 +421,7 @@ async def test_dashboard_service_conversation_detail(dashboard_db):
 
     assert detail is not None
     assert detail["thread_id"] == "thread-102"
-    assert detail["total_tokens"] == 3500
+    assert detail["total_tokens"] is None  # 无 Run 用量事实时暴露未知而不是旧汇总
     assert detail["user_deleted"] is False
     assert detail["agent_deleted"] is False
     assert len(detail["messages"]) == 2

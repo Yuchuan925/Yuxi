@@ -7,16 +7,16 @@ Yuxi 的工具分成三层：内置工具、知识库工具和 MCP 工具。Grap
 普通内置工具使用 `@tool` 注册：
 
 ```python
-from yuxi.agents.toolkits.registry import tool
+from yuxi.modules.extensions.tools.registry import tool
 
 
-@tool(category="buildin", tags=["示例"], display_name="示例工具")
+@tool(category="builtin", tags=["示例"], display_name="示例工具")
 def example_tool(text: str) -> str:
     """返回处理后的文本。"""
     return text
 ```
 
-- `category` 用于前端分组，常见值是 `buildin`、`knowledge` 和 `debug`；
+- `category` 用于前端分组，常见值是 `builtin` 和 `knowledge`；
 - `tags` 用于展示和筛选；
 - `display_name` 是给用户看的名称，工具 ID 是给代码和模型协议使用的稳定名称；
 - 工具模块需要被 `toolkits` 包导入，装饰器才会执行注册。
@@ -49,7 +49,6 @@ def example_tool(text: str) -> str:
 | `query_kb` | 按 `kb_id` 检索片段，返回 `kb_id`、`file_id` 和内容 |
 | `find_kb_document` | 在指定文件中按关键词或正则定位内容 |
 | `open_kb_document` | 按 `file_id` 分段读取解析后的文档 |
-| `get_mindmap` | 读取知识导图 |
 | `search_file` | 按文件名搜索可见知识库中的文件 |
 | `download_kb_file` | 把有权限的原始文件下载到当前 Project 的 `outputs/` |
 
@@ -58,7 +57,7 @@ def example_tool(text: str) -> str:
 需要在 Python 中直接取得知识库工具时：
 
 ```python
-from yuxi.agents.toolkits.kbs import get_common_kb_tools
+from yuxi.modules.extensions.tools.knowledge.tools import get_common_kb_tools
 
 kb_tools = get_common_kb_tools()
 ```

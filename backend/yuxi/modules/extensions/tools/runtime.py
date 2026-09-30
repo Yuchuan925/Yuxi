@@ -12,14 +12,14 @@ async def resolve_configured_runtime_tools(context) -> list[Any]:
     selected_tools = []
     selected_tool_names: set[str] = set()
     selected_tool_sources: dict[str, str] = {}
-    buildin_tools = {tool.name: tool for tool in get_tool_instances_by_category("buildin")}
+    builtin_tools = {tool.name: tool for tool in get_tool_instances_by_category("builtin")}
 
     for tool_name in getattr(context, "tools", None) or []:
         if not isinstance(tool_name, str) or tool_name in selected_tool_names:
             continue
-        tool = buildin_tools.get(tool_name)
+        tool = builtin_tools.get(tool_name)
         if tool is None:
-            logger.warning(f"Configured buildin tool not found, skip: {tool_name}")
+            logger.warning(f"Configured builtin tool not found, skip: {tool_name}")
             continue
         selected_tools.append(tool)
         selected_tool_names.add(tool_name)

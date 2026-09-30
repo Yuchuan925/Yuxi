@@ -20,12 +20,6 @@ public_knowledge_router.include_router(external_kb)
 tool_router = APIRouter(prefix="/knowledge/tools", tags=["knowledge"])
 
 
-class MindmapInput(BaseModel):
-    """指定导图所属知识库。"""
-
-    kb_name: str
-
-
 class FileSearchInput(BaseModel):
     """指定知识库文件搜索条件。"""
 
@@ -56,12 +50,6 @@ async def _result(operation: Awaitable[Any]) -> Any:
 async def list_kbs(current_user: User = Depends(get_required_user)):
     """列出当前用户可见的知识库。"""
     return knowledge_tools.list_kbs(await _visible(current_user.uid))
-
-
-@tool_router.post("/get_mindmap")
-async def get_mindmap(payload: MindmapInput, current_user: User = Depends(get_required_user)):
-    """获取可见知识库的文本导图。"""
-    return await _result(knowledge_tools.get_mindmap(payload.kb_name, await _visible(current_user.uid)))
 
 
 @tool_router.post("/query_kb")

@@ -2,7 +2,7 @@
 
 状态：proposed
 类型：feature
-Owner：backend/yuxi/modules/knowledge/services/folders.py
+Owner：backend/yuxi/modules/knowledge/manager.py
 
 ## 问题
 
@@ -24,7 +24,7 @@ Owner：backend/yuxi/modules/knowledge/services/folders.py
 
 后台任务按最多 500 条文件记录扫描，每个事务只剥离一层路径：在知识库目录树 advisory lock 内复用同名真实文件夹或创建缺失文件夹，再提交该批文件的新 `parent_id` 和剩余 `filename`。每层提交后即成为最终事实；SSE 只读取任务快照，断开连接不取消任务。进程中断时已提交批次保留，再次检测和启动会从仍含路径段的记录继续。普通文件占用目标名称、重复真实文件夹等冲突记录留在原位置并进入任务结果，不能阻塞其他无冲突路径，也不能静默改名。
 
-只读 Connector 保持虚拟路径投影且拒绝实体化。MinIO 对象 URL、文件 `file_id`、解析 Markdown 和向量身份不因目录实体化而移动；实现前必须确认所有按文件名冗余保存的 Chunk、知识导图和其他派生数据 Owner。依赖展示名的派生状态在同一用例中精确更新或明确标记为待刷新，不能静默保留相互矛盾的名称。
+只读 Connector 保持虚拟路径投影且拒绝实体化。MinIO 对象 URL、文件 `file_id`、解析 Markdown 和向量身份不因目录实体化而移动；实现前必须确认所有按文件名冗余保存的 Chunk、其他派生数据 Owner。依赖展示名的派生状态在同一用例中精确更新或明确标记为待刷新，不能静默保留相互矛盾的名称。
 
 前端对新的目录上传结果展示真实文件夹。历史迁移入口只属于知识库文件统计卡，不进入单个虚拟文件夹操作菜单。弹窗展示进度与当前消息，并明确关闭弹窗或 SSE 中断不会撤销已完成批次；任务终态后重新执行检测并读取知识库统计，不使用乐观树结构代替持久化事实。
 
@@ -45,7 +45,7 @@ Owner：backend/yuxi/modules/knowledge/services/folders.py
 | 并发上传复用同一目录链且不产生同级重复文件夹 | 仅在应用层先查后建，竞态下重复创建 | repository 事务、规范化名称唯一约束和目录树锁 | 真实 PostgreSQL 并发 integration，回读同级目录记录数 | 两个请求同时上传到同一路径、根目录 `NULL` 父关系、Unicode/大小写等价名称均只能产生一条目录记录 | Not run |
 | 知识库级任务分批实体化全部无冲突路径、记录启动者并保持文件身份和对象地址 | SSE 断开取消任务、一个冲突回滚其他路径、改变 `file_id` 或 MinIO URL | 实体化 service、Tasker、文件 repository、MinIO 元数据契约 | 真实 HTTP/PostgreSQL integration：不建立 SSE 也完成任务，终态后回读目录树、创建人和原文件 ID | 注入同名普通文件与中断，已完成批次保留且重跑只处理剩余路径 | Not run |
 | 只读和无管理权限调用方不能实体化 | 仅由前端隐藏，直接调用仍可写 | FastAPI 权限依赖、只读 Connector | 真实 HTTP integration | 只读用户、只读 Connector 和跨知识库路径请求返回拒绝且数据库不变 | Not run |
-| 文件名派生状态不会与实体化后的目录事实冲突 | KnowledgeFile 已变更但 Chunk、知识导图或搜索结果仍显示旧路径 | 各派生数据 Owner | 对实际使用文件名的 Owner 做集成回读；无 consumer 时以负向符号搜索证明 | 建立包含知识导图/已索引文件的虚拟目录后转换，旧名称不得继续作为当前事实 | Not run |
+| 文件名派生状态不会与实体化后的目录事实冲突 | KnowledgeFile 已变更但 Chunk 或搜索结果仍显示旧路径 | 各派生数据 Owner | 对实际使用文件名的 Owner 做集成回读；无 consumer 时以负向符号搜索证明 | 建立包含已索引文件的虚拟目录后转换，旧名称不得继续作为当前事实 | Not run |
 | 文件统计卡对历史数据显示 warning 并通过 SSE 展示知识库级进度 | 单个文件夹行出现迁移入口，或关闭弹窗取消后端任务 | `DataBaseInfoView.vue` 与知识库 API 封装 | 前端 unit、lint、build、真实浏览器录屏 | 中断 SSE 后任务继续，重新检测仍反映数据库剩余事实 | Not run |
 
 ## 风险

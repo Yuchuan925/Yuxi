@@ -146,8 +146,8 @@ async def test_concurrent_thread_session_creation_replays_one_receipt(e2e_client
         await blocked_transaction.start()
         await blocker.fetchval("SELECT id FROM projects WHERE id = $1 FOR UPDATE", project_id)
         requests = [
-            asyncio.create_task(e2e_client.post(path, headers=headers, json=body))
-            for path in ("/api/v1/agents/threads", "/api/v1/agents/sessions")
+            asyncio.create_task(e2e_client.post("/api/v1/agents/threads", headers=headers, json=body))
+            for _ in range(2)
         ]
         for _ in range(100):
             waiting = await observer.fetchval(
@@ -163,7 +163,7 @@ async def test_concurrent_thread_session_creation_replays_one_receipt(e2e_client
         blocked_transaction = None
         first, second = await asyncio.wait_for(asyncio.gather(*requests), timeout=30)
         assert (first.status_code, second.status_code) == (200, 200), (first.text, second.text)
-        assert first.json()["thread_id"] == second.json()["session_id"]
+        assert first.json()["thread_id"] == second.json()["thread_id"]
         assert first.json()["event_id"] == second.json()["event_id"]
 
         counts = await blocker.fetchrow(
@@ -177,7 +177,7 @@ async def test_concurrent_thread_session_creation_replays_one_receipt(e2e_client
         )
         assert dict(counts) == {"threads": 1, "receipts": 1, "inputs": 0, "turns": 0, "runs": 0}
         conflict = await e2e_client.post(
-            "/api/v1/agents/sessions", headers=headers, json={**body, "title": "different intent"}
+            "/api/v1/agents/threads", headers=headers, json={**body, "title": "different intent"}
         )
         assert conflict.status_code == 409, conflict.text
     finally:
@@ -225,7 +225,7 @@ async def test_first_input_and_follow_up_fifo_cross_worker(e2e_client, e2e_heade
         assert first["input_id"] and first["turn_id"] and first["run_id"]
         thread_id = first["thread_id"]
         replay = await e2e_client.post(
-            "/api/v1/agents/sessions",
+            "/api/v1/agents/threads",
             headers={**e2e_headers, "Idempotency-Key": creation_key},
             json={
                 "agent_id": slug,
@@ -236,7 +236,7 @@ async def test_first_input_and_follow_up_fifo_cross_worker(e2e_client, e2e_heade
             },
         )
         assert replay.status_code == 200, replay.text
-        assert replay.json()["session_id"] == thread_id
+        assert replay.json()["thread_id"] == thread_id
 
         async with httpx.AsyncClient(base_url="http://api:8765", timeout=5) as replay_client:
             for _ in range(100):

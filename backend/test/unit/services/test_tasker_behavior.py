@@ -457,7 +457,7 @@ async def test_pending_cancel_becomes_terminal_without_worker(monkeypatch):
     tasker = Tasker()
     tasker._repo = repo
 
-    monkeypatch.setattr(task_service, "get_failure_task_definition", lambda *_args: FakeDefinition(None))
+    monkeypatch.setattr(task_service, "get_task_definition", lambda *_args: FakeDefinition(None))
     task = await tasker.cancel_task("task-1")
 
     assert task is not None
@@ -466,7 +466,7 @@ async def test_pending_cancel_becomes_terminal_without_worker(monkeypatch):
     assert await tasker.delete_task("task-1") is True
 
 
-async def test_unknown_nonlegacy_handler_version_does_not_run_current_failure_hook(monkeypatch):
+async def test_unknown_handler_version_does_not_run_current_failure_hook(monkeypatch):
     record = make_record(type="knowledge_parse", handler_version=2)
     repo = FakeRepo(record)
     tasker = Tasker()
@@ -476,12 +476,12 @@ async def test_unknown_nonlegacy_handler_version_does_not_run_current_failure_ho
     async def cancel_hook(_record):
         cancel_calls.append("called")
 
-    def get_failure_definition(_task_type: str, handler_version: int):
+    def get_definition(_task_type: str, handler_version: int):
         if handler_version != 1:
             raise ValueError("unsupported version")
         return FakeDefinition(None)
 
-    monkeypatch.setattr(task_service, "get_failure_task_definition", get_failure_definition)
+    monkeypatch.setattr(task_service, "get_task_definition", get_definition)
     monkeypatch.setattr(FakeDefinition, "load_failure_handler", lambda _self: cancel_hook)
 
     assert await tasker.cancel_task(record.id) is None

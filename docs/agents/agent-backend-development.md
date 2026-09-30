@@ -7,7 +7,7 @@
 仅改变提示词、模型或能力选择时，在 `backend/yuxi/modules/agents/runtime/presets/` 新增一个 Python 文件并导出 `PRESET`；子智能体定义放在其 `subagents/` 子目录。发现逻辑递归读取文件，角色类型仍由 `backend_id` 决定：
 
 ```python
-from yuxi.agents.presets import AgentPreset
+from yuxi.modules.agents.presets import AgentPreset
 
 PRESET = AgentPreset(
     slug="report-assistant",
@@ -38,7 +38,7 @@ backend/yuxi/modules/agents/runtime/builtin/<your_agent>/
 └── graph.py
 ```
 
-执行后端由 `buildin/__init__.py` 中的显式字典注册：
+执行后端由 `yuxi/modules/agents/runtime/builtin/__init__.py` 中的显式字典注册：
 
 ```python
 BUILTIN_BACKENDS = {
@@ -57,7 +57,7 @@ BUILTIN_BACKENDS = {
 
 ```python
 from langchain.agents import create_agent
-from yuxi.agents import BaseAgent, BaseContext, load_chat_model
+from yuxi.modules.agents.runtime import BaseAgent, BaseContext, load_chat_model
 
 
 class MyAgent(BaseAgent):

@@ -37,10 +37,6 @@ def _open_kb_document_callable():
     return _tool_callable(tools.open_kb_document)
 
 
-def _get_mindmap_callable():
-    return _tool_callable(tools.get_mindmap)
-
-
 async def _run_tool(callback, **kwargs):
     result = callback(**kwargs)
     if inspect.isawaitable(result):
@@ -58,10 +54,6 @@ async def _run_find_kb_document(**kwargs):
 
 async def _run_open_kb_document(**kwargs):
     return await _run_tool(_open_kb_document_callable(), **kwargs)
-
-
-async def _run_get_mindmap(**kwargs):
-    return await _run_tool(_get_mindmap_callable(), **kwargs)
 
 
 def _build_test_window(content: str, offset: int = 0, limit: int = 1800) -> dict:
@@ -135,32 +127,6 @@ async def _fake_visible_kbs(runtime):
     del runtime
     return [{"kb_id": "db-1", "name": "FAQ", "kb_type": "milvus"}]
 
-
-@pytest.mark.asyncio
-async def test_get_mindmap_resolves_current_visible_knowledge_base(monkeypatch) -> None:
-    async def fake_get_by_kb_id(_self, kb_id: str):
-        assert kb_id == "db-1"
-        return SimpleNamespace(name="Renamed FAQ", mindmap={"content": "Root", "children": []})
-
-    monkeypatch.setattr(tools, "_resolve_visible_knowledge_bases_for_query", _fake_visible_kbs)
-    monkeypatch.setattr(KnowledgeBaseRepository, "get_by_kb_id", fake_get_by_kb_id)
-
-    result = await _run_get_mindmap(kb_name="FAQ", runtime=SimpleNamespace(context=SimpleNamespace()))
-
-    assert "知识库 FAQ 的思维导图结构" in result
-    assert "- Root" in result
-
-
-@pytest.mark.asyncio
-async def test_get_mindmap_rejects_knowledge_base_outside_runtime_scope(monkeypatch) -> None:
-    async def no_visible_kbs(_runtime):
-        return []
-
-    monkeypatch.setattr(tools, "_resolve_visible_knowledge_bases_for_query", no_visible_kbs)
-
-    result = await _run_get_mindmap(kb_name="FAQ", runtime=SimpleNamespace(context=SimpleNamespace()))
-
-    assert result == "知识库 'FAQ' 不存在或当前会话未启用"
 
 
 @pytest.mark.asyncio

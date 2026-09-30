@@ -15,7 +15,7 @@ def test_get_tool_metadata_includes_config_guide(monkeypatch):
         args_schema=None,
     )
     fake_extra = SimpleNamespace(
-        category="buildin",
+        category="builtin",
         tags=["demo"],
         display_name="演示工具",
         config_guide="请先配置 DEMO_API_KEY",
@@ -39,7 +39,7 @@ def test_get_tool_metadata_includes_config_guide(monkeypatch):
             "description": "demo description",
             "metadata": {},
             "args": [],
-            "category": "buildin",
+            "category": "builtin",
             "tags": ["demo"],
             "config_guide": "请先配置 DEMO_API_KEY",
         }

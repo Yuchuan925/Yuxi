@@ -10,7 +10,6 @@ from yuxi.modules.extensions.mcp.service import (
     get_all_mcp_tools,
     inspect_mcp_server_tools,
     is_builtin_mcp_server,
-    requires_mcp_transport_migration,
     set_server_enabled,
     toggle_tool_enabled,
     update_mcp_server,
@@ -77,19 +76,10 @@ async def get_server_or_404(db: AsyncSession, slug: str):
 
 
 def serialize_mcp_server(server) -> dict:
-    """序列化 MCP，并补充代码内置与迁移状态。"""
+    """序列化 MCP，并补充代码内置标识。"""
     data = server.to_dict()
     data["is_builtin"] = is_builtin_mcp_server(server)
-    data["requires_migration"] = requires_mcp_transport_migration(server)
-    if data["requires_migration"]:
-        data["enabled"] = False
     return data
-
-
-def ensure_mcp_server_runnable(server) -> None:
-    """拒绝连接尚未迁移的非远程 MCP。"""
-    if requires_mcp_transport_migration(server):
-        raise HTTPException(status_code=400, detail="历史 stdio MCP 已被禁用，请先迁移为远程 MCP")
 
 
 # =============================================================================
@@ -115,7 +105,7 @@ async def get_mcp_servers(
                     "name": getattr(s, "name", ""),
                     "description": getattr(s, "description", None),
                     "icon": getattr(s, "icon", None),
-                    "enabled": bool(getattr(s, "enabled", True)) and not requires_mcp_transport_migration(s),
+                    "enabled": bool(getattr(s, "enabled", True)),
                     "tags": getattr(s, "tags", None) or [],
                 }
             )
@@ -265,8 +255,6 @@ async def test_mcp_server(
     """测试 MCP 服务器连接"""
     try:
         server = await get_server_or_404(db, slug)
-        ensure_mcp_server_runnable(server)
-
         try:
             tools = await inspect_mcp_server_tools(server)
             return {
@@ -326,7 +314,6 @@ async def get_mcp_server_tools(
     """获取 MCP 服务器的工具列表"""
     try:
         server = await get_server_or_404(db, slug)
-        ensure_mcp_server_runnable(server)
         disabled_tools = server.disabled_tools or []
 
         try:
@@ -379,9 +366,7 @@ async def refresh_mcp_server_tools(
 ):
     """刷新 MCP 服务器的工具列表（清除缓存重新获取）"""
     try:
-        server = await get_server_or_404(db, slug)
-        ensure_mcp_server_runnable(server)
-
+        await get_server_or_404(db, slug)
         try:
             # 获取所有工具（不过滤 disabled_tools）
             tools = await get_all_mcp_tools(slug)

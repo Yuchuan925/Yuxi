@@ -24,8 +24,8 @@
             type="text"
             :aria-label="testLoading ? '正在测试 MCP' : '测试 MCP'"
             @click="handleTestServer"
-            :disabled="testLoading || server?.requires_migration"
-            :title="server?.requires_migration ? '请先迁移为远程 MCP' : '测试 MCP'"
+            :disabled="testLoading"
+            title="测试 MCP"
             class="lucide-icon-btn extension-detail-action"
           >
             <Zap :size="14" v-if="!testLoading" />
@@ -44,13 +44,13 @@
           </a-button>
           <a-button
             type="text"
-            :danger="server?.enabled !== false || server?.requires_migration"
+            :danger="server?.enabled !== false"
             :aria-label="`${actionLabel} MCP`"
             :title="`${actionLabel} MCP`"
             @click="handleDangerAction"
             class="lucide-icon-btn extension-detail-action"
           >
-            <Plus v-if="server?.enabled === false && !server?.requires_migration" :size="14" />
+            <Plus v-if="server?.enabled === false" :size="14" />
             <Trash2 v-else :size="14" />
             <span>{{ actionLabel }}</span>
           </a-button>
@@ -60,13 +60,6 @@
 
     <template #panel-general>
       <div class="extension-detail-view mcp-general-view">
-        <a-alert
-          v-if="server.requires_migration"
-          type="warning"
-          show-icon
-          class="migration-alert"
-          message="此 stdio MCP 已禁用，请编辑为 SSE 或 Streamable HTTP，或直接删除。"
-        />
         <div v-if="isEditing" class="edit-panel">
           <div class="edit-panel-header">
             <div>
@@ -230,24 +223,6 @@
               <span>{{ server.sse_read_timeout }} 秒</span>
             </div>
           </template>
-          <template v-if="server.transport === 'stdio'">
-            <div class="info-item" v-if="server.command">
-              <label>命令</label>
-              <span class="code-inline">{{ server.command }}</span>
-            </div>
-            <div class="info-item" v-if="server.args && server.args.length > 0">
-              <label>参数</label>
-              <span>
-                <a-tag v-for="(arg, index) in server.args" :key="index" size="small">{{
-                  arg
-                }}</a-tag>
-              </span>
-            </div>
-            <div class="info-item" v-if="server.env && Object.keys(server.env).length > 0">
-              <label>环境变量</label>
-              <pre class="code-pre">{{ JSON.stringify(server.env, null, 2) }}</pre>
-            </div>
-          </template>
           <div class="info-item">
             <label>创建时间</label>
             <span>{{ formatTime(server.created_at) }}</span>
@@ -394,9 +369,7 @@ const toggleToolLoading = ref(null)
 
 const mcpDetailTabs = computed(() => {
   const tabs = [{ key: 'general', label: '信息', icon: Settings2 }]
-  if (!server.value?.requires_migration) {
-    tabs.push({ key: 'tools', label: `工具 (${tools.value.length})`, icon: Wrench })
-  }
+  tabs.push({ key: 'tools', label: `工具 (${tools.value.length})`, icon: Wrench })
   return tabs
 })
 
@@ -417,7 +390,6 @@ const editForm = reactive({
 })
 
 const actionLabel = computed(() => {
-  if (server.value?.requires_migration) return '删除'
   if (server.value?.enabled === false) return '添加'
   return server.value?.is_builtin ? '移除' : '删除'
 })
@@ -439,7 +411,7 @@ const goBack = () => {
 const formatTime = (timeStr) => formatFullDateTime(timeStr)
 
 const getTransportColor = (transport) => {
-  const colors = { sse: 'orange', stdio: 'green', streamable_http: 'blue' }
+  const colors = { sse: 'orange', streamable_http: 'blue' }
   return colors[transport] || 'blue'
 }
 
@@ -448,7 +420,7 @@ const resetEditForm = (data) => {
     slug: data?.slug || '',
     name: data?.name || '',
     description: data?.description || '',
-    transport: data?.requires_migration ? 'streamable_http' : data?.transport || 'streamable_http',
+    transport: data?.transport || 'streamable_http',
     url: data?.url || '',
     headersText: data?.headers ? JSON.stringify(data.headers, null, 2) : '',
     timeout: data?.timeout,
@@ -537,7 +509,7 @@ const fetchServer = async () => {
     loading.value = true
     const result = await mcpApi.getMcpServer(slug.value)
     if (result.success) {
-      if (result.data?.enabled === false && !result.data?.requires_migration) {
+      if (result.data?.enabled === false) {
         server.value = null
         message.info('请先添加 MCP 后再查看详情')
         router.replace({ path: '/extensions', query: { tab: 'mcp' } })
@@ -621,10 +593,6 @@ const handleTestServer = async () => {
 
 const handleDangerAction = async () => {
   if (!server.value) return
-  if (server.value.requires_migration) {
-    confirmDeleteServer(server.value)
-    return
-  }
   if (server.value.enabled === false) {
     await handleSetServerEnabled(server.value, true)
     return

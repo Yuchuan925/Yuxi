@@ -6,7 +6,6 @@ from yuxi.modules.knowledge.graphs.milvus_graph_service import MilvusGraphServic
 from yuxi.modules.knowledge.runtime import knowledge_base
 from yuxi.modules.knowledge.utils import params_for_uploaded_document
 from yuxi.modules.knowledge.repositories.files import KnowledgeFileRepository
-from yuxi.modules.knowledge.services.folders import knowledge_folder_service
 from yuxi.modules.tasks.service import TaskContext
 from yuxi.infrastructure.observability.logging import logger
 
@@ -320,15 +319,6 @@ async def _run_pending_files(context: TaskContext, *, action: str) -> dict:
         f"{label}完成，失败 {failed_count} 个" if processed_count else f"没有待{label}文档",
     )
     return result
-
-
-async def run_virtual_folder_migration(context: TaskContext) -> dict:
-    """从持久 payload 重建历史虚拟目录迁移。"""
-    return await knowledge_folder_service.migrate_virtual_folder_data(
-        context,
-        kb_id=context.payload["kb_id"],
-        operator_id=context.payload["operator_id"],
-    )
 
 
 async def run_knowledge_graph(context: TaskContext) -> dict:

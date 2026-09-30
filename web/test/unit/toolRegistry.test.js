@@ -9,7 +9,6 @@ const ARG_PARSER_CONSUMERS = [
   'EditFileTool.vue',
   'ExecuteTool.vue',
   'FindKbDocumentTool.vue',
-  'GetMindmapTool.vue',
   'GlobTool.vue',
   'GrepTool.vue',
   'ListDirectoryTool.vue',

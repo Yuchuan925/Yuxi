@@ -1,10 +1,13 @@
 import pytest
 
-from yuxi.modules.tasks.registry import get_failure_task_definition
+from yuxi.modules.tasks.registry import get_task_definition
 
 
-def test_failure_hook_fallback_is_limited_to_migrated_legacy_version() -> None:
-    assert get_failure_task_definition("knowledge_parse", 0).version == 1
+def test_unknown_handler_version_is_rejected() -> None:
+    assert get_task_definition("knowledge_parse", 1).version == 1
 
     with pytest.raises(ValueError, match="Unsupported handler version"):
-        get_failure_task_definition("knowledge_parse", 2)
+        get_task_definition("knowledge_parse", 2)
+
+    with pytest.raises(ValueError, match="Unknown task type"):
+        get_task_definition("no_such_task")

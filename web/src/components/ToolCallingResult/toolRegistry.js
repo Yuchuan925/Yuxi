@@ -14,7 +14,6 @@ import {
   Globe,
   HelpCircle,
   Image,
-  Network,
   RefreshCw,
   SquareTerminal
 } from '@lucide/vue'
@@ -27,7 +26,6 @@ export const TOOL_ICON_MAP = {
   edit_file: FilePen,
   execute: SquareTerminal,
   find_kb_document: FolderSearch,
-  get_mindmap: Network,
   glob: FolderSearch,
   grep: FolderSearch,
   list_directory: Folder,
@@ -91,7 +89,6 @@ export const TOOL_NAME_MAP = {
   list_kbs: '查看知识库列表',
   find_kb_document: '查找知识库文档',
   open_kb_document: '打开知识库文档',
-  get_mindmap: '获取思维导图',
   calculator: '计算器',
   web_search: '网络搜索',
   tavily_search: '网络搜索',
@@ -110,7 +107,7 @@ export const getToolCallId = (toolCall) => toolCall?.name || toolCall?.function?
 
 export const getToolName = (toolId) => TOOL_NAME_MAP[toolId] || toolId
 
-// 从工具元数据列表（完整工具列表或 buildin options）中按工具 id 查找对应元数据
+// 从工具元数据列表（完整工具列表或 builtin options）中按工具 id 查找对应元数据
 export const findToolInList = (toolId, toolsList) =>
   (toolsList || []).find((t) => (t.slug ?? t.key ?? t.id) === toolId)
 

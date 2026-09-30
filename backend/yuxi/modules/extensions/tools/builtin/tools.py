@@ -195,7 +195,7 @@ def _register_web_search_tool() -> None:
         return
 
     _, create_tool, display_name = _WEB_SEARCH_PROVIDERS[provider]
-    _extra_registry["web_search"] = ToolExtraMetadata(category="buildin", tags=["搜索"], display_name=display_name)
+    _extra_registry["web_search"] = ToolExtraMetadata(category="builtin", tags=["搜索"], display_name=display_name)
     _all_tool_instances.append(create_tool())
 
 
@@ -259,7 +259,7 @@ PRESENT_ARTIFACTS_DESCRIPTION = """
 
 
 @tool(
-    category="buildin",
+    category="builtin",
     tags=["文件", "交付物"],
     display_name="展示交付物",
     description=PRESENT_ARTIFACTS_DESCRIPTION,
@@ -308,7 +308,7 @@ OCR_PARSE_FILE_DESCRIPTION = """
 
 
 @tool(
-    category="buildin",
+    category="builtin",
     tags=["文件", "OCR"],
     display_name="OCR 解析文件",
     description=OCR_PARSE_FILE_DESCRIPTION,
@@ -475,7 +475,7 @@ answer 为 object，格式为 {question_id: answer}。
 
 
 @tool(
-    category="buildin",
+    category="builtin",
     tags=["交互"],
     display_name="向用户提问",
     description=ASK_USER_QUESTION_DESCRIPTION,

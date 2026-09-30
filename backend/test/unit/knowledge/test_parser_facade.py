@@ -371,9 +371,15 @@ def test_slim_docx_preserves_embedded_image_bytes_and_markdown_position(
         uploaded_images.append(image_data)
         return "https://example.test/docx-image.png"
 
-    monkeypatch.setattr(parser_unified, "_upload_image_to_minio", _capture_upload)
+    image_params = {
+        "parse_data_uri": lambda uri: (
+            base64.b64decode(uri.split(",", 1)[1]),
+            uri.split(":", 1)[1].split(";", 1)[0],
+        ),
+        "image_upload": _capture_upload,
+    }
 
-    markdown = parser_unified._convert_with_docling(PARSER_FIXTURES / "测试文档.docx")
+    markdown = parser_unified._convert_with_docling(PARSER_FIXTURES / "测试文档.docx", params=image_params)
 
     assert len(uploaded_images) == 1
     assert uploaded_images[0].startswith(b"\x89PNG\r\n\x1a\n")
@@ -451,16 +457,22 @@ def test_convert_with_docling_reinserts_image_links_in_document_order(
     )
     uploaded_images: list[bytes] = []
 
-    def _fake_upload_image_to_minio(image_data, filename, bucket_name, object_prefix):
+    def _fake_image_upload(image_data, filename, bucket_name, object_prefix):
         uploaded_images.append(image_data)
         return f"https://example.test/{len(uploaded_images)}.png"
 
+    image_params = {
+        "parse_data_uri": lambda uri: (
+            base64.b64decode(uri.split(",", 1)[1]),
+            uri.split(":", 1)[1].split(";", 1)[0],
+        ),
+        "image_upload": _fake_image_upload,
+    }
     monkeypatch.setattr(parser_unified, "_convert_office_document", lambda _path: fake_doc)
-    monkeypatch.setattr(parser_unified, "_upload_image_to_minio", _fake_upload_image_to_minio)
     image_timestamps = iter([1.0, 2.0])
     monkeypatch.setattr(parser_unified.time, "time", lambda: next(image_timestamps))
 
-    markdown = parser_unified._convert_with_docling(file_path)
+    markdown = parser_unified._convert_with_docling(file_path, params=image_params)
 
     assert uploaded_images == [b"first image", b"second image"]
     assert markdown == (
@@ -489,11 +501,17 @@ def test_convert_with_docling_keeps_image_placeholder_when_upload_fails(
     def _raise_upload_error(*args, **kwargs):
         raise RuntimeError("upload failed")
 
+    image_params = {
+        "parse_data_uri": lambda uri: (
+            base64.b64decode(uri.split(",", 1)[1]),
+            uri.split(":", 1)[1].split(";", 1)[0],
+        ),
+        "image_upload": _raise_upload_error,
+    }
     monkeypatch.setattr(parser_unified, "_convert_office_document", lambda _path: fake_doc)
-    monkeypatch.setattr(parser_unified, "_upload_image_to_minio", _raise_upload_error)
     monkeypatch.setattr(parser_unified.time, "time", lambda: 1.0)
 
-    markdown = parser_unified._convert_with_docling(file_path)
+    markdown = parser_unified._convert_with_docling(file_path, params=image_params)
 
     assert markdown == "before\n[图片: image_1000000.png]\nafter"
 

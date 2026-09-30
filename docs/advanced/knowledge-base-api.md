@@ -1,6 +1,6 @@
 # 文档导入与查询 API
 
-本页说明如何通过 HTTP 或 CLI 把文档加入知识库，以及如何查询已经处理的内容。它面向管理员和集成开发者；知识库运行机制见[知识库机制](../mechanisms/knowledge-base.md)，导图和图谱见[知识导图与知识图谱](./knowledge-base-graph.md)。
+本页说明如何通过 HTTP 或 CLI 把文档加入知识库，以及如何查询已经处理的内容。它面向管理员和集成开发者；知识库运行机制见[知识库机制](../mechanisms/knowledge-base.md)，图谱运维见[知识图谱](./knowledge-base-graph.md)。
 
 ## 权限
 
@@ -68,12 +68,11 @@ Durable Task 的 `success` 只代表 worker 已完成编排，任务状态不拥
 
 `files` 的查询参数只匹配文件名，不搜索正文。`open` 默认从第 0 行开始读取，单次最多 1800 行；`find` 返回匹配窗口。
 
-Public v1 也提供与 Agent 内部 Skill 同名的只读工具入口。Agent 工具与这些 HTTP 入口共用 `yuxi.services.knowledge.tools`；API 根据 JWT 或 Key 绑定的用户重新解析知识库读取权限，调用方不能指定别人的用户身份。
+Public v1 也提供与 Agent 内部 Skill 同名的只读工具入口。Agent 工具与这些 HTTP 入口共用 `yuxi.modules.knowledge.services.tools`；API 根据 JWT 或 Key 绑定的用户重新解析知识库读取权限，调用方不能指定别人的用户身份。
 
 | 方法 | 路径 | 请求体或结果 |
 | --- | --- | --- |
 | `GET` | `/api/v1/knowledge/tools/list_kbs` | 返回可见知识库数组 |
-| `POST` | `/api/v1/knowledge/tools/get_mindmap` | `{"kb_name":"名称"}`，返回文本导图 |
 | `POST` | `/api/v1/knowledge/tools/query_kb` | `{"kb_id":"ID","query_text":"关键词","file_name":null}` |
 | `POST` | `/api/v1/knowledge/tools/open_kb_document` | `{"kb_id":"ID","file_id":"ID","line":1}` |
 | `POST` | `/api/v1/knowledge/tools/find_kb_document` | `{"kb_id":"ID","file_id":"ID","patterns":["词"]}` |

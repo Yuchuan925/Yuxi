@@ -226,7 +226,7 @@ const cardSubtitle = (database) => {
     parts.push(formatCreatedTime(database.created_at))
   }
   if (!kbUtils.isReadOnlyDatabase(database)) {
-    parts.push(`${database.row_count || 0} 文件`)
+    parts.push(`${database.stats?.file_count || 0} 文件`)
   }
   return parts.join(' · ')
 }

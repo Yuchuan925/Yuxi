@@ -10,18 +10,18 @@ from yuxi.modules.workspace import paths
 @pytest.mark.parametrize(
     "value",
     [
-        "projects/11111111-1111-4111-8111-111111111111",
         "projects/2026-09-02_14-35-08_a1b2c3d4",
         "projects/2026-09-02_14-35-08_a1b2c3d4-2",
     ],
 )
-def test_normalize_managed_workdir_path_accepts_legacy_and_timestamped_names(value: str):
+def test_normalize_managed_workdir_path_accepts_timestamped_names(value: str):
     assert paths.normalize_managed_workdir_path(value) == value
 
 
 @pytest.mark.parametrize(
     "value",
     [
+        "projects/11111111-1111-4111-8111-111111111111",
         "projects/2026-02-30_14-35-08_a1b2c3d4",
         "projects/2026-09-02_24-00-00_a1b2c3d4",
         "projects/2026-09-02_14-35-08_A1B2C3D4",

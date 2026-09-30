@@ -30,14 +30,12 @@ def serialize_knowledge_base(
     *,
     permission: ResourcePermission | None = None,
     redact_secrets: bool = False,
-    row_count_fallback: bool = False,
 ) -> dict[str, Any]:
-    """转换单个知识库读取模型，并保留现有 HTTP 字段兼容性。"""
+    """转换单个知识库读取模型为 HTTP 响应。"""
     stats = _knowledge_base_stats(database)
     additional_params = dict(database.additional_params)
     if redact_secrets:
         additional_params = redact_sensitive_params(additional_params)
-    additional_params["stats"] = stats
 
     response = {
         "kb_id": database.kb_id,
@@ -52,7 +50,7 @@ def serialize_knowledge_base(
         "created_at": utc_isoformat(database.created_at) if database.created_at else None,
         "status": "已连接",
         "stats": stats,
-        "row_count": (database.row_count or database.file_count) if row_count_fallback else database.row_count,
+        "row_count": database.row_count,
         "share_config": database.share_config,
         "additional_params": additional_params,
     }
@@ -63,7 +61,6 @@ def serialize_knowledge_base(
         response["can_manage"] = effective_permission == ResourcePermission.MANAGE
 
     if isinstance(database, KnowledgeBaseDetail):
-        response["mindmap"] = database.mindmap
         response["sample_questions"] = list(database.sample_questions)
         if database.files is not None:
             response["files"] = database.files
@@ -75,4 +72,4 @@ def serialize_knowledge_base(
 
 def serialize_knowledge_base_list(databases: list[KnowledgeBaseSummary]) -> dict[str, list[dict[str, Any]]]:
     """转换知识库摘要列表为现有列表接口响应。"""
-    return {"databases": [serialize_knowledge_base(database, row_count_fallback=True) for database in databases]}
+    return {"databases": [serialize_knowledge_base(database) for database in databases]}

@@ -249,7 +249,6 @@
                     :mention="mentionConfig"
                     :thread-id="currentChatId"
                     :show-extra="!currentChatId"
-                    :supports-file-upload="supportsFileUpload"
                     :attachments="currentPendingThreadAttachments"
                     @send="handleSendOrStop"
                     @upload-attachment="handleAttachmentUpload"
@@ -493,7 +492,7 @@
                         </div>
                       </div>
 
-                      <div v-if="supportsContextCompression" class="context-compression-action">
+                      <div class="context-compression-action">
                         <p
                           v-if="shouldSuggestContextCompression"
                           class="context-compression-warning"
@@ -938,7 +937,6 @@ const props = defineProps({
   agentId: { type: String, default: '' },
   initialProjectId: { type: String, default: '' },
   isNewConversation: { type: Boolean, required: true },
-  singleMode: { type: Boolean, default: true },
   sendDisabled: { type: Boolean, default: false }
 })
 const emit = defineEmits(['thread-change'])
@@ -1178,7 +1176,7 @@ const getSubagentRunName = (run) => {
 const getSubagentAgent = (run) => {
   const subagentSlug = run?.subagent_slug
   if (!subagentSlug) return null
-  return agents.value.find((agent) => agent.slug === subagentSlug) || null
+  return agents.value.find((agent) => agent.agent_id === subagentSlug) || null
 }
 
 const getSubagentIconSrc = (run) => {
@@ -1345,9 +1343,6 @@ const closePanelPreviewPath = (targetPath) => {
 
 // ==================== COMPUTED PROPERTIES ====================
 const currentAgentId = computed(() => {
-  if (props.singleMode) {
-    return props.agentId || selectedAgentId.value || agents.value[0]?.id || ''
-  }
   return selectedAgentId.value
 })
 
@@ -1435,31 +1430,13 @@ const handleToolApprovalModeSelect = async (mode) => {
 const currentThreadAgentName = computed(() => {
   const threadAgentId = currentThread.value?.agent_id
   if (threadAgentId && agents.value?.length) {
-    const threadAgent = agents.value.find((agent) => agent.id === threadAgentId)
+    const threadAgent = agents.value.find((agent) => agent.agent_id === threadAgentId)
     if (threadAgent?.name) {
       return threadAgent.name
     }
   }
   return currentAgentName.value
 })
-// 检查当前智能体是否支持文件上传
-const supportsFileUpload = computed(() => {
-  if (!currentAgent.value) return false
-  const capabilities = currentAgent.value.capabilities || []
-  return capabilities.includes('file_upload')
-})
-
-const supportsFiles = computed(() => {
-  if (!currentAgent.value) return false
-  const capabilities = currentAgent.value.capabilities || []
-  return capabilities.includes('files')
-})
-
-const supportsContextCompression = computed(() => {
-  const capabilities = currentAgent.value?.capabilities || []
-  return capabilities.includes('context_compression')
-})
-
 // AgentState 相关计算属性
 const currentAgentState = computed(() => {
   return currentChatId.value ? getThreadState(currentChatId.value)?.agentState || null : null
@@ -2793,10 +2770,7 @@ onUnmounted(() => {
 // ==================== 线程管理方法 ====================
 // 获取当前智能体的线程列表
 const fetchThreads = async (agentId = null) => {
-  const targetAgentId = props.singleMode ? agentId || currentAgentId.value : agentId
-  if (props.singleMode && !targetAgentId) return
-
-  await chatThreadsStore.loadThreads(targetAgentId)
+  await chatThreadsStore.loadThreads(agentId)
 }
 
 // 创建新线程
@@ -3044,7 +3018,6 @@ const { handleStreamChunk } = useAgentStreamHandler({
   getThreadState,
   processApprovalInStream,
   currentAgentId,
-  supportsFiles,
   streamSmoother
 })
 const { startRunStream, resumeActiveRunForThread, stopRunStreamSubscription } = useAgentRunStream({
@@ -3140,12 +3113,6 @@ const handlePageVisibilityChange = () => {
 }
 
 // ==================== CHAT ACTIONS ====================
-// 获取第一个非置顶的对话
-const getFirstNonPinnedChat = (chatList) => {
-  if (!chatList || chatList.length === 0) return null
-  return chatList.find((chat) => !chat.is_pinned) || chatList[0]
-}
-
 const selectChat = async (chatId) => {
   if (threadCreationInFlight.value) {
     message.info('正在创建新对话，请稍候')
@@ -3179,11 +3146,7 @@ const selectChat = async (chatId) => {
       // 先更新当前线程，确保底部智能体名称与选中项即时同步。
       setCurrentThreadId(chatId)
 
-      if (
-        !props.singleMode &&
-        targetChat?.agent_id &&
-        targetChat.agent_id !== currentAgentId.value
-      ) {
+      if (targetChat?.agent_id && targetChat.agent_id !== currentAgentId.value) {
         await agentStore.selectAgent(targetChat.agent_id)
       }
 
@@ -3812,28 +3775,12 @@ const getConversationSources = (conv) => {
 
 // ==================== LIFECYCLE & WATCHERS ====================
 const loadChatsList = async () => {
-  const agentId = props.singleMode ? currentAgentId.value : null
-  if (props.singleMode && !agentId) {
-    console.warn('No agent selected, cannot load chats list')
-    threads.value = []
-    resetAgentPanelState()
-    setCurrentThreadId(null)
-    threadAttachmentsMap.value = {}
-    return
-  }
-
   try {
-    await fetchThreads(agentId)
-    if (props.singleMode && currentAgentId.value !== agentId) return
+    await fetchThreads()
 
     // 如果当前线程不在线程列表中，清空当前线程
     if (currentThreadId.value && !threads.value.find((t) => t.id === currentThreadId.value)) {
       setCurrentThreadId(null)
-    }
-
-    // singleMode 保持旧行为：自动选择首个可用对话
-    if (props.singleMode && threads.value.length > 0 && !currentThreadId.value) {
-      await selectChat(getFirstNonPinnedChat(threads.value).id)
     }
   } catch (error) {
     handleChatError(error, 'load')
@@ -3882,29 +3829,9 @@ watch(
 
 watch(
   currentAgentId,
-  async (newAgentId, oldAgentId) => {
-    if (!props.singleMode) {
-      if (oldAgentId === undefined) {
-        await loadChatsList()
-      }
-      return
-    }
-
-    if (newAgentId !== oldAgentId) {
-      // 清理当前线程状态
-      setCurrentThreadId(null)
-      threadMessages.value = {}
-      threadRuns.value = {}
-      threadAttachmentsMap.value = {}
-      resetAgentPanelState()
-      // 清理所有线程状态
-      resetOnGoingConv()
-
-      if (newAgentId) {
-        await loadChatsList()
-      } else {
-        threads.value = []
-      }
+  async (_newAgentId, oldAgentId) => {
+    if (oldAgentId === undefined) {
+      await loadChatsList()
     }
   },
   { immediate: true }

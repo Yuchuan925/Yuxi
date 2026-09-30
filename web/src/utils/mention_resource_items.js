@@ -28,8 +28,8 @@ export const buildMentionResourceItems = (mention = {}) => {
     mcps: mcps
       .map((m) =>
         toResourceItem('mcp', {
-          value: m.slug || m.value || m.id || m.name,
-          label: m.name || m.label,
+          value: m.slug,
+          label: m.name,
           extra: { description: m.description || '' }
         })
       )
@@ -37,8 +37,8 @@ export const buildMentionResourceItems = (mention = {}) => {
     skills: skills
       .map((s) =>
         toResourceItem('skill', {
-          value: s.slug || s.value || s.id || s.name,
-          label: s.name || s.label,
+          value: s.slug,
+          label: s.name,
           extra: { description: s.description || '' }
         })
       )
@@ -46,8 +46,8 @@ export const buildMentionResourceItems = (mention = {}) => {
     subagents: subagents
       .map((s) =>
         toResourceItem('subagent', {
-          value: s.id || s.value || s.slug || s.name,
-          label: s.name || s.label,
+          value: s.id,
+          label: s.name,
           extra: { description: s.description || '' }
         })
       )

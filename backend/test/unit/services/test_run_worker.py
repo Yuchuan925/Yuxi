@@ -11,6 +11,10 @@ from unittest.mock import AsyncMock
 
 import pytest
 import yuxi.modules.agents.services.runner as run_worker
+import yuxi.modules.agents.services.event_writer as event_writer
+import yuxi.modules.agents.services.leases as leases
+import yuxi.bootstrap.worker as worker_bootstrap
+import yuxi.workers.settings as worker_settings
 from arq.worker import RetryJob
 from yuxi.modules.system import options as config_options
 import yuxi.modules.tasks.service as task_service
@@ -153,7 +157,7 @@ async def test_repeated_cancel_waits_for_async_execution_cleanup():
 def test_durable_task_outer_timeout_tracks_configured_worker_default():
     durable_function = next(
         function
-        for function in run_worker.WorkerSettings.functions
+        for function in worker_settings.WorkerSettings.functions
         if getattr(function, "name", getattr(function, "__name__", None)) == "process_task"
     )
 
@@ -345,12 +349,12 @@ async def test_cancelling_subagent_preserves_shared_runtime(monkeypatch: pytest.
         del args, kwargs
         return run_worker.TerminalTransition(status="cancelled", changed=True)
 
-    monkeypatch.setattr(run_worker, "_flush_writer_best_effort", fake_noop)
+    monkeypatch.setattr(run_worker, "flush_writer_best_effort", fake_noop)
     monkeypatch.setattr(run_worker, "_finish_execution_tree_children", fake_tree_finished)
     monkeypatch.setattr(run_worker, "_release_runtime_before_terminal_event", release_runtime)
     monkeypatch.setattr(run_worker, "mark_run_terminal", fake_mark_terminal)
-    monkeypatch.setattr(run_worker, "_append_run_event_best_effort", fake_noop)
-    monkeypatch.setattr(run_worker, "_append_end_event", fake_noop)
+    monkeypatch.setattr(run_worker, "append_run_event_best_effort", fake_noop)
+    monkeypatch.setattr(run_worker, "append_end_event", fake_noop)
 
     transition = await run_worker._finish_user_cancel(
         run_id=run.id,
@@ -392,7 +396,13 @@ def _patch_common(monkeypatch: pytest.MonkeyPatch, run_obj: SimpleNamespace):
 
     async def fake_load_run_input_messages(run):
         assert run.input_message_id == 10
-        return [SimpleNamespace(content="hello", image_content=None, extra_metadata={})]
+        return [
+            SimpleNamespace(
+                content="hello",
+                image_content=None,
+                extra_metadata={"raw_message": {"type": "human", "content": "hello"}},
+            )
+        ]
 
     async def fake_get_agent_state_view(**kwargs):
         del kwargs
@@ -449,17 +459,13 @@ def _patch_common(monkeypatch: pytest.MonkeyPatch, run_obj: SimpleNamespace):
         ),
     )
     monkeypatch.setattr(run_worker, "_finish_execution_tree_children", fake_tree_finished)
-    monkeypatch.setattr(run_worker, "_release_runtime_if_idle", fake_cleanup)
+    monkeypatch.setattr(run_worker, "_release_runtime_before_terminal_event", fake_cleanup)
     monkeypatch.setattr(run_worker, "clear_cancel_signal", fake_noop)
     monkeypatch.setattr(run_worker, "stream_agent_chat", lambda **kwargs: object())
     monkeypatch.setattr(run_worker.RunContext, "start", fake_noop)
     monkeypatch.setattr(run_worker.RunContext, "close", fake_noop)
     monkeypatch.setattr(run_worker.RunContext, "is_cancelled", fake_not_cancelled)
-    monkeypatch.setattr(
-        run_worker,
-        "get_sandbox_provider",
-        lambda: SimpleNamespace(release=lambda *_args, **_kwargs: None),
-    )
+    monkeypatch.setattr(leases, "release_runtime_if_idle", AsyncMock(return_value=True))
 
 
 @pytest.mark.asyncio
@@ -511,6 +517,7 @@ async def test_process_agent_run_keeps_source_without_legacy_invocation_metadata
                 content="hello",
                 image_content=None,
                 extra_metadata={
+                    "raw_message": {"type": "human", "content": "hello"},
                     "source": "agent_call",
                     "agent_invocation_meta": {"trace_id": "trace-1"},
                     "evaluation": {"dataset_name": "legacy-top-level"},
@@ -523,7 +530,7 @@ async def test_process_agent_run_keeps_source_without_legacy_invocation_metadata
         del kwargs
         events.append({"run_id": run_id, "event_type": event_type, "payload": payload})
 
-    async def fake_mark_terminal(run_id: str, status: str, **kwargs):
+    async def fake_mark_terminal(run_id: str, status: str, error_type=None, error_message=None, **kwargs):
         del run_id, kwargs
         terminal_statuses.append(status)
         return run_worker.TerminalTransition(status=status, changed=True)
@@ -534,7 +541,7 @@ async def test_process_agent_run_keeps_source_without_legacy_invocation_metadata
         return _ExecutionAsyncIter([_terminal_result()])
 
     monkeypatch.setattr(run_worker, "_load_run_input_messages", fake_load_run_input_messages)
-    monkeypatch.setattr(run_worker, "_append_run_event_best_effort", fake_append_event)
+    monkeypatch.setattr(run_worker, "append_run_event_best_effort", fake_append_event)
     monkeypatch.setattr(run_worker, "mark_run_terminal", fake_mark_terminal)
     monkeypatch.setattr(run_worker, "stream_agent_chat", fake_stream_agent_chat)
 
@@ -575,8 +582,8 @@ async def test_terminal_event_is_published_after_runtime_cleanup(monkeypatch: py
         run_obj.status = "completed"
         return _ExecutionAsyncIter([_terminal_result()])
 
-    monkeypatch.setattr(run_worker, "append_run_event", fake_append_event)
-    monkeypatch.setattr(run_worker, "_release_runtime_if_idle", fake_release_runtime)
+    monkeypatch.setattr(event_writer, "append_run_event", fake_append_event)
+    monkeypatch.setattr(run_worker, "_release_runtime_before_terminal_event", fake_release_runtime)
     monkeypatch.setattr(run_worker, "stream_agent_chat", fake_stream_agent_chat)
 
     await run_worker.process_agent_run({"job_try": 1}, "run-1")
@@ -618,10 +625,10 @@ async def test_terminal_cleanup_failure_keeps_end_event_unpublished(monkeypatch:
     end_event = AsyncMock()
 
     async def fail_cleanup(_run):
-        raise RuntimeError("provisioner delete failed")
+        raise run_worker.RuntimeCleanupPendingError("runtime cleanup pending")
 
-    monkeypatch.setattr(run_worker, "_release_runtime_if_idle", fail_cleanup)
-    monkeypatch.setattr(run_worker, "_append_end_event", end_event)
+    monkeypatch.setattr(run_worker, "_release_runtime_before_terminal_event", fail_cleanup)
+    monkeypatch.setattr(run_worker, "append_end_event", end_event)
 
     def committed_stream(**_kwargs):
         run_obj.status = "completed"
@@ -649,8 +656,8 @@ async def test_worker_rejects_success_without_final_checkpoint(monkeypatch: pyte
     _patch_common(monkeypatch, run_obj)
     terminals = []
 
-    async def mark_terminal(run_id, status, **kwargs):
-        terminals.append((run_id, status, kwargs.get("error_message")))
+    async def mark_terminal(run_id, status, error_type=None, error_message=None, **kwargs):
+        terminals.append((run_id, status, error_message or kwargs.get("error_message")))
         return run_worker.TerminalTransition(status=status, changed=True)
 
     monkeypatch.setattr(run_worker, "mark_run_terminal", mark_terminal)
@@ -668,8 +675,8 @@ async def test_worker_rejects_waitpoint_without_postgres_terminal(monkeypatch: p
     _patch_common(monkeypatch, run_obj)
     terminals = []
 
-    async def mark_terminal(run_id, status, **kwargs):
-        terminals.append((run_id, status, kwargs.get("error_message")))
+    async def mark_terminal(run_id, status, error_type=None, error_message=None, **kwargs):
+        terminals.append((run_id, status, error_message or kwargs.get("error_message")))
         return run_worker.TerminalTransition(status=status, changed=True)
 
     wait_result = RunExecutionResult(
@@ -709,15 +716,15 @@ async def test_cleanup_reconciler_keeps_pending_run_for_dispatch_recovery(
     dispatch = AsyncMock(return_value=run_obj.id)
     append_end = AsyncMock()
     monkeypatch.setattr(run_worker.pg_manager, "get_async_session_context", fake_session_ctx)
-    monkeypatch.setattr(run_worker, "AgentRunRepository", Repo)
-    monkeypatch.setattr(run_worker, "_release_runtime_if_idle", cleanup)
+    monkeypatch.setattr(leases, "AgentRunRepository", Repo)
+    monkeypatch.setattr(leases, "release_runtime_if_idle", cleanup)
     monkeypatch.setattr(run_worker, "dispatch_next_input", dispatch)
-    monkeypatch.setattr(run_worker, "_append_end_event", append_end)
+    monkeypatch.setattr(run_worker, "append_end_event", append_end)
     import yuxi.modules.agents.services.turns as turns
 
     monkeypatch.setattr(turns, "reconcile_cancelling_turns", AsyncMock())
 
-    cleaned = await run_worker.reconcile_pending_runtime_cleanups()
+    cleaned = await worker_bootstrap.reconcile_pending_runtime_cleanups()
 
     assert cleaned == [run_obj.id]
     dispatch.assert_not_awaited()
@@ -759,7 +766,7 @@ async def test_process_agent_run_does_not_settle_usage_from_transient_deltas(
             ]
         )
 
-    monkeypatch.setattr(run_worker, "append_run_event", fake_append_event)
+    monkeypatch.setattr(event_writer, "append_run_event", fake_append_event)
     monkeypatch.setattr(run_worker, "mark_run_terminal", terminal_calls)
     monkeypatch.setattr(
         run_worker, "get_agent_state_view", AsyncMock(side_effect=AssertionError("worker must not reread usage"))
@@ -808,8 +815,14 @@ async def test_finish_run_marks_usage_unavailable_when_state_read_fails(monkeypa
         del kwargs
         return None
 
-    async def fake_mark_terminal(run_id: str, status: str, **kwargs):
-        terminal_calls.append({"run_id": run_id, "status": status, **kwargs})
+    async def fake_mark_terminal(run_id: str, status: str, error_type=None, error_message=None, **kwargs):
+        terminal_calls.append({
+            "run_id": run_id,
+            "status": status,
+            "error_type": error_type,
+            "error_message": error_message,
+            **kwargs,
+        })
         return run_worker.TerminalTransition(status=status, changed=True)
 
     async def fake_append_end_event(*args, **kwargs):
@@ -821,7 +834,7 @@ async def test_finish_run_marks_usage_unavailable_when_state_read_fails(monkeypa
     monkeypatch.setattr(run_worker, "_read_run_token_usage_from_state", fake_read_usage)
     monkeypatch.setattr(run_worker, "_get_run", fake_get_run)
     monkeypatch.setattr(run_worker, "mark_run_terminal", fake_mark_terminal)
-    monkeypatch.setattr(run_worker, "_append_end_event", fake_append_end_event)
+    monkeypatch.setattr(run_worker, "append_end_event", fake_append_end_event)
 
     await run_worker._finish_run(
         "run-1",
@@ -856,7 +869,7 @@ async def test_process_agent_run_publishes_interrupt_after_final_state(monkeypat
         lifecycle.append("release")
         return True
 
-    async def fake_mark_terminal(run_id: str, status: str, **kwargs):
+    async def fake_mark_terminal(run_id: str, status: str, error_type=None, error_message=None, **kwargs):
         del run_id, kwargs
         terminal_statuses.append(status)
         # 执行器已在 Message/Run/Turn 的 owning transaction 内提交 interrupted。
@@ -886,9 +899,9 @@ async def test_process_agent_run_publishes_interrupt_after_final_state(monkeypat
             ]
         )
 
-    monkeypatch.setattr(run_worker, "append_run_event", fake_append_event)
+    monkeypatch.setattr(event_writer, "append_run_event", fake_append_event)
     monkeypatch.setattr(run_worker, "mark_run_terminal", fake_mark_terminal)
-    monkeypatch.setattr(run_worker, "_release_runtime_if_idle", fake_release_runtime)
+    monkeypatch.setattr(run_worker, "_release_runtime_before_terminal_event", fake_release_runtime)
     monkeypatch.setattr(run_worker, "stream_agent_chat", fake_stream_agent_chat)
 
     await run_worker.process_agent_run({"job_try": 1}, "run-1")
@@ -911,16 +924,16 @@ async def test_committed_interrupt_cleanup_failure_keeps_terminal_events_unpubli
         del run_id, payload, kwargs
         events.append(event_type)
 
-    async def fake_mark_terminal(run_id: str, status: str, **kwargs):
+    async def fake_mark_terminal(run_id: str, status: str, error_type=None, error_message=None, **kwargs):
         del run_id, kwargs
         return run_worker.TerminalTransition(status=status, changed=False)
 
     async def fail_cleanup(_run):
-        raise RuntimeError("provisioner delete failed")
+        raise run_worker.RuntimeCleanupPendingError("runtime cleanup pending")
 
-    monkeypatch.setattr(run_worker, "append_run_event", fake_append_event)
+    monkeypatch.setattr(event_writer, "append_run_event", fake_append_event)
     monkeypatch.setattr(run_worker, "mark_run_terminal", fake_mark_terminal)
-    monkeypatch.setattr(run_worker, "_release_runtime_if_idle", fail_cleanup)
+    monkeypatch.setattr(run_worker, "_release_runtime_before_terminal_event", fail_cleanup)
     monkeypatch.setattr(
         run_worker,
         "stream_agent_chat",
@@ -947,12 +960,12 @@ async def test_process_agent_run_non_retryable_error_marks_failed(monkeypatch: p
         del run_id, payload, kwargs
         events.append(event_type)
 
-    async def fake_mark_terminal(run_id: str, status: str, **kwargs):
+    async def fake_mark_terminal(run_id: str, status: str, error_type=None, error_message=None, **kwargs):
         del run_id, kwargs
         terminal_statuses.append(status)
         return run_worker.TerminalTransition(status=status, changed=True)
 
-    monkeypatch.setattr(run_worker, "append_run_event", fake_append_event)
+    monkeypatch.setattr(event_writer, "append_run_event", fake_append_event)
     monkeypatch.setattr(run_worker, "mark_run_terminal", fake_mark_terminal)
     monkeypatch.setattr(
         run_worker,
@@ -981,8 +994,14 @@ async def test_preflight_failure_after_lease_closes_context_and_writes_owned_ter
     async def fake_close(context):
         closed.append(context.worker_id)
 
-    async def fake_mark_terminal(run_id: str, status: str, **kwargs):
-        terminal_calls.append({"run_id": run_id, "status": status, **kwargs})
+    async def fake_mark_terminal(run_id: str, status: str, error_type=None, error_message=None, **kwargs):
+        terminal_calls.append({
+            "run_id": run_id,
+            "status": status,
+            "error_type": error_type,
+            "error_message": error_message,
+            **kwargs,
+        })
         return run_worker.TerminalTransition(status=status, changed=True)
 
     monkeypatch.setattr(run_worker, "_load_run_input_messages", fail_input_load)
@@ -1008,8 +1027,14 @@ async def test_redis_event_failure_cannot_block_owned_completed_terminal(monkeyp
         del args, kwargs
         raise ConnectionError("redis unavailable")
 
-    async def fake_mark_terminal(run_id: str, status: str, **kwargs):
-        terminal_calls.append({"run_id": run_id, "status": status, **kwargs})
+    async def fake_mark_terminal(run_id: str, status: str, error_type=None, error_message=None, **kwargs):
+        terminal_calls.append({
+            "run_id": run_id,
+            "status": status,
+            "error_type": error_type,
+            "error_message": error_message,
+            **kwargs,
+        })
         return run_worker.TerminalTransition(status=status, changed=True)
 
     async def fake_close(context):
@@ -1020,7 +1045,7 @@ async def test_redis_event_failure_cannot_block_owned_completed_terminal(monkeyp
         run_obj.status = "completed"
         return _ExecutionAsyncIter([_terminal_result()])
 
-    monkeypatch.setattr(run_worker, "append_run_event", fail_event)
+    monkeypatch.setattr(event_writer, "append_run_event", fail_event)
     monkeypatch.setattr(run_worker, "mark_run_terminal", fake_mark_terminal)
     monkeypatch.setattr(run_worker, "release_run_lease_for_retry", AsyncMock(side_effect=AssertionError("no retry")))
     monkeypatch.setattr(run_worker.RunContext, "close", fake_close)
@@ -1040,7 +1065,7 @@ async def test_durable_cancel_without_redis_signal_never_enters_agent_stream(mon
     terminal_calls: list[dict] = []
     lifecycle: list[str] = []
 
-    async def fake_mark_terminal(run_id: str, status: str, **kwargs):
+    async def fake_mark_terminal(run_id: str, status: str, error_type=None, error_message=None, **kwargs):
         lifecycle.append("terminal")
         terminal_calls.append({"run_id": run_id, "status": status, **kwargs})
         run_obj.status = status
@@ -1057,7 +1082,7 @@ async def test_durable_cancel_without_redis_signal_never_enters_agent_stream(mon
         lifecycle.append("release")
         return True
 
-    monkeypatch.setattr(run_worker, "_release_runtime_if_idle", fake_release_sandbox)
+    monkeypatch.setattr(run_worker, "_release_runtime_before_terminal_event", fake_release_sandbox)
 
     await run_worker.process_agent_run({"worker_id": "worker-cancel", "job_try": 1}, "run-1")
 
@@ -1080,7 +1105,7 @@ async def test_infrastructure_cancel_releases_pending_and_propagates(monkeypatch
     async def fake_close(context):
         closed.append(context.worker_id)
 
-    monkeypatch.setattr(run_worker, "append_run_event", AsyncMock())
+    monkeypatch.setattr(event_writer, "append_run_event", AsyncMock())
     monkeypatch.setattr(run_worker, "mark_run_terminal", AsyncMock(side_effect=AssertionError("not user cancel")))
     monkeypatch.setattr(run_worker, "release_run_lease_for_retry", release)
     monkeypatch.setattr(run_worker.RunContext, "close", fake_close)
@@ -1107,7 +1132,7 @@ async def test_release_failure_does_not_mask_infrastructure_cancel(monkeypatch: 
     async def fail_release(_run_id: str, _worker_id: str) -> bool:
         raise RuntimeError("database unavailable")
 
-    monkeypatch.setattr(run_worker, "append_run_event", AsyncMock())
+    monkeypatch.setattr(event_writer, "append_run_event", AsyncMock())
     monkeypatch.setattr(run_worker, "release_run_lease_for_retry", fail_release)
     monkeypatch.setattr(
         run_worker,
@@ -1160,7 +1185,7 @@ async def test_process_agent_run_retryable_error_retries_then_completes(monkeypa
         del run_id, kwargs
         events.append({"event_type": event_type, "payload": payload})
 
-    async def fake_mark_terminal(run_id: str, status: str, **kwargs):
+    async def fake_mark_terminal(run_id: str, status: str, error_type=None, error_message=None, **kwargs):
         del run_id, kwargs
         terminal_statuses.append(status)
         return run_worker.TerminalTransition(status=status, changed=True)
@@ -1173,7 +1198,7 @@ async def test_process_agent_run_retryable_error_retries_then_completes(monkeypa
         run_obj.status = "completed"
         return _ExecutionAsyncIter([_terminal_result()])
 
-    monkeypatch.setattr(run_worker, "append_run_event", fake_append_event)
+    monkeypatch.setattr(event_writer, "append_run_event", fake_append_event)
     monkeypatch.setattr(run_worker, "mark_run_terminal", fake_mark_terminal)
     monkeypatch.setattr(run_worker, "_consume_stream_with_cancel", fake_consume)
 
@@ -1186,7 +1211,7 @@ async def test_process_agent_run_retryable_error_retries_then_completes(monkeypa
         return True
 
     monkeypatch.setattr(run_worker, "release_run_lease_for_retry", fake_release_lease)
-    monkeypatch.setattr(run_worker, "_release_runtime_if_idle", fake_release_runtime)
+    monkeypatch.setattr(run_worker, "release_runtime_if_idle", fake_release_runtime)
 
     with pytest.raises(run_worker.RetryableRunError) as retry:
         await run_worker.process_agent_run({"job_try": 1}, "run-1")
@@ -1207,7 +1232,7 @@ async def test_process_agent_run_retryable_error_retries_then_completes(monkeypa
 async def test_finish_run_terminal_loser_does_not_append_end_event(monkeypatch: pytest.MonkeyPatch):
     events: list[tuple[str, dict]] = []
 
-    async def fake_mark_terminal(run_id: str, status: str, **kwargs):
+    async def fake_mark_terminal(run_id: str, status: str, error_type=None, error_message=None, **kwargs):
         del run_id, status, kwargs
         return run_worker.TerminalTransition(status="cancelled", changed=False)
 
@@ -1216,7 +1241,7 @@ async def test_finish_run_terminal_loser_does_not_append_end_event(monkeypatch: 
         events.append((event_type, payload))
 
     monkeypatch.setattr(run_worker, "mark_run_terminal", fake_mark_terminal)
-    monkeypatch.setattr(run_worker, "append_run_event", fake_append_event)
+    monkeypatch.setattr(event_writer, "append_run_event", fake_append_event)
     monkeypatch.setattr(run_worker, "_get_run", AsyncMock(return_value=None))
 
     transition = await run_worker._finish_run(
@@ -1269,7 +1294,7 @@ async def test_process_subagent_run_restores_runtime_context(monkeypatch: pytest
     async def fake_append_event(run_id: str, event_type: str, payload: dict, **kwargs):
         del run_id, event_type, payload, kwargs
 
-    async def fake_mark_terminal(run_id: str, status: str, **kwargs):
+    async def fake_mark_terminal(run_id: str, status: str, error_type=None, error_message=None, **kwargs):
         del run_id, kwargs
         terminal_statuses.append(status)
         return run_worker.TerminalTransition(status=status, changed=True)
@@ -1279,7 +1304,7 @@ async def test_process_subagent_run_restores_runtime_context(monkeypatch: pytest
         run_obj.status = "completed"
         return _ExecutionAsyncIter([_terminal_result(thread_id="child-thread")])
 
-    monkeypatch.setattr(run_worker, "append_run_event", fake_append_event)
+    monkeypatch.setattr(event_writer, "append_run_event", fake_append_event)
     monkeypatch.setattr(run_worker, "mark_run_terminal", fake_mark_terminal)
     monkeypatch.setattr(run_worker, "stream_agent_chat", fake_stream_agent_chat)
 
@@ -1394,7 +1419,7 @@ async def test_chunked_event_writer_flushes_loading_chunks_by_thread(monkeypatch
     async def fake_append_run_event(run_id: str, event_type: str, payload: dict, *, thread_id: str | None = None):
         events.append({"run_id": run_id, "event_type": event_type, "payload": payload, "thread_id": thread_id})
 
-    monkeypatch.setattr(run_worker, "append_run_event", fake_append_run_event)
+    monkeypatch.setattr(event_writer, "append_run_event", fake_append_run_event)
 
     writer = run_worker.ChunkedEventWriter("run-1", "parent-thread")
     await writer.append({"status": "loading", "response": "parent", "thread_id": "parent-thread"})
@@ -1424,7 +1449,7 @@ async def test_chunked_event_writer_flushes_semantic_tool_call_immediately(monke
     async def fake_append_run_event(run_id: str, event_type: str, payload: dict, *, thread_id: str | None = None):
         events.append({"run_id": run_id, "event_type": event_type, "payload": payload, "thread_id": thread_id})
 
-    monkeypatch.setattr(run_worker, "append_run_event", fake_append_run_event)
+    monkeypatch.setattr(event_writer, "append_run_event", fake_append_run_event)
 
     writer = run_worker.ChunkedEventWriter("run-1", "parent-thread")
     chunk = {
@@ -1455,12 +1480,12 @@ async def test_chunked_event_writer_flushes_semantic_tool_call_immediately(monke
 
 
 def test_model_output_detection_accepts_text_reasoning_and_tool_calls_only():
-    assert run_worker._contains_model_output({"stream_event": {"type": "message_delta", "content": "你"}})
-    assert run_worker._contains_model_output({"stream_event": {"type": "message_delta", "reasoning_content": "思考"}})
-    assert run_worker._contains_model_output({"stream_event": {"type": "tool_call_delta", "args_delta": "{"}})
-    assert not run_worker._contains_model_output({"status": "metadata", "run_id": "run-1"})
-    assert not run_worker._contains_model_output({"stream_event": {"type": "message_delta", "content": ""}})
-    assert not run_worker._contains_model_output({"stream_event": {"type": "tool_call_delta", "args_delta": ""}})
+    assert run_worker.contains_model_output({"stream_event": {"type": "message_delta", "content": "你"}})
+    assert run_worker.contains_model_output({"stream_event": {"type": "message_delta", "reasoning_content": "思考"}})
+    assert run_worker.contains_model_output({"stream_event": {"type": "tool_call_delta", "args_delta": "{"}})
+    assert not run_worker.contains_model_output({"status": "metadata", "run_id": "run-1"})
+    assert not run_worker.contains_model_output({"stream_event": {"type": "message_delta", "content": ""}})
+    assert not run_worker.contains_model_output({"stream_event": {"type": "tool_call_delta", "args_delta": ""}})
 
 
 @pytest.mark.asyncio
@@ -1498,7 +1523,7 @@ async def test_run_context_stops_when_heartbeat_cannot_renew(monkeypatch: pytest
     renew = AsyncMock(return_value=False)
     monkeypatch.setattr(run_worker, "RUN_HEARTBEAT_SECONDS", 0)
     monkeypatch.setattr(run_worker, "renew_run_lease", renew)
-    monkeypatch.setattr(run_worker, "_run_attempt_finished", AsyncMock(return_value=False))
+    monkeypatch.setattr(run_worker, "run_attempt_finished", AsyncMock(return_value=False))
     run_ctx = run_worker.RunContext(run_id="run-1", worker_id="worker-1:attempt-1")
 
     await run_ctx._heartbeat_lease()
@@ -1514,7 +1539,7 @@ async def test_run_context_fails_closed_when_terminal_attempt_check_fails(monkey
     monkeypatch.setattr(run_worker, "RUN_HEARTBEAT_SECONDS", 0)
     monkeypatch.setattr(run_worker, "renew_run_lease", AsyncMock(return_value=False))
     monkeypatch.setattr(
-        run_worker, "_run_attempt_finished", AsyncMock(side_effect=RuntimeError("database unavailable"))
+        run_worker, "run_attempt_finished", AsyncMock(side_effect=RuntimeError("database unavailable"))
     )
     context = run_worker.RunContext(run_id="run-1", worker_id="worker-1:attempt-1")
 
@@ -1530,7 +1555,7 @@ async def test_worker_startup_ensures_builtin_mcp_servers(monkeypatch: pytest.Mo
     def fake_initialize():
         calls.append("initialize")
 
-    async def fake_require_current_schema():
+    async def fake_require_current_schema(_manager):
         calls.append("require_current_schema")
 
     async def fake_ensure_builtin_mcp_servers_in_db():
@@ -1586,33 +1611,33 @@ async def test_worker_startup_ensures_builtin_mcp_servers(monkeypatch: pytest.Mo
         calls.append("claim_and_dispatch_due_jobs")
 
     monkeypatch.setattr(run_worker.pg_manager, "initialize", fake_initialize)
-    monkeypatch.setattr(run_worker.pg_manager, "require_current_schema", fake_require_current_schema)
+    monkeypatch.setattr(worker_bootstrap, "require_current_schema", fake_require_current_schema)
     monkeypatch.setattr(run_worker.pg_manager, "get_async_session_context", fake_session_ctx)
-    monkeypatch.setattr(run_worker, "ensure_builtin_mcp_servers_in_db", fake_ensure_builtin_mcp_servers_in_db)
-    monkeypatch.setattr(run_worker, "init_builtin_skills", fake_init_builtin_skills)
+    monkeypatch.setattr(worker_bootstrap, "ensure_builtin_mcp_servers_in_db", fake_ensure_builtin_mcp_servers_in_db)
+    monkeypatch.setattr(worker_bootstrap, "init_builtin_skills", fake_init_builtin_skills)
     monkeypatch.setattr(config_options, "ensure_options_in_db", fake_ensure_options_in_db)
     monkeypatch.setattr(config_options, "invalidate_option_cache", fake_invalidate_option_cache)
-    monkeypatch.setattr(run_worker, "recover_pending_dispatches", fake_recover_pending_dispatches)
-    monkeypatch.setattr(run_worker, "reconcile_expired_run_leases", fake_reconcile_expired_run_leases)
+    monkeypatch.setattr(worker_bootstrap, "recover_pending_dispatches", fake_recover_pending_dispatches)
+    monkeypatch.setattr(worker_bootstrap, "reconcile_expired_run_leases", fake_reconcile_expired_run_leases)
     monkeypatch.setattr(
-        run_worker,
+        worker_bootstrap,
         "reconcile_pending_runtime_cleanups",
         fake_reconcile_pending_runtime_cleanups,
     )
-    monkeypatch.setattr(run_worker, "_publish_reconciliation_health", fake_publish_reconciliation_health)
-    monkeypatch.setattr(run_worker, "_publish_task_reconciliation_health", fake_publish_task_reconciliation_health)
-    monkeypatch.setattr(run_worker, "_reconcile_agent_run_leases_forever", fake_reconciliation_loop)
-    monkeypatch.setattr(run_worker, "reconcile_and_publish_tasks", fake_reconcile_and_publish_tasks)
-    monkeypatch.setattr(run_worker, "_reconcile_durable_tasks_forever", fake_task_reconciliation_loop)
-    monkeypatch.setattr(run_worker, "recover_scheduled_dispatches", fake_recover_scheduled_dispatches)
-    monkeypatch.setattr(run_worker, "claim_and_dispatch_due_jobs", fake_claim_and_dispatch_due_jobs)
+    monkeypatch.setattr(worker_bootstrap, "_publish_reconciliation_health", fake_publish_reconciliation_health)
+    monkeypatch.setattr(worker_bootstrap, "_publish_task_reconciliation_health", fake_publish_task_reconciliation_health)
+    monkeypatch.setattr(worker_bootstrap, "_reconcile_agent_run_leases_forever", fake_reconciliation_loop)
+    monkeypatch.setattr(worker_bootstrap, "reconcile_and_publish_tasks", fake_reconcile_and_publish_tasks)
+    monkeypatch.setattr(worker_bootstrap, "_reconcile_durable_tasks_forever", fake_task_reconciliation_loop)
+    monkeypatch.setattr(worker_bootstrap, "recover_scheduled_dispatches", fake_recover_scheduled_dispatches)
+    monkeypatch.setattr(worker_bootstrap, "claim_and_dispatch_due_jobs", fake_claim_and_dispatch_due_jobs)
     options_module = importlib.import_module("yuxi.modules.system.options")
     monkeypatch.setattr(options_module, "ensure_options_in_db", fake_ensure_options_in_db)
 
     ctx = {}
-    await run_worker._worker_startup(ctx)
-    await ctx[run_worker._RECONCILIATION_TASK_KEY]
-    await ctx[run_worker._TASK_RECONCILIATION_TASK_KEY]
+    await worker_bootstrap._worker_startup(ctx)
+    await ctx[worker_bootstrap._RECONCILIATION_TASK_KEY]
+    await ctx[worker_bootstrap._TASK_RECONCILIATION_TASK_KEY]
 
     assert calls == [
         "initialize",
@@ -1632,7 +1657,7 @@ async def test_worker_startup_ensures_builtin_mcp_servers(monkeypatch: pytest.Mo
         "reconciliation_loop",
         "task_reconciliation_loop",
     ]
-    assert ctx["worker_id"] == run_worker.WORKER_ID
+    assert ctx["worker_id"] == worker_bootstrap.WORKER_ID
 
 
 async def test_durable_task_publication_failure_does_not_refresh_health(monkeypatch):
@@ -1653,26 +1678,26 @@ async def test_durable_task_publication_failure_does_not_refresh_health(monkeypa
         health_calls += 1
 
     monkeypatch.setattr(run_worker.asyncio, "sleep", controlled_sleep)
-    monkeypatch.setattr(run_worker, "reconcile_and_publish_tasks", fail_reconciliation)
-    monkeypatch.setattr(run_worker, "_publish_task_reconciliation_health", publish_health)
+    monkeypatch.setattr(worker_bootstrap, "reconcile_and_publish_tasks", fail_reconciliation)
+    monkeypatch.setattr(worker_bootstrap, "_publish_task_reconciliation_health", publish_health)
 
     with pytest.raises(asyncio.CancelledError):
-        await run_worker._reconcile_durable_tasks_forever()
+        await worker_bootstrap._reconcile_durable_tasks_forever()
 
     assert health_calls == 0
 
 
 def test_worker_settings_publish_short_ttl_versioned_health_contract():
-    assert run_worker.WorkerSettings.max_jobs == run_worker.worker_max_jobs()
-    assert run_worker.WorkerSettings.health_check_key == "yuxi:worker:health:agent-run-v1"
-    assert 0 < run_worker.WorkerSettings.health_check_interval <= 10
+    assert worker_settings.WorkerSettings.max_jobs == worker_settings.worker_max_jobs()
+    assert worker_settings.WorkerSettings.health_check_key == "yuxi:worker:health:agent-run-v1"
+    assert 0 < worker_settings.WorkerSettings.health_check_interval <= 10
 
 
 async def test_worker_polls_new_requests_within_interactive_latency_budget():
     """真实 ARQ 配置必须把空闲队列轮询等待限制在 50ms 内。"""
     from arq.worker import create_worker
 
-    worker = create_worker(run_worker.WorkerSettings, handle_signals=False)
+    worker = create_worker(worker_settings.WorkerSettings, handle_signals=False)
     assert 0 < worker.poll_delay_s <= 0.05
 
 
@@ -1680,7 +1705,7 @@ def test_worker_settings_max_jobs_uses_environment():
     with pytest.MonkeyPatch.context() as monkeypatch:
         monkeypatch.setenv("ARQ_MAX_JOBS", "50")
 
-        assert run_worker.worker_max_jobs() == 50
+        assert worker_settings.worker_max_jobs() == 50
 
 
 def test_worker_settings_reject_invalid_redis_dsn_instead_of_using_arq_default():
@@ -1688,7 +1713,7 @@ def test_worker_settings_reject_invalid_redis_dsn_instead_of_using_arq_default()
     env["REDIS_URL"] = "http://configured-redis.invalid:6379/0"
 
     completed = subprocess.run(
-        [sys.executable, "-c", "import yuxi.modules.agents.services.runner"],
+        [sys.executable, "-c", "import yuxi.workers.settings"],
         env=env,
         capture_output=True,
         text=True,
@@ -1716,11 +1741,11 @@ async def test_reconciliation_failure_does_not_refresh_success_lease(monkeypatch
         calls["publish"] += 1
 
     monkeypatch.setattr(run_worker.asyncio, "sleep", no_wait)
-    monkeypatch.setattr(run_worker, "reconcile_expired_run_leases", fail_then_cancel)
-    monkeypatch.setattr(run_worker, "_publish_reconciliation_health", publish)
+    monkeypatch.setattr(worker_bootstrap, "reconcile_expired_run_leases", fail_then_cancel)
+    monkeypatch.setattr(worker_bootstrap, "_publish_reconciliation_health", publish)
 
     with pytest.raises(asyncio.CancelledError):
-        await run_worker._reconcile_agent_run_leases_forever()
+        await worker_bootstrap._reconcile_agent_run_leases_forever()
 
     assert calls == {"reconcile": 2, "publish": 0}
 
@@ -1729,7 +1754,7 @@ async def test_reconciliation_failure_does_not_refresh_success_lease(monkeypatch
 async def test_worker_startup_fails_when_system_options_cannot_initialize(monkeypatch: pytest.MonkeyPatch):
 
     monkeypatch.setattr(run_worker.pg_manager, "initialize", lambda: None)
-    monkeypatch.setattr(run_worker.pg_manager, "require_current_schema", AsyncMock())
+    monkeypatch.setattr(worker_bootstrap, "require_current_schema", AsyncMock())
 
     @asynccontextmanager
     async def fake_session_ctx():
@@ -1742,7 +1767,7 @@ async def test_worker_startup_fails_when_system_options_cannot_initialize(monkey
     monkeypatch.setattr(config_options, "ensure_options_in_db", fail_initialize)
 
     with pytest.raises(RuntimeError, match="config load failed"):
-        await run_worker._worker_startup({})
+        await worker_bootstrap._worker_startup({})
 
 
 @pytest.mark.asyncio
@@ -1760,7 +1785,7 @@ async def test_worker_shutdown_closes_queue_clients_before_postgres(monkeypatch:
     monkeypatch.setattr("yuxi.modules.agents.services.transport.close_queue_clients", fake_close_queue_clients)
     monkeypatch.setattr(run_worker.pg_manager, "close", fake_close_postgres)
 
-    await run_worker._worker_shutdown({run_worker._RECONCILIATION_TASK_KEY: reconciliation_task})
+    await worker_bootstrap._worker_shutdown({worker_bootstrap._RECONCILIATION_TASK_KEY: reconciliation_task})
 
     assert calls == ["redis", "postgres"]
     assert reconciliation_task.cancelled()
@@ -1778,8 +1803,14 @@ async def test_manifest_persist_failure_fails_run_before_execution(monkeypatch: 
         del kwargs
         raise RuntimeError("manifest db unavailable")
 
-    async def fake_mark_terminal(run_id: str, status: str, **kwargs):
-        terminal_calls.append({"run_id": run_id, "status": status, **kwargs})
+    async def fake_mark_terminal(run_id: str, status: str, error_type=None, error_message=None, **kwargs):
+        terminal_calls.append({
+            "run_id": run_id,
+            "status": status,
+            "error_type": error_type,
+            "error_message": error_message,
+            **kwargs,
+        })
         return run_worker.TerminalTransition(status=status, changed=True)
 
     def fake_stream_agent_chat(**kwargs):

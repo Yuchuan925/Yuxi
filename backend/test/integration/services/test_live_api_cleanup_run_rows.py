@@ -31,7 +31,7 @@ import yuxi.modules.workspace.services.projects as project_service
 from yuxi.modules.agents.models.inputs import AgentInput, AgentInputMessage, AgentInputReceipt
 from yuxi.modules.agents.models.runs import AgentRun, AgentRunAttempt
 from yuxi.modules.agents.models.turns import AgentTurn
-from yuxi.modules.agents.models.threads import Conversation, ConversationStats
+from yuxi.modules.agents.models.threads import Conversation
 from yuxi.modules.agents.models.messages import Message, ToolCall
 from yuxi.modules.workspace.models import Project
 from yuxi.modules.identity.models import User
@@ -96,9 +96,6 @@ async def _seed_thread(session_factory, *, thread_prefix: str) -> dict:
             extra_metadata=make_test_conversation_metadata(thread_prefix),
         )
         db.add(conversation)
-        await db.flush()
-        stats = ConversationStats(conversation_id=conversation.id)
-        db.add(stats)
         await db.flush()
         input_repo = AgentInputRepository(db)
         receipt_repo = AgentInputReceiptRepository(db)
@@ -177,7 +174,6 @@ async def _seed_thread(session_factory, *, thread_prefix: str) -> dict:
             "attempt_id": attempt.id,
             "input_message_id": input_message.id,
             "output_message_id": output_message.id,
-            "stats_id": stats.id,
         }
 
 
@@ -199,7 +195,6 @@ async def test_delete_test_conversation_rows_removes_history_and_preserves_neigh
         async with cleanup_database() as db:
             for model, key in (
                 (Conversation, "conversation_id"),
-                (ConversationStats, "stats_id"),
                 (AgentInput, "input_id"),
                 (AgentInputReceipt, "receipt_id"),
                 (AgentTurn, "turn_id"),
@@ -494,7 +489,7 @@ async def test_resource_cleanup_lock_makes_overlapping_linked_project_revalidate
     neighbor_thread_id = f"pytest-lock-neighbor-{uuid.uuid4()}"
     target_project_id = str(uuid.uuid4())
     neighbor_project_id = str(uuid.uuid4())
-    workdir_path = f"projects/{target_project_id}"
+    workdir_path = f"projects/2026-01-01_00-00-00_{target_project_id[:8]}"
     linked_workdir_path = f"{workdir_path}/child"
     ensure_bound_user_workdir(uid, workdir_path)
     user_workdir_host_dir(uid, workdir_path).joinpath("child").mkdir()

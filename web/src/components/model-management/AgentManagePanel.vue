@@ -11,7 +11,7 @@ import PageShoulder from '@/components/shared/PageShoulder.vue'
 import InfoCard from '@/components/shared/InfoCard.vue'
 import FallbackAvatar from '@/components/common/FallbackAvatar.vue'
 import ExtensionCardGrid from '@/components/extensions/ExtensionCardGrid.vue'
-import { normalizeAgent, normalizeAgentBackendOption } from '@/utils/agentConfigUtils'
+import { normalizeAgentBackendOption } from '@/utils/agentConfigUtils'
 import { generatePixelAvatar } from '@/utils/pixelAvatar'
 import { getShareConfigLabel } from '@/utils/shareConfig'
 
@@ -33,7 +33,7 @@ const filteredAgents = computed(() => {
           String(agent.name || '')
             .toLowerCase()
             .includes(keyword) ||
-          String(agent.id || '')
+          String(agent.agent_id || '')
             .toLowerCase()
             .includes(keyword) ||
           String(agent.backend_id || '')
@@ -65,7 +65,7 @@ const agentStats = computed(() => ({
   ).length
 }))
 const canManageAgent = (agent) => !!agent?.can_manage
-const getAgentDefaultIconSrc = (agent) => (agent.id ? generatePixelAvatar(agent.id) : '')
+const getAgentDefaultIconSrc = (agent) => (agent.agent_id ? generatePixelAvatar(agent.agent_id) : '')
 
 /** 返回智能体共享范围的简短展示文案。 */
 const getAgentShareLabel = (agent) => getShareConfigLabel(agent?.share_config)
@@ -84,7 +84,7 @@ const loadAgents = async () => {
   agentLoading.value = true
   try {
     const response = await agentApi.getAgents({ includeSubagents: true })
-    managedAgents.value = (response.agents || []).map(normalizeAgent)
+    managedAgents.value = response.agents || []
   } finally {
     agentLoading.value = false
   }
@@ -116,8 +116,8 @@ const openEditAgentModal = (agent) => {
 }
 
 const openAgentChat = (agent) => {
-  if (!agent?.id || agent.is_subagent) return
-  router.push({ name: 'AgentComp', query: { agent_id: agent.id } })
+  if (!agent?.agent_id || agent.is_subagent) return
+  router.push({ name: 'AgentComp', query: { agent_id: agent.agent_id } })
 }
 
 const refreshAgentLists = async () => {
@@ -137,7 +137,7 @@ const deleteAgent = async (agent) => {
     cancelText: '取消',
     async onOk() {
       try {
-        await agentApi.deleteAgent(agent.id)
+        await agentApi.deleteAgent(agent.agent_id)
         await refreshAgentLists()
         message.success('智能体已删除')
       } catch (error) {
@@ -197,9 +197,9 @@ defineExpose({
         <ExtensionCardGrid :min-width="320">
           <InfoCard
             v-for="agent in group.agents"
-            :key="agent.id"
+            :key="agent.agent_id"
             :title="agent.name"
-            :subtitle="agent.slug || agent.id"
+            :subtitle="agent.agent_id"
             :description="agent.description || '暂无描述'"
             :default-icon="Bot"
             :tags="[{ name: getAgentShareLabel(agent), color: 'gray' }]"
@@ -211,8 +211,8 @@ defineExpose({
                 class="agent-card-icon-image"
                 :src="agent.icon"
                 :default-src="getAgentDefaultIconSrc(agent)"
-                :name="agent.name || agent.id"
-                :seed="agent.id || agent.name"
+                :name="agent.name || agent.agent_id"
+                :seed="agent.agent_id || agent.name"
                 kind="agent"
                 :size="40"
                 shape="rounded"

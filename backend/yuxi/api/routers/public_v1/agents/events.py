@@ -109,7 +109,6 @@ def public_stream_response(
     thread_id: str,
     after_cursor: str | None,
     initial_event: dict | None = None,
-    session_alias: bool = False,
 ) -> StreamingResponse:
     """仅在 HTTP 边界把结构化输出编码为 SSE。"""
     validate_event_cursor(after_cursor)
@@ -117,14 +116,9 @@ def public_stream_response(
     async def events():
         """输出可选创建回执并订阅持久生命周期事件。"""
         if initial_event is not None:
-            created_type = "agent.session.created" if session_alias else "agent.thread.created"
-            yield format_sse(initial_event, event=created_type)
+            yield format_sse(initial_event, event="agent.thread.created")
         async for event in stream_thread_events(scope=scope, thread_id=thread_id, after_cursor=after_cursor):
-            output = dict(event)
-            if session_alias:
-                output["session_id"] = output.pop("thread_id")
-                output["type"] = output["type"].replace("agent.thread.", "agent.session.")
-            yield format_sse(output, event=output["type"], event_id=output.get("cursor"))
+            yield format_sse(event, event=event["type"], event_id=event.get("cursor"))
 
     return StreamingResponse(
         events(),

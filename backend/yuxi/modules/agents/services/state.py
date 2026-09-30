@@ -7,13 +7,11 @@ from yuxi.infrastructure.postgres.checkpointer import get_langgraph_checkpointer
 from typing import Any
 
 from fastapi import HTTPException
-from yuxi.modules.agents.runtime.backends.paths import runtime_workdir_path
-from yuxi.modules.agents.repositories.runs import AgentRunRepository
 from yuxi.modules.agents.repositories.threads import ConversationRepository
+from yuxi.modules.agents.repositories.runs import AgentRunRepository
 from yuxi.modules.agents.repositories.subagents import SubagentThreadRepository
 from yuxi.modules.agents.services.execution import build_pending_interrupt_payload, extract_agent_state
 from yuxi.modules.agents.services.subagents import serialize_subagent_run_state
-from yuxi.modules.workspace.services.bindings import resolve_conversation_workdir_path
 from yuxi.infrastructure.postgres.manager import pg_manager
 from yuxi.modules.identity.models import User
 from yuxi.infrastructure.observability.logging import logger
@@ -70,18 +68,9 @@ async def get_agent_state_view(
             raise HTTPException(status_code=404, detail="对话线程不存在")
 
         latest_run = await run_repo.get_latest_run_by_thread_for_user(thread_id, current_uid)
-        workdir_path = await resolve_conversation_workdir_path(
-            conversation=conversation,
-            uid=current_uid,
-            db=db,
-        )
-        runtime_workdir = runtime_workdir_path(workdir_path)
         values, interrupt_info = await _read_checkpoint_state(uid=current_uid, thread_id=thread_id)
         response = {
-            "agent_state": extract_agent_state(
-                values,
-                workdir_path=runtime_workdir,
-            )
+            "agent_state": extract_agent_state(values)
         }
         if latest_run and latest_run.status == "interrupted" and interrupt_info:
             response["interrupt"] = {

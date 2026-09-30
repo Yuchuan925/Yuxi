@@ -93,7 +93,7 @@ worker 用唯一 attempt token claim Task 并续租 lease；重复投递和失�
 
 ```text
 list_kbs、query_kb、find_kb_document、open_kb_document、
-get_mindmap、search_file、download_kb_file
+search_file、download_kb_file
 ```
 
 推荐顺序是：列出可见知识库 → 检索候选片段 → 用 `file_id` 打开或定位原文。`download_kb_file` 会把有权访问的原始二进制写入当前 Project 的 `outputs`，供后续工具处理。知识库不会映射为 `/home/gem/kbs` 沙盒目录。

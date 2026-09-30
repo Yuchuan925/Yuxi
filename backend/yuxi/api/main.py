@@ -159,13 +159,10 @@ async def add_app_source_header(request: Request, call_next):
 
 
 if __name__ == "__main__":
-    # uvicorn.run(app, host="0.0.0.0", port=5050, threads=10, workers=10, reload=True)
-
     uvicorn.run(
         "yuxi.api.main:app",
         host="0.0.0.0",
         port=5050,
         reload=True,
-        # 与 docker-compose 开发环境保持一致，避免 package 下代码变更不触发热重载。
-        reload_dirs=["server", "package"],
+        reload_dirs=["yuxi"],
     )

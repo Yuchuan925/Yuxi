@@ -97,10 +97,6 @@ export const getMcpServerTools = async (name) => {
  * @param {string} name - 服务器名称
  * @returns {Promise} - 刷新结果
  */
-export const refreshMcpServerTools = async (name) => {
-  return apiAdminPost(`${BASE_URL}/${encodeURIComponent(name)}/tools/refresh`, {})
-}
-
 /**
  * 切换单个工具的启用状态
  * @param {string} serverName - 服务器名称
@@ -123,7 +119,6 @@ export const mcpApi = {
   testMcpServer,
   updateMcpServerStatus,
   getMcpServerTools,
-  refreshMcpServerTools,
   toggleMcpServerTool
 }
 

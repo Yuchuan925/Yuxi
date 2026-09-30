@@ -5,7 +5,6 @@ from __future__ import annotations
 from typing import Any
 
 from yuxi.modules.knowledge.runtime import knowledge_base
-from yuxi.modules.knowledge.repositories.bases import KnowledgeBaseRepository
 
 
 class KnowledgeToolError(ValueError):
@@ -31,30 +30,6 @@ def list_kbs(visible_kbs: list[dict[str, Any]]) -> list[dict[str, Any]]:
         {"kb_id": kb.get("kb_id"), "name": kb.get("name", ""), "description": kb.get("description") or "无描述"}
         for kb in visible_kbs
     ]
-
-
-async def get_mindmap(kb_name: str, visible_kbs: list[dict[str, Any]]) -> str:
-    """按可见知识库名称取得文本思维导图。"""
-    if not kb_name:
-        raise KnowledgeToolError("请提供知识库名称")
-    target = next((kb for kb in visible_kbs if kb.get("name") == kb_name), None)
-    if target is None:
-        raise KnowledgeToolError(f"知识库 '{kb_name}' 不存在或当前会话未启用", not_found=True)
-    kb = await KnowledgeBaseRepository().get_by_kb_id(target["kb_id"])
-    if kb is None:
-        raise KnowledgeToolError(f"知识库 {target['name']} 不存在", not_found=True)
-    if not kb.mindmap:
-        raise KnowledgeToolError(f"知识库 {target['name']} 还没有生成思维导图。")
-
-    def to_text(node: dict[str, Any], level: int = 0) -> str:
-        """把导图节点转换为带缩进的文本。"""
-        return (
-            "  " * level
-            + f"- {node.get('content', '')}\n"
-            + "".join(to_text(child, level + 1) for child in node.get("children", []))
-        )
-
-    return f"知识库 {target['name']} 的思维导图结构：\n\n" + to_text(kb.mindmap)
 
 
 def require_visible_kb(kb_id: str, visible_kbs: list[dict[str, Any]]) -> str:

@@ -155,17 +155,3 @@
   --color-trans-light: rgba(0, 0, 0, 0.85);
   --color-trans-dark: rgba(255, 255, 255, 0.85);
 }
-
-:root.dark .markmap {
-  --markmap-max-width: 9999px;
-  --markmap-a-color: var(--main-500);
-  --markmap-a-hover-color: var(--main-600);
-  --markmap-code-bg: var(--gray-50);
-  --markmap-code-color: var(--gray-700);
-  --markmap-highlight-bg: var(--color-warning-50);
-  --markmap-table-border: 1px solid currentColor;
-  --markmap-font: 300 16px / 20px sans-serif;
-  --markmap-circle-open-bg: var(--main-0);
-  --markmap-text-color: var(--gray-700);
-  --markmap-highlight-node-bg: var(--color-error-50);
-}

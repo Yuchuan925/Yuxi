@@ -246,10 +246,10 @@ const agentQuickSwitchOptions = computed(() =>
   (agents.value || [])
     .filter((agent) => !agent.is_subagent)
     .map((agent) => ({
-      label: agent.name || agent.id,
-      value: agent.id,
+      label: agent.name || agent.agent_id,
+      value: agent.agent_id,
       icon: agent.icon || '',
-      defaultIcon: agent.id ? generatePixelAvatar(agent.id) : '',
+      defaultIcon: agent.agent_id ? generatePixelAvatar(agent.agent_id) : '',
       isBuiltin: isBuiltinAgent(agent)
     }))
 )

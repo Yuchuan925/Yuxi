@@ -158,7 +158,6 @@ async def get_agent_run_progress(run_id: str, *, message_limit: int = 3) -> dict
                 content = (
                     stream_event.get("content")
                     or stream_event.get("reasoning_content")
-                    or stream_event.get("additional_reasoning_content")
                 )
                 progress_kind = "assistant_message" if stream_event.get("content") else "assistant_reasoning"
             elif kind in {"tool_call", "tool_call_delta"}:

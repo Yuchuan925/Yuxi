@@ -49,9 +49,6 @@ _SYNCED_MCP_FIELDS = (
     "description",
     "transport",
     "url",
-    "command",
-    "args",
-    "env",
     "headers",
     "timeout",
     "sse_read_timeout",
@@ -67,11 +64,6 @@ class MCPServerNotFoundError(ValueError):
 def is_builtin_mcp_server(server: MCPServer) -> bool:
     """判断 MCP 是否由代码中的内置定义管理。"""
     return server.slug in BUILTIN_MCP_SERVERS
-
-
-def requires_mcp_transport_migration(server: MCPServer) -> bool:
-    """判断历史 MCP 配置是否需要迁移为支持的远程传输。"""
-    return server.transport not in SUPPORTED_TRANSPORTS
 
 
 def _to_runtime_mcp_config(server: MCPServer) -> dict[str, Any]:
@@ -392,9 +384,6 @@ async def set_server_enabled(
     server = await get_mcp_server(db, slug)
     if not server:
         raise MCPServerNotFoundError(f"Server '{slug}' does not exist")
-    if enabled and requires_mcp_transport_migration(server):
-        raise ValueError("历史 stdio MCP 已被禁用，请改为 sse 或 streamable_http 后再启用")
-
     server.enabled = 1 if enabled else 0
     if updated_by is not None:
         server.updated_by = updated_by
@@ -518,8 +507,6 @@ async def get_all_mcp_tools(server_slug: str) -> list:
 
 async def inspect_mcp_server_tools(server: MCPServer) -> list:
     """管理端严格建连，包括停用服务；不吞异常、不修改状态或运行缓存。"""
-    if requires_mcp_transport_migration(server):
-        raise ValueError("不支持的 MCP transport（包括 stdio）须迁移为远程服务后再测试")
     config = {key: value for key, value in _to_runtime_mcp_config(server).items() if key != "disabled_tools"}
     validate_remote_transport(config)
     client = MultiServerMCPClient({server.slug: config})

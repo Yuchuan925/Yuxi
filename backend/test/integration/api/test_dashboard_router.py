@@ -194,7 +194,6 @@ async def test_dashboard_http_reads_run_token_totals(test_client, admin_headers)
     from sqlalchemy import select
     from yuxi.modules.agents.models.runs import AgentRun
     from yuxi.modules.agents.models.turns import AgentTurn
-    from yuxi.modules.agents.models.threads import ConversationStats
 
     default_agent = await test_client.get("/api/agent/default", headers=admin_headers)
     assert default_agent.status_code == 200
@@ -217,11 +216,6 @@ async def test_dashboard_http_reads_run_token_totals(test_client, admin_headers)
             conversation = (
                 await db.execute(select(Conversation).where(Conversation.thread_id == thread_id))
             ).scalar_one()
-            await db.execute(
-                update(ConversationStats)
-                .where(ConversationStats.conversation_id == conversation.id)
-                .values(total_tokens=9999)
-            )
             for index, usage in enumerate(
                 [
                     {"total": {"total_tokens": 120}, "complete": True, "usage_reported_call_count": 1},

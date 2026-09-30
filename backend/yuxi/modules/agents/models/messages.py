@@ -65,7 +65,6 @@ class Message(Base):
     content = Column(Text, nullable=False, comment="Message content")
     message_type = Column(String(30), default="text", comment="Message type: text/tool_call/tool_result")
     created_at = Column(DateTime, default=utc_now_naive, comment="Creation time")
-    token_count = Column(Integer, nullable=True, comment="Token count (optional)")
     extra_metadata = Column(JSON, nullable=True, comment="Additional metadata (complete message dump)")
     image_content = Column(Text, nullable=True, comment="Base64 encoded image content for multimodal messages")
     run_id = Column(String(64), ForeignKey("agent_runs.id"), nullable=True, index=True, comment="Agent run ID")
@@ -91,7 +90,6 @@ class Message(Base):
             "content": self.content,
             "message_type": self.message_type,
             "created_at": format_utc_datetime(self.created_at),
-            "token_count": self.token_count,
             "metadata": self.extra_metadata or {},
             "image_content": self.image_content,
             "run_id": self.run_id,
@@ -105,12 +103,6 @@ class Message(Base):
             "execution_status": self.execution_status,
             "usage": self.usage,
             "tool_calls": [tc.to_dict() for tc in self.tool_calls] if self.tool_calls else [],
-        }
-
-    def to_simple_dict(self) -> dict[str, Any]:
-        return {
-            "role": self.role,
-            "content": self.content,
         }
 
 

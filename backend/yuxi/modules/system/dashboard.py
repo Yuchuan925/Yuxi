@@ -8,6 +8,7 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 from yuxi.modules.agents.repositories.threads import ConversationRepository
 from yuxi.modules.system.repositories.dashboard import DashboardRepository
+from yuxi.shared.datetime import format_utc_datetime
 
 
 class DashboardService:
@@ -86,7 +87,6 @@ class DashboardService:
             return None
 
         messages = await self.conv_repo.get_messages(conversation.id)
-        stats = await self.conv_repo.get_stats(conversation.id)
         audit_metadata = await self.repo.get_conversation_audit_metadata(conversation)
         message_list = []
         for message in messages:
@@ -96,7 +96,6 @@ class DashboardService:
                 "content": message.content,
                 "message_type": message.message_type,
                 "created_at": format_utc_datetime(message.created_at) or "",
-                "token_count": message.token_count,
             }
             if message.tool_calls:
                 message_data["tool_calls"] = [
@@ -125,7 +124,7 @@ class DashboardService:
             "title": conversation.title,
             "status": conversation.status,
             "is_pinned": bool(conversation.is_pinned),
-            "message_count": stats.message_count if stats else len(message_list),
+            "message_count": len(message_list),
             "created_at": format_utc_datetime(conversation.created_at) or "",
             "updated_at": format_utc_datetime(conversation.updated_at) or "",
             **await self.repo.get_conversation_token_usage(conversation.id),

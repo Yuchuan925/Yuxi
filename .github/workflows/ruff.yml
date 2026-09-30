@@ -63,6 +63,6 @@ jobs:
 
       - name: Check lint, formatting and imports
         run: |
-          ruff check package
-          ruff format package --check
-          ruff check --select I package
+          ruff check yuxi
+          ruff format yuxi --check
+          ruff check --select I yuxi

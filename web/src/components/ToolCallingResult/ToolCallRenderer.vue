@@ -21,7 +21,6 @@ import BaseToolCall from './BaseToolCall.vue'
 
 import WebSearchTool from './tools/WebSearchTool.vue'
 import ListKbsTool from './tools/ListKbsTool.vue'
-import GetMindmapTool from './tools/GetMindmapTool.vue'
 import QueryKbTool from './tools/QueryKbTool.vue'
 import FindKbDocumentTool from './tools/FindKbDocumentTool.vue'
 import OpenKbDocumentTool from './tools/OpenKbDocumentTool.vue'
@@ -72,7 +71,6 @@ const TOOL_RENDERERS = {
   edit_file: EditFileTool,
   execute: ExecuteTool,
   find_kb_document: FindKbDocumentTool,
-  get_mindmap: GetMindmapTool,
   glob: GlobTool,
   grep: GrepTool,
   list_directory: ListDirectoryTool,

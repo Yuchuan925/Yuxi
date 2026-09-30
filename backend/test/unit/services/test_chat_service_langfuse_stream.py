@@ -979,9 +979,6 @@ async def test_stream_agent_chat_maps_raw_protocol_events_to_yuxi_stream_events(
             )
             yield "messages", ({"event": "message-finish", "usage": {}}, metadata)
 
-        async def stream_messages(self, messages, input_context=None, **kwargs):
-            raise AssertionError("stream_messages fallback should not be used")
-
         async def get_graph(self, *, context=None):
             return FakeGraph()
 
@@ -1042,9 +1039,6 @@ async def test_stream_agent_chat_emits_realtime_agent_state_from_values(
             yield "values", {"messages": [], "todos": [{"content": "step 1", "status": "in_progress"}]}
             yield "messages", (AIMessageChunk(content="hello"), {"node": "llm"})
 
-        async def stream_messages(self, messages, input_context=None, **kwargs):
-            raise AssertionError("stream_messages fallback should not be used")
-
         async def get_graph(self, *, context=None):
             return FakeGraph()
 
@@ -1094,9 +1088,6 @@ async def test_stream_agent_chat_maps_custom_compression_event_to_context_compre
                     "file_path": "/conv/x.md",
                 },
             )
-
-        async def stream_messages(self, messages, input_context=None, **kwargs):
-            raise AssertionError("stream_messages fallback should not be used")
 
         async def get_graph(self, *, context=None):
             return FakeGraph()

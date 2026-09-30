@@ -9,6 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from yuxi.modules.agents.repositories.runs import AgentRunRepository
+from yuxi.modules.agents.repositories.threads import ConversationRepository
 from yuxi.modules.agents.models.messages import MODEL_AUDIT_MESSAGE_TYPE, TOOL_AUDIT_MESSAGE_TYPE, Message, ToolCall
 from yuxi.modules.agents.models.runs import AgentRun
 
@@ -295,6 +296,9 @@ class ToolMessageAuditRepository:
         return message
 
     async def _lock_run(self, *, run_id: str, thread_id: str, worker_id: str):
+        conversation = await ConversationRepository(self.db).lock_conversation_by_thread_id(thread_id)
+        if conversation is None:
+            raise ValueError(f"AgentRun conversation 不存在: {thread_id}")
         run = await self.run_repo.lock_output_persistence(
             run_id,
             worker_id=worker_id,

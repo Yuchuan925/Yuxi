@@ -12,7 +12,7 @@ from typing import Any
 
 from yuxi.modules.tasks.repository import TERMINAL_TASK_STATUSES, TaskRepository
 from yuxi.modules.tasks.queue import TASK_HEARTBEAT_SECONDS, TASK_LEASE_SECONDS, publish_pending_tasks, publish_task
-from yuxi.modules.tasks.registry import get_failure_task_definition, get_task_definition
+from yuxi.modules.tasks.registry import get_task_definition
 from yuxi.shared.datetime import utc_isoformat, utc_now_naive
 from yuxi.infrastructure.observability.logging import logger
 
@@ -249,9 +249,8 @@ class Tasker:
         current = await self._repo.get_by_id(task_id)
         before_cancel = None
         if current is not None:
-            handler_version = 1 if current.handler_version is None else int(current.handler_version)
             try:
-                definition = get_failure_task_definition(current.type, handler_version)
+                definition = get_task_definition(current.type, int(current.handler_version))
             except ValueError:
                 return None
             failure_handler = definition.load_failure_handler()
@@ -413,7 +412,7 @@ async def process_task(ctx: dict[str, Any], task_id: str) -> None:
     if record is None or record.status in TERMINAL_STATUSES:
         return
 
-    handler_version = 1 if record.handler_version is None else int(record.handler_version)
+    handler_version = int(record.handler_version)
     try:
         definition = get_task_definition(record.type, handler_version)
     except ValueError:

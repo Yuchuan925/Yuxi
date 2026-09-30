@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import uuid
 from contextlib import aclosing
-from dataclasses import field
+from dataclasses import dataclass, field
 from datetime import datetime
 from arq.worker import RetryJob
 from sqlalchemy import select
@@ -137,11 +137,13 @@ async def _validate_run_workdir_binding(run: AgentRun) -> AuthorizedWorkdir:
     return binding
 
 
+@dataclass
 class TerminalTransition:
     status: str | None
     changed: bool
 
 
+@dataclass
 class RunContext:
     run_id: str
     worker_id: str

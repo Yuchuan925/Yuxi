@@ -79,7 +79,7 @@ metadata 可以定义展示名称、说明、控件类型、选项和角色权�
 
 ```python
 from dataclasses import dataclass, field
-from yuxi.agents import BaseContext
+from yuxi.modules.agents.runtime import BaseContext
 
 
 @dataclass(kw_only=True)
@@ -96,17 +96,6 @@ class MyAgentContext(BaseContext):
 ```
 
 新增字段会影响保存结构、配置表单和运行期 Context。字段默认值、权限和选项变化时，同时更新相关测试和文档。
-
-## `capabilities`
-
-`capabilities` 是代码声明的静态能力，用于控制固定的前端入口，例如：
-
-```python
-class MyAgent(BaseAgent):
-    capabilities = ["file_upload", "files"]
-```
-
-它不保存待办、文件、产物或子智能体状态。运行态来自 LangGraph state 的 `agent_state`；能力声明只表达后端固定支持哪些 UI 入口。
 
 ## 运行时入口
 

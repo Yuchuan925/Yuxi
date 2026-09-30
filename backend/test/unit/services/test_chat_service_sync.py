@@ -1090,7 +1090,6 @@ async def test_get_agent_state_view_rejects_async_subagent_without_child_convers
             raise AssertionError("async subagent state must be loaded through child conversation relation")
 
     monkeypatch.setattr(state_svc, "ConversationRepository", ConvRepo)
-    monkeypatch.setattr(state_svc, "resolve_conversation_workdir_path", _resolve_test_workdir)
     monkeypatch.setattr(state_svc, "AgentRunRepository", RunRepo)
 
     with pytest.raises(HTTPException) as exc:
@@ -1160,7 +1159,6 @@ async def test_get_agent_state_view_returns_interrupted_checkpoint_payload(monke
         )
 
     monkeypatch.setattr(state_svc, "ConversationRepository", ConvRepo)
-    monkeypatch.setattr(state_svc, "resolve_conversation_workdir_path", _resolve_test_workdir)
     monkeypatch.setattr(state_svc, "SubagentThreadRepository", ThreadRepo)
     monkeypatch.setattr(state_svc, "AgentRunRepository", RunRepo)
     monkeypatch.setattr(state_svc, "_read_checkpoint_state", read_checkpoint_state)
@@ -1177,7 +1175,7 @@ async def test_get_agent_state_view_returns_interrupted_checkpoint_payload(monke
 
 
 @pytest.mark.asyncio
-async def test_get_agent_state_view_rejects_conversation_without_workdir(monkeypatch: pytest.MonkeyPatch):
+async def test_get_agent_state_view_reads_checkpoint_without_workspace_binding(monkeypatch: pytest.MonkeyPatch):
     class ConvRepo:
         def __init__(self, _db):
             pass
@@ -1205,23 +1203,28 @@ async def test_get_agent_state_view_rejects_conversation_without_workdir(monkeyp
             assert uid == "user-1"
             return None
 
-    async def unexpected_checkpoint_read(*_args, **_kwargs):
-        raise AssertionError("缺少 Workdir 时不得读取 checkpoint")
+    class ThreadRepo:
+        def __init__(self, _db):
+            pass
 
-    async def missing_workdir(**_kwargs):
-        raise RuntimeError("Conversation 绑定的 Project 不存在")
+        async def get_by_child_conversation_for_user(self, conversation_id, uid):
+            return None
+
+    async def read_checkpoint_state(*_args, **_kwargs):
+        return {}, None
 
     monkeypatch.setattr(state_svc, "ConversationRepository", ConvRepo)
-    monkeypatch.setattr(state_svc, "resolve_conversation_workdir_path", missing_workdir)
     monkeypatch.setattr(state_svc, "AgentRunRepository", RunRepo)
-    monkeypatch.setattr(state_svc, "_read_checkpoint_state", unexpected_checkpoint_read)
+    monkeypatch.setattr(state_svc, "SubagentThreadRepository", ThreadRepo)
+    monkeypatch.setattr(state_svc, "_read_checkpoint_state", read_checkpoint_state)
 
-    with pytest.raises(RuntimeError, match="Project 不存在"):
-        await state_svc.get_agent_state_view(
-            thread_id="thread-1",
-            current_user=SimpleNamespace(uid="user-1"),
-            db=object(),
-        )
+    result = await state_svc.get_agent_state_view(
+        thread_id="thread-1",
+        current_user=SimpleNamespace(uid="user-1"),
+        db=object(),
+    )
+
+    assert result["agent_state"]["subagent_runs"] == []
 
 
 @pytest.mark.asyncio
@@ -1320,7 +1323,6 @@ async def test_get_agent_state_view_includes_subagent_thread_relation(monkeypatc
 
     monkeypatch.setattr(state_svc, "_read_checkpoint_state", read_checkpoint_state)
     monkeypatch.setattr(state_svc, "ConversationRepository", ConvRepo)
-    monkeypatch.setattr(state_svc, "resolve_conversation_workdir_path", _resolve_test_workdir)
     monkeypatch.setattr(state_svc, "SubagentThreadRepository", ThreadRepo)
     monkeypatch.setattr(state_svc, "AgentRunRepository", RunRepo)
 
@@ -1404,7 +1406,6 @@ async def test_get_agent_state_view_reports_malformed_subagent_run_as_server_err
 
     monkeypatch.setattr(state_svc, "_read_checkpoint_state", read_checkpoint_state)
     monkeypatch.setattr(state_svc, "ConversationRepository", ConvRepo)
-    monkeypatch.setattr(state_svc, "resolve_conversation_workdir_path", _resolve_test_workdir)
     monkeypatch.setattr(state_svc, "SubagentThreadRepository", ThreadRepo)
     monkeypatch.setattr(state_svc, "AgentRunRepository", RunRepo)
 

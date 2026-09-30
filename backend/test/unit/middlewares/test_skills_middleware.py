@@ -19,7 +19,6 @@ _KB_TOOL_NAMES = {
     "query_kb",
     "find_kb_document",
     "open_kb_document",
-    "get_mindmap",
 }
 
 
@@ -193,7 +192,6 @@ async def test_awrap_model_call_mounts_knowledge_base_skill_tools():
                         "runtime_skills": {
                             "knowledge-base": _runtime_skill(
                                 "knowledge-base",
-                                tools=["list_kbs", "query_kb", "find_kb_document", "open_kb_document", "get_mindmap"],
                             )
                         },
                     },
@@ -222,7 +220,6 @@ async def test_awrap_model_call_mounts_knowledge_base_skill_tools():
         "query_kb",
         "find_kb_document",
         "open_kb_document",
-        "get_mindmap",
     }
 
 

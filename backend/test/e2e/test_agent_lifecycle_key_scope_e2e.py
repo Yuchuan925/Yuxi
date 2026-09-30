@@ -103,9 +103,9 @@ async def test_private_agent_key_run_uses_end_user_workspace_and_app_scope(e2e_c
         assert accepted.headers["X-App-Id"] == app_id
         receipt = accepted.json()
         thread_id = receipt["thread_id"]
-        replay = await e2e_client.post("/api/v1/agents/sessions", headers=public_headers, json=body)
+        replay = await e2e_client.post("/api/v1/agents/threads", headers=public_headers, json=body)
         assert replay.status_code == 200, replay.text
-        assert replay.json()["session_id"] == thread_id
+        assert replay.json()["thread_id"] == thread_id
 
         for headers in (
             {"Authorization": public_headers["Authorization"]},

@@ -419,7 +419,7 @@ async def find_user_by_oidc_sub(db, sub: str) -> User | None:
 
 
 async def find_deleted_oidc_user_by_sub(db, sub: str) -> User | None:
-    """查找已注销的 OIDC 账户（标准与历史后缀）"""
+    """查找已注销的 OIDC 账户（直接 uid 记录或绑定占位记录）"""
     oidc_uid = f"oidc:{sub}"
 
     result = await db.execute(

@@ -121,14 +121,6 @@
         <div class="panel-actions">
           <button
             type="button"
-            class="lucide-icon-btn extension-panel-action extension-panel-action-secondary file-table-mindmap-button"
-            @click="emit('mindmap')"
-          >
-            <MapIcon :size="14" />
-            <span>思维导图</span>
-          </button>
-          <button
-            type="button"
             class="lucide-icon-btn extension-panel-action extension-panel-action-secondary file-table-search-button"
             @click="emit('search')"
           >
@@ -516,13 +508,12 @@ import {
   Filter,
   MoreHorizontal,
   Pencil,
-  Search,
-  Map as MapIcon
+  Search
 } from '@lucide/vue'
 
 const store = useDatabaseStore()
 
-const emit = defineEmits(['mindmap', 'search'])
+const emit = defineEmits(['search'])
 
 const props = defineProps({
   readonly: { type: Boolean, default: false }
@@ -1412,8 +1403,7 @@ import { generatePixelAvatar } from '@/utils/pixelAvatar'
   min-height: 0;
 }
 
-.file-table-search-button,
-.file-table-mindmap-button {
+.file-table-search-button {
   font-size: 12px;
 }
 

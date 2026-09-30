@@ -4,7 +4,7 @@ from functools import partial
 
 from yuxi.modules.tasks.repository import TaskRepository
 from yuxi.modules.agents.services.transport import get_arq_pool
-from yuxi.modules.tasks.registry import get_failure_task_definition, get_task_definition
+from yuxi.modules.tasks.registry import get_task_definition
 from yuxi.infrastructure.observability.logging import logger
 
 TASK_LEASE_SECONDS = 30.0
@@ -22,15 +22,14 @@ async def publish_task(task_id: str) -> None:
 
 async def finalize_task_failure(session, record, error: str) -> None:
     """在 Task 失败事务内执行已注册的领域收敛。"""
-    handler_version = 1 if record.handler_version is None else int(record.handler_version)
     try:
-        definition = get_failure_task_definition(record.type, handler_version)
+        definition = get_task_definition(record.type, int(record.handler_version))
     except ValueError:
         logger.error(
             "Cannot finalize unknown durable task: task_id=%s, type=%s, handler_version=%s",
             record.id,
             record.type,
-            handler_version,
+            record.handler_version,
         )
         return
     handler = definition.load_failure_handler()
@@ -60,10 +59,10 @@ async def publish_pending_tasks(*, limit: int = 200) -> list[str]:
             logger.error("Cannot publish unknown durable task: task_id=%s, type=%s", record.id, record.type)
             await repository.fail_pending(record.id, error=str(exc))
             continue
-        handler_version = 1 if record.handler_version is None else int(record.handler_version)
+        handler_version = int(record.handler_version)
         if record.cancel_requested:
             try:
-                failure_definition = get_failure_task_definition(record.type, handler_version)
+                failure_definition = get_task_definition(record.type, handler_version)
             except ValueError:
                 failure_definition = None
             failure_handler = failure_definition.load_failure_handler() if failure_definition is not None else None
@@ -76,7 +75,7 @@ async def publish_pending_tasks(*, limit: int = 200) -> list[str]:
             error = str(exc)
             logger.error("Cannot rebuild durable task: task_id=%s, type=%s", record.id, record.type)
             try:
-                failure_definition = get_failure_task_definition(record.type, handler_version)
+                failure_definition = get_task_definition(record.type, handler_version)
             except ValueError:
                 failure_definition = None
             failure_handler = failure_definition.load_failure_handler() if failure_definition is not None else None

@@ -359,10 +359,6 @@ const props = defineProps({
     type: String,
     default: ''
   },
-  fileUploadEnabled: {
-    type: Boolean,
-    default: false
-  },
   showOptionsLeft: {
     type: Boolean,
     default: true
@@ -1053,7 +1049,7 @@ const isDraggingFiles = ref(false)
 const hasTransferFiles = (dataTransfer) =>
   Array.from(dataTransfer?.types || []).some((type) => type === 'Files')
 
-const canAcceptUploadFiles = () => props.fileUploadEnabled && !props.disabled && !props.isLoading
+const canAcceptUploadFiles = () => !props.disabled && !props.isLoading
 
 /** 剪贴板里的全部图片：一次粘多张时不能只留第一张。 */
 const getImageFilesFromClipboard = (clipboardData) => {

@@ -96,8 +96,6 @@ class EvaluationService:
         answer_error = metrics.get("score", 1.0) <= 0.5
         if result_filter == "answer_errors":
             return answer_error
-        if result_filter == "legacy_errors":
-            return answer_error or any(metrics.get(key, 1.0) < 0.3 for key in metrics if key.startswith("recall@"))
 
         return answer_error or metrics.get("recall@10", 1.0) < 1
 
@@ -917,7 +915,6 @@ class EvaluationService:
                 "total": total,
                 "total_pages": (total + page_size - 1) // page_size,
                 "result_filter": result_filter,
-                "error_only": result_filter == "legacy_errors",
             },
         }
 

@@ -130,8 +130,8 @@ async def test_viewer_reads_live_file_without_revision(realtime_viewer):
         current_user=SimpleNamespace(uid="user-1"),
         db=object(),
     )
-    assert result["content"] == "hello\nworld\n"
-    assert result["preview_type"] == "text"
+    assert result.content == "hello\nworld\n"
+    assert result.preview_type == "text"
 
 
 @pytest.mark.asyncio

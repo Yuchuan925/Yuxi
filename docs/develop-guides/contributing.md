@@ -54,7 +54,7 @@ docker compose logs --tail=100 api
 ## 3. 实现原则
 
 - 用满足验收标准的最小实现，保持主路径线性可读。
-- HTTP 路由只做请求解析、认证上下文和响应装配；用例流程放在 `yuxi.services`，持久化查询放在 `yuxi.repositories`。
+- HTTP 路由只做请求解析、认证上下文和响应装配；用例流程放在各模块的 `services/`，持久化查询放在各模块的 `repositories/`（如 `yuxi/modules/agents/services`、`yuxi/modules/agents/repositories`）。
 - 预设条件不成立时明确失败，不用静默回退或吞异常掩盖问题。
 - 权限在后端依赖和 repository 可见性查询处执行；前端守卫、prompt、schema omission 和隐藏按钮不是授权边界。
 - PostgreSQL 保存业务事实；Redis 只负责投递、短期事件、取消和缓存。LangGraph checkpoint 只使用 PostgreSQL。

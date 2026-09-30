@@ -107,7 +107,7 @@ async def test_agents_key_cannot_use_product_routes_or_spoof_source(test_client,
         "X-App-Id": "forged-source",
     }
     product_thread_id = None
-    public_session_id = None
+    public_thread_id = None
     try:
         directory = await test_client.get("/api/v1/agents", headers=headers)
         assert directory.status_code == 200, directory.text
@@ -154,17 +154,17 @@ async def test_agents_key_cannot_use_product_routes_or_spoof_source(test_client,
         isolated = await test_client.get(f"/api/v1/agents/threads/{product_thread_id}", headers=headers)
         assert isolated.status_code == 404, isolated.text
 
-        public_session = await test_client.post(
-            "/api/v1/agents/sessions",
+        public_thread = await test_client.post(
+            "/api/v1/agents/threads",
             json={"agent_id": agent_slug},
             headers={**headers, "Idempotency-Key": str(uuid.uuid4())},
         )
-        assert public_session.status_code == 200, public_session.text
-        public_session_id = public_session.json()["id"]
-        own_session = await test_client.get(f"/api/v1/agents/sessions/{public_session_id}", headers=headers)
-        assert own_session.status_code == 200, own_session.text
+        assert public_thread.status_code == 200, public_thread.text
+        public_thread_id = public_thread.json()["thread_id"]
+        own_thread = await test_client.get(f"/api/v1/agents/threads/{public_thread_id}", headers=headers)
+        assert own_thread.status_code == 200, own_thread.text
         jwt_isolated = await test_client.get(
-            f"/api/v1/agents/sessions/{public_session_id}", headers=admin_headers
+            f"/api/v1/agents/threads/{public_thread_id}", headers=admin_headers
         )
         assert jwt_isolated.status_code == 404, jwt_isolated.text
 
@@ -183,12 +183,12 @@ async def test_agents_key_cannot_use_product_routes_or_spoof_source(test_client,
         restored = await test_client.get("/api/agent", headers=headers)
         assert restored.status_code == 200, restored.text
     finally:
-        if public_session_id is not None:
-            await test_client.post(f"/api/v1/agents/threads/{public_session_id}/archive", headers=headers)
+        if public_thread_id is not None:
+            await test_client.post(f"/api/v1/agents/threads/{public_thread_id}/archive", headers=headers)
         if product_thread_id is not None:
             await test_client.post(f"/api/v1/agents/threads/{product_thread_id}/archive", headers=admin_headers)
         try:
-            await _delete_created_threads(public_session_id, product_thread_id)
+            await _delete_created_threads(public_thread_id, product_thread_id)
         finally:
             await test_client.delete(f"/api/user/apikey/{key_id}", headers=admin_headers)
 
@@ -329,8 +329,6 @@ async def test_key_without_end_user_id_cannot_reach_product_project_files(test_c
     [
         "/api/v1/agents/threads",
         "/api/v1/agents/threads/thread-id/events",
-        "/api/v1/agents/sessions",
-        "/api/v1/agents/sessions/session-id/events",
     ],
 )
 async def test_public_message_preflight_allows_idempotency_key(test_client, path):

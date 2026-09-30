@@ -314,7 +314,7 @@ async def validate_skill_dependencies(
     mcps = normalize_string_list(mcp_dependencies)
     skills = normalize_string_list(skill_dependencies)
 
-    # 验证所有工具（不仅仅是 buildin）
+    # 验证所有工具（不仅仅是 builtin）
     from yuxi.modules.extensions.tools.catalog import get_tool_metadata
 
     available_tools = {tool["slug"] for tool in get_tool_metadata()}

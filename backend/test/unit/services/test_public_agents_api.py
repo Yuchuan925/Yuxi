@@ -7,14 +7,13 @@ from fastapi import HTTPException
 from pydantic import ValidationError
 
 from yuxi.api.routers.public_v1.agents.schemas import InputMessage, ThreadEventCreate, input_messages_to_domain
-from yuxi.api.routers.public_v1.agents.sessions import SessionEventCreate
 from yuxi.api.routers.public_v1.agents.auth import require_public_context
 from yuxi.modules.agents.services.inputs import thread_id_for_creation
 from yuxi.modules.agents.services.scope import ActorScope
 
 
 def test_creation_key_is_stable_and_isolated_by_app():
-    """Thread 与 Session 同键使用同一 ID，APP 命名空间相互隔离。"""
+    """创建幂等键稳定生成同一 Thread ID，APP 命名空间相互隔离。"""
     product = ActorScope(uid="user-1", app_id=None)
     app = ActorScope(uid="user-1", app_id="app-1")
     assert thread_id_for_creation(product, "key-1") == thread_id_for_creation(product, "key-1")
@@ -86,22 +85,3 @@ def test_wire_rejects_unknown_fields_and_remote_images():
     with pytest.raises(HTTPException) as exc:
         input_messages_to_domain([message])
     assert exc.value.status_code == 422
-
-
-def test_session_event_is_only_a_wire_name_mapping():
-    """Session 事件名称可映射为同一 Thread 消息意图。"""
-    raw = {
-        "events": [
-            {
-                "type": "agent.session.input.message",
-                "mode": "follow_up",
-                "input": [{"role": "user", "content": [{"type": "input_text", "text": "继续"}]}],
-            }
-        ]
-    }
-    session_event = SessionEventCreate.model_validate(raw).events[0]
-    mapped = session_event.model_dump(mode="json")
-    mapped["type"] = "agent.thread.input.message"
-    assert ThreadEventCreate.model_validate({"events": [mapped]}).events[0].mode == "follow_up"
-    with pytest.raises(ValidationError):
-        ThreadEventCreate.model_validate(raw)

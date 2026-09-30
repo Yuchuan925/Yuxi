@@ -12,7 +12,6 @@ import { createMarkdownRenderCache } from './markdownRenderCache.js'
 
 const markdownKatexPlugin = markdownItKatex.default || markdownItKatex
 const FRONTMATTER_MARKER = '---'
-const LEGACY_MINIO_PUBLIC_URL_RE = /https?:\/\/[^/\s)]+:9000\/public\//gi
 
 let highlighterPromise
 const getHighlighter = () => {
@@ -33,9 +32,6 @@ const normalizeHtmlTagQuotes = (content) => {
   if (!/[“”]/.test(source)) return source
   return source.replace(/<[^>]+>/g, (tag) => tag.replaceAll('“', '"').replaceAll('”', '"'))
 }
-
-export const normalizeLegacyMinioPublicUrls = (content) =>
-  String(content || '').replace(LEGACY_MINIO_PUBLIC_URL_RE, '/minio/public/')
 
 const renderFrontmatterValue = (value) => {
   if (Array.isArray(value)) {
@@ -218,7 +214,7 @@ const getRenderer = async (theme, needsHighlight) => {
 
 export const renderMarkdown = async (content, { theme = 'github-light' } = {}) => {
   try {
-    const normalizedContent = normalizeHtmlTagQuotes(normalizeLegacyMinioPublicUrls(content))
+    const normalizedContent = normalizeHtmlTagQuotes(content)
     const htmlPreviewContent = renderHtmlPreviewBlocks(normalizedContent, {
       sanitizeHtml: sanitizeHtmlPreviewSrcdoc
     })

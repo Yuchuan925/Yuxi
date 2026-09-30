@@ -1,26 +1,25 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { agentApi, databaseApi, toolApi } from '@/apis'
-import { normalizeAgent } from '@/utils/agentConfigUtils'
 import { handleChatError } from '@/utils/errorHandler'
 
 export const BUILTIN_AGENT_ID = 'default-chatbot'
 
 export function isBuiltinAgent(agent) {
-  return agent?.is_builtin || agent?.id === BUILTIN_AGENT_ID || agent?.slug === BUILTIN_AGENT_ID
+  return agent?.is_builtin || agent?.agent_id === BUILTIN_AGENT_ID
 }
 
 function sortAgents(agents) {
   return [...agents].sort((a, b) => {
     if (isBuiltinAgent(a) !== isBuiltinAgent(b)) return isBuiltinAgent(a) ? -1 : 1
-    return String(a.name || a.id).localeCompare(String(b.name || b.id), 'zh-CN')
+    return String(a.name || a.agent_id).localeCompare(String(b.name || b.agent_id), 'zh-CN')
   })
 }
 
 function getPreferredAgentId(agents, persistedId) {
   const chatAgents = agents.filter((agent) => !agent.is_subagent)
-  if (persistedId && chatAgents.some((agent) => agent.id === persistedId)) return persistedId
-  return chatAgents.find(isBuiltinAgent)?.id || chatAgents[0]?.id || null
+  if (persistedId && chatAgents.some((agent) => agent.agent_id === persistedId)) return persistedId
+  return chatAgents.find(isBuiltinAgent)?.agent_id || chatAgents[0]?.agent_id || null
 }
 
 function extractContext(agent) {
@@ -48,7 +47,7 @@ export const useAgentStore = defineStore(
     const selectedAgentId = ref(null)
 
     const availableKnowledgeBases = ref([])
-    // 完整工具元数据（含 buildin / knowledge 等全部分类的 display_name），用于工具名称展示映射
+    // 完整工具元数据（含 builtin / knowledge 等全部分类的 display_name），用于工具名称展示映射
     const toolMetadata = ref([])
 
     const agentConfig = ref({})
@@ -129,7 +128,7 @@ export const useAgentStore = defineStore(
       error.value = null
       try {
         const response = await agentApi.getAgents({ includeSubagents })
-        agents.value = sortAgents((response.agents || []).map(normalizeAgent))
+        agents.value = sortAgents(response.agents || [])
       } catch (err) {
         console.error('Failed to fetch agents:', err)
         handleChatError(err, 'fetch')
@@ -168,7 +167,7 @@ export const useAgentStore = defineStore(
       error.value = null
       try {
         const response = await agentApi.getAgentDetail(agentId)
-        const agent = normalizeAgent(response.agent || response)
+        const agent = response.agent || response
         agentDetails.value[agent.id] = agent
         return agent
       } catch (err) {
@@ -220,7 +219,7 @@ export const useAgentStore = defineStore(
 
     async function createAgent(payload) {
       const response = await agentApi.createAgent(payload)
-      const created = normalizeAgent(response.agent)
+      const created = response.agent
       if (created?.id) {
         agentDetails.value[created.id] = created
         agents.value = sortAgents([
@@ -234,7 +233,7 @@ export const useAgentStore = defineStore(
 
     async function updateAgentProfile(agentId, payload) {
       const response = await agentApi.updateAgent(agentId, payload)
-      const updated = normalizeAgent(response.agent)
+      const updated = response.agent
       agentDetails.value[updated.id] = updated
       const index = agents.value.findIndex((item) => item.id === updated.id)
       if (index >= 0) agents.value.splice(index, 1, updated)

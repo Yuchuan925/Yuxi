@@ -47,13 +47,9 @@ cache
 ### IDE
 .vscode
 .idea
-.vibe
-.qoder
 .claude
 .cursor
-.trae
 .codex
-.sisyphus
 .pytest_cache
 
 *.secret*
@@ -67,19 +63,7 @@ cache
 *.local/*
 
 *.pdf
-src/data
 */package-lock.json
 web/package-lock.json
-saves
-saves_dev
-notebooks
-graphrag
 docker/volumes
 docs/vibe
-.cursorrules
-
-/models
-
-.taskr/
-.workbuddy/
-web/src/utils/__tests__/

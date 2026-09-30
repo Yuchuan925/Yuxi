@@ -37,7 +37,6 @@ class FakeKnowledgeBaseRepository:
             query_params={"options": {}},
             additional_params={"chunk_preset_id": "general"},
             share_config=None,
-            mindmap=None,
             sample_questions=[],
             created_by="user_1",
             created_at=None,

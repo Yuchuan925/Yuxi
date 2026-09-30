@@ -1,5 +1,4 @@
 import asyncio
-import json
 import os
 import textwrap
 import time
@@ -23,22 +22,12 @@ from yuxi.modules.knowledge.utils import (
     params_for_uploaded_document,
     parse_minio_url,
 )
-from yuxi.modules.knowledge.utils.mindmap_utils import (
-    batch_remove_files_from_mindmap,
-    generate_database_mindmap,
-    get_database_mindmap_data,
-    get_mindmap_database_files,
-    get_mindmap_databases_overview,
-    get_mindmap_diff,
-    remove_file_from_mindmap,
-)
 from yuxi.modules.knowledge.utils.sample_question_utils import (
     generate_database_sample_questions,
     get_database_sample_questions,
 )
 from yuxi.modules.knowledge.utils.url_fetcher import fetch_url_content
 from yuxi.modules.identity.permissions import ResourcePermission, resolve_knowledge_base_permission
-from yuxi.modules.knowledge.services.folders import knowledge_folder_service
 from yuxi.modules.documents.service import parse_document
 from yuxi.modules.tasks.service import tasker
 from yuxi.modules.workspace.services.files import read_workspace_file_bytes
@@ -62,7 +51,6 @@ ACTIVE_GRAPH_BUILD_STATUSES = {"pending", "running"}
 MAX_DIRECT_DOCUMENT_ACTION_FILE_IDS = 1000
 PENDING_PARSE_STATUSES = ["uploaded"]
 PENDING_INDEX_STATUSES = ["parsed", "error_indexing"]
-VIRTUAL_FOLDER_MIGRATION_TASK_TYPE = "knowledge_virtual_folder_migration"
 
 
 class UpdateDatabaseRequest(BaseModel):
@@ -306,72 +294,6 @@ async def get_accessible_databases(current_user: User = Depends(get_required_use
         raise HTTPException(status_code=500, detail="获取可访问知识库列表失败") from e
 
 
-@knowledge.get("/mindmap/databases")
-async def get_mindmap_databases(current_user: User = Depends(get_admin_user)):
-    """获取所有知识库的概览信息，用于思维导图界面选择。"""
-    try:
-        return await get_mindmap_databases_overview(current_user.uid)
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"获取知识库列表失败: {e}, {traceback.format_exc()}")
-        raise HTTPException(status_code=500, detail=f"获取知识库列表失败: {str(e)}")
-
-
-@knowledge.get("/databases/{kb_id}/mindmap/files")
-async def get_database_mindmap_files(kb_id: str, current_user: User = Depends(require_knowledge_base_read)):
-    """获取指定知识库的所有文件列表。"""
-    try:
-        return await get_mindmap_database_files(kb_id)
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"获取文件列表失败: {e}, {traceback.format_exc()}")
-        raise HTTPException(status_code=500, detail=f"获取文件列表失败: {str(e)}")
-
-
-@knowledge.post("/databases/{kb_id}/mindmap/generate")
-async def generate_mindmap(
-    kb_id: str,
-    file_ids: list[str] | None = Body(default=None, description="选择的文件ID列表"),
-    user_prompt: str = Body(default="", description="用户自定义提示词"),
-    incremental: bool = Body(default=False, description="是否增量更新"),
-    current_user: User = Depends(require_knowledge_base_manage),
-):
-    """使用 AI 分析知识库文件，生成思维导图结构。支持增量更新模式。"""
-    try:
-        return await generate_database_mindmap(kb_id, file_ids, user_prompt, incremental)
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"生成思维导图失败: {e}, {traceback.format_exc()}")
-        raise HTTPException(status_code=500, detail=f"生成思维导图失败: {str(e)}")
-
-
-@knowledge.get("/databases/{kb_id}/mindmap")
-async def get_database_mindmap(kb_id: str, current_user: User = Depends(require_knowledge_base_read)):
-    """获取知识库关联的思维导图。"""
-    try:
-        return await get_database_mindmap_data(kb_id)
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"获取知识库思维导图失败: {e}, {traceback.format_exc()}")
-        raise HTTPException(status_code=500, detail=f"获取知识库思维导图失败: {str(e)}")
-
-
-@knowledge.get("/databases/{kb_id}/mindmap/diff")
-async def get_mindmap_diff_route(kb_id: str, current_user: User = Depends(require_knowledge_base_read)):
-    """检测思维导图与知识库文件的变更差异。"""
-    try:
-        return await get_mindmap_diff(kb_id)
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"检测思维导图变更失败: {e}, {traceback.format_exc()}")
-        raise HTTPException(status_code=500, detail=f"检测思维导图变更失败: {str(e)}")
-
-
 @knowledge.get("/databases/{kb_id}")
 async def get_database_info(
     kb_id: str,
@@ -388,21 +310,6 @@ async def get_database_info(
         permission=permission,
         redact_secrets=permission != ResourcePermission.MANAGE,
     )
-
-
-@knowledge.post("/databases/{kb_id}/stats/repair")
-async def repair_database_stats(kb_id: str, current_user: User = Depends(require_knowledge_base_manage)):
-    """修复知识库历史文件缺失的 Chunk/Token 统计。"""
-    await _ensure_database_supports_documents(kb_id, "统计修复")
-    try:
-        return await knowledge_base.repair_missing_file_stats(kb_id)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"修复知识库统计失败 {e}, {traceback.format_exc()}")
-        raise HTTPException(status_code=500, detail=f"修复知识库统计失败: {e}")
 
 
 @knowledge.put("/databases/{kb_id}")
@@ -1069,7 +976,6 @@ async def batch_delete_documents(
 
     deleted_count = 0
     failed_items = []
-    mindmap_removals: list[tuple[str, str]] = []
 
     for doc_id in file_ids:
         try:
@@ -1090,16 +996,9 @@ async def batch_delete_documents(
             await knowledge_base.delete_file(kb_id, doc_id)
             deleted_count += 1
 
-            # 只有成功删除的文件才同步从导图快照移除，避免部分失败导致导图与文件表失同步
-            removed_filename = file_meta_info.get("meta", {}).get("filename", "")
-            if removed_filename:
-                mindmap_removals.append((doc_id, removed_filename))
         except Exception as e:
             logger.error(f"批量删除过程中删除文档 {doc_id} 失败: {e}, {traceback.format_exc()}")
             failed_items.append({"doc_id": doc_id, "error": str(e)})
-
-    # 同步清理导图快照，移除已删除文件对应的叶子节点
-    await batch_remove_files_from_mindmap(kb_id, mindmap_removals)
 
     if failed_items:
         if deleted_count == 0:
@@ -1134,9 +1033,6 @@ async def delete_document(kb_id: str, doc_id: str, current_user: User = Depends(
         # 无论MinIO删除是否成功，都继续从知识库删除
         await knowledge_base.delete_file(kb_id, doc_id)
 
-        # 同步清理导图快照，移除已删除文件对应的叶子节点
-        removed_filename = file_meta_info.get("meta", {}).get("filename", "")
-        await remove_file_from_mindmap(kb_id, doc_id, removed_filename)
         return {"message": "删除成功"}
     except HTTPException:
         raise
@@ -1404,62 +1300,6 @@ async def create_folder(
     except Exception as e:
         logger.error(f"创建文件夹失败 {e}, {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=str(e))
-
-
-@knowledge.get("/databases/{kb_id}/virtual-folders/detect")
-async def detect_virtual_folders(
-    kb_id: str,
-    current_user: User = Depends(require_knowledge_base_read),
-):
-    """检测知识库中的历史路径型虚拟文件夹。"""
-    await _ensure_database_supports_documents(kb_id, "虚拟文件夹检测")
-    return await knowledge_folder_service.detect_virtual_folder_data(kb_id)
-
-
-@knowledge.post("/databases/{kb_id}/virtual-folders/migrate")
-async def start_virtual_folder_migration(
-    kb_id: str,
-    current_user: User = Depends(require_knowledge_base_manage),
-):
-    """创建与 SSE 连接生命周期无关的历史目录迁移任务。"""
-    await _ensure_database_supports_documents(kb_id, "虚拟文件夹转换")
-
-    task, created = await tasker.enqueue_unique_by_payload(
-        name="转换知识库历史虚拟文件夹",
-        task_type=VIRTUAL_FOLDER_MIGRATION_TASK_TYPE,
-        payload={"kb_id": kb_id, "operator_id": current_user.uid},
-        payload_match={"kb_id": kb_id},
-    )
-    return {"task_id": task.id, "created": created}
-
-
-@knowledge.get("/databases/{kb_id}/virtual-folders/migrations/{task_id}/events")
-async def stream_virtual_folder_migration(
-    kb_id: str,
-    task_id: str,
-    current_user: User = Depends(require_knowledge_base_manage),
-):
-    """流式返回迁移任务快照，断开连接不取消任务。"""
-    task = await tasker.get_task(task_id)
-    if (
-        not task
-        or task.get("type") != VIRTUAL_FOLDER_MIGRATION_TASK_TYPE
-        or task.get("payload", {}).get("kb_id") != kb_id
-    ):
-        raise HTTPException(status_code=404, detail="Migration task not found")
-
-    async def event_stream():
-        while True:
-            snapshot = await tasker.get_task(task_id)
-            if snapshot is None:
-                break
-            public_snapshot = {key: value for key, value in snapshot.items() if key != "payload"}
-            yield f"data: {json.dumps(public_snapshot, ensure_ascii=False)}\n\n"
-            if snapshot.get("status") in {"success", "failed", "cancelled"}:
-                break
-            await asyncio.sleep(0.5)
-
-    return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 
 @knowledge.put("/databases/{kb_id}/folders/{folder_id}/rename")

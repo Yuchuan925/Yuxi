@@ -110,7 +110,6 @@ async def _build_middlewares(context, backend, tool_approval_mode: str):
 class SubAgentBackend(BaseAgent):
     name = "子智能体"
     description = "用于被主智能体通过 subagent_start 工具调用的专用智能体后端。"
-    capabilities = ["file_upload", "files"]
     context_schema = SubAgentContext
 
     async def get_info(

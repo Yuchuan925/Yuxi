@@ -22,9 +22,8 @@ from yuxi.infrastructure.observability.logging import logger
 def get_common_kb_tools() -> list:
     """获取通用知识库工具列表
 
-    返回 7 个通用工具：
+    返回 6 个通用工具：
     - list_kbs: 列出用户可访问的知识库
-    - get_mindmap: 获取指定知识库的思维导图
     - query_kb: 在指定知识库中检索
     - find_kb_document: 在指定文件内定位关键词或正则模式
     - open_kb_document: 按 file_id 分段打开知识库文档
@@ -33,7 +32,6 @@ def get_common_kb_tools() -> list:
     """
     return [
         list_kbs,
-        get_mindmap,
         query_kb,
         find_kb_document,
         open_kb_document,
@@ -69,35 +67,6 @@ async def list_kbs(dummy: str, runtime: ToolRuntime) -> str:
         return "当前没有可访问的知识库"
 
     return knowledge_tools.list_kbs(available_kbs)
-
-
-class GetMindmapInput(BaseModel):
-    """获取思维导图输入模型"""
-
-    kb_name: str = Field(description="知识库名称，用于指定要获取思维导图的知识库")
-
-
-@tool(category="knowledge", tags=["知识库"], display_name="获取思维导图", args_schema=GetMindmapInput)
-async def get_mindmap(kb_name: str, runtime: ToolRuntime) -> str:
-    """获取指定知识库的思维导图结构
-
-    当用户想要了解知识库的整体结构、文件分类、知识架构时使用此工具。
-    返回知识库的思维导图层级结构。
-
-    Args:
-        kb_name: 知识库名称
-
-    Returns:
-        知识库的思维导图结构（文本格式）
-    """
-    visible_kbs = await _resolve_visible_knowledge_bases_for_query(runtime)
-    try:
-        return await knowledge_tools.get_mindmap(kb_name, visible_kbs)
-    except knowledge_tools.KnowledgeToolError as e:
-        return str(e)
-    except Exception as e:
-        logger.error(f"获取思维导图失败: {e}")
-        return f"获取思维导图失败: {str(e)}"
 
 
 QueryKBInput = SearchInputSchema

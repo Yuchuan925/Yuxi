@@ -45,7 +45,7 @@ async def test_knowledge_key_tool_route_boundary_without_kb(test_client, admin_h
 
 @pytest_asyncio.fixture
 async def readable_knowledge_tool_data(knowledge_database):
-    """在真实 PostgreSQL 与 MinIO 中准备导图和可读文档。"""
+    """在真实 PostgreSQL 与 MinIO 中准备可读文档。"""
     kb_id = knowledge_database["kb_id"]
     file_id = f"pytest_tool_{uuid.uuid4().hex[:12]}"
     object_name = f"{kb_id}/parsed/{file_id}.md"
@@ -61,7 +61,6 @@ async def readable_knowledge_tool_data(knowledge_database):
         async with pg_manager.get_async_session_context() as session:
             kb = await session.scalar(select(KnowledgeBase).where(KnowledgeBase.kb_id == kb_id))
             assert kb is not None
-            kb.mindmap = {"content": "Root", "children": [{"content": "Documents", "children": []}]}
             session.add(
                 KnowledgeFile(
                     file_id=file_id,
@@ -98,6 +97,9 @@ async def test_jwt_can_call_six_read_only_knowledge_tools(test_client, admin_hea
     assert queried.status_code == 200, queried.text
     assert queried.json()["kb_id"] == kb_id
 
+    removed = await test_client.post(f"{prefix}/get_mindmap", json={"kb_name": "any"}, headers=admin_headers)
+    assert removed.status_code == 404
+
     searched = await test_client.post(
         f"{prefix}/search_file",
         json={"query": "missing-needle"},
@@ -107,7 +109,6 @@ async def test_jwt_can_call_six_read_only_knowledge_tools(test_client, admin_hea
     assert isinstance(searched.json()["files"], list)
 
     for name, payload, expected in (
-        ("get_mindmap", {"kb_name": "missing-kb"}, 404),
         ("open_kb_document", {"kb_id": kb_id, "file_id": "missing-file"}, 400),
         ("find_kb_document", {"kb_id": kb_id, "file_id": "missing-file", "patterns": ["hello"]}, 400),
     ):
@@ -118,18 +119,10 @@ async def test_jwt_can_call_six_read_only_knowledge_tools(test_client, admin_hea
 async def test_document_tools_return_persisted_results(
     test_client, admin_headers, knowledge_database, readable_knowledge_tool_data
 ):
-    """三项工具经真实 HTTP 回读 PostgreSQL 导图和 MinIO 文档内容。"""
+    """保留的文档工具经真实 HTTP 回读 PostgreSQL 和 MinIO 文档内容。"""
     kb_id = knowledge_database["kb_id"]
     file_id = readable_knowledge_tool_data
     prefix = "/api/v1/knowledge/tools"
-
-    mindmap = await test_client.post(
-        f"{prefix}/get_mindmap",
-        json={"kb_name": knowledge_database["name"]},
-        headers=admin_headers,
-    )
-    assert mindmap.status_code == 200, mindmap.text
-    assert "- Root\n  - Documents" in mindmap.json()
 
     opened = await test_client.post(
         f"{prefix}/open_kb_document",
@@ -184,8 +177,7 @@ async def test_knowledge_key_can_call_tools_but_not_unlisted_operations(test_cli
         assert queried.status_code == 200, queried.text
 
         for name, payload, expected in (
-            ("get_mindmap", {"kb_name": "missing-kb"}, 404),
-            ("open_kb_document", {"kb_id": kb_id, "file_id": "missing-file"}, 400),
+                ("open_kb_document", {"kb_id": kb_id, "file_id": "missing-file"}, 400),
             ("find_kb_document", {"kb_id": kb_id, "file_id": "missing-file", "patterns": ["hello"]}, 400),
             ("search_file", {"query": "missing-needle"}, 200),
         ):

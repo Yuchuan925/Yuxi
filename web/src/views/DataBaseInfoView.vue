@@ -126,23 +126,13 @@
                   <span class="file-stat-label">待入库</span>
                 </div>
               </button>
-              <button
-                type="button"
-                class="lucide-icon-btn extension-panel-action extension-panel-action-secondary file-stat-card file-stat-summary"
-                :class="{ 'file-stat-warning': virtualFolderStatus.has_virtual_folders }"
-                :disabled="!virtualFolderStatus.has_virtual_folders || !canManageDatabase"
-                :title="
-                  virtualFolderStatus.has_virtual_folders ? '存在历史虚拟文件夹，点击转换' : ''
-                "
-                @click="virtualFolderModalVisible = true"
-              >
-                <CircleAlert v-if="virtualFolderStatus.has_virtual_folders" :size="16" />
-                <FileText v-else :size="16" />
+              <div class="file-stat-card file-stat-summary">
+                <FileText :size="16" />
                 <div class="file-stat-inline">
                   <span class="file-stat-value">{{ fileStats.count }}</span>
                   <span class="file-stat-label">文件</span>
                 </div>
-              </button>
+              </div>
               <div
                 v-if="fileStats.sizeText"
                 class="lucide-icon-btn extension-panel-action extension-panel-action-secondary file-stat-card file-stat-summary"
@@ -153,46 +143,25 @@
                   <span class="file-stat-value">{{ fileStats.sizeText }}</span>
                 </div>
               </div>
-              <button
-                v-if="canManageDatabase"
-                type="button"
-                class="lucide-icon-btn extension-panel-action extension-panel-action-secondary file-stat-card file-stat-summary file-stat-repair"
-                :disabled="statsRepairing"
-                :aria-busy="statsRepairing"
-                aria-label="修复缺失的 Chunk/Token 统计"
-                title="修复缺失的 Chunk/Token 统计"
-                @click="repairDatabaseStats"
-              >
-                <LoaderCircle v-if="statsRepairing" :size="16" class="file-stat-spinner" />
-                <DatabaseIcon v-else :size="16" />
+              <div class="file-stat-card file-stat-summary">
+                <DatabaseIcon :size="16" />
                 <div class="file-stat-inline">
                   <span class="file-stat-value">{{ fileStats.chunkText }}</span>
                   <span class="file-stat-label">Chunks</span>
                 </div>
-              </button>
-              <button
-                v-if="canManageDatabase"
-                type="button"
-                class="lucide-icon-btn extension-panel-action extension-panel-action-secondary file-stat-card file-stat-summary file-stat-repair"
-                :disabled="statsRepairing"
-                :aria-busy="statsRepairing"
-                aria-label="修复缺失的 Chunk/Token 统计"
-                title="修复缺失的 Chunk/Token 统计"
-                @click="repairDatabaseStats"
-              >
-                <LoaderCircle v-if="statsRepairing" :size="16" class="file-stat-spinner" />
-                <Hash v-else :size="16" />
+              </div>
+              <div class="file-stat-card file-stat-summary">
+                <Hash :size="16" />
                 <div class="file-stat-inline">
                   <span class="file-stat-value">{{ fileStats.tokenText }}</span>
                   <span class="file-stat-label">Tokens</span>
                 </div>
-              </button>
+              </div>
             </div>
           </div>
           <FileTable
             ref="fileTableRef"
             :readonly="!canManageDatabase"
-            @mindmap="mindmapModalVisible = true"
             @search="fileSearchModalVisible = true"
           />
         </div>
@@ -247,51 +216,6 @@
       :kb-id="kbId"
       @select="onFileSearchSelect"
     />
-
-    <a-modal v-model:open="virtualFolderModalVisible" title="转换历史虚拟文件夹">
-      <p>该知识库存在历史兼容数据创建的虚拟文件夹，需要转换为真实目录结构。</p>
-      <p>
-        转换按批次提交；关闭弹窗或进度连接中断不会撤销已经完成的部分，再次执行会从剩余数据继续。
-      </p>
-      <a-progress
-        v-if="virtualFolderTask"
-        :percent="Math.round(virtualFolderTask.progress || 0)"
-        :status="
-          virtualFolderTask.status === 'failed'
-            ? 'exception'
-            : virtualFolderTask.status === 'success'
-              ? 'success'
-              : 'active'
-        "
-      />
-      <p v-if="virtualFolderTask?.message" class="virtual-folder-migration-message">
-        {{ virtualFolderTask.message }}
-      </p>
-      <template #footer>
-        <a-button @click="virtualFolderModalVisible = false">关闭</a-button>
-        <a-button
-          type="primary"
-          :loading="virtualFolderStarting"
-          :disabled="virtualFolderRunning"
-          @click="startVirtualFolderMigration"
-        >
-          开始转换
-        </a-button>
-      </template>
-    </a-modal>
-
-    <a-modal
-      v-model:open="mindmapModalVisible"
-      title="思维导图"
-      width="1200px"
-      :footer="null"
-      destroy-on-close
-      wrap-class-name="knowledge-mindmap-modal"
-    >
-      <div class="knowledge-mindmap-modal-content">
-        <MindMapSection v-if="kbId" :kb-id="kbId" :readonly="!canManageDatabase" />
-      </div>
-    </a-modal>
 
     <a-modal
       v-model:open="editModalVisible"
@@ -432,14 +356,12 @@ import {
   BarChart3,
   ChevronDown,
   ChevronRight,
-  CircleAlert,
   Copy,
   Database as DatabaseIcon,
   FileText,
   FolderPlus,
   FolderUp,
   Hash,
-  LoaderCircle,
   Network,
   Pencil,
   Search,
@@ -456,7 +378,6 @@ import QuerySection from '@/components/QuerySection.vue'
 import SearchConfigPanel from '@/components/SearchConfigPanel.vue'
 import AiTextarea from '@/components/AiTextarea.vue'
 import ShareConfigForm from '@/components/ShareConfigForm.vue'
-import { databaseApi } from '@/apis/knowledge_api'
 import { departmentApi } from '@/apis/department_api'
 import { authApi } from '@/apis/auth_api'
 import { useChunkPresetOptions } from '@/composables/useChunkPresetOptions'
@@ -467,7 +388,6 @@ import { createAsyncPanel } from '@/utils/asyncPanel'
 const KnowledgeGraphSection = createAsyncPanel(
   () => import('@/components/KnowledgeGraphSection.vue')
 )
-const MindMapSection = createAsyncPanel(() => import('@/components/MindMapSection.vue'))
 const KnowledgeEvaluationWorkspace = createAsyncPanel(
   () => import('@/components/evaluation/KnowledgeEvaluationWorkspace.vue')
 )
@@ -574,16 +494,6 @@ const formatTokenStatNumber = (value) => {
   return number.toLocaleString('zh-CN')
 }
 
-const statsRepairing = ref(false)
-const virtualFolderStatus = ref({ has_virtual_folders: false, file_count: 0, remaining_steps: 0 })
-const virtualFolderModalVisible = ref(false)
-const virtualFolderStarting = ref(false)
-const virtualFolderTask = ref(null)
-const virtualFolderStreamController = ref(null)
-const virtualFolderRunning = computed(() =>
-  ['pending', 'running'].includes(virtualFolderTask.value?.status)
-)
-
 const fileStats = computed(() => {
   const stats = store.database.stats || {}
   const statsFileCount = Number(stats.file_count)
@@ -596,92 +506,6 @@ const fileStats = computed(() => {
     tokenText: formatTokenStatNumber(stats.token_count)
   }
 })
-
-const detectVirtualFolders = async () => {
-  if (!kbId.value || !canManageDatabase.value) return
-  try {
-    virtualFolderStatus.value = await databaseApi.detectVirtualFolders(kbId.value)
-  } catch (error) {
-    console.error(error)
-  }
-}
-
-const consumeVirtualFolderEvents = async (taskId) => {
-  virtualFolderStreamController.value?.abort()
-  const controller = new AbortController()
-  virtualFolderStreamController.value = controller
-  try {
-    const response = await databaseApi.streamVirtualFolderMigration(
-      kbId.value,
-      taskId,
-      controller.signal
-    )
-    const reader = response.body.getReader()
-    const decoder = new TextDecoder()
-    let buffer = ''
-    while (true) {
-      const { done, value } = await reader.read()
-      if (done) break
-      buffer += decoder.decode(value, { stream: true })
-      const events = buffer.split('\n\n')
-      buffer = events.pop() || ''
-      for (const event of events) {
-        const data = event
-          .split('\n')
-          .find((line) => line.startsWith('data: '))
-          ?.slice(6)
-        if (data) virtualFolderTask.value = JSON.parse(data)
-      }
-    }
-    await detectVirtualFolders()
-    await store.getDatabaseInfo(undefined, true, true)
-  } catch (error) {
-    if (error.name !== 'AbortError') {
-      console.error(error)
-      message.warning('进度连接已中断，转换任务会继续执行')
-    }
-  }
-}
-
-const startVirtualFolderMigration = async () => {
-  if (!kbId.value || virtualFolderStarting.value || virtualFolderRunning.value) return
-  virtualFolderStarting.value = true
-  try {
-    const result = await databaseApi.startVirtualFolderMigration(kbId.value)
-    virtualFolderTask.value = { status: 'pending', progress: 0, message: '等待任务执行' }
-    consumeVirtualFolderEvents(result.task_id)
-  } catch (error) {
-    console.error(error)
-    message.error(error.message || '启动转换失败')
-  } finally {
-    virtualFolderStarting.value = false
-  }
-}
-
-const repairDatabaseStats = async () => {
-  if (!kbId.value || statsRepairing.value) return
-
-  statsRepairing.value = true
-  try {
-    const result = await databaseApi.repairDatabaseStats(kbId.value)
-    await store.getDatabaseInfo(undefined, true, true)
-
-    const updatedTokenFiles = Number(result?.updated_token_files || 0)
-    const updatedChunkFiles = Number(result?.updated_chunk_files || 0)
-    if (updatedTokenFiles || updatedChunkFiles) {
-      message.success(
-        `已修复 ${updatedTokenFiles} 个 Token 统计，${updatedChunkFiles} 个 Chunk 统计`
-      )
-    } else {
-      message.info('统计已是最新')
-    }
-  } catch (error) {
-    console.error(error)
-    message.error(error.message || '统计修复失败')
-  } finally {
-    statsRepairing.value = false
-  }
-}
 
 const pendingIndexCount = computed(() => {
   return Number(store.database.stats?.pending_index_count || 0)
@@ -713,7 +537,6 @@ const confirmBatchIndex = () => {
   }
 }
 
-const mindmapModalVisible = ref(false)
 const querySectionRef = ref(null)
 const searchConfigPanelRef = ref(null)
 
@@ -800,9 +623,6 @@ const resetFileSelectionState = () => {
 watch(
   () => route.params.kbId,
   async (nextKbId) => {
-    virtualFolderStreamController.value?.abort()
-    virtualFolderTask.value = null
-    virtualFolderStatus.value = { has_virtual_folders: false, file_count: 0, remaining_steps: 0 }
     isInitialLoad.value = true
     detailLoading.value = true
     store.kbId = nextKbId
@@ -818,7 +638,6 @@ watch(
         await router.replace({ path: '/extensions', query: { tab: 'knowledge' } })
         return
       }
-      await detectVirtualFolders()
       store.startAutoRefresh()
     } finally {
       detailLoading.value = false
@@ -972,7 +791,7 @@ const getUserName = (uid) => {
 const loadDepartments = async () => {
   try {
     const res = await departmentApi.getDepartments()
-    departments.value = res.departments || res || []
+    departments.value = res || []
   } catch {
     departments.value = []
   }
@@ -1106,7 +925,6 @@ onMounted(() => {
 
 onUnmounted(() => {
   store.stopAutoRefresh()
-  virtualFolderStreamController.value?.abort()
   document.removeEventListener('click', onUploadMenuOutsideClick)
 })
 </script>
@@ -1386,38 +1204,6 @@ onUnmounted(() => {
   }
 }
 
-.virtual-folder-migration-message {
-  margin-top: 8px;
-  color: var(--gray-600);
-}
-
-.file-stat-repair {
-  cursor: pointer;
-  transition:
-    background 0.15s,
-    border-color 0.15s;
-
-  &:hover:not(:disabled) {
-    border-color: var(--main-300);
-    background-color: var(--main-30);
-  }
-
-  &:disabled {
-    cursor: wait;
-    opacity: 0.72;
-  }
-}
-
-.file-stat-spinner {
-  animation: file-stat-spin 0.8s linear infinite;
-}
-
-@keyframes file-stat-spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
 .database-edit-tabs :deep(.ant-tabs-nav) {
   margin-bottom: 20px;
 }
@@ -1542,29 +1328,6 @@ onUnmounted(() => {
   }
 }
 
-.knowledge-mindmap-modal .ant-modal {
-  top: 32px;
-  max-width: calc(100vw - 32px);
-  padding-bottom: 0;
-}
-
-.knowledge-mindmap-modal .ant-modal-content {
-  height: min(760px, calc(100vh - 64px));
-  display: flex;
-  flex-direction: column;
-}
-
-.knowledge-mindmap-modal .ant-modal-body {
-  flex: 1;
-  min-height: 0;
-  overflow: hidden;
-}
-
-.knowledge-mindmap-modal-content {
-  width: 100%;
-  height: 100%;
-  min-height: 0;
-}
 
 /* 全局样式作为备用方案 */
 .ant-popover .query-params-compact {

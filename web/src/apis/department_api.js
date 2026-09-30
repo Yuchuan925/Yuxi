@@ -4,7 +4,6 @@
 
 import {
   apiAdminGet,
-  apiSuperAdminGet,
   apiSuperAdminPost,
   apiSuperAdminPut,
   apiSuperAdminDelete
@@ -25,10 +24,6 @@ export const getDepartments = () => {
  * @param {number} departmentId - 部门ID
  * @returns {Promise<Object>} 部门详情
  */
-export const getDepartment = (departmentId) => {
-  return apiSuperAdminGet(`${BASE_URL}/${departmentId}`)
-}
-
 /**
  * 创建部门
  * @param {Object} data - 部门数据
@@ -63,7 +58,6 @@ export const deleteDepartment = (departmentId) => {
 
 export const departmentApi = {
   getDepartments,
-  getDepartment,
   createDepartment,
   updateDepartment,
   deleteDepartment

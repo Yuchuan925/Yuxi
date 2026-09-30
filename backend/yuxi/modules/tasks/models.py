@@ -62,7 +62,7 @@ class TaskRecord(Base):
             "result": self.result,
             "error": self.error,
             "cancel_requested": bool(self.cancel_requested),
-            "handler_version": int(self.handler_version if self.handler_version is not None else 1),
+            "handler_version": int(self.handler_version),
             "dedupe_key": self.dedupe_key,
             "attempt_count": int(self.attempt_count or 0),
             "worker_id": self.worker_id,

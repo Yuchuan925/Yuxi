@@ -3,6 +3,7 @@ from types import SimpleNamespace
 
 import pytest
 import yuxi.infrastructure.postgres.manager as manager_module
+import yuxi.infrastructure.postgres.checkpointer as checkpointer_module
 from yuxi.infrastructure.postgres.manager import PostgresManager
 
 
@@ -93,7 +94,7 @@ async def test_langgraph_setup_uses_cross_process_advisory_lock():
     manager.langgraph_pool = SimpleNamespace(connection=connection)
     manager.langgraph_checkpointer = saver
 
-    assert await manager.setup_langgraph_checkpointer() is saver
+    assert await checkpointer_module.setup_langgraph_checkpointer(manager) is saver
     assert statements == [
         "SELECT pg_advisory_lock(94721802)",
         "setup",
@@ -127,7 +128,7 @@ async def test_langgraph_setup_discards_connection_when_unlock_fails():
     manager.langgraph_checkpointer = SimpleNamespace(setup=_noop)
 
     with pytest.raises(RuntimeError, match="unlock failed"):
-        await manager.setup_langgraph_checkpointer()
+        await checkpointer_module.setup_langgraph_checkpointer(manager)
 
     assert connection_closed is True
     assert manager._langgraph_checkpointer_setup is False

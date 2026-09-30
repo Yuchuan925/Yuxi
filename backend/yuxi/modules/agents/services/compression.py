@@ -59,8 +59,6 @@ async def compress_thread_context(
         agent = get_agent_backend(agent_item.backend_id)
     except AgentBackendNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    if "context_compression" not in getattr(agent, "capabilities", []):
-        raise HTTPException(status_code=422, detail="当前智能体不支持主动上下文压缩")
 
     context = agent.context_schema()
     context.update_config((agent_item.config_json or {}).get("context") or {})

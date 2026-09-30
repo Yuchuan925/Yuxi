@@ -52,7 +52,6 @@ export const useDatabaseStore = defineStore('database', () => {
     chunkLoading: false,
     autoRefresh: false,
     queryParamsLoading: false,
-    rightPanelVisible: true
   })
 
   let autoRefreshSource = null // Tracks whether auto-refresh was user-triggered or automatic

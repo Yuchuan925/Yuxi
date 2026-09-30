@@ -6,35 +6,33 @@
     @click.stop
   >
     <template v-if="!activeResourceType">
-      <template v-if="fileUploadEnabled">
-        <button
-          type="button"
-          role="menuitem"
-          class="config-dropdown-item"
-          :class="{ disabled }"
-          :disabled="disabled"
-          title="支持任意文件格式 ≤ 5 MB"
-          @click="handleAttachmentClick"
-        >
-          <FileText :size="15" class="config-dropdown-item-icon" />
-          <span class="config-dropdown-item-label">添加附件</span>
-        </button>
+      <button
+        type="button"
+        role="menuitem"
+        class="config-dropdown-item"
+        :class="{ disabled }"
+        :disabled="disabled"
+        title="支持任意文件格式 ≤ 5 MB"
+        @click="handleAttachmentClick"
+      >
+        <FileText :size="15" class="config-dropdown-item-icon" />
+        <span class="config-dropdown-item-label">添加附件</span>
+      </button>
 
-        <button
-          type="button"
-          role="menuitem"
-          class="config-dropdown-item"
-          :class="{ disabled }"
-          :disabled="disabled"
-          title="支持 jpg/jpeg/png/gif，≤ 5 MB"
-          @click="handleImageUpload"
-        >
-          <Image :size="15" class="config-dropdown-item-icon" />
-          <span class="config-dropdown-item-label">上传图片</span>
-        </button>
-      </template>
+      <button
+        type="button"
+        role="menuitem"
+        class="config-dropdown-item"
+        :class="{ disabled }"
+        :disabled="disabled"
+        title="支持 jpg/jpeg/png/gif，≤ 5 MB"
+        @click="handleImageUpload"
+      >
+        <Image :size="15" class="config-dropdown-item-icon" />
+        <span class="config-dropdown-item-label">上传图片</span>
+      </button>
 
-      <div v-if="fileUploadEnabled && hasMentionResources" class="config-dropdown-divider"></div>
+      <div v-if="hasMentionResources" class="config-dropdown-divider"></div>
 
       <button
         v-for="group in visibleResourceGroups"
@@ -105,10 +103,6 @@ const RESOURCE_GROUPS = [
 
 const props = defineProps({
   disabled: {
-    type: Boolean,
-    default: false
-  },
-  fileUploadEnabled: {
     type: Boolean,
     default: false
   },

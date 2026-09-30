@@ -26,10 +26,6 @@ class MCPServer(Base):
     # 连接配置
     transport = Column(String(20), nullable=False, comment="传输类型：sse/streamable_http")
     url = Column(String(500), nullable=True, comment="服务器 URL（sse/streamable_http）")
-    # 历史 stdio 字段仅供管理员迁移旧配置，不参与运行时连接。
-    command = Column(String(500), nullable=True, comment="历史 stdio 命令")
-    args = Column(JSON, nullable=True, comment="命令参数数组（stdio）")
-    env = Column(JSON, nullable=True, comment="环境变量（stdio）")
     headers = Column(JSON, nullable=True, comment="HTTP 请求头")
     timeout = Column(Integer, nullable=True, comment="HTTP 超时时间（秒）")
     sse_read_timeout = Column(Integer, nullable=True, comment="SSE 读取超时（秒）")
@@ -58,9 +54,6 @@ class MCPServer(Base):
             "description": self.description,
             "transport": self.transport,
             "url": self.url,
-            "command": self.command,
-            "args": self.args or [],
-            "env": self.env or {},
             "headers": self.headers or {},
             "timeout": self.timeout,
             "sse_read_timeout": self.sse_read_timeout,

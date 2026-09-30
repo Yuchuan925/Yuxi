@@ -17,6 +17,7 @@ from yuxi.migrations.schema import (
     create_knowledge_tables,
     create_schema_version_table,
     ensure_business_schema,
+    ensure_knowledge_schema,
     record_schema_version,
 )
 from yuxi.infrastructure.postgres.schema import get_schema_versions, require_current_schema

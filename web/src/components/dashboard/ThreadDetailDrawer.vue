@@ -98,9 +98,6 @@
               </div>
 
               <div class="msg-meta-tags">
-                <a-tag v-if="msg.token_count" size="small" class="token-tag">
-                  {{ msg.token_count }} tokens
-                </a-tag>
                 <a-tag
                   v-if="msg.message_type && msg.message_type !== 'text'"
                   size="small"
@@ -467,13 +464,6 @@ defineExpose({
     .msg-meta-tags {
       display: flex;
       gap: 6px;
-
-      .token-tag {
-        font-size: 11px;
-        background: var(--gray-100);
-        color: var(--gray-600);
-        border: none;
-      }
     }
   }
 

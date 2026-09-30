@@ -31,8 +31,8 @@ class Conversation(Base):
     creation_request_id = Column(String(64), nullable=True, comment="新建 Conversation 幂等请求 ID")
     uid = Column(String(64), index=True, nullable=False, comment="UID")
     app_id = Column(String(64), nullable=True, comment="Public API 可信 APP 归属")
-    # 历史字段名，实际保存的是 Agent.slug。
-    agent_id = Column(String(64), index=True, nullable=False, comment="Agent slug (legacy column name: agent_id)")
+    # 保存 Agent.slug 值；列名与契约字段 agent_id 一致。
+    agent_id = Column(String(64), index=True, nullable=False, comment="Agent slug (agent_id)")
     title = Column(String(255), nullable=True, comment="Conversation title")
     status = Column(String(20), default="active", comment="Status: active/archived/deleted")
     queue_paused = Column(Boolean, nullable=False, default=False, server_default="false")
@@ -45,9 +45,6 @@ class Conversation(Base):
 
     # Relationships
     messages = relationship("Message", back_populates="conversation", cascade="all, delete-orphan")
-    stats = relationship(
-        "ConversationStats", back_populates="conversation", uselist=False, cascade="all, delete-orphan"
-    )
     project = relationship("Project", back_populates="conversations")
 
     __table_args__ = (
@@ -111,36 +108,6 @@ class SubagentThread(Base):
             "child_thread_id": self.child_thread_id,
             "subagent_slug": self.subagent_slug,
             "created_by_run_id": self.created_by_run_id,
-            "created_at": format_utc_datetime(self.created_at),
-            "updated_at": format_utc_datetime(self.updated_at),
-        }
-
-
-class ConversationStats(Base):
-    """ConversationStats table - 对话统计表"""
-
-    __tablename__ = "conversation_stats"
-
-    id = Column(Integer, primary_key=True, autoincrement=True, comment="Primary key")
-    conversation_id = Column(
-        Integer, ForeignKey("conversations.id"), unique=True, nullable=False, comment="Conversation ID"
-    )
-    message_count = Column(Integer, default=0, comment="Total message count")
-    total_tokens = Column(Integer, default=0, comment="Total tokens used")
-    model_used = Column(String(100), nullable=True, comment="Model used")
-    created_at = Column(DateTime, default=utc_now_naive, comment="Creation time")
-    updated_at = Column(DateTime, default=utc_now_naive, onupdate=utc_now_naive, comment="Update time")
-
-    # Relationships
-    conversation = relationship("Conversation", back_populates="stats")
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "id": self.id,
-            "conversation_id": self.conversation_id,
-            "message_count": self.message_count,
-            "total_tokens": self.total_tokens,
-            "model_used": self.model_used,
             "created_at": format_utc_datetime(self.created_at),
             "updated_at": format_utc_datetime(self.updated_at),
         }

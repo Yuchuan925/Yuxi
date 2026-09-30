@@ -62,7 +62,6 @@ class KnowledgeBaseSummary:
 class KnowledgeBaseDetail(KnowledgeBaseSummary):
     """知识库详情读取模型，在摘要基础上增加详情页字段。"""
 
-    mindmap: dict[str, Any] | None = None
     sample_questions: tuple[str, ...] = ()
     files: dict[str, dict[str, Any]] | None = None
     files_truncated: bool = False

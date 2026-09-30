@@ -50,7 +50,7 @@ checkpoint 只拥有模型继续运行所需的压缩视图；PostgreSQL Message
 
 ## 主动压缩
 
-声明 `context_compression` capability 的 Agent 会在聊天状态面板显示“压缩上下文”按钮。按钮发起一次同步维护请求，不创建 AgentRun、排队请求或新的 Run 类型。
+主智能体聊天状态面板提供“压缩上下文”按钮。按钮发起一次同步维护请求，不创建 AgentRun、排队请求或新的 Run 类型。
 
 服务从检查空闲到 checkpoint 更新期间持有 Conversation 行锁。线程存在运行中 Run、等待交互的 Run 或排队 Input 时返回 `409 thread_busy`；普通输入接入使用同一把锁，因此不会与主动压缩并发修改同一线程。
 

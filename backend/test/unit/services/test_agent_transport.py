@@ -109,7 +109,7 @@ async def test_run_stream_event_roundtrip(monkeypatch: pytest.MonkeyPatch):
 
 
 @pytest.mark.asyncio
-async def test_run_stream_event_decoder_keeps_legacy_payload_shape(monkeypatch: pytest.MonkeyPatch):
+async def test_run_stream_event_decoder_drops_malformed_legacy_payload(monkeypatch: pytest.MonkeyPatch):
     fake_redis = _FakeStreamRedis()
     key = transport._event_stream_key("run-legacy")
     fake_redis.streams[key] = [
@@ -124,22 +124,7 @@ async def test_run_stream_event_decoder_keeps_legacy_payload_shape(monkeypatch: 
     forward = await transport.list_run_stream_events("run-legacy")
     reverse = await transport.list_recent_run_stream_events("run-legacy")
 
-    assert forward == reverse
-    assert forward == [
-        {
-            "seq": "1700000000000-0",
-            "event_type": "custom",
-            "payload": {
-                "schema_version": 1,
-                "run_id": "run-legacy",
-                "thread_id": None,
-                "event": "custom",
-                "payload": {},
-                "created_at": None,
-            },
-            "ts": 1700000000000,
-        }
-    ]
+    assert forward == reverse == []
 
 
 def test_normalize_after_seq_stream_id_only():

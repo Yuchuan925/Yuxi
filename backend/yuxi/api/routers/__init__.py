@@ -4,7 +4,6 @@ from yuxi.api.routers.agents.management import agent_router
 from yuxi.api.routers.identity.departments import department
 from yuxi.api.routers.identity.auth import auth
 from yuxi.api.routers.dashboard import dashboard as dashboard_routes
-from yuxi.api.routers.knowledge.external import external_kb
 from yuxi.api.routers.workspace.viewer import filesystem_router
 from yuxi.api.routers.knowledge.graphs import graph
 from yuxi.api.routers.knowledge.dashboard import knowledge_dashboard
@@ -49,7 +48,6 @@ router.include_router(workspace_routes)  # /api/workspace/* 用户个人工作�
 router.include_router(mention_router)  # /api/mention/* 提及文件搜索接口
 
 router.include_router(knowledge_dashboard)  # /api/dashboard/stats/knowledge 知识域仪表盘
-router.include_router(external_kb, deprecated=True)  # /api/knowledge/databases/external* 迁移兼容
 router.include_router(knowledge_routes)  # /api/knowledge/* 知识库管理
 router.include_router(evaluation)  # /api/evaluation/* 知识库评估
 router.include_router(graph)  # /api/graph/* 图谱查询与管理

@@ -75,15 +75,6 @@ class AgentInputRepository:
         result = await self.db.execute(statement.execution_options(populate_existing=for_update))
         return result.scalar_one_or_none()
 
-    async def get_pending_for_message(self, message_id: int) -> AgentInput | None:
-        """查找附件消息所属的待消费 Input。"""
-        result = await self.db.execute(
-            select(AgentInput)
-            .join(AgentInputMessage, AgentInputMessage.input_id == AgentInput.id)
-            .where(AgentInputMessage.message_id == message_id, AgentInput.status == "pending")
-        )
-        return result.scalar_one_or_none()
-
     async def get_queue_head(
         self, *, thread_id: str, uid: str, app_id: str | None, for_update: bool = True
     ) -> AgentInput | None:
@@ -146,14 +137,6 @@ class AgentInputRepository:
             for position, message_id in enumerate(message_ids)
         )
         await self.db.flush()
-
-    async def list_receipts(self, *, input_id: str, through_seq: int | None = None) -> list[AgentInputReceipt]:
-        """按独立接收序号列出 Input 的原始事件。"""
-        statement = select(AgentInputReceipt).where(AgentInputReceipt.input_id == input_id)
-        if through_seq is not None:
-            statement = statement.where(AgentInputReceipt.receive_seq <= through_seq)
-        result = await self.db.execute(statement.order_by(AgentInputReceipt.receive_seq))
-        return list(result.scalars())
 
     async def list_messages(self, input_id: str, through_seq: int | None = None) -> list[Message]:
         """按事件接收序号和事件内位置读取输入消息。"""

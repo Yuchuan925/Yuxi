@@ -108,7 +108,6 @@ class BaseAgent:
 
     name = "base_agent"
     description = "base_agent"
-    capabilities: list[str] = []  # 智能体能力列表，如 ["file_upload", "web_search"] 等
     context_schema: type[BaseContext] = BaseContext  # 智能体上下文 schema
 
     @property
@@ -141,39 +140,7 @@ class BaseAgent:
             "description": getattr(self, "description", "Unknown"),
             "metadata": metadata,
             "configurable_items": configurable_items,
-            "capabilities": getattr(self, "capabilities", []),  # 智能体能力列表
         }
-
-    async def stream_messages(
-        self, messages: list[str], *, context: BaseContext, callbacks=None, metadata=None, tags=None, run_name=None
-    ):
-        graph = await self.get_graph(context=context)
-        logger.debug(f"stream_messages: {context=}")
-
-        # 构建配置：LangGraph 会自动从 checkpointer 恢复 state
-        input_config = {
-            "configurable": {"thread_id": context.thread_id, "uid": context.uid},
-            "recursion_limit": _recursion_limit_from_context(context, DEFAULT_MAX_EXECUTION_STEPS),
-        }
-
-        # langfuse metadata and callbacks integration
-        if callbacks:
-            input_config["callbacks"] = list(callbacks)
-        if metadata:
-            input_config["metadata"] = dict(metadata)
-        if tags:
-            input_config["tags"] = list(tags)
-        # run_name 让 Langfuse/LangSmith 等 tracer 用智能体名而非默认的 "LangGraph" 命名 trace
-        if run_name:
-            input_config["run_name"] = run_name
-
-        async for msg, metadata in graph.astream(
-            {"messages": messages},
-            stream_mode="messages",
-            context=context,
-            config=input_config,
-        ):
-            yield msg, metadata
 
     async def _stream_input_with_state(
         self,
@@ -279,35 +246,6 @@ class BaseAgent:
         async with aclosing(self._stream_input_with_state(resume_input, context=context, **kwargs)) as stream:
             async for event in stream:
                 yield event
-
-    async def invoke_messages(
-        self, messages: list[str], *, context: BaseContext, callbacks=None, metadata=None, tags=None, run_name=None
-    ):
-        graph = await self.get_graph(context=context)
-        logger.debug(f"invoke_messages: {context}")
-
-        # 构建配置
-        input_config = {
-            "configurable": {"thread_id": context.thread_id, "uid": context.uid},
-            "recursion_limit": _recursion_limit_from_context(context, DEFAULT_MAX_EXECUTION_STEPS),
-        }
-
-        # langfuse metadata and callbacks integration
-        if callbacks:
-            input_config["callbacks"] = list(callbacks)
-        if metadata:
-            input_config["metadata"] = dict(metadata)
-        if tags:
-            input_config["tags"] = list(tags)
-        if run_name:
-            input_config["run_name"] = run_name
-
-        msg = await graph.ainvoke(
-            {"messages": messages},
-            context=context,
-            config=input_config,
-        )
-        return msg
 
     @abstractmethod
     async def get_graph(self, **kwargs) -> CompiledStateGraph:

@@ -196,18 +196,7 @@ async def _persist_agent_run_langfuse_trace(*, db, meta: dict, run_context: Lang
         raise
 
 
-def _normalize_agent_artifact_path(path: object, workdir_path: str | None) -> object:
-    if not isinstance(path, str) or not workdir_path:
-        return path
-    legacy_root = "/home/gem/user-data"
-    for namespace in ("uploads", "outputs"):
-        prefix = f"{legacy_root}/{namespace}"
-        if path == prefix or path.startswith(f"{prefix}/"):
-            return f"{workdir_path}{path[len(legacy_root) :]}"
-    return path
-
-
-def extract_agent_state(values: dict, *, workdir_path: str | None = None) -> AgentStatePayload:
+def extract_agent_state(values: dict) -> AgentStatePayload:
     """从 LangGraph state 中提取 agent 状态"""
     if not isinstance(values, dict):
         return {"todos": [], "files": {}, "artifacts": [], "subagent_runs": [], "token_usage": None}
@@ -220,7 +209,7 @@ def extract_agent_state(values: dict, *, workdir_path: str | None = None) -> Age
     result: AgentStatePayload = {
         "todos": list(todos)[:20] if todos else [],
         "files": values.get("files") or {},
-        "artifacts": [_normalize_agent_artifact_path(path, workdir_path) for path in artifacts] if artifacts else [],
+        "artifacts": list(artifacts) if artifacts else [],
         "subagent_runs": list(subagent_runs) if subagent_runs else [],
         "token_usage": dict(token_usage) if isinstance(token_usage, dict) else None,
     }
@@ -822,10 +811,7 @@ async def _stream_agent_execution(
                     final_state = payload
                     continue
                 if mode == "values":
-                    agent_state = extract_agent_state(
-                        payload if isinstance(payload, dict) else {},
-                        workdir_path=context.workdir_path,
-                    )
+                    agent_state = extract_agent_state(payload if isinstance(payload, dict) else {})
                     signature = _agent_state_signature(agent_state)
                     if signature and signature != last_agent_state_signature:
                         last_agent_state_signature = signature
@@ -896,7 +882,7 @@ async def _stream_agent_execution(
             break
 
         meta["time_cost"] = asyncio.get_event_loop().time() - start_time
-        agent_state = extract_agent_state(final_state.values, workdir_path=context.workdir_path)
+        agent_state = extract_agent_state(final_state.values)
         final_signature = _agent_state_signature(agent_state)
         if final_signature and final_signature != last_agent_state_signature:
             yield make_chunk(status="agent_state", agent_state=agent_state, meta=meta)

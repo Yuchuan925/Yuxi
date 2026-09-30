@@ -3,29 +3,11 @@ import test from 'node:test'
 
 import {
   supportsAllAgentResources,
-  normalizeAgent,
   normalizeAgentBackendOption,
   mergeVisibleAgentResourceSelection,
   getVisibleAgentResourceSelection,
   getAgentResourceSelectionOptions
 } from '../../src/utils/agentConfigUtils.js'
-
-test('normalizeAgent 按 agent_id、slug、id 顺序统一身份字段', () => {
-  const withAllIds = { agent_id: 'agent-id', slug: 'agent-slug', id: 'database-id' }
-  assert.deepEqual(normalizeAgent(withAllIds), {
-    agent_id: 'agent-id',
-    slug: 'agent-slug',
-    id: 'agent-id'
-  })
-  assert.equal(normalizeAgent({ slug: 'agent-slug', id: 'database-id' }).id, 'agent-slug')
-  assert.deepEqual(normalizeAgent({ id: 'database-id' }), {
-    id: 'database-id',
-    agent_id: 'database-id',
-    slug: 'database-id'
-  })
-  const withoutId = { name: '无身份字段' }
-  assert.strictEqual(normalizeAgent(withoutId), withoutId)
-})
 
 test('编辑可见选择保留不可见引用，取消最后一个可见项不会禁用全部', () => {
   const original = ['visible-a', 'hidden-a', 'visible-b', 'hidden-b']

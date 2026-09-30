@@ -83,7 +83,6 @@ const { handleStreamChunk } = useAgentStreamHandler({
   getThreadState: getStreamThreadState,
   processApprovalInStream: () => false,
   currentAgentId: ref(''),
-  supportsFiles: ref(false),
   streamSmoother
 })
 const streamedMessages = computed(() => {

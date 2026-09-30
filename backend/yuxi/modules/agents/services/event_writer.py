@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import time
-from dataclasses import field
+from dataclasses import dataclass, field
 from yuxi.modules.agents.services.transport import (
     append_run_stream_event,
 )
@@ -20,6 +20,7 @@ LOADING_FLUSH_MAX_CHARS = 512
 _ALL_THREADS = object()
 
 
+@dataclass
 class _ThreadBuffer:
     items: list[dict] = field(default_factory=list)
     chars: int = 0
@@ -109,7 +110,7 @@ def _loading_chunk_size(chunk: dict) -> int:
     if not isinstance(stream_event, dict):
         return total
 
-    for key in ("content", "reasoning_content", "additional_reasoning_content", "args_delta"):
+    for key in ("content", "reasoning_content", "args_delta"):
         value = stream_event.get(key)
         if isinstance(value, str):
             total += len(value)
@@ -126,7 +127,7 @@ def contains_model_output(chunk: dict) -> bool:
     if event_type == "message_delta":
         return any(
             isinstance(stream_event.get(key), str) and bool(stream_event[key])
-            for key in ("content", "reasoning_content", "additional_reasoning_content")
+            for key in ("content", "reasoning_content")
         )
     if event_type in {"tool_call", "tool_call_delta"}:
         return any(

@@ -253,7 +253,6 @@ backend/yuxi/
 │   │   ├── utils/
 │   │   │   ├── __init__.py  # [移] Y/knowledge/utils/__init__.py
 │   │   │   ├── kb_utils.py  # [拆] Y/knowledge/utils/kb_utils.py；保留知识参数、文件元数据与知识图片代理 URL；通用对象定位函数下沉
-│   │   │   ├── mindmap_utils.py  # [移] Y/knowledge/utils/mindmap_utils.py
 │   │   │   ├── sample_question_utils.py  # [移] Y/knowledge/utils/sample_question_utils.py
 │   │   │   ├── security.py  # [移] Y/knowledge/utils/security.py
 │   │   │   ├── url_fetcher.py  # [移] Y/knowledge/utils/url_fetcher.py

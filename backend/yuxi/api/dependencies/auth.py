@@ -17,7 +17,6 @@ KNOWLEDGE_TOOL_PATHS = frozenset(
     f"/api/v1/knowledge/tools/{name}"
     for name in (
         "list_kbs",
-        "get_mindmap",
         "query_kb",
         "open_kb_document",
         "find_kb_document",

@@ -14,8 +14,6 @@
       :placeholder="placeholder"
       :mention="mention"
       :thread-id="threadId"
-      :file-upload-enabled="supportsFileUpload"
-      :show-options-left="showInputOptions"
       @send="handleSend"
       @keydown="handleKeyDown"
       @paste-images="handlePastedImages"
@@ -75,7 +73,6 @@
       <template #options-left>
         <AttachmentOptionsComponent
           :disabled="disabled"
-          :file-upload-enabled="supportsFileUpload"
           :mention="mention"
           @upload="handleAttachmentUpload"
           @upload-image-files="handleImageFilesSelected"
@@ -124,7 +121,6 @@ const props = defineProps({
   mention: { type: Object, default: () => null },
   threadId: { type: String, default: '' },
   showExtra: { type: Boolean, default: false },
-  supportsFileUpload: { type: Boolean, default: false },
   attachments: {
     type: Array,
     default: () => []
@@ -147,13 +143,6 @@ const nextLocalId = () => `image-${(localIdSeed += 1)}`
 const placeholder = '问点什么？使用 @ 可以选择文件、知识库或技能进行引用。'
 
 const previewAttachments = computed(() => normalizeAttachmentPreviews(props.attachments))
-const showInputOptions = computed(
-  () =>
-    props.supportsFileUpload ||
-    Boolean(props.mention?.knowledgeBases?.length) ||
-    Boolean(props.mention?.skills?.length)
-)
-
 const updateValue = (val) => {
   emit('update:modelValue', val)
 }
@@ -200,13 +189,13 @@ const handleImageFilesSelected = (files = []) => {
 
 /** 粘贴：载荷是剪贴板里的全部图片（原先只取第一张）。 */
 const handlePastedImages = async (files = []) => {
-  if (props.disabled || !props.supportsFileUpload) return
+  if (props.disabled) return
   await uploadImageFiles(files)
 }
 
 /** 拖拽分流：图片走多模态直读；其它文件仍走附件通道（图片的 OCR 入口在「添加附件」菜单）。 */
 const handleDroppedFiles = (files = []) => {
-  if (props.disabled || !props.supportsFileUpload || !files.length) return
+  if (props.disabled || !files.length) return
   const { images, others } = splitDroppedFiles(files)
   if (images.length) {
     uploadImageFiles(images)

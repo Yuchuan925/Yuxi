@@ -5,7 +5,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-PACKAGE_ROOT = Path(__file__).resolve().parents[3] / "package" / "yuxi"
+PACKAGE_ROOT = Path(__file__).resolve().parents[3] / "yuxi"
 
 
 def _imports(relative_path: str) -> set[str]:
@@ -20,7 +20,7 @@ def _imports(relative_path: str) -> set[str]:
 
 
 def test_common_filepreview_does_not_import_domain_storage_or_http() -> None:
-    imports = _imports("utils/filepreview.py")
+    imports = _imports("infrastructure/document_preview.py")
 
     assert not any(
         module.startswith(("yuxi.modules.workspace", "yuxi.modules.knowledge", "yuxi.storage", "fastapi", "starlette"))
@@ -29,5 +29,9 @@ def test_common_filepreview_does_not_import_domain_storage_or_http() -> None:
 
 
 def test_knowledge_and_artifact_do_not_import_workspace_preview() -> None:
-    for relative_path in ("knowledge/base.py", "knowledge/preview.py", "services/artifact_service.py"):
+    for relative_path in (
+        "modules/knowledge/base.py",
+        "modules/knowledge/preview.py",
+        "modules/agents/services/artifacts.py",
+    ):
         assert "yuxi.modules.workspace.preview" not in _imports(relative_path)

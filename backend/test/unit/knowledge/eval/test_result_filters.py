@@ -3,7 +3,6 @@ from types import SimpleNamespace
 import pytest
 from fastapi import HTTPException
 
-import yuxi.api.routers.knowledge.evaluation as knowledge_eval_router
 from yuxi.api.routers.knowledge.evaluation import get_evaluation_run_results
 from yuxi.modules.knowledge.evaluation.service import EvaluationService
 
@@ -56,19 +55,16 @@ class FakeEvaluationRepository:
 @pytest.mark.parametrize(
     ("result_filter", "expected_indexes"),
     [
-        ("all", [0, 1, 2, 3]),
+        ("all", [0, 1, 2]),
         ("answer_errors", [1]),
         ("errors_or_low_recall", [1, 2]),
-        ("legacy_errors", [1, 3]),
     ],
 )
 async def test_get_run_results_filters_before_pagination(result_filter, expected_indexes):
     """筛选必须先于分页并返回筛选后的总数。"""
     service = EvaluationService.__new__(EvaluationService)
-    legacy_recall_item = make_item(3)
-    legacy_recall_item.metrics["recall@1"] = 0.2
     service.eval_repo = FakeEvaluationRepository(
-        [make_item(0), make_item(1, score=0.5), make_item(2, recall=0.99), legacy_recall_item]
+        [make_item(0), make_item(1, score=0.5), make_item(2, recall=0.99)]
     )
 
     result = await service.get_run_results("kb_test", "run_1234abcd", page=1, page_size=2, result_filter=result_filter)
@@ -91,45 +87,3 @@ async def test_router_rejects_unknown_result_filter_before_service_call():
 
     assert exc_info.value.status_code == 400
     assert exc_info.value.detail == "无效的评估结果筛选条件"
-
-
-@pytest.mark.asyncio
-async def test_router_preserves_legacy_error_only_filter(monkeypatch):
-    """旧 error_only 参数继续使用原错误筛选语义。"""
-    captured = {}
-
-    class ServiceStub:
-        """记录路由传给服务的筛选值。"""
-
-        async def get_run_results(self, _kb_id, _run_id, **kwargs):
-            """返回最小成功结果。"""
-            captured.update(kwargs)
-            return {"items": []}
-
-    monkeypatch.setattr(knowledge_eval_router, "EvaluationService", ServiceStub)
-
-    response = await get_evaluation_run_results(
-        "kb_test",
-        "run_1234abcd",
-        error_only=True,
-        current_user=SimpleNamespace(),
-    )
-
-    assert response["message"] == "success"
-    assert captured["result_filter"] == "legacy_errors"
-
-
-@pytest.mark.asyncio
-async def test_router_rejects_mixed_result_filter_contracts():
-    """新旧筛选参数同时出现时拒绝歧义请求。"""
-    with pytest.raises(HTTPException) as exc_info:
-        await get_evaluation_run_results(
-            "kb_test",
-            "run_1234abcd",
-            result_filter="all",
-            error_only=True,
-            current_user=SimpleNamespace(),
-        )
-
-    assert exc_info.value.status_code == 400
-    assert exc_info.value.detail == "不能同时使用 result_filter 和 error_only"

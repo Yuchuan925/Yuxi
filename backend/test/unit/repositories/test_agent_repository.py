@@ -423,3 +423,28 @@ def test_opt_in_resource_selection_preserves_all_intent(field):
     """默认关闭的资源同样可显式选择全部，且不展开持久化。"""
     merged = merge_agent_config_json({}, {"context": {field: "all"}}, resource_access={})
     assert merged == {"context": {field: "all"}}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("backend_id,is_subagent", [("ChatbotAgent", False), ("SubAgentBackend", True)])
+async def test_serialize_agent_omits_capabilities(backend_id, is_subagent):
+    """主子智能体响应保留权限与元信息且不再声明静态能力。"""
+    agent = Agent(
+        slug="test-agent",
+        name="测试智能体",
+        backend_id=backend_id,
+        is_subagent=is_subagent,
+        created_by="owner",
+        config_json={"context": {}},
+        share_config=DEFAULT_SHARE_CONFIG.copy(),
+    )
+    user = User(uid="owner", username="owner", role="user", password_hash="test")
+
+    result = await AgentRepository(FakeDb()).serialize(agent, user=user)
+
+    assert result["backend_id"] == backend_id
+    assert result["is_subagent"] is is_subagent
+    assert result["name"] == "测试智能体"
+    assert result["can_manage"] is True
+    assert "metadata" in result
+    assert "capabilities" not in result

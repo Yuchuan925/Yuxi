@@ -69,9 +69,7 @@
           :key="server.slug"
           variant="mini"
           :title="formatExtensionCardTitle(server.name)"
-          :description="
-            server.requires_migration ? '需要迁移为远程 MCP' : server.description || '暂无描述'
-          "
+          :description="server.description || '暂无描述'"
           @click="handleCardClick(server)"
         >
           <template #icon>
@@ -80,17 +78,12 @@
           <template #action>
             <button
               type="button"
-              :class="['mcp-card-action', { 'mcp-card-action-danger': server.requires_migration }]"
+              class="mcp-card-action"
               :disabled="isActionLoading(server)"
-              :aria-label="server.requires_migration ? '删除 MCP' : '添加 MCP'"
-              @click.stop="
-                server.requires_migration
-                  ? handleRemoveServer(server)
-                  : handleSetServerEnabled(server, true)
-              "
+              aria-label="添加 MCP"
+              @click.stop="handleSetServerEnabled(server, true)"
             >
-              <Trash2 v-if="server.requires_migration" :size="15" class="action-icon" />
-              <Plus v-else :size="15" class="action-icon" />
+              <Plus :size="15" class="action-icon" />
             </button>
           </template>
         </InfoCard>
@@ -216,7 +209,7 @@ const navigateToDetail = (server) => {
 }
 
 const handleCardClick = (server) => {
-  if (server.enabled || server.requires_migration) {
+  if (server.enabled) {
     navigateToDetail(server)
     return
   }

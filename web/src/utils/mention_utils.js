@@ -83,16 +83,13 @@ export const buildMentionDisplayLabels = (mention = {}) => {
     setMentionLabel(labels, 'mcp', mcp?.name, label)
   })
   ;(mention.skills || []).forEach((skill) => {
-    const label = skill?.name || skill?.label || skill?.slug || skill?.id || skill?.value || ''
+    const label = skill?.name || ''
     setMentionLabel(labels, 'skill', skill?.slug, label)
-    setMentionLabel(labels, 'skill', skill?.id, label)
-    setMentionLabel(labels, 'skill', skill?.value, label)
     setMentionLabel(labels, 'skill', skill?.name, label)
   })
   ;(mention.subagents || []).forEach((subagent) => {
-    const label = subagent?.name || subagent?.label || subagent?.id || subagent?.value || ''
+    const label = subagent?.name || ''
     setMentionLabel(labels, 'subagent', subagent?.id, label)
-    setMentionLabel(labels, 'subagent', subagent?.value, label)
     setMentionLabel(labels, 'subagent', subagent?.slug, label)
     setMentionLabel(labels, 'subagent', subagent?.name, label)
   })

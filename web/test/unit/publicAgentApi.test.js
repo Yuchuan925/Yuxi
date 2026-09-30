@@ -104,7 +104,6 @@ test('产品创建、消息、等待恢复和队列控制仅使用 Public Thread
     await threadApi.archiveThread('thread-1')
     assert.equal(calls[9].url, '/api/v1/agents/threads/thread-1/archive')
     assert.equal(calls[9].options.method, 'POST')
-    assert.ok(calls.every((call) => !call.url.includes('/sessions/')))
     assert.ok(calls.every((call) => !call.url.includes('/api/chat/')))
   } finally {
     await server.close()

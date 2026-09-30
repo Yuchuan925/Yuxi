@@ -11,7 +11,7 @@ from yuxi.modules.agents.repositories.threads import ConversationRepository, MAX
 from yuxi.modules.agents.models.runs import AgentRun
 from yuxi.modules.agents.models.turns import AgentTurn
 from yuxi.infrastructure.postgres.base import Base
-from yuxi.modules.agents.models.threads import Conversation, ConversationStats
+from yuxi.modules.agents.models.threads import Conversation
 from yuxi.modules.agents.models.messages import Message, ToolCall
 from yuxi.shared.datetime import utc_now_naive
 
@@ -191,7 +191,6 @@ async def test_model_audit_messages_are_hidden_from_history_and_message_count(co
     )
     conversation_session.add(conversation)
     await conversation_session.flush()
-    stats = ConversationStats(conversation_id=conversation.id, message_count=0)
     visible_message = Message(
         conversation_id=conversation.id,
         role="user",
@@ -216,15 +215,13 @@ async def test_model_audit_messages_are_hidden_from_history_and_message_count(co
         sequence=2,
         execution_status="completed",
     )
-    conversation_session.add_all([stats, visible_message, audit_message, tool_audit])
+    conversation_session.add_all([visible_message, audit_message, tool_audit])
     await conversation_session.commit()
 
     repo = ConversationRepository(conversation_session)
     messages = await repo.get_messages(conversation.id)
-    await repo._update_message_count(conversation.id)
 
     assert [message.content for message in messages] == ["visible"]
-    assert stats.message_count == 1
 
     previous_updated_at = conversation.updated_at
     await repo.publish_assistant_output(audit_message)
@@ -232,7 +229,6 @@ async def test_model_audit_messages_are_hidden_from_history_and_message_count(co
 
     assert [message.content for message in published_messages] == ["visible", "hidden intermediate"]
     assert audit_message.message_type == "text"
-    assert stats.message_count == 2
     assert conversation.updated_at > previous_updated_at
 
 

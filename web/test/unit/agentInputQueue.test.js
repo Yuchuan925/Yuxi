@@ -330,8 +330,7 @@ test('agent_state SSE 使在途状态请求失效', () => {
   const { handleStreamChunk } = useAgentStreamHandler({
     getThreadState: () => threadState,
     processApprovalInStream: () => false,
-    currentAgentId: { value: 'agent-1' },
-    supportsFiles: { value: false }
+    currentAgentId: { value: 'agent-1' }
   })
   const agentState = { token_usage: { measured_at: '2026-08-09T00:00:00Z' } }
 
@@ -357,8 +356,7 @@ test('Run init 将权威 run_id 绑定到实时 User Message', () => {
   const { handleStreamChunk } = useAgentStreamHandler({
     getThreadState: () => threadState,
     processApprovalInStream: () => false,
-    currentAgentId: { value: 'agent-1' },
-    supportsFiles: { value: false }
+    currentAgentId: { value: 'agent-1' }
   })
 
   handleStreamChunk(
@@ -390,8 +388,7 @@ test('缺少 SSE input_id 时不把 Run 关联到本地 pending User', () => {
   const { handleStreamChunk } = useAgentStreamHandler({
     getThreadState: () => threadState,
     processApprovalInStream: () => false,
-    currentAgentId: { value: 'agent-1' },
-    supportsFiles: { value: false }
+    currentAgentId: { value: 'agent-1' }
   })
 
   handleStreamChunk(
@@ -423,8 +420,7 @@ test('子线程 init 不继承父订阅 Run 关联', () => {
   const { handleStreamChunk } = useAgentStreamHandler({
     getThreadState: () => threadState,
     processApprovalInStream: () => false,
-    currentAgentId: { value: 'agent-1' },
-    supportsFiles: { value: false }
+    currentAgentId: { value: 'agent-1' }
   })
 
   handleStreamChunk(

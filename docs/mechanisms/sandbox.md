@@ -54,7 +54,7 @@ Conversation 通过 `project_id` 绑定 Project；Project 拥有这项绑定和 
 
 同一用户的 Sandbox 能看到整个 UserWorkspace，所以 Project A 可以读取 Project B。系统提示词要求 Agent 未经用户明确要求不要在当前 Workdir 外写入，但这只是行为约束，不是安全隔离；真正的边界由用户挂载、Workdir ownership 查询和工具路径校验提供。
 
-文件访问使用相对路径和 no-follow 原语，拒绝 `..`、符号链接、特殊文件和跨用户根目录。普通运行服务以 `1000:1000` 访问数据；storage migrator 只在停机迁移中承担一次性 root 文件操作。
+文件访问使用相对路径和 no-follow 原语，拒绝 `..`、符号链接、特殊文件和跨用户根目录。普通运行服务以 `1000:1000` 访问数据。
 
 Agent 的 `grep` 通过沙盒原生文件搜索 API 执行字面量匹配，未指定路径时搜索当前用户的 UserWorkspace 与已授权共享 Skill。结果包含路径、行号、文本和截断标志，并受跨根全局 `max_count` 限制；未指定限额时采用原生服务默认值（1.11.0 每根 500 条），达到限额会标记截断。默认搜索不包含隐藏文件，可通过显式 glob 选择；目录 glob 相对于搜索根。单根结构化结果超过 `SANDBOX_MAX_OUTPUT_BYTES` 时返回明确错误。
 
@@ -92,7 +92,6 @@ Viewer 和 Agent 看到不同内容时，先核对同一 `uid`、Conversation �
 - [Workspace 路径](https://github.com/xerrors/Yuxi/blob/main/backend/yuxi/modules/workspace/paths.py)：uid 与 Workdir 映射
 - [Workspace 文件系统](https://github.com/xerrors/Yuxi/blob/main/backend/yuxi/modules/workspace/filesystem.py)：宿主 no-follow 文件原语
 - [provisioner](https://github.com/xerrors/Yuxi/blob/main/docker/sandbox_provisioner/app.py)：Docker/Kubernetes 创建、代理和回收
-- [storage migration](https://github.com/xerrors/Yuxi/blob/main/backend/yuxi/migrations/main.py)：历史布局迁移
 - [Sandbox backend unit tests](https://github.com/xerrors/Yuxi/tree/main/backend/test/unit/backends)
 - [Workspace/Workdir unit tests](https://github.com/xerrors/Yuxi/tree/main/backend/test/unit/workspace)
 - [Project Workdir provisioner integration](https://github.com/xerrors/Yuxi/blob/main/backend/test/integration/services/test_project_workdir_provisioner.py)

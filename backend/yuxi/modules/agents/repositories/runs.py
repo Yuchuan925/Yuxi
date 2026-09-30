@@ -38,18 +38,6 @@ class AgentRunRepository:
         result = await self.db.execute(select(AgentRun).where(and_(AgentRun.id == run_id, AgentRun.uid == str(uid))))
         return result.scalar_one_or_none()
 
-    async def get_run_for_scope(self, *, run_id: str, thread_id: str, uid: str, app_id: str | None) -> AgentRun | None:
-        """按完整 Thread 作用域读取 Run。"""
-        result = await self.db.execute(
-            select(AgentRun).where(
-                AgentRun.id == run_id,
-                AgentRun.conversation_thread_id == thread_id,
-                AgentRun.uid == uid,
-                AgentRun.app_id == app_id,
-            )
-        )
-        return result.scalar_one_or_none()
-
     async def list_top_level_runs_after_sequence(
         self, *, thread_id: str, uid: str, app_id: str | None, after_sequence: int, limit: int = 100
     ) -> list[AgentRun]:
@@ -163,27 +151,6 @@ class AgentRunRepository:
         )
         return result.scalar_one_or_none()
 
-    async def get_latest_chat_or_resume_run(
-        self,
-        *,
-        uid: str,
-        agent_slug: str,
-        conversation_thread_id: str,
-    ) -> AgentRun | None:
-        """读取队列作用域内最新的顶层 chat/resume run。"""
-        result = await self.db.execute(
-            select(AgentRun)
-            .where(
-                AgentRun.uid == str(uid),
-                AgentRun.agent_slug == agent_slug,
-                AgentRun.conversation_thread_id == conversation_thread_id,
-                AgentRun.run_type.in_(TOP_LEVEL_RUN_TYPES),
-            )
-            .order_by(AgentRun.created_at.desc(), AgentRun.id.desc())
-            .limit(1)
-        )
-        return result.scalar_one_or_none()
-
     async def get_latest_top_level_runs_for_threads(
         self, uid: str, conversation_thread_ids: list[str]
     ) -> dict[str, tuple[str, str]]:
@@ -215,18 +182,6 @@ class AgentRunRepository:
         )
         result = await self.db.execute(select(ranked).where(ranked.c.rn == 1))
         return {row.conversation_thread_id: (row.id, row.status) for row in result.all()}
-
-    async def list_child_runs_for_user(self, created_by_run_id: str, uid: str) -> list[AgentRun]:
-        """列出由指定 run 创建的所有子 run。"""
-        result = await self.db.execute(
-            select(AgentRun)
-            .where(
-                AgentRun.created_by_run_id == created_by_run_id,
-                AgentRun.uid == str(uid),
-            )
-            .order_by(AgentRun.created_at.asc(), AgentRun.id.asc())
-        )
-        return list(result.scalars().all())
 
     async def list_subagent_runs_for_conversation(self, conversation_id: int, uid: str) -> list[AgentRun]:
         """按持久父子关系读取子 Run，补齐尚未进入父 checkpoint 的派发记录。"""

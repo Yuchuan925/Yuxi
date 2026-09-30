@@ -49,7 +49,7 @@ def normalize_workdir_path(workdir_path: str) -> str:
 
 
 def normalize_managed_workdir_path(workdir_path: str) -> str:
-    """规范化服务端管理的 Workdir 路径，并兼容既有 UUID 目录。"""
+    """规范化服务端管理的 Workdir 路径。"""
     error_message = "managed workdir_path must use a supported projects/<managed-id>"
     try:
         pure = PurePosixPath(normalize_workdir_path(workdir_path))
@@ -59,18 +59,14 @@ def normalize_managed_workdir_path(workdir_path: str) -> str:
         raise ValueError(error_message)
 
     workdir_name = pure.parts[1]
+    match = _MANAGED_WORKDIR_NAME_RE.fullmatch(workdir_name)
+    if match is None:
+        raise ValueError(error_message)
     try:
-        workdir_id = uuid.UUID(workdir_name)
+        datetime.strptime(match.group("timestamp"), _MANAGED_WORKDIR_TIMESTAMP_FORMAT)
     except ValueError:
-        match = _MANAGED_WORKDIR_NAME_RE.fullmatch(workdir_name)
-        if match is None:
-            raise ValueError(error_message) from None
-        try:
-            datetime.strptime(match.group("timestamp"), _MANAGED_WORKDIR_TIMESTAMP_FORMAT)
-        except ValueError:
-            raise ValueError(error_message) from None
-        return pure.as_posix()
-    return f"{WORKDIR_PROJECTS_DIR_NAME}/{workdir_id}"
+        raise ValueError(error_message) from None
+    return pure.as_posix()
 
 
 def workspace_uid_dirname(uid: str) -> str:
@@ -78,7 +74,7 @@ def workspace_uid_dirname(uid: str) -> str:
 
     Database and OIDC subject identifiers may contain characters such as ``:``
     that are valid identity data but unsafe in filesystem path components.
-    Legacy simple UIDs retain their directory name; all other values use a
+    Identity-safe UIDs keep a readable directory name; all other values use a
     namespaced SHA-256 digest at the filesystem boundary only.
     """
     value = str(uid or "").strip()

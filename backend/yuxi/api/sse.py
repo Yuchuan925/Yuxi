@@ -11,7 +11,3 @@ def format_sse(data: dict, event: str, event_id: str | None = None) -> str:
         lines.append(f"id: {event_id}")
     lines.append("")
     return "\n".join(lines) + "\n"
-
-
-def format_heartbeat() -> str:
-    return ": heartbeat\n\n"

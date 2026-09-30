@@ -21,8 +21,9 @@ test('知识库详情将评估基准和近期评估收敛到同一个评估工�
   assert.match(extensionsSource, /<router-view v-else :key="route\.path" \/>/)
   assert.match(
     apiSource,
-    /else if \(params\.errorOnly !== undefined\) queryParams\.append\('error_only', params\.errorOnly\)/
+    /if \(params\.resultFilter !== undefined\) queryParams\.append\('result_filter', params\.resultFilter\)/
   )
+  assert.doesNotMatch(apiSource, /error_only/)
 
   assert.match(workspaceSource, /id="evaluation-benchmarks-title">评估基准/)
   assert.match(workspaceSource, /id="recent-evaluations-title">近期评估/)

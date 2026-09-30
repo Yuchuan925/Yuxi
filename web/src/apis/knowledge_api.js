@@ -45,31 +45,6 @@ export const databaseApi = {
   },
 
   /**
-   * 修复知识库文件统计
-   * @param {string} kbId - 知识库ID
-   * @returns {Promise} - 修复结果
-   */
-  repairDatabaseStats: async (kbId) => {
-    return apiAdminPost(`/api/knowledge/databases/${kbId}/stats/repair`, {})
-  },
-
-  detectVirtualFolders: async (kbId) => {
-    return apiAdminGet(`/api/knowledge/databases/${kbId}/virtual-folders/detect`)
-  },
-
-  startVirtualFolderMigration: async (kbId) => {
-    return apiAdminPost(`/api/knowledge/databases/${kbId}/virtual-folders/migrate`, {})
-  },
-
-  streamVirtualFolderMigration: async (kbId, taskId, signal) => {
-    return apiAdminGet(
-      `/api/knowledge/databases/${kbId}/virtual-folders/migrations/${taskId}/events`,
-      { signal },
-      'response'
-    )
-  },
-
-  /**
    * 更新知识库信息
    * @param {string} kbId - 知识库ID
    * @param {Object} updateData - 更新数据
@@ -359,35 +334,6 @@ export const graphBuildApi = {
 }
 
 // =============================================================================
-// === 思维导图分组 ===
-// =============================================================================
-
-export const mindmapApi = {
-  getDatabases: async () => {
-    return apiAdminGet('/api/knowledge/mindmap/databases')
-  },
-
-  getDatabaseFiles: async (kbId) => {
-    return apiAdminGet(`/api/knowledge/databases/${kbId}/mindmap/files`)
-  },
-
-  generateMindmap: async (kbId, fileIds = [], userPrompt = '', incremental = false) => {
-    return apiAdminPost(`/api/knowledge/databases/${kbId}/mindmap/generate`, {
-      file_ids: fileIds,
-      user_prompt: userPrompt,
-      incremental
-    })
-  },
-
-  getByDatabase: async (kbId) => {
-    return apiAdminGet(`/api/knowledge/databases/${kbId}/mindmap`)
-  },
-
-  getDiff: async (kbId) => {
-    return apiAdminGet(`/api/knowledge/databases/${kbId}/mindmap/diff`)
-  }
-}
-
 // =============================================================================
 // === 查询分组 ===
 // =============================================================================
@@ -652,7 +598,6 @@ export const evaluationApi = {
     if (params.page) queryParams.append('page', params.page)
     if (params.pageSize) queryParams.append('page_size', params.pageSize)
     if (params.resultFilter !== undefined) queryParams.append('result_filter', params.resultFilter)
-    else if (params.errorOnly !== undefined) queryParams.append('error_only', params.errorOnly)
 
     const url = `/api/evaluation/databases/${kbId}/runs/${runId}${queryParams.toString() ? '?' + queryParams.toString() : ''}`
     return apiAdminGet(url)

@@ -231,10 +231,6 @@ class AgentRepository:
             )
         )
 
-    async def get_default(self) -> Agent | None:
-        result = await self.db.execute(select(Agent).where(Agent.is_default.is_(True)))
-        return result.scalar_one_or_none()
-
     async def set_default(self, *, agent: Agent, updated_by: str | None = None) -> Agent:
         if agent.is_subagent:
             raise ValueError("子智能体不能设为默认智能体")
@@ -476,7 +472,6 @@ class AgentRepository:
             )
             if backend_info_cache is not None:
                 backend_info_cache[cache_key] = backend_info
-        data["capabilities"] = backend_info.get("capabilities", [])
         data["metadata"] = backend_info.get("metadata", {})
         if include_configurable_items:
             data["configurable_items"] = backend_info.get("configurable_items", {})

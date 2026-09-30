@@ -210,6 +210,12 @@ def _normalize_payload(data: dict[str, Any], *, partial: bool = False) -> dict[s
         elif not partial:
             payload[field] = default
 
+    capabilities = payload.get("capabilities")
+    if capabilities:
+        unknown = sorted(set(capabilities) - VALID_MODEL_TYPES)
+        if unknown:
+            raise ValueError(f"capabilities 包含未知能力: {', '.join(unknown)}")
+
     # 仅当本次 payload 同时携带 capabilities 与 enabled_models 时做一致性校验，
     # 防止前端把超出 provider.capabilities 的模型 type 写入。
     # partial 模式下若只更新其中一项，跳过校验避免误判（DB 已有值不可见）。

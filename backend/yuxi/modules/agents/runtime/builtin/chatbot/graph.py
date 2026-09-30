@@ -75,7 +75,6 @@ async def _build_middlewares(context, backend):
 class ChatbotAgent(BaseAgent):
     name = "智能助手"
     description = "基础的对话机器人，可以回答问题，可在配置中启用需要的工具。"
-    capabilities = ["file_upload", "files", "context_compression"]
     context_schema = ChatBotContext
 
     async def get_graph(self, *, context, **kwargs):

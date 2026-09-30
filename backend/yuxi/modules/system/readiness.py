@@ -41,11 +41,11 @@ async def _probe_redis() -> None:
 
 
 class WorkerUnavailableError(RuntimeError):
-    """当前队列没有完成启动且仍在续租的兼容 worker。"""
+    """当前队列没有完成启动且仍在续租的 worker。"""
 
 
 async def _probe_worker() -> None:
-    """验证兼容 AgentRun worker 的短 TTL 健康事实仍然存在。"""
+    """验证 AgentRun worker 的短 TTL 健康事实仍然存在。"""
 
     redis = await get_redis_client()
     leases = (

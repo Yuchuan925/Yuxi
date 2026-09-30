@@ -162,7 +162,7 @@ async def test_real_v3_reasoning_projection_and_checkpoint(monkeypatch):
     assert any(e["type"] == "tool_call" and e["tool_call_id"] == "call-test" for e in emitted)
     state = await compiled.aget_state(config)
     persisted = state.values["messages"][-1].model_dump()
-    assert parse_assistant_message_body(persisted["content"], persisted)["reasoning_content"] == REASONING
+    assert parse_assistant_message_body(persisted["content"])["reasoning_content"] == REASONING
 
 
 def test_non_reasoning_provider_is_unchanged(monkeypatch):
@@ -200,7 +200,7 @@ async def test_missing_reasoning_still_completes_tool_roundtrip(monkeypatch, pro
 
 
 @pytest.mark.parametrize(
-    "content,metadata,expected",
+    "content,expected",
     [
         (
             [
@@ -214,46 +214,14 @@ async def test_missing_reasoning_still_completes_tool_roundtrip(monkeypatch, pro
                 {"type": "reasoning", "reasoning": "next"},
                 {"type": "tool_call", "name": "inspect_code"},
             ],
-            None,
             {"content": " first second", "reasoning_content": " thought next"},
         ),
-        (
-            "stored answer",
-            {"content": [{"type": "text", "text": "metadata text"}]},
-            {"content": "stored answer", "reasoning_content": ""},
-        ),
-        (
-            "answer",
-            {"content": "invalid blocks", "additional_kwargs": {"reasoning_content": "saved thought"}},
-            {"content": "answer", "reasoning_content": "saved thought"},
-        ),
-        ("answer", {}, {"content": "answer", "reasoning_content": ""}),
-        ("answer", {"additional_kwargs": None}, {"content": "answer", "reasoning_content": ""}),
-        (
-            "answer",
-            {"additional_kwargs": {"reasoning_content": {"bad": True}}},
-            {"content": "answer", "reasoning_content": ""},
-        ),
-        ("<think> old thought </think>answer", {}, {"content": "answer", "reasoning_content": " old thought "}),
-        ("<think>partial", {}, {"content": "", "reasoning_content": "partial"}),
-        (
-            "example: <think>literal</think>",
-            {},
-            {"content": "example: <think>literal</think>", "reasoning_content": ""},
-        ),
-        (
-            "answer",
-            {
-                "content": [{"type": "reasoning", "reasoning": "canonical"}],
-                "additional_kwargs": {"reasoning_content": "duplicate"},
-            },
-            {"content": "answer", "reasoning_content": "canonical"},
-        ),
+        ("stored answer", {"content": "stored answer", "reasoning_content": ""}),
     ],
 )
-def test_history_recovery_is_best_effort(content, metadata, expected):
-    """旧历史只恢复真实已有内容；缺失或畸形推理不影响正文。"""
-    assert parse_assistant_message_body(content, metadata) == expected
+def test_body_projection_is_block_canonical(content, expected):
+    """展示正文只来自标准 text/reasoning 块；缺失或畸形块不影响正文。"""
+    assert parse_assistant_message_body(content) == expected
 
 
 def test_standard_blocks_encode_history_once(monkeypatch):

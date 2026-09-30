@@ -105,13 +105,10 @@ def test_纯文本的_raw_message_投影为空():
     assert restored.message_type == "text"
 
 
-def test_旧单值历史行仍能还原出一张图():
-    """更早的历史行没有 raw_message，只有单值 image_content 列。"""
-    restored = restore_chat_input_message(content="看图", image_content="OLDVALUE", metadata={})
-
-    assert restored.message_type == "multimodal_image"
-    assert restored.image_content == "OLDVALUE"
-    assert _image_url_parts(restored)[0]["image_url"]["url"] == "data:image/jpeg;base64,OLDVALUE"
+def test_缺失_raw_message的历史行直接拒绝():
+    """没有 raw_message 的输入行无法还原，必须显式报错而不是猜格式。"""
+    with pytest.raises(ValueError, match="missing raw_message"):
+        restore_chat_input_message(content="看图", image_content="OLDVALUE", metadata={})
 
 
 def test_多图历史行按_raw_message_完整还原():

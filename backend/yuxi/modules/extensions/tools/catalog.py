@@ -60,7 +60,7 @@ def _ensure_metadata_loaded():
                 runtime_info["name"] = extra.display_name
         else:
             # 未注册，设为默认分类
-            runtime_info["category"] = "buildin"
+            runtime_info["category"] = "builtin"
             runtime_info["tags"] = []
             runtime_info["config_guide"] = ""
 
@@ -85,7 +85,7 @@ def get_tool_instances_by_category(category: str) -> list[Any]:
     tools = []
     for tool in get_all_tool_instances():
         tool_meta = extra_meta.get(tool.name)
-        tool_category = tool_meta.category if tool_meta else "buildin"
+        tool_category = tool_meta.category if tool_meta else "builtin"
         if tool_category == category:
             tools.append(tool)
     return tools

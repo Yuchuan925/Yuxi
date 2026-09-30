@@ -88,7 +88,7 @@ Yuxi connects knowledge ingestion, agent execution, and team governance into one
 | --- | --- | --- |
 | Unified agent workspace | Ask questions, execute tasks, and receive deliverables in one interface | Multi-turn conversations, knowledge retrieval, task status, human approval |
 | Knowledge bases and RAG | Provide retrieved context for answers | Multi-format ingestion, Embedding/Rerank, retrieval testing, RAG evaluation |
-| Knowledge graphs and mind maps | Discover entity relationships and browse knowledge base file structures | Graph construction, subgraph exploration, node details, file metadata maps |
+| Knowledge graphs | Explore entity relationships | Graph construction, subgraph exploration, node details |
 | Multi-agent execution and extensions | Delegate complex tasks to specialized roles and tools | SubAgents, Skills, MCP, Tools, agent configuration |
 | Sandbox workspace and artifacts | Turn conversations into reusable files | Isolated file systems, file generation, online preview, downloads |
 | Team governance and operations | Manage capabilities, permissions, and execution in multi-user environments | Multi-tenancy, user and department permissions, model configuration, API Keys, Dashboard |
@@ -167,30 +167,23 @@ Automatically generate single-hop and multi-hop Q&A pairs.
 
 </details>
 
-### 03 · Knowledge Graphs and Mind Maps
+### 03 · Knowledge Graphs
 
-Turn unstructured documents into entity–relationship networks. Explore relationships in interactive graphs, or generate knowledge maps from file hierarchies and topic metadata.
+Turn unstructured documents into entity–relationship networks. Explore relationships in interactive graphs built from knowledge base content.
 
 - Automatically extract entities and relationships from knowledge bases and build graph indexes using Milvus/Neo4j.
 - Search entities by keyword, click nodes to inspect properties, and highlight related subgraphs.
-- Generate multi-level knowledge maps from knowledge base file metadata to browse a business domain at a glance.
 
 ![Knowledge graph exploration](https://xerrors.oss-cn-shanghai.aliyuncs.com/github/image-20260830145027082.png)
 
 <details>
-<summary><strong>More screenshots: graph construction, node relationships, and mind maps</strong></summary>
+<summary><strong>More screenshots: graph construction and node relationships</strong></summary>
 
 **Graph construction and index status**
 
 Document parsing automatically performs entity recognition and relationship extraction to build domain-specific knowledge graphs. View entity counts, relationship counts, and construction progress directly.
 
 ![Graph construction and index status](https://xerrors.oss-cn-shanghai.aliyuncs.com/github/image-20260826200519930.png)
-
-**Knowledge maps**
-
-Generate structured topic mind maps from directory structures, category labels, and file metadata, making large knowledge collections easier to browse as a tree.
-
-![Knowledge map](https://xerrors.oss-cn-shanghai.aliyuncs.com/github/image-20260830145125067.png)
 
 </details>
 

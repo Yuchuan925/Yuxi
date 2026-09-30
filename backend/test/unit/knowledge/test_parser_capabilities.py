@@ -31,7 +31,7 @@ def test_capability_metadata_covers_upload_and_ocr_formats() -> None:
 
 
 def test_capability_lookup_does_not_load_concrete_parser_modules() -> None:
-    package_dir = Path(__file__).resolve().parents[3] / "package"
+    package_dir = Path(__file__).resolve().parents[3]
     script = f"""
 import sys
 sys.path.insert(0, {str(package_dir)!r})
@@ -47,12 +47,10 @@ assert "docling" not in sys.modules
 
 def test_knowledge_router_import_does_not_load_docling_or_ocr_provider() -> None:
     backend_dir = Path(__file__).resolve().parents[3]
-    package_dir = backend_dir / "package"
     script = f"""
 import sys
-sys.path.insert(0, {str(package_dir)!r})
 sys.path.insert(0, {str(backend_dir)!r})
-import yuxi.api.routers.knowledge_router
+import yuxi.api.routers.knowledge
 
 assert "docling" not in sys.modules
 assert "yuxi.infrastructure.document_parsing.rapid_ocr" not in sys.modules

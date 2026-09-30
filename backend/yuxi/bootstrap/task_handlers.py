@@ -32,11 +32,6 @@ _TASK_DEFINITIONS = {
             "run_knowledge_graph",
         ),
         TaskDefinition(
-            "knowledge_virtual_folder_migration",
-            "yuxi.modules.knowledge.services.tasks",
-            "run_virtual_folder_migration",
-        ),
-        TaskDefinition(
             "dataset_generation",
             "yuxi.modules.knowledge.evaluation.service",
             "run_dataset_generation_task",

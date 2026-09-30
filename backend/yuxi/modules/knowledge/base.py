@@ -23,14 +23,6 @@ class FileStatus:
     ERROR_INDEXING = "error_indexing"
 
 
-INDEXED_STATS_STATUSES = {FileStatus.INDEXED, "done"}
-
-
-def _should_repair_file_stats(file_meta: dict) -> bool:
-    status = file_meta.get("status")
-    return status is None or status in INDEXED_STATS_STATUSES
-
-
 class KnowledgeBaseException(Exception):
     """知识库统一异常基类"""
 
@@ -257,7 +249,6 @@ class KnowledgeBase(ABC):
         allowed_statuses = {
             FileStatus.UPLOADED,
             FileStatus.ERROR_PARSING,
-            "failed",  # Legacy status
         }
 
         from yuxi.modules.knowledge.repositories.files import KnowledgeFileRepository
@@ -492,7 +483,7 @@ class KnowledgeBase(ABC):
             "size": 0 if is_dir else file_meta.get("size") or 0,
             "modified_at": file_meta.get("updated_at") or file_meta.get("created_at") or "",
             "readonly": True,
-            "status": file_meta.get("status", "done"),
+            "status": file_meta.get("status") or FileStatus.UPLOADED,
             "has_original_file": bool(original_path),
             "has_parsed_markdown": bool(file_meta.get("markdown_file")),
         }
@@ -972,91 +963,6 @@ class KnowledgeBase(ABC):
                 defaults[opt["key"]] = opt["default"]
         return {"options": defaults}
 
-    async def repair_missing_file_stats(self, kb_id: str) -> dict:
-        from yuxi.modules.knowledge.chunking.ragflow_like.nlp import count_tokens
-        from yuxi.modules.knowledge.repositories.chunks import KnowledgeChunkRepository
-        from yuxi.modules.knowledge.repositories.files import KnowledgeFileRepository
-
-        chunk_repo = KnowledgeChunkRepository()
-        file_repo = KnowledgeFileRepository()
-        after_file_id = None
-        scanned_files = 0
-        scanned_indexed_files = 0
-        skipped_file_count = 0
-        scanned_token_files = 0
-        updated_files = 0
-        updated_chunk_files = 0
-        updated_token_files = 0
-        updated_size_files = 0
-
-        while True:
-            records = await file_repo.list_by_kb_id_after(
-                kb_id,
-                after_file_id=after_file_id,
-                limit=500,
-                files_only=True,
-            )
-            if not records:
-                break
-            after_file_id = records[-1].file_id
-
-            indexed_records = [record for record in records if _should_repair_file_stats({"status": record.status})]
-            indexed_file_ids = [record.file_id for record in indexed_records]
-            indexed_file_id_set = set(indexed_file_ids)
-            chunk_counts = await chunk_repo.count_by_file_ids(indexed_file_ids)
-            token_file_ids = [record.file_id for record in indexed_records if int(record.token_count or 0) <= 0]
-            token_counts = {file_id: 0 for file_id in token_file_ids}
-            for chunk in await chunk_repo.list_by_file_ids(token_file_ids):
-                token_counts[chunk.file_id] = token_counts.get(chunk.file_id, 0) + count_tokens(chunk.content or "")
-            size_updates = await self._fill_missing_file_sizes_for_records(records)
-
-            scanned_files += len(records)
-            scanned_indexed_files += len(indexed_file_ids)
-            skipped_file_count += len(records) - len(indexed_file_ids)
-            scanned_token_files += len(token_file_ids)
-
-            for record in records:
-                file_id = record.file_id
-                update_data: dict[str, Any] = {}
-                if file_id not in indexed_file_id_set:
-                    if int(record.chunk_count or 0) != 0:
-                        update_data["chunk_count"] = 0
-                        updated_chunk_files += 1
-                    if int(record.token_count or 0) != 0:
-                        update_data["token_count"] = 0
-                        updated_token_files += 1
-                else:
-                    next_chunk_count = int(chunk_counts.get(file_id, 0))
-                    if int(record.chunk_count or 0) != next_chunk_count:
-                        update_data["chunk_count"] = next_chunk_count
-                        updated_chunk_files += 1
-
-                    if file_id in token_counts:
-                        next_token_count = int(token_counts[file_id])
-                        if record.token_count is None or int(record.token_count or 0) != next_token_count:
-                            update_data["token_count"] = next_token_count
-                            updated_token_files += 1
-
-                if file_id in size_updates:
-                    update_data["file_size"] = size_updates[file_id]
-                    updated_size_files += 1
-
-                if update_data:
-                    updated_files += 1
-                    await file_repo.update_fields(file_id=file_id, kb_id=kb_id, data=update_data)
-
-        return {
-            "status": "success",
-            "scanned_files": scanned_files,
-            "scanned_indexed_files": scanned_indexed_files,
-            "skipped_unindexed_files": skipped_file_count,
-            "scanned_token_files": scanned_token_files,
-            "updated_files": updated_files,
-            "updated_chunk_files": updated_chunk_files,
-            "updated_token_files": updated_token_files,
-            "updated_size_files": updated_size_files,
-        }
-
     async def delete_folder(self, kb_id: str, folder_id: str) -> None:
         """
         Recursively delete a folder and its content.
@@ -1175,48 +1081,6 @@ class KnowledgeBase(ABC):
             dict: 包含文件信息和chunks的字典
         """
         pass
-
-    async def _fill_missing_file_sizes_for_records(self, records: list[Any]) -> dict[str, int]:
-        """为显式修复任务中的缺失 size 文件从 MinIO 补全大小信息。"""
-        from yuxi.infrastructure.object_urls import is_minio_url, parse_minio_url
-        from yuxi.infrastructure.minio import get_minio_client
-
-        candidates: list[tuple[str, str]] = []
-        for record in records:
-            if record.is_folder or record.file_size is not None:
-                continue
-            file_path = record.minio_url or record.path
-            if not file_path or not is_minio_url(file_path):
-                continue
-            candidates.append((record.file_id, file_path))
-
-        if not candidates:
-            return {}
-
-        minio_client = get_minio_client()
-        semaphore = asyncio.Semaphore(20)
-
-        async def _stat_file(file_id: str, file_path: str) -> tuple[str, int | None]:
-            bucket_name, obj_name = parse_minio_url(file_path)
-            try:
-                async with semaphore:
-                    return file_id, await minio_client.astat_file(bucket_name, obj_name)
-            except Exception as exc:
-                logger.warning(f"Failed to fill size for {file_id}: {exc}")
-                return file_id, None
-
-        updates: dict[str, int] = {}
-        for offset in range(0, len(candidates), 100):
-            batch = candidates[offset : offset + 100]
-            for file_id, file_size in await asyncio.gather(
-                *(_stat_file(file_id, file_path) for file_id, file_path in batch)
-            ):
-                if file_size is not None:
-                    updates[file_id] = file_size
-
-        if updates:
-            logger.info(f"Filled {len(updates)}/{len(candidates)} missing file sizes from MinIO for {self.kb_type}")
-        return updates
 
     async def _persist_file_meta(self, file_id: str, meta: dict) -> None:
         """Persist one file metadata record without storing it on the KB instance."""

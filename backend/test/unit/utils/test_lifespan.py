@@ -6,6 +6,7 @@ import pytest
 from fastapi import FastAPI
 
 import yuxi.api.lifespan as lifespan_module
+import yuxi.bootstrap.api as api_bootstrap
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.unit]
 
@@ -17,7 +18,7 @@ async def test_optional_startup_component_failure_is_structured_without_raw_mess
     async def fail() -> None:
         raise RuntimeError("database-password-must-not-leak")
 
-    await lifespan_module._initialize_startup_component(
+    await api_bootstrap._initialize_startup_component(
         app,
         name="builtin_mcp_servers",
         required=False,
@@ -42,7 +43,7 @@ async def test_invalid_security_secrets_fail_before_database_startup(
     app = FastAPI()
 
     with pytest.raises(
-        lifespan_module.RequiredStartupComponentError,
+        api_bootstrap.RequiredStartupComponentError,
         match="component=security_secrets, type=ValueError",
     ):
         await lifespan_module._startup(app)
@@ -61,11 +62,11 @@ async def test_api_startup_validates_full_schema_without_running_ddl(
     monkeypatch.setenv("SANDBOX_PROVISIONER_TOKEN", "schema-test-sandbox-token-at-least-thirty-two-characters")
     monkeypatch.setattr(lifespan_module.pg_manager, "initialize", lambda: calls.append("initialize"))
 
-    async def require_current_schema() -> None:
+    async def require_current_schema(_manager) -> None:
         calls.append("require_current_schema")
         raise RuntimeError("stop after schema assertion")
 
-    monkeypatch.setattr(lifespan_module.pg_manager, "require_current_schema", require_current_schema)
+    monkeypatch.setattr(api_bootstrap, "require_current_schema", require_current_schema)
 
     with pytest.raises(RuntimeError, match="stop after schema assertion"):
         await lifespan_module._startup(FastAPI())
@@ -82,7 +83,7 @@ async def test_required_startup_component_failure_still_releases_every_runtime_c
         async def fail() -> None:
             raise RuntimeError("database-password-must-not-leak")
 
-        await lifespan_module._initialize_startup_component(
+        await api_bootstrap._initialize_startup_component(
             app,
             name="default_agents",
             required=True,
@@ -98,7 +99,7 @@ async def test_required_startup_component_failure_still_releases_every_runtime_c
 
     app = FastAPI()
     with pytest.raises(
-        lifespan_module.RequiredStartupComponentError,
+        api_bootstrap.RequiredStartupComponentError,
         match="component=default_agents, type=RuntimeError",
     ) as exc_info:
         async with lifespan_module.lifespan(app):

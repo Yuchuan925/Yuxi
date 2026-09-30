@@ -757,7 +757,6 @@ class KnowledgeBaseManager:
         file_stats = await self._get_database_file_stats(kb_id)
         return KnowledgeBaseDetail(
             **self._database_read_fields(kb, stats=file_stats),
-            mindmap=kb.mindmap,
             sample_questions=tuple(kb.sample_questions or []),
             files=files,
             files_truncated=files_truncated,
@@ -932,8 +931,8 @@ class KnowledgeBaseManager:
         if not status or status == "all":
             return None
         return {
-            "indexed": {"indexed", "done"},
-            "error_indexing": {"error_indexing", "failed"},
+            "indexed": {"indexed"},
+            "error_indexing": {"error_indexing"},
         }.get(status, {status})
 
     @staticmethod
@@ -995,13 +994,6 @@ class KnowledgeBaseManager:
         """删除文件"""
         kb_instance = await self.get_kb_executor(kb_id)
         await self._run_with_stats_refresh(kb_id, kb_instance.delete_file(kb_id, file_id))
-
-    async def repair_missing_file_stats(self, kb_id: str) -> dict:
-        """修复历史文件缺失的 Chunk/Token 统计，并刷新知识库聚合统计。"""
-        kb_instance = await self.get_kb_executor(kb_id)
-        result = await kb_instance.repair_missing_file_stats(kb_id)
-        result["stats"] = await self._refresh_database_stats(kb_id)
-        return result
 
     async def get_file_basic_info(self, kb_id: str, file_id: str) -> dict:
         """获取文件基本信息（仅元数据）"""

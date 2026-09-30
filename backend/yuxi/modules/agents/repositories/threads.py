@@ -18,7 +18,7 @@ from yuxi.modules.agents.models.messages import (
     Message,
     ToolCall,
 )
-from yuxi.modules.agents.models.threads import UNVIEWED_RUN_MARKER, Conversation, ConversationStats, SubagentThread
+from yuxi.modules.agents.models.threads import UNVIEWED_RUN_MARKER, Conversation, SubagentThread
 from yuxi.infrastructure.observability.logging import logger
 from yuxi.shared.datetime import utc_now_naive
 from yuxi.shared.strings import truncate_utf8
@@ -29,10 +29,9 @@ MESSAGE_SEARCH_SNIPPET_MAX_LENGTH = 180
 MESSAGE_SEARCH_SNIPPETS_PER_THREAD = 2
 MESSAGE_SEARCH_ROLES = ("user", "assistant")
 MESSAGE_SEARCH_EXCLUDED_TYPES = (
-    "tool_call",
-    "tool_result",
     MODEL_AUDIT_MESSAGE_TYPE,
     TOOL_AUDIT_MESSAGE_TYPE,
+    "tool_result",
 )
 ALL_APP_SCOPES = object()
 
@@ -159,10 +158,6 @@ class ConversationRepository:
         self.db.add(conversation)
         await self.db.flush()
 
-        stats = ConversationStats(conversation_id=conversation.id)
-        self.db.add(stats)
-        await self.db.flush()
-
         logger.info(f"Created conversation: {conversation.thread_id} for user {uid}")
         return conversation
 
@@ -192,16 +187,6 @@ class ConversationRepository:
 
     async def get_conversation_by_thread_id(self, thread_id: str) -> Conversation | None:
         result = await self.db.execute(select(Conversation).where(Conversation.thread_id == thread_id))
-        return result.scalar_one_or_none()
-
-    async def get_conversation_by_creation_request_id(self, uid: str, request_id: str) -> Conversation | None:
-        """按用户和创建幂等键读取 Conversation。"""
-        result = await self.db.execute(
-            select(Conversation).where(
-                Conversation.uid == str(uid),
-                Conversation.creation_request_id == request_id,
-            )
-        )
         return result.scalar_one_or_none()
 
     async def lock_conversation_by_thread_id(self, thread_id: str) -> Conversation | None:
@@ -241,12 +226,6 @@ class ConversationRepository:
         conversation.updated_at = utc_now_naive()
         await self.db.flush()
 
-    async def set_model_spec(self, conversation: Conversation, model_spec: str) -> None:
-        """在请求事务内更新对话绑定模型。"""
-        metadata = dict(conversation.extra_metadata or {})
-        metadata["model_spec"] = model_spec
-        await self._save_metadata(conversation, metadata)
-
     async def _lock_conversation_by_id(self, conversation_id: int) -> Conversation | None:
         """锁定会话元数据，串行化同一线程的附件更新。"""
         result = await self.db.execute(select(Conversation).where(Conversation.id == conversation_id).with_for_update())
@@ -285,7 +264,6 @@ class ConversationRepository:
         await self.db.flush()
         await self.db.refresh(message)
 
-        await self._update_message_count(conversation_id)
         if commit:
             await self.db.commit()
 
@@ -335,7 +313,13 @@ class ConversationRepository:
         commit: bool = True,
     ) -> ToolCall:
         if langgraph_tool_call_id:
-            existing = await self.get_tool_call_by_langgraph_id(langgraph_tool_call_id)
+            result = await self.db.execute(
+                select(ToolCall)
+                .where(ToolCall.langgraph_tool_call_id == langgraph_tool_call_id)
+                .order_by(ToolCall.created_at.desc())
+                .limit(1)
+            )
+            existing = result.scalar_one_or_none()
             if existing:
                 logger.debug(
                     "Tool call already exists for langgraph_tool_call_id=%s, skip insert",
@@ -372,7 +356,6 @@ class ConversationRepository:
         if conversation is None:
             raise ValueError("最终输出缺少 Conversation")
         conversation.updated_at = utc_now_naive()
-        await self._update_message_count(message.conversation_id)
         await self.db.flush()
 
     async def get_messages(self, conversation_id: int, limit: int | None = None, offset: int = 0) -> list[Message]:
@@ -465,16 +448,6 @@ class ConversationRepository:
         truncated = len(runs) > limit
         return list(reversed(runs[:limit])), truncated
 
-    async def get_messages_by_thread_id(
-        self, thread_id: str, limit: int | None = None, offset: int = 0
-    ) -> list[Message]:
-        conversation = await self.get_conversation_by_thread_id(thread_id)
-        if not conversation:
-            logger.warning(f"Conversation not found for thread_id: {thread_id}")
-            return []
-
-        return await self.get_messages(conversation.id, limit, offset)
-
     async def list_conversations(
         self,
         uid: str | None = None,
@@ -526,15 +499,6 @@ class ConversationRepository:
         non_pinned_conversations = list(result.scalars().all())
 
         return pinned_conversations + non_pinned_conversations
-
-    async def list_active_conversations_for_user(self, uid: str) -> list[Conversation]:
-        """返回用户全部 active 对话，按最近更新时间排序。"""
-        result = await self.db.execute(
-            select(Conversation)
-            .where(Conversation.uid == str(uid), Conversation.status == "active")
-            .order_by(Conversation.updated_at.desc())
-        )
-        return list(result.scalars().all())
 
     async def search_conversations_by_message_content(
         self,
@@ -853,82 +817,6 @@ class ConversationRepository:
             payload["messages"].pop(0)
             payload["truncated"] = True
 
-    async def get_stats(self, conversation_id: int) -> ConversationStats | None:
-        result = await self.db.execute(
-            select(ConversationStats).where(ConversationStats.conversation_id == conversation_id)
-        )
-        return result.scalar_one_or_none()
-
-    async def update_stats(
-        self,
-        conversation_id: int,
-        tokens_used: int | None = None,
-        model_used: str | None = None,
-    ) -> ConversationStats | None:
-        stats = await self.get_stats(conversation_id)
-        if not stats:
-            return None
-
-        if tokens_used is not None:
-            stats.total_tokens += tokens_used
-        if model_used is not None:
-            stats.model_used = model_used
-        stats.updated_at = utc_now_naive()
-        await self.db.commit()
-        await self.db.refresh(stats)
-
-        return stats
-
-    async def get_tool_call_by_langgraph_id(self, langgraph_tool_call_id: str) -> ToolCall | None:
-        result = await self.db.execute(
-            select(ToolCall)
-            .where(ToolCall.langgraph_tool_call_id == langgraph_tool_call_id)
-            .order_by(ToolCall.created_at.desc())
-            .limit(1)
-        )
-        return result.scalar_one_or_none()
-
-    async def update_tool_call_output(
-        self,
-        langgraph_tool_call_id: str,
-        tool_output: str,
-        status: str = "success",
-        error_message: str | None = None,
-        commit: bool = True,
-    ) -> ToolCall | None:
-        tool_call = await self.get_tool_call_by_langgraph_id(langgraph_tool_call_id)
-        if not tool_call:
-            logger.warning(f"Tool call not found for langgraph_tool_call_id: {langgraph_tool_call_id}")
-            return None
-
-        tool_call.tool_output = tool_output
-        tool_call.status = status
-        if error_message:
-            tool_call.error_message = error_message
-
-        await self.db.flush()
-        await self.db.refresh(tool_call)
-        if commit:
-            await self.db.commit()
-
-        logger.debug(f"Updated tool call {langgraph_tool_call_id} with output")
-        return tool_call
-
-    async def _update_message_count(self, conversation_id: int) -> None:
-        from sqlalchemy import func
-
-        stats = await self.get_stats(conversation_id)
-        if stats:
-            result = await self.db.execute(
-                select(func.count()).where(
-                    Message.conversation_id == conversation_id,
-                    or_(Message.message_type.is_(None), Message.message_type.notin_(AUDIT_MESSAGE_TYPES)),
-                )
-            )
-            message_count = result.scalar()
-            stats.message_count = message_count
-            await self.db.flush()
-
     async def get_attachments(self, conversation_id: int) -> list[dict]:
         conversation = await self.get_conversation_by_id(conversation_id)
         if not conversation:
@@ -943,25 +831,6 @@ class ConversationRepository:
             return []
         return list(self._ensure_metadata(conversation).get("attachments", []))
 
-    async def get_attachments_by_thread_id(self, thread_id: str) -> list[dict]:
-        conversation = await self.get_conversation_by_thread_id(thread_id)
-        if not conversation:
-            return []
-        return await self.get_attachments(conversation.id)
-
-    async def add_attachment(self, conversation_id: int, attachment_info: dict) -> dict | None:
-        conversation = await self._lock_conversation_by_id(conversation_id)
-        if not conversation:
-            return None
-
-        metadata = self._ensure_metadata(conversation)
-        attachments = metadata.get("attachments", [])
-        attachments = [item for item in attachments if item.get("file_id") != attachment_info.get("file_id")]
-        attachments.append(attachment_info)
-        metadata["attachments"] = attachments
-        await self._save_metadata(conversation, metadata)
-        return attachment_info
-
     async def add_attachments(self, conversation_id: int, attachment_infos: list[dict]) -> list[dict] | None:
         conversation = await self._lock_conversation_by_id(conversation_id)
         if not conversation:
@@ -975,29 +844,6 @@ class ConversationRepository:
         metadata["attachments"] = attachments
         await self._save_metadata(conversation, metadata)
         return attachment_infos
-
-    async def update_attachment_status(
-        self, conversation_id: int, file_id: str, status: str, update_fields: dict | None = None
-    ) -> dict | None:
-        conversation = await self._lock_conversation_by_id(conversation_id)
-        if not conversation:
-            return None
-
-        metadata = self._ensure_metadata(conversation)
-        attachments = metadata.get("attachments", [])
-        target = None
-        for item in attachments:
-            if item.get("file_id") == file_id:
-                item["status"] = status
-                if update_fields:
-                    item.update(update_fields)
-                target = item
-                break
-
-        if target is not None:
-            metadata["attachments"] = attachments
-            await self._save_metadata(conversation, metadata)
-        return target
 
     async def bind_attachments_to_input(self, conversation_id: int, input_id: str, file_ids: list[str]) -> list[dict]:
         """在当前线程锁内把附件固定到持久 Input。"""

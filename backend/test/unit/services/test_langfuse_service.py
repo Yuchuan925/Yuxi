@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 import yuxi.modules.agents.services.tracing as svc
+import yuxi.infrastructure.observability.langfuse as langfuse
 
 
 class _FakeLangfuseClient:
@@ -58,9 +59,10 @@ def run_context_with_last_trace(monkeypatch):
     monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "pk-test")
     monkeypatch.setenv("LANGFUSE_SECRET_KEY", "sk-test")
     monkeypatch.setenv("LANGFUSE_BASE_URL", "https://langfuse.local")
-    monkeypatch.setattr(svc, "Langfuse", _FakeLangfuseClient)
+    monkeypatch.setattr(langfuse, "Langfuse", _FakeLangfuseClient)
+    monkeypatch.setattr(langfuse, "CallbackHandler", _FakeCallbackHandler)
     monkeypatch.setattr(svc, "CallbackHandler", _FakeCallbackHandler)
-    svc.get_langfuse_client.cache_clear()
+    langfuse.get_langfuse_client.cache_clear()
 
     run_context = svc.build_run_context(
         user_id="user-1",
@@ -80,9 +82,10 @@ def test_build_run_context_includes_trace_metadata(monkeypatch):
     monkeypatch.setenv("LANGFUSE_SECRET_KEY", "sk-test")
     monkeypatch.setenv("LANGFUSE_BASE_URL", "https://cloud.langfuse.example")
     monkeypatch.delenv("LANGFUSE_ENABLED", raising=False)
-    monkeypatch.setattr(svc, "Langfuse", _FakeLangfuseClient)
+    monkeypatch.setattr(langfuse, "Langfuse", _FakeLangfuseClient)
+    monkeypatch.setattr(langfuse, "CallbackHandler", _FakeCallbackHandler)
     monkeypatch.setattr(svc, "CallbackHandler", _FakeCallbackHandler)
-    svc.get_langfuse_client.cache_clear()
+    langfuse.get_langfuse_client.cache_clear()
 
     run_context = svc.build_run_context(
         user_id="user-1",
@@ -148,7 +151,7 @@ def test_callback_failure_closes_new_observation_without_blocking_run(run_contex
 def test_build_run_context_merges_evaluation_metadata_and_tags(monkeypatch):
     monkeypatch.delenv("LANGFUSE_PUBLIC_KEY", raising=False)
     monkeypatch.delenv("LANGFUSE_SECRET_KEY", raising=False)
-    svc.get_langfuse_client.cache_clear()
+    langfuse.get_langfuse_client.cache_clear()
 
     run_context = svc.build_run_context(
         user_id="user-1",
@@ -226,11 +229,11 @@ def test_terminal_root_exports_persisted_trace_identity_and_duration(monkeypatch
     client = SimpleNamespace(api=SimpleNamespace(opentelemetry=SimpleNamespace(
         export_traces=lambda **kwargs: sent.append(kwargs)
     )))
-    monkeypatch.setattr(svc, "get_langfuse_client", lambda: client)
+    monkeypatch.setattr(langfuse, "get_langfuse_client", lambda: client)
     start = datetime(2026, 9, 29, 10, 0, tzinfo=UTC)
     end = datetime(2026, 9, 29, 10, 2, tzinfo=UTC)
 
-    svc._export_turn_root(
+    langfuse.export_turn_root(
         trace_id="a" * 32, root_id="b" * 16, turn_id="turn-1", thread_id="thread-1",
         uid="user-1", status="completed", created_at=start, finished_at=end,
     )
@@ -245,7 +248,7 @@ def test_terminal_root_exports_persisted_trace_identity_and_duration(monkeypatch
 
 
 async def test_get_trace_url_by_id_async_uses_precreated_trace_id(run_context_with_last_trace):
-    trace_url = await svc.get_trace_url_by_id_async("trace-turn-1")
+    trace_url = await langfuse.get_trace_url_by_id_async("trace-turn-1")
 
     assert trace_url == "https://langfuse.local/trace/trace-turn-1"
 
@@ -254,7 +257,7 @@ async def test_get_trace_url_by_id_async_rejects_non_http_url(run_context_with_l
     client = svc.get_langfuse_client()
     client.get_trace_url = lambda **_kwargs: "javascript:alert(1)"
 
-    trace_url = await svc.get_trace_url_by_id_async("trace-runtime")
+    trace_url = await langfuse.get_trace_url_by_id_async("trace-runtime")
 
     assert trace_url is None
 
@@ -263,7 +266,7 @@ async def test_get_trace_url_by_id_async_rejects_other_https_origin(run_context_
     client = svc.get_langfuse_client()
     client.get_trace_url = lambda **_kwargs: "https://attacker.example/project/1/traces/trace-runtime"
 
-    trace_url = await svc.get_trace_url_by_id_async("trace-runtime")
+    trace_url = await langfuse.get_trace_url_by_id_async("trace-runtime")
 
     assert trace_url is None
 
@@ -271,7 +274,7 @@ async def test_get_trace_url_by_id_async_rejects_other_https_origin(run_context_
 async def test_get_trace_url_by_id_async_fails_closed_for_invalid_config(run_context_with_last_trace, monkeypatch):
     monkeypatch.setenv("LANGFUSE_BASE_URL", "not-a-url")
 
-    trace_url = await svc.get_trace_url_by_id_async("trace-runtime")
+    trace_url = await langfuse.get_trace_url_by_id_async("trace-runtime")
 
     assert trace_url is None
 
@@ -281,6 +284,6 @@ async def test_get_trace_url_by_id_async_accepts_default_cloud_origin(run_contex
     client = svc.get_langfuse_client()
     client.get_trace_url = lambda **_kwargs: "https://cloud.langfuse.com/project/1/traces/trace-runtime"
 
-    trace_url = await svc.get_trace_url_by_id_async("trace-runtime")
+    trace_url = await langfuse.get_trace_url_by_id_async("trace-runtime")
 
     assert trace_url == "https://cloud.langfuse.com/project/1/traces/trace-runtime"

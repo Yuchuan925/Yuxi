@@ -17,17 +17,8 @@ export const getTools = async (category = null) => {
   return apiGet(`${BASE_URL}${query}`)
 }
 
-/**
- * 获取工具选项列表（用于下拉选择）
- * @returns {Promise} - 工具选项
- */
-export const getToolOptions = async () => {
-  return apiGet(`${BASE_URL}/options`)
-}
-
 export const toolApi = {
   getTools,
-  getToolOptions
 }
 
 export default toolApi

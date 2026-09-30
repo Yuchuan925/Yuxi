@@ -5,7 +5,7 @@ import sys
 
 import pytest
 
-from yuxi.modules.agents.runtime import builtin as buildin
+from yuxi.modules.agents.runtime import builtin as builtin
 from yuxi.modules.agents import presets
 from yuxi.modules.agents.runtime.builtin.chatbot.graph import ChatbotAgent
 from yuxi.modules.agents.runtime.builtin.subagent.graph import SubAgentBackend
@@ -86,13 +86,13 @@ def test_duplicate_preset_slug_is_rejected(tmp_path, monkeypatch):
 
 def test_explicit_backend_ids_create_independent_instances():
     """后端工厂不共享可变实例状态。"""
-    assert buildin.BUILTIN_BACKENDS == {
+    assert builtin.BUILTIN_BACKENDS == {
         "ChatbotAgent": ChatbotAgent,
         "SubAgentBackend": SubAgentBackend,
     }
-    for backend_id, expected_type in buildin.BUILTIN_BACKENDS.items():
-        first = buildin.get_agent_backend(backend_id)
-        second = buildin.get_agent_backend(backend_id)
+    for backend_id, expected_type in builtin.BUILTIN_BACKENDS.items():
+        first = builtin.get_agent_backend(backend_id)
+        second = builtin.get_agent_backend(backend_id)
         assert type(first) is expected_type and type(second) is expected_type
         assert first is not second
         first.test_state = "first-run"
@@ -101,8 +101,8 @@ def test_explicit_backend_ids_create_independent_instances():
 
 def test_unregistered_backend_is_unavailable():
     """未知后端使用明确领域错误，供调用入口映射响应。"""
-    with pytest.raises(buildin.AgentBackendNotFoundError, match="UnregisteredBackend"):
-        buildin.get_agent_backend("UnregisteredBackend")
+    with pytest.raises(builtin.AgentBackendNotFoundError, match="UnregisteredBackend"):
+        builtin.get_agent_backend("UnregisteredBackend")
 
 
 @pytest.mark.asyncio
@@ -112,12 +112,13 @@ async def test_backend_info_uses_registry_id_after_class_rename(monkeypatch):
     class RenamedBackend(ChatbotAgent):
         """使用不同 Python 类名模拟内部重命名。"""
 
-    monkeypatch.setattr(buildin, "BUILTIN_BACKENDS", {"stable-backend-id": RenamedBackend})
-    infos = await buildin.list_agent_backend_info()
+    monkeypatch.setattr(builtin, "BUILTIN_BACKENDS", {"stable-backend-id": RenamedBackend})
+    infos = await builtin.list_agent_backend_info()
     assert len(infos) == 1
     assert infos[0]["backend_id"] == "stable-backend-id"
     assert "id" not in infos[0]
     assert infos[0]["name"] == "智能助手"
+    assert "capabilities" not in infos[0]
 
 
 def test_backend_import_does_not_scan_or_create_instances():
@@ -127,11 +128,11 @@ def test_backend_import_does_not_scan_or_create_instances():
     code = """
 from importlib import reload
 from unittest.mock import patch
-import yuxi.modules.agents.runtime.builtin as buildin
+import yuxi.modules.agents.runtime.builtin as builtin
 with patch('pathlib.Path.iterdir', side_effect=AssertionError('directory scan')), \
-     patch.object(buildin.ChatbotAgent, '__init__', side_effect=AssertionError('eager instance')):
-    reload(buildin)
-assert set(buildin.BUILTIN_BACKENDS) == {'ChatbotAgent', 'SubAgentBackend'}
+     patch.object(builtin.ChatbotAgent, '__init__', side_effect=AssertionError('eager instance')):
+    reload(builtin)
+assert set(builtin.BUILTIN_BACKENDS) == {'ChatbotAgent', 'SubAgentBackend'}
 """
     result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
@@ -146,7 +147,7 @@ async def test_each_graph_uses_its_own_run_context(monkeypatch, backend_id):
     from unittest.mock import AsyncMock
     from langchain_core.language_models.fake_chat_models import FakeListChatModel
 
-    backend = buildin.get_agent_backend(backend_id)
+    backend = builtin.get_agent_backend(backend_id)
     module = import_module(type(backend).__module__)
     monkeypatch.setattr(module, "sync_agent_context_skills", AsyncMock())
     monkeypatch.setattr(module, "resolve_configured_runtime_tools", AsyncMock(return_value=[]))
@@ -184,7 +185,6 @@ def test_shipping_skills_keep_required_dependencies():
         "query_kb",
         "find_kb_document",
         "open_kb_document",
-        "get_mindmap",
         "search_file",
         "download_kb_file",
     ]

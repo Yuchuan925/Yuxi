@@ -126,21 +126,17 @@ async def test_artifact_allows_project_user_data_and_authorized_skills(live_file
 
 
 @pytest.mark.asyncio
-async def test_artifact_preview_uses_shared_file_renderer(live_files, monkeypatch):
+async def test_artifact_preview_converts_office_file(live_files, monkeypatch):
     path = "/home/gem/user-data/projects/11111111-1111-4111-8111-111111111111/report.docx"
     live_files.add_runtime_file(path, b"docx bytes")
     captured = {}
-    sentinel = {"preview_type": "pdf", "supported": True}
 
-    async def render_preview(file_path, raw_content, *, office_cache_key):
-        captured.update(
-            path=file_path,
-            raw_content=raw_content,
-            office_cache_key=office_cache_key,
-        )
-        return sentinel
+    async def convert_office_to_pdf(filename, raw_content):
+        captured.update(filename=filename, raw_content=raw_content)
+        return b"%PDF-1.4 preview"
 
-    monkeypatch.setattr(svc, "preview_workspace_file", render_preview)
+    monkeypatch.setattr(svc, "is_office_pdf_preview_file", lambda _path: True)
+    monkeypatch.setattr(svc, "convert_office_to_pdf", convert_office_to_pdf)
 
     response = await svc.resolve_thread_artifact_view(
         thread_id="thread-1",
@@ -150,12 +146,9 @@ async def test_artifact_preview_uses_shared_file_renderer(live_files, monkeypatc
         preview=True,
     )
 
-    assert response is sentinel
-    assert captured == {
-        "path": path,
-        "raw_content": b"docx bytes",
-        "office_cache_key": f"artifact:user-1:{path}",
-    }
+    assert response.preview_type == "pdf"
+    assert response.content == b"%PDF-1.4 preview"
+    assert captured == {"filename": "report.docx", "raw_content": b"docx bytes"}
 
 
 @pytest.mark.asyncio
@@ -166,11 +159,7 @@ async def test_artifact_preview_reports_oversized_file_without_rendering(live_fi
         assert max_bytes == svc.MAX_BINARY_PREVIEW_SIZE_BYTES
         raise FileTransferLimitError("file exceeds transfer limit")
 
-    async def reject_render(*_args, **_kwargs):
-        raise AssertionError("oversized preview must not reach the renderer")
-
     monkeypatch.setattr(live_files, "download_authorized_file_to_path", reject_large_file)
-    monkeypatch.setattr(svc, "preview_workspace_file", reject_render)
 
     response = await svc.resolve_thread_artifact_view(
         thread_id="thread-1",

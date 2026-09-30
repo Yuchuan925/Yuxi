@@ -19,7 +19,6 @@ import { isBuiltinAgent, useAgentStore } from '@/stores/agent'
 import { useUserStore } from '@/stores/user'
 import { generatePixelAvatar } from '@/utils/pixelAvatar'
 import { MAX_IMAGE_UPLOAD_SIZE_BYTES, MAX_IMAGE_UPLOAD_SIZE_MB } from '@/utils/upload_limits'
-import { normalizeAgent } from '@/utils/agentConfigUtils'
 
 const props = defineProps({
   backendOptions: { type: Array, default: () => [] }
@@ -252,7 +251,7 @@ const openCreate = () => {
 }
 
 const openEdit = async (agent) => {
-  const agentId = typeof agent === 'string' ? agent : agent?.id
+  const agentId = typeof agent === 'string' ? agent : agent?.agent_id
   if (!agentId) return
 
   const detail = await agentStore.fetchAgentDetail(agentId, true)
@@ -264,7 +263,7 @@ const openEdit = async (agent) => {
   editingAgentId.value = detail.id
   agentModalActiveTab.value = 'basic'
   Object.assign(agentForm, {
-    slug: detail.id || detail.slug || '',
+    slug: detail.agent_id || '',
     name: detail.name || '',
     backend_id: detail.backend_id || DEFAULT_AGENT_BACKEND_ID,
     description: detail.description || '',
@@ -368,7 +367,7 @@ const saveAgent = async () => {
       message.success('智能体已保存')
     } else {
       const created = await agentStore.createAgent(payload)
-      emit('saved', { mode: 'create', agent: normalizeAgent(created) })
+      emit('saved', { mode: 'create', agent: created })
       message.success('智能体已创建')
     }
     showAgentModal.value = false

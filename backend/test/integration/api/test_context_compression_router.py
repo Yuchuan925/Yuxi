@@ -87,7 +87,6 @@ async def test_compress_thread_persists_canonical_checkpoint_through_http(
         await db.commit()
 
     class Agent:
-        capabilities = ["context_compression"]
         context_schema = BaseContext
 
         async def get_graph(self, *, context):

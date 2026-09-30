@@ -17,6 +17,9 @@ pytestmark = pytest.mark.e2e
 @pytest_asyncio.fixture
 async def current_loop_pg_manager():
     """让全局 PostgreSQL 引擎绑定到当前测试事件循环。"""
+    from yuxi.bootstrap.models import load_models
+
+    load_models()
     if pg_manager.async_engine is not None:
         await pg_manager.async_engine.dispose()
     pg_manager._initialized = False
@@ -61,62 +64,12 @@ async def test_stdio_mcp_payload_is_rejected_without_side_effects(e2e_client, e2
             marker.unlink(missing_ok=True)
 
 
-async def test_legacy_stdio_mcp_is_disabled_without_starting_process(
-    e2e_client,
-    e2e_headers,
-    current_loop_pg_manager,
-):
-    """历史 stdio 记录应被迁移逻辑和运行时加载双重拦截。"""
-    unique_id = uuid.uuid4().hex[:8]
-    slug = f"pytest-legacy-stdio-{unique_id}"
-    marker = Path(f"/tmp/{slug}.marker")
-
-    try:
-        async with current_loop_pg_manager.get_async_session_context() as db:
-            db.add(
-                MCPServer(
-                    slug=slug,
-                    name="pytest legacy stdio MCP",
-                    transport="stdio",
-                    command="sh",
-                    args=["-c", f"touch {marker}"],
-                    enabled=1,
-                    created_by="admin",
-                    updated_by="admin",
-                )
-            )
-            await db.commit()
-
-        await ensure_builtin_mcp_servers_in_db()
-        assert await get_mcp_tools(slug, cache=False, force_refresh=True) == []
-
-        async with current_loop_pg_manager.get_async_session_context() as db:
-            server = await db.scalar(select(MCPServer).where(MCPServer.slug == slug))
-            assert server is not None
-            assert server.enabled == 0
-
-        test_response = await e2e_client.post(f"/api/system/mcp-servers/{slug}/test", headers=e2e_headers)
-        assert test_response.status_code == 400, test_response.text
-        assert not marker.exists(), "legacy stdio MCP created a file in the API container"
-    finally:
-        async with current_loop_pg_manager.get_async_session_context() as db:
-            await db.execute(delete(MCPServer).where(MCPServer.slug == slug))
-            await db.commit()
-        marker.unlink(missing_ok=True)
-
-
 async def test_direct_stdio_config_cannot_start_process(tmp_path):
     """直接传入内置标识的 stdio 配置也不能启动命令。"""
-    from yuxi.modules.extensions.mcp.service import get_mcp_client
-
     marker = tmp_path / "stdio.marker"
     config = {"deepwiki-official": {"transport": "stdio", "command": "sh", "args": ["-c", f"touch {marker}"]}}
     with pytest.raises(ValueError, match="不支持 stdio"):
         await get_mcp_tools("deepwiki-official", additional_servers=config, cache=False)
-    with pytest.raises(ValueError, match="不支持 stdio"):
-        client = await get_mcp_client(config)
-        if client is not None:
-            await client.get_tools()
     assert not marker.exists()
 
 
@@ -129,9 +82,8 @@ async def test_retired_chart_removed_and_deepwiki_registered(current_loop_pg_man
             MCPServer(
                 slug="mcp-server-chart",
                 name="Legacy chart",
-                transport="stdio",
-                command="npx",
-                args=["-y", "@antv/mcp-server-chart"],
+                transport="streamable_http",
+                url="https://legacy-chart.invalid/mcp",
                 enabled=1,
                 created_by="system",
                 updated_by="system",
@@ -147,7 +99,6 @@ async def test_retired_chart_removed_and_deepwiki_registered(current_loop_pg_man
             assert server is not None
             assert server.transport == "streamable_http"
             assert server.url == "https://mcp.deepwiki.com/mcp"
-            assert server.command is None
     finally:
         async with current_loop_pg_manager.get_async_session_context() as db:
             await db.execute(

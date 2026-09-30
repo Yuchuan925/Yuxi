@@ -403,7 +403,7 @@ const toggleSelection = (scopeKey, accessLevel, value, checked) => {
 const loadDepartments = async () => {
   try {
     const result = await departmentApi.getDepartments()
-    departments.value = result.departments || result || []
+    departments.value = result || []
   } catch (error) {
     console.error('加载部门列表失败:', error)
   }

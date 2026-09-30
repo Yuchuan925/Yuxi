@@ -304,7 +304,6 @@ async def get_evaluation_run_results(
     page: int = 1,
     page_size: int = 20,
     result_filter: str | None = None,
-    error_only: bool = False,
     current_user: User = Depends(require_knowledge_base_read),
 ):
     """获取评估运行结果"""
@@ -316,13 +315,10 @@ async def get_evaluation_run_results(
 
         if result_filter not in {None, "all", "answer_errors", "errors_or_low_recall"}:
             raise HTTPException(status_code=400, detail="无效的评估结果筛选条件")
-        if result_filter is not None and error_only:
-            raise HTTPException(status_code=400, detail="不能同时使用 result_filter 和 error_only")
 
-        resolved_filter = "legacy_errors" if error_only else result_filter or "all"
         service = EvaluationService()
         results = await service.get_run_results(
-            kb_id, run_id, page=page, page_size=page_size, result_filter=resolved_filter
+            kb_id, run_id, page=page, page_size=page_size, result_filter=result_filter or "all"
         )
         return {"message": "success", "data": results}
     except HTTPException:

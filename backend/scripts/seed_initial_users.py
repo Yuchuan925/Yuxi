@@ -10,10 +10,8 @@ from sqlalchemy import func, select
 
 
 APP_ROOT = Path(__file__).resolve().parents[1]
-for import_path in (APP_ROOT, APP_ROOT / "package"):
-    import_path_str = str(import_path)
-    if import_path_str not in sys.path:
-        sys.path.insert(0, import_path_str)
+if str(APP_ROOT) not in sys.path:
+    sys.path.insert(0, str(APP_ROOT))
 
 SUPERADMIN_UID = "zwj"
 SUPERADMIN_NAME = "张文杰"
@@ -66,8 +64,10 @@ async def seed_initial_users() -> None:
 
     try:
         pg_manager.initialize()
-        await pg_manager.create_business_tables()
-        await pg_manager.ensure_business_schema()
+        # Schema 由 Compose 中的 schema-init 独占创建，这里只校验版本后写入种子数据。
+        from yuxi.infrastructure.postgres.schema import require_current_schema
+
+        await require_current_schema(pg_manager)
 
         async with pg_manager.get_async_session_context() as session:
             await ensure_uninitialized(session)

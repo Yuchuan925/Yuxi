@@ -95,7 +95,7 @@ async def get_thread_history(*, db: AsyncSession, scope: ActorScope, thread_id: 
             or ([message.image_content] if message.image_content else []),
         }
         if message.role == "assistant":
-            item.update(parse_assistant_message_body(message.content, metadata))
+            item.update(parse_assistant_message_body(message.content))
         if message.tool_calls:
             item["tool_calls"] = [_serialize_tool_call(call) for call in message.tool_calls]
         history.append(item)
@@ -174,7 +174,7 @@ def _serialize_model_audit(message: Any) -> dict[str, Any]:
     model_run_id = metadata.get("model_run_id")
     return {
         **_serialize_audit_base(message, metadata),
-        **parse_assistant_message_body(message.content, metadata),
+        **parse_assistant_message_body(message.content),
         "type": "ai",
         "usage": dict(message.usage) if isinstance(message.usage, dict) else None,
         "model_run_id": model_run_id if isinstance(model_run_id, str) else None,

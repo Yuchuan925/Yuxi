@@ -3,7 +3,7 @@ import { apiGet, apiPost, apiPut, apiDelete } from './base'
 const API_KEY_BASE_PATH = '/api/user/apikey'
 
 export const apikeyApi = {
-  list: (skip = 0, limit = 100) => apiGet(`${API_KEY_BASE_PATH}/`, { params: { skip, limit } }),
+  list: () => apiGet(`${API_KEY_BASE_PATH}/`),
 
   create: (data) => apiPost(`${API_KEY_BASE_PATH}/`, data),
 

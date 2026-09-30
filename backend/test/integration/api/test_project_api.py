@@ -10,7 +10,7 @@ from types import SimpleNamespace
 import asyncpg
 import pytest
 import pytest_asyncio
-from sqlalchemy import delete, select
+from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from test.live_api_cleanup import (
     make_test_conversation_metadata,
@@ -20,7 +20,7 @@ from test.live_api_cleanup import (
 from yuxi.modules.workspace.repositories.projects import ProjectRepository
 from yuxi.modules.workspace.services.projects import delete_project_view
 from yuxi.modules.agents.services.subagents import SubagentRunService
-from yuxi.modules.agents.models.threads import Conversation, ConversationStats, SubagentThread
+from yuxi.modules.agents.models.threads import Conversation, SubagentThread
 from yuxi.modules.workspace.models import Project
 from yuxi.modules.identity.models import User
 from yuxi.modules.workspace.paths import user_workdir_host_dir
@@ -103,11 +103,6 @@ async def project_lifecycle_database():
         finally:
             async with session_factory() as session:
                 await session.execute(delete(SubagentThread).where(SubagentThread.uid == uid))
-                await session.execute(
-                    delete(ConversationStats).where(
-                        ConversationStats.conversation_id.in_(select(Conversation.id).where(Conversation.uid == uid))
-                    )
-                )
                 await session.execute(delete(Conversation).where(Conversation.uid == uid))
                 await session.execute(delete(Project).where(Project.uid == uid))
                 await session.execute(delete(User).where(User.uid == uid))

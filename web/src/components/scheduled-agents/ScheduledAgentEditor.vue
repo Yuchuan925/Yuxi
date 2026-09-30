@@ -38,7 +38,7 @@ const defaultSchedule = {
 }
 
 const agentValues = computed(() =>
-  props.agents.map((agent) => agent.slug || agent.id).filter(Boolean)
+  props.agents.map((agent) => agent.agent_id).filter(Boolean)
 )
 
 function initialForm(job) {
@@ -63,13 +63,13 @@ const nameInput = ref(null)
 const agentDropdownOpen = ref(false)
 const agentSearch = ref('')
 const selectedAgentLabel = computed(() => {
-  const agent = props.agents.find((item) => (item.slug || item.id) === form.agent_slug)
+  const agent = props.agents.find((item) => item.agent_id === form.agent_slug)
   return agent?.name || form.agent_slug || '选择智能体'
 })
 const filteredAgents = computed(() => {
   const query = agentSearch.value.trim().toLocaleLowerCase()
   return props.agents.filter((agent) =>
-    [agent.name, agent.slug, agent.id].some((value) =>
+    [agent.name, agent.agent_id].some((value) =>
       String(value || '')
         .toLocaleLowerCase()
         .includes(query)
@@ -79,7 +79,7 @@ const filteredAgents = computed(() => {
 
 /** 选择任务智能体，不改变全局对话的智能体。 */
 function selectAgent(agent) {
-  form.agent_slug = agent.slug || agent.id
+  form.agent_slug = agent.agent_id
   agentDropdownOpen.value = false
 }
 
@@ -231,20 +231,20 @@ function changeFrequency(frequency) {
               <div role="menu" aria-label="执行智能体">
                 <button
                   v-for="agent in filteredAgents"
-                  :key="agent.slug || agent.id"
+                  :key="agent.agent_id"
                   type="button"
                   role="menuitemradio"
-                  :aria-checked="form.agent_slug === (agent.slug || agent.id)"
+                  :aria-checked="form.agent_slug === agent.agent_id"
                   :disabled="saving"
                   class="config-dropdown-item"
-                  :class="{ selected: form.agent_slug === (agent.slug || agent.id) }"
+                  :class="{ selected: form.agent_slug === agent.agent_id }"
                   @click="selectAgent(agent)"
                 >
                   <span class="config-dropdown-item-label">{{
-                    agent.name || agent.slug || agent.id
+                    agent.name || agent.agent_id
                   }}</span>
                   <Check
-                    v-if="form.agent_slug === (agent.slug || agent.id)"
+                    v-if="form.agent_slug === agent.agent_id"
                     :size="14"
                     class="config-dropdown-item-check"
                   />

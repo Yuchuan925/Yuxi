@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 import yuxi.modules.documents.service as ocr_service
-from yuxi.modules.extensions.tools.builtin import tools as buildin_tools
+from yuxi.modules.extensions.tools.builtin import tools as builtin_tools
 from yuxi.modules.extensions.tools.builtin.tools import ocr_parse_file
 
 pytestmark = pytest.mark.unit
@@ -32,7 +32,7 @@ def _patch_sandbox_backend(monkeypatch: pytest.MonkeyPatch, files: dict[str, byt
         def upload_authorized_file_from_path(self, path, source_path):
             files[path] = Path(source_path).read_bytes()
 
-    monkeypatch.setattr(buildin_tools, "ProvisionerSandboxBackend", FakeBackend, raising=False)
+    monkeypatch.setattr(builtin_tools, "ProvisionerSandboxBackend", FakeBackend, raising=False)
     return files
 
 

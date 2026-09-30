@@ -604,10 +604,6 @@ async def _delete_test_conversation_rows(conn: asyncpg.Connection, thread_ids_li
         "OR child_conversation_id = ANY($1::int[])",
         conversation_ids,
     )
-    await conn.execute(
-        "DELETE FROM conversation_stats WHERE conversation_id = ANY($1::int[])",
-        conversation_ids,
-    )
     await conn.execute("DELETE FROM conversations WHERE id = ANY($1::int[])", conversation_ids)
     await conn.execute(
         "DELETE FROM projects WHERE id = ANY($1::text[]) "

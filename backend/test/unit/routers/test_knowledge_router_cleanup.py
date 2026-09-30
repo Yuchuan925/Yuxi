@@ -7,7 +7,6 @@ from fastapi import HTTPException, UploadFile
 import yuxi.api.routers.knowledge.management as knowledge_router
 from yuxi.modules.knowledge.read_models import KnowledgeBaseDetail
 import yuxi.modules.knowledge.services.tasks as knowledge_task_service
-from yuxi.modules.tasks.registry import get_task_definition
 
 pytestmark = pytest.mark.asyncio
 
@@ -626,53 +625,6 @@ async def test_add_uploaded_documents_creates_records_without_task(monkeypatch):
         },
         "operator_id": "uid-user",
     }
-
-
-async def test_virtual_folder_migration_uses_registered_durable_handler(monkeypatch):
-    captured = {}
-
-    async def fake_ensure_database_supports_documents(kb_id: str, operation: str) -> None:
-        captured["ensure"] = (kb_id, operation)
-
-    async def fake_enqueue_unique_by_payload(**kwargs):
-        captured["enqueue"] = kwargs
-        return SimpleNamespace(id="task_migration_1"), True
-
-    async def fake_migrate(context, *, kb_id: str, operator_id: str):
-        captured["handler"] = (context.payload, kb_id, operator_id)
-        return {"processed_steps": 1}
-
-    monkeypatch.setattr(
-        knowledge_router,
-        "_ensure_database_supports_documents",
-        fake_ensure_database_supports_documents,
-    )
-    monkeypatch.setattr(knowledge_router.tasker, "enqueue_unique_by_payload", fake_enqueue_unique_by_payload)
-    monkeypatch.setattr(knowledge_task_service.knowledge_folder_service, "migrate_virtual_folder_data", fake_migrate)
-
-    response = await knowledge_router.start_virtual_folder_migration(
-        "kb_1",
-        current_user=SimpleNamespace(uid="uid-user"),
-    )
-
-    assert response == {"task_id": "task_migration_1", "created": True}
-    assert captured["ensure"] == ("kb_1", "虚拟文件夹转换")
-    assert captured["enqueue"] == {
-        "name": "转换知识库历史虚拟文件夹",
-        "task_type": knowledge_router.VIRTUAL_FOLDER_MIGRATION_TASK_TYPE,
-        "payload": {"kb_id": "kb_1", "operator_id": "uid-user"},
-        "payload_match": {"kb_id": "kb_1"},
-    }
-
-    definition = get_task_definition(knowledge_router.VIRTUAL_FOLDER_MIGRATION_TASK_TYPE)
-    result = await definition.load_handler()(FakeTaskContext(captured["enqueue"]["payload"]))
-
-    assert result == {"processed_steps": 1}
-    assert captured["handler"] == (
-        {"kb_id": "kb_1", "operator_id": "uid-user"},
-        "kb_1",
-        "uid-user",
-    )
 
 
 async def test_parse_documents_accepts_payload_with_params(monkeypatch):

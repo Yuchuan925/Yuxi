@@ -111,11 +111,10 @@ OpenAI Completions API 兼容供应商的 `chat` 模型可以配置「模型请�
 
 在供应商的已启用模型列表中移除模型。Web 页面不会让当前默认模型直接移除，先在系统配置中换用其他模型再操作；直接调用管理 API 时需要自行保证默认引用仍然有效。知识库的嵌入模型变更后，按知识库页面重新建立索引。
 
-旧版 `provider/model`、旧知识库 JSON 模型字段以及配置文件中的 `model_names`、`embed_model_names`、`reranker_names` 不属于当前运行时来源。升级后如果历史 Agent 或知识库仍保存旧格式，请在界面重新选择模型并保存；知识库嵌入模型变更后还要重建索引。
 
 ## Ollama
 
-当前版本没有 Ollama provider 类型，也没有 Ollama embedding 运行时适配。已有 Ollama embedding 知识库需要选择新的嵌入模型并重建索引。
+当前版本没有 Ollama provider 类型，也没有 Ollama embedding 运行时适配。
 
 ## 排查模型不可用
 

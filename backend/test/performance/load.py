@@ -203,7 +203,7 @@ def contains_model_output(value: object) -> bool:
         event_type = value.get("type")
         if event_type == "message_delta" and any(
             isinstance(value.get(key), str) and bool(value[key])
-            for key in ("content", "reasoning_content", "additional_reasoning_content")
+            for key in ("content", "reasoning_content")
         ):
             return True
         if event_type in {"tool_call", "tool_call_delta"} and any(

@@ -117,9 +117,9 @@ async def test_read_workspace_file_content_returns_unsupported_for_unreadable_fi
 
     result = await svc.read_workspace_file_content(path=f"/{filename}", current_user=user)
 
-    assert result["content"] is None
-    assert result["preview_type"] == "unsupported"
-    assert result["supported"] is False
+    assert result.content is None
+    assert result.preview_type == "unsupported"
+    assert result.supported is False
 
 
 @pytest.mark.asyncio
@@ -142,13 +142,10 @@ async def test_read_workspace_file_content_returns_pdf_preview_for_office_file(
     monkeypatch.setattr(file_preview, "convert_office_to_pdf", fake_convert)
 
     result = await svc.read_workspace_file_content(path="/demo.docx", current_user=user)
-    body = b""
-    async for chunk in result.body_iterator:
-        body += chunk
 
+    assert result.preview_type == "pdf"
     assert result.media_type == "application/pdf"
-    assert result.headers["x-yuxi-preview-type"] == "pdf"
-    assert body == b"%PDF-1.4\npreview"
+    assert result.content == b"%PDF-1.4\npreview"
 
 
 @pytest.mark.asyncio
@@ -164,9 +161,9 @@ async def test_read_workspace_file_content_rejects_xlsx_preview(
 
     result = await svc.read_workspace_file_content(path="/sheet.xlsx", current_user=user)
 
-    assert result["content"] is None
-    assert result["preview_type"] == "unsupported"
-    assert result["supported"] is False
+    assert result.content is None
+    assert result.preview_type == "unsupported"
+    assert result.supported is False
 
 
 @pytest.mark.parametrize(
@@ -205,11 +202,8 @@ async def test_preview_workspace_file_caches_office_pdf_conversion(
     async def read_pdf() -> bytes:
         response = await svc.read_workspace_file_content(path=f"/{filename}", current_user=user)
         assert response.media_type == "application/pdf"
-        assert response.headers["x-yuxi-preview-type"] == "pdf"
-        body = b""
-        async for chunk in response.body_iterator:
-            body += chunk
-        return body
+        assert response.preview_type == "pdf"
+        return response.content
 
     assert await read_pdf() == b"%PDF-1.4\npreview"
     assert await read_pdf() == b"%PDF-1.4\npreview"
@@ -235,7 +229,7 @@ async def test_download_workspace_file_keeps_office_original_file(
 
     response = await svc.download_workspace_file(path="/slides.pptx", current_user=user)
     body = Path(response.path).read_bytes()
-    await response.background()
+    Path(response.path).unlink()
 
     assert response.media_type == "application/vnd.openxmlformats-officedocument.presentationml.presentation"
     assert body == b"presentation"

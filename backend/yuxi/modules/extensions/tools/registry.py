@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 class ToolExtraMetadata:
     """附加元数据（用装饰器注册）"""
 
-    category: str = ""  # 分类: buildin, knowledge, mysql, subagents, debug
+    category: str = ""  # 分类: builtin, knowledge
     tags: list[str] = field(default_factory=list)
     display_name: str = ""  # 显示名称（给人看的名字）
     icon: str = ""
@@ -50,7 +50,7 @@ def tool(
     """基于 langchain.tool 的拓展装饰器，同时注册元数据
 
     使用方式:
-    @tool(category="buildin", tags=["计算"], display_name="计算器")
+    @tool(category="builtin", tags=["计算"], display_name="计算器")
     def calculator(a: float, b: float, operation: str) -> float:
         ...
 

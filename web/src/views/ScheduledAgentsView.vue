@@ -100,7 +100,7 @@ function scheduleLabel(job) {
 
 function agentLabel(job) {
   return (
-    availableAgents.value.find((agent) => (agent.slug || agent.id) === job.agent_slug)?.name ||
+    availableAgents.value.find((agent) => agent.agent_id === job.agent_slug)?.name ||
     job.agent_slug
   )
 }

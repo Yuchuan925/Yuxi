@@ -3,7 +3,7 @@
 from datetime import datetime, timedelta
 from typing import Any
 
-from sqlalchemy import Integer, String, case, cast, distinct, func, literal, or_, select, text
+from sqlalchemy import Integer, String, and_, case, cast, distinct, func, literal, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from yuxi.modules.agents.repositories.definitions import AgentRepository
@@ -11,7 +11,7 @@ from yuxi.infrastructure.minio.client import normalize_public_minio_url
 from yuxi.modules.agents.models.messages import AUDIT_MESSAGE_TYPES, Message, ToolCall
 from yuxi.modules.agents.models.definitions import Agent
 from yuxi.modules.agents.models.runs import AgentRun
-from yuxi.modules.agents.models.threads import Conversation, ConversationStats
+from yuxi.modules.agents.models.threads import Conversation
 from yuxi.modules.identity.models import User
 from yuxi.shared.datetime import UTC, ensure_shanghai, format_utc_datetime, shanghai_now, utc_now
 
@@ -40,7 +40,7 @@ class DashboardRepository:
 
     @staticmethod
     def _conversation_token_totals(conversation_ids: list[int] | None = None):
-        """按会话汇总 Run 实测用量，保留缺失标记和无 Run 历史汇总。"""
+        """按会话汇总 Run 实测用量，保留缺失标记。"""
         reported = AgentRun.token_usage["usage_reported_call_count"].as_integer() > 0
         complete = AgentRun.token_usage["complete"].as_boolean().is_(True)
         value = AgentRun.token_usage["total"]["total_tokens"].as_integer()
@@ -54,28 +54,47 @@ class DashboardRepository:
             .group_by(AgentRun.conversation_id)
             .subquery()
         )
-        has_runs = run_totals.c.conversation_id.isnot(None)
-        legacy_tokens = func.nullif(ConversationStats.total_tokens, 0)
         return (
             select(
-                Conversation.id.label("conversation_id"),
-                case((has_runs, run_totals.c.total_tokens), else_=legacy_tokens).label("total_tokens"),
-                case((has_runs, run_totals.c.complete == 1), else_=legacy_tokens.isnot(None)).label("complete"),
+                run_totals.c.conversation_id.label("conversation_id"),
+                run_totals.c.total_tokens,
+                (run_totals.c.complete == 1).label("complete"),
             )
-            .where(Conversation.id.in_(conversation_ids) if conversation_ids is not None else True)
-            .outerjoin(run_totals, Conversation.id == run_totals.c.conversation_id)
-            .outerjoin(ConversationStats, Conversation.id == ConversationStats.conversation_id)
+            .where(run_totals.c.conversation_id.in_(conversation_ids) if conversation_ids is not None else True)
+            .subquery()
+        )
+
+    @staticmethod
+    def _counted_message_condition():
+        """参与会话消息计数的事实消息：排除审计消息。"""
+        return and_(
+            Message.message_type.isnot(None),
+            Message.message_type.notin_(AUDIT_MESSAGE_TYPES),
+        )
+
+    @staticmethod
+    def _message_count_totals():
+        """按会话统计消息数的事实子查询（与消息写入时的计数语义一致）。"""
+        return (
+            select(
+                Message.conversation_id.label("conversation_id"),
+                func.count(Message.id).label("message_count"),
+            )
+            .where(DashboardRepository._counted_message_condition())
+            .group_by(Message.conversation_id)
             .subquery()
         )
 
     async def get_conversation_token_usage(self, conversation_id: int) -> dict[str, Any]:
-        """读取与会话列表一致的实测 Token 汇总。"""
+        """读取与会话列表一致的实测 Token 汇总；无 Run 事实时暴露未知。"""
         totals = self._conversation_token_totals([conversation_id])
         row = (
             await self.db_session.execute(
                 select(totals.c.total_tokens, totals.c.complete).where(totals.c.conversation_id == conversation_id)
             )
-        ).one()
+        ).one_or_none()
+        if row is None:
+            return {"total_tokens": None, "token_usage_complete": False}
         return {"total_tokens": row.total_tokens, "token_usage_complete": bool(row.complete)}
 
     async def list_conversations(
@@ -117,8 +136,7 @@ class DashboardRepository:
         )
         rows = (
             await self.db_session.execute(
-                select(Conversation, ConversationStats, User)
-                .outerjoin(ConversationStats, Conversation.id == ConversationStats.conversation_id)
+                select(Conversation, User)
                 .outerjoin(User, Conversation.uid == User.uid)
                 .where(*filters)
                 .order_by(Conversation.updated_at.desc())
@@ -127,19 +145,30 @@ class DashboardRepository:
             )
         ).all()
 
-        token_totals = self._conversation_token_totals([conversation.id for conversation, _, _ in rows])
+        token_totals = self._conversation_token_totals([conversation.id for conversation, _ in rows])
         usage_by_conversation = {
             row.conversation_id: row for row in (await self.db_session.execute(select(token_totals))).all()
         }
-        agent_slugs = {conversation.agent_id for conversation, _, _ in rows if conversation.agent_id}
+        message_counts = self._message_count_totals()
+        message_count_by_conversation = {
+            row.conversation_id: row.message_count
+            for row in (
+                await self.db_session.execute(
+                    select(message_counts).where(
+                        message_counts.c.conversation_id.in_([conversation.id for conversation, _ in rows])
+                    )
+                )
+            ).all()
+        }
+        agent_slugs = {conversation.agent_id for conversation, _ in rows if conversation.agent_id}
         agents_by_slug: dict[str, Agent] = {}
         if agent_slugs:
             agents = await AgentRepository(self.db_session).list_by_slugs(list(agent_slugs))
             agents_by_slug = {agent.slug: agent for agent in agents}
 
         items = []
-        for conversation, stats, user in rows:
-            usage = usage_by_conversation[conversation.id]
+        for conversation, user in rows:
+            usage = usage_by_conversation.get(conversation.id)
             agent = agents_by_slug.get(conversation.agent_id)
             items.append(
                 {
@@ -155,9 +184,9 @@ class DashboardRepository:
                     "title": conversation.title,
                     "status": conversation.status,
                     "is_pinned": bool(conversation.is_pinned),
-                    "message_count": stats.message_count if stats else 0,
-                    "total_tokens": usage.total_tokens,
-                    "token_usage_complete": bool(usage.complete),
+                    "message_count": int(message_count_by_conversation.get(conversation.id, 0)),
+                    "total_tokens": usage.total_tokens if usage is not None else None,
+                    "token_usage_complete": bool(usage.complete) if usage is not None else False,
                     "created_at": format_utc_datetime(conversation.created_at) or "",
                     "updated_at": format_utc_datetime(conversation.updated_at) or "",
                 }
@@ -764,53 +793,19 @@ class DashboardRepository:
             )
 
         # 3. 消息深度分布 (0条, 1-2条, 3-5条, 6-10条, 11-20条, 20+条)
+        message_counts = self._message_count_totals()
+        depth_count = func.coalesce(message_counts.c.message_count, 0)
         depth_query = (
             select(
-                func.sum(case((func.coalesce(ConversationStats.message_count, 0) == 0, 1), else_=0)).label("d0"),
-                func.sum(
-                    case(
-                        (
-                            (func.coalesce(ConversationStats.message_count, 0) >= 1)
-                            & (func.coalesce(ConversationStats.message_count, 0) <= 2),
-                            1,
-                        ),
-                        else_=0,
-                    )
-                ).label("d1_2"),
-                func.sum(
-                    case(
-                        (
-                            (func.coalesce(ConversationStats.message_count, 0) >= 3)
-                            & (func.coalesce(ConversationStats.message_count, 0) <= 5),
-                            1,
-                        ),
-                        else_=0,
-                    )
-                ).label("d3_5"),
-                func.sum(
-                    case(
-                        (
-                            (func.coalesce(ConversationStats.message_count, 0) >= 6)
-                            & (func.coalesce(ConversationStats.message_count, 0) <= 10),
-                            1,
-                        ),
-                        else_=0,
-                    )
-                ).label("d6_10"),
-                func.sum(
-                    case(
-                        (
-                            (func.coalesce(ConversationStats.message_count, 0) >= 11)
-                            & (func.coalesce(ConversationStats.message_count, 0) <= 20),
-                            1,
-                        ),
-                        else_=0,
-                    )
-                ).label("d11_20"),
-                func.sum(case((func.coalesce(ConversationStats.message_count, 0) > 20, 1), else_=0)).label("d20_plus"),
+                func.sum(case((depth_count == 0, 1), else_=0)).label("d0"),
+                func.sum(case(((depth_count >= 1) & (depth_count <= 2), 1), else_=0)).label("d1_2"),
+                func.sum(case(((depth_count >= 3) & (depth_count <= 5), 1), else_=0)).label("d3_5"),
+                func.sum(case(((depth_count >= 6) & (depth_count <= 10), 1), else_=0)).label("d6_10"),
+                func.sum(case(((depth_count >= 11) & (depth_count <= 20), 1), else_=0)).label("d11_20"),
+                func.sum(case((depth_count > 20, 1), else_=0)).label("d20_plus"),
             )
             .select_from(Conversation)
-            .outerjoin(ConversationStats, Conversation.id == ConversationStats.conversation_id)
+            .outerjoin(message_counts, Conversation.id == message_counts.c.conversation_id)
             .join(User, Conversation.uid == User.uid)
             .join(Agent, Conversation.agent_id == Agent.slug)
             .where(*conversation_filters)
@@ -830,12 +825,12 @@ class DashboardRepository:
             select(
                 Conversation.agent_id,
                 func.count(Conversation.id).label("thread_count"),
-                func.coalesce(func.sum(ConversationStats.message_count), 0).label("message_count"),
+                func.coalesce(func.sum(message_counts.c.message_count), 0).label("message_count"),
                 func.coalesce(func.sum(token_totals.c.total_tokens), 0).label("token_count"),
             )
             .select_from(Conversation)
-            .join(token_totals, Conversation.id == token_totals.c.conversation_id)
-            .outerjoin(ConversationStats, Conversation.id == ConversationStats.conversation_id)
+            .outerjoin(token_totals, Conversation.id == token_totals.c.conversation_id)
+            .outerjoin(message_counts, Conversation.id == message_counts.c.conversation_id)
             .join(User, Conversation.uid == User.uid)
             .join(Agent, Conversation.agent_id == Agent.slug)
             .where(*conversation_filters)
@@ -871,13 +866,13 @@ class DashboardRepository:
                 User.username,
                 User.avatar,
                 func.count(Conversation.id).label("thread_count"),
-                func.coalesce(func.sum(ConversationStats.message_count), 0).label("message_count"),
+                func.coalesce(func.sum(message_counts.c.message_count), 0).label("message_count"),
                 func.max(Conversation.updated_at).label("last_active_at"),
             )
             .select_from(Conversation)
             .join(User, Conversation.uid == User.uid)
             .join(Agent, Conversation.agent_id == Agent.slug)
-            .outerjoin(ConversationStats, Conversation.id == ConversationStats.conversation_id)
+            .outerjoin(message_counts, Conversation.id == message_counts.c.conversation_id)
             .where(*conversation_filters)
             .group_by(Conversation.uid, User.username, User.avatar)
             .order_by(func.count(Conversation.id).desc())
