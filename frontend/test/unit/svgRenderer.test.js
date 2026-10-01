@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { renderSvgBlocks } from '../../src/utils/svgRenderer.js'
+import { renderSvgBlocks } from '../../src/shared/lib/svgRenderer.js'
 
 test('SVG fenced blocks render safely with controls and preserve other content', () => {
   {

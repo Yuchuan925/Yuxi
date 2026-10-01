@@ -32,6 +32,7 @@ AGENT_RUN_SHAPE_CONSTRAINT_NAME = "ck_agent_runs_nonterminal_shape"
 AGENT_RUN_SHAPE_CONSTRAINT_SQL = """
     runtime_scope_id <> ''
  AND conversation_thread_id <> ''
+ AND runtime_scope_id = conversation_thread_id
  AND ((run_type = 'chat'
      AND runtime_scope_id = conversation_thread_id
      AND created_by_run_id IS NULL
@@ -42,8 +43,6 @@ AGENT_RUN_SHAPE_CONSTRAINT_SQL = """
      AND resume_from_run_id IS NOT NULL
      AND subagent_thread_relation_id IS NULL)
  OR (run_type = 'subagent'
-     AND created_by_run_id IS NOT NULL
-     AND resume_from_run_id IS NULL
      AND subagent_thread_relation_id IS NOT NULL))
 """
 
@@ -87,14 +86,14 @@ class AgentRun(Base):
         comment="跨 Run 订阅的持久执行顺序",
     )
     conversation_thread_id = Column(String(64), index=True, nullable=False, comment="Conversation thread ID snapshot")
-    runtime_scope_id = Column(String(64), index=True, nullable=False, comment="Root conversation runtime scope")
+    runtime_scope_id = Column(String(64), index=True, nullable=False, comment="Owning Thread runtime scope")
     runtime_cleanup_pending = Column(
         Boolean,
         nullable=False,
         default=False,
         server_default="false",
         index=True,
-        comment="Root terminal Run still owns execution runtime cleanup",
+        comment="Terminal Run still owns its runtime cleanup",
     )
     agent_slug = Column(String(64), index=True, nullable=False, comment="Agent slug")
     uid = Column(String(64), index=True, nullable=False, comment="UID")
@@ -116,7 +115,9 @@ class AgentRun(Base):
     conversation_id = Column(
         Integer, ForeignKey("conversations.id"), nullable=True, index=True, comment="Conversation ID"
     )
-    created_by_run_id = Column(String(64), nullable=True, index=True, comment="Run that created this run")
+    created_by_run_id = Column(
+        String(64), ForeignKey("agent_runs.id"), nullable=True, index=True, comment="Run that created this run"
+    )
     resume_from_run_id = Column(String(64), ForeignKey("agent_runs.id"), nullable=True)
     subagent_thread_relation_id = Column(
         Integer,
@@ -160,10 +161,9 @@ class AgentRun(Base):
     __table_args__ = (
         UniqueConstraint("turn_id", "id", name="uq_agent_runs_turn_id_id"),
         ForeignKeyConstraint(
-            ["turn_id", "created_by_run_id"],
-            ["agent_runs.turn_id", "agent_runs.id"],
-            name="fk_agent_runs_parent_same_turn",
-            use_alter=True,
+            ["turn_id", "conversation_thread_id"],
+            ["agent_turns.id", "agent_turns.conversation_thread_id"],
+            name="fk_agent_runs_owning_turn_thread",
         ),
         ForeignKeyConstraint(
             ["turn_id", "resume_from_run_id"],

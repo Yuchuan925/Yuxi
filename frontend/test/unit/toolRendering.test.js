@@ -27,19 +27,19 @@ before(async () => {
     server: { middlewareMode: true }
   })
   ;({ default: BaseToolCall } = await server.ssrLoadModule(
-    '/src/components/ToolCallingResult/BaseToolCall.vue'
+    '/src/modules/conversation/ui/tools/BaseToolCall.vue'
   ))
   ;({ default: ToolCallRenderer } = await server.ssrLoadModule(
-    '/src/components/ToolCallingResult/ToolCallRenderer.vue'
+    '/src/modules/conversation/ui/tools/ToolCallRenderer.vue'
   ))
   ;({ default: ReasoningBlock } = await server.ssrLoadModule(
-    '/src/components/ReasoningBlockComponent.vue'
+    '/src/modules/conversation/ui/ReasoningBlockComponent.vue'
   ))
   ;({ default: ToolCallsGroup } = await server.ssrLoadModule(
-    '/src/components/ToolCallsGroupComponent.vue'
+    '/src/modules/conversation/ui/ToolCallsGroupComponent.vue'
   ))
   ;({ parseToolCallResult } = await server.ssrLoadModule(
-    '/src/components/ToolCallingResult/toolRegistry.js'
+    '/src/modules/conversation/ui/tools/toolRegistry.js'
   ))
 })
 
@@ -235,4 +235,19 @@ test('知识库列表错误不显示暂无知识库', async () => {
   assert.match(html, /执行失败/)
   assert.match(html, /列表读取失败/)
   assert.doesNotMatch(html, /暂无知识库/)
+})
+
+
+test('incomplete 工具显示中断终态而非加载图标', async () => {
+  const html = await render(BaseToolCall, {
+    toolCall: { id: 'stopped', name: 'execute', args: {}, status: 'incomplete' },
+    defaultExpanded: true, appearance: 'timeline'
+  })
+  assert.match(html, /已中断/)
+  assert.doesNotMatch(html, /tool-loading|正在调用工具/)
+  const question = await render(ToolCallRenderer, {
+    toolCall: { id: 'question', name: 'ask_user_question', args: { questions: [] }, status: 'incomplete' }
+  })
+  assert.match(question, /已中断/)
+  assert.doesNotMatch(question, /tool-loading/)
 })

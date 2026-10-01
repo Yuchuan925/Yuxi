@@ -42,7 +42,7 @@ async def submit_public_event(
         event=payload.events[0],
         idempotency_key=idempotency_key,
     )
-    return {"object": "agent.thread.event.accepted", **result}
+    return {"object": "yuxi.session.event.accepted", **result}
 
 
 async def submit_thread_event(
@@ -55,12 +55,11 @@ async def submit_thread_event(
             scope=scope,
             thread_id=thread_id,
             idempotency_key=idempotency_key,
-            mode=event.mode,
+            mode=event.yuxi.mode,
             messages=input_messages_to_domain(event.input),
-            turn_id=event.turn_id,
-            model_spec=event.model_spec,
-            tool_approval_mode=event.tool_approval_mode,
-            attachment_file_ids=event.attachment_file_ids,
+            model_spec=event.yuxi.model_spec,
+            tool_approval_mode=event.yuxi.tool_approval_mode,
+            attachment_file_ids=event.yuxi.attachment_file_ids,
         )
     elif isinstance(event, ResumeEvent):
         result = await resume_turn(
@@ -77,8 +76,8 @@ async def submit_thread_event(
             db=db,
             scope=scope,
             thread_id=thread_id,
-            turn_id=event.turn_id,
-            expected_run_id=event.expected_run_id,
+            turn_id=event.yuxi.turn_id,
+            expected_run_id=event.yuxi.expected_run_id,
             idempotency_key=idempotency_key,
         )
     elif isinstance(event, ContinueEvent):
@@ -116,9 +115,15 @@ def public_stream_response(
     async def events():
         """输出可选创建回执并订阅持久生命周期事件。"""
         if initial_event is not None:
-            yield format_sse(initial_event, event="agent.thread.created")
-        async for event in stream_thread_events(scope=scope, thread_id=thread_id, after_cursor=after_cursor):
-            yield format_sse(event, event=event["type"], event_id=event.get("cursor"))
+            created = {
+                "type": "yuxi.session.created",
+                "event_id": initial_event["event_id"],
+                "session_id": thread_id,
+                "yuxi": initial_event,
+            }
+            yield format_sse(created, event=created["type"])
+        async for cursor, event in stream_thread_events(scope=scope, thread_id=thread_id, after_cursor=after_cursor):
+            yield format_sse(event, event=event["type"], event_id=cursor)
 
     return StreamingResponse(
         events(),

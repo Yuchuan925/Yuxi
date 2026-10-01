@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { fillProjectNameFromFolder, filterProjects, formatRelativeTime } from '../../src/utils/projectSelection.js'
+import { fillProjectNameFromFolder, filterProjects, formatRelativeTime } from '../../src/modules/projects/model/projectSelection.js'
 
 test('Project 搜索按名称过滤且无匹配时返回空列表', () => {
   const projects = [{ name: 'Desktop' }, { name: '论文写作' }, { name: 'Agent Skills' }]

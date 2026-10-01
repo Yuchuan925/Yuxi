@@ -81,7 +81,7 @@ test('问题弹窗按顺序收集全部答案', async () => {
         load(id) {
           if (id !== '\0virtual:human-approval-modal-test') return
           const source = readFileSync(
-            new URL('../../src/components/HumanApprovalModal.vue', import.meta.url),
+            new URL('../../src/modules/conversation/ui/HumanApprovalModal.vue', import.meta.url),
             'utf8'
           )
           const { descriptor } = parse(source)
@@ -120,7 +120,7 @@ test('问题弹窗按顺序收集全部答案', async () => {
       }
     ]
     const { pendingInterruptFromWaitpoint, extractPendingInterrupt } = await server.ssrLoadModule(
-      '/src/composables/useApproval.js'
+      '/src/modules/conversation/model/useApproval.js'
     )
     const pending = pendingInterruptFromWaitpoint(
       {

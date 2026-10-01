@@ -130,10 +130,7 @@ async def test_edited_shared_skill_is_loaded_by_next_run(e2e_client: httpx.Async
             headers={**e2e_headers, "Idempotency-Key": f"skill-edit-input-{uuid.uuid4()}"},
             json={
                 "events": [
-                    {
-                        "type": "agent.thread.input.message",
-                        "mode": "follow_up",
-                        "input": [
+                    {"type": "agent.session.input.message", "input": [
                             {
                                 "role": "user",
                                 "content": [
@@ -143,8 +140,7 @@ async def test_edited_shared_skill_is_loaded_by_next_run(e2e_client: httpx.Async
                                     }
                                 ],
                             }
-                        ],
-                    }
+                        ], "yuxi": {"mode": "follow_up"}}
                 ]
             },
         )
@@ -153,10 +149,10 @@ async def test_edited_shared_skill_is_loaded_by_next_run(e2e_client: httpx.Async
         turn_id = str(run.json()["turn_id"])
         async with asyncio.timeout(RUN_TIMEOUT_SECONDS):
             async for event in iter_public_thread_events(e2e_client, e2e_headers, thread_id):
-                if event["turn_id"] == turn_id and event["type"] in {
-                    "agent.thread.turn.completed",
-                    "agent.thread.turn.failed",
-                    "agent.thread.turn.cancelled",
+                if event.get("turn_id") == turn_id and event["type"] in {
+                    "agent.session.turn.completed",
+                    "agent.session.turn.failed",
+                    "agent.session.turn.cancelled",
                 }:
                     break
             else:

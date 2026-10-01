@@ -11,7 +11,7 @@ test('共享弹层默认自适应，输入区向上约束使用实际可见空�
   })
   try {
     const { default: Dropdown } = await server.ssrLoadModule(
-      '/src/components/common/ActionDropdown.vue'
+      '/src/shared/ui/ActionDropdown.vue'
     )
     assert.equal(Dropdown.props.upward.default, false)
     const props = reactive({ upward: false, open: false, width: 300 })

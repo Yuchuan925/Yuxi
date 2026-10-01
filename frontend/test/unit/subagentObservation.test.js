@@ -9,7 +9,7 @@ before(async () => {
   globalThis.localStorage = { getItem: () => null, setItem: () => {}, removeItem: () => {} }
   server = await createServer({ server: { middlewareMode: true, hmr: false } })
   ;({ agentApi } = await server.ssrLoadModule('/src/apis/index.js'))
-  ;({ useSubagentRuns } = await server.ssrLoadModule('/src/composables/useSubagentRuns.js'))
+  ;({ useSubagentRuns } = await server.ssrLoadModule('/src/modules/conversation/model/useSubagentRuns.js'))
 })
 after(async () => {
   await server?.close()
@@ -30,8 +30,14 @@ function setup(t, initial) {
   const streams = new Map()
   const requests = []
   const originalGet = agentApi.getAgentRun
+  const originalTurn = agentApi.getThreadTurn
   const originalStream = agentApi.streamThreadEvents
-  agentApi.getAgentRun = async (_threadId, id) => ({ id, status: states.get(id) })
+  agentApi.getAgentRun = async (_threadId, id) => ({ id, turn_id: `turn-${id}`, status: states.get(id) })
+  agentApi.getThreadTurn = async (_threadId, turnId) => {
+    const id = turnId.replace('turn-', '')
+    return { turn_id: turnId, current_run_id: id,
+      status: states.get(id) === 'interrupted' ? 'waiting' : states.get(id) }
+  }
   agentApi.streamThreadEvents = async (threadId, cursor, { signal }) => {
     const id = discovered.find((run) => run.child_thread_id === threadId)?.run_id
     requests.push({ id, threadId, cursor, signal })
@@ -56,6 +62,7 @@ function setup(t, initial) {
   t.after(() => {
     scope.stop()
     agentApi.getAgentRun = originalGet
+    agentApi.getThreadTurn = originalTurn
     agentApi.streamThreadEvents = originalStream
   })
   const emit = (id, event, seq = '100-1') =>
@@ -63,7 +70,7 @@ function setup(t, initial) {
       .get(id)
       .enqueue(
         new TextEncoder().encode(
-          `id: ${seq}\nevent: ${event}\ndata: ${JSON.stringify({ type: event, run_id: id, payload: {} })}\n\n`
+          `id: ${seq}\nevent: ${event}\ndata: ${JSON.stringify({ type: event, session_id: `thread-${id}`, turn_id: `turn-${id}`, yuxi: {run_id: id} })}\n\n`
         )
       )
   return { states, streams, requests, thread, runs, enabled, observed, scope, emit }
@@ -76,7 +83,7 @@ test('父 await 的 state 冻结时，快子任务先完成，慢任务仍运行
   ])
   await settle()
   h.states.set('fast', 'completed')
-  h.emit('fast', 'agent.thread.run.completed')
+  h.emit('fast', 'yuxi.session.run.settled')
   h.streams.get('fast').close()
   await settle()
   assert.deepEqual(
@@ -102,7 +109,7 @@ test('重新加载历史记录先回读数据库，已终态 Run 不建立订阅
   h.thread.value = 'user:other'
   await settle()
   assert.equal(h.observed.value[0].status, 'completed')
-  assert.equal(h.requests.length, 1)
+  assert.equal(h.requests.length, 0)
 })
 
 test('切线程时关闭旧连接，延迟状态查询不能污染新会话', async (t) => {
@@ -114,13 +121,14 @@ test('切线程时关闭旧连接，延迟状态查询不能污染新会话', as
       ? new Promise((resolve) => {
           resolveOld = resolve
         })
-      : Promise.resolve({ status: 'completed' })
-  h.emit('old', 'agent.thread.run.completed')
+      : Promise.resolve({ turn_id: `turn-${id}`, status: 'completed' })
+  h.emit('old', 'yuxi.session.run.settled')
   await settle()
   h.thread.value = 'user:new-thread'
+  h.states.set('new', 'completed')
   h.runs.value = [{ run_id: 'new', child_thread_id: 'thread-new', status: 'pending' }]
   await settle()
-  resolveOld({ status: 'failed' })
+  resolveOld({ turn_id: 'turn-old', status: 'failed' })
   await settle()
   assert.equal(h.requests[0].signal.aborted, true)
   assert.deepEqual(
@@ -134,7 +142,7 @@ test('断流回读当前状态并携带子 Run 自己的游标重连', async (t)
   t.mock.timers.enable({ apis: ['setTimeout', 'setInterval'] })
   const h = setup(t, [{ run_id: 'child', status: 'running' }])
   await settle()
-  h.emit('child', 'agent.thread.output', '200-3')
+  h.emit('child', 'agent.session.turn.output_text.delta', '200-3')
   h.streams.get('child').close()
   await settle()
   t.mock.timers.tick(2000)
@@ -169,7 +177,8 @@ test('HTTP 故障明确显示未知状态并在重试后恢复', async (t) => {
   h.streams.get('child').error(new Error('offline'))
   await settle()
   assert.equal(h.observed.value[0].observation_error, true)
-  agentApi.getAgentRun = async () => ({ status: 'completed' })
+  h.states.set('child', 'completed')
+  agentApi.getAgentRun = async () => ({ turn_id: 'turn-child', status: 'completed' })
   t.mock.timers.tick(2000)
   await settle()
   assert.equal(h.observed.value[0].status, 'completed')
@@ -197,7 +206,7 @@ test('同子线程旧 Run 晚发现时仍按创建顺序展示最新 Run', async
     }
   ]
   await settle()
-  const { mergeSubagentRunsForDisplay } = await import('../../src/utils/subagentRuns.js')
+  const { mergeSubagentRunsForDisplay } = await import('../../src/modules/conversation/model/subagentRuns.js')
   assert.deepEqual(
     mergeSubagentRunsForDisplay(h.observed.value).map((run) => run.run_id),
     ['new']
@@ -218,7 +227,7 @@ test('八个活跃子任务最多占用三个 SSE，剩余任务仍可回读完�
   assert.equal(h.observed.value.find((run) => run.run_id === 'child-7').status, 'completed')
   assert.equal(h.requests.length, 3)
   h.states.set('child-0', 'completed')
-  h.emit('child-0', 'agent.thread.run.completed')
+  h.emit('child-0', 'yuxi.session.run.settled')
   h.streams.get('child-0').close()
   await settle()
   t.mock.timers.tick(2000)
@@ -237,7 +246,7 @@ test('切换会话取消在途 HTTP 状态查询，释放请求连接', async (t
       resolveRequest = resolve
     })
   }
-  h.emit('old', 'agent.thread.run.completed')
+  h.emit('old', 'yuxi.session.run.settled')
   await settle()
   const oldSignal = signal
   h.runs.value = []

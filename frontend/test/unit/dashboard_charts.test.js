@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { use } from 'echarts/core'
 import { SVGRenderer } from 'echarts/renderers'
-import { init } from '../../src/utils/dashboardCharts.js'
+import { init } from '../../src/modules/dashboard/model/dashboardCharts.js'
 
 test('Dashboard 按需注册支持柱线饼图、滚动图例及坐标系', () => {
   use(SVGRenderer)

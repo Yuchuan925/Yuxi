@@ -13,11 +13,11 @@ import yuxi.modules.agents.services.scheduler as scheduler
     ("parent_status", "current_status", "expected_delivery", "expected_terminal"),
     [
         ("running", "pending", ["child-run"], []),
-        ("cancel_requested", "pending", [], [("child-run", "cancelled")]),
+        ("completed", "pending", ["child-run"], []),
         ("running", "cancelled", [], []),
     ],
 )
-async def test_recovery_only_republishes_pending_child_of_active_parent(
+async def test_recovery_republishes_owned_child_after_parent_completion(
     monkeypatch, parent_status, current_status, expected_delivery, expected_terminal
 ):
     """崩溃遗留子 Run 可补投；父树取消和扫描后的取消均不能投递。"""
@@ -28,7 +28,7 @@ async def test_recovery_only_republishes_pending_child_of_active_parent(
         status="pending",
         run_type="subagent",
         conversation_thread_id="child-thread",
-        runtime_scope_id="root-thread",
+        runtime_scope_id="child-thread",
         agent_slug="child",
         turn_id="turn-1",
         created_by_run_id="parent-run",
@@ -81,6 +81,9 @@ async def test_recovery_only_republishes_pending_child_of_active_parent(
         def __init__(self, db):
             pass
 
+        async def get_run(self, run_id):
+            return current
+
         async def lock_run_for_user(self, run_id, uid):
             return parent if run_id == "parent-run" else current
 
@@ -106,7 +109,7 @@ async def test_recovery_only_republishes_pending_child_of_active_parent(
             pass
 
         async def get_for_scope(self, **kwargs):
-            return SimpleNamespace(status="running", current_run_id="parent-run")
+            return SimpleNamespace(status="running", current_run_id="child-run")
 
     async def binding(**kwargs):
         return SimpleNamespace(materialize_managed=False)

@@ -91,17 +91,22 @@ class AgentRunRepository:
         created_by_run_id: str,
         run_id: str,
     ) -> tuple[AgentRun, AgentRun] | None:
-        """读取父子 Run，并校验当前执行树的线程关系一致性。"""
-        creator_run = await self.get_run_for_user(created_by_run_id, uid)
-        if not creator_run:
+        """只允许明确创建该 Run 的调用者观察任务。"""
+        pair = await self.get_subagent_run_with_authorization(uid=uid, run_id=run_id)
+        if pair is None or pair[1].created_by_run_id != created_by_run_id:
             return None
+        return pair
 
+    async def get_subagent_run_with_authorization(
+        self,
+        *,
+        uid: str,
+        run_id: str,
+    ) -> tuple[AgentRun, AgentRun] | None:
+        """Thread 授权与本轮委派分开，新用户 Turn 可独立运行。"""
         run = await self.get_run_for_user(run_id, uid)
         if not run or run.run_type != "subagent":
             return None
-        if run.created_by_run_id != creator_run.id:
-            return None
-
         relation_id = run.subagent_thread_relation_id
         if not relation_id:
             return None
@@ -112,7 +117,14 @@ class AgentRunRepository:
             )
         )
         relation = result.scalar_one_or_none()
-        if not relation or relation.parent_conversation_id != creator_run.conversation_id:
+        if relation is None:
+            return None
+        creator_run = await self.get_run_for_user(run.created_by_run_id or relation.created_by_run_id, uid)
+        if (
+            creator_run is None
+            or run.app_id != creator_run.app_id
+            or relation.parent_conversation_id != creator_run.conversation_id
+        ):
             return None
         if (
             relation.child_conversation_id != run.conversation_id
@@ -273,7 +285,7 @@ class AgentRunRepository:
         turn = await self.db.get(AgentTurn, turn_id)
         if turn is None or turn.uid != str(uid) or turn.app_id != app_id:
             raise ValueError("Run 缺少同作用域 Turn")
-        if run_type != "subagent" and turn.conversation_thread_id != conversation_thread_id:
+        if turn.conversation_thread_id != conversation_thread_id:
             raise ValueError("顶层 Run 必须属于 Turn 的 Thread")
         runtime_scope = str(conversation_thread_id) if runtime_scope_id is None else str(runtime_scope_id).strip()
         run = AgentRun(
@@ -408,6 +420,22 @@ class AgentRunRepository:
             raise ValueError("AgentRun 输出必须属于同一 thread")
         if run.conversation_id is None:
             raise ValueError("AgentRun 输出缺少 conversation 归属")
+        return run
+
+    async def lock_cancel_snapshot(self, run_id: str, *, worker_id: str, conversation_thread_id: str) -> AgentRun:
+        """仅允许仍持有效 lease 的取消执行保存已经公开的部分正文。"""
+        run = await self._lock_run(run_id)
+        if (
+            run is None
+            or run.status != "cancel_requested"
+            or run.worker_id != worker_id
+            or not worker_id.strip()
+            or run.lease_expires_at is None
+            or run.lease_expires_at <= utc_now_naive()
+            or run.conversation_thread_id != conversation_thread_id
+            or run.conversation_id is None
+        ):
+            raise ValueError("取消快照必须由相同 Thread 的当前有效 lease owner 保存")
         return run
 
     async def lock_memory_write(
@@ -564,7 +592,7 @@ class AgentRunRepository:
         run.worker_id = None
         run.heartbeat_at = None
         run.lease_expires_at = None
-        run.runtime_cleanup_pending = run.run_type != "subagent"
+        run.runtime_cleanup_pending = True
         run.updated_at = current_time
         await self._finish_open_attempt(
             run_id,
@@ -614,7 +642,7 @@ class AgentRunRepository:
         run.worker_id = None
         run.heartbeat_at = None
         run.lease_expires_at = None
-        run.runtime_cleanup_pending = run.run_type != "subagent"
+        run.runtime_cleanup_pending = True
         await self._project_input_delivery_status(run)
         await self._close_running_audits(run.id, execution_status="abandoned", now=current_time)
         await self._close_open_attempts(
@@ -624,9 +652,8 @@ class AgentRunRepository:
             error_message="执行 worker 的 lease 已过期；本次运行结果未知。",
             now=current_time,
         )
-        cancelled_descendants = await self.cancel_active_execution_tree_descendants(run)
         await self.db.flush()
-        return run, cancelled_descendants
+        return run, []
 
     async def request_cancel_execution_tree(
         self,
@@ -667,57 +694,59 @@ class AgentRunRepository:
         await self.db.flush()
 
     async def cancel_active_execution_tree_descendants(self, root_run: AgentRun) -> list[tuple[str, str]]:
-        """在父 Run 状态事务内请求仍活跃的 execution tree 后代停止。"""
+        """沿整轮委派取消子 Turn，保留同一子 Thread 的无关后续工作。"""
+        from yuxi.modules.agents.repositories.turn import AgentTurnRepository
+        from yuxi.modules.agents.repositories.threads import ConversationRepository
 
-        if root_run.run_type == "subagent":
-            return []
-
-        current_time = utc_now_naive()
+        pending_turn_ids = [root_run.turn_id]
+        seen = {root_run.turn_id}
         cancelled: list[tuple[str, str]] = []
-        pending_parent_ids = [root_run.id]
-        seen_ids: set[str] = set()
-        while pending_parent_ids:
-            parent_ids = pending_parent_ids
-            pending_parent_ids = []
-            result = await self.db.execute(
-                select(AgentRun)
-                .where(
-                    AgentRun.created_by_run_id.in_(parent_ids),
-                    AgentRun.uid == str(root_run.uid),
-                    AgentRun.runtime_scope_id == str(root_run.runtime_scope_id),
-                    AgentRun.status.notin_(TERMINAL_RUN_STATUSES),
-                )
-                .order_by(AgentRun.created_at.asc(), AgentRun.id.asc())
-                .with_for_update()
-            )
-            for child in result.scalars().all():
-                if child.id in seen_ids:
-                    continue
-                seen_ids.add(child.id)
-                pending_parent_ids.append(child.id)
-                child.error_type = "execution_tree_closed"
-                child.error_message = "父运行已结束，请停止共享执行树"
-                if child.status == "pending" and child.worker_id is None and child.started_at is None:
-                    child.status = "cancelled"
-                    child.finished_at = current_time
-                    child.worker_id = None
-                    child.heartbeat_at = None
-                    child.lease_expires_at = None
-                    await self._project_input_delivery_status(child)
-                    await self._close_open_attempts(
-                        child.id,
-                        outcome="cancelled",
-                        error_type=child.error_type,
-                        error_message=child.error_message,
-                        now=current_time,
+        while pending_turn_ids:
+            creator_ids = select(AgentRun.id).where(AgentRun.turn_id.in_(pending_turn_ids))
+            children = list(
+                (
+                    await self.db.execute(
+                        select(AgentRun)
+                        .where(
+                            AgentRun.created_by_run_id.in_(creator_ids),
+                            AgentRun.uid == root_run.uid,
+                            AgentRun.app_id == root_run.app_id,
+                        )
+                        .order_by(AgentRun.conversation_thread_id, AgentRun.execution_seq)
                     )
-                else:
-                    child.status = "cancel_requested"
-                child.updated_at = current_time
-                cancelled.append((child.id, child.conversation_thread_id))
-
-        if cancelled:
-            await self.db.flush()
+                ).scalars()
+            )
+            pending_turn_ids = []
+            for child in children:
+                if child.turn_id in seen:
+                    continue
+                seen.add(child.turn_id)
+                pending_turn_ids.append(child.turn_id)
+                conversation = await ConversationRepository(self.db).lock_conversation_by_thread_id(
+                    child.conversation_thread_id
+                )
+                turn_repo = AgentTurnRepository(self.db)
+                turn = await turn_repo.get_for_scope(
+                    turn_id=child.turn_id,
+                    thread_id=child.conversation_thread_id,
+                    uid=root_run.uid,
+                    app_id=root_run.app_id,
+                    for_update=True,
+                )
+                if conversation is None or turn is None:
+                    raise ValueError("委派子 Turn 的线程归属不一致")
+                if turn.status not in {"running", "waiting", "cancelling"}:
+                    continue
+                conversation.queue_paused = True
+                await turn_repo.set_cancelling(turn)
+                current = await self.lock_run_for_user(turn.current_run_id, root_run.uid)
+                if current is None:
+                    raise ValueError("委派子 Turn 缺少当前 Run")
+                await self._request_cancel_locked(current)
+                if current.status == "cancelled" and not current.runtime_cleanup_pending:
+                    await turn_repo.set_terminal(turn, status="cancelled")
+                cancelled.append((current.id, current.conversation_thread_id))
+        await self.db.flush()
         return cancelled
 
     async def set_terminal_status(
@@ -775,7 +804,7 @@ class AgentRunRepository:
         run.worker_id = None
         run.heartbeat_at = None
         run.lease_expires_at = None
-        run.runtime_cleanup_pending = run.run_type != "subagent" and status != "yielded"
+        run.runtime_cleanup_pending = status != "yielded"
         await self._project_input_delivery_status(run)
         audit_status = {
             "completed": "abandoned",
@@ -808,7 +837,6 @@ class AgentRunRepository:
             select(AgentRun)
             .where(
                 AgentRun.runtime_cleanup_pending.is_(True),
-                AgentRun.run_type != "subagent",
             )
             .order_by(AgentRun.finished_at.asc(), AgentRun.id.asc())
             .limit(limit)

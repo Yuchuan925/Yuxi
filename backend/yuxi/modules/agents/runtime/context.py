@@ -171,6 +171,11 @@ class BaseContext:
         metadata={"name": "运行 ID", "configurable": False, "hide": True},
     )
 
+    steer_before_model: bool = field(
+        default=False,
+        metadata={"name": "模型前安全让位", "configurable": False, "hide": True},
+    )
+
     worker_id: str | None = field(
         default=None,
         metadata={"name": "Worker Attempt Owner", "configurable": False, "hide": True},

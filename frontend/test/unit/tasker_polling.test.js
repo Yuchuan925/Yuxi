@@ -19,8 +19,8 @@ test('任务请求时序与轮询生命周期', async (t) => {
     server: { middlewareMode: true, hmr: false },
     appType: 'custom'
   })
-  const { useUserStore } = await server.ssrLoadModule('/src/stores/user.js')
-  const { useTaskerStore } = await server.ssrLoadModule('/src/stores/tasker.js')
+  const { useUserStore } = await server.ssrLoadModule('/src/modules/identity/model/user.js')
+  const { useTaskerStore } = await server.ssrLoadModule('/src/modules/tasks/model/tasker.js')
   const { taskerApi } = await server.ssrLoadModule('/src/apis/tasker.js')
   const stores = []
   const makeStore = () => {
@@ -35,7 +35,7 @@ test('任务请求时序与轮询生命周期', async (t) => {
   try {
     await t.test('图谱构建和重试的旧提交回执不能进入新会话', async () => {
       const source = readFileSync(
-        new URL('../../src/components/KnowledgeGraphSection.vue', import.meta.url),
+        new URL('../../src/modules/knowledge/ui/KnowledgeGraphSection.vue', import.meta.url),
         'utf8'
       )
       const { descriptor } = parse(source)

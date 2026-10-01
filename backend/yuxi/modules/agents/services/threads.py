@@ -1,4 +1,12 @@
-"""Thread 查询、归档和显式队列控制用例。"""
+"""Thread 查询、归档和显式队列控制用例。
+
+在 Yuxi 中，经常会看到 Thread、Session、Conversation 概念混用。
+需要说明的是，可以认为他们三个是同一个概念的不同叫法
+
+1. Thread 是沿用的 LangChain 的概念，强调的是一个执行树的生命周期。
+2. Session 是沿用的 OpenAI 的概念，强调的是一个用户与智能体的交互周期。
+3. Conversation 是从用户的角度出发，强调的是一个用户与智能体的对话周期。
+"""
 
 from __future__ import annotations
 
@@ -15,7 +23,7 @@ from yuxi.modules.agents.repositories.input_receipt import AgentInputReceiptRepo
 from yuxi.modules.agents.repositories.turn import AgentTurnRepository
 from yuxi.modules.agents.repositories.threads import ConversationRepository
 from yuxi.modules.agents.services.input_config import resolve_agent_run_model_spec, resolve_agent_run_tool_approval_mode
-from yuxi.modules.agents.services.scheduler import claim_follow_up, deliver
+from yuxi.modules.agents.services.scheduler import claim_next_input, deliver
 from yuxi.modules.agents.services.scope import ActorScope
 from yuxi.modules.workspace.services.bindings import resolve_conversation_workdir_path
 from yuxi.modules.agents.models.runs import AGENT_RUN_TERMINAL_STATUSES
@@ -187,9 +195,7 @@ async def archive_thread(*, db: AsyncSession, scope: ActorScope, thread_id: str)
     active_turn = await AgentTurnRepository(db).lock_active_for_thread(
         thread_id=thread_id, uid=scope.uid, app_id=scope.app_id
     )
-    inputs = await AgentInputRepository(db).list_pending_follow_ups(
-        thread_id=thread_id, uid=scope.uid, app_id=scope.app_id
-    )
+    inputs = await AgentInputRepository(db).list_pending_inputs(thread_id=thread_id, uid=scope.uid, app_id=scope.app_id)
     active_run = await AgentRunRepository(db).get_active_run_by_runtime_scope_for_user(
         runtime_scope_id=thread_id, uid=scope.uid
     )
@@ -209,9 +215,7 @@ async def get_thread_snapshot(*, db: AsyncSession, scope: ActorScope, thread_id:
     if turn is None:
         turn = await turn_repo.get_latest_for_thread(thread_id=thread_id, uid=scope.uid, app_id=scope.app_id)
     current_run = await AgentRunRepository(db).get_run(turn.current_run_id) if turn and turn.current_run_id else None
-    queue = await AgentInputRepository(db).list_pending_follow_ups(
-        thread_id=thread_id, uid=scope.uid, app_id=scope.app_id
-    )
+    queue = await AgentInputRepository(db).list_pending_inputs(thread_id=thread_id, uid=scope.uid, app_id=scope.app_id)
     latest = await AgentRunRepository(db).get_latest_top_level_runs_for_threads(scope.uid, [thread_id])
     return {
         **_thread_public(conversation, latest.get(thread_id)),
@@ -222,10 +226,10 @@ async def get_thread_snapshot(*, db: AsyncSession, scope: ActorScope, thread_id:
 
 
 async def get_queue_snapshot(*, db: AsyncSession, scope: ActorScope, thread_id: str) -> dict:
-    """展示尚未创建 Turn 的 follow-up 输入与独立暂停标记。"""
+    """按调度顺序展示待消费输入与独立暂停标记。"""
     conversation = await require_thread(db=db, scope=scope, thread_id=thread_id)
     input_repo = AgentInputRepository(db)
-    items = await input_repo.list_pending_follow_ups(thread_id=thread_id, uid=scope.uid, app_id=scope.app_id)
+    items = await input_repo.list_pending_inputs(thread_id=thread_id, uid=scope.uid, app_id=scope.app_id)
     messages_by_input = await input_repo.list_messages_for_inputs([item.id for item in items])
     active = await AgentTurnRepository(db).get_active_for_thread(
         thread_id=thread_id, uid=scope.uid, app_id=scope.app_id
@@ -250,9 +254,9 @@ async def get_queue_snapshot(*, db: AsyncSession, scope: ActorScope, thread_id: 
 
 
 async def continue_queue(*, db: AsyncSession, scope: ActorScope, thread_id: str, idempotency_key: str) -> dict:
-    """显式解除失败或取消后的暂停，并在同一事务领取队头。"""
+    """显式解除失败或取消后的暂停，并在同一事务领取优先队头。"""
     _check_key(idempotency_key)
-    event_type = "yuxi.thread.input.continue"
+    event_type = "yuxi.session.input.continue"
     intent_hash = _hash_intent(event_type)
     receipt_repo = AgentInputReceiptRepository(db)
     existing = await receipt_repo.get_for_scope(
@@ -275,7 +279,7 @@ async def continue_queue(*, db: AsyncSession, scope: ActorScope, thread_id: str,
         raise HTTPException(status_code=409, detail="当前 Turn 尚未结束")
 
     conversation.queue_paused = False
-    dispatch = await claim_follow_up(db=db, conversation=conversation)
+    dispatch = await claim_next_input(db=db, conversation=conversation)
     receipt = await receipt_repo.create(
         receipt_id=str(uuid.uuid4()),
         idempotency_key=idempotency_key,
@@ -297,7 +301,7 @@ async def cancel_input(
 ) -> dict:
     """取消未领取的 Input，不伪造尚未存在的 Turn。"""
     _check_key(idempotency_key)
-    event_type = "yuxi.thread.input.cancel_input"
+    event_type = "yuxi.session.input.cancel_input"
     intent_hash = _hash_intent(event_type, input_id)
     receipt_repo = AgentInputReceiptRepository(db)
     existing = await receipt_repo.get_for_scope(
@@ -308,6 +312,12 @@ async def cancel_input(
         return _control_accepted(existing)
 
     await require_thread(db=db, scope=scope, thread_id=thread_id, lock=True)
+    existing = await receipt_repo.get_for_scope(
+        uid=scope.uid, app_id=scope.app_id, thread_id=thread_id, idempotency_key=idempotency_key
+    )
+    if existing is not None:
+        _require_replay(existing, event_type, intent_hash)
+        return _control_accepted(existing)
     input_repo = AgentInputRepository(db)
     input_item = await input_repo.get_for_scope(
         input_id=input_id, thread_id=thread_id, uid=scope.uid, app_id=scope.app_id, for_update=True

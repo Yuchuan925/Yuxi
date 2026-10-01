@@ -33,6 +33,13 @@ def postgres_dsn() -> str:
     )
 
 
+async def wait_model_provider_cache() -> None:
+    """等待新测试供应商的跨进程缓存传播；不替代模型执行与持久结果验证。"""
+    from yuxi.modules.models.providers.cache import _CACHE_TTL_SECONDS
+
+    await asyncio.sleep(_CACHE_TTL_SECONDS + 0.1)
+
+
 async def delete_agent(client: httpx.AsyncClient, headers: dict[str, str], slug: str) -> None:
     """等待终态 Run 的异步清理完成后删除测试智能体。"""
     async with asyncio.timeout(30):
@@ -71,7 +78,7 @@ async def archive_public_thread(
                     cancel = await client.post(
                         f"/api/v1/agents/threads/{thread_id}/events",
                         headers={**headers, "Idempotency-Key": f"e2e-cleanup-{turn_id}"},
-                        json={"events": [{"type": "yuxi.thread.input.cancel", "turn_id": turn_id}]},
+                        json={"events": [{"type": "agent.session.input.cancel", "yuxi": {"turn_id": turn_id}}]},
                     )
                     assert cancel.status_code in {202, 409}, cancel.text
                     while True:

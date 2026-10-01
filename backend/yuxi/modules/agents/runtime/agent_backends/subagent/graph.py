@@ -16,18 +16,18 @@ from yuxi.modules.agents.runtime.context import DEFAULT_TOOL_RESULT_EVICTION_K_T
 from yuxi.modules.agents.runtime.middlewares import (
     ImageInputCompatibilityMiddleware,
     NetworkRetryMiddleware,
+    SteerMiddleware,
     TokenUsageMiddleware,
     ToolErrorGuardMiddleware,
     create_summary_middleware_from_context,
 )
 from yuxi.modules.agents.runtime.middlewares.skills import SkillsMiddleware
-from yuxi.modules.agents.runtime.tool_approval import SENSITIVE_BACKEND_TOOLS, normalize_tool_approval_mode
+from yuxi.modules.agents.runtime.tool_approval import create_tool_approval_middleware, normalize_tool_approval_mode
+from yuxi.modules.agents.runtime.sandbox.paths import runtime_workdir_path
 from yuxi.modules.extensions.tools.runtime import resolve_configured_runtime_tools
 from yuxi.modules.models.chat import load_chat_model, resolve_chat_model_spec
 
-_SUBAGENT_DISABLED_TOOLS = frozenset({"present_artifacts", "ask_user_question", "install_skill"})
-# 默认审批模式额外隐藏敏感 backend 工具，避免子智能体绕过主线程逐项审批。
-_SUBAGENT_DISABLED_TOOLS_DEFAULT_MODE = _SUBAGENT_DISABLED_TOOLS | SENSITIVE_BACKEND_TOOLS
+_SUBAGENT_DISABLED_TOOLS = frozenset({"present_artifacts", "install_skill"})
 
 
 def _tool_name(tool) -> str | None:
@@ -38,20 +38,13 @@ def _tool_name(tool) -> str | None:
     return name if isinstance(name, str) else None
 
 
-def _disabled_tools_for(mode: str) -> frozenset[str]:
-    # 调用方已在边界 normalize 过 mode，这里直接按值选择隐藏集合。
-    if mode == "always_trust":
-        return _SUBAGENT_DISABLED_TOOLS
-    return _SUBAGENT_DISABLED_TOOLS_DEFAULT_MODE
-
-
 def _filter_disabled_tools(tools, disabled_tools: frozenset[str]):
     return [tool for tool in tools if _tool_name(tool) not in disabled_tools]
 
 
 class _SubAgentToolFilterMiddleware(AgentMiddleware[Any, Any, Any]):
-    def __init__(self, tool_approval_mode: str = "default"):
-        self.disabled_tools = _disabled_tools_for(tool_approval_mode)
+    def __init__(self):
+        self.disabled_tools = _SUBAGENT_DISABLED_TOOLS
 
     def wrap_model_call(self, request, handler):
         return handler(request.override(tools=_filter_disabled_tools(request.tools or [], self.disabled_tools)))
@@ -74,9 +67,7 @@ class _SubAgentToolFilterMiddleware(AgentMiddleware[Any, Any, Any]):
         if name not in self.disabled_tools:
             return None
         return ToolMessage(
-            content=(
-                f"工具 {name} 在当前审批模式下对子智能体不可用；请把结果交回主智能体，由主线程按审批流程执行该操作。"
-            ),
+            content=(f"工具 {name} 对子智能体不可用；请把结果交回主智能体，由主线程按审批流程执行该操作。"),
             tool_call_id=request.tool_call.get("id") or "",
             name=name,
             status="error",
@@ -86,23 +77,31 @@ class _SubAgentToolFilterMiddleware(AgentMiddleware[Any, Any, Any]):
 async def _build_middlewares(context, backend, tool_approval_mode: str):
     # tool_approval_mode is normalized once by the caller (get_graph / SubAgentBackend.get_graph).
 
-    return [
+    middlewares = [
         # 子 Agent 的工具异常也在最外层隔离，避免打断父对话。
         ToolErrorGuardMiddleware(),
+        SteerMiddleware(),
         create_agent_filesystem_middleware(
             getattr(context, "tool_token_limit", DEFAULT_TOOL_RESULT_EVICTION_K_TOKENS) * 1024,
             backend=backend,
-            disabled_tools=_disabled_tools_for(tool_approval_mode),
+            disabled_tools=_SUBAGENT_DISABLED_TOOLS,
         ),
         SkillsMiddleware(),
         create_summary_middleware_from_context(context, backend=backend),
         TodoListMiddleware(system_prompt=TODO_MID_PROMPT),
         PatchToolCallsMiddleware(),
-        _SubAgentToolFilterMiddleware(tool_approval_mode),
-        NetworkRetryMiddleware(),
+        _SubAgentToolFilterMiddleware(),
+        NetworkRetryMiddleware(max_retries=getattr(context, "model_retry_times", 2)),
         ImageInputCompatibilityMiddleware(),
         TokenUsageMiddleware(),
     ]
+
+    approval = create_tool_approval_middleware(
+        tool_approval_mode, current_project_path=runtime_workdir_path(context.workdir_relative_path)
+    )
+    if approval:
+        middlewares.append(approval)
+    return middlewares
 
 
 class SubAgentBackend(BaseAgent):
@@ -139,7 +138,7 @@ class SubAgentBackend(BaseAgent):
         await sync_agent_context_skills(context)
         model_spec = resolve_chat_model_spec(context.model)
         tool_approval_mode = normalize_tool_approval_mode(getattr(context, "tool_approval_mode", "default"))
-        disabled_tools = _disabled_tools_for(tool_approval_mode)
+        disabled_tools = _SUBAGENT_DISABLED_TOOLS
         backend = create_agent_composite_backend(context)
 
         return create_agent(

@@ -202,8 +202,8 @@ class YuxiClient:
         return self.submit_agent_event(
             thread_id,
             {
-                "type": "agent.thread.input.message",
-                "mode": "follow_up",
+                "type": "agent.session.input.message",
+                "yuxi": {"mode": "follow_up"},
                 "input": [{"role": "user", "content": [{"type": "input_text", "text": message}]}],
             },
             idempotency_key=idempotency_key,
@@ -233,6 +233,10 @@ class YuxiClient:
     def get_agent_thread_queue(self, thread_id: str) -> dict:
         """读取待消费 Input 及其消费关联。"""
         return self._request("GET", f"/v1/agents/threads/{quote(thread_id, safe='')}/queue")
+
+    def get_agent_history(self, thread_id: str) -> dict:
+        """读取与实时共用的公开 item 快照。"""
+        return self._request("GET", f"/v1/agents/threads/{quote(thread_id, safe='')}/history")
 
     def get_agent_input(self, thread_id: str, input_id: str) -> dict:
         """读取 Input 的持久消费关联。"""
@@ -390,3 +394,11 @@ def _iter_sse_events(lines: Iterator[str]) -> Iterator[dict[str, str]]:
     if data_lines:
         event["data"] = "\n".join(data_lines)
         yield event
+
+
+def public_output_text(items: list[dict]) -> str:
+    """从公开 message item 读取明确结果正文。"""
+    return "".join(
+        part["text"] for item in items if item["type"] == "message" and item["role"] == "assistant"
+        for part in item["content"] if part["type"] == "output_text"
+    )

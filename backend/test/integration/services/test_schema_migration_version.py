@@ -174,7 +174,7 @@ async def test_fresh_business_schema_contains_input_lifecycle_without_request_ta
         assert "agent_runs_execution_seq" in execution_seq_default
         assert "request_id" not in run_columns
         assert {"kind", "status", "turn_id", "consumed_run_id", "cutoff_seq", "received_seq"} <= input_columns
-        assert BUSINESS_SCHEMA_VERSION == 10
+        assert BUSINESS_SCHEMA_VERSION == 12
     finally:
         await _drop_isolated_schema(schema, admin_engine, scoped_engine)
 

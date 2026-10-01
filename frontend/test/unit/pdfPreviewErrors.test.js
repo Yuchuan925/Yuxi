@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { resolvePdfLoadErrorMessage } from '../../src/utils/pdfPreviewErrors.js'
+import { resolvePdfLoadErrorMessage } from '../../src/shared/lib/pdfPreviewErrors.js'
 
 test('PDF 错误提示区分文件、网络、加密与 Worker 加载失败', () => {
   const cases = [

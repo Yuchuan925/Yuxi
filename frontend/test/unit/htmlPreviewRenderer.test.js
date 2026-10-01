@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { renderHtmlPreviewBlocks } from '../../src/utils/htmlPreviewRenderer.js'
+import { renderHtmlPreviewBlocks } from '../../src/shared/lib/htmlPreviewRenderer.js'
 
 const identity = (html) => html
 const countMatches = (value, pattern) => value.match(pattern)?.length || 0

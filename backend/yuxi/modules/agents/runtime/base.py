@@ -2,20 +2,17 @@ from __future__ import annotations
 
 from yuxi.infrastructure.postgres.checkpointer import get_langgraph_checkpointer
 
-import asyncio
 from abc import abstractmethod
-from contextlib import aclosing, suppress
+from contextlib import aclosing
 from typing import Any
+from dataclasses import dataclass
 
-from langchain_core.messages import ToolMessage
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.stream.transformers import CustomTransformer
-from langgraph.types import Command
 
 from yuxi.modules.agents.runtime.context import DEFAULT_MAX_EXECUTION_STEPS, BaseContext, resolve_agent_resource_options
 from yuxi.infrastructure.postgres.manager import pg_manager
 from yuxi.infrastructure.observability.logging import logger
-from yuxi.shared.hashing import subagent_child_thread_id
 
 
 def json_safe(value: Any) -> Any:
@@ -31,64 +28,12 @@ def json_safe(value: Any) -> Any:
     return str(value)
 
 
-def _normalize_tool_event_data(data: Any) -> Any:
-    """规整 tools 流事件：write_todos / task 等返回 Command 的工具，其 tool-finished
-    output 是 Command 对象，json_safe 只能退化成 repr 字符串，前端无法关联结果。
-    这里从 Command.update["messages"] 取出真正的 ToolMessage，使其与普通工具一致。"""
-    if not isinstance(data, dict) or data.get("event") != "tool-finished":
-        return data
-    output = data.get("output")
-    if not isinstance(output, Command):
-        return data
-    update = output.update if isinstance(output.update, dict) else {}
-    messages = update.get("messages")
-    if not isinstance(messages, list):
-        return data
-    tool_call_id = data.get("tool_call_id")
-    tool_message = next(
-        (m for m in messages if isinstance(m, ToolMessage) and m.tool_call_id == tool_call_id),
-        next((m for m in messages if isinstance(m, ToolMessage)), None),
-    )
-    if tool_message is None:
-        return data
-    return {**data, "output": tool_message}
+@dataclass(frozen=True, slots=True)
+class GraphExecutionResult:
+    """携带同一图已经提交的 checkpoint，不进入公开事件流。"""
 
-
-def _subagent_route_for_namespace(
-    routes: dict[tuple[str, ...], dict[str, str]], namespace: list[str]
-) -> dict[str, str] | None:
-    ns = tuple(namespace)
-    for path, route in sorted(routes.items(), key=lambda item: len(item[0]), reverse=True):
-        if ns[: len(path)] == path:
-            return route
-    return None
-
-
-async def _collect_subagent_routes(run, parent_thread_id: str, routes: dict[tuple[str, ...], dict[str, str]]) -> None:
-    subagents = getattr(run, "subagents", None)
-    if subagents is None:
-        return
-
-    try:
-        async for subagent in subagents:
-            path = tuple(getattr(subagent, "path", ()) or ())
-            subagent_slug = getattr(subagent, "name", None) or getattr(subagent, "graph_name", None)
-            cause = getattr(subagent, "cause", None)
-            tool_call_id = (
-                cause.get("tool_call_id") if isinstance(cause, dict) else getattr(subagent, "trigger_call_id", None)
-            )
-            if path and isinstance(subagent_slug, str) and isinstance(tool_call_id, str) and tool_call_id:
-                thread_id = subagent_child_thread_id(parent_thread_id, subagent_slug, tool_call_id)
-                routes[path] = {
-                    "thread_id": thread_id,
-                    "parent_thread_id": parent_thread_id,
-                    "subagent_slug": subagent_slug,
-                    "tool_call_id": tool_call_id,
-                }
-    except asyncio.CancelledError:
-        raise
-    except Exception as exc:
-        logger.debug(f"collect subagent stream routes failed: {exc}")
+    checkpoint: Any
+    steer_before_model: bool = False
 
 
 def _recursion_limit_from_context(context: BaseContext, default: int) -> int:
@@ -165,6 +110,7 @@ class BaseAgent:
         if run_name:
             input_config["run_name"] = run_name
 
+        context.steer_before_model = False
         async with await graph.astream_events(
             graph_input,
             context=context,
@@ -174,56 +120,12 @@ class BaseAgent:
         ) as run:
             if on_prepared:
                 await on_prepared()
-            subagent_routes: dict[tuple[str, ...], dict[str, str]] = {}
-            route_task = asyncio.create_task(_collect_subagent_routes(run, context.thread_id, subagent_routes))
-            try:
-                async for event in run:
-                    params = event.get("params") or {}
-                    namespace = list(params.get("namespace") or [])
-                    method = event.get("method")
-                    data = params.get("data")
-                    sequence = event.get("seq")
-                    timestamp = params.get("timestamp")
-                    subagent_route = _subagent_route_for_namespace(subagent_routes, namespace)
+            async for event in run:
+                yield event
 
-                    if method == "custom":
-                        yield "custom", data
-                        continue
-                    if method == "messages":
-                        msg, metadata = data
-                        metadata = dict(metadata or {})
-                        metadata["namespace"] = namespace
-                        metadata["stream_event"] = {
-                            "method": method,
-                            "namespace": namespace,
-                            "seq": sequence,
-                            "timestamp": timestamp,
-                        }
-                        if subagent_route:
-                            metadata.update(subagent_route)
-                        yield "messages", (msg, metadata)
-                    elif method == "values" and not namespace:
-                        yield "values", data
-                    elif method in {"tasks", "tools", "lifecycle"}:
-                        if method == "tools":
-                            data = _normalize_tool_event_data(data)
-                        event_payload = {
-                            "method": method,
-                            "namespace": namespace,
-                            "seq": sequence,
-                            "timestamp": timestamp,
-                            "data": json_safe(data),
-                        }
-                        if subagent_route:
-                            event_payload.update(subagent_route)
-                        yield "stream_event", event_payload
-            finally:
-                route_task.cancel()
-                with suppress(asyncio.CancelledError):
-                    await route_task
-
-        # 流已耗尽、checkpoint 写入已完成；收尾消费者共享本次图的持久状态。
-        yield "checkpoint", await graph.aget_state(input_config)
+        yield GraphExecutionResult(
+            checkpoint=await graph.aget_state(input_config), steer_before_model=context.steer_before_model
+        )
 
     async def stream_messages_with_state(self, messages: list[str], *, context: BaseContext, **kwargs):
         graph_input = {"messages": messages}

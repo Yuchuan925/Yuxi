@@ -3,10 +3,10 @@ import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import { computed, ref } from 'vue'
 import { compileScript, parse } from 'vue/compiler-sfc'
-import * as configUtils from '../../src/utils/agentConfigUtils.js'
+import * as configUtils from '../../src/modules/agents/model/agentConfigUtils.js'
 
 const source = readFileSync(
-  new URL('../../src/components/AgentRuntimeConfigForm.vue', import.meta.url),
+  new URL('../../src/modules/agents/ui/AgentRuntimeConfigForm.vue', import.meta.url),
   'utf8'
 )
 const { descriptor } = parse(source)

@@ -21,7 +21,7 @@ import {
   mergeMessageDebugMessages,
   mergeMessageDebugRunGroups,
   resolveLangfuseRunUrl
-} from '../../src/utils/messageDebug.js'
+} from '../../src/modules/conversation/model/messageDebug.js'
 
 test('时间概览只高亮当前选中记录，选中 Run 时高亮其全部时间条', () => {
   assert.equal(isMessageDebugTimelineMarkSelected('run:run-a-0', 'run-a-0'), true)
@@ -206,7 +206,7 @@ test('Langfuse Run 地址仅接受 Run 详情中的 HTTP(S) URL', () => {
 
 test('Run 详情保留按稳定 run_id 打开 Langfuse Trace 的入口', () => {
   const source = readFileSync(
-    new URL('../../src/components/MessageDebugPanel.vue', import.meta.url),
+    new URL('../../src/modules/conversation/ui/MessageDebugPanel.vue', import.meta.url),
     'utf8'
   )
 
@@ -218,7 +218,7 @@ test('Run 详情保留按稳定 run_id 打开 Langfuse Trace 的入口', () => {
 
 test('Run 行只读取审计接口返回的 AgentRun 状态而不从消息终态猜测', () => {
   const source = readFileSync(
-    new URL('../../src/components/MessageDebugPanel.vue', import.meta.url),
+    new URL('../../src/modules/conversation/ui/MessageDebugPanel.vue', import.meta.url),
     'utf8'
   )
 

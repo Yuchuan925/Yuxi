@@ -8,7 +8,7 @@
 
 Yuxi 是一个面向 RAG、知识图谱和多智能体工作流的知识库平台。用户通过 Vue 前端管理智能体、知识库、模型、工具、Skills、MCP 与 SubAgents；前端通过 `/api` 调用 FastAPI；后端服务层协调 PostgreSQL、Redis、MinIO、Milvus、Neo4j、LangGraph 和沙盒。
 
-普通智能体消息先在 PostgreSQL 中保存为 Input、回执和 Message。线程调度器按 FIFO 领取 follow-up Input 时才创建 Turn 与首个 Run；steer 和人工等待恢复沿用当前 Turn，产生下一段 Run。提交事务后，pending Run 通过 Redis/ARQ 交给独立 worker 执行。Redis Stream 保存短期增量，PostgreSQL 保存执行和业务终态，前端通过 Thread SSE 观察整轮工作。
+普通智能体消息先在 PostgreSQL 中保存为 Input、回执和 Message。线程调度器在空闲时领取优先队头，创建 Turn 与首个 Run；steer 优先于 follow-up，运行中在安全边界接续当前 Turn。人工等待恢复沿用当前 Turn，产生下一段 Run。提交事务后，pending Run 通过 Redis/ARQ 交给独立 worker 执行。Redis Stream 保存短期增量，PostgreSQL 保存执行和业务终态，前端通过 Thread SSE 观察整轮工作。
 
 核心开发服务包括：
 
@@ -39,7 +39,7 @@ Yuxi 始终交付完整知识能力。API 注册知识库、图谱、评估、Da
 
 ### 业务模块
 
-- `modules/agents` 拥有 Input 接收、FIFO 调度、Turn/Run、消息、事件、运行租约与 LangGraph Agent runtime。`services` 编排用例，`repositories` 查询持久状态，`models` 定义 ORM；`runtime/agent_backends` 拥有执行图实现与显式注册，`runtime/sandbox` 拥有沙盒执行、生命周期和虚拟路径；`runtime/middlewares` 拥有模型与工具策略，Context 装配留在 runtime，知识库可见范围解析由 knowledge service 拥有。
+- `modules/agents` 拥有 Input 接收、优先队列调度、Turn/Run、消息、事件、运行租约与 LangGraph Agent runtime。`services` 编排用例，`repositories` 查询持久状态，`models` 定义 ORM；`runtime/agent_backends` 拥有执行图实现与显式注册，`runtime/sandbox` 拥有沙盒执行、生命周期和虚拟路径；`runtime/middlewares` 拥有模型与工具策略，Context 装配留在 runtime，知识库可见范围解析由 knowledge service 拥有。
 - `modules/knowledge` 拥有知识库、分块、检索、图谱与评估的业务状态；`modules/documents` 解析配置与 MinIO 输入，并按调用方指定的位置发布资源；`infrastructure/document_parsing` 只生成完整本地 Markdown 目录，`parser.py` 拥有格式转换，`artifacts.py` 拥有产物路径与引用，`engines/` 集中 OCR 契约、注册与实现。
 - `modules/workspace` 拥有 UserWorkspace 的路径映射、no-follow 文件操作、Workdir 和预览；Agent 沙盒的 runtime 虚拟路径由 `modules/agents/runtime/sandbox/paths.py` 拥有。
 - `modules/identity` 拥有用户、部门、权限、凭据与 OIDC 账号用例，以及 Public API 的 Key 校验与 App/end_user 身份解析；`modules/extensions` 拥有 Skills、MCP 与工具目录；`modules/models` 拥有模型适配和供应商配置。
@@ -55,7 +55,7 @@ Yuxi 始终交付完整知识能力。API 注册知识库、图谱、评估、Da
 
 项目中存在三套领域状态不同、但共享 PostgreSQL 事实与 Redis/ARQ 投递模式的后台机制，不应合并状态模型：
 
-- Agent 生命周期：Thread 保存长期对话，Input 保存持久接收与 FIFO，Turn 保存一轮工作，Run/Attempt 保存执行段、输出和租约；人工等待与 execution tree 绑定明确的 Turn/Run。
+- Agent 生命周期：Thread 保存长期对话，Input 保存持久接收与优先队列，Turn 保存一轮工作，Run/Attempt 保存执行段、输出和租约；人工等待与 execution tree 绑定明确的 Turn/Run。
 - 用户定时 Agent：任务定义和 occurrence 独立持久化；worker 锁定到期任务后复用统一 Thread/Input/Turn/Run 用例，定时 occurrence 保留来源关联。
 - Durable Task：用于知识库解析、评估和图谱构建。API 只提交持久 `task_type + handler_version + payload`；`worker` 从 registry 惰性加载领域 Handler，并通过 Task 行的唯一 owner、heartbeat 和 lease 执行。知识文件中间态绑定 Task/attempt owner，失联 failure hook 与 Task 终态同事务收敛文件错误态；PG pending 行由启动与周期 publisher 补发。共享 ARQ worker 的执行槽由 Compose 配置，Durable Task 的 PG claim 上限为 4，不能占满 AgentRun 容量。
 
@@ -65,13 +65,12 @@ Yuxi 始终交付完整知识能力。API 注册知识库、图谱、评估、Da
 
 前端是 Vue 3 + Vite 应用，业务入口集中在 `frontend/src`。
 
-- `main.js` 挂载应用，`App.vue` 是根组件。
-- `router` 定义公开首页、登录、智能体、工作区、智能体管理、扩展和仪表盘路由，并负责认证、管理员和超级管理员守卫。
-- `apis` 是后端接口封装边界。新增接口应在这里定义，复用 `base.js` 的请求、鉴权和错误处理。
-- `stores` 保存用户、智能体配置、主题和其他跨页面状态。
-- `views` 是页面级入口，`components` 是可复用界面块。智能体对话的主要交互位于 `AgentChatComponent`，由 `AgentView` 负责页面组合。
-- `composables` 封装 Input 排队、Thread SSE、流式消息、审批、线程状态、提及和其他可组合逻辑。
-- `utils` 放轻量转换和展示辅助；全局样式集中在 `assets/css`，颜色和基础规范优先复用 `base.css`。
+- `app/main.js` 挂载应用，`app/App.vue` 提供主题与根 RouterView，`app/router` 与 `app/layouts` 拥有路由、访问守卫和应用导航。
+- `pages` 是路由适配与页面装配入口。`AgentView` 把路由选择交给串行协调器，并装配会话工作区与智能体选择器。
+- `modules` 按 conversation、agents、projects、workspace、knowledge、extensions、identity、settings、tasks、dashboard 组织业务；`ui` 拥有界面，`model` 拥有状态与领域逻辑。会话编排、Input 排队、Thread SSE、审批和提及属于 conversation；智能体目录、选择与编辑属于 agents。
+- `shared/ui` 与 `shared/lib` 保存通用界面和工具，`shared/model` 保存主题状态；全局样式集中在 `assets/css`，颜色和基础规范复用 `base.css`。
+- `apis` 是集中 HTTP 边界，复用 `base.js` 的请求、鉴权和错误处理。模块不能依赖 app/pages，shared 不能依赖业务模块或 API；ESLint 检查别名、相对路径和动态导入。
+- 新 TypeScript 逻辑经 strict 类型检查，build 先执行 typecheck；现有 JavaScript 逐步迁移。当前 conversation 的 ConversationWorkspace 仍拥有聊天编排，独立 Thread 阅读与统一输入内核见[重构提案](docs/develop-guides/decisions/proposed/2026-09-30-agent-view-frontend-refactor.md)。
 
 `/` 是公开首页；登录后的核心工作区是 `/agent`。`/extensions` 对所有登录用户开放，其中 Skills 对普通用户可见，知识库、工具和 MCP 管理能力仅管理员可见；Dashboard 仅超级管理员可访问。后端权限检查始终是最终边界，前端守卫只负责页面体验。
 
@@ -79,15 +78,15 @@ Yuxi 始终交付完整知识能力。API 注册知识库、图谱、评估、Da
 
 一次普通智能体输入经过以下边界：
 
-1. `AgentView` 和 `AgentChatComponent` 收集文本、图片、附件、模型与审批配置，`frontend/src/apis/agent_api.js` 调用 Public Thread API。Session 路径只是同一 Thread 用例的协议命名适配。
+1. `AgentView` 装配 `ConversationWorkspace`，后者收集文本、图片、附件、模型与审批配置，`frontend/src/apis/agent_api.js` 调用 Public Thread API。Session 路径只是同一 Thread 用例的协议命名适配。
 2. `api/routers/public_v1/agents` 将 JWT 或 API Key 身份转为完整 ActorScope，并把有序消息和配置交给 `modules/agents/services/inputs.py`。接入事务锁定 Thread，验证作用域与幂等回执，保存 Input、Message 和 Receipt；配置在接收时冻结。
-3. `modules/agents/services/scheduler.py` 在线程锁下领取未暂停队列的 follow-up 队头，原子创建 Turn 与首个 pending Run。排队 Input 不预建 Turn。steer 绑定当前 Turn 并聚合到尚未领取的批次；等待回答或审批时拒绝普通消息。
+3. `modules/agents/services/scheduler.py` 在线程锁下领取未暂停队列的优先队头，原子创建 Turn 与首个 pending Run。follow-up 彼此 FIFO；每个 Thread 的 pending steer 聚合为唯一优先批次。排队 Input 不绑定 Turn，消费时固定 Turn/Run 归属；等待回答或审批时拒绝普通消息。
 4. owning transaction 提交后才向 ARQ 投递 pending Run。恢复扫描可补投未成功投递的同一个 Run，不自动重试已经失败的工作。
 5. `worker` 中的 `modules/agents/services/runner.py` 使用进程 identity 与 job-attempt token 取得 Run lease；未取得 ownership 的重复任务不会执行。Heartbeat 在独立事务中续租，再加载运行上下文执行 LangGraph。Langfuse 使用 Turn 级 trace 与 Run 级 observation；远端观测不拥有业务终态。
-6. 智能体通过 middleware 组合 UserWorkspace 中的当前 Workdir、只读共享 Skills、MCP、SubAgent、审批、摘要和工具能力。子任务由 `subagent_start` 派发并写入 state，`subagent_await` 按需等待；子 Run 通过父 Run 关系归属根 Turn。根 Agent 与子 Agent 共享 runtime 和 Workdir；Sandbox 在首次相关文件或命令操作时按 runtime scope 惰性创建。
+6. 智能体通过 middleware 组合 UserWorkspace 中的当前 Workdir、只读共享 Skills、MCP、SubAgent、审批、摘要和工具能力。子任务由 `subagent_start` 派发并写入 state，`subagent_await` 按需等待；子任务通过持久输入创建独立 Thread/Turn/Run，自身拥有结果、等待与恢复，并通过委派关系关联父 Run。父子共享 Project Workdir，各自使用自身 Thread 的 runtime scope、lease 和清理；Sandbox 在首次相关文件或命令操作时按 runtime scope 惰性创建。
 7. 安全接管点在工具批次及 checkpoint 保存之后，或无工具的模型调用完成之后。pending steer 被固定为消费批次，旧 Run yielded，同一 Turn 创建下一 Run；普通工具循环保持同一 Run。人工等待使 Run interrupted、Turn waiting，并保存绑定该 Run 的等待点；结构化回答或审批消费等待点后，在同一 Turn 创建新 Run。
-8. 完成、失败和取消由当前 owner 在数据库事务中收敛 Run 与 Turn。最终结果指向明确的顶层 result Run 的 output Message；Model/Tool 审计保留独立归属，不进入普通历史或最终输出。取消先持久化状态并暂停后续 follow-up，再发送 Redis 加速信号；失联 Run 由 lease reconciliation 形成可观察失败。外部副作用仍按 at-least-once 语义核对。
-9. 结构化事件标明 Thread/Turn/Input/Run 与 cursor，HTTP 边界只编码一次 SSE。Redis 保存短期增量；断线或过期时客户端读取 PostgreSQL 快照恢复，不从相邻 Run 推断结果。
+8. 完成、失败和取消由当前 owner 在数据库事务中收敛 Run 与 Turn。最终结果指向明确的顶层 result Run 的 output Message；Model/Tool 审计保留独立归属；普通历史只读取已登记的公开 item，不包含内部 prompt 或 checkpoint。父完成或失败不结束子任务，父取消仅沿本 Turn 委派关系递归取消在途子 Turn。取消先持久化状态并暂停待消费输入队列，再发送 Redis 加速信号；失联 Run 由 lease reconciliation 形成可观察失败。外部副作用仍按 at-least-once 语义核对。
+9. LangGraph v3 ProtocolEvent 先由 `RunMessageRecorder` 统一记录模型和工具消息事实，工具结果在该入口规整一次，再由公开适配器转换为 OpenAI Agents 事件；消息事实与公开快照各自提交后发布事件，checkpoint 留在独立执行结果。Redis 保存逐条公开事件，SSE data 为事件本身，逻辑 event_id 与恢复 cursor 分开；断线或过期时客户端读取 PostgreSQL 快照恢复，不从相邻 Run 推断结果。
 10. Thread 保存不可变 `project_id`，每个 Project 绑定一个 `workdir_path`，多个 Project 可以共享同一路径。managed Project 使用服务端创建的 `projects/YYYY-MM-DD_HH-MM-SS_<project-id-prefix>[-N]`，linked Project 绑定当前用户 UserWorkspace 内通过 no-follow 校验的已有目录。Thread 只归档；删除 Project 时拒绝仍有活跃 Turn 或待处理 Input 的情况，再软删除 Project 并归档所属 Thread。`yuxi.modules.workspace` 拥有宿主路径和 fd-relative 文件访问，Workdir resolver 为 Viewer、附件、Artifact、Run 和 SubAgent 提供同一持久路径；Run 终态清理 runtime 进程但保留 Workdir。
 
 ## 架构不变量
@@ -95,10 +94,10 @@ Yuxi 始终交付完整知识能力。API 注册知识库、图谱、评估、Da
 - Docker Compose 是开发环境的事实来源。开发时先检查容器、日志和热重载，不默认要求本地裸跑服务。
 - HTTP 路由保持薄；用例流程放在各业务域 `services`，持久化查询放在同域 `repositories`。
 - 输入接入与 Run 执行是两个阶段：先提交 PostgreSQL 的 Message、Input、Receipt 和 pending Run，再投递 ARQ，不能让队列消息先于数据库状态可见。
-- 同一用户、APP、智能体和 Thread 的 follow-up Input 按 FIFO 串行领取；Input、Turn 和 Run 分别表达投递、一轮工作和执行段，不共用业务状态模型。
+- 同一用户、APP、智能体和 Thread 的 follow-up Input 按 FIFO 串行领取，pending steer 合并为唯一优先节点；运行中在安全边界消费 steer，空闲时领取优先队头。Input、Turn 和 Run 分别表达投递、一轮工作和执行段，不共用业务状态模型。
 - PostgreSQL 保存业务事实状态；Redis 承担投递、事件、取消和缓存，不作为 AgentRun 最终状态的唯一来源。
 - `pending` Run 是持久化投递意图；`running` / `cancel_requested` Run 必须由唯一 attempt lease 拥有。Heartbeat 只能由当前 owner 续租，终态或 retry publication 清除 lease，过期 ownership 不能被另一个执行者静默接管。
-- Turn 结果以 `result_run_id` 指向的顶层 Run 及其 `output_message_id` 为权威；消息、事件和 artifact 均绑定明确的 Input/Turn/Run，禁止从未完成、子 Run 或相邻 Run 猜测输出。
+- Turn 结果以 `result_run_id` 指向的顶层 Run 及其 `output_message_id` 为权威；消息、事件和 artifact 均绑定明确的 Input/Turn/Run，禁止从未完成、其他 Turn 的子 Run 或相邻 Run 猜测输出。每个子任务的 Turn 结果只属于自身 Run。
 - `/api/system/health` 只表达 API 进程 liveness；Compose 以 `/api/system/ready` 判断启动完成、PostgreSQL/Redis 可用且存在完成启动的兼容 worker。worker 同时续租短 TTL ARQ 消费健康、AgentRun lease reconciliation 与 Durable Task reconciliation 成功事实；持久 key、超长 TTL、错误 Redis DSN 或持续无法收敛失联执行都不能维持 readiness。业务正确性仍由真实链路测试证明。
 - Yuxi 数据库 Schema 只由 `schema-init` 在 PostgreSQL advisory lock 内修改并记录 business/knowledge 域版本；API 与 worker 不建表或执行收敛 DDL，并在任一域版本缺失、过旧或过新时拒绝启动。
 - 内置 Skills 是默认 Agent shipping contract 的 required 组成，API/worker 通过 PostgreSQL advisory lock 串行同步；内置 MCP 定义是 optional，但失败必须形成可观测 degraded 而非被组件内部吞掉。

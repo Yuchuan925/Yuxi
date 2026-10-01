@@ -27,5 +27,5 @@ Tool 审计写入会短暂串行化同一 Thread 的 Langfuse/Tool 持久化事�
 
 ## 验证
 
-- Docker E2E `test_child_end_is_public_while_parent_waits_for_slow_child` 覆盖同一父 Turn 内两个并发 SubAgent、父审计与子 Run 写入；应在真实 PostgreSQL 下完成且无 deadlock。
+- Docker E2E `test_child_end_is_public_while_parent_waits_for_slow_child` 覆盖同一父 Turn 委派的两个独立子 Turn、父审计与子 Run 写入；真实 PostgreSQL 完成状态与公开输出由本例回读。
 - 负向证据：修复前上述 E2E 在真实 PostgreSQL 重现 `DeadlockDetectedError`，冲突涉及 `INSERT messages` 与 `UPDATE agent_runs.langfuse_observation_id`；目标测试复跑结果记录在 PR。

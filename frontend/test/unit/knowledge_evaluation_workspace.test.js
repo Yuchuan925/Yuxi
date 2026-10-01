@@ -7,11 +7,11 @@ function readSource(relativePath) {
 }
 
 test('知识库详情将评估基准和近期评估收敛到同一个评估工作台', () => {
-  const detailSource = readSource('../../src/views/DataBaseInfoView.vue')
+  const detailSource = readSource('../../src/pages/DataBaseInfoView.vue')
   const workspaceSource = readSource(
-    '../../src/components/evaluation/KnowledgeEvaluationWorkspace.vue'
+    '../../src/modules/knowledge/ui/KnowledgeEvaluationWorkspace.vue'
   )
-  const extensionsSource = readSource('../../src/views/ExtensionsView.vue')
+  const extensionsSource = readSource('../../src/pages/ExtensionsView.vue')
   const apiSource = readSource('../../src/apis/knowledge_api.js')
 
   assert.match(detailSource, /key: 'evaluation', label: '评估', icon: BarChart3/)
@@ -35,13 +35,13 @@ test('知识库详情将评估基准和近期评估收敛到同一个评估工�
 
 test('评估基准和近期评估使用语义按钮导航到可深链接三级页面', () => {
   const workspaceSource = readSource(
-    '../../src/components/evaluation/KnowledgeEvaluationWorkspace.vue'
+    '../../src/modules/knowledge/ui/KnowledgeEvaluationWorkspace.vue'
   )
-  const routerSource = readSource('../../src/router/index.js')
+  const routerSource = readSource('../../src/app/router/index.js')
 
   assert.match(routerSource, /path: 'knowledgebase\/:kbId\/evaluation\/:datasetId'/)
   assert.match(routerSource, /name: 'ExtensionEvaluationBenchmarkDetail'/)
-  assert.match(routerSource, /import\('\.\.\/views\/EvaluationBenchmarkDetailView\.vue'\)/)
+  assert.match(routerSource, /import\('\.\.\/\.\.\/pages\/EvaluationBenchmarkDetailView\.vue'\)/)
   assert.match(workspaceSource, /v-for="dataset in datasets"/)
   assert.match(workspaceSource, /class="evaluation-row-open"/)
   assert.match(workspaceSource, /const openDataset = \(dataset\) =>/)
@@ -50,9 +50,9 @@ test('评估基准和近期评估使用语义按钮导航到可深链接三级�
 })
 
 test('评估基准三级页包含题目和评估结果 Tab 并按当前基准过滤运行', () => {
-  const source = readSource('../../src/views/EvaluationBenchmarkDetailView.vue')
+  const source = readSource('../../src/pages/EvaluationBenchmarkDetailView.vue')
   const workspaceSource = readSource(
-    '../../src/components/evaluation/KnowledgeEvaluationWorkspace.vue'
+    '../../src/modules/knowledge/ui/KnowledgeEvaluationWorkspace.vue'
   )
 
   assert.match(source, /<ExtensionDetailLayout/)
@@ -93,7 +93,7 @@ test('评估基准三级页包含题目和评估结果 Tab 并按当前基准过
 })
 
 test('评估详情源码包含所选运行的串行轮询与迟到响应守卫', () => {
-  const source = readSource('../../src/views/EvaluationBenchmarkDetailView.vue')
+  const source = readSource('../../src/pages/EvaluationBenchmarkDetailView.vue')
 
   assert.match(source, /selectedRun\.value\?\.status === 'running'/)
   assert.match(source, /activeTab\.value === 'results' && terminalRefreshPending/)
@@ -122,10 +122,10 @@ test('评估详情源码包含所选运行的串行轮询与迟到响应守卫',
 
 test('新建评估在没有已完成基准时禁用且不伪造成功', () => {
   const workspaceSource = readSource(
-    '../../src/components/evaluation/KnowledgeEvaluationWorkspace.vue'
+    '../../src/modules/knowledge/ui/KnowledgeEvaluationWorkspace.vue'
   )
   const modalSource = readSource(
-    '../../src/components/evaluation/EvaluationRunCreateModal.vue'
+    '../../src/modules/knowledge/ui/EvaluationRunCreateModal.vue'
   )
 
   assert.match(workspaceSource, /:disabled="completedDatasets\.length === 0"/)

@@ -11,7 +11,7 @@ def _resume_body(answer):
     return {
         "events": [
             {
-                "type": "yuxi.thread.input.resume",
+                "type": "yuxi.session.input.resume",
                 "turn_id": "turn-1",
                 "waitpoint_id": "wait-1",
                 "response": {"type": "answer", "answers": [{"question_id": "q-1", "answer": answer}]},

@@ -1,4 +1,4 @@
-"""子智能体线程关系和根 Turn 下的子 Run 创建。"""
+"""已授权委派通过子 Thread 持久输入创建独立 Turn。"""
 
 from __future__ import annotations
 
@@ -17,10 +17,13 @@ from yuxi.modules.workspace.repositories.projects import ProjectRepository
 from yuxi.modules.agents.repositories.subagents import SubagentThreadRepository
 from yuxi.modules.agents.services.input_config import load_agent_run_context, resolve_agent_run_model_spec
 from yuxi.modules.agents.services.input_messages import AgentRunInputMessage
+from yuxi.modules.agents.services.inputs import accept_locked
+from yuxi.modules.agents.services.scope import ActorScope
+from yuxi.modules.agents.services.scheduler import Dispatch, deliver
+from yuxi.modules.agents.repositories.input_receipt import AgentInputReceiptRepository
+from yuxi.modules.agents.repositories.input import AgentInputRepository
 from yuxi.modules.agents.services.transport import (
-    enqueue_agent_run,
     list_recent_run_stream_events,
-    publish_cancel_signals,
 )
 from yuxi.infrastructure.postgres.manager import pg_manager
 from yuxi.modules.agents.models.definitions import Agent
@@ -95,6 +98,7 @@ def serialize_subagent_run_state(run: AgentRun) -> dict:
         "subagent_slug": run.agent_slug,
         "subagent_name": runtime.get("subagent_name"),
         "child_thread_id": run.conversation_thread_id,
+        "turn_id": run.turn_id,
         "status": run.status,
         "created_at": format_utc_datetime(run.created_at),
         "completed_at": format_utc_datetime(run.finished_at),
@@ -114,13 +118,23 @@ async def get_agent_run_result(*, run_id: str, current_uid: str, db: AsyncSessio
             "output": "",
             "error": {"type": "run_not_found", "message": "运行任务不存在"},
         }
+    turn = await AgentTurnRepository(db).get_for_scope(
+        turn_id=run.turn_id, thread_id=run.conversation_thread_id, uid=run.uid, app_id=run.app_id
+    )
+    if turn is None:
+        raise ValueError("子 Run 缺少独立 Turn")
+    selected_id = turn.result_run_id if turn.status == "completed" else turn.current_run_id
+    current = await AgentRunRepository(db).get_run(selected_id)
+    if current is None or current.turn_id != turn.id or current.conversation_thread_id != run.conversation_thread_id:
+        raise ValueError("子 Turn 的执行归属不一致")
+    run = current
     output = await db.get(Message, run.output_message_id) if run.output_message_id else None
     if output is not None and (
         output.run_id != run.id or output.turn_id != run.turn_id or output.conversation_id != run.conversation_id
     ):
         raise ValueError("Run 输出消息归属不一致")
     result = {
-        "status": run.status,
+        "status": "interrupted" if turn.status == "waiting" else run.status,
         "output": output.content if output else "",
         "agent_slug": run.agent_slug,
         "thread_id": run.conversation_thread_id,
@@ -144,36 +158,26 @@ async def get_agent_run_progress(run_id: str, *, message_limit: int = 3) -> dict
         logger.warning("读取 Run 进度失败: run=%s error=%s", run_id, exc)
         return {"last_seq": "0-0", "messages": []}
     messages: list[dict] = []
-    for event in events:
-        if event.get("event_type") != "messages":
+    for row in events:
+        event = row["event"]
+        kind = event["type"]
+        if kind == "agent.session.turn.output_text.delta":
+            content, progress_kind = event["delta"], "assistant_message"
+        elif kind == "yuxi.session.turn.reasoning.delta":
+            content, progress_kind = event["delta"], "assistant_reasoning"
+        elif kind == "agent.session.turn.item.added" and event["item"]["type"] == "function_call":
+            content, progress_kind = f"调用工具 {event['item']['name']}", "tool_call"
+        else:
             continue
-        payload = event.get("payload", {}).get("payload", {})
-        chunks = payload.get("items") if isinstance(payload.get("items"), list) else [payload.get("chunk")]
-        for chunk in reversed(chunks):
-            stream_event = chunk.get("stream_event") if isinstance(chunk, dict) else None
-            if not isinstance(stream_event, dict):
-                continue
-            kind = stream_event.get("type")
-            if kind == "message_delta":
-                content = (
-                    stream_event.get("content")
-                    or stream_event.get("reasoning_content")
-                )
-                progress_kind = "assistant_message" if stream_event.get("content") else "assistant_reasoning"
-            elif kind in {"tool_call", "tool_call_delta"}:
-                tool_name = stream_event.get("name") or stream_event.get("tool_call_id") or "工具"
-                content = f"调用工具 {tool_name}" if kind == "tool_call" else f"正在准备工具 {tool_name}"
-                progress_kind = kind
-            else:
-                continue
-            if content and str(content).strip():
-                item = {"content": str(content).strip()[:800], "kind": progress_kind, "seq": event.get("seq")}
-                for key in ("message_id", "tool_call_id"):
-                    if stream_event.get(key):
-                        item[key] = str(stream_event[key])
-                messages.append(item)
-            if len(messages) >= message_limit:
-                break
+        if content.strip():
+            messages.append(
+                {
+                    "content": content.strip()[:800],
+                    "kind": progress_kind,
+                    "seq": row["seq"],
+                    "item_id": event.get("item_id") or event.get("item", {}).get("id"),
+                }
+            )
         if len(messages) >= message_limit:
             break
     return {"last_seq": events[0]["seq"] if events else "0-0", "messages": list(reversed(messages))}
@@ -199,12 +203,17 @@ async def request_cancel_agent_run(*, run_id: str, current_uid: str, db: AsyncSe
     run = await repo.get_run_for_user(run_id, str(current_uid))
     if run is None or run.run_type != "subagent":
         raise HTTPException(status_code=404, detail="子执行不存在")
-    run, cancelled_ids = await repo.request_cancel_execution_tree(
-        run_id=run_id, uid=str(current_uid), cascade_descendants=False
+    from yuxi.modules.agents.services.turns import cancel_turn
+
+    await cancel_turn(
+        db=db,
+        scope=ActorScope(uid=str(current_uid), app_id=run.app_id),
+        thread_id=run.conversation_thread_id,
+        turn_id=run.turn_id,
+        idempotency_key=f"subagent-cancel:{run.id}",
+        expected_run_id=None,
     )
-    await db.commit()
-    await publish_cancel_signals(cancelled_ids)
-    return run
+    return await repo.get_run(run.id)
 
 
 class SubagentRunService:
@@ -292,7 +301,7 @@ class SubagentRunService:
         )
 
         # 创建数据库记录
-        run, created = await self._create_run_record(
+        run, created, dispatch = await self._create_run_record(
             input_message=input_message,
             current_uid=uid,
             creator_run=creator_run,
@@ -304,7 +313,13 @@ class SubagentRunService:
         # 创建成功后入队 worker 执行；幂等命中已有 run 时不重复入队。
         if created:
             await self.db.commit()
-            await enqueue_agent_run(run.id)
+            await deliver(dispatch)
+            from yuxi.modules.agents.services.event_writer import append_run_event_best_effort
+            from yuxi.modules.agents.services.openai_events import subagent_created_event
+
+            await append_run_event_best_effort(
+                creator_run.id, subagent_created_event(creator_run, run, agent_item.name)
+            )
 
         return SubagentStartResult(
             run=run,
@@ -334,29 +349,34 @@ class SubagentRunService:
         relation: SubagentThread,
         agent_item: Agent,
         tool_call_id: str,
-    ) -> tuple[AgentRun, bool]:
+    ) -> tuple[AgentRun, bool, Dispatch | None]:
         """创建后台子智能体 run，并把规范化输入消息保存为该 run 的输入。"""
         if not input_message.content:
             raise HTTPException(status_code=422, detail="input_message 不能为空")
 
-        child_conversation = await self.conv_repo.get_conversation_by_thread_id(relation.child_thread_id)
+        child_conversation = await self.conv_repo.lock_conversation_by_thread_id(relation.child_thread_id)
         if child_conversation is None or child_conversation.id != relation.child_conversation_id:
             raise ValueError("subagent thread relation 与本次运行不匹配")
-        run_id = hash_id("subrun:", f"{creator_run.id}:{relation.child_thread_id}:{tool_call_id}", length=64)
-        existing = await self.run_repo.get_run(run_id)
+        key = hash_id("delegate:", f"{creator_run.id}:{relation.child_thread_id}:{tool_call_id}", length=64)
+        existing = await AgentInputReceiptRepository(self.db).get_for_scope(
+            uid=current_uid, app_id=creator_run.app_id, thread_id=relation.child_thread_id, idempotency_key=key
+        )
         if existing is not None:
-            if existing.created_by_run_id != creator_run.id or existing.subagent_thread_relation_id != relation.id:
-                raise ValueError("子执行幂等键冲突")
-            return existing, False
-        busy = await self.run_repo.get_active_run_by_thread_for_user(
-            agent_slug=relation.subagent_slug,
-            conversation_thread_id=relation.child_thread_id,
-            uid=current_uid,
+            return await self.run_repo.get_run(existing.run_id), False, None
+        busy = await AgentTurnRepository(self.db).lock_active_for_thread(
+            thread_id=relation.child_thread_id, uid=current_uid, app_id=creator_run.app_id
         )
         if busy is not None:
-            raise SubagentRunBusy(relation.child_thread_id, busy.id, busy.status, "子智能体线程已有执行")
+            raise SubagentRunBusy(relation.child_thread_id, busy.current_run_id, busy.status, "子智能体线程已有执行")
         if creator_run.conversation_id != relation.parent_conversation_id:
             raise ValueError("subagent thread relation 与本次运行不匹配")
+        if child_conversation.queue_paused:
+            raise SubagentRunBusy(relation.child_thread_id, None, "paused", "子智能体线程队列已暂停")
+        pending = await AgentInputRepository(self.db).get_queue_head(
+            thread_id=relation.child_thread_id, uid=current_uid, app_id=creator_run.app_id
+        )
+        if pending is not None:
+            raise SubagentRunBusy(relation.child_thread_id, None, "pending", "子智能体线程已有排队输入")
 
         from yuxi.modules.agents.runtime.agent_backends import get_agent_backend
 
@@ -371,7 +391,13 @@ class SubagentRunService:
             "subagent_name": agent_item.name,
             "parent_thread_id": creator_run.conversation_thread_id,
         }
+        from yuxi.modules.agents.services.attachments import serialize_attachment
+
+        delegated_attachments = await self.conv_repo.get_attachments(creator_run.conversation_id)
         input_payload = {
+            "delegated_attachments": [
+                serialize_attachment(item, thread_id=relation.child_thread_id) for item in delegated_attachments
+            ],
             "model_spec": resolved_model_spec,
             "tool_approval_mode": creator_run.input_payload.get("tool_approval_mode", DEFAULT_TOOL_APPROVAL_MODE),
             "runtime": {key: value for key, value in runtime_payload.items() if value is not None},
@@ -382,38 +408,32 @@ class SubagentRunService:
                 "raw_message": input_message.raw_message(),
             }
         )
-        persisted_input_message = await self.conv_repo.add_message(
-            conversation_id=child_conversation.id,
-            role="user",
-            content=subagent_input_message.content,
-            message_type=subagent_input_message.message_type,
-            extra_metadata=subagent_input_message.extra_metadata,
-            image_content=subagent_input_message.image_content,
-            turn_id=creator_run.turn_id,
-            delivery_status="dispatched",
-            commit=False,
-        )
-        run = await self.run_repo.create_run(
-            run_id=run_id,
-            agent_slug=relation.subagent_slug,
-            conversation_thread_id=relation.child_thread_id,
-            runtime_scope_id=getattr(creator_run, "runtime_scope_id", None) or creator_run.conversation_thread_id,
-            uid=current_uid,
-            turn_id=creator_run.turn_id,
-            app_id=creator_run.app_id,
-            api_key_id=creator_run.api_key_id,
-            conversation_id=child_conversation.id,
-            run_type="subagent",
-            input_payload=input_payload,
-            input_message_id=persisted_input_message.id,
-            created_by_run_id=creator_run.id,
-            subagent_thread_relation_id=relation.id,
+        child_conversation.extra_metadata = {
+            **(child_conversation.extra_metadata or {}),
+            "model_spec": resolved_model_spec,
+            "tool_approval_mode": input_payload["tool_approval_mode"],
+        }
+        receipt, dispatch = await accept_locked(
+            db=self.db,
+            scope=ActorScope(uid=current_uid, app_id=creator_run.app_id, api_key_id=creator_run.api_key_id),
+            conversation=child_conversation,
+            idempotency_key=key,
+            event_type="agent.session.input.message",
+            intent_hash=hash_id("", key, length=64),
+            mode="follow_up",
+            messages=[subagent_input_message],
+            model_spec=resolved_model_spec,
+            tool_approval_mode=input_payload["tool_approval_mode"],
+            attachment_file_ids=[],
             source="subagent",
             channel="internal",
+            external_id=None,
+            origin_metadata={"created_by_run_id": creator_run.id, "subagent_thread_relation_id": relation.id},
+            frozen_payload=input_payload,
         )
-        persisted_input_message.run_id = run.id
-        await self.db.flush()
-        return run, True
+        if dispatch is None:
+            raise ValueError("子 Thread 未能领取已持久接收的委派输入")
+        return await self.run_repo.get_run(receipt.run_id), True, dispatch
 
     async def _ensure_child_conversation(
         self,

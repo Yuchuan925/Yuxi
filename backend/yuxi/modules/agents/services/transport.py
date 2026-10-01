@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-from datetime import UTC, datetime
 
 from yuxi.workers.health import WORKER_HEALTH_KEY
 from yuxi.infrastructure.redis import close_async_redis_client, create_arq_redis_pool, get_async_redis_client
@@ -28,7 +27,7 @@ def _cancel_key(run_id: str) -> str:
 
 def _event_stream_key(run_id: str) -> str:
     """生成当前 Run 的短期事件流键。"""
-    return f"run:events:{run_id}"
+    return f"run:events:v2:{run_id}"
 
 
 def _is_valid_stream_seq(value: str) -> bool:
@@ -51,34 +50,6 @@ def normalize_after_seq(after_seq: str | None) -> str:
     if _is_valid_stream_seq(text):
         return text
     return "0-0"
-
-
-def build_run_event_envelope(
-    *,
-    run_id: str,
-    event_type: str,
-    payload: dict | None = None,
-    thread_id: str | None = None,
-    created_at: str | None = None,
-) -> dict:
-    """构造单条 Run 事件的传输封套。"""
-    return {
-        "schema_version": 1,
-        "run_id": run_id,
-        "thread_id": thread_id,
-        "event": event_type,
-        "payload": payload or {},
-        "created_at": created_at or datetime.now(tz=UTC).isoformat(),
-    }
-
-
-def _payload_thread_id(payload: dict | None) -> str | None:
-    """从事件块提取所属 Thread。"""
-    chunk = payload.get("chunk") if isinstance(payload, dict) else None
-    if not isinstance(chunk, dict):
-        return None
-    thread_id = chunk.get("thread_id")
-    return thread_id.strip() if isinstance(thread_id, str) and thread_id.strip() else None
 
 
 async def get_redis_client():
@@ -164,59 +135,38 @@ async def clear_cancel_signal(run_id: str) -> None:
         logger.warning(f"Failed to clear cancel signal for run {run_id}: {e}")
 
 
-async def append_run_stream_event(run_id: str, event_type: str, payload: dict, *, thread_id: str | None = None) -> str:
-    """写入事件并续期当前 Run 的 Redis Stream。"""
+async def append_run_stream_events(run_id: str, events: list[dict]) -> list[str]:
+    """批量写入逐条公开事件，保留顺序与各自恢复位置。"""
+    if not events:
+        return []
     redis = await get_redis_client()
     key = _event_stream_key(run_id)
-    now = datetime.now(tz=UTC)
-    now_ms = int(now.timestamp() * 1000)
-    event_thread_id = thread_id or _payload_thread_id(payload)
-    envelope = build_run_event_envelope(
-        run_id=run_id,
-        event_type=event_type,
-        payload=payload or {},
-        thread_id=event_thread_id,
-        created_at=now.isoformat(),
-    )
-    fields = {
-        "event_type": event_type,
-        "payload": json.dumps(envelope, ensure_ascii=False),
-        "ts": str(now_ms),
-    }
-
     kwargs = {}
     if RUN_EVENTS_STREAM_MAXLEN > 0:
-        kwargs["maxlen"] = RUN_EVENTS_STREAM_MAXLEN
-        kwargs["approximate"] = True
-
-    # 同一连接顺序发出写入和续期，省去两次往返之间的事件循环等待。
+        kwargs = {"maxlen": RUN_EVENTS_STREAM_MAXLEN, "approximate": True}
     async with redis.pipeline(transaction=False) as pipeline:
-        pipeline.xadd(key, fields, **kwargs)
+        for event in events:
+            if event.get("yuxi", {}).get("run_id") != run_id:
+                raise ValueError("公开事件 Run 归属不一致")
+            pipeline.xadd(key, {"version": "2", "event": json.dumps(event, ensure_ascii=False)}, **kwargs)
         pipeline.expire(key, RUN_EVENTS_STREAM_TTL_SECONDS)
-        event_id, _ = await pipeline.execute()
-    return str(event_id)
+        result = await pipeline.execute()
+    return [str(cursor) for cursor in result[:-1]]
 
 
-def _decode_run_stream_row(run_id: str, event_id: str, fields: dict) -> dict | None:
-    """解码单条 Redis Stream 事件；非当前协议版本的事件直接丢弃。"""
-    payload_raw = fields.get("payload") or "{}"
-    try:
-        payload = json.loads(payload_raw)
-    except Exception:
-        payload = None
+async def append_run_stream_event(run_id: str, event: dict) -> str:
+    """写入已经适配的单条公开事件。"""
+    return (await append_run_stream_events(run_id, [event]))[0]
 
-    if not isinstance(payload, dict) or payload.get("schema_version") != 1:
-        logger.warning("Dropping malformed run event: run_id=%s, event_id=%s", run_id, event_id)
-        return None
 
-    event_type = fields.get("event_type") or "message"
-    ts_value = fields.get("ts")
-    return {
-        "seq": str(event_id),
-        "event_type": event_type,
-        "payload": payload,
-        "ts": int(ts_value) if ts_value else None,
-    }
+def _decode_run_stream_row(run_id: str, cursor: str, fields: dict) -> dict | None:
+    """仅接受当前公开格式，不读取旧封套。"""
+    if fields.get("version") != "2":
+        raise ValueError("Redis 事件格式版本不兼容")
+    event = json.loads(fields["event"])
+    if event.get("yuxi", {}).get("run_id") != run_id:
+        raise ValueError("Redis 事件 Run 归属不一致")
+    return {"seq": str(cursor), "event": event}
 
 
 async def list_run_stream_events(

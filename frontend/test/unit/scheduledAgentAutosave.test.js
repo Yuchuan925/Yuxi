@@ -4,7 +4,7 @@ import test from 'node:test'
 import {
   createRetriableRequestIds,
   createScheduledAgentAutosave
-} from '../../src/components/scheduled-agents/scheduledAgentAutosave.js'
+} from '../../src/modules/agents/ui/scheduledAgentAutosave.js'
 
 function deferred() {
   let resolve

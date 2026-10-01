@@ -2,7 +2,7 @@
 
 状态：implemented
 类型：simplification
-Owner：frontend/src/components/AgentChatComponent.vue
+Owner：frontend/src/modules/conversation/ui/ConversationWorkspace.vue
 
 ## 问题
 
@@ -12,7 +12,7 @@ Owner：frontend/src/components/AgentChatComponent.vue
 
 ### 实现方案
 
-发送时构造一次本地用户消息，包含有序 `image_contents`。Web 将它与 Input ID 一起保存在当前 Thread 的 `queuedInputs`；[队列模块](https://github.com/xerrors/Yuxi/blob/main/frontend/src/composables/useAgentInputQueue.js)同步持久快照时保留同一条本地消息。Input 被领取后，消息转交当前 Run 的 `msgChunks`；取消或失败时按 Input ID 清理。页面刷新重新读取 PostgreSQL 历史投影，浏览器内引用不承担持久化职责。多图格式和上限由[输入多图决定](./2026-09-25-chat-multi-image.md)拥有。
+发送时构造一次本地用户消息，包含有序 `image_contents`。Web 将它与 Input ID 一起保存在当前 Thread 的 `queuedInputs`；[队列模块](https://github.com/xerrors/Yuxi/blob/main/frontend/src/modules/conversation/model/useAgentInputQueue.js)同步持久快照时保留同一条本地消息。Input 被领取后，消息转交当前 Run 的 `msgChunks`；取消或失败时按 Input ID 清理。页面刷新重新读取 PostgreSQL 历史投影，浏览器内引用不承担持久化职责。多图格式和上限由[输入多图决定](./2026-09-25-chat-multi-image.md)拥有。
 
 ## 替代方案
 

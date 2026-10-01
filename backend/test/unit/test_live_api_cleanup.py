@@ -501,7 +501,7 @@ async def test_cleanup_stops_when_cancelled_input_remains_pending(tmp_path, monk
         if request.method == "POST" and request.url.path == "/api/v1/agents/threads/thread-marked/events":
             assert request.headers["Idempotency-Key"] == "cleanup:YUXI_TEST_pending_input"
             assert request.content == (
-                b'{"events":[{"type":"yuxi.thread.input.cancel_input","input_id":"YUXI_TEST_pending_input"}]}'
+                b'{"events":[{"type":"yuxi.session.input.cancel_input","input_id":"YUXI_TEST_pending_input"}]}'
             )
             return httpx.Response(202, json={"status": "cancelled"})
         if request.method == "DELETE":

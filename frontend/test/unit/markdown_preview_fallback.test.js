@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { createMarkdownRenderer } from '../../src/utils/markdown_preview.js'
+import { createMarkdownRenderer } from '../../src/shared/lib/markdown_preview.js'
 
 test('无代码高亮器时 Markdown 仍保留结构化渲染', () => {
   const renderer = createMarkdownRenderer({ themeName: 'github-light', highlighter: null })
@@ -31,7 +31,7 @@ metadata:
 })
 
 test('relative document images resolve beside their artifact with the same authorization boundary', async () => {
-  const { resolveMarkdownImageUrl } = await import('../../src/utils/markdown_preview.js')
+  const { resolveMarkdownImageUrl } = await import('../../src/shared/lib/markdown_preview.js')
   const base = '/api/v1/agents/threads/thread-1/artifacts/home/gem/user-data/project/parsed/document.md'
   const origin = 'https://yuxi.example'
   assert.equal(

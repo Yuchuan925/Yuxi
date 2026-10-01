@@ -5,8 +5,22 @@ from types import SimpleNamespace
 
 import pytest
 
-import yuxi.modules.agents.services.model_audit as model_message_audit_service
-from yuxi.modules.agents.services.model_audit import ModelMessageAuditCollector
+import yuxi.modules.agents.services.message_recorder as model_message_audit_service
+from yuxi.modules.agents.services.message_recorder import RunMessageRecorder
+
+
+def native_event(message, metadata):
+    """把明确 fixture 来源放入原生 ProtocolEvent 的固定位置。"""
+    source = metadata.get("stream_event", {})
+    return {
+        "method": "messages",
+        "seq": source.get("seq"),
+        "params": {
+            "namespace": source.get("namespace", []),
+            "timestamp": source.get("timestamp"),
+            "data": (message, {key: value for key, value in metadata.items() if key != "stream_event"}),
+        },
+    }
 
 
 class _FakeDb:
@@ -40,7 +54,7 @@ async def test_collector_projects_real_v3_message_lifecycle(monkeypatch):
     monkeypatch.setattr(model_message_audit_service, "ModelMessageAuditRepository", FakeRepository)
     monkeypatch.setattr(model_message_audit_service, "monotonic", lambda: next(monotonic_values))
 
-    collector = ModelMessageAuditCollector(
+    collector = RunMessageRecorder(
         run_id="run-1",
         thread_id="thread-1",
         worker_id="worker-1",
@@ -55,41 +69,49 @@ async def test_collector_projects_real_v3_message_lifecycle(monkeypatch):
         },
     }
     await collector.consume(
-        {
-            "event": "message-start",
-            "role": "ai",
-            "id": "lc_run--model-message-1",
-            "metadata": {"provider": "openai"},
-        },
-        metadata,
+        native_event(
+            {
+                "event": "message-start",
+                "role": "ai",
+                "id": "lc_run--model-message-1",
+                "metadata": {"provider": "openai"},
+            },
+            metadata,
+        )
     )
     await collector.consume(
-        {
-            "event": "content-block-delta",
-            "index": 0,
-            "delta": {"type": "text-delta", "text": "hello"},
-        },
-        metadata,
+        native_event(
+            {
+                "event": "content-block-delta",
+                "index": 0,
+                "delta": {"type": "text-delta", "text": "hello"},
+            },
+            metadata,
+        )
     )
     await collector.consume(
-        {
-            "event": "content-block-finish",
-            "index": 0,
-            "content": {"type": "text", "text": "hello"},
-        },
-        metadata,
+        native_event(
+            {
+                "event": "content-block-finish",
+                "index": 0,
+                "content": {"type": "text", "text": "hello"},
+            },
+            metadata,
+        )
     )
     finish_metadata = {
         **metadata,
         "stream_event": {**metadata["stream_event"], "seq": 8, "timestamp": 1_777_000_123_789},
     }
     await collector.consume(
-        {
-            "event": "message-finish",
-            "usage": {"input_tokens": 8, "output_tokens": 2, "total_tokens": 10},
-            "metadata": {"model_name": "deterministic-chat"},
-        },
-        finish_metadata,
+        native_event(
+            {
+                "event": "message-finish",
+                "usage": {"input_tokens": 8, "output_tokens": 2, "total_tokens": 10},
+                "metadata": {"model_name": "deterministic-chat"},
+            },
+            finish_metadata,
+        )
     )
 
     assert calls[0][0] == "start"
@@ -120,7 +142,7 @@ async def test_collector_projects_real_v3_message_lifecycle(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_collector_rejects_start_without_protocol_sequence():
-    collector = ModelMessageAuditCollector(
+    collector = RunMessageRecorder(
         run_id="run-1",
         thread_id="thread-1",
         worker_id="worker-1",
@@ -128,8 +150,10 @@ async def test_collector_rejects_start_without_protocol_sequence():
 
     with pytest.raises(ValueError, match="seq"):
         await collector.consume(
-            {"event": "message-start", "role": "ai", "id": "message-1"},
-            {"run_id": "model-run-1", "stream_event": {"timestamp": 1_777_000_123_456}},
+            native_event(
+                {"event": "message-start", "role": "ai", "id": "message-1"},
+                {"run_id": "model-run-1", "stream_event": {"timestamp": 1_777_000_123_456}},
+            )
         )
 
 
@@ -160,7 +184,7 @@ async def test_duplicate_start_preserves_collected_content_and_monotonic_clock(m
     monkeypatch.setattr(model_message_audit_service, "ModelMessageAuditRepository", FakeRepository)
     monkeypatch.setattr(model_message_audit_service, "monotonic", lambda: next(monotonic_values))
 
-    collector = ModelMessageAuditCollector(
+    collector = RunMessageRecorder(
         run_id="run-1",
         thread_id="thread-1",
         worker_id="worker-1",
@@ -170,19 +194,19 @@ async def test_duplicate_start_preserves_collected_content_and_monotonic_clock(m
         "stream_event": {"seq": 1, "timestamp": 1_777_000_123_456},
     }
     start = {"event": "message-start", "role": "ai", "id": "message-1"}
-    await collector.consume(start, metadata)
+    await collector.consume(native_event(start, metadata))
     await collector.consume(
-        {"event": "content-block-delta", "delta": {"type": "text-delta", "text": "before"}},
-        metadata,
+        native_event({"event": "content-block-delta", "delta": {"type": "text-delta", "text": "before"}}, metadata)
     )
-    await collector.consume(start, metadata)
+    await collector.consume(native_event(start, metadata))
     await collector.consume(
-        {"event": "content-block-delta", "delta": {"type": "text-delta", "text": " after"}},
-        metadata,
+        native_event({"event": "content-block-delta", "delta": {"type": "text-delta", "text": " after"}}, metadata)
     )
     await collector.consume(
-        {"event": "message-finish", "usage": {}},
-        {"run_id": "model-run-1", "stream_event": {"seq": 2, "timestamp": 1_777_000_123_789}},
+        native_event(
+            {"event": "message-finish", "usage": {}},
+            {"run_id": "model-run-1", "stream_event": {"seq": 2, "timestamp": 1_777_000_123_789}},
+        )
     )
 
     assert finishes[0]["content"] == "before after"
@@ -208,7 +232,7 @@ async def test_active_lifecycle_rejects_replacement_operation_id(monkeypatch):
     monkeypatch.setattr(model_message_audit_service.pg_manager, "get_async_session_context", session_context)
     monkeypatch.setattr(model_message_audit_service, "ModelMessageAuditRepository", FakeRepository)
 
-    collector = ModelMessageAuditCollector(
+    collector = RunMessageRecorder(
         run_id="run-1",
         thread_id="thread-1",
         worker_id="worker-1",
@@ -217,7 +241,7 @@ async def test_active_lifecycle_rejects_replacement_operation_id(monkeypatch):
         "run_id": "model-run-1",
         "stream_event": {"seq": 1, "timestamp": 1_777_000_123_456},
     }
-    await collector.consume({"event": "message-start", "role": "ai", "id": "message-1"}, metadata)
+    await collector.consume(native_event({"event": "message-start", "role": "ai", "id": "message-1"}, metadata))
 
     with pytest.raises(ValueError, match="operation id"):
-        await collector.consume({"event": "message-start", "role": "ai", "id": "message-2"}, metadata)
+        await collector.consume(native_event({"event": "message-start", "role": "ai", "id": "message-2"}, metadata))

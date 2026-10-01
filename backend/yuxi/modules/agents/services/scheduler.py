@@ -29,11 +29,11 @@ class Dispatch:
     binding: WorkdirBinding
 
 
-async def claim_follow_up(
+async def claim_next_input(
     *, db: AsyncSession, conversation: Conversation, binding: WorkdirBinding | None = None
 ) -> Dispatch | None:
-    """在已锁定的 Thread 上领取 FIFO 队头，原子建立 Turn 与首段 Run。"""
-    if conversation.status != "active" or conversation.queue_paused:
+    """在已锁 Thread 上领取优先队头，原子建立 Turn 与首段 Run。"""
+    if conversation.status not in {"active", "subagent"} or conversation.queue_paused:
         return None
 
     turn_repo = AgentTurnRepository(db)
@@ -77,7 +77,9 @@ async def claim_follow_up(
         external_id=head.external_id,
         origin_metadata=head.origin_metadata or {},
         conversation_id=conversation.id,
-        run_type="chat",
+        run_type="subagent" if conversation.status == "subagent" else "chat",
+        created_by_run_id=(head.origin_metadata or {}).get("created_by_run_id"),
+        subagent_thread_relation_id=(head.origin_metadata or {}).get("subagent_thread_relation_id"),
         input_message_id=messages[0].id,
     )
     await turn_repo.set_current(turn, run_id=run_id)
@@ -93,10 +95,10 @@ async def dispatch_next_input(*, uid: str, agent_slug: str, thread_id: str) -> s
             conversation is None
             or conversation.uid != uid
             or conversation.agent_id != agent_slug
-            or conversation.status != "active"
+            or conversation.status not in {"active", "subagent"}
         ):
             return None
-        dispatch = await claim_follow_up(db=db, conversation=conversation)
+        dispatch = await claim_next_input(db=db, conversation=conversation)
 
     if dispatch is None:
         return None
@@ -121,7 +123,7 @@ async def recover_pending_dispatches() -> None:
             (
                 await db.execute(
                     select(AgentInput.uid, AgentInput.agent_slug, AgentInput.conversation_thread_id)
-                    .where(AgentInput.kind == "follow_up", AgentInput.status == "pending")
+                    .where(AgentInput.status == "pending")
                     .distinct()
                 )
             ).all()
@@ -130,8 +132,6 @@ async def recover_pending_dispatches() -> None:
     for run in pending:
         try:
             async with pg_manager.get_async_session_context() as db:
-                if run.run_type == "subagent" and not await _recoverable_subagent(db, run):
-                    continue
                 conversation = await ConversationRepository(db).get_conversation_by_thread_id(
                     run.conversation_thread_id
                 )
@@ -144,6 +144,12 @@ async def recover_pending_dispatches() -> None:
                     or conversation.status != expected_status
                 ):
                     continue
+                current = await AgentRunRepository(db).get_run(run.id)
+                turn = await AgentTurnRepository(db).get_for_scope(
+                    turn_id=run.turn_id, thread_id=run.conversation_thread_id, uid=run.uid, app_id=run.app_id
+                )
+                if current is None or current.status != "pending" or turn is None or turn.current_run_id != run.id:
+                    continue
                 binding = await resolve_conversation_workdir_binding(conversation=conversation, uid=run.uid, db=db)
             await deliver(Dispatch(run_id=run.id, binding=binding))
         except Exception:
@@ -154,58 +160,3 @@ async def recover_pending_dispatches() -> None:
             await dispatch_next_input(uid=uid, agent_slug=agent_slug, thread_id=thread_id)
         except Exception:
             logger.exception("Failed to recover ready AgentInput: %s", thread_id)
-
-
-async def _recoverable_subagent(db: AsyncSession, run: AgentRun) -> bool:
-    """锁定父执行树并收敛已失去执行资格的 pending 子 Run。"""
-    conversations = ConversationRepository(db)
-    runs = AgentRunRepository(db)
-    root = await conversations.lock_conversation_by_thread_id(run.runtime_scope_id)
-    turn = None
-    if root is not None:
-        turn = await AgentTurnRepository(db).get_for_scope(
-            turn_id=run.turn_id,
-            thread_id=root.thread_id,
-            uid=run.uid,
-            app_id=run.app_id,
-            for_update=True,
-        )
-    parent = await runs.lock_run_for_user(run.created_by_run_id, run.uid) if run.created_by_run_id else None
-    current = await runs.lock_run_for_user(run.id, run.uid)
-    if current is None or current.status != "pending":
-        return False
-
-    if (
-        root is None
-        or root.uid != run.uid
-        or root.app_id != run.app_id
-        or root.status != "active"
-        or parent is None
-        or parent.run_type not in {"chat", "resume"}
-        or parent.status != "running"
-        or parent.app_id != run.app_id
-        or parent.conversation_thread_id != root.thread_id
-        or parent.conversation_id != root.id
-        or parent.turn_id != run.turn_id
-        or parent.runtime_scope_id != run.runtime_scope_id
-        or turn is None
-        or turn.status != "running"
-        or turn.current_run_id != parent.id
-    ):
-        await runs.set_terminal_status(
-            run.id,
-            status="cancelled",
-            error_type="execution_tree_closed",
-            error_message="父运行已结束，请停止共享执行树",
-        )
-        return False
-
-    if await runs.get_subagent_run_with_creator(uid=run.uid, created_by_run_id=parent.id, run_id=run.id) is None:
-        await runs.set_terminal_status(
-            run.id,
-            status="failed",
-            error_type="invalid_runtime_scope",
-            error_message="子运行的父执行树关系无效",
-        )
-        return False
-    return True

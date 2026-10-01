@@ -12,7 +12,7 @@ before(async () => {
     server: { middlewareMode: true },
     appType: 'custom'
   })
-  ;({ parseDownloadFilename } = await server.ssrLoadModule('/src/utils/file_utils.js'))
+  ;({ parseDownloadFilename } = await server.ssrLoadModule('/src/shared/lib/file_utils.js'))
 })
 
 after(async () => {

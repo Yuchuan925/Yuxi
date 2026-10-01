@@ -1,12 +1,10 @@
 from contextlib import aclosing
-from types import SimpleNamespace
 
 import pytest
 from langchain_core.messages import AIMessageChunk
 
-from yuxi.modules.agents.runtime.base import BaseAgent, _collect_subagent_routes
+from yuxi.modules.agents.runtime.base import BaseAgent
 from yuxi.modules.agents.runtime.context import BaseContext
-from yuxi.shared.hashing import subagent_child_thread_id
 
 
 @pytest.mark.asyncio
@@ -50,30 +48,5 @@ async def test_langgraph_message_does_not_route_by_nested_thread_id(container):
             ["hello"], context=BaseContext(thread_id="parent-thread", uid="user-1")
         )
     ]
-    assert "thread_id" not in events[0][1][1]
-    assert events[1][1][1]["thread_id"] == "child-thread"
-
-
-@pytest.mark.asyncio
-async def test_subgraph_route_uses_handle_identity_instead_of_arbitrary_state():
-    """子图句柄的名字与调用标识决定已有确定性路由。"""
-
-    async def subagents():
-        """非协议属性中的线程字段不能覆盖子图标识。"""
-        yield SimpleNamespace(
-            path=("child:task",),
-            graph_name="worker",
-            trigger_call_id="call-1",
-            metadata={"thread_id": "unrelated-thread"},
-            state={"configurable": {"thread_id": "unrelated-thread"}},
-        )
-
-    routes = {}
-    await _collect_subagent_routes(SimpleNamespace(subagents=subagents()), "parent-thread", routes)
-
-    assert routes[("child:task",)] == {
-        "thread_id": subagent_child_thread_id("parent-thread", "worker", "call-1"),
-        "parent_thread_id": "parent-thread",
-        "subagent_slug": "worker",
-        "tool_call_id": "call-1",
-    }
+    assert "thread_id" not in events[0]["params"]["data"][1]
+    assert events[1]["params"]["data"][1]["thread_id"] == "child-thread"

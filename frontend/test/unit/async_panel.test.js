@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createSSRApp, h } from 'vue'
 import { renderToString } from 'vue/server-renderer'
-import { createAsyncPanel } from '../../src/utils/asyncPanel.js'
+import { createAsyncPanel } from '../../src/shared/lib/asyncPanel.js'
 
 test('异步面板成功后透传 props 与事件', async () => {
   const Panel = createAsyncPanel(async () => ({

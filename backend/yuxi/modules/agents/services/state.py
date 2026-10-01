@@ -9,28 +9,13 @@ from typing import Any
 from fastapi import HTTPException
 from yuxi.modules.agents.repositories.threads import ConversationRepository
 from yuxi.modules.agents.repositories.runs import AgentRunRepository
+from yuxi.modules.agents.repositories.turn import AgentTurnRepository
 from yuxi.modules.agents.repositories.subagents import SubagentThreadRepository
 from yuxi.modules.agents.services.execution import build_pending_interrupt_payload, extract_agent_state
 from yuxi.modules.agents.services.subagents import serialize_subagent_run_state
 from yuxi.infrastructure.postgres.manager import pg_manager
 from yuxi.modules.identity.models import User
 from yuxi.infrastructure.observability.logging import logger
-
-
-def _serialize_state_messages(values: dict[str, Any]) -> list[dict[str, Any]]:
-    """将 checkpoint 消息复制为只读响应载荷。"""
-    messages = values.get("messages") if isinstance(values, dict) else None
-    if not isinstance(messages, list):
-        return []
-    serialized = []
-    for message in messages:
-        if hasattr(message, "model_dump"):
-            serialized.append(message.model_dump())
-        elif isinstance(message, dict):
-            serialized.append(dict(message))
-        else:
-            serialized.append({"type": "unknown", "content": str(message)})
-    return serialized
 
 
 async def _read_checkpoint_state(*, uid: str, thread_id: str) -> tuple[dict, Any | None]:
@@ -69,14 +54,25 @@ async def get_agent_state_view(
 
         latest_run = await run_repo.get_latest_run_by_thread_for_user(thread_id, current_uid)
         values, interrupt_info = await _read_checkpoint_state(uid=current_uid, thread_id=thread_id)
-        response = {
-            "agent_state": extract_agent_state(values)
-        }
+        response = {"agent_state": extract_agent_state(values)}
         if latest_run and latest_run.status == "interrupted" and interrupt_info:
-            response["interrupt"] = {
-                **build_pending_interrupt_payload(interrupt_info, thread_id),
-                "run_id": latest_run.id,
-            }
+            turn = await AgentTurnRepository(db).get_for_scope(
+                turn_id=latest_run.turn_id,
+                thread_id=thread_id,
+                uid=current_uid,
+                app_id=app_id,
+            )
+            if (
+                turn
+                and turn.status == "waiting"
+                and turn.current_run_id == latest_run.id
+                and turn.waitpoint
+                and turn.waitpoint["run_id"] == latest_run.id
+            ):
+                response["interrupt"] = {
+                    **build_pending_interrupt_payload(interrupt_info, thread_id),
+                    "run_id": latest_run.id,
+                }
         if include_relations:
             # checkpoint 保存模型上下文；页面加载以持久 Run 的身份与状态为准。
             child_runs = await run_repo.list_subagent_runs_for_conversation(conversation.id, current_uid)
@@ -107,7 +103,13 @@ async def get_agent_state_view(
                         logger.error(f"子智能体运行记录格式异常: thread_id={thread_id}, run_id={latest_run.id}, {exc}")
                         raise HTTPException(status_code=500, detail="子智能体运行记录格式异常") from exc
         if include_messages:
-            response["messages"] = _serialize_state_messages(values)
+            from yuxi.modules.agents.repositories.public_items import PublicItemRepository
+            from yuxi.modules.agents.services.public_items import serialize_public_items
+
+            rows = await PublicItemRepository(db).list_items(thread_id=thread_id, uid=current_uid, app_id=app_id)
+            response["items"] = [
+                item for message, run, result_id in rows for item in serialize_public_items(message, run, result_id)
+            ]
         return response
 
     # 子智能体线程在创建时必然同时写入子对话与线程关系（见 SubagentRunService.start），

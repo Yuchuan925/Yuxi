@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { createSearchConfigSnapshot, searchConfigChanged } from '../../src/utils/searchConfig.js'
+import { createSearchConfigSnapshot, searchConfigChanged } from '../../src/modules/knowledge/model/searchConfig.js'
 
 test('检索配置快照只包含服务端声明的参数', () => {
   const snapshot = createSearchConfigSnapshot(

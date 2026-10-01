@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { MessageProcessor } from '../../src/utils/messageProcessor.js'
+import { MessageProcessor } from '../../src/modules/conversation/model/messageProcessor.js'
 
 const databases = [{ name: '财税库' }, { name: 'DifyKB' }, { name: 'LightGraphKB' }]
 
@@ -16,12 +16,7 @@ test('流式与历史只消费统一展示字段，不解释供应商元数据',
     content: 'OK', additional_kwargs: { reasoning_content: '不在页面恢复' },
     content_blocks: [{ type: 'reasoning', reasoning: '不在页面恢复' }]
   }), { content: 'OK', reasoningContent: '' })
-  const merged = MessageProcessor.mergeMessageChunk([
-    { type: 'ai', content: '', reasoning_content: '先' },
-    { type: 'ai', content: '', reasoning_content: '检查。' },
-    { type: 'ai', content: 'OK' }
-  ])
-  assert.deepEqual(MessageProcessor.parseAssistantMessageBody(merged), { content: 'OK', reasoningContent: '先检查。' })
+
 })
 
 test('交付物只归属于调用 present_artifacts 的对话', () => {

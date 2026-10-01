@@ -48,7 +48,7 @@ async function withServer(run) {
 
 async function prepareStores(server) {
   setActivePinia(createPinia())
-  const { useUserStore } = await server.ssrLoadModule('/src/stores/user.js')
+  const { useUserStore } = await server.ssrLoadModule('/src/modules/identity/model/user.js')
   const userStore = useUserStore()
   userStore.token = 'dashboard-test-token'
   userStore.userId = 1
@@ -116,7 +116,7 @@ test('dashboardApi.getAllStats 始终请求知识库统计', async () => {
 
 test('会话分析保持紧凑摘要、彩色排行、刷新 loading 与统一头像 fallback', () => {
   const source = readFileSync(
-    new URL('../../src/components/dashboard/ThreadStatsComponent.vue', import.meta.url),
+    new URL('../../src/modules/dashboard/ui/ThreadStatsComponent.vue', import.meta.url),
     'utf8'
   )
   const refreshButton = source.match(/<a-button[^>]*class="refresh-btn"[\s\S]*?<\/a-button>/)?.[0]
@@ -143,7 +143,7 @@ test('会话分析保持紧凑摘要、彩色排行、刷新 loading 与统一�
 
 test('智能体分析不再渲染 TOP 5 排行且保留分布图', () => {
   const source = readFileSync(
-    new URL('../../src/components/dashboard/AgentStatsComponent.vue', import.meta.url),
+    new URL('../../src/modules/dashboard/ui/AgentStatsComponent.vue', import.meta.url),
     'utf8'
   )
 
@@ -154,7 +154,7 @@ test('智能体分析不再渲染 TOP 5 排行且保留分布图', () => {
 
 test('会话统计源码包含筛选请求代次和 loading 回写守卫', () => {
   const source = readFileSync(
-    new URL('../../src/components/dashboard/ThreadStatsComponent.vue', import.meta.url),
+    new URL('../../src/modules/dashboard/ui/ThreadStatsComponent.vue', import.meta.url),
     'utf8'
   )
   const statsLoader = source.slice(source.indexOf('const loadData'), source.indexOf('const changeSubagentScope'))
@@ -181,7 +181,7 @@ test('会话统计源码包含筛选请求代次和 loading 回写守卫', () =>
 
 test('formatStorageSize 将容量限制为四位有效数字并分离单位', async () => {
   await withServer(async (server) => {
-    const { formatStorageSize } = await server.ssrLoadModule('/src/utils/dashboard.js')
+    const { formatStorageSize } = await server.ssrLoadModule('/src/modules/dashboard/model/dashboard.js')
 
     assert.deepEqual(formatStorageSize(518.2 * 1024), { value: '518.2', unit: 'KB' })
     assert.deepEqual(formatStorageSize(12.345 * 1024 ** 3), { value: '12.35', unit: 'GB' })
@@ -192,7 +192,7 @@ test('formatStorageSize 将容量限制为四位有效数字并分离单位', as
 
 test('buildHeatmapMonthSegments 忽略拥挤的残月并保留完整月份', async () => {
   await withServer(async (server) => {
-    const { buildHeatmapMonthSegments } = await server.ssrLoadModule('/src/utils/dashboard.js')
+    const { buildHeatmapMonthSegments } = await server.ssrLoadModule('/src/modules/dashboard/model/dashboard.js')
     const weeks = [
       [{ date: '2026-04-27' }],
       [{ date: '2026-05-04' }],

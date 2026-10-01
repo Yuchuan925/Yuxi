@@ -16,6 +16,23 @@ import yuxi.modules.agents.services.state as state_svc
 import yuxi.modules.agents.services.runs as lifecycle_runs
 
 
+def test_approval_binding_uses_current_model_and_keeps_duplicate_call_order():
+    """同名同参审批仍绑定各自真实调用，不接受缺少当前声明的动作。"""
+    message = SimpleNamespace(extra_metadata={"tool_calls": [
+        {"id": "first", "name": "execute", "args": {"command": "x"}},
+        {"id": "second", "name": "execute", "args": {"command": "x"}},
+    ]})
+    waitpoint = {"kind": "approval", "calls": [
+        {"call_id": "approval-1", "name": "execute", "args": {"command": "x"}},
+        {"call_id": "approval-2", "name": "execute", "args": {"command": "x"}},
+    ]}
+    bound = message_svc._bind_approval_calls(waitpoint, message)
+    assert [call["tool_call_id"] for call in bound["calls"]] == ["first", "second"]
+    assert "tool_call_id" not in waitpoint["calls"][0]
+    with pytest.raises(ValueError, match="当前模型"):
+        message_svc._bind_approval_calls(waitpoint, None)
+
+
 def _empty_agent_context(_uid: str) -> str:
     return ""
 
@@ -145,6 +162,41 @@ class _EmptyToolAuditRepo:
         return []
 
 
+@pytest.fixture(autouse=True)
+def owning_turn_boundary(monkeypatch):
+    """消息对账单测固定独立 Turn；事务并发由真实链路验证。"""
+    class TurnRepo:
+        def __init__(self, db):
+            pass
+        async def get_for_scope(self, **kwargs):
+            return SimpleNamespace(
+                id=kwargs["turn_id"],
+                current_run_id="run-current" if kwargs["turn_id"] == "request-current" else "run-1",
+                status="running",
+                next_output_index=0,
+            )
+
+    class InputRepo:
+        def __init__(self, db):
+            pass
+        async def get_pending_steer(self, **kwargs):
+            return None
+    monkeypatch.setattr(message_svc, "AgentTurnRepository", TurnRepo)
+    monkeypatch.setattr(message_svc, "AgentInputRepository", InputRepo)
+    async def settle(**kwargs):
+        repo = message_svc.AgentRunRepository(kwargs["db"])
+        run, changed = await repo.set_terminal_status(
+            "run-1",
+            status=kwargs["status"],
+            worker_id=kwargs["worker_id"],
+            token_usage=kwargs.get("token_usage"),
+            error_type=kwargs.get("error_type"),
+            error_message=kwargs.get("error_message"),
+        )
+        return SimpleNamespace(status=kwargs["status"], changed=changed, next_run_id=None)
+    monkeypatch.setattr(message_svc, "settle_checkpoint", settle)
+
+
 class _FakeDBBase:
     async def flush(self):
         """模拟仓储原语只 flush、顶层拥有提交。"""
@@ -153,7 +205,9 @@ class _FakeDBBase:
 class _FakeRunRepoBase:
     async def get_run(self, _run_id: str):
         """消息重建测试只关注输出归属，使用子执行免除根 Turn 调度。"""
-        return SimpleNamespace(run_type="subagent")
+        return SimpleNamespace(
+            run_type="subagent", id="run-1", uid="user-1", app_id=None, turn_id="turn-1", input_message_id=None
+        )
 
 
 class _FakeConvRepo:
@@ -286,7 +340,7 @@ async def test_error_output_and_failed_run_commit_together(monkeypatch):
             pass
 
         async def lock_output_persistence(self, *_args, **_kwargs):
-            return SimpleNamespace(id="run-1", run_type="subagent")
+            return SimpleNamespace(id="run-1", run_type="subagent", input_message_id=None)
 
         async def set_output_message(self, *_args, **_kwargs):
             steps.append("output")
@@ -304,7 +358,6 @@ async def test_error_output_and_failed_run_commit_together(monkeypatch):
 
     monkeypatch.setattr(message_svc, "AgentRunRepository", FakeRunRepo)
     monkeypatch.setattr(message_svc, "settle_checkpoint", settle_checkpoint)
-    monkeypatch.setattr(message_svc, "publish_cancel_signals", publish_cancel_signals)
     repo = _FakeConvRepo(FakeDB())
     message = await message_svc.save_partial_message(
         repo,
@@ -316,7 +369,7 @@ async def test_error_output_and_failed_run_commit_together(monkeypatch):
     )
     assert message.id == 1
     assert repo.saved_messages[0]["commit"] is False
-    assert steps == ["output", "failed", "commit", "published"]
+    assert steps == ["output", "failed", "commit"]
 
 
 @pytest.mark.asyncio
@@ -359,6 +412,63 @@ async def test_empty_final_checkpoint_cannot_complete_prior_error_output(monkeyp
             complete_run=True,
         )
     assert db.rolled_back and not db.committed
+
+
+@pytest.mark.asyncio
+async def test_steer_before_first_model_yields_without_ai_output(monkeypatch):
+    """首次模型调用前让位允许空输出，提交后才投递接续段。"""
+    run = SimpleNamespace(id="run-1", status="running", output_message_id=None)
+    events = []
+
+    class DB(_FakeDBBase):
+        async def commit(self):
+            events.append("commit")
+
+        async def rollback(self):
+            pytest.fail("合法的 steer 让位不应回滚")
+
+    class RunRepo(_FakeRunRepoBase):
+        def __init__(self, db):
+            pass
+
+        async def lock_output_persistence(self, *args, **kwargs):
+            return run
+
+    class InputRepo:
+        def __init__(self, db):
+            pass
+
+        async def get_pending_steer(self, **kwargs):
+            return SimpleNamespace(id="S3")
+
+    async def settle(**kwargs):
+        """模拟已由 PG 专项验证的同事务接管结果。"""
+        run.status = "yielded"
+        return SimpleNamespace(status="yielded", changed=True, next_run_id="next-run")
+
+    async def dispatch(run_id):
+        assert run_id == "next-run" and events == ["commit"]
+        events.append("dispatch")
+
+    monkeypatch.setattr(message_svc, "AgentRunRepository", RunRepo)
+    monkeypatch.setattr(message_svc, "AgentInputRepository", InputRepo)
+    monkeypatch.setattr(message_svc, "ModelMessageAuditRepository", _EmptyModelAuditRepo)
+    monkeypatch.setattr(message_svc, "ToolMessageAuditRepository", _EmptyToolAuditRepo)
+    monkeypatch.setattr(message_svc, "settle_checkpoint", settle)
+    monkeypatch.setattr(message_svc, "enqueue_agent_run", dispatch)
+    repo = _FakeConvRepo(DB())
+    status = await message_svc.save_messages_from_langgraph_state(
+        state=SimpleNamespace(values={"messages": []}),
+        thread_id="thread-1",
+        conv_repo=repo,
+        run_id="run-1",
+        turn_id="turn-1",
+        worker_id="owner",
+        complete_run=True,
+    )
+    assert status == run.status == "yielded" and run.output_message_id is None
+    assert repo.saved_messages == repo.published_message_ids == []
+    assert events == ["commit", "dispatch"]
 
 
 @pytest.mark.asyncio
@@ -483,24 +593,6 @@ async def test_state_fallback_does_not_rebind_hidden_message_from_previous_run(m
     assert captured == {"worker-current": 1}
 
 
-def test_root_tool_audit_event_rejects_unrouted_subagent_namespace() -> None:
-    assert svc._is_root_tool_audit_event(
-        {"method": "tools", "namespace": [], "data": {}},
-        "root-thread",
-    )
-    assert not svc._is_root_tool_audit_event(
-        {"method": "tools", "namespace": ["child:task"], "data": {}},
-        "root-thread",
-    )
-    assert not svc._is_root_tool_audit_event(
-        {
-            "method": "tools",
-            "namespace": ["child:task"],
-            "thread_id": "child-thread",
-            "data": {},
-        },
-        "root-thread",
-    )
 
 
 def test_tool_state_only_enriches_running_error_awaiting_terminal() -> None:
@@ -655,7 +747,7 @@ async def test_model_state_reconcile_uses_latest_message_when_operation_id_is_re
             pass
 
         async def lock_output_persistence(self, *_args, **_kwargs):
-            return SimpleNamespace(id="run-1", run_type="subagent")
+            return SimpleNamespace(id="run-1", run_type="subagent", input_message_id=None)
 
         async def set_output_message(self, *_args, **_kwargs):
             pass
@@ -729,7 +821,7 @@ async def test_completed_run_rejects_unmatched_final_state_message(monkeypatch: 
             pass
 
         async def lock_output_persistence(self, *_args, **_kwargs):
-            return SimpleNamespace(id="run-1", run_type="subagent")
+            return SimpleNamespace(id="run-1", run_type="subagent", input_message_id=None)
 
     fake_db = FakeDB()
     monkeypatch.setattr(message_svc, "AgentRunRepository", FakeRunRepo)
@@ -803,7 +895,7 @@ async def test_interrupted_run_does_not_bind_older_reconciled_model_audit(
             pass
 
         async def lock_output_persistence(self, *_args, **_kwargs):
-            return SimpleNamespace(id="run-1", run_type="subagent")
+            return SimpleNamespace(id="run-1", run_type="subagent", input_message_id=None)
 
         async def set_output_message(self, _run_id, message_id, *, worker_id):
             output_ids.append(message_id)
@@ -890,7 +982,7 @@ async def test_tool_call_interrupt_ignores_historical_same_id_tool_message(monke
             pass
 
         async def lock_output_persistence(self, *_args, **_kwargs):
-            return SimpleNamespace(id="run-1", run_type="subagent")
+            return SimpleNamespace(id="run-1", run_type="subagent", input_message_id=None)
 
         async def set_output_message(self, _run_id, message_id, *, worker_id):
             output_ids.append(message_id)
@@ -948,7 +1040,7 @@ async def test_interrupt_persists_message_and_terminal_status_in_one_commit(
 
         async def lock_output_persistence(self, *_args, **_kwargs):
             events.append(("lock",))
-            return SimpleNamespace(id="run-1", run_type="subagent")
+            return SimpleNamespace(id="run-1", run_type="subagent", input_message_id=None)
 
         async def set_output_message(self, run_id, message_id, *, worker_id):
             events.append(("message", run_id, message_id, worker_id))
@@ -980,8 +1072,8 @@ async def test_interrupt_persists_message_and_terminal_status_in_one_commit(
     )
 
     assert terminal_committed == "interrupted"
-    assert [event[0] for event in events] == ["lock", "message", "terminal", "descendants", "commit"]
-    assert events[-3][2] == {
+    assert [event[0] for event in events] == ["lock", "message", "terminal", "commit"]
+    assert events[-2][2] == {
         "status": "interrupted",
         "error_type": "ask_user_question_required",
         "error_message": "请选择",
@@ -1077,6 +1169,7 @@ async def test_get_agent_state_view_rejects_async_subagent_without_child_convers
             assert uid == "user-1"
             return SimpleNamespace(
                 id="child-run",
+        turn_id="child-turn",
                 conversation_thread_id=child_thread_id,
                 agent_slug="worker",
                 status="running",
@@ -1104,7 +1197,10 @@ async def test_get_agent_state_view_rejects_async_subagent_without_child_convers
 
 
 @pytest.mark.asyncio
-async def test_get_agent_state_view_returns_interrupted_checkpoint_payload(monkeypatch: pytest.MonkeyPatch):
+@pytest.mark.parametrize("turn_status", ["waiting", "cancelled"])
+async def test_get_agent_state_view_returns_interrupt_only_for_waiting_owner(
+    monkeypatch: pytest.MonkeyPatch, turn_status
+):
     thread_id = "thread-1"
 
     class ConvRepo:
@@ -1143,7 +1239,7 @@ async def test_get_agent_state_view_returns_interrupted_checkpoint_payload(monke
             assert requested_thread_id == thread_id
             assert uid == "user-1"
             return SimpleNamespace(
-                id="run-1",
+                id="run-1", turn_id="turn",
                 status="interrupted",
                 input_payload={"model_spec": "provider:stale-run-model"},
             )
@@ -1158,9 +1254,18 @@ async def test_get_agent_state_view_returns_interrupted_checkpoint_payload(monke
             }
         )
 
+    class TurnRepo:
+        def __init__(self, _db):
+            pass
+        async def get_for_scope(self, **kwargs):
+            return SimpleNamespace(status=turn_status, current_run_id="run-1", waitpoint={"run_id": "run-1"})
+    monkeypatch.setattr(state_svc, "AgentTurnRepository", TurnRepo)
     monkeypatch.setattr(state_svc, "ConversationRepository", ConvRepo)
     monkeypatch.setattr(state_svc, "SubagentThreadRepository", ThreadRepo)
     monkeypatch.setattr(state_svc, "AgentRunRepository", RunRepo)
+    from yuxi.modules.agents.repositories.public_items import PublicItemRepository
+    from unittest.mock import AsyncMock
+    monkeypatch.setattr(PublicItemRepository, "list_items", AsyncMock(return_value=[]))
     monkeypatch.setattr(state_svc, "_read_checkpoint_state", read_checkpoint_state)
 
     result = await state_svc.get_agent_state_view(
@@ -1169,6 +1274,9 @@ async def test_get_agent_state_view_returns_interrupted_checkpoint_payload(monke
         db=object(),
     )
 
+    if turn_status == "cancelled":
+        assert "interrupt" not in result
+        return
     assert result["interrupt"]["status"] == "human_approval_required"
     assert result["interrupt"]["run_id"] == "run-1"
     assert result["interrupt"]["approval"]["action_requests"][0]["name"] == "execute"
@@ -1216,6 +1324,9 @@ async def test_get_agent_state_view_reads_checkpoint_without_workspace_binding(m
     monkeypatch.setattr(state_svc, "ConversationRepository", ConvRepo)
     monkeypatch.setattr(state_svc, "AgentRunRepository", RunRepo)
     monkeypatch.setattr(state_svc, "SubagentThreadRepository", ThreadRepo)
+    from yuxi.modules.agents.repositories.public_items import PublicItemRepository
+    from unittest.mock import AsyncMock
+    monkeypatch.setattr(PublicItemRepository, "list_items", AsyncMock(return_value=[]))
     monkeypatch.setattr(state_svc, "_read_checkpoint_state", read_checkpoint_state)
 
     result = await state_svc.get_agent_state_view(
@@ -1294,6 +1405,7 @@ async def test_get_agent_state_view_includes_subagent_thread_relation(monkeypatc
             assert uid == "user-1"
             return SimpleNamespace(
                 id="child-run",
+        turn_id="child-turn",
                 conversation_thread_id=child_thread_id,
                 agent_slug="worker",
                 uid="user-1",
@@ -1321,6 +1433,9 @@ async def test_get_agent_state_view_includes_subagent_thread_relation(monkeypatc
             "artifacts": ["out.txt"],
         }, None
 
+    from yuxi.modules.agents.repositories.public_items import PublicItemRepository
+    from unittest.mock import AsyncMock
+    monkeypatch.setattr(PublicItemRepository, "list_items", AsyncMock(return_value=[]))
     monkeypatch.setattr(state_svc, "_read_checkpoint_state", read_checkpoint_state)
     monkeypatch.setattr(state_svc, "ConversationRepository", ConvRepo)
     monkeypatch.setattr(state_svc, "SubagentThreadRepository", ThreadRepo)
@@ -1337,7 +1452,7 @@ async def test_get_agent_state_view_includes_subagent_thread_relation(monkeypatc
     assert result["subagent_thread"]["id"] == 77
     assert result["subagent_run"]["run_id"] == "child-run"
     assert result["agent_state"]["artifacts"] == ["out.txt"]
-    assert [message["type"] for message in result["messages"]] == ["human", "ai"]
+    assert result["items"] == []
 
 
 @pytest.mark.asyncio
@@ -1395,6 +1510,7 @@ async def test_get_agent_state_view_reports_malformed_subagent_run_as_server_err
             assert uid == "user-1"
             return SimpleNamespace(
                 id="child-run",
+        turn_id="child-turn",
                 conversation_thread_id=child_thread_id,
                 agent_slug="worker",
                 status="running",
@@ -1404,6 +1520,9 @@ async def test_get_agent_state_view_reports_malformed_subagent_run_as_server_err
     async def read_checkpoint_state(*, uid, thread_id):
         return {}, None
 
+    from yuxi.modules.agents.repositories.public_items import PublicItemRepository
+    from unittest.mock import AsyncMock
+    monkeypatch.setattr(PublicItemRepository, "list_items", AsyncMock(return_value=[]))
     monkeypatch.setattr(state_svc, "_read_checkpoint_state", read_checkpoint_state)
     monkeypatch.setattr(state_svc, "ConversationRepository", ConvRepo)
     monkeypatch.setattr(state_svc, "SubagentThreadRepository", ThreadRepo)

@@ -2,7 +2,7 @@
 
 状态：implemented
 类型：feature
-Owner：frontend/src/components/common/ActionDropdown.vue
+Owner：frontend/src/shared/ui/ActionDropdown.vue
 
 ## 问题
 

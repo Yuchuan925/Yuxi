@@ -209,7 +209,12 @@ def _terminal_result(status: str = "finished", **chunk) -> RunExecutionResult:
     """模拟执行器已读回 PostgreSQL checkpoint 并提交业务终态。"""
     return RunExecutionResult(
         checkpoint=SimpleNamespace(values={}),
-        chunk={"status": status, "thread_id": "thread-1", "terminal_committed": True, **chunk},
+        status={
+            "finished": "completed",
+            "human_approval_required": "interrupted",
+            "ask_user_question_required": "interrupted",
+        }.get(status, status),
+        committed=True,
     )
 
 
@@ -262,7 +267,7 @@ async def test_validate_run_workdir_binding_requires_subagent_creator_tree(
     run = _build_run()
     run.run_type = "subagent"
     run.conversation_thread_id = "child-thread"
-    run.runtime_scope_id = "root-thread"
+    run.runtime_scope_id = "child-thread"
     run.created_by_run_id = "creator-run"
     run.subagent_thread_relation_id = 3
     creator = SimpleNamespace(
@@ -298,10 +303,9 @@ async def test_validate_run_workdir_binding_requires_subagent_creator_tree(
         def __init__(self, _db):
             pass
 
-        async def get_subagent_run_with_creator(self, **kwargs):
+        async def get_subagent_run_with_authorization(self, **kwargs):
             assert kwargs == {
                 "uid": "user-1",
-                "created_by_run_id": "creator-run",
                 "run_id": "run-1",
             }
             return creator, run
@@ -326,13 +330,13 @@ async def test_validate_run_workdir_binding_requires_subagent_creator_tree(
         await run_worker._validate_run_workdir_binding(run)
 
     monkeypatch.setattr(run_worker, "resolve_authorized_workdir", fake_resolve)
-    creator.runtime_scope_id = "corrupted-root"
-    with pytest.raises(run_worker.NonRetryableRunError, match="SubAgent Run"):
+    run.runtime_scope_id = "root-thread"
+    with pytest.raises(run_worker.NonRetryableRunError, match="runtime scope"):
         await run_worker._validate_run_workdir_binding(run)
 
 
 @pytest.mark.asyncio
-async def test_cancelling_subagent_preserves_shared_runtime(monkeypatch: pytest.MonkeyPatch):
+async def test_cancelling_subagent_releases_its_own_runtime(monkeypatch: pytest.MonkeyPatch):
     run = _build_run()
     run.run_type = "subagent"
     release_runtime = AsyncMock()
@@ -350,11 +354,10 @@ async def test_cancelling_subagent_preserves_shared_runtime(monkeypatch: pytest.
         return run_worker.TerminalTransition(status="cancelled", changed=True)
 
     monkeypatch.setattr(run_worker, "flush_writer_best_effort", fake_noop)
-    monkeypatch.setattr(run_worker, "_finish_execution_tree_children", fake_tree_finished)
     monkeypatch.setattr(run_worker, "_release_runtime_before_terminal_event", release_runtime)
     monkeypatch.setattr(run_worker, "mark_run_terminal", fake_mark_terminal)
     monkeypatch.setattr(run_worker, "append_run_event_best_effort", fake_noop)
-    monkeypatch.setattr(run_worker, "append_end_event", fake_noop)
+    monkeypatch.setattr(run_worker, "publish_run_settlement", fake_noop)
 
     transition = await run_worker._finish_user_cancel(
         run_id=run.id,
@@ -366,7 +369,7 @@ async def test_cancelling_subagent_preserves_shared_runtime(monkeypatch: pytest.
     )
 
     assert transition == run_worker.TerminalTransition(status="cancelled", changed=True)
-    release_runtime.assert_not_awaited()
+    release_runtime.assert_awaited_once_with(run)
 
 
 def _patch_common(monkeypatch: pytest.MonkeyPatch, run_obj: SimpleNamespace):
@@ -458,9 +461,9 @@ def _patch_common(monkeypatch: pytest.MonkeyPatch, run_obj: SimpleNamespace):
             )
         ),
     )
-    monkeypatch.setattr(run_worker, "_finish_execution_tree_children", fake_tree_finished)
     monkeypatch.setattr(run_worker, "_release_runtime_before_terminal_event", fake_cleanup)
     monkeypatch.setattr(run_worker, "clear_cancel_signal", fake_noop)
+    monkeypatch.setattr(run_worker, "publish_run_settlement", fake_noop)
     monkeypatch.setattr(run_worker, "stream_agent_chat", lambda **kwargs: object())
     monkeypatch.setattr(run_worker.RunContext, "start", fake_noop)
     monkeypatch.setattr(run_worker.RunContext, "close", fake_noop)
@@ -507,7 +510,6 @@ async def test_process_agent_run_keeps_source_without_legacy_invocation_metadata
     _patch_common(monkeypatch, run_obj)
 
     captured: dict[str, object] = {}
-    events: list[dict] = []
     terminal_statuses: list[str] = []
 
     async def fake_load_run_input_messages(run):
@@ -526,10 +528,6 @@ async def test_process_agent_run_keeps_source_without_legacy_invocation_metadata
             )
         ]
 
-    async def fake_append_event(run_id: str, event_type: str, payload: dict, **kwargs):
-        del kwargs
-        events.append({"run_id": run_id, "event_type": event_type, "payload": payload})
-
     async def fake_mark_terminal(run_id: str, status: str, error_type=None, error_message=None, **kwargs):
         del run_id, kwargs
         terminal_statuses.append(status)
@@ -541,7 +539,6 @@ async def test_process_agent_run_keeps_source_without_legacy_invocation_metadata
         return _ExecutionAsyncIter([_terminal_result()])
 
     monkeypatch.setattr(run_worker, "_load_run_input_messages", fake_load_run_input_messages)
-    monkeypatch.setattr(run_worker, "append_run_event_best_effort", fake_append_event)
     monkeypatch.setattr(run_worker, "mark_run_terminal", fake_mark_terminal)
     monkeypatch.setattr(run_worker, "stream_agent_chat", fake_stream_agent_chat)
 
@@ -552,43 +549,7 @@ async def test_process_agent_run_keeps_source_without_legacy_invocation_metadata
     assert "agent_invocation_meta" not in meta
     assert "evaluation" not in meta
     assert "custom_variables" not in meta
-    metadata_event = next(event for event in events if event["event_type"] == "metadata")
-    assert metadata_event["payload"]["source"] == "agent_call"
-    assert "agent_invocation_meta" not in metadata_event["payload"]
-    assert "evaluation" not in metadata_event["payload"]
-    assert "custom_variables" not in metadata_event["payload"]
     assert terminal_statuses == []
-
-
-@pytest.mark.asyncio
-async def test_terminal_event_is_published_after_runtime_cleanup(monkeypatch: pytest.MonkeyPatch):
-    """客户端看到 end 时，旧 runtime 必须已经释放，避免实时文件请求撞上删除。"""
-    run_obj = _build_run()
-    _patch_common(monkeypatch, run_obj)
-    lifecycle: list[str] = []
-
-    async def fake_append_event(run_id: str, event_type: str, payload: dict, **kwargs):
-        del run_id, payload, kwargs
-        if event_type == "end":
-            lifecycle.append("end")
-
-    async def fake_release_runtime(run):
-        assert run is run_obj
-        lifecycle.append("release")
-        return True
-
-    def fake_stream_agent_chat(**kwargs):
-        del kwargs
-        run_obj.status = "completed"
-        return _ExecutionAsyncIter([_terminal_result()])
-
-    monkeypatch.setattr(event_writer, "append_run_event", fake_append_event)
-    monkeypatch.setattr(run_worker, "_release_runtime_before_terminal_event", fake_release_runtime)
-    monkeypatch.setattr(run_worker, "stream_agent_chat", fake_stream_agent_chat)
-
-    await run_worker.process_agent_run({"job_try": 1}, "run-1")
-
-    assert lifecycle[:2] == ["release", "end"]
 
 
 async def test_next_fifo_input_dispatches_before_optional_turn_trace(monkeypatch: pytest.MonkeyPatch):
@@ -628,7 +589,7 @@ async def test_terminal_cleanup_failure_keeps_end_event_unpublished(monkeypatch:
         raise run_worker.RuntimeCleanupPendingError("runtime cleanup pending")
 
     monkeypatch.setattr(run_worker, "_release_runtime_before_terminal_event", fail_cleanup)
-    monkeypatch.setattr(run_worker, "append_end_event", end_event)
+    monkeypatch.setattr(run_worker, "publish_run_settlement", end_event)
 
     def committed_stream(**_kwargs):
         run_obj.status = "completed"
@@ -646,7 +607,7 @@ async def test_terminal_cleanup_failure_keeps_end_event_unpublished(monkeypatch:
     "events",
     [
         [{"status": "finished", "thread_id": "thread-1", "terminal_committed": True}],
-        [RunExecutionResult(checkpoint=None, chunk={"status": "finished", "terminal_committed": True})],
+        [RunExecutionResult(checkpoint=None, status="completed", committed=True)],
         [],
     ],
 )
@@ -666,43 +627,7 @@ async def test_worker_rejects_success_without_final_checkpoint(monkeypatch: pyte
     await run_worker.process_agent_run({"job_try": 1}, run_obj.id)
 
     assert terminals and terminals[0][1] == "failed"
-    assert "checkpoint" in terminals[0][2]
-
-
-async def test_worker_fails_chunk_without_top_level_thread_id(monkeypatch):
-    """执行器契约缺失必须形成失败，不能借用嵌套字段继续完成。"""
-    run_obj = _build_run()
-    _patch_common(monkeypatch, run_obj)
-    terminals = []
-    events = []
-
-    async def mark_terminal(run_id, status, error_type=None, error_message=None, **_kwargs):
-        """保存失败原因以核对错误收敛结果。"""
-        terminals.append((run_id, status, error_type, error_message))
-        return run_worker.TerminalTransition(status=status, changed=True)
-
-    async def append_event(_run_id, event_type, payload, **_kwargs):
-        """捕获协议结果，确认未发布缺失归属的模型输出。"""
-        events.append((event_type, payload))
-
-    monkeypatch.setattr(run_worker, "mark_run_terminal", mark_terminal)
-    monkeypatch.setattr(event_writer, "append_run_event", append_event)
-    monkeypatch.setattr(
-        run_worker,
-        "stream_agent_chat",
-        lambda **_kwargs: _ExecutionAsyncIter(
-            [
-                {"status": "loading", "response": "unrouted", "metadata": {"thread_id": "thread-1"}},
-                _terminal_result(),
-            ]
-        ),
-    )
-
-    await run_worker.process_agent_run({"job_try": 1}, run_obj.id)
-
-    assert terminals == [(run_obj.id, "failed", "worker_error", "'thread_id'")]
-    assert not any(event_type == "messages" for event_type, _payload in events)
-    assert events[-1] == ("end", {"status": "failed", "chunk": events[-2][1]["chunk"]})
+    assert any(reason in terminals[0][2] for reason in ("checkpoint", "明确归属", "执行结果"))
 
 
 async def test_worker_rejects_waitpoint_without_postgres_terminal(monkeypatch: pytest.MonkeyPatch):
@@ -717,7 +642,8 @@ async def test_worker_rejects_waitpoint_without_postgres_terminal(monkeypatch: p
 
     wait_result = RunExecutionResult(
         checkpoint=SimpleNamespace(values={}),
-        chunk={"status": "ask_user_question_required", "thread_id": "thread-1", "questions": []},
+        status="interrupted",
+        committed=False,
     )
     monkeypatch.setattr(run_worker, "mark_run_terminal", mark_terminal)
     monkeypatch.setattr(run_worker, "stream_agent_chat", lambda **_kwargs: _ExecutionAsyncIter([wait_result]))
@@ -755,7 +681,7 @@ async def test_cleanup_reconciler_keeps_pending_run_for_dispatch_recovery(
     monkeypatch.setattr(leases, "AgentRunRepository", Repo)
     monkeypatch.setattr(leases, "release_runtime_if_idle", cleanup)
     monkeypatch.setattr(run_worker, "dispatch_next_input", dispatch)
-    monkeypatch.setattr(run_worker, "append_end_event", append_end)
+    monkeypatch.setattr(run_worker, "publish_run_settlement", append_end)
     import yuxi.modules.agents.services.turns as turns
 
     monkeypatch.setattr(turns, "reconcile_cancelling_turns", AsyncMock())
@@ -765,53 +691,6 @@ async def test_cleanup_reconciler_keeps_pending_run_for_dispatch_recovery(
     assert cleaned == [run_obj.id]
     dispatch.assert_not_awaited()
     append_end.assert_not_awaited()
-
-
-@pytest.mark.asyncio
-async def test_process_agent_run_does_not_settle_usage_from_transient_deltas(
-    monkeypatch: pytest.MonkeyPatch,
-):
-    """worker 只投影增量；当前 Run 的用量由执行器业务事务收敛。"""
-    run_obj = _build_run()
-    _patch_common(monkeypatch, run_obj)
-    terminal_calls = AsyncMock(side_effect=AssertionError("worker must not settle completed result"))
-
-    async def fake_append_event(*args, **kwargs):
-        del args, kwargs
-
-    def fake_stream_agent_chat(**kwargs):
-        del kwargs
-        run_obj.status = "completed"
-        return _ExecutionAsyncIter(
-            [
-                {
-                    "status": "agent_state",
-                    "thread_id": "thread-1",
-                    "agent_state": {
-                        "token_usage": {"current_run_id": "other-run", "run": {"total": {"total_tokens": 505}}}
-                    },
-                },
-                {
-                    "status": "agent_state",
-                    "thread_id": "child-thread",
-                    "agent_state": {
-                        "token_usage": {"current_run_id": "run-1", "run": {"total": {"total_tokens": 1000}}}
-                    },
-                },
-                _terminal_result(),
-            ]
-        )
-
-    monkeypatch.setattr(event_writer, "append_run_event", fake_append_event)
-    monkeypatch.setattr(run_worker, "mark_run_terminal", terminal_calls)
-    monkeypatch.setattr(
-        run_worker, "get_agent_state_view", AsyncMock(side_effect=AssertionError("worker must not reread usage"))
-    )
-    monkeypatch.setattr(run_worker, "stream_agent_chat", fake_stream_agent_chat)
-
-    await run_worker.process_agent_run({"job_try": 1}, "run-1")
-
-    terminal_calls.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -852,13 +731,15 @@ async def test_finish_run_marks_usage_unavailable_when_state_read_fails(monkeypa
         return None
 
     async def fake_mark_terminal(run_id: str, status: str, error_type=None, error_message=None, **kwargs):
-        terminal_calls.append({
-            "run_id": run_id,
-            "status": status,
-            "error_type": error_type,
-            "error_message": error_message,
-            **kwargs,
-        })
+        terminal_calls.append(
+            {
+                "run_id": run_id,
+                "status": status,
+                "error_type": error_type,
+                "error_message": error_message,
+                **kwargs,
+            }
+        )
         return run_worker.TerminalTransition(status=status, changed=True)
 
     async def fake_append_end_event(*args, **kwargs):
@@ -870,118 +751,17 @@ async def test_finish_run_marks_usage_unavailable_when_state_read_fails(monkeypa
     monkeypatch.setattr(run_worker, "_read_run_token_usage_from_state", fake_read_usage)
     monkeypatch.setattr(run_worker, "_get_run", fake_get_run)
     monkeypatch.setattr(run_worker, "mark_run_terminal", fake_mark_terminal)
-    monkeypatch.setattr(run_worker, "append_end_event", fake_append_end_event)
+    monkeypatch.setattr(run_worker, "publish_run_settlement", fake_append_end_event)
 
     await run_worker._finish_run(
         "run-1",
         "completed",
         thread_id="thread-1",
-        chunk={"status": "finished"},
         current_user=SimpleNamespace(uid="user-1"),
         worker_id="worker-1:attempt-1",
     )
 
     assert terminal_calls[0]["token_usage"] == {"available": False}
-
-
-@pytest.mark.asyncio
-async def test_process_agent_run_publishes_interrupt_after_final_state(monkeypatch: pytest.MonkeyPatch):
-    """审批中断必须在最终状态落流后结束，避免前端过早刷新历史。"""
-    run_obj = _build_run()
-    _patch_common(monkeypatch, run_obj)
-
-    events: list[dict] = []
-    terminal_statuses: list[str] = []
-    lifecycle: list[str] = []
-
-    async def fake_append_event(run_id: str, event_type: str, payload: dict, **kwargs):
-        del run_id, kwargs
-        events.append({"event_type": event_type, "payload": payload})
-        if event_type in {"interrupt", "end"}:
-            lifecycle.append(event_type)
-
-    async def fake_release_runtime(run):
-        assert run is run_obj
-        lifecycle.append("release")
-        return True
-
-    async def fake_mark_terminal(run_id: str, status: str, error_type=None, error_message=None, **kwargs):
-        del run_id, kwargs
-        terminal_statuses.append(status)
-        # 执行器已在 Message/Run/Turn 的 owning transaction 内提交 interrupted。
-        return run_worker.TerminalTransition(status=status, changed=False)
-
-    def fake_stream_agent_chat(**kwargs):
-        del kwargs
-        run_obj.status = "interrupted"
-        return _ExecutionAsyncIter(
-            [
-                {
-                    "status": "agent_state",
-                    "thread_id": "thread-1",
-                    "agent_state": {"artifacts": ["/home/gem/user-data/outputs/app.py"]},
-                },
-                RunExecutionResult(
-                    checkpoint=SimpleNamespace(values={}),
-                    chunk={
-                        "status": "human_approval_required",
-                        "thread_id": "thread-1",
-                        "approval": {
-                            "action_requests": [{"name": "execute", "args": {"command": "python app.py"}}],
-                            "review_configs": [{"action_name": "execute", "allowed_decisions": ["approve", "reject"]}],
-                        },
-                    },
-                ),
-            ]
-        )
-
-    monkeypatch.setattr(event_writer, "append_run_event", fake_append_event)
-    monkeypatch.setattr(run_worker, "mark_run_terminal", fake_mark_terminal)
-    monkeypatch.setattr(run_worker, "_release_runtime_before_terminal_event", fake_release_runtime)
-    monkeypatch.setattr(run_worker, "stream_agent_chat", fake_stream_agent_chat)
-
-    await run_worker.process_agent_run({"job_try": 1}, "run-1")
-
-    assert [event["event_type"] for event in events] == ["metadata", "custom", "interrupt", "end"]
-    assert terminal_statuses == []
-    assert lifecycle == ["release", "interrupt", "end"]
-
-
-@pytest.mark.asyncio
-async def test_committed_interrupt_cleanup_failure_keeps_terminal_events_unpublished(
-    monkeypatch: pytest.MonkeyPatch,
-):
-    """Chat 已提交 interrupted 时，runtime cleanup 失败仍不能发布 interrupt/end。"""
-    run_obj = _build_run()
-    _patch_common(monkeypatch, run_obj)
-    events: list[str] = []
-
-    async def fake_append_event(run_id: str, event_type: str, payload: dict, **kwargs):
-        del run_id, payload, kwargs
-        events.append(event_type)
-
-    async def fake_mark_terminal(run_id: str, status: str, error_type=None, error_message=None, **kwargs):
-        del run_id, kwargs
-        return run_worker.TerminalTransition(status=status, changed=False)
-
-    async def fail_cleanup(_run):
-        raise run_worker.RuntimeCleanupPendingError("runtime cleanup pending")
-
-    monkeypatch.setattr(event_writer, "append_run_event", fake_append_event)
-    monkeypatch.setattr(run_worker, "mark_run_terminal", fake_mark_terminal)
-    monkeypatch.setattr(run_worker, "_release_runtime_before_terminal_event", fail_cleanup)
-    monkeypatch.setattr(
-        run_worker,
-        "stream_agent_chat",
-        lambda **_kwargs: _ExecutionAsyncIter(
-            [{"status": "interrupted", "thread_id": "thread-1", "message": "input required"}]
-        ),
-    )
-
-    with pytest.raises(run_worker.RuntimeCleanupPendingError):
-        await run_worker.process_agent_run({"job_try": 1}, "run-1")
-
-    assert events == ["metadata"]
 
 
 @pytest.mark.asyncio
@@ -992,16 +772,16 @@ async def test_process_agent_run_non_retryable_error_marks_failed(monkeypatch: p
     terminal_statuses: list[str] = []
     events: list[str] = []
 
-    async def fake_append_event(run_id: str, event_type: str, payload: dict, **kwargs):
-        del run_id, payload, kwargs
-        events.append(event_type)
+    async def fake_append_event(run_id: str, batch: list, **kwargs):
+        del run_id, kwargs
+        events.extend(batch)
 
     async def fake_mark_terminal(run_id: str, status: str, error_type=None, error_message=None, **kwargs):
         del run_id, kwargs
         terminal_statuses.append(status)
         return run_worker.TerminalTransition(status=status, changed=True)
 
-    monkeypatch.setattr(event_writer, "append_run_event", fake_append_event)
+    monkeypatch.setattr(event_writer, "append_run_stream_events", fake_append_event)
     monkeypatch.setattr(run_worker, "mark_run_terminal", fake_mark_terminal)
     monkeypatch.setattr(
         run_worker,
@@ -1011,7 +791,6 @@ async def test_process_agent_run_non_retryable_error_marks_failed(monkeypatch: p
 
     await run_worker.process_agent_run({"job_try": 1}, "run-1")
 
-    assert "error" in events
     assert terminal_statuses == ["failed"]
 
 
@@ -1031,13 +810,15 @@ async def test_preflight_failure_after_lease_closes_context_and_writes_owned_ter
         closed.append(context.worker_id)
 
     async def fake_mark_terminal(run_id: str, status: str, error_type=None, error_message=None, **kwargs):
-        terminal_calls.append({
-            "run_id": run_id,
-            "status": status,
-            "error_type": error_type,
-            "error_message": error_message,
-            **kwargs,
-        })
+        terminal_calls.append(
+            {
+                "run_id": run_id,
+                "status": status,
+                "error_type": error_type,
+                "error_message": error_message,
+                **kwargs,
+            }
+        )
         return run_worker.TerminalTransition(status=status, changed=True)
 
     monkeypatch.setattr(run_worker, "_load_run_input_messages", fail_input_load)
@@ -1064,13 +845,15 @@ async def test_redis_event_failure_cannot_block_owned_completed_terminal(monkeyp
         raise ConnectionError("redis unavailable")
 
     async def fake_mark_terminal(run_id: str, status: str, error_type=None, error_message=None, **kwargs):
-        terminal_calls.append({
-            "run_id": run_id,
-            "status": status,
-            "error_type": error_type,
-            "error_message": error_message,
-            **kwargs,
-        })
+        terminal_calls.append(
+            {
+                "run_id": run_id,
+                "status": status,
+                "error_type": error_type,
+                "error_message": error_message,
+                **kwargs,
+            }
+        )
         return run_worker.TerminalTransition(status=status, changed=True)
 
     async def fake_close(context):
@@ -1081,7 +864,7 @@ async def test_redis_event_failure_cannot_block_owned_completed_terminal(monkeyp
         run_obj.status = "completed"
         return _ExecutionAsyncIter([_terminal_result()])
 
-    monkeypatch.setattr(event_writer, "append_run_event", fail_event)
+    monkeypatch.setattr(event_writer, "append_run_stream_events", fail_event)
     monkeypatch.setattr(run_worker, "mark_run_terminal", fake_mark_terminal)
     monkeypatch.setattr(run_worker, "release_run_lease_for_retry", AsyncMock(side_effect=AssertionError("no retry")))
     monkeypatch.setattr(run_worker.RunContext, "close", fake_close)
@@ -1141,7 +924,7 @@ async def test_infrastructure_cancel_releases_pending_and_propagates(monkeypatch
     async def fake_close(context):
         closed.append(context.worker_id)
 
-    monkeypatch.setattr(event_writer, "append_run_event", AsyncMock())
+    monkeypatch.setattr(event_writer, "append_run_stream_events", AsyncMock())
     monkeypatch.setattr(run_worker, "mark_run_terminal", AsyncMock(side_effect=AssertionError("not user cancel")))
     monkeypatch.setattr(run_worker, "release_run_lease_for_retry", release)
     monkeypatch.setattr(run_worker.RunContext, "close", fake_close)
@@ -1168,7 +951,7 @@ async def test_release_failure_does_not_mask_infrastructure_cancel(monkeypatch: 
     async def fail_release(_run_id: str, _worker_id: str) -> bool:
         raise RuntimeError("database unavailable")
 
-    monkeypatch.setattr(event_writer, "append_run_event", AsyncMock())
+    monkeypatch.setattr(event_writer, "append_run_stream_events", AsyncMock())
     monkeypatch.setattr(run_worker, "release_run_lease_for_retry", fail_release)
     monkeypatch.setattr(
         run_worker,
@@ -1217,9 +1000,9 @@ async def test_process_agent_run_retryable_error_retries_then_completes(monkeypa
     lifecycle: list[str] = []
     attempts = {"count": 0}
 
-    async def fake_append_event(run_id: str, event_type: str, payload: dict, **kwargs):
+    async def fake_append_event(run_id: str, batch: list, **kwargs):
         del run_id, kwargs
-        events.append({"event_type": event_type, "payload": payload})
+        events.extend(batch)
 
     async def fake_mark_terminal(run_id: str, status: str, error_type=None, error_message=None, **kwargs):
         del run_id, kwargs
@@ -1234,7 +1017,7 @@ async def test_process_agent_run_retryable_error_retries_then_completes(monkeypa
         run_obj.status = "completed"
         return _ExecutionAsyncIter([_terminal_result()])
 
-    monkeypatch.setattr(event_writer, "append_run_event", fake_append_event)
+    monkeypatch.setattr(event_writer, "append_run_stream_events", fake_append_event)
     monkeypatch.setattr(run_worker, "mark_run_terminal", fake_mark_terminal)
     monkeypatch.setattr(run_worker, "_consume_stream_with_cancel", fake_consume)
 
@@ -1255,10 +1038,6 @@ async def test_process_agent_run_retryable_error_retries_then_completes(monkeypa
     assert isinstance(retry.value, RetryJob)
     assert terminal_statuses == []
     assert lifecycle == ["lease-and-descendants", "runtime"]
-    assert any(
-        item["event_type"] == "error" and item["payload"]["chunk"].get("error_type") == "retryable_worker_error"
-        for item in events
-    )
 
     await run_worker.process_agent_run({"job_try": 2}, "run-1")
     assert terminal_statuses == []
@@ -1272,12 +1051,12 @@ async def test_finish_run_terminal_loser_does_not_append_end_event(monkeypatch: 
         del run_id, status, kwargs
         return run_worker.TerminalTransition(status="cancelled", changed=False)
 
-    async def fake_append_event(run_id: str, event_type: str, payload: dict, **kwargs):
+    async def fake_append_event(run_id: str, batch: list, **kwargs):
         del run_id, kwargs
-        events.append((event_type, payload))
+        events.extend(batch)
 
     monkeypatch.setattr(run_worker, "mark_run_terminal", fake_mark_terminal)
-    monkeypatch.setattr(event_writer, "append_run_event", fake_append_event)
+    monkeypatch.setattr(event_writer, "append_run_stream_events", fake_append_event)
     monkeypatch.setattr(run_worker, "_get_run", AsyncMock(return_value=None))
     monkeypatch.setattr(run_worker, "_read_run_token_usage_from_state", AsyncMock(return_value=None))
 
@@ -1285,7 +1064,6 @@ async def test_finish_run_terminal_loser_does_not_append_end_event(monkeypatch: 
         "run-1",
         "completed",
         thread_id="thread-1",
-        chunk={"status": "finished"},
         current_user=SimpleNamespace(uid="user-1"),
         worker_id="worker-1:attempt-1",
     )
@@ -1300,7 +1078,7 @@ async def test_process_subagent_run_restores_runtime_context(monkeypatch: pytest
     run_obj.run_type = "subagent"
     run_obj.agent_slug = "worker"
     run_obj.conversation_thread_id = "child-thread"
-    run_obj.runtime_scope_id = "parent-thread"
+    run_obj.runtime_scope_id = "child-thread"
     run_obj.created_by_run_id = "parent-run"
     run_obj.input_payload = {
         "model_spec": "provider:model",
@@ -1328,8 +1106,8 @@ async def test_process_subagent_run_restores_runtime_context(monkeypatch: pytest
     captured: dict[str, object] = {}
     terminal_statuses: list[str] = []
 
-    async def fake_append_event(run_id: str, event_type: str, payload: dict, **kwargs):
-        del run_id, event_type, payload, kwargs
+    async def fake_append_event(run_id: str, events: list, **kwargs):
+        del run_id, events, kwargs
 
     async def fake_mark_terminal(run_id: str, status: str, error_type=None, error_message=None, **kwargs):
         del run_id, kwargs
@@ -1341,7 +1119,7 @@ async def test_process_subagent_run_restores_runtime_context(monkeypatch: pytest
         run_obj.status = "completed"
         return _ExecutionAsyncIter([_terminal_result(thread_id="child-thread")])
 
-    monkeypatch.setattr(event_writer, "append_run_event", fake_append_event)
+    monkeypatch.setattr(event_writer, "append_run_stream_events", fake_append_event)
     monkeypatch.setattr(run_worker, "mark_run_terminal", fake_mark_terminal)
     monkeypatch.setattr(run_worker, "stream_agent_chat", fake_stream_agent_chat)
 
@@ -1450,94 +1228,6 @@ async def test_process_agent_run_rejects_invalid_raw_input_message(monkeypatch: 
 
 
 @pytest.mark.asyncio
-async def test_chunked_event_writer_flushes_loading_chunks_by_thread(monkeypatch: pytest.MonkeyPatch):
-    events: list[dict] = []
-
-    async def fake_append_run_event(run_id: str, event_type: str, payload: dict, *, thread_id: str | None = None):
-        events.append({"run_id": run_id, "event_type": event_type, "payload": payload, "thread_id": thread_id})
-
-    monkeypatch.setattr(event_writer, "append_run_event", fake_append_run_event)
-
-    writer = run_worker.ChunkedEventWriter("run-1")
-    await writer.append({"status": "loading", "response": "parent", "thread_id": "parent-thread"})
-    await writer.append({"status": "loading", "response": "child", "thread_id": "child-thread"})
-    await writer.flush()
-
-    assert events == [
-        {
-            "run_id": "run-1",
-            "event_type": "messages",
-            "payload": {"items": [{"status": "loading", "response": "parent", "thread_id": "parent-thread"}]},
-            "thread_id": "parent-thread",
-        },
-        {
-            "run_id": "run-1",
-            "event_type": "messages",
-            "payload": {"items": [{"status": "loading", "response": "child", "thread_id": "child-thread"}]},
-            "thread_id": "child-thread",
-        },
-    ]
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("container", ["configurable", "metadata", "stream_event", "meta"])
-async def test_chunked_event_writer_rejects_missing_top_level_thread_id(container):
-    """嵌套线程字段不能掩盖内部 chunk 缺少归属。"""
-    writer = run_worker.ChunkedEventWriter("run-1")
-
-    with pytest.raises(KeyError, match="thread_id"):
-        await writer.append({"status": "loading", "response": "child", container: {"thread_id": "child-thread"}})
-
-    assert writer.thread_buffers == {}
-
-
-@pytest.mark.asyncio
-async def test_chunked_event_writer_flushes_semantic_tool_call_immediately(monkeypatch: pytest.MonkeyPatch):
-    events: list[dict] = []
-
-    async def fake_append_run_event(run_id: str, event_type: str, payload: dict, *, thread_id: str | None = None):
-        events.append({"run_id": run_id, "event_type": event_type, "payload": payload, "thread_id": thread_id})
-
-    monkeypatch.setattr(event_writer, "append_run_event", fake_append_run_event)
-
-    writer = run_worker.ChunkedEventWriter("run-1")
-    chunk = {
-        "status": "loading",
-        "response": "",
-        "thread_id": "parent-thread",
-        "stream_event": {
-            "type": "tool_call",
-            "message_id": "msg-1",
-            "tool_call_id": "call-1",
-            "name": "task",
-            "args": {"description": "do work"},
-            "index": 0,
-            "thread_id": "parent-thread",
-            "namespace": [],
-        },
-    }
-    await writer.append(chunk)
-
-    assert events == [
-        {
-            "run_id": "run-1",
-            "event_type": "messages",
-            "payload": {"items": [chunk]},
-            "thread_id": "parent-thread",
-        }
-    ]
-
-
-def test_model_output_detection_accepts_text_reasoning_and_tool_calls_only():
-    assert run_worker.contains_model_output({"stream_event": {"type": "message_delta", "content": "你"}})
-    assert run_worker.contains_model_output({"stream_event": {"type": "message_delta", "reasoning_content": "思考"}})
-    assert run_worker.contains_model_output({"stream_event": {"type": "tool_call_delta", "args_delta": "{"}})
-    assert not run_worker.contains_model_output({"status": "metadata", "run_id": "run-1"})
-    assert not run_worker.contains_model_output({"stream_event": {"type": "message_delta", "content": ""}})
-    assert not run_worker.contains_model_output({"stream_event": {"type": "tool_call_delta", "args_delta": ""}})
-
-
-@pytest.mark.asyncio
 async def test_timing_persistence_failure_does_not_fail_agent_execution(monkeypatch: pytest.MonkeyPatch):
     class FailingRepository:
         def __init__(self, _db):
@@ -1587,9 +1277,7 @@ async def test_run_context_fails_closed_when_terminal_attempt_check_fails(monkey
     """无法确认本 attempt 的终态时，继续按丢失 ownership 停止执行。"""
     monkeypatch.setattr(run_worker, "RUN_HEARTBEAT_SECONDS", 0)
     monkeypatch.setattr(run_worker, "renew_run_lease", AsyncMock(return_value=False))
-    monkeypatch.setattr(
-        run_worker, "run_attempt_finished", AsyncMock(side_effect=RuntimeError("database unavailable"))
-    )
+    monkeypatch.setattr(run_worker, "run_attempt_finished", AsyncMock(side_effect=RuntimeError("database unavailable")))
     context = run_worker.RunContext(run_id="run-1", worker_id="worker-1:attempt-1")
 
     await context._heartbeat_lease()
@@ -1674,7 +1362,9 @@ async def test_worker_startup_ensures_builtin_mcp_servers(monkeypatch: pytest.Mo
         fake_reconcile_pending_runtime_cleanups,
     )
     monkeypatch.setattr(worker_bootstrap, "_publish_reconciliation_health", fake_publish_reconciliation_health)
-    monkeypatch.setattr(worker_bootstrap, "_publish_task_reconciliation_health", fake_publish_task_reconciliation_health)
+    monkeypatch.setattr(
+        worker_bootstrap, "_publish_task_reconciliation_health", fake_publish_task_reconciliation_health
+    )
     monkeypatch.setattr(worker_bootstrap, "_reconcile_agent_run_leases_forever", fake_reconciliation_loop)
     monkeypatch.setattr(worker_bootstrap, "reconcile_and_publish_tasks", fake_reconcile_and_publish_tasks)
     monkeypatch.setattr(worker_bootstrap, "_reconcile_durable_tasks_forever", fake_task_reconciliation_loop)
@@ -1853,13 +1543,15 @@ async def test_manifest_persist_failure_fails_run_before_execution(monkeypatch: 
         raise RuntimeError("manifest db unavailable")
 
     async def fake_mark_terminal(run_id: str, status: str, error_type=None, error_message=None, **kwargs):
-        terminal_calls.append({
-            "run_id": run_id,
-            "status": status,
-            "error_type": error_type,
-            "error_message": error_message,
-            **kwargs,
-        })
+        terminal_calls.append(
+            {
+                "run_id": run_id,
+                "status": status,
+                "error_type": error_type,
+                "error_message": error_message,
+                **kwargs,
+            }
+        )
         return run_worker.TerminalTransition(status=status, changed=True)
 
     def fake_stream_agent_chat(**kwargs):
@@ -1914,3 +1606,135 @@ async def test_cancel_during_manifest_preparation_settles_without_waiting_for_le
     await run_worker.process_agent_run({"job_try": 1}, run.id)
     finish.assert_awaited_once()
     assert finish.call_args.kwargs["run_id"] == run.id
+
+
+@pytest.mark.parametrize("status", ["completed", "interrupted"])
+async def test_committed_execution_releases_own_runtime_before_settlement(monkeypatch, status):
+    """完成和等待均以 PG 已提交状态为依据，先释放当前 Run 的 runtime。"""
+    run = _build_run()
+    _patch_common(monkeypatch, run)
+    order = []
+
+    async def stream():
+        run.status = status
+        yield _terminal_result(status)
+
+    async def release(actual):
+        assert actual is run
+        order.append("release")
+
+    async def publish(run_id, actual_status, **_kwargs):
+        assert run_id == run.id and run.status == actual_status == status
+        order.append("published")
+
+    monkeypatch.setattr(run_worker, "stream_agent_chat", lambda **kw: stream())
+    monkeypatch.setattr(run_worker, "_release_runtime_before_terminal_event", release)
+    monkeypatch.setattr(run_worker, "publish_run_settlement", publish)
+    monkeypatch.setattr(run_worker, "mark_run_terminal", AsyncMock(side_effect=AssertionError("already committed")))
+    await run_worker.process_agent_run({"job_try": 1}, run.id)
+    assert order == ["release", "published"]
+
+
+@pytest.mark.parametrize("container", ["metadata", "payload", "yuxi"])
+async def test_worker_rejects_unrouted_public_output(monkeypatch, container):
+    """嵌套业务 payload 不能代替明确的执行归属。"""
+    run = _build_run()
+    _patch_common(monkeypatch, run)
+    terminal = AsyncMock(return_value=run_worker.TerminalTransition(status="failed", changed=True))
+    output = {
+        "type": "agent.session.turn.output_text.delta",
+        "delta": "foreign",
+        container: {"session_id": run.conversation_thread_id, "turn_id": run.turn_id, "run_id": run.id},
+    }
+    monkeypatch.setattr(run_worker, "mark_run_terminal", terminal)
+    monkeypatch.setattr(run_worker, "stream_agent_chat", lambda **kw: _ExecutionAsyncIter([output]))
+    await run_worker.process_agent_run({"job_try": 1}, run.id)
+    assert terminal.await_args.args[:2] == (run.id, "failed")
+    assert "明确归属" in terminal.await_args.kwargs["error_message"]
+
+
+async def test_worker_only_publishes_valid_events_and_never_settles_usage_from_them(monkeypatch):
+    """Run 使用量由业务事务结算，流中的其他 Run 用量不能成为最终事实。"""
+    run = _build_run()
+    _patch_common(monkeypatch, run)
+    public = {
+        "type": "yuxi.session.turn.state",
+        "event_id": "e",
+        "session_id": run.conversation_thread_id,
+        "turn_id": run.turn_id,
+        "yuxi": {"run_id": run.id},
+        "agent_state": {"token_usage": {"current_run_id": "other", "run": {"total": 505}}},
+    }
+
+    async def stream():
+        yield public
+        run.status = "completed"
+        yield _terminal_result()
+
+    published = []
+
+    async def append(run_id, events):
+        published.extend(events)
+
+    monkeypatch.setattr(run_worker, "stream_agent_chat", lambda **kw: stream())
+    monkeypatch.setattr(event_writer, "append_run_stream_events", append)
+    monkeypatch.setattr(run_worker, "mark_run_terminal", AsyncMock(side_effect=AssertionError("already committed")))
+    await run_worker.process_agent_run({"job_try": 1}, run.id)
+    assert published == [public]
+
+
+async def test_public_writer_preserves_each_event_and_flushes_first_semantic_output(monkeypatch):
+    """空 item 不吞首 token，批量仅合并写入且 done 及时冲刷增量。"""
+    batches = []
+
+    async def append(run_id, events):
+        assert run_id == "run"
+        batches.append(events)
+
+    monkeypatch.setattr(event_writer, "append_run_stream_events", append)
+    writer = event_writer.PublicEventWriter("run", interval_ms=100000, max_chars=512)
+    added = {"type": "agent.session.turn.item.added", "item": {"type": "message"}}
+    first = {"type": "agent.session.turn.output_text.delta", "delta": "first"}
+    second = {"type": "agent.session.turn.output_text.delta", "delta": "second"}
+    done = {"type": "agent.session.turn.output_text.done", "text": "firstsecond"}
+    for event in (added, first, second, done):
+        await writer.append(event)
+    assert batches == [[added], [first], [second, done]]
+
+
+async def test_public_writer_flushes_function_call_boundary(monkeypatch):
+    """完整参数已经生成的实际函数调用立即对外，不生成参数增量。"""
+    append = AsyncMock()
+    monkeypatch.setattr(event_writer, "append_run_stream_events", append)
+    writer = event_writer.PublicEventWriter("run")
+    call = {"type": "agent.session.turn.item.added", "item": {"type": "function_call", "arguments": {"q": "x"}}}
+    await writer.append(call)
+    append.assert_awaited_once_with("run", [call])
+    assert event_writer.contains_model_output(call)
+    assert not event_writer.contains_model_output({"type": "yuxi.session.turn.state"})
+
+
+async def test_nonretryable_output_conflict_after_user_cancel_settles_cancelled(monkeypatch):
+    """取消已提交时，普通输出 owner 冲突也必须收敛取消，不能转失败或留到 lease 过期。"""
+    run = _build_run()
+    _patch_common(monkeypatch, run)
+    cancelled = False
+
+    async def stream():
+        """模拟模型释放时输出提交撞上已提交取消。"""
+        nonlocal cancelled
+        cancelled = True
+        raise ValueError("只有 running owner 可以持久化输出")
+        yield
+
+    async def is_cancelled(*args):
+        """直接表达本测试的 durable 用户取消状态。"""
+        return cancelled
+
+    finish = AsyncMock(return_value=run_worker.TerminalTransition(status="cancelled", changed=True))
+    monkeypatch.setattr(run_worker, "stream_agent_chat", lambda **kwargs: stream())
+    monkeypatch.setattr(run_worker, "_confirmed_user_cancel", is_cancelled)
+    monkeypatch.setattr(run_worker, "_finish_user_cancel", finish)
+    monkeypatch.setattr(run_worker, "_finish_run", AsyncMock(side_effect=AssertionError("不能转为 failed")))
+    await run_worker.process_agent_run({"job_try": 1}, run.id)
+    finish.assert_awaited_once()

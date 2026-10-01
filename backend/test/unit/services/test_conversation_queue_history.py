@@ -134,11 +134,12 @@ async def test_history_shows_pending_input_and_later_binds_its_own_reply(session
             ),
         ]
     )
+    await _register_visible(session)
     await session.commit()
 
     pending = await get_thread_history(db=session, scope=SCOPE, thread_id="thread-1")
-    assert [item["content"] for item in pending["history"]] == ["A", "A reply", "B"]
-    assert pending["history"][-1]["run_id"] is None
+    assert [item["content"][0]["text"] for item in pending["items"]] == ["A", "A reply", "B"]
+    assert pending["items"][-1]["yuxi"]["run_id"] is None
     assert pending["thread"]["queued_input_count"] == 1
 
     turn_b, run_b = _turn_run(turn_id="turn-b", run_id="run-b", created_at=STARTED_AT + timedelta(seconds=3))
@@ -166,11 +167,12 @@ async def test_history_shows_pending_input_and_later_binds_its_own_reply(session
             created_at=STARTED_AT + timedelta(seconds=4),
         )
     )
+    await _register_visible(session)
     await session.commit()
 
     completed = await get_thread_history(db=session, scope=SCOPE, thread_id="thread-1")
-    assert [item["content"] for item in completed["history"]] == ["A", "A reply", "B", "B reply"]
-    assert [(item["turn_id"], item["run_id"]) for item in completed["history"]] == [
+    assert [item["content"][0]["text"] for item in completed["items"]] == ["A", "A reply", "B", "B reply"]
+    assert [(item["turn_id"], item["yuxi"]["run_id"]) for item in completed["items"]] == [
         ("turn-a", "run-a"),
         ("turn-a", "run-a"),
         ("turn-b", "run-b"),
@@ -215,12 +217,13 @@ async def test_history_exposes_tool_result_without_internal_model_metadata(sessi
             status="success",
         )
     )
+    await _register_visible(session)
     await session.commit()
 
     history = await get_thread_history(db=session, scope=SCOPE, thread_id="thread-1")
-    item = history["history"][0]
-    assert item["extra_metadata"] == {"langfuse_trace_id": "trace-safe"}
-    assert item["tool_calls"][0]["tool_call_result"] == {"content": "safe result"}
+    assert [item["type"] for item in history["items"]] == ["message","function_call","function_call_output"]
+    assert history["items"][1]["call_id"] == history["items"][2]["call_id"] == "call-a"
+    assert history["items"][2]["output"] == "safe result"
     assert "private-model-run" not in str(history)
 
 
@@ -232,3 +235,27 @@ async def test_history_rejects_other_app_scope(session):
     with pytest.raises(HTTPException) as failure:
         await get_thread_history(db=session, scope=SCOPE, thread_id="thread-1")
     assert failure.value.status_code == 404
+
+
+async def _register_visible(db):
+    """历史 oracle 显式登记已经发送过的 item，不由待测 serializer 生成。"""
+    from sqlalchemy import select
+    messages = (await db.scalars(select(Message).where(Message.role == "assistant"))).all()
+    for message in messages:
+        public = {"message": {"id":f"visible-{message.id}","type":"message","role":"assistant",
+            "turn_id":message.turn_id,"content":[{"type":"output_text","text":message.content}],
+            "status":"completed","phase":"commentary","yuxi":{"run_id":message.run_id,"output_index":0}}}
+        if message.operation_id:
+            public["call"] = {"id":"call-item","type":"function_call","turn_id":message.turn_id,"call_id":"call-a",
+                "name":"search","arguments":{"q":"Yuxi"},"status":"completed","yuxi":{"run_id":message.run_id,"output_index":1}}
+            public["result"] = {
+                "id": "result-item",
+                "type": "function_call_output",
+                "turn_id": message.turn_id,
+                "call_id": "call-a",
+                "output": "safe result",
+                "error": None,
+                "status": "completed",
+                "yuxi": {"run_id": message.run_id, "output_index": 2},
+            }
+        message.extra_metadata = {**(message.extra_metadata or {}),"public_items":public}

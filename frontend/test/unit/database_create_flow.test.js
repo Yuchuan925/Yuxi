@@ -6,8 +6,8 @@ import {
   createEmptyDatabaseForm,
   selectDatabaseType,
   validateDatabaseConfig
-} from '../../src/utils/databaseCreateForm.js'
-import { getKbTypeLabel } from '../../src/utils/kb_utils.js'
+} from '../../src/modules/knowledge/model/databaseCreateForm.js'
+import { getKbTypeLabel } from '../../src/modules/knowledge/model/kb_utils.js'
 
 const difyType = {
   create_params: {

@@ -4,7 +4,7 @@ import test from 'node:test'
 import { runInNewContext } from 'node:vm'
 
 const source = readFileSync(
-  new URL('../../src/components/extensions/SkillInstallFlowModal.vue', import.meta.url),
+  new URL('../../src/modules/extensions/ui/SkillInstallFlowModal.vue', import.meta.url),
   'utf8'
 )
 const retrySource = source.slice(

@@ -13,7 +13,7 @@ from urllib.parse import urlsplit
 
 from rich.console import Console
 
-from yuxi_cli.client import ClientError, YuxiClient
+from yuxi_cli.client import ClientError, YuxiClient, public_output_text
 from yuxi_cli.config import ConfigStore
 
 MAX_MESSAGE_BYTES = 32 * 1024
@@ -117,7 +117,7 @@ class ChatRequestHandler(BaseHTTPRequestHandler):
                     raise ChatWebError("队列未暂停")
                 self.server.client.submit_agent_event(
                     thread_id,
-                    {"type": "yuxi.thread.input.continue"},
+                    {"type": "yuxi.session.input.continue"},
                     idempotency_key=str(uuid.uuid4()),
                 )
                 accepted = {}
@@ -159,6 +159,8 @@ class ChatRequestHandler(BaseHTTPRequestHandler):
     def _follow_turn(self, thread_id: str, turn_id: str) -> Iterator[dict[str, Any]]:
         """跟随跨 Run 事件，断线后以持久 Turn 快照核对终态。"""
         cursor = None
+        seen_events = set()
+        text = _TextItems()
         unavailable_since = None
         while True:
             turn = self.server.client.get_agent_turn(thread_id, turn_id)
@@ -170,13 +172,22 @@ class ChatRequestHandler(BaseHTTPRequestHandler):
                     thread_id, after_cursor=cursor
                 ):
                     cursor = event.get("id") or cursor
-                    if event.get("event") == "agent.thread.resync":
+                    data = json.loads(event.get("data") or "{}")
+                    identity = data.get("event_id")
+                    if identity and identity in seen_events:
+                        continue
+                    if identity:
+                        seen_events.add(identity)
+                    if event.get("event") == "yuxi.session.resync":
                         turn = self.server.client.get_agent_turn(thread_id, turn_id)
                         if turn.get("status") in TURN_TERMINAL_STATUSES:
                             yield from _turn_result_events(turn)
                             return
+                        history = self.server.client.get_agent_history(thread_id)
+                        text.merge([item for item in history["items"] if item["turn_id"] == turn_id])
+                        yield {"type": "snapshot", "content": text.content()}
                         continue
-                    for browser_event in _browser_events(iter((event,)), turn_id=turn_id):
+                    for browser_event in _browser_events(iter((event,)), turn_id=turn_id, text=text):
                         if browser_event["type"] == "done":
                             turn = self.server.client.get_agent_turn(thread_id, turn_id)
                             yield from _turn_result_events(turn)
@@ -231,7 +242,7 @@ def _turn_result_events(turn: dict[str, Any]) -> Iterator[dict[str, Any]]:
     """根据持久 Turn 状态输出最终结果或等待提示。"""
     status = turn.get("status")
     if status == "completed":
-        yield {"type": "snapshot", "content": str((turn.get("output") or {}).get("content") or "")}
+        yield {"type": "snapshot", "content": public_output_text(turn.get("output") or [])}
         yield {"type": "done", "status": "completed"}
     elif status == "waiting":
         yield {"type": "approval_required", "message": "等待用户操作，请在 Yuxi 网页继续"}
@@ -244,10 +255,42 @@ def _turn_result_events(turn: dict[str, Any]) -> Iterator[dict[str, Any]]:
         raise ChatWebError("Turn 尚未结束，无法读取最终结果")
 
 
+class _TextItems:
+    """按公开 item 和内容块保留文本，完成边界阻止离线期间的旧增量重放。"""
+
+    def __init__(self):
+        """每个 Turn 独立维护展示状态。"""
+        self.parts = {}
+        self.indices = {}
+        self.closed = set()
+
+    def merge(self, items):
+        """持久快照只覆盖已结束块，避免丢失尚未持久化的本地增量。"""
+        for item in items:
+            if item["type"] != "message" or item.get("role") != "assistant":
+                continue
+            self.indices[item["id"]] = item.get("yuxi", {}).get("output_index", 0)
+            completed = set(item.get("yuxi", {}).get("completed_content_indices", []))
+            for index, part in enumerate(item["content"]):
+                if part["type"] != "output_text":
+                    continue
+                key = (item["id"], index)
+                if key not in self.parts or index in completed or item["status"] != "in_progress":
+                    self.parts[key] = part["text"]
+                if index in completed or item["status"] != "in_progress":
+                    self.closed.add(key)
+
+    def content(self):
+        """按输出索引及内容块索引派生当前正文。"""
+        return "".join(self.parts[key] for key in sorted(
+            self.parts, key=lambda key: (self.indices.get(key[0], 0), key[1])))
+
+
 def _browser_events(
-    events: Iterator[dict[str, str]], *, turn_id: str
+    events: Iterator[dict[str, str]], *, turn_id: str, text: _TextItems | None = None
 ) -> Iterator[dict[str, Any]]:
     """从目标 Turn 的事件提取文本增量和终态通知。"""
+    text = text or _TextItems()
     for event in events:
         try:
             data = json.loads(event.get("data") or "{}")
@@ -256,21 +299,25 @@ def _browser_events(
         if not isinstance(data, dict) or data.get("turn_id") != turn_id:
             continue
         event_type = str(data.get("type") or event.get("event") or "")
-        payload = data.get("payload") if isinstance(data.get("payload"), dict) else {}
-        chunks = payload.get("items") if isinstance(payload.get("items"), list) else [payload.get("chunk")]
-        for chunk in chunks:
-            if not isinstance(chunk, dict):
-                continue
-            stream_event = chunk.get("stream_event")
-            if isinstance(stream_event, dict) and stream_event.get("type") == "message_delta":
-                content = stream_event.get("content")
-                if isinstance(content, str) and content:
-                    yield {"type": "delta", "content": content}
+        if event_type == "agent.session.turn.item.added":
+            text.merge([data["item"]])
+        elif event_type == "agent.session.turn.item.done":
+            text.merge([data["item"]])
+            if data["item"]["type"] == "message":
+                yield {"type": "snapshot", "content": text.content()}
+        elif event_type.startswith("agent.session.turn.output_text."):
+            key = (data["item_id"], data["content_index"])
+            text.indices[data["item_id"]] = data["output_index"]
+            if event_type.endswith(".delta") and key not in text.closed and data["delta"]:
+                text.parts[key] = text.parts.get(key, "") + data["delta"]
+                yield {"type": "delta", "content": data["delta"]}
+            elif event_type.endswith(".done"):
+                text.parts[key] = data["text"]
+                text.closed.add(key)
+                yield {"type": "snapshot", "content": text.content()}
         if event_type in {
-            "agent.thread.turn.completed",
-            "agent.thread.turn.waiting",
-            "agent.thread.turn.failed",
-            "agent.thread.turn.cancelled",
+            "agent.session.turn.completed", "yuxi.session.turn.waiting",
+            "agent.session.turn.failed", "agent.session.turn.cancelled",
         }:
             yield {"type": "done", "status": event_type.rsplit(".", 1)[-1]}
 

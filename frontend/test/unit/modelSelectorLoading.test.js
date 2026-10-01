@@ -30,9 +30,9 @@ test('模型弹层的加载、关闭和失败重试', async (t) => {
         load(id) {
           if (id.endsWith('/src/apis/system_api.js'))
             return 'export const modelProviderApi = globalThis.__modelSelectorApi'
-          if (id.endsWith('/src/stores/user.js'))
+          if (id.endsWith('/src/modules/identity/model/user.js'))
             return 'export const useUserStore = () => ({ isAdmin: false })'
-          if (id.endsWith('/src/utils/modelMetadata.js'))
+          if (id.endsWith('/src/modules/settings/model/modelMetadata.js'))
             return `
           export const loadModelMetadataCatalog = () => globalThis.__modelSelectorCatalog.promise
           export const resolveModelDisplayMetadata = () => ({ matched: false })`
@@ -51,7 +51,7 @@ test('模型弹层的加载、关闭和失败重试', async (t) => {
       refreshModelCache: async () => ({ success: true })
     }
     const { default: ModelSelector } = await server.ssrLoadModule(
-      '/src/components/ModelSelectorComponent.vue'
+      '/src/modules/agents/ui/ModelSelectorComponent.vue'
     )
     const setup = async (overrides = {}) => {
       let component
@@ -134,7 +134,7 @@ test('模型弹层的加载、关闭和失败重试', async (t) => {
     })
     await t.test('表单包装器保留 update:value 与 change 的选择结果', async () => {
       for (const name of ['EmbeddingModelSelector', 'RerankModelSelector']) {
-        const { default: Wrapper } = await server.ssrLoadModule(`/src/components/${name}.vue`)
+        const { default: Wrapper } = await server.ssrLoadModule(`/src/modules/settings/ui/${name}.vue`)
         const events = []
         let component
         await renderToString(

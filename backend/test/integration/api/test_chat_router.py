@@ -100,10 +100,15 @@ async def test_thread_message_audits_return_persisted_facts_without_leaking_into
             VALUES ($1, $2, $3, $4, $5, $6)
             """,
             [
-                (turn_id, thread_id, conversation["uid"], "completed", started_at,
-                 started_at + timedelta(seconds=3)),
-                (failed_turn_id, thread_id, conversation["uid"], "failed",
-                 started_at + timedelta(seconds=4), started_at + timedelta(seconds=5)),
+                (turn_id, thread_id, conversation["uid"], "completed", started_at, started_at + timedelta(seconds=3)),
+                (
+                    failed_turn_id,
+                    thread_id,
+                    conversation["uid"],
+                    "failed",
+                    started_at + timedelta(seconds=4),
+                    started_at + timedelta(seconds=5),
+                ),
             ],
         )
         await conn.execute(
@@ -334,15 +339,13 @@ async def test_thread_message_audits_return_persisted_facts_without_leaking_into
 
     history = await test_client.get(f"/api/v1/agents/threads/{thread_id}/history", headers=admin_headers)
     assert history.status_code == 200, history.text
-    history_items = history.json()["history"]
-    assert len(history_items) == 2
-    failed_input = next(item for item in history_items if item["run_id"] == failed_run_id)
-    assert failed_input["type"] == "human"
-    assert failed_input["delivery_status"] == "failed"
-    proven_output = next(item for item in history_items if item["run_id"] == run_id)
-    assert proven_output["content"] == "第一次模型输出"
-    assert proven_output["extra_metadata"] == {}
-    assert proven_output["tool_calls"][0]["id"] == "compat-call-proven"
+    history_items = history.json()["items"]
+    # 未进入公开输出链路的原始审计不会因 state_reconciled 或 ToolCall 存在而暴露。
+    assert len(history_items) == 1
+    failed_input = history_items[0]
+    assert failed_input["type"] == "message" and failed_input["role"] == "user"
+    assert failed_input["yuxi"]["run_id"] == failed_run_id
+    assert failed_input["yuxi"]["delivery_status"] == "failed"
     assert "must-not-leak" not in history.text
     assert "must stay hidden" not in history.text
 
@@ -516,7 +519,7 @@ async def test_thread_history_envelope_has_all_runs_and_keeps_viewed_explicit(
     try:
         empty = await test_client.get(f"/api/v1/agents/threads/{thread_id}/history", headers=admin_headers)
         assert empty.status_code == 200, empty.text
-        assert empty.json()["history"] == []
+        assert empty.json()["items"] == []
         assert empty.json()["runs"] == []
         assert empty.json()["thread"]["id"] == thread_id
         assert empty.json()["thread"]["thread_status"] == "done"
@@ -532,7 +535,9 @@ async def test_thread_history_envelope_has_all_runs_and_keeps_viewed_explicit(
             """,
             [
                 (
-                    f"turn-{prefix}-{index}", thread_id, conversation["uid"],
+                    f"turn-{prefix}-{index}",
+                    thread_id,
+                    conversation["uid"],
                     started_at + timedelta(seconds=index * 2),
                     started_at + timedelta(seconds=index * 2 + 1),
                 )
@@ -576,18 +581,14 @@ async def test_thread_history_envelope_has_all_runs_and_keeps_viewed_explicit(
         response = await test_client.get(f"/api/v1/agents/threads/{thread_id}/history", headers=admin_headers)
         assert response.status_code == 200, response.text
         payload = response.json()
-        assert set(payload) == {"thread", "runs", "history"}
+        assert set(payload) == {"thread", "runs", "items"}
         assert payload["thread"]["project_id"] == empty.json()["thread"]["project_id"]
         assert payload["thread"]["thread_status"] == "ready"
         assert [run["run_id"] for run in payload["runs"]] == [f"{prefix}-{index:03}" for index in range(501)]
         assert all(run["status"] == "cancelled" for run in payload["runs"])
         assert payload["runs"][-1]["turn_id"] == f"turn-{prefix}-500"
         assert all(run["run_type"] == "chat" for run in payload["runs"])
-        assert len(payload["history"]) == 2
-        assert any(message["run_id"] is None for message in payload["history"])
-        assert all(
-            {"run_timing", "run_started_at", "run_finished_at"}.isdisjoint(message) for message in payload["history"]
-        )
+        assert payload["items"] == [], "没有公开身份的内部输出不应进入历史"
         assert "must-not-leak" not in response.text
         assert (
             await conn.fetchval("SELECT last_viewed_run_id FROM conversations WHERE thread_id = $1", thread_id)
@@ -891,3 +892,58 @@ async def test_save_thread_artifact_to_workspace_rejects_invalid_paths(test_clie
         headers=headers,
     )
     assert directory_response.status_code == 400, directory_response.text
+
+
+async def test_standard_user_restores_visible_function_items_without_internal_audit(
+    test_client, admin_headers, standard_user
+):
+    """真实 worker 生成工具过程；普通用户回读可见 item，同时仍无审计权限。"""
+    from test.e2e.test_agent_lifecycle_extended_e2e import (
+        _agent,
+        _provider,
+        _delete_provider,
+        _terminal_turn,
+        MODEL,
+        OUTPUT,
+        TOOL_RESULT,
+    )
+    from test.e2e.e2e_helpers import archive_public_thread, delete_agent
+
+    headers = standard_user["headers"]
+    uid = str((await test_client.get("/api/auth/me", headers=headers)).json()["uid"])
+    provider = await _provider(test_client, admin_headers)
+    slug = await _agent(test_client, admin_headers, uid)
+    thread_id = turn_id = None
+    try:
+        created = await test_client.post(
+            "/api/v1/agents/threads",
+            headers={**headers, "Idempotency-Key": str(uuid.uuid4())},
+            json={
+                "agent_id": slug,
+                "model_spec": MODEL,
+                "tool_approval_mode": "always_trust",
+                "title": make_test_conversation_title("standard-visible-items"),
+                "input": [{"role": "user", "content": [{"type": "input_text", "text": OUTPUT}]}],
+            },
+        )
+        assert created.status_code == 200, created.text
+        thread_id, turn_id = created.json()["thread_id"], created.json()["turn_id"]
+        assert (await _terminal_turn(test_client, headers, thread_id, turn_id))["status"] == "completed"
+        history = await test_client.get(f"/api/v1/agents/threads/{thread_id}/history", headers=headers)
+        assert history.status_code == 200, history.text
+        items = history.json()["items"]
+        call = next(item for item in items if item["type"] == "function_call")
+        output = next(item for item in items if item["type"] == "function_call_output")
+        assert call["name"] == "present_artifacts" and call["arguments"] == {"filepaths": []}
+        assert call["status"] == output["status"] == "completed" and call["call_id"] == output["call_id"]
+        assert TOOL_RESULT in output["output"]
+        assert (await test_client.get(f"/api/v1/agents/threads/{thread_id}/audits", headers=headers)).status_code == 403
+        assert all(
+            field not in history.text
+            for field in ("system_prompt", "checkpoint", "manifest_fingerprint", "source_model_operation_id")
+        )
+    finally:
+        if thread_id:
+            await archive_public_thread(test_client, headers, thread_id, turn_id=turn_id)
+        await delete_agent(test_client, admin_headers, slug)
+        await _delete_provider(test_client, admin_headers, provider)

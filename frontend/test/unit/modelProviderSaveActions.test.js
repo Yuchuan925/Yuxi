@@ -9,7 +9,7 @@ import { compileScript, parse } from 'vue/compiler-sfc'
 import { createRenderer, nextTick } from 'vue'
 
 const componentPath = fileURLToPath(
-  new URL('../../src/components/model-management/ModelProviderManagePanel.vue', import.meta.url)
+  new URL('../../src/modules/settings/ui/ModelProviderManagePanel.vue', import.meta.url)
 )
 const compiledPath = fileURLToPath(
   new URL(`../../.model-provider-actions-test-${pid}.mjs`, import.meta.url)

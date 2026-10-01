@@ -80,12 +80,13 @@ async def _create_run(
     response = await client.post(
         f"/api/v1/agents/threads/{thread_id}/events",
         json={
-            "events": [{
-                "type": "agent.thread.input.message",
-                "mode": "follow_up",
-                "input": [{"role": "user", "content": [{"type": "input_text", "text": query}]}],
-                "tool_approval_mode": "always_trust",
-            }],
+            "events": [
+                {
+                    "type": "agent.session.input.message",
+                    "input": [{"role": "user", "content": [{"type": "input_text", "text": query}]}],
+                    "yuxi": {"mode": "follow_up", "tool_approval_mode": "always_trust"},
+                }
+            ],
         },
         headers={**headers, "Idempotency-Key": f"subagent-input-{uuid.uuid4().hex}"},
     )
@@ -104,17 +105,6 @@ async def _iter_sse(client: httpx.AsyncClient, headers: dict[str, str], thread_i
                 yield json.loads(line[6:])
 
 
-def _collect_message_chunks(payload: dict[str, Any]) -> list[dict[str, Any]]:
-    chunks = []
-    chunk = payload.get("chunk")
-    if isinstance(chunk, dict):
-        chunks.append(chunk)
-    items = payload.get("items")
-    if isinstance(items, list):
-        chunks.extend(item for item in items if isinstance(item, dict))
-    return chunks
-
-
 async def _consume_run_stream(
     client: httpx.AsyncClient,
     headers: dict[str, str],
@@ -125,7 +115,7 @@ async def _consume_run_stream(
     """消费顶层 Turn 流，只记录其 Run 增量与终态。"""
     event_counts: dict[str, int] = {}
     latest_agent_state: dict[str, Any] = {}
-    message_chunks: list[dict[str, Any]] = []
+    public_items: list[dict[str, Any]] = []
     terminal_status = ""
 
     async def consume() -> None:
@@ -135,28 +125,21 @@ async def _consume_run_stream(
                 continue
             event_type = event["type"]
             event_counts[event_type] = event_counts.get(event_type, 0) + 1
-            payload = event.get("payload") or {}
-            if (
-                event_type == "agent.thread.output"
-                and event.get("run_id") == run_id
-                and payload.get("event") == "messages"
-            ):
-                message_chunks.extend(_collect_message_chunks(payload))
-            if payload.get("event") == "custom" and payload.get("name") == "yuxi.agent_state":
-                agent_state = payload.get("agent_state")
-                if isinstance(agent_state, dict):
-                    latest_agent_state = agent_state
-            if event_type == "agent.thread.run.failed":
-                skip_if_external_quota(payload.get("error_message"))
+            if event_type == "agent.session.turn.item.done" and event.get("yuxi", {}).get("run_id") == run_id:
+                public_items.append(event["item"])
+            if event_type == "yuxi.session.turn.state":
+                latest_agent_state = event["agent_state"]
+            if event_type == "agent.session.turn.failed":
+                skip_if_external_quota(event["turn"].get("error"))
             if event_type in {
-                "agent.thread.turn.completed", "agent.thread.turn.failed", "agent.thread.turn.cancelled"
+                "agent.session.turn.completed", "agent.session.turn.failed", "agent.session.turn.cancelled"
             }:
-                terminal_status = str(payload.get("status") or "")
+                terminal_status = event["turn"]["status"]
                 return
 
     await asyncio.wait_for(consume(), timeout=RUN_TIMEOUT_SECONDS)
     assert terminal_status == "completed", {"status": terminal_status, "event_counts": event_counts}
-    return event_counts, latest_agent_state, message_chunks
+    return event_counts, latest_agent_state, public_items
 
 
 async def _assert_child_stream(
@@ -169,11 +152,11 @@ async def _assert_child_stream(
     async def consume() -> None:
         nonlocal seen_output, seen_terminal
         async for event in _iter_sse(client, headers, child_thread_id):
-            if event.get("run_id") != child_run_id:
+            if event.get("yuxi", {}).get("run_id") != child_run_id:
                 continue
-            if event["type"] == "agent.thread.output":
+            if event["type"] == "agent.session.turn.item.done":
                 seen_output = True
-            if event["type"] == "agent.thread.run.completed":
+            if event["type"] == "agent.session.turn.completed":
                 seen_terminal = True
                 return
 
@@ -181,53 +164,18 @@ async def _assert_child_stream(
     assert seen_output and seen_terminal
 
 
-def _find_tool_call_ids(value: Any) -> set[str]:
-    ids: set[str] = set()
-    if isinstance(value, dict):
-        tool_calls = value.get("tool_calls")
-        if isinstance(tool_calls, list):
-            for tool_call in tool_calls:
-                if isinstance(tool_call, dict) and tool_call.get("id"):
-                    ids.add(str(tool_call["id"]))
-        for child in value.values():
-            ids.update(_find_tool_call_ids(child))
-    elif isinstance(value, list):
-        for item in value:
-            ids.update(_find_tool_call_ids(item))
-    return ids
+def _find_named_tool_call_ids(items: list[dict], tool_name: str) -> set[str]:
+    """只读取明确的公开 function_call，业务 payload 不参与递归路由。"""
+    return {item["call_id"] for item in items if item["type"] == "function_call" and item["name"] == tool_name}
 
 
-def _find_named_tool_call_ids(value: Any, tool_name: str) -> set[str]:
-    ids: set[str] = set()
-    if isinstance(value, dict):
-        tool_calls = value.get("tool_calls")
-        if isinstance(tool_calls, list):
-            for tool_call in tool_calls:
-                if not isinstance(tool_call, dict):
-                    continue
-                function = tool_call.get("function") if isinstance(tool_call.get("function"), dict) else {}
-                name = tool_call.get("name") or function.get("name")
-                if name == tool_name and tool_call.get("id"):
-                    ids.add(str(tool_call["id"]))
-        for child in value.values():
-            ids.update(_find_named_tool_call_ids(child, tool_name))
-    elif isinstance(value, list):
-        for item in value:
-            ids.update(_find_named_tool_call_ids(item, tool_name))
-    return ids
-
-
-def _find_tool_result_contents(value: Any, tool_call_ids: set[str]) -> list[str]:
-    contents: list[str] = []
-    if isinstance(value, dict):
-        if str(value.get("tool_call_id") or "") in tool_call_ids and value.get("content") is not None:
-            contents.append(str(value["content"]))
-        for child in value.values():
-            contents.extend(_find_tool_result_contents(child, tool_call_ids))
-    elif isinstance(value, list):
-        for item in value:
-            contents.extend(_find_tool_result_contents(item, tool_call_ids))
-    return contents
+def _find_tool_result_contents(items: list[dict], tool_call_ids: set[str]) -> list[str]:
+    """读取相同调用的公开结果。"""
+    return [
+        str(item["output"])
+        for item in items
+        if item["type"] == "function_call_output" and item["call_id"] in tool_call_ids
+    ]
 
 
 async def _read_viewer_file(
@@ -275,8 +223,8 @@ async def test_subagent_stream_records_run_and_shares_output_files(
     parent_input_viewer_path: str | None = None
     output_viewer_path: str | None = None
     expected_content = "由这个子智能体创建"
-    runtime_content = f"runtime-shared-{suffix}"
-    runtime_marker = f"/tmp/yuxi-execution-tree-{suffix}"
+    runtime_content = f"workdir-shared-{suffix}"
+    runtime_marker = None
     created_agents: list[str] = []
     run_id: str | None = None
     turn_id: str | None = None
@@ -311,7 +259,7 @@ async def test_subagent_stream_records_run_and_shares_output_files(
                         **base_context,
                         "system_prompt": (
                             "你是专门负责文件读取、写入和校验的子智能体。收到任务后必须使用文件系统工具完成任务，"
-                            "不要向用户提问。若任务给出 /tmp 运行时标记，必须先用 execute 读取并报告其真实内容；"
+                            "不要向用户提问。若任务给出 Project Workdir 标记，必须先用 execute 读取并报告其真实内容；"
                             "然后读取用户指定的来源文件，再严格写入目标路径，文件内容必须完全符合要求，"
                             "不要自动追加句号、引号、说明或其他字符。完成后只回复写入的路径和文件内容。"
                         ),
@@ -336,7 +284,7 @@ async def test_subagent_stream_records_run_and_shares_output_files(
                         **base_context,
                         "subagents": [sub_slug],
                         "system_prompt": (
-                            "你是主智能体。严格按用户给出的工具顺序执行：先用 execute 创建 /tmp 运行时标记，"
+                            "你是主智能体。严格按用户给出的工具顺序执行：先用 execute 创建 Project Workdir 标记，"
                             "再由你写入父文件，然后调用 subagent_start 派发子智能体，再用 subagent_await 等待，"
                             "子智能体完成后由你读取其结果；最后一个工具调用必须是 present_artifacts，"
                             "且必须传入目标文件。"
@@ -364,6 +312,7 @@ async def test_subagent_stream_records_run_and_shares_output_files(
         assert sub_slug in management_agent_slugs
 
         thread_id, project_root = await _create_thread(e2e_client, e2e_headers, main_slug, marker)
+        runtime_marker = f"{project_root}/outputs/execution-marker.txt"
         parent_input_path = f"{project_root}/outputs/parent-input.txt"
         output_path = f"{project_root}/outputs/subagents.txt"
         parent_input_viewer_path = _viewer_scope_path(project_root, parent_input_path)
@@ -384,15 +333,15 @@ async def test_subagent_stream_records_run_and_shares_output_files(
         )
         run_id, turn_id = accepted["run_id"], accepted["turn_id"]
 
-        event_counts, stream_agent_state, message_chunks = await _consume_run_stream(
+        event_counts, stream_agent_state, public_items = await _consume_run_stream(
             e2e_client,
             e2e_headers,
             thread_id,
             turn_id,
             run_id,
         )
-        assert event_counts.get("agent.thread.output", 0) > 0
-        assert event_counts.get("agent.thread.turn.completed") == 1
+        assert event_counts.get("agent.session.turn.item.done", 0) > 0
+        assert event_counts.get("agent.session.turn.completed") == 1
 
         turn_response = await e2e_client.get(
             f"/api/v1/agents/threads/{thread_id}/turns/{turn_id}", headers=e2e_headers
@@ -408,7 +357,6 @@ async def test_subagent_stream_records_run_and_shares_output_files(
         _assert_ok(run_response)
         parent_run = run_response.json()
         assert parent_run.get("status") == "completed"
-        assert parent_run.get("runtime_scope_id") == thread_id
         assert parent_run.get("turn_id") == turn_id
 
         state_response = await e2e_client.get(
@@ -423,13 +371,22 @@ async def test_subagent_stream_records_run_and_shares_output_files(
         history_payload = history_response.json()
         subagent_runs = final_agent_state.get("subagent_runs") or []
         assert subagent_runs, final_agent_state
+        file_task_calls = {
+            item["call_id"]
+            for item in history_payload["items"]
+            if item["type"] == "function_call" and item["name"] == "subagent_start"
+            and output_path in json.dumps(item["arguments"], ensure_ascii=False)
+        }
+        assert file_task_calls, "父工具调用未指定目标文件任务"
         completed_runs = [
             item
             for item in subagent_runs
-            if item.get("status") == "completed" and item.get("subagent_slug") == sub_slug
+            if item.get("status") == "completed"
+            and item.get("subagent_slug") == sub_slug
+            and item["id"] in file_task_calls
         ]
-        assert completed_runs, final_agent_state
-        completed_run = max(completed_runs, key=lambda item: str(item.get("created_at") or ""))
+        assert len(completed_runs) == 1, {"file_task_calls": sorted(file_task_calls), "runs": completed_runs}
+        completed_run = completed_runs[0]
         assert completed_run.get("subagent_name") == sub_agent["name"]
         assert completed_run.get("child_thread_id")
         assert completed_run.get("id")
@@ -456,46 +413,47 @@ async def test_subagent_stream_records_run_and_shares_output_files(
         assert child_run.get("conversation_thread_id") == child_thread_id
         assert child_run.get("created_by_run_id") == run_id
         assert child_run.get("status") == "completed"
-        assert child_run.get("runtime_scope_id") == thread_id
-        assert child_run.get("turn_id") == turn_id
+        assert child_run.get("turn_id") != turn_id
         wrong_thread_response = await e2e_client.get(
             f"/api/v1/agents/threads/{thread_id}/runs/{child_subagent_run['run_id']}",
             headers=e2e_headers,
         )
         assert wrong_thread_response.status_code == 404, wrong_thread_response.text
         await _assert_child_stream(e2e_client, e2e_headers, child_thread_id, child_subagent_run["run_id"])
-        assert child_state_payload.get("messages"), child_state_payload
-        child_messages_text = json.dumps(child_state_payload["messages"], ensure_ascii=False, default=str)
+        assert child_state_payload.get("items"), child_state_payload
+        child_messages_text = json.dumps(child_state_payload["items"], ensure_ascii=False, default=str)
         assert all(
             marker in child_messages_text for marker in ("read_file", parent_input_path, "write_file", output_path)
         ), {
             "message": "子智能体未执行父文件读取到子产物写入链路",
             "subagent_run": completed_run,
-            "messages": child_state_payload["messages"],
+            "messages": child_state_payload["items"],
         }
-        child_read_call_ids = _find_named_tool_call_ids(child_state_payload["messages"], "read_file")
-        child_read_results = _find_tool_result_contents(child_state_payload["messages"], child_read_call_ids)
+        child_read_call_ids = _find_named_tool_call_ids(child_state_payload["items"], "read_file")
+        child_read_results = _find_tool_result_contents(child_state_payload["items"], child_read_call_ids)
         assert child_read_call_ids and any(expected_content in content for content in child_read_results), {
             "message": "子智能体 read_file 未从共享 Project Workdir 读到父智能体写入的真实内容",
             "tool_call_ids": sorted(child_read_call_ids),
             "tool_results": child_read_results,
         }
-        child_execute_call_ids = _find_named_tool_call_ids(child_state_payload["messages"], "execute")
-        child_execute_results = _find_tool_result_contents(child_state_payload["messages"], child_execute_call_ids)
+        child_execute_call_ids = _find_named_tool_call_ids(child_state_payload["items"], "execute")
+        child_execute_results = _find_tool_result_contents(child_state_payload["items"], child_execute_call_ids)
         assert child_execute_call_ids and any(runtime_content in content for content in child_execute_results), {
-            "message": "子智能体未从父智能体的同一 runtime 读取 /tmp 标记",
+            "message": "子智能体未从共享 Project Workdir 读取标记",
             "tool_call_ids": sorted(child_execute_call_ids),
             "tool_results": child_execute_results,
         }
 
-        leaked_child_chunks = [
-            chunk for chunk in message_chunks if child_thread_id in json.dumps(chunk, ensure_ascii=False, default=str)
-        ]
-        assert leaked_child_chunks == []
+        # 父工具结果允许包含子任务链接；隔离由 item 的执行归属和持久身份证明。
+        assert public_items and all(item["yuxi"]["run_id"] == run_id for item in public_items)
+        assert all(item["turn_id"] == turn_id for item in public_items)
+        assert {item["id"] for item in public_items}.isdisjoint(
+            item["id"] for item in child_state_payload["items"]
+        )
 
         history_text = json.dumps(history_payload, ensure_ascii=False)
-        tool_call_ids = _find_tool_call_ids(history_payload)
-        assert str(completed_run["id"]) in tool_call_ids
+        start_results = _find_tool_result_contents(history_payload["items"], {completed_run["id"]})
+        assert any(json.loads(result).get("run_id") == completed_run["run_id"] for result in start_results)
         assert child_thread_id in history_text
         assert "write_file" in history_text and parent_input_path in history_text
         assert "execute" in history_text and runtime_marker in history_text
@@ -534,9 +492,11 @@ async def test_subagent_stream_records_run_and_shares_output_files(
         if not run_completed and thread_id and turn_id:
             await e2e_client.post(
                 f"/api/v1/agents/threads/{thread_id}/events",
-                json={"events": [{
-                    "type": "yuxi.thread.input.cancel", "turn_id": turn_id, "expected_run_id": run_id,
-                }]},
+                json={
+                    "events": [
+                        {"type": "agent.session.input.cancel", "yuxi": {"turn_id": turn_id, "expected_run_id": run_id}}
+                    ]
+                },
                 headers={**e2e_headers, "Idempotency-Key": f"subagent-cancel-{uuid.uuid4().hex}"},
             )
         if thread_id:

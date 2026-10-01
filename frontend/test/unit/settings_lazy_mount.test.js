@@ -18,10 +18,10 @@ test('设置仅挂载访问页，切换保留表单，关闭重开只挂载当�
           if (id === 'virtual:settings-test') return '\0' + id
         },
         load(id) {
-          if (id.endsWith('/src/utils/asyncPanel.js')) {
+          if (id.endsWith('/src/shared/lib/asyncPanel.js')) {
             return `import { h, ref } from 'vue'
               export const createAsyncPanel = (loader) => ({ setup() {
-                const name = loader.toString().match(/components\\/(\\w+)\\.vue/)[1]
+                const name = loader.toString().match(/ui\\/(\\w+)\\.vue/)[1]
                 const draft = ref('')
                 return () => h('input', { panel: name, value: draft.value,
                   onInput: (event) => { draft.value = event.target.value } })
@@ -30,7 +30,7 @@ test('设置仅挂载访问页，切换保留表单，关闭重开只挂载当�
           if (id !== '\0virtual:settings-test') return
           // 在内存中编译真实客户端模板，避免 SSR 模板跳过 v-show 等交互语义。
           const source = readFileSync(
-            new URL('../../src/components/SettingsModal.vue', import.meta.url),
+            new URL('../../src/modules/settings/ui/SettingsModal.vue', import.meta.url),
             'utf8'
           )
           const { descriptor } = parse(source)
@@ -43,7 +43,7 @@ test('设置仅挂载访问页，切换保留表单，关闭重开只挂载当�
   setActivePinia(pinia)
   let app
   try {
-    const { useUserStore } = await server.ssrLoadModule('/src/stores/user.js')
+    const { useUserStore } = await server.ssrLoadModule('/src/modules/identity/model/user.js')
     useUserStore().token = 'fixture'
     useUserStore().userRole = 'admin'
     const { default: Settings } = await server.ssrLoadModule('virtual:settings-test')

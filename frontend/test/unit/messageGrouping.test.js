@@ -6,7 +6,7 @@ import {
   formatProcessDuration,
   isConversationSettled,
   formatEmptyRunStatus
-} from '../../src/utils/conversationProcessGrouping.js'
+} from '../../src/modules/conversation/model/conversationProcessGrouping.js'
 
 test('关联续跑组成连续回答，消息归属不变且只累计执行耗时', () => {
   const groups = [

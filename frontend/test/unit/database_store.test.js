@@ -30,7 +30,7 @@ test('从二级目录点击全部文件会清空 parent_id 并返回根目录', 
     app.use(createRouter({ history: createMemoryHistory(), routes: [] }))
     setActivePinia(pinia)
     const { documentApi } = await server.ssrLoadModule('/src/apis/knowledge_api.js')
-    const { useDatabaseStore } = await server.ssrLoadModule('/src/stores/database.js')
+    const { useDatabaseStore } = await server.ssrLoadModule('/src/modules/knowledge/model/database.js')
     const requests = []
 
     documentApi.listDocuments = async (kbId, params) => {
@@ -87,9 +87,9 @@ test('知识库提交跨账号返回时，不把旧入队任务登记给新账�
   app.use(createRouter({ history: createMemoryHistory(), routes: [] }))
   setActivePinia(pinia)
   const { documentApi, databaseApi } = await server.ssrLoadModule('/src/apis/knowledge_api.js')
-  const { useDatabaseStore } = await server.ssrLoadModule('/src/stores/database.js')
-  const { useUserStore } = await server.ssrLoadModule('/src/stores/user.js')
-  const { useTaskerStore } = await server.ssrLoadModule('/src/stores/tasker.js')
+  const { useDatabaseStore } = await server.ssrLoadModule('/src/modules/knowledge/model/database.js')
+  const { useUserStore } = await server.ssrLoadModule('/src/modules/identity/model/user.js')
+  const { useTaskerStore } = await server.ssrLoadModule('/src/modules/tasks/model/tasker.js')
   const database = app.runWithContext(() => useDatabaseStore())
   const user = useUserStore()
   const tasker = useTaskerStore()

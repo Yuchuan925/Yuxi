@@ -24,7 +24,7 @@ from yuxi.modules.agents.models.runs import AgentRun
 from yuxi.modules.agents.models.threads import Conversation
 from yuxi.infrastructure.observability.logging import logger
 
-from yuxi.modules.agents.services.event_writer import append_end_event
+from yuxi.modules.agents.services.event_writer import publish_run_settlement
 
 
 RUN_LEASE_SECONDS = 120
@@ -35,8 +35,6 @@ WORKER_ID = f"worker-{uuid.uuid4().hex}"
 
 async def release_runtime_if_idle(run: AgentRun) -> bool:
     """在 PostgreSQL cleanup fence 内串行销毁根 execution runtime。"""
-    if run.run_type == "subagent":
-        return False
     runtime_scope_id = str(getattr(run, "runtime_scope_id", None) or run.conversation_thread_id)
     async with pg_manager.get_async_session_context() as db:
         await db.execute(
@@ -121,15 +119,9 @@ async def run_attempt_finished(run_id: str, worker_id: str) -> bool:
 
 async def release_run_lease_for_retry(run_id: str, worker_id: str) -> bool:
     """释放当前 attempt 的 lease，允许下一次 ARQ attempt 使用新 token。"""
-    cancelled_descendants: list[tuple[str, str]] = []
     async with pg_manager.get_async_session_context() as db:
         repo = AgentRunRepository(db)
         released = await repo.release_lease_for_retry(run_id, worker_id=worker_id)
-        if released:
-            run = await repo.get_run(run_id)
-            if run is not None:
-                cancelled_descendants = await repo.cancel_active_execution_tree_descendants(run)
-    await publish_cancel_signals([child_id for child_id, _thread_id in cancelled_descendants])
     return released
 
 
@@ -158,15 +150,11 @@ async def reconcile_expired_run_leases(*, now: datetime | None = None) -> list[s
             )
             if turn is None:
                 raise ValueError("失联 Run 的根 Turn 不存在")
-            if candidate.run_type != "subagent":
-                await AgentInputRepository(db).get_pending_steer(
-                    thread_id=root_thread_id, uid=uid, app_id=app_id, turn_id=turn.id
-                )
+            await AgentInputRepository(db).get_pending_steer(thread_id=root_thread_id, uid=uid, app_id=app_id)
             run, descendants = await repo.reconcile_expired_lease(run_id, now=now)
             if run is None:
                 continue
-            if run.run_type != "subagent" and turn.current_run_id == run.id:
-                await AgentInputRepository(db).cancel_pending_for_turn(turn_id=turn.id)
+            if turn.current_run_id == run.id:
                 conversation.queue_paused = True
                 await AgentTurnRepository(db).set_terminal(turn, status="failed")
                 terminal_turn_ids.append(turn.id)
@@ -192,7 +180,7 @@ async def reconcile_pending_runtime_cleanups() -> list[str]:
             logger.error("Failed to reconcile execution-tree runtime cleanup: run=%s", run.id, exc_info=True)
             continue
         if run.status in TERMINAL_RUN_STATUSES:
-            await append_end_event(run.id, run.status, thread_id=run.conversation_thread_id)
+            await publish_run_settlement(run.id, run.status, thread_id=run.conversation_thread_id)
         if run.status == "completed":
             await dispatch_next_input(
                 uid=run.uid,

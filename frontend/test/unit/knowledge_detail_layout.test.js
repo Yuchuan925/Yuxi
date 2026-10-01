@@ -7,7 +7,7 @@ function readSource(relativePath) {
 }
 
 test('知识库详情提供面板插槽并校验深链接 Tab', () => {
-  const source = readSource('../../src/views/DataBaseInfoView.vue')
+  const source = readSource('../../src/pages/DataBaseInfoView.vue')
 
   assert.match(source, /<ExtensionDetailLayout/)
   assert.match(source, /<template #breadcrumb>/)
@@ -24,8 +24,8 @@ test('知识库详情提供面板插槽并校验深链接 Tab', () => {
 })
 
 test('只读连接器没有知识库详情入口并拒绝直接详情 URL', () => {
-  const listSource = readSource('../../src/views/DataBaseView.vue')
-  const detailSource = readSource('../../src/views/DataBaseInfoView.vue')
+  const listSource = readSource('../../src/modules/knowledge/ui/KnowledgeCatalog.vue')
+  const detailSource = readSource('../../src/pages/DataBaseInfoView.vue')
 
   assert.match(listSource, /:disabled="kbUtils\.isReadOnlyDatabase\(database\)"/)
   assert.match(
@@ -49,7 +49,7 @@ test('只读连接器没有知识库详情入口并拒绝直接详情 URL', () =
 })
 
 test('检索面板强制挂载以保留上传后的示例问题生成', () => {
-  const detailSource = readSource('../../src/views/DataBaseInfoView.vue')
+  const detailSource = readSource('../../src/pages/DataBaseInfoView.vue')
 
   assert.match(detailSource, /key: 'query', label: '检索测试', icon: Search, forceRender: true/)
 })

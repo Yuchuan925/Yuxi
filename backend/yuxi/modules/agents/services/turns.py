@@ -11,7 +11,6 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from yuxi.modules.agents.repositories.runs import AgentRunRepository
-from yuxi.modules.agents.repositories.input import AgentInputRepository
 from yuxi.modules.agents.repositories.input_receipt import AgentInputReceiptRepository
 from yuxi.modules.agents.repositories.turn import AgentTurnRepository
 from yuxi.modules.agents.services.scheduler import Dispatch, deliver
@@ -39,7 +38,7 @@ async def resume_turn(
 ) -> dict:
     """一次性消费明确等待点，在同一 Turn 建立下一段恢复 Run。"""
     _check_key(idempotency_key)
-    event_type = "yuxi.thread.input.resume"
+    event_type = "yuxi.session.input.resume"
     intent_hash = _hash_intent(event_type, turn_id, waitpoint_id, response)
     receipt_repo = AgentInputReceiptRepository(db)
     existing = await receipt_repo.get_for_scope(
@@ -50,7 +49,7 @@ async def resume_turn(
         return _accepted(existing)
 
     conversation = await require_thread(db=db, scope=scope, thread_id=thread_id, lock=True)
-    if conversation.status != "active":
+    if conversation.status not in {"active", "subagent"}:
         raise HTTPException(status_code=409, detail="Thread 已归档")
     turn_repo = AgentTurnRepository(db)
     turn = await turn_repo.get_for_scope(
@@ -79,7 +78,15 @@ async def resume_turn(
         role="user",
         content=json.dumps(response, ensure_ascii=False),
         message_type="resume",
-        extra_metadata={"resume": resume_value, "waitpoint_id": waitpoint_id},
+        extra_metadata={
+            "resume": resume_value,
+            "waitpoint_id": waitpoint_id,
+            "rejected_tool_calls": [
+                call["tool_call_id"]
+                for call, decision in zip(waitpoint.get("calls", []), resume_value.get("decisions", []))
+                if decision["type"] == "reject"
+            ],
+        },
         delivery_status="dispatched",
         turn_id=turn.id,
     )
@@ -101,7 +108,9 @@ async def resume_turn(
         origin_metadata=previous.origin_metadata or {},
         conversation_id=conversation.id,
         resume_from_run_id=previous.id,
-        run_type="resume",
+        run_type="subagent" if previous.run_type == "subagent" else "resume",
+        created_by_run_id=previous.created_by_run_id,
+        subagent_thread_relation_id=previous.subagent_thread_relation_id,
         input_message_id=message.id,
     )
     message.run_id = run_id
@@ -127,13 +136,13 @@ async def cancel_turn(
     db: AsyncSession,
     scope: ActorScope,
     thread_id: str,
-    turn_id: str,
+    turn_id: str | None,
     idempotency_key: str,
     expected_run_id: str | None = None,
 ) -> dict:
-    """暂停后续队列，撤销本轮 steer，并请求当前执行树收敛。"""
+    """暂停并保留待消费输入，请求当前执行树收敛。"""
     _check_key(idempotency_key)
-    event_type = "yuxi.thread.input.cancel"
+    event_type = "agent.session.input.cancel"
     intent_hash = _hash_intent(event_type, turn_id, expected_run_id)
     receipt_repo = AgentInputReceiptRepository(db)
     existing = await receipt_repo.get_for_scope(
@@ -144,28 +153,32 @@ async def cancel_turn(
         return _accepted(existing)
 
     conversation = await require_thread(db=db, scope=scope, thread_id=thread_id, lock=True)
-    turn_repo = AgentTurnRepository(db)
-    turn = await turn_repo.get_for_scope(
-        turn_id=turn_id, thread_id=thread_id, uid=scope.uid, app_id=scope.app_id, for_update=True
-    )
-    if turn is None:
-        raise HTTPException(status_code=404, detail="Turn 不存在")
     existing = await receipt_repo.get_for_scope(
         uid=scope.uid, app_id=scope.app_id, thread_id=thread_id, idempotency_key=idempotency_key
     )
     if existing is not None:
         _require_replay(existing, event_type, intent_hash)
         return _accepted(existing)
+    turn_repo = AgentTurnRepository(db)
+    turn = (
+        await turn_repo.get_for_scope(
+            turn_id=turn_id, thread_id=thread_id, uid=scope.uid, app_id=scope.app_id, for_update=True
+        )
+        if turn_id is not None
+        else await turn_repo.lock_active_for_thread(thread_id=thread_id, uid=scope.uid, app_id=scope.app_id)
+    )
+    if turn is None:
+        raise HTTPException(status_code=404, detail="Turn 不存在")
     if expected_run_id is not None and turn.current_run_id != expected_run_id:
         raise HTTPException(status_code=409, detail="当前 Run 已变化")
     if turn.status not in {"running", "waiting", "cancelling", "cancelled"}:
         raise HTTPException(status_code=409, detail="Turn 已结束，无法取消")
 
     cancelled_run_ids: list[str] = []
+    descendants: list[tuple[str, str]] = []
     waiting_cleanup = False
     terminal_changed = False
     if turn.status != "cancelled":
-        await AgentInputRepository(db).cancel_pending_for_turn(turn_id=turn.id)
         conversation.queue_paused = True
         waiting_cleanup = turn.status == "waiting" or (turn.status == "cancelling" and bool(turn.waitpoint))
         if turn.status != "cancelling":
@@ -175,7 +188,7 @@ async def cancel_turn(
             raise ValueError("Turn 当前 Run 不存在")
         if run.status in {"pending", "running", "cancel_requested"}:
             run, cancelled_run_ids = await AgentRunRepository(db).request_cancel_execution_tree(
-                run_id=run.id, uid=scope.uid, cascade_descendants=True
+                run_id=run.id, uid=scope.uid, cascade_descendants=False
             )
             if run.status == "cancelled" and not run.runtime_cleanup_pending:
                 await turn_repo.set_terminal(turn, status="cancelled")
@@ -186,6 +199,10 @@ async def cancel_turn(
                 terminal_changed = True
         elif run.status != "interrupted" or not waiting_cleanup:
             raise HTTPException(status_code=409, detail="当前 Run 已结束，取消目标已变化")
+
+    if turn.status != "cancelled" or terminal_changed:
+        descendants = await AgentRunRepository(db).cancel_active_execution_tree_descendants(run)
+        cancelled_run_ids.extend(child_id for child_id, _ in descendants)
 
     receipt = await receipt_repo.create(
         receipt_id=str(uuid.uuid4()),
@@ -204,7 +221,13 @@ async def cancel_turn(
     if cancelled_run_ids:
         await publish_cancel_signals(cancelled_run_ids)
     if waiting_cleanup:
-        await settle_waiting_cancel(thread_id=thread_id, turn_id=turn_id, uid=scope.uid, app_id=scope.app_id)
+        await settle_waiting_cancel(thread_id=thread_id, turn_id=turn.id, uid=scope.uid, app_id=scope.app_id)
+    for child_id, child_thread_id in descendants:
+        child = await AgentRunRepository(db).get_run(child_id)
+        if child.status == "interrupted":
+            await settle_waiting_cancel(
+                thread_id=child_thread_id, turn_id=child.turn_id, uid=scope.uid, app_id=scope.app_id
+            )
     return _accepted(receipt)
 
 
@@ -215,6 +238,8 @@ async def get_turn_snapshot(*, db: AsyncSession, scope: ActorScope, thread_id: s
     turn = await turn_repo.get_for_scope(turn_id=turn_id, thread_id=thread_id, uid=scope.uid, app_id=scope.app_id)
     if turn is None:
         raise HTTPException(status_code=404, detail="Turn 不存在")
+    from yuxi.modules.agents.services.public_items import serialize_public_run
+
     runs = await turn_repo.list_runs(turn.id)
     result_run = next((run for run in runs if run.id == turn.result_run_id), None)
     current_run = next((run for run in runs if run.id == turn.current_run_id), None)
@@ -224,7 +249,9 @@ async def get_turn_snapshot(*, db: AsyncSession, scope: ActorScope, thread_id: s
         if output_message is None or output_message.run_id != result_run.id or output_message.turn_id != turn.id:
             raise ValueError("Turn 最终结果消息归属不一致")
         await db.refresh(output_message, attribute_names=["tool_calls"])
-        output = output_message.to_dict()
+        from yuxi.modules.agents.services.public_items import serialize_public_items, serialize_public_run
+
+        output = serialize_public_items(output_message, result_run, turn.result_run_id)
     audits = await turn_repo.list_model_usage_audits(turn.id)
     return {
         "turn_id": turn.id,
@@ -233,7 +260,7 @@ async def get_turn_snapshot(*, db: AsyncSession, scope: ActorScope, thread_id: s
         "current_run_id": turn.current_run_id,
         "result_run_id": turn.result_run_id,
         "waitpoint": turn.waitpoint,
-        "runs": [run.to_dict() for run in runs],
+        "runs": [serialize_public_run(run) for run in runs],
         "output": output,
         "usage": _summarize_turn_usage(audits),
         "error": (
@@ -275,7 +302,7 @@ def _summarize_turn_usage(audits: list[Message]) -> dict:
 
 
 async def list_turn_messages(
-    *, db: AsyncSession, scope: ActorScope, thread_id: str, turn_id: str, after_id: int = 0, limit: int = 50
+    *, db: AsyncSession, scope: ActorScope, thread_id: str, turn_id: str, after_id: str | None = None, limit: int = 50
 ) -> list[dict]:
     """读取本轮原始输入与明确绑定的用户可见输出。"""
     await require_thread(db=db, scope=scope, thread_id=thread_id)
@@ -284,10 +311,19 @@ async def list_turn_messages(
     )
     if turn is None:
         raise HTTPException(status_code=404, detail="Turn 不存在")
-    messages = await AgentTurnRepository(db).list_messages(
-        turn_id=turn_id, thread_id=thread_id, after_id=after_id, limit=limit
+    from yuxi.modules.agents.repositories.public_items import PublicItemRepository
+    from yuxi.modules.agents.services.public_items import serialize_public_items
+
+    rows = await PublicItemRepository(db).list_items(
+        thread_id=thread_id, uid=scope.uid, app_id=scope.app_id, turn_id=turn_id
     )
-    return [message.to_dict() for message in messages]
+    items = [item for message, run, result_id in rows for item in serialize_public_items(message, run, result_id)]
+    if after_id is not None:
+        position = next((index for index, item in enumerate(items) if item["id"] == after_id), None)
+        if position is None:
+            raise HTTPException(status_code=400, detail="after_id 不是当前 Turn 的公开 item")
+        items = items[position + 1 :]
+    return items[:limit]
 
 
 async def settle_waiting_cancel(*, thread_id: str, turn_id: str, uid: str, app_id: str | None) -> bool:
@@ -372,7 +408,9 @@ async def _clear_waitpoint_checkpoint(run: AgentRun) -> None:
         user = await db.scalar(select(User).where(User.uid == run.uid))
         if user is None:
             raise ValueError("等待点用户不存在")
-        agent_item = await AgentRepository(db).get_visible_by_slug(slug=run.agent_slug, user=user, kind="main")
+        agent_item = await AgentRepository(db).get_visible_by_slug(
+            slug=run.agent_slug, user=user, kind="subagent" if run.run_type == "subagent" else "main"
+        )
         if agent_item is None:
             raise ValueError("等待点 Agent 不存在")
         backend = get_agent_backend(agent_item.backend_id)

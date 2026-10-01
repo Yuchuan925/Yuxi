@@ -25,12 +25,12 @@ def test_filter_disabled_tools_keeps_allowed_tools_order():
         SimpleNamespace(name="calculator"),
     ]
 
-    filtered = subagent_graph._filter_disabled_tools(tools, subagent_graph._disabled_tools_for("default"))
+    filtered = subagent_graph._filter_disabled_tools(tools, subagent_graph._SUBAGENT_DISABLED_TOOLS)
 
-    assert [subagent_graph._tool_name(tool) for tool in filtered] == ["search", "calculator"]
+    assert [subagent_graph._tool_name(tool) for tool in filtered] == ["search", "ask_user_question", "calculator"]
 
 
-def test_filter_disabled_tools_removes_sensitive_backend_tools_only_in_default_mode():
+def test_filter_keeps_sensitive_tools_for_approval_in_both_modes():
     tools = [
         SimpleNamespace(name="read_file"),
         SimpleNamespace(name="write_file"),
@@ -38,11 +38,16 @@ def test_filter_disabled_tools_removes_sensitive_backend_tools_only_in_default_m
         SimpleNamespace(name="execute"),
     ]
 
-    default_mode_filtered = subagent_graph._filter_disabled_tools(tools, subagent_graph._disabled_tools_for("default"))
-    assert [subagent_graph._tool_name(tool) for tool in default_mode_filtered] == ["read_file"]
+    default_mode_filtered = subagent_graph._filter_disabled_tools(tools, subagent_graph._SUBAGENT_DISABLED_TOOLS)
+    assert [subagent_graph._tool_name(tool) for tool in default_mode_filtered] == [
+        "read_file",
+        "write_file",
+        "edit_file",
+        "execute",
+    ]
 
     always_trust_filtered = subagent_graph._filter_disabled_tools(
-        tools, subagent_graph._disabled_tools_for("always_trust")
+        tools, subagent_graph._SUBAGENT_DISABLED_TOOLS
     )
     assert [subagent_graph._tool_name(tool) for tool in always_trust_filtered] == [
         "read_file",
@@ -79,7 +84,7 @@ async def test_subagent_tool_filter_middleware_filters_before_handler(use_async:
         result = middleware.wrap_model_call(request, sync_handler)
 
     assert result == "ok"
-    assert [subagent_graph._tool_name(tool) for tool in seen["tools"]] == ["allowed_tool"]
+    assert [subagent_graph._tool_name(tool) for tool in seen["tools"]] == ["ask_user_question", "allowed_tool"]
 
 
 @pytest.mark.asyncio
@@ -103,7 +108,10 @@ async def test_subagent_get_info_hides_disabled_tool_options(monkeypatch):
 
     info = await subagent_graph.SubAgentBackend().get_info()
 
-    assert [option["key"] for option in info["configurable_items"]["tools"]["options"]] == ["allowed_tool"]
+    assert [option["key"] for option in info["configurable_items"]["tools"]["options"]] == [
+        "allowed_tool",
+        "ask_user_question",
+    ]
 
 
 class _ToolCallRequest:
@@ -111,19 +119,19 @@ class _ToolCallRequest:
         self.tool_call = {"name": name, "args": {}, "id": call_id}
 
 
-def test_filesystem_middleware_does_not_register_disabled_tools_in_default_mode():
-    """默认模式下敏感工具必须不进入 ToolNode，否则隐藏只是对模型不可见。"""
+def test_filesystem_registers_sensitive_tools_for_approval():
+    """敏感工具必须进入真实审批链路，不能通过隐藏代替审批。"""
     backend = StateBackend()
 
     default_mode = create_agent_filesystem_middleware(
-        backend=backend, disabled_tools=subagent_graph._disabled_tools_for("default")
+        backend=backend, disabled_tools=subagent_graph._SUBAGENT_DISABLED_TOOLS
     )
     default_mode_names = {tool.name for tool in default_mode.tools}
-    assert {"write_file", "edit_file", "execute"}.isdisjoint(default_mode_names)
+    assert {"write_file", "edit_file", "execute"} <= default_mode_names
     assert "read_file" in default_mode_names
 
     always_trust = create_agent_filesystem_middleware(
-        backend=backend, disabled_tools=subagent_graph._disabled_tools_for("always_trust")
+        backend=backend, disabled_tools=subagent_graph._SUBAGENT_DISABLED_TOOLS
     )
     assert {"write_file", "edit_file", "execute"} <= {tool.name for tool in always_trust.tools}
 
@@ -132,7 +140,7 @@ def test_filesystem_middleware_does_not_register_disabled_tools_in_default_mode(
 @pytest.mark.parametrize("use_async", [False, True])
 async def test_subagent_tool_filter_middleware_denies_disabled_tool_execution(use_async: bool):
     """隐藏的工具即使被再次调用（续跑历史、补全或幻觉）也必须在执行前拒绝。"""
-    middleware = subagent_graph._SubAgentToolFilterMiddleware("default")
+    middleware = subagent_graph._SubAgentToolFilterMiddleware()
     executed = []
 
     async def async_handler(request):
@@ -143,7 +151,7 @@ async def test_subagent_tool_filter_middleware_denies_disabled_tool_execution(us
         executed.append(request.tool_call["name"])
         return "executed"
 
-    request = _ToolCallRequest("write_file")
+    request = _ToolCallRequest("install_skill")
     if use_async:
         result = await middleware.awrap_tool_call(request, async_handler)
     else:
@@ -152,13 +160,13 @@ async def test_subagent_tool_filter_middleware_denies_disabled_tool_execution(us
     assert executed == []
     assert result.status == "error"
     assert result.tool_call_id == "call_1"
-    assert "write_file" in result.content
+    assert "install_skill" in result.content
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("use_async", [False, True])
 async def test_subagent_tool_filter_middleware_allows_enabled_tool_execution(use_async: bool):
-    middleware = subagent_graph._SubAgentToolFilterMiddleware("default")
+    middleware = subagent_graph._SubAgentToolFilterMiddleware()
     executed = []
 
     async def async_handler(request):
@@ -181,7 +189,7 @@ async def test_subagent_tool_filter_middleware_allows_enabled_tool_execution(use
 
 @pytest.mark.asyncio
 async def test_subagent_tool_filter_middleware_allows_sensitive_tools_in_always_trust():
-    middleware = subagent_graph._SubAgentToolFilterMiddleware("always_trust")
+    middleware = subagent_graph._SubAgentToolFilterMiddleware()
     executed = []
 
     async def handler(request):

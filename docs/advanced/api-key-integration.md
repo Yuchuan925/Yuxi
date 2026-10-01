@@ -97,7 +97,7 @@ curl --fail "$BASE_URL/api/v1/agents/threads" \
 
 响应中的 `thread_id` 标识长期对话，`input_id` 标识已接收输入，`turn_id`、`run_id` 仅在已经领取时出现。HTTP 接收成功不表示执行完成。用 `GET /api/v1/agents/threads/{thread_id}/turns/{turn_id}` 读取整轮状态与明确结果，或用 `GET /api/v1/agents/threads/{thread_id}/events` 订阅 Thread SSE；断线后带 `Last-Event-ID` 续订，并回读持久快照。排队输入可用 `/queue` 与 `/inputs/{input_id}` 查询。
 
-继续对话时向 `POST /api/v1/agents/threads/{thread_id}/events` 提交 `agent.thread.input.message`，产品消息使用 `mode=follow_up`；修正当前轮需明确 `mode=steer` 和目标 `turn_id`。等待问题或审批时，通过 Turn 快照获取等待点，并提交结构化 `yuxi.thread.input.resume`。取消当前轮和继续暂停队列是两个独立控制事件。字段和示例见 [Public 协议参考](./agents-public-api.md)。
+继续对话时向 `POST /api/v1/agents/threads/{thread_id}/events` 提交 `agent.session.input.message`；明确排队使用 `yuxi.mode=follow_up`，修正当前轮使用 `yuxi.mode=steer` 和 `yuxi.turn_id`。未指定 mode 时，服务在 Thread 锁内选择：运行中 steer，空闲时 follow-up，等待或取消中拒绝普通消息。等待问题或审批时，通过 Turn 快照获取等待点，并提交结构化 `yuxi.session.input.resume`。取消当前轮和继续暂停队列是两个独立控制事件。字段和示例见 [Public 协议参考](./agents-public-api.md)。
 
 ## 排查
 

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { makeChildThreadId } from '../../src/utils/subagentThread.js'
+import { makeChildThreadId } from '../../src/modules/conversation/model/subagentThread.js'
 
 const EXPECTED_THREAD_ID = 'subagent_198242794595efedd1850d5263f677c9b628052b1bfca0d5bc77499'
 

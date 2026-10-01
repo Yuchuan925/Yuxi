@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { formatChatTime } from '../../src/utils/time.js'
+import { formatChatTime } from '../../src/shared/lib/time.js'
 
 // 固定"当前时间"避免跨日边界导致用例不稳定：2026-08-15 12:00（周六）
 const NOW = '2026-08-15T12:00:00+08:00'

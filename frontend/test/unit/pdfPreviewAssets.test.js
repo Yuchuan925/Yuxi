@@ -12,7 +12,7 @@ test('PDF 本地 CMap 开发响应和构建产物与依赖字节一致', async (
     new URL('../../node_modules/pdfjs-dist/cmaps/UniGB-UCS2-H.bcmap', import.meta.url)
   )
   const component = await readFile(
-    new URL('../../src/components/common/PdfPreview.vue', import.meta.url),
+    new URL('../../src/shared/ui/PdfPreview.vue', import.meta.url),
     'utf8'
   )
   assert.match(component, /cMapUrl: '\/assets\/pdfjs-cmaps\/'/)
@@ -33,7 +33,7 @@ test('PDF 本地 CMap 开发响应和构建产物与依赖字节一致', async (
       write: false,
       minify: false,
       rollupOptions: {
-        input: fileURLToPath(new URL('../../src/utils/pdfPreviewErrors.js', import.meta.url))
+        input: fileURLToPath(new URL('../../src/shared/lib/pdfPreviewErrors.js', import.meta.url))
       }
     }
   })

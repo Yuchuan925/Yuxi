@@ -7,14 +7,14 @@ function readSource(relativePath) {
 }
 
 test('Skill 详情暴露编辑、配置面板及内联 HTML 控件', () => {
-  const source = readSource('../../src/components/extensions/SkillDetailView.vue')
+  const source = readSource('../../src/modules/extensions/ui/SkillDetailView.vue')
   assert.match(source, /<template #panel-editor>/)
   assert.match(source, /<template #panel-config>/)
   assert.match(source, /:show-inline-html-controls="true"/)
 })
 
 test('Skill 编辑入口在详情顶部和项目结构中都可访问', () => {
-  const source = readSource('../../src/components/extensions/SkillDetailView.vue')
+  const source = readSource('../../src/modules/extensions/ui/SkillDetailView.vue')
   const actionsStart = source.indexOf('<template #actions>')
   const topBarActions = source.slice(actionsStart, source.indexOf('</template>', actionsStart))
   const treeActionsStart = source.indexOf('<div class="tree-actions">')
@@ -32,7 +32,7 @@ test('Skill 编辑入口在详情顶部和项目结构中都可访问', () => {
 })
 
 test('MCP 详情保留信息、工具面板与可访问操作名称', () => {
-  const source = readSource('../../src/components/extensions/McpDetailView.vue')
+  const source = readSource('../../src/modules/extensions/ui/McpDetailView.vue')
 
   assert.match(source, /<ExtensionDetailLayout/)
   assert.match(source, /<template #breadcrumb>/)
@@ -51,7 +51,7 @@ test('MCP 详情保留信息、工具面板与可访问操作名称', () => {
 })
 
 test('共享权限开关的可访问名称包含当前状态', () => {
-  const source = readSource('../../src/components/ShareConfigForm.vue')
+  const source = readSource('../../src/modules/agents/ui/ShareConfigForm.vue')
 
   assert.match(
     source,
@@ -60,7 +60,7 @@ test('共享权限开关的可访问名称包含当前状态', () => {
 })
 
 test('保存运行依赖不会重载并覆盖同页尚未保存的范围配置', () => {
-  const source = readSource('../../src/components/extensions/SkillDetailView.vue')
+  const source = readSource('../../src/modules/extensions/ui/SkillDetailView.vue')
   const saveStart = source.indexOf('const saveDependencies = async () =>')
   const saveDependencies = source.slice(saveStart, source.indexOf('onMounted(', saveStart))
 
@@ -69,7 +69,7 @@ test('保存运行依赖不会重载并覆盖同页尚未保存的范围配置',
 })
 
 test('文件保存携带修订值并局部更新，切换文件前检查草稿', () => {
-  const source = readSource('../../src/components/extensions/SkillDetailView.vue')
+  const source = readSource('../../src/modules/extensions/ui/SkillDetailView.vue')
   const saveStart = source.indexOf('const saveCurrentFile = async')
   const saveFile = source.slice(saveStart, source.indexOf('const confirmDeleteSkill', saveStart))
 
@@ -80,7 +80,7 @@ test('文件保存携带修订值并局部更新，切换文件前检查草稿',
 })
 
 test('无预览 header 的 HTML 文件在编辑态隐藏模式控件', () => {
-  const source = readSource('../../src/components/AgentFilePreview.vue')
+  const source = readSource('../../src/modules/conversation/ui/workspace/AgentFilePreview.vue')
   const controlsStart = source.indexOf('showInlineHtmlControls &&')
   const controls = source.slice(
     controlsStart,

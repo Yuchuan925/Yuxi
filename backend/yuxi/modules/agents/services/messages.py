@@ -16,89 +16,27 @@ from yuxi.modules.agents.repositories.turn import AgentTurnRepository
 from yuxi.modules.agents.repositories.threads import ConversationRepository
 from yuxi.modules.agents.repositories.model_audit import ModelMessageAuditRepository
 from yuxi.modules.agents.repositories.tool_audit import ToolMessageAuditRepository
-from yuxi.modules.agents.services.input_messages import extract_image_contents
 from yuxi.modules.agents.services.runs import settle_checkpoint
 from yuxi.modules.agents.services.scope import ActorScope
 from yuxi.modules.agents.services.threads import get_thread_snapshot, require_thread
-from yuxi.modules.agents.services.transport import enqueue_agent_run, publish_cancel_signals
-from yuxi.modules.agents.services.attachments import serialize_attachment
-from yuxi.modules.agents.models.messages import MODEL_AUDIT_MESSAGE_TYPE
+from yuxi.modules.agents.services.transport import enqueue_agent_run
+from yuxi.modules.agents.models.messages import MODEL_AUDIT_MESSAGE_TYPE, Message
 from yuxi.modules.agents.models.runs import AgentRun, build_agent_run_timing
 from yuxi.shared.datetime import format_utc_datetime, utc_now_naive
 from yuxi.infrastructure.observability.logging import logger
 
 MESSAGE_AUDIT_LIMIT = 500
 AGENT_RUN_TRACE_LIMIT = 500
-_MODEL_HISTORY_METADATA_KEYS = frozenset(
-    {"attachments", "source", "error_type", "error_message", "langfuse_trace_id", "model"}
-)
-
-
-def _visible_metadata(message) -> dict:
-    """普通 History 只展示已发布模型消息的面向用户字段。"""
-    metadata = dict(message.extra_metadata or {})
-    if message.operation_id is None:
-        return metadata
-    return {key: metadata[key] for key in _MODEL_HISTORY_METADATA_KEYS if key in metadata}
 
 
 async def get_thread_history(*, db: AsyncSession, scope: ActorScope, thread_id: str) -> dict:
-    """包含排队和取消输入消息的完整可见历史。"""
+    """使用与实时相同的 item 投影恢复正文及可见工具过程。"""
+    from yuxi.modules.agents.repositories.public_items import PublicItemRepository
+    from yuxi.modules.agents.services.public_items import serialize_public_items
+
     conversation = await require_thread(db=db, scope=scope, thread_id=thread_id)
-    repo = ConversationRepository(db)
-    messages = await repo.get_messages(conversation.id)
-    runs = await repo.list_agent_runs_for_history(conversation.id)
-    run_created_at = {run.id: run.created_at for run in runs}
-    messages.sort(
-        key=lambda message: (
-            run_created_at.get(message.run_id) or message.created_at,
-            0 if message.role == "user" else 1,
-            message.created_at,
-            message.id,
-        )
-    )
-    input_ids = {
-        str((message.extra_metadata or {}).get("input_id"))
-        for message in messages
-        if message.role == "user" and (message.extra_metadata or {}).get("input_id")
-    }
-    attachments_by_input: dict[str, list[dict]] = {}
-    if input_ids:
-        for attachment in await repo.get_attachments(conversation.id):
-            input_id = str(attachment.get("input_id") or "")
-            if input_id in input_ids:
-                attachments_by_input.setdefault(input_id, []).append(
-                    serialize_attachment(attachment, thread_id=thread_id)
-                )
-    history = []
-    role_types = {"user": "human", "assistant": "ai", "tool": "tool", "system": "system"}
-    for message in messages:
-        metadata = _visible_metadata(message)
-        input_id = metadata.get("input_id")
-        if message.role == "user" and input_id:
-            metadata.setdefault("attachments", attachments_by_input.get(str(input_id), []))
-        item = {
-            "id": message.id,
-            "type": role_types.get(message.role, message.role),
-            "content": message.content,
-            "created_at": format_utc_datetime(message.created_at),
-            "run_id": message.run_id,
-            "turn_id": message.turn_id,
-            "input_id": input_id,
-            "delivery_status": message.delivery_status,
-            "error_type": metadata.get("error_type"),
-            "error_message": metadata.get("error_message"),
-            "extra_metadata": metadata,
-            "message_type": message.message_type,
-            "image_content": message.image_content,
-            "image_contents": extract_image_contents(metadata.get("raw_message"))
-            or ([message.image_content] if message.image_content else []),
-        }
-        if message.role == "assistant":
-            item.update(parse_assistant_message_body(message.content))
-        if message.tool_calls:
-            item["tool_calls"] = [_serialize_tool_call(call) for call in message.tool_calls]
-        history.append(item)
+    rows = await PublicItemRepository(db).list_items(thread_id=thread_id, uid=scope.uid, app_id=scope.app_id)
+    runs = await ConversationRepository(db).list_agent_runs_for_history(conversation.id)
     return {
         "thread": await get_thread_snapshot(db=db, scope=scope, thread_id=thread_id),
         "runs": [
@@ -107,11 +45,20 @@ async def get_thread_history(*, db: AsyncSession, scope: ActorScope, thread_id: 
                 "turn_id": run.turn_id,
                 "run_type": run.run_type,
                 "created_by_run_id": run.created_by_run_id,
+                "resume_from_run_id": run.resume_from_run_id,
+                "timing": build_agent_run_timing(
+                    created_at=run.created_at,
+                    started_at=run.started_at,
+                    prepared_at=run.prepared_at,
+                    first_model_request_at=run.first_model_request_at,
+                    first_output_at=run.first_output_at,
+                    finished_at=run.finished_at,
+                ),
                 "status": run.status,
             }
             for run in runs
         ],
-        "history": history,
+        "items": [item for message, run, result_id in rows for item in serialize_public_items(message, run, result_id)],
     }
 
 
@@ -301,7 +248,6 @@ async def save_partial_message(
     trace_info: dict[str, Any] | None = None,
 ):
     """在同一事务内保存错误输出并结束当前 Run 与 Turn。"""
-    cancelled_descendants: list[tuple[str, str]] = []
     try:
         extra_metadata = {
             "error_type": error_type,
@@ -327,16 +273,15 @@ async def save_partial_message(
         persisted_run = await run_repo.get_run(run_id)
         if persisted_run is None:
             raise ValueError("AgentRun 不存在")
-        if persisted_run.run_type != "subagent":
-            turn = await AgentTurnRepository(conv_repo.db).get_for_scope(
-                turn_id=turn_id,
-                thread_id=thread_id,
-                uid=conversation.uid,
-                app_id=conversation.app_id,
-                for_update=True,
-            )
-            if turn is None or turn.current_run_id != run_id:
-                raise ValueError("AgentRun 不是当前 Turn 的执行段")
+        turn = await AgentTurnRepository(conv_repo.db).get_for_scope(
+            turn_id=turn_id,
+            thread_id=thread_id,
+            uid=conversation.uid,
+            app_id=conversation.app_id,
+            for_update=True,
+        )
+        if turn is None or turn.current_run_id != run_id:
+            raise ValueError("AgentRun 不是当前 Turn 的执行段")
         locked_run = await run_repo.lock_output_persistence(
             run_id,
             worker_id=worker_id,
@@ -369,9 +314,7 @@ async def save_partial_message(
         )
         if not settlement.changed:
             raise ValueError("AgentRun 错误输出与失败终态未能在同一事务提交")
-        cancelled_descendants = await run_repo.cancel_active_execution_tree_descendants(locked_run)
         await conv_repo.db.commit()
-        await publish_cancel_signals([run_id for run_id, _thread_id in cancelled_descendants])
         return message
 
     except Exception as e:
@@ -471,6 +414,7 @@ async def save_messages_from_langgraph_state(
     worker_id: str,
     trace_info: dict[str, Any] | None = None,
     complete_run: bool = False,
+    steer_before_model: bool = False,
     interrupt_run: bool = False,
     interrupt_error_type: str | None = None,
     interrupt_error_message: str | None = None,
@@ -484,7 +428,6 @@ async def save_messages_from_langgraph_state(
         raise ValueError("持久化 AgentRun 输出需要 worker、thread 和 Turn 因果归属")
 
     run_repo = AgentRunRepository(conv_repo.db)
-    cancelled_descendants: list[tuple[str, str]] = []
     next_run_id: str | None = None
     try:
         await conv_repo.db.flush()
@@ -494,23 +437,25 @@ async def save_messages_from_langgraph_state(
         persisted_run = await run_repo.get_run(run_id)
         if persisted_run is None:
             raise ValueError("AgentRun 不存在")
-        if persisted_run.run_type != "subagent":
-            turn = await AgentTurnRepository(conv_repo.db).get_for_scope(
-                turn_id=turn_id,
+        turn = await AgentTurnRepository(conv_repo.db).get_for_scope(
+            turn_id=turn_id,
+            thread_id=thread_id,
+            uid=conversation.uid,
+            app_id=conversation.app_id,
+            for_update=True,
+        )
+        if turn is None or turn.current_run_id != run_id:
+            raise ValueError("AgentRun 不是当前 Turn 的执行段")
+        pending_steer = None
+        if complete_run:
+            pending_steer = await AgentInputRepository(conv_repo.db).get_pending_steer(
                 thread_id=thread_id,
                 uid=conversation.uid,
                 app_id=conversation.app_id,
-                for_update=True,
             )
-            if turn is None or turn.current_run_id != run_id:
-                raise ValueError("AgentRun 不是当前 Turn 的执行段")
-            if complete_run:
-                await AgentInputRepository(conv_repo.db).get_pending_steer(
-                    thread_id=thread_id,
-                    uid=conversation.uid,
-                    app_id=conversation.app_id,
-                    turn_id=turn_id,
-                )
+        continue_after_cancelled_steer = complete_run and steer_before_model and pending_steer is None
+        if continue_after_cancelled_steer:
+            complete_run = False
         locked_run = await run_repo.lock_output_persistence(
             run_id,
             worker_id=worker_id,
@@ -526,6 +471,12 @@ async def save_messages_from_langgraph_state(
         tool_audits_by_operation = {
             message.operation_id: message for message in current_tool_audits if message.operation_id
         }
+        resume_input = (
+            await conv_repo.db.get(Message, persisted_run.input_message_id) if persisted_run.input_message_id else None
+        )
+        rejected_calls = (
+            set((resume_input.extra_metadata or {}).get("rejected_tool_calls", [])) if resume_input else set()
+        )
         state_model_messages: dict[str, dict[str, Any]] = {}
         state_tool_messages: dict[str, dict[str, Any]] = {}
         last_state_ai_id: str | None = None
@@ -564,6 +515,31 @@ async def save_messages_from_langgraph_state(
                     )
             elif msg_type == "tool":
                 tool_call_id = str(msg_dict.get("tool_call_id") or "")
+                if tool_call_id in rejected_calls and tool_call_id not in tool_audits_by_operation:
+                    audit = await ToolMessageAuditRepository(conv_repo.db).record_approval_rejection(
+                        run_id=run_id,
+                        thread_id=thread_id,
+                        worker_id=worker_id,
+                        tool_call_id=tool_call_id,
+                        content=_tool_message_content(msg_dict.get("content")),
+                    )
+                    from yuxi.modules.agents.repositories.public_items import PublicItemRepository
+
+                    await PublicItemRepository(conv_repo.db).save(
+                        run_id=run_id,
+                        worker_id=worker_id,
+                        operation_id=tool_call_id,
+                        role="tool",
+                        key="output",
+                        item={
+                            "type": "function_call_output",
+                            "call_id": tool_call_id,
+                            "output": audit.content,
+                            "error": audit.content,
+                            "status": "failed",
+                        },
+                    )
+                    tool_audits_by_operation[tool_call_id] = audit
                 if tool_call_id in tool_audits_by_operation:
                     state_tool_messages[tool_call_id] = msg_dict
 
@@ -593,10 +569,10 @@ async def save_messages_from_langgraph_state(
             )
         if current_model_audits and (complete_run or interrupt_run):
             terminal_ai_message = reconciled_audits.get(last_state_ai_id or "")
-            if complete_run and terminal_ai_message is None:
+            if complete_run and pending_steer is None and terminal_ai_message is None:
                 raise ValueError("最终 State AIMessage 无法与当前 Run 的 Model lifecycle 事实关联")
             last_ai_message = terminal_ai_message
-        if complete_run and last_ai_message is None:
+        if complete_run and pending_steer is None and last_ai_message is None:
             raise ValueError("最终 checkpoint 缺少当前 Run 的 AI 输出")
         if last_ai_message is not None:
             has_tool_calls = bool((last_ai_message.extra_metadata or {}).get("tool_calls"))
@@ -611,6 +587,8 @@ async def save_messages_from_langgraph_state(
 
         terminal_status = "completed" if complete_run else "interrupted" if interrupt_run else None
         if terminal_status:
+            if interrupt_run and waitpoint and waitpoint["kind"] == "approval":
+                waitpoint = _bind_approval_calls(waitpoint, last_ai_message)
             settlement = await settle_checkpoint(
                 db=conv_repo.db,
                 run=locked_run,
@@ -625,16 +603,33 @@ async def save_messages_from_langgraph_state(
                 raise ValueError(f"AgentRun 输出已写入但 {terminal_status} 终态未能在同一事务提交")
             terminal_status = settlement.status
             next_run_id = settlement.next_run_id
-            if terminal_status != "yielded":
-                cancelled_descendants = await run_repo.cancel_active_execution_tree_descendants(locked_run)
         await conv_repo.db.commit()
-        await publish_cancel_signals([run_id for run_id, _thread_id in cancelled_descendants])
         if next_run_id:
             await enqueue_agent_run(next_run_id)
-        return terminal_status
+        return "running" if continue_after_cancelled_steer else terminal_status
     except asyncio.CancelledError:
         await conv_repo.db.rollback()
         raise
     except Exception:
         await conv_repo.db.rollback()
         raise
+
+
+def _bind_approval_calls(waitpoint: dict, model_message: Message | None) -> dict:
+    """在等待事务中把有序审批动作绑定到当前模型声明，禁止关联历史调用。"""
+    declarations = list((model_message.extra_metadata or {}).get("tool_calls", [])) if model_message else []
+    calls = []
+    for action in waitpoint["calls"]:
+        position = next(
+            (
+                index
+                for index, call in enumerate(declarations)
+                if call["name"] == action["name"] and call["args"] == action["args"]
+            ),
+            None,
+        )
+        if position is None:
+            raise ValueError("审批等待点缺少当前模型的工具声明")
+        declaration = declarations.pop(position)
+        calls.append({**action, "tool_call_id": declaration["id"]})
+    return {**waitpoint, "calls": calls}

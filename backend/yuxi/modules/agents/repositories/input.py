@@ -30,16 +30,15 @@ class AgentInputRepository:
         agent_slug: str,
         kind: str,
         api_key_id: int | None = None,
-        turn_id: str | None = None,
         input_payload: dict | None = None,
         source: str = "chat",
         channel: str = "web",
         external_id: str | None = None,
         origin_metadata: dict | None = None,
     ) -> AgentInput:
-        """保存 follow-up 或固定目标 Turn 的 steer。"""
-        if kind not in {"follow_up", "steer"} or (kind == "steer") != (turn_id is not None):
-            raise ValueError("Input 种类与目标 Turn 不一致")
+        """保存尚未绑定 Turn 的持久输入。"""
+        if kind not in {"follow_up", "steer"}:
+            raise ValueError("不支持的 Input 种类")
         input_item = AgentInput(
             id=input_id,
             conversation_thread_id=thread_id,
@@ -49,7 +48,6 @@ class AgentInputRepository:
             agent_slug=agent_slug,
             kind=kind,
             status="pending",
-            turn_id=turn_id,
             input_payload=input_payload or {},
             source=source,
             channel=channel,
@@ -78,17 +76,16 @@ class AgentInputRepository:
     async def get_queue_head(
         self, *, thread_id: str, uid: str, app_id: str | None, for_update: bool = True
     ) -> AgentInput | None:
-        """读取 follow-up FIFO 队头；调用方先锁 Thread。"""
+        """读取 steer 优先、follow-up FIFO 的队头；调用方先锁 Thread。"""
         statement = (
             select(AgentInput)
             .where(
                 AgentInput.conversation_thread_id == thread_id,
                 AgentInput.uid == uid,
                 AgentInput.app_id == app_id,
-                AgentInput.kind == "follow_up",
                 AgentInput.status == "pending",
             )
-            .order_by(AgentInput.received_seq)
+            .order_by((AgentInput.kind == "steer").desc(), AgentInput.received_seq)
             .limit(1)
         )
         if for_update:
@@ -97,16 +94,15 @@ class AgentInputRepository:
         return result.scalar_one_or_none()
 
     async def get_pending_steer(
-        self, *, thread_id: str, uid: str, app_id: str | None, turn_id: str, for_update: bool = True
+        self, *, thread_id: str, uid: str, app_id: str | None, for_update: bool = True
     ) -> AgentInput | None:
-        """读取并可锁定本轮唯一待消费 steer。"""
+        """读取并可锁定 Thread 唯一待消费 steer。"""
         statement = select(AgentInput).where(
             AgentInput.conversation_thread_id == thread_id,
             AgentInput.uid == uid,
             AgentInput.app_id == app_id,
             AgentInput.kind == "steer",
             AgentInput.status == "pending",
-            AgentInput.turn_id == turn_id,
         )
         if for_update:
             statement = statement.with_for_update()
@@ -181,8 +177,8 @@ class AgentInputRepository:
         run = await self.db.get(AgentRun, run_id)
         if input_item is None or input_item.status != "pending":
             raise ValueError("Input 已领取或不存在")
-        if turn is None or run is None or run.turn_id != turn_id or run.run_type == "subagent":
-            raise ValueError("消费目标必须是本轮顶层 Run")
+        if turn is None or run is None or run.turn_id != turn_id:
+            raise ValueError("消费目标必须属于本轮 Turn")
         if (input_item.uid, input_item.app_id, input_item.conversation_thread_id) != (
             turn.uid,
             turn.app_id,
@@ -212,7 +208,9 @@ class AgentInputRepository:
             .values(turn_id=turn_id, run_id=run_id)
         )
         await self.db.execute(
-            update(Message).where(Message.id.in_(message_ids)).values(turn_id=turn_id, delivery_status="dispatched")
+            update(Message)
+            .where(Message.id.in_(message_ids))
+            .values(turn_id=turn_id, run_id=run_id, delivery_status="dispatched")
         )
         await self.db.flush()
         return input_item
@@ -228,42 +226,16 @@ class AgentInputRepository:
         await self.db.flush()
         return input_item
 
-    async def cancel_pending_for_turn(self, *, turn_id: str) -> list[AgentInput]:
-        """取消结束 Turn 未消费的 steer，不触碰后续 follow-up。"""
-        result = await self.db.execute(
-            select(AgentInput)
-            .where(
-                AgentInput.turn_id == turn_id,
-                AgentInput.kind == "steer",
-                AgentInput.status == "pending",
-            )
-            .with_for_update()
-        )
-        inputs = list(result.scalars())
-        for input_item in inputs:
-            input_item.status = "cancelled"
-            input_item.cancelled_at = utc_now_naive()
-        if inputs:
-            message_ids = select(AgentInputMessage.message_id).where(
-                AgentInputMessage.input_id.in_(input_item.id for input_item in inputs)
-            )
-            await self.db.execute(
-                update(Message).where(Message.id.in_(message_ids)).values(delivery_status="cancelled")
-            )
-        await self.db.flush()
-        return inputs
-
-    async def list_pending_follow_ups(self, *, thread_id: str, uid: str, app_id: str | None) -> list[AgentInput]:
-        """按 FIFO 顺序读取尚未建立 Turn 的输入。"""
+    async def list_pending_inputs(self, *, thread_id: str, uid: str, app_id: str | None) -> list[AgentInput]:
+        """按调度顺序读取尚未绑定 Turn 的全部输入。"""
         result = await self.db.execute(
             select(AgentInput)
             .where(
                 AgentInput.conversation_thread_id == thread_id,
                 AgentInput.uid == uid,
                 AgentInput.app_id == app_id,
-                AgentInput.kind == "follow_up",
                 AgentInput.status == "pending",
             )
-            .order_by(AgentInput.received_seq)
+            .order_by((AgentInput.kind == "steer").desc(), AgentInput.received_seq)
         )
         return list(result.scalars())

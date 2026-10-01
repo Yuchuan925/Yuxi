@@ -7,7 +7,7 @@ import {
   getAvatarColorIndex,
   getAvatarFallbackStyle,
   getAvatarInitials
-} from '../../src/utils/pixelAvatar.js'
+} from '../../src/shared/lib/pixelAvatar.js'
 
 const DICEBEAR_GLYPHS_AVATAR_BASE_URL = 'https://api.dicebear.com/10.x/glyphs/svg'
 

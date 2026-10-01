@@ -15,12 +15,12 @@ globalThis.localStorage = {
 test('知识库文件修改守卫拒绝只读、锁定、筛选和虚拟目录场景', async () => {
   const server = await createServer({ server: { middlewareMode: true }, appType: 'custom' })
   try {
+    const { canDropOnFileBreadcrumb } = await server.ssrLoadModule('/src/shared/lib/fileDrop.js')
     const {
       canMutateKnowledgeFiles,
       canDragKnowledgeFile,
-      canDropKnowledgeFileIntoFolder,
-      canDropOnFileBreadcrumb
-    } = await server.ssrLoadModule('/src/utils/knowledgeFileMutations.js')
+      canDropKnowledgeFileIntoFolder
+    } = await server.ssrLoadModule('/src/modules/knowledge/model/knowledgeFileMutations.js')
 
     assert.equal(canMutateKnowledgeFiles({}), true)
     for (const blockedState of [
@@ -80,7 +80,7 @@ test('知识库文件夹移动与重命名 API 使用管理端 PUT 契约', asyn
 
   try {
     setActivePinia(createPinia())
-    const { useUserStore } = await server.ssrLoadModule('/src/stores/user.js')
+    const { useUserStore } = await server.ssrLoadModule('/src/modules/identity/model/user.js')
     useUserStore().userRole = 'superadmin'
     const { documentApi } = await server.ssrLoadModule('/src/apis/knowledge_api.js')
     await documentApi.renameFolder('kb-1', 'folder-1', '新名称')

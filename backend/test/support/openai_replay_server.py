@@ -55,7 +55,9 @@ def validate_request(authorization: str | None, request: dict) -> str | None:
     subagent_parent = "DETERMINISTIC_SUBAGENT_PARENT:" in serialized_messages
     if "DETERMINISTIC_CANCEL_FOLLOWUP" in serialized_messages:
         return None
-    question_flow = "DETERMINISTIC_ASK_USER" in serialized_messages
+    question_flow = "DETERMINISTIC_ASK_USER" in serialized_messages or (
+        subagent_child and "SUBAGENT_QUESTION_CHILD" in serialized_messages
+    )
     if question_flow:
         if "ask_user_question" not in tool_names:
             return "ask_user_question_missing"
@@ -63,8 +65,7 @@ def validate_request(authorization: str | None, request: dict) -> str | None:
             return "ask_user_question_result_mismatch"
         return None
     if subagent_child:
-        trusted = "SUBAGENT_MODE:always_trust" in serialized_messages
-        if ("write_file" in tool_names) != trusted or "task" in tool_names:
+        if "write_file" not in tool_names or "task" in tool_names:
             return "subagent_tool_policy_mismatch"
     elif EXPECTED_PRELOADED_TOOL not in tool_names:
         return "preloaded_tool_missing"
@@ -131,7 +132,7 @@ def _stream_payloads(model: str, messages: list[dict]) -> list[dict]:
     )
     observation = "SUBAGENT_OBSERVATION_GATE:" in serialized_messages
     waiting_call = None
-    if parent and tool_results:
+    if parent and tool_results and "SUBAGENT_BACKGROUND" not in serialized_messages:
         starts = ["call-subagent-slow", "call-subagent-start"] if observation else ["call-subagent-start"]
         waiting_call = next((call for call in starts if f"await-{call}" not in tool_results), None)
     if tool_results and waiting_call is None:
@@ -159,7 +160,9 @@ def _stream_payloads(model: str, messages: list[dict]) -> list[dict]:
     if "DETERMINISTIC_ASK_USER_INVALID" in serialized_messages:
         tool_call_id, tool_name = "call-ask-user", "ask_user_question"
         tool_arguments = json.dumps({"questions": [{"question": "选择风格？", "multi_select": "false"}]})
-    elif "DETERMINISTIC_ASK_USER" in serialized_messages:
+    elif "DETERMINISTIC_ASK_USER" in serialized_messages or (
+        "DETERMINISTIC_SUBAGENT_CHILD" in serialized_messages and "SUBAGENT_QUESTION_CHILD" in serialized_messages
+    ):
         tool_call_id, tool_name = "call-ask-user", "ask_user_question"
         tool_arguments = json.dumps(
             {
@@ -174,6 +177,9 @@ def _stream_payloads(model: str, messages: list[dict]) -> list[dict]:
         started = json.loads(tool_results[waiting_call])
         tool_call_id, tool_name = f"await-{waiting_call}", "subagent_await"
         tool_arguments = json.dumps({"run_id": started["run_id"]})
+    elif "DETERMINISTIC_SUBAGENT_CHILD" in serialized_messages and "SUBAGENT_APPROVAL_CHILD" in serialized_messages:
+        tool_call_id, tool_name = "call-subagent-write", "execute"
+        tool_arguments = json.dumps({"command": "printf CHILD_APPROVAL_MUST_NOT_EXECUTE"})
     elif "DETERMINISTIC_SUBAGENT_CHILD" in serialized_messages:
         tool_call_id, tool_name = "call-subagent-write", "write_file"
         path = re.search(r'SUBAGENT_PATH:(/[^\s"\\]+)', serialized_messages).group(1)
@@ -301,7 +307,7 @@ class ReplayHandler(BaseHTTPRequestHandler):
                     {"error": {"message": "DETERMINISTIC_RATE_LIMIT exhausted", "type": "rate_limit_error"}},
                 )
                 return
-        gate = re.search(r"SUBAGENT_OBSERVATION_GATE:([0-9a-f-]+)", serialized_messages)
+        gate = re.search(r"SUBAGENT_(?:OBSERVATION|BACKGROUND)_GATE:([0-9a-f-]+)", serialized_messages)
         if gate and "DETERMINISTIC_SUBAGENT_CHILD" in serialized_messages and "SUBAGENT_SLOW" in serialized_messages:
             with BLOCKING_REQUEST_TOKENS_LOCK:
                 event = SUBAGENT_GATES.setdefault(gate.group(1), Event())

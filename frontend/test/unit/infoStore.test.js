@@ -21,7 +21,7 @@ test('调试模式读取受限 LocalStorage 时降级为关闭', async () => {
   })
   setActivePinia(createPinia())
   try {
-    const { useInfoStore } = await server.ssrLoadModule('/src/stores/info.js')
+    const { useInfoStore } = await server.ssrLoadModule('/src/modules/settings/model/info.js')
     const store = useInfoStore()
 
     assert.equal(store.debugMode, false)
@@ -37,7 +37,7 @@ test('品牌配置合并并发读取，成功缓存，失败与强制刷新可�
   })
   setActivePinia(createPinia())
   try {
-    const { useInfoStore } = await server.ssrLoadModule('/src/stores/info.js')
+    const { useInfoStore } = await server.ssrLoadModule('/src/modules/settings/model/info.js')
     const { brandApi } = await server.ssrLoadModule('/src/apis/system_api.js')
     const store = useInfoStore()
     const pending = []

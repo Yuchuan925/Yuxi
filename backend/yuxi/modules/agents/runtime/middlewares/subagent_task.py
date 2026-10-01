@@ -14,7 +14,6 @@ from langgraph.types import Command
 from pydantic import BaseModel
 
 from yuxi.modules.agents.repositories.definitions import AgentRepository
-from yuxi.modules.agents.repositories.runs import TERMINAL_RUN_STATUSES
 from yuxi.modules.identity.repositories.users import UserRepository
 from yuxi.modules.agents.services.input_messages import build_chat_input_message
 from yuxi.infrastructure.postgres.manager import pg_manager
@@ -202,26 +201,24 @@ class YuxiSubAgentMiddleware(AgentMiddleware[Any, ContextT, ResponseT]):
                     run_id=run_id,
                 )
 
-                # 如果 run 已经终结，则尝试读取最终结果；否则 result 保持 None
-                result = None
-                if run.status in TERMINAL_RUN_STATUSES:
-                    async with pg_manager.get_async_session_context() as db:
-                        result = await get_agent_run_result(run_id=run.id, current_uid=parent_runtime.uid, db=db)
+                # 子 Turn 可已恢复到其他 Run；查询它的当前状态和结果。
+                async with pg_manager.get_async_session_context() as db:
+                    result = await get_agent_run_result(run_id=run.id, current_uid=parent_runtime.uid, db=db)
 
             except ValueError as exc:
                 return str(exc)
 
             subagent_service = _subagent_run_service_module()
             payload = {
-                "status": run.status,
+                "status": result["status"],
                 "run_id": run.id,
                 "thread_id": run.conversation_thread_id,
                 "subagent_slug": run.agent_slug,
                 "error": run.error_message,
-                "progress": await get_agent_run_progress(run.id),
+                "progress": await get_agent_run_progress(result["agent_run_id"]),
                 **subagent_service.subagent_run_urls(run.id, run.conversation_thread_id),
             }
-            if result:
+            if result["status"] in {"completed", "failed", "cancelled"}:
                 payload["result"] = result
             subagent_run = subagent_service.serialize_subagent_run_state(run)
             return _json_tool_command(payload, runtime.tool_call_id, subagent_run=subagent_run)

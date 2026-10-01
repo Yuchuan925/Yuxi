@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
 
-import { parseToolCallArgs } from '../../src/components/ToolCallingResult/toolRegistry.js'
+import { parseToolCallArgs } from '../../src/modules/conversation/ui/tools/toolRegistry.js'
 
 const ARG_PARSER_CONSUMERS = [
   'AskUserQuestionTool.vue',
@@ -47,7 +47,7 @@ test('parseToolCallArgs 对空字符串和 malformed JSON 不回退到 function.
 test('工具组件统一消费 parseToolCallArgs，不保留本地参数解析器', () => {
   for (const component of ARG_PARSER_CONSUMERS) {
     const source = readFileSync(
-      new URL(`../../src/components/ToolCallingResult/tools/${component}`, import.meta.url),
+      new URL(`../../src/modules/conversation/ui/tools/renderers/${component}`, import.meta.url),
       'utf8'
     )
 
@@ -61,7 +61,7 @@ test('工具组件统一消费 parseToolCallArgs，不保留本地参数解析�
 
   for (const component of COMPONENTS_WITHOUT_OTHER_JSON_PARSING) {
     const source = readFileSync(
-      new URL(`../../src/components/ToolCallingResult/tools/${component}`, import.meta.url),
+      new URL(`../../src/modules/conversation/ui/tools/renderers/${component}`, import.meta.url),
       'utf8'
     )
 

@@ -2,7 +2,7 @@
 
 状态：implemented
 类型：bug-fix
-Owner：frontend/src/components/common/PdfPreview.vue
+Owner：frontend/src/shared/ui/PdfPreview.vue
 
 ## 问题
 

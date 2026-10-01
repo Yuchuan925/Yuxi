@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { createSingleFlight } from '../../src/utils/singleFlight.js'
+import { createSingleFlight } from '../../src/shared/lib/singleFlight.js'
 
 test('并发调用共享同一个进行中的线程创建 Promise', async () => {
   let calls = 0

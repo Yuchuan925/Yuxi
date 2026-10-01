@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { createMarkdownRenderCache } from '../../src/utils/markdownRenderCache.js'
+import { createMarkdownRenderCache } from '../../src/shared/lib/markdownRenderCache.js'
 
 test('缓存按原文和 HTML 总字符预算淘汰，命中保留最近使用项', () => {
   const cache = createMarkdownRenderCache({ maxChars: 12, maxEntries: 100 })

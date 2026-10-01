@@ -315,7 +315,7 @@ class ConversationRepository:
         if langgraph_tool_call_id:
             result = await self.db.execute(
                 select(ToolCall)
-                .where(ToolCall.langgraph_tool_call_id == langgraph_tool_call_id)
+                .where(ToolCall.message_id == message_id, ToolCall.langgraph_tool_call_id == langgraph_tool_call_id)
                 .order_by(ToolCall.created_at.desc())
                 .limit(1)
             )
@@ -422,6 +422,7 @@ class ConversationRepository:
                     AgentRun.turn_id,
                     AgentRun.run_type,
                     AgentRun.created_by_run_id,
+                    AgentRun.resume_from_run_id,
                     AgentRun.status,
                     AgentRun.created_at,
                     AgentRun.started_at,

@@ -49,18 +49,18 @@ class AgentLoadTestScriptTest(unittest.IsolatedAsyncioTestCase):
                     ": heartbeat",
                     "",
                     "id: 1-0",
-                    "event: agent.thread.input.consumed",
-                    'data: {"thread_id":"thread-1",',
-                    'data: "input_id":"input-1","turn_id":"turn-1","run_id":"run-1"}',
+                    "event: yuxi.session.run.created",
+                    'data: {"session_id":"thread-1",',
+                    'data: "input_id":"input-1","turn_id":"turn-1","yuxi":{"run_id":"run-1"}}',
                     "",
                 )
             )
         ]
 
         self.assertEqual(len(events), 1)
-        self.assertEqual(events[0].name, "agent.thread.input.consumed")
+        self.assertEqual(events[0].name, "yuxi.session.run.created")
         self.assertEqual(events[0].event_id, "1-0")
-        self.assertEqual(events[0].data["run_id"], "run-1")
+        self.assertEqual(events[0].data["yuxi"]["run_id"], "run-1")
 
     async def test_iter_sse_rejects_non_json_data(self) -> None:
         with self.assertRaises(LoadTestError):
@@ -73,10 +73,12 @@ class AgentLoadTestScriptTest(unittest.IsolatedAsyncioTestCase):
             return httpx.Response(
                 200,
                 text=(
-                    "event: agent.thread.input.consumed\n"
-                    'data: {"thread_id":"thread-1","input_id":"neighbor","turn_id":"other","run_id":"other"}\n\n'
-                    "event: agent.thread.input.consumed\n"
-                    'data: {"thread_id":"thread-1","input_id":"input-1","turn_id":"turn-1","run_id":"run-1"}\n\n'
+                    "event: yuxi.session.run.created\n"
+                    'data: {"session_id":"thread-1","input_id":"neighbor","turn_id":"other",'
+                    '"yuxi":{"run_id":"other"}}\n\n'
+                    "event: yuxi.session.run.created\n"
+                    'data: {"session_id":"thread-1","input_id":"input-1","turn_id":"turn-1",'
+                    '"yuxi":{"run_id":"run-1"}}\n\n'
                 ),
             )
 
@@ -91,8 +93,8 @@ class AgentLoadTestScriptTest(unittest.IsolatedAsyncioTestCase):
             return httpx.Response(
                 200,
                 text=(
-                    "event: agent.thread.input.consumed\n"
-                    'data: {"thread_id":"other","input_id":"input-1","turn_id":"turn-2","run_id":"run-2"}\n\n'
+                    "event: yuxi.session.run.created\n"
+                    'data: {"session_id":"other","input_id":"input-1","turn_id":"turn-2","yuxi":{"run_id":"run-2"}}\n\n'
                 ),
             )
 
@@ -108,7 +110,7 @@ class AgentLoadTestScriptTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(request.url.path, "/api/v1/agents/threads/thread-1/events")
             self.assertEqual(request.headers["Idempotency-Key"], "load-event")
             event = json.loads(request.content)["events"][0]
-            self.assertEqual((event["type"], event["mode"]), ("agent.thread.input.message", "follow_up"))
+            self.assertEqual((event["type"], event["yuxi"]["mode"]), ("agent.session.input.message", "follow_up"))
             self.assertEqual(event["input"][0]["content"][0]["text"], "say hi")
             return httpx.Response(202, json={"thread_id": "thread-1", "input_id": "input-1"})
 
@@ -136,7 +138,15 @@ class AgentLoadTestScriptTest(unittest.IsolatedAsyncioTestCase):
             "input_id": "input-1",
             "turn_id": "turn-1",
             "status": "completed",
-            "output": {"content": "LOAD_TEST_OK", "run_id": "run-1", "turn_id": "turn-1"},
+            "output": [
+                {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": "LOAD_TEST_OK"}],
+                    "turn_id": "turn-1",
+                    "yuxi": {"run_id": "run-1"},
+                }
+            ],
         }
 
         success, error, _ = evaluate_result(
@@ -152,39 +162,16 @@ class AgentLoadTestScriptTest(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(success)
         self.assertIn("LOAD_TEST_TOOL_OK", error or "")
 
-    def test_compact_tool_message_proves_execute_completion(self) -> None:
-        evidence = ToolEvidence(execute_started=True)
-
-        observe_tool_evidence(
-            {"payload": {"chunk": {"msg": {"type": "tool", "content": "LOAD_TEST_TOOL_OK\n"}}}},
-            evidence,
-        )
-
+    def test_function_output_proves_execute_completion(self):
+        evidence = ToolEvidence(execute_started=True, call_ids={"execute-call"})
+        observe_tool_evidence({"type":"agent.session.turn.item.done","item":{
+            "type":"function_call_output","call_id":"execute-call","status":"completed","output":"LOAD_TEST_TOOL_OK"}},evidence)
         self.assertTrue(evidence.execute_finished)
         self.assertTrue(evidence.output_marker_seen)
 
-    def test_first_model_output_accepts_text_and_tool_call_delta(self) -> None:
-        self.assertTrue(
-            contains_model_output(
-                {"payload": {"items": [{"stream_event": {"type": "message_delta", "content": "你"}}]}}
-            )
-        )
-        self.assertTrue(
-            contains_model_output(
-                {
-                    "payload": {
-                        "items": [
-                            {
-                                "stream_event": {
-                                    "type": "tool_call_delta",
-                                    "args_delta": "{",
-                                }
-                            }
-                        ]
-                    }
-                }
-            )
-        )
+    def test_first_model_output_accepts_text_and_full_function_call(self):
+        self.assertTrue(contains_model_output({"type":"agent.session.turn.output_text.delta","delta":"你"}))
+        self.assertTrue(contains_model_output({"type":"agent.session.turn.item.added","item":{"type":"function_call","arguments":{}}}))
 
     def test_metadata_does_not_count_as_first_model_output(self) -> None:
         self.assertFalse(
@@ -238,7 +225,15 @@ class AgentLoadTestScriptTest(unittest.IsolatedAsyncioTestCase):
                 "input_id": "input-1",
                 "turn_id": "turn-1",
                 "status": "completed",
-                "output": {"content": "LOAD_TEST_OK", "run_id": "run-1", "turn_id": "turn-1"},
+                "output": [
+                    {
+                        "type": "message",
+                        "role": "assistant",
+                        "content": [{"type": "output_text", "text": "LOAD_TEST_OK"}],
+                        "turn_id": "turn-1",
+                        "yuxi": {"run_id": "run-1"},
+                    }
+                ],
             },
             input_id="input-1",
             turn_id="turn-1",
@@ -259,7 +254,15 @@ class AgentLoadTestScriptTest(unittest.IsolatedAsyncioTestCase):
                 "input_id": "input-1",
                 "turn_id": "turn-1",
                 "status": "completed",
-                "output": {"content": "LOAD_TEST_OK", "run_id": "run-neighbor", "turn_id": "turn-1"},
+                "output": [
+                    {
+                        "type": "message",
+                        "role": "assistant",
+                        "content": [{"type": "output_text", "text": "LOAD_TEST_OK"}],
+                        "turn_id": "turn-1",
+                        "yuxi": {"run_id": "run-neighbor"},
+                    }
+                ],
             },
             input_id="input-1",
             turn_id="turn-1",

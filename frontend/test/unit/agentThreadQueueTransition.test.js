@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { useAgentThreadState } from '../../src/composables/useAgentThreadState.js'
+import { useAgentThreadState } from '../../src/modules/conversation/model/useAgentThreadState.js'
 
 test('重置当前 Turn 投影时保留已排队 Input 的监视', () => {
   const chatState = { threadStates: {} }
@@ -14,14 +14,14 @@ test('重置当前 Turn 投影时保留已排队 Input 的监视', () => {
   let runAborted = false
   state.runStreamAbortController = { abort: () => (runAborted = true) }
   state.inputMonitors['input-2'] = { controller, timer: null }
-  state.onGoingConv.msgChunks['input-1'] = [{ content: '第一轮回复' }]
+  state.onGoingConv.items['input-1'] = { type: 'message', content: [{ type: 'output_text', text: '第一轮回复' }] }
 
   resetOnGoingConv('thread-1', { preserveInputMonitors: true })
 
   assert.equal(runAborted, true)
   assert.equal(controller.signal.aborted, false)
   assert.deepEqual(Object.keys(state.inputMonitors), ['input-2'])
-  assert.deepEqual(state.onGoingConv.msgChunks, {})
+  assert.deepEqual(state.onGoingConv.items, {})
 })
 
 for (const action of ['reset', 'cleanup']) {

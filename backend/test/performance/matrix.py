@@ -73,7 +73,7 @@ def read_runs(run_ids):
         FROM agent_runs r
         JOIN agent_inputs input ON input.id=r.input_id
         JOIN agent_input_receipts receipt ON receipt.input_id=input.id
-             AND receipt.event_type='agent.thread.input.message'
+             AND receipt.event_type='agent.session.input.message'
         WHERE r.id IN ({ids})) t"""
     return json.loads(
         command(

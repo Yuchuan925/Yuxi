@@ -70,12 +70,12 @@ async def retrieve_public_turn(
 async def list_public_turn_items(
     thread_id: str,
     turn_id: str,
-    after_id: int = Query(default=0, ge=0),
+    after_id: str | None = Query(default=None),
     limit: int = Query(default=100, ge=1, le=100),
     context: PublicAgentContext = Depends(require_public_context),
     db: AsyncSession = Depends(get_db),
 ):
-    """按持久 Message ID 读取本轮的原始消息和输出。"""
+    """按稳定 item ID 分页读取本轮的公开输入和输出。"""
     items = await list_turn_messages(
         db=db,
         scope=context.scope,

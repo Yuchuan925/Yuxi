@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { formatJsonKey, formatJsonScalar } from '../../src/utils/jsonTree.js'
+import { formatJsonKey, formatJsonScalar } from '../../src/shared/lib/jsonTree.js'
 
 test('JSON 树转义字符串值中的引号、反斜杠与换行', () => {
   assert.equal(formatJsonScalar('a"b\\c\nnext'), '"a\\"b\\\\c\\nnext"')

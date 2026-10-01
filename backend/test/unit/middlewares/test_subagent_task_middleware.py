@@ -129,6 +129,7 @@ def _subagent_run(
 ):
     return SimpleNamespace(
         id="child-run",
+        turn_id="child-turn",
         conversation_thread_id=thread_id,
         agent_slug=subagent_slug,
         status=status,
@@ -508,7 +509,7 @@ async def test_subagent_status_returns_terminal_result(monkeypatch) -> None:
 
     async def fake_get_agent_run_result(*, run_id: str, current_uid: str, db):
         captured["get_agent_run_result"] = {"run_id": run_id, "current_uid": current_uid, "db": db}
-        return {"status": "completed", "output": "final result"}
+        return {"status": "completed", "output": "final result", "agent_run_id": "child-run"}
 
     async def fake_get_agent_run_progress(run_id: str):
         captured["get_agent_run_progress"] = run_id
@@ -544,6 +545,7 @@ async def test_subagent_status_returns_terminal_result(monkeypatch) -> None:
             "subagent_slug": "worker",
             "subagent_name": "Worker",
             "child_thread_id": "child-thread",
+            "turn_id": "child-turn",
             "status": "completed",
             "events_url": "/api/v1/agents/threads/child-thread/events",
             "result_url": "/api/v1/agents/threads/child-thread/runs/child-run",
@@ -564,7 +566,7 @@ async def test_subagent_status_returns_progress_for_running_run(monkeypatch) -> 
             return _subagent_run(status="running")
 
     async def fake_get_agent_run_result(**kwargs):
-        raise AssertionError(f"running status should not load terminal result: {kwargs}")
+        return {"status": "running", "agent_run_id": "child-run", "output": None}
 
     async def fake_get_agent_run_progress(run_id: str):
         captured["get_agent_run_progress"] = run_id

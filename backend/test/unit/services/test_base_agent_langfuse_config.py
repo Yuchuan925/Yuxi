@@ -6,7 +6,7 @@ from contextlib import aclosing
 
 import pytest
 
-from yuxi.modules.agents.runtime.base import BaseAgent
+from yuxi.modules.agents.runtime.base import BaseAgent, GraphExecutionResult
 
 
 class _LifecycleGraph:
@@ -79,7 +79,10 @@ async def test_base_agent_passes_callbacks_metadata_and_tags():
         tags=["yuxi"],
     )
 
-    assert events == [("values", {}), ("checkpoint", {"messages": []})]
+    assert events == [
+        {"method": "values", "params": {"namespace": [], "data": {}}},
+        GraphExecutionResult({"messages": []}),
+    ]
     graph = await agent.get_graph()
     assert graph.last_events_config == {
         "configurable": {"thread_id": "thread-1", "uid": "user-1"},
@@ -124,7 +127,10 @@ async def test_base_agent_records_prepared_after_stream_creation_before_first_ev
     ):
         events.append(event)
 
-    assert events == [("values", {}), ("checkpoint", {"messages": []})]
+    assert events == [
+        {"method": "values", "params": {"namespace": [], "data": {}}},
+        GraphExecutionResult({"messages": []}),
+    ]
     assert lifecycle == ["graph-ready", "stream-created", "prepared", "first-event", "checkpoint"]
 
 

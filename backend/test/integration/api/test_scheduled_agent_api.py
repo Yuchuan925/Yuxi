@@ -164,7 +164,7 @@ async def test_scheduled_task_crud_persists_and_enforces_owner_scope(
             cancel = await test_client.post(
                 f"/api/v1/agents/threads/{thread_id}/events",
                 headers={**owner_headers, "Idempotency-Key": f"pytest-scheduled-cancel-{uuid.uuid4()}"},
-                json={"events": [{"type": "yuxi.thread.input.cancel", "turn_id": turn_id}]},
+                json={"events": [{"type": "agent.session.input.cancel", "yuxi": {"turn_id": turn_id}}]},
             )
             assert cancel.status_code in {202, 409}, cancel.text
             cancel_sent = True

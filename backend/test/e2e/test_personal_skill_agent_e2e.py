@@ -9,6 +9,8 @@ import asyncpg
 import httpx
 import pytest
 
+from test.e2e.test_agent_lifecycle_e2e import output_text
+
 from e2e_helpers import (
     RUN_TIMEOUT_SECONDS,
     archive_public_thread,
@@ -112,16 +114,12 @@ async def test_main_agent_reads_personal_skill_directly_from_user_workspace(
             headers={**e2e_headers, "Idempotency-Key": f"personal-skill-input-{uuid.uuid4().hex}"},
             json={
                 "events": [
-                    {
-                        "type": "agent.thread.input.message",
-                        "mode": "follow_up",
-                        "input": [
+                    {"type": "agent.session.input.message", "input": [
                             {
                                 "role": "user",
                                 "content": [{"type": "input_text", "text": "请读取并返回 personal Skill marker。"}],
                             }
-                        ],
-                    }
+                        ], "yuxi": {"mode": "follow_up"}}
                 ],
             },
         )
@@ -133,12 +131,15 @@ async def test_main_agent_reads_personal_skill_directly_from_user_workspace(
             """观察本 Run 的模型增量直到同一 Turn 终态。"""
             message_events = 0
             async for event in iter_public_thread_events(e2e_client, e2e_headers, thread_id):
-                if event["run_id"] == run_id and event["type"] == "agent.thread.output":
-                    message_events += event["payload"].get("event") == "messages"
-                if event["turn_id"] == turn_id and event["type"] in {
-                    "agent.thread.turn.completed",
-                    "agent.thread.turn.failed",
-                    "agent.thread.turn.cancelled",
+                if (
+                    event.get("yuxi", {}).get("run_id") == run_id
+                    and event["type"] == "agent.session.turn.output_text.delta"
+                ):
+                    message_events += 1
+                if event.get("turn_id") == turn_id and event["type"] in {
+                    "agent.session.turn.completed",
+                    "agent.session.turn.failed",
+                    "agent.session.turn.cancelled",
                 }:
                     return message_events
             pytest.fail("个人 Skill 的 Thread SSE 在终态前断开")
@@ -153,7 +154,7 @@ async def test_main_agent_reads_personal_skill_directly_from_user_workspace(
         assert turn["status"] == "completed", turn
         assert turn["result_run_id"] == run_id, turn
 
-        assert marker in str((turn.get("output") or {}).get("content") or ""), turn
+        assert marker in output_text(turn.get("output") or []), turn
 
         conn = await asyncpg.connect(postgres_dsn())
         try:

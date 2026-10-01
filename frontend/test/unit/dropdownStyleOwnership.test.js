@@ -6,14 +6,14 @@ const readSource = (relativePath) => readFileSync(new URL(relativePath, import.m
 
 test('共享下拉样式由全局样式表拥有', () => {
   const globalStyles = readSource('../../src/assets/css/main.css')
-  const agentView = readSource('../../src/views/AgentView.vue')
-  const approvalSelector = readSource('../../src/components/ToolApprovalModeSelector.vue')
+  const agentPicker = readSource('../../src/modules/agents/ui/ConversationAgentPicker.vue')
+  const approvalSelector = readSource('../../src/modules/conversation/ui/ToolApprovalModeSelector.vue')
 
-  const actionDropdown = readSource('../../src/components/common/ActionDropdown.vue')
+  const actionDropdown = readSource('../../src/shared/ui/ActionDropdown.vue')
   assert.match(approvalSelector, /<ActionDropdown/)
-  assert.match(agentView, /<ActionDropdown/)
+  assert.match(agentPicker, /<ActionDropdown/)
   assert.match(actionDropdown, /overlay-class-name="config-dropdown-overlay"/)
   assert.match(globalStyles, /\.config-dropdown-overlay \.config-dropdown-panel/)
   assert.match(globalStyles, /\.config-dropdown-overlay \.config-dropdown-item/)
-  assert.doesNotMatch(agentView, /\.config-dropdown-overlay \.config-dropdown-panel/)
+  assert.doesNotMatch(agentPicker, /\.config-dropdown-overlay \.config-dropdown-panel/)
 })

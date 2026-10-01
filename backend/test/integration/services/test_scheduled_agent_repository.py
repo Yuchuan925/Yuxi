@@ -340,7 +340,7 @@ async def test_transient_dispatch_failure_is_recovered_exactly_once(monkeypatch)
             uid=uid,
             app_id=None,
             thread_id=thread_id,
-            event_type="agent.thread.create",
+            event_type="yuxi.session.create",
             intent_hash="scheduled",
             input_id=input_item.id,
         )

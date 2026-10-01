@@ -1,10 +1,13 @@
 """真实 HTTP 与 PostgreSQL 下 Turn 结果只来自明确绑定的 Run。"""
 
 import os
+import json
 import uuid
 
 import asyncpg
 import pytest
+
+from yuxi.bootstrap.models import load_models
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from test.live_api_cleanup import make_test_conversation_title
@@ -32,6 +35,7 @@ async def test_turn_result_follows_only_its_bound_run(test_client, admin_headers
     turn_ids = [str(uuid.uuid4()), str(uuid.uuid4())]
     run_ids = [str(uuid.uuid4()), str(uuid.uuid4())]
     conn = await asyncpg.connect(os.environ["POSTGRES_URL"].replace("+asyncpg", ""))
+    load_models()
     engine = create_async_engine(os.environ["POSTGRES_URL"])
     try:
         conversation_id = await conn.fetchval("SELECT id FROM conversations WHERE thread_id = $1", thread_id)
@@ -56,6 +60,15 @@ async def test_turn_result_follows_only_its_bound_run(test_client, admin_headers
                     "VALUES ($1, 'assistant', $2, $3, $4, 'complete') RETURNING id",
                     conversation_id, content, run_id, turn_id,
                 )
+                await conn.execute(
+                    "UPDATE messages SET extra_metadata=$2::json WHERE id=$1", message_id,
+                    json.dumps({"public_items": {"message": {
+                        "id": f"item_{message_id}", "type": "message", "turn_id": turn_id,
+                        "role": "assistant", "content": [{"type": "output_text", "text": content}],
+                        "status": "completed", "phase": "commentary",
+                        "yuxi": {"run_id": run_id, "message_id": message_id, "output_index": 0},
+                    }}}),
+                )
                 await conn.execute("UPDATE agent_runs SET output_message_id = $2 WHERE id = $1", run_id, message_id)
                 await conn.execute(
                     "UPDATE agent_turns SET current_run_id = $2, result_run_id = $2 WHERE id = $1",
@@ -66,7 +79,8 @@ async def test_turn_result_follows_only_its_bound_run(test_client, admin_headers
         result = await test_client.get(url, headers=admin_headers)
         assert result.status_code == 200, result.text
         assert result.json()["result_run_id"] == run_ids[1]
-        assert result.json()["output"]["content"] == "second output"
+        assert result.json()["output"][0]["content"] == [{"type": "output_text", "text": "second output"}]
+        assert result.json()["output"][0]["phase"] == "final_answer"
         assert (await test_client.get(url, headers=standard_user["headers"])).status_code == 404
 
         with pytest.raises(asyncpg.ForeignKeyViolationError):

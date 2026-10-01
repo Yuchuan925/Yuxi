@@ -12,6 +12,7 @@ import httpx
 import pytest
 
 from e2e_helpers import delete_agent, postgres_dsn, skip_if_external_quota
+from test.e2e.test_agent_lifecycle_e2e import output_text
 from test.live_api_cleanup import make_test_conversation_title
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.e2e, pytest.mark.slow]
@@ -75,9 +76,7 @@ async def _wait_turn(
     pytest.fail(f"Public Turn {turn_id} timed out")
 
 
-async def _assert_public_origin(
-    *, thread_id: str, turn_id: str, input_id: str, run_id: str, agent_slug: str
-) -> None:
+async def _assert_public_origin(*, thread_id: str, turn_id: str, input_id: str, run_id: str, agent_slug: str) -> None:
     """从 PostgreSQL 证明样例由 Public Input 产生且没有旧 Invocation 元数据。"""
     conn = await asyncpg.connect(postgres_dsn())
     try:
@@ -130,10 +129,14 @@ async def test_public_thread_evaluation_sample_uses_one_input_turn_run_flow(
             json={
                 "agent_id": agent_slug,
                 "title": make_test_conversation_title("agent-eval-e2e"),
-                "input": [{
-                    "role": "user",
-                    "content": [{"type": "input_text", "text": f"请只输出 {EVAL_EXPECTED_OUTPUT}，不要添加任何解释。"}],
-                }],
+                "input": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "input_text", "text": f"请只输出 {EVAL_EXPECTED_OUTPUT}，不要添加任何解释。"}
+                        ],
+                    }
+                ],
             },
             headers={**e2e_headers, "Idempotency-Key": f"eval-{uuid.uuid4().hex}"},
         )
@@ -147,8 +150,9 @@ async def test_public_thread_evaluation_sample_uses_one_input_turn_run_flow(
             skip_if_external_quota(turn.get("error"))
         assert turn["status"] == "completed", turn
         assert turn["result_run_id"] == accepted["run_id"]
-        assert EVAL_EXPECTED_OUTPUT in turn["output"]["content"]
-        assert turn["output"]["run_id"] == accepted["run_id"]
+        assert EVAL_EXPECTED_OUTPUT in output_text(turn["output"])
+        assert all(item["yuxi"]["run_id"] == accepted["run_id"] for item in turn["output"])
+        assert all(item["turn_id"] == accepted["turn_id"] for item in turn["output"])
         completed = True
 
         run_response = await e2e_client.get(
@@ -158,7 +162,7 @@ async def test_public_thread_evaluation_sample_uses_one_input_turn_run_flow(
         run = run_response.json()
         assert run["status"] == "completed" and run["turn_id"] == accepted["turn_id"]
         assert run["input_id"] == accepted["input_id"]
-        assert EVAL_EXPECTED_OUTPUT in run["output"]["content"]
+        assert EVAL_EXPECTED_OUTPUT in output_text(run["output"])
 
         await _assert_public_origin(
             thread_id=thread_id,
@@ -170,31 +174,39 @@ async def test_public_thread_evaluation_sample_uses_one_input_turn_run_flow(
 
         invalid = await e2e_client.post(
             f"/api/v1/agents/threads/{thread_id}/events",
-            json={"events": [{
-                "type": "agent.thread.input.message",
-                "mode": "follow_up",
-                "input": [{"role": "user", "content": [{"type": "input_text", "text": "test"}]}],
-                "evaluation": {"dataset_name": "legacy"},
-            }]},
+            json={
+                "events": [
+                    {
+                        "type": "agent.session.input.message",
+                        "input": [{"role": "user", "content": [{"type": "input_text", "text": "test"}]}],
+                        "evaluation": {"dataset_name": "legacy"},
+                        "yuxi": {"mode": "follow_up"},
+                    }
+                ]
+            },
             headers={**e2e_headers, "Idempotency-Key": f"invalid-eval-{uuid.uuid4().hex}"},
         )
         assert invalid.status_code == 422, invalid.text
         conn = await asyncpg.connect(postgres_dsn())
         try:
-            assert await conn.fetchval(
-                "SELECT count(*) FROM agent_inputs WHERE conversation_thread_id = $1", thread_id
-            ) == 1
+            assert (
+                await conn.fetchval("SELECT count(*) FROM agent_inputs WHERE conversation_thread_id = $1", thread_id)
+                == 1
+            )
         finally:
             await conn.close()
     finally:
         if accepted and thread_id and not completed:
             await e2e_client.post(
                 f"/api/v1/agents/threads/{thread_id}/events",
-                json={"events": [{
-                    "type": "yuxi.thread.input.cancel",
-                    "turn_id": accepted["turn_id"],
-                    "expected_run_id": accepted["run_id"],
-                }]},
+                json={
+                    "events": [
+                        {
+                            "type": "agent.session.input.cancel",
+                            "yuxi": {"turn_id": accepted["turn_id"], "expected_run_id": accepted["run_id"]},
+                        }
+                    ]
+                },
                 headers={**e2e_headers, "Idempotency-Key": f"eval-cancel-{uuid.uuid4().hex}"},
             )
         await delete_agent(e2e_client, e2e_headers, agent_slug)

@@ -10,7 +10,7 @@ from typing import Any
 from langfuse import Langfuse
 from rich.console import Console
 
-from yuxi_cli.client import YuxiClient
+from yuxi_cli.client import YuxiClient, public_output_text
 from yuxi_cli.config import ConfigStore
 
 
@@ -133,7 +133,7 @@ def _run_agent_eval_item(
                 turn = client.get_agent_turn(thread_id, str(turn_id))
                 status = turn.get("status")
                 if status == "completed":
-                    return str((turn.get("output") or {}).get("content") or "")
+                    return public_output_text(turn.get("output") or [])
                 if status in {"failed", "cancelled", "waiting"}:
                     raise AgentEvalError(f"Agent eval turn {status} for dataset item {item_id}: {turn}")
             time.sleep(0.5)

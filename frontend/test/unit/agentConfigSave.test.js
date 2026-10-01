@@ -12,7 +12,7 @@ test('共享智能体保存只提交修改字段，并使用后端合并结果�
   const server = await createServer({ server: { middlewareMode: true }, appType: 'custom' })
   setActivePinia(createPinia())
   try {
-    const { useAgentStore } = await server.ssrLoadModule('/src/stores/agent.js')
+    const { useAgentStore } = await server.ssrLoadModule('/src/modules/agents/model/agent.js')
     const { agentApi } = await server.ssrLoadModule('/src/apis/index.js')
     const store = useAgentStore()
     const skills = Array.from({ length: 10 }, (_, i) => `skill-${i}`)

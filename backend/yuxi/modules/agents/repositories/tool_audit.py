@@ -70,6 +70,7 @@ class ToolMessageAuditRepository:
             "tool_name": normalized_name,
             "input": dict(tool_input),
             "source_model_operation_id": source_message.operation_id,
+            "source_model_message_id": source_message.id,
         }
         message = Message(
             conversation_id=run.conversation_id,
@@ -138,6 +139,60 @@ class ToolMessageAuditRepository:
             duration_ms=duration_ms,
             finished_sequence=finished_sequence,
         )
+
+    async def record_approval_rejection(
+        self,
+        *,
+        run_id: str,
+        thread_id: str,
+        worker_id: str,
+        tool_call_id: str,
+        content: str,
+    ) -> Message:
+        """记录已接受审批的拒绝结果，不制造工具执行开始事实。"""
+        from yuxi.shared.datetime import utc_now_naive
+
+        run = await self._lock_run(run_id=run_id, thread_id=thread_id, worker_id=worker_id)
+        resume_input = await self.db.get(Message, run.input_message_id)
+        if (
+            resume_input is None
+            or resume_input.run_id != run.id
+            or resume_input.turn_id != run.turn_id
+            or tool_call_id not in (resume_input.extra_metadata or {}).get("rejected_tool_calls", [])
+        ):
+            raise ValueError("工具拒绝结果缺少当前 Run 的已接受审批")
+        source = await self._find_source_model_message(run, tool_call_id)
+        call = await self._get_tool_call_for_message(source.id, tool_call_id) if source else None
+        if call is None or call.status != "pending":
+            raise ValueError("工具拒绝结果缺少待处理的模型声明")
+        message = Message(
+            conversation_id=run.conversation_id,
+            turn_id=run.turn_id,
+            run_id=run.id,
+            role="tool",
+            message_type=TOOL_AUDIT_MESSAGE_TYPE,
+            operation_id=tool_call_id,
+            content=content,
+            delivery_status="complete",
+            execution_status="failed",
+            finished_at=utc_now_naive(),
+            extra_metadata={
+                "audit_kind": "tool",
+                "tool_call_id": tool_call_id,
+                "tool_name": call.tool_name,
+                "input": call.tool_input,
+                "output": content,
+                "error_message": content,
+                "source": "approval_rejection",
+                "source_model_message_id": source.id,
+                "source_model_operation_id": source.operation_id,
+                "compatibility_tool_call_id": call.id,
+            },
+        )
+        self.db.add(message)
+        call.status, call.tool_output, call.error_message = "error", content, content
+        await self.db.flush()
+        return message
 
     async def fail(
         self,
@@ -353,16 +408,21 @@ class ToolMessageAuditRepository:
         """返回同 Conversation 内无环的 resume 来源链。"""
         source_run_ids = [run.id]
         seen = {run.id}
-        parent_id = run.resume_from_run_id if run.run_type == "resume" else None
+        parent_id = run.resume_from_run_id
         while parent_id:
             if parent_id in seen:
                 raise ValueError("Resume Run ancestry 存在循环")
             parent = await self.db.get(AgentRun, parent_id)
-            if parent is None or parent.conversation_id != run.conversation_id:
-                raise ValueError("Resume Run ancestry 与当前 conversation 不一致")
+            if parent is None or (
+                parent.conversation_id != run.conversation_id
+                or parent.turn_id != run.turn_id
+                or parent.uid != run.uid
+                or parent.app_id != run.app_id
+            ):
+                raise ValueError("Resume Run ancestry 与当前 Turn 或 conversation 不一致")
             source_run_ids.append(parent.id)
             seen.add(parent.id)
-            parent_id = parent.resume_from_run_id if parent.run_type == "resume" else None
+            parent_id = parent.resume_from_run_id
         return source_run_ids
 
     async def _require_compatibility_tool_call(

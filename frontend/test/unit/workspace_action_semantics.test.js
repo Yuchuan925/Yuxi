@@ -7,7 +7,7 @@ function readSource(relativePath) {
 }
 
 test('工作区上传菜单暴露展开状态和菜单语义', () => {
-  const source = readSource('../../src/components/workspace/WorkspaceSidebar.vue')
+  const source = readSource('../../src/modules/workspace/ui/WorkspaceSidebar.vue')
   const trigger = source.slice(source.indexOf('<button'), source.indexOf('</button>'))
   const menu = source.slice(source.indexOf('<Transition name="file-action-menu">'), source.indexOf('</Transition>'))
 
@@ -18,7 +18,7 @@ test('工作区上传菜单暴露展开状态和菜单语义', () => {
 })
 
 test('项目创建目录选择器包含尚未绑定的项目目录', () => {
-  const source = readSource('../../src/components/ProjectSelectionSection.vue')
+  const source = readSource('../../src/modules/projects/ui/ProjectSelectionSection.vue')
   const pickerStart = source.indexOf('<WorkspacePathPicker')
   const picker = source.slice(pickerStart, source.indexOf('/>', pickerStart) + 2)
 
@@ -26,7 +26,7 @@ test('项目创建目录选择器包含尚未绑定的项目目录', () => {
 })
 
 test('交付物保存使用工作区路径选择器并传递目标目录', () => {
-  const component = readSource('../../src/components/AgentArtifactsCard.vue')
+  const component = readSource('../../src/modules/conversation/ui/AgentArtifactsCard.vue')
   const api = readSource('../../src/apis/agent_api.js')
 
   assert.match(component, /<WorkspacePathPicker/)

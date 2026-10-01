@@ -12,7 +12,8 @@ import asyncpg
 import httpx
 import pytest
 
-from e2e_helpers import archive_public_thread, delete_agent, postgres_dsn
+from test.e2e.e2e_helpers import archive_public_thread, delete_agent, postgres_dsn
+from test.e2e.test_agent_lifecycle_e2e import output_text
 from test.live_api_cleanup import make_test_conversation_title
 from yuxi.infrastructure.runtime_settings import get_skill_projection_dir
 from yuxi.modules.workspace.paths import workspace_uid_dirname
@@ -45,27 +46,27 @@ async def test_public_run_persists_preloaded_tool_and_model_audit(e2e_client, e2
         turn = await _terminal_turn(e2e_client, e2e_headers, thread_id, turn_id)
         assert turn["status"] == "completed", turn
         assert turn["result_run_id"] == run_id
-        assert turn["output"]["content"] == OUTPUT
+        assert output_text(turn["output"]) == OUTPUT
         assert projection_root.is_dir(), "worker 应在工具运行前物化用户 Skill 投影"
 
-        run_response = await e2e_client.get(
-            f"/api/v1/agents/threads/{thread_id}/runs/{run_id}", headers=e2e_headers
-        )
+        run_response = await e2e_client.get(f"/api/v1/agents/threads/{thread_id}/runs/{run_id}", headers=e2e_headers)
         assert run_response.status_code == 200, run_response.text
         run = run_response.json()
         assert run["status"] == "completed"
         assert run["turn_id"] == turn_id and run["input_id"] == created["input_id"]
-        assert run["output"]["id"] == turn["output"]["id"]
+        assert run["output"] == turn["output"]
 
         history_response = await e2e_client.get(f"/api/v1/agents/threads/{thread_id}/history", headers=e2e_headers)
         assert history_response.status_code == 200, history_response.text
-        history = history_response.json()["history"]
-        tool_message = next(item for item in history if item.get("tool_calls"))
-        tool_call = tool_message["tool_calls"][0]
-        assert tool_message["run_id"] == run_id and tool_message["turn_id"] == turn_id
-        assert (tool_call["id"], tool_call["name"], tool_call["status"]) == (TOOL_CALL_ID, TOOL, "success")
-        assert TOOL_RESULT in tool_call["tool_call_result"]["content"]
-        assert [item["id"] for item in history if item.get("content") == OUTPUT] == [turn["output"]["id"]]
+        history = history_response.json()["items"]
+        tool_call = next(item for item in history if item["type"] == "function_call")
+        tool_result = next(item for item in history if item["type"] == "function_call_output")
+        assert tool_call["yuxi"]["run_id"] == run_id and tool_call["turn_id"] == turn_id
+        assert (tool_call["call_id"], tool_call["name"], tool_call["status"]) == (TOOL_CALL_ID, TOOL, "completed")
+        assert tool_result["call_id"] == TOOL_CALL_ID and TOOL_RESULT in tool_result["output"]
+        assert [item["id"] for item in history if item["type"] == "message" and output_text([item]) == OUTPUT] == [
+            turn["output"][0]["id"]
+        ]
 
         audits_response = await e2e_client.get(f"/api/v1/agents/threads/{thread_id}/audits", headers=e2e_headers)
         assert audits_response.status_code == 200, audits_response.text
@@ -75,7 +76,7 @@ async def test_public_run_persists_preloaded_tool_and_model_audit(e2e_client, e2
         assert audits[1]["tool_call_id"] == TOOL_CALL_ID and audits[1]["tool_input"] == {"filepaths": []}
         assert audits[1]["source_model_operation_id"] == audits[0]["operation_id"]
         assert TOOL_RESULT in audits[1]["content"]
-        assert audits[2]["id"] == turn["output"]["id"]
+        assert audits[2]["id"] == turn["output"][0]["yuxi"]["message_id"]
 
         conn = await asyncpg.connect(postgres_dsn())
         try:
@@ -98,12 +99,16 @@ async def test_public_run_persists_preloaded_tool_and_model_audit(e2e_client, e2
             )
             assert binding and binding["input_id"] == created["input_id"]
             assert (binding["input_status"], binding["input_turn_id"], binding["consumed_run_id"]) == (
-                "consumed", turn_id, run_id
+                "consumed",
+                turn_id,
+                run_id,
             )
             assert (binding["result_run_id"], binding["output_run_id"], binding["output_turn_id"]) == (
-                run_id, run_id, turn_id
+                run_id,
+                run_id,
+                turn_id,
             )
-            assert binding["output_message_id"] == turn["output"]["id"]
+            assert binding["output_message_id"] == turn["output"][0]["yuxi"]["message_id"]
             assert binding["output_content"] == OUTPUT
             assert binding["runtime_scope_id"] == thread_id
             assert str(binding["workdir_path"]).startswith("projects/")
@@ -136,7 +141,9 @@ async def test_public_run_persists_preloaded_tool_and_model_audit(e2e_client, e2
             assert tool_row and tool_row["execution_status"] == "completed"
             assert tool_row["usage"] is None and tool_row["duration_ms"] >= 0
             assert (tool_row["langgraph_tool_call_id"], tool_row["tool_name"], tool_row["status"]) == (
-                TOOL_CALL_ID, TOOL, "success"
+                TOOL_CALL_ID,
+                TOOL,
+                "success",
             )
             assert TOOL_RESULT in tool_row["content"] and tool_row["tool_output"]
 
@@ -146,9 +153,12 @@ async def test_public_run_persists_preloaded_tool_and_model_audit(e2e_client, e2
             assert manifest["agent"] == {"slug": slug, "backend_id": "ChatbotAgent"}
             assert manifest["model"] == {"spec": MODEL}
             assert [skill["slug"] for skill in manifest["resources"]["skills"]] == ["image-gen"]
-            assert binding["manifest_fingerprint"] == hashlib.sha256(
-                json.dumps(manifest, ensure_ascii=True, sort_keys=True, separators=(",", ":")).encode()
-            ).hexdigest()
+            assert (
+                binding["manifest_fingerprint"]
+                == hashlib.sha256(
+                    json.dumps(manifest, ensure_ascii=True, sort_keys=True, separators=(",", ":")).encode()
+                ).hexdigest()
+            )
             attempts = await conn.fetch(
                 "SELECT attempt_no, outcome, finished_at FROM agent_run_attempts WHERE run_id = $1",
                 run_id,
@@ -187,9 +197,7 @@ async def test_standard_user_run_uses_admin_execution_limit(e2e_client, e2e_head
     provider_created = False
     user_headers = None
     try:
-        login = await e2e_client.post(
-            "/api/auth/token", data={"username": user["uid"], "password": password}
-        )
+        login = await e2e_client.post("/api/auth/token", data={"username": user["uid"], "password": password})
         assert login.status_code == 200, login.text
         user_headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
         provider_created = await _provider(e2e_client, e2e_headers)
@@ -224,7 +232,7 @@ async def test_standard_user_run_uses_admin_execution_limit(e2e_client, e2e_head
                     assert turn["output"] is None
                 else:
                     assert turn["result_run_id"] == run_id
-                    assert turn["output"]["content"] == OUTPUT
+                    assert output_text(turn["output"]) == OUTPUT
             finally:
                 await conn.close()
     finally:
@@ -290,15 +298,15 @@ async def test_scheduled_task_run_now_reaches_exact_thread_and_turn(e2e_client, 
         thread_id, turn_id, run_id = execution["thread_id"], execution["turn_id"], execution["run_id"]
         turn = await _terminal_turn(e2e_client, e2e_headers, thread_id, turn_id)
         assert turn["status"] == "completed", turn
-        assert turn["result_run_id"] == run_id and turn["output"]["content"] == OUTPUT
+        assert turn["result_run_id"] == run_id and output_text(turn["output"]) == OUTPUT
 
         thread = await e2e_client.get(f"/api/v1/agents/threads/{thread_id}", headers=e2e_headers)
         assert thread.status_code == 200, thread.text
         assert thread.json()["project_id"] == project_id
         history_response = await e2e_client.get(f"/api/v1/agents/threads/{thread_id}/history", headers=e2e_headers)
         assert history_response.status_code == 200, history_response.text
-        history = history_response.json()["history"]
-        assert any(item["id"] == turn["output"]["id"] and item["run_id"] == run_id for item in history)
+        history = history_response.json()["items"]
+        assert any(item["id"] == turn["output"][0]["id"] and item["yuxi"]["run_id"] == run_id for item in history)
 
         jobs_response = await e2e_client.get("/api/scheduled-tasks", headers=e2e_headers)
         assert jobs_response.status_code == 200, jobs_response.text
@@ -327,11 +335,11 @@ async def test_scheduled_task_run_now_reaches_exact_thread_and_turn(e2e_client, 
             assert row and row["scheduled_id"] == execution["id"]
             assert row["input_id"] == execution["input_id"]
             assert (row["source"], row["external_id"], row["consumed_run_id"]) == (
-                "scheduled_agent", execution["id"], run_id
+                "scheduled_agent",
+                execution["id"],
+                run_id,
             )
-            assert (row["conversation_thread_id"], row["turn_id"], row["result_run_id"]) == (
-                thread_id, turn_id, run_id
-            )
+            assert (row["conversation_thread_id"], row["turn_id"], row["result_run_id"]) == (thread_id, turn_id, run_id)
             assert row["content"] == OUTPUT
         finally:
             await conn.close()
@@ -366,12 +374,13 @@ async def test_tool_error_is_persisted_by_tool_message(e2e_client, e2e_headers):
         thread_id, turn_id, run_id = created["thread_id"], created["turn_id"], created["run_id"]
         turn = await _terminal_turn(e2e_client, e2e_headers, thread_id, turn_id)
         assert turn["status"] == "completed", turn
-        assert turn["result_run_id"] == run_id and turn["output"]["content"] == OUTPUT
+        assert turn["result_run_id"] == run_id and output_text(turn["output"]) == OUTPUT
 
         audits_response = await e2e_client.get(f"/api/v1/agents/threads/{thread_id}/audits", headers=e2e_headers)
         assert audits_response.status_code == 200, audits_response.text
         tool_audits = [
-            item for item in audits_response.json()["audits"]
+            item
+            for item in audits_response.json()["audits"]
             if item["run_id"] == run_id and item["message_type"] == "tool_audit"
         ]
         assert len(tool_audits) == 1
@@ -426,6 +435,9 @@ async def _provider(client: httpx.AsyncClient, headers: dict[str, str]) -> bool:
         },
     )
     if response.status_code == 200:
+        from test.e2e.e2e_helpers import wait_model_provider_cache
+
+        await wait_model_provider_cache()
         return True
     assert response.status_code == 400 and response.json().get("detail") == "供应商 ci-replay 已存在", response.text
     return False

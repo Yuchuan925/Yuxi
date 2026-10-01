@@ -10,7 +10,7 @@ from langgraph.graph import END, START, MessagesState, StateGraph
 from yuxi.modules.models.chat import load_chat_model
 from yuxi.modules.models.utils import parse_assistant_message_body
 from yuxi.modules.models.providers.cache import ModelInfo
-from yuxi.modules.agents.services.execution import _protocol_event_yuxi_event
+from yuxi.modules.agents.services.openai_events import OpenAIEventAdapter
 
 REASONING = " First\nthen check. "
 TOOL = {"type": "function", "function": {"name": "inspect_code", "parameters": {"type": "object", "properties": {}}}}
@@ -151,15 +151,29 @@ async def test_real_v3_reasoning_projection_and_checkpoint(monkeypatch):
     compiled = graph.compile(checkpointer=InMemorySaver())
     config = {"configurable": {"thread_id": "reasoning-test"}}
     run = await compiled.astream_events({"messages": [HumanMessage("Inspect code")]}, config, version="v3")
+    adapter = OpenAIEventAdapter(run_id="r", turn_id="turn", thread_id="reasoning-test", worker_id="w")
+
+    async def save(operation, role, key, item, content_index=None):
+        """协议映射的独立存储边界；数据库语义由 integration 验证。"""
+        return {
+            **item,
+            "id": key,
+            "turn_id": "turn",
+            "yuxi": {**item.get("yuxi", {}), "output_index": 0, "run_id": "r"},
+        }
+
+    monkeypatch.setattr(adapter, "_save", save)
     emitted = []
     async for event in run:
         if event["method"] == "messages":
-            raw, metadata = event["params"]["data"]
-            projected = _protocol_event_yuxi_event(raw, message_id="m", thread_id="t", namespace=[])
-            if projected:
-                emitted.append(projected)
-    assert "".join(e.get("reasoning_content", "") for e in emitted) == REASONING
-    assert any(e["type"] == "tool_call" and e["tool_call_id"] == "call-test" for e in emitted)
+            emitted.extend(await adapter.consume(event))
+    assert "".join(e["delta"] for e in emitted if e["type"] == "yuxi.session.turn.reasoning.delta") == REASONING
+    assert any(
+        e["type"] == "agent.session.turn.item.added"
+        and e["item"]["type"] == "function_call"
+        and e["item"]["call_id"] == "call-test"
+        for e in emitted
+    )
     state = await compiled.aget_state(config)
     persisted = state.values["messages"][-1].model_dump()
     assert parse_assistant_message_body(persisted["content"])["reasoning_content"] == REASONING

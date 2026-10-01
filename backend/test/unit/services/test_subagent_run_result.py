@@ -15,6 +15,7 @@ async def test_run_result_rejects_output_bound_to_another_turn(monkeypatch):
     run = SimpleNamespace(
         id="run-1",
         uid="user-1",
+        app_id=None,
         status="completed",
         output_message_id=7,
         turn_id="turn-1",
@@ -32,6 +33,9 @@ async def test_run_result_rejects_output_bound_to_another_turn(monkeypatch):
         def __init__(self, db):
             pass
 
+        async def get_run(self, run_id):
+            return run
+
         async def get_run_for_user(self, run_id, uid):
             assert (run_id, uid) == ("run-1", "user-1")
             return run
@@ -41,6 +45,12 @@ async def test_run_result_rejects_output_bound_to_another_turn(monkeypatch):
             assert output_id == 7
             return message
 
+    class TurnRepo:
+        def __init__(self, db):
+            pass
+        async def get_for_scope(self, **kwargs):
+            return SimpleNamespace(id="turn-1", status="completed", current_run_id="run-1", result_run_id="run-1")
+    monkeypatch.setattr(subagent_run_service, "AgentTurnRepository", TurnRepo)
     monkeypatch.setattr(subagent_run_service, "AgentRunRepository", Repo)
     with pytest.raises(ValueError, match="归属不一致"):
         await subagent_run_service.get_agent_run_result(run_id="run-1", current_uid="user-1", db=DB())
@@ -52,6 +62,7 @@ async def test_run_result_reads_only_explicit_output(monkeypatch):
     run = SimpleNamespace(
         id="run-1",
         uid="user-1",
+        app_id=None,
         status="completed",
         output_message_id=None,
         turn_id="turn-1",
@@ -68,6 +79,9 @@ async def test_run_result_reads_only_explicit_output(monkeypatch):
         def __init__(self, db):
             pass
 
+        async def get_run(self, run_id):
+            return run
+
         async def get_run_for_user(self, run_id, uid):
             return run
 
@@ -75,6 +89,12 @@ async def test_run_result_reads_only_explicit_output(monkeypatch):
         async def get(self, *_args):
             raise AssertionError("无输出绑定时不应查询消息")
 
+    class TurnRepo:
+        def __init__(self, db):
+            pass
+        async def get_for_scope(self, **kwargs):
+            return SimpleNamespace(id="turn-1", status="completed", current_run_id="run-1", result_run_id="run-1")
+    monkeypatch.setattr(subagent_run_service, "AgentTurnRepository", TurnRepo)
     monkeypatch.setattr(subagent_run_service, "AgentRunRepository", Repo)
     result = await subagent_run_service.get_agent_run_result(run_id="run-1", current_uid="user-1", db=DB())
     assert result["status"] == "completed"

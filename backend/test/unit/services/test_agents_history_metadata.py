@@ -1,28 +1,23 @@
-"""普通历史对模型审计内部字段的边界测试。"""
-
+"""普通历史仅投影公开 item，不暴露模型审计和配置。"""
+from datetime import datetime
 from types import SimpleNamespace
-
-from yuxi.modules.agents.services.messages import _visible_metadata
+from yuxi.modules.agents.services.public_items import serialize_public_items
 
 
 def test_published_model_history_hides_internal_audit_metadata():
-    """重放内部 metadata 时不能把模型调用上下文泄露给普通历史。"""
-    message = SimpleNamespace(
-        operation_id="model-call-1",
-        extra_metadata={
-            "source": "model",
-            "langfuse_trace_id": "trace-1",
-            "model_run_id": "private-run",
-            "start_metadata": {"provider": "private-provider"},
-            "finish_metadata": {"raw": "private-response"},
-        },
-    )
-
-    assert _visible_metadata(message) == {"source": "model", "langfuse_trace_id": "trace-1"}
+    """未进入用户输出链路的模型审计没有公开 item。"""
+    message = SimpleNamespace(role="assistant", extra_metadata={
+        "start_metadata": {"prompt": "private"}, "finish_metadata": {"raw": "private"}
+    })
+    assert serialize_public_items(message, None, None) == []
 
 
-def test_user_history_keeps_input_metadata():
-    """普通输入仍需展示 Input 归属供刷新恢复。"""
-    message = SimpleNamespace(operation_id=None, extra_metadata={"input_id": "input-1", "source": "web"})
-
-    assert _visible_metadata(message) == {"input_id": "input-1", "source": "web"}
+def test_user_history_keeps_input_identity_and_hides_internal_metadata():
+    """用户输入保留回执关联，内部 metadata 不随 item 返回。"""
+    message = SimpleNamespace(id=1, role="user", run_id=None, turn_id=None,
+        content="hello", delivery_status="queued", created_at=datetime(2026, 9, 30), message_type="text",
+        extra_metadata={"input_id": "input-1", "source": "web", "private": "secret"})
+    item, = serialize_public_items(message, None, None)
+    assert item["yuxi"]["input_id"] == "input-1"
+    assert item["content"] == [{"type": "input_text", "text": "hello"}]
+    assert "secret" not in str(item)

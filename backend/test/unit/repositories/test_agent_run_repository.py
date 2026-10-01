@@ -38,11 +38,7 @@ async def _create_run(repository: AgentRunRepository, *, turn_id: str, conversat
         repository.db.add(
             AgentTurn(
                 id=turn_id,
-                conversation_thread_id=(
-                    values.get("runtime_scope_id", conversation_thread_id)
-                    if values.get("run_type") == "subagent"
-                    else conversation_thread_id
-                ),
+                conversation_thread_id=conversation_thread_id,
                 uid=uid,
                 app_id=values.get("app_id"),
                 status="running",
@@ -96,11 +92,11 @@ async def _seed_subagent_runs(db, *, relation_child_thread_id: str = "child-thre
     child_run = AgentRun(
         id="child-run",
         conversation_thread_id="child-thread",
-        runtime_scope_id="parent-thread",
+        runtime_scope_id="child-thread",
         agent_slug="worker",
         uid="user-1",
         status="completed",
-        turn_id="parent-turn",
+        turn_id="child-turn",
         conversation_id=20,
         created_by_run_id="parent-run",
         subagent_thread_relation_id=77,
@@ -147,6 +143,7 @@ async def _seed_subagent_runs(db, *, relation_child_thread_id: str = "child-thre
                 run_type="chat",
                 input_payload={},
             ),
+            AgentTurn(id="child-turn", conversation_thread_id="child-thread", uid="user-1", status="completed"),
             child_run,
         ]
     )
@@ -261,12 +258,12 @@ async def test_langfuse_observation_is_written_once_by_current_run_owner(session
     assert run.langfuse_observation_id == "0123456789abcdef"
 
 
-async def test_create_subagent_run_persists_explicit_root_runtime_scope(session):
+async def test_create_subagent_run_persists_own_runtime_scope(session):
     run = await _create_run(
         AgentRunRepository(session),
         run_id="child-run-scope",
         conversation_thread_id="child-thread",
-        runtime_scope_id="root-thread",
+        runtime_scope_id="child-thread",
         agent_slug="worker",
         uid="user-1",
         turn_id="child-turn-scope",
@@ -276,7 +273,7 @@ async def test_create_subagent_run_persists_explicit_root_runtime_scope(session)
         subagent_thread_relation_id=1,
     )
 
-    assert run.runtime_scope_id == "root-thread"
+    assert run.runtime_scope_id == "child-thread"
 
 
 async def test_set_output_message_rejects_wrong_causal_owner_and_accepts_exact_message(session):
@@ -795,7 +792,7 @@ async def test_durable_cancel_wins_terminal_race_for_live_owner(session):
     assert persisted.status == "cancelled"
 
 
-async def test_terminal_root_atomically_cancels_active_execution_tree_descendants(session):
+async def test_explicit_parent_cancel_targets_delegated_child_turn(session):
     repo = AgentRunRepository(session)
     now = utc_now_naive()
     parent = await _create_run(
@@ -812,10 +809,10 @@ async def test_terminal_root_atomically_cancels_active_execution_tree_descendant
         repo,
         run_id="tree-child-run",
         conversation_thread_id="tree-child-thread",
-        runtime_scope_id="tree-runtime",
+        runtime_scope_id="tree-child-thread",
         agent_slug="worker",
         uid="user-1",
-        turn_id=parent.turn_id,
+        turn_id="tree-child-turn",
         input_payload={},
         created_by_run_id=parent.id,
         subagent_thread_relation_id=1,
@@ -824,13 +821,26 @@ async def test_terminal_root_atomically_cancels_active_execution_tree_descendant
     await repo.mark_running(parent.id, worker_id="parent-worker", lease_seconds=60, now=now)
     await repo.mark_running(child.id, worker_id="child-worker", lease_seconds=60, now=now)
 
+    for run in (parent, child):
+        session.add(
+            Conversation(
+                thread_id=run.conversation_thread_id,
+                project_id="project-tree",
+                uid="user-1",
+                agent_id=run.agent_slug,
+                status="subagent" if run.run_type == "subagent" else "active",
+            )
+        )
+        turn = await session.get(AgentTurn, run.turn_id)
+        turn.current_run_id = run.id
+    await session.flush()
     parent.status = "failed"
     parent.finished_at = now
     cancelled = await repo.cancel_active_execution_tree_descendants(parent)
 
     assert cancelled == [(child.id, child.conversation_thread_id)]
     assert child.status == "cancel_requested"
-    assert child.error_type == "execution_tree_closed"
+    assert child.error_type is None
     assert child.worker_id == "child-worker"
     assert child.heartbeat_at is not None
     assert child.lease_expires_at is not None

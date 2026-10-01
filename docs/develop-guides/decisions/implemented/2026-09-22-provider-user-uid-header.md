@@ -54,7 +54,7 @@ Owner：backend/yuxi/modules/models/chat.py
 | 签名密钥只读固定环境变量，配置面不存在任何环境变量名字段 | 重新引入可配密钥 Env，借自由文本恢复探测/猜解其他环境变量的通道 | `yuxi/models/providers/cache.py` 的 `USER_UID_SIGNATURE_SECRET_ENV` 常量、`providers/service.py` 字段集合 | 负向符号搜索：`grep -rn uid_signature_secret_env backend frontend docs` 无结果 | 该字符串重新出现在配置面或 `os.getenv` 参数中即失败 | Passed |
 | 开关随模型缓存跨进程透传，旧缓存缺省关闭 | Redis 旧缓存缺字段导致 KeyError 或误开 | `providers/cache.py` | `pytest test/unit/services/test_model_cache.py`：rebuild→save→load 往返与缺省值用例 | 旧缓存 JSON 缺字段时加载不报错且按关闭处理 | Passed |
 | business schema v7 幂等迁移新增列并记录版本 8 | 版本门禁错误拒绝已支持的升级源，或版本记录先于 DDL | `storage/postgres/manager.py`、`storage_migration.py` | `test_supported_legacy_business_schema_is_converged_and_versioned_as_current[7]`；真实 PostgreSQL 删除列后重放 `ensure_business_schema` | 不接受未知版本；列恢复之前不记录版本 | Passed |
-| 前端可切换开关并随保存发送，卡片展示状态，Gemini 时禁用开关 | 开关不持久化、编辑回显丢失或 Gemini 显示为可用 | `frontend/src/components/model-management/ModelProviderManagePanel.vue` | `pnpm run lint:check`、`pnpm run test:unit`、`pnpm run build`；Playwright mocked API 页面检查新增弹窗 | 删除表单字段或 payload 字段后页面与保存行为变化 | Passed |
+| 前端可切换开关并随保存发送，卡片展示状态，Gemini 时禁用开关 | 开关不持久化、编辑回显丢失或 Gemini 显示为可用 | `frontend/src/modules/settings/ui/ModelProviderManagePanel.vue` | `pnpm run lint:check`、`pnpm run test:unit`、`pnpm run build`；Playwright mocked API 页面检查新增弹窗 | 删除表单字段或 payload 字段后页面与保存行为变化 | Passed |
 | agent runtime 四个调用点把 context.uid 传给 load_chat_model | uid 断链，头永远缺值 | chatbot/subagent graph、context/summary middleware | `pytest test/unit/agents/test_summary_graph_config.py`、`test_builtin_discovery.py` 断言 uid 穿透 | 去掉任一调用点 uid 传参后对应测试失败 | Passed |
 
 ## 风险

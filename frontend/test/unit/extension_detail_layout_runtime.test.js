@@ -8,7 +8,7 @@ import { compileScript, parse } from 'vue/compiler-sfc'
 import { createRenderer, h, nextTick, ref } from 'vue'
 
 const layoutSourcePath = fileURLToPath(
-  new URL('../../src/components/shared/ExtensionDetailLayout.vue', import.meta.url)
+  new URL('../../src/shared/ui/ExtensionDetailLayout.vue', import.meta.url)
 )
 const compiledLayoutPath = fileURLToPath(
   new URL(`../../.extension-detail-layout-test-${pid}.mjs`, import.meta.url)

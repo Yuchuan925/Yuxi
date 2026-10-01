@@ -7,7 +7,7 @@ import { parse } from 'vue/compiler-sfc'
 import { reactive, ref } from 'vue'
 
 const source = readFileSync(
-  new URL('../../src/components/ApiKeyManagementComponent.vue', import.meta.url),
+  new URL('../../src/modules/settings/ui/ApiKeyManagementComponent.vue', import.meta.url),
   'utf8'
 )
 const storageKey = 'yuxi_pending_api_key_request_id'

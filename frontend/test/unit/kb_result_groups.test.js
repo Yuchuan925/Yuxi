@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { groupKnowledgeChunks } from '../../src/utils/kbResultGroups.js'
+import { groupKnowledgeChunks } from '../../src/modules/knowledge/model/kbResultGroups.js'
 
 test('同名文件按知识库和文件身份分别聚合', () => {
   const groups = groupKnowledgeChunks([

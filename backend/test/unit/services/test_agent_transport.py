@@ -78,34 +78,19 @@ async def test_run_stream_event_roundtrip(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(transport, "get_async_redis_client", fake_get_async_redis_client)
 
     run_id = "run-1"
-    seq1 = await transport.append_run_stream_event(run_id, "loading", {"items": [1]})
-    seq2 = await transport.append_run_stream_event(
-        run_id,
-        "finished",
-        {"chunk": {"status": "finished", "thread_id": "child-thread"}},
-    )
-
+    first = {"type": "agent.session.turn.output_text.delta", "event_id": "logical-1", "delta": "text",
+             "session_id": "child-thread", "turn_id": "child-turn", "yuxi": {"run_id": run_id}}
+    second = {"type": "yuxi.session.run.settled", "event_id": "logical-2", "status": "completed",
+              "session_id": "child-thread", "turn_id": "child-turn", "yuxi": {"run_id": run_id}}
+    seq1, seq2 = await transport.append_run_stream_events(run_id, [first, second])
     assert seq1 < seq2
-    assert fake_redis.pipeline_executions == 2
-    assert fake_redis.expire_calls == [("run:events:run-1", transport.RUN_EVENTS_STREAM_TTL_SECONDS)] * 2
-
+    assert fake_redis.pipeline_executions == 1
+    assert fake_redis.expire_calls == [("run:events:v2:run-1", transport.RUN_EVENTS_STREAM_TTL_SECONDS)]
     events = await transport.list_run_stream_events(run_id, after_seq="0-0", limit=100)
-    assert [item["event_type"] for item in events] == ["loading", "finished"]
-    assert events[0]["payload"]["schema_version"] == 1
-    assert events[0]["payload"]["run_id"] == run_id
-    assert events[0]["payload"]["payload"] == {"items": [1]}
-    assert events[1]["payload"]["thread_id"] == "child-thread"
-
-    next_events = await transport.list_run_stream_events(run_id, after_seq=seq1, limit=100)
-    assert len(next_events) == 1
-    assert next_events[0]["seq"] == seq2
-
-    last_seq = await transport.get_last_run_stream_seq(run_id)
-    assert last_seq == seq2
-
-    recent_events = await transport.list_recent_run_stream_events(run_id, limit=2)
-    assert [item["seq"] for item in recent_events] == [seq2, seq1]
-    assert [item["event_type"] for item in recent_events] == ["finished", "loading"]
+    assert events == [{"seq": seq1, "event": first}, {"seq": seq2, "event": second}]
+    assert (await transport.list_run_stream_events(run_id, after_seq=seq1))[0]["event"]["event_id"] == "logical-2"
+    assert await transport.get_last_run_stream_seq(run_id) == seq2
+    assert [row["event"] for row in await transport.list_recent_run_stream_events(run_id)] == [second, first]
 
 
 @pytest.mark.asyncio
@@ -121,10 +106,10 @@ async def test_run_stream_event_decoder_drops_malformed_legacy_payload(monkeypat
 
     monkeypatch.setattr(transport, "get_async_redis_client", fake_get_async_redis_client)
 
-    forward = await transport.list_run_stream_events("run-legacy")
-    reverse = await transport.list_recent_run_stream_events("run-legacy")
-
-    assert forward == reverse == []
+    with pytest.raises(ValueError):
+        await transport.list_run_stream_events("run-legacy")
+    with pytest.raises(ValueError):
+        await transport.list_recent_run_stream_events("run-legacy")
 
 
 def test_normalize_after_seq_stream_id_only():

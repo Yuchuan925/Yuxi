@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { createThreadForContext } from '../../src/utils/threadCreation.js'
+import { createThreadForContext } from '../../src/modules/conversation/model/threadCreation.js'
 
 test('延迟创建响应遇到上下文切换时不被接受', async () => {
   const context = { agentId: 'agent-a', projectId: 'auto', threadId: null }

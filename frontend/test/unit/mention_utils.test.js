@@ -12,7 +12,7 @@ before(async () => {
     server: { middlewareMode: true },
     appType: 'custom'
   })
-  mentionUtils = await server.ssrLoadModule('/src/utils/mention_utils.js')
+  mentionUtils = await server.ssrLoadModule('/src/modules/conversation/model/mention_utils.js')
 })
 
 after(async () => {

@@ -51,7 +51,7 @@ class FakeChatClient:
 
     def submit_agent_event(self, thread_id, event, *, idempotency_key):
         self.calls.append(("event", thread_id, event, idempotency_key))
-        assert event == {"type": "yuxi.thread.input.continue"}
+        assert event == {"type": "yuxi.session.input.continue"}
         self.queue_paused = False
         return {"status": "accepted"}
 
@@ -59,7 +59,7 @@ class FakeChatClient:
         self.calls.append(("turn", thread_id, turn_id))
         self.turn_reads += 1
         if self.queued or self.turn_reads > 1:
-            return {"status": "completed", "output": {"content": "最终回答"}}
+            return {"status": "completed", "output": [{"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "最终回答"}]}]}
         return {"status": "running", "current_run_id": "run-1"}
 
     def stream_agent_thread_events(self, thread_id, *, after_cursor=None):
@@ -67,26 +67,25 @@ class FakeChatClient:
         if self.stream_disconnect:
             return iter(())
         if self.stream_resync:
-            return iter([{"event": "agent.thread.resync", "id": "cursor-1", "data": "{}"}])
+            return iter([{"event": "yuxi.session.resync", "id": "cursor-1", "data": "{}"}])
         return iter([
             {
-                "event": "agent.thread.run.output",
+                "event": "agent.session.turn.output_text.delta",
                 "id": "cursor-1",
                 "data": json.dumps({
-                    "type": "agent.thread.run.output",
+                    "type": "agent.session.turn.output_text.delta",
                     "thread_id": "thread-1",
                     "turn_id": "turn-1",
                     "run_id": "run-1",
-                    "payload": {"chunk": {"stream_event": {
-                        "type": "message_delta", "content": "部分"
-                    }}},
+                    "delta": "部分",
+                    "item_id": "message", "content_index": 0, "output_index": 0,
                 }),
             },
             {
-                "event": "agent.thread.turn.completed",
+                "event": "agent.session.turn.completed",
                 "id": "cursor-2",
                 "data": json.dumps({
-                    "type": "agent.thread.turn.completed",
+                    "type": "agent.session.turn.completed",
                     "thread_id": "thread-1",
                     "turn_id": "turn-1",
                     "run_id": "run-1",
@@ -223,11 +222,11 @@ def test_expired_cursor_rechecks_turn_before_waiting_for_more_events():
 
 def test_browser_events_ignore_other_turn_and_report_target_completion():
     events = iter([
-        {"event": "agent.thread.turn.completed", "data": json.dumps({
-            "type": "agent.thread.turn.completed", "turn_id": "other", "payload": {}
+        {"event": "agent.session.turn.completed", "data": json.dumps({
+            "type": "agent.session.turn.completed", "turn_id": "other", "payload": {}
         })},
-        {"event": "agent.thread.turn.completed", "data": json.dumps({
-            "type": "agent.thread.turn.completed", "turn_id": "target", "payload": {}
+        {"event": "agent.session.turn.completed", "data": json.dumps({
+            "type": "agent.session.turn.completed", "turn_id": "target", "payload": {}
         })},
     ])
     assert list(_browser_events(events, turn_id="target")) == [
@@ -310,3 +309,22 @@ def test_run_web_chat_opens_browser_and_closes_resources(tmp_path, monkeypatch):
         ("server_closed",),
         ("client_closed",),
     ]
+
+
+def test_active_resync_completed_block_rejects_retained_delta_and_done_replaces():
+    """快照中已完成块不能被 resync 后重放的旧增量再次追加。"""
+    from yuxi_cli.chat_web import _TextItems
+    state = _TextItems()
+    def event(kind, index=0, **fields):
+        return {"data": json.dumps({"type": f"agent.session.turn.output_text.{kind}",
+                "turn_id": "target", "item_id": "m", "content_index": index,
+                "output_index": 0, **fields})}
+    list(_browser_events(iter([event("delta", delta="part")]), turn_id="target", text=state))
+    state.merge([{"id": "m", "type": "message", "role": "assistant", "status": "in_progress",
+                  "content": [{"type": "output_text", "text": "whole"}],
+                  "yuxi": {"output_index": 0, "completed_content_indices": [0]}}])
+    assert list(_browser_events(iter([event("delta", delta="late")]), turn_id="target", text=state)) == []
+    assert state.content() == "whole"
+    assert list(_browser_events(iter([event("delta", 1, delta="new"), event("done", 1, text="second")]),
+                               turn_id="target", text=state)) == [
+        {"type": "delta", "content": "new"}, {"type": "snapshot", "content": "wholesecond"}]

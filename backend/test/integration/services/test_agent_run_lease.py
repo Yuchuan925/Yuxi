@@ -11,6 +11,8 @@ from unittest.mock import AsyncMock
 
 import pytest
 import pytest_asyncio
+from langchain_core.messages import ToolMessage
+from langgraph.types import Command
 from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
@@ -19,6 +21,9 @@ from yuxi.modules.agents.repositories.runs import AgentRunRepository
 from yuxi.modules.agents.repositories.model_audit import ModelMessageAuditRepository
 from yuxi.modules.agents.repositories.tool_audit import ToolMessageAuditRepository
 import yuxi.modules.agents.services.runner as run_worker
+from yuxi.infrastructure.postgres.manager import pg_manager
+from yuxi.modules.agents.services.message_recorder import RunMessageRecorder
+from yuxi.modules.agents.services.openai_events import OpenAIEventAdapter
 from yuxi.modules.agents.models.inputs import AgentInput, AgentInputMessage, AgentInputReceipt
 from yuxi.modules.agents.models.runs import AgentRun
 from yuxi.modules.agents.models.turns import AgentTurn
@@ -303,6 +308,103 @@ async def test_tool_audit_projects_only_declared_model_call(lease_database):
             calls = list((await db.scalars(select(ToolCall).where(ToolCall.langgraph_tool_call_id == "call-1"))).all())
             assert audit.turn_id == (await db.get(AgentRun, run_id)).turn_id
             assert len(calls) == 1 and calls[0].status == "success" and calls[0].tool_output == "done"
+    finally:
+        await _cleanup_runs(sessions, [thread_id])
+
+
+async def test_message_recorder_commits_facts_before_public_projection(lease_database, monkeypatch):
+    """同一记录器写入真实 PG，公开投影失败保留已提交结果且错误 owner 不能覆盖。"""
+    sessions = lease_database
+    run_id, thread_id, _ = await _create_run(sessions)
+    owner = "recorder-owner"
+    try:
+        async with sessions() as db:
+            run, acquired = await AgentRunRepository(db).mark_running(run_id, worker_id=owner, lease_seconds=60)
+            assert acquired is True
+            turn_id = run.turn_id
+            await db.commit()
+        monkeypatch.setattr(pg_manager, "get_async_session_context", lambda: _session_context(sessions))
+        recorder = RunMessageRecorder(run_id=run_id, thread_id=thread_id, worker_id=owner)
+        adapter = OpenAIEventAdapter(run_id=run_id, turn_id=turn_id, thread_id=thread_id, worker_id=owner)
+
+        def event(seq, data, method="messages"):
+            """使用固定原生来源，不从 mapper 生成预期值。"""
+            return {
+                "method": method,
+                "seq": seq,
+                "params": {
+                    "timestamp": 1_777_000_123_456 + seq,
+                    "namespace": [],
+                    "data": (data, {"run_id": "model", "thread_id": thread_id}) if method == "messages" else data,
+                },
+            }
+
+        start = event(0, {"event": "message-start", "id": "model"})
+        tool_start = event(
+            3,
+            {"event": "tool-started", "tool_call_id": "call", "tool_name": "search", "input": {"q": "actual"}},
+            "tools",
+        )
+        for raw in [
+            start,
+            start,
+            event(
+                1,
+                {
+                    "event": "content-block-finish",
+                    "index": 0,
+                    "content": {"type": "tool_call", "id": "call", "name": "search", "args": {"q": "actual"}},
+                },
+            ),
+            event(2, {"event": "message-finish", "usage": {"input_tokens": 5}}),
+            tool_start,
+            tool_start,
+        ]:
+            await adapter.consume(await recorder.consume(raw))
+
+        command = Command(
+            update={
+                "messages": [
+                    ToolMessage(content="other", tool_call_id="other"),
+                    ToolMessage(content="result", tool_call_id="call"),
+                ],
+            }
+        )
+        raw = event(4, {"event": "tool-finished", "tool_call_id": "call", "output": command}, "tools")
+        normalized = await recorder.consume(raw)
+        assert raw["params"]["data"]["output"] is command
+        save = adapter._save
+
+        async def reject_projection(*args, **kwargs):
+            """公开投影拒绝不应回滚独立消息事实。"""
+            raise ValueError("projection rejected")
+
+        monkeypatch.setattr(adapter, "_save", reject_projection)
+        with pytest.raises(ValueError, match="projection rejected"):
+            await adapter.consume(normalized)
+        async with sessions() as db:
+            [model] = await ModelMessageAuditRepository(db).list_for_run(run_id)
+            [tool] = await ToolMessageAuditRepository(db).list_for_run(run_id)
+            assert model.execution_status == tool.execution_status == "completed"
+            assert model.usage == {"input_tokens": 5}
+            assert tool.content == "result" and tool.extra_metadata["output"]["tool_call_id"] == "call"
+            assert tool.extra_metadata["source_model_message_id"] == model.id
+            assert tool.extra_metadata["public_items"]["output"]["status"] == "in_progress"
+            assert tool.duration_ms is not None and tool.duration_ms >= 0
+            calls = list((await db.scalars(select(ToolCall).where(ToolCall.message_id == model.id))).all())
+            assert len(calls) == 1 and calls[0].status == "success" and calls[0].tool_output == "result"
+
+        wrong_owner = RunMessageRecorder(run_id=run_id, thread_id=thread_id, worker_id="other-owner")
+        with pytest.raises(ValueError, match="lease owner"):
+            await wrong_owner.consume(raw)
+        monkeypatch.setattr(adapter, "_save", save)
+        public = await adapter.consume(normalized)
+        assert public[-1]["item"]["output"] == "result" and public[-1]["item"]["call_id"] == "call"
+        async with sessions() as db:
+            [tool] = await ToolMessageAuditRepository(db).list_for_run(run_id)
+            assert tool.content == "result" and tool.execution_status == "completed"
+            assert tool.extra_metadata["public_items"]["output"]["status"] == "completed"
+            assert tool.extra_metadata["public_items"]["output"]["id"] == public[-1]["item"]["id"]
     finally:
         await _cleanup_runs(sessions, [thread_id])
 

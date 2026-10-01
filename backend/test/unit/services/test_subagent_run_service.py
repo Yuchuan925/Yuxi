@@ -17,25 +17,16 @@ async def test_progress_projects_structured_stream_events(monkeypatch):
     async def recent_events(_run_id, *, limit):
         assert limit == 100
         return [
-            {
-                "seq": "5-0",
-                "event_type": "messages",
-                "payload": {
-                    "payload": {
-                        "items": [
-                            {"stream_event": {"type": "message_delta", "content": "正在查询", "message_id": "m1"}},
-                            {"stream_event": {"type": "tool_call", "name": "search", "tool_call_id": "t1"}},
-                        ]
-                    }
-                },
-            }
+            {"seq":"6-0","event":{"type":"agent.session.turn.item.added", "item":{
+                "type":"function_call", "id":"t1", "name":"search"}}},
+            {"seq":"5-0","event":{"type":"agent.session.turn.output_text.delta", "item_id":"m1", "delta":"正在查询"}},
         ]
 
     monkeypatch.setattr(module, "list_recent_run_stream_events", recent_events)
     progress = await module.get_agent_run_progress("run-1")
     assert progress["messages"] == [
-        {"content": "正在查询", "kind": "assistant_message", "seq": "5-0", "message_id": "m1"},
-        {"content": "调用工具 search", "kind": "tool_call", "seq": "5-0", "tool_call_id": "t1"},
+        {"content": "正在查询", "kind": "assistant_message", "seq": "5-0", "item_id": "m1"},
+        {"content": "调用工具 search", "kind": "tool_call", "seq": "6-0", "item_id": "t1"},
     ]
 
 
@@ -173,7 +164,7 @@ async def test_start_locks_agent_and_project_before_root_execution_tree(
         return SimpleNamespace(id=1, child_thread_id="child-thread")
 
     async def existing_run(self, **kwargs):
-        return SimpleNamespace(id="child-run"), False
+        return SimpleNamespace(id="child-run"), False, None
 
     monkeypatch.setattr(module, "AgentRunRepository", RunRepo)
     monkeypatch.setattr(module, "AgentRepository", AgentRepo, raising=False)
@@ -209,6 +200,68 @@ async def test_start_locks_agent_and_project_before_root_execution_tree(
         with pytest.raises(ValueError, match="子智能体不存在"):
             await start()
         assert locks == ["agent"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("paused,kind", [(True, None), (False, "steer"), (False, "follow_up")])
+async def test_delegation_does_not_resume_or_claim_another_input(monkeypatch, paused, kind):
+    """重新委派遇到暂停或待消费输入时返回 busy，不改变子队列。"""
+    child = SimpleNamespace(id=20, thread_id="child", queue_paused=paused, extra_metadata={"saved": True})
+
+    class ConvRepo:
+        def __init__(self, db):
+            pass
+
+        async def lock_conversation_by_thread_id(self, thread_id):
+            return child
+
+    class ReceiptRepo:
+        def __init__(self, db):
+            pass
+
+        async def get_for_scope(self, **kwargs):
+            return None
+
+    class TurnRepo:
+        def __init__(self, db):
+            pass
+
+        async def lock_active_for_thread(self, **kwargs):
+            return None
+
+    class InputRepo:
+        def __init__(self, db):
+            pass
+
+        async def get_queue_head(self, **kwargs):
+            return SimpleNamespace(kind=kind) if kind else None
+
+    class UnusedRepo:
+        def __init__(self, db):
+            pass
+
+    async def forbidden_accept(**kwargs):
+        pytest.fail("busy 子 Thread 不应接收新的委派输入")
+
+    monkeypatch.setattr(module, "ConversationRepository", ConvRepo)
+    monkeypatch.setattr(module, "AgentInputReceiptRepository", ReceiptRepo)
+    monkeypatch.setattr(module, "AgentTurnRepository", TurnRepo)
+    monkeypatch.setattr(module, "AgentInputRepository", InputRepo)
+    monkeypatch.setattr(module, "AgentRunRepository", UnusedRepo)
+    monkeypatch.setattr(module, "ProjectRepository", UnusedRepo)
+    monkeypatch.setattr(module, "SubagentThreadRepository", UnusedRepo)
+    monkeypatch.setattr(module, "accept_locked", forbidden_accept)
+    with pytest.raises(module.SubagentRunBusy) as exc:
+        await module.SubagentRunService(object())._create_run_record(
+            input_message=build_chat_input_message("delegate"),
+            current_uid="user",
+            creator_run=SimpleNamespace(id="parent", app_id=None, conversation_id=10),
+            relation=SimpleNamespace(child_thread_id="child", child_conversation_id=20, parent_conversation_id=10),
+            agent_item=SimpleNamespace(slug="helper"),
+            tool_call_id="call",
+        )
+    assert exc.value.active_run_status == ("paused" if paused else "pending")
+    assert child.queue_paused == paused and child.extra_metadata == {"saved": True}
 
 
 def test_state_requires_tool_call_identity():

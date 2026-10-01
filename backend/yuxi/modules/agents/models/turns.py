@@ -6,6 +6,9 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     ForeignKeyConstraint,
+    Integer,
+    Index,
+    UniqueConstraint,
     String,
 )
 from yuxi.shared.datetime import utc_now_naive
@@ -25,6 +28,7 @@ class AgentTurn(Base):
     uid = Column(String(64), nullable=False, index=True)
     app_id = Column(String(64), nullable=True, index=True)
     status = Column(String(32), nullable=False, default="running")
+    next_output_index = Column(Integer, nullable=False, default=0, server_default="0")
     current_run_id = Column(String(64), nullable=True)
     result_run_id = Column(String(64), nullable=True)
     langfuse_root_observation_id = Column(String(16), nullable=True)
@@ -34,6 +38,13 @@ class AgentTurn(Base):
     cancelled_at = Column(DateTime, nullable=True)
 
     __table_args__ = (
+        Index(
+            "uq_agent_turns_active",
+            "conversation_thread_id",
+            unique=True,
+            postgresql_where=status.in_(("running", "waiting", "cancelling")),
+        ).ddl_if(dialect="postgresql"),
+        UniqueConstraint("id", "conversation_thread_id", name="uq_agent_turns_id_thread"),
         CheckConstraint(
             "status IN ('running', 'waiting', 'cancelling', 'completed', 'failed', 'cancelled')",
             name="ck_agent_turns_status",

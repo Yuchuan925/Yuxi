@@ -5,7 +5,7 @@ import {
   buildCronExpression,
   describeSchedule,
   parseCronExpression
-} from '../../src/utils/scheduleFrequency.js'
+} from '../../src/modules/agents/model/scheduleFrequency.js'
 
 assert.equal(buildCronExpression({ frequency: 'daily', time: '09:05' }), '5 9 * * *')
 assert.equal(

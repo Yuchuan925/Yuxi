@@ -8,6 +8,7 @@ from sqlalchemy import (
     ForeignKey,
     ForeignKeyConstraint,
     Identity,
+    Index,
     Integer,
     String,
     UniqueConstraint,
@@ -44,10 +45,16 @@ class AgentInput(Base):
     cancelled_at = Column(DateTime, nullable=True)
 
     __table_args__ = (
+        Index(
+            "uq_agent_inputs_pending_steer",
+            "conversation_thread_id",
+            unique=True,
+            postgresql_where=(kind == "steer") & (status == "pending"),
+        ).ddl_if(dialect="postgresql"),
         CheckConstraint("kind IN ('follow_up', 'steer')", name="ck_agent_inputs_kind"),
         CheckConstraint(
             "(status = 'pending' AND consumed_run_id IS NULL AND cutoff_seq IS NULL AND consumed_at IS NULL "
-            "AND ((kind = 'steer' AND turn_id IS NOT NULL) OR (kind = 'follow_up' AND turn_id IS NULL))) "
+            "AND turn_id IS NULL) "
             "OR (status = 'consumed' AND turn_id IS NOT NULL AND consumed_run_id IS NOT NULL "
             "AND cutoff_seq IS NOT NULL AND consumed_at IS NOT NULL) "
             "OR (status = 'cancelled' AND consumed_run_id IS NULL AND cancelled_at IS NOT NULL)",
@@ -80,7 +87,18 @@ class AgentInputReceipt(Base):
     run_id = Column(String(64), ForeignKey("agent_runs.id"), nullable=True)
     created_at = Column(DateTime, nullable=False, default=utc_now_naive)
 
-    __table_args__ = (UniqueConstraint("id", "input_id", name="uq_agent_input_receipts_id_input"),)
+    __table_args__ = (
+        UniqueConstraint("id", "input_id", name="uq_agent_input_receipts_id_input"),
+        Index(
+            "uq_agent_input_receipts_scope_key",
+            "uid",
+            "app_id",
+            "conversation_thread_id",
+            "idempotency_key",
+            unique=True,
+            postgresql_nulls_not_distinct=True,
+        ).ddl_if(dialect="postgresql"),
+    )
 
 
 class AgentInputMessage(Base):

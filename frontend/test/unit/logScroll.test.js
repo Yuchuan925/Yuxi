@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { isLogContainerAtBottom } from '../../src/utils/logScroll.js'
+import { isLogContainerAtBottom } from '../../src/shared/lib/logScroll.js'
 
 test('日志容器离开底部后停止跟随', () => {
   assert.equal(

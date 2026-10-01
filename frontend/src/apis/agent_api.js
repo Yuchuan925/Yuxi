@@ -1,5 +1,5 @@
 import { apiGet, apiPost, apiDelete, apiPut, apiRequest } from './base'
-import { useUserStore } from '@/stores/user'
+import { useUserStore } from '@/modules/identity/model/user'
 
 /**
  * 智能体API模块
@@ -82,13 +82,15 @@ export const agentApi = {
       `/api/v1/agents/threads/${threadId}/events`,
       {
         events: [{
-          type: 'agent.thread.input.message',
+          type: 'agent.session.input.message',
           input: [{ role: 'user', content }],
-          mode: data.mode,
-          ...(data.turn_id ? { turn_id: data.turn_id } : {}),
-          model_spec: data.model_spec,
-          tool_approval_mode: data.tool_approval_mode,
-          attachment_file_ids: data.attachment_file_ids || []
+          yuxi: {
+            mode: data.mode,
+            ...(data.mode !== 'steer' ? {
+              model_spec: data.model_spec, tool_approval_mode: data.tool_approval_mode
+            } : {}),
+            attachment_file_ids: data.attachment_file_ids || []
+          }
         }]
       },
       { headers: { 'Idempotency-Key': data.idempotency_key } }
@@ -98,7 +100,7 @@ export const agentApi = {
   resumeThreadTurn: (threadId, data) =>
     apiPost(
       `/api/v1/agents/threads/${threadId}/events`,
-      { events: [{ type: 'yuxi.thread.input.resume', turn_id: data.turn_id,
+      { events: [{ type: 'yuxi.session.input.resume', turn_id: data.turn_id,
         waitpoint_id: data.waitpoint_id, response: data.response }] },
       { headers: { 'Idempotency-Key': data.idempotency_key } }
     ),
@@ -106,15 +108,15 @@ export const agentApi = {
   cancelThreadTurn: (threadId, turnId, idempotencyKey, expectedRunId = null) =>
     apiPost(
       `/api/v1/agents/threads/${threadId}/events`,
-      { events: [{ type: 'yuxi.thread.input.cancel', turn_id: turnId,
-        ...(expectedRunId ? { expected_run_id: expectedRunId } : {}) }] },
+      { events: [{ type: 'agent.session.input.cancel', yuxi: { turn_id: turnId,
+        ...(expectedRunId ? { expected_run_id: expectedRunId } : {}) } }] },
       { headers: { 'Idempotency-Key': idempotencyKey } }
     ),
 
   getPublicThread: (threadId) => apiGet(`/api/v1/agents/threads/${threadId}`),
 
-  getThreadTurn: (threadId, turnId) =>
-    apiGet(`/api/v1/agents/threads/${threadId}/turns/${turnId}`),
+  getThreadTurn: (threadId, turnId, options = {}) =>
+    apiGet(`/api/v1/agents/threads/${threadId}/turns/${turnId}`, options),
 
   getThreadInput: (threadId, inputId) =>
     apiGet(`/api/v1/agents/threads/${threadId}/inputs/${inputId}`),
@@ -136,7 +138,7 @@ export const agentApi = {
    */
   continueThreadQueue: (threadId, idempotencyKey) => apiPost(
     `/api/v1/agents/threads/${threadId}/events`,
-    { events: [{ type: 'yuxi.thread.input.continue' }] },
+    { events: [{ type: 'yuxi.session.input.continue' }] },
     { headers: { 'Idempotency-Key': idempotencyKey } }
   ),
 
@@ -145,7 +147,7 @@ export const agentApi = {
    */
   cancelThreadInput: (threadId, inputId, idempotencyKey) => apiPost(
     `/api/v1/agents/threads/${threadId}/events`,
-    { events: [{ type: 'yuxi.thread.input.cancel_input', input_id: inputId }] },
+    { events: [{ type: 'yuxi.session.input.cancel_input', input_id: inputId }] },
     { headers: { 'Idempotency-Key': idempotencyKey } }
   ),
 

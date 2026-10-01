@@ -101,7 +101,7 @@ test('受保护请求的 401 才清理会话并跳转登录页', async () => {
     try {
       setActivePinia(createPinia())
       const { apiGet } = await server.ssrLoadModule('/src/apis/base.js')
-      const { useUserStore } = await server.ssrLoadModule('/src/stores/user.js')
+      const { useUserStore } = await server.ssrLoadModule('/src/modules/identity/model/user.js')
       const userStore = useUserStore()
       globalThis.setTimeout = (callback) => {
         callback()
@@ -151,7 +151,7 @@ test('用户 Store 的 422 传播链不泄露认证头、密码或 Pydantic inpu
         )
 
       setActivePinia(createPinia())
-      const { useUserStore } = await server.ssrLoadModule('/src/stores/user.js')
+      const { useUserStore } = await server.ssrLoadModule('/src/modules/identity/model/user.js')
       const userStore = useUserStore()
       userStore.token = secretToken
       userStore.userId = 1
@@ -200,7 +200,7 @@ test('用户 Store 的普通错误传播链不附着或记录服务端任意响�
         )
 
       setActivePinia(createPinia())
-      const { useUserStore } = await server.ssrLoadModule('/src/stores/user.js')
+      const { useUserStore } = await server.ssrLoadModule('/src/modules/identity/model/user.js')
       const userStore = useUserStore()
       userStore.token = secretToken
       userStore.userId = 1
@@ -240,7 +240,7 @@ test('用户管理分页 API 只请求当前页并编码服务端筛选条件', 
     }
 
     setActivePinia(createPinia())
-    const { useUserStore } = await server.ssrLoadModule('/src/stores/user.js')
+    const { useUserStore } = await server.ssrLoadModule('/src/modules/identity/model/user.js')
     useUserStore().userRole = 'superadmin'
     const { authApi } = await server.ssrLoadModule('/src/apis/auth_api.js')
 
@@ -262,7 +262,7 @@ test('用户管理分页 API 只请求当前页并编码服务端筛选条件', 
 test('用户管理组件不再通过 Store 全量加载用户', async () => {
   const source = await import('node:fs/promises').then((fs) =>
     fs.readFile(
-      new URL('../../src/components/UserManagementComponent.vue', import.meta.url),
+      new URL('../../src/modules/settings/ui/UserManagementComponent.vue', import.meta.url),
       'utf8'
     )
   )
@@ -316,7 +316,7 @@ test('四个 API 模块复用查询参数边界并保持 endpoint 问号语义',
     }
 
     setActivePinia(createPinia())
-    const { useUserStore } = await server.ssrLoadModule('/src/stores/user.js')
+    const { useUserStore } = await server.ssrLoadModule('/src/modules/identity/model/user.js')
     useUserStore().userRole = 'admin'
     const { projectApi } = await server.ssrLoadModule('/src/apis/project_api.js')
     const { searchViewerFiles } = await server.ssrLoadModule('/src/apis/viewer_filesystem.js')
@@ -422,7 +422,7 @@ test('工具元数据 API 使用普通用户认证且普通用户可正常请求
     }
 
     setActivePinia(createPinia())
-    const { useUserStore } = await server.ssrLoadModule('/src/stores/user.js')
+    const { useUserStore } = await server.ssrLoadModule('/src/modules/identity/model/user.js')
     const userStore = useUserStore()
     userStore.token = 'user-token'
     userStore.role = 'user' // 非管理员

@@ -3,7 +3,7 @@ import test from 'node:test'
 
 import { createPinia, setActivePinia } from 'pinia'
 import { createServer } from 'vite'
-import { buildProjectConversationGroups } from '../../src/utils/projectConversationGroups.js'
+import { buildProjectConversationGroups } from '../../src/modules/projects/model/projectConversationGroups.js'
 
 globalThis.localStorage = {
   getItem: () => null,
@@ -22,7 +22,7 @@ test('创建 Project 后迟到的列表响应不会覆盖侧边栏状态', async
         resolveProjects = resolve
       })
 
-    const { useProjectsStore } = await server.ssrLoadModule('/src/stores/projects.js')
+    const { useProjectsStore } = await server.ssrLoadModule('/src/modules/projects/model/projects.js')
     const store = useProjectsStore()
     const loadPromise = store.loadProjects()
     const createdProject = {
@@ -53,7 +53,7 @@ test('项目刷新期间保留已加载状态，失败后仍可使用已有列�
   setActivePinia(createPinia())
   try {
     const { projectApi } = await server.ssrLoadModule('/src/apis/project_api.js')
-    const { useProjectsStore } = await server.ssrLoadModule('/src/stores/projects.js')
+    const { useProjectsStore } = await server.ssrLoadModule('/src/modules/projects/model/projects.js')
     const store = useProjectsStore()
     assert.equal(store.hasLoaded, false)
     projectApi.getProjects = async () => []
@@ -86,8 +86,8 @@ test('退出登录清空项目缓存，退出前的迟到响应不能跨会话�
   setActivePinia(createPinia())
   try {
     const { projectApi } = await server.ssrLoadModule('/src/apis/project_api.js')
-    const { useProjectsStore } = await server.ssrLoadModule('/src/stores/projects.js')
-    const { useUserStore } = await server.ssrLoadModule('/src/stores/user.js')
+    const { useProjectsStore } = await server.ssrLoadModule('/src/modules/projects/model/projects.js')
+    const { useUserStore } = await server.ssrLoadModule('/src/modules/identity/model/user.js')
     const store = useProjectsStore()
     projectApi.getProjects = async () => [{ id: 'account-a', name: '账号 A 的项目' }]
     await store.loadProjects()

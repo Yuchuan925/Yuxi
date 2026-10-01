@@ -2,7 +2,7 @@
 
 状态：implemented
 类型：bug-fix
-Owner：frontend/src/components/scheduled-agents/ScheduledAgentEditor.vue
+Owner：frontend/src/modules/agents/ui/ScheduledAgentEditor.vue
 
 ## 问题
 

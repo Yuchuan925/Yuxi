@@ -10,6 +10,7 @@ import pytest
 from PIL import Image, ImageDraw, ImageFont
 
 from e2e_helpers import delete_agent
+from test.e2e.test_agent_lifecycle_e2e import output_text
 from test.live_api_cleanup import make_test_conversation_title
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.e2e, pytest.mark.slow]
@@ -123,10 +124,9 @@ async def _run(
         json={
             "events": [
                 {
-                    "type": "agent.thread.input.message",
-                    "mode": "follow_up",
+                    "type": "agent.session.input.message",
                     "input": [{"role": "user", "content": [{"type": "input_text", "text": query}]}],
-                    "attachment_file_ids": [attachment_file_id],
+                    "yuxi": {"mode": "follow_up", "attachment_file_ids": [attachment_file_id]},
                 }
             ],
         },
@@ -149,14 +149,14 @@ async def _run(
                 assert turn["status"] == "completed", turn
                 assert turn["result_run_id"] == run_id, turn
                 assert turn["output"] is not None, turn
-                return str(turn["output"]["content"])
+                return str(output_text(turn["output"]))
             await asyncio.sleep(2)
         pytest.fail(f"read_file E2E Turn timed out: {turn_id}")
     finally:
         if not completed:
             cancel = await client.post(
                 f"/api/v1/agents/threads/{thread_id}/events",
-                json={"events": [{"type": "yuxi.thread.input.cancel", "turn_id": turn_id}]},
+                json={"events": [{"type": "agent.session.input.cancel", "yuxi": {"turn_id": turn_id}}]},
                 headers={**headers, "Idempotency-Key": f"read-file-cancel-{turn_id}"},
             )
             assert cancel.status_code in {202, 409}, cancel.text

@@ -18,7 +18,7 @@ globalThis.localStorage = {
 }
 
 test('知识库详情页下拉菜单提供上传文件夹入口', () => {
-  const source = readSource('../../src/views/DataBaseInfoView.vue')
+  const source = readSource('../../src/pages/DataBaseInfoView.vue')
   const menu = source.slice(source.indexOf('<Transition name="file-action-menu">'), source.indexOf('</Transition>'))
 
   assert.match(menu, /onUploadFolderAction/)
@@ -27,7 +27,7 @@ test('知识库详情页下拉菜单提供上传文件夹入口', () => {
 })
 
 test('FileUploadModal 收集相对路径 source_paths 并过滤隐藏文件', () => {
-  const source = readSource('../../src/components/FileUploadModal.vue')
+  const source = readSource('../../src/modules/knowledge/ui/FileUploadModal.vue')
 
   assert.match(source, /source_paths\[file_path\]\s*=\s*relativePath/)
   assert.match(source, /params\.source_paths\s*=\s*source_paths/)
@@ -36,7 +36,7 @@ test('FileUploadModal 收集相对路径 source_paths 并过滤隐藏文件', ()
 })
 
 test('FileUploadModal 文件数量与进度统计仅计算受支持且非隐藏的文件', () => {
-  const source = readSource('../../src/components/FileUploadModal.vue')
+  const source = readSource('../../src/modules/knowledge/ui/FileUploadModal.vue')
 
   assert.match(source, /const validFileList\s*=\s*computed/)
   assert.match(source, /const totalUploadCount\s*=\s*computed\(\(\)\s*=>\s*validFileList\.value\.length\)/)
@@ -62,7 +62,7 @@ test('documentApi.addDocuments 能够将 source_paths 正确打包发送给知�
     }
 
     setActivePinia(createPinia())
-    const { useUserStore } = await server.ssrLoadModule('/src/stores/user.js')
+    const { useUserStore } = await server.ssrLoadModule('/src/modules/identity/model/user.js')
     const userStore = useUserStore()
     userStore.userRole = 'admin'
     userStore.token = 'test-token'

@@ -47,6 +47,7 @@ class ToolEvidence:
     execute_started: bool = False
     execute_finished: bool = False
     output_marker_seen: bool = False
+    call_ids: set[str] = field(default_factory=set)
 
 
 @dataclass
@@ -175,46 +176,30 @@ def _build_sse_event(name: str, event_id: str | None, data_lines: Sequence[str])
     return SseEvent(name=name, data=payload, event_id=event_id)
 
 
-def observe_tool_evidence(value: object, evidence: ToolEvidence) -> None:
-    """递归读取精简 Run 事件中的 execute 生命周期证据。"""
-
-    if isinstance(value, dict):
-        if value.get("tool_name") == "execute":
-            event_name = value.get("event")
-            evidence.execute_started |= event_name == "tool-started"
-            evidence.execute_finished |= event_name == "tool-finished"
-            if event_name == "tool-finished" and TOOL_MARKER in str(value.get("output") or ""):
-                evidence.output_marker_seen = True
-        if value.get("type") == "tool" and TOOL_MARKER in str(value.get("content") or ""):
-            # verbose=false 会把完成事件投影为 ToolMessage；唯一标记证明受控命令已经返回。
-            evidence.execute_finished = True
-            evidence.output_marker_seen = True
-        for child in value.values():
-            observe_tool_evidence(child, evidence)
-    elif isinstance(value, list):
-        for child in value:
-            observe_tool_evidence(child, evidence)
+def observe_tool_evidence(event: dict, evidence: ToolEvidence) -> None:
+    """通过实际 function_call 与 call_id 关联 execute 的公开执行结果。"""
+    item = event.get("item") or {}
+    if (
+        event.get("type") == "agent.session.turn.item.added"
+        and item.get("type") == "function_call"
+        and item.get("name") == "execute"
+    ):
+        evidence.execute_started = True
+        evidence.call_ids.add(item["call_id"])
+    if (
+        event.get("type") == "agent.session.turn.item.done"
+        and item.get("type") == "function_call_output"
+        and item.get("call_id") in evidence.call_ids
+    ):
+        evidence.execute_finished |= item.get("status") == "completed"
+        evidence.output_marker_seen |= TOOL_MARKER in str(item.get("output") or "")
 
 
-def contains_model_output(value: object) -> bool:
-    """识别模型产生的首个文本或工具调用增量。"""
-
-    if isinstance(value, dict):
-        event_type = value.get("type")
-        if event_type == "message_delta" and any(
-            isinstance(value.get(key), str) and bool(value[key])
-            for key in ("content", "reasoning_content")
-        ):
-            return True
-        if event_type in {"tool_call", "tool_call_delta"} and any(
-            value.get(key) is not None and value.get(key) != "" and value.get(key) != {}
-            for key in ("name", "args", "args_delta")
-        ):
-            return True
-        return any(contains_model_output(child) for child in value.values())
-    if isinstance(value, list):
-        return any(contains_model_output(child) for child in value)
-    return False
+def contains_model_output(event: dict) -> bool:
+    """首输出是公开文本、原始推理增量或完整函数参数。"""
+    return bool(event.get("delta")) or (
+        event.get("type") == "agent.session.turn.item.added" and event.get("item", {}).get("type") == "function_call"
+    )
 
 
 _MEMORY_UNITS = {
@@ -465,7 +450,13 @@ def evaluate_result(
 
     status = str(payload.get("status") or "")
     output = payload.get("output")
-    output_text = str(output.get("content") or "") if isinstance(output, dict) else ""
+    output_text = "".join(
+        part["text"]
+        for item in output or []
+        if item["type"] == "message" and item["role"] == "assistant"
+        for part in item["content"]
+        if part["type"] == "output_text"
+    )
     checks = [
         (payload.get("id") == run_id, "Run 结果与 SSE Run 不一致"),
         (payload.get("input_id") == input_id, "Run 未绑定提交的 Input"),
@@ -473,7 +464,9 @@ def evaluate_result(
         (turn_payload.get("result_run_id") == run_id, "Turn 结果与 Run 不一致"),
         (turn_payload.get("status") == "completed", "Turn 尚未完成"),
         (
-            isinstance(output, dict) and output.get("run_id") == run_id and output.get("turn_id") == turn_id,
+            isinstance(output, list)
+            and bool(output)
+            and all(item["yuxi"]["run_id"] == run_id and item["turn_id"] == turn_id for item in output),
             "输出消息没有绑定目标 Turn/Run",
         ),
         (status == "completed", f"Run 终态不是 completed：{status or 'missing'}"),
@@ -587,10 +580,9 @@ class AgentLoadClient:
             json={
                 "events": [
                     {
-                        "type": "agent.thread.input.message",
-                        "mode": "follow_up",
+                        "type": "agent.session.input.message",
                         "input": [{"role": "user", "content": [{"type": "input_text", "text": prompt}]}],
-                        "tool_approval_mode": "always_trust",
+                        "yuxi": {"mode": "follow_up", "tool_approval_mode": "always_trust"},
                     }
                 ],
             },
@@ -611,18 +603,16 @@ class AgentLoadClient:
         ) as response:
             await _raise_for_stream_status(response, "读取 Thread SSE")
             async for event in iter_sse(response.aiter_lines()):
-                if event.data.get("thread_id") != thread_id:
+                if event.data.get("session_id") != thread_id:
                     raise LoadTestError("Thread SSE 串入其他 Thread")
                 if event.data.get("input_id") != input_id:
                     continue
-                if event.name == "agent.thread.input.consumed":
-                    run_id = str(event.data.get("run_id") or "")
+                if event.name == "yuxi.session.run.created":
+                    run_id = str(event.data.get("yuxi", {}).get("run_id") or "")
                     turn_id = str(event.data.get("turn_id") or "")
                     if not run_id or not turn_id:
                         raise LoadTestError("Input 消费事件缺少 Turn/Run")
                     return run_id, turn_id
-                if event.name == "agent.thread.input.cancelled":
-                    raise LoadTestError("目标 Input 已取消")
         raise LoadTestError("Thread SSE 结束但目标 Input 尚未消费")
 
     async def consume_run_events(
@@ -645,9 +635,9 @@ class AgentLoadClient:
         ) as response:
             await _raise_for_stream_status(response, "读取 Run SSE")
             async for event in iter_sse(response.aiter_lines()):
-                if event.data.get("thread_id") != thread_id:
+                if event.data.get("session_id") != thread_id:
                     raise LoadTestError("Thread SSE 串入其他 Thread")
-                if event.data.get("run_id") != run_id:
+                if event.data.get("yuxi", {}).get("run_id") != run_id:
                     continue
                 if first_event_ms is None:
                     first_event_ms = (time.perf_counter() - submit_started) * 1000
@@ -656,9 +646,9 @@ class AgentLoadClient:
                 if first_token_ms is None and contains_model_output(event.data):
                     first_token_ms = (time.perf_counter() - submit_started) * 1000
                 if event.name in {
-                    "agent.thread.turn.completed",
-                    "agent.thread.turn.failed",
-                    "agent.thread.turn.cancelled",
+                    "agent.session.turn.completed",
+                    "agent.session.turn.failed",
+                    "agent.session.turn.cancelled",
                 }:
                     return (
                         counts,
@@ -691,7 +681,7 @@ class AgentLoadClient:
         response = await self.client.post(
             f"/api/v1/agents/threads/{thread_id}/events",
             headers={**self.headers, "Idempotency-Key": f"cancel:{event_key}"},
-            json={"events": [{"type": "yuxi.thread.input.cancel_input", "input_id": input_id}]},
+            json={"events": [{"type": "yuxi.session.input.cancel_input", "input_id": input_id}]},
         )
         _raise_for_status(response, "取消 Input")
 
@@ -701,7 +691,11 @@ class AgentLoadClient:
         response = await self.client.post(
             f"/api/v1/agents/threads/{thread_id}/events",
             headers={**self.headers, "Idempotency-Key": f"cancel:{event_key}"},
-            json={"events": [{"type": "yuxi.thread.input.cancel", "turn_id": turn_id, "expected_run_id": run_id}]},
+            json={
+                "events": [
+                    {"type": "agent.session.input.cancel", "yuxi": {"turn_id": turn_id, "expected_run_id": run_id}}
+                ]
+            },
         )
         _raise_for_status(response, "取消 Turn")
 

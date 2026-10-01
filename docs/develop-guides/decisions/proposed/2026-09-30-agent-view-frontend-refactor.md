@@ -2,9 +2,9 @@
 
 状态：proposed
 类型：architecture
-Owner：frontend/src/views/AgentView.vue
+Owner：frontend/src/pages/AgentView.vue
 
-调研日期：2026-09-30。读者为前端维护者、产品设计者和后续实现的 Reviewer。本文以 AgentView 的完整可见工作区为中心，提出整个前端的组织调整方案；所有目标组件、目录和契约均为提案，尚未实现。
+调研日期：2026-09-30。读者为前端维护者、产品设计者和后续实现的 Reviewer。本文保存以 AgentView 完整可见工作区为中心的调研快照和整体重构方案。应用装配、目录归属与页面协调已按[主干决策](../implemented/2026-09-30-frontend-architecture-spine.md)实施；独立 Thread 阅读、统一输入、共享会话数据和全量 strict TypeScript 仍属于后续提案。
 
 结论：前端需要围绕业务边界进行系统重构。优先建立按 Thread 隔离的会话数据与订阅模块、仅传 `threadId` 即可工作的对话阅读组件，以及管理完整草稿与提交回执的统一输入组件。页面负责组合这些能力，文件、状态、子智能体、调试和管理功能分别拥有自己的数据与界面。Vue 3、Vite、Pinia 和现有设计 token 可以继续使用。
 
@@ -32,7 +32,7 @@ Owner：frontend/src/views/AgentView.vue
 | 全局框架 | 给出目录、依赖、路由、状态、API、类型、样式、生命周期和测试的目标边界 |
 | 可执行性 | 提供公开组件契约、保留与删除范围、实施顺序、负向案例与证据要求 |
 
-本轮只生成报告，不修改产品实现、依赖、后端接口或数据；不创建 commit、PR 或部署。没有历史包袱按“允许删除内部旧接口、重复流程和无消费者兼容代码”理解，现有用户能力、权限、数据和后端运行语义继续作为验收约束。
+调研阶段的产出是本报告；主干实现的范围、行为与证据由独立决策记录维护。没有历史包袱按“允许删除内部旧接口、重复流程和无消费者兼容代码”理解，现有用户能力、权限、数据和后端运行语义继续作为验收约束。
 
 ### 证据范围
 
@@ -65,7 +65,7 @@ flowchart TD
 
 源码规模在读取时为：AgentView 377 行，AgentChatComponent 5,629 行，MessageInputComponent 1,731 行，AgentInputArea 489 行，AgentPanel 1,824 行，MessageDebugPanel 2,098 行，AppLayout 1,034 行。统计包含模板、脚本和样式，仅用于定位审阅压力；重构验收以职责和行为为准。
 
-源码证据：[AgentView](https://github.com/xerrors/Yuxi/blob/main/frontend/src/views/AgentView.vue)、[AgentChatComponent](https://github.com/xerrors/Yuxi/blob/main/frontend/src/components/AgentChatComponent.vue)、[AppLayout](https://github.com/xerrors/Yuxi/blob/main/frontend/src/layouts/AppLayout.vue)。链接提供稳定定位，具体判断以工作区调研快照为准，远端 main 可能与快照不同。
+源码证据：[AgentView](https://github.com/xerrors/Yuxi/blob/main/frontend/src/pages/AgentView.vue)、[AgentChatComponent](https://github.com/xerrors/Yuxi/blob/main/frontend/src/modules/conversation/ui/ConversationWorkspace.vue)、[AppLayout](https://github.com/xerrors/Yuxi/blob/main/frontend/src/app/layouts/AppLayout.vue)。链接提供稳定定位，具体判断以工作区调研快照为准，远端 main 可能与快照不同。
 
 ### 影响维护性的具体问题
 
@@ -87,7 +87,7 @@ flowchart TD
 | App、router guard、AppLayout、AgentView、聊天组件均包含 agent 初始化入口；AppLayout 还加载其他域资源 | 启动 Owner 分散，进入一个页面会牵动多个领域；初始化中的调用也缺少统一的完成承诺 |
 | 单测包含纯函数、Vue 运行时以及源码字符串断言；浏览器脚本由开发者在登录环境手动执行 | 已有有效证据值得保留，但字符串存在性无法证明 IME、焦点、粘贴、拖拽和真实订阅行为 |
 
-源码证据：[chatThreads store](https://github.com/xerrors/Yuxi/blob/main/frontend/src/stores/chatThreads.js)、[ThreadMessageList](https://github.com/xerrors/Yuxi/blob/main/frontend/src/components/ThreadMessageList.vue)、[SubagentThreadView](https://github.com/xerrors/Yuxi/blob/main/frontend/src/components/SubagentThreadView.vue)、[输入包装](https://github.com/xerrors/Yuxi/blob/main/frontend/src/components/AgentInputArea.vue)、[编辑器](https://github.com/xerrors/Yuxi/blob/main/frontend/src/components/MessageInputComponent.vue)、[Thread SSE](https://github.com/xerrors/Yuxi/blob/main/frontend/src/composables/useAgentRunStream.js)、[agent store](https://github.com/xerrors/Yuxi/blob/main/frontend/src/stores/agent.js)。
+源码证据：[chatThreads store](https://github.com/xerrors/Yuxi/blob/main/frontend/src/modules/conversation/model/chatThreads.js)、[ThreadMessageList](https://github.com/xerrors/Yuxi/blob/main/frontend/src/modules/conversation/ui/ThreadMessageList.vue)、[SubagentThreadView](https://github.com/xerrors/Yuxi/blob/main/frontend/src/modules/conversation/ui/SubagentThreadView.vue)、[输入包装](https://github.com/xerrors/Yuxi/blob/main/frontend/src/modules/conversation/ui/AgentInputArea.vue)、[编辑器](https://github.com/xerrors/Yuxi/blob/main/frontend/src/modules/conversation/ui/MessageInputComponent.vue)、[Thread SSE](https://github.com/xerrors/Yuxi/blob/main/frontend/src/modules/conversation/model/useAgentRunStream.js)、[agent store](https://github.com/xerrors/Yuxi/blob/main/frontend/src/modules/agents/model/agent.js)。
 
 ### 可以保留的基础
 
@@ -95,7 +95,7 @@ flowchart TD
 
 这些能力先按新 Owner 迁移并复核消费者。现有测试中的消息归属、父子隔离、队列恢复、图片顺序、审批过期、HTML 清洗与对象 URL 释放等结果约束继续使用。重构允许替换实现和测试装配方式，保留独立的业务 oracle。
 
-相关 Owner：[消息转换](https://github.com/xerrors/Yuxi/blob/main/frontend/src/utils/messageProcessor.js)、[消息分组](https://github.com/xerrors/Yuxi/blob/main/frontend/src/utils/messageGrouping.js)、[滚动](https://github.com/xerrors/Yuxi/blob/main/frontend/src/utils/scrollController.js)、[Markdown 安全渲染](https://github.com/xerrors/Yuxi/blob/main/frontend/src/utils/markdown_preview.js)、[设置惰性装配](https://github.com/xerrors/Yuxi/blob/main/frontend/src/components/SettingsModal.vue)。
+相关 Owner：[消息转换](https://github.com/xerrors/Yuxi/blob/main/frontend/src/modules/conversation/model/messageProcessor.js)、[消息分组](https://github.com/xerrors/Yuxi/blob/main/frontend/src/modules/conversation/model/messageGrouping.js)、[滚动](https://github.com/xerrors/Yuxi/blob/main/frontend/src/modules/conversation/model/scrollController.js)、[Markdown 安全渲染](https://github.com/xerrors/Yuxi/blob/main/frontend/src/shared/lib/markdown_preview.js)、[设置惰性装配](https://github.com/xerrors/Yuxi/blob/main/frontend/src/modules/settings/ui/SettingsModal.vue)。
 
 ## 提案
 
@@ -196,15 +196,15 @@ Thread 切换、用户退出、组件卸载、KeepAlive 停用和隐藏标签页
 
 将主聊天与 ThreadMessageList 的重复渲染统一到 `ConversationTimeline`。推荐行模型只覆盖现有消费者：用户消息、回答、执行过程组、产物、配置提示和状态提示。工具结果使用 `(runId, toolCallId)` 关联。父流携带的子运行身份属于事件来源，子消息写入子 Thread 桶；根 Turn 的状态只能由对应根关系更新。
 
-Turn 的最终回答必须来自 `result_run_id` 指向 Run 的 `output_message_id`。不能用“最后一条 AI 消息”或最后一个 Run 作为最终结果。现有 History 返回 `thread/runs/history`，其中 runs 只含有限字段，历史所有 Turn 的完整结果映射尚不包含在同一响应中。这是提案的接口约束，实施时先使用现有精确 Turn 读取验证；若按 Turn 查询造成批量开销，再单独提出 History 增加紧凑 Turn 结果映射的后端变更。
+Turn 的最终回答必须来自 `result_run_id` 指向 Run 的 `output_message_id`。不能用“最后一条 AI 消息”或最后一个 Run 作为最终结果。History 返回 `thread/runs/items`，公开 item 携带稳定身份、Turn/Run 和输入归属；实时事件与历史快照使用同一公开投影。Turn 的完整结果与等待点由精确 Turn 读取拥有，不能以 item 的排序代替结果关系。实施统一阅读器时复用会话模块的公开 item reducer；若按 Turn 查询造成批量开销，再单独提出紧凑结果映射的后端变更。
 
-指定子 Run 的阅读使用 `getAgentRun(childThreadId, runId)` 返回的该 Run `status/output_message_id/output`。子 Run 的 turnId 属于根 Thread，子 Thread 自己不拥有该 Turn；不能用 `getThreadTurn(childThreadId, rootTurnId)` 读取，也不能依赖 child 的 current_turn 恢复观察。子 Run 已完成而根 Turn 仍在运行时，子详情独立回读并收尾；同根 Turn 的其他子 Run 不能替代指定 Run 输出。统一会话模块共享传输、归属和展示基础，顶层 Turn 与子 Run 的恢复/终态策略保持明确分支。[Run 快照服务](https://github.com/xerrors/Yuxi/blob/main/backend/yuxi/modules/agents/services/runs.py)拥有此读取契约。
+子任务拥有独立 Thread/Turn/Run，自身承担结果、等待、恢复和执行租约，通过委派关系关联父 Run。指定子 Run 的阅读先以 `getAgentRun(childThreadId, runId)` 或 History 的 runs 定位 childTurnId，再通过 `getThreadTurn(childThreadId, childTurnId)` 读取该轮的状态、结果和等待点。恢复后的后续 Run 仍属于同一个 child Turn；子任务的其他 Turn 不能替代指定轮的结果。父完成或失败不结束子任务，父取消只沿对应委派关系处理在途子 Turn。统一会话模块共享传输、归属和展示基础，观察目标始终保留明确的 Thread/Turn/Run 身份。[Run 快照服务](https://github.com/xerrors/Yuxi/blob/main/backend/yuxi/modules/agents/services/runs.py)拥有此读取契约。
 
 相关事实 Owner：[History 投影](https://github.com/xerrors/Yuxi/blob/main/backend/yuxi/modules/agents/services/messages.py)、[Thread 快照](https://github.com/xerrors/Yuxi/blob/main/backend/yuxi/modules/agents/services/threads.py)、[Turn 结果与等待点](https://github.com/xerrors/Yuxi/blob/main/backend/yuxi/modules/agents/services/turns.py)。普通用户可见 History 与受限 Model/Tool audits 继续分离，调试模型中间消息不能成为普通历史的备用数据源。
 
 SSE transport 只负责鉴权、字节解码、事件边界、取消和协议错误，前端业务 reducer 负责归属与更新。Thread 观察覆盖后继 Turn 和队列领取，不随一个 Run 或 Turn 结束就永久停止观察。Run 过滤只改变阅读范围，共享传输仍按 Thread 管理。未消费的事件不通过叶子组件决定 Thread 归属。
 
-Thread cursor 是后端拥有的复合游标，客户端保存原值并通过 Last-Event-ID 传回；Redis Run stream sequence 与 Thread cursor 不能混用。游标过期或 `agent.thread.resync` 触发回读持久状态，恢复成功后再更新连接提示。损坏事件显示可观察的协议错误并尝试快照恢复，禁止把解析异常包装成业务完成。[SSE 协议说明](https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events/Using_server-sent_events)支持事件 id 与多行 data，项目 cursor 结构以[后端事件服务](https://github.com/xerrors/Yuxi/blob/main/backend/yuxi/modules/agents/services/events.py)为准。
+Thread cursor 是后端拥有的复合游标，客户端保存原值并通过 Last-Event-ID 传回；公开事件的 event_id 用于逻辑去重，与 Thread cursor 和 Redis sequence 分别处理。游标过期或 `yuxi.session.resync` 触发回读持久状态，恢复成功后再更新连接提示。损坏事件显示可观察的协议错误并尝试快照恢复，禁止把解析异常包装成业务完成。[SSE 协议说明](https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events/Using_server-sent_events)支持事件 id 与多行 data，项目 cursor 结构以[后端事件服务](https://github.com/xerrors/Yuxi/blob/main/backend/yuxi/modules/agents/services/events.py)为准。
 
 历史读取与订阅之间的竞态是单独的验收项。当前 History 没有提供与自身读取原子对应的恢复 cursor，不能直接宣称“取历史再开流”无遗漏。先验证订阅后缓冲、回读、按明确来源去重及终态再回读的组合；若协议无法证明重放增量的身份和顺序，需由事件服务提供快照与恢复位置契约。后端契约未闭合前，不验收为可靠流式重构。
 
@@ -358,7 +358,7 @@ App bootstrap 只装配 HTTP 客户端、身份、主题和基础品牌配置。
 
 TypeScript 不取代运行时校验，也不执行授权。HTTP DTO 和 SSE event 在协议边界校验必要字段，内部使用已收敛类型；无需在每个 helper 重复 defensive fallback。由 wire DTO 到内部模型只转换一次，不能用类型断言掩盖后端缺字段。
 
-增加独立 typecheck gate，并为 TS/SFC 调整 ESLint 和测试装配。当前 Vite build 与 JS lint 不等于类型检查；[Vue TypeScript 文档](https://vuejs.org/guide/typescript/overview.html)明确 Vite 只转译，SFC 类型检查使用 `vue-tsc`。依赖增加限定为此契约确需的开发工具，不在本轮安装。
+增加独立 typecheck gate，并为 TS/SFC 调整 ESLint 和测试装配。当前 Vite build 与 JS lint 不等于类型检查；[Vue TypeScript 文档](https://vuejs.org/guide/typescript/overview.html)明确 Vite 只转译，SFC 类型检查使用 `vue-tsc`。主干阶段接入 tsc strict 与 TypeScript parser，检查新增的 TypeScript 核心；SFC 的 vue-tsc 检查和全量迁移仍属于后续阶段。
 
 基础 API 保留脱敏日志、统一鉴权和结构化业务错误。JSON 与 SSE 请求复用身份失效处理，401 由单一身份流程处理，403/404 为资源级错误；服务不可用不伪装 empty。业务模块决定局部恢复，展示层决定 inline error 或一次 toast。避免基础 API、store、页面重复报告同一错误，也避免普通错误提示泄露内部运行信息。
 
@@ -382,7 +382,7 @@ Dashboard 的跨用户审计继续使用其独立授权入口。可以复用只�
 
 ### 实施顺序与退出条件
 
-本表是后续实施建议，各阶段有可以审查和拒绝的结果。用户明确要求本轮停留在调研，所有阶段均尚未实施。分阶段用于验证职责与语义，最终删除旧框架表面，不长期维护两套聊天流程。
+本表是后续实施建议，各阶段有可以审查和拒绝的结果。应用装配与目录主干的已实施范围见[主干决策](../implemented/2026-09-30-frontend-architecture-spine.md)；本表的消息、输入和会话数据内核尚在提案。分阶段用于验证职责与语义，最终删除旧框架表面，不长期维护两套聊天流程。
 
 | 阶段 | 交付内容 | 验证方式与退出条件 |
 | --- | --- | --- |
@@ -435,7 +435,7 @@ TypeScript、组件行为测试和确定性浏览器链路需要一次建设投�
 | 多实例共享数据且视口隔离 | SSE 重复、A 消息写入 B、滚动串实例 | session / Timeline | 双实例 DOM、网络连接与释放结果 | A/B 响应乱序；同 Thread 第二个实例关闭 | Not run |
 | 重放和历史交接不重复、不漏结果 | 快照/流竞态、过期 cursor、恢复成空 | transport / reducer / 后端 events | 协议 fixture + 真实重连与持久结果 | 取快照时完成 Run、事件重复、Redis 增量过期 | Not run |
 | 最终结果归属明确 | 相邻 Run、子 Run 或模型审计替代顶层结果 | projection / 后端 turns | 持久 result_run/output_message 与 DOM 对照 | 同 Turn 存在旧 Run 和子 Run 的更晚输出 | Not run |
-| 指定子 Run 独立展示自己的结果 | 对 child 查询根 Turn 404、等待根任务才收尾、误取别的子结果 | session / 后端 runs | child Run HTTP + worker E2E，指定 output 与 DOM 核对 | 子 Run completed 而根 Turn running，同根 Turn 多子 Run | Not run |
+| 指定子轮独立展示自己的结果与等待点 | 错用父 Turn、父完成后停止子观察、误取其他子轮结果 | session / 后端 turns、runs | child Turn/Run HTTP + worker E2E，result_run、waitpoint 与 DOM 核对 | 父已完成而子仍 waiting、子恢复后产生新 Run、同 child Thread 多个 Turn | Not run |
 | 完整草稿按接收结果消费 | 图片丢失、新编辑被旧拒绝覆盖 | Composer draft / commands | 图片/文本 DOM 与持久 Input 核对 | Thread 创建失败、拒绝、提交期间加图与输入 | Not run |
 | 刷新后按已确定范围恢复草稿 | 文本与提及丢失、附件引用越权、图片被静默遗漏 | Composer draft / workspace | 刷新与重新打开浏览器的 DOM、附件 HTTP 和存储核对 | 未发送图片、在途上传、附件已删除或无权访问 | Not run |
 | 未知结果重确认不重复发送 | POST 成功但响应丢失后创建新 Input | commands / 后端 receipts | 真实 HTTP + PostgreSQL Input 数量 | 丢弃成功响应，用同 key 确认；变载荷需拒绝 | Not run |
@@ -471,6 +471,6 @@ TypeScript、组件行为测试和确定性浏览器链路需要一次建设投�
 | `docker compose exec -T frontend node --test test/unit/messageProcessor.test.js test/unit/agentInputQueue.test.js test/unit/agentThreadQueueTransition.test.js test/unit/subagentThreadLifecycle.test.js` | Passed，31 项测试通过；并发启动 Vite 测试服务出现 24678 端口占用警告，退出码为 0 |
 | `python3 scripts/verify_engineering_contracts.py` | Failed，最终复核有 4 项错误，均为其他工作区改动 builtin-tool-question-contract 提案的结果状态格式错误；本文未被报告错误 |
 | `git diff --check` | Passed，执行时已存在的工作区 diff 无空白错误；新增本文另以 Python 核对 |
-| 不继承开发上下文的独立 Reviewer 静态核对 | Inspected，steer 配置继承与子 Run 结果契约已修正并复核，无剩余阻断项；审查不替代运行验证 |
+| 不继承开发上下文的独立 Reviewer 静态核对 | Inspected；统一阅读器的实施须以公开 item 与独立子 Turn 契约为准，静态审查不替代运行验证 |
 
-前端全量 lint/unit/build、后端 unit/integration/E2E 与真实浏览器链路：`Not run`。本轮仅新增提案文档，不提交产品代码，选择了相关现状 unit 与文档 gate；没有执行真实聊天、审批、断网、身份切换或视觉截图。其他任务的 gate 错误保持由其 Owner 处理，未修改这些文件。全仓文档最终构建未通过，首次构建通过也不证明产品语义，新架构所有验收项仍为 `Not run`。
+以下结果属于调研阶段：前端全量 lint/unit/build、后端 unit/integration/E2E 与真实浏览器链路为 `Not run`。该阶段仅新增提案文档，不提交产品代码，选择了相关现状 unit 与文档 gate；没有执行真实聊天、审批、断网、身份切换或视觉截图。其他任务的 gate 错误保持由其 Owner 处理，未修改这些文件。全仓文档最终构建未通过，首次构建通过也不证明产品语义，调研未执行目标架构的运行验证；主干的直接验证由已实施记录拥有。

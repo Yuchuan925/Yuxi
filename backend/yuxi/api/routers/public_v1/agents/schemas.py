@@ -34,6 +34,7 @@ class InputImagePart(WireModel):
 class InputMessage(WireModel):
     """一条有序用户消息。"""
 
+    type: Literal["message"] = "message"
     role: Literal["user"]
     content: list[Annotated[InputTextPart | InputImagePart, Field(discriminator="type")]] = Field(
         min_length=1, max_length=18
@@ -61,16 +62,21 @@ class ThreadUpdate(WireModel):
     model_spec: str | None = None
 
 
-class MessageEvent(WireModel):
-    """接收一批 follow-up 或当前 Turn 的 steer 消息。"""
+class MessageOptions(WireModel):
+    """普通输入的优先级、执行配置与附件。"""
 
-    type: Literal["agent.thread.input.message"]
-    mode: Literal["follow_up", "steer"]
-    input: list[InputMessage] = Field(min_length=1, max_length=20)
-    turn_id: str | None = None
+    mode: Literal["follow_up", "steer"] | None = None
     model_spec: str | None = None
     tool_approval_mode: str | None = None
     attachment_file_ids: list[str] = Field(default_factory=list, max_length=20)
+
+
+class MessageEvent(WireModel):
+    """官方消息输入，业务扩展统一放入 yuxi。"""
+
+    type: Literal["agent.session.input.message"]
+    input: list[InputMessage] = Field(min_length=1, max_length=20)
+    yuxi: MessageOptions = Field(default_factory=MessageOptions)
 
 
 class OtherAnswer(WireModel):
@@ -112,30 +118,36 @@ class ApprovalResponse(WireModel):
 class ResumeEvent(WireModel):
     """消费指定 Turn 的一次等待点。"""
 
-    type: Literal["yuxi.thread.input.resume"]
+    type: Literal["yuxi.session.input.resume"]
     turn_id: str = Field(min_length=1)
     waitpoint_id: str = Field(min_length=1)
     response: Annotated[AnswerResponse | ApprovalResponse, Field(discriminator="type")]
 
 
-class CancelEvent(WireModel):
-    """取消指定 Turn。"""
+class CancelOptions(WireModel):
+    """显式取消目标，省略时由 owning transaction 选择当前 Turn。"""
 
-    type: Literal["yuxi.thread.input.cancel"]
-    turn_id: str = Field(min_length=1)
+    turn_id: str | None = Field(default=None, min_length=1)
     expected_run_id: str | None = None
 
 
-class ContinueEvent(WireModel):
-    """显式恢复暂停的 follow-up 队列。"""
+class CancelEvent(WireModel):
+    """官方取消输入和可选业务目标。"""
 
-    type: Literal["yuxi.thread.input.continue"]
+    type: Literal["agent.session.input.cancel"]
+    yuxi: CancelOptions = Field(default_factory=CancelOptions)
+
+
+class ContinueEvent(WireModel):
+    """显式恢复暂停的输入队列。"""
+
+    type: Literal["yuxi.session.input.continue"]
 
 
 class CancelInputEvent(WireModel):
-    """移除尚未领取的 follow-up Input。"""
+    """移除尚未领取的 Input 批次。"""
 
-    type: Literal["yuxi.thread.input.cancel_input"]
+    type: Literal["yuxi.session.input.cancel_input"]
     input_id: str = Field(min_length=1)
 
 

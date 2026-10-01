@@ -7,7 +7,7 @@ import {
   mergeVisibleAgentResourceSelection,
   getVisibleAgentResourceSelection,
   getAgentResourceSelectionOptions
-} from '../../src/utils/agentConfigUtils.js'
+} from '../../src/modules/agents/model/agentConfigUtils.js'
 
 test('编辑可见选择保留不可见引用，取消最后一个可见项不会禁用全部', () => {
   const original = ['visible-a', 'hidden-a', 'visible-b', 'hidden-b']

@@ -25,8 +25,9 @@ from yuxi.modules.agents.services.input_config import (
     resolve_agent_run_model_spec,
     resolve_agent_run_tool_approval_mode,
 )
-from yuxi.modules.agents.services.scheduler import Dispatch, claim_follow_up, deliver
+from yuxi.modules.agents.services.scheduler import Dispatch, claim_next_input, deliver
 from yuxi.modules.agents.services.scope import ActorScope
+from yuxi.modules.agents.services.public_items import serialize_public_items
 from yuxi.modules.agents.services.threads import require_thread
 from yuxi.modules.agents.services.input_messages import AgentRunInputMessage
 from yuxi.modules.workspace.services.projects import create_implicit_project
@@ -67,7 +68,7 @@ async def create_thread(
     _check_idempotency_key(idempotency_key)
     input_messages = list(messages or [])
     intent_hash = _intent_hash(
-        "agent.thread.create",
+        "yuxi.session.create",
         agent_slug,
         project_id,
         title,
@@ -83,7 +84,7 @@ async def create_thread(
         uid=scope.uid, app_id=scope.app_id, thread_id=thread_id, idempotency_key=idempotency_key
     )
     if existing is not None:
-        _require_replay(existing, "agent.thread.create", intent_hash)
+        _require_replay(existing, "yuxi.session.create", intent_hash)
         return _accepted(existing)
 
     user = await db.scalar(select(User).where(User.uid == scope.uid))
@@ -101,7 +102,7 @@ async def create_thread(
             uid=scope.uid, app_id=scope.app_id, thread_id=thread_id, idempotency_key=idempotency_key
         )
         if existing is not None:
-            _require_replay(existing, "agent.thread.create", intent_hash)
+            _require_replay(existing, "yuxi.session.create", intent_hash)
             return _accepted(existing)
         raise HTTPException(status_code=409, detail="Thread ID 已存在")
     thread_metadata = {"source": source, "channel": channel}
@@ -135,23 +136,22 @@ async def create_thread(
             uid=scope.uid, app_id=scope.app_id, thread_id=thread_id, idempotency_key=idempotency_key
         )
         if existing is not None:
-            _require_replay(existing, "agent.thread.create", intent_hash)
+            _require_replay(existing, "yuxi.session.create", intent_hash)
             return _accepted(existing)
         raise HTTPException(status_code=409, detail="Thread 创建冲突") from exc
     binding = await resolve_conversation_workdir_binding(
         conversation=conversation, uid=scope.uid, db=db, project=project
     )
     if input_messages:
-        receipt, dispatch = await _accept_locked(
+        receipt, dispatch = await accept_locked(
             db=db,
             scope=scope,
             conversation=conversation,
             idempotency_key=idempotency_key,
-            event_type="agent.thread.create",
+            event_type="yuxi.session.create",
             intent_hash=intent_hash,
             mode="follow_up",
             messages=input_messages,
-            turn_id=None,
             model_spec=model_spec,
             tool_approval_mode=tool_approval_mode,
             attachment_file_ids=attachment_file_ids or [],
@@ -168,7 +168,7 @@ async def create_thread(
             uid=scope.uid,
             app_id=scope.app_id,
             thread_id=thread_id,
-            event_type="agent.thread.create",
+            event_type="yuxi.session.create",
             intent_hash=intent_hash,
         )
         dispatch = None
@@ -186,9 +186,8 @@ async def accept_message(
     scope: ActorScope,
     thread_id: str,
     idempotency_key: str,
-    mode: Literal["follow_up", "steer"],
+    mode: Literal["follow_up", "steer"] | None,
     messages: list[AgentRunInputMessage],
-    turn_id: str | None = None,
     model_spec: str | None = None,
     tool_approval_mode: str | None = None,
     attachment_file_ids: list[str] | None = None,
@@ -201,12 +200,11 @@ async def accept_message(
     _check_idempotency_key(idempotency_key)
     if not messages:
         raise HTTPException(status_code=422, detail="输入消息不能为空")
-    if mode not in {"follow_up", "steer"}:
+    if mode not in {None, "follow_up", "steer"}:
         raise HTTPException(status_code=422, detail="不支持的输入模式")
     intent_hash = _intent_hash(
-        "agent.thread.input.message",
+        "agent.session.input.message",
         mode,
-        turn_id,
         model_spec,
         tool_approval_mode,
         attachment_file_ids or [],
@@ -219,7 +217,7 @@ async def accept_message(
         uid=scope.uid, app_id=scope.app_id, thread_id=thread_id, idempotency_key=idempotency_key
     )
     if existing is not None:
-        _require_replay(existing, "agent.thread.input.message", intent_hash)
+        _require_replay(existing, "agent.session.input.message", intent_hash)
         return _accepted(existing)
 
     conversation = await require_thread(db=db, scope=scope, thread_id=thread_id, lock=True)
@@ -227,19 +225,18 @@ async def accept_message(
         uid=scope.uid, app_id=scope.app_id, thread_id=thread_id, idempotency_key=idempotency_key
     )
     if existing is not None:
-        _require_replay(existing, "agent.thread.input.message", intent_hash)
+        _require_replay(existing, "agent.session.input.message", intent_hash)
         return _accepted(existing)
 
-    receipt, dispatch = await _accept_locked(
+    receipt, dispatch = await accept_locked(
         db=db,
         scope=scope,
         conversation=conversation,
         idempotency_key=idempotency_key,
-        event_type="agent.thread.input.message",
+        event_type="agent.session.input.message",
         intent_hash=intent_hash,
         mode=mode,
         messages=messages,
-        turn_id=turn_id,
         model_spec=model_spec,
         tool_approval_mode=tool_approval_mode,
         attachment_file_ids=attachment_file_ids or [],
@@ -276,11 +273,11 @@ async def get_input_snapshot(*, db: AsyncSession, scope: ActorScope, thread_id: 
         "run_id": input_item.consumed_run_id,
         "received_seq": input_item.received_seq,
         "cutoff_seq": input_item.cutoff_seq,
-        "messages": [message.to_dict() for message in messages],
+        "items": [item for message in messages for item in serialize_public_items(message, None, None)],
     }
 
 
-async def _accept_locked(
+async def accept_locked(
     *,
     db: AsyncSession,
     scope: ActorScope,
@@ -288,9 +285,8 @@ async def _accept_locked(
     idempotency_key: str,
     event_type: str,
     intent_hash: str,
-    mode: Literal["follow_up", "steer"],
+    mode: Literal["follow_up", "steer"] | None,
     messages: list[AgentRunInputMessage],
-    turn_id: str | None,
     model_spec: str | None,
     tool_approval_mode: str | None,
     attachment_file_ids: list[str],
@@ -299,9 +295,10 @@ async def _accept_locked(
     external_id: str | None,
     origin_metadata: dict | None,
     binding=None,
+    frozen_payload: dict | None = None,
 ) -> tuple[AgentInputReceipt, Dispatch | None]:
     """在调用方事务与 Thread 锁内保存回执、消息和 Input。"""
-    if conversation.status != "active":
+    if conversation.status not in {"active", "subagent"}:
         raise HTTPException(status_code=409, detail="Thread 已归档")
     turn_repo = AgentTurnRepository(db)
     active_turn = await turn_repo.lock_active_for_thread(
@@ -310,27 +307,21 @@ async def _accept_locked(
     if active_turn is not None and active_turn.status in {"waiting", "cancelling"}:
         raise HTTPException(status_code=409, detail="当前 Turn 正在等待控制输入或取消清理")
 
+    mode = mode or ("steer" if active_turn is not None else "follow_up")
     input_repo = AgentInputRepository(db)
-    if mode == "steer":
-        if active_turn is None or active_turn.id != turn_id or active_turn.current_run_id is None:
-            raise HTTPException(status_code=409, detail="Steer 目标不是当前运行的 Turn")
-        if model_spec is not None or tool_approval_mode is not None:
-            raise HTTPException(status_code=422, detail="Steer 不能修改本轮模型或审批配置")
-        current_run = await AgentRunRepository(db).get_run(active_turn.current_run_id)
-        if current_run is None or current_run.status not in {"pending", "running"}:
-            raise HTTPException(status_code=409, detail="当前 Run 不支持 Steer")
-        input_payload = dict(current_run.input_payload or {})
-        input_item = await input_repo.get_pending_steer(
-            thread_id=conversation.thread_id,
-            uid=scope.uid,
-            app_id=scope.app_id,
-            turn_id=active_turn.id,
-        )
-    else:
-        if turn_id is not None:
-            raise HTTPException(status_code=422, detail="Follow-up 不指定 Turn")
+    if mode == "steer" and (model_spec is not None or tool_approval_mode is not None):
+        raise HTTPException(status_code=422, detail="Steer 不指定模型或审批配置")
+    input_item = (
+        await input_repo.get_pending_steer(thread_id=conversation.thread_id, uid=scope.uid, app_id=scope.app_id)
+        if mode == "steer"
+        else None
+    )
+
+    if input_item is None:
         user = await db.scalar(select(User).where(User.uid == scope.uid))
-        agent_item = await AgentRepository(db).get_visible_by_slug(slug=conversation.agent_id, user=user, kind="main")
+        agent_item = await AgentRepository(db).get_visible_by_slug(
+            slug=conversation.agent_id, user=user, kind="subagent" if conversation.status == "subagent" else "main"
+        )
         if agent_item is None:
             raise HTTPException(status_code=404, detail="智能体不存在")
         try:
@@ -342,10 +333,18 @@ async def _accept_locked(
         resolved_model, approval_mode = await resolve_agent_run_config(
             requested_model, requested_approval, agent_item, backend, db
         )
-        input_payload = {"model_spec": resolved_model, "tool_approval_mode": approval_mode}
-        input_item = None
+        input_payload = frozen_payload or {"model_spec": resolved_model, "tool_approval_mode": approval_mode}
+        if conversation.status == "subagent" and frozen_payload is None:
+            previous = await AgentRunRepository(db).get_latest_subagent_run_by_thread_for_user(
+                conversation.thread_id, scope.uid
+            )
+            if previous is None:
+                raise ValueError("子 Thread 缺少已授权委派")
+            input_payload["runtime"] = dict(previous.input_payload["runtime"])
+            input_payload["delegated_attachments"] = list(previous.input_payload.get("delegated_attachments", []))
+            # Thread 关系提供执行授权，新用户 Turn 不继承旧 Turn 的委派来源。
+            origin_metadata = {"subagent_thread_relation_id": previous.subagent_thread_relation_id}
 
-    if input_item is None:
         input_item = await input_repo.create(
             input_id=str(uuid.uuid4()),
             thread_id=conversation.thread_id,
@@ -354,7 +353,6 @@ async def _accept_locked(
             api_key_id=scope.api_key_id,
             agent_slug=conversation.agent_id,
             kind=mode,
-            turn_id=active_turn.id if mode == "steer" else None,
             input_payload=input_payload,
             source=source,
             channel=channel,
@@ -371,7 +369,6 @@ async def _accept_locked(
         event_type=event_type,
         intent_hash=intent_hash,
         input_id=input_item.id,
-        turn_id=active_turn.id if mode == "steer" else None,
     )
     persisted_messages = []
     attachment_ids: list[str] = list(attachment_file_ids)
@@ -386,7 +383,6 @@ async def _accept_locked(
             image_content=message.image_content,
             extra_metadata=metadata,
             delivery_status="queued",
-            turn_id=active_turn.id if mode == "steer" else None,
         )
         db.add(persisted)
         persisted_messages.append(persisted)
@@ -401,10 +397,12 @@ async def _accept_locked(
         requested_ids = {str(file_id).strip() for file_id in attachment_ids}
         if not requested_ids.issubset({item.get("file_id") for item in bound}):
             raise HTTPException(status_code=422, detail="附件不存在或已绑定其他输入")
+        for message in persisted_messages:
+            message.extra_metadata = {**message.extra_metadata, "attachments": bound}
 
     dispatch = None
-    if mode == "follow_up" and active_turn is None and not conversation.queue_paused:
-        dispatch = await claim_follow_up(db=db, conversation=conversation, binding=binding)
+    if active_turn is None and not conversation.queue_paused:
+        dispatch = await claim_next_input(db=db, conversation=conversation, binding=binding)
         if dispatch is not None:
             await db.refresh(receipt)
     return receipt, dispatch

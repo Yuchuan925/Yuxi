@@ -28,7 +28,7 @@ test('产品创建、消息、等待恢复和队列控制仅使用 Public Thread
   const server = await createServer({ server: { middlewareMode: true }, appType: 'custom' })
   try {
     setActivePinia(createPinia())
-    const { useUserStore } = await server.ssrLoadModule('/src/stores/user.js')
+    const { useUserStore } = await server.ssrLoadModule('/src/modules/identity/model/user.js')
     const userStore = useUserStore()
     userStore.token = 'test-token'
     userStore.userId = 1
@@ -55,15 +55,16 @@ test('产品创建、消息、等待恢复和队列控制仅使用 Public Thread
     assert.equal(calls[1].url, '/api/v1/agents/threads/thread-1/events')
     assert.equal(calls[1].options.headers['Idempotency-Key'], 'message-key')
     const message = JSON.parse(calls[1].options.body).events[0]
-    assert.equal(message.type, 'agent.thread.input.message')
-    assert.equal(message.mode, 'follow_up')
+    assert.equal(message.type, 'agent.session.input.message')
+    assert.equal(message.yuxi.mode, 'follow_up')
     assert.equal(message.input[0].content[1].image_url, 'data:image/jpeg;base64,abc')
 
     await agentApi.sendThreadMessage('thread-1', {
       idempotency_key: 'steer-key', query: '改成英文',
       mode: 'steer', turn_id: 'turn-1'
     })
-    assert.equal(JSON.parse(calls[2].options.body).events[0].turn_id, 'turn-1')
+    assert.equal(JSON.parse(calls[2].options.body).events[0].yuxi.mode, 'steer')
+    assert.ok(!('turn_id' in JSON.parse(calls[2].options.body).events[0].yuxi))
 
     await agentApi.resumeThreadTurn('thread-1', {
       turn_id: 'turn-1', waitpoint_id: 'wait-1',
@@ -74,7 +75,7 @@ test('产品创建、消息、等待恢复和队列控制仅使用 Public Thread
       idempotency_key: 'resume-key'
     })
     assert.deepEqual(JSON.parse(calls[3].options.body).events[0], {
-      type: 'yuxi.thread.input.resume',
+      type: 'yuxi.session.input.resume',
       turn_id: 'turn-1',
       waitpoint_id: 'wait-1',
       response: { type: 'answer', answers: [
@@ -85,11 +86,11 @@ test('产品创建、消息、等待恢复和队列控制仅使用 Public Thread
 
     await agentApi.cancelThreadTurn('thread-1', 'turn-1', 'cancel-key', 'run-1')
     assert.deepEqual(JSON.parse(calls[4].options.body).events[0], {
-      type: 'yuxi.thread.input.cancel', turn_id: 'turn-1', expected_run_id: 'run-1'
+      type: 'agent.session.input.cancel', yuxi: { turn_id: 'turn-1', expected_run_id: 'run-1' }
     })
     await agentApi.continueThreadQueue('thread-1', 'continue-key')
     await agentApi.cancelThreadInput('thread-1', 'input-2', 'cancel-input-key')
-    assert.equal(JSON.parse(calls[5].options.body).events[0].type, 'yuxi.thread.input.continue')
+    assert.equal(JSON.parse(calls[5].options.body).events[0].type, 'yuxi.session.input.continue')
     assert.equal(JSON.parse(calls[6].options.body).events[0].input_id, 'input-2')
 
     await agentApi.streamThreadEvents('thread-1', 'cursor-7')

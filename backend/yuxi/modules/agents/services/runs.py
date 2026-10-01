@@ -33,7 +33,7 @@ async def should_yield_for_steer(run_id: str) -> bool:
 
     async with pg_manager.get_async_session_context() as db:
         run = await AgentRunRepository(db).get_run(run_id)
-        if run is None or run.run_type == "subagent" or run.status != "running":
+        if run is None or run.status != "running":
             return False
         turn = await AgentTurnRepository(db).get(run.turn_id)
         if turn is None or turn.status != "running" or turn.current_run_id != run_id:
@@ -42,7 +42,6 @@ async def should_yield_for_steer(run_id: str) -> bool:
             thread_id=run.conversation_thread_id,
             uid=run.uid,
             app_id=run.app_id,
-            turn_id=turn.id,
             for_update=False,
         )
         return pending is not None
@@ -60,17 +59,6 @@ async def settle_checkpoint(
     error_message: str | None = None,
 ) -> RunSettlement:
     """在已锁 Thread 的输出事务内决定 yielded、waiting 或整轮终态。"""
-    if run.run_type == "subagent":
-        terminal, changed = await AgentRunRepository(db).set_terminal_status(
-            run.id,
-            status=status,
-            token_usage=token_usage,
-            worker_id=worker_id,
-            error_type=error_type,
-            error_message=error_message,
-        )
-        return RunSettlement(status=terminal.status if terminal else status, changed=changed)
-
     turn_repo = AgentTurnRepository(db)
     turn = await turn_repo.get_for_scope(
         turn_id=run.turn_id,
@@ -92,7 +80,6 @@ async def settle_checkpoint(
             thread_id=run.conversation_thread_id,
             uid=run.uid,
             app_id=run.app_id,
-            turn_id=turn.id,
         )
         if pending is not None:
             terminal, changed = await run_repo.set_terminal_status(
@@ -141,7 +128,6 @@ async def settle_checkpoint(
         )
         if terminal is None or not changed:
             return RunSettlement(status=terminal.status if terminal else status, changed=False)
-        await input_repo.cancel_pending_for_turn(turn_id=turn.id)
         conversation.queue_paused = True
         if status == "failed":
             await turn_repo.set_terminal(turn, status="failed")
@@ -168,7 +154,9 @@ async def get_run_snapshot(*, db: AsyncSession, scope: ActorScope, thread_id: st
     )
     if turn is None:
         raise HTTPException(status_code=404, detail="Run 不存在")
-    result = run.to_dict()
+    from yuxi.modules.agents.services.public_items import serialize_public_run
+
+    result = serialize_public_run(run)
     if run.output_message_id is not None:
         from yuxi.modules.agents.models.messages import Message
 
@@ -176,7 +164,9 @@ async def get_run_snapshot(*, db: AsyncSession, scope: ActorScope, thread_id: st
         if message is None or message.run_id != run.id or message.turn_id != run.turn_id:
             raise ValueError("Run 输出消息归属不一致")
         await db.refresh(message, attribute_names=["tool_calls"])
-        result["output"] = message.to_dict()
+        from yuxi.modules.agents.services.public_items import serialize_public_items, serialize_public_run
+
+        result["output"] = serialize_public_items(message, run, turn.result_run_id)
     else:
         result["output"] = None
     result["langfuse_url"] = None
@@ -201,7 +191,7 @@ async def get_run_langfuse_link(*, db: AsyncSession, scope: ActorScope, thread_i
 async def _consume_steer(
     *, db: AsyncSession, conversation: Conversation, turn: AgentTurn, previous: AgentRun, pending
 ) -> str:
-    """封闭本轮 pending steer 的消息批次并建立下一执行段。"""
+    """消费 Thread 优先批次，在当前 Turn 建立下一执行段。"""
     input_repo = AgentInputRepository(db)
     messages = await input_repo.list_messages(pending.id)
     cutoff_seq = await input_repo.get_latest_receive_seq(pending.id)
@@ -218,14 +208,16 @@ async def _consume_steer(
         input_id=pending.id,
         app_id=previous.app_id,
         api_key_id=pending.api_key_id,
-        input_payload=pending.input_payload or {},
+        input_payload=previous.input_payload or {},
         source=pending.source,
         channel=pending.channel,
         external_id=pending.external_id,
         origin_metadata=pending.origin_metadata or {},
         conversation_id=conversation.id,
         resume_from_run_id=previous.id,
-        run_type="chat",
+        run_type="subagent" if previous.run_type == "subagent" else "chat",
+        created_by_run_id=previous.created_by_run_id,
+        subagent_thread_relation_id=previous.subagent_thread_relation_id,
         input_message_id=messages[0].id,
     )
     await AgentTurnRepository(db).set_current(turn, run_id=run_id)

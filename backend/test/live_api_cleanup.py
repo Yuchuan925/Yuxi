@@ -673,7 +673,7 @@ async def cleanup_test_chat_resources(
         cancel_response = await client.post(
             f"/api/v1/agents/threads/{thread_id}/events",
             headers={**headers, "Idempotency-Key": f"cleanup:{input_id}"},
-            json={"events": [{"type": "yuxi.thread.input.cancel_input", "input_id": input_id}]},
+            json={"events": [{"type": "yuxi.session.input.cancel_input", "input_id": input_id}]},
         )
         if cancel_response.status_code not in {200, 202}:
             raise RuntimeError(f"Failed to cancel pending test Input {input_id}: {cancel_response.text}")

@@ -5,7 +5,7 @@ import test from 'node:test'
 import {
   buildProjectConversationGroups,
   deriveProjectThreadStatus
-} from '../../src/utils/projectConversationGroups.js'
+} from '../../src/modules/projects/model/projectConversationGroups.js'
 
 test('项目状态优先展示运行中，其次展示未读完成', () => {
   assert.equal(deriveProjectThreadStatus([{ thread_status: 'ready' }]), 'ready')
@@ -85,7 +85,7 @@ test('最近分组保持按创建时间排序且不受更新时间影响', () =>
 
 test('侧边栏同时展示项目和最近分组，最近只展示其他对话', () => {
   const source = readFileSync(
-    new URL('../../src/components/ConversationNavSection.vue', import.meta.url),
+    new URL('../../src/modules/conversation/ui/ConversationNavSection.vue', import.meta.url),
     'utf8'
   )
   const projectHeadingIndex = source.indexOf('<span>项目</span>')
@@ -110,7 +110,7 @@ test('侧边栏同时展示项目和最近分组，最近只展示其他对话',
 
 test('项目默认折叠且提供完整名称提示', () => {
   const source = readFileSync(
-    new URL('../../src/components/ConversationNavSection.vue', import.meta.url),
+    new URL('../../src/modules/conversation/ui/ConversationNavSection.vue', import.meta.url),
     'utf8'
   )
 
@@ -124,7 +124,7 @@ test('项目默认折叠且提供完整名称提示', () => {
 
 test('项目运行状态仅在折叠时展示', () => {
   const source = readFileSync(
-    new URL('../../src/components/ConversationNavSection.vue', import.meta.url),
+    new URL('../../src/modules/conversation/ui/ConversationNavSection.vue', import.meta.url),
     'utf8'
   )
   assert.match(
@@ -135,11 +135,11 @@ test('项目运行状态仅在折叠时展示', () => {
 
 test('页面内创建的 Project 会写入共享侧边栏导航 Owner', () => {
   const layoutSource = readFileSync(
-    new URL('../../src/layouts/AppLayout.vue', import.meta.url),
+    new URL('../../src/app/layouts/AppLayout.vue', import.meta.url),
     'utf8'
   )
   const selectionSource = readFileSync(
-    new URL('../../src/components/ProjectSelectionSection.vue', import.meta.url),
+    new URL('../../src/modules/projects/ui/ProjectSelectionSection.vue', import.meta.url),
     'utf8'
   )
 
@@ -150,7 +150,7 @@ test('页面内创建的 Project 会写入共享侧边栏导航 Owner', () => {
 
 test('对话选择与操作菜单使用并列按钮语义', () => {
   const source = readFileSync(
-    new URL('../../src/components/ConversationNavItem.vue', import.meta.url),
+    new URL('../../src/modules/conversation/ui/ConversationNavItem.vue', import.meta.url),
     'utf8'
   )
 
@@ -162,20 +162,20 @@ test('对话选择与操作菜单使用并列按钮语义', () => {
 
 test('对话状态拥有常驻遮罩且项目提供带项目上下文的新建入口', () => {
   const itemSource = readFileSync(
-    new URL('../../src/components/ConversationNavItem.vue', import.meta.url),
+    new URL('../../src/modules/conversation/ui/ConversationNavItem.vue', import.meta.url),
     'utf8'
   )
   const navigationSource = readFileSync(
-    new URL('../../src/components/ConversationNavSection.vue', import.meta.url),
+    new URL('../../src/modules/conversation/ui/ConversationNavSection.vue', import.meta.url),
     'utf8'
   )
   const layoutSource = readFileSync(
-    new URL('../../src/layouts/AppLayout.vue', import.meta.url),
+    new URL('../../src/app/layouts/AppLayout.vue', import.meta.url),
     'utf8'
   )
-  const agentViewSource = readFileSync(new URL('../../src/views/AgentView.vue', import.meta.url), 'utf8')
+  const agentViewSource = readFileSync(new URL('../../src/pages/AgentView.vue', import.meta.url), 'utf8')
   const chatSource = readFileSync(
-    new URL('../../src/components/AgentChatComponent.vue', import.meta.url),
+    new URL('../../src/modules/conversation/ui/ConversationWorkspace.vue', import.meta.url),
     'utf8'
   )
 
@@ -194,7 +194,7 @@ test('对话状态拥有常驻遮罩且项目提供带项目上下文的新建�
     createProjectChatHandler.indexOf('await router.push') <
       createProjectChatHandler.indexOf('setCurrentThreadId(null)')
   )
-  assert.match(agentViewSource, /:initial-project-id="routeDraftProjectId"/)
+  assert.match(agentViewSource, /:initial-project-id="draftProjectId"/)
   assert.match(chatSource, /if \(!threadId\) selectedProjectId\.value = initialProjectId \|\| AUTO_PROJECT_ID/)
   assert.match(
     chatSource,

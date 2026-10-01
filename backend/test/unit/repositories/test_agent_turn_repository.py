@@ -136,7 +136,7 @@ async def test_usage_includes_bound_final_output_across_runs_but_excludes_unboun
 
 
 async def test_usage_includes_child_run_final_model_output_but_not_child_unbound_text(session):
-    """子 Run 共用父 Turn，已发布的最终模型行仍须按其自身输出绑定计入。"""
+    """父子 Turn 分别计量，子结果不得进入父 Turn 的输出与用量。"""
     parent_conversation = Conversation(
         thread_id="parent-thread", project_id="usage-project", uid="user-1", agent_id="main", status="active"
     )
@@ -170,14 +170,17 @@ async def test_usage_includes_child_run_final_model_output_but_not_child_unbound
     )
     session.add(relation)
     await session.flush()
+    child_turn = AgentTurn(id="child-turn", conversation_thread_id="child-thread", uid="user-1", status="completed")
+    session.add(child_turn)
+    await session.flush()
     child_run = AgentRun(
         id="child-run",
         conversation_thread_id="child-thread",
-        runtime_scope_id="parent-thread",
+        runtime_scope_id="child-thread",
         agent_slug="helper",
         uid="user-1",
         status="completed",
-        turn_id=turn.id,
+        turn_id=child_turn.id,
         conversation_id=child_conversation.id,
         created_by_run_id=parent_run.id,
         subagent_thread_relation_id=relation.id,
@@ -200,7 +203,7 @@ async def test_usage_includes_child_run_final_model_output_but_not_child_unbound
     child_unbound = Message(
         conversation_id=child_conversation.id,
         run_id=child_run.id,
-        turn_id=turn.id,
+        turn_id=child_turn.id,
         role="assistant",
         content="unbound",
         message_type="text",
@@ -211,7 +214,7 @@ async def test_usage_includes_child_run_final_model_output_but_not_child_unbound
     child_final = Message(
         conversation_id=child_conversation.id,
         run_id=child_run.id,
-        turn_id=turn.id,
+        turn_id=child_turn.id,
         role="assistant",
         content="child result",
         message_type="text",
@@ -222,11 +225,15 @@ async def test_usage_includes_child_run_final_model_output_but_not_child_unbound
     session.add_all([parent_audit, child_unbound, child_final])
     await session.flush()
     child_run.output_message_id = child_final.id
+    child_turn.current_run_id = child_run.id
+    child_turn.result_run_id = child_run.id
     turn.current_run_id = parent_run.id
     turn.result_run_id = parent_run.id
     await session.flush()
 
     audits = await AgentTurnRepository(session).list_model_usage_audits(turn.id)
 
-    assert [message.operation_id for message in audits] == ["parent-model", "child-model"]
-    assert sum(message.usage["total_tokens"] for message in audits) == 12
+    assert [message.operation_id for message in audits] == ["parent-model"]
+    child_audits = await AgentTurnRepository(session).list_model_usage_audits(child_turn.id)
+    assert [message.operation_id for message in child_audits] == ["child-model"]
+    assert sum(message.usage["total_tokens"] for message in child_audits) == 7

@@ -1,4 +1,4 @@
-import { useUserStore, checkAdminPermission, checkSuperAdminPermission } from '@/stores/user'
+import { useUserStore, checkAdminPermission, checkSuperAdminPermission } from '@/modules/identity/model/user'
 import { message } from 'ant-design-vue'
 
 function safeRequestMetadata(url, requestOptions, response = null) {

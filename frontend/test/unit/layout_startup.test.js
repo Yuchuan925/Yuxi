@@ -18,21 +18,21 @@ test('布局导航不等待品牌或知识库，卸载后清理状态同步计�
   try {
     const calls = []
     for (const [module, storeName, method, pending] of [
-      ['info', 'useInfoStore', 'loadInfoConfig', true],
-      ['config', 'useConfigStore', 'refreshConfig', false],
-      ['chatThreads', 'useChatThreadsStore', 'loadThreads', false],
-      ['projects', 'useProjectsStore', 'loadProjects', false]
+      ['settings/model/info', 'useInfoStore', 'loadInfoConfig', true],
+      ['settings/model/config', 'useConfigStore', 'refreshConfig', false],
+      ['conversation/model/chatThreads', 'useChatThreadsStore', 'loadThreads', false],
+      ['projects/model/projects', 'useProjectsStore', 'loadProjects', false]
     ]) {
-      const exports = await server.ssrLoadModule(`/src/stores/${module}.js`)
+      const exports = await server.ssrLoadModule(`/src/modules/${module}.js`)
       const store = exports[storeName]()
       t.mock.method(store, method, () => {
         calls.push(method)
         return pending ? new Promise(() => {}) : Promise.resolve()
       })
     }
-    const { useAgentStore } = await server.ssrLoadModule('/src/stores/agent.js')
+    const { useAgentStore } = await server.ssrLoadModule('/src/modules/agents/model/agent.js')
     useAgentStore().isInitialized = true
-    const { default: Layout } = await server.ssrLoadModule('/src/layouts/AppLayout.vue')
+    const { default: Layout } = await server.ssrLoadModule('/src/app/layouts/AppLayout.vue')
     const renderer = createRenderer({
       createElement: () => ({}),
       createText: () => ({}),
@@ -49,7 +49,7 @@ test('布局导航不等待品牌或知识库，卸载后清理状态同步计�
     app.provide(ssrContextKey, { modules: new Set() })
     app.use(pinia)
     app.use(createRouter({ history: createMemoryHistory(), routes: [] }))
-    const { useDatabaseStore } = await server.ssrLoadModule('/src/stores/database.js')
+    const { useDatabaseStore } = await server.ssrLoadModule('/src/modules/knowledge/model/database.js')
     const database = app.runWithContext(() => useDatabaseStore())
     t.mock.method(database, 'loadDatabases', () => {
       calls.push('loadDatabases')

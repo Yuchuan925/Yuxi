@@ -4,14 +4,18 @@ import { setImmediate } from 'node:timers'
 import { createRenderer, getCurrentInstance, h, nextTick, reactive, ssrContextKey } from 'vue'
 import { createServer } from 'vite'
 
-let server, View, api, enrichSubagentToolCall, getSubagentRunStatus
+let server, View, api, enrichSubagentToolCall, getSubagentRunStatus, useAgentThreadState, useApproval, useAgentStreamHandler
 before(async () => {
   globalThis.localStorage = { getItem: () => null, setItem() {}, removeItem() {} }
   server = await createServer({ server: { middlewareMode: true, hmr: false } })
-  ;({ default: View } = await server.ssrLoadModule('/src/components/SubagentThreadView.vue'))
+  ;({ default: View } = await server.ssrLoadModule('/src/modules/conversation/ui/SubagentThreadView.vue'))
+  ;({ useAgentThreadState } = await server.ssrLoadModule('/src/modules/conversation/model/useAgentThreadState.js'))
+  ;({ useApproval } = await server.ssrLoadModule('/src/modules/conversation/model/useApproval.js'))
+  ;({ useAgentStreamHandler } = await server.ssrLoadModule('/src/modules/conversation/model/useAgentStreamHandler.js'))
   ;({ agentApi: api } = await server.ssrLoadModule('/src/apis/index.js'))
+  api.getThreadTurn = async () => ({ turn_id: 'child-turn', status: 'completed', current_run_id: 'selected' })
   ;({ enrichSubagentToolCall, getSubagentRunStatus } = await server.ssrLoadModule(
-    '/src/components/ToolCallingResult/toolRegistry.js'
+    '/src/modules/conversation/ui/tools/toolRegistry.js'
   ))
 })
 after(async () => {
@@ -46,19 +50,23 @@ function mount(t, initial = {}) {
   }
   const app = renderer.createApp(() => h(Component, props))
   app.provide(ssrContextKey, { modules: new Set() })
+  const { getThreadState } = useAgentThreadState({ chatState: reactive({ threadStates: {} }) })
+  app.provide('getAgentThreadState', getThreadState)
+  const { approvalState, processApprovalInStream } = useApproval({
+    getThreadState, fetchThreadMessages: async () => {}, getVisibleThread: () => props.threadId
+  })
+  const { handlePublicEvent } = useAgentStreamHandler({ getThreadState, processApprovalInStream })
+  app.provide('handleSubagentEvent', handlePublicEvent)
   app.mount({})
   t.after(() => app.unmount())
-  return { props, state: () => instance.setupState }
+  return { props, state: () => instance.setupState, getThreadState, approvalState }
 }
 const history = (status = 'running') => ({
-  runs: [
-    { run_id: 'selected', status },
-    { run_id: 'other', status: 'completed' }
-  ],
-  history: [
-    { id: 'a', type: 'ai', content: 'Selected output', run_id: 'selected' },
-    { id: 'b', type: 'ai', content: 'Other output', run_id: 'other' }
-  ]
+  runs: [{ run_id: 'selected', turn_id: 'child-turn', status }, { run_id: 'other', turn_id: 'other-turn', status: 'completed' }],
+  items: ['selected', 'other'].map((id, index) => ({
+    id, type: 'message', role: 'assistant', content: [{ type: 'output_text', text: index ? 'Other output' : 'Selected output' }],
+    status: 'completed', turn_id: index ? 'other-turn' : 'child-turn', yuxi: { run_id: id, output_index: index }
+  }))
 })
 
 test('等待工具未返回时以参数 Run ID 关联目标，而不选同线程另一 Run', () => {
@@ -80,13 +88,14 @@ test('完成详情只读历史并严格显示指定 Run，不请求 checkpoint',
   const h = mount(t)
   await settle()
   assert.deepEqual(
-    h.state().messages.map((m) => m.content),
+    h.state().displayMessages.map((m) => m.content),
     ['Selected output']
   )
   assert.equal(h.state().error, '')
 })
 
 test('隐藏 Tab 不加载，激活订阅，停用关闭，重开从已有游标续接', async (t) => {
+  t.mock.method(api, 'getThreadTurn', async () => ({ turn_id: 'child-turn', status: 'running', current_run_id: 'selected' }))
   const requests = []
   t.mock.method(api, 'getAgentHistory', async () => history())
   t.mock.method(api, 'streamThreadEvents', async (threadId, cursor, { signal }) => {
@@ -95,7 +104,7 @@ test('隐藏 Tab 不加载，激活订阅，停用关闭，重开从已有游标
       new ReadableStream({
         start(controller) {
           controller.enqueue(
-            new TextEncoder().encode('id: 12-0\nevent: agent.thread.output\ndata: {"type":"agent.thread.output","run_id":"selected","payload":{}}\n\n')
+            new TextEncoder().encode('id: 12-0\nevent: yuxi.session.heartbeat\ndata: {"type":"yuxi.session.heartbeat","run_id":"selected","payload":{}}\n\n')
           )
           signal.addEventListener(
             'abort',
@@ -136,7 +145,7 @@ test('失败可重试，保留已有消息，关闭后迟到的历史响应不�
   fail = true
   await h.state().loadThread()
   assert.match(h.state().error, /重试/)
-  assert.equal(h.state().messages.length, 1)
+  assert.equal(h.state().displayMessages.length, 1)
   fail = false
   await h.state().loadThread()
   assert.equal(h.state().error, '')
@@ -144,9 +153,9 @@ test('失败可重试，保留已有消息，关闭后迟到的历史响应不�
   const pending = h.state().loadThread()
   h.props.active = false
   await settle()
-  late.resolve({ runs: [], history: [] })
+  late.resolve({ runs: [], items: [] })
   await pending
-  assert.equal(h.state().messages.length, 1)
+  assert.equal(h.state().displayMessages.length, 1)
 })
 
 test('工具行采用独立观察到的 Run 状态，启动快照不覆盖终态，调用错误仍保留', () => {
@@ -164,7 +173,7 @@ test('SSE 结束后终态查询尚未返回时隐藏 Tab，仍取消在途查询
   let signal, resolveRequest
   t.mock.method(api, 'getAgentHistory', async () => history())
   t.mock.method(api, 'streamThreadEvents', async () => new Response(''))
-  t.mock.method(api, 'getAgentRun', (_threadId, _id, options) => {
+  t.mock.method(api, 'getThreadTurn', (_threadId, _id, options) => {
     signal = options?.signal
     return new Promise((resolve) => {
       resolveRequest = resolve
@@ -177,3 +186,44 @@ test('SSE 结束后终态查询尚未返回时隐藏 Tab，仍取消在途查询
   resolveRequest({ status: 'running' })
   assert.equal(signal?.aborted, true)
 })
+
+
+test('子详情与恢复订阅共用同一 item 状态，父终态后恢复内容仍直接展示', async (t) => {
+  t.mock.method(api, 'getAgentHistory', async () => history('completed'))
+  const mounted = mount(t)
+  await settle()
+  const state = mounted.getThreadState('child')
+  state.onGoingConv.items.resumed = {
+    id: 'resumed', type: 'message', role: 'assistant', status: 'completed', turn_id: 'child-turn',
+    content: [{ type: 'output_text', text: 'Resumed output' }], yuxi: { run_id: 'resume', message_id: 3 }
+  }
+  await settle()
+  assert.deepEqual(mounted.state().displayMessages.map((m) => m.content), ['Selected output', 'Resumed output'])
+})
+
+for (const [name, stream] of [
+  ['断流', ''],
+  ['重同步', 'data: {"type":"yuxi.session.resync","session_id":"child"}\n\n']
+]) {
+  test(`子详情${name}快照恢复等待点，无需重开面板即可回答`, async (t) => {
+    let currentTurn = { turn_id: 'child-turn', status: 'running', current_run_id: 'selected' }
+    t.mock.method(api, 'getAgentHistory', async () => history())
+    t.mock.method(api, 'getThreadTurn', async () => currentTurn)
+    t.mock.method(api, 'streamThreadEvents', async () => {
+      currentTurn = { ...currentTurn, status: 'waiting', waitpoint: {
+        id: 'child-wait', run_id: 'selected', kind: 'answer',
+        questions: [{ question_id: 'q-1', question: '子任务的问题？', options: [], allow_other: true }]
+      } }
+      return new Response(stream)
+    })
+    const mounted = mount(t)
+    await settle()
+    const child = mounted.getThreadState('child')
+    assert.equal(child.currentTurnId, 'child-turn')
+    assert.equal(child.pendingInterrupt.waitpointId, 'child-wait')
+    assert.equal(mounted.approvalState.showModal, true)
+    assert.equal(mounted.approvalState.threadId, 'child')
+    assert.equal(mounted.approvalState.questions[0].question, '子任务的问题？')
+    assert.equal(mounted.state().streamActive, false)
+  })
+}

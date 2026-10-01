@@ -235,7 +235,6 @@ async def test_product_key_active_turn_and_steer_uniqueness_are_enforced() -> No
                 app_id=None,
                 agent_slug="main",
                 kind="steer",
-                turn_id="turn-active",
             )
             await db.commit()
 
@@ -266,8 +265,11 @@ async def test_product_key_active_turn_and_steer_uniqueness_are_enforced() -> No
                     app_id=None,
                     agent_slug="main",
                     kind="steer",
-                    turn_id="turn-active",
                 )
+            await db.rollback()
+
+            with pytest.raises(IntegrityError, match="ck_agent_inputs_delivery"):
+                await db.execute(text("UPDATE agent_inputs SET turn_id = 'turn-active' WHERE id = 'steer-one'"))
             await db.rollback()
 
         async with engine.begin() as connection:
@@ -376,8 +378,8 @@ async def test_run_execution_sequence_orders_segments_across_a_turn() -> None:
         await _drop_schema(schema, admin_engine, engine)
 
 
-async def test_turn_usage_counts_parent_and_child_published_model_output_with_exact_owner() -> None:
-    """父子 Run 的模型调用同轮计数，错 Run 或错 Turn 的文本不得混入。"""
+async def test_parent_and_child_usage_stays_in_its_own_turn() -> None:
+    """父子 Turn 分别计数，错 Run 或错 Turn 的文本不得混入。"""
     schema, admin_engine, engine = await _create_schema()
     try:
         sessions = async_sessionmaker(engine, expire_on_commit=False)
@@ -415,13 +417,16 @@ async def test_turn_usage_counts_parent_and_child_published_model_output_with_ex
             )
             db.add(relation)
             await db.flush()
+            child_turn = await AgentTurnRepository(db).create(
+                turn_id="child-usage-turn", thread_id=child_conversation.thread_id, uid="input-user", app_id=None
+            )
             child_run = await runs.create_run(
                 run_id="usage-child",
                 conversation_thread_id=child_conversation.thread_id,
-                runtime_scope_id=parent_conversation.thread_id,
+                runtime_scope_id=child_conversation.thread_id,
                 agent_slug="helper",
                 uid="input-user",
-                turn_id=turn.id,
+                turn_id=child_turn.id,
                 conversation_id=child_conversation.id,
                 run_type="subagent",
                 created_by_run_id=parent_run.id,
@@ -459,7 +464,7 @@ async def test_turn_usage_counts_parent_and_child_published_model_output_with_ex
             child_audit = Message(
                 conversation_id=child_conversation.id,
                 run_id=child_run.id,
-                turn_id=turn.id,
+                turn_id=child_turn.id,
                 role="assistant",
                 content="tool call",
                 message_type="model_audit",
@@ -492,7 +497,7 @@ async def test_turn_usage_counts_parent_and_child_published_model_output_with_ex
             child_final = Message(
                 conversation_id=child_conversation.id,
                 run_id=child_run.id,
-                turn_id=turn.id,
+                turn_id=child_turn.id,
                 role="assistant",
                 content="child result",
                 message_type="text",
@@ -509,14 +514,53 @@ async def test_turn_usage_counts_parent_and_child_published_model_output_with_ex
 
         async with sessions() as db:
             audits = await AgentTurnRepository(db).list_model_usage_audits(turn.id)
-            assert [message.operation_id for message in audits] == [
-                "parent-model",
-                "child-tool-model",
-                "child-final-model",
-            ]
+            assert [message.operation_id for message in audits] == ["parent-model"]
             assert {
                 key: sum(message.usage[key] for message in audits)
                 for key in ("input_tokens", "output_tokens", "total_tokens")
-            } == {"input_tokens": 9, "output_tokens": 6, "total_tokens": 15}
+            } == {"input_tokens": 3, "output_tokens": 2, "total_tokens": 5}
+            child_audits = await AgentTurnRepository(db).list_model_usage_audits(child_turn.id)
+            assert [message.operation_id for message in child_audits] == ["child-tool-model", "child-final-model"]
+            assert sum(message.usage["total_tokens"] for message in child_audits) == 10
+    finally:
+        await _drop_schema(schema, admin_engine, engine)
+
+
+async def test_reused_tool_call_id_never_reuses_another_message_declaration():
+    """供应商重复 call_id 时，每条声明仍拥有独立 ToolCall 投影。"""
+    from yuxi.modules.agents.repositories.threads import ConversationRepository
+
+    schema, admin_engine, engine = await _create_schema()
+    try:
+        sessions = async_sessionmaker(engine, expire_on_commit=False)
+        async with sessions() as db:
+            conversation = await db.scalar(select(Conversation).where(Conversation.thread_id == "input-thread"))
+            messages = [
+                Message(conversation_id=conversation.id, role="assistant", content="", extra_metadata={})
+                for _ in range(2)
+            ]
+            db.add_all(messages)
+            await db.flush()
+            repository = ConversationRepository(db)
+            first, second = [
+                await repository.add_tool_call(
+                    message_id=message.id,
+                    tool_name="execute",
+                    tool_input={"command": str(message.id)},
+                    langgraph_tool_call_id="provider-reused-id",
+                    commit=False,
+                )
+                for message in messages
+            ]
+            assert first.id != second.id and second.message_id == messages[1].id
+            repeated = await repository.add_tool_call(
+                message_id=messages[0].id,
+                tool_name="execute",
+                tool_input={"command": str(messages[0].id)},
+                langgraph_tool_call_id="provider-reused-id",
+                commit=False,
+            )
+            assert repeated.id == first.id
+            await db.commit()
     finally:
         await _drop_schema(schema, admin_engine, engine)

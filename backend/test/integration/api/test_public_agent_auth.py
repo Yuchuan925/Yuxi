@@ -24,7 +24,7 @@ async def test_public_thread_endpoints_require_authentication(test_client):
     assert (await test_client.get(f"/api/v1/agents/threads/{thread_id}")).status_code == 401
     cancelled = await test_client.post(
         f"/api/v1/agents/threads/{thread_id}/events",
-        json={"events": [{"type": "yuxi.thread.input.cancel", "turn_id": str(uuid.uuid4())}]},
+        json={"events": [{"type": "agent.session.input.cancel", "yuxi": {"turn_id": str(uuid.uuid4())}}]},
         headers=headers,
     )
     assert cancelled.status_code == 401
@@ -103,10 +103,9 @@ async def test_public_input_rejects_unbound_attachment_without_persisting_receip
             json={
                 "events": [
                     {
-                        "type": "agent.thread.input.message",
-                        "mode": "follow_up",
+                        "type": "agent.session.input.message",
                         "input": [{"role": "user", "content": [{"type": "input_text", "text": "read attachment"}]}],
-                        "attachment_file_ids": [file_id],
+                        "yuxi": {"mode": "follow_up", "attachment_file_ids": [file_id]},
                     }
                 ]
             },
@@ -131,7 +130,7 @@ async def test_public_input_rejects_unbound_attachment_without_persisting_receip
             if input_id:
                 cancelled = await test_client.post(
                     f"/api/v1/agents/threads/{thread_id}/events",
-                    json={"events": [{"type": "yuxi.thread.input.cancel_input", "input_id": input_id}]},
+                    json={"events": [{"type": "yuxi.session.input.cancel_input", "input_id": input_id}]},
                     headers={**admin_headers, "Idempotency-Key": str(uuid.uuid4())},
                 )
                 assert cancelled.status_code == 202, cancelled.text

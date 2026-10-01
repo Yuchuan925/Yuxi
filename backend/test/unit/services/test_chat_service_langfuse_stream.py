@@ -1,66 +1,410 @@
+"""执行边界使用原生协议和独立执行结果，业务持久化由 assembled E2E 证明。"""
+
 from __future__ import annotations
 
 import asyncio
-import json
 import threading
 from contextlib import asynccontextmanager
+from copy import deepcopy
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
-from langchain.messages import AIMessageChunk, HumanMessage
-
+from langchain.messages import HumanMessage, ToolMessage
+from langgraph.types import Command
 from test.unit.agent_context_fixtures import prepared_execution
+from test.unit.services.test_openai_event_adapter import native
+from yuxi.modules.agents.runtime.base import BaseAgent, GraphExecutionResult
+from yuxi.modules.agents.runtime.context import BaseContext
+from yuxi.modules.agents.runtime.middlewares.steer import SteerMiddleware
 import yuxi.modules.agents.services.execution as svc
 from yuxi.modules.agents.services.execution import RunExecutionResult
 from yuxi.modules.agents.services.input_messages import build_chat_input_message
 from yuxi.modules.agents.services.tracing import LangfuseRunContext
 
 
-def _chunk(event):
-    """展开执行终结结果，保留原始结构化增量。"""
-    return event.chunk if isinstance(event, RunExecutionResult) else event
+class _FakeSession:
+    """记录服务拥有的事务边界。"""
+
+    def __init__(self):
+        self.commit_count = 0
+        self.rollback_count = 0
+
+    async def commit(self):
+        self.commit_count += 1
+
+    async def rollback(self):
+        self.rollback_count += 1
 
 
-@pytest.mark.asyncio
-async def test_interrupt_decode_failure_cannot_be_treated_as_completion(monkeypatch):
-    """最终 checkpoint 的中断解码失败时必须阻止完成投影。"""
+def _patch_stream_scaffolding(monkeypatch, *, agent, supply_checkpoint=True, **_kwargs):
+    """只隔离持久化与可选观测，不替换公开协议适配。"""
 
-    def broken_interrupt(_state):
-        raise ValueError("interrupt decode failed")
+    async def resolve(**kwargs):
+        return (
+            SimpleNamespace(slug="test-agent", name="测试", backend_id="ChatbotAgent"),
+            agent,
+            prepared_execution().context,
+            SimpleNamespace(id=1),
+        )
 
-    monkeypatch.setattr(svc, "_extract_interrupt_info", broken_interrupt)
-    state = SimpleNamespace(values={"messages": ["hello"]})
-    with pytest.raises(ValueError, match="interrupt decode failed"):
-        async for _ in svc.check_and_handle_interrupts(state, lambda **kw: kw, {}, "thread-1"):
-            pass
+    class ConvRepo:
+        def __init__(self, db):
+            self.db = db
+
+        async def get_attachments(self, _id):
+            return []
+
+    async def save(**kwargs):
+        return "interrupted" if kwargs["interrupt_run"] else "completed"
+
+    async def save_item(adapter, operation, role, key, item, content_index=None):
+        return {
+            **deepcopy(item),
+            "id": f"{operation}:{role}:{key}",
+            "turn_id": adapter.turn_id,
+            "yuxi": {**item.get("yuxi", {}), "run_id": adapter.run_id, "output_index": 0, "message_id": 1},
+        }
+
+    @asynccontextmanager
+    async def session():
+        yield _FakeSession()
+
+    monkeypatch.setattr(svc, "_resolve_agent_runtime", resolve)
+    monkeypatch.setattr(svc, "ConversationRepository", ConvRepo)
+    monkeypatch.setattr(svc, "AgentRunRepository", lambda db: SimpleNamespace(get_run=AsyncMock(return_value=None)))
+    monkeypatch.setattr(svc, "_persist_agent_run_langfuse_trace", AsyncMock())
+    monkeypatch.setattr(svc, "_build_langfuse_run_context", lambda **kw: LangfuseRunContext())
+    monkeypatch.setattr(svc, "get_trace_info", lambda _: {"langfuse_trace_id": "trace"})
+    monkeypatch.setattr(svc, "flush_langfuse", lambda: None)
+    monkeypatch.setattr(svc, "save_messages_from_langgraph_state", save)
+    monkeypatch.setattr(svc, "save_partial_message", AsyncMock(return_value=SimpleNamespace(id=2)))
+    monkeypatch.setattr(svc.RunMessageRecorder, "consume", AsyncMock(side_effect=lambda event: event))
+    monkeypatch.setattr(svc.OpenAIEventAdapter, "_save", save_item)
+    monkeypatch.setattr(svc.OpenAIEventAdapter, "finish", AsyncMock(return_value=[]))
+    monkeypatch.setattr(svc.pg_manager, "get_async_session_context", session)
 
 
-@pytest.mark.asyncio
-async def test_init_preserves_multimodal_image_value(monkeypatch):
-    """聊天 init 增量必须交付原始图片值，不能退化为布尔标志。"""
+class FakeAgent:
+    """控制真实执行边界的协议序列和独立 checkpoint。"""
 
-    class FakeAgent:
-        async def stream_messages_with_state(self, *_args, **_kwargs):
-            if False:
-                yield None
+    def __init__(self, events=(), checkpoint=None, error=None, missing=False):
+        self.events = events
+        self.checkpoint = checkpoint or SimpleNamespace(values={})
+        self.error = error
+        self.missing = missing
+        self.input = None
+        self.kwargs = None
 
-    _patch_stream_scaffolding(monkeypatch, agent=FakeAgent())
-    stream = svc.stream_agent_chat(
+    async def stream_messages_with_state(self, value, **kwargs):
+        self.input, self.kwargs = value, kwargs
+        if kwargs.get("on_prepared"):
+            await kwargs["on_prepared"]()
+        for event in self.events:
+            yield event
+        if self.error:
+            raise self.error
+        if not self.missing:
+            yield GraphExecutionResult(checkpoint=self.checkpoint)
+
+    stream_resume_with_state = stream_messages_with_state
+
+
+def execute(mode="chat", *, db=None, on_prepared=None, image=None):
+    """chat/resume 使用相同持久化身份和已冻结的执行快照。"""
+    kwargs = dict(
         prepared_execution=prepared_execution(),
-        agent_slug="test-agent",
         thread_id="thread-1",
         meta={"turn_id": "turn-1", "run_id": "run-1", "worker_id": "worker-1"},
-        input_messages=[build_chat_input_message("看图", "BASE64DATA")],
         current_user=SimpleNamespace(uid="user-1"),
-        db=_FakeSession(),
+        db=db or _FakeSession(),
+        on_prepared=on_prepared,
     )
-    try:
-        init = _chunk(await anext(stream))
-    finally:
-        await stream.aclose()
-    assert init["status"] == "init"
-    assert init["msg"]["image_content"] == "BASE64DATA"
+    return (
+        svc.stream_agent_chat(
+            **kwargs, agent_slug="test-agent", input_messages=[build_chat_input_message("hello", image)]
+        )
+        if mode == "chat"
+        else svc.stream_agent_resume(**kwargs, resume_input={"answer": "yes"})
+    )
+
+
+def text_events(text="hello", metadata=None):
+    """原生模型正文有明确的模型操作和内容块身份。"""
+    events = [
+        native(0, {"event": "message-start", "id": "model"}),
+        native(1, {"event": "content-block-delta", "index": 0, "delta": {"type": "text-delta", "text": text}}),
+    ]
+    if metadata:
+        for event in events:
+            event["params"]["data"] = (event["params"]["data"][0], metadata)
+    return events
+
+
+@pytest.mark.parametrize("boundary", ["before_model", "after_tools", "after_model"])
+async def test_cancelled_steer_continues_real_graph_without_replaying_input(monkeypatch, boundary):
+    """取消让位批次不重放输入或工具；模型后结束不产生额外模型调用。"""
+    from langchain.agents import create_agent
+    from langchain.messages import AIMessage
+    from langchain.tools import tool
+    from langchain_core.outputs import ChatGeneration, ChatResult
+    from langgraph.checkpoint.memory import InMemorySaver
+    from test.unit.middlewares.test_steer_safety_gate import _FinalAnswerModel
+    from yuxi.modules.agents.services import runs
+
+    cancelled = False
+    tool_calls = 0
+
+    class Model(_FinalAnswerModel):
+        """工具场景先请求一次工具，然后生成最终回答。"""
+
+        def bind_tools(self, tools, **kwargs):
+            """测试模型接受图的工具绑定。"""
+            return self
+
+        def _generate(self, messages, stop=None, run_manager=None, **kwargs):
+            """生成固定工具请求或继承最终回答。"""
+            if boundary == "after_tools" and self.call_count == 0:
+                self.call_count += 1
+                return ChatResult(
+                    generations=[
+                        ChatGeneration(
+                            message=AIMessage(
+                                content="",
+                                tool_calls=[{"name": "complete_tool", "args": {}, "id": "tool-1", "type": "tool_call"}],
+                            )
+                        )
+                    ]
+                )
+            return super()._generate(messages, stop=stop, run_manager=run_manager, **kwargs)
+
+    @tool
+    def complete_tool() -> str:
+        """记录实际工具执行，检查 checkpoint 继续不重复副作用。"""
+        nonlocal tool_calls
+        tool_calls += 1
+        return "tool done"
+
+    model = Model()
+
+    async def should_yield(run_id):
+        return not cancelled and (
+            boundary == "before_model"
+            or (boundary == "after_tools" and tool_calls > 0)
+            or (boundary == "after_model" and model.call_count > 0)
+        )
+
+    monkeypatch.setattr(runs, "should_yield_for_steer", should_yield)
+    graph = create_agent(
+        model=model,
+        middleware=[SteerMiddleware()],
+        context_schema=BaseContext,
+        tools=[complete_tool] if boundary == "after_tools" else [],
+        checkpointer=InMemorySaver(),
+    )
+
+    class Agent(BaseAgent):
+        """保持同一图和 checkpoint，使用实际 BaseAgent 协议适配。"""
+
+        async def get_graph(self, **kwargs):
+            return graph
+
+    _patch_stream_scaffolding(monkeypatch, agent=Agent())
+    # 本例验证 checkpoint 执行继续，公开投影和审计落库由各自测试拥有。
+    monkeypatch.setattr(svc.OpenAIEventAdapter, "consume", AsyncMock(return_value=[]))
+    checkpoints = []
+
+    async def save(**kwargs):
+        nonlocal cancelled
+        checkpoints.append(kwargs["state"])
+        assert (kwargs["run_id"], kwargs["worker_id"]) == ("run-1", "worker-1")
+        cancelled = True
+        if kwargs["steer_before_model"]:
+            return "running"
+        return "completed"
+
+    monkeypatch.setattr(svc, "save_messages_from_langgraph_state", save)
+    results = [event async for event in execute() if isinstance(event, RunExecutionResult)]
+    assert len(results) == 1 and results[0].status == "completed"
+    assert len(checkpoints) == (1 if boundary == "after_model" else 2)
+    assert model.call_count == (2 if boundary == "after_tools" else 1)
+    assert tool_calls == (1 if boundary == "after_tools" else 0)
+    messages = results[0].checkpoint.values["messages"]
+    assert [message.content for message in messages if isinstance(message, HumanMessage)] == ["hello"]
+    assert len([message for message in messages if isinstance(message, AIMessage)]) == model.call_count
+
+
+async def test_cancelled_steer_continuation_keeps_extension_event_ids_unique(monkeypatch):
+    """图继续时源 seq 重新开始，公开状态和压缩事件仍有不同身份。"""
+
+    class Agent(FakeAgent):
+        """生成两个图段，各自从相同 seq 开始。"""
+
+        calls = 0
+
+        async def stream_messages_with_state(self, value, **kwargs):
+            """返回不同业务状态及可复现的源序号冲突。"""
+            self.calls += 1
+            state = {"todos": [{"content": f"segment-{self.calls}", "status": "pending"}]}
+            yield {"method": "values", "seq": 1, "params": {"data": state, "namespace": []}}
+            yield {
+                "method": "custom",
+                "seq": 2,
+                "params": {
+                    "data": {"type": "yuxi.context_compression", "summary": f"segment-{self.calls}"},
+                },
+            }
+            yield GraphExecutionResult(checkpoint=SimpleNamespace(values=state), steer_before_model=self.calls == 1)
+
+    _patch_stream_scaffolding(monkeypatch, agent=Agent())
+    monkeypatch.setattr(svc, "save_messages_from_langgraph_state", AsyncMock(side_effect=["running", "completed"]))
+    events = [event async for event in execute() if isinstance(event, dict)]
+    assert len(events) == 4
+    assert len({event["event_id"] for event in events}) == 4
+    states = [event["agent_state"]["todos"][0]["content"] for event in events if "agent_state" in event]
+    assert states == ["segment-1", "segment-2"]
+
+
+@pytest.mark.parametrize("mode", ["chat", "resume"])
+@pytest.mark.parametrize("defect", ["missing_checkpoint", "bad_interrupt", "save_rejected"])
+async def test_execution_failure_cannot_publish_completed_result(monkeypatch, mode, defect):
+    """缺 checkpoint、中断解码错误或事务拒绝都不能形成成功结果。"""
+    agent = FakeAgent(missing=defect == "missing_checkpoint")
+    _patch_stream_scaffolding(monkeypatch, agent=agent)
+    if defect == "bad_interrupt":
+        monkeypatch.setattr(
+            svc, "_extract_interrupt_info", lambda _: (_ for _ in ()).throw(ValueError("decode failed"))
+        )
+    if defect == "save_rejected":
+        monkeypatch.setattr(
+            svc, "save_messages_from_langgraph_state", AsyncMock(side_effect=ValueError("binding rejected"))
+        )
+    results = [event async for event in execute(mode)]
+    result = results[-1]
+    assert isinstance(result, RunExecutionResult) and result.status == "failed"
+    assert result.committed is True
+    assert result.error_type == "execution_error"
+    assert not any(isinstance(e, RunExecutionResult) and e.status == "completed" for e in results)
+
+
+@pytest.mark.parametrize("mode", ["chat", "resume"])
+async def test_prepared_commit_precedes_graph_and_checkpoint_settlement(monkeypatch, mode):
+    """图开始前提交 trace 事务，终态以独立执行结果传递。"""
+    agent, db = FakeAgent(text_events()), _FakeSession()
+    _patch_stream_scaffolding(monkeypatch, agent=agent)
+
+    async def prepared():
+        assert db.commit_count == 1
+
+    events = [event async for event in execute(mode, db=db, on_prepared=prepared)]
+    assert events[-1] == RunExecutionResult(checkpoint=agent.checkpoint, status="completed", committed=True)
+    assert [e["delta"] for e in events if isinstance(e, dict) and e["type"].endswith("output_text.delta")] == ["hello"]
+    assert "checkpoint" not in str([e for e in events if isinstance(e, dict)])
+    if mode == "resume":
+        assert isinstance(agent.input, Command) and agent.input.resume == {"answer": "yes"}
+        assert not any(isinstance(e, dict) and "input" in e["type"] for e in events)
+    else:
+        assert isinstance(agent.input[0], HumanMessage)
+
+
+async def test_execution_forwards_recorded_command_result_to_public_adapter(monkeypatch):
+    """实际执行循环必须使用记录器返回的事件，不能再次投影原始 Command。"""
+    consume = svc.RunMessageRecorder.consume
+    command = Command(update={"messages": [ToolMessage(content="目标结果", tool_call_id="call")]})
+    source = native(3, {"event": "tool-finished", "tool_call_id": "call", "output": command}, "tools")
+    agent = FakeAgent(
+        [
+            native(0, {"event": "message-start", "id": "model"}),
+            native(
+                1,
+                {
+                    "event": "content-block-finish",
+                    "content": {"type": "tool_call", "id": "call", "name": "search", "args": {}},
+                },
+            ),
+            native(2, {"event": "tool-started", "tool_call_id": "call", "tool_name": "search", "input": {}}, "tools"),
+            source,
+        ]
+    )
+    _patch_stream_scaffolding(monkeypatch, agent=agent)
+    monkeypatch.setattr(svc.RunMessageRecorder, "consume", consume)
+    monkeypatch.setattr(svc.RunMessageRecorder, "_consume_model", AsyncMock())
+    monkeypatch.setattr(svc.RunMessageRecorder, "_consume_tool", AsyncMock())
+
+    events = [event async for event in execute()]
+    output = next(
+        event["item"]
+        for event in events
+        if isinstance(event, dict)
+        and event.get("item", {}).get("type") == "function_call_output"
+        and event["item"]["status"] == "completed"
+    )
+    assert output["output"] == "目标结果" and output["call_id"] == "call"
+    assert source["params"]["data"]["output"] is command
+    assert events[-1].status == "completed"
+
+
+async def test_multimodal_value_is_passed_to_model_without_public_init_wrapper(monkeypatch):
+    """用户图片保留在真实模型输入，执行不再生成重复 init 消息。"""
+    agent = FakeAgent()
+    _patch_stream_scaffolding(monkeypatch, agent=agent)
+    events = [event async for event in execute(image="BASE64DATA")]
+    assert "BASE64DATA" in str(agent.input[0].content)
+    assert len(events) == 1 and events[0].status == "completed"
+
+
+async def test_partial_failure_saves_displayed_text_and_trace_before_done(monkeypatch):
+    """失败前已展示的内容先保存，失败结果不伪装为业务完成。"""
+    agent = FakeAgent(text_events("partial"), error=RuntimeError("stream failed"))
+    _patch_stream_scaffolding(monkeypatch, agent=agent)
+    saved = svc.save_partial_message
+    incomplete = AsyncMock()
+    monkeypatch.setattr(svc.OpenAIEventAdapter, "persist_incomplete", incomplete)
+    events = [event async for event in execute()]
+    assert saved.await_args.kwargs["full_msg"].content == "partial"
+    assert saved.await_args.kwargs["trace_info"] == {"langfuse_trace_id": "trace"}
+    incomplete.assert_awaited_once()
+    assert events[-1].status == "failed"
+
+
+async def test_values_and_custom_events_use_explicit_extensions(monkeypatch):
+    """状态白名单与压缩通知保持来源顺序，不泄漏 checkpoint 内容。"""
+    events = [
+        native(1, {"todos": [{"task": "work"}], "messages": ["private prompt"]}, "values"),
+        native(2, {"type": "yuxi.context_compression", "status": "started"}, "custom"),
+    ]
+    events[0]["params"]["namespace"] = []
+    agent = FakeAgent(events)
+    _patch_stream_scaffolding(monkeypatch, agent=agent)
+    output = [event async for event in execute()]
+    assert [event["type"] for event in output[:-1]] == [
+        "yuxi.session.turn.state",
+        "yuxi.session.turn.context_compression",
+    ]
+    assert output[0]["agent_state"]["todos"] == [{"task": "work"}]
+    assert "private prompt" not in str(output[:-1])
+
+
+async def test_foreign_explicit_thread_is_not_routed_to_parent(monkeypatch):
+    """不同执行 Thread 的模型事件不能进入父 Thread 输出。"""
+    agent = FakeAgent(text_events("child", {"run_id": "model", "thread_id": "child"}))
+    _patch_stream_scaffolding(monkeypatch, agent=agent)
+    events = [event async for event in execute()]
+    assert len(events) == 1 and events[0].status == "completed"
+
+
+@pytest.mark.parametrize("mode", ["chat", "resume"])
+async def test_interrupt_settlement_binds_waitpoint_to_own_run(monkeypatch, mode):
+    """问答等待从 checkpoint 解析并交由业务事务绑定真实 Run。"""
+    state = SimpleNamespace(values={"__interrupt__": [{"questions": [{"question_id": "q", "question": "Where?"}]}]})
+    agent = FakeAgent(checkpoint=state)
+    _patch_stream_scaffolding(monkeypatch, agent=agent)
+    saved = AsyncMock(return_value="interrupted")
+    monkeypatch.setattr(svc, "save_messages_from_langgraph_state", saved)
+    events = [event async for event in execute(mode)]
+    assert events[-1].status == "interrupted" and events[-1].committed
+    assert saved.await_args.kwargs["waitpoint"]["run_id"] == "run-1"
+    assert saved.await_args.kwargs["waitpoint"]["kind"] == "answer"
 
 
 async def test_slow_langfuse_flush_does_not_hold_run_completion(monkeypatch):
@@ -151,7 +495,7 @@ async def test_service_consumer_cancel_closes_real_graph(monkeypatch, mode):
         """精确在真实节点产生的事件处停止消费。"""
         async with aclosing(_consume_stream_with_cancel(stream, RunContext("run", "owner"))) as chunks:
             async for chunk in chunks:
-                if _chunk(chunk)["status"] == "context_compression":
+                if isinstance(chunk, dict) and chunk["type"] == "yuxi.session.turn.context_compression":
                     consuming.set()
                     await asyncio.Event().wait()
 
@@ -173,364 +517,6 @@ async def test_service_consumer_cancel_closes_real_graph(monkeypatch, mode):
             await run.abort()
 
 
-async def _fake_normalize_agent_context_config(context, **_kwargs):
-    return dict(context or {})
-
-
-async def _fake_save_messages_from_langgraph_state(
-    *,
-    state,
-    thread_id,
-    conv_repo,
-    trace_info,
-    run_id=None,
-    turn_id=None,
-    worker_id=None,
-    complete_run=False,
-    interrupt_run=False,
-    interrupt_error_type=None,
-    interrupt_error_message=None,
-    token_usage=None,
-    waitpoint=None,
-):
-    del state, thread_id, conv_repo, trace_info
-    del run_id, turn_id, worker_id, interrupt_error_type, interrupt_error_message, token_usage, waitpoint
-    return complete_run or interrupt_run
-
-
-async def _fake_interrupts(state, make_chunk, meta, thread_id):
-    if False:
-        yield None
-    return
-
-
-@pytest.mark.parametrize("mode", ["chat", "resume"])
-async def test_missing_final_checkpoint_cannot_publish_finished(monkeypatch, mode):
-    """缺少持久状态时不能凭流已结束伪造完成。"""
-
-    class Agent:
-        """模拟缺少协议终点的执行器。"""
-
-        async def stream_messages_with_state(self, *args, **kwargs):
-            """正常耗尽，但未提供 checkpoint。"""
-            if False:
-                yield None
-
-        stream_resume_with_state = stream_messages_with_state
-
-    agent = Agent()
-    original = agent.stream_messages_with_state
-    saved = AsyncMock()
-    _patch_stream_scaffolding(monkeypatch, agent=agent, save_messages=saved)
-    monkeypatch.setattr(agent, "stream_messages_with_state", original)
-    monkeypatch.setattr(agent, "stream_resume_with_state", original)
-    monkeypatch.setattr(svc, "save_partial_message", AsyncMock())
-
-    @asynccontextmanager
-    async def error_session():
-        """异常路径也使用隔离会话，不在 unit 中启动真实连接池。"""
-        yield _FakeSession()
-
-    monkeypatch.setattr(svc.pg_manager, "get_async_session_context", error_session)
-    kwargs = dict(
-        thread_id="thread-1",
-        meta={"turn_id": "turn-1", "run_id": "run-1", "worker_id": "worker-1"},
-        current_user=SimpleNamespace(uid="user-1"),
-        db=_FakeSession(),
-    )
-    stream = (
-        svc.stream_agent_chat(
-            prepared_execution=prepared_execution(),
-            **kwargs,
-            agent_slug="test-agent",
-            input_messages=[build_chat_input_message("hi")],
-        )
-        if mode == "chat"
-        else svc.stream_agent_resume(
-            prepared_execution=prepared_execution(),
-            **kwargs,
-            resume_input={},
-        )
-    )
-    chunks = [_chunk(chunk) async for chunk in stream]
-    assert chunks[-1]["status"] == "error"
-    assert "checkpoint" in json.dumps(chunks[-1], ensure_ascii=False)
-    assert all(chunk["status"] != "finished" for chunk in chunks)
-    saved.assert_not_awaited()
-
-
-def _patch_stream_scaffolding(
-    monkeypatch: pytest.MonkeyPatch,
-    *,
-    agent,
-    runtime_context: dict | None = None,
-    conversation: SimpleNamespace | None = None,
-    save_messages=None,
-    build_run_context=None,
-    get_trace_info=None,
-    flush_langfuse=None,
-    persist_trace=None,
-    supply_checkpoint=True,
-):
-    resolved_conversation = conversation or SimpleNamespace(
-        id=1,
-        uid="user-1",
-        agent_id="test-agent",
-        status="active",
-        project_id="11111111-1111-4111-8111-111111111111",
-        extra_metadata={},
-    )
-    if not hasattr(resolved_conversation, "project_id"):
-        resolved_conversation.project_id = "11111111-1111-4111-8111-111111111111"
-
-    def with_checkpoint(original):
-        """为服务单测的假流提供与 BaseAgent 相同的最终 checkpoint 协议。"""
-
-        async def stream(*args, **kwargs):
-            """先耗尽测试事件，再提供测试图的状态。"""
-            async for event in original(*args, **kwargs):
-                yield event
-            context = _FakeContext()
-            context.update(kwargs.get("input_context") or {})
-            state = SimpleNamespace(values={})
-            if hasattr(agent, "get_graph"):
-                graph = await agent.get_graph(context=context)
-                state = await graph.aget_state({})
-            yield "checkpoint", state
-
-        return stream
-
-    for method in ("stream_messages_with_state", "stream_resume_with_state"):
-        if supply_checkpoint and hasattr(agent, method):
-            monkeypatch.setattr(agent, method, with_checkpoint(getattr(agent, method)))
-
-    async def fake_resolve_agent_runtime(**_kwargs):
-        return (
-            SimpleNamespace(slug="test-agent", name="测试智能体", backend_id="ChatbotAgent"),
-            agent,
-            prepared_execution(**(runtime_context or {})).context,
-            resolved_conversation,
-        )
-
-    async def fake_resolve_workdir(**_kwargs):
-        return "projects/11111111-1111-4111-8111-111111111111"
-
-    monkeypatch.setattr(svc, "_resolve_agent_runtime", fake_resolve_agent_runtime)
-    monkeypatch.setattr(svc, "resolve_conversation_workdir_path", fake_resolve_workdir)
-    monkeypatch.setattr(
-        _FakeConvRepo,
-        "default_attachments",
-        list((resolved_conversation.extra_metadata or {}).get("attachments", [])),
-    )
-    monkeypatch.setattr(svc, "ConversationRepository", _FakeConvRepo)
-    monkeypatch.setattr(
-        svc, "save_messages_from_langgraph_state", save_messages or _fake_save_messages_from_langgraph_state
-    )
-    monkeypatch.setattr(svc, "check_and_handle_interrupts", _fake_interrupts)
-    monkeypatch.setattr(
-        svc,
-        "_build_langfuse_run_context",
-        build_run_context or (lambda **kwargs: LangfuseRunContext()),
-    )
-    monkeypatch.setattr(svc, "get_trace_info", get_trace_info or (lambda _run_context: {}))
-    monkeypatch.setattr(svc, "flush_langfuse", flush_langfuse or (lambda: None))
-
-    async def fake_persist_trace(**_kwargs):
-        """隔离流协议单测中的持久 trace 绑定。"""
-
-    monkeypatch.setattr(svc, "_persist_agent_run_langfuse_trace", persist_trace or fake_persist_trace)
-    monkeypatch.setattr(svc, "_build_model_message_audit_collector", lambda *_args, **_kwargs: None)
-
-    @asynccontextmanager
-    async def fake_session_context():
-        """隔离异常路径，不让单测借用真实数据库会话。"""
-        yield _FakeSession()
-
-    monkeypatch.setattr(svc.pg_manager, "get_async_session_context", fake_session_context)
-
-
-class _FakeContext:
-    def __init__(self):
-        self.thread_id = ""
-        self.uid = ""
-        self.temperature = None
-
-    def update(self, data: dict):
-        for key, value in data.items():
-            setattr(self, key, value)
-
-
-class _FakeSession:
-    def __init__(self):
-        self.commit_count = 0
-        self.rollback_count = 0
-
-    async def commit(self):
-        self.commit_count += 1
-
-    async def rollback(self):
-        self.rollback_count += 1
-
-
-class _FakeConvRepo:
-    default_attachments: list[dict] = []
-
-    def __init__(self, _db):
-        self.saved_messages: list[dict] = []
-        self.conversations: dict[str, SimpleNamespace] = {}
-
-    def _conversation(self, thread_id: str) -> SimpleNamespace:
-        return self.conversations.setdefault(
-            thread_id,
-            SimpleNamespace(
-                id=1,
-                uid="user-1",
-                agent_id="test-agent",
-                thread_id=thread_id,
-                status="active",
-                project_id="11111111-1111-4111-8111-111111111111",
-                extra_metadata={},
-            ),
-        )
-
-    async def add_message_by_thread_id(
-        self,
-        *,
-        thread_id: str,
-        role: str,
-        content: str,
-        message_type: str = "text",
-        extra_metadata: dict | None = None,
-        image_content: str | None = None,
-        run_id: str | None = None,
-        turn_id: str | None = None,
-    ):
-        self.saved_messages.append(
-            {
-                "thread_id": thread_id,
-                "role": role,
-                "content": content,
-                "message_type": message_type,
-                "extra_metadata": extra_metadata,
-                "image_content": image_content,
-                "run_id": run_id,
-                "turn_id": turn_id,
-            }
-        )
-        return SimpleNamespace(id=1)
-
-    async def get_conversation_by_thread_id(self, thread_id: str):
-        return self._conversation(thread_id)
-
-    async def get_attachments_by_input_id(self, conversation_id: int, input_id: str):
-        del conversation_id
-        return [item for item in self.default_attachments if item.get("input_id") == input_id]
-
-    async def get_attachments(self, conversation_id: int):
-        del conversation_id
-        return [dict(item) for item in self.default_attachments]
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("mode", ["chat", "resume"])
-@pytest.mark.parametrize("cancel_during_flush", [False, True])
-async def test_trace_flush_yields_to_other_requests_and_is_awaited(
-    monkeypatch: pytest.MonkeyPatch, mode: str, cancel_during_flush: bool
-):
-    """受控上报阻塞期间其他请求能推进，流正常退出仍等待上报完成。"""
-    loop = asyncio.get_running_loop()
-    flush_started = asyncio.Event()
-    release_flush = threading.Event()
-    flush_finished = threading.Event()
-    statuses = []
-
-    def blocking_flush():
-        """超时只为旧实现的负控兜底；成功路径由测试主动释放。"""
-        loop.call_soon_threadsafe(flush_started.set)
-        release_flush.wait(timeout=2)
-        flush_finished.set()
-
-    class FakeAgent:
-        """使用共同装配验证普通流与恢复流的 finally。"""
-
-        context_schema = _FakeContext
-
-        async def stream_messages_with_state(self, messages, input_context=None, **kwargs):
-            """发出可持久化的模型响应。"""
-            yield "messages", (AIMessageChunk(content="hello"), {"node": "llm"})
-
-        stream_resume_with_state = stream_messages_with_state
-
-        async def get_graph(self, *, context=None):
-            """提供收尾读取的已完成状态。"""
-
-            class FakeGraph:
-                """模拟 checkpoint 的独立状态结果。"""
-
-                async def aget_state(self, config):
-                    """返回空附件和文件的最终状态。"""
-                    return SimpleNamespace(values={"messages": []})
-
-            return FakeGraph()
-
-    _patch_stream_scaffolding(monkeypatch, agent=FakeAgent(), flush_langfuse=blocking_flush)
-    kwargs = {
-        "thread_id": "thread-1",
-        "meta": {"turn_id": "turn-1", "run_id": "run-1", "worker_id": "worker-1"},
-        "current_user": SimpleNamespace(uid="user-1", role="user", department_id=None),
-        "db": _FakeSession(),
-    }
-    if mode == "chat":
-        stream = svc.stream_agent_chat(
-            prepared_execution=prepared_execution(),
-            **kwargs,
-            agent_slug="test-agent",
-            input_messages=[build_chat_input_message("hello")],
-        )
-    else:
-        stream = svc.stream_agent_resume(
-            prepared_execution=prepared_execution(),
-            **kwargs,
-            resume_input={"answer": "continue"},
-        )
-
-    async def consume():
-        """耗尽真实生成器，使 finally 在消费任务中执行。"""
-        async for chunk in stream:
-            statuses.append(_chunk(chunk)["status"])
-
-    consumer = asyncio.create_task(consume())
-    try:
-        await asyncio.wait_for(flush_started.wait(), timeout=3)
-        assert not flush_finished.is_set(), "同步 flush 阻塞了无关请求的恢复调度"
-        assert not consumer.done(), "正常退出必须等待 flush，不允许 fire-and-forget"
-        assert statuses[-1] == "finished"
-        if cancel_during_flush:
-            consumer.cancel()
-            with pytest.raises(asyncio.CancelledError):
-                await consumer
-    finally:
-        release_flush.set()
-        if not consumer.cancelled():
-            await asyncio.wait_for(consumer, timeout=3)
-        # 取消不能终止已执行的线程，测试必须等它真正退出再还原 monkeypatch。
-        assert await asyncio.to_thread(flush_finished.wait, 3)
-
-
-def test_subagent_attachment_root_rejects_same_path_from_different_project() -> None:
-    """共享目录路径不能替代 Project 执行树身份。"""
-
-    child = SimpleNamespace(uid="user-1", project_id="project-child", workdir_path="projects/shared")
-    root = SimpleNamespace(uid="user-1", project_id="project-root", workdir_path="projects/shared")
-
-    with pytest.raises(ValueError, match="Project Workdir"):
-        svc._validate_subagent_attachment_root(
-            root_conversation=root,
-            conversation=child,
-            uid="user-1",
-        )
-
-
 @pytest.mark.asyncio
 async def test_persist_agent_run_langfuse_trace_skips_when_langfuse_is_disabled(monkeypatch: pytest.MonkeyPatch):
     db = _FakeSession()
@@ -549,635 +535,6 @@ async def test_persist_agent_run_langfuse_trace_skips_when_langfuse_is_disabled(
 
     assert db.commit_count == 0
     assert db.rollback_count == 0
-
-
-@pytest.mark.asyncio
-async def test_stream_agent_chat_commits_before_stream_and_persists_langfuse_context(
-    monkeypatch: pytest.MonkeyPatch,
-):
-    calls: dict[str, object] = {}
-    lifecycle: list[str] = []
-    db = _FakeSession()
-
-    async def persist_trace(*, db, meta, run_context):
-        """在服务流开始前记录当前 Turn/Run trace，真实 PG 绑定由集成测试证明。"""
-        calls["trace_binding"] = {
-            "turn_id": meta["turn_id"],
-            "run_id": meta["run_id"],
-            "trace_id": run_context.trace_id,
-            "worker_id": meta["worker_id"],
-        }
-        await db.commit()
-
-    class FakeAgent:
-        context_schema = _FakeContext
-
-        async def stream_messages_with_state(self, messages, input_context=None, **kwargs):
-            await kwargs.pop("on_prepared")()
-            assert db.commit_count == 2
-            assert calls["trace_binding"] == {
-                "turn_id": "turn-1",
-                "run_id": "run-1",
-                "trace_id": "trace-seeded",
-                "worker_id": "worker-1",
-            }
-            assert lifecycle == ["prepared"]
-            lifecycle.append("streaming")
-            calls["stream_messages"] = messages
-            calls["stream_input_context"] = vars(kwargs.pop("context"))
-            calls["stream_kwargs"] = kwargs
-            yield "messages", (AIMessageChunk(content="hello"), {"node": "llm"})
-
-        async def get_graph(self, *, context=None):
-            class FakeGraph:
-                async def aget_state(self, config):
-                    return SimpleNamespace(values={"messages": [], "artifacts": []})
-
-            return FakeGraph()
-
-    async def fake_save_messages_from_langgraph_state(
-        *,
-        state,
-        thread_id,
-        conv_repo,
-        trace_info,
-        run_id=None,
-        turn_id=None,
-        worker_id=None,
-        complete_run=False,
-        interrupt_run=False,
-        interrupt_error_type=None,
-        interrupt_error_message=None,
-        token_usage=None,
-        waitpoint=None,
-    ):
-        calls["saved_state"] = {
-            "thread_id": thread_id,
-            "state": state,
-            "trace_info": trace_info,
-            "run_id": run_id,
-            "turn_id": turn_id,
-            "worker_id": worker_id,
-            "complete_run": complete_run,
-            "interrupt_run": interrupt_run,
-            "interrupt_error_type": interrupt_error_type,
-            "interrupt_error_message": interrupt_error_message,
-            "token_usage": token_usage,
-            "waitpoint": waitpoint,
-        }
-        return complete_run or interrupt_run
-
-    _patch_stream_scaffolding(
-        monkeypatch,
-        agent=FakeAgent(),
-        runtime_context={
-            "model_retry_times": 3,
-        },
-        conversation=SimpleNamespace(
-            id=1,
-            uid="user-1",
-            agent_id="test-agent",
-            status="active",
-            extra_metadata={
-                "attachments": [
-                    {
-                        "file_id": "file-1",
-                        "file_name": "current.txt",
-                        "path": "/home/gem/user-data/projects/11111111-1111-4111-8111-111111111111/uploads/current.txt",
-                        "input_id": "input-1",
-                    },
-                    {
-                        "file_id": "file-2",
-                        "file_name": "history.txt",
-                        "path": "/home/gem/user-data/projects/11111111-1111-4111-8111-111111111111/uploads/history.txt",
-                        "input_id": "input-old",
-                    },
-                ]
-            },
-        ),
-        save_messages=fake_save_messages_from_langgraph_state,
-        build_run_context=lambda **kwargs: LangfuseRunContext(
-            callbacks=["handler-1"],
-            metadata={"langfuse_user_id": kwargs["current_user"].uid, "langfuse_session_id": kwargs["thread_id"]},
-            tags=["yuxi", "chat"],
-            trace_id="trace-seeded",
-        ),
-        get_trace_info=lambda _run_context: {
-            "langfuse_trace_id": "trace-seeded",
-            "langfuse_session_id": "thread-1",
-        },
-        flush_langfuse=lambda: calls.setdefault("flushed", True),
-        persist_trace=persist_trace,
-    )
-
-    async def on_prepared() -> None:
-        assert db.commit_count == 2
-        lifecycle.append("prepared")
-
-    def reject_error_fallback(**kwargs):
-        """正常结果来自最终 checkpoint，不能再次拼装仅错误路径使用的消息。"""
-        raise AssertionError("正常收尾不应构建备用 AIMessage")
-
-    monkeypatch.setattr(svc, "AIMessage", reject_error_fallback)
-    chunks = []
-    async for chunk in svc.stream_agent_chat(
-        prepared_execution=prepared_execution(),
-        agent_slug="test-agent",
-        thread_id="thread-1",
-        meta={"turn_id": "turn-1", "run_id": "run-1", "worker_id": "worker-1", "input_id": "input-1"},
-        input_messages=[build_chat_input_message("hello")],
-        current_user=SimpleNamespace(id=1, uid="user-1", role="user", department_id="dept-1"),
-        db=db,
-        on_prepared=on_prepared,
-    ):
-        chunks.append(_chunk(chunk))
-
-    assert (
-        calls["stream_input_context"].items()
-        >= {
-            "model_retry_times": 3,
-            "uid": "user-1",
-            "thread_id": "thread-1",
-            "run_id": "run-1",
-        }.items()
-    )
-    assert calls["stream_kwargs"] == {
-        "callbacks": ["handler-1"],
-        "metadata": {"langfuse_user_id": "user-1", "langfuse_session_id": "thread-1"},
-        "tags": ["yuxi", "chat"],
-        "run_name": "测试智能体",
-    }
-    model_message = calls["stream_messages"][0]
-    assert model_message.content.startswith("hello\n\n<attachment_context>")
-    assert "current.txt" in model_message.content
-    assert "history.txt" in model_message.content
-    assert calls["saved_state"]["trace_info"] == {
-        "langfuse_trace_id": "trace-seeded",
-        "langfuse_session_id": "thread-1",
-    }
-    assert calls["saved_state"]["state"].values == {"messages": [], "artifacts": []}
-    assert calls["saved_state"]["complete_run"] is True
-    assert chunks[-1]["status"] == "finished"
-    assert calls["stream_input_context"]["workdir_relative_path"] == "projects/11111111-1111-4111-8111-111111111111"
-    assert (
-        calls["stream_input_context"]["workdir_path"]
-        == "/home/gem/user-data/projects/11111111-1111-4111-8111-111111111111"
-    )
-    assert calls["stream_input_context"]["runtime_scope_id"] == "thread-1"
-    [init_attachment] = chunks[0]["msg"]["extra_metadata"]["attachments"]
-    assert init_attachment["file_name"] == "current.txt"
-    assert init_attachment["path"].endswith("/uploads/current.txt")
-    assert calls["flushed"] is True
-    assert isinstance(calls["stream_messages"][0], HumanMessage)
-    assert lifecycle == ["prepared", "streaming"]
-
-
-@pytest.mark.asyncio
-async def test_stream_agent_chat_partial_failure_preserves_trace_info(
-    monkeypatch: pytest.MonkeyPatch,
-):
-    calls: dict[str, object] = {}
-
-    class FakeAgent:
-        context_schema = _FakeContext
-
-        async def stream_messages_with_state(self, messages, input_context=None, **kwargs):
-            del messages, input_context, kwargs
-            yield "messages", (AIMessageChunk(content="partial"), {"node": "llm"})
-            raise RuntimeError("stream failed")
-
-    @asynccontextmanager
-    async def fake_session_context():
-        yield _FakeSession()
-
-    async def fake_save_partial_message(
-        _conv_repo,
-        thread_id,
-        *,
-        full_msg,
-        trace_info,
-        **_kwargs,
-    ):
-        calls["partial"] = {
-            "thread_id": thread_id,
-            "content": full_msg.content,
-            "trace_info": trace_info,
-        }
-
-    _patch_stream_scaffolding(
-        monkeypatch,
-        agent=FakeAgent(),
-        build_run_context=lambda **_kwargs: LangfuseRunContext(
-            callbacks=[],
-            metadata={},
-            tags=[],
-            trace_id="trace-partial",
-        ),
-        get_trace_info=lambda _run_context: {
-            "langfuse_trace_id": "trace-partial",
-            "langfuse_session_id": "thread-partial",
-        },
-    )
-    monkeypatch.setattr(svc.pg_manager, "get_async_session_context", fake_session_context)
-    monkeypatch.setattr(svc, "save_partial_message", fake_save_partial_message)
-
-    chunks = []
-    async for chunk in svc.stream_agent_chat(
-        prepared_execution=prepared_execution(),
-        agent_slug="test-agent",
-        thread_id="thread-partial",
-        meta={"turn_id": "turn-1", "run_id": "run-1", "worker_id": "worker-1"},
-        input_messages=[build_chat_input_message("hello")],
-        current_user=SimpleNamespace(id=1, uid="user-1", role="user", department_id="dept-1"),
-        db=_FakeSession(),
-    ):
-        chunks.append(_chunk(chunk))
-
-    assert calls["partial"] == {
-        "thread_id": "thread-partial",
-        "content": "partial",
-        "trace_info": {
-            "langfuse_trace_id": "trace-partial",
-            "langfuse_session_id": "thread-partial",
-        },
-    }
-    assert chunks[-1]["status"] == "error"
-    assert chunks[-1]["error_type"] == "unexpected_error"
-
-
-@pytest.mark.asyncio
-async def test_stream_agent_chat_does_not_bootstrap_sandbox_before_agent_execution(
-    monkeypatch: pytest.MonkeyPatch,
-):
-    agent_started = False
-
-    class FakeAgent:
-        context_schema = _FakeContext
-
-        async def stream_messages_with_state(self, messages, input_context=None, **kwargs):
-            nonlocal agent_started
-            del messages, input_context, kwargs
-            agent_started = True
-            yield "messages", (AIMessageChunk(content="runs without sandbox"), {"node": "llm"})
-
-    _patch_stream_scaffolding(
-        monkeypatch,
-        agent=FakeAgent(),
-        conversation=SimpleNamespace(
-            id=1,
-            uid="user-1",
-            agent_id="test-agent",
-            status="active",
-            extra_metadata={"attachments": [{"file_id": "file-1"}]},
-        ),
-    )
-
-    class UnexpectedSandboxBackend:
-        def __init__(self, **_kwargs):
-            raise AssertionError("纯文本 Agent 流不应构造 Sandbox Backend")
-
-        def ensure_available(self):
-            raise AssertionError("纯文本 Agent 流不应预创建 Sandbox")
-
-    monkeypatch.setattr(svc, "ProvisionerSandboxBackend", UnexpectedSandboxBackend, raising=False)
-    monkeypatch.setattr(
-        svc,
-        "get_user_skills_root_dir",
-        lambda _uid: (_ for _ in ()).throw(AssertionError("纯文本 Agent 流不应物化 Skill 投影根")),
-        raising=False,
-    )
-
-    chunks = []
-    async for chunk in svc.stream_agent_chat(
-        prepared_execution=prepared_execution(),
-        agent_slug="test-agent",
-        thread_id="thread-1",
-        meta={"turn_id": "turn-1", "run_id": "run-1", "worker_id": "worker-1"},
-        input_messages=[build_chat_input_message("hello")],
-        current_user=SimpleNamespace(id=1, uid="user-1", role="user", department_id="dept-1"),
-        db=_FakeSession(),
-    ):
-        chunks.append(_chunk(chunk))
-
-    assert agent_started is True
-    assert chunks[-1]["status"] == "finished"
-    assert any(chunk.get("response") == "runs without sandbox" for chunk in chunks)
-
-
-@pytest.mark.asyncio
-async def test_stream_agent_chat_output_persistence_failure_is_terminal_error(
-    monkeypatch: pytest.MonkeyPatch,
-):
-    class FakeAgent:
-        context_schema = _FakeContext
-
-        async def stream_messages_with_state(self, messages, input_context=None, **kwargs):
-            del messages, input_context, kwargs
-            yield "messages", (AIMessageChunk(content="answer"), {"node": "llm"})
-
-        async def get_graph(self, *, context=None):
-            del context
-
-            class FakeGraph:
-                async def aget_state(self, _config):
-                    return SimpleNamespace(values={"messages": []})
-
-            return FakeGraph()
-
-    async def fail_output_persistence(**_kwargs):
-        raise ValueError("output binding rejected")
-
-    _patch_stream_scaffolding(
-        monkeypatch,
-        agent=FakeAgent(),
-        save_messages=fail_output_persistence,
-    )
-
-    chunks = []
-    async for chunk in svc.stream_agent_chat(
-        prepared_execution=prepared_execution(),
-        agent_slug="test-agent",
-        thread_id="thread-output-error",
-        meta={
-            "run_id": "run-output-error",
-            "turn_id": "turn-output-error",
-            "worker_id": "worker-output-error:attempt-1",
-        },
-        input_messages=[build_chat_input_message("hello")],
-        current_user=SimpleNamespace(id=1, uid="user-1", role="user", department_id="dept-1"),
-        db=_FakeSession(),
-    ):
-        chunks.append(_chunk(chunk))
-
-    assert chunks[-1]["status"] == "error"
-    assert chunks[-1]["error_type"] == "output_persistence_error"
-    assert all(chunk.get("status") not in {"finished", "warning"} for chunk in chunks)
-
-
-@pytest.mark.asyncio
-async def test_stream_agent_chat_maps_raw_protocol_events_to_yuxi_stream_events(
-    monkeypatch: pytest.MonkeyPatch,
-):
-    class FakeGraph:
-        async def aget_state(self, _config):
-            return SimpleNamespace(values={"messages": [], "artifacts": []})
-
-    class FakeAgent:
-        context_schema = _FakeContext
-
-        async def stream_messages_with_state(self, messages, input_context=None, **kwargs):
-            del messages, input_context, kwargs
-            metadata = {"run_id": "run-1"}
-            yield "messages", ({"event": "message-start", "id": "msg-1", "role": "ai"}, metadata)
-            yield "messages", ({"event": "content-block-start", "index": 0, "content": {"type": "text"}}, metadata)
-            yield (
-                "messages",
-                (
-                    {
-                        "event": "content-block-delta",
-                        "index": 0,
-                        "delta": {"type": "text-delta", "text": '{"note":"line1"}\nline2'},
-                    },
-                    metadata,
-                ),
-            )
-            yield (
-                "messages",
-                (
-                    {
-                        "event": "content-block-delta",
-                        "index": 1,
-                        "delta": {
-                            "type": "block-delta",
-                            "fields": {
-                                "type": "tool_call_chunk",
-                                "id": "call-1",
-                                "name": "task",
-                                "args": '{"description":"do',
-                                "index": 0,
-                            },
-                        },
-                    },
-                    metadata,
-                ),
-            )
-            yield (
-                "messages",
-                (
-                    {
-                        "event": "content-block-finish",
-                        "index": 1,
-                        "content": {
-                            "type": "tool_call",
-                            "id": "call-1",
-                            "name": "task",
-                            "args": {"description": "do work", "subagent_slug": "worker"},
-                        },
-                    },
-                    metadata,
-                ),
-            )
-            yield "messages", ({"event": "message-finish", "usage": {}}, metadata)
-
-        async def get_graph(self, *, context=None):
-            return FakeGraph()
-
-    _patch_stream_scaffolding(monkeypatch, agent=FakeAgent())
-
-    chunks = []
-    async for chunk in svc.stream_agent_chat(
-        prepared_execution=prepared_execution(),
-        agent_slug="test-agent",
-        thread_id="thread-1",
-        meta={"turn_id": "turn-1", "run_id": "run-1", "worker_id": "worker-1"},
-        input_messages=[build_chat_input_message("hello")],
-        current_user=SimpleNamespace(id=1, uid="user-1", role="user", department_id="dept-1"),
-        db=_FakeSession(),
-    ):
-        chunks.append(_chunk(chunk))
-
-    loading_chunks = [chunk for chunk in chunks if chunk.get("status") == "loading"]
-    assert "time_cost" not in chunks[0]["meta"]
-    assert "time_cost" in chunks[-1]["meta"]
-    assert [chunk["stream_event"]["type"] for chunk in loading_chunks] == ["message_delta", "tool_call"]
-    assert loading_chunks[0]["response"] == '{"note":"line1"}\nline2'
-    assert loading_chunks[0]["stream_event"] == {
-        "type": "message_delta",
-        "message_id": "msg-1",
-        "thread_id": "thread-1",
-        "namespace": [],
-        "content": '{"note":"line1"}\nline2',
-    }
-    assert loading_chunks[1]["response"] == ""
-    assert loading_chunks[1]["stream_event"] == {
-        "type": "tool_call",
-        "message_id": "msg-1",
-        "tool_call_id": "call-1",
-        "name": "task",
-        "args": {"description": "do work", "subagent_slug": "worker"},
-        "index": 1,
-        "thread_id": "thread-1",
-        "namespace": [],
-    }
-    assert all("msg" not in chunk for chunk in loading_chunks)
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("container", ["configurable", "metadata", "stream_event", "meta"])
-async def test_execution_keeps_unrouted_nested_thread_fields_out_of_parent_output(monkeypatch, container):
-    """未路由 namespace 的嵌套线程数据不能污染父线程输出。"""
-
-    class Agent:
-        """提供明确子消息、未路由消息与根消息。"""
-
-        async def stream_messages_with_state(self, *_args, **_kwargs):
-            """只在顶层 thread_id 声明子线程归属。"""
-            yield (
-                "messages",
-                (
-                    AIMessageChunk(content="unrouted", id="unrouted"),
-                    {"namespace": ["child:task"], container: {"thread_id": "thread-1"}},
-                ),
-            )
-            yield (
-                "messages",
-                (
-                    AIMessageChunk(content="child", id="child"),
-                    {"namespace": ["child:task"], "thread_id": "child-thread"},
-                ),
-            )
-            yield (
-                "messages",
-                (
-                    AIMessageChunk(content="parent", id="parent"),
-                    {container: {"thread_id": "child-thread"}},
-                ),
-            )
-
-    _patch_stream_scaffolding(monkeypatch, agent=Agent())
-    chunks = [
-        _chunk(chunk)
-        async for chunk in svc.stream_agent_chat(
-            prepared_execution=prepared_execution(),
-            agent_slug="test-agent",
-            thread_id="thread-1",
-            meta={"turn_id": "turn-1", "run_id": "run-1", "worker_id": "worker-1"},
-            input_messages=[build_chat_input_message("hello")],
-            current_user=SimpleNamespace(uid="user-1", role="user", department_id=None),
-            db=_FakeSession(),
-        )
-    ]
-
-    assert [(chunk["thread_id"], chunk["response"]) for chunk in chunks if chunk["status"] == "loading"] == [
-        ("child-thread", "child"),
-        ("thread-1", "parent"),
-    ]
-    assert chunks[-1]["status"] == "finished" and chunks[-1]["thread_id"] == "thread-1"
-
-
-@pytest.mark.asyncio
-async def test_stream_agent_chat_emits_realtime_agent_state_from_values(
-    monkeypatch: pytest.MonkeyPatch,
-):
-    class FakeGraph:
-        async def aget_state(self, _config):
-            return SimpleNamespace(
-                values={
-                    "todos": [{"content": "done", "status": "completed"}],
-                    "files": {"legacy.txt": {"content": ["old checkpoint content"]}},
-                }
-            )
-
-    class FakeAgent:
-        context_schema = _FakeContext
-
-        async def stream_messages_with_state(self, messages, input_context=None, **kwargs):
-            yield (
-                "values",
-                {
-                    "messages": [],
-                    "todos": [{"content": "step 1", "status": "pending"}],
-                    "files": {"legacy.txt": {"content": ["old checkpoint content"]}},
-                },
-            )
-            yield "values", {"messages": [], "todos": [{"content": "step 1", "status": "in_progress"}]}
-            yield "values", {"messages": [], "todos": [{"content": "step 1", "status": "in_progress"}]}
-            yield "messages", (AIMessageChunk(content="hello"), {"node": "llm"})
-
-        async def get_graph(self, *, context=None):
-            return FakeGraph()
-
-    _patch_stream_scaffolding(monkeypatch, agent=FakeAgent())
-
-    chunks = []
-    async for chunk in svc.stream_agent_chat(
-        prepared_execution=prepared_execution(),
-        agent_slug="test-agent",
-        thread_id="thread-1",
-        meta={"turn_id": "turn-1", "run_id": "run-1", "worker_id": "worker-1"},
-        input_messages=[build_chat_input_message("hello")],
-        current_user=SimpleNamespace(id=1, uid="user-1", role="user", department_id="dept-1"),
-        db=_FakeSession(),
-    ):
-        chunks.append(_chunk(chunk))
-
-    agent_state_chunks = [chunk for chunk in chunks if chunk.get("status") == "agent_state"]
-    assert len(agent_state_chunks) == 3
-    assert all("files" not in chunk["agent_state"] for chunk in agent_state_chunks)
-    assert agent_state_chunks[0]["agent_state"]["todos"][0]["status"] == "pending"
-    assert agent_state_chunks[1]["agent_state"]["todos"][0]["status"] == "in_progress"
-    assert agent_state_chunks[2]["agent_state"]["todos"][0]["status"] == "completed"
-    assert all("agent_slug" in chunk.get("meta", {}) for chunk in chunks if isinstance(chunk.get("meta"), dict))
-    assert all("agent_id" not in chunk.get("meta", {}) for chunk in chunks if isinstance(chunk.get("meta"), dict))
-
-
-@pytest.mark.asyncio
-async def test_stream_agent_chat_maps_custom_compression_event_to_context_compression_chunk(
-    monkeypatch: pytest.MonkeyPatch,
-):
-    class FakeGraph:
-        async def aget_state(self, _config):
-            return SimpleNamespace(values={"messages": []})
-
-    class FakeAgent:
-        context_schema = _FakeContext
-
-        async def stream_messages_with_state(self, messages, input_context=None, **kwargs):
-            yield "custom", {"type": "yuxi.context_compression", "status": "started"}
-            yield "messages", (AIMessageChunk(content="hi"), {"node": "llm"})
-            yield (
-                "custom",
-                {
-                    "type": "yuxi.context_compression",
-                    "status": "completed",
-                    "cutoff_index": 5,
-                    "file_path": "/conv/x.md",
-                },
-            )
-
-        async def get_graph(self, *, context=None):
-            return FakeGraph()
-
-    _patch_stream_scaffolding(monkeypatch, agent=FakeAgent())
-
-    chunks = []
-    async for chunk in svc.stream_agent_chat(
-        prepared_execution=prepared_execution(),
-        agent_slug="test-agent",
-        thread_id="thread-1",
-        meta={"turn_id": "turn-1", "run_id": "run-1", "worker_id": "worker-1"},
-        input_messages=[build_chat_input_message("hello")],
-        current_user=SimpleNamespace(id=1, uid="user-1", role="user", department_id="dept-1"),
-        db=_FakeSession(),
-    ):
-        chunks.append(_chunk(chunk))
-
-    compression_chunks = [chunk for chunk in chunks if chunk.get("status") == "context_compression"]
-    assert len(compression_chunks) == 2
-    assert compression_chunks[0]["compression"]["status"] == "started"
-    assert compression_chunks[1]["compression"]["status"] == "completed"
-    assert compression_chunks[1]["compression"]["cutoff_index"] == 5
-    assert compression_chunks[1]["compression"]["file_path"] == "/conv/x.md"
 
 
 @pytest.mark.parametrize("mode", ["chat", "resume"])

@@ -32,17 +32,17 @@ Graph 创建时，Agent backend 取得 `uid`、根运行 scope 和 `workdir_path
 
 ## Identity、Workdir 和生命周期
 
-`runtime_scope_id` 是一次顶层执行树的沙盒分组键，当前使用根 Conversation 的 thread ID。根 Agent 和子 Agent 共享这个 scope，因此可以共享同一个运行时、`/tmp`、环境和文件挂载；子 Agent 的 child thread 只隔离 LangGraph checkpoint。
+`runtime_scope_id` 使用执行所属 Conversation 的 thread ID。主、子 Agent 各自拥有运行时和 checkpoint，子 Agent 的独立 Turn 可在父 Turn 结束后继续运行、等待和恢复。父子共享 Project Workdir 的持久文件，不共享 `/tmp` 或运行时环境；委派附件通过已授权的输入传递。
 
 Conversation 通过 `project_id` 绑定 Project；Project 拥有这项绑定和 `workdir_path`，UserWorkspace 拥有该路径下的实际文件字节。`workdir_path` 是当前用户 UserWorkspace 下的合法相对 POSIX 路径，不能包含 `..`、反斜杠或符号链接。`linked` Project 只能引用已经存在的目录，目标不存在时请求失败。新 `managed` Project 使用上海时间和 Project ID 前 8 位分配 `projects/YYYY-MM-DD_HH-MM-SS_<project-id-prefix>`；同名条目已经存在时依次追加 `-1`、`-2`，既有 `projects/<uuid>` 保持有效，目录创建失败时请求失败。Workdir 决定当前工作目录和 Viewer 文件范围，但不决定 sandbox identity，也不把同一用户的其他 Project 变成安全隔离边界。两个顶层 Conversation 即使绑定同一 Workdir，也会创建不同 runtime。
 
 | 运行类型 | checkpoint | runtime scope | Workdir |
 | --- | --- | --- | --- |
-| 普通 Agent | 当前 thread | 根 thread | 当前 Project 的 Workdir |
-| 子 Agent | child thread | 根 thread | 继承根 Conversation |
+| 普通 Agent | 当前 thread | 当前 thread | 当前 Project 的 Workdir |
+| 子 Agent | child thread | child thread | 委派所在 Project 的 Workdir |
 | 远程 Skill 安装 | 临时 thread | 临时 thread | 无持久用户目录，`inherit_env=False` |
 
-`uid + runtime_scope_id` 派生稳定 `sandbox_id`。同一 runtime 存活期间不能改绑到另一个 Workdir。根执行树终态后，worker 清理 runtime，但保留 UserWorkspace 文件。
+`uid + runtime_scope_id` 派生稳定 `sandbox_id`。同一 runtime 存活期间不能改绑到另一个 Workdir。各执行 Owner 在自身 Run 收敛后清理自身 runtime，并保留 UserWorkspace 文件；父 Run 结束不会清理仍在运行的子 runtime。
 
 ## 挂载和文件 Owner
 

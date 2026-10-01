@@ -1,6 +1,6 @@
 # Agents Public API
 
-本页供 Web 客户端和外部应用查找 Agent 对话接口、输入格式及状态读取方式。运行时状态与恢复规则见 [Agent 输入队列与调度](../mechanisms/agent-request-queue.md)。Yuxi 使用自己的事件协议，不声明与 OpenAI Agents API 完全兼容。
+本页供 Web 客户端和外部应用查找 Agent 对话接口、输入格式及状态读取方式。运行时状态与恢复规则见 [Agent 输入队列与调度](../mechanisms/agent-request-queue.md)。公开流以 [OpenAI Agents streaming events](https://developers.openai.com/api/reference/resources/beta/subresources/agents/streaming-events) 为基线。标准事件保留官方字段和语义，业务扩展放入 `yuxi`，专有事件使用 `yuxi.*`；尚未支持的官方输入动作返回 `422`。
 
 ## 身份与作用域
 
@@ -8,7 +8,7 @@
 
 ## Thread、Turn、Run 与 Input
 
-Thread 是长期对话，Turn 是一轮工作，Run 是其中一段有执行 owner 的运行。普通 `follow_up` 消息先保存为 Input；线程空闲且队列未暂停时领取 FIFO 队头并创建 Turn/Run。`steer` 指向当前 Turn，多次输入可合并为一个待消费批次，安全接管后在同一 Turn 创建下一 Run。回答或审批消费明确等待点，也在同一 Turn 创建下一 Run。接收响应中的 `event_id`、`input_id` 和状态只证明持久接收；工作结果通过 Turn 查询。
+Thread 是长期对话，Turn 是一轮工作，Run 是其中一段有执行 owner 的运行。普通消息先保存为 Input，`follow_up` 彼此 FIFO，`steer` 合并为唯一的待消费优先批次。线程空闲且队列未暂停时领取优先队头并创建 Turn/Run；运行中在安全边界消费 steer，在同一 Turn 创建下一 Run。回答或审批消费明确等待点，也在同一 Turn 创建下一 Run。接收响应中的 `event_id`、`input_id` 和状态只证明持久接收；工作结果通过 Turn 查询。
 
 `/api/v1/agents/threads` 是主协议。
 
@@ -22,7 +22,7 @@ Thread 是长期对话，Turn 是一轮工作，Run 是其中一段有执行 own
 | `GET` | `/api/v1/agents/threads/{thread_id}/queue` | 查看待处理 Input 和暂停状态 |
 | `GET` | `/api/v1/agents/threads/{thread_id}/inputs/{input_id}` | 查看接收、消费和消息归属 |
 | `GET` | `/api/v1/agents/threads/{thread_id}/turns/{turn_id}` | 查看整轮状态、等待点、Run 和明确结果 |
-| `GET` | `/api/v1/agents/threads/{thread_id}/turns/{turn_id}/items` | 按 `after_id`、`limit` 读取本轮消息 |
+| `GET` | `/api/v1/agents/threads/{thread_id}/turns/{turn_id}/items` | 按 `after_id`、`limit` 读取本轮公开 items |
 | `GET` | `/api/v1/agents/threads/{thread_id}/runs/{run_id}` | 查看指定执行段 |
 | `GET` | `/api/v1/agents/threads/{thread_id}/history` | 查看持久历史及轻量 Run 列表 |
 
@@ -41,7 +41,11 @@ curl --fail "$BASE_URL/api/v1/agents/threads" \
   -d '{"agent_id":"default-chatbot","input":[{"role":"user","content":[{"type":"input_text","text":"你好"}]}]}'
 ```
 
-向已有 Thread 提交后续消息时明确使用 `follow_up`；需要修正当前运行时使用 `steer` 并指定当前 `turn_id`。一次 POST 只接收一个事件，事件内可有多条有序消息。排队中的 `follow_up` 没有 Turn ID；尚未被安全接管的 `steer` 已绑定目标 Turn，但尚无消费 Run ID。模型与审批模式在接收时冻结，已排队 Input 不因 Thread 默认值变化而改变。
+向已有 Thread 提交普通排队消息使用 `yuxi.mode=follow_up`；优先处理使用 `yuxi.mode=steer`。steer 位于所有 follow-up 前面，待领取期间的新 steer 消息合并到同一个 Input。普通消息不接受 `yuxi.turn_id`；Input 在消费时固定 Turn/Run，接收回执不返回 mode。即使发送期间当前 Turn 已结束，steer 仍会优先开启新 Turn。
+
+未指定 mode 时，服务在 Thread 锁内按运行中 steer、空闲 follow-up 选择；waiting/cancelling 拒绝普通消息。一次 POST 只接收一个事件，事件内可有多条有序消息。幂等重试返回同一回执与 Input，不重新入队；已消费后返回实际 Turn/Run 归属。两类 pending Input 的 Turn/Run ID 均为空。
+
+新 Input 的模型与审批配置在接收时冻结。steer 不接受显式模型或审批配置；空闲调度使用批次创建时冻结的默认配置，运行中安全接管沿用当前 Run 配置。调度、暂停和取消批次的详细规则见[输入队列机制](../mechanisms/agent-request-queue.md)。
 
 ```bash
 curl --fail -X POST "$BASE_URL/api/v1/agents/threads/$THREAD_ID/events" \
@@ -49,7 +53,7 @@ curl --fail -X POST "$BASE_URL/api/v1/agents/threads/$THREAD_ID/events" \
   -H 'X-End-User-Id: crm-user-42' \
   -H 'Idempotency-Key: crm-message-0002' \
   -H 'Content-Type: application/json' \
-  -d '{"events":[{"type":"agent.thread.input.message","mode":"follow_up","input":[{"role":"user","content":[{"type":"input_text","text":"请继续"}]}]}]}'
+  -d '{"events":[{"type":"agent.session.input.message","yuxi":{"mode":"follow_up"},"input":[{"role":"user","content":[{"type":"input_text","text":"请继续"}]}]}]}'
 ```
 
 ## 等待、取消与队列
@@ -57,13 +61,33 @@ curl --fail -X POST "$BASE_URL/api/v1/agents/threads/$THREAD_ID/events" \
 Turn `waiting` 时普通消息被拒绝。Turn 快照的 `waitpoint` 提供 `id`、`kind` 和应回答的问题或应决策的工具调用。恢复事件必须提供 `turn_id`、`waitpoint_id`，并按等待点完整提交 `answer` 或 `approval` 响应；旧等待点或重复改变意图返回 `409`。
 
 ```json
-{"events":[{"type":"yuxi.thread.input.resume","turn_id":"<turn-id>","waitpoint_id":"<waitpoint-id>","response":{"type":"answer","answers":[{"question_id":"<question-id>","answer":"确认"}]}}]}
+{"events":[{"type":"yuxi.session.input.resume","turn_id":"<turn-id>","waitpoint_id":"<waitpoint-id>","response":{"type":"answer","answers":[{"question_id":"<question-id>","answer":"确认"}]}}]}
 ```
 
-取消事件 `yuxi.thread.input.cancel` 必须指定 `turn_id`，可用 `expected_run_id` 防止取消已经切换的执行段。取消使当前 Turn 收敛，并暂停保留的后续 `follow_up`；等待点的 checkpoint 清理完成前，队列不会继续。`yuxi.thread.input.continue` 在清理完成后显式解除暂停。`yuxi.thread.input.cancel_input` 只移除指定的待处理 Input，不冒充尚未创建的 Turn。归档拒绝活跃 Turn 或待处理 Input；归档后的详情与历史仍可读。
+官方取消事件为 `agent.session.input.cancel`，可用 `yuxi.turn_id`、`yuxi.expected_run_id` 固定目标。省略目标时，事务内选择当前 Turn；幂等重试仍取消首次选定的 Turn。取消使当前 Turn 收敛，并暂停保留的后续 `follow_up`；等待点的 checkpoint 清理完成前，队列不会继续。`yuxi.session.input.continue` 在清理完成后显式解除暂停。`yuxi.session.input.cancel_input` 只移除指定的待处理 Input，不冒充尚未创建的 Turn。归档拒绝活跃 Turn 或待处理 Input；归档后的详情与历史仍可读。
 
 ## 读取与事件
 
-`GET /threads/{thread_id}` 返回 Thread 状态、`current_turn`、`queue_paused` 和 `queued_input_count`。Turn 结果从 `result_run_id` 指向的顶层 Run 的 `output_message_id` 读取；`interrupted` 或 `yielded` Run 结束不表示 Turn 完成。历史包含原始用户消息、已交付输出及轻量 Run 归属；模型与工具审计另由超级管理员 JWT 查询。
+`GET /threads/{thread_id}` 返回 Thread 状态、`current_turn`、`queue_paused` 和 `queued_input_count`。Turn 结果只来自 `result_run_id` 指向的当前 Turn Run；模型正文结束、`interrupted` 和 `yielded` 均不表示 Turn 完成。`/history` 返回 `thread`、`runs`、`items`，`/turns/{turn_id}/items` 复用相同公开投影。普通用户可读取已经展示的工具参数、结果和执行状态；内部 prompt、checkpoint 和完整审计不进入普通历史，审计仍仅允许超级管理员 JWT。
 
-`GET /threads/{thread_id}/events` 订阅整个 Thread。结构化 SSE 事件携带 `type`、`thread_id`、适用的 `turn_id`、`input_id`、`run_id`、`cursor` 和 `payload`。`Last-Event-ID` 用于续订。输入接收、输入消费、Run 结束与 Turn 结束是不同事件；Redis 增量短期保留，断线后的业务终态以 Input、Turn、Run 和历史查询为准。
+`GET /threads/{thread_id}/events` 订阅整个 Thread，每条 SSE `data` 就是一个公开事件，`event` 等于其 `type`，`id` 是订阅 cursor。`event_id` 标识逻辑事件，Redis 重放保持稳定；它与 cursor 分开。`session_id` 是真实 Thread ID，`yuxi.run_id` 是业务执行段。官方 `subagent.created` 仅有 `subagent` 主体，其父业务路由身份位于 `yuxi.session_id/turn_id/run_id`。
+
+| 内容 | 公开事件 |
+| --- | --- |
+| 正文 | `agent.session.turn.item.added/done`、`content_part.added/done`、`output_text.delta/done` |
+| 实际工具 | `function_call` 与 `function_call_output` item，通过 `call_id` 关联；完整参数和执行完成分别通知 |
+| 业务整轮 | `agent.session.turn.created/in_progress/completed/failed/cancelled`，主体来自已提交 Turn |
+| 子任务创建 | `agent.session.subagent.created`，`yuxi` 保存独立子 Thread/Turn/Run |
+| 原始推理 | `yuxi.session.turn.reasoning.delta/done`，关联对应 message item，不表达 reasoning summary |
+| 人工等待 | `yuxi.session.turn.waiting`，等待点绑定真实 Turn/Run |
+| 执行段、状态、恢复 | `yuxi.session.run.*`、`yuxi.session.turn.state`、`yuxi.session.turn.context_compression`、`yuxi.session.resync` |
+
+客户端按 `item_id`、`output_index`、`content_index` 合并，delta 追加、done 完整值替换；终态 item 拒绝迟到的增量。只有 Turn 的 `result_run_id` 对应输出使用 `phase=final_answer`，其他输出为 commentary。工具不会因名称被伪装为 OpenAI 托管搜索、命令或 MCP，也不生成上游未提供的参数增量。
+
+活动 message 的 `yuxi.completed_content_indices` 与 `completed_reasoning_indices` 表示已持久化的块完成边界。resync 时用这些块的完整值补回漏收的 done，保留其他块尚未持久化的本地增量，忽略已完成块的迟到 delta，并清除旧展示平滑缓存。取消时由当前有效执行 Owner 保存已展示的部分正文，随后以 incomplete item 回读。
+
+`Last-Event-ID` 使用 v2 cursor 续订。Redis 增量过期时发送 `yuxi.session.resync`，客户端缓冲新事件、重读 items 和快照，再按稳定 ID 合并。已完成正文与工具结果先持久化再发送完成边界；进行中的内容依赖短期 Redis 重放，不承诺逐 token 落库。
+
+子任务拥有独立 Thread、Turn、Run、等待点和结果，主、子 Thread 使用相同公开协议。父完成或失败不终止子任务；父取消沿当前 Turn 的委派关系递归取消相关在途子 Turn，子单独取消不取消父，子 Thread 中无关后续 Turn 不受影响。父子共享 Project Workdir，各自 runtime 和 heartbeat 独立。
+
+该协议使用 business schema v11、Redis 事件格式 v2 和 cursor v2，只支持全新数据初始化。没有旧数据迁移、旧事件 reader 或双格式消费。

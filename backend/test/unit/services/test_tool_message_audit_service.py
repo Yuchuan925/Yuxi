@@ -5,8 +5,21 @@ from types import SimpleNamespace
 
 import pytest
 
-import yuxi.modules.agents.services.tool_audit as tool_message_audit_service
-from yuxi.modules.agents.services.tool_audit import ToolMessageAuditCollector
+import yuxi.modules.agents.services.message_recorder as tool_message_audit_service
+from yuxi.modules.agents.services.message_recorder import RunMessageRecorder
+
+
+def native_event(source):
+    """工具 fixture 保留内容和来源，使用原生 params 结构。"""
+    return {
+        "method": source.get("method"),
+        "seq": source.get("seq"),
+        "params": {
+            "namespace": source.get("namespace", []),
+            "timestamp": source.get("timestamp"),
+            "data": source.get("data"),
+        },
+    }
 
 
 class _FakeDb:
@@ -44,24 +57,26 @@ async def test_collector_projects_tool_start_and_successful_finish(monkeypatch):
     monkeypatch.setattr(tool_message_audit_service, "ToolMessageAuditRepository", FakeRepository)
     monkeypatch.setattr(tool_message_audit_service, "monotonic", lambda: next(monotonic_values))
 
-    collector = ToolMessageAuditCollector(
+    collector = RunMessageRecorder(
         run_id="run-1",
         thread_id="thread-1",
         worker_id="worker-1",
     )
     await collector.consume(
-        {
-            "method": "tools",
-            "namespace": [],
-            "seq": 11,
-            "timestamp": 1_777_000_123_456,
-            "data": {
-                "event": "tool-started",
-                "tool_call_id": "call-1",
-                "tool_name": "search",
-                "input": {"query": "effective input"},
-            },
-        }
+        native_event(
+            {
+                "method": "tools",
+                "namespace": [],
+                "seq": 11,
+                "timestamp": 1_777_000_123_456,
+                "data": {
+                    "event": "tool-started",
+                    "tool_call_id": "call-1",
+                    "tool_name": "search",
+                    "input": {"query": "effective input"},
+                },
+            }
+        )
     )
     output = {
         "type": "tool",
@@ -71,13 +86,15 @@ async def test_collector_projects_tool_start_and_successful_finish(monkeypatch):
         "private_lifecycle_field": "audit-only",
     }
     await collector.consume(
-        {
-            "method": "tools",
-            "namespace": [],
-            "seq": 12,
-            "timestamp": 1_777_000_123_789,
-            "data": {"event": "tool-finished", "tool_call_id": "call-1", "output": output},
-        }
+        native_event(
+            {
+                "method": "tools",
+                "namespace": [],
+                "seq": 12,
+                "timestamp": 1_777_000_123_789,
+                "data": {"event": "tool-finished", "tool_call_id": "call-1", "output": output},
+            }
+        )
     )
 
     assert calls[0] == (
@@ -147,7 +164,7 @@ async def test_duplicate_start_preserves_original_monotonic_clock(monkeypatch):
     monkeypatch.setattr(tool_message_audit_service, "ToolMessageAuditRepository", FakeRepository)
     monkeypatch.setattr(tool_message_audit_service, "monotonic", lambda: next(monotonic_values))
 
-    collector = ToolMessageAuditCollector(
+    collector = RunMessageRecorder(
         run_id="run-1",
         thread_id="thread-1",
         worker_id="worker-1",
@@ -163,19 +180,21 @@ async def test_duplicate_start_preserves_original_monotonic_clock(monkeypatch):
             "input": {},
         },
     }
-    await collector.consume(start)
-    await collector.consume(start)
+    await collector.consume(native_event(start))
+    await collector.consume(native_event(start))
     await collector.consume(
-        {
-            "method": "tools",
-            "seq": 2,
-            "timestamp": 1_777_000_123_789,
-            "data": {
-                "event": "tool-finished",
-                "tool_call_id": "call-1",
-                "output": {"type": "tool", "content": "done", "status": "success"},
-            },
-        }
+        native_event(
+            {
+                "method": "tools",
+                "seq": 2,
+                "timestamp": 1_777_000_123_789,
+                "data": {
+                    "event": "tool-finished",
+                    "tool_call_id": "call-1",
+                    "output": {"type": "tool", "content": "done", "status": "success"},
+                },
+            }
+        )
     )
 
     assert durations == [250]
@@ -207,23 +226,25 @@ async def test_collector_treats_error_tool_message_as_failed_finish(monkeypatch)
     monkeypatch.setattr(tool_message_audit_service, "ToolMessageAuditRepository", FakeRepository)
     monkeypatch.setattr(tool_message_audit_service, "monotonic", lambda: 100.0)
 
-    collector = ToolMessageAuditCollector(
+    collector = RunMessageRecorder(
         run_id="run-1",
         thread_id="thread-1",
         worker_id="worker-1",
     )
     await collector.consume(
-        {
-            "method": "tools",
-            "seq": 1,
-            "timestamp": 1_777_000_123_456,
-            "data": {
-                "event": "tool-started",
-                "tool_call_id": "call-error",
-                "tool_name": "search",
-                "input": {},
-            },
-        }
+        native_event(
+            {
+                "method": "tools",
+                "seq": 1,
+                "timestamp": 1_777_000_123_456,
+                "data": {
+                    "event": "tool-started",
+                    "tool_call_id": "call-error",
+                    "tool_name": "search",
+                    "input": {},
+                },
+            }
+        )
     )
     output = {
         "type": "tool",
@@ -232,12 +253,14 @@ async def test_collector_treats_error_tool_message_as_failed_finish(monkeypatch)
         "status": "error",
     }
     await collector.consume(
-        {
-            "method": "tools",
-            "seq": 2,
-            "timestamp": 1_777_000_123_789,
-            "data": {"event": "tool-finished", "tool_call_id": "call-error", "output": output},
-        }
+        native_event(
+            {
+                "method": "tools",
+                "seq": 2,
+                "timestamp": 1_777_000_123_789,
+                "data": {"event": "tool-finished", "tool_call_id": "call-error", "output": output},
+            }
+        )
     )
 
     assert calls[1][0] == "fail"
@@ -271,35 +294,39 @@ async def test_raw_tool_error_waits_for_run_terminal(monkeypatch):
     monkeypatch.setattr(tool_message_audit_service, "ToolMessageAuditRepository", FakeRepository)
     monkeypatch.setattr(tool_message_audit_service, "monotonic", lambda: next(monotonic_values))
 
-    collector = ToolMessageAuditCollector(
+    collector = RunMessageRecorder(
         run_id="run-1",
         thread_id="thread-1",
         worker_id="worker-1",
     )
     await collector.consume(
-        {
-            "method": "tools",
-            "seq": 1,
-            "timestamp": 1_777_000_123_456,
-            "data": {
-                "event": "tool-started",
-                "tool_call_id": "call-interrupt",
-                "tool_name": "ask_user_question",
-                "input": {"questions": []},
-            },
-        }
+        native_event(
+            {
+                "method": "tools",
+                "seq": 1,
+                "timestamp": 1_777_000_123_456,
+                "data": {
+                    "event": "tool-started",
+                    "tool_call_id": "call-interrupt",
+                    "tool_name": "ask_user_question",
+                    "input": {"questions": []},
+                },
+            }
+        )
     )
     await collector.consume(
-        {
-            "method": "tools",
-            "seq": 2,
-            "timestamp": 1_777_000_123_789,
-            "data": {
-                "event": "tool-error",
-                "tool_call_id": "call-interrupt",
-                "message": "Interrupt",
-            },
-        }
+        native_event(
+            {
+                "method": "tools",
+                "seq": 2,
+                "timestamp": 1_777_000_123_789,
+                "data": {
+                    "event": "tool-error",
+                    "tool_call_id": "call-interrupt",
+                    "message": "Interrupt",
+                },
+            }
+        )
     )
 
     assert observed[0]["error_message"] == "Interrupt"
@@ -309,7 +336,7 @@ async def test_raw_tool_error_waits_for_run_terminal(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_collector_rejects_tool_start_without_object_input():
-    collector = ToolMessageAuditCollector(
+    collector = RunMessageRecorder(
         run_id="run-1",
         thread_id="thread-1",
         worker_id="worker-1",
@@ -317,15 +344,17 @@ async def test_collector_rejects_tool_start_without_object_input():
 
     with pytest.raises(ValueError, match="input 必须是对象"):
         await collector.consume(
-            {
-                "method": "tools",
-                "seq": 1,
-                "timestamp": 1_777_000_123_456,
-                "data": {
-                    "event": "tool-started",
-                    "tool_call_id": "call-1",
-                    "tool_name": "search",
-                    "input": "not-an-object",
-                },
-            }
+            native_event(
+                {
+                    "method": "tools",
+                    "seq": 1,
+                    "timestamp": 1_777_000_123_456,
+                    "data": {
+                        "event": "tool-started",
+                        "tool_call_id": "call-1",
+                        "tool_name": "search",
+                        "input": "not-an-object",
+                    },
+                }
+            )
         )

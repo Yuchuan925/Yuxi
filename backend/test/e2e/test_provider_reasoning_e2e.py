@@ -74,10 +74,7 @@ async def test_reasoning_stream_matches_persisted_history(e2e_client, e2e_header
             headers={**headers, "Idempotency-Key": f"reasoning-input-{uuid4().hex}"},
             json={
                 "events": [
-                    {
-                        "type": "agent.thread.input.message",
-                        "mode": "follow_up",
-                        "input": [
+                    {"type": "agent.session.input.message", "input": [
                             {
                                 "role": "user",
                                 "content": [
@@ -91,8 +88,7 @@ async def test_reasoning_stream_matches_persisted_history(e2e_client, e2e_header
                                     }
                                 ],
                             }
-                        ],
-                    }
+                        ], "yuxi": {"mode": "follow_up"}}
                 ],
             },
         )
@@ -104,16 +100,15 @@ async def test_reasoning_stream_matches_persisted_history(e2e_client, e2e_header
             """只收集本 Run 的 Public SSE 推理增量。"""
             parts: list[str] = []
             async for event in iter_public_thread_events(client, headers, thread_id):
-                if event["type"] == "agent.thread.output" and event["run_id"] == run_id:
-                    payload = event["payload"]
-                    for chunk in payload.get("items") or [payload.get("chunk") or {}]:
-                        semantic = chunk.get("stream_event") or {}
-                        if semantic.get("type") == "message_delta":
-                            parts.append(semantic.get("reasoning_content") or "")
+                if (
+                    event["type"] == "yuxi.session.turn.reasoning.delta"
+                    and event.get("yuxi", {}).get("run_id") == run_id
+                ):
+                    parts.append(event["delta"])
                 if event["turn_id"] == turn_id and event["type"] in {
-                    "agent.thread.turn.completed",
-                    "agent.thread.turn.failed",
-                    "agent.thread.turn.cancelled",
+                    "agent.session.turn.completed",
+                    "agent.session.turn.failed",
+                    "agent.session.turn.cancelled",
                 }:
                     return parts
             pytest.fail("推理 Thread SSE 在终态前断开")
@@ -127,14 +122,20 @@ async def test_reasoning_stream_matches_persisted_history(e2e_client, e2e_header
         reasoning = "".join(reasoning_parts)
         history = await client.get(f"/api/v1/agents/threads/{thread_id}/history", headers=headers)
         assert history.status_code == 200
-        messages = [m for m in history.json()["history"] if m["type"] == "ai" and m["run_id"] == run_id]
+        messages = [
+            m
+            for m in history.json()["items"]
+            if m["type"] == "message" and m["role"] == "assistant" and m["yuxi"]["run_id"] == run_id
+        ]
         assert len(messages) == 1
-        assert messages[0]["reasoning_content"] == reasoning
-        assert messages[0]["content"].strip()
+        assert "".join(messages[0]["yuxi"].get("reasoning", {}).values()) == reasoning
+        assert "".join(part["text"] for part in messages[0]["content"]).strip()
         conn = await asyncpg.connect(postgres_dsn())
         try:
             row = await conn.fetchrow(
-                "SELECT content, extra_metadata FROM messages WHERE id=$1 AND run_id=$2", messages[0]["id"], run_id
+                "SELECT content, extra_metadata FROM messages WHERE id=$1 AND run_id=$2",
+                messages[0]["yuxi"]["message_id"],
+                run_id,
             )
             metadata = (
                 json.loads(row["extra_metadata"]) if isinstance(row["extra_metadata"], str) else row["extra_metadata"]
@@ -143,7 +144,7 @@ async def test_reasoning_stream_matches_persisted_history(e2e_client, e2e_header
             assert isinstance(blocks, list)
             assert "".join(b["reasoning"] for b in blocks if b["type"] == "reasoning") == reasoning
             assert "reasoning_content" not in (metadata.get("additional_kwargs") or {})
-            assert row["content"] == messages[0]["content"]
+            assert row["content"] == "".join(part["text"] for part in messages[0]["content"])
         finally:
             await conn.close()
         print(json.dumps({"model": spec, "sse_history_pg_equal": True, "reasoning_chars": len(reasoning)}))

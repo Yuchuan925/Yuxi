@@ -39,22 +39,18 @@ def test_create_thread_and_follow_up_use_public_api(monkeypatch):
     assert calls[0]["json"] == {"agent_id": "default-chatbot"}
     assert calls[0]["headers"] == {"Idempotency-Key": "create-key"}
     assert calls[1]["headers"] == {"Idempotency-Key": "message-key"}
-    assert calls[1]["json"] == {"events": [{
-        "type": "agent.thread.input.message",
-        "mode": "follow_up",
-        "input": [{"role": "user", "content": [{"type": "input_text", "text": "你好"}]}],
-    }]}
+    assert calls[1]["json"] == {"events": [{"type": "agent.session.input.message", "input": [{"role": "user", "content": [{"type": "input_text", "text": "你好"}]}], "yuxi": {"mode": "follow_up"}}]}
 
 
 def test_structured_resume_and_cancel_use_public_thread_events(monkeypatch):
     client, calls = _patched_client(monkeypatch)
     resume = {
-        "type": "yuxi.thread.input.resume",
+        "type": "yuxi.session.input.resume",
         "turn_id": "turn-1",
         "waitpoint_id": "waitpoint-1",
         "response": {"type": "answer", "answers": [{"question_id": "q1", "answer": "可以"}]},
     }
-    cancel = {"type": "yuxi.thread.input.cancel", "turn_id": "turn-1"}
+    cancel = {"type": "agent.session.input.cancel", "yuxi": {"turn_id": "turn-1"}}
     try:
         client.submit_agent_event("thread-1", resume, idempotency_key="resume-key")
         client.submit_agent_event("thread-1", cancel, idempotency_key="cancel-key")
@@ -102,7 +98,7 @@ def test_stream_agent_thread_events_sends_auth_and_cursor():
         assert request.headers["Last-Event-ID"] == "cursor-4"
         return httpx.Response(
             200,
-            text='event: agent.thread.turn.completed\nid: cursor-5\ndata: {"turn_id":"turn-1"}\n\n',
+            text='event: agent.session.turn.completed\nid: cursor-5\ndata: {"turn_id":"turn-1"}\n\n',
             headers={"Content-Type": "text/event-stream"},
         )
 
@@ -115,7 +111,7 @@ def test_stream_agent_thread_events_sends_auth_and_cursor():
         client.close()
 
     assert events == [{
-        "event": "agent.thread.turn.completed", "id": "cursor-5", "data": '{"turn_id":"turn-1"}'
+        "event": "agent.session.turn.completed", "id": "cursor-5", "data": '{"turn_id":"turn-1"}'
     }]
 
 

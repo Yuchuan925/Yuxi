@@ -1,4 +1,4 @@
-"""线程历史里的图片投影：多图从 raw_message 取，旧行退化到单值列。"""
+"""线程历史里的图片投影：从持久 raw_message 投影官方 input content。"""
 
 from __future__ import annotations
 
@@ -79,7 +79,7 @@ async def session():
 
 async def _history(session) -> list[dict]:
     view = await get_thread_history(thread_id="thread-images", scope=ActorScope(uid="user-1", app_id=None), db=session)
-    return view["history"]
+    return view["items"]
 
 
 async def test_多图历史行的投影按顺序给出全部图片(session):
@@ -103,34 +103,11 @@ async def test_多图历史行的投影按顺序给出全部图片(session):
 
     user_message = (await _history(session))[0]
 
-    assert user_message["image_contents"] == ["A", "B", "C"]
-    # 单值字段原样保留：CLI 与 API-key 用户仍依赖它
-    assert user_message["image_content"] == "A"
-
-
-async def test_旧单值历史行退化为一张图(session):
-    """更早的历史行没有 raw_message，只有 image_content 列。"""
-    session.add(
-        Message(
-            id=2,
-            conversation_id=1,
-            role="user",
-            content="看图",
-            turn_id="turn-images",
-            run_id="run-images",
-            message_type="multimodal_image",
-            image_content="OLD",
-            extra_metadata={},
-            delivery_status="dispatched",
-            created_at=STARTED_AT,
-        )
-    )
-    await session.commit()
-
-    user_message = (await _history(session))[0]
-
-    assert user_message["image_contents"] == ["OLD"]
-    assert user_message["image_content"] == "OLD"
+    assert [p["image_url"] for p in user_message["content"] if p["type"] == "input_image"] == [
+        "data:image/jpeg;base64,A",
+        "data:image/jpeg;base64,B",
+        "data:image/jpeg;base64,C",
+    ]
 
 
 async def test_纯文本历史行不产生图片(session):
@@ -154,8 +131,8 @@ async def test_纯文本历史行不产生图片(session):
 
     user_message = (await _history(session))[0]
 
-    assert user_message["image_contents"] == []
-    assert user_message["message_type"] == "text"
+    assert user_message["content"] == [{"type":"input_text","text":"只有文字"}]
+    assert user_message["yuxi"]["message_type"] == "text"
 
 
 async def test_投影不外泄_raw_message_的原始形状(session):
@@ -178,7 +155,9 @@ async def test_投影不外泄_raw_message_的原始形状(session):
     )
     await session.commit()
 
-    contents = (await _history(session))[0]["image_contents"]
+    item = (await _history(session))[0]
+    assert "raw_message" not in item["yuxi"]
+    contents = [part["image_url"] for part in item["content"] if part["type"] == "input_image"]
 
-    assert contents == ["A", "B"]
+    assert contents == ["data:image/jpeg;base64,A", "data:image/jpeg;base64,B"]
     assert all(isinstance(item, str) for item in contents)

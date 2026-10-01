@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { copyTextToClipboard } from '../../src/utils/clipboard.js'
+import { copyTextToClipboard } from '../../src/shared/lib/clipboard.js'
 
 function createDocumentStub(execResult = true) {
   const appended = []

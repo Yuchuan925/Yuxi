@@ -98,7 +98,7 @@ class FakeYuxiClient:
 
     def get_agent_turn(self, thread_id, turn_id):
         self.calls.append({"method": "turn", "thread_id": thread_id, "turn_id": turn_id})
-        return {"status": "completed", "output": {"content": "final answer"}}
+        return {"status": "completed", "output": [{"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "final answer"}]}]}
 
 
 def _console():

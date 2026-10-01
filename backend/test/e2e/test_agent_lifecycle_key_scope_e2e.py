@@ -8,6 +8,7 @@ import asyncpg
 import pytest
 
 from e2e_helpers import delete_agent, postgres_dsn
+from test.e2e.test_agent_lifecycle_e2e import output_text
 from test.live_api_cleanup import (
     delete_test_conversation_resources,
     make_test_conversation_title,
@@ -19,9 +20,7 @@ from yuxi.modules.workspace.paths import user_workspace_dir
 pytestmark = [pytest.mark.asyncio, pytest.mark.e2e, pytest.mark.slow, pytest.mark.timeout(240)]
 
 
-async def _delete_key_thread(
-    thread_id: str, *, app_id: str, end_user_id: str, other_end_user_id: str
-) -> None:
+async def _delete_key_thread(thread_id: str, *, app_id: str, end_user_id: str, other_end_user_id: str) -> None:
     """仅清理本测试创建的终端用户 Thread、隐式 Project 和无引用身份。"""
     await validate_test_runs_terminal({thread_id})
     conn = await asyncpg.connect(postgres_dsn())
@@ -55,7 +54,9 @@ async def _delete_key_thread(
             "AND end_user_id = ANY($2::text[]) AND app_id = $3 "
             "AND NOT EXISTS (SELECT 1 FROM conversations WHERE conversations.uid = users.uid) "
             "AND NOT EXISTS (SELECT 1 FROM projects WHERE projects.uid = users.uid)",
-            row["owner_user_id"], [end_user_id, other_end_user_id, "__default__"], app_id,
+            row["owner_user_id"],
+            [end_user_id, other_end_user_id, "__default__"],
+            app_id,
         )
     finally:
         await conn.close()
@@ -121,7 +122,7 @@ async def test_private_agent_key_run_uses_end_user_workspace_and_app_scope(e2e_c
         completed = await _turn(e2e_client, public_headers, thread_id, receipt["turn_id"])
         assert completed["status"] == "completed", completed
         assert completed["result_run_id"] == receipt["run_id"]
-        assert OUTPUT in completed["output"]["content"]
+        assert OUTPUT in output_text(completed["output"])
         conn = await asyncpg.connect(postgres_dsn())
         try:
             persisted = await conn.fetchrow(
@@ -137,15 +138,19 @@ async def test_private_agent_key_run_uses_end_user_workspace_and_app_scope(e2e_c
                 "JOIN agent_runs r ON r.id = i.consumed_run_id "
                 "JOIN messages m ON m.id = r.output_message_id "
                 "WHERE c.thread_id = $1 AND i.id = $2 AND t.id = $3 AND r.id = $4",
-                thread_id, receipt["input_id"], receipt["turn_id"], receipt["run_id"],
+                thread_id,
+                receipt["input_id"],
+                receipt["turn_id"],
+                receipt["run_id"],
             )
         finally:
             await conn.close()
         assert persisted and persisted["user_kind"] == "end_user"
         assert persisted["end_user_id"] == end_user_id and persisted["uid"] != owner_uid
-        assert len({persisted[key] for key in (
-            "uid", "thread_uid", "project_uid", "input_uid", "turn_uid", "run_uid"
-        )}) == 1
+        assert (
+            len({persisted[key] for key in ("uid", "thread_uid", "project_uid", "input_uid", "turn_uid", "run_uid")})
+            == 1
+        )
         assert {persisted[key] for key in ("input_app_id", "turn_app_id", "run_app_id")} == {app_id}
         assert persisted["api_key_id"] == key_id
         assert persisted["output_run_id"] == receipt["run_id"]
@@ -156,12 +161,12 @@ async def test_private_agent_key_run_uses_end_user_workspace_and_app_scope(e2e_c
         assert not (user_workspace_dir(owner_uid) / persisted["workdir_path"]).exists()
     finally:
         if thread_id and public_headers:
-            archived = await e2e_client.post(
-                f"/api/v1/agents/threads/{thread_id}/archive", headers=public_headers
-            )
+            archived = await e2e_client.post(f"/api/v1/agents/threads/{thread_id}/archive", headers=public_headers)
             assert archived.status_code == 200, archived.text
             await _delete_key_thread(
-                thread_id, app_id=app_id, end_user_id=end_user_id,
+                thread_id,
+                app_id=app_id,
+                end_user_id=end_user_id,
                 other_end_user_id=other_end_user_id,
             )
         if key_id is not None:

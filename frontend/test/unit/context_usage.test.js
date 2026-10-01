@@ -8,7 +8,7 @@ import {
   getContextUsageTone,
   resolveContextPressureTokens,
   shouldSuggestContextCompression
-} from '../../src/utils/contextUsage.js'
+} from '../../src/modules/conversation/model/contextUsage.js'
 
 test('formatContextToken: 正确格式化 K / M 及普通数值', () => {
   assert.equal(formatContextToken(0), '0')

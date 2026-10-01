@@ -89,7 +89,7 @@ async (page) => {
     if (/\/api\/v1\/agents\/threads\/[^/]+\/events$/.test(request.url()) && request.method() === 'POST') {
       try {
         const body = JSON.parse(request.postData() || '{}')
-        const message = body.events?.find((event) => event.type === 'agent.thread.input.message')
+        const message = body.events?.find((event) => event.type === 'agent.session.input.message')
         if (message) {
           const content = message.input?.[0]?.content || []
           posted.push(content.filter((part) => part.type === 'input_image').map((part) => part.image_url))
@@ -148,15 +148,13 @@ async (page) => {
       headers: { Authorization: `Bearer ${token}` }
     })
     const data = await response.json()
-    // 后端给每条消息都写 image_contents（AI 消息是空数组），只能按类型定位用户消息
-    return (data.history || []).find((message) => message.type === 'human')
+    return (data.items || []).find((item) => item.type === 'message' && item.role === 'user')
   }, threadId)
-  check(dto, '历史接口没有返回 image_contents 字段')
-  check(dto.image_contents.length === 3, '历史里的 image_contents 不是三张')
-  check(
-    dto.image_contents.every((item) => typeof item === 'string'),
-    '历史里的 image_contents 不是字符串数组（不应透传 raw_message 的 part 形状）'
-  )
+  check(dto, '历史接口没有返回用户 message item')
+  const imageParts = dto.content.filter((part) => part.type === 'input_image')
+  check(imageParts.length === 3, '历史里的 input_image 不是三张')
+  check(imageParts.every((part) => typeof part.image_url === 'string'), '图片 URL 类型不符合协议')
+  check(imageParts[0].image_url !== imageParts[1].image_url, '前两张图片的身份丢失')
 
   // ---- 6. 运行中只带图片发送：不得取消运行、不得静默丢图 ----
   // 这一条是回归守卫：发送载荷的键从 image 改为 images 时，若消费端还读旧键，

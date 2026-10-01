@@ -4,7 +4,7 @@
 
 ## 运行入口
 
-Public Thread 接入把普通消息保存为 Input 与 Message，调度器领取时建立 Turn/Run；审批恢复在同一 Turn 建立下一 Run，子智能体沿父 Run 执行树归属。worker 只执行已持久化的 Run：
+Public Thread 接入把普通消息保存为 Input 与 Message，调度器领取时建立 Turn/Run；审批恢复在同一 Turn 建立下一 Run，子智能体从持久委派输入建立自己的 Thread、Turn、Run，并通过创建者关系关联父执行。worker 只执行已持久化的 Run：
 
 ```mermaid
 flowchart LR
@@ -27,7 +27,7 @@ API/worker 不信任浏览器内存中的完整配置。请求可以提供受限
 
 状态查询在 Conversation 与 Workdir 授权后直接读取 PostgreSQL checkpointer 的根 namespace，返回最近完整快照及同批 pending writes 中的中断，仅在最新 Run 为 interrupted 时展示审批。读取不创建 Context 或模型；业务 pending writes 的合并仍由执行图拥有。HTTP 与 SSE 使用同一状态投影，仅返回待办、产物、子 Run 和用量。文件由 Workdir/Sandbox 边界持久化，前端文件面板通过文件系统接口读取当前 Workdir。
 
-普通来源调用 `services/agents/inputs.py` 接收用例：作用域校验后保存 Message、Input 与幂等 Receipt，按 FIFO 领取时创建 Turn/Run；事务提交后物化 Workdir 并投递 Run。Input 保存来源、目标、消息成员和接收时冻结的模型/审批配置，消息正文由 Message 拥有，其余 Agent 配置在 worker 准备时读取。调度、引导和控制的完整契约见 [Agent 输入队列与调度](./agent-request-queue.md)。
+普通来源调用 `modules/agents/services/inputs.py` 接收用例：作用域校验后保存 Message、Input 与幂等 Receipt，空闲时按优先队头领取并创建 Turn/Run；事务提交后物化 Workdir 并投递 Run。Input 保存来源、优先级、消息成员和接收时冻结的模型/审批配置，消息正文由 Message 拥有，其余 Agent 配置在 worker 准备时读取。调度、引导和控制的完整契约见 [Agent 输入队列与调度](./agent-request-queue.md)。
 
 断线后调用方从 Public Thread、Input、Turn、Run 与 History 查询读取明确的接收、消费和结果归属。排队 Input 尚无 Turn/Run；最终输出只属于 Turn 的 `result_run_id` 所指顶层 Run。HTTP `202`、SSE 中断和 Run `yielded` 都不是整轮成功证明。
 
@@ -56,7 +56,7 @@ manifest v2 的配置摘要来自准备后的可配置字段，包含模型覆�
 
 ## 文件和 Memory
 
-当前 Project 的 `workdir_path` 决定 Agent 的默认工作目录。普通 Agent 和子 Agent 共享根 Conversation 的 Workdir 与 execution runtime；子 Agent 的 child thread 只隔离 LangGraph checkpoint，不隔离文件。
+当前 Project 的 `workdir_path` 决定 Agent 的默认工作目录。普通 Agent 和子 Agent 共享 Project Workdir；每个执行使用自身 Thread 的 runtime scope、checkpoint、lease、heartbeat 和清理。父 runtime 结束不影响子执行，附件通过授权委派输入保存。
 
 `agents/MEMORY.md` 只有在用户配置 `enable_memory=true`，且该文件存在并包含非空内容时，才由主 Agent 的 Memory middleware 读取并提供受限的记忆工具。它是用户主动维护的参考资料，不是系统指令；子 Agent 不直接使用该 middleware。Memory 读取和更新有独立的用户、Run、worker 和文件大小校验。
 
@@ -91,8 +91,16 @@ Viewer、附件和 artifact API 通过持久化 Workspace/Workdir 读取文件�
 
 ## 线程阅读数据
 
-`GET /api/v1/agents/threads/{thread_id}/history` 返回当前作用域可见的 `thread`、`runs` 和 `history`。`thread` 来自持久 Thread/Turn/队列快照；`runs` 是轻量执行段归属，包含 `run_id`、`turn_id`、`run_type`、父 Run 和状态；`history` 保留原始输入、取消的排队消息和已交付输出。Model/Tool 审计由独立管理员接口按需读取，不混入普通历史。
+`GET /api/v1/agents/threads/{thread_id}/history` 返回当前作用域可见的 `thread`、`runs` 和 `items`。`thread` 来自持久 Thread/Turn/队列快照；`runs` 是轻量执行段归属，包含 `run_id`、`turn_id`、`run_type`、父 Run 和状态；`items` 保留用户输入、取消的排队消息和已经进入用户输出链路的正文、工具参数及结果。公开 item 身份与 output_index 保存于 Message 元数据，Turn 锁分配递增索引；实时与历史复用同一 serializer。完整 Model/Tool 审计由独立管理员接口读取。
 
 History 读取不改变已读标记。页面加载后以 `POST /api/v1/agents/threads/{thread_id}/viewed` 显式标记已查看；未知、跨 APP 或跨用户的 Thread 返回 404。多个查询遵循数据库事务隔离，运行中变化通过 Thread SSE 与持久快照重读收敛。
 
-接口契约由 `services/agents/messages.py` 装配、`ConversationRepository` 查询和前端 History consumer 共同拥有；真实 HTTP 测试回读消息、Run 归属和 PostgreSQL 已读标记。取舍与兼容影响见 [前端优化](../develop-guides/decisions/archived/0.7.3/12-concurrency/2026-09-05-frontend-optimization.md)。
+接口契约由 `modules/agents/services/messages.py` 装配、`PublicItemRepository` 查询和前端 History consumer 共同拥有；真实 HTTP 测试回读公开 item、Run 归属和 PostgreSQL 已读标记。公开协议取舍见[原生事件与 Agents API 决策](../develop-guides/decisions/implemented/2026-09-30-langgraph-agents-events.md)。
+
+## 原生流与公开协议
+
+BaseAgent 保留 LangGraph v3 ProtocolEvent 的通道、顺序、内容块和 namespace，独立 GraphExecutionResult 返回 checkpoint。同一 Run 因取消让位批次而续图时，执行层在审计与公开投影前将各图段 seq 衔接为 Run 内递增序号，不修改源事件对象、内容和 namespace。Model/Tool 审计消费原生结构；agents service 的唯一 OpenAIEventAdapter 消费相同原生事件，Redis 逐条保存公开事件。批量写入仅优化传输，不合并事件。业务结果通过独立 RunExecutionResult 与 PostgreSQL 收敛，不从公开流反推。
+
+完成、等待、失败和取消由已提交的 Run/Turn 事实通知。原始推理和业务状态使用明确的 yuxi 扩展；官方 item 与 content 事件保持官方结构。详情见 [Agents Public API](../advanced/agents-public-api.md)。
+
+子 Thread 在委派事务中保存实际模型和审批默认值，各 Input 接收时仍冻结本次配置。直接向子 Thread 提交新的 follow-up 会创建独立的用户 Turn，不继承旧 Turn 的 `created_by_run_id`。Thread 委派关系继续证明其用户、APP 和共享 Project 的授权；本轮 Run 的委派身份只用于本轮父子取消与 tracing，不以 Thread 历史委派推断取消范围。附件绑定在输入事务中写入公开用户 item 快照，回执替换与刷新使用同一已授权记录。

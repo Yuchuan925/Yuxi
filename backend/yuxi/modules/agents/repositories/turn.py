@@ -5,10 +5,9 @@ from __future__ import annotations
 from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from yuxi.modules.agents.models.messages import AUDIT_MESSAGE_TYPES, Message, MODEL_AUDIT_MESSAGE_TYPE
+from yuxi.modules.agents.models.messages import Message, MODEL_AUDIT_MESSAGE_TYPE
 from yuxi.modules.agents.models.runs import AgentRun
 from yuxi.modules.agents.models.turns import AgentTurn
-from yuxi.modules.agents.models.threads import Conversation
 from yuxi.shared.datetime import utc_now_naive
 
 
@@ -89,7 +88,7 @@ class AgentTurnRepository:
     async def set_current(self, turn: AgentTurn, *, run_id: str) -> AgentTurn:
         """将同一 Turn 的新顶层 Run 设为当前执行。"""
         run = await self.db.get(AgentRun, run_id)
-        if run is None or run.turn_id != turn.id or run.run_type == "subagent":
+        if run is None or run.turn_id != turn.id:
             raise ValueError("当前 Run 不属于目标 Turn")
         if turn.status not in {"running", "waiting"}:
             raise ValueError("Turn 当前状态不能接续执行")
@@ -124,7 +123,7 @@ class AgentTurnRepository:
             raise ValueError("Turn 已经结束")
         if status == "completed":
             run = await self.db.get(AgentRun, result_run_id)
-            if run is None or run.turn_id != turn.id or run.run_type == "subagent" or run.status != "completed":
+            if run is None or run.turn_id != turn.id or run.status != "completed":
                 raise ValueError("Turn 结果必须来自已完成的本轮顶层 Run")
         elif result_run_id is not None:
             raise ValueError("非完成 Turn 不能指定结果 Run")
@@ -149,9 +148,7 @@ class AgentTurnRepository:
     async def list_runs(self, turn_id: str) -> list[AgentRun]:
         """只读取明确绑定的顶层执行段。"""
         result = await self.db.execute(
-            select(AgentRun)
-            .where(AgentRun.turn_id == turn_id, AgentRun.run_type.in_(("chat", "resume")))
-            .order_by(AgentRun.execution_seq, AgentRun.id)
+            select(AgentRun).where(AgentRun.turn_id == turn_id).order_by(AgentRun.execution_seq, AgentRun.id)
         )
         return list(result.scalars())
 
@@ -184,24 +181,3 @@ class AgentTurnRepository:
             key = (message.run_id, message.operation_id) if message.operation_id else (message.run_id, message.id)
             latest.setdefault(key, message)
         return list(reversed(latest.values()))
-
-    async def list_messages(self, *, turn_id: str, thread_id: str, after_id: int, limit: int) -> list[Message]:
-        """读取本轮原始消息和明确发布的最终助手输出。"""
-        output_ids = select(AgentRun.output_message_id).where(
-            AgentRun.turn_id == turn_id,
-            AgentRun.output_message_id.is_not(None),
-            AgentRun.run_type.in_(("chat", "resume")),
-        )
-        result = await self.db.execute(
-            select(Message)
-            .join(Conversation, Conversation.id == Message.conversation_id)
-            .where(
-                Conversation.thread_id == thread_id,
-                Message.id > after_id,
-                or_(Message.message_type.is_(None), Message.message_type.notin_(AUDIT_MESSAGE_TYPES)),
-                or_(Message.turn_id == turn_id, Message.id.in_(output_ids)),
-            )
-            .order_by(Message.id)
-            .limit(limit)
-        )
-        return list(result.scalars())

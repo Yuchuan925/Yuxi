@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { isPasswordLongEnough, MIN_PASSWORD_LENGTH } from '../../src/utils/passwordValidation.js'
+import { isPasswordLongEnough, MIN_PASSWORD_LENGTH } from '../../src/modules/identity/model/passwordValidation.js'
 
 test('password validation enforces the minimum length', () => {
   assert.equal(MIN_PASSWORD_LENGTH, 8)
