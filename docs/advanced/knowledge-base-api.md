@@ -88,14 +88,13 @@ Dify 和 Notion 只提供外部检索能力。它们不支持 Yuxi 的文档上�
 
 ```bash
 yuxi kb list
-yuxi kb upload ./docs --kb-id <kb-id>
 yuxi kb files --kb-id <kb-id> --query handbook
 yuxi kb query --kb-id <kb-id> "如何申请年假？"
 yuxi kb open --kb-id <kb-id> --file-id <file-id>
 yuxi kb find --kb-id <kb-id> --file-id <file-id> --pattern "年假"
 ```
 
-`kb upload` 只上传原文件并添加文件记录，不自动完成 OCR、解析或向量入库。完成后回到知识库页面继续处理并确认 `indexed`。
+npm CLI 的 `kb` 命令只读 external 知识库，不提供文件上传、解析或向量入库。管理端上传和处理流程见[知识库入门](../intro/knowledge-base.md)。
 
 ## 验证入口
 

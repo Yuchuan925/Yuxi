@@ -7,8 +7,8 @@ on:
       - "Makefile"
       - "backend/pyproject.toml"
       - "backend/uv.lock"
-      - "packages/yuxi-cli/pyproject.toml"
-      - "packages/yuxi-cli/uv.lock"
+      - "packages/yuxi-cli/package.json"
+      - "packages/yuxi-cli/package-lock.json"
       - "frontend/package.json"
       - "frontend/pnpm-lock.yaml"
       - "frontend/pnpm-workspace.yaml"
@@ -24,8 +24,8 @@ on:
       - "Makefile"
       - "backend/pyproject.toml"
       - "backend/uv.lock"
-      - "packages/yuxi-cli/pyproject.toml"
-      - "packages/yuxi-cli/uv.lock"
+      - "packages/yuxi-cli/package.json"
+      - "packages/yuxi-cli/package-lock.json"
       - "frontend/package.json"
       - "frontend/pnpm-lock.yaml"
       - "frontend/pnpm-workspace.yaml"
@@ -69,24 +69,25 @@ jobs:
       - name: Audit Python transitive licenses
         working-directory: backend
         run: uv run --isolated --no-dev --with pip-licenses pip-licenses --from mixed --format markdown
-      - name: Audit yuxi-cli locked vulnerabilities
-        working-directory: packages/yuxi-cli
-        run: uv audit --locked --no-dev
-      - name: Audit yuxi-cli transitive licenses
-        working-directory: packages/yuxi-cli
-        run: uv run --isolated --no-dev --with pip-licenses pip-licenses --from mixed --format markdown
 
   node:
-    name: Node.js production vulnerabilities
+    name: Node.js production vulnerabilities (${{ matrix.project }})
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
-        project: [frontend, docs]
+        include:
+          - project: frontend
+            package-manager: pnpm
+          - project: docs
+            package-manager: pnpm
+          - project: packages/yuxi-cli
+            package-manager: npm
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
+        if: matrix.package-manager == 'pnpm'
         with:
           version: 11.24.0
       - uses: actions/setup-node@v7
@@ -94,7 +95,12 @@ jobs:
           node-version: 22
       - name: Audit locked Node.js production dependencies
         working-directory: ${{ matrix.project }}
-        run: pnpm audit --audit-level=high --prod
-      - name: Exercise Node.js audit negative control
         run: |
-          bash scripts/dependency-audit-fixtures/run-node-negative-control.sh
+          if [ "${{ matrix.package-manager }}" = "npm" ]; then
+            npm audit --audit-level=high --omit=dev
+          else
+            pnpm audit --audit-level=high --prod
+          fi
+      - name: Exercise Node.js audit negative control
+        if: matrix.project == 'frontend'
+        run: bash scripts/dependency-audit-fixtures/run-node-negative-control.sh

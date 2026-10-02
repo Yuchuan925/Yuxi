@@ -1,15 +1,15 @@
-# yuxi-cli
+# @xerrors/yuxi
 
-Yuxi command line client.
+Yuxi Public v1 command-line client. Requires Node.js 22 or newer.
 
-First-stage scope:
+```bash
+npm install --global @xerrors/yuxi
+yuxi remote add production https://example.com
+yuxi remote use production
+yuxi login
+yuxi agent list
+yuxi chat --agent default-chatbot
+yuxi kb query --kb-id <id> "your question"
+```
 
-- remote management through `~/.yuxi/config.toml`
-- browser login
-- API Key import through `--api-key`
-- `whoami`, `status`, and `logout`
-- server discovery and compatibility check for Yuxi `>=0.7.1`
-- `yuxi chat` for a temporary local browser chat with streamed Agent output; `/state` reads thread state and `/approve` resumes a pending tool approval
-- `yuxi agent list` and `yuxi agent show <slug>` for inspecting agents visible to the logged-in user
-- `yuxi kb upload` for knowledge base file uploads
-- `yuxi agent eval` for running existing Langfuse dataset experiments with a logged-in remote
+Configuration is stored at `~/.yuxi/config.json` with restrictive file permissions. The first release focuses on authentication, Public Agent/Thread APIs, terminal chat, SSE observation, and knowledge-base retrieval. Eval, Langfuse, upload, and administration APIs are intentionally not included.

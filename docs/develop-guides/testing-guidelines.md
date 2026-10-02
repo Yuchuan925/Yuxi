@@ -10,7 +10,7 @@
 | Integration | `backend/test/integration` | 真实 HTTP、认证、事务、锁、Schema、lease 和服务副作用 | 依赖 Docker Compose |
 | E2E | `backend/test/e2e` | Run、SSE、worker、文件落盘和完整用户链路 | 依赖完整 Compose，数量少、速度慢 |
 | Web unit | `frontend/test/unit` | 前端状态、组件和交互逻辑 | 通过 `pnpm test:unit` |
-| CLI | `packages/yuxi-cli/tests` | CLI 配置、命令和客户端行为 | 独立 Python 包 |
+| CLI | `packages/yuxi-cli/test` | npm CLI 配置、命令、Public v1 客户端和协议逻辑 | Node.js 22+，静态测试不依赖运行中的服务 |
 
 同一个子项目只保留一个测试根目录，不要同时创建 `test` 和 `tests`。
 
@@ -114,7 +114,10 @@ CLI：
 
 ```bash
 cd packages/yuxi-cli
-uv run pytest
+npm ci
+npm run typecheck
+npm test
+npm run pack:check
 ```
 
 工程契约、文档构建和补丁检查：

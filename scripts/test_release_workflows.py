@@ -12,9 +12,10 @@ class ReleaseWorkflowTests(unittest.TestCase):
     """阻止候选检查缺失和应用 Release 误触发 CLI 上传。"""
 
     def assert_cold_build_budget(self, workflow: str) -> None:
-        """检查 Runtime job 具有覆盖冷缓存构建的最小预算。"""
+        """检查 Durable Task job 具有覆盖冷缓存构建的最小预算。"""
+        durable_job = workflow.split("  durable-task-worker-path:\n", 1)[1].split("\n  system-tests:", 1)[0]
         self.assertRegex(
-            workflow,
+            durable_job,
             r"(?m)^    timeout-minutes: (?:[6-9][0-9]|[1-9][0-9]{2,})$",
         )
 

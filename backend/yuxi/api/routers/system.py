@@ -60,7 +60,6 @@ async def discovery():
                 "remote_config": True,
                 "agent_list": True,
                 "agent_show": True,
-                "kb_upload": True,
                 "kb_list": True,
                 "kb_files": True,
                 "kb_query": True,
