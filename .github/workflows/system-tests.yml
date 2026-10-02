@@ -202,7 +202,17 @@ jobs:
           sandbox_runtime_image=$(docker compose config --format json | python3 -c 'import json, sys; print(json.load(sys.stdin)["services"]["sandbox-provisioner"]["environment"]["SANDBOX_IMAGE"])')
           docker pull "$sandbox_runtime_image"
       - name: Start focused runtime topology
-        run: docker compose up -d postgres redis minio sandbox-provisioner api worker
+        run: docker compose up -d postgres redis minio milvus graph sandbox-provisioner api worker
+      - name: Wait for Milvus retrieval readiness
+        run: |
+          for attempt in $(seq 1 60); do
+            if docker compose exec -T milvus curl -fsS http://localhost:9091/healthz >/dev/null; then
+              exit 0
+            fi
+            sleep 2
+          done
+          docker compose logs etcd minio milvus --tail 200
+          exit 1
       - name: Wait for truthful readiness
         run: |
           for attempt in $(seq 1 90); do
@@ -284,6 +294,8 @@ jobs:
         run: docker compose exec -T -e TEST_USERNAME="$E2E_USERNAME" -e TEST_PASSWORD="$E2E_PASSWORD" api uv run --no-sync --no-dev pytest test/integration/api/test_mcp_router.py -q
       - name: Verify current Schema initialization contract
         run: docker compose exec -T api uv run --no-sync --no-dev pytest test/integration/services/test_schema_migration_version.py -q
+      - name: Verify Milvus 3 text retrieval through worker
+        run: docker compose exec -T -e E2E_USERNAME -e E2E_PASSWORD api uv run --no-sync --no-dev pytest test/e2e/test_milvus_text_retrieval_e2e.py -q --durations=10
       - name: Verify knowledge statistics projection
         run: docker compose exec -T api uv run --no-sync --no-dev pytest test/integration/services/test_knowledge_stats_refresh.py -q
       - name: Verify Input FIFO transaction and recovery

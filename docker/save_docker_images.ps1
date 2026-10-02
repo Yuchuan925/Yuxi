@@ -25,8 +25,8 @@ $Images = @(
     "postgres:16",
     "redis:7.4.10-alpine",
     "neo4j:5.26.29",
-    "quay.io/coreos/etcd:v3.5.5",
-    "milvusdb/milvus:v2.5.6",
+    "quay.io/coreos/etcd:v3.5.25",
+    "milvusdb/milvus:v3.0.2",
     # "lmsysorg/sglang:v0.4.9.post3-cu126",
     # "ccr-2vdh3abv-pub.cnc.bj.baidubce.com/paddlex/paddlex:paddlex3.0.1-paddlepaddle3.0.0-gpu-cuda11.8-cudnn8.9-trt8.6"
 )

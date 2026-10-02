@@ -832,7 +832,7 @@ async def test_hybrid_mode_uses_milvus_native_hybrid_search():
     assert bm25_request.param["metric_type"] == "BM25"
 
 
-async def test_hybrid_mode_filters_scores_below_similarity_threshold():
+async def test_hybrid_mode_does_not_apply_cosine_threshold_to_fusion_score():
     collection = FakeCollection(distance=0.1)
     kb = make_kb(collection)
     config = make_query_config()
@@ -846,7 +846,7 @@ async def test_hybrid_mode_filters_scores_below_similarity_threshold():
         similarity_threshold=0.2,
     )
 
-    assert chunks == []
+    assert chunks[0]["hybrid_score"] == 0.1
 
 
 def test_query_params_config_uses_bm25_parameters():
@@ -870,7 +870,7 @@ def test_query_params_config_uses_bm25_parameters():
     assert "BM25" in descriptions["hybrid"]
 
 
-def test_collection_supports_bm25_requires_analyzed_content_sparse_field_and_function():
+def test_collection_supports_text_retrieval_requires_match_and_bm25():
     kb = MilvusKB.__new__(MilvusKB)
     schema = CollectionSchema(
         fields=[
@@ -880,6 +880,7 @@ def test_collection_supports_bm25_requires_analyzed_content_sparse_field_and_fun
                 dtype=DataType.VARCHAR,
                 max_length=65535,
                 enable_analyzer=True,
+                enable_match=True,
                 analyzer_params=CONTENT_ANALYZER_PARAMS,
             ),
             FieldSchema(name=CONTENT_SPARSE_FIELD, dtype=DataType.SPARSE_FLOAT_VECTOR),
@@ -896,7 +897,7 @@ def test_collection_supports_bm25_requires_analyzed_content_sparse_field_and_fun
 
     collection = type("Collection", (), {"schema": schema})()
 
-    assert kb._collection_supports_bm25(collection)
+    assert kb._collection_supports_text_retrieval(collection)
 
 
 @pytest.mark.parametrize("chunk_count", [0, 1, 4])

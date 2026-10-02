@@ -21,8 +21,8 @@ IMAGES=(
     "node:24-slim",
     "nginx:alpine",
     "neo4j:5.26.29",
-    "quay.io/coreos/etcd:v3.5.5",
-    "milvusdb/milvus:v2.5.6",
+    "quay.io/coreos/etcd:v3.5.25",
+    "milvusdb/milvus:v3.0.2",
 )
 
 # MinIO 的官方镜像已不再公开分发，改为按仓库内 Dockerfile 构建后再导出。

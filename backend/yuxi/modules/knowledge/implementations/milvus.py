@@ -1,4 +1,6 @@
 import asyncio
+import json
+import re
 import os
 import time
 import traceback
@@ -15,6 +17,7 @@ from pymilvus import (
     FieldSchema,
     Function,
     FunctionType,
+    LexicalHighlighter,
     WeightedRanker,
     connections,
     db,
@@ -102,6 +105,22 @@ class MilvusRetrievalConfig:
             "description": "选择检索模式",
         },
     )
+    required_terms: str = field(
+        default="",
+        metadata={"label": "必含词", "type": "string", "description": "空格分隔；每个词项都必须匹配，按分词结果判断"},
+    )
+    excluded_terms: str = field(
+        default="",
+        metadata={"label": "排除词", "type": "string", "description": "空格分隔；排除包含任一词项的片段"},
+    )
+    exact_phrase: str = field(
+        default="",
+        metadata={"label": "完整短语", "type": "string", "description": "按分词后的顺序匹配完整短语，不允许间隔词项"},
+    )
+    highlight_results: bool = field(
+        default=True,
+        metadata={"label": "命中高亮", "type": "boolean", "description": "展示关键词和文本筛选条件命中的片段"},
+    )
     final_top_k: int = field(
         default=10,
         metadata={
@@ -115,12 +134,12 @@ class MilvusRetrievalConfig:
     similarity_threshold: float = field(
         default=0.0,
         metadata={
-            "label": "相似度阈值（0-1）",
+            "label": "向量相似度阈值（0-1）",
             "type": "number",
             "min": 0.0,
             "max": 1.0,
             "step": 0.1,
-            "description": "过滤相似度低于此值的结果",
+            "description": "仅对纯向量检索生效，过滤低于此值的结果",
         },
     )
     bm25_top_k: int = field(
@@ -313,7 +332,7 @@ class MilvusKB(KnowledgeBase):
         # self.milvus_port = kwargs.get('milvus_port', int(os.getenv('MILVUS_PORT', '19530')))
         self.milvus_token = kwargs.get("milvus_token", os.getenv("MILVUS_TOKEN") or "")
         self.milvus_uri = kwargs.get("milvus_uri", os.getenv("MILVUS_URI") or "http://localhost:19530")
-        self.milvus_db = kwargs.get("milvus_db") or "yuxi"
+        self.milvus_db = kwargs.get("milvus_db") or os.getenv("MILVUS_DB") or "yuxi"
 
         # 连接名称
         self.connection_alias = f"milvus_{hashstr(work_dir, 6)}"
@@ -327,24 +346,12 @@ class MilvusKB(KnowledgeBase):
         logger.info("MilvusKB initialized")
 
     def _init_connection(self):
-        """初始化 Milvus 连接"""
-        try:
-            # 连接到 Milvus
-            connections.connect(alias=self.connection_alias, uri=self.milvus_uri, token=self.milvus_token)
-
-            # 创建数据库（如果不存在）
-            try:
-                if self.milvus_db not in db.list_database():
-                    db.create_database(self.milvus_db)
-                db.using_database(self.milvus_db)
-            except Exception as e:
-                logger.warning(f"Database operation failed, using default: {e}")
-
-            logger.info(f"Connected to Milvus at {self.milvus_uri}")
-
-        except Exception as e:
-            logger.error(f"Failed to connect to Milvus: {e}")
-            raise
+        """在本连接作用域内创建并选择目标数据库。"""
+        connections.connect(alias=self.connection_alias, uri=self.milvus_uri, token=self.milvus_token)
+        if self.milvus_db not in db.list_database(using=self.connection_alias):
+            db.create_database(self.milvus_db, using=self.connection_alias)
+        db.using_database(self.milvus_db, using=self.connection_alias)
+        logger.info(f"Connected to Milvus at {self.milvus_uri}, database={self.milvus_db}")
 
     async def _create_kb_instance(self, kb_id: str, embedding_model_spec: str | None) -> Any:
         """在线程中创建或加载 Milvus 集合，避免阻塞 worker heartbeat。"""
@@ -363,41 +370,20 @@ class MilvusKB(KnowledgeBase):
 
         collection_name = kb_id
 
-        try:
-            # 检查集合是否存在
-            if utility.has_collection(collection_name, using=self.connection_alias):
-                collection = Collection(name=collection_name, using=self.connection_alias)
+        if not utility.has_collection(collection_name, using=self.connection_alias):
+            return self._create_new_collection(collection_name, embedding_info, kb_id)
 
-                # 检查嵌入模型是否匹配
-                description = collection.description
-                expected_model = embedding_info.model_id
-
-                if expected_model not in description:
-                    logger.warning(
-                        f"Collection {collection_name} model mismatch: "
-                        f"expected='{expected_model}', found_in_description='{description}'"
-                    )
-                    utility.drop_collection(collection_name, using=self.connection_alias)
-                    return self._create_new_collection(collection_name, embedding_info, kb_id)
-
-                if not self._collection_supports_bm25(collection):
-                    logger.warning(f"Collection {collection_name} schema does not support BM25, recreating")
-                    utility.drop_collection(collection_name, using=self.connection_alias)
-                    return self._create_new_collection(collection_name, embedding_info, kb_id)
-
-                logger.info(f"Retrieved existing collection: {collection_name}")
-                return collection
-            else:
-                logger.info(f"Collection {collection_name} not found, creating new one")
-                return self._create_new_collection(collection_name, embedding_info, kb_id)
-
-        except (connections.MilvusException, RuntimeError) as e:
-            logger.error(f"Error checking collection {collection_name}: {e}")
-            raise
-        except Exception as e:
-            logger.error(f"Unexpected error while managing collection {collection_name}: {e}")
-            logger.debug(f"Traceback: {traceback.format_exc()}")
-            raise
+        collection = Collection(name=collection_name, using=self.connection_alias)
+        expected_description = f"Knowledge base collection for {kb_id} using {embedding_info.model_id}"
+        embedding_field = next((field for field in collection.schema.fields if field.name == "embedding"), None)
+        if (
+            collection.description != expected_description
+            or embedding_field is None
+            or embedding_field.params.get("dim") != (embedding_info.dimension or 1024)
+            or not self._collection_supports_text_retrieval(collection)
+        ):
+            raise RuntimeError(f"Collection {collection_name} does not match the knowledge base schema or model")
+        return collection
 
     def _create_new_collection(self, collection_name: str, embedding_info: Any, kb_id: str) -> Collection:
         """创建新的 Milvus 集合"""
@@ -412,6 +398,7 @@ class MilvusKB(KnowledgeBase):
                 dtype=DataType.VARCHAR,
                 max_length=65535,
                 enable_analyzer=True,
+                enable_match=True,
                 analyzer_params=CONTENT_ANALYZER_PARAMS,
             ),
             FieldSchema(name="chunk_id", dtype=DataType.VARCHAR, max_length=100),
@@ -450,14 +437,14 @@ class MilvusKB(KnowledgeBase):
 
         return collection
 
-    def _collection_supports_bm25(self, collection: Collection) -> bool:
-        """检查集合是否具备 Milvus 内置 BM25 所需的 schema。"""
+    def _collection_supports_text_retrieval(self, collection: Collection) -> bool:
+        """检查集合是否具备 BM25 与文本匹配所需的 schema。"""
         fields = {field.name: field for field in collection.schema.fields}
         content_field = fields.get("content")
         sparse_field = fields.get(CONTENT_SPARSE_FIELD)
         if not content_field or content_field.dtype != DataType.VARCHAR:
             return False
-        if content_field.params.get("enable_analyzer") is not True:
+        if not content_field.params.get("enable_analyzer") or not content_field.params.get("enable_match"):
             return False
         if not sparse_field or sparse_field.dtype != DataType.SPARSE_FLOAT_VECTOR:
             return False
@@ -473,11 +460,8 @@ class MilvusKB(KnowledgeBase):
 
     async def _initialize_kb_instance(self, instance: Any) -> None:
         """初始化 Milvus 集合（加载到内存）"""
-        try:
-            await asyncio.to_thread(instance.load)
-            logger.info("Milvus collection loaded into memory")
-        except Exception as e:
-            logger.warning(f"Failed to load collection into memory: {e}")
+        await asyncio.to_thread(instance.load)
+        logger.info("Milvus collection loaded into memory")
 
     def _get_embedding_function(self, embedding_model_spec: str, *, sync: bool = False):
         """获取 embedding 编码函数。sync=True 返回同步版本，否则返回异步版本。"""
@@ -862,6 +846,17 @@ class MilvusKB(KnowledgeBase):
             "chunk_index": entity.get("chunk_index"),
         }
         chunk = {"content": entity.get("content", ""), "metadata": metadata, "score": float(score or 0.0)}
+        chunk["score_type"] = {"bm25_score": "bm25", "hybrid_score": "hybrid"}.get(score_field, "cosine")
+        highlight = getattr(hit, "highlight", None)
+        if highlight and (fragments := highlight.get("content", {}).get("fragments")):
+            chunk["highlights"] = [
+                [
+                    {"text": part[1:-1] if part.startswith("\ue000") else part, "matched": part.startswith("\ue000")}
+                    for part in re.split(r"(\ue000.*?\ue001)", fragment, flags=re.DOTALL)
+                    if part
+                ]
+                for fragment in fragments
+            ]
         if score_field:
             chunk[score_field] = float(score or 0.0)
         if include_distances:
@@ -897,7 +892,7 @@ class MilvusKB(KnowledgeBase):
             include_distances = bool(merged_kwargs.get("include_distances", True))
             search_mode = str(merged_kwargs.get("search_mode", "vector")).lower()
             if search_mode not in {"vector", "keyword", "hybrid"}:
-                search_mode = "vector"
+                raise ValueError("Unsupported Milvus search mode")
 
             use_reranker = bool(merged_kwargs.get("use_reranker", False))
             use_graph_retrieval = bool(merged_kwargs.get("use_graph_retrieval", False))
@@ -908,8 +903,8 @@ class MilvusKB(KnowledgeBase):
                 recall_top_k = final_top_k
 
             file_expr = await self._build_file_name_expr(kb_id, merged_kwargs.get("file_name"))
-            if file_expr:
-                logger.debug(f"Using filter expression: {file_expr}")
+            text_expr, highlighter = self._build_text_search(merged_kwargs, search_mode, query_text)
+            filter_expr = " and ".join(f"({expr})" for expr in (file_expr, text_expr) if expr) or None
 
             output_fields = ["content", "chunk_id", "file_id", "chunk_index"]
             retrieved_chunks: list[dict] = []
@@ -925,8 +920,9 @@ class MilvusKB(KnowledgeBase):
                     anns_field="embedding",
                     param=search_params,
                     limit=recall_top_k,
-                    expr=file_expr,
+                    expr=filter_expr,
                     output_fields=output_fields,
+                    highlighter=highlighter,
                 )
 
                 if results and len(results) > 0 and len(results[0]) > 0:
@@ -956,8 +952,9 @@ class MilvusKB(KnowledgeBase):
                     anns_field=CONTENT_SPARSE_FIELD,
                     param=bm25_search_params,
                     limit=bm25_top_k,
-                    expr=file_expr,
+                    expr=filter_expr,
                     output_fields=output_fields,
+                    highlighter=highlighter,
                 )
 
                 if results and len(results) > 0 and len(results[0]) > 0:
@@ -981,7 +978,7 @@ class MilvusKB(KnowledgeBase):
                     anns_field="embedding",
                     param={"metric_type": metric_type, "params": {"nprobe": 10}},
                     limit=recall_top_k,
-                    expr=file_expr,
+                    expr=filter_expr,
                 )
                 bm25_request = AnnSearchRequest(
                     data=[query_text],
@@ -991,7 +988,7 @@ class MilvusKB(KnowledgeBase):
                         "params": {"drop_ratio_search": bm25_drop_ratio_search},
                     },
                     limit=bm25_top_k,
-                    expr=file_expr,
+                    expr=filter_expr,
                 )
                 results = await _run_milvus_query_io(
                     collection.hybrid_search,
@@ -1003,11 +1000,32 @@ class MilvusKB(KnowledgeBase):
                 if results and len(results) > 0 and len(results[0]) > 0:
                     for hit in results[0]:
                         score = float(hit.distance or 0.0)
-                        if score < similarity_threshold:
-                            continue
                         retrieved_chunks.append(
                             self._build_chunk_from_hit(hit, score, include_distances, score_field="hybrid_score")
                         )
+
+                if highlighter and retrieved_chunks:
+                    # 3.0.2 的 hybrid_search 不返回高亮；在已召回 ID 内取文本高亮，保持融合分数与顺序。
+                    chunk_ids = [chunk["metadata"]["chunk_id"] for chunk in retrieved_chunks]
+                    highlighted = await _run_milvus_query_io(
+                        collection.search,
+                        data=query_embedding,
+                        anns_field="embedding",
+                        param={"metric_type": metric_type, "params": {"nprobe": 10}},
+                        limit=len(chunk_ids),
+                        expr=f"chunk_id in {json.dumps(chunk_ids)}",
+                        output_fields=output_fields,
+                        highlighter=highlighter,
+                    )
+                    highlights_by_id = {
+                        hit.entity.get("chunk_id"): self._build_chunk_from_hit(hit, hit.distance, False).get(
+                            "highlights"
+                        )
+                        for hit in highlighted[0]
+                    }
+                    for chunk in retrieved_chunks:
+                        if fragments := highlights_by_id.get(chunk["metadata"]["chunk_id"]):
+                            chunk["highlights"] = fragments
 
                 logger.debug(f"Milvus hybrid query response: {len(retrieved_chunks)} chunks found")
 
@@ -1019,6 +1037,15 @@ class MilvusKB(KnowledgeBase):
                     merged_kwargs,
                     embedding_model_spec,
                 )
+                if graph_chunks and filter_expr:
+                    chunk_ids = [chunk["metadata"]["chunk_id"] for chunk in graph_chunks]
+                    allowed = await _run_milvus_query_io(
+                        collection.query,
+                        expr=f"({filter_expr}) and chunk_id in {json.dumps(chunk_ids)}",
+                        output_fields=["chunk_id"],
+                    )
+                    allowed_ids = {chunk["chunk_id"] for chunk in allowed}
+                    graph_chunks = [chunk for chunk in graph_chunks if chunk["metadata"]["chunk_id"] in allowed_ids]
                 if graph_chunks:
                     graph_weight = float(merged_kwargs.get("graph_weight", 1.0))
                     retrieved_chunks = self._fuse_chunk_rankings(retrieved_chunks, graph_chunks, graph_weight)
@@ -1068,6 +1095,48 @@ class MilvusKB(KnowledgeBase):
         except Exception as e:
             logger.error(f"Milvus query error: {e}, {traceback.format_exc()}")
             raise
+
+    def _build_text_search(
+        self, options: dict[str, Any], search_mode: str, query_text: str = ""
+    ) -> tuple[str | None, LexicalHighlighter | None]:
+        """将文本条件转换为安全的过滤表达式与服务端高亮配置。"""
+        text_options = {}
+        for key in ("required_terms", "excluded_terms", "exact_phrase"):
+            value = options.get(key, "")
+            if not isinstance(value, str):
+                raise ValueError(f"{key} must be a string")
+            text_options[key] = value.strip()
+
+        clauses = []
+        highlight_query = []
+        for term in text_options["required_terms"].split():
+            clauses.append(f"TEXT_MATCH(content, {json.dumps(term, ensure_ascii=False)})")
+            highlight_query.append({"type": "TextMatch", "field": "content", "text": term})
+        for term in text_options["excluded_terms"].split():
+            clauses.append(f"not TEXT_MATCH(content, {json.dumps(term, ensure_ascii=False)})")
+        if phrase := text_options["exact_phrase"]:
+            clauses.append(f"PHRASE_MATCH(content, {json.dumps(phrase, ensure_ascii=False)}, 0)")
+            # 高亮协议仅支持 TextMatch；短语是否命中由上面的 PHRASE_MATCH 决定。
+            highlight_query.append({"type": "TextMatch", "field": "content", "text": phrase})
+
+        if search_mode == "hybrid" and query_text:
+            highlight_query.append({"type": "TextMatch", "field": "content", "text": query_text})
+
+        highlighter = None
+        highlight_results = options.get("highlight_results", True)
+        if not isinstance(highlight_results, bool):
+            raise ValueError("highlight_results must be a boolean")
+        if highlight_results and (search_mode != "vector" or highlight_query):
+            highlighter = LexicalHighlighter(
+                pre_tags=["\ue000"],
+                post_tags=["\ue001"],
+                highlight_search_text=search_mode == "keyword",
+                highlight_query=highlight_query,
+                fragment_offset=40,
+                fragment_size=200,
+                num_of_fragments=3,
+            )
+        return " and ".join(clauses) or None, highlighter
 
     async def _retrieve_graph_chunks(
         self,
@@ -1175,6 +1244,7 @@ class MilvusKB(KnowledgeBase):
             "chunk_index": chunk.chunk_index,
         }
         result = {"content": chunk.content, "metadata": metadata, "score": float(score or 0.0)}
+        result["score_type"] = "graph"
         if score_field:
             result[score_field] = float(score or 0.0)
         return result
@@ -1199,6 +1269,7 @@ class MilvusKB(KnowledgeBase):
                 fused[chunk_id] = existing
             existing["fusion_score"] += score
             existing["score"] = existing["fusion_score"]
+            existing["score_type"] = "fusion"
             existing["fusion_sources"].append(source)
             if source == "graph" and "graph_score" in chunk:
                 existing["graph_score"] = chunk["graph_score"]

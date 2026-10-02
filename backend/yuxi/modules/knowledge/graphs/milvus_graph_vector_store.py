@@ -41,12 +41,9 @@ class MilvusGraphVectorStore:
     def _init_connection(self) -> None:
         if not connections.has_connection(self.connection_alias):
             connections.connect(alias=self.connection_alias, uri=self.milvus_uri, token=self.milvus_token)
-        try:
-            if self.milvus_db not in db.list_database():
-                db.create_database(self.milvus_db)
-            db.using_database(self.milvus_db)
-        except Exception as exc:
-            logger.warning(f"Milvus graph database operation failed, using default: {exc}")
+        if self.milvus_db not in db.list_database(using=self.connection_alias):
+            db.create_database(self.milvus_db, using=self.connection_alias)
+        db.using_database(self.milvus_db, using=self.connection_alias)
 
     async def upsert_graph_records(
         self,
