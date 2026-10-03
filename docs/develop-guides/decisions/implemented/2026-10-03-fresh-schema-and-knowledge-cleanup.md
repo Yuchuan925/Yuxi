@@ -60,5 +60,6 @@ Provider 普通管理响应遮蔽 API Key、Authorization、Cookie 与嵌套凭�
 - **Passed**：真实 API/worker/PG/MinIO/Milvus 3.0.2/Neo4j E2E。building 候选排名更高仍不能占用 active top-k；图谱清理错误保留 PG 关联；重建/删除后回读图存储与向量；持锁阻塞清理期间，真实 HTTP 子图隐藏已删 Chunk/来源属性，同时保留其他可见文件的共享实体。
 - **Passed**：Run lease/Turn 因果与 Provider HTTP/PG 回归 10 项；身份约束 1 项；Input/manifest/委托取消/知识统计 24 项。
 - **Passed**：host unit 2578 项；容器 unit 的 slow 跳过依照现有标记单独记录。Ruff、工程信任检查与文档构建按提交前命令验证。
+- **Passed**：等待问题回答及大工具审批的两项真实 worker E2E 通过；resume Message 首次 flush 前同时绑定 Turn/Run，PG 回读确认输入指针归属原 Thread/Turn 和新 Run，避免违反成对执行范围约束。
 - **Passed**：同步后的权限边界与 Input Schema 集合分别 11/5 项通过真实 HTTP/PG 验证；清理断言先检查 tombstone 再等待物理删除，错 Run/Turn 的 Message 与跨 Run 输出指针断言由 PG 拒绝，合法相邻 Turn 的 usage 不混入父子统计。
 - **Not run**：功能提交前未执行远程 CI；后续检查结果以 GitHub 对应提交为准。外部服务永久故障、跨系统 exactly-once 和生产旧库升级不属于验收范围。

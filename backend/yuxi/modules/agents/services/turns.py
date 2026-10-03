@@ -107,6 +107,7 @@ async def resume_turn(
         },
         delivery_status="dispatched",
         turn_id=turn.id,
+        run_id=run_id,
     )
     db.add(message)
     await db.flush()
@@ -130,7 +131,6 @@ async def resume_turn(
         created_by_run_id=previous.created_by_run_id,
         subagent_thread_relation_id=previous.subagent_thread_relation_id,
     )
-    message.run_id = run_id
     await AgentRunRepository(db).set_input_message(run_id, message.id)
     await turn_repo.set_current(turn, run_id=run_id)
     receipt = await receipt_repo.create(
