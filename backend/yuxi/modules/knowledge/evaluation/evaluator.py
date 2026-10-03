@@ -21,7 +21,7 @@ def build_answer_prompt(query: str, retrieved_chunks: list[dict[str, Any]], max_
         if content:
             context_docs.append(f"文档 {idx + 1}:\n{content}")
 
-    context_text = "\\n\\n".join(context_docs)
+    context_text = "\n\n".join(context_docs)
     return (
         f"基于以下上下文信息，请回答用户的问题。\n\n"
         f"上下文信息：{context_text}\n\n"

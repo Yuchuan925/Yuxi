@@ -358,10 +358,12 @@ async def update_mcp_server(
 
 
 async def delete_mcp_server(db: AsyncSession, slug: str) -> bool:
-    """Delete server."""
+    """删除 MCP 服务器，内置服务器由代码管理。"""
     server = await get_mcp_server(db, slug)
     if not server:
         return False
+    if is_builtin_mcp_server(server):
+        raise PermissionError("系统内置 MCP 的连接配置由代码管理，无法删除")
 
     await delete_mcp_server_row(db, server)
     await db.commit()

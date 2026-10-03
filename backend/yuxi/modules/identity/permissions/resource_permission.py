@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any, Protocol
 
+from yuxi.infrastructure.observability.logging import logger
+
 
 class ResourcePermission(StrEnum):
     """资源权限等级，数值顺序用于判断权限是否足够。"""
@@ -178,9 +180,17 @@ def resolve_resource_permission(
         return ResourcePermission.MANAGE
 
     raw_share_config = _value(resource, "share_config")
-    config = normalize_permission_config(
-        raw_share_config,
-    )
+    try:
+        config = normalize_permission_config(raw_share_config)
+    except (TypeError, ValueError) as exc:
+        logger.warning(
+            "Invalid resource share config; denying access: resource_type={}, resource_id={}, user_uid={}, error={}",
+            type(resource).__name__,
+            _value(resource, "id", _value(resource, "slug", "unknown")),
+            _value(user, "uid", "unknown"),
+            str(exc),
+        )
+        return ResourcePermission.NONE
     if str(_value(resource, "created_by", "") or "") == str(_value(user, "uid", "") or ""):
         return ResourcePermission.MANAGE
     elif scope_matches(user, config["manage_scope"]) and (

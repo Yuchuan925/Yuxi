@@ -128,6 +128,26 @@ def test_legacy_permission_config_is_rejected_at_runtime():
         normalize_permission_config({"access_level": "department", "department_ids": [1]})
 
 
+@pytest.mark.parametrize(
+    "share_config",
+    [
+        {"access_level": "global"},
+        {"version": 2, "read_scope": {"access_level": "department", "department_ids": [None]}},
+        {"version": 2, "read_scope": {"access_level": "department", "department_ids": 1}},
+        {"version": 2, "manage_scope": {"access_level": "user", "user_uids": 1}},
+        {"version": 2, "read_scope": {"access_level": ["global"]}},
+    ],
+)
+def test_invalid_resource_permission_config_denies_access(share_config):
+    """损坏的持久化共享配置不得授予权限或中断解析。"""
+    resource = _resource(created_by="owner", share_config=share_config)
+
+    for resolver in (resolve_knowledge_base_permission, resolve_agent_permission, resolve_skill_permission):
+        assert resolver(_user(uid="owner"), resource) == ResourcePermission.NONE
+        assert resolver(_user(uid="other"), resource) == ResourcePermission.NONE
+    assert resolve_agent_permission(_user(role="superadmin"), resource) == ResourcePermission.MANAGE
+
+
 def test_agent_and_skill_use_shared_resolver_with_resource_policy():
     resource = _resource(share_config={"version": 2, "manage_scope": {"access_level": "user", "user_uids": ["user-2"]}})
 

@@ -32,6 +32,8 @@ def test_build_answer_prompt_uses_first_five_non_empty_chunks():
     assert "内容0" in prompt
     assert "内容4" in prompt
     assert "内容5" not in prompt
+    assert "内容0\n\n文档 2" in prompt
+    assert "\\n\\n" not in prompt
 
 
 async def test_evaluate_question_uses_runtime_kb_manager(monkeypatch):
