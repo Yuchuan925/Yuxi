@@ -10,7 +10,7 @@ Runtime CI 使用全新 bind mount，Docker 创建的目录归 root 所有，UID
 
 独立执行 Durable Task integration selector 时，部分 ORM 关系指向尚未导入的类，查询无法配置 mapper。完整测试收集时其他文件的导入会掩盖该缺陷。
 
-知识统计 integration 仍要求已经退役的历史统计修复路由返回 200，导致当前 404 契约被判为失败。Runtime selector 还引用随旧 Session alias 一起删除的测试文件，pytest 因不存在的路径无法收集。归档与 lease 用例仍创建父子共享 Turn/runtime 的旧数据，并从 runner 调用已经移入 leases 的 reconciler。CORS 测试把显式空配置当作 Origin，Redis 用例仍依赖已经退役的事件封套与 key。
+知识统计 integration 仍要求已经退役的历史统计修复路由返回 200，导致当前 404 契约被判为失败。Runtime selector 还引用随旧 Session alias 一起删除的测试文件，pytest 因不存在的路径无法收集。归档与 lease 用例仍创建父子共享 Turn/runtime 的旧数据，并从 runner 调用已经移入 leases 的 reconciler。CORS 测试把显式空配置当作 Origin，Redis 用例仍依赖已经退役的事件封套与 key。环境准备还把仅支持 OpenAI 的 replay 配成 Langfuse，等待恢复 E2E 回读观察时收到 404。
 
 ## 决策
 
@@ -22,7 +22,7 @@ Runtime CI 使用全新 bind mount，Docker 创建的目录归 root 所有，UID
 
 `backend/test/integration/conftest.py` 在 session fixture 中调用现有 `bootstrap.models.load_models`，为独立测试进程显式注册全部 ORM；fixture 不连接服务、不建表，实际 Schema 与连接仍由原 fixture 和迁移入口拥有。单个文件和完整 integration 使用相同的模型装配。
 
-知识统计 integration 保留当前刷新与行锁回归，把退役修复路由用例改为真实 HTTP 404 与 PostgreSQL/Redis 无写入的负向契约。当前统计继续由现有刷新流程产生。Runtime workflow 与信任检查同步移除已删除的 alias 测试引用，保留当前认证、Key、Input、归档与 Redis 边界检查及其逐项删除负控。归档与 lease integration 按[现有子任务决策](2026-09-30-langgraph-agents-events.md)创建独立子 Turn/runtime，验证父失败不取消子任务、父 Thread 可独立归档而 Project 在子任务活跃时拒绝删除；lease 回归直接调用当前 leases Owner。CORS 用例使用当前开发默认 Origin 或显式配置；Redis 用例回读 v2 key、版本字段和完整公开事件，不恢复旧封套。
+知识统计 integration 保留当前刷新与行锁回归，把退役修复路由用例改为真实 HTTP 404 与 PostgreSQL/Redis 无写入的负向契约。当前统计继续由现有刷新流程产生。Runtime workflow 与信任检查同步移除已删除的 alias 测试引用，保留当前认证、Key、Input、归档与 Redis 边界检查及其逐项删除负控。归档与 lease integration 按[现有子任务决策](2026-09-30-langgraph-agents-events.md)创建独立子 Turn/runtime，验证父失败不取消子任务、父 Thread 可独立归档而 Project 在子任务活跃时拒绝删除；lease 回归直接调用当前 leases Owner。CORS 用例使用当前开发默认 Origin 或显式配置；Redis 用例回读 v2 key、版本字段和完整公开事件，不恢复旧封套。CI 移除伪 Langfuse 凭据与地址；取消 E2E 无条件验证请求时间、数据库审计与终态，trace 断言与等待恢复中的 Langfuse 观察回读都只在配置真实服务时执行。
 
 ## 替代方案
 
@@ -33,6 +33,8 @@ Runtime CI 使用全新 bind mount，Docker 创建的目录归 root 所有，UID
 - 恢复历史统计修复端点或跳过用例：前者重新承诺已删除能力，后者丢失删除的拒绝后果；采用当前不存在且无副作用的 HTTP 契约。
 
 ## 后果
+
+默认 Runtime CI 验证完整核心 worker 链路，不宣称验证可选 Langfuse 导出。配置真实 Langfuse 时仍执行原有观察回读与 trace 断言；没有真实服务的本轮验证明确记录此范围未验证。
 
 目录准备命令仅供隔离 CI 环境使用，会修改指定根目录的 Owner 与模式。它不提供已有部署的数据迁移，也不修改生产入口。
 
@@ -57,3 +59,5 @@ Runtime CI 使用全新 bind mount，Docker 创建的目录归 root 所有，UID
 - 独立 `pytest test/integration/services/test_knowledge_stats_refresh.py -q --tb=short`：4 passed。仅在新测试进程中临时注册旧路径返回 200，退役路由回归因 `200 != 404` 失败；源码路由未改动，PostgreSQL/Redis 回读断言保留。
 
 - 归档与 lease 在真实 PostgreSQL 上共 12 passed；旧数据分别因 runtime scope 的 CHECK、Turn/Thread 组合外键失败，旧 reconciler 路径因 AttributeError 失败。修复不改变生产约束或生命周期实现。
+
+- 移除伪 Langfuse 配置后，真实 API/worker 的核心生命周期 E2E 13 passed；等待恢复与模型取消仍回读 PostgreSQL 终态、审计和输出。可选 Langfuse 导出未验证。环境脚本在临时目录运行时正确保留包含特殊字符的三个测试 secret，且不配置 Langfuse；临时加回旧配置会被检测为错误配置。
