@@ -12,6 +12,7 @@ x-api-worker-env: &api-worker-env
   NEO4J_PASSWORD: ${NEO4J_PASSWORD:-0123456789}
   MILVUS_URI: ${MILVUS_URI:-http://milvus:19530}
   MILVUS_TOKEN: ${MILVUS_TOKEN:-}
+  MILVUS_DB: ${MILVUS_DB:-yuxi}
   MINIO_URI: ${MINIO_URI:-http://minio:9000}
   # 文档解析
   MINERU_API_URI: ${MINERU_API_URI:-http://mineru-api:30001}
@@ -314,7 +315,7 @@ services:
   # endregion neo4j
 
   etcd:
-    image: quay.io/coreos/etcd:v3.5.5
+    image: quay.io/coreos/etcd:v3.5.25
     logging: *default-logging
     environment:
       - ETCD_AUTO_COMPACTION_MODE=revision
@@ -340,7 +341,7 @@ services:
     build:
       context: ./docker/minio
       dockerfile: Dockerfile
-    image: ${COMPOSE_PROJECT_NAME:-yuxi}-minio:RELEASE.2023-03-20T20-16-18Z
+    image: ${COMPOSE_PROJECT_NAME:-yuxi}-minio:RELEASE.2024-12-18T13-15-44Z
     environment:
       MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
       MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
@@ -365,10 +366,21 @@ services:
       - app-network
     restart: unless-stopped
 
+  milvus-storage-init:
+    image: milvusdb/milvus:v3.0.2
+    user: "0:0"
+    entrypoint: ["/bin/sh", "-c"]
+    # 3.x 进程使用 UID 999；Docker 新建的 bind mount 由 root 拥有。
+    command: ["chown 999:999 /var/lib/milvus /var/lib/milvus/logs"]
+    volumes:
+      - ${YUXI_STATE_DIR:-./docker/volumes}/milvus/milvus:/var/lib/milvus
+      - ${YUXI_STATE_DIR:-./docker/volumes}/milvus/logs:/var/lib/milvus/logs
+    restart: "no"
+
   milvus:
-    image: milvusdb/milvus:v2.5.6
+    image: milvusdb/milvus:v3.0.2
     command: ["milvus", "run", "standalone"]
-    # v2.5.6 不读取 MILVUS_LOG_LEVEL；日志级别只能由镜像内 milvus.yaml 拥有，
+    # 日志级别由 Milvus 配置拥有，
     # 这里只对 stdout/stderr 轮转封顶。内存随知识库数据量线性增长，不设 mem_limit：
     # 硬上界终会被合法增长击穿，击穿模式是 OOM→重启→重加载→再 OOM 的循环。
     # cpus 上限同时让内置 maxprocs 按 cgroup quota 收敛 GOMAXPROCS。
@@ -377,6 +389,8 @@ services:
     security_opt:
       - seccomp:unconfined
     environment:
+      MQ_TYPE: woodpecker
+      MINIO_REGION: us-east-1
       ETCD_ENDPOINTS: etcd:2379
       MINIO_ADDRESS: minio:9000
       MINIO_ACCESS_KEY_ID: ${MINIO_ACCESS_KEY:-minioadmin}
@@ -398,8 +412,12 @@ services:
       - "127.0.0.1:${YUXI_MILVUS_PORT:-19530}:19530"
       - "127.0.0.1:${YUXI_MILVUS_HEALTH_PORT:-9091}:9091"
     depends_on:
-      - "etcd"
-      - "minio"
+      milvus-storage-init:
+        condition: service_completed_successfully
+      etcd:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
     networks:
       - app-network
     restart: unless-stopped

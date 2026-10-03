@@ -82,20 +82,42 @@ Public v1 也提供与 Agent 内部 Skill 同名的只读工具入口。Agent �
 
 Dify 和 Notion 只提供外部检索能力。它们不支持 Yuxi 的文档上传、解析、索引和全文打开；调用不支持的接口时，服务会明确返回错误。
 
+## Milvus 文本检索参数
+
+外部 `retrieve` 接口通过 `options` 覆盖本次检索参数，例如：
+
+```json
+{
+  "query": "Milvus",
+  "options": {
+    "search_mode": "hybrid",
+    "required_terms": "Milvus",
+    "excluded_terms": "legacy",
+    "exact_phrase": "vector database",
+    "highlight_results": true
+  }
+}
+```
+
+`search_mode` 支持 `vector`、`keyword`、`hybrid`，默认 `vector`。三个文本条件默认为空字符串；必含与排除条件以空白分隔，逐项使用分词匹配，短语使用分词后的连续词序匹配。它们与 `file_name` 一起约束向量、BM25 和图谱候选。中文使用同一中文 analyzer，词项过滤不等同于字面子串搜索。文本条件要求字符串，高亮开关要求布尔值。
+
+`highlight_results` 默认为 `true`。每个片段保留完整 `content`，外部结果在 `results[i].metadata.highlights` 返回文字段数组，段内为 `{"text":"命中词","matched":true}`。消费方按普通文字渲染；BM25 查询词和正向筛选词可以高亮，只有向量语义查询时显示完整正文。
+
+外部结果的 `metadata.score_type` 标识 `cosine`、`bm25`、`hybrid` 或图谱融合的 `fusion`，`metadata.score` 保存该类型的原始分数；`metadata.rerank_score` 是可选重排分数。纯向量检索使用 `similarity_threshold`，BM25 与融合分数不按余弦阈值过滤。检索测试页面传入的 `meta` 使用相同参数，其原始片段响应在顶层返回这些字段；非法参数返回 `400`，执行失败返回 `500`，不会投影为空结果。
+
 ## CLI
 
 先按[命令行工具](../intro/cli.md)完成登录：
 
 ```bash
 yuxi kb list
-yuxi kb upload ./docs --kb-id <kb-id>
 yuxi kb files --kb-id <kb-id> --query handbook
 yuxi kb query --kb-id <kb-id> "如何申请年假？"
 yuxi kb open --kb-id <kb-id> --file-id <file-id>
 yuxi kb find --kb-id <kb-id> --file-id <file-id> --pattern "年假"
 ```
 
-`kb upload` 只上传原文件并添加文件记录，不自动完成 OCR、解析或向量入库。完成后回到知识库页面继续处理并确认 `indexed`。
+npm CLI 的 `kb` 命令只读 external 知识库，不提供文件上传、解析或向量入库。管理端上传和处理流程见[知识库入门](../intro/knowledge-base.md)。
 
 ## 验证入口
 

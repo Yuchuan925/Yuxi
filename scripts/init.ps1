@@ -282,11 +282,11 @@ $images = @(
     "python:3.13-slim",
     "node:24-slim",
     "node:24-alpine",
-    "milvusdb/milvus:v2.5.6",
+    "milvusdb/milvus:v3.0.2",
     "neo4j:5.26.29",
     "ghcr.io/astral-sh/uv:0.12.6",
     "nginx:alpine",
-    "quay.io/coreos/etcd:v3.5.5",
+    "quay.io/coreos/etcd:v3.5.25",
     "postgres:16",
     "redis:7.4.10-alpine"
 )

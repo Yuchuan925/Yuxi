@@ -6,7 +6,7 @@ updates:
       interval: weekly
     open-pull-requests-limit: 0
 
-  - package-ecosystem: uv
+  - package-ecosystem: npm
     directory: /packages/yuxi-cli
     schedule:
       interval: weekly

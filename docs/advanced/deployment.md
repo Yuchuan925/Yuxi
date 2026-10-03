@@ -194,6 +194,14 @@ docker compose --env-file .env.prod -f docker-compose.prod.yml \
 4. 真实登录、对话和文件操作：确认业务链路。
 5. 知识库、OCR、Langfuse 等可选能力：单独检查其配置和外部服务。
 
+### Milvus 3 全新部署
+
+Milvus 3.0.2 与 PyMilvus 3.0.2 配套部署，知识库与图向量通过 `MILVUS_DB` 使用同一个数据库，默认 `yuxi`。Compose 使用 Woodpecker 的对象存储模式，MinIO 固定到支持条件写入的版本；`milvus-storage-init` 在 Milvus 启动前设置绑定目录的 UID/GID，初始化失败会阻止启动。
+
+允许丢弃全部数据时，停掉当前 Compose project，在对应环境文件中把 `YUXI_STATE_DIR` 指向一个新的空目录，例如 `/srv/yuxi/state-milvus3`，然后重新构建并启动完整拓扑。开发使用 `docker-compose.yml`，生产使用本页的 `.env.prod` 与 `docker-compose.prod.yml`。新目录同时重置 PostgreSQL、对象存储、图谱、工作区及向量索引；需要重新初始化管理员、模型供应商和知识库，再上传、解析、索引文档。不要把旧的 PostgreSQL 文件记录与空的 Milvus 索引混用。
+
+检查 `milvus-storage-init` 和 `schema-init` 已成功退出，并确认 `/api/system/ready` 返回就绪。再按[知识库教程](../intro/knowledge-base.md#3-验证检索)确认文件为 `indexed`，三个检索模式返回目标文件的片段。集合的模型或 schema 不匹配时会显式报错，查询不会自动删除集合；需要修正部署状态并重新建立知识库。
+
 ## 第三方组件和许可证
 
 Yuxi 本体使用 MIT License。Compose 依赖以独立进程运行，Yuxi 通过公开协议访问它们；第三方组件的许可证不会因为使用 Compose 就变成 MIT。
@@ -203,9 +211,9 @@ Yuxi 本体使用 MIT License。Compose 依赖以独立进程运行，Yuxi 通�
 | 组件 | 镜像引用 | 许可证 |
 | --- | --- | --- |
 | Neo4j Community | `neo4j:5.26.29` | GPL-3.0-only |
-| MinIO | 本地构建：`<项目名>-minio:RELEASE.2023-03-20T20-16-18Z`（`docker/minio/Dockerfile`；项目名取 `COMPOSE_PROJECT_NAME`，默认 `yuxi`） | AGPL-3.0 |
-| Milvus | `milvusdb/milvus:v2.5.6` | Apache-2.0 |
-| etcd | `quay.io/coreos/etcd:v3.5.5` | Apache-2.0 |
+| MinIO | 本地构建：`<项目名>-minio:RELEASE.2024-12-18T13-15-44Z`（`docker/minio/Dockerfile`；项目名取 `COMPOSE_PROJECT_NAME`，默认 `yuxi`） | AGPL-3.0 |
+| Milvus | `milvusdb/milvus:v3.0.2` | Apache-2.0 |
+| etcd | `quay.io/coreos/etcd:v3.5.25` | Apache-2.0 |
 | PostgreSQL | `postgres:16` | PostgreSQL License |
 | Redis | `redis:7.4.10-alpine` | RSALv2 / SSPLv1（均非 OSI 许可证） |
 | MinerU / PaddleX（可选） | `mineru-vllm:latest` / `paddlex:latest` | 以各自 Dockerfile 和上游声明为准 |

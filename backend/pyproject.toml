@@ -49,7 +49,7 @@ dependencies = [
     "Pillow>=10.5.0",
     "psycopg[binary,pool]>=3.3.3",
     "pyjwt>=2.13.0",
-    "pymilvus>=2.5.8",
+    "pymilvus==3.0.2",
     "pymysql>=1.1.0",
     "pypdf>=6.13.3",
     "pypdfium2>=5.0.0",

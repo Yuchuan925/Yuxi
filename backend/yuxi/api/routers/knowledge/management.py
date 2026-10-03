@@ -1205,9 +1205,11 @@ async def query_test(
         return result
     except HTTPException:
         raise
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as e:
         logger.error(f"测试查询失败 {e}, {traceback.format_exc()}")
-        return {"message": f"测试查询失败: {e}", "status": "failed"}
+        raise HTTPException(status_code=500, detail="知识库检索失败") from e
 
 
 @knowledge.put("/databases/{kb_id}/query-params")
