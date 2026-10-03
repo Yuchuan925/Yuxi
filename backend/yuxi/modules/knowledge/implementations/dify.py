@@ -8,6 +8,7 @@ from yuxi.modules.knowledge.read_models import KnowledgeBaseConfig
 from yuxi.infrastructure.observability.logging import logger
 
 DIFY_REQUIRED_PARAMS = ("dify_api_url", "dify_token", "dify_dataset_id")
+DIFY_MAX_TOP_K = 100
 
 
 class DifyKB(ReadOnlyConnectors):
@@ -80,8 +81,7 @@ class DifyKB(ReadOnlyConnectors):
         dataset_id = str(additional_params.get("dify_dataset_id") or "").strip()
 
         if not api_url or not token or not dataset_id:
-            logger.error(f"Dify config incomplete for kb_id={kb_id}")
-            return []
+            raise ValueError(f"Dify config incomplete for kb_id={kb_id}")
 
         merged = {**config.query_options, **kwargs}
 
@@ -93,8 +93,7 @@ class DifyKB(ReadOnlyConnectors):
         }
         search_method = search_method_map.get(search_mode, "semantic_search")
 
-        top_k = int(merged.get("final_top_k", 10))
-        top_k = max(top_k, 1)
+        top_k = min(max(int(merged.get("final_top_k", 10)), 1), DIFY_MAX_TOP_K)
         score_threshold_enabled = bool(merged.get("score_threshold_enabled", False))
         score_threshold = float(merged.get("similarity_threshold", 0.0))
 
@@ -130,7 +129,7 @@ class DifyKB(ReadOnlyConnectors):
                 logger.error(
                     f"Dify query fallback failed for kb_id={kb_id}: {fallback_error}, {traceback.format_exc()}"
                 )
-                return []
+                raise RuntimeError(f"Dify query failed for kb_id={kb_id}") from fallback_error
 
         records = response_json.get("records", []) if isinstance(response_json, dict) else []
         if not isinstance(records, list):
@@ -164,7 +163,7 @@ class DifyKB(ReadOnlyConnectors):
                 }
             )
 
-        return results
+        return results[:top_k]
 
     async def _request_dify(self, client_payload: dict[str, Any], request_url: str, headers: dict[str, str]) -> dict:
         async with httpx.AsyncClient(timeout=30.0) as client:

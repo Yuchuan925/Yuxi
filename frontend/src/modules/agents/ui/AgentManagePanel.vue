@@ -68,7 +68,7 @@ const canManageAgent = (agent) => !!agent?.can_manage
 const getAgentDefaultIconSrc = (agent) => (agent.agent_id ? generatePixelAvatar(agent.agent_id) : '')
 
 /** 返回智能体共享范围的简短展示文案。 */
-const getAgentShareLabel = (agent) => getShareConfigLabel(agent?.share_config)
+const getAgentShareLabel = (agent) => getShareConfigLabel(agent?.share_config, agent?.share_config_invalid)
 
 // ============ Agent Operations ============
 const loadAgentBackends = async () => {

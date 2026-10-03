@@ -816,7 +816,7 @@ const sourceTypeLabel = (sourceType) => {
 }
 
 /** 返回 Skill 共享范围的简短展示文案。 */
-const getSkillShareLabel = (skill) => getShareConfigLabel(skill?.share_config)
+const getSkillShareLabel = (skill) => getShareConfigLabel(skill?.share_config, skill?.share_config_invalid)
 
 const skillCardTags = (skill) => {
   if (skill.sourceScope === 'personal') {

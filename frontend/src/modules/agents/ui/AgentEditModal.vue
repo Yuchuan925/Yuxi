@@ -14,6 +14,7 @@ import {
 import { userApi } from '@/apis/user_api'
 import AgentRuntimeConfigForm from '@/modules/agents/ui/AgentRuntimeConfigForm.vue'
 import ShareConfigForm from '@/modules/agents/ui/ShareConfigForm.vue'
+import { cloneShareConfig } from '@/modules/agents/model/shareConfig'
 import FallbackAvatar from '@/shared/ui/FallbackAvatar.vue'
 import { isBuiltinAgent, useAgentStore } from '@/modules/agents/model/agent'
 import { useUserStore } from '@/modules/identity/model/user'
@@ -39,6 +40,7 @@ const agentModalActiveTab = ref('basic')
 const agentIconUploading = ref(false)
 const saving = ref(false)
 const agentShareConfigFormRef = ref(null)
+const shareConfigNeedsRepair = ref(false)
 const agentNameInputRef = ref(null)
 const agentShareConfig = ref({
   version: 2,
@@ -63,23 +65,6 @@ const snapshotAgentForm = () => ({
   description: (agentForm.description || '').trim(),
   icon: (agentForm.icon || '').trim()
 })
-
-const cloneShareConfig = (share) => {
-  if (!share) return null
-  const cloneScope = (scope) =>
-    scope
-      ? {
-          access_level: scope.access_level,
-          department_ids: [...(scope.department_ids || [])],
-          user_uids: [...(scope.user_uids || [])]
-        }
-      : null
-  return {
-    version: share.version,
-    read_scope: cloneScope(share.read_scope),
-    manage_scope: cloneScope(share.manage_scope)
-  }
-}
 
 const snapshotShareConfig = () => {
   if (!editingAgentId.value) return null
@@ -115,6 +100,7 @@ const stringifyShareConfig = (share) => {
 
 const hasProfileChanges = computed(() => {
   if (!editingAgentId.value) return false
+  if (shareConfigNeedsRepair.value) return true
   const currentForm = snapshotAgentForm()
   const baselineForm = originalAgentForm.value
   if (
@@ -212,6 +198,7 @@ const generateDefaultAgentProfile = () => {
 }
 
 const resetAgentForm = () => {
+  shareConfigNeedsRepair.value = false
   const defaults = editingAgentId.value ? {} : generateDefaultAgentProfile()
   Object.assign(agentForm, {
     slug: '',
@@ -260,7 +247,7 @@ const openEdit = async (agent) => {
     return
   }
 
-  editingAgentId.value = detail.id
+  editingAgentId.value = detail.agent_id
   agentModalActiveTab.value = 'basic'
   Object.assign(agentForm, {
     slug: detail.agent_id || '',
@@ -269,14 +256,15 @@ const openEdit = async (agent) => {
     description: detail.description || '',
     icon: detail.icon || ''
   })
+  shareConfigNeedsRepair.value = Boolean(detail.share_config_invalid)
   agentShareConfig.value = isBuiltinAgent(detail)
     ? {
         version: 2,
         read_scope: { access_level: 'global', department_ids: [], user_uids: [] },
         manage_scope: null
       }
-    : detail.share_config || getInitialShareConfig()
-  await agentStore.selectAgent(detail.id, { allowSubagent: true })
+    : cloneShareConfig(detail.share_config, shareConfigNeedsRepair.value) || getInitialShareConfig()
+  await agentStore.selectAgent(detail.agent_id, { allowSubagent: true })
   captureProfileBaseline()
   showAgentModal.value = true
 }
@@ -362,6 +350,7 @@ const saveAgent = async () => {
         payload.config_json = { context: agentStore.changedAgentConfig }
       }
       const updated = await agentStore.updateAgentProfile(editingAgentId.value, payload)
+      shareConfigNeedsRepair.value = false
       captureProfileBaseline()
       emit('saved', { mode: 'edit', agent: updated })
       message.success('智能体已保存')
@@ -432,6 +421,13 @@ defineExpose({
       </aside>
 
       <div class="agent-modal-main">
+        <a-alert
+          v-if="shareConfigNeedsRepair"
+          type="warning"
+          show-icon
+          role="alert"
+          message="共享配置无效。已暂设为仅所有者，请检查共享范围并保存。"
+        />
         <section v-show="agentModalActiveTab === 'basic'" class="agent-modal-section">
           <div class="agent-profile-header">
             <div class="agent-icon-preview" aria-label="智能体图标、名称与后端">

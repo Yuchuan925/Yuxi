@@ -209,6 +209,25 @@ async def test_create_mcp_server_rejects_builtin_slug(mcp_session):
         )
 
 
+async def test_delete_builtin_mcp_server_rejects_service_call(mcp_session):
+    server = MCPServer(
+        slug="deepwiki-official",
+        name="内置 MCP",
+        transport="streamable_http",
+        url="https://trusted.example/mcp",
+        enabled=1,
+        created_by="system",
+        updated_by="system",
+    )
+    mcp_session.add(server)
+    await mcp_session.commit()
+
+    with pytest.raises(PermissionError, match="系统内置"):
+        await mcp_service.delete_mcp_server(mcp_session, "deepwiki-official")
+
+    assert await mcp_session.scalar(select(MCPServer).where(MCPServer.slug == "deepwiki-official")) is not None
+
+
 async def test_update_builtin_mcp_server_rejects_connection_changes(mcp_session):
     server = MCPServer(
         slug="deepwiki-official",

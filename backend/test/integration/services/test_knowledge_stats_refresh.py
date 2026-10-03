@@ -5,6 +5,7 @@ import os
 import socket
 import uuid
 from contextlib import asynccontextmanager
+from types import SimpleNamespace
 
 import pytest
 import httpx
@@ -202,4 +203,58 @@ async def test_retired_stats_repair_route_cannot_mutate_persisted_facts(stats_st
     assert file.file_size == 5
     assert file.chunk_count == 0
     assert file.token_count == 0
+    assert await KnowledgeFileRepository().get_kb_file_stats(kb_id) == cached
+
+
+async def test_database_list_returns_fresh_persisted_stats(stats_store, tmp_path, monkeypatch):
+    """文件操作刷新后，真实 HTTP 列表读取持久投影而非旧统计缓存。"""
+    kb_id, sessions, redis = stats_store
+    cached = await KnowledgeFileRepository().get_kb_file_stats(kb_id)
+    assert cached["pending_index_count"] == 1
+    await redis.expire(f"yuxi:kb_file_stats:{kb_id}", 300)
+    manager = KnowledgeBaseManager(str(tmp_path))
+
+    async def operation():
+        """提交文件状态与统计，供实际聚合读取。"""
+        await KnowledgeFileRepository().update_fields(
+            file_id=kb_id,
+            kb_id=kb_id,
+            data={"status": "indexed", "chunk_count": 7, "token_count": 42},
+        )
+
+    await manager._run_with_stats_refresh(kb_id, operation())
+    # 本用例验证统计的 HTTP 投影；身份与可见性由知识库权限 integration 验证。
+    monkeypatch.setattr(manager, "get_databases_by_uid", lambda _uid: manager.get_databases())
+    monkeypatch.setattr(knowledge_router, "knowledge_base", manager)
+    app = FastAPI()
+    app.include_router(knowledge_router.knowledge, prefix="/api")
+    app.dependency_overrides[knowledge_router.get_admin_user] = lambda: SimpleNamespace(uid="stats-viewer")
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", 0))
+        server = uvicorn.Server(uvicorn.Config(app, lifespan="off", log_level="error"))
+        serving = asyncio.create_task(server.serve(sockets=[listener]))
+        try:
+            async with asyncio.timeout(10):
+                while not server.started:
+                    if serving.done():
+                        serving.result()
+                    await asyncio.sleep(0.01)
+            async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{listener.getsockname()[1]}") as client:
+                response = await client.get("/api/knowledge/databases")
+            assert response.status_code == 200, response.text
+            databases = response.json()["databases"]
+        finally:
+            server.should_exit = True
+            await asyncio.wait_for(serving, timeout=10)
+    assert len(databases) == 1
+    result = databases[0]
+    assert result["kb_id"] == kb_id
+    assert result["stats"]["chunk_count"] == 7
+    assert result["stats"]["token_count"] == 42
+    assert result["stats"]["pending_index_count"] == 0
+    row = await KnowledgeBaseRepository().get_by_kb_id(kb_id)
+    file = await KnowledgeFileRepository().get_by_file_id(kb_id)
+    assert row.additional_params["stats"] == result["stats"]
+    assert file.chunk_count == result["stats"]["chunk_count"]
+    assert file.token_count == result["stats"]["token_count"]
     assert await KnowledgeFileRepository().get_kb_file_stats(kb_id) == cached

@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any, Protocol
 
+from yuxi.infrastructure.observability.logging import logger
+
 
 class ResourcePermission(StrEnum):
     """资源权限等级，数值顺序用于判断权限是否足够。"""
@@ -66,19 +68,28 @@ def _normalize_scope(scope: dict | None) -> dict | None:
     if not isinstance(scope, dict):
         raise ValueError("权限范围必须是对象")
 
-    access_level = scope.get("access_level") or "global"
+    access_level = scope.get("access_level")
+    if access_level is not None and not isinstance(access_level, str):
+        raise ValueError("资源权限访问级别必须是字符串")
+    access_level = access_level or "global"
     if access_level not in {"global", "department", "user"}:
         raise ValueError("无效的资源权限范围")
 
     if access_level == "global":
         return DEFAULT_SCOPE.copy()
     if access_level == "department":
-        department_ids = sorted({int(value) for value in scope.get("department_ids") or []})
+        members = scope.get("department_ids")
+        if not isinstance(members, list) or any(type(value) not in (int, str) for value in members):
+            raise ValueError("部门权限成员必须是整数或整数字符串组成的列表")
+        department_ids = sorted({int(value) for value in members})
         if not department_ids:
             raise ValueError("部门权限至少需要选择一个部门")
         return {"access_level": access_level, "department_ids": department_ids, "user_uids": []}
 
-    user_uids = sorted({str(value).strip() for value in scope.get("user_uids") or [] if str(value).strip()})
+    members = scope.get("user_uids")
+    if not isinstance(members, list) or any(not isinstance(value, str) for value in members):
+        raise ValueError("用户权限成员必须是字符串列表")
+    user_uids = sorted({value.strip() for value in members if value.strip()})
     if not user_uids:
         raise ValueError("指定用户权限至少需要选择一个用户")
     return {"access_level": access_level, "department_ids": [], "user_uids": user_uids}
@@ -178,9 +189,17 @@ def resolve_resource_permission(
         return ResourcePermission.MANAGE
 
     raw_share_config = _value(resource, "share_config")
-    config = normalize_permission_config(
-        raw_share_config,
-    )
+    try:
+        config = normalize_permission_config(raw_share_config)
+    except (TypeError, ValueError) as exc:
+        logger.warning(
+            "Invalid resource share config; denying access: resource_type={}, resource_id={}, user_uid={}, error={}",
+            type(resource).__name__,
+            _value(resource, "id", _value(resource, "slug", "unknown")),
+            _value(user, "uid", "unknown"),
+            str(exc),
+        )
+        return ResourcePermission.NONE
     if str(_value(resource, "created_by", "") or "") == str(_value(user, "uid", "") or ""):
         return ResourcePermission.MANAGE
     elif scope_matches(user, config["manage_scope"]) and (

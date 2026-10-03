@@ -211,14 +211,13 @@ async def test_notion_open_file_content_rejects_unknown_parent(monkeypatch, noti
 
 
 @pytest.mark.asyncio
-async def test_notion_kb_aquery_error_returns_empty(monkeypatch, notion_kb):
+async def test_notion_kb_aquery_error_is_explicit(monkeypatch, notion_kb):
     kb, config = notion_kb
     monkeypatch.setattr("yuxi.modules.knowledge.implementations.notion._NotionClient", _FailingNotionClient)
 
-    result = await kb.aquery(
-        "reasoning",
-        "kb_notion",
-        config=config,
-    )
-
-    assert result == []
+    with pytest.raises(RuntimeError, match="Notion query failed"):
+        await kb.aquery(
+            "reasoning",
+            "kb_notion",
+            config=config,
+        )

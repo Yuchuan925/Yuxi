@@ -753,6 +753,73 @@ async def test_keyword_mode_uses_milvus_bm25_search():
 
 
 @pytest.mark.parametrize("search_mode", ["vector", "keyword", "hybrid"])
+@pytest.mark.parametrize("use_graph_retrieval", [False, True])
+async def test_retrieval_limits_are_enforced_at_runtime(search_mode, use_graph_retrieval):
+    """超限配置在向量、关键词和混合检索中限制召回及最终结果。"""
+    collection = FakeCollection()
+    hits = [FakeHit(f"chunk {index}", 0.8) for index in range(200)]
+    collection.search = Mock(return_value=[hits])
+    collection.hybrid_search = Mock(return_value=[hits])
+    kb = make_kb(collection)
+    kb._retrieve_graph_chunks = AsyncMock(return_value=[])
+
+    chunks = await kb.aquery(
+        "bounded query",
+        "db",
+        config=make_query_config(),
+        search_mode=search_mode,
+        use_graph_retrieval=use_graph_retrieval,
+        recall_top_k=1_000_000,
+        bm25_top_k=1_000_000,
+        final_top_k=1_000_000,
+        highlight_results=False,
+    )
+
+    assert [chunk["content"] for chunk in chunks] == [f"chunk {index}" for index in range(100)]
+    recall_limit = 200 if use_graph_retrieval else 100
+    if search_mode == "hybrid":
+        request = collection.hybrid_search.call_args.kwargs
+        assert request["limit"] == recall_limit
+        assert [item.limit for item in request["reqs"]] == [recall_limit, 200]
+    else:
+        assert collection.search.call_args.kwargs["limit"] == (200 if search_mode == "keyword" else recall_limit)
+
+
+@pytest.mark.parametrize("exceeds_limit", [False, True])
+async def test_graph_retrieval_limits_reach_query_executors(monkeypatch, exceeds_limit):
+    """图检索执行器接收公开上限，范围内配置保持原值。"""
+    vector_store = types.SimpleNamespace(
+        search_entities=AsyncMock(return_value=[{"id": "entity-1", "score": 1.0}]),
+        search_triples=AsyncMock(return_value=[]),
+    )
+    graph_service = types.SimpleNamespace(query_and_rank_chunks_by_ppr=AsyncMock(return_value=[("chunk-1", 0.5)]))
+    monkeypatch.setattr(
+        "yuxi.modules.knowledge.graphs.milvus_graph_vector_store.MilvusGraphVectorStore", lambda: vector_store
+    )
+    monkeypatch.setattr("yuxi.modules.knowledge.graphs.milvus_graph_service.MilvusGraphService", lambda: graph_service)
+    chunk = types.SimpleNamespace(chunk_id="chunk-1", file_id="file-1", chunk_index=0, content="graph result")
+    repository = types.SimpleNamespace(list_by_chunk_ids=AsyncMock(return_value=[chunk]))
+    monkeypatch.setattr(milvus_module, "KnowledgeChunkRepository", lambda: repository)
+    kb = make_kb(FakeCollection())
+    params = {
+        "graph_entity_top_k": 1_000_000 if exceeds_limit else 7,
+        "graph_triple_top_k": 1_000_000 if exceeds_limit else 8,
+        "graph_top_k": 1_000_000 if exceeds_limit else 9,
+        "graph_max_nodes": 1_000_000 if exceeds_limit else 1000,
+    }
+
+    chunks = await kb._retrieve_graph_chunks("query", "db", [], params, EMBEDDING_MODEL_SPEC)
+
+    assert vector_store.search_entities.await_args.kwargs["top_k"] == (100 if exceeds_limit else 7)
+    assert vector_store.search_triples.await_args.kwargs["top_k"] == (100 if exceeds_limit else 8)
+    graph_query = graph_service.query_and_rank_chunks_by_ppr.await_args.kwargs
+    assert graph_query["top_k"] == (200 if exceeds_limit else 9)
+    assert graph_query["max_nodes"] == (50_000 if exceeds_limit else 1000)
+    assert chunks[0]["content"] == "graph result"
+    assert chunks[0]["metadata"]["chunk_id"] == "chunk-1"
+
+
+@pytest.mark.parametrize("search_mode", ["vector", "keyword", "hybrid"])
 async def test_query_failure_is_not_an_empty_result(search_mode):
     """主检索失败必须传给调用方，不能伪装成没有命中。"""
     error = RuntimeError("Milvus unavailable")

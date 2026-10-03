@@ -279,7 +279,7 @@ class NotionKB(ReadOnlyConnectors):
             return sorted(results, key=lambda item: item.get("score", 0.0), reverse=True)[:final_top_k]
         except (NotionAPIError, httpx.HTTPError, ValueError) as exc:
             logger.error(f"Notion query failed for kb_id={kb_id}: {exc}, {traceback.format_exc()}")
-            return []
+            raise RuntimeError(f"Notion query failed for kb_id={kb_id}") from exc
 
     async def _search_candidate_pages(
         self,

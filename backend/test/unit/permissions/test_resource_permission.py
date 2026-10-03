@@ -128,6 +128,56 @@ def test_legacy_permission_config_is_rejected_at_runtime():
         normalize_permission_config({"access_level": "department", "department_ids": [1]})
 
 
+@pytest.mark.parametrize(
+    "share_config",
+    [
+        None,
+        {"access_level": "global"},
+        {"version": 2, "read_scope": {"access_level": "department", "department_ids": [None]}},
+        {"version": 2, "read_scope": {"access_level": "department", "department_ids": 1}},
+        {"version": 2, "manage_scope": {"access_level": "user", "user_uids": 1}},
+        {"version": 2, "read_scope": {"access_level": ["global"]}},
+        *[
+            {"version": 2, scope: {"access_level": value}}
+            for scope in ("read_scope", "manage_scope")
+            for value in ([], {}, False, 0)
+        ],
+        *[
+            {"version": 2, "read_scope": {"access_level": "department", "department_ids": value}}
+            for value in ("1", {"1": True}, [True], [1.5], [float("inf")])
+        ],
+        *[
+            {"version": 2, "manage_scope": {"access_level": "user", "user_uids": value}}
+            for value in ("owner", {"owner": True}, [None], [True], [1])
+        ],
+    ],
+)
+def test_invalid_resource_permission_config_denies_access(share_config):
+    """损坏的持久化共享配置不得授予权限或中断解析。"""
+    resource = _resource(created_by="owner", share_config=share_config)
+
+    for resolver in (resolve_knowledge_base_permission, resolve_agent_permission, resolve_skill_permission):
+        assert resolver(_user(uid="owner"), resource) == ResourcePermission.NONE
+        assert resolver(_user(uid="other"), resource) == ResourcePermission.NONE
+    assert resolve_agent_permission(_user(role="superadmin"), resource) == ResourcePermission.MANAGE
+
+
+@pytest.mark.parametrize("scope", [{}, {"access_level": None}, {"access_level": ""}])
+def test_valid_default_scope_preserves_global_read(scope):
+    """既有省略、空值和空字符串默认范围仍允许全局读取。"""
+    resource = _resource(share_config={"version": 2, "read_scope": scope})
+    assert resolve_agent_permission(_user(uid="other"), resource) == ResourcePermission.READ
+
+
+def test_department_integer_strings_remain_valid():
+    """合法的整数字符串部门成员仍按部门匹配。"""
+    resource = _resource(
+        share_config={"version": 2, "read_scope": {"access_level": "department", "department_ids": ["1", 1]}}
+    )
+    assert resolve_agent_permission(_user(department_id=1), resource) == ResourcePermission.READ
+    assert resolve_agent_permission(_user(department_id=2), resource) == ResourcePermission.NONE
+
+
 def test_agent_and_skill_use_shared_resolver_with_resource_policy():
     resource = _resource(share_config={"version": 2, "manage_scope": {"access_level": "user", "user_uids": ["user-2"]}})
 
