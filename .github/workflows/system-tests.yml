@@ -18,7 +18,7 @@ on:
       - '.github/workflows/system-tests.yml'
   push:
     tags: ['v[0-9]*']
-    branches: [main]
+    branches: [main, develop/1.0]
     paths:
       - '.env.template'
       - 'backend/yuxi/**'

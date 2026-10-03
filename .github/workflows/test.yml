@@ -20,6 +20,7 @@ on:
     tags: ['v[0-9]*']
     branches:
       - main
+      - develop/1.0
     paths:
       - '.env.template'
       - 'backend/**'

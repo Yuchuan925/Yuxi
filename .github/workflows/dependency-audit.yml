@@ -18,7 +18,7 @@ on:
       - "scripts/dependency-audit-fixtures/**"
   push:
     tags: ['v[0-9]*']
-    branches: [main]
+    branches: [main, develop/1.0]
     paths:
       - ".github/workflows/dependency-audit.yml"
       - "Makefile"
