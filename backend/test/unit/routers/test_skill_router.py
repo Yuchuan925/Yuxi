@@ -6,7 +6,7 @@ from yuxi.modules.extensions.skills.models import Skill
 from yuxi.modules.identity.models import User
 
 from yuxi.api.routers.extensions.skills import skills, user_skills
-from yuxi.api.dependencies.auth import get_admin_user, get_db, get_required_user
+from yuxi.api.dependencies.auth import get_admin_user, get_db, get_required_user, get_superadmin_user
 
 
 def _build_app(*, role: str = "admin") -> FastAPI:
@@ -31,6 +31,12 @@ def _build_app(*, role: str = "admin") -> FastAPI:
             raise HTTPException(status_code=403, detail="需要管理员权限")
         return await fake_required_user()
 
+    async def fake_superadmin_user():
+        if role != "superadmin":
+            raise HTTPException(status_code=403, detail="需要超级管理员权限")
+        return await fake_required_user()
+
+    app.dependency_overrides[get_superadmin_user] = fake_superadmin_user
     app.dependency_overrides[get_db] = fake_db
     app.dependency_overrides[get_required_user] = fake_required_user
     app.dependency_overrides[get_admin_user] = fake_admin_user
@@ -103,8 +109,8 @@ def test_list_visible_skills_route_allows_normal_user_readonly_items(monkeypatch
     payload = resp.json()
     assert payload["success"] is True
     assert [(item["slug"], item["can_manage"]) for item in payload["data"]] == [
-        ("owned-disabled", True),
-        ("shared", True),
+        ("owned-disabled", False),
+        ("shared", False),
     ]
     assert payload["allowed_access_levels"] == ["user"]
 
@@ -123,7 +129,7 @@ def test_list_accessible_skills_route(monkeypatch):
     payload = resp.json()
     assert payload["success"] is True
     assert payload["data"][0]["slug"] == "demo"
-    assert payload["data"][0]["can_manage"] is True
+    assert payload["data"][0]["can_manage"] is False
 
 
 def test_list_skill_cards_route_scans_personal_source(monkeypatch):
@@ -404,9 +410,9 @@ def test_sync_builtin_skills_route(monkeypatch):
 
     monkeypatch.setattr("yuxi.api.routers.extensions.skills.init_builtin_skills", fake_init_builtin_skills)
 
-    client = TestClient(_build_app())
+    client = TestClient(_build_app(role="superadmin"))
     resp = client.post("/api/system/skills/builtin/sync")
 
     assert resp.status_code == 200, resp.text
     assert resp.json()["data"][0]["slug"] == "builtin-demo"
-    assert captured == {"created_by": "admin"}
+    assert captured == {"created_by": "superadmin"}

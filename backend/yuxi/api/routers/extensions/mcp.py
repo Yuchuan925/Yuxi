@@ -19,7 +19,7 @@ from yuxi.modules.extensions.mcp.runtime import get_mcp_tools_stats
 from yuxi.modules.identity.models import User
 from yuxi.infrastructure.observability.logging import logger
 
-from yuxi.api.dependencies.auth import get_admin_user, get_db, get_required_user
+from yuxi.api.dependencies.auth import get_superadmin_user, get_db, get_required_user
 
 mcp = APIRouter(prefix="/system/mcp-servers", tags=["mcp"])
 
@@ -78,6 +78,7 @@ async def get_server_or_404(db: AsyncSession, slug: str):
 def serialize_mcp_server(server) -> dict:
     """序列化 MCP，并补充代码内置标识。"""
     data = server.to_dict()
+    data["can_manage"] = True
     data["is_builtin"] = is_builtin_mcp_server(server)
     return data
 
@@ -95,13 +96,15 @@ async def get_mcp_servers(
     """获取所有 MCP 服务器配置（普通用户仅获取脱敏的基础信息）"""
     try:
         servers = await get_all_mcp_servers(db)
-        if current_user.role in ["admin", "superadmin"]:
+        if current_user.role == "superadmin":
             return {"success": True, "data": [serialize_mcp_server(s) for s in servers]}
 
         data = []
         for s in servers:
             data.append(
                 {
+                    "slug": s.slug,
+                    "can_manage": False,
                     "name": getattr(s, "name", ""),
                     "description": getattr(s, "description", None),
                     "icon": getattr(s, "icon", None),
@@ -120,7 +123,7 @@ async def get_mcp_servers(
 @mcp.post("")
 async def create_mcp_server_route(
     request: CreateMcpServerRequest,
-    current_user: User = Depends(get_admin_user),
+    current_user: User = Depends(get_superadmin_user),
     db: AsyncSession = Depends(get_db),
 ):
     """创建新的 MCP 服务器"""
@@ -161,7 +164,7 @@ async def create_mcp_server_route(
 @mcp.get("/{slug}")
 async def get_mcp_server_route(
     slug: str,
-    current_user: User = Depends(get_admin_user),
+    current_user: User = Depends(get_superadmin_user),
     db: AsyncSession = Depends(get_db),
 ):
     """获取单个 MCP 服务器配置"""
@@ -179,7 +182,7 @@ async def get_mcp_server_route(
 async def update_mcp_server_route(
     slug: str,
     request: UpdateMcpServerRequest,
-    current_user: User = Depends(get_admin_user),
+    current_user: User = Depends(get_superadmin_user),
     db: AsyncSession = Depends(get_db),
 ):
     """更新 MCP 服务器配置"""
@@ -220,7 +223,7 @@ async def update_mcp_server_route(
 @mcp.delete("/{slug}")
 async def delete_mcp_server_route(
     slug: str,
-    current_user: User = Depends(get_admin_user),
+    current_user: User = Depends(get_superadmin_user),
     db: AsyncSession = Depends(get_db),
 ):
     """删除 MCP 服务器"""
@@ -249,7 +252,7 @@ async def delete_mcp_server_route(
 @mcp.post("/{slug}/test")
 async def test_mcp_server(
     slug: str,
-    current_user: User = Depends(get_admin_user),
+    current_user: User = Depends(get_superadmin_user),
     db: AsyncSession = Depends(get_db),
 ):
     """测试 MCP 服务器连接"""
@@ -277,7 +280,7 @@ async def test_mcp_server(
 async def update_mcp_server_status_route(
     slug: str,
     request: UpdateMcpServerStatusRequest,
-    current_user: User = Depends(get_admin_user),
+    current_user: User = Depends(get_superadmin_user),
     db: AsyncSession = Depends(get_db),
 ):
     """更新 MCP 服务器启用状态"""
@@ -308,7 +311,7 @@ async def update_mcp_server_status_route(
 @mcp.get("/{slug}/tools")
 async def get_mcp_server_tools(
     slug: str,
-    current_user: User = Depends(get_admin_user),
+    current_user: User = Depends(get_superadmin_user),
     db: AsyncSession = Depends(get_db),
 ):
     """获取 MCP 服务器的工具列表"""
@@ -361,7 +364,7 @@ async def get_mcp_server_tools(
 @mcp.post("/{slug}/tools/refresh")
 async def refresh_mcp_server_tools(
     slug: str,
-    current_user: User = Depends(get_admin_user),
+    current_user: User = Depends(get_superadmin_user),
     db: AsyncSession = Depends(get_db),
 ):
     """刷新 MCP 服务器的工具列表（清除缓存重新获取）"""
@@ -404,7 +407,7 @@ async def refresh_mcp_server_tools(
 async def toggle_mcp_server_tool_route(
     slug: str,
     tool_name: str,
-    current_user: User = Depends(get_admin_user),
+    current_user: User = Depends(get_superadmin_user),
     db: AsyncSession = Depends(get_db),
 ):
     """切换单个工具的启用状态"""

@@ -102,6 +102,7 @@ async def _agent(
                     "subagents": [],
                 }
             },
+            "visibility": "shared",
             "share_config": {
                 "version": 2,
                 "read_scope": {"access_level": "user", "department_ids": [], "user_uids": [uid]},

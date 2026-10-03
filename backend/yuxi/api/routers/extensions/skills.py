@@ -49,7 +49,7 @@ from yuxi.modules.extensions.skills.shared import (
 from yuxi.modules.identity.models import User
 from yuxi.infrastructure.observability.logging import logger
 
-from yuxi.api.dependencies.auth import get_admin_user, get_db, get_required_user
+from yuxi.api.dependencies.auth import get_admin_user, get_superadmin_user, get_db, get_required_user
 
 skills = APIRouter(prefix="/system/skills", tags=["skills"])
 user_skills = APIRouter(prefix="/skills", tags=["skills"])
@@ -382,7 +382,7 @@ async def list_builtin_skills_route(
 
 @skills.post("/builtin/sync")
 async def sync_builtin_skills_route(
-    current_user: User = Depends(get_admin_user),
+    current_user: User = Depends(get_superadmin_user),
     db: AsyncSession = Depends(get_db),
 ):
     try:

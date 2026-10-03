@@ -76,6 +76,7 @@ export default defineConfig({
         text: '机制详解',
         items: [
           { text: '阅读路径', link: '/mechanisms/' },
+          { text: '角色与资源权限', link: '/mechanisms/resource-permissions' },
           { text: 'Agent 运行时上下文', link: '/mechanisms/agent-runtime' },
           { text: 'Agent 请求队列与调度', link: '/mechanisms/agent-request-queue' },
           { text: '沙盒与文件系统', link: '/mechanisms/sandbox' },

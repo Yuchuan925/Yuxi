@@ -55,6 +55,7 @@ def _async_tool_middleware(*, model: str | None = None) -> YuxiSubAgentMiddlewar
         workdir_path="projects/11111111-1111-4111-8111-111111111111",
         uid="user-1",
         run_id="parent-run",
+        subagents=["worker"],
     )
     if model:
         parent_context.model = model
@@ -250,7 +251,7 @@ async def test_subagent_start_rejects_unconfigured_subagent() -> None:
         {"description": "do work", "subagent_slug": "missing", "runtime": runtime}
     )
 
-    assert result == "无法调用子智能体 missing，可用子智能体只有：`worker`"
+    assert result == "能力受限：当前调用者无权使用该子智能体。"
 
 
 @pytest.mark.asyncio
@@ -265,6 +266,7 @@ async def test_subagent_start_invokes_subagent_with_child_scope(monkeypatch) -> 
             workdir_path="projects/11111111-1111-4111-8111-111111111111",
             uid="user-1",
             run_id="parent-run",
+            subagents=["worker.agent"],
         ),
         subagents=[
             SimpleNamespace(
@@ -309,6 +311,7 @@ async def test_subagent_start_leaves_model_resolution_to_service(monkeypatch) ->
             workdir_path="projects/11111111-1111-4111-8111-111111111111",
             uid="user-1",
             run_id="parent-run",
+            subagents=["worker"],
             model="parent:model",
         ),
         subagents=[
@@ -343,6 +346,7 @@ async def test_subagent_start_continues_existing_subagent_thread(monkeypatch) ->
             workdir_path="projects/11111111-1111-4111-8111-111111111111",
             uid="user-1",
             run_id="parent-run",
+            subagents=["worker.agent"],
             model="",
         ),
         subagents=[
@@ -388,6 +392,7 @@ async def test_subagent_start_rejects_invalid_continuation_thread(monkeypatch) -
             workdir_path="projects/11111111-1111-4111-8111-111111111111",
             uid="user-1",
             run_id="parent-run",
+            subagents=["worker"],
         ),
         subagents=[
             SimpleNamespace(

@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import re
 import uuid
+from types import SimpleNamespace
 from collections.abc import Collection
 from typing import Any, Literal
 
@@ -19,6 +20,7 @@ from yuxi.modules.agents.models.inputs import AgentInput
 from yuxi.modules.agents.models.turns import AgentTurn
 from yuxi.modules.agents.models.threads import Conversation
 from yuxi.modules.identity.models import User
+from yuxi.modules.identity.services.resource_grants import validate_shared_grants
 from yuxi.shared.datetime import utc_now_naive
 
 DEFAULT_AGENT_SLUG = DEFAULT_AGENT.slug
@@ -36,7 +38,7 @@ ADMIN_ROLES = {"admin", "superadmin"}
 
 
 def is_builtin_agent(agent: Agent) -> bool:
-    return agent.slug == DEFAULT_AGENT_SLUG
+    return bool(getattr(agent, "is_builtin", False)) or agent.slug == DEFAULT_AGENT_SLUG
 
 
 def resolve_agent_is_subagent(backend_id: str, is_subagent: bool | None = None) -> bool:
@@ -71,8 +73,15 @@ def user_can_access_agent(user: User, agent: Agent) -> bool:
 
 def user_can_manage_agent(user: User, agent: Agent) -> bool:
     if is_builtin_agent(agent):
-        return user.role in ADMIN_ROLES
+        return user.role == "superadmin"
     return resolve_agent_permission(user, agent) == ResourcePermission.MANAGE
+
+
+def user_can_run_agent(user: User, agent: Agent) -> bool:
+    """私有治理权限不赋予冒用所有者运行的能力。"""
+    if agent.visibility == "private":
+        return not user.is_deleted and user.user_kind != "end_user" and user.uid == agent.created_by
+    return user_can_access_agent(user, agent)
 
 
 def _slugify(value: str | None) -> str:
@@ -115,6 +124,8 @@ class AgentRepository:
             pics=[],
             config_json={"context": copy.deepcopy(DEFAULT_AGENT.context)},
             share_config=DEFAULT_SHARE_CONFIG.copy(),
+            visibility="shared",
+            is_builtin=True,
             is_default=True,
             is_subagent=False,
             created_by=created_by,
@@ -144,6 +155,8 @@ class AgentRepository:
             pics=[],
             config_json={"context": copy.deepcopy(preset.context)},
             share_config=DEFAULT_SHARE_CONFIG.copy(),
+            visibility="shared",
+            is_builtin=True,
             is_default=False,
             is_subagent=resolve_agent_is_subagent(preset.backend_id),
             created_by=created_by,
@@ -168,7 +181,12 @@ class AgentRepository:
         agents = list(result.scalars().all())
         if visibility_user.role == "superadmin":
             return agents
-        return [agent for agent in agents if user_can_access_agent(visibility_user, agent)]
+        return [
+            agent
+            for agent in agents
+            if (getattr(user, "user_kind", "human") != "end_user" or agent.visibility == "shared")
+            and user_can_access_agent(visibility_user, agent)
+        ]
 
     async def list_visible_subagents(self, *, user: User) -> list[Agent]:
         visibility_user = await self._visibility_user(user)
@@ -180,7 +198,12 @@ class AgentRepository:
         agents = list(result.scalars().all())
         if visibility_user.role == "superadmin":
             return agents
-        return [agent for agent in agents if user_can_access_agent(visibility_user, agent)]
+        return [
+            agent
+            for agent in agents
+            if (getattr(user, "user_kind", "human") != "end_user" or agent.visibility == "shared")
+            and user_can_access_agent(visibility_user, agent)
+        ]
 
     async def get_by_slug(self, slug: str, *, for_key_share: bool = False) -> Agent | None:
         """读取 Agent，创建 Thread 时可持有共享键锁直到提交。"""
@@ -201,6 +224,7 @@ class AgentRepository:
         user: User,
         kind: Literal["main", "subagent", "any"] = "main",
         for_key_share: bool = False,
+        for_run: bool = True,
     ) -> Agent | None:
         """按 slug 读取用户可见智能体，并按入口语义过滤主/子智能体。"""
         visibility_user = await self._visibility_user(user)
@@ -208,6 +232,10 @@ class AgentRepository:
             return None
         agent = await self.get_by_slug(slug, for_key_share=for_key_share)
         if not agent:
+            return None
+        if getattr(user, "user_kind", "human") == "end_user" and agent.visibility != "shared":
+            return None
+        if for_run and agent.visibility == "private" and not user_can_run_agent(user, agent):
             return None
         if not user_can_access_agent(visibility_user, agent):
             return None
@@ -223,15 +251,20 @@ class AgentRepository:
         """终端用户只借用 Key 用户的 Agent 可见性，执行 UID 保持不变。"""
         if getattr(user, "user_kind", "human") != "end_user":
             return user
-        return await self.db.scalar(
+        owner = await self.db.scalar(
             select(User).where(
                 User.id == user.owner_user_id,
                 User.user_kind == "human",
                 User.is_deleted == 0,
             )
         )
+        if owner is None or user.is_deleted:
+            return None
+        return SimpleNamespace(uid=owner.uid, department_id=owner.department_id, role="user", is_deleted=0)
 
     async def set_default(self, *, agent: Agent, updated_by: str | None = None) -> Agent:
+        if agent.visibility != "shared":
+            raise ValueError("默认 Agent 必须为共享状态")
         if agent.is_subagent:
             raise ValueError("子智能体不能设为默认智能体")
         if not is_builtin_agent(agent):
@@ -280,27 +313,28 @@ class AgentRepository:
         is_subagent: bool | None = None,
         created_by: str | None = None,
         creator: User | None = None,
+        visibility: Literal["private", "shared"] = "private",
     ) -> Agent:
         resolved_is_subagent = resolve_agent_is_subagent(backend_id, is_subagent)
         if resolved_is_subagent and is_default:
             raise ValueError("子智能体不能设为默认智能体")
-        owner_uid = str(created_by or "")
-        default_share_config = {
-            "version": 2,
-            "read_scope": {
-                "access_level": "user",
-                "department_ids": [],
-                "user_uids": [owner_uid],
-            },
-            "manage_scope": None,
-        }
-        allowed_access_levels = get_allowed_agent_access_levels(creator) if creator else None
-        normalized_share_config = normalize_agent_share_config(
-            share_config or default_share_config,
-            allowed_access_levels=allowed_access_levels,
+        if creator is None or creator.is_deleted or creator.user_kind == "end_user":
+            raise ValueError("必须由有效产品用户创建智能体")
+        if str(created_by) != str(creator.uid):
+            raise ValueError("不能指定其他所有者")
+        if resolved_is_subagent:
+            if creator.role not in ADMIN_ROLES:
+                raise ValueError("普通用户不能建设 SubAgent 定义")
+            visibility = "shared"
+        if visibility == "shared" and creator.role not in ADMIN_ROLES:
+            raise ValueError("普通用户不能创建共享智能体")
+        if visibility == "private" and share_config is not None:
+            raise ValueError("私有智能体不接受共享授权")
+        normalized_share_config = (
+            await validate_shared_grants(self.db, share_config or DEFAULT_SHARE_CONFIG)
+            if visibility == "shared"
+            else {"version": 2, "read_scope": None, "manage_scope": None}
         )
-        if is_default and (normalized_share_config.get("read_scope") or {}).get("access_level") != "global":
-            raise ValueError("默认智能体必须全局共享")
 
         from yuxi.modules.agents.runtime.agent_backends import get_agent_backend
 
@@ -318,6 +352,8 @@ class AgentRepository:
                 context_schema=get_agent_backend(backend_id).context_schema,
             ),
             share_config=normalized_share_config,
+            visibility=visibility,
+            is_builtin=False,
             is_default=False,
             is_subagent=resolved_is_subagent,
             created_by=created_by,
@@ -325,6 +361,8 @@ class AgentRepository:
             created_at=utc_now_naive(),
             updated_at=utc_now_naive(),
         )
+        if visibility == "shared":
+            await self.validate_shared_dependencies(agent.config_json)
         self.db.add(agent)
         await self.db.commit()
         await self.db.refresh(agent)
@@ -346,14 +384,31 @@ class AgentRepository:
         is_subagent: bool | None = None,
         updated_by: str | None = None,
         updater: User | None = None,
+        fields_set: set[str] | None = None,
     ) -> Agent:
+        current = await self.db.scalar(
+            select(Agent).where(Agent.id == agent.id).with_for_update().execution_options(populate_existing=True)
+        )
+        if current is None:
+            raise ValueError("智能体不存在")
+        agent = current
+        if updater is None or not user_can_manage_agent(updater, agent):
+            raise ValueError("无权管理该智能体")
+        if is_subagent is not None and updater.role not in ADMIN_ROLES:
+            raise ValueError("普通用户不能修改 SubAgent 类型")
+        if share_config is not None and agent.visibility == "private":
+            raise ValueError("私有智能体不接受共享授权，请使用发布接口")
+        if share_config is not None and is_builtin_agent(agent):
+            raise ValueError("内置定义不接受共享配置写入")
+        if is_subagent and agent.visibility != "shared":
+            raise ValueError("SubAgent 定义必须为共享状态")
         if is_subagent is not None:
             agent.is_subagent = resolve_agent_is_subagent(agent.backend_id, is_subagent)
         if name is not None:
             agent.name = name.strip() or "未命名智能体"
-        if description is not None:
+        if description is not None or "description" in (fields_set or set()):
             agent.description = description
-        if icon is not None:
+        if icon is not None or "icon" in (fields_set or set()):
             agent.icon = icon
         if pics is not None:
             agent.pics = pics
@@ -371,20 +426,50 @@ class AgentRepository:
                 context_schema=get_agent_backend(agent.backend_id).context_schema,
             )
         if share_config is not None:
-            if is_builtin_agent(agent):
-                agent.share_config = DEFAULT_SHARE_CONFIG.copy()
-            else:
-                allowed_access_levels = get_allowed_agent_access_levels(updater) if updater else None
-                agent.share_config = normalize_agent_share_config(
-                    share_config,
-                    allowed_access_levels=allowed_access_levels,
-                )
+            agent.share_config = await validate_shared_grants(self.db, share_config)
+        if agent.visibility == "shared":
+            await self.validate_shared_dependencies(agent.config_json)
 
         agent.updated_by = updated_by
         agent.updated_at = utc_now_naive()
         await self.db.commit()
         await self.db.refresh(agent)
         return agent
+
+    async def publish(self, *, slug: str, user: User, share_config: dict) -> Agent:
+        """在同一事务中校验依赖和授权，再单向发布自己的私有定义。"""
+        agent = await self.db.scalar(select(Agent).where(Agent.slug == slug).with_for_update())
+        if agent is None:
+            raise LookupError("智能体不存在")
+        if user.is_deleted or user.role not in ADMIN_ROLES or user.uid != agent.created_by:
+            raise PermissionError("只能由管理员发布自己的私有智能体")
+        if agent.visibility != "private" or is_builtin_agent(agent):
+            raise ValueError("只能发布私有主智能体")
+        grants = await validate_shared_grants(self.db, share_config)
+        await self.validate_shared_dependencies(agent.config_json)
+        agent.visibility = "shared"
+        agent.share_config = grants
+        agent.updated_by = user.uid
+        agent.updated_at = utc_now_naive()
+        await self.db.commit()
+        await self.db.refresh(agent)
+        return agent
+
+    async def validate_shared_dependencies(self, config_json: dict) -> None:
+        """共享定义不能引用私有 SubAgent。"""
+        selected = (config_json.get("context") or {}).get("subagents", [])
+        if selected == "all" or not selected:
+            return
+        private = await self.db.scalar(
+            select(Agent.id)
+            .where(
+                Agent.slug.in_(selected),
+                Agent.visibility == "private",
+            )
+            .limit(1)
+        )
+        if private is not None:
+            raise ValueError("共享智能体不能依赖私有 SubAgent")
 
     async def delete(self, *, agent: Agent, user: User) -> None:
         """锁定 Agent 与已有 Thread，拒绝仍由该 Agent 拥有的工作。"""
@@ -454,6 +539,12 @@ class AgentRepository:
         permission = resolve_agent_permission(user, agent)
         is_builtin = is_builtin_agent(agent)
         data["can_manage"] = user_can_manage_agent(user, agent)
+        data["can_run"] = user_can_run_agent(user, agent)
+        data["can_publish"] = (
+            agent.visibility == "private" and user.role in ADMIN_ROLES and user.uid == agent.created_by
+        )
+        data["can_share"] = agent.visibility == "shared" and data["can_manage"] and not is_builtin
+        data["can_transfer"] = agent.visibility == "shared" and user.role == "superadmin" and not is_builtin
         data["effective_permission"] = permission.value
         data["is_builtin"] = is_builtin
         data["permission_locked"] = is_builtin

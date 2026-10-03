@@ -203,7 +203,7 @@
           </div>
         </a-form-item>
 
-        <template v-if="userManagement.editMode">
+        <template v-if="userManagement.editMode && userStore.isSuperAdmin">
           <div class="password-toggle">
             <a-checkbox v-model:checked="userManagement.displayPasswordFields">
               修改密码
@@ -228,10 +228,11 @@
           </a-form-item>
         </template>
 
-        <a-form-item v-if="!userManagement.editMode" label="角色" class="form-item">
+        <a-form-item v-if="!userManagement.editMode || userStore.isSuperAdmin" label="角色" class="form-item">
           <a-select v-model:value="userManagement.form.role">
-            <a-select-option value="user">普通用户</a-select-option>
-            <a-select-option value="admin" v-if="userStore.isSuperAdmin">管理员</a-select-option>
+            <a-select-option value="user" :disabled="userManagement.editMode && userManagement.originalRole !== 'user'">普通用户</a-select-option>
+            <a-select-option value="admin" v-if="userStore.isSuperAdmin" :disabled="userManagement.editMode && userManagement.originalRole === 'superadmin'">管理员</a-select-option>
+            <a-select-option value="superadmin" v-if="userStore.isSuperAdmin">系统管理员</a-select-option>
           </a-select>
         </a-form-item>
 
@@ -525,7 +526,9 @@ const showEditUserModal = (user) => {
   userManagement.modalTitle = '编辑用户'
   userManagement.editMode = true
   userManagement.editUserId = user.id
+  userManagement.originalRole = user.role
   userManagement.form = {
+    role: user.role,
     username: user.username,
     generatedUid: user.uid || '', // 编辑模式显示现有的uid
     phoneNumber: user.phone_number || '',
@@ -593,6 +596,8 @@ const handleUserFormSubmit = async () => {
       if (userManagement.form.phoneNumber) {
         updateData.phone_number = userManagement.form.phoneNumber
       }
+
+      if (userStore.isSuperAdmin) updateData.role = userManagement.form.role
 
       // 超级管理员可以修改部门
       if (userStore.isSuperAdmin && userManagement.form.departmentId) {

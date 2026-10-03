@@ -1,5 +1,6 @@
 /** 将智能体后端描述转换为下拉选项，并以 backend_id 作为名称兜底。 */
 export const normalizeAgentBackendOption = (backend) => ({
+  can_create: backend.can_create,
   label: backend.name || backend.backend_id,
   value: backend.backend_id
 })

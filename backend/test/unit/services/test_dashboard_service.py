@@ -57,13 +57,13 @@ async def dashboard_db():
             is_deleted=1,
         )
 
-        agent1 = Agent(
+        agent1 = Agent(visibility="shared",
             slug="agent-helper",
             backend_id="b-1",
             name="Helper Agent",
             share_config={},
         )
-        agent2 = Agent(
+        agent2 = Agent(visibility="shared",
             slug="agent-coder",
             backend_id="b-2",
             name="Coder Agent",

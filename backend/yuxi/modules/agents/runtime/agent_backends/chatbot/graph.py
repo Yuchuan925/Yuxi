@@ -1,3 +1,5 @@
+from yuxi.modules.agents.runtime.checkpoint_cleanup import CheckpointCleanupModel
+from yuxi.modules.agents.runtime.middlewares.authorization import RuntimeAuthorizationMiddleware
 from deepagents.middleware.patch_tool_calls import PatchToolCallsMiddleware
 from langchain.agents import create_agent
 from langchain.agents.middleware import TodoListMiddleware
@@ -28,7 +30,7 @@ from yuxi.modules.agents.runtime.agent_backends.chatbot.prompt import TODO_MID_P
 from yuxi.modules.agents.runtime.agent_backends.chatbot.state import ChatBotState
 
 
-async def _build_middlewares(context, backend):
+async def _build_middlewares(context, backend, *, cleanup_model=None):
     """构建中间件列表"""
     middlewares = [
         # 最外层隔离普通工具异常，保留取消与 interrupt 的传播。
@@ -40,15 +42,16 @@ async def _build_middlewares(context, backend):
         ),
         SkillsMiddleware(),
     ]
-    memory_middleware = await create_memory_middleware(context)
+    memory_middleware = None if cleanup_model else await create_memory_middleware(context)
     if memory_middleware:
         middlewares.append(memory_middleware)
-    subagent_middleware = await create_subagent_task_middleware(context)
+    subagent_middleware = None if cleanup_model else await create_subagent_task_middleware(context)
     if subagent_middleware:
         middlewares.append(subagent_middleware)
     middlewares.extend(
         [
-            create_summary_middleware_from_context(context, backend=backend),
+            create_summary_middleware_from_context(context, backend=backend, model=cleanup_model)
+            if cleanup_model else create_summary_middleware_from_context(context, backend=backend),
             TodoListMiddleware(system_prompt=TODO_MID_PROMPT),
             PatchToolCallsMiddleware(),
             # 网络类错误(断网/连接抖动)按预算(默认600s)持续重试，非网络错误按 max_retries
@@ -67,6 +70,8 @@ async def _build_middlewares(context, backend):
     )
     if approval_middleware:
         middlewares.append(approval_middleware)
+    # after_model 按逆序执行，授权必须先于审批产生等待点。
+    middlewares.append(RuntimeAuthorizationMiddleware())
     return middlewares
 
 
@@ -75,27 +80,34 @@ class ChatbotAgent(BaseAgent):
     description = "基础的对话机器人，可以回答问题，可在配置中启用需要的工具。"
     context_schema = ChatBotContext
 
-    async def get_graph(self, *, context, **kwargs):
-        """从显式准备的 Context 构建执行图。"""
-        if not getattr(context, "_runtime_prepared", False):
-            raise ValueError("构图需要已准备的 Context")
-        await sync_agent_context_skills(context)
-
-        backend = create_agent_composite_backend(context)
-        model_spec = resolve_chat_model_spec(context.model)
-        graph = create_agent(
-            model=load_chat_model(
-                fully_specified_name=model_spec,
+    async def get_graph(self, *, context, checkpoint_only: bool = False, **kwargs):
+        """构建执行图；checkpoint_only 仅供归属已验证的取消服务使用状态 API。"""
+        if checkpoint_only:
+            model = CheckpointCleanupModel()
+            tools = []
+            prompt = ""
+            middlewares = await _build_middlewares(context, None, cleanup_model=model)
+        else:
+            if not getattr(context, "_runtime_prepared", False):
+                raise ValueError("构图需要已准备的 Context")
+            await sync_agent_context_skills(context)
+            backend = create_agent_composite_backend(context)
+            model = load_chat_model(
+                fully_specified_name=resolve_chat_model_spec(context.model),
                 session_id=context.thread_id,
                 uid=context.uid,
-            ),
-            tools=await resolve_configured_runtime_tools(context),
-            system_prompt=build_prompt_with_context(context),
-            middleware=await _build_middlewares(context, backend),
+            )
+            tools = await resolve_configured_runtime_tools(context)
+            prompt = build_prompt_with_context(context)
+            middlewares = await _build_middlewares(context, backend)
+        return create_agent(
+            model=model,
+            tools=tools,
+            system_prompt=prompt,
+            middleware=middlewares,
             state_schema=ChatBotState,
             checkpointer=await self._get_checkpointer(),
         )
-        return graph
 
 
 def main():

@@ -6,6 +6,8 @@
 
 登录用户用 JWT 调用 Public API；CLI 或产品集成可用未绑定 APP 的 `full` Key，以密钥所属用户身份访问同一产品作用域。外部应用使用绑定 `app_id` 的 `agents` API Key。服务端从 Key 决定 APP，客户端的 `X-App-Id` 不改变作用域。绑定 APP 的 Key 可提供 `X-End-User-Id`，服务端在 Key 所属用户和 APP 内解析独立终端用户；未提供时使用该 APP 的默认终端用户。后续查询和订阅使用相同 Header。JWT 与未绑定 APP 的 `full` Key 不接受该 Header；APP 终端用户不能访问产品 Thread 或 Workspace。密钥创建与权限见 [API Key 接入](./api-key-integration.md)。
 
+所有 APP 终端用户，包括默认终端用户，都无法发现、读取或运行私有 Agent。JWT 和未绑定 APP 的个人 `full` Key 可使用自己的私有 Agent；系统管理员治理其他人的私有定义使用产品管理接口。完整规则见[资源权限](../mechanisms/resource-permissions.md)。
+
 ## Thread、Turn、Run 与 Input
 
 Thread 是长期对话，Turn 是一轮工作，Run 是其中一段有执行 owner 的运行。普通消息先保存为 Input，`follow_up` 彼此 FIFO，`steer` 合并为唯一的待消费优先批次。线程空闲且队列未暂停时领取优先队头并创建 Turn/Run；运行中在安全边界消费 steer，在同一 Turn 创建下一 Run。回答或审批消费明确等待点，也在同一 Turn 创建下一 Run。接收响应中的 `event_id`、`input_id` 和状态只证明持久接收；工作结果通过 Turn 查询。
@@ -78,6 +80,7 @@ Turn `waiting` 时普通消息被拒绝。Turn 快照的 `waitpoint` 提供 `id`
 | 实际工具 | `function_call` 与 `function_call_output` item，通过 `call_id` 关联；完整参数和执行完成分别通知 |
 | 业务整轮 | `agent.session.turn.created/in_progress/completed/failed/cancelled`，主体来自已提交 Turn |
 | 子任务创建 | `agent.session.subagent.created`，`yuxi` 保存独立子 Thread/Turn/Run |
+| 能力受限 | `yuxi.session.turn.capability_limited`，只有通用提示，不包含无权资源元信息 |
 | 原始推理 | `yuxi.session.turn.reasoning.delta/done`，关联对应 message item，不表达 reasoning summary |
 | 人工等待 | `yuxi.session.turn.waiting`，等待点绑定真实 Turn/Run |
 | 执行段、状态、恢复 | `yuxi.session.run.*`、`yuxi.session.turn.state`、`yuxi.session.turn.context_compression`、`yuxi.session.resync` |
@@ -90,4 +93,4 @@ Turn `waiting` 时普通消息被拒绝。Turn 快照的 `waitpoint` 提供 `id`
 
 子任务拥有独立 Thread、Turn、Run、等待点和结果，主、子 Thread 使用相同公开协议。父完成或失败不终止子任务；父取消沿当前 Turn 的委派关系递归取消相关在途子 Turn，子单独取消不取消父，子 Thread 中无关后续 Turn 不受影响。父子共享 Project Workdir，各自 runtime 和 heartbeat 独立。
 
-该协议使用 business schema v11、Redis 事件格式 v2 和 cursor v2，只支持全新数据初始化。没有旧数据迁移、旧事件 reader 或双格式消费。
+该协议使用 business schema v13、Redis 事件格式 v2 和 cursor v2，只支持全新数据初始化。没有旧数据迁移、旧事件 reader 或双格式消费。

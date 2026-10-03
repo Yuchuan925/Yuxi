@@ -64,6 +64,11 @@ async def resolve_runtime_skills_for_context(
     selected_skills = [slug for slug in selected if slug in skill_items_by_slug]
     context_skills = normalize_string_list([*selected_skills, *(item.slug for item in personal_items)])
     effective_skills = expand_skill_closure(context_skills, runtime_skills)
+    limited = any(
+        dependency not in runtime_skills
+        for slug in effective_skills
+        for dependency in runtime_skills[slug]["skills"]
+    )
     configured_preloads = normalize_string_list(getattr(context, "preload_skills", None))
     context_preload_skills = [slug for slug in configured_preloads if slug in selected_skills]
     preloaded_skills = expand_skill_closure(context_preload_skills, runtime_skills)
@@ -73,6 +78,7 @@ async def resolve_runtime_skills_for_context(
         else {}
     )
     return {
+        "capability_limited": limited,
         "context_skills": context_skills,
         "context_preload_skills": context_preload_skills,
         "effective_skills": effective_skills,

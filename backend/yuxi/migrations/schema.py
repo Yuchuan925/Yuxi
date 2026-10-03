@@ -16,6 +16,33 @@ from yuxi.infrastructure.postgres.schema import SCHEMA_VERSION_TABLE
 AGENT_RUN_TERMINAL_STATUS_SQL = ", ".join(f"'{status}'" for status in AGENT_RUN_TERMINAL_STATUSES)
 
 
+IDENTITY_PERMISSION_STATEMENTS = (
+    """
+    CREATE OR REPLACE FUNCTION yuxi_guard_identity() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN
+        IF TG_OP = 'UPDATE' AND
+            array_position(ARRAY['user','admin','superadmin'], NEW.role) <
+            array_position(ARRAY['user','admin','superadmin'], OLD.role) THEN
+            RAISE EXCEPTION '角色只允许提升，禁止降级' USING ERRCODE = '23514';
+        END IF;
+        IF OLD.role = 'superadmin' AND OLD.is_deleted = 0 THEN
+            IF TG_OP = 'DELETE' OR NEW.is_deleted <> 0 THEN
+                PERFORM pg_advisory_xact_lock(1498765386);
+                IF NOT EXISTS (SELECT 1 FROM users WHERE role = 'superadmin' AND is_deleted = 0 AND id <> OLD.id) THEN
+                    RAISE EXCEPTION '必须至少保留一个有效系统管理员' USING ERRCODE = '23514';
+                END IF;
+            END IF;
+        END IF;
+        IF TG_OP = 'DELETE' THEN RETURN OLD; END IF;
+        RETURN NEW;
+    END $$
+    """,
+    "DROP TRIGGER IF EXISTS yuxi_identity_guard ON users",
+    "CREATE TRIGGER yuxi_identity_guard BEFORE UPDATE OR DELETE ON users "
+    "FOR EACH ROW EXECUTE FUNCTION yuxi_guard_identity()",
+)
+
+
 AGENT_RUN_LEASE_SCHEMA_STATEMENTS = (
     "ALTER TABLE IF EXISTS agent_runs ADD COLUMN IF NOT EXISTS worker_id VARCHAR(128)",
     "ALTER TABLE IF EXISTS agent_runs ADD COLUMN IF NOT EXISTS heartbeat_at TIMESTAMP WITHOUT TIME ZONE",
@@ -899,6 +926,7 @@ async def ensure_business_schema(manager):
             updated_at TIMESTAMPTZ DEFAULT NOW()
         )
         """,
+        *IDENTITY_PERMISSION_STATEMENTS,
         *WORKDIR_PATH_SCHEMA_STATEMENTS,
         (
             "ALTER TABLE IF EXISTS model_providers ADD COLUMN IF NOT EXISTS "

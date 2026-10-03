@@ -22,7 +22,7 @@
       <div class="ocr-selector-dropdown" @click.stop>
         <div class="ocr-selector-header">
           <span>OCR 方法</span>
-          <button v-if="userStore.isAdmin" type="button" class="config-link" @click="goToConfig">
+          <button v-if="userStore.isSuperAdmin" type="button" class="config-link" @click="goToConfig">
             去配置
           </button>
         </div>

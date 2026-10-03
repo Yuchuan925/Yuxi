@@ -87,7 +87,7 @@ def test_global_agent_scope_preserves_admin_management():
     assert resolve_agent_permission(_user(role="admin"), resource) == ResourcePermission.MANAGE
 
 
-def test_user_agent_and_skill_scope_preserves_user_management():
+def test_user_agent_and_skill_scope_is_read_only():
     resource = _resource(
         share_config={
             "version": 2,
@@ -96,14 +96,14 @@ def test_user_agent_and_skill_scope_preserves_user_management():
         }
     )
 
-    assert resolve_agent_permission(_user(), resource) == ResourcePermission.MANAGE
-    assert resolve_skill_permission(_user(), resource) == ResourcePermission.MANAGE
+    assert resolve_agent_permission(_user(), resource) == ResourcePermission.READ
+    assert resolve_skill_permission(_user(), resource) == ResourcePermission.READ
 
 
 def test_knowledge_base_owner_and_superadmin_can_manage():
     resource = _resource(created_by="owner", share_config={"version": 2})
 
-    assert resolve_knowledge_base_permission(_user(uid="owner"), resource) == ResourcePermission.MANAGE
+    assert resolve_knowledge_base_permission(_user(uid="owner"), resource) == ResourcePermission.NONE
     assert resolve_knowledge_base_permission(_user(uid="owner", role="admin"), resource) == ResourcePermission.MANAGE
     assert resolve_knowledge_base_permission(_user(role="superadmin"), resource) == ResourcePermission.MANAGE
 
@@ -131,8 +131,8 @@ def test_legacy_permission_config_is_rejected_at_runtime():
 def test_agent_and_skill_use_shared_resolver_with_resource_policy():
     resource = _resource(share_config={"version": 2, "manage_scope": {"access_level": "user", "user_uids": ["user-2"]}})
 
-    assert resolve_agent_permission(_user(uid="user-2"), resource) == ResourcePermission.MANAGE
-    assert resolve_skill_permission(_user(uid="user-2"), resource) == ResourcePermission.MANAGE
+    assert resolve_agent_permission(_user(uid="user-2"), resource) == ResourcePermission.NONE
+    assert resolve_skill_permission(_user(uid="user-2"), resource) == ResourcePermission.NONE
 
 
 def test_personal_skill_permission_is_limited_to_owner():
@@ -142,7 +142,7 @@ def test_personal_skill_permission_is_limited_to_owner():
     assert resolve_skill_permission(_user(uid="user-2"), resource) == ResourcePermission.NONE
 
 
-def test_manage_only_scope_also_grants_read_to_matching_users():
+def test_manage_only_scope_never_grants_access():
     resource = _resource(
         share_config={
             "version": 2,
@@ -151,10 +151,8 @@ def test_manage_only_scope_also_grants_read_to_matching_users():
         }
     )
 
-    assert (
-        resolve_knowledge_base_permission(_user(role="admin", department_id=1), resource) == ResourcePermission.MANAGE
-    )
-    assert resolve_knowledge_base_permission(_user(department_id=1), resource) == ResourcePermission.READ
+    assert resolve_knowledge_base_permission(_user(role="admin", department_id=1), resource) == ResourcePermission.NONE
+    assert resolve_knowledge_base_permission(_user(department_id=1), resource) == ResourcePermission.NONE
     assert resolve_knowledge_base_permission(_user(role="admin", department_id=2), resource) == ResourcePermission.NONE
 
 
@@ -193,4 +191,23 @@ def test_v2_scope_validation_rejects_disallowed_access_level():
                 "manage_scope": None,
             },
             allowed_access_levels={"user"},
+        )
+
+
+@pytest.mark.parametrize("role", ["user", "admin", "superadmin"])
+def test_private_agent_access_is_owner_or_system_governance(role):
+    resource = SimpleNamespace(visibility="private", created_by="owner", share_config={"version": 2})
+    assert resolve_agent_permission(_user(uid="owner", role=role), resource) == ResourcePermission.MANAGE
+    expected = ResourcePermission.MANAGE if role == "superadmin" else ResourcePermission.NONE
+    assert resolve_agent_permission(_user(uid="other", role=role), resource) == expected
+    end_user = SimpleNamespace(uid="owner", role=role, user_kind="end_user")
+    assert resolve_agent_permission(end_user, resource) == ResourcePermission.NONE
+
+
+def test_empty_read_scope_rejects_nonempty_management():
+    from yuxi.modules.identity.permissions import normalize_permission_config
+
+    with pytest.raises(ValueError, match="管理范围"):
+        normalize_permission_config(
+            {"version": 2, "read_scope": None, "manage_scope": {"access_level": "global"}}, strict=True
         )

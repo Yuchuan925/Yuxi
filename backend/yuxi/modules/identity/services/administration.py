@@ -148,3 +148,18 @@ async def initialize_system_admin(
     except Exception:
         await db.rollback()
         raise
+
+
+async def promote_user_role(db: AsyncSession, *, user: User, role: str) -> None:
+    """只提升有效产品用户角色，持久化前锁定当前身份。"""
+    from sqlalchemy import select
+
+    current = await db.scalar(
+        select(User).where(User.id == user.id).with_for_update().execution_options(populate_existing=True)
+    )
+    ranks = {"user": 0, "admin": 1, "superadmin": 2}
+    if current is None or current.is_deleted or current.user_kind != "human":
+        raise ValueError("只能提升有效产品用户角色")
+    if role not in ranks or ranks[role] < ranks[current.role]:
+        raise ValueError("角色只允许提升，禁止降级")
+    current.role = role

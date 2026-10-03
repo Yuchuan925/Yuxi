@@ -22,12 +22,12 @@ class FakeCheckpointGraph:
 
     async def aget_state(self, _config):
         """返回当前持久状态。"""
-        return SimpleNamespace(next=self.next, values={"messages": [self.message]})
+        return SimpleNamespace(next=self.next, interrupts=(), values={"messages": [self.message]})
 
     async def aupdate_state(self, _config, values, *, as_node):
         """持久改写后可模拟崩溃，空改写推进节点。"""
         self.updates.append((values, as_node))
-        if values.get("messages"):
+        if values and values.get("messages"):
             self.message = values["messages"][0]
             if self.crash_after_patch:
                 raise RuntimeError("进程失联")
@@ -53,7 +53,7 @@ async def test_waitpoint_cleanup_retries_after_message_patch():
 
     assert graph.next == ()
     assert len(graph.updates) == 2
-    assert graph.updates[-1] == ({}, "tools")
+    assert graph.updates[-1] == (None, "__end__")
 
 
 async def test_waitpoint_cleanup_rejects_unrelated_checkpoint_without_tool_calls():

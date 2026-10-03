@@ -10,11 +10,12 @@ from langchain.agents.middleware.types import (
     ToolCallRequest,
 )
 from langchain_core.messages import ToolMessage
+from yuxi.modules.agents.runtime.middlewares.authorization import AgentExecutionRevoked
 from langgraph.errors import GraphBubbleUp
 
 logger = logging.getLogger(__name__)
 
-_RETHROW_EXCEPTIONS = (GraphBubbleUp, asyncio.CancelledError, KeyboardInterrupt, SystemExit)
+_RETHROW_EXCEPTIONS = (AgentExecutionRevoked, GraphBubbleUp, asyncio.CancelledError, KeyboardInterrupt, SystemExit)
 
 _ERROR_HINT = (
     "请分析报错原因后继续：参数问题请修正后重试；该工具不支持当前输入"

@@ -6,7 +6,7 @@ from yuxi.modules.extensions.mcp.service import MCPServerNotFoundError
 from yuxi.modules.identity.models import User
 
 from yuxi.api.routers.extensions.mcp import mcp
-from yuxi.api.dependencies.auth import get_admin_user, get_db, get_required_user
+from yuxi.api.dependencies.auth import get_superadmin_user, get_db, get_required_user
 
 
 def _build_app(*, allow_admin: bool = True) -> FastAPI:
@@ -25,7 +25,7 @@ def _build_app(*, allow_admin: bool = True) -> FastAPI:
             username="admin",
             uid="admin",
             password_hash="x",
-            role="admin",
+            role="superadmin",
         )
 
     async def fake_required_user():
@@ -33,11 +33,11 @@ def _build_app(*, allow_admin: bool = True) -> FastAPI:
             username="admin" if allow_admin else "user",
             uid="admin" if allow_admin else "user",
             password_hash="x",
-            role="admin" if allow_admin else "user",
+            role="superadmin" if allow_admin else "user",
         )
 
     app.dependency_overrides[get_db] = fake_db
-    app.dependency_overrides[get_admin_user] = fake_admin_user
+    app.dependency_overrides[get_superadmin_user] = fake_admin_user
     app.dependency_overrides[get_required_user] = fake_required_user
     return app
 
@@ -97,6 +97,7 @@ def test_update_mcp_server_status_rejects_legacy_stdio(monkeypatch):
 def test_get_mcp_servers_normal_user_is_stripped(monkeypatch):
     class DummyServer:
         def __init__(self):
+            self.slug = "test-mcp"
             self.name = "test-mcp"
             self.slug = "test-mcp"
             self.description = "test mcp description"

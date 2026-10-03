@@ -54,7 +54,7 @@ class _ListRepo:
             return self.items
         return [item for item in self.items if not item.is_subagent]
 
-    async def get_visible_by_slug(self, *, slug, user, kind="main"):
+    async def get_visible_by_slug(self, *, slug, user, kind="main", for_run=True):
         del user
         if kind == "any":
             self.get_definition_calls.append(slug)

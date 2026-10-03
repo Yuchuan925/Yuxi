@@ -7,6 +7,7 @@ from sqlalchemy import func, select
 from yuxi.modules.knowledge.cache import cache_kb_config, delete_cached_kb_config, kb_config_cache_lock
 from yuxi.infrastructure.postgres.manager import pg_manager
 from yuxi.modules.knowledge.models import KnowledgeBase
+from yuxi.modules.identity.services.resource_grants import validate_shared_grants
 
 
 class KnowledgeBaseRepository:
@@ -31,6 +32,7 @@ class KnowledgeBaseRepository:
     async def create(self, data: dict[str, Any]) -> KnowledgeBase:
         kb = KnowledgeBase(**data)
         async with pg_manager.get_async_session_context() as session:
+            kb.share_config = await validate_shared_grants(session, kb.share_config)
             session.add(kb)
         await cache_kb_config(kb)
         return kb
@@ -44,6 +46,8 @@ class KnowledgeBaseRepository:
                 kb = result.scalar_one_or_none()
                 if kb is None:
                     return None
+                if "share_config" in data:
+                    data = {**data, "share_config": await validate_shared_grants(session, data["share_config"])}
                 for key, value in data.items():
                     setattr(kb, key, value)
             return kb

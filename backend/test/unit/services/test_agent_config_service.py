@@ -82,22 +82,20 @@ async def test_prepare_agent_config_write_does_not_load_resources_for_unrelated_
 async def test_prepare_agent_config_write_does_not_load_resources_for_strategy_switch(
     monkeypatch, subagents, selection
 ):
-    """显式策略切换保留原值，未声明的字段在资源解析前被移除。"""
+    """替代配置入口明确拒绝未声明字段。"""
     monkeypatch.setattr(
         agent_config_service,
         "resolve_agent_resource_options",
         AsyncMock(side_effect=AssertionError("resource options should not be loaded")),
     )
 
-    config, resource_access = await agent_config_service.prepare_agent_config_write(
-        {"context": {"skills": selection, "mcps": selection, "preload_skills": selection, "subagents": subagents}},
-        context_schema=None,
-        db=object(),
-        user=SimpleNamespace(role="user"),
-    )
-
-    assert config == {"context": {"skills": selection, "mcps": selection, "preload_skills": selection}}
-    assert resource_access == {}
+    with pytest.raises(ValueError, match="不可写或未声明"):
+        await agent_config_service.prepare_agent_config_write(
+            {"context": {"skills": selection, "mcps": selection, "preload_skills": selection, "subagents": subagents}},
+            context_schema=None,
+            db=object(),
+            user=SimpleNamespace(role="user"),
+        )
 
 
 @dataclass(kw_only=True)

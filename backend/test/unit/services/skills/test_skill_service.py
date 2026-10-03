@@ -234,7 +234,7 @@ async def test_list_visible_skills_for_management_includes_owned_disabled_and_en
 
     monkeypatch.setattr(svc, "SkillRepository", FakeRepo)
 
-    visible = await svc.SkillRepository(None).list_visible_for_management(_user("root", role="user"))
+    visible = await svc.SkillRepository(None).list_visible_for_management(_user("root", role="admin"))
 
     assert [item.slug for item in visible] == ["owned-disabled", "shared-enabled", "shared-disabled"]
 
@@ -294,7 +294,7 @@ async def test_locked_shared_list_only_locks_visible_rows_and_rechecks_permissio
                 enabled=False,
                 share_config={"version": 2, "read_scope": None, "manage_scope": None},
             ),
-            _user("root", role="user"),
+            _user("root", role="admin"),
         ),
         (
             Skill(
@@ -349,7 +349,7 @@ async def test_management_readable_skill_allows_manageable_disabled_and_enabled_
 
 
 @pytest.mark.asyncio
-async def test_management_readable_skill_allows_disabled_user_shared_manager(monkeypatch: pytest.MonkeyPatch):
+async def test_management_readable_skill_denies_disabled_ordinary_user(monkeypatch: pytest.MonkeyPatch):
     skill = Skill(
         slug="shared-disabled",
         name="shared-disabled",
@@ -373,9 +373,8 @@ async def test_management_readable_skill_allows_disabled_user_shared_manager(mon
 
     monkeypatch.setattr(svc, "SkillRepository", FakeRepo)
 
-    result = await svc.get_management_readable_skill_or_raise(None, _user("root", role="user"), skill.slug)
-
-    assert result is skill
+    with pytest.raises(ValueError, match="无权访问"):
+        await svc.get_management_readable_skill_or_raise(None, _user("root", role="user"), skill.slug)
 
 
 @pytest.mark.asyncio
@@ -464,7 +463,7 @@ async def test_normal_user_confirm_skill_draft_rejects_wider_share_scope(
         operator=operator,
     )
 
-    with pytest.raises(ValueError, match="无权使用该 Skill 共享范围"):
+    with pytest.raises(ValueError, match="需要管理员权限"):
         await svc.confirm_skill_install_draft(
             _UnitOfWork(),
             draft_id=draft["draft_id"],
@@ -1994,7 +1993,7 @@ async def test_skill_cards_keep_shadowed_shared_item_for_management(
 
     monkeypatch.setattr(catalog, "SkillRepository", FakeRepo)
 
-    cards = await catalog.list_skill_cards_for_user(None, _user("user-1", role="user"))
+    cards = await catalog.list_skill_cards_for_user(None, _user("user-1", role="admin"))
 
     assert [(item.slug, item.source_scope) for item in cards] == [
         ("demo", "personal"),

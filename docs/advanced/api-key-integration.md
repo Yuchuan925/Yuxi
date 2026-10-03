@@ -1,10 +1,10 @@
 # 使用 API Key 调用 Yuxi
 
-API Key 适合服务之间调用 Yuxi。它绑定到一个具体的 Yuxi 用户，请求会继承该用户的角色、部门和资源权限；它不是一个绕过权限的“超级凭证”。
+API Key 适合服务之间调用 Yuxi。它绑定到一个具体的 Yuxi 用户，未绑定 APP 的个人请求使用该用户的角色、部门和资源权限。绑定 APP 的 Agents 请求使用独立终端用户身份；共享 Agent 可见性按 Key 所属账号当前读取授权匹配，知识库和 Skill 依赖按终端用户授权解析，资源边界见[资源权限](../mechanisms/resource-permissions.md)。
 
 ## 创建 API Key
 
-登录 Web 后，进入“设置 → API Keys”，点击“创建 API Key”。创建时填写名称、权限、可选的 APP 标识与过期时间。Web 默认选择 `agents`；管理 API 省略 `access_level` 时仍默认 `full`，以保持既有调用兼容。`agents` 权限必须绑定 `app_id`，只允许访问 [Agents Public API](./agents-public-api.md)；`knowledge` 权限只允许访问版本化的 [external 知识库查询接口](./knowledge-base-api.md#外部查询接口)，不要求 `app_id`；`full` 权限保留绑定用户可访问的产品接口。升级前创建的 Key 保持 `full`，不会被自动收窄。
+登录 Web 后，进入“设置 → API Keys”，点击“创建 API Key”。创建时填写名称、权限、可选的 APP 标识与过期时间。Web 默认选择 `agents`；管理 API 省略 `access_level` 时仍默认 `full`。`agents` 权限必须绑定 `app_id`，只允许访问 [Agents Public API](./agents-public-api.md)；`knowledge` 权限只允许访问版本化的 [external 知识库查询接口](./knowledge-base-api.md#外部查询接口)，不要求 `app_id`；`full` 权限保留绑定用户可访问的产品接口。
 
 也可以调用管理接口：
 

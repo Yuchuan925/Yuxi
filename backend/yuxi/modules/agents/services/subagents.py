@@ -7,7 +7,9 @@ from dataclasses import dataclass
 from typing import Any
 
 from fastapi import HTTPException
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from yuxi.modules.identity.models import User
 from yuxi.modules.agents.runtime.tool_approval import DEFAULT_TOOL_APPROVAL_MODE
 from yuxi.modules.agents.repositories.definitions import AgentRepository
 from yuxi.modules.agents.repositories.runs import TERMINAL_RUN_STATUSES, AgentRunRepository
@@ -248,7 +250,12 @@ class SubagentRunService:
         ):
             raise ValueError("父运行的根 Thread 不存在")
         # 与 Agent 删除和普通 Thread 创建同序：Agent → Project → Thread。
-        locked_agent = await AgentRepository(self.db).get_by_slug(agent_item.slug, for_key_share=True)
+        user = await self.db.scalar(select(User).where(User.uid == uid, User.is_deleted == 0))
+        if user is None:
+            raise ValueError("能力受限：执行账号已失效")
+        locked_agent = await AgentRepository(self.db).get_visible_by_slug(
+            slug=agent_item.slug, user=user, kind="subagent", for_key_share=True
+        )
         if locked_agent is None or locked_agent.id != agent_item.id or not locked_agent.is_subagent:
             raise ValueError("子智能体不存在")
         agent_item = locked_agent

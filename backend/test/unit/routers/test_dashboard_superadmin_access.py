@@ -68,7 +68,7 @@ async def dashboard_session():
             role="user",
             department=dept_b,
         )
-        agent = Agent(
+        agent = Agent(visibility="shared",
             slug="agent-shared",
             backend_id="shared-backend",
             name="Shared Agent",

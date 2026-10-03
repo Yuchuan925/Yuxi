@@ -5,6 +5,7 @@ from sqlalchemy import (
     JSON,
     Boolean,
     Column,
+    CheckConstraint,
     DateTime,
     ForeignKey,
     Index,
@@ -58,6 +59,9 @@ class Agent(Base):
     config_json = Column(JSON, nullable=False, default=dict)
     share_config = Column(JSON_VALUE, nullable=False)
 
+    visibility = Column(String(16), nullable=False, default="private", index=True)
+    is_builtin = Column(Boolean, nullable=False, default=False)
+
     is_default = Column(Boolean, nullable=False, default=False, index=True)
     is_subagent = Column(Boolean, nullable=False, default=False, index=True)
 
@@ -67,6 +71,10 @@ class Agent(Base):
     updated_at = Column(DateTime, default=utc_now_naive, onupdate=utc_now_naive)
 
     __table_args__ = (
+        CheckConstraint("visibility IN ('private', 'shared')", name="ck_agents_visibility"),
+        CheckConstraint("NOT is_subagent OR visibility = 'shared'", name="ck_agents_subagent_shared"),
+        CheckConstraint("NOT is_builtin OR visibility = 'shared'", name="ck_agents_builtin_shared"),
+        CheckConstraint("visibility <> 'private' OR created_by IS NOT NULL", name="ck_agents_private_owner"),
         Index(
             "uq_agents_default",
             "is_default",
@@ -88,6 +96,8 @@ class Agent(Base):
             "pics": [normalize_public_minio_url(pic) for pic in (self.pics or [])],
             "config_json": self.config_json or {},
             "share_config": self.share_config or {},
+            "visibility": self.visibility,
+            "is_builtin": bool(self.is_builtin),
             "is_default": bool(self.is_default),
             "is_subagent": bool(self.is_subagent),
             "created_by": self.created_by,

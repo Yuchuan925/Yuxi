@@ -68,13 +68,13 @@ const canManageAgent = (agent) => !!agent?.can_manage
 const getAgentDefaultIconSrc = (agent) => (agent.agent_id ? generatePixelAvatar(agent.agent_id) : '')
 
 /** 返回智能体共享范围的简短展示文案。 */
-const getAgentShareLabel = (agent) => getShareConfigLabel(agent?.share_config)
+const getAgentShareLabel = (agent) => agent?.visibility === 'private' ? '私有' : getShareConfigLabel(agent?.share_config)
 
 // ============ Agent Operations ============
 const loadAgentBackends = async () => {
   try {
     const response = await agentApi.getAgentBackends()
-    agentBackendOptions.value = (response.backends || []).map(normalizeAgentBackendOption)
+    agentBackendOptions.value = (response.backends || []).filter((backend) => backend.can_create).map(normalizeAgentBackendOption)
   } catch (error) {
     message.error(error.message || '加载智能体后端失败')
   }

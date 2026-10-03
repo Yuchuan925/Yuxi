@@ -70,7 +70,7 @@ class Token(BaseModel):
 class UserCreate(BaseModel):
     username: str
     password: str = Field(min_length=8)
-    role: str = "user"
+    role: Literal["user", "admin", "superadmin"] = "user"
     phone_number: str | None = None
     department_id: int | None = None
 
@@ -78,6 +78,7 @@ class UserCreate(BaseModel):
 class UserUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    role: Literal["user", "admin", "superadmin"] | None = None
     username: str | None = None
     password: str | None = Field(default=None, min_length=8)
     phone_number: str | None = None
@@ -542,13 +543,6 @@ async def create_user(
     hashed_password = AuthUtils.hash_password(user_data.password)
 
     # 检查角色权限
-    # 禁止创建超级管理员账户（系统只能有一个超级管理员）
-    if user_data.role == "superadmin":
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="不能创建超级管理员账户",
-        )
-
     # 管理员只能创建普通用户
     if current_user.role == "admin" and user_data.role != "user":
         raise HTTPException(
@@ -665,13 +659,7 @@ async def read_user_access_options(
     current_user: User = Depends(get_admin_user),
     db: AsyncSession = Depends(get_db),
 ):
-    user_repo = UserRepository(db)
-    if current_user.role == "superadmin":
-        users_with_dept = await user_repo.list_with_department(skip=skip, limit=limit)
-    else:
-        users_with_dept = await user_repo.list_with_department(
-            skip=skip, limit=limit, department_id=current_user.department_id
-        )
+    users_with_dept = await UserRepository(db).list_with_department(skip=skip, limit=limit)
     return [
         {
             "uid": user.uid,
@@ -710,7 +698,7 @@ async def update_user(
     db: AsyncSession = Depends(get_db),
 ):
     user_repository = UserRepository(db)
-    user = await user_repository.get_active_by_id(user_id)
+    user = await user_repository.get_active_by_id(user_id, for_update=True)
     if user is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -732,6 +720,18 @@ async def update_user(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="管理员只能修改普通用户账户",
             )
+
+    if current_user.role != "superadmin" and user_data.password is not None:
+        raise HTTPException(status_code=403, detail="普通管理员不能重置已有成员密码")
+    if user_data.role is not None:
+        if current_user.role != "superadmin":
+            raise HTTPException(status_code=403, detail="只有系统管理员可以提升角色")
+        from yuxi.modules.identity.services.administration import promote_user_role
+
+        try:
+            await promote_user_role(db, user=user, role=user_data.role)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     # 更新信息
     if user_data.username is not None:
@@ -761,17 +761,6 @@ async def update_user(
                 detail="只有超级管理员才能修改用户部门",
             )
 
-        # 检查该用户是否是当前部门的唯一管理员
-        if user.role == "admin" and user.department_id is not None:
-            admin_count = await user_repository.get_admin_count_in_department(
-                user.department_id, exclude_user_id=user_id
-            )
-            if admin_count <= 1:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="不能修改该用户的部门，因为该用户是当前部门的唯一管理员",
-                )
-
         user.department_id = user_data.department_id
 
     await user_repository.save(user)
@@ -789,6 +778,7 @@ async def delete_user(
     db: AsyncSession = Depends(get_db),
 ):
     user_repository = UserRepository(db)
+    await user_repository.lock_identity_changes()
     user = await user_repository.get_active_by_id(user_id, for_update=True)
     if user is None:
         raise HTTPException(
@@ -798,27 +788,11 @@ async def delete_user(
 
     _ensure_user_in_current_department(current_user, user)
 
-    # 不能删除超级管理员账户
-    if user.role == "superadmin":
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="不能删除超级管理员账户",
-        )
-
     if current_user.role == "admin" and user.role != "user":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="管理员只能删除普通用户账户",
         )
-
-    # 检查是否是部门的唯一管理员
-    if user.role == "admin" and current_user.role != "superadmin":
-        admin_count = await user_repository.get_admin_count_in_department(user.department_id)
-        if admin_count <= 1:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="不能删除部门唯一的管理员",
-            )
 
     # 不能删除自己的账户
     if user.id == current_user.id:
@@ -834,7 +808,10 @@ async def delete_user(
             detail="该用户已经被删除",
         )
 
-    await user_repository.delete_for_admin(user)
+    try:
+        await user_repository.delete_for_admin(user)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     await db.commit()
 

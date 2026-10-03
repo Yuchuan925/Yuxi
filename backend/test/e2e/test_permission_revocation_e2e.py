@@ -1,0 +1,593 @@
+"""真实模型、worker 与文件边界证明新工具执行会重新授权。"""
+
+import asyncio
+import json
+import os
+import socket
+from datetime import datetime
+import uuid
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from threading import Event, Thread
+
+import pytest
+import uvicorn
+from mcp.server.fastmcp import FastMCP
+from langchain_core.messages import ToolMessage
+from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+
+from test.e2e.test_agent_lifecycle_e2e import _message, _provider
+from test.integration.api.test_permission_convergence import actors as actor_fixture, create_agent, SHARED
+from yuxi.modules.agents.runtime.sandbox.paths import VIRTUAL_PATH_PREFIX
+from yuxi.modules.workspace.paths import user_workspace_dir
+
+actors = actor_fixture
+
+pytestmark = [pytest.mark.asyncio, pytest.mark.e2e, pytest.mark.slow, pytest.mark.timeout(120)]
+
+
+@pytest.fixture
+def remote_tool(tmp_path):
+    """真实 MCP 工具产生可独立回读的文件副作用。"""
+    effect = tmp_path / "remote-effect.txt"
+    mcp = FastMCP("permission-test", stateless_http=True)
+    mcp.settings.transport_security.enable_dns_rebinding_protection = False
+
+    @mcp.tool()
+    def effect_probe() -> str:
+        """记录真实外部工具调用。"""
+        effect.write_text("EXECUTED")
+        return "EXECUTED"
+
+    listener = socket.socket()
+    listener.bind(("0.0.0.0", 0))
+    server = uvicorn.Server(uvicorn.Config(mcp.streamable_http_app(), log_level="error"))
+    thread = Thread(target=server.run, kwargs={"sockets": [listener]}, daemon=True)
+    thread.start()
+    try:
+        yield {"url": f"http://api:{listener.getsockname()[1]}/mcp", "effect": effect}
+    finally:
+        server.should_exit = True
+        thread.join(timeout=5)
+        listener.close()
+
+
+@pytest.fixture
+def test_client(e2e_client):
+    """复用真实 HTTP 客户端。"""
+    return e2e_client
+
+
+@pytest.fixture
+def admin_headers(e2e_headers):
+    """复用系统管理员身份准备独立的测试成员。"""
+    return e2e_headers
+
+
+@pytest.fixture
+def replay():
+    """在模型给出工具调用前提供可观测的真实 HTTP 阻塞点。"""
+    entered, release = Event(), Event()
+    observations = []
+    action = {}
+
+    class Handler(BaseHTTPRequestHandler):
+        """返回一次工具调用，再根据真实工具结果返回文本。"""
+
+        def do_POST(self):  # noqa: N802
+            """按 OpenAI SSE 协议提供确定性模型响应。"""
+            request = json.loads(self.rfile.read(int(self.headers["content-length"])))
+            observations.append(request)
+            assert self.headers["authorization"] == "Bearer ci-replay-key"
+            assert request["model"] == "deterministic-chat" and request["stream"] is True
+            has_result = any(message["role"] == "tool" for message in request["messages"])
+            if not has_result:
+                assert action["name"] in {tool["function"]["name"] for tool in request["tools"]}
+                entered.set()
+                assert release.wait(60)
+                delta = {
+                    "role": "assistant",
+                    "tool_calls": [
+                        {
+                            "index": 0,
+                            "id": "call-permission",
+                            "type": "function",
+                            "function": {"name": action["name"], "arguments": json.dumps(action["arguments"])},
+                        }
+                    ],
+                }
+            else:
+                delta = {"role": "assistant", "content": "PERMISSION_CHECK_COMPLETE"}
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.end_headers()
+            common = {
+                "id": "chatcmpl-permission",
+                "object": "chat.completion.chunk",
+                "created": 1,
+                "model": "deterministic-chat",
+            }
+            for payload in [
+                {**common, "choices": [{"index": 0, "delta": delta, "finish_reason": None}]},
+                {
+                    **common,
+                    "choices": [{"index": 0, "delta": {}, "finish_reason": "stop" if has_result else "tool_calls"}],
+                    "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+                },
+            ]:
+                self.wfile.write(f"data: {json.dumps(payload)}\n\n".encode())
+            self.wfile.write(b"data: [DONE]\n\n")
+            self.wfile.flush()
+
+        def log_message(self, *args):
+            """测试不输出请求日志。"""
+
+    server = ThreadingHTTPServer(("0.0.0.0", 0), Handler)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield {
+            "url": f"http://api:{server.server_port}/v1",
+            "entered": entered,
+            "release": release,
+            "requests": observations,
+            "action": action,
+        }
+    finally:
+        release.set()
+        server.shutdown()
+        thread.join()
+        server.server_close()
+
+
+@pytest.mark.parametrize("revocation", ["agent", "account", "skill", "subagent", "mcp"])
+async def test_tool_boundary_rechecks_current_caller_and_retains_history(actors, replay, remote_tool, revocation):
+    """撤销 Agent/账号终结执行，撤销 Skill 拒绝工具但继续可执行部分。"""
+    client, db = actors["client"], actors["db"]
+    admin, user = (actors["identities"][key] for key in ("admin0", "user0"))
+    suffix = uuid.uuid4().hex[:8]
+    provider_id = f"ci-permission-{suffix}"
+    model = f"{provider_id}:deterministic-chat"
+    await _provider(client, actors["root"], base_url=replay["url"], provider_id=provider_id)
+    skill = f"permission-skill-{suffix}"
+    skill_installed = False
+    filename = f"permission-proof-{suffix}.txt"
+    file = user_workspace_dir(user["uid"]) / filename
+    child = None
+    mcp_slug = None
+    if revocation == "skill":
+        package = (f"---\nname: {skill}\ndescription: permission test\n"
+                   "tool_dependencies: [present_artifacts]\n---\n# Permission test\n")
+        prepared = await client.post(
+            "/api/skills/import/prepare",
+            headers=admin["headers"],
+            files={"file": ("SKILL.md", package.encode(), "text/markdown")},
+        )
+        assert prepared.status_code == 200, prepared.text
+        draft = prepared.json()["data"]["draft_id"]
+        confirmed = await client.post(
+            f"/api/skills/install-drafts/{draft}/confirm",
+            headers=admin["headers"],
+            json={"slugs": [skill], "share_config": SHARED},
+        )
+        assert confirmed.status_code == 200, confirmed.text
+        assert confirmed.json()["data"][0]["success"], confirmed.text
+        skill_installed = True
+        replay["action"].update(name="present_artifacts", arguments={"filepaths": []})
+    elif revocation == "mcp":
+        mcp_slug = f"permission-mcp-{suffix}"
+        created = await client.post(
+            "/api/system/mcp-servers",
+            headers=actors["root"],
+            json={
+                "slug": mcp_slug,
+                "name": "Permission MCP",
+                "transport": "streamable_http",
+                "url": remote_tool["url"],
+            },
+        )
+        assert created.status_code == 200, created.text
+        replay["action"].update(name="effect_probe", arguments={})
+    elif revocation == "subagent":
+        child = await create_agent(
+            actors, admin, backend_id="SubAgentBackend", visibility="shared", share_config=SHARED
+        )
+        replay["action"].update(
+            name="subagent_start", arguments={"subagent_slug": child["slug"], "description": "forbidden"}
+        )
+    else:
+        replay["action"].update(
+            name="write_file",
+            arguments={"file_path": f"{VIRTUAL_PATH_PREFIX}/{filename}", "content": "FORBIDDEN_SIDE_EFFECT"},
+        )
+    agent = await create_agent(
+        actors,
+        admin,
+        visibility="shared",
+        share_config=SHARED,
+        config_json={
+            "context": {
+                "model": model,
+                "tools": [],
+                "skills": [skill] if skill_installed else [],
+                "preload_skills": [skill] if skill_installed else [],
+                "mcps": [mcp_slug] if mcp_slug else [],
+                "knowledges": [],
+                "subagents": [child["slug"]] if child else [],
+            }
+        },
+    )
+    try:
+        created = await client.post(
+            "/api/v1/agents/threads",
+            headers={**user["headers"], "Idempotency-Key": suffix},
+            json={
+                "agent_id": agent["slug"],
+                "model_spec": model,
+                "input": [_message("Check permission")],
+                "title": f"Permission {suffix}",
+            },
+        )
+        assert created.status_code == 200, created.text
+        accepted = created.json()
+        for _ in range(200):
+            if replay["entered"].is_set():
+                break
+            run = await db.fetchrow("SELECT status,error_message FROM agent_runs WHERE id=$1", accepted["run_id"])
+            assert run["status"] != "failed", dict(run)
+            await asyncio.sleep(0.1)
+        else:
+            pytest.fail("真实模型未到达撤权前的工具准备阶段")
+        workdir = await db.fetchval(
+            "SELECT p.workdir_path FROM projects p JOIN conversations t ON t.project_id=p.id WHERE t.thread_id=$1",
+            accepted["thread_id"],
+        )
+        file = user_workspace_dir(user["uid"]) / workdir / filename
+        if revocation in {"agent", "account"}:
+            replay["action"]["arguments"]["file_path"] = f"{VIRTUAL_PATH_PREFIX}/{workdir}/{filename}"
+        if revocation == "agent":
+            response = await client.put(
+                f"/api/agent/{agent['slug']}",
+                headers=admin["headers"],
+                json={"share_config": {"version": 2, "read_scope": None, "manage_scope": None}},
+            )
+        elif revocation == "account":
+            response = await client.delete(f"/api/auth/users/{user['id']}", headers=actors["root"])
+        elif revocation == "mcp":
+            response = await client.put(
+                f"/api/system/mcp-servers/{mcp_slug}/tools/effect_probe/toggle", headers=actors["root"]
+            )
+        elif revocation == "subagent":
+            response = await client.put(
+                f"/api/agent/{child['slug']}",
+                headers=admin["headers"],
+                json={"share_config": {"version": 2, "read_scope": None, "manage_scope": None}},
+            )
+        else:
+            response = await client.put(
+                f"/api/system/skills/{skill}/share-config",
+                headers=admin["headers"],
+                json={"share_config": {"version": 2, "read_scope": None, "manage_scope": None}},
+            )
+        assert response.status_code == 200, response.text
+        replay["release"].set()
+        for _ in range(200):
+            run = await db.fetchrow("SELECT status,error_message FROM agent_runs WHERE id=$1", accepted["run_id"])
+            if run["status"] in {"completed", "failed", "cancelled"}:
+                break
+            await asyncio.sleep(0.1)
+        else:
+            pytest.fail("撤权后 Run 没有形成终态")
+        assert run["status"] == ("completed" if revocation in {"skill", "subagent", "mcp"} else "failed"), dict(run)
+        assert not file.exists(), "失权后执行了文件副作用"
+        assert not remote_tool["effect"].exists(), "停用后执行了真实 MCP 工具"
+        assert await db.fetchval("SELECT count(*) FROM conversations WHERE thread_id=$1", accepted["thread_id"]) == 1
+        if revocation in {"skill", "subagent", "mcp"}:
+            async with AsyncPostgresSaver.from_conn_string(os.environ["POSTGRES_URL"].replace("+asyncpg", "")) as saver:
+                checkpoint = await saver.aget_tuple({"configurable": {"thread_id": accepted["thread_id"]}})
+            outputs = [
+                message
+                for message in checkpoint.checkpoint["channel_values"]["messages"]
+                if isinstance(message, ToolMessage) and message.tool_call_id == "call-permission"
+            ]
+            assert len(outputs) == 1 and "能力受限" in outputs[0].content
+            if revocation in {"skill", "mcp"}:
+                assert outputs[0].status == "error" and skill not in outputs[0].content
+            if child:
+                assert child["name"] not in outputs[0].content
+                assert (
+                    await db.fetchval("SELECT count(*) FROM agent_runs WHERE created_by_run_id=$1", accepted["run_id"])
+                    == 0
+                )
+            assert any(
+                "能力受限" in str(message.get("content"))
+                for request in replay["requests"]
+                for message in request["messages"]
+                if message["role"] == "tool"
+            )
+        else:
+            assert "权限已撤销" in run["error_message"] or "账号已失效" in run["error_message"]
+    finally:
+        replay["release"].set()
+        if mcp_slug:
+            response = await client.delete(f"/api/system/mcp-servers/{mcp_slug}", headers=actors["root"])
+            assert response.status_code in {200, 404}, response.text
+        if skill_installed:
+            deleted = await client.delete(f"/api/system/skills/{skill}", headers=actors["root"])
+            assert deleted.status_code in {200, 404}, deleted.text
+        response = await client.delete(f"/api/system/model-providers/{provider_id}", headers=actors["root"])
+        assert response.status_code in {200, 404}, response.text
+
+
+async def prepared_agent(actors, replay, *, tools=None):
+    """注册独占模型并创建可供普通用户调用的共享定义。"""
+    provider = f"ci-permission-{uuid.uuid4().hex[:8]}"
+    model = f"{provider}:deterministic-chat"
+    await _provider(actors["client"], actors["root"], base_url=replay["url"], provider_id=provider)
+    admin = actors["identities"]["admin0"]
+    agent = await create_agent(
+        actors,
+        admin,
+        visibility="shared",
+        share_config=SHARED,
+        config_json={
+            "context": {
+                "model": model,
+                "tools": tools or [],
+                "skills": [],
+                "preload_skills": [],
+                "mcps": [],
+                "knowledges": [],
+                "subagents": [],
+            }
+        },
+    )
+    return agent, provider, model
+
+
+async def revoke_agent(actors, agent):
+    """通过资源 Owner 的真实接口撤销使用范围。"""
+    response = await actors["client"].put(
+        f"/api/agent/{agent['slug']}",
+        headers=actors["identities"]["admin0"]["headers"],
+        json={"share_config": {"version": 2, "read_scope": None, "manage_scope": None}},
+    )
+    assert response.status_code == 200, response.text
+
+
+async def test_queued_input_after_revocation_fails_without_another_model_call(actors, replay):
+    """已经接收的 FIFO 输入启动时重查权限，两轮都终结且历史保留。"""
+    client, db = actors["client"], actors["db"]
+    user = actors["identities"]["user0"]
+    replay["action"].update(
+        name="write_file", arguments={"file_path": f"{VIRTUAL_PATH_PREFIX}/forbidden.txt", "content": "forbidden"}
+    )
+    agent, provider, model = await prepared_agent(actors, replay)
+    try:
+        initial = await client.post(
+            "/api/v1/agents/threads",
+            headers={**user["headers"], "Idempotency-Key": uuid.uuid4().hex},
+            json={"agent_id": agent["slug"], "model_spec": model, "input": [_message("First")]},
+        )
+        assert initial.status_code == 200, initial.text
+        accepted = initial.json()
+        for _ in range(200):
+            if replay["entered"].is_set():
+                break
+            await asyncio.sleep(0.1)
+        assert replay["entered"].is_set()
+        queued = await client.post(
+            f"/api/v1/agents/threads/{accepted['thread_id']}/events",
+            headers={**user["headers"], "Idempotency-Key": uuid.uuid4().hex},
+            json={
+                "events": [
+                    {
+                        "type": "agent.session.input.message",
+                        "yuxi": {"mode": "follow_up"},
+                        "input": [_message("Queued")],
+                    }
+                ]
+            },
+        )
+        assert queued.status_code == 202, queued.text
+        await revoke_agent(actors, agent)
+        replay["release"].set()
+        for _ in range(200):
+            if await db.fetchval("SELECT status FROM agent_runs WHERE id=$1", accepted["run_id"]) == "failed":
+                break
+            await asyncio.sleep(0.1)
+        else:
+            pytest.fail("失权的执行未失败")
+        assert await db.fetchval(
+            "SELECT queue_paused FROM conversations WHERE thread_id=$1", accepted["thread_id"]
+        )
+        assert await db.fetchval(
+            "SELECT count(*) FROM agent_inputs WHERE conversation_thread_id=$1 AND status='pending'",
+            accepted["thread_id"],
+        ) == 1
+        continued = await client.post(
+            f"/api/v1/agents/threads/{accepted['thread_id']}/events",
+            headers={**user["headers"], "Idempotency-Key": uuid.uuid4().hex},
+            json={"events": [{"type": "yuxi.session.input.continue"}]},
+        )
+        assert continued.status_code == 202, continued.text
+        for _ in range(200):
+            rows = await db.fetch(
+                "SELECT status,error_message FROM agent_runs WHERE conversation_thread_id=$1", accepted["thread_id"]
+            )
+            if len(rows) == 2 and all(row["status"] == "failed" for row in rows):
+                break
+            await asyncio.sleep(0.1)
+        else:
+            pytest.fail(f"失权的排队输入未形成明确失败结果：{[dict(row) for row in rows]}")
+        assert len(replay["requests"]) == 1, "排队输入失权后仍调用了模型"
+        history = await client.get(f"/api/v1/agents/threads/{accepted['thread_id']}/history", headers=user["headers"])
+        assert history.status_code == 200 and "Queued" in history.text, history.text
+    finally:
+        replay["release"].set()
+        await client.delete(f"/api/system/model-providers/{provider}", headers=actors["root"])
+
+
+async def test_due_schedule_rechecks_permission_before_creating_thread(actors, replay):
+    """真实 worker 到期调度失权任务，保存失败意图且不创建会话或 Run。"""
+    client, db = actors["client"], actors["db"]
+    user = actors["identities"]["user0"]
+    agent, provider, model = await prepared_agent(actors, replay)
+    job = None
+    try:
+        initial = await client.post(
+            "/api/v1/agents/threads",
+            headers={**user["headers"], "Idempotency-Key": uuid.uuid4().hex},
+            json={"agent_id": agent["slug"], "model_spec": model},
+        )
+        assert initial.status_code == 200, initial.text
+        thread_id = initial.json()["thread_id"]
+        project_id = await db.fetchval("SELECT project_id FROM conversations WHERE thread_id=$1", thread_id)
+        response = await client.post(
+            "/api/scheduled-tasks",
+            headers=user["headers"],
+            json={
+                "request_id": uuid.uuid4().hex,
+                "name": "Permission schedule",
+                "project_id": project_id,
+                "agent_slug": agent["slug"],
+                "prompt": "Never run",
+                "cron_expression": "0 0 1 1 *",
+                "timezone": "UTC",
+                "model_spec": model,
+            },
+        )
+        assert response.status_code == 200, response.text
+        job = response.json()["id"]
+        await revoke_agent(actors, agent)
+        await db.execute("UPDATE scheduled_agent_jobs SET next_run_at=$1 WHERE id=$2", datetime(2020, 1, 1), job)
+        for _ in range(300):
+            record = await db.fetchrow(
+                "SELECT status,error_message,thread_id FROM scheduled_agent_runs WHERE job_id=$1", job
+            )
+            if record and record["status"] == "failed":
+                break
+            await asyncio.sleep(0.1)
+        else:
+            pytest.fail("真实 worker 未处理失权的到期任务")
+        assert "不可访问" in record["error_message"]
+        assert await db.fetchval("SELECT count(*) FROM conversations WHERE thread_id=$1", record["thread_id"]) == 0
+        assert not replay["requests"]
+    finally:
+        if job:
+            await client.delete(f"/api/scheduled-tasks/{job}", headers=user["headers"])
+        await client.delete(f"/api/system/model-providers/{provider}", headers=actors["root"])
+
+
+@pytest.mark.parametrize("revocation", ["agent", "account"])
+async def test_waitpoint_resume_after_revocation_cannot_create_new_run(actors, replay, revocation):
+    """真实提问等待点失权后拒绝恢复，原会话和暂停结果仍可读取。"""
+    client, db = actors["client"], actors["db"]
+    user = actors["identities"]["user0"]
+    replay["action"].update(
+        name="ask_user_question", arguments={"questions": [{"question_id": "permission-q", "question": "Continue?"}]}
+    )
+    replay["release"].set()
+    agent, provider, model = await prepared_agent(actors, replay, tools=["ask_user_question"])
+    accepted = None
+    try:
+        response = await client.post(
+            "/api/v1/agents/threads",
+            headers={**user["headers"], "Idempotency-Key": uuid.uuid4().hex},
+            json={"agent_id": agent["slug"], "model_spec": model, "input": [_message("Wait")]},
+        )
+        assert response.status_code == 200, response.text
+        accepted = response.json()
+        for _ in range(200):
+            response = await client.get(
+                f"/api/v1/agents/threads/{accepted['thread_id']}/turns/{accepted['turn_id']}", headers=user["headers"]
+            )
+            assert response.status_code == 200, response.text
+            snapshot = response.json()
+            if snapshot["status"] == "waiting":
+                break
+            await asyncio.sleep(0.1)
+        else:
+            pytest.fail("真实提问没有形成等待点")
+        if revocation == "agent":
+            waiting_request = None
+            try:
+                async with db.transaction():
+                    await db.fetchval("SELECT id FROM agents WHERE slug=$1 FOR UPDATE", agent["slug"])
+                    waiting_request = asyncio.create_task(client.post(
+                        f"/api/v1/agents/threads/{accepted['thread_id']}/events",
+                        headers={**user["headers"], "Idempotency-Key": uuid.uuid4().hex},
+                        json={"events": [{
+                            "type": "yuxi.session.input.resume",
+                            "turn_id": accepted["turn_id"],
+                            "waitpoint_id": str(uuid.uuid4()),
+                            "response": {
+                                "type": "answer",
+                                "answers": [{"question_id": "permission-q", "answer": "Yes"}],
+                            },
+                        }]},
+                    ))
+                    for _ in range(100):
+                        await db.execute("SELECT pg_stat_clear_snapshot()")
+                        if await db.fetchval(
+                            "SELECT count(*) FROM pg_stat_activity WHERE wait_event_type='Lock' "
+                            "AND query LIKE '%FROM agents%' AND query LIKE '%FOR KEY SHARE%' "
+                            "AND $1 = ANY(pg_blocking_pids(pid))",
+                            db.get_server_pid(),
+                        ):
+                            break
+                        await asyncio.sleep(0.1)
+                    else:
+                        pytest.fail("恢复没有在 Agent 锁上等待")
+                    # 删除先锁 Agent 再锁 Thread；恢复等待 Agent 时不得先占 Thread。
+                    await db.fetchval(
+                        "SELECT id FROM conversations WHERE thread_id=$1 FOR UPDATE NOWAIT", accepted["thread_id"]
+                    )
+            finally:
+                if waiting_request is not None:
+                    invalid = await waiting_request
+                    assert invalid.status_code == 409, invalid.text
+            await revoke_agent(actors, agent)
+        else:
+            deleted = await client.delete(f"/api/auth/users/{user['id']}", headers=actors["root"])
+            assert deleted.status_code == 200, deleted.text
+        response = await client.post(
+            f"/api/v1/agents/threads/{accepted['thread_id']}/events",
+            headers={**user["headers"], "Idempotency-Key": uuid.uuid4().hex},
+            json={
+                "events": [
+                    {
+                        "type": "yuxi.session.input.resume",
+                        "turn_id": accepted["turn_id"],
+                        "waitpoint_id": snapshot["waitpoint"]["id"],
+                        "response": {"type": "answer", "answers": [{"question_id": "permission-q", "answer": "Yes"}]},
+                    }
+                ]
+            },
+        )
+        assert response.status_code in {401, 403, 404}, response.text
+        assert (
+            await db.fetchval("SELECT count(*) FROM agent_runs WHERE conversation_thread_id=$1", accepted["thread_id"])
+            == 1
+        )
+        assert await db.fetchval("SELECT status FROM agent_runs WHERE id=$1", accepted["run_id"]) == "interrupted"
+        if revocation == "agent":
+            assert (
+                await client.get(f"/api/v1/agents/threads/{accepted['thread_id']}/history", headers=user["headers"])
+            ).status_code == 200
+        await client.delete(f"/api/system/model-providers/{provider}", headers=actors["root"])
+        if revocation == "account":
+            # 恢复进程失联留下的取消意图：worker 对失效账号同样必须收敛。
+            await db.execute("UPDATE conversations SET queue_paused=true WHERE thread_id=$1", accepted["thread_id"])
+            await db.execute("UPDATE agent_turns SET status='cancelling' WHERE id=$1", accepted["turn_id"])
+            for _ in range(400):
+                if await db.fetchval("SELECT status FROM agent_turns WHERE id=$1", accepted["turn_id"]) == "cancelled":
+                    break
+                await asyncio.sleep(0.1)
+            else:
+                pytest.fail("失效账号的等待取消没有收敛")
+    finally:
+        if accepted and revocation == "agent":
+            from test.e2e.e2e_helpers import archive_public_thread
+
+            await archive_public_thread(client, user["headers"], accepted["thread_id"], turn_id=accepted["turn_id"])
+        await client.delete(f"/api/system/model-providers/{provider}", headers=actors["root"])
