@@ -68,7 +68,10 @@ const canManageAgent = (agent) => !!agent?.can_manage
 const getAgentDefaultIconSrc = (agent) => (agent.agent_id ? generatePixelAvatar(agent.agent_id) : '')
 
 /** 返回智能体共享范围的简短展示文案。 */
-const getAgentShareLabel = (agent) => agent?.visibility === 'private' ? '私有' : getShareConfigLabel(agent?.share_config)
+const getAgentShareLabel = (agent) =>
+  agent?.visibility === 'private'
+    ? '私有'
+    : getShareConfigLabel(agent?.share_config, agent?.share_config_invalid)
 
 // ============ Agent Operations ============
 const loadAgentBackends = async () => {
@@ -116,7 +119,7 @@ const openEditAgentModal = (agent) => {
 }
 
 const openAgentChat = (agent) => {
-  if (!agent?.agent_id || agent.is_subagent) return
+  if (!agent?.agent_id || agent.is_subagent || !agent.can_run) return
   router.push({ name: 'AgentComp', query: { agent_id: agent.agent_id } })
 }
 
@@ -244,6 +247,7 @@ defineExpose({
 
             <template v-if="group.key === 'agents'" #tag-actions>
               <a-button
+                v-if="agent.can_run"
                 type="text"
                 size="small"
                 class="agent-chat-entry"

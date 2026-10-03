@@ -78,9 +78,55 @@ def replay():
             request = json.loads(self.rfile.read(int(self.headers["content-length"])))
             observations.append(request)
             assert self.headers["authorization"] == "Bearer ci-replay-key"
-            assert request["model"] == "deterministic-chat" and request["stream"] is True
+            assert request["model"] == "deterministic-chat"
+            failure = action.get("failure")
+            if failure and len(observations) == 1:
+                entered.set()
+                assert release.wait(60)
+                self.send_response(503 if failure == "network" else 400)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(
+                    json.dumps(
+                        {
+                            "error": {
+                                "message": "service unavailable" if failure == "network" else "context length exceeded",
+                                "type": "server_error" if failure == "network" else "invalid_request_error",
+                                "code": "service_unavailable" if failure == "network" else "context_length_exceeded",
+                            }
+                        }
+                    ).encode()
+                )
+                self.wfile.flush()
+                return
+            if action.get("plain") and not request.get("stream"):
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(
+                    json.dumps(
+                        {
+                            "id": "chatcmpl-summary",
+                            "object": "chat.completion",
+                            "created": 1,
+                            "model": "deterministic-chat",
+                            "choices": [
+                                {
+                                    "index": 0,
+                                    "message": {"role": "assistant", "content": "Summary"},
+                                    "finish_reason": "stop",
+                                }
+                            ],
+                            "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+                        }
+                    ).encode()
+                )
+                self.wfile.flush()
+                return
             has_result = any(message["role"] == "tool" for message in request["messages"])
-            if not has_result:
+            if action.get("plain"):
+                delta = {"role": "assistant", "content": "PERMISSION_CHECK_COMPLETE"}
+            elif not has_result:
                 assert action["name"] in {tool["function"]["name"] for tool in request["tools"]}
                 entered.set()
                 assert release.wait(60)
@@ -110,7 +156,13 @@ def replay():
                 {**common, "choices": [{"index": 0, "delta": delta, "finish_reason": None}]},
                 {
                     **common,
-                    "choices": [{"index": 0, "delta": {}, "finish_reason": "stop" if has_result else "tool_calls"}],
+                    "choices": [
+                        {
+                            "index": 0,
+                            "delta": {},
+                            "finish_reason": "stop" if has_result or action.get("plain") else "tool_calls",
+                        }
+                    ],
                     "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
                 },
             ]:
@@ -155,8 +207,10 @@ async def test_tool_boundary_rechecks_current_caller_and_retains_history(actors,
     child = None
     mcp_slug = None
     if revocation == "skill":
-        package = (f"---\nname: {skill}\ndescription: permission test\n"
-                   "tool_dependencies: [present_artifacts]\n---\n# Permission test\n")
+        package = (
+            f"---\nname: {skill}\ndescription: permission test\n"
+            "tool_dependencies: [present_artifacts]\n---\n# Permission test\n"
+        )
         prepared = await client.post(
             "/api/skills/import/prepare",
             headers=admin["headers"],
@@ -397,13 +451,14 @@ async def test_queued_input_after_revocation_fails_without_another_model_call(ac
             await asyncio.sleep(0.1)
         else:
             pytest.fail("失权的执行未失败")
-        assert await db.fetchval(
-            "SELECT queue_paused FROM conversations WHERE thread_id=$1", accepted["thread_id"]
+        assert await db.fetchval("SELECT queue_paused FROM conversations WHERE thread_id=$1", accepted["thread_id"])
+        assert (
+            await db.fetchval(
+                "SELECT count(*) FROM agent_inputs WHERE conversation_thread_id=$1 AND status='pending'",
+                accepted["thread_id"],
+            )
+            == 1
         )
-        assert await db.fetchval(
-            "SELECT count(*) FROM agent_inputs WHERE conversation_thread_id=$1 AND status='pending'",
-            accepted["thread_id"],
-        ) == 1
         continued = await client.post(
             f"/api/v1/agents/threads/{accepted['thread_id']}/events",
             headers={**user["headers"], "Idempotency-Key": uuid.uuid4().hex},
@@ -513,19 +568,25 @@ async def test_waitpoint_resume_after_revocation_cannot_create_new_run(actors, r
             try:
                 async with db.transaction():
                     await db.fetchval("SELECT id FROM agents WHERE slug=$1 FOR UPDATE", agent["slug"])
-                    waiting_request = asyncio.create_task(client.post(
-                        f"/api/v1/agents/threads/{accepted['thread_id']}/events",
-                        headers={**user["headers"], "Idempotency-Key": uuid.uuid4().hex},
-                        json={"events": [{
-                            "type": "yuxi.session.input.resume",
-                            "turn_id": accepted["turn_id"],
-                            "waitpoint_id": str(uuid.uuid4()),
-                            "response": {
-                                "type": "answer",
-                                "answers": [{"question_id": "permission-q", "answer": "Yes"}],
+                    waiting_request = asyncio.create_task(
+                        client.post(
+                            f"/api/v1/agents/threads/{accepted['thread_id']}/events",
+                            headers={**user["headers"], "Idempotency-Key": uuid.uuid4().hex},
+                            json={
+                                "events": [
+                                    {
+                                        "type": "yuxi.session.input.resume",
+                                        "turn_id": accepted["turn_id"],
+                                        "waitpoint_id": str(uuid.uuid4()),
+                                        "response": {
+                                            "type": "answer",
+                                            "answers": [{"question_id": "permission-q", "answer": "Yes"}],
+                                        },
+                                    }
+                                ]
                             },
-                        }]},
-                    ))
+                        )
+                    )
                     for _ in range(100):
                         await db.execute("SELECT pg_stat_clear_snapshot()")
                         if await db.fetchval(
@@ -591,3 +652,151 @@ async def test_waitpoint_resume_after_revocation_cannot_create_new_run(actors, r
 
             await archive_public_thread(client, user["headers"], accepted["thread_id"], turn_id=accepted["turn_id"])
         await client.delete(f"/api/system/model-providers/{provider}", headers=actors["root"])
+
+
+@pytest.mark.parametrize("failure", ["network", "overflow"])
+async def test_failed_model_response_cannot_start_retry_or_summary_after_revocation(actors, replay, failure):
+    """真实模型失败期间撤权后，不发送重试或摘要请求，Run/Turn 持久失败。"""
+    client, db = actors["client"], actors["db"]
+    admin, user = (actors["identities"][key] for key in ("admin0", "user0"))
+    suffix = uuid.uuid4().hex[:8]
+    provider_id = f"ci-retry-revocation-{suffix}"
+    model = f"{provider_id}:deterministic-chat"
+    await _provider(client, actors["root"], base_url=replay["url"], provider_id=provider_id)
+    agent = await create_agent(
+        actors,
+        admin,
+        visibility="shared",
+        share_config=SHARED,
+        config_json={
+            "context": {
+                "model": model,
+                "tools": [],
+                "mcps": [],
+                "skills": [],
+                "subagents": [],
+                "knowledges": [],
+                "summary_keep_messages": 1,
+            }
+        },
+    )
+    try:
+        replay["action"]["plain"] = True
+        if failure == "network":
+            replay["action"]["failure"] = failure
+        response = await client.post(
+            "/api/v1/agents/threads",
+            headers={**user["headers"], "Idempotency-Key": suffix},
+            json={
+                "agent_id": agent["slug"],
+                "model_spec": model,
+                "input": [_message("Prime history" if failure == "overflow" else "Check retry")],
+                "title": f"Permission retry {suffix}",
+            },
+        )
+        assert response.status_code == 200, response.text
+        accepted = response.json()
+        if failure == "overflow":
+            for _ in range(200):
+                status = await db.fetchval("SELECT status FROM agent_runs WHERE id=$1", accepted["run_id"])
+                if status == "completed":
+                    break
+                assert status != "failed"
+                await asyncio.sleep(0.1)
+            else:
+                pytest.fail("历史初始化没有完成")
+            replay["requests"].clear()
+            replay["action"]["failure"] = failure
+            response = await client.post(
+                f"/api/v1/agents/threads/{accepted['thread_id']}/events",
+                headers={**user["headers"], "Idempotency-Key": suffix + "-overflow"},
+                json={
+                    "events": [
+                        {
+                            "type": "agent.session.input.message",
+                            "input": [_message("Trigger overflow")],
+                            "yuxi": {"mode": "follow_up", "model_spec": model},
+                        }
+                    ]
+                },
+            )
+            assert response.status_code == 202, response.text
+            accepted.update(response.json())
+        for _ in range(200):
+            if replay["entered"].is_set():
+                break
+            status = await db.fetchval("SELECT status FROM agent_runs WHERE id=$1", accepted["run_id"])
+            assert status != "failed"
+            await asyncio.sleep(0.1)
+        else:
+            pytest.fail("没有到达受控的模型失败响应")
+        response = await client.put(
+            f"/api/agent/{agent['slug']}",
+            headers=admin["headers"],
+            json={"share_config": {"version": 2, "read_scope": None, "manage_scope": None}},
+        )
+        assert response.status_code == 200, response.text
+        persisted = json.loads(await db.fetchval("SELECT share_config FROM agents WHERE slug=$1", agent["slug"]))
+        assert persisted["read_scope"] is None
+        replay["release"].set()
+        for _ in range(200):
+            run = await db.fetchrow(
+                "SELECT status,error_message,turn_id FROM agent_runs WHERE id=$1", accepted["run_id"]
+            )
+            if run["status"] in {"failed", "completed", "cancelled"}:
+                break
+            await asyncio.sleep(0.1)
+        else:
+            pytest.fail("模型失败和撤权后 Run 没有收敛")
+        assert run["status"] == "failed", dict(run)
+        assert "权限已撤销" in run["error_message"], dict(run)
+        assert await db.fetchval("SELECT status FROM agent_turns WHERE id=$1", run["turn_id"]) == "failed"
+        assert len(replay["requests"]) == 1, "撤权后仍发送了重试或独立摘要请求"
+    finally:
+        replay["release"].set()
+        response = await client.delete(f"/api/system/model-providers/{provider_id}", headers=actors["root"])
+        assert response.status_code in {200, 404}, response.text
+
+
+async def test_runless_forced_summary_uses_current_thread_agent_permission(actors, replay):
+    """主动摘要没有 Run 时仍按真实 Thread 撤权，并且不发送模型请求。"""
+    from langchain_core.messages import HumanMessage
+    from langchain_openai import ChatOpenAI
+    from yuxi.bootstrap.models import load_models
+    from yuxi.infrastructure.postgres.manager import pg_manager
+    from yuxi.modules.agents.runtime.agent_backends.chatbot.context import ChatBotContext
+    from yuxi.modules.agents.runtime.middlewares.authorization import AgentExecutionRevoked
+    from yuxi.modules.agents.runtime.middlewares.summary import create_summary_middleware_from_context
+
+    user = actors["identities"]["user0"]
+    agent, provider, model = await prepared_agent(actors, replay)
+    try:
+        response = await actors["client"].post(
+            "/api/v1/agents/threads",
+            headers={**user["headers"], "Idempotency-Key": uuid.uuid4().hex},
+            json={"agent_id": agent["slug"], "model_spec": model},
+        )
+        assert response.status_code == 200, response.text
+        thread_id = response.json()["thread_id"]
+        assert await actors["db"].fetchval("SELECT uid FROM conversations WHERE thread_id=$1", thread_id) == user["uid"]
+        assert (
+            await actors["db"].fetchval("SELECT count(*) FROM agent_runs WHERE conversation_thread_id=$1", thread_id)
+            == 0
+        )
+        context = ChatBotContext(uid=user["uid"], thread_id=thread_id, model=model)
+        compressor = create_summary_middleware_from_context(
+            context, backend=None, model=ChatOpenAI(model="deterministic-chat", api_key="test", base_url=replay["url"])
+        )
+        await revoke_agent(actors, agent)
+        replay["action"]["plain"] = True
+        replay["release"].set()
+        load_models()
+        pg_manager.initialize()
+        try:
+            with pytest.raises(AgentExecutionRevoked, match="权限已撤销"):
+                await compressor._acreate_summary_or_raise([HumanMessage(content="Private history")])
+            assert replay["requests"] == []
+        finally:
+            await pg_manager.close()
+    finally:
+        await actors["client"].delete(f"/api/system/model-providers/{provider}", headers=actors["root"])

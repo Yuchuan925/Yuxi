@@ -115,6 +115,7 @@
                         type="text"
                         size="small"
                         class="action-btn lucide-icon-btn"
+                        :disabled="!userStore.isSuperAdmin && record.role !== 'user'"
                         @click="showEditUserModal(record)"
                       >
                         <SquarePen :size="14" />
@@ -122,7 +123,7 @@
                     </a-tooltip>
                     <a-tooltip
                       :title="
-                        isUserDeleteDisabled(record) ? '不能删除当前用户或超级管理员' : '删除用户'
+                        isUserDeleteDisabled(record) ? '无权删除该用户' : '删除用户'
                       "
                     >
                       <a-button
@@ -443,7 +444,7 @@ const getUserDefaultAvatarSrc = (user) => (user.uid ? generatePixelAvatar(user.u
 
 const isUserDeleteDisabled = (user) =>
   user.id === userStore.userId ||
-  (user.role === 'superadmin' && userStore.userRole !== 'superadmin')
+  (!userStore.isSuperAdmin && user.role !== 'user')
 
 let latestUserRequest = 0
 const fetchUsers = async () => {

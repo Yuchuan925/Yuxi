@@ -41,6 +41,14 @@ SANDBOX_PROVISIONER_TOKEN = os.getenv("SANDBOX_PROVISIONER_TOKEN", "")
 
 
 @pytest.fixture(scope="session", autouse=True)
+def load_orm_models():
+    """独立测试进程显式装配全部 ORM，避免依赖其他测试的导入顺序。"""
+    from yuxi.bootstrap.models import load_models
+
+    load_models()
+
+
+@pytest.fixture(scope="session", autouse=True)
 def ensure_live_api_schema():
     if not ADMIN_LOGIN or not ADMIN_PASSWORD:
         return

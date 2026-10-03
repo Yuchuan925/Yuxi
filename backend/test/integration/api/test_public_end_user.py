@@ -39,10 +39,12 @@ async def test_public_end_user_identity_is_unique_and_cannot_enter_product_api(t
             )
             assert created.status_code == 200, created.text
             key_ids.append(created.json()["api_key"]["id"])
-            headers_by_app.append({
-                "Authorization": f"Bearer {created.json()['secret']}",
-                "X-End-User-Id": external_id,
-            })
+            headers_by_app.append(
+                {
+                    "Authorization": f"Bearer {created.json()['secret']}",
+                    "X-End-User-Id": external_id,
+                }
+            )
 
         responses = await asyncio.gather(
             *(test_client.get("/api/v1/agents", headers=headers_by_app[0]) for _ in range(6))
@@ -50,9 +52,7 @@ async def test_public_end_user_identity_is_unique_and_cannot_enter_product_api(t
         assert all(response.status_code == 200 for response in responses), [response.text for response in responses]
         other_app = await test_client.get("/api/v1/agents", headers=headers_by_app[1])
         assert other_app.status_code == 200, other_app.text
-        invalid = await test_client.get(
-            "/api/v1/agents", headers={**headers_by_app[0], "X-End-User-Id": ""}
-        )
+        invalid = await test_client.get("/api/v1/agents", headers={**headers_by_app[0], "X-End-User-Id": ""})
         assert invalid.status_code == 422, invalid.text
 
         rows = await conn.fetch(
@@ -75,7 +75,7 @@ async def test_public_end_user_identity_is_unique_and_cannot_enter_product_api(t
         )
         assert login.status_code == 401, login.text
         impersonate = await test_client.post(f"/api/auth/impersonate/{end_user['id']}", headers=admin_headers)
-        assert impersonate.status_code == 403, impersonate.text
+        assert impersonate.status_code == 404, impersonate.text
         product_token = AuthUtils.create_access_token({"sub": str(end_user["id"])})
         product = await test_client.get("/api/agent", headers={"Authorization": f"Bearer {product_token}"})
         assert product.status_code == 403, product.text

@@ -17,7 +17,7 @@ function sortAgents(agents) {
 }
 
 function getPreferredAgentId(agents, persistedId) {
-  const chatAgents = agents.filter((agent) => !agent.is_subagent)
+  const chatAgents = agents.filter((agent) => agent.can_run && !agent.is_subagent)
   if (persistedId && chatAgents.some((agent) => agent.agent_id === persistedId)) return persistedId
   return chatAgents.find(isBuiltinAgent)?.agent_id || chatAgents[0]?.agent_id || null
 }

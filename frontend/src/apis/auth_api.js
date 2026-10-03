@@ -9,7 +9,6 @@ import {
   apiPost,
   apiPut,
   apiSuperAdminGet,
-  apiSuperAdminPost
 } from './base'
 
 /**
@@ -116,9 +115,6 @@ async function checkUid(uid) {
   return apiSuperAdminGet(`/api/auth/check-uid/${encodeURIComponent(uid)}`)
 }
 
-async function impersonateUser(userId) {
-  return apiSuperAdminPost(`/api/auth/impersonate/${encodeURIComponent(userId)}`, {})
-}
 
 async function getCLIAuthSession(userCode) {
   const encoded = encodeURIComponent(userCode)
@@ -144,7 +140,6 @@ export const authApi = {
   getCurrentUser,
   updateProfile,
   checkUid,
-  impersonateUser,
   getOIDCConfig,
   getOIDCLoginUrl,
   getUserAccessOptions,

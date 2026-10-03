@@ -51,7 +51,8 @@ async def _build_middlewares(context, backend, *, cleanup_model=None):
     middlewares.extend(
         [
             create_summary_middleware_from_context(context, backend=backend, model=cleanup_model)
-            if cleanup_model else create_summary_middleware_from_context(context, backend=backend),
+            if cleanup_model
+            else create_summary_middleware_from_context(context, backend=backend),
             TodoListMiddleware(system_prompt=TODO_MID_PROMPT),
             PatchToolCallsMiddleware(),
             # 网络类错误(断网/连接抖动)按预算(默认600s)持续重试，非网络错误按 max_retries
@@ -96,6 +97,7 @@ class ChatbotAgent(BaseAgent):
                 fully_specified_name=resolve_chat_model_spec(context.model),
                 session_id=context.thread_id,
                 uid=context.uid,
+                max_retries=0,
             )
             tools = await resolve_configured_runtime_tools(context)
             prompt = build_prompt_with_context(context)

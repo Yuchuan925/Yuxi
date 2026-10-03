@@ -54,11 +54,15 @@ async def resume_turn(
     from yuxi.modules.identity.repositories.users import UserRepository
 
     user = await UserRepository(db).get_by_uid(scope.uid)
-    agent = None if user is None or user.is_deleted else await AgentRepository(db).get_visible_by_slug(
-        slug=conversation.agent_id,
-        user=user,
-        kind="any",
-        for_key_share=True,
+    agent = (
+        None
+        if user is None or user.is_deleted
+        else await AgentRepository(db).get_visible_by_slug(
+            slug=conversation.agent_id,
+            user=user,
+            kind="any",
+            for_key_share=True,
+        )
     )
     if agent is None:
         raise HTTPException(status_code=404, detail="Agent 不可访问")

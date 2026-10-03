@@ -249,6 +249,7 @@ async def test_get_databases_by_user_sets_permission_and_redacts_readonly_secret
             record = await self.get_by_kb_id("kb_1")
             record.additional_params = {"dify_token": "secret", "chunk_preset_id": "general"}
             record.created_by = "user_1"
+            record.share_config = {"version": 2, "read_scope": {"access_level": "global"}}
             return [record]
 
     monkeypatch.setattr(

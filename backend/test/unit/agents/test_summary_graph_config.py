@@ -74,7 +74,7 @@ async def test_graph_uses_shared_summary_middleware_factory(
 def test_shared_summary_factory_uses_one_threshold(monkeypatch: pytest.MonkeyPatch) -> None:
     captured: dict = {}
 
-    def load_model(fully_specified_name, *, session_id, uid):
+    def load_model(fully_specified_name, *, session_id, uid, max_retries):
         """记录摘要模型实际接收的会话 ID 与用户 UID。"""
         captured["session_id"] = session_id
         captured["uid"] = uid
@@ -124,7 +124,7 @@ async def test_graph_passes_conversation_session_to_model(monkeypatch, graph_mod
     monkeypatch.setattr(agent_class, "_get_checkpointer", AsyncMock(return_value=None))
     captured = {}
 
-    def load_model(fully_specified_name, *, session_id, uid):
+    def load_model(fully_specified_name, *, session_id, uid, max_retries):
         """用装配参数作为模型占位，核对传给图的对象。"""
         captured.update(spec=fully_specified_name, session_id=session_id, uid=uid)
         return captured

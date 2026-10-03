@@ -353,3 +353,143 @@ async def test_department_admin_limits_role_promotion_and_deleted_owner_retentio
         json={"owner_uid": actors["identities"]["admin1"]["uid"]},
     )
     assert transfer.status_code == 422, transfer.text
+
+
+async def test_superadmin_cannot_mint_owner_token_to_bypass_private_execution(actors):
+    """治理私有定义不能经模拟登录取得所有者身份。"""
+    owner = actors["identities"]["admin0"]
+    agent = await create_agent(actors, owner)
+    response = await actors["client"].post(f"/api/auth/impersonate/{owner['id']}", headers=actors["root"])
+    assert response.status_code == 404
+    row = await actors["db"].fetchrow("SELECT created_by,visibility FROM agents WHERE slug=$1", agent["slug"])
+    assert row["created_by"] == owner["uid"] and row["visibility"] == "private"
+
+
+@pytest.mark.parametrize("operation", ["update", "delete"])
+@pytest.mark.parametrize("revocation", ["department", "deleted"])
+async def test_member_write_rechecks_actor_after_waiting_for_target(actors, operation, revocation):
+    """等待成员锁时操作人的部门或账号变更，不能沿用鉴权时的旧身份写入。"""
+    client, db = actors["client"], actors["db"]
+    admin, other, member = (actors["identities"][key] for key in ("admin0", "admin1", "user0"))
+    observer = await asyncpg.connect(os.environ["POSTGRES_URL"].replace("+asyncpg", ""))
+    transaction = db.transaction()
+    await transaction.start()
+    pending = None
+    try:
+        await db.fetchrow("SELECT id FROM users WHERE id=$1 FOR UPDATE", member["id"])
+        path = f"/api/auth/users/{member['id']}"
+        pending = asyncio.create_task(
+            client.put(path, headers=admin["headers"], json={"username": "forbidden_actor_race"})
+            if operation == "update"
+            else client.delete(path, headers=admin["headers"])
+        )
+        for _ in range(200):
+            await observer.execute("SELECT pg_stat_clear_snapshot()")
+            waiting = await observer.fetchval(
+                "SELECT EXISTS (SELECT 1 FROM pg_stat_activity "
+                "WHERE $1 = ANY(pg_blocking_pids(pid)) AND query LIKE '%users%')",
+                db.get_server_pid(),
+            )
+            if waiting:
+                break
+            await asyncio.sleep(0.01)
+        else:
+            pytest.fail("成员操作未等待当前测试连接持有的行锁")
+        if revocation == "department":
+            await observer.execute("UPDATE users SET department_id=$1 WHERE id=$2", other["department_id"], admin["id"])
+        else:
+            await observer.execute("UPDATE users SET is_deleted=1 WHERE id=$1", admin["id"])
+        await transaction.commit()
+        response = await asyncio.wait_for(pending, 5)
+        assert response.status_code == 403, response.text
+        row = await observer.fetchrow("SELECT username,is_deleted FROM users WHERE id=$1", member["id"])
+        assert row["username"] == member["username"] and row["is_deleted"] == 0
+    finally:
+        if transaction._state.name == "STARTED":
+            await transaction.rollback()
+        if pending is not None and not pending.done():
+            await pending
+        await observer.close()
+
+
+async def test_each_skill_install_transaction_revalidates_live_managers(actors):
+    """首项提交后管理者删除，第二项不能复用已释放锁的旧校验。"""
+    import json
+    import shutil
+    from pathlib import Path
+    from sqlalchemy import select
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+    from yuxi.modules.extensions.skills.shared import confirm_skill_install_draft, get_skills_root_dir
+    from yuxi.modules.extensions.skills.draft import get_skill_drafts_root_dir
+    from yuxi.modules.identity.models import User
+
+    admin, manager = (actors["identities"][key] for key in ("admin0", "admin1"))
+    slugs = [f"grant-batch-{index}-{uuid.uuid4().hex[:8]}" for index in range(2)]
+    draft_ids = []
+    for slug in slugs:
+        response = await actors["client"].post(
+            "/api/skills/import/prepare",
+            headers=admin["headers"],
+            files={
+                "file": (
+                    "SKILL.md",
+                    f"---\nname: {slug}\ndescription: grant test\n---\n# {slug}\n".encode(),
+                    "text/markdown",
+                )
+            },
+        )
+        assert response.status_code == 200, response.text
+        draft_ids.append(response.json()["data"]["draft_id"])
+    # 复用两个已校验的上传快照，组成远程批量安装消费的同一草稿输入协议。
+    draft_dir, second_dir = (get_skill_drafts_root_dir() / draft_id for draft_id in draft_ids)
+    metadata = json.loads((draft_dir / "metadata.json").read_text())
+    second = json.loads((second_dir / "metadata.json").read_text())
+    for item in second["items"]:
+        shutil.move(second_dir / item["source_dir"], draft_dir / item["source_dir"])
+    metadata["items"].extend(second["items"])
+    (draft_dir / "metadata.json").write_text(json.dumps(metadata))
+    draft_id = draft_ids[0]
+    revoked = False
+
+    class CommitThenRevoke(AsyncSession):
+        """真实提交后通过独立连接撤销管理员。"""
+
+        async def commit(self):
+            """模拟两个独立安装事务之间的已提交身份变更。"""
+            nonlocal revoked
+            await super().commit()
+            if not revoked:
+                await actors["db"].execute("UPDATE users SET is_deleted=1 WHERE id=$1", manager["id"])
+                revoked = True
+
+    engine = create_async_engine(os.environ["POSTGRES_URL"])
+    try:
+        sessions = async_sessionmaker(engine, class_=CommitThenRevoke, expire_on_commit=False)
+        async with sessions() as db:
+            operator = await db.scalar(select(User).where(User.uid == admin["uid"]))
+            results = await confirm_skill_install_draft(
+                db,
+                draft_id=draft_id,
+                slugs=slugs,
+                operator=operator,
+                share_config={
+                    "version": 2,
+                    "read_scope": {"access_level": "global"},
+                    "manage_scope": {"access_level": "user", "user_uids": [manager["uid"]]},
+                },
+            )
+        rows = await actors["db"].fetch("SELECT slug FROM skills WHERE slug=ANY($1::varchar[])", slugs)
+        assert [row["slug"] for row in rows] == [slugs[0]]
+        assert results[0]["success"] is True and results[1]["success"] is False
+        assert "有效管理员" in results[1]["error"]
+        root = Path(get_skills_root_dir())
+        assert slugs[0] in (root / slugs[0] / "SKILL.md").read_text()
+        assert not (root / slugs[1]).exists()
+        assert await actors["db"].fetchval("SELECT is_deleted FROM users WHERE id=$1", manager["id"]) == 1
+    finally:
+        await engine.dispose()
+        for directory in (draft_dir, second_dir):
+            shutil.rmtree(directory, ignore_errors=True)
+        for slug in slugs:
+            response = await actors["client"].delete(f"/api/system/skills/{slug}", headers=actors["root"])
+            assert response.status_code in {200, 404}, response.text

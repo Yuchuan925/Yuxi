@@ -413,19 +413,20 @@ async def main(args):
         try:
             session = uuid.uuid4().hex[:8]
             for index in range(max(args.concurrency)):
+                user_password = secrets.token_urlsafe(24)
                 response = await client.post(
                     "/api/auth/users",
                     headers=admin,
                     json={
                         "username": f"matrix{session}{index}",
-                        "password": secrets.token_urlsafe(24),
+                        "password": user_password,
                         "role": "user",
                     },
                 )
                 response.raise_for_status()
                 user = response.json()
                 users.append({"id": user["id"], "uid": user["uid"]})
-                token = await client.post(f"/api/auth/impersonate/{user['id']}", headers=admin)
+                token = await client.post("/api/auth/token", data={"username": user["uid"], "password": user_password})
                 token.raise_for_status()
                 users[-1]["headers"] = {"Authorization": "Bearer " + token.json()["access_token"]}
             print(f"已准备 {len(users)} 个不同用户", flush=True)

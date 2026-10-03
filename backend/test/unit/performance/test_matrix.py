@@ -386,7 +386,7 @@ class ObservationPersistenceTest(unittest.IsolatedAsyncioTestCase):
                         return httpx.Response(200, json={"status": "archived"})
                     if request.url.path == "/api/auth/users":
                         return httpx.Response(200, json={"id": 1, "uid": "u"})
-                    if request.url.path == "/api/auth/impersonate/1":
+                    if request.url.path == "/api/auth/token":
                         return httpx.Response(200, json={"access_token": "test-token"})
                     if request.url.path == "/api/v1/agents/threads":
                         return httpx.Response(200, json={"id": "t"})

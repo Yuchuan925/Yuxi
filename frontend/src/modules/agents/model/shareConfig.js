@@ -1,4 +1,5 @@
-export function getShareConfigLabel(shareConfig) {
+export function getShareConfigLabel(shareConfig, invalid = false) {
+  if (invalid) return '共享配置无效'
   const config = shareConfig || {}
   const readScope = config.version === 2 ? config.read_scope : config
   const manageScope = config.manage_scope
@@ -12,4 +13,10 @@ export function getShareConfigLabel(shareConfig) {
   return manageScope
     ? `读${scopeLabel(readScope)} · 管${scopeLabel(manageScope)}`
     : `只读${scopeLabel(readScope)}`
+}
+
+/** 复制共享配置，坏配置仅在本地暂设为仅所有者，等待用户明确保存。 */
+export function cloneShareConfig(shareConfig, invalid = false) {
+  if (invalid) return { version: 2, read_scope: null, manage_scope: null }
+  return shareConfig ? JSON.parse(JSON.stringify(shareConfig)) : null
 }

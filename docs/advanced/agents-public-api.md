@@ -93,4 +93,4 @@ Turn `waiting` 时普通消息被拒绝。Turn 快照的 `waitpoint` 提供 `id`
 
 子任务拥有独立 Thread、Turn、Run、等待点和结果，主、子 Thread 使用相同公开协议。父完成或失败不终止子任务；父取消沿当前 Turn 的委派关系递归取消相关在途子 Turn，子单独取消不取消父，子 Thread 中无关后续 Turn 不受影响。父子共享 Project Workdir，各自 runtime 和 heartbeat 独立。
 
-该协议使用 business schema v13、Redis 事件格式 v2 和 cursor v2，只支持全新数据初始化。没有旧数据迁移、旧事件 reader 或双格式消费。
+该协议使用 business schema v14、Redis 事件格式 v2 和 cursor v2，只支持全新数据初始化。没有旧数据迁移、旧事件 reader 或双格式消费。

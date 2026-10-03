@@ -86,6 +86,10 @@ jobs:
             buildkit-minio-${{ runner.os }}-
       - name: Build topology images with cached layers
         run: bash scripts/ci_build_topology_images.sh /tmp/yuxi-buildkit-cache/api /tmp/yuxi-buildkit-cache/sandbox-provisioner /tmp/yuxi-buildkit-cache/minio
+      - name: Prepare isolated storage for runtime identity
+        run: |
+          docker compose run --rm --no-deps --user 0:0 api \
+            install -d -o 1000 -g 1000 -m 0700 /app/user-data /app/skill-sources /app/skill-projections
       - name: Start durable-task runtime topology
         run: docker compose up -d postgres redis minio etcd milvus sandbox-provisioner api worker
       - name: Wait for durable-task topology readiness
@@ -201,6 +205,10 @@ jobs:
         run: |
           sandbox_runtime_image=$(docker compose config --format json | python3 -c 'import json, sys; print(json.load(sys.stdin)["services"]["sandbox-provisioner"]["environment"]["SANDBOX_IMAGE"])')
           docker pull "$sandbox_runtime_image"
+      - name: Prepare isolated storage for runtime identity
+        run: |
+          docker compose run --rm --no-deps --user 0:0 api \
+            install -d -o 1000 -g 1000 -m 0700 /app/user-data /app/skill-sources /app/skill-projections
       - name: Start focused runtime topology
         run: docker compose up -d postgres redis minio milvus graph sandbox-provisioner api worker
       - name: Wait for Milvus retrieval readiness
@@ -292,6 +300,12 @@ jobs:
         run: docker compose exec -T api uv run --no-sync --no-dev pytest test/integration/api/test_system_router_api.py::test_health_endpoint_is_public test/integration/api/test_system_router_api.py::test_readiness_endpoint_proves_core_runtime_dependencies test/integration/api/test_system_router_api.py::test_discovery_and_openapi_declare_full_knowledge_capabilities -q
       - name: Verify MCP management connection contract
         run: docker compose exec -T -e TEST_USERNAME="$E2E_USERNAME" -e TEST_PASSWORD="$E2E_PASSWORD" api uv run --no-sync --no-dev pytest test/integration/api/test_mcp_router.py -q
+      - name: Verify module failure and permission boundaries
+        run: docker compose exec -T -e TEST_USERNAME="$E2E_USERNAME" -e TEST_PASSWORD="$E2E_PASSWORD" api uv run --no-sync --no-dev pytest test/integration/api/test_module_failure_boundaries.py -q
+      - name: Verify roles, grants and private Agent HTTP boundaries
+        run: docker compose exec -T -e TEST_USERNAME="$E2E_USERNAME" -e TEST_PASSWORD="$E2E_PASSWORD" api uv run --no-sync --no-dev pytest test/integration/api/test_permission_convergence.py test/integration/identity/test_identity_permission_constraints.py -q
+      - name: Verify permission revocation through worker
+        run: docker compose exec -T -e E2E_USERNAME -e E2E_PASSWORD api uv run --no-sync --no-dev pytest test/e2e/test_permission_revocation_e2e.py -q
       - name: Verify current Schema initialization contract
         run: docker compose exec -T api uv run --no-sync --no-dev pytest test/integration/services/test_schema_migration_version.py -q
       - name: Verify Milvus 3 text retrieval through worker
@@ -311,7 +325,6 @@ jobs:
             uv run --no-sync --no-dev pytest \
             test/integration/api/test_public_agent_auth.py \
             test/integration/api/test_public_agents_key_boundary.py \
-            test/integration/api/test_public_thread_alias.py \
             test/integration/services/test_agent_input_schema.py \
             test/integration/services/test_project_thread_archive.py \
             test/integration/services/test_run_stream_redis.py -q

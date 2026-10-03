@@ -6,6 +6,7 @@ from sqlalchemy import select
 
 from yuxi.infrastructure.postgres.manager import pg_manager
 from yuxi.modules.agents.models.runs import AgentRun
+from yuxi.modules.agents.models.threads import Conversation
 from yuxi.modules.agents.repositories.definitions import AgentRepository
 from yuxi.modules.agents.runtime.context import normalize_agent_context_config
 from yuxi.modules.agents.services.event_writer import append_run_event_best_effort
@@ -32,6 +33,7 @@ class RuntimeAuthorizationMiddleware(AgentMiddleware):
     async def awrap_model_call(self, request, handler):
         """隐藏本轮已撤销的已注册工具，执行处仍再次检查。"""
         context = request.runtime.context
+        await refresh_execution_authorization(context)
         tools = [tool for tool in request.tools if tool_allowed(context, tool.name, request.state)]
         return await handler(request.override(tools=tools))
 
@@ -90,6 +92,20 @@ async def refresh_execution_authorization(context) -> None:
                 user=user,
                 kind="subagent" if run.run_type == "subagent" else "main",
             )
+            if agent is None:
+                raise AgentExecutionRevoked("Agent 使用权限已撤销")
+        else:
+            # 主动压缩没有 Run，使用已绑定调用者的 Thread 找到当前 Agent。
+            thread = await db.scalar(
+                select(Conversation).where(
+                    Conversation.thread_id == context.thread_id,
+                    Conversation.uid == user.uid,
+                    Conversation.status == "active",
+                )
+            )
+            if thread is None:
+                raise AgentExecutionRevoked("执行对话已失效")
+            agent = await AgentRepository(db).get_visible_by_slug(slug=thread.agent_id, user=user, kind="main")
             if agent is None:
                 raise AgentExecutionRevoked("Agent 使用权限已撤销")
         resources = type(context).get_resource_fields()

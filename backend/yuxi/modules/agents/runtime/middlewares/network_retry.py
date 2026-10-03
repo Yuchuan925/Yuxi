@@ -154,7 +154,7 @@ class NetworkRetryMiddleware(ModelRetryMiddleware):
 
 def _retry_non_network_errors(exc: BaseException) -> bool:
     """父类 retry_on 谓词：网络异常已由 handler 包装处理，这里排除；其余按默认语义。"""
-    if _is_network_error(exc):
+    if isinstance(exc, PermissionError) or _is_network_error(exc):
         return False
     if isinstance(exc, ModelError):
         return exc.is_retryable

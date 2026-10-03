@@ -158,7 +158,7 @@ async def test_each_graph_uses_its_own_run_context(monkeypatch, backend_id):
     monkeypatch.setattr(
         module,
         "load_chat_model",
-        lambda fully_specified_name, session_id, uid: FakeListChatModel(responses=[session_id, uid]),
+        lambda fully_specified_name, session_id, uid, max_retries: FakeListChatModel(responses=[session_id, uid]),
     )
     monkeypatch.setattr(backend, "_get_checkpointer", AsyncMock(return_value=None))
     graphs = []

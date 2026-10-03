@@ -1,7 +1,7 @@
 """MCP 服务器管理路由"""
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, StrictInt
 from sqlalchemy.ext.asyncio import AsyncSession
 from yuxi.modules.extensions.mcp.service import (
     MCPServerNotFoundError,
@@ -38,8 +38,8 @@ class CreateMcpServerRequest(BaseModel):
     url: str | None = Field(None, description="服务器 URL")
     description: str | None = Field(None, description="描述")
     headers: dict | None = Field(None, description="HTTP 请求头")
-    timeout: int | None = Field(None, description="HTTP 超时时间（秒）")
-    sse_read_timeout: int | None = Field(None, description="SSE 读取超时（秒）")
+    timeout: StrictInt | None = Field(None, description="HTTP 超时时间（秒）")
+    sse_read_timeout: StrictInt | None = Field(None, description="SSE 读取超时（秒）")
     tags: list | None = Field(None, description="标签数组")
     icon: str | None = Field(None, description="图标（emoji）")
 
@@ -52,8 +52,8 @@ class UpdateMcpServerRequest(BaseModel):
     url: str | None = Field(None, description="服务器 URL")
     description: str | None = Field(None, description="描述")
     headers: dict | None = Field(None, description="HTTP 请求头")
-    timeout: int | None = Field(None, description="HTTP 超时时间（秒）")
-    sse_read_timeout: int | None = Field(None, description="SSE 读取超时（秒）")
+    timeout: StrictInt | None = Field(None, description="HTTP 超时时间（秒）")
+    sse_read_timeout: StrictInt | None = Field(None, description="SSE 读取超时（秒）")
     tags: list | None = Field(None, description="标签数组")
     icon: str | None = Field(None, description="图标（emoji）")
 

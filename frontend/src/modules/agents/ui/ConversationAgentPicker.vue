@@ -111,7 +111,7 @@ const { agents, selectedAgentId, isLoadingConfig } = storeToRefs(agentStore)
 const agentEditModalRef = ref(null)
 const agentQuickSwitchOptions = computed(() =>
   (agents.value || [])
-    .filter((agent) => !agent.is_subagent)
+    .filter((agent) => agent.can_run && !agent.is_subagent)
     .map((agent) => ({
       label: agent.name || agent.agent_id,
       value: agent.agent_id,
@@ -149,7 +149,7 @@ const loadAgentBackends = async () => {
     agentApi.getAgentBackends(),
     import('./AgentEditModal.vue')
   ])
-  agentBackendOptions.value = (response.backends || []).map(normalizeAgentBackendOption)
+  agentBackendOptions.value = (response.backends || []).filter((backend) => backend.can_create).map(normalizeAgentBackendOption)
   AgentEditModal.value = Editor
   agentBackendsLoaded.value = true
   await nextTick()

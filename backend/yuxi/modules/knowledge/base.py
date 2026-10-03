@@ -987,7 +987,9 @@ class KnowledgeBase(ABC):
         pass
 
     async def export_data(self, kb_id: str, format: str = "zip", **kwargs) -> str:
-        pass
+        """导出知识库数据；具体 backend 未实现时显式拒绝。"""
+        del kb_id, format, kwargs
+        raise NotImplementedError("当前知识库类型不支持数据导出")
 
     def get_default_query_params(self, kb_id: str) -> dict[str, Any]:
         """从 get_query_params_config 中提取所有参数的默认值，返回 {"options": {...}}"""

@@ -52,7 +52,7 @@ class _FakeClient:
         return self._tools
 
 
-async def test_ensure_builtin_mcp_servers_removes_retired_system_server(monkeypatch, mcp_session):
+async def test_ensure_builtin_mcp_servers_preserves_other_system_server(monkeypatch, mcp_session):
     retired_server = MCPServer(
         slug="sequentialthinking",
         name="sequentialthinking",
@@ -76,7 +76,7 @@ async def test_ensure_builtin_mcp_servers_removes_retired_system_server(monkeypa
 
     retired = await mcp_session.scalar(select(MCPServer).where(MCPServer.slug == "sequentialthinking"))
     deepwiki = await mcp_session.scalar(select(MCPServer).where(MCPServer.slug == "deepwiki-official"))
-    assert retired is None
+    assert retired is not None
     assert deepwiki is not None
 
 
@@ -113,7 +113,7 @@ async def test_ensure_builtin_mcp_servers_preserves_user_slug(monkeypatch, mcp_s
     assert configs[slug]["url"] == "https://example.com/mcp"
 
 
-async def test_ensure_builtin_mcp_servers_disables_unsupported_transport(monkeypatch, mcp_session):
+async def test_ensure_builtin_mcp_servers_does_not_migrate_unsupported_transport(monkeypatch, mcp_session):
     legacy_server = MCPServer(
         slug="legacy-stdio",
         name="历史 stdio",
@@ -134,7 +134,7 @@ async def test_ensure_builtin_mcp_servers_disables_unsupported_transport(monkeyp
     await mcp_service.ensure_builtin_mcp_servers_in_db()
 
     await mcp_session.refresh(legacy_server)
-    assert legacy_server.enabled == 0
+    assert legacy_server.enabled == 1
 
 
 async def test_builtin_mcp_initialization_propagates_failure_to_entrypoint(monkeypatch):
@@ -209,10 +209,29 @@ async def test_create_mcp_server_rejects_builtin_slug(mcp_session):
         )
 
 
+async def test_delete_builtin_mcp_server_rejects_service_call(mcp_session):
+    server = MCPServer(
+        slug="deepwiki-official",
+        name="内置 MCP",
+        transport="streamable_http",
+        url="https://trusted.example/mcp",
+        enabled=1,
+        created_by="system",
+        updated_by="system",
+    )
+    mcp_session.add(server)
+    await mcp_session.commit()
+
+    with pytest.raises(PermissionError, match="系统内置"):
+        await mcp_service.delete_mcp_server(mcp_session, "deepwiki-official")
+
+    assert await mcp_session.scalar(select(MCPServer).where(MCPServer.slug == "deepwiki-official")) is not None
+
+
 async def test_update_builtin_mcp_server_rejects_connection_changes(mcp_session):
     server = MCPServer(
         slug="deepwiki-official",
-        name="内置 stdio",
+        name="DeepWiki",
         transport="streamable_http",
         url="https://trusted.example/mcp",
         enabled=1,
@@ -248,7 +267,7 @@ async def test_update_unsupported_transport_requires_remote_url(mcp_session):
     mcp_session.add(legacy_server)
     await mcp_session.commit()
 
-    with pytest.raises(ValueError, match="url 必填"):
+    with pytest.raises(ValueError, match="url"):
         await mcp_service.update_mcp_server(
             mcp_session,
             slug="legacy-stdio",
@@ -414,13 +433,13 @@ async def test_additional_unsupported_config_cannot_reuse_cached_tools():
 
 def test_model_cannot_serialize_stdio_for_execution():
     """持久化模型不再生成本地进程配置。"""
-    server = MCPServer(slug="legacy", transport="websocket")
+    server = MCPServer(slug="unsupported", transport="stdio")
     with pytest.raises(ValueError, match="仅支持 sse 或 streamable_http"):
         server.to_mcp_config()
 
 
-async def test_retire_chart_and_sync_deepwiki_idempotently(monkeypatch, mcp_session):
-    """退役图表且固定 DeepWiki 连接，不恢复历史启用状态。"""
+async def test_sync_deepwiki_idempotently_preserves_other_servers(monkeypatch, mcp_session):
+    """同步仅收敛当前内置定义，保留其他服务器与管理员启停。"""
     mcp_session.add_all(
         [
             MCPServer(
@@ -449,7 +468,7 @@ async def test_retire_chart_and_sync_deepwiki_idempotently(monkeypatch, mcp_sess
     )
     await mcp_service.ensure_builtin_mcp_servers_in_db()
     await mcp_service.ensure_builtin_mcp_servers_in_db()
-    assert await mcp_session.scalar(select(MCPServer).where(MCPServer.slug == "mcp-server-chart")) is None
+    assert await mcp_session.scalar(select(MCPServer).where(MCPServer.slug == "mcp-server-chart")) is not None
     server = await mcp_session.scalar(select(MCPServer).where(MCPServer.slug == "deepwiki-official"))
     assert server.transport == "streamable_http"
     assert server.url == "https://mcp.deepwiki.com/mcp"

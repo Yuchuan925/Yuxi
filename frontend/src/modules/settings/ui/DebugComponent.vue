@@ -376,72 +376,6 @@
                 </div>
               </div>
 
-              <!-- 切换用户模拟 (Super Admin) -->
-              <div class="diagnostic-card">
-                <div class="card-header">
-                  <Users :size="15" class="card-icon" />
-                  <span class="card-title">用户模拟切换 (Impersonate)</span>
-                  <span class="badge-subtle">免密切换</span>
-                </div>
-                <div class="card-body">
-                  <div class="user-switcher-toolbar">
-                    <a-input
-                      v-model:value="state.userSearch"
-                      placeholder="搜索用户名或UID..."
-                      allow-clear
-                      size="small"
-                      class="user-search-input"
-                    >
-                      <template #prefix><Search :size="13" /></template>
-                    </a-input>
-                    <a-button size="small" @click="fetchUsers" :loading="state.loadingUsers">
-                      <template #icon><RefreshCw :size="13" /></template>
-                      刷新列表
-                    </a-button>
-                  </div>
-
-                  <div class="user-list-scroll">
-                    <div
-                      v-for="user in filteredUsers"
-                      :key="user.id"
-                      class="user-item-row"
-                      :class="{ current: user.id === userStore.userId }"
-                    >
-                      <div class="user-meta-left">
-                        <FallbackAvatar
-                          :src="user.avatar"
-                          :name="user.username"
-                          :seed="user.uid || user.username"
-                          kind="user"
-                          :size="26"
-                          shape="circle"
-                        />
-                        <div class="user-details">
-                          <span class="name">{{ user.username }}</span>
-                          <span class="sub font-mono">ID: {{ user.id }} · {{ user.role }}</span>
-                        </div>
-                      </div>
-
-                      <div class="user-meta-right">
-                        <span v-if="user.id === userStore.userId" class="current-badge">
-                          当前
-                        </span>
-                        <a-button
-                          v-else
-                          size="small"
-                          @click="switchToUser(user)"
-                          :loading="state.switchingUserId === user.id"
-                        >
-                          切换
-                        </a-button>
-                      </div>
-                    </div>
-                    <div v-if="filteredUsers.length === 0" class="empty-hint">
-                      {{ state.loadingUsers ? '正在加载用户列表...' : '未找到匹配用户' }}
-                    </div>
-                  </div>
-                </div>
-              </div>
             </div>
           </div>
 
@@ -690,7 +624,6 @@ import {
   FileText,
   Settings,
   User,
-  Users,
   HardDrive,
   ArrowDownToLine,
   WrapText,
@@ -699,7 +632,6 @@ import {
   Edit3
 } from '@lucide/vue'
 import dayjs from '@/shared/lib/time'
-import { authApi } from '@/apis/auth_api'
 import { configApi } from '@/apis/system_api'
 import { checkSuperAdminPermission } from '@/modules/identity/model/user'
 import FallbackAvatar from '@/shared/ui/FallbackAvatar.vue'
@@ -742,10 +674,6 @@ const state = reactive({
   configSearch: '',
   configViewMode: 'table',
   loadingConfig: false,
-  userSearch: '',
-  loadingUsers: false,
-  users: [],
-  switchingUserId: null,
   // LocalStorage 状态
   localStorageList: [],
   storageSearch: '',
@@ -952,8 +880,7 @@ function switchTab(tabKey) {
     fetchLogs()
   } else if (tabKey === 'config' && Object.keys(configStore.config || {}).length === 0) {
     refreshConfigData()
-  } else if (tabKey === 'user' && state.users.length === 0) {
-    fetchUsers()
+
   } else if (tabKey === 'storage') {
     loadLocalStorageItems()
   }
@@ -972,9 +899,6 @@ watch(showModal, (isOpen) => {
   }
   if (state.autoRefresh) {
     startAutoRefresh()
-  }
-  if (userStore.isSuperAdmin && state.users.length === 0) {
-    fetchUsers()
   }
 })
 
@@ -1095,55 +1019,6 @@ const copyConfigJson = async () => {
   } catch {
     message.error('复制失败')
   }
-}
-
-// ==================== USER TAB LOGIC ====================
-async function fetchUsers() {
-  state.loadingUsers = true
-  try {
-    state.users = await userStore.getUsers()
-  } catch (err) {
-    message.error(`获取用户列表失败: ${err.message}`)
-  } finally {
-    state.loadingUsers = false
-  }
-}
-
-const filteredUsers = computed(() => {
-  if (!state.userSearch) return state.users
-  const q = state.userSearch.toLowerCase()
-  return state.users.filter(
-    (u) =>
-      u.username?.toLowerCase().includes(q) ||
-      u.uid?.toLowerCase().includes(q) ||
-      String(u.id).includes(q)
-  )
-})
-
-const switchToUser = async (user) => {
-  if (!checkSuperAdminPermission()) return
-
-  Modal.confirm({
-    title: '危险操作确认',
-    content: `确定要切换为用户 "${user.username}" 吗？切换后将获得该用户的全部操作权限。`,
-    okText: '确认切换',
-    cancelText: '取消',
-    okType: 'danger',
-    onOk: async () => {
-      state.switchingUserId = user.id
-      try {
-        const data = await authApi.impersonateUser(user.id)
-        userStore.applySession(data)
-        message.success(`已切换为用户: ${user.username}`)
-        showModal.value = false
-        window.location.reload()
-      } catch (err) {
-        message.error(`切换失败: ${err.message}`)
-      } finally {
-        state.switchingUserId = null
-      }
-    }
-  })
 }
 
 // ==================== LOCALSTORAGE TAB LOGIC ====================
@@ -2101,78 +1976,7 @@ const reloadAllStores = async () => {
   }
 }
 
-.user-switcher-toolbar {
-  display: flex;
-  gap: 8px;
-  margin-bottom: 10px;
 
-  .user-search-input {
-    flex: 1;
-  }
-}
-
-.user-list-scroll {
-  max-height: 300px;
-  overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-
-  .user-item-row {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 6px 8px;
-    border-radius: 5px;
-    border: 1px solid var(--gray-200);
-    background: var(--gray-0);
-    transition: all 0.12s ease;
-
-    &:hover {
-      background: var(--gray-50);
-    }
-
-    &.current {
-      background: var(--gray-100);
-      border-color: var(--gray-300);
-    }
-
-    .user-meta-left {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-
-      .user-details {
-        display: flex;
-        flex-direction: column;
-
-        .name {
-          font-size: 12px;
-          font-weight: 500;
-          color: var(--gray-1000);
-        }
-
-        .sub {
-          font-size: 10.5px;
-          color: var(--gray-500);
-        }
-      }
-    }
-
-    .current-badge {
-      font-size: 10.5px;
-      color: var(--gray-500);
-      font-weight: 500;
-    }
-  }
-
-  .empty-hint {
-    text-align: center;
-    padding: 20px;
-    color: var(--gray-400);
-    font-size: 11.5px;
-  }
-}
 
 /* ==================== LOCALSTORAGE TAB ==================== */
 .storage-stats-pill {

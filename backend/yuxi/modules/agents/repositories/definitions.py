@@ -21,6 +21,7 @@ from yuxi.modules.agents.models.turns import AgentTurn
 from yuxi.modules.agents.models.threads import Conversation
 from yuxi.modules.identity.models import User
 from yuxi.modules.identity.services.resource_grants import validate_shared_grants
+from yuxi.infrastructure.observability.logging import logger
 from yuxi.shared.datetime import utc_now_naive
 
 DEFAULT_AGENT_SLUG = DEFAULT_AGENT.slug
@@ -533,9 +534,16 @@ class AgentRepository:
         backend_info_cache: dict[tuple[str, bool, str], dict] | None = None,
     ) -> dict[str, Any]:
         data = agent.to_dict()
-        data["share_config"] = normalize_permission_config(
-            agent.share_config,
-        )
+        data["share_config_invalid"] = False
+        try:
+            data["share_config"] = normalize_permission_config(agent.share_config)
+        except (TypeError, ValueError) as exc:
+            if user.role != "superadmin":
+                raise
+            # 管理者需要读取原始坏配置进行修复，不将它解释为有效共享范围。
+            data["share_config"] = agent.share_config
+            data["share_config_invalid"] = True
+            logger.warning("Invalid agent share config exposed for repair: slug={}, error={}", agent.slug, str(exc))
         permission = resolve_agent_permission(user, agent)
         is_builtin = is_builtin_agent(agent)
         data["can_manage"] = user_can_manage_agent(user, agent)

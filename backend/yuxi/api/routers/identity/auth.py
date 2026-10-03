@@ -8,7 +8,7 @@ from fastapi.security import OAuth2PasswordRequestForm
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from yuxi.api.dependencies.auth import get_admin_user, get_db, get_required_user, get_superadmin_user
+from yuxi.api.dependencies.auth import get_admin_user, get_db, get_required_user
 from yuxi.modules.identity.services.cli_auth import (
     CLI_AUTH_POLL_INTERVAL_SECONDS,
     CLI_AUTH_SESSION_TTL_SECONDS,
@@ -25,6 +25,7 @@ from yuxi.modules.identity.services.login_limits import (
     record_login_failure,
 )
 from yuxi.modules.identity.services.administration import (
+    lock_member_management,
     IdentityConflictError,
     SystemAlreadyInitializedError,
     initialize_system_admin,
@@ -37,7 +38,6 @@ from yuxi.infrastructure.minio.client import normalize_public_minio_url
 from yuxi.modules.identity.models import User
 from yuxi.modules.identity.repositories.departments import DepartmentRepository
 from yuxi.modules.identity.repositories.users import UserRepository
-from yuxi.infrastructure.observability.logging import logger
 from yuxi.modules.identity.security import AuthUtils
 from yuxi.shared.datetime import utc_now_naive
 
@@ -509,6 +509,10 @@ async def create_user(
     db: AsyncSession = Depends(get_db),
 ):
     """创建新用户（管理员权限）"""
+    try:
+        current_user, _ = await lock_member_management(db, actor_id=current_user.id)
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
     user_repo = UserRepository(db)
 
     # 验证用户名
@@ -698,12 +702,12 @@ async def update_user(
     db: AsyncSession = Depends(get_db),
 ):
     user_repository = UserRepository(db)
-    user = await user_repository.get_active_by_id(user_id, for_update=True)
-    if user is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="用户不存在",
-        )
+    try:
+        current_user, user = await lock_member_management(db, actor_id=current_user.id, member_id=user_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
 
     _ensure_user_in_current_department(current_user, user)
 
@@ -778,13 +782,12 @@ async def delete_user(
     db: AsyncSession = Depends(get_db),
 ):
     user_repository = UserRepository(db)
-    await user_repository.lock_identity_changes()
-    user = await user_repository.get_active_by_id(user_id, for_update=True)
-    if user is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="用户不存在",
-        )
+    try:
+        current_user, user = await lock_member_management(db, actor_id=current_user.id, member_id=user_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
 
     _ensure_user_in_current_department(current_user, user)
 
@@ -894,57 +897,6 @@ async def upload_user_avatar(
         raise
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"头像上传失败: {str(e)}")
-
-
-# 路由：模拟用户登录（超级管理员专用）
-@auth.post("/impersonate/{user_id}", response_model=Token)
-async def impersonate_user(
-    user_id: int,
-    current_user: User = Depends(get_superadmin_user),
-    db: AsyncSession = Depends(get_db),
-):
-    """超级管理员模拟其他用户登录"""
-    # 查找目标用户
-    target_user = await UserRepository(db).get_active_by_id(user_id)
-    if target_user is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="用户不存在",
-        )
-
-    # 不能模拟超级管理员
-    if target_user.role == "superadmin" or target_user.user_kind == "end_user":
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="不能模拟该账户",
-        )
-
-    # 生成访问令牌
-    token_data = {"sub": str(target_user.id)}
-    access_token = AuthUtils.create_access_token(token_data)
-
-    # 获取部门名称
-    department_name = None
-    if target_user.department_id:
-        department_name = await DepartmentRepository(db).get_name_by_id(target_user.department_id)
-
-    await db.commit()
-
-    # 控制台警告日志
-    logger.warning(f"⚠️ [危险操作] 超级管理员 {current_user.username} 模拟登录用户: {target_user.username}")
-
-    return {
-        "access_token": access_token,
-        "token_type": "bearer",
-        "user_id": target_user.id,
-        "username": target_user.username,
-        "uid": target_user.uid,
-        "phone_number": target_user.phone_number,
-        "avatar": normalize_public_minio_url(target_user.avatar),
-        "role": target_user.role,
-        "department_id": target_user.department_id,
-        "department_name": department_name,
-    }
 
 
 # =============================================================================

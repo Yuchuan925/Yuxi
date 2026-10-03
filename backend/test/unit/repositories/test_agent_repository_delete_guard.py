@@ -35,7 +35,8 @@ async def session():
 async def _seed_agent(session):
     """创建待删除 Agent 与历史 Thread。"""
     user = User(username="owner", uid="owner", password_hash="x", role="superadmin")
-    agent = Agent(visibility="shared",
+    agent = Agent(
+        visibility="shared",
         slug="custom-agent",
         backend_id="ChatbotAgent",
         name="Custom Agent",

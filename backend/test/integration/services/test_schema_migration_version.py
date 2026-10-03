@@ -17,8 +17,8 @@ from yuxi.migrations.schema import (
     create_knowledge_tables,
     create_schema_version_table,
     ensure_business_schema,
-    ensure_knowledge_schema,
     record_schema_version,
+    schema_migration_lock,
 )
 from yuxi.infrastructure.postgres.schema import get_schema_versions, require_current_schema
 from yuxi.infrastructure.postgres.manager import PostgresManager
@@ -84,13 +84,13 @@ async def test_schema_migration_lock_serializes_real_postgres_sessions() -> None
     second_entered = asyncio.Event()
 
     async def first_migrator() -> None:
-        async with manager.schema_migration_lock():
+        async with schema_migration_lock(manager):
             first_entered.set()
             await release_first.wait()
 
     async def second_migrator() -> None:
         await first_entered.wait()
-        async with manager.schema_migration_lock():
+        async with schema_migration_lock(manager):
             second_entered.set()
 
     first_task = asyncio.create_task(first_migrator())
@@ -174,7 +174,7 @@ async def test_fresh_business_schema_contains_input_lifecycle_without_request_ta
         assert "agent_runs_execution_seq" in execution_seq_default
         assert "request_id" not in run_columns
         assert {"kind", "status", "turn_id", "consumed_run_id", "cutoff_seq", "received_seq"} <= input_columns
-        assert BUSINESS_SCHEMA_VERSION == 12
+        assert BUSINESS_SCHEMA_VERSION == 14
     finally:
         await _drop_isolated_schema(schema, admin_engine, scoped_engine)
 
@@ -227,6 +227,11 @@ async def test_schema_version_is_persisted_and_runtime_validation_fails_closed()
             await require_current_schema(manager)
 
         await create_schema_version_table(manager)
+        await record_schema_version(manager, "business", 13)
+        with pytest.raises(RuntimeError, match="business=13"):
+            await require_current_schema(manager)
+        assert (await get_schema_versions(manager))["business"] == 13
+
         await record_schema_version(manager, "business", BUSINESS_SCHEMA_VERSION + 1)
         with pytest.raises(RuntimeError, match=f"business={BUSINESS_SCHEMA_VERSION + 1}"):
             await require_current_schema(manager)
@@ -241,5 +246,30 @@ async def test_schema_version_is_persisted_and_runtime_validation_fails_closed()
             "business": BUSINESS_SCHEMA_VERSION,
             "knowledge": KNOWLEDGE_SCHEMA_VERSION,
         }
+    finally:
+        await _drop_isolated_schema(schema, admin_engine, scoped_engine)
+
+
+async def test_fresh_mcp_schema_has_only_remote_connection_columns() -> None:
+    """新库和重复初始化不产生 stdio 进程字段。"""
+    schema, admin_engine, scoped_engine, manager = await _create_isolated_manager("pytest_mcp_schema")
+    try:
+        await create_business_tables(manager)
+        await ensure_business_schema(manager)
+        await ensure_business_schema(manager)
+        async with scoped_engine.connect() as connection:
+            columns = set(
+                (
+                    await connection.execute(
+                        text(
+                            "SELECT column_name FROM information_schema.columns "
+                            "WHERE table_schema = :schema AND table_name = 'mcp_servers'"
+                        ),
+                        {"schema": schema},
+                    )
+                ).scalars()
+            )
+        assert {"transport", "url", "headers", "timeout", "sse_read_timeout"} <= columns
+        assert not {"command", "args", "env"} & columns
     finally:
         await _drop_isolated_schema(schema, admin_engine, scoped_engine)

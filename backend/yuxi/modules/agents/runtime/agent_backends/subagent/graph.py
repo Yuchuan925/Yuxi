@@ -90,7 +90,8 @@ async def _build_middlewares(context, backend, tool_approval_mode: str, *, clean
         ),
         SkillsMiddleware(),
         create_summary_middleware_from_context(context, backend=backend, model=cleanup_model)
-            if cleanup_model else create_summary_middleware_from_context(context, backend=backend),
+        if cleanup_model
+        else create_summary_middleware_from_context(context, backend=backend),
         TodoListMiddleware(system_prompt=TODO_MID_PROMPT),
         PatchToolCallsMiddleware(),
         _SubAgentToolFilterMiddleware(),
@@ -153,6 +154,7 @@ class SubAgentBackend(BaseAgent):
                 fully_specified_name=resolve_chat_model_spec(context.model),
                 session_id=context.thread_id,
                 uid=context.uid,
+                max_retries=0,
             )
             tools = _filter_disabled_tools(await resolve_configured_runtime_tools(context), _SUBAGENT_DISABLED_TOOLS)
             prompt = build_prompt_with_context(context)
