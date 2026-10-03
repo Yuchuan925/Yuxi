@@ -134,6 +134,6 @@ docker compose logs --tail=100 milvus etcd minio graph
 
 - [模型配置](./model-config.md)：接入聊天、嵌入和重排模型。
 - [知识库与知识图谱](./knowledge-base.md)：上传文档并验证检索。
-- [命令行工具](./cli.md)：用 CLI 管理实例和运行任务。
+- [命令行工具](./cli.md)：用 npm CLI 连接实例、进行终端对话和查询知识库。
 - [生产部署](../advanced/deployment.md)：配置生产环境和验证部署。
 - [机制详解](../mechanisms/index.md)：理解运行、文件和存储边界。
