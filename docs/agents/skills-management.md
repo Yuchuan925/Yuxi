@@ -130,13 +130,13 @@ Agent 配置可以用 `preload_skills` 指定少量需要从首轮就可用的 S
 
 ## 权限和选择
 
-共享 Skill 使用 `source_type`、`share_config` 和 `enabled` 表达来源、范围和启用状态。范围使用 version 2 的 `read_scope`、`manage_scope`，可以是全局、部门或指定用户；管理范围必须包含在读取范围内。
+共享 Skill 使用 `source_type`、`share_config` 和 `enabled` 表达来源、范围和启用状态。范围使用 version 2 的 `read_scope`、`manage_scope`，可以是全局、部门或指定用户；范围关系遵循[资源权限的同类型子集规则](../mechanisms/resource-permissions.md#共享资源)。
 
 | 用户 | 可见和使用 | 可管理 |
 | --- | --- | --- |
-| `superadmin` | 全部允许的共享/内置 Skill | 全部非内置 Skill，及内置 Skill 的启停 |
-| `admin` | 命中读取范围且已启用的 Skill | 命中管理范围的非内置 Skill，及内置 Skill 的启停 |
-| 普通用户 | 命中读取范围且已启用的 Skill | 自己拥有的非内置 Skill；新安装的 Skill 固定进入个人来源 |
+| `superadmin` | 全部允许的共享/内置 Skill | 全部共享 Skill；内置 Skill 维护 |
+| `admin` | 命中读取范围且已启用的 Skill | 自己的或同时命中读取和管理范围的非内置 Skill |
+| 普通用户 | 命中读取范围且已启用的 Skill | 自己的个人 Skill；共享 Skill 只读 |
 
 普通用户安装的新 Skill 固定进入个人来源，不配置共享范围。管理员安装到共享来源时才会写入 PostgreSQL 索引，并可以配置部门或用户范围。扩展管理页展示当前用户可访问的共享和个人 Skill；Agent 配置选项只展示可访问的共享和内置 Skill。后端在保存时校验共享引用，运行时按当前用户身份加载个人目录。
 

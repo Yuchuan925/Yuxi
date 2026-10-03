@@ -67,6 +67,8 @@ export const agentApi = {
 
   updateAgent: (agentId, payload) => apiPut(`/api/agent/${agentId}`, payload),
 
+  publishAgent: (agentId, shareConfig) => apiPost(`/api/agent/${agentId}/publish`, { share_config: shareConfig }),
+
   deleteAgent: (agentId) => apiDelete(`/api/agent/${agentId}`),
 
   /** 产品对话以明确的 follow-up 或 steer 模式提交 Input。 */

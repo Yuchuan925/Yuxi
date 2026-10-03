@@ -45,7 +45,7 @@ test('设置仅挂载访问页，切换保留表单，关闭重开只挂载当�
   try {
     const { useUserStore } = await server.ssrLoadModule('/src/modules/identity/model/user.js')
     useUserStore().token = 'fixture'
-    useUserStore().userRole = 'admin'
+    useUserStore().userRole = 'superadmin'
     const { default: Settings } = await server.ssrLoadModule('virtual:settings-test')
     const makeNode = (type) => ({ type, children: [], props: {}, style: {}, parent: null })
     const renderer = createRenderer({

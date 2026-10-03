@@ -56,11 +56,13 @@ class YuxiSummarizationMiddleware(SummarizationMiddleware):
         *args,
         tool_result_offload_token_limit: int | None = _DEFAULT_SUMMARY_TOOL_RESULT_LIMIT_TOKENS,
         tool_arg_max_length: int = _DEFAULT_TOOL_ARG_MAX_LENGTH,
+        authorization_context=None,
         **kwargs,
     ) -> None:
         super().__init__(*args, **kwargs)
         self.tool_result_offload_token_limit = tool_result_offload_token_limit
         self.tool_arg_max_length = tool_arg_max_length
+        self.authorization_context = authorization_context
 
     def wrap_model_call(
         self,
@@ -366,6 +368,7 @@ class YuxiSummarizationMiddleware(SummarizationMiddleware):
         prompt = self._build_summary_prompt(messages) if messages else None
         if prompt is None:
             raise RuntimeError("没有可供自动压缩的对话历史")
+        await self._authorize_summary_request()
         response = await self.model.ainvoke(prompt, config=self._SUMMARY_INVOKE_CONFIG)
         summary = response.text.strip()
         if not summary:
@@ -376,11 +379,19 @@ class YuxiSummarizationMiddleware(SummarizationMiddleware):
         prompt = self._build_summary_prompt(messages) if messages else None
         if prompt is None:
             raise RuntimeError("没有可供主动压缩的对话历史")
+        await self._authorize_summary_request()
         response = await self.model.ainvoke(prompt, config=self._SUMMARY_INVOKE_CONFIG)
         summary = response.text.strip()
         if not summary:
             raise RuntimeError("摘要模型返回空内容")
         return summary
+
+    async def _authorize_summary_request(self) -> None:
+        """摘要模型同样使用实际调用者的当前账号和 Agent 授权。"""
+        if self.authorization_context is not None:
+            from yuxi.modules.agents.runtime.middlewares.authorization import refresh_execution_authorization
+
+            await refresh_execution_authorization(self.authorization_context)
 
     def _offload_to_backend(self, backend, messages: list[AnyMessage], session_id: str) -> str | None:
         _emit_compression_started_once()
@@ -453,6 +464,7 @@ def create_summary_middleware(
     trigger: ContextSize | list[ContextSize] | None,
     keep: ContextSize | list[ContextSize] | None,
     summary_prompt: str | None = None,
+    authorization_context=None,
     trim_tokens_to_summarize: int | None = None,
     tool_result_offload_token_limit: int | None = _DEFAULT_SUMMARY_TOOL_RESULT_LIMIT_TOKENS,
 ) -> YuxiSummarizationMiddleware:
@@ -465,19 +477,25 @@ def create_summary_middleware(
         "token_counter": _count_tokens_for_summary_trigger,
         "trim_tokens_to_summarize": trim_tokens_to_summarize,
         "tool_result_offload_token_limit": tool_result_offload_token_limit,
+        "authorization_context": authorization_context,
     }
     if summary_prompt and summary_prompt.strip():
         middleware_kwargs["summary_prompt"] = summary_prompt
     return YuxiSummarizationMiddleware(**middleware_kwargs)
 
 
-def create_summary_middleware_from_context(context, *, backend) -> YuxiSummarizationMiddleware:
+def create_summary_middleware_from_context(context, *, backend, model=None) -> YuxiSummarizationMiddleware:
     """按 Agent 运行时配置创建自动与主动压缩共用的摘要器。"""
     trigger_tokens = getattr(context, "summary_threshold", DEFAULT_SUMMARY_THRESHOLD_K) * 1024
-    model_spec = resolve_chat_model_spec(context.model)
+    if model is None:
+        model_spec = resolve_chat_model_spec(context.model)
+        model = load_chat_model(
+            fully_specified_name=model_spec, session_id=context.thread_id, uid=context.uid, max_retries=0
+        )
     return create_summary_middleware(
-        model=load_chat_model(fully_specified_name=model_spec, session_id=context.thread_id, uid=context.uid),
+        model=model,
         backend=backend,
+        authorization_context=context,
         trigger=("tokens", trigger_tokens),
         keep=("messages", getattr(context, "summary_keep_messages", DEFAULT_SUMMARY_KEEP_MESSAGES)),
         summary_prompt=getattr(context, "summary_prompt", None) or DEFAULT_YUXI_SUMMARY_PROMPT,

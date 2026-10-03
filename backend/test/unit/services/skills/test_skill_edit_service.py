@@ -86,7 +86,7 @@ def _setup_shared_skill(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 
 
 def _user(uid: str) -> User:
-    return User(uid=uid, role="user")
+    return User(uid=uid, role="admin")
 
 
 def test_shared_artifact_source_ignores_personal_override_and_rejects_links(tmp_path, monkeypatch):
@@ -217,7 +217,7 @@ async def test_edit_rejects_unmanaged_and_builtin_skills(tmp_path, monkeypatch):
             operator=_user("other"),
         )
     item.source_type = "builtin"
-    with pytest.raises(ValueError, match="内置 skill"):
+    with pytest.raises(ValueError, match="无权管理"):
         await edit_service.edit_shared_skill_file(
             _Session(),
             slug="demo",

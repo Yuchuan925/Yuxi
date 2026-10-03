@@ -36,6 +36,7 @@ async def _seed_agent(session):
     """创建待删除 Agent 与历史 Thread。"""
     user = User(username="owner", uid="owner", password_hash="x", role="superadmin")
     agent = Agent(
+        visibility="shared",
         slug="custom-agent",
         backend_id="ChatbotAgent",
         name="Custom Agent",
@@ -45,7 +46,7 @@ async def _seed_agent(session):
     thread = Conversation(
         thread_id="agent-thread", project_id="agent-project", uid=user.uid, agent_id=agent.slug, status="active"
     )
-    session.add_all([agent, thread])
+    session.add_all([user, agent, thread])
     await session.flush()
     return user, agent, thread
 

@@ -32,7 +32,7 @@ async def test_corrupt_agent_share_config_is_hidden_and_rejected(test_client, ad
     conn = await asyncpg.connect(os.environ["POSTGRES_URL"].replace("+asyncpg", ""))
     created = False
     try:
-        payload = {"name": "Pytest invalid sharing", "slug": slug, "share_config": config}
+        payload = {"name": "Pytest invalid sharing", "slug": slug, "visibility": "shared", "share_config": config}
         response = await test_client.post("/api/agent", headers=admin_headers, json=payload)
         assert response.status_code == 422, response.text
         assert await conn.fetchval("SELECT id FROM agents WHERE slug = $1", slug) is None

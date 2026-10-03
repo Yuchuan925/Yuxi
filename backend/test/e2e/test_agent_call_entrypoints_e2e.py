@@ -46,6 +46,7 @@ async def _create_agent(client: httpx.AsyncClient, headers: dict[str, str], uid:
             "name": f"E2E Agent Eval {slug[-8:]}",
             "slug": slug,
             "backend_id": "ChatbotAgent",
+            "visibility": "shared",
             "description": "真实 Public 评估样例 E2E 临时智能体",
             "config_json": {"context": context},
             "share_config": {

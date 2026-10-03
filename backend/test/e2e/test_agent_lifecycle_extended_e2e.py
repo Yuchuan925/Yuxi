@@ -460,6 +460,7 @@ async def _agent(client: httpx.AsyncClient, headers: dict[str, str], uid: str, *
             "name": f"Lifecycle extended {slug[-8:]}",
             "slug": slug,
             "backend_id": "ChatbotAgent",
+            "visibility": "shared",
             "description": "扩展生命周期 E2E",
             "config_json": {
                 "context": {

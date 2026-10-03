@@ -9,6 +9,8 @@ from yuxi.modules.extensions.tools.catalog import get_tool_instances_by_category
 async def resolve_configured_runtime_tools(context) -> list[Any]:
     from yuxi.modules.extensions.mcp.service import get_enabled_mcp_tools
 
+    context._mcp_tool_servers = {}
+    context._registered_builtin_tool_names = set()
     selected_tools = []
     selected_tool_names: set[str] = set()
     selected_tool_sources: dict[str, str] = {}
@@ -24,6 +26,7 @@ async def resolve_configured_runtime_tools(context) -> list[Any]:
         selected_tools.append(tool)
         selected_tool_names.add(tool_name)
         selected_tool_sources[tool_name] = "local"
+        context._registered_builtin_tool_names.add(tool_name)
 
     # 去重后的 MCP server 列表(保持配置顺序)
     selected_mcp_servers: set[str] = set()
@@ -59,6 +62,7 @@ async def resolve_configured_runtime_tools(context) -> list[Any]:
             selected_tools.append(tool)
             selected_tool_names.add(tool.name)
             selected_tool_sources[tool.name] = f"MCP '{server_name}'"
+            context._mcp_tool_servers[tool.name] = server_name
 
     # Skill 依赖的本地工具：必须随基础工具一起注册进 create_agent 的 ToolNode 才可执行，
     # 否则 Skill 激活后模型虽能发起调用，执行器仍报 "not a valid tool"。
@@ -74,5 +78,6 @@ async def resolve_configured_runtime_tools(context) -> list[Any]:
         selected_tools.append(tool)
         selected_tool_names.add(tool.name)
         selected_tool_sources[tool.name] = "local"
+        context._registered_builtin_tool_names.add(tool.name)
 
     return selected_tools

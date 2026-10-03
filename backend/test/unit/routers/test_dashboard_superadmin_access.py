@@ -69,6 +69,7 @@ async def dashboard_session():
             department=dept_b,
         )
         agent = Agent(
+            visibility="shared",
             slug="agent-shared",
             backend_id="shared-backend",
             name="Shared Agent",

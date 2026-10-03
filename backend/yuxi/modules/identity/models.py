@@ -52,6 +52,7 @@ class User(Base):
 
     __tablename__ = "users"
     __table_args__ = (
+        CheckConstraint("role IN ('user', 'admin', 'superadmin')", name="ck_users_role"),
         UniqueConstraint("owner_user_id", "app_id", "end_user_id", name="uq_users_public_end_user_identity"),
         CheckConstraint(
             "(user_kind = 'human' AND owner_user_id IS NULL AND app_id IS NULL AND end_user_id IS NULL) "

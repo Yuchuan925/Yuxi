@@ -16,7 +16,7 @@
             />
           </a-button>
         </a-tooltip>
-        <a-button type="primary" @click="handleMcpAdd" class="lucide-icon-btn">
+        <a-button v-if="userStore.isSuperAdmin" type="primary" @click="handleMcpAdd" class="lucide-icon-btn">
           <Plus :size="14" />
           <span>添加 MCP</span>
         </a-button>
@@ -47,7 +47,7 @@
           <template #icon>
             <span class="info-card-emoji-icon">{{ server.icon || '🔌' }}</span>
           </template>
-          <template #action>
+          <template v-if="server.can_manage" #action>
             <button
               type="button"
               class="mcp-card-action mcp-card-action-danger"
@@ -75,7 +75,7 @@
           <template #icon>
             <span class="info-card-emoji-icon">{{ server.icon || '🔌' }}</span>
           </template>
-          <template #action>
+          <template v-if="server.can_manage" #action>
             <button
               type="button"
               class="mcp-card-action"
@@ -166,6 +166,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { message, Modal } from 'ant-design-vue'
 import { Check, Plus, RefreshCw, Trash2 } from '@lucide/vue'
+import { useUserStore } from '@/modules/identity/model/user'
 import { mcpApi } from '@/apis/mcp_api'
 import ExtensionCardGrid from './ExtensionCardGrid.vue'
 import InfoCard from '@/shared/ui/InfoCard.vue'
@@ -174,6 +175,7 @@ import McpFormModal from './McpFormModal.vue'
 import { formatExtensionCardTitle } from '@/modules/extensions/model/extensionDisplayName'
 
 const router = useRouter()
+const userStore = useUserStore()
 
 const loading = ref(false)
 const servers = ref([])
@@ -205,6 +207,7 @@ const filteredDisabledServers = computed(() =>
 )
 
 const navigateToDetail = (server) => {
+  if (!server.can_manage) return
   router.push({ path: `/extensions/mcp/${encodeURIComponent(server.slug)}` })
 }
 

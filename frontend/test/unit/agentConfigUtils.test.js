@@ -134,11 +134,12 @@ test('预加载候选项只包含 Agent 当前启用的 Skill', () => {
 test('normalizeAgentBackendOption 缺少名称时回退到 backend_id', () => {
   assert.deepEqual(normalizeAgentBackendOption({ backend_id: 'ChatbotAgent' }), {
     label: 'ChatbotAgent',
-    value: 'ChatbotAgent'
+    value: 'ChatbotAgent',
+    can_create: undefined
   })
   assert.deepEqual(
     normalizeAgentBackendOption({ backend_id: 'ChatbotAgent', name: '对话智能体' }),
-    { label: '对话智能体', value: 'ChatbotAgent' }
+    { label: '对话智能体', value: 'ChatbotAgent', can_create: undefined }
   )
 })
 

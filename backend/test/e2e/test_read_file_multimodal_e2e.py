@@ -34,6 +34,7 @@ async def _create_agent(
             "name": f"E2E read_file {slug[-8:]}",
             "slug": slug,
             "backend_id": "ChatbotAgent",
+            "visibility": "shared",
             "description": "read_file 多模态真实链路测试智能体",
             "config_json": {
                 "context": {

@@ -52,7 +52,7 @@ KNOWLEDGE_BASE_PERMISSION_POLICY = ResourcePermissionPolicy(
 )
 AGENT_PERMISSION_POLICY = ResourcePermissionPolicy(
     role_ceiling={
-        "user": ResourcePermission.MANAGE,
+        "user": ResourcePermission.READ,
         "admin": ResourcePermission.MANAGE,
         "superadmin": ResourcePermission.MANAGE,
     }
@@ -98,7 +98,11 @@ def _normalize_scope(scope: dict | None) -> dict | None:
 def _validate_manage_scope(read_scope: dict | None, manage_scope: dict | None) -> None:
     """确保管理范围不会超出读取范围。"""
 
-    if not read_scope or not manage_scope or read_scope["access_level"] == "global":
+    if not manage_scope:
+        return
+    if not read_scope:
+        raise ValueError("管理范围必须包含在读取范围内")
+    if read_scope["access_level"] == "global":
         return
 
     read_level = read_scope["access_level"]
@@ -185,6 +189,8 @@ def resolve_resource_permission(
 ) -> ResourcePermission:
     """解析资源所有权、共享范围和角色上限后的有效权限。"""
 
+    if _value(user, "is_deleted", 0):
+        return ResourcePermission.NONE
     if _value(user, "role") == "superadmin":
         return ResourcePermission.MANAGE
 
@@ -200,11 +206,13 @@ def resolve_resource_permission(
             str(exc),
         )
         return ResourcePermission.NONE
-    if str(_value(resource, "created_by", "") or "") == str(_value(user, "uid", "") or ""):
-        return ResourcePermission.MANAGE
-    elif scope_matches(user, config["manage_scope"]) and (
-        config["read_scope"] is None or scope_matches(user, config["read_scope"])
+    if (
+        _value(user, "role") == "admin"
+        and _value(user, "uid")
+        and (str(_value(resource, "created_by", "") or "") == str(_value(user, "uid")))
     ):
+        return ResourcePermission.MANAGE
+    if scope_matches(user, config["manage_scope"]) and scope_matches(user, config["read_scope"]):
         granted = ResourcePermission.MANAGE
     elif scope_matches(user, config["read_scope"]):
         granted = ResourcePermission.READ
@@ -248,8 +256,24 @@ def require_knowledge_base_permission(
 
 
 def resolve_agent_permission(user: Any, resource: ShareableResource) -> ResourcePermission:
-    """解析 Agent 权限。"""
-
+    """私有定义只供所有者管理，系统管理员拥有治理权限。"""
+    if _value(user, "is_deleted", 0):
+        return ResourcePermission.NONE
+    if _value(resource, "visibility") == "private":
+        if _value(user, "user_kind") == "end_user":
+            return ResourcePermission.NONE
+        if _value(user, "role") == "superadmin" or (
+            _value(user, "uid") and str(_value(user, "uid")) == str(_value(resource, "created_by"))
+        ):
+            return ResourcePermission.MANAGE
+        return ResourcePermission.NONE
+    if _value(resource, "is_builtin", False) or _value(resource, "slug") == "default-chatbot":
+        permission = resolve_resource_permission(user, resource, AGENT_PERMISSION_POLICY)
+        return (
+            permission
+            if _value(user, "role") == "superadmin"
+            else _minimum_permission(permission, ResourcePermission.READ)
+        )
     return resolve_resource_permission(
         user,
         resource,

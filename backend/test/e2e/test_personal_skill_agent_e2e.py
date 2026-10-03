@@ -86,6 +86,7 @@ async def test_main_agent_reads_personal_skill_directly_from_user_workspace(
                 "name": f"E2E Personal Skill {slug[-8:]}",
                 "slug": agent_slug,
                 "backend_id": "ChatbotAgent",
+                "visibility": "shared",
                 "description": "真实个人 Skill Agent E2E 临时智能体",
                 "config_json": {"context": context},
                 "share_config": {

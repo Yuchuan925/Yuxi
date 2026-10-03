@@ -138,7 +138,7 @@ const router = createRouter({
               meta: {
                 keepAlive: false,
                 requiresAuth: true,
-                requiresAdmin: true
+                requiresSuperAdmin: true
               }
             },
             {

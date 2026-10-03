@@ -4,6 +4,8 @@
 
 ## 怎么读
 
+- 想理解私有定义、共享授权和运行中撤权：看[资源权限](./resource-permissions.md)。
+
 - 想知道配置怎样进入一次 Agent 运行：先看[Agent 运行时上下文](./agent-runtime.md)。
 - 想知道 Agent 文件和命令在哪里执行：再看[沙盒与文件系统](./sandbox.md)。
 - 想知道长对话怎样压缩：继续看[上下文压缩](./context-compression.md)。

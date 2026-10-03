@@ -1,4 +1,5 @@
 import { unref } from 'vue'
+import { message } from 'ant-design-vue'
 import { applyAgentEvent } from '@/modules/conversation/model/agentItems'
 
 /** 主、子 Thread 共用公开事件消费入口。 */
@@ -32,6 +33,9 @@ export function useAgentStreamHandler({ getThreadState, processApprovalInStream,
       streamSmoother?.updateText(event.item_id, threadId)
     } else if (type.endsWith('.done')) {
       streamSmoother?.flushThread(threadId)
+    }
+    if (type === 'yuxi.session.turn.capability_limited') {
+      message.warning(event.message)
     }
     if (type === 'yuxi.session.turn.state') {
       state.agentStateRequestVersion = (state.agentStateRequestVersion || 0) + 1

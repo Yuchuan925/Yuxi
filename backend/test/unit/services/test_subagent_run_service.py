@@ -17,9 +17,17 @@ async def test_progress_projects_structured_stream_events(monkeypatch):
     async def recent_events(_run_id, *, limit):
         assert limit == 100
         return [
-            {"seq":"6-0","event":{"type":"agent.session.turn.item.added", "item":{
-                "type":"function_call", "id":"t1", "name":"search"}}},
-            {"seq":"5-0","event":{"type":"agent.session.turn.output_text.delta", "item_id":"m1", "delta":"正在查询"}},
+            {
+                "seq": "6-0",
+                "event": {
+                    "type": "agent.session.turn.item.added",
+                    "item": {"type": "function_call", "id": "t1", "name": "search"},
+                },
+            },
+            {
+                "seq": "5-0",
+                "event": {"type": "agent.session.turn.output_text.delta", "item_id": "m1", "delta": "正在查询"},
+            },
         ]
 
     monkeypatch.setattr(module, "list_recent_run_stream_events", recent_events)
@@ -111,7 +119,7 @@ async def test_start_locks_agent_and_project_before_root_execution_tree(
         def __init__(self, db):
             pass
 
-        async def get_by_slug(self, slug, *, for_key_share=False):
+        async def get_visible_by_slug(self, *, slug, user, kind, for_key_share=False):
             assert slug == "child" and for_key_share
             locks.append("agent")
             return SimpleNamespace(id=7, slug="child", name="Child", is_subagent=True) if agent_present else None
@@ -175,9 +183,13 @@ async def test_start_locks_agent_and_project_before_root_execution_tree(
     monkeypatch.setattr(module.SubagentRunService, "_ensure_thread_relation", relation)
     monkeypatch.setattr(module.SubagentRunService, "_create_run_record", existing_run)
 
+    class Db:
+        async def scalar(self, statement):
+            return SimpleNamespace(uid="user-1", role="user", is_deleted=0)
+
     async def start():
         """调用待测子 Run 创建入口。"""
-        return await module.SubagentRunService(object()).start(
+        return await module.SubagentRunService(Db()).start(
             uid="user-1",
             created_by_run_id="parent-run",
             agent_item=SimpleNamespace(id=7, slug="child", name="Child"),

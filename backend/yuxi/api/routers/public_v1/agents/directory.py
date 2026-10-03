@@ -16,7 +16,7 @@ async def list_agents(
     context: PublicAgentContext = Depends(require_public_context), db: AsyncSession = Depends(get_db)
 ):
     """列出凭据所有者可见的主 Agent。"""
-    agents = await list_public_agents(user=context.owner, db=db)
+    agents = await list_public_agents(user=context.user, db=db)
     return {"data": [_agent_response(agent) for agent in agents]}
 
 
@@ -27,7 +27,7 @@ async def retrieve_agent(
     db: AsyncSession = Depends(get_db),
 ):
     """按后端可见性读取主 Agent。"""
-    agent = await get_public_agent(agent_id=agent_id, user=context.owner, db=db)
+    agent = await get_public_agent(agent_id=agent_id, user=context.user, db=db)
     return _agent_response(agent)
 
 

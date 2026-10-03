@@ -201,7 +201,7 @@ const emit = defineEmits(['update:modelValue'])
 
 const scopeOptions = [
   { key: 'read_scope', title: '读取权限' },
-  { key: 'manage_scope', title: '共享管理权限（包含读取权限）' }
+  { key: 'manage_scope', title: '管理权限（仅管理员生效，包含使用）' }
 ]
 
 const baseShareModeOptions = [
@@ -279,7 +279,9 @@ const normalizeScope = (scope, { includeCurrent = false } = {}) => {
 }
 
 const isManageScopeWithinRead = (manageScope, readScope = scopes.read_scope) => {
-  if (!manageScope || !readScope || readScope.access_level === 'global') return true
+  if (!manageScope) return true
+  if (!readScope) return false
+  if (readScope.access_level === 'global') return true
   if (manageScope.access_level !== readScope.access_level) return false
   if (readScope.access_level === 'user') {
     return (
@@ -349,6 +351,7 @@ const userOptions = computed(() =>
   users.value.map((user) => ({
     label: user.department_name ? `${user.username}（${user.department_name}）` : user.username,
     value: user.uid,
+    role: user.role,
     department_id: user.department_id
   }))
 )
@@ -368,6 +371,9 @@ const getAccessSummary = (scopeKey, accessLevel) => {
 const getSelectionOptions = (scopeKey, accessLevel) => {
   let options = accessLevel === 'department' ? departmentOptions.value : userOptions.value
 
+  if (scopeKey === 'manage_scope' && accessLevel === 'user') {
+    options = options.filter((item) => ['admin', 'superadmin'].includes(item.role))
+  }
   const query = selectionSearch[scopeKey][accessLevel].trim().toLowerCase()
   return query ? options.filter((item) => item.label.toLowerCase().includes(query)) : options
 }

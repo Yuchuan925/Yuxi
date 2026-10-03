@@ -7,7 +7,7 @@ from datetime import UTC
 from datetime import datetime as dt
 from typing import Annotated, Any
 
-from sqlalchemy import delete, func, or_, select
+from sqlalchemy import text, delete, func, or_, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -88,9 +88,20 @@ class UserRepository:
         async with self._session() as session:
             query = select(User).where(User.id == id, User.is_deleted == 0)
             if for_update:
-                query = query.with_for_update()
+                query = query.with_for_update().execution_options(populate_existing=True)
             result = await session.execute(query)
             return result.scalar_one_or_none()
+
+    async def lock_active_human(self, uid: str) -> User | None:
+        """在资源写入事务内刷新并共享锁定当前操作人身份。"""
+        if self.db_session is None:
+            raise RuntimeError("身份锁需要资源写入事务")
+        return await self.db_session.scalar(
+            select(User)
+            .where(User.uid == uid, User.is_deleted == 0, User.user_kind == "human")
+            .with_for_update(read=True)
+            .execution_options(populate_existing=True)
+        )
 
     @staticmethod
     async def _revoke_api_keys(session: AsyncSession, user_id: int, revoked_at: dt) -> None:
@@ -120,7 +131,7 @@ class UserRepository:
 
     async def get_by_uid_with_db(self, db: AsyncSession, uid: str) -> User | None:
         """使用指定的 db 获取用户"""
-        result = await db.execute(select(User).where(User.uid == uid))
+        result = await db.execute(select(User).where(User.uid == uid).execution_options(populate_existing=True))
         return result.scalar_one_or_none()
 
     async def list_by_uids(self, uids: list[str]) -> list[User]:
@@ -269,10 +280,13 @@ class UserRepository:
     async def soft_delete(self, id: int, username: str | None = None, phone_number: str | None = None) -> bool:
         """软删除用户"""
         async with self._session() as session:
+            if session.get_bind().dialect.name == "postgresql":
+                await session.execute(text("SELECT pg_advisory_xact_lock(1498765386)"))
             result = await session.execute(select(User).where(User.id == id, User.is_deleted == 0).with_for_update())
             user = result.scalar_one_or_none()
             if user is None:
                 return False
+            await self.ensure_deletable_superadmin(session, user)
             user.is_deleted = 1
 
             user.deleted_at = _utc_now()
@@ -291,6 +305,7 @@ class UserRepository:
     async def delete_for_admin(self, user: User) -> None:
         """软删除用户并在同一事务中不可恢复地撤销其 API Key。"""
         async with self._session() as session:
+            await self.ensure_deletable_superadmin(session, user)
             user.is_deleted = 1
             user.deleted_at = _utc_now()
             user.username = f"已注销用户-{user.id}"
@@ -300,6 +315,29 @@ class UserRepository:
             await self._revoke_api_keys(session, user.id, user.deleted_at)
             await self._delete_scheduled_jobs(session, user.uid)
             await session.flush()
+
+    async def lock_identity_changes(self) -> None:
+        """删除身份前按共同顺序取得事务锁。"""
+        async with self._session() as session:
+            if session.get_bind().dialect.name == "postgresql":
+                await session.execute(text("SELECT pg_advisory_xact_lock(1498765386)"))
+
+    async def ensure_deletable_superadmin(self, session, user: User) -> None:
+        """保留至少一个未删除的系统管理员。"""
+        if session.get_bind().dialect.name == "postgresql":
+            await session.execute(text("SELECT pg_advisory_xact_lock(1498765386)"))
+        if user.role == "superadmin" and not user.is_deleted:
+            survivor = await session.scalar(
+                select(User.id)
+                .where(
+                    User.role == "superadmin",
+                    User.is_deleted == 0,
+                    User.id != user.id,
+                )
+                .limit(1)
+            )
+            if survivor is None:
+                raise ValueError("必须至少保留一个有效系统管理员")
 
     async def exists_by_uid(self, uid: str) -> bool:
         """检查 uid 是否存在"""

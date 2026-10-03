@@ -6,13 +6,13 @@
 
 文档管理接口要求知识库管理权限；原始文件上传接口还要求管理员身份。读取和外部查询接口要求知识库读取权限。
 
-知识库的 `share_config` 使用 version 2，分别保存 `read_scope` 和 `manage_scope`。范围的 `access_level` 可以是 `global`、`department` 或 `user`；管理范围必须包含在读取范围内。
+知识库的 `share_config` 使用 version 2，分别保存 `read_scope` 和 `manage_scope`。范围的 `access_level` 可以是 `global`、`department` 或 `user`；范围关系遵循[资源权限的同类型子集规则](../mechanisms/resource-permissions.md#共享资源)。
 
 | 用户 | 读取 | 管理 |
 | --- | --- | --- |
-| 创建者 | 有 | 有 |
+| 管理员所有者 | 有 | 有 |
 | `superadmin` | 有 | 有 |
-| `admin` | 命中读取范围时有 | 命中管理范围时有 |
+| `admin` | 命中读取范围时有 | 同时命中读取与管理范围时有 |
 | `user` | 命中读取范围时有 | 无 |
 
 前端显示和 Agent 配置只会缩小可见范围，最终授权由后端依赖和 repository/manager 查询执行。

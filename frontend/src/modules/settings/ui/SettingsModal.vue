@@ -41,7 +41,7 @@
             class="sider-item"
             :class="{ activesec: activeTab === 'base' }"
             @click="activeTab = 'base'"
-            v-if="userStore.isAdmin"
+            v-if="userStore.isSuperAdmin"
           >
             <Settings class="icon" :size="18" />
             <span>基本设置</span>
@@ -50,7 +50,7 @@
             class="sider-item"
             :class="{ activesec: activeTab === 'ocr' }"
             @click="activeTab = 'ocr'"
-            v-if="userStore.isAdmin"
+            v-if="userStore.isSuperAdmin"
           >
             <ScanText class="icon" :size="18" />
             <span>OCR 配置</span>
@@ -148,7 +148,7 @@
           class="nav-item"
           :class="{ active: activeTab === 'base' }"
           @click="activeTab = 'base'"
-          v-if="userStore.isAdmin"
+          v-if="userStore.isSuperAdmin"
         >
           基本设置
         </div>
@@ -156,7 +156,7 @@
           class="nav-item"
           :class="{ active: activeTab === 'ocr' }"
           @click="activeTab = 'ocr'"
-          v-if="userStore.isAdmin"
+          v-if="userStore.isSuperAdmin"
         >
           OCR 配置
         </div>
@@ -202,11 +202,11 @@
             <AgentEnvSettingsCard />
           </div>
 
-          <div v-show="activeTab === 'base'" v-if="userStore.isAdmin && loadedTabs.has('base')">
+          <div v-show="activeTab === 'base'" v-if="userStore.isSuperAdmin && loadedTabs.has('base')">
             <BasicSettingsSection />
           </div>
 
-          <div v-show="activeTab === 'ocr'" v-if="userStore.isAdmin && loadedTabs.has('ocr')">
+          <div v-show="activeTab === 'ocr'" v-if="userStore.isSuperAdmin && loadedTabs.has('ocr')">
             <OCRSettingsSection />
           </div>
 
@@ -288,7 +288,8 @@ const visible = computed({
 const availableTabs = computed(() => {
   const tabs = []
   if (userStore.isLoggedIn) tabs.push('account', 'apiKeys', 'agentEnv')
-  if (userStore.isAdmin) tabs.push('base', 'ocr', 'user')
+  if (userStore.isAdmin) tabs.push('user')
+  if (userStore.isSuperAdmin) tabs.push('base', 'ocr')
   if (userStore.isSuperAdmin) tabs.push('department')
   return tabs
 })
@@ -298,7 +299,7 @@ const setActiveTab = (preferredTab) => {
     activeTab.value = preferredTab
     return
   }
-  activeTab.value = userStore.isAdmin ? 'base' : availableTabs.value[0]
+  activeTab.value = userStore.isSuperAdmin ? 'base' : availableTabs.value[0]
 }
 
 const handleClose = () => {

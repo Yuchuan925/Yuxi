@@ -61,7 +61,7 @@ const projectPendingId = ref(null)
 
 // Provide settings modal methods to child components
 const openSettingsModal = (tab) => {
-  settingsInitialTab.value = tab || (userStore.isAdmin ? 'base' : 'account')
+  settingsInitialTab.value = tab || (userStore.isSuperAdmin ? 'base' : 'account')
   showSettingsModal.value = true
 }
 

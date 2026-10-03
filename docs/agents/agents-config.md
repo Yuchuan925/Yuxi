@@ -6,13 +6,19 @@
 
 | 对象 | 负责什么 |
 | --- | --- |
-| `Agent` | 数据库中的智能体资源，保存名称、slug、共享范围和持久化配置 |
+| `Agent` | 数据库中的智能体资源，保存名称、slug、私有／共享状态、共享范围和持久化配置 |
 | `BaseAgent` | 代码中的后端类型，声明 `context_schema` 和 `get_graph()` |
 | `BaseContext` | 配置字段和运行时输入的 Schema |
 | `config_json.context` | 当前 Agent 保存的配置值 |
 | Graph / middleware | 根据 Context 组合模型、工具、文件和扩展能力 |
 
 内置 `ChatbotAgent` 用于普通对话，`SubAgentBackend` 用于被主智能体委派的任务。子智能体的配置入口与普通智能体相同。
+
+## 私有与共享定义
+
+新建主 Agent 默认 `visibility=private`。普通用户可以建设自己的私有主 Agent，管理员还可显式创建共享主 Agent。普通用户不能建设 SubAgent 定义，私有所有权仍遵循字段角色限制。详情接口返回 `can_manage`、`can_run`、`can_publish`、`can_share` 和 `can_transfer`，界面按这些能力提供操作。
+
+管理员发布自己的私有主 Agent 使用 `POST /api/agent/{slug}/publish`，请求体为 `{"share_config": {"version": 2, "read_scope": {"access_level": "global"}, "manage_scope": null}}`。成功后回读定义得到 `visibility=shared`，ID 与所有者不变，既有会话和产物继续隔离。更新接口拒绝直接改写状态或所有者；私有定义拒绝共享配置，发布失败保留私有状态。完整授权关系见[资源权限](../mechanisms/resource-permissions.md)。
 
 ## 配置页面从哪里来
 
@@ -28,7 +34,7 @@ Context 字段
 
 metadata 可以定义展示名称、说明、控件类型、选项和角色权限。运行期 ID、owner 和内部派生值应隐藏，不作为用户配置。
 
-`metadata.auth` 只限制修改权限：`admin` 字段允许管理员和超级管理员修改，`superadmin` 字段只允许超级管理员修改。普通用户读取有权访问的智能体时，可以读到这些已保存值，运行也使用这些值；不可修改的字段不进入其编辑表单，后端会过滤越权提交的字段并保留已保存值。`auth` 不提供字段保密能力，Context 配置不得存放凭据。
+`metadata.auth` 只限制修改权限：`admin` 字段允许管理员和超级管理员修改，`superadmin` 字段只允许超级管理员修改。普通用户读取有权访问的智能体时，可以读到这些已保存值，运行也使用这些值；不可修改的字段不进入其编辑表单，后端明确拒绝越权提交的字段；省略字段保留已保存值。`auth` 不提供字段保密能力，Context 配置不得存放凭据。
 
 例如管理员将 `max_execution_steps` 设置为 50，普通用户运行该智能体时的 `recursion_limit` 也为 50。已经固化运行快照的 Run 保留自己的配置；后续新 Run 读取保存的配置。知识库、Skills 等资源仍按运行用户的访问权限筛选。
 

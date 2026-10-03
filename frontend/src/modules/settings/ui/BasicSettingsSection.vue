@@ -1,6 +1,6 @@
 <template>
   <div class="basic-settings-section">
-    <template v-if="userStore.isAdmin">
+    <template v-if="userStore.isSuperAdmin">
       <template v-if="userStore.isSuperAdmin">
         <div class="section-title">默认项配置</div>
         <div class="settings-panel">
@@ -55,7 +55,7 @@
     </template>
 
     <!-- 服务链接部分 -->
-    <div v-if="userStore.isAdmin">
+    <div v-if="userStore.isSuperAdmin">
       <div class="services-grid">
         <div class="service-link-card">
           <div class="service-info">

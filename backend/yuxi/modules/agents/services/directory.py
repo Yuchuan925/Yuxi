@@ -5,14 +5,15 @@ from __future__ import annotations
 from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from yuxi.modules.agents.repositories.definitions import AgentRepository
+from yuxi.modules.agents.repositories.definitions import AgentRepository, user_can_run_agent
 from yuxi.modules.agents.models.definitions import Agent
 from yuxi.modules.identity.models import User
 
 
 async def list_public_agents(*, user: User, db: AsyncSession) -> list[Agent]:
     """列出当前身份可调用的主 Agent。"""
-    return await AgentRepository(db).list_visible(user=user)
+    agents = await AgentRepository(db).list_visible(user=user)
+    return [agent for agent in agents if agent.visibility == "shared" or user_can_run_agent(user, agent)]
 
 
 async def get_public_agent(*, agent_id: str, user: User, db: AsyncSession) -> Agent:

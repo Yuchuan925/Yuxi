@@ -14,7 +14,7 @@ from yuxi.modules.system.readiness import get_readiness
 from yuxi.modules.identity.models import User
 from yuxi.infrastructure.observability.logging import LOG_FILE, logger
 
-from yuxi.api.dependencies.auth import get_admin_user, get_db, get_required_user
+from yuxi.api.dependencies.auth import get_superadmin_user, get_db, get_required_user
 
 BRAND_STATIC_DIR = Path(__file__).resolve().parents[2] / "modules/system/static"
 
@@ -108,7 +108,7 @@ async def get_config(
 async def update_config_single(
     key=Body(...),
     value=Body(...),
-    current_user: User = Depends(get_admin_user),
+    current_user: User = Depends(get_superadmin_user),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """更新单个配置项"""
@@ -126,7 +126,7 @@ async def update_config_single(
 @system.post("/config/update")
 async def update_config_batch(
     items: dict = Body(...),
-    current_user: User = Depends(get_admin_user),
+    current_user: User = Depends(get_superadmin_user),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """批量更新配置项"""
@@ -140,7 +140,7 @@ async def update_config_batch(
 
 
 @system.get("/logs")
-async def get_system_logs(levels: str | None = None, current_user: User = Depends(get_admin_user)):
+async def get_system_logs(levels: str | None = None, current_user: User = Depends(get_superadmin_user)):
     """获取当前 API 进程日志。
 
     Args:
@@ -231,7 +231,7 @@ async def get_info_config():
 
 
 @system.post("/info/reload")
-async def reload_info_config(current_user: User = Depends(get_admin_user)):
+async def reload_info_config(current_user: User = Depends(get_superadmin_user)):
     """重新加载信息配置"""
     try:
         config = await load_info_config()
@@ -256,7 +256,7 @@ class ConfigOptionValuePayload(BaseModel):
 
 @system.get("/config/options")
 async def get_config_options(
-    current_user: User = Depends(get_admin_user),
+    current_user: User = Depends(get_superadmin_user),
     db: AsyncSession = Depends(get_db),
 ):
     """返回系统定义的通用配置表单和值。"""
@@ -270,7 +270,7 @@ async def get_config_options(
 async def put_config_option(
     key: str,
     payload: ConfigOptionValuePayload,
-    current_user: User = Depends(get_admin_user),
+    current_user: User = Depends(get_superadmin_user),
     db: AsyncSession = Depends(get_db),
 ):
     """保存一个通用配置项的 JSON 值。"""
@@ -313,3 +313,33 @@ async def get_ocr_health(
     from yuxi.modules.documents.service import check_all_ocr_health
 
     return {"health": await check_all_ocr_health(db)}
+
+
+class ResourceOwnerUpdate(BaseModel):
+    """共享资源的目标所有者。"""
+
+    owner_uid: str
+
+
+@system.put("/resources/{kind}/{resource_id}/owner")
+async def transfer_resource_owner(
+    kind: str,
+    resource_id: str,
+    payload: ResourceOwnerUpdate,
+    current_user: User = Depends(get_superadmin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """系统管理员转移一个共享资源。"""
+    from yuxi.modules.identity.services.resource_ownership import transfer_shared_resource
+
+    try:
+        await transfer_shared_resource(
+            db, kind=kind, resource_id=resource_id, owner_uid=payload.owner_uid, actor=current_user
+        )
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {"success": True}

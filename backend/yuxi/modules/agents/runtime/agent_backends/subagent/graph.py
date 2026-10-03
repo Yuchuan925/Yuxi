@@ -1,3 +1,5 @@
+from yuxi.modules.agents.runtime.checkpoint_cleanup import CheckpointCleanupModel
+from yuxi.modules.agents.runtime.middlewares.authorization import RuntimeAuthorizationMiddleware
 from typing import Any
 
 from deepagents.middleware.patch_tool_calls import PatchToolCallsMiddleware
@@ -74,7 +76,7 @@ class _SubAgentToolFilterMiddleware(AgentMiddleware[Any, Any, Any]):
         )
 
 
-async def _build_middlewares(context, backend, tool_approval_mode: str):
+async def _build_middlewares(context, backend, tool_approval_mode: str, *, cleanup_model=None):
     # tool_approval_mode is normalized once by the caller (get_graph / SubAgentBackend.get_graph).
 
     middlewares = [
@@ -87,7 +89,9 @@ async def _build_middlewares(context, backend, tool_approval_mode: str):
             disabled_tools=_SUBAGENT_DISABLED_TOOLS,
         ),
         SkillsMiddleware(),
-        create_summary_middleware_from_context(context, backend=backend),
+        create_summary_middleware_from_context(context, backend=backend, model=cleanup_model)
+        if cleanup_model
+        else create_summary_middleware_from_context(context, backend=backend),
         TodoListMiddleware(system_prompt=TODO_MID_PROMPT),
         PatchToolCallsMiddleware(),
         _SubAgentToolFilterMiddleware(),
@@ -101,6 +105,8 @@ async def _build_middlewares(context, backend, tool_approval_mode: str):
     )
     if approval:
         middlewares.append(approval)
+    # after_model 按逆序执行，授权必须先于审批产生等待点。
+    middlewares.append(RuntimeAuthorizationMiddleware())
     return middlewares
 
 
@@ -131,25 +137,33 @@ class SubAgentBackend(BaseAgent):
             ]
         return info
 
-    async def get_graph(self, *, context, **kwargs):
-        """从显式准备的 Context 构建执行图。"""
-        if not getattr(context, "_runtime_prepared", False):
-            raise ValueError("构图需要已准备的 Context")
-        await sync_agent_context_skills(context)
-        model_spec = resolve_chat_model_spec(context.model)
+    async def get_graph(self, *, context, checkpoint_only: bool = False, **kwargs):
+        """构建执行图；checkpoint_only 仅供归属已验证的取消服务使用状态 API。"""
         tool_approval_mode = normalize_tool_approval_mode(getattr(context, "tool_approval_mode", "default"))
-        disabled_tools = _SUBAGENT_DISABLED_TOOLS
-        backend = create_agent_composite_backend(context)
-
-        return create_agent(
-            model=load_chat_model(
-                fully_specified_name=model_spec,
+        if checkpoint_only:
+            model = CheckpointCleanupModel()
+            tools = []
+            prompt = ""
+            middlewares = await _build_middlewares(context, None, tool_approval_mode, cleanup_model=model)
+        else:
+            if not getattr(context, "_runtime_prepared", False):
+                raise ValueError("构图需要已准备的 Context")
+            await sync_agent_context_skills(context)
+            backend = create_agent_composite_backend(context)
+            model = load_chat_model(
+                fully_specified_name=resolve_chat_model_spec(context.model),
                 session_id=context.thread_id,
                 uid=context.uid,
-            ),
-            tools=_filter_disabled_tools(await resolve_configured_runtime_tools(context), disabled_tools),
-            system_prompt=build_prompt_with_context(context),
-            middleware=await _build_middlewares(context, backend, tool_approval_mode),
+                max_retries=0,
+            )
+            tools = _filter_disabled_tools(await resolve_configured_runtime_tools(context), _SUBAGENT_DISABLED_TOOLS)
+            prompt = build_prompt_with_context(context)
+            middlewares = await _build_middlewares(context, backend, tool_approval_mode)
+        return create_agent(
+            model=model,
+            tools=tools,
+            system_prompt=prompt,
+            middleware=middlewares,
             state_schema=BaseState,
             checkpointer=await self._get_checkpointer(),
         )

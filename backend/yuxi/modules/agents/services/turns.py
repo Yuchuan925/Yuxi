@@ -48,6 +48,24 @@ async def resume_turn(
         _require_replay(existing, event_type, intent_hash)
         return _accepted(existing)
 
+    conversation = await require_thread(db=db, scope=scope, thread_id=thread_id)
+    # 与 Agent 删除保持 Agent → Conversation 的锁序。
+    from yuxi.modules.agents.repositories.definitions import AgentRepository
+    from yuxi.modules.identity.repositories.users import UserRepository
+
+    user = await UserRepository(db).get_by_uid(scope.uid)
+    agent = (
+        None
+        if user is None or user.is_deleted
+        else await AgentRepository(db).get_visible_by_slug(
+            slug=conversation.agent_id,
+            user=user,
+            kind="any",
+            for_key_share=True,
+        )
+    )
+    if agent is None:
+        raise HTTPException(status_code=404, detail="Agent 不可访问")
     conversation = await require_thread(db=db, scope=scope, thread_id=thread_id, lock=True)
     if conversation.status not in {"active", "subagent"}:
         raise HTTPException(status_code=409, detail="Thread 已归档")
@@ -399,18 +417,11 @@ async def _clear_waitpoint_checkpoint(run: AgentRun) -> None:
     """移除未执行的工具调用，再推进等待节点而不执行工具。"""
     from yuxi.modules.agents.runtime.sandbox.paths import runtime_workdir_path
     from yuxi.modules.agents.runtime.agent_backends import get_agent_backend
-    from yuxi.modules.agents.runtime.context import prepare_agent_runtime_context
     from yuxi.modules.agents.repositories.definitions import AgentRepository
     from yuxi.modules.workspace.services.bindings import resolve_conversation_workdir_binding
-    from yuxi.modules.identity.models import User
 
     async with pg_manager.get_async_session_context() as db:
-        user = await db.scalar(select(User).where(User.uid == run.uid))
-        if user is None:
-            raise ValueError("等待点用户不存在")
-        agent_item = await AgentRepository(db).get_visible_by_slug(
-            slug=run.agent_slug, user=user, kind="subagent" if run.run_type == "subagent" else "main"
-        )
+        agent_item = await AgentRepository(db).get_by_slug(run.agent_slug)
         if agent_item is None:
             raise ValueError("等待点 Agent 不存在")
         backend = get_agent_backend(agent_item.backend_id)
@@ -436,8 +447,8 @@ async def _clear_waitpoint_checkpoint(run: AgentRun) -> None:
     )
     context.model = run.input_payload["model_spec"]
     context.tool_approval_mode = run.input_payload["tool_approval_mode"]
-    context = await prepare_agent_runtime_context(context)
-    graph = await backend.get_graph(context=context)
+    # 持久 Run 与 Thread 的完整归属已验证；清理不取得资源使用授权。
+    graph = await backend.get_graph(context=context, checkpoint_only=True)
     config = {"configurable": {"uid": run.uid, "thread_id": run.conversation_thread_id}}
     await _drain_waitpoint_checkpoint(graph, config)
 
@@ -462,14 +473,12 @@ async def _drain_waitpoint_checkpoint(graph, config: dict) -> None:
             )
         elif pending.content != "[已取消]":
             raise ValueError("等待 checkpoint 缺少未执行的工具调用")
-    for _ in range(32):
-        saved = await graph.aget_state(config)
-        if not saved.next:
-            return
-        if len(saved.next) != 1:
-            raise ValueError("等待 checkpoint 存在多个待清理节点")
-        await graph.aupdate_state(config, {}, as_node=saved.next[0])
-    raise ValueError("等待 checkpoint 清理未收敛")
+    from langgraph.graph import END
+
+    await graph.aupdate_state(config, None, as_node=END)
+    saved = await graph.aget_state(config)
+    if saved.next or saved.interrupts:
+        raise ValueError("等待 checkpoint 清理未收敛")
 
 
 def _validate_resume_response(waitpoint: dict, response: dict) -> dict:

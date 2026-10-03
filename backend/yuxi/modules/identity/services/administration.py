@@ -148,3 +148,33 @@ async def initialize_system_admin(
     except Exception:
         await db.rollback()
         raise
+
+
+async def lock_member_management(
+    db: AsyncSession, *, actor_id: int, member_id: int | None = None
+) -> tuple[User, User | None]:
+    """按共同锁序取得目标和操作人的当前身份，持有到写入事务结束。"""
+    repo = UserRepository(db)
+    await repo.lock_identity_changes()
+    member = await repo.get_active_by_id(member_id, for_update=True) if member_id is not None else None
+    if member_id is not None and member is None:
+        raise LookupError("用户不存在")
+    actor = await repo.get_active_by_id(actor_id, for_update=True)
+    if actor is None or actor.role not in {"admin", "superadmin"} or actor.user_kind != "human":
+        raise PermissionError("当前管理员身份已失效")
+    return actor, member
+
+
+async def promote_user_role(db: AsyncSession, *, user: User, role: str) -> None:
+    """只提升有效产品用户角色，持久化前锁定当前身份。"""
+    from sqlalchemy import select
+
+    current = await db.scalar(
+        select(User).where(User.id == user.id).with_for_update().execution_options(populate_existing=True)
+    )
+    ranks = {"user": 0, "admin": 1, "superadmin": 2}
+    if current is None or current.is_deleted or current.user_kind != "human":
+        raise ValueError("只能提升有效产品用户角色")
+    if role not in ranks or ranks[role] < ranks[current.role]:
+        raise ValueError("角色只允许提升，禁止降级")
+    current.role = role

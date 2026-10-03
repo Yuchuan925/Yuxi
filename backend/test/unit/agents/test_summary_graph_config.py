@@ -74,7 +74,7 @@ async def test_graph_uses_shared_summary_middleware_factory(
 def test_shared_summary_factory_uses_one_threshold(monkeypatch: pytest.MonkeyPatch) -> None:
     captured: dict = {}
 
-    def load_model(fully_specified_name, *, session_id, uid):
+    def load_model(fully_specified_name, *, session_id, uid, max_retries):
         """记录摘要模型实际接收的会话 ID 与用户 UID。"""
         captured["session_id"] = session_id
         captured["uid"] = uid
@@ -124,7 +124,7 @@ async def test_graph_passes_conversation_session_to_model(monkeypatch, graph_mod
     monkeypatch.setattr(agent_class, "_get_checkpointer", AsyncMock(return_value=None))
     captured = {}
 
-    def load_model(fully_specified_name, *, session_id, uid):
+    def load_model(fully_specified_name, *, session_id, uid, max_retries):
         """用装配参数作为模型占位，核对传给图的对象。"""
         captured.update(spec=fully_specified_name, session_id=session_id, uid=uid)
         return captured
@@ -141,3 +141,67 @@ async def test_graph_rejects_unprepared_context(agent_class):
     """未经权限资源准备的对象不能构建执行图。"""
     with pytest.raises(ValueError, match="已准备"):
         await agent_class().get_graph(context=_context())
+
+
+@pytest.mark.parametrize(
+    "graph_module,agent_class",
+    [
+        (chatbot_graph, chatbot_graph.ChatbotAgent),
+        (subagent_graph, subagent_graph.SubAgentBackend),
+    ],
+)
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_checkpoint_cleanup_preserves_original_tasks_and_state(monkeypatch, graph_module, agent_class):
+    """维护图保留真实拓扑与状态，不依赖模型、资源或有效账号。"""
+    from langchain_core.messages import AIMessage
+    from langgraph.checkpoint.memory import InMemorySaver
+
+    from yuxi.modules.agents.runtime.checkpoint_cleanup import CheckpointCleanupModel
+    from yuxi.modules.agents.services.turns import _drain_waitpoint_checkpoint
+
+    context = _context()
+    context.thread_id, context.uid = "cleanup-thread", "deleted-user"
+    context._runtime_prepared = True
+    context.tool_approval_mode = "default"
+    saver = InMemorySaver()
+    monkeypatch.setattr(agent_class, "_get_checkpointer", AsyncMock(return_value=saver))
+    monkeypatch.setattr(graph_module, "sync_agent_context_skills", AsyncMock())
+    monkeypatch.setattr(graph_module, "resolve_configured_runtime_tools", AsyncMock(return_value=[]))
+    monkeypatch.setattr(graph_module, "create_agent_composite_backend", lambda _context: None)
+    monkeypatch.setattr(graph_module, "build_prompt_with_context", lambda _context: "")
+    monkeypatch.setattr(graph_module, "load_chat_model", lambda **_kwargs: CheckpointCleanupModel())
+    monkeypatch.setattr(summary_module, "load_chat_model", lambda **_kwargs: CheckpointCleanupModel())
+    if graph_module is chatbot_graph:
+        monkeypatch.setattr(graph_module, "create_memory_middleware", AsyncMock(return_value=None))
+        monkeypatch.setattr(graph_module, "create_subagent_task_middleware", AsyncMock(return_value=None))
+    original = await agent_class().get_graph(context=context)
+    config = {"configurable": {"thread_id": context.thread_id}}
+    await original.aupdate_state(
+        config,
+        {
+            "messages": [
+                AIMessage(id="pending", content="", tool_calls=[{"id": "one", "name": "write_file", "args": {}}])
+            ],
+            "activated_skills": ["retained"],
+        },
+        as_node="model",
+    )
+    assert (await original.aget_state(config)).next
+
+    def unexpected(*_args, **_kwargs):
+        """维护构图不得解析外部模型或沙盒。"""
+        raise AssertionError("清理读取了运行资源")
+
+    for name in ("load_chat_model", "create_agent_composite_backend", "resolve_chat_model_spec"):
+        monkeypatch.setattr(graph_module, name, unexpected)
+    monkeypatch.setattr(summary_module, "load_chat_model", unexpected)
+    cleanup = await agent_class().get_graph(context=context, checkpoint_only=True)
+    assert set(cleanup.nodes) == set(original.nodes)
+    assert set(cleanup.channels) == set(original.channels)
+    await _drain_waitpoint_checkpoint(cleanup, config)
+    saved = await original.aget_state(config)
+    assert saved.next == () and saved.interrupts == ()
+    assert saved.values["messages"][-1].content == "[已取消]"
+    assert saved.values["messages"][-1].tool_calls == []
+    assert saved.values["activated_skills"] == ["retained"]

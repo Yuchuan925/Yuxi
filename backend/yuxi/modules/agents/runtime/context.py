@@ -535,11 +535,8 @@ async def prepare_agent_runtime_context(
         if not str(getattr(context, "model", "") or "").strip():
             setattr(context, "model", (await system_options.get(db))["default_model"])
         user = await UserRepository().get_by_uid_with_db(db, uid)
-        if user is None:
-            for field_name in resource_fields:
-                setattr(context, field_name, [])
-            context._skill_runtime_snapshot = {}
-            return context
+        if user is None or user.is_deleted:
+            raise PermissionError("执行账号已失效")
 
         raw_resources = {field_name: getattr(context, field_name, None) for field_name in resource_fields}
         normalized = await normalize_agent_context_config(
@@ -548,10 +545,16 @@ async def prepare_agent_runtime_context(
             user=user,
             context_schema=schema,
         )
+        context._resource_selections = raw_resources
+        context._capability_limited = any(
+            isinstance(raw_resources[name], list) and set(raw_resources[name]) - set(normalized[name])
+            for name in resource_fields
+        )
         for field_name in resource_fields:
             setattr(context, field_name, normalized[field_name])
 
         skill_scope = await resolve_runtime_skills_for_context(context, db=db, user=user)
+        context._capability_limited = context._capability_limited or skill_scope.get("capability_limited", False)
         setattr(context, "_skill_runtime_snapshot", skill_scope)
         context.skills = skill_scope["context_skills"]
         context.preload_skills = skill_scope["context_preload_skills"]

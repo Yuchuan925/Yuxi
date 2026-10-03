@@ -255,7 +255,7 @@ async def test_normalize_agent_context_config_defaults_mcps_off_and_filters_expl
             "max_execution_steps": 50,
         },
         db=object(),
-        user=types.SimpleNamespace(role="user", uid="u1", department_id=None),
+        user=types.SimpleNamespace(role="user", uid="u1", department_id=None, is_deleted=0),
         context_schema=ChatBotContext,
     )
 
@@ -275,7 +275,7 @@ async def test_normalize_agent_context_config_defaults_mcps_off_and_filters_expl
     selected_mcp = await normalize_agent_context_config(
         {"tools": [], "knowledges": [], "mcps": ["mcp-a", "mcp-b"], "skills": []},
         db=object(),
-        user=types.SimpleNamespace(role="user", uid="u1", department_id=None),
+        user=types.SimpleNamespace(role="user", uid="u1", department_id=None, is_deleted=0),
         context_schema=ChatBotContext,
     )
     assert selected_mcp["mcps"] == ["mcp-a"]
@@ -283,7 +283,7 @@ async def test_normalize_agent_context_config_defaults_mcps_off_and_filters_expl
     omitted_mcp = await normalize_agent_context_config(
         {"tools": [], "knowledges": [], "skills": []},
         db=object(),
-        user=types.SimpleNamespace(role="user", uid="u1", department_id=None),
+        user=types.SimpleNamespace(role="user", uid="u1", department_id=None, is_deleted=0),
         context_schema=ChatBotContext,
     )
     assert omitted_mcp["mcps"] == []
@@ -291,7 +291,7 @@ async def test_normalize_agent_context_config_defaults_mcps_off_and_filters_expl
     empty_subagents_normalized = await normalize_agent_context_config(
         {"tools": [], "knowledges": [], "mcps": [], "skills": [], "subagents": []},
         db=object(),
-        user=types.SimpleNamespace(role="user", uid="u1", department_id=None),
+        user=types.SimpleNamespace(role="user", uid="u1", department_id=None, is_deleted=0),
         context_schema=ChatBotContext,
     )
 
@@ -308,7 +308,7 @@ async def test_normalize_agent_context_config_defaults_mcps_off_and_filters_expl
             "subagents": ["research-agent"],
         },
         db=object(),
-        user=types.SimpleNamespace(role="user", uid="u1", department_id=None),
+        user=types.SimpleNamespace(role="user", uid="u1", department_id=None, is_deleted=0),
         context_schema=ChatBotContext,
     )
 
@@ -383,7 +383,7 @@ async def test_prepare_agent_runtime_context_filters_resources_and_derives_runti
     class FakeUserRepository:
         async def get_by_uid_with_db(self, _db, uid):
             assert uid == "u1"
-            return types.SimpleNamespace(role="user", uid="u1", department_id=None)
+            return types.SimpleNamespace(role="user", uid="u1", department_id=None, is_deleted=0)
 
     class FakeAgentRepository:
         def __init__(self, _db):
@@ -539,17 +539,8 @@ async def test_prepare_agent_runtime_context_clears_resources_for_missing_user(m
         subagents=["agent"],
     )
 
-    prepared = await context_module.prepare_agent_runtime_context(context)
-
-    assert prepared.tools == []
-    assert prepared.knowledges == []
-    assert prepared.mcps == []
-    assert prepared.skills == []
-    assert prepared.preload_skills == []
-    assert prepared.subagents == []
-    assert not hasattr(prepared, "_visible_knowledge_bases")
-    assert prepared._skill_runtime_snapshot.get("effective_skills", []) == []
-    assert prepared._skill_runtime_snapshot.get("runtime_skills", {}) == {}
+    with pytest.raises(PermissionError, match="账号已失效"):
+        await context_module.prepare_agent_runtime_context(context)
 
 
 def test_persistent_config_cannot_replace_runtime_identity():

@@ -439,6 +439,7 @@ async def _agent(
             "name": f"Subagent boundary {slug[-8:]}",
             "slug": slug,
             "backend_id": "SubAgentBackend" if child else "ChatbotAgent",
+            "visibility": "shared",
             "is_subagent": child,
             "description": "SubAgent 边界 E2E",
             "config_json": {
@@ -450,7 +451,7 @@ async def _agent(
                     "mcps": [],
                     "skills": ["image-gen"],
                     "preload_skills": ["image-gen"],
-                    "subagents": [] if child else [subagent_slug],
+                    **({} if child else {"subagents": [subagent_slug]}),
                 }
             },
             "share_config": {

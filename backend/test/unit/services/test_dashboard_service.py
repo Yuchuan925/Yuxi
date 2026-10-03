@@ -58,12 +58,14 @@ async def dashboard_db():
         )
 
         agent1 = Agent(
+            visibility="shared",
             slug="agent-helper",
             backend_id="b-1",
             name="Helper Agent",
             share_config={},
         )
         agent2 = Agent(
+            visibility="shared",
             slug="agent-coder",
             backend_id="b-2",
             name="Coder Agent",
@@ -243,6 +245,7 @@ async def test_dashboard_service_basic_stats(dashboard_db):
     assert len(user_stats["daily_active_users"]) == 120
     assert user_stats["daily_active_users"][0]["date"] < user_stats["daily_active_users"][-1]["date"]
 
+
 async def test_agent_analytics_omits_removed_top_performers_contract(dashboard_db):
     """智能体统计保留概览字段且不再生成 TOP 5 排行。"""
     analytics = await DashboardService(dashboard_db).get_agent_analytics()
@@ -414,6 +417,7 @@ async def test_dashboard_audit_timestamps_carry_timezone_designator(dashboard_db
     assert detail["updated_at"].endswith("Z")
     for message in detail["messages"]:
         assert message["created_at"].endswith("Z")
+
 
 async def test_dashboard_service_conversation_detail(dashboard_db):
     service = DashboardService(dashboard_db)

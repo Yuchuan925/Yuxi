@@ -11,6 +11,7 @@ import {
   Wrench
 } from '@lucide/vue'
 
+import { agentApi } from '@/apis/agent_api'
 import { userApi } from '@/apis/user_api'
 import AgentRuntimeConfigForm from '@/modules/agents/ui/AgentRuntimeConfigForm.vue'
 import ShareConfigForm from '@/modules/agents/ui/ShareConfigForm.vue'
@@ -36,6 +37,8 @@ const runtimeAgentModalTabs = ['model', 'tools', 'other']
 
 const showAgentModal = ref(false)
 const editingAgentId = ref(null)
+const editingCapabilities = ref({})
+const publishing = ref(false)
 const agentModalActiveTab = ref('basic')
 const agentIconUploading = ref(false)
 const saving = ref(false)
@@ -100,7 +103,7 @@ const stringifyShareConfig = (share) => {
 
 const hasProfileChanges = computed(() => {
   if (!editingAgentId.value) return false
-  if (shareConfigNeedsRepair.value) return true
+  if (shareConfigNeedsRepair.value || publishing.value) return true
   const currentForm = snapshotAgentForm()
   const baselineForm = originalAgentForm.value
   if (
@@ -166,7 +169,10 @@ const normalizeShareConfigForPayload = () => {
 }
 
 const isEditingBuiltinAgent = computed(() => isBuiltinAgent({ id: editingAgentId.value }))
-const canEditAgentShareConfig = computed(() => !isEditingBuiltinAgent.value)
+const canEditAgentShareConfig = computed(() =>
+  editingCapabilities.value.can_share || publishing.value ||
+  (!editingAgentId.value && userStore.isAdmin && isSubAgentBackend(agentForm.backend_id))
+)
 const getAgentShareAllowedLevels = () => {
   if (isEditingBuiltinAgent.value) return ['global']
   if (userStore.isAdmin) return ['global', 'department', 'user']
@@ -230,6 +236,8 @@ const handleAgentModalAfterOpenChange = (open) => {
 
 const openCreate = () => {
   editingAgentId.value = null
+  editingCapabilities.value = {}
+  publishing.value = false
   agentModalActiveTab.value = 'basic'
   resetAgentForm()
   agentStore.resetAgentConfig()
@@ -247,6 +255,8 @@ const openEdit = async (agent) => {
     return
   }
 
+  editingCapabilities.value = detail
+  publishing.value = false
   editingAgentId.value = detail.agent_id
   agentModalActiveTab.value = 'basic'
   Object.assign(agentForm, {
@@ -270,8 +280,8 @@ const openEdit = async (agent) => {
 }
 
 const restoreChatAgentSelectionIfNeeded = async () => {
-  if (!agentStore.selectedAgent?.is_subagent) return
-  const fallbackAgentId = (agentStore.agents || []).find((agent) => !agent.is_subagent)?.id
+  if (agentStore.selectedAgent?.can_run && !agentStore.selectedAgent?.is_subagent) return
+  const fallbackAgentId = (agentStore.agents || []).find((agent) => agent.can_run && !agent.is_subagent)?.agent_id
   if (fallbackAgentId) await agentStore.selectAgent(fallbackAgentId)
 }
 
@@ -314,13 +324,13 @@ const buildAgentPayload = () => {
     name: agentForm.name.trim(),
     description: agentForm.description.trim() || null,
     icon: agentForm.icon.trim() || null,
-    share_config: normalizeShareConfigForPayload(),
-    is_subagent: isSubAgentBackend(agentForm.backend_id)
+    ...(canEditAgentShareConfig.value && !publishing.value ? { share_config: normalizeShareConfigForPayload() } : {})
   }
 
   if (!editingAgentId.value) {
     payload.slug = agentForm.slug.trim() || undefined
     payload.backend_id = agentForm.backend_id
+    payload.visibility = isSubAgentBackend(agentForm.backend_id) ? 'shared' : 'private'
   }
 
   return payload
@@ -350,9 +360,12 @@ const saveAgent = async () => {
         payload.config_json = { context: agentStore.changedAgentConfig }
       }
       const updated = await agentStore.updateAgentProfile(editingAgentId.value, payload)
+      const finalAgent = publishing.value
+        ? (await agentApi.publishAgent(editingAgentId.value, normalizeShareConfigForPayload())).agent
+        : updated
       shareConfigNeedsRepair.value = false
       captureProfileBaseline()
-      emit('saved', { mode: 'edit', agent: updated })
+      emit('saved', { mode: 'edit', agent: finalAgent })
       message.success('智能体已保存')
     } else {
       const created = await agentStore.createAgent(payload)
@@ -520,6 +533,10 @@ defineExpose({
             </label>
           </div>
 
+          <a-checkbox v-if="editingCapabilities.can_publish" v-model:checked="publishing">
+            发布为共享智能体（发布后无法改回私有）
+          </a-checkbox>
+          <a-alert v-if="publishing" type="info" show-icon message="只共享定义；已有会话、文件与产物仍归原用户。" />
           <div v-if="canEditAgentShareConfig" class="share-config-block">
             <div class="section-heading">
               <span>共享权限</span>

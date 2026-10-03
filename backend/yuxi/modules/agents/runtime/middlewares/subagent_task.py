@@ -129,8 +129,19 @@ class YuxiSubAgentMiddleware(AgentMiddleware[Any, ContextT, ResponseT]):
         request: ModelRequest[ContextT],
         handler: Callable[[ModelRequest[ContextT]], Awaitable[ModelResponse[ResponseT]]],
     ) -> ModelResponse[ResponseT]:
+        current = [agent for slug, agent in self.subagents.items() if slug in request.runtime.context.subagents]
+        available = "\n".join(f"- {agent.slug}: {agent.description or agent.name}" for agent in current)
+        prompt = SUBAGENT_SYSTEM_PROMPT.format(available_agents=available)
+        tools = [
+            tool.model_copy(
+                update={"description": SUBAGENT_START_DESCRIPTION + "\n\nAvailable subagent slugs:\n" + available}
+            )
+            if tool.name == "subagent_start"
+            else tool
+            for tool in request.tools
+        ]
         return await handler(
-            request.override(system_message=append_to_system_message(request.system_message, self.system_prompt))
+            request.override(tools=tools, system_message=append_to_system_message(request.system_message, prompt))
         )
 
     def _build_subagent_tools(self, available_agents: str) -> list[StructuredTool]:
@@ -142,9 +153,8 @@ class YuxiSubAgentMiddleware(AgentMiddleware[Any, ContextT, ResponseT]):
             runtime: ToolRuntime,
             thread_id: Annotated[str | None, ASYNC_THREAD_ID_ARG] = None,
         ) -> str | Command:
-            if subagent_slug not in self.subagents:
-                allowed = ", ".join(f"`{slug}`" for slug in self.subagents)
-                return f"无法调用子智能体 {subagent_slug}，可用子智能体只有：{allowed}"
+            if subagent_slug not in self.subagents or subagent_slug not in self.parent_context.subagents:
+                return "能力受限：当前调用者无权使用该子智能体。"
             if not runtime.tool_call_id:
                 raise ValueError("Tool call ID is required for subagent invocation")
 

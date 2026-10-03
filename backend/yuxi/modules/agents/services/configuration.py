@@ -6,7 +6,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from yuxi.modules.agents.runtime.agent_backends import get_agent_backend
 from yuxi.modules.agents.runtime.context import BaseContext, filter_config_by_role, resolve_agent_resource_options
 from yuxi.modules.agents.presets import discover_agent_presets
-from yuxi.modules.agents.repositories.definitions import AgentRepository
 from yuxi.modules.identity.models import User
 
 
@@ -19,6 +18,8 @@ async def prepare_agent_config_write(
 ) -> tuple[dict[str, Any], dict[str, set[str]]]:
     """过滤可写配置，并解析本次资源补丁对应的可访问键。"""
     filtered = filter_config_by_role(config_json, user.role, context_schema)
+    if filtered != config_json:
+        raise ValueError("配置包含当前角色不可写或未声明的字段")
     context = filtered.get("context")
     if not isinstance(context, dict):
         return filtered, {}
@@ -46,6 +47,8 @@ async def prepare_agent_config_write(
 
 async def initialize_agent_presets(db: AsyncSession) -> None:
     """确认所有角色后端存在，再按既有落库规则初始化。"""
+    from yuxi.modules.agents.repositories.definitions import AgentRepository
+
     presets = discover_agent_presets()
     for preset in presets:
         get_agent_backend(preset.backend_id)

@@ -29,6 +29,7 @@ from yuxi.modules.extensions.skills.projection import commit_skill_policy_and_re
 from yuxi.modules.extensions.skills.resolved import ResolvedSkill
 from yuxi.modules.extensions.skills.models import Skill
 from yuxi.modules.identity.models import User
+from yuxi.modules.identity.services.resource_grants import validate_shared_grants
 
 BUILTIN_SKILL_OPERATOR = "builtin-system"
 ADMIN_ROLES = {"admin", "superadmin"}
@@ -65,6 +66,8 @@ async def confirm_skill_install_draft(
     operator: User,
 ) -> list[dict[str, Any]]:
     """按共享授权确认并发布 Skill 草稿。"""
+    if operator.role not in ADMIN_ROLES or operator.is_deleted:
+        raise ValueError("共享 Skill 建设需要管理员权限")
     draft_dir, data, draft_items = load_and_select_draft_items(draft_id, slugs, operator)
     source_type = data["source_type"]
 
@@ -87,6 +90,7 @@ async def confirm_skill_install_draft(
         final_dir = skills_root / final_slug
         published = False
         try:
+            normalized_share_config = await validate_shared_grants(db, normalized_share_config)
             parsed = copy_skill_snapshot(draft_item.source_dir, temp_target, expected_slug=slug, final_slug=final_slug)
             if final_dir.exists():
                 raise ValueError("Skill slug 已被占用，请重新解析安装")
@@ -182,6 +186,7 @@ async def update_skill_share_config(
         allowed_access_levels=set(get_allowed_skill_access_levels(operator)),
     )
     repo = SkillRepository(db)
+    normalized = await validate_shared_grants(db, normalized)
     updated = await repo.update_share_config(item, share_config=normalized, updated_by=operator.uid)
     await commit_skill_policy_and_refresh_projections(db, slug)
     return updated
@@ -462,7 +467,7 @@ def user_can_access_skill(user: User, skill: Skill) -> bool:
 def user_can_manage_skill(user: User, skill: Skill) -> bool:
     """检查用户是否可管理共享 Skill。"""
     if is_builtin_skill(skill):
-        return user.role in ADMIN_ROLES
+        return user.role == "superadmin"
     return resolve_skill_permission(user, skill) == ResourcePermission.MANAGE
 
 

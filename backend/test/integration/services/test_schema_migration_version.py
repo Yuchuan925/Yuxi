@@ -174,7 +174,7 @@ async def test_fresh_business_schema_contains_input_lifecycle_without_request_ta
         assert "agent_runs_execution_seq" in execution_seq_default
         assert "request_id" not in run_columns
         assert {"kind", "status", "turn_id", "consumed_run_id", "cutoff_seq", "received_seq"} <= input_columns
-        assert BUSINESS_SCHEMA_VERSION == 13
+        assert BUSINESS_SCHEMA_VERSION == 14
     finally:
         await _drop_isolated_schema(schema, admin_engine, scoped_engine)
 
@@ -227,6 +227,11 @@ async def test_schema_version_is_persisted_and_runtime_validation_fails_closed()
             await require_current_schema(manager)
 
         await create_schema_version_table(manager)
+        await record_schema_version(manager, "business", 13)
+        with pytest.raises(RuntimeError, match="business=13"):
+            await require_current_schema(manager)
+        assert (await get_schema_versions(manager))["business"] == 13
+
         await record_schema_version(manager, "business", BUSINESS_SCHEMA_VERSION + 1)
         with pytest.raises(RuntimeError, match=f"business={BUSINESS_SCHEMA_VERSION + 1}"):
             await require_current_schema(manager)

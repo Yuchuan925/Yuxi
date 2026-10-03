@@ -162,6 +162,8 @@ class SkillsMiddleware(AgentMiddleware):
         import asyncio
 
         # 显式 MCP 已在 Graph 基础工具中注册，这里只加载 Skill 新增依赖。
+        if not hasattr(context, "_mcp_tool_servers"):
+            context._mcp_tool_servers = {}
         configured_mcps = set(normalize_string_list(getattr(context, "mcps", None)))
         all_mcp_names: list[str] = []
         for server_name in extra_mcps or []:
@@ -185,7 +187,9 @@ class SkillsMiddleware(AgentMiddleware):
         # 并行加载所有 MCP 工具
         results = await asyncio.gather(*[load_mcp_tools(name) for name in unique_mcp_names])
         selected_tools = []
-        for tools in results:
+        for server_name, tools in zip(unique_mcp_names, results, strict=True):
+            for tool in tools:
+                context._mcp_tool_servers[tool.name] = server_name
             selected_tools.extend(tools)
 
         return selected_tools
