@@ -40,6 +40,43 @@
           </div>
         </div>
 
+        <div v-if="store.database?.kb_type === 'milvus'" class="text-search-options">
+          <div class="text-search-toolbar">
+            <label for="query-search-mode">检索方式</label>
+            <a-select
+              id="query-search-mode"
+              v-model:value="store.meta.search_mode"
+              class="search-mode-select"
+            >
+              <a-select-option value="vector">向量检索</a-select-option>
+              <a-select-option value="keyword">关键词检索</a-select-option>
+              <a-select-option value="hybrid">混合检索</a-select-option>
+            </a-select>
+            <a-button
+              type="text"
+              :aria-expanded="showTextFilters"
+              @click="showTextFilters = !showTextFilters"
+            >
+              {{ showTextFilters ? '收起筛选条件' : '筛选条件' }}
+            </a-button>
+          </div>
+          <div v-if="showTextFilters" class="text-search-filters">
+            <label
+              >必含词<a-input
+                v-model:value="store.meta.required_terms"
+                placeholder="空格分隔，全部匹配"
+            /></label>
+            <label
+              >排除词<a-input
+                v-model:value="store.meta.excluded_terms"
+                placeholder="空格分隔，排除任一词项"
+            /></label>
+            <label
+              >完整短语<a-input v-model:value="store.meta.exact_phrase" placeholder="按词序匹配"
+            /></label>
+          </div>
+        </div>
+
         <div class="query-results" v-if="queryResult">
           <!-- 原始数据显示 -->
           <div v-if="showRawData" class="result-raw">
@@ -55,7 +92,7 @@
             <!-- Milvus 返回列表格式 -->
             <div v-else-if="Array.isArray(queryResult)" class="result-list">
               <div v-if="queryResult.length === 0" class="no-results">
-                <p>未找到相关结果</p>
+                <p>未找到相关结果，请尝试更换关键词或放宽筛选条件。</p>
               </div>
               <div v-else>
                 <div class="result-summary">
@@ -69,36 +106,12 @@
                     清空
                   </a-button>
                 </div>
-                <div v-for="(chunk, index) in queryResult" :key="index" class="result-item">
-                  <div class="result-header">
-                    <span class="result-index">#{{ index + 1 }}</span>
-                    <span v-if="chunk.score" class="result-score">
-                      相似度: {{ (chunk.score * 100).toFixed(2) }}%
-                    </span>
-                    <span v-if="chunk.rerank_score" class="result-rerank-score">
-                      重排序分数: {{ (chunk.rerank_score * 100).toFixed(2) }}%
-                    </span>
-                  </div>
-
-                  <div class="result-content">
-                    {{ chunk.content }}
-                  </div>
-
-                  <div class="result-metadata">
-                    <span v-if="chunk.metadata?.source" class="metadata-item">
-                      <strong>来源:</strong> {{ chunk.metadata.source }}
-                    </span>
-                    <span v-if="chunk.metadata?.file_id" class="metadata-item">
-                      <strong>文件ID:</strong> {{ chunk.metadata.file_id }}
-                    </span>
-                    <span v-if="chunk.metadata?.chunk_index !== undefined" class="metadata-item">
-                      <strong>块索引:</strong> {{ chunk.metadata.chunk_index }}
-                    </span>
-                    <span v-if="chunk.distance !== undefined" class="metadata-item">
-                      <strong>距离:</strong> {{ chunk.distance.toFixed(4) }}
-                    </span>
-                  </div>
-                </div>
+                <QueryResultChunk
+                  v-for="(chunk, index) in queryResult"
+                  :key="chunk.metadata?.chunk_id || index"
+                  :chunk="chunk"
+                  :index="index"
+                />
               </div>
             </div>
 
@@ -159,7 +172,9 @@ import { ref, computed, onMounted, watch, h } from 'vue'
 import { useDatabaseStore } from '@/modules/knowledge/model/database'
 import { message } from 'ant-design-vue'
 import { queryApi } from '@/apis/knowledge_api'
-import { Braces, RefreshCw, Search as SearchOutlined } from '@lucide/vue'
+import { SearchOutlined } from '@ant-design/icons-vue'
+import { Braces, RefreshCw } from '@lucide/vue'
+import QueryResultChunk from '@/modules/knowledge/ui/QueryResultChunk.vue'
 
 const store = useDatabaseStore()
 const MAX_VISIBLE_EXAMPLES = 10
@@ -181,6 +196,7 @@ defineEmits(['toggleVisible'])
 const searchLoading = computed(() => store.state.searchLoading)
 const queryResult = ref('')
 const showRawData = ref(false)
+const showTextFilters = ref(false)
 const showQuerySuggestions = computed(() => !searchLoading.value && !queryResult.value)
 
 // 示例问题生成属于写操作，仅对拥有管理权限（非只读权限）的知识库开放
@@ -466,6 +482,48 @@ defineExpose({
   }
 }
 
+.text-search-options {
+  margin-bottom: 16px;
+}
+
+.text-search-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--color-text-secondary);
+
+  :deep(.ant-btn) {
+    color: var(--color-text-secondary);
+  }
+}
+
+.search-mode-select {
+  width: 140px;
+}
+
+.text-search-filters {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 12px;
+
+  label {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    font-size: 13px;
+    color: var(--color-text-secondary);
+  }
+}
+
+@media (max-width: 767px) {
+  .text-search-filters {
+    grid-template-columns: 1fr;
+  }
+}
+
 .query-results {
   flex: 1;
   overflow-y: auto;
@@ -532,82 +590,6 @@ defineExpose({
       &:hover {
         color: var(--main-800);
         background-color: var(--main-200);
-      }
-    }
-
-    .result-item {
-      background-color: var(--gray-0);
-      border: 1px solid var(--gray-200);
-      border-radius: 6px;
-      padding: 12px;
-      margin-bottom: 12px;
-      transition: all 0.2s ease;
-
-      &:hover {
-        border-color: var(--main-300);
-        box-shadow: 0 2px 8px rgba(1, 97, 121, 0.08);
-      }
-
-      &:last-child {
-        margin-bottom: 0;
-      }
-
-      .result-header {
-        display: flex;
-        align-items: center;
-        gap: 12px;
-        margin-bottom: 8px;
-        padding-bottom: 8px;
-        border-bottom: 1px solid var(--gray-150);
-
-        .result-index {
-          font-weight: 600;
-          color: var(--main-color);
-          font-size: 14px;
-        }
-
-        .result-score,
-        .result-rerank-score {
-          font-size: 12px;
-          padding: 2px 8px;
-          border-radius: 12px;
-          background-color: var(--gray-100);
-          color: var(--gray-700);
-        }
-
-        .result-rerank-score {
-          background-color: var(--color-warning-50);
-          color: var(--color-warning-700);
-        }
-      }
-
-      .result-content {
-        padding: 8px 0;
-        line-height: 1.6;
-        font-size: 13px;
-        color: var(--gray-900);
-        white-space: pre-wrap;
-        word-break: break-word;
-      }
-
-      .result-metadata {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 12px;
-        margin-top: 8px;
-        padding-top: 8px;
-        border-top: 1px solid var(--gray-150);
-
-        .metadata-item {
-          font-size: 12px;
-          color: var(--gray-700);
-
-          strong {
-            color: var(--gray-500);
-            font-weight: 500;
-            margin-right: 4px;
-          }
-        }
       }
     }
   }
