@@ -17,8 +17,8 @@ from yuxi.migrations.schema import (
     create_knowledge_tables,
     create_schema_version_table,
     ensure_business_schema,
-    ensure_knowledge_schema,
     record_schema_version,
+    schema_migration_lock,
 )
 from yuxi.infrastructure.postgres.schema import get_schema_versions, require_current_schema
 from yuxi.infrastructure.postgres.manager import PostgresManager
@@ -84,13 +84,13 @@ async def test_schema_migration_lock_serializes_real_postgres_sessions() -> None
     second_entered = asyncio.Event()
 
     async def first_migrator() -> None:
-        async with manager.schema_migration_lock():
+        async with schema_migration_lock(manager):
             first_entered.set()
             await release_first.wait()
 
     async def second_migrator() -> None:
         await first_entered.wait()
-        async with manager.schema_migration_lock():
+        async with schema_migration_lock(manager):
             second_entered.set()
 
     first_task = asyncio.create_task(first_migrator())
