@@ -44,6 +44,34 @@ class ReleaseWorkflowTests(unittest.TestCase):
             "CLI 必须独立手动发布",
         )
 
+    def assert_runtime_mount_ownership(self, workflow: str) -> None:
+        """两个运行链路 job 在首次启动前为非 root 进程准备挂载目录。"""
+        command = (
+            "docker compose run --rm --no-deps --user 0:0 api "
+            "chown 1000:1000 /app/user-data /app/skill-sources /app/skill-projections"
+        )
+        jobs = workflow.split("  durable-task-worker-path:\n", 1)[1].split("\n  system-tests:", 1)
+        for job in jobs:
+            self.assertIn(command, job)
+            self.assertLess(job.index("bash scripts/ci_build_topology_images.sh"), job.index(command))
+            self.assertLess(job.index(command), job.index("docker compose up -d"))
+
+    def test_runtime_mounts_are_owned_before_service_startup(self) -> None:
+        """首次启动的 API 和 worker 不依赖 Docker 创建目录的默认所有权。"""
+        self.assert_runtime_mount_ownership((WORKFLOWS / "system-tests.yml").read_text())
+
+    def test_runtime_mounts_reject_missing_ownership_preparation(self) -> None:
+        """恢复 root 所有的挂载根目录或遗漏任一 job 时门禁失败。"""
+        workflow = (WORKFLOWS / "system-tests.yml").read_text()
+        for mount in ("/app/user-data", "/app/skill-sources", "/app/skill-projections"):
+            with self.subTest(mount=mount), self.assertRaises(AssertionError):
+                self.assert_runtime_mount_ownership(workflow.replace(" " + mount, ""))
+        for job in ("durable-task-worker-path", "system-tests"):
+            with self.subTest(job=job), self.assertRaises(AssertionError):
+                before, section = workflow.split("  " + job + ":\n", 1)
+                section = section.replace("chown 1000:1000", "true", 1)
+                self.assert_runtime_mount_ownership(before + "  " + job + ":\n" + section)
+
     def test_repository_release_events(self) -> None:
         """当前配置覆盖候选与正式 tag，CLI 仅手动触发。"""
         self.assert_release_events(
