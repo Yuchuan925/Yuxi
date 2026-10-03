@@ -653,7 +653,6 @@ onMounted(() => {
 </script>
 
 <style lang="less" scoped>
-@import '@/assets/css/extensions.less';
 
 .migration-alert {
   margin-bottom: 20px;
@@ -768,7 +767,7 @@ onMounted(() => {
   }
 
   .config-textarea {
-    font-family: @mono-font;
+    font-family: 'Monaco', 'Consolas', monospace;
     font-size: 13px;
     line-height: 1.6;
   }
@@ -890,7 +889,7 @@ onMounted(() => {
               font-weight: 500;
               font-size: 13px;
               color: var(--gray-900);
-              font-family: @mono-font;
+              font-family: 'Monaco', 'Consolas', monospace;
             }
             .param-required {
               font-size: 11px;
@@ -905,7 +904,7 @@ onMounted(() => {
               background: var(--gray-100);
               padding: 1px 6px;
               border-radius: 3px;
-              font-family: @mono-font;
+              font-family: 'Monaco', 'Consolas', monospace;
             }
           }
 

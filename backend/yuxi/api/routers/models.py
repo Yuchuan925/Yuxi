@@ -25,19 +25,6 @@ from yuxi.infrastructure.observability.logging import logger
 model_providers = APIRouter(prefix="/system/model-providers", tags=["model-providers"])
 
 
-async def _refresh_model_cache() -> None:
-    """刷新模型缓存（CRUD 操作后调用）。"""
-    from yuxi.modules.models.providers.cache import model_cache
-
-    try:
-        async with pg_manager.get_async_session_context() as session:
-            providers = await get_all_model_providers(session)
-            model_cache.rebuild(providers)
-            logger.info(f"Model cache refreshed: {len(model_cache.get_all_specs())} models loaded")
-    except Exception as e:
-        logger.error(f"Failed to refresh model cache: {e}")
-
-
 class ModelProviderPayload(BaseModel):
     provider_id: str | None = Field(None, description="供应商稳定标识")
     display_name: str | None = Field(None, description="展示名称")
@@ -98,6 +85,72 @@ async def create_provider(
     except Exception as e:
         logger.error(f"创建模型供应商失败: {e}")
         raise HTTPException(status_code=500, detail="创建模型供应商失败")
+
+
+@model_providers.post("/models/cache/refresh")
+async def refresh_model_cache(
+    current_user: User = Depends(get_admin_user),
+):
+    """强制刷新模型缓存，从数据库重新加载所有供应商配置到 Redis。"""
+    await _refresh_model_cache()
+    from yuxi.modules.models.providers.cache import model_cache
+
+    return {"success": True, "message": "缓存已刷新", "model_count": len(model_cache.get_all_specs())}
+
+
+@model_providers.get("/models/v2")
+async def get_v2_models(
+    model_type: str = "chat",
+    _current_user: User = Depends(get_required_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """获取 v2 格式的模型列表，按 provider 分组。
+
+    v2 模型 spec 格式: provider_id:model_id（冒号分隔）
+    返回数据供前端模型选择器使用。
+    """
+    from yuxi.modules.models.providers.cache import model_cache
+
+    grouped = model_cache.get_specs_grouped_by_provider(model_type)
+    providers = await get_all_model_providers(db)
+    provider_name_by_id = {
+        provider.provider_id: provider.display_name or provider.provider_id for provider in providers
+    }
+
+    result = {}
+    for provider_id, models in grouped.items():
+        result[provider_id] = {
+            "provider_id": provider_id,
+            "provider_display_name": provider_name_by_id.get(provider_id, provider_id),
+            "models": [
+                {
+                    "spec": m.spec,
+                    "model_id": m.model_id,
+                    "display_name": m.display_name,
+                    "dimension": m.dimension,
+                    "batch_size": m.batch_size,
+                }
+                for m in models
+            ],
+        }
+
+    return {"success": True, "data": result}
+
+
+@model_providers.get("/models/status")
+async def get_model_status_by_spec(
+    spec: str,
+    current_user: User = Depends(get_admin_user),
+):
+    """根据 full spec 检查模型状态（自动识别 V1/V2、Chat/Embedding）。"""
+    try:
+        result = await test_model_status_by_spec(spec)
+        return {"success": True, "data": result}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"测试模型状态失败 {spec}: {e}")
+        return {"success": False, "data": {"spec": spec, "status": "error", "message": str(e)}}
 
 
 @model_providers.get("/{provider_id}")
@@ -195,67 +248,14 @@ async def get_remote_models(
         raise HTTPException(status_code=400, detail=f"拉取远端模型失败: {e}")
 
 
-@model_providers.post("/models/cache/refresh")
-async def refresh_model_cache(
-    current_user: User = Depends(get_admin_user),
-):
-    """强制刷新模型缓存，从数据库重新加载所有供应商配置到 Redis。"""
-    await _refresh_model_cache()
+async def _refresh_model_cache() -> None:
+    """刷新模型缓存（CRUD 操作后调用）。"""
     from yuxi.modules.models.providers.cache import model_cache
 
-    return {"success": True, "message": "缓存已刷新", "model_count": len(model_cache.get_all_specs())}
-
-
-@model_providers.get("/models/v2")
-async def get_v2_models(
-    model_type: str = "chat",
-    _current_user: User = Depends(get_required_user),
-    db: AsyncSession = Depends(get_db),
-):
-    """获取 v2 格式的模型列表，按 provider 分组。
-
-    v2 模型 spec 格式: provider_id:model_id（冒号分隔）
-    返回数据供前端模型选择器使用。
-    """
-    from yuxi.modules.models.providers.cache import model_cache
-
-    grouped = model_cache.get_specs_grouped_by_provider(model_type)
-    providers = await get_all_model_providers(db)
-    provider_name_by_id = {
-        provider.provider_id: provider.display_name or provider.provider_id for provider in providers
-    }
-
-    result = {}
-    for provider_id, models in grouped.items():
-        result[provider_id] = {
-            "provider_id": provider_id,
-            "provider_display_name": provider_name_by_id.get(provider_id, provider_id),
-            "models": [
-                {
-                    "spec": m.spec,
-                    "model_id": m.model_id,
-                    "display_name": m.display_name,
-                    "dimension": m.dimension,
-                    "batch_size": m.batch_size,
-                }
-                for m in models
-            ],
-        }
-
-    return {"success": True, "data": result}
-
-
-@model_providers.get("/models/status")
-async def get_model_status_by_spec(
-    spec: str,
-    current_user: User = Depends(get_admin_user),
-):
-    """根据 full spec 检查模型状态（自动识别 V1/V2、Chat/Embedding）。"""
     try:
-        result = await test_model_status_by_spec(spec)
-        return {"success": True, "data": result}
-    except HTTPException:
-        raise
+        async with pg_manager.get_async_session_context() as session:
+            providers = await get_all_model_providers(session)
+            model_cache.rebuild(providers)
+            logger.info(f"Model cache refreshed: {len(model_cache.get_all_specs())} models loaded")
     except Exception as e:
-        logger.error(f"测试模型状态失败 {spec}: {e}")
-        return {"success": False, "data": {"spec": spec, "status": "error", "message": str(e)}}
+        logger.error(f"Failed to refresh model cache: {e}")

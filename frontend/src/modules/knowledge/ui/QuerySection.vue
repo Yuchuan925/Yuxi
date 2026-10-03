@@ -159,8 +159,7 @@ import { ref, computed, onMounted, watch, h } from 'vue'
 import { useDatabaseStore } from '@/modules/knowledge/model/database'
 import { message } from 'ant-design-vue'
 import { queryApi } from '@/apis/knowledge_api'
-import { SearchOutlined } from '@ant-design/icons-vue'
-import { Braces, RefreshCw } from '@lucide/vue'
+import { Braces, RefreshCw, Search as SearchOutlined } from '@lucide/vue'
 
 const store = useDatabaseStore()
 const MAX_VISIBLE_EXAMPLES = 10

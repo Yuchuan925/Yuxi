@@ -746,7 +746,7 @@
                                 v-else-if="run.status === 'failed'"
                                 class="state-subagent-status-icon state-subagent-failed-icon"
                               />
-                              <SyncOutlined
+                              <RefreshCw
                                 v-else-if="run.status === 'running'"
                                 spin
                                 class="state-subagent-status-icon state-subagent-running-icon"
@@ -845,11 +845,12 @@ import {
   ListCollapse,
   Play,
   RefreshCw,
-  Trash2
+  Trash2,
+  CircleCheck as CheckCircleOutlined,
+  CircleX as CloseCircleOutlined
 } from '@lucide/vue'
 import FileTypeIcon from '@/shared/ui/FileTypeIcon.vue'
 import { generatePixelAvatar } from '@/shared/lib/pixelAvatar'
-import { CheckCircleOutlined, CloseCircleOutlined, SyncOutlined } from '@ant-design/icons-vue'
 import AgentInputArea from '@/modules/conversation/ui/AgentInputArea.vue'
 import ContextUsageRing from '@/modules/conversation/ui/ContextUsageRing.vue'
 import ToolApprovalModeSelector from '@/modules/conversation/ui/ToolApprovalModeSelector.vue'
@@ -866,7 +867,7 @@ import ConversationProcessGroupComponent from '@/modules/conversation/ui/Convers
 import { handleChatError, handleValidationError } from '@/shared/lib/errorHandler'
 import {
   DRAFT_THREAD_ID,
-  createThreadDraftStore,
+  threadDraftStore,
   createThreadDraftSession
 } from '@/modules/conversation/model/thread_draft'
 import { ScrollController } from '@/modules/conversation/model/scrollController'
@@ -957,7 +958,6 @@ const { threads, currentThreadId, currentThread, threadCreationInFlight } =
 
 // ==================== LOCAL CHAT & UI STATE ====================
 // 输入草稿按线程保存：初始按当前线程还原，后续输入实时写入对应线程
-const threadDraftStore = createThreadDraftStore()
 const threadDraftSession = createThreadDraftSession(threadDraftStore, currentThreadId.value)
 const userInput = ref(threadDraftStore.read(currentThreadId.value || DRAFT_THREAD_ID))
 watch(userInput, (text) => threadDraftSession.saveInput(text))
@@ -3915,7 +3915,6 @@ watch(currentChatId, (threadId, oldThreadId) => {
 </script>
 
 <style lang="less" scoped>
-@import '@/assets/css/main.css';
 @import '@/assets/css/animations.less';
 @import '@/modules/conversation/ui/composerStyles.less';
 

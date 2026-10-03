@@ -489,13 +489,6 @@ import {
   canMutateKnowledgeFiles
 } from '@/modules/knowledge/model/knowledgeFileMutations'
 import {
-  CheckCircleFilled,
-  HourglassFilled,
-  CloseCircleFilled,
-  ClockCircleFilled,
-  FileTextFilled
-} from '@ant-design/icons-vue'
-import {
   Trash2,
   Download,
   RotateCw,
@@ -508,7 +501,12 @@ import {
   Filter,
   MoreHorizontal,
   Pencil,
-  Search
+  Search,
+  CircleCheck as CheckCircleFilled,
+  Hourglass as HourglassFilled,
+  CircleX as CloseCircleFilled,
+  Clock as ClockCircleFilled,
+  FileText as FileTextFilled
 } from '@lucide/vue'
 
 const store = useDatabaseStore()
@@ -1383,7 +1381,6 @@ import { generatePixelAvatar } from '@/shared/lib/pixelAvatar'
 </script>
 
 <style scoped lang="less">
-@import '@/assets/css/extensions.less';
 
 .file-table-container {
   display: flex;

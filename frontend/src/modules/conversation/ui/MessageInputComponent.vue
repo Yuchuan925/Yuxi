@@ -282,8 +282,12 @@ import {
   h,
   render
 } from 'vue'
-import { SendOutlined, ArrowUpOutlined, PauseOutlined } from '@ant-design/icons-vue'
-import { Plus } from '@lucide/vue'
+import {
+  ArrowUp as ArrowUpOutlined,
+  Pause as PauseOutlined,
+  Plus,
+  Send as SendOutlined
+} from '@lucide/vue'
 import { searchMentionFiles } from '@/apis/mention_api'
 import FileTypeIcon from '@/shared/ui/FileTypeIcon.vue'
 import ActionDropdown from '@/shared/ui/ActionDropdown.vue'

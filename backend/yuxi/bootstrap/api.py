@@ -1,4 +1,4 @@
-"""迁移后的职责模块。"""
+"""API 进程启动组件、readiness 状态与资源关闭适配。"""
 
 from yuxi.infrastructure.postgres.schema import require_current_schema
 import inspect
@@ -21,33 +21,6 @@ class RequiredStartupComponentError(RuntimeError):
         self.component = component
         self.code = code
         super().__init__(f"Required startup component failed: component={component}, type={code}")
-
-
-async def _initialize_startup_component(
-    app: FastAPI,
-    *,
-    name: str,
-    required: bool,
-    operation: Callable[[], object],
-) -> None:
-    """执行启动组件并保存非敏感、可供 readiness 使用的能力状态。"""
-
-    try:
-        result = operation()
-        if inspect.isawaitable(result):
-            await result
-    except Exception as exc:
-        code = type(exc).__name__
-        app.state.startup_components[name] = {
-            "status": "error",
-            "required": required,
-            "code": code,
-        }
-        logger.error(f"Startup component failed: component={name}, required={required}, type={code}")
-        if required:
-            raise RequiredStartupComponentError(name, code) from None
-    else:
-        app.state.startup_components[name] = {"status": "ok", "required": required}
 
 
 async def _startup(app: FastAPI) -> None:
@@ -200,3 +173,30 @@ def _close_neo4j_connection() -> object:
     from yuxi.infrastructure.neo4j import close_shared_neo4j_connection
 
     return close_shared_neo4j_connection()
+
+
+async def _initialize_startup_component(
+    app: FastAPI,
+    *,
+    name: str,
+    required: bool,
+    operation: Callable[[], object],
+) -> None:
+    """执行启动组件并保存非敏感、可供 readiness 使用的能力状态。"""
+
+    try:
+        result = operation()
+        if inspect.isawaitable(result):
+            await result
+    except Exception as exc:
+        code = type(exc).__name__
+        app.state.startup_components[name] = {
+            "status": "error",
+            "required": required,
+            "code": code,
+        }
+        logger.error(f"Startup component failed: component={name}, required={required}, type={code}")
+        if required:
+            raise RequiredStartupComponentError(name, code) from None
+    else:
+        app.state.startup_components[name] = {"status": "ok", "required": required}

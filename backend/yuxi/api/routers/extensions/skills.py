@@ -397,6 +397,24 @@ async def sync_builtin_skills_route(
         raise HTTPException(status_code=500, detail="同步内置 skill 失败")
 
 
+@skills.post("/delete-batch")
+async def delete_skills_batch_route(
+    payload: SkillBatchDeleteRequest,
+    current_user: User = Depends(get_required_user),
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        results = await delete_skills_batch(db, slugs=payload.slugs, operator=current_user)
+        return {"success": True, "data": results, "summary": _summarize_results(results)}
+    except ValueError as e:
+        _raise_from_value_error(e)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to delete skills batch: {e}")
+        raise HTTPException(status_code=500, detail="批量删除技能失败")
+
+
 @skills.put("/{slug}/share-config")
 async def update_skill_share_config_route(
     slug: str,
@@ -611,24 +629,6 @@ async def delete_skill_route(
     except Exception as e:
         logger.error(f"Failed to delete skill '{slug}': {e}")
         raise HTTPException(status_code=500, detail="删除技能失败")
-
-
-@skills.post("/delete-batch")
-async def delete_skills_batch_route(
-    payload: SkillBatchDeleteRequest,
-    current_user: User = Depends(get_required_user),
-    db: AsyncSession = Depends(get_db),
-):
-    try:
-        results = await delete_skills_batch(db, slugs=payload.slugs, operator=current_user)
-        return {"success": True, "data": results, "summary": _summarize_results(results)}
-    except ValueError as e:
-        _raise_from_value_error(e)
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Failed to delete skills batch: {e}")
-        raise HTTPException(status_code=500, detail="批量删除技能失败")
 
 
 def _raise_from_value_error(e: ValueError) -> None:

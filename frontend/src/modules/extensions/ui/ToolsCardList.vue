@@ -204,7 +204,6 @@ defineExpose({ fetchTools, loading })
 </script>
 
 <style lang="less" scoped>
-@import '@/assets/css/extensions.less';
 
 .tool-detail-content {
   max-height: 70vh;

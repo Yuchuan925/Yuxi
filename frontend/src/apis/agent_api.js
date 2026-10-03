@@ -1,5 +1,5 @@
 import { apiGet, apiPost, apiDelete, apiPut, apiRequest } from './base'
-import { useUserStore } from '@/modules/identity/model/user'
+import { getApiAuthHeaders } from './auth_context'
 
 /**
  * 智能体API模块
@@ -123,7 +123,7 @@ export const agentApi = {
 
   streamThreadEvents: (threadId, afterCursor = null, { signal } = {}) => {
     const headers = {
-      ...useUserStore().getAuthHeaders()
+      ...getApiAuthHeaders()
     }
     if (afterCursor) headers['Last-Event-ID'] = afterCursor
     return fetch(`/api/v1/agents/threads/${threadId}/events`, {

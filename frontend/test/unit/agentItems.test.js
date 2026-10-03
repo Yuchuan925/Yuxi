@@ -32,6 +32,17 @@ test('多内容块分别追加，重放按 event_id 去重，done 完整替换',
   assert.equal(state.items.m.phase, 'final_answer')
 })
 
+test('快照克隆保留结构化值且不与输入对象共享引用', () => {
+  const state = createItemState()
+  const snapshot = message('structured')
+  snapshot.optional = undefined
+  mergeItemSnapshot(state, [snapshot])
+
+  assert.equal(state.items.structured.optional, undefined)
+  assert.notStrictEqual(state.items.structured, snapshot)
+  assert.notStrictEqual(state.items.structured.content, snapshot.content)
+})
+
 test('Redis 过期重读快照，终态拒绝旧 added 和 delta，保存明确 incomplete', () => {
   const state = createItemState()
   const full = message('m', 'incomplete')

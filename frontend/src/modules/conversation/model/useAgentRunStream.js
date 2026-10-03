@@ -1,6 +1,7 @@
 import { unref } from 'vue'
 import { agentApi } from '@/apis'
 import { handleChatError } from '@/shared/lib/errorHandler'
+import { getReconnectDelay } from './reconnectBackoff.js'
 
 export const processRunSseResponse = async (response, onEvent) => {
   if (!response || !response.body) return
@@ -100,6 +101,7 @@ export function useAgentRunStream({
     ts.activeRunSteerable = false
     ts.replyLoadingVisible = false
     ts.pendingInputId = null
+    ts.runReconnectAttempts = 0
     if (status === 'waiting') {
       ts.activeRunId = runId
     } else {
@@ -162,6 +164,7 @@ export function useAgentRunStream({
       if (!response.ok) throw new Error(`SSE response not ok: ${response.status}`)
       await processRunSseResponse(response, async (_event, data, eventId) => {
         if (!data || controller.signal.aborted || ts.currentTurnId !== turnId) return
+        ts.runReconnectAttempts = 0
         if (eventId) ts.threadCursor = String(eventId)
         if (data.type === 'agent.session.subagent.created') {
           if (data.yuxi?.session_id === threadId && data.yuxi?.turn_id === turnId) handlePublicEvent(data, threadId)
@@ -208,12 +211,14 @@ export function useAgentRunStream({
     } finally {
       if (ts.runStreamAbortController === controller) ts.runStreamAbortController = null
       if (!sawTurnEnd && !controller.signal.aborted && ts.currentTurnId === turnId) {
+        const reconnectAttempt = ts.runReconnectAttempts || 0
+        ts.runReconnectAttempts = reconnectAttempt + 1
         ts.runReconnectTimer = setTimeout(() => {
           ts.runReconnectTimer = null
           if (!controller.signal.aborted && ts.currentTurnId === turnId && !ts.runStreamAbortController) {
             void startRunStream(threadId, ts.activeRunId, ts.threadCursor, { turnId })
           }
-        }, 1000)
+        }, getReconnectDelay(reconnectAttempt))
       }
     }
   }

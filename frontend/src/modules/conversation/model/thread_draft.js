@@ -49,6 +49,9 @@ export const createThreadDraftStore = (storage = globalThis.localStorage) => {
   }
 }
 
+// 线程列表清理和当前编辑器共享同一个存储 Owner。
+export const threadDraftStore = createThreadDraftStore()
+
 /**
  * 创建绑定当前输入框的草稿会话，负责草稿与线程的对应关系。
  *

@@ -282,9 +282,22 @@ Thread cursor 是后端拥有的复合游标，客户端保存原值并通过 La
 
 loading、empty、error、上传部分失败、停止待确认、断线、只读和权限变化均有可见文案。屏幕阅读器使用低频状态摘要，避免逐 token 宣读；流式更新不抢夺浏览历史时的滚动位置。浅色/深色、窄屏、软键盘遮挡、长资源名和键盘操作作为同一验收矩阵。仓库[设计规范](../../design.md)继续拥有视觉与 token 规则。
 
+### 会话运行时安全约束
+
+会话重构同时收敛以下机制，不能只完成组件搬迁：
+
+- 等待点按 `threadId + turnId + runId + waitpointId` 保存，展示层只显示当前可见线程；多个线程同时 waiting 时，各自事实不得互相覆盖，切换线程后从对应桶恢复。
+- Input 领取使用每个 Thread 至多一个观察循环，不为每条 Input 创建独立长期 timer；消费、取消、拒绝和等待状态都以服务端队列快照及精确 Input 读取为准。若要进一步减少读取次数，先由 Public Thread API 提供批量状态/事件契约，前端不得猜测已消费 Input。
+- 主 Thread 与子 Run SSE 共用有界指数退避；有效事件重置尝试次数，断流重连保留 Thread cursor，终态、隐藏和卸载清理 timer。固定间隔不得作为长期恢复策略。
+- 协议 item 的持久事实与展示平滑分离，reducer 不在每个 delta 上进行无界 JSON 深拷贝；替换克隆方式必须保留 undefined/数组/嵌套对象语义并有长流基准。
+- 主聊天与子 Thread 使用同一个公开 item 投影 Owner；工具调用归一化属于 conversation model，UI registry 只装配图标和 renderer 入口。
+- 低频工具 renderer 可以按需加载，但未知工具和加载失败必须有局部安全卡片；没有实际 chunk 与首屏测量前不引入通用插件系统。
+
+每条机制都需要能恢复目标缺陷的负向测试；未完成后端通知或恢复 cursor 契约时，阶段退出条件保持 `Not run`，不能用页面看起来更新替代真实事件/持久状态证据。
+
 ### 非核心功能的组织
 
-ConversationWorkspace 使用一个面板停靠区，负责宽度、响应式位置、标签与开关。面板选择用明确的联合类型表达，例如 file scope/resource、child thread/run、inspector thread、debug thread；各面板拥有数据读取和错误状态。面板组合只覆盖已有类型，不建设动态插件框架、事件总线或通用 panel engine。
+ConversationWorkspace 使用一个面板停靠区，负责宽度、响应式位置、标签与开关。 面板选择用明确的联合类型表达，例如 file scope/resource、child thread/run、inspector thread、debug thread；各面板拥有数据读取和错误状态。面板组合只覆盖已有类型，不建设动态插件框架、事件总线或通用 panel engine。
 
 | 功能模块 | 自己拥有的内容 | 从外部取得的最小上下文 |
 | --- | --- | --- |

@@ -31,7 +31,7 @@ const router = createRouter({
       path: '/auth/oidc/callback', // oidc登录回调页面
       name: 'OIDCCallback',
       component: () => import('@/pages/OIDCCallbackView.vue'),
-      meta: { public: true }
+      meta: { requiresAuth: false }
     },
     {
       path: '/auth/cli/authorize',

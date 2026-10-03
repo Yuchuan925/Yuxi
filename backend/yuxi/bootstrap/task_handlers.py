@@ -1,4 +1,4 @@
-"""迁移后的职责模块。"""
+"""Durable Task 的领域处理器注册定义。"""
 
 from __future__ import annotations
 

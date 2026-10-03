@@ -20,23 +20,6 @@ DEFAULT_REDIS_URL = "redis://redis:6379/0"
 DEFAULT_REDIS_MAX_CONNECTIONS = 32
 
 
-def _float_or_none(value: str | None) -> float | None:
-    if value is None or not value.strip():
-        return None
-    return float(value)
-
-
-def redact_redis_url(url: str) -> str:
-    """隐藏 url 中的密码部分用于日志输出。"""
-    try:
-        parsed = urlparse(url)
-        if parsed.password:
-            parsed = parsed._replace(netloc=parsed.netloc.replace(parsed.password, "***"))
-        return urlunparse(parsed)
-    except Exception:
-        return url
-
-
 @dataclass(frozen=True)
 class RedisConfig:
     """Redis 连接配置，仅承载参数，不建立连接。"""
@@ -86,28 +69,15 @@ class RedisConfig:
         return kwargs
 
 
-def _close_sync_client(client: Any) -> None:
+def redact_redis_url(url: str) -> str:
+    """隐藏 url 中的密码部分用于日志输出。"""
     try:
-        client.close()
+        parsed = urlparse(url)
+        if parsed.password:
+            parsed = parsed._replace(netloc=parsed.netloc.replace(parsed.password, "***"))
+        return urlunparse(parsed)
     except Exception:
-        pass
-
-
-@contextmanager
-def sync_redis_client(config: RedisConfig | None = None, *, ping: bool = True) -> Iterator[Any]:
-    """短生命周期同步 Redis 客户端。"""
-    client = create_sync_redis_client(config, ping=ping)
-    try:
-        yield client
-    finally:
-        _close_sync_client(client)
-
-
-async def _close_async_client(client: Any) -> None:
-    try:
-        await client.aclose()
-    except Exception:
-        pass
+        return url
 
 
 def create_sync_redis_client(config: RedisConfig | None = None, *, ping: bool = True) -> Any:
@@ -128,6 +98,16 @@ def create_sync_redis_client(config: RedisConfig | None = None, *, ping: bool = 
         _close_sync_client(client)
         raise RuntimeError(f"Redis connection failed ({config.log_url}): {e}") from e
     return client
+
+
+@contextmanager
+def sync_redis_client(config: RedisConfig | None = None, *, ping: bool = True) -> Iterator[Any]:
+    """短生命周期同步 Redis 客户端。"""
+    client = create_sync_redis_client(config, ping=ping)
+    try:
+        yield client
+    finally:
+        _close_sync_client(client)
 
 
 async def create_async_redis_client(config: RedisConfig | None = None, *, ping: bool = True) -> Any:
@@ -152,13 +132,6 @@ async def create_async_redis_client(config: RedisConfig | None = None, *, ping: 
 
 _async_redis_client: Any | None = None
 _async_redis_lock: asyncio.Lock | None = None
-
-
-def _get_async_redis_lock() -> asyncio.Lock:
-    global _async_redis_lock
-    if _async_redis_lock is None:
-        _async_redis_lock = asyncio.Lock()
-    return _async_redis_lock
 
 
 async def get_async_redis_client(config: RedisConfig | None = None) -> Any:
@@ -202,3 +175,34 @@ async def create_arq_redis_pool(config: RedisConfig | None = None) -> Any:
     except Exception as e:
         raise RuntimeError("arq dependency is required") from e
     return await create_pool(get_arq_redis_settings(config))
+
+
+def _float_or_none(value: str | None) -> float | None:
+    """把可选环境变量转换为浮点数。"""
+    if value is None or not value.strip():
+        return None
+    return float(value)
+
+
+def _close_sync_client(client: Any) -> None:
+    """尽力关闭同步客户端，不遮蔽调用方的主异常。"""
+    try:
+        client.close()
+    except Exception:
+        pass
+
+
+async def _close_async_client(client: Any) -> None:
+    """尽力关闭异步客户端，不遮蔽调用方的主异常。"""
+    try:
+        await client.aclose()
+    except Exception:
+        pass
+
+
+def _get_async_redis_lock() -> asyncio.Lock:
+    """返回进程内共享异步客户端的初始化锁。"""
+    global _async_redis_lock
+    if _async_redis_lock is None:
+        _async_redis_lock = asyncio.Lock()
+    return _async_redis_lock

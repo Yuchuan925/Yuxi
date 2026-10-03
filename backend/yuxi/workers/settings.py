@@ -1,4 +1,4 @@
-"""AgentRun worker 职责。"""
+"""ARQ worker 的任务注册、并发配置与生命周期回调。"""
 
 from __future__ import annotations
 
@@ -19,6 +19,8 @@ def worker_max_jobs() -> int:
 
 
 class WorkerSettings:
+    """为 ARQ 提供 Yuxi 任务、并发和生命周期配置。"""
+
     functions = [
         process_agent_run,
         func(process_task, timeout=TASKER_DEFAULT_TIMEOUT_SECONDS + 30),

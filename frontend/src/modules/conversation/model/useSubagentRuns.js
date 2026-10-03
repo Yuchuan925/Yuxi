@@ -1,8 +1,9 @@
 import { computed, onScopeDispose, ref, watch } from 'vue'
 import { agentApi } from '@/apis'
 import { processRunSseResponse } from './useAgentRunStream'
+import { getReconnectDelay } from './reconnectBackoff.js'
 
-// HTTP/1.1 下给父流、状态查询和取消请求保留同源连接；额外子 Run 每 2 秒回读。
+// HTTP/1.1 下给父流、状态查询和取消请求保留同源连接；额外子 Run 使用有界退避回读。
 const MAX_CHILD_STREAMS = 3
 
 /** 独立观察子 Run；父 checkpoint 只提供身份，不覆盖已读取的运行状态。 */
@@ -75,6 +76,7 @@ export function useSubagentRuns({ scope, runs, enabled = ref(true), onEvent = nu
       if (!response.ok) throw new Error(`子任务订阅失败: ${response.status}`)
       await processRunSseResponse(response, (_event, data, eventId) => {
         if (!isCurrent(entry)) return
+        entry.retryAttempt = 0
         if (eventId) entry.cursor = eventId
         if (data?.type === 'yuxi.session.resync') {
           void refresh(entry).catch(() => markUnavailable(entry))
@@ -94,7 +96,11 @@ export function useSubagentRuns({ scope, runs, enabled = ref(true), onEvent = nu
       markUnavailable(entry)
     } finally {
       entry.streaming = false
-      if (isCurrent(entry)) entry.retry = setTimeout(() => observe(entry), 2000)
+      if (isCurrent(entry)) {
+        const retryAttempt = entry.retryAttempt || 0
+        entry.retryAttempt = retryAttempt + 1
+        entry.retry = setTimeout(() => observe(entry), getReconnectDelay(retryAttempt))
+      }
     }
   }
 
@@ -109,7 +115,8 @@ export function useSubagentRuns({ scope, runs, enabled = ref(true), onEvent = nu
           id: run.run_id,
           threadId: run.child_thread_id,
           controller: new AbortController(),
-          cursor: null
+          cursor: null,
+          retryAttempt: 0
         }
         subscriptions.set(entry.id, entry)
         records.value[entry.id] = { ...run }

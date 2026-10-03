@@ -44,12 +44,12 @@
 import { computed } from 'vue'
 import BaseToolCall from '../BaseToolCall.vue'
 import {
-  CheckCircleOutlined,
-  SyncOutlined,
-  ClockCircleOutlined,
-  CloseCircleOutlined,
-  QuestionCircleOutlined
-} from '@ant-design/icons-vue'
+  CircleCheck as CheckCircleOutlined,
+  RefreshCw as SyncOutlined,
+  Clock as ClockCircleOutlined,
+  CircleX as CloseCircleOutlined,
+  CircleHelp as QuestionCircleOutlined
+} from '@lucide/vue'
 import { parseToolCallArgs } from '../toolRegistry'
 
 const props = defineProps({

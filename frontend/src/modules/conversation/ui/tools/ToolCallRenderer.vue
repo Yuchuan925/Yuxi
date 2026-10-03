@@ -16,35 +16,45 @@
 </template>
 
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, defineAsyncComponent, ref } from 'vue'
 import BaseToolCall from './BaseToolCall.vue'
-
-import WebSearchTool from './renderers/WebSearchTool.vue'
-import ListKbsTool from './renderers/ListKbsTool.vue'
-import QueryKbTool from './renderers/QueryKbTool.vue'
-import FindKbDocumentTool from './renderers/FindKbDocumentTool.vue'
-import OpenKbDocumentTool from './renderers/OpenKbDocumentTool.vue'
-import CalculatorTool from './renderers/CalculatorTool.vue'
-import TodoListTool from './renderers/TodoListTool.vue'
-import TaskTool from './renderers/TaskTool.vue'
-import SubagentLifecycleTool from './renderers/SubagentLifecycleTool.vue'
-import ImageTool from './renderers/ImageTool.vue'
-import WriteFileTool from './renderers/WriteFileTool.vue'
-import ReadFileTool from './renderers/ReadFileTool.vue'
-import ListDirectoryTool from './renderers/ListDirectoryTool.vue'
-import SearchFileContentTool from './renderers/SearchFileContentTool.vue'
-import SearchFileTool from './renderers/SearchFileTool.vue'
-import GrepTool from './renderers/GrepTool.vue'
-import GlobTool from './renderers/GlobTool.vue'
-import EditFileTool from './renderers/EditFileTool.vue'
-import MysqlQueryTool from './renderers/MysqlQueryTool.vue'
-import MysqlDescribeTableTool from './renderers/MysqlDescribeTableTool.vue'
-import MysqlListTablesTool from './renderers/MysqlListTablesTool.vue'
-import AskUserQuestionTool from './renderers/AskUserQuestionTool.vue'
-import ExecuteTool from './renderers/ExecuteTool.vue'
-import OcrParseFileTool from './renderers/OcrParseFileTool.vue'
-import RememberMemoryTool from './renderers/RememberMemoryTool.vue'
+import ToolRendererUnavailable from './ToolRendererUnavailable.vue'
 import { getToolCallId, isHiddenToolCall } from './toolRegistry'
+
+const createRenderer = (loader) => defineAsyncComponent({
+  loader,
+  loadingComponent: BaseToolCall,
+  errorComponent: ToolRendererUnavailable,
+  delay: 0,
+  timeout: 10000,
+  suspensible: false
+})
+
+const WebSearchTool = createRenderer(() => import('./renderers/WebSearchTool.vue'))
+const ListKbsTool = createRenderer(() => import('./renderers/ListKbsTool.vue'))
+const QueryKbTool = createRenderer(() => import('./renderers/QueryKbTool.vue'))
+const FindKbDocumentTool = createRenderer(() => import('./renderers/FindKbDocumentTool.vue'))
+const OpenKbDocumentTool = createRenderer(() => import('./renderers/OpenKbDocumentTool.vue'))
+const CalculatorTool = createRenderer(() => import('./renderers/CalculatorTool.vue'))
+const TodoListTool = createRenderer(() => import('./renderers/TodoListTool.vue'))
+const TaskTool = createRenderer(() => import('./renderers/TaskTool.vue'))
+const SubagentLifecycleTool = createRenderer(() => import('./renderers/SubagentLifecycleTool.vue'))
+const ImageTool = createRenderer(() => import('./renderers/ImageTool.vue'))
+const WriteFileTool = createRenderer(() => import('./renderers/WriteFileTool.vue'))
+const ReadFileTool = createRenderer(() => import('./renderers/ReadFileTool.vue'))
+const ListDirectoryTool = createRenderer(() => import('./renderers/ListDirectoryTool.vue'))
+const SearchFileContentTool = createRenderer(() => import('./renderers/SearchFileContentTool.vue'))
+const SearchFileTool = createRenderer(() => import('./renderers/SearchFileTool.vue'))
+const GrepTool = createRenderer(() => import('./renderers/GrepTool.vue'))
+const GlobTool = createRenderer(() => import('./renderers/GlobTool.vue'))
+const EditFileTool = createRenderer(() => import('./renderers/EditFileTool.vue'))
+const MysqlQueryTool = createRenderer(() => import('./renderers/MysqlQueryTool.vue'))
+const MysqlDescribeTableTool = createRenderer(() => import('./renderers/MysqlDescribeTableTool.vue'))
+const MysqlListTablesTool = createRenderer(() => import('./renderers/MysqlListTablesTool.vue'))
+const AskUserQuestionTool = createRenderer(() => import('./renderers/AskUserQuestionTool.vue'))
+const ExecuteTool = createRenderer(() => import('./renderers/ExecuteTool.vue'))
+const OcrParseFileTool = createRenderer(() => import('./renderers/OcrParseFileTool.vue'))
+const RememberMemoryTool = createRenderer(() => import('./renderers/RememberMemoryTool.vue'))
 
 const props = defineProps({
   toolCall: {

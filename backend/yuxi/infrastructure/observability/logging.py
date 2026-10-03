@@ -1,3 +1,5 @@
+"""日志适配、第三方 logging 桥接与进程级日志初始化。"""
+
 import logging
 import sys
 

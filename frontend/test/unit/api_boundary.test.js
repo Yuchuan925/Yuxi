@@ -434,3 +434,26 @@ test('工具元数据 API 使用普通用户认证且普通用户可正常请求
     assert.equal(result.data[0].slug, 'web_search')
   })
 })
+
+test('服务端 5xx 文案不泄露部署命令且保留错误状态', async () => {
+  await withServer(async (server) => {
+    storageValues.set('user_token', 'test-token')
+    globalThis.fetch = async () =>
+      new Response(JSON.stringify({ detail: 'internal details' }), {
+        status: 500,
+        headers: { 'content-type': 'application/json' }
+      })
+
+    setActivePinia(createPinia())
+    const { useUserStore } = await server.ssrLoadModule('/src/modules/identity/model/user.js')
+    useUserStore().token = 'test-token'
+    const { apiGet } = await server.ssrLoadModule('/src/apis/base.js')
+
+    await assert.rejects(apiGet('/api/failing'), (error) => {
+      assert.equal(error.status, 500)
+      assert.equal(error.message, '服务器内部错误，请稍后重试')
+      assert.equal(error.message.includes('docker compose'), false)
+      return true
+    })
+  })
+})

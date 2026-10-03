@@ -82,7 +82,7 @@
 
 <script setup>
 import { computed, onMounted, ref } from 'vue'
-import { QuestionCircleOutlined } from '@ant-design/icons-vue'
+import { CircleHelp as QuestionCircleOutlined } from '@lucide/vue'
 import { useChunkPresetOptions } from '@/modules/knowledge/model/useChunkPresetOptions'
 import { DEFAULT_CHUNK_PRESET_ID, isPlainObject } from '@/modules/knowledge/model/chunkUtils'
 

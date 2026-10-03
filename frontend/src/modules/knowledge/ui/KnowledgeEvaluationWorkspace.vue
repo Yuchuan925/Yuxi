@@ -567,7 +567,6 @@ defineExpose({ loadOverview })
 </script>
 
 <style lang="less" scoped>
-@import '@/assets/css/extensions.less';
 
 .evaluation-workspace {
   height: 100%;

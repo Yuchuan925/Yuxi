@@ -78,11 +78,6 @@ class PostgresManager(metaclass=SingletonMeta):
         except Exception as e:
             logger.error(f"Failed to initialize PostgreSQL manager: {e}")
 
-    def _check_initialized(self):
-        """检查是否已初始化"""
-        if not self._initialized:
-            raise RuntimeError("PostgreSQL manager not initialized. Please check configuration.")
-
     @property
     def is_postgresql(self) -> bool:
         """检查是否是 PostgreSQL 数据库"""
@@ -142,6 +137,11 @@ class PostgresManager(metaclass=SingletonMeta):
         self._check_initialized()
         async with self.get_async_session_context():
             pass  # commit is automatic in context manager
+
+    def _check_initialized(self):
+        """检查是否已初始化"""
+        if not self._initialized:
+            raise RuntimeError("PostgreSQL manager not initialized. Please check configuration.")
 
 
 pg_manager = PostgresManager()

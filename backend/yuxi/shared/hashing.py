@@ -1,3 +1,5 @@
+"""跨域稳定标识和哈希值生成工具。"""
+
 from __future__ import annotations
 
 import hashlib

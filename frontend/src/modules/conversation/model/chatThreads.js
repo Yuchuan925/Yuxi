@@ -2,11 +2,9 @@ import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
 import { threadApi } from '@/apis'
 import { handleChatError } from '@/shared/lib/errorHandler'
-import { createThreadDraftStore } from '@/modules/conversation/model/thread_draft'
+import { threadDraftStore } from '@/modules/conversation/model/thread_draft'
 
 const PAGE_SIZE = 100
-const threadDraftStore = createThreadDraftStore()
-
 function countNonPinnedThreads(items) {
   let count = 0
   for (const item of items) {

@@ -1,5 +1,5 @@
 import MessageProcessor from '@/modules/conversation/model/messageProcessor'
-import { enrichTaskToolCalls } from '@/modules/conversation/ui/tools/toolRegistry'
+import { enrichTaskToolCalls } from '@/modules/conversation/model/toolCallProjection'
 import { collapseConversationProcess } from '@/modules/conversation/model/conversationProcessGrouping'
 
 const hasVisibleAssistantBody = (message) => {

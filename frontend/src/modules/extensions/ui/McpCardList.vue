@@ -311,7 +311,6 @@ defineExpose({ fetchServers, loading })
 </script>
 
 <style lang="less" scoped>
-@import '@/assets/css/extensions.less';
 
 .info-card-emoji-icon {
   font-size: 18px;

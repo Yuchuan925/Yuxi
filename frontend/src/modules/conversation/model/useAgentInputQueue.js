@@ -15,19 +15,30 @@ export function useAgentInputQueue({
   startRunStream,
   onStreamError
 }) {
+  const stopInputQueueMonitor = (ts) => {
+    if (!ts?.inputQueueMonitor) return
+    clearTimeout(ts.inputQueueMonitor.timer)
+    ts.inputQueueMonitor.controller.abort()
+    ts.inputQueueMonitor = null
+  }
+
   const stopInputMonitor = (threadId, inputId) => {
     const ts = getThreadState(threadId)
     const entry = ts?.inputMonitors?.[inputId]
     if (!entry) return
-    clearTimeout(entry.timer)
-    entry.controller.abort()
     delete ts.inputMonitors[inputId]
+    if (Object.keys(ts.inputMonitors).length === 0) stopInputQueueMonitor(ts)
   }
 
   const stopAllInputMonitors = (threadId) => {
-    for (const inputId of Object.keys(getThreadState(threadId)?.inputMonitors || {})) {
-      stopInputMonitor(threadId, inputId)
+    const ts = getThreadState(threadId)
+    if (!ts) return
+    for (const entry of Object.values(ts.inputMonitors || {})) {
+      clearTimeout(entry.timer)
+      entry.controller?.abort()
     }
+    ts.inputMonitors = {}
+    stopInputQueueMonitor(ts)
   }
 
   const removeInput = (ts, inputId) => {
@@ -38,46 +49,59 @@ export function useAgentInputQueue({
     const ts = getThreadState(threadId)
     if (!ts || !inputId || ts.inputMonitors?.[inputId]) return
     ts.inputMonitors ||= {}
-    const entry = { controller: new AbortController(), timer: null }
-    ts.inputMonitors[inputId] = entry
+    ts.inputQueueMonitor ||= { controller: new AbortController(), timer: null }
+    const monitor = ts.inputQueueMonitor
+    ts.inputMonitors[inputId] = { controller: monitor.controller, timer: null }
+    if (Object.keys(ts.inputMonitors).length > 1) return
 
     const poll = async () => {
-      if (entry.controller.signal.aborted) return
-      try {
-        const input = await agentApi.getThreadInput(threadId, inputId)
-        if (entry.controller.signal.aborted) return
-        if (input.status === 'consumed' && input.run_id) {
-          const state = getThreadState(threadId)
-          removeInput(state, inputId)
-          stopInputMonitor(threadId, inputId)
-          if (!state?.activeRunId) resetOnGoingConv(threadId, { preserveInputMonitors: true })
-          mergeItemSnapshot(state.onGoingConv, input.items || [])
-          delete state.onGoingConv.optimisticMessages[inputId]
-          state.pendingInputId = inputId
-          void startRunStream(threadId, input.run_id, null, {
-            turnId: input.turn_id, inputId
+      if (monitor.controller.signal.aborted) return
+      let retryDelay = 1000
+      for (const currentInputId of Object.keys(ts.inputMonitors)) {
+        if (monitor.controller.signal.aborted) return
+        try {
+          const input = await agentApi.getThreadInput(threadId, currentInputId, {
+            signal: monitor.controller.signal
           })
-          return
+          if (monitor.controller.signal.aborted) return
+          if (input.status === 'consumed' && input.run_id) {
+            const state = getThreadState(threadId)
+            removeInput(state, currentInputId)
+            stopInputMonitor(threadId, currentInputId)
+            if (!state?.activeRunId) resetOnGoingConv(threadId, { preserveInputMonitors: true })
+            mergeItemSnapshot(state.onGoingConv, input.items || [])
+            delete state.onGoingConv.optimisticMessages[currentInputId]
+            state.pendingInputId = currentInputId
+            void startRunStream(threadId, input.run_id, null, {
+              turnId: input.turn_id, inputId: currentInputId
+            })
+            continue
+          }
+          if (input.status === 'cancelled') {
+            const state = getThreadState(threadId)
+            removeInput(state, currentInputId)
+            if (state?.onGoingConv?.optimisticMessages) {
+              delete state.onGoingConv.optimisticMessages[currentInputId]
+            }
+            stopInputMonitor(threadId, currentInputId)
+            onStreamError?.(threadId, currentInputId, 'cancelled')
+          }
+        } catch (error) {
+          if (error?.name === 'AbortError') return
+          if (error?.status >= 400 && error.status < 500 && error.status !== 429) {
+            stopInputMonitor(threadId, currentInputId)
+            onStreamError?.(threadId, currentInputId, 'unavailable')
+            handleChatError(error, 'stream')
+          } else {
+            retryDelay = 5000
+          }
         }
-        if (input.status === 'cancelled') {
-          const state = getThreadState(threadId)
-          removeInput(state, inputId)
-          if (state?.onGoingConv?.optimisticMessages) delete state.onGoingConv.optimisticMessages[inputId]
-          stopInputMonitor(threadId, inputId)
-          onStreamError?.(threadId, inputId, 'cancelled')
-          return
-        }
-      } catch (error) {
-        if (error?.status >= 400 && error.status < 500 && error.status !== 429) {
-          stopInputMonitor(threadId, inputId)
-          onStreamError?.(threadId, inputId, 'unavailable')
-          handleChatError(error, 'stream')
-          return
-        }
-        entry.timer = setTimeout(poll, 5000)
-        return
       }
-      entry.timer = setTimeout(poll, 1000)
+      if (!monitor.controller.signal.aborted && Object.keys(ts.inputMonitors).length > 0) {
+        monitor.timer = setTimeout(poll, retryDelay)
+      } else {
+        stopInputQueueMonitor(ts)
+      }
     }
     void poll()
   }

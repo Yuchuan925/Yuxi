@@ -1027,7 +1027,6 @@ onBeforeRouteLeave(async () => {
 </script>
 
 <style lang="less" scoped>
-@import '@/assets/css/extensions.less';
 
 .skill-detail {
   .readonly-detail-hint {

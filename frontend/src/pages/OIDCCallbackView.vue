@@ -68,19 +68,8 @@ const handleCallback = async () => {
 
     await router.replace({ path: route.path, query: {} })
 
-    // 更新用户状态
-    userStore.token = tokenData.access_token
-    userStore.userId = tokenData.uid
-    userStore.username = tokenData.username
-    userStore.uid = tokenData.uid || ''
-    userStore.phoneNumber = tokenData.phone_number || ''
-    userStore.avatar = tokenData.avatar || ''
-    userStore.userRole = tokenData.role || 'user'
-    userStore.departmentId = tokenData.department_id || null
-    userStore.departmentName = tokenData.department_name || ''
-
-    // 保存 token 到 localStorage
-    localStorage.setItem('user_token', tokenData.access_token)
+    // 统一更新响应式会话与持久 token
+    userStore.applySession({ ...tokenData, role: tokenData.role || 'user' })
 
     // 显示成功消息
     message.success('登录成功')

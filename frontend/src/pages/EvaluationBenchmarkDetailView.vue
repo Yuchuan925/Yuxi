@@ -656,7 +656,6 @@ onUnmounted(() => {
 </script>
 
 <style lang="less" scoped>
-@import '@/assets/css/extensions.less';
 
 .benchmark-detail-container,
 .benchmark-detail-layout {

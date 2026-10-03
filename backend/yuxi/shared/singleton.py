@@ -1,3 +1,5 @@
+"""仅供基础设施对象复用的线程安全 Singleton 元类。"""
+
 from threading import Lock
 
 

@@ -28,6 +28,7 @@ export function useAgentThreadState({
         isStreaming: false,
         runStreamAbortController: null,
         runReconnectTimer: null,
+        runReconnectAttempts: 0,
         activeRunId: null,
         currentTurnId: null,
         turnStatus: null,
@@ -43,7 +44,8 @@ export function useAgentThreadState({
         queuedInputs: [],
         queueSnapshot: { ...IDLE_QUEUE_SNAPSHOT },
         continueQueueInFlight: false,
-        inputMonitors: {}
+        inputMonitors: {},
+        inputQueueMonitor: null
       }
     }
     return chatState.threadStates[threadId]
@@ -63,6 +65,9 @@ export function useAgentThreadState({
       clearTimeout(entry.timer)
     }
     threadState.inputMonitors = {}
+    clearTimeout(threadState.inputQueueMonitor?.timer)
+    threadState.inputQueueMonitor?.controller?.abort()
+    threadState.inputQueueMonitor = null
   }
 
   const cleanupThreadState = (threadId) => {

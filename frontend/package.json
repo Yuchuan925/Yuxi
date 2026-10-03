@@ -16,7 +16,6 @@
     "typecheck": "tsc --project tsconfig.json"
   },
   "dependencies": {
-    "@ant-design/icons-vue": "^7.0.1",
     "@antv/g6": "^5.1.1",
     "@lucide/vue": "^1.34.0",
     "@opencode-ai/models": "0.0.55",

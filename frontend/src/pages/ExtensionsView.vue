@@ -118,7 +118,6 @@ watch(activeTab, (tab) => {
 </script>
 
 <style scoped lang="less">
-@import '@/assets/css/extensions.less';
 
 .extensions-view {
   .extensions-content {

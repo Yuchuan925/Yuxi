@@ -38,74 +38,6 @@ class UpdateWorkspaceFileContentRequest(BaseModel):
     content: str
 
 
-def _get_knowledge_base():
-    """仅在已注册的知识库工作区路由被调用时加载重运行时。"""
-
-    from yuxi.modules.knowledge.runtime import knowledge_base
-
-    return knowledge_base
-
-
-async def _ensure_knowledge_read_access(current_user: User, kb_id: str) -> None:
-    allowed = await _get_knowledge_base().check_accessible(
-        {
-            "uid": current_user.uid,
-            "role": current_user.role,
-            "department_id": current_user.department_id,
-        },
-        kb_id,
-    )
-    if not allowed:
-        raise HTTPException(status_code=403, detail="Access denied")
-
-
-async def _ensure_knowledge_supports_documents(kb_id: str) -> None:
-    db_info, supports_documents = await _get_knowledge_base().get_database_document_support(kb_id)
-    if not db_info:
-        raise HTTPException(status_code=404, detail=f"知识库 {kb_id} 不存在")
-    if not supports_documents:
-        raise HTTPException(status_code=501, detail=f"{db_info.name or db_info.kb_type} 不支持文件浏览")
-
-
-def _raise_knowledge_read_error(error: ValueError) -> None:
-    message = str(error) or "知识库文件读取失败"
-    if message.startswith("Dify 知识库不支持"):
-        raise HTTPException(status_code=501, detail=message) from error
-    raise HTTPException(status_code=400, detail=message) from error
-
-
-def _workspace_knowledge_entry(kb_id: str, item: dict) -> dict:
-    is_dir = bool(item.get("is_folder"))
-    is_virtual_folder = bool(item.get("is_virtual_folder"))
-    file_id = item.get("file_id")
-    path_prefix = item.get("path_prefix") or ""
-    if is_virtual_folder:
-        path = f"/knowledge/{kb_id}/virtual/{quote(path_prefix, safe='')}"
-    elif is_dir:
-        path = f"/knowledge/{kb_id}/folder/{file_id}/"
-    else:
-        path = f"/knowledge/{kb_id}/file/{file_id}"
-
-    return {
-        "source": "knowledge",
-        "kb_id": kb_id,
-        "file_id": file_id,
-        "parent_id": item.get("parent_id"),
-        "path": path,
-        "virtual_path": path,
-        "name": item.get("filename") or file_id,
-        "is_dir": is_dir,
-        "size": 0 if is_dir else int(item.get("file_size") or 0),
-        "modified_at": item.get("updated_at") or item.get("created_at") or "",
-        "readonly": True,
-        "status": item.get("status") or "done",
-        "has_original_file": bool(item.get("has_original_file")),
-        "has_parsed_markdown": bool(item.get("has_parsed_markdown")),
-        "is_virtual_folder": is_virtual_folder,
-        "path_prefix": path_prefix,
-    }
-
-
 @workspace.get("/tree", response_model=dict)
 async def get_workspace_tree(
     path: str = Query("/", description="工作区目录路径"),
@@ -131,26 +63,6 @@ async def search_workspace_files_route(
     current_user: User = Depends(get_required_user),
 ):
     return await search_workspace_files(query=query, current_user=current_user)
-
-
-def _binary_preview_response(data: dict) -> StreamingResponse:
-    filename = data.get("filename") or "preview"
-    preview_type = data.get("preview_type") or "unsupported"
-    return StreamingResponse(
-        io.BytesIO(data.get("content") or b""),
-        media_type=data.get("media_type") or "application/octet-stream",
-        headers={
-            "Content-Disposition": f"inline; filename*=UTF-8''{quote(filename)}",
-            "X-Yuxi-Preview-Type": preview_type,
-            "X-Yuxi-Preview-Filename": quote(filename),
-        },
-    )
-
-
-def _preview_response(data):
-    if isinstance(data, dict) and data.get("binary"):
-        return _binary_preview_response(data)
-    return data
 
 
 @workspace.get("/file")
@@ -291,3 +203,91 @@ async def download_workspace(
     current_user: User = Depends(get_required_user),
 ):
     return render_file_result(await download_workspace_file(path=path, current_user=current_user))
+
+
+def _get_knowledge_base():
+    """仅在已注册的知识库工作区路由被调用时加载重运行时。"""
+
+    from yuxi.modules.knowledge.runtime import knowledge_base
+
+    return knowledge_base
+
+
+async def _ensure_knowledge_read_access(current_user: User, kb_id: str) -> None:
+    allowed = await _get_knowledge_base().check_accessible(
+        {
+            "uid": current_user.uid,
+            "role": current_user.role,
+            "department_id": current_user.department_id,
+        },
+        kb_id,
+    )
+    if not allowed:
+        raise HTTPException(status_code=403, detail="Access denied")
+
+
+async def _ensure_knowledge_supports_documents(kb_id: str) -> None:
+    db_info, supports_documents = await _get_knowledge_base().get_database_document_support(kb_id)
+    if not db_info:
+        raise HTTPException(status_code=404, detail=f"知识库 {kb_id} 不存在")
+    if not supports_documents:
+        raise HTTPException(status_code=501, detail=f"{db_info.name or db_info.kb_type} 不支持文件浏览")
+
+
+def _raise_knowledge_read_error(error: ValueError) -> None:
+    message = str(error) or "知识库文件读取失败"
+    if message.startswith("Dify 知识库不支持"):
+        raise HTTPException(status_code=501, detail=message) from error
+    raise HTTPException(status_code=400, detail=message) from error
+
+
+def _workspace_knowledge_entry(kb_id: str, item: dict) -> dict:
+    is_dir = bool(item.get("is_folder"))
+    is_virtual_folder = bool(item.get("is_virtual_folder"))
+    file_id = item.get("file_id")
+    path_prefix = item.get("path_prefix") or ""
+    if is_virtual_folder:
+        path = f"/knowledge/{kb_id}/virtual/{quote(path_prefix, safe='')}"
+    elif is_dir:
+        path = f"/knowledge/{kb_id}/folder/{file_id}/"
+    else:
+        path = f"/knowledge/{kb_id}/file/{file_id}"
+
+    return {
+        "source": "knowledge",
+        "kb_id": kb_id,
+        "file_id": file_id,
+        "parent_id": item.get("parent_id"),
+        "path": path,
+        "virtual_path": path,
+        "name": item.get("filename") or file_id,
+        "is_dir": is_dir,
+        "size": 0 if is_dir else int(item.get("file_size") or 0),
+        "modified_at": item.get("updated_at") or item.get("created_at") or "",
+        "readonly": True,
+        "status": item.get("status") or "done",
+        "has_original_file": bool(item.get("has_original_file")),
+        "has_parsed_markdown": bool(item.get("has_parsed_markdown")),
+        "is_virtual_folder": is_virtual_folder,
+        "path_prefix": path_prefix,
+    }
+
+
+def _binary_preview_response(data: dict) -> StreamingResponse:
+    filename = data.get("filename") or "preview"
+    preview_type = data.get("preview_type") or "unsupported"
+    return StreamingResponse(
+        io.BytesIO(data.get("content") or b""),
+        media_type=data.get("media_type") or "application/octet-stream",
+        headers={
+            "Content-Disposition": f"inline; filename*=UTF-8''{quote(filename)}",
+            "X-Yuxi-Preview-Type": preview_type,
+            "X-Yuxi-Preview-Filename": quote(filename),
+        },
+    )
+
+
+def _preview_response(data):
+    if isinstance(data, dict) and data.get("binary"):
+        return _binary_preview_response(data)
+    return data

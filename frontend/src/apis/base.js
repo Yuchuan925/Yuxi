@@ -1,4 +1,10 @@
-import { useUserStore, checkAdminPermission, checkSuperAdminPermission } from '@/modules/identity/model/user'
+import {
+  assertApiAdminPermission,
+  assertApiSuperAdminPermission,
+  getApiAuthHeaders,
+  handleApiUnauthorized,
+  getApiToken
+} from './auth_context'
 import { message } from 'ant-design-vue'
 
 function safeRequestMetadata(url, requestOptions, response = null) {
@@ -89,7 +95,7 @@ function publicErrorMessage(url, status, headers, requiresAuth) {
       : '账户已锁定，请稍后再试'
   }
   if (status === 429) return '请求过于频繁，请稍后重试'
-  if (status >= 500) return '服务器内部错误，请使用 docker compose logs api 查看详细日志'
+  if (status >= 500) return '服务器内部错误，请稍后重试'
   return `请求失败: ${status}`
 }
 
@@ -120,12 +126,11 @@ export async function apiRequest(url, options = {}, requiresAuth = true, respons
 
     // 如果需要认证，添加认证头
     if (requiresAuth) {
-      const userStore = useUserStore()
-      if (!userStore.isLoggedIn) {
+      if (!getApiToken()) {
         throw new Error('用户未登录')
       }
 
-      Object.assign(requestOptions.headers, userStore.getAuthHeaders())
+      Object.assign(requestOptions.headers, getApiAuthHeaders())
     }
 
     // 发送请求
@@ -166,14 +171,10 @@ export async function apiRequest(url, options = {}, requiresAuth = true, respons
 
       if (response.status === 401 && requiresAuth) {
         // 如果是认证失败，可能需要重新登录
-        const userStore = useUserStore()
-
         message.error('登录已过期，请重新登录')
 
-        // 如果用户当前认为自己已登录，则登出
-        if (userStore.isLoggedIn) {
-          userStore.logout()
-        }
+        // 将会话清理交还给 identity Store
+        handleApiUnauthorized()
 
         // 使用setTimeout确保消息显示后再跳转
         setTimeout(() => {
@@ -230,12 +231,12 @@ export function apiGet(url, options = {}, requiresAuth = true, responseType = 'j
 }
 
 export function apiAdminGet(url, options = {}, responseType = 'json') {
-  checkAdminPermission()
+  assertApiAdminPermission()
   return apiGet(url, options, true, responseType)
 }
 
 export function apiSuperAdminGet(url, options = {}, responseType = 'json') {
-  checkSuperAdminPermission()
+  assertApiSuperAdminPermission()
   return apiGet(url, options, true, responseType)
 }
 
@@ -262,12 +263,12 @@ export function apiPost(url, data = {}, options = {}, requiresAuth = true, respo
 }
 
 export function apiAdminPost(url, data = {}, options = {}, responseType = 'json') {
-  checkAdminPermission()
+  assertApiAdminPermission()
   return apiPost(url, data, options, true, responseType)
 }
 
 export function apiSuperAdminPost(url, data = {}, options = {}, responseType = 'json') {
-  checkSuperAdminPermission()
+  assertApiSuperAdminPermission()
   return apiPost(url, data, options, true, responseType)
 }
 
@@ -294,12 +295,12 @@ export function apiPut(url, data = {}, options = {}, requiresAuth = true, respon
 }
 
 export function apiAdminPut(url, data = {}, options = {}, responseType = 'json') {
-  checkAdminPermission()
+  assertApiAdminPermission()
   return apiPut(url, data, options, true, responseType)
 }
 
 export function apiSuperAdminPut(url, data = {}, options = {}, responseType = 'json') {
-  checkSuperAdminPermission()
+  assertApiSuperAdminPermission()
   return apiPut(url, data, options, true, responseType)
 }
 
@@ -316,11 +317,11 @@ export function apiDelete(url, options = {}, requiresAuth = true, responseType =
 }
 
 export function apiAdminDelete(url, options = {}) {
-  checkAdminPermission()
+  assertApiAdminPermission()
   return apiDelete(url, options, true)
 }
 
 export function apiSuperAdminDelete(url, options = {}) {
-  checkSuperAdminPermission()
+  assertApiSuperAdminPermission()
   return apiDelete(url, options, true)
 }

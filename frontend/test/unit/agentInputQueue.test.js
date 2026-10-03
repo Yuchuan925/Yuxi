@@ -160,6 +160,8 @@ test('完整队列快照合并 steer 节点并遵循服务器优先顺序', asyn
     await queue.syncQueuedInputs('thread-1')
     assert.deepEqual(state.queuedInputs.map((input) => input.input_id), ['S1', 'F1', 'local'])
     assert.equal(state.queuedInputs[0].content, 'S1\nS2')
+    assert.ok(state.inputQueueMonitor)
+    assert.strictEqual(state.inputMonitors.S1.controller, state.inputMonitors.F1.controller)
     agentApi.getThreadQueue = async () => ({ inputs: [
       { input_id: 'F1', kind: 'follow_up', status: 'pending', content: '普通消息' }
     ] })

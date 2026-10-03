@@ -1255,7 +1255,6 @@ defineExpose({
 </script>
 
 <style lang="less" scoped>
-@import '@/assets/css/extensions.less';
 </style>
 
 <style lang="less" scoped>

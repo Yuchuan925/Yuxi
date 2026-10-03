@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { authApi } from '@/apis/auth_api'
+import { configureApiAuth } from '@/apis/auth_context'
 import { useAgentStore } from '../../agents/model/agent'
 import { useProjectsStore } from '../../projects/model/projects'
 
@@ -22,12 +23,13 @@ export const useUserStore = defineStore('user', () => {
   const isSuperAdmin = computed(() => userRole.value === 'superadmin')
 
   // 动作
+  /** 统一应用认证响应，保持响应式会话与持久 token 同步。 */
   function applySession(data) {
     useProjectsStore().reset()
     token.value = data.access_token
-    userId.value = data.user_id
+    userId.value = data.user_id ?? data.uid ?? null
     username.value = data.username
-    uid.value = data.uid
+    uid.value = data.uid ?? ''
     phoneNumber.value = data.phone_number || ''
     avatar.value = data.avatar || ''
     userRole.value = data.role
@@ -232,6 +234,7 @@ export const useUserStore = defineStore('user', () => {
     isSuperAdmin,
 
     // 方法
+    applySession,
     login,
     logout,
     initialize,
@@ -245,6 +248,16 @@ export const useUserStore = defineStore('user', () => {
     uploadAvatar,
     getCurrentUser,
     updateProfile
+  }
+})
+
+configureApiAuth({
+  getToken: () => useUserStore().token,
+  isAdmin: () => useUserStore().isAdmin,
+  isSuperAdmin: () => useUserStore().isSuperAdmin,
+  onUnauthorized: () => {
+    const userStore = useUserStore()
+    if (userStore.isLoggedIn) userStore.logout()
   }
 })
 

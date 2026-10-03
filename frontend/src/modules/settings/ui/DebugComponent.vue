@@ -1133,7 +1133,7 @@ const switchToUser = async (user) => {
       state.switchingUserId = user.id
       try {
         const data = await authApi.impersonateUser(user.id)
-        localStorage.setItem('user_token', data.access_token)
+        userStore.applySession(data)
         message.success(`已切换为用户: ${user.username}`)
         showModal.value = false
         window.location.reload()

@@ -1,7 +1,6 @@
 <script setup>
 import { ref, onMounted, onUnmounted, computed, provide, watch } from 'vue'
 import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router'
-import { GithubOutlined } from '@ant-design/icons-vue'
 import { message } from 'ant-design-vue'
 import {
   BarChart3,
@@ -12,7 +11,8 @@ import {
   PanelLeft,
   PanelLeftOpen,
   MessageCirclePlus,
-  Search
+  Search,
+  GitFork as GithubOutlined
 } from '@lucide/vue'
 
 import { useConfigStore } from '@/modules/settings/model/config'

@@ -1,7 +1,9 @@
 /** 公开 item 的唯一客户端 reducer；协议状态先落地，展示平滑独立处理。 */
 export const createItemState = () => ({ items: {}, seenEvents: new Set(), closedParts: new Set() })
 
-const clone = (value) => JSON.parse(JSON.stringify(value))
+const clone = (value) => typeof structuredClone === 'function'
+  ? structuredClone(value)
+  : JSON.parse(JSON.stringify(value))
 const terminal = (item) => item && item.status !== 'in_progress'
 const partKey = (event) => `${event.item_id}:${event.content_index}`
 const canReplace = (existing, incoming) => !existing || (

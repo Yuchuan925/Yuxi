@@ -365,9 +365,9 @@ import {
   Network,
   Pencil,
   Search,
-  Upload
+  Upload,
+  CircleHelp as QuestionCircleOutlined
 } from '@lucide/vue'
-import { QuestionCircleOutlined } from '@ant-design/icons-vue'
 import { message } from 'ant-design-vue'
 import ExtensionDetailLayout from '@/shared/ui/ExtensionDetailLayout.vue'
 import FileTable from '@/modules/knowledge/ui/FileTable.vue'
@@ -930,7 +930,6 @@ onUnmounted(() => {
 </script>
 
 <style lang="less" scoped>
-@import '@/assets/css/extensions.less';
 
 .database-info-container,
 .knowledge-detail-layout {

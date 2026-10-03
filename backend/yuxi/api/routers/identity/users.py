@@ -128,45 +128,6 @@ async def upload_user_image(file: UploadFile = File(...), current_user: User = D
     return {"success": True, "image_url": image_url, "url": image_url}
 
 
-def validate_agent_env(env: dict[str, Any]) -> dict[str, str]:
-    if len(env) > MAX_ENV_COUNT:
-        raise HTTPException(status_code=400, detail=f"环境变量数量不能超过 {MAX_ENV_COUNT} 个")
-
-    normalized: dict[str, str] = {}
-    for key, value in env.items():
-        if not isinstance(key, str):
-            raise HTTPException(status_code=400, detail="环境变量名必须是字符串")
-        name = key.strip()
-        if not name:
-            raise HTTPException(status_code=400, detail="环境变量名不能为空")
-        if len(name) > MAX_ENV_KEY_LENGTH:
-            raise HTTPException(status_code=400, detail=f"环境变量名长度不能超过 {MAX_ENV_KEY_LENGTH}")
-        if not ENV_KEY_PATTERN.match(name):
-            raise HTTPException(status_code=400, detail=f"环境变量名 {name} 格式不正确")
-        if name in normalized:
-            raise HTTPException(status_code=400, detail=f"环境变量名 {name} 重复")
-        if not isinstance(value, str):
-            raise HTTPException(status_code=400, detail=f"环境变量 {name} 的值必须是字符串")
-        if len(value) > MAX_ENV_VALUE_LENGTH:
-            raise HTTPException(status_code=400, detail=f"环境变量 {name} 的值过长")
-        normalized[name] = value
-    return normalized
-
-
-async def get_accessible_api_key(repository: APIKeyRepository, api_key_id: int, current_user: User):
-    """读取当前用户可见的 API Key，并保持既有错误状态码。"""
-    access = await repository.get_accessible(
-        api_key_id=api_key_id,
-        requester_user_id=current_user.id,
-        is_superadmin=current_user.role == "superadmin",
-    )
-    if access.api_key is not None:
-        return access.api_key
-    if not access.exists:
-        raise HTTPException(status_code=404, detail="API Key 不存在")
-    raise HTTPException(status_code=403, detail="无权操作此 API Key")
-
-
 @user_router.get("/apikey/", response_model=dict)
 async def list_api_keys(
     skip: int = Query(0, ge=0),
@@ -315,3 +276,42 @@ async def update_agent_env(
     now = utc_now_naive()
     result = await AgentEnvRepository(db).upsert(uid=current_user.uid, env=env, updated_at=now)
     return AgentEnvResponse(env=result.env, updated_at=format_utc_datetime(result.updated_at))
+
+
+def validate_agent_env(env: dict[str, Any]) -> dict[str, str]:
+    if len(env) > MAX_ENV_COUNT:
+        raise HTTPException(status_code=400, detail=f"环境变量数量不能超过 {MAX_ENV_COUNT} 个")
+
+    normalized: dict[str, str] = {}
+    for key, value in env.items():
+        if not isinstance(key, str):
+            raise HTTPException(status_code=400, detail="环境变量名必须是字符串")
+        name = key.strip()
+        if not name:
+            raise HTTPException(status_code=400, detail="环境变量名不能为空")
+        if len(name) > MAX_ENV_KEY_LENGTH:
+            raise HTTPException(status_code=400, detail=f"环境变量名长度不能超过 {MAX_ENV_KEY_LENGTH}")
+        if not ENV_KEY_PATTERN.match(name):
+            raise HTTPException(status_code=400, detail=f"环境变量名 {name} 格式不正确")
+        if name in normalized:
+            raise HTTPException(status_code=400, detail=f"环境变量名 {name} 重复")
+        if not isinstance(value, str):
+            raise HTTPException(status_code=400, detail=f"环境变量 {name} 的值必须是字符串")
+        if len(value) > MAX_ENV_VALUE_LENGTH:
+            raise HTTPException(status_code=400, detail=f"环境变量 {name} 的值过长")
+        normalized[name] = value
+    return normalized
+
+
+async def get_accessible_api_key(repository: APIKeyRepository, api_key_id: int, current_user: User):
+    """读取当前用户可见的 API Key，并保持既有错误状态码。"""
+    access = await repository.get_accessible(
+        api_key_id=api_key_id,
+        requester_user_id=current_user.id,
+        is_superadmin=current_user.role == "superadmin",
+    )
+    if access.api_key is not None:
+        return access.api_key
+    if not access.exists:
+        raise HTTPException(status_code=404, detail="API Key 不存在")
+    raise HTTPException(status_code=403, detail="无权操作此 API Key")
