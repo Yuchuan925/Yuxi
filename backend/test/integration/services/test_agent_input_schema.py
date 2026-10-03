@@ -10,16 +10,16 @@ from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from yuxi.modules.agents.repositories.runs import AgentRunRepository
-from yuxi.modules.agents.repositories.input import AgentInputRepository
-from yuxi.modules.agents.repositories.input_receipt import AgentInputReceiptRepository
-from yuxi.modules.agents.repositories.turn import AgentTurnRepository
 from yuxi.infrastructure.postgres.manager import PostgresManager
 from yuxi.migrations.schema import create_business_tables
 from yuxi.modules.agents.models.inputs import AgentInput
-from yuxi.modules.agents.models.turns import AgentTurn
-from yuxi.modules.agents.models.threads import Conversation, SubagentThread
 from yuxi.modules.agents.models.messages import Message
+from yuxi.modules.agents.models.threads import Conversation, SubagentThread
+from yuxi.modules.agents.models.turns import AgentTurn
+from yuxi.modules.agents.repositories.input import AgentInputRepository
+from yuxi.modules.agents.repositories.input_receipt import AgentInputReceiptRepository
+from yuxi.modules.agents.repositories.runs import AgentRunRepository
+from yuxi.modules.agents.repositories.turn import AgentTurnRepository
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
 
@@ -317,6 +317,7 @@ async def test_run_execution_sequence_orders_segments_across_a_turn() -> None:
             first = await runs.create_run(
                 run_id="cursor-first",
                 conversation_thread_id="input-thread",
+                conversation_id=conversation_id,
                 agent_slug="main",
                 uid="input-user",
                 turn_id=turn.id,
@@ -329,6 +330,7 @@ async def test_run_execution_sequence_orders_segments_across_a_turn() -> None:
             second = await runs.create_run(
                 run_id="cursor-second",
                 conversation_thread_id="input-thread",
+                conversation_id=conversation_id,
                 agent_slug="main",
                 uid="input-user",
                 turn_id=turn.id,
@@ -505,10 +507,33 @@ async def test_parent_and_child_usage_stays_in_its_own_turn() -> None:
                 execution_status="completed",
                 usage={"input_tokens": 4, "output_tokens": 3, "total_tokens": 7},
             )
-            db.add_all([parent_audit, child_audit, wrong_run_text, wrong_turn_text, child_final])
+            other_final = Message(
+                conversation_id=parent_conversation.id,
+                run_id=other_run.id,
+                turn_id=other_turn.id,
+                role="assistant",
+                content="other turn result",
+                message_type="text",
+                operation_id="other-final-model",
+                execution_status="completed",
+                usage={"input_tokens": 900, "output_tokens": 900, "total_tokens": 1800},
+            )
+            db.add_all([parent_audit, child_audit, child_final, other_final])
             await db.flush()
-            parent_run.output_message_id = wrong_run_text.id
-            other_run.output_message_id = wrong_turn_text.id
+            for invalid_message in (wrong_run_text, wrong_turn_text):
+                with pytest.raises(IntegrityError, match="fk_messages_run_turn_conversation"):
+                    async with db.begin_nested():
+                        db.add(invalid_message)
+                        await db.flush()
+                        await db.execute(text("SET CONSTRAINTS ALL IMMEDIATE"))
+            for run, foreign_message in ((parent_run, child_final), (other_run, parent_audit)):
+                with pytest.raises(IntegrityError, match="fk_agent_runs_output_message_scope"):
+                    async with db.begin_nested():
+                        run.output_message_id = foreign_message.id
+                        await db.flush()
+                        await db.execute(text("SET CONSTRAINTS ALL IMMEDIATE"))
+                await db.refresh(run)
+            other_run.output_message_id = other_final.id
             child_run.output_message_id = child_final.id
             await db.commit()
 
@@ -522,6 +547,10 @@ async def test_parent_and_child_usage_stays_in_its_own_turn() -> None:
             child_audits = await AgentTurnRepository(db).list_model_usage_audits(child_turn.id)
             assert [message.operation_id for message in child_audits] == ["child-tool-model", "child-final-model"]
             assert sum(message.usage["total_tokens"] for message in child_audits) == 10
+            other_audits = await AgentTurnRepository(db).list_model_usage_audits(other_turn.id)
+            assert [(message.operation_id, message.usage["total_tokens"]) for message in other_audits] == [
+                ("other-final-model", 1800)
+            ]
     finally:
         await _drop_schema(schema, admin_engine, engine)
 
