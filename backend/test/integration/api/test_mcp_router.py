@@ -159,7 +159,14 @@ async def test_management_connection_uses_real_protocol_and_preserves_state(test
         ({"transport": "streamable_http", "args": []}, "extra_forbidden"),
         ({"transport": "streamable_http", "env": {}}, "extra_forbidden"),
         ({"transport": "streamable_http", "url": "file:///tmp/mcp"}, "HTTP URL"),
+        ({"transport": "streamable_http", "url": "https://example.com:bad/mcp"}, "HTTP URL"),
+        ({"transport": "streamable_http", "url": "https://exa mple.com/mcp"}, "HTTP URL"),
+        ({"transport": "streamable_http", "url": "https://example.com/\u0000mcp"}, "HTTP URL"),
         ({"transport": "sse", "timeout": -1}, "timeout"),
+        ({"transport": "sse", "timeout": True}, "timeout"),
+        ({"transport": "sse", "timeout": 1.0}, "timeout"),
+        ({"transport": "sse", "timeout": "30"}, "timeout"),
+        ({"transport": "sse", "sse_read_timeout": True}, "sse_read_timeout"),
     ],
 )
 async def test_remote_config_rejected_before_persistence(test_client, admin_headers, payload, reason):
@@ -205,10 +212,20 @@ async def test_manifest_metadata_persisted_and_invalid_update_preserves_connecti
         assert before["icon"] == "📚"
         assert json.loads(before["tags"]) == ["文档"]
         assert not {"command", "args", "env", "extra_data"} & set(before.keys())
-        response = await test_client.put(path, headers=admin_headers, json={"url": "file:///tmp/mcp"})
-        assert response.status_code == 400, response.text
-        assert "HTTP URL" in response.text
-        assert await conn.fetchrow("SELECT * FROM mcp_servers WHERE slug = $1", slug) == before
+        for payload, reason in [
+            ({"url": "file:///tmp/mcp"}, "HTTP URL"),
+            ({"url": "https://example.com:bad/mcp"}, "HTTP URL"),
+            ({"url": "https://exa mple.com/mcp"}, "HTTP URL"),
+            ({"url": "https://example.com/\u0000mcp"}, "HTTP URL"),
+            ({"timeout": True}, "timeout"),
+            ({"sse_read_timeout": True}, "sse_read_timeout"),
+            ({"timeout": 1.0}, "timeout"),
+            ({"sse_read_timeout": "30"}, "sse_read_timeout"),
+        ]:
+            response = await test_client.put(path, headers=admin_headers, json=payload)
+            assert response.status_code in (400, 422), response.text
+            assert reason in response.text
+            assert await conn.fetchrow("SELECT * FROM mcp_servers WHERE slug = $1", slug) == before
     finally:
         await test_client.delete(path, headers=admin_headers)
         assert await conn.fetchrow("SELECT * FROM mcp_servers WHERE slug = $1", slug) is None

@@ -172,7 +172,7 @@ const handleFormSubmit = async () => {
     const entry = {
       type: form.transport,
       url: form.url,
-      ...(headers && { headers }),
+      ...(form.headersText.trim() && { headers }),
       ...(form.timeout != null && { timeout: form.timeout }),
       ...(form.sse_read_timeout != null && { sse_read_timeout: form.sse_read_timeout }),
       extra_data: {

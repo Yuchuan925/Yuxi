@@ -1,8 +1,8 @@
 """远程 MCP 清单与持久化配置的输入契约。"""
 
 from typing import Annotated, Any, Literal
-from urllib.parse import urlsplit
 
+from httpx import InvalidURL, URL
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr, field_validator
 
 
@@ -26,8 +26,16 @@ class RemoteMCPConfig(BaseModel):
     @classmethod
     def validate_http_url(cls, value: str) -> str:
         """仅接受带主机名的 HTTP URL。"""
-        parsed = urlsplit(value)
-        if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        try:
+            parsed = URL(value)
+        except InvalidURL as exc:
+            raise ValueError("MCP 需要有效的 HTTP URL") from exc
+        if (
+            parsed.scheme not in {"http", "https"}
+            or not parsed.host
+            or "%" in parsed.host
+            or (parsed.port is not None and not 0 <= parsed.port <= 65535)
+        ):
             raise ValueError("MCP 需要有效的 HTTP URL")
         return value
 
