@@ -284,6 +284,13 @@ class KnowledgeBaseManager:
         persisted_stats = additional_params.pop("stats", None)
         normalized_stats = self._normalize_database_stats(stats if stats is not None else persisted_stats)
 
+        try:
+            share_config = normalize_permission_config(row.share_config)
+        except (TypeError, ValueError) as error:
+            # 保留损坏原值供授权拒绝及超级管理员修复，读取不能赋予默认全局权限。
+            share_config = row.share_config
+            logger.warning(f"Invalid knowledge share config: kb_id={row.kb_id}: {error}")
+
         return {
             "kb_id": row.kb_id,
             "name": row.name,
@@ -293,7 +300,7 @@ class KnowledgeBaseManager:
             "llm_model_spec": row.llm_model_spec,
             "query_params": dict(row.query_params or {}),
             "additional_params": additional_params,
-            "share_config": self._normalize_share_config(row.share_config),
+            "share_config": share_config,
             "created_by": row.created_by,
             "created_at": row.created_at,
             **normalized_stats,

@@ -68,19 +68,28 @@ def _normalize_scope(scope: dict | None) -> dict | None:
     if not isinstance(scope, dict):
         raise ValueError("权限范围必须是对象")
 
-    access_level = scope.get("access_level") or "global"
+    access_level = scope.get("access_level")
+    if access_level is not None and not isinstance(access_level, str):
+        raise ValueError("资源权限访问级别必须是字符串")
+    access_level = access_level or "global"
     if access_level not in {"global", "department", "user"}:
         raise ValueError("无效的资源权限范围")
 
     if access_level == "global":
         return DEFAULT_SCOPE.copy()
     if access_level == "department":
-        department_ids = sorted({int(value) for value in scope.get("department_ids") or []})
+        members = scope.get("department_ids")
+        if not isinstance(members, list) or any(type(value) not in (int, str) for value in members):
+            raise ValueError("部门权限成员必须是整数或整数字符串组成的列表")
+        department_ids = sorted({int(value) for value in members})
         if not department_ids:
             raise ValueError("部门权限至少需要选择一个部门")
         return {"access_level": access_level, "department_ids": department_ids, "user_uids": []}
 
-    user_uids = sorted({str(value).strip() for value in scope.get("user_uids") or [] if str(value).strip()})
+    members = scope.get("user_uids")
+    if not isinstance(members, list) or any(not isinstance(value, str) for value in members):
+        raise ValueError("用户权限成员必须是字符串列表")
+    user_uids = sorted({value.strip() for value in members if value.strip()})
     if not user_uids:
         raise ValueError("指定用户权限至少需要选择一个用户")
     return {"access_level": access_level, "department_ids": [], "user_uids": user_uids}

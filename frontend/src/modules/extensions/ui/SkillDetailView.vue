@@ -206,13 +206,21 @@
               <div v-else-if="isReadOnlySkill" class="readonly-scope-hint">
                 当前 Skill 对你只读，不能修改生效范围。
               </div>
-              <ShareConfigForm
-                v-else
-                ref="shareConfigFormRef"
-                v-model="shareConfigForm"
-                :auto-select-user-dept="true"
-                :allowed-access-levels="allowedSkillAccessLevels"
-              />
+              <template v-else>
+                <a-alert
+                  v-if="currentSkill?.share_config_invalid"
+                  type="warning"
+                  show-icon
+                  role="alert"
+                  message="共享配置无效。已暂设为仅所有者，请检查共享范围并保存。"
+                />
+                <ShareConfigForm
+                  ref="shareConfigFormRef"
+                  v-model="shareConfigForm"
+                  :auto-select-user-dept="true"
+                  :allowed-access-levels="allowedSkillAccessLevels"
+                />
+              </template>
             </section>
           </div>
         </section>
@@ -407,6 +415,7 @@ import AgentFilePreview from '@/modules/conversation/ui/workspace/AgentFilePrevi
 import ExtensionDetailLayout from '@/shared/ui/ExtensionDetailLayout.vue'
 import FileTreeComponent from '@/modules/conversation/ui/workspace/FileTreeComponent.vue'
 import ShareConfigForm from '@/modules/agents/ui/ShareConfigForm.vue'
+import { cloneShareConfig } from '@/modules/agents/model/shareConfig'
 
 const route = useRoute()
 const router = useRouter()
@@ -482,9 +491,10 @@ const hasUnsavedDependencyChanges = computed(() =>
 )
 const hasUnsavedShareConfigChanges = computed(() =>
   currentSkill.value
-    ? enabledForm.value !== (currentSkill.value.enabled !== false) ||
+    ? currentSkill.value.share_config_invalid ||
+      enabledForm.value !== (currentSkill.value.enabled !== false) ||
       JSON.stringify(shareConfigForm.value) !==
-        JSON.stringify(cloneShareConfig(currentSkill.value.share_config))
+        JSON.stringify(cloneShareConfig(currentSkill.value.share_config, currentSkill.value.share_config_invalid))
     : false
 )
 const hasUnsavedSettings = computed(() => {
@@ -629,35 +639,9 @@ const startEditingCurrentFile = () => {
   filePreviewRef.value?.startEditing?.()
 }
 
-const cloneShareConfig = (config) => ({
-  version: 2,
-  read_scope:
-    config?.version === 2
-      ? config.read_scope
-        ? {
-            access_level: config.read_scope.access_level || 'global',
-            department_ids: [...(config.read_scope.department_ids || [])],
-            user_uids: [...(config.read_scope.user_uids || [])]
-          }
-        : null
-      : {
-          access_level: config?.access_level || 'user',
-          department_ids: [...(config?.department_ids || [])],
-          user_uids: [...(config?.user_uids || [])]
-        },
-  manage_scope:
-    config?.version === 2 && config.manage_scope
-      ? {
-          access_level: config.manage_scope.access_level || 'global',
-          department_ids: [...(config.manage_scope.department_ids || [])],
-          user_uids: [...(config.manage_scope.user_uids || [])]
-        }
-      : null
-})
-
 const syncShareConfigFromSkill = (skillRecord) => {
   enabledForm.value = skillRecord?.enabled !== false
-  shareConfigForm.value = cloneShareConfig(skillRecord?.share_config)
+  shareConfigForm.value = cloneShareConfig(skillRecord?.share_config, skillRecord?.share_config_invalid)
 }
 
 const fetchSkillDetail = async () => {

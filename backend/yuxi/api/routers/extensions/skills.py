@@ -8,7 +8,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Qu
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
-from yuxi.modules.identity.permissions import resolve_skill_permission
+from yuxi.modules.identity.permissions import normalize_permission_config, resolve_skill_permission
 from yuxi.modules.extensions.skills.repository import SkillRepository
 from yuxi.modules.extensions.skills.catalog import list_accessible_skills, list_skill_cards_for_user
 from yuxi.modules.extensions.skills.draft import (
@@ -655,6 +655,14 @@ def _summarize_results(results: list[dict]) -> dict[str, int]:
 def _serialize_skill_for_user(item, user: User) -> dict:
     """为 Skill 描述附加当前用户的管理权限。"""
     data = item.to_dict()
+    data["share_config_invalid"] = False
+    if getattr(item, "source_scope", None) != "personal":
+        try:
+            data["share_config"] = normalize_permission_config(item.share_config)
+        except (TypeError, ValueError) as exc:
+            data["share_config"] = item.share_config
+            data["share_config_invalid"] = True
+            logger.warning("Invalid skill share config exposed for repair: slug={}, error={}", item.slug, str(exc))
     data["can_manage"] = user_can_manage_skill(user, item)
     data["effective_permission"] = resolve_skill_permission(user, item).value
     data["is_builtin"] = is_builtin_skill(item)

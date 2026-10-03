@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from yuxi.modules.extensions.mcp.service import get_enabled_mcp_server_slugs
 from yuxi.modules.extensions.skills.builtin import BUILTIN_SKILLS_DIR
 from yuxi.infrastructure.runtime_settings import get_skill_data_dir
+from yuxi.infrastructure.observability.logging import logger
 from yuxi.modules.identity.permissions import ResourcePermission, normalize_permission_config, resolve_skill_permission
 from yuxi.modules.extensions.skills.repository import SkillRepository
 from yuxi.modules.extensions.skills.draft import consume_installed_draft_items, load_and_select_draft_items
@@ -373,6 +374,12 @@ async def get_manageable_skill_or_raise(db: AsyncSession, user: User, slug: str,
 def resolved_shared_skill(item: Skill) -> ResolvedSkill:
     """将数据库 Skill 适配为统一的有效 Skill 描述。"""
     source_scope = "builtin" if is_builtin_skill(item) else "shared"
+    try:
+        share_config = normalize_permission_config(item.share_config)
+    except (TypeError, ValueError) as exc:
+        # 可见性仍由 repository/resolver 校验；保留坏配置供管理者修复。
+        share_config = item.share_config
+        logger.warning("Invalid skill share config exposed for repair: slug={}, error={}", item.slug, str(exc))
     return ResolvedSkill(
         id=item.id,
         slug=item.slug,
@@ -383,9 +390,7 @@ def resolved_shared_skill(item: Skill) -> ResolvedSkill:
         source_dir=_resolve_skill_dir(item),
         enabled=bool(item.enabled),
         created_by=item.created_by,
-        share_config=normalize_permission_config(
-            item.share_config,
-        ),
+        share_config=share_config,
         tool_dependencies=normalize_string_list(item.tool_dependencies),
         mcp_dependencies=normalize_string_list(item.mcp_dependencies),
         skill_dependencies=normalize_string_list(item.skill_dependencies),

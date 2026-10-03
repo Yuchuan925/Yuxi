@@ -38,7 +38,7 @@ class KnowledgeBaseSummary:
     llm_model_spec: str | None
     query_params: dict[str, Any]
     additional_params: dict[str, Any]
-    share_config: dict[str, Any]
+    share_config: dict[str, Any] | None
     created_by: str | None
     created_at: datetime | None
     file_count: int = 0
