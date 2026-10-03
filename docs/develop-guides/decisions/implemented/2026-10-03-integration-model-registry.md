@@ -10,7 +10,7 @@ Owner：backend/test/integration/conftest.py
 
 ## 决策
 
-Integration 的共享 conftest 在测试模块导入之前调用已有 `yuxi.bootstrap.models.load_models()`，使用与 unit、Schema 初始化相同的完整模型清单。加载只注册映射，不建立数据库连接、不创建表、不启动 API 或 worker。Schema 锁测试直接调用当前 `schema_migration_lock(manager)`，使用真实 PostgreSQL 的 advisory lock，保留串行化与释放后的进入断言。
+Integration 的共享 conftest 通过 session autouse fixture 调用已有 `yuxi.bootstrap.models.load_models()`，使用与 unit、Schema 初始化相同的完整模型清单。加载只注册映射，不建立数据库连接、不创建表、不启动 API 或 worker。Schema 锁测试直接调用当前 `schema_migration_lock(manager)`，使用真实 PostgreSQL 的 advisory lock，保留串行化与释放后的进入断言。
 
 ### 实现方案
 
@@ -24,10 +24,12 @@ Integration 的共享 conftest 在测试模块导入之前调用已有 `yuxi.boo
 
 ## 后果
 
-独立执行单个 integration 文件与批量执行都使用同一映射清单。模型加载失败会在测试收集时明确报告；测试不依赖文件排序或之前收集的 unit 用例。
+独立执行单个 integration 文件与批量执行都使用同一映射清单。模型加载失败会在 session fixture 初始化时明确报告；测试不依赖文件排序或之前收集的 unit 用例。
 
 ## 验证
 
 `docker compose run --rm --no-deps -e PYTEST_ADDOPTS='-p no:cacheprovider' api uv run --no-sync pytest test/integration/services/test_durable_task_repository.py -q` 在修复前得到 16 failed、1 passed，失败原因是无法解析 `AgentEnv`；修复后在真实 PostgreSQL 的独立 Schema 中 17 passed。原测试继续断言持久 Task、lease、去重及领域终态，没有改写 oracle 或业务数据。
 
 Ruff check 与 format 检查（使用 `backend/pyproject.toml`）通过。完整 worker assembled path 仍由更新后 GitHub Runtime System Tests 的结果证明，隔离 Schema 结果不替代它。Schema 测试修复前本地 1 failed、4 passed，失败为入口错误导致的 TimeoutError；改为真实锁入口后，Durable Task 与 Schema 两文件联合执行 22 passed，包含两个真实 PostgreSQL 会话的锁竞争及释放验证。
+
+合入 `829f65fd` 后使用上游同一 conftest 的 session autouse 装配入口，删除重复的模块级调用；模型清单与真实锁入口保持不变。

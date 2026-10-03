@@ -14,7 +14,7 @@ Runtime System Tests 的两个 job 在干净 runner 上启动 API 与 worker 时
 
 ### 实现方案
 
-workflow 使用现有 API 镜像与 Compose 挂载映射，执行 `docker compose run --rm --no-deps --user 0:0 api chown 1000:1000 /app/user-data /app/skill-sources /app/skill-projections`。不启动依赖服务，不递归更改已有子目录，不修改业务状态或应用启动代码。随后的真实 readiness 与运行链路测试验证 shipping 进程能初始化目录。`scripts/test_release_workflows.py` 在现有 trust job 中校验两个 job 均在构建与首次启动之间接入准备命令，并通过删除目录参数和单个 job 的所有权修复构造负向案例。
+workflow 使用现有 API 镜像与 Compose 挂载映射，执行 `docker compose run --rm --no-deps --user 0:0 api install -d -o 1000 -g 1000 -m 0700 /app/user-data /app/skill-sources /app/skill-projections`。不启动依赖服务，不递归更改已有子目录，不修改业务状态或应用启动代码。随后的真实 readiness 与运行链路测试验证 shipping 进程能初始化目录。`scripts/test_release_workflows.py` 在现有 trust job 中校验两个 job 均在构建与首次启动之间接入准备命令，并通过删除目录参数和单个 job 的所有权修复构造负向案例。
 
 ## 替代方案
 
@@ -25,7 +25,7 @@ workflow 使用现有 API 镜像与 Compose 挂载映射，执行 `docker compos
 
 ## 后果
 
-root 权限只用于 CI 冷启动前的一次性目录准备；长期进程使用非 root 身份。重复准备只更新挂载根目录的所有权，保留已有文件与子目录。开发与生产部署不新增自动所有权修复；用户数据的部署迁移仍由原有 Owner 负责。
+root 权限只用于 CI 冷启动前的一次性目录准备；长期进程使用非 root 身份。合入 develop/1.0 后复用上游的 install 准备命令，同时收敛三个挂载根的模式为 0700；重复准备只更新挂载根目录的所有权与模式，保留已有文件与子目录。开发与生产部署不新增自动所有权修复；用户数据的部署迁移仍由原有 Owner 负责。
 
 ## 验证
 
@@ -36,3 +36,5 @@ root 权限只用于 CI 冷启动前的一次性目录准备；长期进程使�
 - `uv tool run --offline ruff check --config backend/pyproject.toml scripts/test_release_workflows.py` 与 `git diff --check`：Passed。Ruff 整文件格式检查仍报告修改前既有行的布局差异，未重排无关代码。
 - `cd docs && pnpm run build`：Passed，包含相对链接检查。
 - GitHub 上完整冷启动、readiness、Durable Task 与 Agent 主链路的结果以更新后运行记录为准；本地目录探针不替代这些检查。
+
+合入 `829f65fd` 时采用上游相同语义的 `install -d` 命令，移除重复准备步骤；原 `chown` 探针是之前提交的证据，最终命令的冷启动行为以新 head CI 为准。工作流负控同步核对当前命令。

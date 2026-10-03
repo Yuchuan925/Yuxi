@@ -1106,7 +1106,9 @@ async def test_cancel_running_model_closes_audit_without_foreign_output(e2e_clie
             )
         finally:
             await conn.close()
-        assert run["langfuse_trace_id"] and run["first_model_request_at"]
+        assert run["first_model_request_at"]
+        if os.getenv("LANGFUSE_PUBLIC_KEY") and os.getenv("LANGFUSE_SECRET_KEY"):
+            assert run["langfuse_trace_id"]
         assert run["output_message_id"] is None and visible == 0
         assert [(row["turn_id"], row["run_id"], row["execution_status"]) for row in audits] == [
             (turn_id, run_id, "interrupted")

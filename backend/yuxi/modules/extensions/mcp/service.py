@@ -28,7 +28,8 @@ from langchain_mcp_adapters.client import MultiServerMCPClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from yuxi.modules.extensions.mcp.builtin import BUILTIN_MCP_SERVERS
+from yuxi.modules.extensions.mcp.builtin import BUILTIN_MCP_MANIFEST
+from yuxi.modules.extensions.mcp.config import RemoteMCPConfig, normalize_mcp_manifest_entry
 from yuxi.modules.extensions.mcp.models import MCPServer
 from yuxi.infrastructure.observability.logging import logger
 
@@ -43,9 +44,10 @@ from yuxi.infrastructure.observability.logging import logger
 
 # MCP tools statistics (for reporting enabled/disabled counts)
 
-_RETIRED_BUILTIN_MCP_SERVER_SLUGS = ("sequentialthinking", "mcp-server-chart")
+BUILTIN_MCP_SERVERS = BUILTIN_MCP_MANIFEST["mcpServers"]
 
 _SYNCED_MCP_FIELDS = (
+    "name",
     "description",
     "transport",
     "url",
@@ -66,22 +68,6 @@ def is_builtin_mcp_server(server: MCPServer) -> bool:
     return server.slug in BUILTIN_MCP_SERVERS
 
 
-def _to_runtime_mcp_config(server: MCPServer) -> dict[str, Any]:
-    """生成运行时 MCP 配置，内置连接字段始终以代码定义为准。"""
-    if not is_builtin_mcp_server(server):
-        return server.to_mcp_config()
-
-    builtin = BUILTIN_MCP_SERVERS[server.slug]
-    config = {
-        key: builtin[key]
-        for key in ("transport", "url", "headers", "timeout", "sse_read_timeout")
-        if builtin.get(key) is not None
-    }
-    if server.disabled_tools:
-        config["disabled_tools"] = server.disabled_tools
-    return config
-
-
 # =============================================================================
 # === Core Logic (Moved from agents/common/mcp.py) ===
 # =============================================================================
@@ -94,31 +80,8 @@ async def ensure_builtin_mcp_servers_in_db() -> None:
     async with pg_manager.get_async_session_context() as session:
         any_changed = False
 
-        result = await session.execute(
-            select(MCPServer).where(
-                MCPServer.transport.not_in(SUPPORTED_TRANSPORTS),
-                MCPServer.enabled == 1,
-            )
-        )
-        for server in result.scalars().all():
-            server.enabled = 0
-            server.updated_by = "system"
-            clear_mcp_server_tools_cache(server.slug)
-            any_changed = True
-            logger.warning(f"Disabled unsupported MCP server '{server.slug}'")
-
-        for slug in _RETIRED_BUILTIN_MCP_SERVER_SLUGS:
-            result = await session.execute(
-                select(MCPServer).filter(MCPServer.slug == slug, MCPServer.created_by == "system")
-            )
-            retired = result.scalar_one_or_none()
-            if retired:
-                await session.delete(retired)
-                clear_mcp_server_tools_cache(slug)
-                any_changed = True
-                logger.info(f"Removed retired built-in MCP server '{slug}' from database")
-
-        for slug, config in BUILTIN_MCP_SERVERS.items():
+        for slug, entry in BUILTIN_MCP_SERVERS.items():
+            config = normalize_mcp_manifest_entry(slug, entry)
             result = await session.execute(select(MCPServer).filter(MCPServer.slug == slug))
             existing = result.scalar_one_or_none()
             if not existing:
@@ -134,9 +97,7 @@ async def ensure_builtin_mcp_servers_in_db() -> None:
                         sse_read_timeout=config.get("sse_read_timeout"),
                         tags=config.get("tags"),
                         icon=config.get("icon"),
-                        # 内置定义可用 enabled 声明默认启停；未声明时保持停用，
-                        # 由管理员按需启用（如对外部服务 DeepWiki）。
-                        enabled=config.get("enabled", 0),
+                        enabled=0,
                         created_by="system",
                         updated_by="system",
                     )
@@ -151,11 +112,6 @@ async def ensure_builtin_mcp_servers_in_db() -> None:
                 if getattr(existing, field) != next_value:
                     setattr(existing, field, next_value)
                     server_changed = True
-            # 内置连接与启停都由代码声明，启动时收敛，避免手工改动造成漂移。
-            wanted_enabled = config.get("enabled")
-            if wanted_enabled is not None and existing.enabled != wanted_enabled:
-                existing.enabled = wanted_enabled
-                server_changed = True
             if existing.created_by != "system":
                 existing.created_by = "system"
                 server_changed = True
@@ -263,24 +219,27 @@ async def create_mcp_server(
     """Create server."""
     if slug in BUILTIN_MCP_SERVERS:
         raise ValueError("系统内置 MCP 的 slug 由代码保留，无法通过接口创建")
-    if transport not in SUPPORTED_TRANSPORTS:
-        raise ValueError("MCP 仅支持 sse 或 streamable_http，不允许启动 stdio 本地进程")
+    config = RemoteMCPConfig.model_validate(
+        dict(
+            slug=slug,
+            name=name,
+            transport=transport,
+            url=url,
+            description=description,
+            headers=headers,
+            timeout=timeout,
+            sse_read_timeout=sse_read_timeout,
+            tags=tags,
+            icon=icon,
+        )
+    ).model_dump()
 
     existing = await get_mcp_server(db, slug)
     if existing:
         raise ValueError(f"Server slug '{slug}' already exists")
 
     server = MCPServer(
-        slug=slug,
-        name=name,
-        description=description,
-        transport=transport,
-        url=url,
-        headers=headers,
-        timeout=timeout,
-        sse_read_timeout=sse_read_timeout,
-        tags=tags,
-        icon=icon,
+        **config,
         enabled=1,
         created_by=created_by,
         updated_by=created_by,
@@ -316,35 +275,23 @@ async def update_mcp_server(
     if is_builtin_mcp_server(server):
         raise PermissionError("系统内置 MCP 的连接配置由代码管理，无法通过接口修改")
 
-    next_transport = transport or server.transport
-    if next_transport not in SUPPORTED_TRANSPORTS:
-        raise ValueError("MCP 仅支持 sse 或 streamable_http，不允许启动 stdio 本地进程")
+    updates = dict(
+        name=name,
+        description=description,
+        transport=transport,
+        url=url,
+        headers=headers,
+        timeout=timeout,
+        sse_read_timeout=sse_read_timeout,
+        tags=tags,
+        icon=icon,
+    )
+    current = {field: getattr(server, field) for field in RemoteMCPConfig.model_fields}
+    RemoteMCPConfig.model_validate({**current, **{key: value for key, value in updates.items() if value is not None}})
 
-    next_url = url if url is not None else server.url
-    if not next_url or not next_url.strip():
-        raise ValueError(f"传输类型为 {next_transport} 时，url 必填")
-
-    if name is not None:
-        server.name = name
-    if description is not None:
-        server.description = description
-    if transport is not None:
-        server.transport = transport
-    if url is not None:
-        server.url = url
-    server.command = None
-    server.args = None
-    server.env = None
-    if headers is not None:
-        server.headers = headers
-    if timeout is not None:
-        server.timeout = timeout
-    if sse_read_timeout is not None:
-        server.sse_read_timeout = sse_read_timeout
-    if tags is not None:
-        server.tags = tags
-    if icon is not None:
-        server.icon = icon
+    for field, value in updates.items():
+        if value is not None:
+            setattr(server, field, value)
     if updated_by is not None:
         server.updated_by = updated_by
 
@@ -518,3 +465,19 @@ async def inspect_mcp_server_tools(server: MCPServer) -> list:
             tool.metadata = {}
         tool.metadata["id"] = f"mcp__{to_camel_case(server.slug)}__{to_camel_case(tool.name)}"
     return tools
+
+
+def _to_runtime_mcp_config(server: MCPServer) -> dict[str, Any]:
+    """生成运行时 MCP 配置，内置连接字段始终以代码定义为准。"""
+    if not is_builtin_mcp_server(server):
+        return server.to_mcp_config()
+
+    builtin = normalize_mcp_manifest_entry(server.slug, BUILTIN_MCP_SERVERS[server.slug])
+    config = {
+        key: builtin[key]
+        for key in ("transport", "url", "headers", "timeout", "sse_read_timeout")
+        if builtin.get(key) is not None
+    }
+    if server.disabled_tools:
+        config["disabled_tools"] = server.disabled_tools
+    return config

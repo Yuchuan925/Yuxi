@@ -31,3 +31,5 @@ Owner：backend/test/integration/services/test_knowledge_stats_refresh.py
 `docker compose run --rm --no-deps -e PYTEST_ADDOPTS='-p no:cacheprovider' api uv run --no-sync pytest test/integration/services/test_knowledge_stats_refresh.py -q`：修复前 1 failed、3 passed，失败为旧端点 404；更新后 4 passed，覆盖真实 PostgreSQL、Redis 和 HTTP。
 
 Ruff check 与 format（backend 配置）通过。负向验证在独立进程临时撤销文件操作后的投影刷新，HTTP 测试因返回 Chunk 数为 0、未反映已提交文件的 7 个 Chunk 而失败，撤销保护被检出。完整 Agent assembled path 以更新 head 的 GitHub CI 结果为准。
+
+合入 `829f65fd` 时保留上游新增的退休端点 404 及持久事实不变回归，并独立保留当前 GET 列表的统计投影回归；两个入口分别验证退休能力拒绝和当前能力正确性。

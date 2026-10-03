@@ -9,7 +9,7 @@ MCP（Model Context Protocol）让智能体调用外部服务提供的工具。�
 | `streamable_http` | 新的远程 MCP 服务 |
 | `sse` | 仍提供 SSE 接口的远程服务 |
 
-管理接口只接受 `streamable_http` 和 `sse`。Yuxi 不支持 `stdio`，包括内置 MCP 和直接传入的运行时配置；历史 `stdio` 配置会被禁用，应迁移为远程服务。
+管理接口只接受 `streamable_http` 和 `sse`。Yuxi 不支持 `stdio`，包括内置 MCP 和直接传入的运行时配置，也不接受 `command`、`args`、`env` 进程字段。
 
 ## 添加远程 MCP
 
@@ -61,23 +61,28 @@ MCP 配置从 PostgreSQL 读取，工具对象按配置哈希缓存。修改连�
 
 内置 DeepWiki 使用 `deepwiki-official` 标识，通过 `https://mcp.deepwiki.com/mcp` 提供 Streamable HTTP 服务，无需认证即可查询公开 GitHub 仓库。详见 [DeepWiki 官方文档](https://docs.devin.ai/work-with-devin/deepwiki-mcp)。
 
-开发者在 [`builtin.py`](https://github.com/xerrors/Yuxi/blob/main/backend/yuxi/modules/extensions/mcp/builtin.py) 的 `BUILTIN_MCP_SERVERS` 中添加固定远程定义：
+开发者在 [`builtin.py`](https://github.com/xerrors/Yuxi/blob/main/backend/yuxi/modules/extensions/mcp/builtin.py) 的 `BUILTIN_MCP_MANIFEST` 中维护清单：
 
 ```python
-BUILTIN_MCP_SERVERS = {
-    "deepwiki-official": {
-        "transport": "streamable_http",
-        "url": "https://mcp.deepwiki.com/mcp",
-        "description": "查询公开 GitHub 仓库的文档、架构与代码",
-        "icon": "📚",
-        "tags": ["内置", "代码", "文档"],
+BUILTIN_MCP_MANIFEST = {
+    "mcpServers": {
+        "deepwiki-official": {
+            "type": "http",
+            "url": "https://mcp.deepwiki.com/mcp",
+            "extra_data": {
+                "name": "DeepWiki",
+                "description": "查询公开 GitHub 仓库的文档、架构与代码",
+                "icon": "📚",
+                "tags": ["内置", "代码", "文档"],
+            },
+        },
     },
 }
 ```
 
-API/worker 启动时同步固定定义到数据库；运行时直接读取代码中的连接字段。新内置 MCP 默认未添加，管理员需要启用；连接配置不可通过页面修改。添加定义无需修改服务逻辑或启动入口。
+清单连接字段支持 `type`（`http`、`sse`）或 `transport`（`streamable_http`、`sse`）、HTTP URL、headers、timeout 和 sse_read_timeout。同时声明 type 与 transport 时必须一致。展示字段 name、description、icon 和 tags 放在 `extra_data`，名称缺省时使用清单键。管理表单使用相同清单结构解析，再转换为上面的平铺管理接口字段；`extra_data` 不发送给远端 MCP 客户端。
 
-原内置 `mcp-server-chart` 已退役，启动时删除系统创建的记录。其他历史 stdio 记录保留并禁用，管理员可迁移为远程服务或删除。MySQL 报表技能改用 Markdown 表格，不再依赖图表 MCP；自定义角色或 Skill 中对退役 MCP 的引用需要自行调整。
+API/worker 启动时只同步当前内置定义到数据库；运行时直接读取代码中的连接字段。新内置 MCP 默认未添加，管理员需要启用；连接配置不可通过页面修改。管理员的启停与禁用工具列表在同步后保留。全新部署不提供 stdio 数据迁移或退役配置清理。
 
 ## 常用管理接口
 

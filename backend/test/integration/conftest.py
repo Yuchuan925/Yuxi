@@ -27,11 +27,6 @@ from test.live_api_cleanup import (  # noqa: E402
     list_test_conversation_resources,
 )
 
-from yuxi.bootstrap.models import load_models  # noqa: E402
-
-# 独立测试进程也需要完整 registry，不能依赖 API/worker 已加载关联模型。
-load_models()
-
 load_dotenv(PROJECT_ROOT / ".env", override=False)
 load_dotenv(PROJECT_ROOT / "test/.env.test", override=False)
 
@@ -43,6 +38,14 @@ _ADMIN_TOKEN_CACHE: str | None = None
 HTTP_TIMEOUT = httpx.Timeout(60.0, connect=5.0)
 SANDBOX_PROVISIONER_URL = os.getenv("SANDBOX_PROVISIONER_URL", "http://sandbox-provisioner:8002").rstrip("/")
 SANDBOX_PROVISIONER_TOKEN = os.getenv("SANDBOX_PROVISIONER_TOKEN", "")
+
+
+@pytest.fixture(scope="session", autouse=True)
+def load_orm_models():
+    """独立测试进程显式装配全部 ORM，避免依赖其他测试的导入顺序。"""
+    from yuxi.bootstrap.models import load_models
+
+    load_models()
 
 
 @pytest.fixture(scope="session", autouse=True)
