@@ -1,4 +1,4 @@
-"""真实 PostgreSQL 与文件系统上的 Workdir/UserWorkspace 契约。"""
+"""SQLite 项目绑定与真实文件系统上的 Workdir/UserWorkspace 契约。"""
 
 from __future__ import annotations
 
@@ -17,6 +17,7 @@ pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
 
 
 async def test_conversations_share_workdir_only_through_project(monkeypatch, tmp_path: Path):
+    """同一 Project 的 Conversation 共享目录，不各自保存 Workdir 路径。"""
     monkeypatch.setenv("YUXI_USER_DATA_DIR", str(tmp_path / "user-data"))
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
     async with engine.begin() as connection:
@@ -24,7 +25,7 @@ async def test_conversations_share_workdir_only_through_project(monkeypatch, tmp
     factory = async_sessionmaker(engine, expire_on_commit=False)
     try:
         async with factory() as db:
-            first_path = f"projects/{uuid.uuid4()}"
+            first_path = f"projects/2026-10-03_12-00-00_{uuid.uuid4().hex[:8]}"
             ensure_bound_user_workdir("user-1", first_path)
             project = Project(
                 id=str(uuid.uuid4()),

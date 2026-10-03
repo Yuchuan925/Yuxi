@@ -10,7 +10,7 @@ Runtime CI 使用全新 bind mount，Docker 创建的目录归 root 所有，UID
 
 独立执行 Durable Task integration selector 时，部分 ORM 关系指向尚未导入的类，查询无法配置 mapper。完整测试收集时其他文件的导入会掩盖该缺陷。
 
-知识统计 integration 仍要求已经退役的历史统计修复路由返回 200，导致当前 404 契约被判为失败。Runtime selector 还引用随旧 Session alias 一起删除的测试文件，pytest 因不存在的路径无法收集。归档与 lease 用例仍创建父子共享 Turn/runtime 的旧数据，并从 runner 调用已经移入 leases 的 reconciler。CORS 测试把显式空配置当作 Origin，Redis 用例仍依赖已经退役的事件封套与 key。环境准备还把仅支持 OpenAI 的 replay 配成 Langfuse，等待恢复 E2E 回读观察时收到 404。
+知识统计 integration 仍要求已经退役的历史统计修复路由返回 200，导致当前 404 契约被判为失败。Runtime selector 还引用随旧 Session alias 一起删除的测试文件，pytest 因不存在的路径无法收集。归档与 lease 用例仍创建父子共享 Turn/runtime 的旧数据，并从 runner 调用已经移入 leases 的 reconciler。CORS 测试把显式空配置当作 Origin，Redis 用例仍依赖已经退役的事件封套与 key。环境准备还把仅支持 OpenAI 的 replay 配成 Langfuse，等待恢复 E2E 回读观察时收到 404。Workdir 用例使用不受支持的 UUID 目录名，文件边界按当前托管格式拒绝。
 
 ## 决策
 
@@ -22,7 +22,7 @@ Runtime CI 使用全新 bind mount，Docker 创建的目录归 root 所有，UID
 
 `backend/test/integration/conftest.py` 在 session fixture 中调用现有 `bootstrap.models.load_models`，为独立测试进程显式注册全部 ORM；fixture 不连接服务、不建表，实际 Schema 与连接仍由原 fixture 和迁移入口拥有。单个文件和完整 integration 使用相同的模型装配。
 
-知识统计 integration 保留当前刷新与行锁回归，把退役修复路由用例改为真实 HTTP 404 与 PostgreSQL/Redis 无写入的负向契约。当前统计继续由现有刷新流程产生。Runtime workflow 与信任检查同步移除已删除的 alias 测试引用，保留当前认证、Key、Input、归档与 Redis 边界检查及其逐项删除负控。归档与 lease integration 按[现有子任务决策](2026-09-30-langgraph-agents-events.md)创建独立子 Turn/runtime，验证父失败不取消子任务、父 Thread 可独立归档而 Project 在子任务活跃时拒绝删除；lease 回归直接调用当前 leases Owner。CORS 用例使用当前开发默认 Origin 或显式配置；Redis 用例回读 v2 key、版本字段和完整公开事件，不恢复旧封套。CI 移除伪 Langfuse 凭据与地址；取消 E2E 无条件验证请求时间、数据库审计与终态，trace 断言与等待恢复中的 Langfuse 观察回读都只在配置真实服务时执行。
+知识统计 integration 保留当前刷新与行锁回归，把退役修复路由用例改为真实 HTTP 404 与 PostgreSQL/Redis 无写入的负向契约。当前统计继续由现有刷新流程产生。Runtime workflow 与信任检查同步移除已删除的 alias 测试引用，保留当前认证、Key、Input、归档与 Redis 边界检查及其逐项删除负控。归档与 lease integration 按[现有子任务决策](2026-09-30-langgraph-agents-events.md)创建独立子 Turn/runtime，验证父失败不取消子任务、父 Thread 可独立归档而 Project 在子任务活跃时拒绝删除；lease 回归直接调用当前 leases Owner。CORS 用例使用当前开发默认 Origin 或显式配置；Redis 用例回读 v2 key、版本字段和完整公开事件，不恢复旧封套。CI 移除伪 Langfuse 凭据与地址；取消 E2E 无条件验证请求时间、数据库审计与终态，trace 断言与等待恢复中的 Langfuse 观察回读都只在配置真实服务时执行。Workdir fixture 使用现行时间戳加8位标识格式，并准确声明自身的 SQLite/真实目录证据范围。
 
 ## 替代方案
 
@@ -61,3 +61,5 @@ Runtime CI 使用全新 bind mount，Docker 创建的目录归 root 所有，UID
 - 归档与 lease 在真实 PostgreSQL 上共 12 passed；旧数据分别因 runtime scope 的 CHECK、Turn/Thread 组合外键失败，旧 reconciler 路径因 AttributeError 失败。修复不改变生产约束或生命周期实现。
 
 - 移除伪 Langfuse 配置后，真实 API/worker 的核心生命周期 E2E 13 passed；等待恢复与模型取消仍回读 PostgreSQL 终态、审计和输出。可选 Langfuse 导出未验证。环境脚本在临时目录运行时正确保留包含特殊字符的三个测试 secret，且不配置 Langfuse；临时加回旧配置会被检测为错误配置。
+
+- 主 Runtime 剩余 selector 按 workflow 分组独立执行：确定性真实 worker E2E 32 passed（核心13、扩展4、子任务11、Key作用域1、公开事件3）；identity/secret19 passed；Workdir/Skill3 passed（Workdir为SQLite与真实目录，Skill为PG/HTTP）；真实Sandbox隔离6 passed。完整最终SHA的GitHub结果在PR另记，不以本地预检代替冷构建门禁。
