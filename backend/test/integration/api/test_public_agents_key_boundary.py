@@ -333,7 +333,7 @@ async def test_key_without_end_user_id_cannot_reach_product_project_files(test_c
 )
 async def test_public_message_preflight_allows_idempotency_key(test_client, path):
     """明确允许跨源浏览器提交 Public API 必需的幂等请求头。"""
-    origin = os.getenv("YUXI_CORS_ORIGINS", "http://localhost:5173").split(",")[0]
+    origin = (os.getenv("YUXI_CORS_ORIGINS") or "http://localhost:5173").split(",")[0].strip()
     response = await test_client.options(
         path,
         headers={

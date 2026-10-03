@@ -115,8 +115,8 @@ async def test_project_delete_rejects_pending_work_then_archives_history(pending
 
 
 @pytest.mark.parametrize("remaining_work", ["child_run", "runtime_cleanup"])
-async def test_archive_waits_for_execution_tree_cleanup(remaining_work):
-    """Turn 已终结时，子 Run 或根运行时清理仍阻止 Thread 和 Project 归档。"""
+async def test_archive_respects_independent_child_and_runtime_cleanup(remaining_work):
+    """子任务不阻止父 Thread 归档，但子任务或父运行时清理仍阻止 Project 删除。"""
     engine = create_async_engine(os.environ["POSTGRES_URL"], pool_pre_ping=True)
     sessions = async_sessionmaker(engine, expire_on_commit=False)
     suffix = uuid.uuid4().hex
@@ -125,6 +125,7 @@ async def test_archive_waits_for_execution_tree_cleanup(remaining_work):
     thread_id = f"thread-{suffix}"
     child_thread_id = f"child-{suffix}"
     turn_id = f"turn-{suffix}"
+    child_turn_id = f"child-turn-{suffix}"
     root_run_id = f"root-{suffix}"
     child_run_id = f"run-child-{suffix}"
     scope = ActorScope(uid=uid, app_id=None)
@@ -174,6 +175,8 @@ async def test_archive_waits_for_execution_tree_cleanup(remaining_work):
             )
             await db.flush()
             if remaining_work == "child_run":
+                db.add(AgentTurn(id=child_turn_id, conversation_thread_id=child_thread_id, uid=uid, status="cancelling"))
+                await db.flush()
                 relation = SubagentThread(
                     uid=uid,
                     parent_conversation_id=parent.id,
@@ -188,10 +191,10 @@ async def test_archive_waits_for_execution_tree_cleanup(remaining_work):
                     AgentRun(
                         id=child_run_id,
                         conversation_thread_id=child_thread_id,
-                        runtime_scope_id=thread_id,
+                        runtime_scope_id=child_thread_id,
                         agent_slug="helper",
                         uid=uid,
-                        turn_id=turn_id,
+                        turn_id=child_turn_id,
                         conversation_id=child.id,
                         run_type="subagent",
                         created_by_run_id=root_run_id,
@@ -203,10 +206,13 @@ async def test_archive_waits_for_execution_tree_cleanup(remaining_work):
             await db.commit()
 
         async with sessions() as db:
-            with pytest.raises(HTTPException) as thread_error:
-                await archive_thread(db=db, scope=scope, thread_id=thread_id)
-            assert thread_error.value.status_code == 409
-            await db.rollback()
+            if remaining_work == "child_run":
+                assert (await archive_thread(db=db, scope=scope, thread_id=thread_id))["status"] == "archived"
+            else:
+                with pytest.raises(HTTPException) as thread_error:
+                    await archive_thread(db=db, scope=scope, thread_id=thread_id)
+                assert thread_error.value.status_code == 409
+                await db.rollback()
             with pytest.raises(HTTPException) as project_error:
                 await delete_project_view(uid=uid, project_id=project_id, db=db)
             assert project_error.value.status_code == 409
@@ -214,9 +220,12 @@ async def test_archive_waits_for_execution_tree_cleanup(remaining_work):
 
         async with sessions() as db:
             assert (await db.get(Project, project_id)).status == "active"
-            assert (await db.scalar(select(Conversation).where(Conversation.thread_id == thread_id))).status == "active"
+            assert (await db.scalar(select(Conversation).where(Conversation.thread_id == thread_id))).status == (
+                "archived" if remaining_work == "child_run" else "active"
+            )
             if remaining_work == "child_run":
                 (await db.get(AgentRun, child_run_id)).status = "cancelled"
+                (await db.get(AgentTurn, child_turn_id)).status = "cancelled"
             else:
                 (await db.get(AgentRun, root_run_id)).runtime_cleanup_pending = False
             await db.commit()
@@ -227,9 +236,9 @@ async def test_archive_waits_for_execution_tree_cleanup(remaining_work):
             assert result["archived_threads"] == (1 if remaining_work == "child_run" else 0)
     finally:
         async with sessions() as db:
-            await db.execute(delete(AgentRun).where(AgentRun.turn_id == turn_id))
+            await db.execute(delete(AgentRun).where(AgentRun.turn_id.in_([turn_id, child_turn_id])))
             await db.execute(delete(SubagentThread).where(SubagentThread.uid == uid))
-            await db.execute(delete(AgentTurn).where(AgentTurn.id == turn_id))
+            await db.execute(delete(AgentTurn).where(AgentTurn.id.in_([turn_id, child_turn_id])))
             await db.execute(delete(Conversation).where(Conversation.uid == uid))
             await db.execute(delete(Project).where(Project.id == project_id))
             await db.execute(delete(User).where(User.uid == uid))
