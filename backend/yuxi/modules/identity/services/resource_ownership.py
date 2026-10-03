@@ -5,6 +5,7 @@ from yuxi.modules.agents.models.definitions import Agent
 from yuxi.modules.extensions.skills.models import Skill
 from yuxi.modules.knowledge.models import KnowledgeBase
 from yuxi.modules.identity.models import User
+from yuxi.modules.identity.repositories.users import UserRepository
 from yuxi.modules.knowledge.cache import delete_cached_kb_config
 from yuxi.modules.extensions.skills.projection import commit_skill_policy_and_refresh_projections
 
@@ -24,6 +25,9 @@ async def transfer_shared_resource(db, *, kind: str, resource_id: str, owner_uid
     resource = await db.scalar(select(model).where(key == resource_id).with_for_update())
     if resource is None:
         raise LookupError("资源不存在")
+    actor = await UserRepository(db).lock_active_human(actor.uid)
+    if actor is None or actor.role != "superadmin":
+        raise PermissionError("只有系统管理员可以转移所有权")
     if kind == "agent" and (resource.visibility != "shared" or resource.is_builtin):
         raise ValueError("私有或内置 Agent 不能转移所有权")
     if kind == "skill" and resource.source_type == "builtin":

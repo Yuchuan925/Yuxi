@@ -253,6 +253,7 @@ async def test_subagent_stream_records_run_and_shares_output_files(
                 "name": f"E2E 子智能体 {suffix}",
                 "slug": sub_slug,
                 "backend_id": "SubAgentBackend",
+                "visibility": "shared",
                 "description": "真实流式 E2E 子智能体",
                 "config_json": {
                     "context": {
@@ -278,6 +279,7 @@ async def test_subagent_stream_records_run_and_shares_output_files(
                 "name": f"E2E 主智能体 {suffix}",
                 "slug": main_slug,
                 "backend_id": "ChatbotAgent",
+                "visibility": "shared",
                 "description": "真实流式 E2E 主智能体",
                 "config_json": {
                     "context": {

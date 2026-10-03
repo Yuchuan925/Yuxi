@@ -493,3 +493,113 @@ async def test_each_skill_install_transaction_revalidates_live_managers(actors):
         for slug in slugs:
             response = await actors["client"].delete(f"/api/system/skills/{slug}", headers=actors["root"])
             assert response.status_code in {200, 404}, response.text
+
+
+@pytest.mark.parametrize(
+    "operation,revocation",
+    [
+        ("update", "department"),
+        ("delete", "department"),
+        ("update", "deleted"),
+        ("delete", "deleted"),
+        ("publish", "deleted"),
+        ("transfer", "deleted"),
+        ("config", "department"),
+    ],
+)
+async def test_agent_write_rechecks_actor_after_waiting_for_resource(actors, operation, revocation):
+    """等待定义行锁期间身份撤销，不能使用请求开始时的旧身份写入。"""
+    client, db = actors["client"], actors["db"]
+    owner, actor = (actors["identities"][key] for key in ("admin0", "admin1"))
+    await db.execute("UPDATE users SET department_id=$1 WHERE id=$2", owner["department_id"], actor["id"])
+    if operation == "transfer":
+        await db.execute("UPDATE users SET role='superadmin' WHERE id=$1", actor["id"])
+    if operation in {"publish", "config"}:
+        agent = await create_agent(actors, actor)
+    else:
+        agent = await create_agent(
+            actors,
+            owner,
+            visibility="shared",
+            share_config={
+                "version": 2,
+                "read_scope": {"access_level": "department", "department_ids": [owner["department_id"]]},
+                "manage_scope": {"access_level": "department", "department_ids": [owner["department_id"]]},
+            },
+        )
+    slug = agent["slug"]
+    skill = f"actor-race-{uuid.uuid4().hex[:8]}" if operation == "config" else None
+    if skill:
+        import json
+
+        await db.execute(
+            "INSERT INTO skills (slug,name,description,source_type,dir_path,share_config,enabled,created_by,"
+            "tool_dependencies,mcp_dependencies,skill_dependencies,updated_by,created_at,updated_at) "
+            "VALUES ($1,$1,'race','upload',$1,$2::jsonb,true,$3,'[]'::jsonb,'[]'::jsonb,'[]'::jsonb,$3,NOW(),NOW())",
+            skill,
+            json.dumps(
+                {
+                    "version": 2,
+                    "read_scope": {"access_level": "department", "department_ids": [owner["department_id"]]},
+                    "manage_scope": None,
+                }
+            ),
+            owner["uid"],
+        )
+    before = await db.fetchrow(
+        "SELECT name,visibility,created_by,share_config,config_json FROM agents WHERE slug=$1", slug
+    )
+    observer = await asyncpg.connect(os.environ["POSTGRES_URL"].replace("+asyncpg", ""))
+    transaction = db.transaction()
+    await transaction.start()
+    pending = None
+    try:
+        await db.fetchrow("SELECT id FROM agents WHERE slug=$1 FOR UPDATE", slug)
+        path = f"/api/agent/{slug}"
+        if operation == "update":
+            request = client.put(path, headers=actor["headers"], json={"name": "forbidden_actor_race"})
+        elif operation == "config":
+            request = client.put(path, headers=actor["headers"], json={"config_json": {"context": {"skills": [skill]}}})
+        elif operation == "delete":
+            request = client.delete(path, headers=actor["headers"])
+        elif operation == "publish":
+            request = client.post(f"{path}/publish", headers=actor["headers"], json={"share_config": SHARED})
+        else:
+            request = client.put(
+                f"/api/system/resources/agent/{slug}/owner", headers=actor["headers"], json={"owner_uid": actor["uid"]}
+            )
+        pending = asyncio.create_task(request)
+        for _ in range(200):
+            await observer.execute("SELECT pg_stat_clear_snapshot()")
+            if await observer.fetchval(
+                "SELECT EXISTS (SELECT 1 FROM pg_stat_activity "
+                "WHERE $1 = ANY(pg_blocking_pids(pid)) AND query LIKE '%agents%')",
+                db.get_server_pid(),
+            ):
+                break
+            await asyncio.sleep(0.01)
+        else:
+            pytest.fail("资源写入未等待当前测试连接持有的行锁")
+        if revocation == "department":
+            await observer.execute("UPDATE users SET department_id=$1 WHERE id=$2", actor["department_id"], actor["id"])
+        else:
+            await observer.execute("UPDATE users SET is_deleted=1 WHERE id=$1", actor["id"])
+        await transaction.commit()
+        response = await asyncio.wait_for(pending, 5)
+        after = await observer.fetchrow(
+            "SELECT name,visibility,created_by,share_config,config_json FROM agents WHERE slug=$1", slug
+        )
+        assert response.status_code == (422 if operation == "config" else 403) and after == before, (
+            response.status_code,
+            response.text,
+            before,
+            after,
+        )
+    finally:
+        if transaction._state.name == "STARTED":
+            await transaction.rollback()
+        if pending is not None and not pending.done():
+            await pending
+        if skill:
+            await observer.execute("DELETE FROM skills WHERE slug=$1", skill)
+        await observer.close()

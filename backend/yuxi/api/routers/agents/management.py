@@ -196,25 +196,13 @@ async def update_agent(
         raise HTTPException(status_code=403, detail="不能编辑非自己创建的智能体")
 
     try:
-        backend = get_agent_backend(item.backend_id)
-        config_json = None
-        config_resource_access = None
-        if payload.config_json is not None:
-            config_json, config_resource_access = await prepare_agent_config_write(
-                payload.config_json,
-                context_schema=backend.context_schema,
-                db=db,
-                user=current_user,
-            )
-
         updated = await repo.update(
             item,
             name=payload.name,
             description=payload.description,
             icon=payload.icon,
             pics=payload.pics,
-            config_json=config_json,
-            config_resource_access=config_resource_access,
+            config_json=payload.config_json,
             share_config=payload.share_config,
             is_subagent=payload.is_subagent,
             updated_by=str(current_user.uid),
@@ -223,6 +211,8 @@ async def update_agent(
         )
     except AgentBackendNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return {"agent": await _serialize_agent(repo, updated, current_user, include_configurable_items=True)}

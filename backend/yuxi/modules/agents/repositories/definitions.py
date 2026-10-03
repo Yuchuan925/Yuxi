@@ -20,6 +20,7 @@ from yuxi.modules.agents.models.inputs import AgentInput
 from yuxi.modules.agents.models.turns import AgentTurn
 from yuxi.modules.agents.models.threads import Conversation
 from yuxi.modules.identity.models import User
+from yuxi.modules.identity.repositories.users import UserRepository
 from yuxi.modules.identity.services.resource_grants import validate_shared_grants
 from yuxi.infrastructure.observability.logging import logger
 from yuxi.shared.datetime import utc_now_naive
@@ -380,7 +381,6 @@ class AgentRepository:
         icon: str | None = None,
         pics: list[str] | None = None,
         config_json: dict | None = None,
-        config_resource_access: dict[str, Collection[str]] | None = None,
         share_config: dict | None = None,
         is_subagent: bool | None = None,
         updated_by: str | None = None,
@@ -393,8 +393,20 @@ class AgentRepository:
         if current is None:
             raise ValueError("智能体不存在")
         agent = current
+        updater = await UserRepository(self.db).lock_active_human(updater.uid) if updater is not None else None
         if updater is None or not user_can_manage_agent(updater, agent):
-            raise ValueError("无权管理该智能体")
+            raise PermissionError("无权管理该智能体")
+        config_resource_access = {}
+        if config_json is not None:
+            from yuxi.modules.agents.runtime.agent_backends import get_agent_backend
+            from yuxi.modules.agents.services.configuration import prepare_agent_config_write
+
+            config_json, config_resource_access = await prepare_agent_config_write(
+                config_json,
+                context_schema=get_agent_backend(agent.backend_id).context_schema,
+                db=self.db,
+                user=updater,
+            )
         if is_subagent is not None and updater.role not in ADMIN_ROLES:
             raise ValueError("普通用户不能修改 SubAgent 类型")
         if share_config is not None and agent.visibility == "private":
@@ -414,8 +426,6 @@ class AgentRepository:
         if pics is not None:
             agent.pics = pics
         if config_json is not None:
-            from yuxi.modules.agents.runtime.agent_backends import get_agent_backend
-
             result = await self.db.execute(select(Agent.config_json).where(Agent.id == agent.id).with_for_update())
             row = result.one_or_none()
             if row is None:
@@ -442,7 +452,8 @@ class AgentRepository:
         agent = await self.db.scalar(select(Agent).where(Agent.slug == slug).with_for_update())
         if agent is None:
             raise LookupError("智能体不存在")
-        if user.is_deleted or user.role not in ADMIN_ROLES or user.uid != agent.created_by:
+        user = await UserRepository(self.db).lock_active_human(user.uid)
+        if user is None or user.role not in ADMIN_ROLES or user.uid != agent.created_by:
             raise PermissionError("只能由管理员发布自己的私有智能体")
         if agent.visibility != "private" or is_builtin_agent(agent):
             raise ValueError("只能发布私有主智能体")
@@ -479,7 +490,8 @@ class AgentRepository:
         )
         if current is None:
             raise LookupError("智能体不存在")
-        if not user_can_manage_agent(user, current):
+        user = await UserRepository(self.db).lock_active_human(user.uid)
+        if user is None or not user_can_manage_agent(user, current):
             raise PermissionError("不能删除非自己创建的智能体")
         if is_builtin_agent(current):
             raise ValueError("内置智能体不能删除")

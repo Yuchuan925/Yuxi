@@ -46,7 +46,7 @@ async def _seed_agent(session):
     thread = Conversation(
         thread_id="agent-thread", project_id="agent-project", uid=user.uid, agent_id=agent.slug, status="active"
     )
-    session.add_all([agent, thread])
+    session.add_all([user, agent, thread])
     await session.flush()
     return user, agent, thread
 

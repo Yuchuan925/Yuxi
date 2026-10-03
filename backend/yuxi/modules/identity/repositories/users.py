@@ -92,6 +92,17 @@ class UserRepository:
             result = await session.execute(query)
             return result.scalar_one_or_none()
 
+    async def lock_active_human(self, uid: str) -> User | None:
+        """在资源写入事务内刷新并共享锁定当前操作人身份。"""
+        if self.db_session is None:
+            raise RuntimeError("身份锁需要资源写入事务")
+        return await self.db_session.scalar(
+            select(User)
+            .where(User.uid == uid, User.is_deleted == 0, User.user_kind == "human")
+            .with_for_update(read=True)
+            .execution_options(populate_existing=True)
+        )
+
     @staticmethod
     async def _revoke_api_keys(session: AsyncSession, user_id: int, revoked_at: dt) -> None:
         """撤销用户的全部 API Key，并保留已有撤销时间。"""

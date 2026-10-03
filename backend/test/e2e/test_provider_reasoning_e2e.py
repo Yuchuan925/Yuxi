@@ -34,6 +34,7 @@ async def test_reasoning_stream_matches_persisted_history(e2e_client, e2e_header
             "name": "E2E 推理展示测试",
             "slug": slug,
             "backend_id": "ChatbotAgent",
+            "visibility": "shared",
             "config_json": {
                 "context": {
                     "model": spec,

@@ -103,14 +103,10 @@ async def test_mcp_selection_requires_explicit_agent_config(test_client, admin_h
         await conn.close()
 
 
-async def test_admin_settings_are_readable_but_not_writable_by_delegated_user(
-    test_client, admin_headers, standard_user
-):
-    """普通管理用户读取管理员参数，越权保存后 PostgreSQL 仍保留原值。"""
+async def test_admin_settings_are_readable_but_not_writable_by_private_owner(test_client, admin_headers, standard_user):
+    """普通私有所有者读取管理员参数，越权字段写入明确拒绝且允许编辑提示词。"""
     slug = f"pytest-config-auth-{uuid.uuid4().hex[:10]}"
-    uid = str(standard_user["user"]["uid"])
     headers = standard_user["headers"]
-    scope = {"access_level": "user", "department_ids": [], "user_uids": [uid]}
     settings = {
         "tool_approval_mode": "always_trust",
         "summary_threshold": 37,
@@ -124,13 +120,13 @@ async def test_admin_settings_are_readable_but_not_writable_by_delegated_user(
     try:
         created = await test_client.post(
             "/api/agent",
-            headers=admin_headers,
+            headers=headers,
             json={
                 "name": "Pytest config auth",
                 "slug": slug,
                 "backend_id": "ChatbotAgent",
-                "share_config": {"version": 2, "read_scope": scope, "manage_scope": scope},
-                "config_json": {"context": {**settings, "max_execution_steps": 60}},
+                "visibility": "private",
+                "config_json": {"context": {"system_prompt": "owner prompt"}},
             },
         )
         assert created.status_code == 200, created.text
@@ -157,7 +153,14 @@ async def test_admin_settings_are_readable_but_not_writable_by_delegated_user(
             headers=headers,
             json={"config_json": {"context": {**overwritten, "system_prompt": "user edit"}}},
         )
-        assert saved.status_code == 200, saved.text
+        assert saved.status_code == 422, saved.text
+        rejected = (await _read_agent_config(conn, slug))["context"]
+        assert {key: rejected[key] for key in settings} == settings
+        assert rejected["system_prompt"] == "owner prompt"
+        edited = await test_client.put(
+            f"/api/agent/{slug}", headers=headers, json={"config_json": {"context": {"system_prompt": "user edit"}}}
+        )
+        assert edited.status_code == 200, edited.text
         persisted = (await _read_agent_config(conn, slug))["context"]
         assert {key: persisted[key] for key in settings} == settings
         assert persisted["system_prompt"] == "user edit"
@@ -195,6 +198,10 @@ async def test_delegated_manager_resource_patch_preserves_hidden_config_and_reje
     conn = await asyncpg.connect(postgres_dsn)
     created_agent = False
     try:
+        promoted = await test_client.put(
+            f"/api/auth/users/{standard_user['user']['id']}", headers=admin_headers, json={"role": "admin"}
+        )
+        assert promoted.status_code == 200, promoted.text
         rows = []
         for slug in [*visible_configured, *visible_extra]:
             rows.append((slug, _user_share_config(manager_uid), manager_uid))
@@ -230,6 +237,7 @@ async def test_delegated_manager_resource_patch_preserves_hidden_config_and_reje
             "/api/agent",
             json={
                 "name": "Pytest shared resource agent",
+                "visibility": "shared",
                 "slug": agent_slug,
                 "backend_id": "ChatbotAgent",
                 "config_json": {"context": {"skills": configured, "system_prompt": "owner prompt"}},

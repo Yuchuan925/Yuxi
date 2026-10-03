@@ -96,6 +96,7 @@ async def test_edited_shared_skill_is_loaded_by_next_run(e2e_client: httpx.Async
                 "name": agent_slug,
                 "slug": agent_slug,
                 "backend_id": "ChatbotAgent",
+                "visibility": "shared",
                 "description": "共享 Skill 编辑后加载测试",
                 "config_json": {
                     "context": {

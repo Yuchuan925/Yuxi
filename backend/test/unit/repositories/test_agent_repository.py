@@ -298,9 +298,9 @@ async def test_delegated_admin_update_preserves_shared_agent_acl():
     agent = _agent_for_update()
     agent.id = 1
     agent.visibility = "shared"
-    db.scalar = AsyncMock(side_effect=[agent, None])
     db.execute = AsyncMock(return_value=SimpleNamespace(scalars=lambda: ["manager"]))
     user = User(uid="manager", role="admin", user_kind="human", is_deleted=0)
+    db.scalar = AsyncMock(side_effect=[agent, user])
     await AgentRepository(db).update(agent, share_config=_MANAGER_USER_SCOPE, updater=user)
     assert agent.share_config["manage_scope"]["user_uids"] == ["manager"]
     db.commit.assert_awaited_once()
@@ -312,8 +312,8 @@ async def test_normal_user_cannot_update_private_agent_grants():
     agent = _agent_for_update(created_by="manager")
     agent.id = 1
     agent.visibility = "private"
-    db.scalar = AsyncMock(return_value=agent)
     user = User(uid="manager", role="user", user_kind="human", is_deleted=0)
+    db.scalar = AsyncMock(side_effect=[agent, user])
     with pytest.raises(ValueError, match="私有智能体不接受共享授权"):
         await AgentRepository(db).update(agent, share_config=_MANAGER_USER_SCOPE, updater=user)
     assert agent.share_config == _MANAGER_USER_SCOPE
