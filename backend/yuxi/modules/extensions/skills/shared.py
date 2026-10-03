@@ -10,13 +10,13 @@ from typing import Any
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from yuxi.infrastructure.observability.logging import logger
+from yuxi.infrastructure.runtime_settings import get_skill_data_dir
 from yuxi.modules.extensions.mcp.service import get_enabled_mcp_server_slugs
 from yuxi.modules.extensions.skills.builtin import BUILTIN_SKILLS_DIR
-from yuxi.infrastructure.runtime_settings import get_skill_data_dir
-from yuxi.infrastructure.observability.logging import logger
-from yuxi.modules.identity.permissions import ResourcePermission, normalize_permission_config, resolve_skill_permission
-from yuxi.modules.extensions.skills.repository import SkillRepository
 from yuxi.modules.extensions.skills.draft import consume_installed_draft_items, load_and_select_draft_items
+from yuxi.modules.extensions.skills.models import Skill
 from yuxi.modules.extensions.skills.package import (
     copy_skill_snapshot,
     copy_skill_tree_no_symlinks,
@@ -26,9 +26,10 @@ from yuxi.modules.extensions.skills.package import (
     validated_shared_skill_parts,
 )
 from yuxi.modules.extensions.skills.projection import commit_skill_policy_and_refresh_projections
+from yuxi.modules.extensions.skills.repository import SkillRepository
 from yuxi.modules.extensions.skills.resolved import ResolvedSkill
-from yuxi.modules.extensions.skills.models import Skill
 from yuxi.modules.identity.models import User
+from yuxi.modules.identity.permissions import ResourcePermission, normalize_permission_config, resolve_skill_permission
 from yuxi.modules.identity.services.resource_grants import validate_shared_grants
 
 BUILTIN_SKILL_OPERATOR = "builtin-system"

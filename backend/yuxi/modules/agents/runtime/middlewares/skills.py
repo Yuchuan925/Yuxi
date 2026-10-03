@@ -13,13 +13,12 @@ from langchain.agents.middleware import AgentMiddleware, ModelRequest, ModelResp
 from langchain.tools.tool_node import ToolCallRequest
 from langgraph.types import Command
 
+from yuxi.infrastructure.observability.logging import logger
 from yuxi.modules.agents.runtime.sandbox.paths import VIRTUAL_PERSONAL_SKILLS_PATH, VIRTUAL_SKILLS_PATH
 from yuxi.modules.extensions.mcp.service import get_enabled_mcp_tools
+from yuxi.modules.extensions.skills.package import is_valid_skill_slug, normalize_string_list
 from yuxi.modules.extensions.skills.runtime import RuntimeSkill, build_dependency_bundle
-from yuxi.modules.extensions.skills.package import is_valid_skill_slug
-from yuxi.modules.extensions.skills.package import normalize_string_list
 from yuxi.modules.extensions.tools import get_all_tool_instances
-from yuxi.infrastructure.observability.logging import logger
 
 
 def _activated_skills_reducer(left: list[str] | None, right: list[str] | None) -> list[str]:

@@ -6,8 +6,9 @@ import asyncio
 from dataclasses import replace
 
 from sqlalchemy.ext.asyncio import AsyncSession
-from yuxi.modules.extensions.skills.repository import SkillRepository
+
 from yuxi.modules.extensions.skills.personal import list_personal_skills
+from yuxi.modules.extensions.skills.repository import SkillRepository
 from yuxi.modules.extensions.skills.resolved import ResolvedSkill
 from yuxi.modules.extensions.skills.shared import resolved_shared_skill
 from yuxi.modules.identity.models import User

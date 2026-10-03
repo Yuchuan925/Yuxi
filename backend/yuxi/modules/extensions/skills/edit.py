@@ -16,8 +16,10 @@ from pathlib import Path
 
 import yaml
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from yuxi.infrastructure.filesystem import open_directory_fd, open_regular_file_fd
 from yuxi.infrastructure.runtime_settings import get_skill_data_dir
-from yuxi.modules.extensions.skills.repository import SkillRepository
+from yuxi.modules.extensions.skills.models import Skill
 from yuxi.modules.extensions.skills.package import (
     TEXT_FILE_EXTENSIONS,
     is_valid_skill_slug,
@@ -26,6 +28,7 @@ from yuxi.modules.extensions.skills.package import (
     validated_shared_skill_parts,
     validated_skill_file_parts,
 )
+from yuxi.modules.extensions.skills.repository import SkillRepository
 from yuxi.modules.extensions.skills.shared import (
     get_manageable_skill_or_raise,
     get_management_readable_skill_or_raise,
@@ -34,9 +37,7 @@ from yuxi.modules.extensions.skills.shared import (
     user_can_manage_skill,
     validate_skill_dependencies,
 )
-from yuxi.modules.extensions.skills.models import Skill
 from yuxi.modules.identity.models import User
-from yuxi.infrastructure.filesystem import open_directory_fd, open_regular_file_fd
 
 
 class SkillEditConflict(ValueError):

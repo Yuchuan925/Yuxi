@@ -1,8 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 
+from yuxi.api.dependencies.auth import get_admin_user
 from yuxi.modules.identity.models import User
 from yuxi.modules.tasks.service import tasker
-from yuxi.api.dependencies.auth import get_admin_user
 
 tasks = APIRouter(prefix="/tasks", tags=["tasks"])
 

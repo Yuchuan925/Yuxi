@@ -8,8 +8,8 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from yuxi.modules.agents.repositories.runs import AgentRunRepository
 from yuxi.modules.agents.models.messages import MODEL_AUDIT_MESSAGE_TYPE, Message
+from yuxi.modules.agents.repositories.runs import AgentRunRepository
 
 
 class ModelMessageAuditRepository:

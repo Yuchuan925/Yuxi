@@ -7,8 +7,8 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from yuxi.api.dependencies.auth import get_db, get_superadmin_user
-from yuxi.modules.system.dashboard import DashboardService
 from yuxi.modules.identity.models import User
+from yuxi.modules.system.dashboard import DashboardService
 
 dashboard = APIRouter(prefix="/dashboard", tags=["Dashboard"])
 

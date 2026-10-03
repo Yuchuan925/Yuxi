@@ -7,20 +7,6 @@ Responsibilities:
 - MCP Client and Tools management (formerly in agents/common/mcp.py)
 """
 
-from yuxi.modules.extensions.mcp.repository import (
-    get_mcp_server,
-    save_mcp_server,
-    delete_mcp_server_row,
-)
-from yuxi.modules.extensions.mcp.runtime import (
-    SUPPORTED_TRANSPORTS,
-    clear_mcp_server_tools_cache,
-    get_mcp_tools as load_mcp_tools,
-    to_camel_case,
-    validate_remote_transport,
-)
-
-
 from collections.abc import Callable
 from typing import Any
 
@@ -28,10 +14,24 @@ from langchain_mcp_adapters.client import MultiServerMCPClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from yuxi.infrastructure.observability.logging import logger
 from yuxi.modules.extensions.mcp.builtin import BUILTIN_MCP_MANIFEST
 from yuxi.modules.extensions.mcp.config import RemoteMCPConfig, normalize_mcp_manifest_entry
 from yuxi.modules.extensions.mcp.models import MCPServer
-from yuxi.infrastructure.observability.logging import logger
+from yuxi.modules.extensions.mcp.repository import (
+    delete_mcp_server_row,
+    get_mcp_server,
+    save_mcp_server,
+)
+from yuxi.modules.extensions.mcp.runtime import (
+    SUPPORTED_TRANSPORTS,
+    clear_mcp_server_tools_cache,
+    to_camel_case,
+    validate_remote_transport,
+)
+from yuxi.modules.extensions.mcp.runtime import (
+    get_mcp_tools as load_mcp_tools,
+)
 
 # =============================================================================
 # === Global Cache & State ===

@@ -2,6 +2,7 @@
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+
 from yuxi.modules.extensions.mcp.models import MCPServer
 
 

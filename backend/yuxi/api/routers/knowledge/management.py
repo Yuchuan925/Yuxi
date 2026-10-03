@@ -8,13 +8,28 @@ from urllib.parse import quote, unquote
 from fastapi import APIRouter, Body, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
+from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.responses import StreamingResponse
-from yuxi.modules.system.options import system_options
+
+from yuxi.api.dependencies.auth import get_admin_user, get_db, get_required_user
+from yuxi.api.dependencies.knowledge import (
+    ensure_knowledge_base_permission as _ensure_database_permission,
+)
+from yuxi.api.dependencies.knowledge import (
+    require_knowledge_base_manage,
+    require_knowledge_base_read,
+)
+from yuxi.api.responses.knowledge import serialize_knowledge_base, serialize_knowledge_base_list
+from yuxi.api.uploads import read_upload_with_limit
+from yuxi.infrastructure.document_parsing import SUPPORTED_FILE_EXTENSIONS, is_supported_file_extension
+from yuxi.infrastructure.minio.client import MinIOClient, StorageError, aupload_file_to_minio, get_minio_client
+from yuxi.infrastructure.observability.logging import logger
+from yuxi.modules.identity.models import User
+from yuxi.modules.identity.permissions import ResourcePermission, resolve_knowledge_base_permission
 from yuxi.modules.knowledge.base import KBNameConflictError, KBNotFoundError
 from yuxi.modules.knowledge.chunking.ragflow_like.presets import get_chunk_preset_options
 from yuxi.modules.knowledge.graphs.milvus_graph_service import GRAPH_TASK_TYPE, MilvusGraphService
 from yuxi.modules.knowledge.read_models import KnowledgeBaseDetail
-from yuxi.infrastructure.document_parsing import SUPPORTED_FILE_EXTENSIONS, is_supported_file_extension
 from yuxi.modules.knowledge.runtime import knowledge_base
 from yuxi.modules.knowledge.utils import (
     calculate_content_hash,
@@ -27,22 +42,9 @@ from yuxi.modules.knowledge.utils.sample_question_utils import (
     get_database_sample_questions,
 )
 from yuxi.modules.knowledge.utils.url_fetcher import fetch_url_content
-from yuxi.modules.identity.permissions import ResourcePermission, resolve_knowledge_base_permission
+from yuxi.modules.system.options import system_options
 from yuxi.modules.tasks.service import tasker
 from yuxi.modules.workspace.services.files import read_workspace_file_bytes
-from yuxi.infrastructure.minio.client import MinIOClient, StorageError, aupload_file_to_minio, get_minio_client
-from yuxi.modules.identity.models import User
-from yuxi.infrastructure.observability.logging import logger
-from yuxi.api.uploads import read_upload_with_limit
-
-from yuxi.api.dependencies.auth import get_admin_user, get_db, get_required_user
-from sqlalchemy.ext.asyncio import AsyncSession
-from yuxi.api.responses.knowledge import serialize_knowledge_base, serialize_knowledge_base_list
-from yuxi.api.dependencies.knowledge import (
-    ensure_knowledge_base_permission as _ensure_database_permission,
-    require_knowledge_base_manage,
-    require_knowledge_base_read,
-)
 
 knowledge = APIRouter(prefix="/knowledge", tags=["knowledge"])
 

@@ -1,8 +1,5 @@
 from __future__ import annotations
 
-from yuxi.api.responses.files import render_file_result
-from yuxi.api.uploads import prepare_upload_files
-
 import io
 from urllib.parse import quote
 
@@ -10,7 +7,11 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Upload
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
+
 from yuxi.api.dependencies.auth import get_db, get_required_user
+from yuxi.api.responses.files import render_file_result
+from yuxi.api.uploads import prepare_upload_files
+from yuxi.modules.identity.models import User
 from yuxi.modules.workspace.services.files import (
     MAX_WORKSPACE_UPLOAD_SIZE_BYTES,
     create_workspace_directory,
@@ -22,7 +23,6 @@ from yuxi.modules.workspace.services.files import (
     upload_workspace_files,
     write_workspace_file_content,
 )
-from yuxi.modules.identity.models import User
 
 workspace = APIRouter(prefix="/workspace", tags=["workspace"])
 workspace_knowledge = APIRouter(prefix="/workspace", tags=["workspace"])

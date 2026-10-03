@@ -10,6 +10,8 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 from sqlalchemy import text
+
+from yuxi.infrastructure.postgres.manager import pg_manager
 from yuxi.modules.agents.services.transport import (
     WORKER_RECONCILIATION_HEALTH_KEY,
     WORKER_RECONCILIATION_HEALTH_TTL_SECONDS,
@@ -17,7 +19,6 @@ from yuxi.modules.agents.services.transport import (
 )
 from yuxi.modules.tasks.queue import TASK_RECONCILIATION_HEALTH_KEY, TASK_RECONCILIATION_HEALTH_TTL_SECONDS
 from yuxi.workers.health import WORKER_HEALTH_KEY, WORKER_HEALTH_MAX_TTL_MS
-from yuxi.infrastructure.postgres.manager import pg_manager
 
 READINESS_PROBE_TIMEOUT_SECONDS = float(os.getenv("READINESS_PROBE_TIMEOUT_SECONDS", "2"))
 READINESS_CACHE_TTL_SECONDS = float(os.getenv("READINESS_CACHE_TTL_SECONDS", "1"))

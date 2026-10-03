@@ -15,8 +15,8 @@ from langchain_openai import ChatOpenAI
 from pydantic import Field, SecretStr
 
 from yuxi import get_version
-from yuxi.modules.models.providers.cache import USER_UID_SIGNATURE_SECRET_ENV, ModelInfo, model_cache
 from yuxi.infrastructure.observability.logging import logger
+from yuxi.modules.models.providers.cache import USER_UID_SIGNATURE_SECRET_ENV, ModelInfo, model_cache
 from yuxi.modules.models.utils import get_docker_safe_url
 
 USER_UID_HEADER = "x-yuxi-uid"

@@ -1,12 +1,12 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
-from yuxi.modules.knowledge.runtime import knowledge_base
-from yuxi.modules.knowledge.base import KBNotFoundError
-from yuxi.modules.knowledge.read_models import KnowledgeBaseSummary
-from yuxi.modules.identity.models import User
-from yuxi.infrastructure.observability.logging import logger
 
 from yuxi.api.dependencies.auth import get_required_user
+from yuxi.infrastructure.observability.logging import logger
+from yuxi.modules.identity.models import User
+from yuxi.modules.knowledge.base import KBNotFoundError
+from yuxi.modules.knowledge.read_models import KnowledgeBaseSummary
+from yuxi.modules.knowledge.runtime import knowledge_base
 
 external_kb = APIRouter(prefix="/knowledge", tags=["knowledge"])
 

@@ -4,10 +4,10 @@ from typing import Any
 
 from sqlalchemy import func, select
 
-from yuxi.modules.knowledge.cache import cache_kb_config, delete_cached_kb_config, kb_config_cache_lock
 from yuxi.infrastructure.postgres.manager import pg_manager
-from yuxi.modules.knowledge.models import KnowledgeBase
 from yuxi.modules.identity.services.resource_grants import validate_shared_grants
+from yuxi.modules.knowledge.cache import cache_kb_config, delete_cached_kb_config, kb_config_cache_lock
+from yuxi.modules.knowledge.models import KnowledgeBase
 
 
 class KnowledgeBaseRepository:

@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from functools import partial
 
-from yuxi.modules.tasks.repository import TaskRepository
+from yuxi.infrastructure.observability.logging import logger
 from yuxi.modules.agents.services.transport import get_arq_pool
 from yuxi.modules.tasks.registry import get_task_definition
-from yuxi.infrastructure.observability.logging import logger
+from yuxi.modules.tasks.repository import TaskRepository
 
 TASK_LEASE_SECONDS = 30.0
 TASK_HEARTBEAT_SECONDS = 10.0

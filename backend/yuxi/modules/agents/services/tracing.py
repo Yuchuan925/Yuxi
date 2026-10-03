@@ -1,13 +1,12 @@
 from __future__ import annotations
 
-from yuxi.infrastructure.observability.langfuse import CallbackHandler, get_langfuse_client, export_turn_root
-
 import asyncio
 import hashlib
 from dataclasses import dataclass, field
-from datetime import datetime, UTC
+from datetime import UTC, datetime
 from typing import Any
 
+from yuxi.infrastructure.observability.langfuse import CallbackHandler, export_turn_root, get_langfuse_client
 from yuxi.infrastructure.observability.logging import logger
 
 
@@ -147,8 +146,8 @@ def start_turn_observation(context: LangfuseRunContext) -> str | None:
 
 async def finish_turn_observation_if_terminal(turn_id: str) -> None:
     """提交后读取 Turn 终态，再尽力导出跨 Run 和等待期的根观察。"""
-    from yuxi.modules.agents.repositories.turn import AgentTurnRepository
     from yuxi.infrastructure.postgres.manager import pg_manager
+    from yuxi.modules.agents.repositories.turn import AgentTurnRepository
 
     if get_langfuse_client() is None:
         return

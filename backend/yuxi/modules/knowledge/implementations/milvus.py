@@ -1,7 +1,7 @@
 import asyncio
 import json
-import re
 import os
+import re
 import time
 import traceback
 import weakref
@@ -24,18 +24,18 @@ from pymilvus import (
     utility,
 )
 
-from yuxi.modules.system.options import system_options
+from yuxi.infrastructure.observability.logging import logger
 from yuxi.modules.knowledge.base import FileStatus, KnowledgeBase
 from yuxi.modules.knowledge.chunking.ragflow_like.dispatcher import chunk_markdown
 from yuxi.modules.knowledge.chunking.ragflow_like.nlp import count_tokens
 from yuxi.modules.knowledge.read_models import KnowledgeBaseConfig
-from yuxi.modules.knowledge.utils.kb_utils import resolve_processing_params
-from yuxi.modules.models.providers.cache import model_cache
 from yuxi.modules.knowledge.repositories.chunks import KnowledgeChunkRepository
 from yuxi.modules.knowledge.repositories.files import KnowledgeFileRepository
-from yuxi.shared.hashing import hashstr
-from yuxi.infrastructure.observability.logging import logger
+from yuxi.modules.knowledge.utils.kb_utils import resolve_processing_params
+from yuxi.modules.models.providers.cache import model_cache
+from yuxi.modules.system.options import system_options
 from yuxi.shared.datetime import utc_isoformat
+from yuxi.shared.hashing import hashstr
 
 MILVUS_AVAILABLE = True
 CONTENT_SPARSE_FIELD = "content_sparse"

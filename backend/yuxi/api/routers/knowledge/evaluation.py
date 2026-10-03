@@ -4,22 +4,22 @@ from urllib.parse import quote
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
+
 from yuxi.api.dependencies.auth import get_admin_user
 from yuxi.api.dependencies.knowledge import (
     ensure_knowledge_base_permission,
     require_knowledge_base_manage,
     require_knowledge_base_read,
 )
+from yuxi.infrastructure.observability.logging import logger
+from yuxi.modules.identity.models import User
+from yuxi.modules.identity.permissions import ResourcePermission
 from yuxi.modules.knowledge.evaluation.benchmark_generation import (
     DEFAULT_BENCHMARK_GENERATION_CONCURRENCY,
     MAX_BENCHMARK_GENERATION_CONCURRENCY,
 )
 from yuxi.modules.knowledge.evaluation.service import EvaluationService
-from yuxi.modules.identity.permissions import ResourcePermission
 from yuxi.modules.knowledge.repositories.evaluation import EvaluationRepository
-from yuxi.modules.identity.models import User
-from yuxi.infrastructure.observability.logging import logger
-
 
 evaluation = APIRouter(prefix="/evaluation", tags=["evaluation"])
 

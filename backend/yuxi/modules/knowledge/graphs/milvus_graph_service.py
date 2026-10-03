@@ -6,6 +6,14 @@ import time
 import weakref
 from typing import Any
 
+from yuxi.infrastructure.neo4j import (
+    Neo4jConnectionManager,
+    get_shared_neo4j_connection,
+    neo4j_read,
+    neo4j_write,
+    safe_neo4j_label,
+)
+from yuxi.infrastructure.observability.logging import logger
 from yuxi.modules.knowledge.graphs.extractors import GraphExtractor, GraphExtractorFactory, normalize_extraction_result
 from yuxi.modules.knowledge.graphs.graph_utils import (
     build_graph_payload,
@@ -20,14 +28,6 @@ from yuxi.modules.knowledge.graphs.milvus_graph_vector_store import MilvusGraphV
 from yuxi.modules.knowledge.repositories.bases import KnowledgeBaseRepository
 from yuxi.modules.knowledge.repositories.chunks import KnowledgeChunkRepository
 from yuxi.modules.knowledge.repositories.graphs import KnowledgeGraphRepository
-from yuxi.infrastructure.neo4j import (
-    Neo4jConnectionManager,
-    get_shared_neo4j_connection,
-    neo4j_read,
-    neo4j_write,
-    safe_neo4j_label,
-)
-from yuxi.infrastructure.observability.logging import logger
 from yuxi.shared.datetime import utc_isoformat
 
 GRAPH_CONFIG_KEY = "graph_build_config"

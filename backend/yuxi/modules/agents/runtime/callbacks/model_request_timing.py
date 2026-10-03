@@ -7,10 +7,10 @@ from typing import Any
 
 from langchain_core.callbacks import BaseCallbackHandler
 
-from yuxi.modules.agents.repositories.runs import AgentRunRepository
-from yuxi.infrastructure.postgres.manager import pg_manager
-from yuxi.shared.datetime import utc_now_naive
 from yuxi.infrastructure.observability.logging import logger
+from yuxi.infrastructure.postgres.manager import pg_manager
+from yuxi.modules.agents.repositories.runs import AgentRunRepository
+from yuxi.shared.datetime import utc_now_naive
 
 
 class FirstModelRequestRecorder(BaseCallbackHandler):

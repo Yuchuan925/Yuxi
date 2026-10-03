@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import asyncio
 
+from yuxi.infrastructure.observability.logging import logger
 from yuxi.modules.knowledge.graphs.milvus_graph_service import MilvusGraphService
+from yuxi.modules.knowledge.repositories.files import KnowledgeFileRepository
 from yuxi.modules.knowledge.runtime import knowledge_base
 from yuxi.modules.knowledge.utils import params_for_uploaded_document
-from yuxi.modules.knowledge.repositories.files import KnowledgeFileRepository
 from yuxi.modules.tasks.service import TaskContext
-from yuxi.infrastructure.observability.logging import logger
 
 DOCUMENT_ACTION_BATCH_SIZE = 500
 DOCUMENT_ACTION_RESULT_ITEM_LIMIT = 200

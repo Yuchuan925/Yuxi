@@ -9,6 +9,14 @@ import tempfile
 from pathlib import PurePosixPath
 
 from fastapi import HTTPException
+
+from yuxi.infrastructure.file_preview import prepare_file_preview, preview_too_large
+from yuxi.infrastructure.filesystem import copy_file_fd, open_regular_file_fd
+from yuxi.infrastructure.office_conversion import (
+    OfficeConversionError,
+    convert_office_to_pdf,
+    is_office_pdf_convertible,
+)
 from yuxi.modules.agents.runtime.sandbox.paths import (
     VIRTUAL_PATH_PREFIX,
     VIRTUAL_SKILLS_PATH,
@@ -16,20 +24,13 @@ from yuxi.modules.agents.runtime.sandbox.paths import (
     runtime_user_data_path,
     workspace_scope_from_runtime_path,
 )
-from yuxi.modules.extensions.skills.models import Skill
 from yuxi.modules.extensions.skills.edit import open_shared_skill_dir
+from yuxi.modules.extensions.skills.models import Skill
 from yuxi.modules.extensions.skills.shared import lock_accessible_shared_skill_for_file
 from yuxi.modules.identity.repositories.users import UserRepository
-from yuxi.shared.files import MAX_FILE_PREVIEW_BYTES, PreparedFile, PreviewResult, detect_media_type
-from yuxi.modules.workspace.services.bindings import resolve_authorized_workdir
-from yuxi.infrastructure.file_preview import prepare_file_preview, preview_too_large
-from yuxi.infrastructure.office_conversion import (
-    OfficeConversionError,
-    convert_office_to_pdf,
-    is_office_pdf_convertible,
-)
-from yuxi.infrastructure.filesystem import copy_file_fd, open_regular_file_fd
 from yuxi.modules.workspace.errors import FileTransferLimitError
+from yuxi.modules.workspace.services.bindings import resolve_authorized_workdir
+from yuxi.shared.files import MAX_FILE_PREVIEW_BYTES, PreparedFile, PreviewResult, detect_media_type
 
 MAX_ARTIFACT_DOWNLOAD_BYTES = 1024 * 1024 * 1024
 MAX_SAVED_ARTIFACT_NAME_ATTEMPTS = 1000

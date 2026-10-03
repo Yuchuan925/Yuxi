@@ -5,7 +5,7 @@ from __future__ import annotations
 from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from yuxi.modules.agents.models.messages import Message, MODEL_AUDIT_MESSAGE_TYPE
+from yuxi.modules.agents.models.messages import MODEL_AUDIT_MESSAGE_TYPE, Message
 from yuxi.modules.agents.models.runs import AgentRun
 from yuxi.modules.agents.models.turns import AgentTurn
 from yuxi.shared.datetime import utc_now_naive

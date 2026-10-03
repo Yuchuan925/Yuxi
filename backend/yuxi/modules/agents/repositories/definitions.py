@@ -3,26 +3,26 @@ from __future__ import annotations
 import copy
 import re
 import uuid
-from types import SimpleNamespace
 from collections.abc import Collection
+from types import SimpleNamespace
 from typing import Any, Literal
 
 from sqlalchemy import or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from yuxi.modules.agents.runtime.context import BaseContext, validate_resource_selection
-from yuxi.modules.agents.presets import AgentPreset
-from yuxi.modules.agents.presets.default_chatbot import PRESET as DEFAULT_AGENT
-from yuxi.modules.identity.permissions import ResourcePermission, normalize_permission_config, resolve_agent_permission
-from yuxi.modules.agents.models.runs import AGENT_RUN_TERMINAL_STATUSES, AgentRun
+from yuxi.infrastructure.observability.logging import logger
 from yuxi.modules.agents.models.definitions import Agent
 from yuxi.modules.agents.models.inputs import AgentInput
-from yuxi.modules.agents.models.turns import AgentTurn
+from yuxi.modules.agents.models.runs import AGENT_RUN_TERMINAL_STATUSES, AgentRun
 from yuxi.modules.agents.models.threads import Conversation
+from yuxi.modules.agents.models.turns import AgentTurn
+from yuxi.modules.agents.presets import AgentPreset
+from yuxi.modules.agents.presets.default_chatbot import PRESET as DEFAULT_AGENT
+from yuxi.modules.agents.runtime.context import BaseContext, validate_resource_selection
 from yuxi.modules.identity.models import User
+from yuxi.modules.identity.permissions import ResourcePermission, normalize_permission_config, resolve_agent_permission
 from yuxi.modules.identity.repositories.users import UserRepository
 from yuxi.modules.identity.services.resource_grants import validate_shared_grants
-from yuxi.infrastructure.observability.logging import logger
 from yuxi.shared.datetime import utc_now_naive
 
 DEFAULT_AGENT_SLUG = DEFAULT_AGENT.slug

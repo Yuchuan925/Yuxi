@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload, load_only, selectinload
 from sqlalchemy.orm.attributes import flag_modified
 
-from yuxi.modules.agents.models.runs import AGENT_RUN_TERMINAL_STATUSES, AgentRun
+from yuxi.infrastructure.observability.logging import logger
 from yuxi.modules.agents.models.messages import (
     AUDIT_MESSAGE_TYPES,
     MODEL_AUDIT_MESSAGE_TYPE,
@@ -18,8 +18,8 @@ from yuxi.modules.agents.models.messages import (
     Message,
     ToolCall,
 )
+from yuxi.modules.agents.models.runs import AGENT_RUN_TERMINAL_STATUSES, AgentRun
 from yuxi.modules.agents.models.threads import UNVIEWED_RUN_MARKER, Conversation, SubagentThread
-from yuxi.infrastructure.observability.logging import logger
 from yuxi.shared.datetime import utc_now_naive
 from yuxi.shared.strings import truncate_utf8
 

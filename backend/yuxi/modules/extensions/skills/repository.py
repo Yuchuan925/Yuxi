@@ -3,9 +3,9 @@ from __future__ import annotations
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from yuxi.modules.identity.permissions import ResourcePermission, resolve_skill_permission
 from yuxi.modules.extensions.skills.models import Skill
 from yuxi.modules.identity.models import User
+from yuxi.modules.identity.permissions import ResourcePermission, resolve_skill_permission
 from yuxi.shared.datetime import utc_now_naive
 
 

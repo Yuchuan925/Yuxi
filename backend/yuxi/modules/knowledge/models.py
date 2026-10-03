@@ -13,9 +13,10 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
 )
-from yuxi.shared.datetime import utc_now
 
-from yuxi.infrastructure.postgres.base import KnowledgeBase as Base, JSON_VALUE
+from yuxi.infrastructure.postgres.base import JSON_VALUE
+from yuxi.infrastructure.postgres.base import KnowledgeBase as Base
+from yuxi.shared.datetime import utc_now
 
 
 class KnowledgeBase(Base):

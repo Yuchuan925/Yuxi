@@ -6,8 +6,8 @@ from abc import ABC, abstractmethod
 import httpx
 import requests
 
-from yuxi.modules.models.providers.cache import model_cache
 from yuxi.infrastructure.observability.logging import logger
+from yuxi.modules.models.providers.cache import model_cache
 from yuxi.modules.models.utils import get_docker_safe_url
 from yuxi.shared.hashing import hashstr
 

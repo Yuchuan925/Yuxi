@@ -10,8 +10,13 @@ from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from yuxi.modules.agents.repositories.runs import AgentRunRepository
+from yuxi.infrastructure.observability.logging import logger
+from yuxi.infrastructure.postgres.manager import pg_manager
+from yuxi.modules.agents.models.messages import Message
+from yuxi.modules.agents.models.runs import AgentRun
+from yuxi.modules.agents.models.turns import AgentTurn
 from yuxi.modules.agents.repositories.input_receipt import AgentInputReceiptRepository
+from yuxi.modules.agents.repositories.runs import AgentRunRepository
 from yuxi.modules.agents.repositories.turn import AgentTurnRepository
 from yuxi.modules.agents.services.scheduler import Dispatch, deliver
 from yuxi.modules.agents.services.scope import ActorScope
@@ -19,11 +24,6 @@ from yuxi.modules.agents.services.threads import require_thread
 from yuxi.modules.agents.services.tracing import finish_turn_observation_if_terminal
 from yuxi.modules.agents.services.transport import publish_cancel_signals
 from yuxi.modules.workspace.services.bindings import resolve_conversation_workdir_binding
-from yuxi.infrastructure.postgres.manager import pg_manager
-from yuxi.modules.agents.models.runs import AgentRun
-from yuxi.modules.agents.models.turns import AgentTurn
-from yuxi.modules.agents.models.messages import Message
-from yuxi.infrastructure.observability.logging import logger
 
 
 async def resume_turn(
@@ -415,9 +415,9 @@ async def reconcile_cancelling_turns() -> list[str]:
 
 async def _clear_waitpoint_checkpoint(run: AgentRun) -> None:
     """移除未执行的工具调用，再推进等待节点而不执行工具。"""
-    from yuxi.modules.agents.runtime.sandbox.paths import runtime_workdir_path
-    from yuxi.modules.agents.runtime.agent_backends import get_agent_backend
     from yuxi.modules.agents.repositories.definitions import AgentRepository
+    from yuxi.modules.agents.runtime.agent_backends import get_agent_backend
+    from yuxi.modules.agents.runtime.sandbox.paths import runtime_workdir_path
     from yuxi.modules.workspace.services.bindings import resolve_conversation_workdir_binding
 
     async with pg_manager.get_async_session_context() as db:

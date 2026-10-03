@@ -12,11 +12,11 @@ from io import BytesIO
 from urllib.parse import quote, urlsplit
 
 from urllib3 import BaseHTTPResponse
-from yuxi.infrastructure.observability.logging import logger
-from yuxi.shared.files import detect_media_type
 
 from minio import Minio
 from minio.error import S3Error
+from yuxi.infrastructure.observability.logging import logger
+from yuxi.shared.files import detect_media_type
 
 
 class StorageError(Exception):

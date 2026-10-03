@@ -8,13 +8,14 @@ from datetime import timedelta
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from yuxi.modules.identity.models import APIKey, CLIAuthSession, Department, User
 from yuxi.modules.identity.repositories.api_keys import (
     APIKeyDepartmentConflict,
     APIKeyIdempotencyConflict,
     APIKeyRepository,
     APIKeySubjectUnavailable,
 )
-from yuxi.modules.identity.models import APIKey, CLIAuthSession, Department, User
 from yuxi.modules.identity.security import AuthUtils
 from yuxi.shared.datetime import utc_now_naive
 

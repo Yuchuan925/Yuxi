@@ -5,6 +5,9 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from yuxi.api.dependencies.auth import get_db, get_required_user
+from yuxi.modules.identity.models import User
 from yuxi.modules.schedules.service import (
     create_scheduled_job,
     delete_scheduled_job,
@@ -12,9 +15,6 @@ from yuxi.modules.schedules.service import (
     run_scheduled_job_now,
     update_scheduled_job,
 )
-from yuxi.modules.identity.models import User
-
-from yuxi.api.dependencies.auth import get_db, get_required_user
 
 scheduled_agents = APIRouter(prefix="/scheduled-tasks", tags=["scheduled-tasks"])
 

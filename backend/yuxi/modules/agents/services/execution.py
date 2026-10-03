@@ -1,8 +1,5 @@
 """Worker 的 LangGraph 执行、输出持久化与状态投影边界。"""
 
-from yuxi.infrastructure.observability.langfuse import flush_langfuse
-
-
 import asyncio
 import json
 from collections.abc import AsyncIterator, Awaitable, Callable
@@ -12,19 +9,27 @@ from typing import Any, Literal
 
 from langchain.messages import AIMessage, HumanMessage
 from langgraph.types import Command
-from yuxi.modules.agents.runtime.base import GraphExecutionResult, json_safe
+
+from yuxi.infrastructure.observability.langfuse import flush_langfuse
+from yuxi.infrastructure.observability.logging import logger
+from yuxi.infrastructure.postgres.manager import pg_manager
+from yuxi.modules.agents.models.definitions import Agent
+from yuxi.modules.agents.models.threads import Conversation
+from yuxi.modules.agents.repositories.definitions import AgentRepository
+from yuxi.modules.agents.repositories.runs import AgentRunRepository
+from yuxi.modules.agents.repositories.threads import ConversationRepository
+from yuxi.modules.agents.repositories.turn import AgentTurnRepository
 from yuxi.modules.agents.runtime.agent_backends import get_agent_backend
+from yuxi.modules.agents.runtime.base import GraphExecutionResult, json_safe
 from yuxi.modules.agents.runtime.callbacks.model_request_timing import FirstModelRequestRecorder
 from yuxi.modules.agents.runtime.context import BaseContext
 from yuxi.modules.agents.runtime.state import AgentStatePayload
-from yuxi.modules.agents.repositories.definitions import AgentRepository
-from yuxi.modules.agents.repositories.runs import AgentRunRepository
-from yuxi.modules.agents.repositories.turn import AgentTurnRepository
-from yuxi.modules.agents.repositories.threads import ConversationRepository
-from yuxi.modules.agents.services.input_messages import AgentRunInputMessage
-from yuxi.modules.agents.services.messages import save_messages_from_langgraph_state, save_partial_message
-from yuxi.modules.agents.services.preparation import PreparedRunExecution
 from yuxi.modules.agents.services.attachments import serialize_attachment
+from yuxi.modules.agents.services.input_messages import AgentRunInputMessage
+from yuxi.modules.agents.services.message_recorder import RunMessageRecorder
+from yuxi.modules.agents.services.messages import save_messages_from_langgraph_state, save_partial_message
+from yuxi.modules.agents.services.openai_events import OpenAIEventAdapter
+from yuxi.modules.agents.services.preparation import PreparedRunExecution
 from yuxi.modules.agents.services.tracing import (
     LangfuseRunContext,
     attach_run_observation,
@@ -33,15 +38,9 @@ from yuxi.modules.agents.services.tracing import (
     get_trace_info,
     start_turn_observation,
 )
-from yuxi.modules.agents.services.message_recorder import RunMessageRecorder
-from yuxi.modules.agents.services.openai_events import OpenAIEventAdapter
-from yuxi.modules.workspace.services.bindings import resolve_conversation_workdir_path
-from yuxi.infrastructure.postgres.manager import pg_manager
-from yuxi.modules.agents.models.definitions import Agent
-from yuxi.modules.agents.models.threads import Conversation
 from yuxi.modules.identity.models import User
+from yuxi.modules.workspace.services.bindings import resolve_conversation_workdir_path
 from yuxi.shared.hashing import hash_id
-from yuxi.infrastructure.observability.logging import logger
 
 
 def _with_attachment_context(message: HumanMessage, attachments: list[dict]) -> HumanMessage:

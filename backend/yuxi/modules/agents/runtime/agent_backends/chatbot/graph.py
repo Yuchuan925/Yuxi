@@ -1,14 +1,12 @@
-from yuxi.modules.agents.runtime.checkpoint_cleanup import CheckpointCleanupModel
-from yuxi.modules.agents.runtime.middlewares.authorization import RuntimeAuthorizationMiddleware
 from deepagents.middleware.patch_tool_calls import PatchToolCallsMiddleware
 from langchain.agents import create_agent
 from langchain.agents.middleware import TodoListMiddleware
 
 from yuxi.modules.agents.runtime import BaseAgent
-from yuxi.modules.agents.runtime.sandbox.backend import create_agent_composite_backend
-from yuxi.modules.agents.runtime.middlewares.filesystem import create_agent_filesystem_middleware
-from yuxi.modules.extensions.skills.runtime import sync_agent_context_skills
-from yuxi.modules.agents.runtime.sandbox.paths import runtime_workdir_path
+from yuxi.modules.agents.runtime.agent_backends.chatbot.context import ChatBotContext
+from yuxi.modules.agents.runtime.agent_backends.chatbot.prompt import TODO_MID_PROMPT, build_prompt_with_context
+from yuxi.modules.agents.runtime.agent_backends.chatbot.state import ChatBotState
+from yuxi.modules.agents.runtime.checkpoint_cleanup import CheckpointCleanupModel
 from yuxi.modules.agents.runtime.context import DEFAULT_TOOL_RESULT_EVICTION_K_TOKENS
 from yuxi.modules.agents.runtime.middlewares import (
     ImageInputCompatibilityMiddleware,
@@ -19,15 +17,16 @@ from yuxi.modules.agents.runtime.middlewares import (
     create_memory_middleware,
     create_summary_middleware_from_context,
 )
+from yuxi.modules.agents.runtime.middlewares.authorization import RuntimeAuthorizationMiddleware
+from yuxi.modules.agents.runtime.middlewares.filesystem import create_agent_filesystem_middleware
 from yuxi.modules.agents.runtime.middlewares.skills import SkillsMiddleware
 from yuxi.modules.agents.runtime.middlewares.subagent_task import create_subagent_task_middleware
+from yuxi.modules.agents.runtime.sandbox.backend import create_agent_composite_backend
+from yuxi.modules.agents.runtime.sandbox.paths import runtime_workdir_path
 from yuxi.modules.agents.runtime.tool_approval import create_tool_approval_middleware, normalize_tool_approval_mode
+from yuxi.modules.extensions.skills.runtime import sync_agent_context_skills
 from yuxi.modules.extensions.tools.runtime import resolve_configured_runtime_tools
 from yuxi.modules.models.chat import load_chat_model, resolve_chat_model_spec
-
-from yuxi.modules.agents.runtime.agent_backends.chatbot.context import ChatBotContext
-from yuxi.modules.agents.runtime.agent_backends.chatbot.prompt import TODO_MID_PROMPT, build_prompt_with_context
-from yuxi.modules.agents.runtime.agent_backends.chatbot.state import ChatBotState
 
 
 async def _build_middlewares(context, backend, *, cleanup_model=None):

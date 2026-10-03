@@ -24,6 +24,7 @@ from langchain_core.messages.utils import count_tokens_approximately
 from langgraph.config import get_stream_writer
 from langgraph.constants import TAG_NOSTREAM
 
+from yuxi.infrastructure.observability.logging import logger
 from yuxi.modules.agents.runtime.context import (
     DEFAULT_SUMMARY_KEEP_MESSAGES,
     DEFAULT_SUMMARY_THRESHOLD_K,
@@ -31,7 +32,6 @@ from yuxi.modules.agents.runtime.context import (
     DEFAULT_YUXI_SUMMARY_PROMPT,
 )
 from yuxi.modules.models.chat import load_chat_model, resolve_chat_model_spec
-from yuxi.infrastructure.observability.logging import logger
 
 _APPROX_CHARS_PER_TOKEN = 4
 _DEFAULT_SUMMARY_TOOL_RESULT_LIMIT_TOKENS = 300

@@ -1,7 +1,9 @@
 """OIDC provider discovery 与远端协议调用。"""
 
-import httpx
 from typing import Any
+
+import httpx
+
 from yuxi.infrastructure.observability.logging import logger
 
 

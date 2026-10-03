@@ -8,9 +8,9 @@ from sqlalchemy import (
     String,
     Text,
 )
-from yuxi.shared.datetime import utc_now_naive
 
 from yuxi.infrastructure.postgres.base import BusinessBase as Base
+from yuxi.shared.datetime import utc_now_naive
 
 
 class ConfigOption(Base):

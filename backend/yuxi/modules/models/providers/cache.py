@@ -13,8 +13,8 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
-from yuxi.infrastructure.redis import sync_redis_client
 from yuxi.infrastructure.observability.logging import logger
+from yuxi.infrastructure.redis import sync_redis_client
 
 REDIS_CACHE_KEY = "yuxi:model_cache"
 _CACHE_TTL_SECONDS = 5

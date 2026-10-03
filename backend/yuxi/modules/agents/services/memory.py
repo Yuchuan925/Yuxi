@@ -5,10 +5,11 @@ from __future__ import annotations
 import asyncio
 
 from sqlalchemy import text
-from yuxi.modules.identity.preferences import UserConfig
+
+from yuxi.infrastructure.postgres.manager import pg_manager
 from yuxi.modules.agents.repositories.runs import AgentRunRepository
 from yuxi.modules.agents.repositories.threads import ConversationRepository
-from yuxi.infrastructure.postgres.manager import pg_manager
+from yuxi.modules.identity.preferences import UserConfig
 from yuxi.modules.workspace.filesystem import Workspace
 
 MEMORY_PATH = "/agents/MEMORY.md"

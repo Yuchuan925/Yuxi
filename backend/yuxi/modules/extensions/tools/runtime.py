@@ -1,8 +1,8 @@
 """迁移后的职责模块。"""
 
 from typing import Any
-from yuxi.infrastructure.observability.logging import logger
 
+from yuxi.infrastructure.observability.logging import logger
 from yuxi.modules.extensions.tools.catalog import get_tool_instances_by_category
 
 

@@ -9,10 +9,10 @@ from typing import Any
 from sqlalchemy import DateTime, String, case, cast, func, literal, or_, select, union_all, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from yuxi.infrastructure.postgres.manager import pg_manager
-from yuxi.modules.tasks.models import TaskRecord
-from yuxi.modules.knowledge.models import KnowledgeFile
 from yuxi.infrastructure.observability.logging import logger
+from yuxi.infrastructure.postgres.manager import pg_manager
+from yuxi.modules.knowledge.models import KnowledgeFile
+from yuxi.modules.tasks.models import TaskRecord
 from yuxi.shared.datetime import utc_now
 
 # asyncpg 单条 SQL 参数上限为 32767；按 file_id 批量查询时统一分批。

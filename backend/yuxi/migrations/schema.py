@@ -1,17 +1,18 @@
 """Schema 初始化进程使用的 PostgreSQL 建表与当前约束 SQL。"""
 
 from contextlib import asynccontextmanager
+
 from sqlalchemy import text
+
+from yuxi.infrastructure.observability.logging import logger
+from yuxi.infrastructure.postgres.base import BusinessBase, KnowledgeBase
+from yuxi.infrastructure.postgres.schema import SCHEMA_VERSION_TABLE
 from yuxi.modules.agents.models.runs import (
     AGENT_RUN_SHAPE_CONSTRAINT_NAME,
     AGENT_RUN_SHAPE_CONSTRAINT_SQL,
     AGENT_RUN_TERMINAL_STATUSES,
 )
 from yuxi.modules.workspace.models import PROJECT_STATUS_CONSTRAINT_NAME, PROJECT_STATUS_CONSTRAINT_SQL
-from yuxi.infrastructure.postgres.base import BusinessBase, KnowledgeBase
-from yuxi.infrastructure.observability.logging import logger
-
-from yuxi.infrastructure.postgres.schema import SCHEMA_VERSION_TABLE
 
 AGENT_RUN_TERMINAL_STATUS_SQL = ", ".join(f"'{status}'" for status in AGENT_RUN_TERMINAL_STATUSES)
 

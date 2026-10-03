@@ -6,9 +6,9 @@ from typing import Any
 
 import json_repair
 
+from yuxi.infrastructure.observability.logging import logger
 from yuxi.modules.knowledge.runtime import knowledge_base as kb_manager
 from yuxi.modules.models import select_model
-from yuxi.infrastructure.observability.logging import logger
 
 DEFAULT_BENCHMARK_GENERATION_CONCURRENCY = 10
 MAX_BENCHMARK_GENERATION_CONCURRENCY = 20

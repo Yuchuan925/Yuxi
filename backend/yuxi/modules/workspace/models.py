@@ -1,6 +1,7 @@
 """业务 PostgreSQL 映射。"""
 
 from typing import Any
+
 from sqlalchemy import (
     CheckConstraint,
     Column,
@@ -11,10 +12,9 @@ from sqlalchemy import (
     func,
 )
 from sqlalchemy.orm import relationship
-from yuxi.shared.datetime import format_utc_datetime, utc_now_naive
 
 from yuxi.infrastructure.postgres.base import BusinessBase as Base
-
+from yuxi.shared.datetime import format_utc_datetime, utc_now_naive
 
 PROJECT_STATUS_CONSTRAINT_NAME = "ck_projects_status"
 

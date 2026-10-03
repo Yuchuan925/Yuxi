@@ -2,11 +2,16 @@
 
 from __future__ import annotations
 
-from yuxi.infrastructure.postgres.schema import require_current_schema
-
 import asyncio
-from yuxi.modules.extensions.mcp.service import ensure_builtin_mcp_servers_in_db
-from yuxi.modules.extensions.skills.shared import init_builtin_skills
+
+from yuxi.infrastructure.observability.logging import logger
+from yuxi.infrastructure.postgres.manager import pg_manager
+from yuxi.infrastructure.postgres.schema import require_current_schema
+from yuxi.modules.agents.services.leases import (
+    WORKER_ID,
+    reconcile_expired_run_leases,
+    reconcile_pending_runtime_cleanups,
+)
 from yuxi.modules.agents.services.scheduler import recover_pending_dispatches
 from yuxi.modules.agents.services.transport import (
     RUN_RECONCILIATION_SECONDS,
@@ -14,6 +19,9 @@ from yuxi.modules.agents.services.transport import (
     WORKER_RECONCILIATION_HEALTH_TTL_SECONDS,
     publish_worker_health,
 )
+from yuxi.modules.extensions.mcp.service import ensure_builtin_mcp_servers_in_db
+from yuxi.modules.extensions.skills.shared import init_builtin_skills
+from yuxi.modules.identity.security import AuthUtils
 from yuxi.modules.schedules.service import claim_and_dispatch_due_jobs, recover_scheduled_dispatches
 from yuxi.modules.tasks.queue import (
     TASK_RECONCILIATION_HEALTH_KEY,
@@ -21,16 +29,6 @@ from yuxi.modules.tasks.queue import (
     TASK_RECONCILIATION_SECONDS,
     reconcile_and_publish_tasks,
 )
-from yuxi.infrastructure.postgres.manager import pg_manager
-from yuxi.modules.identity.security import AuthUtils
-from yuxi.infrastructure.observability.logging import logger
-
-from yuxi.modules.agents.services.leases import (
-    WORKER_ID,
-    reconcile_expired_run_leases,
-    reconcile_pending_runtime_cleanups,
-)
-
 
 _RECONCILIATION_TASK_KEY = "agent_run_reconciliation_task"
 
@@ -48,8 +46,7 @@ async def _worker_startup(ctx):
     pg_manager.initialize()
     await require_current_schema(pg_manager)
     async with pg_manager.get_async_session_context() as session:
-        from yuxi.modules.system.options import ensure_options_in_db, invalidate_option_cache
-        from yuxi.modules.system.options import system_options
+        from yuxi.modules.system.options import ensure_options_in_db, invalidate_option_cache, system_options
 
         await ensure_options_in_db(session)
         await session.commit()

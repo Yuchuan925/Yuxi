@@ -3,9 +3,9 @@
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from yuxi.api.dependencies.auth import get_db
 from yuxi.api.routers.public_v1.agents.auth import PublicAgentContext, require_public_context
 from yuxi.api.routers.public_v1.agents.schemas import ThreadCreate, ThreadUpdate, input_messages_to_domain
-from yuxi.api.dependencies.auth import get_db
 from yuxi.modules.agents.services.inputs import create_thread, thread_id_for_creation
 from yuxi.modules.agents.services.threads import (
     archive_thread,

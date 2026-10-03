@@ -5,6 +5,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from yuxi.api.dependencies.auth import get_db, get_required_user
+from yuxi.modules.identity.models import User
 from yuxi.modules.workspace.services.projects import (
     create_project_view,
     delete_project_view,
@@ -12,7 +13,6 @@ from yuxi.modules.workspace.services.projects import (
     list_projects_view,
     rename_project_view,
 )
-from yuxi.modules.identity.models import User
 
 projects = APIRouter(prefix="/projects", tags=["projects"])
 

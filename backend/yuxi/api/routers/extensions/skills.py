@@ -8,8 +8,9 @@ from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Qu
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
-from yuxi.modules.identity.permissions import normalize_permission_config, resolve_skill_permission
-from yuxi.modules.extensions.skills.repository import SkillRepository
+
+from yuxi.api.dependencies.auth import get_admin_user, get_db, get_required_user, get_superadmin_user
+from yuxi.infrastructure.observability.logging import logger
 from yuxi.modules.extensions.skills.catalog import list_accessible_skills, list_skill_cards_for_user
 from yuxi.modules.extensions.skills.draft import (
     create_remote_skill_draft,
@@ -32,6 +33,7 @@ from yuxi.modules.extensions.skills.personal import (
     read_personal_skill_file,
 )
 from yuxi.modules.extensions.skills.remote import list_remote_skills, search_remote_skills
+from yuxi.modules.extensions.skills.repository import SkillRepository
 from yuxi.modules.extensions.skills.shared import (
     confirm_skill_install_draft,
     delete_skill,
@@ -47,9 +49,7 @@ from yuxi.modules.extensions.skills.shared import (
     user_can_manage_skill,
 )
 from yuxi.modules.identity.models import User
-from yuxi.infrastructure.observability.logging import logger
-
-from yuxi.api.dependencies.auth import get_admin_user, get_superadmin_user, get_db, get_required_user
+from yuxi.modules.identity.permissions import normalize_permission_config, resolve_skill_permission
 
 skills = APIRouter(prefix="/system/skills", tags=["skills"])
 user_skills = APIRouter(prefix="/skills", tags=["skills"])

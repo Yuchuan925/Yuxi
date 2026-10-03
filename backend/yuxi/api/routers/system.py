@@ -7,14 +7,13 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
-from yuxi import get_version
-from yuxi.modules.system.options import invalidate_option_cache, update_option_value
-from yuxi.modules.system.options import system_options
-from yuxi.modules.system.readiness import get_readiness
-from yuxi.modules.identity.models import User
-from yuxi.infrastructure.observability.logging import LOG_FILE, logger
 
-from yuxi.api.dependencies.auth import get_superadmin_user, get_db, get_required_user
+from yuxi import get_version
+from yuxi.api.dependencies.auth import get_db, get_required_user, get_superadmin_user
+from yuxi.infrastructure.observability.logging import LOG_FILE, logger
+from yuxi.modules.identity.models import User
+from yuxi.modules.system.options import invalidate_option_cache, system_options, update_option_value
+from yuxi.modules.system.readiness import get_readiness
 
 BRAND_STATIC_DIR = Path(__file__).resolve().parents[2] / "modules/system/static"
 

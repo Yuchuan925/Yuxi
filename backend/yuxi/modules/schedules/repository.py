@@ -10,8 +10,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from yuxi.modules.agents.models.inputs import AgentInput
 from yuxi.modules.agents.models.runs import AgentRun
 from yuxi.modules.agents.models.turns import AgentTurn
-from yuxi.modules.schedules.models import ScheduledAgentJob, ScheduledAgentRun
 from yuxi.modules.identity.models import User
+from yuxi.modules.schedules.models import ScheduledAgentJob, ScheduledAgentRun
 from yuxi.shared.datetime import utc_now_naive
 
 

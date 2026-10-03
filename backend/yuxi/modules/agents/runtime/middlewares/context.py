@@ -4,8 +4,8 @@ from collections.abc import Callable
 
 from langchain.agents.middleware import ModelRequest, ModelResponse, dynamic_prompt, wrap_model_call
 
-from yuxi.modules.models.chat import load_chat_model, resolve_chat_model_spec
 from yuxi.infrastructure.observability.logging import logger
+from yuxi.modules.models.chat import load_chat_model, resolve_chat_model_spec
 
 
 @dynamic_prompt

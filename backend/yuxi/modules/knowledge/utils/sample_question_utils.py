@@ -6,12 +6,12 @@ from typing import Any
 
 from fastapi import HTTPException
 
-from yuxi.modules.system.options import system_options
+from yuxi.infrastructure.observability.logging import logger
 from yuxi.modules.knowledge.factory import KnowledgeBaseFactory
+from yuxi.modules.knowledge.repositories.bases import KnowledgeBaseRepository
 from yuxi.modules.knowledge.runtime import knowledge_base
 from yuxi.modules.models import select_model
-from yuxi.modules.knowledge.repositories.bases import KnowledgeBaseRepository
-from yuxi.infrastructure.observability.logging import logger
+from yuxi.modules.system.options import system_options
 
 SAMPLE_QUESTIONS_SYSTEM_PROMPT = """你是一个专业的知识库问答测试专家。
 

@@ -5,8 +5,8 @@ from __future__ import annotations
 from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from yuxi.modules.agents.repositories.definitions import AgentRepository, user_can_run_agent
 from yuxi.modules.agents.models.definitions import Agent
+from yuxi.modules.agents.repositories.definitions import AgentRepository, user_can_run_agent
 from yuxi.modules.identity.models import User
 
 

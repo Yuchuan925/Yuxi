@@ -7,11 +7,11 @@ from datetime import datetime, timedelta
 from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from yuxi.modules.agents.models.runs import AGENT_RUN_TERMINAL_STATUSES, AgentRun, AgentRunAttempt
-from yuxi.modules.agents.models.messages import AUDIT_MESSAGE_TYPES, TOOL_AUDIT_MESSAGE_TYPE, Message, ToolCall
 from yuxi.modules.agents.models.inputs import AgentInputMessage
-from yuxi.modules.agents.models.turns import AgentTurn
+from yuxi.modules.agents.models.messages import AUDIT_MESSAGE_TYPES, TOOL_AUDIT_MESSAGE_TYPE, Message, ToolCall
+from yuxi.modules.agents.models.runs import AGENT_RUN_TERMINAL_STATUSES, AgentRun, AgentRunAttempt
 from yuxi.modules.agents.models.threads import SubagentThread
+from yuxi.modules.agents.models.turns import AgentTurn
 from yuxi.shared.datetime import utc_now_naive
 
 TERMINAL_RUN_STATUSES = set(AGENT_RUN_TERMINAL_STATUSES)
@@ -695,8 +695,8 @@ class AgentRunRepository:
 
     async def cancel_active_execution_tree_descendants(self, root_run: AgentRun) -> list[tuple[str, str]]:
         """沿整轮委派取消子 Turn，保留同一子 Thread 的无关后续工作。"""
-        from yuxi.modules.agents.repositories.turn import AgentTurnRepository
         from yuxi.modules.agents.repositories.threads import ConversationRepository
+        from yuxi.modules.agents.repositories.turn import AgentTurnRepository
 
         pending_turn_ids = [root_run.turn_id]
         seen = {root_run.turn_id}

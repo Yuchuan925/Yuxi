@@ -6,9 +6,9 @@ from typing import Any
 
 import httpx
 
+from yuxi.infrastructure.observability.logging import logger
 from yuxi.modules.knowledge.implementations.read_only_connectors import ReadOnlyConnectors
 from yuxi.modules.knowledge.read_models import KnowledgeBaseConfig
-from yuxi.infrastructure.observability.logging import logger
 
 NOTION_API_BASE = "https://api.notion.com/v1"
 NOTION_DEFAULT_VERSION = "2026-03-11"

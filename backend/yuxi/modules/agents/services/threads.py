@@ -17,17 +17,17 @@ import uuid
 from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from yuxi.modules.agents.repositories.runs import AgentRunRepository
+from yuxi.modules.agents.models.runs import AGENT_RUN_TERMINAL_STATUSES
+from yuxi.modules.agents.models.threads import Conversation
 from yuxi.modules.agents.repositories.input import AgentInputRepository
 from yuxi.modules.agents.repositories.input_receipt import AgentInputReceiptRepository
-from yuxi.modules.agents.repositories.turn import AgentTurnRepository
+from yuxi.modules.agents.repositories.runs import AgentRunRepository
 from yuxi.modules.agents.repositories.threads import ConversationRepository
+from yuxi.modules.agents.repositories.turn import AgentTurnRepository
 from yuxi.modules.agents.services.input_config import resolve_agent_run_model_spec, resolve_agent_run_tool_approval_mode
 from yuxi.modules.agents.services.scheduler import claim_next_input, deliver
 from yuxi.modules.agents.services.scope import ActorScope
 from yuxi.modules.workspace.services.bindings import resolve_conversation_workdir_path
-from yuxi.modules.agents.models.runs import AGENT_RUN_TERMINAL_STATUSES
-from yuxi.modules.agents.models.threads import Conversation
 from yuxi.shared.datetime import format_utc_datetime, utc_now_naive
 
 

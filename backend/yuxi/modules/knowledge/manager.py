@@ -9,6 +9,13 @@ from typing import Any
 from redis.exceptions import ConnectionError as RedisConnectionError
 from redis.exceptions import TimeoutError as RedisTimeoutError
 
+from yuxi.infrastructure.observability.logging import logger
+from yuxi.modules.identity.models import User
+from yuxi.modules.identity.permissions import (
+    ResourcePermission,
+    normalize_permission_config,
+    resolve_knowledge_base_permission,
+)
 from yuxi.modules.knowledge.base import KBNameConflictError, KBNotFoundError, KnowledgeBase
 from yuxi.modules.knowledge.cache import (
     cache_kb_config,
@@ -21,13 +28,6 @@ from yuxi.modules.knowledge.factory import KnowledgeBaseFactory
 from yuxi.modules.knowledge.read_models import KnowledgeBaseConfig, KnowledgeBaseDetail, KnowledgeBaseSummary
 from yuxi.modules.knowledge.schemas import FindOutputSchema, OpenOutputSchema
 from yuxi.modules.knowledge.utils.security import redact_sensitive_params
-from yuxi.modules.identity.permissions import (
-    ResourcePermission,
-    normalize_permission_config,
-    resolve_knowledge_base_permission,
-)
-from yuxi.modules.identity.models import User
-from yuxi.infrastructure.observability.logging import logger
 from yuxi.shared.datetime import utc_isoformat
 
 KB_FILE_SEARCH_SCAN_LIMIT = 5000
@@ -433,8 +433,8 @@ class KnowledgeBaseManager:
 
     async def database_name_exists(self, database_name: str) -> bool:
         """检查知识库名称是否已存在"""
-        from yuxi.modules.knowledge.repositories.bases import KnowledgeBaseRepository
         from yuxi.infrastructure.postgres.manager import pg_manager
+        from yuxi.modules.knowledge.repositories.bases import KnowledgeBaseRepository
 
         # 确保 pg_manager 已初始化
         if not pg_manager._initialized:

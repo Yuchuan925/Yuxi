@@ -3,14 +3,15 @@
 from __future__ import annotations
 
 import os
+
 from arq.worker import func
+
+from yuxi.bootstrap.worker import _worker_shutdown, _worker_startup
+from yuxi.infrastructure.redis import get_arq_redis_settings
 from yuxi.infrastructure.runtime_settings import get_int_env
+from yuxi.modules.agents.services.runner import MAX_RUN_TRIES, process_agent_run
 from yuxi.modules.tasks.service import TASKER_DEFAULT_TIMEOUT_SECONDS, process_task
 from yuxi.workers.health import WORKER_HEALTH_INTERVAL_SECONDS, WORKER_HEALTH_KEY
-from yuxi.infrastructure.redis import get_arq_redis_settings
-
-from yuxi.bootstrap.worker import _worker_startup, _worker_shutdown
-from yuxi.modules.agents.services.runner import MAX_RUN_TRIES, process_agent_run
 
 
 def worker_max_jobs() -> int:

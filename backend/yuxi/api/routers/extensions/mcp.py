@@ -3,6 +3,11 @@
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict, Field, StrictInt
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from yuxi.api.dependencies.auth import get_db, get_required_user, get_superadmin_user
+from yuxi.infrastructure.observability.logging import logger
+from yuxi.modules.extensions.mcp.repository import get_all_mcp_servers, get_mcp_server
+from yuxi.modules.extensions.mcp.runtime import get_mcp_tools_stats
 from yuxi.modules.extensions.mcp.service import (
     MCPServerNotFoundError,
     create_mcp_server,
@@ -14,12 +19,7 @@ from yuxi.modules.extensions.mcp.service import (
     toggle_tool_enabled,
     update_mcp_server,
 )
-from yuxi.modules.extensions.mcp.repository import get_all_mcp_servers, get_mcp_server
-from yuxi.modules.extensions.mcp.runtime import get_mcp_tools_stats
 from yuxi.modules.identity.models import User
-from yuxi.infrastructure.observability.logging import logger
-
-from yuxi.api.dependencies.auth import get_superadmin_user, get_db, get_required_user
 
 mcp = APIRouter(prefix="/system/mcp-servers", tags=["mcp"])
 

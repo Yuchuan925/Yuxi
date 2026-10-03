@@ -5,11 +5,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from fastapi import HTTPException
-from yuxi.modules.agents.repositories.threads import ConversationRepository
-from yuxi.modules.workspace.repositories.projects import ProjectRepository
+
 from yuxi.modules.agents.models.threads import Conversation
+from yuxi.modules.agents.repositories.threads import ConversationRepository
 from yuxi.modules.workspace.models import Project
 from yuxi.modules.workspace.paths import ensure_bound_user_workdir
+from yuxi.modules.workspace.repositories.projects import ProjectRepository
 from yuxi.modules.workspace.workdir import Workdir
 
 

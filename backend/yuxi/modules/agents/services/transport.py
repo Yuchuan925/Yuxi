@@ -6,9 +6,9 @@ import asyncio
 import json
 import os
 
-from yuxi.workers.health import WORKER_HEALTH_KEY
-from yuxi.infrastructure.redis import close_async_redis_client, create_arq_redis_pool, get_async_redis_client
 from yuxi.infrastructure.observability.logging import logger
+from yuxi.infrastructure.redis import close_async_redis_client, create_arq_redis_pool, get_async_redis_client
+from yuxi.workers.health import WORKER_HEALTH_KEY
 
 RUN_CANCEL_KEY_TTL_SECONDS = int(os.getenv("RUN_CANCEL_KEY_TTL_SECONDS", "1800"))
 RUN_EVENTS_STREAM_TTL_SECONDS = int(os.getenv("RUN_EVENTS_STREAM_TTL_SECONDS", "7200"))

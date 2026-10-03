@@ -15,18 +15,19 @@ from pathlib import Path
 
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from yuxi.infrastructure.filesystem import open_directory_fd, open_regular_file_fd
+from yuxi.infrastructure.observability.logging import logger
 from yuxi.infrastructure.runtime_settings import get_skill_data_dir, get_skill_projection_dir
-from yuxi.modules.identity.permissions import ResourcePermission, resolve_skill_permission
-from yuxi.modules.extensions.skills.repository import SkillRepository
+from yuxi.modules.extensions.skills.models import Skill
 from yuxi.modules.extensions.skills.package import (
     copy_skill_tree_no_symlinks,
     is_valid_skill_slug,
     validated_shared_skill_parts,
 )
-from yuxi.modules.extensions.skills.models import Skill
+from yuxi.modules.extensions.skills.repository import SkillRepository
 from yuxi.modules.identity.models import User
-from yuxi.infrastructure.observability.logging import logger
-from yuxi.infrastructure.filesystem import open_directory_fd, open_regular_file_fd
+from yuxi.modules.identity.permissions import ResourcePermission, resolve_skill_permission
 
 _USER_SKILLS_LOCK = threading.Lock()
 _USER_SKILLS_LOCKS: dict[str, threading.Lock] = {}
@@ -35,8 +36,8 @@ _USER_SKILL_PROJECTION_LOCK_SCOPE = "yuxi:skills:user-projection:v1:"
 
 async def refresh_user_skill_projection_async(uid: str) -> dict[str, str]:
     """按数据库中的最新授权快照重建用户共享 Skill 投影。"""
-    from yuxi.modules.identity.repositories.users import UserRepository
     from yuxi.infrastructure.postgres.manager import pg_manager
+    from yuxi.modules.identity.repositories.users import UserRepository
 
     normalized_uid = str(uid or "").strip()
     if not normalized_uid:

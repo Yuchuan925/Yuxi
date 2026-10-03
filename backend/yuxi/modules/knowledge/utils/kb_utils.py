@@ -1,12 +1,12 @@
-from yuxi.infrastructure.minio.object_urls import is_minio_url, parse_minio_url
 import hashlib
 import time
 from urllib.parse import quote
 
-from yuxi.modules.knowledge.chunking.ragflow_like.presets import resolve_chunk_processing_params
-from yuxi.shared.hashing import hashstr
+from yuxi.infrastructure.minio.object_urls import is_minio_url, parse_minio_url
 from yuxi.infrastructure.observability.logging import logger
+from yuxi.modules.knowledge.chunking.ragflow_like.presets import resolve_chunk_processing_params
 from yuxi.shared.datetime import utc_isoformat
+from yuxi.shared.hashing import hashstr
 
 _DROPPED_PROCESSING_PARAM_KEYS = {
     "_preprocessed_map",

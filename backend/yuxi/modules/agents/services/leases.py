@@ -5,12 +5,19 @@ from __future__ import annotations
 import asyncio
 import uuid
 from datetime import datetime
+
 from sqlalchemy import select, text
-from yuxi.modules.agents.runtime.sandbox.provider import get_sandbox_provider
-from yuxi.modules.agents.repositories.runs import TERMINAL_RUN_STATUSES, AgentRunRepository
+
+from yuxi.infrastructure.observability.logging import logger
+from yuxi.infrastructure.postgres.manager import pg_manager
+from yuxi.modules.agents.models.runs import AgentRun
+from yuxi.modules.agents.models.threads import Conversation
 from yuxi.modules.agents.repositories.input import AgentInputRepository
-from yuxi.modules.agents.repositories.turn import AgentTurnRepository
+from yuxi.modules.agents.repositories.runs import TERMINAL_RUN_STATUSES, AgentRunRepository
 from yuxi.modules.agents.repositories.threads import ConversationRepository
+from yuxi.modules.agents.repositories.turn import AgentTurnRepository
+from yuxi.modules.agents.runtime.sandbox.provider import get_sandbox_provider
+from yuxi.modules.agents.services.event_writer import publish_run_settlement
 from yuxi.modules.agents.services.scheduler import dispatch_next_input
 from yuxi.modules.agents.services.tracing import finish_turn_observation_if_terminal
 from yuxi.modules.agents.services.transport import (
@@ -19,13 +26,6 @@ from yuxi.modules.agents.services.transport import (
 from yuxi.modules.workspace.services.bindings import (
     resolve_conversation_workdir_path,
 )
-from yuxi.infrastructure.postgres.manager import pg_manager
-from yuxi.modules.agents.models.runs import AgentRun
-from yuxi.modules.agents.models.threads import Conversation
-from yuxi.infrastructure.observability.logging import logger
-
-from yuxi.modules.agents.services.event_writer import publish_run_settlement
-
 
 RUN_LEASE_SECONDS = 120
 

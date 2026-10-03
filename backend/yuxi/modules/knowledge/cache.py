@@ -7,8 +7,8 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
 
-from yuxi.infrastructure.redis import get_async_redis_client
 from yuxi.infrastructure.observability.logging import logger
+from yuxi.infrastructure.redis import get_async_redis_client
 
 KNOWLEDGE_BASE_CACHE_KEY_PREFIX = "yuxi:knowledge_base:"
 KNOWLEDGE_BASE_CACHE_TTL_SECONDS = 3600

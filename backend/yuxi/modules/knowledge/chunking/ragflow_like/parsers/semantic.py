@@ -6,9 +6,8 @@ from typing import Any
 from markdown_it import MarkdownIt
 from mdit_py_plugins.dollarmath import dollarmath_plugin
 
-from yuxi.modules.knowledge.chunking.ragflow_like.nlp import count_tokens
 from yuxi.infrastructure.observability.logging import logger
-
+from yuxi.modules.knowledge.chunking.ragflow_like.nlp import count_tokens
 from yuxi.modules.knowledge.chunking.ragflow_like.utils.md_parser_utils import (
     extract_table_block,
     get_title_path,

@@ -7,13 +7,13 @@ from typing import Any
 from uuid import uuid4
 
 from yuxi.infrastructure.filesystem import await_io
-from yuxi.shared.files import detect_media_type
 from yuxi.infrastructure.observability.logging import logger
 from yuxi.modules.knowledge.chunking.ragflow_like.presets import ensure_chunk_defaults_in_additional_params
 from yuxi.modules.knowledge.read_models import KnowledgeBaseConfig
 from yuxi.modules.knowledge.schemas import FindOutputSchema, FindWindowSchema, SearchOutputSchema, SearchResultSchema
 from yuxi.modules.knowledge.utils import resolve_processing_params, sanitize_processing_params
 from yuxi.shared.datetime import utc_isoformat
+from yuxi.shared.files import detect_media_type
 
 
 class FileStatus:

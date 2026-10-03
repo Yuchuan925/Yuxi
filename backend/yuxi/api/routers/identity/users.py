@@ -1,25 +1,24 @@
 """用户级配置与凭据路由"""
 
 import re
-from typing import Any
-from typing import Literal
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from yuxi.api.dependencies.auth import get_current_user, get_db, get_required_user
-from yuxi.modules.identity.preferences import UserConfig, UserConfigSchema
+from yuxi.api.uploads import read_upload_with_limit
+from yuxi.infrastructure.minio import upload_image_to_minio
 from yuxi.modules.agents.repositories.environment import AgentEnvRepository
+from yuxi.modules.identity.models import User
+from yuxi.modules.identity.preferences import UserConfig, UserConfigSchema
 from yuxi.modules.identity.repositories.api_keys import (
     APIKeyDepartmentConflict,
     APIKeyIdempotencyConflict,
     APIKeyRepository,
     APIKeySubjectUnavailable,
 )
-from yuxi.infrastructure.minio import upload_image_to_minio
-from yuxi.api.uploads import read_upload_with_limit
-from yuxi.modules.identity.models import User
 from yuxi.modules.identity.security import AuthUtils
 from yuxi.shared.datetime import coerce_any_to_utc_datetime, format_utc_datetime, utc_now_naive
 

@@ -2,16 +2,16 @@
 
 from __future__ import annotations
 
-from yuxi.infrastructure.minio.object_urls import is_minio_url, parse_minio_url
-from yuxi.modules.knowledge.repositories.files import KnowledgeFileRepository
-from yuxi.infrastructure.minio import ObjectSizeLimitError, get_minio_client
 from yuxi.infrastructure.file_preview import prepare_file_preview, preview_too_large
-from yuxi.shared.files import MAX_FILE_PREVIEW_BYTES
+from yuxi.infrastructure.minio import ObjectSizeLimitError, get_minio_client
+from yuxi.infrastructure.minio.object_urls import is_minio_url, parse_minio_url
 from yuxi.infrastructure.office_conversion import (
     OfficeConversionError,
     convert_office_to_pdf,
     is_office_pdf_convertible,
 )
+from yuxi.modules.knowledge.repositories.files import KnowledgeFileRepository
+from yuxi.shared.files import MAX_FILE_PREVIEW_BYTES
 
 
 async def read_knowledge_file_preview(kb_id: str, file_id: str) -> dict:

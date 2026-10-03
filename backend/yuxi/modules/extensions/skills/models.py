@@ -1,6 +1,7 @@
 """业务 PostgreSQL 映射。"""
 
 from typing import Any
+
 from sqlalchemy import (
     JSON,
     Boolean,
@@ -10,9 +11,10 @@ from sqlalchemy import (
     String,
     Text,
 )
-from yuxi.shared.datetime import format_utc_datetime, utc_now_naive
 
-from yuxi.infrastructure.postgres.base import BusinessBase as Base, JSON_VALUE
+from yuxi.infrastructure.postgres.base import JSON_VALUE
+from yuxi.infrastructure.postgres.base import BusinessBase as Base
+from yuxi.shared.datetime import format_utc_datetime, utc_now_naive
 
 
 class Skill(Base):

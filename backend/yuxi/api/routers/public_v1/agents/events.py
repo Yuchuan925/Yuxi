@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, Header
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from yuxi.api.dependencies.auth import get_db
 from yuxi.api.routers.public_v1.agents.auth import PublicAgentContext, require_public_context
 from yuxi.api.routers.public_v1.agents.schemas import (
     CancelEvent,
@@ -15,13 +16,12 @@ from yuxi.api.routers.public_v1.agents.schemas import (
     ThreadEventCreate,
     input_messages_to_domain,
 )
-from yuxi.api.dependencies.auth import get_db
+from yuxi.api.sse import format_sse
 from yuxi.modules.agents.services.events import stream_thread_events, validate_event_cursor
 from yuxi.modules.agents.services.inputs import accept_message
 from yuxi.modules.agents.services.scope import ActorScope
 from yuxi.modules.agents.services.threads import cancel_input, continue_queue, get_thread_snapshot
 from yuxi.modules.agents.services.turns import cancel_turn, resume_turn
-from yuxi.api.sse import format_sse
 
 router = APIRouter(dependencies=[Depends(require_public_context)])
 

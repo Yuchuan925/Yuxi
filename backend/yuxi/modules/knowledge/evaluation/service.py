@@ -8,22 +8,22 @@ from typing import Any
 
 from sqlalchemy import select
 
+from yuxi.infrastructure.observability.logging import logger
+from yuxi.infrastructure.postgres.manager import pg_manager
 from yuxi.modules.knowledge.evaluation.benchmark_generation import (
     dump_benchmark_item,
     iter_generated_benchmark_items,
     normalize_generation_concurrency_count,
 )
 from yuxi.modules.knowledge.evaluation.evaluator import aggregate_metrics, evaluate_question
-from yuxi.modules.knowledge.runtime import knowledge_base as kb_manager
-from yuxi.modules.models import select_model
-from yuxi.modules.knowledge.repositories.evaluation import EvaluationRepository
+from yuxi.modules.knowledge.models import EvaluationDataset, EvaluationRun
 from yuxi.modules.knowledge.repositories.bases import KnowledgeBaseRepository
 from yuxi.modules.knowledge.repositories.chunks import KnowledgeChunkRepository
+from yuxi.modules.knowledge.repositories.evaluation import EvaluationRepository
+from yuxi.modules.knowledge.runtime import knowledge_base as kb_manager
+from yuxi.modules.models import select_model
 from yuxi.modules.tasks.repository import TaskRepository
 from yuxi.modules.tasks.service import TaskContext, tasker
-from yuxi.infrastructure.postgres.manager import pg_manager
-from yuxi.modules.knowledge.models import EvaluationDataset, EvaluationRun
-from yuxi.infrastructure.observability.logging import logger
 from yuxi.shared.datetime import coerce_any_to_utc_datetime, format_utc_datetime, utc_now, utc_now_naive
 
 DATASET_PERSIST_BATCH_SIZE = max(1, int(os.getenv("YUXI_DATASET_PERSIST_BATCH_SIZE") or 1))

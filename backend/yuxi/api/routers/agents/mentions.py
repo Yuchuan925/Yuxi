@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
-from yuxi.api.dependencies.auth import get_db, get_required_user
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from yuxi.api.dependencies.auth import get_db, get_required_user
 from yuxi.modules.agents.services.mentions import InvalidMentionThreadError, MentionThreadNotFoundError, search_mentions
 from yuxi.modules.identity.models import User
 

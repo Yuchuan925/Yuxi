@@ -1,6 +1,7 @@
 """业务 PostgreSQL 映射。"""
 
 from typing import Any
+
 from sqlalchemy import (
     JSON,
     BigInteger,
@@ -15,10 +16,10 @@ from sqlalchemy import (
     text,
 )
 from sqlalchemy.orm import relationship
+
+from yuxi.infrastructure.postgres.base import JSON_VALUE
+from yuxi.infrastructure.postgres.base import BusinessBase as Base
 from yuxi.shared.datetime import format_utc_datetime, utc_now_naive
-
-from yuxi.infrastructure.postgres.base import BusinessBase as Base, JSON_VALUE
-
 
 MODEL_AUDIT_MESSAGE_TYPE = "model_audit"
 

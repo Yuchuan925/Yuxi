@@ -6,8 +6,8 @@ from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from yuxi.modules.agents.runtime.tool_approval import DEFAULT_TOOL_APPROVAL_MODE, normalize_tool_approval_mode
-from yuxi.modules.system.options import system_options
 from yuxi.modules.models.providers.cache import model_cache
+from yuxi.modules.system.options import system_options
 
 
 async def resolve_agent_run_config(

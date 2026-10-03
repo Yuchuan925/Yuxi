@@ -3,9 +3,6 @@
 统一封装 OIDC 配置、工具能力和认证业务处理逻辑
 """
 
-from yuxi.infrastructure.oidc.client import OIDCProviderMetadata, exchange_code_for_token, get_userinfo
-
-
 import hashlib
 import os
 import secrets
@@ -17,11 +14,13 @@ from fastapi import HTTPException, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
-from yuxi.modules.identity.repositories.users import UserRepository
+
+from yuxi.infrastructure.observability.logging import logger
+from yuxi.infrastructure.oidc.client import OIDCProviderMetadata, exchange_code_for_token, get_userinfo
 from yuxi.modules.identity.models import Department, User
+from yuxi.modules.identity.repositories.users import UserRepository
 from yuxi.modules.identity.security import AuthUtils
 from yuxi.shared.datetime import utc_now_naive
-from yuxi.infrastructure.observability.logging import logger
 
 # 前端 OIDC 回调路由路径（与 frontend/src/router/index.js 中的路由保持一致）
 FRONTEND_CALLBACK_PATH = "/auth/oidc/callback"

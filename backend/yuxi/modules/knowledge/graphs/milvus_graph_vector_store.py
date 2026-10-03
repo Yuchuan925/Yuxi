@@ -17,6 +17,7 @@ from pymilvus import (
     utility,
 )
 
+from yuxi.infrastructure.observability.logging import logger
 from yuxi.modules.knowledge.graphs.graph_utils import graph_entity_collection_name, graph_triple_collection_name
 from yuxi.modules.knowledge.implementations.milvus import (
     CONTENT_ANALYZER_PARAMS,
@@ -27,7 +28,6 @@ from yuxi.modules.knowledge.implementations.milvus import (
 from yuxi.modules.models.embed import select_embedding_model
 from yuxi.modules.models.providers.cache import model_cache
 from yuxi.shared.hashing import hashstr
-from yuxi.infrastructure.observability.logging import logger
 
 
 class MilvusGraphVectorStore:

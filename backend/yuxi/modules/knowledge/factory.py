@@ -1,5 +1,5 @@
-from yuxi.modules.knowledge.base import KBNotFoundError, KnowledgeBase
 from yuxi.infrastructure.observability.logging import logger
+from yuxi.modules.knowledge.base import KBNotFoundError, KnowledgeBase
 
 
 class KnowledgeBaseFactory:

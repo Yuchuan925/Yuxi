@@ -2,6 +2,7 @@
 
 from datetime import timedelta
 from typing import Any
+
 from sqlalchemy import (
     Boolean,
     CheckConstraint,
@@ -13,11 +14,10 @@ from sqlalchemy import (
     UniqueConstraint,
 )
 from sqlalchemy.orm import relationship
+
 from yuxi.infrastructure.minio.client import normalize_public_minio_url
-from yuxi.shared.datetime import format_utc_datetime, utc_now_naive
-
 from yuxi.infrastructure.postgres.base import BusinessBase as Base
-
+from yuxi.shared.datetime import format_utc_datetime, utc_now_naive
 
 MAX_LOGIN_FAILED_ATTEMPTS = 5
 

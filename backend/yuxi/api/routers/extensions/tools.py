@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends
 
-from yuxi.modules.extensions.tools.catalog import get_tool_metadata
 from yuxi.api.dependencies.auth import get_required_user
+from yuxi.modules.extensions.tools.catalog import get_tool_metadata
 from yuxi.modules.identity.models import User
 
 tools = APIRouter(prefix="/system/tools", tags=["tools"])

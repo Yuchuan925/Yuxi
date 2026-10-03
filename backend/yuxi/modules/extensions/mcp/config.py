@@ -2,7 +2,7 @@
 
 from typing import Annotated, Any, Literal
 
-from httpx import InvalidURL, URL
+from httpx import URL, InvalidURL
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr, field_validator
 
 

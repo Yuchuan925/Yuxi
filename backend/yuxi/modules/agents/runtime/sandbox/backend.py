@@ -30,15 +30,14 @@ from deepagents.backends.protocol import (
 from deepagents.backends.sandbox import MAX_BINARY_BYTES, BaseSandbox
 from deepagents.backends.utils import _get_file_type
 
-from yuxi.modules.agents.runtime.sandbox.paths import VIRTUAL_PATH_PREFIX, VIRTUAL_SKILLS_PATH, runtime_workdir_path
 from yuxi.infrastructure.observability.logging import logger
-from yuxi.modules.workspace.errors import FileTransferLimitError
-
+from yuxi.modules.agents.runtime.sandbox.paths import VIRTUAL_PATH_PREFIX, VIRTUAL_SKILLS_PATH, runtime_workdir_path
 from yuxi.modules.agents.runtime.sandbox.provider import (
     get_sandbox_provider,
     sandbox_id_for_thread,
     sandbox_provisioner_token,
 )
+from yuxi.modules.workspace.errors import FileTransferLimitError
 
 if TYPE_CHECKING:
     from yuxi.modules.agents.runtime.context import BaseContext

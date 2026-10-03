@@ -1,11 +1,12 @@
 """业务 PostgreSQL 映射。"""
 
 from typing import Any
+
 from sqlalchemy import (
     JSON,
     Boolean,
-    Column,
     CheckConstraint,
+    Column,
     DateTime,
     ForeignKey,
     Index,
@@ -14,10 +15,11 @@ from sqlalchemy import (
     Text,
 )
 from sqlalchemy.orm import relationship
-from yuxi.infrastructure.minio.client import normalize_public_minio_url
-from yuxi.shared.datetime import format_utc_datetime, utc_now_naive
 
-from yuxi.infrastructure.postgres.base import BusinessBase as Base, JSON_VALUE
+from yuxi.infrastructure.minio.client import normalize_public_minio_url
+from yuxi.infrastructure.postgres.base import JSON_VALUE
+from yuxi.infrastructure.postgres.base import BusinessBase as Base
+from yuxi.shared.datetime import format_utc_datetime, utc_now_naive
 
 
 class AgentEnv(Base):

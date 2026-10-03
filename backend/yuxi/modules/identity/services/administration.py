@@ -5,9 +5,10 @@ from dataclasses import dataclass
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from yuxi.modules.identity.models import Department, User
 from yuxi.modules.identity.repositories.departments import DepartmentRepository
 from yuxi.modules.identity.repositories.users import UserRepository
-from yuxi.modules.identity.models import Department, User
 from yuxi.modules.identity.security import AuthUtils
 from yuxi.shared.datetime import utc_now_naive
 

@@ -1,6 +1,7 @@
 """OIDC HTTP 回调和重定向响应。"""
 
 from urllib.parse import urlencode
+
 from fastapi import HTTPException, status
 from fastapi.responses import RedirectResponse
 
@@ -8,8 +9,8 @@ from yuxi.modules.identity.oidc import (
     FRONTEND_CALLBACK_PATH,
     FRONTEND_LOGIN_PATH,
     OIDCUtils,
-    oidc_config,
     build_oidc_login_response,
+    oidc_config,
 )
 
 

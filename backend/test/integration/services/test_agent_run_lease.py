@@ -179,9 +179,7 @@ async def test_expired_lease_reconciliation_is_single_winner_and_closes_audit(le
             )
             await db.commit()
         expired_at = now + timedelta(seconds=61)
-        monkeypatch.setattr(
-            run_worker.pg_manager, "get_async_session_context", lambda: _session_context(sessions)
-        )
+        monkeypatch.setattr(run_worker.pg_manager, "get_async_session_context", lambda: _session_context(sessions))
         monkeypatch.setattr(lease_worker, "publish_cancel_signals", AsyncMock())
         monkeypatch.setattr(lease_worker, "reconcile_pending_runtime_cleanups", AsyncMock(return_value=[]))
         outcomes = await asyncio.gather(
@@ -216,42 +214,70 @@ async def test_model_audit_is_idempotent_and_keeps_turn_run_owner(lease_database
             assert acquired is True
             audit = ModelMessageAuditRepository(db)
             first, created = await audit.start(
-                run_id=run_id, thread_id=thread_id, worker_id="model-owner",
-                operation_id="model-op", sequence=1, started_at=now,
+                run_id=run_id,
+                thread_id=thread_id,
+                worker_id="model-owner",
+                operation_id="model-op",
+                sequence=1,
+                started_at=now,
             )
             duplicate, duplicate_created = await audit.start(
-                run_id=run_id, thread_id=thread_id, worker_id="model-owner",
-                operation_id="model-op", sequence=1, started_at=now,
+                run_id=run_id,
+                thread_id=thread_id,
+                worker_id="model-owner",
+                operation_id="model-op",
+                sequence=1,
+                started_at=now,
             )
             assert created is True and duplicate_created is False and duplicate.id == first.id
             with pytest.raises(ValueError, match="sequence"):
                 await audit.start(
-                    run_id=run_id, thread_id=thread_id, worker_id="model-owner",
-                    operation_id="model-op", sequence=2, started_at=now,
+                    run_id=run_id,
+                    thread_id=thread_id,
+                    worker_id="model-owner",
+                    operation_id="model-op",
+                    sequence=2,
+                    started_at=now,
                 )
             result = await audit.finish(
-                run_id=run_id, thread_id=thread_id, worker_id="model-owner",
-                operation_id="model-op", content="answer", finished_at=now + timedelta(seconds=1),
-                duration_ms=100, usage={"input_tokens": 3, "output_tokens": 2},
+                run_id=run_id,
+                thread_id=thread_id,
+                worker_id="model-owner",
+                operation_id="model-op",
+                content="answer",
+                finished_at=now + timedelta(seconds=1),
+                duration_ms=100,
+                usage={"input_tokens": 3, "output_tokens": 2},
             )
             assert result.id == first.id
             with pytest.raises(ValueError, match="不同结果覆盖"):
                 await audit.finish(
-                    run_id=run_id, thread_id=thread_id, worker_id="model-owner",
-                    operation_id="model-op", content="different", finished_at=now + timedelta(seconds=2),
-                    duration_ms=200, usage=None,
+                    run_id=run_id,
+                    thread_id=thread_id,
+                    worker_id="model-owner",
+                    operation_id="model-op",
+                    content="different",
+                    finished_at=now + timedelta(seconds=2),
+                    duration_ms=200,
+                    usage=None,
                 )
             with pytest.raises(ValueError, match="lease owner"):
                 await audit.start(
-                    run_id=run_id, thread_id=thread_id, worker_id="other-owner",
-                    operation_id="other-op", sequence=2, started_at=now,
+                    run_id=run_id,
+                    thread_id=thread_id,
+                    worker_id="other-owner",
+                    operation_id="other-op",
+                    sequence=2,
+                    started_at=now,
                 )
             await db.commit()
         async with sessions() as db:
             run = await db.get(AgentRun, run_id)
             [audit] = await ModelMessageAuditRepository(db).list_for_run(run_id)
             assert (audit.turn_id, audit.run_id, audit.usage) == (
-                run.turn_id, run_id, {"input_tokens": 3, "output_tokens": 2}
+                run.turn_id,
+                run_id,
+                {"input_tokens": 3, "output_tokens": 2},
             )
     finally:
         await _cleanup_runs(sessions, [thread_id])
@@ -269,39 +295,69 @@ async def test_tool_audit_projects_only_declared_model_call(lease_database):
             assert acquired is True
             model = ModelMessageAuditRepository(db)
             await model.start(
-                run_id=run_id, thread_id=thread_id, worker_id="tool-owner",
-                operation_id="model-op", sequence=1, started_at=now,
+                run_id=run_id,
+                thread_id=thread_id,
+                worker_id="tool-owner",
+                operation_id="model-op",
+                sequence=1,
+                started_at=now,
                 metadata={"tool_calls": [{"id": "call-1", "name": "test_tool", "args": {"x": 1}}]},
             )
             tool = ToolMessageAuditRepository(db)
             with pytest.raises(ValueError, match="无法关联"):
                 await tool.start(
-                    run_id=run_id, thread_id=thread_id, worker_id="tool-owner",
-                    tool_call_id="unclaimed", tool_name="test_tool", tool_input={},
-                    sequence=2, started_at=now,
+                    run_id=run_id,
+                    thread_id=thread_id,
+                    worker_id="tool-owner",
+                    tool_call_id="unclaimed",
+                    tool_name="test_tool",
+                    tool_input={},
+                    sequence=2,
+                    started_at=now,
                 )
             first, created = await tool.start(
-                run_id=run_id, thread_id=thread_id, worker_id="tool-owner",
-                tool_call_id="call-1", tool_name="test_tool", tool_input={"x": 1},
-                sequence=2, started_at=now,
+                run_id=run_id,
+                thread_id=thread_id,
+                worker_id="tool-owner",
+                tool_call_id="call-1",
+                tool_name="test_tool",
+                tool_input={"x": 1},
+                sequence=2,
+                started_at=now,
             )
             duplicate, duplicate_created = await tool.start(
-                run_id=run_id, thread_id=thread_id, worker_id="tool-owner",
-                tool_call_id="call-1", tool_name="test_tool", tool_input={"x": 1},
-                sequence=2, started_at=now,
+                run_id=run_id,
+                thread_id=thread_id,
+                worker_id="tool-owner",
+                tool_call_id="call-1",
+                tool_name="test_tool",
+                tool_input={"x": 1},
+                sequence=2,
+                started_at=now,
             )
             assert created is True and duplicate_created is False and first.id == duplicate.id
             completed = await tool.complete(
-                run_id=run_id, thread_id=thread_id, worker_id="tool-owner",
-                tool_call_id="call-1", output={"ok": True}, content="done",
-                finished_at=now + timedelta(seconds=1), duration_ms=20, finished_sequence=3,
+                run_id=run_id,
+                thread_id=thread_id,
+                worker_id="tool-owner",
+                tool_call_id="call-1",
+                output={"ok": True},
+                content="done",
+                finished_at=now + timedelta(seconds=1),
+                duration_ms=20,
+                finished_sequence=3,
             )
             assert completed.execution_status == "completed"
             with pytest.raises(ValueError, match="lease owner"):
                 await tool.start(
-                    run_id=run_id, thread_id=thread_id, worker_id="other-owner",
-                    tool_call_id="call-1", tool_name="test_tool", tool_input={"x": 1},
-                    sequence=2, started_at=now,
+                    run_id=run_id,
+                    thread_id=thread_id,
+                    worker_id="other-owner",
+                    tool_call_id="call-1",
+                    tool_name="test_tool",
+                    tool_input={"x": 1},
+                    sequence=2,
+                    started_at=now,
                 )
             await db.commit()
         async with sessions() as db:
@@ -447,8 +503,11 @@ async def test_root_failure_preserves_independent_child_turn(lease_database, mon
             parent = await db.get(AgentRun, parent_id)
             parent_thread = await db.get(Conversation, parent.conversation_id)
             child_thread = Conversation(
-                thread_id=child_thread_id, uid=parent.uid, project_id=parent_thread.project_id,
-                agent_id="worker", status="subagent",
+                thread_id=child_thread_id,
+                uid=parent.uid,
+                project_id=parent_thread.project_id,
+                agent_id="worker",
+                status="subagent",
             )
             db.add(child_thread)
             await db.flush()
@@ -458,25 +517,42 @@ async def test_root_failure_preserves_independent_child_turn(lease_database, mon
             db.add(message)
             await db.flush()
             relation = SubagentThread(
-                uid=parent.uid, parent_conversation_id=parent_thread.id,
-                child_conversation_id=child_thread.id, child_thread_id=child_thread_id,
-                subagent_slug="worker", created_by_run_id=parent_id,
+                uid=parent.uid,
+                parent_conversation_id=parent_thread.id,
+                child_conversation_id=child_thread.id,
+                child_thread_id=child_thread_id,
+                subagent_slug="worker",
+                created_by_run_id=parent_id,
             )
             db.add(relation)
             await db.flush()
             child_turn = AgentTurn(
-                id=f"child-turn-{uuid.uuid4()}", conversation_thread_id=child_thread_id,
-                uid=parent.uid, status="running", current_run_id=child_id,
+                id=f"child-turn-{uuid.uuid4()}",
+                conversation_thread_id=child_thread_id,
+                uid=parent.uid,
+                status="running",
+                current_run_id=child_id,
             )
             db.add(child_turn)
             await db.flush()
-            db.add(AgentRun(
-                id=child_id, conversation_thread_id=child_thread_id, runtime_scope_id=child_thread_id,
-                agent_slug="worker", uid=parent.uid, app_id=None, turn_id=child_turn.id,
-                conversation_id=child_thread.id, created_by_run_id=parent_id,
-                subagent_thread_relation_id=relation.id, run_type="subagent",
-                input_message_id=message.id, input_payload={}, status="pending",
-            ))
+            db.add(
+                AgentRun(
+                    id=child_id,
+                    conversation_thread_id=child_thread_id,
+                    runtime_scope_id=child_thread_id,
+                    agent_slug="worker",
+                    uid=parent.uid,
+                    app_id=None,
+                    turn_id=child_turn.id,
+                    conversation_id=child_thread.id,
+                    created_by_run_id=parent_id,
+                    subagent_thread_relation_id=relation.id,
+                    run_type="subagent",
+                    input_message_id=message.id,
+                    input_payload={},
+                    status="pending",
+                )
+            )
             await db.flush()
             repo = AgentRunRepository(db)
             assert (await repo.mark_running(parent_id, worker_id="parent-owner", lease_seconds=60))[1]

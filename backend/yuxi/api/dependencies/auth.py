@@ -2,12 +2,12 @@ from fastapi import Depends, Header, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+
 from yuxi.infrastructure.postgres.manager import pg_manager
 from yuxi.modules.identity.models import User
+from yuxi.modules.identity.security import AuthUtils
 from yuxi.modules.identity.services.public_auth import verify_api_key
 from yuxi.shared.datetime import utc_now_naive
-
-from yuxi.modules.identity.security import AuthUtils
 
 # 定义OAuth2密码承载器，指定token URL
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/token", auto_error=False)

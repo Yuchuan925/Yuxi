@@ -5,10 +5,10 @@ from datetime import datetime
 from sqlalchemy import or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from yuxi.modules.agents.models.runs import AGENT_RUN_TERMINAL_STATUSES, AgentRun
 from yuxi.modules.agents.models.inputs import AgentInput
-from yuxi.modules.agents.models.turns import AgentTurn
+from yuxi.modules.agents.models.runs import AGENT_RUN_TERMINAL_STATUSES, AgentRun
 from yuxi.modules.agents.models.threads import Conversation
+from yuxi.modules.agents.models.turns import AgentTurn
 from yuxi.modules.workspace.models import Project
 
 

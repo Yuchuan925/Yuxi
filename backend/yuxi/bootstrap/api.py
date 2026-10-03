@@ -1,17 +1,19 @@
 """API 进程启动组件、readiness 状态与资源关闭适配。"""
 
-from yuxi.infrastructure.postgres.schema import require_current_schema
 import inspect
 from collections.abc import Callable
+
 from fastapi import FastAPI
-from yuxi.modules.extensions.mcp.service import ensure_builtin_mcp_servers_in_db
-from yuxi.modules.models.providers.service import ensure_builtin_model_providers_in_db
-from yuxi.modules.agents.services.transport import get_redis_client
-from yuxi.infrastructure.postgres.manager import pg_manager
-from yuxi.infrastructure.observability.logging import logger
-from yuxi.modules.agents.runtime.sandbox import init_sandbox_provider
+
 from yuxi import get_version
+from yuxi.infrastructure.observability.logging import logger
+from yuxi.infrastructure.postgres.manager import pg_manager
+from yuxi.infrastructure.postgres.schema import require_current_schema
+from yuxi.modules.agents.runtime.sandbox import init_sandbox_provider
+from yuxi.modules.agents.services.transport import get_redis_client
+from yuxi.modules.extensions.mcp.service import ensure_builtin_mcp_servers_in_db
 from yuxi.modules.identity.security import AuthUtils
+from yuxi.modules.models.providers.service import ensure_builtin_model_providers_in_db
 
 
 class RequiredStartupComponentError(RuntimeError):
@@ -40,8 +42,7 @@ async def _startup(app: FastAPI) -> None:
     pg_manager.initialize()
     await require_current_schema(pg_manager)
 
-    from yuxi.modules.system.options import ensure_options_in_db, invalidate_option_cache
-    from yuxi.modules.system.options import system_options
+    from yuxi.modules.system.options import ensure_options_in_db, invalidate_option_cache, system_options
 
     async with pg_manager.get_async_session_context() as session:
         await ensure_options_in_db(session)

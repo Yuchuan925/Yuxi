@@ -8,17 +8,17 @@ from dataclasses import dataclass
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from yuxi.modules.agents.repositories.runs import AgentRunRepository
-from yuxi.modules.agents.repositories.input import AgentInputRepository
-from yuxi.modules.agents.repositories.turn import AgentTurnRepository
-from yuxi.modules.agents.repositories.threads import ConversationRepository
-from yuxi.modules.workspace.services.bindings import WorkdirBinding, resolve_conversation_workdir_binding
+from yuxi.infrastructure.observability.logging import logger
 from yuxi.infrastructure.postgres.manager import pg_manager
 from yuxi.modules.agents.models.inputs import AgentInput
 from yuxi.modules.agents.models.runs import AgentRun
 from yuxi.modules.agents.models.threads import Conversation
-from yuxi.infrastructure.observability.logging import logger
+from yuxi.modules.agents.repositories.input import AgentInputRepository
+from yuxi.modules.agents.repositories.runs import AgentRunRepository
+from yuxi.modules.agents.repositories.threads import ConversationRepository
+from yuxi.modules.agents.repositories.turn import AgentTurnRepository
 from yuxi.modules.workspace.paths import ensure_bound_user_workdir
+from yuxi.modules.workspace.services.bindings import WorkdirBinding, resolve_conversation_workdir_binding
 
 
 @dataclass(frozen=True, slots=True)

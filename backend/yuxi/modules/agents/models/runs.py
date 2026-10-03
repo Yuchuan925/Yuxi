@@ -2,6 +2,7 @@
 
 from datetime import datetime
 from typing import Any
+
 from sqlalchemy import (
     JSON,
     BigInteger,
@@ -18,10 +19,10 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
 )
+
+from yuxi.infrastructure.postgres.base import JSON_VALUE
+from yuxi.infrastructure.postgres.base import BusinessBase as Base
 from yuxi.shared.datetime import duration_ms, format_utc_datetime, utc_now_naive
-
-from yuxi.infrastructure.postgres.base import BusinessBase as Base, JSON_VALUE
-
 
 AGENT_RUN_TERMINAL_STATUSES = ("completed", "failed", "cancelled", "interrupted", "yielded")
 

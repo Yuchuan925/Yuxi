@@ -11,8 +11,8 @@ from datetime import UTC
 
 from fastapi import HTTPException
 
-from yuxi.infrastructure.postgres.manager import pg_manager
 from yuxi.infrastructure.observability.logging import logger
+from yuxi.infrastructure.postgres.manager import pg_manager
 from yuxi.modules.agents.repositories.input_receipt import AgentInputReceiptRepository
 from yuxi.modules.agents.repositories.runs import TERMINAL_RUN_STATUSES, AgentRunRepository
 from yuxi.modules.agents.repositories.turn import AgentTurnRepository

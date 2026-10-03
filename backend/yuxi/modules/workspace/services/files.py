@@ -7,18 +7,19 @@ import tempfile
 from pathlib import Path, PurePosixPath
 
 from fastapi import HTTPException
-from yuxi.modules.agents.runtime.sandbox.paths import runtime_user_data_path
-from yuxi.modules.workspace.repositories.projects import ProjectRepository
-from yuxi.modules.workspace.preview import preview_workspace_file
-from yuxi.shared.files import MAX_FILE_PREVIEW_BYTES, FileInput, PreparedFile, PreviewResult, detect_media_type
-from yuxi.infrastructure.filesystem import await_io
-from yuxi.modules.identity.models import User
-from yuxi.shared.datetime import utc_isoformat_from_timestamp
+
 from yuxi.infrastructure.file_preview import detect_preview_type, preview_too_large
+from yuxi.infrastructure.filesystem import await_io
 from yuxi.infrastructure.office_conversion import OfficeConversionError
+from yuxi.modules.agents.runtime.sandbox.paths import runtime_user_data_path
+from yuxi.modules.identity.models import User
 from yuxi.modules.workspace.errors import FileTransferLimitError
 from yuxi.modules.workspace.filesystem import Workspace
 from yuxi.modules.workspace.paths import ensure_user_workspace
+from yuxi.modules.workspace.preview import preview_workspace_file
+from yuxi.modules.workspace.repositories.projects import ProjectRepository
+from yuxi.shared.datetime import utc_isoformat_from_timestamp
+from yuxi.shared.files import MAX_FILE_PREVIEW_BYTES, FileInput, PreparedFile, PreviewResult, detect_media_type
 
 EDITABLE_WORKSPACE_SUFFIXES = {".md", ".markdown", ".mdx", ".txt"}
 MAX_WORKSPACE_UPLOAD_SIZE_BYTES = 100 * 1024 * 1024
