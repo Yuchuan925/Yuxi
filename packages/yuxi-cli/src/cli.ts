@@ -59,6 +59,11 @@ function requireAuth(remote: Remote): void {
   if (!remote.apiKey) throw new Error(`remote 尚未登录: ${remote.name}`);
 }
 
+function requiredString(value: unknown, field: string): string {
+  if (typeof value !== "string" || !value.trim()) throw new Error(`远程响应缺少 ${field}`);
+  return value;
+}
+
 function openUrl(url: string): void {
   const command = process.platform === "darwin" ? "open" : process.platform === "win32" ? "cmd" : "xdg-open";
   const args = process.platform === "win32" ? ["/c", "start", "", url] : [url];
@@ -124,7 +129,7 @@ program
     const selected = getRemote(config, options.remote);
     const client = new Client(selected);
     const discovery = await client.discovery();
-    if (!discovery.version) throw new Error("远程服务 discovery 无效");
+    requiredString(discovery.version, "version");
 
     if (options.apiKey) {
       if (!options.apiKey.startsWith("yxkey_")) {
@@ -140,17 +145,31 @@ program
     }
 
     const session = await client.createLoginSession();
-    const url = resolveVerificationUrl(selected.url, String(session.verification_uri));
-    url.searchParams.set("user_code", String(session.user_code));
-    console.log(`授权码: ${String(session.user_code)}\n浏览器授权地址: ${url}`);
+    const deviceCode = requiredString(session.device_code, "device_code");
+    const userCode = requiredString(session.user_code, "user_code");
+    const verificationUri = requiredString(session.verification_uri, "verification_uri");
+    const expiresIn = Number(session.expires_in);
+    const interval = Number(session.interval);
+    if (!Number.isFinite(expiresIn) || expiresIn <= 0 || !Number.isFinite(interval) || interval <= 0) {
+      throw new Error("远程响应中的登录期限无效");
+    }
+    const url = resolveVerificationUrl(selected.url, verificationUri);
+    url.searchParams.set("user_code", userCode);
+    console.log(`授权码: ${userCode}\n浏览器授权地址: ${url}`);
     if (options.open) openUrl(url.toString());
 
-    const deadline = Date.now() + Number(session.expires_in ?? 600) * 1000;
+    const deadline = Date.now() + expiresIn * 1000;
     while (Date.now() < deadline) {
       try {
-        const token = await client.exchangeLoginToken(String(session.device_code));
-        selected.apiKey = String(token.secret ?? "");
-        selected.apiKeyId = String((token.api_key as Json | undefined)?.id ?? "");
+        const token = await client.exchangeLoginToken(deviceCode);
+        const secret = requiredString(token.secret, "secret");
+        if (!secret.startsWith("yxkey_")) throw new Error("远程响应中的 API Key 格式无效");
+        const apiKey = token.api_key;
+        const apiKeyId = apiKey && typeof apiKey === "object" && !Array.isArray(apiKey)
+          ? requiredString((apiKey as Json).id, "api_key.id")
+          : "";
+        selected.apiKey = secret;
+        selected.apiKeyId = apiKeyId;
         await saveConfig(config);
         console.log(`已完成 ${selected.name} 的浏览器登录。`);
         return;
@@ -159,7 +178,7 @@ program
         if (exception.status !== 400 && exception.status !== 429 && (exception.status ?? 0) < 500) {
           throw error;
         }
-        await new Promise(resolve => setTimeout(resolve, Number(session.interval ?? 2) * 1000));
+        await new Promise(resolve => setTimeout(resolve, interval * 1000));
       }
     }
     throw new Error("浏览器授权超时");

@@ -6,4 +6,3 @@ test("only turn terminal events end a chat response", () => {
   assert.equal(isTurnTerminal("yuxi.session.run.settled"), false);
   assert.equal(isTurnTerminal("agent.session.turn.completed"), true);
 });
-

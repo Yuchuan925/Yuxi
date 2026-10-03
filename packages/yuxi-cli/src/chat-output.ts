@@ -6,4 +6,3 @@ export function isTurnTerminal(type: string): boolean {
     "agent.session.turn.waiting",
   ].includes(type);
 }
-

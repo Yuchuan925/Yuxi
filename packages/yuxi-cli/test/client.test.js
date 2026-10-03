@@ -58,3 +58,10 @@ test("maps structured HTTP errors without hiding the server status", async () =>
     await assert.rejects(() => client.request("/error"), error => error.status === 422 && error.code === "invalid_input" && error.message === "invalid_input: bad request");
   });
 });
+
+test("uses the server status when a structured error omits its code and message", async () => {
+  await withServer((_request, response) => json(response, 503, { detail: {} }), async url => {
+    const client = new Client({ name: "test", url });
+    await assert.rejects(() => client.request("/error"), error => error.status === 503 && error.message === "Service Unavailable");
+  });
+});

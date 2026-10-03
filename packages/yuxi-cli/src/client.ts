@@ -37,8 +37,11 @@ export class Client {
       const detail = (JSON.parse(text) as Json).detail;
       if (typeof detail === "string") return new YuxiError(detail, response.status);
       if (detail && typeof detail === "object") {
-        const code = String((detail as Json).error ?? "");
-        const message = String((detail as Json).message ?? code ?? response.statusText);
+        const codeValue = (detail as Json).error;
+        const messageValue = (detail as Json).message;
+        const code = typeof codeValue === "string" ? codeValue : "";
+        const detailMessage = typeof messageValue === "string" ? messageValue : "";
+        const message = detailMessage || code || response.statusText;
         return new YuxiError(code && message ? `${code}: ${message}` : message, response.status, code || undefined);
       }
     } catch { /* use status below */ }
