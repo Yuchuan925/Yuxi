@@ -31,3 +31,30 @@ async def test_legacy_schema_version_is_rejected_before_ddl(monkeypatch):
 
     create_tables.assert_not_awaited()
     manager.close.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_fresh_schema_failure_cleans_partial_tables_before_retry(monkeypatch):
+    """fresh baseline 任一阶段失败后必须清理半成品。"""
+    manager = SimpleNamespace(initialize=Mock(), close=AsyncMock())
+
+    @asynccontextmanager
+    async def locked(_manager):
+        yield
+
+    create_tables = AsyncMock(side_effect=RuntimeError("ddl failed"))
+    drop_schema = AsyncMock()
+    monkeypatch.setattr(schema_bootstrap, "pg_manager", manager)
+    monkeypatch.setattr(schema_bootstrap, "schema_migration_lock", locked)
+    monkeypatch.setattr(schema_bootstrap, "get_schema_versions", AsyncMock(return_value={}))
+    monkeypatch.setattr(schema_bootstrap, "_require_empty_database", AsyncMock())
+    monkeypatch.setattr(schema_bootstrap, "create_schema_version_table", AsyncMock())
+    monkeypatch.setattr(schema_bootstrap, "record_schema_version", AsyncMock())
+    monkeypatch.setattr(schema_bootstrap, "create_business_tables", create_tables)
+    monkeypatch.setattr(schema_bootstrap, "drop_fresh_schema", drop_schema)
+
+    with pytest.raises(RuntimeError, match="ddl failed"):
+        await schema_bootstrap.main()
+
+    drop_schema.assert_awaited_once_with(manager)
+    manager.close.assert_awaited_once()

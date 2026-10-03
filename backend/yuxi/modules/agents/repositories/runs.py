@@ -370,6 +370,25 @@ class AgentRunRepository:
         await self.db.flush()
         return run
 
+    async def set_input_message(self, run_id: str, message_id: int) -> AgentRun | None:
+        """绑定已派发且属于同一 Turn/Run 的输入消息。"""
+        run = await self._lock_run(run_id)
+        if run is None:
+            return None
+        message = await self.db.scalar(
+            select(Message).where(
+                Message.id == message_id,
+                Message.run_id == run.id,
+                Message.turn_id == run.turn_id,
+                Message.role == "user",
+            )
+        )
+        if message is None:
+            raise ValueError("输入消息必须属于同一 Run 和 Turn")
+        run.input_message_id = message_id
+        await self.db.flush()
+        return run
+
     async def set_output_message(
         self,
         run_id: str,

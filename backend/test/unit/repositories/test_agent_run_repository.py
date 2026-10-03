@@ -336,7 +336,7 @@ async def test_set_output_message_rejects_wrong_causal_owner_and_accepts_exact_m
         Message(
             conversation_id=conversation.id,
             run_id=None,
-            turn_id=run.turn_id,
+            turn_id=None,
             role="assistant",
             content="missing run",
         ),

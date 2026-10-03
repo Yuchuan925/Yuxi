@@ -172,6 +172,15 @@ class EvaluationRepository:
         item_index: int,
         data: dict[str, Any],
     ) -> EvaluationRunItem:
+        """绑定父运行的数据集；不能把其他数据集的题目写入当前结果。"""
+        data = dict(data)
+        if data.get("dataset_item_id") is not None:
+            run = await session.scalar(select(EvaluationRun).where(EvaluationRun.run_id == run_id).with_for_update())
+            if run is None or run.dataset_id is None:
+                raise ValueError("评估运行没有可关联的数据集")
+            data["dataset_id"] = run.dataset_id
+        elif "dataset_item_id" in data:
+            data["dataset_id"] = None
         record = await session.scalar(
             select(EvaluationRunItem)
             .where(EvaluationRunItem.run_id == run_id, EvaluationRunItem.item_index == item_index)

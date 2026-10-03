@@ -161,6 +161,38 @@ class AgentRun(Base):
 
     __table_args__ = (
         UniqueConstraint("turn_id", "id", name="uq_agent_runs_turn_id_id"),
+        Index("ix_agent_runs_turn_execution", "turn_id", "execution_seq", "id"),
+        CheckConstraint(
+            "status IN ('pending','running','cancel_requested','completed',"
+            "'failed','cancelled','interrupted','yielded')",
+            name="ck_agent_runs_status",
+        ),
+        UniqueConstraint("id", "turn_id", "conversation_id", name="uq_agent_runs_id_turn_conversation"),
+        ForeignKeyConstraint(
+            ["conversation_id", "conversation_thread_id"],
+            ["conversations.id", "conversations.thread_id"],
+            name="fk_agent_runs_conversation_thread",
+        ),
+        CheckConstraint(
+            "(input_message_id IS NULL AND output_message_id IS NULL) OR conversation_id IS NOT NULL",
+            name="ck_agent_runs_message_thread_required",
+        ),
+        ForeignKeyConstraint(
+            ["input_message_id", "id", "turn_id", "conversation_id"],
+            ["messages.id", "messages.run_id", "messages.turn_id", "messages.conversation_id"],
+            name="fk_agent_runs_input_message_scope",
+            use_alter=True,
+            deferrable=True,
+            initially="DEFERRED",
+        ),
+        ForeignKeyConstraint(
+            ["output_message_id", "id", "turn_id", "conversation_id"],
+            ["messages.id", "messages.run_id", "messages.turn_id", "messages.conversation_id"],
+            name="fk_agent_runs_output_message_scope",
+            use_alter=True,
+            deferrable=True,
+            initially="DEFERRED",
+        ),
         ForeignKeyConstraint(
             ["turn_id", "conversation_thread_id"],
             ["agent_turns.id", "agent_turns.conversation_thread_id"],
@@ -265,6 +297,13 @@ class AgentRunAttempt(Base):
     __table_args__ = (
         UniqueConstraint("run_id", "attempt_no", name="uq_agent_run_attempts_run_attempt_no"),
         Index("ix_agent_run_attempts_open", "run_id", "finished_at"),
+        Index(
+            "uq_agent_run_attempts_one_open",
+            "run_id",
+            unique=True,
+            postgresql_where=finished_at.is_(None),
+            sqlite_where=finished_at.is_(None),
+        ),
     )
 
     def to_dict(self) -> dict[str, Any]:

@@ -12,8 +12,8 @@ from sqlalchemy import delete, select, text, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
+from yuxi.bootstrap.models import load_models
 from yuxi.modules.agents.repositories.runs import AgentRunRepository
-from yuxi.migrations.schema import AGENT_RUN_FACT_SCHEMA_STATEMENTS, AGENT_RUN_TIMING_SCHEMA_STATEMENTS
 from yuxi.modules.agents.models.inputs import AgentInput, AgentInputMessage, AgentInputReceipt
 from yuxi.modules.agents.models.runs import AgentRun, AgentRunAttempt
 from yuxi.modules.agents.models.turns import AgentTurn
@@ -42,11 +42,9 @@ def cleanup_test_sandboxes():
 
 @pytest_asyncio.fixture()
 async def fact_database():
+    """加载真实映射，在当前 fresh 基线上验证 Run 和 Attempt。"""
+    load_models()
     engine = create_async_engine(os.environ["POSTGRES_URL"], pool_pre_ping=True)
-    async with engine.begin() as connection:
-        for _ in range(2):
-            for statement in (*AGENT_RUN_FACT_SCHEMA_STATEMENTS, *AGENT_RUN_TIMING_SCHEMA_STATEMENTS):
-                await connection.execute(text(statement))
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
     try:
         yield engine, session_factory
@@ -99,7 +97,8 @@ async def _persisted_attempts(session_factory, run_id: str) -> list[AgentRunAtte
         return sorted(attempts, key=lambda attempt: attempt.attempt_no)
 
 
-async def test_run_fact_schema_evolution_is_idempotent(fact_database):
+async def test_fresh_run_fact_schema_contains_manifest_and_attempt_constraints(fact_database):
+    """直接回读 fresh 基线；测试不能先补列再证明结构完整。"""
     engine, _ = fact_database
     async with engine.connect() as connection:
         columns = set(

@@ -87,6 +87,14 @@ class PostgresManager(metaclass=SingletonMeta):
             return False
         return self.async_engine.dialect.name == "postgresql"
 
+    @asynccontextmanager
+    async def schema_migration_lock(self):
+        """为测试与迁移调用方提供统一的 Schema advisory lock。"""
+        from yuxi.migrations.schema import schema_migration_lock
+
+        async with schema_migration_lock(self):
+            yield
+
     async def get_async_session(self) -> AsyncSession:
         """获取异步数据库会话"""
         self.initialize()  # 确保已初始化

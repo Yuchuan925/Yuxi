@@ -110,13 +110,17 @@ async def test_turn_result_follows_only_its_bound_run(test_client, admin_headers
                 await conn.execute("UPDATE agent_turns SET result_run_id = $2 WHERE id = $1", turn_ids[1], run_ids[0])
 
         wrong_message_id = await conn.fetchval("SELECT output_message_id FROM agent_runs WHERE id = $1", run_ids[0])
-        await conn.execute("UPDATE agent_runs SET output_message_id = $2 WHERE id = $1", run_ids[1], wrong_message_id)
+        with pytest.raises(asyncpg.ForeignKeyViolationError, match="fk_agent_runs_output_message_scope"):
+            async with conn.transaction():
+                await conn.execute(
+                    "UPDATE agent_runs SET output_message_id = $2 WHERE id = $1", run_ids[1], wrong_message_id
+                )
         sessions = async_sessionmaker(engine, expire_on_commit=False)
         async with sessions() as db:
-            with pytest.raises(ValueError, match="结果消息归属不一致"):
-                await get_turn_snapshot(
-                    db=db, scope=ActorScope(uid=uid, app_id=None), thread_id=thread_id, turn_id=turn_ids[1]
-                )
+            snapshot = await get_turn_snapshot(
+                db=db, scope=ActorScope(uid=uid, app_id=None), thread_id=thread_id, turn_id=turn_ids[1]
+            )
+            assert snapshot["output"][0]["content"] == [{"type": "output_text", "text": "second output"}]
     finally:
         async with conn.transaction():
             await conn.execute(

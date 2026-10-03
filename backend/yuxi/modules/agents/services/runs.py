@@ -218,8 +218,8 @@ async def _consume_steer(
         run_type="subagent" if previous.run_type == "subagent" else "chat",
         created_by_run_id=previous.created_by_run_id,
         subagent_thread_relation_id=previous.subagent_thread_relation_id,
-        input_message_id=messages[0].id,
     )
     await AgentTurnRepository(db).set_current(turn, run_id=run_id)
     await input_repo.consume(input_id=pending.id, turn_id=turn.id, run_id=run_id, cutoff_seq=cutoff_seq)
+    await AgentRunRepository(db).set_input_message(run_id, messages[0].id)
     return run_id

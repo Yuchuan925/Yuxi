@@ -8,14 +8,15 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
-from sqlalchemy import text
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from yuxi.api.main import app
 import yuxi.api.routers.models as model_provider_router
-from yuxi.api.dependencies.auth import get_admin_user, get_db
+from yuxi.api.dependencies.auth import get_superadmin_user, get_db
 from yuxi.infrastructure.postgres.manager import PostgresManager
 from yuxi.migrations.schema import create_business_tables
+from yuxi.modules.models.tables import ModelProvider
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
 
@@ -67,7 +68,7 @@ async def test_provider_uid_header_http_round_trip_and_rejections(monkeypatch):
     await create_business_tables(manager)
     previous_overrides = app.dependency_overrides.copy()
     app.dependency_overrides[get_db] = provide_db
-    app.dependency_overrides[get_admin_user] = provide_admin
+    app.dependency_overrides[get_superadmin_user] = provide_admin
     monkeypatch.setattr(model_provider_router, "_refresh_model_cache", no_cache_refresh)
     uid = uuid.uuid4().hex
     path = "/api/system/model-providers"
@@ -77,6 +78,11 @@ async def test_provider_uid_header_http_round_trip_and_rejections(monkeypatch):
         "provider_type": "openai",
         "base_url": "https://example.com/v1",
         "include_user_uid": False,
+        "headers_json": {"Cookie": "session=private-cookie-fixture", "X-Public": "public"},
+        "extra_json": {
+            "nested": {"secret": "private-nested-fixture", "label": "kept"},
+            "entries": [{"api_key": "private-list-fixture", "name": "entry"}],
+        },
     }
 
     try:
@@ -115,6 +121,36 @@ async def test_provider_uid_header_http_round_trip_and_rejections(monkeypatch):
             reread = await client.get(f"{path}/{provider['provider_id']}")
             assert reread.status_code == 200, reread.text
             assert reread.json()["data"]["include_user_uid"] is True
+            listing = await client.get(path)
+            assert listing.status_code == 200
+            for response in (created, updated, reread, listing):
+                assert "private-cookie-fixture" not in response.text
+                assert "private-nested-fixture" not in response.text
+                assert "private-list-fixture" not in response.text
+            redacted = reread.json()["data"]
+            assert redacted["headers_json"]["Cookie"] == "[REDACTED]"
+            saved = await client.put(
+                f"{path}/{provider['provider_id']}",
+                json={
+                    "display_name": "renamed",
+                    "headers_json": redacted["headers_json"],
+                    "extra_json": redacted["extra_json"],
+                },
+            )
+            assert saved.status_code == 200, saved.text
+            rejected = await client.put(
+                f"{path}/{provider['provider_id']}",
+                json={"extra_json": {"new_secret": "[REDACTED]"}},
+            )
+            assert rejected.status_code == 400
+            assert "没有可保留的原值" in rejected.json()["detail"]
+            async with session_factory() as session:
+                persisted = await session.scalar(
+                    select(ModelProvider).where(ModelProvider.provider_id == provider["provider_id"])
+                )
+                assert persisted.headers_json == provider["headers_json"]
+                assert persisted.extra_json == provider["extra_json"]
+                assert persisted.display_name == "renamed"
 
             disabled = await client.put(f"{path}/{provider['provider_id']}", json={"include_user_uid": False})
             assert disabled.status_code == 200, disabled.text

@@ -319,6 +319,8 @@ async def test_only_state_proven_terminal_model_audit_keeps_tool_call_visible(co
             execution_status="completed",
         ),
     ]
+    for message in audit_messages:
+        message.turn_id = "turn-tool-audit"
     conversation_session.add_all(audit_messages)
     await conversation_session.flush()
     conversation_session.add_all(

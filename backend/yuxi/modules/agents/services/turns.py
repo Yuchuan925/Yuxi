@@ -129,9 +129,9 @@ async def resume_turn(
         run_type="subagent" if previous.run_type == "subagent" else "resume",
         created_by_run_id=previous.created_by_run_id,
         subagent_thread_relation_id=previous.subagent_thread_relation_id,
-        input_message_id=message.id,
     )
     message.run_id = run_id
+    await AgentRunRepository(db).set_input_message(run_id, message.id)
     await turn_repo.set_current(turn, run_id=run_id)
     receipt = await receipt_repo.create(
         receipt_id=str(uuid.uuid4()),

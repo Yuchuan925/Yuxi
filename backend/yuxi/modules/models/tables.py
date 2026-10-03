@@ -14,6 +14,26 @@ from sqlalchemy import (
 from yuxi.infrastructure.postgres.base import BusinessBase as Base
 from yuxi.shared.datetime import format_utc_datetime, utc_now_naive
 
+_SENSITIVE_KEY_PARTS = ("authorization", "api_key", "apikey", "token", "secret", "password", "cookie")
+
+
+def is_sensitive_config_key(key: str) -> bool:
+    """判断管理响应中需要遮蔽的配置键。"""
+    normalized = key.replace("-", "_").lower()
+    return any(part in normalized for part in _SENSITIVE_KEY_PARTS)
+
+
+def _redact_value(value: Any) -> Any:
+    """递归遮蔽动态配置中的凭据字段。"""
+    if isinstance(value, dict):
+        return {
+            key: "[REDACTED]" if is_sensitive_config_key(str(key)) else _redact_value(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_redact_value(item) for item in value]
+    return value
+
 
 class ModelProvider(Base):
     """模型供应商配置，存储 provider 基础信息、模型端点和可用模型。"""
@@ -50,6 +70,8 @@ class ModelProvider(Base):
     updated_at = Column(DateTime, default=utc_now_naive, onupdate=utc_now_naive, comment="更新时间")
 
     def to_dict(self) -> dict[str, Any]:
+        """返回管理端可见配置；凭据只保留是否已配置的事实。"""
+        safe_headers = _redact_value(self.headers_json or {})
         return {
             "id": self.id,
             "provider_id": self.provider_id,
@@ -63,11 +85,11 @@ class ModelProvider(Base):
             "embedding_models_endpoint": self.embedding_models_endpoint,
             "rerank_models_endpoint": self.rerank_models_endpoint,
             "api_key_env": self.api_key_env,
-            "api_key": self.api_key,
+            "api_key_configured": bool(self.api_key),
             "capabilities": self.capabilities or [],
             "enabled_models": self.enabled_models or [],
-            "headers_json": self.headers_json or {},
-            "extra_json": self.extra_json or {},
+            "headers_json": safe_headers,
+            "extra_json": _redact_value(self.extra_json or {}),
             "is_enabled": bool(self.is_enabled),
             "is_builtin": bool(self.is_builtin),
             "include_user_uid": bool(self.include_user_uid),

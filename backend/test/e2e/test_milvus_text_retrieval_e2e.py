@@ -7,19 +7,26 @@ import json
 import os
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from unittest.mock import AsyncMock
 from uuid import uuid4
 
-import pytest
 import pymilvus
+import pytest
 from pymilvus import Collection, connections, utility
+from sqlalchemy import select
 
 from test.e2e.e2e_helpers import wait_model_provider_cache
 from yuxi.bootstrap.models import load_models
 from yuxi.infrastructure.postgres.manager import pg_manager
+from yuxi.modules.knowledge.graphs.extractors import normalize_extraction_result
+from yuxi.modules.knowledge.graphs.graph_utils import graph_entity_collection_name, graph_triple_collection_name
+from yuxi.modules.knowledge.graphs.milvus_graph_service import MilvusGraphService
+from yuxi.modules.knowledge.graphs.milvus_graph_vector_store import MilvusGraphVectorStore
+from yuxi.modules.knowledge.models import KnowledgeProjectionOutbox
 from yuxi.modules.knowledge.repositories.chunks import KnowledgeChunkRepository
 from yuxi.modules.knowledge.repositories.files import KnowledgeFileRepository
-from yuxi.modules.knowledge.graphs.milvus_graph_vector_store import MilvusGraphVectorStore
-from yuxi.modules.knowledge.graphs.graph_utils import graph_entity_collection_name, graph_triple_collection_name
+from yuxi.modules.knowledge.repositories.graphs import KnowledgeGraphRepository
+from yuxi.modules.knowledge.repositories.projections import knowledge_projection_lock
 
 load_models()
 pytestmark = [pytest.mark.asyncio, pytest.mark.e2e]
@@ -38,7 +45,25 @@ async def _wait_task(client, headers, task_id):
             await asyncio.sleep(0.2)
 
 
-async def test_worker_index_and_all_search_modes_use_text_constraints(e2e_client, e2e_headers):
+async def _wait_projection_cleanup(kb_id):
+    """等待真实 worker 清理意图完成；随后仍需回读外部存储证明结果。"""
+    async with asyncio.timeout(120):
+        while True:
+            async with pg_manager.get_async_session_context() as session:
+                pending = await session.scalar(
+                    select(KnowledgeProjectionOutbox.id)
+                    .where(
+                        KnowledgeProjectionOutbox.kb_id == kb_id,
+                        KnowledgeProjectionOutbox.status != "applied",
+                    )
+                    .limit(1)
+                )
+            if pending is None:
+                return
+            await asyncio.sleep(0.2)
+
+
+async def test_worker_index_and_all_search_modes_use_text_constraints(e2e_client, e2e_headers, monkeypatch):
     """索引后回读正文，验证三通道、中文、短语、高亮、重建和删除。"""
 
     class EmbeddingReplay(BaseHTTPRequestHandler):
@@ -230,6 +255,46 @@ async def test_worker_index_and_all_search_modes_use_text_constraints(e2e_client
             assert response.status_code == 200, response.text
             return response.json()
 
+        active_entities = collection.query(
+            expr='id != ""',
+            output_fields=["id", "chunk_id", "file_id", "generation", "chunk_index", "content", "embedding"],
+            consistency_level="Strong",
+        )
+        building_entities = [
+            {
+                **row,
+                "id": row["id"] + "-building",
+                "chunk_id": row["chunk_id"] + "-building",
+                "generation": row["generation"] + 1000,
+                "content": "Milvus",
+                "embedding": [1, 0, 0, 0],
+            }
+            for row in active_entities
+        ]
+        try:
+            # 非 active 候选在向量和 BM25 通道都更相关，必须在 top-k 截断前排除。
+            collection.upsert([{**row, "embedding": [0, 1, 0, 0]} for row in active_entities] + building_entities)
+            collection.flush()
+            [raw_hits] = collection.search(
+                data=[[1, 0, 0, 0]],
+                anns_field="embedding",
+                param={"metric_type": "COSINE", "params": {"nprobe": 10}},
+                limit=1,
+                output_fields=["generation"],
+                consistency_level="Strong",
+            )
+            assert raw_hits[0].entity.get("generation") >= 1000
+            for mode in ("vector", "keyword", "hybrid"):
+                results = await query(mode, final_top_k=1, recall_top_k=1, bm25_top_k=1)
+                assert len(results) == 1, "非 active 候选不能挤掉有效 top-k"
+                [visible] = results
+                assert not visible["metadata"]["chunk_id"].endswith("-building")
+                assert visible["content"] in samples.values()
+        finally:
+            collection.delete(expr=f"id in {json.dumps([row['id'] for row in building_entities])}")
+            collection.upsert(active_entities)
+            collection.flush()
+
         assert len(await query("vector")) == 5
         for mode in ("vector", "keyword", "hybrid"):
             [result] = await query(
@@ -278,22 +343,139 @@ async def test_worker_index_and_all_search_modes_use_text_constraints(e2e_client
             )
             assert invalid.status_code == 400, invalid.text
 
+        graph_repo = KnowledgeGraphRepository()
+        graph_service = MilvusGraphService(graph_vector_store=graph_store)
+
+        async def seed_file_graph(filename="match.md", attribute="public-A"):
+            """为 active Chunk 发布真实 PG/Neo4j/图向量，验证代次与文件删除。"""
+            [chunk] = await repository.list_by_file_id(file_ids[filename])
+            payload = normalize_extraction_result(
+                {
+                    "entities": [{"text": "Alpha", "attributes": [{"text": attribute}]}, {"text": "Beta"}],
+                    "relations": [{"source": "Alpha", "target": "Beta", "text": "links"}],
+                },
+                "llm",
+            )
+            entities, triples = await asyncio.to_thread(graph_service.write_chunk_graph, kb_id, chunk, payload)
+            await graph_repo.upsert_chunk_graph(
+                kb_id=kb_id,
+                file_id=chunk.file_id,
+                chunk_id=chunk.chunk_id,
+                entities=entities,
+                triples=triples,
+            )
+            await repository.mark_graph_structure_indexed(chunk.chunk_id, ent_ids=[e["entity_id"] for e in entities])
+            for kind in ("entity", "triple"):
+                token, records = await graph_repo.claim_vector_records(
+                    kb_id=kb_id,
+                    record_type=kind,
+                    limit=10,
+                    lease_seconds=60,
+                )
+                if not records:
+                    continue
+                await graph_store.upsert_graph_records(
+                    kb_id=kb_id,
+                    embedding_model_spec=f"{provider_id}:replay-embedding",
+                    record_type=kind,
+                    records=records,
+                )
+                await graph_repo.mark_vector_records_indexed(
+                    record_type=kind,
+                    record_ids=[r["id"] for r in records],
+                    lock_token=token,
+                )
+            for name, expected_ids in (
+                (graph_entity_collection_name(kb_id), {e["entity_id"] for e in entities}),
+                (graph_triple_collection_name(kb_id), {t["triple_id"] for t in triples}),
+            ):
+                projected = Collection(name, using=alias).query(
+                    expr='id != ""', output_fields=["id"], consistency_level="Strong"
+                )
+                assert expected_ids <= {row["id"] for row in projected}
+            assert await graph_repo.count_by_kb_id(kb_id) == (2, 1)
+
+        def graph_node_count():
+            """回读 Neo4j，而不是相信清理回调的返回值。"""
+            with graph_service.driver.session() as session:
+                return session.run("MATCH (n:MilvusKB {kb_id: $kb_id}) RETURN count(n) AS count", kb_id=kb_id).single()[
+                    "count"
+                ]
+
+        await seed_file_graph()
+        assert await asyncio.to_thread(graph_node_count) == 3
+        [seeded_chunk] = await repository.list_by_file_id(file_ids["match.md"])
+        with monkeypatch.context() as scoped:
+            scoped.setattr(
+                graph_store, "delete_graph_records", AsyncMock(side_effect=RuntimeError("temporary cleanup failure"))
+            )
+            with pytest.raises(RuntimeError, match="temporary cleanup failure"):
+                await graph_service.delete_file_graph(kb_id, file_ids["match.md"], generation=seeded_chunk.generation)
+        assert await graph_repo.count_by_kb_id(kb_id) == (2, 1)
+        assert await asyncio.to_thread(graph_node_count) == 3
         await index_documents()
         assert len(await repository.list_by_kb_id(kb_id)) == 5
+        await _wait_projection_cleanup(kb_id)
+        assert await graph_repo.count_by_kb_id(kb_id) == (0, 0)
+        assert await asyncio.to_thread(graph_node_count) == 0
+        assert (
+            len(
+                await graph_store.search_entities(
+                    kb_id=kb_id,
+                    query_text="Milvus",
+                    embedding_model_spec=f"{provider_id}:replay-embedding",
+                    top_k=10,
+                )
+            )
+            == 1
+        )
+        assert (
+            len(
+                await graph_store.search_triples(
+                    kb_id=kb_id,
+                    query_text="Milvus",
+                    embedding_model_spec=f"{provider_id}:replay-embedding",
+                    top_k=10,
+                )
+            )
+            == 1
+        )
+        await seed_file_graph("chinese.md")
+        await seed_file_graph("match.md", "PRIVATE_SOURCE_B")
         assert len(collection.query(expr='id != ""', output_fields=["file_id"], consistency_level="Strong")) == 5
         removed_file = file_ids["match.md"]
-        deleted = await e2e_client.delete(
-            f"/api/knowledge/databases/{kb_id}/documents/{removed_file}", headers=e2e_headers
-        )
-        assert deleted.status_code == 200, deleted.text
+        before = await e2e_client.get("/api/graph/subgraph", headers=e2e_headers, params={"kb_id": kb_id})
+        assert before.status_code == 200, before.text
+        assert len(before.json()["data"]["nodes"]) == 4
+        assert "PRIVATE_SOURCE_B" in json.dumps(before.json())
+        async with knowledge_projection_lock(kb_id, shared=True):
+            deleted = await e2e_client.delete(
+                f"/api/knowledge/databases/{kb_id}/documents/{removed_file}", headers=e2e_headers
+            )
+            assert deleted.status_code == 200, deleted.text
+            assert await asyncio.to_thread(graph_node_count) == 4, "清理被锁阻塞，外部旧内容确实还在"
+            hidden = await e2e_client.get("/api/graph/subgraph", headers=e2e_headers, params={"kb_id": kb_id})
+            assert hidden.status_code == 200, hidden.text
+            assert len(hidden.json()["data"]["nodes"]) == 3, "保留共享实体和可见文件的 Chunk"
+            assert "PRIVATE_SOURCE_B" not in json.dumps(hidden.json()), "不可返回已删除来源的实体属性"
         assert await repository.list_by_file_id(removed_file) == []
         assert await KnowledgeFileRepository().get_by_file_id(removed_file) is None
+        for mode in ("vector", "keyword", "hybrid"):
+            assert all(result["metadata"]["file_id"] != removed_file for result in await query(mode))
+        await _wait_projection_cleanup(kb_id)
+        assert await graph_repo.count_by_kb_id(kb_id) == (2, 1)
+        assert await asyncio.to_thread(graph_node_count) == 3
+        shared = await e2e_client.get("/api/graph/subgraph", headers=e2e_headers, params={"kb_id": kb_id})
+        assert len(shared.json()["data"]["nodes"]) == 3
+        assert "PRIVATE_SOURCE_B" not in json.dumps(shared.json())
         assert (
             collection.query(expr=f'file_id == "{removed_file}"', output_fields=["file_id"], consistency_level="Strong")
             == []
         )
         deleted = await e2e_client.delete(f"/api/knowledge/databases/{kb_id}", headers=e2e_headers)
         assert deleted.status_code == 200, deleted.text
+        assert await repository.list_by_kb_id(kb_id) == []
+        await _wait_projection_cleanup(kb_id)
         assert not utility.has_collection(kb_id, using=alias)
         assert not utility.has_collection(graph_entity_collection_name(kb_id), using=alias)
         assert not utility.has_collection(graph_triple_collection_name(kb_id), using=alias)

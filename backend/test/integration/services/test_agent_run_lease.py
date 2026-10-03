@@ -553,6 +553,8 @@ async def test_root_failure_preserves_independent_child_turn(lease_database, mon
                     status="pending",
                 )
             )
+            message.run_id = child_id
+            message.turn_id = child_turn.id
             await db.flush()
             repo = AgentRunRepository(db)
             assert (await repo.mark_running(parent_id, worker_id="parent-owner", lease_seconds=60))[1]

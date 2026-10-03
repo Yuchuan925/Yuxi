@@ -54,6 +54,7 @@ class Conversation(Base):
             name="fk_conversations_project_uid",
         ),
         UniqueConstraint("uid", "creation_request_id", name="uq_conversations_uid_creation_request_id"),
+        UniqueConstraint("id", "thread_id", name="uq_conversations_id_thread"),
     )
 
     def to_dict(self) -> dict[str, Any]:

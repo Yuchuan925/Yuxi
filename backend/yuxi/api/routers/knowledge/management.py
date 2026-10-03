@@ -126,27 +126,6 @@ media_types = {
 }
 
 
-async def _delete_document_storage_objects(kb_id: str, doc_id: str, file_path: str) -> None:
-    minio_client = get_minio_client()
-
-    if is_minio_url(file_path):
-        try:
-            bucket_name, object_name = parse_minio_url(file_path)
-            await minio_client.adelete_file(bucket_name, object_name)
-        except Exception as minio_error:
-            logger.warning(f"从MinIO删除原始文件失败: {minio_error}")
-
-    try:
-        await minio_client.adelete_file(minio_client.KB_BUCKETS["parsed"], f"{kb_id}/parsed/{doc_id}.md")
-    except Exception as minio_error:
-        logger.warning(f"从MinIO删除解析结果失败: {minio_error}")
-
-    try:
-        await minio_client.adelete_file(minio_client.KB_BUCKETS["parsed"], f"{kb_id}/preview/{doc_id}.pdf")
-    except Exception as minio_error:
-        logger.warning(f"从MinIO删除预览 PDF 失败: {minio_error}")
-
-
 async def _require_manage_permission_if_kb_id(kb_id: str | None, current_user: User) -> None:
     """当请求携带 kb_id 时，校验当前用户对该知识库的管理权限。"""
     if kb_id and getattr(current_user, "role", None):
@@ -990,11 +969,6 @@ async def batch_delete_documents(
                 deleted_count += 1
                 continue
 
-            file_path = file_meta_info.get("meta", {}).get("path", "")
-
-            await _delete_document_storage_objects(kb_id, doc_id, file_path)
-
-            # 无论MinIO删除是否成功，都继续从知识库删除
             await knowledge_base.delete_file(kb_id, doc_id)
             deleted_count += 1
 
@@ -1028,11 +1002,6 @@ async def delete_document(kb_id: str, doc_id: str, current_user: User = Depends(
             await knowledge_base.delete_folder(kb_id, doc_id)
             return {"message": "文件夹删除成功"}
 
-        file_path = file_meta_info.get("meta", {}).get("path", "")
-
-        await _delete_document_storage_objects(kb_id, doc_id, file_path)
-
-        # 无论MinIO删除是否成功，都继续从知识库删除
         await knowledge_base.delete_file(kb_id, doc_id)
 
         return {"message": "删除成功"}

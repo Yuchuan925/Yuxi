@@ -24,6 +24,7 @@ from pymilvus import (
     utility,
 )
 
+from yuxi.infrastructure.filesystem import await_io
 from yuxi.infrastructure.observability.logging import logger
 from yuxi.modules.knowledge.base import FileStatus, KnowledgeBase
 from yuxi.modules.knowledge.chunking.ragflow_like.dispatcher import chunk_markdown
@@ -363,7 +364,7 @@ class MilvusKB(KnowledgeBase):
 
     async def _create_kb_instance(self, kb_id: str, embedding_model_spec: str | None) -> Any:
         """在线程中创建或加载 Milvus 集合，避免阻塞 worker heartbeat。"""
-        return await asyncio.to_thread(self._create_kb_instance_sync, kb_id, embedding_model_spec)
+        return await await_io(asyncio.to_thread(self._create_kb_instance_sync, kb_id, embedding_model_spec))
 
     def _create_kb_instance_sync(self, kb_id: str, embedding_model_spec: str | None) -> Any:
         """同步创建或加载 Milvus 集合。"""
@@ -413,6 +414,7 @@ class MilvusKB(KnowledgeBase):
             FieldSchema(name="file_id", dtype=DataType.VARCHAR, max_length=100),
             FieldSchema(name="chunk_index", dtype=DataType.INT64),
             FieldSchema(name="embedding", dtype=DataType.FLOAT_VECTOR, dim=embedding_dim),
+            FieldSchema(name="generation", dtype=DataType.INT64),
             FieldSchema(name=CONTENT_SPARSE_FIELD, dtype=DataType.SPARSE_FLOAT_VECTOR),
         ]
         bm25_function = Function(
@@ -450,6 +452,9 @@ class MilvusKB(KnowledgeBase):
         fields = {field.name: field for field in collection.schema.fields}
         content_field = fields.get("content")
         sparse_field = fields.get(CONTENT_SPARSE_FIELD)
+        generation_field = fields.get("generation")
+        if not generation_field or generation_field.dtype != DataType.INT64:
+            return False
         if not content_field or content_field.dtype != DataType.VARCHAR:
             return False
         if not content_field.params.get("enable_analyzer") or not content_field.params.get("enable_match"):
@@ -528,6 +533,7 @@ class MilvusKB(KnowledgeBase):
                 "file_id": chunk["file_id"],
                 "kb_id": kb_id,
                 "chunk_index": chunk["chunk_index"],
+                "generation": int(chunk.get("generation", 1) or 1),
                 "content": chunk["content"],
                 "start_char_pos": chunk.get("start_char_pos"),
                 "end_char_pos": chunk.get("end_char_pos"),
@@ -559,6 +565,7 @@ class MilvusKB(KnowledgeBase):
             [chunk["file_id"] for chunk in chunks],
             [chunk["chunk_index"] for chunk in chunks],
             embeddings,
+            [int(chunk.get("generation", 1) or 1) for chunk in chunks],
         ]
         chunk_repo = KnowledgeChunkRepository()
 
@@ -571,7 +578,7 @@ class MilvusKB(KnowledgeBase):
         last_error: Exception | None = None
         for attempt in range(MILVUS_CHUNK_UPSERT_ATTEMPTS):
             try:
-                await asyncio.to_thread(_upsert_milvus_records)
+                await await_io(asyncio.to_thread(_upsert_milvus_records))
                 return
             except Exception as e:
                 last_error = e
@@ -612,8 +619,12 @@ class MilvusKB(KnowledgeBase):
                 embeddings,
             )
 
-    async def _delete_file_chunks_from_milvus(self, collection: Collection, file_id: str) -> None:
+    async def _delete_file_chunks_from_milvus(
+        self, collection: Collection, file_id: str, generation: int | None = None
+    ) -> None:
         expr = f'file_id == "{file_id}"'
+        if generation is not None:
+            expr += f" and generation == {int(generation)}"
 
         def delete_from_milvus() -> bool:
             results = collection.query(expr=expr, output_fields=["id"], limit=1)
@@ -622,7 +633,7 @@ class MilvusKB(KnowledgeBase):
             collection.delete(expr)
             return True
 
-        if await asyncio.to_thread(delete_from_milvus):
+        if await await_io(asyncio.to_thread(delete_from_milvus)):
             logger.info(f"Deleted chunks for file {file_id} from Milvus")
         else:
             logger.info(f"File {file_id} not found in Milvus, skipping delete operation")
@@ -637,20 +648,43 @@ class MilvusKB(KnowledgeBase):
             {str(file_id) for chunk in chunks if (file_id := (chunk.get("metadata") or {}).get("file_id"))}
         )
         if not file_ids:
-            return chunks
+            return []
 
         sources = await KnowledgeFileRepository().get_chunk_sources_by_file_ids(kb_id=kb_id, file_ids=file_ids)
+        chunk_ids = [str((chunk.get("metadata") or {}).get("chunk_id") or "") for chunk in chunks]
+        records = await KnowledgeChunkRepository().list_by_chunk_ids(chunk_ids)
+        records_by_id = {record.chunk_id: record for record in records if record.kb_id == kb_id}
         live_chunks: list[dict] = []
         for chunk in chunks:
             metadata = chunk.get("metadata")
             if not isinstance(metadata, dict):
                 continue
             file_id = str(metadata.get("file_id") or "")
-            if file_id not in sources:
+            source = sources.get(file_id)
+            if source is None:
                 continue
-            metadata.update(sources[file_id])
+            record = records_by_id.get(str(metadata.get("chunk_id") or ""))
+            if record is None or record.file_id != file_id or record.generation != source["active_generation"]:
+                continue
+            chunk["content"] = record.content
+            metadata.update(source)
+            metadata["generation"] = record.generation
+            metadata["chunk_index"] = record.chunk_index
             live_chunks.append(chunk)
         return live_chunks
+
+    async def _build_active_generation_expr(self, kb_id: str) -> str:
+        """先过滤非服务代次，避免不可见候选占满 Milvus top-k。"""
+        grouped: dict[int, list[str]] = {}
+        for file_id, generation in await KnowledgeFileRepository().list_active_generations(kb_id):
+            grouped.setdefault(generation, []).append(file_id)
+        return (
+            " or ".join(
+                f"(generation == {generation} and file_id in {json.dumps(file_ids)})"
+                for generation, file_ids in grouped.items()
+            )
+            or "file_id in []"
+        )
 
     async def _build_file_name_expr(self, kb_id: str, file_name: str | None) -> str | None:
         if not file_name:
@@ -668,7 +702,14 @@ class MilvusKB(KnowledgeBase):
         joined_ids = '", "'.join(escaped_ids)
         return f'file_id in ["{joined_ids}"]'
 
-    async def index_file(
+    async def index_file(self, kb_id: str, file_id: str, *args, **kwargs) -> dict:
+        """持有投影写锁直到所有 I/O 完成，清理不能被旧 attempt 的晚写越过。"""
+        from yuxi.modules.knowledge.repositories.projections import knowledge_projection_lock
+
+        async with knowledge_projection_lock(kb_id, shared=True):
+            return await self._index_file(kb_id, file_id, *args, **kwargs)
+
+    async def _index_file(
         self,
         kb_id: str,
         file_id: str,
@@ -692,14 +733,14 @@ class MilvusKB(KnowledgeBase):
         Returns:
             Updated file metadata
         """
-        # Get/Create collection
+        file_meta = await self._load_file_meta(kb_id, file_id)
+        # 在投影锁内先检查 PG 可见事实，删除后不能重新创建外部集合。
         collection = await self._get_or_create_milvus_collection(kb_id, embedding_model_spec)
         if not collection:
             raise ValueError(f"Failed to get Milvus collection for {kb_id}")
 
         embedding_function = self._get_embedding_function(embedding_model_spec)
 
-        file_meta = await self._load_file_meta(kb_id, file_id)
         allowed_statuses = {
             FileStatus.PARSED,
             FileStatus.ERROR_INDEXING,
@@ -762,9 +803,9 @@ class MilvusKB(KnowledgeBase):
                 raise asyncio.CancelledError("File processing owner was lost")
             raise ValueError("File has not been parsed yet (no markdown_file)")
 
-        logger.debug(f"[index_file] file_id={file_id}, processing_params={params}")
-
         try:
+            generation = await file_repo.begin_index_generation(kb_id=kb_id, file_id=file_id, **owner_filter)
+            file_meta["generation"] = generation
             chunk_parser_config = dict(params.get("chunk_parser_config") or {})
             chunk_parser_config.setdefault("embed_model_id", (await system_options.get())["embed_model"])
             params["chunk_parser_config"] = chunk_parser_config
@@ -774,6 +815,10 @@ class MilvusKB(KnowledgeBase):
 
             # Split
             chunks = self._split_text_into_chunks(markdown_content, file_id, filename, params)
+            for chunk in chunks:
+                chunk["generation"] = generation
+                chunk["chunk_id"] = f"{chunk['chunk_id'][:80]}-g{generation}"[:100]
+                chunk["id"] = f"{chunk['id'][:80]}-g{generation}"[:100]
             logger.info(
                 f"Split {filename} into {len(chunks)} chunks with params: "
                 f"chunk_preset_id={params.get('chunk_preset_id')}, "
@@ -782,33 +827,18 @@ class MilvusKB(KnowledgeBase):
 
             chunk_stats = self._calculate_chunk_stats(chunks)
 
-            # Clean up existing chunks if any (for re-indexing)
-            await self.delete_file_chunks_only(kb_id, file_id)
-
             if chunks:
                 await self._embed_and_store_chunks(kb_id, file_id, collection, chunks, embedding_function)
 
-            logger.info(f"Indexed file {file_id} into Milvus")
+            logger.info(f"Indexed file {file_id} generation {generation} into Milvus")
 
-            # Update status
-            update_data = {
-                "status": FileStatus.INDEXED,
-                "error_message": None,
-                "processing_task_id": None,
-                "processing_owner": None,
-                **chunk_stats,
-            }
-            if operator_id:
-                update_data["updated_by"] = operator_id
-            updated_record = await file_repo.update_fields_if_status(
-                file_id=file_id,
+            updated_record = await file_repo.finish_index_generation(
                 kb_id=kb_id,
-                allowed_statuses={FileStatus.INDEXING},
-                data=update_data,
+                file_id=file_id,
+                generation=generation,
+                **chunk_stats,
                 **owner_filter,
             )
-            if updated_record is None:
-                raise asyncio.CancelledError("File processing owner was lost")
             return self._file_record_to_meta(updated_record)
 
         except (Exception, asyncio.CancelledError) as e:
@@ -823,6 +853,8 @@ class MilvusKB(KnowledgeBase):
                 "error_message": error_msg,
                 "processing_task_id": None,
                 "processing_owner": None,
+                "projection_status": "failed",
+                "projection_error": error_msg,
             }
             if operator_id:
                 update_data["updated_by"] = operator_id
@@ -851,6 +883,7 @@ class MilvusKB(KnowledgeBase):
             "source": "未知来源",
             "chunk_id": entity.get("chunk_id"),
             "file_id": file_id,
+            "generation": entity.get("generation", 1),
             "chunk_index": entity.get("chunk_index"),
         }
         chunk = {"content": entity.get("content", ""), "metadata": metadata, "score": float(score or 0.0)}
@@ -882,9 +915,11 @@ class MilvusKB(KnowledgeBase):
     ) -> list[dict]:
         """异步查询知识库"""
         embedding_model_spec = config.embedding_model_spec
-        collection = await self._get_or_create_milvus_collection(kb_id, embedding_model_spec)
+        collection = await self._get_existing_milvus_collection(kb_id)
         if not collection:
-            raise ValueError(f"Database {kb_id} not found")
+            if await KnowledgeChunkRepository().count_by_kb_id(kb_id):
+                raise ValueError(f"Database {kb_id} has no vector projection; reindex is required")
+            return []
 
         # 合并查询参数：kwargs（临时参数）优先级高于 query_params（持久化参数）
         # 这样允许用户在单次查询中临时覆盖持久化配置
@@ -911,11 +946,12 @@ class MilvusKB(KnowledgeBase):
             else:
                 recall_top_k = final_top_k
 
+            active_expr = await self._build_active_generation_expr(kb_id)
             file_expr = await self._build_file_name_expr(kb_id, merged_kwargs.get("file_name"))
             text_expr, highlighter = self._build_text_search(merged_kwargs, search_mode, query_text)
-            filter_expr = " and ".join(f"({expr})" for expr in (file_expr, text_expr) if expr) or None
+            filter_expr = " and ".join(f"({expr})" for expr in (active_expr, file_expr, text_expr) if expr)
 
-            output_fields = ["content", "chunk_id", "file_id", "chunk_index"]
+            output_fields = ["content", "chunk_id", "file_id", "generation", "chunk_index"]
             retrieved_chunks: list[dict] = []
             if search_mode == "vector":
                 embedding_function = self._get_embedding_function(embedding_model_spec, sync=True)
@@ -1300,14 +1336,14 @@ class MilvusKB(KnowledgeBase):
 
         return sorted(fused.values(), key=lambda item: item.get("fusion_score", 0.0), reverse=True)
 
-    async def delete_file_chunks_only(self, kb_id: str, file_id: str) -> None:
-        """仅删除文件的chunks数据，保留元数据（用于更新操作）"""
+    async def delete_file_chunks_only(self, kb_id: str, file_id: str, generation: int | None = None) -> None:
+        """删除指定代次的派生 Chunk；不传 generation 时删除文件全部代次。"""
         chunk_repo = KnowledgeChunkRepository()
-        if await chunk_repo.count_graph_indexed_by_file_id(file_id):
+        if await chunk_repo.count_graph_indexed_by_file_id(file_id, generation=generation):
             from yuxi.modules.knowledge.graphs.milvus_graph_service import MilvusGraphService
 
             try:
-                await MilvusGraphService().delete_file_graph(kb_id, file_id)
+                await MilvusGraphService().delete_file_graph(kb_id, file_id, generation=generation)
             except Exception as e:
                 logger.error(f"Failed to delete graph data for file {file_id}: {e}")
                 raise
@@ -1316,25 +1352,25 @@ class MilvusKB(KnowledgeBase):
         if collection:
             # 先查询文件是否存在，避免不必要的删除操作
             try:
-                await self._delete_file_chunks_from_milvus(collection, file_id)
+                await self._delete_file_chunks_from_milvus(collection, file_id, generation)
             except Exception as e:
                 logger.error(f"Error checking file existence in Milvus: {e}")
                 raise
         # 外部删除成功后再移除 chunk 事实，失败时保留可重试的元数据。
-        await chunk_repo.delete_by_file_id(file_id)
-        await KnowledgeFileRepository().update_fields(
-            file_id=file_id,
-            kb_id=kb_id,
-            data={"chunk_count": 0, "token_count": 0},
-        )
+        if generation is None:
+            await chunk_repo.delete_by_file_id(file_id)
+        else:
+            await chunk_repo.delete_by_file_id(file_id, generation=generation)
+        if generation is None:
+            await KnowledgeFileRepository().update_fields(
+                file_id=file_id,
+                kb_id=kb_id,
+                data={"chunk_count": 0, "token_count": 0},
+            )
 
     async def delete_file(self, kb_id: str, file_id: str) -> None:
-        """删除文件（包括元数据）"""
-        # 先删除 Milvus 中的 chunks 数据
-        await self.delete_file_chunks_only(kb_id, file_id)
-
-        await self.cleanup_file_resources(kb_id, file_id)
-        await KnowledgeFileRepository().delete(file_id)
+        """先提交删除事实，再清理派生存储；失败时保留可重试 outbox。"""
+        await KnowledgeFileRepository().mark_deleted(kb_id=kb_id, file_id=file_id)
 
     async def get_file_basic_info(self, kb_id: str, file_id: str) -> dict:
         """获取文件基本信息（仅元数据）"""
@@ -1405,7 +1441,7 @@ class MilvusKB(KnowledgeBase):
 
             MilvusGraphVectorStore().drop_graph_collections(kb_id)
 
-        await asyncio.to_thread(delete_milvus_collections)
+        await await_io(asyncio.to_thread(delete_milvus_collections))
 
         return await super().cleanup_database_resources(kb_id)
 

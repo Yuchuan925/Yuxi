@@ -3,10 +3,10 @@ from __future__ import annotations
 from collections.abc import Iterator
 from typing import Any
 
-from sqlalchemy import delete, func, select, update
+from sqlalchemy import delete, exists, func, or_, select, update
 
 from yuxi.infrastructure.postgres.manager import pg_manager
-from yuxi.modules.knowledge.models import KnowledgeChunk
+from yuxi.modules.knowledge.models import KnowledgeChunk, KnowledgeFile
 from yuxi.shared.datetime import utc_isoformat
 
 SQL_IN_BATCH_SIZE = 10_000
@@ -18,6 +18,7 @@ class KnowledgeChunkRepository:
         "file_id",
         "kb_id",
         "chunk_index",
+        "generation",
         "content",
         "start_char_pos",
         "end_char_pos",
@@ -35,16 +36,45 @@ class KnowledgeChunkRepository:
         for index in range(0, len(items), batch_size):
             yield items[index : index + batch_size]
 
+    @staticmethod
+    def visible_scope():
+        """普通 Chunk 查询统一使用文件的当前可见代次。"""
+        return exists().where(
+            KnowledgeFile.file_id == KnowledgeChunk.file_id,
+            KnowledgeFile.kb_id == KnowledgeChunk.kb_id,
+            KnowledgeFile.deleted_at.is_(None),
+            KnowledgeFile.active_generation == KnowledgeChunk.generation,
+        )
+
     async def get_by_chunk_id(self, chunk_id: str) -> KnowledgeChunk | None:
         async with pg_manager.get_async_session_context() as session:
-            result = await session.execute(select(KnowledgeChunk).where(KnowledgeChunk.chunk_id == chunk_id))
+            result = await session.execute(
+                select(KnowledgeChunk)
+                .join(
+                    KnowledgeFile,
+                    (KnowledgeFile.file_id == KnowledgeChunk.file_id) & (KnowledgeFile.kb_id == KnowledgeChunk.kb_id),
+                )
+                .where(
+                    KnowledgeChunk.chunk_id == chunk_id,
+                    KnowledgeFile.deleted_at.is_(None),
+                    KnowledgeChunk.generation == KnowledgeFile.active_generation,
+                )
+            )
             return result.scalar_one_or_none()
 
     async def list_by_file_id(self, file_id: str) -> list[KnowledgeChunk]:
         async with pg_manager.get_async_session_context() as session:
             result = await session.execute(
                 select(KnowledgeChunk)
-                .where(KnowledgeChunk.file_id == file_id)
+                .join(
+                    KnowledgeFile,
+                    (KnowledgeFile.file_id == KnowledgeChunk.file_id) & (KnowledgeFile.kb_id == KnowledgeChunk.kb_id),
+                )
+                .where(
+                    KnowledgeChunk.file_id == file_id,
+                    KnowledgeFile.deleted_at.is_(None),
+                    KnowledgeChunk.generation == KnowledgeFile.active_generation,
+                )
                 .order_by(KnowledgeChunk.chunk_index.asc())
             )
             return list(result.scalars().all())
@@ -52,7 +82,17 @@ class KnowledgeChunkRepository:
     async def list_by_kb_id(self, kb_id: str) -> list[KnowledgeChunk]:
         async with pg_manager.get_async_session_context() as session:
             result = await session.execute(
-                select(KnowledgeChunk).where(KnowledgeChunk.kb_id == kb_id).order_by(KnowledgeChunk.id.asc())
+                select(KnowledgeChunk)
+                .join(
+                    KnowledgeFile,
+                    (KnowledgeFile.file_id == KnowledgeChunk.file_id) & (KnowledgeFile.kb_id == KnowledgeChunk.kb_id),
+                )
+                .where(
+                    KnowledgeChunk.kb_id == kb_id,
+                    KnowledgeFile.deleted_at.is_(None),
+                    KnowledgeChunk.generation == KnowledgeFile.active_generation,
+                )
+                .order_by(KnowledgeChunk.id.asc())
             )
             return list(result.scalars().all())
 
@@ -62,7 +102,19 @@ class KnowledgeChunkRepository:
         chunks_by_id: dict[str, KnowledgeChunk] = {}
         async with pg_manager.get_async_session_context() as session:
             for batch in self._iter_batches(chunk_ids):
-                result = await session.execute(select(KnowledgeChunk).where(KnowledgeChunk.chunk_id.in_(batch)))
+                result = await session.execute(
+                    select(KnowledgeChunk)
+                    .join(
+                        KnowledgeFile,
+                        (KnowledgeFile.file_id == KnowledgeChunk.file_id)
+                        & (KnowledgeFile.kb_id == KnowledgeChunk.kb_id),
+                    )
+                    .where(
+                        KnowledgeChunk.chunk_id.in_(batch),
+                        KnowledgeFile.deleted_at.is_(None),
+                        KnowledgeChunk.generation == KnowledgeFile.active_generation,
+                    )
+                )
                 chunks_by_id.update({chunk.chunk_id: chunk for chunk in result.scalars().all()})
         return [chunks_by_id[chunk_id] for chunk_id in chunk_ids if chunk_id in chunks_by_id]
 
@@ -95,9 +147,12 @@ class KnowledgeChunkRepository:
 
             return records
 
-    async def delete_by_file_id(self, file_id: str) -> int:
+    async def delete_by_file_id(self, file_id: str, *, generation: int | None = None) -> int:
+        filters = [KnowledgeChunk.file_id == file_id]
+        if generation is not None:
+            filters.append(KnowledgeChunk.generation == generation)
         async with pg_manager.get_async_session_context() as session:
-            result = await session.execute(delete(KnowledgeChunk).where(KnowledgeChunk.file_id == file_id))
+            result = await session.execute(delete(KnowledgeChunk).where(*filters))
             return int(result.rowcount or 0)
 
     async def delete_by_kb_id(self, kb_id: str) -> int:
@@ -120,7 +175,9 @@ class KnowledgeChunkRepository:
         async with pg_manager.get_async_session_context() as session:
             rows = (
                 await session.execute(
-                    select(status, func.count()).where(KnowledgeChunk.kb_id == kb_id).group_by(status)
+                    select(status, func.count())
+                    .where(KnowledgeChunk.kb_id == kb_id, self.visible_scope())
+                    .group_by(status)
                 )
             ).all()
         for value, count in rows:
@@ -153,13 +210,20 @@ class KnowledgeChunkRepository:
             for chunk in chunks
         ]
 
-    async def count_graph_indexed_by_file_id(self, file_id: str) -> int:
+    async def count_graph_indexed_by_file_id(self, file_id: str, *, generation: int | None = None) -> int:
+        """计数已经或可能发布图谱的 Chunk，清理覆盖部分构建。"""
+        filters = [
+            KnowledgeChunk.file_id == file_id,
+            or_(
+                KnowledgeChunk.graph_indexed.is_(True),
+                KnowledgeChunk.graph_structure_indexed.is_(True),
+                KnowledgeChunk.graph_extraction_details["status"].as_string() == "succeeded",
+            ),
+        ]
+        if generation is not None:
+            filters.append(KnowledgeChunk.generation == generation)
         async with pg_manager.get_async_session_context() as session:
-            result = await session.execute(
-                select(func.count())
-                .select_from(KnowledgeChunk)
-                .where(KnowledgeChunk.file_id == file_id, KnowledgeChunk.graph_indexed.is_(True))
-            )
+            result = await session.execute(select(func.count()).select_from(KnowledgeChunk).where(*filters))
             return int(result.scalar() or 0)
 
     async def count_graph_pending_by_kb_id(self, kb_id: str) -> int:
@@ -168,7 +232,9 @@ class KnowledgeChunkRepository:
     async def _count_by_kb_id(self, kb_id: str, *conditions: Any) -> int:
         async with pg_manager.get_async_session_context() as session:
             result = await session.execute(
-                select(func.count()).select_from(KnowledgeChunk).where(KnowledgeChunk.kb_id == kb_id, *conditions)
+                select(func.count())
+                .select_from(KnowledgeChunk)
+                .where(KnowledgeChunk.kb_id == kb_id, self.visible_scope(), *conditions)
             )
             return int(result.scalar() or 0)
 
@@ -185,6 +251,7 @@ class KnowledgeChunkRepository:
                 .where(
                     KnowledgeChunk.kb_id == kb_id,
                     KnowledgeChunk.graph_indexed.is_not(True),
+                    self.visible_scope(),
                     KnowledgeChunk.id > after_id,
                 )
                 .order_by(KnowledgeChunk.id.asc())

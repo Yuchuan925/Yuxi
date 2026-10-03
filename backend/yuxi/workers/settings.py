@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import os
 
+from arq import cron
 from arq.worker import func
 
 from yuxi.bootstrap.worker import _worker_shutdown, _worker_startup
 from yuxi.infrastructure.redis import get_arq_redis_settings
 from yuxi.infrastructure.runtime_settings import get_int_env
 from yuxi.modules.agents.services.runner import MAX_RUN_TRIES, process_agent_run
+from yuxi.modules.knowledge.services.tasks import process_knowledge_projections
 from yuxi.modules.tasks.service import TASKER_DEFAULT_TIMEOUT_SECONDS, process_task
 from yuxi.workers.health import WORKER_HEALTH_INTERVAL_SECONDS, WORKER_HEALTH_KEY
 
@@ -26,6 +28,7 @@ class WorkerSettings:
         process_agent_run,
         func(process_task, timeout=TASKER_DEFAULT_TIMEOUT_SECONDS + 30),
     ]
+    cron_jobs = [cron(process_knowledge_projections, second={15, 45}, run_at_startup=True)]
     max_jobs = worker_max_jobs()
     # 交互请求避免继承 ARQ 默认的 500ms 空闲轮询等待。
     poll_delay = 0.05

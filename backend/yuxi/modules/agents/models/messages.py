@@ -9,10 +9,12 @@ from sqlalchemy import (
     Column,
     DateTime,
     ForeignKey,
+    ForeignKeyConstraint,
     Index,
     Integer,
     String,
     Text,
+    UniqueConstraint,
     text,
 )
 from sqlalchemy.orm import relationship
@@ -49,6 +51,16 @@ class Message(Base):
             postgresql_where=text("operation_id IS NOT NULL"),
             sqlite_where=text("operation_id IS NOT NULL"),
         ),
+        UniqueConstraint("id", "run_id", "turn_id", "conversation_id", name="uq_messages_id_run_turn_thread"),
+        CheckConstraint("(run_id IS NULL) = (turn_id IS NULL)", name="ck_messages_execution_scope"),
+        ForeignKeyConstraint(
+            ["run_id", "turn_id", "conversation_id"],
+            ["agent_runs.id", "agent_runs.turn_id", "agent_runs.conversation_id"],
+            name="fk_messages_run_turn_conversation",
+            use_alter=True,
+            deferrable=True,
+            initially="DEFERRED",
+        ),
         Index(
             "ix_messages_run_sequence",
             "run_id",
@@ -68,8 +80,8 @@ class Message(Base):
     created_at = Column(DateTime, default=utc_now_naive, comment="Creation time")
     extra_metadata = Column(JSON, nullable=True, comment="Additional metadata (complete message dump)")
     image_content = Column(Text, nullable=True, comment="Base64 encoded image content for multimodal messages")
-    run_id = Column(String(64), ForeignKey("agent_runs.id"), nullable=True, index=True, comment="Agent run ID")
-    turn_id = Column(String(64), ForeignKey("agent_turns.id"), nullable=True, index=True)
+    run_id = Column(String(64), nullable=True, index=True, comment="Agent run ID")
+    turn_id = Column(String(64), nullable=True, index=True)
     delivery_status = Column(String(32), nullable=False, default="complete", comment="Message status")
     operation_id = Column(String(128), nullable=True, comment="同一 Run 内的 Model/Tool 稳定来源键")
     started_at = Column(DateTime, nullable=True, comment="Yuxi 观察到操作开始的 wall-clock 时间")

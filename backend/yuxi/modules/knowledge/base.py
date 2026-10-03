@@ -88,6 +88,10 @@ class KnowledgeBase(ABC):
             "updated_at": utc_isoformat(record.updated_at) if record.updated_at else None,
             "original_filename": record.original_filename,
             "minio_url": record.minio_url,
+            "generation": int(getattr(record, "generation", 1) or 1),
+            "active_generation": int(getattr(record, "active_generation", 1) or 1),
+            "building_generation": getattr(record, "building_generation", None),
+            "active_version_id": getattr(record, "active_version_id", None),
         }
 
     @staticmethod
@@ -438,8 +442,20 @@ class KnowledgeBase(ABC):
     async def cleanup_file_resources(self, kb_id: str, file_id: str) -> None:
         """删除单个文档拥有的全部解析产物。"""
         from yuxi.infrastructure.minio import get_minio_client
+        from yuxi.infrastructure.minio.object_urls import is_minio_url, parse_minio_url
+        from yuxi.modules.knowledge.repositories.files import KnowledgeFileRepository
 
         client = get_minio_client()
+        record = await KnowledgeFileRepository().get_by_file_id(file_id, include_deleted=True)
+        if record is not None and record.kb_id != kb_id:
+            raise ValueError("File cleanup cannot cross knowledge bases")
+        if record is not None:
+            source = record.minio_url or record.path
+            if source and is_minio_url(source):
+                bucket, key = parse_minio_url(source)
+                if bucket != client.KB_BUCKETS["documents"] or not key.startswith(f"{kb_id}/"):
+                    raise ValueError("File source is outside the owning knowledge base")
+                await client.adelete_file(bucket, key)
         await asyncio.gather(
             client.adelete_objects_by_prefix(client.KB_BUCKETS["images"], f"{kb_id}/kb-images/{file_id}/"),
             client.adelete_objects_by_prefix(client.KB_BUCKETS["parsed"], f"{kb_id}/parsed/{file_id}/"),
@@ -824,29 +840,12 @@ class KnowledgeBase(ABC):
             操作结果
         """
         from yuxi.infrastructure.minio import get_minio_client
-        from yuxi.infrastructure.minio.object_urls import is_minio_url, parse_minio_url
         from yuxi.modules.knowledge.repositories.files import KnowledgeFileRepository
 
         minio_client = get_minio_client()
         file_repo = KnowledgeFileRepository()
 
-        # 1. 删除文件元数据中记录的 MinIO 文件
-        after_file_id = None
-        while True:
-            records = await file_repo.list_by_kb_id_after(kb_id, after_file_id=after_file_id, limit=500)
-            if not records:
-                break
-            after_file_id = records[-1].file_id
-            for record in records:
-                file_path = record.minio_url or record.path
-                if file_path and is_minio_url(file_path):
-                    try:
-                        bucket_name, object_name = parse_minio_url(file_path)
-                        await minio_client.adelete_file(bucket_name, object_name)
-                    except Exception as e:
-                        logger.warning(f"Failed to delete MinIO file {file_path}: {e}")
-
-        # 2. 并行删除所有知识库 bucket 中该 kb_id 下的文件
+        # 调用方已经提交 KB/File tombstone；失败必须阻止 PG 硬删除。
         prefix = f"{kb_id}/"
         cleanup_buckets = {
             minio_client.KB_BUCKETS["parsed"],
@@ -856,7 +855,7 @@ class KnowledgeBase(ABC):
         cleanup_tasks = [minio_client.adelete_objects_by_prefix(bucket_name, prefix) for bucket_name in cleanup_buckets]
         await asyncio.gather(*cleanup_tasks)
 
-        # 3. 删除知识库的文件记录；知识库主记录由 Manager 统一删除。
+        # 删除知识库的文件记录；知识库主记录由 Manager 统一删除。
         await file_repo.delete_by_kb_id(kb_id)
 
         # 删除工作目录

@@ -6,6 +6,7 @@ import pytest
 os.environ.setdefault("OPENAI_API_KEY", "test-key")
 
 from yuxi.modules.models.providers.builtin import BUILTIN_PROVIDERS
+from yuxi.modules.models.tables import ModelProvider
 from yuxi.modules.models.providers.service import (
     _normalize_payload,
     _normalize_remote_model,
@@ -15,6 +16,28 @@ from yuxi.modules.models.providers.service import (
     fetch_remote_models,
     update_provider_config,
 )
+
+
+def test_model_provider_to_dict_redacts_credentials():
+    """管理响应不携带 API key 或敏感请求头原文。"""
+    provider = ModelProvider(
+        provider_id="secret-provider",
+        display_name="Secret Provider",
+        base_url="https://example.com/v1",
+        api_key="database-secret",
+        headers_json={"Authorization": "Bearer header-secret", "X-Trace": "trace"},
+        extra_json={"nested": {"token": "extra-secret"}},
+    )
+
+    payload = provider.to_dict()
+
+    assert "api_key" not in payload
+    assert payload["api_key_configured"] is True
+    assert payload["headers_json"] == {"Authorization": "[REDACTED]", "X-Trace": "trace"}
+    assert "database-secret" not in str(payload)
+    assert payload["extra_json"] == {"nested": {"token": "[REDACTED]"}}
+    assert "header-secret" not in str(payload)
+    assert "extra-secret" not in str(payload)
 
 
 def test_normalize_payload_accepts_enabled_chat_model():

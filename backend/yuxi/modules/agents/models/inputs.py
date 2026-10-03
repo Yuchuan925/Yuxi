@@ -47,6 +47,13 @@ class AgentInput(Base):
 
     __table_args__ = (
         Index(
+            "ix_agent_inputs_pending_head",
+            "conversation_thread_id",
+            (kind == "steer").self_group().desc(),
+            "received_seq",
+            postgresql_where=status == "pending",
+        ).ddl_if(dialect="postgresql"),
+        Index(
             "uq_agent_inputs_pending_steer",
             "conversation_thread_id",
             unique=True,
@@ -90,6 +97,7 @@ class AgentInputReceipt(Base):
 
     __table_args__ = (
         UniqueConstraint("id", "input_id", name="uq_agent_input_receipts_id_input"),
+        Index("ix_agent_input_receipts_input_seq", "input_id", receive_seq.desc()),
         Index(
             "uq_agent_input_receipts_scope_key",
             "uid",
@@ -120,5 +128,6 @@ class AgentInputMessage(Base):
             name="fk_agent_input_messages_receipt_input",
         ),
         UniqueConstraint("receipt_id", "position", name="uq_agent_input_messages_receipt_position"),
+        Index("ix_agent_input_messages_input", "input_id", "receipt_id", "position"),
         CheckConstraint("position >= 0", name="ck_agent_input_messages_position"),
     )
