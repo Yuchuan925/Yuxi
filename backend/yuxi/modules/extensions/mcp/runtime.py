@@ -26,6 +26,8 @@ def validate_remote_transport(config: dict[str, Any]) -> None:
     """在客户端与工具缓存边界拒绝非远程连接。"""
     if config.get("transport") not in SUPPORTED_TRANSPORTS:
         raise ValueError("MCP 仅支持 sse 或 streamable_http，不支持 stdio 等其他 transport")
+    if set(config) & {"command", "args", "env"}:
+        raise ValueError("远程 MCP 不支持 command、args 或 env 进程字段")
 
 
 async def get_mcp_client(
