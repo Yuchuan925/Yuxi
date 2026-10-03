@@ -21,6 +21,7 @@ from yuxi.modules.agents.repositories.runs import AgentRunRepository
 from yuxi.modules.agents.repositories.model_audit import ModelMessageAuditRepository
 from yuxi.modules.agents.repositories.tool_audit import ToolMessageAuditRepository
 import yuxi.modules.agents.services.runner as run_worker
+import yuxi.modules.agents.services.leases as lease_worker
 from yuxi.infrastructure.postgres.manager import pg_manager
 from yuxi.modules.agents.services.message_recorder import RunMessageRecorder
 from yuxi.modules.agents.services.openai_events import OpenAIEventAdapter
@@ -181,11 +182,11 @@ async def test_expired_lease_reconciliation_is_single_winner_and_closes_audit(le
         monkeypatch.setattr(
             run_worker.pg_manager, "get_async_session_context", lambda: _session_context(sessions)
         )
-        monkeypatch.setattr(run_worker, "publish_cancel_signals", AsyncMock())
-        monkeypatch.setattr(run_worker, "reconcile_pending_runtime_cleanups", AsyncMock(return_value=[]))
+        monkeypatch.setattr(lease_worker, "publish_cancel_signals", AsyncMock())
+        monkeypatch.setattr(lease_worker, "reconcile_pending_runtime_cleanups", AsyncMock(return_value=[]))
         outcomes = await asyncio.gather(
-            run_worker.reconcile_expired_run_leases(now=expired_at),
-            run_worker.reconcile_expired_run_leases(now=expired_at),
+            lease_worker.reconcile_expired_run_leases(now=expired_at),
+            lease_worker.reconcile_expired_run_leases(now=expired_at),
         )
         assert sorted(len(item) for item in outcomes) == [0, 1]
         assert [run_id] in outcomes
@@ -435,8 +436,8 @@ async def test_langfuse_identity_is_write_once_by_live_owner(lease_database):
         await _cleanup_runs(sessions, [thread_id])
 
 
-async def test_root_terminal_cancels_live_child_in_same_execution_tree(lease_database, monkeypatch):
-    """根 Run 终态提交后，仍在共享 runtime 的子 Run 必须收到持久取消。"""
+async def test_root_failure_preserves_independent_child_turn(lease_database, monkeypatch):
+    """父 Run 失败不取消拥有独立 Turn 和 runtime 的子任务。"""
     sessions = lease_database
     parent_id, parent_thread_id, _ = await _create_run(sessions)
     child_thread_id = f"pytest-child-{uuid.uuid4()}"
@@ -463,9 +464,15 @@ async def test_root_terminal_cancels_live_child_in_same_execution_tree(lease_dat
             )
             db.add(relation)
             await db.flush()
+            child_turn = AgentTurn(
+                id=f"child-turn-{uuid.uuid4()}", conversation_thread_id=child_thread_id,
+                uid=parent.uid, status="running", current_run_id=child_id,
+            )
+            db.add(child_turn)
+            await db.flush()
             db.add(AgentRun(
-                id=child_id, conversation_thread_id=child_thread_id, runtime_scope_id=parent_thread_id,
-                agent_slug="worker", uid=parent.uid, app_id=None, turn_id=parent.turn_id,
+                id=child_id, conversation_thread_id=child_thread_id, runtime_scope_id=child_thread_id,
+                agent_slug="worker", uid=parent.uid, app_id=None, turn_id=child_turn.id,
                 conversation_id=child_thread.id, created_by_run_id=parent_id,
                 subagent_thread_relation_id=relation.id, run_type="subagent",
                 input_message_id=message.id, input_payload={}, status="pending",
@@ -487,8 +494,10 @@ async def test_root_terminal_cancels_live_child_in_same_execution_tree(lease_dat
             parent = await db.get(AgentRun, parent_id)
             child = await db.get(AgentRun, child_id)
             assert parent.status == "failed"
-            assert child.status == "cancel_requested" and child.error_type == "execution_tree_closed"
+            assert child.status == "running" and child.error_type is None
             assert child.worker_id == "child-owner"
-        publish.assert_awaited_once_with([child_id])
+            assert (await db.get(AgentTurn, child.turn_id)).status == "running"
+            assert (await db.get(AgentTurn, parent.turn_id)).status == "failed"
+        publish.assert_awaited_once_with([])
     finally:
         await _cleanup_runs(sessions, [parent_thread_id, child_thread_id])

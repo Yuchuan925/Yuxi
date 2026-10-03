@@ -73,38 +73,18 @@ async def test_direct_stdio_config_cannot_start_process(tmp_path):
     assert not marker.exists()
 
 
-async def test_retired_chart_removed_and_deepwiki_registered(current_loop_pg_manager):
-    """真实 PostgreSQL 同步删除系统图表，注册固定远程 DeepWiki。"""
+async def test_deepwiki_registered_from_remote_manifest(current_loop_pg_manager):
+    """真实 PostgreSQL 注册清单中的固定远程 DeepWiki。"""
+    await ensure_builtin_mcp_servers_in_db()
+    await ensure_builtin_mcp_servers_in_db()
     async with current_loop_pg_manager.get_async_session_context() as db:
-        existing = await db.scalar(select(MCPServer).where(MCPServer.slug == "mcp-server-chart"))
-        assert existing is None, "retired chart must be absent before seeding the migration case"
-        db.add(
-            MCPServer(
-                slug="mcp-server-chart",
-                name="Legacy chart",
-                transport="streamable_http",
-                url="https://legacy-chart.invalid/mcp",
-                enabled=1,
-                created_by="system",
-                updated_by="system",
-            )
-        )
-        await db.commit()
-    try:
-        await ensure_builtin_mcp_servers_in_db()
-        await ensure_builtin_mcp_servers_in_db()
-        async with current_loop_pg_manager.get_async_session_context() as db:
-            assert await db.scalar(select(MCPServer).where(MCPServer.slug == "mcp-server-chart")) is None
-            server = await db.scalar(select(MCPServer).where(MCPServer.slug == "deepwiki-official"))
-            assert server is not None
-            assert server.transport == "streamable_http"
-            assert server.url == "https://mcp.deepwiki.com/mcp"
-    finally:
-        async with current_loop_pg_manager.get_async_session_context() as db:
-            await db.execute(
-                delete(MCPServer).where(MCPServer.slug == "mcp-server-chart", MCPServer.created_by == "system")
-            )
-            await db.commit()
+        server = await db.scalar(select(MCPServer).where(MCPServer.slug == "deepwiki-official"))
+        assert server is not None
+        assert server.name == "DeepWiki"
+        assert server.transport == "streamable_http"
+        assert server.url == "https://mcp.deepwiki.com/mcp"
+        assert server.icon == "📚"
+        assert server.tags == ["内置", "代码", "文档"]
 
 
 async def test_official_builtin_preserves_user_deepwiki(current_loop_pg_manager):

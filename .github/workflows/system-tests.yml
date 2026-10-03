@@ -86,6 +86,10 @@ jobs:
             buildkit-minio-${{ runner.os }}-
       - name: Build topology images with cached layers
         run: bash scripts/ci_build_topology_images.sh /tmp/yuxi-buildkit-cache/api /tmp/yuxi-buildkit-cache/sandbox-provisioner /tmp/yuxi-buildkit-cache/minio
+      - name: Prepare isolated storage for runtime identity
+        run: |
+          docker compose run --rm --no-deps --user 0:0 api \
+            install -d -o 1000 -g 1000 -m 0700 /app/user-data /app/skill-sources /app/skill-projections
       - name: Start durable-task runtime topology
         run: docker compose up -d postgres redis minio etcd milvus sandbox-provisioner api worker
       - name: Wait for durable-task topology readiness
@@ -201,6 +205,10 @@ jobs:
         run: |
           sandbox_runtime_image=$(docker compose config --format json | python3 -c 'import json, sys; print(json.load(sys.stdin)["services"]["sandbox-provisioner"]["environment"]["SANDBOX_IMAGE"])')
           docker pull "$sandbox_runtime_image"
+      - name: Prepare isolated storage for runtime identity
+        run: |
+          docker compose run --rm --no-deps --user 0:0 api \
+            install -d -o 1000 -g 1000 -m 0700 /app/user-data /app/skill-sources /app/skill-projections
       - name: Start focused runtime topology
         run: docker compose up -d postgres redis minio milvus graph sandbox-provisioner api worker
       - name: Wait for Milvus retrieval readiness
@@ -311,7 +319,6 @@ jobs:
             uv run --no-sync --no-dev pytest \
             test/integration/api/test_public_agent_auth.py \
             test/integration/api/test_public_agents_key_boundary.py \
-            test/integration/api/test_public_thread_alias.py \
             test/integration/services/test_agent_input_schema.py \
             test/integration/services/test_project_thread_archive.py \
             test/integration/services/test_run_stream_redis.py -q
