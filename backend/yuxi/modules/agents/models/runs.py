@@ -22,7 +22,7 @@ from sqlalchemy import (
 
 from yuxi.infrastructure.postgres.base import JSON_VALUE
 from yuxi.infrastructure.postgres.base import BusinessBase as Base
-from yuxi.shared.datetime import duration_ms, format_utc_datetime, utc_now_naive
+from yuxi.shared.datetime import duration_ms, format_utc_datetime, utc_now
 
 AGENT_RUN_TERMINAL_STATUSES = ("completed", "failed", "cancelled", "interrupted", "yielded")
 
@@ -106,7 +106,7 @@ class AgentRun(Base):
         comment="Run status: pending/running/completed/failed/cancel_requested/cancelled/interrupted/yielded",
     )
     turn_id = Column(String(64), ForeignKey("agent_turns.id", name="fk_agent_runs_turn"), nullable=False, index=True)
-    input_id = Column(String(64), ForeignKey("agent_inputs.id"), nullable=True, unique=True)
+    input_id = Column(String(64), nullable=True, unique=True)
     app_id = Column(String(64), nullable=True, index=True, comment="API Key 来源快照")
     api_key_id = Column(Integer, nullable=True, index=True, comment="发起调用的 API Key ID 快照")
     source = Column(String(32), nullable=False, default="chat", comment="Run source snapshot")
@@ -142,25 +142,33 @@ class AgentRun(Base):
     error_type = Column(String(64), nullable=True, comment="Error type")
     error_message = Column(Text, nullable=True, comment="Error message")
     worker_id = Column(String(128), nullable=True, comment="稳定 worker identity 与 attempt UUID 组成的 owner token")
-    heartbeat_at = Column(DateTime, nullable=True, comment="当前 owner 最近一次成功续租时间")
-    lease_expires_at = Column(DateTime, nullable=True, comment="当前执行 ownership 的到期时间")
+    heartbeat_at = Column(DateTime(timezone=True), nullable=True, comment="当前 owner 最近一次成功续租时间")
+    lease_expires_at = Column(DateTime(timezone=True), nullable=True, comment="当前执行 ownership 的到期时间")
     manifest = Column(
         JSON_VALUE,
         nullable=True,
         comment="首次执行前固化的运行清单（脱敏）；NULL 表示历史 Run 未知，不从当前配置反推",
     )
     manifest_fingerprint = Column(String(64), nullable=True, comment="运行清单规范化 JSON 的 SHA-256 指纹")
-    manifest_recorded_at = Column(DateTime, nullable=True, comment="运行清单固化时间")
-    started_at = Column(DateTime, nullable=True, comment="Start time")
-    prepared_at = Column(DateTime, nullable=True, comment="当前 Run 首次完成模型调用前准备的时间")
-    first_model_request_at = Column(DateTime, nullable=True, comment="当前 Run 首次进入模型供应商请求前的时间")
-    first_output_at = Column(DateTime, nullable=True, comment="当前 Run 首次产生非空模型语义输出的时间")
-    finished_at = Column(DateTime, nullable=True, comment="Finish time")
-    created_at = Column(DateTime, default=utc_now_naive, comment="Creation time")
-    updated_at = Column(DateTime, default=utc_now_naive, onupdate=utc_now_naive, comment="Update time")
+    manifest_recorded_at = Column(DateTime(timezone=True), nullable=True, comment="运行清单固化时间")
+    started_at = Column(DateTime(timezone=True), nullable=True, comment="Start time")
+    prepared_at = Column(DateTime(timezone=True), nullable=True, comment="当前 Run 首次完成模型调用前准备的时间")
+    first_model_request_at = Column(
+        DateTime(timezone=True), nullable=True, comment="当前 Run 首次进入模型供应商请求前的时间"
+    )
+    first_output_at = Column(DateTime(timezone=True), nullable=True, comment="当前 Run 首次产生非空模型语义输出的时间")
+    finished_at = Column(DateTime(timezone=True), nullable=True, comment="Finish time")
+    created_at = Column(DateTime(timezone=True), default=utc_now, comment="Creation time")
+    updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, comment="Update time")
 
     __table_args__ = (
         UniqueConstraint("turn_id", "id", name="uq_agent_runs_turn_id_id"),
+        ForeignKeyConstraint(
+            ["input_id", "conversation_thread_id"],
+            ["agent_inputs.id", "agent_inputs.conversation_thread_id"],
+            name="fk_agent_runs_input_thread",
+            use_alter=True,
+        ),
         Index("ix_agent_runs_turn_execution", "turn_id", "execution_seq", "id"),
         CheckConstraint(
             "status IN ('pending','running','cancel_requested','completed',"
@@ -280,10 +288,10 @@ class AgentRunAttempt(Base):
     )
     attempt_no = Column(Integer, nullable=False, comment="Run 内递增的执行序号")
     worker_id = Column(String(128), nullable=False, comment="取得执行所有权的 owner token")
-    started_at = Column(DateTime, nullable=False, comment="取得执行所有权时间")
-    heartbeat_at = Column(DateTime, nullable=True, comment="本 attempt 最近一次续租时间")
-    lease_expires_at = Column(DateTime, nullable=True, comment="本 attempt 最近一次租约到期时间")
-    finished_at = Column(DateTime, nullable=True, comment="执行占有结束时间；NULL 表示仍开放")
+    started_at = Column(DateTime(timezone=True), nullable=False, comment="取得执行所有权时间")
+    heartbeat_at = Column(DateTime(timezone=True), nullable=True, comment="本 attempt 最近一次续租时间")
+    lease_expires_at = Column(DateTime(timezone=True), nullable=True, comment="本 attempt 最近一次租约到期时间")
+    finished_at = Column(DateTime(timezone=True), nullable=True, comment="执行占有结束时间；NULL 表示仍开放")
     outcome = Column(
         String(32),
         nullable=True,
@@ -291,8 +299,8 @@ class AgentRunAttempt(Base):
     )
     error_type = Column(String(64), nullable=True, comment="失败时的结构化错误分类")
     error_message = Column(Text, nullable=True, comment="失败时的错误摘要")
-    created_at = Column(DateTime, default=utc_now_naive, comment="Creation time")
-    updated_at = Column(DateTime, default=utc_now_naive, onupdate=utc_now_naive, comment="Update time")
+    created_at = Column(DateTime(timezone=True), default=utc_now, comment="Creation time")
+    updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, comment="Update time")
 
     __table_args__ = (
         UniqueConstraint("run_id", "attempt_no", name="uq_agent_run_attempts_run_attempt_no"),

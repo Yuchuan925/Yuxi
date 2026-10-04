@@ -114,7 +114,6 @@ def make_file_record(**overrides):
         "generation": 1,
         "active_generation": 1,
         "building_generation": None,
-        "active_version_id": None,
         "deleted_at": None,
         "projection_status": "pending",
         "projection_error": None,

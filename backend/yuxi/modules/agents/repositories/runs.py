@@ -12,7 +12,7 @@ from yuxi.modules.agents.models.messages import AUDIT_MESSAGE_TYPES, TOOL_AUDIT_
 from yuxi.modules.agents.models.runs import AGENT_RUN_TERMINAL_STATUSES, AgentRun, AgentRunAttempt
 from yuxi.modules.agents.models.threads import SubagentThread
 from yuxi.modules.agents.models.turns import AgentTurn
-from yuxi.shared.datetime import utc_now_naive
+from yuxi.shared.datetime import utc_now
 
 TERMINAL_RUN_STATUSES = set(AGENT_RUN_TERMINAL_STATUSES)
 LEASED_RUN_STATUSES = {"running", "cancel_requested"}
@@ -336,7 +336,7 @@ class AgentRunRepository:
         if run is None:
             return None
 
-        current_time = now or utc_now_naive()
+        current_time = now or utc_now()
         self._require_lease_owner(run, worker_id=worker_id, now=current_time, action="固化 Langfuse trace")
         if run.langfuse_trace_id and run.langfuse_trace_id != normalized_trace_id:
             raise ValueError("AgentRun 已绑定不同的 Langfuse trace")
@@ -361,7 +361,7 @@ class AgentRunRepository:
         run = await self._lock_run(run_id)
         if run is None:
             return None
-        current_time = now or utc_now_naive()
+        current_time = now or utc_now()
         self._require_lease_owner(run, worker_id=worker_id, now=current_time, action="固化 Langfuse observation")
         if run.langfuse_observation_id not in (None, normalized_id):
             raise ValueError("Run 已绑定不同的 Langfuse observation")
@@ -406,7 +406,7 @@ class AgentRunRepository:
         if not run:
             return None
 
-        current_time = now or utc_now_naive()
+        current_time = now or utc_now()
         self._require_lease_owner(run, worker_id=worker_id, now=current_time, action="持久化输出消息")
 
         message = await self._get_matching_output_message(run, message_id)
@@ -434,7 +434,7 @@ class AgentRunRepository:
         if run is None:
             return None
 
-        self._require_lease_owner(run, worker_id=worker_id, now=now or utc_now_naive(), action="持久化输出消息")
+        self._require_lease_owner(run, worker_id=worker_id, now=now or utc_now(), action="持久化输出消息")
         if run.conversation_thread_id != conversation_thread_id:
             raise ValueError("AgentRun 输出必须属于同一 thread")
         if run.conversation_id is None:
@@ -450,7 +450,7 @@ class AgentRunRepository:
             or run.worker_id != worker_id
             or not worker_id.strip()
             or run.lease_expires_at is None
-            or run.lease_expires_at <= utc_now_naive()
+            or run.lease_expires_at <= utc_now()
             or run.conversation_thread_id != conversation_thread_id
             or run.conversation_id is None
         ):
@@ -473,7 +473,7 @@ class AgentRunRepository:
         if run is None:
             return None
 
-        self._require_lease_owner(run, worker_id=worker_id, now=now or utc_now_naive(), action="写入 Memory")
+        self._require_lease_owner(run, worker_id=worker_id, now=now or utc_now(), action="写入 Memory")
         if (
             run.uid != str(uid)
             or run.conversation_thread_id != conversation_thread_id
@@ -504,7 +504,7 @@ class AgentRunRepository:
         if run.runtime_cleanup_pending:
             return run, False
 
-        current_time = now or utc_now_naive()
+        current_time = now or utc_now()
         initial_claim = run.status == "pending" or (run.status == "cancel_requested" and run.worker_id is None)
         same_live_owner = (
             run.status in LEASED_RUN_STATUSES
@@ -567,7 +567,7 @@ class AgentRunRepository:
             raise ValueError("lease_seconds 必须大于 0")
 
         run = await self._lock_run(run_id)
-        current_time = now or utc_now_naive()
+        current_time = now or utc_now()
         if (
             not run
             or run.status not in LEASED_RUN_STATUSES
@@ -597,7 +597,7 @@ class AgentRunRepository:
     ) -> bool:
         """仅由 lease 尚有效的当前 attempt 释放 retry ownership。"""
         run = await self._lock_run(run_id)
-        current_time = now or utc_now_naive()
+        current_time = now or utc_now()
         if (
             not run
             or run.status != "running"
@@ -626,7 +626,7 @@ class AgentRunRepository:
         self, *, now: datetime | None = None
     ) -> list[tuple[str, str, str, str | None]]:
         """只读失联候选，供 worker 按 Thread→Turn→Run 锁顺序处理。"""
-        current_time = now or utc_now_naive()
+        current_time = now or utc_now()
         result = await self.db.execute(
             select(AgentRun.id, AgentRun.runtime_scope_id, AgentRun.uid, AgentRun.app_id)
             .where(self._expired_lease_condition(current_time))
@@ -642,7 +642,7 @@ class AgentRunRepository:
         self, run_id: str, *, now: datetime | None = None
     ) -> tuple[AgentRun | None, list[tuple[str, str]]]:
         """在调用方已锁 Thread 和 Turn 后，锁单 Run 并收敛失联事实。"""
-        current_time = now or utc_now_naive()
+        current_time = now or utc_now()
         result = await self.db.execute(
             select(AgentRun)
             .where(AgentRun.id == run_id, self._expired_lease_condition(current_time))
@@ -697,7 +697,7 @@ class AgentRunRepository:
         """转换一条已由当前事务锁定的 Run。"""
         if run.status in TERMINAL_RUN_STATUSES:
             return
-        current_time = utc_now_naive()
+        current_time = utc_now()
         if run.status == "pending" and run.worker_id is None and run.started_at is None:
             run.status = "cancelled"
             run.error_type = "cancelled"
@@ -793,7 +793,7 @@ class AgentRunRepository:
                 await self.db.flush()
             return run, False
 
-        current_time = now or utc_now_naive()
+        current_time = now or utc_now()
         if run.status == "pending":
             if worker_id is not None or status not in {"failed", "cancelled"}:
                 return run, False
@@ -941,7 +941,7 @@ class AgentRunRepository:
         run = await self._lock_run(run_id)
         if not run:
             return None, False
-        current_time = now or utc_now_naive()
+        current_time = now or utc_now()
         self._require_lease_owner(run, worker_id=worker_id, now=current_time, action="固化运行清单")
 
         if run.manifest_fingerprint is not None:
@@ -969,7 +969,7 @@ class AgentRunRepository:
         if run.prepared_at is not None:
             return run, False
 
-        lease_check_time = checked_at or utc_now_naive()
+        lease_check_time = checked_at or utc_now()
         self._require_lease_owner(run, worker_id=worker_id, now=lease_check_time, action="记录运行准备时间")
         event_time = observed_at or lease_check_time
         if run.started_at is None or event_time < run.started_at:
@@ -995,7 +995,7 @@ class AgentRunRepository:
         if run.first_model_request_at is not None:
             return run, False
 
-        lease_check_time = checked_at or utc_now_naive()
+        lease_check_time = checked_at or utc_now()
         # 取消请求不抹去已经发生的调用；仅此观测允许仍持有效 lease 的取消中 Run 补写。
         if (
             run.status not in LEASED_RUN_STATUSES
@@ -1028,7 +1028,7 @@ class AgentRunRepository:
         if run.first_output_at is not None:
             return run, False
 
-        lease_check_time = checked_at or utc_now_naive()
+        lease_check_time = checked_at or utc_now()
         self._require_lease_owner(run, worker_id=worker_id, now=lease_check_time, action="记录首次模型输出时间")
         event_time = observed_at or lease_check_time
         if run.prepared_at is None or event_time < run.prepared_at:

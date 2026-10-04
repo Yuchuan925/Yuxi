@@ -23,7 +23,7 @@ from yuxi.modules.agents.services.scope import ActorScope
 from yuxi.modules.agents.services.threads import get_thread_snapshot, require_thread
 from yuxi.modules.agents.services.transport import enqueue_agent_run
 from yuxi.modules.models.utils import parse_assistant_message_body
-from yuxi.shared.datetime import format_utc_datetime, utc_now_naive
+from yuxi.shared.datetime import format_utc_datetime, utc_now
 
 MESSAGE_AUDIT_LIMIT = 500
 AGENT_RUN_TRACE_LIMIT = 500
@@ -348,7 +348,7 @@ async def _reconcile_model_audit_message(
     message.extra_metadata = metadata
     if message.execution_status == "running":
         message.execution_status = "completed"
-        message.finished_at = utc_now_naive()
+        message.finished_at = utc_now()
         metadata["finished_by_reconcile"] = True
     await conv_repo.db.flush()
     if tool_calls_data:
@@ -381,7 +381,7 @@ async def _reconcile_tool_error_from_state(
         output=json.loads(json.dumps(msg_dict, ensure_ascii=False, default=str)),
         content=content,
         error_message=content or "Tool 执行失败",
-        finished_at=utc_now_naive(),
+        finished_at=utc_now(),
         duration_ms=None,
         finished_sequence=None,
     )

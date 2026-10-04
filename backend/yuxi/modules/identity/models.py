@@ -17,7 +17,7 @@ from sqlalchemy.orm import relationship
 
 from yuxi.infrastructure.minio.client import normalize_public_minio_url
 from yuxi.infrastructure.postgres.base import BusinessBase as Base
-from yuxi.shared.datetime import format_utc_datetime, utc_now_naive
+from yuxi.shared.datetime import format_utc_datetime, utc_now
 
 MAX_LOGIN_FAILED_ATTEMPTS = 5
 
@@ -33,7 +33,7 @@ class Department(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     name = Column(String(50), nullable=False, unique=True, index=True)
     description = Column(String(255), nullable=True)
-    created_at = Column(DateTime, default=utc_now_naive)
+    created_at = Column(DateTime(timezone=True), default=utc_now)
 
     # 关联关系
     users = relationship("User", back_populates="department", cascade="all, delete-orphan")
@@ -74,17 +74,17 @@ class User(Base):
     app_id = Column(String(64), nullable=True)
     end_user_id = Column(String(128), nullable=True)
     department_id = Column(Integer, ForeignKey("departments.id"), nullable=True)  # 部门ID
-    created_at = Column(DateTime, default=utc_now_naive)
-    last_login = Column(DateTime, nullable=True)
+    created_at = Column(DateTime(timezone=True), default=utc_now)
+    last_login = Column(DateTime(timezone=True), nullable=True)
 
     # 登录失败限制相关字段
     login_failed_count = Column(Integer, nullable=False, default=0)  # 登录失败次数
-    last_failed_login = Column(DateTime, nullable=True)  # 最后一次登录失败时间
-    login_locked_until = Column(DateTime, nullable=True)  # 锁定到什么时候
+    last_failed_login = Column(DateTime(timezone=True), nullable=True)  # 最后一次登录失败时间
+    login_locked_until = Column(DateTime(timezone=True), nullable=True)  # 锁定到什么时候
 
     # 软删除相关字段
     is_deleted = Column(Integer, nullable=False, default=0, index=True)  # 是否已删除：0=否，1=是
-    deleted_at = Column(DateTime, nullable=True)  # 删除时间
+    deleted_at = Column(DateTime(timezone=True), nullable=True)  # 删除时间
 
     # 关联部门
     department = relationship("Department", back_populates="users")
@@ -121,19 +121,19 @@ class User(Base):
         """检查用户是否处于登录锁定状态"""
         if self.login_locked_until is None:
             return False
-        return utc_now_naive() < self.login_locked_until
+        return utc_now() < self.login_locked_until
 
     def get_remaining_lock_time(self) -> int:
         """获取剩余锁定时间（秒）"""
         if self.login_locked_until is None:
             return 0
-        remaining = int((self.login_locked_until - utc_now_naive()).total_seconds())
+        remaining = int((self.login_locked_until - utc_now()).total_seconds())
         return max(0, remaining)
 
     def increment_failed_login(self):
         """增加登录失败计数，并在达到阈值后锁定登录"""
         self.login_failed_count += 1
-        self.last_failed_login = utc_now_naive()
+        self.last_failed_login = utc_now()
         if self.login_failed_count >= MAX_LOGIN_FAILED_ATTEMPTS:
             self.login_locked_until = self.last_failed_login + timedelta(seconds=LOGIN_LOCK_DURATION_SECONDS)
 
@@ -152,8 +152,8 @@ class UserConfig(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     uid = Column(String, ForeignKey("users.uid"), nullable=False, unique=True, index=True)
     enable_memory = Column(Boolean, nullable=False, default=False)
-    created_at = Column(DateTime, default=utc_now_naive)
-    updated_at = Column(DateTime, default=utc_now_naive, onupdate=utc_now_naive)
+    created_at = Column(DateTime(timezone=True), default=utc_now)
+    updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
 
     user = relationship("User", back_populates="user_config")
 
@@ -186,13 +186,13 @@ class APIKey(Base):
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
     department_id = Column(Integer, ForeignKey("departments.id"), nullable=True, index=True)
 
-    expires_at = Column(DateTime, nullable=True)
+    expires_at = Column(DateTime(timezone=True), nullable=True)
     is_enabled = Column(Boolean, nullable=False, default=True)
-    revoked_at = Column(DateTime, nullable=True, index=True)
-    last_used_at = Column(DateTime, nullable=True)
+    revoked_at = Column(DateTime(timezone=True), nullable=True, index=True)
+    last_used_at = Column(DateTime(timezone=True), nullable=True)
 
     created_by = Column(String(64), nullable=False)
-    created_at = Column(DateTime, default=utc_now_naive)
+    created_at = Column(DateTime(timezone=True), default=utc_now)
 
     # 关联
     user = relationship("User", back_populates="api_keys")
@@ -220,7 +220,7 @@ class APIKey(Base):
             return False
         if self.revoked_at is not None:
             return False
-        if self.expires_at and utc_now_naive() > self.expires_at:
+        if self.expires_at and utc_now() > self.expires_at:
             return False
         return True
 
@@ -239,10 +239,10 @@ class CLIAuthSession(Base):
     approved_user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
     api_key_id = Column(Integer, ForeignKey("api_keys.id"), nullable=True, index=True)
 
-    created_at = Column(DateTime, default=utc_now_naive, nullable=False)
-    expires_at = Column(DateTime, nullable=False)
-    approved_at = Column(DateTime, nullable=True)
-    consumed_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime(timezone=True), default=utc_now, nullable=False)
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+    approved_at = Column(DateTime(timezone=True), nullable=True)
+    consumed_at = Column(DateTime(timezone=True), nullable=True)
 
     approved_user = relationship("User")
     api_key = relationship("APIKey")

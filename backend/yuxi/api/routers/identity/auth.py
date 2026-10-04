@@ -46,7 +46,7 @@ from yuxi.modules.identity.services.login_limits import (
     record_login_failure,
 )
 from yuxi.modules.identity.services.usernames import generate_unique_uid, is_valid_phone_number, validate_username
-from yuxi.shared.datetime import utc_now_naive
+from yuxi.shared.datetime import utc_now
 
 # 创建路由器
 auth = APIRouter(prefix="/auth", tags=["authentication"])
@@ -291,7 +291,7 @@ async def login_for_access_token(
 
     # 登录成功，重置失败计数器并清除 IP+账号维度的失败记录
     user.reset_failed_login()
-    user.last_login = utc_now_naive()
+    user.last_login = utc_now()
     await user_repository.save(user)
     await clear_login_failures(client_ip, login_identifier)
 

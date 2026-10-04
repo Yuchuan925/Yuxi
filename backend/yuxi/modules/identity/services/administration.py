@@ -10,7 +10,7 @@ from yuxi.modules.identity.models import Department, User
 from yuxi.modules.identity.repositories.departments import DepartmentRepository
 from yuxi.modules.identity.repositories.users import UserRepository
 from yuxi.modules.identity.security import AuthUtils
-from yuxi.shared.datetime import utc_now_naive
+from yuxi.shared.datetime import utc_now
 
 _INITIALIZATION_LOCK_KEY = 0x59555849
 
@@ -135,7 +135,7 @@ async def initialize_system_admin(
                     "password_hash": password_hash,
                     "role": "superadmin",
                     "department_id": department.id,
-                    "last_login": utc_now_naive(),
+                    "last_login": utc_now(),
                 }
             )
         except IntegrityError as exc:

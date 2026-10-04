@@ -171,7 +171,7 @@ async def test_generate_dataset_rejects_graph_mode_without_indexed_chunks():
 
 @pytest.mark.asyncio
 async def test_list_runs_projects_failed_durable_task_to_evaluation_run():
-    started_at = eval_service_module.utc_now_naive()
+    started_at = eval_service_module.utc_now()
     run = SimpleNamespace(
         run_id="run_12345678",
         name="评估",

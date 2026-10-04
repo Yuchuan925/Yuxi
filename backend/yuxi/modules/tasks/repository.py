@@ -236,7 +236,7 @@ class TaskRepository:
                         TaskRecord.id == task_id,
                         TaskRecord.status == "running",
                         TaskRecord.worker_id == worker_id,
-                        TaskRecord.lease_expires_at > func.timezone("UTC", func.clock_timestamp()),
+                        TaskRecord.lease_expires_at > func.clock_timestamp(),
                     )
                 )
             ).one_or_none()
@@ -449,7 +449,7 @@ class TaskRepository:
     async def _current_time(session, explicit: datetime | None) -> datetime:
         if explicit is not None:
             return explicit
-        return await session.scalar(select(func.timezone("UTC", func.clock_timestamp())))
+        return await session.scalar(select(func.clock_timestamp()))
 
     @staticmethod
     async def _lock_task(session, task_id: str) -> TaskRecord | None:

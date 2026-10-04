@@ -4,6 +4,7 @@ from typing import Any
 
 from sqlalchemy import (
     JSON,
+    CheckConstraint,
     Column,
     DateTime,
     Float,
@@ -15,12 +16,13 @@ from sqlalchemy import (
 )
 
 from yuxi.infrastructure.postgres.base import BusinessBase as Base
-from yuxi.shared.datetime import format_utc_datetime, utc_now_naive
+from yuxi.shared.datetime import format_utc_datetime, utc_now
 
 
 class TaskRecord(Base):
     __tablename__ = "tasks"
     __table_args__ = (
+        CheckConstraint("status IN ('pending', 'running', 'success', 'failed', 'cancelled')", name="ck_tasks_status"),
         UniqueConstraint("type", "dedupe_key", name="uq_tasks_active_dedupe"),
         Index("ix_tasks_status_lease_expires", "status", "lease_expires_at"),
     )
@@ -39,13 +41,13 @@ class TaskRecord(Base):
     dedupe_key = Column(String(64), nullable=True)
     attempt_count = Column(Integer, nullable=False, default=0)
     worker_id = Column(String(128), nullable=True)
-    heartbeat_at = Column(DateTime, nullable=True)
-    lease_expires_at = Column(DateTime, nullable=True)
+    heartbeat_at = Column(DateTime(timezone=True), nullable=True)
+    lease_expires_at = Column(DateTime(timezone=True), nullable=True)
     timeout_seconds = Column(Float, nullable=False, default=21600.0)
-    created_at = Column(DateTime, default=utc_now_naive, index=True)
-    updated_at = Column(DateTime, default=utc_now_naive, onupdate=utc_now_naive)
-    started_at = Column(DateTime, nullable=True)
-    completed_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime(timezone=True), default=utc_now, index=True)
+    updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
+    started_at = Column(DateTime(timezone=True), nullable=True)
+    completed_at = Column(DateTime(timezone=True), nullable=True)
 
     def to_dict(self) -> dict[str, Any]:
         return {

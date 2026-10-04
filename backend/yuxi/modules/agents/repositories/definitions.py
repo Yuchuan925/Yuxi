@@ -23,7 +23,7 @@ from yuxi.modules.identity.models import User
 from yuxi.modules.identity.permissions import ResourcePermission, normalize_permission_config, resolve_agent_permission
 from yuxi.modules.identity.repositories.users import UserRepository
 from yuxi.modules.identity.services.resource_grants import validate_shared_grants
-from yuxi.shared.datetime import utc_now_naive
+from yuxi.shared.datetime import utc_now
 
 DEFAULT_AGENT_SLUG = DEFAULT_AGENT.slug
 DEFAULT_AGENT_NAME = DEFAULT_AGENT.name
@@ -112,7 +112,7 @@ class AgentRepository:
                 return await self.set_default(agent=agent, updated_by=created_by)
             if needs_update:
                 agent.updated_by = created_by
-                agent.updated_at = utc_now_naive()
+                agent.updated_at = utc_now()
                 await self.db.commit()
                 await self.db.refresh(agent)
             return agent
@@ -132,8 +132,8 @@ class AgentRepository:
             is_subagent=False,
             created_by=created_by,
             updated_by=created_by,
-            created_at=utc_now_naive(),
-            updated_at=utc_now_naive(),
+            created_at=utc_now(),
+            updated_at=utc_now(),
         )
         self.db.add(agent)
         await self.db.commit()
@@ -163,8 +163,8 @@ class AgentRepository:
             is_subagent=resolve_agent_is_subagent(preset.backend_id),
             created_by=created_by,
             updated_by=created_by,
-            created_at=utc_now_naive(),
-            updated_at=utc_now_naive(),
+            created_at=utc_now(),
+            updated_at=utc_now(),
         )
         self.db.add(agent)
         await self.db.commit()
@@ -276,7 +276,7 @@ class AgentRepository:
         if read_scope.get("access_level") != "global":
             raise ValueError("内置智能体必须全局共享")
 
-        now = utc_now_naive()
+        now = utc_now()
         await self.db.execute(update(Agent).where(Agent.is_default.is_(True)).values(is_default=False, updated_at=now))
         agent.is_default = True
         agent.updated_by = updated_by
@@ -360,8 +360,8 @@ class AgentRepository:
             is_subagent=resolved_is_subagent,
             created_by=created_by,
             updated_by=created_by,
-            created_at=utc_now_naive(),
-            updated_at=utc_now_naive(),
+            created_at=utc_now(),
+            updated_at=utc_now(),
         )
         if visibility == "shared":
             await self.validate_shared_dependencies(agent.config_json)
@@ -442,7 +442,7 @@ class AgentRepository:
             await self.validate_shared_dependencies(agent.config_json)
 
         agent.updated_by = updated_by
-        agent.updated_at = utc_now_naive()
+        agent.updated_at = utc_now()
         await self.db.commit()
         await self.db.refresh(agent)
         return agent
@@ -462,7 +462,7 @@ class AgentRepository:
         agent.visibility = "shared"
         agent.share_config = grants
         agent.updated_by = user.uid
-        agent.updated_at = utc_now_naive()
+        agent.updated_at = utc_now()
         await self.db.commit()
         await self.db.refresh(agent)
         return agent

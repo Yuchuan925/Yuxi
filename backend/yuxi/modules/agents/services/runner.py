@@ -60,7 +60,7 @@ from yuxi.modules.workspace.services.bindings import (
     AuthorizedWorkdir,
     resolve_authorized_workdir,
 )
-from yuxi.shared.datetime import utc_now_naive
+from yuxi.shared.datetime import utc_now
 
 MAX_RUN_TRIES = 2
 
@@ -773,7 +773,7 @@ async def process_agent_run(ctx, run_id: str):
                 run_id,
                 worker_id,
                 "prepared",
-                observed_at=utc_now_naive(),
+                observed_at=utc_now(),
             )
 
         terminal_set = False
@@ -825,7 +825,7 @@ async def process_agent_run(ctx, run_id: str):
                                 run_id,
                                 worker_id,
                                 "first_output",
-                                observed_at=utc_now_naive(),
+                                observed_at=utc_now(),
                             )
                         continue
                     await writer.flush()

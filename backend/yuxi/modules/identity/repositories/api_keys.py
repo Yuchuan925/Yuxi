@@ -10,7 +10,7 @@ from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from yuxi.modules.identity.models import APIKey, User
-from yuxi.shared.datetime import utc_now_naive
+from yuxi.shared.datetime import utc_now
 
 
 @dataclass(frozen=True)
@@ -202,5 +202,5 @@ class APIKeyRepository:
         """撤销 API Key 并保留幂等 tombstone，阻止同一请求复活凭据。"""
 
         api_key.is_enabled = False
-        api_key.revoked_at = utc_now_naive()
+        api_key.revoked_at = utc_now()
         await self.db_session.commit()

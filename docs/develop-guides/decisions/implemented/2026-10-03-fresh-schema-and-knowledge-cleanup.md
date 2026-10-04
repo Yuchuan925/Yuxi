@@ -6,31 +6,31 @@ Owner：backend/yuxi/migrations/main.py
 
 ## 问题
 
-新部署需要数据库独立拒绝错配的执行消息、跨知识库关系和错误版本指针。初始化中断、索引重建失败与外部存储清理需要明确的事实归属。部署接受重建数据库；Tasker 保留现有进度与取消消费方式，恢复、重新加载和清理由对应业务领域拥有。
+新部署需要数据库独立拒绝错配的执行消息、跨知识库关系和错误来源关系。初始化中断、索引重建失败与外部存储清理需要明确的事实归属。部署接受重建数据库；Tasker 保留现有进度与取消消费方式，恢复、重新加载和清理由对应业务领域拥有。
 
 ## 决策
 
 ### 实现方案
 
-ORM 与 fresh baseline DDL 拥有当前结构，初始化器在空库创建基线，API/worker 校验版本。文件 repository 在事务内登记版本切换、删除事实和清理意图。知识 worker 的固定 cron 直接消费 pending outbox；文件索引和图谱写入持有共享投影锁，清理持有排他锁。外部 I/O 完成后释放锁，清理成功后提交关联移除。普通检索与图谱响应使用 PostgreSQL 可见事实过滤，外部存储保持派生投影职责。
+ORM 与 fresh baseline DDL 拥有当前结构，初始化器在空库创建基线，API/worker 校验版本。文件 repository 在事务内登记代次切换、删除事实和清理意图。知识 worker 的固定 cron 直接消费 pending outbox；文件索引和图谱写入持有共享投影锁，清理持有排他锁。外部 I/O 完成后释放锁，清理成功后提交关联移除。普通检索与图谱响应使用 PostgreSQL 可见事实过滤，外部存储保持派生投影职责。
 
 ### 初始化与关系约束
 
-当前基线为 `business=15 / knowledge=6`。初始化器确认空库后提交 initializing 标记；进程中断后的重试只清理带该标记的半成品，完成后移除标记。版本门禁拒绝旧库和未完成初始化；部署重建需要对应数据授权。
+当前版本只支持全新建库，直接创建当前结构，不考虑历史数据兼容或数据库迁移。两个域的版本号统一为 `1`，只标记当前初始化契约，不维护历史递增链；执行输入关系和索引代次的简化见[后续关系收敛决定](2026-10-04-execution-and-mention-scope.md)。初始化器确认空库后提交 initializing 标记；进程中断后的重试只清理带该标记的半成品，完成后移除标记。版本门禁拒绝旧库和未完成初始化；部署重建需要对应数据授权。
 
 Run 的 Conversation ID/Thread ID 绑定同一 Conversation；带执行归属的 Message 同时绑定 Run/Turn 和 Conversation，输入/输出指针指向所属 Run 的消息。开放 Attempt 的部分唯一约束和关键 Run 状态检查保留在 schema。
 
-KnowledgeFile/Folder、Chunk、图谱 mention、Dataset/Item、EvaluationRun/RunItem 使用复合键约束冗余归属。active version 属于同一文件、KB 和 generation，每个文件最多一个 active version。删除 Dataset 保留逐题评估快照；文件夹删除保持子文件关系的既定行为。
+KnowledgeFile/Folder、Chunk、图谱 mention、Dataset/Item、EvaluationRun/RunItem 使用复合键约束冗余归属。文件的 active_generation 拥有唯一服务代次；冗余版本表的移除由后续关系收敛决定拥有。删除 Dataset 保留逐题评估快照；文件夹删除保持子文件关系的既定行为。
 
 ### 版本、查询与局部清理
 
-构建使用单调 generation；新版本完成前保留旧 active。版本指针、统计与 indexed 状态同事务切换。文件自身的状态及当前处理身份拒绝删除/替换后的旧完成回调。
+构建使用单调 generation；新版本完成前保留旧 active。服务代次、统计与 indexed 状态同事务切换。文件自身的状态及当前处理身份拒绝删除/替换后的旧完成回调。
 
 Milvus 召回前按 PG 的 active 文件/generation 过滤，召回后回查 Chunk 并从 PG 补齐正文。读请求只打开现有集合；有可见 Chunk 而投影缺失时显式失败。图谱构建候选、计数、写入回查和公开子图使用一致的 active 范围；Neo4j 尚未清理时，PG tombstone 仍使对应内容不可见。共享实体的属性带最后写入 Chunk 的来源；来源失效时只返回仍有可见 mention 的稳定身份信息。
 
 文件/KB 删除先提交 tombstone 与清理意图，HTTP 路由不提前删除 MinIO 原件。Outbox 仅有 pending/applied、对象范围、代次及错误记录；消费持有行锁并使用 SKIP LOCKED。错误保留 pending，后续消费重复同一幂等清理。Tasker 不承载 outbox 清理任务、索引补发或上下文恢复。
 
-索引、图谱发布与清理通过 KB 投影锁协调；取消时等待已启动 I/O 结束，多分支删除等待全部 I/O 结束再抛错。代次清理按原始 Chunk ID 清理 Neo4j 与图向量；PG 关联在外部成功后提交移除，失败回滚以保留重试依据。清理后移除旧 Chunk/version，只保留当前 active/building。
+索引、图谱发布与清理通过 KB 投影锁协调；取消时等待已启动 I/O 结束，多分支删除等待全部 I/O 结束再抛错。代次清理按原始 Chunk ID 清理 Neo4j 与图向量；PG 关联在外部成功后提交移除，失败回滚以保留重试依据。代次清理移除旧 Chunk，只保留当前 active/building 代次的内容。
 
 ### 凭据与索引
 
@@ -50,7 +50,7 @@ Provider 普通管理响应遮蔽 API Key、Authorization、Cookie 与嵌套凭�
 - fresh baseline 不兼容旧数据库；初始化器没有历史升级承诺。
 - 删除 API 成功表达 PG 不可见事实已提交，外部清理由 outbox 结果及存储回读证明。
 - 外部服务持续故障保留 pending/error；系统没有跨存储 exactly-once、全库孤儿扫描或自动恢复索引上下文的承诺。
-- 版本历史受清理边界限制，原始字节由 MinIO 拥有，PG 不是原始对象备份。
+- 旧代次内容受清理边界限制，原始字节由 MinIO 拥有，PG 不保存历史内容快照。
 
 ## 验证
 

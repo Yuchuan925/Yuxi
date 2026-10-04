@@ -3,6 +3,7 @@
 from sqlalchemy import (
     BigInteger,
     Boolean,
+    CheckConstraint,
     Column,
     DateTime,
     Float,
@@ -57,19 +58,6 @@ class KnowledgeFile(Base):
             deferrable=True,
             initially="DEFERRED",
         ),
-        ForeignKeyConstraint(
-            ["active_version_id", "file_id", "kb_id", "active_generation"],
-            [
-                "knowledge_file_versions.version_id",
-                "knowledge_file_versions.file_id",
-                "knowledge_file_versions.kb_id",
-                "knowledge_file_versions.generation",
-            ],
-            name="fk_knowledge_files_active_version",
-            use_alter=True,
-            deferrable=True,
-            initially="DEFERRED",
-        ),
     )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -97,7 +85,6 @@ class KnowledgeFile(Base):
     updated_by = Column(String(64))
     created_at = Column(DateTime(timezone=True), default=utc_now)
     # generation 是文件事实的单调代次；deleted_at 让删除先在 PostgreSQL 中生效。
-    active_version_id = Column(String(64), index=True)
     generation = Column(Integer, nullable=False, default=1, server_default=text("1"))
     active_generation = Column(Integer, nullable=False, default=1, server_default=text("1"))
     building_generation = Column(Integer)
@@ -107,47 +94,12 @@ class KnowledgeFile(Base):
     updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
 
 
-class KnowledgeFileVersion(Base):
-    """文件内容版本；向量和图投影只能引用一个明确代次。"""
-
-    __tablename__ = "knowledge_file_versions"
-    __table_args__ = (
-        UniqueConstraint("version_id", name="uq_knowledge_file_versions_version_id"),
-        UniqueConstraint("file_id", "generation", name="uq_knowledge_file_versions_file_generation"),
-        UniqueConstraint("version_id", "file_id", "kb_id", "generation", name="uq_knowledge_file_versions_scope"),
-        Index(
-            "uq_knowledge_file_versions_active",
-            "file_id",
-            unique=True,
-            postgresql_where=text("is_active"),
-            sqlite_where=text("is_active = 1"),
-        ),
-        ForeignKeyConstraint(
-            ["file_id", "kb_id"],
-            ["knowledge_files.file_id", "knowledge_files.kb_id"],
-            name="fk_knowledge_file_versions_file_kb",
-            ondelete="CASCADE",
-        ),
-        Index("ix_knowledge_file_versions_file_active", "file_id", "is_active"),
-    )
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    version_id = Column(String(64), nullable=False)
-    file_id = Column(String(64), nullable=False)
-    kb_id = Column(String(80), nullable=False)
-    generation = Column(Integer, nullable=False)
-    content_hash = Column(String(128))
-    markdown_file = Column(String(1024))
-    processing_params = Column(JSON_VALUE)
-    is_active = Column(Boolean, nullable=False, default=True)
-    created_at = Column(DateTime(timezone=True), default=utc_now)
-
-
 class KnowledgeProjectionOutbox(Base):
     """PostgreSQL 权威事实到外部投影的可重试意图。"""
 
     __tablename__ = "knowledge_projection_outbox"
     __table_args__ = (
+        CheckConstraint("status IN ('pending', 'applied')", name="ck_knowledge_projection_outbox_status"),
         UniqueConstraint("event_key", name="uq_knowledge_projection_outbox_event_key"),
         Index("ix_knowledge_projection_outbox_pending", "status", "updated_at", "id"),
     )
@@ -171,7 +123,7 @@ class KnowledgeChunk(Base):
     __tablename__ = "knowledge_chunks"
     __table_args__ = (
         UniqueConstraint("chunk_id", name="uq_knowledge_chunks_chunk_id"),
-        UniqueConstraint("chunk_id", "kb_id", name="uq_knowledge_chunks_chunk_id_kb"),
+        UniqueConstraint("chunk_id", "file_id", "kb_id", name="uq_knowledge_chunks_chunk_file_kb"),
         ForeignKeyConstraint(
             ["file_id", "kb_id"],
             ["knowledge_files.file_id", "knowledge_files.kb_id"],
@@ -257,9 +209,9 @@ class KnowledgeGraphEntityMention(Base):
             ondelete="CASCADE",
         ),
         ForeignKeyConstraint(
-            ["chunk_id", "kb_id"],
-            ["knowledge_chunks.chunk_id", "knowledge_chunks.kb_id"],
-            name="fk_knowledge_graph_entity_mentions_chunk_kb",
+            ["chunk_id", "file_id", "kb_id"],
+            ["knowledge_chunks.chunk_id", "knowledge_chunks.file_id", "knowledge_chunks.kb_id"],
+            name="fk_knowledge_graph_entity_mentions_chunk_file_kb",
             ondelete="CASCADE",
         ),
         Index("ix_knowledge_graph_entity_mentions_kb_id", "kb_id"),
@@ -338,9 +290,9 @@ class KnowledgeGraphTripleMention(Base):
             ondelete="CASCADE",
         ),
         ForeignKeyConstraint(
-            ["chunk_id", "kb_id"],
-            ["knowledge_chunks.chunk_id", "knowledge_chunks.kb_id"],
-            name="fk_knowledge_graph_triple_mentions_chunk_kb",
+            ["chunk_id", "file_id", "kb_id"],
+            ["knowledge_chunks.chunk_id", "knowledge_chunks.file_id", "knowledge_chunks.kb_id"],
+            name="fk_knowledge_graph_triple_mentions_chunk_file_kb",
             ondelete="CASCADE",
         ),
         Index("ix_knowledge_graph_triple_mentions_kb_id", "kb_id"),

@@ -13,7 +13,7 @@ from yuxi.modules.agents.models.turns import AgentTurn
 from yuxi.infrastructure.postgres.base import Base
 from yuxi.modules.agents.models.threads import Conversation
 from yuxi.modules.agents.models.messages import Message, ToolCall
-from yuxi.shared.datetime import utc_now_naive
+from yuxi.shared.datetime import utc_now
 
 pytestmark = pytest.mark.unit
 
@@ -50,7 +50,7 @@ def test_normalize_title_trims_spaces():
 
 @pytest.mark.asyncio
 async def test_list_agent_runs_for_trace_returns_latest_bounded_window_in_order(conversation_session):
-    now = utc_now_naive()
+    now = utc_now()
     conversation = Conversation(
         thread_id="thread-run-trace-window",
         project_id="project-run-trace-window",
@@ -138,7 +138,7 @@ async def test_lock_conversation_refreshes_cached_lifecycle_state(tmp_path):
 
 
 def _seed_source_filter_conversations() -> tuple[Conversation, Conversation, Conversation, datetime]:
-    now = utc_now_naive()
+    now = utc_now()
     normal = Conversation(
         thread_id="thread-normal",
         project_id="project-thread-normal",
@@ -178,7 +178,7 @@ def _seed_source_filter_conversations() -> tuple[Conversation, Conversation, Con
 
 @pytest.mark.asyncio
 async def test_model_audit_messages_are_hidden_from_history_and_message_count(conversation_session):
-    now = utc_now_naive()
+    now = utc_now()
     conversation = Conversation(
         thread_id="thread-model-audit",
         project_id="project-model-audit",
@@ -234,7 +234,7 @@ async def test_model_audit_messages_are_hidden_from_history_and_message_count(co
 
 @pytest.mark.asyncio
 async def test_only_state_proven_terminal_model_audit_keeps_tool_call_visible(conversation_session):
-    now = utc_now_naive()
+    now = utc_now()
     conversation = Conversation(
         thread_id="thread-tool-audit",
         project_id="project-tool-audit",
@@ -361,7 +361,7 @@ async def test_list_conversations_excludes_subagent_source(conversation_session)
 
 @pytest.mark.asyncio
 async def test_list_conversations_paginates_only_non_pinned_items(conversation_session):
-    now = utc_now_naive()
+    now = utc_now()
     pinned = Conversation(
         thread_id="thread-pinned",
         project_id="project-pinned",
@@ -399,7 +399,7 @@ async def test_list_conversations_paginates_only_non_pinned_items(conversation_s
 
 @pytest.mark.asyncio
 async def test_search_conversations_by_message_content_filters_user_status_and_tool_messages(conversation_session):
-    now = utc_now_naive()
+    now = utc_now()
     active = Conversation(
         thread_id="thread-active",
         project_id="project-thread-active",
@@ -532,7 +532,7 @@ async def test_search_conversations_by_message_content_excludes_subagent_source(
 
 @pytest.mark.asyncio
 async def test_search_conversations_by_message_content_filters_agent_and_paginates(conversation_session):
-    now = utc_now_naive()
+    now = utc_now()
     old = now - timedelta(days=1)
     first = Conversation(
         thread_id="thread-first",

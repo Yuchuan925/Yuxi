@@ -91,7 +91,6 @@ class KnowledgeBase(ABC):
             "generation": int(getattr(record, "generation", 1) or 1),
             "active_generation": int(getattr(record, "active_generation", 1) or 1),
             "building_generation": getattr(record, "building_generation", None),
-            "active_version_id": getattr(record, "active_version_id", None),
         }
 
     @staticmethod

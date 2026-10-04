@@ -1,4 +1,4 @@
-"""真实 PostgreSQL 的消息、目录、版本和评估关系负向证据。"""
+"""真实 PostgreSQL 的消息、目录、代次和评估关系负向证据。"""
 
 import os
 import asyncio
@@ -6,12 +6,13 @@ import sys
 import textwrap
 
 import pytest
-from sqlalchemy import text
+from sqlalchemy import insert, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from test_schema_migration_version import _create_isolated_manager, _drop_isolated_schema
 from yuxi.migrations.schema import create_business_tables, create_knowledge_tables, ensure_business_schema
+from yuxi.modules.knowledge.models import KnowledgeChunk, KnowledgeGraphEntity, KnowledgeGraphTriple
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
 
@@ -34,7 +35,7 @@ def cleanup_test_sandboxes():
 
 
 async def test_knowledge_relationships_reject_cross_scope_and_keep_delete_semantics():
-    """单 ID 都合法仍不能跨 KB、Dataset 或 active version 归属。"""
+    """单 ID 都合法仍不能跨 KB 或 Dataset 归属。"""
     schema, admin, engine, manager = await _create_isolated_manager("pytest_relations")
     try:
         await create_knowledge_tables(manager)
@@ -45,23 +46,10 @@ async def test_knowledge_relationships_reject_cross_scope_and_keep_delete_semant
                 "INSERT INTO evaluation_datasets (dataset_id,kb_id,name) VALUES ('da','a','A'),('db','b','B'),('da2','a','A2')",
                 "INSERT INTO evaluation_dataset_items (item_id,dataset_id,kb_id,item_index,query_text) VALUES ('ia','da','a',0,'a'),('ib','db','b',0,'b'),('ia2','da2','a',0,'a2')",
                 "INSERT INTO evaluation_runs (run_id,kb_id,dataset_id,name) VALUES ('ra','a','da','run')",
-                "INSERT INTO knowledge_file_versions (version_id,file_id,kb_id,generation,is_active) VALUES ('va','fa','a',1,true)",
             ):
                 await conn.execute(text(sql))
         invalid = (
             ("fk_knowledge_files_parent_kb", "UPDATE knowledge_files SET parent_id='fa' WHERE file_id='fb'"),
-            (
-                "fk_knowledge_files_active_version",
-                "UPDATE knowledge_files SET active_version_id='va' WHERE file_id='fb'",
-            ),
-            (
-                "fk_knowledge_files_active_version",
-                "UPDATE knowledge_files SET active_version_id='va',active_generation=2 WHERE file_id='fa'",
-            ),
-            (
-                "uq_knowledge_file_versions_active",
-                "INSERT INTO knowledge_file_versions (version_id,file_id,kb_id,generation,is_active) VALUES ('va2','fa','a',2,true)",
-            ),
             (
                 "fk_evaluation_runs_dataset_kb",
                 "INSERT INTO evaluation_runs (run_id,kb_id,dataset_id,name) VALUES ('bad','a','db','bad')",
@@ -93,6 +81,24 @@ async def test_knowledge_relationships_reject_cross_scope_and_keep_delete_semant
             )
             await conn.execute(text("DELETE FROM evaluation_datasets WHERE dataset_id='da'"))
         async with engine.connect() as conn:
+            assert (
+                await conn.scalar(
+                    text(
+                        "SELECT count(*) FROM information_schema.columns WHERE table_schema=current_schema() "
+                        "AND table_name='knowledge_files' AND column_name='active_version_id'"
+                    )
+                )
+                == 0
+            )
+            assert (
+                await conn.scalar(
+                    text(
+                        "SELECT count(*) FROM information_schema.tables WHERE table_schema=current_schema() "
+                        "AND table_name='knowledge_file_versions'"
+                    )
+                )
+                == 0
+            )
             assert await conn.scalar(text("SELECT parent_id FROM knowledge_files WHERE file_id='fa'")) is None
             assert await conn.scalar(text("SELECT dataset_id FROM evaluation_runs WHERE run_id='ra'")) is None
             row = (
@@ -137,6 +143,133 @@ async def test_unselected_message_and_run_thread_must_match_execution_scope():
         async with engine.connect() as conn:
             assert await conn.scalar(text("SELECT count(*) FROM messages")) == 0
             assert await conn.scalar(text("SELECT conversation_thread_id FROM agent_runs WHERE id='run'")) == "ta"
+    finally:
+        await _drop_isolated_schema(schema, admin, engine)
+
+
+async def test_input_consumption_and_receipt_references_stay_in_owning_thread():
+    """合法单 ID 不能把 Input 消费或接收回执连接到其他 Thread。"""
+    schema, admin, engine, manager = await _create_isolated_manager("pytest_input_scope")
+    try:
+        await create_business_tables(manager)
+        await ensure_business_schema(manager)
+        async with engine.begin() as conn:
+            for sql in (
+                "INSERT INTO users (uid,username,password_hash,role,is_deleted,login_failed_count) VALUES ('u','u','fixture','user',0,0)",
+                "INSERT INTO projects (id,uid,selection_status,workdir_path,directory_mode) VALUES ('p','u','implicit','projects/p','managed')",
+                "INSERT INTO conversations (thread_id,uid,agent_id,project_id,status,is_pinned) VALUES ('ta','u','main','p','active',false),('tb','u','main','p','active',false)",
+                "INSERT INTO agent_turns (id,conversation_thread_id,uid,status,created_at) VALUES ('turn-a','ta','u','completed',now()),('turn-b','tb','u','completed',now()),('turn-a2','ta','u','completed',now())",
+                "INSERT INTO agent_runs (id,conversation_thread_id,runtime_scope_id,turn_id,conversation_id,agent_slug,uid,status,source,channel,run_type,origin_metadata,input_payload,token_usage,runtime_cleanup_pending) SELECT 'run-a','ta','ta','turn-a',id,'main','u','completed','chat','web','chat','{}','{}','{}',false FROM conversations WHERE thread_id='ta'",
+                "INSERT INTO agent_inputs (id,conversation_thread_id,uid,agent_slug,kind,status,input_payload,source,channel,origin_metadata,created_at) VALUES ('input-a','ta','u','main','follow_up','pending','{}','chat','web','{}',now()),('input-b','tb','u','main','follow_up','pending','{}','chat','web','{}',now())",
+            ):
+                await conn.execute(text(sql))
+        invalid = (
+            (
+                "fk_agent_inputs_turn_thread",
+                "UPDATE agent_inputs SET status='consumed',turn_id='turn-a',consumed_run_id='run-a',cutoff_seq=1,consumed_at=now() WHERE id='input-b'",
+            ),
+            ("fk_agent_runs_input_thread", "UPDATE agent_runs SET input_id='input-b' WHERE id='run-a'"),
+            (
+                "fk_agent_input_receipts_input_thread",
+                "INSERT INTO agent_input_receipts (id,idempotency_key,uid,conversation_thread_id,event_type,intent_hash,input_id,created_at) VALUES ('bad','bad','u','ta','input','fixture','input-b',now())",
+            ),
+            (
+                "fk_agent_input_receipts_turn_thread",
+                "INSERT INTO agent_input_receipts (id,idempotency_key,uid,conversation_thread_id,event_type,intent_hash,turn_id,created_at) VALUES ('bad','bad','u','ta','cancel','fixture','turn-b',now())",
+            ),
+            (
+                "fk_agent_input_receipts_run_turn",
+                "INSERT INTO agent_input_receipts (id,idempotency_key,uid,conversation_thread_id,event_type,intent_hash,turn_id,run_id,created_at) VALUES ('bad','bad','u','ta','cancel','fixture','turn-a2','run-a',now())",
+            ),
+            (
+                "ck_agent_input_receipts_run_turn",
+                "INSERT INTO agent_input_receipts (id,idempotency_key,uid,conversation_thread_id,event_type,intent_hash,run_id,created_at) VALUES ('bad','bad','u','tb','cancel','fixture','run-a',now())",
+            ),
+        )
+        for constraint, sql in invalid:
+            with pytest.raises(IntegrityError, match=constraint):
+                async with engine.begin() as conn:
+                    await conn.execute(text(sql))
+        async with engine.begin() as conn:
+            await conn.execute(text("UPDATE agent_runs SET input_id='input-a' WHERE id='run-a'"))
+            await conn.execute(
+                text(
+                    "UPDATE agent_inputs SET status='consumed',turn_id='turn-a',consumed_run_id='run-a',cutoff_seq=1,consumed_at=now() WHERE id='input-a'"
+                )
+            )
+            await conn.execute(
+                text(
+                    "INSERT INTO agent_input_receipts (id,idempotency_key,uid,conversation_thread_id,event_type,intent_hash,input_id,turn_id,run_id,created_at) VALUES ('ok','ok','u','ta','input','fixture','input-a','turn-a','run-a',now())"
+                )
+            )
+        async with engine.connect() as conn:
+            row = (
+                await conn.execute(
+                    text(
+                        "SELECT i.conversation_thread_id,t.conversation_thread_id,r.conversation_thread_id FROM agent_inputs i JOIN agent_turns t ON t.id=i.turn_id JOIN agent_runs r ON r.id=i.consumed_run_id WHERE i.id='input-a'"
+                    )
+                )
+            ).one()
+            assert tuple(row) == ("ta", "ta", "ta")
+            assert await conn.scalar(text("SELECT status FROM agent_inputs WHERE id='input-b'")) == "pending"
+            assert await conn.scalar(text("SELECT count(*) FROM agent_input_receipts")) == 1
+    finally:
+        await _drop_isolated_schema(schema, admin, engine)
+
+
+async def test_graph_mentions_reject_wrong_file_inside_same_knowledge_base():
+    """实体和三元组来源必须指向 Chunk 所属文件，删除只级联该文件。"""
+    schema, admin, engine, manager = await _create_isolated_manager("pytest_mention_file")
+    try:
+        await create_knowledge_tables(manager)
+        async with engine.begin() as conn:
+            await conn.execute(text("INSERT INTO knowledge_bases (kb_id,name,kb_type) VALUES ('k','K','milvus')"))
+            await conn.execute(
+                text("INSERT INTO knowledge_files (file_id,kb_id,filename) VALUES ('fa','k','A'),('fb','k','B')")
+            )
+            await conn.execute(
+                insert(KnowledgeChunk).values(chunk_id="c", file_id="fa", kb_id="k", chunk_index=0, content="fixture")
+            )
+            await conn.execute(
+                insert(KnowledgeGraphEntity).values(entity_id="e", kb_id="k", name="E", normalized_name="e", label="E")
+            )
+            await conn.execute(
+                insert(KnowledgeGraphTriple).values(
+                    triple_id="t",
+                    kb_id="k",
+                    source_entity_id="e",
+                    target_entity_id="e",
+                    relation_type="fixture",
+                    content="fixture",
+                )
+            )
+        for table, identity, value, constraint in (
+            ("knowledge_graph_entity_mentions", "entity_id", "e", "fk_knowledge_graph_entity_mentions_chunk_file_kb"),
+            ("knowledge_graph_triple_mentions", "triple_id", "t", "fk_knowledge_graph_triple_mentions_chunk_file_kb"),
+        ):
+            with pytest.raises(IntegrityError, match=constraint):
+                async with engine.begin() as conn:
+                    await conn.execute(
+                        text(
+                            f"INSERT INTO {table} ({identity},kb_id,file_id,chunk_id) VALUES (:identity,'k','fb','c')"
+                        ),
+                        {"identity": value},
+                    )
+            async with engine.begin() as conn:
+                await conn.execute(
+                    text(f"INSERT INTO {table} ({identity},kb_id,file_id,chunk_id) VALUES (:identity,'k','fa','c')"),
+                    {"identity": value},
+                )
+        async with engine.begin() as conn:
+            await conn.execute(text("DELETE FROM knowledge_files WHERE file_id='fb'"))
+        async with engine.connect() as conn:
+            assert await conn.scalar(text("SELECT count(*) FROM knowledge_graph_entity_mentions")) == 1
+            assert await conn.scalar(text("SELECT count(*) FROM knowledge_graph_triple_mentions")) == 1
+        async with engine.begin() as conn:
+            await conn.execute(text("DELETE FROM knowledge_files WHERE file_id='fa'"))
+        async with engine.connect() as conn:
+            assert await conn.scalar(text("SELECT count(*) FROM knowledge_graph_entity_mentions")) == 0
+            assert await conn.scalar(text("SELECT count(*) FROM knowledge_graph_triple_mentions")) == 0
     finally:
         await _drop_isolated_schema(schema, admin, engine)
 
@@ -194,5 +327,77 @@ async def test_killed_fresh_initializer_is_recoverable_without_adopting_old_data
             "business": BUSINESS_SCHEMA_VERSION,
             "knowledge": KNOWLEDGE_SCHEMA_VERSION,
         }
+    finally:
+        await _drop_isolated_schema(schema, admin, engine)
+
+
+async def test_persisted_timestamps_keep_the_same_instant_across_session_timezones():
+    """所有业务时间列带时区；带偏移写入不受数据库 session 时区影响。"""
+    from datetime import UTC, datetime, timedelta, timezone
+
+    from yuxi.modules.identity.models import User
+
+    schema, admin, engine, manager = await _create_isolated_manager("pytest_utc")
+    instant = datetime(2026, 10, 4, 10, 30, tzinfo=timezone(timedelta(hours=8)))
+    try:
+        await create_business_tables(manager)
+        await create_knowledge_tables(manager)
+        async with engine.begin() as conn:
+            assert (
+                list(
+                    await conn.scalars(
+                        text(
+                            "SELECT table_name || '.' || column_name FROM information_schema.columns "
+                            "WHERE table_schema=current_schema() AND data_type='timestamp without time zone'"
+                        )
+                    )
+                )
+                == []
+            )
+            await conn.execute(text("SET LOCAL TIME ZONE 'America/Los_Angeles'"))
+            await conn.execute(
+                insert(User).values(uid="utc-user", username="utc-user", password_hash="fixture", last_login=instant)
+            )
+        async with engine.begin() as conn:
+            await conn.execute(text("SET LOCAL TIME ZONE 'Asia/Shanghai'"))
+            stored = await conn.scalar(select(User.last_login).where(User.uid == "utc-user"))
+            assert stored.tzinfo is not None
+            assert stored == instant.astimezone(UTC)
+            assert (
+                await conn.scalar(text("SELECT EXTRACT(EPOCH FROM last_login) FROM users WHERE uid='utc-user'"))
+                == instant.timestamp()
+            )
+            created = await conn.scalar(select(User.created_at).where(User.uid == "utc-user"))
+            assert created.tzinfo is not None
+    finally:
+        await _drop_isolated_schema(schema, admin, engine)
+
+
+async def test_task_and_cleanup_intent_reject_unknown_states():
+    """未知状态不能绕过任务恢复或清理扫描；合法状态仍可写入。"""
+    from yuxi.modules.knowledge.models import KnowledgeProjectionOutbox
+    from yuxi.modules.tasks.models import TaskRecord
+
+    schema, admin, engine, manager = await _create_isolated_manager("pytest_states")
+    task = insert(TaskRecord).values(id="task", name="fixture", type="fixture")
+    cleanup = insert(KnowledgeProjectionOutbox).values(
+        event_key="cleanup", kb_id="kb", aggregate_id="file", generation=1, operation="generation_cleanup"
+    )
+    try:
+        await create_business_tables(manager)
+        await create_knowledge_tables(manager)
+        for constraint, statement in (
+            ("ck_tasks_status", task),
+            ("ck_knowledge_projection_outbox_status", cleanup),
+        ):
+            with pytest.raises(IntegrityError, match=constraint):
+                async with engine.begin() as conn:
+                    await conn.execute(statement.values(status="unknown"))
+        async with engine.begin() as conn:
+            await conn.execute(task.values(status="pending"))
+            await conn.execute(cleanup.values(status="pending"))
+        async with engine.connect() as conn:
+            assert await conn.scalar(select(TaskRecord.status)) == "pending"
+            assert await conn.scalar(select(KnowledgeProjectionOutbox.status)) == "pending"
     finally:
         await _drop_isolated_schema(schema, admin, engine)

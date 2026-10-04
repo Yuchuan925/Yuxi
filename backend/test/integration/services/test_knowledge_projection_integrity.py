@@ -19,7 +19,12 @@ from yuxi.infrastructure.filesystem import await_io
 from yuxi.migrations.schema import create_knowledge_tables
 from yuxi.modules.knowledge.graphs.milvus_graph_service import MilvusGraphService
 from yuxi.modules.knowledge.implementations.milvus import MilvusKB
-from yuxi.modules.knowledge.models import KnowledgeBase, KnowledgeChunk, KnowledgeFileVersion, KnowledgeProjectionOutbox
+from yuxi.modules.knowledge.models import (
+    KnowledgeBase,
+    KnowledgeChunk,
+    KnowledgeFile,
+    KnowledgeProjectionOutbox,
+)
 from yuxi.modules.knowledge.repositories import files
 from yuxi.modules.knowledge.repositories.bases import KnowledgeBaseRepository
 from yuxi.modules.knowledge.repositories.chunks import KnowledgeChunkRepository
@@ -75,7 +80,7 @@ async def _file():
     )
 
 
-async def test_new_generation_isolates_old_tail_and_cleanup_bounds_version_retention(database, monkeypatch):
+async def test_new_generation_isolates_old_tail_and_cleanup_bounds_generation_retention(database, monkeypatch):
     """构建不复用代次；旧内容不可见，清理后只保留 active 版本。"""
     await _file()
     repo = KnowledgeFileRepository()
@@ -122,8 +127,9 @@ async def test_new_generation_isolates_old_tail_and_cleanup_bounds_version_reten
     )
     assert len(await tasks.process_knowledge_projections()) == 2
     async with database() as session:
-        versions = (await session.scalars(select(KnowledgeFileVersion))).all()
-        assert len(versions) == 1 and versions[0].generation == current and versions[0].is_active
+        file = await session.scalar(select(KnowledgeFile).where(KnowledgeFile.file_id == "file-test"))
+        assert file.active_generation == current
+        assert file.building_generation is None
         assert await session.scalar(select(func.count()).select_from(KnowledgeChunk)) == 1
         assert set(await session.scalars(select(KnowledgeProjectionOutbox.status))) == {"applied"}
 
@@ -168,6 +174,27 @@ async def test_file_owner_is_independent_of_tasker_and_rejects_replaced_callback
             processing_owner="old",
         )
     assert (await repo.get_by_file_id("file-test")).active_generation == 1
+    await KnowledgeChunkRepository().batch_upsert(
+        [
+            {
+                "chunk_id": "serving",
+                "kb_id": "kb-test",
+                "file_id": "file-test",
+                "chunk_index": 0,
+                "generation": 1,
+                "content": "old content",
+            },
+            {
+                "chunk_id": "unpublished",
+                "kb_id": "kb-test",
+                "file_id": "file-test",
+                "chunk_index": 0,
+                "generation": generation,
+                "content": "new content",
+            },
+        ]
+    )
+    assert [c.content for c in await KnowledgeChunkRepository().list_by_file_id("file-test")] == ["old content"]
 
 
 async def test_cleanup_error_remains_pending_and_concurrent_worker_skips_locked_event(database, monkeypatch):
@@ -271,7 +298,6 @@ async def test_cleanup_waits_for_late_index_write_before_marking_applied(databas
         assert await cleaner == [key]
         async with database() as session:
             assert await session.scalar(select(func.count()).select_from(KnowledgeChunk)) == 0
-            assert await session.scalar(select(func.count()).select_from(KnowledgeFileVersion)) == 0
             assert await session.scalar(select(KnowledgeProjectionOutbox.status)) == "applied"
     finally:
         release.set()

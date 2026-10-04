@@ -23,7 +23,7 @@ from yuxi.modules.tasks.service import TaskContext, Tasker
 from yuxi.infrastructure.postgres.manager import PostgresManager
 from yuxi.modules.tasks.models import TaskRecord
 from yuxi.modules.knowledge.models import EvaluationDataset, EvaluationRun, KnowledgeBase, KnowledgeFile
-from yuxi.shared.datetime import utc_now_naive
+from yuxi.shared.datetime import utc_now
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
 
@@ -84,7 +84,7 @@ async def durable_task_schema(monkeypatch):
 
 
 def _task_data(*, dedupe_key: str | None = None) -> dict:
-    now = utc_now_naive()
+    now = utc_now()
     return {
         "name": "pytest durable task",
         "type": "knowledge_parse",
@@ -108,7 +108,7 @@ async def test_concurrent_claim_has_single_owner_and_rejects_late_writer(durable
     task_id = uuid.uuid4().hex
     repo = TaskRepository()
     await repo.create(task_id, _task_data())
-    now = utc_now_naive()
+    now = utc_now()
 
     claims = await asyncio.gather(
         repo.claim(task_id, worker_id="owner-a", lease_seconds=30, now=now),
@@ -141,7 +141,7 @@ async def test_concurrent_claim_has_single_owner_and_rejects_late_writer(durable
 
 async def test_unknown_expired_task_does_not_rollback_other_reconciliation(durable_task_schema) -> None:
     repo = TaskRepository()
-    now = utc_now_naive()
+    now = utc_now()
     unknown_id = uuid.uuid4().hex
     known_id = uuid.uuid4().hex
     await repo.create(unknown_id, {**_task_data(), "type": "removed_task_type"})
@@ -342,7 +342,7 @@ async def test_knowledge_task_failure_fences_file_intermediate_state(durable_tas
     assert (await KnowledgeFileRepository().get_by_file_id(file_id)).status == "parsing"
 
     reconciled = await repo.reconcile_expired_leases(
-        now=utc_now_naive(),
+        now=utc_now(),
         before_fail=finalize_task_failure,
     )
     assert reconciled == [(task_id, "failed", 1)]
@@ -425,7 +425,7 @@ async def test_cancel_request_wins_race_with_successful_handler(durable_task_sch
 
 
 async def test_dataset_completion_and_task_success_share_owner_transaction(durable_task_schema) -> None:
-    now = utc_now_naive()
+    now = utc_now()
     dataset_id = f"dataset_{uuid.uuid4().hex[:8]}"
     kb_id = f"kb_{uuid.uuid4().hex[:8]}"
     task_id = uuid.uuid4().hex
@@ -477,7 +477,7 @@ async def test_dataset_completion_and_task_success_share_owner_transaction(durab
 
 
 async def test_expired_owner_cannot_commit_dataset_completion(durable_task_schema) -> None:
-    now = utc_now_naive()
+    now = utc_now()
     dataset_id = f"dataset_{uuid.uuid4().hex[:8]}"
     kb_id = f"kb_{uuid.uuid4().hex[:8]}"
     task_id = uuid.uuid4().hex
@@ -604,7 +604,7 @@ async def test_late_dataset_attachment_preserves_same_task_failure(durable_task_
 
 
 async def test_expired_evaluation_task_converges_run_when_observed(durable_task_schema) -> None:
-    now = utc_now_naive()
+    now = utc_now()
     run_id = f"run_{uuid.uuid4().hex[:8]}"
     dataset_id = f"dataset_{uuid.uuid4().hex[:8]}"
     kb_id = f"kb_{uuid.uuid4().hex[:8]}"
@@ -660,7 +660,7 @@ async def test_expired_evaluation_task_converges_run_when_observed(durable_task_
 
 
 async def test_worker_shutdown_commits_evaluation_failure_with_task(durable_task_schema) -> None:
-    now = utc_now_naive()
+    now = utc_now()
     run_id = f"run_{uuid.uuid4().hex[:8]}"
     dataset_id = f"dataset_{uuid.uuid4().hex[:8]}"
     kb_id = f"kb_{uuid.uuid4().hex[:8]}"
@@ -710,7 +710,7 @@ async def test_worker_shutdown_commits_evaluation_failure_with_task(durable_task
 
 async def test_payload_lookup_finds_active_task_beyond_recent_history_window(durable_task_schema) -> None:
     target_id = uuid.uuid4().hex
-    now = utc_now_naive()
+    now = utc_now()
     async with durable_task_schema.get_async_session_context() as session:
         session.add(
             TaskRecord(

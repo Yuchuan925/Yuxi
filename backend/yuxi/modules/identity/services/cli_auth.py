@@ -17,7 +17,7 @@ from yuxi.modules.identity.repositories.api_keys import (
     APIKeySubjectUnavailable,
 )
 from yuxi.modules.identity.security import AuthUtils
-from yuxi.shared.datetime import utc_now_naive
+from yuxi.shared.datetime import utc_now
 
 CLI_AUTH_SESSION_TTL_SECONDS = 10 * 60
 CLI_AUTH_POLL_INTERVAL_SECONDS = 2
@@ -60,7 +60,7 @@ async def _generate_unique_user_code(db: AsyncSession) -> str:
 
 
 def _expire_if_needed(session: CLIAuthSession, now=None) -> bool:
-    now = now or utc_now_naive()
+    now = now or utc_now()
     if session.status in {CLI_AUTH_STATUS_PENDING, CLI_AUTH_STATUS_APPROVED} and session.expires_at <= now:
         session.status = CLI_AUTH_STATUS_EXPIRED
         return True
@@ -69,7 +69,7 @@ def _expire_if_needed(session: CLIAuthSession, now=None) -> bool:
 
 async def create_cli_auth_session(db: AsyncSession, key_name: str | None = None) -> tuple[CLIAuthSession, str]:
     device_code = _generate_device_code()
-    now = utc_now_naive()
+    now = utc_now()
     session = CLIAuthSession(
         device_code_hash=_hash_secret(device_code),
         user_code=await _generate_unique_user_code(db),
@@ -111,7 +111,7 @@ async def approve_cli_auth_session(db: AsyncSession, user_code: str, user: User)
 
     session.status = CLI_AUTH_STATUS_APPROVED
     session.approved_user_id = user.id
-    session.approved_at = utc_now_naive()
+    session.approved_at = utc_now()
     await db.commit()
     await db.refresh(session)
     return session
@@ -163,7 +163,7 @@ async def exchange_cli_auth_token(db: AsyncSession, device_code: str) -> dict:
     if session.status == CLI_AUTH_STATUS_PENDING:
         raise CLIAuthError("authorization_pending", "等待浏览器授权", status_code=400)
     if session.status == CLI_AUTH_STATUS_CONSUMED:
-        if session.expires_at <= utc_now_naive():
+        if session.expires_at <= utc_now():
             raise CLIAuthError("expired_token", "授权结果重放窗口已过期", status_code=410)
         return await _build_cli_exchange_result(db, session)
     if session.status != CLI_AUTH_STATUS_APPROVED or not session.approved_user_id:
@@ -191,7 +191,7 @@ async def exchange_cli_auth_token(db: AsyncSession, device_code: str) -> dict:
 
     session.status = CLI_AUTH_STATUS_CONSUMED
     session.api_key_id = api_key.id
-    session.consumed_at = utc_now_naive()
+    session.consumed_at = utc_now()
     await db.commit()
     await db.refresh(api_key)
     return await _build_cli_exchange_result(db, session)

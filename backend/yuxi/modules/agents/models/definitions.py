@@ -19,7 +19,7 @@ from sqlalchemy.orm import relationship
 from yuxi.infrastructure.minio.client import normalize_public_minio_url
 from yuxi.infrastructure.postgres.base import JSON_VALUE
 from yuxi.infrastructure.postgres.base import BusinessBase as Base
-from yuxi.shared.datetime import format_utc_datetime, utc_now_naive
+from yuxi.shared.datetime import format_utc_datetime, utc_now
 
 
 class AgentEnv(Base):
@@ -30,8 +30,8 @@ class AgentEnv(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     uid = Column(String, ForeignKey("users.uid"), nullable=False, unique=True, index=True)
     env = Column(JSON, nullable=False, default=dict)
-    created_at = Column(DateTime, default=utc_now_naive)
-    updated_at = Column(DateTime, default=utc_now_naive, onupdate=utc_now_naive)
+    created_at = Column(DateTime(timezone=True), default=utc_now)
+    updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
 
     user = relationship("User", back_populates="agent_env")
 
@@ -69,8 +69,8 @@ class Agent(Base):
 
     created_by = Column(String(64), nullable=True, index=True)
     updated_by = Column(String(64), nullable=True)
-    created_at = Column(DateTime, default=utc_now_naive)
-    updated_at = Column(DateTime, default=utc_now_naive, onupdate=utc_now_naive)
+    created_at = Column(DateTime(timezone=True), default=utc_now)
+    updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
 
     __table_args__ = (
         CheckConstraint("visibility IN ('private', 'shared')", name="ck_agents_visibility"),

@@ -174,7 +174,7 @@ async def finish_turn_observation_if_terminal(turn_id: str) -> None:
                 "uid": turn.uid,
                 "status": turn.status,
                 "created_at": turn.created_at,
-                "finished_at": max(turn.finished_at, datetime.now(UTC).replace(tzinfo=None)),
+                "finished_at": max(turn.finished_at, datetime.now(UTC)),
             }
         await asyncio.wait_for(asyncio.to_thread(export_turn_root, **details), timeout=3)
     except Exception as exc:

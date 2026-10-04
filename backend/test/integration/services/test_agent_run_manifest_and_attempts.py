@@ -21,7 +21,7 @@ from yuxi.modules.agents.models.threads import Conversation
 from yuxi.modules.agents.models.messages import Message
 from yuxi.modules.workspace.models import Project
 from yuxi.modules.identity.models import User
-from yuxi.shared.datetime import utc_now_naive
+from yuxi.shared.datetime import utc_now
 
 from agent_run_test_helpers import create_agent_run
 
@@ -140,7 +140,7 @@ async def test_fresh_run_fact_schema_contains_manifest_and_attempt_constraints(f
 async def test_attempt_history_survives_retry_takeover_and_reconciliation(fact_database):
     """重试、接管与失联收敛各自留下不可改写的 attempt 事实。"""
     _, session_factory = fact_database
-    now = utc_now_naive()
+    now = utc_now()
     owner_a = "worker-a:token-1"
     owner_b = "worker-b:token-2"
     run_id, thread_id = await _create_run(session_factory)
@@ -211,7 +211,7 @@ async def test_attempt_history_survives_retry_takeover_and_reconciliation(fact_d
 async def test_concurrent_claims_produce_single_valid_attempt(fact_database):
     """真实行锁下并发 claim 只有一个 attempt 获得有效执行权。"""
     _, session_factory = fact_database
-    now = utc_now_naive()
+    now = utc_now()
     run_id, thread_id = await _create_run(session_factory)
 
     async def claim(worker_id: str) -> bool:
@@ -241,7 +241,7 @@ async def test_concurrent_claims_produce_single_valid_attempt(fact_database):
 async def test_duplicate_attempt_no_rejected_by_unique_constraint(fact_database):
     """(run_id, attempt_no) 唯一约束是执行占有事实的数据库级失败面。"""
     _, session_factory = fact_database
-    now = utc_now_naive()
+    now = utc_now()
     run_id, thread_id = await _create_run(session_factory)
 
     try:
@@ -275,7 +275,7 @@ async def test_duplicate_attempt_no_rejected_by_unique_constraint(fact_database)
 async def test_manifest_write_once_keeps_original_fingerprint_after_config_change(fact_database):
     """配置变化后重放不能改写历史 Run 的 manifest 与指纹。"""
     _, session_factory = fact_database
-    now = utc_now_naive()
+    now = utc_now()
     owner = "worker-manifest:token-1"
     run_id, thread_id = await _create_run(session_factory)
 
@@ -324,7 +324,7 @@ async def test_manifest_write_once_keeps_original_fingerprint_after_config_chang
 async def test_manifest_rejects_stale_owner_and_expired_lease(fact_database):
     """非 owner 或过期 lease 不能固化 manifest；历史 Run 的 NULL 保持 unknown。"""
     _, session_factory = fact_database
-    now = utc_now_naive()
+    now = utc_now()
     run_id, thread_id = await _create_run(session_factory)
     legacy_run_id, legacy_thread_id = await _create_run(session_factory)
 
@@ -375,7 +375,7 @@ async def test_manifest_rejects_stale_owner_and_expired_lease(fact_database):
 async def test_run_timing_is_write_once_under_real_postgres_lease(fact_database):
     """阶段时间由有效 owner 写入，重放和过期 owner 都不能改写。"""
     _, session_factory = fact_database
-    now = utc_now_naive()
+    now = utc_now()
     owner = "worker-timing:token-1"
     run_id, thread_id = await _create_run(session_factory)
 

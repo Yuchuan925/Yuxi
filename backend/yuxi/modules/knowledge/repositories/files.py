@@ -5,14 +5,13 @@ from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from typing import Any
-from uuid import uuid4
 
-from sqlalchemy import DateTime, String, case, cast, delete, func, literal, or_, select, union_all, update
+from sqlalchemy import DateTime, String, case, cast, func, literal, or_, select, union_all, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from yuxi.infrastructure.observability.logging import logger
 from yuxi.infrastructure.postgres.manager import pg_manager
-from yuxi.modules.knowledge.models import KnowledgeBase, KnowledgeFile, KnowledgeFileVersion, KnowledgeProjectionOutbox
+from yuxi.modules.knowledge.models import KnowledgeBase, KnowledgeFile, KnowledgeProjectionOutbox
 from yuxi.modules.tasks.models import TaskRecord
 from yuxi.shared.datetime import utc_now
 
@@ -77,7 +76,6 @@ class KnowledgeFileRepository:
         "generation",
         "active_generation",
         "building_generation",
-        "active_version_id",
         "deleted_at",
         "projection_status",
         "projection_error",
@@ -485,8 +483,8 @@ class KnowledgeFileRepository:
                 segment.label("filename"),
                 literal("folder").label("file_type"),
                 literal("done").label("status"),
-                cast(literal(None), DateTime).label("created_at"),
-                cast(literal(None), DateTime).label("updated_at"),
+                cast(literal(None), DateTime(timezone=True)).label("created_at"),
+                cast(literal(None), DateTime(timezone=True)).label("updated_at"),
                 literal(0).label("file_size"),
                 literal(0).label("chunk_count"),
                 literal(0).label("token_count"),
@@ -659,7 +657,7 @@ class KnowledgeFileRepository:
         }
 
     async def upsert(self, file_id: str, data: dict[str, Any]) -> KnowledgeFile:
-        """写入文件事实，并在同一事务登记初始版本。"""
+        """写入文件事实。"""
         sanitized_data = self._sanitize_data(data)
         async with pg_manager.get_async_session_context() as session:
             kb = await session.scalar(
@@ -684,26 +682,6 @@ class KnowledgeFileRepository:
                     setattr(record, key, value)
                 await session.flush()
 
-            if record.kb_id and not record.is_folder:
-                generation = int(record.generation or 1)
-                version = await session.scalar(
-                    select(KnowledgeFileVersion).where(
-                        KnowledgeFileVersion.file_id == record.file_id,
-                        KnowledgeFileVersion.generation == generation,
-                    )
-                )
-                if version is None:
-                    version = KnowledgeFileVersion(
-                        version_id=uuid4().hex,
-                        file_id=record.file_id,
-                        kb_id=record.kb_id,
-                        generation=generation,
-                        content_hash=record.content_hash,
-                        markdown_file=record.markdown_file,
-                        processing_params=record.processing_params,
-                    )
-                    session.add(version)
-                    record.active_version_id = version.version_id
             return record
 
     async def update_fields(
@@ -730,29 +708,6 @@ class KnowledgeFileRepository:
                 setattr(record, key, value)
             return record
 
-    async def cleanup_versions(self, *, kb_id: str, file_id: str, generation: int | None) -> None:
-        """外部清理后移除废弃版本；active 与 building 版本不得被代次清理删除。"""
-        async with pg_manager.get_async_session_context() as session:
-            record = await session.scalar(
-                select(KnowledgeFile)
-                .where(KnowledgeFile.kb_id == kb_id, KnowledgeFile.file_id == file_id)
-                .with_for_update()
-            )
-            if record is None:
-                return
-            if generation is None:
-                if record.deleted_at is None:
-                    raise ValueError("不能清理仍可见文件的全部版本")
-                record.active_version_id = None
-                record.building_generation = None
-                await session.flush()
-            elif generation in (record.active_generation, record.building_generation):
-                raise ValueError("不能清理 active 或 building 版本")
-            filters = [KnowledgeFileVersion.file_id == file_id, KnowledgeFileVersion.kb_id == kb_id]
-            if generation is not None:
-                filters.append(KnowledgeFileVersion.generation == generation)
-            await session.execute(delete(KnowledgeFileVersion).where(*filters))
-
     async def begin_index_generation(
         self, *, kb_id: str, file_id: str, processing_task_id: str | None = None, processing_owner: str | None = None
     ) -> int:
@@ -771,18 +726,6 @@ class KnowledgeFileRepository:
             record.generation = generation
             record.building_generation = generation
             record.projection_status = "building"
-            session.add(
-                KnowledgeFileVersion(
-                    version_id=uuid4().hex,
-                    file_id=file_id,
-                    kb_id=kb_id,
-                    generation=generation,
-                    content_hash=record.content_hash,
-                    markdown_file=record.markdown_file,
-                    processing_params=record.processing_params,
-                    is_active=False,
-                )
-            )
             return generation
 
     async def finish_index_generation(
@@ -807,24 +750,7 @@ class KnowledgeFileRepository:
             )
             if record.building_generation != generation:
                 raise ValueError(f"File {file_id} generation {generation} is not the current build")
-            version = await session.scalar(
-                select(KnowledgeFileVersion).where(
-                    KnowledgeFileVersion.file_id == file_id,
-                    KnowledgeFileVersion.generation == generation,
-                )
-            )
-            if version is None:
-                raise ValueError(f"File {file_id} generation {generation} version not found")
             self._enqueue_generation_cleanup(session, record, int(record.active_generation))
-            await session.execute(
-                update(KnowledgeFileVersion)
-                .where(
-                    KnowledgeFileVersion.file_id == file_id,
-                )
-                .values(is_active=False)
-            )
-            version.is_active = True
-            record.active_version_id = version.version_id
             record.active_generation = generation
             record.building_generation = None
             record.status = "indexed"
@@ -911,7 +837,7 @@ class KnowledgeFileRepository:
                 file_record = await session.scalar(select(KnowledgeFile).where(*filters).with_for_update())
                 if file_record is None:
                     return None
-                database_now = await session.scalar(select(func.timezone("utc", func.clock_timestamp())))
+                database_now = await session.scalar(select(func.clock_timestamp()))
                 if task_record.lease_expires_at is None or task_record.lease_expires_at <= database_now:
                     return None
                 for key, value in sanitized_data.items():

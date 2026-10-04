@@ -73,9 +73,6 @@ async def process_knowledge_projections(_context: dict | None = None) -> list[st
                             )
                             if event.operation == "file_deleted":
                                 await executor.cleanup_file_resources(event.kb_id, event.aggregate_id)
-                            await KnowledgeFileRepository().cleanup_versions(
-                                kb_id=event.kb_id, file_id=event.aggregate_id, generation=generation
-                            )
                     else:
                         raise ValueError(f"Unknown projection operation: {event.operation}")
                 event.status = "applied"

@@ -32,7 +32,7 @@ from yuxi.modules.agents.models.threads import Conversation, SubagentThread
 from yuxi.modules.agents.models.messages import Message, ToolCall
 from yuxi.modules.workspace.models import Project
 from yuxi.modules.identity.models import User
-from yuxi.shared.datetime import utc_now_naive
+from yuxi.shared.datetime import utc_now
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
 
@@ -104,7 +104,7 @@ async def test_owner_heartbeat_and_terminal_are_lease_fenced(lease_database):
     """旧 attempt 不能续租、写输出或覆盖新 owner 的终态。"""
     sessions = lease_database
     run_id, thread_id, _ = await _create_run(sessions)
-    now = utc_now_naive()
+    now = utc_now()
     try:
         async with sessions() as db:
             repo = AgentRunRepository(db)
@@ -163,7 +163,7 @@ async def test_expired_lease_reconciliation_is_single_winner_and_closes_audit(le
     """并发 reconciler 只能收敛一次，同事务关闭审计、Turn 与 lease。"""
     sessions = lease_database
     run_id, thread_id, _ = await _create_run(sessions)
-    now = utc_now_naive()
+    now = utc_now()
     try:
         async with sessions() as db:
             repo = AgentRunRepository(db)
@@ -206,7 +206,7 @@ async def test_model_audit_is_idempotent_and_keeps_turn_run_owner(lease_database
     """同一模型操作只有一条审计事实，且旧 owner 不能改写。"""
     sessions = lease_database
     run_id, thread_id, _ = await _create_run(sessions)
-    now = utc_now_naive()
+    now = utc_now()
     try:
         async with sessions() as db:
             repo = AgentRunRepository(db)
@@ -287,7 +287,7 @@ async def test_tool_audit_projects_only_declared_model_call(lease_database):
     """工具审计须由同 Run 模型调用声明，并同步唯一兼容 ToolCall。"""
     sessions = lease_database
     run_id, thread_id, _ = await _create_run(sessions)
-    now = utc_now_naive()
+    now = utc_now()
     try:
         async with sessions() as db:
             repo = AgentRunRepository(db)

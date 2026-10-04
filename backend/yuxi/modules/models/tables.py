@@ -12,7 +12,7 @@ from sqlalchemy import (
 )
 
 from yuxi.infrastructure.postgres.base import BusinessBase as Base
-from yuxi.shared.datetime import format_utc_datetime, utc_now_naive
+from yuxi.shared.datetime import format_utc_datetime, utc_now
 
 _SENSITIVE_KEY_PARTS = ("authorization", "api_key", "apikey", "token", "secret", "password", "cookie")
 
@@ -66,8 +66,8 @@ class ModelProvider(Base):
 
     created_by = Column(String(100), nullable=True)
     updated_by = Column(String(100), nullable=True)
-    created_at = Column(DateTime, default=utc_now_naive, comment="创建时间")
-    updated_at = Column(DateTime, default=utc_now_naive, onupdate=utc_now_naive, comment="更新时间")
+    created_at = Column(DateTime(timezone=True), default=utc_now, comment="创建时间")
+    updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, comment="更新时间")
 
     def to_dict(self) -> dict[str, Any]:
         """返回管理端可见配置；凭据只保留是否已配置的事实。"""

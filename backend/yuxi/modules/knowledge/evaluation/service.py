@@ -24,7 +24,7 @@ from yuxi.modules.knowledge.runtime import knowledge_base as kb_manager
 from yuxi.modules.models import select_model
 from yuxi.modules.tasks.repository import TaskRepository
 from yuxi.modules.tasks.service import TaskContext, tasker
-from yuxi.shared.datetime import coerce_any_to_utc_datetime, format_utc_datetime, utc_now, utc_now_naive
+from yuxi.shared.datetime import coerce_any_to_utc_datetime, format_utc_datetime, utc_now
 
 DATASET_PERSIST_BATCH_SIZE = max(1, int(os.getenv("YUXI_DATASET_PERSIST_BATCH_SIZE") or 1))
 _TASK_NOT_LOADED = object()
@@ -35,7 +35,7 @@ class _DatasetAlreadyCompleted(RuntimeError):
 
 
 def build_evaluation_run_name(started_at=None, hash_value: str | None = None) -> str:
-    date_part = (started_at or utc_now_naive()).strftime("%Y%m%d")
+    date_part = (started_at or utc_now()).strftime("%Y%m%d")
     hash_part = re.sub(r"[^a-fA-F0-9]", "", hash_value or uuid.uuid4().hex).lower()[:6]
     if len(hash_part) < 6:
         hash_part = (hash_part + uuid.uuid4().hex)[:6]
@@ -164,7 +164,7 @@ class EvaluationService:
         elif (
             task is None
             and row.started_at
-            and coerce_any_to_utc_datetime(row.started_at).replace(tzinfo=None) < utc_now_naive() - timedelta(minutes=1)
+            and coerce_any_to_utc_datetime(row.started_at) < utc_now() - timedelta(minutes=1)
         ):
             error = "评估任务提交中断"
             completed_at = utc_now()

@@ -10,7 +10,7 @@ from yuxi.modules.agents.models.messages import Message
 from yuxi.modules.agents.models.runs import AgentRun
 from yuxi.modules.agents.models.threads import Conversation
 from yuxi.modules.agents.models.turns import AgentTurn
-from yuxi.shared.datetime import utc_now_naive
+from yuxi.shared.datetime import utc_now
 
 
 class AgentInputRepository:
@@ -195,7 +195,7 @@ class AgentInputRepository:
         input_item.turn_id = turn_id
         input_item.consumed_run_id = run_id
         input_item.cutoff_seq = cutoff_seq
-        input_item.consumed_at = utc_now_naive()
+        input_item.consumed_at = utc_now()
         run.input_id = input_id
         receipt_ids = select(AgentInputReceipt.id).where(
             AgentInputReceipt.input_id == input_id,
@@ -220,7 +220,7 @@ class AgentInputRepository:
         if input_item.status != "pending":
             raise ValueError("只能取消待消费 Input")
         input_item.status = "cancelled"
-        input_item.cancelled_at = utc_now_naive()
+        input_item.cancelled_at = utc_now()
         message_ids = select(AgentInputMessage.message_id).where(AgentInputMessage.input_id == input_item.id)
         await self.db.execute(update(Message).where(Message.id.in_(message_ids)).values(delivery_status="cancelled"))
         await self.db.flush()

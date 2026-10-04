@@ -22,11 +22,6 @@ def utc_now() -> dt.datetime:
     return dt.datetime.now(UTC)
 
 
-def utc_now_naive() -> dt.datetime:
-    """Return the current UTC time as a naive datetime (for DB fields without timezone)."""
-    return dt.datetime.now(UTC).replace(tzinfo=None)
-
-
 def shanghai_now() -> dt.datetime:
     """Return the current Asia/Shanghai time as an aware datetime."""
     return utc_now().astimezone(SHANGHAI_TZ)
@@ -147,7 +142,6 @@ __all__ = [
     "UTC",
     "SHANGHAI_TZ",
     "utc_now",
-    "utc_now_naive",
     "shanghai_now",
     "ensure_utc",
     "ensure_shanghai",

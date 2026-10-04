@@ -28,7 +28,7 @@ from yuxi.modules.agents.services.input_config import resolve_agent_run_model_sp
 from yuxi.modules.agents.services.scheduler import claim_next_input, deliver
 from yuxi.modules.agents.services.scope import ActorScope
 from yuxi.modules.workspace.services.bindings import resolve_conversation_workdir_path
-from yuxi.shared.datetime import format_utc_datetime, utc_now_naive
+from yuxi.shared.datetime import format_utc_datetime, utc_now
 
 
 async def require_thread(*, db: AsyncSession, scope: ActorScope, thread_id: str, lock: bool = False) -> Conversation:
@@ -180,7 +180,7 @@ async def update_thread(
         if model_spec is not None:
             metadata["model_spec"] = await resolve_agent_run_model_spec(model_spec, None, db)
         conversation.extra_metadata = metadata
-    conversation.updated_at = utc_now_naive()
+    conversation.updated_at = utc_now()
     await db.commit()
     return _thread_public(conversation)
 
@@ -202,7 +202,7 @@ async def archive_thread(*, db: AsyncSession, scope: ActorScope, thread_id: str)
     if active_turn is not None or inputs or active_run is not None:
         raise HTTPException(status_code=409, detail="Thread 仍有活跃执行或待处理输入")
     conversation.status = "archived"
-    conversation.updated_at = utc_now_naive()
+    conversation.updated_at = utc_now()
     await db.commit()
     return _thread_public(conversation)
 
@@ -280,6 +280,7 @@ async def continue_queue(*, db: AsyncSession, scope: ActorScope, thread_id: str,
 
     conversation.queue_paused = False
     dispatch = await claim_next_input(db=db, conversation=conversation)
+    run = await AgentRunRepository(db).get_run(dispatch.run_id) if dispatch else None
     receipt = await receipt_repo.create(
         receipt_id=str(uuid.uuid4()),
         idempotency_key=idempotency_key,
@@ -288,6 +289,7 @@ async def continue_queue(*, db: AsyncSession, scope: ActorScope, thread_id: str,
         thread_id=thread_id,
         event_type=event_type,
         intent_hash=intent_hash,
+        turn_id=run.turn_id if dispatch else None,
         run_id=dispatch.run_id if dispatch else None,
     )
     await db.commit()

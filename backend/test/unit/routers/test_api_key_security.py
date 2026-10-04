@@ -14,7 +14,7 @@ from yuxi.modules.identity.repositories.api_keys import APIKeyRepository
 from yuxi.modules.identity.models import APIKey, Department, User
 from yuxi.infrastructure.postgres.base import Base
 from yuxi.modules.identity.security import AuthUtils
-from yuxi.shared.datetime import utc_now_naive
+from yuxi.shared.datetime import utc_now
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.unit]
 
@@ -241,8 +241,8 @@ async def test_identity_verifies_api_key_lifecycle(session, key_state):
         user_id=owner.id,
         created_by=str(owner.id),
         is_enabled=key_state != "disabled",
-        revoked_at=utc_now_naive() if key_state == "revoked" else None,
-        expires_at=utc_now_naive() - timedelta(seconds=1) if key_state == "expired" else None,
+        revoked_at=utc_now() if key_state == "revoked" else None,
+        expires_at=utc_now() - timedelta(seconds=1) if key_state == "expired" else None,
     )
     db.add(key)
     await db.commit()

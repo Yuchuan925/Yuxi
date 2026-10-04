@@ -14,7 +14,7 @@ from yuxi.modules.agents.models.threads import Conversation
 from yuxi.modules.agents.models.messages import Message
 from yuxi.modules.workspace.models import Project
 from yuxi.modules.identity.models import User
-from yuxi.shared.datetime import utc_now_naive
+from yuxi.shared.datetime import utc_now
 
 
 async def create_agent_run(
@@ -104,7 +104,7 @@ async def create_agent_run(
                 status=status,
                 run_type="chat",
                 worker_id=worker_id,
-                heartbeat_at=utc_now_naive() if worker_id else None,
+                heartbeat_at=utc_now() if worker_id else None,
                 lease_expires_at=lease_expires_at,
             )
         )

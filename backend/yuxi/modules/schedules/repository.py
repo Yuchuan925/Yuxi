@@ -12,7 +12,7 @@ from yuxi.modules.agents.models.runs import AgentRun
 from yuxi.modules.agents.models.turns import AgentTurn
 from yuxi.modules.identity.models import User
 from yuxi.modules.schedules.models import ScheduledAgentJob, ScheduledAgentRun
-from yuxi.shared.datetime import utc_now_naive
+from yuxi.shared.datetime import utc_now
 
 
 class ScheduledAgentRepository:
@@ -190,6 +190,6 @@ class ScheduledAgentRepository:
     async def delete_job(self, job: ScheduledAgentJob) -> None:
         """软删除任务，保留执行记录。"""
         job.enabled = False
-        job.deleted_at = utc_now_naive()
+        job.deleted_at = utc_now()
         job.updated_at = job.deleted_at
         await self.db.flush()

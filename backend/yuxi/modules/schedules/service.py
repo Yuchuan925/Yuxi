@@ -27,7 +27,7 @@ from yuxi.modules.identity.models import User
 from yuxi.modules.schedules.models import ScheduledAgentJob, ScheduledAgentRun
 from yuxi.modules.schedules.repository import ScheduledAgentRepository
 from yuxi.modules.workspace.repositories.projects import ProjectRepository
-from yuxi.shared.datetime import format_utc_datetime, utc_now_naive
+from yuxi.shared.datetime import format_utc_datetime, utc_now
 
 SCHEDULED_AGENT_SOURCE = "scheduled_agent"
 MAX_PROMPT_LENGTH = 32_000
@@ -70,18 +70,18 @@ def validate_schedule(cron_expression: str, timezone: str) -> tuple[str, str]:
     except (ZoneInfoNotFoundError, ValueError):
         raise HTTPException(status_code=422, detail="timezone 必须是有效的 IANA 时区") from None
     try:
-        next_run_at(expression, zone, utc_now_naive())
+        next_run_at(expression, zone, utc_now())
     except (CroniterBadDateError, CroniterError, OverflowError, ValueError):
         raise HTTPException(status_code=422, detail="cron_expression 没有可计算的下一次触发时间") from None
     return expression, zone
 
 
 def next_run_at(cron_expression: str, timezone: str, after: datetime) -> datetime:
-    """计算下一次 UTC 触发时间，数据库统一保存无时区 UTC。"""
+    """计算下一次 UTC 触发时间，数据库统一保存带时区 UTC。"""
     zone = ZoneInfo(timezone)
-    local_after = after.replace(tzinfo=ZoneInfo("UTC")).astimezone(zone)
+    local_after = after.astimezone(zone)
     next_local = croniter(cron_expression, local_after).get_next(datetime)
-    return next_local.astimezone(ZoneInfo("UTC")).replace(tzinfo=None)
+    return next_local.astimezone(ZoneInfo("UTC"))
 
 
 def _normalize_text(value: str, field: str, maximum: int) -> str:
@@ -234,7 +234,7 @@ async def create_scheduled_job(*, user: User, db: AsyncSession, data: dict) -> d
 
     await _validate_project(project_id, user, db)
     await _validate_agent(agent_slug, user, db)
-    now = utc_now_naive()
+    now = utc_now()
     job = ScheduledAgentJob(
         id=str(uuid.uuid4()),
         uid=str(user.uid),
@@ -299,9 +299,9 @@ async def update_scheduled_job(*, job_id: str, user: User, db: AsyncSession, dat
     timezone = data.get("timezone", job.timezone)
     expression, timezone = validate_schedule(expression, timezone)
     if expression != job.cron_expression or timezone != job.timezone:
-        job.next_run_at = next_run_at(expression, timezone, utc_now_naive())
+        job.next_run_at = next_run_at(expression, timezone, utc_now())
     job.cron_expression, job.timezone = expression, timezone
-    now = utc_now_naive()
+    now = utc_now()
     if "enabled" in data:
         enabled = bool(data["enabled"])
         if enabled and not job.enabled:
@@ -344,7 +344,7 @@ async def run_scheduled_job_now(
     if run is None:
         await _validate_project(job.project_id, user, db)
         await _validate_agent(job.agent_slug, user, db)
-        now = utc_now_naive()
+        now = utc_now()
         run = _new_scheduled_run(
             job=job,
             trigger="manual",
@@ -468,7 +468,7 @@ async def dispatch_scheduled_run(*, scheduled_run_id: str) -> dict | None:
             current.error_message = None
             current_job = await result_db.get(ScheduledAgentJob, current.job_id)
             if current_job is not None:
-                current_job.updated_at = utc_now_naive()
+                current_job.updated_at = utc_now()
             await result_db.commit()
             input_item, run = await ScheduledAgentRepository(result_db).get_input_and_run(current.input_id)
             return _execution_to_dict(current, input_item, run)
@@ -488,7 +488,7 @@ async def recover_scheduled_dispatches(*, limit: int = 100) -> int:
     """恢复 worker 中断后遗留的定时触发意图。"""
     async with pg_manager.get_async_session_context() as db:
         records = await ScheduledAgentRepository(db).list_dispatching_runs(
-            before=utc_now_naive() - timedelta(seconds=30),
+            before=utc_now() - timedelta(seconds=30),
             limit=limit,
         )
     recovered = 0
@@ -535,7 +535,7 @@ async def claim_and_dispatch_due_jobs(*, limit: int = 20) -> int:
     count = 0
     for _ in range(max(0, limit)):
         async with pg_manager.get_async_session_context() as db:
-            run = await _claim_due_run(db=db, now=utc_now_naive())
+            run = await _claim_due_run(db=db, now=utc_now())
             if run is None:
                 break
             run_id = run.id

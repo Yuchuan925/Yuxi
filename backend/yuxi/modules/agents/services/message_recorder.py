@@ -282,7 +282,7 @@ class RunMessageRecorder:
         timestamp = event["params"].get("timestamp")
         if not isinstance(timestamp, int | float) or isinstance(timestamp, bool):
             raise ValueError("Message lifecycle 缺少有效 params.timestamp")
-        return datetime.fromtimestamp(timestamp / 1000, UTC).replace(tzinfo=None)
+        return datetime.fromtimestamp(timestamp / 1000, UTC)
 
     @staticmethod
     def _namespace(event: dict[str, Any]) -> list[str]:

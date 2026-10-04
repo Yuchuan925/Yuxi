@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from yuxi.modules.agents.models.messages import MODEL_AUDIT_MESSAGE_TYPE, Message
 from yuxi.modules.agents.models.runs import AgentRun
 from yuxi.modules.agents.models.turns import AgentTurn
-from yuxi.shared.datetime import utc_now_naive
+from yuxi.shared.datetime import utc_now
 
 
 class AgentTurnRepository:
@@ -127,7 +127,7 @@ class AgentTurnRepository:
                 raise ValueError("Turn 结果必须来自已完成的本轮顶层 Run")
         elif result_run_id is not None:
             raise ValueError("非完成 Turn 不能指定结果 Run")
-        now = utc_now_naive()
+        now = utc_now()
         turn.status = status
         turn.result_run_id = result_run_id
         turn.waitpoint = None

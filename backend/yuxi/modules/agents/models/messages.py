@@ -21,7 +21,7 @@ from sqlalchemy.orm import relationship
 
 from yuxi.infrastructure.postgres.base import JSON_VALUE
 from yuxi.infrastructure.postgres.base import BusinessBase as Base
-from yuxi.shared.datetime import format_utc_datetime, utc_now_naive
+from yuxi.shared.datetime import format_utc_datetime, utc_now
 
 MODEL_AUDIT_MESSAGE_TYPE = "model_audit"
 
@@ -77,15 +77,15 @@ class Message(Base):
     role = Column(String(20), nullable=False, comment="Message role: user/assistant/system/tool")
     content = Column(Text, nullable=False, comment="Message content")
     message_type = Column(String(30), default="text", comment="Message type: text/tool_call/tool_result")
-    created_at = Column(DateTime, default=utc_now_naive, comment="Creation time")
+    created_at = Column(DateTime(timezone=True), default=utc_now, comment="Creation time")
     extra_metadata = Column(JSON, nullable=True, comment="Additional metadata (complete message dump)")
     image_content = Column(Text, nullable=True, comment="Base64 encoded image content for multimodal messages")
     run_id = Column(String(64), nullable=True, index=True, comment="Agent run ID")
     turn_id = Column(String(64), nullable=True, index=True)
     delivery_status = Column(String(32), nullable=False, default="complete", comment="Message status")
     operation_id = Column(String(128), nullable=True, comment="同一 Run 内的 Model/Tool 稳定来源键")
-    started_at = Column(DateTime, nullable=True, comment="Yuxi 观察到操作开始的 wall-clock 时间")
-    finished_at = Column(DateTime, nullable=True, comment="Yuxi 观察到操作结束的 wall-clock 时间")
+    started_at = Column(DateTime(timezone=True), nullable=True, comment="Yuxi 观察到操作开始的 wall-clock 时间")
+    finished_at = Column(DateTime(timezone=True), nullable=True, comment="Yuxi 观察到操作结束的 wall-clock 时间")
     duration_ms = Column(BigInteger, nullable=True, comment="本进程 monotonic clock 计算的操作耗时")
     sequence = Column(BigInteger, nullable=True, comment="LangGraph 根 StreamMux 事件顺序")
     execution_status = Column(String(32), nullable=True, comment="Model/Tool 执行状态")
@@ -132,7 +132,7 @@ class ToolCall(Base):
     tool_output = Column(Text, nullable=True, comment="Tool execution result")
     status = Column(String(20), default="pending", comment="Status: pending/success/error")
     error_message = Column(Text, nullable=True, comment="Error message if failed")
-    created_at = Column(DateTime, default=utc_now_naive, comment="Creation time")
+    created_at = Column(DateTime(timezone=True), default=utc_now, comment="Creation time")
 
     # Relationships
     message = relationship("Message", back_populates="tool_calls")

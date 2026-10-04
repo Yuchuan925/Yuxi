@@ -16,7 +16,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import relationship
 
 from yuxi.infrastructure.postgres.base import BusinessBase as Base
-from yuxi.shared.datetime import format_utc_datetime, utc_now_naive
+from yuxi.shared.datetime import format_utc_datetime, utc_now
 
 UNVIEWED_RUN_MARKER = "__unviewed__"
 
@@ -39,8 +39,8 @@ class Conversation(Base):
     is_pinned = Column(Boolean, default=False, nullable=False, index=True, comment="Is pinned to top")
     last_viewed_run_id = Column(String(64), nullable=True, comment="Latest top-level run id viewed by user")
     project_id = Column(String(64), nullable=False, index=True, comment="Conversation 绑定的 Project ID")
-    created_at = Column(DateTime, default=utc_now_naive, comment="Creation time")
-    updated_at = Column(DateTime, default=utc_now_naive, onupdate=utc_now_naive, comment="Update time")
+    created_at = Column(DateTime(timezone=True), default=utc_now, comment="Creation time")
+    updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, comment="Update time")
     extra_metadata = Column(JSON, nullable=True, comment="Additional metadata")
 
     # Relationships
@@ -97,8 +97,8 @@ class SubagentThread(Base):
     child_thread_id = Column(String(64), nullable=False, unique=True, index=True, comment="Child thread ID")
     subagent_slug = Column(String(64), nullable=False, index=True, comment="Subagent slug")
     created_by_run_id = Column(String(64), nullable=False, index=True, comment="Run that created this subagent thread")
-    created_at = Column(DateTime, default=utc_now_naive, comment="Creation time")
-    updated_at = Column(DateTime, default=utc_now_naive, onupdate=utc_now_naive, comment="Update time")
+    created_at = Column(DateTime(timezone=True), default=utc_now, comment="Creation time")
+    updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, comment="Update time")
 
     def to_dict(self) -> dict[str, Any]:
         return {
