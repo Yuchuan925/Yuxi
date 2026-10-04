@@ -54,7 +54,7 @@ class ReleaseWorkflowTests(unittest.TestCase):
             "install -d -o 1000 -g 1000 -m 0700 /app/user-data /app/skill-sources /app/skill-projections"
         )
         workflow = re.sub(r"\\\n\s*", "", workflow)
-        jobs = workflow.split("  durable-task-worker-path:\n", 1)[1].split("\n  system-tests:", 1)
+        jobs = workflow.split("  background-job-worker-path:\n", 1)[1].split("\n  system-tests:", 1)
         for job in jobs:
             self.assertIn(command, job)
             self.assertLess(job.index("bash scripts/ci_build_topology_images.sh"), job.index(command))
@@ -70,7 +70,7 @@ class ReleaseWorkflowTests(unittest.TestCase):
         for mount in ("/app/user-data", "/app/skill-sources", "/app/skill-projections"):
             with self.subTest(mount=mount), self.assertRaises(AssertionError):
                 self.assert_runtime_mount_ownership(workflow.replace(" " + mount, ""))
-        for job in ("durable-task-worker-path", "system-tests"):
+        for job in ("background-job-worker-path", "system-tests"):
             with self.subTest(job=job), self.assertRaises(AssertionError):
                 before, section = workflow.split("  " + job + ":\n", 1)
                 section = section.replace("install -d -o 1000 -g 1000", "true", 1)

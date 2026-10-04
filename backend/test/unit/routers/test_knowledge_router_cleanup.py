@@ -6,7 +6,7 @@ from fastapi import HTTPException, UploadFile
 
 import yuxi.api.routers.knowledge.management as knowledge_router
 from yuxi.modules.knowledge.read_models import KnowledgeBaseDetail
-import yuxi.modules.knowledge.services.tasks as knowledge_task_service
+import yuxi.modules.knowledge.services.background_jobs as knowledge_job_service
 
 pytestmark = pytest.mark.asyncio
 
@@ -28,9 +28,9 @@ def _database_detail(**stats) -> KnowledgeBaseDetail:
     )
 
 
-class FakeTaskContext:
+class FakeBackgroundJobContext:
     def __init__(self, payload: dict | None = None):
-        self.task_id = "task_1"
+        self.job_id = "job_1"
         self.worker_id = "worker_1"
         self.payload = payload or {}
         self.result = None
@@ -194,9 +194,9 @@ async def test_index_documents_uses_uid_for_operator(monkeypatch):
         captured["operator_id"] = operator_id
         return {"file_id": file_id, "status": "indexed"}
 
-    async def fake_enqueue(name: str, task_type: str, payload: dict):
-        await knowledge_task_service.run_knowledge_index(FakeTaskContext(payload))
-        return SimpleNamespace(id="task_1")
+    async def fake_enqueue(name: str, job_type: str, payload: dict):
+        await knowledge_job_service.run_knowledge_index(FakeBackgroundJobContext(payload))
+        return SimpleNamespace(id="job_1"), True
 
     monkeypatch.setattr(
         knowledge_router,
@@ -205,7 +205,7 @@ async def test_index_documents_uses_uid_for_operator(monkeypatch):
     )
     monkeypatch.setattr(knowledge_router.knowledge_base, "get_database_info", fake_get_database_info)
     monkeypatch.setattr(knowledge_router.knowledge_base, "index_file", fake_index_file)
-    monkeypatch.setattr(knowledge_router.tasker, "enqueue", fake_enqueue)
+    monkeypatch.setattr(knowledge_router, "submit_job", fake_enqueue)
 
     result = await knowledge_router.index_documents(
         "kb_1",
@@ -232,7 +232,7 @@ async def test_parse_documents_rejects_oversized_direct_batch():
     assert str(knowledge_router.MAX_DIRECT_DOCUMENT_ACTION_FILE_IDS) in exc_info.value.detail
 
 
-async def test_parse_pending_documents_enqueues_status_scoped_task(monkeypatch):
+async def test_parse_pending_documents_enqueues_status_scoped_job(monkeypatch):
     captured = {"list_calls": [], "parsed": []}
 
     async def fake_ensure_database_supports_documents(kb_id: str, operation: str) -> dict:
@@ -255,8 +255,8 @@ async def test_parse_pending_documents_enqueues_status_scoped_task(monkeypatch):
     async def fake_enqueue_unique_by_payload(**kwargs):
         captured["payload"] = kwargs["payload"]
         captured["payload_match"] = kwargs["payload_match"]
-        await knowledge_task_service.run_knowledge_parse(FakeTaskContext(kwargs["payload"]))
-        return SimpleNamespace(id="task_1"), True
+        await knowledge_job_service.run_knowledge_parse(FakeBackgroundJobContext(kwargs["payload"]))
+        return SimpleNamespace(id="job_1"), True
 
     monkeypatch.setattr(
         knowledge_router,
@@ -270,7 +270,7 @@ async def test_parse_pending_documents_enqueues_status_scoped_task(monkeypatch):
         fake_list_document_file_ids_by_statuses,
     )
     monkeypatch.setattr(knowledge_router.knowledge_base, "parse_file", fake_parse_file)
-    monkeypatch.setattr(knowledge_router.tasker, "enqueue_unique_by_payload", fake_enqueue_unique_by_payload)
+    monkeypatch.setattr(knowledge_router, "submit_job", fake_enqueue_unique_by_payload)
 
     result = await knowledge_router.parse_pending_documents(
         "kb_1",
@@ -278,7 +278,7 @@ async def test_parse_pending_documents_enqueues_status_scoped_task(monkeypatch):
     )
 
     assert result["status"] == "queued"
-    assert result["task_id"] == "task_1"
+    assert result["job_id"] == "job_1"
     assert captured["ensure"] == ("kb_1", "文档解析")
     assert captured["payload_match"] == {"kb_id": "kb_1", "scope": "pending", "action": "parse"}
     assert captured["payload"]["statuses"] == knowledge_router.PENDING_PARSE_STATUSES
@@ -287,13 +287,13 @@ async def test_parse_pending_documents_enqueues_status_scoped_task(monkeypatch):
             "kb_id": "kb_1",
             "statuses": knowledge_router.PENDING_PARSE_STATUSES,
             "after_file_id": None,
-            "limit": knowledge_task_service.DOCUMENT_ACTION_BATCH_SIZE,
+            "limit": knowledge_job_service.DOCUMENT_ACTION_BATCH_SIZE,
         },
         {
             "kb_id": "kb_1",
             "statuses": knowledge_router.PENDING_PARSE_STATUSES,
             "after_file_id": "file_2",
-            "limit": knowledge_task_service.DOCUMENT_ACTION_BATCH_SIZE,
+            "limit": knowledge_job_service.DOCUMENT_ACTION_BATCH_SIZE,
         },
     ]
     assert captured["parsed"] == [
@@ -302,7 +302,7 @@ async def test_parse_pending_documents_enqueues_status_scoped_task(monkeypatch):
     ]
 
 
-async def test_reconcile_graph_build_mutates_state_only_after_unique_task_is_created(monkeypatch):
+async def test_reconcile_graph_build_mutates_state_only_after_unique_job_is_created(monkeypatch):
     captured = {}
 
     class FakeGraphService:
@@ -314,7 +314,7 @@ async def test_reconcile_graph_build_mutates_state_only_after_unique_task_is_cre
             captured["build"] = kb_id
             return {"kb_id": kb_id, "success": 1}
 
-    async def fake_has_running_graph_build_task(kb_id: str) -> bool:
+    async def fake_has_running_graph_build_job(kb_id: str) -> bool:
         return False
 
     async def fake_get_database_info(kb_id: str) -> KnowledgeBaseDetail:
@@ -323,13 +323,13 @@ async def test_reconcile_graph_build_mutates_state_only_after_unique_task_is_cre
     async def fake_enqueue_unique_by_payload(**kwargs):
         captured["payload"] = kwargs["payload"]
         assert "reconcile" not in captured
-        return SimpleNamespace(id="task_1"), True
+        return SimpleNamespace(id="job_1"), True
 
-    monkeypatch.setattr(knowledge_router, "_has_running_graph_build_task", fake_has_running_graph_build_task)
+    monkeypatch.setattr(knowledge_router, "_has_running_graph_build_job", fake_has_running_graph_build_job)
     monkeypatch.setattr(knowledge_router.knowledge_base, "get_database_info", fake_get_database_info)
     monkeypatch.setattr(knowledge_router, "MilvusGraphService", FakeGraphService)
-    monkeypatch.setattr(knowledge_task_service, "MilvusGraphService", FakeGraphService)
-    monkeypatch.setattr(knowledge_router.tasker, "enqueue_unique_by_payload", fake_enqueue_unique_by_payload)
+    monkeypatch.setattr(knowledge_job_service, "MilvusGraphService", FakeGraphService)
+    monkeypatch.setattr(knowledge_router, "submit_job", fake_enqueue_unique_by_payload)
 
     result = await knowledge_router.reconcile_graph_build(
         "kb_1",
@@ -340,18 +340,18 @@ async def test_reconcile_graph_build_mutates_state_only_after_unique_task_is_cre
     assert result == {
         "message": "图谱向量索引修复任务已提交",
         "status": "queued",
-        "task_id": "task_1",
+        "job_id": "job_1",
         "mode": "all_vectors",
     }
     assert "reconcile" not in captured
 
-    context = FakeTaskContext(captured["payload"])
-    task_result = await knowledge_task_service.run_knowledge_graph(context)
+    context = FakeBackgroundJobContext(captured["payload"])
+    job_result = await knowledge_job_service.run_knowledge_graph(context)
 
     assert captured["reconcile"] == ("kb_1", True)
     assert captured["build"] == "kb_1"
-    assert task_result["reconcile"]["reset_records"] == 2
-    assert context.result == task_result
+    assert job_result["reconcile"]["reset_records"] == 2
+    assert context.result == job_result
 
 
 async def test_index_pending_documents_uses_pending_statuses_and_params(monkeypatch):
@@ -382,8 +382,8 @@ async def test_index_pending_documents_uses_pending_statuses_and_params(monkeypa
     async def fake_enqueue_unique_by_payload(**kwargs):
         captured["payload"] = kwargs["payload"]
         captured["payload_match"] = kwargs["payload_match"]
-        await knowledge_task_service.run_knowledge_index(FakeTaskContext(kwargs["payload"]))
-        return SimpleNamespace(id="task_1"), True
+        await knowledge_job_service.run_knowledge_index(FakeBackgroundJobContext(kwargs["payload"]))
+        return SimpleNamespace(id="job_1"), True
 
     monkeypatch.setattr(
         knowledge_router,
@@ -398,7 +398,7 @@ async def test_index_pending_documents_uses_pending_statuses_and_params(monkeypa
     )
     monkeypatch.setattr(knowledge_router.knowledge_base, "update_file_params", fake_update_file_params)
     monkeypatch.setattr(knowledge_router.knowledge_base, "index_file", fake_index_file)
-    monkeypatch.setattr(knowledge_router.tasker, "enqueue_unique_by_payload", fake_enqueue_unique_by_payload)
+    monkeypatch.setattr(knowledge_router, "submit_job", fake_enqueue_unique_by_payload)
 
     params = {"chunk_preset_id": "general"}
     result = await knowledge_router.index_pending_documents(
@@ -425,7 +425,7 @@ async def test_index_pending_documents_uses_pending_statuses_and_params(monkeypa
 
 async def test_add_documents_auto_index_returns_one_final_result_per_item(monkeypatch):
     """成功入库的文件元数据会携带 error=None，不应被统计为失败 (#793)。"""
-    context = FakeTaskContext()
+    context = FakeBackgroundJobContext()
     item = "minio://knowledgebases/kb_1/upload/demo.txt"
 
     async def fake_ensure_database_supports_documents(kb_id: str, operation: str) -> None:
@@ -448,10 +448,10 @@ async def test_add_documents_auto_index_returns_one_final_result_per_item(monkey
     ):
         return {"file_id": file_id, "status": "indexed", "error": None}
 
-    async def fake_enqueue(name: str, task_type: str, payload: dict):
+    async def fake_enqueue(name: str, job_type: str, payload: dict):
         context.payload = payload
-        await knowledge_task_service.run_knowledge_ingest(context)
-        return SimpleNamespace(id="task_1")
+        await knowledge_job_service.run_knowledge_ingest(context)
+        return SimpleNamespace(id="job_1"), True
 
     monkeypatch.setattr(
         knowledge_router,
@@ -463,7 +463,7 @@ async def test_add_documents_auto_index_returns_one_final_result_per_item(monkey
     monkeypatch.setattr(knowledge_router.knowledge_base, "parse_file", fake_parse_file)
     monkeypatch.setattr(knowledge_router.knowledge_base, "update_file_params", fake_update_file_params)
     monkeypatch.setattr(knowledge_router.knowledge_base, "index_file", fake_index_file)
-    monkeypatch.setattr(knowledge_router.tasker, "enqueue", fake_enqueue)
+    monkeypatch.setattr(knowledge_router, "submit_job", fake_enqueue)
 
     result = await knowledge_router.add_documents(
         "kb_1",
@@ -480,7 +480,7 @@ async def test_add_documents_auto_index_returns_one_final_result_per_item(monkey
 
 async def test_add_documents_passes_source_path_to_file_record(monkeypatch):
     """验证包含 source_paths 的批量上传会将单文件 source_path 传递给 add_file_record。"""
-    context = FakeTaskContext()
+    context = FakeBackgroundJobContext()
     item1 = "minio://knowledgebases/kb_1/upload/doc1.txt"
     item2 = "minio://knowledgebases/kb_1/upload/doc2.txt"
     captured_records = []
@@ -498,10 +498,10 @@ async def test_add_documents_passes_source_path_to_file_record(monkeypatch):
     async def fake_parse_file(kb_id: str, file_id: str, operator_id: str | None = None, **_kwargs):
         return {"file_id": file_id, "status": "parsed", "error": None}
 
-    async def fake_enqueue(name: str, task_type: str, payload: dict):
+    async def fake_enqueue(name: str, job_type: str, payload: dict):
         context.payload = payload
-        await knowledge_task_service.run_knowledge_ingest(context)
-        return SimpleNamespace(id="task_1")
+        await knowledge_job_service.run_knowledge_ingest(context)
+        return SimpleNamespace(id="job_1"), True
 
     monkeypatch.setattr(
         knowledge_router,
@@ -511,7 +511,7 @@ async def test_add_documents_passes_source_path_to_file_record(monkeypatch):
     monkeypatch.setattr(knowledge_router.knowledge_base, "get_database_info", fake_get_database_info)
     monkeypatch.setattr(knowledge_router.knowledge_base, "add_file_record", fake_add_file_record)
     monkeypatch.setattr(knowledge_router.knowledge_base, "parse_file", fake_parse_file)
-    monkeypatch.setattr(knowledge_router.tasker, "enqueue", fake_enqueue)
+    monkeypatch.setattr(knowledge_router, "submit_job", fake_enqueue)
 
     await knowledge_router.add_documents(
         "kb_1",
@@ -572,7 +572,7 @@ async def test_add_uploaded_documents_rejects_invalid_payload(monkeypatch, paylo
     assert exc_info.value.detail == error_detail
 
 
-async def test_add_uploaded_documents_creates_records_without_task(monkeypatch):
+async def test_add_uploaded_documents_creates_records_without_job(monkeypatch):
     item = "minio://knowledgebases/kb_1/upload/demo.txt"
     captured = {}
 
@@ -587,7 +587,7 @@ async def test_add_uploaded_documents_creates_records_without_task(monkeypatch):
         return {"file_id": "file_1", "status": "uploaded", "filename": "demo.txt"}
 
     async def fail_enqueue(*_args, **_kwargs):
-        raise AssertionError("documents/add must not enqueue tasker work")
+        raise AssertionError("documents/add must not enqueue job_tracker work")
 
     monkeypatch.setattr(
         knowledge_router,
@@ -595,7 +595,7 @@ async def test_add_uploaded_documents_creates_records_without_task(monkeypatch):
         fake_ensure_database_supports_documents,
     )
     monkeypatch.setattr(knowledge_router.knowledge_base, "add_file_record", fake_add_file_record)
-    monkeypatch.setattr(knowledge_router.tasker, "enqueue", fail_enqueue)
+    monkeypatch.setattr(knowledge_router, "submit_job", fail_enqueue)
 
     result = await knowledge_router.add_uploaded_documents(
         "kb_1",
@@ -643,10 +643,10 @@ async def test_parse_documents_accepts_payload_with_params(monkeypatch):
         captured["parsed"].append({"kb_id": kb_id, "file_id": file_id, "operator_id": operator_id})
         return {"file_id": file_id, "status": "parsed"}
 
-    async def fake_enqueue(name: str, task_type: str, payload: dict):
+    async def fake_enqueue(name: str, job_type: str, payload: dict):
         captured["payload"] = payload
-        await knowledge_task_service.run_knowledge_parse(FakeTaskContext(payload))
-        return SimpleNamespace(id="task_parse_1")
+        await knowledge_job_service.run_knowledge_parse(FakeBackgroundJobContext(payload))
+        return SimpleNamespace(id="job_parse_1"), True
 
     monkeypatch.setattr(
         knowledge_router,
@@ -656,7 +656,7 @@ async def test_parse_documents_accepts_payload_with_params(monkeypatch):
     monkeypatch.setattr(knowledge_router.knowledge_base, "get_database_info", fake_get_database_info)
     monkeypatch.setattr(knowledge_router.knowledge_base, "update_file_params", fake_update_file_params)
     monkeypatch.setattr(knowledge_router.knowledge_base, "parse_file", fake_parse_file)
-    monkeypatch.setattr(knowledge_router.tasker, "enqueue", fake_enqueue)
+    monkeypatch.setattr(knowledge_router, "submit_job", fake_enqueue)
 
     params = {"ocr_engine": "rapid_ocr"}
     result = await knowledge_router.parse_documents(
@@ -693,8 +693,8 @@ async def test_parse_pending_documents_uses_params(monkeypatch):
 
     async def fake_enqueue_unique_by_payload(**kwargs):
         captured["payload"] = kwargs["payload"]
-        await knowledge_task_service.run_knowledge_parse(FakeTaskContext(kwargs["payload"]))
-        return SimpleNamespace(id="task_pending_1"), True
+        await knowledge_job_service.run_knowledge_parse(FakeBackgroundJobContext(kwargs["payload"]))
+        return SimpleNamespace(id="job_pending_1"), True
 
     monkeypatch.setattr(
         knowledge_router,
@@ -709,7 +709,7 @@ async def test_parse_pending_documents_uses_params(monkeypatch):
     )
     monkeypatch.setattr(knowledge_router.knowledge_base, "update_file_params", fake_update_file_params)
     monkeypatch.setattr(knowledge_router.knowledge_base, "parse_file", fake_parse_file)
-    monkeypatch.setattr(knowledge_router.tasker, "enqueue_unique_by_payload", fake_enqueue_unique_by_payload)
+    monkeypatch.setattr(knowledge_router, "submit_job", fake_enqueue_unique_by_payload)
 
     params = {"ocr_engine": "rapid_ocr"}
     result = await knowledge_router.parse_pending_documents(
@@ -724,3 +724,17 @@ async def test_parse_pending_documents_uses_params(monkeypatch):
         {"kb_id": "kb_1", "file_id": "file_pending_1", "params": params, "operator_id": "uid-user"}
     ]
     assert captured["parsed"] == [{"kb_id": "kb_1", "file_id": "file_pending_1", "operator_id": "uid-user"}]
+
+
+async def test_document_job_result_keeps_bounded_references_and_counts():
+    """任务摘要不携带完整文件数据或异常秘密，计数仍覆盖全部结果。"""
+    items = [
+        {"file_id": f"file-{index}", "status": "failed", "error": "private-token", "markdown": "private-body"}
+        for index in range(250)
+    ]
+    result = knowledge_job_service._document_result(items, processed=250, failed=250)
+    assert result["failed"] == 250 and result["succeeded"] == 0
+    assert result["result_truncated"] is True
+    assert len(result["items"]) == 200
+    assert set(result["items"][0]) == {"file_id", "status", "error"}
+    assert "private-token" not in str(result) and "private-body" not in str(result)

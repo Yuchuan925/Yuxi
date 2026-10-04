@@ -43,7 +43,7 @@ Owner：backend/yuxi/modules/knowledge/manager.py
 |---|---|---|---|---|---|
 | 新目录上传产生带稳定 ID、父关系、创建人和时间的真实文件夹 | 仍只把完整相对路径写入 `filename`，或目录与文件分批发布 | 上传用例、`KnowledgeFileRepository`、`knowledge_files` | 真实 HTTP/PostgreSQL integration：上传后重新读取文件夹和文件记录 | 目录链创建中注入失败，不能观察到文件挂在半成品目录下 | Not run |
 | 并发上传复用同一目录链且不产生同级重复文件夹 | 仅在应用层先查后建，竞态下重复创建 | repository 事务、规范化名称唯一约束和目录树锁 | 真实 PostgreSQL 并发 integration，回读同级目录记录数 | 两个请求同时上传到同一路径、根目录 `NULL` 父关系、Unicode/大小写等价名称均只能产生一条目录记录 | Not run |
-| 知识库级任务分批实体化全部无冲突路径、记录启动者并保持文件身份和对象地址 | SSE 断开取消任务、一个冲突回滚其他路径、改变 `file_id` 或 MinIO URL | 实体化 service、Tasker、文件 repository、MinIO 元数据契约 | 真实 HTTP/PostgreSQL integration：不建立 SSE 也完成任务，终态后回读目录树、创建人和原文件 ID | 注入同名普通文件与中断，已完成批次保留且重跑只处理剩余路径 | Not run |
+| 知识库级任务分批实体化全部无冲突路径、记录启动者并保持文件身份和对象地址 | SSE 断开取消任务、一个冲突回滚其他路径、改变 `file_id` 或 MinIO URL | 实体化 service、JobTracker、文件 repository、MinIO 元数据契约 | 真实 HTTP/PostgreSQL integration：不建立 SSE 也完成任务，终态后回读目录树、创建人和原文件 ID | 注入同名普通文件与中断，已完成批次保留且重跑只处理剩余路径 | Not run |
 | 只读和无管理权限调用方不能实体化 | 仅由前端隐藏，直接调用仍可写 | FastAPI 权限依赖、只读 Connector | 真实 HTTP integration | 只读用户、只读 Connector 和跨知识库路径请求返回拒绝且数据库不变 | Not run |
 | 文件名派生状态不会与实体化后的目录事实冲突 | KnowledgeFile 已变更但 Chunk 或搜索结果仍显示旧路径 | 各派生数据 Owner | 对实际使用文件名的 Owner 做集成回读；无 consumer 时以负向符号搜索证明 | 建立包含已索引文件的虚拟目录后转换，旧名称不得继续作为当前事实 | Not run |
 | 文件统计卡对历史数据显示 warning 并通过 SSE 展示知识库级进度 | 单个文件夹行出现迁移入口，或关闭弹窗取消后端任务 | `DataBaseInfoView.vue` 与知识库 API 封装 | 前端 unit、lint、build、真实浏览器录屏 | 中断 SSE 后任务继续，重新检测仍反映数据库剩余事实 | Not run |
@@ -52,6 +52,6 @@ Owner：backend/yuxi/modules/knowledge/manager.py
 
 路径规范化、同级名称冲突和并发创建会直接影响持久目录树。实现需要真实 PostgreSQL 事务、规范化名称唯一约束和确定性并发负控，不能用 mock 调用次数替代。现有 `knowledge_files` 尚未拥有该数据约束，因此自动上传实体化不得在 schema 审计、归一化字段和根目录唯一语义落地前启用。
 
-历史虚拟目录可能包含大量文件。迁移任务每批最多扫描 500 条记录并逐层提交，SSE 生命周期不拥有任务；进程停止会让当前 Tasker 任务进入可观察终态，已经提交的数据不回滚，重新启动迁移从剩余路径继续。自动上传的有限批次上限仍需压测证据，不能直接复用历史迁移批次。
+历史虚拟目录可能包含大量文件。迁移任务每批最多扫描 500 条记录并逐层提交，SSE 生命周期不拥有任务；进程停止会让当前 JobTracker 任务进入可观察终态，已经提交的数据不回滚，重新启动迁移从剩余路径继续。自动上传的有限批次上限仍需压测证据，不能直接复用历史迁移批次。
 
 从完整相对路径改为 `parent_id + 叶子名称` 会改变展示名事实。文件内容、对象和向量以 `file_id` 为身份的主张需要由实际回读证明；任何仍以旧文件名作为身份或引用的 consumer 都必须在实现前纳入同一事务、失效流程或明确排除实体化能力。

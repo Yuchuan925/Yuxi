@@ -628,15 +628,15 @@ async def test_graph_build_keeps_extraction_concurrency_full_while_writes_are_bl
     )
     monkeypatch.setattr(service, "write_chunk_graph", lambda kb_id, chunk, result: ([], []))
 
-    build_task = asyncio.create_task(service.build_pending_chunks("kb_test"))
+    build_job = asyncio.create_task(service.build_pending_chunks("kb_test"))
     await asyncio.wait_for(all_extractions_finished.wait(), timeout=1)
 
     assert extractor.max_active == 2
     assert extractor.calls == 7
-    assert not build_task.done()
+    assert not build_job.done()
 
     release_writes.set()
-    result = await asyncio.wait_for(build_task, timeout=1)
+    result = await asyncio.wait_for(build_job, timeout=1)
 
     assert result["success"] == 5
     assert result["extraction_failed"] == 1
@@ -714,12 +714,12 @@ async def test_graph_build_cancellation_stops_backpressured_extraction_queue(mon
         graph_vector_store=SimpleNamespace(),
     )
 
-    build_task = asyncio.create_task(service.build_pending_chunks("kb_test", context=context))
+    build_job = asyncio.create_task(service.build_pending_chunks("kb_test", context=context))
     await asyncio.wait_for(extraction_started.wait(), timeout=1)
     context.cancel_requested = True
 
     with pytest.raises(asyncio.CancelledError):
-        await asyncio.wait_for(build_task, timeout=1.5)
+        await asyncio.wait_for(build_job, timeout=1.5)
 
 
 @pytest.mark.asyncio
@@ -1097,8 +1097,8 @@ async def test_graph_status_reports_latest_successful_run_as_completed():
         async def get_by_kb_id(self, kb_id):
             return kb
 
-    class Tasker:
-        async def find_task_by_payload(self, *, task_type, payload_match, statuses):
+    class JobTracker:
+        async def find_job_by_payload(self, *, job_type, payload_match, statuses):
             assert statuses is None
             return SimpleNamespace(status="success", progress=100)
 
@@ -1117,10 +1117,10 @@ async def test_graph_status_reports_latest_successful_run_as_completed():
     )
     service = MilvusGraphService(kb_repo=Repo(), chunk_repo=chunk_repo, graph_repo=graph_repo)
 
-    status = await service.get_status("kb_test", tasker=Tasker())
+    status = await service.get_status("kb_test", job_tracker=JobTracker())
 
-    assert status["build_task_status"] == "completed"
-    assert status["build_task_progress"] == 100
+    assert status["build_job_status"] == "completed"
+    assert status["build_job_progress"] == 100
 
 
 def test_milvus_graph_service_writes_chunk_entity_and_relation():

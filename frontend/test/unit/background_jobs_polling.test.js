@@ -20,26 +20,50 @@ test('任务请求时序与轮询生命周期', async (t) => {
     appType: 'custom'
   })
   const { useUserStore } = await server.ssrLoadModule('/src/modules/identity/model/user.js')
-  const { useTaskerStore } = await server.ssrLoadModule('/src/modules/tasks/model/tasker.js')
-  const { taskerApi } = await server.ssrLoadModule('/src/apis/tasker.js')
+  const { useBackgroundJobsStore } = await server.ssrLoadModule('/src/modules/background-jobs/model/jobs.js')
+  const { backgroundJobsApi } = await server.ssrLoadModule('/src/apis/background_jobs.js')
   const stores = []
   const makeStore = () => {
     setActivePinia(createPinia())
     const user = useUserStore()
     user.token = 'test-session'
     user.userRole = 'admin'
-    const store = useTaskerStore()
+    const store = useBackgroundJobsStore()
+    backgroundJobsApi.fetchJobDetail = async (id) => ({ job: { id, status: 'pending' } })
     stores.push(store)
     return { store, user }
   }
   try {
+    await t.test('首次详情失败后，关闭抽屉仍重试权威列表并读取已完成任务', async (t) => {
+      const { store } = makeStore()
+      t.mock.timers.enable({ apis: ['setTimeout'] })
+      t.mock.method(console, 'error', () => {})
+      backgroundJobsApi.fetchJobDetail = async () => {
+        throw new Error('temporary disconnect')
+      }
+      let calls = 0
+      backgroundJobsApi.fetchJobs = async () => {
+        calls++
+        return { jobs: [{ id: 'receipt-job', status: 'success', progress: 100 }] }
+      }
+      await store.createJobRegistration()({ job_id: 'receipt-job' })
+      assert.deepEqual(store.jobs, [])
+      assert.equal(store.isDrawerOpen, false)
+      t.mock.timers.tick(5000)
+      await Promise.resolve()
+      assert.equal(calls, 1)
+      assert.equal(store.jobs[0].status, 'success')
+      t.mock.timers.tick(30000)
+      assert.equal(calls, 1)
+      store.reset()
+    })
     await t.test('图谱构建和重试的旧提交回执不能进入新会话', async () => {
       const source = readFileSync(
         new URL('../../src/modules/knowledge/ui/KnowledgeGraphSection.vue', import.meta.url),
         'utf8'
       )
       const { descriptor } = parse(source)
-      const { scriptSetupAst } = compileScript(descriptor, { id: 'graph-task-test' })
+      const { scriptSetupAst } = compileScript(descriptor, { id: 'graph-job-test' })
       for (const [name, apiMethod] of [
         ['startGraphBuild', 'startIndex'],
         ['retryGraphVectors', 'reconcile']
@@ -53,7 +77,7 @@ test('任务请求时序与轮询生命周期', async (t) => {
         const { store, user } = makeStore()
         const response = deferred()
         const action = new Function(
-          'taskerStore',
+          'jobsStore',
           'graphBuildApi',
           'kbId',
           'message',
@@ -74,24 +98,24 @@ test('任务请求时序与轮询生命周期', async (t) => {
         user.logout()
         user.token = 'next-session'
         user.userRole = 'admin'
-        response.resolve({ task_id: 'old-graph-task' })
+        response.resolve({ job_id: 'old-graph-job' })
         await pending
-        assert.deepEqual(store.tasks, [])
+        assert.deepEqual(store.jobs, [])
         await action()
-        assert.equal(store.tasks[0].id, 'old-graph-task')
+        assert.equal(store.jobs[0].id, 'old-graph-job')
         store.reset()
       }
     })
-    await t.test('旧提交回执不能登记到新会话，新提交仍可登记', () => {
+    await t.test('旧提交回执不能登记到新会话，新提交仍可登记', async () => {
       const { store, user } = makeStore()
-      const registerOldTask = store.createTaskRegistration()
+      const registerOldJob = store.createJobRegistration()
       user.logout()
       user.token = 'next-session'
       user.userRole = 'admin'
-      registerOldTask({ task_id: 'old-task' })
-      assert.deepEqual(store.tasks, [])
-      store.createTaskRegistration()({ task_id: 'new-task' })
-      assert.equal(store.tasks[0].id, 'new-task')
+      registerOldJob({ job_id: 'old-job' })
+      assert.deepEqual(store.jobs, [])
+      await store.createJobRegistration()({ job_id: 'new-job' })
+      assert.equal(store.jobs[0].id, 'new-job')
       store.reset()
     })
     await t.test('隐藏页面跳过轮询，恢复可见后继续读取', async (t) => {
@@ -99,9 +123,9 @@ test('任务请求时序与轮询生命周期', async (t) => {
       t.mock.timers.enable({ apis: ['setTimeout'] })
       globalThis.document = { visibilityState: 'hidden' }
       let calls = 0
-      taskerApi.fetchTasks = async () => {
+      backgroundJobsApi.fetchJobs = async () => {
         calls++
-        return { tasks: [] }
+        return { jobs: [] }
       }
       try {
         store.openDrawer()
@@ -118,12 +142,12 @@ test('任务请求时序与轮询生命周期', async (t) => {
     await t.test('已入队任务不会被更早开始的列表抹去', async () => {
       const { store } = makeStore()
       const response = deferred()
-      taskerApi.fetchTasks = () => response.promise
-      const loading = store.loadTasks()
-      store.createTaskRegistration()({ task_id: 'new-task' })
-      response.resolve({ tasks: [] })
+      backgroundJobsApi.fetchJobs = () => response.promise
+      const loading = store.loadJobs()
+      await store.createJobRegistration()({ job_id: 'new-job' })
+      response.resolve({ jobs: [] })
       await loading
-      assert.equal(store.tasks[0].id, 'new-task')
+      assert.equal(store.jobs[0].id, 'new-job')
       assert.equal(store.loading, false)
       store.reset()
     })
@@ -132,63 +156,65 @@ test('任务请求时序与轮询生命周期', async (t) => {
       const old = deferred(),
         latest = deferred()
       let calls = 0
-      taskerApi.fetchTaskDetail = () => (++calls === 1 ? old.promise : latest.promise)
-      const first = store.refreshTask('task'),
-        second = store.refreshTask('task')
-      latest.resolve({ task: { id: 'task', status: 'success' } })
+      backgroundJobsApi.fetchJobDetail = () => (++calls === 1 ? old.promise : latest.promise)
+      const first = store.refreshJob('job'),
+        second = store.refreshJob('job')
+      latest.resolve({ job: { id: 'job', status: 'success' } })
       await second
-      old.resolve({ task: { id: 'task', status: 'running' } })
+      old.resolve({ job: { id: 'job', status: 'running' } })
       await first
-      assert.equal(store.tasks[0].status, 'success')
+      assert.equal(store.jobs[0].status, 'success')
       const afterLogout = deferred()
-      taskerApi.fetchTaskDetail = () => afterLogout.promise
-      const pending = store.refreshTask('task')
+      backgroundJobsApi.fetchJobDetail = () => afterLogout.promise
+      const pending = store.refreshJob('job')
       user.logout()
-      afterLogout.resolve({ task: { id: 'task', status: 'running' } })
+      afterLogout.resolve({ job: { id: 'job', status: 'running' } })
       await pending
-      assert.deepEqual(store.tasks, [])
+      assert.deepEqual(store.jobs, [])
     })
     await t.test('详情更新后旧列表不能恢复过期内容', async () => {
       const { store } = makeStore()
       const response = deferred()
-      taskerApi.fetchTasks = () => response.promise
-      taskerApi.fetchTaskDetail = async () => ({ task: { id: 'task', status: 'success' } })
-      const loading = store.loadTasks()
-      await store.refreshTask('task')
-      response.resolve({ tasks: [{ id: 'task', status: 'running' }] })
+      backgroundJobsApi.fetchJobs = () => response.promise
+      backgroundJobsApi.fetchJobDetail = async () => ({ job: { id: 'job', status: 'success' } })
+      const loading = store.loadJobs()
+      await store.refreshJob('job')
+      response.resolve({ jobs: [{ id: 'job', status: 'running' }] })
       await loading
-      assert.equal(store.tasks[0].status, 'success')
+      assert.equal(store.jobs[0].status, 'success')
       store.reset()
     })
     await t.test('旧详情响应不能覆盖较新的列表终态', async () => {
       const { store } = makeStore()
       const response = deferred()
-      taskerApi.fetchTaskDetail = () => response.promise
-      taskerApi.fetchTasks = async () => ({ tasks: [{ id: 'task', status: 'success' }] })
-      const pending = store.refreshTask('task')
-      await store.loadTasks()
-      response.resolve({ task: { id: 'task', status: 'running' } })
+      backgroundJobsApi.fetchJobDetail = () => response.promise
+      backgroundJobsApi.fetchJobs = async () => ({ jobs: [{ id: 'job', status: 'success' }] })
+      const pending = store.refreshJob('job')
+      await store.loadJobs()
+      response.resolve({ job: { id: 'job', status: 'running' } })
       await pending
-      assert.equal(store.tasks[0].status, 'success')
+      assert.equal(store.jobs[0].status, 'success')
       store.reset()
     })
     await t.test('切换账号后旧取消与删除回调不操作新会话', async () => {
       const { store, user } = makeStore()
       const cancelled = deferred(),
         deleted = deferred()
-      taskerApi.cancelTask = () => cancelled.promise
-      taskerApi.deleteTask = () => deleted.promise
-      taskerApi.fetchTaskDetail = () => assert.fail('旧会话不能启动详情读取')
-      const cancel = store.cancelTask('task'),
-        remove = store.deleteTask('task')
+      backgroundJobsApi.cancelJob = () => cancelled.promise
+      backgroundJobsApi.deleteJob = () => deleted.promise
+      backgroundJobsApi.fetchJobDetail = () => assert.fail('旧会话不能启动详情读取')
+      const cancel = store.cancelJob('job'),
+        remove = store.deleteJob('job')
       user.logout()
       user.token = 'next-session'
       user.userRole = 'admin'
-      store.createTaskRegistration()({ task_id: 'task' })
+      backgroundJobsApi.fetchJobDetail = async () => ({ job: { id: 'job', status: 'pending' } })
+      await store.createJobRegistration()({ job_id: 'job' })
+      backgroundJobsApi.fetchJobDetail = () => assert.fail('旧会话不能启动详情读取')
       cancelled.resolve({})
       deleted.resolve({})
       await Promise.all([cancel, remove])
-      assert.equal(store.tasks[0].status, 'queued')
+      assert.equal(store.jobs[0].status, 'pending')
       assert.equal(store.lastError, null)
       store.reset()
     })
@@ -196,19 +222,19 @@ test('任务请求时序与轮询生命周期', async (t) => {
       const { store } = makeStore()
       t.mock.timers.enable({ apis: ['setTimeout'] })
       t.mock.method(console, 'error', () => {})
-      taskerApi.fetchTasks = async () => ({
-        tasks: [{ id: 'task', status: 'running' }],
+      backgroundJobsApi.fetchJobs = async () => ({
+        jobs: [{ id: 'job', status: 'running' }],
         summary: { total: 1, status_counts: { running: 1 } }
       })
-      await store.loadTasks()
+      await store.loadJobs()
       let calls = 0
-      taskerApi.fetchTasks = async () => {
+      backgroundJobsApi.fetchJobs = async () => {
         calls++
         throw new Error('offline')
       }
-      await store.loadTasks()
+      await store.loadJobs()
       assert.equal(store.activeCount, 1)
-      assert.equal(store.tasks[0].id, 'task')
+      assert.equal(store.jobs[0].id, 'job')
       assert.equal(store.lastError.message, 'offline')
       t.mock.timers.tick(9999)
       assert.equal(calls, 1)
@@ -221,26 +247,27 @@ test('任务请求时序与轮询生命周期', async (t) => {
       const old = deferred(),
         latest = deferred()
       let calls = 0
-      taskerApi.fetchTasks = () => (++calls === 1 ? old.promise : latest.promise)
-      const first = store.loadTasks(),
-        second = store.loadTasks()
-      latest.resolve({ tasks: [{ id: 't', status: 'success' }] })
+      backgroundJobsApi.fetchJobs = () => (++calls === 1 ? old.promise : latest.promise)
+      const first = store.loadJobs(),
+        second = store.loadJobs()
+      latest.resolve({ jobs: [{ id: 't', status: 'success' }] })
       await second
-      old.resolve({ tasks: [{ id: 't', status: 'running' }] })
+      old.resolve({ jobs: [{ id: 't', status: 'running' }] })
       await first
-      assert.equal(store.tasks[0].status, 'success')
+      assert.equal(store.jobs[0].status, 'success')
       store.reset()
     })
     await t.test('退出登录使在途响应失效并立即清空状态', async () => {
       const { store, user } = makeStore()
       const response = deferred()
-      taskerApi.fetchTasks = () => response.promise
-      store.createTaskRegistration()({ task_id: 'queued' })
-      const loading = store.loadTasks()
+      backgroundJobsApi.fetchJobs = () => response.promise
+      backgroundJobsApi.fetchJobDetail = () => response.promise
+      store.createJobRegistration()({ job_id: 'receipt' })
+      const loading = store.loadJobs()
       user.logout()
-      response.resolve({ tasks: [{ id: 'private-task', status: 'running' }] })
+      response.resolve({ jobs: [{ id: 'private-job', status: 'running' }] })
       await loading
-      assert.deepEqual(store.tasks, [])
+      assert.deepEqual(store.jobs, [])
       assert.equal(store.loading, false)
       store.reset()
     })
@@ -249,7 +276,7 @@ test('任务请求时序与轮询生命周期', async (t) => {
       t.mock.timers.enable({ apis: ['setTimeout', 'setInterval'] })
       const response = deferred()
       let calls = 0
-      taskerApi.fetchTasks = () => {
+      backgroundJobsApi.fetchJobs = () => {
         calls++
         return response.promise
       }
@@ -258,7 +285,7 @@ test('任务请求时序与轮询生命周期', async (t) => {
       assert.equal(calls, 1)
       t.mock.timers.tick(15000)
       assert.equal(calls, 1)
-      response.resolve({ tasks: [] })
+      response.resolve({ jobs: [] })
       await Promise.resolve()
       await Promise.resolve()
       t.mock.timers.tick(4999)

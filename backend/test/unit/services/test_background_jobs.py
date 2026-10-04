@@ -1,4 +1,4 @@
-"""Durable Task 行为单元测试：持久提交、Handler 重建、lease 与终态。"""
+"""后台作业 行为单元测试：持久提交、Handler 重建、lease 与终态。"""
 
 from __future__ import annotations
 
@@ -10,9 +10,13 @@ from typing import Any
 
 import pytest
 
-import yuxi.modules.tasks.queue as task_queue_service
-import yuxi.modules.tasks.service as task_service
-from yuxi.modules.tasks.service import TaskContext, Tasker, process_task
+import yuxi.modules.background_jobs.dispatch as job_queue_service
+import yuxi.modules.background_jobs.service as job_service
+from yuxi.modules.background_jobs.service import JobTracker
+from yuxi.workers.background_job_context import BackgroundJobContext
+from yuxi.workers.background_jobs import process_background_job
+import yuxi.workers.background_jobs as job_worker
+import yuxi.workers.background_job_context as job_context
 from yuxi.shared.datetime import format_utc_datetime, utc_now
 
 
@@ -20,10 +24,12 @@ from yuxi.shared.datetime import format_utc_datetime, utc_now
 def disable_pending_publication(monkeypatch: pytest.MonkeyPatch) -> None:
     """默认隔离任务完成后的下一批发布，专项测试再覆盖它。"""
 
-    async def no_pending_tasks(*, limit: int = 200) -> list[str]:
+    async def no_pending_jobs(*, limit: int = 200) -> list[str]:
         return []
 
-    monkeypatch.setattr(task_service, "publish_pending_tasks", no_pending_tasks)
+    monkeypatch.setattr(job_worker, "publish_pending_jobs", no_pending_jobs)
+    monkeypatch.setattr(job_worker, "BackgroundJobRepository", lambda: job_service.BackgroundJobRepository())
+    monkeypatch.setattr(job_context, "BackgroundJobRepository", lambda: job_service.BackgroundJobRepository())
 
 
 class FakeRecord(SimpleNamespace):
@@ -37,7 +43,7 @@ class FakeRecord(SimpleNamespace):
 def make_record(**overrides) -> FakeRecord:
     now = utc_now()
     data = {
-        "id": "task-1",
+        "id": "job-1",
         "name": "demo",
         "type": "demo",
         "status": "pending",
@@ -64,7 +70,7 @@ def make_record(**overrides) -> FakeRecord:
 
 
 class FakeRepo:
-    """实现 Task Service 单元测试所需的持久边界。"""
+    """实现 BackgroundJob Service 单元测试所需的持久边界。"""
 
     def __init__(self, record: FakeRecord | None = None):
         self.record = record
@@ -76,22 +82,22 @@ class FakeRepo:
         self.renew_error: Exception | None = None
         self.release_calls: list[str] = []
 
-    async def create(self, task_id: str, data: dict[str, Any]):
+    async def create(self, job_id: str, data: dict[str, Any]):
         self.events.append("persist")
         if self.record is not None and self.record.dedupe_key == data.get("dedupe_key"):
             return self.record, False
-        self.record = make_record(id=task_id, **data)
+        self.record = make_record(id=job_id, **data)
         return self.record, True
 
-    async def get_by_id(self, task_id: str):
-        return self.record if self.record and self.record.id == task_id else None
+    async def get_by_id(self, job_id: str):
+        return self.record if self.record and self.record.id == job_id else None
 
     async def list(self, status=None, limit=100):
         if self.record is None or (status and self.record.status != status):
             return []
         return [self.record]
 
-    async def claim(self, task_id: str, *, worker_id: str, lease_seconds: float, max_running: int | None = None):
+    async def claim(self, job_id: str, *, worker_id: str, lease_seconds: float, max_running: int | None = None):
         if not self.claim_allowed or self.record is None or self.record.status != "pending":
             return self.record, False
         now = utc_now()
@@ -102,15 +108,15 @@ class FakeRepo:
         self.record.attempt_count += 1
         return self.record, True
 
-    async def check_control(self, task_id: str, *, worker_id: str):
+    async def check_control(self, job_id: str, *, worker_id: str):
         return self.live_owner, bool(self.record.cancel_requested if self.record else False)
 
-    async def renew_lease(self, task_id: str, *, worker_id: str, lease_seconds: float):
+    async def renew_lease(self, job_id: str, *, worker_id: str, lease_seconds: float):
         if self.renew_error is not None:
             raise self.renew_error
         return self.live_owner, bool(self.record.cancel_requested if self.record else False)
 
-    async def update_owned(self, task_id: str, *, worker_id: str, data: dict[str, Any]):
+    async def update_owned(self, job_id: str, *, worker_id: str, data: dict[str, Any]):
         if not self.live_owner or self.record is None or self.record.worker_id != worker_id:
             return False
         self.updates.append(data)
@@ -118,7 +124,7 @@ class FakeRepo:
             setattr(self.record, key, value)
         return True
 
-    async def finish_owned(self, task_id: str, *, worker_id: str, **data):
+    async def finish_owned(self, job_id: str, *, worker_id: str, **data):
         if not self.live_owner or self.record is None or self.record.worker_id != worker_id:
             return False
         self.finish_calls.append(data)
@@ -130,21 +136,19 @@ class FakeRepo:
         self.record.worker_id = None
         return True
 
-    async def release_interrupted_owner(self, task_id: str, *, worker_id: str, error: str, before_fail=None):
+    async def release_interrupted_owner(self, job_id: str, *, worker_id: str, error: str, before_fail=None):
         self.release_calls.append(error)
         self.record.status = "failed"
         self.record.error = error
         return self.record.status
 
-    async def request_cancel(self, task_id: str, *, before_cancel=None):
+    async def request_cancel(self, job_id: str):
         if self.record is None or self.record.status in {"success", "failed", "cancelled"}:
             return None
         self.record.cancel_requested = 1
-        if self.record.status == "pending":
-            self.record.status = "cancelled"
         return self.record
 
-    async def delete_terminal(self, task_id: str):
+    async def delete_terminal(self, job_id: str):
         if self.record and self.record.status in {"success", "failed", "cancelled"}:
             self.record = None
             return True
@@ -176,73 +180,76 @@ async def test_arq_publication_uses_fresh_messages_instead_of_stale_job_lock(mon
     async def pool():
         return Pool()
 
-    monkeypatch.setattr(task_queue_service, "get_arq_pool", pool)
+    monkeypatch.setattr(job_queue_service, "get_arq_pool", pool)
 
-    await task_queue_service.publish_task("task-1")
+    await job_queue_service.publish_job("job-1")
 
-    assert calls == [(("process_task", "task-1"), {})]
+    assert calls == [(("process_background_job", "job-1"), {})]
 
 
 async def test_submit_persists_before_arq_publication(monkeypatch):
     repo = FakeRepo()
-    tasker = Tasker()
-    tasker._repo = repo
+    job_tracker = JobTracker()
+    job_tracker._repo = repo
 
-    async def publish(task_id: str):
+    async def publish(job_id: str):
         assert repo.record is not None
         repo.events.append("publish")
         return True
 
-    monkeypatch.setattr(task_service, "get_task_definition", lambda _task_type: FakeDefinition(None))
-    monkeypatch.setattr(task_service, "publish_task", publish)
+    monkeypatch.setattr(job_queue_service, "get_job_definition", lambda _job_type: FakeDefinition(None))
+    monkeypatch.setattr(job_queue_service, "job_tracker", job_tracker)
+    monkeypatch.setattr(job_queue_service, "publish_job", publish)
 
-    task = await tasker.enqueue(name="demo", task_type="demo", payload={"value": 1})
+    job, _ = await job_queue_service.submit_job(name="demo", job_type="demo", payload={"value": 1})
 
     assert repo.events == ["persist", "publish"]
-    assert task.payload == {"value": 1}
-    assert task.status == "pending"
+    assert job.payload == {"value": 1}
+    assert job.status == "pending"
 
 
 async def test_publication_failure_keeps_persisted_pending_intent(monkeypatch):
     repo = FakeRepo()
-    tasker = Tasker()
-    tasker._repo = repo
+    job_tracker = JobTracker()
+    job_tracker._repo = repo
 
     async def fail_publication(*_args):
         raise ConnectionError("redis unavailable")
 
-    monkeypatch.setattr(task_service, "get_task_definition", lambda _task_type: FakeDefinition(None))
-    monkeypatch.setattr(task_service, "publish_task", fail_publication)
+    monkeypatch.setattr(job_queue_service, "get_job_definition", lambda _job_type: FakeDefinition(None))
+    monkeypatch.setattr(job_queue_service, "job_tracker", job_tracker)
+    monkeypatch.setattr(job_queue_service, "publish_job", fail_publication)
 
-    task = await tasker.enqueue(name="demo", task_type="demo", payload={"value": 1})
+    job, _ = await job_queue_service.submit_job(name="demo", job_type="demo", payload={"value": 1})
 
-    assert task.status == "pending"
+    assert job.status == "pending"
     assert repo.record is not None
     assert repo.record.payload == {"value": 1}
 
 
 async def test_unique_submit_uses_database_dedupe_and_does_not_republish(monkeypatch):
     repo = FakeRepo()
-    tasker = Tasker()
-    tasker._repo = repo
+    job_tracker = JobTracker()
+    job_tracker._repo = repo
     published: list[str] = []
 
-    async def publish(task_id: str):
-        published.append(task_id)
+    async def publish(job_id: str):
+        published.append(job_id)
         return True
 
-    monkeypatch.setattr(task_service, "get_task_definition", lambda _task_type: FakeDefinition(None))
-    monkeypatch.setattr(task_service, "publish_task", publish)
+    monkeypatch.setattr(job_queue_service, "get_job_definition", lambda _job_type: FakeDefinition(None))
+    monkeypatch.setattr(job_queue_service, "job_tracker", job_tracker)
+    monkeypatch.setattr(job_queue_service, "publish_job", publish)
 
-    first, first_created = await tasker.enqueue_unique_by_payload(
+    first, first_created = await job_queue_service.submit_job(
         name="demo",
-        task_type="demo",
+        job_type="demo",
         payload={"kb_id": "kb-1"},
         payload_match={"kb_id": "kb-1"},
     )
-    second, second_created = await tasker.enqueue_unique_by_payload(
+    second, second_created = await job_queue_service.submit_job(
         name="demo",
-        task_type="demo",
+        job_type="demo",
         payload={"kb_id": "kb-1"},
         payload_match={"kb_id": "kb-1"},
     )
@@ -253,12 +260,12 @@ async def test_unique_submit_uses_database_dedupe_and_does_not_republish(monkeyp
     assert published == [first.id]
 
 
-async def test_task_context_throttles_progress_and_rejects_lost_lease(monkeypatch):
+async def test_job_context_throttles_progress_and_rejects_lost_lease(monkeypatch):
     record = make_record(status="running", worker_id="owner")
     record.lease_expires_at = utc_now() + timedelta(seconds=30)
     repo = FakeRepo(record)
-    monkeypatch.setattr(task_service, "TaskRepository", lambda: repo)
-    context = TaskContext(record.id, "owner", {"value": 1})
+    monkeypatch.setattr(job_service, "BackgroundJobRepository", lambda: repo)
+    context = BackgroundJobContext(record.id, "owner", {"value": 1})
 
     await context.set_progress(10)
     await context.set_progress(11, "第二步")
@@ -273,11 +280,11 @@ async def test_task_context_throttles_progress_and_rejects_lost_lease(monkeypatc
         await context.set_message("迟到更新")
 
 
-async def test_task_context_tracks_messages_written_outside_progress_updates(monkeypatch):
+async def test_job_context_tracks_messages_written_outside_progress_updates(monkeypatch):
     record = make_record(status="running", worker_id="owner")
     repo = FakeRepo(record)
-    monkeypatch.setattr(task_service, "TaskRepository", lambda: repo)
-    context = TaskContext(record.id, "owner")
+    monkeypatch.setattr(job_service, "BackgroundJobRepository", lambda: repo)
+    context = BackgroundJobContext(record.id, "owner")
 
     await context.set_progress(10, "A")
     await context.set_message("B")
@@ -290,20 +297,20 @@ async def test_task_context_tracks_messages_written_outside_progress_updates(mon
     ]
 
 
-async def test_process_task_rebuilds_handler_and_persists_success(monkeypatch):
+async def test_process_background_job_rebuilds_handler_and_persists_success(monkeypatch):
     record = make_record(payload={"value": 7})
     repo = FakeRepo(record)
     seen: list[int] = []
 
-    async def handler(context: TaskContext):
+    async def handler(context: BackgroundJobContext):
         seen.append(context.payload["value"])
         await context.set_progress(50, "执行中")
         return {"ok": True}
 
-    monkeypatch.setattr(task_service, "TaskRepository", lambda: repo)
-    monkeypatch.setattr(task_service, "get_task_definition", lambda *_args: FakeDefinition(handler))
+    monkeypatch.setattr(job_service, "BackgroundJobRepository", lambda: repo)
+    monkeypatch.setattr(job_worker, "get_job_definition", lambda *_args: FakeDefinition(handler))
 
-    await process_task({"worker_id": "worker-1"}, record.id)
+    await process_background_job({"worker_id": "worker-1"}, record.id)
 
     assert seen == [7]
     assert repo.record.status == "success"
@@ -311,7 +318,7 @@ async def test_process_task_rebuilds_handler_and_persists_success(monkeypatch):
     assert repo.record.attempt_count == 1
 
 
-async def test_process_task_uses_failure_hook_when_success_hook_cannot_load(monkeypatch):
+async def test_process_background_job_uses_failure_hook_when_success_hook_cannot_load(monkeypatch):
     record = make_record(type="dataset_generation")
     repo = FakeRepo(record)
     failure_calls: list[str] = []
@@ -326,10 +333,10 @@ async def test_process_task_uses_failure_hook_when_success_hook_cannot_load(monk
         def load_failure_handler(self):
             return failure_hook
 
-    monkeypatch.setattr(task_service, "TaskRepository", lambda: repo)
-    monkeypatch.setattr(task_service, "get_task_definition", lambda *_args: BrokenSuccessDefinition(None))
+    monkeypatch.setattr(job_service, "BackgroundJobRepository", lambda: repo)
+    monkeypatch.setattr(job_worker, "get_job_definition", lambda *_args: BrokenSuccessDefinition(None))
 
-    await process_task({"worker_id": "worker-1"}, record.id)
+    await process_background_job({"worker_id": "worker-1"}, record.id)
 
     assert repo.record.status == "failed"
     assert repo.finish_calls[-1]["message"] == "任务 Handler 无法加载"
@@ -339,25 +346,25 @@ async def test_process_task_uses_failure_hook_when_success_hook_cannot_load(monk
     assert failure_calls == ["success hook missing"]
 
 
-async def test_process_task_republishes_pending_tasks_after_slot_release(monkeypatch):
+async def test_process_background_job_republishes_pending_jobs_after_slot_release(monkeypatch):
     record = make_record()
     repo = FakeRepo(record)
     publication_limits: list[int] = []
 
-    async def handler(_context: TaskContext):
+    async def handler(_context: BackgroundJobContext):
         return {"ok": True}
 
     async def publish_pending(*, limit: int = 200) -> list[str]:
         publication_limits.append(limit)
         return []
 
-    monkeypatch.setattr(task_service, "TaskRepository", lambda: repo)
-    monkeypatch.setattr(task_service, "get_task_definition", lambda *_args: FakeDefinition(handler))
-    monkeypatch.setattr(task_service, "publish_pending_tasks", publish_pending)
+    monkeypatch.setattr(job_service, "BackgroundJobRepository", lambda: repo)
+    monkeypatch.setattr(job_worker, "get_job_definition", lambda *_args: FakeDefinition(handler))
+    monkeypatch.setattr(job_worker, "publish_pending_jobs", publish_pending)
 
-    await process_task({"worker_id": "worker-1"}, record.id)
+    await process_background_job({"worker_id": "worker-1"}, record.id)
 
-    assert publication_limits == [task_service.DURABLE_TASK_MAX_RUNNING]
+    assert publication_limits == [job_worker.BACKGROUND_JOB_MAX_RUNNING]
 
 
 async def test_duplicate_delivery_cannot_execute_without_claim(monkeypatch):
@@ -366,14 +373,14 @@ async def test_duplicate_delivery_cannot_execute_without_claim(monkeypatch):
     repo.claim_allowed = False
     called = False
 
-    async def handler(context: TaskContext):
+    async def handler(context: BackgroundJobContext):
         nonlocal called
         called = True
 
-    monkeypatch.setattr(task_service, "TaskRepository", lambda: repo)
-    monkeypatch.setattr(task_service, "get_task_definition", lambda *_args: FakeDefinition(handler))
+    monkeypatch.setattr(job_service, "BackgroundJobRepository", lambda: repo)
+    monkeypatch.setattr(job_worker, "get_job_definition", lambda *_args: FakeDefinition(handler))
 
-    await process_task({"worker_id": "worker-1"}, record.id)
+    await process_background_job({"worker_id": "worker-1"}, record.id)
 
     assert called is False
     assert repo.finish_calls == []
@@ -385,18 +392,18 @@ async def test_heartbeat_error_cancels_handler_as_lost_lease(monkeypatch):
     repo.renew_error = ConnectionError("database unavailable")
     observed_reason: list[str | None] = []
 
-    async def handler(context: TaskContext):
+    async def handler(context: BackgroundJobContext):
         try:
             await asyncio.Event().wait()
         except asyncio.CancelledError:
             observed_reason.append(context.cancellation_reason)
             raise
 
-    monkeypatch.setattr(task_service, "TASK_HEARTBEAT_SECONDS", 0)
-    monkeypatch.setattr(task_service, "TaskRepository", lambda: repo)
-    monkeypatch.setattr(task_service, "get_task_definition", lambda *_args: FakeDefinition(handler))
+    monkeypatch.setattr(job_worker, "JOB_HEARTBEAT_SECONDS", 0)
+    monkeypatch.setattr(job_service, "BackgroundJobRepository", lambda: repo)
+    monkeypatch.setattr(job_worker, "get_job_definition", lambda *_args: FakeDefinition(handler))
 
-    await process_task({"worker_id": "worker-1"}, record.id)
+    await process_background_job({"worker_id": "worker-1"}, record.id)
 
     assert observed_reason == ["lease_lost"]
     assert repo.finish_calls == []
@@ -408,17 +415,17 @@ async def test_parent_job_cancellation_waits_for_handler_exit(monkeypatch):
     started = asyncio.Event()
     stopped = asyncio.Event()
 
-    async def handler(context: TaskContext):
+    async def handler(context: BackgroundJobContext):
         started.set()
         try:
             await asyncio.Event().wait()
         finally:
             stopped.set()
 
-    monkeypatch.setattr(task_service, "TaskRepository", lambda: repo)
-    monkeypatch.setattr(task_service, "get_task_definition", lambda *_args: FakeDefinition(handler))
+    monkeypatch.setattr(job_service, "BackgroundJobRepository", lambda: repo)
+    monkeypatch.setattr(job_worker, "get_job_definition", lambda *_args: FakeDefinition(handler))
 
-    job = asyncio.create_task(process_task({"worker_id": "worker-1"}, record.id))
+    job = asyncio.create_task(process_background_job({"worker_id": "worker-1"}, record.id))
     await started.wait()
     job.cancel()
     with pytest.raises(asyncio.CancelledError):
@@ -428,23 +435,23 @@ async def test_parent_job_cancellation_waits_for_handler_exit(monkeypatch):
     assert repo.release_calls == ["worker_shutdown: worker 停止时任务中断"]
 
 
-async def test_process_task_timeout_persists_failed_terminal(monkeypatch):
+async def test_process_background_job_timeout_persists_failed_terminal(monkeypatch):
     record = make_record(timeout_seconds=0.01)
     repo = FakeRepo(record)
 
     observed_reason: list[str | None] = []
 
-    async def handler(context: TaskContext):
+    async def handler(context: BackgroundJobContext):
         try:
             await asyncio.Event().wait()
         except asyncio.CancelledError:
             observed_reason.append(context.cancellation_reason)
             raise
 
-    monkeypatch.setattr(task_service, "TaskRepository", lambda: repo)
-    monkeypatch.setattr(task_service, "get_task_definition", lambda *_args: FakeDefinition(handler))
+    monkeypatch.setattr(job_service, "BackgroundJobRepository", lambda: repo)
+    monkeypatch.setattr(job_worker, "get_job_definition", lambda *_args: FakeDefinition(handler))
 
-    await process_task({"worker_id": "worker-1"}, record.id)
+    await process_background_job({"worker_id": "worker-1"}, record.id)
 
     assert repo.record.status == "failed"
     assert observed_reason == ["timeout"]
@@ -452,50 +459,92 @@ async def test_process_task_timeout_persists_failed_terminal(monkeypatch):
     assert "0.01-second" in repo.finish_calls[-1]["error"]
 
 
-async def test_pending_cancel_becomes_terminal_without_worker(monkeypatch):
+async def test_pending_cancel_is_only_an_intent_until_execution_acknowledges(monkeypatch):
     repo = FakeRepo(make_record())
-    tasker = Tasker()
-    tasker._repo = repo
+    observer = JobTracker()
+    observer._repo = repo
 
-    monkeypatch.setattr(task_service, "get_task_definition", lambda *_args: FakeDefinition(None))
-    task = await tasker.cancel_task("task-1")
+    job = await observer.cancel_job("job-1")
 
-    assert task is not None
-    assert task.status == "cancelled"
-    assert task.cancel_requested is True
-    assert await tasker.delete_task("task-1") is True
+    assert job.status == "pending"
+    assert job.cancel_requested is True
+    assert await observer.delete_job("job-1") is False
 
 
-async def test_unknown_handler_version_does_not_run_current_failure_hook(monkeypatch):
-    record = make_record(type="knowledge_parse", handler_version=2)
-    repo = FakeRepo(record)
-    tasker = Tasker()
-    tasker._repo = repo
-    cancel_calls: list[str] = []
+async def test_registration_and_cancel_do_not_require_a_worker_handler():
+    observer = JobTracker()
+    observer._repo = FakeRepo()
+    job, created = await observer.register(name="业务动作", job_type="domain-owned", handler_version=99)
 
-    async def cancel_hook(_record):
-        cancel_calls.append("called")
-
-    def get_definition(_task_type: str, handler_version: int):
-        if handler_version != 1:
-            raise ValueError("unsupported version")
-        return FakeDefinition(None)
-
-    monkeypatch.setattr(task_service, "get_task_definition", get_definition)
-    monkeypatch.setattr(FakeDefinition, "load_failure_handler", lambda _self: cancel_hook)
-
-    assert await tasker.cancel_task(record.id) is None
-    assert cancel_calls == []
-    assert record.cancel_requested == 0
+    assert created is True
+    assert job.type == "domain-owned"
+    assert job.handler_version == 99
+    assert observer._repo.events == ["persist"]
+    cancelled = await observer.cancel_job(job.id)
+    assert cancelled.status == "pending"
+    assert cancelled.cancel_requested is True
 
 
-def test_task_timeout_accepts_existing_values_above_24_hours():
-    assert Tasker(default_timeout_seconds=172800.0)._resolve_timeout_seconds(None) == 172800.0
+async def test_report_progress_100_does_not_infer_success_or_failure():
+    record = make_record(status="running", worker_id="owner")
+    observer = JobTracker()
+    observer._repo = FakeRepo(record)
+
+    assert await observer.report(record.id, worker_id="owner", progress=100, result={"failed": 2}) is True
+    assert record.progress == 100
+    assert record.result == {"failed": 2}
+    assert record.status == "running"
 
 
-def test_task_timeout_override_cannot_exceed_worker_default():
-    tasker = Tasker(default_timeout_seconds=60.0)
+@pytest.mark.parametrize("progress", [float("nan"), float("inf"), -float("inf")])
+async def test_report_rejects_non_finite_progress(progress):
+    observer = JobTracker()
+    observer._repo = FakeRepo(make_record(status="running", worker_id="owner"))
+    with pytest.raises(ValueError, match="finite"):
+        await observer.report("job-1", worker_id="owner", progress=progress)
+    assert observer._repo.updates == []
 
-    assert tasker._resolve_timeout_seconds(30.0) == 30.0
+
+def test_job_timeout_accepts_existing_values_above_24_hours():
+    assert job_queue_service.resolve_job_timeout(None, default=172800.0) == 172800.0
+
+
+def test_job_timeout_override_cannot_exceed_worker_default():
+    assert job_queue_service.resolve_job_timeout(30.0, default=60.0) == 30.0
     with pytest.raises(ValueError, match="cannot exceed the worker default"):
-        tasker._resolve_timeout_seconds(61.0)
+        job_queue_service.resolve_job_timeout(61.0, default=60.0)
+
+
+async def test_running_cancel_waits_for_handler_safe_boundary(monkeypatch):
+    record = make_record()
+    repo = FakeRepo(record)
+    entered = asyncio.Event()
+    boundary = asyncio.Event()
+    interrupted = asyncio.Event()
+
+    async def handler(context):
+        entered.set()
+        try:
+            await boundary.wait()
+            await context.raise_if_cancelled()
+        except asyncio.CancelledError:
+            interrupted.set()
+            raise
+
+    monkeypatch.setattr(job_service, "BackgroundJobRepository", lambda: repo)
+    monkeypatch.setattr(job_worker, "get_job_definition", lambda *_args: FakeDefinition(handler))
+    monkeypatch.setattr(job_worker, "JOB_HEARTBEAT_SECONDS", 0.001)
+    job = asyncio.create_task(process_background_job({}, record.id))
+    try:
+        await asyncio.wait_for(entered.wait(), 1)
+        record.cancel_requested = 1
+        await asyncio.sleep(0.02)
+        assert not interrupted.is_set(), "取消请求不能打断尚未到达安全边界的业务动作"
+        boundary.set()
+        await asyncio.wait_for(job, 1)
+        assert interrupted.is_set()
+        assert record.status == "cancelled"
+    finally:
+        boundary.set()
+        job.cancel()
+        await asyncio.gather(job, return_exceptions=True)

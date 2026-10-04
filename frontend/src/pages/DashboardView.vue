@@ -37,17 +37,17 @@
               <Moon v-else class="header-action-icon" />
             </button>
           </a-tooltip>
-          <a-tooltip title="任务中心">
+          <a-tooltip title="后台作业">
             <button
               type="button"
-              class="header-action-button task-center-button"
-              :class="{ active: taskerStore.isDrawerOpen }"
-              aria-label="任务中心"
-              @click="openTaskCenter"
+              class="header-action-button job-center-button"
+              :class="{ active: jobsStore.isDrawerOpen }"
+              aria-label="后台作业"
+              @click="openJobCenter"
             >
               <ClipboardList class="header-action-icon" />
-              <span class="task-center-label">任务中心</span>
-              <a-badge :count="activeTaskCount" :overflow-count="99" size="small" />
+              <span class="job-center-label">后台作业</span>
+              <a-badge :count="activeJobCount" :overflow-count="99" size="small" />
             </button>
           </a-tooltip>
         </div>
@@ -120,7 +120,7 @@ import { storeToRefs } from 'pinia'
 import { message } from 'ant-design-vue'
 import { useRoute, useRouter } from 'vue-router'
 import { dashboardApi } from '@/apis/dashboard_api'
-import { useTaskerStore } from '@/modules/tasks/model/tasker'
+import { useBackgroundJobsStore } from '@/modules/background-jobs/model/jobs'
 import { useThemeStore } from '@/shared/model/theme'
 import { useUserStore } from '@/modules/identity/model/user'
 import { ClipboardList, Settings, Sun, Moon } from '@lucide/vue'
@@ -147,12 +147,12 @@ const overviewActivated = ref(activeTab.value === 'overview')
 const threadActivated = ref(activeTab.value === 'threads')
 
 // 组件引用
-const taskerStore = useTaskerStore()
+const jobsStore = useBackgroundJobsStore()
 const themeStore = useThemeStore()
 const userStore = useUserStore()
-const { activeCount } = storeToRefs(taskerStore)
+const { activeCount } = storeToRefs(jobsStore)
 const { openSettingsModal } = inject('settingsModal', {})
-const activeTaskCount = computed(() => activeCount.value || 0)
+const activeJobCount = computed(() => activeCount.value || 0)
 
 // 统计数据
 const basicStats = ref({})
@@ -249,8 +249,8 @@ const toggleTheme = () => {
   themeStore.toggleTheme()
 }
 
-const openTaskCenter = () => {
-  taskerStore.openDrawer()
+const openJobCenter = () => {
+  jobsStore.openDrawer()
 }
 
 // 清理所有子组件的图表实例
@@ -324,11 +324,11 @@ onUnmounted(() => {
   height: 16px;
 }
 
-.task-center-button {
+.job-center-button {
   padding-right: 10px;
 }
 
-.task-center-label {
+.job-center-label {
   line-height: 1;
 }
 
@@ -431,11 +431,11 @@ onUnmounted(() => {
 
 @media (max-width: 900px) {
   .header-context,
-  .task-center-label {
+  .job-center-label {
     display: none;
   }
 
-  .task-center-button {
+  .job-center-button {
     padding-right: 8px;
   }
 }

@@ -1,15 +1,19 @@
+from __future__ import annotations
+
 import asyncio
 import json
 import os
 import re
 import uuid
 from datetime import UTC, timedelta
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import select
 
 from yuxi.infrastructure.observability.logging import logger
 from yuxi.infrastructure.postgres.manager import pg_manager
+from yuxi.modules.background_jobs.repository import BackgroundJobRepository
+from yuxi.modules.background_jobs.service import job_tracker
 from yuxi.modules.knowledge.evaluation.benchmark_generation import (
     dump_benchmark_item,
     iter_generated_benchmark_items,
@@ -22,8 +26,10 @@ from yuxi.modules.knowledge.repositories.chunks import KnowledgeChunkRepository
 from yuxi.modules.knowledge.repositories.evaluation import EvaluationRepository
 from yuxi.modules.knowledge.runtime import knowledge_base as kb_manager
 from yuxi.modules.models import select_model
-from yuxi.modules.tasks.repository import TaskRepository
-from yuxi.modules.tasks.service import TaskContext, tasker
+
+if TYPE_CHECKING:
+    from yuxi.workers.background_job_context import BackgroundJobContext
+from yuxi.modules.background_jobs.dispatch import dispatch_job, register_job_in_session
 from yuxi.shared.datetime import coerce_any_to_utc_datetime, format_utc_datetime, utc_now
 
 DATASET_PERSIST_BATCH_SIZE = max(1, int(os.getenv("YUXI_DATASET_PERSIST_BATCH_SIZE") or 1))
@@ -49,7 +55,7 @@ class EvaluationService:
         self.eval_repo = EvaluationRepository()
         self.kb_repo = KnowledgeBaseRepository()
         self.chunk_repo = KnowledgeChunkRepository()
-        self.task_repo = TaskRepository()
+        self.job_repo = BackgroundJobRepository()
 
     def _dataset_to_dict(self, row) -> dict[str, Any]:
         return {
@@ -116,53 +122,53 @@ class EvaluationService:
         if metadata.get("source") != "generated" or metadata.get("status") not in {"pending", "running"}:
             return
 
-        task_id = metadata.get("task_id")
-        task = await self.task_repo.get_by_id(task_id) if task_id else None
-        if task is None and not task_id:
-            task = await tasker.find_task_by_payload(
-                task_type="dataset_generation",
+        job_id = metadata.get("job_id")
+        job = await self.job_repo.get_by_id(job_id) if job_id else None
+        if job is None and not job_id:
+            job = await job_tracker.find_job_by_payload(
+                job_type="dataset_generation",
                 payload_match={"dataset_id": row.dataset_id},
                 statuses={"pending", "running"},
             )
-            if task is not None:
-                task_id = task.id
-                metadata["task_id"] = task_id
-        if task is None and not task_id:
+            if job is not None:
+                job_id = job.id
+                metadata["job_id"] = job_id
+        if job is None and not job_id:
             return
-        if task is None:
+        if job is None:
             metadata.pop("progress", None)
             metadata.update(status="failed", message="生成任务不存在")
-        elif task.status == "success":
-            metadata.update(status="completed", progress=100, message=task.message or "完成")
-        elif task.status in {"failed", "cancelled"}:
+        elif job.status == "success":
+            metadata.update(status="completed", progress=100, message=job.message or "完成")
+        elif job.status in {"failed", "cancelled"}:
             metadata.pop("progress", None)
-            metadata.update(status="failed", message=task.error or task.message or "生成任务失败")
+            metadata.update(status="failed", message=job.error or job.message or "生成任务失败")
         else:
-            metadata.update(status=task.status, progress=task.progress, message=task.message)
+            metadata.update(status=job.status, progress=job.progress, message=job.message)
 
         if metadata != (row.build_metadata or {}):
             await self.eval_repo.update_dataset(row.dataset_id, {"build_metadata": metadata})
             row.build_metadata = metadata
 
-    async def _sync_evaluation_run(self, row, task: Any = _TASK_NOT_LOADED):
-        """把 Durable Task 终态投影到单条 EvaluationRun。"""
+    async def _sync_evaluation_run(self, row, job: Any = _TASK_NOT_LOADED):
+        """把 后台作业 终态投影到单条 EvaluationRun。"""
         if row.status != "running":
             return None
-        if task is _TASK_NOT_LOADED:
-            task = await self.task_repo.find_latest_by_payload(
-                task_type="rag_evaluation",
+        if job is _TASK_NOT_LOADED:
+            job = await self.job_repo.find_latest_by_payload(
+                job_type="rag_evaluation",
                 payload_match={"run_id": row.run_id},
             )
 
         error = None
         completed_at = None
-        if task is not None and task.status in {"failed", "cancelled"}:
-            error = task.error or task.message or "评估任务失败"
-            completed_at = task.completed_at or utc_now()
+        if job is not None and job.status in {"failed", "cancelled"}:
+            error = job.error or job.message or "评估任务失败"
+            completed_at = job.completed_at or utc_now()
             if completed_at.tzinfo is None:
                 completed_at = completed_at.replace(tzinfo=UTC)
         elif (
-            task is None
+            job is None
             and row.started_at
             and coerce_any_to_utc_datetime(row.started_at) < utc_now() - timedelta(minutes=1)
         ):
@@ -177,7 +183,7 @@ class EvaluationService:
             row.status = "failed"
             row.metrics = {"error": error}
             row.completed_at = completed_at
-        return task
+        return job
 
     def _build_dataset_items(
         self, dataset_id: str, kb_id: str, questions: list[dict[str, Any]], start_index: int = 0
@@ -373,32 +379,32 @@ class EvaluationService:
         }
         try:
             async with pg_manager.get_async_session_context() as session:
-                task, created = await tasker.create_unique_in_session(
+                job, created = await register_job_in_session(
                     session,
                     name="继续生成评估数据集",
-                    task_type="dataset_generation",
+                    job_type="dataset_generation",
                     payload=payload,
                     payload_match={"dataset_id": dataset_id},
                 )
-                attached = await self.eval_repo.attach_dataset_generation_task_in_session(session, dataset_id, task.id)
+                attached = await self.eval_repo.attach_dataset_generation_job_in_session(session, dataset_id, job.id)
                 if attached is None:
                     raise ValueError("Dataset not found")
                 attached_metadata = attached.build_metadata or {}
-                if attached_metadata.get("status") == "completed" and attached_metadata.get("task_id") != task.id:
+                if attached_metadata.get("status") == "completed" and attached_metadata.get("job_id") != job.id:
                     raise _DatasetAlreadyCompleted
         except _DatasetAlreadyCompleted:
             return {"dataset_id": dataset_id, "message": "数据集已完成生成"}
         if created:
-            await tasker.publish(task)
+            await dispatch_job(job.id)
         if not created:
             return {
                 "dataset_id": dataset_id,
-                "task_id": task.id,
+                "job_id": job.id,
                 "message": "已有进行中的生成任务",
             }
         return {
             "dataset_id": dataset_id,
-            "task_id": task.id,
+            "job_id": job.id,
             "message": "评估数据集生成任务已恢复",
         }
 
@@ -440,7 +446,7 @@ class EvaluationService:
             "progress": 0,
             "params": generation_params,
         }
-        task_payload = {
+        job_payload = {
             "dataset_id": dataset_id,
             "kb_id": kb_id,
             "created_by": created_by,
@@ -449,14 +455,14 @@ class EvaluationService:
             **generation_params,
         }
         async with pg_manager.get_async_session_context() as session:
-            task = await tasker.create_in_session(
+            job, _ = await register_job_in_session(
                 session,
                 name="生成评估数据集",
-                task_type="dataset_generation",
-                payload=task_payload,
+                job_type="dataset_generation",
+                payload=job_payload,
                 payload_match={"dataset_id": dataset_id},
             )
-            build_metadata["task_id"] = task.id
+            build_metadata["job_id"] = job.id
             await self.eval_repo.create_dataset_in_session(
                 session,
                 {
@@ -471,10 +477,10 @@ class EvaluationService:
                     "created_by": created_by,
                 },
             )
-        await tasker.publish(task)
-        return {"dataset_id": dataset_id, "task_id": task.id, "message": "评估数据集生成任务已提交"}
+        await dispatch_job(job.id)
+        return {"dataset_id": dataset_id, "job_id": job.id, "message": "评估数据集生成任务已提交"}
 
-    async def _generate_dataset_task(self, context: TaskContext):
+    async def _generate_dataset_job(self, context: BackgroundJobContext):
         await context.set_progress(0, "初始化")
         payload = context.payload
 
@@ -501,7 +507,7 @@ class EvaluationService:
                 "source": "generated",
                 "status": "completed",
                 "progress": 100,
-                "task_id": context.task_id,
+                "job_id": context.job_id,
                 "params": generation_params,
             }
             await context.set_progress(100, "完成")
@@ -518,14 +524,14 @@ class EvaluationService:
             "source": "generated",
             "status": "running",
             "progress": int(99 * existing_count / total_count),
-            "task_id": context.task_id,
+            "job_id": context.job_id,
             "params": generation_params,
         }
 
         async def persist_build_metadata(**updates) -> None:
             build_metadata.update(updates)
 
-            async def operation(session, _task_record) -> None:
+            async def operation(session, _job_record) -> None:
                 record = await self.eval_repo.update_dataset_in_session(
                     session,
                     dataset_id,
@@ -555,7 +561,7 @@ class EvaluationService:
             items = self._build_dataset_items(dataset_id, kb_id, buffer, start_index)
             next_index = start_index + len(items)
 
-            async def operation(session, _task_record) -> None:
+            async def operation(session, _job_record) -> None:
                 await self.eval_repo.add_dataset_items_in_session(session, items)
                 record = await self.eval_repo.update_dataset_in_session(
                     session,
@@ -662,7 +668,7 @@ class EvaluationService:
             if model_config:
                 retrieval_config.update(model_config)
 
-            task_payload = {
+            job_payload = {
                 "run_id": run_id,
                 "name": run_name,
                 "kb_id": kb_id,
@@ -671,11 +677,11 @@ class EvaluationService:
                 "created_by": created_by,
             }
             async with pg_manager.get_async_session_context() as session:
-                task = await tasker.create_in_session(
+                job, _ = await register_job_in_session(
                     session,
                     name=f"RAG评估({run_name})",
-                    task_type="rag_evaluation",
-                    payload=task_payload,
+                    job_type="rag_evaluation",
+                    payload=job_payload,
                     payload_match={"run_id": run_id},
                 )
                 await self.eval_repo.create_run_in_session(
@@ -696,13 +702,13 @@ class EvaluationService:
                         "created_by": created_by,
                     },
                 )
-            await tasker.publish(task)
+            await dispatch_job(job.id)
             return run_id
         except Exception as e:
             logger.error(f"启动评估失败: {e}")
             raise
 
-    async def _run_evaluation_task(self, context: TaskContext):
+    async def _run_evaluation_job(self, context: BackgroundJobContext):
         try:
             payload = context.payload
 
@@ -734,7 +740,7 @@ class EvaluationService:
             total_items = len(dataset_items)
 
             async def persist_completed_items(completed_items: int) -> None:
-                async def operation(session, _task_record) -> None:
+                async def operation(session, _job_record) -> None:
                     record = await self.eval_repo.update_run_in_session(
                         session,
                         run_id,
@@ -770,7 +776,7 @@ class EvaluationService:
                 if dataset_row.has_gold_answers and question_data.get("gold_answer") and judge_llm:
                     all_answer_metrics.append(question_result["answer_scores"])
 
-                async def persist_run_item(session, _task_record) -> None:
+                async def persist_run_item(session, _job_record) -> None:
                     await self.eval_repo.upsert_run_item_in_session(
                         session,
                         run_id=run_id,
@@ -814,29 +820,29 @@ class EvaluationService:
                     error = "任务执行超时"
                 else:
                     error = "服务停止，任务执行中断"
-            logger.error(f"Task failed: {error}")
-            await context.set_message(f"Error: {error}")
+            logger.error(f"BackgroundJob failed: {error}")
+            await context.set_message("评估执行中断，请查看业务资源状态或日志")
             raise
 
     async def list_runs(self, kb_id: str) -> list[dict[str, Any]]:
         try:
             rows = await self.eval_repo.list_runs(kb_id)
             running_run_ids = {row.run_id for row in rows if row.status == "running"}
-            task_by_run_id = {}
+            job_by_run_id = {}
             if running_run_ids:
-                tasks = await self.task_repo.list_by_payload_values(
-                    task_type="rag_evaluation",
+                jobs = await self.job_repo.list_by_payload_values(
+                    job_type="rag_evaluation",
                     payload_key="run_id",
                     payload_values=running_run_ids,
                 )
-                for task in tasks:
-                    task_run_id = (task.payload or {}).get("run_id")
-                    if task_run_id not in task_by_run_id:
-                        task_by_run_id[task_run_id] = task
+                for job in jobs:
+                    job_run_id = (job.payload or {}).get("run_id")
+                    if job_run_id not in job_by_run_id:
+                        job_by_run_id[job_run_id] = job
 
             runs = []
             for row in rows:
-                task = await self._sync_evaluation_run(row, task_by_run_id.get(row.run_id))
+                job = await self._sync_evaluation_run(row, job_by_run_id.get(row.run_id))
                 run = {
                     "run_id": row.run_id,
                     "name": self._run_name_from_row(row),
@@ -850,8 +856,8 @@ class EvaluationService:
                     "retrieval_config": row.retrieval_config or {},
                     "metrics": row.metrics or {},
                 }
-                if row.status == "running" and task is not None:
-                    run.update(progress=task.progress, message=task.message)
+                if row.status == "running" and job is not None:
+                    run.update(progress=job.progress, message=job.message)
                 runs.append(run)
             return runs
         except Exception as e:
@@ -871,9 +877,6 @@ class EvaluationService:
             raise ValueError("Invalid run_id format")
         row = await self.eval_repo.get_run(run_id)
         if row is None or row.kb_id != kb_id:
-            task = await tasker.get_task(run_id)
-            if task:
-                return {"run_id": run_id, "status": task.status, "progress": task.progress, "message": task.message}
             raise ValueError(f"Run not found for {run_id}")
 
         await self._sync_evaluation_run(row)
@@ -928,27 +931,27 @@ class EvaluationService:
         logger.info(f"成功删除评估运行: {run_id}")
 
 
-async def run_dataset_generation_task(context: TaskContext):
+async def run_dataset_generation_job(context: BackgroundJobContext):
     """从持久 payload 重建评估数据集生成 Handler。"""
-    return await EvaluationService()._generate_dataset_task(context)
+    return await EvaluationService()._generate_dataset_job(context)
 
 
-async def finish_dataset_generation_task(session, task_record, result) -> None:
-    """在 Task 成功事务内提交数据集完成事实。"""
-    if not isinstance(result, dict) or result.get("dataset_id") != (task_record.payload or {}).get("dataset_id"):
-        raise ValueError("Dataset generation result does not match Task payload")
+async def finish_dataset_generation_job(session, job_record, result) -> None:
+    """在 BackgroundJob 成功事务内提交数据集完成事实。"""
+    if not isinstance(result, dict) or result.get("dataset_id") != (job_record.payload or {}).get("dataset_id"):
+        raise ValueError("Dataset generation result does not match BackgroundJob payload")
     dataset = await session.scalar(
         select(EvaluationDataset).where(EvaluationDataset.dataset_id == result["dataset_id"]).with_for_update()
     )
     if dataset is None:
-        raise ValueError("Dataset not found during Task completion")
+        raise ValueError("Dataset not found during BackgroundJob completion")
     dataset.item_count = int(result["item_count"])
     dataset.build_metadata = dict(result["build_metadata"])
 
 
-async def fail_dataset_generation_task(session, task_record, error: str) -> None:
-    """在 Task 失败事务内收敛数据集构建状态。"""
-    dataset_id = (task_record.payload or {}).get("dataset_id")
+async def fail_dataset_generation_job(session, job_record, error: str) -> None:
+    """在 BackgroundJob 失败事务内收敛数据集构建状态。"""
+    dataset_id = (job_record.payload or {}).get("dataset_id")
     dataset = await session.scalar(
         select(EvaluationDataset).where(EvaluationDataset.dataset_id == dataset_id).with_for_update()
     )
@@ -959,7 +962,7 @@ async def fail_dataset_generation_task(session, task_record, error: str) -> None
         return
     metadata.update(
         status="failed",
-        task_id=task_record.id,
+        job_id=job_record.id,
         progress=100,
         error_message=error,
         message=error,
@@ -967,18 +970,18 @@ async def fail_dataset_generation_task(session, task_record, error: str) -> None
     dataset.build_metadata = metadata
 
 
-async def run_rag_evaluation_task(context: TaskContext):
+async def run_rag_evaluation_job(context: BackgroundJobContext):
     """从持久 payload 重建 RAG 评估 Handler。"""
-    return await EvaluationService()._run_evaluation_task(context)
+    return await EvaluationService()._run_evaluation_job(context)
 
 
-async def finish_rag_evaluation_task(session, task_record, result) -> None:
-    """在 Task 成功事务内提交评估 Run 完成事实。"""
-    if not isinstance(result, dict) or result.get("run_id") != (task_record.payload or {}).get("run_id"):
-        raise ValueError("Evaluation result does not match Task payload")
+async def finish_rag_evaluation_job(session, job_record, result) -> None:
+    """在 BackgroundJob 成功事务内提交评估 Run 完成事实。"""
+    if not isinstance(result, dict) or result.get("run_id") != (job_record.payload or {}).get("run_id"):
+        raise ValueError("Evaluation result does not match BackgroundJob payload")
     run = await session.scalar(select(EvaluationRun).where(EvaluationRun.run_id == result["run_id"]).with_for_update())
     if run is None:
-        raise ValueError("EvaluationRun not found during Task completion")
+        raise ValueError("EvaluationRun not found during BackgroundJob completion")
     run.status = "completed"
     run.completed_items = int(result["completed_items"])
     run.metrics = dict(result["metrics"])
@@ -986,9 +989,9 @@ async def finish_rag_evaluation_task(session, task_record, result) -> None:
     run.completed_at = utc_now()
 
 
-async def fail_rag_evaluation_task(session, task_record, error: str) -> None:
-    """在 Task 失败事务内收敛评估 Run。"""
-    run_id = (task_record.payload or {}).get("run_id")
+async def fail_rag_evaluation_job(session, job_record, error: str) -> None:
+    """在 BackgroundJob 失败事务内收敛评估 Run。"""
+    run_id = (job_record.payload or {}).get("run_id")
     run = await session.scalar(select(EvaluationRun).where(EvaluationRun.run_id == run_id).with_for_update())
     if run is None or run.status == "completed":
         return

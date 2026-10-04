@@ -188,7 +188,7 @@
             <div class="panel-body">
               <a-progress
                 v-if="isBuildActive"
-                :percent="graphBuildStatus?.build_task_progress ?? 0"
+                :percent="graphBuildStatus?.build_job_progress ?? 0"
                 :stroke-color="{ '0%': '#108ee9', '100%': '#87d068' }"
                 size="small"
                 style="margin-bottom: 10px"
@@ -249,7 +249,7 @@
                   配置抽取器
                 </a-button>
                 <a-button v-else-if="isBuildActive" type="primary" block disabled>
-                  构建中 {{ graphBuildStatus?.build_task_progress ?? 0 }}%
+                  构建中 {{ graphBuildStatus?.build_job_progress ?? 0 }}%
                 </a-button>
                 <a-button
                   v-else-if="isBuildFailed"
@@ -377,7 +377,7 @@
 <script setup>
 import { ref, computed, watch, nextTick, onUnmounted, reactive } from 'vue'
 import { useDatabaseStore } from '@/modules/knowledge/model/database'
-import { useTaskerStore } from '@/modules/tasks/model/tasker'
+import { useBackgroundJobsStore } from '@/modules/background-jobs/model/jobs'
 import { useConfigStore } from '@/modules/settings/model/config'
 import {
   RefreshCw,
@@ -397,7 +397,6 @@ import { Modal, message } from 'ant-design-vue'
 import ModelSelectorComponent from '@/modules/agents/ui/ModelSelectorComponent.vue'
 import { useGraph } from '@/modules/knowledge/model/useGraph'
 
-const GRAPH_BUILD_TASK_TYPE = 'knowledge_graph_index'
 const MILVUS_KB_TYPE = 'milvus'
 const GRAPH_SUPPORTED_KB_TYPES = new Set([MILVUS_KB_TYPE])
 
@@ -413,7 +412,7 @@ const props = defineProps({
 })
 
 const store = useDatabaseStore()
-const taskerStore = useTaskerStore()
+const jobsStore = useBackgroundJobsStore()
 const configStore = useConfigStore()
 
 const kbId = computed(() => store.kbId)
@@ -440,12 +439,12 @@ const activeFailedChunkKey = ref('')
 let buildStatusPollTimer = null
 
 const isBuildActive = computed(() => {
-  const s = graphBuildStatus.value?.build_task_status
+  const s = graphBuildStatus.value?.build_job_status
   return s === 'pending' || s === 'running'
 })
 
 const isBuildFailed = computed(() => {
-  return graphBuildStatus.value?.build_task_status === 'failed'
+  return graphBuildStatus.value?.build_job_status === 'failed'
 })
 
 const pendingGraphChunks = computed(() => {
@@ -663,18 +662,12 @@ const configureGraphBuild = async () => {
 }
 
 const startGraphBuild = async () => {
-  const registerTask = taskerStore.createTaskRegistration()
+  const registerJob = jobsStore.createJobRegistration()
   try {
     const data = await graphBuildApi.startIndex(kbId.value)
     message.success(data.message || '图谱构建任务已提交')
-    if (data.task_id) {
-      registerTask({
-        task_id: data.task_id,
-        name: `图谱构建 (${kbId.value})`,
-        task_type: GRAPH_BUILD_TASK_TYPE,
-        message: data.message,
-        payload: { kb_id: kbId.value }
-      })
+    if (data.job_id) {
+      registerJob({ job_id: data.job_id })
     }
     await loadGraphBuildStatus()
   } catch (e) {
@@ -684,18 +677,12 @@ const startGraphBuild = async () => {
 }
 
 const retryGraphVectors = async () => {
-  const registerTask = taskerStore.createTaskRegistration()
+  const registerJob = jobsStore.createJobRegistration()
   try {
     const data = await graphBuildApi.reconcile(kbId.value, 'failed')
     message.success(data.message || '图谱向量索引修复任务已提交')
-    if (data.task_id) {
-      registerTask({
-        task_id: data.task_id,
-        name: `图谱向量索引修复 (${kbId.value})`,
-        task_type: GRAPH_BUILD_TASK_TYPE,
-        message: data.message,
-        payload: { kb_id: kbId.value, reconcile_mode: 'failed' }
-      })
+    if (data.job_id) {
+      registerJob({ job_id: data.job_id })
     }
     await loadGraphBuildStatus()
   } catch (e) {

@@ -35,6 +35,6 @@ root 权限只用于 CI 冷启动前的一次性目录准备；长期进程使�
 - `docker compose run --rm --no-deps -e PYTEST_ADDOPTS='-p no:cacheprovider' api uv run --no-sync pytest test/unit -m 'not slow' -q`：Passed，2465 passed、55 skipped。
 - `uv tool run --offline ruff check --config backend/pyproject.toml scripts/test_release_workflows.py` 与 `git diff --check`：Passed。Ruff 整文件格式检查仍报告修改前既有行的布局差异，未重排无关代码。
 - `cd docs && pnpm run build`：Passed，包含相对链接检查。
-- GitHub 上完整冷启动、readiness、Durable Task 与 Agent 主链路的结果以更新后运行记录为准；本地目录探针不替代这些检查。
+- GitHub 上完整冷启动、readiness、后台作业 与 Agent 主链路的结果以更新后运行记录为准；本地目录探针不替代这些检查。
 
 合入 `829f65fd` 时采用上游相同语义的 `install -d` 命令，移除重复准备步骤；原 `chown` 探针是之前提交的证据，最终命令的冷启动行为以新 head CI 为准。工作流负控同步核对当前命令。

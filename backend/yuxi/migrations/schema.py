@@ -142,7 +142,8 @@ async def ensure_business_schema(manager):
         "CREATE INDEX IF NOT EXISTS ix_messages_session_created_id ON messages(session_record_id, created_at, id)",
         "CREATE INDEX IF NOT EXISTS ix_agent_runs_thread_execution_seq ON agent_runs(thread_id, execution_seq)",
         "CREATE INDEX IF NOT EXISTS ix_agent_runs_status_lease_expires ON agent_runs(status, lease_expires_at)",
-        "CREATE INDEX IF NOT EXISTS ix_tasks_status_lease_expires ON tasks(status, lease_expires_at)",
+        "CREATE INDEX IF NOT EXISTS ix_background_jobs_status_lease_expires "
+        "ON background_jobs(status, lease_expires_at)",
         f"CREATE UNIQUE INDEX IF NOT EXISTS uq_agent_runs_one_active_per_thread "
         f"ON agent_runs(uid, agent_slug, thread_id) "
         f"WHERE status NOT IN ({AGENT_RUN_TERMINAL_STATUS_SQL})",

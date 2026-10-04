@@ -22,11 +22,11 @@ import { useChatUIStore } from '@/modules/session/model/chatUI'
 import { useDatabaseStore } from '@/modules/knowledge/model/database'
 import { useInfoStore } from '@/modules/settings/model/info'
 import { useProjectsStore } from '@/modules/projects/model/projects'
-import { useTaskerStore } from '@/modules/tasks/model/tasker'
+import { useBackgroundJobsStore } from '@/modules/background-jobs/model/jobs'
 import { useUserStore } from '@/modules/identity/model/user'
 import { storeToRefs } from 'pinia'
 import UserInfoComponent from '@/modules/settings/ui/UserInfoComponent.vue'
-import TaskCenterDrawer from '@/modules/tasks/ui/TaskCenterDrawer.vue'
+import BackgroundJobsDrawer from '@/modules/background-jobs/ui/BackgroundJobsDrawer.vue'
 import SettingsModal from '@/modules/settings/ui/SettingsModal.vue'
 import SessionNavSection from '@/modules/session/ui/SessionNavSection.vue'
 import GlobalSearchModal from '@/modules/session/ui/GlobalSearchModal.vue'
@@ -40,9 +40,9 @@ const chatUIStore = useChatUIStore()
 const databaseStore = useDatabaseStore()
 const infoStore = useInfoStore()
 const projectsStore = useProjectsStore()
-const taskerStore = useTaskerStore()
+const jobsStore = useBackgroundJobsStore()
 const userStore = useUserStore()
-const { activeCount: activeCountRef, isDrawerOpen } = storeToRefs(taskerStore)
+const { activeCount: activeCountRef, isDrawerOpen } = storeToRefs(jobsStore)
 const { projects, isLoading: projectsLoading, error: projectsError } = storeToRefs(projectsStore)
 const { threads, currentThreadId, hasMoreThreads, isLoadingMoreThreads, threadCreationInFlight } =
   storeToRefs(chatThreadsStore)
@@ -113,9 +113,9 @@ onMounted(() => {
   void getRemoteDatabase()
   void initAgentNavigation()
   void getRemoteConfig()
-  // 仅管理员加载任务中心数据
+  // 仅管理员加载后台作业数据
   if (userStore.isAdmin) {
-    taskerStore.loadTasks()
+    jobsStore.loadJobs()
     fetchGithubStars() // Fetch GitHub stars on mount
   }
   startThreadStatusSync()
@@ -149,7 +149,7 @@ onUnmounted(() => {
 const route = useRoute()
 const router = useRouter()
 
-const activeTaskCount = computed(() => activeCountRef.value || 0)
+const activeJobCount = computed(() => activeCountRef.value || 0)
 const activeSessionThreadId = computed(() => {
   return route.path.startsWith('/agent') ? currentThreadId.value : null
 })
@@ -498,18 +498,18 @@ provide('settingsModal', {
         <div class="nav-item user-info" @click.stop>
           <UserInfoComponent :show-role="!sidebarCollapsed">
             <template v-if="userStore.isAdmin" #actions>
-              <a-tooltip placement="top" title="任务中心">
+              <a-tooltip placement="top" title="后台作业">
                 <button
-                  class="user-task-center"
+                  class="user-job-center"
                   :class="{ active: isDrawerOpen }"
                   type="button"
-                  aria-label="任务中心"
-                  @click.stop="taskerStore.openDrawer()"
+                  aria-label="后台作业"
+                  @click.stop="jobsStore.openDrawer()"
                 >
                   <a-badge
-                    :count="activeTaskCount"
+                    :count="activeJobCount"
                     :overflow-count="99"
-                    class="task-center-badge"
+                    class="job-center-badge"
                     size="small"
                   >
                     <ClipboardList class="icon" size="16" />
@@ -541,7 +541,7 @@ provide('settingsModal', {
       @select-file="handleSearchSelectFile"
     />
 
-    <TaskCenterDrawer v-if="userStore.isAdmin" />
+    <BackgroundJobsDrawer v-if="userStore.isAdmin" />
     <SettingsModal
       v-model:visible="showSettingsModal"
       :initial-tab="settingsInitialTab"
@@ -903,7 +903,7 @@ div.header,
         flex: 1 1 auto;
       }
 
-      :deep(.user-task-center) {
+      :deep(.user-job-center) {
         display: inline-flex;
         align-items: center;
         justify-content: center;
@@ -925,7 +925,7 @@ div.header,
           color: var(--main-color);
         }
 
-        .task-center-badge {
+        .job-center-badge {
           display: flex;
           justify-content: center;
         }

@@ -44,10 +44,10 @@ class ReadOnlyConnectors(KnowledgeBase):
         operator_id: str | None = None,
         *,
         additional_params: dict[str, Any],
-        processing_task_id: str | None = None,
+        processing_job_id: str | None = None,
         processing_owner: str | None = None,
     ) -> dict:
-        del kb_id, file_id, operator_id, additional_params, processing_task_id, processing_owner
+        del kb_id, file_id, operator_id, additional_params, processing_job_id, processing_owner
         raise self._readonly_error()
 
     async def update_file_params(
@@ -89,7 +89,7 @@ class ReadOnlyConnectors(KnowledgeBase):
         *,
         embedding_model_spec: str | None,
         additional_params: dict[str, Any],
-        processing_task_id: str | None = None,
+        processing_job_id: str | None = None,
         processing_owner: str | None = None,
     ) -> dict:
         del (
@@ -99,7 +99,7 @@ class ReadOnlyConnectors(KnowledgeBase):
             params,
             embedding_model_spec,
             additional_params,
-            processing_task_id,
+            processing_job_id,
             processing_owner,
         )
         raise self._readonly_error()

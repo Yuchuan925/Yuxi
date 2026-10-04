@@ -1,5 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { setImmediate } from 'node:timers/promises'
 
 import { createPinia, setActivePinia } from 'pinia'
 import { createApp } from 'vue'
@@ -89,10 +90,16 @@ test('知识库提交跨账号返回时，不把旧入队任务登记给新账�
   const { documentApi, databaseApi } = await server.ssrLoadModule('/src/apis/knowledge_api.js')
   const { useDatabaseStore } = await server.ssrLoadModule('/src/modules/knowledge/model/database.js')
   const { useUserStore } = await server.ssrLoadModule('/src/modules/identity/model/user.js')
-  const { useTaskerStore } = await server.ssrLoadModule('/src/modules/tasks/model/tasker.js')
+  const { useBackgroundJobsStore } = await server.ssrLoadModule('/src/modules/background-jobs/model/jobs.js')
+  const { backgroundJobsApi } = await server.ssrLoadModule('/src/apis/background_jobs.js')
   const database = app.runWithContext(() => useDatabaseStore())
   const user = useUserStore()
-  const tasker = useTaskerStore()
+  const job_tracker = useBackgroundJobsStore()
+  const detailRequests = []
+  t.mock.method(backgroundJobsApi, 'fetchJobDetail', async (id) => {
+    detailRequests.push(id)
+    return { job: { id, status: 'success', progress: 100 } }
+  })
   t.mock.method(message, 'success', () => {})
   t.mock.method(databaseApi, 'getDatabaseInfo', async () => ({ stats: { processing_count: 0 } }))
   t.mock.method(documentApi, 'listDocuments', async () => ({
@@ -124,19 +131,22 @@ test('知识库提交跨账号返回时，不把旧入队任务登记给新账�
         user.logout()
         user.token = `new-${action}`
         user.userRole = 'admin'
-        resolve({ status: 'queued', task_id: 'old-task' })
+        resolve({ status: 'queued', job_id: 'old-job' })
         assert.equal(await pending, true)
-        assert.deepEqual(tasker.tasks, [])
+        assert.deepEqual(job_tracker.jobs, [])
+        assert.equal(detailRequests.includes('old-job'), false)
         const current = database[action](...args)
-        resolve({ status: 'queued', task_id: `new-${action}` })
+        resolve({ status: 'queued', job_id: `new-${action}` })
         assert.equal(await current, true)
-        assert.equal(tasker.tasks[0].id, `new-${action}`)
-        tasker.reset()
+        await setImmediate()
+        assert.equal(job_tracker.jobs[0].id, `new-${action}`)
+        assert.equal(job_tracker.jobs[0].status, 'success')
+        job_tracker.reset()
       })
     }
   } finally {
     database.stopAutoRefresh()
-    tasker.$dispose()
+    job_tracker.$dispose()
     await server.close()
   }
 })

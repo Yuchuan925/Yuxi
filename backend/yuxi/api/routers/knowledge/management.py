@@ -24,6 +24,8 @@ from yuxi.api.uploads import read_upload_with_limit
 from yuxi.infrastructure.document_parsing import SUPPORTED_FILE_EXTENSIONS, is_supported_file_extension
 from yuxi.infrastructure.minio.client import MinIOClient, StorageError, aupload_file_to_minio, get_minio_client
 from yuxi.infrastructure.observability.logging import logger
+from yuxi.modules.background_jobs.dispatch import submit_job
+from yuxi.modules.background_jobs.service import job_tracker
 from yuxi.modules.identity.models import User
 from yuxi.modules.identity.permissions import ResourcePermission, resolve_knowledge_base_permission
 from yuxi.modules.knowledge.base import KBNameConflictError, KBNotFoundError
@@ -43,7 +45,6 @@ from yuxi.modules.knowledge.utils.sample_question_utils import (
 )
 from yuxi.modules.knowledge.utils.url_fetcher import fetch_url_content
 from yuxi.modules.system.options import system_options
-from yuxi.modules.tasks.service import tasker
 from yuxi.modules.workspace.services.files import read_workspace_file_bytes
 
 knowledge = APIRouter(prefix="/knowledge", tags=["knowledge"])
@@ -179,10 +180,10 @@ def _validate_uploaded_document_items(items: list[str], params: dict) -> None:
             raise HTTPException(status_code=400, detail=f"Missing content_hash for file: {item}")
 
 
-async def _has_running_graph_build_task(kb_id: str) -> bool:
+async def _has_running_graph_build_job(kb_id: str) -> bool:
     return (
-        await tasker.find_task_by_payload(
-            task_type=GRAPH_TASK_TYPE,
+        await job_tracker.find_job_by_payload(
+            job_type=GRAPH_TASK_TYPE,
             payload_match={"kb_id": kb_id},
             statuses=ACTIVE_GRAPH_BUILD_STATUSES,
         )
@@ -344,7 +345,7 @@ async def delete_database(kb_id: str, current_user: User = Depends(require_knowl
 @knowledge.get("/databases/{kb_id}/graph-build/status")
 async def get_graph_build_status(kb_id: str, current_user: User = Depends(require_knowledge_base_read)):
     try:
-        return await MilvusGraphService().get_status(kb_id, tasker=tasker)
+        return await MilvusGraphService().get_status(kb_id, job_tracker=job_tracker)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except HTTPException:
@@ -384,7 +385,7 @@ async def index_graph_build(
     current_user: User = Depends(require_knowledge_base_manage),
 ):
     try:
-        if await _has_running_graph_build_task(kb_id):
+        if await _has_running_graph_build_job(kb_id):
             raise HTTPException(status_code=409, detail="该知识库已有正在运行的图谱构建任务")
 
         database = await knowledge_base.get_database_info(kb_id)
@@ -396,15 +397,15 @@ async def index_graph_build(
         if not graph_status.get("locked"):
             raise HTTPException(status_code=400, detail="请先确认并锁定图谱抽取配置")
 
-        task, created = await tasker.enqueue_unique_by_payload(
+        job, created = await submit_job(
             name=f"图谱构建 ({database.name})",
-            task_type=GRAPH_TASK_TYPE,
+            job_type=GRAPH_TASK_TYPE,
             payload={"kb_id": kb_id, "action": "build"},
             payload_match={"kb_id": kb_id},
         )
         if not created:
             raise HTTPException(status_code=409, detail="该知识库已有正在运行的图谱构建任务")
-        return {"message": "图谱构建任务已提交", "status": "queued", "task_id": task.id}
+        return {"message": "图谱构建任务已提交", "status": "queued", "job_id": job.id}
     except HTTPException:
         raise
     except ValueError as e:
@@ -439,7 +440,7 @@ async def reset_graph_build(
 ):
     data = data or {}
     try:
-        if await _has_running_graph_build_task(kb_id):
+        if await _has_running_graph_build_job(kb_id):
             raise HTTPException(status_code=409, detail="该知识库存在正在运行的图谱构建任务，无法重置")
 
         return await MilvusGraphService().reset(
@@ -467,16 +468,16 @@ async def reconcile_graph_build(
     if mode not in {"failed", "all_vectors"}:
         raise HTTPException(status_code=400, detail="mode 必须是 failed 或 all_vectors")
     try:
-        if await _has_running_graph_build_task(kb_id):
+        if await _has_running_graph_build_job(kb_id):
             raise HTTPException(status_code=409, detail="该知识库已有正在运行的图谱构建任务")
 
         database = await knowledge_base.get_database_info(kb_id)
         if not database:
             raise HTTPException(status_code=404, detail=f"知识库 {kb_id} 不存在")
 
-        task, created = await tasker.enqueue_unique_by_payload(
+        job, created = await submit_job(
             name=f"图谱向量索引修复 ({database.name})",
-            task_type=GRAPH_TASK_TYPE,
+            job_type=GRAPH_TASK_TYPE,
             payload={"kb_id": kb_id, "action": "reconcile", "reconcile_mode": mode},
             payload_match={"kb_id": kb_id},
         )
@@ -485,7 +486,7 @@ async def reconcile_graph_build(
         return {
             "message": "图谱向量索引修复任务已提交",
             "status": "queued",
-            "task_id": task.id,
+            "job_id": job.id,
             "mode": mode,
         }
     except HTTPException:
@@ -624,9 +625,9 @@ async def add_documents(
 
     try:
         database = await knowledge_base.get_database_info(kb_id)
-        task = await tasker.enqueue(
+        job, _ = await submit_job(
             name=f"知识库文档处理 ({database.name})",
-            task_type="knowledge_ingest",
+            job_type="knowledge_ingest",
             payload={
                 "kb_id": kb_id,
                 "items": items,
@@ -636,15 +637,15 @@ async def add_documents(
             },
         )
         return {
-            "message": "任务已提交，请在任务中心查看进度",
+            "message": "作业已提交，请查看文件列表中的状态",
             "status": "queued",
-            "task_id": task.id,
+            "job_id": job.id,
         }
     except HTTPException:
         raise
     except Exception as e:  # noqa: BLE001
         logger.error(f"Failed to enqueue {content_type}s: {e}, {traceback.format_exc()}")
-        raise HTTPException(status_code=500, detail=f"Failed to enqueue task: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to enqueue job: {e}")
 
 
 @knowledge.post("/databases/{kb_id}/documents/add")
@@ -726,12 +727,12 @@ def _validate_direct_document_action_file_ids(file_ids: list[str]) -> list[str]:
     if len(normalized_file_ids) > MAX_DIRECT_DOCUMENT_ACTION_FILE_IDS:
         raise HTTPException(
             status_code=400,
-            detail=(f"单次最多支持 {MAX_DIRECT_DOCUMENT_ACTION_FILE_IDS} 个文件，请使用待处理状态入口提交全量后台任务"),
+            detail=(f"单次最多支持 {MAX_DIRECT_DOCUMENT_ACTION_FILE_IDS} 个文件，请使用待处理状态入口提交全量后台作业"),
         )
     return normalized_file_ids
 
 
-async def _enqueue_document_action_task(
+async def _enqueue_document_action_job(
     *,
     kb_id: str,
     file_ids: list[str],
@@ -743,9 +744,9 @@ async def _enqueue_document_action_task(
     """提交管理端指定文件的解析或入库任务。"""
     label = "解析" if action == "parse" else "入库"
     try:
-        task = await tasker.enqueue(
+        job, _ = await submit_job(
             name=f"文档{label} ({db_info.name})",
-            task_type=f"knowledge_{action}",
+            job_type=f"knowledge_{action}",
             payload={
                 "kb_id": kb_id,
                 "file_ids": file_ids,
@@ -753,14 +754,14 @@ async def _enqueue_document_action_task(
                 "operator_id": operator_id,
             },
         )
-        return {"message": f"{label}任务已提交", "status": "queued", "task_id": task.id}
+        return {"message": f"{label}任务已提交", "status": "queued", "job_id": job.id}
     except HTTPException:
         raise
     except Exception as e:
         return {"message": f"提交失败: {e}", "status": "failed"}
 
 
-async def _enqueue_pending_document_action_task(
+async def _enqueue_pending_document_action_job(
     *,
     kb_id: str,
     params: dict,
@@ -782,9 +783,9 @@ async def _enqueue_pending_document_action_task(
         return {"message": f"没有待{label}文档", "status": "success", "queued_count": 0}
 
     try:
-        task, created = await tasker.enqueue_unique_by_payload(
+        job, created = await submit_job(
             name=f"待{label}文档{label} ({db_info.name})",
-            task_type=f"knowledge_{action}",
+            job_type=f"knowledge_{action}",
             payload={
                 "kb_id": kb_id,
                 "scope": "pending",
@@ -799,7 +800,7 @@ async def _enqueue_pending_document_action_task(
         return {
             "message": f"{label}任务已提交" if created else f"已有待{label}任务正在执行",
             "status": "queued",
-            "task_id": task.id,
+            "job_id": job.id,
             "queued_count": pending_count,
         }
     except HTTPException:
@@ -824,7 +825,7 @@ async def parse_documents(
     file_ids = _validate_direct_document_action_file_ids(file_ids)
     logger.debug(f"Parse documents for kb_id {kb_id}: {file_ids} {params=}")
     db_info = await _ensure_database_supports_documents(kb_id, "文档解析")
-    return await _enqueue_document_action_task(
+    return await _enqueue_document_action_job(
         kb_id=kb_id,
         file_ids=file_ids,
         params=params or {},
@@ -844,7 +845,7 @@ async def parse_pending_documents(
     params = (payload.params if payload else None) or {}
     logger.debug(f"Parse pending documents for kb_id {kb_id}: {params=}")
     db_info = await _ensure_database_supports_documents(kb_id, "文档解析")
-    return await _enqueue_pending_document_action_task(
+    return await _enqueue_pending_document_action_job(
         kb_id=kb_id,
         params=params,
         operator_id=current_user.uid,
@@ -865,7 +866,7 @@ async def index_documents(
     params = params or {}
     logger.debug(f"Index documents for kb_id {kb_id}: {file_ids} {params=}")
     db_info = await _ensure_database_supports_documents(kb_id, "文档入库")
-    return await _enqueue_document_action_task(
+    return await _enqueue_document_action_job(
         kb_id=kb_id,
         file_ids=file_ids,
         params=params,
@@ -885,7 +886,7 @@ async def index_pending_documents(
     params = (payload.params if payload else None) or {}
     logger.debug(f"Index pending documents for kb_id {kb_id}: {params=}")
     db_info = await _ensure_database_supports_documents(kb_id, "文档入库")
-    return await _enqueue_pending_document_action_task(
+    return await _enqueue_pending_document_action_job(
         kb_id=kb_id,
         params=params,
         operator_id=current_user.uid,

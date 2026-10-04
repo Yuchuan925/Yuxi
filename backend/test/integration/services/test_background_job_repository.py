@@ -1,4 +1,4 @@
-"""Durable Task 的真实 PostgreSQL claim、lease、去重与失联收敛测试。"""
+"""后台作业 的真实 PostgreSQL claim、lease、去重与失联收敛测试。"""
 
 from __future__ import annotations
 
@@ -11,17 +11,18 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from yuxi.modules.knowledge.evaluation.service import EvaluationService, finish_dataset_generation_task
+from yuxi.modules.knowledge.evaluation.service import EvaluationService, finish_dataset_generation_job
 import yuxi.modules.knowledge.repositories.evaluation as evaluation_repository_module
 import yuxi.modules.knowledge.repositories.files as knowledge_file_repository_module
-import yuxi.modules.tasks.repository as task_repository_module
+import yuxi.modules.background_jobs.repository as job_repository_module
 from yuxi.modules.knowledge.repositories.evaluation import EvaluationRepository
 from yuxi.modules.knowledge.repositories.files import KnowledgeFileRepository
-from yuxi.modules.tasks.repository import TaskRepository
-from yuxi.modules.tasks.queue import finalize_task_failure
-from yuxi.modules.tasks.service import TaskContext, Tasker
+from yuxi.modules.background_jobs.repository import BackgroundJobRepository
+from yuxi.workers.background_jobs import finalize_job_failure, publish_pending_jobs
+from yuxi.modules.background_jobs.service import JobTracker
+from yuxi.workers.background_job_context import BackgroundJobContext
 from yuxi.infrastructure.postgres.manager import PostgresManager
-from yuxi.modules.tasks.models import TaskRecord
+from yuxi.modules.background_jobs.models import BackgroundJobRecord
 from yuxi.modules.knowledge.models import EvaluationDataset, EvaluationRun, KnowledgeBase, KnowledgeFile
 from yuxi.shared.datetime import utc_now
 
@@ -46,9 +47,9 @@ def cleanup_test_sandboxes():
 
 
 @pytest.fixture
-async def durable_task_schema(monkeypatch):
-    """在独立 PostgreSQL Schema 中验证 Task lease，不修改运行实例业务表。"""
-    schema = f"pytest_durable_task_{uuid.uuid4().hex[:16]}"
+async def background_job_schema(monkeypatch):
+    """在独立 PostgreSQL Schema 中验证 BackgroundJob lease，不修改运行实例业务表。"""
+    schema = f"pytest_background_job_{uuid.uuid4().hex[:16]}"
     admin_engine = create_async_engine(os.environ["POSTGRES_URL"], pool_pre_ping=True)
     async with admin_engine.begin() as connection:
         await connection.execute(text(f'CREATE SCHEMA "{schema}"'))
@@ -59,7 +60,7 @@ async def durable_task_schema(monkeypatch):
         connect_args={"server_settings": {"search_path": schema}},
     )
     async with scoped_engine.begin() as connection:
-        await connection.run_sync(TaskRecord.__table__.create)
+        await connection.run_sync(BackgroundJobRecord.__table__.create)
         await connection.run_sync(KnowledgeBase.__table__.create)
         await connection.run_sync(KnowledgeFile.__table__.create)
         await connection.run_sync(EvaluationDataset.__table__.create)
@@ -70,7 +71,7 @@ async def durable_task_schema(monkeypatch):
     manager.async_engine = scoped_engine
     manager.AsyncSession = async_sessionmaker(scoped_engine, class_=AsyncSession, expire_on_commit=False)
     manager._initialized = True
-    monkeypatch.setattr(task_repository_module, "pg_manager", manager)
+    monkeypatch.setattr(job_repository_module, "pg_manager", manager)
     monkeypatch.setattr(evaluation_repository_module, "pg_manager", manager)
     monkeypatch.setattr(knowledge_file_repository_module, "pg_manager", manager)
 
@@ -83,10 +84,10 @@ async def durable_task_schema(monkeypatch):
         await admin_engine.dispose()
 
 
-def _task_data(*, dedupe_key: str | None = None) -> dict:
+def _job_data(*, dedupe_key: str | None = None) -> dict:
     now = utc_now()
     return {
-        "name": "pytest durable task",
+        "name": "pytest durable job",
         "type": "knowledge_parse",
         "status": "pending",
         "progress": 0.0,
@@ -104,15 +105,15 @@ def _task_data(*, dedupe_key: str | None = None) -> dict:
     }
 
 
-async def test_concurrent_claim_has_single_owner_and_rejects_late_writer(durable_task_schema) -> None:
-    task_id = uuid.uuid4().hex
-    repo = TaskRepository()
-    await repo.create(task_id, _task_data())
+async def test_concurrent_claim_has_single_owner_and_rejects_late_writer(background_job_schema) -> None:
+    job_id = uuid.uuid4().hex
+    repo = BackgroundJobRepository()
+    await repo.create(job_id, _job_data())
     now = utc_now()
 
     claims = await asyncio.gather(
-        repo.claim(task_id, worker_id="owner-a", lease_seconds=30, now=now),
-        repo.claim(task_id, worker_id="owner-b", lease_seconds=30, now=now),
+        repo.claim(job_id, worker_id="owner-a", lease_seconds=30, now=now),
+        repo.claim(job_id, worker_id="owner-b", lease_seconds=30, now=now),
     )
     winners = [(record.worker_id, claimed) for record, claimed in claims if claimed]
     assert winners in [
@@ -122,10 +123,10 @@ async def test_concurrent_claim_has_single_owner_and_rejects_late_writer(durable
     winner = winners[0][0]
 
     reconciled = await repo.reconcile_expired_leases(now=now + timedelta(seconds=31))
-    assert reconciled == [(task_id, "failed", 1)]
+    assert reconciled == [(job_id, "failed", 1)]
     assert (
         await repo.update_owned(
-            task_id,
+            job_id,
             worker_id=winner,
             data={"message": "迟到结果"},
             now=now + timedelta(seconds=31),
@@ -133,24 +134,24 @@ async def test_concurrent_claim_has_single_owner_and_rejects_late_writer(durable
         is False
     )
 
-    persisted = await repo.get_by_id(task_id)
+    persisted = await repo.get_by_id(job_id)
     assert persisted.status == "failed"
     assert persisted.error.startswith("worker_lease_expired")
     assert persisted.worker_id is None
 
 
-async def test_unknown_expired_task_does_not_rollback_other_reconciliation(durable_task_schema) -> None:
-    repo = TaskRepository()
+async def test_unknown_expired_job_does_not_rollback_other_reconciliation(background_job_schema) -> None:
+    repo = BackgroundJobRepository()
     now = utc_now()
     unknown_id = uuid.uuid4().hex
     known_id = uuid.uuid4().hex
-    await repo.create(unknown_id, {**_task_data(), "type": "removed_task_type"})
-    await repo.create(known_id, {**_task_data(), "type": "knowledge_graph_index"})
+    await repo.create(unknown_id, {**_job_data(), "type": "removed_job_type"})
+    await repo.create(known_id, {**_job_data(), "type": "knowledge_graph_index"})
     await repo.claim(unknown_id, worker_id="owner-a", lease_seconds=5, now=now)
     await repo.claim(known_id, worker_id="owner-b", lease_seconds=5, now=now)
 
     reconciled = await repo.reconcile_expired_leases(
-        before_fail=finalize_task_failure,
+        before_fail=finalize_job_failure,
         now=now + timedelta(seconds=6),
     )
 
@@ -162,86 +163,86 @@ async def test_unknown_expired_task_does_not_rollback_other_reconciliation(durab
     assert (await repo.get_by_id(known_id)).status == "failed"
 
 
-async def test_lock_wait_cannot_reuse_time_from_before_lease_expiry(durable_task_schema) -> None:
-    task_id = uuid.uuid4().hex
-    repo = TaskRepository()
-    await repo.create(task_id, _task_data())
-    _, claimed = await repo.claim(task_id, worker_id="owner-a", lease_seconds=0.1)
+async def test_lock_wait_cannot_reuse_time_from_before_lease_expiry(background_job_schema) -> None:
+    job_id = uuid.uuid4().hex
+    repo = BackgroundJobRepository()
+    await repo.create(job_id, _job_data())
+    _, claimed = await repo.claim(job_id, worker_id="owner-a", lease_seconds=0.1)
     assert claimed is True
 
-    async with durable_task_schema.get_async_session_context() as blocker:
-        await blocker.execute(text("SELECT id FROM tasks WHERE id = :task_id FOR UPDATE"), {"task_id": task_id})
-        late_update = asyncio.create_task(repo.update_owned(task_id, worker_id="owner-a", data={"message": "迟到更新"}))
+    async with background_job_schema.get_async_session_context() as blocker:
+        await blocker.execute(text("SELECT id FROM background_jobs WHERE id = :job_id FOR UPDATE"), {"job_id": job_id})
+        late_update = asyncio.create_task(repo.update_owned(job_id, worker_id="owner-a", data={"message": "迟到更新"}))
         await asyncio.sleep(0.2)
 
     assert await late_update is False
     assert (
         await repo.finish_owned(
-            task_id,
+            job_id,
             worker_id="owner-a",
             status="success",
             message="迟到完成",
         )
         is False
     )
-    persisted = await repo.get_by_id(task_id)
+    persisted = await repo.get_by_id(job_id)
     assert persisted.status == "running"
 
 
-async def test_domain_callback_lock_wait_rolls_back_after_lease_expiry(durable_task_schema) -> None:
+async def test_domain_callback_lock_wait_rolls_back_after_lease_expiry(background_job_schema) -> None:
     kb_id = f"kb_{uuid.uuid4().hex[:8]}"
     dataset_id = f"dataset_{uuid.uuid4().hex[:8]}"
-    task_id = uuid.uuid4().hex
-    async with durable_task_schema.get_async_session_context() as session:
+    job_id = uuid.uuid4().hex
+    async with background_job_schema.get_async_session_context() as session:
         session.add(KnowledgeBase(kb_id=kb_id, name="pytest", kb_type="milvus"))
         await session.flush()
         session.add(EvaluationDataset(dataset_id=dataset_id, kb_id=kb_id, name="pytest", item_count=0))
 
-    repo = TaskRepository()
-    await repo.create(task_id, _task_data())
-    _record, claimed = await repo.claim(task_id, worker_id="owner-a", lease_seconds=0.1)
+    repo = BackgroundJobRepository()
+    await repo.create(job_id, _job_data())
+    _record, claimed = await repo.claim(job_id, worker_id="owner-a", lease_seconds=0.1)
     assert claimed is True
 
-    async def operation(session, _task_record) -> None:
+    async def operation(session, _job_record) -> None:
         await EvaluationRepository.update_dataset_in_session(session, dataset_id, {"item_count": 99})
 
-    async with durable_task_schema.get_async_session_context() as blocker:
+    async with background_job_schema.get_async_session_context() as blocker:
         await blocker.execute(
             text("SELECT dataset_id FROM evaluation_datasets WHERE dataset_id = :dataset_id FOR UPDATE"),
             {"dataset_id": dataset_id},
         )
-        checkpoint = asyncio.create_task(repo.run_owned_transaction(task_id, worker_id="owner-a", operation=operation))
+        checkpoint = asyncio.create_task(repo.run_owned_transaction(job_id, worker_id="owner-a", operation=operation))
         await asyncio.sleep(0.2)
 
     assert await checkpoint is False
     assert (await EvaluationRepository().get_dataset(dataset_id)).item_count == 0
 
 
-async def test_terminal_hook_lock_wait_rolls_back_after_lease_expiry(durable_task_schema) -> None:
+async def test_terminal_hook_lock_wait_rolls_back_after_lease_expiry(background_job_schema) -> None:
     kb_id = f"kb_{uuid.uuid4().hex[:8]}"
     dataset_id = f"dataset_{uuid.uuid4().hex[:8]}"
-    task_id = uuid.uuid4().hex
-    async with durable_task_schema.get_async_session_context() as session:
+    job_id = uuid.uuid4().hex
+    async with background_job_schema.get_async_session_context() as session:
         session.add(KnowledgeBase(kb_id=kb_id, name="pytest", kb_type="milvus"))
         await session.flush()
         session.add(EvaluationDataset(dataset_id=dataset_id, kb_id=kb_id, name="pytest", item_count=0))
 
-    repo = TaskRepository()
-    await repo.create(task_id, _task_data())
-    _record, claimed = await repo.claim(task_id, worker_id="owner-a", lease_seconds=0.1)
+    repo = BackgroundJobRepository()
+    await repo.create(job_id, _job_data())
+    _record, claimed = await repo.claim(job_id, worker_id="owner-a", lease_seconds=0.1)
     assert claimed is True
 
-    async def before_finish(session, _task_record) -> None:
+    async def before_finish(session, _job_record) -> None:
         await EvaluationRepository.update_dataset_in_session(session, dataset_id, {"item_count": 99})
 
-    async with durable_task_schema.get_async_session_context() as blocker:
+    async with background_job_schema.get_async_session_context() as blocker:
         await blocker.execute(
             text("SELECT dataset_id FROM evaluation_datasets WHERE dataset_id = :dataset_id FOR UPDATE"),
             {"dataset_id": dataset_id},
         )
         terminal = asyncio.create_task(
             repo.finish_owned(
-                task_id,
+                job_id,
                 worker_id="owner-a",
                 status="success",
                 message="完成",
@@ -252,18 +253,18 @@ async def test_terminal_hook_lock_wait_rolls_back_after_lease_expiry(durable_tas
 
     assert await terminal is False
     assert (await EvaluationRepository().get_dataset(dataset_id)).item_count == 0
-    assert (await repo.get_by_id(task_id)).status == "running"
+    assert (await repo.get_by_id(job_id)).status == "running"
 
 
-async def test_durable_capacity_reserves_worker_slots_for_agent_runs(durable_task_schema) -> None:
-    repo = TaskRepository()
-    task_ids = [uuid.uuid4().hex for _ in range(5)]
-    for task_id in task_ids:
-        await repo.create(task_id, _task_data())
+async def test_durable_capacity_reserves_worker_slots_for_agent_runs(background_job_schema) -> None:
+    repo = BackgroundJobRepository()
+    job_ids = [uuid.uuid4().hex for _ in range(5)]
+    for job_id in job_ids:
+        await repo.create(job_id, _job_data())
 
-    for index, task_id in enumerate(task_ids[:4]):
+    for index, job_id in enumerate(job_ids[:4]):
         _record, claimed = await repo.claim(
-            task_id,
+            job_id,
             worker_id=f"owner-{index}",
             lease_seconds=30,
             max_running=4,
@@ -271,21 +272,21 @@ async def test_durable_capacity_reserves_worker_slots_for_agent_runs(durable_tas
         assert claimed is True
 
     _record, claimed = await repo.claim(
-        task_ids[4],
+        job_ids[4],
         worker_id="owner-4",
         lease_seconds=30,
         max_running=4,
     )
     assert claimed is False
-    assert (await repo.get_by_id(task_ids[4])).status == "pending"
+    assert (await repo.get_by_id(job_ids[4])).status == "pending"
 
 
-async def test_knowledge_task_failure_fences_file_intermediate_state(durable_task_schema) -> None:
+async def test_knowledge_job_failure_fences_file_intermediate_state(background_job_schema) -> None:
     kb_id = f"kb_{uuid.uuid4().hex[:8]}"
     file_id = f"file_{uuid.uuid4().hex[:8]}"
-    task_id = uuid.uuid4().hex
+    job_id = uuid.uuid4().hex
     owner = "owner-a"
-    async with durable_task_schema.get_async_session_context() as session:
+    async with background_job_schema.get_async_session_context() as session:
         session.add(KnowledgeBase(kb_id=kb_id, name="pytest", kb_type="milvus"))
         await session.flush()
         session.add(
@@ -298,16 +299,16 @@ async def test_knowledge_task_failure_fences_file_intermediate_state(durable_tas
             )
         )
 
-    repo = TaskRepository()
+    repo = BackgroundJobRepository()
     await repo.create(
-        task_id,
+        job_id,
         {
-            **_task_data(),
+            **_job_data(),
             "type": "knowledge_parse",
             "payload": {"kb_id": kb_id, "scope": "files", "file_ids": [file_id]},
         },
     )
-    _record, claimed = await repo.claim(task_id, worker_id=owner, lease_seconds=0.5)
+    _record, claimed = await repo.claim(job_id, worker_id=owner, lease_seconds=0.5)
     assert claimed is True
     claimed_file = await KnowledgeFileRepository().update_fields_if_status(
         kb_id=kb_id,
@@ -315,13 +316,13 @@ async def test_knowledge_task_failure_fences_file_intermediate_state(durable_tas
         allowed_statuses={"uploaded"},
         data={
             "status": "parsing",
-            "processing_task_id": task_id,
+            "processing_job_id": job_id,
             "processing_owner": owner,
         },
     )
     assert claimed_file is not None
 
-    async with durable_task_schema.get_async_session_context() as blocker:
+    async with background_job_schema.get_async_session_context() as blocker:
         await blocker.execute(
             text("SELECT id FROM knowledge_files WHERE file_id = :file_id FOR UPDATE"),
             {"file_id": file_id},
@@ -331,8 +332,8 @@ async def test_knowledge_task_failure_fences_file_intermediate_state(durable_tas
                 kb_id=kb_id,
                 file_id=file_id,
                 allowed_statuses={"parsing"},
-                data={"status": "parsed", "processing_task_id": None, "processing_owner": None},
-                processing_task_id=task_id,
+                data={"status": "parsed", "processing_job_id": None, "processing_owner": None},
+                processing_job_id=job_id,
                 processing_owner=owner,
             )
         )
@@ -343,20 +344,20 @@ async def test_knowledge_task_failure_fences_file_intermediate_state(durable_tas
 
     reconciled = await repo.reconcile_expired_leases(
         now=utc_now(),
-        before_fail=finalize_task_failure,
+        before_fail=finalize_job_failure,
     )
-    assert reconciled == [(task_id, "failed", 1)]
+    assert reconciled == [(job_id, "failed", 1)]
     file_record = await KnowledgeFileRepository().get_by_file_id(file_id)
     assert file_record.status == "error_parsing"
-    assert file_record.processing_task_id is None
+    assert file_record.processing_job_id is None
     assert file_record.processing_owner is None
 
 
-async def test_pending_dataset_cancel_commits_domain_and_task_terminal_together(durable_task_schema) -> None:
+async def test_pending_dataset_cancel_commits_domain_and_job_terminal_together(background_job_schema) -> None:
     dataset_id = f"dataset_{uuid.uuid4().hex[:8]}"
     kb_id = f"kb_{uuid.uuid4().hex[:8]}"
-    task_id = uuid.uuid4().hex
-    async with durable_task_schema.get_async_session_context() as session:
+    job_id = uuid.uuid4().hex
+    async with background_job_schema.get_async_session_context() as session:
         session.add(KnowledgeBase(kb_id=kb_id, name="pytest", kb_type="milvus"))
         await session.flush()
         session.add(
@@ -365,34 +366,39 @@ async def test_pending_dataset_cancel_commits_domain_and_task_terminal_together(
                 kb_id=kb_id,
                 name="pytest",
                 item_count=0,
-                build_metadata={"source": "generated", "status": "pending", "task_id": task_id},
+                build_metadata={"source": "generated", "status": "pending", "job_id": job_id},
             )
         )
 
-    await TaskRepository().create(
-        task_id,
-        {**_task_data(), "type": "dataset_generation", "payload": {"dataset_id": dataset_id}},
+    await BackgroundJobRepository().create(
+        job_id,
+        {**_job_data(), "type": "dataset_generation", "payload": {"dataset_id": dataset_id}},
     )
 
-    cancelled = await Tasker().cancel_task(task_id)
+    cancelled = await JobTracker().cancel_job(job_id)
 
-    assert cancelled.status == "cancelled"
+    assert cancelled.status == "pending"
+    assert cancelled.cancel_requested is True
+    dataset = await EvaluationRepository().get_dataset(dataset_id)
+    assert dataset.build_metadata["status"] == "pending"
+    await publish_pending_jobs()
+    assert (await BackgroundJobRepository().get_by_id(job_id)).status == "cancelled"
     dataset = await EvaluationRepository().get_dataset(dataset_id)
     assert dataset.build_metadata["status"] == "failed"
     assert dataset.build_metadata["message"] == "任务已取消"
 
 
-async def test_cancel_request_wins_race_with_successful_handler(durable_task_schema) -> None:
-    task_id = uuid.uuid4().hex
-    repo = TaskRepository()
-    await repo.create(task_id, _task_data())
-    _, claimed = await repo.claim(task_id, worker_id="owner-a", lease_seconds=30)
+async def test_cancel_request_wins_race_with_successful_handler(background_job_schema) -> None:
+    job_id = uuid.uuid4().hex
+    repo = BackgroundJobRepository()
+    await repo.create(job_id, _job_data())
+    _, claimed = await repo.claim(job_id, worker_id="owner-a", lease_seconds=30)
     assert claimed is True
-    assert await repo.request_cancel(task_id) is not None
+    assert await repo.request_cancel(job_id) is not None
 
     assert (
         await repo.finish_owned(
-            task_id,
+            job_id,
             worker_id="owner-a",
             status="success",
             message="任务已完成",
@@ -401,19 +407,19 @@ async def test_cancel_request_wins_race_with_successful_handler(durable_task_sch
         is True
     )
 
-    persisted = await repo.get_by_id(task_id)
+    persisted = await repo.get_by_id(job_id)
     assert persisted.status == "cancelled"
     assert persisted.message == "任务已取消"
     assert persisted.result is None
 
-    failed_task_id = uuid.uuid4().hex
-    await repo.create(failed_task_id, _task_data())
-    _, claimed = await repo.claim(failed_task_id, worker_id="owner-b", lease_seconds=30)
+    failed_job_id = uuid.uuid4().hex
+    await repo.create(failed_job_id, _job_data())
+    _, claimed = await repo.claim(failed_job_id, worker_id="owner-b", lease_seconds=30)
     assert claimed is True
-    assert await repo.request_cancel(failed_task_id) is not None
+    assert await repo.request_cancel(failed_job_id) is not None
     assert (
         await repo.finish_owned(
-            failed_task_id,
+            failed_job_id,
             worker_id="owner-b",
             status="failed",
             message="执行失败",
@@ -421,15 +427,15 @@ async def test_cancel_request_wins_race_with_successful_handler(durable_task_sch
         )
         is True
     )
-    assert (await repo.get_by_id(failed_task_id)).status == "cancelled"
+    assert (await repo.get_by_id(failed_job_id)).status == "cancelled"
 
 
-async def test_dataset_completion_and_task_success_share_owner_transaction(durable_task_schema) -> None:
+async def test_dataset_completion_and_job_success_share_owner_transaction(background_job_schema) -> None:
     now = utc_now()
     dataset_id = f"dataset_{uuid.uuid4().hex[:8]}"
     kb_id = f"kb_{uuid.uuid4().hex[:8]}"
-    task_id = uuid.uuid4().hex
-    async with durable_task_schema.get_async_session_context() as session:
+    job_id = uuid.uuid4().hex
+    async with background_job_schema.get_async_session_context() as session:
         session.add(KnowledgeBase(kb_id=kb_id, name="pytest", kb_type="milvus"))
         await session.flush()
         session.add(
@@ -438,27 +444,27 @@ async def test_dataset_completion_and_task_success_share_owner_transaction(durab
                 kb_id=kb_id,
                 name="pytest",
                 item_count=0,
-                build_metadata={"source": "generated", "status": "running", "task_id": task_id},
+                build_metadata={"source": "generated", "status": "running", "job_id": job_id},
             )
         )
 
-    await TaskRepository().create(
-        task_id,
-        {**_task_data(), "type": "dataset_generation", "payload": {"dataset_id": dataset_id}},
+    await BackgroundJobRepository().create(
+        job_id,
+        {**_job_data(), "type": "dataset_generation", "payload": {"dataset_id": dataset_id}},
     )
-    await TaskRepository().claim(task_id, worker_id="owner-a", lease_seconds=30, now=now)
+    await BackgroundJobRepository().claim(job_id, worker_id="owner-a", lease_seconds=30, now=now)
     result = {
         "dataset_id": dataset_id,
         "item_count": 3,
-        "build_metadata": {"source": "generated", "status": "completed", "task_id": task_id},
+        "build_metadata": {"source": "generated", "status": "completed", "job_id": job_id},
     }
 
-    async def finish_dataset(session, task_record):
-        await finish_dataset_generation_task(session, task_record, result)
+    async def finish_dataset(session, job_record):
+        await finish_dataset_generation_job(session, job_record, result)
 
     assert (
-        await TaskRepository().finish_owned(
-            task_id,
+        await BackgroundJobRepository().finish_owned(
+            job_id,
             worker_id="owner-a",
             status="success",
             message="完成",
@@ -469,19 +475,19 @@ async def test_dataset_completion_and_task_success_share_owner_transaction(durab
         is True
     )
 
-    task = await TaskRepository().get_by_id(task_id)
+    job = await BackgroundJobRepository().get_by_id(job_id)
     dataset = await EvaluationRepository().get_dataset(dataset_id)
-    assert task.status == "success"
+    assert job.status == "success"
     assert dataset.item_count == 3
     assert dataset.build_metadata["status"] == "completed"
 
 
-async def test_expired_owner_cannot_commit_dataset_completion(durable_task_schema) -> None:
+async def test_expired_owner_cannot_commit_dataset_completion(background_job_schema) -> None:
     now = utc_now()
     dataset_id = f"dataset_{uuid.uuid4().hex[:8]}"
     kb_id = f"kb_{uuid.uuid4().hex[:8]}"
-    task_id = uuid.uuid4().hex
-    async with durable_task_schema.get_async_session_context() as session:
+    job_id = uuid.uuid4().hex
+    async with background_job_schema.get_async_session_context() as session:
         session.add(KnowledgeBase(kb_id=kb_id, name="pytest", kb_type="milvus"))
         await session.flush()
         session.add(
@@ -490,27 +496,27 @@ async def test_expired_owner_cannot_commit_dataset_completion(durable_task_schem
                 kb_id=kb_id,
                 name="pytest",
                 item_count=0,
-                build_metadata={"source": "generated", "status": "running", "task_id": task_id},
+                build_metadata={"source": "generated", "status": "running", "job_id": job_id},
             )
         )
 
-    await TaskRepository().create(
-        task_id,
-        {**_task_data(), "type": "dataset_generation", "payload": {"dataset_id": dataset_id}},
+    await BackgroundJobRepository().create(
+        job_id,
+        {**_job_data(), "type": "dataset_generation", "payload": {"dataset_id": dataset_id}},
     )
-    await TaskRepository().claim(task_id, worker_id="owner-a", lease_seconds=5, now=now)
+    await BackgroundJobRepository().claim(job_id, worker_id="owner-a", lease_seconds=5, now=now)
     result = {
         "dataset_id": dataset_id,
         "item_count": 3,
-        "build_metadata": {"source": "generated", "status": "completed", "task_id": task_id},
+        "build_metadata": {"source": "generated", "status": "completed", "job_id": job_id},
     }
 
-    async def finish_dataset(session, task_record):
-        await finish_dataset_generation_task(session, task_record, result)
+    async def finish_dataset(session, job_record):
+        await finish_dataset_generation_job(session, job_record, result)
 
     assert (
-        await TaskRepository().finish_owned(
-            task_id,
+        await BackgroundJobRepository().finish_owned(
+            job_id,
             worker_id="owner-a",
             status="success",
             message="完成",
@@ -526,12 +532,12 @@ async def test_expired_owner_cannot_commit_dataset_completion(durable_task_schem
     assert dataset.build_metadata["status"] == "running"
 
 
-async def test_old_dataset_attempt_cannot_write_after_resume_claim(durable_task_schema) -> None:
+async def test_old_dataset_attempt_cannot_write_after_resume_claim(background_job_schema) -> None:
     dataset_id = f"dataset_{uuid.uuid4().hex[:8]}"
     kb_id = f"kb_{uuid.uuid4().hex[:8]}"
-    old_task_id = uuid.uuid4().hex
-    new_task_id = uuid.uuid4().hex
-    async with durable_task_schema.get_async_session_context() as session:
+    old_job_id = uuid.uuid4().hex
+    new_job_id = uuid.uuid4().hex
+    async with background_job_schema.get_async_session_context() as session:
         session.add(KnowledgeBase(kb_id=kb_id, name="pytest", kb_type="milvus"))
         await session.flush()
         session.add(
@@ -540,28 +546,28 @@ async def test_old_dataset_attempt_cannot_write_after_resume_claim(durable_task_
                 kb_id=kb_id,
                 name="pytest",
                 item_count=0,
-                build_metadata={"source": "generated", "status": "running", "task_id": old_task_id},
+                build_metadata={"source": "generated", "status": "running", "job_id": old_job_id},
             )
         )
 
-    await TaskRepository().create(
-        old_task_id,
-        {**_task_data(), "type": "dataset_generation", "payload": {"dataset_id": dataset_id}},
+    await BackgroundJobRepository().create(
+        old_job_id,
+        {**_job_data(), "type": "dataset_generation", "payload": {"dataset_id": dataset_id}},
     )
-    await TaskRepository().claim(old_task_id, worker_id="old-owner", lease_seconds=0.1)
+    await BackgroundJobRepository().claim(old_job_id, worker_id="old-owner", lease_seconds=0.1)
     await asyncio.sleep(0.2)
-    await TaskRepository().reconcile_expired_leases(before_fail=finalize_task_failure)
+    await BackgroundJobRepository().reconcile_expired_leases(before_fail=finalize_job_failure)
 
-    await TaskRepository().create(
-        new_task_id,
-        {**_task_data(), "type": "dataset_generation", "payload": {"dataset_id": dataset_id}},
+    await BackgroundJobRepository().create(
+        new_job_id,
+        {**_job_data(), "type": "dataset_generation", "payload": {"dataset_id": dataset_id}},
     )
     async with evaluation_repository_module.pg_manager.get_async_session_context() as session:
-        await EvaluationRepository.attach_dataset_generation_task_in_session(session, dataset_id, new_task_id)
-    await TaskRepository().claim(new_task_id, worker_id="new-owner", lease_seconds=30)
-    old_context = TaskContext(old_task_id, "old-owner", {"dataset_id": dataset_id})
+        await EvaluationRepository.attach_dataset_generation_job_in_session(session, dataset_id, new_job_id)
+    await BackgroundJobRepository().claim(new_job_id, worker_id="new-owner", lease_seconds=30)
+    old_context = BackgroundJobContext(old_job_id, "old-owner", {"dataset_id": dataset_id})
 
-    async def stale_write(session, _task_record):
+    async def stale_write(session, _job_record):
         await EvaluationRepository.update_dataset_in_session(session, dataset_id, {"item_count": 99})
 
     with pytest.raises(asyncio.CancelledError):
@@ -569,15 +575,15 @@ async def test_old_dataset_attempt_cannot_write_after_resume_claim(durable_task_
 
     dataset = await EvaluationRepository().get_dataset(dataset_id)
     assert dataset.item_count == 0
-    assert dataset.build_metadata["task_id"] == new_task_id
+    assert dataset.build_metadata["job_id"] == new_job_id
     assert dataset.build_metadata["status"] == "pending"
 
 
-async def test_late_dataset_attachment_preserves_same_task_failure(durable_task_schema) -> None:
+async def test_late_dataset_attachment_preserves_same_job_failure(background_job_schema) -> None:
     dataset_id = f"dataset_{uuid.uuid4().hex[:8]}"
     kb_id = f"kb_{uuid.uuid4().hex[:8]}"
-    task_id = uuid.uuid4().hex
-    async with durable_task_schema.get_async_session_context() as session:
+    job_id = uuid.uuid4().hex
+    async with background_job_schema.get_async_session_context() as session:
         session.add(KnowledgeBase(kb_id=kb_id, name="pytest", kb_type="milvus"))
         await session.flush()
         session.add(
@@ -589,26 +595,26 @@ async def test_late_dataset_attachment_preserves_same_task_failure(durable_task_
                 build_metadata={
                     "source": "generated",
                     "status": "failed",
-                    "task_id": task_id,
+                    "job_id": job_id,
                     "error_message": "handler failed",
                 },
             )
         )
 
     async with evaluation_repository_module.pg_manager.get_async_session_context() as session:
-        await EvaluationRepository.attach_dataset_generation_task_in_session(session, dataset_id, task_id)
+        await EvaluationRepository.attach_dataset_generation_job_in_session(session, dataset_id, job_id)
 
     persisted = await EvaluationRepository().get_dataset(dataset_id)
     assert persisted.build_metadata["status"] == "failed"
     assert persisted.build_metadata["error_message"] == "handler failed"
 
 
-async def test_expired_evaluation_task_converges_run_when_observed(durable_task_schema) -> None:
+async def test_expired_evaluation_job_converges_run_when_observed(background_job_schema) -> None:
     now = utc_now()
     run_id = f"run_{uuid.uuid4().hex[:8]}"
     dataset_id = f"dataset_{uuid.uuid4().hex[:8]}"
     kb_id = f"kb_{uuid.uuid4().hex[:8]}"
-    async with durable_task_schema.get_async_session_context() as session:
+    async with background_job_schema.get_async_session_context() as session:
         session.add(KnowledgeBase(kb_id=kb_id, name="pytest", kb_type="milvus"))
         await session.flush()
         session.add(
@@ -634,18 +640,18 @@ async def test_expired_evaluation_task_converges_run_when_observed(durable_task_
             )
         )
 
-    task_id = uuid.uuid4().hex
-    await TaskRepository().create(
-        task_id,
+    job_id = uuid.uuid4().hex
+    await BackgroundJobRepository().create(
+        job_id,
         {
-            **_task_data(),
+            **_job_data(),
             "type": "rag_evaluation",
             "payload": {"run_id": run_id},
         },
     )
-    await TaskRepository().claim(task_id, worker_id="owner-a", lease_seconds=5, now=now)
-    await TaskRepository().reconcile_expired_leases(
-        before_fail=finalize_task_failure,
+    await BackgroundJobRepository().claim(job_id, worker_id="owner-a", lease_seconds=5, now=now)
+    await BackgroundJobRepository().reconcile_expired_leases(
+        before_fail=finalize_job_failure,
         now=now + timedelta(seconds=6),
     )
 
@@ -659,13 +665,13 @@ async def test_expired_evaluation_task_converges_run_when_observed(durable_task_
     assert persisted.metrics == {"error": "worker_lease_expired: 执行 worker 的 lease 已过期，任务副作用结果未知"}
 
 
-async def test_worker_shutdown_commits_evaluation_failure_with_task(durable_task_schema) -> None:
+async def test_worker_shutdown_commits_evaluation_failure_with_job(background_job_schema) -> None:
     now = utc_now()
     run_id = f"run_{uuid.uuid4().hex[:8]}"
     dataset_id = f"dataset_{uuid.uuid4().hex[:8]}"
     kb_id = f"kb_{uuid.uuid4().hex[:8]}"
-    task_id = uuid.uuid4().hex
-    async with durable_task_schema.get_async_session_context() as session:
+    job_id = uuid.uuid4().hex
+    async with background_job_schema.get_async_session_context() as session:
         session.add(KnowledgeBase(kb_id=kb_id, name="pytest", kb_type="milvus"))
         await session.flush()
         session.add(EvaluationDataset(dataset_id=dataset_id, kb_id=kb_id, name="pytest", item_count=0))
@@ -681,19 +687,19 @@ async def test_worker_shutdown_commits_evaluation_failure_with_task(durable_task
             )
         )
 
-    await TaskRepository().create(
-        task_id,
-        {**_task_data(), "type": "rag_evaluation", "payload": {"run_id": run_id}},
+    await BackgroundJobRepository().create(
+        job_id,
+        {**_job_data(), "type": "rag_evaluation", "payload": {"run_id": run_id}},
     )
-    await TaskRepository().claim(task_id, worker_id="owner-a", lease_seconds=30, now=now)
+    await BackgroundJobRepository().claim(job_id, worker_id="owner-a", lease_seconds=30, now=now)
     error = "worker_shutdown: worker 停止时任务中断"
 
     async def finalize_failure(session, record):
-        await finalize_task_failure(session, record, error)
+        await finalize_job_failure(session, record, error)
 
     assert (
-        await TaskRepository().release_interrupted_owner(
-            task_id,
+        await BackgroundJobRepository().release_interrupted_owner(
+            job_id,
             worker_id="owner-a",
             error=error,
             before_fail=finalize_failure,
@@ -702,27 +708,27 @@ async def test_worker_shutdown_commits_evaluation_failure_with_task(durable_task
         == "failed"
     )
 
-    assert (await TaskRepository().get_by_id(task_id)).status == "failed"
+    assert (await BackgroundJobRepository().get_by_id(job_id)).status == "failed"
     run = await EvaluationRepository().get_run(run_id)
     assert run.status == "failed"
     assert run.metrics == {"error": error}
 
 
-async def test_payload_lookup_finds_active_task_beyond_recent_history_window(durable_task_schema) -> None:
+async def test_payload_lookup_finds_active_job_beyond_recent_history_window(background_job_schema) -> None:
     target_id = uuid.uuid4().hex
     now = utc_now()
-    async with durable_task_schema.get_async_session_context() as session:
+    async with background_job_schema.get_async_session_context() as session:
         session.add(
-            TaskRecord(
+            BackgroundJobRecord(
                 id=target_id,
-                **_task_data(),
+                **_job_data(),
             )
         )
         session.add_all(
-            TaskRecord(
+            BackgroundJobRecord(
                 id=uuid.uuid4().hex,
                 **{
-                    **_task_data(),
+                    **_job_data(),
                     "status": "failed",
                     "payload": {"dataset_id": f"history-{index}"},
                     "created_at": now + timedelta(seconds=index + 1),
@@ -732,8 +738,8 @@ async def test_payload_lookup_finds_active_task_beyond_recent_history_window(dur
             for index in range(250)
         )
 
-    found = await TaskRepository().find_latest_by_payload(
-        task_type="knowledge_parse",
+    found = await BackgroundJobRepository().find_latest_by_payload(
+        job_type="knowledge_parse",
         payload_match={"kb_id": "pytest-kb"},
         statuses={"pending", "running"},
     )
@@ -741,23 +747,56 @@ async def test_payload_lookup_finds_active_task_beyond_recent_history_window(dur
     assert found is not None
     assert found.id == target_id
 
-    listing = await Tasker().list_tasks(limit=100)
-    assert any(task["id"] == target_id for task in listing["tasks"])
+    listing = await JobTracker().list_jobs(limit=100)
+    assert any(job["id"] == target_id for job in listing["jobs"])
     assert listing["summary"]["total"] == 251
     assert listing["summary"]["status_counts"]["pending"] == 1
 
 
-async def test_concurrent_dedupe_creates_one_active_task(durable_task_schema) -> None:
-    task_ids = [uuid.uuid4().hex, uuid.uuid4().hex]
+async def test_concurrent_dedupe_creates_one_active_job(background_job_schema) -> None:
+    job_ids = [uuid.uuid4().hex, uuid.uuid4().hex]
     dedupe_key = uuid.uuid4().hex
-    repo = TaskRepository()
+    repo = BackgroundJobRepository()
 
     results = await asyncio.gather(
-        repo.create(task_ids[0], _task_data(dedupe_key=dedupe_key)),
-        repo.create(task_ids[1], _task_data(dedupe_key=dedupe_key)),
+        repo.create(job_ids[0], _job_data(dedupe_key=dedupe_key)),
+        repo.create(job_ids[1], _job_data(dedupe_key=dedupe_key)),
     )
 
     created = [(record.id, is_created) for record, is_created in results if is_created]
     reused = [(record.id, is_created) for record, is_created in results if not is_created]
     assert len(created) == 1
     assert reused == [(created[0][0], False)]
+
+
+async def test_registered_transaction_rollback_leaves_no_executable_job(background_job_schema):
+    """登记与投递分离，回滚的登记对另一个数据库连接不可见。"""
+    from yuxi.modules.background_jobs.dispatch import register_job_in_session
+
+    observer = JobTracker()
+    async with background_job_schema.get_async_session_context() as session:
+        job, created = await register_job_in_session(
+            session, name="pytest rollback", job_type="knowledge_parse", payload={"kb_id": "pytest-kb"}
+        )
+        assert created
+        assert await BackgroundJobRepository().get_by_id(job.id) is None
+        await session.rollback()
+    assert await observer.get_job(job.id) is None
+    assert await BackgroundJobRepository().list_pending() == []
+
+
+@pytest.mark.parametrize("status", ["success", "failed"])
+async def test_observer_preserves_executor_outcome_and_rejects_late_progress(background_job_schema, status):
+    """相同失败计数不决定终态，进度达到 100 也不决定成功。"""
+    observer = JobTracker()
+    job, _ = await observer.register(name="pytest outcome", job_type="knowledge_parse")
+    repo = BackgroundJobRepository()
+    _, claimed = await repo.claim(job.id, worker_id="owner", lease_seconds=30)
+    assert claimed
+    assert await observer.report(job.id, worker_id="owner", progress=100, result={"failed": 2})
+    assert (await observer.get_job(job.id))["status"] == "running"
+    assert await repo.finish_owned(job.id, worker_id="owner", status=status, message="执行方结论")
+    assert not await observer.report(job.id, worker_id="owner", progress=20, result={"failed": 0})
+    observed = await observer.get_job(job.id)
+    assert observed["status"] == status
+    assert observed["result"] == {"failed": 2}

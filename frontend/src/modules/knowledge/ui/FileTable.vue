@@ -18,7 +18,7 @@
           class="parse-pending-alert"
           type="info"
           show-icon
-          :message="`将提交 ${pendingParseTotalText} 个待解析文件，任务会在后台按批处理，可在任务中心查看进度。`"
+          :message="`将提交 ${pendingParseTotalText} 个待解析文件，任务会在后台按批处理，可在文件列表查看处理状态。`"
         />
         <div class="setting-item">
           <div class="setting-label">OCR 引擎（仅应用于 PDF/图片文件）</div>
@@ -52,7 +52,7 @@
           class="index-pending-alert"
           type="info"
           show-icon
-          :message="`将提交 ${pendingIndexTotalText} 个待入库文件，任务会在后台按批处理，可在任务中心查看进度。`"
+          :message="`将提交 ${pendingIndexTotalText} 个待入库文件，任务会在后台按批处理，可在文件列表查看处理状态。`"
         />
         <ChunkParamsConfig
           :temp-chunk-params="indexParams"
@@ -1201,7 +1201,7 @@ const handleParseConfigConfirm = async () => {
   try {
     const params = { ocr_engine: parseParams.value.ocr_engine }
     const result = isPendingParseOperation.value
-      ? await store.parsePendingFiles(params, pendingParseTotal.value)
+      ? await store.parsePendingFiles(params)
       : await store.parseFiles(currentParseFileIds.value, params)
     if (result) {
       currentParseFileIds.value = []
@@ -1299,7 +1299,7 @@ const handleIndexConfigConfirm = async () => {
   try {
     const params = buildIndexParamsPayload()
     const result = isPendingIndexOperation.value
-      ? await store.indexPendingFiles(params, pendingIndexTotal.value)
+      ? await store.indexPendingFiles(params)
       : await store.indexFiles(currentIndexFileIds.value, params)
     if (result) {
       currentIndexFileIds.value = []

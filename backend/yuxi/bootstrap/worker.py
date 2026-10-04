@@ -1,4 +1,4 @@
-"""AgentRun worker 职责。"""
+"""Worker 进程装配与后台执行维护。"""
 
 from __future__ import annotations
 
@@ -23,17 +23,17 @@ from yuxi.modules.extensions.mcp.service import ensure_builtin_mcp_servers_in_db
 from yuxi.modules.extensions.skills.shared import init_builtin_skills
 from yuxi.modules.identity.security import AuthUtils
 from yuxi.modules.schedules.service import claim_and_dispatch_due_jobs, recover_scheduled_dispatches
-from yuxi.modules.tasks.queue import (
-    TASK_RECONCILIATION_HEALTH_KEY,
-    TASK_RECONCILIATION_HEALTH_TTL_SECONDS,
-    TASK_RECONCILIATION_SECONDS,
-    reconcile_and_publish_tasks,
+from yuxi.workers.background_jobs import reconcile_and_publish_jobs
+from yuxi.workers.health import (
+    JOB_RECONCILIATION_HEALTH_KEY,
+    JOB_RECONCILIATION_HEALTH_TTL_SECONDS,
+    JOB_RECONCILIATION_SECONDS,
 )
 
 _RECONCILIATION_TASK_KEY = "agent_run_reconciliation_task"
 
 
-_TASK_RECONCILIATION_TASK_KEY = "durable_task_reconciliation_task"
+_JOB_RECONCILIATION_TASK_KEY = "background_job_reconciliation_task"
 
 
 async def _worker_startup(ctx):
@@ -65,13 +65,13 @@ async def _worker_startup(ctx):
         logger.warning(f"Reconciled expired AgentRun leases at startup: count={len(reconciled_ids)}")
     await reconcile_pending_runtime_cleanups()
     await recover_pending_dispatches()
-    await reconcile_and_publish_tasks()
-    await _publish_task_reconciliation_health()
+    await reconcile_and_publish_jobs()
+    await _publish_job_reconciliation_health()
     await recover_scheduled_dispatches()
     await claim_and_dispatch_due_jobs()
     await _publish_reconciliation_health()
     ctx[_RECONCILIATION_TASK_KEY] = asyncio.create_task(_reconcile_agent_run_leases_forever())
-    ctx[_TASK_RECONCILIATION_TASK_KEY] = asyncio.create_task(_reconcile_durable_tasks_forever())
+    ctx[_JOB_RECONCILIATION_TASK_KEY] = asyncio.create_task(_reconcile_background_jobs_forever())
 
 
 async def _worker_shutdown(ctx):
@@ -80,7 +80,7 @@ async def _worker_shutdown(ctx):
     if isinstance(ctx, dict):
         reconciliation_tasks = [
             ctx.pop(_RECONCILIATION_TASK_KEY, None),
-            ctx.pop(_TASK_RECONCILIATION_TASK_KEY, None),
+            ctx.pop(_JOB_RECONCILIATION_TASK_KEY, None),
         ]
         reconciliation_tasks = [task for task in reconciliation_tasks if task is not None]
         for task in reconciliation_tasks:
@@ -114,27 +114,27 @@ async def _reconcile_agent_run_leases_forever() -> None:
             logger.error("Failed to reconcile expired AgentRun leases", exc_info=True)
 
 
-async def _reconcile_durable_tasks_forever() -> None:
-    """周期收敛失联通用 Task，并补发持久 pending 意图。"""
+async def _reconcile_background_jobs_forever() -> None:
+    """周期收敛失联通用 Job，并补发持久 pending 意图。"""
     while True:
-        await asyncio.sleep(TASK_RECONCILIATION_SECONDS)
+        await asyncio.sleep(JOB_RECONCILIATION_SECONDS)
         try:
-            reconciled = await reconcile_and_publish_tasks()
+            reconciled = await reconcile_and_publish_jobs()
             if reconciled:
-                logger.warning("Reconciled expired durable tasks: count=%s", len(reconciled))
-            await _publish_task_reconciliation_health()
+                logger.warning("Reconciled expired durable jobs: count=%s", len(reconciled))
+            await _publish_job_reconciliation_health()
         except asyncio.CancelledError:
             raise
         except Exception:
-            logger.error("Failed to reconcile durable tasks", exc_info=True)
+            logger.error("Failed to reconcile durable jobs", exc_info=True)
 
 
-async def _publish_task_reconciliation_health() -> None:
-    """续租 worker 的 Durable Task 收敛与 pending 补发能力。"""
+async def _publish_job_reconciliation_health() -> None:
+    """续租 worker 的 后台作业 收敛与 pending 补发能力。"""
     await publish_worker_health(
-        TASK_RECONCILIATION_HEALTH_KEY,
+        JOB_RECONCILIATION_HEALTH_KEY,
         WORKER_ID,
-        TASK_RECONCILIATION_HEALTH_TTL_SECONDS,
+        JOB_RECONCILIATION_HEALTH_TTL_SECONDS,
     )
 
 

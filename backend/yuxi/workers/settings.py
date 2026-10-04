@@ -11,8 +11,9 @@ from yuxi.bootstrap.worker import _worker_shutdown, _worker_startup
 from yuxi.infrastructure.redis import get_arq_redis_settings
 from yuxi.infrastructure.runtime_settings import get_int_env
 from yuxi.modules.agents.services.runner import MAX_RUN_TRIES, process_agent_run
-from yuxi.modules.knowledge.services.tasks import process_knowledge_projections
-from yuxi.modules.tasks.service import TASKER_DEFAULT_TIMEOUT_SECONDS, process_task
+from yuxi.modules.background_jobs.dispatch import BACKGROUND_JOB_DEFAULT_TIMEOUT_SECONDS
+from yuxi.modules.knowledge.services.background_jobs import process_knowledge_projections
+from yuxi.workers.background_jobs import process_background_job
 from yuxi.workers.health import WORKER_HEALTH_INTERVAL_SECONDS, WORKER_HEALTH_KEY
 
 
@@ -26,7 +27,7 @@ class WorkerSettings:
 
     functions = [
         process_agent_run,
-        func(process_task, timeout=TASKER_DEFAULT_TIMEOUT_SECONDS + 30),
+        func(process_background_job, timeout=BACKGROUND_JOB_DEFAULT_TIMEOUT_SECONDS + 30),
     ]
     cron_jobs = [cron(process_knowledge_projections, second={15, 45}, run_at_startup=True)]
     max_jobs = worker_max_jobs()

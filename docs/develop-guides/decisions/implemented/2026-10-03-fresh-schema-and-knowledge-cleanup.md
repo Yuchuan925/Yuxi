@@ -6,7 +6,7 @@ Owner：backend/yuxi/migrations/main.py
 
 ## 问题
 
-新部署需要数据库独立拒绝错配的执行消息、跨知识库关系和错误来源关系。初始化中断、索引重建失败与外部存储清理需要明确的事实归属。部署接受重建数据库；Tasker 保留现有进度与取消消费方式，恢复、重新加载和清理由对应业务领域拥有。
+新部署需要数据库独立拒绝错配的执行消息、跨知识库关系和错误来源关系。初始化中断、索引重建失败与外部存储清理需要明确的事实归属。部署接受重建数据库；JobTracker 保留现有进度与取消消费方式，恢复、重新加载和清理由对应业务领域拥有。
 
 ## 决策
 
@@ -28,7 +28,7 @@ KnowledgeFile/Folder、Chunk、图谱 mention、Dataset/Item、EvaluationRun/Run
 
 Milvus 召回前按 PG 的 active 文件/generation 过滤，召回后回查 Chunk 并从 PG 补齐正文。读请求只打开现有集合；有可见 Chunk 而投影缺失时显式失败。图谱构建候选、计数、写入回查和公开子图使用一致的 active 范围；Neo4j 尚未清理时，PG tombstone 仍使对应内容不可见。共享实体的属性带最后写入 Chunk 的来源；来源失效时只返回仍有可见 mention 的稳定身份信息。
 
-文件/KB 删除先提交 tombstone 与清理意图，HTTP 路由不提前删除 MinIO 原件。Outbox 仅有 pending/applied、对象范围、代次及错误记录；消费持有行锁并使用 SKIP LOCKED。错误保留 pending，后续消费重复同一幂等清理。Tasker 不承载 outbox 清理任务、索引补发或上下文恢复。
+文件/KB 删除先提交 tombstone 与清理意图，HTTP 路由不提前删除 MinIO 原件。Outbox 仅有 pending/applied、对象范围、代次及错误记录；消费持有行锁并使用 SKIP LOCKED。错误保留 pending，后续消费重复同一幂等清理。JobTracker 不承载 outbox 清理任务、索引补发或上下文恢复。
 
 索引、图谱发布与清理通过 KB 投影锁协调；取消时等待已启动 I/O 结束，多分支删除等待全部 I/O 结束再抛错。代次清理按原始 Chunk ID 清理 Neo4j 与图向量；PG 关联在外部成功后提交移除，失败回滚以保留重试依据。代次清理移除旧 Chunk，只保留当前 active/building 代次的内容。
 
@@ -41,7 +41,7 @@ Provider 普通管理响应遮蔽 API Key、Authorization、Cookie 与嵌套凭�
 ## 替代方案
 
 - **升级旧库、回填和历史补列**：重建是部署前提，兼容分支没有验收价值。
-- **Tasker 恢复/清理平台或 outbox lease/token/retry 状态机**：局部行锁、幂等清理和错误记录满足当前消费入口，避免增加 Tasker 重构依赖。
+- **JobTracker 恢复/清理平台或 outbox lease/token/retry 状态机**：局部行锁、幂等清理和错误记录满足当前消费入口，避免增加 JobTracker 重构依赖。
 - **先删 active 再重建**：构建失败会破坏服务中的内容。
 - **全库 ENUM/时区转换、全面关系化 JSON 或身份重构**：维持现有身份与快照 Owner，范围聚焦可验证的关系和副作用边界。
 

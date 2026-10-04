@@ -32,15 +32,15 @@ load_models()
 pytestmark = [pytest.mark.asyncio, pytest.mark.e2e]
 
 
-async def _wait_task(client, headers, task_id):
+async def _wait_job(client, headers, job_id):
     """等待真实 worker 的任务终态，失败直接暴露持久结果。"""
     async with asyncio.timeout(120):
         while True:
-            response = await client.get(f"/api/tasks/{task_id}", headers=headers)
+            response = await client.get(f"/api/background-jobs/{job_id}", headers=headers)
             assert response.status_code == 200, response.text
-            task = response.json()["task"]
-            if task["status"] in {"success", "failed", "cancelled"}:
-                assert task["status"] == "success", task
+            job = response.json()["job"]
+            if job["status"] in {"success", "failed", "cancelled"}:
+                assert job["status"] == "success", job
                 return
             await asyncio.sleep(0.2)
 
@@ -173,7 +173,7 @@ async def test_worker_index_and_all_search_modes_use_text_constraints(e2e_client
                 json={"file_ids": list(file_ids.values()), "params": {}},
             )
             assert indexed.status_code == 200, indexed.text
-            await _wait_task(e2e_client, e2e_headers, indexed.json()["task_id"])
+            await _wait_job(e2e_client, e2e_headers, indexed.json()["job_id"])
 
         parsed = await e2e_client.post(
             f"/api/knowledge/databases/{kb_id}/documents/parse",
@@ -181,7 +181,7 @@ async def test_worker_index_and_all_search_modes_use_text_constraints(e2e_client
             json={"file_ids": list(file_ids.values()), "params": {}},
         )
         assert parsed.status_code == 200, parsed.text
-        await _wait_task(e2e_client, e2e_headers, parsed.json()["task_id"])
+        await _wait_job(e2e_client, e2e_headers, parsed.json()["job_id"])
         await index_documents()
         repository = KnowledgeChunkRepository()
         for name, file_id in file_ids.items():

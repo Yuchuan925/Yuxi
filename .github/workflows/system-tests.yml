@@ -50,10 +50,10 @@ env:
   E2E_PASSWORD: ci-e2e-password-at-least-eight
 
 jobs:
-  # Durable Task 验证与主链路互斥（会停 api/worker 并强制重建 Milvus），
+  # 后台作业 验证与主链路互斥（会停 api/worker 并强制重建 Milvus），
   # 单独成 job 与主链路并行；两个 job 共享层缓存，各自持有完整拓扑。
-  durable-task-worker-path:
-    name: Durable Task worker path
+  background-job-worker-path:
+    name: 后台作业 worker path
     runs-on: ubuntu-latest
     # 与主链路相同：冷缓存构建（含 provisioner Debian/Python 下载）叠加 Milvus 拓扑热身，预算需覆盖最慢真实构建。
     timeout-minutes: 60
@@ -90,9 +90,9 @@ jobs:
         run: |
           docker compose run --rm --no-deps --user 0:0 api \
             install -d -o 1000 -g 1000 -m 0700 /app/user-data /app/skill-sources /app/skill-projections
-      - name: Start durable-task runtime topology
+      - name: Start background-job runtime topology
         run: docker compose up -d postgres redis minio etcd milvus sandbox-provisioner api worker
-      - name: Wait for durable-task topology readiness
+      - name: Wait for background-job topology readiness
         run: |
           for attempt in $(seq 1 60); do
             if docker compose exec -T milvus curl -fsS http://localhost:9091/healthz >/dev/null; then
@@ -117,16 +117,16 @@ jobs:
           curl -fsS -X POST http://localhost:5050/api/auth/initialize \
             -H 'Content-Type: application/json' \
             --data "{\"uid\":\"${E2E_USERNAME}\",\"password\":\"${E2E_PASSWORD}\"}" >/dev/null
-      - name: Verify Durable Task worker path
+      - name: Verify 后台作业 worker path
         run: |
           docker compose stop api worker
           docker compose run --rm schema-init
           docker compose run --rm --no-deps api \
-            uv run --no-sync --no-dev pytest test/integration/services/test_durable_task_repository.py -q
+            uv run --no-sync --no-dev pytest test/integration/services/test_background_job_repository.py -q
           docker compose run --rm --no-deps \
-            -e DURABLE_TASK_GATE_ID=${{ github.run_id }} api \
+            -e BACKGROUND_JOB_GATE_ID=${{ github.run_id }} api \
             uv run --no-sync --no-dev pytest \
-              test/integration/services/test_durable_task_worker_path.py::test_prepare_task_with_failed_initial_arq_publication -q
+              test/integration/services/test_background_job_worker_path.py::test_prepare_job_with_failed_initial_arq_publication -q
           docker compose up -d --force-recreate milvus api worker
           for attempt in $(seq 1 60); do
             if docker compose exec -T milvus curl -fsS http://localhost:9091/healthz >/dev/null; then
@@ -148,17 +148,17 @@ jobs:
             fi
             sleep 2
           done
-          docker compose exec -T -e DURABLE_TASK_GATE_ID=${{ github.run_id }} api \
+          docker compose exec -T -e BACKGROUND_JOB_GATE_ID=${{ github.run_id }} api \
             uv run --no-sync --no-dev pytest \
-              test/integration/services/test_durable_task_worker_path.py::test_shipping_worker_startup_recovers_pending_publication -q
-          docker compose exec -T -e DURABLE_TASK_GATE_ID=${{ github.run_id }} api \
+              test/integration/services/test_background_job_worker_path.py::test_shipping_worker_startup_recovers_pending_publication -q
+          docker compose exec -T -e BACKGROUND_JOB_GATE_ID=${{ github.run_id }} api \
             uv run --no-sync --no-dev pytest \
-              test/integration/services/test_durable_task_worker_path.py::test_shipping_worker_failure_runs_domain_hook -q
+              test/integration/services/test_background_job_worker_path.py::test_shipping_worker_failure_runs_domain_hook -q
           docker compose exec -T \
             -e TEST_USERNAME=${E2E_USERNAME} \
             -e TEST_PASSWORD=${E2E_PASSWORD} api \
             uv run --no-sync --no-dev pytest \
-              test/integration/api/test_task_router.py::test_enqueue_document_creates_task -q
+              test/integration/api/test_background_jobs_router.py::test_enqueue_document_creates_job -q
       - name: Runtime logs on failure
         if: failure() || cancelled()
         run: docker compose logs api worker --tail 300

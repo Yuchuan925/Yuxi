@@ -17,7 +17,7 @@ import yuxi.bootstrap.worker as worker_bootstrap
 import yuxi.workers.settings as worker_settings
 from arq.worker import RetryJob
 from yuxi.modules.system import options as config_options
-import yuxi.modules.tasks.service as task_service
+import yuxi.modules.background_jobs.dispatch as job_service
 from yuxi.modules.agents.services.execution import RunExecutionResult
 
 
@@ -154,30 +154,29 @@ async def test_repeated_cancel_waits_for_async_execution_cleanup():
         await asyncio.gather(consumer, return_exceptions=True)
 
 
-def test_durable_task_outer_timeout_tracks_configured_worker_default():
+def test_background_job_outer_timeout_tracks_configured_worker_default():
     durable_function = next(
         function
         for function in worker_settings.WorkerSettings.functions
-        if getattr(function, "name", getattr(function, "__name__", None)) == "process_task"
+        if getattr(function, "name", getattr(function, "__name__", None)) == "process_background_job"
     )
 
-    assert task_service.tasker.default_timeout_seconds == task_service.TASKER_DEFAULT_TIMEOUT_SECONDS
-    assert durable_function.timeout_s == task_service.TASKER_DEFAULT_TIMEOUT_SECONDS + 30
+    assert durable_function.timeout_s == job_service.BACKGROUND_JOB_DEFAULT_TIMEOUT_SECONDS + 30
 
 
-def test_durable_task_shipping_worker_accepts_default_above_24_hours():
+def test_background_job_shipping_worker_accepts_default_above_24_hours():
     env = os.environ.copy()
-    env["TASKER_DEFAULT_TIMEOUT_SECONDS"] = "172800"
+    env["BACKGROUND_JOB_DEFAULT_TIMEOUT_SECONDS"] = "172800"
     script = """
 from yuxi.workers.settings import WorkerSettings
-from yuxi.modules.tasks.service import tasker
+from yuxi.modules.background_jobs.dispatch import resolve_job_timeout
 
 durable = next(
     function
     for function in WorkerSettings.functions
-    if getattr(function, "name", getattr(function, "__name__", None)) == "process_task"
+    if getattr(function, "name", getattr(function, "__name__", None)) == "process_background_job"
 )
-assert tasker.default_timeout_seconds == 172800
+assert resolve_job_timeout(None) == 172800
 assert durable.timeout_s == 172830
 """
 
@@ -1320,8 +1319,8 @@ async def test_worker_startup_ensures_builtin_mcp_servers(monkeypatch: pytest.Mo
     async def fake_publish_reconciliation_health():
         calls.append("publish_reconciliation_health")
 
-    async def fake_publish_task_reconciliation_health():
-        calls.append("publish_task_reconciliation_health")
+    async def fake_publish_job_reconciliation_health():
+        calls.append("publish_job_reconciliation_health")
 
     async def fake_reconcile_expired_run_leases():
         calls.append("reconcile_expired_run_leases")
@@ -1334,12 +1333,12 @@ async def test_worker_startup_ensures_builtin_mcp_servers(monkeypatch: pytest.Mo
     async def fake_reconciliation_loop():
         calls.append("reconciliation_loop")
 
-    async def fake_reconcile_and_publish_tasks():
-        calls.append("reconcile_and_publish_tasks")
+    async def fake_reconcile_and_publish_jobs():
+        calls.append("reconcile_and_publish_jobs")
         return []
 
-    async def fake_task_reconciliation_loop():
-        calls.append("task_reconciliation_loop")
+    async def fake_job_reconciliation_loop():
+        calls.append("job_reconciliation_loop")
 
     async def fake_recover_scheduled_dispatches():
         calls.append("recover_scheduled_dispatches")
@@ -1362,12 +1361,10 @@ async def test_worker_startup_ensures_builtin_mcp_servers(monkeypatch: pytest.Mo
         fake_reconcile_pending_runtime_cleanups,
     )
     monkeypatch.setattr(worker_bootstrap, "_publish_reconciliation_health", fake_publish_reconciliation_health)
-    monkeypatch.setattr(
-        worker_bootstrap, "_publish_task_reconciliation_health", fake_publish_task_reconciliation_health
-    )
+    monkeypatch.setattr(worker_bootstrap, "_publish_job_reconciliation_health", fake_publish_job_reconciliation_health)
     monkeypatch.setattr(worker_bootstrap, "_reconcile_agent_run_leases_forever", fake_reconciliation_loop)
-    monkeypatch.setattr(worker_bootstrap, "reconcile_and_publish_tasks", fake_reconcile_and_publish_tasks)
-    monkeypatch.setattr(worker_bootstrap, "_reconcile_durable_tasks_forever", fake_task_reconciliation_loop)
+    monkeypatch.setattr(worker_bootstrap, "reconcile_and_publish_jobs", fake_reconcile_and_publish_jobs)
+    monkeypatch.setattr(worker_bootstrap, "_reconcile_background_jobs_forever", fake_job_reconciliation_loop)
     monkeypatch.setattr(worker_bootstrap, "recover_scheduled_dispatches", fake_recover_scheduled_dispatches)
     monkeypatch.setattr(worker_bootstrap, "claim_and_dispatch_due_jobs", fake_claim_and_dispatch_due_jobs)
     options_module = importlib.import_module("yuxi.modules.system.options")
@@ -1376,7 +1373,7 @@ async def test_worker_startup_ensures_builtin_mcp_servers(monkeypatch: pytest.Mo
     ctx = {}
     await worker_bootstrap._worker_startup(ctx)
     await ctx[worker_bootstrap._RECONCILIATION_TASK_KEY]
-    await ctx[worker_bootstrap._TASK_RECONCILIATION_TASK_KEY]
+    await ctx[worker_bootstrap._JOB_RECONCILIATION_TASK_KEY]
 
     assert calls == [
         "initialize",
@@ -1388,18 +1385,18 @@ async def test_worker_startup_ensures_builtin_mcp_servers(monkeypatch: pytest.Mo
         "reconcile_expired_run_leases",
         "reconcile_pending_runtime_cleanups",
         "recover_pending_dispatches",
-        "reconcile_and_publish_tasks",
-        "publish_task_reconciliation_health",
+        "reconcile_and_publish_jobs",
+        "publish_job_reconciliation_health",
         "recover_scheduled_dispatches",
         "claim_and_dispatch_due_jobs",
         "publish_reconciliation_health",
         "reconciliation_loop",
-        "task_reconciliation_loop",
+        "job_reconciliation_loop",
     ]
     assert ctx["worker_id"] == worker_bootstrap.WORKER_ID
 
 
-async def test_durable_task_publication_failure_does_not_refresh_health(monkeypatch):
+async def test_background_job_publication_failure_does_not_refresh_health(monkeypatch):
     sleep_calls = 0
     health_calls = 0
 
@@ -1417,11 +1414,11 @@ async def test_durable_task_publication_failure_does_not_refresh_health(monkeypa
         health_calls += 1
 
     monkeypatch.setattr(run_worker.asyncio, "sleep", controlled_sleep)
-    monkeypatch.setattr(worker_bootstrap, "reconcile_and_publish_tasks", fail_reconciliation)
-    monkeypatch.setattr(worker_bootstrap, "_publish_task_reconciliation_health", publish_health)
+    monkeypatch.setattr(worker_bootstrap, "reconcile_and_publish_jobs", fail_reconciliation)
+    monkeypatch.setattr(worker_bootstrap, "_publish_job_reconciliation_health", publish_health)
 
     with pytest.raises(asyncio.CancelledError):
-        await worker_bootstrap._reconcile_durable_tasks_forever()
+        await worker_bootstrap._reconcile_background_jobs_forever()
 
     assert health_calls == 0
 
@@ -1513,7 +1510,7 @@ async def test_worker_startup_fails_when_system_options_cannot_initialize(monkey
 async def test_worker_shutdown_closes_queue_clients_before_postgres(monkeypatch: pytest.MonkeyPatch):
     calls: list[str] = []
     never_finishes = asyncio.Event()
-    reconciliation_task = asyncio.create_task(never_finishes.wait())
+    reconciliation_job = asyncio.create_task(never_finishes.wait())
 
     async def fake_close_queue_clients():
         calls.append("redis")
@@ -1524,10 +1521,10 @@ async def test_worker_shutdown_closes_queue_clients_before_postgres(monkeypatch:
     monkeypatch.setattr("yuxi.modules.agents.services.transport.close_queue_clients", fake_close_queue_clients)
     monkeypatch.setattr(run_worker.pg_manager, "close", fake_close_postgres)
 
-    await worker_bootstrap._worker_shutdown({worker_bootstrap._RECONCILIATION_TASK_KEY: reconciliation_task})
+    await worker_bootstrap._worker_shutdown({worker_bootstrap._RECONCILIATION_TASK_KEY: reconciliation_job})
 
     assert calls == ["redis", "postgres"]
-    assert reconciliation_task.cancelled()
+    assert reconciliation_job.cancelled()
 
 
 @pytest.mark.asyncio
@@ -1738,3 +1735,19 @@ async def test_nonretryable_output_conflict_after_user_cancel_settles_cancelled(
     monkeypatch.setattr(run_worker, "_finish_run", AsyncMock(side_effect=AssertionError("不能转为 failed")))
     await run_worker.process_agent_run({"job_try": 1}, run.id)
     finish.assert_awaited_once()
+
+
+@pytest.mark.parametrize("value", ["0", "-1", "nan", "inf", "-inf"])
+def test_background_job_worker_rejects_invalid_default_timeout_at_configuration(value):
+    """无效执行预算在 worker 装配时失败，不能先进入 ready。"""
+    env = os.environ.copy()
+    env["BACKGROUND_JOB_DEFAULT_TIMEOUT_SECONDS"] = value
+    result = subprocess.run(
+        [sys.executable, "-c", "from yuxi.workers.settings import WorkerSettings"],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode != 0
+    assert "positive finite number of seconds" in result.stderr

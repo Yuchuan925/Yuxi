@@ -11,8 +11,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from yuxi.infrastructure.observability.logging import logger
 from yuxi.infrastructure.postgres.manager import pg_manager
+from yuxi.modules.background_jobs.models import BackgroundJobRecord
 from yuxi.modules.knowledge.models import KnowledgeBase, KnowledgeFile, KnowledgeProjectionOutbox
-from yuxi.modules.tasks.models import TaskRecord
 from yuxi.shared.datetime import utc_now
 
 # asyncpg 单条 SQL 参数上限为 32767；按 file_id 批量查询时统一分批。
@@ -69,7 +69,7 @@ class KnowledgeFileRepository:
         "processing_params",
         "is_folder",
         "error_message",
-        "processing_task_id",
+        "processing_job_id",
         "processing_owner",
         "created_by",
         "updated_by",
@@ -709,7 +709,7 @@ class KnowledgeFileRepository:
             return record
 
     async def begin_index_generation(
-        self, *, kb_id: str, file_id: str, processing_task_id: str | None = None, processing_owner: str | None = None
+        self, *, kb_id: str, file_id: str, processing_job_id: str | None = None, processing_owner: str | None = None
     ) -> int:
         """每次尝试申请单调新代次，旧 owner 的晚写不能污染重试结果。"""
         async with pg_manager.get_async_session_context() as session:
@@ -717,7 +717,7 @@ class KnowledgeFileRepository:
                 session,
                 kb_id=kb_id,
                 file_id=file_id,
-                processing_task_id=processing_task_id,
+                processing_job_id=processing_job_id,
                 processing_owner=processing_owner,
             )
             if record.building_generation is not None:
@@ -736,7 +736,7 @@ class KnowledgeFileRepository:
         generation: int,
         chunk_count: int,
         token_count: int,
-        processing_task_id: str | None = None,
+        processing_job_id: str | None = None,
         processing_owner: str | None = None,
     ) -> KnowledgeFile:
         """当前 owner 在同一事务切换版本、终态和旧代次清理意图。"""
@@ -745,7 +745,7 @@ class KnowledgeFileRepository:
                 session,
                 kb_id=kb_id,
                 file_id=file_id,
-                processing_task_id=processing_task_id,
+                processing_job_id=processing_job_id,
                 processing_owner=processing_owner,
             )
             if record.building_generation != generation:
@@ -759,12 +759,12 @@ class KnowledgeFileRepository:
             record.projection_status = "ready"
             record.projection_error = None
             record.error_message = None
-            record.processing_task_id = None
+            record.processing_job_id = None
             record.processing_owner = None
             return record
 
     @staticmethod
-    async def _lock_index_owner(session, *, kb_id, file_id, processing_task_id, processing_owner):
+    async def _lock_index_owner(session, *, kb_id, file_id, processing_job_id, processing_owner):
         """在文件自身的锁与版本事实下拒绝删除和替换后的旧完成回调。"""
         record = await session.scalar(
             select(KnowledgeFile)
@@ -776,8 +776,8 @@ class KnowledgeFileRepository:
         )
         if record is None or record.deleted_at is not None:
             raise ValueError(f"File {file_id} not found or deleted")
-        if record.status != "indexing" or (record.processing_task_id, record.processing_owner) != (
-            processing_task_id,
+        if record.status != "indexing" or (record.processing_job_id, record.processing_owner) != (
+            processing_job_id,
             processing_owner,
         ):
             raise ValueError("File indexing owner was lost")
@@ -803,10 +803,10 @@ class KnowledgeFileRepository:
         file_id: str,
         allowed_statuses: set[str],
         data: dict[str, Any],
-        processing_task_id: str | None = None,
+        processing_job_id: str | None = None,
         processing_owner: str | None = None,
     ) -> KnowledgeFile | None:
-        lease_task_id = processing_task_id or data.get("processing_task_id")
+        lease_job_id = processing_job_id or data.get("processing_job_id")
         lease_owner = processing_owner or data.get("processing_owner")
         sanitized_data = self._sanitize_data(data)
         if not sanitized_data:
@@ -817,28 +817,28 @@ class KnowledgeFileRepository:
             KnowledgeFile.file_id == file_id,
             KnowledgeFile.status.in_(sorted(allowed_statuses)),
         ]
-        if processing_task_id is not None:
-            filters.append(KnowledgeFile.processing_task_id == processing_task_id)
+        if processing_job_id is not None:
+            filters.append(KnowledgeFile.processing_job_id == processing_job_id)
         if processing_owner is not None:
             filters.append(KnowledgeFile.processing_owner == processing_owner)
         async with pg_manager.get_async_session_context() as session:
-            if lease_task_id is not None and lease_owner is not None:
-                task_record = await session.scalar(
-                    select(TaskRecord)
+            if lease_job_id is not None and lease_owner is not None:
+                job_record = await session.scalar(
+                    select(BackgroundJobRecord)
                     .where(
-                        TaskRecord.id == lease_task_id,
-                        TaskRecord.status == "running",
-                        TaskRecord.worker_id == lease_owner,
+                        BackgroundJobRecord.id == lease_job_id,
+                        BackgroundJobRecord.status == "running",
+                        BackgroundJobRecord.worker_id == lease_owner,
                     )
                     .with_for_update()
                 )
-                if task_record is None:
+                if job_record is None:
                     return None
                 file_record = await session.scalar(select(KnowledgeFile).where(*filters).with_for_update())
                 if file_record is None:
                     return None
                 database_now = await session.scalar(select(func.clock_timestamp()))
-                if task_record.lease_expires_at is None or task_record.lease_expires_at <= database_now:
+                if job_record.lease_expires_at is None or job_record.lease_expires_at <= database_now:
                     return None
                 for key, value in sanitized_data.items():
                     setattr(file_record, key, value)
@@ -851,12 +851,12 @@ class KnowledgeFileRepository:
             return result.scalar_one_or_none()
 
     @staticmethod
-    async def fail_task_processing_in_session(session, *, task_id: str, error: str) -> int:
-        """仅收敛仍由指定 Durable Task 拥有的文件中间态。"""
+    async def fail_job_processing_in_session(session, *, job_id: str, error: str) -> int:
+        """仅收敛仍由指定 后台作业 拥有的文件中间态。"""
         result = await session.execute(
             update(KnowledgeFile)
             .where(
-                KnowledgeFile.processing_task_id == task_id,
+                KnowledgeFile.processing_job_id == job_id,
                 KnowledgeFile.status.in_(["parsing", "indexing"]),
             )
             .values(
@@ -865,7 +865,7 @@ class KnowledgeFileRepository:
                     else_="error_indexing",
                 ),
                 error_message=error,
-                processing_task_id=None,
+                processing_job_id=None,
                 processing_owner=None,
                 projection_status="failed",
                 projection_error=error,
