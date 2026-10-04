@@ -14,7 +14,7 @@ from yuxi.modules.models.providers.cache import ModelInfo
 from yuxi.modules.models.providers.builtin import BUILTIN_PROVIDERS
 from yuxi.modules.agents.runtime.sandbox.paths import workdir_runtime_paths
 
-VIRTUAL_PATH_LARGE_TOOL_RESULTS, VIRTUAL_PATH_SESSION_HISTORY = workdir_runtime_paths(
+VIRTUAL_PATH_LARGE_TOOL_RESULTS, VIRTUAL_PATH_CONVERSATION_HISTORY = workdir_runtime_paths(
     "/home/gem/user-data/projects/11111111-1111-4111-8111-111111111111"
 )
 
@@ -131,7 +131,7 @@ async def test_compacted_messages_call_real_chat_model(monkeypatch: pytest.Monke
         token_counter=_content_char_counter,
         trim_tokens_to_summarize=None,
     )
-    middleware._history_path_prefix = VIRTUAL_PATH_SESSION_HISTORY
+    middleware._history_path_prefix = VIRTUAL_PATH_CONVERSATION_HISTORY
     middleware._large_tool_results_prefix = VIRTUAL_PATH_LARGE_TOOL_RESULTS
     captured_messages: list | None = None
 

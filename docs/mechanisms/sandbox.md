@@ -28,7 +28,7 @@ flowchart LR
 
 Graph 创建时，Agent backend 取得 `uid`、根运行 scope 和 `workdir_path`。实际沙盒惰性创建；API/worker 只持有 provisioner 代理地址，不直接访问动态容器或 NodePort。
 
-[`sandbox/backend.py`](https://github.com/xerrors/Yuxi/blob/main/backend/yuxi/modules/agents/runtime/sandbox/backend.py) 按已准备的 Context 装配 CompositeBackend，文件与摘要 middleware 共用构图创建的实例。装配要求显式提供 `runtime_scope_id` 和 `workdir_relative_path`，缺失值直接失败；runtime scope 不从 checkpoint thread 推断。产物根由持久化 Workdir 相对路径映射为 runtime 路径后追加 `outputs`，大工具结果与对话历史分别写入其 `large_tool_results` 和 `session_history` 子目录。装配取舍见[后端直接装配决定](../develop-guides/decisions/implemented/2026-09-30-sandbox-backend-assembly.md)。
+[`sandbox/backend.py`](https://github.com/xerrors/Yuxi/blob/main/backend/yuxi/modules/agents/runtime/sandbox/backend.py) 按已准备的 Context 装配 CompositeBackend，文件与摘要 middleware 共用构图创建的实例。装配要求显式提供 `runtime_scope_id` 和 `workdir_relative_path`，缺失值直接失败；runtime scope 不从 checkpoint thread 推断。产物根由持久化 Workdir 相对路径映射为 runtime 路径后追加 `outputs`，大工具结果与对话历史分别写入其 `large_tool_results` 和 `conversation_history` 子目录。装配取舍见[后端直接装配决定](../develop-guides/decisions/implemented/2026-09-30-sandbox-backend-assembly.md)。
 
 ## Identity、Workdir 和生命周期
 

@@ -33,7 +33,7 @@ Schema 初始化入口只接受空库或精确当前版本；已有版本不会�
 
 业务 Schema 版本升为 2，知识库版本保持 1。启动入口拒绝旧版本与包含未版本化旧 `conversations` 表的数据库；新环境创建 `sessions`、复合外键与索引。本任务不提供数据迁移。
 
-摘要目录统一为 `outputs/session_history`，摘要写入、媒体目录、文件工具结果卸载和禁止公开规则共用路径常量。DeepAgents 0.7 的 `_conversation_history_prefix` 是第三方属性名，仅在适配边界保留；实际路径使用新目录。CompositeBackend 使用产物根，普通 StateBackend 使用其根路径语义。旧 checkpoint 和文件目录不在新库验收范围内。
+摘要文件目录沿用 DeepAgents 默认的 `outputs/conversation_history`，媒体目录与文件工具结果路径继续由依赖初始化。本次仅统一业务实体和字段，不重命名第三方文件目录，不覆盖 `_history_path_prefix`、`_media_prefix` 或 `_conversation_history_prefix`。Yuxi 的路径常量与测试保留对应目录名；文件访问继续由 Workdir 授权和路径校验执行，不按摘要目录名新增拒绝。
 
 冻结的 archived 决策、历史发布说明及历史验证命令保留当时的词汇；当前源码、契约、机制说明与仍存续的 Owner 路径使用新术语。
 
@@ -62,7 +62,7 @@ Schema 初始化入口只接受空库或精确当前版本；已有版本不会�
 | Schema 和复合约束一致 | 旧库被误接受、新表漏约束 | migrations、PostgreSQL schema 与 ORM | 六个文件 PostgreSQL integration 共 47 项最终通过（首次 46 passed、旧版本 oracle 1 项失败，显式更新 oracle 后 schema 9 项重跑全过）；新库回读 business=2、knowledge=1、sessions 存在、conversations 不存在 | 旧版本、未版本化 sessions/conversations 表拒绝启动；跨 Thread/Run 关联拒绝 | Passed |
 | 输入队列与最终输出归属保持 | SSE、FIFO、等待恢复或子 Thread 退化 | inputs、scheduler、events、subagents | 真实 HTTP integration 47 项最终通过（dashboard/chat 33 项重跑）；确定性 lifecycle E2E 32 passed，回读终态、输出和文件 | 越权及跨 Thread/Turn/Run 归属错误拒绝 | Passed |
 | 当前 UI 与调用契约一致 | 旧字段消费者、消息分组求值异常 | frontend APIs、workspace、dashboard 与 schedules | Playwright Agent 编辑/创建、真实消息完成后刷新恢复、管理员列表 | 页面异常与旧接口调用作为失败条件 | Passed |
-| 摘要路径与禁止公开规则一致 | 摘要不存在或可公开读取 | sandbox paths、summary、filesystem 与 artifacts | summary/sandbox 定向 unit 133 passed；全量 unit；真实生命周期文件验证 | session_history 目录产物禁止公开 | Passed |
+| 摘要路径和文件授权保持现有语义 | 摘要路径不一致或文件授权被改变 | sandbox paths、summary、filesystem 与 artifacts | 恢复依赖默认目录后，全量 unit 2524 passed、55 skipped；既有生命周期文件验证 | 路径与 DeepAgents 默认值一致；未经授权的文件访问及路径穿越仍被拒绝 | Passed |
 
 验证环境为独立 Compose project `yuxi-session-rename`，使用独立端口和全新持久数据槽位，未操作原运行库。镜像内依赖已安装；标准 `uv run --group test` 的同步步骤因系统安装权限失败，实际测试使用 `uv run --no-sync --group test pytest ...`，未更改依赖锁。
 

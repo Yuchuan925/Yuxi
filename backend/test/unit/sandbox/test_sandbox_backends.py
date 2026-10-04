@@ -28,7 +28,7 @@ from yuxi.modules.agents.runtime.sandbox.paths import workdir_runtime_paths
 
 WORKDIR_RELATIVE_PATH = "projects/11111111-1111-4111-8111-111111111111"
 WORKDIR_PATH = "/home/gem/user-data/projects/11111111-1111-4111-8111-111111111111"
-VIRTUAL_PATH_LARGE_TOOL_RESULTS, VIRTUAL_PATH_SESSION_HISTORY = workdir_runtime_paths(WORKDIR_PATH)
+VIRTUAL_PATH_LARGE_TOOL_RESULTS, VIRTUAL_PATH_CONVERSATION_HISTORY = workdir_runtime_paths(WORKDIR_PATH)
 
 
 class _OwnedAsyncHttpClient:
@@ -353,7 +353,7 @@ def test_create_agent_filesystem_middleware_uses_outputs_for_internal_artifacts(
 
     assert middleware._tool_token_limit_before_evict == 500
     assert middleware._large_tool_results_prefix == VIRTUAL_PATH_LARGE_TOOL_RESULTS
-    assert middleware._conversation_history_prefix == VIRTUAL_PATH_SESSION_HISTORY
+    assert middleware._conversation_history_prefix == VIRTUAL_PATH_CONVERSATION_HISTORY
 
 
 def test_filesystem_middleware_evicts_large_non_read_file_tool_result() -> None:

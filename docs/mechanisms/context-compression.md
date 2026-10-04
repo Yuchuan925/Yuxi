@@ -40,7 +40,7 @@ token 数使用近似计算，只用于压力判断和预览长度，不是计�
 
 ## 摘要和 checkpoint
 
-摘要器从较早历史中选择待摘要区间，优先保留 `summary_keep_messages` 条最近消息。选中的历史写入当前 Workdir 的 `outputs/session_history/`，摘要模型根据这段历史生成一条 summary message。
+摘要器从较早历史中选择待摘要区间，优先保留 `summary_keep_messages` 条最近消息。选中的历史写入当前 Workdir 的 `outputs/conversation_history/`，摘要模型根据这段历史生成一条 summary message。
 
 成功后，`_summarization_event` 保存累计 cutoff、摘要消息和历史文件路径。后续请求根据这个事件跳过已摘要区间，只发送当前摘要和 cutoff 之后的原始消息。再次压缩时，局部 cutoff 会换算成完整 state 的位置。
 
