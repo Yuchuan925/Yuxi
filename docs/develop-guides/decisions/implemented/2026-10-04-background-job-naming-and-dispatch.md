@@ -16,7 +16,7 @@ Task 容易被理解为包含 AgentRun 的全局任务，workers 中混合 API �
 
 HTTP 使用 /api/background-jobs，业务回执与资源执行关联使用 job_id，前端模块和“后台作业”页面采用对应名称。数据库更新表、约束、索引与知识文件 owner 关联字段；用户明确允许不兼容的数据模型变更，采用新的 fresh baseline、business schema 3 与 knowledge schema 2，拒绝旧库，不复制或兼容旧 tasks 表。旧表仍纳入非空库检测，避免被误认为可新建的空库。测试使用新的隔离运行槽位，保留旧环境。
 
-默认执行预算保持六小时，开发与生产 Compose 与 Python 默认值一致，显式覆盖仍由配置正数/有限性校验限制。保留状态 pending/running/success/failed/cancelled、管理员授权、结果摘要、合作式取消与业务失败判定。AgentRun 的模型和执行入口保持独立，Worker 共享进程与 ARQ 消费机制。 普通用户从文件状态和评估运行查看业务结果，提交提示不引导其访问管理员页面。前端回执仅携带 job_id 并读取权威详情，不构造未消费的参数或乐观快照。评估结果查询要求所属知识库的 EvaluationRun 存在；作业 ID 与评估运行 ID 格式不同，旧作业兜底没有当前 consumer，因此删除该路径。
+开发与生产 Compose 默认执行预算为二十四小时（86400 秒）；Python 未配置时的六小时兜底仅适用于未通过 Compose 装配的直接调用。显式覆盖仍由配置正数/有限性校验限制。保留状态 pending/running/success/failed/cancelled、管理员授权、结果摘要、合作式取消与业务失败判定。AgentRun 的模型和执行入口保持独立，Worker 共享进程与 ARQ 消费机制。 普通用户从文件状态和评估运行查看业务结果，提交提示不引导其访问管理员页面。前端回执仅携带 job_id 并读取权威详情，不构造未消费的参数或乐观快照。评估结果查询要求所属知识库的 EvaluationRun 存在；作业 ID 与评估运行 ID 格式不同，旧作业兜底没有当前 consumer，因此删除该路径。
 
 ## 替代方案
 
@@ -54,7 +54,7 @@ fresh Python 导入 `knowledge.evaluation.service` 与 `background_jobs.dispatch
 
 补充归属验证：`test/unit/knowledge/eval/test_result_filters.py test/integration/api/test_evaluation_run_visibility_router.py` 8 passed；人为建立同名后台作业时，缺失/跨库评估运行仍由 HTTP 返回 404。修复前两项 unit 因旧兜底的字典属性访问失败；修复后查询始终依据领域运行归属。历史执行命令保留原文，命名后证据单独记录。
 
-Compose 默认值回归：新增 workflow 配置测试先对开发/生产的 76400 秒值失败；恢复 21600 后通过，恢复超长值或遗漏预算的负向案例由既有 trust workflow 拒绝；相关 `test_run_worker.py` 64 passed。开发 Compose 解析后的 API/worker 默认值均为 21600；生产声明由脚本验证，未配置 .env.prod，未验证生产拓扑解析/部署。
+开发与生产 Compose 默认执行预算为 86400 秒。开发拓扑解析后 API 与 worker 均收到该预算；ARQ worker 超时在此基础上增加 30 秒。生产 .env 未提供，生产拓扑解析与部署未验证。
 
 未验证：完整外部 LLM 评估、完整图谱构建、Worker 强制 kill 的额外 E2E 和远端 CI。
 
