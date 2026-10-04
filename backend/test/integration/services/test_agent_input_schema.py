@@ -14,7 +14,7 @@ from yuxi.infrastructure.postgres.manager import PostgresManager
 from yuxi.migrations.schema import create_business_tables
 from yuxi.modules.agents.models.inputs import AgentInput
 from yuxi.modules.agents.models.messages import Message
-from yuxi.modules.agents.models.threads import Conversation, SubagentThread
+from yuxi.modules.agents.models.sessions import Session, SubagentThread
 from yuxi.modules.agents.models.turns import AgentTurn
 from yuxi.modules.agents.repositories.input import AgentInputRepository
 from yuxi.modules.agents.repositories.input_receipt import AgentInputReceiptRepository
@@ -72,7 +72,7 @@ async def _create_schema():
         )
         await connection.execute(
             text(
-                "INSERT INTO conversations (thread_id, uid, agent_id, project_id, is_pinned, status) "
+                "INSERT INTO sessions (thread_id, uid, agent_id, project_id, is_pinned, status) "
                 "VALUES ('input-thread', 'input-user', 'main', 'input-project', false, 'active')"
             )
         )
@@ -93,7 +93,7 @@ async def test_follow_up_claim_fixes_order_and_turn_only_once() -> None:
     try:
         sessions = async_sessionmaker(engine, expire_on_commit=False)
         async with sessions() as db:
-            conversation_id = await db.scalar(select(text("id")).select_from(text("conversations")))
+            session_record_id = await db.scalar(select(text("id")).select_from(text("sessions")))
             input_repo = AgentInputRepository(db)
             receipt_repo = AgentInputReceiptRepository(db)
             input_item = await input_repo.create(
@@ -117,7 +117,7 @@ async def test_follow_up_claim_fixes_order_and_turn_only_once() -> None:
                     input_id=input_item.id,
                 )
                 messages = [
-                    Message(conversation_id=conversation_id, role="user", content=content, delivery_status="queued")
+                    Message(session_record_id=session_record_id, role="user", content=content, delivery_status="queued")
                     for content in contents
                 ]
                 db.add_all(messages)
@@ -145,7 +145,7 @@ async def test_follow_up_claim_fixes_order_and_turn_only_once() -> None:
                 input_id=second_input.id,
             )
             second_message = Message(
-                conversation_id=conversation_id, role="user", content="next input", delivery_status="queued"
+                session_record_id=session_record_id, role="user", content="next input", delivery_status="queued"
             )
             db.add(second_message)
             await db.flush()
@@ -170,13 +170,13 @@ async def test_follow_up_claim_fixes_order_and_turn_only_once() -> None:
             )
             run = await AgentRunRepository(db).create_run(
                 run_id="run-one",
-                conversation_thread_id="input-thread",
+                thread_id="input-thread",
                 agent_slug="main",
                 uid="input-user",
                 turn_id=turn.id,
                 input_id=head.id,
                 input_payload={},
-                conversation_id=conversation_id,
+                session_record_id=session_record_id,
             )
             await AgentTurnRepository(db).set_current(turn, run_id=run.id)
             await input_repo.consume(input_id=head.id, turn_id=turn.id, run_id=run.id, cutoff_seq=cutoff)
@@ -275,7 +275,7 @@ async def test_product_key_active_turn_and_steer_uniqueness_are_enforced() -> No
         async with engine.begin() as connection:
             await connection.execute(
                 text(
-                    "INSERT INTO conversations (thread_id, uid, agent_id, project_id, is_pinned, status) "
+                    "INSERT INTO sessions (thread_id, uid, agent_id, project_id, is_pinned, status) "
                     "VALUES ('other-thread', 'input-user', 'main', 'input-project', false, 'active')"
                 )
             )
@@ -285,7 +285,7 @@ async def test_product_key_active_turn_and_steer_uniqueness_are_enforced() -> No
             )
             await AgentRunRepository(db).create_run(
                 run_id="other-run",
-                conversation_thread_id="other-thread",
+                thread_id="other-thread",
                 agent_slug="main",
                 uid="input-user",
                 turn_id=turn.id,
@@ -309,15 +309,15 @@ async def test_run_execution_sequence_orders_segments_across_a_turn() -> None:
     try:
         sessions = async_sessionmaker(engine, expire_on_commit=False)
         async with sessions() as db:
-            conversation_id = await db.scalar(select(text("id")).select_from(text("conversations")))
+            session_record_id = await db.scalar(select(text("id")).select_from(text("sessions")))
             turn = await AgentTurnRepository(db).create(
                 turn_id="cursor-turn", thread_id="input-thread", uid="input-user", app_id=None
             )
             runs = AgentRunRepository(db)
             first = await runs.create_run(
                 run_id="cursor-first",
-                conversation_thread_id="input-thread",
-                conversation_id=conversation_id,
+                thread_id="input-thread",
+                session_record_id=session_record_id,
                 agent_slug="main",
                 uid="input-user",
                 turn_id=turn.id,
@@ -329,8 +329,8 @@ async def test_run_execution_sequence_orders_segments_across_a_turn() -> None:
             await db.flush()
             second = await runs.create_run(
                 run_id="cursor-second",
-                conversation_thread_id="input-thread",
-                conversation_id=conversation_id,
+                thread_id="input-thread",
+                session_record_id=session_record_id,
                 agent_slug="main",
                 uid="input-user",
                 turn_id=turn.id,
@@ -341,7 +341,7 @@ async def test_run_execution_sequence_orders_segments_across_a_turn() -> None:
             db.add_all(
                 [
                     Message(
-                        conversation_id=conversation_id,
+                        session_record_id=session_record_id,
                         role="assistant",
                         content="first",
                         message_type="model_audit",
@@ -352,7 +352,7 @@ async def test_run_execution_sequence_orders_segments_across_a_turn() -> None:
                         usage={"input_tokens": 1, "output_tokens": 1, "total_tokens": 2},
                     ),
                     Message(
-                        conversation_id=conversation_id,
+                        session_record_id=session_record_id,
                         role="assistant",
                         content="",
                         message_type="model_audit",
@@ -386,50 +386,50 @@ async def test_parent_and_child_usage_stays_in_its_own_turn() -> None:
     try:
         sessions = async_sessionmaker(engine, expire_on_commit=False)
         async with sessions() as db:
-            parent_conversation = await db.scalar(select(Conversation).where(Conversation.thread_id == "input-thread"))
+            parent_session = await db.scalar(select(Session).where(Session.thread_id == "input-thread"))
             turn = await AgentTurnRepository(db).create(
                 turn_id="usage-turn", thread_id="input-thread", uid="input-user", app_id=None
             )
             runs = AgentRunRepository(db)
             parent_run = await runs.create_run(
                 run_id="usage-parent",
-                conversation_thread_id="input-thread",
+                thread_id="input-thread",
                 agent_slug="main",
                 uid="input-user",
                 turn_id=turn.id,
-                conversation_id=parent_conversation.id,
+                session_record_id=parent_session.id,
                 input_payload={},
             )
-            child_conversation = Conversation(
+            child_session = Session(
                 thread_id="usage-child-thread",
                 project_id="input-project",
                 uid="input-user",
                 agent_id="helper",
                 status="subagent",
             )
-            db.add(child_conversation)
+            db.add(child_session)
             await db.flush()
             relation = SubagentThread(
                 uid="input-user",
-                parent_conversation_id=parent_conversation.id,
-                child_conversation_id=child_conversation.id,
-                child_thread_id=child_conversation.thread_id,
+                parent_session_record_id=parent_session.id,
+                child_session_record_id=child_session.id,
+                child_thread_id=child_session.thread_id,
                 subagent_slug="helper",
                 created_by_run_id=parent_run.id,
             )
             db.add(relation)
             await db.flush()
             child_turn = await AgentTurnRepository(db).create(
-                turn_id="child-usage-turn", thread_id=child_conversation.thread_id, uid="input-user", app_id=None
+                turn_id="child-usage-turn", thread_id=child_session.thread_id, uid="input-user", app_id=None
             )
             child_run = await runs.create_run(
                 run_id="usage-child",
-                conversation_thread_id=child_conversation.thread_id,
-                runtime_scope_id=child_conversation.thread_id,
+                thread_id=child_session.thread_id,
+                runtime_scope_id=child_session.thread_id,
                 agent_slug="helper",
                 uid="input-user",
                 turn_id=child_turn.id,
-                conversation_id=child_conversation.id,
+                session_record_id=child_session.id,
                 run_type="subagent",
                 created_by_run_id=parent_run.id,
                 subagent_thread_relation_id=relation.id,
@@ -438,22 +438,20 @@ async def test_parent_and_child_usage_stays_in_its_own_turn() -> None:
             parent_run.status = "completed"
             child_run.status = "completed"
             await db.flush()
-            other_turn = AgentTurn(
-                id="other-turn", conversation_thread_id="input-thread", uid="input-user", status="completed"
-            )
+            other_turn = AgentTurn(id="other-turn", thread_id="input-thread", uid="input-user", status="completed")
             db.add(other_turn)
             await db.flush()
             other_run = await runs.create_run(
                 run_id="other-run",
-                conversation_thread_id="input-thread",
+                thread_id="input-thread",
                 agent_slug="main",
                 uid="input-user",
                 turn_id=other_turn.id,
-                conversation_id=parent_conversation.id,
+                session_record_id=parent_session.id,
                 input_payload={},
             )
             parent_audit = Message(
-                conversation_id=parent_conversation.id,
+                session_record_id=parent_session.id,
                 run_id=parent_run.id,
                 turn_id=turn.id,
                 role="assistant",
@@ -464,7 +462,7 @@ async def test_parent_and_child_usage_stays_in_its_own_turn() -> None:
                 usage={"input_tokens": 3, "output_tokens": 2, "total_tokens": 5},
             )
             child_audit = Message(
-                conversation_id=child_conversation.id,
+                session_record_id=child_session.id,
                 run_id=child_run.id,
                 turn_id=child_turn.id,
                 role="assistant",
@@ -475,7 +473,7 @@ async def test_parent_and_child_usage_stays_in_its_own_turn() -> None:
                 usage={"input_tokens": 2, "output_tokens": 1, "total_tokens": 3},
             )
             wrong_run_text = Message(
-                conversation_id=child_conversation.id,
+                session_record_id=child_session.id,
                 run_id=child_run.id,
                 turn_id=turn.id,
                 role="assistant",
@@ -486,7 +484,7 @@ async def test_parent_and_child_usage_stays_in_its_own_turn() -> None:
                 usage={"input_tokens": 900, "output_tokens": 900, "total_tokens": 1800},
             )
             wrong_turn_text = Message(
-                conversation_id=parent_conversation.id,
+                session_record_id=parent_session.id,
                 run_id=other_run.id,
                 turn_id=turn.id,
                 role="assistant",
@@ -497,7 +495,7 @@ async def test_parent_and_child_usage_stays_in_its_own_turn() -> None:
                 usage={"input_tokens": 900, "output_tokens": 900, "total_tokens": 1800},
             )
             child_final = Message(
-                conversation_id=child_conversation.id,
+                session_record_id=child_session.id,
                 run_id=child_run.id,
                 turn_id=child_turn.id,
                 role="assistant",
@@ -508,7 +506,7 @@ async def test_parent_and_child_usage_stays_in_its_own_turn() -> None:
                 usage={"input_tokens": 4, "output_tokens": 3, "total_tokens": 7},
             )
             other_final = Message(
-                conversation_id=parent_conversation.id,
+                session_record_id=parent_session.id,
                 run_id=other_run.id,
                 turn_id=other_turn.id,
                 role="assistant",
@@ -521,7 +519,7 @@ async def test_parent_and_child_usage_stays_in_its_own_turn() -> None:
             db.add_all([parent_audit, child_audit, child_final, other_final])
             await db.flush()
             for invalid_message in (wrong_run_text, wrong_turn_text):
-                with pytest.raises(IntegrityError, match="fk_messages_run_turn_conversation"):
+                with pytest.raises(IntegrityError, match="fk_messages_run_turn_session"):
                     async with db.begin_nested():
                         db.add(invalid_message)
                         await db.flush()
@@ -557,20 +555,20 @@ async def test_parent_and_child_usage_stays_in_its_own_turn() -> None:
 
 async def test_reused_tool_call_id_never_reuses_another_message_declaration():
     """供应商重复 call_id 时，每条声明仍拥有独立 ToolCall 投影。"""
-    from yuxi.modules.agents.repositories.threads import ConversationRepository
+    from yuxi.modules.agents.repositories.sessions import SessionRepository
 
     schema, admin_engine, engine = await _create_schema()
     try:
         sessions = async_sessionmaker(engine, expire_on_commit=False)
         async with sessions() as db:
-            conversation = await db.scalar(select(Conversation).where(Conversation.thread_id == "input-thread"))
+            agent_session = await db.scalar(select(Session).where(Session.thread_id == "input-thread"))
             messages = [
-                Message(conversation_id=conversation.id, role="assistant", content="", extra_metadata={})
+                Message(session_record_id=agent_session.id, role="assistant", content="", extra_metadata={})
                 for _ in range(2)
             ]
             db.add_all(messages)
             await db.flush()
-            repository = ConversationRepository(db)
+            repository = SessionRepository(db)
             first, second = [
                 await repository.add_tool_call(
                     message_id=message.id,

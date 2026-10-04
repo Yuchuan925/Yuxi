@@ -10,7 +10,7 @@ from yuxi.infrastructure.minio.client import normalize_public_minio_url
 from yuxi.modules.agents.models.definitions import Agent
 from yuxi.modules.agents.models.messages import AUDIT_MESSAGE_TYPES, Message, ToolCall
 from yuxi.modules.agents.models.runs import AgentRun
-from yuxi.modules.agents.models.threads import Conversation
+from yuxi.modules.agents.models.sessions import Session
 from yuxi.modules.agents.repositories.definitions import AgentRepository
 from yuxi.modules.identity.models import User
 from yuxi.shared.datetime import UTC, ensure_shanghai, format_utc_datetime, shanghai_now, utc_now
@@ -39,28 +39,28 @@ class DashboardRepository:
         return func.date(func.timezone("Asia/Shanghai", column))
 
     @staticmethod
-    def _conversation_token_totals(conversation_ids: list[int] | None = None):
+    def _session_token_totals(session_record_ids: list[int] | None = None):
         """按会话汇总 Run 实测用量，保留缺失标记。"""
         reported = AgentRun.token_usage["usage_reported_call_count"].as_integer() > 0
         complete = AgentRun.token_usage["complete"].as_boolean().is_(True)
         value = AgentRun.token_usage["total"]["total_tokens"].as_integer()
         run_totals = (
             select(
-                AgentRun.conversation_id,
+                AgentRun.session_record_id,
                 func.sum(case((reported | complete, value), else_=None)).label("total_tokens"),
                 func.min(case((complete & value.isnot(None), 1), else_=0)).label("complete"),
             )
-            .where(AgentRun.conversation_id.in_(conversation_ids) if conversation_ids is not None else True)
-            .group_by(AgentRun.conversation_id)
+            .where(AgentRun.session_record_id.in_(session_record_ids) if session_record_ids is not None else True)
+            .group_by(AgentRun.session_record_id)
             .subquery()
         )
         return (
             select(
-                run_totals.c.conversation_id.label("conversation_id"),
+                run_totals.c.session_record_id.label("session_record_id"),
                 run_totals.c.total_tokens,
                 (run_totals.c.complete == 1).label("complete"),
             )
-            .where(run_totals.c.conversation_id.in_(conversation_ids) if conversation_ids is not None else True)
+            .where(run_totals.c.session_record_id.in_(session_record_ids) if session_record_ids is not None else True)
             .subquery()
         )
 
@@ -77,27 +77,27 @@ class DashboardRepository:
         """按会话统计消息数的事实子查询（与消息写入时的计数语义一致）。"""
         return (
             select(
-                Message.conversation_id.label("conversation_id"),
+                Message.session_record_id.label("session_record_id"),
                 func.count(Message.id).label("message_count"),
             )
             .where(DashboardRepository._counted_message_condition())
-            .group_by(Message.conversation_id)
+            .group_by(Message.session_record_id)
             .subquery()
         )
 
-    async def get_conversation_token_usage(self, conversation_id: int) -> dict[str, Any]:
+    async def get_session_token_usage(self, session_record_id: int) -> dict[str, Any]:
         """读取与会话列表一致的实测 Token 汇总；无 Run 事实时暴露未知。"""
-        totals = self._conversation_token_totals([conversation_id])
+        totals = self._session_token_totals([session_record_id])
         row = (
             await self.db_session.execute(
-                select(totals.c.total_tokens, totals.c.complete).where(totals.c.conversation_id == conversation_id)
+                select(totals.c.total_tokens, totals.c.complete).where(totals.c.session_record_id == session_record_id)
             )
         ).one_or_none()
         if row is None:
             return {"total_tokens": None, "token_usage_complete": False}
         return {"total_tokens": row.total_tokens, "token_usage_complete": bool(row.complete)}
 
-    async def list_conversations(
+    async def list_sessions(
         self,
         *,
         uid: str | None = None,
@@ -110,85 +110,82 @@ class DashboardRepository:
         """分页查询 Dashboard 对话，并装配用户与 Agent 展示名称。"""
         filters = []
         if uid:
-            filters.append(Conversation.uid == uid)
+            filters.append(Session.uid == uid)
         if agent_id:
-            filters.append(Conversation.agent_id == agent_id)
+            filters.append(Session.agent_id == agent_id)
         if status and status != "all":
-            filters.append(Conversation.status == status)
+            filters.append(Session.status == status)
         else:
-            filters.append(Conversation.status != "deleted")
+            filters.append(Session.status != "deleted")
         if search:
             search_term = f"%{search.strip()}%"
             filters.append(
                 or_(
-                    Conversation.title.ilike(search_term),
-                    Conversation.thread_id.ilike(search_term),
-                    Conversation.uid.ilike(search_term),
+                    Session.title.ilike(search_term),
+                    Session.thread_id.ilike(search_term),
+                    Session.uid.ilike(search_term),
                     User.username.ilike(search_term),
                 )
             )
 
         total_result = await self.db_session.execute(
-            select(func.count(Conversation.id))
-            .select_from(Conversation)
-            .outerjoin(User, Conversation.uid == User.uid)
-            .where(*filters)
+            select(func.count(Session.id)).select_from(Session).outerjoin(User, Session.uid == User.uid).where(*filters)
         )
         rows = (
             await self.db_session.execute(
-                select(Conversation, User)
-                .outerjoin(User, Conversation.uid == User.uid)
+                select(Session, User)
+                .outerjoin(User, Session.uid == User.uid)
                 .where(*filters)
-                .order_by(Conversation.updated_at.desc())
+                .order_by(Session.updated_at.desc())
                 .limit(limit)
                 .offset(offset)
             )
         ).all()
 
-        token_totals = self._conversation_token_totals([conversation.id for conversation, _ in rows])
-        usage_by_conversation = {
-            row.conversation_id: row for row in (await self.db_session.execute(select(token_totals))).all()
+        token_totals = self._session_token_totals([agent_session.id for agent_session, _ in rows])
+        usage_by_session = {
+            row.session_record_id: row for row in (await self.db_session.execute(select(token_totals))).all()
         }
         message_counts = self._message_count_totals()
-        message_count_by_conversation = {
-            row.conversation_id: row.message_count
+        message_count_by_session = {
+            row.session_record_id: row.message_count
             for row in (
                 await self.db_session.execute(
                     select(message_counts).where(
-                        message_counts.c.conversation_id.in_([conversation.id for conversation, _ in rows])
+                        message_counts.c.session_record_id.in_([agent_session.id for agent_session, _ in rows])
                     )
                 )
             ).all()
         }
-        agent_slugs = {conversation.agent_id for conversation, _ in rows if conversation.agent_id}
+        agent_slugs = {agent_session.agent_id for agent_session, _ in rows if agent_session.agent_id}
         agents_by_slug: dict[str, Agent] = {}
         if agent_slugs:
             agents = await AgentRepository(self.db_session).list_by_slugs(list(agent_slugs))
             agents_by_slug = {agent.slug: agent for agent in agents}
 
         items = []
-        for conversation, user in rows:
-            usage = usage_by_conversation.get(conversation.id)
-            agent = agents_by_slug.get(conversation.agent_id)
+        for agent_session, user in rows:
+            usage = usage_by_session.get(agent_session.id)
+            agent = agents_by_slug.get(agent_session.agent_id)
             items.append(
                 {
-                    "thread_id": conversation.thread_id,
-                    "uid": conversation.uid,
-                    "username": user.username if user else conversation.uid,
+                    "thread_id": agent_session.thread_id,
+                    "uid": agent_session.uid,
+                    "username": user.username if user else agent_session.uid,
                     "user_avatar": normalize_public_minio_url(user.avatar) if user and user.avatar else None,
                     "user_deleted": user is None or bool(user.is_deleted),
-                    "agent_id": conversation.agent_id,
-                    "agent_name": agent.name if agent else conversation.agent_id,
+                    "agent_id": agent_session.agent_id,
+                    "agent_name": agent.name if agent else agent_session.agent_id,
                     "agent_avatar": normalize_public_minio_url(agent.icon) if agent and agent.icon else None,
                     "agent_deleted": agent is None,
-                    "title": conversation.title,
-                    "status": conversation.status,
-                    "is_pinned": bool(conversation.is_pinned),
-                    "message_count": int(message_count_by_conversation.get(conversation.id, 0)),
+                    "title": agent_session.title,
+                    "status": agent_session.status,
+                    "is_pinned": bool(agent_session.is_pinned),
+                    "message_count": int(message_count_by_session.get(agent_session.id, 0)),
                     "total_tokens": usage.total_tokens if usage is not None else None,
                     "token_usage_complete": bool(usage.complete) if usage is not None else False,
-                    "created_at": format_utc_datetime(conversation.created_at) or "",
-                    "updated_at": format_utc_datetime(conversation.updated_at) or "",
+                    "created_at": format_utc_datetime(agent_session.created_at) or "",
+                    "updated_at": format_utc_datetime(agent_session.updated_at) or "",
                 }
             )
         return {
@@ -198,21 +195,21 @@ class DashboardRepository:
             "offset": offset,
         }
 
-    async def get_conversation_filter_options(self) -> dict[str, list[dict[str, Any]]]:
+    async def get_session_filter_options(self) -> dict[str, list[dict[str, Any]]]:
         """读取完整会话审计可用的用户与 Agent 筛选项。"""
         user_rows = (
             await self.db_session.execute(
-                select(Conversation.uid, User.username, User.avatar, User.is_deleted)
-                .select_from(Conversation)
-                .outerjoin(User, Conversation.uid == User.uid)
+                select(Session.uid, User.username, User.avatar, User.is_deleted)
+                .select_from(Session)
+                .outerjoin(User, Session.uid == User.uid)
                 .distinct()
             )
         ).all()
         agent_rows = (
             await self.db_session.execute(
-                select(Conversation.agent_id, Agent.name, Agent.icon)
-                .select_from(Conversation)
-                .outerjoin(Agent, Conversation.agent_id == Agent.slug)
+                select(Session.agent_id, Agent.name, Agent.icon)
+                .select_from(Session)
+                .outerjoin(Agent, Session.agent_id == Agent.slug)
                 .distinct()
             )
         ).all()
@@ -239,23 +236,23 @@ class DashboardRepository:
         agents.sort(key=lambda item: (item["is_deleted"], item["agent_name"].lower()))
         return {"users": users, "agents": agents}
 
-    async def get_conversation_audit_metadata(self, conversation: Conversation) -> dict[str, Any]:
+    async def get_session_audit_metadata(self, agent_session: Session) -> dict[str, Any]:
         """读取会话关联用户与 Agent 的当前审计状态。"""
         row = (
             await self.db_session.execute(
                 select(User, Agent)
-                .select_from(Conversation)
-                .outerjoin(User, Conversation.uid == User.uid)
-                .outerjoin(Agent, Conversation.agent_id == Agent.slug)
-                .where(Conversation.id == conversation.id)
+                .select_from(Session)
+                .outerjoin(User, Session.uid == User.uid)
+                .outerjoin(Agent, Session.agent_id == Agent.slug)
+                .where(Session.id == agent_session.id)
             )
         ).one()
         user, agent = row
         return {
-            "username": user.username if user else conversation.uid,
+            "username": user.username if user else agent_session.uid,
             "user_avatar": normalize_public_minio_url(user.avatar) if user and user.avatar else None,
             "user_deleted": user is None or bool(user.is_deleted),
-            "agent_name": agent.name if agent else conversation.agent_id,
+            "agent_name": agent.name if agent else agent_session.agent_id,
             "agent_avatar": normalize_public_minio_url(agent.icon) if agent and agent.icon else None,
             "agent_deleted": agent is None,
         }
@@ -267,37 +264,37 @@ class DashboardRepository:
         total_result = await self.db_session.execute(select(func.count(User.id)).where(User.is_deleted == 0))
         active_24h_result = await self.db_session.execute(
             select(func.count(distinct(User.id)))
-            .select_from(Conversation)
-            .join(User, Conversation.uid == User.uid)
-            .join(Agent, Conversation.agent_id == Agent.slug)
+            .select_from(Session)
+            .join(User, Session.uid == User.uid)
+            .join(Agent, Session.agent_id == Agent.slug)
             .where(
-                Conversation.updated_at >= query_now - timedelta(days=1),
-                Conversation.status.notin_(("deleted", "subagent")),
+                Session.updated_at >= query_now - timedelta(days=1),
+                Session.status.notin_(("deleted", "subagent")),
                 User.is_deleted == 0,
             )
         )
         active_30d_result = await self.db_session.execute(
             select(func.count(distinct(User.id)))
-            .select_from(Conversation)
-            .join(User, Conversation.uid == User.uid)
-            .join(Agent, Conversation.agent_id == Agent.slug)
+            .select_from(Session)
+            .join(User, Session.uid == User.uid)
+            .join(Agent, Session.agent_id == Agent.slug)
             .where(
-                Conversation.updated_at >= query_now - timedelta(days=30),
-                Conversation.status.notin_(("deleted", "subagent")),
+                Session.updated_at >= query_now - timedelta(days=30),
+                Session.status.notin_(("deleted", "subagent")),
                 User.is_deleted == 0,
             )
         )
 
-        active_date = self._shanghai_date_group(Conversation.updated_at)
+        active_date = self._shanghai_date_group(Session.updated_at)
         daily_active_result = await self.db_session.execute(
             select(active_date.label("date"), func.count(distinct(User.id)).label("active_users"))
-            .select_from(Conversation)
-            .join(User, Conversation.uid == User.uid)
-            .join(Agent, Conversation.agent_id == Agent.slug)
+            .select_from(Session)
+            .join(User, Session.uid == User.uid)
+            .join(Agent, Session.agent_id == Agent.slug)
             .where(
-                Conversation.updated_at >= query_now - timedelta(days=120),
-                Conversation.updated_at < query_now,
-                Conversation.status.notin_(("deleted", "subagent")),
+                Session.updated_at >= query_now - timedelta(days=120),
+                Session.updated_at < query_now,
+                Session.status.notin_(("deleted", "subagent")),
                 User.is_deleted == 0,
             )
             .group_by(active_date)
@@ -319,21 +316,21 @@ class DashboardRepository:
     async def get_tool_call_stats(self, *, now: datetime | None = None) -> dict[str, Any]:
         """统计有效用户与非删除会话中的工具调用。"""
         query_now = now or utc_now()
-        valid_filters = [Conversation.status.notin_(("deleted", "subagent")), User.is_deleted == 0]
+        valid_filters = [Session.status.notin_(("deleted", "subagent")), User.is_deleted == 0]
         total_result = await self.db_session.execute(
             select(func.count(ToolCall.id))
             .join(Message, ToolCall.message_id == Message.id)
-            .join(Conversation, Message.conversation_id == Conversation.id)
-            .join(User, Conversation.uid == User.uid)
-            .join(Agent, Conversation.agent_id == Agent.slug)
+            .join(Session, Message.session_record_id == Session.id)
+            .join(User, Session.uid == User.uid)
+            .join(Agent, Session.agent_id == Agent.slug)
             .where(*valid_filters)
         )
         successful_result = await self.db_session.execute(
             select(func.count(ToolCall.id))
             .join(Message, ToolCall.message_id == Message.id)
-            .join(Conversation, Message.conversation_id == Conversation.id)
-            .join(User, Conversation.uid == User.uid)
-            .join(Agent, Conversation.agent_id == Agent.slug)
+            .join(Session, Message.session_record_id == Session.id)
+            .join(User, Session.uid == User.uid)
+            .join(Agent, Session.agent_id == Agent.slug)
             .where(*valid_filters, ToolCall.status == "success")
         )
         total_calls = total_result.scalar() or 0
@@ -342,9 +339,9 @@ class DashboardRepository:
         most_used_result = await self.db_session.execute(
             select(ToolCall.tool_name, func.count(ToolCall.id).label("count"))
             .join(Message, ToolCall.message_id == Message.id)
-            .join(Conversation, Message.conversation_id == Conversation.id)
-            .join(User, Conversation.uid == User.uid)
-            .join(Agent, Conversation.agent_id == Agent.slug)
+            .join(Session, Message.session_record_id == Session.id)
+            .join(User, Session.uid == User.uid)
+            .join(Agent, Session.agent_id == Agent.slug)
             .where(*valid_filters)
             .group_by(ToolCall.tool_name)
             .order_by(func.count(ToolCall.id).desc())
@@ -353,9 +350,9 @@ class DashboardRepository:
         error_result = await self.db_session.execute(
             select(ToolCall.tool_name, func.count(ToolCall.id).label("error_count"))
             .join(Message, ToolCall.message_id == Message.id)
-            .join(Conversation, Message.conversation_id == Conversation.id)
-            .join(User, Conversation.uid == User.uid)
-            .join(Agent, Conversation.agent_id == Agent.slug)
+            .join(Session, Message.session_record_id == Session.id)
+            .join(User, Session.uid == User.uid)
+            .join(Agent, Session.agent_id == Agent.slug)
             .where(*valid_filters, ToolCall.status == "error")
             .group_by(ToolCall.tool_name)
         )
@@ -367,9 +364,9 @@ class DashboardRepository:
             daily_result = await self.db_session.execute(
                 select(func.count(ToolCall.id))
                 .join(Message, ToolCall.message_id == Message.id)
-                .join(Conversation, Message.conversation_id == Conversation.id)
-                .join(User, Conversation.uid == User.uid)
-                .join(Agent, Conversation.agent_id == Agent.slug)
+                .join(Session, Message.session_record_id == Session.id)
+                .join(User, Session.uid == User.uid)
+                .join(Agent, Session.agent_id == Agent.slug)
                 .where(
                     *valid_filters,
                     ToolCall.created_at >= day_start,
@@ -391,66 +388,66 @@ class DashboardRepository:
     async def get_agent_analytics(self) -> dict[str, Any]:
         """汇总仍存在 Agent 在有效用户与非删除会话中的使用情况。"""
         agents = list((await self.db_session.execute(select(Agent).order_by(Agent.name.asc()))).scalars().all())
-        valid_filters = [Conversation.status.notin_(("deleted", "subagent")), User.is_deleted == 0]
+        valid_filters = [Session.status.notin_(("deleted", "subagent")), User.is_deleted == 0]
 
-        conversation_rows = (
+        session_rows = (
             await self.db_session.execute(
-                select(Conversation.agent_id, func.count(Conversation.id))
-                .join(User, Conversation.uid == User.uid)
-                .join(Agent, Conversation.agent_id == Agent.slug)
+                select(Session.agent_id, func.count(Session.id))
+                .join(User, Session.uid == User.uid)
+                .join(Agent, Session.agent_id == Agent.slug)
                 .where(*valid_filters)
-                .group_by(Conversation.agent_id)
+                .group_by(Session.agent_id)
             )
         ).all()
-        conversation_counts = {agent_id: int(count or 0) for agent_id, count in conversation_rows}
+        session_counts = {agent_id: int(count or 0) for agent_id, count in session_rows}
 
         tool_rows = (
             await self.db_session.execute(
-                select(Conversation.agent_id, func.count(ToolCall.id))
+                select(Session.agent_id, func.count(ToolCall.id))
                 .join(Message, ToolCall.message_id == Message.id)
-                .join(Conversation, Message.conversation_id == Conversation.id)
-                .join(User, Conversation.uid == User.uid)
-                .join(Agent, Conversation.agent_id == Agent.slug)
+                .join(Session, Message.session_record_id == Session.id)
+                .join(User, Session.uid == User.uid)
+                .join(Agent, Session.agent_id == Agent.slug)
                 .where(*valid_filters)
-                .group_by(Conversation.agent_id)
+                .group_by(Session.agent_id)
             )
         ).all()
         tool_counts = {agent_id: int(count or 0) for agent_id, count in tool_rows}
 
-        conversation_stats = []
+        session_stats = []
         tool_usage = []
         for agent in agents:
-            conversation_count = conversation_counts.get(agent.slug, 0)
-            conversation_stats.append({"agent_id": agent.slug, "conversation_count": conversation_count})
+            session_count = session_counts.get(agent.slug, 0)
+            session_stats.append({"agent_id": agent.slug, "session_count": session_count})
             tool_usage.append({"agent_id": agent.slug, "tool_usage_count": tool_counts.get(agent.slug, 0)})
 
         return {
             "total_agents": len(agents),
-            "agent_conversation_counts": conversation_stats,
+            "agent_session_counts": session_stats,
             "agent_tool_usage": tool_usage,
             "agent_names": {agent.slug: agent.name for agent in agents},
         }
 
     async def get_basic_stats(self) -> dict[str, Any]:
         """读取有效用户与非删除会话的 Dashboard 基础计数。"""
-        valid_filters = [Conversation.status.notin_(("deleted", "subagent")), User.is_deleted == 0]
-        total_conversations_result = await self.db_session.execute(
-            select(func.count(Conversation.id))
-            .join(User, Conversation.uid == User.uid)
-            .join(Agent, Conversation.agent_id == Agent.slug)
+        valid_filters = [Session.status.notin_(("deleted", "subagent")), User.is_deleted == 0]
+        total_sessions_result = await self.db_session.execute(
+            select(func.count(Session.id))
+            .join(User, Session.uid == User.uid)
+            .join(Agent, Session.agent_id == Agent.slug)
             .where(*valid_filters)
         )
-        active_conversations_result = await self.db_session.execute(
-            select(func.count(Conversation.id))
-            .join(User, Conversation.uid == User.uid)
-            .join(Agent, Conversation.agent_id == Agent.slug)
-            .where(*valid_filters, Conversation.status == "active")
+        active_sessions_result = await self.db_session.execute(
+            select(func.count(Session.id))
+            .join(User, Session.uid == User.uid)
+            .join(Agent, Session.agent_id == Agent.slug)
+            .where(*valid_filters, Session.status == "active")
         )
         total_messages_result = await self.db_session.execute(
             select(func.count(Message.id))
-            .join(Conversation, Message.conversation_id == Conversation.id)
-            .join(User, Conversation.uid == User.uid)
-            .join(Agent, Conversation.agent_id == Agent.slug)
+            .join(Session, Message.session_record_id == Session.id)
+            .join(User, Session.uid == User.uid)
+            .join(Agent, Session.agent_id == Agent.slug)
             .where(
                 *valid_filters,
                 or_(Message.message_type.is_(None), Message.message_type.notin_(AUDIT_MESSAGE_TYPES)),
@@ -458,8 +455,8 @@ class DashboardRepository:
         )
         total_users_result = await self.db_session.execute(select(func.count(User.id)).where(User.is_deleted == 0))
         return {
-            "total_conversations": total_conversations_result.scalar() or 0,
-            "active_conversations": active_conversations_result.scalar() or 0,
+            "total_sessions": total_sessions_result.scalar() or 0,
+            "active_sessions": active_sessions_result.scalar() or 0,
             "total_messages": total_messages_result.scalar() or 0,
             "total_users": total_users_result.scalar() or 0,
         }
@@ -500,15 +497,15 @@ class DashboardRepository:
                     func.count(Message.id).label("count"),
                     category.label("category"),
                 )
-                .join(Conversation, Message.conversation_id == Conversation.id)
-                .join(User, Conversation.uid == User.uid)
-                .join(Agent, Conversation.agent_id == Agent.slug)
+                .join(Session, Message.session_record_id == Session.id)
+                .join(User, Session.uid == User.uid)
+                .join(Agent, Session.agent_id == Agent.slug)
                 .where(
                     Message.role == "assistant",
                     or_(Message.message_type.is_(None), Message.message_type.notin_(AUDIT_MESSAGE_TYPES)),
                     Message.created_at >= query_start_time,
                     Message.extra_metadata.isnot(None),
-                    Conversation.status.notin_(("deleted", "subagent")),
+                    Session.status.notin_(("deleted", "subagent")),
                     User.is_deleted == 0,
                 )
                 .group_by(message_group, category)
@@ -516,23 +513,23 @@ class DashboardRepository:
             )
             rows = list(result.all())
         elif metric_type == "agents":
-            conversation_group = self._time_group_format(Conversation.updated_at, time_range)
+            session_group = self._time_group_format(Session.updated_at, time_range)
             result = await self.db_session.execute(
                 select(
-                    conversation_group.label("date"),
-                    func.count(Conversation.id).label("count"),
-                    Conversation.agent_id.label("category"),
+                    session_group.label("date"),
+                    func.count(Session.id).label("count"),
+                    Session.agent_id.label("category"),
                 )
-                .join(User, Conversation.uid == User.uid)
-                .join(Agent, Conversation.agent_id == Agent.slug)
+                .join(User, Session.uid == User.uid)
+                .join(Agent, Session.agent_id == Agent.slug)
                 .where(
-                    Conversation.updated_at.isnot(None),
-                    Conversation.updated_at >= query_start_time,
-                    Conversation.status.notin_(("deleted", "subagent")),
+                    Session.updated_at.isnot(None),
+                    Session.updated_at >= query_start_time,
+                    Session.status.notin_(("deleted", "subagent")),
                     User.is_deleted == 0,
                 )
-                .group_by(conversation_group, Conversation.agent_id)
-                .order_by(conversation_group)
+                .group_by(session_group, Session.agent_id)
+                .order_by(session_group)
             )
             rows = list(result.all())
         elif metric_type == "tokens":
@@ -549,15 +546,15 @@ class DashboardRepository:
                         ).label("count"),
                         literal(token_name).label("category"),
                     )
-                    .join(Conversation, Message.conversation_id == Conversation.id)
-                    .join(User, Conversation.uid == User.uid)
-                    .join(Agent, Conversation.agent_id == Agent.slug)
+                    .join(Session, Message.session_record_id == Session.id)
+                    .join(User, Session.uid == User.uid)
+                    .join(Agent, Session.agent_id == Agent.slug)
                     .where(
                         Message.created_at >= query_start_time,
                         or_(Message.message_type.is_(None), Message.message_type.notin_(AUDIT_MESSAGE_TYPES)),
                         Message.extra_metadata.isnot(None),
                         Message.extra_metadata["usage_metadata"].isnot(None),
-                        Conversation.status.notin_(("deleted", "subagent")),
+                        Session.status.notin_(("deleted", "subagent")),
                         User.is_deleted == 0,
                     )
                     .group_by(message_group)
@@ -573,12 +570,12 @@ class DashboardRepository:
                     ToolCall.tool_name.label("category"),
                 )
                 .join(Message, ToolCall.message_id == Message.id)
-                .join(Conversation, Message.conversation_id == Conversation.id)
-                .join(User, Conversation.uid == User.uid)
-                .join(Agent, Conversation.agent_id == Agent.slug)
+                .join(Session, Message.session_record_id == Session.id)
+                .join(User, Session.uid == User.uid)
+                .join(Agent, Session.agent_id == Agent.slug)
                 .where(
                     ToolCall.created_at >= query_start_time,
-                    Conversation.status.notin_(("deleted", "subagent")),
+                    Session.status.notin_(("deleted", "subagent")),
                     User.is_deleted == 0,
                 )
                 .group_by(tool_group, ToolCall.tool_name)
@@ -642,10 +639,10 @@ class DashboardRepository:
             total_result = await self.db_session.execute(
                 select(func.count(ToolCall.id))
                 .join(Message, ToolCall.message_id == Message.id)
-                .join(Conversation, Message.conversation_id == Conversation.id)
-                .join(User, Conversation.uid == User.uid)
-                .join(Agent, Conversation.agent_id == Agent.slug)
-                .where(Conversation.status.notin_(("deleted", "subagent")), User.is_deleted == 0)
+                .join(Session, Message.session_record_id == Session.id)
+                .join(User, Session.uid == User.uid)
+                .join(Agent, Session.agent_id == Agent.slug)
+                .where(Session.status.notin_(("deleted", "subagent")), User.is_deleted == 0)
             )
             total_count = total_result.scalar() or 0
         else:
@@ -678,26 +675,24 @@ class DashboardRepository:
         query_start_time = local_start_day - timedelta(hours=8)
 
         status_filter = (
-            Conversation.status != "deleted"
-            if include_subagents
-            else Conversation.status.notin_(("deleted", "subagent"))
+            Session.status != "deleted" if include_subagents else Session.status.notin_(("deleted", "subagent"))
         )
-        conversation_filters = [
-            Conversation.created_at.isnot(None),
+        session_filters = [
+            Session.created_at.isnot(None),
             status_filter,
             User.is_deleted == 0,
         ]
         if agent_id:
-            conversation_filters.append(Conversation.agent_id == agent_id)
+            session_filters.append(Session.agent_id == agent_id)
 
         summary_result = await self.db_session.execute(
             select(
-                func.count(Conversation.id).label("total_threads"),
-                func.sum(case((Conversation.is_pinned.is_(True), 1), else_=0)).label("pinned_threads"),
+                func.count(Session.id).label("total_threads"),
+                func.sum(case((Session.is_pinned.is_(True), 1), else_=0)).label("pinned_threads"),
             )
-            .join(User, Conversation.uid == User.uid)
-            .join(Agent, Conversation.agent_id == Agent.slug)
-            .where(*conversation_filters)
+            .join(User, Session.uid == User.uid)
+            .join(Agent, Session.agent_id == Agent.slug)
+            .where(*session_filters)
         )
         summary_row = summary_result.one()
 
@@ -705,28 +700,28 @@ class DashboardRepository:
             select(
                 func.count(Message.id).label("total_messages"),
                 func.count(
-                    distinct(case((Message.created_at >= query_start_time, Message.conversation_id), else_=None))
+                    distinct(case((Message.created_at >= query_start_time, Message.session_record_id), else_=None))
                 ).label("active_threads"),
             )
             .select_from(Message)
-            .join(Conversation, Message.conversation_id == Conversation.id)
-            .join(User, Conversation.uid == User.uid)
-            .join(Agent, Conversation.agent_id == Agent.slug)
+            .join(Session, Message.session_record_id == Session.id)
+            .join(User, Session.uid == User.uid)
+            .join(Agent, Session.agent_id == Agent.slug)
             .where(
-                *conversation_filters,
+                *session_filters,
                 or_(Message.message_type.is_(None), Message.message_type.notin_(AUDIT_MESSAGE_TYPES)),
             )
         )
         message_summary_row = message_summary_result.one()
 
-        token_totals = self._conversation_token_totals()
+        token_totals = self._session_token_totals()
         tokens_query = (
             select(func.coalesce(func.sum(token_totals.c.total_tokens), 0))
             .select_from(token_totals)
-            .join(Conversation, token_totals.c.conversation_id == Conversation.id)
-            .join(User, Conversation.uid == User.uid)
-            .join(Agent, Conversation.agent_id == Agent.slug)
-            .where(*conversation_filters)
+            .join(Session, token_totals.c.session_record_id == Session.id)
+            .join(User, Session.uid == User.uid)
+            .join(Agent, Session.agent_id == Agent.slug)
+            .where(*session_filters)
         )
         total_tokens = int((await self.db_session.execute(tokens_query)).scalar() or 0)
 
@@ -735,16 +730,16 @@ class DashboardRepository:
         pinned_threads = int(summary_row.pinned_threads or 0)
         total_messages = int(message_summary_row.total_messages or 0)
 
-        new_thread_date = self._shanghai_date_group(Conversation.created_at)
+        new_thread_date = self._shanghai_date_group(Session.created_at)
         new_thread_rows = (
             await self.db_session.execute(
-                select(new_thread_date.label("date"), func.count(Conversation.id).label("count"))
-                .join(User, Conversation.uid == User.uid)
-                .join(Agent, Conversation.agent_id == Agent.slug)
+                select(new_thread_date.label("date"), func.count(Session.id).label("count"))
+                .join(User, Session.uid == User.uid)
+                .join(Agent, Session.agent_id == Agent.slug)
                 .where(
-                    *conversation_filters,
-                    Conversation.created_at >= query_start_time,
-                    Conversation.created_at <= query_now,
+                    *session_filters,
+                    Session.created_at >= query_start_time,
+                    Session.created_at <= query_now,
                 )
                 .group_by(new_thread_date)
             )
@@ -755,18 +750,18 @@ class DashboardRepository:
         activity_query = (
             select(
                 message_date.label("date"),
-                func.count(distinct(Message.conversation_id)).label("active_threads"),
+                func.count(distinct(Message.session_record_id)).label("active_threads"),
                 func.count(Message.id).label("message_count"),
             )
             .select_from(Message)
-            .join(Conversation, Message.conversation_id == Conversation.id)
-            .join(User, Conversation.uid == User.uid)
-            .join(Agent, Conversation.agent_id == Agent.slug)
+            .join(Session, Message.session_record_id == Session.id)
+            .join(User, Session.uid == User.uid)
+            .join(Agent, Session.agent_id == Agent.slug)
             .where(
                 Message.created_at >= query_start_time,
                 Message.created_at <= query_now,
                 or_(Message.message_type.is_(None), Message.message_type.notin_(AUDIT_MESSAGE_TYPES)),
-                *conversation_filters,
+                *session_filters,
             )
             .group_by(message_date)
         )
@@ -804,11 +799,11 @@ class DashboardRepository:
                 func.sum(case(((depth_count >= 11) & (depth_count <= 20), 1), else_=0)).label("d11_20"),
                 func.sum(case((depth_count > 20, 1), else_=0)).label("d20_plus"),
             )
-            .select_from(Conversation)
-            .outerjoin(message_counts, Conversation.id == message_counts.c.conversation_id)
-            .join(User, Conversation.uid == User.uid)
-            .join(Agent, Conversation.agent_id == Agent.slug)
-            .where(*conversation_filters)
+            .select_from(Session)
+            .outerjoin(message_counts, Session.id == message_counts.c.session_record_id)
+            .join(User, Session.uid == User.uid)
+            .join(Agent, Session.agent_id == Agent.slug)
+            .where(*session_filters)
         )
         depth_row = (await self.db_session.execute(depth_query)).one()
         depth_distribution = {
@@ -823,19 +818,19 @@ class DashboardRepository:
         # 4. 各智能体会话分布
         agent_group_query = (
             select(
-                Conversation.agent_id,
-                func.count(Conversation.id).label("thread_count"),
+                Session.agent_id,
+                func.count(Session.id).label("thread_count"),
                 func.coalesce(func.sum(message_counts.c.message_count), 0).label("message_count"),
                 func.coalesce(func.sum(token_totals.c.total_tokens), 0).label("token_count"),
             )
-            .select_from(Conversation)
-            .outerjoin(token_totals, Conversation.id == token_totals.c.conversation_id)
-            .outerjoin(message_counts, Conversation.id == message_counts.c.conversation_id)
-            .join(User, Conversation.uid == User.uid)
-            .join(Agent, Conversation.agent_id == Agent.slug)
-            .where(*conversation_filters)
-            .group_by(Conversation.agent_id)
-            .order_by(func.count(Conversation.id).desc())
+            .select_from(Session)
+            .outerjoin(token_totals, Session.id == token_totals.c.session_record_id)
+            .outerjoin(message_counts, Session.id == message_counts.c.session_record_id)
+            .join(User, Session.uid == User.uid)
+            .join(Agent, Session.agent_id == Agent.slug)
+            .where(*session_filters)
+            .group_by(Session.agent_id)
+            .order_by(func.count(Session.id).desc())
         )
         agent_rows = (await self.db_session.execute(agent_group_query)).all()
         agent_slugs = [row.agent_id for row in agent_rows if row.agent_id]
@@ -862,20 +857,20 @@ class DashboardRepository:
         # 5. 高频用户活跃排行
         user_group_query = (
             select(
-                Conversation.uid,
+                Session.uid,
                 User.username,
                 User.avatar,
-                func.count(Conversation.id).label("thread_count"),
+                func.count(Session.id).label("thread_count"),
                 func.coalesce(func.sum(message_counts.c.message_count), 0).label("message_count"),
-                func.max(Conversation.updated_at).label("last_active_at"),
+                func.max(Session.updated_at).label("last_active_at"),
             )
-            .select_from(Conversation)
-            .join(User, Conversation.uid == User.uid)
-            .join(Agent, Conversation.agent_id == Agent.slug)
-            .outerjoin(message_counts, Conversation.id == message_counts.c.conversation_id)
-            .where(*conversation_filters)
-            .group_by(Conversation.uid, User.username, User.avatar)
-            .order_by(func.count(Conversation.id).desc())
+            .select_from(Session)
+            .join(User, Session.uid == User.uid)
+            .join(Agent, Session.agent_id == Agent.slug)
+            .outerjoin(message_counts, Session.id == message_counts.c.session_record_id)
+            .where(*session_filters)
+            .group_by(Session.uid, User.username, User.avatar)
+            .order_by(func.count(Session.id).desc())
             .limit(10)
         )
         user_rows = (await self.db_session.execute(user_group_query)).all()
@@ -893,11 +888,11 @@ class DashboardRepository:
 
         # 6. 状态分布
         status_query = (
-            select(Conversation.status, func.count(Conversation.id))
-            .join(User, Conversation.uid == User.uid)
-            .join(Agent, Conversation.agent_id == Agent.slug)
-            .where(*conversation_filters)
-            .group_by(Conversation.status)
+            select(Session.status, func.count(Session.id))
+            .join(User, Session.uid == User.uid)
+            .join(Agent, Session.agent_id == Agent.slug)
+            .where(*session_filters)
+            .group_by(Session.status)
         )
         status_rows = (await self.db_session.execute(status_query)).all()
         status_distribution = {row[0] or "unknown": int(row[1] or 0) for row in status_rows}

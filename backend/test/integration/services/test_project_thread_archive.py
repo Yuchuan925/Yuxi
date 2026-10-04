@@ -14,7 +14,7 @@ from yuxi.modules.agents.services.threads import archive_thread
 from yuxi.modules.agents.models.inputs import AgentInput
 from yuxi.modules.agents.models.runs import AgentRun
 from yuxi.modules.agents.models.turns import AgentTurn
-from yuxi.modules.agents.models.threads import Conversation, SubagentThread
+from yuxi.modules.agents.models.sessions import Session, SubagentThread
 from yuxi.modules.workspace.models import Project
 from yuxi.modules.identity.models import User
 
@@ -63,13 +63,13 @@ async def test_project_delete_rejects_pending_work_then_archives_history(pending
                 )
             )
             await db.flush()
-            db.add(Conversation(thread_id=thread_id, uid=uid, agent_id="main", project_id=project_id))
+            db.add(Session(thread_id=thread_id, uid=uid, agent_id="main", project_id=project_id))
             await db.flush()
             if pending_kind == "input":
                 db.add(
                     AgentInput(
                         id=work_id,
-                        conversation_thread_id=thread_id,
+                        thread_id=thread_id,
                         uid=uid,
                         agent_slug="main",
                         kind="follow_up",
@@ -77,7 +77,7 @@ async def test_project_delete_rejects_pending_work_then_archives_history(pending
                     )
                 )
             else:
-                db.add(AgentTurn(id=work_id, conversation_thread_id=thread_id, uid=uid, status="running"))
+                db.add(AgentTurn(id=work_id, thread_id=thread_id, uid=uid, status="running"))
             await db.commit()
 
         async with sessions() as db:
@@ -88,7 +88,7 @@ async def test_project_delete_rejects_pending_work_then_archives_history(pending
 
         async with sessions() as db:
             assert (await db.get(Project, project_id)).status == "active"
-            assert (await db.scalar(select(Conversation).where(Conversation.thread_id == thread_id))).status == "active"
+            assert (await db.scalar(select(Session).where(Session.thread_id == thread_id))).status == "active"
             if pending_kind == "input":
                 await db.execute(delete(AgentInput).where(AgentInput.id == work_id))
             else:
@@ -101,13 +101,13 @@ async def test_project_delete_rejects_pending_work_then_archives_history(pending
 
         async with sessions() as db:
             assert (await db.get(Project, project_id)).status == "deleted"
-            conversation = await db.scalar(select(Conversation).where(Conversation.thread_id == thread_id))
-            assert conversation is not None and conversation.status == "archived"
+            agent_session = await db.scalar(select(Session).where(Session.thread_id == thread_id))
+            assert agent_session is not None and agent_session.status == "archived"
     finally:
         async with sessions() as db:
             await db.execute(delete(AgentInput).where(AgentInput.id == work_id))
             await db.execute(delete(AgentTurn).where(AgentTurn.id == work_id))
-            await db.execute(delete(Conversation).where(Conversation.thread_id == thread_id))
+            await db.execute(delete(Session).where(Session.thread_id == thread_id))
             await db.execute(delete(Project).where(Project.id == project_id))
             await db.execute(delete(User).where(User.uid == uid))
             await db.commit()
@@ -143,11 +143,11 @@ async def test_archive_respects_independent_child_and_runtime_cleanup(remaining_
                 )
             )
             await db.flush()
-            parent = Conversation(thread_id=thread_id, uid=uid, agent_id="main", project_id=project_id)
+            parent = Session(thread_id=thread_id, uid=uid, agent_id="main", project_id=project_id)
             db.add(parent)
             await db.flush()
             if remaining_work == "child_run":
-                child = Conversation(
+                child = Session(
                     thread_id=child_thread_id,
                     uid=uid,
                     agent_id="helper",
@@ -156,17 +156,17 @@ async def test_archive_respects_independent_child_and_runtime_cleanup(remaining_
                 )
                 db.add(child)
                 await db.flush()
-            db.add(AgentTurn(id=turn_id, conversation_thread_id=thread_id, uid=uid, status="completed"))
+            db.add(AgentTurn(id=turn_id, thread_id=thread_id, uid=uid, status="completed"))
             await db.flush()
             db.add(
                 AgentRun(
                     id=root_run_id,
-                    conversation_thread_id=thread_id,
+                    thread_id=thread_id,
                     runtime_scope_id=thread_id,
                     agent_slug="main",
                     uid=uid,
                     turn_id=turn_id,
-                    conversation_id=parent.id,
+                    session_record_id=parent.id,
                     run_type="chat",
                     status="completed",
                     input_payload={},
@@ -175,12 +175,12 @@ async def test_archive_respects_independent_child_and_runtime_cleanup(remaining_
             )
             await db.flush()
             if remaining_work == "child_run":
-                db.add(AgentTurn(id=child_turn_id, conversation_thread_id=child_thread_id, uid=uid, status="cancelling"))
+                db.add(AgentTurn(id=child_turn_id, thread_id=child_thread_id, uid=uid, status="cancelling"))
                 await db.flush()
                 relation = SubagentThread(
                     uid=uid,
-                    parent_conversation_id=parent.id,
-                    child_conversation_id=child.id,
+                    parent_session_record_id=parent.id,
+                    child_session_record_id=child.id,
                     child_thread_id=child_thread_id,
                     subagent_slug="helper",
                     created_by_run_id=root_run_id,
@@ -190,12 +190,12 @@ async def test_archive_respects_independent_child_and_runtime_cleanup(remaining_
                 db.add(
                     AgentRun(
                         id=child_run_id,
-                        conversation_thread_id=child_thread_id,
+                        thread_id=child_thread_id,
                         runtime_scope_id=child_thread_id,
                         agent_slug="helper",
                         uid=uid,
                         turn_id=child_turn_id,
-                        conversation_id=child.id,
+                        session_record_id=child.id,
                         run_type="subagent",
                         created_by_run_id=root_run_id,
                         subagent_thread_relation_id=relation.id,
@@ -220,7 +220,7 @@ async def test_archive_respects_independent_child_and_runtime_cleanup(remaining_
 
         async with sessions() as db:
             assert (await db.get(Project, project_id)).status == "active"
-            assert (await db.scalar(select(Conversation).where(Conversation.thread_id == thread_id))).status == (
+            assert (await db.scalar(select(Session).where(Session.thread_id == thread_id))).status == (
                 "archived" if remaining_work == "child_run" else "active"
             )
             if remaining_work == "child_run":
@@ -239,7 +239,7 @@ async def test_archive_respects_independent_child_and_runtime_cleanup(remaining_
             await db.execute(delete(AgentRun).where(AgentRun.turn_id.in_([turn_id, child_turn_id])))
             await db.execute(delete(SubagentThread).where(SubagentThread.uid == uid))
             await db.execute(delete(AgentTurn).where(AgentTurn.id.in_([turn_id, child_turn_id])))
-            await db.execute(delete(Conversation).where(Conversation.uid == uid))
+            await db.execute(delete(Session).where(Session.uid == uid))
             await db.execute(delete(Project).where(Project.id == project_id))
             await db.execute(delete(User).where(User.uid == uid))
             await db.commit()

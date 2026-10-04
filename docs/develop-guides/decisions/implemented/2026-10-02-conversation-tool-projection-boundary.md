@@ -2,7 +2,7 @@
 
 状态：implemented
 类型：architecture
-Owner：frontend/src/modules/conversation/model/toolCallProjection.js
+Owner：frontend/src/modules/session/model/toolCallProjection.js
 
 ## 问题
 

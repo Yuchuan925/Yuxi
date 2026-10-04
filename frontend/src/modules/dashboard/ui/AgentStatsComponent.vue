@@ -11,7 +11,7 @@
       />
       <DashboardMetricCard
         :icon="MessageSquare"
-        :value="formatNumber(totalConversations)"
+        :value="formatNumber(totalSessions)"
         label="总对话数"
         tone="accent"
         compact
@@ -33,7 +33,7 @@
       <a-col :span="24">
         <div class="chart-container">
           <h4>对话/工具调用分布 (TOP 3)</h4>
-          <div ref="conversationToolChartRef" class="chart"></div>
+          <div ref="sessionToolChartRef" class="chart"></div>
         </div>
       </a-col>
     </a-row>
@@ -71,13 +71,13 @@ const props = defineProps({
 })
 
 // Chart refs
-const conversationToolChartRef = ref(null)
-let conversationToolChart = null
+const sessionToolChartRef = ref(null)
+let sessionToolChart = null
 
 // 计算属性
-const totalConversations = computed(() => {
-  const conversationCounts = props.agentStats?.agent_conversation_counts || []
-  return conversationCounts.reduce((sum, item) => sum + item.conversation_count, 0)
+const totalSessions = computed(() => {
+  const sessionCounts = props.agentStats?.agent_session_counts || []
+  return sessionCounts.reduce((sum, item) => sum + item.session_count, 0)
 })
 
 const totalToolUsage = computed(() => {
@@ -90,40 +90,40 @@ const agentNames = computed(() => props.agentStats?.agent_names || {})
 const resolveAgentName = (agentId) => agentNames.value[agentId] || agentId
 
 // 初始化对话数和工具调用数合并图表
-const initConversationToolChart = () => {
+const initSessionToolChart = () => {
   if (
-    !conversationToolChartRef.value ||
-    (!props.agentStats?.agent_conversation_counts?.length &&
+    !sessionToolChartRef.value ||
+    (!props.agentStats?.agent_session_counts?.length &&
       !props.agentStats?.agent_tool_usage?.length)
   )
     return
 
   // 如果已存在图表实例，先销毁
-  if (conversationToolChart) {
-    conversationToolChart.dispose()
-    conversationToolChart = null
+  if (sessionToolChart) {
+    sessionToolChart.dispose()
+    sessionToolChart = null
   }
 
-  conversationToolChart = echarts.init(conversationToolChartRef.value)
+  sessionToolChart = echarts.init(sessionToolChartRef.value)
 
-  const conversationData = props.agentStats.agent_conversation_counts || []
+  const sessionData = props.agentStats.agent_session_counts || []
   const toolData = props.agentStats.agent_tool_usage || []
 
   // 获取所有智能体ID并按对话数+工具调用数排序，取前3个
   const allAgentStats = {}
 
   // 统计每个智能体的总数据量（对话数 + 工具调用数）
-  conversationData.forEach((item) => {
+  sessionData.forEach((item) => {
     if (!allAgentStats[item.agent_id]) {
-      allAgentStats[item.agent_id] = { conversation: 0, tool: 0, total: 0 }
+      allAgentStats[item.agent_id] = { session: 0, tool: 0, total: 0 }
     }
-    allAgentStats[item.agent_id].conversation = item.conversation_count
-    allAgentStats[item.agent_id].total += item.conversation_count
+    allAgentStats[item.agent_id].session = item.session_count
+    allAgentStats[item.agent_id].total += item.session_count
   })
 
   toolData.forEach((item) => {
     if (!allAgentStats[item.agent_id]) {
-      allAgentStats[item.agent_id] = { conversation: 0, tool: 0, total: 0 }
+      allAgentStats[item.agent_id] = { session: 0, tool: 0, total: 0 }
     }
     allAgentStats[item.agent_id].tool = item.tool_usage_count
     allAgentStats[item.agent_id].total += item.tool_usage_count
@@ -196,8 +196,8 @@ const initConversationToolChart = () => {
         name: '对话数',
         type: 'bar',
         data: topAgentIds.map((agentId) => {
-          const item = conversationData.find((d) => d.agent_id === agentId)
-          return item ? item.conversation_count : 0
+          const item = sessionData.find((d) => d.agent_id === agentId)
+          return item ? item.session_count : 0
         }),
         itemStyle: {
           color: getColorByIndex(0),
@@ -233,13 +233,13 @@ const initConversationToolChart = () => {
     ]
   }
 
-  conversationToolChart.setOption(option)
+  sessionToolChart.setOption(option)
 }
 
 // 更新图表
 const updateCharts = () => {
   nextTick(() => {
-    initConversationToolChart()
+    initSessionToolChart()
   })
 }
 
@@ -254,7 +254,7 @@ watch(
 
 // 窗口大小变化时重新调整图表
 const handleResize = () => {
-  if (conversationToolChart) conversationToolChart.resize()
+  if (sessionToolChart) sessionToolChart.resize()
 }
 
 onMounted(() => {
@@ -266,7 +266,7 @@ onMounted(() => {
 watch(
   () => themeStore.isDark,
   () => {
-    if (props.agentStats && conversationToolChart) {
+    if (props.agentStats && sessionToolChart) {
       nextTick(() => {
         updateCharts()
       })
@@ -277,9 +277,9 @@ watch(
 // 组件卸载时清理
 const cleanup = () => {
   window.removeEventListener('resize', handleResize)
-  if (conversationToolChart) {
-    conversationToolChart.dispose()
-    conversationToolChart = null
+  if (sessionToolChart) {
+    sessionToolChart.dispose()
+    sessionToolChart = null
   }
 }
 

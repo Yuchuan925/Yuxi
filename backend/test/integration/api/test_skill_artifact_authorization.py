@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from yuxi.modules.extensions.skills import shared as skill_service
 from yuxi.modules.extensions.skills import projection as projection_service
 from yuxi.modules.extensions.skills.models import Skill
-from test.live_api_cleanup import make_test_conversation_title
+from test.live_api_cleanup import make_test_session_title
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
 
@@ -29,7 +29,7 @@ async def _create_thread(test_client, headers: dict[str, str], title: str) -> st
         "/api/v1/agents/threads",
         json={
             "agent_id": agent_id,
-            "title": make_test_conversation_title(title),
+            "title": make_test_session_title(title),
         },
         headers={**headers, "Idempotency-Key": str(uuid.uuid4())},
     )

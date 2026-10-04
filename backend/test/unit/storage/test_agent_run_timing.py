@@ -52,7 +52,7 @@ def test_agent_run_dict_uses_the_shared_timing_projection():
     created_at = datetime(2026, 9, 4, 8, 0, 0)
     run = AgentRun(
         id="run-1",
-        conversation_thread_id="thread-1",
+        thread_id="thread-1",
         runtime_scope_id="thread-1",
         agent_slug="main",
         uid="user-1",

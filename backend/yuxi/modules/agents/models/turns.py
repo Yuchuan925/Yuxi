@@ -23,9 +23,7 @@ class AgentTurn(Base):
     __tablename__ = "agent_turns"
 
     id = Column(String(64), primary_key=True)
-    conversation_thread_id = Column(
-        String(64), ForeignKey("conversations.thread_id", ondelete="CASCADE"), nullable=False, index=True
-    )
+    thread_id = Column(String(64), ForeignKey("sessions.thread_id", ondelete="CASCADE"), nullable=False, index=True)
     uid = Column(String(64), nullable=False, index=True)
     app_id = Column(String(64), nullable=True, index=True)
     status = Column(String(32), nullable=False, default="running")
@@ -41,11 +39,11 @@ class AgentTurn(Base):
     __table_args__ = (
         Index(
             "uq_agent_turns_active",
-            "conversation_thread_id",
+            "thread_id",
             unique=True,
             postgresql_where=status.in_(("running", "waiting", "cancelling")),
         ).ddl_if(dialect="postgresql"),
-        UniqueConstraint("id", "conversation_thread_id", name="uq_agent_turns_id_thread"),
+        UniqueConstraint("id", "thread_id", name="uq_agent_turns_id_thread"),
         CheckConstraint(
             "status IN ('running', 'waiting', 'cancelling', 'completed', 'failed', 'cancelled')",
             name="ck_agent_turns_status",

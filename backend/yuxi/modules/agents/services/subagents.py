@@ -15,13 +15,13 @@ from yuxi.infrastructure.postgres.manager import pg_manager
 from yuxi.modules.agents.models.definitions import Agent
 from yuxi.modules.agents.models.messages import Message
 from yuxi.modules.agents.models.runs import AgentRun
-from yuxi.modules.agents.models.threads import SubagentThread
+from yuxi.modules.agents.models.sessions import SubagentThread
 from yuxi.modules.agents.repositories.definitions import AgentRepository
 from yuxi.modules.agents.repositories.input import AgentInputRepository
 from yuxi.modules.agents.repositories.input_receipt import AgentInputReceiptRepository
 from yuxi.modules.agents.repositories.runs import TERMINAL_RUN_STATUSES, AgentRunRepository
+from yuxi.modules.agents.repositories.sessions import SessionRepository
 from yuxi.modules.agents.repositories.subagents import SubagentThreadRepository
-from yuxi.modules.agents.repositories.threads import ConversationRepository
 from yuxi.modules.agents.repositories.turn import AgentTurnRepository
 from yuxi.modules.agents.runtime.tool_approval import DEFAULT_TOOL_APPROVAL_MODE
 from yuxi.modules.agents.services.input_config import load_agent_run_context, resolve_agent_run_model_spec
@@ -100,13 +100,13 @@ def serialize_subagent_run_state(run: AgentRun) -> dict:
         "run_id": run.id,
         "subagent_slug": run.agent_slug,
         "subagent_name": runtime.get("subagent_name"),
-        "child_thread_id": run.conversation_thread_id,
+        "child_thread_id": run.thread_id,
         "turn_id": run.turn_id,
         "status": run.status,
         "created_at": format_utc_datetime(run.created_at),
         "completed_at": format_utc_datetime(run.finished_at),
         "error": run.error_message,
-        **subagent_run_urls(run.id, run.conversation_thread_id),
+        **subagent_run_urls(run.id, run.thread_id),
     }
     return {key: value for key, value in state.items() if value is not None}
 
@@ -122,26 +122,26 @@ async def get_agent_run_result(*, run_id: str, current_uid: str, db: AsyncSessio
             "error": {"type": "run_not_found", "message": "运行任务不存在"},
         }
     turn = await AgentTurnRepository(db).get_for_scope(
-        turn_id=run.turn_id, thread_id=run.conversation_thread_id, uid=run.uid, app_id=run.app_id
+        turn_id=run.turn_id, thread_id=run.thread_id, uid=run.uid, app_id=run.app_id
     )
     if turn is None:
         raise ValueError("子 Run 缺少独立 Turn")
     selected_id = turn.result_run_id if turn.status == "completed" else turn.current_run_id
     current = await AgentRunRepository(db).get_run(selected_id)
-    if current is None or current.turn_id != turn.id or current.conversation_thread_id != run.conversation_thread_id:
+    if current is None or current.turn_id != turn.id or current.thread_id != run.thread_id:
         raise ValueError("子 Turn 的执行归属不一致")
     run = current
     output = await db.get(Message, run.output_message_id) if run.output_message_id else None
     if output is not None and (
-        output.run_id != run.id or output.turn_id != run.turn_id or output.conversation_id != run.conversation_id
+        output.run_id != run.id or output.turn_id != run.turn_id or output.session_record_id != run.session_record_id
     ):
         raise ValueError("Run 输出消息归属不一致")
     result = {
         "status": "interrupted" if turn.status == "waiting" else run.status,
         "output": output.content if output else "",
         "agent_slug": run.agent_slug,
-        "thread_id": run.conversation_thread_id,
-        "conversation_id": run.conversation_id,
+        "thread_id": run.thread_id,
+        "session_record_id": run.session_record_id,
         "agent_run_id": run.id,
         "turn_id": run.turn_id,
         "final_message_id": output.id if output else None,
@@ -211,7 +211,7 @@ async def request_cancel_agent_run(*, run_id: str, current_uid: str, db: AsyncSe
     await cancel_turn(
         db=db,
         scope=ActorScope(uid=str(current_uid), app_id=run.app_id),
-        thread_id=run.conversation_thread_id,
+        thread_id=run.thread_id,
         turn_id=run.turn_id,
         idempotency_key=f"subagent-cancel:{run.id}",
         expected_run_id=None,
@@ -223,7 +223,7 @@ class SubagentRunService:
     def __init__(self, db: AsyncSession):
         self.db = db
         self.run_repo = AgentRunRepository(db)
-        self.conv_repo = ConversationRepository(db)
+        self.session_repo = SessionRepository(db)
         self.project_repo = ProjectRepository(db)
         self.thread_repo = SubagentThreadRepository(db)
 
@@ -242,7 +242,7 @@ class SubagentRunService:
         creator_run = await self.run_repo.get_run_for_user(created_by_run_id, uid)
         if not creator_run:
             raise ValueError("父运行任务不存在")
-        root_snapshot = await self.conv_repo.get_conversation_by_thread_id(creator_run.runtime_scope_id)
+        root_snapshot = await self.session_repo.get_session_by_thread_id(creator_run.runtime_scope_id)
         if (
             root_snapshot is None
             or root_snapshot.uid != uid
@@ -263,14 +263,14 @@ class SubagentRunService:
         project = await self.project_repo.lock_active_for_user(root_snapshot.project_id, uid)
         if project is None:
             raise ValueError("父运行任务的 Project 不存在")
-        root_thread = await self.conv_repo.lock_conversation_by_thread_id(creator_run.runtime_scope_id)
+        root_thread = await self.session_repo.lock_session_by_thread_id(creator_run.runtime_scope_id)
         if (
             root_thread is None
             or root_thread.uid != uid
             or root_thread.app_id != creator_run.app_id
             or root_thread.status != "active"
-            or root_thread.id != creator_run.conversation_id
-            or root_thread.thread_id != creator_run.conversation_thread_id
+            or root_thread.id != creator_run.session_record_id
+            or root_thread.thread_id != creator_run.thread_id
             or root_thread.project_id != project.id
         ):
             raise ValueError("父运行的根 Thread 不存在")
@@ -293,12 +293,12 @@ class SubagentRunService:
         continuing = bool(child_thread_id)  # 表示是继续运行已有子智能体线程，而非新建子线程
         if not child_thread_id:
             child_thread_id = subagent_child_thread_id(
-                creator_run.conversation_thread_id,
+                creator_run.thread_id,
                 agent_item.slug,
                 tool_call_id,
             )
 
-        # 1. 确保子线程有对应 conversation，必要时创建 subagent 对话
+        # 1. 确保子线程有对应 agent_session，必要时创建 subagent 对话
         # 2. 确保父子线程关系存在，必要时创建 SubagentThread 记录；relation 是后台子 run 的线程归属来源
         relation = await self._ensure_thread_relation(
             child_thread_id=child_thread_id,
@@ -362,8 +362,8 @@ class SubagentRunService:
         if not input_message.content:
             raise HTTPException(status_code=422, detail="input_message 不能为空")
 
-        child_conversation = await self.conv_repo.lock_conversation_by_thread_id(relation.child_thread_id)
-        if child_conversation is None or child_conversation.id != relation.child_conversation_id:
+        child_session = await self.session_repo.lock_session_by_thread_id(relation.child_thread_id)
+        if child_session is None or child_session.id != relation.child_session_record_id:
             raise ValueError("subagent thread relation 与本次运行不匹配")
         key = hash_id("delegate:", f"{creator_run.id}:{relation.child_thread_id}:{tool_call_id}", length=64)
         existing = await AgentInputReceiptRepository(self.db).get_for_scope(
@@ -376,9 +376,9 @@ class SubagentRunService:
         )
         if busy is not None:
             raise SubagentRunBusy(relation.child_thread_id, busy.current_run_id, busy.status, "子智能体线程已有执行")
-        if creator_run.conversation_id != relation.parent_conversation_id:
+        if creator_run.session_record_id != relation.parent_session_record_id:
             raise ValueError("subagent thread relation 与本次运行不匹配")
-        if child_conversation.queue_paused:
+        if child_session.queue_paused:
             raise SubagentRunBusy(relation.child_thread_id, None, "paused", "子智能体线程队列已暂停")
         pending = await AgentInputRepository(self.db).get_queue_head(
             thread_id=relation.child_thread_id, uid=current_uid, app_id=creator_run.app_id
@@ -397,11 +397,11 @@ class SubagentRunService:
         runtime_payload = {
             "tool_call_id": tool_call_id,
             "subagent_name": agent_item.name,
-            "parent_thread_id": creator_run.conversation_thread_id,
+            "parent_thread_id": creator_run.thread_id,
         }
         from yuxi.modules.agents.services.attachments import serialize_attachment
 
-        delegated_attachments = await self.conv_repo.get_attachments(creator_run.conversation_id)
+        delegated_attachments = await self.session_repo.get_attachments(creator_run.session_record_id)
         input_payload = {
             "delegated_attachments": [
                 serialize_attachment(item, thread_id=relation.child_thread_id) for item in delegated_attachments
@@ -416,15 +416,15 @@ class SubagentRunService:
                 "raw_message": input_message.raw_message(),
             }
         )
-        child_conversation.extra_metadata = {
-            **(child_conversation.extra_metadata or {}),
+        child_session.extra_metadata = {
+            **(child_session.extra_metadata or {}),
             "model_spec": resolved_model_spec,
             "tool_approval_mode": input_payload["tool_approval_mode"],
         }
         receipt, dispatch = await accept_locked(
             db=self.db,
             scope=ActorScope(uid=current_uid, app_id=creator_run.app_id, api_key_id=creator_run.api_key_id),
-            conversation=child_conversation,
+            agent_session=child_session,
             idempotency_key=key,
             event_type="agent.session.input.message",
             intent_hash=hash_id("", key, length=64),
@@ -443,7 +443,7 @@ class SubagentRunService:
             raise ValueError("子 Thread 未能领取已持久接收的委派输入")
         return await self.run_repo.get_run(receipt.run_id), True, dispatch
 
-    async def _ensure_child_conversation(
+    async def _ensure_child_session(
         self,
         *,
         child_thread_id: str,
@@ -452,37 +452,37 @@ class SubagentRunService:
         creator_run: AgentRun,
         parent_project_id: str,
     ):
-        """确保子线程有对应 conversation；新线程会创建标记为 subagent 的对话。"""
-        conversation = await self.conv_repo.get_conversation_by_thread_id(child_thread_id)
-        if conversation:
-            if conversation.uid != str(uid) or conversation.app_id != creator_run.app_id:
+        """确保子线程有对应 agent_session；新线程会创建标记为 subagent 的对话。"""
+        agent_session = await self.session_repo.get_session_by_thread_id(child_thread_id)
+        if agent_session:
+            if agent_session.uid != str(uid) or agent_session.app_id != creator_run.app_id:
                 raise ValueError("子智能体线程不存在")
-            if conversation.status != "subagent":
+            if agent_session.status != "subagent":
                 raise ValueError(f"子智能体线程 {child_thread_id} 已被普通对话占用")
-            if conversation.agent_id != agent_item.slug:
-                raise ValueError(f"子智能体线程 {child_thread_id} 属于智能体 {conversation.agent_id}")
-            if conversation.project_id != parent_project_id:
+            if agent_session.agent_id != agent_item.slug:
+                raise ValueError(f"子智能体线程 {child_thread_id} 属于智能体 {agent_session.agent_id}")
+            if agent_session.project_id != parent_project_id:
                 raise ValueError("子智能体线程与父对话的 Workdir 不一致")
-            return conversation
+            return agent_session
 
-        conversation = await self.conv_repo.add_conversation(
+        agent_session = await self.session_repo.add_session(
             uid=uid,
             agent_id=agent_item.slug,
             title=f"SubAgent: {agent_item.name}",
             thread_id=child_thread_id,
             metadata={
                 "source": "subagent",
-                "parent_thread_id": creator_run.conversation_thread_id,
+                "parent_thread_id": creator_run.thread_id,
                 "created_by_run_id": creator_run.id,
-                "parent_conversation_id": creator_run.conversation_id,
+                "parent_session_record_id": creator_run.session_record_id,
                 "subagent_slug": agent_item.slug,
             },
             project_id=parent_project_id,
             app_id=creator_run.app_id,
         )
-        conversation.status = "subagent"
+        agent_session.status = "subagent"
         await self.db.flush()
-        return conversation
+        return agent_session
 
     def _validate_thread_relation(
         self,
@@ -493,7 +493,7 @@ class SubagentRunService:
         creator_run: AgentRun,
     ) -> None:
         """校验已有子线程关系仍属于当前父对话和子智能体。"""
-        if relation.parent_conversation_id != creator_run.conversation_id:
+        if relation.parent_session_record_id != creator_run.session_record_id:
             raise ValueError(f"子智能体线程 {child_thread_id}：线程不属于当前对话")
         if relation.subagent_slug != agent_item.slug:
             raise ValueError(f"子智能体线程 {child_thread_id} 属于子智能体 {relation.subagent_slug or '未知'}")
@@ -508,27 +508,27 @@ class SubagentRunService:
         continuing: bool,
     ) -> SubagentThread:
         """读取或创建父子线程关系；relation 是后台子 run 的线程归属来源。"""
-        if creator_run.conversation_id is None:
-            raise ValueError("父运行任务缺少 conversation_id，无法创建子智能体线程关系")
-        parent_conversation = await self.conv_repo.get_conversation_by_id(creator_run.conversation_id)
-        if parent_conversation is None or parent_conversation.uid != str(uid):
-            raise ValueError("父运行任务的 Conversation 不存在")
+        if creator_run.session_record_id is None:
+            raise ValueError("父运行任务缺少 session_record_id，无法创建子智能体线程关系")
+        parent_session = await self.session_repo.get_session_by_id(creator_run.session_record_id)
+        if parent_session is None or parent_session.uid != str(uid):
+            raise ValueError("父运行任务的 Session 不存在")
         parent_project = await self.project_repo.lock_active_for_user(
-            parent_conversation.project_id,
+            parent_session.project_id,
             str(uid),
         )
         if parent_project is None:
             raise ValueError("父运行任务的 Project 不存在")
-        parent_conversation = await self.conv_repo.lock_conversation_by_thread_id(creator_run.conversation_thread_id)
+        parent_session = await self.session_repo.lock_session_by_thread_id(creator_run.thread_id)
         if (
-            parent_conversation is None
-            or parent_conversation.id != creator_run.conversation_id
-            or parent_conversation.uid != str(uid)
-            or parent_conversation.status != "active"
-            or parent_conversation.app_id != creator_run.app_id
-            or parent_conversation.project_id != parent_project.id
+            parent_session is None
+            or parent_session.id != creator_run.session_record_id
+            or parent_session.uid != str(uid)
+            or parent_session.status != "active"
+            or parent_session.app_id != creator_run.app_id
+            or parent_session.project_id != parent_project.id
         ):
-            raise ValueError("父运行任务的 Conversation 不存在")
+            raise ValueError("父运行任务的 Session 不存在")
         parent_project_id = parent_project.id
 
         existing = await self.thread_repo.get_by_child_thread_for_user(child_thread_id, uid)
@@ -539,20 +539,20 @@ class SubagentRunService:
                 agent_item=agent_item,
                 creator_run=creator_run,
             )
-            child_conversation = await self.conv_repo.get_conversation_by_id(existing.child_conversation_id)
+            child_session = await self.session_repo.get_session_by_id(existing.child_session_record_id)
             if (
-                child_conversation is None
-                or child_conversation.uid != str(uid)
-                or child_conversation.status != "subagent"
-                or child_conversation.app_id != creator_run.app_id
+                child_session is None
+                or child_session.uid != str(uid)
+                or child_session.status != "subagent"
+                or child_session.app_id != creator_run.app_id
             ):
                 raise ValueError("子智能体线程不存在")
-            if child_conversation.project_id != parent_project_id:
+            if child_session.project_id != parent_project_id:
                 raise ValueError("子智能体线程与父对话的 Workdir 不一致")
             return existing
         if continuing:
             raise ValueError(f"无法继续子智能体线程 {child_thread_id}：当前对话中没有找到对应的运行记录")
-        child_conversation = await self._ensure_child_conversation(
+        child_session = await self._ensure_child_session(
             child_thread_id=child_thread_id,
             uid=uid,
             agent_item=agent_item,
@@ -561,8 +561,8 @@ class SubagentRunService:
         )
         return await self.thread_repo.create(
             uid=uid,
-            parent_conversation_id=creator_run.conversation_id,
-            child_conversation_id=child_conversation.id,
+            parent_session_record_id=creator_run.session_record_id,
+            child_session_record_id=child_session.id,
             child_thread_id=child_thread_id,
             subagent_slug=agent_item.slug,
             created_by_run_id=creator_run.id,

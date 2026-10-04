@@ -22,7 +22,7 @@ VIRTUAL_PATH_PREFIX = _get_virtual_path_prefix()
 VIRTUAL_SKILLS_PATH = "/home/gem/skills"
 VIRTUAL_PERSONAL_SKILLS_PATH = f"{VIRTUAL_PATH_PREFIX.rstrip('/')}/agents/skills"
 LARGE_TOOL_RESULTS_DIR_NAME = "large_tool_results"
-CONVERSATION_HISTORY_DIR_NAME = "conversation_history"
+SESSION_HISTORY_DIR_NAME = "session_history"
 
 
 def runtime_workdir_path(workdir_path: str) -> str:
@@ -38,7 +38,7 @@ def workdir_runtime_paths(workdir_path: str) -> tuple[str, str]:
     outputs = f"{normalized}/outputs"
     return (
         f"{outputs}/{LARGE_TOOL_RESULTS_DIR_NAME}",
-        f"{outputs}/{CONVERSATION_HISTORY_DIR_NAME}",
+        f"{outputs}/{SESSION_HISTORY_DIR_NAME}",
     )
 
 
@@ -93,7 +93,7 @@ def is_runtime_path(path: str) -> bool:
 
 
 __all__ = [
-    "CONVERSATION_HISTORY_DIR_NAME",
+    "SESSION_HISTORY_DIR_NAME",
     "LARGE_TOOL_RESULTS_DIR_NAME",
     "VIRTUAL_PATH_PREFIX",
     "VIRTUAL_PERSONAL_SKILLS_PATH",

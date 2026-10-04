@@ -23,7 +23,7 @@ from yuxi.modules.schedules.service import _claim_due_run, _create_run_record
 from yuxi.modules.agents.models.runs import AgentRun
 from yuxi.modules.agents.models.inputs import AgentInput, AgentInputMessage, AgentInputReceipt
 from yuxi.modules.agents.models.turns import AgentTurn
-from yuxi.modules.agents.models.threads import Conversation
+from yuxi.modules.agents.models.sessions import Session
 from yuxi.modules.agents.models.messages import Message
 from yuxi.modules.workspace.models import Project
 from yuxi.modules.schedules.models import ScheduledAgentJob, ScheduledAgentRun
@@ -114,13 +114,13 @@ async def test_claim_concurrency_coalesce_and_soft_delete_history():
             assert scheduled_run.thread_id
             assert job.next_run_at > now
 
-            conversation = Conversation(
+            agent_session = Session(
                 thread_id=scheduled_run.thread_id,
                 uid=uid,
                 agent_id="chatbot",
                 project_id=project_id,
             )
-            db.add(conversation)
+            db.add(agent_session)
             await db.flush()
             input_repo = AgentInputRepository(db)
             input_item = await input_repo.create(
@@ -143,7 +143,9 @@ async def test_claim_concurrency_coalesce_and_soft_delete_history():
                 intent_hash="scheduled",
                 input_id=input_item.id,
             )
-            message = Message(conversation_id=conversation.id, role="user", content="hello", delivery_status="queued")
+            message = Message(
+                session_record_id=agent_session.id, role="user", content="hello", delivery_status="queued"
+            )
             db.add(message)
             await db.flush()
             await input_repo.add_messages(input_id=input_item.id, receipt_id=receipt.id, message_ids=[message.id])
@@ -166,7 +168,7 @@ async def test_claim_concurrency_coalesce_and_soft_delete_history():
             )
             agent_run = await AgentRunRepository(db).create_run(
                 run_id=f"run-{uuid.uuid4()}",
-                conversation_thread_id=scheduled_run.thread_id,
+                thread_id=scheduled_run.thread_id,
                 agent_slug="chatbot",
                 uid=uid,
                 turn_id=turn.id,
@@ -174,7 +176,7 @@ async def test_claim_concurrency_coalesce_and_soft_delete_history():
                 input_payload={},
                 source="scheduled_agent",
                 channel="worker",
-                conversation_id=conversation.id,
+                session_record_id=agent_session.id,
             )
             await AgentTurnRepository(db).set_current(turn, run_id=agent_run.id)
             cutoff = await input_repo.get_latest_receive_seq(input_item.id)
@@ -214,15 +216,13 @@ async def test_claim_concurrency_coalesce_and_soft_delete_history():
             )
             await db.execute(delete(AgentInputReceipt).where(AgentInputReceipt.uid == uid))
             await db.execute(
-                delete(Message).where(
-                    Message.conversation_id.in_(select(Conversation.id).where(Conversation.uid == uid))
-                )
+                delete(Message).where(Message.session_record_id.in_(select(Session.id).where(Session.uid == uid)))
             )
             await db.execute(update(AgentRun).where(AgentRun.uid == uid).values(input_id=None))
             await db.execute(delete(AgentInput).where(AgentInput.uid == uid))
             await db.execute(delete(AgentRun).where(AgentRun.uid == uid))
             await db.execute(delete(AgentTurn).where(AgentTurn.uid == uid))
-            await db.execute(delete(Conversation).where(Conversation.uid == uid))
+            await db.execute(delete(Session).where(Session.uid == uid))
             await db.execute(delete(ScheduledAgentJob).where(ScheduledAgentJob.id == job_id))
             await db.execute(delete(Project).where(Project.id == project_id))
             await db.execute(delete(User).where(User.uid == uid))
@@ -315,14 +315,14 @@ async def test_transient_dispatch_failure_is_recovered_exactly_once(monkeypatch)
         scope = kwargs["scope"]
         assert (scope.uid, kwargs["agent_slug"], kwargs["thread_id"]) == (uid, "chatbot", thread_id)
         assert kwargs["idempotency_key"] == scheduled_run_id
-        conversation = Conversation(
+        agent_session = Session(
             thread_id=thread_id,
             uid=uid,
             agent_id="chatbot",
             title=kwargs["title"],
             project_id=project_id,
         )
-        db.add(conversation)
+        db.add(agent_session)
         await db.flush()
         input_item = await AgentInputRepository(db).create(
             input_id=input_id,
@@ -345,7 +345,7 @@ async def test_transient_dispatch_failure_is_recovered_exactly_once(monkeypatch)
             input_id=input_item.id,
         )
         message = Message(
-            conversation_id=conversation.id,
+            session_record_id=agent_session.id,
             role="user",
             content="hello",
             delivery_status="queued",
@@ -412,7 +412,7 @@ async def test_transient_dispatch_failure_is_recovered_exactly_once(monkeypatch)
                     scheduled_for=utc_now() - timedelta(minutes=2),
                     project_id=project_id,
                     agent_slug="chatbot",
-                    conversation_title="Recovery Job",
+                    session_title="Recovery Job",
                     prompt="hello",
                     tool_approval_mode="default",
                     status="dispatching",
@@ -451,10 +451,10 @@ async def test_transient_dispatch_failure_is_recovered_exactly_once(monkeypatch)
             await db.execute(delete(AgentInput).where(AgentInput.id == input_id))
             await db.execute(
                 delete(Message).where(
-                    Message.conversation_id.in_(select(Conversation.id).where(Conversation.thread_id == thread_id))
+                    Message.session_record_id.in_(select(Session.id).where(Session.thread_id == thread_id))
                 )
             )
-            await db.execute(delete(Conversation).where(Conversation.thread_id == thread_id))
+            await db.execute(delete(Session).where(Session.thread_id == thread_id))
             await db.execute(delete(ScheduledAgentRun).where(ScheduledAgentRun.id == scheduled_run_id))
             await db.execute(delete(ScheduledAgentJob).where(ScheduledAgentJob.id == job_id))
             await db.execute(delete(Project).where(Project.id == project_id))
@@ -518,7 +518,7 @@ async def test_account_soft_deletion_removes_scheduled_job_history():
                     scheduled_for=utc_now(),
                     project_id=project_id,
                     agent_slug="chatbot",
-                    conversation_title="Cascade Job",
+                    session_title="Cascade Job",
                     prompt="hello",
                     tool_approval_mode="default",
                     status="failed",

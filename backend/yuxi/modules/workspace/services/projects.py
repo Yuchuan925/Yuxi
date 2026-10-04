@@ -90,7 +90,7 @@ async def create_project_record(
 
 
 async def create_implicit_project(*, uid: str, db, idempotency_key: str | None = None) -> Project:
-    """为新 Conversation 创建 implicit managed Project。"""
+    """为新 Session 创建 implicit managed Project。"""
     return await create_project_record(
         uid=uid,
         name=None,
@@ -190,12 +190,12 @@ async def delete_project_view(*, uid: str, project_id: str, db) -> dict:
 
 
 async def list_history_candidates_view(*, uid: str, db, query: str = "", limit: int = 20, offset: int = 0) -> dict:
-    """列出可作为新建 Project 目录快捷入口的历史 Conversation。"""
-    conversations = await ProjectRepository(db).list_history_candidates(str(uid))
+    """列出可作为新建 Project 目录快捷入口的历史 Session。"""
+    sessions = await ProjectRepository(db).list_history_candidates(str(uid))
     normalized_query = (query or "").strip().lower()
     items = []
     seen_workdirs = set()
-    for item, workdir_path in conversations:
+    for item, workdir_path in sessions:
         if workdir_path in seen_workdirs:
             continue
         if (

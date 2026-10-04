@@ -10,7 +10,7 @@ import pytest
 from yuxi.bootstrap.models import load_models
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from test.live_api_cleanup import make_test_conversation_title
+from test.live_api_cleanup import make_test_session_title
 from yuxi.modules.agents.services.scope import ActorScope
 from yuxi.modules.agents.services.turns import get_turn_snapshot
 
@@ -25,7 +25,7 @@ async def test_turn_result_follows_only_its_bound_run(test_client, admin_headers
     agent_slug = agent.get("slug") or agent["agent_id"]
     created = await test_client.post(
         "/api/v1/agents/threads",
-        json={"agent_id": agent_slug, "title": make_test_conversation_title("turn-result")},
+        json={"agent_id": agent_slug, "title": make_test_session_title("turn-result")},
         headers={**admin_headers, "Idempotency-Key": str(uuid.uuid4())},
     )
     assert created.status_code == 200, created.text
@@ -38,12 +38,12 @@ async def test_turn_result_follows_only_its_bound_run(test_client, admin_headers
     load_models()
     engine = create_async_engine(os.environ["POSTGRES_URL"])
     try:
-        conversation_id = await conn.fetchval("SELECT id FROM conversations WHERE thread_id = $1", thread_id)
-        assert conversation_id
+        session_record_id = await conn.fetchval("SELECT id FROM sessions WHERE thread_id = $1", thread_id)
+        assert session_record_id
         async with conn.transaction():
             for turn_id, run_id, content in zip(turn_ids, run_ids, ("first output", "second output")):
                 await conn.execute(
-                    "INSERT INTO agent_turns (id, conversation_thread_id, uid, status, created_at) "
+                    "INSERT INTO agent_turns (id, thread_id, uid, status, created_at) "
                     "VALUES ($1, $2, $3, 'completed', NOW())",
                     turn_id,
                     thread_id,
@@ -51,8 +51,8 @@ async def test_turn_result_follows_only_its_bound_run(test_client, admin_headers
                 )
                 await conn.execute(
                     "INSERT INTO agent_runs "
-                    "(id, conversation_thread_id, runtime_scope_id, agent_slug, uid, turn_id, status, "
-                    "run_type, source, channel, input_payload, token_usage, origin_metadata, conversation_id) "
+                    "(id, thread_id, runtime_scope_id, agent_slug, uid, turn_id, status, "
+                    "run_type, source, channel, input_payload, token_usage, origin_metadata, session_record_id) "
                     "VALUES ($1, $2, $2, $3, $4, $5, 'completed', 'chat', 'public_api', 'api', "
                     "'{}'::jsonb, '{}'::jsonb, '{}'::jsonb, $6)",
                     run_id,
@@ -60,12 +60,12 @@ async def test_turn_result_follows_only_its_bound_run(test_client, admin_headers
                     agent_slug,
                     uid,
                     turn_id,
-                    conversation_id,
+                    session_record_id,
                 )
                 message_id = await conn.fetchval(
-                    "INSERT INTO messages (conversation_id, role, content, run_id, turn_id, delivery_status) "
+                    "INSERT INTO messages (session_record_id, role, content, run_id, turn_id, delivery_status) "
                     "VALUES ($1, 'assistant', $2, $3, $4, 'complete') RETURNING id",
-                    conversation_id,
+                    session_record_id,
                     content,
                     run_id,
                     turn_id,

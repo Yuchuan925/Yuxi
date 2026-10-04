@@ -24,7 +24,7 @@ from test.live_api_cleanup import (  # noqa: E402
     cleanup_provisioned_sandboxes,
     cleanup_pytest_knowledge_resources,
     cleanup_test_chat_resources,
-    list_test_conversation_resources,
+    list_test_session_resources,
 )
 
 load_dotenv(PROJECT_ROOT / ".env", override=False)
@@ -239,9 +239,9 @@ async def standard_user(test_client: httpx.AsyncClient, admin_headers: dict[str,
             )
         elif auth_check.status_code in {401, 403, 423}:
             # 锁定或删除用户的令牌已失效，确认无持久对话后再由管理员清理用户。
-            remaining = await list_test_conversation_resources(str(user_payload["uid"]))
+            remaining = await list_test_session_resources(str(user_payload["uid"]))
             if remaining:
-                raise RuntimeError("Cannot clean test conversations with a revoked standard-user token")
+                raise RuntimeError("Cannot clean test sessions with a revoked standard-user token")
         else:
             raise RuntimeError(f"Cannot verify standard-user cleanup access: {auth_check.status_code}")
         cleanup_error = None

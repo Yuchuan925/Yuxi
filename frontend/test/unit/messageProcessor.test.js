@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { MessageProcessor } from '../../src/modules/conversation/model/messageProcessor.js'
+import { MessageProcessor } from '../../src/modules/session/model/messageProcessor.js'
 
 const databases = [{ name: '财税库' }, { name: 'DifyKB' }, { name: 'LightGraphKB' }]
 
@@ -20,7 +20,7 @@ test('流式与历史只消费统一展示字段，不解释供应商元数据',
 })
 
 test('交付物只归属于调用 present_artifacts 的对话', () => {
-  const artifactConversation = {
+  const artifactSession = {
     messages: [
       {
         type: 'ai',
@@ -44,19 +44,19 @@ test('交付物只归属于调用 present_artifacts 的对话', () => {
       }
     ]
   }
-  const laterConversation = {
+  const laterSession = {
     messages: [{ type: 'human', content: '运行 Python 的' }]
   }
 
-  assert.deepEqual(MessageProcessor.extractArtifactsFromConversation(artifactConversation), [
+  assert.deepEqual(MessageProcessor.extractArtifactsFromMessageGroup(artifactSession), [
     '/home/gem/user-data/outputs/bubble_sort.py',
     '/home/gem/user-data/outputs/bubble_sort.js'
   ])
-  assert.deepEqual(MessageProcessor.extractArtifactsFromConversation(laterConversation), [])
+  assert.deepEqual(MessageProcessor.extractArtifactsFromMessageGroup(laterSession), [])
 })
 
 test('知识库来源与历史消息保持独立的归一化语义', () => {
-  const conv = {
+  const group = {
     messages: [
       {
         type: 'ai',
@@ -109,7 +109,7 @@ test('知识库来源与历史消息保持独立的归一化语义', () => {
     ]
   }
 
-  const chunks = MessageProcessor.extractKnowledgeChunksFromConversation(conv, databases)
+  const chunks = MessageProcessor.extractKnowledgeChunksFromMessageGroup(group, databases)
 
   assert.equal(chunks.some((chunk) => chunk.content === 'A' && chunk.kb_name === '财税库'), true)
   assert.equal(
@@ -124,7 +124,7 @@ test('知识库来源与历史消息保持独立的归一化语义', () => {
   const idxB = chunks.findIndex((chunk) => chunk.content === 'B')
   assert.equal(idxA < idxB, true)
 
-  const conversations = MessageProcessor.convertServerHistoryToMessages([
+  const runGroups = MessageProcessor.convertServerHistoryToMessages([
     { type: 'human', content: '排队输入一' },
     { type: 'human', content: '排队输入二' },
     {
@@ -135,14 +135,14 @@ test('知识库来源与历史消息保持独立的归一化语义', () => {
     { type: 'ai', content: '这是 Python 版本', run_id: 'run-1' }
   ])
 
-  assert.equal(conversations.length, 3)
-  assert.equal(conversations[0].messages.length, 1)
-  assert.equal(conversations[0].messages[0].content, '排队输入一')
-  assert.equal(conversations[1].messages.length, 1)
-  assert.equal(conversations[1].messages[0].content, '排队输入二')
-  assert.equal(conversations[2].messages.at(-1).content, '这是 Python 版本')
-  assert.equal(conversations[2].messages.at(-1).isLast, true)
-  assert.equal(conversations[2].status, 'finished')
+  assert.equal(runGroups.length, 3)
+  assert.equal(runGroups[0].messages.length, 1)
+  assert.equal(runGroups[0].messages[0].content, '排队输入一')
+  assert.equal(runGroups[1].messages.length, 1)
+  assert.equal(runGroups[1].messages[0].content, '排队输入二')
+  assert.equal(runGroups[2].messages.at(-1).content, '这是 Python 版本')
+  assert.equal(runGroups[2].messages.at(-1).isLast, true)
+  assert.equal(runGroups[2].status, 'finished')
 
   assert.deepEqual(
     MessageProcessor.parseAssistantMessageBody({

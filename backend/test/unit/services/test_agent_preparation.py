@@ -251,7 +251,7 @@ async def test_manifest_uses_prepared_context_and_persisted_overrides(monkeypatc
         agent_slug="agent",
         run_type=run_type,
         runtime_scope_id="root",
-        conversation_thread_id="thread",
+        thread_id="thread",
         input_payload={
             "model_spec": "chosen",
             "tool_approval_mode": "always_trust",
@@ -323,7 +323,7 @@ async def test_execution_preparation_rejects_missing_dependencies(monkeypatch, m
         agent_slug="agent",
         run_type="subagent",
         runtime_scope_id="root",
-        conversation_thread_id="child",
+        thread_id="child",
         input_payload={"runtime": {} if missing == "parent" else {"parent_thread_id": "parent"}},
     )
     with pytest.raises(ValueError):

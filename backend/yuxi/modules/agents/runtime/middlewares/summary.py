@@ -9,6 +9,7 @@ from collections.abc import Awaitable, Callable, Iterable
 from contextvars import ContextVar
 from typing import Any
 
+from deepagents.backends import CompositeBackend
 from deepagents.middleware.summarization import (
     Command,
     ContextOverflowError,
@@ -31,6 +32,7 @@ from yuxi.modules.agents.runtime.context import (
     DEFAULT_SUMMARY_TOOL_RESULT_TOKEN_LIMIT,
     DEFAULT_YUXI_SUMMARY_PROMPT,
 )
+from yuxi.modules.agents.runtime.sandbox.paths import SESSION_HISTORY_DIR_NAME
 from yuxi.modules.models.chat import load_chat_model, resolve_chat_model_spec
 
 _APPROX_CHARS_PER_TOKEN = 4
@@ -60,6 +62,9 @@ class YuxiSummarizationMiddleware(SummarizationMiddleware):
         **kwargs,
     ) -> None:
         super().__init__(*args, **kwargs)
+        artifacts_root = self._backend.artifacts_root if isinstance(self._backend, CompositeBackend) else "/"
+        self._history_path_prefix = f"{artifacts_root.rstrip('/')}/{SESSION_HISTORY_DIR_NAME}"
+        self._media_prefix = f"{self._history_path_prefix}/media"
         self.tool_result_offload_token_limit = tool_result_offload_token_limit
         self.tool_arg_max_length = tool_arg_max_length
         self.authorization_context = authorization_context
@@ -135,7 +140,7 @@ class YuxiSummarizationMiddleware(SummarizationMiddleware):
         summary = await self._acreate_summary_or_raise(offloaded_messages)
         if failed_media:
             logger.warning(
-                "Conversation history offloaded to %s, but %d media block(s) could not be offloaded.",
+                "Session history offloaded to %s, but %d media block(s) could not be offloaded.",
                 file_path,
                 failed_media,
             )
@@ -434,7 +439,7 @@ class YuxiSummarizationMiddleware(SummarizationMiddleware):
             raise RuntimeError("自动压缩无法保存可恢复的对话历史")
         if failed_media:
             logger.warning(
-                "Conversation history offloaded to %s, but %d media block(s) could not be offloaded.",
+                "Session history offloaded to %s, but %d media block(s) could not be offloaded.",
                 file_path,
                 failed_media,
             )

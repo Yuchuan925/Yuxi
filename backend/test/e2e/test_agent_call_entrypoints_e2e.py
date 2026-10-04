@@ -13,7 +13,7 @@ import pytest
 
 from e2e_helpers import delete_agent, postgres_dsn, skip_if_external_quota
 from test.e2e.test_agent_lifecycle_e2e import output_text
-from test.live_api_cleanup import make_test_conversation_title
+from test.live_api_cleanup import make_test_session_title
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.e2e, pytest.mark.slow]
 
@@ -93,7 +93,7 @@ async def _assert_public_origin(*, thread_id: str, turn_id: str, input_id: str, 
             FROM agent_runs ar
             JOIN agent_inputs ai ON ai.id = ar.input_id
             JOIN agent_turns at ON at.id = ar.turn_id
-            JOIN conversations conv ON conv.id = ar.conversation_id
+            JOIN sessions conv ON conv.id = ar.session_record_id
             JOIN messages input_msg ON input_msg.id = ar.input_message_id
             WHERE ar.id = $1 AND conv.thread_id = $2
             """,
@@ -129,7 +129,7 @@ async def test_public_thread_evaluation_sample_uses_one_input_turn_run_flow(
             "/api/v1/agents/threads",
             json={
                 "agent_id": agent_slug,
-                "title": make_test_conversation_title("agent-eval-e2e"),
+                "title": make_test_session_title("agent-eval-e2e"),
                 "input": [
                     {
                         "role": "user",
@@ -190,10 +190,7 @@ async def test_public_thread_evaluation_sample_uses_one_input_turn_run_flow(
         assert invalid.status_code == 422, invalid.text
         conn = await asyncpg.connect(postgres_dsn())
         try:
-            assert (
-                await conn.fetchval("SELECT count(*) FROM agent_inputs WHERE conversation_thread_id = $1", thread_id)
-                == 1
-            )
+            assert await conn.fetchval("SELECT count(*) FROM agent_inputs WHERE thread_id = $1", thread_id) == 1
         finally:
             await conn.close()
     finally:

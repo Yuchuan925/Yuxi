@@ -88,7 +88,7 @@ class _Backend:
 def realtime_viewer(monkeypatch):
     backend = _Backend()
     binding = AuthorizedWorkdir(
-        conversation_id=1,
+        session_record_id=1,
         thread_id="thread-1",
         uid="user-1",
         workdir=Workdir("projects/11111111-1111-4111-8111-111111111111", backend),

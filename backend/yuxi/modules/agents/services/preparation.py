@@ -157,11 +157,11 @@ async def prepare_run_execution(
     payload = run.input_payload
     context.update(
         {
-            "thread_id": run.conversation_thread_id,
+            "thread_id": run.thread_id,
             "uid": str(user.uid),
             "run_id": run.id,
             "worker_id": worker_id,
-            "runtime_scope_id": run.runtime_scope_id or run.conversation_thread_id,
+            "runtime_scope_id": run.runtime_scope_id or run.thread_id,
             "workdir_relative_path": workdir_binding.workdir_path,
             "workdir_path": runtime_workdir_path(workdir_binding.workdir_path),
         }

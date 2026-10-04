@@ -374,9 +374,9 @@ def subagent_created_event(creator, child, agent_name: str) -> dict:
         "type": "agent.session.subagent.created",
         "event_id": hash_id("event_", f"{child.id}:subagent-created", length=64),
         "subagent": {
-            "id": child.conversation_thread_id,
+            "id": child.thread_id,
             "object": "agent.session.subagent",
-            "session_id": creator.conversation_thread_id,
+            "session_id": creator.thread_id,
             "name": agent_name,
             "instructions": None,
             "parent_agent_id": creator.agent_slug,
@@ -386,9 +386,9 @@ def subagent_created_event(creator, child, agent_name: str) -> dict:
         },
         "yuxi": {
             "run_id": creator.id,
-            "session_id": creator.conversation_thread_id,
+            "session_id": creator.thread_id,
             "turn_id": creator.turn_id,
-            "child_thread_id": child.conversation_thread_id,
+            "child_thread_id": child.thread_id,
             "child_turn_id": child.turn_id,
             "child_run_id": child.id,
             "child_agent_id": child.agent_slug,

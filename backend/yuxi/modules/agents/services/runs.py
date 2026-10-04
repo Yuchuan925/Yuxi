@@ -9,11 +9,11 @@ from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from yuxi.modules.agents.models.runs import AgentRun
-from yuxi.modules.agents.models.threads import Conversation
+from yuxi.modules.agents.models.sessions import Session
 from yuxi.modules.agents.models.turns import AgentTurn
 from yuxi.modules.agents.repositories.input import AgentInputRepository
 from yuxi.modules.agents.repositories.runs import AgentRunRepository
-from yuxi.modules.agents.repositories.threads import ConversationRepository
+from yuxi.modules.agents.repositories.sessions import SessionRepository
 from yuxi.modules.agents.repositories.turn import AgentTurnRepository
 from yuxi.modules.agents.services.scope import ActorScope
 
@@ -39,7 +39,7 @@ async def should_yield_for_steer(run_id: str) -> bool:
         if turn is None or turn.status != "running" or turn.current_run_id != run_id:
             return False
         pending = await AgentInputRepository(db).get_pending_steer(
-            thread_id=run.conversation_thread_id,
+            thread_id=run.thread_id,
             uid=run.uid,
             app_id=run.app_id,
             for_update=False,
@@ -62,7 +62,7 @@ async def settle_checkpoint(
     turn_repo = AgentTurnRepository(db)
     turn = await turn_repo.get_for_scope(
         turn_id=run.turn_id,
-        thread_id=run.conversation_thread_id,
+        thread_id=run.thread_id,
         uid=run.uid,
         app_id=run.app_id,
         for_update=True,
@@ -71,13 +71,13 @@ async def settle_checkpoint(
         raise ValueError("Run 不是目标 Turn 的当前执行段")
     input_repo = AgentInputRepository(db)
     run_repo = AgentRunRepository(db)
-    conversation = await ConversationRepository(db).get_conversation_by_thread_id(run.conversation_thread_id)
-    if conversation is None or conversation.uid != run.uid or conversation.app_id != run.app_id:
+    agent_session = await SessionRepository(db).get_session_by_thread_id(run.thread_id)
+    if agent_session is None or agent_session.uid != run.uid or agent_session.app_id != run.app_id:
         raise ValueError("Run 的 Thread 归属不一致")
 
     if status == "completed" and turn.status == "running":
         pending = await input_repo.get_pending_steer(
-            thread_id=run.conversation_thread_id,
+            thread_id=run.thread_id,
             uid=run.uid,
             app_id=run.app_id,
         )
@@ -88,7 +88,7 @@ async def settle_checkpoint(
             if terminal is None or not changed:
                 raise ValueError("Steer 接管前当前 Run 所有权已失效")
             next_run_id = await _consume_steer(
-                db=db, conversation=conversation, turn=turn, previous=run, pending=pending
+                db=db, agent_session=agent_session, turn=turn, previous=run, pending=pending
             )
             return RunSettlement(status="yielded", changed=True, next_run_id=next_run_id)
 
@@ -128,7 +128,7 @@ async def settle_checkpoint(
         )
         if terminal is None or not changed:
             return RunSettlement(status=terminal.status if terminal else status, changed=False)
-        conversation.queue_paused = True
+        agent_session.queue_paused = True
         if status == "failed":
             await turn_repo.set_terminal(turn, status="failed")
         elif turn.status != "cancelling":
@@ -140,11 +140,11 @@ async def settle_checkpoint(
 
 async def get_run_snapshot(*, db: AsyncSession, scope: ActorScope, thread_id: str, run_id: str) -> dict:
     """按 Thread/Turn/APP 归属读取执行段及持久输出。"""
-    conversation = await ConversationRepository(db).get_conversation_by_thread_id(thread_id)
-    if conversation is None or conversation.uid != scope.uid or conversation.app_id != scope.app_id:
+    agent_session = await SessionRepository(db).get_session_by_thread_id(thread_id)
+    if agent_session is None or agent_session.uid != scope.uid or agent_session.app_id != scope.app_id:
         raise HTTPException(status_code=404, detail="Run 不存在")
     run = await AgentRunRepository(db).get_run(run_id)
-    if run is None or run.uid != scope.uid or run.app_id != scope.app_id or run.conversation_thread_id != thread_id:
+    if run is None or run.uid != scope.uid or run.app_id != scope.app_id or run.thread_id != thread_id:
         raise HTTPException(status_code=404, detail="Run 不存在")
     turn = await AgentTurnRepository(db).get_for_scope(
         turn_id=run.turn_id,
@@ -189,7 +189,7 @@ async def get_run_langfuse_link(*, db: AsyncSession, scope: ActorScope, thread_i
 
 
 async def _consume_steer(
-    *, db: AsyncSession, conversation: Conversation, turn: AgentTurn, previous: AgentRun, pending
+    *, db: AsyncSession, agent_session: Session, turn: AgentTurn, previous: AgentRun, pending
 ) -> str:
     """消费 Thread 优先批次，在当前 Turn 建立下一执行段。"""
     input_repo = AgentInputRepository(db)
@@ -200,7 +200,7 @@ async def _consume_steer(
     run_id = str(uuid.uuid4())
     await AgentRunRepository(db).create_run(
         run_id=run_id,
-        conversation_thread_id=conversation.thread_id,
+        thread_id=agent_session.thread_id,
         runtime_scope_id=previous.runtime_scope_id,
         agent_slug=previous.agent_slug,
         uid=previous.uid,
@@ -213,7 +213,7 @@ async def _consume_steer(
         channel=pending.channel,
         external_id=pending.external_id,
         origin_metadata=pending.origin_metadata or {},
-        conversation_id=conversation.id,
+        session_record_id=agent_session.id,
         resume_from_run_id=previous.id,
         run_type="subagent" if previous.run_type == "subagent" else "chat",
         created_by_run_id=previous.created_by_run_id,

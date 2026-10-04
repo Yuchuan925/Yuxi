@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from yuxi.modules.agents.models.inputs import AgentInput, AgentInputMessage, AgentInputReceipt
 from yuxi.modules.agents.models.messages import Message
 from yuxi.modules.agents.models.runs import AgentRun
-from yuxi.modules.agents.models.threads import Conversation
+from yuxi.modules.agents.models.sessions import Session
 from yuxi.modules.agents.models.turns import AgentTurn
 from yuxi.shared.datetime import utc_now
 
@@ -41,7 +41,7 @@ class AgentInputRepository:
             raise ValueError("不支持的 Input 种类")
         input_item = AgentInput(
             id=input_id,
-            conversation_thread_id=thread_id,
+            thread_id=thread_id,
             uid=uid,
             app_id=app_id,
             api_key_id=api_key_id,
@@ -64,7 +64,7 @@ class AgentInputRepository:
         """按完整资源作用域读取或锁定 Input。"""
         statement = select(AgentInput).where(
             AgentInput.id == input_id,
-            AgentInput.conversation_thread_id == thread_id,
+            AgentInput.thread_id == thread_id,
             AgentInput.uid == uid,
             AgentInput.app_id == app_id,
         )
@@ -80,7 +80,7 @@ class AgentInputRepository:
         statement = (
             select(AgentInput)
             .where(
-                AgentInput.conversation_thread_id == thread_id,
+                AgentInput.thread_id == thread_id,
                 AgentInput.uid == uid,
                 AgentInput.app_id == app_id,
                 AgentInput.status == "pending",
@@ -98,7 +98,7 @@ class AgentInputRepository:
     ) -> AgentInput | None:
         """读取并可锁定 Thread 唯一待消费 steer。"""
         statement = select(AgentInput).where(
-            AgentInput.conversation_thread_id == thread_id,
+            AgentInput.thread_id == thread_id,
             AgentInput.uid == uid,
             AgentInput.app_id == app_id,
             AgentInput.kind == "steer",
@@ -115,16 +115,16 @@ class AgentInputRepository:
         receipt = await self.db.get(AgentInputReceipt, receipt_id)
         if input_item is None or input_item.status != "pending" or receipt is None or receipt.input_id != input_id:
             raise ValueError("只能向待消费 Input 追加所属 Receipt 的消息")
-        if (receipt.uid, receipt.app_id, receipt.conversation_thread_id) != (
+        if (receipt.uid, receipt.app_id, receipt.thread_id) != (
             input_item.uid,
             input_item.app_id,
-            input_item.conversation_thread_id,
+            input_item.thread_id,
         ):
             raise ValueError("Receipt 与 Input 作用域不一致")
         messages = await self.db.execute(
             select(Message.id)
-            .join(Conversation, Conversation.id == Message.conversation_id)
-            .where(Message.id.in_(message_ids), Conversation.thread_id == input_item.conversation_thread_id)
+            .join(Session, Session.id == Message.session_record_id)
+            .where(Message.id.in_(message_ids), Session.thread_id == input_item.thread_id)
         )
         if len(set(messages.scalars())) != len(message_ids) or len(set(message_ids)) != len(message_ids):
             raise ValueError("消息不属于目标 Thread 或存在重复成员")
@@ -179,11 +179,11 @@ class AgentInputRepository:
             raise ValueError("Input 已领取或不存在")
         if turn is None or run is None or run.turn_id != turn_id:
             raise ValueError("消费目标必须属于本轮 Turn")
-        if (input_item.uid, input_item.app_id, input_item.conversation_thread_id) != (
+        if (input_item.uid, input_item.app_id, input_item.thread_id) != (
             turn.uid,
             turn.app_id,
-            turn.conversation_thread_id,
-        ) or run.conversation_thread_id != input_item.conversation_thread_id:
+            turn.thread_id,
+        ) or run.thread_id != input_item.thread_id:
             raise ValueError("Input、Turn 与 Run 作用域不一致")
         if input_item.turn_id not in (None, turn_id) or run.input_id not in (None, input_id):
             raise ValueError("Input 或 Run 已绑定其他目标")
@@ -231,7 +231,7 @@ class AgentInputRepository:
         result = await self.db.execute(
             select(AgentInput)
             .where(
-                AgentInput.conversation_thread_id == thread_id,
+                AgentInput.thread_id == thread_id,
                 AgentInput.uid == uid,
                 AgentInput.app_id == app_id,
                 AgentInput.status == "pending",

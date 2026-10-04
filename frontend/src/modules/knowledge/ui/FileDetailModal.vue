@@ -133,7 +133,7 @@ import {
 } from '@/modules/knowledge/model/knowledge_file_policy'
 import MarkdownPreview from '@/modules/workspace/ui/MarkdownPreview.vue'
 import FileTypeIcon from '@/shared/ui/FileTypeIcon.vue'
-import AgentFilePreview from '@/modules/conversation/ui/workspace/AgentFilePreview.vue'
+import AgentFilePreview from '@/modules/session/ui/workspace/AgentFilePreview.vue'
 import { Download, ChevronDown, FileSearch, FileText, Rows3, X } from '@lucide/vue'
 
 const props = defineProps({

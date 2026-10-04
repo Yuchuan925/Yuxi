@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 
 import pytest
-from test.live_api_cleanup import make_test_conversation_title
+from test.live_api_cleanup import make_test_session_title
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
 
@@ -21,7 +21,7 @@ async def _create_thread(test_client, headers) -> str:
         "/api/v1/agents/threads",
         json={
             "agent_id": agent_id,
-            "title": make_test_conversation_title("viewer-filesystem"),
+            "title": make_test_session_title("viewer-filesystem"),
         },
         headers={**headers, "Idempotency-Key": str(uuid.uuid4())},
     )

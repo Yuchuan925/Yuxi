@@ -5,7 +5,7 @@ import {
   mapQuestionsForDisplay,
   isQuestionAnswered,
   buildQuestionAnswer
-} from '../../src/modules/conversation/model/questionUtils.js'
+} from '../../src/modules/session/model/questionUtils.js'
 
 test('标准问题只映射显示字段，保留后端 ID 和选项描述', () => {
   const questions = [

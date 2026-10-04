@@ -14,10 +14,10 @@ from yuxi.infrastructure.observability.langfuse import flush_langfuse
 from yuxi.infrastructure.observability.logging import logger
 from yuxi.infrastructure.postgres.manager import pg_manager
 from yuxi.modules.agents.models.definitions import Agent
-from yuxi.modules.agents.models.threads import Conversation
+from yuxi.modules.agents.models.sessions import Session
 from yuxi.modules.agents.repositories.definitions import AgentRepository
 from yuxi.modules.agents.repositories.runs import AgentRunRepository
-from yuxi.modules.agents.repositories.threads import ConversationRepository
+from yuxi.modules.agents.repositories.sessions import SessionRepository
 from yuxi.modules.agents.repositories.turn import AgentTurnRepository
 from yuxi.modules.agents.runtime.agent_backends import get_agent_backend
 from yuxi.modules.agents.runtime.base import GraphExecutionResult, json_safe
@@ -39,7 +39,7 @@ from yuxi.modules.agents.services.tracing import (
     start_turn_observation,
 )
 from yuxi.modules.identity.models import User
-from yuxi.modules.workspace.services.bindings import resolve_conversation_workdir_path
+from yuxi.modules.workspace.services.bindings import resolve_session_workdir_path
 from yuxi.shared.hashing import hash_id
 
 
@@ -114,14 +114,14 @@ async def _persist_agent_run_langfuse_trace(*, db, meta: dict, run_context: Lang
 
     try:
         root_thread_id = str(meta.get("runtime_scope_id") or meta.get("thread_id") or "")
-        conversation = await ConversationRepository(db).lock_conversation_by_thread_id(root_thread_id)
-        if conversation is None:
+        agent_session = await SessionRepository(db).lock_session_by_thread_id(root_thread_id)
+        if agent_session is None:
             raise ValueError("Langfuse 根 Thread 不存在")
         turn = await AgentTurnRepository(db).get_for_scope(
             turn_id=str(meta["turn_id"]),
             thread_id=root_thread_id,
             uid=str(meta["uid"]),
-            app_id=conversation.app_id,
+            app_id=agent_session.app_id,
             for_update=True,
         )
         if turn is None:
@@ -338,18 +338,18 @@ async def _resolve_agent_runtime(
     thread_id: str,
     prepared_execution: PreparedRunExecution,
     agent_kind: Literal["main", "subagent"] = "main",
-) -> tuple[Agent, Any, BaseContext, Conversation]:
+) -> tuple[Agent, Any, BaseContext, Session]:
     """校验执行时的线程与 Agent 权限，使用 worker 已固化的配置。"""
-    conversation = await ConversationRepository(db).get_conversation_by_thread_id(thread_id)
+    agent_session = await SessionRepository(db).get_session_by_thread_id(thread_id)
     expected_status = "subagent" if agent_kind == "subagent" else "active"
-    if not conversation or conversation.uid != str(user.uid) or conversation.status != expected_status:
+    if not agent_session or agent_session.uid != str(user.uid) or agent_session.status != expected_status:
         raise ValueError("对话线程不存在")
-    # Conversation.agent_id 是历史字段名，实际保存的是 Agent.slug。
-    if requested_agent_slug and requested_agent_slug != conversation.agent_id:
+    # Session.agent_id 是历史字段名，实际保存的是 Agent.slug。
+    if requested_agent_slug and requested_agent_slug != agent_session.agent_id:
         raise ValueError("已有线程已绑定智能体，不能切换")
-    await resolve_conversation_workdir_path(conversation=conversation, uid=str(user.uid), db=db)
+    await resolve_session_workdir_path(agent_session=agent_session, uid=str(user.uid), db=db)
 
-    agent_item = await AgentRepository(db).get_visible_by_slug(slug=conversation.agent_id, user=user, kind=agent_kind)
+    agent_item = await AgentRepository(db).get_visible_by_slug(slug=agent_session.agent_id, user=user, kind=agent_kind)
     if not agent_item:
         raise ValueError("智能体不存在或无权限访问")
 
@@ -357,7 +357,7 @@ async def _resolve_agent_runtime(
 
     if agent_item.backend_id != prepared_execution.backend_id:
         raise ValueError("智能体后端在执行准备后发生变化")
-    return agent_item, backend, prepared_execution.context, conversation
+    return agent_item, backend, prepared_execution.context, agent_session
 
 
 @dataclass(frozen=True)
@@ -456,7 +456,7 @@ async def _stream_agent_execution(
     accumulated_content = []
     trace_info = {}
     try:
-        agent_item, agent, context, conversation = await _resolve_agent_runtime(
+        agent_item, agent, context, agent_session = await _resolve_agent_runtime(
             db=db,
             user=current_user,
             requested_agent_slug=None if is_resume else agent_slug,
@@ -464,14 +464,14 @@ async def _stream_agent_execution(
             agent_kind="subagent" if meta.get("run_type") == "subagent" else "main",
             prepared_execution=prepared_execution,
         )
-        conv_repo = ConversationRepository(db)
+        session_repo = SessionRepository(db)
         if is_resume:
             graph_input = Command(resume=resume_input)
             message_type = "resume"
         else:
             graph_input = [message.require_langchain_message() for message in input_messages]
             message_type = input_messages[0].message_type
-            attachments = await conv_repo.get_attachments(conversation.id)
+            attachments = await session_repo.get_attachments(agent_session.id)
             authorized_attachments = list(meta.get("delegated_attachments") or []) + [
                 serialize_attachment(item, thread_id=thread_id) for item in attachments
             ]
@@ -557,7 +557,7 @@ async def _stream_agent_execution(
             terminal_status = await save_messages_from_langgraph_state(
                 state=final_state,
                 thread_id=thread_id,
-                conv_repo=conv_repo,
+                session_repo=session_repo,
                 trace_info=trace_info,
                 run_id=meta["run_id"],
                 turn_id=meta["turn_id"],
@@ -601,7 +601,7 @@ async def _stream_agent_execution(
         await _persist_model_request_timing(model_request_recorder, meta)
         async with pg_manager.get_async_session_context() as new_db:
             output = await save_partial_message(
-                ConversationRepository(new_db),
+                SessionRepository(new_db),
                 thread_id,
                 full_msg=AIMessage(content="".join(accumulated_content)) if accumulated_content else None,
                 error_message=error_message,

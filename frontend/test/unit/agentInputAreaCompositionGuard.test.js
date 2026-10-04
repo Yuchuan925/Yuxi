@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs'
 import test from 'node:test'
 
 const source = readFileSync(
-  new URL('../../src/modules/conversation/ui/AgentInputArea.vue', import.meta.url),
+  new URL('../../src/modules/session/ui/AgentInputArea.vue', import.meta.url),
   'utf8'
 )
 

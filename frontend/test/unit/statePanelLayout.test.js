@@ -4,7 +4,7 @@ import test from 'node:test'
 import {
   getDockedStatePanelMaxHeight,
   getFloatingStatePanelMaxHeight
-} from '../../src/modules/conversation/model/statePanelLayout.js'
+} from '../../src/modules/session/model/statePanelLayout.js'
 
 test('固定状态面板只限制容器内最大高度', () => {
   assert.equal(getDockedStatePanelMaxHeight({ height: 720 }), 702)

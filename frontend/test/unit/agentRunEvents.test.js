@@ -2,15 +2,15 @@ import assert from 'node:assert/strict'
 import { after, before, test } from 'node:test'
 import { setImmediate } from 'node:timers'
 import { createServer } from 'vite'
-import { createItemState } from '../../src/modules/conversation/model/agentItems.js'
+import { createItemState } from '../../src/modules/session/model/agentItems.js'
 
 let server, api, useAgentRunStream, processRunSseResponse, useAgentInputQueue
 before(async () => {
   globalThis.localStorage = { getItem: () => null, setItem() {}, removeItem() {} }
   server = await createServer({ server: { middlewareMode: true, hmr: false } })
   ;({ agentApi: api } = await server.ssrLoadModule('/src/apis/index.js'))
-  ;({ useAgentRunStream, processRunSseResponse } = await server.ssrLoadModule('/src/modules/conversation/model/useAgentRunStream.js'))
-  ;({ useAgentInputQueue } = await server.ssrLoadModule('/src/modules/conversation/model/useAgentInputQueue.js'))
+  ;({ useAgentRunStream, processRunSseResponse } = await server.ssrLoadModule('/src/modules/session/model/useAgentRunStream.js'))
+  ;({ useAgentInputQueue } = await server.ssrLoadModule('/src/modules/session/model/useAgentInputQueue.js'))
 })
 after(async () => { await server?.close(); delete globalThis.localStorage })
 const tick = () => new Promise((resolve) => setImmediate(resolve))
@@ -23,14 +23,14 @@ const response = (events) => new Response(new ReadableStream({ start(controller)
   controller.close()
 } }))
 function harness(t, events, { status = 'running', currentRun = 'run', snapshot = async () => {} } = {}) {
-  const state = { currentTurnId: 'turn', activeRunId: currentRun, onGoingConv: createItemState() }
+  const state = { currentTurnId: 'turn', activeRunId: currentRun, ongoingRunGroup: createItemState() }
   const delivered = [], terminal = []
   t.mock.method(api, 'getThreadTurn', async () => ({ turn_id: 'turn', current_run_id: currentRun, status }))
   t.mock.method(api, 'streamThreadEvents', async () => response(events))
   const stream = useAgentRunStream({
     getThreadState: () => state, currentAgentId: 'agent',
     handlePublicEvent: (value) => delivered.push(value), fetchThreadMessages: snapshot,
-    fetchAgentState() {}, resetOnGoingConv() {},
+    fetchAgentState() {}, resetOngoingRunGroup() {},
     onTerminalDetected: (value) => terminal.push(value)
   })
   t.after(() => stream.stopRunStreamSubscription('thread'))
@@ -91,7 +91,7 @@ test('Run settled 不结束 Turn；只有 Turn 终态收尾', async (t) => {
 })
 
 test('FIFO 领取后用真实 item 替换乐观输入并订阅所属 Turn', async (t) => {
-  const state = { queuedInputs: [], inputMonitors: {}, onGoingConv: {
+  const state = { queuedInputs: [], inputMonitors: {}, ongoingRunGroup: {
     ...createItemState(), optimisticMessages: { input: { id: 'local' } }
   } }
   const item = { id: 'input_1', type: 'message', role: 'user', status: 'completed', content: [], yuxi: { input_id: 'input' } }
@@ -99,12 +99,12 @@ test('FIFO 领取后用真实 item 替换乐观输入并订阅所属 Turn', asyn
   t.mock.method(api, 'getThreadInput', async () => ({ status: 'consumed', run_id: 'run', turn_id: 'turn', items: [item] }))
   const started = []
   const queue = useAgentInputQueue({ getThreadState: () => state,
-    resetOnGoingConv() {}, startRunStream: (...args) => started.push(args) })
+    resetOngoingRunGroup() {}, startRunStream: (...args) => started.push(args) })
   t.after(() => queue.stopAllInputMonitors('thread'))
   await queue.syncQueuedInputs('thread')
   await tick()
-  assert.deepEqual(state.onGoingConv.items.input_1, item)
-  assert.deepEqual(state.onGoingConv.optimisticMessages, {})
+  assert.deepEqual(state.ongoingRunGroup.items.input_1, item)
+  assert.deepEqual(state.ongoingRunGroup.optimisticMessages, {})
   assert.deepEqual(started, [['thread', 'run', null, { turnId: 'turn', inputId: 'input' }]])
 })
 
@@ -113,7 +113,7 @@ test('旧 Turn 等待历史回读时启动新 FIFO 流，旧收尾不能中止�
   let releaseHistory
   const history = new Promise((resolve) => { releaseHistory = resolve })
   let secondController, resetCount = 0, terminalCount = 0
-  const state = { currentTurnId: 'turn', activeRunId: 'run', onGoingConv: createItemState() }
+  const state = { currentTurnId: 'turn', activeRunId: 'run', ongoingRunGroup: createItemState() }
   t.mock.method(api, 'streamThreadEvents', async (_thread, _cursor, { signal }) => {
     if (!secondController) {
       secondController = signal
@@ -126,7 +126,7 @@ test('旧 Turn 等待历史回读时启动新 FIFO 流，旧收尾不能中止�
   })
   const stream = useAgentRunStream({ getThreadState: () => state, currentAgentId: 'agent',
     handlePublicEvent() {}, fetchThreadMessages: () => history, fetchAgentState() {},
-    resetOnGoingConv: () => { resetCount++; state.runStreamAbortController?.abort() },
+    resetOngoingRunGroup: () => { resetCount++; state.runStreamAbortController?.abort() },
     onTerminalDetected: () => terminalCount++ })
   await stream.startRunStream('thread', 'run', null, { turnId: 'turn' })
   const following = stream.startRunStream('thread', 'next', null, { turnId: 'next-turn' })

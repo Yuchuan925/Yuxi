@@ -17,9 +17,9 @@ from yuxi.infrastructure.runtime_settings import get_user_data_dir
 from yuxi.modules.agents.models.runs import AGENT_RUN_TERMINAL_STATUSES
 
 TEST_RESOURCE_PREFIX = "YUXI_TEST_"
-TEST_CONVERSATION_TITLE_PREFIX = f"{TEST_RESOURCE_PREFIX}CONVERSATION_"
+TEST_SESSION_TITLE_PREFIX = f"{TEST_RESOURCE_PREFIX}SESSION_"
 PYTEST_RESOURCE_PREFIXES = ("pytest", "py_test")
-LEGACY_TEST_CONVERSATION_TITLE_PATTERNS = (
+LEGACY_TEST_SESSION_TITLE_PATTERNS = (
     re.compile(
         r"^(?:agent-async-e2e|agent-steer-e2e|attachment-state-e2e|attachment-workdir-e2e|"
         r"chat-router-test|deterministic-e2e|ocr-config-e2e|personal-skill-e2e|"
@@ -56,10 +56,10 @@ RUN_CLEANUP_WAIT_SECONDS = 10
 
 
 @dataclass(frozen=True, slots=True)
-class CleanupConversationResource:
-    """描述一个待清理的测试 Conversation 及其 Project Workdir。"""
+class CleanupSessionResource:
+    """描述一个待清理的测试 Session 及其 Project Workdir。"""
 
-    conversation_id: int
+    session_record_id: int
     project_id: str
     thread_id: str
     uid: str
@@ -67,11 +67,11 @@ class CleanupConversationResource:
     workdir_path: str | None
 
 
-def make_test_conversation_title(label: str) -> str:
-    """生成带统一前缀且适合展示的测试 Conversation 标题。"""
+def make_test_session_title(label: str) -> str:
+    """生成带统一前缀且适合展示的测试 Session 标题。"""
 
     normalized = re.sub(r"[^A-Za-z0-9_-]+", "-", str(label)).strip("-_") or "case"
-    return f"{TEST_CONVERSATION_TITLE_PREFIX}{normalized[:120]}_{uuid.uuid4().hex[:12]}"
+    return f"{TEST_SESSION_TITLE_PREFIX}{normalized[:120]}_{uuid.uuid4().hex[:12]}"
 
 
 def make_test_resource_id(label: str) -> str:
@@ -81,8 +81,8 @@ def make_test_resource_id(label: str) -> str:
     return f"{TEST_RESOURCE_PREFIX}{normalized[:40]}_{uuid.uuid4().hex}"
 
 
-def make_test_conversation_metadata(test_name: str, *, e2e: bool = False, **extra: object) -> dict[str, object]:
-    """生成带测试资源标记的 Conversation metadata。"""
+def make_test_session_metadata(test_name: str, *, e2e: bool = False, **extra: object) -> dict[str, object]:
+    """生成带测试资源标记的 Session metadata。"""
 
     metadata: dict[str, object] = {"_yuxi_test": True, "test": test_name}
     if e2e:
@@ -169,14 +169,14 @@ def _parse_metadata(value: object) -> dict[str, object]:
     return {}
 
 
-def is_test_conversation_title(title: object) -> bool:
+def is_test_session_title(title: object) -> bool:
     """识别统一前缀及当前仓库历史测试标题。"""
 
     if not isinstance(title, str):
         return False
-    if title.startswith(TEST_CONVERSATION_TITLE_PREFIX):
+    if title.startswith(TEST_SESSION_TITLE_PREFIX):
         return True
-    return any(pattern.fullmatch(title) for pattern in LEGACY_TEST_CONVERSATION_TITLE_PATTERNS)
+    return any(pattern.fullmatch(title) for pattern in LEGACY_TEST_SESSION_TITLE_PATTERNS)
 
 
 def _is_test_thread(thread: object) -> bool:
@@ -198,7 +198,7 @@ def _is_test_thread(thread: object) -> bool:
         or _has_prefix(metadata.get("marker"), ("YUXI_SUBAGENT_STREAM_E2E_",))
     ):
         return True
-    if is_test_conversation_title(thread.get("title")):
+    if is_test_session_title(thread.get("title")):
         return True
     return _has_prefix(thread.get("agent_id") or thread.get("agent_slug") or "", E2E_AGENT_SLUG_PREFIXES)
 
@@ -216,18 +216,18 @@ def _resolve_e2e_thread_storage(thread_id: str) -> Path:
     """校验并返回测试线程的独立沙盒目录，不触碰用户共享工作区。"""
 
     if not SAFE_THREAD_ID.fullmatch(thread_id):
-        raise RuntimeError(f"E2E conversation cleanup received an unsafe thread id: {thread_id!r}")
+        raise RuntimeError(f"E2E agent_session cleanup received an unsafe thread id: {thread_id!r}")
     if thread_id == "shared":
-        raise RuntimeError("E2E conversation cleanup refuses to target the shared workspace")
+        raise RuntimeError("E2E agent_session cleanup refuses to target the shared workspace")
 
     threads_root = get_user_data_dir().resolve()
     raw_thread_root = threads_root / thread_id
     if raw_thread_root.is_symlink():
-        raise RuntimeError(f"E2E conversation cleanup refuses to remove symlink: {raw_thread_root}")
+        raise RuntimeError(f"E2E agent_session cleanup refuses to remove symlink: {raw_thread_root}")
 
     thread_root = raw_thread_root.resolve()
     if thread_root.parent != threads_root:
-        raise RuntimeError(f"E2E conversation cleanup path escaped thread root: {thread_root}")
+        raise RuntimeError(f"E2E agent_session cleanup path escaped thread root: {thread_root}")
     return thread_root
 
 
@@ -244,10 +244,10 @@ def _resolve_test_workdir(uid: str, workdir_path: str) -> Path | None:
     try:
         normalized = normalize_workdir_path(workdir_path)
     except ValueError as exc:
-        raise RuntimeError(f"Test conversation cleanup refuses invalid Workdir: {workdir_path!r}") from exc
+        raise RuntimeError(f"Test agent_session cleanup refuses invalid Workdir: {workdir_path!r}") from exc
     parts = PurePosixPath(normalized).parts
     if len(parts) < 2 or parts[0] != "projects":
-        raise RuntimeError(f"Test conversation cleanup refuses non-project Workdir: {workdir_path!r}")
+        raise RuntimeError(f"Test agent_session cleanup refuses non-project Workdir: {workdir_path!r}")
 
     try:
         workdir = user_workdir_host_dir(uid, normalized)
@@ -256,16 +256,16 @@ def _resolve_test_workdir(uid: str, workdir_path: str) -> Path | None:
     except ValueError as exc:
         if str(exc) == "workdir_path does not reference an existing directory":
             return None
-        raise RuntimeError(f"Test conversation cleanup refuses invalid Workdir: {workdir_path!r}") from exc
+        raise RuntimeError(f"Test agent_session cleanup refuses invalid Workdir: {workdir_path!r}") from exc
     if not workdir.exists() and not workdir.is_symlink():
         return None
     if workdir.is_symlink():
-        raise RuntimeError(f"Test conversation cleanup refuses symlink Workdir: {workdir}")
+        raise RuntimeError(f"Test agent_session cleanup refuses symlink Workdir: {workdir}")
     return workdir
 
 
 def remove_test_workdir(uid: str, workdir_path: str) -> None:
-    """在 UserWorkspace 边界内删除测试 Conversation 的 Project Workdir。"""
+    """在 UserWorkspace 边界内删除测试 Session 的 Project Workdir。"""
 
     workdir = _resolve_test_workdir(uid, workdir_path)
     if workdir is None:
@@ -273,16 +273,16 @@ def remove_test_workdir(uid: str, workdir_path: str) -> None:
 
     shutil.rmtree(workdir)
     if workdir.exists() or workdir.is_symlink():
-        raise RuntimeError(f"Test conversation cleanup left Workdir behind: {workdir}")
+        raise RuntimeError(f"Test agent_session cleanup left Workdir behind: {workdir}")
 
 
-async def list_test_conversation_resources(owner_uid: str) -> dict[str, CleanupConversationResource]:
-    """读取当前测试用户的测试 Conversation、状态和真实 Workdir。"""
+async def list_test_session_resources(owner_uid: str) -> dict[str, CleanupSessionResource]:
+    """读取当前测试用户的测试 Session、状态和真实 Workdir。"""
 
     conn = await asyncpg.connect(_postgres_dsn())
     try:
         receipt_rows = await conn.fetch(
-            "SELECT DISTINCT conversation_thread_id "
+            "SELECT DISTINCT thread_id "
             "FROM agent_input_receipts "
             "WHERE uid = $1 AND ("
             "left(idempotency_key, char_length($2)) = $2 "
@@ -292,16 +292,16 @@ async def list_test_conversation_resources(owner_uid: str) -> dict[str, CleanupC
             TEST_RESOURCE_PREFIX,
             "agent-call-queue-",
         )
-        receipt_thread_ids = {str(row["conversation_thread_id"] or "") for row in receipt_rows}
+        receipt_thread_ids = {str(row["thread_id"] or "") for row in receipt_rows}
         rows = await conn.fetch(
             "SELECT c.id, c.project_id, c.thread_id, c.uid, c.status, c.title, "
             "p.workdir_path, p.directory_mode, p.selection_status, c.extra_metadata, c.agent_id "
-            "FROM conversations c JOIN projects p ON p.id = c.project_id AND p.uid = c.uid "
+            "FROM sessions c JOIN projects p ON p.id = c.project_id AND p.uid = c.uid "
             "WHERE c.uid = $1",
             owner_uid,
         )
         marked_parent_ids: list[int] = []
-        resources: dict[str, CleanupConversationResource] = {}
+        resources: dict[str, CleanupSessionResource] = {}
         for row in rows:
             thread_id = str(row["thread_id"] or "")
             if (
@@ -316,8 +316,8 @@ async def list_test_conversation_resources(owner_uid: str) -> dict[str, CleanupC
             ):
                 continue
             marked_parent_ids.append(int(row["id"]))
-            resources[thread_id] = CleanupConversationResource(
-                conversation_id=int(row["id"]),
+            resources[thread_id] = CleanupSessionResource(
+                session_record_id=int(row["id"]),
                 project_id=str(row["project_id"]),
                 thread_id=thread_id,
                 uid=str(row["uid"] or owner_uid),
@@ -335,24 +335,24 @@ async def list_test_conversation_resources(owner_uid: str) -> dict[str, CleanupC
             child_rows = await conn.fetch(
                 """
                 WITH RECURSIVE descendants(id) AS (
-                    SELECT child_conversation_id FROM subagent_threads
-                    WHERE parent_conversation_id = ANY($1::int[])
+                    SELECT child_session_record_id FROM subagent_threads
+                    WHERE parent_session_record_id = ANY($1::int[])
                     UNION
-                    SELECT st.child_conversation_id FROM subagent_threads st
-                    JOIN descendants parent ON parent.id = st.parent_conversation_id
+                    SELECT st.child_session_record_id FROM subagent_threads st
+                    JOIN descendants parent ON parent.id = st.parent_session_record_id
                 )
                 SELECT child.id, child.project_id, child.thread_id, child.uid, child.status,
                        project.workdir_path, project.directory_mode, project.selection_status
                 FROM descendants
-                JOIN conversations child ON child.id = descendants.id
+                JOIN sessions child ON child.id = descendants.id
                 JOIN projects project ON project.id = child.project_id AND project.uid = child.uid
                 """,
                 marked_parent_ids,
             )
             for row in child_rows:
                 child_id = str(row["thread_id"] or "")
-                resources[child_id] = CleanupConversationResource(
-                    conversation_id=int(row["id"]),
+                resources[child_id] = CleanupSessionResource(
+                    session_record_id=int(row["id"]),
                     project_id=str(row["project_id"]),
                     thread_id=child_id,
                     uid=str(row["uid"] or owner_uid),
@@ -404,7 +404,7 @@ async def _validate_test_workdirs_exclusive(
         try:
             target_path = PurePosixPath(normalize_workdir_path(workdir_path))
         except ValueError as exc:
-            raise RuntimeError(f"Test conversation cleanup refuses invalid Workdir: {workdir_path!r}") from exc
+            raise RuntimeError(f"Test agent_session cleanup refuses invalid Workdir: {workdir_path!r}") from exc
         owners: set[str] = set()
         for row in rows_by_uid[uid]:
             candidate_value = str(row["workdir_path"] or "")
@@ -412,7 +412,7 @@ async def _validate_test_workdirs_exclusive(
                 candidate_path = PurePosixPath(normalize_workdir_path(candidate_value))
             except ValueError as exc:
                 raise RuntimeError(
-                    "Test conversation cleanup cannot verify an existing Workdir owner: "
+                    "Test agent_session cleanup cannot verify an existing Workdir owner: "
                     f"{row['id']}={candidate_value!r}"
                 ) from exc
             overlaps = (
@@ -425,11 +425,11 @@ async def _validate_test_workdirs_exclusive(
         unexpected = owners - target_project_ids
         if unexpected:
             raise RuntimeError(
-                f"Test conversation cleanup refuses shared or overlapping Workdir {workdir_path!r}; "
+                f"Test agent_session cleanup refuses shared or overlapping Workdir {workdir_path!r}; "
                 f"other projects: {', '.join(sorted(unexpected))}"
             )
         if not project_ids <= target_project_ids:
-            raise RuntimeError(f"Test conversation cleanup has an untracked Workdir owner: {workdir_path!r}")
+            raise RuntimeError(f"Test agent_session cleanup has an untracked Workdir owner: {workdir_path!r}")
 
 
 async def validate_test_runs_terminal(thread_ids: set[str]) -> None:
@@ -443,7 +443,7 @@ async def validate_test_runs_terminal(thread_ids: set[str]) -> None:
         target_ids = sorted(thread_ids)
         while True:
             turns = await conn.fetch(
-                "SELECT id, status FROM agent_turns WHERE conversation_thread_id = ANY($1::text[]) "
+                "SELECT id, status FROM agent_turns WHERE thread_id = ANY($1::text[]) "
                 "AND status IN ('running', 'waiting', 'cancelling')",
                 target_ids,
             )
@@ -453,7 +453,7 @@ async def validate_test_runs_terminal(thread_ids: set[str]) -> None:
 
             rows = await conn.fetch(
                 "SELECT id, status, runtime_cleanup_pending FROM agent_runs "
-                "WHERE conversation_thread_id = ANY($1::text[]) "
+                "WHERE thread_id = ANY($1::text[]) "
                 "AND (status <> ALL($2::text[]) OR runtime_cleanup_pending)",
                 target_ids,
                 list(AGENT_RUN_TERMINAL_STATUSES),
@@ -480,18 +480,18 @@ async def list_test_pending_inputs(thread_ids: set[str]) -> list[tuple[str, str]
     conn = await asyncpg.connect(_postgres_dsn())
     try:
         rows = await conn.fetch(
-            "SELECT conversation_thread_id, id FROM agent_inputs "
-            "WHERE conversation_thread_id = ANY($1::text[]) AND kind = 'follow_up' AND status = 'pending' "
+            "SELECT thread_id, id FROM agent_inputs "
+            "WHERE thread_id = ANY($1::text[]) AND kind = 'follow_up' AND status = 'pending' "
             "ORDER BY received_seq",
             sorted(thread_ids),
         )
-        return [(str(row["conversation_thread_id"]), str(row["id"])) for row in rows]
+        return [(str(row["thread_id"]), str(row["id"])) for row in rows]
     finally:
         await conn.close()
 
 
-async def delete_test_conversation_rows(thread_ids: set[str]) -> None:
-    """物理删除已完成测试清理的 Conversation 及其历史关联行。"""
+async def delete_test_session_rows(thread_ids: set[str]) -> None:
+    """物理删除已完成测试清理的 Session 及其历史关联行。"""
 
     if not thread_ids:
         return
@@ -499,19 +499,19 @@ async def delete_test_conversation_rows(thread_ids: set[str]) -> None:
     conn = await asyncpg.connect(_postgres_dsn())
     try:
         async with conn.transaction():
-            await _delete_test_conversation_rows(conn, thread_ids_list)
+            await _delete_test_session_rows(conn, thread_ids_list)
 
-        await _assert_test_conversations_deleted(conn, thread_ids_list)
+        await _assert_test_sessions_deleted(conn, thread_ids_list)
     finally:
         await conn.close()
 
 
-async def delete_test_conversation_resources(
+async def delete_test_session_resources(
     workdirs: dict[tuple[str, str], set[str]],
     thread_ids: set[str],
     workdir_project_ids: set[str],
 ) -> None:
-    """先提交测试 Conversation 删除，再在 Project Owner 锁内清理对应文件。"""
+    """先提交测试 Session 删除，再在 Project Owner 锁内清理对应文件。"""
 
     if not thread_ids:
         return
@@ -520,11 +520,11 @@ async def delete_test_conversation_resources(
     try:
         async with conn.transaction():
             await conn.execute("LOCK TABLE projects IN SHARE MODE")
-            await conn.execute("LOCK TABLE conversations IN SHARE MODE")
+            await conn.execute("LOCK TABLE sessions IN SHARE MODE")
             await _validate_test_workdirs_exclusive(conn, workdirs, workdir_project_ids)
-            await _delete_test_conversation_rows(conn, thread_ids_list)
+            await _delete_test_session_rows(conn, thread_ids_list)
 
-        await _assert_test_conversations_deleted(conn, thread_ids_list)
+        await _assert_test_sessions_deleted(conn, thread_ids_list)
         try:
             async with conn.transaction():
                 # 与 linked Project 创建共享同一路径锁；拿锁后再回读 Owner，
@@ -534,57 +534,55 @@ async def delete_test_conversation_resources(
                         "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
                         f"project-workdir:{uid}",
                     )
-                await conn.execute("LOCK TABLE conversations IN SHARE MODE")
+                await conn.execute("LOCK TABLE sessions IN SHARE MODE")
                 await _validate_test_workdirs_exclusive(conn, workdirs, workdir_project_ids)
                 for uid, workdir_path in workdirs:
                     remove_test_workdir(uid, workdir_path)
                 for thread_id in thread_ids:
                     remove_e2e_thread_storage(thread_id)
         except Exception as exc:  # noqa: BLE001
-            raise RuntimeError(f"Test conversation rows were deleted, but filesystem cleanup failed: {exc}") from exc
+            raise RuntimeError(f"Test agent_session rows were deleted, but filesystem cleanup failed: {exc}") from exc
     finally:
         await conn.close()
 
 
-async def _delete_test_conversation_rows(conn: asyncpg.Connection, thread_ids_list: list[str]) -> None:
-    """使用调用方事务删除测试 Conversation 的完整历史。"""
+async def _delete_test_session_rows(conn: asyncpg.Connection, thread_ids_list: list[str]) -> None:
+    """使用调用方事务删除测试 Session 的完整历史。"""
 
-    conversation_rows = await conn.fetch(
+    session_rows = await conn.fetch(
         "SELECT c.id, c.project_id, p.selection_status "
-        "FROM conversations c JOIN projects p ON p.id = c.project_id AND p.uid = c.uid "
+        "FROM sessions c JOIN projects p ON p.id = c.project_id AND p.uid = c.uid "
         "WHERE c.thread_id = ANY($1::text[])",
         thread_ids_list,
     )
-    conversation_ids = [int(row["id"]) for row in conversation_rows]
+    session_record_ids = [int(row["id"]) for row in session_rows]
     implicit_project_ids = [
-        str(row["project_id"])
-        for row in conversation_rows
-        if row["project_id"] and row["selection_status"] == "implicit"
+        str(row["project_id"]) for row in session_rows if row["project_id"] and row["selection_status"] == "implicit"
     ]
     run_rows = await conn.fetch(
-        "SELECT id FROM agent_runs WHERE conversation_thread_id = ANY($1::text[])",
+        "SELECT id FROM agent_runs WHERE thread_id = ANY($1::text[])",
         thread_ids_list,
     )
     run_ids = [str(row["id"]) for row in run_rows]
     turn_rows = await conn.fetch(
-        "SELECT id FROM agent_turns WHERE conversation_thread_id = ANY($1::text[])",
+        "SELECT id FROM agent_turns WHERE thread_id = ANY($1::text[])",
         thread_ids_list,
     )
     turn_ids = [str(row["id"]) for row in turn_rows]
     input_rows = await conn.fetch(
-        "SELECT id FROM agent_inputs WHERE conversation_thread_id = ANY($1::text[])",
+        "SELECT id FROM agent_inputs WHERE thread_id = ANY($1::text[])",
         thread_ids_list,
     )
     input_ids = [str(row["id"]) for row in input_rows]
     message_rows = await conn.fetch(
-        "SELECT id FROM messages WHERE conversation_id = ANY($1::int[])",
-        conversation_ids,
+        "SELECT id FROM messages WHERE session_record_id = ANY($1::int[])",
+        session_record_ids,
     )
     message_ids = [int(row["id"]) for row in message_rows]
 
     await conn.execute("DELETE FROM agent_input_messages WHERE input_id = ANY($1::text[])", input_ids)
     await conn.execute(
-        "DELETE FROM agent_input_receipts WHERE conversation_thread_id = ANY($1::text[])",
+        "DELETE FROM agent_input_receipts WHERE thread_id = ANY($1::text[])",
         thread_ids_list,
     )
     await conn.execute("DELETE FROM tool_calls WHERE message_id = ANY($1::int[])", message_ids)
@@ -600,27 +598,27 @@ async def _delete_test_conversation_rows(conn: asyncpg.Connection, thread_ids_li
     await conn.execute("DELETE FROM scheduled_agent_runs WHERE thread_id = ANY($1::text[])", thread_ids_list)
     await conn.execute(
         "DELETE FROM subagent_threads "
-        "WHERE parent_conversation_id = ANY($1::int[]) "
-        "OR child_conversation_id = ANY($1::int[])",
-        conversation_ids,
+        "WHERE parent_session_record_id = ANY($1::int[]) "
+        "OR child_session_record_id = ANY($1::int[])",
+        session_record_ids,
     )
-    await conn.execute("DELETE FROM conversations WHERE id = ANY($1::int[])", conversation_ids)
+    await conn.execute("DELETE FROM sessions WHERE id = ANY($1::int[])", session_record_ids)
     await conn.execute(
         "DELETE FROM projects WHERE id = ANY($1::text[]) "
-        "AND NOT EXISTS (SELECT 1 FROM conversations WHERE conversations.project_id = projects.id)",
+        "AND NOT EXISTS (SELECT 1 FROM sessions WHERE sessions.project_id = projects.id)",
         implicit_project_ids,
     )
 
 
 async def delete_orphaned_test_projects(owner_uid: str) -> None:
-    """删除当前用户无 Conversation 引用且显式标记的测试 Project。"""
+    """删除当前用户无 Session 引用且显式标记的测试 Project。"""
 
     conn = await asyncpg.connect(_postgres_dsn())
     try:
         await conn.execute(
             "DELETE FROM projects WHERE uid = $1 "
             "AND left(idempotency_key, char_length($2)) = $2 "
-            "AND NOT EXISTS (SELECT 1 FROM conversations WHERE conversations.project_id = projects.id)",
+            "AND NOT EXISTS (SELECT 1 FROM sessions WHERE sessions.project_id = projects.id)",
             owner_uid,
             TEST_RESOURCE_PREFIX,
         )
@@ -628,16 +626,16 @@ async def delete_orphaned_test_projects(owner_uid: str) -> None:
         await conn.close()
 
 
-async def _assert_test_conversations_deleted(conn: asyncpg.Connection, thread_ids_list: list[str]) -> None:
-    """回读确认目标 Conversation 已物理删除。"""
+async def _assert_test_sessions_deleted(conn: asyncpg.Connection, thread_ids_list: list[str]) -> None:
+    """回读确认目标 Session 已物理删除。"""
 
     remaining = await conn.fetch(
-        "SELECT thread_id FROM conversations WHERE thread_id = ANY($1::text[])",
+        "SELECT thread_id FROM sessions WHERE thread_id = ANY($1::text[])",
         thread_ids_list,
     )
     if remaining:
         raise RuntimeError(
-            "Test conversation cleanup left conversations behind: "
+            "Test agent_session cleanup left sessions behind: "
             + ", ".join(sorted(str(row["thread_id"]) for row in remaining))
         )
 
@@ -651,15 +649,15 @@ async def cleanup_test_chat_resources(
     """删除测试对话、消息/run 历史、Project Workdir 和临时智能体。"""
 
     try:
-        resources = await list_test_conversation_resources(owner_uid)
+        resources = await list_test_session_resources(owner_uid)
     except Exception as exc:  # noqa: BLE001
-        raise RuntimeError(f"Failed to list persisted test conversation resources: {exc}") from exc
+        raise RuntimeError(f"Failed to list persisted test agent_session resources: {exc}") from exc
 
     target_thread_ids = set(resources)
     workdir_targets: dict[tuple[str, str], set[str]] = {}
     for resource in resources.values():
         if not SAFE_THREAD_ID.fullmatch(resource.thread_id):
-            raise RuntimeError(f"Test conversation cleanup received an unsafe thread id: {resource.thread_id!r}")
+            raise RuntimeError(f"Test agent_session cleanup received an unsafe thread id: {resource.thread_id!r}")
         _resolve_e2e_thread_storage(resource.thread_id)
         if resource.workdir_path:
             _resolve_test_workdir(resource.uid, resource.workdir_path)
@@ -681,7 +679,7 @@ async def cleanup_test_chat_resources(
     remaining_inputs = await list_test_pending_inputs(target_thread_ids)
     if remaining_inputs:
         raise RuntimeError(
-            "Test conversation cleanup left pending Inputs behind: "
+            "Test agent_session cleanup left pending Inputs behind: "
             + ", ".join(input_id for _, input_id in remaining_inputs)
         )
     await validate_test_runs_terminal(target_thread_ids)
@@ -693,7 +691,7 @@ async def cleanup_test_chat_resources(
         if archive_response.status_code != 200:
             raise RuntimeError(f"Failed to archive persisted test Thread {resource.thread_id}: {archive_response.text}")
 
-    await delete_test_conversation_resources(workdir_targets, target_thread_ids, workdir_project_ids)
+    await delete_test_session_resources(workdir_targets, target_thread_ids, workdir_project_ids)
     await delete_orphaned_test_projects(owner_uid)
 
     failures: list[str] = []

@@ -9,7 +9,7 @@ import pytest
 
 from e2e_helpers import archive_public_thread, delete_agent, postgres_dsn
 from test.e2e.test_agent_lifecycle_e2e import MODEL, OUTPUT, _agent, _message, _provider, _turn
-from test.live_api_cleanup import make_test_conversation_title
+from test.live_api_cleanup import make_test_session_title
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.e2e, pytest.mark.slow, pytest.mark.timeout(180)]
 
@@ -29,7 +29,7 @@ async def test_default_message_keeps_batch_across_concurrent_steer_and_retry(e2e
                 json={
                     "agent_id": slug,
                     "model_spec": MODEL,
-                    "title": make_test_conversation_title("openai-default-mode"),
+                    "title": make_test_session_title("openai-default-mode"),
                 },
             )
             assert created.status_code == 200, created.text
@@ -169,7 +169,7 @@ async def test_default_cancel_target_is_fixed_for_idempotent_retry(e2e_client, e
                 json={
                     "agent_id": slug,
                     "model_spec": MODEL,
-                    "title": make_test_conversation_title("default-cancel"),
+                    "title": make_test_session_title("default-cancel"),
                     "input": [_message(f"{OUTPUT} DETERMINISTIC_BLOCK_BEFORE_RESPONSE:{gate}")],
                 },
             )
@@ -224,7 +224,7 @@ async def test_cancel_preserves_displayed_partial_text_in_public_history(e2e_cli
                 json={
                     "agent_id": slug,
                     "model_spec": MODEL,
-                    "title": make_test_conversation_title("cancel-partial"),
+                    "title": make_test_session_title("cancel-partial"),
                     "input": [
                         _message(f"{OUTPUT} DETERMINISTIC_CANCEL_FOLLOWUP DETERMINISTIC_BLOCK_BEFORE_RESPONSE:{gate}")
                     ],

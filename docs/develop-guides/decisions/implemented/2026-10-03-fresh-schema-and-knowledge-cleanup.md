@@ -16,9 +16,9 @@ ORM 与 fresh baseline DDL 拥有当前结构，初始化器在空库创建基�
 
 ### 初始化与关系约束
 
-当前版本只支持全新建库，直接创建当前结构，不考虑历史数据兼容或数据库迁移。两个域的版本号统一为 `1`，只标记当前初始化契约，不维护历史递增链；执行输入关系和索引代次的简化见[后续关系收敛决定](2026-10-04-execution-and-mention-scope.md)。初始化器确认空库后提交 initializing 标记；进程中断后的重试只清理带该标记的半成品，完成后移除标记。版本门禁拒绝旧库和未完成初始化；部署重建需要对应数据授权。
+当前版本只支持全新建库，直接创建当前结构，不考虑历史数据兼容或数据库迁移。业务域版本为 `2`、知识域版本为 `1`，只标记当前初始化契约，不提供历史升级链；业务版本切换由 [Session 命名决定](2026-10-03-conversation-to-session.md) 拥有；执行输入关系和索引代次的简化见[后续关系收敛决定](2026-10-04-execution-and-mention-scope.md)。初始化器确认空库后提交 initializing 标记；进程中断后的重试只清理带该标记的半成品，完成后移除标记。版本门禁拒绝旧库和未完成初始化；部署重建需要对应数据授权。
 
-Run 的 Conversation ID/Thread ID 绑定同一 Conversation；带执行归属的 Message 同时绑定 Run/Turn 和 Conversation，输入/输出指针指向所属 Run 的消息。开放 Attempt 的部分唯一约束和关键 Run 状态检查保留在 schema。
+Run 的整数 `session_record_id` / 字符串 `thread_id` 绑定同一 Session；带执行归属的 Message 同时绑定 Run/Turn 和 Session，输入/输出指针指向所属 Run 的消息。开放 Attempt 的部分唯一约束和关键 Run 状态检查保留在 schema。
 
 KnowledgeFile/Folder、Chunk、图谱 mention、Dataset/Item、EvaluationRun/RunItem 使用复合键约束冗余归属。文件的 active_generation 拥有唯一服务代次；冗余版本表的移除由后续关系收敛决定拥有。删除 Dataset 保留逐题评估快照；文件夹删除保持子文件关系的既定行为。
 

@@ -237,13 +237,13 @@
 
       <div class="explorer-body">
         <a-empty
-          v-if="!tableLoading && conversationList.length === 0"
+          v-if="!tableLoading && sessionList.length === 0"
           description="没有符合当前条件的会话，可调整关键词或状态后重试"
         />
         <a-table
           v-else
-          :columns="conversationColumns"
-          :data-source="conversationList"
+          :columns="sessionColumns"
+          :data-source="sessionList"
           :loading="tableLoading"
           :pagination="tablePagination"
           :scroll="{ x: 980 }"
@@ -253,9 +253,9 @@
         >
           <template #bodyCell="{ column, record }">
             <template v-if="column.key === 'title'">
-              <div class="conv-title-cell">
+              <div class="group-title-cell">
                 <div class="title-row">
-                  <span class="conv-title" :title="record.title">{{
+                  <span class="group-title" :title="record.title">{{
                     record.title || '未命名会话'
                   }}</span>
                   <a-tag v-if="record.is_pinned" color="orange" size="small">置顶</a-tag>
@@ -388,7 +388,7 @@ const selectedAgentId = ref(undefined)
 const selectedUid = ref(undefined)
 const threadData = ref(null)
 const filterOptions = ref({ users: [], agents: [] })
-const conversationList = ref([])
+const sessionList = ref([])
 const detailDrawerRef = ref(null)
 
 const timeRangeOptions = [
@@ -419,7 +419,7 @@ const userColumns = [
   { title: '消息数', key: 'message_count', width: 70, align: 'center' }
 ]
 
-const conversationColumns = [
+const sessionColumns = [
   { title: '会话标题 & ID', key: 'title', width: '28%' },
   { title: '所属智能体', key: 'agent', width: 190 },
   { title: '用户', key: 'user', width: 180 },
@@ -438,7 +438,7 @@ let trendChart = null
 let depthChart = null
 let agentChart = null
 let latestStatsRequest = 0
-let latestConversationRequest = 0
+let latestSessionRequest = 0
 
 const truncateIdentifier = (value, startLength = 8, endLength = 4) => {
   const text = String(value || '')
@@ -475,18 +475,18 @@ const changeSubagentScope = (value) => {
 
 const loadFilterOptions = async () => {
   try {
-    filterOptions.value = await dashboardApi.getConversationFilterOptions()
+    filterOptions.value = await dashboardApi.getSessionFilterOptions()
   } catch (err) {
     console.error('加载会话筛选项失败:', err)
   }
 }
 
-const loadConversations = async () => {
-  const requestId = ++latestConversationRequest
+const loadSessions = async () => {
+  const requestId = ++latestSessionRequest
   tableLoading.value = true
   try {
     const offset = (tablePagination.value.current - 1) * tablePagination.value.pageSize
-    const res = await dashboardApi.getConversations({
+    const res = await dashboardApi.getSessions({
       status: selectedStatus.value,
       search: searchKeyword.value.trim() || undefined,
       agent_id: selectedAgentId.value,
@@ -494,15 +494,15 @@ const loadConversations = async () => {
       limit: tablePagination.value.pageSize,
       offset
     })
-    if (requestId !== latestConversationRequest) return
+    if (requestId !== latestSessionRequest) return
 
-    conversationList.value = res?.items || []
+    sessionList.value = res?.items || []
     tablePagination.value.total = res?.total || 0
   } catch (err) {
-    if (requestId !== latestConversationRequest) return
+    if (requestId !== latestSessionRequest) return
     console.error('加载会话明细列表失败:', err)
   } finally {
-    if (requestId === latestConversationRequest) tableLoading.value = false
+    if (requestId === latestSessionRequest) tableLoading.value = false
   }
 }
 
@@ -516,7 +516,7 @@ const resetFilters = () => {
 
 const handleSearch = () => {
   tablePagination.value.current = 1
-  loadConversations()
+  loadSessions()
 }
 
 const handleSearchChange = () => {
@@ -528,7 +528,7 @@ const handleSearchChange = () => {
 const handleTableChange = (pag) => {
   tablePagination.value.current = pag.current
   tablePagination.value.pageSize = pag.pageSize
-  loadConversations()
+  loadSessions()
 }
 
 const handleOpenDetail = (threadId) => {
@@ -759,7 +759,7 @@ defineExpose({
 
 onMounted(async () => {
   window.addEventListener('resize', handleResize)
-  await Promise.all([loadData(), loadFilterOptions(), loadConversations()])
+  await Promise.all([loadData(), loadFilterOptions(), loadSessions()])
 })
 
 onUnmounted(() => {
@@ -1007,7 +1007,7 @@ watch(
     }
   }
 
-  .conv-title-cell {
+  .group-title-cell {
     display: flex;
     flex-direction: column;
     gap: 2px;
@@ -1017,7 +1017,7 @@ watch(
       align-items: center;
       gap: 6px;
 
-      .conv-title {
+      .group-title {
         font-size: 13px;
         font-weight: 500;
         color: var(--gray-900);

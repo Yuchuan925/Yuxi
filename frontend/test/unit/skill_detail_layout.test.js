@@ -80,7 +80,7 @@ test('文件保存携带修订值并局部更新，切换文件前检查草稿',
 })
 
 test('无预览 header 的 HTML 文件在编辑态隐藏模式控件', () => {
-  const source = readSource('../../src/modules/conversation/ui/workspace/AgentFilePreview.vue')
+  const source = readSource('../../src/modules/session/ui/workspace/AgentFilePreview.vue')
   const controlsStart = source.indexOf('showInlineHtmlControls &&')
   const controls = source.slice(
     controlsStart,

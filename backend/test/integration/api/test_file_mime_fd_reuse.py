@@ -4,7 +4,7 @@ from hashlib import sha256
 from uuid import uuid4
 
 import pytest
-from test.live_api_cleanup import make_test_conversation_title
+from test.live_api_cleanup import make_test_session_title
 
 from yuxi.infrastructure.minio import get_minio_client
 
@@ -38,7 +38,7 @@ async def test_viewer_and_artifact_download_preserve_mime_and_multichunk_bytes(t
     assert agent_id
     created = await test_client.post(
         "/api/v1/agents/threads",
-        json={"agent_id": agent_id, "title": make_test_conversation_title("mime-fd-copy")},
+        json={"agent_id": agent_id, "title": make_test_session_title("mime-fd-copy")},
         headers={**headers, "Idempotency-Key": str(uuid4())},
     )
     assert created.status_code == 200, created.text

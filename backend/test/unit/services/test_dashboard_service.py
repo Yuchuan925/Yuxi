@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from yuxi.modules.system.dashboard import DashboardService
 from yuxi.modules.agents.models.definitions import Agent
 from yuxi.infrastructure.postgres.base import Base
-from yuxi.modules.agents.models.threads import Conversation
+from yuxi.modules.agents.models.sessions import Session
 from yuxi.modules.identity.models import Department, User
 from yuxi.modules.agents.models.messages import Message, ToolCall
 from yuxi.shared.datetime import utc_now
@@ -75,7 +75,7 @@ async def dashboard_db():
         now = utc_now()
         yesterday = now - timedelta(days=1)
 
-        conv1 = Conversation(
+        conv1 = Session(
             thread_id="thread-101",
             project_id="p-1",
             uid="uid-alice",
@@ -86,7 +86,7 @@ async def dashboard_db():
             created_at=yesterday,
             updated_at=now,
         )
-        conv2 = Conversation(
+        conv2 = Session(
             thread_id="thread-102",
             project_id="p-2",
             uid="uid-bob",
@@ -97,7 +97,7 @@ async def dashboard_db():
             created_at=now,
             updated_at=now,
         )
-        conv3 = Conversation(
+        conv3 = Session(
             thread_id="thread-103",
             project_id="p-3",
             uid="uid-alice",
@@ -108,59 +108,59 @@ async def dashboard_db():
             created_at=yesterday,
             updated_at=yesterday,
         )
-        deleted_conversation = Conversation(
+        deleted_session = Session(
             thread_id="thread-deleted",
             project_id="p-deleted",
             uid="uid-alice",
             agent_id="agent-helper",
-            title="Deleted conversation",
+            title="Deleted agent_session",
             status="deleted",
             created_at=yesterday,
             updated_at=now,
         )
-        deleted_user_conversation = Conversation(
+        deleted_user_session = Session(
             thread_id="thread-deleted-user",
             project_id="p-deleted-user",
             uid="uid-deleted",
             agent_id="agent-helper",
-            title="Deleted user conversation",
+            title="Deleted user agent_session",
             status="active",
             created_at=yesterday,
             updated_at=now,
         )
-        missing_agent_conversation = Conversation(
+        missing_agent_session = Session(
             thread_id="thread-missing-agent",
             project_id="p-missing-agent",
             uid="uid-alice",
             agent_id="removed-agent",
-            title="Removed agent conversation",
+            title="Removed agent agent_session",
             status="active",
             created_at=yesterday,
             updated_at=now,
         )
-        subagent_conversation = Conversation(
+        subagent_session = Session(
             thread_id="thread-subagent",
             project_id="p-subagent",
             uid="uid-alice",
             agent_id="agent-helper",
-            title="Subagent conversation",
+            title="Subagent agent_session",
             status="subagent",
             created_at=yesterday,
             updated_at=now,
         )
 
-        msg1 = Message(conversation=conv1, role="user", content="Hello", created_at=yesterday)
-        msg2 = Message(conversation=conv1, role="assistant", content="Hi there!", created_at=yesterday)
-        msg3 = Message(conversation=conv2, role="user", content="Write code", created_at=now)
+        msg1 = Message(agent_session=conv1, role="user", content="Hello", created_at=yesterday)
+        msg2 = Message(agent_session=conv1, role="assistant", content="Hi there!", created_at=yesterday)
+        msg3 = Message(agent_session=conv2, role="user", content="Write code", created_at=now)
         msg4 = Message(
-            conversation=conv2,
+            agent_session=conv2,
             role="assistant",
             content="Here is code",
             created_at=now,
             extra_metadata={"usage_metadata": {"input_tokens": 5, "output_tokens": 3}},
         )
         hidden_model_audit = Message(
-            conversation=conv2,
+            agent_session=conv2,
             role="assistant",
             content="Intermediate model output",
             message_type="model_audit",
@@ -170,7 +170,7 @@ async def dashboard_db():
             extra_metadata={"usage_metadata": {"input_tokens": 100, "output_tokens": 100}},
         )
         hidden_tool_audit = Message(
-            conversation=conv2,
+            agent_session=conv2,
             role="tool",
             content="Intermediate tool output",
             message_type="tool_audit",
@@ -182,7 +182,7 @@ async def dashboard_db():
             extra_metadata={"usage_metadata": {"input_tokens": 100, "output_tokens": 100}},
         )
         removed_agent_message = Message(
-            conversation=missing_agent_conversation,
+            agent_session=missing_agent_session,
             role="assistant",
             content="Historical removed agent output",
             created_at=now,
@@ -208,10 +208,10 @@ async def dashboard_db():
                 conv1,
                 conv2,
                 conv3,
-                deleted_conversation,
-                deleted_user_conversation,
-                missing_agent_conversation,
-                subagent_conversation,
+                deleted_session,
+                deleted_user_session,
+                missing_agent_session,
+                subagent_session,
                 msg1,
                 msg2,
                 msg3,
@@ -232,8 +232,8 @@ async def test_dashboard_service_basic_stats(dashboard_db):
     service = DashboardService(dashboard_db)
     stats = await service.get_basic_stats()
 
-    assert stats["total_conversations"] == 3
-    assert stats["active_conversations"] == 2
+    assert stats["total_sessions"] == 3
+    assert stats["active_sessions"] == 2
     assert stats["total_messages"] == 4
     assert stats["total_users"] == 3
     assert "feedback_stats" not in stats
@@ -252,7 +252,7 @@ async def test_agent_analytics_omits_removed_top_performers_contract(dashboard_d
 
     assert set(analytics) == {
         "total_agents",
-        "agent_conversation_counts",
+        "agent_session_counts",
         "agent_tool_usage",
         "agent_names",
     }
@@ -320,7 +320,7 @@ async def test_thread_analytics_groups_daily_trends_by_shanghai_date(dashboard_d
     baseline = await service.repo.get_thread_analytics(time_range="7days", now=fixed_now)
     baseline_by_date = {item["date"]: item for item in baseline["daily_trends"]}
 
-    boundary_conversation = Conversation(
+    boundary_session = Session(
         thread_id="thread-shanghai-boundary",
         project_id="p-boundary",
         uid="uid-alice",
@@ -331,12 +331,12 @@ async def test_thread_analytics_groups_daily_trends_by_shanghai_date(dashboard_d
         updated_at=datetime(2026, 8, 23, 16, 30),
     )
     boundary_message = Message(
-        conversation=boundary_conversation,
+        agent_session=boundary_session,
         role="user",
         content="After Shanghai midnight",
         created_at=datetime(2026, 8, 23, 16, 30),
     )
-    dashboard_db.add_all([boundary_conversation, boundary_message])
+    dashboard_db.add_all([boundary_session, boundary_message])
     await dashboard_db.commit()
 
     analytics = await service.repo.get_thread_analytics(time_range="7days", now=fixed_now)
@@ -371,14 +371,14 @@ async def test_thread_analytics_query_count_does_not_grow_with_time_range(dashbo
     assert statement_counts[0] <= 12
 
 
-async def test_dashboard_service_list_conversations_search(dashboard_db):
+async def test_dashboard_service_list_sessions_search(dashboard_db):
     service = DashboardService(dashboard_db)
 
-    all_convs = await service.list_conversations(limit=20)
+    all_convs = await service.list_sessions(limit=20)
     assert all_convs["total"] == 6
     assert len(all_convs["items"]) == 6
     assert all(item["status"] != "deleted" for item in all_convs["items"])
-    deleted_convs = await service.list_conversations(status="deleted", limit=20)
+    deleted_convs = await service.list_sessions(status="deleted", limit=20)
     assert deleted_convs["total"] == 1
     assert deleted_convs["items"][0]["thread_id"] == "thread-deleted"
     deleted_item = next(item for item in all_convs["items"] if item["thread_id"] == "thread-deleted-user")
@@ -386,17 +386,17 @@ async def test_dashboard_service_list_conversations_search(dashboard_db):
     assert deleted_item["user_deleted"] is True
     assert missing_agent_item["agent_deleted"] is True
 
-    search_result = await service.list_conversations(search="Python")
+    search_result = await service.list_sessions(search="Python")
     assert search_result["total"] == 1
     assert search_result["items"][0]["thread_id"] == "thread-103"
     assert search_result["items"][0]["username"] == "Alice"
     assert search_result["items"][0]["agent_name"] == "Coder Agent"
 
-    active_only = await service.list_conversations(status="active")
+    active_only = await service.list_sessions(status="active")
     assert active_only["total"] == 4
     assert len(active_only["items"]) == 4
 
-    options = await service.get_conversation_filter_options()
+    options = await service.get_session_filter_options()
     assert next(item for item in options["users"] if item["uid"] == "uid-deleted")["is_deleted"] is True
     assert next(item for item in options["agents"] if item["agent_id"] == "removed-agent")["is_deleted"] is True
 
@@ -405,13 +405,13 @@ async def test_dashboard_audit_timestamps_carry_timezone_designator(dashboard_db
     """审计接口对外时间必须带时区标识（约定 UTC + Z 后缀），否则前端会按本地时间误读。"""
     service = DashboardService(dashboard_db)
 
-    conversations = await service.list_conversations(limit=20)
-    assert conversations["items"]
-    for item in conversations["items"]:
+    sessions = await service.list_sessions(limit=20)
+    assert sessions["items"]
+    for item in sessions["items"]:
         assert item["created_at"].endswith("Z")
         assert item["updated_at"].endswith("Z")
 
-    detail = await service.get_conversation_detail("thread-102")
+    detail = await service.get_session_detail("thread-102")
     assert detail is not None
     assert detail["created_at"].endswith("Z")
     assert detail["updated_at"].endswith("Z")
@@ -419,9 +419,9 @@ async def test_dashboard_audit_timestamps_carry_timezone_designator(dashboard_db
         assert message["created_at"].endswith("Z")
 
 
-async def test_dashboard_service_conversation_detail(dashboard_db):
+async def test_dashboard_service_session_detail(dashboard_db):
     service = DashboardService(dashboard_db)
-    detail = await service.get_conversation_detail("thread-102")
+    detail = await service.get_session_detail("thread-102")
 
     assert detail is not None
     assert detail["thread_id"] == "thread-102"
@@ -434,20 +434,18 @@ async def test_dashboard_service_conversation_detail(dashboard_db):
     assert assistant_msg["tool_calls"][0]["tool_name"] == "bash"
 
 
-async def test_conversation_tokens_use_runs_and_expose_missing_usage(dashboard_db):
+async def test_session_tokens_use_runs_and_expose_missing_usage(dashboard_db):
     """审计累加同会话 Run，忽略旧汇总并区分真实零和未知。"""
     from sqlalchemy import select
     from yuxi.modules.agents.models.runs import AgentRun
     from yuxi.modules.agents.models.turns import AgentTurn
 
-    conversation = (
-        await dashboard_db.execute(select(Conversation).where(Conversation.thread_id == "thread-102"))
-    ).scalar_one()
+    agent_session = (await dashboard_db.execute(select(Session).where(Session.thread_id == "thread-102"))).scalar_one()
     dashboard_db.add(
         AgentTurn(
             id="usage-turn",
-            conversation_thread_id=conversation.thread_id,
-            uid=conversation.uid,
+            thread_id=agent_session.thread_id,
+            uid=agent_session.uid,
             status="completed",
         )
     )
@@ -461,11 +459,11 @@ async def test_conversation_tokens_use_runs_and_expose_missing_usage(dashboard_d
         dashboard_db.add(
             AgentRun(
                 id=f"usage-run-{index}",
-                conversation_id=conversation.id,
-                conversation_thread_id=conversation.thread_id,
-                runtime_scope_id=conversation.thread_id,
-                agent_slug=conversation.agent_id,
-                uid=conversation.uid,
+                session_record_id=agent_session.id,
+                thread_id=agent_session.thread_id,
+                runtime_scope_id=agent_session.thread_id,
+                agent_slug=agent_session.agent_id,
+                uid=agent_session.uid,
                 status="yielded" if index == 0 else "completed",
                 turn_id="usage-turn",
                 run_type="chat" if index == 0 else "resume",
@@ -476,28 +474,28 @@ async def test_conversation_tokens_use_runs_and_expose_missing_usage(dashboard_d
         await dashboard_db.flush()
     await dashboard_db.commit()
     service = DashboardService(dashboard_db)
-    detail = await service.get_conversation_detail(conversation.thread_id)
-    item = (await service.list_conversations(search="thread-102"))["items"][0]
+    detail = await service.get_session_detail(agent_session.thread_id)
+    item = (await service.list_sessions(search="thread-102"))["items"][0]
     assert detail["total_tokens"] == item["total_tokens"] == 200
     assert item["token_usage_complete"] is True
 
     run = await dashboard_db.get(AgentRun, "usage-run-1")
     run.token_usage = {"available": False}
     await dashboard_db.commit()
-    item = (await service.list_conversations(search="thread-102"))["items"][0]
+    item = (await service.list_sessions(search="thread-102"))["items"][0]
     assert item["total_tokens"] == 120
     assert item["token_usage_complete"] is False
 
     run = await dashboard_db.get(AgentRun, "usage-run-0")
     run.token_usage = {"total": {"total_tokens": 0}, "complete": False, "usage_reported_call_count": 0}
     await dashboard_db.commit()
-    item = (await service.list_conversations(search="thread-102"))["items"][0]
+    item = (await service.list_sessions(search="thread-102"))["items"][0]
     assert item["total_tokens"] is None
     assert item["token_usage_complete"] is False
 
     run.token_usage = {"total": {"total_tokens": 0}, "complete": True, "usage_reported_call_count": 1}
     await dashboard_db.delete(await dashboard_db.get(AgentRun, "usage-run-1"))
     await dashboard_db.commit()
-    item = (await service.list_conversations(search="thread-102"))["items"][0]
+    item = (await service.list_sessions(search="thread-102"))["items"][0]
     assert item["total_tokens"] == 0
     assert item["token_usage_complete"] is True

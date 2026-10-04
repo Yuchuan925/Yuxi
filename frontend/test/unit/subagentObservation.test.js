@@ -9,7 +9,7 @@ before(async () => {
   globalThis.localStorage = { getItem: () => null, setItem: () => {}, removeItem: () => {} }
   server = await createServer({ server: { middlewareMode: true, hmr: false } })
   ;({ agentApi } = await server.ssrLoadModule('/src/apis/index.js'))
-  ;({ useSubagentRuns } = await server.ssrLoadModule('/src/modules/conversation/model/useSubagentRuns.js'))
+  ;({ useSubagentRuns } = await server.ssrLoadModule('/src/modules/session/model/useSubagentRuns.js'))
 })
 after(async () => {
   await server?.close()
@@ -206,7 +206,7 @@ test('同子线程旧 Run 晚发现时仍按创建顺序展示最新 Run', async
     }
   ]
   await settle()
-  const { mergeSubagentRunsForDisplay } = await import('../../src/modules/conversation/model/subagentRuns.js')
+  const { mergeSubagentRunsForDisplay } = await import('../../src/modules/session/model/subagentRuns.js')
   assert.deepEqual(
     mergeSubagentRunsForDisplay(h.observed.value).map((run) => run.run_id),
     ['new']

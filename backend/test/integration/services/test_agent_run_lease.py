@@ -28,7 +28,7 @@ from yuxi.modules.agents.services.openai_events import OpenAIEventAdapter
 from yuxi.modules.agents.models.inputs import AgentInput, AgentInputMessage, AgentInputReceipt
 from yuxi.modules.agents.models.runs import AgentRun
 from yuxi.modules.agents.models.turns import AgentTurn
-from yuxi.modules.agents.models.threads import Conversation, SubagentThread
+from yuxi.modules.agents.models.sessions import Session, SubagentThread
 from yuxi.modules.agents.models.messages import Message, ToolCall
 from yuxi.modules.workspace.models import Project
 from yuxi.modules.identity.models import User
@@ -72,29 +72,23 @@ async def _cleanup_runs(session_factory, thread_ids: list[str]) -> None:
     """按外键顺序清理本测试创建的持久事实。"""
     async with session_factory() as db:
         rows = (
-            await db.execute(
-                select(Conversation.project_id, Conversation.uid).where(Conversation.thread_id.in_(thread_ids))
-            )
+            await db.execute(select(Session.project_id, Session.uid).where(Session.thread_id.in_(thread_ids)))
         ).all()
-        conversation_ids = list(
-            (await db.scalars(select(Conversation.id).where(Conversation.thread_id.in_(thread_ids)))).all()
-        )
-        input_ids = list(
-            (await db.scalars(select(AgentInput.id).where(AgentInput.conversation_thread_id.in_(thread_ids)))).all()
-        )
-        await db.execute(update(AgentRun).where(AgentRun.conversation_thread_id.in_(thread_ids)).values(input_id=None))
+        session_record_ids = list((await db.scalars(select(Session.id).where(Session.thread_id.in_(thread_ids)))).all())
+        input_ids = list((await db.scalars(select(AgentInput.id).where(AgentInput.thread_id.in_(thread_ids)))).all())
+        await db.execute(update(AgentRun).where(AgentRun.thread_id.in_(thread_ids)).values(input_id=None))
         if input_ids:
             await db.execute(delete(AgentInputMessage).where(AgentInputMessage.input_id.in_(input_ids)))
             await db.execute(delete(AgentInputReceipt).where(AgentInputReceipt.input_id.in_(input_ids)))
             await db.execute(delete(AgentInput).where(AgentInput.id.in_(input_ids)))
-        if conversation_ids:
-            message_ids = select(Message.id).where(Message.conversation_id.in_(conversation_ids))
+        if session_record_ids:
+            message_ids = select(Message.id).where(Message.session_record_id.in_(session_record_ids))
             await db.execute(delete(ToolCall).where(ToolCall.message_id.in_(message_ids)))
-            await db.execute(delete(Message).where(Message.conversation_id.in_(conversation_ids)))
-        await db.execute(delete(AgentRun).where(AgentRun.conversation_thread_id.in_(thread_ids)))
-        await db.execute(delete(AgentTurn).where(AgentTurn.conversation_thread_id.in_(thread_ids)))
+            await db.execute(delete(Message).where(Message.session_record_id.in_(session_record_ids)))
+        await db.execute(delete(AgentRun).where(AgentRun.thread_id.in_(thread_ids)))
+        await db.execute(delete(AgentTurn).where(AgentTurn.thread_id.in_(thread_ids)))
         await db.execute(delete(SubagentThread).where(SubagentThread.child_thread_id.in_(thread_ids)))
-        await db.execute(delete(Conversation).where(Conversation.thread_id.in_(thread_ids)))
+        await db.execute(delete(Session).where(Session.thread_id.in_(thread_ids)))
         await db.execute(delete(Project).where(Project.id.in_([row.project_id for row in rows])))
         await db.execute(delete(User).where(User.uid.in_([row.uid for row in rows])))
         await db.commit()
@@ -112,9 +106,7 @@ async def test_owner_heartbeat_and_terminal_are_lease_fenced(lease_database):
             assert acquired is True
             assert await repo.renew_lease(run_id, worker_id="owner-b", lease_seconds=60, now=now) is False
             with pytest.raises(ValueError, match="lease owner"):
-                await repo.lock_output_persistence(
-                    run_id, worker_id="owner-b", conversation_thread_id=thread_id, now=now
-                )
+                await repo.lock_output_persistence(run_id, worker_id="owner-b", thread_id=thread_id, now=now)
             _, changed = await repo.set_terminal_status(run_id, status="failed", worker_id="owner-b", now=now)
             assert changed is False
             assert await repo.renew_lease(run_id, worker_id="owner-a", lease_seconds=60, now=now) is True
@@ -191,11 +183,11 @@ async def test_expired_lease_reconciliation_is_single_winner_and_closes_audit(le
         async with sessions() as db:
             run = await db.get(AgentRun, run_id)
             turn = await db.get(AgentTurn, run.turn_id)
-            conversation = await db.get(Conversation, run.conversation_id)
+            agent_session = await db.get(Session, run.session_record_id)
             [audit] = await ModelMessageAuditRepository(db).list_for_run(run_id)
             [attempt] = await AgentRunRepository(db).list_run_attempts(run_id)
             assert (run.status, run.error_type, run.worker_id) == ("failed", "worker_lease_expired", None)
-            assert turn.status == "failed" and conversation.queue_paused is True
+            assert turn.status == "failed" and agent_session.queue_paused is True
             assert audit.execution_status == "abandoned"
             assert attempt.outcome == "lease_expired"
     finally:
@@ -501,8 +493,8 @@ async def test_root_failure_preserves_independent_child_turn(lease_database, mon
     try:
         async with sessions() as db:
             parent = await db.get(AgentRun, parent_id)
-            parent_thread = await db.get(Conversation, parent.conversation_id)
-            child_thread = Conversation(
+            parent_thread = await db.get(Session, parent.session_record_id)
+            child_thread = Session(
                 thread_id=child_thread_id,
                 uid=parent.uid,
                 project_id=parent_thread.project_id,
@@ -512,14 +504,14 @@ async def test_root_failure_preserves_independent_child_turn(lease_database, mon
             db.add(child_thread)
             await db.flush()
             message = Message(
-                conversation_id=child_thread.id, role="user", content="child input", delivery_status="dispatched"
+                session_record_id=child_thread.id, role="user", content="child input", delivery_status="dispatched"
             )
             db.add(message)
             await db.flush()
             relation = SubagentThread(
                 uid=parent.uid,
-                parent_conversation_id=parent_thread.id,
-                child_conversation_id=child_thread.id,
+                parent_session_record_id=parent_thread.id,
+                child_session_record_id=child_thread.id,
                 child_thread_id=child_thread_id,
                 subagent_slug="worker",
                 created_by_run_id=parent_id,
@@ -528,7 +520,7 @@ async def test_root_failure_preserves_independent_child_turn(lease_database, mon
             await db.flush()
             child_turn = AgentTurn(
                 id=f"child-turn-{uuid.uuid4()}",
-                conversation_thread_id=child_thread_id,
+                thread_id=child_thread_id,
                 uid=parent.uid,
                 status="running",
                 current_run_id=child_id,
@@ -538,13 +530,13 @@ async def test_root_failure_preserves_independent_child_turn(lease_database, mon
             db.add(
                 AgentRun(
                     id=child_id,
-                    conversation_thread_id=child_thread_id,
+                    thread_id=child_thread_id,
                     runtime_scope_id=child_thread_id,
                     agent_slug="worker",
                     uid=parent.uid,
                     app_id=None,
                     turn_id=child_turn.id,
-                    conversation_id=child_thread.id,
+                    session_record_id=child_thread.id,
                     created_by_run_id=parent_id,
                     subagent_thread_relation_id=relation.id,
                     run_type="subagent",

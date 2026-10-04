@@ -11,7 +11,7 @@ def test_workdir_access_resolves_only_scope_relative_paths():
     workspace = object()
     workdir = Workdir("projects/11111111-1111-4111-8111-111111111111", workspace)
     access = svc.AuthorizedWorkdir(
-        conversation_id=1,
+        session_record_id=1,
         thread_id="thread-1",
         uid="user-1",
         workdir=workdir,
@@ -36,7 +36,7 @@ def test_workdir_access_resolves_only_scope_relative_paths():
 
 @pytest.mark.asyncio
 async def test_binding_uses_project_workdir(monkeypatch: pytest.MonkeyPatch):
-    conversation = SimpleNamespace(
+    agent_session = SimpleNamespace(
         id=1,
         thread_id="thread-1",
         uid="user-1",
@@ -44,12 +44,12 @@ async def test_binding_uses_project_workdir(monkeypatch: pytest.MonkeyPatch):
         project_id="project-1",
     )
 
-    class _ConversationRepository:
+    class _SessionRepository:
         def __init__(self, _db):
             pass
 
-        async def get_conversation_by_thread_id(self, _thread_id):
-            return conversation
+        async def get_session_by_thread_id(self, _thread_id):
+            return agent_session
 
     opened = {}
 
@@ -76,7 +76,7 @@ async def test_binding_uses_project_workdir(monkeypatch: pytest.MonkeyPatch):
                 directory_mode="managed",
             )
 
-    monkeypatch.setattr(svc, "ConversationRepository", _ConversationRepository)
+    monkeypatch.setattr(svc, "SessionRepository", _SessionRepository)
     monkeypatch.setattr(svc, "ProjectRepository", _ProjectRepository)
     monkeypatch.setattr(svc, "Workdir", _Workdir)
 
@@ -89,8 +89,8 @@ async def test_binding_uses_project_workdir(monkeypatch: pytest.MonkeyPatch):
 
 
 @pytest.mark.asyncio
-async def test_binding_rejects_cross_user_conversation(monkeypatch: pytest.MonkeyPatch):
-    conversation = SimpleNamespace(
+async def test_binding_rejects_cross_user_session(monkeypatch: pytest.MonkeyPatch):
+    agent_session = SimpleNamespace(
         id=1,
         thread_id="thread-1",
         uid="other-user",
@@ -98,14 +98,14 @@ async def test_binding_rejects_cross_user_conversation(monkeypatch: pytest.Monke
         project_id="project-1",
     )
 
-    class _ConversationRepository:
+    class _SessionRepository:
         def __init__(self, _db):
             pass
 
-        async def get_conversation_by_thread_id(self, _thread_id):
-            return conversation
+        async def get_session_by_thread_id(self, _thread_id):
+            return agent_session
 
-    monkeypatch.setattr(svc, "ConversationRepository", _ConversationRepository)
+    monkeypatch.setattr(svc, "SessionRepository", _SessionRepository)
 
     with pytest.raises(HTTPException) as exc:
         await svc.resolve_authorized_workdir(thread_id="thread-1", uid="user-1", db=object())
@@ -116,17 +116,17 @@ async def test_binding_rejects_cross_user_conversation(monkeypatch: pytest.Monke
 @pytest.mark.asyncio
 async def test_binding_rejects_same_user_from_other_app():
     """Workdir executor 不接受同 UID 的另一个 APP 身份。"""
-    conversation = SimpleNamespace(uid="user-1", app_id="app-a", status="active")
+    agent_session = SimpleNamespace(uid="user-1", app_id="app-a", status="active")
     with pytest.raises(HTTPException) as exc:
-        await svc.resolve_authorized_conversation_workdir(
-            conversation=conversation, uid="user-1", app_id="app-b", db=object()
+        await svc.resolve_authorized_session_workdir(
+            agent_session=agent_session, uid="user-1", app_id="app-b", db=object()
         )
     assert exc.value.status_code == 404
 
 
 @pytest.mark.asyncio
-async def test_binding_resolves_project_workdir_without_conversation_path(monkeypatch: pytest.MonkeyPatch):
-    conversation = SimpleNamespace(
+async def test_binding_resolves_project_workdir_without_session_path(monkeypatch: pytest.MonkeyPatch):
+    agent_session = SimpleNamespace(
         id=1,
         thread_id="thread-1",
         uid="user-1",
@@ -134,12 +134,12 @@ async def test_binding_resolves_project_workdir_without_conversation_path(monkey
         project_id="project-1",
     )
 
-    class _ConversationRepository:
+    class _SessionRepository:
         def __init__(self, _db):
             pass
 
-        async def get_conversation_by_thread_id(self, _thread_id):
-            return conversation
+        async def get_session_by_thread_id(self, _thread_id):
+            return agent_session
 
     class _ProjectRepository:
         def __init__(self, _db):
@@ -162,7 +162,7 @@ async def test_binding_resolves_project_workdir_without_conversation_path(monkey
             assert (uid, workdir_path) == ("user-1", "client/demo")
             return cls()
 
-    monkeypatch.setattr(svc, "ConversationRepository", _ConversationRepository)
+    monkeypatch.setattr(svc, "SessionRepository", _SessionRepository)
     monkeypatch.setattr(svc, "ProjectRepository", _ProjectRepository)
     monkeypatch.setattr(svc, "Workdir", _Workdir)
 
@@ -175,11 +175,11 @@ async def test_binding_resolves_project_workdir_without_conversation_path(monkey
 
 @pytest.mark.asyncio
 async def test_ensure_linked_workdir_opens_existing_without_materializing(monkeypatch: pytest.MonkeyPatch):
-    conversation = SimpleNamespace(id=1, thread_id="thread-1", project_id="project-1", uid="user-1")
+    agent_session = SimpleNamespace(id=1, thread_id="thread-1", project_id="project-1", uid="user-1")
 
     async def resolve_binding(**_kwargs):
         return svc.WorkdirBinding(
-            conversation_id=1,
+            session_record_id=1,
             thread_id="thread-1",
             uid="user-1",
             project_id="project-1",
@@ -194,7 +194,7 @@ async def test_ensure_linked_workdir_opens_existing_without_materializing(monkey
         def open_existing(cls, uid, workdir_path):
             opened.append((uid, workdir_path))
 
-    monkeypatch.setattr(svc, "resolve_conversation_workdir_binding", resolve_binding)
+    monkeypatch.setattr(svc, "resolve_session_workdir_binding", resolve_binding)
     monkeypatch.setattr(svc, "Workdir", _Workdir)
     monkeypatch.setattr(
         svc,
@@ -202,8 +202,8 @@ async def test_ensure_linked_workdir_opens_existing_without_materializing(monkey
         lambda *_args: pytest.fail("linked Workdir 不能走 managed 物化"),
     )
 
-    result = await svc.ensure_conversation_workdir_available(
-        conversation=conversation,
+    result = await svc.ensure_session_workdir_available(
+        agent_session=agent_session,
         uid="user-1",
         db=object(),
     )

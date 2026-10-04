@@ -2,7 +2,7 @@
 
 状态：implemented
 类型：simplification
-Owner：frontend/src/modules/conversation/model/thread_draft.js
+Owner：frontend/src/modules/session/model/thread_draft.js
 
 ## 问题
 
@@ -24,7 +24,7 @@ Owner：frontend/src/modules/conversation/model/thread_draft.js
 
 ## 验证
 
-旧能力不存在：`chatThreads.js` 与 `ConversationWorkspace.vue` 不再调用 `createThreadDraftStore()`，仅引用 `thread_draft.js` 的共享实例。
+旧能力不存在：`chatThreads.js` 与 `SessionWorkspace.vue` 不再调用 `createThreadDraftStore()`，仅引用 `thread_draft.js` 的共享实例。
 
 重新引入条件：只有出现不同用户/存储 scope 的明确宿主边界，且新增实例不读写当前默认 key 时，才允许通过工厂创建额外 Owner，并补充 scope 决策与测试。
 

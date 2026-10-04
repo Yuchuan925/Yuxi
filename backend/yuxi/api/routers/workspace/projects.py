@@ -78,7 +78,7 @@ async def list_history_candidates(
     current_user: User = Depends(get_required_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """列出可作为目录快捷选择的历史 Conversation。"""
+    """列出可作为目录快捷选择的历史 Session。"""
     return await list_history_candidates_view(uid=str(current_user.uid), db=db, query=q, limit=limit, offset=offset)
 
 

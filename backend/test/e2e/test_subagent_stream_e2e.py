@@ -12,7 +12,7 @@ import pytest
 
 from e2e_helpers import delete_agent, postgres_dsn, skip_if_external_quota
 from test.live_api_cleanup import (
-    make_test_conversation_title,
+    make_test_session_title,
 )
 from yuxi.modules.agents.runtime.sandbox.paths import runtime_workdir_path
 
@@ -48,7 +48,7 @@ async def _create_thread(
         "/api/v1/agents/threads",
         json={
             "agent_id": agent_id,
-            "title": make_test_conversation_title(f"subagent-stream-e2e-{marker}"),
+            "title": make_test_session_title(f"subagent-stream-e2e-{marker}"),
         },
         headers={**headers, "Idempotency-Key": f"subagent-thread-{uuid.uuid4().hex}"},
     )
@@ -59,8 +59,7 @@ async def _create_thread(
     conn = await asyncpg.connect(postgres_dsn())
     try:
         workdir_path = await conn.fetchval(
-            "SELECT p.workdir_path FROM projects p "
-            "JOIN conversations c ON c.project_id = p.id WHERE c.thread_id = $1",
+            "SELECT p.workdir_path FROM projects p JOIN sessions c ON c.project_id = p.id WHERE c.thread_id = $1",
             thread_id,
         )
     finally:
@@ -132,7 +131,9 @@ async def _consume_run_stream(
             if event_type == "agent.session.turn.failed":
                 skip_if_external_quota(event["turn"].get("error"))
             if event_type in {
-                "agent.session.turn.completed", "agent.session.turn.failed", "agent.session.turn.cancelled"
+                "agent.session.turn.completed",
+                "agent.session.turn.failed",
+                "agent.session.turn.cancelled",
             }:
                 terminal_status = event["turn"]["status"]
                 return
@@ -345,30 +346,22 @@ async def test_subagent_stream_records_run_and_shares_output_files(
         assert event_counts.get("agent.session.turn.item.done", 0) > 0
         assert event_counts.get("agent.session.turn.completed") == 1
 
-        turn_response = await e2e_client.get(
-            f"/api/v1/agents/threads/{thread_id}/turns/{turn_id}", headers=e2e_headers
-        )
+        turn_response = await e2e_client.get(f"/api/v1/agents/threads/{thread_id}/turns/{turn_id}", headers=e2e_headers)
         _assert_ok(turn_response)
         parent_turn = turn_response.json()
         assert parent_turn["status"] == "completed"
         assert parent_turn["result_run_id"] == run_id
 
-        run_response = await e2e_client.get(
-            f"/api/v1/agents/threads/{thread_id}/runs/{run_id}", headers=e2e_headers
-        )
+        run_response = await e2e_client.get(f"/api/v1/agents/threads/{thread_id}/runs/{run_id}", headers=e2e_headers)
         _assert_ok(run_response)
         parent_run = run_response.json()
         assert parent_run.get("status") == "completed"
         assert parent_run.get("turn_id") == turn_id
 
-        state_response = await e2e_client.get(
-            f"/api/v1/agents/threads/{thread_id}/state", headers=e2e_headers
-        )
+        state_response = await e2e_client.get(f"/api/v1/agents/threads/{thread_id}/state", headers=e2e_headers)
         _assert_ok(state_response)
         final_agent_state = state_response.json().get("agent_state") or stream_agent_state
-        history_response = await e2e_client.get(
-            f"/api/v1/agents/threads/{thread_id}/history", headers=e2e_headers
-        )
+        history_response = await e2e_client.get(f"/api/v1/agents/threads/{thread_id}/history", headers=e2e_headers)
         _assert_ok(history_response)
         history_payload = history_response.json()
         subagent_runs = final_agent_state.get("subagent_runs") or []
@@ -376,7 +369,8 @@ async def test_subagent_stream_records_run_and_shares_output_files(
         file_task_calls = {
             item["call_id"]
             for item in history_payload["items"]
-            if item["type"] == "function_call" and item["name"] == "subagent_start"
+            if item["type"] == "function_call"
+            and item["name"] == "subagent_start"
             and output_path in json.dumps(item["arguments"], ensure_ascii=False)
         }
         assert file_task_calls, "父工具调用未指定目标文件任务"
@@ -412,7 +406,7 @@ async def test_subagent_stream_records_run_and_shares_output_files(
         _assert_ok(child_run_response)
         child_run = child_run_response.json()
         assert child_run.get("run_type") == "subagent"
-        assert child_run.get("conversation_thread_id") == child_thread_id
+        assert child_run.get("thread_id") == child_thread_id
         assert child_run.get("created_by_run_id") == run_id
         assert child_run.get("status") == "completed"
         assert child_run.get("turn_id") != turn_id
@@ -449,9 +443,7 @@ async def test_subagent_stream_records_run_and_shares_output_files(
         # 父工具结果允许包含子任务链接；隔离由 item 的执行归属和持久身份证明。
         assert public_items and all(item["yuxi"]["run_id"] == run_id for item in public_items)
         assert all(item["turn_id"] == turn_id for item in public_items)
-        assert {item["id"] for item in public_items}.isdisjoint(
-            item["id"] for item in child_state_payload["items"]
-        )
+        assert {item["id"] for item in public_items}.isdisjoint(item["id"] for item in child_state_payload["items"])
 
         history_text = json.dumps(history_payload, ensure_ascii=False)
         start_results = _find_tool_result_contents(history_payload["items"], {completed_run["id"]})
@@ -510,9 +502,7 @@ async def test_subagent_stream_records_run_and_shares_output_files(
                         headers=e2e_headers,
                     )
         if thread_id and run_completed:
-            archive_response = await e2e_client.post(
-                f"/api/v1/agents/threads/{thread_id}/archive", headers=e2e_headers
-            )
+            archive_response = await e2e_client.post(f"/api/v1/agents/threads/{thread_id}/archive", headers=e2e_headers)
             assert archive_response.status_code == 200, archive_response.text
         for slug in reversed(created_agents):
             await delete_agent(e2e_client, e2e_headers, slug)

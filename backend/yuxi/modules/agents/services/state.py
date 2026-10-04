@@ -10,8 +10,8 @@ from yuxi.infrastructure.observability.logging import logger
 from yuxi.infrastructure.postgres.checkpointer import get_langgraph_checkpointer
 from yuxi.infrastructure.postgres.manager import pg_manager
 from yuxi.modules.agents.repositories.runs import AgentRunRepository
+from yuxi.modules.agents.repositories.sessions import SessionRepository
 from yuxi.modules.agents.repositories.subagents import SubagentThreadRepository
-from yuxi.modules.agents.repositories.threads import ConversationRepository
 from yuxi.modules.agents.repositories.turn import AgentTurnRepository
 from yuxi.modules.agents.services.execution import build_pending_interrupt_payload, extract_agent_state
 from yuxi.modules.agents.services.subagents import serialize_subagent_run_state
@@ -45,11 +45,11 @@ async def get_agent_state_view(
 ) -> dict:
     """按用户和 APP 作用域读取 checkpoint 及持久执行关系。"""
     current_uid = str(current_user.uid)
-    conv_repo = ConversationRepository(db)
+    session_repo = SessionRepository(db)
     run_repo = AgentRunRepository(db)
-    conversation = await conv_repo.get_conversation_by_thread_id(thread_id)
-    if conversation:
-        if conversation.uid != str(current_uid) or conversation.app_id != app_id or conversation.status == "deleted":
+    agent_session = await session_repo.get_session_by_thread_id(thread_id)
+    if agent_session:
+        if agent_session.uid != str(current_uid) or agent_session.app_id != app_id or agent_session.status == "deleted":
             raise HTTPException(status_code=404, detail="对话线程不存在")
 
         latest_run = await run_repo.get_latest_run_by_thread_for_user(thread_id, current_uid)
@@ -75,22 +75,22 @@ async def get_agent_state_view(
                 }
         if include_relations:
             # checkpoint 保存模型上下文；页面加载以持久 Run 的身份与状态为准。
-            child_runs = await run_repo.list_subagent_runs_for_conversation(conversation.id, current_uid)
+            child_runs = await run_repo.list_subagent_runs_for_session(agent_session.id, current_uid)
             response["agent_state"]["subagent_runs"] = [serialize_subagent_run_state(run) for run in child_runs]
-            relation = await SubagentThreadRepository(db).get_by_child_conversation_for_user(
-                conversation.id,
+            relation = await SubagentThreadRepository(db).get_by_child_session_for_user(
+                agent_session.id,
                 str(current_uid),
             )
             if relation:
-                parent_conversation = await conv_repo.get_conversation_by_id(relation.parent_conversation_id)
+                parent_session = await session_repo.get_session_by_id(relation.parent_session_record_id)
                 if (
-                    not parent_conversation
-                    or parent_conversation.uid != str(current_uid)
-                    or parent_conversation.app_id != app_id
-                    or parent_conversation.status == "deleted"
+                    not parent_session
+                    or parent_session.uid != str(current_uid)
+                    or parent_session.app_id != app_id
+                    or parent_session.status == "deleted"
                 ):
                     raise HTTPException(status_code=404, detail="父对话线程不存在")
-                response["parent_thread_id"] = parent_conversation.thread_id
+                response["parent_thread_id"] = parent_session.thread_id
                 response["subagent_thread"] = relation.to_dict()
                 latest_run = await run_repo.get_latest_subagent_run_by_thread_for_user(
                     thread_id,
@@ -113,5 +113,5 @@ async def get_agent_state_view(
         return response
 
     # 子智能体线程在创建时必然同时写入子对话与线程关系（见 SubagentRunService.start），
-    # 由上面的 conversation 分支统一处理；走到这里说明该 thread 没有对应对话，即线程不存在。
+    # 由上面的 agent_session 分支统一处理；走到这里说明该 thread 没有对应对话，即线程不存在。
     raise HTTPException(status_code=404, detail="对话线程不存在")

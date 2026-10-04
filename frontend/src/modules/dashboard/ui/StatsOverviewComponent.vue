@@ -3,22 +3,22 @@
     <DashboardMetricGrid>
       <DashboardMetricCard
         :icon="MessageCircle"
-        :value="formatNumber(props.basicStats?.total_conversations)"
+        :value="formatNumber(props.basicStats?.total_sessions)"
         label="累计会话"
         tone="primary"
       >
-        <template #meta v-if="props.basicStats?.conversation_trend">
-          <span class="metric-trend" :class="props.basicStats.conversation_trend > 0 ? 'up' : 'down'">
-            <TrendingUp v-if="props.basicStats.conversation_trend > 0" />
+        <template #meta v-if="props.basicStats?.session_trend">
+          <span class="metric-trend" :class="props.basicStats.session_trend > 0 ? 'up' : 'down'">
+            <TrendingUp v-if="props.basicStats.session_trend > 0" />
             <TrendingDown v-else />
-            {{ Math.abs(props.basicStats.conversation_trend) }}%
+            {{ Math.abs(props.basicStats.session_trend) }}%
           </span>
         </template>
       </DashboardMetricCard>
 
       <DashboardMetricCard
         :icon="Activity"
-        :value="formatNumber(props.basicStats?.active_conversations)"
+        :value="formatNumber(props.basicStats?.active_sessions)"
         label="活跃对话"
         tone="success"
       />

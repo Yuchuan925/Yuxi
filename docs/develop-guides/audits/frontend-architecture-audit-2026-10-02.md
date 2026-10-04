@@ -8,13 +8,13 @@
 
 1. **迁移只做了“搬家”没做“收敛”**——143 个旧组件原样搬进新结构，巨型文件一个没拆，旧的坏习惯（双错误体系、样式复制、localStorage 各写各的）全部带进了新家；
 2. **依赖方向存在真实破坏**——`apis ↔ identity` 形成两条 import 环，`model → ui` 有一处层级倒挂，这是边界规则管不到的盲区；
-3. **会话域（conversation）是全项目风险中心**——5647 行的 `ConversationWorkspace.vue` 承载了约十种职责，既有重构提案（2026-09-30）已识别大半，但本次审计发现了提案未覆盖的机制级问题。
+3. **会话域（session）是全项目风险中心**——5647 行的 `SessionWorkspace.vue` 承载了约十种职责，既有重构提案（2026-09-30）已识别大半，但本次审计发现了提案未覆盖的机制级问题。
 
 ## 二、结构性问题（按严重度排序）
 
-### 1. ConversationWorkspace.vue：5647 行的上帝组件（严重，提案已覆盖大半）
+### 1. SessionWorkspace.vue：5647 行的上帝组件（严重，提案已覆盖大半）
 
-`src/modules/conversation/ui/ConversationWorkspace.vue` 同时承担：6 个 store 的装配、按线程分桶的会话运行时（`threadStates` 每桶 17 个字段）、消息投影合并、SSE 流编排回调注入、输入队列、审批、附件、面板布局/拖拽/ResizeObserver、草稿持久化、配置变更提示。脚本约 3090 行 + 样式 1730 行，且在 scoped 块里 `@import '@/assets/css/main.css'` 把整套全局样式复制进组件（`:3918`）。
+`src/modules/session/ui/SessionWorkspace.vue` 同时承担：6 个 store 的装配、按线程分桶的会话运行时（`threadStates` 每桶 17 个字段）、消息投影合并、SSE 流编排回调注入、输入队列、审批、附件、面板布局/拖拽/ResizeObserver、草稿持久化、配置变更提示。脚本约 3090 行 + 样式 1730 行，且在 scoped 块里 `@import '@/assets/css/main.css'` 把整套全局样式复制进组件（`:3918`）。
 
 配套问题：该组件被路由 meta `keepAlive: true` 保活（`app/layouts/AppLayout.vue:525`），意味着这个巨石连同其全部监听器在切页后常驻内存。`pages/AgentView.vue` 已瘦身到 93 行并抽出 `threadRouteCoordinator.ts`（串行路由协调，写得不错），说明重构已在进行，但真正的硬骨头还没动。
 
@@ -27,7 +27,7 @@
 
 目前靠“store 在函数体内延迟调用”没有运行时爆栈，属于结构性隐患。正确方向是 apis 不回头 import modules（token 经参数注入），`base.js` 反向依赖 identity 后，“基础设施层”就没法独立测试和复用了。
 
-还有一处**层级倒挂**：`conversation/model/messageGrouping.js:2` import `ui/tools/toolRegistry` 的 `enrichTaskToolCalls`——投影层依赖展示层。提案定义了 model/data/ui 边界规则但没点名这条既有边，照提案迁移时会把倒挂带进新结构。
+还有一处**层级倒挂**：`session/model/messageGrouping.js:2` import `ui/tools/toolRegistry` 的 `enrichTaskToolCalls`——投影层依赖展示层。提案定义了 model/data/ui 边界规则但没点名这条既有边，照提案迁移时会把倒挂带进新结构。
 
 ### 3. 客户端 superadmin 守卫空转（中，真实缺陷，本次新发现）
 
@@ -35,9 +35,9 @@
 
 ### 4. 跨域耦合枢纽 + 模块无公开入口（中）
 
-modules 间跨域 import 共 84 处。耦合中心是 **identity**（被 6 个域引用 18 次）和 **agents**（`ModelSelectorComponent`、`ShareConfigForm` 被 5 个域的 UI 直接消费）；conversation 是最大消费方（出边 6 个域）。dashboard 是唯一零跨域的干净域。
+modules 间跨域 import 共 84 处。耦合中心是 **identity**（被 6 个域引用 18 次）和 **agents**（`ModelSelectorComponent`、`ShareConfigForm` 被 5 个域的 UI 直接消费）；session 是最大消费方（出边 6 个域）。dashboard 是唯一零跨域的干净域。
 
-conversation 域**没有公开入口（无 index）**，外部 8+ 处深路径直捣其内部：`AppLayout → ConversationNavSection/GlobalSearchModal`、`agents/ui/ScheduledAgentEditor → ToolApprovalModeSelector`（跨模块深路径）、`knowledge/FileDetailModal`、`workspace/WorkspacePreviewPane → AgentFilePreview` 等。提案规划了依赖方向但未盘点这些存量消费者，迁移时全是隐性破坏面。另外 `GlobalSearchModal` 同时挂在 AppLayout 和 AgentPanel 两个宿主下，一个组件两套生命周期。
+session 域**没有公开入口（无 index）**，外部 8+ 处深路径直捣其内部：`AppLayout → SessionNavSection/GlobalSearchModal`、`agents/ui/ScheduledAgentEditor → ToolApprovalModeSelector`（跨模块深路径）、`knowledge/FileDetailModal`、`workspace/WorkspacePreviewPane → AgentFilePreview` 等。提案规划了依赖方向但未盘点这些存量消费者，迁移时全是隐性破坏面。另外 `GlobalSearchModal` 同时挂在 AppLayout 和 AgentPanel 两个宿主下，一个组件两套生命周期。
 
 ### 5. pages 层残留巨石（中）
 
@@ -74,7 +74,7 @@ AgentView 已瘦身，但其余页面未跟上：`DataBaseInfoView.vue` 1424 行
 ### 10. 样式体系失控（中高）
 
 - **`extensions.less`（838 行）被 11 个组件的 scoped 块各自 `@import`**，同一份样式带 11 种 scope hash 重复编译进产物（约膨胀 9000 行 CSS）。受影响文件清单已验证：FileTable、SkillCardList、McpDetailView、ExtensionsView、DataBaseInfoView 等 11 处。
-- `ConversationWorkspace.vue:3918` 在 scoped 块里 import 全局 `main.css`。
+- `SessionWorkspace.vue:3918` 在 scoped 块里 import 全局 `main.css`。
 - 全 src 共 **298 处 `:deep(`**（56 个文件）、**313 处 `.ant-*` 选择器覆盖**——是“重度重皮”而非主题 token 定制；`main.css:20-28` 还有 `* { position: relative }` 全局通配 reset。
 - scoped/全局双 style 块混用无规范（13 个组件双块并存，6 个纯全局）。
 
@@ -86,7 +86,7 @@ AgentView 已瘦身，但其余页面未跟上：`DataBaseInfoView.vue` 1424 行
 2. **输入领取靠每条 1 秒轮询**：`useAgentInputQueue.js:80` 每个 input 一个独立定时器，N 条排队 = N 个轮询器，无退避；提案说“前端只投影服务端 FIFO”却没给出替代轮询的领取通知机制。
 3. **重连无退避**：主流固定 1s `setTimeout`（`useAgentRunStream.js:211-217`），子流固定 2s（`useSubagentRuns.js:97`），服务端故障时是固定频率重压。
 4. **JSON 深拷贝热点**：`agentItems.js:4` 每个事件 delta/快照都用 `JSON.parse(JSON.stringify)` 克隆，长流式 run 下的 CPU 成本未被列入提案性能清单。
-5. **草稿 store 双实例**：`chatThreads.js:8` 模块级与 `ConversationWorkspace.vue:960` 组件级各持一个 `createThreadDraftStore()` 实例操作同一批 localStorage 键，两个 Owner 写同一存储。
+5. **草稿 store 双实例**：`chatThreads.js:8` 模块级与 `SessionWorkspace.vue:960` 组件级各持一个 `createThreadDraftStore()` 实例操作同一批 localStorage 键，两个 Owner 写同一存储。
 6. **主聊天内联渲染行，子线程用 `ThreadMessageList`**——两套投影消费者并存（提案点名了现象，但未给出统一时的这条具体路径）。
 7. `tools/ToolCallRenderer.vue` 静态 import 全部 24 个渲染器，低频 renderer 无懒加载。
 
@@ -103,14 +103,14 @@ AgentView 已瘦身，但其余页面未跟上：`DataBaseInfoView.vue` 1424 行
 
 - 五层骨架 + ESLint 边界规则 + 边界回归测试的组合，约束真实有效；shared 零反向依赖、modules 不依赖 app/pages 均已验证；
 - `apis/` 各文件是干净的薄包装，`base.js` 的日志脱敏、422 白名单质量高；
-- conversation 的 SSE 字节解析（`processRunSseResponse`）、事件 reducer（`agentItems.applyAgentEvent`）、流平滑器（`useStreamSmoother`，rAF + 字素级 + reduced-motion）都是可独立测试的纯函数，设计良好；
+- session 的 SSE 字节解析（`processRunSseResponse`）、事件 reducer（`agentItems.applyAgentEvent`）、流平滑器（`useStreamSmoother`，rAF + 字素级 + reduced-motion）都是可独立测试的纯函数，设计良好；
 - dashboard 域完全自包含，是 modules 里分层最干净的样本；
 - `AgentView.vue` 93 行 + `threadRouteCoordinator.ts` 串行队列说明重构方法论已经跑通一次。
 
 ## 七、优先级建议
 
 1. **P0**：修 `apiSuperAdmin*` 守卫空转（一行契约统一）；收敛 token 三处写入到 user store 单点。
-2. **P1**：打断 `apis ↔ identity` 双环（token 注入化）；消除 `messageGrouping → toolRegistry` 倒挂；按提案推进 ConversationWorkspace 拆分，并把本次新发现的 7 个机制问题补进提案的阶段清单（尤其审批单例与轮询领取，它们影响提案的目标架构形状）。
+2. **P1**：打断 `apis ↔ identity` 双环（token 注入化）；消除 `messageGrouping → toolRegistry` 倒挂；按提案推进 SessionWorkspace 拆分，并把本次新发现的 7 个机制问题补进提案的阶段清单（尤其审批单例与轮询领取，它们影响提案的目标架构形状）。
 3. **P2**：antd 按需引入；shiki/hljs 收敛为一个；extensions.less 改为真正全局引入一次；清理 7 组空目录。
 4. **P3**：pages 层大页面按 AgentView 模式逐个搬入 modules；TS 覆盖面扩大到 model 层；router meta 统一。
 

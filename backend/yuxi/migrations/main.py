@@ -36,6 +36,7 @@ async def _require_empty_database() -> None:
         set(BusinessBase.metadata.tables)
         | set(KnowledgeBase.metadata.tables)
         | {
+            "conversations",  # 已退役的业务表仍属于旧库，禁止被当作空库。
             "checkpoint_writes",
             "checkpoint_blobs",
             "checkpoints",

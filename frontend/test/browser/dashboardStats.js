@@ -53,5 +53,5 @@ async (page) => {
   await page.locator('.token-num').first().waitFor()
   check(await page.locator('.explorer-card').getByText('进行中', {exact:true}).count() === 0, 'active 被误译成进行中')
   check(await page.locator('.explorer-card').getByText('未归档', {exact:true}).count() > 0, '未显示真实会话状态')
-  return { widths: [1440,1024,768,375], fileTypes: 8, emptyState: true, conversationStatus: '未归档' }
+  return { widths: [1440,1024,768,375], fileTypes: 8, emptyState: true, sessionStatus: '未归档' }
 }

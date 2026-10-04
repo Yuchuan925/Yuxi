@@ -4,7 +4,7 @@ from yuxi.modules.agents.runtime.sandbox import backend as sandbox_backend
 from yuxi.modules.agents.runtime.agent_backends.chatbot.state import merge_subagent_runs
 from yuxi.modules.agents.runtime.state import merge_artifacts
 from yuxi.modules.extensions.tools.builtin.present_artifacts import _normalize_presented_artifact_path
-from yuxi.modules.agents.runtime.sandbox.paths import CONVERSATION_HISTORY_DIR_NAME, LARGE_TOOL_RESULTS_DIR_NAME
+from yuxi.modules.agents.runtime.sandbox.paths import SESSION_HISTORY_DIR_NAME, LARGE_TOOL_RESULTS_DIR_NAME
 
 
 def _runtime_with_thread(thread_id: str, uid: str = "user-1"):
@@ -192,6 +192,6 @@ def test_normalize_presented_artifact_path_does_not_special_case_internal_names(
     thread_id = "artifacts-reject-internal"
     _stub_output_exists(monkeypatch)
 
-    for dir_name in [LARGE_TOOL_RESULTS_DIR_NAME, CONVERSATION_HISTORY_DIR_NAME, "large_tool_history"]:
+    for dir_name in [LARGE_TOOL_RESULTS_DIR_NAME, SESSION_HISTORY_DIR_NAME, "large_tool_history"]:
         path = f"/home/gem/user-data/projects/11111111-1111-4111-8111-111111111111/outputs/{dir_name}/stage.txt"
         assert _normalize_presented_artifact_path(path, _runtime_with_thread(thread_id)) == path

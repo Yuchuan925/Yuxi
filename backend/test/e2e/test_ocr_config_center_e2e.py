@@ -8,7 +8,7 @@ import pytest
 from PIL import Image, ImageDraw, ImageFont
 
 from test.live_api_cleanup import (
-    make_test_conversation_title,
+    make_test_session_title,
     remove_e2e_thread_storage,
 )
 from yuxi.infrastructure.minio.client import get_minio_client
@@ -50,7 +50,7 @@ async def test_admin_ocr_config_drives_real_tmp_attachment_parse(
             "/api/v1/agents/threads",
             json={
                 "agent_id": e2e_agent_context["agent_slug"],
-                "title": make_test_conversation_title("ocr-config-e2e"),
+                "title": make_test_session_title("ocr-config-e2e"),
             },
             headers={**e2e_headers, "Idempotency-Key": f"ocr-config-{uuid4().hex}"},
         )

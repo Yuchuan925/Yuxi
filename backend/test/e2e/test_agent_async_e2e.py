@@ -13,7 +13,7 @@ import pytest
 
 from test.e2e.test_agent_lifecycle_e2e import output_text
 from e2e_helpers import delete_agent, postgres_dsn, skip_if_external_quota
-from test.live_api_cleanup import make_test_conversation_title
+from test.live_api_cleanup import make_test_session_title
 from test.support.public_events import read_events
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.e2e, pytest.mark.slow]
@@ -66,7 +66,7 @@ async def _create_thread(client: httpx.AsyncClient, headers: dict[str, str], age
     """通过 Public API 创建独立测试 Thread。"""
     response = await client.post(
         "/api/v1/agents/threads",
-        json={"agent_id": agent_slug, "title": make_test_conversation_title("agent-async-e2e")},
+        json={"agent_id": agent_slug, "title": make_test_session_title("agent-async-e2e")},
         headers={**headers, "Idempotency-Key": f"async-thread-{uuid.uuid4().hex}"},
     )
     assert response.status_code == 200, response.text
@@ -80,10 +80,20 @@ async def _submit_input(client: httpx.AsyncClient, headers: dict[str, str], thre
     response = await client.post(
         f"/api/v1/agents/threads/{thread_id}/events",
         json={
-            "events": [{"type": "agent.session.input.message", "input": [{
-                    "role": "user",
-                    "content": [{"type": "input_text", "text": f"请只回复 {EXPECTED_OUTPUT}，不要添加任何解释。"}],
-                }], "yuxi": {"mode": "follow_up"}}]
+            "events": [
+                {
+                    "type": "agent.session.input.message",
+                    "input": [
+                        {
+                            "role": "user",
+                            "content": [
+                                {"type": "input_text", "text": f"请只回复 {EXPECTED_OUTPUT}，不要添加任何解释。"}
+                            ],
+                        }
+                    ],
+                    "yuxi": {"mode": "follow_up"},
+                }
+            ]
         },
         headers={**headers, "Idempotency-Key": f"async-input-{uuid.uuid4().hex}"},
     )
@@ -141,7 +151,7 @@ async def _assert_run_persisted(
         row = await conn.fetchrow(
             """
             SELECT ar.id, ar.status, ar.error_message, ar.run_type, ar.agent_slug, ar.uid,
-                   ar.conversation_thread_id, ar.turn_id, ar.input_id, ar.conversation_id,
+                   ar.thread_id, ar.turn_id, ar.input_id, ar.session_record_id,
                    ar.input_message_id, ar.output_message_id, ar.created_at, ar.started_at,
                    ar.finished_at, ai.status AS input_status, ai.turn_id AS input_turn_id,
                    ai.consumed_run_id, at.status AS turn_status, at.result_run_id,
@@ -152,7 +162,7 @@ async def _assert_run_persisted(
             FROM agent_runs ar
             JOIN agent_inputs ai ON ai.id = ar.input_id
             JOIN agent_turns at ON at.id = ar.turn_id
-            JOIN conversations conv ON conv.id = ar.conversation_id
+            JOIN sessions conv ON conv.id = ar.session_record_id
             LEFT JOIN messages input_msg ON input_msg.id = ar.input_message_id
             LEFT JOIN messages output_msg ON output_msg.id = ar.output_message_id
             WHERE ar.id = $1
@@ -165,7 +175,7 @@ async def _assert_run_persisted(
         assert row["status"] == row["turn_status"] == "completed"
         assert row["run_type"] == "chat"
         assert (row["agent_slug"], row["uid"]) == (agent_slug, uid)
-        assert row["conversation_thread_id"] == row["persisted_thread_id"] == thread_id
+        assert row["thread_id"] == row["persisted_thread_id"] == thread_id
         assert row["turn_id"] == row["input_turn_id"] == turn_id
         assert row["input_id"] == input_id
         assert row["input_status"] == "consumed" and row["consumed_run_id"] == run_id
@@ -204,9 +214,7 @@ async def test_async_agent_run_stream_result_and_persistence(
         assert streamed[-1]["type"] == "agent.session.turn.completed", streamed[-1]
         assert streamed[-1]["yuxi"]["run_id"] == run_id and streamed[-1]["yuxi"]["input_id"] == input_id
 
-        turn_response = await e2e_client.get(
-            f"/api/v1/agents/threads/{thread_id}/turns/{turn_id}", headers=e2e_headers
-        )
+        turn_response = await e2e_client.get(f"/api/v1/agents/threads/{thread_id}/turns/{turn_id}", headers=e2e_headers)
         assert turn_response.status_code == 200, turn_response.text
         turn = turn_response.json()
         if turn["status"] != "completed":
@@ -227,21 +235,24 @@ async def test_async_agent_run_stream_result_and_persistence(
         assert any(item["yuxi"].get("input_id") == input_id and item["turn_id"] == turn_id for item in history["items"])
         assert any(
             item["yuxi"]["run_id"] == run_id and item["turn_id"] == turn_id and EXPECTED_OUTPUT in output_text([item])
-            for item in history["items"] if item["type"] == "message" and item["role"] == "assistant"
+            for item in history["items"]
+            if item["type"] == "message" and item["role"] == "assistant"
         )
         assert any(item["run_id"] == run_id and item["turn_id"] == turn_id for item in history["runs"])
 
         await _assert_run_persisted(
-            run_id=run_id, input_id=input_id, turn_id=turn_id,
-            thread_id=thread_id, agent_slug=agent_slug, uid=uid,
+            run_id=run_id,
+            input_id=input_id,
+            turn_id=turn_id,
+            thread_id=thread_id,
+            agent_slug=agent_slug,
+            uid=uid,
         )
 
         first_cursor = next(
             event["cursor"] for event in streamed if event["type"] == "agent.session.turn.output_text.delta"
         )
-        replayed = await _stream_until_terminal(
-            e2e_client, e2e_headers, thread_id, turn_id, after_cursor=first_cursor
-        )
+        replayed = await _stream_until_terminal(e2e_client, e2e_headers, thread_id, turn_id, after_cursor=first_cursor)
         assert replayed[-1]["type"] == "agent.session.turn.completed"
         assert replayed[-1]["yuxi"]["run_id"] == run_id and replayed[-1]["yuxi"]["input_id"] == input_id
         completed = True

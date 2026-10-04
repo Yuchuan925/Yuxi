@@ -121,28 +121,28 @@ async def test_unselected_message_and_run_thread_must_match_execution_scope():
             for sql in (
                 "INSERT INTO users (uid,username,password_hash,role,is_deleted,login_failed_count) VALUES ('u','u','fixture','user',0,0)",
                 "INSERT INTO projects (id,uid,selection_status,workdir_path,directory_mode) VALUES ('p','u','implicit','projects/p','managed')",
-                "INSERT INTO conversations (thread_id,uid,agent_id,project_id,status,is_pinned) VALUES ('ta','u','main','p','active',false),('tb','u','main','p','active',false)",
-                "INSERT INTO agent_turns (id,conversation_thread_id,uid,status,created_at) VALUES ('turn','ta','u','running',CURRENT_TIMESTAMP)",
-                "INSERT INTO agent_runs (id,conversation_thread_id,runtime_scope_id,turn_id,conversation_id,agent_slug,uid,status,source,channel,run_type,origin_metadata,input_payload,token_usage,runtime_cleanup_pending) SELECT 'run','ta','ta','turn',id,'main','u','pending','chat','web','chat','{}','{}','{}',false FROM conversations WHERE thread_id='ta'",
+                "INSERT INTO sessions (thread_id,uid,agent_id,project_id,status,is_pinned) VALUES ('ta','u','main','p','active',false),('tb','u','main','p','active',false)",
+                "INSERT INTO agent_turns (id,thread_id,uid,status,created_at) VALUES ('turn','ta','u','running',CURRENT_TIMESTAMP)",
+                "INSERT INTO agent_runs (id,thread_id,runtime_scope_id,turn_id,session_record_id,agent_slug,uid,status,source,channel,run_type,origin_metadata,input_payload,token_usage,runtime_cleanup_pending) SELECT 'run','ta','ta','turn',id,'main','u','pending','chat','web','chat','{}','{}','{}',false FROM sessions WHERE thread_id='ta'",
             ):
                 await conn.execute(text(sql))
-        with pytest.raises(IntegrityError, match="fk_messages_run_turn_conversation"):
+        with pytest.raises(IntegrityError, match="fk_messages_run_turn_session"):
             async with engine.begin() as conn:
                 await conn.execute(
                     text(
-                        "INSERT INTO messages (conversation_id,role,content,run_id,turn_id,delivery_status,message_type) SELECT id,'assistant','audit','run','turn','complete','model_audit' FROM conversations WHERE thread_id='tb'"
+                        "INSERT INTO messages (session_record_id,role,content,run_id,turn_id,delivery_status,message_type) SELECT id,'assistant','audit','run','turn','complete','model_audit' FROM sessions WHERE thread_id='tb'"
                     )
                 )
-        with pytest.raises(IntegrityError, match="fk_agent_runs_conversation_thread"):
+        with pytest.raises(IntegrityError, match="fk_agent_runs_session_thread"):
             async with engine.begin() as conn:
                 await conn.execute(
                     text(
-                        "UPDATE agent_runs SET conversation_id=(SELECT id FROM conversations WHERE thread_id='tb') WHERE id='run'"
+                        "UPDATE agent_runs SET session_record_id=(SELECT id FROM sessions WHERE thread_id='tb') WHERE id='run'"
                     )
                 )
         async with engine.connect() as conn:
             assert await conn.scalar(text("SELECT count(*) FROM messages")) == 0
-            assert await conn.scalar(text("SELECT conversation_thread_id FROM agent_runs WHERE id='run'")) == "ta"
+            assert await conn.scalar(text("SELECT thread_id FROM agent_runs WHERE id='run'")) == "ta"
     finally:
         await _drop_isolated_schema(schema, admin, engine)
 
@@ -157,10 +157,10 @@ async def test_input_consumption_and_receipt_references_stay_in_owning_thread():
             for sql in (
                 "INSERT INTO users (uid,username,password_hash,role,is_deleted,login_failed_count) VALUES ('u','u','fixture','user',0,0)",
                 "INSERT INTO projects (id,uid,selection_status,workdir_path,directory_mode) VALUES ('p','u','implicit','projects/p','managed')",
-                "INSERT INTO conversations (thread_id,uid,agent_id,project_id,status,is_pinned) VALUES ('ta','u','main','p','active',false),('tb','u','main','p','active',false)",
-                "INSERT INTO agent_turns (id,conversation_thread_id,uid,status,created_at) VALUES ('turn-a','ta','u','completed',now()),('turn-b','tb','u','completed',now()),('turn-a2','ta','u','completed',now())",
-                "INSERT INTO agent_runs (id,conversation_thread_id,runtime_scope_id,turn_id,conversation_id,agent_slug,uid,status,source,channel,run_type,origin_metadata,input_payload,token_usage,runtime_cleanup_pending) SELECT 'run-a','ta','ta','turn-a',id,'main','u','completed','chat','web','chat','{}','{}','{}',false FROM conversations WHERE thread_id='ta'",
-                "INSERT INTO agent_inputs (id,conversation_thread_id,uid,agent_slug,kind,status,input_payload,source,channel,origin_metadata,created_at) VALUES ('input-a','ta','u','main','follow_up','pending','{}','chat','web','{}',now()),('input-b','tb','u','main','follow_up','pending','{}','chat','web','{}',now())",
+                "INSERT INTO sessions (thread_id,uid,agent_id,project_id,status,is_pinned) VALUES ('ta','u','main','p','active',false),('tb','u','main','p','active',false)",
+                "INSERT INTO agent_turns (id,thread_id,uid,status,created_at) VALUES ('turn-a','ta','u','completed',now()),('turn-b','tb','u','completed',now()),('turn-a2','ta','u','completed',now())",
+                "INSERT INTO agent_runs (id,thread_id,runtime_scope_id,turn_id,session_record_id,agent_slug,uid,status,source,channel,run_type,origin_metadata,input_payload,token_usage,runtime_cleanup_pending) SELECT 'run-a','ta','ta','turn-a',id,'main','u','completed','chat','web','chat','{}','{}','{}',false FROM sessions WHERE thread_id='ta'",
+                "INSERT INTO agent_inputs (id,thread_id,uid,agent_slug,kind,status,input_payload,source,channel,origin_metadata,created_at) VALUES ('input-a','ta','u','main','follow_up','pending','{}','chat','web','{}',now()),('input-b','tb','u','main','follow_up','pending','{}','chat','web','{}',now())",
             ):
                 await conn.execute(text(sql))
         invalid = (
@@ -171,19 +171,19 @@ async def test_input_consumption_and_receipt_references_stay_in_owning_thread():
             ("fk_agent_runs_input_thread", "UPDATE agent_runs SET input_id='input-b' WHERE id='run-a'"),
             (
                 "fk_agent_input_receipts_input_thread",
-                "INSERT INTO agent_input_receipts (id,idempotency_key,uid,conversation_thread_id,event_type,intent_hash,input_id,created_at) VALUES ('bad','bad','u','ta','input','fixture','input-b',now())",
+                "INSERT INTO agent_input_receipts (id,idempotency_key,uid,thread_id,event_type,intent_hash,input_id,created_at) VALUES ('bad','bad','u','ta','input','fixture','input-b',now())",
             ),
             (
                 "fk_agent_input_receipts_turn_thread",
-                "INSERT INTO agent_input_receipts (id,idempotency_key,uid,conversation_thread_id,event_type,intent_hash,turn_id,created_at) VALUES ('bad','bad','u','ta','cancel','fixture','turn-b',now())",
+                "INSERT INTO agent_input_receipts (id,idempotency_key,uid,thread_id,event_type,intent_hash,turn_id,created_at) VALUES ('bad','bad','u','ta','cancel','fixture','turn-b',now())",
             ),
             (
                 "fk_agent_input_receipts_run_turn",
-                "INSERT INTO agent_input_receipts (id,idempotency_key,uid,conversation_thread_id,event_type,intent_hash,turn_id,run_id,created_at) VALUES ('bad','bad','u','ta','cancel','fixture','turn-a2','run-a',now())",
+                "INSERT INTO agent_input_receipts (id,idempotency_key,uid,thread_id,event_type,intent_hash,turn_id,run_id,created_at) VALUES ('bad','bad','u','ta','cancel','fixture','turn-a2','run-a',now())",
             ),
             (
                 "ck_agent_input_receipts_run_turn",
-                "INSERT INTO agent_input_receipts (id,idempotency_key,uid,conversation_thread_id,event_type,intent_hash,run_id,created_at) VALUES ('bad','bad','u','tb','cancel','fixture','run-a',now())",
+                "INSERT INTO agent_input_receipts (id,idempotency_key,uid,thread_id,event_type,intent_hash,run_id,created_at) VALUES ('bad','bad','u','tb','cancel','fixture','run-a',now())",
             ),
         )
         for constraint, sql in invalid:
@@ -199,14 +199,14 @@ async def test_input_consumption_and_receipt_references_stay_in_owning_thread():
             )
             await conn.execute(
                 text(
-                    "INSERT INTO agent_input_receipts (id,idempotency_key,uid,conversation_thread_id,event_type,intent_hash,input_id,turn_id,run_id,created_at) VALUES ('ok','ok','u','ta','input','fixture','input-a','turn-a','run-a',now())"
+                    "INSERT INTO agent_input_receipts (id,idempotency_key,uid,thread_id,event_type,intent_hash,input_id,turn_id,run_id,created_at) VALUES ('ok','ok','u','ta','input','fixture','input-a','turn-a','run-a',now())"
                 )
             )
         async with engine.connect() as conn:
             row = (
                 await conn.execute(
                     text(
-                        "SELECT i.conversation_thread_id,t.conversation_thread_id,r.conversation_thread_id FROM agent_inputs i JOIN agent_turns t ON t.id=i.turn_id JOIN agent_runs r ON r.id=i.consumed_run_id WHERE i.id='input-a'"
+                        "SELECT i.thread_id,t.thread_id,r.thread_id FROM agent_inputs i JOIN agent_turns t ON t.id=i.turn_id JOIN agent_runs r ON r.id=i.consumed_run_id WHERE i.id='input-a'"
                     )
                 )
             ).one()

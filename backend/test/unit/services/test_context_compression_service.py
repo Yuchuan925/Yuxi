@@ -39,7 +39,7 @@ class _Graph:
 @pytest.mark.asyncio
 async def test_compress_thread_context_uses_locked_idle_thread(monkeypatch: pytest.MonkeyPatch) -> None:
     events = []
-    conversation = SimpleNamespace(
+    agent_session = SimpleNamespace(
         uid="user-1",
         status="active",
         agent_id="assistant",
@@ -51,13 +51,13 @@ async def test_compress_thread_context_uses_locked_idle_thread(monkeypatch: pyte
         async def commit(self):
             events.append("commit")
 
-    class ConversationRepo:
+    class SessionRepo:
         def __init__(self, _db):
             pass
 
-        async def lock_conversation_by_thread_id(self, thread_id):
+        async def lock_session_by_thread_id(self, thread_id):
             events.append(("lock", thread_id))
-            return conversation
+            return agent_session
 
     class AgentRepo:
         def __init__(self, _db):
@@ -85,11 +85,11 @@ async def test_compress_thread_context_uses_locked_idle_thread(monkeypatch: pyte
         events.append(("compress", kwargs["context"].model))
         return {"status": "completed", "after_tokens": 300}
 
-    monkeypatch.setattr(service, "ConversationRepository", ConversationRepo)
+    monkeypatch.setattr(service, "SessionRepository", SessionRepo)
     monkeypatch.setattr(service, "AgentRepository", AgentRepo)
     monkeypatch.setattr(service, "_ensure_thread_idle", idle)
     monkeypatch.setattr(service, "resolve_agent_run_model_spec", resolve_model)
-    monkeypatch.setattr(service, "ensure_conversation_workdir_available", workdir)
+    monkeypatch.setattr(service, "ensure_session_workdir_available", workdir)
     monkeypatch.setattr(service, "_ensure_runtime_available", runtime)
     monkeypatch.setattr(service, "_release_runtime", release)
     monkeypatch.setattr(service, "_compress_agent_checkpoint", compress)
@@ -117,14 +117,14 @@ async def test_compress_thread_context_uses_locked_idle_thread(monkeypatch: pyte
 async def test_compress_rejects_same_user_from_other_app(monkeypatch: pytest.MonkeyPatch) -> None:
     """压缩副作用在 service 锁内重新核对 APP。"""
 
-    class ConversationRepo:
+    class SessionRepo:
         def __init__(self, _db):
             pass
 
-        async def lock_conversation_by_thread_id(self, _thread_id):
+        async def lock_session_by_thread_id(self, _thread_id):
             return SimpleNamespace(uid="user-1", app_id="app-a", status="active")
 
-    monkeypatch.setattr(service, "ConversationRepository", ConversationRepo)
+    monkeypatch.setattr(service, "SessionRepository", SessionRepo)
     with pytest.raises(HTTPException) as exc:
         await service.compress_thread_context(
             thread_id="thread-1", current_user=SimpleNamespace(uid="user-1"), db=object(), app_id="app-b"

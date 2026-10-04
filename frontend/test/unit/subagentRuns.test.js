@@ -5,7 +5,7 @@ import test from 'node:test'
 import {
   isSubagentLaunchToolName,
   mergeSubagentRunsForDisplay
-} from '../../src/modules/conversation/model/subagentRuns.js'
+} from '../../src/modules/session/model/subagentRuns.js'
 
 test('同步 task 和异步 subagent_start 都属于子智能体启动调用', () => {
   assert.equal(isSubagentLaunchToolName('task'), true)
@@ -85,7 +85,7 @@ test('异步启动继续同一子线程时显示最新一次输入描述', () =>
 
 test('历史会话从 messages 分组收集子智能体任务描述', () => {
   const source = readFileSync(
-    new URL('../../src/modules/conversation/ui/ConversationWorkspace.vue', import.meta.url),
+    new URL('../../src/modules/session/ui/SessionWorkspace.vue', import.meta.url),
     'utf8'
   )
   const collector = source.slice(
@@ -95,7 +95,7 @@ test('历史会话从 messages 分组收集子智能体任务描述', () => {
 
   assert.match(
     collector,
-    /historyConversations\.value\.forEach\(\(conversation\) => collect\(conversation\?\.messages\)\)/
+    /historyRunGroups\.value\.forEach\(\(group\) => collect\(group\?\.messages\)\)/
   )
 })
 

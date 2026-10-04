@@ -10,7 +10,7 @@ test('文件 mention 来自附件元数据并按路径去重', async () => {
   })
   try {
     const { useAgentMentionConfig } = await server.ssrLoadModule(
-      '/src/modules/conversation/model/useAgentMentionConfig.js'
+      '/src/modules/session/model/useAgentMentionConfig.js'
     )
     const attachments = ref([
       {
@@ -54,7 +54,7 @@ test('资源 mention 按智能体选择生成，不把预加载 Skills 当成可
   })
   try {
     const { useAgentMentionConfig } = await server.ssrLoadModule(
-      '/src/modules/conversation/model/useAgentMentionConfig.js'
+      '/src/modules/session/model/useAgentMentionConfig.js'
     )
     const getMentionMcps = (agentConfig) => {
       const { mentionConfig } = useAgentMentionConfig({

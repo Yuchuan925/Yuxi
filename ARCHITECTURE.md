@@ -67,10 +67,10 @@ Yuxi 始终交付完整知识能力。API 注册知识库、图谱、评估、Da
 
 - `app/main.js` 挂载应用，`app/App.vue` 提供主题与根 RouterView，`app/router` 与 `app/layouts` 拥有路由、访问守卫和应用导航。
 - `pages` 是路由适配与页面装配入口。`AgentView` 把路由选择交给串行协调器，并装配会话工作区与智能体选择器。
-- `modules` 按 conversation、agents、projects、workspace、knowledge、extensions、identity、settings、tasks、dashboard 组织业务；`ui` 拥有界面，`model` 拥有状态与领域逻辑。会话编排、Input 排队、Thread SSE、审批和提及属于 conversation；智能体目录、选择与编辑属于 agents。
+- `modules` 按 session、agents、projects、workspace、knowledge、extensions、identity、settings、tasks、dashboard 组织业务；`ui` 拥有界面，`model` 拥有状态与领域逻辑。会话编排、Input 排队、Thread SSE、审批和提及属于 session；智能体目录、选择与编辑属于 agents。
 - `shared/ui` 与 `shared/lib` 保存通用界面和工具，`shared/model` 保存主题状态；全局样式集中在 `assets/css`，颜色和基础规范复用 `base.css`。
 - `apis` 是集中 HTTP 边界，复用 `base.js` 的请求、鉴权和错误处理。模块不能依赖 app/pages，shared 不能依赖业务模块或 API；ESLint 检查别名、相对路径和动态导入。
-- 新 TypeScript 逻辑经 strict 类型检查，build 先执行 typecheck；现有 JavaScript 逐步迁移。当前 conversation 的 ConversationWorkspace 仍拥有聊天编排，独立 Thread 阅读与统一输入内核见[重构提案](docs/develop-guides/decisions/proposed/2026-09-30-agent-view-frontend-refactor.md)。
+- 新 TypeScript 逻辑经 strict 类型检查，build 先执行 typecheck；现有 JavaScript 逐步迁移。当前 session 的 SessionWorkspace 仍拥有聊天编排，独立 Thread 阅读与统一输入内核见[重构提案](docs/develop-guides/decisions/proposed/2026-09-30-agent-view-frontend-refactor.md)。
 
 `/` 是公开首页；登录后的核心工作区是 `/agent`。`/extensions` 对所有登录用户开放，其中 Skills 对普通用户可见，知识库、工具和 MCP 管理能力仅管理员可见；Dashboard 仅超级管理员可访问。后端权限检查始终是最终边界，前端守卫只负责页面体验。
 
@@ -78,7 +78,7 @@ Yuxi 始终交付完整知识能力。API 注册知识库、图谱、评估、Da
 
 一次普通智能体输入经过以下边界：
 
-1. `AgentView` 装配 `ConversationWorkspace`，后者收集文本、图片、附件、模型与审批配置，`frontend/src/apis/agent_api.js` 调用 Public Thread API。Session 路径只是同一 Thread 用例的协议命名适配。
+1. `AgentView` 装配 `SessionWorkspace`，后者收集文本、图片、附件、模型与审批配置，`frontend/src/apis/agent_api.js` 调用 Public Thread API。Session 路径只是同一 Thread 用例的协议命名适配。
 2. `api/routers/public_v1/agents` 将 JWT 或 API Key 身份转为完整 ActorScope，并把有序消息和配置交给 `modules/agents/services/inputs.py`。接入事务锁定 Thread，验证作用域与幂等回执，保存 Input、Message 和 Receipt；配置在接收时冻结。
 3. `modules/agents/services/scheduler.py` 在线程锁下领取未暂停队列的优先队头，原子创建 Turn 与首个 pending Run。follow-up 彼此 FIFO；每个 Thread 的 pending steer 聚合为唯一优先批次。排队 Input 不绑定 Turn，消费时固定 Turn/Run 归属；等待回答或审批时拒绝普通消息。
 4. owning transaction 提交后才向 ARQ 投递 pending Run。恢复扫描可补投未成功投递的同一个 Run，不自动重试已经失败的工作。

@@ -11,7 +11,7 @@ import {
   settlePreviewCacheLoad,
   shouldRefreshActivePreview,
   startAgentPanelFilesystemPolling
-} from '../../src/modules/conversation/model/agentPanelFilesystemPolling.js'
+} from '../../src/modules/session/model/agentPanelFilesystemPolling.js'
 
 test('agent panel polls live files every second and stops on cleanup', async () => {
   let callback

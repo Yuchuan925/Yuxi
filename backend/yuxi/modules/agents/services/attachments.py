@@ -18,7 +18,7 @@ from yuxi.infrastructure.minio import StorageError, get_minio_client
 from yuxi.infrastructure.observability.logging import logger
 from yuxi.modules.agents.repositories.input import AgentInputRepository
 from yuxi.modules.agents.repositories.runs import AgentRunRepository
-from yuxi.modules.agents.repositories.threads import ConversationRepository
+from yuxi.modules.agents.repositories.sessions import SessionRepository
 from yuxi.modules.agents.runtime.sandbox.paths import runtime_path_for_workdir_scope, workdir_scope_from_runtime_path
 from yuxi.modules.system.options import system_options
 from yuxi.modules.workspace.filesystem import Workspace
@@ -173,14 +173,14 @@ async def confirm_tmp_thread_attachments_view(
     if not attachments:
         raise HTTPException(status_code=400, detail="请选择要添加的附件")
 
-    conv_repo = ConversationRepository(db)
-    conversation = await _require_user_conversation(conv_repo, thread_id, str(current_uid), app_id)
-    if conversation.status != "active":
+    session_repo = SessionRepository(db)
+    agent_session = await _require_user_session(session_repo, thread_id, str(current_uid), app_id)
+    if agent_session.status != "active":
         raise HTTPException(status_code=409, detail="Thread 已归档")
-    from yuxi.modules.workspace.services.bindings import resolve_authorized_conversation_workdir
+    from yuxi.modules.workspace.services.bindings import resolve_authorized_session_workdir
 
-    binding = await resolve_authorized_conversation_workdir(
-        conversation=conversation,
+    binding = await resolve_authorized_session_workdir(
+        agent_session=agent_session,
         uid=str(current_uid),
         db=db,
         app_id=app_id,
@@ -230,7 +230,7 @@ async def confirm_tmp_thread_attachments_view(
         raise
 
     try:
-        await conv_repo.add_attachments(conversation.id, added_records)
+        await session_repo.add_attachments(agent_session.id, added_records)
         await db.commit()
     except (Exception, asyncio.CancelledError):
         await db.rollback()
@@ -273,9 +273,9 @@ async def list_thread_attachments_view(
     app_id: str | None = None,
 ) -> dict:
     """列出指定对话线程的附件。"""
-    conv_repo = ConversationRepository(db)
-    conversation = await _require_user_conversation(conv_repo, thread_id, str(current_uid), app_id)
-    attachments = await conv_repo.get_attachments(conversation.id)
+    session_repo = SessionRepository(db)
+    agent_session = await _require_user_session(session_repo, thread_id, str(current_uid), app_id)
+    attachments = await session_repo.get_attachments(agent_session.id)
     return {
         "attachments": [serialize_attachment(item, thread_id=thread_id) for item in attachments],
         "limits": {
@@ -294,19 +294,19 @@ async def delete_thread_attachment_view(
     app_id: str | None = None,
 ) -> dict:
     """删除指定对话线程的附件。"""
-    conv_repo = ConversationRepository(db)
-    conversation = await _require_user_conversation(conv_repo, thread_id, str(current_uid), app_id)
-    from yuxi.modules.workspace.services.bindings import resolve_authorized_conversation_workdir
+    session_repo = SessionRepository(db)
+    agent_session = await _require_user_session(session_repo, thread_id, str(current_uid), app_id)
+    from yuxi.modules.workspace.services.bindings import resolve_authorized_session_workdir
 
-    binding = await resolve_authorized_conversation_workdir(
-        conversation=conversation,
+    binding = await resolve_authorized_session_workdir(
+        agent_session=agent_session,
         uid=str(current_uid),
         db=db,
         app_id=app_id,
     )
     workdir = binding.workdir
 
-    existing_attachments = await conv_repo.lock_attachments(conversation.id)
+    existing_attachments = await session_repo.lock_attachments(agent_session.id)
     target_attachment = next((item for item in existing_attachments if item.get("file_id") == file_id), None)
     if target_attachment is None:
         raise HTTPException(status_code=404, detail="附件不存在或已被删除")
@@ -317,20 +317,20 @@ async def delete_thread_attachment_view(
             input_id=input_id,
             thread_id=thread_id,
             uid=str(current_uid),
-            app_id=conversation.app_id,
+            app_id=agent_session.app_id,
         )
         if input_item and input_item.status == "pending":
             raise HTTPException(status_code=409, detail="附件正在被输入使用，暂时不能删除")
 
     active_run = await AgentRunRepository(db).get_active_run_by_thread_for_user(
-        agent_slug=conversation.agent_id,
-        conversation_thread_id=thread_id,
+        agent_slug=agent_session.agent_id,
+        thread_id=thread_id,
         uid=str(current_uid),
     )
     if active_run:
         raise HTTPException(status_code=409, detail="对话正在运行，暂时不能删除附件")
 
-    removed = await conv_repo.remove_attachment(conversation.id, file_id)
+    removed = await session_repo.remove_attachment(agent_session.id, file_id)
     if not removed:
         raise HTTPException(status_code=404, detail="附件不存在或已被删除")
 
@@ -354,19 +354,17 @@ async def delete_thread_attachment_view(
     return {"message": "附件已删除"}
 
 
-async def _require_user_conversation(
-    conv_repo: ConversationRepository, thread_id: str, uid: str, app_id: str | None = None
-):
+async def _require_user_session(session_repo: SessionRepository, thread_id: str, uid: str, app_id: str | None = None):
     """在附件副作用边界校验 Thread 的用户与 APP 归属。"""
-    conversation = await conv_repo.get_conversation_by_thread_id(thread_id)
+    agent_session = await session_repo.get_session_by_thread_id(thread_id)
     if (
-        not conversation
-        or conversation.uid != str(uid)
-        or getattr(conversation, "app_id", None) != app_id
-        or conversation.status == "deleted"
+        not agent_session
+        or agent_session.uid != str(uid)
+        or getattr(agent_session, "app_id", None) != app_id
+        or agent_session.status == "deleted"
     ):
         raise HTTPException(status_code=404, detail="对话线程不存在")
-    return conversation
+    return agent_session
 
 
 def _tmp_attachment_owner(uid: str, app_id: str | None) -> str:

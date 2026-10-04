@@ -23,7 +23,7 @@ from yuxi.modules.agents.services.scope import ActorScope
 from yuxi.modules.agents.services.threads import require_thread
 from yuxi.modules.agents.services.tracing import finish_turn_observation_if_terminal
 from yuxi.modules.agents.services.transport import publish_cancel_signals
-from yuxi.modules.workspace.services.bindings import resolve_conversation_workdir_binding
+from yuxi.modules.workspace.services.bindings import resolve_session_workdir_binding
 
 
 async def resume_turn(
@@ -48,8 +48,8 @@ async def resume_turn(
         _require_replay(existing, event_type, intent_hash)
         return _accepted(existing)
 
-    conversation = await require_thread(db=db, scope=scope, thread_id=thread_id)
-    # 与 Agent 删除保持 Agent → Conversation 的锁序。
+    agent_session = await require_thread(db=db, scope=scope, thread_id=thread_id)
+    # 与 Agent 删除保持 Agent → Session 的锁序。
     from yuxi.modules.agents.repositories.definitions import AgentRepository
     from yuxi.modules.identity.repositories.users import UserRepository
 
@@ -58,7 +58,7 @@ async def resume_turn(
         None
         if user is None or user.is_deleted
         else await AgentRepository(db).get_visible_by_slug(
-            slug=conversation.agent_id,
+            slug=agent_session.agent_id,
             user=user,
             kind="any",
             for_key_share=True,
@@ -66,8 +66,8 @@ async def resume_turn(
     )
     if agent is None:
         raise HTTPException(status_code=404, detail="Agent 不可访问")
-    conversation = await require_thread(db=db, scope=scope, thread_id=thread_id, lock=True)
-    if conversation.status not in {"active", "subagent"}:
+    agent_session = await require_thread(db=db, scope=scope, thread_id=thread_id, lock=True)
+    if agent_session.status not in {"active", "subagent"}:
         raise HTTPException(status_code=409, detail="Thread 已归档")
     turn_repo = AgentTurnRepository(db)
     turn = await turn_repo.get_for_scope(
@@ -88,11 +88,11 @@ async def resume_turn(
     if previous is None or previous.status != "interrupted" or waitpoint.get("run_id") != previous.id:
         raise HTTPException(status_code=409, detail="等待点与 interrupted Run 不一致")
     resume_value = _validate_resume_response(waitpoint, response)
-    binding = await resolve_conversation_workdir_binding(conversation=conversation, uid=scope.uid, db=db)
+    binding = await resolve_session_workdir_binding(agent_session=agent_session, uid=scope.uid, db=db)
 
     run_id = str(uuid.uuid4())
     message = Message(
-        conversation_id=conversation.id,
+        session_record_id=agent_session.id,
         role="user",
         content=json.dumps(response, ensure_ascii=False),
         message_type="resume",
@@ -113,7 +113,7 @@ async def resume_turn(
     await db.flush()
     await AgentRunRepository(db).create_run(
         run_id=run_id,
-        conversation_thread_id=thread_id,
+        thread_id=thread_id,
         runtime_scope_id=previous.runtime_scope_id,
         agent_slug=previous.agent_slug,
         uid=scope.uid,
@@ -125,7 +125,7 @@ async def resume_turn(
         channel=previous.channel,
         external_id=previous.external_id,
         origin_metadata=previous.origin_metadata or {},
-        conversation_id=conversation.id,
+        session_record_id=agent_session.id,
         resume_from_run_id=previous.id,
         run_type="subagent" if previous.run_type == "subagent" else "resume",
         created_by_run_id=previous.created_by_run_id,
@@ -170,7 +170,7 @@ async def cancel_turn(
         _require_replay(existing, event_type, intent_hash)
         return _accepted(existing)
 
-    conversation = await require_thread(db=db, scope=scope, thread_id=thread_id, lock=True)
+    agent_session = await require_thread(db=db, scope=scope, thread_id=thread_id, lock=True)
     existing = await receipt_repo.get_for_scope(
         uid=scope.uid, app_id=scope.app_id, thread_id=thread_id, idempotency_key=idempotency_key
     )
@@ -197,7 +197,7 @@ async def cancel_turn(
     waiting_cleanup = False
     terminal_changed = False
     if turn.status != "cancelled":
-        conversation.queue_paused = True
+        agent_session.queue_paused = True
         waiting_cleanup = turn.status == "waiting" or (turn.status == "cancelling" and bool(turn.waitpoint))
         if turn.status != "cancelling":
             await turn_repo.set_cancelling(turn)
@@ -362,13 +362,13 @@ async def settle_waiting_cancel(*, thread_id: str, turn_id: str, uid: str, app_i
         return False
 
     async with pg_manager.get_async_session_context() as db:
-        conversation = await require_thread(db=db, scope=scope, thread_id=thread_id, lock=True)
+        agent_session = await require_thread(db=db, scope=scope, thread_id=thread_id, lock=True)
         turn = await AgentTurnRepository(db).get_for_scope(
             turn_id=turn_id, thread_id=thread_id, uid=uid, app_id=app_id, for_update=True
         )
         if turn is None or turn.status != "cancelling" or turn.current_run_id != run.id:
             return False
-        if not conversation.queue_paused:
+        if not agent_session.queue_paused:
             raise ValueError("等待取消未保持队列暂停")
         await AgentTurnRepository(db).set_terminal(turn, status="cancelled")
     await finish_turn_observation_if_terminal(turn_id)
@@ -388,7 +388,7 @@ async def reconcile_cancelling_turns() -> list[str]:
             continue
         if run.status == "interrupted" and candidate.waitpoint:
             if await settle_waiting_cancel(
-                thread_id=candidate.conversation_thread_id,
+                thread_id=candidate.thread_id,
                 turn_id=candidate.id,
                 uid=candidate.uid,
                 app_id=candidate.app_id,
@@ -397,10 +397,10 @@ async def reconcile_cancelling_turns() -> list[str]:
         elif run.status == "cancelled" and not run.runtime_cleanup_pending:
             async with pg_manager.get_async_session_context() as db:
                 scope = ActorScope(uid=candidate.uid, app_id=candidate.app_id)
-                await require_thread(db=db, scope=scope, thread_id=candidate.conversation_thread_id, lock=True)
+                await require_thread(db=db, scope=scope, thread_id=candidate.thread_id, lock=True)
                 turn = await AgentTurnRepository(db).get_for_scope(
                     turn_id=candidate.id,
-                    thread_id=candidate.conversation_thread_id,
+                    thread_id=candidate.thread_id,
                     uid=candidate.uid,
                     app_id=candidate.app_id,
                     for_update=True,
@@ -418,25 +418,25 @@ async def _clear_waitpoint_checkpoint(run: AgentRun) -> None:
     from yuxi.modules.agents.repositories.definitions import AgentRepository
     from yuxi.modules.agents.runtime.agent_backends import get_agent_backend
     from yuxi.modules.agents.runtime.sandbox.paths import runtime_workdir_path
-    from yuxi.modules.workspace.services.bindings import resolve_conversation_workdir_binding
+    from yuxi.modules.workspace.services.bindings import resolve_session_workdir_binding
 
     async with pg_manager.get_async_session_context() as db:
         agent_item = await AgentRepository(db).get_by_slug(run.agent_slug)
         if agent_item is None:
             raise ValueError("等待点 Agent 不存在")
         backend = get_agent_backend(agent_item.backend_id)
-        conversation = await require_thread(
+        agent_session = await require_thread(
             db=db,
             scope=ActorScope(uid=run.uid, app_id=run.app_id),
-            thread_id=run.conversation_thread_id,
+            thread_id=run.thread_id,
         )
-        binding = await resolve_conversation_workdir_binding(conversation=conversation, uid=run.uid, db=db)
+        binding = await resolve_session_workdir_binding(agent_session=agent_session, uid=run.uid, db=db)
 
     context = backend.context_schema()
     context.update_config((agent_item.config_json or {}).get("context") or {})
     context.update(
         {
-            "thread_id": run.conversation_thread_id,
+            "thread_id": run.thread_id,
             "uid": run.uid,
             "run_id": run.id,
             "worker_id": "waitpoint-cleanup",
@@ -449,7 +449,7 @@ async def _clear_waitpoint_checkpoint(run: AgentRun) -> None:
     context.tool_approval_mode = run.input_payload["tool_approval_mode"]
     # 持久 Run 与 Thread 的完整归属已验证；清理不取得资源使用授权。
     graph = await backend.get_graph(context=context, checkpoint_only=True)
-    config = {"configurable": {"uid": run.uid, "thread_id": run.conversation_thread_id}}
+    config = {"configurable": {"uid": run.uid, "thread_id": run.thread_id}}
     await _drain_waitpoint_checkpoint(graph, config)
 
 
@@ -535,7 +535,7 @@ def _accepted(receipt) -> dict:
     """返回首次固定的控制目标。"""
     return {
         "event_id": receipt.id,
-        "thread_id": receipt.conversation_thread_id,
+        "thread_id": receipt.thread_id,
         "turn_id": receipt.turn_id,
         "run_id": receipt.run_id,
         "status": "accepted",

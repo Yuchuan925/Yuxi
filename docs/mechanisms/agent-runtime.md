@@ -25,7 +25,7 @@ worker 在取得 lease 并校验输入后，合并 Agent 可配置字段、Run �
 
 API/worker 不信任浏览器内存中的完整配置。请求可以提供受限的单次覆盖值，例如模型或工具审批模式；配置快照也不能替代实时授权。
 
-状态查询在 Conversation 与 Workdir 授权后直接读取 PostgreSQL checkpointer 的根 namespace，返回最近完整快照及同批 pending writes 中的中断，仅在最新 Run 为 interrupted 时展示审批。读取不创建 Context 或模型；业务 pending writes 的合并仍由执行图拥有。HTTP 与 SSE 使用同一状态投影，仅返回待办、产物、子 Run 和用量。文件由 Workdir/Sandbox 边界持久化，前端文件面板通过文件系统接口读取当前 Workdir。
+状态查询在 Session 与 Workdir 授权后直接读取 PostgreSQL checkpointer 的根 namespace，返回最近完整快照及同批 pending writes 中的中断，仅在最新 Run 为 interrupted 时展示审批。读取不创建 Context 或模型；业务 pending writes 的合并仍由执行图拥有。HTTP 与 SSE 使用同一状态投影，仅返回待办、产物、子 Run 和用量。文件由 Workdir/Sandbox 边界持久化，前端文件面板通过文件系统接口读取当前 Workdir。
 
 普通来源调用 `modules/agents/services/inputs.py` 接收用例：作用域校验后保存 Message、Input 与幂等 Receipt，空闲时按优先队头领取并创建 Turn/Run；事务提交后物化 Workdir 并投递 Run。Input 保存来源、优先级、消息成员和接收时冻结的模型/审批配置，消息正文由 Message 拥有，其余 Agent 配置在 worker 准备时读取。调度、引导和控制的完整契约见 [Agent 输入队列与调度](./agent-request-queue.md)。
 

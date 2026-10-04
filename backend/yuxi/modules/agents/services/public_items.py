@@ -72,7 +72,7 @@ def serialize_public_run(run: AgentRun) -> dict:
             "execution_seq",
             "turn_id",
             "input_id",
-            "conversation_thread_id",
+            "thread_id",
             "agent_slug",
             "run_type",
             "status",

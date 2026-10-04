@@ -3,6 +3,8 @@
 from deepagents.backends import CompositeBackend
 from deepagents.middleware.filesystem import TOOLS_EXCLUDED_FROM_EVICTION, FilesystemMiddleware, FsToolName
 
+from yuxi.modules.agents.runtime.sandbox.paths import SESSION_HISTORY_DIR_NAME
+
 # Yuxi 在 DeepAgents 内建排除集之上额外豁免知识库文档工具结果，
 # 避免 read_file/offload 循环：该工具自带分页与引用语义。
 _TOOL_RESULT_EVICTION_EXEMPT_TOOLS = frozenset(TOOLS_EXCLUDED_FROM_EVICTION) | {"open_kb_document"}
@@ -27,11 +29,15 @@ def create_agent_filesystem_middleware(
     disabled_tools: frozenset[str] = frozenset(),
 ) -> FilesystemMiddleware:
     """构造文件系统中间件，在 ToolNode 注册前排除禁用工具。"""
-    return YuxiFilesystemMiddleware(
+    middleware = YuxiFilesystemMiddleware(
         backend=backend,
         tool_token_limit_before_evict=tool_token_limit_before_evict,
         tools=[name for name in _AGENT_FS_TOOLS if name not in disabled_tools],
     )
+    # DeepAgents 的属性名固定；实际目录由 Yuxi 路径契约拥有。
+    artifacts_root = backend.artifacts_root if isinstance(backend, CompositeBackend) else "/"
+    middleware._conversation_history_prefix = f"{artifacts_root.rstrip('/')}/{SESSION_HISTORY_DIR_NAME}"
+    return middleware
 
 
 class YuxiFilesystemMiddleware(FilesystemMiddleware):

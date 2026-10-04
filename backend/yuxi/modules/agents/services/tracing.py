@@ -170,7 +170,7 @@ async def finish_turn_observation_if_terminal(turn_id: str) -> None:
                 "trace_id": trace_id,
                 "root_id": turn.langfuse_root_observation_id,
                 "turn_id": turn.id,
-                "thread_id": turn.conversation_thread_id,
+                "thread_id": turn.thread_id,
                 "uid": turn.uid,
                 "status": turn.status,
                 "created_at": turn.created_at,

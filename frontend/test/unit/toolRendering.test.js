@@ -27,19 +27,19 @@ before(async () => {
     server: { middlewareMode: true }
   })
   ;({ default: BaseToolCall } = await server.ssrLoadModule(
-    '/src/modules/conversation/ui/tools/BaseToolCall.vue'
+    '/src/modules/session/ui/tools/BaseToolCall.vue'
   ))
   ;({ default: ToolCallRenderer } = await server.ssrLoadModule(
-    '/src/modules/conversation/ui/tools/ToolCallRenderer.vue'
+    '/src/modules/session/ui/tools/ToolCallRenderer.vue'
   ))
   ;({ default: ReasoningBlock } = await server.ssrLoadModule(
-    '/src/modules/conversation/ui/ReasoningBlockComponent.vue'
+    '/src/modules/session/ui/ReasoningBlockComponent.vue'
   ))
   ;({ default: ToolCallsGroup } = await server.ssrLoadModule(
-    '/src/modules/conversation/ui/ToolCallsGroupComponent.vue'
+    '/src/modules/session/ui/ToolCallsGroupComponent.vue'
   ))
   ;({ parseToolCallResult } = await server.ssrLoadModule(
-    '/src/modules/conversation/ui/tools/toolRegistry.js'
+    '/src/modules/session/ui/tools/toolRegistry.js'
   ))
 })
 

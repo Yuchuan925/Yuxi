@@ -2,7 +2,7 @@
 
 状态：implemented
 类型：simplification
-Owner：frontend/src/modules/conversation/model/useAgentInputQueue.js
+Owner：frontend/src/modules/session/model/useAgentInputQueue.js
 
 ## 问题
 

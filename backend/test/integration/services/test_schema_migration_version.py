@@ -165,16 +165,34 @@ async def test_fresh_business_schema_contains_input_lifecycle_without_request_ta
                 ),
                 {"schema": schema},
             )
-        assert {"agent_turns", "agent_runs", "agent_inputs", "agent_input_receipts", "agent_input_messages"} <= tables
+        assert {
+            "sessions",
+            "agent_turns",
+            "agent_runs",
+            "agent_inputs",
+            "agent_input_receipts",
+            "agent_input_messages",
+        } <= tables
+        assert "conversations" not in tables
         assert "agent_run_requests" not in tables
         assert "agent_session_input_receipts" not in tables
-        assert {"turn_id", "input_id", "resume_from_run_id"} <= run_columns
+        assert {"turn_id", "input_id", "resume_from_run_id", "session_record_id", "thread_id"} <= run_columns
+        assert {"conversation_id", "conversation_thread_id"}.isdisjoint(run_columns)
         assert execution_seq_nullable == "NO"
         assert execution_seq_default and "nextval" in execution_seq_default
         assert "agent_runs_execution_seq" in execution_seq_default
         assert "request_id" not in run_columns
-        assert {"kind", "status", "turn_id", "consumed_run_id", "cutoff_seq", "received_seq"} <= input_columns
-        assert BUSINESS_SCHEMA_VERSION == 1
+        assert {
+            "kind",
+            "status",
+            "turn_id",
+            "consumed_run_id",
+            "cutoff_seq",
+            "received_seq",
+            "thread_id",
+        } <= input_columns
+        assert "conversation_thread_id" not in input_columns
+        assert BUSINESS_SCHEMA_VERSION == 2
         assert KNOWLEDGE_SCHEMA_VERSION == 1
     finally:
         await _drop_isolated_schema(schema, admin_engine, scoped_engine)
@@ -257,7 +275,7 @@ async def test_open_attempt_is_unique_in_fresh_business_schema() -> None:
             )
             await connection.execute(
                 text(
-                    "INSERT INTO conversations "
+                    "INSERT INTO sessions "
                     "(thread_id, uid, agent_id, project_id, status, is_pinned) "
                     "VALUES ('constraint-thread', 'constraint-user', 'default', 'constraint-project', 'active', false)"
                 )
@@ -265,14 +283,14 @@ async def test_open_attempt_is_unique_in_fresh_business_schema() -> None:
             await connection.execute(
                 text(
                     "INSERT INTO agent_turns "
-                    "(id, conversation_thread_id, uid, status, created_at) "
+                    "(id, thread_id, uid, status, created_at) "
                     "VALUES ('constraint-turn', 'constraint-thread', 'constraint-user', 'running', CURRENT_TIMESTAMP)"
                 )
             )
             await connection.execute(
                 text(
                     "INSERT INTO agent_runs "
-                    "(id, conversation_thread_id, runtime_scope_id, agent_slug, uid, status, turn_id, "
+                    "(id, thread_id, runtime_scope_id, agent_slug, uid, status, turn_id, "
                     "source, channel, run_type, origin_metadata, input_payload, token_usage, runtime_cleanup_pending) "
                     "VALUES ('constraint-run', 'constraint-thread', 'constraint-thread', 'default', 'constraint-user', "
                     "'pending', 'constraint-turn', 'chat', 'web', 'chat', '{}', '{}', '{}', false)"
@@ -282,14 +300,14 @@ async def test_open_attempt_is_unique_in_fresh_business_schema() -> None:
         async with scoped_engine.begin() as connection:
             await connection.execute(
                 text(
-                    "UPDATE agent_runs SET conversation_id = (SELECT id FROM conversations "
+                    "UPDATE agent_runs SET session_record_id = (SELECT id FROM sessions "
                     "WHERE thread_id = 'constraint-thread') WHERE id = 'constraint-run'"
                 )
             )
             message_id = await connection.scalar(
                 text(
-                    "INSERT INTO messages (conversation_id, role, content, delivery_status) "
-                    "SELECT id, 'assistant', 'unbound candidate', 'complete' FROM conversations "
+                    "INSERT INTO messages (session_record_id, role, content, delivery_status) "
+                    "SELECT id, 'assistant', 'unbound candidate', 'complete' FROM sessions "
                     "WHERE thread_id = 'constraint-thread' RETURNING id"
                 )
             )
@@ -375,15 +393,16 @@ async def test_failed_fresh_initialization_cleans_checkpoint_tables_and_can_retr
         await _drop_isolated_schema(schema, admin, engine)
 
 
-async def test_unversioned_existing_yuxi_table_blocks_fresh_schema_initialization(monkeypatch) -> None:
+@pytest.mark.parametrize("table_name", ["sessions", "conversations"])
+async def test_unversioned_existing_yuxi_table_blocks_fresh_schema_initialization(monkeypatch, table_name) -> None:
     """未版本化的旧表不得被空库初始化误认为全新部署。"""
     schema, admin_engine, scoped_engine, manager = await _create_isolated_manager("pytest_fresh_only")
     monkeypatch.setattr(schema_bootstrap, "pg_manager", manager)
     try:
         await schema_bootstrap._require_empty_database()
         async with scoped_engine.begin() as connection:
-            await connection.execute(text("CREATE TABLE conversations (id integer PRIMARY KEY)"))
-        with pytest.raises(RuntimeError, match="conversations"):
+            await connection.execute(text(f"CREATE TABLE {table_name} (id integer PRIMARY KEY)"))
+        with pytest.raises(RuntimeError, match=table_name):
             await schema_bootstrap._require_empty_database()
     finally:
         await _drop_isolated_schema(schema, admin_engine, scoped_engine)

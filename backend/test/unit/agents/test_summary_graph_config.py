@@ -110,7 +110,7 @@ def test_shared_summary_factory_uses_one_threshold(monkeypatch: pytest.MonkeyPat
     ],
 )
 @pytest.mark.asyncio
-async def test_graph_passes_conversation_session_to_model(monkeypatch, graph_module, agent_class):
+async def test_graph_passes_session_session_to_model(monkeypatch, graph_module, agent_class):
     """主 Agent 与子 Agent 构图都使用实际线程的模型会话。"""
     context = _context()
     context.thread_id = "graph-thread"

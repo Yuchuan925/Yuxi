@@ -222,11 +222,11 @@ class YuxiSubAgentMiddleware(AgentMiddleware[Any, ContextT, ResponseT]):
             payload = {
                 "status": result["status"],
                 "run_id": run.id,
-                "thread_id": run.conversation_thread_id,
+                "thread_id": run.thread_id,
                 "subagent_slug": run.agent_slug,
                 "error": run.error_message,
                 "progress": await get_agent_run_progress(result["agent_run_id"]),
-                **subagent_service.subagent_run_urls(run.id, run.conversation_thread_id),
+                **subagent_service.subagent_run_urls(run.id, run.thread_id),
             }
             if result["status"] in {"completed", "failed", "cancelled"}:
                 payload["result"] = result
@@ -260,8 +260,8 @@ class YuxiSubAgentMiddleware(AgentMiddleware[Any, ContextT, ResponseT]):
             payload = {
                 "status": run.status,
                 "run_id": run.id,
-                "thread_id": run.conversation_thread_id,
-                **subagent_service.subagent_run_urls(run.id, run.conversation_thread_id),
+                "thread_id": run.thread_id,
+                **subagent_service.subagent_run_urls(run.id, run.thread_id),
             }
             subagent_run = subagent_service.serialize_subagent_run_state(run)
             return _json_tool_command(payload, runtime.tool_call_id, subagent_run=subagent_run)
@@ -302,7 +302,7 @@ class YuxiSubAgentMiddleware(AgentMiddleware[Any, ContextT, ResponseT]):
             payload = {
                 "status": run.status,
                 "run_id": run.id,
-                "thread_id": run.conversation_thread_id,
+                "thread_id": run.thread_id,
                 "result": result,
             }
             if wait_timed_out:

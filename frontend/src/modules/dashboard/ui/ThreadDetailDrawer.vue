@@ -206,7 +206,7 @@ const open = async (threadId) => {
   expandedTools.value.clear()
 
   try {
-    const data = await dashboardApi.getConversationDetail(threadId)
+    const data = await dashboardApi.getSessionDetail(threadId)
     detail.value = data
   } catch (err) {
     console.error('获取会话详情失败:', err)

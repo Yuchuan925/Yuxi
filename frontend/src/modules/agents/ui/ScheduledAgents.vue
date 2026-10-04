@@ -245,19 +245,19 @@ function runStatusTone(run) {
   return 'active'
 }
 
-function canOpenConversation(run) {
-  return Boolean(run.conversation_available && run.thread_id)
+function canOpenSession(run) {
+  return Boolean(run.session_available && run.thread_id)
 }
 
-async function openConversation(run) {
-  if (!canOpenConversation(run)) return
+async function openSession(run) {
+  if (!canOpenSession(run)) return
   if (!(await flushAutoSave())) return
   await router.push({ name: 'AgentCompWithThreadId', params: { thread_id: run.thread_id } })
 }
 
 function runRecordLabel(run) {
   const trigger = run.trigger === 'manual' ? '手动运行' : '定时运行'
-  const availability = canOpenConversation(run) ? '打开对应对话' : '没有可用对话'
+  const availability = canOpenSession(run) ? '打开对应对话' : '没有可用对话'
   return `${trigger}，${runStatusLabel(run)}，${formatRunTime(run.scheduled_for)}，${availability}`
 }
 
@@ -422,10 +422,10 @@ defineExpose({ beforeLeave: flushAutoSave, loading, saving })
                 :key="run.id"
                 type="button"
                 class="run-row"
-                :class="{ actionable: canOpenConversation(run) }"
-                :disabled="!canOpenConversation(run)"
+                :class="{ actionable: canOpenSession(run) }"
+                :disabled="!canOpenSession(run)"
                 :aria-label="runRecordLabel(run)"
-                @click="openConversation(run)"
+                @click="openSession(run)"
               >
                 <span class="run-status" :class="runStatusTone(run)">{{
                   runStatusLabel(run)
@@ -436,12 +436,12 @@ defineExpose({ beforeLeave: flushAutoSave, loading, saving })
                     run.error_message
                   }}</small>
                   <small v-else>{{
-                    canOpenConversation(run) ? '查看对话和运行结果' : '尚未创建对话'
+                    canOpenSession(run) ? '查看对话和运行结果' : '尚未创建对话'
                   }}</small>
                 </span>
                 <time :datetime="run.scheduled_for">{{ formatRunTime(run.scheduled_for) }}</time>
-                <ExternalLink v-if="canOpenConversation(run)" :size="15" aria-hidden="true" />
-                <span v-else class="no-conversation">无对话</span>
+                <ExternalLink v-if="canOpenSession(run)" :size="15" aria-hidden="true" />
+                <span v-else class="no-session">无对话</span>
               </button>
             </div>
             <p v-else class="runs-empty">任务运行后，记录会显示在这里。</p>
@@ -799,7 +799,7 @@ defineExpose({ beforeLeave: flushAutoSave, loading, saving })
 
   time,
   svg,
-  .no-conversation {
+  .no-session {
     color: var(--gray-400);
     font-size: 11px;
     font-variant-numeric: tabular-nums;
@@ -929,7 +929,7 @@ defineExpose({ beforeLeave: flushAutoSave, loading, saving })
     grid-template-columns: 52px minmax(0, 1fr) 18px;
 
     time,
-    .no-conversation {
+    .no-session {
       display: none;
     }
   }

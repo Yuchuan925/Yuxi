@@ -14,12 +14,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from yuxi.modules.agents.models.inputs import AgentInputReceipt
 from yuxi.modules.agents.models.messages import Message
-from yuxi.modules.agents.models.threads import Conversation
+from yuxi.modules.agents.models.sessions import Session
 from yuxi.modules.agents.repositories.definitions import AgentRepository
 from yuxi.modules.agents.repositories.input import AgentInputRepository
 from yuxi.modules.agents.repositories.input_receipt import AgentInputReceiptRepository
 from yuxi.modules.agents.repositories.runs import AgentRunRepository
-from yuxi.modules.agents.repositories.threads import ConversationRepository
+from yuxi.modules.agents.repositories.sessions import SessionRepository
 from yuxi.modules.agents.repositories.turn import AgentTurnRepository
 from yuxi.modules.agents.runtime.agent_backends import AgentBackendNotFoundError, get_agent_backend
 from yuxi.modules.agents.services.input_config import (
@@ -35,7 +35,7 @@ from yuxi.modules.agents.services.threads import require_thread
 from yuxi.modules.identity.models import User
 from yuxi.modules.workspace.paths import ensure_bound_user_workdir
 from yuxi.modules.workspace.repositories.projects import ProjectRepository
-from yuxi.modules.workspace.services.bindings import resolve_conversation_workdir_binding
+from yuxi.modules.workspace.services.bindings import resolve_session_workdir_binding
 from yuxi.modules.workspace.services.projects import create_implicit_project
 from yuxi.shared.hashing import hash_id
 
@@ -96,7 +96,7 @@ async def create_thread(
     if agent_item is None:
         raise HTTPException(status_code=404, detail="智能体不存在")
 
-    existing_thread = await ConversationRepository(db).get_conversation_by_thread_id(thread_id)
+    existing_thread = await SessionRepository(db).get_session_by_thread_id(thread_id)
     if existing_thread is not None:
         existing = await receipt_repo.get_for_scope(
             uid=scope.uid, app_id=scope.app_id, thread_id=thread_id, idempotency_key=idempotency_key
@@ -119,7 +119,7 @@ async def create_thread(
             )
             if project is None:
                 raise HTTPException(status_code=404, detail="Project 不存在或不可访问")
-            conversation = await ConversationRepository(db).add_conversation(
+            agent_session = await SessionRepository(db).add_session(
                 uid=scope.uid,
                 agent_id=agent_slug,
                 title=title,
@@ -139,14 +139,12 @@ async def create_thread(
             _require_replay(existing, "yuxi.session.create", intent_hash)
             return _accepted(existing)
         raise HTTPException(status_code=409, detail="Thread 创建冲突") from exc
-    binding = await resolve_conversation_workdir_binding(
-        conversation=conversation, uid=scope.uid, db=db, project=project
-    )
+    binding = await resolve_session_workdir_binding(agent_session=agent_session, uid=scope.uid, db=db, project=project)
     if input_messages:
         receipt, dispatch = await accept_locked(
             db=db,
             scope=scope,
-            conversation=conversation,
+            agent_session=agent_session,
             idempotency_key=idempotency_key,
             event_type="yuxi.session.create",
             intent_hash=intent_hash,
@@ -220,7 +218,7 @@ async def accept_message(
         _require_replay(existing, "agent.session.input.message", intent_hash)
         return _accepted(existing)
 
-    conversation = await require_thread(db=db, scope=scope, thread_id=thread_id, lock=True)
+    agent_session = await require_thread(db=db, scope=scope, thread_id=thread_id, lock=True)
     existing = await receipt_repo.get_for_scope(
         uid=scope.uid, app_id=scope.app_id, thread_id=thread_id, idempotency_key=idempotency_key
     )
@@ -231,7 +229,7 @@ async def accept_message(
     receipt, dispatch = await accept_locked(
         db=db,
         scope=scope,
-        conversation=conversation,
+        agent_session=agent_session,
         idempotency_key=idempotency_key,
         event_type="agent.session.input.message",
         intent_hash=intent_hash,
@@ -253,8 +251,8 @@ async def accept_message(
 
 async def get_input_snapshot(*, db: AsyncSession, scope: ActorScope, thread_id: str, input_id: str) -> dict:
     """按完整作用域回读 Input 的接收与消费事实。"""
-    conversation = await ConversationRepository(db).get_conversation_by_thread_id(thread_id)
-    if conversation is None or conversation.uid != scope.uid or conversation.app_id != scope.app_id:
+    agent_session = await SessionRepository(db).get_session_by_thread_id(thread_id)
+    if agent_session is None or agent_session.uid != scope.uid or agent_session.app_id != scope.app_id:
         raise HTTPException(status_code=404, detail="Thread 不存在")
     input_item = await AgentInputRepository(db).get_for_scope(
         input_id=input_id, thread_id=thread_id, uid=scope.uid, app_id=scope.app_id
@@ -281,7 +279,7 @@ async def accept_locked(
     *,
     db: AsyncSession,
     scope: ActorScope,
-    conversation: Conversation,
+    agent_session: Session,
     idempotency_key: str,
     event_type: str,
     intent_hash: str,
@@ -298,11 +296,11 @@ async def accept_locked(
     frozen_payload: dict | None = None,
 ) -> tuple[AgentInputReceipt, Dispatch | None]:
     """在调用方事务与 Thread 锁内保存回执、消息和 Input。"""
-    if conversation.status not in {"active", "subagent"}:
+    if agent_session.status not in {"active", "subagent"}:
         raise HTTPException(status_code=409, detail="Thread 已归档")
     turn_repo = AgentTurnRepository(db)
     active_turn = await turn_repo.lock_active_for_thread(
-        thread_id=conversation.thread_id, uid=scope.uid, app_id=scope.app_id
+        thread_id=agent_session.thread_id, uid=scope.uid, app_id=scope.app_id
     )
     if active_turn is not None and active_turn.status in {"waiting", "cancelling"}:
         raise HTTPException(status_code=409, detail="当前 Turn 正在等待控制输入或取消清理")
@@ -312,7 +310,7 @@ async def accept_locked(
     if mode == "steer" and (model_spec is not None or tool_approval_mode is not None):
         raise HTTPException(status_code=422, detail="Steer 不指定模型或审批配置")
     input_item = (
-        await input_repo.get_pending_steer(thread_id=conversation.thread_id, uid=scope.uid, app_id=scope.app_id)
+        await input_repo.get_pending_steer(thread_id=agent_session.thread_id, uid=scope.uid, app_id=scope.app_id)
         if mode == "steer"
         else None
     )
@@ -320,7 +318,7 @@ async def accept_locked(
     if input_item is None:
         user = await db.scalar(select(User).where(User.uid == scope.uid))
         agent_item = await AgentRepository(db).get_visible_by_slug(
-            slug=conversation.agent_id, user=user, kind="subagent" if conversation.status == "subagent" else "main"
+            slug=agent_session.agent_id, user=user, kind="subagent" if agent_session.status == "subagent" else "main"
         )
         if agent_item is None:
             raise HTTPException(status_code=404, detail="智能体不存在")
@@ -328,15 +326,15 @@ async def accept_locked(
             backend = get_agent_backend(agent_item.backend_id)
         except AgentBackendNotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
-        requested_model = model_spec or (conversation.extra_metadata or {}).get("model_spec")
-        requested_approval = tool_approval_mode or (conversation.extra_metadata or {}).get("tool_approval_mode")
+        requested_model = model_spec or (agent_session.extra_metadata or {}).get("model_spec")
+        requested_approval = tool_approval_mode or (agent_session.extra_metadata or {}).get("tool_approval_mode")
         resolved_model, approval_mode = await resolve_agent_run_config(
             requested_model, requested_approval, agent_item, backend, db
         )
         input_payload = frozen_payload or {"model_spec": resolved_model, "tool_approval_mode": approval_mode}
-        if conversation.status == "subagent" and frozen_payload is None:
+        if agent_session.status == "subagent" and frozen_payload is None:
             previous = await AgentRunRepository(db).get_latest_subagent_run_by_thread_for_user(
-                conversation.thread_id, scope.uid
+                agent_session.thread_id, scope.uid
             )
             if previous is None:
                 raise ValueError("子 Thread 缺少已授权委派")
@@ -347,11 +345,11 @@ async def accept_locked(
 
         input_item = await input_repo.create(
             input_id=str(uuid.uuid4()),
-            thread_id=conversation.thread_id,
+            thread_id=agent_session.thread_id,
             uid=scope.uid,
             app_id=scope.app_id,
             api_key_id=scope.api_key_id,
-            agent_slug=conversation.agent_id,
+            agent_slug=agent_session.agent_id,
             kind=mode,
             input_payload=input_payload,
             source=source,
@@ -365,7 +363,7 @@ async def accept_locked(
         idempotency_key=idempotency_key,
         uid=scope.uid,
         app_id=scope.app_id,
-        thread_id=conversation.thread_id,
+        thread_id=agent_session.thread_id,
         event_type=event_type,
         intent_hash=intent_hash,
         input_id=input_item.id,
@@ -376,7 +374,7 @@ async def accept_locked(
         metadata = {**message.extra_metadata, "raw_message": message.raw_message(), "input_id": input_item.id}
         attachment_ids.extend(metadata.get("attachment_file_ids") or [])
         persisted = Message(
-            conversation_id=conversation.id,
+            session_record_id=agent_session.id,
             role="user",
             content=message.content,
             message_type=message.message_type,
@@ -391,8 +389,8 @@ async def accept_locked(
         input_id=input_item.id, receipt_id=receipt.id, message_ids=[message.id for message in persisted_messages]
     )
     if attachment_ids:
-        bound = await ConversationRepository(db).bind_attachments_to_input(
-            conversation.id, input_item.id, list(dict.fromkeys(attachment_ids))
+        bound = await SessionRepository(db).bind_attachments_to_input(
+            agent_session.id, input_item.id, list(dict.fromkeys(attachment_ids))
         )
         requested_ids = {str(file_id).strip() for file_id in attachment_ids}
         if not requested_ids.issubset({item.get("file_id") for item in bound}):
@@ -401,8 +399,8 @@ async def accept_locked(
             message.extra_metadata = {**message.extra_metadata, "attachments": bound}
 
     dispatch = None
-    if active_turn is None and not conversation.queue_paused:
-        dispatch = await claim_next_input(db=db, conversation=conversation, binding=binding)
+    if active_turn is None and not agent_session.queue_paused:
+        dispatch = await claim_next_input(db=db, agent_session=agent_session, binding=binding)
         if dispatch is not None:
             await db.refresh(receipt)
     return receipt, dispatch
@@ -442,7 +440,7 @@ def _accepted(receipt: AgentInputReceipt) -> dict:
     return {
         "event_id": receipt.id,
         "input_id": receipt.input_id,
-        "thread_id": receipt.conversation_thread_id,
+        "thread_id": receipt.thread_id,
         "turn_id": receipt.turn_id,
         "run_id": receipt.run_id,
         "status": "accepted",

@@ -15,7 +15,7 @@ from e2e_helpers import (
     postgres_dsn,
 )
 
-from test.live_api_cleanup import make_test_conversation_title
+from test.live_api_cleanup import make_test_session_title
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.e2e, pytest.mark.slow]
 
@@ -65,7 +65,7 @@ async def test_reasoning_stream_matches_persisted_history(e2e_client, e2e_header
             headers={**headers, "Idempotency-Key": f"reasoning-create-{uuid4().hex}"},
             json={
                 "agent_id": slug,
-                "title": make_test_conversation_title("reasoning-e2e"),
+                "title": make_test_session_title("reasoning-e2e"),
             },
         )
         assert response.status_code == 200, response.text
@@ -75,7 +75,9 @@ async def test_reasoning_stream_matches_persisted_history(e2e_client, e2e_header
             headers={**headers, "Idempotency-Key": f"reasoning-input-{uuid4().hex}"},
             json={
                 "events": [
-                    {"type": "agent.session.input.message", "input": [
+                    {
+                        "type": "agent.session.input.message",
+                        "input": [
                             {
                                 "role": "user",
                                 "content": [
@@ -89,7 +91,9 @@ async def test_reasoning_stream_matches_persisted_history(e2e_client, e2e_header
                                     }
                                 ],
                             }
-                        ], "yuxi": {"mode": "follow_up"}}
+                        ],
+                        "yuxi": {"mode": "follow_up"},
+                    }
                 ],
             },
         )

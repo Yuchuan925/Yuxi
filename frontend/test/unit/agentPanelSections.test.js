@@ -7,7 +7,7 @@ import {
   closeAgentPanelSection,
   shouldPollAgentPanelFilesystem,
   upsertAgentPanelSection
-} from '../../src/modules/conversation/model/agentPanelSections.js'
+} from '../../src/modules/session/model/agentPanelSections.js'
 import { normalizePreviewResponse } from '../../src/shared/lib/file_preview.js'
 
 test('同一子线程重复打开时更新已有 Section 而不新增', () => {
@@ -94,7 +94,7 @@ test('normalizePreviewResponse 不支持格式时标记 status 为 unsupported',
 
 test('状态面板保留 cancelled 待办的已取消语义', () => {
   const source = readFileSync(
-    new URL('../../src/modules/conversation/ui/ConversationWorkspace.vue', import.meta.url),
+    new URL('../../src/modules/session/ui/SessionWorkspace.vue', import.meta.url),
     'utf8'
   )
   const statusLabel = source.slice(
@@ -108,7 +108,7 @@ test('状态面板保留 cancelled 待办的已取消语义', () => {
 
 test('暂停队列仍有请求时禁用上下文压缩', () => {
   const source = readFileSync(
-    new URL('../../src/modules/conversation/ui/ConversationWorkspace.vue', import.meta.url),
+    new URL('../../src/modules/session/ui/SessionWorkspace.vue', import.meta.url),
     'utf8'
   )
   const action = source.slice(

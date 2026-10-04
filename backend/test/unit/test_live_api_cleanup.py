@@ -6,14 +6,14 @@ import httpx
 import pytest
 
 from test.live_api_cleanup import (
-    TEST_CONVERSATION_TITLE_PREFIX,
-    CleanupConversationResource,
+    TEST_SESSION_TITLE_PREFIX,
+    CleanupSessionResource,
     cleanup_test_chat_resources,
     cleanup_provisioned_sandboxes,
     cleanup_pytest_knowledge_resources,
-    is_test_conversation_title,
-    make_test_conversation_metadata,
-    make_test_conversation_title,
+    is_test_session_title,
+    make_test_session_metadata,
+    make_test_session_title,
     make_test_resource_id,
     remove_e2e_thread_storage,
     remove_test_workdir,
@@ -82,13 +82,13 @@ async def test_cleanup_rejects_invalid_provisioner_list_payload():
 
 async def _patch_chat_cleanup_database(
     monkeypatch: pytest.MonkeyPatch,
-    resources: dict[str, CleanupConversationResource],
+    resources: dict[str, CleanupSessionResource],
 ) -> list[set[str]]:
     """打桩清理器的持久化发现、校验与物理删除。"""
 
     collected: list[set[str]] = []
 
-    async def fake_list_resources(_owner_uid: str) -> dict[str, CleanupConversationResource]:
+    async def fake_list_resources(_owner_uid: str) -> dict[str, CleanupSessionResource]:
         return resources
 
     async def fake_validate(*_args, **_kwargs) -> None:
@@ -104,11 +104,11 @@ async def _patch_chat_cleanup_database(
             remove_e2e_thread_storage(thread_id)
         collected.append(set(thread_ids))
 
-    monkeypatch.setattr("test.live_api_cleanup.list_test_conversation_resources", fake_list_resources)
+    monkeypatch.setattr("test.live_api_cleanup.list_test_session_resources", fake_list_resources)
     monkeypatch.setattr("test.live_api_cleanup.validate_test_workdirs_exclusive", fake_validate)
     monkeypatch.setattr("test.live_api_cleanup.validate_test_runs_terminal", fake_validate)
     monkeypatch.setattr("test.live_api_cleanup.list_test_pending_inputs", fake_list_pending)
-    monkeypatch.setattr("test.live_api_cleanup.delete_test_conversation_resources", fake_delete_resources)
+    monkeypatch.setattr("test.live_api_cleanup.delete_test_session_resources", fake_delete_resources)
     monkeypatch.setattr("test.live_api_cleanup.delete_orphaned_test_projects", fake_validate)
     return collected
 
@@ -178,8 +178,8 @@ async def test_cleanup_deletes_e2e_threads_before_temporary_agents(tmp_path, mon
     deleted_row_threads = await _patch_chat_cleanup_database(
         monkeypatch,
         {
-            thread_id: CleanupConversationResource(
-                conversation_id=index,
+            thread_id: CleanupSessionResource(
+                session_record_id=index,
                 project_id=f"project-{index}",
                 thread_id=thread_id,
                 uid="test-user",
@@ -236,7 +236,7 @@ async def test_cleanup_only_exempts_projects_whose_managed_workdir_is_deleted(tm
     monkeypatch.setattr("test.live_api_cleanup.user_workdir_host_dir", lambda _uid, _path: managed_dir)
     monkeypatch.setenv("YUXI_USER_DATA_DIR", str(tmp_path / "threads"))
     resources = {
-        "thread-managed": CleanupConversationResource(
+        "thread-managed": CleanupSessionResource(
             1,
             "project-managed",
             "thread-managed",
@@ -244,7 +244,7 @@ async def test_cleanup_only_exempts_projects_whose_managed_workdir_is_deleted(tm
             "active",
             workdir_path,
         ),
-        "thread-linked": CleanupConversationResource(
+        "thread-linked": CleanupSessionResource(
             2,
             "project-linked",
             "thread-linked",
@@ -280,8 +280,8 @@ async def test_cleanup_uses_persisted_discovery_for_archived_threads(tmp_path, m
     deleted_row_threads = await _patch_chat_cleanup_database(
         monkeypatch,
         {
-            "thread-archived": CleanupConversationResource(
-                conversation_id=1,
+            "thread-archived": CleanupSessionResource(
+                session_record_id=1,
                 project_id="project-archived",
                 thread_id="thread-archived",
                 uid="test-user",
@@ -313,16 +313,16 @@ async def test_cleanup_removes_deleted_and_subagent_thread_storage(tmp_path, mon
     deleted_row_threads = await _patch_chat_cleanup_database(
         monkeypatch,
         {
-            "thread-deleted": CleanupConversationResource(
-                conversation_id=1,
+            "thread-deleted": CleanupSessionResource(
+                session_record_id=1,
                 project_id="project-deleted",
                 thread_id="thread-deleted",
                 uid="test-user",
                 status="deleted",
                 workdir_path=None,
             ),
-            "thread-child": CleanupConversationResource(
-                conversation_id=2,
+            "thread-child": CleanupSessionResource(
+                session_record_id=2,
                 project_id="project-child",
                 thread_id="thread-child",
                 uid="test-user",
@@ -375,10 +375,10 @@ async def test_remove_e2e_thread_storage_rejects_symlink(tmp_path, monkeypatch):
 
 
 async def test_test_resource_names_use_one_visible_prefix():
-    title = make_test_conversation_title("viewer 文件系统")
-    metadata = make_test_conversation_metadata("viewer-filesystem")
+    title = make_test_session_title("viewer 文件系统")
+    metadata = make_test_session_metadata("viewer-filesystem")
 
-    assert title.startswith(TEST_CONVERSATION_TITLE_PREFIX)
+    assert title.startswith(TEST_SESSION_TITLE_PREFIX)
     assert metadata["_yuxi_test"] is True
     assert make_test_resource_id("agent-call").startswith("YUXI_TEST_")
 
@@ -386,11 +386,11 @@ async def test_test_resource_names_use_one_visible_prefix():
 async def test_legacy_title_matching_is_exact_and_does_not_capture_user_titles():
     """历史兼容只接受仓库曾生成的固定格式，不按宽泛前缀误删。"""
 
-    assert is_test_conversation_title("viewer-deadbeef")
-    assert is_test_conversation_title("pytest-channel-0123abcd")
-    assert is_test_conversation_title("pytest-queue-0123abcd")
-    assert not is_test_conversation_title("viewer-notes")
-    assert not is_test_conversation_title("viewer-deadbeef-personal")
+    assert is_test_session_title("viewer-deadbeef")
+    assert is_test_session_title("pytest-channel-0123abcd")
+    assert is_test_session_title("pytest-queue-0123abcd")
+    assert not is_test_session_title("viewer-notes")
+    assert not is_test_session_title("viewer-deadbeef-personal")
 
 
 async def test_cleanup_discovery_failure_has_no_destructive_side_effect(tmp_path, monkeypatch):
@@ -402,7 +402,7 @@ async def test_cleanup_discovery_failure_has_no_destructive_side_effect(tmp_path
     async def fail_discovery(_owner_uid: str):
         raise OSError("postgres unavailable")
 
-    monkeypatch.setattr("test.live_api_cleanup.list_test_conversation_resources", fail_discovery)
+    monkeypatch.setattr("test.live_api_cleanup.list_test_session_resources", fail_discovery)
 
     def handle_request(request: httpx.Request) -> httpx.Response:
         if request.method == "DELETE":
@@ -427,7 +427,7 @@ async def test_cleanup_guard_failure_has_no_destructive_side_effect(tmp_path, mo
     legacy_dir.mkdir(parents=True)
     monkeypatch.setenv("YUXI_USER_DATA_DIR", str(tmp_path / "threads"))
     resources = {
-        "thread-marked": CleanupConversationResource(
+        "thread-marked": CleanupSessionResource(
             1,
             "project-marked",
             "thread-marked",
@@ -446,7 +446,7 @@ async def test_cleanup_guard_failure_has_no_destructive_side_effect(tmp_path, mo
     async def fail_run_guard(_thread_ids: set[str]):
         raise RuntimeError("test Run is not terminal")
 
-    monkeypatch.setattr("test.live_api_cleanup.list_test_conversation_resources", fake_list_resources)
+    monkeypatch.setattr("test.live_api_cleanup.list_test_session_resources", fake_list_resources)
     monkeypatch.setattr("test.live_api_cleanup.validate_test_workdirs_exclusive", fake_workdir_guard)
     monkeypatch.setattr("test.live_api_cleanup.validate_test_runs_terminal", fail_run_guard)
 
@@ -476,7 +476,7 @@ async def test_cleanup_stops_when_cancelled_input_remains_pending(tmp_path, monk
 
     async def fake_list_resources(_owner_uid: str):
         return {
-            "thread-marked": CleanupConversationResource(
+            "thread-marked": CleanupSessionResource(
                 1,
                 "project-marked",
                 "thread-marked",
@@ -492,7 +492,7 @@ async def test_cleanup_stops_when_cancelled_input_remains_pending(tmp_path, monk
     async def still_pending(_thread_ids: set[str]) -> list[tuple[str, str]]:
         return [("thread-marked", "YUXI_TEST_pending_input")]
 
-    monkeypatch.setattr("test.live_api_cleanup.list_test_conversation_resources", fake_list_resources)
+    monkeypatch.setattr("test.live_api_cleanup.list_test_session_resources", fake_list_resources)
     monkeypatch.setattr("test.live_api_cleanup.validate_test_workdirs_exclusive", fake_validate)
     monkeypatch.setattr("test.live_api_cleanup.validate_test_runs_terminal", fake_validate)
     monkeypatch.setattr("test.live_api_cleanup.list_test_pending_inputs", still_pending)
@@ -574,7 +574,7 @@ async def test_is_test_thread_recognizes_marker_or_e2e_agent_prefix():
 
     marked = {"id": "t1", "agent_id": "default-chatbot", "metadata": {"_yuxi_e2e": True, "test": "viewer-fs-e2e"}}
     agent_prefix = {"id": "invocation_x", "agent_id": "e2e-agent-call-deadbeef"}
-    unified = {"id": "t3", "title": f"{TEST_CONVERSATION_TITLE_PREFIX}viewer_deadbeef", "metadata": {}}
+    unified = {"id": "t3", "title": f"{TEST_SESSION_TITLE_PREFIX}viewer_deadbeef", "metadata": {}}
     explicit = {"id": "t4", "metadata": {"_yuxi_test": True}}
     plain = {"id": "t2", "agent_id": "default-chatbot"}
 

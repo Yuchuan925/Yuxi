@@ -50,7 +50,7 @@ Skills middleware 将 Skill 说明按模型请求注入：预加载 Skill 从首
 
 附件确认后写入当前 Project Workdir。每次 Run 会把线程历史附件的文件名和实时路径加入本轮用户消息，让模型按需调用 `read_file`；持久化 Message 仍保存原始文本，不会把这段模型专用路径混进用户可见消息。
 
-普通 Agent 和子 Agent 使用根 Conversation 的同一个 `runtime_scope_id` 和 Workdir。子 Agent 的 child thread 只隔离 LangGraph checkpoint，不隔离共享文件。Viewer、附件和 artifact API 直接访问 UserWorkspace 的持久文件，不需要创建 file-bridge Sandbox。
+普通 Agent 和子 Agent 使用根 Session 的同一个 `runtime_scope_id` 和 Workdir。子 Agent 的 child thread 只隔离 LangGraph checkpoint，不隔离共享文件。Viewer、附件和 artifact API 直接访问 UserWorkspace 的持久文件，不需要创建 file-bridge Sandbox。
 
 ## 子智能体
 

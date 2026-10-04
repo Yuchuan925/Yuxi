@@ -11,7 +11,7 @@ import {
   settleUploadedImage,
   splitDroppedFiles,
   sumBase64Bytes
-} from '../../src/modules/conversation/model/multimodal_image_limits.js'
+} from '../../src/modules/session/model/multimodal_image_limits.js'
 
 const image = (name = 'a.png', type = 'image/png') => ({ name, type })
 const doc = (name = 'a.pdf', type = 'application/pdf') => ({ name, type })

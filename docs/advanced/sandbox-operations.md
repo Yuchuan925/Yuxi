@@ -180,7 +180,7 @@ docker compose logs --tail=100 sandbox-provisioner
 2. 检查 `/health` 报告的后端和超时是否符合预期。
 3. Docker 后端检查两处 host path 是否为 provisioner 能看到的真实路径；Kubernetes 后端检查 kubeconfig、namespace、PVC 和 NodePort。
 4. 查看 provisioner 的创建、复用、健康检查和回收日志。
-5. 如果 Viewer 能看到文件但 Agent 不能，核对 Conversation 绑定的 `project_id`、Project 的 `workdir_path`、根 runtime scope、uid 和挂载路径；不要把 Viewer scope `/foo`、Agent 路径或宿主机路径混在一起。
+5. 如果 Viewer 能看到文件但 Agent 不能，核对 Session 绑定的 `project_id`、Project 的 `workdir_path`、根 runtime scope、uid 和挂载路径；不要把 Viewer scope `/foo`、Agent 路径或宿主机路径混在一起。
 
 健康接口只能证明 provisioner 进程和后端初始化，不能证明某个沙盒已经创建或文件权限正确。最终结论要通过真实文件、容器/PVC 和 API 响应回读确认。
 

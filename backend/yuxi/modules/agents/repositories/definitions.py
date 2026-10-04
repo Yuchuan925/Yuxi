@@ -14,7 +14,7 @@ from yuxi.infrastructure.observability.logging import logger
 from yuxi.modules.agents.models.definitions import Agent
 from yuxi.modules.agents.models.inputs import AgentInput
 from yuxi.modules.agents.models.runs import AGENT_RUN_TERMINAL_STATUSES, AgentRun
-from yuxi.modules.agents.models.threads import Conversation
+from yuxi.modules.agents.models.sessions import Session
 from yuxi.modules.agents.models.turns import AgentTurn
 from yuxi.modules.agents.presets import AgentPreset
 from yuxi.modules.agents.presets.default_chatbot import PRESET as DEFAULT_AGENT
@@ -498,16 +498,16 @@ class AgentRepository:
 
         # Thread 是接收与调度的先行锁；按共同顺序锁定，随后读取持久工作事实。
         result = await self.db.execute(
-            select(Conversation.thread_id)
-            .where(Conversation.agent_id == current.slug)
-            .order_by(Conversation.thread_id)
+            select(Session.thread_id)
+            .where(Session.agent_id == current.slug)
+            .order_by(Session.thread_id)
             .with_for_update()
         )
         thread_ids = list(result.scalars())
         active_turn = await self.db.scalar(
             select(AgentTurn.id)
             .where(
-                AgentTurn.conversation_thread_id.in_(thread_ids),
+                AgentTurn.thread_id.in_(thread_ids),
                 AgentTurn.status.in_(("running", "waiting", "cancelling")),
             )
             .limit(1)
@@ -515,7 +515,7 @@ class AgentRepository:
         pending_input = await self.db.scalar(
             select(AgentInput.id)
             .where(
-                or_(AgentInput.agent_slug == current.slug, AgentInput.conversation_thread_id.in_(thread_ids)),
+                or_(AgentInput.agent_slug == current.slug, AgentInput.thread_id.in_(thread_ids)),
                 AgentInput.status == "pending",
             )
             .limit(1)

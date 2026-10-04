@@ -19,15 +19,15 @@ async def test_run_result_rejects_output_bound_to_another_turn(monkeypatch):
         status="completed",
         output_message_id=7,
         turn_id="turn-1",
-        conversation_id=3,
-        conversation_thread_id="thread-1",
+        session_record_id=3,
+        thread_id="thread-1",
         agent_slug="agent",
         langfuse_trace_id=None,
         token_usage={},
         error_type=None,
         error_message=None,
     )
-    message = SimpleNamespace(id=7, run_id="run-1", turn_id="turn-2", conversation_id=3, content="wrong")
+    message = SimpleNamespace(id=7, run_id="run-1", turn_id="turn-2", session_record_id=3, content="wrong")
 
     class Repo:
         def __init__(self, db):
@@ -48,8 +48,10 @@ async def test_run_result_rejects_output_bound_to_another_turn(monkeypatch):
     class TurnRepo:
         def __init__(self, db):
             pass
+
         async def get_for_scope(self, **kwargs):
             return SimpleNamespace(id="turn-1", status="completed", current_run_id="run-1", result_run_id="run-1")
+
     monkeypatch.setattr(subagent_run_service, "AgentTurnRepository", TurnRepo)
     monkeypatch.setattr(subagent_run_service, "AgentRunRepository", Repo)
     with pytest.raises(ValueError, match="归属不一致"):
@@ -66,8 +68,8 @@ async def test_run_result_reads_only_explicit_output(monkeypatch):
         status="completed",
         output_message_id=None,
         turn_id="turn-1",
-        conversation_id=3,
-        conversation_thread_id="thread-1",
+        session_record_id=3,
+        thread_id="thread-1",
         agent_slug="agent",
         langfuse_trace_id="trace-1",
         token_usage={"available": False},
@@ -92,8 +94,10 @@ async def test_run_result_reads_only_explicit_output(monkeypatch):
     class TurnRepo:
         def __init__(self, db):
             pass
+
         async def get_for_scope(self, **kwargs):
             return SimpleNamespace(id="turn-1", status="completed", current_run_id="run-1", result_run_id="run-1")
+
     monkeypatch.setattr(subagent_run_service, "AgentTurnRepository", TurnRepo)
     monkeypatch.setattr(subagent_run_service, "AgentRunRepository", Repo)
     result = await subagent_run_service.get_agent_run_result(run_id="run-1", current_uid="user-1", db=DB())

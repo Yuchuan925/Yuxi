@@ -2,7 +2,7 @@
 
 状态：implemented
 类型：simplification
-Owner：frontend/src/modules/conversation/model/agentItems.js
+Owner：frontend/src/modules/session/model/agentItems.js
 
 ## 问题
 

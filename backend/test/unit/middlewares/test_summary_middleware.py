@@ -15,7 +15,7 @@ from yuxi.modules.agents.runtime.middlewares.summary import YuxiSummarizationMid
 from yuxi.modules.agents.runtime.sandbox.paths import workdir_runtime_paths
 
 WORKDIR_PATH = "/home/gem/user-data/projects/11111111-1111-4111-8111-111111111111"
-VIRTUAL_PATH_LARGE_TOOL_RESULTS, VIRTUAL_PATH_CONVERSATION_HISTORY = workdir_runtime_paths(WORKDIR_PATH)
+VIRTUAL_PATH_LARGE_TOOL_RESULTS, VIRTUAL_PATH_SESSION_HISTORY = workdir_runtime_paths(WORKDIR_PATH)
 
 
 class _DummyModel:
@@ -97,7 +97,7 @@ class _FailingWriteBackend(_MemoryBackend):
 
 class _FailingHistoryWriteBackend(_MemoryBackend):
     def write(self, path: str, content: str) -> SimpleNamespace:
-        if path.startswith(VIRTUAL_PATH_CONVERSATION_HISTORY):
+        if path.startswith(VIRTUAL_PATH_SESSION_HISTORY):
             return SimpleNamespace(error="disk full")
         return super().write(path, content)
 
@@ -208,7 +208,7 @@ def test_create_summary_middleware_uses_deepagents_with_yuxi_outputs_root() -> N
     assert isinstance(middleware, SummarizationMiddleware)
     assert isinstance(middleware, YuxiSummarizationMiddleware)
     assert middleware._backend.default is memory
-    assert middleware._history_path_prefix == VIRTUAL_PATH_CONVERSATION_HISTORY
+    assert middleware._history_path_prefix == VIRTUAL_PATH_SESSION_HISTORY
     assert middleware._large_tool_results_prefix == VIRTUAL_PATH_LARGE_TOOL_RESULTS
     assert middleware._lc_helper.trigger == ("tokens", 90_000)
     assert middleware._lc_helper.keep == ("tokens", 45_000)
@@ -536,7 +536,7 @@ async def test_force_summary_returns_checkpoint_update_without_adding_messages()
         keep=("messages", 2),
         trim_tokens_to_summarize=None,
     )
-    middleware._history_path_prefix = VIRTUAL_PATH_CONVERSATION_HISTORY
+    middleware._history_path_prefix = VIRTUAL_PATH_SESSION_HISTORY
     middleware._large_tool_results_prefix = VIRTUAL_PATH_LARGE_TOOL_RESULTS
 
     update, result = await middleware.aforce_summarize({"messages": messages})
@@ -546,7 +546,7 @@ async def test_force_summary_returns_checkpoint_update_without_adding_messages()
     assert result["after_tokens"] < result["before_tokens"] + 200
     assert "messages" not in update
     assert update["_summarization_event"]["cutoff_index"] == 3
-    assert update["_summarization_event"]["file_path"].startswith(VIRTUAL_PATH_CONVERSATION_HISTORY)
+    assert update["_summarization_event"]["file_path"].startswith(VIRTUAL_PATH_SESSION_HISTORY)
     assert len(model.prompts) == 1
     assert "第一问" in model.prompts[0]
 
@@ -572,7 +572,7 @@ async def test_force_summary_reports_persisted_uncompacted_tail_tokens() -> None
         trim_tokens_to_summarize=None,
         tool_result_offload_token_limit=1,
     )
-    middleware._history_path_prefix = VIRTUAL_PATH_CONVERSATION_HISTORY
+    middleware._history_path_prefix = VIRTUAL_PATH_SESSION_HISTORY
     middleware._large_tool_results_prefix = VIRTUAL_PATH_LARGE_TOOL_RESULTS
 
     update, result = await middleware.aforce_summarize({"messages": messages})
@@ -658,7 +658,7 @@ def test_wrap_model_call_offloads_large_tool_results(scenario: dict) -> None:
         trim_tokens_to_summarize=None,
         tool_result_offload_token_limit=scenario["tool_result_offload_token_limit"],
     )
-    middleware._history_path_prefix = VIRTUAL_PATH_CONVERSATION_HISTORY
+    middleware._history_path_prefix = VIRTUAL_PATH_SESSION_HISTORY
     middleware._large_tool_results_prefix = VIRTUAL_PATH_LARGE_TOOL_RESULTS
     captured_messages: list | None = None
 
@@ -674,9 +674,7 @@ def test_wrap_model_call_offloads_large_tool_results(scenario: dict) -> None:
     assert messages[2].content == large_result
     assert (_expected_tool_result_path(large_result), large_result) in backend.writes
     history_writes = [
-        write_path
-        for write_path, _content in backend.writes
-        if write_path.startswith(VIRTUAL_PATH_CONVERSATION_HISTORY)
+        write_path for write_path, _content in backend.writes if write_path.startswith(VIRTUAL_PATH_SESSION_HISTORY)
     ]
     assert bool(history_writes) is scenario["expect_history_write"]
 
@@ -743,7 +741,7 @@ async def test_awrap_model_call_emits_completed_for_compaction_without_summary(
         trim_tokens_to_summarize=None,
         tool_result_offload_token_limit=1,
     )
-    middleware._history_path_prefix = VIRTUAL_PATH_CONVERSATION_HISTORY
+    middleware._history_path_prefix = VIRTUAL_PATH_SESSION_HISTORY
     middleware._large_tool_results_prefix = VIRTUAL_PATH_LARGE_TOOL_RESULTS
     captured_messages: list | None = None
 
@@ -843,7 +841,7 @@ def test_summary_event_reuses_original_preserved_window_on_later_calls() -> None
         trim_tokens_to_summarize=None,
         tool_result_offload_token_limit=1,
     )
-    middleware._history_path_prefix = VIRTUAL_PATH_CONVERSATION_HISTORY
+    middleware._history_path_prefix = VIRTUAL_PATH_SESSION_HISTORY
     middleware._large_tool_results_prefix = VIRTUAL_PATH_LARGE_TOOL_RESULTS
     captured: list[str] = []
 
@@ -895,7 +893,7 @@ def test_create_summary_uses_sanitized_messages() -> None:
         trim_tokens_to_summarize=None,
         tool_result_offload_token_limit=0,
     )
-    middleware._history_path_prefix = VIRTUAL_PATH_CONVERSATION_HISTORY
+    middleware._history_path_prefix = VIRTUAL_PATH_SESSION_HISTORY
     middleware._large_tool_results_prefix = VIRTUAL_PATH_LARGE_TOOL_RESULTS
 
     compacted_messages = middleware._compact_messages(_tool_messages())
@@ -919,7 +917,7 @@ def test_offload_history_uses_tool_messages_with_replaced_content() -> None:
         trim_tokens_to_summarize=None,
         tool_result_offload_token_limit=0,
     )
-    middleware._history_path_prefix = VIRTUAL_PATH_CONVERSATION_HISTORY
+    middleware._history_path_prefix = VIRTUAL_PATH_SESSION_HISTORY
     middleware._large_tool_results_prefix = VIRTUAL_PATH_LARGE_TOOL_RESULTS
 
     compacted_messages = middleware._compact_messages(_tool_messages())
@@ -952,7 +950,7 @@ def _make_compressing_middleware(
         trim_tokens_to_summarize=None,
         tool_result_offload_token_limit=1,
     )
-    middleware._history_path_prefix = VIRTUAL_PATH_CONVERSATION_HISTORY
+    middleware._history_path_prefix = VIRTUAL_PATH_SESSION_HISTORY
     middleware._large_tool_results_prefix = VIRTUAL_PATH_LARGE_TOOL_RESULTS
     return middleware, large_result
 
@@ -1077,7 +1075,7 @@ async def test_auto_summary_propagates_summary_failure(
 
     assert handler_calls == 0
     assert len(model.prompts) == 1
-    assert any(path.startswith(VIRTUAL_PATH_CONVERSATION_HISTORY) for path, _ in backend.writes)
+    assert any(path.startswith(VIRTUAL_PATH_SESSION_HISTORY) for path, _ in backend.writes)
     assert [event["status"] for event in compression_events] == ["started", "failed"]
 
 

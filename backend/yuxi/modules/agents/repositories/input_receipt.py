@@ -23,7 +23,7 @@ class AgentInputReceiptRepository:
             select(AgentInputReceipt).where(
                 AgentInputReceipt.uid == uid,
                 AgentInputReceipt.app_id == app_id,
-                AgentInputReceipt.conversation_thread_id == thread_id,
+                AgentInputReceipt.thread_id == thread_id,
                 AgentInputReceipt.idempotency_key == idempotency_key,
             )
         )
@@ -38,7 +38,7 @@ class AgentInputReceiptRepository:
             .where(
                 AgentInputReceipt.uid == uid,
                 AgentInputReceipt.app_id == app_id,
-                AgentInputReceipt.conversation_thread_id == thread_id,
+                AgentInputReceipt.thread_id == thread_id,
                 AgentInputReceipt.receive_seq > after_sequence,
             )
             .order_by(AgentInputReceipt.receive_seq)
@@ -66,7 +66,7 @@ class AgentInputReceiptRepository:
             idempotency_key=idempotency_key,
             uid=uid,
             app_id=app_id,
-            conversation_thread_id=thread_id,
+            thread_id=thread_id,
             event_type=event_type,
             intent_hash=intent_hash,
             input_id=input_id,

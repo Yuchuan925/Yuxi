@@ -14,7 +14,7 @@ import pytest
 
 from test.e2e.e2e_helpers import archive_public_thread, delete_agent, postgres_dsn
 from test.e2e.test_agent_lifecycle_e2e import output_text
-from test.live_api_cleanup import make_test_conversation_title
+from test.live_api_cleanup import make_test_session_title
 from yuxi.infrastructure.runtime_settings import get_skill_projection_dir
 from yuxi.modules.workspace.paths import workspace_uid_dirname
 
@@ -91,8 +91,8 @@ async def test_public_run_persists_preloaded_tool_and_model_audit(e2e_client, e2
                 JOIN agent_turns turn ON turn.id = run.turn_id
                 JOIN agent_inputs input ON input.id = run.input_id
                 JOIN messages output ON output.id = run.output_message_id
-                JOIN conversations conversation ON conversation.thread_id = run.conversation_thread_id
-                JOIN projects project ON project.id = conversation.project_id
+                JOIN sessions agent_session ON agent_session.thread_id = run.thread_id
+                JOIN projects project ON project.id = agent_session.project_id
                 WHERE run.id = $1
                 """,
                 run_id,
@@ -277,7 +277,7 @@ async def test_scheduled_task_run_now_reaches_exact_thread_and_turn(e2e_client, 
             headers=e2e_headers,
             json={
                 "request_id": f"scheduled-create-{uuid.uuid4()}",
-                "name": make_test_conversation_title("scheduled-agent"),
+                "name": make_test_session_title("scheduled-agent"),
                 "project_id": project_id,
                 "agent_slug": slug,
                 "prompt": f"只输出 {OUTPUT}",
@@ -314,14 +314,14 @@ async def test_scheduled_task_run_now_reaches_exact_thread_and_turn(e2e_client, 
         saved = next(item for item in job["runs"] if item["run_id"] == run_id)
         assert saved["status"] == "completed"
         assert saved["thread_id"] == thread_id and saved["turn_id"] == turn_id
-        assert saved["conversation_available"] is True
+        assert saved["session_available"] is True
 
         conn = await asyncpg.connect(postgres_dsn())
         try:
             row = await conn.fetchrow(
                 """
                 SELECT scheduled.id AS scheduled_id, input.id AS input_id, input.source,
-                       input.external_id, input.consumed_run_id, run.conversation_thread_id,
+                       input.external_id, input.consumed_run_id, run.thread_id,
                        run.turn_id, turn.result_run_id, output.content
                 FROM scheduled_agent_runs scheduled
                 JOIN agent_inputs input ON input.id = scheduled.input_id
@@ -339,7 +339,7 @@ async def test_scheduled_task_run_now_reaches_exact_thread_and_turn(e2e_client, 
                 execution["id"],
                 run_id,
             )
-            assert (row["conversation_thread_id"], row["turn_id"], row["result_run_id"]) == (thread_id, turn_id, run_id)
+            assert (row["thread_id"], row["turn_id"], row["result_run_id"]) == (thread_id, turn_id, run_id)
             assert row["content"] == OUTPUT
         finally:
             await conn.close()
@@ -492,7 +492,7 @@ async def _create_thread(client: httpx.AsyncClient, headers: dict[str, str], slu
         headers={**headers, "Idempotency-Key": f"{tag}-{uuid.uuid4().hex}"},
         json={
             "agent_id": slug,
-            "title": make_test_conversation_title(tag),
+            "title": make_test_session_title(tag),
             "model_spec": MODEL,
             "input": [{"role": "user", "content": [{"type": "input_text", "text": f"只输出 {OUTPUT}"}]}],
         },

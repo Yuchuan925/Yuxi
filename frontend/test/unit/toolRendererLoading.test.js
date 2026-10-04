@@ -3,15 +3,15 @@ import { readFileSync } from 'node:fs'
 import test from 'node:test'
 
 const rendererSource = readFileSync(
-  new URL('../../src/modules/conversation/ui/tools/ToolCallRenderer.vue', import.meta.url),
+  new URL('../../src/modules/session/ui/tools/ToolCallRenderer.vue', import.meta.url),
   'utf8'
 )
 const indexSource = readFileSync(
-  new URL('../../src/modules/conversation/ui/tools/index.js', import.meta.url),
+  new URL('../../src/modules/session/ui/tools/index.js', import.meta.url),
   'utf8'
 )
 const errorSource = readFileSync(
-  new URL('../../src/modules/conversation/ui/tools/ToolRendererUnavailable.vue', import.meta.url),
+  new URL('../../src/modules/session/ui/tools/ToolRendererUnavailable.vue', import.meta.url),
   'utf8'
 )
 

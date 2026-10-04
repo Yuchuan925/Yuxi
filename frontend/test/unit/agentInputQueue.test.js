@@ -10,8 +10,8 @@ let server
 let agentApi
 let useAgentInputQueue
 let MessageProcessor
-let getConversationDisplayItems
-let groupConversationContinuations
+let getMessageGroupDisplayItems
+let groupRunContinuations
 
 before(async () => {
   const storage = new Map()
@@ -23,12 +23,12 @@ before(async () => {
   server = await createServer({ root: webRoot, server: { middlewareMode: true } })
   ;({ agentApi } = await server.ssrLoadModule('/src/apis/index.js'))
   ;({ useAgentInputQueue } = await server.ssrLoadModule(
-    '/src/modules/conversation/model/useAgentInputQueue.js'
+    '/src/modules/session/model/useAgentInputQueue.js'
   ))
-  ;({ default: MessageProcessor } = await server.ssrLoadModule('/src/modules/conversation/model/messageProcessor.js'))
-  ;({ getConversationDisplayItems } = await server.ssrLoadModule('/src/modules/conversation/model/messageGrouping.js'))
-  ;({ groupConversationContinuations } = await server.ssrLoadModule(
-    '/src/modules/conversation/model/conversationProcessGrouping.js'
+  ;({ default: MessageProcessor } = await server.ssrLoadModule('/src/modules/session/model/messageProcessor.js'))
+  ;({ getMessageGroupDisplayItems } = await server.ssrLoadModule('/src/modules/session/model/messageGrouping.js'))
+  ;({ groupRunContinuations } = await server.ssrLoadModule(
+    '/src/modules/session/model/runProcessGrouping.js'
   ))
 })
 
@@ -78,9 +78,9 @@ test('审批前后的工具和思考跨关联 Run 连续展示，正文仍独立
     { id: 'm4', run_id: 'resume', type: 'ai', content: '最终回答' }
   ]
   const runGroups = MessageProcessor.convertServerHistoryToMessages(history, runs)
-  const groups = groupConversationContinuations(runGroups)
+  const groups = groupRunContinuations(runGroups)
   assert.equal(groups.length, 1)
-  const items = getConversationDisplayItems(groups[0])
+  const items = getMessageGroupDisplayItems(groups[0])
   assert.deepEqual(
     items.map((item) => item.type),
     ['message', 'tool-group', 'message']
@@ -91,12 +91,12 @@ test('审批前后的工具和思考跨关联 Run 连续展示，正文仍独立
   )
   assert.equal(items[2].message.content, '最终回答')
   assert.equal(runGroups.length, 2)
-  const streaming = groupConversationContinuations([
+  const streaming = groupRunContinuations([
     runGroups[0],
     { ...runGroups[1], status: 'streaming', messages: runGroups[1].messages.slice(0, 1) }
   ])
   assert.equal(streaming[0].status, 'streaming')
-  assert.equal(getConversationDisplayItems(streaming[0])[1].key, items[1].key)
+  assert.equal(getMessageGroupDisplayItems(streaming[0])[1].key, items[1].key)
 })
 
 test('thinking 与相邻工具按顺序合并，正文和错误仍独立显示', () => {
@@ -105,7 +105,7 @@ test('thinking 与相邻工具按顺序合并，正文和错误仍独立显示',
     { id: 'a2', type: 'ai', reasoning_content: '再确认', tool_calls: [{ id: 't2', name: 'read_file', args: {} }] },
     { id: 'a3', type: 'ai', reasoning_content: '得到结论', content: '最终回答' }
   ]
-  const items = getConversationDisplayItems({ messages })
+  const items = getMessageGroupDisplayItems({ messages })
   assert.deepEqual(items.map((item) => item.type), ['tool-group', 'message'])
   assert.deepEqual(items[0].entries.map((entry) => entry.type), ['reasoning', 'tool', 'reasoning', 'tool', 'reasoning'])
   assert.deepEqual(items[0].entries.filter((entry) => entry.type === 'reasoning').map((entry) => entry.content), ['先检查', '再确认', '得到结论'])
@@ -114,26 +114,26 @@ test('thinking 与相邻工具按顺序合并，正文和错误仍独立显示',
   assert.equal(items[1].message.reasoning_content, '')
   assert.equal(messages[2].reasoning_content, '得到结论')
 
-  const thinkingOnly = getConversationDisplayItems({ messages: [{ id: 'a', type: 'ai', reasoning_content: '思考中' }] })
+  const thinkingOnly = getMessageGroupDisplayItems({ messages: [{ id: 'a', type: 'ai', reasoning_content: '思考中' }] })
   assert.equal(thinkingOnly.length, 1)
   assert.equal(thinkingOnly[0].type, 'tool-group')
   assert.equal(thinkingOnly[0].entries[0].content, '思考中')
   assert.deepEqual(thinkingOnly[0].toolCalls, [])
-  assert.deepEqual(getConversationDisplayItems({ messages: [{ type: 'ai', content: '' }] }), [])
+  assert.deepEqual(getMessageGroupDisplayItems({ messages: [{ type: 'ai', content: '' }] }), [])
 
-  const failed = getConversationDisplayItems({ messages: [{ type: 'ai', reasoning_content: '检查中断', error_type: 'interrupted' }] })
+  const failed = getMessageGroupDisplayItems({ messages: [{ type: 'ai', reasoning_content: '检查中断', error_type: 'interrupted' }] })
   assert.deepEqual(failed.map((item) => item.type), ['tool-group', 'message'])
   assert.equal(failed[1].message.error_type, 'interrupted')
 })
 
 test('同一消息的 thinking、正文和工具分段使用不同的稳定 key', () => {
   const message = { id: 'mixed', type: 'ai', reasoning_content: '计划', content: '先查文件', tool_calls: [{ id: 't1', name: 'ls', args: {} }] }
-  const items = getConversationDisplayItems({ messages: [message] })
+  const items = getMessageGroupDisplayItems({ messages: [message] })
   assert.deepEqual(items.map((item) => item.type), ['tool-group', 'message', 'tool-group'])
   assert.equal(new Set(items.map((item) => item.key)).size, 3)
   assert.equal(items[0].entries[0].content, '计划')
   assert.equal(items[2].entries[0].toolCall.id, 't1')
-  const updated = getConversationDisplayItems({ messages: [{ ...message, content: '先查文件，再整理' }] })
+  const updated = getMessageGroupDisplayItems({ messages: [{ ...message, content: '先查文件，再整理' }] })
   assert.deepEqual(updated.map((item) => item.key), items.map((item) => item.key))
 })
 
@@ -146,7 +146,7 @@ test('完整队列快照合并 steer 节点并遵循服务器优先顺序', asyn
       { input_id: 'local', status: 'sending' }
     ],
     inputMonitors: {},
-    onGoingConv: { items: {}, optimisticMessages: {} }
+    ongoingRunGroup: { items: {}, optimisticMessages: {} }
   }
   const originalQueue = agentApi.getThreadQueue
   const originalInput = agentApi.getThreadInput
@@ -178,7 +178,7 @@ test('尚未接收的本地输入不能被取消或订阅', async () => {
   const state = {
     queuedInputs: [{ input_id: 'local-key', status: 'sending' }],
     inputMonitors: {},
-    onGoingConv: { items: {}, optimisticMessages: {} }
+    ongoingRunGroup: { items: {}, optimisticMessages: {} }
   }
   const originalQueue = agentApi.getThreadQueue
   const originalInput = agentApi.getThreadInput

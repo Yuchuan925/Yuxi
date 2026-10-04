@@ -6,7 +6,7 @@ from pathlib import Path
 
 import asyncpg
 import pytest
-from test.live_api_cleanup import make_test_conversation_title
+from test.live_api_cleanup import make_test_session_title
 from yuxi.modules.workspace.paths import user_workdir_host_dir
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
@@ -24,7 +24,7 @@ async def _create_thread_for_user(test_client, headers: dict[str, str]) -> tuple
         "/api/v1/agents/threads",
         json={
             "agent_id": agent_id,
-            "title": make_test_conversation_title("viewer-filesystem-security"),
+            "title": make_test_session_title("viewer-filesystem-security"),
         },
         headers={**headers, "Idempotency-Key": str(uuid.uuid4())},
     )
@@ -35,8 +35,7 @@ async def _create_thread_for_user(test_client, headers: dict[str, str]) -> tuple
     connection = await asyncpg.connect(os.environ["POSTGRES_URL"].replace("+asyncpg", ""))
     try:
         workdir_path = await connection.fetchval(
-            "SELECT p.workdir_path FROM conversations c JOIN projects p ON p.id = c.project_id "
-            "WHERE c.thread_id = $1",
+            "SELECT p.workdir_path FROM sessions c JOIN projects p ON p.id = c.project_id WHERE c.thread_id = $1",
             thread_id,
         )
     finally:

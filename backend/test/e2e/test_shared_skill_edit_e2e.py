@@ -19,7 +19,7 @@ from e2e_helpers import (
 )
 from yuxi.modules.extensions.skills.projection import get_user_skills_root_dir
 
-from test.live_api_cleanup import make_test_conversation_title, remove_e2e_thread_storage
+from test.live_api_cleanup import make_test_session_title, remove_e2e_thread_storage
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.e2e, pytest.mark.slow, pytest.mark.timeout(360)]
 
@@ -122,7 +122,7 @@ async def test_edited_shared_skill_is_loaded_by_next_run(e2e_client: httpx.Async
         thread = await e2e_client.post(
             "/api/v1/agents/threads",
             headers={**e2e_headers, "Idempotency-Key": f"skill-edit-thread-{uuid.uuid4()}"},
-            json={"agent_id": agent_slug, "title": make_test_conversation_title("shared-skill-edit")},
+            json={"agent_id": agent_slug, "title": make_test_session_title("shared-skill-edit")},
         )
         assert thread.status_code == 200, thread.text
         thread_id = str(thread.json()["thread_id"])
@@ -131,7 +131,9 @@ async def test_edited_shared_skill_is_loaded_by_next_run(e2e_client: httpx.Async
             headers={**e2e_headers, "Idempotency-Key": f"skill-edit-input-{uuid.uuid4()}"},
             json={
                 "events": [
-                    {"type": "agent.session.input.message", "input": [
+                    {
+                        "type": "agent.session.input.message",
+                        "input": [
                             {
                                 "role": "user",
                                 "content": [
@@ -141,7 +143,9 @@ async def test_edited_shared_skill_is_loaded_by_next_run(e2e_client: httpx.Async
                                     }
                                 ],
                             }
-                        ], "yuxi": {"mode": "follow_up"}}
+                        ],
+                        "yuxi": {"mode": "follow_up"},
+                    }
                 ]
             },
         )

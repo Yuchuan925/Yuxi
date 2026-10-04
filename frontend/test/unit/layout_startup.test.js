@@ -20,7 +20,7 @@ test('布局导航不等待品牌或知识库，卸载后清理状态同步计�
     for (const [module, storeName, method, pending] of [
       ['settings/model/info', 'useInfoStore', 'loadInfoConfig', true],
       ['settings/model/config', 'useConfigStore', 'refreshConfig', false],
-      ['conversation/model/chatThreads', 'useChatThreadsStore', 'loadThreads', false],
+      ['session/model/chatThreads', 'useChatThreadsStore', 'loadThreads', false],
       ['projects/model/projects', 'useProjectsStore', 'loadProjects', false]
     ]) {
       const exports = await server.ssrLoadModule(`/src/modules/${module}.js`)

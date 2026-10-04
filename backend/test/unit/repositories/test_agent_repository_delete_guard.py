@@ -14,7 +14,7 @@ from yuxi.modules.agents.models.inputs import AgentInput
 from yuxi.modules.agents.models.runs import AgentRun
 from yuxi.modules.agents.models.turns import AgentTurn
 from yuxi.infrastructure.postgres.base import Base
-from yuxi.modules.agents.models.threads import Conversation
+from yuxi.modules.agents.models.sessions import Session
 from yuxi.modules.identity.models import User
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.unit]
@@ -43,7 +43,7 @@ async def _seed_agent(session):
         share_config={"version": 2, "read_scope": {"access_level": "global"}, "manage_scope": None},
         created_by=user.uid,
     )
-    thread = Conversation(
+    thread = Session(
         thread_id="agent-thread", project_id="agent-project", uid=user.uid, agent_id=agent.slug, status="active"
     )
     session.add_all([user, agent, thread])
@@ -55,7 +55,7 @@ async def _seed_agent(session):
 async def test_delete_agent_returns_conflict_for_active_turn(session, status):
     """三种非终态 Turn 均禁止删除其 Agent。"""
     user, agent, _ = await _seed_agent(session)
-    session.add(AgentTurn(id="active-turn", conversation_thread_id="agent-thread", uid=user.uid, status=status))
+    session.add(AgentTurn(id="active-turn", thread_id="agent-thread", uid=user.uid, status=status))
     await session.flush()
 
     with pytest.raises(HTTPException) as exc:
@@ -72,7 +72,7 @@ async def test_delete_agent_rejects_pending_input_after_prior_turn(session):
         AgentInput(
             id="pending-input",
             received_seq=1,
-            conversation_thread_id="agent-thread",
+            thread_id="agent-thread",
             uid=user.uid,
             agent_slug=agent.slug,
             kind="follow_up",
@@ -95,20 +95,20 @@ async def test_delete_agent_rejects_pending_input_after_prior_turn(session):
 async def test_delete_agent_rejects_active_run_or_runtime_cleanup(session, run_status, cleanup_pending):
     """Turn 已终态也不能遗失 pending Run 或待清理 runtime。"""
     user, agent, thread = await _seed_agent(session)
-    turn = AgentTurn(id="finished-turn", conversation_thread_id=thread.thread_id, uid=user.uid, status="completed")
+    turn = AgentTurn(id="finished-turn", thread_id=thread.thread_id, uid=user.uid, status="completed")
     session.add(turn)
     await session.flush()
     session.add(
         AgentRun(
             id="unfinished-run",
-            conversation_thread_id=thread.thread_id,
+            thread_id=thread.thread_id,
             runtime_scope_id=thread.thread_id,
             agent_slug=agent.slug,
             uid=user.uid,
             status=run_status,
             runtime_cleanup_pending=cleanup_pending,
             turn_id=turn.id,
-            conversation_id=thread.id,
+            session_record_id=thread.id,
             run_type="chat",
             input_payload={},
         )
@@ -124,20 +124,20 @@ async def test_delete_agent_rejects_active_run_or_runtime_cleanup(session, run_s
 async def test_delete_agent_accepts_terminal_history(session):
     """仅有完成历史时允许删除 Agent，Thread 历史仍可保留。"""
     user, agent, thread = await _seed_agent(session)
-    turn = AgentTurn(id="finished-turn", conversation_thread_id=thread.thread_id, uid=user.uid, status="completed")
+    turn = AgentTurn(id="finished-turn", thread_id=thread.thread_id, uid=user.uid, status="completed")
     session.add(turn)
     await session.flush()
     session.add(
         AgentRun(
             id="finished-run",
-            conversation_thread_id=thread.thread_id,
+            thread_id=thread.thread_id,
             runtime_scope_id=thread.thread_id,
             agent_slug=agent.slug,
             uid=user.uid,
             status="completed",
             runtime_cleanup_pending=False,
             turn_id=turn.id,
-            conversation_id=thread.id,
+            session_record_id=thread.id,
             run_type="chat",
             input_payload={},
         )
@@ -147,7 +147,7 @@ async def test_delete_agent_accepts_terminal_history(session):
     await AgentRepository(session).delete(agent=agent, user=user)
 
     assert await session.scalar(select(Agent.id).where(Agent.slug == "custom-agent")) is None
-    thread_id = await session.scalar(select(Conversation.thread_id).where(Conversation.agent_id == "custom-agent"))
+    thread_id = await session.scalar(select(Session.thread_id).where(Session.agent_id == "custom-agent"))
     assert thread_id == "agent-thread"
 
 

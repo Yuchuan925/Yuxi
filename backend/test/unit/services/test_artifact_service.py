@@ -72,7 +72,7 @@ def live_files(monkeypatch, tmp_path):
     backend = _Workspace(tmp_path / "shared/reporter")
     monkeypatch.setattr(skill_edit, "get_skill_data_dir", lambda: tmp_path)
     binding = AuthorizedWorkdir(
-        conversation_id=1,
+        session_record_id=1,
         thread_id="thread-1",
         uid="user-1",
         workdir=Workdir("projects/11111111-1111-4111-8111-111111111111", backend),

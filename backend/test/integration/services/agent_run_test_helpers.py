@@ -10,7 +10,7 @@ from yuxi.modules.agents.repositories.input import AgentInputRepository
 from yuxi.modules.agents.repositories.input_receipt import AgentInputReceiptRepository
 from yuxi.modules.agents.models.runs import AgentRun
 from yuxi.modules.agents.models.turns import AgentTurn
-from yuxi.modules.agents.models.threads import Conversation
+from yuxi.modules.agents.models.sessions import Session
 from yuxi.modules.agents.models.messages import Message
 from yuxi.modules.workspace.models import Project
 from yuxi.modules.identity.models import User
@@ -48,14 +48,14 @@ async def create_agent_run(
             )
         )
         await db.flush()
-        conversation = Conversation(
+        agent_session = Session(
             thread_id=thread_id,
             uid=uid,
             project_id=project_id,
             agent_id="main",
             status="active",
         )
-        db.add(conversation)
+        db.add(agent_session)
         await db.flush()
         input_repo = AgentInputRepository(db)
         await input_repo.create(
@@ -78,7 +78,7 @@ async def create_agent_run(
             input_id=input_id,
         )
         message = Message(
-            conversation_id=conversation.id,
+            session_record_id=agent_session.id,
             role="user",
             content=message_content,
             delivery_status="queued",
@@ -86,19 +86,19 @@ async def create_agent_run(
         db.add(message)
         await db.flush()
         await input_repo.add_messages(input_id=input_id, receipt_id=receipt.id, message_ids=[message.id])
-        turn = AgentTurn(id=turn_id, conversation_thread_id=thread_id, uid=uid, app_id=None, status="running")
+        turn = AgentTurn(id=turn_id, thread_id=thread_id, uid=uid, app_id=None, status="running")
         db.add(turn)
         await db.flush()
         db.add(
             AgentRun(
                 id=run_id,
-                conversation_thread_id=thread_id,
+                thread_id=thread_id,
                 runtime_scope_id=thread_id,
                 agent_slug="main",
                 uid=uid,
                 turn_id=turn_id,
                 input_id=input_id,
-                conversation_id=conversation.id,
+                session_record_id=agent_session.id,
                 input_message_id=message.id,
                 input_payload=dict(input_payload),
                 status=status,

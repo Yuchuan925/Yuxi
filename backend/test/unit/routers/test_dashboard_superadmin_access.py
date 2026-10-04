@@ -8,15 +8,15 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from yuxi.api.routers.dashboard import (
     dashboard,
-    get_all_conversations,
-    get_conversation_detail,
+    get_all_sessions,
+    get_session_detail,
     get_tool_call_stats,
     get_user_activity_stats,
 )
 from yuxi.api.dependencies.auth import get_superadmin_user
 from yuxi.modules.agents.models.definitions import Agent
 from yuxi.infrastructure.postgres.base import Base
-from yuxi.modules.agents.models.threads import Conversation
+from yuxi.modules.agents.models.sessions import Session
 from yuxi.modules.identity.models import Department, User
 from yuxi.modules.agents.models.messages import Message, ToolCall
 from yuxi.shared.datetime import utc_now
@@ -76,28 +76,28 @@ async def dashboard_session():
             share_config={},
         )
         now = utc_now()
-        conversation_a = Conversation(
+        session_a = Session(
             thread_id="thread-a",
             project_id="project-thread-a",
             uid="user_a",
             agent_id="agent-shared",
-            title="Dept A conversation",
+            title="Dept A agent_session",
             status="active",
             created_at=now,
             updated_at=now,
         )
-        conversation_b = Conversation(
+        session_b = Session(
             thread_id="thread-b",
             project_id="project-thread-b",
             uid="user_b",
             agent_id="agent-shared",
-            title="Dept B conversation",
+            title="Dept B agent_session",
             status="active",
             created_at=now,
             updated_at=now,
         )
-        message_a = Message(conversation=conversation_a, role="assistant", content="A", created_at=now)
-        message_b = Message(conversation=conversation_b, role="assistant", content="B", created_at=now)
+        message_a = Message(agent_session=session_a, role="assistant", content="A", created_at=now)
+        message_b = Message(agent_session=session_b, role="assistant", content="B", created_at=now)
         tool_call_a = ToolCall(message=message_a, tool_name="dept_a_tool", status="success", created_at=now)
         tool_call_b = ToolCall(message=message_b, tool_name="dept_b_tool", status="success", created_at=now)
         db.add_all(
@@ -110,8 +110,8 @@ async def dashboard_session():
                 admin_b,
                 user_b,
                 agent,
-                conversation_a,
-                conversation_b,
+                session_a,
+                session_b,
                 message_a,
                 message_b,
                 tool_call_a,
@@ -127,8 +127,8 @@ async def dashboard_session():
             user_a,
             admin_b,
             user_b,
-            conversation_a,
-            conversation_b,
+            session_a,
+            session_b,
         ]:
             await db.refresh(item)
         yield {"db": db, "superadmin": superadmin, "admin_a": admin_a}
@@ -151,15 +151,15 @@ async def test_dashboard_dependency_rejects_department_admin(dashboard_session):
     assert exc.value.status_code == 403
 
 
-async def test_conversation_list_superadmin_sees_all_departments(dashboard_session):
-    response = await get_all_conversations(db=dashboard_session["db"], current_user=dashboard_session["superadmin"])
+async def test_session_list_superadmin_sees_all_departments(dashboard_session):
+    response = await get_all_sessions(db=dashboard_session["db"], current_user=dashboard_session["superadmin"])
 
     assert response["total"] == 2
     assert {item["thread_id"] for item in response["items"]} == {"thread-a", "thread-b"}
 
 
-async def test_conversation_detail_superadmin_can_view_other_department(dashboard_session):
-    response = await get_conversation_detail(
+async def test_session_detail_superadmin_can_view_other_department(dashboard_session):
+    response = await get_session_detail(
         "thread-b",
         db=dashboard_session["db"],
         current_user=dashboard_session["superadmin"],

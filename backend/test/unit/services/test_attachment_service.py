@@ -138,7 +138,7 @@ class FakeMinioClient:
 
 
 @dataclass
-class FakeConversation:
+class FakeSession:
     id: int = 1
     uid: str = "user-1"
     agent_id: str = "agent-1"
@@ -147,29 +147,29 @@ class FakeConversation:
     extra_metadata: dict | None = None
 
 
-class FakeConversationRepository:
+class FakeSessionRepository:
     def __init__(self, db):
-        self.conversation = FakeConversation()
+        self.agent_session = FakeSession()
         self.attachments: list[dict] = []
 
-    async def get_conversation_by_thread_id(self, thread_id: str):
-        return self.conversation
+    async def get_session_by_thread_id(self, thread_id: str):
+        return self.agent_session
 
-    async def add_attachment(self, conversation_id: int, attachment_info: dict):
+    async def add_attachment(self, session_record_id: int, attachment_info: dict):
         self.attachments.append(attachment_info)
         return attachment_info
 
-    async def add_attachments(self, conversation_id: int, attachment_infos: list[dict]):
+    async def add_attachments(self, session_record_id: int, attachment_infos: list[dict]):
         self.attachments.extend(attachment_infos)
         return attachment_infos
 
-    async def get_attachments(self, conversation_id: int):
+    async def get_attachments(self, session_record_id: int):
         return list(self.attachments)
 
-    async def lock_attachments(self, conversation_id: int):
+    async def lock_attachments(self, session_record_id: int):
         return list(self.attachments)
 
-    async def remove_attachment(self, conversation_id: int, file_id: str):
+    async def remove_attachment(self, session_record_id: int, file_id: str):
         before = len(self.attachments)
         self.attachments = [item for item in self.attachments if item.get("file_id") != file_id]
         return len(self.attachments) != before
@@ -178,9 +178,9 @@ class FakeConversationRepository:
 @pytest.mark.asyncio
 async def test_thread_attachment_rejects_same_user_from_other_app(monkeypatch):
     """附件读取在 service 边界拒绝同 UID 的跨 APP Thread。"""
-    repo = FakeConversationRepository(None)
-    repo.conversation.app_id = "app-a"
-    monkeypatch.setattr(service, "ConversationRepository", lambda _db: repo)
+    repo = FakeSessionRepository(None)
+    repo.agent_session.app_id = "app-a"
+    monkeypatch.setattr(service, "SessionRepository", lambda _db: repo)
     with pytest.raises(service.HTTPException) as exc:
         await service.list_thread_attachments_view(
             thread_id="thread-1", db=FakeDB(), current_uid="user-1", app_id="app-b"
@@ -390,17 +390,17 @@ async def test_parse_tmp_attachment_uses_selected_method_and_uploads_markdown(mo
 def confirm_attachment_env(monkeypatch: pytest.MonkeyPatch):
     """构造 confirm 流程所需的 MinIO 与仓库假实现，并挂载到 service 模块。"""
     fake_minio = FakeMinioClient()
-    fake_repo = FakeConversationRepository(db=None)
+    fake_repo = FakeSessionRepository(db=None)
     backend = FakeWorkdirStorage()
 
     monkeypatch.setattr(service, "get_minio_client", lambda: fake_minio)
-    monkeypatch.setattr(service, "ConversationRepository", lambda db: fake_repo)
+    monkeypatch.setattr(service, "SessionRepository", lambda db: fake_repo)
 
     async def resolve_binding(**kwargs):
         del kwargs
         return SimpleNamespace(workdir=FakeWorkdir(backend))
 
-    monkeypatch.setattr(workdir_service, "resolve_authorized_conversation_workdir", resolve_binding)
+    monkeypatch.setattr(workdir_service, "resolve_authorized_session_workdir", resolve_binding)
     fake_repo.workdir_backend = backend
 
     return fake_minio, fake_repo
@@ -615,7 +615,7 @@ async def test_store_attachment_normalizes_persisted_file_name(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_delete_thread_attachment_updates_live_workdir_even_during_runtime(monkeypatch):
-    fake_repo = FakeConversationRepository(db=None)
+    fake_repo = FakeSessionRepository(db=None)
     backend = FakeWorkdirStorage()
     original = "/home/gem/user-data/projects/11111111-1111-4111-8111-111111111111/uploads/file-1_demo.pdf"
     parsed = "/home/gem/user-data/projects/11111111-1111-4111-8111-111111111111/uploads/attachments/file-1_demo.md"
@@ -626,8 +626,8 @@ async def test_delete_thread_attachment_updates_live_workdir_even_during_runtime
         del kwargs
         return SimpleNamespace(workdir=FakeWorkdir(backend))
 
-    monkeypatch.setattr(service, "ConversationRepository", lambda _db: fake_repo)
-    monkeypatch.setattr(workdir_service, "resolve_authorized_conversation_workdir", resolve_binding)
+    monkeypatch.setattr(service, "SessionRepository", lambda _db: fake_repo)
+    monkeypatch.setattr(workdir_service, "resolve_authorized_session_workdir", resolve_binding)
     result = await service.delete_thread_attachment_view(
         thread_id="thread-1", file_id="file-1", db=FakeDB(), current_uid="user-1"
     )
@@ -639,7 +639,7 @@ async def test_delete_thread_attachment_updates_live_workdir_even_during_runtime
 
 @pytest.mark.asyncio
 async def test_delete_thread_attachment_rejects_pending_input_use(monkeypatch):
-    fake_repo = FakeConversationRepository(db=None)
+    fake_repo = FakeSessionRepository(db=None)
     backend = FakeWorkdirStorage()
     original = "/home/gem/user-data/projects/11111111-1111-4111-8111-111111111111/uploads/file-1_demo.pdf"
     backend.files = {_scope_path(original): b"pdf"}
@@ -656,8 +656,8 @@ async def test_delete_thread_attachment_rejects_pending_input_use(monkeypatch):
         del kwargs
         return SimpleNamespace(workdir=FakeWorkdir(backend))
 
-    monkeypatch.setattr(service, "ConversationRepository", lambda _db: fake_repo)
-    monkeypatch.setattr(workdir_service, "resolve_authorized_conversation_workdir", resolve_binding)
+    monkeypatch.setattr(service, "SessionRepository", lambda _db: fake_repo)
+    monkeypatch.setattr(workdir_service, "resolve_authorized_session_workdir", resolve_binding)
     monkeypatch.setattr(service, "AgentInputRepository", PendingAgentInputRepository)
 
     with pytest.raises(service.HTTPException) as exc_info:
@@ -672,7 +672,7 @@ async def test_delete_thread_attachment_rejects_pending_input_use(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_delete_thread_attachment_rejects_active_thread_run(monkeypatch):
-    fake_repo = FakeConversationRepository(db=None)
+    fake_repo = FakeSessionRepository(db=None)
     backend = FakeWorkdirStorage()
     original = "/home/gem/user-data/projects/11111111-1111-4111-8111-111111111111/uploads/file-1_demo.pdf"
     backend.files = {_scope_path(original): b"pdf"}
@@ -683,8 +683,8 @@ async def test_delete_thread_attachment_rejects_active_thread_run(monkeypatch):
         del kwargs
         return SimpleNamespace(workdir=FakeWorkdir(backend))
 
-    monkeypatch.setattr(service, "ConversationRepository", lambda _db: fake_repo)
-    monkeypatch.setattr(workdir_service, "resolve_authorized_conversation_workdir", resolve_binding)
+    monkeypatch.setattr(service, "SessionRepository", lambda _db: fake_repo)
+    monkeypatch.setattr(workdir_service, "resolve_authorized_session_workdir", resolve_binding)
     monkeypatch.setattr(service, "AgentRunRepository", ActiveAgentRunRepository)
 
     with pytest.raises(service.HTTPException) as exc_info:
@@ -699,7 +699,7 @@ async def test_delete_thread_attachment_rejects_active_thread_run(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_delete_thread_attachment_does_not_delete_bytes_before_metadata_commit(monkeypatch):
-    fake_repo = FakeConversationRepository(db=None)
+    fake_repo = FakeSessionRepository(db=None)
     backend = FakeWorkdirStorage()
     original = "/home/gem/user-data/projects/11111111-1111-4111-8111-111111111111/uploads/file-1_demo.pdf"
     backend.files = {_scope_path(original): b"pdf"}
@@ -707,7 +707,7 @@ async def test_delete_thread_attachment_does_not_delete_bytes_before_metadata_co
         {"file_id": "file-1", "file_name": "demo.pdf", "original_path": original, "path": original}
     ]
 
-    async def fail_remove(_conversation_id: int, _file_id: str):
+    async def fail_remove(_session_record_id: int, _file_id: str):
         raise RuntimeError("database unavailable")
 
     fake_repo.remove_attachment = fail_remove
@@ -716,8 +716,8 @@ async def test_delete_thread_attachment_does_not_delete_bytes_before_metadata_co
         del kwargs
         return SimpleNamespace(workdir=FakeWorkdir(backend))
 
-    monkeypatch.setattr(service, "ConversationRepository", lambda _db: fake_repo)
-    monkeypatch.setattr(workdir_service, "resolve_authorized_conversation_workdir", resolve_binding)
+    monkeypatch.setattr(service, "SessionRepository", lambda _db: fake_repo)
+    monkeypatch.setattr(workdir_service, "resolve_authorized_session_workdir", resolve_binding)
 
     with pytest.raises(RuntimeError, match="database unavailable"):
         await service.delete_thread_attachment_view(

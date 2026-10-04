@@ -54,7 +54,7 @@ class Project(Base):
         DateTime(timezone=True), default=utc_now, onupdate=utc_now, server_default=func.now(), nullable=False
     )
 
-    conversations = relationship("Conversation", back_populates="project")
+    sessions = relationship("Session", back_populates="project")
 
     def to_dict(self) -> dict[str, Any]:
         """序列化项目公开字段。"""

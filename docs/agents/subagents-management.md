@@ -64,7 +64,7 @@
 | --- | --- | --- |
 | LangGraph checkpoint | 当前 `thread_id` | 独立 `child thread_id` |
 | Sandbox runtime | 根 `runtime_scope_id` | 与根运行相同 |
-| Project Workdir | 当前 Project 的 Workdir | 与根 Conversation 绑定的 Project 相同 |
+| Project Workdir | 当前 Project 的 Workdir | 与根 Session 绑定的 Project 相同 |
 | UserWorkspace | 当前用户的工作区 | 同一用户的工作区 |
 | 共享/内置 Skills | 当前用户授权的只读投影 | 同一授权投影 |
 

@@ -134,7 +134,7 @@ def _new_scheduled_run(
         scheduled_for=scheduled_for,
         project_id=job.project_id,
         agent_slug=job.agent_slug,
-        conversation_title=job.name,
+        session_title=job.name,
         prompt=job.prompt,
         tool_approval_mode=job.tool_approval_mode,
         model_spec=job.model_spec,
@@ -181,7 +181,7 @@ async def list_scheduled_jobs(*, user: User, db: AsyncSession) -> dict:
 def _execution_to_dict(scheduled_run, input_item, run) -> dict:
     """从 Input 与当前 Turn/Run 装配调度记录摘要。"""
     data = scheduled_run.to_dict()
-    data["conversation_available"] = input_item is not None
+    data["session_available"] = input_item is not None
     if scheduled_run.status != "submitted" or input_item is None:
         return data
 
@@ -431,7 +431,7 @@ async def dispatch_scheduled_run(*, scheduled_run_id: str) -> dict | None:
                 "thread_id": scheduled_run.thread_id,
                 "idempotency_key": scheduled_run.id,
                 "project_id": scheduled_run.project_id,
-                "title": scheduled_run.conversation_title,
+                "title": scheduled_run.session_title,
                 "prompt": scheduled_run.prompt,
                 "model_spec": scheduled_run.model_spec,
                 "tool_approval_mode": scheduled_run.tool_approval_mode,
