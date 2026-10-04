@@ -108,8 +108,7 @@ async def test_nested_mcp_connection_preserves_http_exception(monkeypatch):
 async def test_document_submission_preserves_http_exception(monkeypatch, pending):
     """请求共用的提交函数不能把 HTTP 拒绝包装成成功状态码。"""
     error = HTTPException(503, "队列不可用", headers={"Retry-After": "30"})
-    method = "enqueue_unique_by_payload" if pending else "enqueue"
-    monkeypatch.setattr(knowledge_router.tasker, method, AsyncMock(side_effect=error))
+    monkeypatch.setattr(knowledge_router, "submit_job", AsyncMock(side_effect=error))
     kwargs = {
         "kb_id": "kb-1",
         "params": {},
@@ -120,9 +119,9 @@ async def test_document_submission_preserves_http_exception(monkeypatch, pending
 
     with pytest.raises(HTTPException) as caught:
         if pending:
-            await knowledge_router._enqueue_pending_document_action_task(**kwargs)
+            await knowledge_router._enqueue_pending_document_action_job(**kwargs)
         else:
-            await knowledge_router._enqueue_document_action_task(**kwargs, file_ids=["file-1"])
+            await knowledge_router._enqueue_document_action_job(**kwargs, file_ids=["file-1"])
 
     assert caught.value is error
 

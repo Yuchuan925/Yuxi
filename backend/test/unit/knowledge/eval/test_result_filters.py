@@ -4,6 +4,7 @@ import pytest
 from fastapi import HTTPException
 
 from yuxi.api.routers.knowledge.evaluation import get_evaluation_run_results
+from yuxi.modules.knowledge.evaluation import service as evaluation_module
 from yuxi.modules.knowledge.evaluation.service import EvaluationService
 
 
@@ -63,9 +64,7 @@ class FakeEvaluationRepository:
 async def test_get_run_results_filters_before_pagination(result_filter, expected_indexes):
     """筛选必须先于分页并返回筛选后的总数。"""
     service = EvaluationService.__new__(EvaluationService)
-    service.eval_repo = FakeEvaluationRepository(
-        [make_item(0), make_item(1, score=0.5), make_item(2, recall=0.99)]
-    )
+    service.eval_repo = FakeEvaluationRepository([make_item(0), make_item(1, score=0.5), make_item(2, recall=0.99)])
 
     result = await service.get_run_results("kb_test", "run_1234abcd", page=1, page_size=2, result_filter=result_filter)
 
@@ -87,3 +86,25 @@ async def test_router_rejects_unknown_result_filter_before_service_call():
 
     assert exc_info.value.status_code == 400
     assert exc_info.value.detail == "无效的评估结果筛选条件"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("row", [None, SimpleNamespace(kb_id="other_kb")], ids=["missing", "foreign"])
+async def test_run_results_reject_missing_or_foreign_run_even_with_matching_job(monkeypatch, row):
+    """后台作业不能替代所属知识库的评估运行。"""
+
+    class RunRepository:
+        async def get_run(self, run_id):
+            """返回缺失或其他知识库的运行。"""
+            return row
+
+    async def matching_job(job_id):
+        """制造可触发旧兜底的同名后台作业。"""
+        return {"id": job_id, "status": "running", "progress": 50, "message": "private job"}
+
+    monkeypatch.setattr(evaluation_module.job_tracker, "get_job", matching_job)
+    service = EvaluationService.__new__(EvaluationService)
+    service.eval_repo = RunRepository()
+
+    with pytest.raises(ValueError, match="Run not found"):
+        await service.get_run_results("kb_test", "run_1234abcd")

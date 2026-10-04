@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from typing import TYPE_CHECKING
 
 from sqlalchemy import select
 
@@ -12,7 +13,9 @@ from yuxi.modules.knowledge.repositories.files import KnowledgeFileRepository
 from yuxi.modules.knowledge.repositories.projections import knowledge_projection_lock
 from yuxi.modules.knowledge.runtime import knowledge_base
 from yuxi.modules.knowledge.utils import params_for_uploaded_document
-from yuxi.modules.tasks.service import TaskContext
+
+if TYPE_CHECKING:
+    from yuxi.workers.background_job_context import BackgroundJobContext
 from yuxi.shared.datetime import utc_now
 
 DOCUMENT_ACTION_BATCH_SIZE = 500
@@ -28,17 +31,17 @@ def _append_result_sample(items: list[dict], item: dict) -> None:
         items.append(item)
 
 
-async def fail_knowledge_file_task(session, task_record, error: str) -> None:
-    """原子收敛仍由失败 Task attempt 拥有的知识文件中间态。"""
-    await KnowledgeFileRepository.fail_task_processing_in_session(
+async def fail_knowledge_file_job(session, job_record, error: str) -> None:
+    """原子收敛仍由失败 Job attempt 拥有的知识文件中间态。"""
+    await KnowledgeFileRepository.fail_job_processing_in_session(
         session,
-        task_id=task_record.id,
+        job_id=job_record.id,
         error=error,
     )
 
 
 async def process_knowledge_projections(_context: dict | None = None) -> list[str]:
-    """由知识 worker 直接处理待清理意图，不创建 Tasker 任务或恢复执行上下文。"""
+    """由知识 worker 直接处理待清理意图，不创建 JobTracker 任务或恢复执行上下文。"""
     async with pg_manager.get_async_session_context() as session:
         keys = list(
             (
@@ -86,7 +89,7 @@ async def process_knowledge_projections(_context: dict | None = None) -> list[st
     return applied
 
 
-async def run_knowledge_ingest(context: TaskContext) -> dict:
+async def run_knowledge_ingest(context: BackgroundJobContext) -> dict:
     """从持久 payload 重建文档添加、解析和可选索引流程。"""
     payload = context.payload
     kb_id = payload["kb_id"]
@@ -100,7 +103,7 @@ async def run_knowledge_ingest(context: TaskContext) -> dict:
         if key in params and params[key] is not None
     }
     processing_owner = {
-        "processing_task_id": context.task_id,
+        "processing_job_id": context.job_id,
         "processing_owner": context.worker_id,
     }
 
@@ -214,13 +217,8 @@ async def run_knowledge_ingest(context: TaskContext) -> dict:
         for index, item in enumerate(processed_items)
     ]
     failed_count = sum(_is_failed_item(item) for item in final_items)
-    summary = {
-        "kb_id": kb_id,
-        "item_type": "文件",
-        "submitted": total,
-        "failed": failed_count,
-        "items": final_items,
-    }
+    summary = _document_result(final_items, processed=total, failed=failed_count)
+    summary.update(kb_id=kb_id, item_type="文件", submitted=total)
     await context.set_result(summary)
     await context.set_progress(100.0, f"文件处理完成，失败 {failed_count} 个" if failed_count else "文件处理完成")
     if failed_count:
@@ -228,21 +226,21 @@ async def run_knowledge_ingest(context: TaskContext) -> dict:
     return summary
 
 
-async def run_knowledge_parse(context: TaskContext) -> dict:
+async def run_knowledge_parse(context: BackgroundJobContext) -> dict:
     """按指定文件或待处理状态执行可重建的解析任务。"""
     if context.payload.get("scope") == "pending":
         return await _run_pending_files(context, action="parse")
     return await _run_file_ids(context, action="parse")
 
 
-async def run_knowledge_index(context: TaskContext) -> dict:
+async def run_knowledge_index(context: BackgroundJobContext) -> dict:
     """按指定文件或待处理状态执行可重建的索引任务。"""
     if context.payload.get("scope") == "pending":
         return await _run_pending_files(context, action="index")
     return await _run_file_ids(context, action="index")
 
 
-async def _run_file_ids(context: TaskContext, *, action: str) -> dict:
+async def _run_file_ids(context: BackgroundJobContext, *, action: str) -> dict:
     payload = context.payload
     kb_id = payload["kb_id"]
     file_ids = list(payload["file_ids"])
@@ -250,7 +248,7 @@ async def _run_file_ids(context: TaskContext, *, action: str) -> dict:
     operator_id = payload["operator_id"]
     label = "解析" if action == "parse" else "入库"
     processing_owner = {
-        "processing_task_id": context.task_id,
+        "processing_job_id": context.job_id,
         "processing_owner": context.worker_id,
     }
     await context.set_progress(5.0, f"准备{label}文档")
@@ -287,13 +285,13 @@ async def _run_file_ids(context: TaskContext, *, action: str) -> dict:
 
     await context.raise_if_cancelled()
     failed_count = sum(_is_failed_item(item) for item in processed_items)
-    result = {"items": processed_items, "processed": len(processed_items), "failed": failed_count}
+    result = _document_result(processed_items, processed=len(processed_items), failed=failed_count)
     await context.set_result(result)
     await context.set_progress(100.0, f"{label}完成，失败 {failed_count} 个")
     return result
 
 
-async def _run_pending_files(context: TaskContext, *, action: str) -> dict:
+async def _run_pending_files(context: BackgroundJobContext, *, action: str) -> dict:
     payload = context.payload
     kb_id = payload["kb_id"]
     statuses = list(payload["statuses"])
@@ -302,7 +300,7 @@ async def _run_pending_files(context: TaskContext, *, action: str) -> dict:
     operator_id = payload["operator_id"]
     label = "解析" if action == "parse" else "入库"
     processing_owner = {
-        "processing_task_id": context.task_id,
+        "processing_job_id": context.job_id,
         "processing_owner": context.worker_id,
     }
     await context.set_progress(5.0, f"准备{label}待处理文档")
@@ -362,12 +360,7 @@ async def _run_pending_files(context: TaskContext, *, action: str) -> dict:
                 )
 
     await context.raise_if_cancelled()
-    result = {
-        "items": result_items,
-        "processed": processed_count,
-        "failed": failed_count,
-        "result_truncated": processed_count > len(result_items),
-    }
+    result = _document_result(result_items, processed=processed_count, failed=failed_count)
     await context.set_result(result)
     await context.set_progress(
         100.0,
@@ -376,7 +369,7 @@ async def _run_pending_files(context: TaskContext, *, action: str) -> dict:
     return result
 
 
-async def run_knowledge_graph(context: TaskContext) -> dict:
+async def run_knowledge_graph(context: BackgroundJobContext) -> dict:
     """根据持久 action 重建图谱构建或向量修复任务。"""
     payload = context.payload
     kb_id = payload["kb_id"]
@@ -401,3 +394,21 @@ async def run_knowledge_graph(context: TaskContext) -> dict:
         f"图谱构建执行完成，成功 {result['success']} 个，抽取失败 {result['extraction_failed']} 个",
     )
     return result
+
+
+def _document_result(items: list[dict], *, processed: int, failed: int) -> dict:
+    """任务结果保留计数和有限文件引用，文件详情由知识库拥有。"""
+    samples = []
+    for item in items[:DOCUMENT_ACTION_RESULT_ITEM_LIMIT]:
+        sample = {key: item[key] for key in ("file_id", "status", "error") if key in item}
+        if sample.get("error"):
+            sample["error"] = "处理失败，详情请查看文件状态或日志"
+        samples.append(sample)
+    return {
+        "items": samples,
+        "processed": processed,
+        "succeeded": processed - failed,
+        "failed": failed,
+        "outcome": "partial" if failed else "completed",
+        "result_truncated": processed > len(samples),
+    }

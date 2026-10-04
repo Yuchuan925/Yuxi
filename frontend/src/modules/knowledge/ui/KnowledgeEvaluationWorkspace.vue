@@ -345,7 +345,7 @@ import {
   Upload
 } from '@lucide/vue'
 import { evaluationApi } from '@/apis/knowledge_api'
-import { useTaskerStore } from '@/modules/tasks/model/tasker'
+import { useBackgroundJobsStore } from '@/modules/background-jobs/model/jobs'
 import ResourceEmptyState from '@/shared/ui/ResourceEmptyState.vue'
 import BenchmarkUploadModal from '@/modules/knowledge/ui/BenchmarkUploadModal.vue'
 import BenchmarkGenerateModal from '@/modules/knowledge/ui/BenchmarkGenerateModal.vue'
@@ -358,7 +358,7 @@ const props = defineProps({
 })
 
 const router = useRouter()
-const taskerStore = useTaskerStore()
+const jobsStore = useBackgroundJobsStore()
 const loading = ref(true)
 const errorMessage = ref('')
 const datasets = ref([])
@@ -530,7 +530,7 @@ const handleDatasetAction = async (key, dataset) => {
     try {
       await evaluationApi.resumeDatasetGeneration(props.kbId, dataset.dataset_id)
       message.success('已继续生成评估基准')
-      taskerStore.loadTasks()
+      jobsStore.loadJobs()
       await loadOverview()
     } catch (error) {
       console.error('继续生成评估基准失败:', error)
@@ -551,12 +551,12 @@ const deleteRun = async (run) => {
 }
 
 const handleDatasetCreated = async () => {
-  taskerStore.loadTasks()
+  jobsStore.loadJobs()
   await loadOverview()
 }
 
 const handleRunCreated = async () => {
-  taskerStore.loadTasks()
+  jobsStore.loadJobs()
   await loadOverview()
 }
 

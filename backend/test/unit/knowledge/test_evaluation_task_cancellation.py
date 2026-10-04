@@ -10,7 +10,7 @@ from yuxi.modules.knowledge.evaluation.service import EvaluationService
 class FakeContext:
     def __init__(self, payload: dict, *, cancel_requested: bool, cancellation_reason: str | None = None):
         self.payload = payload
-        self.task_id = "task-1"
+        self.job_id = "job-1"
         self.cancel_requested = cancel_requested
         self.cancellation_reason = cancellation_reason
         self.messages: list[str] = []
@@ -52,7 +52,7 @@ class FakeEvaluationRepository:
         self.run_updates.append((run_id, deepcopy(data)))
 
 
-async def test_dataset_cancellation_defers_terminal_status_to_task_hook(monkeypatch):
+async def test_dataset_cancellation_defers_terminal_status_to_job_hook(monkeypatch):
     repo = FakeEvaluationRepository()
     service = EvaluationService.__new__(EvaluationService)
     service.eval_repo = repo
@@ -78,18 +78,18 @@ async def test_dataset_cancellation_defers_terminal_status_to_task_hook(monkeypa
 
     monkeypatch.setattr(evaluation_module.kb_manager, "get_kb_config", cancelled_get_config)
 
-    task = asyncio.create_task(service._generate_dataset_task(context))
+    job = asyncio.create_task(service._generate_dataset_job(context))
     await asyncio.wait_for(loading.wait(), timeout=1)
-    task.cancel()
+    job.cancel()
     with pytest.raises(asyncio.CancelledError):
-        await task
+        await job
 
     build_metadata = repo.dataset_updates[-1][1]["build_metadata"]
     assert build_metadata["status"] == "running"
     assert "error_message" not in build_metadata
 
 
-async def test_evaluation_timeout_defers_run_terminal_to_task_hook():
+async def test_evaluation_timeout_defers_run_terminal_to_job_hook():
     repo = FakeEvaluationRepository()
     service = EvaluationService.__new__(EvaluationService)
     service.eval_repo = repo
@@ -111,11 +111,11 @@ async def test_evaluation_timeout_defers_run_terminal_to_task_hook():
         await asyncio.Event().wait()
 
     repo.get_dataset = cancelled_get_dataset
-    task = asyncio.create_task(service._run_evaluation_task(context))
+    job = asyncio.create_task(service._run_evaluation_job(context))
     await asyncio.wait_for(loading.wait(), timeout=1)
-    task.cancel()
+    job.cancel()
     with pytest.raises(asyncio.CancelledError):
-        await task
+        await job
 
     assert repo.run_updates == []
-    assert context.messages == ["Error: 任务执行超时"]
+    assert context.messages == ["评估执行中断，请查看业务资源状态或日志"]

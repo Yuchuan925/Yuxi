@@ -72,7 +72,7 @@ async def test_queue_history_and_membership_indexes_remove_baseline_work():
                 "INSERT INTO agent_turns (id,thread_id,uid,status,created_at) SELECT 'turn'||i,'t'||i,'u','completed',now() FROM generate_series(0,99) i",
                 "INSERT INTO agent_runs (id,thread_id,runtime_scope_id,turn_id,session_record_id,agent_slug,uid,status,source,channel,run_type,origin_metadata,input_payload,token_usage,runtime_cleanup_pending,created_at) SELECT 'run'||i,c.thread_id,c.thread_id,'turn'||(i%100),c.id,'main','u','completed','chat','web','chat','{}','{}','{}',false,now() FROM generate_series(1,20000) i JOIN sessions c ON c.thread_id='t'||(i%100)",
                 "UPDATE agent_runs SET status='running',worker_id='fixture',lease_expires_at=now()-interval '1 second' WHERE id IN (SELECT 'run'||i FROM generate_series(1,100) i)",
-                "INSERT INTO tasks (id,name,type,status,progress,message,cancel_requested,handler_version,attempt_count,timeout_seconds,lease_expires_at,created_at) SELECT 'task'||i,'fixture','knowledge_index',CASE WHEN i<=20 THEN 'running' ELSE 'success' END,0,'',0,1,1,60,now()-interval '1 second',now() FROM generate_series(1,20000) i",
+                "INSERT INTO background_jobs (id,name,type,status,progress,message,cancel_requested,handler_version,attempt_count,timeout_seconds,lease_expires_at,created_at) SELECT 'job'||i,'fixture','knowledge_index',CASE WHEN i<=20 THEN 'running' ELSE 'success' END,0,'',0,1,1,60,now()-interval '1 second',now() FROM generate_series(1,20000) i",
                 "ANALYZE",
             ):
                 await conn.execute(text(sql))
@@ -117,11 +117,11 @@ async def test_queue_history_and_membership_indexes_remove_baseline_work():
                     print(json.dumps({"index": index, "rows": 20000, "current": current, "without_index": baseline}))
                 finally:
                     await savepoint.rollback()
-        # 小型 Session 列表保留原索引；现有 lease/task 复合索引不重复新增。
+        # 小型 Session 列表保留原索引；现有 lease/job 复合索引不重复新增。
         observed = (
             "SELECT * FROM sessions WHERE uid='u' AND app_id IS NULL AND status='active' ORDER BY is_pinned DESC,updated_at DESC,id DESC LIMIT 20",
             "SELECT * FROM agent_runs WHERE status IN ('running','cancel_requested') AND lease_expires_at < now() ORDER BY lease_expires_at LIMIT 100 FOR UPDATE SKIP LOCKED",
-            "SELECT * FROM tasks WHERE status='running' AND lease_expires_at < now() ORDER BY lease_expires_at LIMIT 100 FOR UPDATE SKIP LOCKED",
+            "SELECT * FROM background_jobs WHERE status='running' AND lease_expires_at < now() ORDER BY lease_expires_at LIMIT 100 FOR UPDATE SKIP LOCKED",
         )
         async with engine.connect() as conn:
             for query in observed:

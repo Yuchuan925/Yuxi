@@ -1,25 +1,25 @@
 <template>
   <a-modal
     :open="isOpen"
-    title="任务中心"
+    title="后台作业"
     :width="680"
     :footer="null"
     :destroy-on-close="false"
-    class="task-center-modal"
+    class="job-center-modal"
     @cancel="handleClose"
   >
     <a-alert
       type="info"
       show-icon
-      class="task-tip"
-      message="状态为「已完成」仅代表任务执行结束，其内部仍可能存在已捕获的问题，请留意日志。"
+      class="job-tip"
+      message="状态为「已完成」仅代表作业执行结束，其内部仍可能存在已捕获的问题，请留意日志。"
     />
-    <div class="task-center">
-      <div class="task-toolbar">
-        <div class="task-filter-group">
-          <a-segmented v-model:value="statusFilter" :options="taskFilterOptions" />
+    <div class="job-center">
+      <div class="job-toolbar">
+        <div class="job-filter-group">
+          <a-segmented v-model:value="statusFilter" :options="jobFilterOptions" />
         </div>
-        <div class="task-toolbar-actions">
+        <div class="job-toolbar-actions">
           <a-button type="text" @click="handleRefresh" :loading="loadingState"> 刷新 </a-button>
         </div>
       </div>
@@ -28,70 +28,70 @@
         v-if="lastErrorState"
         type="error"
         show-icon
-        class="task-alert"
-        :message="lastErrorState.message || '加载任务信息失败'"
+        class="job-alert"
+        :message="lastErrorState.message || '加载作业信息失败'"
       />
 
-      <div v-if="hasTasks" class="task-list">
+      <div v-if="hasJobs" class="job-list">
         <div
-          v-for="task in filteredTasks"
-          :key="task.id"
-          class="task-card"
-          :class="taskCardClasses(task)"
-          @click="handleDetail(task.id)"
+          v-for="job in filteredJobs"
+          :key="job.id"
+          class="job-card"
+          :class="jobCardClasses(job)"
+          @click="handleDetail(job.id)"
         >
           <!-- 状态指示器 -->
-          <div class="task-card-status-indicator" :class="`status-${task.status}`">
+          <div class="job-card-status-indicator" :class="`status-${job.status}`">
             <span class="status-dot"></span>
-            <span class="status-text">{{ statusLabel(task.status) }}</span>
+            <span class="status-text">{{ statusLabel(job.status) }}</span>
           </div>
 
-          <div class="task-card-header">
-            <div class="task-card-info">
-              <div class="task-card-title">{{ task.name }}</div>
-              <div class="task-card-meta">
-                <span class="task-card-type">{{ taskTypeLabel(task.type) }}</span>
-                <span class="task-card-id">#{{ formatTaskId(task.id) }}</span>
-                <span v-if="getTaskDuration(task)" class="task-card-duration">{{
-                  getTaskDuration(task)
+          <div class="job-card-header">
+            <div class="job-card-info">
+              <div class="job-card-title">{{ job.name }}</div>
+              <div class="job-card-meta">
+                <span class="job-card-type">{{ jobTypeLabel(job.type) }}</span>
+                <span class="job-card-id">#{{ formatJobId(job.id) }}</span>
+                <span v-if="getJobDuration(job)" class="job-card-duration">{{
+                  getJobDuration(job)
                 }}</span>
               </div>
             </div>
           </div>
 
           <!-- 进度信息 -->
-          <div v-if="!isTaskCompleted(task)" class="task-card-progress">
+          <div v-if="!isJobCompleted(job)" class="job-card-progress">
             <a-progress
-              :percent="Math.round(task.progress || 0)"
-              :status="progressStatus(task.status)"
+              :percent="Math.round(job.progress || 0)"
+              :status="progressStatus(job.status)"
               :stroke-width="4"
               :show-info="false"
             />
-            <span class="progress-text">{{ Math.round(task.progress || 0) }}%</span>
+            <span class="progress-text">{{ Math.round(job.progress || 0) }}%</span>
           </div>
-          <div v-if="task.message && !isTaskCompleted(task)" class="task-card-message">
-            {{ task.message }}
+          <div v-if="job.message && !isJobCompleted(job)" class="job-card-message">
+            {{ job.message }}
           </div>
-          <div v-if="task.error" class="task-card-error">
-            {{ task.error }}
+          <div v-if="job.error" class="job-card-error">
+            {{ job.error }}
           </div>
 
           <!-- 底部信息 -->
-          <div class="task-card-footer">
-            <div class="task-card-times">
-              <span v-if="task.started_at">开始 {{ formatTime(task.started_at, 'short') }}</span>
-              <span v-if="task.completed_at"
-                >· 完成 {{ formatTime(task.completed_at, 'short') }}</span
+          <div class="job-card-footer">
+            <div class="job-card-times">
+              <span v-if="job.started_at">开始 {{ formatTime(job.started_at, 'short') }}</span>
+              <span v-if="job.completed_at"
+                >· 完成 {{ formatTime(job.completed_at, 'short') }}</span
               >
-              <span v-if="!task.started_at">创建 {{ formatTime(task.created_at, 'short') }}</span>
+              <span v-if="!job.started_at">创建 {{ formatTime(job.created_at, 'short') }}</span>
             </div>
-            <div class="task-card-actions">
+            <div class="job-card-actions">
               <a-button
                 type="text"
                 size="small"
                 danger
-                v-if="canCancel(task)"
-                @click.stop="handleCancel(task.id)"
+                v-if="canCancel(job)"
+                @click.stop="handleCancel(job.id)"
               >
                 取消
               </a-button>
@@ -99,8 +99,8 @@
                 type="text"
                 size="small"
                 danger
-                v-if="isTaskCompleted(task)"
-                @click.stop="handleDelete(task.id, task.name)"
+                v-if="isJobCompleted(job)"
+                @click.stop="handleDelete(job.id, job.name)"
               >
                 删除
               </a-button>
@@ -109,10 +109,10 @@
         </div>
       </div>
 
-      <div v-else class="task-empty">
-        <div class="task-empty-icon">🗂️</div>
-        <div class="task-empty-title">{{ emptyHint.title }}</div>
-        <div class="task-empty-subtitle">{{ emptyHint.subtitle }}</div>
+      <div v-else class="job-empty">
+        <div class="job-empty-icon">🗂️</div>
+        <div class="job-empty-title">{{ emptyHint.title }}</div>
+        <div class="job-empty-subtitle">{{ emptyHint.subtitle }}</div>
       </div>
     </div>
   </a-modal>
@@ -121,43 +121,43 @@
 <script setup>
 import { computed, h, watch, ref } from 'vue'
 import { Modal } from 'ant-design-vue'
-import { useTaskerStore } from '@/modules/tasks/model/tasker'
+import { useBackgroundJobsStore } from '@/modules/background-jobs/model/jobs'
 import { storeToRefs } from 'pinia'
 import { formatFullDateTime, formatRelative, parseToShanghai } from '@/shared/lib/time'
 
-const taskerStore = useTaskerStore()
+const jobsStore = useBackgroundJobsStore()
 const {
   isDrawerOpen,
-  sortedTasks,
+  sortedJobs,
   loading,
   lastError,
   activeCount,
   totalCount,
   successCount,
   failedCount
-} = storeToRefs(taskerStore)
+} = storeToRefs(jobsStore)
 const isOpen = isDrawerOpen
 
-const tasks = computed(() => sortedTasks.value)
+const jobs = computed(() => sortedJobs.value)
 const loadingState = computed(() => Boolean(loading.value))
 const lastErrorState = computed(() => lastError.value)
 const statusFilter = ref('all')
 const inProgressCount = computed(() => activeCount.value || 0)
 const completedCount = computed(() => successCount.value || 0)
-const failedTaskCount = computed(() => failedCount.value || 0)
-const totalTaskCount = computed(() => totalCount.value || 0)
-const taskFilterOptions = computed(() => [
+const failedJobCount = computed(() => failedCount.value || 0)
+const totalJobCount = computed(() => totalCount.value || 0)
+const jobFilterOptions = computed(() => [
   {
     label: () =>
-      h('span', { class: 'task-filter-option' }, [
+      h('span', { class: 'job-filter-option' }, [
         '全部',
-        h('span', { class: 'filter-count' }, totalTaskCount.value)
+        h('span', { class: 'filter-count' }, totalJobCount.value)
       ]),
     value: 'all'
   },
   {
     label: () =>
-      h('span', { class: 'task-filter-option' }, [
+      h('span', { class: 'job-filter-option' }, [
         '进行中',
         h('span', { class: 'filter-count' }, inProgressCount.value)
       ]),
@@ -165,7 +165,7 @@ const taskFilterOptions = computed(() => [
   },
   {
     label: () =>
-      h('span', { class: 'task-filter-option' }, [
+      h('span', { class: 'job-filter-option' }, [
         '已完成',
         h('span', { class: 'filter-count' }, completedCount.value)
       ]),
@@ -173,9 +173,9 @@ const taskFilterOptions = computed(() => [
   },
   {
     label: () =>
-      h('span', { class: 'task-filter-option' }, [
+      h('span', { class: 'job-filter-option' }, [
         '失败',
-        h('span', { class: 'filter-count' }, failedTaskCount.value)
+        h('span', { class: 'filter-count' }, failedJobCount.value)
       ]),
     value: 'failed'
   }
@@ -183,7 +183,6 @@ const taskFilterOptions = computed(() => [
 
 const STATUS_CONFIG = {
   pending: { label: '等待中', terminal: false, cancelable: true, progress: 'active' },
-  queued: { label: '已排队', terminal: false, cancelable: true, progress: 'active' },
   running: { label: '进行中', terminal: false, cancelable: true, progress: 'active' },
   success: { label: '已完成', terminal: true, cancelable: false, progress: 'success' },
   failed: { label: '失败', terminal: true, cancelable: false, progress: 'exception' },
@@ -201,52 +200,52 @@ const TASK_TYPE_LABELS = {
 const isActiveStatus = (status) => Boolean(STATUS_CONFIG[status]) && !STATUS_CONFIG[status].terminal
 const isFailedStatus = (status) => status === 'failed' || status === 'cancelled'
 
-const filteredTasks = computed(() => {
-  const list = tasks.value
+const filteredJobs = computed(() => {
+  const list = jobs.value
   switch (statusFilter.value) {
     case 'active':
-      return list.filter((task) => isActiveStatus(task.status))
+      return list.filter((job) => isActiveStatus(job.status))
     case 'success':
-      return list.filter((task) => task.status === 'success')
+      return list.filter((job) => job.status === 'success')
     case 'failed':
-      return list.filter((task) => isFailedStatus(task.status))
+      return list.filter((job) => isFailedStatus(job.status))
     default:
       return list
   }
 })
 
-const hasTasks = computed(() => filteredTasks.value.length > 0)
+const hasJobs = computed(() => filteredJobs.value.length > 0)
 
 const emptyHint = computed(() => {
   switch (statusFilter.value) {
     case 'active':
-      return { title: '暂无进行中的任务', subtitle: '当前没有正在执行的后台任务。' }
+      return { title: '暂无进行中的作业', subtitle: '当前没有正在执行的后台作业。' }
     case 'success':
-      return { title: '暂无已完成的任务', subtitle: '执行成功的后台任务会显示在这里。' }
+      return { title: '暂无已完成的作业', subtitle: '执行成功的后台作业会显示在这里。' }
     case 'failed':
-      return { title: '暂无失败的任务', subtitle: '失败或已取消的后台任务会显示在这里。' }
+      return { title: '暂无失败的作业', subtitle: '失败或已取消的后台作业会显示在这里。' }
     default:
       return {
-        title: '暂无任务',
-        subtitle: '提交知识库导入等后台任务后，将在这里展示实时进度（仅展示最近的 100 个任务）。'
+        title: '暂无作业',
+        subtitle: '提交知识库导入等后台作业后，将在这里展示实时进度（仅展示最近的 100 个作业）。'
       }
   }
 })
 
-function taskCardClasses(task) {
+function jobCardClasses(job) {
   return {
-    'task-card--active': isActiveStatus(task.status),
-    'task-card--success': task.status === 'success',
-    'task-card--failed': task.status === 'failed'
+    'job-card--active': isActiveStatus(job.status),
+    'job-card--success': job.status === 'success',
+    'job-card--failed': job.status === 'failed'
   }
 }
 
-function taskTypeLabel(type) {
-  if (!type) return '后台任务'
+function jobTypeLabel(type) {
+  if (!type) return '后台作业'
   return TASK_TYPE_LABELS[type] || type
 }
 
-function formatTaskId(id) {
+function formatJobId(id) {
   if (!id) return '--'
   return id.slice(0, 8)
 }
@@ -255,18 +254,18 @@ watch(
   isOpen,
   (open) => {
     if (open) {
-      taskerStore.loadTasks()
+      jobsStore.loadJobs()
     }
   },
   { immediate: true }
 )
 
 function handleClose() {
-  taskerStore.closeDrawer()
+  jobsStore.closeDrawer()
 }
 
 function handleRefresh() {
-  taskerStore.loadTasks()
+  jobsStore.loadJobs()
 }
 
 function prettyJson(value) {
@@ -290,21 +289,22 @@ function hasContent(value) {
   return true
 }
 
-function handleDetail(taskId) {
-  const task = tasks.value.find((item) => item.id === taskId)
-  if (!task) {
+async function handleDetail(jobId) {
+  await jobsStore.refreshJob(jobId)
+  const job = jobs.value.find((item) => item.id === jobId)
+  if (!job) {
     return
   }
   const rows = [
-    ['类型', taskTypeLabel(task.type)],
-    ['状态', statusLabel(task.status)],
-    ['进度', `${Math.round(task.progress || 0)}%`],
-    ['创建时间', formatTime(task.created_at)],
-    ['开始时间', task.started_at ? formatTime(task.started_at) : '-'],
-    ['完成时间', task.completed_at ? formatTime(task.completed_at) : '-'],
-    ['耗时', getTaskDuration(task) || '-'],
-    ['描述', task.message || '-'],
-    ['错误', task.error || '-']
+    ['类型', jobTypeLabel(job.type)],
+    ['状态', statusLabel(job.status)],
+    ['进度', `${Math.round(job.progress || 0)}%`],
+    ['创建时间', formatTime(job.created_at)],
+    ['开始时间', job.started_at ? formatTime(job.started_at) : '-'],
+    ['完成时间', job.completed_at ? formatTime(job.completed_at) : '-'],
+    ['耗时', getJobDuration(job) || '-'],
+    ['描述', job.message || '-'],
+    ['错误', job.error || '-']
   ]
   const children = rows.map(([label, value]) =>
     h('div', { style: DETAIL_ROW_STYLE }, [
@@ -312,34 +312,30 @@ function handleDetail(taskId) {
       h('span', value)
     ])
   )
-  if (hasContent(task.payload)) {
-    children.push(h('div', { style: DETAIL_TITLE_STYLE }, '参数'))
-    children.push(h('pre', { style: DETAIL_JSON_STYLE }, prettyJson(task.payload)))
-  }
-  if (hasContent(task.result)) {
+  if (hasContent(job.result)) {
     children.push(h('div', { style: DETAIL_TITLE_STYLE }, '结果'))
-    children.push(h('pre', { style: DETAIL_JSON_STYLE }, prettyJson(task.result)))
+    children.push(h('pre', { style: DETAIL_JSON_STYLE }, prettyJson(job.result)))
   }
   Modal.info({
-    title: task.name,
+    title: job.name,
     width: 560,
     content: h('div', children)
   })
 }
 
-function handleCancel(taskId) {
-  taskerStore.cancelTask(taskId)
+function handleCancel(jobId) {
+  jobsStore.cancelJob(jobId)
 }
 
-function handleDelete(taskId, taskName) {
+function handleDelete(jobId, jobName) {
   Modal.confirm({
     title: '确认删除',
-    content: `确定要删除任务"${taskName}"吗？此操作不可恢复。`,
+    content: `确定要删除作业"${jobName}"吗？此操作不可恢复。`,
     okText: '删除',
     okType: 'danger',
     cancelText: '取消',
     onOk: () => {
-      taskerStore.deleteTask(taskId)
+      jobsStore.deleteJob(jobId)
     }
   })
 }
@@ -352,11 +348,11 @@ function formatTime(value, mode = 'full') {
   return formatFullDateTime(value)
 }
 
-function getTaskDuration(task) {
-  if (!task.started_at || !task.completed_at) return null
+function getJobDuration(job) {
+  if (!job.started_at || !job.completed_at) return null
   try {
-    const start = parseToShanghai(task.started_at)
-    const end = parseToShanghai(task.completed_at)
+    const start = parseToShanghai(job.started_at)
+    const end = parseToShanghai(job.completed_at)
     if (!start || !end) {
       return null
     }
@@ -381,8 +377,8 @@ function getTaskDuration(task) {
   }
 }
 
-function isTaskCompleted(task) {
-  return Boolean(STATUS_CONFIG[task.status]?.terminal)
+function isJobCompleted(job) {
+  return Boolean(STATUS_CONFIG[job.status]?.terminal)
 }
 
 function statusLabel(status) {
@@ -393,12 +389,12 @@ function progressStatus(status) {
   return STATUS_CONFIG[status]?.progress || 'active'
 }
 
-function canCancel(task) {
-  return Boolean(STATUS_CONFIG[task.status]?.cancelable) && !task.cancel_requested
+function canCancel(job) {
+  return Boolean(STATUS_CONFIG[job.status]?.cancelable) && !job.cancel_requested
 }
 </script>
 <style scoped lang="less">
-.task-center {
+.job-center {
   display: flex;
   flex-direction: column;
   gap: 16px;
@@ -407,7 +403,7 @@ function canCancel(task) {
   overflow: hidden;
 }
 
-.task-toolbar {
+.job-toolbar {
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -416,11 +412,11 @@ function canCancel(task) {
   flex-wrap: wrap;
 }
 
-.task-filter-group {
+.job-filter-group {
   flex-shrink: 0;
 }
 
-.task-toolbar-actions {
+.job-toolbar-actions {
   display: flex;
   align-items: center;
   gap: 4px;
@@ -432,22 +428,22 @@ function canCancel(task) {
   color: var(--gray-400);
 }
 
-.task-toolbar-actions :deep(.ant-btn) {
+.job-toolbar-actions :deep(.ant-btn) {
   display: inline-flex;
   align-items: center;
   gap: 4px;
   padding: 0 10px;
 }
 
-.task-alert {
+.job-alert {
   margin-bottom: 4px;
 }
 
-.task-tip {
+.job-tip {
   margin-bottom: 12px;
 }
 
-.task-list {
+.job-list {
   flex: 1;
   min-height: 0;
   display: flex;
@@ -457,7 +453,7 @@ function canCancel(task) {
   padding-right: 4px;
 }
 
-.task-card {
+.job-card {
   background: var(--gray-0);
   border: 1px solid var(--gray-200);
   border-radius: 10px;
@@ -470,13 +466,13 @@ function canCancel(task) {
   cursor: pointer;
 }
 
-.task-card:hover {
+.job-card:hover {
   border-color: var(--gray-300);
   box-shadow: 0 2px 8px var(--shadow-1);
 }
 
 /* 状态指示器 */
-.task-card-status-indicator {
+.job-card-status-indicator {
   position: absolute;
   top: 14px;
   right: 14px;
@@ -498,13 +494,6 @@ function canCancel(task) {
   background: var(--color-info-500);
 }
 .status-pending .status-text {
-  color: var(--color-info-500);
-}
-
-.status-queued .status-dot {
-  background: var(--color-info-500);
-}
-.status-queued .status-text {
   color: var(--color-info-500);
 }
 
@@ -549,17 +538,17 @@ function canCancel(task) {
   }
 }
 
-.task-card-header {
+.job-card-header {
   padding-right: 80px; /* 为状态指示器留出空间 */
 }
 
-.task-card-info {
+.job-card-info {
   display: flex;
   flex-direction: column;
   gap: 5px;
 }
 
-.task-card-title {
+.job-card-title {
   font-size: 15px;
   font-weight: 600;
   color: var(--gray-900);
@@ -569,7 +558,7 @@ function canCancel(task) {
   overflow: hidden;
 }
 
-.task-card-meta {
+.job-card-meta {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -577,26 +566,26 @@ function canCancel(task) {
   color: var(--gray-500);
 }
 
-.task-card-id {
+.job-card-id {
   font-family: 'SF Mono', 'Monaco', monospace;
   letter-spacing: 0.03em;
 }
 
-.task-card-type {
+.job-card-type {
   font-size: 12px;
 }
 
-.task-card-duration {
+.job-card-duration {
   color: var(--gray-400);
 }
 
-.task-card-progress {
+.job-card-progress {
   display: flex;
   align-items: center;
   gap: 10px;
 }
 
-.task-card-progress :deep(.ant-progress) {
+.job-card-progress :deep(.ant-progress) {
   flex: 1;
 }
 
@@ -608,25 +597,25 @@ function canCancel(task) {
   text-align: right;
 }
 
-.task-card-message,
-.task-card-error {
+.job-card-message,
+.job-card-error {
   font-size: 13px;
   line-height: 1.45;
   border-radius: 6px;
   padding: 10px 12px;
 }
 
-.task-card-message {
+.job-card-message {
   background: var(--gray-100);
   color: var(--gray-800);
 }
 
-.task-card-error {
+.job-card-error {
   background: var(--color-error-50);
   color: var(--color-error-500);
 }
 
-.task-card-footer {
+.job-card-footer {
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -634,31 +623,31 @@ function canCancel(task) {
   border-top: 1px solid var(--gray-100);
 }
 
-.task-card-times {
+.job-card-times {
   display: flex;
   gap: 6px;
   font-size: 12px;
   color: var(--gray-400);
 }
 
-.task-card-actions {
+.job-card-actions {
   display: flex;
   gap: 2px;
 }
 
-.task-card-actions :deep(.ant-btn) {
+.job-card-actions :deep(.ant-btn) {
   height: 24px;
   padding: 0 10px;
   font-size: 12px;
   color: var(--gray-500);
 }
 
-.task-card-actions :deep(.ant-btn:hover) {
+.job-card-actions :deep(.ant-btn:hover) {
   color: var(--gray-700);
   background: var(--gray-50);
 }
 
-.task-empty {
+.job-empty {
   margin-top: 32px;
   padding: 40px 30px;
   border-radius: 16px;
@@ -672,16 +661,16 @@ function canCancel(task) {
   gap: 10px;
 }
 
-.task-empty-icon {
+.job-empty-icon {
   font-size: 28px;
 }
 
-.task-empty-title {
+.job-empty-title {
   font-size: 16px;
   font-weight: 600;
 }
 
-.task-empty-subtitle {
+.job-empty-subtitle {
   font-size: 13px;
   max-width: 320px;
   line-height: 1.5;

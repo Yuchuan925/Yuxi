@@ -1,11 +1,11 @@
 import { defineStore } from 'pinia'
 import { computed, onScopeDispose, ref, watch } from 'vue'
 import { message } from 'ant-design-vue'
-import { taskerApi } from '@/apis/tasker'
+import { backgroundJobsApi } from '@/apis/background_jobs'
 import { useUserStore } from '@/modules/identity/model/user'
 import { parseToShanghai } from '@/shared/lib/time'
 
-const ACTIVE_STATUSES = new Set(['pending', 'running', 'queued'])
+const ACTIVE_STATUSES = new Set(['pending', 'running'])
 const FAILED_STATUSES = new Set(['failed', 'cancelled'])
 
 const createDefaultSummary = () => ({
@@ -15,9 +15,9 @@ const createDefaultSummary = () => ({
   type_counts: {}
 })
 
-const toTask = (raw = {}) => ({
+const toJob = (raw = {}) => ({
   id: raw.id,
-  name: raw.name || '后台任务',
+  name: raw.name || '后台作业',
   type: raw.type || 'general',
   status: raw.status || 'pending',
   progress: raw.progress ?? 0,
@@ -26,15 +26,14 @@ const toTask = (raw = {}) => ({
   updated_at: raw.updated_at,
   started_at: raw.started_at,
   completed_at: raw.completed_at,
-  payload: raw.payload || {},
   result: raw.result,
   error: raw.error,
   cancel_requested: raw.cancel_requested || false
 })
 
-export const useTaskerStore = defineStore('tasker', () => {
+export const useBackgroundJobsStore = defineStore('backgroundJobs', () => {
   const userStore = useUserStore()
-  const tasks = ref([])
+  const jobs = ref([])
   const loading = ref(false)
   const lastError = ref(null)
   const isDrawerOpen = ref(false)
@@ -42,12 +41,13 @@ export const useTaskerStore = defineStore('tasker', () => {
   let pollingTimer = null
   let sessionGeneration = 0
   let listRequestId = 0
-  let taskRevision = 0
+  let jobRevision = 0
   let pollingFailures = 0
   const detailRequests = new Map()
+  const pendingReceipts = new Set()
 
-  const sortedTasks = computed(() => {
-    return [...tasks.value].sort((a, b) => {
+  const sortedJobs = computed(() => {
+    return [...jobs.value].sort((a, b) => {
       const timeA = parseToShanghai(a.created_at)
       const timeB = parseToShanghai(b.created_at)
       if (!timeA && !timeB) return 0
@@ -74,47 +74,48 @@ export const useTaskerStore = defineStore('tasker', () => {
   const successCount = computed(() => statusCounts.value?.success || 0)
   const totalCount = computed(() => summary.value?.total || 0)
 
-  // 是否存在需要持续轮询的任务：summary 统计或本地乐观登记的活跃任务
-  const hasActiveTasks = computed(
-    () => activeCount.value > 0 || tasks.value.some((task) => ACTIVE_STATUSES.has(task.status))
+  // 是否存在需要持续轮询的作业：summary 统计或详情快照中的活跃作业
+  const hasActiveJobs = computed(
+    () => activeCount.value > 0 || jobs.value.some((job) => ACTIVE_STATUSES.has(job.status))
   )
 
-  function upsertTask(rawTask) {
-    if (!rawTask || !rawTask.id) return
-    taskRevision += 1
-    const task = toTask(rawTask)
-    const index = tasks.value.findIndex((item) => item.id === task.id)
+  function upsertJob(rawJob) {
+    if (!rawJob || !rawJob.id) return
+    jobRevision += 1
+    const job = toJob(rawJob)
+    const index = jobs.value.findIndex((item) => item.id === job.id)
     if (index >= 0) {
-      tasks.value.splice(index, 1, { ...tasks.value[index], ...task })
+      jobs.value.splice(index, 1, { ...jobs.value[index], ...job })
     } else {
-      tasks.value.unshift(task)
+      jobs.value.unshift(job)
     }
   }
 
-  async function loadTasks(params = {}) {
+  async function loadJobs(params = {}) {
     if (!userStore.isAdmin) {
       reset()
       return
     }
 
     const requestId = ++listRequestId
-    const revision = taskRevision
+    const revision = jobRevision
     stopPolling()
     loading.value = true
     lastError.value = null
     try {
-      const response = await taskerApi.fetchTasks(params)
-      if (requestId !== listRequestId || revision !== taskRevision) return
-      const taskList = response?.tasks || []
+      const response = await backgroundJobsApi.fetchJobs(params)
+      if (requestId !== listRequestId || revision !== jobRevision) return
+      const jobList = response?.jobs || []
       summary.value = {
         ...createDefaultSummary(),
         ...(response?.summary || {})
       }
-      tasks.value = taskList.map(toTask)
+      jobs.value = jobList.map(toJob)
+      pendingReceipts.clear()
       pollingFailures = 0
     } catch (error) {
-      if (requestId !== listRequestId || revision !== taskRevision) return
-      console.error('加载任务列表失败', error)
+      if (requestId !== listRequestId || revision !== jobRevision) return
+      console.error('加载作业列表失败', error)
       lastError.value = error
       pollingFailures += 1
     } finally {
@@ -125,85 +126,76 @@ export const useTaskerStore = defineStore('tasker', () => {
     }
   }
 
-  async function refreshTask(taskId) {
-    if (!taskId) return
-    const request = Symbol(taskId)
+  async function refreshJob(jobId) {
+    if (!jobId) return
+    const request = Symbol(jobId)
     const listId = listRequestId
-    detailRequests.set(taskId, request)
+    detailRequests.set(jobId, request)
     try {
-      const response = await taskerApi.fetchTaskDetail(taskId)
-      if (detailRequests.get(taskId) !== request || listId !== listRequestId) return
-      if (response?.task) {
-        upsertTask(response.task)
+      const response = await backgroundJobsApi.fetchJobDetail(jobId)
+      if (detailRequests.get(jobId) !== request || listId !== listRequestId) return
+      if (response?.job) {
+        upsertJob(response.job)
+        pendingReceipts.delete(jobId)
       }
     } catch (error) {
-      if (detailRequests.get(taskId) !== request || listId !== listRequestId) return
-      console.error(`刷新任务 ${taskId} 详情失败`, error)
+      if (detailRequests.get(jobId) !== request || listId !== listRequestId) return
+      console.error(`刷新作业 ${jobId} 详情失败`, error)
       lastError.value = error
     } finally {
-      if (detailRequests.get(taskId) === request) detailRequests.delete(taskId)
+      if (detailRequests.get(jobId) === request) detailRequests.delete(jobId)
     }
   }
 
-  async function cancelTask(taskId) {
-    if (!taskId) return
+  async function cancelJob(jobId) {
+    if (!jobId) return
     const generation = sessionGeneration
     try {
-      await taskerApi.cancelTask(taskId)
+      await backgroundJobsApi.cancelJob(jobId)
       if (generation !== sessionGeneration) return
       message.success('取消请求已提交')
-      await refreshTask(taskId)
+      await refreshJob(jobId)
     } catch (error) {
       if (generation !== sessionGeneration) return
-      console.error(`取消任务 ${taskId} 失败`, error)
-      message.error(error?.message || '取消任务失败')
+      console.error(`取消作业 ${jobId} 失败`, error)
+      message.error(error?.message || '取消作业失败')
     }
   }
 
-  async function deleteTask(taskId) {
-    if (!taskId) return
+  async function deleteJob(jobId) {
+    if (!jobId) return
     const generation = sessionGeneration
     try {
-      await taskerApi.deleteTask(taskId)
+      await backgroundJobsApi.deleteJob(jobId)
       if (generation !== sessionGeneration) return
-      taskRevision += 1
-      detailRequests.delete(taskId)
-      message.success('删除任务成功')
+      jobRevision += 1
+      detailRequests.delete(jobId)
+      message.success('删除作业成功')
       // 从本地列表中移除
-      const index = tasks.value.findIndex((item) => item.id === taskId)
+      const index = jobs.value.findIndex((item) => item.id === jobId)
       if (index >= 0) {
-        tasks.value.splice(index, 1)
+        jobs.value.splice(index, 1)
       }
     } catch (error) {
       if (generation !== sessionGeneration) return
-      console.error(`删除任务 ${taskId} 失败`, error)
-      message.error(error?.message || '删除任务失败')
+      console.error(`删除作业 ${jobId} 失败`, error)
+      message.error(error?.message || '删除作业失败')
     }
   }
 
-  function registerQueuedTask({ task_id, name, task_type, message: msg, payload } = {}) {
-    if (!task_id) return
-    const now = new Date().toISOString()
-    upsertTask({
-      id: task_id,
-      name: name || '后台任务',
-      type: task_type || 'manual',
-      status: 'queued',
-      progress: 0,
-      message: msg || '任务已排队',
-      created_at: now,
-      updated_at: now,
-      payload: payload || {}
-    })
-    syncPolling()
+  function registerJobReceipt({ job_id } = {}) {
+    if (!job_id) return
+    pendingReceipts.add(job_id)
+    jobRevision += 1
+    return refreshJob(job_id).then(syncPolling)
   }
 
   /** 在提交开始时绑定会话，拒绝切换账号后晚到的入队回执。 */
-  function createTaskRegistration() {
+  function createJobRegistration() {
     const generation = sessionGeneration
-    return (task) => {
+    return (job) => {
       if (generation !== sessionGeneration || !userStore.isAdmin) return
-      registerQueuedTask(task)
+      return registerJobReceipt(job)
     }
   }
 
@@ -226,7 +218,7 @@ export const useTaskerStore = defineStore('tasker', () => {
         syncPolling()
         return
       }
-      void loadTasks()
+      void loadJobs()
     }, interval)
   }
 
@@ -237,10 +229,10 @@ export const useTaskerStore = defineStore('tasker', () => {
     }
   }
 
-  // 轮询所有权收敛到 store：抽屉打开或存在活跃任务时持续轮询，否则停止，
-  // 修复抽屉关闭后任务角标（activeCount）不再更新的问题。
+  // 轮询所有权收敛到 store：抽屉打开或存在活跃作业时持续轮询，否则停止，
+  // 修复抽屉关闭后作业角标（activeCount）不再更新的问题。
   function syncPolling() {
-    if (userStore.isAdmin && (isDrawerOpen.value || hasActiveTasks.value)) {
+    if (userStore.isAdmin && (isDrawerOpen.value || hasActiveJobs.value || pendingReceipts.size)) {
       startPolling()
     } else {
       stopPolling()
@@ -251,10 +243,11 @@ export const useTaskerStore = defineStore('tasker', () => {
     sessionGeneration += 1
     listRequestId += 1
     detailRequests.clear()
+    pendingReceipts.clear()
     pollingFailures = 0
     loading.value = false
     stopPolling()
-    tasks.value = []
+    jobs.value = []
     lastError.value = null
     isDrawerOpen.value = false
     summary.value = createDefaultSummary()
@@ -266,19 +259,19 @@ export const useTaskerStore = defineStore('tasker', () => {
 
   return {
     isDrawerOpen,
-    tasks,
-    sortedTasks,
+    jobs,
+    sortedJobs,
     totalCount,
     successCount,
     failedCount,
     loading,
     lastError,
     activeCount,
-    loadTasks,
-    refreshTask,
-    cancelTask,
-    deleteTask,
-    createTaskRegistration,
+    loadJobs,
+    refreshJob,
+    cancelJob,
+    deleteJob,
+    createJobRegistration,
     reset,
     openDrawer,
     closeDrawer

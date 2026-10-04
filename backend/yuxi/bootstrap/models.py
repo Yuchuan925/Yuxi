@@ -17,7 +17,7 @@ MODEL_MODULES = (
     "yuxi.modules.extensions.mcp.models",
     "yuxi.modules.models.tables",
     "yuxi.modules.system.models",
-    "yuxi.modules.tasks.models",
+    "yuxi.modules.background_jobs.models",
     "yuxi.modules.schedules.models",
     "yuxi.modules.knowledge.models",
 )

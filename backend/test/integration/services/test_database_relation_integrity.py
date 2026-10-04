@@ -373,13 +373,13 @@ async def test_persisted_timestamps_keep_the_same_instant_across_session_timezon
         await _drop_isolated_schema(schema, admin, engine)
 
 
-async def test_task_and_cleanup_intent_reject_unknown_states():
+async def test_job_and_cleanup_intent_reject_unknown_states():
     """未知状态不能绕过任务恢复或清理扫描；合法状态仍可写入。"""
     from yuxi.modules.knowledge.models import KnowledgeProjectionOutbox
-    from yuxi.modules.tasks.models import TaskRecord
+    from yuxi.modules.background_jobs.models import BackgroundJobRecord
 
     schema, admin, engine, manager = await _create_isolated_manager("pytest_states")
-    task = insert(TaskRecord).values(id="task", name="fixture", type="fixture")
+    job = insert(BackgroundJobRecord).values(id="job", name="fixture", type="fixture")
     cleanup = insert(KnowledgeProjectionOutbox).values(
         event_key="cleanup", kb_id="kb", aggregate_id="file", generation=1, operation="generation_cleanup"
     )
@@ -387,17 +387,17 @@ async def test_task_and_cleanup_intent_reject_unknown_states():
         await create_business_tables(manager)
         await create_knowledge_tables(manager)
         for constraint, statement in (
-            ("ck_tasks_status", task),
+            ("ck_background_jobs_status", job),
             ("ck_knowledge_projection_outbox_status", cleanup),
         ):
             with pytest.raises(IntegrityError, match=constraint):
                 async with engine.begin() as conn:
                     await conn.execute(statement.values(status="unknown"))
         async with engine.begin() as conn:
-            await conn.execute(task.values(status="pending"))
+            await conn.execute(job.values(status="pending"))
             await conn.execute(cleanup.values(status="pending"))
         async with engine.connect() as conn:
-            assert await conn.scalar(select(TaskRecord.status)) == "pending"
+            assert await conn.scalar(select(BackgroundJobRecord.status)) == "pending"
             assert await conn.scalar(select(KnowledgeProjectionOutbox.status)) == "pending"
     finally:
         await _drop_isolated_schema(schema, admin, engine)

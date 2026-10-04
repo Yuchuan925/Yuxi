@@ -26,12 +26,12 @@ class EvaluationRepository:
             return dataset
 
     @staticmethod
-    async def attach_dataset_generation_task_in_session(
+    async def attach_dataset_generation_job_in_session(
         session,
         dataset_id: str,
-        task_id: str,
+        job_id: str,
     ) -> EvaluationDataset | None:
-        """在调用方事务中关联生成 Task，且不覆盖相同 Task 的终态。"""
+        """在调用方事务中关联生成作业，且不覆盖相同作业的终态。"""
         record = await session.scalar(
             select(EvaluationDataset).where(EvaluationDataset.dataset_id == dataset_id).with_for_update()
         )
@@ -40,10 +40,10 @@ class EvaluationRepository:
         metadata = dict(record.build_metadata or {})
         if metadata.get("source") != "generated" or metadata.get("status") == "completed":
             return record
-        if metadata.get("task_id") == task_id:
+        if metadata.get("job_id") == job_id:
             return record
         metadata.update(
-            task_id=task_id,
+            job_id=job_id,
             status="pending",
             message="等待 worker 执行",
         )

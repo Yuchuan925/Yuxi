@@ -17,8 +17,12 @@ from yuxi.modules.agents.services.transport import (
     WORKER_RECONCILIATION_HEALTH_TTL_SECONDS,
     get_redis_client,
 )
-from yuxi.modules.tasks.queue import TASK_RECONCILIATION_HEALTH_KEY, TASK_RECONCILIATION_HEALTH_TTL_SECONDS
-from yuxi.workers.health import WORKER_HEALTH_KEY, WORKER_HEALTH_MAX_TTL_MS
+from yuxi.workers.health import (
+    JOB_RECONCILIATION_HEALTH_KEY,
+    JOB_RECONCILIATION_HEALTH_TTL_SECONDS,
+    WORKER_HEALTH_KEY,
+    WORKER_HEALTH_MAX_TTL_MS,
+)
 
 READINESS_PROBE_TIMEOUT_SECONDS = float(os.getenv("READINESS_PROBE_TIMEOUT_SECONDS", "2"))
 READINESS_CACHE_TTL_SECONDS = float(os.getenv("READINESS_CACHE_TTL_SECONDS", "1"))
@@ -52,7 +56,7 @@ async def _probe_worker() -> None:
     leases = (
         (WORKER_HEALTH_KEY, WORKER_HEALTH_MAX_TTL_MS),
         (WORKER_RECONCILIATION_HEALTH_KEY, WORKER_RECONCILIATION_HEALTH_TTL_SECONDS * 1000),
-        (TASK_RECONCILIATION_HEALTH_KEY, TASK_RECONCILIATION_HEALTH_TTL_SECONDS * 1000),
+        (JOB_RECONCILIATION_HEALTH_KEY, JOB_RECONCILIATION_HEALTH_TTL_SECONDS * 1000),
     )
     for key, max_ttl_ms in leases:
         value = await redis.get(key)
@@ -140,16 +144,16 @@ async def get_readiness(
         if cached_key == cache_key and now < expires_at:
             return copy.deepcopy(cached_result)
 
-    task = _readiness_inflight.get(cache_key)
-    if task is None:
-        task = asyncio.create_task(
+    job = _readiness_inflight.get(cache_key)
+    if job is None:
+        job = asyncio.create_task(
             _compute_readiness(startup_complete=startup_complete, component_snapshot=component_snapshot)
         )
-        _readiness_inflight[cache_key] = task
+        _readiness_inflight[cache_key] = job
     try:
-        result = await asyncio.shield(task)
+        result = await asyncio.shield(job)
     finally:
-        if task.done() and _readiness_inflight.get(cache_key) is task:
+        if job.done() and _readiness_inflight.get(cache_key) is job:
             _readiness_inflight.pop(cache_key, None)
 
     _readiness_cache = (cache_key, time.monotonic() + max(0.0, READINESS_CACHE_TTL_SECONDS), result)

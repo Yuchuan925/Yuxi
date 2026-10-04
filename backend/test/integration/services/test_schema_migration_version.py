@@ -192,8 +192,8 @@ async def test_fresh_business_schema_contains_input_lifecycle_without_request_ta
             "thread_id",
         } <= input_columns
         assert "conversation_thread_id" not in input_columns
-        assert BUSINESS_SCHEMA_VERSION == 2
-        assert KNOWLEDGE_SCHEMA_VERSION == 1
+        assert BUSINESS_SCHEMA_VERSION == 3
+        assert KNOWLEDGE_SCHEMA_VERSION == 2
     finally:
         await _drop_isolated_schema(schema, admin_engine, scoped_engine)
 
@@ -393,7 +393,7 @@ async def test_failed_fresh_initialization_cleans_checkpoint_tables_and_can_retr
         await _drop_isolated_schema(schema, admin, engine)
 
 
-@pytest.mark.parametrize("table_name", ["sessions", "conversations"])
+@pytest.mark.parametrize("table_name", ["sessions", "conversations", "tasks"])
 async def test_unversioned_existing_yuxi_table_blocks_fresh_schema_initialization(monkeypatch, table_name) -> None:
     """未版本化的旧表不得被空库初始化误认为全新部署。"""
     schema, admin_engine, scoped_engine, manager = await _create_isolated_manager("pytest_fresh_only")
@@ -431,5 +431,56 @@ async def test_schema_version_is_persisted_and_runtime_validation_fails_closed()
             "business": BUSINESS_SCHEMA_VERSION,
             "knowledge": KNOWLEDGE_SCHEMA_VERSION,
         }
+    finally:
+        await _drop_isolated_schema(schema, admin_engine, scoped_engine)
+
+
+async def test_background_job_baseline_replaces_task_table_and_knowledge_owner_column() -> None:
+    """新库只建立后台作业模型，文件执行关联使用作业 ID。"""
+    schema, admin_engine, scoped_engine, manager = await _create_isolated_manager("pytest_background_job_schema")
+    try:
+        await create_business_tables(manager)
+        await create_knowledge_tables(manager)
+        await ensure_business_schema(manager)
+        async with scoped_engine.connect() as connection:
+            tables = set(
+                (
+                    await connection.execute(
+                        text("SELECT table_name FROM information_schema.tables WHERE table_schema = :schema"),
+                        {"schema": schema},
+                    )
+                ).scalars()
+            )
+            columns = set(
+                (
+                    await connection.execute(
+                        text(
+                            "SELECT column_name FROM information_schema.columns "
+                            "WHERE table_schema = :schema AND table_name = 'knowledge_files'"
+                        ),
+                        {"schema": schema},
+                    )
+                ).scalars()
+            )
+            constraints = set(
+                (
+                    await connection.execute(
+                        text(
+                            "SELECT constraint_name FROM information_schema.table_constraints "
+                            "WHERE table_schema = :schema AND table_name = 'background_jobs'"
+                        ),
+                        {"schema": schema},
+                    )
+                ).scalars()
+            )
+        assert "background_jobs" in tables
+        assert {"tasks", "jobs"}.isdisjoint(tables)
+        assert "processing_job_id" in columns and "processing_task_id" not in columns
+        assert {"ck_background_jobs_status", "uq_background_jobs_active_dedupe"} <= constraints
+        await create_schema_version_table(manager)
+        await record_schema_version(manager, "business", 2)
+        await record_schema_version(manager, "knowledge", 1)
+        with pytest.raises(RuntimeError, match="business=2.*knowledge=1"):
+            await require_current_schema(manager)
     finally:
         await _drop_isolated_schema(schema, admin_engine, scoped_engine)

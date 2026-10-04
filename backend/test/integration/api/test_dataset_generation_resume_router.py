@@ -57,7 +57,7 @@ async def _create_failed_dataset(*, kb_id: str, dataset_id: str, name: str) -> N
         )
 
 
-async def test_resume_dataset_generation_enqueues_task(test_client, admin_headers, knowledge_database):
+async def test_resume_dataset_generation_enqueues_job(test_client, admin_headers, knowledge_database):
     dataset_id = f"dataset_{uuid.uuid4().hex[:8]}"
     await _create_failed_dataset(
         kb_id=knowledge_database["kb_id"],
@@ -73,21 +73,21 @@ async def test_resume_dataset_generation_enqueues_task(test_client, admin_header
         assert response.status_code == 200, response.text
         payload = response.json()
         assert payload.get("message") == "success"
-        assert payload.get("data", {}).get("task_id")
+        assert payload.get("data", {}).get("job_id")
         assert payload.get("data", {}).get("message") == "评估数据集生成任务已恢复"
     finally:
-        from yuxi.modules.tasks.service import tasker
+        from yuxi.modules.background_jobs.service import job_tracker
 
-        # Best-effort cleanup of any task enqueued during the test
-        tasks = (await tasker.list_tasks()).get("tasks", [])
-        for task in tasks:
-            if (task.get("payload") or {}).get("dataset_id") == dataset_id:
-                await tasker.delete_task(task["id"])
+        # Best-effort cleanup of any job enqueued during the test
+        jobs = (await job_tracker.list_jobs()).get("jobs", [])
+        for job in jobs:
+            if (job.get("payload") or {}).get("dataset_id") == dataset_id:
+                await job_tracker.delete_job(job["id"])
                 break
 
 
-async def test_resume_dataset_generation_concurrent_calls_share_task(knowledge_database):
-    """并发恢复调用共享同一任务（真实 DB + 真实 tasker，测试进程未启动 worker，任务保持 pending，时序确定）。"""
+async def test_resume_dataset_generation_concurrent_calls_share_job(knowledge_database):
+    """并发恢复调用共享同一任务（真实 DB + 真实 job_tracker，测试进程未启动 worker，任务保持 pending，时序确定）。"""
     dataset_id = f"dataset_{uuid.uuid4().hex[:8]}"
     await _create_failed_dataset(
         kb_id=knowledge_database["kb_id"],
@@ -101,12 +101,12 @@ async def test_resume_dataset_generation_concurrent_calls_share_task(knowledge_d
             service.resume_dataset_generation(knowledge_database["kb_id"], dataset_id, "admin"),
             service.resume_dataset_generation(knowledge_database["kb_id"], dataset_id, "admin"),
         )
-        task_ids = {result["task_id"] for result in results}
-        assert len(task_ids) == 1
+        job_ids = {result["job_id"] for result in results}
+        assert len(job_ids) == 1
     finally:
-        from yuxi.modules.tasks.service import tasker
+        from yuxi.modules.background_jobs.service import job_tracker
 
-        tasks = (await tasker.list_tasks()).get("tasks", [])
-        for task in tasks:
-            if (task.get("payload") or {}).get("dataset_id") == dataset_id:
-                await tasker.delete_task(task["id"])
+        jobs = (await job_tracker.list_jobs()).get("jobs", [])
+        for job in jobs:
+            if (job.get("payload") or {}).get("dataset_id") == dataset_id:
+                await job_tracker.delete_job(job["id"])

@@ -351,7 +351,7 @@
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useDatabaseStore } from '@/modules/knowledge/model/database'
-import { useTaskerStore } from '@/modules/tasks/model/tasker'
+import { useBackgroundJobsStore } from '@/modules/background-jobs/model/jobs'
 import {
   BarChart3,
   ChevronDown,
@@ -395,7 +395,7 @@ const KnowledgeEvaluationWorkspace = createAsyncPanel(
 const route = useRoute()
 const router = useRouter()
 const store = useDatabaseStore()
-const taskerStore = useTaskerStore()
+const jobsStore = useBackgroundJobsStore()
 const {
   chunkPresetSelectOptions: chunkPresetOptions,
   chunkPresetLoading,
@@ -611,7 +611,7 @@ const folderTree = computed(() => {
 })
 
 const onFileUploadSuccess = () => {
-  taskerStore.loadTasks()
+  jobsStore.loadJobs()
 }
 
 const resetFileSelectionState = () => {

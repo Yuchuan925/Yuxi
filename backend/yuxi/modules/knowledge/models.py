@@ -79,7 +79,7 @@ class KnowledgeFile(Base):
     processing_params = Column(JSON_VALUE)
     is_folder = Column(Boolean, default=False)
     error_message = Column(Text)
-    processing_task_id = Column(String(64), index=True)
+    processing_job_id = Column(String(64), index=True)
     processing_owner = Column(String(128))
     created_by = Column(String(64))
     updated_by = Column(String(64))

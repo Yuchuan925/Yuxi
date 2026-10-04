@@ -237,7 +237,7 @@ class KnowledgeBase(ABC):
         operator_id: str | None = None,
         *,
         additional_params: dict[str, Any],
-        processing_task_id: str | None = None,
+        processing_job_id: str | None = None,
         processing_owner: str | None = None,
     ) -> dict:
         """
@@ -261,14 +261,14 @@ class KnowledgeBase(ABC):
 
         file_repo = KnowledgeFileRepository()
         owner_filter = (
-            {"processing_task_id": processing_task_id, "processing_owner": processing_owner}
-            if processing_task_id is not None and processing_owner is not None
+            {"processing_job_id": processing_job_id, "processing_owner": processing_owner}
+            if processing_job_id is not None and processing_owner is not None
             else {}
         )
         claim_data = {
             "status": FileStatus.PARSING,
             "error_message": None,
-            "processing_task_id": processing_task_id,
+            "processing_job_id": processing_job_id,
             "processing_owner": processing_owner,
         }
         if operator_id:
@@ -294,7 +294,7 @@ class KnowledgeBase(ABC):
             update_data = {"status": FileStatus.ERROR_PARSING, "error_message": message}
             if operator_id:
                 update_data["updated_by"] = operator_id
-            update_data.update({"processing_task_id": None, "processing_owner": None})
+            update_data.update({"processing_job_id": None, "processing_owner": None})
             updated_record = await file_repo.update_fields_if_status(
                 file_id=file_id,
                 kb_id=kb_id,
@@ -341,7 +341,7 @@ class KnowledgeBase(ABC):
                 "status": FileStatus.PARSED,
                 "markdown_file": markdown_file_path,
                 "error_message": None,
-                "processing_task_id": None,
+                "processing_job_id": None,
                 "processing_owner": None,
             }
             if operator_id:
@@ -373,7 +373,7 @@ class KnowledgeBase(ABC):
             update_data = {
                 "status": FileStatus.ERROR_PARSING,
                 "error_message": error_msg,
-                "processing_task_id": None,
+                "processing_job_id": None,
                 "processing_owner": None,
             }
             if operator_id:
@@ -812,7 +812,7 @@ class KnowledgeBase(ABC):
         *,
         embedding_model_spec: str | None,
         additional_params: dict[str, Any],
-        processing_task_id: str | None = None,
+        processing_job_id: str | None = None,
         processing_owner: str | None = None,
     ) -> dict:
         """

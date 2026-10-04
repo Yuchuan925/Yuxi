@@ -29,7 +29,7 @@ from yuxi.modules.knowledge.repositories import files
 from yuxi.modules.knowledge.repositories.bases import KnowledgeBaseRepository
 from yuxi.modules.knowledge.repositories.chunks import KnowledgeChunkRepository
 from yuxi.modules.knowledge.repositories.files import KnowledgeFileRepository
-from yuxi.modules.knowledge.services import tasks
+from yuxi.modules.knowledge.services import background_jobs
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
 
@@ -121,11 +121,11 @@ async def test_new_generation_isolates_old_tail_and_cleanup_bounds_generation_re
         await KnowledgeChunkRepository().delete_by_file_id(file_id, generation=generation)
 
     monkeypatch.setattr(
-        tasks.knowledge_base,
+        background_jobs.knowledge_base,
         "get_cleanup_executor",
         AsyncMock(return_value=SimpleNamespace(delete_file_chunks_only=delete_chunks)),
     )
-    assert len(await tasks.process_knowledge_projections()) == 2
+    assert len(await background_jobs.process_knowledge_projections()) == 2
     async with database() as session:
         file = await session.scalar(select(KnowledgeFile).where(KnowledgeFile.file_id == "file-test"))
         assert file.active_generation == current
@@ -150,19 +150,15 @@ async def test_deleted_database_rejects_activation_and_new_files(database):
     assert await KnowledgeBaseRepository().get_by_kb_id("kb-test") is None
 
 
-async def test_file_owner_is_independent_of_tasker_and_rejects_replaced_callback(database):
-    """文件自身验证当前处理身份，不依赖 Tasker 的恢复或租约记录。"""
+async def test_file_owner_is_independent_of_job_tracker_and_rejects_replaced_callback(database):
+    """文件自身验证当前处理身份，不依赖 JobTracker 的恢复或租约记录。"""
     await _file()
     repo = KnowledgeFileRepository()
-    await repo.update_fields(
-        file_id="file-test", data={"processing_task_id": "progress-old", "processing_owner": "old"}
-    )
+    await repo.update_fields(file_id="file-test", data={"processing_job_id": "progress-old", "processing_owner": "old"})
     generation = await repo.begin_index_generation(
-        kb_id="kb-test", file_id="file-test", processing_task_id="progress-old", processing_owner="old"
+        kb_id="kb-test", file_id="file-test", processing_job_id="progress-old", processing_owner="old"
     )
-    await repo.update_fields(
-        file_id="file-test", data={"processing_task_id": "progress-new", "processing_owner": "new"}
-    )
+    await repo.update_fields(file_id="file-test", data={"processing_job_id": "progress-new", "processing_owner": "new"})
     with pytest.raises(ValueError, match="owner"):
         await repo.finish_index_generation(
             kb_id="kb-test",
@@ -170,7 +166,7 @@ async def test_file_owner_is_independent_of_tasker_and_rejects_replaced_callback
             generation=generation,
             chunk_count=1,
             token_count=2,
-            processing_task_id="progress-old",
+            processing_job_id="progress-old",
             processing_owner="old",
         )
     assert (await repo.get_by_file_id("file-test")).active_generation == 1
@@ -206,9 +202,11 @@ async def test_cleanup_error_remains_pending_and_concurrent_worker_skips_locked_
             )
         )
     monkeypatch.setattr(
-        tasks.knowledge_base, "cleanup_deleted_database", AsyncMock(side_effect=RuntimeError("external unavailable"))
+        background_jobs.knowledge_base,
+        "cleanup_deleted_database",
+        AsyncMock(side_effect=RuntimeError("external unavailable")),
     )
-    assert await tasks.process_knowledge_projections() == []
+    assert await background_jobs.process_knowledge_projections() == []
     async with database() as session:
         event = await session.scalar(select(KnowledgeProjectionOutbox))
         assert event.status == "pending" and event.last_error == "external unavailable"
@@ -221,18 +219,18 @@ async def test_cleanup_error_remains_pending_and_concurrent_worker_skips_locked_
         async with database() as session, session.begin():
             await session.execute(delete(KnowledgeBase).where(KnowledgeBase.kb_id == kb_id))
 
-    monkeypatch.setattr(tasks.knowledge_base, "cleanup_deleted_database", cleanup)
-    running = asyncio.create_task(tasks.process_knowledge_projections())
+    monkeypatch.setattr(background_jobs.knowledge_base, "cleanup_deleted_database", cleanup)
+    running = asyncio.create_task(background_jobs.process_knowledge_projections())
     try:
         await asyncio.wait_for(started.wait(), 5)
-        assert await tasks.process_knowledge_projections() == []
+        assert await background_jobs.process_knowledge_projections() == []
         release.set()
         assert await running == ["event"]
         async with database() as session:
             event = await session.scalar(select(KnowledgeProjectionOutbox))
             assert event.status == "applied" and event.last_error is None
             assert await session.scalar(select(func.count()).select_from(KnowledgeBase)) == 0
-        assert await tasks.process_knowledge_projections() == []
+        assert await background_jobs.process_knowledge_projections() == []
     finally:
         release.set()
         await asyncio.gather(running, return_exceptions=True)
@@ -268,7 +266,7 @@ async def test_cleanup_waits_for_late_index_write_before_marking_applied(databas
         await KnowledgeChunkRepository().delete_by_file_id(file_id)
 
     monkeypatch.setattr(
-        tasks.knowledge_base,
+        background_jobs.knowledge_base,
         "get_cleanup_executor",
         AsyncMock(
             return_value=SimpleNamespace(delete_file_chunks_only=delete_chunks, cleanup_file_resources=AsyncMock())
@@ -280,7 +278,7 @@ async def test_cleanup_waits_for_late_index_write_before_marking_applied(databas
         await asyncio.wait_for(started.wait(), 5)
         key = await KnowledgeFileRepository().mark_deleted(kb_id="kb-test", file_id="file-test")
         assert await KnowledgeFileRepository().get_by_file_id("file-test") is None
-        cleaner = asyncio.create_task(tasks.process_knowledge_projections())
+        cleaner = asyncio.create_task(background_jobs.process_knowledge_projections())
         async with asyncio.timeout(5):
             while True:
                 async with database() as session:
@@ -493,7 +491,7 @@ async def test_graph_parallel_vector_cancel_drains_both_branches_before_cleanup(
         artifact.unlink(missing_ok=True)
 
     monkeypatch.setattr(
-        tasks.knowledge_base,
+        background_jobs.knowledge_base,
         "get_cleanup_executor",
         AsyncMock(
             return_value=SimpleNamespace(
@@ -511,7 +509,7 @@ async def test_graph_parallel_vector_cancel_drains_both_branches_before_cleanup(
                 await asyncio.sleep(0.01)
         writer.cancel()
         key = await KnowledgeFileRepository().mark_deleted(kb_id="kb-test", file_id="file-test")
-        cleaner = asyncio.create_task(tasks.process_knowledge_projections())
+        cleaner = asyncio.create_task(background_jobs.process_knowledge_projections())
         async with asyncio.timeout(5):
             while True:
                 async with database() as session:
@@ -573,7 +571,7 @@ async def test_cancelled_external_writer_keeps_lock_until_io_settles(database, m
         artifact.unlink(missing_ok=True)
 
     monkeypatch.setattr(
-        tasks.knowledge_base,
+        background_jobs.knowledge_base,
         "get_cleanup_executor",
         AsyncMock(
             return_value=SimpleNamespace(
@@ -590,7 +588,7 @@ async def test_cancelled_external_writer_keeps_lock_until_io_settles(database, m
                 await asyncio.sleep(0.01)
         writer.cancel()
         key = await KnowledgeFileRepository().mark_deleted(kb_id="kb-test", file_id="file-test")
-        cleaner = asyncio.create_task(tasks.process_knowledge_projections())
+        cleaner = asyncio.create_task(background_jobs.process_knowledge_projections())
         async with asyncio.timeout(5):
             while True:
                 async with database() as session:

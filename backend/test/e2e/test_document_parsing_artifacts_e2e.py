@@ -221,15 +221,15 @@ async def test_knowledge_worker_hosts_document_resources_and_file_delete_reclaim
             headers=e2e_headers,
         )
         assert parsing.status_code == 200, parsing.text
-        task_id = parsing.json()["task_id"]
+        job_id = parsing.json()["job_id"]
         for _ in range(100):
-            task_response = await e2e_client.get(f"/api/tasks/{task_id}", headers=e2e_headers)
-            assert task_response.status_code == 200, task_response.text
-            task = task_response.json()["task"]
-            if task["status"] in {"success", "failed", "cancelled"}:
+            job_response = await e2e_client.get(f"/api/background-jobs/{job_id}", headers=e2e_headers)
+            assert job_response.status_code == 200, job_response.text
+            job = job_response.json()["job"]
+            if job["status"] in {"success", "failed", "cancelled"}:
                 break
             await asyncio.sleep(0.2)
-        assert task["status"] == "success", task
+        assert job["status"] == "success", job
         record = await KnowledgeFileRepository().get_by_file_id(file_id)
         assert record.status == "parsed"
         from yuxi.infrastructure.minio.object_urls import parse_minio_url
@@ -249,20 +249,20 @@ async def test_knowledge_worker_hosts_document_resources_and_file_delete_reclaim
 
         from datetime import timedelta
         from sqlalchemy import update
-        from yuxi.modules.tasks.models import TaskRecord
+        from yuxi.modules.background_jobs.models import BackgroundJobRecord
         from yuxi.shared.datetime import utc_now
 
         async with pg_manager.get_async_session_context() as session:
             await session.execute(
-                update(TaskRecord)
-                .where(TaskRecord.id == task_id)
+                update(BackgroundJobRecord)
+                .where(BackgroundJobRecord.id == job_id)
                 .values(status="running", worker_id="test-owner", lease_expires_at=utc_now() + timedelta(minutes=5))
             )
         repository = KnowledgeFileRepository()
         await repository.update_fields(
             file_id=file_id,
             kb_id=kb_id,
-            data={"status": "uploaded", "processing_task_id": task_id, "processing_owner": "test-owner"},
+            data={"status": "uploaded", "processing_job_id": job_id, "processing_owner": "test-owner"},
         )
         real_hosted_parse = document_service.parse_to_hosted_markdown
 
@@ -275,7 +275,7 @@ async def test_knowledge_worker_hosts_document_resources_and_file_delete_reclaim
             patch.setattr(document_service, "parse_to_hosted_markdown", lose_owner_after_upload)
             with pytest.raises(asyncio.CancelledError):
                 await MilvusKB.__new__(MilvusKB).parse_file(
-                    kb_id, file_id, additional_params={}, processing_task_id=task_id, processing_owner="test-owner"
+                    kb_id, file_id, additional_params={}, processing_job_id=job_id, processing_owner="test-owner"
                 )
         assert await client.adownload_file(bucket, markdown_name)
         assert await client.adownload_file(client.KB_BUCKETS["images"], image_name) == image
@@ -289,15 +289,15 @@ async def test_knowledge_worker_hosts_document_resources_and_file_delete_reclaim
 
         async with pg_manager.get_async_session_context() as session:
             await session.execute(
-                update(TaskRecord)
-                .where(TaskRecord.id == task_id)
+                update(BackgroundJobRecord)
+                .where(BackgroundJobRecord.id == job_id)
                 .values(status="success", worker_id=None, lease_expires_at=None)
             )
         # 现有重试入口接收 uploaded/error_parsing；新结果提交后回收先前产物。
         await repository.update_fields(
             file_id=file_id,
             kb_id=kb_id,
-            data={"status": "uploaded", "processing_owner": None, "processing_task_id": None},
+            data={"status": "uploaded", "processing_owner": None, "processing_job_id": None},
         )
         retry = await e2e_client.post(
             f"/api/knowledge/databases/{kb_id}/documents/parse",
@@ -306,12 +306,12 @@ async def test_knowledge_worker_hosts_document_resources_and_file_delete_reclaim
         )
         assert retry.status_code == 200, retry.text
         for _ in range(100):
-            response = await e2e_client.get(f"/api/tasks/{retry.json()['task_id']}", headers=e2e_headers)
-            retry_task = response.json()["task"]
-            if retry_task["status"] in {"success", "failed", "cancelled"}:
+            response = await e2e_client.get(f"/api/background-jobs/{retry.json()['job_id']}", headers=e2e_headers)
+            retry_job = response.json()["job"]
+            if retry_job["status"] in {"success", "failed", "cancelled"}:
                 break
             await asyncio.sleep(0.2)
-        assert retry_task["status"] == "success", retry_task
+        assert retry_job["status"] == "success", retry_job
         replacement = await repository.get_by_file_id(file_id)
         assert replacement.status == "parsed"
         assert replacement.markdown_file != record.markdown_file
@@ -326,8 +326,15 @@ async def test_knowledge_worker_hosts_document_resources_and_file_delete_reclaim
         deleted = await e2e_client.delete(f"/api/knowledge/databases/{kb_id}/documents/{file_id}", headers=e2e_headers)
         assert deleted.status_code == 200, deleted.text
         assert await KnowledgeFileRepository().get_by_file_id(file_id) is None
-        assert await client.alist_object_metadata(client.KB_BUCKETS["images"], f"{kb_id}/kb-images/{file_id}/") == []
-        assert await client.alist_object_metadata(client.KB_BUCKETS["parsed"], f"{kb_id}/parsed/{file_id}/") == []
+        # 删除先提交 tombstone；真实 worker 异步回收对象，读取最终产物确认完成。
+        for _ in range(200):
+            images = await client.alist_object_metadata(client.KB_BUCKETS["images"], f"{kb_id}/kb-images/{file_id}/")
+            parsed = await client.alist_object_metadata(client.KB_BUCKETS["parsed"], f"{kb_id}/parsed/{file_id}/")
+            if not images and not parsed:
+                break
+            await asyncio.sleep(0.2)
+        assert images == []
+        assert parsed == []
         assert await client.adownload_file(client.KB_BUCKETS["images"], other_name) == image
     finally:
         deleted = await e2e_client.delete(f"/api/knowledge/databases/{kb_id}", headers=e2e_headers)

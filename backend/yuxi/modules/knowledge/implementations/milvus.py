@@ -718,7 +718,7 @@ class MilvusKB(KnowledgeBase):
         *,
         embedding_model_spec: str | None,
         additional_params: dict[str, Any],
-        processing_task_id: str | None = None,
+        processing_job_id: str | None = None,
         processing_owner: str | None = None,
     ) -> dict:
         """
@@ -753,8 +753,8 @@ class MilvusKB(KnowledgeBase):
         )
         file_repo = KnowledgeFileRepository()
         owner_filter = (
-            {"processing_task_id": processing_task_id, "processing_owner": processing_owner}
-            if processing_task_id is not None and processing_owner is not None
+            {"processing_job_id": processing_job_id, "processing_owner": processing_owner}
+            if processing_job_id is not None and processing_owner is not None
             else {}
         )
 
@@ -762,7 +762,7 @@ class MilvusKB(KnowledgeBase):
             "status": FileStatus.INDEXING,
             "processing_params": params,
             "error_message": None,
-            "processing_task_id": processing_task_id,
+            "processing_job_id": processing_job_id,
             "processing_owner": processing_owner,
         }
         if operator_id:
@@ -787,7 +787,7 @@ class MilvusKB(KnowledgeBase):
             reset_data = {
                 "status": FileStatus.UPLOADED,
                 "error_message": None,
-                "processing_task_id": None,
+                "processing_job_id": None,
                 "processing_owner": None,
             }
             if operator_id:
@@ -851,7 +851,7 @@ class MilvusKB(KnowledgeBase):
             update_data = {
                 "status": FileStatus.ERROR_INDEXING,
                 "error_message": error_msg,
-                "processing_task_id": None,
+                "processing_job_id": None,
                 "processing_owner": None,
                 "projection_status": "failed",
                 "projection_error": error_msg,

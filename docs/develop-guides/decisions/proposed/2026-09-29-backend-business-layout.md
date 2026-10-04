@@ -20,7 +20,7 @@ Owner：backend/pyproject.toml
 
 项目装配事实来自后端项目配置（`backend/pyproject.toml`）、API 入口（`backend/yuxi/api/main.py`）、worker 执行与装配（`backend/yuxi/workers/main.py`、`backend/yuxi/bootstrap/worker.py`）和 Compose（`docker-compose.yml`）。当前业务边界由 ARCHITECTURE.md 与源码拥有；本文件保存来源与目标的迁移映射。
 
-普通输入继续由 Agent 模块接收并持久化，经 FIFO 创建 Turn/Run，在事务提交后投递 worker；worker 调用同域 runner 执行、收敛终态并发布事件。知识文件和聊天附件共同调用 documents 的配置感知解析入口，再调用 infrastructure 的解析引擎；知识文件的状态、分块与索引仍由 knowledge 拥有。schedules 调用统一 Agent 输入用例，tasks 保留独立持久任务状态。
+普通输入继续由 Agent 模块接收并持久化，经 FIFO 创建 Turn/Run，在事务提交后投递 worker；worker 调用同域 runner 执行、收敛终态并发布事件。知识文件和聊天附件共同调用 documents 的配置感知解析入口，再调用 infrastructure 的解析引擎；知识文件的状态、分块与索引仍由 knowledge 拥有。schedules 调用统一 Agent 输入用例，background_jobs 保留独立持久作业状态。
 
 目录调整分为机械迁移和职责拆分两类交付。迁移阶段保持既有公开函数契约；树中明确标注的拆分、合并各自单独验证。现有 service 中零散的 HTTPException、部分 router 内部查询和 knowledge manager/base 的宽职责不在此提案中全量重构；本树不宣称已经实现完全无框架依赖的业务层。抽出的 HTTP 响应和资源清理必须在同一次局部变更中接通调用方。
 
@@ -70,7 +70,7 @@ backend/yuxi/
 │   │   ├── models.py  # [移改] S/routers/model_provider_router.py；URL、认证依赖与响应契约保留
 │   │   ├── schedules.py  # [移改] S/routers/scheduled_agent_router.py；URL、认证依赖与响应契约保留
 │   │   ├── system.py  # [移改] S/routers/system_router.py；URL、认证依赖与响应契约保留
-│   │   └── tasks.py  # [移改] S/routers/system_task_router.py；URL、认证依赖与响应契约保留
+│   │   └── background_jobs.py  # [移改] S/routers/system_task_router.py；后台作业查询、取消与删除
 │   ├── lifespan.py  # [拆] S/utils/lifespan.py；FastAPI lifespan 与 app.state 适配
 │   ├── main.py  # [移改] S/main.py；FastAPI 应用与现有中间件装配
 │   └── sse.py  # [拆] Y/utils/sse_utils.py；仅 format_sse、format_heartbeat；订阅时序配置归 Agent events
@@ -78,7 +78,7 @@ backend/yuxi/
 │   ├── api.py  # [拆] S/utils/lifespan.py；组件初始化、关闭顺序与必需/可选组件结果
 │   ├── environment.py  # [拆] Y/__init__.py；load_dotenv；三个进程入口在依赖初始化前调用
 │   ├── models.py  # [新] 无旧文件；显式导入各业务 ORM，装配两套既有 metadata；不修改 schema 域
-│   ├── task_handlers.py  # [拆] Y/services/task_registry.py；_TASK_DEFINITIONS 注册；保持 task_type/handler_version 与惰性导入
+│   ├── background_job_handlers.py  # [拆] Y/services/task_registry.py；JOB_DEFINITIONS 注册；保持 job_type/handler_version 与惰性导入
 │   └── worker.py  # [拆] Y/services/run_worker.py；startup/shutdown、恢复循环启动与共享资源释放
 ├── infrastructure/
 │   ├── document_parsing/
@@ -241,7 +241,7 @@ backend/yuxi/
 │   │   │   ├── __init__.py  # [移] Y/services/knowledge/__init__.py
 │   │   │   ├── dashboard.py  # [移改] Y/services/knowledge_dashboard_service.py
 │   │   │   ├── folders.py  # [移改] Y/services/knowledge_folder_service.py
-│   │   │   ├── tasks.py  # [移改] Y/services/knowledge_task_service.py
+│   │   │   ├── background_jobs.py  # [移改] Y/services/knowledge_task_service.py
 │   │   │   └── tools.py  # [移] Y/services/knowledge/tools.py
 │   │   ├── utils/
 │   │   │   ├── __init__.py  # [移] Y/knowledge/utils/__init__.py
@@ -281,12 +281,12 @@ backend/yuxi/
 │   │   ├── models.py  # [拆] Y/storage/postgres/models_business.py；ConfigOption
 │   │   ├── options.py  # [移改] Y/config/options.py；系统级持久配置、缓存与失效
 │   │   └── readiness.py  # [移改] Y/services/readiness_service.py
-│   ├── tasks/
-│   │   ├── models.py  # [拆] Y/storage/postgres/models_business.py；TaskRecord
-│   │   ├── queue.py  # [移改] Y/services/task_queue_service.py；持久任务发布、失败收敛与恢复
-│   │   ├── registry.py  # [拆] Y/services/task_registry.py；TaskDefinition、版本检查与加载；不硬编码业务模块路径
+│   ├── background_jobs/
+│   │   ├── models.py  # [拆] Y/storage/postgres/models_business.py；BackgroundJobRecord
+│   │   ├── dispatch.py  # [拆] Y/services/task_queue_service.py；API 提交与事务提交后投递
+│   │   ├── registry.py  # [拆] Y/services/task_registry.py；共享作业定义与版本校验
 │   │   ├── repository.py  # [移改] Y/repositories/task_repository.py
-│   │   └── service.py  # [移改] Y/services/task_service.py；Task/TaskContext/Tasker、lease、取消与 handler 执行
+│   │   └── service.py  # [移改] Y/services/task_service.py；BackgroundJob/JobTracker 登记、观察与取消请求
 │   └── workspace/
 │       ├── repositories/
 │       │   └── projects.py  # [移改] Y/repositories/project_repository.py
@@ -312,7 +312,9 @@ backend/yuxi/
 │   ├── arq.py  # [移改] Y/services/arq_worker.py；YuxiWorker 领取适配
 │   ├── health.py  # [移改] Y/services/worker_health.py；worker healthcheck 命令与进程健康协议
 │   ├── main.py  # [移改] S/worker_main.py；ARQ 启动入口与 Windows event loop 设置
-│   └── settings.py  # [拆] Y/services/run_worker.py；WorkerSettings、worker_max_jobs；注册既有 job 名称与参数
+│   ├── settings.py  # [拆] Y/services/run_worker.py；WorkerSettings、worker_max_jobs；注册既有 job 名称与参数
+│   ├── background_job_context.py  # [拆] Y/services/task_service.py；领域执行方的上报、取消检查与 owner 保护
+│   └── background_jobs.py  # [拆] Y/services/task_service.py；后台 Handler 执行、lease 与领域终态 Hook
 └── __init__.py  # [拆] Y/__init__.py；保留版本查询；显式启动时加载环境；无消费者 executor 见退役说明
 ```
 
@@ -335,7 +337,7 @@ backend/yuxi/
 | `Y/services/langfuse_service.py` | `infrastructure/observability/langfuse.py` 承接启用检测、SDK/client、flush、远端操作及 `_export_turn_root` 的协议发送；`modules/agents/services/tracing.py` 承接 LangfuseRunContext、trace metadata/tags、Turn/Run observation 归属、finish_turn_observation_if_terminal 与业务反馈。 | infrastructure 接收已经确定的 ID/状态；读取 PG Turn 终态的逻辑留在 Agent 模块。远端 trace 不拥有业务成功/失败事实。 |
 | `Y/services/file_preview.py`、artifact/workspace/viewer service | `api/responses/files.py` 统一装配 FileResponse/StreamingResponse 与 BackgroundTask；原业务 service 保留授权、文件读取/准备和保存操作，返回 `shared/files.py` 的文件结果。 | 服务准备失败时自行清理；交付给 HTTP 后，响应装配负责关闭与临时文件清理。取消、断开和响应构造失败都要验证；不提前删除流正在读取的文件。 |
 | `Y/utils/logging_config.py`、`S/utils/common_utils.py` | 合并到 `infrastructure/observability/logging.py`，保留现有 logger 导出与 setup_logging 入口，由 bootstrap 显式调用。 | 保留应用 logger 与 Uvicorn/标准 logging 的各自配置，不借合并替换日志库或修改输出格式。 |
-| `Y/services/task_registry.py` | `modules/tasks/registry.py` 保留 TaskDefinition、解析版本与加载行为；`bootstrap/task_handlers.py` 保留实际业务 handler 注册表，API/worker 初始化时显式注册。 | 任务 type/version 不变；模块路径随迁移更新，handler 继续惰性加载。registry 未完成装配时显式报错，不能以空表伪装可用。 |
+| `Y/services/task_registry.py` | `modules/background_jobs/registry.py` 保留 JobDefinition、解析版本与加载行为；`bootstrap/background_job_handlers.py` 保留实际业务 handler 注册表，API/worker 初始化时显式注册。 | 任务 type/version 不变；模块路径随迁移更新，handler 继续惰性加载。registry 未完成装配时显式报错，不能以空表伪装可用。 |
 | `Y/__init__.py`、`Y/config/__init__.py` | 根 initializer 保留版本查询；dotenv 加载进入 bootstrap/environment；进程环境与运行目录配置进入 infrastructure/runtime_settings；持久系统配置进入 system/options，用户配置进入 identity/preferences。 | API、worker、schema-init 在导入会读取配置的模块前加载环境；保留当前环境覆盖语义。生产 metadata 仍能正确返回 Yuxi 版本。 |
 | `Y/utils/sse_utils.py` | format_sse、format_heartbeat 进入 `api/sse.py`；使用中的 SSE_HEARTBEAT_SECONDS、SSE_MAX_CONNECTION_MINUTES 由 `modules/agents/services/events.py` 拥有。 | SSE 编码仍只在 HTTP 边界发生一次；无人使用的轮询配置不再导出。 |
 
@@ -366,7 +368,7 @@ backend/yuxi/
 | 根与 backend `AGENTS.md`、`ARCHITECTURE.md`、开发与机制文档 | 实施后更新 `yuxi.services`、`yuxi.repositories` 等路径约定及源码链接。提案阶段继续以现有规则为准。 |
 | `packages/yuxi-cli`、`frontend` | HTTP 协议保持不变，原则上无需随 Python 目录迁移改动；搜索是否存在路径假设后再判断。 |
 
-内置 Skill 的 Markdown、脚本和相对资源路径属于交付资源；保留目录内容不等于自动保证镜像携带这些资源，必须从构建后的运行环境回读。数据库 task_type、handler_version、工具 slug、Agent backend_id、模型 provider ID 和公开 URL 不跟随 Python 目录重命名。
+内置 Skill 的 Markdown、脚本和相对资源路径属于交付资源；保留目录内容不等于自动保证镜像携带这些资源，必须从构建后的运行环境回读。数据库作业 type、handler_version、工具 slug、Agent backend_id、模型 provider ID 和公开 URL 不随纯 Python 目录迁移修改；后台作业的独立命名、schema 与 API 变更由[后台作业命名决策](../implemented/2026-10-04-background-job-naming-and-dispatch.md)拥有。
 
 ## 替代方案
 

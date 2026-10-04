@@ -608,7 +608,7 @@ class KnowledgeBaseManager:
         file_id: str,
         operator_id: str | None = None,
         *,
-        processing_task_id: str | None = None,
+        processing_job_id: str | None = None,
         processing_owner: str | None = None,
     ) -> dict:
         """Parse file to Markdown"""
@@ -621,7 +621,7 @@ class KnowledgeBaseManager:
                 file_id,
                 operator_id,
                 additional_params=config.additional_params,
-                processing_task_id=processing_task_id,
+                processing_job_id=processing_job_id,
                 processing_owner=processing_owner,
             ),
         )
@@ -633,7 +633,7 @@ class KnowledgeBaseManager:
         operator_id: str | None = None,
         params: dict | None = None,
         *,
-        processing_task_id: str | None = None,
+        processing_job_id: str | None = None,
         processing_owner: str | None = None,
     ) -> dict:
         """Index parsed file"""
@@ -648,7 +648,7 @@ class KnowledgeBaseManager:
                 params=params,
                 embedding_model_spec=config.embedding_model_spec,
                 additional_params=config.additional_params,
-                processing_task_id=processing_task_id,
+                processing_job_id=processing_job_id,
                 processing_owner=processing_owner,
             ),
         )

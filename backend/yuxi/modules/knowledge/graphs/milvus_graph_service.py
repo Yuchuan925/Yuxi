@@ -131,7 +131,7 @@ class MilvusGraphService:
     def driver(self):
         return self.connection.driver
 
-    async def get_status(self, kb_id: str, *, tasker: Any = None) -> dict[str, Any]:
+    async def get_status(self, kb_id: str, *, job_tracker: Any = None) -> dict[str, Any]:
         kb = await self._get_milvus_kb(kb_id)
         params = dict(kb.additional_params or {})
         config = params.get(GRAPH_CONFIG_KEY) or {}
@@ -155,22 +155,22 @@ class MilvusGraphService:
         ) = status_values
         entity_count, relationship_count = graph_counts
 
-        build_task_status = None
-        build_task_progress = 0
-        if tasker is not None:
-            latest_task = await tasker.find_task_by_payload(
-                task_type=GRAPH_TASK_TYPE,
+        build_job_status = None
+        build_job_progress = 0
+        if job_tracker is not None:
+            latest_job = await job_tracker.find_job_by_payload(
+                job_type=GRAPH_TASK_TYPE,
                 payload_match={"kb_id": kb_id},
                 statuses=None,
             )
-            if latest_task and latest_task.status in {"pending", "running"}:
-                build_task_status = latest_task.status
-                build_task_progress = round(latest_task.progress)
-            elif latest_task and latest_task.status == "success":
-                build_task_status = "completed"
-                build_task_progress = 100
-            elif latest_task and latest_task.status in {"failed", "cancelled"}:
-                build_task_status = "failed"
+            if latest_job and latest_job.status in {"pending", "running"}:
+                build_job_status = latest_job.status
+                build_job_progress = round(latest_job.progress)
+            elif latest_job and latest_job.status == "success":
+                build_job_status = "completed"
+                build_job_progress = 100
+            elif latest_job and latest_job.status in {"failed", "cancelled"}:
+                build_job_status = "failed"
 
         return {
             "kb_id": kb_id,
@@ -186,8 +186,8 @@ class MilvusGraphService:
             "vector_counts": vector_counts,
             "entity_count": entity_count,
             "relationship_count": relationship_count,
-            "build_task_status": build_task_status,
-            "build_task_progress": build_task_progress,
+            "build_job_status": build_job_status,
+            "build_job_progress": build_job_progress,
         }
 
     async def configure(

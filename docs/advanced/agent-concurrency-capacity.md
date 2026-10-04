@@ -4,7 +4,7 @@
 
 ## 当前运行模型
 
-- 普通输入先作为 Message 和 Input 持久化到 PostgreSQL；调度器领取 FIFO 队头时创建 Turn/Run，提交后由 ARQ 投递给 worker。`ARQ_MAX_JOBS` 是单个 worker 供 AgentRun、Durable Task 与控制面工作共用的执行槽上限。Durable Task 另受 PostgreSQL 最多 4 个并发 claim 的约束。
+- 普通输入先作为 Message 和 Input 持久化到 PostgreSQL；调度器领取 FIFO 队头时创建 Turn/Run，提交后由 ARQ 投递给 worker。`ARQ_MAX_JOBS` 是单个 worker 供 AgentRun、后台作业 与控制面工作共用的执行槽上限。后台作业 另受 PostgreSQL 最多 4 个并发 claim 的约束。
 - Run 事件写入 Redis Stream，SSE 使用自适应 `XRANGE` 轮询；PostgreSQL 低频补偿权威终态。
 - 取消请求先提交 PostgreSQL durable 状态，再写入带 TTL 的 Redis key。每个运行中的 Run 约每 200ms 读取该 key，另有约 1 秒的 PostgreSQL durable watcher；模型事件循环只检查进程内 Event。
 - 取消链路不使用 Redis Pub/Sub，也不为每个 Run 长期占用一个 Redis 连接。100 个活跃 Run 的取消 key 读取上界约为 500 次/秒。
