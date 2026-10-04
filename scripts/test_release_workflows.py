@@ -131,6 +131,41 @@ class ReleaseWorkflowTests(unittest.TestCase):
         with self.assertRaisesRegex(AssertionError, "CLI 必须独立手动发布"):
             self.assert_release_events(workflows)
 
+    def test_background_job_timeout_default_preserves_six_hour_budget(self) -> None:
+        """开发与生产拓扑在配置改名后保持六小时默认执行预算。"""
+        for filename in ("docker-compose.yml", "docker-compose.prod.yml"):
+            with self.subTest(filename=filename):
+                self.assert_background_job_timeout_default(
+                    (WORKFLOWS.parents[1] / filename).read_text()
+                )
+
+    def test_background_job_timeout_rejects_extended_or_missing_default(self) -> None:
+        """恢复超长默认值或遗漏预算配置时门禁失败。"""
+        for filename in ("docker-compose.yml", "docker-compose.prod.yml"):
+            compose = (WORKFLOWS.parents[1] / filename).read_text()
+            for invalid in ("76400", ""):
+                with (
+                    self.subTest(filename=filename, invalid=invalid),
+                    self.assertRaises(AssertionError),
+                ):
+                    self.assert_background_job_timeout_default(
+                        compose.replace(
+                            "BACKGROUND_JOB_DEFAULT_TIMEOUT_SECONDS:-21600",
+                            f"BACKGROUND_JOB_DEFAULT_TIMEOUT_SECONDS:-{invalid}",
+                        )
+                    )
+
+    def assert_background_job_timeout_default(self, compose: str) -> None:
+        """检查真实拓扑中后台作业的默认值，不限制用户显式覆盖。"""
+        default = re.search(
+            r"(?m)^  BACKGROUND_JOB_DEFAULT_TIMEOUT_SECONDS: \$\{BACKGROUND_JOB_DEFAULT_TIMEOUT_SECONDS:-(\d+)\}$",
+            compose,
+        )
+        self.assertIsNotNone(default, "后台作业缺少默认执行预算")
+        self.assertEqual(
+            int(default.group(1)), 6 * 60 * 60, "后台作业默认执行预算必须保持六小时"
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
