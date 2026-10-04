@@ -4,10 +4,10 @@ from typing import Any
 
 from sqlalchemy import func, select
 
-from yuxi.modules.knowledge.cache import cache_kb_config, delete_cached_kb_config, kb_config_cache_lock
 from yuxi.infrastructure.postgres.manager import pg_manager
-from yuxi.modules.knowledge.models import KnowledgeBase
 from yuxi.modules.identity.services.resource_grants import validate_shared_grants
+from yuxi.modules.knowledge.cache import cache_kb_config, delete_cached_kb_config, kb_config_cache_lock
+from yuxi.modules.knowledge.models import KnowledgeBase
 
 
 class KnowledgeBaseRepository:
@@ -21,12 +21,15 @@ class KnowledgeBaseRepository:
 
     async def get_all(self) -> list[KnowledgeBase]:
         async with pg_manager.get_async_session_context() as session:
-            result = await session.execute(select(KnowledgeBase))
+            result = await session.execute(select(KnowledgeBase).where(KnowledgeBase.deleted_at.is_(None)))
             return list(result.scalars().all())
 
-    async def get_by_kb_id(self, kb_id: str) -> KnowledgeBase | None:
+    async def get_by_kb_id(self, kb_id: str, *, include_deleted: bool = False) -> KnowledgeBase | None:
+        filters = [KnowledgeBase.kb_id == kb_id]
+        if not include_deleted:
+            filters.append(KnowledgeBase.deleted_at.is_(None))
         async with pg_manager.get_async_session_context() as session:
-            result = await session.execute(select(KnowledgeBase).where(KnowledgeBase.kb_id == kb_id))
+            result = await session.execute(select(KnowledgeBase).where(*filters))
             return result.scalar_one_or_none()
 
     async def create(self, data: dict[str, Any]) -> KnowledgeBase:

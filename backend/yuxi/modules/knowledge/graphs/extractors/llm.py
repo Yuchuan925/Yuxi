@@ -5,9 +5,8 @@ from typing import Any
 
 import json_repair
 
-from yuxi.modules.models.chat import select_model
-
 from yuxi.modules.knowledge.graphs.extractors.base import GraphExtractor
+from yuxi.modules.models.chat import select_model
 
 DEFAULT_TRIPLE_EXTRACTION_PROMPT = """请从下面文本中抽取实体和实体关系，返回严格 JSON，不要输出解释。
 JSON 格式：

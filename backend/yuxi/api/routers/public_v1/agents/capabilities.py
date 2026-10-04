@@ -2,17 +2,15 @@
 
 from __future__ import annotations
 
-from yuxi.api.responses.files import render_file_result
-from yuxi.api.uploads import read_upload_with_limit
-
-
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from yuxi.api.routers.public_v1.agents.auth import PublicAgentContext, require_public_context
 from yuxi.api.dependencies.auth import get_db
-from yuxi.modules.agents.services.threads import get_thread_snapshot
+from yuxi.api.responses.files import render_file_result
+from yuxi.api.routers.public_v1.agents.auth import PublicAgentContext, require_public_context
+from yuxi.api.uploads import read_upload_with_limit
+from yuxi.infrastructure.images import process_uploaded_image
 from yuxi.modules.agents.services.artifacts import resolve_thread_artifact_view, save_thread_artifact_to_workspace_view
 from yuxi.modules.agents.services.attachments import (
     MAX_ATTACHMENT_SIZE_BYTES,
@@ -22,9 +20,9 @@ from yuxi.modules.agents.services.attachments import (
     parse_tmp_attachment_view,
     upload_tmp_attachment_view,
 )
-from yuxi.modules.agents.services.state import get_agent_state_view
 from yuxi.modules.agents.services.compression import compress_thread_context as compress_context
-from yuxi.infrastructure.images import process_uploaded_image
+from yuxi.modules.agents.services.state import get_agent_state_view
+from yuxi.modules.agents.services.threads import get_thread_snapshot
 
 router = APIRouter(dependencies=[Depends(require_public_context)])
 

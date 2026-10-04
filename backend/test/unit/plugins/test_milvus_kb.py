@@ -1,6 +1,7 @@
 import asyncio
 import threading
 import types
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
@@ -75,8 +76,14 @@ def make_kb(collection: FakeCollection) -> MilvusKB:
             chunk["metadata"]["source"] = "demo.md"
         return chunks
 
+    async def active_generation_expr(kb_id):
+        """检索通道单测使用固定 PG 可见范围；真实范围由 integration 验证。"""
+        return 'generation == 1 and file_id in ["file-1"]'
+
     kb._get_or_create_milvus_collection = get_collection
+    kb._get_existing_milvus_collection = AsyncMock(return_value=collection)
     kb._hydrate_chunk_sources = hydrate_chunk_sources
+    kb._build_active_generation_expr = active_generation_expr
     return kb
 
 
@@ -104,6 +111,12 @@ def make_file_record(**overrides):
         "created_at": None,
         "updated_at": None,
         "original_filename": None,
+        "generation": 1,
+        "active_generation": 1,
+        "building_generation": None,
+        "deleted_at": None,
+        "projection_status": "pending",
+        "projection_error": None,
     }
     data.update(overrides)
     return types.SimpleNamespace(**data)
@@ -128,6 +141,30 @@ class FakeKnowledgeFileRepository:
             setattr(record, key, value)
         return record
 
+    async def begin_index_generation(self, *, kb_id: str, file_id: str):
+        record = self.records[file_id]
+        record.generation += 1
+        record.building_generation = record.generation
+        record.projection_status = "building"
+        return record.building_generation
+
+    async def finish_index_generation(self, *, kb_id: str, file_id: str, generation: int, chunk_count, token_count):
+        record = self.records[file_id]
+        record.active_generation = generation
+        record.generation = generation
+        record.building_generation = None
+        record.projection_status = "ready"
+        record.status = FileStatus.INDEXED
+        record.chunk_count = chunk_count
+        record.token_count = token_count
+        return record
+
+    async def mark_deleted(self, *, kb_id: str, file_id: str):
+        record = self.records[file_id]
+        record.deleted_at = "deleted"
+        record.status = "deleted"
+        return f"file:{file_id}:g{record.generation}:deleted"
+
     async def update_fields(self, *, file_id: str, data: dict, kb_id: str | None = None):
         await asyncio.sleep(0)
         record = self.records.get(file_id)
@@ -138,9 +175,21 @@ class FakeKnowledgeFileRepository:
         self.update_calls.append((file_id, kb_id, dict(data)))
         return record
 
+    async def list_active_generations(self, kb_id):
+        """提供实际 Repository 的可见代次接口。"""
+        return [
+            (file_id, row.active_generation)
+            for file_id, row in self.records.items()
+            if row.kb_id == kb_id and row.deleted_at is None
+        ]
+
     async def get_chunk_sources_by_file_ids(self, *, kb_id: str, file_ids: list[str]):
         return {
-            file_id: {"source": record.filename, "chunk_count": record.chunk_count}
+            file_id: {
+                "source": record.filename,
+                "chunk_count": record.chunk_count,
+                "active_generation": record.active_generation,
+            }
             for file_id in file_ids
             if (record := self.records.get(file_id)) is not None and record.kb_id == kb_id
         }
@@ -158,8 +207,28 @@ class FakeKnowledgeFileRepository:
 
 
 def patch_file_repository(monkeypatch, file_repo: FakeKnowledgeFileRepository) -> None:
+    from contextlib import asynccontextmanager
+
+    @asynccontextmanager
+    async def projection_lock(kb_id, *, shared=False):
+        """unit 只隔离锁；并发排他性由真实 PG integration 拥有。"""
+        yield
+
+    monkeypatch.setattr("yuxi.modules.knowledge.repositories.projections.knowledge_projection_lock", projection_lock)
     monkeypatch.setattr("yuxi.modules.knowledge.repositories.files.KnowledgeFileRepository", lambda: file_repo)
     monkeypatch.setattr("yuxi.modules.knowledge.implementations.milvus.KnowledgeFileRepository", lambda: file_repo)
+
+
+def patch_chunk_records(monkeypatch, records):
+    """检索测试显式提供 PG 权威 chunk，而非复用向量正文。"""
+    repository = types.SimpleNamespace(
+        list_by_chunk_ids=AsyncMock(
+            return_value=[
+                types.SimpleNamespace(kb_id="db", generation=1, chunk_index=0, **record) for record in records
+            ]
+        )
+    )
+    monkeypatch.setattr(milvus_module, "KnowledgeChunkRepository", lambda: repository)
 
 
 def make_chunk(index: int, content: str = "content") -> dict:
@@ -341,8 +410,8 @@ async def test_index_file_persists_chunk_stats(monkeypatch):
     async def embedding_function(texts):
         return [[0.1, 0.2] for _ in texts]
 
-    async def delete_file_chunks_only(kb_id, file_id):
-        deleted_files.append((kb_id, file_id))
+    async def delete_file_chunks_only(kb_id, file_id, generation=None):
+        deleted_files.append((kb_id, file_id, generation))
 
     async def embed_and_store_chunks(kb_id, file_id, collection_arg, chunk_records, embedding_fn):
         store_calls.append((kb_id, file_id, collection_arg, list(chunk_records), embedding_fn))
@@ -368,15 +437,15 @@ async def test_index_file_persists_chunk_stats(monkeypatch):
         additional_params={},
     )
 
-    assert deleted_files == [("db", "file-1")]
+    assert deleted_files == []
     assert len(store_calls) == 1
-    assert [chunk["chunk_id"] for chunk in store_calls[0][3]] == ["chunk-0", "chunk-1"]
+    assert [chunk["chunk_id"] for chunk in store_calls[0][3]] == ["chunk-0-g2", "chunk-1-g2"]
     assert result["status"] == FileStatus.INDEXED
     assert result["chunk_count"] == 2
     assert result["token_count"] == count_tokens("alpha beta") + count_tokens("中文")
     assert file_repo.records["file-1"].chunk_count == result["chunk_count"]
     assert file_repo.conditional_update_calls[0][3]["status"] == FileStatus.INDEXING
-    assert file_repo.conditional_update_calls[-1][3]["status"] == FileStatus.INDEXED
+    assert result["active_generation"] == 2
 
 
 @pytest.mark.parametrize(
@@ -459,7 +528,7 @@ async def test_delete_file_chunks_only_resets_file_stats(monkeypatch):
             self.delete_calls = []
             repos.append(self)
 
-        async def count_graph_indexed_by_file_id(self, file_id):
+        async def count_graph_indexed_by_file_id(self, file_id, *, generation=None):
             return 0
 
         async def delete_by_file_id(self, file_id):
@@ -488,8 +557,8 @@ async def test_delete_file_chunks_only_resets_file_stats(monkeypatch):
 
 
 @pytest.mark.parametrize("failure", ["graph", "vector"])
-async def test_delete_file_keeps_metadata_when_external_deletion_fails(monkeypatch, failure):
-    """外部删除失败必须显式失败，并保留文件与 chunk 的重试依据。"""
+async def test_delete_file_commits_invisibility_without_external_cleanup(monkeypatch, failure):
+    """外部不可用不阻止 PG 删除；请求线程不能先调用外部清理。"""
     error = RuntimeError("external storage unavailable")
     chunk_repo = types.SimpleNamespace(
         count_graph_indexed_by_file_id=AsyncMock(return_value=1 if failure == "graph" else 0),
@@ -506,10 +575,11 @@ async def test_delete_file_keeps_metadata_when_external_deletion_fails(monkeypat
     kb._get_existing_milvus_collection = AsyncMock(return_value=FakeCollection())
     kb._delete_file_chunks_from_milvus = AsyncMock(side_effect=error)
 
-    with pytest.raises(RuntimeError) as caught:
-        await kb.delete_file("db", "file-1")
+    await kb.delete_file("db", "file-1")
 
-    assert caught.value is error
+    assert file_repo.records["file-1"].status == "deleted"
+    assert file_repo.records["file-1"].deleted_at is not None
+    kb._delete_file_chunks_from_milvus.assert_not_awaited()
     assert "file-1" in file_repo.records
     assert file_repo.records["file-1"].chunk_count == 2
     assert file_repo.records["file-1"].token_count == 10
@@ -942,6 +1012,7 @@ def test_collection_supports_text_retrieval_requires_match_and_bm25():
     schema = CollectionSchema(
         fields=[
             FieldSchema(name="id", dtype=DataType.VARCHAR, max_length=100, is_primary=True),
+            FieldSchema(name="generation", dtype=DataType.INT64),
             FieldSchema(
                 name="content",
                 dtype=DataType.VARCHAR,
@@ -978,8 +1049,14 @@ async def test_hydrate_chunk_sources_filters_orphaned_file_chunks(monkeypatch, c
     patch_file_repository(monkeypatch, file_repo)
     kb = MilvusKB.__new__(MilvusKB)
 
+    patch_chunk_records(
+        monkeypatch,
+        [
+            {"chunk_id": "live", "file_id": "file-live", "content": "PG live content"},
+        ],
+    )
     chunks = [
-        {"metadata": {"file_id": "file-live", "chunk_index": 0}, "content": "live content", "score": 0.9},
+        {"metadata": {"file_id": "file-live", "chunk_id": "live", "chunk_index": 0}, "content": "stale", "score": 0.9},
         {"metadata": {"file_id": "file-deleted"}, "content": "orphan content", "score": 0.8},
     ]
 
@@ -990,6 +1067,7 @@ async def test_hydrate_chunk_sources_filters_orphaned_file_chunks(monkeypatch, c
     assert result[0]["metadata"]["source"] == "live.md"
     assert result[0]["metadata"]["chunk_count"] == chunk_count
     assert result[0]["metadata"]["chunk_index"] == 0
+    assert result[0]["content"] == "PG live content"
 
 
 async def test_hydrate_chunk_sources_returns_all_chunks_when_no_orphans(monkeypatch):
@@ -1003,9 +1081,16 @@ async def test_hydrate_chunk_sources_returns_all_chunks_when_no_orphans(monkeypa
     patch_file_repository(monkeypatch, file_repo)
     kb = MilvusKB.__new__(MilvusKB)
 
+    patch_chunk_records(
+        monkeypatch,
+        [
+            {"chunk_id": "a", "file_id": "file-a", "content": "PG a"},
+            {"chunk_id": "b", "file_id": "file-b", "content": "PG b"},
+        ],
+    )
     chunks = [
-        {"metadata": {"file_id": "file-a"}, "content": "a", "score": 0.9},
-        {"metadata": {"file_id": "file-b"}, "content": "b", "score": 0.8},
+        {"metadata": {"file_id": "file-a", "chunk_id": "a"}, "content": "a", "score": 0.9},
+        {"metadata": {"file_id": "file-b", "chunk_id": "b"}, "content": "b", "score": 0.8},
     ]
 
     result = await kb._hydrate_chunk_sources("db", chunks)
@@ -1013,6 +1098,33 @@ async def test_hydrate_chunk_sources_returns_all_chunks_when_no_orphans(monkeypa
     assert len(result) == 2
     assert result[0]["metadata"]["source"] == "a.md"
     assert result[1]["metadata"]["source"] == "b.md"
+
+
+@pytest.mark.parametrize("visible_chunks", [0, 1])
+async def test_query_does_not_create_missing_vector_projection(monkeypatch, tmp_path, visible_chunks):
+    """读请求不创建集合；丢失 active 投影时显式失败。"""
+    artifact = tmp_path / "collection"
+    kb = make_kb(FakeCollection())
+    kb._get_existing_milvus_collection = AsyncMock(return_value=None)
+
+    async def create(*args):
+        """旧读路径会留下新的外部集合。"""
+        artifact.write_text("created by query")
+        return FakeCollection()
+
+    kb._get_or_create_milvus_collection = create
+    monkeypatch.setattr(
+        "yuxi.modules.knowledge.implementations.milvus.KnowledgeChunkRepository",
+        lambda: SimpleNamespace(
+            count_by_kb_id=AsyncMock(return_value=visible_chunks),
+        ),
+    )
+    if visible_chunks:
+        with pytest.raises(ValueError, match="no vector projection"):
+            await kb.aquery("query", "db", config=make_query_config())
+    else:
+        assert await kb.aquery("query", "db", config=make_query_config()) == []
+    assert not artifact.exists()
 
 
 async def test_query_filters_orphaned_chunks_from_search_results(monkeypatch):
@@ -1023,6 +1135,12 @@ async def test_query_filters_orphaned_chunks_from_search_results(monkeypatch):
         }
     )
     patch_file_repository(monkeypatch, file_repo)
+    patch_chunk_records(
+        monkeypatch,
+        [
+            {"chunk_id": "chunk-1", "file_id": "file-live", "content": "live content"},
+        ],
+    )
 
     class OrphanCollection(FakeCollection):
         """模拟 Milvus 中残留已删除文件的向量。"""
@@ -1039,11 +1157,11 @@ async def test_query_filters_orphaned_chunks_from_search_results(monkeypatch):
     kb = MilvusKB.__new__(MilvusKB)
     kb._get_embedding_function = lambda embedding_model_spec, **kwargs: lambda texts: [[0.1, 0.2] for _ in texts]
 
-    async def get_collection(kb_id: str, embedding_model_spec: str | None):
-        del kb_id, embedding_model_spec
+    async def get_collection(kb_id: str):
+        del kb_id
         return OrphanCollection()
 
-    kb._get_or_create_milvus_collection = get_collection
+    kb._get_existing_milvus_collection = get_collection
 
     chunks = await kb.aquery("query", "db", config=make_query_config())
 

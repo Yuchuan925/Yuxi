@@ -6,14 +6,15 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     ForeignKeyConstraint,
-    Integer,
     Index,
-    UniqueConstraint,
+    Integer,
     String,
+    UniqueConstraint,
 )
-from yuxi.shared.datetime import utc_now_naive
 
-from yuxi.infrastructure.postgres.base import BusinessBase as Base, JSON_VALUE
+from yuxi.infrastructure.postgres.base import JSON_VALUE
+from yuxi.infrastructure.postgres.base import BusinessBase as Base
+from yuxi.shared.datetime import utc_now
 
 
 class AgentTurn(Base):
@@ -33,9 +34,9 @@ class AgentTurn(Base):
     result_run_id = Column(String(64), nullable=True)
     langfuse_root_observation_id = Column(String(16), nullable=True)
     waitpoint = Column(JSON_VALUE, nullable=True)
-    created_at = Column(DateTime, nullable=False, default=utc_now_naive)
-    finished_at = Column(DateTime, nullable=True)
-    cancelled_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utc_now)
+    finished_at = Column(DateTime(timezone=True), nullable=True)
+    cancelled_at = Column(DateTime(timezone=True), nullable=True)
 
     __table_args__ = (
         Index(

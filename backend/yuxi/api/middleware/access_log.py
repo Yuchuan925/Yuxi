@@ -1,7 +1,7 @@
 """访问日志中间件 - 记录请求处理时间"""
 
-import time
 import logging
+import time
 from collections.abc import Callable
 
 from fastapi import Request, Response

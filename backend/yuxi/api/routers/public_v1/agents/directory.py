@@ -3,10 +3,10 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from yuxi.api.routers.public_v1.agents.auth import PublicAgentContext, require_public_context
 from yuxi.api.dependencies.auth import get_db
-from yuxi.modules.agents.services.directory import get_public_agent, list_public_agents
+from yuxi.api.routers.public_v1.agents.auth import PublicAgentContext, require_public_context
 from yuxi.modules.agents.models.definitions import Agent
+from yuxi.modules.agents.services.directory import get_public_agent, list_public_agents
 
 router = APIRouter(dependencies=[Depends(require_public_context)])
 

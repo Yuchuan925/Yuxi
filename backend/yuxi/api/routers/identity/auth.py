@@ -1,5 +1,4 @@
 import re
-
 from typing import Literal
 
 from fastapi import APIRouter, Body, Depends, File, HTTPException, Query, Request, UploadFile, status
@@ -9,6 +8,28 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from yuxi.api.dependencies.auth import get_admin_user, get_db, get_required_user
+
+# OIDC 认证相关导入
+from yuxi.api.routers.identity.oidc import (
+    get_oidc_config_handler,
+    oidc_callback_handler,
+    oidc_exchange_code_handler,
+    oidc_login_url_handler,
+)
+from yuxi.api.uploads import read_upload_with_limit
+from yuxi.infrastructure.minio import upload_image_to_minio
+from yuxi.infrastructure.minio.client import normalize_public_minio_url
+from yuxi.modules.identity.models import User
+from yuxi.modules.identity.repositories.departments import DepartmentRepository
+from yuxi.modules.identity.repositories.users import UserRepository
+from yuxi.modules.identity.security import AuthUtils
+from yuxi.modules.identity.services.administration import (
+    IdentityConflictError,
+    SystemAlreadyInitializedError,
+    initialize_system_admin,
+    list_managed_users_page,
+    lock_member_management,
+)
 from yuxi.modules.identity.services.cli_auth import (
     CLI_AUTH_POLL_INTERVAL_SECONDS,
     CLI_AUTH_SESSION_TTL_SECONDS,
@@ -24,30 +45,8 @@ from yuxi.modules.identity.services.login_limits import (
     extract_client_ip,
     record_login_failure,
 )
-from yuxi.modules.identity.services.administration import (
-    lock_member_management,
-    IdentityConflictError,
-    SystemAlreadyInitializedError,
-    initialize_system_admin,
-    list_managed_users_page,
-)
 from yuxi.modules.identity.services.usernames import generate_unique_uid, is_valid_phone_number, validate_username
-from yuxi.infrastructure.minio import upload_image_to_minio
-from yuxi.api.uploads import read_upload_with_limit
-from yuxi.infrastructure.minio.client import normalize_public_minio_url
-from yuxi.modules.identity.models import User
-from yuxi.modules.identity.repositories.departments import DepartmentRepository
-from yuxi.modules.identity.repositories.users import UserRepository
-from yuxi.modules.identity.security import AuthUtils
-from yuxi.shared.datetime import utc_now_naive
-
-# OIDC 认证相关导入
-from yuxi.api.routers.identity.oidc import (
-    get_oidc_config_handler,
-    oidc_callback_handler,
-    oidc_exchange_code_handler,
-    oidc_login_url_handler,
-)
+from yuxi.shared.datetime import utc_now
 
 # 创建路由器
 auth = APIRouter(prefix="/auth", tags=["authentication"])
@@ -292,7 +291,7 @@ async def login_for_access_token(
 
     # 登录成功，重置失败计数器并清除 IP+账号维度的失败记录
     user.reset_failed_login()
-    user.last_login = utc_now_naive()
+    user.last_login = utc_now()
     await user_repository.save(user)
     await clear_login_failures(client_ip, login_identifier)
 

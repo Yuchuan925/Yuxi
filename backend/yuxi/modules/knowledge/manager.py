@@ -9,6 +9,13 @@ from typing import Any
 from redis.exceptions import ConnectionError as RedisConnectionError
 from redis.exceptions import TimeoutError as RedisTimeoutError
 
+from yuxi.infrastructure.observability.logging import logger
+from yuxi.modules.identity.models import User
+from yuxi.modules.identity.permissions import (
+    ResourcePermission,
+    normalize_permission_config,
+    resolve_knowledge_base_permission,
+)
 from yuxi.modules.knowledge.base import KBNameConflictError, KBNotFoundError, KnowledgeBase
 from yuxi.modules.knowledge.cache import (
     cache_kb_config,
@@ -21,13 +28,6 @@ from yuxi.modules.knowledge.factory import KnowledgeBaseFactory
 from yuxi.modules.knowledge.read_models import KnowledgeBaseConfig, KnowledgeBaseDetail, KnowledgeBaseSummary
 from yuxi.modules.knowledge.schemas import FindOutputSchema, OpenOutputSchema
 from yuxi.modules.knowledge.utils.security import redact_sensitive_params
-from yuxi.modules.identity.permissions import (
-    ResourcePermission,
-    normalize_permission_config,
-    resolve_knowledge_base_permission,
-)
-from yuxi.modules.identity.models import User
-from yuxi.infrastructure.observability.logging import logger
 from yuxi.shared.datetime import utc_isoformat
 
 KB_FILE_SEARCH_SCAN_LIMIT = 5000
@@ -433,8 +433,8 @@ class KnowledgeBaseManager:
 
     async def database_name_exists(self, database_name: str) -> bool:
         """检查知识库名称是否已存在"""
-        from yuxi.modules.knowledge.repositories.bases import KnowledgeBaseRepository
         from yuxi.infrastructure.postgres.manager import pg_manager
+        from yuxi.modules.knowledge.repositories.bases import KnowledgeBaseRepository
 
         # 确保 pg_manager 已初始化
         if not pg_manager._initialized:
@@ -556,17 +556,34 @@ class KnowledgeBaseManager:
         return database
 
     async def delete_database(self, kb_id: str) -> dict:
-        """删除数据库"""
+        """提交知识库不可见事实；外部存储清理由 durable outbox 重放。"""
+        from yuxi.modules.knowledge.repositories.files import KnowledgeFileRepository
+
+        await KnowledgeFileRepository().mark_deleted_by_kb_id(kb_id)
+        return {"message": "删除成功"}
+
+    async def cleanup_deleted_database(self, kb_id: str) -> None:
+        """仅为已删除知识库执行可重试外部清理。"""
         from yuxi.modules.knowledge.repositories.bases import KnowledgeBaseRepository
 
-        try:
-            kb_instance = await self.get_kb_executor(kb_id)
-            result = await kb_instance.cleanup_database_resources(kb_id)
-            await KnowledgeBaseRepository().delete(kb_id)
-            return result
-        except KBNotFoundError as e:
-            logger.warning(f"Database {kb_id} not found during deletion: {e}")
-            return {"message": "删除成功"}
+        repository = KnowledgeBaseRepository()
+        record = await repository.get_by_kb_id(kb_id, include_deleted=True)
+        if record is None:
+            return
+        if record.deleted_at is None:
+            raise ValueError("Cannot clean a visible knowledge base")
+        executor = await self._get_or_create_kb_instance(record.kb_type)
+        await executor.cleanup_database_resources(kb_id)
+        await repository.delete(kb_id)
+
+    async def get_cleanup_executor(self, kb_id: str) -> KnowledgeBase | None:
+        """清理任务读取 tombstone，不使用可见配置缓存。"""
+        from yuxi.modules.knowledge.repositories.bases import KnowledgeBaseRepository
+
+        record = await KnowledgeBaseRepository().get_by_kb_id(kb_id, include_deleted=True)
+        if record is None:
+            return None
+        return await self._get_or_create_kb_instance(record.kb_type)
 
     async def add_file_record(
         self, kb_id: str, item: str, params: dict | None = None, operator_id: str | None = None

@@ -10,11 +10,11 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from yuxi.api.dependencies.auth import get_admin_user, get_db, get_superadmin_user
+from yuxi.modules.identity.models import User
 from yuxi.modules.identity.repositories.departments import DepartmentRepository
 from yuxi.modules.identity.repositories.users import UserRepository
 from yuxi.modules.identity.services.administration import IdentityConflictError, create_department_with_admin
 from yuxi.modules.identity.services.usernames import is_valid_phone_number
-from yuxi.modules.identity.models import User
 
 # 创建路由器
 department = APIRouter(prefix="/departments", tags=["department"])

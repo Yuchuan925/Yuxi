@@ -45,7 +45,9 @@ async def test_turn_result_follows_only_its_bound_run(test_client, admin_headers
                 await conn.execute(
                     "INSERT INTO agent_turns (id, conversation_thread_id, uid, status, created_at) "
                     "VALUES ($1, $2, $3, 'completed', NOW())",
-                    turn_id, thread_id, uid,
+                    turn_id,
+                    thread_id,
+                    uid,
                 )
                 await conn.execute(
                     "INSERT INTO agent_runs "
@@ -53,26 +55,46 @@ async def test_turn_result_follows_only_its_bound_run(test_client, admin_headers
                     "run_type, source, channel, input_payload, token_usage, origin_metadata, conversation_id) "
                     "VALUES ($1, $2, $2, $3, $4, $5, 'completed', 'chat', 'public_api', 'api', "
                     "'{}'::jsonb, '{}'::jsonb, '{}'::jsonb, $6)",
-                    run_id, thread_id, agent_slug, uid, turn_id, conversation_id,
+                    run_id,
+                    thread_id,
+                    agent_slug,
+                    uid,
+                    turn_id,
+                    conversation_id,
                 )
                 message_id = await conn.fetchval(
                     "INSERT INTO messages (conversation_id, role, content, run_id, turn_id, delivery_status) "
                     "VALUES ($1, 'assistant', $2, $3, $4, 'complete') RETURNING id",
-                    conversation_id, content, run_id, turn_id,
+                    conversation_id,
+                    content,
+                    run_id,
+                    turn_id,
                 )
                 await conn.execute(
-                    "UPDATE messages SET extra_metadata=$2::json WHERE id=$1", message_id,
-                    json.dumps({"public_items": {"message": {
-                        "id": f"item_{message_id}", "type": "message", "turn_id": turn_id,
-                        "role": "assistant", "content": [{"type": "output_text", "text": content}],
-                        "status": "completed", "phase": "commentary",
-                        "yuxi": {"run_id": run_id, "message_id": message_id, "output_index": 0},
-                    }}}),
+                    "UPDATE messages SET extra_metadata=$2::json WHERE id=$1",
+                    message_id,
+                    json.dumps(
+                        {
+                            "public_items": {
+                                "message": {
+                                    "id": f"item_{message_id}",
+                                    "type": "message",
+                                    "turn_id": turn_id,
+                                    "role": "assistant",
+                                    "content": [{"type": "output_text", "text": content}],
+                                    "status": "completed",
+                                    "phase": "commentary",
+                                    "yuxi": {"run_id": run_id, "message_id": message_id, "output_index": 0},
+                                }
+                            }
+                        }
+                    ),
                 )
                 await conn.execute("UPDATE agent_runs SET output_message_id = $2 WHERE id = $1", run_id, message_id)
                 await conn.execute(
                     "UPDATE agent_turns SET current_run_id = $2, result_run_id = $2 WHERE id = $1",
-                    turn_id, run_id,
+                    turn_id,
+                    run_id,
                 )
 
         url = f"/api/v1/agents/threads/{thread_id}/turns/{turn_ids[1]}"
@@ -85,18 +107,20 @@ async def test_turn_result_follows_only_its_bound_run(test_client, admin_headers
 
         with pytest.raises(asyncpg.ForeignKeyViolationError):
             async with conn.transaction():
-                await conn.execute(
-                    "UPDATE agent_turns SET result_run_id = $2 WHERE id = $1", turn_ids[1], run_ids[0]
-                )
+                await conn.execute("UPDATE agent_turns SET result_run_id = $2 WHERE id = $1", turn_ids[1], run_ids[0])
 
         wrong_message_id = await conn.fetchval("SELECT output_message_id FROM agent_runs WHERE id = $1", run_ids[0])
-        await conn.execute("UPDATE agent_runs SET output_message_id = $2 WHERE id = $1", run_ids[1], wrong_message_id)
+        with pytest.raises(asyncpg.ForeignKeyViolationError, match="fk_agent_runs_output_message_scope"):
+            async with conn.transaction():
+                await conn.execute(
+                    "UPDATE agent_runs SET output_message_id = $2 WHERE id = $1", run_ids[1], wrong_message_id
+                )
         sessions = async_sessionmaker(engine, expire_on_commit=False)
         async with sessions() as db:
-            with pytest.raises(ValueError, match="结果消息归属不一致"):
-                await get_turn_snapshot(
-                    db=db, scope=ActorScope(uid=uid, app_id=None), thread_id=thread_id, turn_id=turn_ids[1]
-                )
+            snapshot = await get_turn_snapshot(
+                db=db, scope=ActorScope(uid=uid, app_id=None), thread_id=thread_id, turn_id=turn_ids[1]
+            )
+            assert snapshot["output"][0]["content"] == [{"type": "output_text", "text": "second output"}]
     finally:
         async with conn.transaction():
             await conn.execute(

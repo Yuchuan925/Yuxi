@@ -1,6 +1,7 @@
 """业务 PostgreSQL 映射。"""
 
 from typing import Any
+
 from sqlalchemy import (
     JSON,
     Column,
@@ -8,9 +9,9 @@ from sqlalchemy import (
     Integer,
     String,
 )
-from yuxi.shared.datetime import format_utc_datetime, utc_now_naive
 
 from yuxi.infrastructure.postgres.base import BusinessBase as Base
+from yuxi.shared.datetime import format_utc_datetime, utc_now
 
 
 class MCPServer(Base):
@@ -43,8 +44,8 @@ class MCPServer(Base):
     updated_by = Column(String(100), nullable=False, comment="修改人用户名")
 
     # 时间戳
-    created_at = Column(DateTime, default=utc_now_naive, comment="创建时间")
-    updated_at = Column(DateTime, default=utc_now_naive, onupdate=utc_now_naive, comment="更新时间")
+    created_at = Column(DateTime(timezone=True), default=utc_now, comment="创建时间")
+    updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, comment="更新时间")
 
     def to_dict(self) -> dict[str, Any]:
         return {

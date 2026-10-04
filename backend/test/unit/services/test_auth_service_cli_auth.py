@@ -3,8 +3,10 @@ from __future__ import annotations
 from datetime import timedelta
 
 import pytest
+
+from test.support.sqlite import create_utc_sqlite_engine
 import pytest_asyncio
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from yuxi.modules.identity.services.cli_auth import (
     CLIAuthError,
@@ -15,7 +17,7 @@ from yuxi.modules.identity.services.cli_auth import (
 )
 from yuxi.modules.identity.models import APIKey, Department, User
 from yuxi.infrastructure.postgres.base import Base
-from yuxi.shared.datetime import utc_now_naive
+from yuxi.shared.datetime import utc_now
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.unit]
 
@@ -27,7 +29,7 @@ def api_key_derivation_secret(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest_asyncio.fixture()
 async def session():
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    engine = create_utc_sqlite_engine()
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     factory = async_sessionmaker(engine, expire_on_commit=False)
@@ -88,7 +90,7 @@ async def test_cli_auth_session_does_not_republish_revoked_secret(session):
     first = await exchange_cli_auth_token(db, device_code)
     api_key = await db.get(APIKey, first["api_key"]["id"])
     api_key.is_enabled = False
-    api_key.revoked_at = utc_now_naive()
+    api_key.revoked_at = utc_now()
     await db.commit()
 
     with pytest.raises(CLIAuthError) as revoked:

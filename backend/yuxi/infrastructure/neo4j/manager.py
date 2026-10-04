@@ -6,9 +6,8 @@ import threading
 from collections.abc import Callable
 from typing import Any
 
-from yuxi.infrastructure.observability.logging import logger
-
 from neo4j import GraphDatabase as GD
+from yuxi.infrastructure.observability.logging import logger
 
 _SAFE_NEO4J_LABEL_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _shared_neo4j_connection: Neo4jConnectionManager | None = None

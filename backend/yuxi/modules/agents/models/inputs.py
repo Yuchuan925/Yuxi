@@ -13,9 +13,10 @@ from sqlalchemy import (
     String,
     UniqueConstraint,
 )
-from yuxi.shared.datetime import utc_now_naive
 
-from yuxi.infrastructure.postgres.base import BusinessBase as Base, JSON_VALUE
+from yuxi.infrastructure.postgres.base import JSON_VALUE
+from yuxi.infrastructure.postgres.base import BusinessBase as Base
+from yuxi.shared.datetime import utc_now
 
 
 class AgentInput(Base):
@@ -32,7 +33,7 @@ class AgentInput(Base):
     agent_slug = Column(String(64), nullable=False)
     kind = Column(String(16), nullable=False)
     status = Column(String(16), nullable=False, default="pending")
-    turn_id = Column(String(64), ForeignKey("agent_turns.id"), nullable=True, index=True)
+    turn_id = Column(String(64), nullable=True, index=True)
     consumed_run_id = Column(String(64), ForeignKey("agent_runs.id"), nullable=True, unique=True)
     cutoff_seq = Column(BigInteger, nullable=True)
     input_payload = Column(JSON_VALUE, nullable=False, default=dict)
@@ -40,11 +41,24 @@ class AgentInput(Base):
     channel = Column(String(32), nullable=False, default="web")
     external_id = Column(String(128), nullable=True)
     origin_metadata = Column(JSON_VALUE, nullable=False, default=dict)
-    created_at = Column(DateTime, nullable=False, default=utc_now_naive)
-    consumed_at = Column(DateTime, nullable=True)
-    cancelled_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utc_now)
+    consumed_at = Column(DateTime(timezone=True), nullable=True)
+    cancelled_at = Column(DateTime(timezone=True), nullable=True)
 
     __table_args__ = (
+        UniqueConstraint("id", "conversation_thread_id", name="uq_agent_inputs_id_thread"),
+        ForeignKeyConstraint(
+            ["turn_id", "conversation_thread_id"],
+            ["agent_turns.id", "agent_turns.conversation_thread_id"],
+            name="fk_agent_inputs_turn_thread",
+        ),
+        Index(
+            "ix_agent_inputs_pending_head",
+            "conversation_thread_id",
+            (kind == "steer").self_group().desc(),
+            "received_seq",
+            postgresql_where=status == "pending",
+        ).ddl_if(dialect="postgresql"),
         Index(
             "uq_agent_inputs_pending_steer",
             "conversation_thread_id",
@@ -82,13 +96,30 @@ class AgentInputReceipt(Base):
     conversation_thread_id = Column(String(64), ForeignKey("conversations.thread_id"), nullable=False)
     event_type = Column(String(48), nullable=False)
     intent_hash = Column(String(64), nullable=False)
-    input_id = Column(String(64), ForeignKey("agent_inputs.id"), nullable=True)
-    turn_id = Column(String(64), ForeignKey("agent_turns.id"), nullable=True)
-    run_id = Column(String(64), ForeignKey("agent_runs.id"), nullable=True)
-    created_at = Column(DateTime, nullable=False, default=utc_now_naive)
+    input_id = Column(String(64), nullable=True)
+    turn_id = Column(String(64), nullable=True)
+    run_id = Column(String(64), nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utc_now)
 
     __table_args__ = (
+        ForeignKeyConstraint(
+            ["input_id", "conversation_thread_id"],
+            ["agent_inputs.id", "agent_inputs.conversation_thread_id"],
+            name="fk_agent_input_receipts_input_thread",
+        ),
+        ForeignKeyConstraint(
+            ["turn_id", "conversation_thread_id"],
+            ["agent_turns.id", "agent_turns.conversation_thread_id"],
+            name="fk_agent_input_receipts_turn_thread",
+        ),
+        ForeignKeyConstraint(
+            ["turn_id", "run_id"],
+            ["agent_runs.turn_id", "agent_runs.id"],
+            name="fk_agent_input_receipts_run_turn",
+        ),
+        CheckConstraint("run_id IS NULL OR turn_id IS NOT NULL", name="ck_agent_input_receipts_run_turn"),
         UniqueConstraint("id", "input_id", name="uq_agent_input_receipts_id_input"),
+        Index("ix_agent_input_receipts_input_seq", "input_id", receive_seq.desc()),
         Index(
             "uq_agent_input_receipts_scope_key",
             "uid",
@@ -119,5 +150,6 @@ class AgentInputMessage(Base):
             name="fk_agent_input_messages_receipt_input",
         ),
         UniqueConstraint("receipt_id", "position", name="uq_agent_input_messages_receipt_position"),
+        Index("ix_agent_input_messages_input", "input_id", "receipt_id", "position"),
         CheckConstraint("position >= 0", name="ck_agent_input_messages_position"),
     )

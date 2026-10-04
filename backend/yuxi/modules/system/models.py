@@ -8,9 +8,9 @@ from sqlalchemy import (
     String,
     Text,
 )
-from yuxi.shared.datetime import utc_now_naive
 
 from yuxi.infrastructure.postgres.base import BusinessBase as Base
+from yuxi.shared.datetime import utc_now
 
 
 class ConfigOption(Base):
@@ -26,5 +26,5 @@ class ConfigOption(Base):
     value = Column(JSON, nullable=False, default=dict)
     created_by = Column(String(100), nullable=True)
     updated_by = Column(String(100), nullable=True)
-    created_at = Column(DateTime, default=utc_now_naive)
-    updated_at = Column(DateTime, default=utc_now_naive, onupdate=utc_now_naive)
+    created_at = Column(DateTime(timezone=True), default=utc_now)
+    updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)

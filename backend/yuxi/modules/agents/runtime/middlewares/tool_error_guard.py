@@ -10,8 +10,9 @@ from langchain.agents.middleware.types import (
     ToolCallRequest,
 )
 from langchain_core.messages import ToolMessage
-from yuxi.modules.agents.runtime.middlewares.authorization import AgentExecutionRevoked
 from langgraph.errors import GraphBubbleUp
+
+from yuxi.modules.agents.runtime.middlewares.authorization import AgentExecutionRevoked
 
 logger = logging.getLogger(__name__)
 

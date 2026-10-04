@@ -4,15 +4,14 @@
 - /viewer/filesystem/* - Viewer UI 使用
 """
 
-from yuxi.api.responses.files import render_file_result
-from yuxi.api.uploads import prepare_upload_files
-
-
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from yuxi.api.dependencies.auth import get_db, get_required_user
+from yuxi.api.responses.files import render_file_result
+from yuxi.api.uploads import prepare_upload_files
+from yuxi.modules.identity.models import User
 from yuxi.modules.workspace.services.viewer import (
     MAX_VIEWER_UPLOAD_BYTES,
     create_viewer_directory,
@@ -23,7 +22,6 @@ from yuxi.modules.workspace.services.viewer import (
     search_viewer_files,
     upload_viewer_files,
 )
-from yuxi.modules.identity.models import User
 
 filesystem_router = APIRouter(prefix="/viewer/filesystem", tags=["viewer-filesystem"])
 

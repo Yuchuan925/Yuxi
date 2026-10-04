@@ -10,7 +10,7 @@ import io
 import json
 import os
 import uuid
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import PurePosixPath
 
 import asyncpg
@@ -84,7 +84,7 @@ async def test_thread_message_audits_return_persisted_facts_without_leaking_into
     failed_run_id = f"run-{uuid.uuid4()}"
     turn_id = f"turn-{uuid.uuid4()}"
     failed_turn_id = f"turn-{uuid.uuid4()}"
-    started_at = datetime(2026, 8, 30, 1, 0, 0)
+    started_at = datetime(2026, 8, 30, 1, 0, 0, tzinfo=UTC)
 
     conn = await asyncpg.connect(_postgres_dsn())
     try:
@@ -515,7 +515,7 @@ async def test_thread_history_envelope_has_all_runs_and_keeps_viewed_explicit(
     thread_id = await _create_thread_for_user(test_client, admin_headers)
     conn = await asyncpg.connect(_postgres_dsn())
     prefix = uuid.uuid4().hex
-    started_at = datetime(2026, 9, 5, 0, 0, 0)
+    started_at = datetime(2026, 9, 5, 0, 0, 0, tzinfo=UTC)
     try:
         empty = await test_client.get(f"/api/v1/agents/threads/{thread_id}/history", headers=admin_headers)
         assert empty.status_code == 200, empty.text
@@ -570,13 +570,14 @@ async def test_thread_history_envelope_has_all_runs_and_keeps_viewed_explicit(
         await conn.execute(
             """
             INSERT INTO messages
-                (conversation_id, role, content, delivery_status, extra_metadata, run_id, created_at)
-            VALUES ($1, 'assistant', '历史回答', 'complete', '{}'::jsonb, $2, $3),
-                   ($1, 'assistant', '没有 Run 的旧回答', 'complete', '{}'::jsonb, NULL, $3)
+                (conversation_id, role, content, delivery_status, extra_metadata, run_id, turn_id, created_at)
+            VALUES ($1, 'assistant', '历史回答', 'complete', '{}'::jsonb, $2, $4, $3),
+                   ($1, 'assistant', '没有 Run 的旧回答', 'complete', '{}'::jsonb, NULL, NULL, $3)
             """,
             conversation["id"],
             f"{prefix}-000",
             started_at,
+            f"turn-{prefix}-0",
         )
         response = await test_client.get(f"/api/v1/agents/threads/{thread_id}/history", headers=admin_headers)
         assert response.status_code == 200, response.text

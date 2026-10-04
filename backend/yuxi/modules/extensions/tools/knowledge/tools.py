@@ -10,12 +10,12 @@ from typing import Any
 from langgraph.prebuilt.tool_node import ToolRuntime
 from pydantic import BaseModel, Field
 
+from yuxi.infrastructure.observability.logging import logger
 from yuxi.modules.agents.runtime.sandbox import ProvisionerSandboxBackend
 from yuxi.modules.extensions.tools.registry import tool
 from yuxi.modules.knowledge.schemas import FindInputSchema, OpenInputSchema, SearchInputSchema
-from yuxi.modules.knowledge.services.access import visible_knowledge_bases
 from yuxi.modules.knowledge.services import tools as knowledge_tools
-from yuxi.infrastructure.observability.logging import logger
+from yuxi.modules.knowledge.services.access import visible_knowledge_bases
 
 # ========== 通用知识库工具 ==========
 

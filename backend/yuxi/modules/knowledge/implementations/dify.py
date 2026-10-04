@@ -3,9 +3,9 @@ from typing import Any
 
 import httpx
 
+from yuxi.infrastructure.observability.logging import logger
 from yuxi.modules.knowledge.implementations.read_only_connectors import ReadOnlyConnectors
 from yuxi.modules.knowledge.read_models import KnowledgeBaseConfig
-from yuxi.infrastructure.observability.logging import logger
 
 DIFY_REQUIRED_PARAMS = ("dify_api_url", "dify_token", "dify_dataset_id")
 DIFY_MAX_TOP_K = 100

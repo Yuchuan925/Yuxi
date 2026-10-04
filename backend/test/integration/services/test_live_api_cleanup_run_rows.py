@@ -36,7 +36,7 @@ from yuxi.modules.agents.models.messages import Message, ToolCall
 from yuxi.modules.workspace.models import Project
 from yuxi.modules.identity.models import User
 from yuxi.modules.workspace.paths import ensure_bound_user_workdir, user_workdir_host_dir
-from yuxi.shared.datetime import utc_now_naive
+from yuxi.shared.datetime import utc_now
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
 
@@ -155,8 +155,8 @@ async def _seed_thread(session_factory, *, thread_prefix: str) -> dict:
             run_id=run_id,
             attempt_no=1,
             worker_id="test-owner",
-            started_at=utc_now_naive(),
-            finished_at=utc_now_naive(),
+            started_at=utc_now(),
+            finished_at=utc_now(),
             outcome="completed",
         )
         db.add(attempt)

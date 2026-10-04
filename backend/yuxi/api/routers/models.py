@@ -7,7 +7,10 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field, StrictBool
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from yuxi.api.dependencies.auth import get_superadmin_user, get_db, get_required_user
+from yuxi.api.dependencies.auth import get_db, get_required_user, get_superadmin_user
+from yuxi.infrastructure.observability.logging import logger
+from yuxi.infrastructure.postgres.manager import pg_manager
+from yuxi.modules.identity.models import User
 from yuxi.modules.models.providers.service import (
     check_credential_status,
     create_provider_config,
@@ -18,9 +21,6 @@ from yuxi.modules.models.providers.service import (
     test_model_status_by_spec,
     update_provider_config,
 )
-from yuxi.modules.identity.models import User
-from yuxi.infrastructure.postgres.manager import pg_manager
-from yuxi.infrastructure.observability.logging import logger
 
 model_providers = APIRouter(prefix="/system/model-providers", tags=["model-providers"])
 

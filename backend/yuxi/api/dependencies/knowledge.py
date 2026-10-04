@@ -3,14 +3,14 @@
 from fastapi import Depends, HTTPException
 
 from yuxi.api.dependencies.auth import get_admin_user
-from yuxi.modules.knowledge.read_models import KnowledgeBaseDetail
-from yuxi.modules.knowledge.runtime import knowledge_base
+from yuxi.modules.identity.models import User
 from yuxi.modules.identity.permissions import (
     ResourcePermission,
     ResourcePermissionDenied,
     require_knowledge_base_permission,
 )
-from yuxi.modules.identity.models import User
+from yuxi.modules.knowledge.read_models import KnowledgeBaseDetail
+from yuxi.modules.knowledge.runtime import knowledge_base
 
 
 async def ensure_knowledge_base_permission(

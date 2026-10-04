@@ -12,32 +12,32 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from yuxi.modules.agents.runtime.agent_backends import AgentBackendNotFoundError, get_agent_backend
+from yuxi.modules.agents.models.inputs import AgentInputReceipt
+from yuxi.modules.agents.models.messages import Message
+from yuxi.modules.agents.models.threads import Conversation
 from yuxi.modules.agents.repositories.definitions import AgentRepository
-from yuxi.modules.agents.repositories.runs import AgentRunRepository
 from yuxi.modules.agents.repositories.input import AgentInputRepository
 from yuxi.modules.agents.repositories.input_receipt import AgentInputReceiptRepository
-from yuxi.modules.agents.repositories.turn import AgentTurnRepository
+from yuxi.modules.agents.repositories.runs import AgentRunRepository
 from yuxi.modules.agents.repositories.threads import ConversationRepository
-from yuxi.modules.workspace.repositories.projects import ProjectRepository
+from yuxi.modules.agents.repositories.turn import AgentTurnRepository
+from yuxi.modules.agents.runtime.agent_backends import AgentBackendNotFoundError, get_agent_backend
 from yuxi.modules.agents.services.input_config import (
     resolve_agent_run_config,
     resolve_agent_run_model_spec,
     resolve_agent_run_tool_approval_mode,
 )
+from yuxi.modules.agents.services.input_messages import AgentRunInputMessage
+from yuxi.modules.agents.services.public_items import serialize_public_items
 from yuxi.modules.agents.services.scheduler import Dispatch, claim_next_input, deliver
 from yuxi.modules.agents.services.scope import ActorScope
-from yuxi.modules.agents.services.public_items import serialize_public_items
 from yuxi.modules.agents.services.threads import require_thread
-from yuxi.modules.agents.services.input_messages import AgentRunInputMessage
-from yuxi.modules.workspace.services.projects import create_implicit_project
-from yuxi.modules.workspace.services.bindings import resolve_conversation_workdir_binding
-from yuxi.modules.agents.models.inputs import AgentInputReceipt
-from yuxi.modules.agents.models.threads import Conversation
-from yuxi.modules.agents.models.messages import Message
 from yuxi.modules.identity.models import User
-from yuxi.shared.hashing import hash_id
 from yuxi.modules.workspace.paths import ensure_bound_user_workdir
+from yuxi.modules.workspace.repositories.projects import ProjectRepository
+from yuxi.modules.workspace.services.bindings import resolve_conversation_workdir_binding
+from yuxi.modules.workspace.services.projects import create_implicit_project
+from yuxi.shared.hashing import hash_id
 
 
 def thread_id_for_creation(scope: ActorScope, idempotency_key: str) -> str:

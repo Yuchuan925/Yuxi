@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 import yuxi.modules.identity.services.login_limits as login_limiter
 from yuxi.modules.identity.models import User as UserModel
 from yuxi.infrastructure.redis import close_async_redis_client, create_async_redis_client, get_async_redis_client
-from yuxi.shared.datetime import utc_now_naive
+from yuxi.shared.datetime import utc_now
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
 
@@ -48,7 +48,7 @@ async def _expire_login_lock(user_id: int) -> None:
             await session.execute(
                 update(UserModel)
                 .where(UserModel.id == user_id)
-                .values(login_locked_until=utc_now_naive() - timedelta(seconds=1))
+                .values(login_locked_until=utc_now() - timedelta(seconds=1))
             )
             await session.commit()
     finally:
@@ -374,8 +374,10 @@ async def test_department_admin_is_limited_to_own_department_users(test_client, 
         access_options = options_response.json()
         option_uids = {user["uid"] for user in access_options}
         assert user_a["uid"] in option_uids
-        assert user_b["uid"] not in option_uids
-        assert all(user["department_id"] == department_a["id"] for user in access_options)
+        assert user_b["uid"] in option_uids
+        assert all(
+            set(user) == {"uid", "username", "role", "department_id", "department_name"} for user in access_options
+        )
 
         superadmin_list_response = await test_client.get("/api/auth/users?limit=1000", headers=admin_headers)
         assert superadmin_list_response.status_code == 200, superadmin_list_response.text
@@ -399,7 +401,8 @@ async def test_department_admin_is_limited_to_own_department_users(test_client, 
         role_escalation = await test_client.put(
             f"/api/auth/users/{user_a['id']}", json={"role": "admin"}, headers=dept_a["admin_headers"]
         )
-        assert role_escalation.status_code == 422, role_escalation.text
+        assert role_escalation.status_code == 403, role_escalation.text
+        assert role_escalation.json()["detail"] == "只有系统管理员可以提升角色"
 
         cross_delete = await test_client.delete(f"/api/auth/users/{user_b['id']}", headers=dept_a["admin_headers"])
         assert cross_delete.status_code == 403, cross_delete.text

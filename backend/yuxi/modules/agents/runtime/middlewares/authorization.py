@@ -10,9 +10,9 @@ from yuxi.modules.agents.models.threads import Conversation
 from yuxi.modules.agents.repositories.definitions import AgentRepository
 from yuxi.modules.agents.runtime.context import normalize_agent_context_config
 from yuxi.modules.agents.services.event_writer import append_run_event_best_effort
+from yuxi.modules.extensions.mcp.models import MCPServer
 from yuxi.modules.extensions.skills.runtime import resolve_runtime_skills_for_context, sync_agent_context_skills
 from yuxi.modules.identity.models import User
-from yuxi.modules.extensions.mcp.models import MCPServer
 
 
 class AgentExecutionRevoked(PermissionError):

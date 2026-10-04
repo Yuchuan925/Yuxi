@@ -9,21 +9,21 @@ from typing import Any
 from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from yuxi.modules.models.utils import parse_assistant_message_body
-from yuxi.modules.agents.repositories.runs import AgentRunRepository
+from yuxi.infrastructure.observability.logging import logger
+from yuxi.modules.agents.models.messages import MODEL_AUDIT_MESSAGE_TYPE, Message
+from yuxi.modules.agents.models.runs import AgentRun, build_agent_run_timing
 from yuxi.modules.agents.repositories.input import AgentInputRepository
-from yuxi.modules.agents.repositories.turn import AgentTurnRepository
-from yuxi.modules.agents.repositories.threads import ConversationRepository
 from yuxi.modules.agents.repositories.model_audit import ModelMessageAuditRepository
+from yuxi.modules.agents.repositories.runs import AgentRunRepository
+from yuxi.modules.agents.repositories.threads import ConversationRepository
 from yuxi.modules.agents.repositories.tool_audit import ToolMessageAuditRepository
+from yuxi.modules.agents.repositories.turn import AgentTurnRepository
 from yuxi.modules.agents.services.runs import settle_checkpoint
 from yuxi.modules.agents.services.scope import ActorScope
 from yuxi.modules.agents.services.threads import get_thread_snapshot, require_thread
 from yuxi.modules.agents.services.transport import enqueue_agent_run
-from yuxi.modules.agents.models.messages import MODEL_AUDIT_MESSAGE_TYPE, Message
-from yuxi.modules.agents.models.runs import AgentRun, build_agent_run_timing
-from yuxi.shared.datetime import format_utc_datetime, utc_now_naive
-from yuxi.infrastructure.observability.logging import logger
+from yuxi.modules.models.utils import parse_assistant_message_body
+from yuxi.shared.datetime import format_utc_datetime, utc_now
 
 MESSAGE_AUDIT_LIMIT = 500
 AGENT_RUN_TRACE_LIMIT = 500
@@ -348,7 +348,7 @@ async def _reconcile_model_audit_message(
     message.extra_metadata = metadata
     if message.execution_status == "running":
         message.execution_status = "completed"
-        message.finished_at = utc_now_naive()
+        message.finished_at = utc_now()
         metadata["finished_by_reconcile"] = True
     await conv_repo.db.flush()
     if tool_calls_data:
@@ -381,7 +381,7 @@ async def _reconcile_tool_error_from_state(
         output=json.loads(json.dumps(msg_dict, ensure_ascii=False, default=str)),
         content=content,
         error_message=content or "Tool 执行失败",
-        finished_at=utc_now_naive(),
+        finished_at=utc_now(),
         duration_ms=None,
         finished_sequence=None,
     )

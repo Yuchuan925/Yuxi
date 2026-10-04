@@ -2,20 +2,20 @@
 
 from __future__ import annotations
 
-from yuxi.infrastructure.postgres.checkpointer import get_langgraph_checkpointer
-
 from typing import Any
 
 from fastapi import HTTPException
-from yuxi.modules.agents.repositories.threads import ConversationRepository
+
+from yuxi.infrastructure.observability.logging import logger
+from yuxi.infrastructure.postgres.checkpointer import get_langgraph_checkpointer
+from yuxi.infrastructure.postgres.manager import pg_manager
 from yuxi.modules.agents.repositories.runs import AgentRunRepository
-from yuxi.modules.agents.repositories.turn import AgentTurnRepository
 from yuxi.modules.agents.repositories.subagents import SubagentThreadRepository
+from yuxi.modules.agents.repositories.threads import ConversationRepository
+from yuxi.modules.agents.repositories.turn import AgentTurnRepository
 from yuxi.modules.agents.services.execution import build_pending_interrupt_payload, extract_agent_state
 from yuxi.modules.agents.services.subagents import serialize_subagent_run_state
-from yuxi.infrastructure.postgres.manager import pg_manager
 from yuxi.modules.identity.models import User
-from yuxi.infrastructure.observability.logging import logger
 
 
 async def _read_checkpoint_state(*, uid: str, thread_id: str) -> tuple[dict, Any | None]:

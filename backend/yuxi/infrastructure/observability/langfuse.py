@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import os
-from datetime import datetime, UTC
+from datetime import UTC, datetime
 from functools import lru_cache
 from typing import Any
 from urllib.parse import urlparse
-from yuxi.infrastructure.observability.logging import logger
 
+from yuxi.infrastructure.observability.logging import logger
 
 _FALSE_VALUES = {"0", "false", "no", "off"}
 

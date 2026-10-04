@@ -4,6 +4,7 @@ from typing import Annotated, Literal
 
 from fastapi import HTTPException
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictStr
+
 from yuxi.modules.agents.services.input_messages import (
     AgentRunInputMessage,
     build_chat_input_message_from_openai_content,

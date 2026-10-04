@@ -1,9 +1,9 @@
 from collections.abc import Callable
 from typing import Any
 
+from yuxi.infrastructure.observability.logging import logger
 from yuxi.modules.knowledge.evaluation.metrics import EvaluationMetricsCalculator
 from yuxi.modules.knowledge.runtime import knowledge_base as kb_manager
-from yuxi.infrastructure.observability.logging import logger
 
 
 def normalize_query_result(query_result: Any) -> tuple[str, list[dict[str, Any]]]:

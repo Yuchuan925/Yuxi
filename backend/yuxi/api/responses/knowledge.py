@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from typing import Any
 
+from yuxi.modules.identity.permissions import ResourcePermission
 from yuxi.modules.knowledge.read_models import KnowledgeBaseDetail, KnowledgeBaseSummary
 from yuxi.modules.knowledge.utils.security import redact_sensitive_params
-from yuxi.modules.identity.permissions import ResourcePermission
 from yuxi.shared.datetime import utc_isoformat
 
 

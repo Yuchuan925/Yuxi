@@ -60,7 +60,7 @@ async def seed_initial_users() -> None:
     from yuxi.modules.identity.security import AuthUtils
     from yuxi.infrastructure.postgres.manager import pg_manager
     from yuxi.modules.identity.models import Department, User
-    from yuxi.shared.datetime import utc_now_naive
+    from yuxi.shared.datetime import utc_now
 
     try:
         pg_manager.initialize()
@@ -91,7 +91,7 @@ async def seed_initial_users() -> None:
                     password_hash=AuthUtils.hash_password(SUPERADMIN_PASSWORD),
                     role="superadmin",
                     department_id=departments["dev"].id,
-                    last_login=utc_now_naive(),
+                    last_login=utc_now(),
                 )
             ]
 

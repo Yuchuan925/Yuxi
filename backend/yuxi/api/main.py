@@ -25,10 +25,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from yuxi.api.routers import router
 from yuxi.api.lifespan import lifespan
-from yuxi.infrastructure.observability.logging import setup_logging
 from yuxi.api.middleware.access_log import AccessLogMiddleware
+from yuxi.api.routers import router
+from yuxi.infrastructure.observability.logging import setup_logging
 
 # 设置日志配置
 setup_logging()

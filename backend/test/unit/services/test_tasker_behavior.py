@@ -13,7 +13,7 @@ import pytest
 import yuxi.modules.tasks.queue as task_queue_service
 import yuxi.modules.tasks.service as task_service
 from yuxi.modules.tasks.service import TaskContext, Tasker, process_task
-from yuxi.shared.datetime import format_utc_datetime, utc_now_naive
+from yuxi.shared.datetime import format_utc_datetime, utc_now
 
 
 @pytest.fixture(autouse=True)
@@ -35,7 +35,7 @@ class FakeRecord(SimpleNamespace):
 
 
 def make_record(**overrides) -> FakeRecord:
-    now = utc_now_naive()
+    now = utc_now()
     data = {
         "id": "task-1",
         "name": "demo",
@@ -94,7 +94,7 @@ class FakeRepo:
     async def claim(self, task_id: str, *, worker_id: str, lease_seconds: float, max_running: int | None = None):
         if not self.claim_allowed or self.record is None or self.record.status != "pending":
             return self.record, False
-        now = utc_now_naive()
+        now = utc_now()
         self.record.status = "running"
         self.record.worker_id = worker_id
         self.record.lease_expires_at = now + timedelta(seconds=lease_seconds)
@@ -255,7 +255,7 @@ async def test_unique_submit_uses_database_dedupe_and_does_not_republish(monkeyp
 
 async def test_task_context_throttles_progress_and_rejects_lost_lease(monkeypatch):
     record = make_record(status="running", worker_id="owner")
-    record.lease_expires_at = utc_now_naive() + timedelta(seconds=30)
+    record.lease_expires_at = utc_now() + timedelta(seconds=30)
     repo = FakeRepo(record)
     monkeypatch.setattr(task_service, "TaskRepository", lambda: repo)
     context = TaskContext(record.id, "owner", {"value": 1})

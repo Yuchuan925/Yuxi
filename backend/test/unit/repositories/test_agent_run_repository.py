@@ -3,9 +3,11 @@ from __future__ import annotations
 from datetime import timedelta
 
 import pytest
+
+from test.support.sqlite import create_utc_sqlite_engine
 import pytest_asyncio
 from sqlalchemy import select, text
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from yuxi.modules.agents.repositories.runs import AgentRunRepository
 from yuxi.modules.agents.models.runs import AgentRun, AgentRunAttempt
@@ -14,7 +16,7 @@ from yuxi.infrastructure.postgres.base import Base
 from yuxi.bootstrap.models import load_models
 from yuxi.modules.agents.models.threads import Conversation, SubagentThread
 from yuxi.modules.agents.models.messages import Message
-from yuxi.shared.datetime import utc_now_naive
+from yuxi.shared.datetime import utc_now
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.unit]
 
@@ -22,7 +24,7 @@ pytestmark = [pytest.mark.asyncio, pytest.mark.unit]
 @pytest_asyncio.fixture()
 async def session():
     load_models()
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    engine = create_utc_sqlite_engine()
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     factory = async_sessionmaker(engine, expire_on_commit=False)
@@ -243,7 +245,7 @@ async def test_langfuse_observation_is_written_once_by_current_run_owner(session
         turn_id="observation-turn",
         input_payload={},
     )
-    now = utc_now_naive()
+    now = utc_now()
     run.status = "running"
     run.worker_id = "owner-1"
     run.lease_expires_at = now + timedelta(minutes=1)
@@ -304,7 +306,7 @@ async def test_set_output_message_rejects_wrong_causal_owner_and_accepts_exact_m
         input_payload={},
         conversation_id=conversation.id,
     )
-    now = utc_now_naive()
+    now = utc_now()
     await repository.mark_running(
         run.id,
         worker_id="output-worker:attempt-1",
@@ -336,7 +338,7 @@ async def test_set_output_message_rejects_wrong_causal_owner_and_accepts_exact_m
         Message(
             conversation_id=conversation.id,
             run_id=None,
-            turn_id=run.turn_id,
+            turn_id=None,
             role="assistant",
             content="missing run",
         ),
@@ -405,7 +407,7 @@ async def test_completed_transition_rejects_missing_output_binding(session):
         turn_id="missing-output-turn",
         input_payload={},
     )
-    now = utc_now_naive()
+    now = utc_now()
     await repository.mark_running(
         run.id,
         worker_id="missing-output-worker:attempt-1",
@@ -511,7 +513,7 @@ async def test_set_terminal_status_persists_token_usage_only_for_winner(session)
         "models": {"provider:model": {}},
         "total": {"input_tokens": 10, "output_tokens": 2, "total_tokens": 12},
     }
-    now = utc_now_naive()
+    now = utc_now()
     _, acquired = await repo.mark_running(
         run.id,
         worker_id="worker-usage:attempt-1",
@@ -557,7 +559,7 @@ async def test_owned_run_requires_exact_owner_for_terminal_transition(session):
         turn_id="owned-turn",
         input_payload={},
     )
-    now = utc_now_naive()
+    now = utc_now()
     _, acquired = await repo.mark_running(
         run.id,
         worker_id="worker-1:attempt-1",
@@ -607,7 +609,7 @@ async def test_attempt_owner_blocks_duplicate_until_retry_release(session):
         turn_id="retry-turn",
         input_payload={},
     )
-    now = utc_now_naive()
+    now = utc_now()
 
     _, first_acquired = await repo.mark_running(
         run.id,
@@ -662,7 +664,7 @@ async def test_expired_owner_cannot_finish_or_release_before_reconciliation(sess
         turn_id="expired-owner-turn",
         input_payload={},
     )
-    now = utc_now_naive()
+    now = utc_now()
     _, acquired = await repo.mark_running(
         run.id,
         worker_id="worker-expired:attempt-1",
@@ -729,9 +731,7 @@ async def test_pending_cancel_is_terminal_without_fake_worker_expiry(session):
         uid="user-1",
         cascade_descendants=False,
     )
-    reconciled, cancelled_descendants = await repo.reconcile_expired_lease(
-        run.id, now=utc_now_naive() + timedelta(minutes=5)
-    )
+    reconciled, cancelled_descendants = await repo.reconcile_expired_lease(run.id, now=utc_now() + timedelta(minutes=5))
     await session.refresh(message)
 
     assert cancelled is run
@@ -757,7 +757,7 @@ async def test_durable_cancel_wins_terminal_race_for_live_owner(session):
         turn_id="cancel-race-turn",
         input_payload={},
     )
-    now = utc_now_naive()
+    now = utc_now()
     _, acquired = await repo.mark_running(
         run.id,
         worker_id="worker-cancel:attempt-1",
@@ -794,7 +794,7 @@ async def test_durable_cancel_wins_terminal_race_for_live_owner(session):
 
 async def test_explicit_parent_cancel_targets_delegated_child_turn(session):
     repo = AgentRunRepository(session)
-    now = utc_now_naive()
+    now = utc_now()
     parent = await _create_run(
         repo,
         run_id="tree-parent-run",
@@ -863,7 +863,7 @@ async def _seed_running_run(db, *, run_id: str = "attempt-run", turn_id: str = "
 async def test_mark_running_creates_single_attempt_for_initial_claim_and_live_owner(session):
     repository = AgentRunRepository(session)
     run = await _seed_running_run(session)
-    now = utc_now_naive()
+    now = utc_now()
 
     _, first_acquired = await repository.mark_running(run.id, worker_id="worker-a:token-1", lease_seconds=60, now=now)
     _, second_acquired = await repository.mark_running(
@@ -881,7 +881,7 @@ async def test_mark_running_creates_single_attempt_for_initial_claim_and_live_ow
 async def test_retry_release_then_reclaim_uses_new_attempt_no_and_keeps_old_fact(session):
     repository = AgentRunRepository(session)
     run = await _seed_running_run(session)
-    now = utc_now_naive()
+    now = utc_now()
 
     await repository.mark_running(run.id, worker_id="worker-a:token-1", lease_seconds=60, now=now)
     released = await repository.release_lease_for_retry(
@@ -909,7 +909,7 @@ async def test_retry_release_then_reclaim_uses_new_attempt_no_and_keeps_old_fact
 async def test_terminal_status_finishes_owner_attempt_with_matching_outcome(session):
     repository = AgentRunRepository(session)
     run = await _seed_running_run(session, run_id="terminal-attempt-run", turn_id="terminal-attempt-turn")
-    now = utc_now_naive()
+    now = utc_now()
 
     await repository.mark_running(run.id, worker_id="worker-a:token-1", lease_seconds=60, now=now)
     await _bind_valid_output(
@@ -933,7 +933,7 @@ async def test_terminal_status_finishes_owner_attempt_with_matching_outcome(sess
 async def test_reconcile_closes_open_attempt_as_lease_expired(session):
     repository = AgentRunRepository(session)
     run = await _seed_running_run(session, run_id="reconcile-run", turn_id="reconcile-turn")
-    now = utc_now_naive()
+    now = utc_now()
 
     await repository.mark_running(run.id, worker_id="worker-dead:token-1", lease_seconds=10, now=now)
     reconciled, cancelled_descendants = await repository.reconcile_expired_lease(
@@ -951,7 +951,7 @@ async def test_reconcile_closes_open_attempt_as_lease_expired(session):
 async def test_record_run_manifest_is_write_once_and_requires_live_owner(session):
     repository = AgentRunRepository(session)
     run = await _seed_running_run(session, run_id="manifest-run", turn_id="manifest-turn")
-    now = utc_now_naive()
+    now = utc_now()
 
     await repository.mark_running(run.id, worker_id="worker-a:token-1", lease_seconds=60, now=now)
 
@@ -1001,7 +1001,7 @@ async def test_record_run_manifest_is_write_once_and_requires_live_owner(session
 async def test_run_timing_is_write_once_and_requires_live_owner(session):
     repository = AgentRunRepository(session)
     run = await _seed_running_run(session, run_id="timing-run", turn_id="timing-turn")
-    now = utc_now_naive()
+    now = utc_now()
     owner = "worker-a:token-1"
 
     await repository.mark_running(run.id, worker_id=owner, lease_seconds=60, now=now)
@@ -1081,7 +1081,7 @@ async def test_run_timing_is_write_once_and_requires_live_owner(session):
 async def test_run_first_output_requires_prepared_timestamp(session):
     repository = AgentRunRepository(session)
     run = await _seed_running_run(session, run_id="unprepared-run", turn_id="unprepared-turn")
-    now = utc_now_naive()
+    now = utc_now()
     owner = "worker-a:token-1"
     await repository.mark_running(run.id, worker_id=owner, lease_seconds=60, now=now)
 
@@ -1099,7 +1099,7 @@ async def test_run_first_output_requires_prepared_timestamp(session):
 async def test_lock_memory_write_requires_current_top_level_lease_owner(session):
     repository = AgentRunRepository(session)
     run = await _seed_running_run(session, run_id="memory-run", turn_id="memory-turn")
-    now = utc_now_naive()
+    now = utc_now()
     await repository.mark_running(run.id, worker_id="worker-a:token-1", lease_seconds=60, now=now)
 
     locked = await repository.lock_memory_write(

@@ -17,6 +17,8 @@ from pymilvus import (
     utility,
 )
 
+from yuxi.infrastructure.filesystem import await_io
+from yuxi.infrastructure.observability.logging import logger
 from yuxi.modules.knowledge.graphs.graph_utils import graph_entity_collection_name, graph_triple_collection_name
 from yuxi.modules.knowledge.implementations.milvus import (
     CONTENT_ANALYZER_PARAMS,
@@ -27,7 +29,6 @@ from yuxi.modules.knowledge.implementations.milvus import (
 from yuxi.modules.models.embed import select_embedding_model
 from yuxi.modules.models.providers.cache import model_cache
 from yuxi.shared.hashing import hashstr
-from yuxi.infrastructure.observability.logging import logger
 
 
 class MilvusGraphVectorStore:
@@ -60,18 +61,18 @@ class MilvusGraphVectorStore:
             raise ValueError(f"Unsupported embedding model: {embedding_model_spec}")
 
         if record_type == "entity":
-            collection = await asyncio.to_thread(self._get_or_create_entity_collection, kb_id, embedding_info)
+            collection = await await_io(asyncio.to_thread(self._get_or_create_entity_collection, kb_id, embedding_info))
         elif record_type == "triple":
-            collection = await asyncio.to_thread(self._get_or_create_triple_collection, kb_id, embedding_info)
+            collection = await await_io(asyncio.to_thread(self._get_or_create_triple_collection, kb_id, embedding_info))
         else:
             raise ValueError(f"Unsupported graph vector record type: {record_type}")
 
         embed = self._get_embedding_function(embedding_model_spec)
         embeddings = await embed([record["content"] for record in records])
         if record_type == "entity":
-            await asyncio.to_thread(self._upsert_entities, collection, records, embeddings)
+            await await_io(asyncio.to_thread(self._upsert_entities, collection, records, embeddings))
         else:
-            await asyncio.to_thread(self._upsert_triples, collection, records, embeddings)
+            await await_io(asyncio.to_thread(self._upsert_triples, collection, records, embeddings))
 
     async def delete_graph_records(self, kb_id: str, *, entity_ids: list[str], triple_ids: list[str]) -> None:
         tasks = []
@@ -80,7 +81,10 @@ class MilvusGraphVectorStore:
         if triple_ids:
             tasks.append(asyncio.to_thread(self._delete_ids, graph_triple_collection_name(kb_id), triple_ids))
         if tasks:
-            await asyncio.gather(*tasks)
+            results = await await_io(asyncio.gather(*tasks, return_exceptions=True))
+            for result in results:
+                if isinstance(result, BaseException):
+                    raise result
 
     async def search_entities(
         self,

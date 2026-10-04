@@ -7,10 +7,10 @@ from typing import Any
 
 from langchain_core.callbacks import BaseCallbackHandler
 
-from yuxi.modules.agents.repositories.runs import AgentRunRepository
-from yuxi.infrastructure.postgres.manager import pg_manager
-from yuxi.shared.datetime import utc_now_naive
 from yuxi.infrastructure.observability.logging import logger
+from yuxi.infrastructure.postgres.manager import pg_manager
+from yuxi.modules.agents.repositories.runs import AgentRunRepository
+from yuxi.shared.datetime import utc_now
 
 
 class FirstModelRequestRecorder(BaseCallbackHandler):
@@ -36,7 +36,7 @@ class FirstModelRequestRecorder(BaseCallbackHandler):
         """在 LangChain 发起供应商调用前记录首次时间。"""
         del serialized, messages, run_id, parent_run_id, tags, metadata, kwargs
         if self.first_model_request_at is None:
-            self.first_model_request_at = utc_now_naive()
+            self.first_model_request_at = utc_now()
 
     async def persist(self, *, run_id: str, worker_id: str) -> None:
         """在当前 Run 仍由 worker 持有时写入一次性时间事实。"""

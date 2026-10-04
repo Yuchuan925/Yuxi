@@ -14,7 +14,7 @@ from yuxi.infrastructure.postgres.base import Base
 from yuxi.modules.agents.models.threads import Conversation
 from yuxi.modules.identity.models import Department, User
 from yuxi.modules.agents.models.messages import Message, ToolCall
-from yuxi.shared.datetime import utc_now_naive
+from yuxi.shared.datetime import utc_now
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.unit]
 
@@ -72,7 +72,7 @@ async def dashboard_db():
             share_config={},
         )
 
-        now = utc_now_naive()
+        now = utc_now()
         yesterday = now - timedelta(days=1)
 
         conv1 = Conversation(

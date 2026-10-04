@@ -1,5 +1,5 @@
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import UTC, datetime
 from types import SimpleNamespace
 
 import pytest
@@ -8,11 +8,11 @@ import yuxi.modules.schedules.service as service
 from yuxi.modules.schedules.service import next_run_at, validate_schedule
 
 
-def test_next_run_at_uses_timezone_and_returns_utc_naive_datetime():
-    result = next_run_at("0 9 * * *", "Asia/Shanghai", datetime(2026, 8, 26, 0, 0))
+def test_next_run_at_uses_timezone_and_returns_utc_aware_datetime():
+    result = next_run_at("0 9 * * *", "Asia/Shanghai", datetime(2026, 8, 26, 0, 0, tzinfo=UTC))
 
-    assert result == datetime(2026, 8, 26, 1, 0)
-    assert result.tzinfo is None
+    assert result == datetime(2026, 8, 26, 1, 0, tzinfo=UTC)
+    assert result.utcoffset().total_seconds() == 0
 
 
 @pytest.mark.parametrize(
@@ -24,6 +24,16 @@ def test_validate_schedule_rejects_invalid_expression_or_timezone(expression, ti
         validate_schedule(expression, timezone)
 
     assert exc_info.value.status_code == 422
+
+
+def test_next_run_at_preserves_input_offset_and_crosses_daylight_saving():
+    """输入偏移和夏令时不会改变触发瞬间。"""
+    from datetime import timedelta, timezone
+
+    after = datetime(2026, 8, 26, 8, 0, tzinfo=timezone(timedelta(hours=8)))
+    assert next_run_at("0 9 * * *", "Asia/Shanghai", after) == datetime(2026, 8, 26, 1, 0, tzinfo=UTC)
+    before_dst = datetime(2026, 3, 7, 14, 0, tzinfo=UTC)
+    assert next_run_at("0 9 * * *", "America/New_York", before_dst) == datetime(2026, 3, 8, 13, 0, tzinfo=UTC)
 
 
 def test_validate_schedule_accepts_five_field_cron_and_iana_timezone():
@@ -115,7 +125,7 @@ def test_execution_projection_reads_terminal_status_from_agent_run():
         id="run-1",
         status="failed",
         error_message="模型不可用",
-        finished_at=datetime(2026, 8, 27, 10, 0),
+        finished_at=datetime(2026, 8, 27, 10, 0, tzinfo=UTC),
     )
 
     result = service._execution_to_dict(scheduled_run, input_item, run)
@@ -143,13 +153,13 @@ def test_execution_projection_does_not_offer_conversation_before_input_exists():
 
 @pytest.mark.asyncio
 async def test_enabling_paused_job_schedules_from_current_time(monkeypatch):
-    now = datetime(2026, 8, 27, 10, 0)
-    next_time = datetime(2026, 8, 28, 1, 0)
+    now = datetime(2026, 8, 27, 10, 0, tzinfo=UTC)
+    next_time = datetime(2026, 8, 28, 1, 0, tzinfo=UTC)
     job = SimpleNamespace(
         cron_expression="0 9 * * *",
         timezone="Asia/Shanghai",
         enabled=False,
-        next_run_at=datetime(2026, 8, 20, 1, 0),
+        next_run_at=datetime(2026, 8, 20, 1, 0, tzinfo=UTC),
         updated_at=None,
         to_dict=lambda: {"enabled": job.enabled, "next_run_at": job.next_run_at},
     )
@@ -164,7 +174,7 @@ async def test_enabling_paused_job_schedules_from_current_time(monkeypatch):
             return None
 
     monkeypatch.setattr(service, "ScheduledAgentRepository", lambda _db: Repository())
-    monkeypatch.setattr(service, "utc_now_naive", lambda: now)
+    monkeypatch.setattr(service, "utc_now", lambda: now)
     monkeypatch.setattr(service, "next_run_at", lambda expression, timezone, after: next_time)
 
     result = await service.update_scheduled_job(
@@ -275,7 +285,7 @@ async def test_claim_disables_invalid_schedule_and_continues_to_next_job(monkeyp
         id="job-invalid",
         cron_expression="0 9 * * *",
         timezone="Mars/Olympus",
-        next_run_at=datetime(2026, 8, 27, 1, 0),
+        next_run_at=datetime(2026, 8, 27, 1, 0, tzinfo=UTC),
         enabled=True,
         updated_at=None,
     )
@@ -283,7 +293,7 @@ async def test_claim_disables_invalid_schedule_and_continues_to_next_job(monkeyp
         id="job-valid",
         cron_expression="0 9 * * *",
         timezone="UTC",
-        next_run_at=datetime(2026, 8, 27, 9, 0),
+        next_run_at=datetime(2026, 8, 27, 9, 0, tzinfo=UTC),
         enabled=True,
         updated_at=None,
     )
@@ -292,7 +302,7 @@ async def test_claim_disables_invalid_schedule_and_continues_to_next_job(monkeyp
 
     class Repository:
         async def claim_due_job(self, *, now):
-            assert now == datetime(2026, 8, 27, 10, 0)
+            assert now == datetime(2026, 8, 27, 10, 0, tzinfo=UTC)
             return next(jobs)
 
     class Db:
@@ -309,9 +319,9 @@ async def test_claim_disables_invalid_schedule_and_continues_to_next_job(monkeyp
     monkeypatch.setattr(service, "ScheduledAgentRepository", lambda _db: Repository())
     monkeypatch.setattr(service, "_create_run_record", create_run_record)
 
-    result = await service._claim_due_run(db=Db(), now=datetime(2026, 8, 27, 10, 0))
+    result = await service._claim_due_run(db=Db(), now=datetime(2026, 8, 27, 10, 0, tzinfo=UTC))
 
     assert result is run
     assert invalid.enabled is False
-    assert valid.next_run_at == datetime(2026, 8, 28, 9, 0)
+    assert valid.next_run_at == datetime(2026, 8, 28, 9, 0, tzinfo=UTC)
     assert commits == 2

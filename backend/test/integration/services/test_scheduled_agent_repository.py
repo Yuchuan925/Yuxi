@@ -28,7 +28,7 @@ from yuxi.modules.agents.models.messages import Message
 from yuxi.modules.workspace.models import Project
 from yuxi.modules.schedules.models import ScheduledAgentJob, ScheduledAgentRun
 from yuxi.modules.identity.models import User
-from yuxi.shared.datetime import utc_now_naive
+from yuxi.shared.datetime import utc_now
 
 pytestmark = pytest.mark.integration
 
@@ -59,7 +59,7 @@ async def test_claim_concurrency_coalesce_and_soft_delete_history():
     uid = f"scheduled-user-{uuid.uuid4()}"
     project_id = str(uuid.uuid4())
     job_id = str(uuid.uuid4())
-    now = utc_now_naive()
+    now = utc_now()
 
     try:
         async with session_factory() as db:
@@ -151,7 +151,7 @@ async def test_claim_concurrency_coalesce_and_soft_delete_history():
             await db.flush()
             assert await repo.has_active_run(job_id) is True
 
-            manual_now = utc_now_naive()
+            manual_now = utc_now()
             manual = await _create_run_record(
                 repo=repo,
                 job=job,
@@ -268,13 +268,13 @@ async def test_deleted_user_job_is_not_claimed():
                     cron_expression="* * * * *",
                     timezone="UTC",
                     enabled=True,
-                    next_run_at=utc_now_naive() - timedelta(minutes=1),
+                    next_run_at=utc_now() - timedelta(minutes=1),
                 )
             )
             await db.commit()
 
         async with session_factory() as db:
-            assert await ScheduledAgentRepository(db).claim_due_job(now=utc_now_naive()) is None
+            assert await ScheduledAgentRepository(db).claim_due_job(now=utc_now()) is None
     finally:
         async with session_factory() as db:
             await db.execute(delete(ScheduledAgentJob).where(ScheduledAgentJob.id == job_id))
@@ -397,7 +397,7 @@ async def test_transient_dispatch_failure_is_recovered_exactly_once(monkeypatch)
                     cron_expression="0 9 * * *",
                     timezone="UTC",
                     enabled=True,
-                    next_run_at=utc_now_naive() + timedelta(days=1),
+                    next_run_at=utc_now() + timedelta(days=1),
                 )
             )
             await db.flush()
@@ -409,14 +409,14 @@ async def test_transient_dispatch_failure_is_recovered_exactly_once(monkeypatch)
                     thread_id=thread_id,
                     trigger="scheduled",
                     occurrence_key="scheduled:recovery",
-                    scheduled_for=utc_now_naive() - timedelta(minutes=2),
+                    scheduled_for=utc_now() - timedelta(minutes=2),
                     project_id=project_id,
                     agent_slug="chatbot",
                     conversation_title="Recovery Job",
                     prompt="hello",
                     tool_approval_mode="default",
                     status="dispatching",
-                    created_at=utc_now_naive() - timedelta(minutes=2),
+                    created_at=utc_now() - timedelta(minutes=2),
                 )
             )
             await db.commit()
@@ -503,7 +503,7 @@ async def test_account_soft_deletion_removes_scheduled_job_history():
                     cron_expression="0 9 * * *",
                     timezone="UTC",
                     enabled=False,
-                    next_run_at=utc_now_naive(),
+                    next_run_at=utc_now(),
                 )
             )
             await db.flush()
@@ -515,7 +515,7 @@ async def test_account_soft_deletion_removes_scheduled_job_history():
                     thread_id=f"thread-{uuid.uuid4()}",
                     trigger="manual",
                     occurrence_key=f"manual:{uuid.uuid4()}",
-                    scheduled_for=utc_now_naive(),
+                    scheduled_for=utc_now(),
                     project_id=project_id,
                     agent_slug="chatbot",
                     conversation_title="Cascade Job",

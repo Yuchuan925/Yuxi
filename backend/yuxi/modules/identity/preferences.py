@@ -10,7 +10,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from yuxi.modules.identity.models import UserConfig as UserConfigRecord
-from yuxi.shared.datetime import format_utc_datetime, utc_now_naive
+from yuxi.shared.datetime import format_utc_datetime, utc_now
 
 
 class UserConfigSchema(BaseModel):
@@ -42,7 +42,7 @@ class UserConfig:
         )
 
     async def save(self, db: AsyncSession) -> UserConfig:
-        now = utc_now_naive()
+        now = utc_now()
         result = await db.execute(
             update(UserConfigRecord)
             .where(UserConfigRecord.uid == self.uid)
@@ -61,7 +61,7 @@ class UserConfig:
             await db.commit()
         except IntegrityError:
             await db.rollback()
-            now = utc_now_naive()
+            now = utc_now()
             retry_result = await db.execute(
                 update(UserConfigRecord)
                 .where(UserConfigRecord.uid == self.uid)

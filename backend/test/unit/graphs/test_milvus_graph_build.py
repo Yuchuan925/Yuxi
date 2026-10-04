@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+import threading
+from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from yuxi.modules.knowledge.graphs import milvus_graph_service
 from yuxi.modules.knowledge.graphs.extractors import (
     GraphExtractorFactory,
     LLMGraphExtractor,
@@ -19,6 +22,54 @@ from yuxi.modules.knowledge.graphs.extractors.base import (
 from yuxi.modules.knowledge.graphs.milvus_graph_service import MilvusGraphService
 from yuxi.modules.knowledge.graphs.milvus_graph_vector_store import MilvusGraphVectorStore
 from yuxi.modules.knowledge.models import KnowledgeGraphEntity, KnowledgeGraphTriple
+
+
+@pytest.fixture(autouse=True)
+def projection_lock(monkeypatch):
+    """纯流水线单测替换 PG 锁，真实互斥由 integration 证明。"""
+
+    @asynccontextmanager
+    async def lock(*args, **kwargs):
+        """只保留上下文协议。"""
+        yield
+
+    monkeypatch.setattr(milvus_graph_service, "knowledge_projection_lock", lock)
+    monkeypatch.setattr(
+        MilvusGraphService, "_filter_visible_subgraph", AsyncMock(side_effect=lambda kb_id, result: result)
+    )
+
+
+@pytest.mark.asyncio
+async def test_graph_vector_delete_waits_for_sibling_io_after_first_failure(monkeypatch):
+    """一个删除失败后也等另一个 SDK 线程结束，避免释放锁后的晚删。"""
+    store = object.__new__(MilvusGraphVectorStore)
+    slow_started, fast_failed, release = threading.Event(), threading.Event(), threading.Event()
+    finished = []
+
+    def delete_ids(collection_name, ids):
+        """模拟一快一慢两个外部删除。"""
+        if ids == ["entity"]:
+            fast_failed.set()
+            raise RuntimeError("first delete failed")
+        slow_started.set()
+        assert release.wait(10)
+        finished.append("triple deleted")
+
+    monkeypatch.setattr(store, "_delete_ids", delete_ids)
+    deleting = asyncio.create_task(store.delete_graph_records("kb-test", entity_ids=["entity"], triple_ids=["triple"]))
+    try:
+        async with asyncio.timeout(5):
+            while not (slow_started.is_set() and fast_failed.is_set()):
+                await asyncio.sleep(0.01)
+        await asyncio.sleep(0.05)
+        assert not deleting.done()
+        release.set()
+        with pytest.raises(RuntimeError, match="first delete failed"):
+            await deleting
+        assert finished == ["triple deleted"]
+    finally:
+        release.set()
+        await asyncio.gather(deleting, return_exceptions=True)
 
 
 def _raw_graph_node(node_id: str, *, labels: list[str] | None = None, name: str | None = None) -> dict:
@@ -1147,7 +1198,7 @@ def test_milvus_graph_service_delete_file_graph_uses_scoped_streaming_queries():
     driver.session.return_value = session
     service = MilvusGraphService(neo4j_connection=SimpleNamespace(driver=driver))
 
-    service._delete_file_graph_from_neo4j("kb_test", "file_1")
+    service._delete_file_graph_from_neo4j("kb_test", "file_1", ["chunk_1"])
 
     queries = [call.args[0] for call in tx.run.call_args_list]
     assert len(queries) == 3
@@ -1158,6 +1209,8 @@ def test_milvus_graph_service_delete_file_graph_uses_scoped_streaming_queries():
     assert "collect(" not in cleanup_query
     assert "MATCH (e:Entity:MilvusKB:`kb_test` {kb_id: $kb_id})" not in cleanup_query
     assert "DETACH DELETE c" in queries[2]
+    assert all("IN $chunk_ids" in query for query in queries)
+    assert all(call.kwargs["chunk_ids"] == ["chunk_1"] for call in tx.run.call_args_list)
 
 
 @pytest.mark.parametrize(

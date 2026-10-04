@@ -335,7 +335,7 @@ async def test_same_key_concurrent_cancel_replays_receipt_after_thread_lock(monk
 async def test_cancel_partial_snapshot_only_updates_existing_public_message(case):
     """取消快照保留可见正文；失效 owner、新 item 与工具写入均在真实 PG 边界拒绝。"""
     from datetime import timedelta
-    from yuxi.shared.datetime import utc_now_naive
+    from yuxi.shared.datetime import utc_now
     from yuxi.modules.agents.repositories.public_items import PublicItemRepository
 
     schema, admin_engine, engine = await _create_schema()
@@ -375,7 +375,7 @@ async def test_cancel_partial_snapshot_only_updates_existing_public_message(case
             )
             run.status = "cancel_requested"
             if case == "expired":
-                run.lease_expires_at = utc_now_naive() - timedelta(seconds=1)
+                run.lease_expires_at = utc_now() - timedelta(seconds=1)
             await db.commit()
         async with sessions() as db:
             snapshot = {**initial, "status": "incomplete", "content": [{"type": "output_text", "text": "shown"}]}

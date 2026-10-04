@@ -6,9 +6,8 @@ import time
 
 from yuxi.infrastructure.observability.logging import logger
 from yuxi.infrastructure.postgres.manager import pg_manager
-from yuxi.modules.agents.services.transport import append_run_stream_events
 from yuxi.modules.agents.services.openai_events import OpenAIEventAdapter
-
+from yuxi.modules.agents.services.transport import append_run_stream_events
 
 LOADING_FLUSH_INTERVAL_MS = 100
 LOADING_FLUSH_MAX_CHARS = 512

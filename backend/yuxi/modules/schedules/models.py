@@ -1,6 +1,7 @@
 """业务 PostgreSQL 映射。"""
 
 from typing import Any
+
 from sqlalchemy import (
     Boolean,
     CheckConstraint,
@@ -13,9 +14,9 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
 )
-from yuxi.shared.datetime import format_utc_datetime, utc_now_naive
 
 from yuxi.infrastructure.postgres.base import BusinessBase as Base
+from yuxi.shared.datetime import format_utc_datetime, utc_now
 
 
 class ScheduledAgentJob(Base):
@@ -53,10 +54,10 @@ class ScheduledAgentJob(Base):
     cron_expression = Column(String(100), nullable=False)
     timezone = Column(String(64), nullable=False)
     enabled = Column(Boolean, nullable=False, default=True)
-    deleted_at = Column(DateTime, nullable=True, index=True)
-    next_run_at = Column(DateTime, nullable=False)
-    created_at = Column(DateTime, default=utc_now_naive, nullable=False)
-    updated_at = Column(DateTime, default=utc_now_naive, onupdate=utc_now_naive, nullable=False)
+    deleted_at = Column(DateTime(timezone=True), nullable=True, index=True)
+    next_run_at = Column(DateTime(timezone=True), nullable=False)
+    created_at = Column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -100,7 +101,7 @@ class ScheduledAgentRun(Base):
     thread_id = Column(String(64), nullable=False)
     trigger = Column(String(16), nullable=False, default="scheduled")
     occurrence_key = Column(String(128), nullable=False)
-    scheduled_for = Column(DateTime, nullable=False)
+    scheduled_for = Column(DateTime(timezone=True), nullable=False)
     project_id = Column(String(64), nullable=False)
     agent_slug = Column(String(64), nullable=False)
     conversation_title = Column(String(255), nullable=False)
@@ -109,7 +110,7 @@ class ScheduledAgentRun(Base):
     model_spec = Column(String(512), nullable=True)
     status = Column(String(32), nullable=False, default="dispatching")
     error_message = Column(Text, nullable=True)
-    created_at = Column(DateTime, default=utc_now_naive, nullable=False)
+    created_at = Column(DateTime(timezone=True), default=utc_now, nullable=False)
 
     def to_dict(self) -> dict[str, Any]:
         return {

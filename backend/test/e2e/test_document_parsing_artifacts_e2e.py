@@ -250,15 +250,13 @@ async def test_knowledge_worker_hosts_document_resources_and_file_delete_reclaim
         from datetime import timedelta
         from sqlalchemy import update
         from yuxi.modules.tasks.models import TaskRecord
-        from yuxi.shared.datetime import utc_now_naive
+        from yuxi.shared.datetime import utc_now
 
         async with pg_manager.get_async_session_context() as session:
             await session.execute(
                 update(TaskRecord)
                 .where(TaskRecord.id == task_id)
-                .values(
-                    status="running", worker_id="test-owner", lease_expires_at=utc_now_naive() + timedelta(minutes=5)
-                )
+                .values(status="running", worker_id="test-owner", lease_expires_at=utc_now() + timedelta(minutes=5))
             )
         repository = KnowledgeFileRepository()
         await repository.update_fields(

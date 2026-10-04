@@ -1,26 +1,27 @@
 from fastapi import APIRouter
 
 from yuxi.api.routers.agents.management import agent_router
-from yuxi.api.routers.identity.departments import department
-from yuxi.api.routers.identity.auth import auth
+from yuxi.api.routers.agents.mentions import mention_router
 from yuxi.api.routers.dashboard import dashboard as dashboard_routes
-from yuxi.api.routers.workspace.viewer import filesystem_router
-from yuxi.api.routers.knowledge.graphs import graph
+from yuxi.api.routers.extensions.mcp import mcp
+from yuxi.api.routers.extensions.skills import skills, user_skills
+from yuxi.api.routers.extensions.tools import tools
+from yuxi.api.routers.identity.auth import auth
+from yuxi.api.routers.identity.departments import department
+from yuxi.api.routers.identity.users import user_router
 from yuxi.api.routers.knowledge.dashboard import knowledge_dashboard
 from yuxi.api.routers.knowledge.evaluation import evaluation
+from yuxi.api.routers.knowledge.graphs import graph
 from yuxi.api.routers.knowledge.management import knowledge as knowledge_routes
-from yuxi.api.routers.extensions.mcp import mcp
-from yuxi.api.routers.agents.mentions import mention_router
 from yuxi.api.routers.models import model_providers
-from yuxi.api.routers.workspace.projects import projects
 from yuxi.api.routers.public_v1 import public_agents_router, public_knowledge_router
 from yuxi.api.routers.schedules import scheduled_agents
-from yuxi.api.routers.extensions.skills import skills, user_skills
 from yuxi.api.routers.system import system as system_routes
 from yuxi.api.routers.tasks import tasks
-from yuxi.api.routers.extensions.tools import tools
-from yuxi.api.routers.identity.users import user_router
-from yuxi.api.routers.workspace.workspace import workspace as workspace_routes, workspace_knowledge
+from yuxi.api.routers.workspace.projects import projects
+from yuxi.api.routers.workspace.viewer import filesystem_router
+from yuxi.api.routers.workspace.workspace import workspace as workspace_routes
+from yuxi.api.routers.workspace.workspace import workspace_knowledge
 
 router = APIRouter()
 router.include_router(public_agents_router)

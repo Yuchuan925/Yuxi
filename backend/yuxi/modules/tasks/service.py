@@ -10,11 +10,11 @@ from dataclasses import dataclass, field
 from functools import partial
 from typing import Any
 
-from yuxi.modules.tasks.repository import TERMINAL_TASK_STATUSES, TaskRepository
+from yuxi.infrastructure.observability.logging import logger
 from yuxi.modules.tasks.queue import TASK_HEARTBEAT_SECONDS, TASK_LEASE_SECONDS, publish_pending_tasks, publish_task
 from yuxi.modules.tasks.registry import get_task_definition
-from yuxi.shared.datetime import utc_isoformat, utc_now_naive
-from yuxi.infrastructure.observability.logging import logger
+from yuxi.modules.tasks.repository import TERMINAL_TASK_STATUSES, TaskRepository
+from yuxi.shared.datetime import utc_isoformat, utc_now
 
 TERMINAL_STATUSES = TERMINAL_TASK_STATUSES
 PROGRESS_PERSIST_DELTA = 2.0
@@ -307,7 +307,7 @@ class Tasker:
         dedupe_key: str | None,
     ) -> dict[str, Any]:
         definition = get_task_definition(task_type)
-        now = utc_now_naive()
+        now = utc_now()
         return {
             "name": name,
             "type": task_type,

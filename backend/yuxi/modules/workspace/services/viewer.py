@@ -8,15 +8,16 @@ import tempfile
 from pathlib import PurePosixPath
 
 from fastapi import HTTPException
-from yuxi.modules.agents.runtime.sandbox.paths import is_runtime_path, runtime_path_for_workdir_scope
-from yuxi.modules.workspace.preview import preview_workspace_file
-from yuxi.shared.files import MAX_FILE_PREVIEW_BYTES, FileInput, PreparedFile, PreviewResult, detect_media_type
+
+from yuxi.infrastructure.file_preview import preview_too_large
 from yuxi.infrastructure.filesystem import await_io
+from yuxi.infrastructure.office_conversion import OfficeConversionError
+from yuxi.modules.agents.runtime.sandbox.paths import is_runtime_path, runtime_path_for_workdir_scope
+from yuxi.modules.workspace.errors import FileTransferLimitError
+from yuxi.modules.workspace.preview import preview_workspace_file
 from yuxi.modules.workspace.services.bindings import AuthorizedWorkdir, resolve_authorized_workdir
 from yuxi.shared.datetime import utc_isoformat_from_timestamp
-from yuxi.infrastructure.file_preview import preview_too_large
-from yuxi.infrastructure.office_conversion import OfficeConversionError
-from yuxi.modules.workspace.errors import FileTransferLimitError
+from yuxi.shared.files import MAX_FILE_PREVIEW_BYTES, FileInput, PreparedFile, PreviewResult, detect_media_type
 
 SEARCH_MAX_RESULTS = 100
 SEARCH_MAX_DIRECTORIES = 600

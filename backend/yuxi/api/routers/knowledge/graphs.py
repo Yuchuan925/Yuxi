@@ -3,10 +3,10 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from yuxi.api.dependencies.auth import get_admin_user
 from yuxi.api.dependencies.knowledge import require_knowledge_base_read
 from yuxi.api.responses.knowledge import serialize_knowledge_base
+from yuxi.infrastructure.observability.logging import logger
+from yuxi.modules.identity.models import User
 from yuxi.modules.knowledge.graphs.milvus_graph_service import MilvusGraphService
 from yuxi.modules.knowledge.runtime import knowledge_base
-from yuxi.modules.identity.models import User
-from yuxi.infrastructure.observability.logging import logger
 
 graph = APIRouter(prefix="/graph", tags=["graph"])
 

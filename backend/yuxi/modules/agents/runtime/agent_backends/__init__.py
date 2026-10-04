@@ -1,6 +1,6 @@
-from yuxi.modules.agents.runtime.base import BaseAgent
 from yuxi.modules.agents.runtime.agent_backends.chatbot.graph import ChatbotAgent
 from yuxi.modules.agents.runtime.agent_backends.subagent.graph import SubAgentBackend
+from yuxi.modules.agents.runtime.base import BaseAgent
 
 AGENT_BACKENDS: dict[str, type[BaseAgent]] = {
     "ChatbotAgent": ChatbotAgent,

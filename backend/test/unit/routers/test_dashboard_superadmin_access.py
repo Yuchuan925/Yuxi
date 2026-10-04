@@ -19,7 +19,7 @@ from yuxi.infrastructure.postgres.base import Base
 from yuxi.modules.agents.models.threads import Conversation
 from yuxi.modules.identity.models import Department, User
 from yuxi.modules.agents.models.messages import Message, ToolCall
-from yuxi.shared.datetime import utc_now_naive
+from yuxi.shared.datetime import utc_now
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.unit]
 
@@ -75,7 +75,7 @@ async def dashboard_session():
             name="Shared Agent",
             share_config={},
         )
-        now = utc_now_naive()
+        now = utc_now()
         conversation_a = Conversation(
             thread_id="thread-a",
             project_id="project-thread-a",

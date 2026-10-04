@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from yuxi.infrastructure.postgres.manager import pg_manager
 from yuxi.modules.identity.models import APIKey, Department, User
-from yuxi.shared.datetime import utc_now_naive
+from yuxi.shared.datetime import utc_now
 
 
 @dataclass(frozen=True)
@@ -142,7 +142,7 @@ class DepartmentRepository:
             await session.execute(
                 update(APIKey)
                 .where(APIKey.department_id == id)
-                .values(is_enabled=False, revoked_at=utc_now_naive(), department_id=None)
+                .values(is_enabled=False, revoked_at=utc_now(), department_id=None)
             )
             await session.delete(department)
             await session.flush()

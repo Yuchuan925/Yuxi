@@ -12,7 +12,7 @@ from yuxi.modules.identity.repositories.users import UserRepository
 from yuxi.modules.identity.models import APIKey, Department, User
 from yuxi.infrastructure.postgres.base import Base
 from yuxi.modules.identity.security import AuthUtils
-from yuxi.shared.datetime import utc_now_naive
+from yuxi.shared.datetime import utc_now
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.unit]
 
@@ -46,7 +46,7 @@ async def user_session():
                     created_by=str(user.id),
                 )
             )
-        previous_revocation = utc_now_naive() - timedelta(days=1)
+        previous_revocation = utc_now() - timedelta(days=1)
         keys[1].is_enabled = False
         keys[1].revoked_at = previous_revocation
         session.add_all(keys)

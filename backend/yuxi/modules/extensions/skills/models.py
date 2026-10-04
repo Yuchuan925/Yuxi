@@ -1,6 +1,7 @@
 """业务 PostgreSQL 映射。"""
 
 from typing import Any
+
 from sqlalchemy import (
     JSON,
     Boolean,
@@ -10,9 +11,10 @@ from sqlalchemy import (
     String,
     Text,
 )
-from yuxi.shared.datetime import format_utc_datetime, utc_now_naive
 
-from yuxi.infrastructure.postgres.base import BusinessBase as Base, JSON_VALUE
+from yuxi.infrastructure.postgres.base import JSON_VALUE
+from yuxi.infrastructure.postgres.base import BusinessBase as Base
+from yuxi.shared.datetime import format_utc_datetime, utc_now
 
 
 class Skill(Base):
@@ -37,8 +39,8 @@ class Skill(Base):
     enabled = Column(Boolean, nullable=False, default=True, comment="是否启用")
     created_by = Column(String(64), nullable=True)
     updated_by = Column(String(64), nullable=True)
-    created_at = Column(DateTime, default=utc_now_naive)
-    updated_at = Column(DateTime, default=utc_now_naive, onupdate=utc_now_naive)
+    created_at = Column(DateTime(timezone=True), default=utc_now)
+    updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
 
     def to_dict(self) -> dict[str, Any]:
         return {

@@ -1,13 +1,14 @@
 """系统管理员转移共享资源所有权。"""
 
 from sqlalchemy import select
+
 from yuxi.modules.agents.models.definitions import Agent
 from yuxi.modules.extensions.skills.models import Skill
-from yuxi.modules.knowledge.models import KnowledgeBase
+from yuxi.modules.extensions.skills.projection import commit_skill_policy_and_refresh_projections
 from yuxi.modules.identity.models import User
 from yuxi.modules.identity.repositories.users import UserRepository
 from yuxi.modules.knowledge.cache import delete_cached_kb_config
-from yuxi.modules.extensions.skills.projection import commit_skill_policy_and_refresh_projections
+from yuxi.modules.knowledge.models import KnowledgeBase
 
 
 async def transfer_shared_resource(db, *, kind: str, resource_id: str, owner_uid: str, actor: User) -> None:

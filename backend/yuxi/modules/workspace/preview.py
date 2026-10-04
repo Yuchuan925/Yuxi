@@ -6,9 +6,9 @@ import asyncio
 import hashlib
 from pathlib import Path, PurePosixPath
 
-from yuxi.infrastructure.runtime_settings import get_runtime_dir
 from yuxi.infrastructure.file_preview import prepare_file_preview
 from yuxi.infrastructure.office_conversion import convert_office_to_pdf, is_office_pdf_convertible
+from yuxi.infrastructure.runtime_settings import get_runtime_dir
 from yuxi.shared.files import PreviewResult
 
 

@@ -15,7 +15,7 @@ from yuxi.modules.agents.models.runs import AgentRun
 from yuxi.modules.agents.models.turns import AgentTurn
 from yuxi.modules.agents.models.threads import Conversation, SubagentThread
 from yuxi.modules.workspace.models import Project
-from yuxi.shared.datetime import utc_now_naive
+from yuxi.shared.datetime import utc_now
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
 
@@ -74,7 +74,7 @@ async def test_state_recovers_children_without_checkpoint_and_rejects_other_user
                     runtime_scope_id=parent_thread,
                     turn_id=turn_id,
                     status="completed",
-                    finished_at=utc_now_naive(),
+                    finished_at=utc_now(),
                     input_payload={},
                 )
             )
@@ -89,8 +89,16 @@ async def test_state_recovers_children_without_checkpoint_and_rejects_other_user
             )
             db.add(relation)
             await db.flush()
-            db.add(AgentTurn(id=child_turn_id,conversation_thread_id=child_thread,uid=uid,status="completed",
-                current_run_id=child_id,result_run_id=child_id))
+            db.add(
+                AgentTurn(
+                    id=child_turn_id,
+                    conversation_thread_id=child_thread,
+                    uid=uid,
+                    status="completed",
+                    current_run_id=child_id,
+                    result_run_id=child_id,
+                )
+            )
             await db.flush()
             db.add(
                 AgentRun(
@@ -103,7 +111,7 @@ async def test_state_recovers_children_without_checkpoint_and_rejects_other_user
                     runtime_scope_id=child_thread,
                     turn_id=child_turn_id,
                     status="completed",
-                    finished_at=utc_now_naive(),
+                    finished_at=utc_now(),
                     created_by_run_id=parent_id,
                     subagent_thread_relation_id=relation.id,
                     input_payload={"runtime": {"tool_call_id": "start-probe"}},

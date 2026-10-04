@@ -8,10 +8,10 @@ from typing import Any, Literal
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from yuxi.modules.agents.repositories.runs import AgentRunRepository
-from yuxi.modules.agents.repositories.threads import ConversationRepository
 from yuxi.modules.agents.models.messages import MODEL_AUDIT_MESSAGE_TYPE, TOOL_AUDIT_MESSAGE_TYPE, Message, ToolCall
 from yuxi.modules.agents.models.runs import AgentRun
+from yuxi.modules.agents.repositories.runs import AgentRunRepository
+from yuxi.modules.agents.repositories.threads import ConversationRepository
 
 
 class ToolMessageAuditRepository:
@@ -150,7 +150,7 @@ class ToolMessageAuditRepository:
         content: str,
     ) -> Message:
         """记录已接受审批的拒绝结果，不制造工具执行开始事实。"""
-        from yuxi.shared.datetime import utc_now_naive
+        from yuxi.shared.datetime import utc_now
 
         run = await self._lock_run(run_id=run_id, thread_id=thread_id, worker_id=worker_id)
         resume_input = await self.db.get(Message, run.input_message_id)
@@ -175,7 +175,7 @@ class ToolMessageAuditRepository:
             content=content,
             delivery_status="complete",
             execution_status="failed",
-            finished_at=utc_now_naive(),
+            finished_at=utc_now(),
             extra_metadata={
                 "audit_kind": "tool",
                 "tool_call_id": tool_call_id,

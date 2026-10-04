@@ -48,32 +48,20 @@ async def test_concurrent_executor_construction_is_deduplicated(tmp_path, monkey
     assert construction_count == 1
 
 
-async def test_delete_database_cleans_resources_before_deleting_record(tmp_path, monkeypatch):
-    calls = []
+async def test_delete_database_commits_tombstone_before_any_external_cleanup(tmp_path, monkeypatch):
+    """删除请求只提交事实；外部清理通过 outbox，不阻塞不可见提交。"""
     manager = KnowledgeBaseManager(str(tmp_path))
-
-    class FakeExecutor:
-        async def cleanup_database_resources(self, kb_id: str) -> dict:
-            calls.append(("cleanup", kb_id))
-            return {"message": "删除成功"}
-
-    class FakeRepository:
-        async def delete(self, kb_id: str) -> None:
-            calls.append(("delete_record", kb_id))
-
-    async def get_kb_executor(_kb_id: str):
-        return FakeExecutor()
-
-    monkeypatch.setattr(manager, "get_kb_executor", get_kb_executor)
+    repository = SimpleNamespace(mark_deleted_by_kb_id=AsyncMock(return_value=["database:kb_1:deleted"]))
     monkeypatch.setattr(
-        "yuxi.modules.knowledge.repositories.bases.KnowledgeBaseRepository",
-        FakeRepository,
+        "yuxi.modules.knowledge.repositories.files.KnowledgeFileRepository",
+        lambda: repository,
     )
-
+    executor = AsyncMock(side_effect=RuntimeError("Milvus offline"))
+    monkeypatch.setattr(manager, "get_kb_executor", executor)
     result = await manager.delete_database("kb_1")
-
     assert result == {"message": "删除成功"}
-    assert calls == [("cleanup", "kb_1"), ("delete_record", "kb_1")]
+    repository.mark_deleted_by_kb_id.assert_awaited_once_with("kb_1")
+    executor.assert_not_awaited()
 
 
 @pytest.mark.parametrize("refresh_stats_fails", [False, True])

@@ -3,10 +3,10 @@ from __future__ import annotations
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from yuxi.modules.identity.permissions import ResourcePermission, resolve_skill_permission
 from yuxi.modules.extensions.skills.models import Skill
 from yuxi.modules.identity.models import User
-from yuxi.shared.datetime import utc_now_naive
+from yuxi.modules.identity.permissions import ResourcePermission, resolve_skill_permission
+from yuxi.shared.datetime import utc_now
 
 
 class SkillRepository:
@@ -106,7 +106,7 @@ class SkillRepository:
         content_hash: str | None = None,
         created_by: str | None,
     ) -> Skill:
-        now = utc_now_naive()
+        now = utc_now()
         item = Skill(
             slug=slug,
             name=name,
@@ -147,7 +147,7 @@ class SkillRepository:
             "manage_scope": None,
         }
         item.updated_by = updated_by
-        item.updated_at = utc_now_naive()
+        item.updated_at = utc_now()
         await self.db.flush()
         await self.db.refresh(item)
         return item
@@ -165,7 +165,7 @@ class SkillRepository:
         item.mcp_dependencies = mcp_dependencies
         item.skill_dependencies = skill_dependencies
         item.updated_by = updated_by
-        item.updated_at = utc_now_naive()
+        item.updated_at = utc_now()
         await self.db.flush()
         await self.db.refresh(item)
         return item
@@ -181,7 +181,7 @@ class SkillRepository:
         item.name = name
         item.description = description
         item.updated_by = updated_by
-        item.updated_at = utc_now_naive()
+        item.updated_at = utc_now()
         await self.db.flush()
         await self.db.refresh(item)
         return item
@@ -189,7 +189,7 @@ class SkillRepository:
     async def update_share_config(self, item: Skill, *, share_config: dict, updated_by: str | None) -> Skill:
         item.share_config = share_config
         item.updated_by = updated_by
-        item.updated_at = utc_now_naive()
+        item.updated_at = utc_now()
         await self.db.flush()
         await self.db.refresh(item)
         return item
@@ -197,7 +197,7 @@ class SkillRepository:
     async def update_enabled(self, item: Skill, *, enabled: bool, updated_by: str | None) -> Skill:
         item.enabled = enabled
         item.updated_by = updated_by
-        item.updated_at = utc_now_naive()
+        item.updated_at = utc_now()
         await self.db.flush()
         await self.db.refresh(item)
         return item

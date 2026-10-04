@@ -5,15 +5,14 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
+
+from yuxi.api.dependencies.auth import get_required_user
+from yuxi.api.routers.knowledge.external import external_kb
+from yuxi.modules.identity.models import User
 from yuxi.modules.knowledge.base import KBNotFoundError
 from yuxi.modules.knowledge.schemas import FindInputSchema, OpenInputSchema, SearchInputSchema
 from yuxi.modules.knowledge.services import tools as knowledge_tools
 from yuxi.modules.knowledge.services.access import visible_knowledge_bases
-from yuxi.modules.identity.models import User
-
-from yuxi.api.dependencies.auth import get_required_user
-
-from yuxi.api.routers.knowledge.external import external_kb
 
 public_knowledge_router = APIRouter(prefix="/v1")
 public_knowledge_router.include_router(external_kb)

@@ -7,12 +7,11 @@ import os
 import re
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
-from datetime import UTC
 
 from fastapi import HTTPException
 
-from yuxi.infrastructure.postgres.manager import pg_manager
 from yuxi.infrastructure.observability.logging import logger
+from yuxi.infrastructure.postgres.manager import pg_manager
 from yuxi.modules.agents.repositories.input_receipt import AgentInputReceiptRepository
 from yuxi.modules.agents.repositories.runs import TERMINAL_RUN_STATUSES, AgentRunRepository
 from yuxi.modules.agents.repositories.turn import AgentTurnRepository
@@ -20,7 +19,7 @@ from yuxi.modules.agents.services.openai_events import OpenAIEventAdapter
 from yuxi.modules.agents.services.scope import ActorScope
 from yuxi.modules.agents.services.threads import require_thread
 from yuxi.modules.agents.services.transport import list_recent_run_stream_events, list_run_stream_events
-from yuxi.shared.datetime import utc_now_naive
+from yuxi.shared.datetime import utc_now
 from yuxi.shared.hashing import hash_id
 
 SSE_HEARTBEAT_SECONDS = int(os.getenv("RUN_SSE_HEARTBEAT_SECONDS", "15"))
@@ -178,7 +177,7 @@ async def stream_thread_events(
                 except Exception:
                     latest = []
                 has_settled = bool(latest and latest[0]["event"]["type"] == "yuxi.session.run.settled")
-                age = (utc_now_naive() - run.finished_at).total_seconds() if run.finished_at else 0
+                age = (utc_now() - run.finished_at).total_seconds() if run.finished_at else 0
                 if not has_settled and not expired and age < 2:
                     break
                 cursor.run_phase = 4
@@ -228,7 +227,7 @@ def _turn_event(adapter: OpenAIEventAdapter, run, turn, name: str, status: str) 
 
     def timestamp(value):
         """将 PostgreSQL UTC 时间投影为官方秒数。"""
-        return value.replace(tzinfo=UTC).timestamp() if value else None
+        return value.timestamp() if value else None
 
     return {
         "type": f"agent.session.turn.{name}",

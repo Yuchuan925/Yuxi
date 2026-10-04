@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload, load_only, selectinload
 from sqlalchemy.orm.attributes import flag_modified
 
-from yuxi.modules.agents.models.runs import AGENT_RUN_TERMINAL_STATUSES, AgentRun
+from yuxi.infrastructure.observability.logging import logger
 from yuxi.modules.agents.models.messages import (
     AUDIT_MESSAGE_TYPES,
     MODEL_AUDIT_MESSAGE_TYPE,
@@ -18,9 +18,9 @@ from yuxi.modules.agents.models.messages import (
     Message,
     ToolCall,
 )
+from yuxi.modules.agents.models.runs import AGENT_RUN_TERMINAL_STATUSES, AgentRun
 from yuxi.modules.agents.models.threads import UNVIEWED_RUN_MARKER, Conversation, SubagentThread
-from yuxi.infrastructure.observability.logging import logger
-from yuxi.shared.datetime import utc_now_naive
+from yuxi.shared.datetime import utc_now
 from yuxi.shared.strings import truncate_utf8
 
 MAX_CONVERSATION_TITLE_LENGTH = 255
@@ -223,7 +223,7 @@ class ConversationRepository:
     async def _save_metadata(self, conversation: Conversation, metadata: dict) -> None:
         conversation.extra_metadata = metadata
         flag_modified(conversation, "extra_metadata")
-        conversation.updated_at = utc_now_naive()
+        conversation.updated_at = utc_now()
         await self.db.flush()
 
     async def _lock_conversation_by_id(self, conversation_id: int) -> Conversation | None:
@@ -259,7 +259,7 @@ class ConversationRepository:
         self.db.add(message)
         conversation = await self.get_conversation_by_id(conversation_id)
         if conversation:
-            conversation.updated_at = utc_now_naive()
+            conversation.updated_at = utc_now()
 
         await self.db.flush()
         await self.db.refresh(message)
@@ -355,7 +355,7 @@ class ConversationRepository:
         conversation = await self.get_conversation_by_id(message.conversation_id)
         if conversation is None:
             raise ValueError("最终输出缺少 Conversation")
-        conversation.updated_at = utc_now_naive()
+        conversation.updated_at = utc_now()
         await self.db.flush()
 
     async def get_messages(self, conversation_id: int, limit: int | None = None, offset: int = 0) -> list[Message]:

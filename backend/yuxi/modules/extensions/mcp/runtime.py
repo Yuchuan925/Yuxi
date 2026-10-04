@@ -6,9 +6,10 @@ import json
 import re
 from collections.abc import Callable
 from typing import Any, cast
-from langchain_mcp_adapters.client import MultiServerMCPClient
-from yuxi.infrastructure.observability.logging import logger
 
+from langchain_mcp_adapters.client import MultiServerMCPClient
+
+from yuxi.infrastructure.observability.logging import logger
 
 _mcp_lock = asyncio.Lock()
 

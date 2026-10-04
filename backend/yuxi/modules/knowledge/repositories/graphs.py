@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -15,10 +17,35 @@ from yuxi.modules.knowledge.models import (
     KnowledgeGraphTriple,
     KnowledgeGraphTripleMention,
 )
+from yuxi.modules.knowledge.repositories.chunks import KnowledgeChunkRepository
 
 
 class KnowledgeGraphRepository:
     VECTOR_MAX_ATTEMPTS = 3
+
+    async def visible_graph_ids(
+        self, kb_id: str, chunk_ids: list[str], entity_ids: list[str]
+    ) -> tuple[set[str], set[str]]:
+        """图谱响应仅保留仍有 active 文件依据的节点和边。"""
+        chunk_query = select(KnowledgeChunk.chunk_id).where(
+            KnowledgeChunk.kb_id == kb_id,
+            KnowledgeChunk.chunk_id.in_(chunk_ids),
+            KnowledgeChunkRepository.visible_scope(),
+        )
+        entity_query = (
+            select(KnowledgeGraphEntityMention.entity_id)
+            .join(KnowledgeChunk, KnowledgeChunk.chunk_id == KnowledgeGraphEntityMention.chunk_id)
+            .where(
+                KnowledgeChunk.kb_id == kb_id,
+                KnowledgeGraphEntityMention.entity_id.in_(entity_ids),
+                KnowledgeChunkRepository.visible_scope(),
+            )
+            .distinct()
+        )
+        async with pg_manager.get_async_session_context() as session:
+            chunks = set(await session.scalars(chunk_query)) if chunk_ids else set()
+            entities = set(await session.scalars(entity_query)) if entity_ids else set()
+            return chunks, entities
 
     async def count_by_kb_id(self, kb_id: str) -> tuple[int, int]:
         async with pg_manager.get_async_session_context() as session:
@@ -287,37 +314,33 @@ class KnowledgeGraphRepository:
                     .on_conflict_do_nothing(index_elements=["triple_id", "chunk_id"])
                 )
 
-    async def delete_file_references(self, file_id: str) -> tuple[list[str], list[str]]:
+    @asynccontextmanager
+    async def delete_file_references(
+        self, file_id: str, *, generation: int | None = None
+    ) -> AsyncIterator[tuple[list[str], list[str], list[str]]]:
+        """清理指定代次关联；外部删除失败时回滚，保留重试依据。"""
+        entity_scope = KnowledgeGraphEntityMention.file_id == file_id
+        triple_scope = KnowledgeGraphTripleMention.file_id == file_id
+        chunk_query = select(KnowledgeChunk.chunk_id).where(KnowledgeChunk.file_id == file_id)
+        if generation is not None:
+            chunk_query = chunk_query.where(KnowledgeChunk.generation == generation)
+            entity_scope &= KnowledgeGraphEntityMention.chunk_id.in_(chunk_query)
+            triple_scope &= KnowledgeGraphTripleMention.chunk_id.in_(chunk_query)
         async with pg_manager.get_async_session_context() as session:
+            chunk_ids = list((await session.execute(chunk_query)).scalars())
             affected_entity_ids = list(
-                (
-                    await session.execute(
-                        select(KnowledgeGraphEntityMention.entity_id)
-                        .where(KnowledgeGraphEntityMention.file_id == file_id)
-                        .distinct()
-                    )
-                )
+                (await session.execute(select(KnowledgeGraphEntityMention.entity_id).where(entity_scope).distinct()))
                 .scalars()
                 .all()
             )
             affected_triple_ids = list(
-                (
-                    await session.execute(
-                        select(KnowledgeGraphTripleMention.triple_id)
-                        .where(KnowledgeGraphTripleMention.file_id == file_id)
-                        .distinct()
-                    )
-                )
+                (await session.execute(select(KnowledgeGraphTripleMention.triple_id).where(triple_scope).distinct()))
                 .scalars()
                 .all()
             )
 
-            await session.execute(
-                delete(KnowledgeGraphTripleMention).where(KnowledgeGraphTripleMention.file_id == file_id)
-            )
-            await session.execute(
-                delete(KnowledgeGraphEntityMention).where(KnowledgeGraphEntityMention.file_id == file_id)
-            )
+            await session.execute(delete(KnowledgeGraphTripleMention).where(triple_scope))
+            await session.execute(delete(KnowledgeGraphEntityMention).where(entity_scope))
 
             orphan_triple_ids: list[str] = []
             if affected_triple_ids:
@@ -370,7 +393,7 @@ class KnowledgeGraphRepository:
                         delete(KnowledgeGraphEntity).where(KnowledgeGraphEntity.entity_id.in_(orphan_entity_ids))
                     )
 
-            return orphan_entity_ids, orphan_triple_ids
+            yield orphan_entity_ids, orphan_triple_ids, chunk_ids
 
     async def delete_by_kb_id(self, kb_id: str) -> None:
         async with pg_manager.get_async_session_context() as session:

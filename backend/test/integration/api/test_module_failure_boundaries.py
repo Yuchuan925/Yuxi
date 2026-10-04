@@ -1,5 +1,6 @@
 """通过真实 HTTP、PostgreSQL 和本地 Dify 协议验证模块失败边界。"""
 
+import asyncio
 import json
 import os
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -292,9 +293,8 @@ async def test_null_knowledge_permission_does_not_become_global(test_client, adm
         assert kb_id not in {item["kb_id"] for item in response.json()["databases"]}
         response = await test_client.get(f"/api/knowledge/databases/{kb_id}", headers=standard_user["headers"])
         assert response.status_code == 403, response.text
-        from yuxi.modules.knowledge.runtime import knowledge_base
-
         from yuxi.infrastructure.postgres.manager import pg_manager
+        from yuxi.modules.knowledge.runtime import knowledge_base
 
         try:
             assert await knowledge_base.get_accessible_database_info_by_uid(standard_user["user"]["uid"], kb_id) is None
@@ -305,6 +305,10 @@ async def test_null_knowledge_permission_does_not_become_global(test_client, adm
         try:
             response = await test_client.delete(f"/api/knowledge/databases/{kb_id}", headers=admin_headers)
             assert response.status_code == 200, response.text
-            assert await conn.fetchval("SELECT kb_id FROM knowledge_bases WHERE kb_id = $1", kb_id) is None
+            row = await conn.fetchrow("SELECT deleted_at FROM knowledge_bases WHERE kb_id = $1", kb_id)
+            assert row is None or row["deleted_at"] is not None
+            async with asyncio.timeout(120):
+                while await conn.fetchval("SELECT kb_id FROM knowledge_bases WHERE kb_id = $1", kb_id) is not None:
+                    await asyncio.sleep(0.2)
         finally:
             await conn.close()

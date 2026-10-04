@@ -1,27 +1,26 @@
 """用户级配置与凭据路由"""
 
 import re
-from typing import Any
-from typing import Literal
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from yuxi.api.dependencies.auth import get_current_user, get_db, get_required_user
-from yuxi.modules.identity.preferences import UserConfig, UserConfigSchema
+from yuxi.api.uploads import read_upload_with_limit
+from yuxi.infrastructure.minio import upload_image_to_minio
 from yuxi.modules.agents.repositories.environment import AgentEnvRepository
+from yuxi.modules.identity.models import User
+from yuxi.modules.identity.preferences import UserConfig, UserConfigSchema
 from yuxi.modules.identity.repositories.api_keys import (
     APIKeyDepartmentConflict,
     APIKeyIdempotencyConflict,
     APIKeyRepository,
     APIKeySubjectUnavailable,
 )
-from yuxi.infrastructure.minio import upload_image_to_minio
-from yuxi.api.uploads import read_upload_with_limit
-from yuxi.modules.identity.models import User
 from yuxi.modules.identity.security import AuthUtils
-from yuxi.shared.datetime import coerce_any_to_utc_datetime, format_utc_datetime, utc_now_naive
+from yuxi.shared.datetime import coerce_any_to_utc_datetime, format_utc_datetime, utc_now
 
 user_router = APIRouter(prefix="/user", tags=["user"])
 
@@ -169,7 +168,7 @@ async def create_api_key(
     if data.expires_at:
         aware_dt = coerce_any_to_utc_datetime(data.expires_at)
         if aware_dt:
-            expires_at = aware_dt.replace(tzinfo=None)
+            expires_at = aware_dt
 
     try:
         api_key = await APIKeyRepository(db).create(
@@ -230,7 +229,7 @@ async def update_api_key(
         updates["name"] = data.name
     if data.expires_at is not None:
         aware_dt = coerce_any_to_utc_datetime(data.expires_at)
-        updates["expires_at"] = aware_dt.replace(tzinfo=None) if aware_dt else None
+        updates["expires_at"] = aware_dt if aware_dt else None
     if data.is_enabled is not None:
         updates["is_enabled"] = data.is_enabled
     if data.access_level is not None:
@@ -273,7 +272,7 @@ async def update_agent_env(
     db: AsyncSession = Depends(get_db),
 ):
     env = validate_agent_env(data.env)
-    now = utc_now_naive()
+    now = utc_now()
     result = await AgentEnvRepository(db).upsert(uid=current_user.uid, env=env, updated_at=now)
     return AgentEnvResponse(env=result.env, updated_at=format_utc_datetime(result.updated_at))
 

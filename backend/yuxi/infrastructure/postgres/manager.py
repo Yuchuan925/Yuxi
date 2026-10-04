@@ -3,10 +3,12 @@
 import json
 import os
 from contextlib import asynccontextmanager
+
 from psycopg_pool import AsyncConnectionPool
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from yuxi.infrastructure.runtime_settings import get_int_env
+
 from yuxi.infrastructure.observability.logging import logger
+from yuxi.infrastructure.runtime_settings import get_int_env
 from yuxi.shared.singleton import SingletonMeta
 
 
@@ -84,6 +86,14 @@ class PostgresManager(metaclass=SingletonMeta):
         if not self._initialized:
             return False
         return self.async_engine.dialect.name == "postgresql"
+
+    @asynccontextmanager
+    async def schema_migration_lock(self):
+        """为测试与迁移调用方提供统一的 Schema advisory lock。"""
+        from yuxi.migrations.schema import schema_migration_lock
+
+        async with schema_migration_lock(self):
+            yield
 
     async def get_async_session(self) -> AsyncSession:
         """获取异步数据库会话"""

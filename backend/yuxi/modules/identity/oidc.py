@@ -3,9 +3,6 @@
 统一封装 OIDC 配置、工具能力和认证业务处理逻辑
 """
 
-from yuxi.infrastructure.oidc.client import OIDCProviderMetadata, exchange_code_for_token, get_userinfo
-
-
 import hashlib
 import os
 import secrets
@@ -17,11 +14,13 @@ from fastapi import HTTPException, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
-from yuxi.modules.identity.repositories.users import UserRepository
-from yuxi.modules.identity.models import Department, User
-from yuxi.modules.identity.security import AuthUtils
-from yuxi.shared.datetime import utc_now_naive
+
 from yuxi.infrastructure.observability.logging import logger
+from yuxi.infrastructure.oidc.client import OIDCProviderMetadata, exchange_code_for_token, get_userinfo
+from yuxi.modules.identity.models import Department, User
+from yuxi.modules.identity.repositories.users import UserRepository
+from yuxi.modules.identity.security import AuthUtils
+from yuxi.shared.datetime import utc_now
 
 # 前端 OIDC 回调路由路径（与 frontend/src/router/index.js 中的路由保持一致）
 FRONTEND_CALLBACK_PATH = "/auth/oidc/callback"
@@ -495,7 +494,7 @@ async def create_oidc_binding_placeholder(db, sub: str, target_user: User) -> No
         role=target_user.role,
         department_id=target_user.department_id,
         is_deleted=1,  # 标记为deleted，不参与实际登录
-        last_login=utc_now_naive(),
+        last_login=utc_now(),
     )
 
     try:
@@ -596,7 +595,7 @@ async def create_oidc_user(db, user_info: dict, department_id: int | None = None
                     "password_hash": password_hash,
                     "role": oidc_config.default_role,
                     "department_id": department_id,
-                    "last_login": utc_now_naive(),
+                    "last_login": utc_now(),
                 }
             )
             logger.info(f"Created OIDC user: {new_user.username} ({uid})")
@@ -626,7 +625,7 @@ async def restore_deleted_oidc_user(db, deleted_user: User, user_info: dict) -> 
 
     deleted_user.is_deleted = 0
     deleted_user.deleted_at = None
-    deleted_user.last_login = utc_now_naive()
+    deleted_user.last_login = utc_now()
     deleted_user.phone_number = None
     deleted_user.avatar = None
 
@@ -645,7 +644,7 @@ async def restore_deleted_oidc_user(db, deleted_user: User, user_info: dict) -> 
 
 async def update_oidc_user_login(db, user: User) -> None:
     """更新 OIDC 用户登录时间"""
-    user.last_login = utc_now_naive()
+    user.last_login = utc_now()
     await db.commit()
 
 

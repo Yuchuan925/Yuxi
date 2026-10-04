@@ -8,14 +8,14 @@ from dataclasses import dataclass
 from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from yuxi.modules.agents.repositories.runs import AgentRunRepository
-from yuxi.modules.agents.repositories.input import AgentInputRepository
-from yuxi.modules.agents.repositories.turn import AgentTurnRepository
-from yuxi.modules.agents.repositories.threads import ConversationRepository
-from yuxi.modules.agents.services.scope import ActorScope
 from yuxi.modules.agents.models.runs import AgentRun
-from yuxi.modules.agents.models.turns import AgentTurn
 from yuxi.modules.agents.models.threads import Conversation
+from yuxi.modules.agents.models.turns import AgentTurn
+from yuxi.modules.agents.repositories.input import AgentInputRepository
+from yuxi.modules.agents.repositories.runs import AgentRunRepository
+from yuxi.modules.agents.repositories.threads import ConversationRepository
+from yuxi.modules.agents.repositories.turn import AgentTurnRepository
+from yuxi.modules.agents.services.scope import ActorScope
 
 
 @dataclass(frozen=True, slots=True)
@@ -218,8 +218,8 @@ async def _consume_steer(
         run_type="subagent" if previous.run_type == "subagent" else "chat",
         created_by_run_id=previous.created_by_run_id,
         subagent_thread_relation_id=previous.subagent_thread_relation_id,
-        input_message_id=messages[0].id,
     )
     await AgentTurnRepository(db).set_current(turn, run_id=run_id)
     await input_repo.consume(input_id=pending.id, turn_id=turn.id, run_id=run_id, cutoff_seq=cutoff_seq)
+    await AgentRunRepository(db).set_input_message(run_id, messages[0].id)
     return run_id

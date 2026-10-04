@@ -6,6 +6,15 @@ import time
 import weakref
 from typing import Any
 
+from yuxi.infrastructure.filesystem import await_io
+from yuxi.infrastructure.neo4j import (
+    Neo4jConnectionManager,
+    get_shared_neo4j_connection,
+    neo4j_read,
+    neo4j_write,
+    safe_neo4j_label,
+)
+from yuxi.infrastructure.observability.logging import logger
 from yuxi.modules.knowledge.graphs.extractors import GraphExtractor, GraphExtractorFactory, normalize_extraction_result
 from yuxi.modules.knowledge.graphs.graph_utils import (
     build_graph_payload,
@@ -20,14 +29,7 @@ from yuxi.modules.knowledge.graphs.milvus_graph_vector_store import MilvusGraphV
 from yuxi.modules.knowledge.repositories.bases import KnowledgeBaseRepository
 from yuxi.modules.knowledge.repositories.chunks import KnowledgeChunkRepository
 from yuxi.modules.knowledge.repositories.graphs import KnowledgeGraphRepository
-from yuxi.infrastructure.neo4j import (
-    Neo4jConnectionManager,
-    get_shared_neo4j_connection,
-    neo4j_read,
-    neo4j_write,
-    safe_neo4j_label,
-)
-from yuxi.infrastructure.observability.logging import logger
+from yuxi.modules.knowledge.repositories.projections import knowledge_projection_lock
 from yuxi.shared.datetime import utc_isoformat
 
 GRAPH_CONFIG_KEY = "graph_build_config"
@@ -228,6 +230,12 @@ class MilvusGraphService:
         return {"kb_id": kb_id, "samples": samples}
 
     async def build_pending_chunks(self, kb_id: str, *, context=None) -> dict[str, Any]:
+        """图谱写入和索引共用投影锁，删除不能越过未完成写入。"""
+        async with knowledge_projection_lock(kb_id, shared=True):
+            return await self._build_pending_chunks(kb_id, context=context)
+
+    async def _build_pending_chunks(self, kb_id: str, *, context=None) -> dict[str, Any]:
+        """按现有流水线构建当前可见 Chunk 的图谱。"""
         kb = await self._get_milvus_kb(kb_id)
         config = self._get_locked_config(kb.additional_params or {})
         extractor_options = self._runtime_extractor_options(config)
@@ -307,11 +315,8 @@ class MilvusGraphService:
                         raise ValueError(f"图谱写入找不到 chunk: {chunk_id}")
                     extraction_result = await self._get_chunk_extraction_result(kb_id, chunk, extractor)
                     write_started_at = time.monotonic()
-                    entities, triples = await asyncio.to_thread(
-                        self.write_chunk_graph,
-                        kb_id,
-                        chunk,
-                        extraction_result,
+                    entities, triples = await await_io(
+                        asyncio.to_thread(self.write_chunk_graph, kb_id, chunk, extraction_result)
                     )
                     await self.graph_repo.upsert_chunk_graph(
                         kb_id=kb_id,
@@ -384,10 +389,17 @@ class MilvusGraphService:
             while True:
                 if context is not None:
                     await context.raise_if_cancelled()
-                entity_count, triple_count = await asyncio.gather(
-                    index_vector_batch("entity"),
-                    index_vector_batch("triple"),
+                counts = await await_io(
+                    asyncio.gather(
+                        index_vector_batch("entity"),
+                        index_vector_batch("triple"),
+                        return_exceptions=True,
+                    )
                 )
+                for count in counts:
+                    if isinstance(count, BaseException):
+                        raise count
+                entity_count, triple_count = counts
                 if entity_count or triple_count:
                     await self.graph_repo.finalize_graph_indexed_chunks(kb_id)
                     continue
@@ -704,8 +716,14 @@ class MilvusGraphService:
         return records
 
     async def reset(self, kb_id: str, *, clear_extraction_result: bool, clear_config: bool) -> dict[str, Any]:
+        """重置与所有投影写入互斥。"""
+        async with knowledge_projection_lock(kb_id, shared=False):
+            return await self._reset(kb_id, clear_extraction_result=clear_extraction_result, clear_config=clear_config)
+
+    async def _reset(self, kb_id: str, *, clear_extraction_result: bool, clear_config: bool) -> dict[str, Any]:
+        """删除图谱后重置数据库构建状态。"""
         kb = await self._get_milvus_kb(kb_id)
-        await asyncio.to_thread(self.delete_graph, kb_id)
+        await await_io(asyncio.to_thread(self.delete_graph, kb_id))
         await self.graph_repo.delete_by_kb_id(kb_id)
         reset_chunks = await self.chunk_repo.reset_graph_state_by_kb_id(kb_id, clear_extraction_result)
         if clear_config:
@@ -721,11 +739,17 @@ class MilvusGraphService:
         }
 
     async def reconcile_vectors(self, kb_id: str, *, all_vectors: bool) -> dict[str, Any]:
+        """向量重置与构建、删除互斥。"""
+        async with knowledge_projection_lock(kb_id, shared=False):
+            return await self._reconcile_vectors(kb_id, all_vectors=all_vectors)
+
+    async def _reconcile_vectors(self, kb_id: str, *, all_vectors: bool) -> dict[str, Any]:
+        """执行已有图谱向量重置用例。"""
         await self._get_milvus_kb(kb_id)
         reset_records = await self.graph_repo.reconcile_vector_records(kb_id, all_vectors=all_vectors)
         if all_vectors:
             graph_vector_store = await self.get_graph_vector_store()
-            await asyncio.to_thread(graph_vector_store.drop_graph_collections, kb_id)
+            await await_io(asyncio.to_thread(graph_vector_store.drop_graph_collections, kb_id))
         return {
             "kb_id": kb_id,
             "mode": "all_vectors" if all_vectors else "failed",
@@ -741,16 +765,20 @@ class MilvusGraphService:
         neo4j_write(self.driver, query)
         self.graph_vector_store.drop_graph_collections(kb_id)
 
-    async def delete_file_graph(self, kb_id: str, file_id: str) -> None:
-        orphan_entity_ids, orphan_triple_ids = await self.graph_repo.delete_file_references(file_id)
-        await self.graph_vector_store.delete_graph_records(
-            kb_id,
-            entity_ids=orphan_entity_ids,
-            triple_ids=orphan_triple_ids,
-        )
-        await asyncio.to_thread(self._delete_file_graph_from_neo4j, kb_id, file_id)
+    async def delete_file_graph(self, kb_id: str, file_id: str, *, generation: int | None = None) -> None:
+        """外部清理成功后才提交关联移除，失败保留重试所需的 ID。"""
+        async with self.graph_repo.delete_file_references(file_id, generation=generation) as scope:
+            orphan_entity_ids, orphan_triple_ids, chunk_ids = scope
+            await await_io(
+                self.graph_vector_store.delete_graph_records(
+                    kb_id,
+                    entity_ids=orphan_entity_ids,
+                    triple_ids=orphan_triple_ids,
+                )
+            )
+            await await_io(asyncio.to_thread(self._delete_file_graph_from_neo4j, kb_id, file_id, chunk_ids))
 
-    def _delete_file_graph_from_neo4j(self, kb_id: str, file_id: str) -> None:
+    def _delete_file_graph_from_neo4j(self, kb_id: str, file_id: str, chunk_ids: list[str]) -> None:
         label = safe_neo4j_label(kb_id)
 
         def query(tx):
@@ -758,15 +786,18 @@ class MilvusGraphService:
                 f"""
                 MATCH (:Entity:MilvusKB:`{label}`)-[r:RELATION {{kb_id: $kb_id, file_id: $file_id}}]->
                     (:Entity:MilvusKB:`{label}`)
+                WHERE r.chunk_id IN $chunk_ids
                 DELETE r
                 """,
                 kb_id=kb_id,
                 file_id=file_id,
+                chunk_ids=chunk_ids,
             )
             tx.run(
                 f"""
                 MATCH (:Chunk:MilvusKB:`{label}` {{kb_id: $kb_id, file_id: $file_id}})-[m:MENTIONS]->
                     (e:Entity:MilvusKB:`{label}`)
+                WHERE m.chunk_id IN $chunk_ids
                 DELETE m
                 WITH DISTINCT e
                 WHERE NOT ()-[:MENTIONS]->(e)
@@ -774,14 +805,17 @@ class MilvusGraphService:
                 """,
                 kb_id=kb_id,
                 file_id=file_id,
+                chunk_ids=chunk_ids,
             )
             tx.run(
                 f"""
                 MATCH (c:Chunk:MilvusKB:`{label}` {{kb_id: $kb_id, file_id: $file_id}})
+                WHERE c.chunk_id IN $chunk_ids
                 DETACH DELETE c
                 """,
                 kb_id=kb_id,
                 file_id=file_id,
+                chunk_ids=chunk_ids,
             )
 
         neo4j_write(self.driver, query)
@@ -802,7 +836,7 @@ class MilvusGraphService:
         label = safe_neo4j_label(effective_kb_id)
         limit = max_nodes
         try:
-            return await _run_neo4j_query_io(
+            result = await _run_neo4j_query_io(
                 self._query_nodes_sync,
                 effective_kb_id,
                 label,
@@ -811,9 +845,50 @@ class MilvusGraphService:
                 max_depth,
                 exclude_chunk,
             )
+            return await self._filter_visible_subgraph(effective_kb_id, result)
         except Exception as e:
             logger.error(f"Milvus graph query failed: {e}")
             return {"nodes": [], "edges": []}
+
+    async def _filter_visible_subgraph(self, kb_id: str, result: dict[str, Any]) -> dict[str, Any]:
+        """Neo4j 尚未完成清理时，也不能发布 PG 已不可见的内容。"""
+        chunk_ids = {n["properties"]["chunk_id"] for n in result["nodes"] if n["properties"].get("chunk_id")}
+        chunk_ids.update(e["properties"]["chunk_id"] for e in result["edges"] if e["properties"].get("chunk_id"))
+        chunk_ids.update(
+            n["properties"]["source_chunk_id"] for n in result["nodes"] if n["properties"].get("source_chunk_id")
+        )
+        entity_ids = {n["properties"]["entity_id"] for n in result["nodes"] if n["properties"].get("entity_id")}
+        visible_chunks, visible_entities = await self.graph_repo.visible_graph_ids(
+            kb_id, list(chunk_ids), list(entity_ids)
+        )
+        nodes = [
+            n
+            for n in result["nodes"]
+            if (
+                n["properties"].get("chunk_id") in visible_chunks
+                or n["properties"].get("entity_id") in visible_entities
+            )
+        ]
+        for node in nodes:
+            properties = node["properties"]
+            if properties.get("entity_id") and properties.get("source_chunk_id") not in visible_chunks:
+                node["properties"] = {
+                    key: properties[key]
+                    for key in ("entity_id", "normalized_name", "label", "kb_id")
+                    if key in properties
+                }
+                node["name"] = properties["normalized_name"]
+        node_ids = {n["id"] for n in nodes}
+        edges = [
+            e
+            for e in result["edges"]
+            if (
+                e["source_id"] in node_ids
+                and e["target_id"] in node_ids
+                and e["properties"].get("chunk_id") in visible_chunks
+            )
+        ]
+        return {"nodes": nodes, "edges": edges}
 
     def _query_nodes_sync(
         self,
@@ -868,13 +943,14 @@ class MilvusGraphService:
         RETURN graph_nodes AS nodes, collect(DISTINCT rel) AS edges
         """
         try:
-            return await _run_neo4j_query_io(
+            result = await _run_neo4j_query_io(
                 self._query_seed_subgraph_sync,
                 kb_id,
                 cypher,
                 seed_entity_ids,
                 max_nodes,
             )
+            return await self._filter_visible_subgraph(kb_id, result)
         except Exception as e:
             logger.error(f"Milvus seed subgraph query failed: {e}")
             return {"nodes": [], "edges": []}

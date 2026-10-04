@@ -18,7 +18,7 @@ from yuxi.modules.models.providers.repository import (
     list_model_providers,
     update_model_provider,
 )
-from yuxi.modules.models.tables import ModelProvider
+from yuxi.modules.models.tables import ModelProvider, is_sensitive_config_key
 
 VALID_MODEL_TYPES = {"chat", "embedding", "rerank"}
 VALID_MODEL_SOURCES = {"manual", "remote"}
@@ -355,17 +355,50 @@ async def create_provider_config(db: AsyncSession, data: dict[str, Any], usernam
     return await create_model_provider(db, payload)
 
 
+def _restore_redacted_value(requested: Any, current: Any) -> Any:
+    """管理表单回传脱敏占位符时保留原值，包括嵌套字典和数组。"""
+    if requested == "[REDACTED]":
+        if current is None:
+            raise ValueError("脱敏占位符没有可保留的原值")
+        return current
+    if isinstance(requested, dict):
+        existing = current if isinstance(current, dict) else {}
+        return {key: _restore_redacted_value(value, existing.get(key)) for key, value in requested.items()}
+    if isinstance(requested, list):
+        existing = current if isinstance(current, list) else []
+        return [
+            _restore_redacted_value(value, existing[index] if index < len(existing) else None)
+            for index, value in enumerate(requested)
+        ]
+    return requested
+
+
 async def update_provider_config(
     db: AsyncSession,
     provider_id: str,
     data: dict[str, Any],
     username: str,
 ) -> ModelProvider | None:
-    """更新独立模型供应商配置。"""
+    """更新独立模型供应商配置，空凭据表示保留已有 secret。"""
     provider = await get_model_provider(db, provider_id)
     if provider is None:
         return None
-    payload = _normalize_payload(data, partial=True)
+
+    update_data = dict(data)
+    if update_data.get("api_key") is None:
+        update_data.pop("api_key", None)
+    for field in ("headers_json", "extra_json"):
+        if field in update_data:
+            update_data[field] = _restore_redacted_value(
+                _normalize_dict(update_data[field]) or {}, getattr(provider, field)
+            )
+    if "headers_json" in update_data:
+        current_headers = provider.headers_json or {}
+        for key, value in current_headers.items():
+            if is_sensitive_config_key(key) and key not in update_data["headers_json"]:
+                update_data["headers_json"][key] = value
+
+    payload = _normalize_payload(update_data, partial=True)
     # partial 更新时仅传 enabled_models，结合 DB 中现有 capabilities 校验
     if "enabled_models" in payload and "capabilities" not in payload:
         existing_caps = set(provider.capabilities or [])

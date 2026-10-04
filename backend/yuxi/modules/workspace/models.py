@@ -1,6 +1,7 @@
 """业务 PostgreSQL 映射。"""
 
 from typing import Any
+
 from sqlalchemy import (
     CheckConstraint,
     Column,
@@ -11,10 +12,9 @@ from sqlalchemy import (
     func,
 )
 from sqlalchemy.orm import relationship
-from yuxi.shared.datetime import format_utc_datetime, utc_now_naive
 
 from yuxi.infrastructure.postgres.base import BusinessBase as Base
-
+from yuxi.shared.datetime import format_utc_datetime, utc_now
 
 PROJECT_STATUS_CONSTRAINT_NAME = "ck_projects_status"
 
@@ -47,11 +47,11 @@ class Project(Base):
     workdir_path = Column(String(512), nullable=False, comment="UserWorkspace-relative Workdir path")
     directory_mode = Column(String(20), nullable=False, comment="managed/linked")
     status = Column(String(20), nullable=False, default="active", server_default="active", index=True)
-    deleted_at = Column(DateTime, nullable=True, comment="软删除时间")
+    deleted_at = Column(DateTime(timezone=True), nullable=True, comment="软删除时间")
     idempotency_key = Column(String(128), nullable=True, comment="幂等创建键")
-    created_at = Column(DateTime, default=utc_now_naive, server_default=func.now(), nullable=False)
+    created_at = Column(DateTime(timezone=True), default=utc_now, server_default=func.now(), nullable=False)
     updated_at = Column(
-        DateTime, default=utc_now_naive, onupdate=utc_now_naive, server_default=func.now(), nullable=False
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now, server_default=func.now(), nullable=False
     )
 
     conversations = relationship("Conversation", back_populates="project")

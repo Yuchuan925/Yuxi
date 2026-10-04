@@ -7,24 +7,47 @@ import uuid
 from contextlib import aclosing
 from dataclasses import dataclass, field
 from datetime import datetime
+
 from arq.worker import RetryJob
 from sqlalchemy import select
 from sqlalchemy.exc import OperationalError
-from yuxi.modules.agents.runtime.callbacks.model_request_timing import FirstModelRequestRecorder
-from yuxi.modules.agents.repositories.runs import TERMINAL_RUN_STATUSES, AgentRunRepository
+
+from yuxi.infrastructure.observability.logging import logger
+from yuxi.infrastructure.postgres.manager import pg_manager
+from yuxi.modules.agents.models.messages import Message
+from yuxi.modules.agents.models.runs import AgentRun
 from yuxi.modules.agents.repositories.input import AgentInputRepository
-from yuxi.modules.agents.repositories.turn import AgentTurnRepository
+from yuxi.modules.agents.repositories.runs import TERMINAL_RUN_STATUSES, AgentRunRepository
 from yuxi.modules.agents.repositories.threads import ConversationRepository
-from yuxi.modules.agents.services.scheduler import dispatch_next_input
+from yuxi.modules.agents.repositories.turn import AgentTurnRepository
+from yuxi.modules.agents.runtime.callbacks.model_request_timing import FirstModelRequestRecorder
+from yuxi.modules.agents.services.event_writer import (
+    LOADING_FLUSH_INTERVAL_MS,
+    LOADING_FLUSH_MAX_CHARS,
+    PublicEventWriter,
+    append_run_event_best_effort,
+    contains_model_output,
+    flush_writer_best_effort,
+    publish_run_settlement,
+)
+from yuxi.modules.agents.services.execution import RunExecutionResult, stream_agent_chat, stream_agent_resume
+from yuxi.modules.agents.services.input_messages import restore_chat_input_message
+from yuxi.modules.agents.services.leases import (
+    WORKER_ID,
+    mark_run_running,
+    release_run_lease_for_retry,
+    release_runtime_if_idle,
+    renew_run_lease,
+    run_attempt_finished,
+)
+from yuxi.modules.agents.services.openai_events import OpenAIEventAdapter
 from yuxi.modules.agents.services.preparation import (
     PreparedRunExecution,
     compute_manifest_fingerprint,
     prepare_run_execution,
 )
 from yuxi.modules.agents.services.runs import settle_checkpoint
-from yuxi.modules.agents.services.openai_events import OpenAIEventAdapter
-from yuxi.modules.agents.services.execution import RunExecutionResult, stream_agent_chat, stream_agent_resume
-from yuxi.modules.agents.services.input_messages import restore_chat_input_message
+from yuxi.modules.agents.services.scheduler import dispatch_next_input
 from yuxi.modules.agents.services.state import get_agent_state_view
 from yuxi.modules.agents.services.tracing import finish_turn_observation_if_terminal
 from yuxi.modules.agents.services.transport import (
@@ -32,34 +55,12 @@ from yuxi.modules.agents.services.transport import (
     publish_cancel_signals,
     wait_for_cancel_signal,
 )
+from yuxi.modules.identity.models import User
 from yuxi.modules.workspace.services.bindings import (
     AuthorizedWorkdir,
     resolve_authorized_workdir,
 )
-from yuxi.infrastructure.postgres.manager import pg_manager
-from yuxi.modules.agents.models.runs import AgentRun
-from yuxi.modules.agents.models.messages import Message
-from yuxi.modules.identity.models import User
-from yuxi.shared.datetime import utc_now_naive
-from yuxi.infrastructure.observability.logging import logger
-
-from yuxi.modules.agents.services.event_writer import (
-    LOADING_FLUSH_INTERVAL_MS,
-    LOADING_FLUSH_MAX_CHARS,
-    PublicEventWriter,
-    publish_run_settlement,
-    append_run_event_best_effort,
-    flush_writer_best_effort,
-    contains_model_output,
-)
-from yuxi.modules.agents.services.leases import (
-    WORKER_ID,
-    mark_run_running,
-    renew_run_lease,
-    run_attempt_finished,
-    release_run_lease_for_retry,
-    release_runtime_if_idle,
-)
+from yuxi.shared.datetime import utc_now
 
 MAX_RUN_TRIES = 2
 
@@ -772,7 +773,7 @@ async def process_agent_run(ctx, run_id: str):
                 run_id,
                 worker_id,
                 "prepared",
-                observed_at=utc_now_naive(),
+                observed_at=utc_now(),
             )
 
         terminal_set = False
@@ -824,7 +825,7 @@ async def process_agent_run(ctx, run_id: str):
                                 run_id,
                                 worker_id,
                                 "first_output",
-                                observed_at=utc_now_naive(),
+                                observed_at=utc_now(),
                             )
                         continue
                     await writer.flush()

@@ -118,7 +118,8 @@ def cypher_merge_entity_mention(db_label: str) -> str:
     }})
     SET e.entity_id = $entity_id,
         e.name = $name,
-        e.attributes = $attributes
+        e.attributes = $attributes,
+        e.source_chunk_id = $chunk_id
     MERGE (c)-[m:MENTIONS {{chunk_id: $chunk_id, file_id: $file_id, kb_id: $kb_id}}]->(e)
     """
 

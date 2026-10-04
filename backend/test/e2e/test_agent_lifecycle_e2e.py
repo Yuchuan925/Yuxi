@@ -735,6 +735,23 @@ async def test_waiting_turn_requires_complete_answers_and_resumes_same_turn(e2e_
         assert accepted.status_code == 202, accepted.text
         resume_id = accepted.json()["run_id"]
         assert resume_id and resume_id != initial["run_id"]
+        conn = await asyncpg.connect(postgres_dsn())
+        try:
+            resume_message = await conn.fetchrow(
+                "SELECT m.run_id, m.turn_id, m.message_type, c.thread_id FROM agent_runs r "
+                "JOIN messages m ON m.id = r.input_message_id AND m.conversation_id = r.conversation_id "
+                "JOIN conversations c ON c.id = m.conversation_id WHERE r.id = $1",
+                resume_id,
+            )
+            assert resume_message is not None
+            assert dict(resume_message) == {
+                "run_id": resume_id,
+                "turn_id": turn_id,
+                "message_type": "resume",
+                "thread_id": thread_id,
+            }
+        finally:
+            await conn.close()
         completed = await _turn(e2e_client, e2e_headers, thread_id, turn_id)
         assert completed["status"] == "completed", completed
         assert completed["result_run_id"] == resume_id

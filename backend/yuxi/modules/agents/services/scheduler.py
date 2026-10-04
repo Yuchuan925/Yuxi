@@ -8,17 +8,17 @@ from dataclasses import dataclass
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from yuxi.modules.agents.repositories.runs import AgentRunRepository
-from yuxi.modules.agents.repositories.input import AgentInputRepository
-from yuxi.modules.agents.repositories.turn import AgentTurnRepository
-from yuxi.modules.agents.repositories.threads import ConversationRepository
-from yuxi.modules.workspace.services.bindings import WorkdirBinding, resolve_conversation_workdir_binding
+from yuxi.infrastructure.observability.logging import logger
 from yuxi.infrastructure.postgres.manager import pg_manager
 from yuxi.modules.agents.models.inputs import AgentInput
 from yuxi.modules.agents.models.runs import AgentRun
 from yuxi.modules.agents.models.threads import Conversation
-from yuxi.infrastructure.observability.logging import logger
+from yuxi.modules.agents.repositories.input import AgentInputRepository
+from yuxi.modules.agents.repositories.runs import AgentRunRepository
+from yuxi.modules.agents.repositories.threads import ConversationRepository
+from yuxi.modules.agents.repositories.turn import AgentTurnRepository
 from yuxi.modules.workspace.paths import ensure_bound_user_workdir
+from yuxi.modules.workspace.services.bindings import WorkdirBinding, resolve_conversation_workdir_binding
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,10 +80,10 @@ async def claim_next_input(
         run_type="subagent" if conversation.status == "subagent" else "chat",
         created_by_run_id=(head.origin_metadata or {}).get("created_by_run_id"),
         subagent_thread_relation_id=(head.origin_metadata or {}).get("subagent_thread_relation_id"),
-        input_message_id=messages[0].id,
     )
     await turn_repo.set_current(turn, run_id=run_id)
     await input_repo.consume(input_id=head.id, turn_id=turn_id, run_id=run_id, cutoff_seq=cutoff_seq)
+    await AgentRunRepository(db).set_input_message(run_id, messages[0].id)
     return Dispatch(run_id=run_id, binding=binding)
 
 

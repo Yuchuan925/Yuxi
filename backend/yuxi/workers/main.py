@@ -24,6 +24,7 @@ __all__ = ["WorkerSettings"]
 def main() -> None:
     """沿用 ARQ 默认日志与运行生命周期，装配 Yuxi 的领取适配。"""
     from arq.logs import default_log_config
+
     from yuxi.workers.arq import run_worker
 
     logging.config.dictConfig(default_log_config(False))

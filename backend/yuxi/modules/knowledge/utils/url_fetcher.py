@@ -8,8 +8,8 @@ import httpcore
 import httpx
 from httpcore._backends.base import SOCKET_OPTION, AsyncNetworkStream
 
-from yuxi.modules.knowledge.utils.url_validator import is_url_parsing_enabled, validate_url
 from yuxi.infrastructure.observability.logging import logger
+from yuxi.modules.knowledge.utils.url_validator import is_url_parsing_enabled, validate_url
 
 # 最大允许下载大小 (例如 10MB)
 MAX_DOWNLOAD_SIZE = 10 * 1024 * 1024

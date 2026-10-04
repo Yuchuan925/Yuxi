@@ -2,12 +2,12 @@ from fastapi import Depends, Header, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+
 from yuxi.infrastructure.postgres.manager import pg_manager
 from yuxi.modules.identity.models import User
-from yuxi.modules.identity.services.public_auth import verify_api_key
-from yuxi.shared.datetime import utc_now_naive
-
 from yuxi.modules.identity.security import AuthUtils
+from yuxi.modules.identity.services.public_auth import verify_api_key
+from yuxi.shared.datetime import utc_now
 
 # 定义OAuth2密码承载器，指定token URL
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/token", auto_error=False)
@@ -69,7 +69,7 @@ async def get_current_user(
                 or (api_key_obj.access_level == "knowledge" and route_path in KNOWLEDGE_TOOL_PATHS)
             ):
                 raise HTTPException(status_code=403, detail="该 API Key 无权访问此 API 面")
-            api_key_obj.last_used_at = utc_now_naive()
+            api_key_obj.last_used_at = utc_now()
             await db.commit()
         return user
 

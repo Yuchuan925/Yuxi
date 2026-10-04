@@ -3,15 +3,15 @@
 from datetime import datetime, timedelta
 from typing import Any
 
-from sqlalchemy import Integer, String, and_, case, cast, distinct, func, literal, or_, select, text
+from sqlalchemy import Integer, String, and_, case, cast, distinct, func, literal, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from yuxi.modules.agents.repositories.definitions import AgentRepository
 from yuxi.infrastructure.minio.client import normalize_public_minio_url
-from yuxi.modules.agents.models.messages import AUDIT_MESSAGE_TYPES, Message, ToolCall
 from yuxi.modules.agents.models.definitions import Agent
+from yuxi.modules.agents.models.messages import AUDIT_MESSAGE_TYPES, Message, ToolCall
 from yuxi.modules.agents.models.runs import AgentRun
 from yuxi.modules.agents.models.threads import Conversation
+from yuxi.modules.agents.repositories.definitions import AgentRepository
 from yuxi.modules.identity.models import User
 from yuxi.shared.datetime import UTC, ensure_shanghai, format_utc_datetime, shanghai_now, utc_now
 
@@ -26,17 +26,17 @@ class DashboardRepository:
     def _time_group_format(column: Any, time_range: str) -> Any:
         """生成使用上海时区显示的 PostgreSQL 时间分组表达式。"""
         if time_range == "14hours":
-            return func.to_char(column + text("INTERVAL '8 hours'"), "YYYY-MM-DD HH24:00")
+            return func.to_char(func.timezone("Asia/Shanghai", column), "YYYY-MM-DD HH24:00")
         if time_range == "14weeks":
-            return func.to_char(column + text("INTERVAL '8 hours'"), "YYYY-IW")
-        return func.to_char(column + text("INTERVAL '8 hours'"), "YYYY-MM-DD")
+            return func.to_char(func.timezone("Asia/Shanghai", column), "YYYY-IW")
+        return func.to_char(func.timezone("Asia/Shanghai", column), "YYYY-MM-DD")
 
     def _shanghai_date_group(self, column: Any) -> Any:
         """按上海日历日生成 PostgreSQL/SQLite 兼容分组表达式。"""
         bind = self.db_session.bind
         if bind is not None and bind.dialect.name == "sqlite":
             return func.date(column, "+8 hours")
-        return func.date(column + text("INTERVAL '8 hours'"))
+        return func.date(func.timezone("Asia/Shanghai", column))
 
     @staticmethod
     def _conversation_token_totals(conversation_ids: list[int] | None = None):
@@ -262,7 +262,7 @@ class DashboardRepository:
 
     async def get_user_activity_stats(self, *, now: datetime | None = None) -> dict[str, Any]:
         """统计用户总量与近期开启对话的活跃用户。"""
-        query_now = (now or utc_now()).replace(tzinfo=None)
+        query_now = now or utc_now()
 
         total_result = await self.db_session.execute(select(func.count(User.id)).where(User.is_deleted == 0))
         active_24h_result = await self.db_session.execute(
@@ -318,7 +318,7 @@ class DashboardRepository:
 
     async def get_tool_call_stats(self, *, now: datetime | None = None) -> dict[str, Any]:
         """统计有效用户与非删除会话中的工具调用。"""
-        query_now = (now or utc_now()).replace(tzinfo=None)
+        query_now = now or utc_now()
         valid_filters = [Conversation.status.notin_(("deleted", "subagent")), User.is_deleted == 0]
         total_result = await self.db_session.execute(
             select(func.count(ToolCall.id))
@@ -489,7 +489,7 @@ class DashboardRepository:
             start_time = query_now - timedelta(days=intervals - 1)
             base_local_time = ensure_shanghai(start_time)
 
-        query_start_time = start_time.replace(tzinfo=None)
+        query_start_time = start_time
         message_group = self._time_group_format(Message.created_at, time_range)
 
         if metric_type == "models":
@@ -671,7 +671,7 @@ class DashboardRepository:
     ) -> dict[str, Any]:
         """统计会话（Thread）汇总、每日趋势、消息深度、Agent 与用户分布。"""
         raw_now = now or utc_now()
-        query_now = raw_now.astimezone(UTC).replace(tzinfo=None) if raw_now.tzinfo else raw_now
+        query_now = raw_now.astimezone(UTC)
         days = {"7days": 7, "14days": 14, "30days": 30, "90days": 90}.get(time_range, 30)
         local_start_day = (query_now + timedelta(hours=8)).replace(hour=0, minute=0, second=0, microsecond=0)
         local_start_day -= timedelta(days=days - 1)

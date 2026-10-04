@@ -1,6 +1,7 @@
 """LangGraph PostgreSQL checkpoint pool 的 saver 与建表生命周期。"""
 
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+
 from yuxi.infrastructure.observability.logging import logger
 
 

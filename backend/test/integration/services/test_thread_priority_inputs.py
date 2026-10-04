@@ -160,6 +160,11 @@ async def test_idle_steer_batch_precedes_fifo_and_is_sealed_on_claim(sessions):
         assert batch.status == "consumed" and batch.consumed_run_id == accepted["run_id"]
         claimed_run = await db.get(AgentRun, accepted["run_id"])
         assert batch.turn_id == claimed_run.turn_id
+        receipt = await db.get(AgentInputReceipt, accepted["event_id"])
+        assert receipt.turn_id == claimed_run.turn_id
+        replay = await threads.continue_queue(db=db, scope=SCOPE, thread_id="input-thread", idempotency_key="continue")
+        assert replay == accepted
+        assert await db.scalar(select(func.count()).select_from(AgentRun)) == 1
         messages = await AgentInputRepository(db).list_messages(batch.id)
         assert [(item.content, item.run_id, item.delivery_status) for item in messages] == [
             ("S1", accepted["run_id"], "dispatched"),
@@ -453,6 +458,7 @@ async def test_parent_delegation_preserves_child_pending_steer_and_pause(session
             backend_id="SubAgentBackend",
             name="helper",
             is_subagent=True,
+            visibility="shared",
             created_by=SCOPE.uid,
             share_config=DEFAULT_SHARE_CONFIG.copy(),
             config_json={},

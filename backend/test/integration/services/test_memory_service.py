@@ -22,7 +22,7 @@ from yuxi.modules.agents.models.threads import Conversation, SubagentThread
 from yuxi.modules.agents.models.messages import Message, ToolCall
 from yuxi.modules.workspace.models import Project
 from yuxi.modules.identity.models import User, UserConfig
-from yuxi.shared.datetime import utc_now_naive
+from yuxi.shared.datetime import utc_now
 from yuxi.modules.workspace import paths as workspace_paths
 from yuxi.modules.workspace.filesystem import Workspace
 
@@ -92,8 +92,8 @@ async def memory_database(tmp_path, monkeypatch: pytest.MonkeyPatch):
                 run_type="chat",
                 input_payload={},
                 worker_id=worker_id,
-                heartbeat_at=utc_now_naive(),
-                lease_expires_at=utc_now_naive() + timedelta(minutes=5),
+                heartbeat_at=utc_now(),
+                lease_expires_at=utc_now() + timedelta(minutes=5),
             )
         )
         await db.commit()

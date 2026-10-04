@@ -7,11 +7,12 @@ import uuid
 from fastapi import HTTPException
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
-from yuxi.modules.workspace.repositories.projects import ProjectHasPendingAgentWorkError, ProjectRepository
+
 from yuxi.modules.workspace.models import Project
-from yuxi.shared.datetime import utc_now_naive
 from yuxi.modules.workspace.paths import allocate_default_user_workdir_path, normalize_workdir_path
+from yuxi.modules.workspace.repositories.projects import ProjectHasPendingAgentWorkError, ProjectRepository
 from yuxi.modules.workspace.workdir import Workdir
+from yuxi.shared.datetime import utc_now
 
 MAX_PROJECT_NAME_LENGTH = 255
 
@@ -164,7 +165,7 @@ async def rename_project_view(*, uid: str, project_id: str, name: str, db) -> di
         raise HTTPException(status_code=404, detail="Project 不存在")
 
     project.name = normalized_name
-    project.updated_at = utc_now_naive()
+    project.updated_at = utc_now()
     await db.commit()
     await db.refresh(project)
     return project.to_dict()
@@ -180,7 +181,7 @@ async def delete_project_view(*, uid: str, project_id: str, db) -> dict:
     try:
         archived_threads = await repository.delete_project_and_archive_threads(
             project,
-            deleted_at=utc_now_naive(),
+            deleted_at=utc_now(),
         )
     except ProjectHasPendingAgentWorkError as exc:
         raise HTTPException(status_code=409, detail="项目内仍有执行或待处理输入，暂不能归档") from exc

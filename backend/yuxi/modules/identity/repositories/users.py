@@ -3,23 +3,18 @@
 import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from datetime import UTC
 from datetime import datetime as dt
 from typing import Annotated, Any
 
-from sqlalchemy import text, delete, func, or_, select
+from sqlalchemy import delete, func, or_, select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from yuxi.infrastructure.postgres.manager import pg_manager
 from yuxi.modules.identity.models import APIKey, User
 from yuxi.modules.schedules.models import ScheduledAgentJob
+from yuxi.shared.datetime import utc_now
 from yuxi.shared.hashing import hash_id
-
-
-def _utc_now() -> dt:
-    # 使用 naive datetime 以匹配 PostgreSQL TIMESTAMP WITHOUT TIME ZONE 列
-    return dt.now(UTC).replace(tzinfo=None)
 
 
 class UserRepository:
@@ -289,7 +284,7 @@ class UserRepository:
             await self.ensure_deletable_superadmin(session, user)
             user.is_deleted = 1
 
-            user.deleted_at = _utc_now()
+            user.deleted_at = utc_now()
             if username:
                 import hashlib
 
@@ -307,7 +302,7 @@ class UserRepository:
         async with self._session() as session:
             await self.ensure_deletable_superadmin(session, user)
             user.is_deleted = 1
-            user.deleted_at = _utc_now()
+            user.deleted_at = utc_now()
             user.username = f"已注销用户-{user.id}"
             user.phone_number = None
             user.password_hash = "DELETED"

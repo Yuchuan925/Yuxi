@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import pytest
+
+from test.support.sqlite import create_utc_sqlite_engine
 import pytest_asyncio
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from yuxi.api.routers.identity.auth import auth
 from yuxi.api.dependencies.auth import get_db, get_required_user
@@ -21,7 +23,7 @@ def cli_auth_security_secrets(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest_asyncio.fixture()
 async def app_client():
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    engine = create_utc_sqlite_engine()
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     factory = async_sessionmaker(engine, expire_on_commit=False)

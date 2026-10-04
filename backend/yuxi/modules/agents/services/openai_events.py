@@ -369,7 +369,6 @@ class OpenAIEventAdapter:
 
 def subagent_created_event(creator, child, agent_name: str) -> dict:
     """已提交委派的子 Thread 身份由业务 Owner 发布。"""
-    from datetime import UTC
 
     return {
         "type": "agent.session.subagent.created",
@@ -382,7 +381,7 @@ def subagent_created_event(creator, child, agent_name: str) -> dict:
             "instructions": None,
             "parent_agent_id": creator.agent_slug,
             "status": "active",
-            "opened_at": child.created_at.replace(tzinfo=UTC).timestamp(),
+            "opened_at": child.created_at.timestamp(),
             "closed_at": None,
         },
         "yuxi": {

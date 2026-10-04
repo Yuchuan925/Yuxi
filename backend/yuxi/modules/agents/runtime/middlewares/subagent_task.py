@@ -13,11 +13,11 @@ from langgraph.prebuilt.tool_node import ToolRuntime
 from langgraph.types import Command
 from pydantic import BaseModel
 
-from yuxi.modules.agents.repositories.definitions import AgentRepository
-from yuxi.modules.identity.repositories.users import UserRepository
-from yuxi.modules.agents.services.input_messages import build_chat_input_message
 from yuxi.infrastructure.postgres.manager import pg_manager
 from yuxi.modules.agents.models.definitions import Agent
+from yuxi.modules.agents.repositories.definitions import AgentRepository
+from yuxi.modules.agents.services.input_messages import build_chat_input_message
+from yuxi.modules.identity.repositories.users import UserRepository
 
 # 四个内建工具的签名固定；仅复用参数类型，闭包与父 Run 仍逐次创建。
 _TOOL_INPUT_SCHEMAS: dict[str, type[BaseModel]] = {}

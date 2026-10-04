@@ -20,6 +20,7 @@ from yuxi.migrations.schema import (
     create_business_tables,
     create_knowledge_tables,
     create_schema_version_table,
+    drop_fresh_schema,
     ensure_business_schema,
     ensure_knowledge_schema,
     record_schema_version,
@@ -31,7 +32,16 @@ from yuxi.modules.system.options import ensure_options_in_db
 async def _require_empty_database() -> None:
     """拒绝未版本化的旧库和上次初始化失败后留下的半成品。"""
     load_models()
-    owned_tables = set(BusinessBase.metadata.tables) | set(KnowledgeBase.metadata.tables)
+    owned_tables = (
+        set(BusinessBase.metadata.tables)
+        | set(KnowledgeBase.metadata.tables)
+        | {
+            "checkpoint_writes",
+            "checkpoint_blobs",
+            "checkpoints",
+            "checkpoint_migrations",
+        }
+    )
     async with pg_manager.async_engine.connect() as conn:
         rows = await conn.execute(text("SELECT tablename FROM pg_tables WHERE schemaname = current_schema()"))
         existing = owned_tables.intersection(rows.scalars().all())
@@ -40,29 +50,41 @@ async def _require_empty_database() -> None:
 
 
 async def main() -> None:
-    """新库建表并记录版本；已有库只接受完整的当前版本。"""
+    """新库建立完整基线；任一初始化阶段失败都会清理后允许重试。"""
     pg_manager.initialize()
     try:
         async with schema_migration_lock(pg_manager):
             versions = await get_schema_versions(pg_manager)
             current = {"business": BUSINESS_SCHEMA_VERSION, "knowledge": KNOWLEDGE_SCHEMA_VERSION}
+            if versions.get("initializing") == 1:
+                # 该标记只在确认空库后提交；崩溃恢复只能清理本初始化器拥有的半成品。
+                await drop_fresh_schema(pg_manager)
+                versions = {}
             if versions == current:
                 return
             if versions:
                 raise RuntimeError(f"Unsupported Yuxi schema versions: {versions}; required {current}")
 
             await _require_empty_database()
-            await create_business_tables(pg_manager)
-            await create_knowledge_tables(pg_manager)
-            await ensure_business_schema(pg_manager)
-            await ensure_knowledge_schema(pg_manager)
-            await setup_langgraph_checkpointer(pg_manager)
-            async with pg_manager.get_async_session_context() as session:
-                await ensure_options_in_db(session)
-                await session.commit()
-            await create_schema_version_table(pg_manager)
-            await record_schema_version(pg_manager, "business", BUSINESS_SCHEMA_VERSION)
-            await record_schema_version(pg_manager, "knowledge", KNOWLEDGE_SCHEMA_VERSION)
+            try:
+                await create_schema_version_table(pg_manager)
+                await record_schema_version(pg_manager, "initializing", 1)
+                await create_business_tables(pg_manager)
+                await create_knowledge_tables(pg_manager)
+                await ensure_business_schema(pg_manager)
+                await ensure_knowledge_schema(pg_manager)
+                await setup_langgraph_checkpointer(pg_manager)
+                async with pg_manager.get_async_session_context() as session:
+                    await ensure_options_in_db(session)
+                    await session.commit()
+                await create_schema_version_table(pg_manager)
+                await record_schema_version(pg_manager, "business", BUSINESS_SCHEMA_VERSION)
+                await record_schema_version(pg_manager, "knowledge", KNOWLEDGE_SCHEMA_VERSION)
+                async with pg_manager.async_engine.begin() as conn:
+                    await conn.execute(text("DELETE FROM yuxi_schema_migrations WHERE domain = 'initializing'"))
+            except BaseException:
+                await drop_fresh_schema(pg_manager)
+                raise
     finally:
         await pg_manager.close()
 

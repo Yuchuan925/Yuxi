@@ -5,9 +5,9 @@ import uuid
 from dataclasses import MISSING, dataclass, field, fields
 from typing import Any, Literal, get_origin, get_type_hints
 
+from yuxi.infrastructure.observability.logging import logger
 from yuxi.modules.agents.runtime.tool_approval import DEFAULT_TOOL_APPROVAL_MODE
 from yuxi.modules.system.options import system_options
-from yuxi.infrastructure.observability.logging import logger
 from yuxi.modules.workspace.filesystem import Workspace
 
 type ResourceSelection = Literal["all"] | list[str]
@@ -525,9 +525,9 @@ async def prepare_agent_runtime_context(
     if not uid:
         return context
 
+    from yuxi.infrastructure.postgres.manager import pg_manager
     from yuxi.modules.extensions.skills.runtime import resolve_runtime_skills_for_context
     from yuxi.modules.identity.repositories.users import UserRepository
-    from yuxi.infrastructure.postgres.manager import pg_manager
 
     await _append_workspace_agent_prompt(context)
 
