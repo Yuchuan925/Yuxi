@@ -71,7 +71,7 @@ def _patch_stream_scaffolding(monkeypatch, *, agent, supply_checkpoint=True, **_
         yield _FakeSession()
 
     monkeypatch.setattr(svc, "_resolve_agent_runtime", resolve)
-    monkeypatch.setattr(svc, "ConversationRepository", ConvRepo)
+    monkeypatch.setattr(svc, "SessionRepository", ConvRepo)
     monkeypatch.setattr(svc, "AgentRunRepository", lambda db: SimpleNamespace(get_run=AsyncMock(return_value=None)))
     monkeypatch.setattr(svc, "_persist_agent_run_langfuse_trace", AsyncMock())
     monkeypatch.setattr(svc, "_build_langfuse_run_context", lambda **kw: LangfuseRunContext())

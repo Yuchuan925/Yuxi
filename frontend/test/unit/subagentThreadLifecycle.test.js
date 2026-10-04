@@ -8,14 +8,14 @@ let server, View, api, enrichSubagentToolCall, getSubagentRunStatus, useAgentThr
 before(async () => {
   globalThis.localStorage = { getItem: () => null, setItem() {}, removeItem() {} }
   server = await createServer({ server: { middlewareMode: true, hmr: false } })
-  ;({ default: View } = await server.ssrLoadModule('/src/modules/conversation/ui/SubagentThreadView.vue'))
-  ;({ useAgentThreadState } = await server.ssrLoadModule('/src/modules/conversation/model/useAgentThreadState.js'))
-  ;({ useApproval } = await server.ssrLoadModule('/src/modules/conversation/model/useApproval.js'))
-  ;({ useAgentStreamHandler } = await server.ssrLoadModule('/src/modules/conversation/model/useAgentStreamHandler.js'))
+  ;({ default: View } = await server.ssrLoadModule('/src/modules/session/ui/SubagentThreadView.vue'))
+  ;({ useAgentThreadState } = await server.ssrLoadModule('/src/modules/session/model/useAgentThreadState.js'))
+  ;({ useApproval } = await server.ssrLoadModule('/src/modules/session/model/useApproval.js'))
+  ;({ useAgentStreamHandler } = await server.ssrLoadModule('/src/modules/session/model/useAgentStreamHandler.js'))
   ;({ agentApi: api } = await server.ssrLoadModule('/src/apis/index.js'))
   api.getThreadTurn = async () => ({ turn_id: 'child-turn', status: 'completed', current_run_id: 'selected' })
   ;({ enrichSubagentToolCall, getSubagentRunStatus } = await server.ssrLoadModule(
-    '/src/modules/conversation/ui/tools/toolRegistry.js'
+    '/src/modules/session/ui/tools/toolRegistry.js'
   ))
 })
 after(async () => {
@@ -193,7 +193,7 @@ test('子详情与恢复订阅共用同一 item 状态，父终态后恢复内�
   const mounted = mount(t)
   await settle()
   const state = mounted.getThreadState('child')
-  state.onGoingConv.items.resumed = {
+  state.ongoingRunGroup.items.resumed = {
     id: 'resumed', type: 'message', role: 'assistant', status: 'completed', turn_id: 'child-turn',
     content: [{ type: 'output_text', text: 'Resumed output' }], yuxi: { run_id: 'resume', message_id: 3 }
   }

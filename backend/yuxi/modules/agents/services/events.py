@@ -232,14 +232,14 @@ def _turn_event(adapter: OpenAIEventAdapter, run, turn, name: str, status: str) 
     return {
         "type": f"agent.session.turn.{name}",
         "event_id": hash_id("event_", f"{run.id}:turn:{name}", length=64),
-        "session_id": run.conversation_thread_id,
+        "session_id": run.thread_id,
         "turn_id": turn.id,
         "turn": {
             "id": turn.id,
             "object": "agent.session.turn",
-            "session_id": run.conversation_thread_id,
+            "session_id": run.thread_id,
             "agent_id": run.agent_slug,
-            "subagent_id": run.conversation_thread_id if run.run_type == "subagent" else None,
+            "subagent_id": run.thread_id if run.run_type == "subagent" else None,
             "status": status,
             "created_at": timestamp(turn.created_at),
             "started_at": timestamp(run.started_at),

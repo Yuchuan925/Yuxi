@@ -11,7 +11,7 @@ import {
   getRunTimingWindow,
   getRunTotalLatencyMs,
   getTimelineMinimumRangeUnits
-} from '../../src/modules/conversation/model/runTiming.js'
+} from '../../src/modules/session/model/runTiming.js'
 
 test('运行时延使用紧凑且稳定的单位', () => {
   assert.equal(formatRunTimingDuration(235), '235ms')

@@ -9,8 +9,8 @@ async (page) => {
     project_id: 'layout-project', agent_slug: 'default-chatbot', model_spec: 'deepseek:deepseek-chat',
     cron_expression: '0 9 * * *', timezone: 'Asia/Shanghai', tool_approval_mode: 'default',
     runs: [
-      { id: 'run-one', trigger: 'scheduled', status: 'completed', scheduled_for: '2026-09-11T01:00:00Z', conversation_available: true, thread_id: 'fixture-thread' },
-      { id: 'run-two', trigger: 'manual', status: 'interrupted', scheduled_for: '2026-09-10T03:12:00Z', conversation_available: true, thread_id: 'fixture-thread', error_message: '需要用户审批工具操作' }
+      { id: 'run-one', trigger: 'scheduled', status: 'completed', scheduled_for: '2026-09-11T01:00:00Z', session_available: true, thread_id: 'fixture-thread' },
+      { id: 'run-two', trigger: 'manual', status: 'interrupted', scheduled_for: '2026-09-10T03:12:00Z', session_available: true, thread_id: 'fixture-thread', error_message: '需要用户审批工具操作' }
     ]
   }
   let projectRequests = 0

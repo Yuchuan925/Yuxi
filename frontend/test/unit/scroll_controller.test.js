@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import ScrollController from '../../src/modules/conversation/model/scrollController.js'
+import ScrollController from '../../src/modules/session/model/scrollController.js'
 
 test('ScrollController 在用户向上滚动离开底部时停用自动滚动', () => {
   let scrollTop = 500

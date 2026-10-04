@@ -2,7 +2,7 @@
 
 状态：implemented
 类型：bug-fix
-Owner：frontend/src/modules/conversation/model/reconnectBackoff.js
+Owner：frontend/src/modules/session/model/reconnectBackoff.js
 
 ## 问题
 

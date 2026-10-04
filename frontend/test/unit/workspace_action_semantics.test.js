@@ -26,7 +26,7 @@ test('项目创建目录选择器包含尚未绑定的项目目录', () => {
 })
 
 test('交付物保存使用工作区路径选择器并传递目标目录', () => {
-  const component = readSource('../../src/modules/conversation/ui/AgentArtifactsCard.vue')
+  const component = readSource('../../src/modules/session/ui/AgentArtifactsCard.vue')
   const api = readSource('../../src/apis/agent_api.js')
 
   assert.match(component, /<WorkspacePathPicker/)

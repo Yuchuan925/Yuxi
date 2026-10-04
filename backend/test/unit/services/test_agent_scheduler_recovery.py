@@ -27,7 +27,7 @@ async def test_recovery_republishes_owned_child_after_parent_completion(
         app_id=None,
         status="pending",
         run_type="subagent",
-        conversation_thread_id="child-thread",
+        thread_id="child-thread",
         runtime_scope_id="child-thread",
         agent_slug="child",
         turn_id="turn-1",
@@ -40,8 +40,8 @@ async def test_recovery_republishes_owned_child_after_parent_completion(
         app_id=None,
         status=parent_status,
         run_type="chat",
-        conversation_id=1,
-        conversation_thread_id="root-thread",
+        session_record_id=1,
+        thread_id="root-thread",
         turn_id="turn-1",
         runtime_scope_id="root-thread",
     )
@@ -98,10 +98,10 @@ async def test_recovery_republishes_owned_child_after_parent_completion(
         def __init__(self, db):
             pass
 
-        async def lock_conversation_by_thread_id(self, thread_id):
+        async def lock_session_by_thread_id(self, thread_id):
             return root
 
-        async def get_conversation_by_thread_id(self, thread_id):
+        async def get_session_by_thread_id(self, thread_id):
             return child_thread
 
     class TurnRepo:
@@ -119,9 +119,9 @@ async def test_recovery_republishes_owned_child_after_parent_completion(
 
     monkeypatch.setattr(scheduler.pg_manager, "get_async_session_context", session_context)
     monkeypatch.setattr(scheduler, "AgentRunRepository", RunRepo)
-    monkeypatch.setattr(scheduler, "ConversationRepository", ConvRepo)
+    monkeypatch.setattr(scheduler, "SessionRepository", ConvRepo)
     monkeypatch.setattr(scheduler, "AgentTurnRepository", TurnRepo)
-    monkeypatch.setattr(scheduler, "resolve_conversation_workdir_binding", binding)
+    monkeypatch.setattr(scheduler, "resolve_session_workdir_binding", binding)
     monkeypatch.setattr(scheduler, "deliver", deliver)
 
     await scheduler.recover_pending_dispatches()

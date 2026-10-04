@@ -19,7 +19,7 @@ from e2e_helpers import (
     skip_if_external_quota,
 )
 from test.live_api_cleanup import (
-    make_test_conversation_title,
+    make_test_session_title,
     remove_e2e_thread_storage,
 )
 from yuxi.modules.extensions.skills.projection import get_user_skills_root_dir
@@ -104,7 +104,7 @@ async def test_main_agent_reads_personal_skill_directly_from_user_workspace(
             headers={**e2e_headers, "Idempotency-Key": f"personal-skill-create-{uuid.uuid4().hex}"},
             json={
                 "agent_id": agent_slug,
-                "title": make_test_conversation_title("personal-skill-e2e"),
+                "title": make_test_session_title("personal-skill-e2e"),
             },
         )
         assert thread_response.status_code == 200, thread_response.text
@@ -115,12 +115,16 @@ async def test_main_agent_reads_personal_skill_directly_from_user_workspace(
             headers={**e2e_headers, "Idempotency-Key": f"personal-skill-input-{uuid.uuid4().hex}"},
             json={
                 "events": [
-                    {"type": "agent.session.input.message", "input": [
+                    {
+                        "type": "agent.session.input.message",
+                        "input": [
                             {
                                 "role": "user",
                                 "content": [{"type": "input_text", "text": "请读取并返回 personal Skill marker。"}],
                             }
-                        ], "yuxi": {"mode": "follow_up"}}
+                        ],
+                        "yuxi": {"mode": "follow_up"},
+                    }
                 ],
             },
         )

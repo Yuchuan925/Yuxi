@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from yuxi.modules.agents.models.inputs import AgentInput
 from yuxi.modules.agents.models.runs import AGENT_RUN_TERMINAL_STATUSES, AgentRun
-from yuxi.modules.agents.models.threads import Conversation
+from yuxi.modules.agents.models.sessions import Session
 from yuxi.modules.agents.models.turns import AgentTurn
 from yuxi.modules.workspace.models import Project
 
@@ -89,26 +89,26 @@ class ProjectRepository:
         )
         return list(result.scalars().all())
 
-    async def list_history_candidates(self, uid: str) -> list[tuple[Conversation, str]]:
+    async def list_history_candidates(self, uid: str) -> list[tuple[Session, str]]:
         """列出可解析实际 Workdir 的普通历史对话。"""
         result = await self.db.execute(
-            select(Conversation, Project.workdir_path)
-            .join(Project, (Project.uid == Conversation.uid) & (Project.id == Conversation.project_id))
+            select(Session, Project.workdir_path)
+            .join(Project, (Project.uid == Session.uid) & (Project.id == Session.project_id))
             .where(
-                Conversation.uid == str(uid),
-                Conversation.status == "active",
+                Session.uid == str(uid),
+                Session.status == "active",
                 Project.status == "active",
             )
-            .order_by(Conversation.updated_at.desc(), Conversation.id.desc())
+            .order_by(Session.updated_at.desc(), Session.id.desc())
         )
         return list(result.all())
 
     async def delete_project_and_archive_threads(self, project: Project, *, deleted_at: datetime) -> int:
         """锁定关联 Thread，确认空闲后归档并软删除 Project。"""
         rows = await self.db.execute(
-            select(Conversation.thread_id)
-            .where(Conversation.uid == project.uid, Conversation.project_id == project.id)
-            .order_by(Conversation.thread_id)
+            select(Session.thread_id)
+            .where(Session.uid == project.uid, Session.project_id == project.id)
+            .order_by(Session.thread_id)
             .with_for_update()
         )
         thread_ids = list(rows.scalars())
@@ -116,14 +116,14 @@ class ProjectRepository:
             active_turn = await self.db.scalar(
                 select(AgentTurn.id)
                 .where(
-                    AgentTurn.conversation_thread_id.in_(thread_ids),
+                    AgentTurn.thread_id.in_(thread_ids),
                     AgentTurn.status.in_(("running", "waiting", "cancelling")),
                 )
                 .limit(1)
             )
             pending_input = await self.db.scalar(
                 select(AgentInput.id)
-                .where(AgentInput.conversation_thread_id.in_(thread_ids), AgentInput.status == "pending")
+                .where(AgentInput.thread_id.in_(thread_ids), AgentInput.status == "pending")
                 .limit(1)
             )
             active_run = await self.db.scalar(
@@ -131,7 +131,7 @@ class ProjectRepository:
                 .where(
                     AgentRun.uid == project.uid,
                     or_(
-                        AgentRun.conversation_thread_id.in_(thread_ids),
+                        AgentRun.thread_id.in_(thread_ids),
                         AgentRun.runtime_scope_id.in_(thread_ids),
                     ),
                     or_(
@@ -145,11 +145,11 @@ class ProjectRepository:
                 raise ProjectHasPendingAgentWorkError
 
         result = await self.db.execute(
-            update(Conversation)
+            update(Session)
             .where(
-                Conversation.uid == project.uid,
-                Conversation.project_id == project.id,
-                Conversation.status.in_(("active", "subagent")),
+                Session.uid == project.uid,
+                Session.project_id == project.id,
+                Session.status.in_(("active", "subagent")),
             )
             .values(status="archived", updated_at=deleted_at)
         )

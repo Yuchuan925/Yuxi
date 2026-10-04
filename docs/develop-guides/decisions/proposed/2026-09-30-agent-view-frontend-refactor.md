@@ -65,7 +65,7 @@ flowchart TD
 
 源码规模在读取时为：AgentView 377 行，AgentChatComponent 5,629 行，MessageInputComponent 1,731 行，AgentInputArea 489 行，AgentPanel 1,824 行，MessageDebugPanel 2,098 行，AppLayout 1,034 行。统计包含模板、脚本和样式，仅用于定位审阅压力；重构验收以职责和行为为准。
 
-源码证据：[AgentView](https://github.com/xerrors/Yuxi/blob/main/frontend/src/pages/AgentView.vue)、[AgentChatComponent](https://github.com/xerrors/Yuxi/blob/main/frontend/src/modules/conversation/ui/ConversationWorkspace.vue)、[AppLayout](https://github.com/xerrors/Yuxi/blob/main/frontend/src/app/layouts/AppLayout.vue)。链接提供稳定定位，具体判断以工作区调研快照为准，远端 main 可能与快照不同。
+源码证据：[AgentView](https://github.com/xerrors/Yuxi/blob/main/frontend/src/pages/AgentView.vue)、[AgentChatComponent](https://github.com/xerrors/Yuxi/blob/main/frontend/src/modules/session/ui/SessionWorkspace.vue)、[AppLayout](https://github.com/xerrors/Yuxi/blob/main/frontend/src/app/layouts/AppLayout.vue)。链接提供稳定定位，具体判断以工作区调研快照为准，远端 main 可能与快照不同。
 
 ### 影响维护性的具体问题
 
@@ -87,7 +87,7 @@ flowchart TD
 | App、router guard、AppLayout、AgentView、聊天组件均包含 agent 初始化入口；AppLayout 还加载其他域资源 | 启动 Owner 分散，进入一个页面会牵动多个领域；初始化中的调用也缺少统一的完成承诺 |
 | 单测包含纯函数、Vue 运行时以及源码字符串断言；浏览器脚本由开发者在登录环境手动执行 | 已有有效证据值得保留，但字符串存在性无法证明 IME、焦点、粘贴、拖拽和真实订阅行为 |
 
-源码证据：[chatThreads store](https://github.com/xerrors/Yuxi/blob/main/frontend/src/modules/conversation/model/chatThreads.js)、[ThreadMessageList](https://github.com/xerrors/Yuxi/blob/main/frontend/src/modules/conversation/ui/ThreadMessageList.vue)、[SubagentThreadView](https://github.com/xerrors/Yuxi/blob/main/frontend/src/modules/conversation/ui/SubagentThreadView.vue)、[输入包装](https://github.com/xerrors/Yuxi/blob/main/frontend/src/modules/conversation/ui/AgentInputArea.vue)、[编辑器](https://github.com/xerrors/Yuxi/blob/main/frontend/src/modules/conversation/ui/MessageInputComponent.vue)、[Thread SSE](https://github.com/xerrors/Yuxi/blob/main/frontend/src/modules/conversation/model/useAgentRunStream.js)、[agent store](https://github.com/xerrors/Yuxi/blob/main/frontend/src/modules/agents/model/agent.js)。
+源码证据：[chatThreads store](https://github.com/xerrors/Yuxi/blob/main/frontend/src/modules/session/model/chatThreads.js)、[ThreadMessageList](https://github.com/xerrors/Yuxi/blob/main/frontend/src/modules/session/ui/ThreadMessageList.vue)、[SubagentThreadView](https://github.com/xerrors/Yuxi/blob/main/frontend/src/modules/session/ui/SubagentThreadView.vue)、[输入包装](https://github.com/xerrors/Yuxi/blob/main/frontend/src/modules/session/ui/AgentInputArea.vue)、[编辑器](https://github.com/xerrors/Yuxi/blob/main/frontend/src/modules/session/ui/MessageInputComponent.vue)、[Thread SSE](https://github.com/xerrors/Yuxi/blob/main/frontend/src/modules/session/model/useAgentRunStream.js)、[agent store](https://github.com/xerrors/Yuxi/blob/main/frontend/src/modules/agents/model/agent.js)。
 
 ### 可以保留的基础
 
@@ -95,31 +95,31 @@ flowchart TD
 
 这些能力先按新 Owner 迁移并复核消费者。现有测试中的消息归属、父子隔离、队列恢复、图片顺序、审批过期、HTML 清洗与对象 URL 释放等结果约束继续使用。重构允许替换实现和测试装配方式，保留独立的业务 oracle。
 
-相关 Owner：[消息转换](https://github.com/xerrors/Yuxi/blob/main/frontend/src/modules/conversation/model/messageProcessor.js)、[消息分组](https://github.com/xerrors/Yuxi/blob/main/frontend/src/modules/conversation/model/messageGrouping.js)、[滚动](https://github.com/xerrors/Yuxi/blob/main/frontend/src/modules/conversation/model/scrollController.js)、[Markdown 安全渲染](https://github.com/xerrors/Yuxi/blob/main/frontend/src/shared/lib/markdown_preview.js)、[设置惰性装配](https://github.com/xerrors/Yuxi/blob/main/frontend/src/modules/settings/ui/SettingsModal.vue)。
+相关 Owner：[消息转换](https://github.com/xerrors/Yuxi/blob/main/frontend/src/modules/session/model/messageProcessor.js)、[消息分组](https://github.com/xerrors/Yuxi/blob/main/frontend/src/modules/session/model/messageGrouping.js)、[滚动](https://github.com/xerrors/Yuxi/blob/main/frontend/src/modules/session/model/scrollController.js)、[Markdown 安全渲染](https://github.com/xerrors/Yuxi/blob/main/frontend/src/shared/lib/markdown_preview.js)、[设置惰性装配](https://github.com/xerrors/Yuxi/blob/main/frontend/src/modules/settings/ui/SettingsModal.vue)。
 
 ## 提案
 
 ### 实现方案
 
-以 `conversation` 业务模块拥有 Thread 阅读、Input 提交和等待点响应，以 `workspace` 拥有文件操作与预览，以 `agents` 拥有智能体目录和编辑，以应用层拥有路由、导航和工作区组合。会话内部只设数据会话、命令、投影和 UI 四类边界；每个文件对应实际消费者，避免按技术名词建立大量空层。
+以 `session` 业务模块拥有 Thread 阅读、Input 提交和等待点响应，以 `workspace` 拥有文件操作与预览，以 `agents` 拥有智能体目录和编辑，以应用层拥有路由、导航和工作区组合。会话内部只设数据会话、命令、投影和 UI 四类边界；每个文件对应实际消费者，避免按技术名词建立大量空层。
 
-现有 Thread 入口的主链路调整为：URL → ThreadConversation 的 `threadId` → 会话模块直接读取授权快照 → 建立 Thread 事件订阅 → 统一投影 → 消息列表。输入主链路为：ConversationComposer 的明确 target → 草稿快照 → 必要时创建 Thread → 提交 Input → 用持久回执确认接收 → 会话模块观察后续执行。面板从工作区取得自己的 target，只读取所需切片；面板网络失败不会中断输入或消息订阅。
+现有 Thread 入口的主链路调整为：URL → ThreadSession 的 `threadId` → 会话模块直接读取授权快照 → 建立 Thread 事件订阅 → 统一投影 → 消息列表。输入主链路为：SessionComposer 的明确 target → 草稿快照 → 必要时创建 Thread → 提交 Input → 用持久回执确认接收 → 会话模块观察后续执行。面板从工作区取得自己的 target，只读取所需切片；面板网络失败不会中断输入或消息订阅。
 
 ### AgentView 可见能力的归属
 
 | 用户能力 | 目标 Owner | 与主会话的关系 |
 | --- | --- | --- |
-| 项目分组、对话分页、搜索、重命名、置顶、归档、未读提示 | 应用导航组合 + conversation/projects 数据模块 | 导航改变 URL，读取组件不依赖列表是否含有目标 |
-| 对话标题、加载、空态、错误、断线提示、生成状态 | ThreadConversation | 由该 Thread 的数据与连接状态决定 |
+| 项目分组、对话分页、搜索、重命名、置顶、归档、未读提示 | 应用导航组合 + session/projects 数据模块 | 导航改变 URL，读取组件不依赖列表是否含有目标 |
+| 对话标题、加载、空态、错误、断线提示、生成状态 | ThreadSession | 由该 Thread 的数据与连接状态决定 |
 | 用户消息、回答、推理、工具过程、来源、复制、图片、附件、产物卡片 | 会话投影 + timeline 展示组件 | 共享一个展示模型，操作输出明确意图 |
-| 文本、提及、图片、附件、粘贴、拖拽 | ConversationComposer + composer editor | 归属同一个草稿，传输格式在 API 边界转换 |
+| 文本、提及、图片、附件、粘贴、拖拽 | SessionComposer + composer editor | 归属同一个草稿，传输格式在 API 边界转换 |
 | Agent、Project、模型与工具审批策略选择 | Composer 的上下文区 + 对应目录模块 | 新 Thread 可选 Agent/Project；已有 Thread 使用持久绑定，配置按 Input 接收冻结 |
 | 普通发送、运行中排队、引导、停止、取消排队、继续队列 | 会话命令 + Composer/QueuePanel | 显式命令，前端只投影服务端 FIFO |
 | 回答问题、工具批准或拒绝 | TurnActionPanel + 会话命令 | 独立核心区域，绑定 turn/run/waitpoint；普通输入可编辑但不能提交 |
-| 上下文占用、压缩、待办、附件摘要、产物摘要 | ConversationInspector | 状态摘要按需读取，压缩通过会话命令执行 |
-| 子智能体状态、打开指定子 Run 对话 | 子 Run 观察模块 + ThreadConversation | 共享传输和投影基础，Run 过滤作为查看范围 |
+| 上下文占用、压缩、待办、附件摘要、产物摘要 | SessionInspector | 状态摘要按需读取，压缩通过会话命令执行 |
+| 子智能体状态、打开指定子 Run 对话 | 子 Run 观察模块 + ThreadSession | 共享传输和投影基础，Run 过滤作为查看范围 |
 | 对话目录、个人空间、文件检索、预览、编辑、下载、删除 | WorkspaceFilesPanel + 文件模块 | 使用明确 scope，拥有标签、缓存、错误和生命周期 |
-| 消息审计、运行时序与 Debug | ConversationDebugPanel | 超级管理员入口和独立审计 API，按需装配 |
+| 消息审计、运行时序与 Debug | SessionDebugPanel | 超级管理员入口和独立审计 API，按需装配 |
 | 新建或编辑智能体、运行配置、共享配置 | agents 模块 | 快捷入口打开同一编辑功能，聊天只刷新有关目录与配置 |
 | 账号、API Key、基础/OCR/用户/部门/环境配置、主题 | settings/identity/system 模块 + 全局 overlay | 按权限与实际打开的设置项加载 |
 | 后台任务中心、应用导航、品牌与外部项目入口 | tasks 模块与应用 shell | 具有应用级生命周期，聊天不拥有其初始化 |
@@ -128,13 +128,13 @@ flowchart TD
 
 ### 目标组件关系
 
-下图仅描述提案。ThreadConversation 可以单独嵌入，ConversationWorkspace 是 AgentView 使用的组合界面。
+下图仅描述提案。ThreadSession 可以单独嵌入，SessionWorkspace 是 AgentView 使用的组合界面。
 
 ```mermaid
 flowchart TD
-  View[AgentView 路由适配] --> Workspace[ConversationWorkspace]
-  Workspace --> Reader[ThreadConversation]
-  Workspace --> Composer[ConversationComposer]
+  View[AgentView 路由适配] --> Workspace[SessionWorkspace]
+  Workspace --> Reader[ThreadSession]
+  Workspace --> Composer[SessionComposer]
   Workspace --> Actions[TurnActionPanel 与 QueuePanel]
   Workspace --> Dock[WorkspacePanelDock]
   Reader --> Session[按身份与 Thread 隔离的会话模块]
@@ -143,20 +143,20 @@ flowchart TD
   Commands --> Session
   Session --> Projection[统一消息投影]
   Projection --> Reader
-  Dock --> Inspector[ConversationInspector]
+  Dock --> Inspector[SessionInspector]
   Dock --> Files[WorkspaceFilesPanel]
-  Dock --> Child[ThreadConversation 指定子 Run]
-  Dock --> Debug[ConversationDebugPanel]
+  Dock --> Child[ThreadSession 指定子 Run]
+  Dock --> Debug[SessionDebugPanel]
 ```
 
-AgentView 只负责将 route 参数与新建上下文传给 ConversationWorkspace，以及在新 Thread 创建后导航。页内高级能力的装配属于 workspace，避免将原 5,629 行原样搬进另一个总控组件。组合层不写 SSE parser、消息合并、上传实现或文件缓存算法。
+AgentView 只负责将 route 参数与新建上下文传给 SessionWorkspace，以及在新 Thread 创建后导航。页内高级能力的装配属于 workspace，避免将原 5,629 行原样搬进另一个总控组件。组合层不写 SSE parser、消息合并、上传实现或文件缓存算法。
 
 ### 自洽的 Thread 对话组件
 
-建议公开组件命名 `ThreadConversation`。最小用法如下，调用方提供 Thread 身份，组件完成授权读取、历史展示、流式更新、重连、错误提示和滚动。登录与 HTTP 客户端由应用提供，调用方无需先选择 Agent、初始化侧栏或传入消息数组。
+建议公开组件命名 `ThreadSession`。最小用法如下，调用方提供 Thread 身份，组件完成授权读取、历史展示、流式更新、重连、错误提示和滚动。登录与 HTTP 客户端由应用提供，调用方无需先选择 Agent、初始化侧栏或传入消息数组。
 
 ```vue
-<ThreadConversation :thread-id="threadId" />
+<ThreadSession :thread-id="threadId" />
 ```
 
 | 公开契约 | 建议语义 |
@@ -168,13 +168,13 @@ AgentView 只负责将 route 参数与新建上下文传给 ConversationWorkspac
 
 组件默认只读。独立阅读可以显示“正在运行”“等待回答”“失败”和暂停摘要，回答或审批由 TurnActionPanel 提供。它不会因为挂载就创建消息、取消任务或标记已读；是否记录已读由用户实际查看的工作区负责。复制、展开、查看来源属于阅读行为。
 
-文件、引用和产物的基本查看入口由 conversation 的轻量资源预览组合提供。宿主接管 `open-resource` 时使用工作区面板。资源加载依旧通过对应领域 API；ThreadConversation 的独立使用不得隐含要求父组件提供文件面板或字符串注入方法。
+文件、引用和产物的基本查看入口由 session 的轻量资源预览组合提供。宿主接管 `open-resource` 时使用工作区面板。资源加载依旧通过对应领域 API；ThreadSession 的独立使用不得隐含要求父组件提供文件面板或字符串注入方法。
 
-内部区分三项职责：`useThreadSession` 提供会话数据和观察生命周期，`projectConversation` 将持久快照与增量转成一致行模型，`ConversationTimeline` 渲染行模型并管理本实例的滚动、展开和选择。展示叶子组件接收完整展示数据，不从全局“选中 Agent”获取来源名称。这里的自洽体现在公开使用闭合；内部共享数据模块仍可独立测试和复用。[Vue composable 文档](https://vuejs.org/guide/reusability/composables.html)支持封装有状态逻辑，也明确普通 composable 调用会创建独立状态，因此共享会话需要显式的共享 Owner。
+内部区分三项职责：`useThreadSession` 提供会话数据和观察生命周期，`projectSession` 将持久快照与增量转成一致行模型，`SessionTimeline` 渲染行模型并管理本实例的滚动、展开和选择。展示叶子组件接收完整展示数据，不从全局“选中 Agent”获取来源名称。这里的自洽体现在公开使用闭合；内部共享数据模块仍可独立测试和复用。[Vue composable 文档](https://vuejs.org/guide/reusability/composables.html)支持封装有状态逻辑，也明确普通 composable 调用会创建独立状态，因此共享会话需要显式的共享 Owner。
 
 #### 会话数据与观察生命周期
 
-建议 conversation 模块用一个 Pinia store 保存按身份作用域和 `threadId` 分桶的服务端投影。`useThreadSession` 负责为 UI 获取和释放观察需求；AbortController、重连 timer 和订阅消费者放在运行时管理对象，业务快照保持可序列化。相同身份下 Timeline、Composer、Inspector 访问同一个 Thread 时共享一份实体数据和至多一条 Thread SSE。
+建议 session 模块用一个 Pinia store 保存按身份作用域和 `threadId` 分桶的服务端投影。`useThreadSession` 负责为 UI 获取和释放观察需求；AbortController、重连 timer 和订阅消费者放在运行时管理对象，业务快照保持可序列化。相同身份下 Timeline、Composer、Inspector 访问同一个 Thread 时共享一份实体数据和至多一条 Thread SSE。
 
 | 状态种类 | Owner | 规则 |
 | --- | --- | --- |
@@ -194,7 +194,7 @@ Thread 切换、用户退出、组件卸载、KeepAlive 停用和隐藏标签页
 
 投影保留后端明确的 Thread/Turn/Input/Run 关系：按 Turn 展示一轮工作，按 Run 展示其中执行过程，用持久 Message 身份或协议明确来源身份对账。排队 Input 即使尚无 Run 也有自己的消息与投递状态；普通输入不依赖空白 Run 占位。显示进度时区分接收中、已排队、执行中、等待用户和业务终态。
 
-将主聊天与 ThreadMessageList 的重复渲染统一到 `ConversationTimeline`。推荐行模型只覆盖现有消费者：用户消息、回答、执行过程组、产物、配置提示和状态提示。工具结果使用 `(runId, toolCallId)` 关联。父流携带的子运行身份属于事件来源，子消息写入子 Thread 桶；根 Turn 的状态只能由对应根关系更新。
+将主聊天与 ThreadMessageList 的重复渲染统一到 `SessionTimeline`。推荐行模型只覆盖现有消费者：用户消息、回答、执行过程组、产物、配置提示和状态提示。工具结果使用 `(runId, toolCallId)` 关联。父流携带的子运行身份属于事件来源，子消息写入子 Thread 桶；根 Turn 的状态只能由对应根关系更新。
 
 Turn 的最终回答必须来自 `result_run_id` 指向 Run 的 `output_message_id`。不能用“最后一条 AI 消息”或最后一个 Run 作为最终结果。History 返回 `thread/runs/items`，公开 item 携带稳定身份、Turn/Run 和输入归属；实时事件与历史快照使用同一公开投影。Turn 的完整结果与等待点由精确 Turn 读取拥有，不能以 item 的排序代替结果关系。实施统一阅读器时复用会话模块的公开 item reducer；若按 Turn 查询造成批量开销，再单独提出紧凑结果映射的后端变更。
 
@@ -212,14 +212,14 @@ Thread cursor 是后端拥有的复合游标，客户端保存原值并通过 La
 
 ### 统一输入组件
 
-建议将产品级输入命名为 `ConversationComposer`，将纯编辑表面命名为 `ComposerEditor`。前者自洽地管理完整草稿、上传、上下文选择、命令可用性与提交回执；后者负责文字、提及节点、光标、键盘、IME、粘贴和拖拽事件。Agent/Project/模型目录和附件传输由对应数据模块提供，页面不再自行拼接输入内容。
+建议将产品级输入命名为 `SessionComposer`，将纯编辑表面命名为 `ComposerEditor`。前者自洽地管理完整草稿、上传、上下文选择、命令可用性与提交回执；后者负责文字、提及节点、光标、键盘、IME、粘贴和拖拽事件。Agent/Project/模型目录和附件传输由对应数据模块提供，页面不再自行拼接输入内容。
 
 最小用法区分已有 Thread 和新建草稿。以下对象是组件契约草案，字段名在类型实施阶段定稿。
 
 ```vue
-<ConversationComposer :target="{ kind: 'thread', threadId }" />
+<SessionComposer :target="{ kind: 'thread', threadId }" />
 
-<ConversationComposer
+<SessionComposer
   :target="{ kind: 'draft', draftId, agentId, projectId }"
   @thread-created="navigateToThread"
 />
@@ -290,21 +290,21 @@ loading、empty、error、上传部分失败、停止待确认、断线、只读
 - Input 领取使用每个 Thread 至多一个观察循环，不为每条 Input 创建独立长期 timer；消费、取消、拒绝和等待状态都以服务端队列快照及精确 Input 读取为准。若要进一步减少读取次数，先由 Public Thread API 提供批量状态/事件契约，前端不得猜测已消费 Input。
 - 主 Thread 与子 Run SSE 共用有界指数退避；有效事件重置尝试次数，断流重连保留 Thread cursor，终态、隐藏和卸载清理 timer。固定间隔不得作为长期恢复策略。
 - 协议 item 的持久事实与展示平滑分离，reducer 不在每个 delta 上进行无界 JSON 深拷贝；替换克隆方式必须保留 undefined/数组/嵌套对象语义并有长流基准。
-- 主聊天与子 Thread 使用同一个公开 item 投影 Owner；工具调用归一化属于 conversation model，UI registry 只装配图标和 renderer 入口。
+- 主聊天与子 Thread 使用同一个公开 item 投影 Owner；工具调用归一化属于 session model，UI registry 只装配图标和 renderer 入口。
 - 低频工具 renderer 可以按需加载，但未知工具和加载失败必须有局部安全卡片；没有实际 chunk 与首屏测量前不引入通用插件系统。
 
 每条机制都需要能恢复目标缺陷的负向测试；未完成后端通知或恢复 cursor 契约时，阶段退出条件保持 `Not run`，不能用页面看起来更新替代真实事件/持久状态证据。
 
 ### 非核心功能的组织
 
-ConversationWorkspace 使用一个面板停靠区，负责宽度、响应式位置、标签与开关。 面板选择用明确的联合类型表达，例如 file scope/resource、child thread/run、inspector thread、debug thread；各面板拥有数据读取和错误状态。面板组合只覆盖已有类型，不建设动态插件框架、事件总线或通用 panel engine。
+SessionWorkspace 使用一个面板停靠区，负责宽度、响应式位置、标签与开关。 面板选择用明确的联合类型表达，例如 file scope/resource、child thread/run、inspector thread、debug thread；各面板拥有数据读取和错误状态。面板组合只覆盖已有类型，不建设动态插件框架、事件总线或通用 panel engine。
 
 | 功能模块 | 自己拥有的内容 | 从外部取得的最小上下文 |
 | --- | --- | --- |
 | WorkspaceFilesPanel | 对话目录与个人空间切换、树加载、搜索、文件操作、预览标签和缓存、Blob URL 释放 | 显式文件 scope，必要时 Thread/Project 身份 |
-| ConversationInspector | token 用量、上下文构成、待办与资源摘要、刷新 UI | Thread 身份及会话只读切片，压缩动作委托会话命令 |
-| 子智能体详情 | 指定 Run 的标题与元信息、共享 ThreadConversation 阅读器 | child threadId/runId，不从最后一个工具结果猜测目标 |
-| ConversationDebugPanel | audits 请求、运行时序、截断提示、查询错误与筛选 | Thread 身份及必要只读运行摘要 |
+| SessionInspector | token 用量、上下文构成、待办与资源摘要、刷新 UI | Thread 身份及会话只读切片，压缩动作委托会话命令 |
+| 子智能体详情 | 指定 Run 的标题与元信息、共享 ThreadSession 阅读器 | child threadId/runId，不从最后一个工具结果猜测目标 |
+| SessionDebugPanel | audits 请求、运行时序、截断提示、查询错误与筛选 | Thread 身份及必要只读运行摘要 |
 | AgentEditorDialog | 配置草稿、表单校验、保存、共享范围和冲突反馈 | agentId 或新建模式，保存后使对应目录缓存失效 |
 | 全局设置与任务中心 | 对应领域的数据、权限入口与 lifecycle | 登录身份和模块自己的 target |
 
@@ -314,7 +314,7 @@ ConversationWorkspace 使用一个面板停靠区，负责宽度、响应式位�
 
 隐藏或停用面板停止其轮询和昂贵解析；打开面板才加载其代码与数据。Inspector 需要的轻量状态摘要与运行时等待点读取分开，避免关闭状态面板时连核心审批也无法恢复。子 Run 状态观察服务现有运行进度展示，详细消息读取仅在详情可见时启用。现有子流数量预算保留为约束，统一传输去重后再测量，不为每个卡片开独立 SSE。
 
-工具渲染继续使用显式静态 registry，未知工具显示安全的通用卡片。展示组件只接收规范化调用数据，资源与子线程点击通过有限的 typed action context 交给所在会话边界。该 context 由 ThreadConversation 自身提供，独立嵌入也闭合；替换页面私有的字符串 inject。昂贵且低频的 renderer 按需加载，渲染错误有局部错误态，不能拖垮整条消息列表。
+工具渲染继续使用显式静态 registry，未知工具显示安全的通用卡片。展示组件只接收规范化调用数据，资源与子线程点击通过有限的 typed action context 交给所在会话边界。该 context 由 ThreadSession 自身提供，独立嵌入也闭合；替换页面私有的字符串 inject。昂贵且低频的 renderer 按需加载，渲染错误有局部错误态，不能拖垮整条消息列表。
 
 ### 全局目录与依赖规则
 
@@ -324,13 +324,13 @@ ConversationWorkspace 使用一个面板停靠区，负责宽度、响应式位�
 src/
   app/                       # 启动、router、身份生命周期、layouts
   pages/                     # 路由适配与页面组合
-    agent/                   # AgentView、ConversationWorkspace、面板停靠组合
+    agent/                   # AgentView、SessionWorkspace、面板停靠组合
   modules/
-    conversation/
+    session/
       index.ts               # 对外组件与必要类型
       model/                 # 消息投影、草稿、输入与动作类型
       data/                  # Thread session、命令、订阅生命周期
-      ui/                    # ThreadConversation、Composer、等待点、timeline
+      ui/                    # ThreadSession、Composer、等待点、timeline
     agents/                  # 目录、详情、配置编辑
     projects/                # Project 数据与选择、项目导航
     workspace/               # 文件数据、预览、搜索、资源操作
@@ -347,7 +347,7 @@ src/
   assets/                    # 现有全局 token、静态资源
 ```
 
-依赖方向为 `app/pages → modules 的公开入口 → apis/shared`。模块内部允许直接导入本模块；跨模块只使用公开入口，禁止反向导入页面或布局。全局 sidebar 与 ConversationWorkspace 位于应用组合层，可以协调 Projects、Conversation、Agents、Workspace，业务模块不借 sidebar 互相更新。
+依赖方向为 `app/pages → modules 的公开入口 → apis/shared`。模块内部允许直接导入本模块；跨模块只使用公开入口，禁止反向导入页面或布局。全局 sidebar 与 SessionWorkspace 位于应用组合层，可以协调 Projects、Session、Agents、Workspace，业务模块不借 sidebar 互相更新。
 
 各域自己的 model/data/ui 位于一起，取代顶层 components/composables/utils/stores 中混合增长的业务文件。shared 只接收无业务状态和网络职责的复用能力；知识来源列表、模型选择、OCR 配置、Skill 编辑等即使多页面复用，也属于各自业务域。generic 的 common/shared 两套目录统一为 shared/ui。
 
@@ -357,7 +357,7 @@ API 继续集中在 `src/apis`，遵守现有仓库规则。将 agent_api 的智
 
 ### 路由与全局状态
 
-URL 拥有页面选中的 Thread/Project/resource，导航列表 store 只保存列表、分页、搜索和摘要缓存。重构后的 ThreadConversation 始终直接读取目标，不依赖列表 upsert 才能工作；列表刷新、归档和项目删除通过明确动作更新导航，实体读取失败有独立错误页面。
+URL 拥有页面选中的 Thread/Project/resource，导航列表 store 只保存列表、分页、搜索和摘要缓存。重构后的 ThreadSession 始终直接读取目标，不依赖列表 upsert 才能工作；列表刷新、归档和项目删除通过明确动作更新导航，实体读取失败有独立错误页面。
 
 Pinia 保存需要跨组件共享的实体投影、目录和应用偏好。组件实例保存滚动和展开，表单保存编辑草稿，运行时对象保存网络生命周期。agent store 的目录、全局偏好、智能体编辑草稿和会话执行覆盖拆成对应 Owner；读取历史 Thread 不改变新建草稿选择的 Agent。
 
@@ -400,13 +400,13 @@ Dashboard 的跨用户审计继续使用其独立授权入口。可以复用只�
 | 阶段 | 交付内容 | 验证方式与退出条件 |
 | --- | --- | --- |
 | 1 契约与证据基线 | 收敛 DTO/事件/草稿类型，确认 History 结果映射与恢复位置，记录现有 DOM 与运行语义 | 最小 unit、真实协议样本及相关 integration；结果与 cursor 约束尚有缺口时先解决 Owner 契约 |
-| 2 会话读取核心 | Thread session、统一投影、ThreadConversation 独立挂载，主/子运行范围共享基础 | 两个不同 Thread 和同 Thread 双实例、重放/resync/终态回读、隐藏释放；组件无需侧栏初始化 |
-| 3 输入与控制 | ConversationComposer、完整草稿、回执结果、TurnActionPanel 和 QueuePanel | IME/图片/附件/提交期间编辑、超时同 key 确认、FIFO/steer/审批的真实链路 |
+| 2 会话读取核心 | Thread session、统一投影、ThreadSession 独立挂载，主/子运行范围共享基础 | 两个不同 Thread 和同 Thread 双实例、重放/resync/终态回读、隐藏释放；组件无需侧栏初始化 |
+| 3 输入与控制 | SessionComposer、完整草稿、回执结果、TurnActionPanel 和 QueuePanel | IME/图片/附件/提交期间编辑、超时同 key 确认、FIFO/steer/审批的真实链路 |
 | 4 Agent 工作区 | AgentView 改为路由组合，接入新会话和输入，移出面板功能 | 深链接、前进后退、新建/附件提前创建、双实例不串状态、浅深色与窄屏；移除主聊天重复流程 |
 | 5 全局业务模块 | AppLayout、启动 Owner、目录/表单拆分、文件/设置/扩展/知识/任务/统计迁移 | 各域最小 lint/unit/build + 风险对应浏览器；共享基础不得反向依赖页面 |
 | 6 清理与交付 | 删除旧组件、旧状态、无消费者兼容分支与旧测试装配，补齐 owning 文档 | import 和运行入口核对、完整 frontend gate、必要真实 E2E、独立 Review；所有现有能力有明确去向 |
 
-第一份实现应优先交付 ThreadConversation 与会话模块，消费场景为 AgentView 和指定子 Run 详情。输入、面板和全局组织随后围绕同一事实 Owner 收敛。全前端重构的完成范围包括上述全部业务域，其他页面须在迁移前深读其 Owner；本报告不以 AgentView 瘦身作为整个前端完成的替代验收。
+第一份实现应优先交付 ThreadSession 与会话模块，消费场景为 AgentView 和指定子 Run 详情。输入、面板和全局组织随后围绕同一事实 Owner 收敛。全前端重构的完成范围包括上述全部业务域，其他页面须在迁移前深读其 Owner；本报告不以 AgentView 瘦身作为整个前端完成的替代验收。
 
 公开 API、用户数据、权限和路径隔离继续使用当前契约。内部组件接口可直接替换，无消费者的旧接口删除。若证据表明需要新的后端阅读投影或恢复契约，将其作为独立的小型前置变更审查，保留 service/repository 归属，不在前端引入猜测式兼容。
 
@@ -444,7 +444,7 @@ TypeScript、组件行为测试和确定性浏览器链路需要一次建设投�
 
 | 验收主张 | 失败面 | 语义 Owner | 直接证据 / 命令 | 负向案例 | 当前结果 |
 | --- | --- | --- | --- | --- | --- |
-| 仅传 threadId 可读取与实时观察 | 依赖 Agent/侧栏初始化，深链接失败 | ThreadConversation / session | 独立组件挂载 + 真实 Thread HTTP/SSE | 目标不在前 100 个列表项，侧栏未挂载 | Not run |
+| 仅传 threadId 可读取与实时观察 | 依赖 Agent/侧栏初始化，深链接失败 | ThreadSession / session | 独立组件挂载 + 真实 Thread HTTP/SSE | 目标不在前 100 个列表项，侧栏未挂载 | Not run |
 | 多实例共享数据且视口隔离 | SSE 重复、A 消息写入 B、滚动串实例 | session / Timeline | 双实例 DOM、网络连接与释放结果 | A/B 响应乱序；同 Thread 第二个实例关闭 | Not run |
 | 重放和历史交接不重复、不漏结果 | 快照/流竞态、过期 cursor、恢复成空 | transport / reducer / 后端 events | 协议 fixture + 真实重连与持久结果 | 取快照时完成 Run、事件重复、Redis 增量过期 | Not run |
 | 最终结果归属明确 | 相邻 Run、子 Run 或模型审计替代顶层结果 | projection / 后端 turns | 持久 result_run/output_message 与 DOM 对照 | 同 Turn 存在旧 Run 和子 Run 的更晚输出 | Not run |

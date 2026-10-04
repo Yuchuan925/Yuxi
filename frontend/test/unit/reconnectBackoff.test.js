@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { getReconnectDelay } from '../../src/modules/conversation/model/reconnectBackoff.js'
+import { getReconnectDelay } from '../../src/modules/session/model/reconnectBackoff.js'
 
 test('SSE 重连延迟按指数增长并封顶', () => {
   assert.deepEqual(

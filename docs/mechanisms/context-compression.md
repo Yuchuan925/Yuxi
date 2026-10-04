@@ -52,7 +52,7 @@ checkpoint 只拥有模型继续运行所需的压缩视图；PostgreSQL Message
 
 主智能体聊天状态面板提供“压缩上下文”按钮。按钮发起一次同步维护请求，不创建 AgentRun、排队请求或新的 Run 类型。
 
-服务从检查空闲到 checkpoint 更新期间持有 Conversation 行锁。线程存在运行中 Run、等待交互的 Run 或排队 Input 时返回 `409 thread_busy`；普通输入接入使用同一把锁，因此不会与主动压缩并发修改同一线程。
+服务从检查空闲到 checkpoint 更新期间持有 Session 行锁。线程存在运行中 Run、等待交互的 Run 或排队 Input 时返回 `409 thread_busy`；普通输入接入使用同一把锁，因此不会与主动压缩并发修改同一线程。
 
 服务通过当前 Agent 的 canonical compiled graph 读取和更新 state，不直接操作 checkpoint 表。压缩期间创建或复用的 Sandbox 在请求结束时释放。成功后前端重新读取 Agent state；由于这次维护请求没有完整主模型请求形状，上一次 system/tool 压力估算会失效，下一次主模型调用重新生成完整压力数据。
 
@@ -81,7 +81,7 @@ checkpoint 只拥有模型继续运行所需的压缩视图；PostgreSQL Message
 
 ## 文件、权限和用量
 
-摘要历史和长工具结果写入当前 Conversation 的 Project Workdir。主 Agent 和子 Agent 共享根执行树的文件作用域，因此子 Agent 也可能看到这些文件。文件内容可能包含完整工具返回和用户对话，应按用户数据保护。
+摘要历史和长工具结果写入当前 Session 的 Project Workdir。主 Agent 和子 Agent 共享根执行树的文件作用域，因此子 Agent 也可能看到这些文件。文件内容可能包含完整工具返回和用户对话，应按用户数据保护。
 
 路径由 Workspace/Sandbox backend 校验；公共 Skill 目录不可写，宿主机路径不会暴露给模型。文件写入过程不做脱敏或加密。
 

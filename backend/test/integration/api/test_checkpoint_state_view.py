@@ -9,7 +9,7 @@ from langchain.messages import HumanMessage
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from langgraph.graph import END, START, StateGraph
 
-from test.live_api_cleanup import make_test_conversation_title
+from test.live_api_cleanup import make_test_session_title
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
 
@@ -42,7 +42,7 @@ async def test_state_view_reads_postgres_snapshot_and_rejects_other_users(test_c
                 "/api/v1/agents/threads",
                 json={
                     "agent_id": slug,
-                    "title": make_test_conversation_title("checkpoint"),
+                    "title": make_test_session_title("checkpoint"),
                 },
                 headers={**admin_headers, "Idempotency-Key": str(uuid.uuid4())},
             )
@@ -92,9 +92,7 @@ async def test_state_view_reads_postgres_snapshot_and_rejects_other_users(test_c
         finally:
             if thread_id:
                 await saver.adelete_thread(thread_id)
-                archived = await test_client.post(
-                    f"/api/v1/agents/threads/{thread_id}/archive", headers=admin_headers
-                )
+                archived = await test_client.post(f"/api/v1/agents/threads/{thread_id}/archive", headers=admin_headers)
                 assert archived.status_code in (200, 404), archived.text
             deleted_agent = await test_client.delete(f"/api/agent/{slug}", headers=admin_headers)
             assert deleted_agent.status_code in (200, 404), deleted_agent.text

@@ -15,7 +15,7 @@ import httpx
 import pytest
 
 from test.e2e.e2e_helpers import delete_agent, postgres_dsn
-from test.live_api_cleanup import make_test_conversation_title
+from test.live_api_cleanup import make_test_session_title
 from test.support.openai_replay_server import ReplayHandler
 from test.support.public_events import read_events
 from yuxi.modules.agents.runtime.sandbox import ProvisionerSandboxBackend, get_sandbox_provider
@@ -151,7 +151,7 @@ async def test_concurrent_thread_session_creation_replays_one_receipt(e2e_client
             headers=e2e_headers,
             json={
                 "request_id": f"thread-race-project-{uuid.uuid4()}",
-                "name": make_test_conversation_title("thread-race-project"),
+                "name": make_test_session_title("thread-race-project"),
                 "workdir": {"mode": "linked", "path": directory_name},
             },
         )
@@ -165,7 +165,7 @@ async def test_concurrent_thread_session_creation_replays_one_receipt(e2e_client
         body = {
             "agent_id": agent_slug,
             "project_id": project_id,
-            "title": make_test_conversation_title("thread-create-race"),
+            "title": make_test_session_title("thread-create-race"),
         }
         headers = {**e2e_headers, "Idempotency-Key": key}
 
@@ -196,11 +196,11 @@ async def test_concurrent_thread_session_creation_replays_one_receipt(e2e_client
 
         counts = await blocker.fetchrow(
             "SELECT "
-            "(SELECT COUNT(*) FROM conversations WHERE thread_id = $1) AS threads, "
-            "(SELECT COUNT(*) FROM agent_input_receipts WHERE conversation_thread_id = $1) AS receipts, "
-            "(SELECT COUNT(*) FROM agent_inputs WHERE conversation_thread_id = $1) AS inputs, "
-            "(SELECT COUNT(*) FROM agent_turns WHERE conversation_thread_id = $1) AS turns, "
-            "(SELECT COUNT(*) FROM agent_runs WHERE conversation_thread_id = $1) AS runs",
+            "(SELECT COUNT(*) FROM sessions WHERE thread_id = $1) AS threads, "
+            "(SELECT COUNT(*) FROM agent_input_receipts WHERE thread_id = $1) AS receipts, "
+            "(SELECT COUNT(*) FROM agent_inputs WHERE thread_id = $1) AS inputs, "
+            "(SELECT COUNT(*) FROM agent_turns WHERE thread_id = $1) AS turns, "
+            "(SELECT COUNT(*) FROM agent_runs WHERE thread_id = $1) AS runs",
             first.json()["thread_id"],
         )
         assert dict(counts) == {"threads": 1, "receipts": 1, "inputs": 0, "turns": 0, "runs": 0}
@@ -235,7 +235,7 @@ async def test_first_input_and_follow_up_fifo_cross_worker(e2e_client, e2e_heade
     slug = await _agent(e2e_client, e2e_headers, str(me.json()["uid"]))
     gate = str(uuid.uuid4())
     creation_key = f"lifecycle-{uuid.uuid4().hex}"
-    title = make_test_conversation_title("lifecycle-fifo")
+    title = make_test_session_title("lifecycle-fifo")
     try:
         created = await e2e_client.post(
             "/api/v1/agents/threads",
@@ -325,6 +325,13 @@ async def test_first_input_and_follow_up_fifo_cross_worker(e2e_client, e2e_heade
         assert first_turn["status"] == "completed", first_turn
         assert first_turn["result_run_id"] == first["run_id"]
         assert OUTPUT in output_text(first_turn["output"])
+        run_snapshot = await e2e_client.get(
+            f"/api/v1/agents/threads/{thread_id}/runs/{first['run_id']}", headers=e2e_headers
+        )
+        assert run_snapshot.status_code == 200, run_snapshot.text
+        assert run_snapshot.json()["thread_id"] == thread_id
+        assert "conversation_thread_id" not in run_snapshot.json()
+        assert "conversation_id" not in run_snapshot.json()
         assert first_turn["usage"]["complete"] is True
         assert first_turn["usage"]["total_tokens"] == (
             first_turn["usage"]["input_tokens"] + first_turn["usage"]["output_tokens"]
@@ -436,7 +443,7 @@ async def test_first_input_and_follow_up_fifo_cross_worker(e2e_client, e2e_heade
         try:
             rows = await pg.fetch(
                 "SELECT id, turn_id, consumed_run_id, status FROM agent_inputs "
-                "WHERE conversation_thread_id = $1 ORDER BY received_seq",
+                "WHERE thread_id = $1 ORDER BY received_seq",
                 thread_id,
             )
             assert [(row["id"], row["turn_id"], row["consumed_run_id"], row["status"]) for row in rows] == [
@@ -468,7 +475,7 @@ async def test_tool_cycle_without_steer_stays_in_one_run(e2e_client, e2e_headers
             headers={**e2e_headers, "Idempotency-Key": f"tool-cycle-{uuid.uuid4().hex}"},
             json={
                 "agent_id": slug,
-                "title": make_test_conversation_title("lifecycle-tool-cycle"),
+                "title": make_test_session_title("lifecycle-tool-cycle"),
                 "model_spec": MODEL,
                 "tool_approval_mode": "always_trust",
                 "input": [_message(OUTPUT)],
@@ -535,7 +542,7 @@ async def test_steer_aggregates_and_yields_into_same_turn(e2e_client, e2e_header
             headers={**e2e_headers, "Idempotency-Key": f"steer-create-{uuid.uuid4().hex}"},
             json={
                 "agent_id": slug,
-                "title": make_test_conversation_title("lifecycle-steer"),
+                "title": make_test_session_title("lifecycle-steer"),
                 "model_spec": MODEL,
                 "input": [_message(f"{OUTPUT} DETERMINISTIC_BLOCK_BEFORE_RESPONSE:{gate}")],
             },
@@ -672,7 +679,7 @@ async def test_waiting_turn_requires_complete_answers_and_resumes_same_turn(e2e_
             headers={**e2e_headers, "Idempotency-Key": f"waiting-create-{uuid.uuid4().hex}"},
             json={
                 "agent_id": slug,
-                "title": make_test_conversation_title("lifecycle-waiting"),
+                "title": make_test_session_title("lifecycle-waiting"),
                 "model_spec": MODEL,
                 "input": [_message(f"{OUTPUT} DETERMINISTIC_ASK_USER")],
             },
@@ -739,8 +746,8 @@ async def test_waiting_turn_requires_complete_answers_and_resumes_same_turn(e2e_
         try:
             resume_message = await conn.fetchrow(
                 "SELECT m.run_id, m.turn_id, m.message_type, c.thread_id FROM agent_runs r "
-                "JOIN messages m ON m.id = r.input_message_id AND m.conversation_id = r.conversation_id "
-                "JOIN conversations c ON c.id = m.conversation_id WHERE r.id = $1",
+                "JOIN messages m ON m.id = r.input_message_id AND m.session_record_id = r.session_record_id "
+                "JOIN sessions c ON c.id = m.session_record_id WHERE r.id = $1",
                 resume_id,
             )
             assert resume_message is not None
@@ -873,7 +880,7 @@ async def test_invalid_question_parameters_return_tool_error_without_waitpoint(
             headers={**e2e_headers, "Idempotency-Key": f"invalid-question-{uuid.uuid4().hex}"},
             json={
                 "agent_id": slug,
-                "title": make_test_conversation_title("invalid-question"),
+                "title": make_test_session_title("invalid-question"),
                 "model_spec": model_spec,
                 "input": [_message(f"{OUTPUT} DETERMINISTIC_ASK_USER_INVALID")],
             },
@@ -928,7 +935,7 @@ async def test_cancel_waiting_turn_pauses_queue_until_continue(e2e_client, e2e_h
             headers={**e2e_headers, "Idempotency-Key": f"cancel-create-{uuid.uuid4().hex}"},
             json={
                 "agent_id": slug,
-                "title": make_test_conversation_title("lifecycle-cancel-waiting"),
+                "title": make_test_session_title("lifecycle-cancel-waiting"),
                 "model_spec": MODEL,
                 "input": [_message(f"{OUTPUT} DETERMINISTIC_ASK_USER DETERMINISTIC_BLOCK_BEFORE_RESPONSE:{gate}")],
             },
@@ -1066,7 +1073,7 @@ async def test_cancel_running_model_closes_audit_without_foreign_output(e2e_clie
             headers={**e2e_headers, "Idempotency-Key": f"cancel-model-{uuid.uuid4().hex}"},
             json={
                 "agent_id": slug,
-                "title": make_test_conversation_title("lifecycle-cancel-model"),
+                "title": make_test_session_title("lifecycle-cancel-model"),
                 "model_spec": MODEL,
                 "input": [_message(OUTPUT)],
             },
@@ -1159,14 +1166,14 @@ async def test_attachment_survives_run_runtime_recreation(e2e_client, e2e_header
         created = await e2e_client.post(
             "/api/v1/agents/threads",
             headers={**e2e_headers, "Idempotency-Key": f"attachment-thread-{uuid.uuid4().hex}"},
-            json={"agent_id": slug, "title": make_test_conversation_title("lifecycle-attachment")},
+            json={"agent_id": slug, "title": make_test_session_title("lifecycle-attachment")},
         )
         assert created.status_code == 200, created.text
         thread_id = created.json()["thread_id"]
         conn = await asyncpg.connect(postgres_dsn())
         try:
             workdir_path = await conn.fetchval(
-                "SELECT project.workdir_path FROM conversations AS thread "
+                "SELECT project.workdir_path FROM sessions AS thread "
                 "JOIN projects AS project ON project.id = thread.project_id WHERE thread.thread_id = $1",
                 thread_id,
             )
@@ -1260,7 +1267,7 @@ async def test_model_rate_limit_failure_preserves_error_and_queue_can_continue(e
             headers={**e2e_headers, "Idempotency-Key": f"rate-limit-{uuid.uuid4().hex}"},
             json={
                 "agent_id": slug,
-                "title": make_test_conversation_title("lifecycle-rate-limit"),
+                "title": make_test_session_title("lifecycle-rate-limit"),
                 "model_spec": MODEL,
                 "input": [_message(f"{OUTPUT} DETERMINISTIC_RATE_LIMIT RATE_LIMIT_FIRST_CALL")],
             },
@@ -1351,7 +1358,7 @@ async def test_large_tool_approval_resume_keeps_original_audit(e2e_client, e2e_h
             headers={**e2e_headers, "Idempotency-Key": f"large-tool-{uuid.uuid4().hex}"},
             json={
                 "agent_id": slug,
-                "title": make_test_conversation_title("lifecycle-large-tool"),
+                "title": make_test_session_title("lifecycle-large-tool"),
                 "model_spec": MODEL,
                 "tool_approval_mode": "default",
                 "input": [_message(OUTPUT)],
@@ -1377,7 +1384,7 @@ async def test_large_tool_approval_resume_keeps_original_audit(e2e_client, e2e_h
         conn = await asyncpg.connect(postgres_dsn())
         try:
             workdir_path = await conn.fetchval(
-                "SELECT project.workdir_path FROM conversations AS thread "
+                "SELECT project.workdir_path FROM sessions AS thread "
                 "JOIN projects AS project ON project.id = thread.project_id WHERE thread.thread_id = $1",
                 thread_id,
             )
@@ -1481,7 +1488,7 @@ async def test_thread_sse_releases_validation_transaction(e2e_client, e2e_header
         key = f"sse-transaction-{uuid.uuid4().hex}"
         body = {
             "agent_id": slug,
-            "title": make_test_conversation_title("lifecycle-sse-transaction"),
+            "title": make_test_session_title("lifecycle-sse-transaction"),
             "model_spec": MODEL,
             "input": [_message(OUTPUT)],
         }
@@ -1521,7 +1528,7 @@ async def test_thread_sse_releases_validation_transaction(e2e_client, e2e_header
                 idle = await conn.fetch(
                     "SELECT pid FROM pg_stat_activity WHERE datname = current_database() "
                     "AND xact_start >= $1 AND xact_start <= $2 AND state = 'idle in transaction' "
-                    "AND query ~ '(agent_runs|agent_inputs|conversations)'",
+                    "AND query ~ '(agent_runs|agent_inputs|sessions)'",
                     since,
                     cutoff,
                 )

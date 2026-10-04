@@ -9,7 +9,7 @@ from sqlalchemy.orm import selectinload
 from yuxi.modules.agents.models.messages import Message
 from yuxi.modules.agents.models.runs import AgentRun
 from yuxi.modules.agents.repositories.runs import AgentRunRepository
-from yuxi.modules.agents.repositories.threads import ConversationRepository
+from yuxi.modules.agents.repositories.sessions import SessionRepository
 from yuxi.modules.agents.repositories.turn import AgentTurnRepository
 from yuxi.shared.datetime import format_utc_datetime
 from yuxi.shared.hashing import hash_id
@@ -38,12 +38,12 @@ class PublicItemRepository:
         run = await AgentRunRepository(self.db).get_run(run_id)
         if run is None:
             raise ValueError("公开输出缺少 Run")
-        conversation = await ConversationRepository(self.db).lock_conversation_by_thread_id(run.conversation_thread_id)
-        if conversation is None or conversation.uid != run.uid or conversation.app_id != run.app_id:
+        agent_session = await SessionRepository(self.db).lock_session_by_thread_id(run.thread_id)
+        if agent_session is None or agent_session.uid != run.uid or agent_session.app_id != run.app_id:
             raise ValueError("公开输出 Thread 归属不一致")
         turn = await AgentTurnRepository(self.db).get_for_scope(
             turn_id=run.turn_id,
-            thread_id=run.conversation_thread_id,
+            thread_id=run.thread_id,
             uid=run.uid,
             app_id=run.app_id,
             for_update=True,
@@ -52,7 +52,7 @@ class PublicItemRepository:
             raise ValueError("公开输出不属于当前 Turn")
         run_repo = AgentRunRepository(self.db)
         lock_output = run_repo.lock_cancel_snapshot if cancelled_partial else run_repo.lock_output_persistence
-        await lock_output(run_id, worker_id=worker_id, conversation_thread_id=run.conversation_thread_id)
+        await lock_output(run_id, worker_id=worker_id, thread_id=run.thread_id)
         message = await self.db.scalar(
             select(Message).where(
                 Message.run_id == run_id,
@@ -60,7 +60,7 @@ class PublicItemRepository:
                 Message.role == role,
             )
         )
-        if message is None or message.turn_id != turn.id or message.conversation_id != conversation.id:
+        if message is None or message.turn_id != turn.id or message.session_record_id != agent_session.id:
             raise ValueError("公开 item 缺少相同 Run 的审计来源")
         metadata = dict(message.extra_metadata or {})
         public = dict(metadata.get("public_items") or {})
@@ -126,7 +126,7 @@ class PublicItemRepository:
         source = await self.db.get(Message, source_id) if source_id is not None else None
         if (
             source is None
-            or source.conversation_id != tool_message.conversation_id
+            or source.session_record_id != tool_message.session_record_id
             or source.turn_id != tool_message.turn_id
         ):
             return None
@@ -152,15 +152,15 @@ class PublicItemRepository:
         turn_id: str | None = None,
     ) -> list[tuple[Message, AgentRun | None, str | None]]:
         """只读取当前用户和 APP 的 Message 与结果归属，不返回审计 DTO。"""
-        from yuxi.modules.agents.models.threads import Conversation
+        from yuxi.modules.agents.models.sessions import Session
         from yuxi.modules.agents.models.turns import AgentTurn
 
         statement = (
             select(Message, AgentRun, AgentTurn.result_run_id)
-            .join(Conversation, Message.conversation_id == Conversation.id)
+            .join(Session, Message.session_record_id == Session.id)
             .outerjoin(AgentRun, Message.run_id == AgentRun.id)
             .outerjoin(AgentTurn, Message.turn_id == AgentTurn.id)
-            .where(Conversation.thread_id == thread_id, Conversation.uid == uid, Conversation.app_id == app_id)
+            .where(Session.thread_id == thread_id, Session.uid == uid, Session.app_id == app_id)
             .options(selectinload(Message.tool_calls))
             .order_by(Message.id)
         )

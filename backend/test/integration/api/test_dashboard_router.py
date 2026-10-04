@@ -10,42 +10,38 @@ import uuid
 import pytest
 from sqlalchemy import update
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-from yuxi.modules.agents.models.threads import Conversation
+from yuxi.modules.agents.models.sessions import Session
 
-from test.live_api_cleanup import make_test_conversation_title
+from test.live_api_cleanup import make_test_session_title
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
 
 
-async def _set_conversation_statuses(subagent_thread_id: str, deleted_thread_id: str) -> None:
+async def _set_session_statuses(subagent_thread_id: str, deleted_thread_id: str) -> None:
     """使用绑定当前测试事件循环的一次性引擎写入状态事实。"""
     engine = create_async_engine(os.environ["POSTGRES_URL"])
     try:
         session_factory = async_sessionmaker(bind=engine, expire_on_commit=False)
         async with session_factory() as db:
-            await db.execute(
-                update(Conversation).where(Conversation.thread_id == subagent_thread_id).values(status="subagent")
-            )
-            await db.execute(
-                update(Conversation).where(Conversation.thread_id == deleted_thread_id).values(status="deleted")
-            )
+            await db.execute(update(Session).where(Session.thread_id == subagent_thread_id).values(status="subagent"))
+            await db.execute(update(Session).where(Session.thread_id == deleted_thread_id).values(status="deleted"))
             await db.commit()
     finally:
         await engine.dispose()
 
 
 async def test_dashboard_requires_authentication(test_client):
-    response = await test_client.get("/api/dashboard/conversations")
+    response = await test_client.get("/api/dashboard/sessions")
     assert response.status_code == 401
 
 
 async def test_standard_user_is_forbidden(test_client, standard_user):
-    response = await test_client.get("/api/dashboard/conversations", headers=standard_user["headers"])
+    response = await test_client.get("/api/dashboard/sessions", headers=standard_user["headers"])
     assert response.status_code == 403
 
 
-async def test_admin_can_fetch_conversations(test_client, admin_headers):
-    response = await test_client.get("/api/dashboard/conversations", headers=admin_headers)
+async def test_admin_can_fetch_sessions(test_client, admin_headers):
+    response = await test_client.get("/api/dashboard/sessions", headers=admin_headers)
     assert response.status_code == 200, response.text
     data = response.json()
     assert set(data) == {"items", "total", "limit", "offset"}
@@ -53,8 +49,15 @@ async def test_admin_can_fetch_conversations(test_client, admin_headers):
     assert data["total"] >= len(data["items"])
 
 
-async def test_admin_can_fetch_conversation_filter_options(test_client, admin_headers):
-    response = await test_client.get("/api/dashboard/conversations/options", headers=admin_headers)
+async def test_retired_conversation_routes_are_not_registered(test_client, admin_headers):
+    """旧会话审计路由不提供兼容入口。"""
+    for path in ("/api/dashboard/conversations", "/api/dashboard/conversations/options"):
+        response = await test_client.get(path, headers=admin_headers)
+        assert response.status_code == 404, response.text
+
+
+async def test_admin_can_fetch_session_filter_options(test_client, admin_headers):
+    response = await test_client.get("/api/dashboard/sessions/options", headers=admin_headers)
 
     assert response.status_code == 200, response.text
     data = response.json()
@@ -66,8 +69,8 @@ async def test_admin_can_fetch_conversation_filter_options(test_client, admin_he
 async def test_dashboard_rejects_invalid_query_ranges(test_client, admin_headers):
     responses = [
         await test_client.get("/api/dashboard/stats/threads?time_range=365days", headers=admin_headers),
-        await test_client.get("/api/dashboard/conversations?limit=0", headers=admin_headers),
-        await test_client.get("/api/dashboard/conversations?offset=-1", headers=admin_headers),
+        await test_client.get("/api/dashboard/sessions?limit=0", headers=admin_headers),
+        await test_client.get("/api/dashboard/sessions?offset=-1", headers=admin_headers),
     ]
 
     assert [response.status_code for response in responses] == [422, 422, 422]
@@ -80,7 +83,7 @@ async def test_agent_stats_http_omits_removed_top_performers_contract(test_clien
     assert response.status_code == 200, response.text
     assert set(response.json()) == {
         "total_agents",
-        "agent_conversation_counts",
+        "agent_session_counts",
         "agent_tool_usage",
         "agent_names",
     }
@@ -131,7 +134,7 @@ async def test_admin_can_fetch_thread_analytics(test_client, admin_headers):
     assert data["summary"]["total_threads"] >= 0
 
 
-async def test_dashboard_http_applies_subagent_and_deleted_conversation_scopes(test_client, admin_headers):
+async def test_dashboard_http_applies_subagent_and_deleted_session_scopes(test_client, admin_headers):
     default_agent = await test_client.get("/api/agent/default", headers=admin_headers)
     assert default_agent.status_code == 200, default_agent.text
     agent = default_agent.json()["agent"]
@@ -160,13 +163,13 @@ async def test_dashboard_http_applies_subagent_and_deleted_conversation_scopes(t
             headers={**admin_headers, "Idempotency-Key": f"{marker}-{status}"},
             json={
                 "agent_id": agent_id,
-                "title": make_test_conversation_title(f"{marker}-{status}"),
+                "title": make_test_session_title(f"{marker}-{status}"),
             },
         )
         assert response.status_code == 200, response.text
         thread_ids.append(str(response.json().get("thread_id") or response.json()["id"]))
 
-    await _set_conversation_statuses(thread_ids[1], thread_ids[2])
+    await _set_session_statuses(thread_ids[1], thread_ids[2])
 
     default_scope = await analytics(include_subagents=False)
     subagent_scope = await analytics(include_subagents=True)
@@ -174,12 +177,12 @@ async def test_dashboard_http_applies_subagent_and_deleted_conversation_scopes(t
     assert subagent_scope["summary"]["total_threads"] == baseline_including_subagents["summary"]["total_threads"] + 2
 
     default_audit = await test_client.get(
-        "/api/dashboard/conversations",
+        "/api/dashboard/sessions",
         params={"search": marker, "limit": 10},
         headers=admin_headers,
     )
     deleted_audit = await test_client.get(
-        "/api/dashboard/conversations",
+        "/api/dashboard/sessions",
         params={"search": marker, "status": "deleted", "limit": 10},
         headers=admin_headers,
     )
@@ -205,7 +208,7 @@ async def test_dashboard_http_reads_run_token_totals(test_client, admin_headers)
         headers={**admin_headers, "Idempotency-Key": marker},
         json={
             "agent_id": agent_id,
-            "title": make_test_conversation_title(marker),
+            "title": make_test_session_title(marker),
         },
     )
     assert response.status_code == 200
@@ -213,9 +216,7 @@ async def test_dashboard_http_reads_run_token_totals(test_client, admin_headers)
     engine = create_async_engine(os.environ["POSTGRES_URL"])
     try:
         async with async_sessionmaker(engine, expire_on_commit=False)() as db:
-            conversation = (
-                await db.execute(select(Conversation).where(Conversation.thread_id == thread_id))
-            ).scalar_one()
+            agent_session = (await db.execute(select(Session).where(Session.thread_id == thread_id))).scalar_one()
             for index, usage in enumerate(
                 [
                     {"total": {"total_tokens": 120}, "complete": True, "usage_reported_call_count": 1},
@@ -226,8 +227,8 @@ async def test_dashboard_http_reads_run_token_totals(test_client, admin_headers)
                 db.add(
                     AgentTurn(
                         id=f"turn-{run_id}",
-                        conversation_thread_id=thread_id,
-                        uid=conversation.uid,
+                        thread_id=thread_id,
+                        uid=agent_session.uid,
                         status="completed",
                         current_run_id=run_id,
                         result_run_id=run_id,
@@ -237,13 +238,13 @@ async def test_dashboard_http_reads_run_token_totals(test_client, admin_headers)
                 db.add(
                     AgentRun(
                         id=run_id,
-                        conversation_id=conversation.id,
-                        conversation_thread_id=thread_id,
+                        session_record_id=agent_session.id,
+                        thread_id=thread_id,
                         runtime_scope_id=thread_id,
                         turn_id=f"turn-{run_id}",
                         run_type="chat",
                         input_payload={},
-                        uid=conversation.uid,
+                        uid=agent_session.uid,
                         agent_slug=agent_id,
                         status="completed",
                         token_usage=usage,
@@ -252,9 +253,9 @@ async def test_dashboard_http_reads_run_token_totals(test_client, admin_headers)
             await db.commit()
             for expected, complete in [(200, True), (120, False), (None, False)]:
                 listing = await test_client.get(
-                    "/api/dashboard/conversations", headers=admin_headers, params={"search": marker}
+                    "/api/dashboard/sessions", headers=admin_headers, params={"search": marker}
                 )
-                detail = await test_client.get(f"/api/dashboard/conversations/{thread_id}", headers=admin_headers)
+                detail = await test_client.get(f"/api/dashboard/sessions/{thread_id}", headers=admin_headers)
                 assert listing.status_code == detail.status_code == 200
                 item = listing.json()["items"][0]
                 assert item["status"] == "active"

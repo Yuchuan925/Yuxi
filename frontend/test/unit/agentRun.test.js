@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { isSteerableMainChatRun } from '../../src/modules/conversation/model/agentRun.js'
+import { isSteerableMainChatRun } from '../../src/modules/session/model/agentRun.js'
 
 test('Steer is exposed only for running main Chat requests', () => {
   assert.equal(

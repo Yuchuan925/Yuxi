@@ -18,7 +18,7 @@ from yuxi.modules.agents.models.messages import Message
 from yuxi.modules.agents.models.runs import AgentRun
 from yuxi.modules.agents.repositories.input import AgentInputRepository
 from yuxi.modules.agents.repositories.runs import TERMINAL_RUN_STATUSES, AgentRunRepository
-from yuxi.modules.agents.repositories.threads import ConversationRepository
+from yuxi.modules.agents.repositories.sessions import SessionRepository
 from yuxi.modules.agents.repositories.turn import AgentTurnRepository
 from yuxi.modules.agents.runtime.callbacks.model_request_timing import FirstModelRequestRecorder
 from yuxi.modules.agents.services.event_writer import (
@@ -90,21 +90,21 @@ class NonRetryableRunError(Exception):
 
 
 async def _validate_run_workdir_binding(run: AgentRun) -> AuthorizedWorkdir:
-    """在执行器边界验证持久 Run 的 Conversation、执行树与 Workdir 归属。"""
+    """在执行器边界验证持久 Run 的 Session、执行树与 Workdir 归属。"""
     async with pg_manager.get_async_session_context() as db:
         binding = await resolve_authorized_workdir(
-            thread_id=str(run.conversation_thread_id),
+            thread_id=str(run.thread_id),
             uid=str(run.uid),
             app_id=run.app_id,
             db=db,
         )
-        if int(binding.conversation_id) != int(run.conversation_id):
-            raise NonRetryableRunError("AgentRun 的 Conversation 身份不一致")
+        if int(binding.session_record_id) != int(run.session_record_id):
+            raise NonRetryableRunError("AgentRun 的 Session 身份不一致")
 
         persisted_scope = str(run.runtime_scope_id or "").strip()
         if not persisted_scope:
             raise NonRetryableRunError("AgentRun 缺少 runtime scope")
-        if persisted_scope != str(run.conversation_thread_id):
+        if persisted_scope != str(run.thread_id):
             raise NonRetryableRunError(f"{str(run.run_type).capitalize()} AgentRun 的 runtime scope 非法")
 
         if run.run_type == "subagent":
@@ -119,13 +119,13 @@ async def _validate_run_workdir_binding(run: AgentRun) -> AuthorizedWorkdir:
             if creator_run.run_type not in {"chat", "resume"}:
                 raise NonRetryableRunError("SubAgent Run 的创建者非法")
             creator_binding = await resolve_authorized_workdir(
-                thread_id=str(creator_run.conversation_thread_id),
+                thread_id=str(creator_run.thread_id),
                 uid=str(run.uid),
                 app_id=creator_run.app_id,
                 db=db,
             )
             if (
-                int(creator_binding.conversation_id) != int(creator_run.conversation_id)
+                int(creator_binding.session_record_id) != int(creator_run.session_record_id)
                 or creator_binding.project_id != binding.project_id
             ):
                 raise NonRetryableRunError("SubAgent Run 的 runtime scope 不属于创建者执行树")
@@ -260,12 +260,12 @@ async def mark_run_terminal(
         if run is None:
             return TerminalTransition(status=None, changed=False)
         if run.status not in TERMINAL_RUN_STATUSES:
-            conversation = await ConversationRepository(db).lock_conversation_by_thread_id(run.conversation_thread_id)
-            if conversation is None:
+            agent_session = await SessionRepository(db).lock_session_by_thread_id(run.thread_id)
+            if agent_session is None:
                 raise ValueError("Run 的 Thread 不存在")
             turn = await AgentTurnRepository(db).get_for_scope(
                 turn_id=run.turn_id,
-                thread_id=run.conversation_thread_id,
+                thread_id=run.thread_id,
                 uid=run.uid,
                 app_id=run.app_id,
                 for_update=True,
@@ -273,7 +273,7 @@ async def mark_run_terminal(
             if turn is None or turn.current_run_id != run.id:
                 raise ValueError("Run 不是当前 Turn 的执行段")
             await AgentInputRepository(db).get_pending_steer(
-                thread_id=run.conversation_thread_id,
+                thread_id=run.thread_id,
                 uid=run.uid,
                 app_id=run.app_id,
             )
@@ -557,12 +557,12 @@ async def process_agent_run(ctx, run_id: str):
         cleanup_was_pending = bool(getattr(run, "runtime_cleanup_pending", False))
         if cleanup_was_pending:
             await _require_runtime_cleanup(run, f"Run {run_id} 的 execution tree 尚未完成 runtime cleanup")
-            await publish_run_settlement(run_id, run.status, thread_id=run.conversation_thread_id)
+            await publish_run_settlement(run_id, run.status, thread_id=run.thread_id)
         if run.status == "completed":
             await dispatch_next_input(
                 uid=run.uid,
                 agent_slug=run.agent_slug,
-                thread_id=run.conversation_thread_id,
+                thread_id=run.thread_id,
             )
         logger.info(f"Run already terminal, skip: {run_id}, status={run.status}")
         return
@@ -582,7 +582,7 @@ async def process_agent_run(ctx, run_id: str):
     agent_slug = run.agent_slug
     uid = run.uid
     turn_id = run.turn_id
-    thread_id = run.conversation_thread_id
+    thread_id = run.thread_id
     user = None
     run_ctx = RunContext(run_id=run_id, worker_id=worker_id)
     writer = PublicEventWriter(

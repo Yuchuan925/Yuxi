@@ -14,7 +14,7 @@ test('线程创建期间共享 Store 拒绝外层切换，创建结果可显式�
   const server = await createServer({ server: { middlewareMode: true }, appType: 'custom' })
   setActivePinia(createPinia())
   try {
-    const { useChatThreadsStore } = await server.ssrLoadModule('/src/modules/conversation/model/chatThreads.js')
+    const { useChatThreadsStore } = await server.ssrLoadModule('/src/modules/session/model/chatThreads.js')
     const store = useChatThreadsStore()
     store.setCurrentThreadId('thread-before')
     store.setThreadCreationInFlight(true)
@@ -34,7 +34,7 @@ test('Project 删除后 Store 只移除对应线程并清空当前选择', async
   const server = await createServer({ server: { middlewareMode: true }, appType: 'custom' })
   setActivePinia(createPinia())
   try {
-    const { useChatThreadsStore } = await server.ssrLoadModule('/src/modules/conversation/model/chatThreads.js')
+    const { useChatThreadsStore } = await server.ssrLoadModule('/src/modules/session/model/chatThreads.js')
     const store = useChatThreadsStore()
     store.threads = [
       { id: 'thread-a', project_id: 'project-a' },
@@ -69,7 +69,7 @@ test('置顶线程不占用普通线程分页 offset 且不会提前结束加载
       ]
     }
 
-    const { useChatThreadsStore } = await server.ssrLoadModule('/src/modules/conversation/model/chatThreads.js')
+    const { useChatThreadsStore } = await server.ssrLoadModule('/src/modules/session/model/chatThreads.js')
     const store = useChatThreadsStore()
     await store.loadThreads()
     await store.loadMoreThreads()

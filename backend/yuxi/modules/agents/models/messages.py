@@ -51,12 +51,12 @@ class Message(Base):
             postgresql_where=text("operation_id IS NOT NULL"),
             sqlite_where=text("operation_id IS NOT NULL"),
         ),
-        UniqueConstraint("id", "run_id", "turn_id", "conversation_id", name="uq_messages_id_run_turn_thread"),
+        UniqueConstraint("id", "run_id", "turn_id", "session_record_id", name="uq_messages_id_run_turn_thread"),
         CheckConstraint("(run_id IS NULL) = (turn_id IS NULL)", name="ck_messages_execution_scope"),
         ForeignKeyConstraint(
-            ["run_id", "turn_id", "conversation_id"],
-            ["agent_runs.id", "agent_runs.turn_id", "agent_runs.conversation_id"],
-            name="fk_messages_run_turn_conversation",
+            ["run_id", "turn_id", "session_record_id"],
+            ["agent_runs.id", "agent_runs.turn_id", "agent_runs.session_record_id"],
+            name="fk_messages_run_turn_session",
             use_alter=True,
             deferrable=True,
             initially="DEFERRED",
@@ -71,9 +71,7 @@ class Message(Base):
     )
 
     id = Column(Integer, primary_key=True, autoincrement=True, comment="Primary key")
-    conversation_id = Column(
-        Integer, ForeignKey("conversations.id"), nullable=False, index=True, comment="Conversation ID"
-    )
+    session_record_id = Column(Integer, ForeignKey("sessions.id"), nullable=False, index=True, comment="Session ID")
     role = Column(String(20), nullable=False, comment="Message role: user/assistant/system/tool")
     content = Column(Text, nullable=False, comment="Message content")
     message_type = Column(String(30), default="text", comment="Message type: text/tool_call/tool_result")
@@ -92,13 +90,13 @@ class Message(Base):
     usage = Column(JSON_VALUE, nullable=True, comment="Provider 返回的单次可靠 usage")
 
     # Relationships
-    conversation = relationship("Conversation", back_populates="messages")
+    agent_session = relationship("Session", back_populates="messages")
     tool_calls = relationship("ToolCall", back_populates="message", cascade="all, delete-orphan")
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "id": self.id,
-            "conversation_id": self.conversation_id,
+            "session_record_id": self.session_record_id,
             "role": self.role,
             "content": self.content,
             "message_type": self.message_type,

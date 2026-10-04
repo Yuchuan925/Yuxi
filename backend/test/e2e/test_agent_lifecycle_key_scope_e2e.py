@@ -10,8 +10,8 @@ import pytest
 from e2e_helpers import delete_agent, postgres_dsn
 from test.e2e.test_agent_lifecycle_e2e import output_text
 from test.live_api_cleanup import (
-    delete_test_conversation_resources,
-    make_test_conversation_title,
+    delete_test_session_resources,
+    make_test_session_title,
     validate_test_runs_terminal,
 )
 from test_agent_lifecycle_e2e import MODEL, OUTPUT, _agent, _message, _provider, _turn
@@ -28,7 +28,7 @@ async def _delete_key_thread(thread_id: str, *, app_id: str, end_user_id: str, o
         row = await conn.fetchrow(
             "SELECT c.uid, c.project_id, p.workdir_path, p.directory_mode, p.selection_status, "
             "u.user_kind, u.end_user_id, u.app_id, u.owner_user_id "
-            "FROM conversations c JOIN projects p ON p.id = c.project_id AND p.uid = c.uid "
+            "FROM sessions c JOIN projects p ON p.id = c.project_id AND p.uid = c.uid "
             "JOIN users u ON u.uid = c.uid WHERE c.thread_id = $1",
             thread_id,
         )
@@ -42,7 +42,7 @@ async def _delete_key_thread(thread_id: str, *, app_id: str, end_user_id: str, o
         or row["selection_status"] != "implicit"
     ):
         raise RuntimeError("终端用户测试清理拒绝非本测试的 Thread 或 Project")
-    await delete_test_conversation_resources(
+    await delete_test_session_resources(
         {(row["uid"], row["workdir_path"]): {row["project_id"]}},
         {thread_id},
         {row["project_id"]},
@@ -52,7 +52,7 @@ async def _delete_key_thread(thread_id: str, *, app_id: str, end_user_id: str, o
         await conn.execute(
             "DELETE FROM users WHERE owner_user_id = $1 AND user_kind = 'end_user' "
             "AND end_user_id = ANY($2::text[]) AND app_id = $3 "
-            "AND NOT EXISTS (SELECT 1 FROM conversations WHERE conversations.uid = users.uid) "
+            "AND NOT EXISTS (SELECT 1 FROM sessions WHERE sessions.uid = users.uid) "
             "AND NOT EXISTS (SELECT 1 FROM projects WHERE projects.uid = users.uid)",
             row["owner_user_id"],
             [end_user_id, other_end_user_id, "__default__"],
@@ -95,7 +95,7 @@ async def test_private_agent_key_run_uses_end_user_workspace_and_app_scope(e2e_c
         }
         body = {
             "agent_id": slug,
-            "title": make_test_conversation_title("lifecycle-key-worker"),
+            "title": make_test_session_title("lifecycle-key-worker"),
             "model_spec": MODEL,
             "input": [_message(OUTPUT)],
         }
@@ -131,9 +131,9 @@ async def test_private_agent_key_run_uses_end_user_workspace_and_app_scope(e2e_c
                 "t.uid AS turn_uid, t.app_id AS turn_app_id, r.uid AS run_uid, "
                 "r.app_id AS run_app_id, r.api_key_id, m.run_id AS output_run_id, "
                 "m.turn_id AS output_turn_id, m.content AS output_content "
-                "FROM conversations c JOIN users u ON u.uid = c.uid "
+                "FROM sessions c JOIN users u ON u.uid = c.uid "
                 "JOIN projects p ON p.id = c.project_id "
-                "JOIN agent_inputs i ON i.conversation_thread_id = c.thread_id "
+                "JOIN agent_inputs i ON i.thread_id = c.thread_id "
                 "JOIN agent_turns t ON t.id = i.turn_id "
                 "JOIN agent_runs r ON r.id = i.consumed_run_id "
                 "JOIN messages m ON m.id = r.output_message_id "

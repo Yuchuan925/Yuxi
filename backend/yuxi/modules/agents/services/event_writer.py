@@ -84,7 +84,7 @@ async def publish_run_settlement(run_id: str, status: str, *, thread_id: str | N
         run = await AgentRunRepository(db).get_run(run_id)
         if run is None or run.status != status:
             raise ValueError("执行段通知缺少相同 PostgreSQL 事实")
-    adapter = OpenAIEventAdapter(run_id=run.id, turn_id=run.turn_id, thread_id=run.conversation_thread_id, worker_id="")
+    adapter = OpenAIEventAdapter(run_id=run.id, turn_id=run.turn_id, thread_id=run.thread_id, worker_id="")
     await append_run_event_best_effort(
         run_id,
         adapter.extension(

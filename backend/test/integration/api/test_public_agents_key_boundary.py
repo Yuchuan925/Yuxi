@@ -10,7 +10,7 @@ import asyncpg
 import pytest
 from yuxi.modules.agents.runtime.sandbox.paths import runtime_user_data_path
 from yuxi.modules.workspace.filesystem import Workspace
-from test.live_api_cleanup import delete_test_conversation_resources, validate_test_runs_terminal
+from test.live_api_cleanup import delete_test_session_resources, validate_test_runs_terminal
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
 
@@ -27,7 +27,7 @@ async def _delete_created_threads(*thread_ids: str | None) -> None:
         rows = await conn.fetch(
             "SELECT c.thread_id, c.uid, c.project_id, p.workdir_path, "
             "p.directory_mode, p.selection_status, u.user_kind, u.end_user_id "
-            "FROM conversations c JOIN projects p ON p.id = c.project_id AND p.uid = c.uid "
+            "FROM sessions c JOIN projects p ON p.id = c.project_id AND p.uid = c.uid "
             "JOIN users u ON u.uid = c.uid "
             "WHERE c.thread_id = ANY($1::text[])",
             sorted(targets),
@@ -39,17 +39,15 @@ async def _delete_created_threads(*thread_ids: str | None) -> None:
     if any(row["directory_mode"] != "managed" or row["selection_status"] != "implicit" for row in rows):
         raise RuntimeError("Test Thread cleanup refuses a non-implicit Project")
     workdirs = {(row["uid"], row["workdir_path"]): {row["project_id"]} for row in rows}
-    await delete_test_conversation_resources(workdirs, targets, {row["project_id"] for row in rows})
-    public_uids = {
-        row["uid"] for row in rows if row["user_kind"] == "end_user" and row["end_user_id"] == "__default__"
-    }
+    await delete_test_session_resources(workdirs, targets, {row["project_id"] for row in rows})
+    public_uids = {row["uid"] for row in rows if row["user_kind"] == "end_user" and row["end_user_id"] == "__default__"}
     if public_uids:
         conn = await asyncpg.connect(os.environ["POSTGRES_URL"].replace("+asyncpg", ""))
         try:
             await conn.execute(
                 "DELETE FROM users WHERE uid = ANY($1::text[]) AND user_kind = 'end_user' "
                 "AND end_user_id = '__default__' "
-                "AND NOT EXISTS (SELECT 1 FROM conversations WHERE conversations.uid = users.uid) "
+                "AND NOT EXISTS (SELECT 1 FROM sessions WHERE sessions.uid = users.uid) "
                 "AND NOT EXISTS (SELECT 1 FROM projects WHERE projects.uid = users.uid)",
                 sorted(public_uids),
             )
@@ -142,7 +140,7 @@ async def test_agents_key_cannot_use_product_routes_or_spoof_source(test_client,
         conn = await asyncpg.connect(os.environ["POSTGRES_URL"].replace("+asyncpg", ""))
         try:
             stored = await conn.fetchrow(
-                "UPDATE conversations SET extra_metadata = "
+                "UPDATE sessions SET extra_metadata = "
                 "jsonb_set(extra_metadata::jsonb, '{app_id}', to_jsonb($1::text))::json "
                 "WHERE thread_id = $2 RETURNING app_id, extra_metadata",
                 "integration-app",
@@ -163,9 +161,7 @@ async def test_agents_key_cannot_use_product_routes_or_spoof_source(test_client,
         public_thread_id = public_thread.json()["thread_id"]
         own_thread = await test_client.get(f"/api/v1/agents/threads/{public_thread_id}", headers=headers)
         assert own_thread.status_code == 200, own_thread.text
-        jwt_isolated = await test_client.get(
-            f"/api/v1/agents/threads/{public_thread_id}", headers=admin_headers
-        )
+        jwt_isolated = await test_client.get(f"/api/v1/agents/threads/{public_thread_id}", headers=admin_headers)
         assert jwt_isolated.status_code == 404, jwt_isolated.text
 
         replay = await test_client.post("/api/user/apikey/", json=payload, headers=admin_headers)
@@ -206,9 +202,7 @@ async def test_public_api_accepts_product_jwt_without_end_user_impersonation(tes
     assert jwt.status_code == 200, jwt.text
     assert "X-App-Id" not in jwt.headers
 
-    spoofed = await test_client.get(
-        "/api/v1/agents", headers={**admin_headers, "X-End-User-Id": "another-user"}
-    )
+    spoofed = await test_client.get("/api/v1/agents", headers={**admin_headers, "X-End-User-Id": "another-user"})
     assert spoofed.status_code == 403, spoofed.text
 
 
@@ -257,7 +251,7 @@ async def test_key_without_end_user_id_cannot_reach_product_project_files(test_c
         try:
             rows = await conn.fetch(
                 "SELECT c.thread_id, c.uid, c.project_id, c.app_id, p.workdir_path, "
-                "u.user_kind, u.end_user_id FROM conversations c "
+                "u.user_kind, u.end_user_id FROM sessions c "
                 "JOIN projects p ON p.id = c.project_id "
                 "JOIN users u ON u.uid = c.uid WHERE c.thread_id = ANY($1::text[])",
                 [product_thread_id, app_thread_id],

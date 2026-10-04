@@ -1,28 +1,28 @@
 <template>
   <div class="agent-view">
-    <ConversationWorkspace
+    <SessionWorkspace
       ref="workspaceRef"
       :single-mode="false"
       :initial-project-id="draftProjectId"
-      :is-new-conversation="!threadId"
+      :is-new-session="!threadId"
       @thread-change="handleThreadChange"
     >
       <template #input-actions-left="{ hasActiveThread, isCreatingThread }">
-        <ConversationAgentPicker
+        <SessionAgentPicker
           :has-active-thread="hasActiveThread"
           :is-creating-thread="isCreatingThread"
-          :start-new-conversation="startNewConversation"
+          :start-new-session="startNewSession"
         />
       </template>
-    </ConversationWorkspace>
+    </SessionWorkspace>
   </div>
 </template>
 
 <script setup>
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import ConversationWorkspace from '@/modules/conversation/ui/ConversationWorkspace.vue'
-import ConversationAgentPicker from '@/modules/agents/ui/ConversationAgentPicker.vue'
+import SessionWorkspace from '@/modules/session/ui/SessionWorkspace.vue'
+import SessionAgentPicker from '@/modules/agents/ui/SessionAgentPicker.vue'
 import { useAgentStore } from '@/modules/agents/model/agent'
 import { handleChatError } from '@/shared/lib/errorHandler'
 import { createThreadRouteCoordinator } from './agent/threadRouteCoordinator'
@@ -66,7 +66,7 @@ watch(
 onBeforeUnmount(() => coordinator.dispose())
 
 /** 智能体创建后的新会话准备由页面协调。 */
-async function startNewConversation() {
+async function startNewSession() {
   return workspaceRef.value?.selectThreadFromRoute('')
 }
 

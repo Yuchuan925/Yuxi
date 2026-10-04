@@ -11,7 +11,7 @@
 - SubAgent 与主 Agent 共用同一张 `agents` 表，仅以 `is_subagent` 布尔列区分（`backend/yuxi/modules/agents/models/definitions.py:62`）。子智能体是「一级智能体」，有独立 slug、配置与管理入口（`docs/agents/subagents-management.md`）。
 - 预置子智能体（general-purpose / web-search / research-explorer / fact-verifier）与普通 agent 走同一 preset 机制（`backend/yuxi/modules/agents/presets/subagents/`），全部挂 `SubAgentBackend`。
 - 主 agent 通过 `config_json.context.subagents` 声明可调用的子 agent 白名单（`presets/deep_research.py:24`），候选列表按用户可见性过滤（`runtime/context.py:470-475`）。
-- 子任务拥有**完全独立**的 Thread / Turn / Run / LangGraph checkpoint，通过 `SubagentThread` 委派关系（`parent_conversation_id` / `child_thread_id` / `created_by_run_id` 等，`models/threads.py:78-98`）关联父 Run。子线程 ID 由 `hash(parent_thread:slug:tool_call_id)` 确定性派生（`services/subagents.py:286-291`）。
+- 子任务拥有**完全独立**的 Thread / Turn / Run / LangGraph checkpoint，通过 `SubagentThread` 委派关系（`parent_session_record_id` / `child_thread_id` / `created_by_run_id` 等，`models/threads.py:78-98`）关联父 Run。子线程 ID 由 `hash(parent_thread:slug:tool_call_id)` 确定性派生（`services/subagents.py:286-291`）。
 
 **结论：在数据模型与生命周期层，子智能体与主智能体已经是同构的**——同表、同 Input/Turn/Run 状态机、同 ARQ 执行器（`run_type="subagent"` 走与 `chat` 相同的 `stream_agent_chat`，`services/runner.py:780-793`）、同 PostgreSQL checkpointer、同租约与恢复机制。
 
@@ -59,7 +59,7 @@
 - **支持并行**：每个 tool_call 派生独立子线程、独立入队 ARQ；父 state 用 reducer 按 run_id 合并并发子 Run（`chatbot/state.py:24-59`）；提示词引导「先派发互不依赖的任务，再继续自己的工作」。唯一串行约束是同一子线程同时只能有一个活跃 Run（`SubagentRunBusy`，`subagents.py:366-370`）。
 - **取消级联**：显式取消父 Turn 时，沿 `created_by_run_id` BFS 级联取消在途子 Turn，并经 Redis 发加速信号（`services/turns.py:186-206`；`repositories/runs.py:658-757`）。
 - **缺口**：父 Run **正常完成**不会级联取消仍活跃的子 Run——`mark_run_terminal` 的 `cancelled_descendants` 恒为空（`runner.py:248-300`），目前靠系统提示词约束模型「应 await 或明确取消」（`subagent_task.py:55`）。孤儿子 Run 成为孤儿后仍继续消耗 worker 容量，这是**提示词兜底而非结构保证**。
-- 前端观测：每个子 Run 独立 HTTP+SSE 观察流，受 HTTP/1.1 连接预算限制 `MAX_CHILD_STREAMS = 3`，超限降级为 2 秒轮询（`frontend/src/modules/conversation/model/useSubagentRuns.js:6`）；子线程有独立视图（`SubagentThreadView.vue`）。这套「父流不复制子生命周期、独立观察」的设计来自 ADR `2026-09-17-subagent-independent-observation`。
+- 前端观测：每个子 Run 独立 HTTP+SSE 观察流，受 HTTP/1.1 连接预算限制 `MAX_CHILD_STREAMS = 3`，超限降级为 2 秒轮询（`frontend/src/modules/session/model/useSubagentRuns.js:6`）；子线程有独立视图（`SubagentThreadView.vue`）。这套「父流不复制子生命周期、独立观察」的设计来自 ADR `2026-09-17-subagent-independent-observation`。
 
 ### 1.7 同构性总评
 
@@ -162,5 +162,5 @@
 - 源码结论：探索代理全量调研 + 本文对关键主张的直接抽查核验（递归禁止 `subagents.py:281-282`、禁用工具双层边界 `subagent/graph.py:30,55-74`、中间件栈对比 `chatbot/graph.py` / `subagent/graph.py`、`is_subagent` 字段、引用的测试/文档/ADR 文件存在性），均一致。
 - Responses API multi-agent：来自官方文档（2026-10 抓取），beta 期 schema 可能变化。
 - Codex CLI 参数（TOML 字段、`max_threads=6`、`max_depth=1`）：来自第三方博客与社区文章，官方 learn 站点当前 404；**作为设计输入前应对照 openai/codex 仓库 `docs/config.md` 核实**。
-- 前端投影细节（`useSubagentRuns.js`、`ConversationWorkspace.vue` 行号）来自探索代理报告，未逐行抽查。
+- 前端投影细节（`useSubagentRuns.js`、`SessionWorkspace.vue` 行号）来自探索代理报告，未逐行抽查。
 - 未做任何运行时验证（未起 Compose、未跑 e2e）；本报告不改变任何现有行为的结论。

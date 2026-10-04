@@ -9,15 +9,15 @@ import pytest
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from yuxi.modules.workspace.paths import ensure_bound_user_workdir
-from yuxi.modules.agents.repositories.threads import ConversationRepository
+from yuxi.modules.agents.repositories.sessions import SessionRepository
 from yuxi.infrastructure.postgres.base import Base
 from yuxi.modules.workspace.models import Project
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
 
 
-async def test_conversations_share_workdir_only_through_project(monkeypatch, tmp_path: Path):
-    """同一 Project 的 Conversation 共享目录，不各自保存 Workdir 路径。"""
+async def test_sessions_share_workdir_only_through_project(monkeypatch, tmp_path: Path):
+    """同一 Project 的 Session 共享目录，不各自保存 Workdir 路径。"""
     monkeypatch.setenv("YUXI_USER_DATA_DIR", str(tmp_path / "user-data"))
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
     async with engine.begin() as connection:
@@ -36,7 +36,7 @@ async def test_conversations_share_workdir_only_through_project(monkeypatch, tmp
             )
             db.add(project)
             await db.flush()
-            first = await ConversationRepository(db).add_conversation(
+            first = await SessionRepository(db).add_session(
                 uid="user-1",
                 agent_id="main",
                 thread_id="thread-1",
@@ -48,7 +48,7 @@ async def test_conversations_share_workdir_only_through_project(monkeypatch, tmp
             first_directory = tmp_path / "user-data" / "shared" / "user-1" / "workspace" / first_path
             assert first_directory.is_dir()
 
-            second = await ConversationRepository(db).add_conversation(
+            second = await SessionRepository(db).add_session(
                 uid="user-1",
                 agent_id="main",
                 thread_id="thread-2",

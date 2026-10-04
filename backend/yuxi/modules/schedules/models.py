@@ -104,7 +104,7 @@ class ScheduledAgentRun(Base):
     scheduled_for = Column(DateTime(timezone=True), nullable=False)
     project_id = Column(String(64), nullable=False)
     agent_slug = Column(String(64), nullable=False)
-    conversation_title = Column(String(255), nullable=False)
+    session_title = Column(String(255), nullable=False)
     prompt = Column(Text, nullable=False)
     tool_approval_mode = Column(String(32), nullable=False)
     model_spec = Column(String(512), nullable=True)

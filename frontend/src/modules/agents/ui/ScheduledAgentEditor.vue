@@ -7,7 +7,7 @@ import ActionTrigger from '@/shared/ui/ActionTrigger.vue'
 
 import ModelSelectorComponent from '@/modules/agents/ui/ModelSelectorComponent.vue'
 import ProjectSelectionSection from '@/modules/projects/ui/ProjectSelectionSection.vue'
-import ToolApprovalModeSelector from '@/modules/conversation/ui/ToolApprovalModeSelector.vue'
+import ToolApprovalModeSelector from '@/modules/session/ui/ToolApprovalModeSelector.vue'
 import { AUTO_PROJECT_ID } from '@/modules/projects/model/projectSelection'
 import {
   applyFrequencyChange,

@@ -20,7 +20,7 @@ class _FakeSession:
 
 
 async def _resolve_test_workdir(**_kwargs):
-    """返回测试 Conversation 的 Project Workdir。"""
+    """返回测试 Session 的 Project Workdir。"""
 
     return "projects/11111111-1111-4111-8111-111111111111"
 

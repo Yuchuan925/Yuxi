@@ -93,7 +93,7 @@ test('dashboardApi.getAllStats 始终请求知识库统计', async () => {
     storageValues.clear()
     const requests = []
     const responses = {
-      '/api/dashboard/stats': { total_conversations: 3 },
+      '/api/dashboard/stats': { total_sessions: 3 },
       '/api/dashboard/stats/users': { total_users: 2 },
       '/api/dashboard/stats/tools': { total_calls: 4 },
       '/api/dashboard/stats/agents': { total_agents: 1 },
@@ -158,8 +158,8 @@ test('会话统计源码包含筛选请求代次和 loading 回写守卫', () =>
     'utf8'
   )
   const statsLoader = source.slice(source.indexOf('const loadData'), source.indexOf('const changeSubagentScope'))
-  const conversationLoader = source.slice(
-    source.indexOf('const loadConversations'),
+  const sessionLoader = source.slice(
+    source.indexOf('const loadSessions'),
     source.indexOf('const resetFilters')
   )
 
@@ -171,11 +171,11 @@ test('会话统计源码包含筛选请求代次和 loading 回写守卫', () =>
       statsLoader.indexOf('await dashboardApi.getThreadStats')
   )
   assert.match(statsLoader, /if \(requestId === latestStatsRequest\) loading\.value = false/)
-  assert.match(conversationLoader, /const requestId = \+\+latestConversationRequest/)
-  assert.match(conversationLoader, /if \(requestId !== latestConversationRequest\) return/)
+  assert.match(sessionLoader, /const requestId = \+\+latestSessionRequest/)
+  assert.match(sessionLoader, /if \(requestId !== latestSessionRequest\) return/)
   assert.match(
-    conversationLoader,
-    /if \(requestId === latestConversationRequest\) tableLoading\.value = false/
+    sessionLoader,
+    /if \(requestId === latestSessionRequest\) tableLoading\.value = false/
   )
 })
 
@@ -208,7 +208,7 @@ test('buildHeatmapMonthSegments 忽略拥挤的残月并保留完整月份', asy
   })
 })
 
-test('dashboardApi.getConversationFilterOptions 请求会话审计筛选项', async () => {
+test('dashboardApi.getSessionFilterOptions 请求会话审计筛选项', async () => {
   await withServer(async (server) => {
     storageValues.clear()
     const requests = []
@@ -219,14 +219,14 @@ test('dashboardApi.getConversationFilterOptions 请求会话审计筛选项', as
 
     await prepareStores(server)
     const { dashboardApi } = await server.ssrLoadModule('/src/apis/dashboard_api.js')
-    const result = await dashboardApi.getConversationFilterOptions()
+    const result = await dashboardApi.getSessionFilterOptions()
 
-    assert.equal(requests[0], '/api/dashboard/conversations/options')
+    assert.equal(requests[0], '/api/dashboard/sessions/options')
     assert.deepEqual(result, { users: [], agents: [] })
   })
 })
 
-test('dashboardApi.getConversations 正确拼接 search 搜索关键词与分页参数', async () => {
+test('dashboardApi.getSessions 正确拼接 search 搜索关键词与分页参数', async () => {
   await withServer(async (server) => {
     storageValues.clear()
     const requests = []
@@ -249,7 +249,7 @@ test('dashboardApi.getConversations 正确拼接 search 搜索关键词与分页
     await prepareStores(server)
     const { dashboardApi } = await server.ssrLoadModule('/src/apis/dashboard_api.js')
 
-    const result = await dashboardApi.getConversations({
+    const result = await dashboardApi.getSessions({
       status: 'active',
       search: 'search term',
       limit: 20,
@@ -258,7 +258,7 @@ test('dashboardApi.getConversations 正确拼接 search 搜索关键词与分页
 
     assert.equal(
       requests[0],
-      '/api/dashboard/conversations?status=active&search=search+term&limit=20&offset=40'
+      '/api/dashboard/sessions?status=active&search=search+term&limit=20&offset=40'
     )
     assert.equal(result.total, 41)
     assert.equal(result.items.length, 1)

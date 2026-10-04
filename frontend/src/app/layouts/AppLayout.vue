@@ -17,8 +17,8 @@ import {
 
 import { useConfigStore } from '@/modules/settings/model/config'
 import { useAgentStore } from '@/modules/agents/model/agent'
-import { useChatThreadsStore } from '@/modules/conversation/model/chatThreads'
-import { useChatUIStore } from '@/modules/conversation/model/chatUI'
+import { useChatThreadsStore } from '@/modules/session/model/chatThreads'
+import { useChatUIStore } from '@/modules/session/model/chatUI'
 import { useDatabaseStore } from '@/modules/knowledge/model/database'
 import { useInfoStore } from '@/modules/settings/model/info'
 import { useProjectsStore } from '@/modules/projects/model/projects'
@@ -28,8 +28,8 @@ import { storeToRefs } from 'pinia'
 import UserInfoComponent from '@/modules/settings/ui/UserInfoComponent.vue'
 import TaskCenterDrawer from '@/modules/tasks/ui/TaskCenterDrawer.vue'
 import SettingsModal from '@/modules/settings/ui/SettingsModal.vue'
-import ConversationNavSection from '@/modules/conversation/ui/ConversationNavSection.vue'
-import GlobalSearchModal from '@/modules/conversation/ui/GlobalSearchModal.vue'
+import SessionNavSection from '@/modules/session/ui/SessionNavSection.vue'
+import GlobalSearchModal from '@/modules/session/ui/GlobalSearchModal.vue'
 import { searchWorkspaceFiles } from '@/apis/workspace_api'
 import { projectApi } from '@/apis/project_api'
 
@@ -56,7 +56,7 @@ const showSettingsModal = ref(false)
 const settingsInitialTab = ref('')
 
 const { sidebarCollapsed } = storeToRefs(chatUIStore)
-const conversationSearchOpen = ref(false)
+const sessionSearchOpen = ref(false)
 const projectPendingId = ref(null)
 
 // Provide settings modal methods to child components
@@ -150,7 +150,7 @@ const route = useRoute()
 const router = useRouter()
 
 const activeTaskCount = computed(() => activeCountRef.value || 0)
-const activeConversationThreadId = computed(() => {
+const activeSessionThreadId = computed(() => {
   return route.path.startsWith('/agent') ? currentThreadId.value : null
 })
 const organizationName = computed(() => {
@@ -223,8 +223,8 @@ const toggleSidebar = () => {
   setSidebarCollapsed(!sidebarCollapsed.value)
 }
 
-const openConversationSearch = () => {
-  conversationSearchOpen.value = true
+const openSessionSearch = () => {
+  sessionSearchOpen.value = true
 }
 
 const initAgentNavigation = async () => {
@@ -262,7 +262,7 @@ const handleSearchSelectThread = (thread) => {
   handleSelectChat(thread.id)
 }
 
-const handleCreateConversationFromSearch = () => {
+const handleCreateSessionFromSearch = () => {
   if (!chatThreadsStore.setCurrentThreadId(null)) return
   router.push({ name: 'AgentComp' })
 }
@@ -386,9 +386,9 @@ provide('settingsModal', {
           <button
             type="button"
             class="sidebar-header-action"
-            :class="{ active: conversationSearchOpen }"
+            :class="{ active: sessionSearchOpen }"
             aria-label="搜索"
-            @click="openConversationSearch"
+            @click="openSessionSearch"
           >
             <Search size="17" />
           </button>
@@ -428,9 +428,9 @@ provide('settingsModal', {
           v-if="sidebarCollapsed"
           type="button"
           class="nav-item"
-          :class="{ active: conversationSearchOpen }"
+          :class="{ active: sessionSearchOpen }"
           aria-label="搜索"
-          @click.stop="openConversationSearch"
+          @click.stop="openSessionSearch"
         >
           <a-tooltip placement="right" title="搜索">
             <Search class="icon" size="18" />
@@ -459,10 +459,10 @@ provide('settingsModal', {
         </RouterLink>
       </div>
       <div class="fill">
-        <ConversationNavSection
+        <SessionNavSection
           v-if="!sidebarCollapsed"
-          class="sidebar-conversations"
-          :current-chat-id="activeConversationThreadId"
+          class="sidebar-sessions"
+          :current-chat-id="activeSessionThreadId"
           :chats-list="threads"
           :projects="projects"
           :projects-loading="projectsLoading && !projectsStore.hasLoaded"
@@ -529,14 +529,14 @@ provide('settingsModal', {
     </router-view>
 
     <GlobalSearchModal
-      v-model:open="conversationSearchOpen"
-      :modes="['conversation', 'file']"
-      default-mode="conversation"
+      v-model:open="sessionSearchOpen"
+      :modes="['session', 'file']"
+      default-mode="session"
       :recent-threads="threads"
       :file-search="searchWorkspace"
       file-placeholder="搜索个人空间文件..."
       @select-thread="handleSearchSelectThread"
-      @create-thread="handleCreateConversationFromSearch"
+      @create-thread="handleCreateSessionFromSearch"
       @thread-found="handleSearchThreadFound"
       @select-file="handleSearchSelectFile"
     />
@@ -621,7 +621,7 @@ div.header,
     padding: 0 @sidebar-padding-x;
   }
 
-  .sidebar-conversations {
+  .sidebar-sessions {
     height: 100%;
     min-height: 0;
     overflow: hidden;
@@ -629,7 +629,7 @@ div.header,
   }
 
   .sidebar-brand,
-  :deep(.conversation-nav-section:not(.sidebar-conversations)),
+  :deep(.session-nav-section:not(.sidebar-sessions)),
   .github,
   .user-info {
     flex-shrink: 0;

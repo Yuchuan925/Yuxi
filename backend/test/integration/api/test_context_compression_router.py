@@ -21,7 +21,7 @@ from yuxi.api.routers.public_v1.agents import public_agents_router
 from yuxi.api.dependencies.auth import get_db, get_required_user
 import yuxi.modules.agents.services.compression as context_compression_service
 from yuxi.infrastructure.postgres.manager import pg_manager
-from yuxi.modules.agents.models.threads import Conversation
+from yuxi.modules.agents.models.sessions import Session
 from yuxi.modules.workspace.models import Project
 from yuxi.modules.identity.models import User
 
@@ -76,7 +76,7 @@ async def test_compress_thread_persists_canonical_checkpoint_through_http(
         )
         await db.flush()
         db.add(
-            Conversation(
+            Session(
                 thread_id=thread_id,
                 uid=uid,
                 project_id=project_id,
@@ -139,7 +139,7 @@ async def test_compress_thread_persists_canonical_checkpoint_through_http(
     monkeypatch.setattr(context_compression_service, "AgentRepository", AgentRepo)
     monkeypatch.setattr(context_compression_service, "get_agent_backend", lambda _backend_id: Agent())
     monkeypatch.setattr(context_compression_service, "resolve_agent_run_model_spec", resolve_model)
-    monkeypatch.setattr(context_compression_service, "ensure_conversation_workdir_available", workdir)
+    monkeypatch.setattr(context_compression_service, "ensure_session_workdir_available", workdir)
     monkeypatch.setattr(context_compression_service, "_ensure_runtime_available", runtime)
     monkeypatch.setattr(context_compression_service, "_release_runtime", runtime)
     monkeypatch.setattr(context_compression_service, "prepare_agent_runtime_context", AsyncMock())
@@ -182,7 +182,7 @@ async def test_compress_thread_persists_canonical_checkpoint_through_http(
     finally:
         await checkpointer.adelete_thread(thread_id)
         async with session_factory() as db:
-            await db.execute(delete(Conversation).where(Conversation.thread_id == thread_id))
+            await db.execute(delete(Session).where(Session.thread_id == thread_id))
             await db.execute(delete(Project).where(Project.id == project_id))
             await db.execute(delete(User).where(User.uid == uid))
             await db.commit()

@@ -6,8 +6,8 @@ const readSource = (relativePath) => readFileSync(new URL(relativePath, import.m
 
 test('共享下拉样式由全局样式表拥有', () => {
   const globalStyles = readSource('../../src/assets/css/main.css')
-  const agentPicker = readSource('../../src/modules/agents/ui/ConversationAgentPicker.vue')
-  const approvalSelector = readSource('../../src/modules/conversation/ui/ToolApprovalModeSelector.vue')
+  const agentPicker = readSource('../../src/modules/agents/ui/SessionAgentPicker.vue')
+  const approvalSelector = readSource('../../src/modules/session/ui/ToolApprovalModeSelector.vue')
 
   const actionDropdown = readSource('../../src/shared/ui/ActionDropdown.vue')
   assert.match(approvalSelector, /<ActionDropdown/)

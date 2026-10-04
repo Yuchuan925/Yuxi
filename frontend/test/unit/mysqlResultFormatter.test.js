@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { formatMysqlResult } from '../../src/modules/conversation/ui/tools/renderers/mysqlResultFormatter.js'
+import { formatMysqlResult } from '../../src/modules/session/ui/tools/renderers/mysqlResultFormatter.js'
 
 test('formatMysqlResult 将空值保持为空字符串', () => {
   assert.equal(formatMysqlResult(undefined), '')

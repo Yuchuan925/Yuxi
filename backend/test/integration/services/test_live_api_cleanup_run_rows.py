@@ -15,11 +15,11 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from test import live_api_cleanup as cleanup_module
 from test.live_api_cleanup import (
-    delete_test_conversation_resources,
-    delete_test_conversation_rows,
-    list_test_conversation_resources,
-    make_test_conversation_metadata,
-    make_test_conversation_title,
+    delete_test_session_resources,
+    delete_test_session_rows,
+    list_test_session_resources,
+    make_test_session_metadata,
+    make_test_session_title,
     validate_test_runs_terminal,
     validate_test_workdirs_exclusive,
 )
@@ -31,7 +31,7 @@ import yuxi.modules.workspace.services.projects as project_service
 from yuxi.modules.agents.models.inputs import AgentInput, AgentInputMessage, AgentInputReceipt
 from yuxi.modules.agents.models.runs import AgentRun, AgentRunAttempt
 from yuxi.modules.agents.models.turns import AgentTurn
-from yuxi.modules.agents.models.threads import Conversation
+from yuxi.modules.agents.models.sessions import Session
 from yuxi.modules.agents.models.messages import Message, ToolCall
 from yuxi.modules.workspace.models import Project
 from yuxi.modules.identity.models import User
@@ -86,16 +86,16 @@ async def _seed_thread(session_factory, *, thread_prefix: str) -> dict:
                 id=project_id, uid=uid, selection_status="implicit", workdir_path=workdir_path, directory_mode="managed"
             )
         )
-        conversation = Conversation(
+        agent_session = Session(
             thread_id=thread_id,
             uid=uid,
             project_id=project_id,
             agent_id="main",
-            title=make_test_conversation_title(thread_prefix),
+            title=make_test_session_title(thread_prefix),
             status="active",
-            extra_metadata=make_test_conversation_metadata(thread_prefix),
+            extra_metadata=make_test_session_metadata(thread_prefix),
         )
-        db.add(conversation)
+        db.add(agent_session)
         await db.flush()
         input_repo = AgentInputRepository(db)
         receipt_repo = AgentInputReceiptRepository(db)
@@ -119,20 +119,22 @@ async def _seed_thread(session_factory, *, thread_prefix: str) -> dict:
             intent_hash="test",
             input_id=input_id,
         )
-        input_message = Message(conversation_id=conversation.id, role="user", content="input", delivery_status="queued")
+        input_message = Message(
+            session_record_id=agent_session.id, role="user", content="input", delivery_status="queued"
+        )
         db.add(input_message)
         await db.flush()
         await input_repo.add_messages(input_id=input_id, receipt_id=receipt_id, message_ids=[input_message.id])
         turn = await turn_repo.create(turn_id=turn_id, thread_id=thread_id, uid=uid, app_id=None)
         run = await AgentRunRepository(db).create_run(
             run_id=run_id,
-            conversation_thread_id=thread_id,
+            thread_id=thread_id,
             agent_slug="main",
             uid=uid,
             turn_id=turn_id,
             input_id=input_id,
             input_payload={},
-            conversation_id=conversation.id,
+            session_record_id=agent_session.id,
             input_message_id=input_message.id,
         )
         await turn_repo.set_current(turn, run_id=run.id)
@@ -141,7 +143,7 @@ async def _seed_thread(session_factory, *, thread_prefix: str) -> dict:
         await db.flush()
         await turn_repo.set_terminal(turn, status="completed", result_run_id=run_id)
         output_message = Message(
-            conversation_id=conversation.id,
+            session_record_id=agent_session.id,
             run_id=run_id,
             turn_id=turn_id,
             role="assistant",
@@ -166,7 +168,7 @@ async def _seed_thread(session_factory, *, thread_prefix: str) -> dict:
             "uid": uid,
             "project_id": project_id,
             "workdir_path": workdir_path,
-            "conversation_id": conversation.id,
+            "session_record_id": agent_session.id,
             "input_id": input_id,
             "receipt_id": receipt_id,
             "turn_id": turn_id,
@@ -179,22 +181,22 @@ async def _seed_thread(session_factory, *, thread_prefix: str) -> dict:
 
 async def _cleanup_seed(session_factory, seeds: list[dict]) -> None:
     """仅清理本测试创建的线程及用户。"""
-    await delete_test_conversation_rows({seed["thread_id"] for seed in seeds})
+    await delete_test_session_rows({seed["thread_id"] for seed in seeds})
     async with session_factory() as db:
         await db.execute(delete(Project).where(Project.id.in_([seed["project_id"] for seed in seeds])))
         await db.execute(delete(User).where(User.uid.in_([seed["uid"] for seed in seeds])))
         await db.commit()
 
 
-async def test_delete_test_conversation_rows_removes_history_and_preserves_neighbor(cleanup_database):
+async def test_delete_test_session_rows_removes_history_and_preserves_neighbor(cleanup_database):
     """物理清理删除目标整条生命周期历史，同时保留相邻线程。"""
     target = await _seed_thread(cleanup_database, thread_prefix="pytest-conv-target")
     neighbor = await _seed_thread(cleanup_database, thread_prefix="pytest-conv-neighbor")
     try:
-        await delete_test_conversation_rows({target["thread_id"]})
+        await delete_test_session_rows({target["thread_id"]})
         async with cleanup_database() as db:
             for model, key in (
-                (Conversation, "conversation_id"),
+                (Session, "session_record_id"),
                 (AgentInput, "input_id"),
                 (AgentInputReceipt, "receipt_id"),
                 (AgentTurn, "turn_id"),
@@ -220,20 +222,20 @@ async def test_delete_test_conversation_rows_removes_history_and_preserves_neigh
         await _cleanup_seed(cleanup_database, [target, neighbor])
 
 
-async def test_delete_test_conversation_rows_is_idempotent(cleanup_database):
+async def test_delete_test_session_rows_is_idempotent(cleanup_database):
     """重复清理同一测试线程仍保持物理删除。"""
     target = await _seed_thread(cleanup_database, thread_prefix="pytest-conv-idem")
     try:
-        await delete_test_conversation_rows({target["thread_id"]})
-        await delete_test_conversation_rows({target["thread_id"]})
+        await delete_test_session_rows({target["thread_id"]})
+        await delete_test_session_rows({target["thread_id"]})
         async with cleanup_database() as db:
-            assert await db.get(Conversation, target["conversation_id"]) is None
+            assert await db.get(Session, target["session_record_id"]) is None
     finally:
         await _cleanup_seed(cleanup_database, [target])
 
 
-async def test_delete_test_conversation_rows_preserves_selectable_project(cleanup_database):
-    """删除最后一个 Conversation 时保留可选择的 Project。"""
+async def test_delete_test_session_rows_preserves_selectable_project(cleanup_database):
+    """删除最后一个 Session 时保留可选择的 Project。"""
     target = await _seed_thread(cleanup_database, thread_prefix="pytest-selectable-project")
     try:
         async with cleanup_database() as db:
@@ -241,7 +243,7 @@ async def test_delete_test_conversation_rows_preserves_selectable_project(cleanu
             project.selection_status = "selectable"
             project.name = "Test selectable project"
             await db.commit()
-        await delete_test_conversation_rows({target["thread_id"]})
+        await delete_test_session_rows({target["thread_id"]})
         async with cleanup_database() as db:
             assert await db.get(Project, target["project_id"]) is not None
     finally:
@@ -271,14 +273,14 @@ async def test_receipt_prefix_matching_treats_underscores_literally(cleanup_data
                 )
             db.add_all(
                 [
-                    Conversation(
+                    Session(
                         thread_id=valid_thread_id,
                         uid=uid,
                         project_id=project_ids[0],
                         agent_id="main",
                         title="ordinary valid",
                     ),
-                    Conversation(
+                    Session(
                         thread_id=ordinary_thread_id,
                         uid=uid,
                         project_id=project_ids[1],
@@ -295,7 +297,7 @@ async def test_receipt_prefix_matching_treats_underscores_literally(cleanup_data
                         idempotency_key=f"YUXI_TEST_valid_{uuid.uuid4()}",
                         uid=uid,
                         app_id=None,
-                        conversation_thread_id=valid_thread_id,
+                        thread_id=valid_thread_id,
                         event_type="control",
                         intent_hash="test",
                     ),
@@ -304,18 +306,18 @@ async def test_receipt_prefix_matching_treats_underscores_literally(cleanup_data
                         idempotency_key=f"YUXI-TEST-ordinary-{uuid.uuid4()}",
                         uid=uid,
                         app_id=None,
-                        conversation_thread_id=ordinary_thread_id,
+                        thread_id=ordinary_thread_id,
                         event_type="control",
                         intent_hash="test",
                     ),
                 ]
             )
             await db.commit()
-        resources = await list_test_conversation_resources(uid)
+        resources = await list_test_session_resources(uid)
         assert valid_thread_id in resources
         assert ordinary_thread_id not in resources
     finally:
-        await delete_test_conversation_rows({valid_thread_id, ordinary_thread_id})
+        await delete_test_session_rows({valid_thread_id, ordinary_thread_id})
         async with cleanup_database() as db:
             await db.execute(delete(Project).where(Project.id.in_(project_ids)))
             await db.execute(delete(User).where(User.uid == uid))
@@ -323,7 +325,7 @@ async def test_receipt_prefix_matching_treats_underscores_literally(cleanup_data
 
 
 async def test_workdir_guard_rejects_ancestor_or_descendant_owner(cleanup_database):
-    """目标 Project Workdir 与非目标 Conversation 路径嵌套时必须拒绝。"""
+    """目标 Project Workdir 与非目标 Session 路径嵌套时必须拒绝。"""
 
     session_factory = cleanup_database
     uid = f"pytest-workdir-user-{uuid.uuid4()}"
@@ -350,14 +352,14 @@ async def test_workdir_guard_rejects_ancestor_or_descendant_owner(cleanup_databa
                     workdir_path="projects/shared/nested",
                     directory_mode="managed",
                 ),
-                Conversation(
+                Session(
                     thread_id=target_thread_id,
                     uid=uid,
                     project_id=target_project_id,
                     agent_id="main",
                     title="target",
                 ),
-                Conversation(
+                Session(
                     thread_id=neighbor_thread_id,
                     uid=uid,
                     project_id=neighbor_project_id,
@@ -375,9 +377,7 @@ async def test_workdir_guard_rejects_ancestor_or_descendant_owner(cleanup_databa
             )
     finally:
         async with session_factory() as db:
-            await db.execute(
-                delete(Conversation).where(Conversation.thread_id.in_([target_thread_id, neighbor_thread_id]))
-            )
+            await db.execute(delete(Session).where(Session.thread_id.in_([target_thread_id, neighbor_thread_id])))
             await db.execute(delete(Project).where(Project.id.in_([target_project_id, neighbor_project_id])))
             await db.execute(delete(User).where(User.uid == uid))
             await db.commit()
@@ -415,7 +415,7 @@ async def test_run_guard_waits_for_interrupted_history_runtime_cleanup(cleanup_d
             db.add(
                 AgentRun(
                     id=resume_id,
-                    conversation_thread_id=target["thread_id"],
+                    thread_id=target["thread_id"],
                     runtime_scope_id=target["thread_id"],
                     agent_slug="main",
                     uid=target["uid"],
@@ -505,18 +505,18 @@ async def test_resource_cleanup_lock_makes_overlapping_linked_project_revalidate
                 directory_mode="managed",
             )
         )
-        conversation = Conversation(
+        agent_session = Session(
             thread_id=target_thread_id,
             uid=uid,
             project_id=target_project_id,
             agent_id="main",
-            title=make_test_conversation_title("workdir-lock"),
+            title=make_test_session_title("workdir-lock"),
             status="deleted",
-            extra_metadata=make_test_conversation_metadata("workdir-lock"),
+            extra_metadata=make_test_session_metadata("workdir-lock"),
         )
-        db.add(conversation)
+        db.add(agent_session)
         await db.commit()
-        conversation_id = conversation.id
+        session_record_id = agent_session.id
 
     creation_result: dict[str, object] = {}
     lock_attempted = threading.Event()
@@ -564,7 +564,7 @@ async def test_resource_cleanup_lock_makes_overlapping_linked_project_revalidate
     monkeypatch.setattr("test.live_api_cleanup.remove_e2e_thread_storage", lambda _thread_id: None)
 
     try:
-        await delete_test_conversation_resources(
+        await delete_test_session_resources(
             {(uid, workdir_path): {target_project_id}},
             {target_thread_id},
             {target_project_id},
@@ -574,29 +574,27 @@ async def test_resource_cleanup_lock_makes_overlapping_linked_project_revalidate
         assert creation_result == {"status_code": 404}
 
         async with session_factory() as db:
-            assert await db.get(Conversation, conversation_id) is None
+            assert await db.get(Session, session_record_id) is None
             assert await db.get(Project, neighbor_project_id) is None
     finally:
         async with session_factory() as db:
-            await db.execute(
-                delete(Conversation).where(Conversation.thread_id.in_([target_thread_id, neighbor_thread_id]))
-            )
+            await db.execute(delete(Session).where(Session.thread_id.in_([target_thread_id, neighbor_thread_id])))
             await db.execute(delete(Project).where(Project.id.in_([target_project_id, neighbor_project_id])))
             await db.execute(delete(User).where(User.uid == uid))
             await db.commit()
 
 
 async def test_resource_cleanup_reports_file_failure_after_database_commit(cleanup_database, monkeypatch):
-    """文件清理失败必须显式报告，且不能恢复已提交的 Conversation 行。"""
+    """文件清理失败必须显式报告，且不能恢复已提交的 Session 行。"""
 
     session_factory = cleanup_database
     target = await _seed_thread(session_factory, thread_prefix="pytest-cleanup-file-failure")
     workdir_path = f"projects/YUXI_TEST_failure-{uuid.uuid4()}"
     async with session_factory() as db:
-        conversation = await db.get(Conversation, target["conversation_id"])
+        agent_session = await db.get(Session, target["session_record_id"])
         project = await db.get(Project, target["project_id"])
-        assert conversation is not None and project is not None
-        conversation.status = "deleted"
+        assert agent_session is not None and project is not None
+        agent_session.status = "deleted"
         project.workdir_path = workdir_path
         await db.commit()
 
@@ -608,13 +606,13 @@ async def test_resource_cleanup_reports_file_failure_after_database_commit(clean
 
     try:
         with pytest.raises(RuntimeError, match="rows were deleted, but filesystem cleanup failed"):
-            await delete_test_conversation_resources(
+            await delete_test_session_resources(
                 {(target["uid"], workdir_path): {target["project_id"]}},
                 {target["thread_id"]},
                 {target["project_id"]},
             )
 
         async with session_factory() as db:
-            assert await db.get(Conversation, target["conversation_id"]) is None
+            assert await db.get(Session, target["session_record_id"]) is None
     finally:
         await _cleanup_seed(session_factory, [target])

@@ -32,9 +32,9 @@ Graph 创建时，Agent backend 取得 `uid`、根运行 scope 和 `workdir_path
 
 ## Identity、Workdir 和生命周期
 
-`runtime_scope_id` 使用执行所属 Conversation 的 thread ID。主、子 Agent 各自拥有运行时和 checkpoint，子 Agent 的独立 Turn 可在父 Turn 结束后继续运行、等待和恢复。父子共享 Project Workdir 的持久文件，不共享 `/tmp` 或运行时环境；委派附件通过已授权的输入传递。
+`runtime_scope_id` 使用执行所属 Session 的 thread ID。主、子 Agent 各自拥有运行时和 checkpoint，子 Agent 的独立 Turn 可在父 Turn 结束后继续运行、等待和恢复。父子共享 Project Workdir 的持久文件，不共享 `/tmp` 或运行时环境；委派附件通过已授权的输入传递。
 
-Conversation 通过 `project_id` 绑定 Project；Project 拥有这项绑定和 `workdir_path`，UserWorkspace 拥有该路径下的实际文件字节。`workdir_path` 是当前用户 UserWorkspace 下的合法相对 POSIX 路径，不能包含 `..`、反斜杠或符号链接。`linked` Project 只能引用已经存在的目录，目标不存在时请求失败。新 `managed` Project 使用上海时间和 Project ID 前 8 位分配 `projects/YYYY-MM-DD_HH-MM-SS_<project-id-prefix>`；同名条目已经存在时依次追加 `-1`、`-2`，既有 `projects/<uuid>` 保持有效，目录创建失败时请求失败。Workdir 决定当前工作目录和 Viewer 文件范围，但不决定 sandbox identity，也不把同一用户的其他 Project 变成安全隔离边界。两个顶层 Conversation 即使绑定同一 Workdir，也会创建不同 runtime。
+Session 通过 `project_id` 绑定 Project；Project 拥有这项绑定和 `workdir_path`，UserWorkspace 拥有该路径下的实际文件字节。`workdir_path` 是当前用户 UserWorkspace 下的合法相对 POSIX 路径，不能包含 `..`、反斜杠或符号链接。`linked` Project 只能引用已经存在的目录，目标不存在时请求失败。新 `managed` Project 使用上海时间和 Project ID 前 8 位分配 `projects/YYYY-MM-DD_HH-MM-SS_<project-id-prefix>`；同名条目已经存在时依次追加 `-1`、`-2`，既有 `projects/<uuid>` 保持有效，目录创建失败时请求失败。Workdir 决定当前工作目录和 Viewer 文件范围，但不决定 sandbox identity，也不把同一用户的其他 Project 变成安全隔离边界。两个顶层 Session 即使绑定同一 Workdir，也会创建不同 runtime。
 
 | 运行类型 | checkpoint | runtime scope | Workdir |
 | --- | --- | --- | --- |
@@ -86,7 +86,7 @@ API/worker 使用 `SANDBOX_PROVISIONER_TOKEN` 调用 provisioner。动态沙盒�
 | runtime 被回收 | 动态进程生命周期结束 | 持久文件被删除或内容正确 |
 | 迁移器成功 | 迁移目标和路径约束通过回读 | 未来 Agent 行为都正确 |
 
-Viewer 和 Agent 看到不同内容时，先核对同一 `uid`、Conversation 绑定的 `project_id`、Project 的 `workdir_path`、runtime scope、宿主 bind/PVC subPath 和 generation。不要用对象 URL 推断文件系统权限，也不要用相邻 Run 的路径猜测当前结果。
+Viewer 和 Agent 看到不同内容时，先核对同一 `uid`、Session 绑定的 `project_id`、Project 的 `workdir_path`、runtime scope、宿主 bind/PVC subPath 和 generation。不要用对象 URL 推断文件系统权限，也不要用相邻 Run 的路径猜测当前结果。
 
 ## 源码定位与验证
 

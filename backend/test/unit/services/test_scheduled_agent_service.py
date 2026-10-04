@@ -86,7 +86,7 @@ async def test_validate_agent_rejects_agent_outside_user_visibility(monkeypatch)
 def test_scheduled_run_model_owns_execution_configuration_snapshot():
     from yuxi.modules.schedules.models import ScheduledAgentRun
 
-    assert {"project_id", "agent_slug", "conversation_title", "prompt", "tool_approval_mode", "model_spec"}.issubset(
+    assert {"project_id", "agent_slug", "session_title", "prompt", "tool_approval_mode", "model_spec"}.issubset(
         ScheduledAgentRun.__table__.c.keys()
     )
 
@@ -136,11 +136,11 @@ def test_execution_projection_reads_terminal_status_from_agent_run():
         "turn_id": "turn-1",
         "error_message": "模型不可用",
         "completed_at": "2026-08-27T10:00:00Z",
-        "conversation_available": True,
+        "session_available": True,
     }
 
 
-def test_execution_projection_does_not_offer_conversation_before_input_exists():
+def test_execution_projection_does_not_offer_session_before_input_exists():
     scheduled_run = SimpleNamespace(
         status="failed",
         to_dict=lambda: {"status": "failed", "thread_id": "reserved-thread"},
@@ -148,7 +148,7 @@ def test_execution_projection_does_not_offer_conversation_before_input_exists():
 
     result = service._execution_to_dict(scheduled_run, None, None)
 
-    assert result["conversation_available"] is False
+    assert result["session_available"] is False
 
 
 @pytest.mark.asyncio

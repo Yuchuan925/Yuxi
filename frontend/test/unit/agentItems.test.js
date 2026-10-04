@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { createItemState, applyAgentEvent, mergeItemSnapshot, itemsToMessages } from '../../src/modules/conversation/model/agentItems.js'
+import { createItemState, applyAgentEvent, mergeItemSnapshot, itemsToMessages } from '../../src/modules/session/model/agentItems.js'
 
 const message = (id = 'm', status = 'in_progress') => ({
   id, type: 'message', role: 'assistant', turn_id: 'turn', status, phase: 'commentary',

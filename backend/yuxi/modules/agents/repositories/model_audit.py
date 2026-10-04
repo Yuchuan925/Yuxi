@@ -40,19 +40,19 @@ class ModelMessageAuditRepository:
         run = await self.run_repo.lock_output_persistence(
             run_id,
             worker_id=worker_id,
-            conversation_thread_id=thread_id,
+            thread_id=thread_id,
         )
         if run is None:
             raise ValueError(f"AgentRun 不存在: {run_id}")
 
         existing = await self._get(run_id, normalized_operation_id)
         if existing is not None:
-            self._require_same_owner(existing, conversation_id=run.conversation_id, turn_id=run.turn_id)
+            self._require_same_owner(existing, session_record_id=run.session_record_id, turn_id=run.turn_id)
             self._require_same_start(existing, sequence=sequence)
             return existing, False
 
         message = Message(
-            conversation_id=run.conversation_id,
+            session_record_id=run.session_record_id,
             role="assistant",
             content="",
             message_type=MODEL_AUDIT_MESSAGE_TYPE,
@@ -93,7 +93,7 @@ class ModelMessageAuditRepository:
         run = await self.run_repo.lock_output_persistence(
             run_id,
             worker_id=worker_id,
-            conversation_thread_id=thread_id,
+            thread_id=thread_id,
         )
         if run is None:
             raise ValueError(f"AgentRun 不存在: {run_id}")
@@ -101,7 +101,7 @@ class ModelMessageAuditRepository:
         message = await self._get(run_id, normalized_operation_id)
         if message is None:
             raise ValueError("Model finish 缺少对应的 start 事实")
-        self._require_same_owner(message, conversation_id=run.conversation_id, turn_id=run.turn_id)
+        self._require_same_owner(message, session_record_id=run.session_record_id, turn_id=run.turn_id)
 
         normalized_usage = dict(usage) if isinstance(usage, dict) else None
         if message.execution_status == "completed":
@@ -149,14 +149,14 @@ class ModelMessageAuditRepository:
         return result.scalar_one_or_none()
 
     @staticmethod
-    def _require_same_owner(message: Message, *, conversation_id: int, turn_id: str) -> None:
+    def _require_same_owner(message: Message, *, session_record_id: int, turn_id: str) -> None:
         if (
-            message.conversation_id != conversation_id
+            message.session_record_id != session_record_id
             or message.turn_id != turn_id
             or message.role != "assistant"
             or message.message_type != MODEL_AUDIT_MESSAGE_TYPE
         ):
-            raise ValueError("Model 审计消息必须属于同一 Turn 和 conversation")
+            raise ValueError("Model 审计消息必须属于同一 Turn 和 agent_session")
 
     @staticmethod
     def _require_same_start(message: Message, *, sequence: int) -> None:

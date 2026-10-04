@@ -6,7 +6,7 @@ import uuid
 
 import asyncpg
 import pytest
-from test.live_api_cleanup import make_test_conversation_title
+from test.live_api_cleanup import make_test_session_title
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
 
@@ -45,13 +45,11 @@ async def test_public_missing_thread_and_turn_return_not_found(test_client, admi
     thread_id = str(uuid.uuid4())
     turn_id = str(uuid.uuid4())
     assert (await test_client.get(f"/api/v1/agents/threads/{thread_id}", headers=admin_headers)).status_code == 404
-    turn = await test_client.get(
-        f"/api/v1/agents/threads/{thread_id}/turns/{turn_id}", headers=admin_headers
-    )
+    turn = await test_client.get(f"/api/v1/agents/threads/{thread_id}/turns/{turn_id}", headers=admin_headers)
     assert turn.status_code == 404
 
 
-async def test_removed_agent_conversation_entrypoints_are_unreachable(test_client, admin_headers):
+async def test_removed_agent_session_entrypoints_are_unreachable(test_client, admin_headers):
     """旧聊天、Channel 和 Invocation 入口不再接收执行请求。"""
     requests = (
         ("/api/chat/thread", {"agent_id": "default-chatbot"}),
@@ -76,7 +74,7 @@ async def test_public_input_rejects_unbound_attachment_without_persisting_receip
     slug = agent.get("id") or agent.get("slug") or agent["agent_id"]
     created = await test_client.post(
         "/api/v1/agents/threads",
-        json={"agent_id": slug, "title": make_test_conversation_title("attachment-input")},
+        json={"agent_id": slug, "title": make_test_session_title("attachment-input")},
         headers={**admin_headers, "Idempotency-Key": str(uuid.uuid4())},
     )
     assert created.status_code == 200, created.text
@@ -88,7 +86,7 @@ async def test_public_input_rejects_unbound_attachment_without_persisting_receip
     try:
         if attachment_kind == "bound_elsewhere":
             await conn.execute(
-                "UPDATE conversations SET queue_paused = TRUE, "
+                "UPDATE sessions SET queue_paused = TRUE, "
                 "extra_metadata = jsonb_set(coalesce(extra_metadata::jsonb, '{}'::jsonb), "
                 "'{attachments}', $2::jsonb)::json "
                 "WHERE thread_id = $1",
@@ -96,7 +94,7 @@ async def test_public_input_rejects_unbound_attachment_without_persisting_receip
                 json.dumps([{"file_id": file_id, "input_id": "other-input", "status": "ready"}]),
             )
         else:
-            await conn.execute("UPDATE conversations SET queue_paused = TRUE WHERE thread_id = $1", thread_id)
+            await conn.execute("UPDATE sessions SET queue_paused = TRUE WHERE thread_id = $1", thread_id)
 
         response = await test_client.post(
             f"/api/v1/agents/threads/{thread_id}/events",
@@ -114,12 +112,12 @@ async def test_public_input_rejects_unbound_attachment_without_persisting_receip
         assert response.status_code == 422, response.text
         facts = await conn.fetchrow(
             "SELECT "
-            "(SELECT COUNT(*) FROM agent_input_receipts WHERE conversation_thread_id = $1 "
+            "(SELECT COUNT(*) FROM agent_input_receipts WHERE thread_id = $1 "
             "AND idempotency_key = $2) AS receipts, "
-            "(SELECT COUNT(*) FROM agent_inputs WHERE conversation_thread_id = $1) AS inputs, "
-            "(SELECT COUNT(*) FROM agent_runs WHERE conversation_thread_id = $1) AS runs, "
-            "(SELECT COUNT(*) FROM messages WHERE conversation_id = "
-            "(SELECT id FROM conversations WHERE thread_id = $1)) AS messages",
+            "(SELECT COUNT(*) FROM agent_inputs WHERE thread_id = $1) AS inputs, "
+            "(SELECT COUNT(*) FROM agent_runs WHERE thread_id = $1) AS runs, "
+            "(SELECT COUNT(*) FROM messages WHERE session_record_id = "
+            "(SELECT id FROM sessions WHERE thread_id = $1)) AS messages",
             thread_id,
             event_key,
         )

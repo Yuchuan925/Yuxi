@@ -11,6 +11,6 @@ def test_thread_create_rejects_legacy_direct_workdir_path():
 
 
 def test_thread_update_rejects_project_rebinding():
-    """已有 Conversation 不接受 project_id 改绑。"""
+    """已有 Session 不接受 project_id 改绑。"""
     with pytest.raises(ValidationError):
         ThreadUpdate(project_id="project-2")

@@ -77,7 +77,7 @@ metadata 可以定义展示名称、说明、控件类型、选项和角色权�
 
 ## 定时运行
 
-智能体支持用户定时任务（Beta）：为智能体配置 5 段 cron 和 IANA 时区后，worker 到期自动在独立 Conversation 中触发一次运行，也支持手动立即运行；停机错过的多个周期合并为一次，已有未完成执行时跳过并记录。任务的定义、触发与恢复边界见 [Agent 运行时上下文](../mechanisms/agent-runtime.md#用户定时-agent)。
+智能体支持用户定时任务（Beta）：为智能体配置 5 段 cron 和 IANA 时区后，worker 到期自动在独立 Session 中触发一次运行，也支持手动立即运行；停机错过的多个周期合并为一次，已有未完成执行时跳过并记录。任务的定义、触发与恢复边界见 [Agent 运行时上下文](../mechanisms/agent-runtime.md#用户定时-agent)。
 
 ## 自定义 Context 字段
 

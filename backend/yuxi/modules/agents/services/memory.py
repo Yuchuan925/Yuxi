@@ -8,7 +8,7 @@ from sqlalchemy import text
 
 from yuxi.infrastructure.postgres.manager import pg_manager
 from yuxi.modules.agents.repositories.runs import AgentRunRepository
-from yuxi.modules.agents.repositories.threads import ConversationRepository
+from yuxi.modules.agents.repositories.sessions import SessionRepository
 from yuxi.modules.identity.preferences import UserConfig
 from yuxi.modules.workspace.filesystem import Workspace
 
@@ -75,7 +75,7 @@ async def remember_memory(
             normalized_run_id,
             uid=normalized_uid,
             worker_id=normalized_worker_id,
-            conversation_thread_id=normalized_thread_id,
+            thread_id=normalized_thread_id,
         )
         if run is None:
             raise ValueError("Memory 写入对应的 AgentRun 不存在")
@@ -110,7 +110,7 @@ async def search_thread_messages(*, uid: str, query: str, limit: int = 5) -> dic
         config = await UserConfig.load(db, normalized_uid)
         if not config.schema.enable_memory:
             raise ValueError("Memory 已关闭")
-        return await ConversationRepository(db).search_memory_messages(
+        return await SessionRepository(db).search_memory_messages(
             uid=normalized_uid,
             query=query,
             limit=limit,
@@ -133,7 +133,7 @@ async def read_thread_messages(
         config = await UserConfig.load(db, normalized_uid)
         if not config.schema.enable_memory:
             raise ValueError("Memory 已关闭")
-        return await ConversationRepository(db).read_memory_messages(
+        return await SessionRepository(db).read_memory_messages(
             uid=normalized_uid,
             thread_id=thread_id,
             message_id=message_id,

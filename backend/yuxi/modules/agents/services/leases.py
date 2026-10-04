@@ -11,10 +11,10 @@ from sqlalchemy import select, text
 from yuxi.infrastructure.observability.logging import logger
 from yuxi.infrastructure.postgres.manager import pg_manager
 from yuxi.modules.agents.models.runs import AgentRun
-from yuxi.modules.agents.models.threads import Conversation
+from yuxi.modules.agents.models.sessions import Session
 from yuxi.modules.agents.repositories.input import AgentInputRepository
 from yuxi.modules.agents.repositories.runs import TERMINAL_RUN_STATUSES, AgentRunRepository
-from yuxi.modules.agents.repositories.threads import ConversationRepository
+from yuxi.modules.agents.repositories.sessions import SessionRepository
 from yuxi.modules.agents.repositories.turn import AgentTurnRepository
 from yuxi.modules.agents.runtime.sandbox.provider import get_sandbox_provider
 from yuxi.modules.agents.services.event_writer import publish_run_settlement
@@ -24,7 +24,7 @@ from yuxi.modules.agents.services.transport import (
     publish_cancel_signals,
 )
 from yuxi.modules.workspace.services.bindings import (
-    resolve_conversation_workdir_path,
+    resolve_session_workdir_path,
 )
 
 RUN_LEASE_SECONDS = 120
@@ -35,7 +35,7 @@ WORKER_ID = f"worker-{uuid.uuid4().hex}"
 
 async def release_runtime_if_idle(run: AgentRun) -> bool:
     """在 PostgreSQL cleanup fence 内串行销毁根 execution runtime。"""
-    runtime_scope_id = str(getattr(run, "runtime_scope_id", None) or run.conversation_thread_id)
+    runtime_scope_id = str(getattr(run, "runtime_scope_id", None) or run.thread_id)
     async with pg_manager.get_async_session_context() as db:
         await db.execute(
             text("SELECT pg_advisory_xact_lock(hashtext(:lock_key))"),
@@ -57,11 +57,11 @@ async def release_runtime_if_idle(run: AgentRun) -> bool:
         )
         if result.scalar_one_or_none() is not None:
             return False
-        conversation = await db.scalar(select(Conversation).where(Conversation.id == current.conversation_id))
-        if conversation is None or conversation.uid != str(current.uid):
-            raise RuntimeError(f"Run {run.id} 的 Conversation 身份不一致")
-        workdir_path = await resolve_conversation_workdir_path(
-            conversation=conversation,
+        agent_session = await db.scalar(select(Session).where(Session.id == current.session_record_id))
+        if agent_session is None or agent_session.uid != str(current.uid):
+            raise RuntimeError(f"Run {run.id} 的 Session 身份不一致")
+        workdir_path = await resolve_session_workdir_path(
+            agent_session=agent_session,
             uid=str(current.uid),
             db=db,
         )
@@ -134,8 +134,8 @@ async def reconcile_expired_run_leases(*, now: datetime | None = None) -> list[s
     cancelled_descendants: list[tuple[str, str]] = []
     for run_id, root_thread_id, uid, app_id in candidates:
         async with pg_manager.get_async_session_context() as db:
-            conversation = await ConversationRepository(db).lock_conversation_by_thread_id(root_thread_id)
-            if conversation is None or conversation.uid != uid or conversation.app_id != app_id:
+            agent_session = await SessionRepository(db).lock_session_by_thread_id(root_thread_id)
+            if agent_session is None or agent_session.uid != uid or agent_session.app_id != app_id:
                 continue
             repo = AgentRunRepository(db)
             candidate = await repo.get_run(run_id)
@@ -155,7 +155,7 @@ async def reconcile_expired_run_leases(*, now: datetime | None = None) -> list[s
             if run is None:
                 continue
             if turn.current_run_id == run.id:
-                conversation.queue_paused = True
+                agent_session.queue_paused = True
                 await AgentTurnRepository(db).set_terminal(turn, status="failed")
                 terminal_turn_ids.append(turn.id)
             reconciled.append(run.id)
@@ -180,12 +180,12 @@ async def reconcile_pending_runtime_cleanups() -> list[str]:
             logger.error("Failed to reconcile execution-tree runtime cleanup: run=%s", run.id, exc_info=True)
             continue
         if run.status in TERMINAL_RUN_STATUSES:
-            await publish_run_settlement(run.id, run.status, thread_id=run.conversation_thread_id)
+            await publish_run_settlement(run.id, run.status, thread_id=run.thread_id)
         if run.status == "completed":
             await dispatch_next_input(
                 uid=run.uid,
                 agent_slug=run.agent_slug,
-                thread_id=run.conversation_thread_id,
+                thread_id=run.thread_id,
             )
         cleaned.append(run.id)
     from yuxi.modules.agents.services.turns import reconcile_cancelling_turns

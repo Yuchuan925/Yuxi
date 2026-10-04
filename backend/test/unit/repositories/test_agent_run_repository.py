@@ -14,7 +14,7 @@ from yuxi.modules.agents.models.runs import AgentRun, AgentRunAttempt
 from yuxi.modules.agents.models.turns import AgentTurn
 from yuxi.infrastructure.postgres.base import Base
 from yuxi.bootstrap.models import load_models
-from yuxi.modules.agents.models.threads import Conversation, SubagentThread
+from yuxi.modules.agents.models.sessions import Session, SubagentThread
 from yuxi.modules.agents.models.messages import Message
 from yuxi.shared.datetime import utc_now
 
@@ -33,14 +33,14 @@ async def session():
     await engine.dispose()
 
 
-async def _create_run(repository: AgentRunRepository, *, turn_id: str, conversation_thread_id: str, uid: str, **values):
+async def _create_run(repository: AgentRunRepository, *, turn_id: str, thread_id: str, uid: str, **values):
     """为仓储单测先建立调度器负责的 Turn。"""
     turn = await repository.db.get(AgentTurn, turn_id)
     if turn is None:
         repository.db.add(
             AgentTurn(
                 id=turn_id,
-                conversation_thread_id=conversation_thread_id,
+                thread_id=thread_id,
                 uid=uid,
                 app_id=values.get("app_id"),
                 status="running",
@@ -49,7 +49,7 @@ async def _create_run(repository: AgentRunRepository, *, turn_id: str, conversat
         await repository.db.flush()
     return await repository.create_run(
         turn_id=turn_id,
-        conversation_thread_id=conversation_thread_id,
+        thread_id=thread_id,
         uid=uid,
         **values,
     )
@@ -65,20 +65,20 @@ async def _bind_valid_output(
 ) -> Message:
     """为运行中的 Run 创建并绑定满足因果约束的输出消息。"""
 
-    if run.conversation_id is None:
-        conversation = Conversation(
-            thread_id=run.conversation_thread_id,
-            project_id=f"project-{run.conversation_thread_id}",
+    if run.session_record_id is None:
+        agent_session = Session(
+            thread_id=run.thread_id,
+            project_id=f"project-{run.thread_id}",
             uid=run.uid,
             agent_id=run.agent_slug,
             status="active",
         )
-        db.add(conversation)
+        db.add(agent_session)
         await db.flush()
-        run.conversation_id = conversation.id
+        run.session_record_id = agent_session.id
 
     message = Message(
-        conversation_id=run.conversation_id,
+        session_record_id=run.session_record_id,
         run_id=run.id,
         turn_id=run.turn_id,
         role="assistant",
@@ -93,13 +93,13 @@ async def _bind_valid_output(
 async def _seed_subagent_runs(db, *, relation_child_thread_id: str = "child-thread") -> AgentRun:
     child_run = AgentRun(
         id="child-run",
-        conversation_thread_id="child-thread",
+        thread_id="child-thread",
         runtime_scope_id="child-thread",
         agent_slug="worker",
         uid="user-1",
         status="completed",
         turn_id="child-turn",
-        conversation_id=20,
+        session_record_id=20,
         created_by_run_id="parent-run",
         subagent_thread_relation_id=77,
         run_type="subagent",
@@ -107,7 +107,7 @@ async def _seed_subagent_runs(db, *, relation_child_thread_id: str = "child-thre
     )
     db.add_all(
         [
-            Conversation(
+            Session(
                 id=10,
                 thread_id="parent-thread",
                 project_id="project-parent-thread",
@@ -115,7 +115,7 @@ async def _seed_subagent_runs(db, *, relation_child_thread_id: str = "child-thre
                 agent_id="main",
                 status="active",
             ),
-            Conversation(
+            Session(
                 id=20,
                 thread_id="child-thread",
                 project_id="project-parent-thread",
@@ -126,26 +126,26 @@ async def _seed_subagent_runs(db, *, relation_child_thread_id: str = "child-thre
             SubagentThread(
                 id=77,
                 uid="user-1",
-                parent_conversation_id=10,
-                child_conversation_id=20,
+                parent_session_record_id=10,
+                child_session_record_id=20,
                 child_thread_id=relation_child_thread_id,
                 subagent_slug="worker",
                 created_by_run_id="parent-run",
             ),
-            AgentTurn(id="parent-turn", conversation_thread_id="parent-thread", uid="user-1", status="completed"),
+            AgentTurn(id="parent-turn", thread_id="parent-thread", uid="user-1", status="completed"),
             AgentRun(
                 id="parent-run",
-                conversation_thread_id="parent-thread",
+                thread_id="parent-thread",
                 runtime_scope_id="parent-thread",
                 agent_slug="main",
                 uid="user-1",
                 status="completed",
                 turn_id="parent-turn",
-                conversation_id=10,
+                session_record_id=10,
                 run_type="chat",
                 input_payload={},
             ),
-            AgentTurn(id="child-turn", conversation_thread_id="child-thread", uid="user-1", status="completed"),
+            AgentTurn(id="child-turn", thread_id="child-thread", uid="user-1", status="completed"),
             child_run,
         ]
     )
@@ -190,7 +190,7 @@ async def test_create_run_persists_origin_snapshot(session):
     run = await _create_run(
         AgentRunRepository(session),
         run_id="origin-run",
-        conversation_thread_id="thread-1",
+        thread_id="thread-1",
         agent_slug="main",
         uid="user-1",
         turn_id="origin-turn",
@@ -215,7 +215,7 @@ async def test_lock_run_refreshes_stale_same_session_owner(session):
     run = await _create_run(
         repository,
         run_id="refreshed-run",
-        conversation_thread_id="thread-1",
+        thread_id="thread-1",
         agent_slug="main",
         uid="user-1",
         turn_id="refreshed-turn",
@@ -239,7 +239,7 @@ async def test_langfuse_observation_is_written_once_by_current_run_owner(session
     run = await _create_run(
         repository,
         run_id="observation-run",
-        conversation_thread_id="thread-1",
+        thread_id="thread-1",
         agent_slug="main",
         uid="user-1",
         turn_id="observation-turn",
@@ -264,7 +264,7 @@ async def test_create_subagent_run_persists_own_runtime_scope(session):
     run = await _create_run(
         AgentRunRepository(session),
         run_id="child-run-scope",
-        conversation_thread_id="child-thread",
+        thread_id="child-thread",
         runtime_scope_id="child-thread",
         agent_slug="worker",
         uid="user-1",
@@ -280,31 +280,31 @@ async def test_create_subagent_run_persists_own_runtime_scope(session):
 
 async def test_set_output_message_rejects_wrong_causal_owner_and_accepts_exact_message(session):
     repository = AgentRunRepository(session)
-    conversation = Conversation(
+    agent_session = Session(
         thread_id="output-thread",
         project_id="project-output-thread",
         uid="user-1",
         agent_id="main",
         status="active",
     )
-    other_conversation = Conversation(
+    other_session = Session(
         thread_id="other-output-thread",
         project_id="project-other-output-thread",
         uid="user-1",
         agent_id="main",
         status="active",
     )
-    session.add_all([conversation, other_conversation])
+    session.add_all([agent_session, other_session])
     await session.flush()
     run = await _create_run(
         repository,
         run_id="output-run",
-        conversation_thread_id=conversation.thread_id,
+        thread_id=agent_session.thread_id,
         agent_slug="main",
         uid="user-1",
         turn_id="output-turn",
         input_payload={},
-        conversation_id=conversation.id,
+        session_record_id=agent_session.id,
     )
     now = utc_now()
     await repository.mark_running(
@@ -315,35 +315,35 @@ async def test_set_output_message_rejects_wrong_causal_owner_and_accepts_exact_m
     )
     candidates = [
         Message(
-            conversation_id=other_conversation.id,
+            session_record_id=other_session.id,
             run_id=run.id,
             turn_id=run.turn_id,
             role="assistant",
-            content="other conversation",
+            content="other agent_session",
         ),
         Message(
-            conversation_id=conversation.id,
+            session_record_id=agent_session.id,
             run_id="other-run",
             turn_id=run.turn_id,
             role="assistant",
             content="other run",
         ),
         Message(
-            conversation_id=conversation.id,
+            session_record_id=agent_session.id,
             run_id=run.id,
             turn_id=run.turn_id,
             role="user",
             content="wrong role",
         ),
         Message(
-            conversation_id=conversation.id,
+            session_record_id=agent_session.id,
             run_id=None,
             turn_id=None,
             role="assistant",
             content="missing run",
         ),
         Message(
-            conversation_id=conversation.id,
+            session_record_id=agent_session.id,
             run_id=run.id,
             turn_id="other-turn",
             role="assistant",
@@ -354,7 +354,7 @@ async def test_set_output_message_rejects_wrong_causal_owner_and_accepts_exact_m
     await session.flush()
 
     for candidate in candidates:
-        with pytest.raises(ValueError, match="同一 conversation"):
+        with pytest.raises(ValueError, match="同一 agent_session"):
             await repository.set_output_message(
                 run.id,
                 candidate.id,
@@ -363,7 +363,7 @@ async def test_set_output_message_rejects_wrong_causal_owner_and_accepts_exact_m
             )
         assert run.output_message_id is None
 
-    with pytest.raises(ValueError, match="同一 conversation"):
+    with pytest.raises(ValueError, match="同一 agent_session"):
         await repository.set_output_message(
             run.id,
             999_999,
@@ -401,7 +401,7 @@ async def test_completed_transition_rejects_missing_output_binding(session):
     run = await _create_run(
         repository,
         run_id="missing-output-run",
-        conversation_thread_id="missing-output-thread",
+        thread_id="missing-output-thread",
         agent_slug="main",
         uid="user-1",
         turn_id="missing-output-turn",
@@ -432,7 +432,7 @@ async def _seed_thread_run(db, *, thread_id: str, run_id: str, status: str, run_
     db.add(
         AgentTurn(
             id=turn_id,
-            conversation_thread_id=thread_id,
+            thread_id=thread_id,
             uid="user-1",
             status="running" if status == "running" else "completed",
         )
@@ -440,7 +440,7 @@ async def _seed_thread_run(db, *, thread_id: str, run_id: str, status: str, run_
     await db.flush()
     run = AgentRun(
         id=run_id,
-        conversation_thread_id=thread_id,
+        thread_id=thread_id,
         runtime_scope_id=thread_id,
         agent_slug="main",
         uid="user-1",
@@ -471,11 +471,11 @@ async def test_get_latest_top_level_runs_for_threads_picks_latest_chat_resume(se
 
 async def test_get_latest_top_level_runs_for_threads_scopes_by_user(session):
     await _seed_thread_run(session, thread_id="t1", run_id="t1-done", status="completed")
-    session.add(AgentTurn(id="turn-other", conversation_thread_id="t1", uid="user-2", status="running"))
+    session.add(AgentTurn(id="turn-other", thread_id="t1", uid="user-2", status="running"))
     session.add(
         AgentRun(
             id="t1-other",
-            conversation_thread_id="t1",
+            thread_id="t1",
             runtime_scope_id="t1",
             agent_slug="main",
             uid="user-2",
@@ -502,7 +502,7 @@ async def test_set_terminal_status_persists_token_usage_only_for_winner(session)
     run = await _create_run(
         repo,
         run_id="usage-run",
-        conversation_thread_id="thread-1",
+        thread_id="thread-1",
         agent_slug="main",
         uid="user-1",
         turn_id="usage-turn",
@@ -553,7 +553,7 @@ async def test_owned_run_requires_exact_owner_for_terminal_transition(session):
     run = await _create_run(
         repo,
         run_id="owned-run",
-        conversation_thread_id="owned-thread",
+        thread_id="owned-thread",
         agent_slug="main",
         uid="user-1",
         turn_id="owned-turn",
@@ -603,7 +603,7 @@ async def test_attempt_owner_blocks_duplicate_until_retry_release(session):
     run = await _create_run(
         repo,
         run_id="retry-run",
-        conversation_thread_id="retry-thread",
+        thread_id="retry-thread",
         agent_slug="main",
         uid="user-1",
         turn_id="retry-turn",
@@ -658,7 +658,7 @@ async def test_expired_owner_cannot_finish_or_release_before_reconciliation(sess
     run = await _create_run(
         repo,
         run_id="expired-owner-run",
-        conversation_thread_id="expired-owner-thread",
+        thread_id="expired-owner-thread",
         agent_slug="main",
         uid="user-1",
         turn_id="expired-owner-turn",
@@ -696,17 +696,17 @@ async def test_expired_owner_cannot_finish_or_release_before_reconciliation(sess
 
 async def test_pending_cancel_is_terminal_without_fake_worker_expiry(session):
     """从未执行的 pending Run 由用户取消后直接形成 cancelled 事实。"""
-    conversation = Conversation(
+    agent_session = Session(
         thread_id="cancel-pending-thread",
         project_id="project-cancel-pending-thread",
         uid="user-1",
         agent_id="main",
         status="active",
     )
-    session.add(conversation)
+    session.add(agent_session)
     await session.flush()
     message = Message(
-        conversation_id=conversation.id,
+        session_record_id=agent_session.id,
         role="user",
         content="cancel before worker",
         delivery_status="dispatched",
@@ -717,12 +717,12 @@ async def test_pending_cancel_is_terminal_without_fake_worker_expiry(session):
     run = await _create_run(
         repo,
         run_id="cancel-pending-run",
-        conversation_thread_id=conversation.thread_id,
+        thread_id=agent_session.thread_id,
         agent_slug="main",
         uid="user-1",
         turn_id="cancel-pending-turn",
         input_payload={},
-        conversation_id=conversation.id,
+        session_record_id=agent_session.id,
         input_message_id=message.id,
     )
 
@@ -751,7 +751,7 @@ async def test_durable_cancel_wins_terminal_race_for_live_owner(session):
     run = await _create_run(
         repo,
         run_id="cancel-race-run",
-        conversation_thread_id="cancel-race-thread",
+        thread_id="cancel-race-thread",
         agent_slug="main",
         uid="user-1",
         turn_id="cancel-race-turn",
@@ -798,7 +798,7 @@ async def test_explicit_parent_cancel_targets_delegated_child_turn(session):
     parent = await _create_run(
         repo,
         run_id="tree-parent-run",
-        conversation_thread_id="tree-runtime",
+        thread_id="tree-runtime",
         runtime_scope_id="tree-runtime",
         agent_slug="main",
         uid="user-1",
@@ -808,7 +808,7 @@ async def test_explicit_parent_cancel_targets_delegated_child_turn(session):
     child = await _create_run(
         repo,
         run_id="tree-child-run",
-        conversation_thread_id="tree-child-thread",
+        thread_id="tree-child-thread",
         runtime_scope_id="tree-child-thread",
         agent_slug="worker",
         uid="user-1",
@@ -823,8 +823,8 @@ async def test_explicit_parent_cancel_targets_delegated_child_turn(session):
 
     for run in (parent, child):
         session.add(
-            Conversation(
-                thread_id=run.conversation_thread_id,
+            Session(
+                thread_id=run.thread_id,
                 project_id="project-tree",
                 uid="user-1",
                 agent_id=run.agent_slug,
@@ -838,7 +838,7 @@ async def test_explicit_parent_cancel_targets_delegated_child_turn(session):
     parent.finished_at = now
     cancelled = await repo.cancel_active_execution_tree_descendants(parent)
 
-    assert cancelled == [(child.id, child.conversation_thread_id)]
+    assert cancelled == [(child.id, child.thread_id)]
     assert child.status == "cancel_requested"
     assert child.error_type is None
     assert child.worker_id == "child-worker"
@@ -850,7 +850,7 @@ async def _seed_running_run(db, *, run_id: str = "attempt-run", turn_id: str = "
     run = await _create_run(
         AgentRunRepository(db),
         run_id=run_id,
-        conversation_thread_id="attempt-thread",
+        thread_id="attempt-thread",
         agent_slug="main",
         uid="user-1",
         turn_id=turn_id,
@@ -1106,7 +1106,7 @@ async def test_lock_memory_write_requires_current_top_level_lease_owner(session)
         run.id,
         uid="user-1",
         worker_id="worker-a:token-1",
-        conversation_thread_id="attempt-thread",
+        thread_id="attempt-thread",
         now=now + timedelta(seconds=1),
     )
 
@@ -1116,7 +1116,7 @@ async def test_lock_memory_write_requires_current_top_level_lease_owner(session)
             run.id,
             uid="user-1",
             worker_id="worker-b:token-2",
-            conversation_thread_id="attempt-thread",
+            thread_id="attempt-thread",
             now=now + timedelta(seconds=2),
         )
     with pytest.raises(ValueError, match="同一顶层 Run"):
@@ -1124,6 +1124,6 @@ async def test_lock_memory_write_requires_current_top_level_lease_owner(session)
             run.id,
             uid="other-user",
             worker_id="worker-a:token-1",
-            conversation_thread_id="attempt-thread",
+            thread_id="attempt-thread",
             now=now + timedelta(seconds=2),
         )

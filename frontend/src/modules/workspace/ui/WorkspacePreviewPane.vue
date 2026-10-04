@@ -30,7 +30,7 @@
 
 <script setup>
 import { FileSearch, LoaderCircle } from '@lucide/vue'
-import AgentFilePreview from '@/modules/conversation/ui/workspace/AgentFilePreview.vue'
+import AgentFilePreview from '@/modules/session/ui/workspace/AgentFilePreview.vue'
 
 defineProps({
   file: { type: Object, default: null },

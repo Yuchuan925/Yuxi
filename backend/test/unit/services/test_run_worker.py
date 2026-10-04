@@ -230,8 +230,8 @@ def _build_run() -> SimpleNamespace:
         run_type="chat",
         agent_slug="ChatbotAgent",
         uid="user-1",
-        conversation_id=7,
-        conversation_thread_id="thread-1",
+        session_record_id=7,
+        thread_id="thread-1",
         runtime_scope_id="thread-1",
         runtime_cleanup_pending=False,
         created_by_run_id=None,
@@ -251,7 +251,7 @@ async def test_validate_run_workdir_binding_rejects_top_level_foreign_runtime_sc
         yield object()
 
     async def fake_resolve(**_kwargs):
-        return SimpleNamespace(conversation_id=run.conversation_id)
+        return SimpleNamespace(session_record_id=run.session_record_id)
 
     monkeypatch.setattr(run_worker.pg_manager, "get_async_session_context", fake_session)
     monkeypatch.setattr(run_worker, "resolve_authorized_workdir", fake_resolve)
@@ -266,7 +266,7 @@ async def test_validate_run_workdir_binding_requires_subagent_creator_tree(
 ):
     run = _build_run()
     run.run_type = "subagent"
-    run.conversation_thread_id = "child-thread"
+    run.thread_id = "child-thread"
     run.runtime_scope_id = "child-thread"
     run.created_by_run_id = "creator-run"
     run.subagent_thread_relation_id = 3
@@ -274,9 +274,9 @@ async def test_validate_run_workdir_binding_requires_subagent_creator_tree(
         id="creator-run",
         app_id=None,
         run_type="chat",
-        conversation_thread_id="root-thread",
+        thread_id="root-thread",
         runtime_scope_id="root-thread",
-        conversation_id=2,
+        session_record_id=2,
         created_by_run_id=None,
         subagent_thread_relation_id=None,
     )
@@ -288,13 +288,13 @@ async def test_validate_run_workdir_binding_requires_subagent_creator_tree(
     async def fake_resolve(**kwargs):
         if kwargs["thread_id"] == "child-thread":
             return SimpleNamespace(
-                conversation_id=run.conversation_id,
+                session_record_id=run.session_record_id,
                 workdir_path="projects/shared",
                 project_id="project-1",
             )
         assert kwargs["thread_id"] == "root-thread"
         return SimpleNamespace(
-            conversation_id=creator.conversation_id,
+            session_record_id=creator.session_record_id,
             workdir_path="projects/shared",
             project_id="project-1",
         )
@@ -315,7 +315,7 @@ async def test_validate_run_workdir_binding_requires_subagent_creator_tree(
     monkeypatch.setattr(run_worker, "AgentRunRepository", RunRepo)
 
     binding = await run_worker._validate_run_workdir_binding(run)
-    assert binding.conversation_id == run.conversation_id
+    assert binding.session_record_id == run.session_record_id
 
     original_resolve = fake_resolve
 
@@ -361,7 +361,7 @@ async def test_cancelling_subagent_releases_its_own_runtime(monkeypatch: pytest.
 
     transition = await run_worker._finish_user_cancel(
         run_id=run.id,
-        thread_id=run.conversation_thread_id,
+        thread_id=run.thread_id,
         current_user=None,
         worker_id="worker-1",
         writer=SimpleNamespace(),
@@ -1077,7 +1077,7 @@ async def test_process_subagent_run_restores_runtime_context(monkeypatch: pytest
     run_obj = _build_run()
     run_obj.run_type = "subagent"
     run_obj.agent_slug = "worker"
-    run_obj.conversation_thread_id = "child-thread"
+    run_obj.thread_id = "child-thread"
     run_obj.runtime_scope_id = "child-thread"
     run_obj.created_by_run_id = "parent-run"
     run_obj.input_payload = {
@@ -1644,7 +1644,7 @@ async def test_worker_rejects_unrouted_public_output(monkeypatch, container):
     output = {
         "type": "agent.session.turn.output_text.delta",
         "delta": "foreign",
-        container: {"session_id": run.conversation_thread_id, "turn_id": run.turn_id, "run_id": run.id},
+        container: {"session_id": run.thread_id, "turn_id": run.turn_id, "run_id": run.id},
     }
     monkeypatch.setattr(run_worker, "mark_run_terminal", terminal)
     monkeypatch.setattr(run_worker, "stream_agent_chat", lambda **kw: _ExecutionAsyncIter([output]))
@@ -1660,7 +1660,7 @@ async def test_worker_only_publishes_valid_events_and_never_settles_usage_from_t
     public = {
         "type": "yuxi.session.turn.state",
         "event_id": "e",
-        "session_id": run.conversation_thread_id,
+        "session_id": run.thread_id,
         "turn_id": run.turn_id,
         "yuxi": {"run_id": run.id},
         "agent_state": {"token_usage": {"current_run_id": "other", "run": {"total": 505}}},

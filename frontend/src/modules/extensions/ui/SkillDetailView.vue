@@ -411,9 +411,9 @@ import {
   ChevronRight
 } from '@lucide/vue'
 import { skillApi } from '@/apis/skill_api'
-import AgentFilePreview from '@/modules/conversation/ui/workspace/AgentFilePreview.vue'
+import AgentFilePreview from '@/modules/session/ui/workspace/AgentFilePreview.vue'
 import ExtensionDetailLayout from '@/shared/ui/ExtensionDetailLayout.vue'
-import FileTreeComponent from '@/modules/conversation/ui/workspace/FileTreeComponent.vue'
+import FileTreeComponent from '@/modules/session/ui/workspace/FileTreeComponent.vue'
 import ShareConfigForm from '@/modules/agents/ui/ShareConfigForm.vue'
 import { cloneShareConfig } from '@/modules/agents/model/shareConfig'
 

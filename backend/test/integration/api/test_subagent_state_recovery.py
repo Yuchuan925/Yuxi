@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from yuxi.modules.agents.models.runs import AgentRun
 from yuxi.modules.agents.models.turns import AgentTurn
-from yuxi.modules.agents.models.threads import Conversation, SubagentThread
+from yuxi.modules.agents.models.sessions import Session, SubagentThread
 from yuxi.modules.workspace.models import Project
 from yuxi.shared.datetime import utc_now
 
@@ -44,10 +44,10 @@ async def test_state_recovers_children_without_checkpoint_and_rejects_other_user
                 )
             )
             await db.flush()
-            parent = Conversation(
+            parent = Session(
                 thread_id=parent_thread, uid=uid, project_id=project_id, agent_id="state-probe", status="active"
             )
-            child = Conversation(
+            child = Session(
                 thread_id=child_thread, uid=uid, project_id=project_id, agent_id="state-probe-child", status="subagent"
             )
             db.add_all([parent, child])
@@ -55,7 +55,7 @@ async def test_state_recovers_children_without_checkpoint_and_rejects_other_user
             db.add(
                 AgentTurn(
                     id=turn_id,
-                    conversation_thread_id=parent_thread,
+                    thread_id=parent_thread,
                     uid=uid,
                     status="completed",
                     current_run_id=parent_id,
@@ -69,8 +69,8 @@ async def test_state_recovers_children_without_checkpoint_and_rejects_other_user
                     uid=uid,
                     agent_slug="state-probe",
                     run_type="chat",
-                    conversation_id=parent.id,
-                    conversation_thread_id=parent_thread,
+                    session_record_id=parent.id,
+                    thread_id=parent_thread,
                     runtime_scope_id=parent_thread,
                     turn_id=turn_id,
                     status="completed",
@@ -81,8 +81,8 @@ async def test_state_recovers_children_without_checkpoint_and_rejects_other_user
             await db.flush()
             relation = SubagentThread(
                 uid=uid,
-                parent_conversation_id=parent.id,
-                child_conversation_id=child.id,
+                parent_session_record_id=parent.id,
+                child_session_record_id=child.id,
                 child_thread_id=child_thread,
                 subagent_slug="state-probe-child",
                 created_by_run_id=parent_id,
@@ -92,7 +92,7 @@ async def test_state_recovers_children_without_checkpoint_and_rejects_other_user
             db.add(
                 AgentTurn(
                     id=child_turn_id,
-                    conversation_thread_id=child_thread,
+                    thread_id=child_thread,
                     uid=uid,
                     status="completed",
                     current_run_id=child_id,
@@ -106,8 +106,8 @@ async def test_state_recovers_children_without_checkpoint_and_rejects_other_user
                     uid=uid,
                     agent_slug="state-probe-child",
                     run_type="subagent",
-                    conversation_id=child.id,
-                    conversation_thread_id=child_thread,
+                    session_record_id=child.id,
+                    thread_id=child_thread,
                     runtime_scope_id=child_thread,
                     turn_id=child_turn_id,
                     status="completed",
@@ -151,7 +151,7 @@ async def test_state_recovers_children_without_checkpoint_and_rejects_other_user
             await db.execute(delete(SubagentThread).where(SubagentThread.child_thread_id == child_thread))
             await db.execute(delete(AgentRun).where(AgentRun.id == parent_id))
             await db.execute(delete(AgentTurn).where(AgentTurn.id.in_([turn_id, child_turn_id])))
-            await db.execute(delete(Conversation).where(Conversation.thread_id.in_([parent_thread, child_thread])))
+            await db.execute(delete(Session).where(Session.thread_id.in_([parent_thread, child_thread])))
             await db.execute(delete(Project).where(Project.id == project_id))
             await db.commit()
         await engine.dispose()

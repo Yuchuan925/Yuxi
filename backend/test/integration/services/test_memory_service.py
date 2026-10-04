@@ -13,12 +13,12 @@ import pytest_asyncio
 from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from yuxi.modules.agents.repositories.threads import ConversationRepository
+from yuxi.modules.agents.repositories.sessions import SessionRepository
 import yuxi.modules.agents.services.memory as memory_service
 from yuxi.infrastructure.postgres.manager import pg_manager
 from yuxi.modules.agents.models.runs import AgentRun
 from yuxi.modules.agents.models.turns import AgentTurn
-from yuxi.modules.agents.models.threads import Conversation, SubagentThread
+from yuxi.modules.agents.models.sessions import Session, SubagentThread
 from yuxi.modules.agents.models.messages import Message, ToolCall
 from yuxi.modules.workspace.models import Project
 from yuxi.modules.identity.models import User, UserConfig
@@ -68,27 +68,27 @@ async def memory_database(tmp_path, monkeypatch: pytest.MonkeyPatch):
             )
         )
         await db.flush()
-        conversation = Conversation(
+        agent_session = Session(
             thread_id=thread_id,
             uid=uid,
             project_id=project_id,
             agent_id="main",
             status="active",
         )
-        db.add(conversation)
+        db.add(agent_session)
         await db.flush()
-        db.add(AgentTurn(id=turn_id, conversation_thread_id=thread_id, uid=uid, status="running"))
+        db.add(AgentTurn(id=turn_id, thread_id=thread_id, uid=uid, status="running"))
         await db.flush()
         db.add(
             AgentRun(
                 id=run_id,
-                conversation_thread_id=thread_id,
+                thread_id=thread_id,
                 runtime_scope_id=thread_id,
                 agent_slug="main",
                 uid=uid,
                 status="running",
                 turn_id=turn_id,
-                conversation_id=conversation.id,
+                session_record_id=agent_session.id,
                 run_type="chat",
                 input_payload={},
                 worker_id=worker_id,
@@ -112,14 +112,12 @@ async def memory_database(tmp_path, monkeypatch: pytest.MonkeyPatch):
             await db.execute(delete(AgentRun).where(AgentRun.id == run_id))
             await db.execute(delete(AgentTurn).where(AgentTurn.id == turn_id))
             await db.execute(delete(SubagentThread).where(SubagentThread.uid == uid))
-            owned_message_ids = select(Message.id).join(Conversation).where(Conversation.uid == uid)
+            owned_message_ids = select(Message.id).join(Session).where(Session.uid == uid)
             await db.execute(delete(ToolCall).where(ToolCall.message_id.in_(owned_message_ids)))
             await db.execute(
-                delete(Message).where(
-                    Message.conversation_id.in_(select(Conversation.id).where(Conversation.uid == uid))
-                )
+                delete(Message).where(Message.session_record_id.in_(select(Session.id).where(Session.uid == uid)))
             )
-            await db.execute(delete(Conversation).where(Conversation.uid == uid))
+            await db.execute(delete(Session).where(Session.uid == uid))
             await db.execute(delete(Project).where(Project.uid == uid))
             await db.execute(delete(UserConfig).where(UserConfig.uid == uid))
             await db.execute(delete(User).where(User.uid == uid))
@@ -174,21 +172,21 @@ async def test_history_query_uses_postgres_visibility_and_field_allowlists(memor
             )
         )
         await db.flush()
-        visible = Conversation(
+        visible = Session(
             thread_id=f"visible-{uuid.uuid4().hex}",
             uid=uid,
             project_id=project_id,
             agent_id="main",
             status="active",
         )
-        parent = Conversation(
+        parent = Session(
             thread_id=f"parent-{uuid.uuid4().hex}",
             uid=uid,
             project_id=project_id,
             agent_id="main",
             status="active",
         )
-        child = Conversation(
+        child = Session(
             thread_id=f"child-{uuid.uuid4().hex}",
             uid=uid,
             project_id=project_id,
@@ -200,15 +198,15 @@ async def test_history_query_uses_postgres_visibility_and_field_allowlists(memor
         db.add(
             SubagentThread(
                 uid=uid,
-                parent_conversation_id=parent.id,
-                child_conversation_id=child.id,
+                parent_session_record_id=parent.id,
+                child_session_record_id=child.id,
                 child_thread_id=child.thread_id,
                 subagent_slug="worker",
                 created_by_run_id=identity["run_id"],
             )
         )
         visible_message = Message(
-            conversation_id=visible.id,
+            session_record_id=visible.id,
             role="assistant",
             content="needle visible",
             message_type="text",
@@ -218,14 +216,14 @@ async def test_history_query_uses_postgres_visibility_and_field_allowlists(memor
         db.add_all(
             [
                 visible_message,
-                Message(conversation_id=visible.id, role="tool", content="needle TOOL-ROLE", message_type="text"),
+                Message(session_record_id=visible.id, role="tool", content="needle TOOL-ROLE", message_type="text"),
                 Message(
-                    conversation_id=visible.id,
+                    session_record_id=visible.id,
                     role="assistant",
                     content="needle TOOL-TYPE",
                     message_type="tool_result",
                 ),
-                Message(conversation_id=child.id, role="assistant", content="needle CHILD", message_type="text"),
+                Message(session_record_id=child.id, role="assistant", content="needle CHILD", message_type="text"),
             ]
         )
         await db.flush()
@@ -242,7 +240,7 @@ async def test_history_query_uses_postgres_visibility_and_field_allowlists(memor
         await db.commit()
 
     async with session_factory() as db:
-        repository = ConversationRepository(db)
+        repository = SessionRepository(db)
         search = await repository.search_memory_messages(uid=uid, query="needle", limit=10)
         default_read = await repository.read_memory_messages(uid=uid, thread_id=visible.thread_id)
         tool_read = await repository.read_memory_messages(

@@ -15,7 +15,7 @@ from test.integration.services.test_agent_input_schema import _create_schema, _d
 from yuxi.modules.agents.repositories.runs import AgentRunRepository
 from yuxi.modules.agents.repositories.input import AgentInputRepository
 from yuxi.modules.agents.repositories.input_receipt import AgentInputReceiptRepository
-from yuxi.modules.agents.repositories.threads import ConversationRepository
+from yuxi.modules.agents.repositories.sessions import SessionRepository
 import yuxi.modules.agents.services.runs as runs
 import yuxi.modules.agents.services.scheduler as scheduler
 import yuxi.modules.agents.services.threads as threads
@@ -50,7 +50,7 @@ def cleanup_test_sandboxes():
 async def _queue_inputs(sessions, *, count: int) -> None:
     """接收多条持久输入，保持原始消息及 FIFO 序号。"""
     async with sessions() as db:
-        conversation = await ConversationRepository(db).get_conversation_by_thread_id("input-thread")
+        agent_session = await SessionRepository(db).get_session_by_thread_id("input-thread")
         for number in range(count):
             input_id = f"input-{number}"
             await AgentInputRepository(db).create(
@@ -73,7 +73,7 @@ async def _queue_inputs(sessions, *, count: int) -> None:
                 input_id=input_id,
             )
             message = Message(
-                conversation_id=conversation.id,
+                session_record_id=agent_session.id,
                 role="user",
                 content=f"message-{number}",
                 delivery_status="queued",
@@ -89,7 +89,7 @@ async def _queue_inputs(sessions, *, count: int) -> None:
 def _binding() -> WorkdirBinding:
     """只提供领取所需的已授权 Project 目录快照。"""
     return WorkdirBinding(
-        conversation_id=1,
+        session_record_id=1,
         thread_id="input-thread",
         uid="input-user",
         project_id="input-project",
@@ -110,8 +110,8 @@ async def test_concurrent_claims_consume_only_fifo_head() -> None:
             """模拟两个完成接收事务后的独立调度者。"""
             async with sessions() as db:
                 await start.wait()
-                conversation = await ConversationRepository(db).lock_conversation_by_thread_id("input-thread")
-                dispatch = await scheduler.claim_next_input(db=db, conversation=conversation, binding=_binding())
+                agent_session = await SessionRepository(db).lock_session_by_thread_id("input-thread")
+                dispatch = await scheduler.claim_next_input(db=db, agent_session=agent_session, binding=_binding())
                 await db.commit()
                 return dispatch.run_id if dispatch else None
 
@@ -142,8 +142,8 @@ async def test_recovery_republishes_committed_pending_run(monkeypatch) -> None:
         sessions = async_sessionmaker(engine, expire_on_commit=False)
         await _queue_inputs(sessions, count=1)
         async with sessions() as db:
-            conversation = await ConversationRepository(db).lock_conversation_by_thread_id("input-thread")
-            dispatch = await scheduler.claim_next_input(db=db, conversation=conversation, binding=_binding())
+            agent_session = await SessionRepository(db).lock_session_by_thread_id("input-thread")
+            dispatch = await scheduler.claim_next_input(db=db, agent_session=agent_session, binding=_binding())
             assert dispatch is not None
             await db.commit()
 
@@ -202,14 +202,14 @@ async def test_completion_winning_thread_lock_rejects_stale_cancel() -> None:
         sessions = async_sessionmaker(engine, expire_on_commit=False)
         await _queue_inputs(sessions, count=1)
         async with sessions() as db:
-            conversation = await ConversationRepository(db).lock_conversation_by_thread_id("input-thread")
-            dispatch = await scheduler.claim_next_input(db=db, conversation=conversation, binding=_binding())
+            agent_session = await SessionRepository(db).lock_session_by_thread_id("input-thread")
+            dispatch = await scheduler.claim_next_input(db=db, agent_session=agent_session, binding=_binding())
             assert dispatch is not None
             run = await db.get(AgentRun, dispatch.run_id)
             _, acquired = await AgentRunRepository(db).mark_running(run.id, worker_id="owner-a", lease_seconds=60)
             assert acquired is True
             output = Message(
-                conversation_id=conversation.id,
+                session_record_id=agent_session.id,
                 role="assistant",
                 content="done",
                 run_id=run.id,
@@ -229,7 +229,7 @@ async def test_completion_winning_thread_lock_rejects_stale_cancel() -> None:
         async def finish():
             """持有 Thread 锁直到控制方已开始竞争，再提交最终结果。"""
             async with sessions() as db:
-                await ConversationRepository(db).lock_conversation_by_thread_id("input-thread")
+                await SessionRepository(db).lock_session_by_thread_id("input-thread")
                 lock_held.set()
                 await control_started.wait()
                 await asyncio.sleep(0.05)
@@ -261,9 +261,9 @@ async def test_completion_winning_thread_lock_rejects_stale_cancel() -> None:
         async with sessions() as db:
             run = await db.get(AgentRun, dispatch.run_id)
             turn = await db.get(AgentTurn, turn_id)
-            conversation = await ConversationRepository(db).get_conversation_by_thread_id("input-thread")
+            agent_session = await SessionRepository(db).get_session_by_thread_id("input-thread")
             assert run.status == "completed" and turn.status == "completed"
-            assert turn.result_run_id == run.id and conversation.queue_paused is False
+            assert turn.result_run_id == run.id and agent_session.queue_paused is False
             assert await db.scalar(select(func.count()).select_from(AgentRun)) == 1
             assert await db.scalar(select(func.count()).select_from(AgentInput)) == 1
     finally:
@@ -279,8 +279,8 @@ async def test_same_key_concurrent_cancel_replays_receipt_after_thread_lock(monk
         await _queue_inputs(sessions, count=1)
         if control == "cancel_turn":
             async with sessions() as db:
-                conversation = await ConversationRepository(db).lock_conversation_by_thread_id("input-thread")
-                dispatch = await scheduler.claim_next_input(db=db, conversation=conversation, binding=_binding())
+                agent_session = await SessionRepository(db).lock_session_by_thread_id("input-thread")
+                dispatch = await scheduler.claim_next_input(db=db, agent_session=agent_session, binding=_binding())
                 await db.commit()
 
             async def ignore_external(*args, **kwargs):
@@ -343,14 +343,14 @@ async def test_cancel_partial_snapshot_only_updates_existing_public_message(case
         sessions = async_sessionmaker(engine, expire_on_commit=False)
         await _queue_inputs(sessions, count=1)
         async with sessions() as db:
-            conversation = await ConversationRepository(db).lock_conversation_by_thread_id("input-thread")
-            dispatch = await scheduler.claim_next_input(db=db, conversation=conversation, binding=_binding())
+            agent_session = await SessionRepository(db).lock_session_by_thread_id("input-thread")
+            dispatch = await scheduler.claim_next_input(db=db, agent_session=agent_session, binding=_binding())
             run, acquired = await AgentRunRepository(db).mark_running(
                 dispatch.run_id, worker_id="owner", lease_seconds=60
             )
             assert acquired
             message = Message(
-                conversation_id=conversation.id,
+                session_record_id=agent_session.id,
                 turn_id=run.turn_id,
                 run_id=run.id,
                 role="assistant",

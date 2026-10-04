@@ -8,7 +8,7 @@ import {
   isThreadWaitingForUserAction,
   isToolApprovalMode,
   resolveToolApprovalMode
-} from '../../src/modules/conversation/model/toolApproval.js'
+} from '../../src/modules/session/model/toolApproval.js'
 
 test('tool approval modes and interrupt payloads follow their state contracts', () => {
   assert.equal(isToolApprovalMode('default'), true)

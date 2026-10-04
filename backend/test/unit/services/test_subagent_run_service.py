@@ -62,7 +62,7 @@ async def test_start_rejects_archived_root_before_creating_child(monkeypatch):
         def __init__(self, db):
             pass
 
-        async def get_conversation_by_thread_id(self, thread_id):
+        async def get_session_by_thread_id(self, thread_id):
             assert thread_id == "root-thread"
             return SimpleNamespace(uid="user-1", app_id=None, status="archived")
 
@@ -71,7 +71,7 @@ async def test_start_rejects_archived_root_before_creating_child(monkeypatch):
             pass
 
     monkeypatch.setattr(module, "AgentRunRepository", RunRepo)
-    monkeypatch.setattr(module, "ConversationRepository", ConvRepo)
+    monkeypatch.setattr(module, "SessionRepository", ConvRepo)
     monkeypatch.setattr(module, "ProjectRepository", UnusedRepo)
     monkeypatch.setattr(module, "SubagentThreadRepository", UnusedRepo)
     service = module.SubagentRunService(object())
@@ -100,8 +100,8 @@ async def test_start_locks_agent_and_project_before_root_execution_tree(
         uid="user-1",
         app_id=None,
         runtime_scope_id="root-thread",
-        conversation_id=10,
-        conversation_thread_id="root-thread",
+        session_record_id=10,
+        thread_id="root-thread",
         turn_id="turn-1",
         run_type="chat",
         status="running",
@@ -139,10 +139,10 @@ async def test_start_locks_agent_and_project_before_root_execution_tree(
         def __init__(self, db):
             pass
 
-        async def get_conversation_by_thread_id(self, thread_id):
+        async def get_session_by_thread_id(self, thread_id):
             return root
 
-        async def lock_conversation_by_thread_id(self, thread_id):
+        async def lock_session_by_thread_id(self, thread_id):
             locks.append("thread")
             return root
 
@@ -176,7 +176,7 @@ async def test_start_locks_agent_and_project_before_root_execution_tree(
 
     monkeypatch.setattr(module, "AgentRunRepository", RunRepo)
     monkeypatch.setattr(module, "AgentRepository", AgentRepo, raising=False)
-    monkeypatch.setattr(module, "ConversationRepository", ConvRepo)
+    monkeypatch.setattr(module, "SessionRepository", ConvRepo)
     monkeypatch.setattr(module, "ProjectRepository", ProjectRepo)
     monkeypatch.setattr(module, "SubagentThreadRepository", UnusedRepo)
     monkeypatch.setattr(module, "AgentTurnRepository", TurnRepo)
@@ -224,7 +224,7 @@ async def test_delegation_does_not_resume_or_claim_another_input(monkeypatch, pa
         def __init__(self, db):
             pass
 
-        async def lock_conversation_by_thread_id(self, thread_id):
+        async def lock_session_by_thread_id(self, thread_id):
             return child
 
     class ReceiptRepo:
@@ -255,7 +255,7 @@ async def test_delegation_does_not_resume_or_claim_another_input(monkeypatch, pa
     async def forbidden_accept(**kwargs):
         pytest.fail("busy 子 Thread 不应接收新的委派输入")
 
-    monkeypatch.setattr(module, "ConversationRepository", ConvRepo)
+    monkeypatch.setattr(module, "SessionRepository", ConvRepo)
     monkeypatch.setattr(module, "AgentInputReceiptRepository", ReceiptRepo)
     monkeypatch.setattr(module, "AgentTurnRepository", TurnRepo)
     monkeypatch.setattr(module, "AgentInputRepository", InputRepo)
@@ -267,8 +267,8 @@ async def test_delegation_does_not_resume_or_claim_another_input(monkeypatch, pa
         await module.SubagentRunService(object())._create_run_record(
             input_message=build_chat_input_message("delegate"),
             current_uid="user",
-            creator_run=SimpleNamespace(id="parent", app_id=None, conversation_id=10),
-            relation=SimpleNamespace(child_thread_id="child", child_conversation_id=20, parent_conversation_id=10),
+            creator_run=SimpleNamespace(id="parent", app_id=None, session_record_id=10),
+            relation=SimpleNamespace(child_thread_id="child", child_session_record_id=20, parent_session_record_id=10),
             agent_item=SimpleNamespace(slug="helper"),
             tool_call_id="call",
         )

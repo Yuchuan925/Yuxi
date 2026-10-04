@@ -38,12 +38,12 @@ class AgentAnalytics(BaseModel):
     """AI 智能体分析。"""
 
     total_agents: int
-    agent_conversation_counts: list[dict]
+    agent_session_counts: list[dict]
     agent_tool_usage: list[dict]
     agent_names: dict[str, str] = {}
 
 
-class ConversationListItem(BaseModel):
+class SessionListItem(BaseModel):
     """Dashboard 对话列表项。"""
 
     thread_id: str
@@ -65,16 +65,16 @@ class ConversationListItem(BaseModel):
     updated_at: str
 
 
-class ConversationListResponse(BaseModel):
+class SessionListResponse(BaseModel):
     """会话分页列表响应。"""
 
-    items: list[ConversationListItem]
+    items: list[SessionListItem]
     total: int
     limit: int
     offset: int
 
 
-class ConversationFilterOption(BaseModel):
+class SessionFilterOption(BaseModel):
     """会话审计筛选选项。"""
 
     uid: str | None = None
@@ -85,14 +85,14 @@ class ConversationFilterOption(BaseModel):
     is_deleted: bool = False
 
 
-class ConversationFilterOptionsResponse(BaseModel):
+class SessionFilterOptionsResponse(BaseModel):
     """会话审计用户与 Agent 筛选项。"""
 
-    users: list[ConversationFilterOption]
-    agents: list[ConversationFilterOption]
+    users: list[SessionFilterOption]
+    agents: list[SessionFilterOption]
 
 
-class ConversationDetailResponse(BaseModel):
+class SessionDetailResponse(BaseModel):
     """Dashboard 对话详情。"""
 
     thread_id: str
@@ -250,17 +250,17 @@ async def get_thread_analytics_stats(
     return ThreadAnalyticsResponse(**data)
 
 
-@dashboard.get("/conversations/options", response_model=ConversationFilterOptionsResponse)
-async def get_conversation_filter_options(
+@dashboard.get("/sessions/options", response_model=SessionFilterOptionsResponse)
+async def get_session_filter_options(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_superadmin_user),
 ):
     """获取会话审计用户与 Agent 筛选项（超级管理员权限）。"""
-    return await DashboardService(db).get_conversation_filter_options()
+    return await DashboardService(db).get_session_filter_options()
 
 
-@dashboard.get("/conversations", response_model=ConversationListResponse)
-async def get_all_conversations(
+@dashboard.get("/sessions", response_model=SessionListResponse)
+async def get_all_sessions(
     uid: str | None = None,
     agent_id: str | None = None,
     status: Literal["active", "archived", "deleted", "subagent", "all"] = "all",
@@ -271,7 +271,7 @@ async def get_all_conversations(
     current_user: User = Depends(get_superadmin_user),
 ):
     """获取所有对话（超级管理员权限）。"""
-    return await DashboardService(db).list_conversations(
+    return await DashboardService(db).list_sessions(
         uid=uid,
         agent_id=agent_id,
         status=status,
@@ -281,14 +281,14 @@ async def get_all_conversations(
     )
 
 
-@dashboard.get("/conversations/{thread_id}", response_model=ConversationDetailResponse)
-async def get_conversation_detail(
+@dashboard.get("/sessions/{thread_id}", response_model=SessionDetailResponse)
+async def get_session_detail(
     thread_id: str,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_superadmin_user),
 ):
     """获取指定对话详情（超级管理员权限）。"""
-    data = await DashboardService(db).get_conversation_detail(thread_id)
+    data = await DashboardService(db).get_session_detail(thread_id)
     if not data:
-        raise HTTPException(status_code=404, detail="Conversation not found")
+        raise HTTPException(status_code=404, detail="Session not found")
     return data

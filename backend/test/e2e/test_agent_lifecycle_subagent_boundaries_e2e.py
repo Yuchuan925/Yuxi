@@ -12,7 +12,7 @@ import pytest
 
 from test.e2e.test_agent_lifecycle_e2e import output_text
 from e2e_helpers import archive_public_thread, delete_agent, postgres_dsn
-from test.live_api_cleanup import make_test_conversation_title
+from test.live_api_cleanup import make_test_session_title
 from yuxi.modules.workspace.paths import user_workspace_dir
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.e2e, pytest.mark.slow, pytest.mark.timeout(240)]
@@ -41,7 +41,7 @@ async def test_subagent_inherits_write_policy_and_shares_workdir(e2e_client, e2e
             headers={**e2e_headers, "Idempotency-Key": f"subagent-policy-{uuid.uuid4().hex}"},
             json={
                 "agent_id": parent_slug,
-                "title": make_test_conversation_title("subagent-policy"),
+                "title": make_test_session_title("subagent-policy"),
                 "model_spec": MODEL,
             },
         )
@@ -51,9 +51,9 @@ async def test_subagent_inherits_write_policy_and_shares_workdir(e2e_client, e2e
         try:
             workdir_path = await conn.fetchval(
                 """
-                SELECT project.workdir_path FROM conversations conversation
-                JOIN projects project ON project.id = conversation.project_id
-                WHERE conversation.thread_id = $1
+                SELECT project.workdir_path FROM sessions agent_session
+                JOIN projects project ON project.id = agent_session.project_id
+                WHERE agent_session.thread_id = $1
                 """,
                 thread_id,
             )
@@ -90,7 +90,7 @@ async def test_subagent_inherits_write_policy_and_shares_workdir(e2e_client, e2e
         try:
             children = await conn.fetch(
                 """
-                SELECT id, status, conversation_thread_id, runtime_scope_id, turn_id,
+                SELECT id, status, thread_id, runtime_scope_id, turn_id,
                        input_payload, manifest, output_message_id
                 FROM agent_runs WHERE created_by_run_id = $1 AND run_type = 'subagent'
                 """,
@@ -99,7 +99,7 @@ async def test_subagent_inherits_write_policy_and_shares_workdir(e2e_client, e2e
             assert len(children) == 1, [dict(row) for row in children]
             child = children[0]
             assert child["status"] == "completed" and child["turn_id"] != turn_id
-            assert child["runtime_scope_id"] == child["conversation_thread_id"] and child["output_message_id"]
+            assert child["runtime_scope_id"] == child["thread_id"] and child["output_message_id"]
             payload = _json_object(child["input_payload"])
             manifest = _json_object(child["manifest"])
             assert payload["tool_approval_mode"] == mode and payload["model_spec"] == MODEL
@@ -133,7 +133,7 @@ async def test_subagent_inherits_write_policy_and_shares_workdir(e2e_client, e2e
         finally:
             await conn.close()
 
-        child_thread_id = child["conversation_thread_id"]
+        child_thread_id = child["thread_id"]
         child_run = await e2e_client.get(
             f"/api/v1/agents/threads/{child_thread_id}/runs/{child['id']}", headers=e2e_headers
         )
@@ -182,7 +182,7 @@ async def test_child_end_is_public_while_parent_waits_for_slow_child(e2e_client,
             headers={**e2e_headers, "Idempotency-Key": f"subagent-observe-{uuid.uuid4().hex}"},
             json={
                 "agent_id": parent_slug,
-                "title": make_test_conversation_title("subagent-observation"),
+                "title": make_test_session_title("subagent-observation"),
                 "model_spec": MODEL,
                 "tool_approval_mode": "always_trust",
                 "input": [_message(f"{OUTPUT} SUBAGENT_OBSERVATION_GATE:{gate} SUBAGENT_PATH:/tmp/not-written")],
@@ -198,7 +198,7 @@ async def test_child_end_is_public_while_parent_waits_for_slow_child(e2e_client,
                 while True:
                     children = await conn.fetch(
                         """
-                        SELECT id, status, conversation_thread_id, input_payload, output_message_id, turn_id
+                        SELECT id, status, thread_id, input_payload, output_message_id, turn_id
                         FROM agent_runs WHERE created_by_run_id = $1 AND run_type = 'subagent'
                         """,
                         parent_run_id,
@@ -222,11 +222,11 @@ async def test_child_end_is_public_while_parent_waits_for_slow_child(e2e_client,
                     await asyncio.sleep(0.2)
             fast, slow = by_call["call-subagent-start"], by_call["call-subagent-slow"]
             assert fast["output_message_id"] and fast["turn_id"] != turn_id
-            assert slow["turn_id"] != turn_id and slow["conversation_thread_id"] != fast["conversation_thread_id"]
+            assert slow["turn_id"] != turn_id and slow["thread_id"] != fast["thread_id"]
             assert await conn.fetchval("SELECT status FROM agent_runs WHERE id = $1", parent_run_id) == "running"
 
             fast_run = await e2e_client.get(
-                f"/api/v1/agents/threads/{fast['conversation_thread_id']}/runs/{fast['id']}",
+                f"/api/v1/agents/threads/{fast['thread_id']}/runs/{fast['id']}",
                 headers=e2e_headers,
             )
             assert fast_run.status_code == 200, fast_run.text
@@ -239,7 +239,7 @@ async def test_child_end_is_public_while_parent_waits_for_slow_child(e2e_client,
 
             async with asyncio.timeout(20):
                 async with e2e_client.stream(
-                    "GET", f"/api/v1/agents/threads/{fast['conversation_thread_id']}/events", headers=e2e_headers
+                    "GET", f"/api/v1/agents/threads/{fast['thread_id']}/events", headers=e2e_headers
                 ) as response:
                     assert response.status_code == 200, await response.aread()
                     async for line in response.aiter_lines():
@@ -247,7 +247,7 @@ async def test_child_end_is_public_while_parent_waits_for_slow_child(e2e_client,
                             continue
                         event = json.loads(line[6:])
                         if event["type"] == "agent.session.turn.completed" and event["yuxi"]["run_id"] == fast["id"]:
-                            assert event["session_id"] == fast["conversation_thread_id"]
+                            assert event["session_id"] == fast["thread_id"]
                             assert event["turn_id"] == fast["turn_id"] and event["turn"]["status"] == "completed"
                             break
                     else:
@@ -265,7 +265,7 @@ async def test_child_end_is_public_while_parent_waits_for_slow_child(e2e_client,
         assert turn["result_run_id"] == parent_run_id and output_text(turn["output"]) == OUTPUT
         for child in (fast, slow):
             run = await e2e_client.get(
-                f"/api/v1/agents/threads/{child['conversation_thread_id']}/runs/{child['id']}",
+                f"/api/v1/agents/threads/{child['thread_id']}/runs/{child['id']}",
                 headers=e2e_headers,
             )
             assert run.status_code == 200, run.text
@@ -302,7 +302,7 @@ async def test_child_model_retry_exhaustion_is_reported_to_parent(e2e_client, e2
             headers={**e2e_headers, "Idempotency-Key": f"subagent-retry-{uuid.uuid4().hex}"},
             json={
                 "agent_id": parent_slug,
-                "title": make_test_conversation_title("subagent-retry"),
+                "title": make_test_session_title("subagent-retry"),
                 "model_spec": MODEL,
                 "tool_approval_mode": "always_trust",
                 "input": [_message(f"{OUTPUT} {marker} SUBAGENT_PATH:/tmp/not-written")],
@@ -319,7 +319,7 @@ async def test_child_model_retry_exhaustion_is_reported_to_parent(e2e_client, e2
         try:
             children = await conn.fetch(
                 """
-                SELECT id, status, conversation_thread_id, turn_id, error_message, output_message_id
+                SELECT id, status, thread_id, turn_id, error_message, output_message_id
                 FROM agent_runs WHERE created_by_run_id = $1 AND run_type = 'subagent'
                 """,
                 parent_run_id,
@@ -371,7 +371,7 @@ async def test_child_model_retry_exhaustion_is_reported_to_parent(e2e_client, e2
             await conn.close()
 
         child_run = await e2e_client.get(
-            f"/api/v1/agents/threads/{child['conversation_thread_id']}/runs/{child['id']}",
+            f"/api/v1/agents/threads/{child['thread_id']}/runs/{child['id']}",
             headers=e2e_headers,
         )
         assert child_run.status_code == 200, child_run.text
@@ -506,7 +506,7 @@ async def test_parent_finishes_before_child_and_child_keeps_own_owner(e2e_client
                 "agent_id": parent_slug,
                 "model_spec": MODEL,
                 "tool_approval_mode": "always_trust",
-                "title": make_test_conversation_title("child-background"),
+                "title": make_test_session_title("child-background"),
                 "input": [
                     _message(f"{OUTPUT} SUBAGENT_BACKGROUND_GATE:{gate} SUBAGENT_SLOW SUBAGENT_PATH:/tmp/no-write")
                 ],
@@ -519,11 +519,11 @@ async def test_parent_finishes_before_child_and_child_keeps_own_owner(e2e_client
         conn = await asyncpg.connect(postgres_dsn())
         try:
             child = await conn.fetchrow(
-                "SELECT id,turn_id,conversation_thread_id,status,worker_id FROM agent_runs WHERE created_by_run_id=$1",
+                "SELECT id,turn_id,thread_id,status,worker_id FROM agent_runs WHERE created_by_run_id=$1",
                 parent_id,
             )
             assert child and child["turn_id"] != turn_id
-            child_thread, child_turn = child["conversation_thread_id"], child["turn_id"]
+            child_thread, child_turn = child["thread_id"], child["turn_id"]
             async with asyncio.timeout(30):
                 while not await conn.fetchval(
                     "SELECT worker_id FROM agent_runs WHERE id=$1 AND status='running'", child["id"]
@@ -592,7 +592,7 @@ async def test_child_question_resumes_after_parent_completed(e2e_client, e2e_hea
             json={
                 "agent_id": parent_slug,
                 "model_spec": MODEL,
-                "title": make_test_conversation_title("child-question"),
+                "title": make_test_session_title("child-question"),
                 "input": [
                     _message(
                         f"{OUTPUT} SUBAGENT_BACKGROUND "
@@ -608,10 +608,10 @@ async def test_child_question_resumes_after_parent_completed(e2e_client, e2e_hea
         conn = await asyncpg.connect(postgres_dsn())
         try:
             child = await conn.fetchrow(
-                "SELECT id,turn_id,conversation_thread_id FROM agent_runs WHERE created_by_run_id=$1", parent_id
+                "SELECT id,turn_id,thread_id FROM agent_runs WHERE created_by_run_id=$1", parent_id
             )
             assert child and child["turn_id"] != turn_id
-            child_thread, child_turn = child["conversation_thread_id"], child["turn_id"]
+            child_thread, child_turn = child["thread_id"], child["turn_id"]
         finally:
             await conn.close()
         async with asyncio.timeout(30):
@@ -723,7 +723,7 @@ async def test_parent_cancel_cascades_and_child_cancel_isolated(e2e_client, e2e_
                 "agent_id": parent_slug,
                 "model_spec": MODEL,
                 "tool_approval_mode": "always_trust",
-                "title": make_test_conversation_title("cancel-tree"),
+                "title": make_test_session_title("cancel-tree"),
                 "input": [_message(f"{OUTPUT} SUBAGENT_OBSERVATION_GATE:{gate} SUBAGENT_PATH:/tmp/no-write")],
             },
         )
@@ -734,8 +734,7 @@ async def test_parent_cancel_cascades_and_child_cancel_isolated(e2e_client, e2e_
             async with asyncio.timeout(30):
                 while True:
                     children = await conn.fetch(
-                        "SELECT id,turn_id,conversation_thread_id,status,input_payload FROM agent_runs "
-                        "WHERE created_by_run_id=$1",
+                        "SELECT id,turn_id,thread_id,status,input_payload FROM agent_runs WHERE created_by_run_id=$1",
                         parent_id,
                     )
                     slow = next(
@@ -757,11 +756,11 @@ async def test_parent_cancel_cascades_and_child_cancel_isolated(e2e_client, e2e_
                     if slow and slow["status"] == "running" and awaiting == "running" and fast_ready:
                         break
                     await asyncio.sleep(0.1)
-            child_thread, child_turn = slow["conversation_thread_id"], slow["turn_id"]
+            child_thread, child_turn = slow["thread_id"], slow["turn_id"]
             if target == "unrelated_follow_up":
                 fast = next(row for row in children if row["status"] == "completed")
                 follow = await e2e_client.post(
-                    f"/api/v1/agents/threads/{fast['conversation_thread_id']}/events",
+                    f"/api/v1/agents/threads/{fast['thread_id']}/events",
                     headers={**e2e_headers, "Idempotency-Key": f"independent-{gate}"},
                     json={
                         "events": [
@@ -818,9 +817,7 @@ async def test_parent_cancel_cascades_and_child_cancel_isolated(e2e_client, e2e_
                 )
                 async with httpx.AsyncClient(base_url="http://api:8765", timeout=5) as replay:
                     await replay.get("/release-blocking", params={"token": gate})
-                completed = await _terminal_turn(
-                    e2e_client, e2e_headers, fast["conversation_thread_id"], independent["turn_id"]
-                )
+                completed = await _terminal_turn(e2e_client, e2e_headers, fast["thread_id"], independent["turn_id"])
                 assert completed["status"] == "completed" and completed["result_run_id"] == independent["run_id"]
         finally:
             await conn.close()

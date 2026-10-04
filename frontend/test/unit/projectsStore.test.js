@@ -3,7 +3,7 @@ import test from 'node:test'
 
 import { createPinia, setActivePinia } from 'pinia'
 import { createServer } from 'vite'
-import { buildProjectConversationGroups } from '../../src/modules/projects/model/projectConversationGroups.js'
+import { buildProjectSessionGroups } from '../../src/modules/projects/model/projectSessionGroups.js'
 
 globalThis.localStorage = {
   getItem: () => null,
@@ -38,11 +38,11 @@ test('创建 Project 后迟到的列表响应不会覆盖侧边栏状态', async
 
     assert.deepEqual(store.projects, [createdProject])
     assert.equal(store.isLoading, false)
-    const grouped = buildProjectConversationGroups(store.projects, [
+    const grouped = buildProjectSessionGroups(store.projects, [
       { id: 'thread-new', project_id: createdProject.id, created_at: '2026-09-01T10:00:00Z' }
     ])
-    assert.equal(grouped.groups[0].conversations[0].id, 'thread-new')
-    assert.deepEqual(grouped.otherConversations, [])
+    assert.equal(grouped.groups[0].sessions[0].id, 'thread-new')
+    assert.deepEqual(grouped.otherSessions, [])
   } finally {
     await server.close()
   }

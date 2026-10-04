@@ -26,7 +26,7 @@ class AgentInput(Base):
 
     id = Column(String(64), primary_key=True)
     received_seq = Column(BigInteger, Identity(), nullable=False, unique=True)
-    conversation_thread_id = Column(String(64), ForeignKey("conversations.thread_id"), nullable=False, index=True)
+    thread_id = Column(String(64), ForeignKey("sessions.thread_id"), nullable=False, index=True)
     uid = Column(String(64), nullable=False)
     app_id = Column(String(64), nullable=True)
     api_key_id = Column(Integer, nullable=True, comment="首次接收 Input 的 API Key ID 快照")
@@ -46,22 +46,22 @@ class AgentInput(Base):
     cancelled_at = Column(DateTime(timezone=True), nullable=True)
 
     __table_args__ = (
-        UniqueConstraint("id", "conversation_thread_id", name="uq_agent_inputs_id_thread"),
+        UniqueConstraint("id", "thread_id", name="uq_agent_inputs_id_thread"),
         ForeignKeyConstraint(
-            ["turn_id", "conversation_thread_id"],
-            ["agent_turns.id", "agent_turns.conversation_thread_id"],
+            ["turn_id", "thread_id"],
+            ["agent_turns.id", "agent_turns.thread_id"],
             name="fk_agent_inputs_turn_thread",
         ),
         Index(
             "ix_agent_inputs_pending_head",
-            "conversation_thread_id",
+            "thread_id",
             (kind == "steer").self_group().desc(),
             "received_seq",
             postgresql_where=status == "pending",
         ).ddl_if(dialect="postgresql"),
         Index(
             "uq_agent_inputs_pending_steer",
-            "conversation_thread_id",
+            "thread_id",
             unique=True,
             postgresql_where=(kind == "steer") & (status == "pending"),
         ).ddl_if(dialect="postgresql"),
@@ -93,7 +93,7 @@ class AgentInputReceipt(Base):
     idempotency_key = Column(String(128), nullable=False)
     uid = Column(String(64), nullable=False)
     app_id = Column(String(64), nullable=True)
-    conversation_thread_id = Column(String(64), ForeignKey("conversations.thread_id"), nullable=False)
+    thread_id = Column(String(64), ForeignKey("sessions.thread_id"), nullable=False)
     event_type = Column(String(48), nullable=False)
     intent_hash = Column(String(64), nullable=False)
     input_id = Column(String(64), nullable=True)
@@ -103,13 +103,13 @@ class AgentInputReceipt(Base):
 
     __table_args__ = (
         ForeignKeyConstraint(
-            ["input_id", "conversation_thread_id"],
-            ["agent_inputs.id", "agent_inputs.conversation_thread_id"],
+            ["input_id", "thread_id"],
+            ["agent_inputs.id", "agent_inputs.thread_id"],
             name="fk_agent_input_receipts_input_thread",
         ),
         ForeignKeyConstraint(
-            ["turn_id", "conversation_thread_id"],
-            ["agent_turns.id", "agent_turns.conversation_thread_id"],
+            ["turn_id", "thread_id"],
+            ["agent_turns.id", "agent_turns.thread_id"],
             name="fk_agent_input_receipts_turn_thread",
         ),
         ForeignKeyConstraint(
@@ -124,7 +124,7 @@ class AgentInputReceipt(Base):
             "uq_agent_input_receipts_scope_key",
             "uid",
             "app_id",
-            "conversation_thread_id",
+            "thread_id",
             "idempotency_key",
             unique=True,
             postgresql_nulls_not_distinct=True,

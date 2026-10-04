@@ -13,8 +13,8 @@ from yuxi.infrastructure.observability.logging import logger
 from yuxi.modules.agents.models.inputs import AgentInput
 from yuxi.modules.agents.models.turns import AgentTurn
 from yuxi.modules.agents.repositories.definitions import AgentRepository
+from yuxi.modules.agents.repositories.sessions import SessionRepository
 from yuxi.modules.agents.repositories.state import AgentStateRepository
-from yuxi.modules.agents.repositories.threads import ConversationRepository
 from yuxi.modules.agents.runtime.agent_backends import AgentBackendNotFoundError, get_agent_backend
 from yuxi.modules.agents.runtime.context import DEFAULT_SUMMARY_THRESHOLD_K, BaseContext, prepare_agent_runtime_context
 from yuxi.modules.agents.runtime.middlewares import create_summary_middleware_from_context
@@ -25,7 +25,7 @@ from yuxi.modules.agents.runtime.sandbox.paths import runtime_workdir_path
 from yuxi.modules.agents.services.input_config import resolve_agent_run_model_spec
 from yuxi.modules.extensions.skills.projection import get_user_skills_root_dir
 from yuxi.modules.identity.models import User
-from yuxi.modules.workspace.services.bindings import ensure_conversation_workdir_available
+from yuxi.modules.workspace.services.bindings import ensure_session_workdir_available
 
 
 async def compress_thread_context(
@@ -35,18 +35,18 @@ async def compress_thread_context(
     db: AsyncSession,
     app_id: str | None = None,
 ) -> dict[str, Any]:
-    """在线程空闲时压缩 checkpoint；同线程新请求由 Conversation 行锁串行化。"""
+    """在线程空闲时压缩 checkpoint；同线程新请求由 Session 行锁串行化。"""
     uid = str(current_user.uid)
-    conversation = await ConversationRepository(db).lock_conversation_by_thread_id(thread_id)
+    agent_session = await SessionRepository(db).lock_session_by_thread_id(thread_id)
     if (
-        conversation is None
-        or conversation.uid != uid
-        or getattr(conversation, "app_id", None) != app_id
-        or conversation.status != "active"
+        agent_session is None
+        or agent_session.uid != uid
+        or getattr(agent_session, "app_id", None) != app_id
+        or agent_session.status != "active"
     ):
         raise HTTPException(status_code=404, detail="对话线程不存在")
 
-    agent_slug = conversation.agent_id
+    agent_slug = agent_session.agent_id
     await _ensure_thread_idle(db=db, thread_id=thread_id)
 
     agent_item = await AgentRepository(db).get_visible_by_slug(
@@ -64,12 +64,12 @@ async def compress_thread_context(
     context = agent.context_schema()
     context.update_config((agent_item.config_json or {}).get("context") or {})
     model_spec = await resolve_agent_run_model_spec(
-        (conversation.extra_metadata or {}).get("model_spec"),
+        (agent_session.extra_metadata or {}).get("model_spec"),
         context.model,
         db,
     )
-    workdir_path = await ensure_conversation_workdir_available(
-        conversation=conversation,
+    workdir_path = await ensure_session_workdir_available(
+        agent_session=agent_session,
         uid=uid,
         db=db,
     )
@@ -99,15 +99,13 @@ async def _ensure_thread_idle(*, db: AsyncSession, thread_id: str) -> None:
     active_turn = await db.scalar(
         select(AgentTurn.id)
         .where(
-            AgentTurn.conversation_thread_id == thread_id,
+            AgentTurn.thread_id == thread_id,
             AgentTurn.status.in_(("running", "waiting", "cancelling")),
         )
         .limit(1)
     )
     pending_input = await db.scalar(
-        select(AgentInput.id)
-        .where(AgentInput.conversation_thread_id == thread_id, AgentInput.status == "pending")
-        .limit(1)
+        select(AgentInput.id).where(AgentInput.thread_id == thread_id, AgentInput.status == "pending").limit(1)
     )
     if active_turn is None and pending_input is None:
         return

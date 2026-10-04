@@ -32,14 +32,14 @@ AGENT_RUN_SHAPE_CONSTRAINT_NAME = "ck_agent_runs_nonterminal_shape"
 
 AGENT_RUN_SHAPE_CONSTRAINT_SQL = """
     runtime_scope_id <> ''
- AND conversation_thread_id <> ''
- AND runtime_scope_id = conversation_thread_id
+ AND thread_id <> ''
+ AND runtime_scope_id = thread_id
  AND ((run_type = 'chat'
-     AND runtime_scope_id = conversation_thread_id
+     AND runtime_scope_id = thread_id
      AND created_by_run_id IS NULL
      AND subagent_thread_relation_id IS NULL)
  OR (run_type = 'resume'
-     AND runtime_scope_id = conversation_thread_id
+     AND runtime_scope_id = thread_id
      AND created_by_run_id IS NULL
      AND resume_from_run_id IS NOT NULL
      AND subagent_thread_relation_id IS NULL)
@@ -86,7 +86,7 @@ class AgentRun(Base):
         nullable=False,
         comment="跨 Run 订阅的持久执行顺序",
     )
-    conversation_thread_id = Column(String(64), index=True, nullable=False, comment="Conversation thread ID snapshot")
+    thread_id = Column(String(64), index=True, nullable=False, comment="Session thread ID snapshot")
     runtime_scope_id = Column(String(64), index=True, nullable=False, comment="Owning Thread runtime scope")
     runtime_cleanup_pending = Column(
         Boolean,
@@ -113,9 +113,7 @@ class AgentRun(Base):
     channel = Column(String(32), nullable=False, default="web", comment="Run channel snapshot")
     external_id = Column(String(128), nullable=True, index=True, comment="Source-specific external ID snapshot")
     origin_metadata = Column(JSON, nullable=False, default=dict, comment="Immutable origin metadata snapshot")
-    conversation_id = Column(
-        Integer, ForeignKey("conversations.id"), nullable=True, index=True, comment="Conversation ID"
-    )
+    session_record_id = Column(Integer, ForeignKey("sessions.id"), nullable=True, index=True, comment="Session ID")
     created_by_run_id = Column(
         String(64), ForeignKey("agent_runs.id"), nullable=True, index=True, comment="Run that created this run"
     )
@@ -164,8 +162,8 @@ class AgentRun(Base):
     __table_args__ = (
         UniqueConstraint("turn_id", "id", name="uq_agent_runs_turn_id_id"),
         ForeignKeyConstraint(
-            ["input_id", "conversation_thread_id"],
-            ["agent_inputs.id", "agent_inputs.conversation_thread_id"],
+            ["input_id", "thread_id"],
+            ["agent_inputs.id", "agent_inputs.thread_id"],
             name="fk_agent_runs_input_thread",
             use_alter=True,
         ),
@@ -175,35 +173,35 @@ class AgentRun(Base):
             "'failed','cancelled','interrupted','yielded')",
             name="ck_agent_runs_status",
         ),
-        UniqueConstraint("id", "turn_id", "conversation_id", name="uq_agent_runs_id_turn_conversation"),
+        UniqueConstraint("id", "turn_id", "session_record_id", name="uq_agent_runs_id_turn_session"),
         ForeignKeyConstraint(
-            ["conversation_id", "conversation_thread_id"],
-            ["conversations.id", "conversations.thread_id"],
-            name="fk_agent_runs_conversation_thread",
+            ["session_record_id", "thread_id"],
+            ["sessions.id", "sessions.thread_id"],
+            name="fk_agent_runs_session_thread",
         ),
         CheckConstraint(
-            "(input_message_id IS NULL AND output_message_id IS NULL) OR conversation_id IS NOT NULL",
+            "(input_message_id IS NULL AND output_message_id IS NULL) OR session_record_id IS NOT NULL",
             name="ck_agent_runs_message_thread_required",
         ),
         ForeignKeyConstraint(
-            ["input_message_id", "id", "turn_id", "conversation_id"],
-            ["messages.id", "messages.run_id", "messages.turn_id", "messages.conversation_id"],
+            ["input_message_id", "id", "turn_id", "session_record_id"],
+            ["messages.id", "messages.run_id", "messages.turn_id", "messages.session_record_id"],
             name="fk_agent_runs_input_message_scope",
             use_alter=True,
             deferrable=True,
             initially="DEFERRED",
         ),
         ForeignKeyConstraint(
-            ["output_message_id", "id", "turn_id", "conversation_id"],
-            ["messages.id", "messages.run_id", "messages.turn_id", "messages.conversation_id"],
+            ["output_message_id", "id", "turn_id", "session_record_id"],
+            ["messages.id", "messages.run_id", "messages.turn_id", "messages.session_record_id"],
             name="fk_agent_runs_output_message_scope",
             use_alter=True,
             deferrable=True,
             initially="DEFERRED",
         ),
         ForeignKeyConstraint(
-            ["turn_id", "conversation_thread_id"],
-            ["agent_turns.id", "agent_turns.conversation_thread_id"],
+            ["turn_id", "thread_id"],
+            ["agent_turns.id", "agent_turns.thread_id"],
             name="fk_agent_runs_owning_turn_thread",
         ),
         ForeignKeyConstraint(
@@ -222,7 +220,7 @@ class AgentRun(Base):
         return {
             "id": self.id,
             "execution_seq": self.execution_seq,
-            "conversation_thread_id": self.conversation_thread_id,
+            "thread_id": self.thread_id,
             "runtime_scope_id": self.runtime_scope_id,
             "runtime_cleanup_pending": bool(self.runtime_cleanup_pending),
             "agent_slug": self.agent_slug,
@@ -236,7 +234,7 @@ class AgentRun(Base):
             "channel": self.channel,
             "external_id": self.external_id,
             "origin_metadata": self.origin_metadata or {},
-            "conversation_id": self.conversation_id,
+            "session_record_id": self.session_record_id,
             "created_by_run_id": self.created_by_run_id,
             "resume_from_run_id": self.resume_from_run_id,
             "subagent_thread_relation_id": self.subagent_thread_relation_id,

@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from yuxi.modules.agents.models.inputs import AgentInputMessage
 from yuxi.modules.agents.models.messages import AUDIT_MESSAGE_TYPES, TOOL_AUDIT_MESSAGE_TYPE, Message, ToolCall
 from yuxi.modules.agents.models.runs import AGENT_RUN_TERMINAL_STATUSES, AgentRun, AgentRunAttempt
-from yuxi.modules.agents.models.threads import SubagentThread
+from yuxi.modules.agents.models.sessions import SubagentThread
 from yuxi.modules.agents.models.turns import AgentTurn
 from yuxi.shared.datetime import utc_now
 
@@ -45,7 +45,7 @@ class AgentRunRepository:
         result = await self.db.execute(
             select(AgentRun)
             .where(
-                AgentRun.conversation_thread_id == thread_id,
+                AgentRun.thread_id == thread_id,
                 AgentRun.uid == uid,
                 AgentRun.app_id == app_id,
                 AgentRun.run_type.in_(TOP_LEVEL_RUN_TYPES),
@@ -63,7 +63,7 @@ class AgentRunRepository:
         result = await self.db.execute(
             select(AgentRun)
             .where(
-                AgentRun.conversation_thread_id == thread_id,
+                AgentRun.thread_id == thread_id,
                 AgentRun.uid == uid,
                 AgentRun.app_id == app_id,
                 AgentRun.execution_seq > after_sequence,
@@ -123,24 +123,19 @@ class AgentRunRepository:
         if (
             creator_run is None
             or run.app_id != creator_run.app_id
-            or relation.parent_conversation_id != creator_run.conversation_id
+            or relation.parent_session_record_id != creator_run.session_record_id
         ):
             return None
-        if (
-            relation.child_conversation_id != run.conversation_id
-            or relation.child_thread_id != run.conversation_thread_id
-        ):
+        if relation.child_session_record_id != run.session_record_id or relation.child_thread_id != run.thread_id:
             return None
         return creator_run, run
 
-    async def get_latest_subagent_run_by_thread_for_user(
-        self, conversation_thread_id: str, uid: str
-    ) -> AgentRun | None:
+    async def get_latest_subagent_run_by_thread_for_user(self, thread_id: str, uid: str) -> AgentRun | None:
         """读取某个子线程最近一次子智能体 run，用于状态页和继续线程校验。"""
         result = await self.db.execute(
             select(AgentRun)
             .where(
-                AgentRun.conversation_thread_id == conversation_thread_id,
+                AgentRun.thread_id == thread_id,
                 AgentRun.uid == str(uid),
                 AgentRun.run_type == "subagent",
             )
@@ -149,12 +144,12 @@ class AgentRunRepository:
         )
         return result.scalar_one_or_none()
 
-    async def get_latest_run_by_thread_for_user(self, conversation_thread_id: str, uid: str) -> AgentRun | None:
+    async def get_latest_run_by_thread_for_user(self, thread_id: str, uid: str) -> AgentRun | None:
         """读取线程最近一次 run，用于恢复查询 checkpoint 时的运行时模型。"""
         result = await self.db.execute(
             select(AgentRun)
             .where(
-                AgentRun.conversation_thread_id == conversation_thread_id,
+                AgentRun.thread_id == thread_id,
                 AgentRun.uid == str(uid),
                 AgentRun.run_type.in_(["chat", "resume", "subagent"]),
             )
@@ -164,48 +159,48 @@ class AgentRunRepository:
         return result.scalar_one_or_none()
 
     async def get_latest_top_level_runs_for_threads(
-        self, uid: str, conversation_thread_ids: list[str]
+        self, uid: str, thread_ids: list[str]
     ) -> dict[str, tuple[str, str]]:
         """批量读取各线程最新顶层 chat/resume run，返回 thread_id -> (run_id, status)。
 
         使用窗口函数一次查询完成，避免对每个线程执行 N+1 查询。
         """
-        if not conversation_thread_ids:
+        if not thread_ids:
             return {}
 
         ranked = (
             select(
                 AgentRun.id,
                 AgentRun.status,
-                AgentRun.conversation_thread_id,
+                AgentRun.thread_id,
                 func.row_number()
                 .over(
-                    partition_by=AgentRun.conversation_thread_id,
+                    partition_by=AgentRun.thread_id,
                     order_by=(AgentRun.created_at.desc(), AgentRun.id.desc()),
                 )
                 .label("rn"),
             )
             .where(
                 AgentRun.uid == str(uid),
-                AgentRun.conversation_thread_id.in_(conversation_thread_ids),
+                AgentRun.thread_id.in_(thread_ids),
                 AgentRun.run_type.in_(TOP_LEVEL_RUN_TYPES),
             )
             .subquery()
         )
         result = await self.db.execute(select(ranked).where(ranked.c.rn == 1))
-        return {row.conversation_thread_id: (row.id, row.status) for row in result.all()}
+        return {row.thread_id: (row.id, row.status) for row in result.all()}
 
-    async def list_subagent_runs_for_conversation(self, conversation_id: int, uid: str) -> list[AgentRun]:
+    async def list_subagent_runs_for_session(self, session_record_id: int, uid: str) -> list[AgentRun]:
         """按持久父子关系读取子 Run，补齐尚未进入父 checkpoint 的派发记录。"""
         result = await self.db.execute(
             select(AgentRun)
             .join(SubagentThread, AgentRun.subagent_thread_relation_id == SubagentThread.id)
             .where(
-                SubagentThread.parent_conversation_id == conversation_id,
+                SubagentThread.parent_session_record_id == session_record_id,
                 SubagentThread.uid == str(uid),
                 AgentRun.uid == str(uid),
                 AgentRun.run_type == "subagent",
-                AgentRun.conversation_id == SubagentThread.child_conversation_id,
+                AgentRun.session_record_id == SubagentThread.child_session_record_id,
             )
             .order_by(AgentRun.created_at.asc(), AgentRun.id.asc())
         )
@@ -215,7 +210,7 @@ class AgentRunRepository:
         self,
         *,
         agent_slug: str,
-        conversation_thread_id: str,
+        thread_id: str,
         uid: str,
     ) -> AgentRun | None:
         """检查同一用户、智能体、线程上是否已有未结束 run，避免并发写同一线程。"""
@@ -224,7 +219,7 @@ class AgentRunRepository:
             .where(
                 AgentRun.agent_slug == agent_slug,
                 AgentRun.uid == str(uid),
-                AgentRun.conversation_thread_id == conversation_thread_id,
+                AgentRun.thread_id == thread_id,
                 or_(
                     AgentRun.status.notin_(TERMINAL_RUN_STATUSES),
                     AgentRun.runtime_cleanup_pending.is_(True),
@@ -261,7 +256,7 @@ class AgentRunRepository:
         self,
         *,
         run_id: str,
-        conversation_thread_id: str,
+        thread_id: str,
         runtime_scope_id: str | None = None,
         agent_slug: str,
         uid: str,
@@ -272,7 +267,7 @@ class AgentRunRepository:
         channel: str = "web",
         external_id: str | None = None,
         origin_metadata: dict | None = None,
-        conversation_id: int | None = None,
+        session_record_id: int | None = None,
         created_by_run_id: str | None = None,
         resume_from_run_id: str | None = None,
         subagent_thread_relation_id: int | None = None,
@@ -285,12 +280,12 @@ class AgentRunRepository:
         turn = await self.db.get(AgentTurn, turn_id)
         if turn is None or turn.uid != str(uid) or turn.app_id != app_id:
             raise ValueError("Run 缺少同作用域 Turn")
-        if turn.conversation_thread_id != conversation_thread_id:
+        if turn.thread_id != thread_id:
             raise ValueError("顶层 Run 必须属于 Turn 的 Thread")
-        runtime_scope = str(conversation_thread_id) if runtime_scope_id is None else str(runtime_scope_id).strip()
+        runtime_scope = str(thread_id) if runtime_scope_id is None else str(runtime_scope_id).strip()
         run = AgentRun(
             id=run_id,
-            conversation_thread_id=conversation_thread_id,
+            thread_id=thread_id,
             runtime_scope_id=runtime_scope,
             agent_slug=agent_slug,
             uid=str(uid),
@@ -302,7 +297,7 @@ class AgentRunRepository:
             channel=channel,
             external_id=external_id,
             origin_metadata=origin_metadata or {},
-            conversation_id=conversation_id,
+            session_record_id=session_record_id,
             created_by_run_id=created_by_run_id,
             resume_from_run_id=resume_from_run_id,
             subagent_thread_relation_id=subagent_thread_relation_id,
@@ -411,7 +406,7 @@ class AgentRunRepository:
 
         message = await self._get_matching_output_message(run, message_id)
         if message is None:
-            raise ValueError("输出消息必须属于同一 conversation、Turn 和 Run，且角色为 assistant")
+            raise ValueError("输出消息必须属于同一 agent_session、Turn 和 Run，且角色为 assistant")
 
         run.output_message_id = message_id
         run.updated_at = current_time
@@ -423,7 +418,7 @@ class AgentRunRepository:
         run_id: str,
         *,
         worker_id: str,
-        conversation_thread_id: str,
+        thread_id: str,
         now: datetime | None = None,
     ) -> AgentRun | None:
         """在任何输出写入前锁定并验证当前 attempt 的完整因果边界。"""
@@ -435,13 +430,13 @@ class AgentRunRepository:
             return None
 
         self._require_lease_owner(run, worker_id=worker_id, now=now or utc_now(), action="持久化输出消息")
-        if run.conversation_thread_id != conversation_thread_id:
+        if run.thread_id != thread_id:
             raise ValueError("AgentRun 输出必须属于同一 thread")
-        if run.conversation_id is None:
-            raise ValueError("AgentRun 输出缺少 conversation 归属")
+        if run.session_record_id is None:
+            raise ValueError("AgentRun 输出缺少 agent_session 归属")
         return run
 
-    async def lock_cancel_snapshot(self, run_id: str, *, worker_id: str, conversation_thread_id: str) -> AgentRun:
+    async def lock_cancel_snapshot(self, run_id: str, *, worker_id: str, thread_id: str) -> AgentRun:
         """仅允许仍持有效 lease 的取消执行保存已经公开的部分正文。"""
         run = await self._lock_run(run_id)
         if (
@@ -451,8 +446,8 @@ class AgentRunRepository:
             or not worker_id.strip()
             or run.lease_expires_at is None
             or run.lease_expires_at <= utc_now()
-            or run.conversation_thread_id != conversation_thread_id
-            or run.conversation_id is None
+            or run.thread_id != thread_id
+            or run.session_record_id is None
         ):
             raise ValueError("取消快照必须由相同 Thread 的当前有效 lease owner 保存")
         return run
@@ -463,7 +458,7 @@ class AgentRunRepository:
         *,
         uid: str,
         worker_id: str,
-        conversation_thread_id: str,
+        thread_id: str,
         now: datetime | None = None,
     ) -> AgentRun | None:
         """锁定并验证允许写入用户 Memory 的当前顶层 attempt。"""
@@ -474,11 +469,7 @@ class AgentRunRepository:
             return None
 
         self._require_lease_owner(run, worker_id=worker_id, now=now or utc_now(), action="写入 Memory")
-        if (
-            run.uid != str(uid)
-            or run.conversation_thread_id != conversation_thread_id
-            or run.run_type not in TOP_LEVEL_RUN_TYPES
-        ):
+        if run.uid != str(uid) or run.thread_id != thread_id or run.run_type not in TOP_LEVEL_RUN_TYPES:
             raise ValueError("Memory 写入必须属于当前用户的同一顶层 Run 和 thread")
         return run
 
@@ -714,7 +705,7 @@ class AgentRunRepository:
 
     async def cancel_active_execution_tree_descendants(self, root_run: AgentRun) -> list[tuple[str, str]]:
         """沿整轮委派取消子 Turn，保留同一子 Thread 的无关后续工作。"""
-        from yuxi.modules.agents.repositories.threads import ConversationRepository
+        from yuxi.modules.agents.repositories.sessions import SessionRepository
         from yuxi.modules.agents.repositories.turn import AgentTurnRepository
 
         pending_turn_ids = [root_run.turn_id]
@@ -731,7 +722,7 @@ class AgentRunRepository:
                             AgentRun.uid == root_run.uid,
                             AgentRun.app_id == root_run.app_id,
                         )
-                        .order_by(AgentRun.conversation_thread_id, AgentRun.execution_seq)
+                        .order_by(AgentRun.thread_id, AgentRun.execution_seq)
                     )
                 ).scalars()
             )
@@ -741,22 +732,20 @@ class AgentRunRepository:
                     continue
                 seen.add(child.turn_id)
                 pending_turn_ids.append(child.turn_id)
-                conversation = await ConversationRepository(self.db).lock_conversation_by_thread_id(
-                    child.conversation_thread_id
-                )
+                agent_session = await SessionRepository(self.db).lock_session_by_thread_id(child.thread_id)
                 turn_repo = AgentTurnRepository(self.db)
                 turn = await turn_repo.get_for_scope(
                     turn_id=child.turn_id,
-                    thread_id=child.conversation_thread_id,
+                    thread_id=child.thread_id,
                     uid=root_run.uid,
                     app_id=root_run.app_id,
                     for_update=True,
                 )
-                if conversation is None or turn is None:
+                if agent_session is None or turn is None:
                     raise ValueError("委派子 Turn 的线程归属不一致")
                 if turn.status not in {"running", "waiting", "cancelling"}:
                     continue
-                conversation.queue_paused = True
+                agent_session.queue_paused = True
                 await turn_repo.set_cancelling(turn)
                 current = await self.lock_run_for_user(turn.current_run_id, root_run.uid)
                 if current is None:
@@ -764,7 +753,7 @@ class AgentRunRepository:
                 await self._request_cancel_locked(current)
                 if current.status == "cancelled" and not current.runtime_cleanup_pending:
                     await turn_repo.set_terminal(turn, status="cancelled")
-                cancelled.append((current.id, current.conversation_thread_id))
+                cancelled.append((current.id, current.thread_id))
         await self.db.flush()
         return cancelled
 
@@ -1104,7 +1093,7 @@ class AgentRunRepository:
         result = await self.db.execute(
             select(Message).where(
                 Message.id == message_id,
-                Message.conversation_id == run.conversation_id,
+                Message.session_record_id == run.session_record_id,
                 Message.run_id == run.id,
                 Message.turn_id == run.turn_id,
                 Message.role == "assistant",

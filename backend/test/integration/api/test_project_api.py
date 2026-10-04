@@ -13,14 +13,14 @@ import pytest_asyncio
 from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from test.live_api_cleanup import (
-    make_test_conversation_metadata,
-    make_test_conversation_title,
+    make_test_session_metadata,
+    make_test_session_title,
     make_test_resource_id,
 )
 from yuxi.modules.workspace.repositories.projects import ProjectRepository
 from yuxi.modules.workspace.services.projects import delete_project_view
 from yuxi.modules.agents.services.subagents import SubagentRunService
-from yuxi.modules.agents.models.threads import Conversation, SubagentThread
+from yuxi.modules.agents.models.sessions import Session, SubagentThread
 from yuxi.modules.workspace.models import Project
 from yuxi.modules.identity.models import User
 from yuxi.modules.workspace.paths import user_workdir_host_dir
@@ -103,7 +103,7 @@ async def project_lifecycle_database():
         finally:
             async with session_factory() as session:
                 await session.execute(delete(SubagentThread).where(SubagentThread.uid == uid))
-                await session.execute(delete(Conversation).where(Conversation.uid == uid))
+                await session.execute(delete(Session).where(Session.uid == uid))
                 await session.execute(delete(Project).where(Project.uid == uid))
                 await session.execute(delete(User).where(User.uid == uid))
                 await session.commit()
@@ -111,7 +111,7 @@ async def project_lifecycle_database():
         await engine.dispose()
 
 
-async def _create_lifecycle_conversation(
+async def _create_lifecycle_session(
     session_factory,
     *,
     uid: str,
@@ -120,20 +120,20 @@ async def _create_lifecycle_conversation(
     label: str,
     status: str,
 ) -> int:
-    """创建并提交竞态测试使用的 Conversation。"""
+    """创建并提交竞态测试使用的 Session。"""
     async with session_factory() as session:
-        conversation = Conversation(
+        agent_session = Session(
             thread_id=thread_id,
             uid=uid,
             agent_id="default-chatbot",
-            title=make_test_conversation_title(label),
+            title=make_test_session_title(label),
             status=status,
             project_id=project_id,
-            extra_metadata=make_test_conversation_metadata(label),
+            extra_metadata=make_test_session_metadata(label),
         )
-        session.add(conversation)
+        session.add(agent_session)
         await session.commit()
-        return conversation.id
+        return agent_session.id
 
 
 async def test_default_thread_creates_implicit_project_with_exclusive_binding(test_client, admin_headers):
@@ -142,7 +142,7 @@ async def test_default_thread_creates_implicit_project_with_exclusive_binding(te
         headers=_public_headers(admin_headers),
         json={
             "agent_id": await _default_agent_slug(test_client, admin_headers),
-            "title": make_test_conversation_title("implicit-project"),
+            "title": make_test_session_title("implicit-project"),
         },
     )
     assert response.status_code == 200, response.text
@@ -153,7 +153,7 @@ async def test_default_thread_creates_implicit_project_with_exclusive_binding(te
     async with _database_connection() as db:
         row = await db.fetchrow(
             "SELECT c.uid, c.project_id, p.selection_status, p.directory_mode, p.workdir_path "
-            "FROM conversations c JOIN projects p ON p.id = c.project_id AND p.uid = c.uid "
+            "FROM sessions c JOIN projects p ON p.id = c.project_id AND p.uid = c.uid "
             "WHERE c.thread_id = $1",
             payload["id"],
         )
@@ -185,7 +185,7 @@ async def test_linked_project_and_thread_selection_keep_directory_bytes(
     assert project_response.status_code == 200, project_response.text
     project = project_response.json()
 
-    title = make_test_conversation_title("linked-project")
+    title = make_test_session_title("linked-project")
     thread_response = await test_client.post(
         "/api/v1/agents/threads",
         headers=_public_headers(admin_headers),
@@ -250,7 +250,7 @@ async def test_linked_project_and_thread_selection_keep_directory_bytes(
         assert invalid.status_code in {400, 404}, (path, invalid.text)
 
 
-async def test_project_rename_and_delete_soft_delete_conversations_but_keep_workdir(
+async def test_project_rename_and_delete_soft_delete_sessions_but_keep_workdir(
     test_client,
     admin_headers,
     linked_directory,
@@ -284,7 +284,7 @@ async def test_project_rename_and_delete_soft_delete_conversations_but_keep_work
             json={
                 "agent_id": agent_slug,
                 "project_id": project["id"],
-                "title": make_test_conversation_title(f"project-delete-{suffix}"),
+                "title": make_test_session_title(f"project-delete-{suffix}"),
             },
         )
         assert thread_response.status_code == 200, thread_response.text
@@ -339,15 +339,15 @@ async def test_project_rename_and_delete_soft_delete_conversations_but_keep_work
             "SELECT status, deleted_at FROM projects WHERE id = $1",
             project["id"],
         )
-        conversation_rows = await db.fetch(
-            "SELECT thread_id, status FROM conversations WHERE project_id = $1 ORDER BY thread_id",
+        session_rows = await db.fetch(
+            "SELECT thread_id, status FROM sessions WHERE project_id = $1 ORDER BY thread_id",
             project["id"],
         )
 
     assert project_row["status"] == "deleted"
     assert project_row["deleted_at"] is not None
-    assert {row["thread_id"] for row in conversation_rows} == set(thread_ids)
-    assert {row["status"] for row in conversation_rows} == {"archived"}
+    assert {row["thread_id"] for row in session_rows} == set(thread_ids)
+    assert {row["status"] for row in session_rows} == {"archived"}
     for thread_id in thread_ids:
         history = await test_client.get(f"/api/v1/agents/threads/{thread_id}", headers=admin_headers)
         assert history.status_code == 200, history.text
@@ -360,7 +360,7 @@ async def test_project_rename_and_delete_soft_delete_conversations_but_keep_work
     assert repeated_delete.status_code == 404, repeated_delete.text
 
 
-async def test_project_delete_waits_for_locked_conversation_creation(
+async def test_project_delete_waits_for_locked_session_creation(
     test_client,
     admin_headers,
     linked_directory,
@@ -407,13 +407,13 @@ async def test_project_delete_waits_for_locked_conversation_creation(
         assert not delete_task.done()
 
         await creator_connection.execute(
-            "INSERT INTO conversations "
+            "INSERT INTO sessions "
             "(thread_id, uid, agent_id, title, status, is_pinned, project_id, extra_metadata) "
             "VALUES ($1, $2, $3, $4, 'active', FALSE, $5, '{}'::json)",
             thread_id,
             project["uid"],
             "default-chatbot",
-            make_test_conversation_title("project-delete-race"),
+            make_test_session_title("project-delete-race"),
             project["id"],
         )
         await creator_transaction.commit()
@@ -422,12 +422,12 @@ async def test_project_delete_waits_for_locked_conversation_creation(
 
         async with _database_connection() as database:
             project_status = await database.fetchval("SELECT status FROM projects WHERE id = $1", project["id"])
-            conversation_status = await database.fetchval(
-                "SELECT status FROM conversations WHERE thread_id = $1",
+            session_status = await database.fetchval(
+                "SELECT status FROM sessions WHERE thread_id = $1",
                 thread_id,
             )
         assert project_status == "deleted"
-        assert conversation_status == "archived"
+        assert session_status == "archived"
     finally:
         if creator_connection.is_in_transaction():
             await creator_transaction.rollback()
@@ -435,7 +435,7 @@ async def test_project_delete_waits_for_locked_conversation_creation(
         await engine.dispose()
 
 
-async def test_project_delete_waits_for_real_subagent_conversation_creation(
+async def test_project_delete_waits_for_real_subagent_session_creation(
     monkeypatch: pytest.MonkeyPatch,
     project_lifecycle_database,
 ):
@@ -446,9 +446,9 @@ async def test_project_delete_waits_for_real_subagent_conversation_creation(
     child_thread_id = f"pytest-subdel-{uuid.uuid4()}"
     child_boundary_reached = asyncio.Event()
     allow_child_creation = asyncio.Event()
-    original_ensure_child = SubagentRunService._ensure_child_conversation
+    original_ensure_child = SubagentRunService._ensure_child_session
 
-    parent_conversation_id = await _create_lifecycle_conversation(
+    parent_session_record_id = await _create_lifecycle_session(
         session_factory,
         uid=uid,
         project_id=project_id,
@@ -462,7 +462,7 @@ async def test_project_delete_waits_for_real_subagent_conversation_creation(
         await allow_child_creation.wait()
         return await original_ensure_child(self, **kwargs)
 
-    monkeypatch.setattr(SubagentRunService, "_ensure_child_conversation", pause_before_child_creation)
+    monkeypatch.setattr(SubagentRunService, "_ensure_child_session", pause_before_child_creation)
 
     async def create_subagent_relation():
         async with session_factory() as session:
@@ -472,14 +472,14 @@ async def test_project_delete_waits_for_real_subagent_conversation_creation(
                 agent_item=SimpleNamespace(slug=agent_slug, name="Worker"),
                 creator_run=SimpleNamespace(
                     id=f"parent-run-{uuid.uuid4()}",
-                    conversation_id=parent_conversation_id,
-                    conversation_thread_id=parent_thread_id,
+                    session_record_id=parent_session_record_id,
+                    thread_id=parent_thread_id,
                     app_id=None,
                 ),
                 continuing=False,
             )
             await session.commit()
-            return relation.child_conversation_id
+            return relation.child_session_record_id
 
     async def delete_project():
         async with session_factory() as session:
@@ -494,19 +494,19 @@ async def test_project_delete_waits_for_real_subagent_conversation_creation(
         assert not delete_task.done()
 
         allow_child_creation.set()
-        child_conversation_id = await asyncio.wait_for(creator_task, timeout=5)
+        child_session_record_id = await asyncio.wait_for(creator_task, timeout=5)
         delete_result = await asyncio.wait_for(delete_task, timeout=5)
         assert delete_result["archived_threads"] == 2
 
         async with _database_connection() as database:
             rows = await database.fetch(
-                "SELECT id, status FROM conversations WHERE project_id = $1 ORDER BY id",
+                "SELECT id, status FROM sessions WHERE project_id = $1 ORDER BY id",
                 project_id,
             )
             project_status = await database.fetchval("SELECT status FROM projects WHERE id = $1", project_id)
 
         assert project_status == "deleted"
-        assert child_conversation_id in {row["id"] for row in rows}
+        assert child_session_record_id in {row["id"] for row in rows}
         assert {row["status"] for row in rows} == {"archived"}
     finally:
         allow_child_creation.set()
@@ -529,7 +529,7 @@ async def test_subagent_rejects_parent_thread_archived_after_initial_read(
     allow_project_lookup = asyncio.Event()
     original_lock_active = ProjectRepository.lock_active_for_user
 
-    parent_conversation_id = await _create_lifecycle_conversation(
+    parent_session_record_id = await _create_lifecycle_session(
         session_factory,
         uid=uid,
         project_id=project_id,
@@ -553,8 +553,8 @@ async def test_subagent_rejects_parent_thread_archived_after_initial_read(
                 agent_item=SimpleNamespace(slug="default-chatbot", name="Worker"),
                 creator_run=SimpleNamespace(
                     id=f"parent-run-{uuid.uuid4()}",
-                    conversation_id=parent_conversation_id,
-                    conversation_thread_id=parent_thread_id,
+                    session_record_id=parent_session_record_id,
+                    thread_id=parent_thread_id,
                     app_id=None,
                 ),
                 continuing=False,
@@ -565,17 +565,17 @@ async def test_subagent_rejects_parent_thread_archived_after_initial_read(
         await asyncio.wait_for(project_lookup_reached.wait(), timeout=5)
         async with _database_connection() as database:
             await database.execute(
-                "UPDATE conversations SET status = 'archived' WHERE id = $1",
-                parent_conversation_id,
+                "UPDATE sessions SET status = 'archived' WHERE id = $1",
+                parent_session_record_id,
             )
         allow_project_lookup.set()
 
-        with pytest.raises(ValueError, match="父运行任务的 Conversation 不存在"):
+        with pytest.raises(ValueError, match="父运行任务的 Session 不存在"):
             await asyncio.wait_for(creator_task, timeout=5)
 
         async with _database_connection() as database:
             child_count = await database.fetchval(
-                "SELECT COUNT(*) FROM conversations WHERE thread_id = $1",
+                "SELECT COUNT(*) FROM sessions WHERE thread_id = $1",
                 child_thread_id,
             )
             relation_count = await database.fetchval(

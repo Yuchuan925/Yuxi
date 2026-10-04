@@ -110,7 +110,7 @@ async def run_now(
     current_user: User = Depends(get_required_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """立即按任务快照创建一次独立 Conversation 和 AgentRun。"""
+    """立即按任务快照创建一次独立 Session 和 AgentRun。"""
     result = await run_scheduled_job_now(
         job_id=job_id,
         request_id=payload.request_id,

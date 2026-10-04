@@ -20,7 +20,7 @@ class AgentTurnRepository:
 
     async def create(self, *, turn_id: str, thread_id: str, uid: str, app_id: str | None) -> AgentTurn:
         """领取 follow-up 时建立 running Turn。"""
-        turn = AgentTurn(id=turn_id, conversation_thread_id=thread_id, uid=uid, app_id=app_id, status="running")
+        turn = AgentTurn(id=turn_id, thread_id=thread_id, uid=uid, app_id=app_id, status="running")
         self.db.add(turn)
         await self.db.flush()
         return turn
@@ -35,7 +35,7 @@ class AgentTurnRepository:
         """按完整线程作用域读取或锁定 Turn。"""
         statement = select(AgentTurn).where(
             AgentTurn.id == turn_id,
-            AgentTurn.conversation_thread_id == thread_id,
+            AgentTurn.thread_id == thread_id,
             AgentTurn.uid == uid,
             AgentTurn.app_id == app_id,
         )
@@ -49,7 +49,7 @@ class AgentTurnRepository:
         result = await self.db.execute(
             select(AgentTurn)
             .where(
-                AgentTurn.conversation_thread_id == thread_id,
+                AgentTurn.thread_id == thread_id,
                 AgentTurn.uid == uid,
                 AgentTurn.app_id == app_id,
                 AgentTurn.status.in_(("running", "waiting", "cancelling")),
@@ -63,7 +63,7 @@ class AgentTurnRepository:
         """只读当前活跃 Turn，不取得调度锁。"""
         result = await self.db.execute(
             select(AgentTurn).where(
-                AgentTurn.conversation_thread_id == thread_id,
+                AgentTurn.thread_id == thread_id,
                 AgentTurn.uid == uid,
                 AgentTurn.app_id == app_id,
                 AgentTurn.status.in_(("running", "waiting", "cancelling")),
@@ -76,7 +76,7 @@ class AgentTurnRepository:
         result = await self.db.execute(
             select(AgentTurn)
             .where(
-                AgentTurn.conversation_thread_id == thread_id,
+                AgentTurn.thread_id == thread_id,
                 AgentTurn.uid == uid,
                 AgentTurn.app_id == app_id,
             )
@@ -160,7 +160,7 @@ class AgentTurnRepository:
                 AgentRun.turn_id == turn_id,
                 AgentRun.output_message_id == Message.id,
                 AgentRun.id == Message.run_id,
-                AgentRun.conversation_id == Message.conversation_id,
+                AgentRun.session_record_id == Message.session_record_id,
             )
             .exists()
         )

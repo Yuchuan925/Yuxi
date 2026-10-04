@@ -2,7 +2,7 @@
 
 状态：implemented
 类型：simplification
-Owner：frontend/src/modules/conversation/ui/tools/ToolCallRenderer.vue
+Owner：frontend/src/modules/session/ui/tools/ToolCallRenderer.vue
 
 ## 问题
 
@@ -40,7 +40,7 @@ Owner：frontend/src/modules/conversation/ui/tools/ToolCallRenderer.vue
 
 ## 验证说明
 
-旧能力不存在：`frontend/src/modules/conversation/ui/tools/index.js` 不再静态导出低频 renderer，聊天入口源码 import 与 build 产物中不包含这些组件。
+旧能力不存在：`frontend/src/modules/session/ui/tools/index.js` 不再静态导出低频 renderer，聊天入口源码 import 与 build 产物中不包含这些组件。
 
 重新引入条件：只有构建测量证明动态加载引入可感知的首屏延迟，或部署环境不支持动态 chunk 时，才恢复静态导入，并须附 build 产物对比证据。
 

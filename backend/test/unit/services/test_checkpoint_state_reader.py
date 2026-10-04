@@ -94,7 +94,7 @@ async def test_state_view_reads_persisted_fields_without_agent_runtime(checkpoin
     builder.add_edge("done", END)
     await builder.compile(checkpointer=checkpoint_reader).ainvoke(payload, {"configurable": {"thread_id": "thread"}})
 
-    async def conversation(thread_id):
+    async def agent_session(thread_id):
         """返回已授权的持久化线程。"""
         return SimpleNamespace(id=1, uid="user", app_id=None, status="active")
 
@@ -102,9 +102,7 @@ async def test_state_view_reads_persisted_fields_without_agent_runtime(checkpoin
         """返回已完成运行。"""
         return SimpleNamespace(status="completed")
 
-    monkeypatch.setattr(
-        svc, "ConversationRepository", lambda db: SimpleNamespace(get_conversation_by_thread_id=conversation)
-    )
+    monkeypatch.setattr(svc, "SessionRepository", lambda db: SimpleNamespace(get_session_by_thread_id=agent_session))
     monkeypatch.setattr(
         svc, "AgentRunRepository", lambda db: SimpleNamespace(get_latest_run_by_thread_for_user=latest_run)
     )
@@ -132,13 +130,11 @@ async def test_state_view_reads_persisted_fields_without_agent_runtime(checkpoin
 async def test_state_view_rejects_invisible_thread_before_checkpoint(monkeypatch, owner, status):
     """不可见线程不能到达 checkpoint 读取边界。"""
 
-    async def conversation(thread_id):
+    async def agent_session(thread_id):
         """返回不可见的线程。"""
         return SimpleNamespace(uid=owner, app_id=None, status=status)
 
-    monkeypatch.setattr(
-        svc, "ConversationRepository", lambda db: SimpleNamespace(get_conversation_by_thread_id=conversation)
-    )
+    monkeypatch.setattr(svc, "SessionRepository", lambda db: SimpleNamespace(get_session_by_thread_id=agent_session))
     monkeypatch.setattr(svc, "get_langgraph_checkpointer", lambda _manager: _unexpected_runtime())
     with pytest.raises(HTTPException) as exc:
         await svc.get_agent_state_view(thread_id="thread", current_user=SimpleNamespace(uid="user"), db=None)

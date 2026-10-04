@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 
-from yuxi.modules.agents.repositories.threads import ConversationRepository
+from yuxi.modules.agents.repositories.sessions import SessionRepository
 from yuxi.modules.agents.runtime.sandbox.paths import runtime_path_for_workdir_scope, runtime_user_data_path
 from yuxi.modules.workspace.filesystem import Workspace
 from yuxi.modules.workspace.paths import validate_thread_id
@@ -134,9 +134,9 @@ async def search_mentions(
     uid = str(current_user.uid)
     effective_thread_id: str | None = None
     if thread_id:
-        conversation = await ConversationRepository(db).get_conversation_by_thread_id(thread_id)
-        if conversation:
-            if conversation.uid != uid or conversation.status == "deleted":
+        agent_session = await SessionRepository(db).get_session_by_thread_id(thread_id)
+        if agent_session:
+            if agent_session.uid != uid or agent_session.status == "deleted":
                 raise MentionThreadNotFoundError("对话线程不存在")
             effective_thread_id = thread_id
         else:

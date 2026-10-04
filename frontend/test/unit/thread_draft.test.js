@@ -5,7 +5,7 @@ import {
   DRAFT_THREAD_ID,
   createThreadDraftStore,
   createThreadDraftSession
-} from '../../src/modules/conversation/model/thread_draft.js'
+} from '../../src/modules/session/model/thread_draft.js'
 
 // 构造可注入的内存存储，模拟 localStorage 行为
 const createMemoryStorage = () => {

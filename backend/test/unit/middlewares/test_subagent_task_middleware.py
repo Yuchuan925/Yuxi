@@ -131,7 +131,7 @@ def _subagent_run(
     return SimpleNamespace(
         id="child-run",
         turn_id="child-turn",
-        conversation_thread_id=thread_id,
+        thread_id=thread_id,
         agent_slug=subagent_slug,
         status=status,
         created_by_run_id="parent-run",
@@ -483,7 +483,7 @@ async def test_subagent_start_replay_reuses_existing_run_without_file_checkpoint
                 run=run,
                 created=False,
                 continuing=False,
-                relation=SimpleNamespace(id=77, child_thread_id=run.conversation_thread_id),
+                relation=SimpleNamespace(id=77, child_thread_id=run.thread_id),
             )
 
     _patch_session(monkeypatch)

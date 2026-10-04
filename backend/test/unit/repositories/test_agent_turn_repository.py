@@ -8,7 +8,7 @@ from yuxi.modules.agents.repositories.turn import AgentTurnRepository
 from yuxi.modules.agents.models.runs import AgentRun
 from yuxi.modules.agents.models.turns import AgentTurn
 from yuxi.infrastructure.postgres.base import Base
-from yuxi.modules.agents.models.threads import Conversation, SubagentThread
+from yuxi.modules.agents.models.sessions import Session, SubagentThread
 from yuxi.modules.agents.models.messages import Message
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.unit]
@@ -28,33 +28,33 @@ async def session():
 
 async def test_usage_includes_bound_final_output_across_runs_but_excludes_unbound_text(session):
     """最终 Model 行发布为 text 后仍计费，旁路 text 不能伪装为输出。"""
-    conversation = Conversation(
+    agent_session = Session(
         thread_id="usage-thread", project_id="usage-project", uid="user-1", agent_id="main", status="active"
     )
-    session.add(conversation)
+    session.add(agent_session)
     await session.flush()
-    turn = AgentTurn(id="usage-turn", conversation_thread_id="usage-thread", uid="user-1", status="completed")
+    turn = AgentTurn(id="usage-turn", thread_id="usage-thread", uid="user-1", status="completed")
     first = AgentRun(
         id="usage-first",
-        conversation_thread_id="usage-thread",
+        thread_id="usage-thread",
         runtime_scope_id="usage-thread",
         agent_slug="main",
         uid="user-1",
         status="yielded",
         turn_id=turn.id,
-        conversation_id=conversation.id,
+        session_record_id=agent_session.id,
         run_type="chat",
         input_payload={},
     )
     resumed = AgentRun(
         id="usage-resume",
-        conversation_thread_id="usage-thread",
+        thread_id="usage-thread",
         runtime_scope_id="usage-thread",
         agent_slug="main",
         uid="user-1",
         status="completed",
         turn_id=turn.id,
-        conversation_id=conversation.id,
+        session_record_id=agent_session.id,
         run_type="resume",
         resume_from_run_id=first.id,
         input_payload={},
@@ -63,7 +63,7 @@ async def test_usage_includes_bound_final_output_across_runs_but_excludes_unboun
     await session.flush()
 
     first_audit = Message(
-        conversation_id=conversation.id,
+        session_record_id=agent_session.id,
         run_id=first.id,
         turn_id=turn.id,
         role="assistant",
@@ -74,7 +74,7 @@ async def test_usage_includes_bound_final_output_across_runs_but_excludes_unboun
         usage={"input_tokens": 7, "output_tokens": 3, "total_tokens": 10},
     )
     abandoned_same_operation = Message(
-        conversation_id=conversation.id,
+        session_record_id=agent_session.id,
         run_id=first.id,
         turn_id=turn.id,
         role="assistant",
@@ -84,7 +84,7 @@ async def test_usage_includes_bound_final_output_across_runs_but_excludes_unboun
         execution_status="abandoned",
     )
     unbound_text = Message(
-        conversation_id=conversation.id,
+        session_record_id=agent_session.id,
         run_id=resumed.id,
         turn_id=turn.id,
         role="assistant",
@@ -95,7 +95,7 @@ async def test_usage_includes_bound_final_output_across_runs_but_excludes_unboun
         usage={"input_tokens": 900, "output_tokens": 900, "total_tokens": 1800},
     )
     wrong_run_output = Message(
-        conversation_id=conversation.id,
+        session_record_id=agent_session.id,
         run_id=resumed.id,
         turn_id=turn.id,
         role="assistant",
@@ -106,7 +106,7 @@ async def test_usage_includes_bound_final_output_across_runs_but_excludes_unboun
         usage={"input_tokens": 900, "output_tokens": 900, "total_tokens": 1800},
     )
     final_output = Message(
-        conversation_id=conversation.id,
+        session_record_id=agent_session.id,
         run_id=resumed.id,
         turn_id=turn.id,
         role="assistant",
@@ -137,24 +137,24 @@ async def test_usage_includes_bound_final_output_across_runs_but_excludes_unboun
 
 async def test_usage_includes_child_run_final_model_output_but_not_child_unbound_text(session):
     """父子 Turn 分别计量，子结果不得进入父 Turn 的输出与用量。"""
-    parent_conversation = Conversation(
+    parent_session = Session(
         thread_id="parent-thread", project_id="usage-project", uid="user-1", agent_id="main", status="active"
     )
-    child_conversation = Conversation(
+    child_session = Session(
         thread_id="child-thread", project_id="usage-project", uid="user-1", agent_id="helper", status="subagent"
     )
-    session.add_all([parent_conversation, child_conversation])
+    session.add_all([parent_session, child_session])
     await session.flush()
-    turn = AgentTurn(id="parent-turn", conversation_thread_id="parent-thread", uid="user-1", status="completed")
+    turn = AgentTurn(id="parent-turn", thread_id="parent-thread", uid="user-1", status="completed")
     parent_run = AgentRun(
         id="parent-run",
-        conversation_thread_id="parent-thread",
+        thread_id="parent-thread",
         runtime_scope_id="parent-thread",
         agent_slug="main",
         uid="user-1",
         status="completed",
         turn_id=turn.id,
-        conversation_id=parent_conversation.id,
+        session_record_id=parent_session.id,
         run_type="chat",
         input_payload={},
     )
@@ -162,26 +162,26 @@ async def test_usage_includes_child_run_final_model_output_but_not_child_unbound
     await session.flush()
     relation = SubagentThread(
         uid="user-1",
-        parent_conversation_id=parent_conversation.id,
-        child_conversation_id=child_conversation.id,
+        parent_session_record_id=parent_session.id,
+        child_session_record_id=child_session.id,
         child_thread_id="child-thread",
         subagent_slug="helper",
         created_by_run_id=parent_run.id,
     )
     session.add(relation)
     await session.flush()
-    child_turn = AgentTurn(id="child-turn", conversation_thread_id="child-thread", uid="user-1", status="completed")
+    child_turn = AgentTurn(id="child-turn", thread_id="child-thread", uid="user-1", status="completed")
     session.add(child_turn)
     await session.flush()
     child_run = AgentRun(
         id="child-run",
-        conversation_thread_id="child-thread",
+        thread_id="child-thread",
         runtime_scope_id="child-thread",
         agent_slug="helper",
         uid="user-1",
         status="completed",
         turn_id=child_turn.id,
-        conversation_id=child_conversation.id,
+        session_record_id=child_session.id,
         created_by_run_id=parent_run.id,
         subagent_thread_relation_id=relation.id,
         run_type="subagent",
@@ -190,7 +190,7 @@ async def test_usage_includes_child_run_final_model_output_but_not_child_unbound
     session.add(child_run)
     await session.flush()
     parent_audit = Message(
-        conversation_id=parent_conversation.id,
+        session_record_id=parent_session.id,
         run_id=parent_run.id,
         turn_id=turn.id,
         role="assistant",
@@ -201,7 +201,7 @@ async def test_usage_includes_child_run_final_model_output_but_not_child_unbound
         usage={"input_tokens": 3, "output_tokens": 2, "total_tokens": 5},
     )
     child_unbound = Message(
-        conversation_id=child_conversation.id,
+        session_record_id=child_session.id,
         run_id=child_run.id,
         turn_id=child_turn.id,
         role="assistant",
@@ -212,7 +212,7 @@ async def test_usage_includes_child_run_final_model_output_but_not_child_unbound
         usage={"input_tokens": 900, "output_tokens": 900, "total_tokens": 1800},
     )
     child_final = Message(
-        conversation_id=child_conversation.id,
+        session_record_id=child_session.id,
         run_id=child_run.id,
         turn_id=child_turn.id,
         role="assistant",

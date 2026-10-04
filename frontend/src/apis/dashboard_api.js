@@ -17,7 +17,7 @@ export const dashboardApi = {
    * @param {number} [params.offset] - 偏移量
    * @returns {Promise<Object>} - 分页对话列表（items/total/limit/offset）
    */
-  getConversations: (params = {}) => {
+  getSessions: (params = {}) => {
     const queryParams = new URLSearchParams()
     if (params.uid) queryParams.append('uid', params.uid)
     if (params.agent_id) queryParams.append('agent_id', params.agent_id)
@@ -26,15 +26,15 @@ export const dashboardApi = {
     if (params.limit) queryParams.append('limit', params.limit)
     if (params.offset) queryParams.append('offset', params.offset)
 
-    return apiAdminGet(`/api/dashboard/conversations?${queryParams.toString()}`)
+    return apiAdminGet(`/api/dashboard/sessions?${queryParams.toString()}`)
   },
 
   /**
    * 获取会话审计筛选选项
    * @returns {Promise<Object>} - 用户与智能体选项
    */
-  getConversationFilterOptions: () => {
-    return apiAdminGet('/api/dashboard/conversations/options')
+  getSessionFilterOptions: () => {
+    return apiAdminGet('/api/dashboard/sessions/options')
   },
 
   /**
@@ -42,8 +42,8 @@ export const dashboardApi = {
    * @param {string} threadId - 对话线程ID
    * @returns {Promise<Object>} - 对话详情
    */
-  getConversationDetail: (threadId) => {
-    return apiAdminGet(`/api/dashboard/conversations/${threadId}`)
+  getSessionDetail: (threadId) => {
+    return apiAdminGet(`/api/dashboard/sessions/${threadId}`)
   },
 
   /**

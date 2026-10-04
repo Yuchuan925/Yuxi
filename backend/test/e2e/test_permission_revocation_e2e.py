@@ -292,7 +292,7 @@ async def test_tool_boundary_rechecks_current_caller_and_retains_history(actors,
         else:
             pytest.fail("真实模型未到达撤权前的工具准备阶段")
         workdir = await db.fetchval(
-            "SELECT p.workdir_path FROM projects p JOIN conversations t ON t.project_id=p.id WHERE t.thread_id=$1",
+            "SELECT p.workdir_path FROM projects p JOIN sessions t ON t.project_id=p.id WHERE t.thread_id=$1",
             accepted["thread_id"],
         )
         file = user_workspace_dir(user["uid"]) / workdir / filename
@@ -334,7 +334,7 @@ async def test_tool_boundary_rechecks_current_caller_and_retains_history(actors,
         assert run["status"] == ("completed" if revocation in {"skill", "subagent", "mcp"} else "failed"), dict(run)
         assert not file.exists(), "失权后执行了文件副作用"
         assert not remote_tool["effect"].exists(), "停用后执行了真实 MCP 工具"
-        assert await db.fetchval("SELECT count(*) FROM conversations WHERE thread_id=$1", accepted["thread_id"]) == 1
+        assert await db.fetchval("SELECT count(*) FROM sessions WHERE thread_id=$1", accepted["thread_id"]) == 1
         if revocation in {"skill", "subagent", "mcp"}:
             async with AsyncPostgresSaver.from_conn_string(os.environ["POSTGRES_URL"].replace("+asyncpg", "")) as saver:
                 checkpoint = await saver.aget_tuple({"configurable": {"thread_id": accepted["thread_id"]}})
@@ -451,10 +451,10 @@ async def test_queued_input_after_revocation_fails_without_another_model_call(ac
             await asyncio.sleep(0.1)
         else:
             pytest.fail("失权的执行未失败")
-        assert await db.fetchval("SELECT queue_paused FROM conversations WHERE thread_id=$1", accepted["thread_id"])
+        assert await db.fetchval("SELECT queue_paused FROM sessions WHERE thread_id=$1", accepted["thread_id"])
         assert (
             await db.fetchval(
-                "SELECT count(*) FROM agent_inputs WHERE conversation_thread_id=$1 AND status='pending'",
+                "SELECT count(*) FROM agent_inputs WHERE thread_id=$1 AND status='pending'",
                 accepted["thread_id"],
             )
             == 1
@@ -467,7 +467,7 @@ async def test_queued_input_after_revocation_fails_without_another_model_call(ac
         assert continued.status_code == 202, continued.text
         for _ in range(200):
             rows = await db.fetch(
-                "SELECT status,error_message FROM agent_runs WHERE conversation_thread_id=$1", accepted["thread_id"]
+                "SELECT status,error_message FROM agent_runs WHERE thread_id=$1", accepted["thread_id"]
             )
             if len(rows) == 2 and all(row["status"] == "failed" for row in rows):
                 break
@@ -496,7 +496,7 @@ async def test_due_schedule_rechecks_permission_before_creating_thread(actors, r
         )
         assert initial.status_code == 200, initial.text
         thread_id = initial.json()["thread_id"]
-        project_id = await db.fetchval("SELECT project_id FROM conversations WHERE thread_id=$1", thread_id)
+        project_id = await db.fetchval("SELECT project_id FROM sessions WHERE thread_id=$1", thread_id)
         response = await client.post(
             "/api/scheduled-tasks",
             headers=user["headers"],
@@ -525,7 +525,7 @@ async def test_due_schedule_rechecks_permission_before_creating_thread(actors, r
         else:
             pytest.fail("真实 worker 未处理失权的到期任务")
         assert "不可访问" in record["error_message"]
-        assert await db.fetchval("SELECT count(*) FROM conversations WHERE thread_id=$1", record["thread_id"]) == 0
+        assert await db.fetchval("SELECT count(*) FROM sessions WHERE thread_id=$1", record["thread_id"]) == 0
         assert not replay["requests"]
     finally:
         if job:
@@ -601,7 +601,7 @@ async def test_waitpoint_resume_after_revocation_cannot_create_new_run(actors, r
                         pytest.fail("恢复没有在 Agent 锁上等待")
                     # 删除先锁 Agent 再锁 Thread；恢复等待 Agent 时不得先占 Thread。
                     await db.fetchval(
-                        "SELECT id FROM conversations WHERE thread_id=$1 FOR UPDATE NOWAIT", accepted["thread_id"]
+                        "SELECT id FROM sessions WHERE thread_id=$1 FOR UPDATE NOWAIT", accepted["thread_id"]
                     )
             finally:
                 if waiting_request is not None:
@@ -626,10 +626,7 @@ async def test_waitpoint_resume_after_revocation_cannot_create_new_run(actors, r
             },
         )
         assert response.status_code in {401, 403, 404}, response.text
-        assert (
-            await db.fetchval("SELECT count(*) FROM agent_runs WHERE conversation_thread_id=$1", accepted["thread_id"])
-            == 1
-        )
+        assert await db.fetchval("SELECT count(*) FROM agent_runs WHERE thread_id=$1", accepted["thread_id"]) == 1
         assert await db.fetchval("SELECT status FROM agent_runs WHERE id=$1", accepted["run_id"]) == "interrupted"
         if revocation == "agent":
             assert (
@@ -638,7 +635,7 @@ async def test_waitpoint_resume_after_revocation_cannot_create_new_run(actors, r
         await client.delete(f"/api/system/model-providers/{provider}", headers=actors["root"])
         if revocation == "account":
             # 恢复进程失联留下的取消意图：worker 对失效账号同样必须收敛。
-            await db.execute("UPDATE conversations SET queue_paused=true WHERE thread_id=$1", accepted["thread_id"])
+            await db.execute("UPDATE sessions SET queue_paused=true WHERE thread_id=$1", accepted["thread_id"])
             await db.execute("UPDATE agent_turns SET status='cancelling' WHERE id=$1", accepted["turn_id"])
             for _ in range(400):
                 if await db.fetchval("SELECT status FROM agent_turns WHERE id=$1", accepted["turn_id"]) == "cancelled":
@@ -778,11 +775,8 @@ async def test_runless_forced_summary_uses_current_thread_agent_permission(actor
         )
         assert response.status_code == 200, response.text
         thread_id = response.json()["thread_id"]
-        assert await actors["db"].fetchval("SELECT uid FROM conversations WHERE thread_id=$1", thread_id) == user["uid"]
-        assert (
-            await actors["db"].fetchval("SELECT count(*) FROM agent_runs WHERE conversation_thread_id=$1", thread_id)
-            == 0
-        )
+        assert await actors["db"].fetchval("SELECT uid FROM sessions WHERE thread_id=$1", thread_id) == user["uid"]
+        assert await actors["db"].fetchval("SELECT count(*) FROM agent_runs WHERE thread_id=$1", thread_id) == 0
         context = ChatBotContext(uid=user["uid"], thread_id=thread_id, model=model)
         compressor = create_summary_middleware_from_context(
             context, backend=None, model=ChatOpenAI(model="deterministic-chat", api_key="test", base_url=replay["url"])

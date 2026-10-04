@@ -7,7 +7,7 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from yuxi.modules.agents.repositories.threads import ConversationRepository
+from yuxi.modules.agents.repositories.sessions import SessionRepository
 from yuxi.modules.system.repositories.dashboard import DashboardRepository
 from yuxi.shared.datetime import format_utc_datetime
 
@@ -18,7 +18,7 @@ class DashboardService:
     def __init__(self, db: AsyncSession):
         self.db = db
         self.repo = DashboardRepository(db)
-        self.conv_repo = ConversationRepository(db)
+        self.session_repo = SessionRepository(db)
 
     async def get_basic_stats(self) -> dict[str, Any]:
         """读取基础统计指标（会话数、消息数、用户数）。"""
@@ -57,11 +57,11 @@ class DashboardService:
             include_subagents=include_subagents,
         )
 
-    async def get_conversation_filter_options(self) -> dict[str, list[dict[str, Any]]]:
+    async def get_session_filter_options(self) -> dict[str, list[dict[str, Any]]]:
         """读取会话审计用户与 Agent 筛选项。"""
-        return await self.repo.get_conversation_filter_options()
+        return await self.repo.get_session_filter_options()
 
-    async def list_conversations(
+    async def list_sessions(
         self,
         *,
         uid: str | None = None,
@@ -72,7 +72,7 @@ class DashboardService:
         offset: int = 0,
     ) -> dict[str, Any]:
         """分页查询并组装 Dashboard 对话列表。"""
-        return await self.repo.list_conversations(
+        return await self.repo.list_sessions(
             uid=uid,
             agent_id=agent_id,
             status=status,
@@ -81,14 +81,14 @@ class DashboardService:
             offset=offset,
         )
 
-    async def get_conversation_detail(self, thread_id: str) -> dict[str, Any] | None:
+    async def get_session_detail(self, thread_id: str) -> dict[str, Any] | None:
         """获取指定会话完整消息流水与统计。"""
-        conversation = await self.conv_repo.get_conversation_by_thread_id(thread_id)
-        if not conversation:
+        agent_session = await self.session_repo.get_session_by_thread_id(thread_id)
+        if not agent_session:
             return None
 
-        messages = await self.conv_repo.get_messages(conversation.id)
-        audit_metadata = await self.repo.get_conversation_audit_metadata(conversation)
+        messages = await self.session_repo.get_messages(agent_session.id)
+        audit_metadata = await self.repo.get_session_audit_metadata(agent_session)
         message_list = []
         for message in messages:
             message_data = {
@@ -113,21 +113,21 @@ class DashboardService:
             message_list.append(message_data)
 
         return {
-            "thread_id": conversation.thread_id,
-            "uid": conversation.uid,
+            "thread_id": agent_session.thread_id,
+            "uid": agent_session.uid,
             "username": audit_metadata["username"],
             "user_avatar": audit_metadata["user_avatar"],
             "user_deleted": audit_metadata["user_deleted"],
-            "agent_id": conversation.agent_id,
+            "agent_id": agent_session.agent_id,
             "agent_name": audit_metadata["agent_name"],
             "agent_avatar": audit_metadata["agent_avatar"],
             "agent_deleted": audit_metadata["agent_deleted"],
-            "title": conversation.title,
-            "status": conversation.status,
-            "is_pinned": bool(conversation.is_pinned),
+            "title": agent_session.title,
+            "status": agent_session.status,
+            "is_pinned": bool(agent_session.is_pinned),
             "message_count": len(message_list),
-            "created_at": format_utc_datetime(conversation.created_at) or "",
-            "updated_at": format_utc_datetime(conversation.updated_at) or "",
-            **await self.repo.get_conversation_token_usage(conversation.id),
+            "created_at": format_utc_datetime(agent_session.created_at) or "",
+            "updated_at": format_utc_datetime(agent_session.updated_at) or "",
+            **await self.repo.get_session_token_usage(agent_session.id),
             "messages": message_list,
         }

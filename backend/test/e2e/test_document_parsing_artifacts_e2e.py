@@ -15,11 +15,11 @@ import pytest
 from PIL import Image
 from pypdf import PdfWriter
 
-from test.live_api_cleanup import make_test_conversation_title, remove_e2e_thread_storage
+from test.live_api_cleanup import make_test_session_title, remove_e2e_thread_storage
 from yuxi.bootstrap.models import load_models
 from yuxi.infrastructure.minio import get_minio_client
 from yuxi.infrastructure.postgres.manager import pg_manager
-from yuxi.modules.agents.repositories.threads import ConversationRepository
+from yuxi.modules.agents.repositories.sessions import SessionRepository
 from yuxi.modules.knowledge.repositories.files import KnowledgeFileRepository
 from yuxi.modules.workspace.filesystem import Workspace
 
@@ -82,7 +82,7 @@ async def test_chat_parse_confirm_and_delete_preserve_complete_local_directory(
         assert configured.status_code == 200, configured.text
         created = await e2e_client.post(
             "/api/v1/agents/threads",
-            json={"agent_id": e2e_agent_context["agent_slug"], "title": make_test_conversation_title("parser-folder")},
+            json={"agent_id": e2e_agent_context["agent_slug"], "title": make_test_session_title("parser-folder")},
             headers={**e2e_headers, "Idempotency-Key": uuid4().hex},
         )
         assert created.status_code == 200, created.text
@@ -130,9 +130,9 @@ async def test_chat_parse_confirm_and_delete_preserve_complete_local_directory(
             workspace.read_authorized_file("/" + parsed_name, 1024)
         pg_manager.initialize()
         async with pg_manager.get_async_session_context() as db:
-            repository = ConversationRepository(db)
-            conversation = await repository.get_conversation_by_thread_id(thread_id)
-            [stored] = await repository.get_attachments(conversation.id)
+            repository = SessionRepository(db)
+            agent_session = await repository.get_session_by_thread_id(thread_id)
+            [stored] = await repository.get_attachments(agent_session.id)
             assert stored["parsed_directory"] == str(PurePosixPath(attachment["path"]).parent)
         deleted = await e2e_client.delete(
             f"/api/v1/agents/threads/{thread_id}/attachments/{attachment['file_id']}",
@@ -142,9 +142,9 @@ async def test_chat_parse_confirm_and_delete_preserve_complete_local_directory(
         assert (await e2e_client.get(image_url, headers=e2e_headers)).status_code == 404
         assert (await e2e_client.get(attachment["artifact_url"], headers=e2e_headers)).status_code == 404
         async with pg_manager.get_async_session_context() as db:
-            repository = ConversationRepository(db)
-            conversation = await repository.get_conversation_by_thread_id(thread_id)
-            assert await repository.get_attachments(conversation.id) == []
+            repository = SessionRepository(db)
+            agent_session = await repository.get_session_by_thread_id(thread_id)
+            assert await repository.get_attachments(agent_session.id) == []
         attachment = None
     finally:
         restored = await e2e_client.put(

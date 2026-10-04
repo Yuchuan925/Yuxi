@@ -15,7 +15,7 @@ from yuxi.modules.agents.models.runs import AgentRun, build_agent_run_timing
 from yuxi.modules.agents.repositories.input import AgentInputRepository
 from yuxi.modules.agents.repositories.model_audit import ModelMessageAuditRepository
 from yuxi.modules.agents.repositories.runs import AgentRunRepository
-from yuxi.modules.agents.repositories.threads import ConversationRepository
+from yuxi.modules.agents.repositories.sessions import SessionRepository
 from yuxi.modules.agents.repositories.tool_audit import ToolMessageAuditRepository
 from yuxi.modules.agents.repositories.turn import AgentTurnRepository
 from yuxi.modules.agents.services.runs import settle_checkpoint
@@ -34,9 +34,9 @@ async def get_thread_history(*, db: AsyncSession, scope: ActorScope, thread_id: 
     from yuxi.modules.agents.repositories.public_items import PublicItemRepository
     from yuxi.modules.agents.services.public_items import serialize_public_items
 
-    conversation = await require_thread(db=db, scope=scope, thread_id=thread_id)
+    agent_session = await require_thread(db=db, scope=scope, thread_id=thread_id)
     rows = await PublicItemRepository(db).list_items(thread_id=thread_id, uid=scope.uid, app_id=scope.app_id)
-    runs = await ConversationRepository(db).list_agent_runs_for_history(conversation.id)
+    runs = await SessionRepository(db).list_agent_runs_for_history(agent_session.id)
     return {
         "thread": await get_thread_snapshot(db=db, scope=scope, thread_id=thread_id),
         "runs": [
@@ -66,10 +66,10 @@ async def get_thread_audits(*, db: AsyncSession, scope: ActorScope, thread_id: s
     """只允许无 API Key 的超级管理员读取模型和工具审计。"""
     if not scope.is_superadmin or scope.api_key_id is not None or scope.app_id is not None:
         raise HTTPException(status_code=403, detail="无权读取模型与工具审计")
-    conversation = await require_thread(db=db, scope=scope, thread_id=thread_id)
-    repository = ConversationRepository(db)
-    messages, truncated = await repository.list_message_audits(conversation.id, limit=MESSAGE_AUDIT_LIMIT)
-    runs, runs_truncated = await repository.list_agent_runs_for_trace(conversation.id, limit=AGENT_RUN_TRACE_LIMIT)
+    agent_session = await require_thread(db=db, scope=scope, thread_id=thread_id)
+    repository = SessionRepository(db)
+    messages, truncated = await repository.list_message_audits(agent_session.id, limit=MESSAGE_AUDIT_LIMIT)
+    runs, runs_truncated = await repository.list_agent_runs_for_trace(agent_session.id, limit=AGENT_RUN_TRACE_LIMIT)
     return {
         "audits": [_serialize_message_audit(message) for message in messages],
         "runs": [_serialize_run_trace(run) for run in runs],
@@ -190,14 +190,14 @@ def _ai_message_content_and_tool_calls(msg_dict: dict) -> tuple[str, list[dict]]
 
 
 async def _project_ai_tool_calls(
-    conv_repo: ConversationRepository,
+    session_repo: SessionRepository,
     *,
     message_id: int,
     tool_calls_data: list[dict],
 ) -> None:
     """从 AIMessage 单向投影阶段二仍需兼容的 ToolCall。"""
     for tool_call in tool_calls_data:
-        await conv_repo.add_tool_call(
+        await session_repo.add_tool_call(
             message_id=message_id,
             tool_name=tool_call.get("name") or "unknown",
             tool_input=tool_call.get("args", {}),
@@ -208,7 +208,7 @@ async def _project_ai_tool_calls(
 
 
 async def _save_ai_message(
-    conv_repo: ConversationRepository,
+    session_repo: SessionRepository,
     thread_id: str,
     msg_dict: dict,
     *,
@@ -222,7 +222,7 @@ async def _save_ai_message(
     if trace_info:
         extra_metadata.update(trace_info)
 
-    ai_msg = await conv_repo.add_message_by_thread_id(
+    ai_msg = await session_repo.add_message_by_thread_id(
         thread_id=thread_id,
         role="assistant",
         content=content,
@@ -236,7 +236,7 @@ async def _save_ai_message(
 
 
 async def save_partial_message(
-    conv_repo: ConversationRepository,
+    session_repo: SessionRepository,
     thread_id: str,
     *,
     run_id: str,
@@ -266,18 +266,18 @@ async def save_partial_message(
 
         if not worker_id or not turn_id:
             raise ValueError("持久化 AgentRun 部分输出需要当前 worker 和 Turn")
-        run_repo = AgentRunRepository(conv_repo.db)
-        conversation = await conv_repo.lock_conversation_by_thread_id(thread_id)
-        if conversation is None:
+        run_repo = AgentRunRepository(session_repo.db)
+        agent_session = await session_repo.lock_session_by_thread_id(thread_id)
+        if agent_session is None:
             raise ValueError("AgentRun 的 Thread 不存在")
         persisted_run = await run_repo.get_run(run_id)
         if persisted_run is None:
             raise ValueError("AgentRun 不存在")
-        turn = await AgentTurnRepository(conv_repo.db).get_for_scope(
+        turn = await AgentTurnRepository(session_repo.db).get_for_scope(
             turn_id=turn_id,
             thread_id=thread_id,
-            uid=conversation.uid,
-            app_id=conversation.app_id,
+            uid=agent_session.uid,
+            app_id=agent_session.app_id,
             for_update=True,
         )
         if turn is None or turn.current_run_id != run_id:
@@ -285,12 +285,12 @@ async def save_partial_message(
         locked_run = await run_repo.lock_output_persistence(
             run_id,
             worker_id=worker_id,
-            conversation_thread_id=thread_id,
+            thread_id=thread_id,
         )
         if locked_run is None:
             raise ValueError(f"AgentRun 不存在: {run_id}")
 
-        message = await conv_repo.add_message_by_thread_id(
+        message = await session_repo.add_message_by_thread_id(
             thread_id=thread_id,
             role="assistant",
             content=content,
@@ -304,7 +304,7 @@ async def save_partial_message(
             raise ValueError("AgentRun 错误输出消息未能持久化")
         await run_repo.set_output_message(run_id, message.id, worker_id=worker_id)
         settlement = await settle_checkpoint(
-            db=conv_repo.db,
+            db=session_repo.db,
             run=locked_run,
             worker_id=worker_id,
             status="failed",
@@ -314,17 +314,17 @@ async def save_partial_message(
         )
         if not settlement.changed:
             raise ValueError("AgentRun 错误输出与失败终态未能在同一事务提交")
-        await conv_repo.db.commit()
+        await session_repo.db.commit()
         return message
 
     except Exception as e:
-        await conv_repo.db.rollback()
+        await session_repo.db.rollback()
         logger.exception(f"Error saving message: {e}")
         return None
 
 
 async def _reconcile_model_audit_message(
-    conv_repo: ConversationRepository,
+    session_repo: SessionRepository,
     *,
     run_id: str,
     operation_id: str,
@@ -332,7 +332,7 @@ async def _reconcile_model_audit_message(
     trace_info: dict[str, Any] | None,
 ) -> Any | None:
     """用终态 State 补全同一稳定来源键的 Model 审计消息。"""
-    message = await ModelMessageAuditRepository(conv_repo.db).get(
+    message = await ModelMessageAuditRepository(session_repo.db).get(
         run_id=run_id,
         operation_id=operation_id,
     )
@@ -350,10 +350,10 @@ async def _reconcile_model_audit_message(
         message.execution_status = "completed"
         message.finished_at = utc_now()
         metadata["finished_by_reconcile"] = True
-    await conv_repo.db.flush()
+    await session_repo.db.flush()
     if tool_calls_data:
         await _project_ai_tool_calls(
-            conv_repo,
+            session_repo,
             message_id=message.id,
             tool_calls_data=tool_calls_data,
         )
@@ -361,7 +361,7 @@ async def _reconcile_model_audit_message(
 
 
 async def _reconcile_tool_error_from_state(
-    conv_repo: ConversationRepository,
+    session_repo: SessionRepository,
     *,
     run_id: str,
     thread_id: str,
@@ -373,7 +373,7 @@ async def _reconcile_tool_error_from_state(
     if not worker_id:
         raise ValueError("ToolMessage 对账需要当前 worker 所有权")
     content = _tool_message_content(msg_dict.get("content"))
-    await ToolMessageAuditRepository(conv_repo.db).fail(
+    await ToolMessageAuditRepository(session_repo.db).fail(
         run_id=run_id,
         thread_id=thread_id,
         worker_id=worker_id,
@@ -407,7 +407,7 @@ def _should_reconcile_tool_state(audit: Any, tool_message: dict[str, Any]) -> bo
 async def save_messages_from_langgraph_state(
     state,
     thread_id: str,
-    conv_repo: ConversationRepository,
+    session_repo: SessionRepository,
     *,
     run_id: str,
     turn_id: str,
@@ -427,31 +427,31 @@ async def save_messages_from_langgraph_state(
     if not worker_id or not turn_id:
         raise ValueError("持久化 AgentRun 输出需要 worker、thread 和 Turn 因果归属")
 
-    run_repo = AgentRunRepository(conv_repo.db)
+    run_repo = AgentRunRepository(session_repo.db)
     next_run_id: str | None = None
     try:
-        await conv_repo.db.flush()
-        conversation = await conv_repo.lock_conversation_by_thread_id(thread_id)
-        if conversation is None:
+        await session_repo.db.flush()
+        agent_session = await session_repo.lock_session_by_thread_id(thread_id)
+        if agent_session is None:
             raise ValueError("AgentRun 的 Thread 不存在")
         persisted_run = await run_repo.get_run(run_id)
         if persisted_run is None:
             raise ValueError("AgentRun 不存在")
-        turn = await AgentTurnRepository(conv_repo.db).get_for_scope(
+        turn = await AgentTurnRepository(session_repo.db).get_for_scope(
             turn_id=turn_id,
             thread_id=thread_id,
-            uid=conversation.uid,
-            app_id=conversation.app_id,
+            uid=agent_session.uid,
+            app_id=agent_session.app_id,
             for_update=True,
         )
         if turn is None or turn.current_run_id != run_id:
             raise ValueError("AgentRun 不是当前 Turn 的执行段")
         pending_steer = None
         if complete_run:
-            pending_steer = await AgentInputRepository(conv_repo.db).get_pending_steer(
+            pending_steer = await AgentInputRepository(session_repo.db).get_pending_steer(
                 thread_id=thread_id,
-                uid=conversation.uid,
-                app_id=conversation.app_id,
+                uid=agent_session.uid,
+                app_id=agent_session.app_id,
             )
         continue_after_cancelled_steer = complete_run and steer_before_model and pending_steer is None
         if continue_after_cancelled_steer:
@@ -459,20 +459,22 @@ async def save_messages_from_langgraph_state(
         locked_run = await run_repo.lock_output_persistence(
             run_id,
             worker_id=worker_id,
-            conversation_thread_id=thread_id,
+            thread_id=thread_id,
         )
         if locked_run is None:
             raise ValueError(f"AgentRun 不存在: {run_id}")
 
-        existing_ids = await conv_repo.get_message_source_ids_by_thread_id(thread_id)
-        current_model_audits = await ModelMessageAuditRepository(conv_repo.db).list_for_run(run_id)
+        existing_ids = await session_repo.get_message_source_ids_by_thread_id(thread_id)
+        current_model_audits = await ModelMessageAuditRepository(session_repo.db).list_for_run(run_id)
         model_operation_ids = {message.operation_id for message in current_model_audits if message.operation_id}
-        current_tool_audits = await ToolMessageAuditRepository(conv_repo.db).list_for_run(run_id)
+        current_tool_audits = await ToolMessageAuditRepository(session_repo.db).list_for_run(run_id)
         tool_audits_by_operation = {
             message.operation_id: message for message in current_tool_audits if message.operation_id
         }
         resume_input = (
-            await conv_repo.db.get(Message, persisted_run.input_message_id) if persisted_run.input_message_id else None
+            await session_repo.db.get(Message, persisted_run.input_message_id)
+            if persisted_run.input_message_id
+            else None
         )
         rejected_calls = (
             set((resume_input.extra_metadata or {}).get("rejected_tool_calls", [])) if resume_input else set()
@@ -506,7 +508,7 @@ async def save_messages_from_langgraph_state(
                     state_model_messages[str(msg_id)] = msg_dict
                 elif not current_model_audits and msg_id not in existing_ids:
                     last_ai_message = await _save_ai_message(
-                        conv_repo,
+                        session_repo,
                         thread_id,
                         msg_dict,
                         trace_info=trace_info,
@@ -516,7 +518,7 @@ async def save_messages_from_langgraph_state(
             elif msg_type == "tool":
                 tool_call_id = str(msg_dict.get("tool_call_id") or "")
                 if tool_call_id in rejected_calls and tool_call_id not in tool_audits_by_operation:
-                    audit = await ToolMessageAuditRepository(conv_repo.db).record_approval_rejection(
+                    audit = await ToolMessageAuditRepository(session_repo.db).record_approval_rejection(
                         run_id=run_id,
                         thread_id=thread_id,
                         worker_id=worker_id,
@@ -525,7 +527,7 @@ async def save_messages_from_langgraph_state(
                     )
                     from yuxi.modules.agents.repositories.public_items import PublicItemRepository
 
-                    await PublicItemRepository(conv_repo.db).save(
+                    await PublicItemRepository(session_repo.db).save(
                         run_id=run_id,
                         worker_id=worker_id,
                         operation_id=tool_call_id,
@@ -546,7 +548,7 @@ async def save_messages_from_langgraph_state(
         reconciled_audits: dict[str, Any] = {}
         for operation_id, msg_dict in state_model_messages.items():
             reconciled = await _reconcile_model_audit_message(
-                conv_repo,
+                session_repo,
                 run_id=run_id,
                 operation_id=operation_id,
                 msg_dict=msg_dict,
@@ -560,7 +562,7 @@ async def save_messages_from_langgraph_state(
             if interrupt_run or not _should_reconcile_tool_state(audit, msg_dict):
                 continue
             await _reconcile_tool_error_from_state(
-                conv_repo,
+                session_repo,
                 run_id=run_id,
                 thread_id=thread_id,
                 worker_id=worker_id,
@@ -582,7 +584,7 @@ async def save_messages_from_langgraph_state(
                 or (interrupt_run and not has_tool_calls)
             )
             if should_publish:
-                await conv_repo.publish_assistant_output(last_ai_message)
+                await session_repo.publish_assistant_output(last_ai_message)
             await run_repo.set_output_message(run_id, last_ai_message.id, worker_id=worker_id)
 
         terminal_status = "completed" if complete_run else "interrupted" if interrupt_run else None
@@ -590,7 +592,7 @@ async def save_messages_from_langgraph_state(
             if interrupt_run and waitpoint and waitpoint["kind"] == "approval":
                 waitpoint = _bind_approval_calls(waitpoint, last_ai_message)
             settlement = await settle_checkpoint(
-                db=conv_repo.db,
+                db=session_repo.db,
                 run=locked_run,
                 worker_id=worker_id,
                 status=terminal_status,
@@ -603,15 +605,15 @@ async def save_messages_from_langgraph_state(
                 raise ValueError(f"AgentRun 输出已写入但 {terminal_status} 终态未能在同一事务提交")
             terminal_status = settlement.status
             next_run_id = settlement.next_run_id
-        await conv_repo.db.commit()
+        await session_repo.db.commit()
         if next_run_id:
             await enqueue_agent_run(next_run_id)
         return "running" if continue_after_cancelled_steer else terminal_status
     except asyncio.CancelledError:
-        await conv_repo.db.rollback()
+        await session_repo.db.rollback()
         raise
     except Exception:
-        await conv_repo.db.rollback()
+        await session_repo.db.rollback()
         raise
 
 

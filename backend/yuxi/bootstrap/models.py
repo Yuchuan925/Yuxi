@@ -6,7 +6,7 @@ from yuxi.infrastructure.postgres.base import BusinessBase, KnowledgeBase
 
 MODEL_MODULES = (
     "yuxi.modules.agents.models.definitions",
-    "yuxi.modules.agents.models.threads",
+    "yuxi.modules.agents.models.sessions",
     "yuxi.modules.agents.models.inputs",
     "yuxi.modules.agents.models.turns",
     "yuxi.modules.agents.models.runs",

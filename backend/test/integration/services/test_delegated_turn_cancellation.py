@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from test.integration.services.test_agent_input_schema import _create_schema, _drop_schema
 from yuxi.modules.agents.models.inputs import AgentInput
-from yuxi.modules.agents.models.threads import Conversation, SubagentThread
+from yuxi.modules.agents.models.sessions import Session, SubagentThread
 from yuxi.modules.agents.models.turns import AgentTurn
 from yuxi.modules.agents.repositories.input import AgentInputRepository
 from yuxi.modules.agents.repositories.runs import AgentRunRepository
@@ -38,35 +38,35 @@ async def test_cascade_follows_turn_delegation_not_child_thread_latest_turn():
     sessions = async_sessionmaker(engine, expire_on_commit=False)
     try:
         async with sessions() as db:
-            parent = await db.scalar(select(Conversation).where(Conversation.thread_id == "input-thread"))
+            parent = await db.scalar(select(Session).where(Session.thread_id == "input-thread"))
             children = []
             for suffix in ("active", "reused", "grandchild"):
-                conversation = Conversation(
+                agent_session = Session(
                     thread_id=f"child-{suffix}",
                     uid="input-user",
                     agent_id="child",
                     project_id="input-project",
                     status="subagent",
                 )
-                db.add(conversation)
+                db.add(agent_session)
                 await db.flush()
                 relation = SubagentThread(
                     uid="input-user",
-                    parent_conversation_id=parent.id,
-                    child_conversation_id=conversation.id,
-                    child_thread_id=conversation.thread_id,
+                    parent_session_record_id=parent.id,
+                    child_session_record_id=agent_session.id,
+                    child_thread_id=agent_session.thread_id,
                     subagent_slug="child",
                     created_by_run_id="root-first",
                 )
                 db.add(relation)
                 await db.flush()
-                children.append((conversation, relation))
+                children.append((agent_session, relation))
             turns, runs = AgentTurnRepository(db), AgentRunRepository(db)
             root = await turns.create(turn_id="root-turn", thread_id=parent.thread_id, uid="input-user", app_id=None)
             first = await runs.create_run(
                 run_id="root-first",
-                conversation_thread_id=parent.thread_id,
-                conversation_id=parent.id,
+                thread_id=parent.thread_id,
+                session_record_id=parent.id,
                 agent_slug="main",
                 uid="input-user",
                 turn_id=root.id,
@@ -75,8 +75,8 @@ async def test_cascade_follows_turn_delegation_not_child_thread_latest_turn():
             first.status = "yielded"
             resumed = await runs.create_run(
                 run_id="root-resume",
-                conversation_thread_id=parent.thread_id,
-                conversation_id=parent.id,
+                thread_id=parent.thread_id,
+                session_record_id=parent.id,
                 agent_slug="main",
                 uid="input-user",
                 turn_id=root.id,
@@ -86,14 +86,14 @@ async def test_cascade_follows_turn_delegation_not_child_thread_latest_turn():
             )
             await turns.set_current(root, run_id=resumed.id)
             child_runs = []
-            for number, (conversation, relation) in enumerate(children):
+            for number, (agent_session, relation) in enumerate(children):
                 turn = await turns.create(
-                    turn_id=f"child-turn-{number}", thread_id=conversation.thread_id, uid="input-user", app_id=None
+                    turn_id=f"child-turn-{number}", thread_id=agent_session.thread_id, uid="input-user", app_id=None
                 )
                 child = await runs.create_run(
                     run_id=f"child-run-{number}",
-                    conversation_thread_id=conversation.thread_id,
-                    conversation_id=conversation.id,
+                    thread_id=agent_session.thread_id,
+                    session_record_id=agent_session.id,
                     agent_slug="child",
                     uid="input-user",
                     turn_id=turn.id,
@@ -109,8 +109,8 @@ async def test_cascade_follows_turn_delegation_not_child_thread_latest_turn():
             original.status = "interrupted"
             current = await runs.create_run(
                 run_id="child-resume",
-                conversation_thread_id=original.conversation_thread_id,
-                conversation_id=original.conversation_id,
+                thread_id=original.thread_id,
+                session_record_id=original.session_record_id,
                 agent_slug="child",
                 uid="input-user",
                 turn_id=active_turn.id,
@@ -124,15 +124,18 @@ async def test_cascade_follows_turn_delegation_not_child_thread_latest_turn():
             old_turn, old_run = child_runs[1]
             old_turn.status, old_run.status = "completed", "completed"
             other_parent_turn = AgentTurn(
-                id="other-parent-turn", conversation_thread_id=parent.thread_id,
-                uid="input-user", app_id=None, status="completed",
+                id="other-parent-turn",
+                thread_id=parent.thread_id,
+                uid="input-user",
+                app_id=None,
+                status="completed",
             )
             db.add(other_parent_turn)
             await db.flush()
             other_parent_run = await runs.create_run(
                 run_id="other-parent-run",
-                conversation_thread_id=parent.thread_id,
-                conversation_id=parent.id,
+                thread_id=parent.thread_id,
+                session_record_id=parent.id,
                 agent_slug="main",
                 uid="input-user",
                 turn_id=other_parent_turn.id,
@@ -140,12 +143,12 @@ async def test_cascade_follows_turn_delegation_not_child_thread_latest_turn():
             )
             other_parent_run.status = "completed"
             unrelated = await turns.create(
-                turn_id="unrelated-turn", thread_id=old_run.conversation_thread_id, uid="input-user", app_id=None
+                turn_id="unrelated-turn", thread_id=old_run.thread_id, uid="input-user", app_id=None
             )
             unrelated_run = await runs.create_run(
                 run_id="unrelated-run",
-                conversation_thread_id=old_run.conversation_thread_id,
-                conversation_id=old_run.conversation_id,
+                thread_id=old_run.thread_id,
+                session_record_id=old_run.session_record_id,
                 agent_slug="child",
                 uid="input-user",
                 turn_id=unrelated.id,
@@ -157,7 +160,7 @@ async def test_cascade_follows_turn_delegation_not_child_thread_latest_turn():
             await turns.set_current(unrelated, run_id=unrelated_run.id)
             queued = await AgentInputRepository(db).create(
                 input_id="unrelated-followup",
-                thread_id=old_run.conversation_thread_id,
+                thread_id=old_run.thread_id,
                 uid="input-user",
                 app_id=None,
                 agent_slug="child",
@@ -176,9 +179,7 @@ async def test_cascade_follows_turn_delegation_not_child_thread_latest_turn():
             assert (await AgentRunRepository(db).get_run("unrelated-run")).status == "pending"
             assert (await db.get(AgentTurn, "unrelated-turn")).status == "running"
             assert (await db.get(AgentInput, queued.id)).status == "pending"
-            assert not (
-                await db.scalar(select(Conversation).where(Conversation.thread_id == "child-reused"))
-            ).queue_paused
+            assert not (await db.scalar(select(Session).where(Session.thread_id == "child-reused"))).queue_paused
             assert (await db.get(AgentTurn, "root-turn")).status == "running"
     finally:
         await _drop_schema(schema, admin_engine, engine)

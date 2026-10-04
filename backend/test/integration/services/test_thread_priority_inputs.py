@@ -20,12 +20,12 @@ from yuxi.modules.agents.models.inputs import AgentInput, AgentInputReceipt
 from yuxi.modules.agents.models.messages import Message
 from yuxi.modules.agents.models.runs import AgentRun
 from yuxi.modules.agents.models.turns import AgentTurn
-from yuxi.modules.agents.models.threads import Conversation, SubagentThread
+from yuxi.modules.agents.models.sessions import Session, SubagentThread
 from yuxi.modules.agents.repositories.input import AgentInputRepository
 from yuxi.modules.agents.repositories.input_receipt import AgentInputReceiptRepository
 from yuxi.modules.agents.repositories.definitions import DEFAULT_SHARE_CONFIG
 from yuxi.modules.agents.repositories.runs import AgentRunRepository
-from yuxi.modules.agents.repositories.threads import ConversationRepository
+from yuxi.modules.agents.repositories.sessions import SessionRepository
 from yuxi.modules.agents.services import input_config, inputs, messages, runs, scheduler, subagents, threads, turns
 from yuxi.modules.agents.services.input_messages import build_chat_input_message
 from yuxi.modules.agents.services.scope import ActorScope
@@ -67,8 +67,8 @@ async def sessions(monkeypatch):
                 config_json={"context": {"model": "test:chat"}},
             )
         )
-        conversation = await ConversationRepository(db).get_conversation_by_thread_id("input-thread")
-        conversation.queue_paused = True
+        agent_session = await SessionRepository(db).get_session_by_thread_id("input-thread")
+        agent_session.queue_paused = True
         await db.commit()
 
     async def resolve_binding(**kwargs):
@@ -93,7 +93,7 @@ async def sessions(monkeypatch):
     monkeypatch.setattr(input_config.model_cache, "get_model_info", lambda spec: SimpleNamespace(model_type="chat"))
     monkeypatch.setattr(turns, "finish_turn_observation_if_terminal", notify)
     monkeypatch.setattr(turns, "publish_cancel_signals", notify)
-    monkeypatch.setattr(scheduler, "resolve_conversation_workdir_binding", resolve_binding)
+    monkeypatch.setattr(scheduler, "resolve_session_workdir_binding", resolve_binding)
     monkeypatch.setattr(inputs, "deliver", deliver)
     monkeypatch.setattr(threads, "deliver", deliver)
     monkeypatch.setattr(scheduler, "deliver", deliver)
@@ -121,9 +121,9 @@ async def _start(sessions, *, running: bool = True):
     """领取首条消息并取得执行所有权。"""
     await _queue_inputs(sessions, count=1)
     async with sessions() as db:
-        conversation = await ConversationRepository(db).lock_conversation_by_thread_id("input-thread")
-        conversation.queue_paused = False
-        dispatch = await scheduler.claim_next_input(db=db, conversation=conversation, binding=_binding())
+        agent_session = await SessionRepository(db).lock_session_by_thread_id("input-thread")
+        agent_session.queue_paused = False
+        dispatch = await scheduler.claim_next_input(db=db, agent_session=agent_session, binding=_binding())
         run = await db.get(AgentRun, dispatch.run_id)
         if running:
             run, acquired = await AgentRunRepository(db).mark_running(
@@ -201,7 +201,7 @@ async def test_safe_handoff_consumes_batch_in_same_turn_with_current_config(sess
     assert first["input_id"] == second["input_id"]
     assert await runs.should_yield_for_steer(current.id)
     async with sessions() as db:
-        await ConversationRepository(db).lock_conversation_by_thread_id("input-thread")
+        await SessionRepository(db).lock_session_by_thread_id("input-thread")
         run = await db.get(AgentRun, current.id)
         settled = await runs.settle_checkpoint(db=db, run=run, worker_id="owner", status="completed", token_usage=None)
         assert settled.status == "yielded" and settled.next_run_id
@@ -227,7 +227,7 @@ async def test_terminal_failure_preserves_steer_for_explicit_continue(sessions, 
     follow = await _send(sessions, "F1", "follow_up")
     steer = await _send(sessions, "S1")
     async with sessions() as db:
-        await ConversationRepository(db).lock_conversation_by_thread_id("input-thread")
+        await SessionRepository(db).lock_session_by_thread_id("input-thread")
         run = await db.get(AgentRun, current.id)
         if status == "failed":
             await runs.settle_checkpoint(db=db, run=run, worker_id="owner", status=status, token_usage=None)
@@ -241,8 +241,8 @@ async def test_terminal_failure_preserves_steer_for_explicit_continue(sessions, 
             )
         await db.commit()
     async with sessions() as db:
-        conversation = await ConversationRepository(db).get_conversation_by_thread_id("input-thread")
-        assert conversation.queue_paused
+        agent_session = await SessionRepository(db).get_session_by_thread_id("input-thread")
+        assert agent_session.queue_paused
         batch = await db.get(AgentInput, steer["input_id"])
         assert batch.status == "pending" and batch.turn_id is None
         assert (await AgentInputRepository(db).list_messages(batch.id))[0].delivery_status == "queued"
@@ -257,8 +257,8 @@ async def test_recovery_claims_idle_steer_without_any_follow_up(sessions):
     """崩溃后仅剩 steer 的 ready Thread 也能由恢复扫描领取。"""
     steer = await _send(sessions, "S1")
     async with sessions() as db:
-        conversation = await ConversationRepository(db).get_conversation_by_thread_id("input-thread")
-        conversation.queue_paused = False
+        agent_session = await SessionRepository(db).get_session_by_thread_id("input-thread")
+        agent_session.queue_paused = False
         await db.commit()
     await scheduler.recover_pending_dispatches()
     async with sessions() as db:
@@ -301,7 +301,7 @@ async def test_steer_before_first_model_is_saved_as_yielded_not_failed(sessions,
         status = await messages.save_messages_from_langgraph_state(
             state=SimpleNamespace(values={"messages": []}),
             thread_id="input-thread",
-            conv_repo=ConversationRepository(db),
+            session_repo=SessionRepository(db),
             run_id=current.id,
             turn_id=current.turn_id,
             worker_id="owner",
@@ -324,7 +324,7 @@ async def test_steer_before_first_model_is_saved_as_yielded_not_failed(sessions,
                     values={"messages": [AIMessage(content="original task done", id="after-cancel")]}
                 ),
                 thread_id="input-thread",
-                conv_repo=ConversationRepository(db),
+                session_repo=SessionRepository(db),
                 run_id=current.id,
                 turn_id=current.turn_id,
                 worker_id="owner",
@@ -333,7 +333,7 @@ async def test_steer_before_first_model_is_saved_as_yielded_not_failed(sessions,
             assert status == "completed"
         else:
             assert turn.current_run_id == batch.consumed_run_id and batch.status == "consumed"
-        assert not (await ConversationRepository(db).get_conversation_by_thread_id("input-thread")).queue_paused
+        assert not (await SessionRepository(db).get_session_by_thread_id("input-thread")).queue_paused
     if cancel_batch:
         async with sessions() as db:
             turn = await db.get(AgentTurn, current.turn_id)
@@ -410,8 +410,8 @@ async def test_cancelled_steer_continuation_preserves_wire_ids_and_audit_order(s
 
     async def resolve(**kwargs):
         """隔离模型发现，Thread、审计与输出持久化仍读取真实 PG。"""
-        conversation = await ConversationRepository(kwargs["db"]).get_conversation_by_thread_id("input-thread")
-        return SimpleNamespace(slug="main", name="test", backend_id="ChatbotAgent"), source, context, conversation
+        agent_session = await SessionRepository(kwargs["db"]).get_session_by_thread_id("input-thread")
+        return SimpleNamespace(slug="main", name="test", backend_id="ChatbotAgent"), source, context, agent_session
 
     monkeypatch.setattr(execution, "_resolve_agent_runtime", resolve)
     monkeypatch.setattr(execution, "_build_langfuse_run_context", lambda **kwargs: LangfuseRunContext())
@@ -463,7 +463,7 @@ async def test_parent_delegation_preserves_child_pending_steer_and_pause(session
             share_config=DEFAULT_SHARE_CONFIG.copy(),
             config_json={},
         )
-        child = Conversation(
+        child = Session(
             thread_id="child-thread",
             uid=SCOPE.uid,
             app_id=None,
@@ -477,8 +477,8 @@ async def test_parent_delegation_preserves_child_pending_steer_and_pause(session
         await db.flush()
         relation = SubagentThread(
             uid=SCOPE.uid,
-            parent_conversation_id=parent.conversation_id,
-            child_conversation_id=child.id,
+            parent_session_record_id=parent.session_record_id,
+            child_session_record_id=child.id,
             child_thread_id=child.thread_id,
             subagent_slug=agent.slug,
             created_by_run_id=parent.id,
@@ -510,7 +510,7 @@ async def test_parent_delegation_preserves_child_pending_steer_and_pause(session
             intent_hash="child-steer-intent",
             input_id="child-steer",
         )
-        message = Message(conversation_id=child.id, role="user", content="steer", delivery_status="queued")
+        message = Message(session_record_id=child.id, role="user", content="steer", delivery_status="queued")
         db.add(message)
         await db.flush()
         await input_repo.add_messages(input_id="child-steer", receipt_id=receipt.id, message_ids=[message.id])
@@ -528,7 +528,7 @@ async def test_parent_delegation_preserves_child_pending_steer_and_pause(session
         assert exc.value.active_run_status == ("paused" if paused else "pending")
         await db.commit()
     async with sessions() as db:
-        child = await ConversationRepository(db).get_conversation_by_thread_id("child-thread")
+        child = await SessionRepository(db).get_session_by_thread_id("child-thread")
         batch = await db.get(AgentInput, "child-steer")
         assert child.queue_paused == paused and child.extra_metadata == {"model_spec": "saved:chat"}
         assert batch.status == "pending" and batch.turn_id is None
@@ -544,12 +544,12 @@ async def test_completion_winning_thread_lock_still_accepts_steer(sessions):
     async def finish():
         """在 steer 竞争锁之前固定旧 Turn 的最终输出。"""
         async with sessions() as db:
-            conversation = await ConversationRepository(db).lock_conversation_by_thread_id("input-thread")
+            agent_session = await SessionRepository(db).lock_session_by_thread_id("input-thread")
             locked.set()
             await sending.wait()
             run = await db.get(AgentRun, current.id)
             output = Message(
-                conversation_id=conversation.id,
+                session_record_id=agent_session.id,
                 role="assistant",
                 content="done",
                 run_id=run.id,

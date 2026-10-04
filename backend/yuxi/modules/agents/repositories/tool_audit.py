@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from yuxi.modules.agents.models.messages import MODEL_AUDIT_MESSAGE_TYPE, TOOL_AUDIT_MESSAGE_TYPE, Message, ToolCall
 from yuxi.modules.agents.models.runs import AgentRun
 from yuxi.modules.agents.repositories.runs import AgentRunRepository
-from yuxi.modules.agents.repositories.threads import ConversationRepository
+from yuxi.modules.agents.repositories.sessions import SessionRepository
 
 
 class ToolMessageAuditRepository:
@@ -51,7 +51,7 @@ class ToolMessageAuditRepository:
         )
         existing = await self._get(run_id, operation_id)
         if existing is not None:
-            self._require_same_owner(existing, conversation_id=run.conversation_id, turn_id=run.turn_id)
+            self._require_same_owner(existing, session_record_id=run.session_record_id, turn_id=run.turn_id)
             self._require_same_start(
                 existing,
                 tool_name=normalized_name,
@@ -73,7 +73,7 @@ class ToolMessageAuditRepository:
             "source_model_message_id": source_message.id,
         }
         message = Message(
-            conversation_id=run.conversation_id,
+            session_record_id=run.session_record_id,
             role="tool",
             content="",
             message_type=TOOL_AUDIT_MESSAGE_TYPE,
@@ -166,7 +166,7 @@ class ToolMessageAuditRepository:
         if call is None or call.status != "pending":
             raise ValueError("工具拒绝结果缺少待处理的模型声明")
         message = Message(
-            conversation_id=run.conversation_id,
+            session_record_id=run.session_record_id,
             turn_id=run.turn_id,
             run_id=run.id,
             role="tool",
@@ -252,7 +252,7 @@ class ToolMessageAuditRepository:
         message = await self._get(run_id, operation_id)
         if message is None:
             raise ValueError("Tool error 缺少对应的 start 事实")
-        self._require_same_owner(message, conversation_id=run.conversation_id, turn_id=run.turn_id)
+        self._require_same_owner(message, session_record_id=run.session_record_id, turn_id=run.turn_id)
         if message.execution_status != "running":
             metadata = message.extra_metadata if isinstance(message.extra_metadata, dict) else {}
             if metadata.get("error_message") != error_message:
@@ -316,7 +316,7 @@ class ToolMessageAuditRepository:
         message = await self._get(run_id, operation_id)
         if message is None:
             raise ValueError("Tool terminal 缺少对应的 start 事实")
-        self._require_same_owner(message, conversation_id=run.conversation_id, turn_id=run.turn_id)
+        self._require_same_owner(message, session_record_id=run.session_record_id, turn_id=run.turn_id)
 
         metadata = dict(message.extra_metadata or {})
         if message.execution_status == execution_status:
@@ -351,13 +351,13 @@ class ToolMessageAuditRepository:
         return message
 
     async def _lock_run(self, *, run_id: str, thread_id: str, worker_id: str):
-        conversation = await ConversationRepository(self.db).lock_conversation_by_thread_id(thread_id)
-        if conversation is None:
-            raise ValueError(f"AgentRun conversation 不存在: {thread_id}")
+        agent_session = await SessionRepository(self.db).lock_session_by_thread_id(thread_id)
+        if agent_session is None:
+            raise ValueError(f"AgentRun agent_session 不存在: {thread_id}")
         run = await self.run_repo.lock_output_persistence(
             run_id,
             worker_id=worker_id,
-            conversation_thread_id=thread_id,
+            thread_id=thread_id,
         )
         if run is None:
             raise ValueError(f"AgentRun 不存在: {run_id}")
@@ -405,7 +405,7 @@ class ToolMessageAuditRepository:
         return None
 
     async def _source_run_ids(self, run: AgentRun) -> list[str]:
-        """返回同 Conversation 内无环的 resume 来源链。"""
+        """返回同 Session 内无环的 resume 来源链。"""
         source_run_ids = [run.id]
         seen = {run.id}
         parent_id = run.resume_from_run_id
@@ -414,12 +414,12 @@ class ToolMessageAuditRepository:
                 raise ValueError("Resume Run ancestry 存在循环")
             parent = await self.db.get(AgentRun, parent_id)
             if parent is None or (
-                parent.conversation_id != run.conversation_id
+                parent.session_record_id != run.session_record_id
                 or parent.turn_id != run.turn_id
                 or parent.uid != run.uid
                 or parent.app_id != run.app_id
             ):
-                raise ValueError("Resume Run ancestry 与当前 Turn 或 conversation 不一致")
+                raise ValueError("Resume Run ancestry 与当前 Turn 或 agent_session 不一致")
             source_run_ids.append(parent.id)
             seen.add(parent.id)
             parent_id = parent.resume_from_run_id
@@ -438,14 +438,14 @@ class ToolMessageAuditRepository:
         return tool_call
 
     @staticmethod
-    def _require_same_owner(message: Message, *, conversation_id: int, turn_id: str) -> None:
+    def _require_same_owner(message: Message, *, session_record_id: int, turn_id: str) -> None:
         if (
-            message.conversation_id != conversation_id
+            message.session_record_id != session_record_id
             or message.turn_id != turn_id
             or message.role != "tool"
             or message.message_type != TOOL_AUDIT_MESSAGE_TYPE
         ):
-            raise ValueError("Tool 审计消息必须属于同一 Turn 和 conversation")
+            raise ValueError("Tool 审计消息必须属于同一 Turn 和 agent_session")
 
     @staticmethod
     def _require_same_start(

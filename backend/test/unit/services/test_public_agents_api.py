@@ -83,9 +83,7 @@ def test_message_priority_has_no_target_turn(mode):
 
 def test_receipt_returns_identity_and_consumption_without_effective_mode():
     """回执只返回持久接收及消费归属，不需要有效模式字段。"""
-    receipt = SimpleNamespace(
-        id="receipt", input_id="batch", conversation_thread_id="thread", turn_id=None, run_id=None
-    )
+    receipt = SimpleNamespace(id="receipt", input_id="batch", thread_id="thread", turn_id=None, run_id=None)
     assert _accepted(receipt) == {
         "event_id": "receipt",
         "input_id": "batch",

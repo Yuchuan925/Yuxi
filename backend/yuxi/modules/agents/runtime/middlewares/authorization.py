@@ -6,7 +6,7 @@ from sqlalchemy import select
 
 from yuxi.infrastructure.postgres.manager import pg_manager
 from yuxi.modules.agents.models.runs import AgentRun
-from yuxi.modules.agents.models.threads import Conversation
+from yuxi.modules.agents.models.sessions import Session
 from yuxi.modules.agents.repositories.definitions import AgentRepository
 from yuxi.modules.agents.runtime.context import normalize_agent_context_config
 from yuxi.modules.agents.services.event_writer import append_run_event_best_effort
@@ -97,10 +97,10 @@ async def refresh_execution_authorization(context) -> None:
         else:
             # 主动压缩没有 Run，使用已绑定调用者的 Thread 找到当前 Agent。
             thread = await db.scalar(
-                select(Conversation).where(
-                    Conversation.thread_id == context.thread_id,
-                    Conversation.uid == user.uid,
-                    Conversation.status == "active",
+                select(Session).where(
+                    Session.thread_id == context.thread_id,
+                    Session.uid == user.uid,
+                    Session.status == "active",
                 )
             )
             if thread is None:
@@ -124,7 +124,7 @@ async def refresh_execution_authorization(context) -> None:
                 run.id,
                 {
                     "type": "yuxi.session.turn.capability_limited",
-                    "session_id": run.conversation_thread_id,
+                    "session_id": run.thread_id,
                     "turn_id": run.turn_id,
                     "message": "部分配置能力不可用，已按当前调用者权限过滤。",
                     "yuxi": {"run_id": run.id},

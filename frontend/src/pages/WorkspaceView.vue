@@ -215,7 +215,7 @@ import { useRoute } from 'vue-router'
 import { message, Modal } from 'ant-design-vue'
 import { ChevronLeft, ChevronRight, CircleHelp, LibraryBig, Search } from '@lucide/vue'
 import PageHeader from '@/shared/ui/PageHeader.vue'
-import AgentFilePreview from '@/modules/conversation/ui/workspace/AgentFilePreview.vue'
+import AgentFilePreview from '@/modules/session/ui/workspace/AgentFilePreview.vue'
 import WorkspaceFileList from '@/modules/workspace/ui/WorkspaceFileList.vue'
 import WorkspacePreviewPane from '@/modules/workspace/ui/WorkspacePreviewPane.vue'
 import WorkspaceSidebar from '@/modules/workspace/ui/WorkspaceSidebar.vue'
@@ -234,7 +234,7 @@ import {
   searchWorkspaceFiles,
   uploadWorkspaceFiles
 } from '@/apis/workspace_api'
-import GlobalSearchModal from '@/modules/conversation/ui/GlobalSearchModal.vue'
+import GlobalSearchModal from '@/modules/session/ui/GlobalSearchModal.vue'
 import { normalizePreviewResponse } from '@/shared/lib/file_preview'
 import { parseDownloadFilename } from '@/shared/lib/file_utils'
 

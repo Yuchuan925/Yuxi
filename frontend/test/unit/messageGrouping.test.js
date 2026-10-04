@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
-  groupConversationContinuations,
-  collapseConversationProcess,
+  groupRunContinuations,
+  collapseRunProcess,
   formatProcessDuration,
-  isConversationSettled,
+  isRunGroupSettled,
   formatEmptyRunStatus
-} from '../../src/modules/conversation/model/conversationProcessGrouping.js'
+} from '../../src/modules/session/model/runProcessGrouping.js'
 
 test('关联续跑组成连续回答，消息归属不变且只累计执行耗时', () => {
   const groups = [
@@ -37,7 +37,7 @@ test('关联续跑组成连续回答，消息归属不变且只累计执行耗�
     }
   ]
   const original = structuredClone(groups)
-  const result = groupConversationContinuations(groups)
+  const result = groupRunContinuations(groups)
   assert.equal(result.length, 1)
   assert.deepEqual(
     result[0].messages.map((message) => message.run_id),
@@ -50,7 +50,7 @@ test('关联续跑组成连续回答，消息归属不变且只累计执行耗�
   assert.deepEqual(result[0].messages.map((message) => message.isLast), [false, false, true])
   assert.deepEqual(groups, original)
   groups[1].run.timing = null
-  assert.equal(groupConversationContinuations(groups)[0].processTiming.total_latency_ms, null)
+  assert.equal(groupRunContinuations(groups)[0].processTiming.total_latency_ms, null)
 })
 
 test('新用户、独立 Turn、未知归属及零消息失败不并入前一回答', () => {
@@ -72,16 +72,16 @@ test('新用户、独立 Turn、未知归属及零消息失败不并入前一回
       messages: []
     }
   ]) {
-    assert.deepEqual(groupConversationContinuations([first, next]), [first, next])
+    assert.deepEqual(groupRunContinuations([first, next]), [first, next])
   }
   const resume = { run: { run_id: 'b', turn_id: 'turn-1', run_type: 'resume' }, messages: [{ type: 'ai' }] }
   for (const previous of [{ messages: [{ type: 'ai' }] }, { run: { run_id: 'a', status: 'failed' }, messages: [] }]) {
-    assert.deepEqual(groupConversationContinuations([previous, resume]), [previous, resume])
+    assert.deepEqual(groupRunContinuations([previous, resume]), [previous, resume])
   }
 })
 
 test('已完成对话使用后端 Run 总耗时聚合过程组', () => {
-  const items = collapseConversationProcess(
+  const items = collapseRunProcess(
     [
       { key: 'h1', type: 'message', message: { type: 'human' } },
       { key: 'a1', type: 'message', message: { type: 'ai' } },
@@ -107,7 +107,7 @@ test('已完成对话使用后端 Run 总耗时聚合过程组', () => {
 })
 
 test('只有旧 Run 时间戳时不推算过程耗时', () => {
-  const items = collapseConversationProcess(
+  const items = collapseRunProcess(
     [
       { key: 'h1', type: 'message', message: { type: 'human' } },
       { key: 'a1', type: 'message', message: { type: 'ai' } },
@@ -134,9 +134,9 @@ test('运行中或最终消息后仍有工具调用时不聚合过程', () => {
     { key: 'a1', type: 'message', message: { type: 'ai' } },
     { key: 'tools', type: 'tool-group', toolCalls: [{ id: 't1' }] }
   ]
-  assert.equal(collapseConversationProcess(items).some((item) => item.type === 'process-group'), false)
+  assert.equal(collapseRunProcess(items).some((item) => item.type === 'process-group'), false)
   assert.equal(
-    collapseConversationProcess(items, true).some((item) => item.type === 'process-group'),
+    collapseRunProcess(items, true).some((item) => item.type === 'process-group'),
     false
   )
 })
@@ -156,13 +156,13 @@ test('formatProcessDuration: 复用 Run 时延格式', () => {
 test('零消息后续 Run 不隐藏上一条完成回答的操作栏，关联 resume 仍等待续写', () => {
   const answer = { run: { run_id: 'run-a', turn_id: 'turn-1', status: 'completed' }, messages: [{ type: 'human' }, { type: 'ai' }] }
   const empty = { run: { run_id: 'run-b', run_type: 'chat', status: 'failed' }, messages: [] }
-  assert.equal(isConversationSettled([answer, empty], answer), true)
+  assert.equal(isRunGroupSettled([answer, empty], answer), true)
   const resume = { run: { run_id: 'resume', turn_id: 'turn-1', run_type: 'resume' }, messages: [] }
-  assert.equal(isConversationSettled([answer, resume], answer), false)
-  assert.equal(isConversationSettled([
+  assert.equal(isRunGroupSettled([answer, resume], answer), false)
+  assert.equal(isRunGroupSettled([
     answer, { ...resume, run: { ...resume.run, turn_id: 'turn-2', created_by_run_id: 'run-a' } }
   ], answer), true)
-  assert.equal(isConversationSettled([answer], answer, true), false)
+  assert.equal(isRunGroupSettled([answer], answer, true), false)
   assert.equal(formatEmptyRunStatus(empty.run.status), '本次运行失败')
   assert.equal(formatEmptyRunStatus('cancelled'), '本次运行已取消')
 })

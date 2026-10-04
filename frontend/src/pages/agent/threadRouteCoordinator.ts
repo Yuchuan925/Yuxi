@@ -1,9 +1,9 @@
-export interface ConversationRoute {
+export interface SessionRoute {
   threadId: string
   agentId: string
 }
 
-export interface ConversationSelection {
+export interface SessionSelection {
   selectThreadFromRoute(threadId: string): Promise<boolean | null>
 }
 
@@ -23,7 +23,7 @@ export function createThreadRouteCoordinator(actions: RouteActions) {
   let disposed = false
 
   return {
-    sync(target: ConversationRoute, selection: ConversationSelection | null): Promise<void> {
+    sync(target: SessionRoute, selection: SessionSelection | null): Promise<void> {
       const currentRevision = ++revision
       if (disposed || !selection) return Promise.resolve()
       const { threadId, agentId } = target

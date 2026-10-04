@@ -17,7 +17,7 @@ from yuxi.modules.agents.repositories.runs import AgentRunRepository
 from yuxi.modules.agents.models.inputs import AgentInput, AgentInputMessage, AgentInputReceipt
 from yuxi.modules.agents.models.runs import AgentRun, AgentRunAttempt
 from yuxi.modules.agents.models.turns import AgentTurn
-from yuxi.modules.agents.models.threads import Conversation
+from yuxi.modules.agents.models.sessions import Session
 from yuxi.modules.agents.models.messages import Message
 from yuxi.modules.workspace.models import Project
 from yuxi.modules.identity.models import User
@@ -66,26 +66,20 @@ async def _create_run(session_factory, *, status: str = "pending") -> tuple[str,
 async def _cleanup_runs(session_factory, thread_ids: list[str]) -> None:
     async with session_factory() as db:
         rows = (
-            await db.execute(
-                select(Conversation.project_id, Conversation.uid).where(Conversation.thread_id.in_(thread_ids))
-            )
+            await db.execute(select(Session.project_id, Session.uid).where(Session.thread_id.in_(thread_ids)))
         ).all()
-        conversation_ids = list(
-            (await db.scalars(select(Conversation.id).where(Conversation.thread_id.in_(thread_ids)))).all()
-        )
-        input_ids = list(
-            (await db.scalars(select(AgentInput.id).where(AgentInput.conversation_thread_id.in_(thread_ids)))).all()
-        )
-        await db.execute(update(AgentRun).where(AgentRun.conversation_thread_id.in_(thread_ids)).values(input_id=None))
+        session_record_ids = list((await db.scalars(select(Session.id).where(Session.thread_id.in_(thread_ids)))).all())
+        input_ids = list((await db.scalars(select(AgentInput.id).where(AgentInput.thread_id.in_(thread_ids)))).all())
+        await db.execute(update(AgentRun).where(AgentRun.thread_id.in_(thread_ids)).values(input_id=None))
         if input_ids:
             await db.execute(delete(AgentInputMessage).where(AgentInputMessage.input_id.in_(input_ids)))
             await db.execute(delete(AgentInputReceipt).where(AgentInputReceipt.input_id.in_(input_ids)))
             await db.execute(delete(AgentInput).where(AgentInput.id.in_(input_ids)))
-        if conversation_ids:
-            await db.execute(delete(Message).where(Message.conversation_id.in_(conversation_ids)))
-        await db.execute(delete(AgentRun).where(AgentRun.conversation_thread_id.in_(thread_ids)))
-        await db.execute(delete(AgentTurn).where(AgentTurn.conversation_thread_id.in_(thread_ids)))
-        await db.execute(delete(Conversation).where(Conversation.thread_id.in_(thread_ids)))
+        if session_record_ids:
+            await db.execute(delete(Message).where(Message.session_record_id.in_(session_record_ids)))
+        await db.execute(delete(AgentRun).where(AgentRun.thread_id.in_(thread_ids)))
+        await db.execute(delete(AgentTurn).where(AgentTurn.thread_id.in_(thread_ids)))
+        await db.execute(delete(Session).where(Session.thread_id.in_(thread_ids)))
         await db.execute(delete(Project).where(Project.id.in_([row.project_id for row in rows])))
         await db.execute(delete(User).where(User.uid.in_([row.uid for row in rows])))
         await db.commit()

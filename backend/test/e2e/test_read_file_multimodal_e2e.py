@@ -11,7 +11,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 from e2e_helpers import delete_agent
 from test.e2e.test_agent_lifecycle_e2e import output_text
-from test.live_api_cleanup import make_test_conversation_title
+from test.live_api_cleanup import make_test_session_title
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.e2e, pytest.mark.slow]
 
@@ -69,7 +69,7 @@ async def _create_thread(client: httpx.AsyncClient, headers: dict[str, str], age
         "/api/v1/agents/threads",
         json={
             "agent_id": agent_slug,
-            "title": make_test_conversation_title("read-file-e2e"),
+            "title": make_test_session_title("read-file-e2e"),
         },
         headers={**headers, "Idempotency-Key": f"read-file-create-{uuid.uuid4().hex}"},
     )
