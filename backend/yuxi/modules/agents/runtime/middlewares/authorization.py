@@ -108,12 +108,19 @@ async def refresh_execution_authorization(context) -> None:
             agent = await AgentRepository(db).get_visible_by_slug(slug=thread.agent_id, user=user, kind="main")
             if agent is None:
                 raise AgentExecutionRevoked("Agent 使用权限已撤销")
+        context.agent_slug = agent.slug
         resources = type(context).get_resource_fields()
         selections = getattr(context, "_resource_selections", {name: getattr(context, name) for name in resources})
         normalized = await normalize_agent_context_config(selections, db=db, user=user, context_schema=type(context))
         for name in resources:
             setattr(context, name, normalized[name])
-        context._skill_runtime_snapshot = await resolve_runtime_skills_for_context(context, db=db, user=user)
+        previous = getattr(context, "_skill_runtime_snapshot", {})
+        current = await resolve_runtime_skills_for_context(context, db=db, user=user)
+        # 每个执行边界重新授权；已经注入的专属根文本保持该 Run 准备时的快照。
+        for slug, metadata in previous.get("skill_metadata", {}).items():
+            if metadata.get("source_scope") == "agent_bound" and slug in current["preloaded_skill_contents"]:
+                current["preloaded_skill_contents"][slug] = previous["preloaded_skill_contents"][slug]
+        context._skill_runtime_snapshot = current
         rows = await db.execute(select(MCPServer.slug, MCPServer.disabled_tools).where(MCPServer.enabled == 1))
         context._enabled_mcps = {slug: set(disabled or []) for slug, disabled in rows}
         limited = any(

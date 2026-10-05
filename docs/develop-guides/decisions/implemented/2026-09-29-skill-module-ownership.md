@@ -14,7 +14,7 @@ Skill 安装和管理用例曾散落在 `agents/skills` 与顶层 `services`；�
 
 共享、个人、草稿、远程获取、编辑和投影用例与运行时解析统一位于 `yuxi.modules.extensions.skills`；同目录 `repository.py` 拥有数据库查询，`models.py` 拥有 Skill ORM，`builtin/` 提供随代码发布的资源。`package.py` 集中包解析、快照复制和 slug 改写，`resolved.py` 描述来源。API、worker 与 Agent 直接导入实际 Owner，旧模块路径不提供兼容转发。
 
-`edit.py` 拥有修订值校验、共享行锁、文件发布与失败恢复；`projection.py` 拥有授权快照、共享行锁到用户投影锁的顺序和投影刷新；`runtime.py` 在预加载读取完成前保持共享行锁。个人来源由 `personal.py` 持有，文件访问复用 `modules/workspace/paths.py` 与 filesystem 原语。Agent 的 Input/Turn/Run、事务提交与投递顺序继续由 Agent 模块拥有；API 的文件响应继续消费 `PreparedFile` 或预览结果。
+`edit.py` 拥有读取及已公开文件/依赖 HTTP 契约的适配，`content.py` 拥有受管理 Skill 的资源锁、完整内容修订、不可变目录与数据库引用提交；文件发布和失败边界由[完整内容提交决定](./2026-10-05-skill-content-commit.md)解释，不再原地替换或恢复旧文件；`projection.py` 拥有授权快照、共享行锁到用户投影锁的顺序和投影刷新；`runtime.py` 在预加载读取完成前保持共享行锁。个人来源由 `personal.py` 持有，文件访问复用 `modules/workspace/paths.py` 与 filesystem 原语。Agent 的 Input/Turn/Run、事务提交与投递顺序继续由 Agent 模块拥有；API 的文件响应继续消费 `PreparedFile` 或预览结果。
 
 简单共享查询由调用方直接使用 `SkillRepository`，service 不提供逐方法转发。内置来源筛选由 repository 的 SQL 查询执行，保留原有排序。service 保留组合查询、安装、授权与一致性用例。
 

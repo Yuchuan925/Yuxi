@@ -21,6 +21,7 @@ for (const editMode of [false, true]) {
       const events = []
       const deps = {
         computed, reactive, ref, watch, parseMcpManifest,
+        CollapseTransition: {}, ChevronRight: {}, Plug: {},
         message: { error: (value) => errors.push(value) },
         mcpApi: {
           createMcpServer: (data) => writes.push(data),

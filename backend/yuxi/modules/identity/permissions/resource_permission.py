@@ -284,6 +284,20 @@ def resolve_agent_permission(user: Any, resource: ShareableResource) -> Resource
 def resolve_skill_permission(user: Any, resource: ShareableResource) -> ResourcePermission:
     """解析 Skill 权限。"""
 
+    if _value(resource, "bound_agent_id") is not None:
+        agent = _value(resource, "bound_agent")
+        if agent is None:
+            return ResourcePermission.NONE
+        if _value(user, "user_kind") == "end_user":
+            owner = _value(user, "owner_user")
+            if _value(user, "is_deleted", 0) or owner is None or _value(owner, "is_deleted", 0):
+                return ResourcePermission.NONE
+            if _value(agent, "visibility") != "shared":
+                return ResourcePermission.NONE
+            # 绑定资源复用 APP 的 Agent 可见性，角色上限保持实际终端用户的读取权限。
+            user = {"uid": _value(owner, "uid"), "department_id": _value(owner, "department_id"), "role": "user"}
+        return resolve_agent_permission(user, agent)
+
     if _value(resource, "source_scope") == "personal":
         if str(_value(resource, "created_by", "") or "") == str(_value(user, "uid", "") or ""):
             return ResourcePermission.MANAGE

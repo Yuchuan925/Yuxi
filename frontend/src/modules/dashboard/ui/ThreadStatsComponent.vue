@@ -272,7 +272,7 @@
               <div class="entity-cell">
                 <FallbackAvatar
                   :src="record.agent_avatar"
-                  :default-src="generatePixelAvatar(record.agent_id)"
+                  :default-src="generateAgentAvatar(record.agent_id)"
                   :name="record.agent_name || record.agent_id"
                   :seed="record.agent_id"
                   kind="agent"
@@ -365,7 +365,7 @@ import { dashboardApi } from '@/apis/dashboard_api'
 import { getColorByIndex } from '@/shared/lib/chartColors'
 import { formatNumber } from '@/modules/dashboard/model/dashboard'
 import { formatFullDateTime } from '@/shared/lib/time'
-import { generatePixelAvatar } from '@/shared/lib/pixelAvatar'
+import { generateAgentAvatar, generatePixelAvatar } from '@/shared/lib/pixelAvatar'
 import { useThemeStore } from '@/shared/model/theme'
 import FallbackAvatar from '@/shared/ui/FallbackAvatar.vue'
 import DashboardMetricCard from './DashboardMetricCard.vue'

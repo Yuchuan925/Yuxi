@@ -157,7 +157,7 @@
         <WrapText :size="14" />
       </button>
       <button
-        v-if="draftChanged"
+        v-if="draftChanged && showSaveAction"
         class="edit-floating-btn edit-floating-btn-primary"
         :disabled="saving"
         @click="requestSave"
@@ -191,6 +191,7 @@
       <template v-if="canEdit && editMode === 'edit'">
         <textarea
           v-model="draftContent"
+          @input="emit('draft-change', draftContent)"
           class="file-edit-textarea"
           :class="{ 'no-wrap': !lineWrapEnabled }"
           :disabled="saving"
@@ -233,7 +234,10 @@
         />
       </template>
       <template v-else-if="isMarkdown">
-        <MarkdownPreview :content="formatContent(file?.content)" :resource-base-url="file?.resourceBaseUrl" />
+        <MarkdownPreview
+          :content="formatContent(file?.content)"
+          :resource-base-url="file?.resourceBaseUrl"
+        />
       </template>
       <template v-else>
         <pre v-if="Array.isArray(file?.content)" class="file-content-pre">{{
@@ -348,7 +352,10 @@
               />
             </template>
             <template v-else-if="isMarkdown">
-              <MarkdownPreview :content="formatContent(file?.content)" :resource-base-url="file?.resourceBaseUrl" />
+              <MarkdownPreview
+                :content="formatContent(file?.content)"
+                :resource-base-url="file?.resourceBaseUrl"
+              />
             </template>
             <template v-else>
               <pre v-if="Array.isArray(file?.content)" class="file-content-pre">{{
@@ -407,6 +414,8 @@ const HTML_PREVIEW_SCALE_MIN = 0.6
 const HTML_PREVIEW_SCALE_MAX = 1.5
 
 const props = defineProps({
+  showSaveAction: { type: Boolean, default: true },
+  draft: { type: String, default: null },
   file: {
     type: Object,
     default: null
@@ -487,7 +496,7 @@ const props = defineProps({
   }
 })
 
-const emit = defineEmits(['close', 'download', 'save'])
+const emit = defineEmits(['close', 'download', 'save', 'draft-change'])
 
 const themeStore = useThemeStore()
 const closeTitle = computed(() =>
@@ -608,7 +617,7 @@ const buildHtmlPreviewSrcdoc = (content, scale = HTML_PREVIEW_DEFAULT_SCALE) => 
 }
 
 const syncDraftContent = () => {
-  draftContent.value = savedContent.value
+  draftContent.value = props.draft ?? savedContent.value
   editMode.value = 'preview'
 }
 
@@ -639,7 +648,9 @@ const requestSave = () => {
 }
 
 const cancelEdit = () => {
-  syncDraftContent()
+  draftContent.value = savedContent.value
+  emit('draft-change', savedContent.value)
+  editMode.value = 'preview'
 }
 
 const openFullscreenPreview = () => {
@@ -662,6 +673,13 @@ watch(
 watch([() => props.filePath, () => props.file?.content, canEdit], syncDraftContent, {
   immediate: true
 })
+
+watch(
+  () => props.draft,
+  (value) => {
+    if (value != null) draftContent.value = value
+  }
+)
 
 watch([() => props.filePath, () => props.file?.previewType, () => props.file?.content], () => {
   if (isHtmlFile.value) {

@@ -14,10 +14,10 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from yuxi.modules.extensions.skills.repository import SkillRepository
 from yuxi.modules.extensions.skills.projection import get_user_skills_root_dir, sync_user_accessible_skills
 from yuxi.modules.extensions.skills.shared import (
-    get_skills_root_dir,
     lock_accessible_shared_skills_for_runtime,
 )
 from yuxi.modules.extensions.skills.models import Skill
+from yuxi.infrastructure.runtime_settings import get_skill_data_dir
 from yuxi.modules.identity.models import User
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
@@ -58,6 +58,17 @@ async def test_shared_skill_edit_updates_file_and_index_and_rejects_stale_or_una
             json={"path": "SKILL.md", "content": original},
         )
         assert missing_revision.status_code == 422, missing_revision.text
+
+        missing_file = await test_client.put(
+            f"/api/system/skills/{slug}/file",
+            headers=admin_headers,
+            json={"path": "missing.md", "content": "unexpected", "expected_revision": revision},
+        )
+        assert missing_file.status_code == 404, missing_file.text
+        assert missing_file.json()["detail"] == "文件不存在"
+        unchanged = await test_client.get(f"/api/system/skills/{slug}/content", headers=admin_headers)
+        assert unchanged.status_code == 200, unchanged.text
+        assert unchanged.json()["data"]["files"] == {"SKILL.md": original}
 
         updated_content = original.replace("before", "after").replace("# Before", "# After")
         saved = await test_client.put(
@@ -107,7 +118,7 @@ async def test_shared_skill_edit_updates_file_and_index_and_rejects_stale_or_una
         assert root_snapshot.json()["data"]["skill"]["tool_dependencies"] == [tool_slug]
         assert root_snapshot.json()["data"]["revision"] == dependencies.json()["data"]["revision"]
 
-        source = get_skills_root_dir() / slug / "SKILL.md"
+        source = get_skill_data_dir() / dependencies.json()["data"]["skill"]["dir_path"] / "SKILL.md"
         persisted_content = source.read_text(encoding="utf-8")
         frontmatter = yaml.safe_load(persisted_content.split("---", 2)[1])
         assert frontmatter["description"] == "after"
@@ -246,3 +257,68 @@ async def test_unquoted_multiline_description_can_be_saved_through_http(test_cli
     finally:
         deleted = await test_client.delete(f"/api/system/skills/{slug}", headers=admin_headers)
         assert deleted.status_code == 200, deleted.text
+
+
+async def test_delete_cleanup_preserves_reinstalled_same_slug(test_client, admin_headers, monkeypatch):
+    """删除提交后的旧目录清理不能删除随后同 slug 安装的新包。"""
+    from yuxi.modules.extensions.skills import shared
+
+    slug = f"pytest-reinstall-{uuid.uuid4().hex[:10]}"
+    root = f"---\nname: {slug}\nslug: {slug}\ndescription: old\n---\nold"
+
+    async def install(content):
+        """通过真实 HTTP 安装指定字节，返回持久引用。"""
+        prepared = await test_client.post(
+            "/api/skills/import/prepare",
+            headers=admin_headers,
+            files={"file": ("SKILL.md", content.encode(), "text/markdown")},
+        )
+        assert prepared.status_code == 200, prepared.text
+        confirmed = await test_client.post(
+            f"/api/skills/install-drafts/{prepared.json()['data']['draft_id']}/confirm",
+            headers=admin_headers,
+            json={"slugs": [slug], "share_config": None},
+        )
+        assert confirmed.status_code == 200, confirmed.text
+        detail = await test_client.get(f"/api/system/skills/{slug}", headers=admin_headers)
+        return get_skill_data_dir() / detail.json()["data"]["dir_path"]
+
+    old = await install(root)
+    revision = (await test_client.get(f"/api/system/skills/{slug}/content", headers=admin_headers)).json()["data"][
+        "revision"
+    ]
+    ordinary_release = await test_client.put(
+        f"/api/system/skills/{slug}/content",
+        headers=admin_headers,
+        json={"expected_revision": revision, "changes": [], "release": True},
+    )
+    assert ordinary_release.status_code == 400, ordinary_release.text
+    assert old.joinpath("SKILL.md").read_text() == root
+    me = await test_client.get("/api/auth/me", headers=admin_headers)
+    engine = create_async_engine(os.environ["POSTGRES_URL"])
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    original_to_thread = asyncio.to_thread
+    replacement = None
+
+    async def reinstall_before_cleanup(func, *args, **kwargs):
+        """在删除提交与旧包清理之间安装新的同名内容。"""
+        nonlocal replacement
+        if func is shared.shutil.rmtree and args and args[0] == old:
+            replacement = await install(root.replace("old", "new"))
+        return await original_to_thread(func, *args, **kwargs)
+
+    try:
+        monkeypatch.setattr(asyncio, "to_thread", reinstall_before_cleanup)
+        async with factory() as db:
+            operator = await db.scalar(select(User).where(User.uid == me.json()["uid"]))
+            await shared.delete_skill(db, slug=slug, operator=operator)
+        assert replacement is not None and replacement != old
+        assert not old.exists()
+        assert replacement.joinpath("SKILL.md").read_text() == root.replace("old", "new")
+        read = await test_client.get(f"/api/system/skills/{slug}/content", headers=admin_headers)
+        assert read.status_code == 200, read.text
+        assert read.json()["data"]["files"]["SKILL.md"] == root.replace("old", "new")
+    finally:
+        monkeypatch.setattr(asyncio, "to_thread", original_to_thread)
+        await test_client.delete(f"/api/system/skills/{slug}", headers=admin_headers)
+        await engine.dispose()

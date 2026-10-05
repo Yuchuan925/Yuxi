@@ -64,6 +64,38 @@ test('公开登录 401 保留服务端错误且不清理当前会话', async () 
   })
 })
 
+test('创建有 ZIP 使用 multipart，其余保持 JSON，均只发送一次请求', async () => {
+  await withServer(async (server) => {
+    storageValues.set('user_token', 'fixture-token')
+    const requests = []
+    globalThis.fetch = async (url, options) => {
+      requests.push({ url, options })
+      return new Response(JSON.stringify({ agent: { agent_id: 'created' } }), { headers: { 'content-type': 'application/json' } })
+    }
+    const { agentApi } = await server.ssrLoadModule('/src/apis/agent_api.js')
+    const payload = { name: 'Create', mcp_servers: [] }
+    await agentApi.createAgent(payload)
+    const file = new File(['zip'], 'guide.zip', { type: 'application/zip' })
+    await agentApi.createAgent(payload, file)
+    assert.equal(requests.length, 2)
+    assert.equal(requests[0].url, '/api/agent')
+    assert.deepEqual(JSON.parse(requests[0].options.body), payload)
+    assert.equal(requests[1].url, '/api/agent/with-skill')
+    assert.equal(requests[1].options.headers['Content-Type'], undefined)
+    assert.deepEqual(JSON.parse(requests[1].options.body.get('agent')), payload)
+    assert.equal(await requests[1].options.body.get('file').text(), 'zip')
+  })
+})
+
+test('创建业务错误显示可修正的原因，校验错误继续脱敏', async () => {
+  await withServer(async (server) => {
+    storageValues.set('user_token', 'fixture-token')
+    globalThis.fetch = async () => new Response(JSON.stringify({ detail: { code: 'agent_creation_invalid', message: '无效 ZIP 文件' } }), { status: 422, headers: { 'content-type': 'application/json' } })
+    const { agentApi } = await server.ssrLoadModule('/src/apis/agent_api.js')
+    await assert.rejects(agentApi.createAgent({ name: 'Create' }, new File(['bad'], 'bad.zip')), (error) => error.status === 422 && error.message === '无效 ZIP 文件')
+  })
+})
+
 test('登录 423 保留锁定状态、文案和剩余时间响应头', async () => {
   await withServer(async (server) => {
     globalThis.fetch = async () =>
@@ -455,5 +487,26 @@ test('服务端 5xx 文案不泄露部署命令且保留错误状态', async () 
       assert.equal(error.message.includes('docker compose'), false)
       return true
     })
+  })
+})
+
+test('Skill 详情通过实际 skillApi 对象读取隐藏的单个绑定资源', async () => {
+  await withServer(async (server) => {
+    globalThis.__apiBoundaryMessages = []
+    let requestedPath
+    globalThis.fetch = async (path) => {
+      requestedPath = path
+      return new Response(
+        JSON.stringify({ data: { slug: 'agent-bound-fixture', bound_agent_id: 1 } }),
+        {
+          status: 200,
+          headers: { 'content-type': 'application/json' }
+        }
+      )
+    }
+    const { skillApi } = await server.ssrLoadModule('/src/apis/skill_api.js')
+    const detail = await skillApi.getSkillDetail('agent-bound-fixture')
+    assert.equal(requestedPath, '/api/system/skills/agent-bound-fixture')
+    assert.equal(detail.data.bound_agent_id, 1)
   })
 })

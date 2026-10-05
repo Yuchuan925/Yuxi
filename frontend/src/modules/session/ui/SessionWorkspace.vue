@@ -850,7 +850,7 @@ import {
   CircleX as CloseCircleOutlined
 } from '@lucide/vue'
 import FileTypeIcon from '@/shared/ui/FileTypeIcon.vue'
-import { generatePixelAvatar } from '@/shared/lib/pixelAvatar'
+import { generateAgentAvatar } from '@/shared/lib/pixelAvatar'
 import AgentInputArea from '@/modules/session/ui/AgentInputArea.vue'
 import ContextUsageRing from '@/modules/session/ui/ContextUsageRing.vue'
 import ToolApprovalModeSelector from '@/modules/session/ui/ToolApprovalModeSelector.vue'
@@ -1186,7 +1186,7 @@ const getSubagentIconSrc = (run) => {
 }
 
 const getSubagentDefaultIconSrc = (run) =>
-  run?.subagent_slug ? generatePixelAvatar(run.subagent_slug) : ''
+  run?.subagent_slug ? generateAgentAvatar(run.subagent_slug) : ''
 
 const normalizePanelPath = (path) => String(path || '').replace(/\/+$/, '')
 
@@ -3606,7 +3606,7 @@ const buildExportPayload = () => {
   const agentId = currentAgentId.value
   let agentDescription = ''
   if (agentId && agents.value && agents.value.length > 0) {
-    const agent = agents.value.find((a) => a.id === agentId)
+    const agent = agents.value.find((a) => a.agent_id === agentId)
     agentDescription = agent ? agent.description || '' : ''
   }
 

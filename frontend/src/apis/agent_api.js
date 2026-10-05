@@ -23,7 +23,20 @@ export const agentApi = {
     return apiGet(query ? `/api/agent?${query}` : '/api/agent')
   },
 
+  getAgentBoundSkill: (slug) => apiGet(`/api/agent/${encodeURIComponent(slug)}/self-skill`),
+
+  createAgentBoundSkill: (slug) => apiPost(`/api/agent/${encodeURIComponent(slug)}/self-skill`),
+
+  uploadAgentBoundSkill: (slug, file, revision) => {
+    const body = new FormData()
+    body.append('file', file)
+    if (revision) body.append('expected_revision', revision)
+    return apiPost(`/api/agent/${encodeURIComponent(slug)}/self-skill/upload`, body)
+  },
+
   getAgentBackends: () => apiGet('/api/agent/backends'),
+
+  getAgentBackendDetail: (backendId) => apiGet(`/api/agent/backends/${encodeURIComponent(backendId)}`),
 
   /**
    * 获取单个智能体详情
@@ -63,11 +76,16 @@ export const agentApi = {
    */
   compressThreadContext: (threadId) => apiPost(`/api/v1/agents/threads/${threadId}/compress`, {}),
 
-  createAgent: (payload) => apiPost('/api/agent', payload),
+  createAgent: (payload, skillFile = null) => {
+    if (!skillFile) return apiPost('/api/agent', payload)
+    const body = new FormData()
+    body.append('agent', JSON.stringify(payload))
+    body.append('file', skillFile)
+    return apiPost('/api/agent/with-skill', body)
+  },
 
   updateAgent: (agentId, payload) => apiPut(`/api/agent/${agentId}`, payload),
 
-  publishAgent: (agentId, shareConfig) => apiPost(`/api/agent/${agentId}/publish`, { share_config: shareConfig }),
 
   deleteAgent: (agentId) => apiDelete(`/api/agent/${agentId}`),
 

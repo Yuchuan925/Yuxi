@@ -1,3 +1,11 @@
+/** 合并后端声明的字段展示覆盖，创建和编辑使用同一描述。 */
+export const normalizeAgentConfigurableItems = (items = {}) => Object.fromEntries(
+  Object.entries(items).map(([key, item]) => {
+    const { x_oap_ui_config: ui, ...schema } = item
+    return [key, { ...schema, ...ui }]
+  })
+)
+
 /** 将智能体后端描述转换为下拉选项，并以 backend_id 作为名称兜底。 */
 export const normalizeAgentBackendOption = (backend) => ({
   can_create: backend.can_create,

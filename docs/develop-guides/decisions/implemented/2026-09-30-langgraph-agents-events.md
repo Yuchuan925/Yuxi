@@ -16,7 +16,7 @@ Runtime 保留 LangGraph v3 ProtocolEvent，checkpoint 通过执行结果返回�
 
 子任务通过持久 Input、Receipt 和 FIFO 调度创建自己的 Thread、Turn、Run。自身 Turn 拥有结果、等待点和恢复，runtime 使用自身 Thread，父子共享 Project Workdir。父取消按委派关系递归取消相应子 Turn；父完成或失败不取消子任务。Thread 授权与本轮委派分开：独立用户 follow-up 不继承旧创建者，仍使用已授权的子 Thread 和 Project。委派事务固化子 Thread 的实际模型和审批默认值，各 Input 冻结本次配置。
 
-Message 和 ToolCall 保存可公开 item 的稳定身份及索引，实时和历史复用公开投影。前端和 CLI 直接消费公开 item 与 Turn 事件，按 item 身份合并重放和快照。普通用户恢复可见工具过程，完整审计权限保持独立。已完成块的索引边界进入 Message 快照，重连补回漏收的 done，展示平滑不覆盖恢复后的完整值。取消快照只允许有效 lease Owner 更新已公开的 assistant message，不开放新的输出、工具或 Memory 写入。附件绑定在同一输入事务内保存于公开用户 item。
+Message 和 ToolCall 保存可公开 item 的稳定身份及索引，实时和历史复用公开投影。前端和 CLI 直接消费公开 item 与 Turn 事件，按 item 身份合并重放和快照。普通用户恢复可见工具过程，完整审计权限保持独立。已完成块的索引边界进入 Message 快照，重连补回漏收的 done，展示平滑不覆盖恢复后的完整值。取消快照只允许有效 lease Owner 更新已公开的 assistant message，不开放新的输出、工具或 Memory 写入。执行消费者等待下一事件和停在 yield 时分别通过 CancelledError 与 GeneratorExit 关闭；两条路径在同一取消分支保存正文，仍要求持久 cancel_requested 和相同 worker Owner，随后重新抛出关闭异常。附件绑定在同一输入事务内保存于公开用户 item。
 
 保留现有 HTTP 路径、单事件提交及幂等键。省略 mode 时在 Thread 锁内固定有效 mode 和目标，取消同样在事务内固定目标。仅支持新初始化的 Schema、Redis 格式和 cursor，不读取旧数据或协议。
 
@@ -34,6 +34,7 @@ Message 和 ToolCall 保存可公开 item 的稳定身份及索引，实时和�
 | 原生事件直接适配官方公开事件 | 嵌套包装、伪造工具能力或参数增量 | runtime / event adapter / transport | 官方 fixture 与协议测试 | 多内容块、Command、失败工具、无推理 | Passed |
 | 公开实时与历史 item 一致且无审计泄漏 | 刷新丢工具、done 重复、内部 prompt 外泄 | messages / public serializer | HTTP、数据库、浏览器 DOM | 过期 cursor、迟到 delta、跨用户/APP | Passed |
 | 输入接收批次与取消目标在事务内固定 | 重试重新入队、并发串 Turn | inputs / turns | 真实 HTTP / PostgreSQL integration | 并发 steer、waiting/cancelling、幂等重试 | Passed |
+| 两种取消关闭路径保留已展示正文 | yield 关闭漏存正文 | execution / public_items | adapter unit、PostgreSQL integration、公开事件 E2E | 恢复旧 except 实际失败；无持久取消、错误 Owner、过期 lease 不写快照 | Passed |
 | 前端与 CLI 消费同一协议并独立恢复子任务 | 父终态关闭子流、旧协议残留 | frontend / yuxi-cli | lint、unit、build、浏览器与 CLI tests | 刷新工具、子审批、Redis 过期 | Passed |
 
 普通消息目标与模式回传的公开契约由[Thread 优先输入队列决策](2026-10-01-thread-priority-input-queue.md)接续。
@@ -59,6 +60,10 @@ Message 和 ToolCall 保存可公开 item 的稳定身份及索引，实时和�
 负向证据包含：同键并发取消必须重放原目标；错误 Owner、过期 lease、新 item 与工具不能借取消快照写入；父取消不能影响子 Thread 的无关后续 Turn；已完成正文不能因后续失败降级。正文负向测试在未修复代码上实际失败，修复后完整 unit 通过。工具 call_id、漏收 done、迟到增量与附件回执均通过实时、数据库回读或真实 DOM 验证。
 
 测试中新建供应商后等待当前模型缓存的 5 秒跨进程传播窗口，只准备模型环境；实际模型 gate、PG / HTTP 终态与产物仍为独立验收事实。没有修改模型缓存协议。外部真实模型、外部 Langfuse 导出与性能负载测试不属于本次已执行证据。
+
+### 取消关闭路径补验
+
+执行边界 adapter 单测 47 项通过，新增 chat/resume 两种关闭与 Owner 负向组合共 12 项；旧异常分支实际失败 2 项。真实 PostgreSQL 并发测试 11 项通过。专属 Skill、公开事件、生命周期与权限撤销 assembled path 共 47 项通过，包含取消后正文历史回读；本次准确命令见 PR。
 
 ## 后果
 

@@ -124,7 +124,7 @@
               </div>
             </div>
           </div>
-          <div class="install-target-section">
+          <div v-if="!props.target" class="install-target-section">
             <h3>安装位置</h3>
             <div class="install-target-options">
               <button
@@ -232,7 +232,8 @@ import { useUserStore } from '@/modules/identity/model/user'
 
 const props = defineProps({
   open: { type: Boolean, default: false },
-  flow: { type: Object, default: null }
+  flow: { type: Object, default: null },
+  target: { type: String, default: '' }
 })
 
 const emit = defineEmits(['close', 'completed'])
@@ -522,6 +523,7 @@ const applyInstallResults = (results, draftId) => {
     )
     if (!item) return
     Object.assign(item, {
+      slug: result.slug || item.slug,
       status: result.success ? 'success' : 'failed',
       error: result.error || ''
     })
@@ -589,7 +591,8 @@ const finishFlow = async () => {
   await discardDrafts()
   emit('completed', {
     success: successfulInstallCount.value,
-    failed: failedInstallItems.value.length
+    failed: failedInstallItems.value.length,
+    slugs: installItems.value.filter((item) => item.status === 'success').map((item) => item.slug)
   })
   emit('close')
 }
@@ -602,7 +605,7 @@ watch(
     drafts.value = []
     reviewItems.value = []
     installItems.value = []
-    installTarget.value = 'personal'
+    installTarget.value = props.target || 'personal'
 
     if (props.flow.kind === 'suite') {
       phase.value = 'selecting'
