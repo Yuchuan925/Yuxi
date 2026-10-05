@@ -1,6 +1,7 @@
 """受管理 Skill 的完整内容提交与不可变目录存储。"""
 
 import asyncio
+import errno
 import hashlib
 import os
 import shutil
@@ -161,6 +162,12 @@ async def commit_skill_content(
     finally:
         if not committed and not reuse:
             await asyncio.to_thread(shutil.rmtree, target, ignore_errors=True)
+            try:
+                # 只回收空的 Skill 目录，已有当前或历史内容时保留目录。
+                await asyncio.to_thread(target.parent.rmdir)
+            except OSError as exc:
+                if exc.errno not in {errno.ENOTEMPTY, errno.ENOENT}:
+                    logger.exception("Skill 失败内容的空目录清理失败: %s", target.parent)
     await prune_skill_content(db, slug)
     return result
 

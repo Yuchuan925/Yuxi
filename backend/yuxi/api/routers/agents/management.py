@@ -3,10 +3,11 @@ from __future__ import annotations
 from typing import Literal
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from yuxi.api.dependencies.auth import get_db, get_required_user, get_superadmin_user
+from yuxi.api.uploads import read_upload_with_limit
 from yuxi.modules.agents.repositories.definitions import (
     AgentRepository,
     is_builtin_agent,
@@ -19,11 +20,12 @@ from yuxi.modules.agents.runtime.agent_backends import (
     list_agent_backend_info,
 )
 from yuxi.modules.agents.runtime.context import filter_declared_config
-from yuxi.modules.agents.services.configuration import prepare_agent_config_write
 from yuxi.modules.agents.services.definitions import (
+    create_agent_definition,
     delete_agent_definition,
     update_agent_definition,
 )
+from yuxi.modules.extensions.mcp.config import RemoteMCPConfig
 from yuxi.modules.extensions.skills.bound import (
     create_agent_bound_skill,
     get_agent_bound_skill,
@@ -48,6 +50,7 @@ class AgentCreate(BaseModel):
     share_config: dict | None = None
     is_subagent: bool | None = None
     set_default: bool = False
+    mcp_servers: list[RemoteMCPConfig] = Field(default_factory=list)
 
 
 class AgentUpdate(BaseModel):
@@ -144,40 +147,47 @@ async def get_default_agent(current_user: User = Depends(get_required_user), db:
 async def create_agent(
     payload: AgentCreate, current_user: User = Depends(get_required_user), db: AsyncSession = Depends(get_db)
 ):
-    try:
-        backend = get_agent_backend(payload.backend_id)
-    except AgentBackendNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    if payload.set_default:
-        raise HTTPException(status_code=422, detail="默认智能体已固定为内置智能助手")
+    """创建定义与可选 MCP，保留 JSON 创建契约。"""
+    return await _create_agent_response(db, current_user, payload)
 
-    repo = AgentRepository(db)
+
+@agent_router.post("/with-skill")
+async def create_agent_with_skill(
+    agent: str = Form(...),
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_required_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """附带单 Skill ZIP 的创建入口，共用 JSON 模型和创建事务。"""
     try:
-        config_json, config_resource_access = await prepare_agent_config_write(
-            payload.config_json or {},
-            context_schema=backend.context_schema,
-            db=db,
-            user=current_user,
-        )
-        item = await repo.create(
-            name=payload.name,
-            slug=payload.slug,
-            backend_id=payload.backend_id,
-            description=payload.description,
-            icon=payload.icon,
-            pics=payload.pics,
-            config_json=config_json,
-            config_resource_access=config_resource_access,
-            share_config=payload.share_config,
-            is_default=payload.set_default,
-            is_subagent=payload.is_subagent,
-            created_by=str(current_user.uid),
-            creator=current_user,
-            visibility=payload.visibility,
+        payload = AgentCreate.model_validate_json(agent)
+    except ValidationError as exc:
+        raise HTTPException(status_code=422, detail="智能体创建参数无效") from exc
+    if not (file.filename or "").lower().endswith(".zip"):
+        raise HTTPException(status_code=422, detail="请上传 Skill ZIP 文件")
+    try:
+        file_bytes = await read_upload_with_limit(
+            file, max_size_bytes=10 * 1024 * 1024, too_large_message="ZIP 文件不能超过 10 MiB"
         )
     except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    return {"agent": await _serialize_agent(repo, item, current_user, include_configurable_items=True)}
+        raise HTTPException(status_code=413, detail=str(exc)) from exc
+    return await _create_agent_response(db, current_user, payload, skill_upload=(file.filename, file_bytes))
+
+
+async def _create_agent_response(db, user, payload, *, skill_upload=None):
+    """将同一创建用例的领域错误与结果映射到 HTTP。"""
+    repo = AgentRepository(db)
+    try:
+        item = await create_agent_definition(db, operator=user, skill_upload=skill_upload, **payload.model_dump())
+    except AgentBackendNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ValueError as exc:
+        # YAML parser 的后续行含文件片段；只展示失败原因，不回显内容。
+        detail = {"code": "agent_creation_invalid", "message": str(exc).splitlines()[0]}
+        raise HTTPException(status_code=422, detail=detail) from exc
+    return {"agent": await _serialize_agent(repo, item, user, include_configurable_items=True)}
 
 
 @agent_router.get("/{agent_id}")

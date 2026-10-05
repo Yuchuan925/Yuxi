@@ -63,3 +63,19 @@ def test_replay_rejects_changed_bound_root_for_prepared_run():
     assert validate_request("Bearer ci-replay-key", body) == "bound_root_snapshot_mismatch"
     body["messages"][0]["content"] = "# 图片生成技能\nBOUND_SKILL_aaaa"
     assert validate_request("Bearer ci-replay-key", body) is None
+
+
+def test_replay_requires_imported_mcp_tool_in_creation_flow():
+    """创建时导入的 MCP 必须进入真实模型工具集合。"""
+    body = {
+        "model": "deterministic-chat",
+        "stream": True,
+        "messages": [
+            {"role": "system", "content": "# 图片生成技能"},
+            {"role": "user", "content": "DETERMINISTIC_AGENT_E2E_OK DETERMINISTIC_CREATE_MCP"},
+        ],
+        "tools": [{"type": "function", "function": {"name": "present_artifacts"}}],
+    }
+    assert validate_request("Bearer ci-replay-key", body) == "creation_mcp_tool_missing"
+    body["tools"].append({"type": "function", "function": {"name": "effect_probe"}})
+    assert validate_request("Bearer ci-replay-key", body) is None

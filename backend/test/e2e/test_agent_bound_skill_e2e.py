@@ -6,6 +6,8 @@ import asyncio
 import hashlib
 import json
 import uuid
+from io import BytesIO
+from zipfile import ZipFile
 
 import asyncpg
 import httpx
@@ -17,17 +19,24 @@ from e2e_helpers import (
     iter_public_thread_events,
     postgres_dsn,
 )
-from yuxi.modules.extensions.skills.projection import get_user_skills_root_dir
-from yuxi.infrastructure.runtime_settings import get_skill_data_dir
 
+from test.e2e.test_permission_revocation_e2e import remote_tool as remote_tool_fixture
 from test.live_api_cleanup import make_test_session_title, remove_e2e_thread_storage
+from yuxi.infrastructure.runtime_settings import get_skill_data_dir
+from yuxi.modules.extensions.skills.projection import get_user_skills_root_dir
+
+remote_tool = remote_tool_fixture
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.e2e, pytest.mark.slow, pytest.mark.timeout(360)]
 
 
-@pytest.mark.parametrize("edit_during_run", [False, True])
+@pytest.mark.parametrize("edit_during_run,create_with_resources", [(False, False), (True, False), (False, True)])
 async def test_bound_skill_is_preloaded_without_explicit_selection(
-    e2e_client: httpx.AsyncClient, e2e_headers: dict[str, str], edit_during_run: bool
+    e2e_client: httpx.AsyncClient,
+    e2e_headers: dict[str, str],
+    edit_during_run: bool,
+    create_with_resources: bool,
+    remote_tool,
 ):
     """从 HTTP 编辑到 worker Run，回读实际投影与持久运行清单。"""
     slug = f"pytest-run-skill-{uuid.uuid4().hex[:8]}"
@@ -44,6 +53,7 @@ async def test_bound_skill_is_preloaded_without_explicit_selection(
     run_id = None
     turn_id = None
     provider_id = f"ci-skill-replay-{uuid.uuid4().hex[:8]}"
+    mcp_slug = f"ci-create-{uuid.uuid4().hex[:8]}" if create_with_resources else None
     try:
         provider = await e2e_client.post(
             "/api/system/model-providers",
@@ -65,37 +75,53 @@ async def test_bound_skill_is_preloaded_without_explicit_selection(
         provider_created = True
         # Worker 的模型本地缓存有 5 秒 TTL，新测试 provider 在过期后进入真实构图。
         await asyncio.sleep(6)
-        agent = await e2e_client.post(
-            "/api/agent",
-            headers=e2e_headers,
-            json={
-                "name": agent_slug,
-                "slug": agent_slug,
-                "backend_id": "ChatbotAgent",
-                "visibility": "shared",
-                "description": "专属 Skill 自动加载测试",
-                "config_json": {
-                    "context": {
-                        "model": f"{provider_id}:deterministic-chat",
-                        "system_prompt": "不要调用工具，只输出 DETERMINISTIC_AGENT_E2E_OK。",
-                        "tools": [],
-                        "knowledges": [],
-                        "mcps": [],
-                        "skills": [],
-                        "preload_skills": [],
-                        "subagents": [],
-                    }
-                },
-                "share_config": {
-                    "version": 2,
-                    "read_scope": {"access_level": "user", "department_ids": [], "user_uids": [uid]},
-                    "manage_scope": None,
-                },
+        payload = {
+            "name": agent_slug,
+            "slug": agent_slug,
+            "backend_id": "ChatbotAgent",
+            "visibility": "shared",
+            "description": "专属 Skill 自动加载测试",
+            "config_json": {
+                "context": {
+                    "model": f"{provider_id}:deterministic-chat",
+                    "system_prompt": "不要调用工具，只输出 DETERMINISTIC_AGENT_E2E_OK。",
+                    "tools": [],
+                    "knowledges": [],
+                    "mcps": [],
+                    "skills": [],
+                    "preload_skills": [],
+                    "subagents": [],
+                }
             },
-        )
+            "share_config": {
+                "version": 2,
+                "read_scope": {"access_level": "user", "department_ids": [], "user_uids": [uid]},
+                "manage_scope": None,
+            },
+        }
+        if create_with_resources:
+            payload["mcp_servers"] = [
+                {"slug": mcp_slug, "name": "Creation MCP", "transport": "streamable_http", "url": remote_tool["url"]}
+            ]
+            package = BytesIO()
+            with ZipFile(package, "w") as archive:
+                archive.writestr(
+                    "SKILL.md", "---\nslug: create-guide\nname: Guide\ndescription: creation\n---\n\n# 操作指南\n"
+                )
+                archive.writestr("references/creation.txt", "CREATION_REFERENCE")
+            agent = await e2e_client.post(
+                "/api/agent/with-skill",
+                headers=e2e_headers,
+                data={"agent": json.dumps(payload)},
+                files={"file": ("guide.zip", package.getvalue(), "application/zip")},
+            )
+        else:
+            agent = await e2e_client.post("/api/agent", headers=e2e_headers, json=payload)
         assert agent.status_code == 200, agent.text
         agent_created = True
-        bound = await e2e_client.post(f"/api/agent/{agent_slug}/self-skill", headers=e2e_headers)
+        bound = await e2e_client.request(
+            "GET" if create_with_resources else "POST", f"/api/agent/{agent_slug}/self-skill", headers=e2e_headers
+        )
         assert bound.status_code == 200, bound.text
         slug = bound.json()["skill"]["slug"]
         root = await e2e_client.get(f"/api/system/skills/{slug}/file?path=SKILL.md", headers=e2e_headers)
@@ -157,6 +183,7 @@ async def test_bound_skill_is_preloaded_without_explicit_selection(
                                     {
                                         "type": "input_text",
                                         "text": f"DETERMINISTIC_AGENT_E2E_OK DETERMINISTIC_BOUND_ROOT:{marker_token}"
+                                        + (" DETERMINISTIC_CREATE_MCP" if create_with_resources else "")
                                         + (f" DETERMINISTIC_BLOCK_BEFORE_RESPONSE:{gate}" if edit_during_run else ""),
                                     }
                                 ],
@@ -219,6 +246,13 @@ async def test_bound_skill_is_preloaded_without_explicit_selection(
             await conn.close()
         manifest = json.loads(raw_manifest) if isinstance(raw_manifest, str) else raw_manifest
         assert [item["slug"] for item in manifest["resources"]["skills"]] == [slug]
+        if create_with_resources:
+            assert manifest["resources"]["mcps"] == [mcp_slug]
+            assert (
+                get_user_skills_root_dir(uid).joinpath(slug, "references/creation.txt").read_text()
+                == "CREATION_REFERENCE"
+            )
+            assert not remote_tool["effect"].exists()
         assert (
             manifest["resources"]["skills"][0]["preload_content_hash"] == hashlib.sha256(updated.encode()).hexdigest()
         )
@@ -231,6 +265,9 @@ async def test_bound_skill_is_preloaded_without_explicit_selection(
             remove_e2e_thread_storage(thread_id)
         if agent_created:
             await delete_agent(e2e_client, e2e_headers, agent_slug)
+        if mcp_slug:
+            response = await e2e_client.delete(f"/api/system/mcp-servers/{mcp_slug}", headers=e2e_headers)
+            assert response.status_code in {200, 404}, response.text
         if provider_created:
             response = await e2e_client.delete(f"/api/system/model-providers/{provider_id}", headers=e2e_headers)
             assert response.status_code in {200, 404}, response.text

@@ -67,10 +67,6 @@ export const getPersonalSkillFile = async (slug, path) => {
   )
 }
 
-export const createSkillFile = async (slug, payload) => {
-  return apiPost(`${BASE_URL}/${encodeURIComponent(slug)}/file`, payload)
-}
-
 export const updateSkillShareConfig = async (slug, shareConfig) => {
   return apiPut(`${BASE_URL}/${encodeURIComponent(slug)}/share-config`, {
     share_config: shareConfig
@@ -132,7 +128,6 @@ export const skillApi = {
   getSkillDependencyOptions,
   getSkillFile,
   getPersonalSkillFile,
-  createSkillFile,
   updateSkillShareConfig,
   updateSkillEnabled,
   exportSkill,

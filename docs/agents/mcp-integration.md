@@ -1,6 +1,6 @@
 # 集成 MCP
 
-MCP（Model Context Protocol）让智能体调用外部服务提供的工具。管理员在“扩展 → MCP”中添加远程服务器；Agent 可直接选择服务器，Skill 也可声明激活后加载的依赖。
+MCP（Model Context Protocol）让智能体调用外部服务提供的工具。超级管理员在“扩展 → MCP”中添加远程服务器；Agent 可直接选择服务器，Skill 也可声明激活后加载的依赖。
 
 ## 支持的传输方式
 
@@ -28,7 +28,7 @@ MCP（Model Context Protocol）让智能体调用外部服务提供的工具。�
 
 ```http
 POST /api/system/mcp-servers
-Authorization: Bearer <admin-token>
+Authorization: Bearer <superadmin-token>
 Content-Type: application/json
 
 {
@@ -42,7 +42,21 @@ Content-Type: application/json
 
 需要认证的远程服务可以配置 HTTP headers、连接超时和 SSE 读取超时。凭证会随着连接请求发送，请只配置必要的 header，并把管理接口限制在可信的管理员范围。
 
-添加后先点击“测试连接”，确认能发现工具，再把服务器状态设为“已添加”。状态关闭时，服务器记录仍保留，但不会进入运行时。
+超级管理员也可在 [创建智能体](./agents-config.md#创建智能体) 时导入 `mcpServers` 清单，服务器与 Agent 一起提交。清单中 `type: "http"` 对应 `streamable_http`；展示名称、描述、标签和图标放在 `extra_data`。已有标识和内置标识不能被导入覆盖。
+
+```json
+{
+  "mcpServers": {
+    "custom-remote-mcp": {
+      "type": "http",
+      "url": "https://example.com/mcp",
+      "extra_data": { "name": "Example MCP" }
+    }
+  }
+}
+```
+
+创建智能体时导入的服务器立即启用。可以在 MCP 管理页点击“测试连接”确认工具发现结果，也可关闭服务器状态；状态关闭时记录仍保留，但不会进入运行时。
 
 ## 让智能体使用 MCP
 

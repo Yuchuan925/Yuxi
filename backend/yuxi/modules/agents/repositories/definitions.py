@@ -316,7 +316,9 @@ class AgentRepository:
         created_by: str | None = None,
         creator: User | None = None,
         visibility: Literal["private", "shared"] = "private",
+        commit: bool = True,
     ) -> Agent:
+        """校验定义并写入；联合创建由用例持有最终事务。"""
         resolved_is_subagent = resolve_agent_is_subagent(backend_id, is_subagent)
         if resolved_is_subagent and is_default:
             raise ValueError("子智能体不能设为默认智能体")
@@ -366,8 +368,11 @@ class AgentRepository:
         if visibility == "shared":
             await self.validate_shared_dependencies(agent.config_json)
         self.db.add(agent)
-        await self.db.commit()
-        await self.db.refresh(agent)
+        if commit:
+            await self.db.commit()
+            await self.db.refresh(agent)
+        else:
+            await self.db.flush()
         if is_default:
             return await self.set_default(agent=agent, updated_by=created_by)
         return agent

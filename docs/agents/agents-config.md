@@ -14,6 +14,16 @@
 
 内置 `ChatbotAgent` 用于普通对话，`SubAgentBackend` 用于被主智能体委派的任务。子智能体的配置入口与普通智能体相同。
 
+## 创建智能体
+
+在“智能体 → 新增智能体”填写名称和基本信息，可以附带单 Skill ZIP，并选择已启用的 MCP。ZIP 成为这个 Agent 的专属操作指南；省略 ZIP 时不创建空 Skill，之后可以在“专属 Skill”中添加。包限制与编辑方式见 [Skills 管理](./skills-management.md#agent-专属操作指南)。
+
+![创建智能体并附带 Skill 和 MCP](../assets/agent-create-resources.png)
+
+超级管理员可以展开“导入 MCP 清单”，粘贴标准 `mcpServers` JSON。新服务器启用后自动加入本次 Agent 的 MCP 选择，也可供其他 Agent 选择；清单格式和远程连接限制见 [MCP 集成](./mcp-integration.md#添加远程-mcp)。普通用户和管理员可以选择已有 MCP，不能通过创建入口新增服务器。
+
+点击“创建”后，Agent、导入的 MCP 与专属 Skill 在一个事务中生效。ZIP、依赖、权限或配置校验失败时不留下部分资源，表单保留输入供修正。创建响应中断或服务端结果不明确时，本次表单禁止直接重试；取消并刷新智能体列表，核对是否已经创建。
+
 ## 私有与共享定义
 
 新建主 Agent 默认 `visibility=private`。普通用户可以建设自己的私有主 Agent，管理员还可显式创建共享主 Agent。普通用户不能建设 SubAgent 定义，私有所有权仍遵循字段角色限制。详情接口返回 `can_manage`、`can_run`、`can_share` 和 `can_transfer`，界面按这些能力提供操作。

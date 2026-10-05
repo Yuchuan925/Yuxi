@@ -312,6 +312,8 @@ jobs:
         run: docker compose exec -T -e TEST_USERNAME="$E2E_USERNAME" -e TEST_PASSWORD="$E2E_PASSWORD" api uv run --no-sync --no-dev pytest test/integration/api/test_agent_bound_skill.py test/integration/api/test_agent_bound_skill_versions.py test/integration/api/test_shared_skill_edit_router.py -q
       - name: Verify exclusive Skill preload and restore through worker
         run: docker compose exec -T -e E2E_USERNAME -e E2E_PASSWORD api uv run --no-sync --no-dev pytest test/e2e/test_agent_bound_skill_e2e.py -q
+      - name: Verify atomic Agent creation with Skill and MCP
+        run: docker compose exec -T -e TEST_USERNAME="$E2E_USERNAME" -e TEST_PASSWORD="$E2E_PASSWORD" api uv run --no-sync --no-dev pytest test/integration/api/test_agent_create_resources.py -q
       - name: Verify current Schema initialization contract
         run: docker compose exec -T api uv run --no-sync --no-dev pytest test/integration/services/test_schema_migration_version.py -q
       - name: Verify fresh relations, indexes and knowledge cleanup negative controls

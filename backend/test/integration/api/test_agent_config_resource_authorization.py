@@ -232,7 +232,7 @@ async def test_delegated_manager_resource_patch_preserves_hidden_config_and_reje
             headers=manager_headers,
         )
         assert forbidden_create.status_code == 422, forbidden_create.text
-        assert "无权新增智能体资源 skills" in forbidden_create.json()["detail"]
+        assert "无权新增智能体资源 skills" in forbidden_create.json()["detail"]["message"]
         assert await conn.fetchval("SELECT count(*) FROM agents WHERE slug = $1", forbidden_agent_slug) == 0
 
         create_response = await test_client.post(

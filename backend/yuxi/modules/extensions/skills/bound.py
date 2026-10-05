@@ -11,10 +11,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from yuxi.modules.agents.models.definitions import Agent
 from yuxi.modules.agents.repositories.definitions import user_can_access_agent, user_can_manage_agent
-from yuxi.modules.extensions.skills.content import commit_skill_content
+from yuxi.modules.extensions.skills.content import commit_skill_content, content_path
 from yuxi.modules.extensions.skills.draft import prepared_uploaded_skill
 from yuxi.modules.extensions.skills.models import Skill
-from yuxi.modules.extensions.skills.package import parse_skill_dir_metadata, validated_shared_skill_parts
+from yuxi.modules.extensions.skills.package import parse_skill_dir_metadata
 from yuxi.modules.extensions.skills.projection import (
     compute_skill_directory_hash,
 )
@@ -100,7 +100,7 @@ async def lock_manageable_agent(db: AsyncSession, slug: str, operator: User) -> 
 
 async def describe_bound_skill(item: Skill, operator: User, revision: str | None = None) -> dict:
     """绑定元数据与目录字节同受 Skill 行锁保护。"""
-    path = get_skills_root_dir().parent.joinpath(*validated_shared_skill_parts(item.slug, item.dir_path))
+    path = content_path(item)
     if revision is None:
         revision = (await asyncio.to_thread(compute_skill_directory_hash, path)).hex()
     skill = item.to_dict()

@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import { message } from 'ant-design-vue'
 import {
   Bot,
+  FileArchive,
   Microscope,
   RefreshCw,
   Settings2,
@@ -13,6 +14,8 @@ import {
 } from '@lucide/vue'
 
 import { userApi } from '@/apis/user_api'
+import { mcpApi } from '@/apis/mcp_api'
+import { parseMcpManifest } from '@/modules/extensions/model/mcpManifest'
 import AgentBoundSkillPanel from '@/modules/agents/ui/AgentBoundSkillPanel.vue'
 import AgentRuntimeConfigForm from '@/modules/agents/ui/AgentRuntimeConfigForm.vue'
 import ShareConfigForm from '@/modules/agents/ui/ShareConfigForm.vue'
@@ -43,6 +46,17 @@ const editingCapabilities = ref({})
 const agentModalActiveTab = ref('basic')
 const agentIconUploading = ref(false)
 const saving = ref(false)
+const createSkillFile = ref(null)
+const createMcpSelection = ref([])
+const createMcpManifest = ref('')
+const createMcpOptions = ref([])
+const createMcpLoading = ref(false)
+const createMcpError = ref('')
+const createOutcomeUnknown = ref(false)
+const openingBlocked = computed(() => saving.value || agentIconUploading.value
+  || (showAgentModal.value && createOutcomeUnknown.value))
+// 新的打开或关闭操作使旧编辑响应失效，避免覆盖创建草稿。
+let modalOpenRevision = 0
 const agentShareConfigFormRef = ref(null)
 const shareConfigNeedsRepair = ref(false)
 const agentNameInputRef = ref(null)
@@ -237,26 +251,65 @@ const handleAgentModalAfterOpenChange = (open) => {
 }
 
 const openCreate = () => {
+  if (openingBlocked.value) return
+  modalOpenRevision += 1
   editingAgentId.value = null
   editingCapabilities.value = {}
   agentModalActiveTab.value = 'basic'
   resetAgentForm()
+  createSkillFile.value = null
+  createMcpSelection.value = []
+  createMcpManifest.value = ''
+  createOutcomeUnknown.value = false
   agentStore.resetAgentConfig()
   showAgentModal.value = true
+  loadCreateMcps()
   focusAgentNameInput()
 }
 
+/** 只提供启用配置；最终可选范围由创建事务重新解析。 */
+const loadCreateMcps = async () => {
+  createMcpLoading.value = true
+  createMcpError.value = ''
+  try {
+    const response = await mcpApi.getMcpServers()
+    createMcpOptions.value = response.data.filter((item) => item.enabled)
+      .map((item) => ({ value: item.slug, label: item.name || item.slug }))
+  } catch (error) {
+    createMcpOptions.value = []
+    createMcpError.value = error.message || 'MCP 列表加载失败'
+  } finally {
+    createMcpLoading.value = false
+  }
+}
+
+/** 文件只留在创建草稿中，随一次创建请求上传。 */
+const beforeCreateSkillUpload = (file) => {
+  if (!file.name.toLowerCase().endsWith('.zip')) {
+    message.error('请上传 Skill ZIP 文件')
+  } else if (file.size > 10 * 1024 * 1024) {
+    message.error('ZIP 文件不能超过 10 MiB')
+  } else {
+    createSkillFile.value = file
+  }
+  return false
+}
+
 const openEdit = async (agent) => {
+  if (openingBlocked.value) return
   const agentId = typeof agent === 'string' ? agent : agent?.agent_id
   if (!agentId) return
+  const revision = ++modalOpenRevision
 
   const detail = await agentStore.fetchAgentDetail(agentId, true)
+  if (revision !== modalOpenRevision || openingBlocked.value) return
   if (!detail?.can_manage) {
     message.warning('当前智能体不可编辑')
     return
   }
 
   editingCapabilities.value = detail
+  createOutcomeUnknown.value = false
   editingAgentId.value = detail.agent_id
   agentModalActiveTab.value = 'basic'
   Object.assign(agentForm, {
@@ -275,6 +328,7 @@ const openEdit = async (agent) => {
       }
     : cloneShareConfig(detail.share_config, shareConfigNeedsRepair.value) || getInitialShareConfig()
   await agentStore.selectAgent(detail.agent_id, { allowSubagent: true })
+  if (revision !== modalOpenRevision || openingBlocked.value) return
   captureProfileBaseline()
   showAgentModal.value = true
 }
@@ -287,6 +341,7 @@ const restoreChatAgentSelectionIfNeeded = async () => {
 
 const closeAgentModal = async () => {
   if (saving.value || agentIconUploading.value) return
+  modalOpenRevision += 1
   showAgentModal.value = false
   await restoreChatAgentSelectionIfNeeded()
 }
@@ -342,12 +397,15 @@ const buildAgentPayload = () => {
     payload.slug = agentForm.slug.trim() || undefined
     payload.backend_id = agentForm.backend_id
     payload.visibility = isSubAgentBackend(agentForm.backend_id) ? 'shared' : 'private'
+    payload.config_json = { context: { mcps: [...createMcpSelection.value] } }
+    if (userStore.isSuperAdmin) payload.mcp_servers = parseMcpManifest(createMcpManifest.value)
   }
 
   return payload
 }
 
 const saveAgent = async () => {
+  if (saving.value || agentIconUploading.value || createOutcomeUnknown.value) return
   if (!agentForm.name.trim()) {
     agentModalActiveTab.value = 'basic'
     message.error('请填写智能体名称')
@@ -364,6 +422,7 @@ const saveAgent = async () => {
   }
 
   saving.value = true
+  let creatingRequest = false
   try {
     const payload = buildAgentPayload()
     if (editingAgentId.value) {
@@ -376,14 +435,20 @@ const saveAgent = async () => {
       emit('saved', { mode: 'edit', agent: updated })
       message.success('智能体已保存')
     } else {
-      const created = await agentStore.createAgent(payload)
+      creatingRequest = true
+      const created = await agentStore.createAgent(payload, createSkillFile.value)
       emit('saved', { mode: 'create', agent: created })
       message.success('智能体已创建')
     }
     showAgentModal.value = false
     await restoreChatAgentSelectionIfNeeded()
   } catch (error) {
-    message.error(error.message || '保存智能体失败')
+    if (creatingRequest && (!error.status || error.status >= 500)) {
+      createOutcomeUnknown.value = true
+      message.warning('创建结果尚未确认，请取消并刷新智能体列表核对')
+    } else {
+      message.error(error.message || '保存智能体失败')
+    }
   } finally {
     saving.value = false
   }
@@ -398,7 +463,7 @@ defineExpose({
 
 <template>
   <a-modal
-    v-model:open="showAgentModal"
+    :open="showAgentModal"
     class="agent-edit-modal"
     :width="editingAgentId ? 820 : 740"
     :footer="null"
@@ -411,7 +476,7 @@ defineExpose({
         <span class="agent-modal-title">{{ agentModalTitle }}</span>
         <div class="agent-modal-actions" v-if="hasAnyUnsavedChanges || !editingAgentId">
           <a-button size="small" :disabled="saving" @click="closeAgentModal">取消</a-button>
-          <a-button size="small" type="primary" :loading="saving" @click="saveAgent">
+          <a-button size="small" type="primary" :loading="saving" :disabled="agentIconUploading || createOutcomeUnknown" @click="saveAgent">
             {{ editingAgentId ? '保存（有修改）' : '创建' }}
           </a-button>
         </div>
@@ -456,7 +521,7 @@ defineExpose({
                 <a-upload
                   :show-upload-list="false"
                   :before-upload="beforeAgentIconUpload"
-                  :disabled="agentIconUploading"
+                  :disabled="agentIconUploading || saving"
                   accept="image/*"
                 >
                   <div
@@ -541,6 +606,36 @@ defineExpose({
             </label>
           </div>
 
+          <div v-if="!editingAgentId" class="create-resources">
+            <div class="create-resource-row">
+              <label class="form-label">
+                <span>专属 Skill <small>可选</small></span>
+                <span class="create-resource-hint">导入操作指南、脚本与参考资料，创建后可继续编辑。</span>
+              </label>
+              <div class="create-skill-upload">
+                <a-upload :show-upload-list="false" :before-upload="beforeCreateSkillUpload" :disabled="saving" accept=".zip">
+                  <a-button :disabled="saving"><FileArchive :size="14" />{{ createSkillFile ? '更换 ZIP' : '选择 ZIP' }}</a-button>
+                </a-upload>
+                <span v-if="createSkillFile" class="create-skill-filename">{{ createSkillFile.name }}</span>
+                <a-button v-if="createSkillFile" type="text" size="small" :disabled="saving" @click="createSkillFile = null">移除</a-button>
+                <span v-else class="create-resource-hint">单 Skill ZIP，最多 10 MiB</span>
+              </div>
+            </div>
+            <label class="form-label">
+              <span>MCP <small>可选</small></span>
+              <a-select v-model:value="createMcpSelection" mode="multiple" :options="createMcpOptions" :loading="createMcpLoading" :disabled="saving || createMcpLoading" placeholder="选择已启用的 MCP" aria-label="创建时选择 MCP" />
+            </label>
+            <div v-if="createMcpError" class="create-resource-error" role="alert">
+              <span>{{ createMcpError }}</span><a-button size="small" type="link" @click="loadCreateMcps">重试</a-button>
+            </div>
+            <details v-if="userStore.isSuperAdmin" class="create-mcp-import">
+              <summary>导入 MCP 清单</summary>
+              <p class="create-resource-hint">粘贴 mcpServers JSON。新配置会启用并加入此智能体，也可被其他智能体选择；仅支持远程 HTTP / SSE。</p>
+              <a-textarea v-model:value="createMcpManifest" :disabled="saving" :rows="4" placeholder='{"mcpServers":{"example":{"type":"http","url":"https://example.com/mcp"}}}' aria-label="MCP 清单" />
+            </details>
+            <a-alert v-if="createOutcomeUnknown" type="warning" show-icon message="创建结果尚未确认。请取消并刷新列表核对，再决定是否重新创建。" />
+          </div>
+
           <div v-if="canEditAgentShareConfig" class="share-config-block">
             <div class="section-heading">
               <span>共享权限</span>
@@ -571,6 +666,25 @@ defineExpose({
 </template>
 
 <style lang="less" scoped>
+.create-resources {
+  display: grid;
+  gap: 16px;
+  margin-top: 24px;
+  padding-top: 20px;
+  border-top: 1px solid var(--gray-200);
+  .form-label { display: grid; gap: 8px; }
+  small { margin-left: 6px; color: var(--gray-500); font-weight: 400; }
+}
+.create-resource-row { display: grid; gap: 10px; }
+.create-resource-hint { font-size: 12px; line-height: 1.6; color: var(--gray-500); }
+.create-skill-upload { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.create-skill-filename { max-width: 250px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: var(--gray-700); }
+.create-resource-error { display: flex; align-items: center; gap: 8px; color: var(--color-error-500); font-size: 12px; }
+.create-mcp-import {
+  summary { color: var(--gray-700); cursor: pointer; font-size: 13px; }
+  p { margin: 10px 0; }
+  :deep(textarea) { font-family: monospace; font-size: 12px; }
+}
 .agent-modal-titlebar {
   display: flex;
   align-items: center;
@@ -1074,9 +1188,26 @@ defineExpose({
 }
 
 @media (max-width: 768px) {
+  .agent-icon-preview {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .agent-profile-main {
+    width: 100%;
+  }
+
+  .agent-backend-summary {
+    width: 100%;
+  }
+
   .agent-modal-content {
     grid-template-columns: 1fr;
     height: min(78vh, 680px);
+
+    &.create-mode {
+      height: min(78vh, 680px);
+    }
   }
 
   .agent-modal-nav-item {

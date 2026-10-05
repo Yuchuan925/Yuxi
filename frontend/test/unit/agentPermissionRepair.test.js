@@ -4,6 +4,7 @@ import test from 'node:test'
 import { computed, nextTick, reactive, ref } from 'vue'
 import { compileScript, parse } from 'vue/compiler-sfc'
 import { cloneShareConfig } from '../../src/modules/agents/model/shareConfig.js'
+import { parseMcpManifest } from '../../src/modules/extensions/model/mcpManifest.js'
 
 const source = readFileSync(
   new URL('../../src/modules/agents/ui/AgentEditModal.vue', import.meta.url), 'utf8'
@@ -26,19 +27,24 @@ async function setupForm(detail, isAdmin = true) {
     agentConfig: {},
     fetchAgentDetail: async () => detail,
     selectAgent: async (slug) => selections.push(slug),
-    updateAgentProfile: async (slug, payload) => writes.push({ slug, payload: JSON.parse(JSON.stringify(payload)) })
+    updateAgentProfile: async (slug, payload) => writes.push({ slug, payload: JSON.parse(JSON.stringify(payload)) }),
+    createAgent: async (payload, file) => {
+      writes.push({ payload: JSON.parse(JSON.stringify(payload)), file })
+      return { agent_id: payload.slug, can_run: true }
+    }
   })
   const deps = {
-    computed, nextTick, reactive, ref, cloneShareConfig,
+    computed, nextTick, reactive, ref, cloneShareConfig, parseMcpManifest,
+    mcpApi: { getMcpServers: async () => ({ data: [{ slug: 'ready', name: '可用', enabled: true }, { slug: 'off', enabled: false }] }) },
     useAgentStore: () => store,
     useRouter: () => ({ push: async (route) => { navigations.push(route) } }),
-    useUserStore: () => ({ isAdmin, uid: 'admin', departmentId: 1 }),
+    useUserStore: () => ({ isAdmin, isSuperAdmin: isAdmin, uid: 'admin', departmentId: 1 }),
     isBuiltinAgent: () => false,
     message: { error: (value) => errors.push(value), warning: (value) => errors.push(value), success() {} },
     userApi: {}, generateAgentAvatar: () => '',
     MAX_IMAGE_UPLOAD_SIZE_BYTES: 1024, MAX_IMAGE_UPLOAD_SIZE_MB: 1
   }
-  for (const name of ['Bot', 'Microscope', 'RefreshCw', 'Settings2', 'SlidersHorizontal', 'Upload', 'Wrench',
+  for (const name of ['Bot', 'FileArchive', 'Microscope', 'RefreshCw', 'Settings2', 'SlidersHorizontal', 'Upload', 'Wrench',
     'AgentRuntimeConfigForm', 'AgentBoundSkillPanel', 'ShareConfigForm', 'FallbackAvatar']) deps[name] = {}
   const component = new Function(...Object.keys(deps), executable)(...Object.values(deps))
   const form = component.setup({ backendOptions: [] }, { expose() {}, emit() {} })
@@ -126,3 +132,112 @@ test('编辑专属 Skill 保留未保存 Agent 配置，忙碌时不跳转，保
   assert.deepEqual(navigations, [route])
   assert.equal(form.showAgentModal.value, false)
 })
+
+test('一次创建附带 ZIP、已有 MCP 与清单，校验失败保留完整草稿', async () => {
+  const { form, writes, errors } = await setupForm({})
+  form.openCreate()
+  await form.loadCreateMcps()
+  assert.deepEqual(form.createMcpOptions.value, [{ value: 'ready', label: '可用' }])
+  const file = { name: 'guide.zip', size: 100 }
+  assert.equal(form.beforeCreateSkillUpload(file), false)
+  form.createMcpSelection.value = ['ready']
+  form.createMcpManifest.value = '{invalid'
+  await form.saveAgent()
+  assert.equal(writes.length, 0)
+  assert.equal(form.showAgentModal.value, true)
+  assert.equal(form.createSkillFile.value.name, file.name)
+  assert.equal(form.createOutcomeUnknown.value, false)
+  assert.match(errors.pop(), /有效的 JSON/)
+  form.createMcpManifest.value = '{"mcpServers":{"new":{"type":"http","url":"https://example.com/mcp"}}}'
+  await form.saveAgent()
+  assert.equal(writes.length, 1)
+  assert.equal(writes[0].file.name, 'guide.zip')
+  assert.deepEqual(writes[0].payload.config_json.context.mcps, ['ready'])
+  assert.equal(writes[0].payload.mcp_servers[0].slug, 'new')
+  assert.equal(form.showAgentModal.value, false)
+})
+
+test('等待时不重复创建，未知结果禁止在同一草稿直接重试，明确校验失败可修正', async () => {
+  const { form, store, writes } = await setupForm({ agent_id: 'existing', name: 'Existing', can_manage: true, can_run: true })
+  form.openCreate()
+  let rejectRequest
+  store.createAgent = () => {
+    writes.push('sent')
+    return new Promise((_, reject) => { rejectRequest = reject })
+  }
+  const request = form.saveAgent()
+  await form.saveAgent()
+  assert.equal(writes.length, 1)
+  rejectRequest(Object.assign(new Error('invalid'), { status: 422 }))
+  await request
+  assert.equal(form.createOutcomeUnknown.value, false)
+  assert.equal(form.showAgentModal.value, true)
+  store.createAgent = async () => { writes.push('sent'); throw new TypeError('connection lost') }
+  await form.saveAgent()
+  assert.equal(form.createOutcomeUnknown.value, true)
+  await form.saveAgent()
+  assert.equal(writes.length, 2)
+  await form.closeAgentModal()
+  await form.openEdit({ agent_id: 'existing' })
+  form.agentForm.name = 'Updated existing'
+  await form.saveAgent()
+  assert.equal(writes[2].slug, 'existing')
+  assert.equal(writes[2].payload.name, 'Updated existing')
+})
+
+test('创建 ZIP 后缀和预算在上传前拒绝，普通用户不提交导入配置', async () => {
+  const { form, errors } = await setupForm({}, false)
+  form.openCreate()
+  form.beforeCreateSkillUpload({ name: 'bad.md', size: 1 })
+  form.beforeCreateSkillUpload({ name: 'big.zip', size: 10 * 1024 * 1024 + 1 })
+  assert.equal(form.createSkillFile.value, null)
+  assert.equal(errors.length, 2)
+  form.createMcpManifest.value = 'ignored'
+  assert.equal('mcp_servers' in form.buildAgentPayload(), false)
+})
+
+for (const outcome of ['pending', 'unknown', 'invalid']) {
+  const description = { pending: '等待中的', unknown: '结果不明的', invalid: '校验失败后的' }[outcome]
+  test(`旧编辑请求不能覆盖${description}创建草稿`, async () => {
+    const detail = { agent_id: 'existing', name: 'Existing', can_manage: true, can_run: true }
+    const { form, store } = await setupForm(detail)
+    const detailReads = []
+    store.fetchAgentDetail = () => new Promise((resolve) => detailReads.push(resolve))
+    const opens = [form.openEdit('existing')]
+    form.openCreate()
+    form.agentForm.name = 'Creation draft'
+    form.agentForm.slug = 'creation-draft'
+    form.beforeCreateSkillUpload({ name: 'draft.zip', size: 100 })
+    let rejectCreation
+    store.createAgent = () => new Promise((_, reject) => { rejectCreation = reject })
+    const request = form.saveAgent()
+    try {
+      form.openCreate()
+      opens.push(form.openEdit('another'))
+      assert.equal(form.agentForm.name, 'Creation draft')
+      assert.equal(detailReads.length, 1)
+      if (outcome !== 'pending') {
+        rejectCreation(outcome === 'unknown'
+          ? new TypeError('connection lost')
+          : Object.assign(new Error('invalid'), { status: 422 }))
+        await request
+      }
+      if (outcome === 'unknown') {
+        form.openCreate()
+        opens.push(form.openEdit('another'))
+        assert.equal(detailReads.length, 1)
+      }
+      detailReads[0](detail)
+      await opens[0]
+      assert.equal(form.editingAgentId.value, null)
+      assert.equal(form.agentForm.name, 'Creation draft')
+      assert.equal(form.createSkillFile.value.name, 'draft.zip')
+      assert.equal(form.createOutcomeUnknown.value, outcome === 'unknown')
+      assert.equal(form.showAgentModal.value, true)
+    } finally {
+      for (const resolve of detailReads) resolve(detail)
+      rejectCreation(Object.assign(new Error('invalid'), { status: 422 }))
+      await Promise.allSettled([...opens, request])
+    }
+  })
+}

@@ -74,7 +74,13 @@ export const agentApi = {
    */
   compressThreadContext: (threadId) => apiPost(`/api/v1/agents/threads/${threadId}/compress`, {}),
 
-  createAgent: (payload) => apiPost('/api/agent', payload),
+  createAgent: (payload, skillFile = null) => {
+    if (!skillFile) return apiPost('/api/agent', payload)
+    const body = new FormData()
+    body.append('agent', JSON.stringify(payload))
+    body.append('file', skillFile)
+    return apiPost('/api/agent/with-skill', body)
+  },
 
   updateAgent: (agentId, payload) => apiPut(`/api/agent/${agentId}`, payload),
 

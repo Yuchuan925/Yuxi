@@ -83,6 +83,12 @@ class _RejectingCreateRepo(_ListRepo):
 def _build_app(monkeypatch, repo_cls, *, role: str = "admin") -> TestClient:
     monkeypatch.setattr(agent_router_module, "AgentRepository", repo_cls)
 
+    async def fake_create_definition(db, *, operator, skill_upload=None, mcp_servers=None, **fields):
+        """路由单测隔离创建用例；联合事务由真实 HTTP integration 验证。"""
+        return await repo_cls(db).create(**fields, created_by=operator.uid)
+
+    monkeypatch.setattr(agent_router_module, "create_agent_definition", fake_create_definition)
+
     app = FastAPI()
     app.include_router(agent_router_module.agent_router, prefix="/api")
 
@@ -196,4 +202,4 @@ def test_create_subagent_backend_rejects_mismatched_flag(monkeypatch):
     )
 
     assert response.status_code == 422
-    assert "is_subagent" in response.json()["detail"]
+    assert "is_subagent" in response.json()["detail"]["message"]
