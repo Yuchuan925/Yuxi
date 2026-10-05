@@ -1,7 +1,7 @@
 <template>
   <div
     class="extension-card-grid"
-    :style="{ gridTemplateColumns: `repeat(auto-fill, minmax(${minWidth}px, 1fr))` }"
+    :style="{ gridTemplateColumns: `repeat(auto-fill, minmax(min(100%, ${minWidth}px), 1fr))` }"
   >
     <slot />
     <div v-if="!$slots.default && items.length === 0" class="extension-card-grid-empty">

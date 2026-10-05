@@ -23,6 +23,17 @@ export const agentApi = {
     return apiGet(query ? `/api/agent?${query}` : '/api/agent')
   },
 
+  getAgentBoundSkill: (slug) => apiGet(`/api/agent/${encodeURIComponent(slug)}/self-skill`),
+
+  createAgentBoundSkill: (slug) => apiPost(`/api/agent/${encodeURIComponent(slug)}/self-skill`),
+
+  uploadAgentBoundSkill: (slug, file, revision) => {
+    const body = new FormData()
+    body.append('file', file)
+    if (revision) body.append('expected_revision', revision)
+    return apiPost(`/api/agent/${encodeURIComponent(slug)}/self-skill/upload`, body)
+  },
+
   getAgentBackends: () => apiGet('/api/agent/backends'),
 
   /**
@@ -67,7 +78,6 @@ export const agentApi = {
 
   updateAgent: (agentId, payload) => apiPut(`/api/agent/${agentId}`, payload),
 
-  publishAgent: (agentId, shareConfig) => apiPost(`/api/agent/${agentId}/publish`, { share_config: shareConfig }),
 
   deleteAgent: (agentId) => apiDelete(`/api/agent/${agentId}`),
 

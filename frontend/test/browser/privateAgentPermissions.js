@@ -26,7 +26,7 @@ async (page) => {
   try {
     const persisted = (await api(`/api/agent/${agent.slug}`)).agent
     check(persisted.visibility === 'private' && persisted.can_manage && persisted.can_run, '回读必须是自己的可管理私有 Agent')
-    check(!persisted.can_publish && !persisted.can_share && !persisted.can_transfer, '普通用户不能获得共享写能力')
+    check(!Object.hasOwn(persisted, 'can_publish') && !persisted.can_share && !persisted.can_transfer, '普通用户不能获得共享写能力')
     await modal.waitFor({state:'hidden'})
     const card = page.locator('.info-card').filter({hasText:name})
     await card.waitFor()

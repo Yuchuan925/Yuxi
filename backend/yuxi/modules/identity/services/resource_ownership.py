@@ -23,7 +23,7 @@ async def transfer_shared_resource(db, *, kind: str, resource_id: str, owner_uid
         model, key = KnowledgeBase, KnowledgeBase.kb_id
     else:
         raise ValueError("未知资源类型")
-    resource = await db.scalar(select(model).where(key == resource_id).with_for_update())
+    resource = await db.scalar(select(model).where(key == resource_id).with_for_update(of=model))
     if resource is None:
         raise LookupError("资源不存在")
     actor = await UserRepository(db).lock_active_human(actor.uid)
@@ -31,6 +31,8 @@ async def transfer_shared_resource(db, *, kind: str, resource_id: str, owner_uid
         raise PermissionError("只有系统管理员可以转移所有权")
     if kind == "agent" and (resource.visibility != "shared" or resource.is_builtin):
         raise ValueError("私有或内置 Agent 不能转移所有权")
+    if kind == "skill" and resource.bound_agent_id is not None:
+        raise ValueError("专属 Skill 的所有权跟随智能体")
     if kind == "skill" and resource.source_type == "builtin":
         raise ValueError("内置 Skill 不能转移所有权")
     owner = await db.scalar(
@@ -50,5 +52,9 @@ async def transfer_shared_resource(db, *, kind: str, resource_id: str, owner_uid
         await delete_cached_kb_config(resource_id)
     if kind == "skill":
         await commit_skill_policy_and_refresh_projections(db, resource_id)
+    elif kind == "agent":
+        from yuxi.modules.agents.services.definitions import commit_agent_definition
+
+        await commit_agent_definition(db, resource, actor)
     else:
         await db.commit()

@@ -4,10 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import fcntl
-import hashlib
 import os
 import shutil
-import stat
 import threading
 import uuid
 from contextlib import contextmanager
@@ -16,11 +14,11 @@ from pathlib import Path
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from yuxi.infrastructure.filesystem import open_directory_fd, open_regular_file_fd
 from yuxi.infrastructure.observability.logging import logger
 from yuxi.infrastructure.runtime_settings import get_skill_data_dir, get_skill_projection_dir
 from yuxi.modules.extensions.skills.models import Skill
 from yuxi.modules.extensions.skills.package import (
+    compute_skill_directory_hash,
     copy_skill_tree_no_symlinks,
     is_valid_skill_slug,
     validated_shared_skill_parts,
@@ -63,6 +61,13 @@ async def refresh_user_skill_projection_async(uid: str) -> dict[str, str]:
 
 async def commit_skill_policy_and_refresh_projections(db: AsyncSession, slug: str) -> None:
     """提交 Skill 授权变更，并同步所有已存在的 uid 投影。"""
+    uids = await invalidate_skill_projections(db, slug)
+    await db.commit()
+    await refresh_skill_projections(uids)
+
+
+async def invalidate_skill_projections(db: AsyncSession, slug: str) -> list[str]:
+    """在 owning transaction 提交前撤下已有副本，拒绝沿用旧授权。"""
     from yuxi.modules.workspace.paths import workspace_uid_dirname
 
     result = await db.execute(select(User.uid).where(User.is_deleted == 0).order_by(User.id))
@@ -75,9 +80,21 @@ async def commit_skill_policy_and_refresh_projections(db: AsyncSession, slug: st
         )
     for uid in uids:
         await asyncio.to_thread(_remove_skill_from_user_projection, uid, slug)
-    await db.commit()
+    return uids
+
+
+async def refresh_skill_projections(uids: list[str]) -> None:
+    """提交完成后用新授权重建投影；失败由调用方显式报告。"""
     for uid in uids:
         await refresh_user_skill_projection_async(uid)
+
+
+async def refresh_committed_skill_projections(uids: list[str]) -> None:
+    """提交后刷新派生投影；失败记录日志，执行准备再次读取来源。"""
+    try:
+        await refresh_skill_projections(uids)
+    except Exception:
+        logger.exception("Skill 已提交，投影刷新未完成")
 
 
 def sync_user_accessible_skills(
@@ -143,9 +160,9 @@ def get_user_skills_root_dir(uid: str) -> Path:
 
 def skill_dirs_equal(dir1: Path, dir2: Path) -> bool:
     """按 no-follow 字节与执行位比较来源和投影，非法来源显式失败。"""
-    source_hash = _compute_projection_hash(dir1)
+    source_hash = compute_skill_directory_hash(dir1)
     try:
-        return source_hash == _compute_projection_hash(dir2)
+        return source_hash == compute_skill_directory_hash(dir2)
     except OSError:
         # 缺失或被替换为链接的投影必须重建，不能沿用相同字节的链接。
         return False
@@ -193,40 +210,6 @@ def _remove_skill_projection_entry(path: Path) -> None:
         shutil.rmtree(path)
     else:
         path.unlink()
-
-
-def _compute_projection_hash(path: Path) -> bytes:
-    """通过目录 fd 读取投影比较摘要，拒绝链接和特殊文件。"""
-    hasher = hashlib.sha256()
-
-    def visit(directory_fd: int) -> None:
-        """在已打开的目录内递归比较所需的类型、执行位和字节。"""
-        for name in sorted(os.listdir(directory_fd)):
-            hasher.update(os.fsencode(name) + b"\0")
-            mode = os.stat(name, dir_fd=directory_fd, follow_symlinks=False).st_mode
-            if stat.S_ISDIR(mode):
-                child_fd = open_directory_fd(directory_fd, (name,))
-                try:
-                    hasher.update(b"directory\0")
-                    visit(child_fd)
-                    hasher.update(b"end-directory\0")
-                finally:
-                    os.close(child_fd)
-            else:
-                with open_regular_file_fd(directory_fd, (name,)) as (file_fd, file_stat):
-                    hasher.update(b"file\0" + bytes([stat.S_IMODE(file_stat.st_mode) & 0o111]))
-                    content_hash = hashlib.sha256()
-                    while chunk := os.read(file_fd, 1024 * 1024):
-                        content_hash.update(chunk)
-                    hasher.update(content_hash.digest())
-
-    absolute = Path(os.path.abspath(path))
-    directory_fd = open_directory_fd(Path(absolute.anchor), absolute.parts[1:])
-    try:
-        visit(directory_fd)
-    finally:
-        os.close(directory_fd)
-    return hasher.digest()
 
 
 def _resolve_shared_skill_dir(item: Skill) -> Path:

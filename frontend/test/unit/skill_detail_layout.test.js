@@ -59,23 +59,13 @@ test('共享权限开关的可访问名称包含当前状态', () => {
   )
 })
 
-test('保存运行依赖不会重载并覆盖同页尚未保存的范围配置', () => {
+test('完整内容与权限配置有独立保存边界，切换文件和页签保留内容草稿', () => {
   const source = readSource('../../src/modules/extensions/ui/SkillDetailView.vue')
-  const saveStart = source.indexOf('const saveDependencies = async () =>')
-  const saveDependencies = source.slice(saveStart, source.indexOf('onMounted(', saveStart))
-
-  assert.ok(saveStart >= 0)
-  assert.doesNotMatch(saveDependencies, /fetchSkillDetail\(\)/)
-})
-
-test('文件保存携带修订值并局部更新，切换文件前检查草稿', () => {
-  const source = readSource('../../src/modules/extensions/ui/SkillDetailView.vue')
-  const saveStart = source.indexOf('const saveCurrentFile = async')
-  const saveFile = source.slice(saveStart, source.indexOf('const confirmDeleteSkill', saveStart))
-
-  assert.match(saveFile, /expected_revision: fileRevision\.value/)
-  assert.doesNotMatch(saveFile, /fetchSkillDetail\(\)/)
-  assert.match(source, /confirmDiscardFileDraft\(\)/)
+  const saveStart = source.indexOf('const saveContent = async')
+  const save = source.slice(saveStart, source.indexOf('const confirmDeleteSkill', saveStart))
+  assert.match(save, /expected_revision: contentRevision\.value/)
+  assert.match(save, /collectSkillChanges/)
+  assert.doesNotMatch(save, /fetchSkillDetail\(\)/)
   assert.match(source, /onBeforeRouteLeave/)
 })
 

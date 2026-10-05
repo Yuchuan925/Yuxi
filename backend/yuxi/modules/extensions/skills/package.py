@@ -2,12 +2,20 @@
 
 from __future__ import annotations
 
+import hashlib
+import os
 import re
 import shutil
+import stat
 from pathlib import Path, PurePosixPath
 from typing import Any
 
 import yaml
+
+from yuxi.infrastructure.filesystem import open_directory_fd, open_regular_file_fd
+
+MAX_SKILL_BYTES = 50 * 1024 * 1024
+MAX_SKILL_ENTRIES = 2000
 
 SKILL_SLUG_PATTERN = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 
@@ -42,6 +50,10 @@ TEXT_FILE_EXTENSIONS = {
 }
 
 
+class SkillEditConflict(ValueError):
+    """读取后的 Skill 内容已被其他提交更新。"""
+
+
 def parse_skill_dir_metadata(source_skill_dir: Path) -> dict[str, Any]:
     """读取目录中的根文件并提取 Skill 元数据。"""
     skill_md_path = source_skill_dir / "SKILL.md"
@@ -50,6 +62,12 @@ def parse_skill_dir_metadata(source_skill_dir: Path) -> dict[str, Any]:
 
     content = skill_md_path.read_text(encoding="utf-8")
     parsed_slug, parsed_name, parsed_desc, meta = parse_skill_markdown(content)
+    for key in ("tool_dependencies", "mcp_dependencies", "skill_dependencies"):
+        value = meta.get(key, [])
+        if not isinstance(value, list) or any(not isinstance(entry, str) for entry in value):
+            raise ValueError(f"{key} 必须是字符串列表")
+        if normalize_string_list(value) != value:
+            raise ValueError(f"{key} 含重复或空值")
     return {
         "slug": parsed_slug,
         "name": parsed_name,
@@ -138,11 +156,16 @@ def validated_skill_file_parts(relative_path: str, *, error_message: str = "非�
     return parts
 
 
-def validated_shared_skill_parts(slug: str, dir_path: str) -> tuple[str, str]:
-    """确认数据库共享来源只指向自身 slug 对应的持久目录。"""
-    if not is_valid_skill_slug(slug) or dir_path != f"shared/{slug}":
+def validated_shared_skill_parts(slug: str, dir_path: str) -> tuple[str, ...]:
+    """确认索引只指向自身 Skill 的内置目录或不可变内容。"""
+    if not is_valid_skill_slug(slug):
         raise ValueError("Skill 来源目录非法")
-    return "shared", slug
+    if dir_path == f"shared/{slug}":
+        return "shared", slug
+    parts = dir_path.split("/")
+    if len(parts) == 3 and parts[:2] == ["packages", slug] and re.fullmatch(r"[0-9a-f]{32}", parts[2]):
+        return tuple(parts)
+    raise ValueError("Skill 来源目录非法")
 
 
 def split_skill_frontmatter(content: str) -> tuple[str, str]:
@@ -227,3 +250,47 @@ def _validate_skill_display_name(name: str) -> str:
     if len(name) > 128:
         raise ValueError("SKILL.md frontmatter.name 长度不能超过 128")
     return name
+
+
+def compute_skill_directory_hash(path: Path) -> bytes:
+    """通过目录 fd 读取投影比较摘要，拒绝链接和特殊文件。"""
+    hasher = hashlib.sha256()
+
+    def visit(directory_fd: int) -> None:
+        """在已打开的目录内递归比较所需的类型、执行位和字节。"""
+        for name in sorted(os.listdir(directory_fd)):
+            hasher.update(os.fsencode(name) + b"\0")
+            mode = os.stat(name, dir_fd=directory_fd, follow_symlinks=False).st_mode
+            if stat.S_ISDIR(mode):
+                child_fd = open_directory_fd(directory_fd, (name,))
+                try:
+                    hasher.update(b"directory\0")
+                    visit(child_fd)
+                    hasher.update(b"end-directory\0")
+                finally:
+                    os.close(child_fd)
+            else:
+                with open_regular_file_fd(directory_fd, (name,)) as (file_fd, file_stat):
+                    hasher.update(b"file\0" + bytes([stat.S_IMODE(file_stat.st_mode) & 0o111]))
+                    content_hash = hashlib.sha256()
+                    while chunk := os.read(file_fd, 1024 * 1024):
+                        content_hash.update(chunk)
+                    hasher.update(content_hash.digest())
+
+    absolute = Path(os.path.abspath(path))
+    directory_fd = open_directory_fd(Path(absolute.anchor), absolute.parts[1:])
+    try:
+        visit(directory_fd)
+    finally:
+        os.close(directory_fd)
+    return hasher.digest()
+
+
+def validate_content_budget(target: Path) -> None:
+    """内容预算限制在完整包边界执行，避免在线编辑绕过上传限制。"""
+    entries = list(target.rglob("*"))
+    if (
+        len(entries) > MAX_SKILL_ENTRIES
+        or sum(entry.stat().st_size for entry in entries if entry.is_file()) > MAX_SKILL_BYTES
+    ):
+        raise ValueError("Skill 内容不能超过 50 MiB 或 2000 个条目")

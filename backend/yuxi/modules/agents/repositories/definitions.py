@@ -386,6 +386,7 @@ class AgentRepository:
         updated_by: str | None = None,
         updater: User | None = None,
         fields_set: set[str] | None = None,
+        commit: bool = True,
     ) -> Agent:
         current = await self.db.scalar(
             select(Agent).where(Agent.id == agent.id).with_for_update().execution_options(populate_existing=True)
@@ -410,7 +411,7 @@ class AgentRepository:
         if is_subagent is not None and updater.role not in ADMIN_ROLES:
             raise ValueError("普通用户不能修改 SubAgent 类型")
         if share_config is not None and agent.visibility == "private":
-            raise ValueError("私有智能体不接受共享授权，请使用发布接口")
+            raise ValueError("私有智能体不接受共享授权")
         if share_config is not None and is_builtin_agent(agent):
             raise ValueError("内置定义不接受共享配置写入")
         if is_subagent and agent.visibility != "shared":
@@ -443,28 +444,11 @@ class AgentRepository:
 
         agent.updated_by = updated_by
         agent.updated_at = utc_now()
-        await self.db.commit()
-        await self.db.refresh(agent)
-        return agent
-
-    async def publish(self, *, slug: str, user: User, share_config: dict) -> Agent:
-        """在同一事务中校验依赖和授权，再单向发布自己的私有定义。"""
-        agent = await self.db.scalar(select(Agent).where(Agent.slug == slug).with_for_update())
-        if agent is None:
-            raise LookupError("智能体不存在")
-        user = await UserRepository(self.db).lock_active_human(user.uid)
-        if user is None or user.role not in ADMIN_ROLES or user.uid != agent.created_by:
-            raise PermissionError("只能由管理员发布自己的私有智能体")
-        if agent.visibility != "private" or is_builtin_agent(agent):
-            raise ValueError("只能发布私有主智能体")
-        grants = await validate_shared_grants(self.db, share_config)
-        await self.validate_shared_dependencies(agent.config_json)
-        agent.visibility = "shared"
-        agent.share_config = grants
-        agent.updated_by = user.uid
-        agent.updated_at = utc_now()
-        await self.db.commit()
-        await self.db.refresh(agent)
+        if commit:
+            await self.db.commit()
+            await self.db.refresh(agent)
+        else:
+            await self.db.flush()
         return agent
 
     async def validate_shared_dependencies(self, config_json: dict) -> None:
@@ -483,7 +467,7 @@ class AgentRepository:
         if private is not None:
             raise ValueError("共享智能体不能依赖私有 SubAgent")
 
-    async def delete(self, *, agent: Agent, user: User) -> None:
+    async def delete(self, *, agent: Agent, user: User, commit: bool = True) -> None:
         """锁定 Agent 与已有 Thread，拒绝仍由该 Agent 拥有的工作。"""
         current = await self.db.scalar(
             select(Agent).where(Agent.id == agent.id).with_for_update().execution_options(populate_existing=True)
@@ -535,7 +519,10 @@ class AgentRepository:
             raise ValueError("智能体仍有活跃执行或待处理输入")
 
         await self.db.delete(current)
-        await self.db.commit()
+        if commit:
+            await self.db.commit()
+        else:
+            await self.db.flush()
 
     async def serialize(
         self,
@@ -560,9 +547,6 @@ class AgentRepository:
         is_builtin = is_builtin_agent(agent)
         data["can_manage"] = user_can_manage_agent(user, agent)
         data["can_run"] = user_can_run_agent(user, agent)
-        data["can_publish"] = (
-            agent.visibility == "private" and user.role in ADMIN_ROLES and user.uid == agent.created_by
-        )
         data["can_share"] = agent.visibility == "shared" and data["can_manage"] and not is_builtin
         data["can_transfer"] = agent.visibility == "shared" and user.role == "superadmin" and not is_builtin
         data["effective_permission"] = permission.value

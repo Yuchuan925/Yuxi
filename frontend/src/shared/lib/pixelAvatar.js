@@ -50,3 +50,18 @@ export const getAvatarColorIndex = (seed) => {
 }
 
 export const getAvatarFallbackStyle = (seed) => AVATAR_BACKGROUND_TOKENS[getAvatarColorIndex(seed)]
+
+/** 根据 Agent 身份生成本地图形头像，不依赖外部服务。 */
+export const generateAgentAvatar = (id) => {
+  const seed = normalizeSeed(id)
+  const palette = [
+    ['#E8E5F6', '#645596'],
+    ['#DBEEF0', '#317E88'],
+    ['#F7E4DE', '#AC6350'],
+    ['#E2EAE1', '#5D7B59'],
+    ['#F2E7CF', '#96722E']
+  ]
+  const [background, foreground] = palette[getAvatarColorIndex(seed)]
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40"><rect width="40" height="40" rx="9" fill="${background}"/><g stroke="${foreground}" stroke-width="2.5" stroke-linecap="round" fill="none"><path d="M20 9v4"/><rect x="10" y="13" width="20" height="17" rx="5"/><path d="M6 20v5m28-5v5m-17 0h6"/></g><g fill="${foreground}"><circle cx="16" cy="20" r="1.7"/><circle cx="24" cy="20" r="1.7"/></g></svg>`
+  return `data:image/svg+xml,${encodeURIComponent(svg)}`
+}

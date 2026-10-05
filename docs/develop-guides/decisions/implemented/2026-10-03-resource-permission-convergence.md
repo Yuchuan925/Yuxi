@@ -1,6 +1,8 @@
 # 角色、共享资源与私有 Agent 权限收敛
 
 状态：implemented
+
+后续收敛：私有转共享已由 [Agent 配置与专属 Skill 交互收敛](./2026-10-05-agent-skill-interface.md) 移除；其余授权框架保持。
 类型：feature
 Owner：backend/yuxi/modules/identity/permissions/resource_permission.py
 

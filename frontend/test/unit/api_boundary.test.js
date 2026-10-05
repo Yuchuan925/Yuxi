@@ -457,3 +457,24 @@ test('服务端 5xx 文案不泄露部署命令且保留错误状态', async () 
     })
   })
 })
+
+test('Skill 详情通过实际 skillApi 对象读取隐藏的单个绑定资源', async () => {
+  await withServer(async (server) => {
+    globalThis.__apiBoundaryMessages = []
+    let requestedPath
+    globalThis.fetch = async (path) => {
+      requestedPath = path
+      return new Response(
+        JSON.stringify({ data: { slug: 'agent-bound-fixture', bound_agent_id: 1 } }),
+        {
+          status: 200,
+          headers: { 'content-type': 'application/json' }
+        }
+      )
+    }
+    const { skillApi } = await server.ssrLoadModule('/src/apis/skill_api.js')
+    const detail = await skillApi.getSkillDetail('agent-bound-fixture')
+    assert.equal(requestedPath, '/api/system/skills/agent-bound-fixture')
+    assert.equal(detail.data.bound_agent_id, 1)
+  })
+})

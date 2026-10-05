@@ -104,6 +104,7 @@ Yuxi 始终交付完整知识能力。API 注册知识库、图谱、评估、Da
 - 跨 repository 的身份管理用例只有一个 service 事务 Owner；Department 与 User 同一提交。API Key 由独立服务端主密钥和客户端幂等 ID 确定性派生，只保存 hash；原始创建意图使用不可变指纹校验，撤销保留 request-id tombstone，同一请求可恢复响应但不能复活已撤销凭据。
 - 前端 API 调用集中在 `frontend/src/apis`，组件不要散落拼接普通 HTTP 接口。
 - 智能体能力通过 context、middleware、toolkits、Skills、MCP 和 backends 组合；不要把知识库、沙盒或扩展逻辑硬编码进单个页面或路由。
+- 受管理 Skill 的当前完整内容由 PostgreSQL 目录引用拥有；内容更新先准备不可变包再提交引用，专属历史记录复用该包。内容保存由运行准备刷新用户投影；权限撤销在授权提交前撤下旧投影。内容读取与引用清理共同使用资源锁，当前或历史引用的目录不能清理。
 - Skill 的依赖工具只有在对应 Skill 被显式预加载或动态激活后才对模型开放；基础工具与受 Skill 门控的工具保持边界。
 - Shipping 进程始终装配知识库、图谱和评估能力；解析器等只服务实际动作的重运行时继续保持惰性加载。
 - 文件边界只使用三种跨层路径：数据库中的 Project `workdir_path`、Viewer 当前 scope 相对 `/foo`、Agent/artifact runtime 绝对 `/home/gem/user-data/...`；宿主 `Path` 由 `yuxi.modules.workspace` 持有，普通 Service/Repository 不得取得。

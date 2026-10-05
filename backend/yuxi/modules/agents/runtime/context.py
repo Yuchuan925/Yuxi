@@ -196,6 +196,8 @@ class BaseContext:
         metadata={"name": "Workdir Virtual Path", "configurable": False, "hide": True},
     )
 
+    agent_slug: str | None = field(default=None, metadata={"configurable": False, "hide": True})
+
     system_prompt: str = field(
         default="You are a helpful assistant.",
         metadata={"name": "系统提示词", "description": "用来描述智能体的角色和行为", "kind": "prompt"},

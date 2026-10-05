@@ -44,6 +44,9 @@ def validate_request(authorization: str | None, request: dict) -> str | None:
         return "expected_input_missing"
     if EXPECTED_PRELOADED_SKILL_MARKER not in serialized_messages:
         return "preloaded_skill_missing"
+    bound_roots = re.findall(r"DETERMINISTIC_BOUND_ROOT:([0-9a-f]+)", serialized_messages)
+    if bound_roots and f"BOUND_SKILL_{bound_roots[-1]}" not in serialized_messages:
+        return "bound_root_snapshot_mismatch"
     tools = request.get("tools")
     tool_names = {
         item.get("function", {}).get("name")

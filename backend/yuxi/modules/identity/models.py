@@ -71,6 +71,7 @@ class User(Base):
     role = Column(String, nullable=False, default="user")  # 角色: superadmin, admin, user
     user_kind = Column(String(16), nullable=False, default="human", server_default="human")
     owner_user_id = Column(Integer, ForeignKey("users.id", name="fk_users_owner_user_id"), nullable=True)
+    owner_user = relationship("User", remote_side=[id], lazy="selectin", join_depth=1)
     app_id = Column(String(64), nullable=True)
     end_user_id = Column(String(128), nullable=True)
     department_id = Column(Integer, ForeignKey("departments.id"), nullable=True)  # 部门ID

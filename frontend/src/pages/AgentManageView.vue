@@ -18,9 +18,7 @@ const providerPanelRef = ref(null)
 const schedulePanelRef = ref(null)
 
 const modelManageTabs = computed(() => {
-  const tabs = [
-    { key: 'agents', label: '智能体' },
-  ]
+  const tabs = [{ key: 'agents', label: '智能体' }]
   if (userStore.isAdmin) tabs.push({ key: 'providers', label: '模型供应商' })
   tabs.push({ key: 'schedules', label: '定时任务 (beta)' })
   return tabs
@@ -32,7 +30,9 @@ const activePanel = computed(() => {
   return agentPanelRef.value
 })
 
-const activeLoading = computed(() => activePanel.value?.loading || activePanel.value?.saving || false)
+const activeLoading = computed(
+  () => activePanel.value?.loading || activePanel.value?.saving || false
+)
 const activeStats = computed(() => activePanel.value?.stats || {})
 
 const normalizeTab = (tab) => {
@@ -92,7 +92,7 @@ onBeforeRouteUpdate((to) => canChangeTab(normalizeTab(to.query.tab)))
 
     <div class="agent-manage-content">
       <div v-show="activeTab === 'agents'" class="tab-panel">
-        <AgentManagePanel ref="agentPanelRef" />
+        <AgentManagePanel ref="agentPanelRef" :focus-agent="String(route.query.agent || '')" />
       </div>
       <div v-if="userStore.isAdmin && activeTab === 'providers'" class="tab-panel">
         <ModelProviderManagePanel ref="providerPanelRef" />

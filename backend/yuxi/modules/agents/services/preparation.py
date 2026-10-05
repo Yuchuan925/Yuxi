@@ -157,6 +157,7 @@ async def prepare_run_execution(
     payload = run.input_payload
     context.update(
         {
+            "agent_slug": run.agent_slug,
             "thread_id": run.thread_id,
             "uid": str(user.uid),
             "run_id": run.id,

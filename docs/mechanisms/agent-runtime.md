@@ -17,7 +17,7 @@ flowchart LR
     State --> Result["消息、事件、文件和产物"]
 ```
 
-worker 在取得 lease 并校验输入后，合并 Agent 可配置字段、Run 模型与审批模式、运行身份和 Workdir，准备一个 Context。准备期间持续续租，manifest 从准备结果派生并提交；固化失败时执行不开始。chat/resume 流和 BaseAgent 传递同一个 Context，构图只消费已准备的资源与 Skill 内容。执行流复查 Agent 可见性，后端发生变化时显式失败。
+worker 在取得 lease 并校验输入后，合并 Agent 可配置字段、Run 模型与审批模式、运行身份和 Workdir，准备一个 Context。准备期间持续续租，manifest 从准备结果派生并提交；固化失败时执行不开始。chat/resume 流和 BaseAgent 传递同一个 Context，构图只消费已准备的资源与 Skill 内容。当前 Agent 的专属 Skill 自动加入预加载，系统提示词继续生效；执行边界复查权限，保留本 Run 的专属根文本，中途新增绑定在下一 Run 加载。执行流复查 Agent 可见性，后端发生变化时显式失败。
 
 执行流要求明确的 Thread、Turn 和 Run 身份，并检查 Thread 及其 Project 属于当前用户、APP 和 Agent 作用域。缺失身份、归属不一致或资源已归档时显式失败。Thread 创建和用户消息写入由接入用例负责；流中的 init 消息用于展示已经保存的输入。
 
@@ -48,7 +48,7 @@ manifest v2 的配置摘要来自准备后的可配置字段，包含模型覆�
 
 ## 资源权限
 
-角色上限、共享范围、私有发布与治理由[资源权限机制](./resource-permissions.md)解释。模型返回和新工具执行复查最新调用者授权；账号或 Agent 失权形成失败终态，仅依赖失权则返回能力受限提示并继续可执行部分。
+角色上限、共享范围、共享范围修改与治理由[资源权限机制](./resource-permissions.md)解释。模型返回和新工具执行复查最新调用者授权；账号或 Agent 失权形成失败终态，仅依赖失权则返回能力受限提示并继续可执行部分。
 
 - Context 准备阶段将 `"all"` 展开为当前执行用户可用的资源列表，将固定列表与可用资源取交集，空列表保持为空；后续构图消费解析后的列表。字段默认值、界面操作与 API 写入规则见[智能体配置](../agents/agents-config.md)。
 - MCP 选择控制直接加载的服务器；有效 Skill 激活后仍可按需加载其 MCP 依赖。

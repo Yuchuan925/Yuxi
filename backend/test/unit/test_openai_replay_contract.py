@@ -47,3 +47,19 @@ def test_replay_rejects_unexpected_tool_result():
         "tools": [{"type": "function", "function": {"name": "present_artifacts"}}],
     }
     assert validate_request("Bearer ci-replay-key", body) == "tool_execution_result_missing"
+
+
+def test_replay_rejects_changed_bound_root_for_prepared_run():
+    """运行中根文件变化不能被确定性模型的成功响应掩盖。"""
+    body = {
+        "model": "deterministic-chat",
+        "stream": True,
+        "messages": [
+            {"role": "system", "content": "# 图片生成技能\nBOUND_SKILL_bbbb"},
+            {"role": "user", "content": "DETERMINISTIC_AGENT_E2E_OK DETERMINISTIC_BOUND_ROOT:aaaa"},
+        ],
+        "tools": [{"type": "function", "function": {"name": "present_artifacts"}}],
+    }
+    assert validate_request("Bearer ci-replay-key", body) == "bound_root_snapshot_mismatch"
+    body["messages"][0]["content"] = "# 图片生成技能\nBOUND_SKILL_aaaa"
+    assert validate_request("Bearer ci-replay-key", body) is None

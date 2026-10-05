@@ -5,17 +5,24 @@ from __future__ import annotations
 import json
 import re
 import shutil
+import stat
 import tempfile
 import time
 import uuid
 import zipfile
+from contextlib import contextmanager
 from dataclasses import dataclass
 from io import BytesIO
 from pathlib import Path, PurePosixPath
 from typing import Any
 
 from yuxi.infrastructure.runtime_settings import get_runtime_dir
-from yuxi.modules.extensions.skills.package import copy_skill_snapshot, is_valid_skill_slug
+from yuxi.modules.extensions.skills.package import (
+    MAX_SKILL_BYTES,
+    MAX_SKILL_ENTRIES,
+    copy_skill_snapshot,
+    is_valid_skill_slug,
+)
 from yuxi.modules.identity.models import User
 
 SKILL_DRAFT_TTL_SECONDS = 60 * 60
@@ -49,29 +56,43 @@ async def create_uploaded_skill_draft(
     items_dir.mkdir(parents=True, exist_ok=True)
 
     try:
-        with tempfile.TemporaryDirectory(prefix=".skill-prepare-", dir=str(draft_dir)) as temp_root:
-            extract_dir = Path(temp_root) / "extract"
-            extract_dir.mkdir(parents=True, exist_ok=True)
-            if is_zip_upload:
-                with zipfile.ZipFile(BytesIO(file_bytes), "r") as zf:
-                    _validate_zip_paths(zf)
-                    zf.extractall(extract_dir)
-                skill_md_files = list(extract_dir.rglob("SKILL.md"))
-                if len(skill_md_files) != 1:
-                    raise ValueError("ZIP 必须且只能包含一个技能（检测到一个 SKILL.md）")
-                source_skill_dir = skill_md_files[0].parent
-            else:
-                source_skill_dir = extract_dir
-                (source_skill_dir / "SKILL.md").write_bytes(file_bytes)
-
+        with prepared_uploaded_skill(filename=filename, file_bytes=file_bytes) as source_skill_dir:
             item = _stage_skill_draft_item(source_skill_dir=source_skill_dir, draft_items_dir=items_dir)
 
         return _write_skill_draft(
             draft_dir, operator=operator, source_type="upload", source=filename, items=[item], failures=[]
         )
+    except zipfile.BadZipFile as exc:
+        shutil.rmtree(draft_dir, ignore_errors=True)
+        raise ValueError("无效 ZIP 文件") from exc
     except Exception:
         shutil.rmtree(draft_dir, ignore_errors=True)
         raise
+
+
+@contextmanager
+def prepared_uploaded_skill(*, filename: str, file_bytes: bytes):
+    """在一次调用的临时目录解析上传包，供安装与专属导入共用。"""
+    if len(file_bytes) > 10 * 1024 * 1024:
+        raise ValueError("上传包不能超过 10 MiB")
+    if not filename.lower().endswith((".zip", "skill.md")):
+        raise ValueError("仅支持上传 .zip 或 SKILL.md 文件")
+    with tempfile.TemporaryDirectory(prefix="skill-upload-") as temporary:
+        root = Path(temporary)
+        if filename.lower().endswith(".zip"):
+            try:
+                with zipfile.ZipFile(BytesIO(file_bytes), "r") as archive:
+                    _validate_zip_paths(archive)
+                    archive.extractall(root)
+            except zipfile.BadZipFile as exc:
+                raise ValueError("无效 ZIP 文件") from exc
+            roots = list(root.rglob("SKILL.md"))
+            if len(roots) != 1:
+                raise ValueError("ZIP 必须且只能包含一个技能（检测到一个 SKILL.md）")
+            yield roots[0].parent
+        else:
+            (root / "SKILL.md").write_bytes(file_bytes)
+            yield root
 
 
 async def create_remote_skill_draft(
@@ -267,7 +288,14 @@ def _write_skill_draft(
 
 def _validate_zip_paths(zip_file: zipfile.ZipFile) -> None:
     """拒绝压缩包中的越界路径。"""
-    for name in zip_file.namelist():
+    entries = zip_file.infolist()
+    if len(entries) > MAX_SKILL_ENTRIES or sum(entry.file_size for entry in entries) > MAX_SKILL_BYTES:
+        raise ValueError("ZIP 展开后不能超过 50 MiB 或 2000 个条目")
+    for entry in entries:
+        name = entry.filename
+        mode = stat.S_IFMT(entry.external_attr >> 16)
+        if mode not in (0, stat.S_IFREG, stat.S_IFDIR) or "\\" in name:
+            raise ValueError(f"ZIP 包含不安全路径或特殊文件: {name}")
         pure = PurePosixPath(name)
         if pure.is_absolute():
             raise ValueError(f"ZIP 包含不安全绝对路径: {name}")

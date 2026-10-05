@@ -7,6 +7,11 @@ export const listSkills = async () => {
   return apiGet(BASE_URL)
 }
 
+export const getSkillDetail = (slug) => apiGet(`${BASE_URL}/${encodeURIComponent(slug)}`)
+export const getSkillContent = (slug) => apiGet(`${BASE_URL}/${encodeURIComponent(slug)}/content`)
+export const saveSkillContent = (slug, payload) =>
+  apiPut(`${BASE_URL}/${encodeURIComponent(slug)}/content`, payload)
+
 export const listSkillCards = async () => apiGet(USER_BASE_URL)
 
 export const prepareSkillUpload = async (file) => {
@@ -52,10 +57,6 @@ export const getSkillDependencyOptions = async (slug) => {
   return apiGet(`${BASE_URL}/dependency-options${query}`)
 }
 
-export const getSkillTree = async (slug) => {
-  return apiGet(`${BASE_URL}/${encodeURIComponent(slug)}/tree`)
-}
-
 export const getSkillFile = async (slug, path) => {
   return apiGet(`${BASE_URL}/${encodeURIComponent(slug)}/file?path=${encodeURIComponent(path)}`)
 }
@@ -68,14 +69,6 @@ export const getPersonalSkillFile = async (slug, path) => {
 
 export const createSkillFile = async (slug, payload) => {
   return apiPost(`${BASE_URL}/${encodeURIComponent(slug)}/file`, payload)
-}
-
-export const updateSkillFile = async (slug, payload) => {
-  return apiPut(`${BASE_URL}/${encodeURIComponent(slug)}/file`, payload)
-}
-
-export const updateSkillDependencies = async (slug, payload) => {
-  return apiPut(`${BASE_URL}/${encodeURIComponent(slug)}/dependencies`, payload)
 }
 
 export const updateSkillShareConfig = async (slug, shareConfig) => {
@@ -92,6 +85,21 @@ export const exportSkill = async (slug) => {
   return apiGet(`${BASE_URL}/${encodeURIComponent(slug)}/export`, {}, true, 'blob')
 }
 
+export const listSkillVersions = (slug) =>
+  apiGet(`${BASE_URL}/${encodeURIComponent(slug)}/versions`)
+
+export const releaseSkillVersion = (slug, expectedRevision) =>
+  apiPost(`${BASE_URL}/${encodeURIComponent(slug)}/versions`, { expected_revision: expectedRevision })
+
+export const restoreSkillVersion = (slug, version, expectedRevision) =>
+  apiPost(
+    `${BASE_URL}/${encodeURIComponent(slug)}/versions/${encodeURIComponent(version)}/restore`,
+    { expected_revision: expectedRevision }
+  )
+
+export const deleteSkillVersion = (slug, version) =>
+  apiDelete(`${BASE_URL}/${encodeURIComponent(slug)}/versions/${encodeURIComponent(version)}`)
+
 export const deleteSkill = async (slug) => {
   return apiDelete(`${BASE_URL}/${encodeURIComponent(slug)}`)
 }
@@ -105,6 +113,13 @@ export const deleteSkillsBatch = async (slugs) => {
 }
 
 export const skillApi = {
+  getSkillContent,
+  saveSkillContent,
+  listSkillVersions,
+  releaseSkillVersion,
+  restoreSkillVersion,
+  deleteSkillVersion,
+  getSkillDetail,
   listSkills,
   listSkillCards,
   prepareSkillUpload,
@@ -115,12 +130,9 @@ export const skillApi = {
   confirmPersonalSkillInstallDraft,
   discardSkillInstallDraft,
   getSkillDependencyOptions,
-  getSkillTree,
   getSkillFile,
   getPersonalSkillFile,
   createSkillFile,
-  updateSkillFile,
-  updateSkillDependencies,
   updateSkillShareConfig,
   updateSkillEnabled,
   exportSkill,

@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { message, Modal } from 'ant-design-vue'
 import { Plus, RefreshCw, Trash2, SquarePen, Bot, ChevronRight } from '@lucide/vue'
 import { useRouter } from 'vue-router'
@@ -12,9 +12,10 @@ import InfoCard from '@/shared/ui/InfoCard.vue'
 import FallbackAvatar from '@/shared/ui/FallbackAvatar.vue'
 import ExtensionCardGrid from '@/modules/extensions/ui/ExtensionCardGrid.vue'
 import { normalizeAgentBackendOption } from '@/modules/agents/model/agentConfigUtils'
-import { generatePixelAvatar } from '@/shared/lib/pixelAvatar'
+import { generateAgentAvatar } from '@/shared/lib/pixelAvatar'
 import { getShareConfigLabel } from '@/modules/agents/model/shareConfig'
 
+const props = defineProps({ focusAgent: { type: String, default: '' } })
 const agentStore = useAgentStore()
 const router = useRouter()
 const agentLoading = ref(false)
@@ -65,7 +66,8 @@ const agentStats = computed(() => ({
   ).length
 }))
 const canManageAgent = (agent) => !!agent?.can_manage
-const getAgentDefaultIconSrc = (agent) => (agent.agent_id ? generatePixelAvatar(agent.agent_id) : '')
+const getAgentDefaultIconSrc = (agent) =>
+  agent.agent_id ? generateAgentAvatar(agent.agent_id) : ''
 
 /** 返回智能体共享范围的简短展示文案。 */
 const getAgentShareLabel = (agent) =>
@@ -77,7 +79,9 @@ const getAgentShareLabel = (agent) =>
 const loadAgentBackends = async () => {
   try {
     const response = await agentApi.getAgentBackends()
-    agentBackendOptions.value = (response.backends || []).filter((backend) => backend.can_create).map(normalizeAgentBackendOption)
+    agentBackendOptions.value = (response.backends || [])
+      .filter((backend) => backend.can_create)
+      .map(normalizeAgentBackendOption)
   } catch (error) {
     message.error(error.message || '加载智能体后端失败')
   }
@@ -150,8 +154,16 @@ const deleteAgent = async (agent) => {
   })
 }
 
+watch(
+  () => props.focusAgent,
+  (slug) => {
+    if (slug && managedAgents.value.length) agentEditModalRef.value?.openEdit(slug)
+  }
+)
+
 onMounted(async () => {
   const results = await Promise.allSettled([loadAgentBackends(), loadAgents()])
+  if (props.focusAgent) await agentEditModalRef.value?.openEdit(props.focusAgent)
   const failedLoad = results.find((result) => result.status === 'rejected')
   if (failedLoad) {
     message.error(failedLoad.reason?.message || '加载智能体失败')

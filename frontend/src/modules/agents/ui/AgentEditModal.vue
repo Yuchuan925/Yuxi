@@ -1,5 +1,6 @@
 <script setup>
 import { computed, nextTick, reactive, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { message } from 'ant-design-vue'
 import {
   Bot,
@@ -11,15 +12,15 @@ import {
   Wrench
 } from '@lucide/vue'
 
-import { agentApi } from '@/apis/agent_api'
 import { userApi } from '@/apis/user_api'
+import AgentBoundSkillPanel from '@/modules/agents/ui/AgentBoundSkillPanel.vue'
 import AgentRuntimeConfigForm from '@/modules/agents/ui/AgentRuntimeConfigForm.vue'
 import ShareConfigForm from '@/modules/agents/ui/ShareConfigForm.vue'
 import { cloneShareConfig } from '@/modules/agents/model/shareConfig'
 import FallbackAvatar from '@/shared/ui/FallbackAvatar.vue'
 import { isBuiltinAgent, useAgentStore } from '@/modules/agents/model/agent'
 import { useUserStore } from '@/modules/identity/model/user'
-import { generatePixelAvatar } from '@/shared/lib/pixelAvatar'
+import { generateAgentAvatar } from '@/shared/lib/pixelAvatar'
 import { MAX_IMAGE_UPLOAD_SIZE_BYTES, MAX_IMAGE_UPLOAD_SIZE_MB } from '@/shared/lib/upload_limits'
 
 const props = defineProps({
@@ -30,6 +31,7 @@ const emit = defineEmits(['saved'])
 
 const userStore = useUserStore()
 const agentStore = useAgentStore()
+const router = useRouter()
 
 const DEFAULT_AGENT_BACKEND_ID = 'ChatbotAgent'
 const SUB_AGENT_BACKEND_ID = 'SubAgentBackend'
@@ -38,7 +40,6 @@ const runtimeAgentModalTabs = ['model', 'tools', 'other']
 const showAgentModal = ref(false)
 const editingAgentId = ref(null)
 const editingCapabilities = ref({})
-const publishing = ref(false)
 const agentModalActiveTab = ref('basic')
 const agentIconUploading = ref(false)
 const saving = ref(false)
@@ -71,7 +72,7 @@ const snapshotAgentForm = () => ({
 
 const snapshotShareConfig = () => {
   if (!editingAgentId.value) return null
-  if (isBuiltinAgent({ id: editingAgentId.value })) {
+  if (isBuiltinAgent({ agent_id: editingAgentId.value })) {
     return cloneShareConfig({
       version: 2,
       read_scope: { access_level: 'global', department_ids: [], user_uids: [] },
@@ -103,7 +104,7 @@ const stringifyShareConfig = (share) => {
 
 const hasProfileChanges = computed(() => {
   if (!editingAgentId.value) return false
-  if (shareConfigNeedsRepair.value || publishing.value) return true
+  if (shareConfigNeedsRepair.value) return true
   const currentForm = snapshotAgentForm()
   const baselineForm = originalAgentForm.value
   if (
@@ -133,6 +134,7 @@ const agentModalMenuItems = computed(() => {
     items.push(
       { key: 'model', label: '模型配置', icon: SlidersHorizontal },
       { key: 'tools', label: '工具配置', icon: Wrench },
+      { key: 'skill', label: '专属 Skill', icon: Microscope },
       { key: 'other', label: '其他配置', icon: Settings2 }
     )
   }
@@ -158,7 +160,7 @@ const getInitialShareConfig = () => ({
 })
 
 const normalizeShareConfigForPayload = () => {
-  if (isBuiltinAgent({ id: editingAgentId.value })) {
+  if (isBuiltinAgent({ agent_id: editingAgentId.value })) {
     return {
       version: 2,
       read_scope: { access_level: 'global', department_ids: [], user_uids: [] },
@@ -168,9 +170,9 @@ const normalizeShareConfigForPayload = () => {
   return agentShareConfig.value || getInitialShareConfig()
 }
 
-const isEditingBuiltinAgent = computed(() => isBuiltinAgent({ id: editingAgentId.value }))
+const isEditingBuiltinAgent = computed(() => isBuiltinAgent({ agent_id: editingAgentId.value }))
 const canEditAgentShareConfig = computed(() =>
-  editingCapabilities.value.can_share || publishing.value ||
+  editingCapabilities.value.can_share ||
   (!editingAgentId.value && userStore.isAdmin && isSubAgentBackend(agentForm.backend_id))
 )
 const getAgentShareAllowedLevels = () => {
@@ -181,7 +183,7 @@ const getAgentShareAllowedLevels = () => {
 
 const agentModalTitle = computed(() => (editingAgentId.value ? '编辑智能体' : '新增智能体'))
 const agentPreviewDefaultIcon = computed(() =>
-  editingAgentId.value ? generatePixelAvatar(editingAgentId.value) : ''
+  editingAgentId.value ? generateAgentAvatar(editingAgentId.value) : ''
 )
 const agentPreviewName = computed(() => agentForm.name || editingAgentId.value || '智能体')
 const selectedBackendOption = computed(() =>
@@ -237,7 +239,6 @@ const handleAgentModalAfterOpenChange = (open) => {
 const openCreate = () => {
   editingAgentId.value = null
   editingCapabilities.value = {}
-  publishing.value = false
   agentModalActiveTab.value = 'basic'
   resetAgentForm()
   agentStore.resetAgentConfig()
@@ -256,7 +257,6 @@ const openEdit = async (agent) => {
   }
 
   editingCapabilities.value = detail
-  publishing.value = false
   editingAgentId.value = detail.agent_id
   agentModalActiveTab.value = 'basic'
   Object.assign(agentForm, {
@@ -289,6 +289,17 @@ const closeAgentModal = async () => {
   if (saving.value || agentIconUploading.value) return
   showAgentModal.value = false
   await restoreChatAgentSelectionIfNeeded()
+}
+
+/** 保留未保存的 Agent 配置，由父级统一执行 Skill 编辑跳转。 */
+const navigateToSkill = async (route) => {
+  if (saving.value || agentIconUploading.value) return
+  if (hasAnyUnsavedChanges.value) {
+    message.warning('请先保存智能体配置，再编辑专属 Skill')
+    return
+  }
+  const failure = await router.push(route)
+  if (!failure) await closeAgentModal()
 }
 
 const beforeAgentIconUpload = (file) => {
@@ -324,7 +335,7 @@ const buildAgentPayload = () => {
     name: agentForm.name.trim(),
     description: agentForm.description.trim() || null,
     icon: agentForm.icon.trim() || null,
-    ...(canEditAgentShareConfig.value && !publishing.value ? { share_config: normalizeShareConfigForPayload() } : {})
+    ...(canEditAgentShareConfig.value ? { share_config: normalizeShareConfigForPayload() } : {})
   }
 
   if (!editingAgentId.value) {
@@ -360,12 +371,9 @@ const saveAgent = async () => {
         payload.config_json = { context: agentStore.changedAgentConfig }
       }
       const updated = await agentStore.updateAgentProfile(editingAgentId.value, payload)
-      const finalAgent = publishing.value
-        ? (await agentApi.publishAgent(editingAgentId.value, normalizeShareConfigForPayload())).agent
-        : updated
       shareConfigNeedsRepair.value = false
       captureProfileBaseline()
-      emit('saved', { mode: 'edit', agent: finalAgent })
+      emit('saved', { mode: 'edit', agent: updated })
       message.success('智能体已保存')
     } else {
       const created = await agentStore.createAgent(payload)
@@ -533,10 +541,6 @@ defineExpose({
             </label>
           </div>
 
-          <a-checkbox v-if="editingCapabilities.can_publish" v-model:checked="publishing">
-            发布为共享智能体（发布后无法改回私有）
-          </a-checkbox>
-          <a-alert v-if="publishing" type="info" show-icon message="只共享定义；已有会话、文件与产物仍归原用户。" />
           <div v-if="canEditAgentShareConfig" class="share-config-block">
             <div class="section-heading">
               <span>共享权限</span>
@@ -548,6 +552,10 @@ defineExpose({
               :allowed-access-levels="getAgentShareAllowedLevels()"
             />
           </div>
+        </section>
+
+        <section v-if="editingAgentId && agentModalActiveTab === 'skill'" class="agent-modal-section">
+          <AgentBoundSkillPanel :key="editingAgentId" :agent-slug="editingAgentId" @navigate="navigateToSkill" />
         </section>
 
         <section
@@ -1069,6 +1077,12 @@ defineExpose({
   .agent-modal-content {
     grid-template-columns: 1fr;
     height: min(78vh, 680px);
+  }
+
+  .agent-modal-nav-item {
+    flex: 0 0 auto;
+    width: auto;
+    white-space: nowrap;
   }
 
   .agent-modal-sidebar {

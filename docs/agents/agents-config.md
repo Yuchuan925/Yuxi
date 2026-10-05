@@ -16,9 +16,9 @@
 
 ## 私有与共享定义
 
-新建主 Agent 默认 `visibility=private`。普通用户可以建设自己的私有主 Agent，管理员还可显式创建共享主 Agent。普通用户不能建设 SubAgent 定义，私有所有权仍遵循字段角色限制。详情接口返回 `can_manage`、`can_run`、`can_publish`、`can_share` 和 `can_transfer`，界面按这些能力提供操作。
+新建主 Agent 默认 `visibility=private`。普通用户可以建设自己的私有主 Agent，管理员还可显式创建共享主 Agent。普通用户不能建设 SubAgent 定义，私有所有权仍遵循字段角色限制。详情接口返回 `can_manage`、`can_run`、`can_share` 和 `can_transfer`，界面按这些能力提供操作。
 
-管理员发布自己的私有主 Agent 使用 `POST /api/agent/{slug}/publish`，请求体为 `{"share_config": {"version": 2, "read_scope": {"access_level": "global"}, "manage_scope": null}}`。成功后回读定义得到 `visibility=shared`，ID 与所有者不变，既有会话和产物继续隔离。更新接口拒绝直接改写状态或所有者；私有定义拒绝共享配置，发布失败保留私有状态。完整授权关系见[资源权限](../mechanisms/resource-permissions.md)。
+本阶段不提供私有 Agent 转共享。管理员可显式创建共享定义，并维护已有共享定义；更新接口拒绝直接改写 visibility 或所有者，私有定义拒绝共享配置。完整授权关系见[资源权限](../mechanisms/resource-permissions.md)。
 
 ## 配置页面从哪里来
 

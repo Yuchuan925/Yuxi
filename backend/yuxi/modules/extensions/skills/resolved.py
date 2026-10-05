@@ -24,6 +24,8 @@ class ResolvedSkill:
     tool_dependencies: list[str]
     mcp_dependencies: list[str]
     skill_dependencies: list[str]
+    bound_agent_id: int | None = None
+    bound_agent: Any = None
     version: str | None = None
     content_hash: str | None = None
     overrides_shared: bool = False
@@ -33,6 +35,7 @@ class ResolvedSkill:
         """返回可安全提供给前端的 Skill 元数据。"""
         data = {
             "id": self.id,
+            "bound_agent_id": self.bound_agent_id,
             "slug": self.slug,
             "name": self.name,
             "description": self.description,

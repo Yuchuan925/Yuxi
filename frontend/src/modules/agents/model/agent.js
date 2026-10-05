@@ -64,7 +64,7 @@ export const useAgentStore = defineStore(
     const selectedAgent = computed(() => {
       const agentId = selectedAgentId.value
       return agentId
-        ? agentDetails.value[agentId] || agents.value.find((a) => a.id === agentId) || null
+        ? agentDetails.value[agentId] || agents.value.find((a) => a.agent_id === agentId) || null
         : null
     })
 
@@ -191,7 +191,7 @@ export const useAgentStore = defineStore(
         const response = await agentApi.getAgentDetail(agentId)
         if (currentGeneration !== generation) return null
         const agent = response.agent || response
-        agentDetails.value[agent.id] = agent
+        agentDetails.value[agent.agent_id] = agent
         return agent
       } catch (err) {
         if (currentGeneration !== generation) return null
@@ -207,7 +207,7 @@ export const useAgentStore = defineStore(
     async function selectAgent(agentId, { allowSubagent = false } = {}) {
       const currentGeneration = generation
       if (!agentId) return
-      let knownAgent = agentDetails.value[agentId] || agents.value.find((a) => a.id === agentId)
+      let knownAgent = agentDetails.value[agentId] || agents.value.find((a) => a.agent_id === agentId)
       if (!knownAgent) {
         knownAgent = await fetchAgentDetail(agentId)
       }
@@ -247,13 +247,13 @@ export const useAgentStore = defineStore(
     async function createAgent(payload) {
       const response = await agentApi.createAgent(payload)
       const created = response.agent
-      if (created?.id) {
-        agentDetails.value[created.id] = created
+      if (created?.agent_id) {
+        agentDetails.value[created.agent_id] = created
         agents.value = sortAgents([
           created,
-          ...agents.value.filter((item) => item.id !== created.id)
+          ...agents.value.filter((item) => item.agent_id !== created.agent_id)
         ])
-        if (!created.is_subagent) await selectAgent(created.id)
+        if (!created.is_subagent) await selectAgent(created.agent_id)
       }
       return created
     }
@@ -261,10 +261,10 @@ export const useAgentStore = defineStore(
     async function updateAgentProfile(agentId, payload) {
       const response = await agentApi.updateAgent(agentId, payload)
       const updated = response.agent
-      agentDetails.value[updated.id] = updated
-      const index = agents.value.findIndex((item) => item.id === updated.id)
+      agentDetails.value[updated.agent_id] = updated
+      const index = agents.value.findIndex((item) => item.agent_id === updated.agent_id)
       if (index >= 0) agents.value.splice(index, 1, updated)
-      if (selectedAgentId.value === updated.id) {
+      if (selectedAgentId.value === updated.agent_id) {
         const loadedConfig = applyConfigDefaults(
           extractContext(updated),
           getConfigurableItems(updated)
@@ -277,7 +277,7 @@ export const useAgentStore = defineStore(
 
     async function deleteAgent(agentId) {
       await agentApi.deleteAgent(agentId)
-      agents.value = agents.value.filter((item) => item.id !== agentId)
+      agents.value = agents.value.filter((item) => item.agent_id !== agentId)
       delete agentDetails.value[agentId]
       if (selectedAgentId.value === agentId) {
         selectedAgentId.value = null

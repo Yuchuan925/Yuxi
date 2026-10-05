@@ -97,7 +97,7 @@ import ActionDropdown from '@/shared/ui/ActionDropdown.vue'
 import ActionTrigger from '@/shared/ui/ActionTrigger.vue'
 import FallbackAvatar from '@/shared/ui/FallbackAvatar.vue'
 import { isBuiltinAgent, useAgentStore } from '@/modules/agents/model/agent'
-import { generatePixelAvatar } from '@/shared/lib/pixelAvatar'
+import { generateAgentAvatar } from '@/shared/lib/pixelAvatar'
 import { normalizeAgentBackendOption } from '@/modules/agents/model/agentConfigUtils'
 
 const AgentEditModal = shallowRef(null)
@@ -116,7 +116,7 @@ const agentQuickSwitchOptions = computed(() =>
       label: agent.name || agent.agent_id,
       value: agent.agent_id,
       icon: agent.icon || '',
-      defaultIcon: agent.agent_id ? generatePixelAvatar(agent.agent_id) : '',
+      defaultIcon: agent.agent_id ? generateAgentAvatar(agent.agent_id) : '',
       isBuiltin: isBuiltinAgent(agent)
     }))
 )
