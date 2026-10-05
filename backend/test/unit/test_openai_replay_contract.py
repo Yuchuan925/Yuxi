@@ -47,3 +47,35 @@ def test_replay_rejects_unexpected_tool_result():
         "tools": [{"type": "function", "function": {"name": "present_artifacts"}}],
     }
     assert validate_request("Bearer ci-replay-key", body) == "tool_execution_result_missing"
+
+
+def test_replay_rejects_changed_bound_root_for_prepared_run():
+    """运行中根文件变化不能被确定性模型的成功响应掩盖。"""
+    body = {
+        "model": "deterministic-chat",
+        "stream": True,
+        "messages": [
+            {"role": "system", "content": "# 图片生成技能\nBOUND_SKILL_bbbb"},
+            {"role": "user", "content": "DETERMINISTIC_AGENT_E2E_OK DETERMINISTIC_BOUND_ROOT:aaaa"},
+        ],
+        "tools": [{"type": "function", "function": {"name": "present_artifacts"}}],
+    }
+    assert validate_request("Bearer ci-replay-key", body) == "bound_root_snapshot_mismatch"
+    body["messages"][0]["content"] = "# 图片生成技能\nBOUND_SKILL_aaaa"
+    assert validate_request("Bearer ci-replay-key", body) is None
+
+
+def test_replay_requires_imported_mcp_tool_in_creation_flow():
+    """创建时导入的 MCP 必须进入真实模型工具集合。"""
+    body = {
+        "model": "deterministic-chat",
+        "stream": True,
+        "messages": [
+            {"role": "system", "content": "# 图片生成技能"},
+            {"role": "user", "content": "DETERMINISTIC_AGENT_E2E_OK DETERMINISTIC_CREATE_MCP"},
+        ],
+        "tools": [{"type": "function", "function": {"name": "present_artifacts"}}],
+    }
+    assert validate_request("Bearer ci-replay-key", body) == "creation_mcp_tool_missing"
+    body["tools"].append({"type": "function", "function": {"name": "effect_probe"}})
+    assert validate_request("Bearer ci-replay-key", body) is None

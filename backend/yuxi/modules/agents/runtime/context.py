@@ -196,6 +196,8 @@ class BaseContext:
         metadata={"name": "Workdir Virtual Path", "configurable": False, "hide": True},
     )
 
+    agent_slug: str | None = field(default=None, metadata={"configurable": False, "hide": True})
+
     system_prompt: str = field(
         default="You are a helpful assistant.",
         metadata={"name": "系统提示词", "description": "用来描述智能体的角色和行为", "kind": "prompt"},
@@ -250,11 +252,7 @@ class BaseContext:
         metadata={
             "name": "MCP服务器",
             "options": [],
-            "description": (
-                "选择要直接添加到智能体的 MCP 服务器；默认不直接加载，Skill 激活后仍可加载其依赖。"
-                "建议使用支持 SSE 的 MCP 服务器，"
-                "如果需要使用 uvx 或 npx 运行的服务器，也请在项目外部启动 MCP 服务器，并在项目中配置 MCP 服务器。"
-            ),
+            "description": "选择智能体直接使用的 MCP 服务，默认不直接加载；Skill 的依赖在激活时加载。",
             "type": "list",
             "kind": "mcps",
         },
@@ -265,8 +263,9 @@ class BaseContext:
         metadata={
             "name": "Skills",
             "options": [],
-            "description": "选择共享和内置 Skill，默认全部；个人 Skill 始终可用，无需选择。"
-            "Skill 的本地工具和 MCP 依赖在激活后开放；预加载 Skill 从首轮开放依赖。",
+            "description": (
+                "选择共享和内置 Skill；个人 Skill 始终可用。本地工具和 MCP 依赖在激活后开放，预加载从首轮开放。"
+            ),
             "type": "list",
             "kind": "skills",
         },

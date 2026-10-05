@@ -2,11 +2,12 @@ from __future__ import annotations
 
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel, ConfigDict
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
+from pydantic import BaseModel, ConfigDict, ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from yuxi.api.dependencies.auth import get_db, get_required_user, get_superadmin_user
+from yuxi.api.uploads import read_upload_with_limit
 from yuxi.modules.agents.repositories.definitions import (
     AgentRepository,
     is_builtin_agent,
@@ -19,7 +20,17 @@ from yuxi.modules.agents.runtime.agent_backends import (
     list_agent_backend_info,
 )
 from yuxi.modules.agents.runtime.context import filter_declared_config
-from yuxi.modules.agents.services.configuration import prepare_agent_config_write
+from yuxi.modules.agents.services.definitions import (
+    create_agent_definition,
+    delete_agent_definition,
+    update_agent_definition,
+)
+from yuxi.modules.extensions.skills.bound import (
+    create_agent_bound_skill,
+    get_agent_bound_skill,
+    upload_agent_bound_skill,
+)
+from yuxi.modules.extensions.skills.package import SkillEditConflict
 from yuxi.modules.identity.models import User
 
 agent_router = APIRouter(prefix="/agent", tags=["agent"])
@@ -42,6 +53,7 @@ class AgentCreate(BaseModel):
 
 class AgentUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
+    visibility: Literal["shared"] | None = None
     name: str | None = None
     description: str | None = None
     icon: str | None = None
@@ -134,40 +146,47 @@ async def get_default_agent(current_user: User = Depends(get_required_user), db:
 async def create_agent(
     payload: AgentCreate, current_user: User = Depends(get_required_user), db: AsyncSession = Depends(get_db)
 ):
-    try:
-        backend = get_agent_backend(payload.backend_id)
-    except AgentBackendNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    if payload.set_default:
-        raise HTTPException(status_code=422, detail="默认智能体已固定为内置智能助手")
+    """创建定义与 Context，保留 JSON 创建契约。"""
+    return await _create_agent_response(db, current_user, payload)
 
-    repo = AgentRepository(db)
+
+@agent_router.post("/with-skill")
+async def create_agent_with_skill(
+    agent: str = Form(...),
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_required_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """附带单 Skill ZIP 的创建入口，共用 JSON 模型和创建事务。"""
     try:
-        config_json, config_resource_access = await prepare_agent_config_write(
-            payload.config_json or {},
-            context_schema=backend.context_schema,
-            db=db,
-            user=current_user,
-        )
-        item = await repo.create(
-            name=payload.name,
-            slug=payload.slug,
-            backend_id=payload.backend_id,
-            description=payload.description,
-            icon=payload.icon,
-            pics=payload.pics,
-            config_json=config_json,
-            config_resource_access=config_resource_access,
-            share_config=payload.share_config,
-            is_default=payload.set_default,
-            is_subagent=payload.is_subagent,
-            created_by=str(current_user.uid),
-            creator=current_user,
-            visibility=payload.visibility,
+        payload = AgentCreate.model_validate_json(agent)
+    except ValidationError as exc:
+        raise HTTPException(status_code=422, detail="智能体创建参数无效") from exc
+    if not (file.filename or "").lower().endswith(".zip"):
+        raise HTTPException(status_code=422, detail="请上传 Skill ZIP 文件")
+    try:
+        file_bytes = await read_upload_with_limit(
+            file, max_size_bytes=10 * 1024 * 1024, too_large_message="ZIP 文件不能超过 10 MiB"
         )
     except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    return {"agent": await _serialize_agent(repo, item, current_user, include_configurable_items=True)}
+        raise HTTPException(status_code=413, detail=str(exc)) from exc
+    return await _create_agent_response(db, current_user, payload, skill_upload=(file.filename, file_bytes))
+
+
+async def _create_agent_response(db, user, payload, *, skill_upload=None):
+    """将同一创建用例的领域错误与结果映射到 HTTP。"""
+    repo = AgentRepository(db)
+    try:
+        item = await create_agent_definition(db, operator=user, skill_upload=skill_upload, **payload.model_dump())
+    except AgentBackendNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ValueError as exc:
+        # YAML parser 的后续行含文件片段；只展示失败原因，不回显内容。
+        detail = {"code": "agent_creation_invalid", "message": str(exc).splitlines()[0]}
+        raise HTTPException(status_code=422, detail=detail) from exc
+    return {"agent": await _serialize_agent(repo, item, user, include_configurable_items=True)}
 
 
 @agent_router.get("/{agent_id}")
@@ -196,7 +215,8 @@ async def update_agent(
         raise HTTPException(status_code=403, detail="不能编辑非自己创建的智能体")
 
     try:
-        updated = await repo.update(
+        updated = await update_agent_definition(
+            db,
             item,
             name=payload.name,
             description=payload.description,
@@ -204,6 +224,7 @@ async def update_agent(
             pics=payload.pics,
             config_json=payload.config_json,
             share_config=payload.share_config,
+            visibility=payload.visibility,
             is_subagent=payload.is_subagent,
             updated_by=str(current_user.uid),
             updater=current_user,
@@ -232,7 +253,7 @@ async def delete_agent(
     if is_builtin_agent(item):
         raise HTTPException(status_code=409, detail="内置智能体不能删除")
     try:
-        await repo.delete(agent=item, user=current_user)
+        await delete_agent_definition(db, agent=item, user=current_user)
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except PermissionError as exc:
@@ -260,28 +281,56 @@ async def set_agent_default(
     return {"agent": await _serialize_agent(repo, updated, current_user, include_configurable_items=True)}
 
 
-class AgentPublish(BaseModel):
-    """发布时明确提交共享范围。"""
-
-    model_config = ConfigDict(extra="forbid")
-    share_config: dict
-
-
-@agent_router.post("/{agent_id}/publish")
-async def publish_agent(
-    agent_id: str,
-    payload: AgentPublish,
-    current_user: User = Depends(get_required_user),
-    db: AsyncSession = Depends(get_db),
+@agent_router.get("/{agent_id}/self-skill")
+async def get_self_skill(
+    agent_id: str, current_user: User = Depends(get_required_user), db: AsyncSession = Depends(get_db)
 ):
-    """发布自己的私有 Agent，保留身份和历史数据归属。"""
-    repo = AgentRepository(db)
+    """读取专属 Skill 与整包修订。"""
     try:
-        item = await repo.publish(slug=agent_id, user=current_user, share_config=payload.share_config)
-    except LookupError as exc:
+        return await get_agent_bound_skill(db, agent_slug=agent_id, operator=current_user)
+    except PermissionError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@agent_router.post("/{agent_id}/self-skill")
+async def create_self_skill(
+    agent_id: str, current_user: User = Depends(get_required_user), db: AsyncSession = Depends(get_db)
+):
+    """按 Agent 管理权限幂等创建操作指南。"""
+    try:
+        return await create_agent_bound_skill(db, agent_slug=agent_id, operator=current_user)
     except PermissionError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    return {"agent": await _serialize_agent(repo, item, current_user, include_configurable_items=True)}
+
+
+@agent_router.post("/{agent_id}/self-skill/upload")
+async def upload_self_skill(
+    agent_id: str,
+    file: UploadFile = File(...),
+    expected_revision: str | None = Form(None),
+    current_user: User = Depends(get_required_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """以整包修订保护 ZIP 替换，不允许静默覆盖并发修改。"""
+    if not (file.filename or "").lower().endswith(".zip"):
+        raise HTTPException(status_code=422, detail="请上传 Skill ZIP 文件")
+    file_bytes = await file.read(10 * 1024 * 1024 + 1)
+    if len(file_bytes) > 10 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="ZIP 文件不能超过 10 MiB")
+    try:
+        return await upload_agent_bound_skill(
+            db,
+            agent_slug=agent_id,
+            filename=file.filename,
+            file_bytes=file_bytes,
+            expected_revision=expected_revision,
+            operator=current_user,
+        )
+    except SkillEditConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc

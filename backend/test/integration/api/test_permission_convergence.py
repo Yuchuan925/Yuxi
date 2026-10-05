@@ -243,7 +243,8 @@ async def test_private_agent_crud_isolation_governance_and_app_default(actors):
     assert await db.fetchval("SELECT id FROM agents WHERE slug=$1", slug) is None
 
 
-async def test_user_write_guards_and_publication_are_explicit_and_atomic(actors):
+async def test_private_definition_sharing_rejects_unauthorized_or_implicit_grants(actors):
+    """发布需要管理权、管理员身份与明确授权，失败保持原始私有记录。"""
     client, db = actors["client"], actors["db"]
     user = actors["identities"]["user0"]
     agent = await create_agent(actors, user)
@@ -258,27 +259,75 @@ async def test_user_write_guards_and_publication_are_explicit_and_atomic(actors)
         response = await client.post("/api/agent", headers=user["headers"], json={"name": "forged", **payload})
         assert response.status_code == 422, response.text
     for payload in (
-        {"visibility": "shared"},
         {"share_config": SHARED},
         {"created_by": "forged"},
         {"is_subagent": True},
     ):
         response = await client.put(path, headers=user["headers"], json=payload)
         assert response.status_code == 422, response.text
-    for headers in (user["headers"], actors["root"], actors["identities"]["admin0"]["headers"]):
+    response = await client.put(path, headers=user["headers"], json={"visibility": "shared", "share_config": SHARED})
+    assert response.status_code == 403 and "仅管理员" in response.text, response.text
+    response = await client.put(
+        path, headers=actors["identities"]["admin0"]["headers"], json={"visibility": "shared", "share_config": SHARED}
+    )
+    assert response.status_code == 404, response.text
+    for payload in ({"visibility": "shared"}, {"share_config": SHARED}):
+        response = await client.put(path, headers=actors["root"], json=payload)
+        assert response.status_code == 422, response.text
+    for headers in (user["headers"], actors["root"]):
         response = await client.post(path + "/publish", headers=headers, json={"share_config": SHARED})
-        assert response.status_code == 403, response.text
+        assert response.status_code == 404, response.text
     assert await db.fetchval("SELECT visibility FROM agents WHERE slug=$1", agent["slug"]) == "private"
-    promotion = await client.put(f"/api/auth/users/{user['id']}", headers=actors["root"], json={"role": "admin"})
-    assert promotion.status_code == 200, promotion.text
-    published = await client.post(path + "/publish", headers=user["headers"], json={"share_config": SHARED})
-    assert published.status_code == 200, published.text
     row = await db.fetchrow("SELECT id, created_by, visibility FROM agents WHERE slug=$1", agent["slug"])
-    assert row["id"] == agent["id"] and row["created_by"] == user["uid"] and row["visibility"] == "shared"
-    assert (await client.put(path, headers=user["headers"], json={"visibility": "private"})).status_code == 422
-    assert (
-        await client.post(path + "/publish", headers=user["headers"], json={"share_config": SHARED})
-    ).status_code == 422
+    assert row["id"] == agent["id"] and row["created_by"] == user["uid"] and row["visibility"] == "private"
+    detail = await client.get(path, headers=user["headers"])
+    assert "can_publish" not in detail.json()["agent"]
+    assert detail.json()["agent"]["can_share"] is False
+
+
+@pytest.mark.parametrize("publisher", ["admin", "superadmin"])
+async def test_share_private_agent_preserves_identity_owner_and_config(actors, publisher):
+    """管理员共享自己的定义，系统管理员可治理共享他人的私有定义。"""
+    client, db = actors["client"], actors["db"]
+    owner = actors["identities"]["admin0" if publisher == "admin" else "user0"]
+    headers = owner["headers"] if publisher == "admin" else actors["root"]
+    agent = await create_agent(actors, owner, config_json={"context": {"system_prompt": "retain original role"}})
+    path = f"/api/agent/{agent['slug']}"
+    before = await db.fetchrow(
+        "SELECT id,slug,created_by,config_json,share_config FROM agents WHERE slug=$1", agent["slug"]
+    )
+    detail = await client.get(path, headers=headers)
+    assert detail.json()["agent"]["can_share"] is True
+    for invalid in (
+        {"visibility": "shared"},
+        {
+            "visibility": "shared",
+            "share_config": {"version": 2, "read_scope": None, "manage_scope": {"access_level": "global"}},
+        },
+    ):
+        denied = await client.put(path, headers=headers, json=invalid)
+        assert denied.status_code == 422, denied.text
+        unchanged = await db.fetchrow("SELECT visibility,share_config FROM agents WHERE slug=$1", agent["slug"])
+        assert unchanged["visibility"] == "private" and unchanged["share_config"] == before["share_config"]
+
+    shared = await client.put(path, headers=headers, json={"visibility": "shared", "share_config": SHARED})
+    assert shared.status_code == 200, shared.text
+    after = await db.fetchrow(
+        "SELECT id,slug,created_by,config_json,visibility FROM agents WHERE slug=$1", agent["slug"]
+    )
+    assert after["visibility"] == "shared"
+    assert {key: after[key] for key in before.keys() if key != "share_config"} == {
+        key: before[key] for key in before.keys() if key != "share_config"
+    }
+    assert await db.fetchval("SELECT count(*) FROM agents WHERE id=$1", before["id"]) == 1
+    reader = actors["identities"]["user1"]
+    readable = await client.get(path, headers=reader["headers"])
+    assert readable.status_code == 200, readable.text
+    assert readable.json()["agent"]["can_run"] is True
+    assert readable.json()["agent"]["can_manage"] is False
+    reverse = await client.put(path, headers=headers, json={"visibility": "private"})
+    assert reverse.status_code == 422, reverse.text
+    assert await db.fetchval("SELECT visibility FROM agents WHERE id=$1", before["id"]) == "shared"
 
 
 async def test_shared_grants_role_ceiling_and_system_configuration(actors):
@@ -416,10 +465,10 @@ async def test_each_skill_install_transaction_revalidates_live_managers(actors):
     """首项提交后管理者删除，第二项不能复用已释放锁的旧校验。"""
     import json
     import shutil
-    from pathlib import Path
     from sqlalchemy import select
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-    from yuxi.modules.extensions.skills.shared import confirm_skill_install_draft, get_skills_root_dir
+    from yuxi.modules.extensions.skills.shared import confirm_skill_install_draft
+    from yuxi.infrastructure.runtime_settings import get_skill_data_dir
     from yuxi.modules.extensions.skills.draft import get_skill_drafts_root_dir
     from yuxi.modules.identity.models import User
 
@@ -478,13 +527,13 @@ async def test_each_skill_install_transaction_revalidates_live_managers(actors):
                     "manage_scope": {"access_level": "user", "user_uids": [manager["uid"]]},
                 },
             )
-        rows = await actors["db"].fetch("SELECT slug FROM skills WHERE slug=ANY($1::varchar[])", slugs)
+        rows = await actors["db"].fetch("SELECT slug, dir_path FROM skills WHERE slug=ANY($1::varchar[])", slugs)
         assert [row["slug"] for row in rows] == [slugs[0]]
         assert results[0]["success"] is True and results[1]["success"] is False
         assert "有效管理员" in results[1]["error"]
-        root = Path(get_skills_root_dir())
-        assert slugs[0] in (root / slugs[0] / "SKILL.md").read_text()
-        assert not (root / slugs[1]).exists()
+        root = get_skill_data_dir()
+        assert slugs[0] in (root / rows[0]["dir_path"] / "SKILL.md").read_text()
+        assert not (root / "packages" / slugs[1]).exists()
         assert await actors["db"].fetchval("SELECT is_deleted FROM users WHERE id=$1", manager["id"]) == 1
     finally:
         await engine.dispose()
@@ -502,7 +551,6 @@ async def test_each_skill_install_transaction_revalidates_live_managers(actors):
         ("delete", "department"),
         ("update", "deleted"),
         ("delete", "deleted"),
-        ("publish", "deleted"),
         ("transfer", "deleted"),
         ("config", "department"),
     ],
@@ -514,7 +562,7 @@ async def test_agent_write_rechecks_actor_after_waiting_for_resource(actors, ope
     await db.execute("UPDATE users SET department_id=$1 WHERE id=$2", owner["department_id"], actor["id"])
     if operation == "transfer":
         await db.execute("UPDATE users SET role='superadmin' WHERE id=$1", actor["id"])
-    if operation in {"publish", "config"}:
+    if operation == "config":
         agent = await create_agent(actors, actor)
     else:
         agent = await create_agent(
@@ -562,8 +610,6 @@ async def test_agent_write_rechecks_actor_after_waiting_for_resource(actors, ope
             request = client.put(path, headers=actor["headers"], json={"config_json": {"context": {"skills": [skill]}}})
         elif operation == "delete":
             request = client.delete(path, headers=actor["headers"])
-        elif operation == "publish":
-            request = client.post(f"{path}/publish", headers=actor["headers"], json={"share_config": SHARED})
         else:
             request = client.put(
                 f"/api/system/resources/agent/{slug}/owner", headers=actor["headers"], json={"owner_uid": actor["uid"]}

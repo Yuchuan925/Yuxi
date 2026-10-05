@@ -164,4 +164,33 @@ function emitChange(item) {
     left: 100%;
   }
 }
+@media (max-width: 767px) {
+  .page-header {
+    height: auto;
+    flex-wrap: wrap;
+    gap: 10px;
+    padding-top: 12px;
+    padding-bottom: 12px;
+  }
+  .page-header-left {
+    flex-wrap: wrap;
+    width: 100%;
+    gap: 12px;
+  }
+  .page-header-tabs {
+    width: 100%;
+    min-width: 0;
+    margin: 0;
+    padding: 0;
+    border-left: 0;
+    height: auto;
+    overflow-x: auto;
+  }
+  .tab-item {
+    flex-shrink: 0;
+  }
+  .page-header-right {
+    flex-wrap: wrap;
+  }
+}
 </style>

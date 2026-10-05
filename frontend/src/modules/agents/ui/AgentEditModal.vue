@@ -1,25 +1,37 @@
 <script setup>
-import { computed, nextTick, reactive, ref } from 'vue'
+import { computed, nextTick, reactive, ref, watch } from 'vue'
+import { onBeforeRouteLeave, useRouter } from 'vue-router'
 import { message } from 'ant-design-vue'
 import {
+  ArrowLeft,
+  ArrowRight,
   Bot,
+  FileArchive,
   Microscope,
+  Plus,
   RefreshCw,
   Settings2,
   SlidersHorizontal,
   Upload,
-  Wrench
+  Wrench,
+  X
 } from '@lucide/vue'
 
-import { agentApi } from '@/apis/agent_api'
 import { userApi } from '@/apis/user_api'
+import { agentApi } from '@/apis/agent_api'
+import { skillApi } from '@/apis/skill_api'
+import { isAllAgentResourceSelection, normalizeAgentConfigurableItems } from '@/modules/agents/model/agentConfigUtils'
+import McpFormModal from '@/modules/extensions/ui/McpFormModal.vue'
+import SkillInstallFlowModal from '@/modules/extensions/ui/SkillInstallFlowModal.vue'
+import AgentBoundSkillPanel from '@/modules/agents/ui/AgentBoundSkillPanel.vue'
 import AgentRuntimeConfigForm from '@/modules/agents/ui/AgentRuntimeConfigForm.vue'
 import ShareConfigForm from '@/modules/agents/ui/ShareConfigForm.vue'
 import { cloneShareConfig } from '@/modules/agents/model/shareConfig'
 import FallbackAvatar from '@/shared/ui/FallbackAvatar.vue'
+import CollapseTransition from '@/shared/ui/CollapseTransition.vue'
 import { isBuiltinAgent, useAgentStore } from '@/modules/agents/model/agent'
 import { useUserStore } from '@/modules/identity/model/user'
-import { generatePixelAvatar } from '@/shared/lib/pixelAvatar'
+import { generateAgentAvatar } from '@/shared/lib/pixelAvatar'
 import { MAX_IMAGE_UPLOAD_SIZE_BYTES, MAX_IMAGE_UPLOAD_SIZE_MB } from '@/shared/lib/upload_limits'
 
 const props = defineProps({
@@ -30,6 +42,7 @@ const emit = defineEmits(['saved'])
 
 const userStore = useUserStore()
 const agentStore = useAgentStore()
+const router = useRouter()
 
 const DEFAULT_AGENT_BACKEND_ID = 'ChatbotAgent'
 const SUB_AGENT_BACKEND_ID = 'SubAgentBackend'
@@ -38,10 +51,32 @@ const runtimeAgentModalTabs = ['model', 'tools', 'other']
 const showAgentModal = ref(false)
 const editingAgentId = ref(null)
 const editingCapabilities = ref({})
-const publishing = ref(false)
 const agentModalActiveTab = ref('basic')
 const agentIconUploading = ref(false)
 const saving = ref(false)
+const boundSkillSaving = ref(false)
+const createSkillFile = ref(null)
+const createContext = ref({})
+const createConfigItems = ref({})
+const createConfigLoading = ref(false)
+const createConfigError = ref('')
+const createAdvancedOpen = ref(false)
+const shareConfigHeadingRef = ref(null)
+const createConfigSectionRef = ref(null)
+const createError = ref('')
+const createOutcomeUnknown = ref(false)
+const runtimeFormRef = ref(null)
+const mcpCreateOpen = ref(false)
+const sharedSkillPreparing = ref(false)
+const sharedSkillOpen = ref(false)
+const sharedSkillFlow = ref(null)
+const resourceCreationOpen = computed(() => mcpCreateOpen.value || sharedSkillPreparing.value || sharedSkillOpen.value)
+const openingBlocked = computed(() => saving.value || boundSkillSaving.value || agentIconUploading.value || resourceCreationOpen.value
+  || (showAgentModal.value && createOutcomeUnknown.value))
+onBeforeRouteLeave(() => !(saving.value || boundSkillSaving.value || agentIconUploading.value || resourceCreationOpen.value))
+let createConfigRevision = 0
+// 新的打开或关闭操作使旧编辑响应失效，避免覆盖创建草稿。
+let modalOpenRevision = 0
 const agentShareConfigFormRef = ref(null)
 const shareConfigNeedsRepair = ref(false)
 const agentNameInputRef = ref(null)
@@ -54,24 +89,43 @@ const agentForm = reactive({
   slug: '',
   name: '',
   backend_id: DEFAULT_AGENT_BACKEND_ID,
+  visibility: 'private',
   description: '',
   icon: ''
 })
 
 // 基本配置的原始基线，用于在标题栏显示「有修改」状态。slug / backend_id
 // 仅在创建模式可编辑，因此新建时不参与比对。
-const originalAgentForm = ref({ name: '', description: '', icon: '' })
+const runtimeConfig = computed({
+  get: () => editingAgentId.value ? agentStore.agentConfig : createContext.value,
+  set: (value) => {
+    if (editingAgentId.value) agentStore.updateAgentConfig(value)
+    else createContext.value = value
+  }
+})
+const runtimeConfigItems = computed(() => editingAgentId.value
+  ? agentStore.configurableItems : createConfigItems.value)
+const runtimeConfigReadonly = computed(() => saving.value || boundSkillSaving.value || resourceCreationOpen.value
+  || createOutcomeUnknown.value || createConfigLoading.value
+  || Boolean(editingAgentId.value && !agentStore.selectedAgent?.can_manage))
+const creatableResourceKinds = computed(() => [
+  ...(userStore.isSuperAdmin ? ['mcps'] : []),
+  ...(userStore.isAdmin ? ['skills'] : [])
+])
+
+const originalAgentForm = ref({ name: '', description: '', icon: '', visibility: 'private' })
 const originalShareConfig = ref(null)
 
 const snapshotAgentForm = () => ({
   name: (agentForm.name || '').trim(),
   description: (agentForm.description || '').trim(),
-  icon: (agentForm.icon || '').trim()
+  icon: (agentForm.icon || '').trim(),
+  visibility: agentForm.visibility
 })
 
 const snapshotShareConfig = () => {
-  if (!editingAgentId.value) return null
-  if (isBuiltinAgent({ id: editingAgentId.value })) {
+  if (!editingAgentId.value || !isAgentShared.value) return null
+  if (isBuiltinAgent({ agent_id: editingAgentId.value })) {
     return cloneShareConfig({
       version: 2,
       read_scope: { access_level: 'global', department_ids: [], user_uids: [] },
@@ -103,13 +157,14 @@ const stringifyShareConfig = (share) => {
 
 const hasProfileChanges = computed(() => {
   if (!editingAgentId.value) return false
-  if (shareConfigNeedsRepair.value || publishing.value) return true
+  if (shareConfigNeedsRepair.value) return true
   const currentForm = snapshotAgentForm()
   const baselineForm = originalAgentForm.value
   if (
     currentForm.name !== baselineForm.name ||
     currentForm.description !== baselineForm.description ||
-    currentForm.icon !== baselineForm.icon
+    currentForm.icon !== baselineForm.icon ||
+    currentForm.visibility !== baselineForm.visibility
   ) {
     return true
   }
@@ -133,6 +188,7 @@ const agentModalMenuItems = computed(() => {
     items.push(
       { key: 'model', label: '模型配置', icon: SlidersHorizontal },
       { key: 'tools', label: '工具配置', icon: Wrench },
+      { key: 'skill', label: '专属 Skill', icon: Microscope },
       { key: 'other', label: '其他配置', icon: Settings2 }
     )
   }
@@ -158,7 +214,7 @@ const getInitialShareConfig = () => ({
 })
 
 const normalizeShareConfigForPayload = () => {
-  if (isBuiltinAgent({ id: editingAgentId.value })) {
+  if (isBuiltinAgent({ agent_id: editingAgentId.value })) {
     return {
       version: 2,
       read_scope: { access_level: 'global', department_ids: [], user_uids: [] },
@@ -168,11 +224,14 @@ const normalizeShareConfigForPayload = () => {
   return agentShareConfig.value || getInitialShareConfig()
 }
 
-const isEditingBuiltinAgent = computed(() => isBuiltinAgent({ id: editingAgentId.value }))
+const isEditingBuiltinAgent = computed(() => isBuiltinAgent({ agent_id: editingAgentId.value }))
 const canEditAgentShareConfig = computed(() =>
-  editingCapabilities.value.can_share || publishing.value ||
-  (!editingAgentId.value && userStore.isAdmin && isSubAgentBackend(agentForm.backend_id))
+  editingCapabilities.value.can_share ||
+  (!editingAgentId.value && userStore.isAdmin)
 )
+const isAgentShared = computed(() => agentForm.visibility === 'shared' || isSubAgentBackend(agentForm.backend_id))
+const canToggleAgentSharing = computed(() => !isSubAgentBackend(agentForm.backend_id)
+  && (!editingAgentId.value || editingCapabilities.value.visibility === 'private'))
 const getAgentShareAllowedLevels = () => {
   if (isEditingBuiltinAgent.value) return ['global']
   if (userStore.isAdmin) return ['global', 'department', 'user']
@@ -181,7 +240,7 @@ const getAgentShareAllowedLevels = () => {
 
 const agentModalTitle = computed(() => (editingAgentId.value ? '编辑智能体' : '新增智能体'))
 const agentPreviewDefaultIcon = computed(() =>
-  editingAgentId.value ? generatePixelAvatar(editingAgentId.value) : ''
+  generateAgentAvatar(editingAgentId.value || agentForm.slug || 'new-agent')
 )
 const agentPreviewName = computed(() => agentForm.name || editingAgentId.value || '智能体')
 const selectedBackendOption = computed(() =>
@@ -210,6 +269,7 @@ const resetAgentForm = () => {
     slug: '',
     name: '',
     backend_id: getDefaultBackendId(),
+    visibility: 'private',
     description: '',
     icon: '',
     ...defaults
@@ -235,34 +295,158 @@ const handleAgentModalAfterOpenChange = (open) => {
 }
 
 const openCreate = () => {
+  if (openingBlocked.value) return
+  modalOpenRevision += 1
   editingAgentId.value = null
   editingCapabilities.value = {}
-  publishing.value = false
   agentModalActiveTab.value = 'basic'
   resetAgentForm()
+  createSkillFile.value = null
+  createContext.value = {}
+  createConfigItems.value = {}
+  createConfigError.value = ''
+  createConfigLoading.value = false
+  createAdvancedOpen.value = false
+  createError.value = ''
+  createConfigRevision += 1
+  createOutcomeUnknown.value = false
   agentStore.resetAgentConfig()
   showAgentModal.value = true
   focusAgentNameInput()
 }
 
+/** 刷新 Schema 只改变候选项，不覆盖创建草稿。 */
+const loadCreateConfig = async () => {
+  const revision = ++createConfigRevision
+  const modalRevision = modalOpenRevision
+  const backendId = agentForm.backend_id
+  createConfigLoading.value = true
+  createConfigError.value = ''
+  try {
+    const info = await agentApi.getAgentBackendDetail(backendId)
+    if (revision !== createConfigRevision || modalRevision !== modalOpenRevision) return
+    createConfigItems.value = normalizeAgentConfigurableItems(info.configurable_items)
+  } catch (error) {
+    if (revision !== createConfigRevision || modalRevision !== modalOpenRevision) return
+    createConfigError.value = error.message || '配置项加载失败'
+  } finally {
+    if (revision === createConfigRevision && modalRevision === modalOpenRevision) createConfigLoading.value = false
+  }
+}
+const toggleCreateAdvanced = async () => {
+  if (saving.value || boundSkillSaving.value || agentIconUploading.value || resourceCreationOpen.value || createOutcomeUnknown.value) return
+  createAdvancedOpen.value = !createAdvancedOpen.value
+  await nextTick()
+  if (createAdvancedOpen.value) createConfigSectionRef.value?.focus()
+  else focusAgentNameInput()
+  if (createAdvancedOpen.value && Object.keys(createConfigItems.value).length === 0) await loadCreateConfig()
+}
+watch(() => agentForm.backend_id, () => {
+  if (editingAgentId.value || !showAgentModal.value) return
+  if (Object.keys(createContext.value).length) message.info('后端已切换，请重新选择高级配置')
+  createContext.value = {}
+  createConfigItems.value = {}
+  createConfigError.value = ''
+  createConfigLoading.value = false
+  createConfigRevision += 1
+  if (createAdvancedOpen.value) loadCreateConfig()
+})
+
+const refreshRuntimeOptions = async () => {
+  if (!editingAgentId.value) return loadCreateConfig()
+  try {
+    await agentStore.fetchAgentDetail(editingAgentId.value, true)
+    message.success('配置选项已刷新')
+  } catch (error) {
+    message.error(error.message || '配置选项刷新失败')
+  }
+}
+/** 共享资源独立发布，只将成功标识加入 Context。 */
+const selectCreatedResources = (field, slugs) => {
+  if (!slugs.length || isAllAgentResourceSelection(runtimeConfig.value[field], runtimeConfigItems.value[field])) return
+  const selected = runtimeConfig.value[field] ?? runtimeConfigItems.value[field]?.default
+  runtimeConfig.value = {
+    ...runtimeConfig.value,
+    [field]: [...new Set([...(Array.isArray(selected) ? selected : []), ...slugs])]
+  }
+}
+const openMcpCreate = () => {
+  if (!userStore.isSuperAdmin || runtimeConfigReadonly.value) return
+  runtimeFormRef.value?.closeSelectionModal()
+  mcpCreateOpen.value = true
+}
+const handleMcpCreated = async (server) => {
+  if (server?.slug) selectCreatedResources('mcps', [server.slug])
+  await refreshRuntimeOptions()
+}
+const beforeSharedSkillUpload = async (file) => {
+  if (!userStore.isAdmin || runtimeConfigReadonly.value) return false
+  if (!file.name.toLowerCase().endsWith('.zip') || file.size > 10 * 1024 * 1024) {
+    message.error('请上传不超过 10 MiB 的 Skill ZIP 文件')
+    return false
+  }
+  runtimeFormRef.value?.closeSelectionModal()
+  sharedSkillPreparing.value = true
+  try {
+    const result = await skillApi.prepareSkillUpload(file)
+    sharedSkillFlow.value = { kind: 'draft', title: '创建共享 Skill', drafts: [result.data] }
+    sharedSkillOpen.value = true
+  } catch (error) {
+    message.error(error.message || 'Skill 解析失败')
+  } finally {
+    sharedSkillPreparing.value = false
+  }
+  return false
+}
+const handleSharedSkillCreated = async ({ slugs = [] }) => {
+  selectCreatedResources('skills', slugs)
+  await refreshRuntimeOptions()
+}
+const manageRuntimeResource = async (kind) => {
+  if (!editingAgentId.value) {
+    message.warning('请先创建智能体；新增 MCP 或共享 Skill 可使用旁边的创建按钮')
+    return
+  }
+  const tabs = { knowledges: 'knowledge', tools: 'tools', mcps: 'mcp', skills: 'skills' }
+  await navigateToSkill(kind === 'subagents'
+    ? { path: '/agent-manage', query: { tab: 'agents' } }
+    : { path: '/extensions', query: { tab: tabs[kind] } })
+}
+
+/** 文件只留在创建草稿中，随一次创建请求上传。 */
+const beforeCreateSkillUpload = (file) => {
+  if (!file.name.toLowerCase().endsWith('.zip')) {
+    message.error('请上传 Skill ZIP 文件')
+  } else if (file.size > 10 * 1024 * 1024) {
+    message.error('ZIP 文件不能超过 10 MiB')
+  } else {
+    createSkillFile.value = file
+  }
+  return false
+}
+
 const openEdit = async (agent) => {
+  if (openingBlocked.value) return
   const agentId = typeof agent === 'string' ? agent : agent?.agent_id
   if (!agentId) return
+  const revision = ++modalOpenRevision
 
   const detail = await agentStore.fetchAgentDetail(agentId, true)
+  if (revision !== modalOpenRevision || openingBlocked.value) return
   if (!detail?.can_manage) {
     message.warning('当前智能体不可编辑')
     return
   }
 
   editingCapabilities.value = detail
-  publishing.value = false
+  createOutcomeUnknown.value = false
   editingAgentId.value = detail.agent_id
   agentModalActiveTab.value = 'basic'
   Object.assign(agentForm, {
     slug: detail.agent_id || '',
     name: detail.name || '',
     backend_id: detail.backend_id || DEFAULT_AGENT_BACKEND_ID,
+    visibility: detail.visibility,
     description: detail.description || '',
     icon: detail.icon || ''
   })
@@ -273,8 +457,11 @@ const openEdit = async (agent) => {
         read_scope: { access_level: 'global', department_ids: [], user_uids: [] },
         manage_scope: null
       }
-    : cloneShareConfig(detail.share_config, shareConfigNeedsRepair.value) || getInitialShareConfig()
+    : detail.visibility === 'private'
+      ? getInitialShareConfig()
+      : cloneShareConfig(detail.share_config, shareConfigNeedsRepair.value) || getInitialShareConfig()
   await agentStore.selectAgent(detail.agent_id, { allowSubagent: true })
+  if (revision !== modalOpenRevision || openingBlocked.value) return
   captureProfileBaseline()
   showAgentModal.value = true
 }
@@ -285,10 +472,29 @@ const restoreChatAgentSelectionIfNeeded = async () => {
   if (fallbackAgentId) await agentStore.selectAgent(fallbackAgentId)
 }
 
+const selectAgentModalTab = (tab) => {
+  if (boundSkillSaving.value) return
+  agentModalActiveTab.value = tab
+}
+
 const closeAgentModal = async () => {
-  if (saving.value || agentIconUploading.value) return
+  if (saving.value || boundSkillSaving.value || agentIconUploading.value || resourceCreationOpen.value) return
+  modalOpenRevision += 1
   showAgentModal.value = false
+  createConfigRevision += 1
+  createConfigLoading.value = false
   await restoreChatAgentSelectionIfNeeded()
+}
+
+/** 保留未保存的 Agent 配置，由父级统一执行 Skill 编辑跳转。 */
+const navigateToSkill = async (route) => {
+  if (saving.value || boundSkillSaving.value || agentIconUploading.value || resourceCreationOpen.value) return
+  if (hasAnyUnsavedChanges.value) {
+    message.warning('请先保存智能体配置，再编辑专属 Skill')
+    return
+  }
+  const failure = await router.push(route)
+  if (!failure) await closeAgentModal()
 }
 
 const beforeAgentIconUpload = (file) => {
@@ -324,35 +530,52 @@ const buildAgentPayload = () => {
     name: agentForm.name.trim(),
     description: agentForm.description.trim() || null,
     icon: agentForm.icon.trim() || null,
-    ...(canEditAgentShareConfig.value && !publishing.value ? { share_config: normalizeShareConfigForPayload() } : {})
+    ...(canEditAgentShareConfig.value && isAgentShared.value ? { share_config: normalizeShareConfigForPayload() } : {})
   }
 
   if (!editingAgentId.value) {
     payload.slug = agentForm.slug.trim() || undefined
     payload.backend_id = agentForm.backend_id
-    payload.visibility = isSubAgentBackend(agentForm.backend_id) ? 'shared' : 'private'
+    payload.visibility = isAgentShared.value ? 'shared' : 'private'
+    payload.config_json = { context: { ...createContext.value } }
+  } else if (canEditAgentShareConfig.value && canToggleAgentSharing.value && isAgentShared.value) {
+    payload.visibility = 'shared'
   }
 
   return payload
 }
 
 const saveAgent = async () => {
+  if (saving.value || boundSkillSaving.value || agentIconUploading.value || resourceCreationOpen.value || createOutcomeUnknown.value || createConfigLoading.value) return
   if (!agentForm.name.trim()) {
     agentModalActiveTab.value = 'basic'
+    if (!editingAgentId.value) {
+      createAdvancedOpen.value = false
+      createError.value = '请填写智能体名称'
+    }
     message.error('请填写智能体名称')
+    await focusAgentNameInput()
     return
   }
 
-  const validation = canEditAgentShareConfig.value
+  const validation = canEditAgentShareConfig.value && isAgentShared.value
     ? agentShareConfigFormRef.value?.validate?.()
     : null
   if (validation && !validation.valid) {
     agentModalActiveTab.value = 'basic'
+    if (!editingAgentId.value) {
+      createAdvancedOpen.value = false
+      createError.value = validation.message
+    }
     message.error(validation.message)
+    await nextTick()
+    shareConfigHeadingRef.value?.focus()
     return
   }
 
   saving.value = true
+  createError.value = ''
+  let creatingRequest = false
   try {
     const payload = buildAgentPayload()
     if (editingAgentId.value) {
@@ -360,22 +583,26 @@ const saveAgent = async () => {
         payload.config_json = { context: agentStore.changedAgentConfig }
       }
       const updated = await agentStore.updateAgentProfile(editingAgentId.value, payload)
-      const finalAgent = publishing.value
-        ? (await agentApi.publishAgent(editingAgentId.value, normalizeShareConfigForPayload())).agent
-        : updated
       shareConfigNeedsRepair.value = false
       captureProfileBaseline()
-      emit('saved', { mode: 'edit', agent: finalAgent })
+      emit('saved', { mode: 'edit', agent: updated })
       message.success('智能体已保存')
     } else {
-      const created = await agentStore.createAgent(payload)
+      creatingRequest = true
+      const created = await agentStore.createAgent(payload, createSkillFile.value)
       emit('saved', { mode: 'create', agent: created })
       message.success('智能体已创建')
     }
     showAgentModal.value = false
     await restoreChatAgentSelectionIfNeeded()
   } catch (error) {
-    message.error(error.message || '保存智能体失败')
+    if (creatingRequest && (!error.status || error.status >= 500)) {
+      createOutcomeUnknown.value = true
+      message.warning('创建结果尚未确认，请取消并刷新智能体列表核对')
+    } else {
+      if (creatingRequest) createError.value = error.message || '创建失败，请检查配置后重试'
+      message.error(error.message || '保存智能体失败')
+    }
   } finally {
     saving.value = false
   }
@@ -390,9 +617,11 @@ defineExpose({
 
 <template>
   <a-modal
-    v-model:open="showAgentModal"
+    :open="showAgentModal"
     class="agent-edit-modal"
+    :class="{ 'create-agent-modal': !editingAgentId }"
     :width="editingAgentId ? 820 : 740"
+    :centered="!editingAgentId"
     :footer="null"
     :closable="false"
     @cancel="closeAgentModal"
@@ -400,10 +629,18 @@ defineExpose({
   >
     <template #title>
       <div class="agent-modal-titlebar">
-        <span class="agent-modal-title">{{ agentModalTitle }}</span>
-        <div class="agent-modal-actions" v-if="hasAnyUnsavedChanges || !editingAgentId">
-          <a-button size="small" :disabled="saving" @click="closeAgentModal">取消</a-button>
-          <a-button size="small" type="primary" :loading="saving" @click="saveAgent">
+        <div v-if="!editingAgentId" class="create-dialog-heading">
+          <span class="create-dialog-icon"><Bot :size="18" aria-hidden="true" /></span>
+          <span class="agent-modal-title">{{ agentModalTitle }}</span>
+        </div>
+        <span v-else class="agent-modal-title">{{ agentModalTitle }}</span>
+        <div v-if="!editingAgentId" class="create-dialog-header-actions">
+          <span class="create-dialog-location">{{ createAdvancedOpen ? '高级配置 · 可选' : '基本信息' }}</span>
+          <a-button type="text" class="create-dialog-close" aria-label="关闭创建弹窗" :disabled="saving || agentIconUploading || resourceCreationOpen" @click="closeAgentModal"><X :size="18" aria-hidden="true" /></a-button>
+        </div>
+        <div class="agent-modal-actions" v-else-if="hasAnyUnsavedChanges">
+          <a-button size="small" :disabled="saving || boundSkillSaving" @click="closeAgentModal">取消</a-button>
+          <a-button size="small" type="primary" :loading="saving" :disabled="boundSkillSaving || agentIconUploading || resourceCreationOpen || createOutcomeUnknown || createConfigLoading" @click="saveAgent">
             {{ editingAgentId ? '保存（有修改）' : '创建' }}
           </a-button>
         </div>
@@ -423,7 +660,8 @@ defineExpose({
           type="button"
           class="agent-modal-nav-item"
           :class="{ active: agentModalActiveTab === item.key }"
-          @click="agentModalActiveTab = item.key"
+          :disabled="boundSkillSaving"
+          @click="selectAgentModalTab(item.key)"
         >
           <span class="nav-item-main">
             <component :is="item.icon" :size="16" />
@@ -434,6 +672,7 @@ defineExpose({
       </aside>
 
       <div class="agent-modal-main">
+        <a-alert v-if="!editingAgentId && (createOutcomeUnknown || createError)" class="create-save-error" :type="createOutcomeUnknown ? 'warning' : 'error'" show-icon :message="createOutcomeUnknown ? '创建结果尚未确认，请取消并刷新列表核对。' : createError" />
         <a-alert
           v-if="shareConfigNeedsRepair"
           type="warning"
@@ -441,25 +680,23 @@ defineExpose({
           role="alert"
           message="共享配置无效。已暂设为仅所有者，请检查共享范围并保存。"
         />
-        <section v-show="agentModalActiveTab === 'basic'" class="agent-modal-section">
+        <section v-show="editingAgentId ? agentModalActiveTab === 'basic' : !createAdvancedOpen" class="agent-modal-section">
           <div class="agent-profile-header">
             <div class="agent-icon-preview" aria-label="智能体图标、名称与后端">
               <div class="agent-profile-main">
                 <a-upload
                   :show-upload-list="false"
                   :before-upload="beforeAgentIconUpload"
-                  :disabled="agentIconUploading"
+                  :disabled="agentIconUploading || saving || resourceCreationOpen"
                   accept="image/*"
                 >
                   <div
                     class="agent-icon-upload"
                     :class="{
-                      uploading: agentIconUploading,
-                      'is-empty': !agentForm.icon && !editingAgentId
+                      uploading: agentIconUploading
                     }"
                   >
                     <FallbackAvatar
-                      v-if="agentForm.icon || editingAgentId"
                       :src="agentForm.icon"
                       :default-src="agentPreviewDefaultIcon"
                       :name="agentPreviewName"
@@ -478,30 +715,48 @@ defineExpose({
                   </div>
                 </a-upload>
                 <div class="agent-icon-preview-text">
+                  <label v-if="!editingAgentId" for="agent-profile-name" class="create-field-label">名称 <span aria-hidden="true" class="required-mark">*</span></label>
                   <input
+                    id="agent-profile-name"
                     ref="agentNameInputRef"
                     v-model="agentForm.name"
                     class="agent-inline-name-input"
                     type="text"
+                    :aria-required="!editingAgentId"
                     placeholder="点击输入智能体名称"
                     aria-label="智能体名称"
                   />
-                  <input
-                    v-if="!editingAgentId"
-                    v-model="agentForm.slug"
-                    class="agent-inline-slug-input"
-                    type="text"
-                    placeholder="标识可选，留空自动生成"
-                    aria-label="智能体标识"
-                  />
+                  <div v-if="!editingAgentId" class="create-profile-details">
+                    <div class="create-profile-field">
+                      <label for="agent-profile-slug" class="create-field-label">标识 <small>可选</small></label>
+                      <input
+                        id="agent-profile-slug"
+                        v-model="agentForm.slug"
+                        class="agent-inline-slug-input"
+                        type="text"
+                        placeholder="留空自动生成"
+                        aria-label="智能体标识"
+                      />
+                    </div>
+                    <div class="create-profile-field">
+                      <label for="agent-profile-backend" class="create-field-label">智能体后端</label>
+                      <a-select
+                        id="agent-profile-backend"
+                        v-model:value="agentForm.backend_id"
+                        class="agent-backend-select"
+                        :options="backendOptions"
+                        :disabled="saving || resourceCreationOpen"
+                      />
+                    </div>
+                  </div>
                   <span v-else class="agent-inline-slug">{{
                     agentForm.slug || editingAgentId
                   }}</span>
                 </div>
               </div>
               <div
+                v-if="editingAgentId"
                 class="agent-backend-summary"
-                :class="{ editable: !editingAgentId }"
                 aria-label="智能体后端"
               >
                 <span class="agent-backend-icon">
@@ -509,14 +764,7 @@ defineExpose({
                 </span>
                 <div class="agent-backend-text">
                   <span class="agent-backend-label">智能体后端</span>
-                  <a-select
-                    v-if="!editingAgentId"
-                    v-model:value="agentForm.backend_id"
-                    class="agent-backend-select"
-                    :bordered="false"
-                    :options="backendOptions"
-                  />
-                  <span v-else class="agent-backend-name">{{ selectedBackendLabel }}</span>
+                  <span class="agent-backend-name">{{ selectedBackendLabel }}</span>
                 </div>
               </div>
             </div>
@@ -533,36 +781,140 @@ defineExpose({
             </label>
           </div>
 
-          <a-checkbox v-if="editingCapabilities.can_publish" v-model:checked="publishing">
-            发布为共享智能体（发布后无法改回私有）
-          </a-checkbox>
-          <a-alert v-if="publishing" type="info" show-icon message="只共享定义；已有会话、文件与产物仍归原用户。" />
           <div v-if="canEditAgentShareConfig" class="share-config-block">
-            <div class="section-heading">
-              <span>共享权限</span>
+            <div ref="shareConfigHeadingRef" tabindex="-1" class="section-heading">
+              <a-checkbox
+                v-if="canToggleAgentSharing"
+                :checked="isAgentShared"
+                :disabled="saving || agentIconUploading || resourceCreationOpen || createOutcomeUnknown"
+                @change="agentForm.visibility = $event.target.checked ? 'shared' : 'private'"
+              >共享此 Agent</a-checkbox>
+              <span v-else>共享权限</span>
             </div>
-            <ShareConfigForm
-              ref="agentShareConfigFormRef"
-              v-model="agentShareConfig"
-              :auto-select-user-dept="true"
-              :allowed-access-levels="getAgentShareAllowedLevels()"
-            />
+            <CollapseTransition>
+              <div v-if="isAgentShared" class="agent-sharing-options">
+                <ShareConfigForm
+                  ref="agentShareConfigFormRef"
+                  v-model="agentShareConfig"
+                  :disabled="saving || resourceCreationOpen || createOutcomeUnknown"
+                  :auto-select-user-dept="true"
+                  :allowed-access-levels="getAgentShareAllowedLevels()"
+                />
+              </div>
+            </CollapseTransition>
           </div>
+
+          <div v-if="!editingAgentId" class="create-resources">
+            <div class="create-resource-row">
+              <div class="form-label">
+                <span>专属 Skill <small>可选</small></span>
+                <span class="create-resource-hint">导入操作指南、脚本与参考资料，创建后可继续编辑。</span>
+              </div>
+              <div class="create-skill-upload">
+                <a-upload :show-upload-list="false" :before-upload="beforeCreateSkillUpload" :disabled="saving" accept=".zip">
+                  <a-button class="lucide-icon-btn" :disabled="saving"><FileArchive :size="14" aria-hidden="true" />{{ createSkillFile ? '更换 ZIP' : '选择 ZIP' }}</a-button>
+                </a-upload>
+                <span v-if="createSkillFile" class="create-skill-filename">{{ createSkillFile.name }}</span>
+                <a-button v-if="createSkillFile" type="text" size="small" :disabled="saving" @click="createSkillFile = null">移除</a-button>
+                <span v-else class="create-resource-hint">单 Skill ZIP，最多 10 MiB</span>
+              </div>
+            </div>
+          </div>
+
+        </section>
+
+        <section v-if="editingAgentId && agentModalActiveTab === 'skill'" class="agent-modal-section">
+          <AgentBoundSkillPanel :key="editingAgentId" :agent-slug="editingAgentId" @navigate="navigateToSkill" @busy="boundSkillSaving = $event" />
         </section>
 
         <section
-          v-if="editingAgentId"
-          v-show="isRuntimeAgentModalTab(agentModalActiveTab)"
+          v-if="editingAgentId || createAdvancedOpen || Object.keys(createConfigItems).length"
+          v-show="editingAgentId ? isRuntimeAgentModalTab(agentModalActiveTab) : createAdvancedOpen"
+          ref="createConfigSectionRef"
+          :tabindex="editingAgentId ? null : -1"
+          :aria-label="editingAgentId ? null : '高级配置'"
           class="agent-modal-section runtime-section"
         >
-          <AgentRuntimeConfigForm :segment="runtimeConfigSegment" :show-segmented="false" />
+          <div v-if="createConfigError" class="create-resource-error" role="alert">
+            <span>{{ createConfigError }}</span><a-button size="small" type="link" @click="loadCreateConfig">重试</a-button>
+          </div>
+          <a-spin :spinning="createConfigLoading">
+            <AgentRuntimeConfigForm
+              v-if="editingAgentId || Object.keys(runtimeConfigItems).length || (!createConfigLoading && !createConfigError)"
+              ref="runtimeFormRef"
+              v-model="runtimeConfig"
+              :configurable-items="runtimeConfigItems"
+              :readonly="runtimeConfigReadonly"
+              :creatable-resource-kinds="creatableResourceKinds"
+              :segment="editingAgentId ? runtimeConfigSegment : 'all'"
+              :show-segmented="false"
+              @refresh="refreshRuntimeOptions"
+              @manage-resource="manageRuntimeResource"
+            >
+              <template #resource-actions="{ field, kind }">
+                <a-button v-if="field === 'mcps' && userStore.isSuperAdmin" type="link" size="small" class="inline-action-btn lucide-icon-btn" :disabled="runtimeConfigReadonly" @click="openMcpCreate"><Plus :size="12" aria-hidden="true" />创建 MCP</a-button>
+                <a-upload v-if="field === 'skills' && kind === 'skills' && userStore.isAdmin" class="resource-create-upload" :show-upload-list="false" :before-upload="beforeSharedSkillUpload" :disabled="runtimeConfigReadonly" accept=".zip">
+                  <a-button type="link" size="small" class="inline-action-btn lucide-icon-btn" :loading="sharedSkillPreparing" :disabled="runtimeConfigReadonly"><Plus :size="12" aria-hidden="true" />创建共享 Skill</a-button>
+                </a-upload>
+              </template>
+            </AgentRuntimeConfigForm>
+          </a-spin>
         </section>
       </div>
     </div>
+    <footer v-if="!editingAgentId" class="create-dialog-footer">
+      <a-button v-if="createAdvancedOpen" type="text" class="create-back-button" :disabled="saving || agentIconUploading || resourceCreationOpen || createOutcomeUnknown" @click="toggleCreateAdvanced"><ArrowLeft :size="14" aria-hidden="true" />基本信息</a-button>
+      <span v-else class="create-footer-hint">模型与工具可稍后配置</span>
+      <div class="agent-modal-actions">
+        <a-button :disabled="saving || agentIconUploading || resourceCreationOpen" @click="closeAgentModal">取消</a-button>
+        <a-button v-if="!createAdvancedOpen" class="create-next-button" :disabled="saving || agentIconUploading || resourceCreationOpen || createOutcomeUnknown" :aria-expanded="createAdvancedOpen" @click="toggleCreateAdvanced">高级配置<ArrowRight :size="14" aria-hidden="true" /></a-button>
+        <a-button type="primary" :loading="saving" :disabled="boundSkillSaving || agentIconUploading || resourceCreationOpen || createOutcomeUnknown || createConfigLoading" @click="saveAgent">创建</a-button>
+      </div>
+    </footer>
   </a-modal>
+  <McpFormModal v-model:open="mcpCreateOpen" @submitted="handleMcpCreated" />
+  <SkillInstallFlowModal :open="sharedSkillOpen" :flow="sharedSkillFlow" target="shared" @close="sharedSkillOpen = false" @completed="handleSharedSkillCreated" />
 </template>
 
 <style lang="less" scoped>
+.create-dialog-heading { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.create-dialog-icon { display: flex; align-items: center; justify-content: center; width: 36px; height: 36px; flex-shrink: 0; border-radius: 8px; background: var(--gray-100); color: var(--gray-700); }
+.create-dialog-header-actions { display: flex; align-items: center; gap: 12px; }
+.create-dialog-location { padding: 4px 10px; border-radius: 999px; background: var(--gray-100); color: var(--gray-700); font-size: 12px; font-weight: 400; white-space: nowrap; }
+.create-dialog-close { display: flex; align-items: center; justify-content: center; width: 36px; height: 36px; padding: 0; }
+.create-dialog-footer { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 16px 24px; border-top: 1px solid var(--gray-150); background: var(--gray-0); }
+.create-footer-hint { color: var(--gray-600); font-size: 12px; }
+.create-back-button, .create-next-button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+.create-save-error { margin-bottom: 16px; }
+.create-field-label { display: block; color: var(--gray-800); font-size: 12px; line-height: 18px; small { margin-left: 4px; color: var(--gray-600); font-weight: 400; } }
+.required-mark { color: var(--color-error-500); }
+.create-mode {
+  .agent-icon-preview { align-items: flex-start; }
+  .agent-profile-main { align-items: flex-start; flex: 1; gap: 16px; }
+  .agent-icon-preview-text { flex: 1; gap: 8px; }
+  .agent-icon-upload { margin-top: 24px; }
+  .agent-inline-name-input, .agent-inline-slug-input { width: 100%; min-height: 36px; padding: 7px 10px; border-color: var(--gray-200); border-radius: 6px; background: var(--gray-0); font-size: 14px; }
+  .agent-inline-name-input { font-weight: 500; }
+  .agent-inline-slug-input { color: var(--gray-700); }
+  .agent-backend-select { width: 100%; margin: 0; :deep(.ant-select-selector) { min-height: 36px; background: var(--gray-0) !important; } :deep(.ant-select-selection-item) { font-weight: 400; } }
+}
+.create-profile-details { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); gap: 16px; margin-top: 8px; }
+.create-profile-field { display: grid; gap: 8px; min-width: 0; }
+.create-resources {
+  display: grid;
+  gap: 16px;
+  margin-top: 24px;
+  padding-top: 20px;
+  border-top: 1px solid var(--gray-200);
+  .form-label { display: grid; gap: 8px; }
+  small { margin-left: 6px; color: var(--gray-600); font-weight: 400; }
+}
+.create-resource-row { display: grid; gap: 10px; }
+.create-resource-hint { font-size: 12px; line-height: 1.6; color: var(--gray-600); }
+.create-skill-upload { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.create-skill-upload, .resource-create-upload { :deep(.ant-upload) { display: inline-flex; align-items: center; } }
+.create-skill-filename { max-width: 250px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: var(--gray-700); }
+.create-resource-error { display: flex; align-items: center; gap: 8px; color: var(--color-error-500); font-size: 12px; }
 .agent-modal-titlebar {
   display: flex;
   align-items: center;
@@ -591,6 +943,7 @@ defineExpose({
   :deep(.ant-btn-primary) {
     border-color: var(--main-700);
     background: var(--main-700);
+    color: var(--gray-0);
 
     &:hover,
     &:focus {
@@ -613,8 +966,11 @@ defineExpose({
   }
 
   &.create-mode {
-    height: auto;
-    min-height: 360px;
+    height: min(62vh, 540px);
+    min-height: 0;
+    max-height: calc(100dvh - 200px);
+
+    .runtime-section { min-height: 0; }
   }
 }
 
@@ -816,14 +1172,8 @@ defineExpose({
 
   &:hover .agent-icon-mask,
   &:focus-within .agent-icon-mask,
-  &.uploading .agent-icon-mask,
-  &.is-empty .agent-icon-mask {
+  &.uploading .agent-icon-mask {
     opacity: 1;
-  }
-
-  &.is-empty {
-    border-style: dashed;
-    background: var(--gray-0);
   }
 }
 
@@ -841,11 +1191,6 @@ defineExpose({
   font-weight: 600;
   opacity: 0;
   transition: opacity 0.16s ease;
-}
-
-.agent-icon-upload.is-empty .agent-icon-mask {
-  background: transparent;
-  color: var(--gray-600);
 }
 
 .agent-icon-preview-text {
@@ -932,9 +1277,6 @@ defineExpose({
   background: var(--gray-10);
   color: var(--gray-700);
 
-  &.editable {
-    padding-right: 8px;
-  }
 }
 
 .agent-backend-icon {
@@ -997,6 +1339,16 @@ defineExpose({
   margin-top: 22px;
   padding-top: 18px;
   border-top: 1px solid var(--gray-150);
+}
+
+.agent-sharing-options {
+  padding-top: 12px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agent-sharing-options {
+    transition: none !important;
+  }
 }
 
 .modal-form {
@@ -1066,9 +1418,34 @@ defineExpose({
 }
 
 @media (max-width: 768px) {
+  .agent-icon-preview {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .agent-profile-main {
+    width: 100%;
+  }
+
+  .agent-backend-summary {
+    width: 100%;
+  }
+
   .agent-modal-content {
     grid-template-columns: 1fr;
     height: min(78vh, 680px);
+
+    &.create-mode {
+      height: min(65vh, 540px);
+      max-height: calc(100dvh - 210px);
+      .agent-icon-upload { margin-top: 0; }
+    }
+  }
+
+  .agent-modal-nav-item {
+    flex: 0 0 auto;
+    width: auto;
+    white-space: nowrap;
   }
 
   .agent-modal-sidebar {
@@ -1077,6 +1454,21 @@ defineExpose({
     border-right: 0;
     border-bottom: 1px solid var(--gray-150);
   }
+  .create-dialog-heading { gap: 8px; }
+  .create-dialog-location { display: none; }
+  .create-dialog-close { width: 44px; height: 44px; }
+  .create-dialog-footer { flex-wrap: wrap; gap: 8px; padding: 12px 16px; .agent-modal-actions { margin-left: auto; } :deep(.ant-btn) { min-height: 44px; } }
+  .create-footer-hint { display: none; }
+  .create-back-button { padding-left: 0; }
+}
+
+@media (max-width: 600px) {
+  .create-profile-details { grid-template-columns: minmax(0, 1fr); }
+  .create-mode .agent-icon-preview-text { display: contents; }
+  .create-mode .agent-profile-main { display: grid; grid-template-columns: 56px minmax(0, 1fr); gap: 8px 16px; }
+  .create-mode .agent-profile-main > :deep(.ant-upload-wrapper) { grid-row: 1 / 3; align-self: center; }
+  .create-mode .create-profile-details { grid-column: 1 / -1; margin-top: 8px; }
+  .create-mode .agent-inline-name-input, .create-mode .agent-inline-slug-input, .create-mode .agent-backend-select :deep(.ant-select-selector), .create-skill-upload :deep(.ant-btn) { min-height: 40px; }
 }
 
 :global(.agent-edit-modal .ant-modal-content) {
@@ -1098,5 +1490,9 @@ defineExpose({
 
 :global(.agent-edit-modal .ant-modal-body) {
   padding: 0;
+}
+:global(.create-agent-modal .ant-modal-header) { padding: 18px 24px; }
+@media (max-width: 768px) {
+  :global(.create-agent-modal .ant-modal-header) { padding: 12px 16px; }
 }
 </style>

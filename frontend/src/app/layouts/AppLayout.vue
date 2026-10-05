@@ -1,5 +1,6 @@
 <script setup>
 import { ref, onMounted, onUnmounted, computed, provide, watch } from 'vue'
+import { useMediaQuery } from '@vueuse/core'
 import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router'
 import { message } from 'ant-design-vue'
 import {
@@ -56,6 +57,14 @@ const showSettingsModal = ref(false)
 const settingsInitialTab = ref('')
 
 const { sidebarCollapsed } = storeToRefs(chatUIStore)
+const compactViewport = useMediaQuery('(max-width: 767px)')
+watch(
+  compactViewport,
+  (compact) => {
+    if (compact) sidebarCollapsed.value = true
+  },
+  { immediate: true }
+)
 const sessionSearchOpen = ref(false)
 const projectPendingId = ref(null)
 
@@ -1029,6 +1038,11 @@ div.header,
         }
       }
     }
+  }
+}
+@media (max-width: 767px) {
+  .app-layout {
+    min-width: 0;
   }
 }
 </style>

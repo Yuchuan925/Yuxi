@@ -52,11 +52,37 @@ async def resolve_runtime_skills_for_context(
     selected = normalize_string_list(getattr(context, "skills", None))
     personal_items = await list_personal_skills(str(user.uid))
     personal_slugs = {item.slug for item in personal_items}
+    bound_slug = None
+    agent_slug = getattr(context, "agent_slug", None)
+    if agent_slug:
+        from yuxi.modules.agents.repositories.definitions import AgentRepository
+        from yuxi.modules.extensions.skills.repository import SkillRepository
+
+        agent = await AgentRepository(db).get_visible_by_slug(slug=agent_slug, user=user, kind="any")
+        if agent is None:
+            raise PermissionError("智能体不存在或无权限访问")
+        bound = await SkillRepository(db).get_by_bound_agent_id(agent.id)
+        previous = getattr(context, "_skill_runtime_snapshot", None)
+        if bound is not None and previous is not None:
+            prepared_bound = {
+                slug
+                for slug, metadata in previous["skill_metadata"].items()
+                if metadata["source_scope"] == "agent_bound"
+            }
+            # 执行边界只复核已准备绑定；中途新增绑定在下一 Run 生效。
+            if bound.slug not in prepared_bound:
+                bound = None
+        if bound is not None:
+            if bound.slug in personal_slugs:
+                raise ValueError("个人 Skill 与智能体专属 Skill 标识冲突，请重命名个人 Skill")
+            bound_slug = bound.slug
+            selected = [*selected, bound_slug]
     shared_rows = await lock_accessible_shared_skills_for_runtime(
         db,
         user,
         selected,
         shadowed_slugs=personal_slugs,
+        **({"bound_slug": bound_slug} if bound_slug else {}),
     )
     skill_items_by_slug = {item.slug: resolved_shared_skill(item) for item in shared_rows if item.slug}
     skill_items_by_slug.update({item.slug: item for item in personal_items if item.slug})
@@ -69,6 +95,10 @@ async def resolve_runtime_skills_for_context(
     )
     configured_preloads = normalize_string_list(getattr(context, "preload_skills", None))
     context_preload_skills = [slug for slug in configured_preloads if slug in selected_skills]
+    if bound_slug:
+        if bound_slug not in runtime_skills:
+            raise PermissionError("智能体专属 Skill 不可用")
+        context_preload_skills = normalize_string_list([*context_preload_skills, bound_slug])
     preloaded_skills = expand_skill_closure(context_preload_skills, runtime_skills)
     preloaded_contents = (
         await asyncio.to_thread(_read_preloaded_skill_contents, preloaded_skills, skill_items_by_slug)

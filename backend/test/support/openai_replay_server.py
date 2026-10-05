@@ -44,6 +44,9 @@ def validate_request(authorization: str | None, request: dict) -> str | None:
         return "expected_input_missing"
     if EXPECTED_PRELOADED_SKILL_MARKER not in serialized_messages:
         return "preloaded_skill_missing"
+    bound_roots = re.findall(r"DETERMINISTIC_BOUND_ROOT:([0-9a-f]+)", serialized_messages)
+    if bound_roots and f"BOUND_SKILL_{bound_roots[-1]}" not in serialized_messages:
+        return "bound_root_snapshot_mismatch"
     tools = request.get("tools")
     tool_names = {
         item.get("function", {}).get("name")
@@ -51,6 +54,8 @@ def validate_request(authorization: str | None, request: dict) -> str | None:
         if isinstance(item, dict) and isinstance(item.get("function"), dict)
     }
     tool_messages = [message for message in messages if isinstance(message, dict) and message.get("role") == "tool"]
+    if "DETERMINISTIC_CREATE_MCP" in serialized_messages and "effect_probe" not in tool_names:
+        return "creation_mcp_tool_missing"
     subagent_child = "DETERMINISTIC_SUBAGENT_CHILD" in serialized_messages
     subagent_parent = "DETERMINISTIC_SUBAGENT_PARENT:" in serialized_messages
     if "DETERMINISTIC_CANCEL_FOLLOWUP" in serialized_messages:

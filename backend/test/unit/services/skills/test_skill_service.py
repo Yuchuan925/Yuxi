@@ -18,6 +18,8 @@ from yuxi.modules.extensions.skills import catalog
 from yuxi.modules.extensions.skills import draft as draft_service
 from yuxi.modules.extensions.skills import draft as skill_draft
 from yuxi.modules.extensions.skills import edit as edit_service
+from yuxi.modules.extensions.skills import content as content_service
+from yuxi.modules.extensions.skills import package as package_service
 from yuxi.modules.extensions.skills import personal as personal_service
 from yuxi.modules.extensions.skills import projection as projection_service
 from yuxi.modules.extensions.skills import shared as svc
@@ -105,6 +107,15 @@ def _user(uid: str = "root", role: str = "admin") -> User:
 
 
 class _UnitOfWork:
+    def add(self, item):
+        repo_type = svc.SkillRepository
+        if hasattr(repo_type, "created_item"):
+            repo_type.created_item = item
+        item.id = item.id or 1
+
+    async def flush(self):
+        pass
+
     async def commit(self) -> None:
         pass
 
@@ -118,6 +129,23 @@ def _isolated_skill_storage(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     monkeypatch.setenv("YUXI_SKILL_DATA_DIR", str(tmp_path / "skill-sources"))
     monkeypatch.setenv("YUXI_SKILL_PROJECTION_DIR", str(tmp_path / "skill-projections"))
     monkeypatch.setenv("YUXI_RUNTIME_DIR", str(tmp_path / "runtime"))
+
+    class ContentRepo:
+        def __init__(self, db):
+            pass
+
+        async def list_enabled_readable(self, operator):
+            return []
+
+    async def no_prune(db, slug):
+        pass
+
+    async def no_mcps(db=None):
+        return []
+
+    monkeypatch.setattr(content_service, "SkillRepository", ContentRepo)
+    monkeypatch.setattr(content_service, "prune_skill_content", no_prune)
+    monkeypatch.setattr(svc, "get_enabled_mcp_server_slugs", no_mcps)
 
 
 def test_allowed_skill_access_levels_by_role():
@@ -229,7 +257,7 @@ async def test_list_visible_skills_for_management_includes_owned_disabled_and_en
         def __init__(self, _db):
             pass
 
-        async def list_all(self):
+        async def list_all(self, *, include_agent_bound=False):
             return items
 
     monkeypatch.setattr(svc, "SkillRepository", FakeRepo)
@@ -262,7 +290,7 @@ async def test_locked_shared_list_only_locks_visible_rows_and_rechecks_permissio
         def __init__(self, _db):
             pass
 
-        async def list_all(self):
+        async def list_all(self, *, include_agent_bound=False):
             return [visible, hidden]
 
         async def lock_rows_for_read(self, ids):
@@ -783,14 +811,14 @@ def test_projection_comparison_rejects_file_replaced_after_stat(tmp_path: Path, 
     projection = projection_service.sync_user_accessible_skills("user-1", {"demo": source})
     outside = tmp_path / "outside.md"
     outside.write_text("# same\n", encoding="utf-8")
-    original_open = projection_service.open_regular_file_fd
+    original_open = package_service.open_regular_file_fd
 
     def swap_before_open(*args, **kwargs):
         source_file.unlink()
         source_file.symlink_to(outside)
         return original_open(*args, **kwargs)
 
-    monkeypatch.setattr(projection_service, "open_regular_file_fd", swap_before_open)
+    monkeypatch.setattr(package_service, "open_regular_file_fd", swap_before_open)
     with pytest.raises(PermissionError, match="symlink"):
         projection_service.sync_user_accessible_skills("user-1", {"demo": source})
     assert not (projection / "demo").exists()
@@ -1163,7 +1191,7 @@ async def test_skill_upload_prepare_confirm_rewrites_conflicting_name(tmp_path: 
     assert results[0]["slug"] == "demo-v2"
     assert results[0]["success"] is True
     assert FakeRepo.created_item.slug == "demo-v2"
-    skill_md = (tmp_path / "skill-sources/shared" / "demo-v2" / "SKILL.md").read_text(encoding="utf-8")
+    skill_md = content_service.content_path(FakeRepo.created_item).joinpath("SKILL.md").read_text(encoding="utf-8")
     assert "name: demo-v2" in skill_md
 
 
@@ -1210,7 +1238,7 @@ async def test_skill_zip_import_uses_skill_md_name_not_zip_or_root_dir(tmp_path:
     assert results[0]["success"] is True
     assert results[0]["slug"] == "valid-skill"
     assert FakeRepo.created_item.slug == "valid-skill"
-    assert (tmp_path / "skill-sources/shared" / "valid-skill" / "SKILL.md").exists()
+    assert content_service.content_path(FakeRepo.created_item).joinpath("SKILL.md").exists()
 
 
 @pytest.mark.asyncio
@@ -1352,7 +1380,7 @@ async def test_skill_zip_import_rewrites_conflicting_slug_not_display_name(
     assert results[0]["slug"] == "word-docx-v2"
     assert results[0]["success"] is True
     assert FakeRepo.created_item.name == "Word / DOCX"
-    skill_md = (tmp_path / "skill-sources/shared" / "word-docx-v2" / "SKILL.md").read_text(encoding="utf-8")
+    skill_md = content_service.content_path(FakeRepo.created_item).joinpath("SKILL.md").read_text(encoding="utf-8")
     assert "name: Word / DOCX" in skill_md
     assert "slug: word-docx-v2" in skill_md
 
@@ -1393,7 +1421,9 @@ async def test_skill_md_prepare_confirm_creates_single_file_skill(tmp_path: Path
     assert results[0]["slug"] == "demo"
     assert results[0]["success"] is True
     assert FakeRepo.created_item.name == "demo"
-    assert (tmp_path / "skill-sources/shared" / "demo" / "SKILL.md").read_text(encoding="utf-8") == skill_md
+    assert (
+        content_service.content_path(FakeRepo.created_item).joinpath("SKILL.md").read_text(encoding="utf-8") == skill_md
+    )
 
 
 def test_skill_dependency_scope_covers_read_and_manage_audiences():
@@ -1737,6 +1767,7 @@ async def test_skill_node_mutations_lock_skill_row(tmp_path: Path, monkeypatch: 
     monkeypatch.setattr(svc, "SkillRepository", FakeRepo)
     source = tmp_path / "skill-sources/shared/demo"
     source.mkdir(parents=True)
+    source.joinpath("SKILL.md").write_text("---\nslug: demo\nname: demo\ndescription: demo\n---\n# demo\n")
     await edit_service.create_skill_node(
         _UnitOfWork(),
         slug="demo",
@@ -1745,18 +1776,23 @@ async def test_skill_node_mutations_lock_skill_row(tmp_path: Path, monkeypatch: 
         content=None,
         operator=_user("root", role="admin"),
     )
-    note = source / "notes" / "note.md"
+    note = content_service.content_path(item) / "notes" / "note.md"
     note.write_text("before", encoding="utf-8")
     await edit_service.delete_skill_node(
         _UnitOfWork(), slug="demo", relative_path="notes/note.md", operator=_user("root", role="admin")
     )
 
-    assert locked_reads == [("demo", True), ("demo", True)]
-    assert not note.exists()
+    assert locked_reads == [("demo", False), ("demo", True), ("demo", False), ("demo", True)]
+    assert note.read_text() == "before"
+    assert not content_service.content_path(item).joinpath("notes/note.md").exists()
 
 
 @pytest.mark.asyncio
 async def test_delete_skills_batch_ok(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    async def invalidate(db, slug):
+        return []
+
+    monkeypatch.setattr(svc, "invalidate_skill_projections", invalidate)
 
     # 模拟两个已安装的技能
     (tmp_path / "skill-sources/shared" / "skill-a").mkdir(parents=True, exist_ok=True)
@@ -1826,6 +1862,10 @@ async def test_delete_skills_batch_limit_exceeded():
 
 @pytest.mark.asyncio
 async def test_delete_skill_commits_database_before_removing_trash(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    async def invalidate(db, slug):
+        return []
+
+    monkeypatch.setattr(svc, "invalidate_skill_projections", invalidate)
     (tmp_path / "skill-sources/shared" / "concurrent-skill").mkdir(parents=True, exist_ok=True)
     item = Skill(
         slug="concurrent-skill",
@@ -1988,7 +2028,7 @@ async def test_skill_cards_keep_shadowed_shared_item_for_management(
         def __init__(self, _db):
             pass
 
-        async def list_all(self):
+        async def list_all(self, *, include_agent_bound=False):
             return [shared]
 
     monkeypatch.setattr(catalog, "SkillRepository", FakeRepo)
@@ -2036,6 +2076,23 @@ async def test_confirm_personal_skill_draft_uses_package_slug_without_database(
     )
 
     monkeypatch.setenv("YUXI_RUNTIME_DIR", str(tmp_path / "runtime"))
+
+    class ContentRepo:
+        def __init__(self, db):
+            pass
+
+        async def list_enabled_readable(self, operator):
+            return []
+
+    async def no_prune(db, slug):
+        pass
+
+    async def no_mcps(db=None):
+        return []
+
+    monkeypatch.setattr(content_service, "SkillRepository", ContentRepo)
+    monkeypatch.setattr(content_service, "prune_skill_content", no_prune)
+    monkeypatch.setattr(svc, "get_enabled_mcp_server_slugs", no_mcps)
 
     results = await personal_service.confirm_personal_skill_install_draft(
         draft_id=draft_id,

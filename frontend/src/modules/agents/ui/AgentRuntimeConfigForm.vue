@@ -1,13 +1,13 @@
 <template>
   <div class="agent-runtime-config-form">
     <div class="runtime-config-content">
-      <div class="agent-info" v-if="selectedAgent">
+      <div class="agent-info">
         <div class="config-segment" v-if="props.showSegmented && !isEmptyConfig">
           <a-segmented v-model:value="currentSegment" :options="segmentOptions" block />
         </div>
 
         <div
-          v-if="selectedAgentId && configurableItems"
+          v-if="configurableItems"
           class="config-form-content"
           :class="{ 'is-readonly': isReadOnlyConfig }"
         >
@@ -84,20 +84,6 @@
                 <!-- 多选 / 工具列表 (统一处理) -->
                 <div v-else-if="value?.type === 'list'" class="list-config-container">
                   <div
-                    v-if="supportsAllAgentResources(configurableItems[key])"
-                    class="hidden-selection-note"
-                  >
-                    <a-checkbox
-                      :checked="
-                        isAllAgentResourceSelection(agentConfig[key], configurableItems[key])
-                      "
-                      :disabled="isReadOnlyConfig"
-                      @change="(event) => setAllSelection(key, event.target.checked)"
-                      >全部（含新增）</a-checkbox
-                    >
-                    <span>逐项选择将保存固定范围，清空表示不选择。</span>
-                  </div>
-                  <div
                     v-if="getHiddenSelection(key).length"
                     class="hidden-selection-note"
                     role="status"
@@ -116,17 +102,30 @@
                         >已选择 {{ getSelectedCount(key) }} 项 | 共
                         {{ getSelectionOptions(key, value).length }} 项</span
                       >
-                      <div v-if="!isReadOnlyConfig" class="label-actions">
+                      <div v-if="!isReadOnlyConfig || supportsAllAgentResources(value)" class="label-actions">
+                        <a-button
+                          v-if="supportsAllAgentResources(value)"
+                          type="link"
+                          size="small"
+                          class="select-all-btn lucide-icon-btn"
+                          :class="{ selected: isAllSelected(key) }"
+                          :aria-pressed="isAllSelected(key)"
+                          :disabled="isReadOnlyConfig"
+                          @click="setAllSelection(key, !isAllSelected(key))"
+                        >
+                          <Check v-if="isAllSelected(key)" :size="12" aria-hidden="true" />
+                          选择全部
+                        </a-button>
                         <a-button
                           type="link"
                           size="small"
                           class="clear-btn"
                           @click="clearSelection(key)"
-                          v-if="canResetSelection(key)"
+                          v-if="!isReadOnlyConfig && canResetSelection(key)"
                         >
                           清空全部
                         </a-button>
-                        <template v-if="isResourceConfigKind(value.kind)">
+                        <template v-if="!isReadOnlyConfig && isResourceConfigKind(value.kind)">
                           <a-divider type="vertical" />
                           <a-button
                             type="link"
@@ -146,6 +145,7 @@
                             <Settings :size="12" />
                             配置
                           </a-button>
+                          <slot name="resource-actions" :field="key" :kind="value.kind" />
                         </template>
                       </div>
                     </div>
@@ -190,15 +190,30 @@
                           {{ getSelectionOptions(key, value).length }} 项</span
                         >
 
-                        <a-button
-                          v-if="!isReadOnlyConfig && canResetSelection(key)"
-                          type="link"
-                          size="small"
-                          class="clear-btn"
-                          @click="clearSelection(key)"
-                        >
-                          清空全部
-                        </a-button>
+                        <div v-if="!isReadOnlyConfig || supportsAllAgentResources(value)" class="selection-range-actions">
+                          <a-button
+                            v-if="supportsAllAgentResources(value)"
+                            type="link"
+                            size="small"
+                            class="select-all-btn lucide-icon-btn"
+                            :class="{ selected: isAllSelected(key) }"
+                            :aria-pressed="isAllSelected(key)"
+                            :disabled="isReadOnlyConfig"
+                            @click="setAllSelection(key, !isAllSelected(key))"
+                          >
+                            <Check v-if="isAllSelected(key)" :size="12" aria-hidden="true" />
+                            选择全部
+                          </a-button>
+                          <a-button
+                            v-if="!isReadOnlyConfig && canResetSelection(key)"
+                            type="link"
+                            size="small"
+                            class="clear-btn"
+                            @click="clearSelection(key)"
+                          >
+                            清空全部
+                          </a-button>
+                        </div>
                       </div>
 
                       <a-button
@@ -210,6 +225,7 @@
                       >
                         选择...
                       </a-button>
+                      <slot name="resource-actions" :field="key" :kind="value.kind" />
                     </div>
 
                     <!-- Selected Preview Tags -->
@@ -302,25 +318,26 @@
           </a-input>
           <template v-if="!isReadOnlyConfig && isResourceConfigKind(currentConfigKind)">
             <a-button
-              type="text"
+              type="link"
               size="small"
               @click="refreshConfigOptions(currentConfigKey, currentConfigKind)"
               class="inline-action-btn lucide-icon-btn"
               title="刷新列表"
             >
-              <RotateCw :size="14" />
+              <RotateCw :size="12" />
               刷新
             </a-button>
             <a-button
-              type="text"
+              type="link"
               size="small"
               @click="navigateToConfigPage(currentConfigKind)"
               class="inline-action-btn lucide-icon-btn"
               title="跳转配置"
             >
-              <Settings :size="14" />
+              <Settings :size="12" />
               配置
             </a-button>
+            <slot name="resource-actions" :field="currentConfigKey" :kind="currentConfigKind" />
           </template>
         </div>
 
@@ -412,10 +429,8 @@
 <script setup>
 import { ref, computed } from 'vue'
 import { message } from 'ant-design-vue'
-import { useRouter } from 'vue-router'
 import { AlertTriangle, Check, Plus, Search, RotateCw, RotateCcw, Settings } from '@lucide/vue'
 import ModelSelectorComponent from '@/modules/agents/ui/ModelSelectorComponent.vue'
-import { useAgentStore } from '@/modules/agents/model/agent'
 import {
   getAgentConfigOptionDescription as getOptionDescription,
   getAgentConfigOptionLabel as getOptionLabel,
@@ -428,9 +443,12 @@ import {
   mergeVisibleAgentResourceSelection,
   getVisibleAgentResourceSelection
 } from '@/modules/agents/model/agentConfigUtils'
-import { storeToRefs } from 'pinia'
 
 const props = defineProps({
+  modelValue: { type: Object, required: true },
+  configurableItems: { type: Object, required: true },
+  readonly: { type: Boolean, default: false },
+  creatableResourceKinds: { type: Array, default: () => [] },
   segment: {
     type: String,
     default: 'model'
@@ -441,12 +459,19 @@ const props = defineProps({
   }
 })
 
-const agentStore = useAgentStore()
-const router = useRouter()
-
-const { selectedAgent, selectedAgentId, agentConfig, configurableItems } = storeToRefs(agentStore)
-
-// console.log(availableTools.value)
+const emit = defineEmits(['update:modelValue', 'refresh', 'manage-resource'])
+const configurableItems = computed(() => props.configurableItems)
+/** 默认值只用于展示，未修改的配置不变成持久覆盖。 */
+const agentConfig = computed(() => {
+  const values = Object.fromEntries(Object.entries(configurableItems.value)
+    .filter(([, item]) => item.default !== undefined)
+    .map(([key, item]) => [key, item.default]))
+  return { ...values, ...props.modelValue }
+})
+const isReadOnlyConfig = computed(() => props.readonly)
+const updateConfig = (patch) => {
+  if (!isReadOnlyConfig.value) emit('update:modelValue', { ...props.modelValue, ...patch })
+}
 
 // 本地状态
 const selectionModalOpen = ref(false)
@@ -473,15 +498,13 @@ const getSelectionOptions = (key, item) =>
   getAgentResourceSelectionOptions(key, item, agentConfig.value, configurableItems.value)
 
 const isEmptyConfig = computed(() => {
-  return !selectedAgentId.value || Object.keys(configurableItems.value).length === 0
+  return Object.keys(configurableItems.value).length === 0
 })
-
-const canManageCurrentAgent = computed(() => !!selectedAgent.value?.can_manage)
-const isReadOnlyConfig = computed(() => !canManageCurrentAgent.value)
 
 const segmentConfigKeys = computed(() => {
   const keys = Object.keys(configurableItems.value)
   return {
+    all: keys,
     model: keys.filter((key) => {
       const meta = configurableItems.value[key]?.kind
       return meta === 'llm' || meta === 'prompt'
@@ -501,6 +524,7 @@ const segmentConfigKeys = computed(() => {
 const hasSelectableOptions = (key, value) => {
   if (value?.type !== 'list') return true
   return getSelectionOptions(key, value).length > 0 || getHiddenSelection(key).length > 0
+    || (['mcps', 'skills'].includes(key) && props.creatableResourceKinds.includes(value.kind))
 }
 
 const filteredConfigurableItems = computed(() => {
@@ -519,44 +543,11 @@ const isCurrentSegmentEmpty = computed(
   () => !isEmptyConfig.value && Object.keys(filteredConfigurableItems.value).length === 0
 )
 
-// 判断是否为需要跳转的配置类型
-// 强制刷新对应配置项的选项列表
-const refreshConfigOptions = async () => {
-  if (isReadOnlyConfig.value || !selectedAgentId.value) return
-  try {
-    await agentStore.fetchAgentDetail(selectedAgentId.value, true)
-    message.success('配置选项已刷新')
-  } catch (error) {
-    console.error('刷新配置选项失败:', error)
-    message.error('刷新失败')
-  }
+const refreshConfigOptions = () => {
+  if (!isReadOnlyConfig.value) emit('refresh')
 }
-
-// 跳转到对应管理页面
 const navigateToConfigPage = (kind) => {
-  if (isReadOnlyConfig.value) return
-  // 先关闭选择弹窗
-  closeSelectionModal()
-  // 延迟跳转，确保弹窗先关闭
-  setTimeout(() => {
-    switch (kind) {
-      case 'knowledges':
-        router.push({ path: '/extensions', query: { tab: 'knowledge' } })
-        break
-      case 'tools':
-        router.push({ path: '/extensions', query: { tab: 'tools' } })
-        break
-      case 'mcps':
-        router.push({ path: '/extensions', query: { tab: 'mcp' } })
-        break
-      case 'skills':
-        router.push({ path: '/extensions', query: { tab: 'skills' } })
-        break
-      case 'subagents':
-        router.push({ path: '/agent-manage', query: { tab: 'agents' } })
-        break
-    }
-  }, 100)
+  if (!isReadOnlyConfig.value) emit('manage-resource', kind)
 }
 
 const isDefaultEnabledResourceValue = (value) => value === 'all' || value === undefined
@@ -633,7 +624,7 @@ const filteredOptions = computed(() => {
 // 方法
 const updateConfigValue = (key, value) => {
   if (isReadOnlyConfig.value) return
-  agentStore.updateAgentConfig({
+  updateConfig({
     [key]: value
   })
 }
@@ -647,7 +638,7 @@ const getPlaceholder = (_key, value) => {
 const handleModelChange = (key, spec) => {
   if (isReadOnlyConfig.value) return
   if (typeof spec !== 'string') return
-  agentStore.updateAgentConfig({
+  updateConfig({
     [key]: spec
   })
 }
@@ -683,7 +674,7 @@ const toggleOption = (key, option) => {
     currentOptions.push(option)
   }
 
-  agentStore.updateAgentConfig({
+  updateConfig({
     [key]: mergeVisibleAgentResourceSelection(
       agentConfig.value[key],
       getSelectionOptions(key, configurableItems.value[key]).map(getOptionValue),
@@ -694,7 +685,7 @@ const toggleOption = (key, option) => {
 
 const clearSelection = (key) => {
   if (isReadOnlyConfig.value) return
-  agentStore.updateAgentConfig({
+  updateConfig({
     [key]: []
   })
 }
@@ -729,7 +720,7 @@ const confirmSelection = () => {
     return
   }
   if (currentConfigKey.value) {
-    agentStore.updateAgentConfig({
+    updateConfig({
       [currentConfigKey.value]: mergeVisibleAgentResourceSelection(
         agentConfig.value[currentConfigKey.value],
         getSelectionOptions(
@@ -771,7 +762,7 @@ const restoreSystemPromptDefault = () => {
 const saveSystemPrompt = () => {
   if (isReadOnlyConfig.value) return
   if (!currentSystemPromptKey.value) return
-  agentStore.updateAgentConfig({
+  updateConfig({
     [currentSystemPromptKey.value]: systemPromptDraft.value
   })
   closeSystemPromptModal()
@@ -785,16 +776,25 @@ const getHiddenSelection = (key) =>
     []
   )
 
+/** 默认全部与显式全部使用相同选中状态。 */
+const isAllSelected = (key) =>
+  isAllAgentResourceSelection(agentConfig.value[key], configurableItems.value[key])
+
 const canResetSelection = (key) =>
-  isAllAgentResourceSelection(agentConfig.value[key], configurableItems.value[key]) ||
+  isAllSelected(key) ||
   getSelectedCount(key) > 0 ||
   getHiddenSelection(key).length > 0
 
 /** 关闭全部模式时固定当前可见范围，后续新增资源不自动加入。 */
 const setAllSelection = (key, checked) => {
   if (isReadOnlyConfig.value) return
-  agentStore.updateAgentConfig({ [key]: checked ? 'all' : [...ensureArray(key)] })
+  updateConfig({ [key]: checked ? 'all' : [...ensureArray(key)] })
+  if (checked) message.info({
+    content: '已选择全部，后续新增的资源也会自动加入。',
+    key: 'agent-resource-select-all'
+  })
 }
+defineExpose({ closeSelectionModal })
 </script>
 
 <style lang="less" scoped>
@@ -1009,6 +1009,7 @@ const setAllSelection = (key, checked) => {
 
     .selection-summary-info {
       display: flex;
+      flex-wrap: wrap;
       align-items: center;
       gap: 8px;
       font-size: 13px;
@@ -1360,7 +1361,34 @@ const setAllSelection = (key, checked) => {
   }
 }
 
-.inline-action-btn {
+.selection-range-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.select-all-btn {
+  gap: 4px;
+  min-height: 24px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 12px;
+  color: var(--main-700);
+
+  &.selected {
+    border-color: var(--main-200);
+    background: var(--main-10);
+    font-weight: 600;
+
+    &:hover {
+      border-color: var(--main-300);
+      background: var(--main-30);
+      color: var(--main-800);
+    }
+  }
+}
+
+.inline-action-btn, :deep(.inline-action-btn) {
   padding: 2px 6px;
   height: auto;
   line-height: 1;
@@ -1373,7 +1401,29 @@ const setAllSelection = (key, checked) => {
   }
 }
 
-.selection-search .inline-action-btn {
+.selection-search .inline-action-btn, .selection-search :deep(.inline-action-btn) {
   font-size: 13px;
+}
+
+@media (max-width: 600px) {
+  .multi-select-cards .multi-select-label {
+    flex-wrap: wrap;
+    gap: 8px;
+    > span { flex: 0 0 100%; white-space: nowrap; }
+    .label-actions { flex-wrap: wrap; gap: 8px; }
+    :deep(.ant-btn) { min-height: 40px; }
+  }
+  .selection-container .selection-summary {
+    flex-wrap: wrap;
+    gap: 8px;
+    .selection-summary-info { flex: 0 0 100%; justify-content: space-between; margin-right: 0; }
+    .selection-count { white-space: nowrap; }
+    :deep(.ant-btn) { min-height: 40px; }
+  }
+  .selection-modal .selection-modal-content .selection-search {
+    flex-wrap: wrap;
+    .search-input { flex: 0 0 100%; min-width: 0; }
+    :deep(.ant-btn) { min-height: 40px; }
+  }
 }
 </style>

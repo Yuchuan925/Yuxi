@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Literal
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
@@ -12,21 +13,23 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from yuxi.api.dependencies.auth import get_admin_user, get_db, get_required_user, get_superadmin_user
 from yuxi.infrastructure.observability.logging import logger
 from yuxi.modules.extensions.skills.catalog import list_accessible_skills, list_skill_cards_for_user
+from yuxi.modules.extensions.skills.content import save_skill_content
 from yuxi.modules.extensions.skills.draft import (
     create_remote_skill_draft,
     create_uploaded_skill_draft,
     discard_skill_install_draft,
 )
 from yuxi.modules.extensions.skills.edit import (
-    SkillEditConflict,
     create_skill_node,
     delete_skill_node,
     edit_shared_skill_dependencies,
     edit_shared_skill_file,
     export_skill_zip,
     get_skill_tree,
+    read_skill_content,
     read_skill_file,
 )
+from yuxi.modules.extensions.skills.package import SkillEditConflict
 from yuxi.modules.extensions.skills.personal import (
     confirm_personal_skill_install_draft,
     delete_personal_skill,
@@ -40,6 +43,7 @@ from yuxi.modules.extensions.skills.shared import (
     delete_skills_batch,
     get_allowed_skill_access_levels,
     get_manageable_skill_or_raise,
+    get_management_readable_skill_or_raise,
     get_skill_dependency_options,
     init_builtin_skills,
     is_builtin_skill,
@@ -47,6 +51,12 @@ from yuxi.modules.extensions.skills.shared import (
     update_skill_enabled,
     update_skill_share_config,
     user_can_manage_skill,
+)
+from yuxi.modules.extensions.skills.versions import (
+    delete_skill_version,
+    list_skill_versions,
+    release_skill_version,
+    restore_skill_version,
 )
 from yuxi.modules.identity.models import User
 from yuxi.modules.identity.permissions import normalize_permission_config, resolve_skill_permission
@@ -80,6 +90,29 @@ class SkillDependenciesUpdateRequest(BaseModel):
     mcp_dependencies: list[str] = Field(default_factory=list, description="依赖的 MCP 服务列表")
     skill_dependencies: list[str] = Field(default_factory=list, description="依赖的其他 skill slug 列表")
     expected_revision: str = Field(..., description="读取根级 SKILL.md 时取得的修订值")
+
+
+class SkillVersionRequest(BaseModel):
+    expected_revision: str = Field(..., min_length=1, description="当前整包修订")
+
+
+class SkillContentChange(BaseModel):
+    """完整编辑提交中的文件或依赖变更。"""
+
+    action: Literal["write", "create", "mkdir", "delete", "dependencies"]
+    path: str = ""
+    content: str = ""
+    tool_dependencies: list[str] = Field(default_factory=list)
+    mcp_dependencies: list[str] = Field(default_factory=list)
+    skill_dependencies: list[str] = Field(default_factory=list)
+
+
+class SkillContentRequest(BaseModel):
+    """一次保存的完整草稿与基准修订。"""
+
+    expected_revision: str = Field(..., min_length=1)
+    changes: list[SkillContentChange] = Field(default_factory=list, max_length=2000)
+    release: bool = False
 
 
 class RemoteSkillSourceRequest(BaseModel):
@@ -453,6 +486,64 @@ async def update_skill_enabled_route(
         raise HTTPException(status_code=500, detail="更新 Skill 启用状态失败")
 
 
+@skills.get("/{slug}")
+async def get_skill_detail_route(
+    slug: str,
+    current_user: User = Depends(get_required_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """按当前权限读取单个 Skill，包含隐藏于普通列表的绑定资源。"""
+    try:
+        item = await get_management_readable_skill_or_raise(db, current_user, slug)
+        return {"success": True, "data": _serialize_skill_for_user(item, current_user)}
+    except ValueError as exc:
+        _raise_from_value_error(exc)
+
+
+@skills.get("/{slug}/content")
+async def get_skill_content_route(
+    slug: str,
+    current_user: User = Depends(get_required_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """读取一份完整编辑基准。"""
+    try:
+        return {"success": True, "data": await read_skill_content(db, slug=slug, operator=current_user)}
+    except ValueError as exc:
+        _raise_from_value_error(exc)
+
+
+@skills.put("/{slug}/content")
+async def save_skill_content_route(
+    slug: str,
+    payload: SkillContentRequest,
+    current_user: User = Depends(get_required_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """一次提交全部草稿，并可为结果发版。"""
+    try:
+        result = await save_skill_content(
+            db,
+            slug=slug,
+            operator=current_user,
+            expected_revision=payload.expected_revision,
+            changes=[change.model_dump() for change in payload.changes],
+            release=payload.release,
+        )
+        return {
+            "success": True,
+            "data": {
+                "skill": _serialize_skill_for_user(result.skill, current_user),
+                "revision": result.revision,
+                "published_version": result.published_version,
+            },
+        }
+    except SkillEditConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ValueError as exc:
+        _raise_from_value_error(exc)
+
+
 @skills.get("/{slug}/tree")
 async def get_skill_tree_route(
     slug: str,
@@ -533,7 +624,13 @@ async def update_skill_file_route(
             expected_revision=payload.expected_revision,
             operator=current_user,
         )
-        return {"success": True, "data": {"skill": _serialize_skill_for_user(item, current_user), "revision": revision}}
+        return {
+            "success": True,
+            "data": {
+                "skill": _serialize_skill_for_user(item, current_user),
+                "revision": revision,
+            },
+        }
     except SkillEditConflict as e:
         raise HTTPException(status_code=409, detail=str(e)) from e
     except ValueError as e:
@@ -562,7 +659,13 @@ async def update_skill_dependencies_route(
             expected_revision=payload.expected_revision,
             operator=current_user,
         )
-        return {"success": True, "data": {"skill": _serialize_skill_for_user(item, current_user), "revision": revision}}
+        return {
+            "success": True,
+            "data": {
+                "skill": _serialize_skill_for_user(item, current_user),
+                "revision": revision,
+            },
+        }
     except SkillEditConflict as e:
         raise HTTPException(status_code=409, detail=str(e)) from e
     except ValueError as e:
@@ -572,6 +675,68 @@ async def update_skill_dependencies_route(
     except Exception as e:
         logger.error(f"Failed to update skill dependencies '{slug}': {e}")
         raise HTTPException(status_code=500, detail="更新 skill 依赖失败")
+
+
+@skills.get("/{slug}/versions")
+async def list_skill_versions_route(
+    slug: str, current_user: User = Depends(get_required_user), db: AsyncSession = Depends(get_db)
+):
+    """读取专属 Skill 历史与 latest 修订。"""
+    try:
+        return {"success": True, "data": await list_skill_versions(db, slug=slug, operator=current_user)}
+    except ValueError as exc:
+        _raise_from_value_error(exc)
+
+
+@skills.post("/{slug}/versions")
+async def release_skill_version_route(
+    slug: str,
+    payload: SkillVersionRequest,
+    current_user: User = Depends(get_required_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """为已保存的 latest 发版。"""
+    try:
+        result = await release_skill_version(
+            db, slug=slug, expected_revision=payload.expected_revision, operator=current_user
+        )
+        return {"success": True, "data": result}
+    except SkillEditConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ValueError as exc:
+        _raise_from_value_error(exc)
+
+
+@skills.post("/{slug}/versions/{version}/restore")
+async def restore_skill_version_route(
+    slug: str,
+    version: str,
+    payload: SkillVersionRequest,
+    current_user: User = Depends(get_required_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """覆盖 latest，保留当前绑定 slug。"""
+    try:
+        result = await restore_skill_version(
+            db, slug=slug, version=version, expected_revision=payload.expected_revision, operator=current_user
+        )
+        return {"success": True, "data": result}
+    except SkillEditConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ValueError as exc:
+        _raise_from_value_error(exc)
+
+
+@skills.delete("/{slug}/versions/{version}")
+async def delete_skill_version_route(
+    slug: str, version: str, current_user: User = Depends(get_required_user), db: AsyncSession = Depends(get_db)
+):
+    """删除历史快照，不改变 latest。"""
+    try:
+        await delete_skill_version(db, slug=slug, version=version, operator=current_user)
+        return {"success": True}
+    except ValueError as exc:
+        _raise_from_value_error(exc)
 
 
 @skills.delete("/{slug}/file")
@@ -656,7 +821,7 @@ def _serialize_skill_for_user(item, user: User) -> dict:
     """为 Skill 描述附加当前用户的管理权限。"""
     data = item.to_dict()
     data["share_config_invalid"] = False
-    if getattr(item, "source_scope", None) != "personal":
+    if getattr(item, "source_scope", None) != "personal" and data.get("bound_agent_id") is None:
         try:
             data["share_config"] = normalize_permission_config(item.share_config)
         except (TypeError, ValueError) as exc:
@@ -666,4 +831,7 @@ def _serialize_skill_for_user(item, user: User) -> dict:
     data["can_manage"] = user_can_manage_skill(user, item)
     data["effective_permission"] = resolve_skill_permission(user, item).value
     data["is_builtin"] = is_builtin_skill(item)
+    if data.get("bound_agent_id") is not None:
+        data.pop("share_config", None)
+        data["source_scope"] = "agent_bound"
     return data

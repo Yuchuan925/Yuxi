@@ -580,7 +580,8 @@ async def _stream_agent_execution(
         for event in await adapter.finish():
             yield event
         yield RunExecutionResult(checkpoint=final_state, status=terminal_status, committed=True)
-    except asyncio.CancelledError:
+    except (asyncio.CancelledError, GeneratorExit):
+        # 消费者停在 yield 时通过 aclose 关闭，仍须保存已展示的取消正文。
         async with pg_manager.get_async_session_context() as db:
             current = await AgentRunRepository(db).get_run(meta["run_id"])
         if current is not None and current.status == "cancel_requested" and current.worker_id == meta["worker_id"]:

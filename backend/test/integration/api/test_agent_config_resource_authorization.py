@@ -19,6 +19,7 @@ pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
 
 async def test_mcp_selection_requires_explicit_agent_config(test_client, admin_headers):
     """真实保存与运行边界只启用 Agent 显式选择的 MCP。"""
+    from yuxi.infrastructure.postgres.manager import pg_manager
     suffix = uuid.uuid4().hex[:10]
     agent_slug = f"pytest-mcp-selection-agent-{suffix}"
     mcp_slug = f"pytest-mcp-selection-{suffix}"
@@ -100,6 +101,7 @@ async def test_mcp_selection_requires_explicit_agent_config(test_client, admin_h
             response = await test_client.delete(mcp_path, headers=admin_headers)
             assert response.status_code in {200, 404}, response.text
         await engine.dispose()
+        await pg_manager.close()
         await conn.close()
 
 
@@ -230,7 +232,7 @@ async def test_delegated_manager_resource_patch_preserves_hidden_config_and_reje
             headers=manager_headers,
         )
         assert forbidden_create.status_code == 422, forbidden_create.text
-        assert "无权新增智能体资源 skills" in forbidden_create.json()["detail"]
+        assert "无权新增智能体资源 skills" in forbidden_create.json()["detail"]["message"]
         assert await conn.fetchval("SELECT count(*) FROM agents WHERE slug = $1", forbidden_agent_slug) == 0
 
         create_response = await test_client.post(

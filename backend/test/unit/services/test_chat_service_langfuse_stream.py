@@ -367,6 +367,88 @@ async def test_partial_failure_saves_displayed_text_and_trace_before_done(monkey
     assert events[-1].status == "failed"
 
 
+@pytest.mark.parametrize("mode", ["chat", "resume"])
+@pytest.mark.parametrize("close_path", ["paused_yield", "pending_next"])
+@pytest.mark.parametrize(
+    ("status", "worker_id", "expected_snapshot"),
+    [("cancel_requested", "worker-1", True), ("running", "worker-1", False), ("cancel_requested", "other", False)],
+)
+async def test_cancel_close_preserves_only_owned_requested_partial(
+    monkeypatch, mode, close_path, status, worker_id, expected_snapshot
+):
+    """两种关闭异常保留已展示正文，普通关闭和错误 Owner 不写取消快照。"""
+    import yuxi.modules.agents.services.openai_events as events_module
+
+    waiting = asyncio.Event()
+    persisted = {}
+
+    class WaitingAgent(FakeAgent):
+        """输出正文后阻塞，让关闭发生在 yield 或等待下一事件时。"""
+
+        async def stream_messages_with_state(self, value, **kwargs):
+            """使用真实协议正文并暴露确定性的等待边界。"""
+            if kwargs.get("on_prepared"):
+                await kwargs["on_prepared"]()
+            for event in self.events:
+                yield event
+            waiting.set()
+            await asyncio.Event().wait()
+
+        stream_resume_with_state = stream_messages_with_state
+
+    _patch_stream_scaffolding(monkeypatch, agent=WaitingAgent(text_events("displayed")))
+    original_save = svc.OpenAIEventAdapter._save
+
+    async def save_item(adapter, *args, **kwargs):
+        item = await original_save(adapter, *args, **kwargs)
+        persisted[item["id"]] = deepcopy(item)
+        return item
+
+    class ItemRepository:
+        """保存独立副本，防止内存修改冒充持久化成功。"""
+
+        def __init__(self, db):
+            self.db = db
+
+        async def save(self, *, item, **kwargs):
+            """回读相同公开 item 的最终存储副本。"""
+            persisted[item["id"]] = deepcopy(item)
+            return deepcopy(item)
+
+    monkeypatch.setattr(svc.OpenAIEventAdapter, "_save", save_item)
+    monkeypatch.setattr(events_module, "PublicItemRepository", ItemRepository)
+    monkeypatch.setattr(
+        svc,
+        "AgentRunRepository",
+        lambda db: SimpleNamespace(get_run=AsyncMock(return_value=SimpleNamespace(status=status, worker_id=worker_id))),
+    )
+    stream = execute(mode)
+    async for event in stream:
+        if event.get("type") == "agent.session.turn.output_text.delta":
+            assert event["delta"] == "displayed"
+            break
+    else:
+        pytest.fail("未收到公开正文增量")
+
+    initial = deepcopy(next(iter(persisted.values())))
+    assert initial["status"] == "in_progress" and initial["content"] == []
+    if close_path == "pending_next":
+        pending = asyncio.create_task(anext(stream))
+        await asyncio.wait_for(waiting.wait(), 2)
+        pending.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await pending
+    await stream.aclose()
+
+    item = next(iter(persisted.values()))
+    assert item["id"] == initial["id"]
+    if expected_snapshot:
+        assert item["status"] == "incomplete"
+        assert item["content"] == [{"type": "output_text", "text": "displayed"}]
+    else:
+        assert item == initial
+
+
 async def test_values_and_custom_events_use_explicit_extensions(monkeypatch):
     """状态白名单与压缩通知保持来源顺序，不泄漏 checkpoint 内容。"""
     events = [

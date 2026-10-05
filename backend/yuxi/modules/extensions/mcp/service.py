@@ -216,7 +216,7 @@ async def create_mcp_server(
     icon: str = None,
     created_by: str = None,
 ) -> MCPServer:
-    """Create server."""
+    """创建并独立发布远程 MCP 配置。"""
     if slug in BUILTIN_MCP_SERVERS:
         raise ValueError("系统内置 MCP 的 slug 由代码保留，无法通过接口创建")
     config = RemoteMCPConfig.model_validate(
@@ -247,9 +247,7 @@ async def create_mcp_server(
     await save_mcp_server(db, server, new=True)
     await db.commit()
     await db.refresh(server)
-
     clear_mcp_server_tools_cache(slug)
-
     logger.info(f"Created MCP server '{slug}'")
     return server
 

@@ -125,3 +125,43 @@ async def test_partial_install_preserves_failed_and_unselected_snapshots(tmp_pat
     assert all((item.source_dir / "SKILL.md").is_file() for item in remaining)
     assert (existing / "sentinel.txt").read_text(encoding="utf-8") == "existing"
     assert (existing.parent / "alpha/SKILL.md").is_file()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("filename", ["../escaped", "/absolute", "windows\\escape", "symlink"])
+async def test_zip_rejects_unsafe_entries_before_publish(tmp_path, monkeypatch, filename):
+    """路径与符号链接必须在解包前拒绝，不能产生安装资产。"""
+    import stat
+    from io import BytesIO
+    from zipfile import ZipFile, ZipInfo
+
+    data = BytesIO()
+    with ZipFile(data, "w") as archive:
+        entry = ZipInfo(filename)
+        if filename == "symlink":
+            entry.create_system = 3
+            entry.external_attr = (stat.S_IFLNK | 0o777) << 16
+        archive.writestr(entry, "outside")
+    monkeypatch.setattr(skill_draft, "get_runtime_dir", lambda: tmp_path)
+    with pytest.raises(ValueError, match="ZIP 包含"):
+        await skill_draft.create_uploaded_skill_draft(
+            filename="skill.zip", file_bytes=data.getvalue(), operator=User(uid="owner")
+        )
+    assert not list((tmp_path / "skill_import_drafts").iterdir())
+
+
+@pytest.mark.asyncio
+async def test_zip_rejects_expanded_size_before_extract(tmp_path, monkeypatch):
+    """少量压缩字节也不能绕过展开字节上限。"""
+    from io import BytesIO
+    from zipfile import ZIP_DEFLATED, ZipFile
+
+    data = BytesIO()
+    with ZipFile(data, "w", compression=ZIP_DEFLATED) as archive:
+        archive.writestr("oversized.txt", b"a" * (50 * 1024 * 1024 + 1))
+    monkeypatch.setattr(skill_draft, "get_runtime_dir", lambda: tmp_path)
+    with pytest.raises(ValueError, match="展开后"):
+        await skill_draft.create_uploaded_skill_draft(
+            filename="skill.zip", file_bytes=data.getvalue(), operator=User(uid="owner")
+        )
+    assert not list((tmp_path / "skill_import_drafts").iterdir())

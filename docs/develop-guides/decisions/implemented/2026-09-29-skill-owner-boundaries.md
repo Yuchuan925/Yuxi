@@ -14,7 +14,7 @@ Owner：backend/yuxi/modules/extensions/skills/projection.py
 
 个人 Skill 的草稿确认、列举、安装、读取与删除由 `backend/yuxi/modules/extensions/skills/personal.py` 负责，用户工作区根由 `modules/workspace/paths.py` 提供。个人安装沿用包内 slug，不查询或分配共享数据库 slug。共享 Skill 的业务索引和安装保留在 `backend/yuxi/modules/extensions/skills/shared.py`；包格式解析位于 `backend/yuxi/modules/extensions/skills/package.py`，上传与远程暂存位于 `backend/yuxi/modules/extensions/skills/draft.py`，草稿读取与筛选位于 `backend/yuxi/modules/extensions/skills/draft.py`。
 
-共享文件入口由 `backend/yuxi/modules/extensions/skills/edit.py` 持有：先锁定共享数据库行并重查权限，再从可信根逐层 no-follow 打开目录和普通文件。编辑使用修订值，发布文件后提交索引；提交失败恢复旧文件。创建失败撤回新节点，删除在提交前把节点移到暂存区以便恢复。Artifact 下载只使用已授权的共享行定位文件，不经个人同名覆盖。
+共享文件入口由 `backend/yuxi/modules/extensions/skills/edit.py` 持有：先锁定共享数据库行并重查权限，再从可信根逐层 no-follow 打开目录和普通文件。文件、依赖与节点 HTTP 写入保留已公开的修订契约，全部交给 content.py 准备完整不可变包并提交数据库引用；失败不会修改当前包，不再暂存节点或恢复原文件。内容提交的职责与清理由[完整内容提交决定](./2026-10-05-skill-content-commit.md)拥有。Artifact 下载只使用已授权的共享行定位文件，不经个人同名覆盖。
 
 投影授权快照、跨进程锁和目录发布由本记录的 Owner 负责；运行时单独锁定已选择的共享 Skill 及其依赖。展示列表不接受影响授权或锁行为的布尔参数。HTTP 路由仍只编排对应 service，repository 持有可见性查询和行锁查询。
 
@@ -25,7 +25,7 @@ Owner：backend/yuxi/modules/extensions/skills/projection.py
 
 ## 后果
 
-个人与共享 Skill 保持同名覆盖的运行时语义，但安装命名互不影响。共享文件读取、运行时快照和投影刷新使用各自明确的锁入口。PostgreSQL 与文件系统无法组成原子事务；进程在文件替换和数据库提交之间崩溃的窗口仍是已知限制，需要后续恢复机制才能消除。
+个人与共享 Skill 保持同名覆盖的运行时语义，但安装命名互不影响。共享文件读取、运行时快照和投影刷新使用各自明确的锁入口。受管理内容在 PostgreSQL 提交引用前准备完整目录，读取只消费已提交引用；失败清理未引用目录，不存在原地文件替换与索引提交的补偿窗口。物理损坏与未引用内容清理由完整内容提交决定说明。
 
 ## 验证
 

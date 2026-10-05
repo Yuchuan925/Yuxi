@@ -25,9 +25,9 @@
 
 ## 私有、发布与治理
 
-主 Agent 的 `visibility` 持久化为 `private` 或 `shared`，创建默认私有。私有主 Agent 由所有者正常使用、编辑和删除；其他用户和管理员无法列出、读取或运行。系统管理员可以治理其他人的私有定义，但运行、发布和转移仍要求符合各自边界。SubAgent 定义与内置定义为共享状态，内置维护仅允许系统管理员。
+主 Agent 的 `visibility` 持久化为 `private` 或 `shared`，创建默认私有。私有主 Agent 由所有者正常使用、编辑和删除；其他用户和管理员无法列出、读取或运行。系统管理员可以治理其他人的私有定义，但运行和转移仍要求符合各自边界。SubAgent 定义与内置定义为共享状态，内置维护仅允许系统管理员。
 
-管理员通过发布接口将自己的私有主 Agent 单向变为共享。发布锁定定义，在同一事务校验共享范围和依赖后提交，保留 Agent ID 和所有者。共享状态不能恢复为私有。会话、附件、工作目录、运行产物和个人 Skill 继续属于实际调用者，发布只改变定义可见性。
+管理员可显式创建共享主 Agent；有管理权限的管理员也可通过同一更新接口将私有定义的 `visibility` 改为 `shared`，同时提交明确的 `share_config`。Agent repository 在锁定定义和有效操作者后校验管理权、角色和授权范围，更新同一条记录；普通用户、无授权范围的转换与共享转私有均拒绝。Agent definitions service 在同一事务中校验专属 Skill 的依赖权限并刷新投影，依赖范围不匹配时回滚定义更新。原 ID、slug、所有者和 Context 保留，会话、附件、工作目录、运行产物和个人 Skill 始终属于实际调用者。
 
 共享 Agent 的使用者可以读取提示词与配置。配置中的字段角色限制仍在写入时执行，越权字段提交明确拒绝。所有 APP 终端用户，包括默认终端用户，只能发现和使用获授权的共享 Agent；个人 JWT 和未切换 APP 身份的个人 API 可以访问自己的私有主 Agent。
 
@@ -35,13 +35,13 @@
 
 HTTP 查询、worker 准备、定时触发、等待恢复、模型和工具边界使用当前调用者。模型重试每次重新授权；摘要模型同样复查权限，主动压缩没有 Run 时通过会话归属找到当前 Agent。Agent 所有者的身份只表达定义归属。APP 运行使用终端用户身份，共享 Agent 可见性按 Key 所属账号的 UID 和部门匹配显式读取范围；该匹配将角色按普通用户处理，不借用所有者或系统管理员的隐含治理权限，知识库和 Skill 依赖按实际终端用户授权解析，管理员建设能力不会传递给终端用户。
 
-无权依赖从本次 Context 过滤，显式 `all` 按当前可用资源展开，已保存配置保留原引用。事件 `yuxi.session.turn.capability_limited` 提供通用提示，不包含无权资源名称或内容。共享 Skill 按当前用户刷新投影，个人 Skill 来自调用者自己的目录。实际工具调用复查资源授权、Skill 激活状态以及 MCP 服务器和单工具启用状态；子 Agent 委派在创建子执行前再次授权。
+无权依赖从本次 Context 过滤，显式 `all` 按当前可用资源展开，已保存配置保留原引用。事件 `yuxi.session.turn.capability_limited` 提供通用提示，不包含无权资源名称或内容。共享 Skill 按当前用户刷新投影，个人 Skill 来自调用者自己的目录。Agent 专属 Skill 从绑定 Agent 派生权限；APP 读取复用 Agent 的显式可见性且角色上限为读取，其普通 Skill 依赖继续按实际终端用户授权解析。实际工具调用复查资源授权、Skill 激活状态以及 MCP 服务器和单工具启用状态；子 Agent 委派在创建子执行前再次授权。
 
 账号失效或 Agent 使用权撤销使后续执行形成失败终态，Run 保存错误，Turn 投影对应结果。仅依赖失权时拒绝该依赖的新访问，其他能力继续执行。已交给外部服务的动作和已进入上下文的信息不具有撤回承诺；历史会话与产物保留，并沿其所属资源和文件边界读取。
 
 ## 源码定位与验证
 
-- [权限解析](https://github.com/xerrors/Yuxi/blob/main/backend/yuxi/modules/identity/permissions/resource_permission.py)拥有角色上限、范围关系和私有可见性；[Agent repository](https://github.com/xerrors/Yuxi/blob/main/backend/yuxi/modules/agents/repositories/definitions.py)拥有定义写入和发布事务。
+- [权限解析](https://github.com/xerrors/Yuxi/blob/main/backend/yuxi/modules/identity/permissions/resource_permission.py)拥有角色上限、范围关系和私有可见性；[Agent repository](https://github.com/xerrors/Yuxi/blob/main/backend/yuxi/modules/agents/repositories/definitions.py)拥有定义写入和共享定义授权事务。
 - [身份 schema](https://github.com/xerrors/Yuxi/blob/main/backend/yuxi/migrations/schema.py)拥有角色与有效系统管理员约束；[授权中间件](https://github.com/xerrors/Yuxi/blob/main/backend/yuxi/modules/agents/runtime/middlewares/authorization.py)拥有模型和工具执行边界。
 - [HTTP 验收](https://github.com/xerrors/Yuxi/blob/main/backend/test/integration/api/test_permission_convergence.py)回读定义与账号；[身份并发测试](https://github.com/xerrors/Yuxi/blob/main/backend/test/integration/identity/test_identity_permission_constraints.py)使用两个 PostgreSQL 连接；[撤权 E2E](https://github.com/xerrors/Yuxi/blob/main/backend/test/e2e/test_permission_revocation_e2e.py)回读运行终态、工具结果和文件。
 

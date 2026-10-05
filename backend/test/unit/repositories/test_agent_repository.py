@@ -320,6 +320,51 @@ async def test_normal_user_cannot_update_private_agent_grants():
     db.commit.assert_not_awaited()
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("role,owner", [("admin", "manager"), ("superadmin", "owner")])
+async def test_share_private_agent_updates_same_definition(role, owner):
+    """管理员原地共享定义，保留所有者和完整配置。"""
+    db = FakeDb()
+    agent = _agent_for_update(created_by=owner)
+    agent.id, agent.visibility = 1, "private"
+    agent.config_json = {"context": {"system_prompt": "original", "skills": ["existing"]}}
+    user = User(uid="manager", role=role, user_kind="human", is_deleted=0)
+    db.scalar = AsyncMock(side_effect=[agent, user])
+
+    updated = await AgentRepository(db).update(
+        agent, visibility="shared", share_config=DEFAULT_SHARE_CONFIG, updater=user
+    )
+
+    assert updated is agent
+    assert (agent.id, agent.slug, agent.created_by, agent.visibility) == (1, "shared-bot", owner, "shared")
+    assert agent.config_json == {"context": {"system_prompt": "original", "skills": ["existing"]}}
+    assert agent.share_config == DEFAULT_SHARE_CONFIG
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "role,grants,error,message",
+    [
+        ("user", DEFAULT_SHARE_CONFIG, PermissionError, "仅管理员可共享智能体"),
+        ("admin", None, ValueError, "必须指定共享权限"),
+    ],
+)
+async def test_share_private_agent_requires_admin_and_explicit_grants(role, grants, error, message):
+    """替代仓储调用仍拒绝普通用户发布或无明确授权的转换。"""
+    db = FakeDb()
+    original = {"version": 2, "read_scope": None, "manage_scope": None}
+    agent = _agent_for_update(created_by="manager", share_config=original)
+    agent.id, agent.visibility = 1, "private"
+    user = User(uid="manager", role=role, user_kind="human", is_deleted=0)
+    db.scalar = AsyncMock(side_effect=[agent, user])
+
+    with pytest.raises(error, match=message):
+        await AgentRepository(db).update(agent, visibility="shared", share_config=grants, updater=user)
+
+    assert agent.visibility == "private" and agent.share_config == original
+    db.commit.assert_not_awaited()
+
+
 @pytest.mark.parametrize("field", ["tools", "knowledges", "skills", "subagents", "mcps", "preload_skills"])
 @pytest.mark.parametrize("invalid", [None, "full", ["ok", 1], [""], {"mode": "all"}])
 def test_resource_write_rejects_invalid_selection(field, invalid):
