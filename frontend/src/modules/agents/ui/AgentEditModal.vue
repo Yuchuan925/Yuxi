@@ -31,7 +31,6 @@ import FallbackAvatar from '@/shared/ui/FallbackAvatar.vue'
 import CollapseTransition from '@/shared/ui/CollapseTransition.vue'
 import { isBuiltinAgent, useAgentStore } from '@/modules/agents/model/agent'
 import { useUserStore } from '@/modules/identity/model/user'
-import { generateAgentAvatar } from '@/shared/lib/pixelAvatar'
 import { MAX_IMAGE_UPLOAD_SIZE_BYTES, MAX_IMAGE_UPLOAD_SIZE_MB } from '@/shared/lib/upload_limits'
 
 const props = defineProps({
@@ -239,9 +238,6 @@ const getAgentShareAllowedLevels = () => {
 }
 
 const agentModalTitle = computed(() => (editingAgentId.value ? '编辑智能体' : '新增智能体'))
-const agentPreviewDefaultIcon = computed(() =>
-  generateAgentAvatar(editingAgentId.value || agentForm.slug || 'new-agent')
-)
 const agentPreviewName = computed(() => agentForm.name || editingAgentId.value || '智能体')
 const selectedBackendOption = computed(() =>
   props.backendOptions.find((backend) => backend.value === agentForm.backend_id)
@@ -698,7 +694,6 @@ defineExpose({
                   >
                     <FallbackAvatar
                       :src="agentForm.icon"
-                      :default-src="agentPreviewDefaultIcon"
                       :name="agentPreviewName"
                       :seed="editingAgentId || agentForm.slug || agentForm.name"
                       kind="agent"

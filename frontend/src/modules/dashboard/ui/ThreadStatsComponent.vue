@@ -121,7 +121,6 @@
                 <div class="user-cell">
                   <FallbackAvatar
                     :src="record.avatar"
-                    :default-src="generatePixelAvatar(record.uid)"
                     :name="record.username"
                     :seed="record.uid"
                     kind="user"
@@ -272,7 +271,6 @@
               <div class="entity-cell">
                 <FallbackAvatar
                   :src="record.agent_avatar"
-                  :default-src="generateAgentAvatar(record.agent_id)"
                   :name="record.agent_name || record.agent_id"
                   :seed="record.agent_id"
                   kind="agent"
@@ -296,7 +294,6 @@
               <div class="entity-cell">
                 <FallbackAvatar
                   :src="record.user_avatar"
-                  :default-src="generatePixelAvatar(record.uid)"
                   :name="record.user_deleted ? '已注销用户' : record.username || record.uid"
                   :seed="record.uid"
                   kind="user"
@@ -365,7 +362,6 @@ import { dashboardApi } from '@/apis/dashboard_api'
 import { getColorByIndex } from '@/shared/lib/chartColors'
 import { formatNumber } from '@/modules/dashboard/model/dashboard'
 import { formatFullDateTime } from '@/shared/lib/time'
-import { generateAgentAvatar, generatePixelAvatar } from '@/shared/lib/pixelAvatar'
 import { useThemeStore } from '@/shared/model/theme'
 import FallbackAvatar from '@/shared/ui/FallbackAvatar.vue'
 import DashboardMetricCard from './DashboardMetricCard.vue'

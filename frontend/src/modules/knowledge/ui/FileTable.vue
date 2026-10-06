@@ -333,7 +333,6 @@
           <span class="file-creator">
             <FallbackAvatar
               :src="row.created_by_avatar"
-              :default-src="generatePixelAvatar(row.created_by)"
               :name="row.created_by_name || row.created_by"
               :seed="row.created_by"
               kind="user"
@@ -1377,7 +1376,6 @@ import ChunkParamsConfig from '@/modules/knowledge/ui/ChunkParamsConfig.vue'
 import FileBrowserTable from '@/shared/ui/FileBrowserTable.vue'
 import FileTypeIcon from '@/shared/ui/FileTypeIcon.vue'
 import FallbackAvatar from '@/shared/ui/FallbackAvatar.vue'
-import { generatePixelAvatar } from '@/shared/lib/pixelAvatar'
 </script>
 
 <style scoped lang="less">

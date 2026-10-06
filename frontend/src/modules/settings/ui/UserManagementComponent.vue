@@ -76,7 +76,6 @@
                   <div class="user-table-cell">
                     <FallbackAvatar
                       :src="record.avatar"
-                      :default-src="getUserDefaultAvatarSrc(record)"
                       :name="record.username"
                       :seed="record.uid || record.username"
                       kind="user"
@@ -262,7 +261,6 @@ import { authApi, departmentApi } from '@/apis'
 import { Plus, SquarePen, Trash2, User, UserLock, UserStar, RefreshCw, Search } from '@lucide/vue'
 import { formatDateTime } from '@/shared/lib/time'
 import { isPasswordLongEnough, MIN_PASSWORD_LENGTH } from '@/modules/identity/model/passwordValidation'
-import { generatePixelAvatar } from '@/shared/lib/pixelAvatar'
 import FallbackAvatar from '@/shared/ui/FallbackAvatar.vue'
 
 const userStore = useUserStore()
@@ -439,8 +437,6 @@ watch(
 
 // 格式化时间显示
 const formatTime = (timeStr) => formatDateTime(timeStr)
-
-const getUserDefaultAvatarSrc = (user) => (user.uid ? generatePixelAvatar(user.uid) : '')
 
 const isUserDeleteDisabled = (user) =>
   user.id === userStore.userId ||

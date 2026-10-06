@@ -5,7 +5,6 @@
         <div class="user-avatar">
           <FallbackAvatar
             :src="userStore.avatar"
-            :default-src="avatarDefaultSrc"
             :name="userStore.username"
             :seed="userStore.uid || userStore.username"
             kind="user"
@@ -78,7 +77,6 @@ import DebugComponent from '@/modules/settings/ui/DebugComponent.vue'
 import { message } from 'ant-design-vue'
 import { BookOpen, Sun, Moon, LogOut, Settings, Terminal } from '@lucide/vue'
 import { useThemeStore } from '@/shared/model/theme'
-import { generatePixelAvatar } from '@/shared/lib/pixelAvatar'
 import FallbackAvatar from '@/shared/ui/FallbackAvatar.vue'
 
 const router = useRouter()
@@ -89,8 +87,6 @@ const slots = useSlots()
 
 // Inject settings modal methods
 const { openSettingsModal } = inject('settingsModal', {})
-
-const avatarDefaultSrc = computed(() => (userStore.uid ? generatePixelAvatar(userStore.uid) : ''))
 
 defineProps({
   showRole: {

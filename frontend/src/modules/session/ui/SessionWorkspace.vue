@@ -727,7 +727,6 @@
                           <FallbackAvatar
                             class="state-subagent-icon"
                             :src="getSubagentIconSrc(run)"
-                            :default-src="getSubagentDefaultIconSrc(run)"
                             :name="getSubagentRunName(run)"
                             :seed="run.subagent_slug || getSubagentRunName(run)"
                             kind="agent"
@@ -850,7 +849,6 @@ import {
   CircleX as CloseCircleOutlined
 } from '@lucide/vue'
 import FileTypeIcon from '@/shared/ui/FileTypeIcon.vue'
-import { generateAgentAvatar } from '@/shared/lib/pixelAvatar'
 import AgentInputArea from '@/modules/session/ui/AgentInputArea.vue'
 import ContextUsageRing from '@/modules/session/ui/ContextUsageRing.vue'
 import ToolApprovalModeSelector from '@/modules/session/ui/ToolApprovalModeSelector.vue'
@@ -1184,9 +1182,6 @@ const getSubagentIconSrc = (run) => {
   const agent = getSubagentAgent(run)
   return agent?.icon || ''
 }
-
-const getSubagentDefaultIconSrc = (run) =>
-  run?.subagent_slug ? generateAgentAvatar(run.subagent_slug) : ''
 
 const normalizePanelPath = (path) => String(path || '').replace(/\/+$/, '')
 
@@ -1813,7 +1808,7 @@ const openSubagentThread = (run) => {
     title: getSubagentRunName(run),
     threadId,
     avatar: getSubagentIconSrc(run),
-    defaultAvatar: getSubagentDefaultIconSrc(run)
+    avatarSeed: run.subagent_slug || run.run_id
   }
   agentPanelSections.value = upsertAgentPanelSection(agentPanelSections.value, section)
   agentPanelActiveSectionKey.value = key

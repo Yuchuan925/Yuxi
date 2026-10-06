@@ -214,3 +214,11 @@
     --page-padding: 14px;
   }
 }
+
+/* 备用头像在深浅主题下均使用浅色底与深色图标。 */
+:root {
+  --avatar-agent-background: #edf2fb;
+  --avatar-agent-ink: #526e9e;
+  --avatar-user-background: #edf4f0;
+  --avatar-user-ink: #587d68;
+}

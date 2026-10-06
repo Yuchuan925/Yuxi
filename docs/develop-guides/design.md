@@ -332,3 +332,13 @@ AI agent 修改或生成 Yuxi UI 时，优先按这一节执行。
 - `frontend/src/assets/css/base.dark.css`：暗色模式 token
 - `frontend/src/assets/css/main.css`：全局字体、布局基础样式和 `lucide-icon-btn`
 - [Awesome DESIGN.md](https://github.com/VoltAgent/awesome-design-md)：面向 AI agent 的 `DESIGN.md` 样例集合
+
+## 头像组件
+
+Agent 与 User 使用共享 [FallbackAvatar](https://github.com/xerrors/Yuxi/blob/main/frontend/src/shared/ui/FallbackAvatar.vue)。调用方传入 kind、稳定实体 seed、自定义图片 src 与展示尺寸；自定义图片优先。Agent 默认 Clay，User 默认 Glyphs。生成器随前端本地交付，不请求外部头像 API，Gaze 保持透明背景。
+
+组件支持 style 为 glyphs、clay、shape-grid、gaze；preset 默认为 default，也支持 studio、heritage、soft，每套色卡都有日间与夜间版本。dark 为 on、off、auto，auto 跟随 Yuxi 的主题 Store；circle、square、rounded 分别提供圆形、直角方形和圆角方形。颜色配置由 [共享色卡](https://github.com/xerrors/Yuxi/blob/main/frontend/src/shared/lib/avatar/presets.js) 拥有，几何与表情随稳定 seed 固定。
+
+图片加载或本地生成失败时，Agent 使用 Lucide Bot、User 使用 Lucide User，浅色背景 token 在深浅主题下保持相同。组件通过 fallback 事件提供 image 或 generation 原因。图片地址改变后重新加载；网络恢复只重试失败图片。装饰头像传 decorative，独立头像使用 alt 或 name 提供可访问名称。
+
+Glyphs 使用 Matt Houser 原作的 CC BY 4.0 授权，组件保留 SVG 署名与许可元数据，应用配色、夜间底纸及画布裁切适配；发布包含 [头像第三方声明](https://github.com/xerrors/Yuxi/blob/main/frontend/public/avatar-licenses.txt)。Clay、Shape Grid、Gaze 美术为 CC0 1.0，DiceBear 核心为 MIT。固定依赖与色卡更新需要核验输出和许可。

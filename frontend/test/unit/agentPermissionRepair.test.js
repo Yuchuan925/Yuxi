@@ -50,7 +50,7 @@ async function setupForm(detail, isAdmin = true) {
     useUserStore: () => ({ isAdmin, isSuperAdmin: isAdmin, uid: 'admin', departmentId: 1 }),
     isBuiltinAgent: () => false,
     message: { error: (value) => errors.push(value), warning: (value) => errors.push(value), success() {}, info: (value) => errors.push(value) },
-    userApi: {}, generateAgentAvatar: () => '',
+    userApi: {},
     MAX_IMAGE_UPLOAD_SIZE_BYTES: 1024, MAX_IMAGE_UPLOAD_SIZE_MB: 1
   }
   for (const name of ['ArrowLeft', 'ArrowRight', 'Bot', 'FileArchive', 'Microscope', 'Plus', 'RefreshCw', 'Settings2', 'SlidersHorizontal', 'Upload', 'Wrench', 'X',

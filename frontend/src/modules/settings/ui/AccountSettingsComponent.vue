@@ -23,7 +23,6 @@
             <div class="avatar-upload" :class="{ uploading: avatarUploading }">
               <FallbackAvatar
                 :src="userStore.avatar"
-                :default-src="avatarDefaultSrc"
                 :name="userStore.username"
                 :seed="userStore.uid || userStore.username"
                 kind="user"
@@ -122,7 +121,6 @@ import { message } from 'ant-design-vue'
 import { Building2, RefreshCw, ShieldCheck, Upload } from '@lucide/vue'
 import FallbackAvatar from '@/shared/ui/FallbackAvatar.vue'
 import { useUserStore } from '@/modules/identity/model/user'
-import { generatePixelAvatar } from '@/shared/lib/pixelAvatar'
 
 const userStore = useUserStore()
 const avatarUploading = ref(false)
@@ -136,8 +134,6 @@ const profileDraft = reactive({
   username: '',
   phone_number: ''
 })
-
-const avatarDefaultSrc = computed(() => (userStore.uid ? generatePixelAvatar(userStore.uid) : ''))
 
 const userRoleText = computed(() => {
   switch (userStore.userRole) {

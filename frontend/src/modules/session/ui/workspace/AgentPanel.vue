@@ -23,9 +23,8 @@
             <FallbackAvatar
               v-else
               :src="section.avatar"
-              :default-src="section.defaultAvatar"
               :name="section.title"
-              :seed="section.threadId"
+              :seed="section.avatarSeed"
               kind="agent"
               :size="18"
               shape="rounded"

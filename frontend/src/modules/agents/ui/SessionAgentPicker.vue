@@ -19,7 +19,6 @@
           <FallbackAvatar
             v-if="currentAgentOption"
             :src="currentAgentOption.icon"
-            :default-src="currentAgentOption.defaultIcon"
             :name="currentAgentOption.label"
             :seed="currentAgentOption.value || currentAgentOption.label"
             kind="agent"
@@ -47,7 +46,6 @@
       <FallbackAvatar
         class="config-dropdown-item-icon-image"
         :src="agent.icon"
-        :default-src="agent.defaultIcon"
         :name="agent.label"
         :seed="agent.value || agent.label"
         kind="agent"
@@ -97,7 +95,6 @@ import ActionDropdown from '@/shared/ui/ActionDropdown.vue'
 import ActionTrigger from '@/shared/ui/ActionTrigger.vue'
 import FallbackAvatar from '@/shared/ui/FallbackAvatar.vue'
 import { isBuiltinAgent, useAgentStore } from '@/modules/agents/model/agent'
-import { generateAgentAvatar } from '@/shared/lib/pixelAvatar'
 import { normalizeAgentBackendOption } from '@/modules/agents/model/agentConfigUtils'
 
 const AgentEditModal = shallowRef(null)
@@ -116,7 +113,6 @@ const agentQuickSwitchOptions = computed(() =>
       label: agent.name || agent.agent_id,
       value: agent.agent_id,
       icon: agent.icon || '',
-      defaultIcon: agent.agent_id ? generateAgentAvatar(agent.agent_id) : '',
       isBuiltin: isBuiltinAgent(agent)
     }))
 )

@@ -12,7 +12,6 @@ import InfoCard from '@/shared/ui/InfoCard.vue'
 import FallbackAvatar from '@/shared/ui/FallbackAvatar.vue'
 import ExtensionCardGrid from '@/modules/extensions/ui/ExtensionCardGrid.vue'
 import { normalizeAgentBackendOption } from '@/modules/agents/model/agentConfigUtils'
-import { generateAgentAvatar } from '@/shared/lib/pixelAvatar'
 import { getShareConfigLabel } from '@/modules/agents/model/shareConfig'
 
 const props = defineProps({ focusAgent: { type: String, default: '' } })
@@ -66,9 +65,6 @@ const agentStats = computed(() => ({
   ).length
 }))
 const canManageAgent = (agent) => !!agent?.can_manage
-const getAgentDefaultIconSrc = (agent) =>
-  agent.agent_id ? generateAgentAvatar(agent.agent_id) : ''
-
 /** 返回智能体共享范围的简短展示文案。 */
 const getAgentShareLabel = (agent) =>
   agent?.visibility === 'private'
@@ -225,7 +221,6 @@ defineExpose({
               <FallbackAvatar
                 class="agent-card-icon-image"
                 :src="agent.icon"
-                :default-src="getAgentDefaultIconSrc(agent)"
                 :name="agent.name || agent.agent_id"
                 :seed="agent.agent_id || agent.name"
                 kind="agent"

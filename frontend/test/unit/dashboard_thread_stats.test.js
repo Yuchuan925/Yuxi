@@ -129,8 +129,8 @@ test('会话分析保持紧凑摘要、彩色排行、刷新 loading 与统一�
 
   assert.ok(refreshButton)
   assert.ok(refreshButton.includes(':loading="loading"'))
-  assert.match(source, /:default-src="generateAgentAvatar\(record\.agent_id\)"/)
-  assert.match(source, /:default-src="generatePixelAvatar\(record\.uid\)"/)
+  assert.match(source, /:seed="record\.agent_id"/)
+  assert.match(source, /:seed="record\.uid"/)
   assert.match(source, /label: '全部', value: true/)
   assert.match(source, /label: '仅主智能体', value: false/)
   assert.match(source, /@change="changeSubagentScope"/)
