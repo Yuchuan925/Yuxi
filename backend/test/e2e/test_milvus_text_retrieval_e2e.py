@@ -304,23 +304,32 @@ async def test_worker_index_and_all_search_modes_use_text_constraints(e2e_client
             assert result["content"] == samples["match.md"]
             assert result["score_type"] == {"vector": "cosine", "keyword": "bm25", "hybrid": "hybrid"}[mode]
             assert any(segment["matched"] for fragment in result["highlights"] for segment in fragment)
-            external = await e2e_client.post(
-                f"/api/v1/knowledge/databases/external/{kb_id}/retrieve",
+            saved = await e2e_client.put(
+                f"/api/knowledge/databases/{kb_id}/query-params",
                 headers=e2e_headers,
                 json={
-                    "query": "Milvus",
-                    "options": {
-                        "search_mode": mode,
-                        "required_terms": "Milvus",
-                        "excluded_terms": "legacy",
-                        "exact_phrase": "vector database",
-                        "use_graph_retrieval": False,
-                        "use_reranker": False,
-                    },
+                    "search_mode": mode,
+                    "required_terms": "Milvus",
+                    "excluded_terms": "legacy",
+                    "exact_phrase": "vector database",
+                    "use_graph_retrieval": False,
+                    "use_reranker": False,
                 },
             )
-            assert external.status_code == 200, external.text
-            [public_result] = external.json()["results"]
+            assert saved.status_code == 200, saved.text
+            public = await e2e_client.post(
+                "/api/v1/knowledge/tools/query_kb",
+                headers=e2e_headers,
+                json={"kb_id": kb_id, "query_text": "Milvus"},
+            )
+            assert public.status_code == 200, public.text
+            [public_result] = public.json()["results"]
+            restored = await e2e_client.put(
+                f"/api/knowledge/databases/{kb_id}/query-params",
+                headers=e2e_headers,
+                json={"search_mode": "vector", "required_terms": "", "excluded_terms": "", "exact_phrase": ""},
+            )
+            assert restored.status_code == 200, restored.text
             assert public_result["file_id"] == file_ids["match.md"]
             assert public_result["content"] == result["content"]
             assert public_result["metadata"]["score_type"] == result["score_type"]

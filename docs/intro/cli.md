@@ -108,7 +108,7 @@ yuxi thread show <thread-id> --json
 
 ## 查询知识库
 
-登录用户可以读取自己有权限访问的 external 知识库：
+登录用户通过 Public 工具接口读取自己有权限访问的知识库：
 
 ```bash
 yuxi kb list

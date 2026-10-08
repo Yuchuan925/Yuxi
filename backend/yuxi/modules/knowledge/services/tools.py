@@ -110,6 +110,7 @@ async def find_kb_document(
 async def search_file(
     visible_kbs: list[dict[str, Any]],
     *,
+    kb_id: str | None = None,
     kb_name: str | None = None,
     query: str | None = None,
     offset: int = 0,
@@ -117,16 +118,18 @@ async def search_file(
     kb_service: Any = None,
 ) -> Any:
     """按可见范围和文件名搜索知识库文件。"""
-    if not kb_name and not query:
-        raise KnowledgeToolError("请提供知识库名称或搜索关键词，不能同时为空")
+    if not kb_id and not kb_name and not query:
+        raise KnowledgeToolError("请提供知识库 ID、名称或搜索关键词，不能同时为空")
     if not visible_kbs:
         raise KnowledgeToolError("无法获取当前会话可访问的知识库", not_found=True)
+    target_kbs = visible_kbs
+    if kb_id:
+        target = require_visible_kb(kb_id, visible_kbs)
+        target_kbs = [kb for kb in target_kbs if kb.get("kb_id") == target]
     if kb_name:
-        target_kbs = [kb for kb in visible_kbs if kb.get("name") == kb_name]
+        target_kbs = [kb for kb in target_kbs if kb.get("name") == kb_name]
         if not target_kbs:
             raise KnowledgeToolError(f"知识库 '{kb_name}' 不存在或当前会话未启用", not_found=True)
-    else:
-        target_kbs = visible_kbs
     service = kb_service or knowledge_base
     searchable = [kb for kb in target_kbs if service.database_type_supports_documents(kb.get("kb_type"))]
     if not searchable:

@@ -902,3 +902,12 @@ def _async_get_file_download(content: bytes, filename: str):
         }
 
     return _impl
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kwargs", [{"kb_id": "db-2"}, {"kb_id": "db-1", "kb_name": "Other"}])
+async def test_search_file_id_cannot_bypass_visible_scope_or_name(monkeypatch, kwargs):
+    """ID 与名称必须落在同一可见知识库内。"""
+    monkeypatch.setattr(tools, "_resolve_visible_knowledge_bases_for_query", _fake_visible_kbs)
+    result = await _run_search_file(runtime=SimpleNamespace(context=SimpleNamespace()), **kwargs)
+    assert "不存在或当前会话未启用" in result

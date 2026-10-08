@@ -885,7 +885,6 @@ class KnowledgeBaseManager:
         offset: int = 0,
         limit: int = 300,
         status: str | None = None,
-        include_is_folder: bool = False,
         include_parent_id: bool = False,
     ) -> dict:
         """按文件名在一组知识库中搜索文件，并返回分页结果。"""
@@ -930,8 +929,6 @@ class KnowledgeBaseManager:
                     "updated_at": str(file.updated_at) if file.updated_at else None,
                     "file_size": file.file_size,
                 }
-                if include_is_folder:
-                    item["is_folder"] = bool(file.is_folder)
                 if include_parent_id:
                     item["parent_id"] = file.parent_id
                 all_files.append(item)

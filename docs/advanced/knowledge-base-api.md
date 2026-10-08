@@ -56,19 +56,7 @@ Durable Task 的 `success` 只代表 worker 已完成编排，任务状态不拥
 
 ## 外部查询接口
 
-普通登录用户 JWT、`full` Key 或 `knowledge` 级 API Key 可以查询绑定用户有读取权限的知识库。旧 external 路径在迁移期保留；管理、上传等接口仍使用 `/api/knowledge/*`。
-
-| 方法 | 路径 | 作用 |
-| --- | --- | --- |
-| `GET` | `/api/v1/knowledge/databases/external` | 列出可见知识库 |
-| `GET` | `/api/v1/knowledge/databases/external/{kb_id}/files` | 列出或按文件名搜索文件 |
-| `POST` | `/api/v1/knowledge/databases/external/{kb_id}/retrieve` | 检索片段 |
-| `GET` | `/api/v1/knowledge/databases/external/{kb_id}/files/{file_id}/open` | 按行打开解析后的 Markdown |
-| `POST` | `/api/v1/knowledge/databases/external/{kb_id}/files/{file_id}/find` | 在文件内按关键词或正则查找 |
-
-`files` 的查询参数只匹配文件名，不搜索正文。`open` 默认从第 0 行开始读取，单次最多 1800 行；`find` 返回匹配窗口。
-
-Public v1 也提供与 Agent 内部 Skill 同名的只读工具入口。Agent 工具与这些 HTTP 入口共用 `yuxi.modules.knowledge.services.tools`；API 根据 JWT 或 Key 绑定的用户重新解析知识库读取权限，调用方不能指定别人的用户身份。
+普通登录用户 JWT、`full` Key 或 `knowledge` 级 API Key 通过 `/api/v1/knowledge/tools` 查询绑定用户有读取权限的知识库。Agent 工具、CLI 与这些 HTTP 入口共用 `yuxi.modules.knowledge.services.tools`；API 根据 JWT 或 Key 绑定的用户重新解析知识库读取权限，调用方不能指定别人的用户身份。管理、上传等接口使用 `/api/knowledge/*`。
 
 | 方法 | 路径 | 请求体或结果 |
 | --- | --- | --- |
@@ -76,26 +64,25 @@ Public v1 也提供与 Agent 内部 Skill 同名的只读工具入口。Agent �
 | `POST` | `/api/v1/knowledge/tools/query_kb` | `{"kb_id":"ID","query_text":"关键词","file_name":null}` |
 | `POST` | `/api/v1/knowledge/tools/open_kb_document` | `{"kb_id":"ID","file_id":"ID","line":1}` |
 | `POST` | `/api/v1/knowledge/tools/find_kb_document` | `{"kb_id":"ID","file_id":"ID","patterns":["词"]}` |
-| `POST` | `/api/v1/knowledge/tools/search_file` | `{"kb_name":"名称","query":"文件名","offset":0,"limit":300}` |
+| `POST` | `/api/v1/knowledge/tools/search_file` | `{"kb_id":"ID","query":"文件名","offset":0,"limit":300}` |
 
-`search_file` 至少需要 `kb_name` 或 `query`。不可见资源返回 `404`；业务条件不满足时返回 `400`，请求体字段缺失或数值越界时返回 `422`。Agent 的 `download_kb_file` 依赖会话沙盒路径，本次不提供对外工具入口；原有文件下载 API 的权限不变。
+`search_file` 至少需要 `kb_id`、`kb_name` 或 `query`，查询词只匹配文件名。指定知识库时可省略查询词以列出文件；同时传 ID 与名称时需同时匹配。`open_kb_document` 默认读取 1800 行，`window_size` 最大 2000；`find_kb_document` 返回匹配窗口。不可见资源返回 `404`；业务条件不满足时返回 `400`，请求体字段缺失或数值越界时返回 `422`。Agent 的 `download_kb_file` 依赖会话沙盒路径，只提供 Agent 内部入口；原有文件下载 API 的权限不变。
 
 Dify 和 Notion 只提供外部检索能力。它们不支持 Yuxi 的文档上传、解析、索引和全文打开；调用不支持的接口时，服务会明确返回错误。
 
 ## Milvus 文本检索参数
 
-外部 `retrieve` 接口通过 `options` 覆盖本次检索参数，例如：
+`query_kb` 接收 `kb_id`、`query_text` 和可选的 `file_name`，使用知识库保存的默认检索配置。单次公共检索不接受 `options` 覆盖。具有管理权限的调用方可通过 `PUT /api/knowledge/databases/{kb_id}/query-params` 保存默认值；检索测试页面通过管理侧 `query-test` 的 `meta` 传入本次参数。
+
+保存 Milvus 检索配置的请求体示例：
 
 ```json
 {
-  "query": "Milvus",
-  "options": {
-    "search_mode": "hybrid",
-    "required_terms": "Milvus",
-    "excluded_terms": "legacy",
-    "exact_phrase": "vector database",
-    "highlight_results": true
-  }
+  "search_mode": "hybrid",
+  "required_terms": "Milvus",
+  "excluded_terms": "legacy",
+  "exact_phrase": "vector database",
+  "highlight_results": true
 }
 ```
 
@@ -117,14 +104,14 @@ yuxi kb open --kb-id <kb-id> --file-id <file-id>
 yuxi kb find --kb-id <kb-id> --file-id <file-id> --pattern "年假"
 ```
 
-npm CLI 的 `kb` 命令只读 external 知识库，不提供文件上传、解析或向量入库。管理端上传和处理流程见[知识库入门](../intro/knowledge-base.md)。
+npm CLI 的 `kb` 命令使用 Public 工具接口读取知识库，不提供文件上传、解析或向量入库。管理端上传和处理流程见[知识库入门](../intro/knowledge-base.md)。
 
 ## 验证入口
 
 - [知识库路由](https://github.com/xerrors/Yuxi/blob/main/backend/yuxi/api/routers/knowledge/management.py)
-- [外部查询路由](https://github.com/xerrors/Yuxi/blob/main/backend/yuxi/api/routers/knowledge/external.py)
+- [Public 工具路由](https://github.com/xerrors/Yuxi/blob/main/backend/yuxi/api/routers/public_v1/knowledge.py)
 - [知识库权限解析](https://github.com/xerrors/Yuxi/blob/main/backend/yuxi/modules/identity/permissions/resource_permission.py)
 - [知识库 HTTP integration](https://github.com/xerrors/Yuxi/blob/main/backend/test/integration/api/test_knowledge_router.py)
-- [外部知识库 integration](https://github.com/xerrors/Yuxi/blob/main/backend/test/integration/api/test_knowledge_external_router.py)
+- [Public 工具 integration](https://github.com/xerrors/Yuxi/blob/main/backend/test/integration/api/test_public_knowledge_tools.py)
 
 修改导入、权限或查询接口时，运行真实 HTTP integration，并从 PostgreSQL、MinIO、Milvus 或 Neo4j 回读最终结果。

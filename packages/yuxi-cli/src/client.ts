@@ -12,7 +12,7 @@ export class Client {
     this.apiBase = `${remote.url.replace(/\/$/, "")}/api`;
   }
 
-  async request<T extends Json = Json>(path: string, init: RequestInit = {}, unauthenticated = false): Promise<T> {
+  async request<T extends Json | Json[] = Json>(path: string, init: RequestInit = {}, unauthenticated = false): Promise<T> {
     const headers = new Headers(init.headers);
     headers.set("Accept", "application/json");
     if (!unauthenticated && this.remote.apiKey) headers.set("Authorization", `Bearer ${this.remote.apiKey}`);
@@ -78,9 +78,9 @@ export class Client {
       controller.abort();
     }
   }
-  kbList() { return this.request<Json>("/v1/knowledge/databases/external"); }
-  kbFiles(id: string, query?: string) { return this.request<Json>(`/v1/knowledge/databases/external/${encodeURIComponent(id)}/files?offset=0&limit=100&status=all${query ? `&query=${encodeURIComponent(query)}` : ""}`); }
-  kbQuery(id: string, query: string) { return this.request<Json>(`/v1/knowledge/databases/external/${encodeURIComponent(id)}/retrieve`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ query, options: {} }) }); }
-  kbOpen(kb: string, file: string) { return this.request<Json>(`/v1/knowledge/databases/external/${encodeURIComponent(kb)}/files/${encodeURIComponent(file)}/open?offset=0&limit=200`); }
-  kbFind(kb: string, file: string, patterns: string[]) { return this.request<Json>(`/v1/knowledge/databases/external/${encodeURIComponent(kb)}/files/${encodeURIComponent(file)}/find`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ patterns, use_regex: false, case_sensitive: false, max_windows: 5, window_size: 80 }) }); }
+  kbList() { return this.request<Json[]>("/v1/knowledge/tools/list_kbs"); }
+  kbFiles(id: string, query?: string) { return this.request<Json>("/v1/knowledge/tools/search_file", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ kb_id: id, query, offset: 0, limit: 100 }) }); }
+  kbQuery(id: string, query: string) { return this.request<Json>("/v1/knowledge/tools/query_kb", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ kb_id: id, query_text: query }) }); }
+  kbOpen(kb: string, file: string) { return this.request<Json>("/v1/knowledge/tools/open_kb_document", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ kb_id: kb, file_id: file, offset: 0, window_size: 200 }) }); }
+  kbFind(kb: string, file: string, patterns: string[]) { return this.request<Json>("/v1/knowledge/tools/find_kb_document", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ kb_id: kb, file_id: file, patterns, use_regex: false, case_sensitive: false, max_windows: 5, window_size: 80 }) }); }
 }

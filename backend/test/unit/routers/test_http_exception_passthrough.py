@@ -9,7 +9,6 @@ from fastapi import FastAPI, HTTPException, UploadFile
 from fastapi.testclient import TestClient
 
 import yuxi.api.routers.identity.auth as auth_router
-import yuxi.api.routers.knowledge.external as external_kb_router
 import yuxi.api.routers.knowledge.graphs as graph_router
 import yuxi.api.routers.knowledge.dashboard as knowledge_dashboard_router
 import yuxi.api.routers.knowledge.evaluation as knowledge_eval_router
@@ -69,12 +68,6 @@ import yuxi.api.routers.system as system_router
             auth_router,
             "upload_image_to_minio",
         ),
-        (
-            external_kb_router.open_external_file,
-            {"kb_id": "kb-1", "file_id": "file-1", "offset": 0, "limit": 100},
-            external_kb_router.knowledge_base,
-            "open_document",
-        ),
     ],
 )
 @pytest.mark.asyncio
@@ -82,7 +75,6 @@ async def test_route_preserves_http_exception(monkeypatch, status_code, endpoint
     """服务拒绝须保留同一异常对象，包含结构化详情和重试响应头。"""
     error = HTTPException(status_code, detail={"code": "service_rejected"}, headers={"Retry-After": "30"})
     monkeypatch.setattr(target, method, AsyncMock(side_effect=error))
-    monkeypatch.setattr(external_kb_router, "_require_accessible_kb", AsyncMock())
 
     with pytest.raises(HTTPException) as caught:
         await endpoint(**kwargs, current_user=SimpleNamespace(uid="user-1", id=1, role="admin"))

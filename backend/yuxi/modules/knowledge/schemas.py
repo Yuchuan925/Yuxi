@@ -3,6 +3,16 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 
+class SearchFileInput(BaseModel):
+    """Agent 与 Public API 共用的文件搜索条件。"""
+
+    kb_id: str | None = Field(default=None, description="可选知识库资源 ID；指定后只搜索该知识库")
+    kb_name: str | None = Field(default=None, description="可选知识库名称；与 ID 同时指定时需同时匹配")
+    query: str | None = Field(default=None, description="文件名关键词；指定知识库时可留空以列出文件")
+    offset: int = Field(default=0, ge=0, description="偏移量，从 0 开始")
+    limit: int = Field(default=300, ge=1, le=5000, description="返回数量限制，默认 300")
+
+
 class SearchInputSchema(BaseModel):
     kb_id: str = Field(description="知识库资源 ID，也就是 kb_id")
     query_text: str = Field(description="检索关键词，应提炼为有助于召回答案的关键词或短语")

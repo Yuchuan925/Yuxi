@@ -4,29 +4,17 @@ from collections.abc import Awaitable
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
 
 from yuxi.api.dependencies.auth import get_required_user
-from yuxi.api.routers.knowledge.external import external_kb
 from yuxi.modules.identity.models import User
 from yuxi.modules.knowledge.base import KBNotFoundError
-from yuxi.modules.knowledge.schemas import FindInputSchema, OpenInputSchema, SearchInputSchema
+from yuxi.modules.knowledge.schemas import FindInputSchema, OpenInputSchema, SearchFileInput, SearchInputSchema
 from yuxi.modules.knowledge.services import tools as knowledge_tools
 from yuxi.modules.knowledge.services.access import visible_knowledge_bases
 
 public_knowledge_router = APIRouter(prefix="/v1")
-public_knowledge_router.include_router(external_kb)
 
 tool_router = APIRouter(prefix="/knowledge/tools", tags=["knowledge"])
-
-
-class FileSearchInput(BaseModel):
-    """指定知识库文件搜索条件。"""
-
-    kb_name: str | None = None
-    query: str | None = None
-    offset: int = Field(default=0, ge=0)
-    limit: int = Field(default=300, ge=1, le=5000)
 
 
 async def _result(operation: Awaitable[Any]) -> Any:
@@ -93,11 +81,12 @@ async def find_kb_document(payload: FindInputSchema, current_user: User = Depend
 
 
 @tool_router.post("/search_file")
-async def search_file(payload: FileSearchInput, current_user: User = Depends(get_required_user)):
+async def search_file(payload: SearchFileInput, current_user: User = Depends(get_required_user)):
     """按名称搜索当前用户可见的知识库文件。"""
     return await _result(
         knowledge_tools.search_file(
             await visible_knowledge_bases(current_user.uid),
+            kb_id=payload.kb_id,
             kb_name=payload.kb_name,
             query=payload.query,
             offset=payload.offset,

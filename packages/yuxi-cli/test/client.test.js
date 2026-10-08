@@ -25,31 +25,33 @@ test("uses Public v1 knowledge paths, bodies, and bearer authentication", async 
     request.on("data", chunk => { body += chunk; });
     request.on("end", () => {
       record.body = body;
-      if (request.url.endsWith("/external")) return json(response, 200, { databases: [] });
-      if (request.url.includes("/files?")) return json(response, 200, { files: [] });
-      if (request.url.endsWith("/retrieve")) return json(response, 200, { body: JSON.parse(body) });
-      if (request.url.endsWith("/open?offset=0&limit=200")) return json(response, 200, { content: "ok" });
-      if (request.url.endsWith("/find")) return json(response, 200, { body: JSON.parse(body) });
+      if (request.url.endsWith("/list_kbs")) return json(response, 200, [{ kb_id: "kb 1", name: "Handbook" }]);
+      if (request.url.endsWith("/search_file")) return json(response, 200, { files: [] });
+      if (request.url.endsWith("/query_kb")) return json(response, 200, { kb_id: "kb 1", results: [] });
+      if (request.url.endsWith("/open_kb_document")) return json(response, 200, { content: "ok" });
+      if (request.url.endsWith("/find_kb_document")) return json(response, 200, { windows: [] });
       json(response, 404, { detail: "unexpected path" });
     });
   }, async url => {
     const client = new Client({ name: "test", url, apiKey: "yxkey_test" });
-    await client.kbList();
+    assert.deepEqual(await client.kbList(), [{ kb_id: "kb 1", name: "Handbook" }]);
     await client.kbFiles("kb 1", "hand book");
     await client.kbQuery("kb 1", "what?");
     await client.kbOpen("kb 1", "file/1");
     await client.kbFind("kb 1", "file/1", ["needle"]);
   });
-  assert.deepEqual(seen.map(item => item.url), [
-    "/api/v1/knowledge/databases/external",
-    "/api/v1/knowledge/databases/external/kb%201/files?offset=0&limit=100&status=all&query=hand%20book",
-    "/api/v1/knowledge/databases/external/kb%201/retrieve",
-    "/api/v1/knowledge/databases/external/kb%201/files/file%2F1/open?offset=0&limit=200",
-    "/api/v1/knowledge/databases/external/kb%201/files/file%2F1/find",
+  assert.deepEqual(seen.map(item => [item.method, item.url]), [
+    ["GET", "/api/v1/knowledge/tools/list_kbs"],
+    ["POST", "/api/v1/knowledge/tools/search_file"],
+    ["POST", "/api/v1/knowledge/tools/query_kb"],
+    ["POST", "/api/v1/knowledge/tools/open_kb_document"],
+    ["POST", "/api/v1/knowledge/tools/find_kb_document"],
   ]);
   assert.ok(seen.every(item => item.auth === "Bearer yxkey_test"));
-  assert.deepEqual(JSON.parse(seen[2].body), { query: "what?", options: {} });
-  assert.deepEqual(JSON.parse(seen[4].body), { patterns: ["needle"], use_regex: false, case_sensitive: false, max_windows: 5, window_size: 80 });
+  assert.deepEqual(JSON.parse(seen[1].body), { kb_id: "kb 1", query: "hand book", offset: 0, limit: 100 });
+  assert.deepEqual(JSON.parse(seen[2].body), { kb_id: "kb 1", query_text: "what?" });
+  assert.deepEqual(JSON.parse(seen[3].body), { kb_id: "kb 1", file_id: "file/1", offset: 0, window_size: 200 });
+  assert.deepEqual(JSON.parse(seen[4].body), { kb_id: "kb 1", file_id: "file/1", patterns: ["needle"], use_regex: false, case_sensitive: false, max_windows: 5, window_size: 80 });
 });
 
 test("maps structured HTTP errors without hiding the server status", async () => {

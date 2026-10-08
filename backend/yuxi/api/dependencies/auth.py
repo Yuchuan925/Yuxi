@@ -60,10 +60,7 @@ async def get_current_user(
             request.state.api_key = api_key_obj
             request.state.app_id = api_key_obj.app_id
             route_path = request.scope.get("path", "")
-            permitted_root = {
-                "agents": "/api/v1/agents",
-                "knowledge": "/api/v1/knowledge/databases/external",
-            }.get(api_key_obj.access_level)
+            permitted_root = "/api/v1/agents" if api_key_obj.access_level == "agents" else None
             if api_key_obj.access_level != "full" and not (
                 (permitted_root and (route_path == permitted_root or route_path.startswith(f"{permitted_root}/")))
                 or (api_key_obj.access_level == "knowledge" and route_path in KNOWLEDGE_TOOL_PATHS)

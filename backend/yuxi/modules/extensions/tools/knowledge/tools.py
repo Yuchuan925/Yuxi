@@ -13,7 +13,7 @@ from pydantic import BaseModel, Field
 from yuxi.infrastructure.observability.logging import logger
 from yuxi.modules.agents.runtime.sandbox import ProvisionerSandboxBackend
 from yuxi.modules.extensions.tools.registry import tool
-from yuxi.modules.knowledge.schemas import FindInputSchema, OpenInputSchema, SearchInputSchema
+from yuxi.modules.knowledge.schemas import FindInputSchema, OpenInputSchema, SearchFileInput, SearchInputSchema
 from yuxi.modules.knowledge.services import tools as knowledge_tools
 from yuxi.modules.knowledge.services.access import visible_knowledge_bases
 
@@ -169,15 +169,6 @@ async def find_kb_document(
         return f"知识库文档内检索失败: {str(e)}"
 
 
-class SearchFileInput(BaseModel):
-    """搜索文件输入模型"""
-
-    kb_name: str | None = Field(default=None, description="知识库名称，为空时搜索所有知识库")
-    query: str | None = Field(default=None, description="搜索关键词，为空时返回所有文件")
-    offset: int = Field(default=0, ge=0, description="偏移量，从 0 开始")
-    limit: int = Field(default=300, ge=1, le=5000, description="返回数量限制，默认 300")
-
-
 @tool(category="knowledge", tags=["知识库"], display_name="搜索知识库文件", args_schema=SearchFileInput)
 async def search_file(
     kb_name: str | None = None,
@@ -185,15 +176,17 @@ async def search_file(
     offset: int = 0,
     limit: int = 300,
     runtime: ToolRuntime = None,
+    kb_id: str | None = None,
 ) -> dict[str, Any] | str:
     """搜索知识库中的文件
 
-    当用户需要查找特定文件时使用此工具。可以指定知识库名称和搜索关键词。
+    当用户需要查找特定文件时使用此工具。可以指定知识库 ID、名称和搜索关键词。
     如果不指定知识库，将搜索所有可访问的知识库。
     如果不指定搜索关键词，将返回所有文件。
 
     Args:
-        kb_name: 知识库名称，为空时搜索所有知识库
+        kb_id: 知识库资源 ID；与名称同时指定时需同时匹配
+        kb_name: 知识库名称，为空时按 ID 或关键词搜索
         query: 搜索关键词，为空时返回所有文件
         offset: 偏移量，从 0 开始
         limit: 返回数量限制，默认 300
@@ -205,6 +198,7 @@ async def search_file(
     try:
         return await knowledge_tools.search_file(
             visible_kbs,
+            kb_id=kb_id,
             kb_name=kb_name,
             query=query,
             offset=offset,

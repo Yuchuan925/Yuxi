@@ -78,8 +78,8 @@ async def readable_knowledge_tool_data(knowledge_database):
         await pg_manager.close()
 
 
-async def test_jwt_can_call_six_read_only_knowledge_tools(test_client, admin_headers, knowledge_database):
-    """普通用户 JWT 可调用六个查询工具，缺失资源不会泄露。"""
+async def test_jwt_can_call_five_read_only_knowledge_tools(test_client, admin_headers, knowledge_database):
+    """登录用户 JWT 可调用五个查询工具，缺失资源不会泄露。"""
     kb_id = knowledge_database["kb_id"]
     prefix = "/api/v1/knowledge/tools"
     unauthenticated = await test_client.get(f"{prefix}/list_kbs")
@@ -123,6 +123,17 @@ async def test_document_tools_return_persisted_results(
     kb_id = knowledge_database["kb_id"]
     file_id = readable_knowledge_tool_data
     prefix = "/api/v1/knowledge/tools"
+
+    searched = await test_client.post(
+        f"{prefix}/search_file",
+        json={"kb_id": kb_id, "query": "tool-proof"},
+        headers=admin_headers,
+    )
+    assert searched.status_code == 200, searched.text
+    [file] = searched.json()["files"]
+    assert file["file_id"] == file_id
+    assert file["kb_id"] == kb_id
+    assert file["filename"] == "tool-proof.md"
 
     opened = await test_client.post(
         f"{prefix}/open_kb_document",
