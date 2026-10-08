@@ -1,33 +1,54 @@
 <template>
-  <section v-if="normalizedArtifacts.length" class="artifacts-list">
-    <div v-for="file in normalizedArtifacts" :key="file.path" class="artifact-card">
+  <section
+    v-if="normalizedArtifacts.length"
+    class="artifacts-list"
+    :class="{ 'is-box-group': normalizedArtifacts.length > 3 }"
+    aria-label="交付物"
+  >
+    <div v-if="normalizedArtifacts.length > 3" class="artifacts-heading">
+      <span>交付物 <span class="artifact-count">{{ normalizedArtifacts.length }}</span></span>
       <button
         type="button"
-        class="item-main"
-        :title="`打开 ${file.name}`"
-        @click="openPreview(file)"
+        class="lucide-icon-btn artifacts-toggle"
+        :aria-expanded="expanded"
+        @click="expanded = !expanded"
       >
-        <FileTypeIcon :name="file.path" :size="20" class="item-icon" />
-        <div class="item-meta">
-          <div class="item-name">{{ file.name }}</div>
-          <div class="item-desc">{{ getFileMetaLabel(file.path) }}</div>
-        </div>
+        {{ expanded ? '收起' : `展开其余 ${normalizedArtifacts.length - 3} 个` }}
+        <ChevronDown :size="14" :class="{ 'is-expanded': expanded }" aria-hidden="true" />
       </button>
-      <div class="item-actions">
-        <button class="item-action-btn" title="下载" @click.stop="downloadFile(file)">
-          <Download :size="15" />
-        </button>
-        <button
-          class="item-action-btn"
-          :title="isSaving(file.path) ? '保存中' : '保存到个人空间'"
-          :disabled="isSaving(file.path)"
-          @click.stop="saveToWorkspace(file)"
-        >
-          <LoaderCircle v-if="isSaving(file.path)" :size="15" class="item-action-spin" />
-          <Save v-else :size="15" />
-        </button>
-      </div>
     </div>
+    <TransitionGroup name="artifact-reveal" tag="div" class="artifact-items">
+      <div v-for="file in visibleArtifacts" :key="file.path" class="artifact-entry">
+        <div class="artifact-card">
+          <button
+            type="button"
+            class="item-main"
+            :title="`打开 ${file.name}`"
+            @click="openPreview(file)"
+          >
+            <FileTypeIcon :name="file.path" :size="20" class="item-icon" />
+            <div class="item-meta">
+              <div class="item-name">{{ file.name }}</div>
+              <div class="item-desc">{{ getFileMetaLabel(file.path) }}</div>
+            </div>
+          </button>
+          <div class="item-actions">
+            <button class="item-action-btn" title="下载" @click.stop="downloadFile(file)">
+              <Download :size="15" />
+            </button>
+            <button
+              class="item-action-btn"
+              :title="isSaving(file.path) ? '保存中' : '保存到个人空间'"
+              :disabled="isSaving(file.path)"
+              @click.stop="saveToWorkspace(file)"
+            >
+              <LoaderCircle v-if="isSaving(file.path)" :size="15" class="item-action-spin" />
+              <Save v-else :size="15" />
+            </button>
+          </div>
+        </div>
+      </div>
+    </TransitionGroup>
   </section>
 
   <a-modal
@@ -54,7 +75,7 @@
 <script setup>
 import { computed, ref } from 'vue'
 import { message } from 'ant-design-vue'
-import { Download, LoaderCircle, Save } from '@lucide/vue'
+import { ChevronDown, Download, LoaderCircle, Save } from '@lucide/vue'
 import { threadApi } from '@/apis/agent_api'
 import FileTypeIcon from '@/shared/ui/FileTypeIcon.vue'
 import WorkspacePathPicker from '@/modules/workspace/ui/WorkspacePathPicker.vue'
@@ -75,6 +96,8 @@ const emit = defineEmits(['saved', 'open-preview'])
 const normalizedArtifacts = computed(() =>
   (props.artifacts || [])
     .filter((path) => typeof path === 'string' && path.trim())
+    .slice()
+    .reverse()
     .map((path) => {
       const normalizedPath = path.trim()
       return {
@@ -82,6 +105,10 @@ const normalizedArtifacts = computed(() =>
         name: normalizedPath.split('/').pop() || normalizedPath
       }
     })
+)
+const expanded = ref(false)
+const visibleArtifacts = computed(() =>
+  expanded.value ? normalizedArtifacts.value : normalizedArtifacts.value.slice(0, 3)
 )
 const savingState = ref({})
 const saveDialogOpen = ref(false)
@@ -188,6 +215,104 @@ const confirmSave = async () => {
   gap: 8px;
 }
 
+.artifacts-list.is-box-group {
+  gap: 0;
+  border: 1px solid var(--gray-150);
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--gray-25);
+
+  .artifact-items {
+    gap: 0;
+  }
+
+  .artifact-card {
+    border: 0;
+    border-top: 1px solid var(--gray-100);
+    border-radius: 0;
+    background: transparent;
+
+    &:hover {
+      background: var(--gray-50);
+    }
+  }
+}
+
+.artifact-items {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.artifact-entry {
+  display: grid;
+  grid-template-rows: 1fr;
+
+  .artifact-card {
+    min-height: 0;
+    overflow: hidden;
+  }
+}
+
+.artifact-reveal-enter-active,
+.artifact-reveal-leave-active {
+  transition: grid-template-rows 0.24s ease, opacity 0.2s ease;
+}
+
+.artifact-reveal-enter-from,
+.artifact-reveal-leave-to {
+  grid-template-rows: 0fr;
+  opacity: 0;
+}
+
+.artifacts-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 12px;
+  color: var(--color-text);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.artifact-count {
+  margin-left: 4px;
+  color: var(--color-text-secondary);
+  font-weight: 400;
+}
+
+.artifacts-toggle {
+  gap: 4px;
+  padding: 4px 6px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--color-text-secondary);
+  font: inherit;
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+
+  &:hover {
+    background: var(--gray-100);
+    color: var(--color-text);
+  }
+
+  svg {
+    transition: transform 0.24s ease;
+  }
+
+  .is-expanded {
+    transform: rotate(180deg);
+  }
+}
+
+.artifacts-toggle:focus-visible {
+  outline: 2px solid var(--main-color);
+  outline-offset: 2px;
+}
+
 .artifact-card {
   width: 100%;
   display: flex;
@@ -202,7 +327,7 @@ const confirmSave = async () => {
     border-color 0.18s ease;
 
   &:hover {
-    border-color: var(--main-200);
+    border-color: var(--gray-300);
     background: var(--gray-0);
   }
 }
@@ -305,6 +430,13 @@ const confirmSave = async () => {
 
   .item-main {
     padding: 9px 6px 9px 12px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .artifact-reveal-enter-active,
+  .artifact-reveal-leave-active,
+  .artifacts-toggle svg {
+    transition: none;
   }
 }
 </style>

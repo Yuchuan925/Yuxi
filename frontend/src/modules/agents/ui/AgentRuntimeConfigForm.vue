@@ -520,11 +520,11 @@ const segmentConfigKeys = computed(() => {
   }
 })
 
-/** 隐藏空资源分组；已有不可见选择仍保留清理入口。 */
+/** 空资源保留创建入口和已有不可见选择的清理入口。 */
 const hasSelectableOptions = (key, value) => {
   if (value?.type !== 'list') return true
+  if (props.creatableResourceKinds.includes(value.kind)) return true
   return getSelectionOptions(key, value).length > 0 || getHiddenSelection(key).length > 0
-    || (['mcps', 'skills'].includes(key) && props.creatableResourceKinds.includes(value.kind))
 }
 
 const filteredConfigurableItems = computed(() => {

@@ -22,10 +22,9 @@ export const agentApi = {
 
   createAgentBoundSkill: (slug) => apiPost(`/api/agent/${encodeURIComponent(slug)}/self-skill`),
 
-  uploadAgentBoundSkill: (slug, file, revision) => {
+  uploadAgentBoundSkill: (slug, file) => {
     const body = new FormData()
     body.append('file', file)
-    if (revision) body.append('expected_revision', revision)
     return apiPost(`/api/agent/${encodeURIComponent(slug)}/self-skill/upload`, body)
   },
 

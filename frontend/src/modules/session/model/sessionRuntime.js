@@ -10,6 +10,7 @@ import { useAgentStreamHandler } from './useAgentStreamHandler'
 import { useStreamSmoother } from './useStreamSmoother'
 import { itemsToMessages, mergeItemSnapshot } from './agentItems'
 import { bindMessageInputRun } from './messageDebug'
+import { activityFromTurnEvent } from './sessionActivity'
 import { extractPendingInterrupt, pendingInterruptFromWaitpoint } from './useApproval'
 
 /** 每个 Thread 共享运行数据和订阅，视图仅注册展示回调。 */
@@ -128,7 +129,14 @@ export const useSessionRuntimeStore = defineStore('sessionRuntime', () => {
   const stream = useAgentRunStream({
     getThreadState,
     isThreadActive: (threadId) => observers.has(threadId),
-    handlePublicEvent,
+    handlePublicEvent: (event, threadId) => {
+      const result = handlePublicEvent(event, threadId)
+      const activity = activityFromTurnEvent(event)
+      if (activity && event.session_id === threadId) {
+        chatThreads.upsertThread({ id: threadId, activity_status: activity })
+      }
+      return result
+    },
     fetchThreadMessages,
     fetchAgentState,
     resetOngoingRunGroup,

@@ -7,6 +7,16 @@ import {
   deriveProjectThreadStatus
 } from '../../src/modules/projects/model/projectSessionGroups.js'
 
+test('折叠项目优先提示需要用户审批的会话，协作等待保持独立状态', () => {
+  const projects = [{ id: 'project', status: 'active', selection_status: 'selectable' }]
+  const sessions = [
+    { id: 'research', project_id: 'project', activity_status: 'waiting_cooperation' },
+    { id: 'approval', project_id: 'project', activity_status: 'waiting_approval' }
+  ]
+  assert.equal(buildProjectSessionGroups(projects, sessions).groups[0].activityStatus, 'waiting_approval')
+  assert.equal(buildProjectSessionGroups(projects, sessions.slice(0, 1)).groups[0].activityStatus, 'waiting_cooperation')
+})
+
 test('项目状态优先展示运行中，其次展示未读完成', () => {
   assert.equal(deriveProjectThreadStatus([{ thread_status: 'ready' }]), 'ready')
   assert.equal(
@@ -129,7 +139,7 @@ test('项目运行状态仅在折叠时展示', () => {
   )
   assert.match(
     source,
-    /group\.threadStatus === 'loading' &&\s*!isProjectExpanded\(group\.project\.id\)/
+    /\(\['running', 'queued'\]\.includes\(group\.activityStatus\) \|\| group\.threadStatus === 'loading'\) && !isProjectExpanded\(group\.project\.id\)/
   )
 })
 
@@ -160,11 +170,7 @@ test('对话选择与操作菜单使用并列按钮语义', () => {
   assert.doesNotMatch(source, /@keydown\.(?:enter|space)/)
 })
 
-test('对话状态拥有常驻遮罩且项目提供带项目上下文的新建入口', () => {
-  const itemSource = readFileSync(
-    new URL('../../src/modules/session/ui/SessionNavItem.vue', import.meta.url),
-    'utf8'
-  )
+test('项目提供带项目上下文的新建入口', () => {
   const navigationSource = readFileSync(
     new URL('../../src/modules/session/ui/SessionNavSection.vue', import.meta.url),
     'utf8'
@@ -179,8 +185,6 @@ test('对话状态拥有常驻遮罩且项目提供带项目上下文的新建�
     'utf8'
   )
 
-  assert.match(itemSource, /class="status-mask"/)
-  assert.match(itemSource, /v-if="chat\.thread_status === 'loading' \|\| chat\.thread_status === 'ready'"/)
   assert.match(navigationSource, /class="project-status project-status-loading"/)
   assert.match(navigationSource, /class="project-status project-status-ready"/)
   assert.match(navigationSource, /@click\.stop="\$emit\('create-project-chat', group\.project\.id\)"/)

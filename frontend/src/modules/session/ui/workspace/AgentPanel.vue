@@ -1327,7 +1327,7 @@ watch(
   gap: 8px;
   padding: 4px 12px;
   min-height: var(--header-height);
-  background: var(--gray-0);
+  background: var(--gray-50);
   border-bottom: 1px solid var(--gray-100);
   flex-shrink: 0;
 }
@@ -1369,7 +1369,7 @@ watch(
   flex: 1;
   min-width: 0;
   align-items: center;
-  gap: 1px;
+  gap: 4px;
   overflow-x: auto;
   scrollbar-width: none;
 
@@ -1379,6 +1379,7 @@ watch(
 }
 
 .section-tab {
+  position: relative;
   display: flex;
   flex: 0 0 auto;
   align-items: center;
@@ -1387,9 +1388,38 @@ watch(
   border-radius: 7px;
   color: var(--gray-600);
 
-  &.active {
+  &::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    right: -3px;
+    width: 1px;
+    height: 14px;
+    background: var(--gray-200);
+    transform: translateY(-50%);
+    pointer-events: none;
+  }
+
+  &:last-child::after,
+  &.active::after,
+  &:has(+ .section-tab.active)::after {
+    display: none;
+  }
+
+  &:hover {
     background: var(--gray-100);
+  }
+
+  &.active {
+    background: var(--gray-0);
     color: var(--gray-900);
+  }
+
+  &:hover .section-tab-close,
+  &:focus-within .section-tab-close,
+  &.active .section-tab-close {
+    opacity: 1;
+    pointer-events: auto;
   }
 }
 
@@ -1404,6 +1434,12 @@ watch(
   background: transparent;
   color: inherit;
   cursor: pointer;
+  border-radius: 7px;
+
+  &:focus-visible {
+    outline: 2px solid var(--main-300);
+    outline-offset: -2px;
+  }
 
   &:only-child,
   &:last-child {
@@ -1441,10 +1477,25 @@ watch(
   background: transparent;
   color: var(--gray-500);
   cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease;
 
   &:hover {
     background: var(--gray-150);
     color: var(--gray-900);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--main-300);
+    outline-offset: -2px;
+  }
+}
+
+@media (hover: none) {
+  .section-tab-close {
+    opacity: 1;
+    pointer-events: auto;
   }
 }
 

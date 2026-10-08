@@ -53,14 +53,20 @@
                       }}</span>
                     </button>
                     <span
-                      v-if="
-                        group.threadStatus === 'loading' && !isProjectExpanded(group.project.id)
+                      v-if="SESSION_ACTIVITY_LABELS[group.activityStatus] && !isProjectExpanded(group.project.id)"
+                      class="project-activity-badge"
+                      :class="{ 'needs-action': ['waiting_approval', 'waiting_answer'].includes(group.activityStatus) }"
+                      role="status"
+                    >{{ SESSION_ACTIVITY_LABELS[group.activityStatus] }}</span>
+                    <span
+                      v-else-if="
+                        (['running', 'queued'].includes(group.activityStatus) || group.threadStatus === 'loading') && !isProjectExpanded(group.project.id)
                       "
                       class="project-status project-status-loading"
                       role="status"
                       title="项目中有对话正在运行"
                     >
-                      <Loader2 :size="12" />
+                      <span class="status-spinner" aria-hidden="true"></span>
                     </span>
                     <span
                       v-else-if="group.threadStatus === 'ready'"
@@ -191,13 +197,13 @@ import {
   ChevronDown,
   FolderClosed,
   FolderOpen,
-  Loader2,
   MoreVertical,
   Plus,
   SquarePen,
   Trash2
 } from '@lucide/vue'
 import SessionNavItem from '@/modules/session/ui/SessionNavItem.vue'
+import { SESSION_ACTIVITY_LABELS } from '@/modules/session/model/sessionActivity'
 import CollapseTransition from '@/shared/ui/CollapseTransition.vue'
 import { buildProjectSessionGroups } from '@/modules/projects/model/projectSessionGroups'
 
@@ -415,6 +421,22 @@ const confirmDeleteProject = (project) => {
 .project-icon {
   flex: 0 0 17px;
 }
+.project-activity-badge {
+  flex-shrink: 0;
+  padding: 2px 6px;
+  border-radius: 10px;
+  background: var(--gray-100);
+  color: var(--gray-600);
+  font-size: 11px;
+  line-height: 16px;
+
+  &.needs-action {
+    background: var(--main-100);
+    color: var(--main-700);
+    font-weight: 600;
+  }
+}
+
 .project-status {
   position: absolute;
   right: 6px;
@@ -424,14 +446,20 @@ const confirmDeleteProject = (project) => {
   justify-content: center;
   color: var(--main-color);
 }
-.project-status-loading :deep(svg) {
+.project-status-loading .status-spinner {
+  width: 14px;
+  height: 14px;
+  box-sizing: border-box;
+  border: 2px solid var(--gray-200);
+  border-top-color: var(--gray-600);
+  border-radius: 50%;
   animation: project-status-spin 1s linear infinite;
 }
 .project-status-ready {
-  flex-basis: 6px;
-  width: 6px;
-  height: 6px;
-  margin: 0 5px;
+  flex-basis: 8px;
+  width: 8px;
+  height: 8px;
+  margin: 0 4px;
   border-radius: 50%;
   background: var(--main-color);
 }

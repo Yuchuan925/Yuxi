@@ -12,6 +12,10 @@ Owner：backend/yuxi/modules/agents/services/cooperation.py
 
 ## 决策
 
+侧边栏活动状态从当前 Turn、等待点类型、当前 Run 和待派发 Input 批量读取，与 Run 已读标记独立。前台事件实时更新，后台沿用会话列表轮询；查看 interrupted Run 不清除等待批准、回答或协作标签。相比把所有 interrupted Run 当作新回复，独立投影准确表达需要用户介入的等待，并保留已有未读提示。
+
+协作等待在 Turn 层保持非终态，前端以等待中的工作展示并保留停止入口。公开 item 的扩展 metadata 区分协作等待与真正中断，避免把协议的 `incomplete` 一律渲染为错误；恢复产生的结果按原调用 item 身份闭合工具状态。用户等待判断排除协作等待，使协作期间的普通输入仍按 FIFO 入队。
+
 协作服务通过 Input 或 Turn 读取精确状态与 `result_run_id` 指向的输出。`wait_inputs` 等待已提交 Input，从持久事实判断完成，覆盖尚未创建 Turn 的排队取消，不依赖最新 Turn 或消费游标。`get_result` 只允许指定一种身份，并执行同树、用户与应用范围校验。已有 Session 事件等待保留。
 
 协作树摘要一次返回全部成员，批量读取且不包含输出正文。HTTP 观察入口不读取 checkpoint；前端每次轮询只发出一次请求，用完整成员状态判断整树是否可继续。
@@ -21,6 +25,10 @@ Owner：backend/yuxi/modules/agents/services/cooperation.py
 前端按 Thread 共享运行状态、历史、SSE、恢复查询及队列监控。最后一个观察者卸载时释放订阅；隐藏视图继续接收数据，但不标已读或滚动。终态历史重新读取事件发生后的快照，失败时保留流输出；异步结果同时校验状态实例和运行状态版本，避免卸载重挂及同一 SSE 跨 Run 恢复时被迟到查询覆盖。审批面板绑定共享等待点身份。视图保留独立输入草稿，首次进入从持久草稿初始化，同一视图切换后恢复自己的编辑。
 
 标准 Turn 生命周期事件保留官方必需的 `subagent_id` 字段并固定为 `null`，因为每个 Session 都是独立主会话。该字段属于外部线协议；独立 schema 继续严格验证标准事件。
+
+展示层连接同一 Turn 的相邻续跑；实时消息在 Run 快照尚未刷新时使用消息明确携带的 `turn_id` 和 `run_id` 连接。连续推理和工具调用合并为一个展示组，用户消息和助手正文保持边界，各消息的持久 Run 归属不变。未知归属或不同 Turn 保持独立，避免仅凭缺少用户消息猜测运行关系。
+
+主对话中的协作工具采用会话入口展示，多个目标逐个显示，点击打开侧栏对应成员，参数与原始结果不展开。入口身份由工具结果中的 `session_id`、完整路径和已登记的 Input 回执映射拥有；同名成员保持独立，未解析目标打开协作列表。嵌入会话保留原工具结果展示。直接复用侧栏会话标签，避免在工具结果中重复整套进程界面。
 
 ### 实现方案
 
@@ -62,3 +70,9 @@ Owner：backend/yuxi/modules/agents/services/cooperation.py
 完整摘要契约的 PostgreSQL 回归建立 107 个成员，与独立持久查询核对完整有序集合，摘要读取保持四次批量 SQL 且无正文。旧实现因截断为 50 项而失败，工具 schema 与前端请求测试也因仍携带分页参数而失败；相关后端 49 项、真实 HTTP 一项通过。协作 E2E 使用 `docker compose exec -T api uv run --no-sync --group test pytest test/e2e/test_session_cooperation_e2e.py -m e2e -x -q -p no:cacheprovider`，四项通过，约 224 秒。前端全量 unit 484 项通过，lint 和 build 通过；真实页面与 PostgreSQL 的 107 个成员一致，没有分页入口或分页请求参数，1024、768、375px 下的长标题省略、浅色与暗色展示通过。独立 Review、工程检查及其 64 项回归、文档构建和 diff 检查通过。
 
 交付复验在全新隔离 PostgreSQL 上执行 `pytest test/integration/services/test_session_cooperation.py -q -p no:cacheprovider`，43 项通过。恢复旧 Session/Run 写锁的独立进程负控在 dispatch、metadata、continue、run owner 和 run terminal 五条路径均触发真实数据库死锁；正控同时验证 Turn 外键与事件持久化。连续两次取消的旧实现因外部释放尚未结束却可领取生命周期锁而失败，修复后锁在外部释放完成前保持占有，并最终传播取消。后端全量 unit 重新执行，2509 项通过、55 项跳过。原隔离数据库恢复期间产生的环境错误不计为通过，保留原数据后以临时 PostgreSQL 补齐验证。
+
+实时协作恢复的分组回归通过 `docker compose exec -T frontend node --test test/unit/messageGrouping.test.js test/unit/agentInputQueue.test.js`（13 项），覆盖等待工具与恢复推理连续展示、不同 Turn、未知归属及用户消息边界；相关文件 ESLint 通过。真实会话页面核对协作入口及成员嵌入展示，组件状态页面以固定测试数据核对等待与失败状态、长名称及浅暗主题。
+
+协作工具入口的最小验证：`docker compose exec -T frontend node --test test/unit/cooperationToolView.test.js`（2 项通过），覆盖多个等待目标、同名成员精确匹配和未知任务不误跳转；修改文件 ESLint 与 `git diff --check` 通过。前端全量 unit 491 项、lint 和 build 通过；固定测试数据的浏览器页面覆盖同名多目标导航、产物折叠与等待终态转换，并在 1280、1024、768、375px 下核对浅暗主题与溢出。
+
+活动状态的真实 HTTP 验证由协作 E2E 在持久等待点核对：Thread 快照、viewed 回执与列表一致保留等待回答、等待协作；停止整树后暂停的 FIFO 输入保持 pending，活动投影为空闲，继续队列产生独立 Turn 并最终完成。`docker compose exec -T api uv run --no-sync --group test pytest test/e2e/test_session_cooperation_e2e.py -m e2e -x -q -p no:cacheprovider` 四项通过。父子执行与周期恢复的终态等待预算为 180 秒，整项预算保留 240 秒；该预算不定义产品时延承诺。

@@ -17,14 +17,14 @@ from yuxi.modules.extensions.tools.registry import tool
 class PresentArtifactsInput(BaseModel):
     """声明交付物文件路径。"""
 
-    filepaths: list[str] = Field(description="需要展示给用户的文件绝对路径列表；建议把交付物放在 Project outputs/ 下")
+    filepaths: list[str] = Field(description="需要展示给用户的文件绝对路径列表")
 
 
 PRESENT_ARTIFACTS_DESCRIPTION = """
 将已经生成好的结果文件展示给用户。
 
 使用场景：
-1. 你已经写好了最终结果文件；建议放在当前 Project Workdir 的 `outputs/` 下
+1. 你已经在合适的位置写好了最终结果文件
 2. 你希望前端在对话结束后显示这些结果文件卡片
 3. 这些文件需要支持下载或预览
 

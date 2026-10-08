@@ -1,6 +1,7 @@
 <script setup>
 import { onMounted, ref } from 'vue'
-import { message, Modal } from 'ant-design-vue'
+import { message } from 'ant-design-vue'
+import { BookOpen, Plus, RefreshCw } from '@lucide/vue'
 import { agentApi } from '@/apis/agent_api'
 import { skillApi } from '@/apis/skill_api'
 import MarkdownPreview from '@/modules/workspace/ui/MarkdownPreview.vue'
@@ -58,11 +59,10 @@ async function upload(file) {
   try {
     binding.value = await agentApi.uploadAgentBoundSkill(
       props.agentSlug,
-      file,
-      binding.value?.revision
+      file
     )
     await load()
-    message.success('专属 Skill 已更新')
+    message.success('专属 Skill 已导入')
   } catch (cause) {
     message.error(cause.message || '上传失败；请刷新后重试')
   } finally {
@@ -80,17 +80,7 @@ function selectPackage(event) {
     message.error('请选择不超过 10 MiB 的 ZIP 文件')
     return
   }
-  if (binding.value?.skill) {
-    Modal.confirm({
-      title: '替换专属 Skill？',
-      content: 'ZIP 将替换当前全部文件。请先在详情页导出需要保留的内容。',
-      okText: '替换',
-      cancelText: '取消',
-      onOk: () => upload(file)
-    })
-  } else {
-    upload(file)
-  }
+  upload(file)
 }
 
 function openDetail() {
@@ -112,39 +102,43 @@ onMounted(load)
         <h3>专属 Skill</h3>
         <p>操作流程与资源，运行时自动加载。</p>
       </div>
-      <a-space v-if="binding?.skill && !error" :size="4">
-        <a-button type="text" :disabled="saving || loading" @click="load">刷新</a-button>
-        <a-button :disabled="saving || loading" @click="openDetail">{{ binding.can_manage ? '编辑' : '查看文件' }}</a-button>
-      </a-space>
+      <div v-if="binding?.skill && !error" class="header-actions">
+        <a-button type="text" :disabled="saving || loading" @click="load">
+          <template #icon><RefreshCw :size="14" /></template>
+          刷新
+        </a-button>
+        <a-button :disabled="saving || loading" @click="openDetail">{{ binding.can_manage ? '编辑 Skill' : '查看文件' }}</a-button>
+      </div>
     </header>
-    <a-spin v-if="loading" aria-label="加载专属 Skill" />
+    <div v-if="loading" class="skill-loading"><a-spin aria-label="加载专属 Skill" /></div>
     <a-alert v-else-if="error" type="error" :message="error" show-icon>
       <template #action><a-button size="small" @click="load">重试</a-button></template>
     </a-alert>
     <template v-else>
-      <div v-if="binding?.skill" class="bound-skill-preview" aria-label="SKILL.md 只读预览">
-        <span class="preview-filename">SKILL.md</span>
-        <MarkdownPreview :content="content" compact />
+      <div v-if="binding?.skill" class="bound-skill-preview" aria-label="专属 Skill 内容预览">
+        <div class="preview-content"><MarkdownPreview :content="content" compact /></div>
       </div>
-      <a-empty v-else description="尚未创建专属 Skill" />
-      <div v-if="binding?.can_manage" class="bound-skill-actions">
-        <a-button v-if="!binding.skill" type="primary" :loading="saving" @click="create"
-          >创建 Skill</a-button
-        >
-        <a-button type="text" :disabled="saving" @click="fileInput.click()">{{
-          binding.skill ? '替换 ZIP' : '导入 ZIP'
-        }}</a-button>
-        <input ref="fileInput" type="file" accept=".zip" hidden @change="selectPackage" />
+      <div v-else class="skill-empty">
+        <BookOpen :size="28" :stroke-width="1.4" class="empty-icon" aria-hidden="true" />
+        <p>尚未添加专属 Skill</p>
+        <div v-if="binding?.can_manage" class="empty-actions">
+          <a-button :loading="saving" @click="create">
+            <template #icon><Plus :size="14" /></template>
+            创建 Skill
+          </a-button>
+          <a-button type="text" :disabled="saving" @click="fileInput.click()">导入 ZIP</a-button>
+        </div>
       </div>
+      <input v-if="binding?.can_manage && !binding.skill" ref="fileInput" type="file" accept=".zip" hidden @change="selectPackage" />
     </template>
   </section>
 </template>
 
-<style scoped>
+<style scoped lang="less">
 .bound-skill-panel {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 24px;
 }
 .bound-skill-header {
   display: flex;
@@ -155,38 +149,55 @@ onMounted(load)
 h3 {
   margin: 0 0 6px;
   font-size: 15px;
-  color: var(--gray-900);
+  font-weight: 600;
+  color: var(--color-text);
 }
 p {
   margin: 0;
   font-size: 13px;
-  color: var(--gray-600);
+  line-height: 1.6;
+  color: var(--color-text-secondary);
+}
+.header-actions,
+.empty-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+:deep(.ant-btn) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  font-size: 13px;
+  box-shadow: none;
+}
+.skill-loading {
+  padding: 64px 0;
+  text-align: center;
+}
+.skill-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 56px 16px 64px;
+  border-top: 1px solid var(--gray-100);
+
+  .empty-icon {
+    margin-bottom: 16px;
+    color: var(--gray-400);
+  }
+  .empty-actions {
+    margin-top: 20px;
+  }
 }
 .bound-skill-preview {
-  padding: 18px 20px;
-  border: 1px solid var(--gray-150);
-  border-radius: 8px;
   overflow-wrap: anywhere;
-}
-.preview-filename {
-  display: block;
-  margin-bottom: 16px;
-  font-size: 12px;
-  color: var(--gray-500);
-  font-family: monospace;
-}
-.bound-skill-actions {
-  display: flex;
-  gap: 8px;
-  align-items: center;
 }
 @media (max-width: 600px) {
   .bound-skill-header {
     align-items: flex-start;
     flex-wrap: wrap;
-  }
-  .bound-skill-preview {
-    padding: 14px;
   }
 }
 </style>

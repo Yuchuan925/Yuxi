@@ -45,6 +45,8 @@
             <ToolCallRenderer
               v-else
               :tool-call="entry.toolCall"
+              :open-task-panel="openTaskPanel"
+              :cooperation-view="cooperationView"
               appearance="timeline"
               :default-expanded="false"
             />
@@ -75,6 +77,8 @@ const { availableTools, toolMetadata } = storeToRefs(agentStore)
 
 
 const props = defineProps({
+  cooperationView: { type: Object, default: null },
+  openTaskPanel: { type: Function, default: null },
   toolCalls: {
     type: Array,
     default: () => []
@@ -197,7 +201,7 @@ const toggleToolCallsExpanded = () => {
     display: inline-flex;
     align-items: center;
     gap: 8px;
-    color: var(--gray-700);
+    color: var(--gray-600);
     text-align: left;
     cursor: pointer;
     outline: none;
@@ -212,14 +216,7 @@ const toggleToolCallsExpanded = () => {
       outline-offset: 2px;
     }
 
-    &:hover {
-      color: var(--gray-800);
-
-      .summary-chevron {
-        color: var(--gray-700);
-      }
-    }
-
+    &:hover,
     &.is-expanded {
       color: var(--gray-800);
     }
@@ -227,7 +224,6 @@ const toggleToolCallsExpanded = () => {
     .summary-leading {
       display: inline-flex;
       align-items: center;
-      color: var(--gray-700);
       flex-shrink: 0;
     }
 
@@ -246,12 +242,10 @@ const toggleToolCallsExpanded = () => {
     }
 
     .summary-separator {
-      color: var(--gray-500);
       flex-shrink: 0;
     }
 
     .summary-meta {
-      color: var(--gray-600);
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
@@ -261,7 +255,6 @@ const toggleToolCallsExpanded = () => {
       margin-left: 4px;
       font-size: 11px;
       padding: 0 4px;
-      color: var(--gray-600);
       border-radius: 4px;
       white-space: nowrap;
       font-weight: normal;
@@ -270,16 +263,12 @@ const toggleToolCallsExpanded = () => {
     .summary-trailing {
       display: inline-flex;
       align-items: center;
-      color: var(--gray-500);
       flex-shrink: 0;
     }
 
     .summary-chevron {
       flex-shrink: 0;
-      color: var(--gray-400);
-      transition:
-        transform 0.22s cubic-bezier(0.16, 1, 0.3, 1),
-        color 0.18s ease;
+      transition: transform 0.22s cubic-bezier(0.16, 1, 0.3, 1);
 
       &.is-collapsed {
         transform: rotate(-90deg);

@@ -54,7 +54,7 @@ def skill_zip(*, description="uploaded", dependency=None):
 
 
 async def test_bound_skill_creation_upload_revision_visibility_and_delete(test_client, admin_headers, standard_user):
-    """合法下划线身份并发创建唯一绑定，整包覆盖并回读删除后的资产。"""
+    """并发创建唯一绑定，拒绝 ZIP 覆盖，编辑与删除资产可回读。"""
     agent_slug = f"pytest_bound_{uuid.uuid4().hex[:10]}"
     created = await test_client.post("/api/agent", headers=admin_headers, json={"name": "n" * 100, "slug": agent_slug})
     assert created.status_code == 200, created.text
@@ -104,9 +104,18 @@ async def test_bound_skill_creation_upload_revision_visibility_and_delete(test_c
             data={"expected_revision": revision},
             files={"file": ("skill.zip", skill_zip(), "application/zip")},
         )
-        assert uploaded.status_code == 200, uploaded.text
-        assert uploaded.json()["skill"]["slug"] == skill_slug
-        old_revision = uploaded.json()["revision"]
+        assert uploaded.status_code == 409, uploaded.text
+        assert "已存在专属 Skill" in uploaded.text
+        saved = await test_client.put(
+            f"/api/system/skills/{skill_slug}/content",
+            headers=admin_headers,
+            json={"expected_revision": revision, "changes": [
+                {"action": "create", "path": "references/note.md", "content": "reference-before"},
+                {"action": "create", "path": "scripts/run.py", "content": "print('bound')\n"},
+            ]},
+        )
+        assert saved.status_code == 200, saved.text
+        old_revision = saved.json()["data"]["revision"]
         read = await test_client.get(
             f"/api/system/skills/{skill_slug}/file?path=references/note.md", headers=admin_headers
         )
@@ -137,7 +146,7 @@ async def test_bound_skill_creation_upload_revision_visibility_and_delete(test_c
             data={"expected_revision": binding.json()["revision"]},
             files={"file": ("skill.zip", skill_zip(dependency=skill_slug), "application/zip")},
         )
-        assert rejected.status_code == 422, rejected.text
+        assert rejected.status_code == 409, rejected.text
         assert source.joinpath("references/note.md").read_text() == "reference-after"
         prepared = await test_client.post(
             "/api/skills/import/prepare",
@@ -431,7 +440,7 @@ async def test_binding_added_after_preparation_waits_for_next_context(test_clien
 
 async def test_package_compensation_respects_commit_point(test_client, admin_headers, monkeypatch):
     """提交前失败恢复文件，提交后清理失败保留已持久化的包。"""
-    from yuxi.modules.extensions.skills import bound as bound_service, content as content_service
+    from yuxi.modules.extensions.skills import content as content_service
     from yuxi.modules.identity.models import User
 
     slug = f"pytest-bound-compensation-{uuid.uuid4().hex[:8]}"
@@ -455,11 +464,10 @@ async def test_package_compensation_respects_commit_point(test_client, admin_hea
             with monkeypatch.context() as patch:
                 patch.setattr(db, "commit", fail_commit)
                 with pytest.raises(RuntimeError, match="commit failure"):
-                    await bound_service.upload_agent_bound_skill(
+                    await content_service.save_skill_content(
                         db,
-                        agent_slug=slug,
-                        filename="skill.zip",
-                        file_bytes=skill_zip(),
+                        slug=skill_slug,
+                        changes=[{"action": "create", "path": "references/note.md", "content": "reference-before"}],
                         expected_revision=revision,
                         operator=user,
                     )
@@ -482,15 +490,14 @@ async def test_package_compensation_respects_commit_point(test_client, admin_hea
             user = await db.scalar(select(User).where(User.uid == me.json()["uid"]))
             with monkeypatch.context() as patch:
                 patch.setattr(content_service.shutil, "rmtree", fail_previous_cleanup)
-                result = await bound_service.upload_agent_bound_skill(
+                result = await content_service.save_skill_content(
                     db,
-                    agent_slug=slug,
-                    filename="skill.zip",
-                    file_bytes=skill_zip(),
+                    slug=skill_slug,
+                    changes=[{"action": "create", "path": "references/note.md", "content": "reference-before"}],
                     expected_revision=revision,
                     operator=user,
                 )
-                assert "projection" not in result
+                assert result.skill.slug == skill_slug
         assert cleanup_failures == [previous_content]
         assert previous_content.joinpath("SKILL.md").read_bytes() == original
         source = await current_content(skill_slug)
@@ -503,3 +510,35 @@ async def test_package_compensation_respects_commit_point(test_client, admin_hea
         deleted = await test_client.delete(f"/api/agent/{slug}", headers=admin_headers)
         assert deleted.status_code in {200, 404}, deleted.text
         await engine.dispose()
+
+
+async def test_bound_zip_import_is_create_only(test_client, admin_headers):
+    """并发首次导入只接受一份 ZIP，正确修订也不能覆盖已导入的文件。"""
+    agent = f"pytest-bound-import-{uuid.uuid4().hex[:8]}"
+    created = await test_client.post("/api/agent", headers=admin_headers, json={"slug": agent, "name": agent})
+    assert created.status_code == 200, created.text
+    try:
+        results = await asyncio.gather(*[
+            test_client.post(
+                f"/api/agent/{agent}/self-skill/upload", headers=admin_headers,
+                files={"file": ("skill.zip", skill_zip(description=label), "application/zip")},
+            ) for label in ("first", "second")
+        ])
+        assert sorted(result.status_code for result in results) == [200, 409]
+        accepted = next(result.json() for result in results if result.status_code == 200)
+        source = await current_content(accepted["skill"]["slug"])
+        before = {str(path.relative_to(source)): path.read_bytes() for path in source.rglob("*") if path.is_file()}
+        rejected = await test_client.post(
+            f"/api/agent/{agent}/self-skill/upload", headers=admin_headers,
+            data={"expected_revision": accepted["revision"]},
+            files={"file": ("skill.zip", skill_zip(description="replacement"), "application/zip")},
+        )
+        assert rejected.status_code == 409, rejected.text
+        assert "已存在专属 Skill" in rejected.text
+        latest = (await test_client.get(f"/api/agent/{agent}/self-skill", headers=admin_headers)).json()
+        assert latest["revision"] == accepted["revision"]
+        after = {str(path.relative_to(source)): path.read_bytes() for path in source.rglob("*") if path.is_file()}
+        assert after == before
+    finally:
+        deleted = await test_client.delete(f"/api/agent/{agent}", headers=admin_headers)
+        assert deleted.status_code in {200, 404}, deleted.text

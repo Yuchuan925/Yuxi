@@ -99,6 +99,39 @@ test('审批前后的工具和思考跨关联 Run 连续展示，正文仍独立
   assert.equal(getMessageGroupDisplayItems(streaming[0])[1].key, items[1].key)
 })
 
+test('协作恢复的实时消息没有 Run 快照时，仍与等待工具连续展示', () => {
+  const waiting = {
+    run: { run_id: 'before', turn_id: 'turn-1', status: 'interrupted' },
+    messages: [{
+      id: 'wait', type: 'ai', run_id: 'before', turn_id: 'turn-1',
+      tool_calls: [{ id: 'wait-call', name: 'wait_inputs', status: 'waiting', args: {} }]
+    }]
+  }
+  const live = {
+    status: 'streaming',
+    messages: [{
+      id: 'thinking', type: 'ai', run_id: 'after', turn_id: 'turn-1',
+      reasoning_content: '继续核验'
+    }]
+  }
+  const groups = groupRunContinuations([waiting, live])
+  assert.equal(groups.length, 1)
+  const items = getMessageGroupDisplayItems(groups[0])
+  assert.equal(items.length, 1)
+  assert.deepEqual(items[0].entries.map((entry) => entry.type), ['tool', 'reasoning'])
+  assert.equal(items[0].toolCalls[0].status, 'waiting')
+  assert.deepEqual(groups[0].messages.map((message) => message.run_id), ['before', 'after'])
+  assert.equal(groups[0].run.run_id, 'after')
+  assert.equal(groups[0].status, 'streaming')
+  for (const messages of [
+    [{ ...live.messages[0], turn_id: 'turn-2' }],
+    [{ ...live.messages[0], turn_id: undefined }],
+    [{ id: 'user', type: 'human', content: '继续' }, ...live.messages]
+  ]) {
+    assert.equal(groupRunContinuations([waiting, { ...live, messages }]).length, 2)
+  }
+})
+
 test('thinking 与相邻工具按顺序合并，正文和错误仍独立显示', () => {
   const messages = [
     { id: 'a1', type: 'ai', reasoning_content: '先检查', tool_calls: [{ id: 't1', name: 'ls', args: {} }] },

@@ -5,10 +5,18 @@ export const groupRunContinuations = (runGroups) => {
   const groups = []
   for (const group of runGroups) {
     const previous = groups.at(-1)
+    // 实时续跑尚未刷新 Run 快照时，使用消息明确携带的归属。
+    const liveMessage = group.status === 'streaming' && group.messages.find((message) => message.type === 'ai')
+    const run = group.run || (liveMessage?.run_id && liveMessage.turn_id
+      ? { run_id: liveMessage.run_id, turn_id: liveMessage.turn_id }
+      : null)
+    const isContinuation = run?.run_type === 'resume' || (
+      group.status === 'streaming' && run?.run_id && run.run_id !== previous?.run?.run_id
+    )
     if (
-      group.run?.run_type !== 'resume' ||
-      !group.run.turn_id ||
-      group.run.turn_id !== previous?.run?.turn_id ||
+      !isContinuation ||
+      !run?.turn_id ||
+      run.turn_id !== previous?.run?.turn_id ||
       !previous.messages.length ||
       !group.messages.length ||
       group.messages.some((message) => message.type === 'human')
@@ -18,9 +26,10 @@ export const groupRunContinuations = (runGroups) => {
     }
 
     const previousDuration = getRunTotalLatencyMs(previous.processTiming || previous.run.timing)
-    const duration = getRunTotalLatencyMs(group.run.timing)
+    const duration = getRunTotalLatencyMs(run.timing)
     groups[groups.length - 1] = {
       ...group,
+      run,
       displayKey: previous.displayKey || previous.run.run_id,
       messages: [
         ...previous.messages.map((message) =>

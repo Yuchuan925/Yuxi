@@ -30,6 +30,9 @@ export function useAgentStreamHandler({
     if (type === 'yuxi.session.turn.capability_limited') {
       message.warning(event.message)
     }
+    if (type === 'agent.session.turn.failed') {
+      message.error(event.turn?.error?.message || '本次运行失败，请检查模型配置后重试')
+    }
     if (type === 'yuxi.session.turn.state') {
       state.agentStateRequestVersion = (state.agentStateRequestVersion || 0) + 1
       state.agentState = event.agent_state

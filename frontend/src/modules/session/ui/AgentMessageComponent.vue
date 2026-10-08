@@ -251,9 +251,9 @@ const processEntries = computed(() => {
 
 // 错误消息处理
 const displayError = computed(() => {
-  // 简化错误判断：只检查明确的错误类型标识
   return !!(props.message.error_type || props.message.extra_metadata?.error_type ||
-    ['failed', 'incomplete'].includes(props.message.execution_status))
+    props.message.execution_status === 'failed' ||
+    (props.message.execution_status === 'incomplete' && props.message.extra_metadata?.waiting_kind !== 'cooperation'))
 })
 
 const getErrorMessage = computed(() => {

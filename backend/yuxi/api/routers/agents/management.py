@@ -305,11 +305,10 @@ async def create_self_skill(
 async def upload_self_skill(
     agent_id: str,
     file: UploadFile = File(...),
-    expected_revision: str | None = Form(None),
     current_user: User = Depends(get_required_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """以整包修订保护 ZIP 替换，不允许静默覆盖并发修改。"""
+    """首次导入专属 Skill，已有绑定返回冲突。"""
     if not (file.filename or "").lower().endswith(".zip"):
         raise HTTPException(status_code=422, detail="请上传 Skill ZIP 文件")
     file_bytes = await file.read(10 * 1024 * 1024 + 1)
@@ -321,7 +320,6 @@ async def upload_self_skill(
             agent_slug=agent_id,
             filename=file.filename,
             file_bytes=file_bytes,
-            expected_revision=expected_revision,
             operator=current_user,
         )
     except SkillEditConflict as exc:

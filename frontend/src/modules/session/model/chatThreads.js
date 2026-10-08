@@ -79,11 +79,11 @@ export const useChatThreadsStore = defineStore('chatThreads', () => {
     try {
       const fetchedThreads = await threadApi.getThreads(agentId, PAGE_SIZE, 0)
       if (!fetchedThreads) return
-      const statusById = new Map(fetchedThreads.map((thread) => [thread.id, thread.thread_status]))
+      const statusById = new Map(fetchedThreads.map((thread) => [thread.id, thread]))
       threads.value = threads.value.map((thread) => {
         const latestStatus = statusById.get(thread.id)
         if (!latestStatus) return thread
-        return { ...thread, thread_status: latestStatus }
+        return { ...thread, thread_status: latestStatus.thread_status, activity_status: latestStatus.activity_status }
       })
     } catch (error) {
       console.warn('Failed to sync thread statuses:', error)

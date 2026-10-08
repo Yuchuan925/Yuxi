@@ -81,7 +81,8 @@ async def test_sessions_use_public_state_and_shared_sandbox(e2e_client, e2e_head
         )
         assert accepted.status_code == 202, accepted.text
         turn_id = accepted.json()["turn_id"]
-        async with asyncio.timeout(90):
+        # 包含父子执行与周期协作恢复，恢复相位可额外等待一分钟。
+        async with asyncio.timeout(180):
             while True:
                 response = await e2e_client.get(
                     f"/api/v1/agents/threads/{thread_id}/turns/{turn_id}", headers=e2e_headers
@@ -89,6 +90,7 @@ async def test_sessions_use_public_state_and_shared_sandbox(e2e_client, e2e_head
                 assert response.status_code == 200, response.text
                 turn = response.json()
                 if parallel_question and turn["status"] == "waiting" and turn["waitpoint"]["kind"] == "answer":
+                    await _assert_thread_activity(e2e_client, e2e_headers, thread_id, "waiting_answer")
                     resumed = await e2e_client.post(
                         f"/api/v1/agents/threads/{thread_id}/events",
                         headers={**e2e_headers, "Idempotency-Key": str(uuid.uuid4())},
@@ -257,6 +259,7 @@ async def test_full_tree_capacity_control_and_sibling_tools(e2e_client, e2e_head
                 if observed["children"] == 4 and observed["waiting"]:
                     break
                 await asyncio.sleep(0.05)
+        await _assert_thread_activity(e2e_client, e2e_headers, root_id, "waiting_cooperation")
         members = await conn.fetch(
             "SELECT thread_id,cooperation_path FROM sessions WHERE tree_root_thread_id=$1 ORDER BY cooperation_path",
             root_id,
@@ -312,6 +315,7 @@ async def test_full_tree_capacity_control_and_sibling_tools(e2e_client, e2e_head
                 "SELECT bool_and(queue_paused) FROM sessions WHERE tree_root_thread_id=$1", root_id
             )
             assert await conn.fetchval("SELECT status FROM agent_inputs WHERE id=$1", queued["input_id"]) == "pending"
+            await _assert_thread_activity(e2e_client, e2e_headers, root_id, "idle")
             await event(root_id, {"type": "yuxi.session.tree.continue"})
             async with asyncio.timeout(60):
                 while True:
@@ -401,3 +405,18 @@ async def test_full_tree_capacity_control_and_sibling_tools(e2e_client, e2e_head
                 body_error.add_note(f"测试清理另有失败: {cleanup_error}")
                 raise body_error from cleanup_error
             raise
+
+
+async def _assert_thread_activity(client, headers, thread_id, expected):
+    """真实 HTTP 查看不改变 Turn 等待，列表与快照保持同一活动投影。"""
+    for path, method in (
+        (f"/api/v1/agents/threads/{thread_id}", client.get),
+        (f"/api/v1/agents/threads/{thread_id}/viewed", client.post),
+    ):
+        response = await method(path, headers=headers)
+        assert response.status_code == 200, response.text
+        assert response.json()["activity_status"] == expected, response.json()
+    listed = await client.get("/api/v1/agents/threads", headers=headers, params={"limit": 100})
+    assert listed.status_code == 200, listed.text
+    thread = next(item for item in listed.json() if item["id"] == thread_id)
+    assert thread["activity_status"] == expected, thread

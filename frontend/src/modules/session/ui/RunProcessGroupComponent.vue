@@ -18,7 +18,7 @@
               :hide-tool-calls="true"
               :mention="mention"
             />
-            <ToolCallsGroupComponent v-else :tool-calls="item.toolCalls" :entries="item.entries" />
+            <ToolCallsGroupComponent v-else :cooperation-view="cooperationView" :open-task-panel="openTaskPanel" :tool-calls="item.toolCalls" :entries="item.entries" />
           </template>
         </div>
       </div>
@@ -33,6 +33,8 @@ import ToolCallsGroupComponent from '@/modules/session/ui/ToolCallsGroupComponen
 import { formatProcessDuration } from '@/modules/session/model/runProcessGrouping.js'
 
 const props = defineProps({
+  cooperationView: { type: Object, default: null },
+  openTaskPanel: { type: Function, default: null },
   items: { type: Array, default: () => [] },
   messageCount: { type: Number, default: 0 },
   toolCallCount: { type: Number, default: 0 },

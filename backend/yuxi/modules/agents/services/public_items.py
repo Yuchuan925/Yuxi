@@ -59,6 +59,8 @@ def serialize_public_items(message: Message, run: AgentRun | None, result_run_id
         if run is not None and run.status in {"failed", "cancelled", "interrupted", "yielded"}:
             if item["status"] == "in_progress":
                 item["status"] = "failed" if run.status == "failed" and item["type"] != "message" else "incomplete"
+            if run.status == "interrupted" and run.error_type == "cooperation_waiting":
+                item["yuxi"]["waiting_kind"] = "cooperation"
     return sorted(items, key=lambda item: item["yuxi"]["output_index"])
 
 

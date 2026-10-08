@@ -42,7 +42,9 @@ export const buildProjectSessionGroups = (projects, sessions) => {
       return {
         project,
         sessions: projectSessions,
-        threadStatus: deriveProjectThreadStatus(projectSessions)
+        threadStatus: deriveProjectThreadStatus(projectSessions),
+        activityStatus: ['waiting_approval', 'waiting_answer', 'running', 'waiting_cooperation', 'queued', 'waiting']
+          .find((status) => projectSessions.some((session) => session.activity_status === status)) || 'idle'
       }
     }),
     otherSessions

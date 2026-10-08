@@ -55,6 +55,8 @@ async def get_thread_history(*, db: AsyncSession, scope: ActorScope, thread_id: 
                     finished_at=run.finished_at,
                 ),
                 "status": run.status,
+                "error_type": run.error_type,
+                "error_message": run.error_message,
             }
             for run in runs
         ],

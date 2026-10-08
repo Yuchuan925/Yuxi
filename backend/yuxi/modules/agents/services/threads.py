@@ -66,7 +66,17 @@ async def list_threads(
     latest = await AgentRunRepository(db).get_latest_top_level_runs_for_threads(
         scope.uid, [item.thread_id for item in items]
     )
-    return [_thread_public(item, latest.get(item.thread_id)) for item in items]
+    activity = await AgentTurnRepository(db).list_thread_activity(
+        thread_ids=[item.thread_id for item in items], uid=scope.uid, app_id=scope.app_id
+    )
+    activity_by_id = {
+        thread_id: _thread_activity(status, waitpoint, run_status, pending and not paused)
+        for thread_id, status, waitpoint, run_status, pending, paused in activity
+    }
+    return [
+        {**_thread_public(item, latest.get(item.thread_id)), "activity_status": activity_by_id[item.thread_id]}
+        for item in items
+    ]
 
 
 async def search_threads(
@@ -129,6 +139,10 @@ async def mark_thread_viewed(*, db: AsyncSession, scope: ActorScope, thread_id: 
     if run_id and run_status in AGENT_RUN_TERMINAL_STATUSES:
         agent_session = await SessionRepository(db).mark_thread_viewed(thread_id, run_id)
     thread_status = _thread_public(agent_session, (run_id, run_status))["thread_status"]
+    activity = await AgentTurnRepository(db).list_thread_activity(
+        thread_ids=[thread_id], uid=scope.uid, app_id=scope.app_id
+    )
+    _, status, waitpoint, current_run_status, pending, paused = activity[0]
     workdir_path = await resolve_session_workdir_path(agent_session=agent_session, uid=scope.uid, db=db)
     return {
         "id": agent_session.thread_id,
@@ -142,6 +156,7 @@ async def mark_thread_viewed(*, db: AsyncSession, scope: ActorScope, thread_id: 
         "updated_at": agent_session.updated_at.isoformat(),
         "metadata": agent_session.extra_metadata or {},
         "thread_status": thread_status,
+        "activity_status": _thread_activity(status, waitpoint, current_run_status, pending and not paused),
     }
 
 
@@ -213,6 +228,12 @@ async def get_thread_snapshot(*, db: AsyncSession, scope: ActorScope, thread_id:
         "current_turn": _turn_summary(turn, current_run),
         "queue_paused": bool(agent_session.queue_paused),
         "queued_input_count": len(queue),
+        "activity_status": _thread_activity(
+            turn.status if turn else None,
+            turn.waitpoint if turn else None,
+            current_run.status if current_run else None,
+            bool(queue) and not agent_session.queue_paused,
+        ),
     }
 
 
@@ -347,6 +368,19 @@ def _turn_summary(turn, run) -> dict | None:
         "waitpoint": turn.waitpoint,
         "result_run_id": turn.result_run_id,
     }
+
+
+def _thread_activity(turn_status, waitpoint, run_status, has_pending_input) -> str:
+    """当前 Turn 拥有运行状态，待派发输入在无活跃轮次时表达排队。"""
+    if turn_status == "waiting":
+        return {"cooperation": "waiting_cooperation", "approval": "waiting_approval", "answer": "waiting_answer"}.get(
+            (waitpoint or {}).get("kind"), "waiting"
+        )
+    if turn_status in {"running", "cancelling"}:
+        return "queued" if run_status == "pending" else "running"
+    if has_pending_input:
+        return "queued"
+    return "failed" if turn_status == "failed" else "idle"
 
 
 def _thread_public(agent_session: Session, latest_run: tuple[str, str] | None = None) -> dict:

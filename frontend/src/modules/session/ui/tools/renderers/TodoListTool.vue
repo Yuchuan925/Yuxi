@@ -1,5 +1,5 @@
 <template>
-  <BaseToolCall :tool-call="toolCall" hide-params>
+  <BaseToolCall :tool-call="toolCall" :header-action="openTaskPanel" hide-params>
     <template #header>
       <div class="sep-header">
         <span class="note">任务清单</span>
@@ -53,6 +53,7 @@ import {
 import { parseToolCallArgs } from '../toolRegistry'
 
 const props = defineProps({
+  openTaskPanel: { type: Function, default: null },
   toolCall: {
     type: Object,
     required: true

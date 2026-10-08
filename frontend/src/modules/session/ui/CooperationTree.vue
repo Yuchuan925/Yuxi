@@ -19,18 +19,24 @@
         </h3>
         <p>{{ summaryText }}</p>
       </div>
-      <a-button
+      <button
         v-if="!compact && pausedQueueCount"
-        size="small"
-        :disabled="hasActiveTurns"
-        :loading="controlling"
+        type="button"
+        class="lucide-icon-btn control-button"
+        title="继续队列"
+        aria-label="继续队列"
+        :disabled="hasActiveTurns || controlling || !currentId"
+        :aria-busy="controlling"
         @click="control(false)"
-        >继续队列</a-button
       >
+        <LoaderCircle v-if="controlling" :size="16" class="is-spinning" aria-hidden="true" />
+        <Play v-else :size="16" aria-hidden="true" />
+        <span class="control-label">继续队列</span>
+      </button>
       <button
         v-if="hasStoppableWork"
         type="button"
-        class="lucide-icon-btn stop-button"
+        class="lucide-icon-btn control-button stop-button"
         title="停止全部协作会话"
         aria-label="停止全部"
         :disabled="controlling || !currentId || !sessions.length"
@@ -39,6 +45,7 @@
       >
         <LoaderCircle v-if="controlling" :size="16" class="is-spinning" aria-hidden="true" />
         <Square v-else :size="14" aria-hidden="true" />
+        <span v-if="!compact" class="control-label">停止全部</span>
       </button>
       <span v-if="compact" class="session-count">{{ sessions.length }}</span>
     </div>
@@ -52,13 +59,12 @@
           <button
             type="button"
             class="session-row"
-            :style="{ paddingInlineStart: `${16 + Math.min(item.depth, 4) * 16}px` }"
+            :style="{ paddingInlineStart: `${12 + Math.min(item.depth, 4) * 12}px` }"
             :aria-label="`打开会话 ${item.name}`"
             :aria-current="item.session.session_id === currentId ? 'true' : undefined"
             :title="item.session.path"
             @click="$emit('open', item.session.session_id)"
           >
-            <CornerDownRight v-if="item.depth" :size="16" class="branch-icon" aria-hidden="true" />
             <FallbackAvatar
               :name="item.name"
               :seed="item.session.session_id"
@@ -69,19 +75,20 @@
             />
             <span class="session-content">
               <span class="session-heading">
-                <span class="session-name">{{ item.name }}</span>
+                <span class="session-name" :title="item.name">{{ item.name }}</span>
+                <span
+                  v-if="item.session.title && item.session.title !== item.name"
+                  class="session-task"
+                  :title="item.session.title"
+                >
+                  {{ item.session.title }}
+                </span>
+                <span v-if="item.session.has_pending_input" class="queue-hint">
+                  {{ item.session.queue_paused ? '后续输入待继续' : '有后续输入排队' }}
+                </span>
                 <span class="status-label" :class="`status-${item.state.tone}`">{{
                   item.state.label
                 }}</span>
-              </span>
-              <span
-                v-if="item.session.title && item.session.title !== item.name"
-                class="session-task"
-              >
-                {{ item.session.title }}
-              </span>
-              <span v-if="item.session.has_pending_input" class="queue-hint">
-                {{ item.session.queue_paused ? '后续输入待继续' : '有后续输入排队' }}
               </span>
             </span>
             <ChevronRight :size="16" class="open-icon" aria-hidden="true" />
@@ -94,7 +101,7 @@
 </template>
 <script setup>
 import { computed, ref } from 'vue'
-import { ChevronRight, CornerDownRight, LoaderCircle, Square } from '@lucide/vue'
+import { ChevronRight, LoaderCircle, Play, Square } from '@lucide/vue'
 import { message } from 'ant-design-vue'
 import { agentApi } from '@/apis'
 import FallbackAvatar from '@/shared/ui/FallbackAvatar.vue'
@@ -198,6 +205,8 @@ const control = async (stopped) => {
 </script>
 <style scoped lang="less">
 .cooperation {
+  container-type: inline-size;
+  container-name: cooperation;
   height: 100%;
   min-height: 0;
   display: flex;
@@ -275,33 +284,49 @@ const control = async (stopped) => {
   font-size: 12px;
   line-height: 1.6;
 }
-.stop-button {
+.control-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   flex-shrink: 0;
-  width: 32px;
-  height: 32px;
+  gap: 6px;
+  min-width: 28px;
+  height: 28px;
+  padding: 0 6px;
+  font: inherit;
+  font-size: 12px;
+  white-space: nowrap;
   border: 0;
   border-radius: 6px;
   color: var(--color-text-secondary);
   background: transparent;
   cursor: pointer;
 }
-.stop-button:hover:not(:disabled) {
-  color: var(--color-error-700);
-  background: var(--color-error-50);
+.control-button:hover:not(:disabled) {
+  color: var(--color-text);
+  background: var(--gray-100);
 }
-.stop-button:disabled {
+.control-label {
+  display: none;
+}
+@container cooperation (min-width: 440px) {
+  .control-label {
+    display: inline;
+  }
+}
+.control-button:disabled {
   opacity: 0.45;
   cursor: not-allowed;
 }
 .summary-entry:focus-visible,
 .session-row:focus-visible,
-.stop-button:focus-visible {
+.control-button:focus-visible {
   outline: 2px solid var(--main-color);
   outline-offset: -2px;
 }
 .list-header {
   flex-shrink: 0;
-  padding: 16px;
+  padding: 12px;
   border-bottom: 1px solid var(--gray-100);
 }
 .list-heading {
@@ -313,7 +338,7 @@ const control = async (stopped) => {
     font-weight: 600;
   }
   p {
-    margin: 6px 0 0;
+    margin: 3px 0 0;
     font-size: 12px;
     color: var(--color-text-secondary);
     line-height: 1.6;
@@ -335,7 +360,7 @@ const control = async (stopped) => {
   align-items: flex-start;
   gap: 8px;
   width: 100%;
-  padding: 14px 16px;
+  padding: 9px 12px;
   text-align: left;
   border: 0;
   color: inherit;
@@ -343,7 +368,6 @@ const control = async (stopped) => {
   background: transparent;
   cursor: pointer;
 }
-.branch-icon,
 .open-icon {
   flex-shrink: 0;
   margin-top: 3px;
@@ -365,12 +389,13 @@ const control = async (stopped) => {
   white-space: nowrap;
 }
 .session-name {
-  flex: 1;
+  flex: 0 1 auto;
   min-width: 0;
   font-size: 14px;
   font-weight: 500;
 }
 .status-label {
+  margin-left: auto;
   flex-shrink: 0;
   font-size: 12px;
   line-height: 20px;
@@ -393,13 +418,19 @@ const control = async (stopped) => {
 }
 .session-task,
 .queue-hint {
-  display: block;
-  margin-top: 4px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: 12px;
-  line-height: 1.6;
+  line-height: 1.5;
   color: var(--color-text-secondary);
 }
+.session-task {
+  flex: 0 1 auto;
+}
 .queue-hint {
+  flex-shrink: 0;
   color: var(--color-warning-900);
 }
 .cooperation-error,
@@ -420,9 +451,9 @@ const control = async (stopped) => {
   }
 }
 @media (max-width: 767px) {
-  .stop-button,
+  .control-button,
   .is-compact .stop-button {
-    width: 40px;
+    min-width: 40px;
     height: 40px;
   }
 }

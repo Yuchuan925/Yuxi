@@ -217,9 +217,11 @@
           :disabled="sendButtonDisabled"
           type="link"
           class="send-button"
+          :aria-label="isLoading ? '停止回答' : '发送消息'"
         >
           <template #icon>
-            <component :is="getIcon" class="send-btn" />
+            <Square v-if="isLoading" :size="14" fill="currentColor" :stroke-width="0" aria-hidden="true" />
+            <component v-else :is="getIcon" class="send-btn" />
           </template>
         </a-button>
       </a-tooltip>
@@ -245,7 +247,7 @@ import {
 } from 'vue'
 import {
   ArrowUp as ArrowUpOutlined,
-  Pause as PauseOutlined,
+  Square,
   Plus,
   Send as SendOutlined
 } from '@lucide/vue'
@@ -987,15 +989,11 @@ const hasOptionsLeft = computed(() => {
 // 图标映射
 const iconComponents = {
   SendOutlined: SendOutlined,
-  ArrowUpOutlined: ArrowUpOutlined,
-  PauseOutlined: PauseOutlined
+  ArrowUpOutlined: ArrowUpOutlined
 }
 
 // 根据传入的图标名动态获取组件
 const getIcon = computed(() => {
-  if (props.isLoading) {
-    return PauseOutlined
-  }
   return iconComponents[props.sendIcon] || ArrowUpOutlined
 })
 

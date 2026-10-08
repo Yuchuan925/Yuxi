@@ -4,6 +4,7 @@ export const TOOL_NAME_MAP = {
   submit_input: '提交工作',
   cancel_turn: '取消轮次',
   wait_sessions: '等待协作更新',
+  wait_inputs: '等待任务结果',
   list_sessions: '查看协作树',
   bash: '执行命令',
   cmd: '执行命令',
@@ -90,6 +91,7 @@ export const getToolCallStatus = (toolCall) => {
     parseToolCallResult(toolCall)?.status
   ]
   if (statuses.some((status) => status === 'error' || status === 'failed')) return 'error'
+  if (statuses.includes('waiting')) return 'waiting'
   if (statuses.includes('incomplete')) return 'incomplete'
   if (
     toolCall?.tool_call_result != null ||

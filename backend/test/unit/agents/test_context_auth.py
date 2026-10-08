@@ -36,6 +36,13 @@ filter_config_by_role = context_module.filter_config_by_role
 normalize_agent_context_config = context_module.normalize_agent_context_config
 
 
+def test_summary_default_and_schema_preserve_explicit_overrides():
+    """缺省上下文使用 256K，已有显式阈值保持原值。"""
+    assert BaseContext().summary_threshold == 256
+    assert BaseContext.get_configurable_items(user_role="admin")["summary_threshold"]["default"] == 256
+    assert BaseContext(summary_threshold=37).summary_threshold == 37
+
+
 @dataclass(kw_only=True)
 class ChatBotContext(BaseContext):
     pass

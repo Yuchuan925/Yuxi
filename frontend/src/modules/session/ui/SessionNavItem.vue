@@ -4,7 +4,7 @@
     :class="{
       active: currentChatId === chat.id,
       nested,
-      'has-status': chat.thread_status === 'loading' || chat.thread_status === 'ready'
+      'has-status': isRunning || Boolean(activityLabel) || chat.thread_status === 'ready'
     }"
   >
     <button
@@ -16,21 +16,27 @@
       @click.middle="$emit('archive-chat', chat.id)"
     >
       <span class="session-title">{{ chat.title || '新的对话' }}</span>
+      <span
+        v-if="activityLabel"
+        class="activity-badge"
+        :class="`activity-${chat.activity_status}`"
+        role="status"
+        :title="activityLabel"
+      >
+        {{ activityLabel }}
+      </span>
       <span class="actions-mask"></span>
       <span
-        v-if="chat.thread_status === 'loading' || chat.thread_status === 'ready'"
-        class="status-mask"
-      ></span>
-      <span
-        v-if="chat.thread_status === 'loading'"
-        class="thread-status thread-status-loading"
+        v-if="isRunning"
+        class="thread-status"
         role="status"
+        aria-label="正在运行"
         title="正在运行"
       >
-        <Loader2 :size="12" />
+        <span class="status-spinner" aria-hidden="true"></span>
       </span>
       <span
-        v-else-if="chat.thread_status === 'ready'"
+        v-else-if="!activityLabel && chat.thread_status === 'ready'"
         class="thread-status thread-status-ready"
         role="status"
         title="有新回复"
@@ -71,9 +77,10 @@
 </template>
 
 <script setup>
-import { h } from 'vue'
+import { computed, h } from 'vue'
+import { SESSION_ACTIVITY_LABELS } from '@/modules/session/model/sessionActivity'
 import { message, Modal } from 'ant-design-vue'
-import { Archive, Loader2, MoreVertical, Pin, PinOff, SquarePen } from '@lucide/vue'
+import { Archive, MoreVertical, Pin, PinOff, SquarePen } from '@lucide/vue'
 
 const props = defineProps({
   chat: { type: Object, required: true },
@@ -82,6 +89,8 @@ const props = defineProps({
 })
 
 const emit = defineEmits(['select-chat', 'archive-chat', 'rename-chat', 'toggle-pin'])
+const activityLabel = computed(() => SESSION_ACTIVITY_LABELS[props.chat.activity_status] || '')
+const isRunning = computed(() => ['running', 'queued'].includes(props.chat.activity_status))
 
 const renameChat = () => {
   let newTitle = props.chat.title || ''
@@ -213,8 +222,7 @@ const renameChat = () => {
     }
 
     .pinned-indicator,
-    .thread-status,
-    .status-mask {
+    .thread-status {
       display: none;
     }
   }
@@ -227,12 +235,19 @@ const renameChat = () => {
       font-weight: 600;
     }
 
-    .status-mask {
-      background: linear-gradient(
-        to right,
-        transparent,
-        color-mix(in srgb, var(--gray-100) 6%, var(--gray-100)) 28px
-      );
+  }
+
+  &.has-status {
+    .actions-mask {
+      display: none;
+    }
+    .session-select {
+      padding-right: 32px;
+    }
+
+    .session-title {
+      text-overflow: clip;
+      mask-image: linear-gradient(to right, #000 calc(100% - 16px), transparent);
     }
   }
 
@@ -256,6 +271,7 @@ const renameChat = () => {
   display: flex;
   align-items: center;
   width: 100%;
+  min-width: 0;
   height: 100%;
   padding: 0 8px;
   border: 0;
@@ -273,10 +289,32 @@ const renameChat = () => {
 }
 
 .session-title {
+  flex: 1;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.activity-badge {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  gap: 4px;
+  margin-left: 6px;
+  padding: 2px 6px;
+  border-radius: 10px;
+  background: var(--gray-100);
+  color: var(--gray-600);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.activity-waiting_approval,
+.activity-waiting_answer {
+  background: var(--main-100);
+  color: var(--main-700);
+  font-weight: 600;
 }
 
 .thread-status {
@@ -290,13 +328,19 @@ const renameChat = () => {
   transform: translateY(-50%) translateX(50%);
 }
 
-.thread-status-loading :deep(svg) {
+.status-spinner {
+  width: 14px;
+  height: 14px;
+  box-sizing: border-box;
+  border: 2px solid var(--gray-200);
+  border-top-color: var(--gray-600);
+  border-radius: 50%;
   animation: thread-status-spin 1s linear infinite;
 }
 
 .thread-status-ready {
-  width: 6px;
-  height: 6px;
+  width: 8px;
+  height: 8px;
   border-radius: 50%;
   background: var(--main-color);
 }
@@ -309,14 +353,6 @@ const renameChat = () => {
   opacity: 0;
   pointer-events: none;
   transition: opacity 0.2s ease;
-}
-
-.status-mask {
-  position: absolute;
-  inset: 0 0 0 auto;
-  width: 40px;
-  background: linear-gradient(to right, transparent, var(--main-5) 24px);
-  pointer-events: none;
 }
 
 .session-actions {

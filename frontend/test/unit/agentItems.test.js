@@ -12,6 +12,20 @@ const event = (type, fields = {}, id = type) => ({
   item_id: 'm', output_index: 0, content_index: 0, ...fields
 })
 
+test('协作暂停保留等待状态，精确关联的恢复结果使原工具完成', () => {
+  const call = { id: 'waiting-call', type: 'function_call', name: 'wait_inputs', arguments: {},
+    call_id: 'wait-1', status: 'incomplete', turn_id: 'turn',
+    yuxi: { run_id: 'run-1', output_index: 1, message_id: 2, waiting_kind: 'cooperation' } }
+  assert.equal(itemsToMessages([call])[0].tool_calls[0].status, 'waiting')
+  const output = { id: 'resumed-output', type: 'function_call_output', call_id: 'wait-1',
+    status: 'completed', output: '任务完成', turn_id: 'turn',
+    yuxi: { run_id: 'run-2', output_index: 2, message_id: 3, call_item_id: 'waiting-call' } }
+  assert.equal(itemsToMessages([call, output])[0].tool_calls[0].status, 'success')
+  assert.equal(itemsToMessages([call, output])[0].tool_calls[0].tool_call_result.content, '任务完成')
+  const cancelled = { ...call, yuxi: { ...call.yuxi, waiting_kind: undefined } }
+  assert.equal(itemsToMessages([cancelled])[0].tool_calls[0].status, 'incomplete')
+})
+
 test('多内容块分别追加，重放按 event_id 去重，done 完整替换', () => {
   const state = createItemState()
   applyAgentEvent(state, event('item.added', { item: message() }))

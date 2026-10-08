@@ -298,6 +298,7 @@ export function useAgentRunStream({
       return
     const turnId = thread.current_turn?.turn_id
     if (!turnId) {
+      ts.cooperationWaiting = false
       ts.activeRunId = null
       ts.currentTurnId = null
       ts.turnStatus = null

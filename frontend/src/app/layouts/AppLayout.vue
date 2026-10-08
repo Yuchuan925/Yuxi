@@ -532,12 +532,14 @@ provide('settingsModal', {
         </div>
       </div>
     </div>
-    <router-view v-slot="{ Component, route }" id="app-router-view">
-      <keep-alive>
-        <component :is="Component" v-if="route.meta.keepAlive !== false" :key="route.path" />
-      </keep-alive>
-      <component :is="Component" v-if="route.meta.keepAlive === false" />
-    </router-view>
+    <main id="app-router-view">
+      <router-view v-slot="{ Component, route }">
+        <keep-alive>
+          <component :is="Component" v-if="route.meta.keepAlive !== false" :key="route.path" />
+        </keep-alive>
+        <component :is="Component" v-if="route.meta.keepAlive === false" />
+      </router-view>
+    </main>
 
     <GlobalSearchModal
       v-model:open="sessionSearchOpen"
@@ -599,7 +601,11 @@ div.header,
 }
 
 #app-router-view {
-  flex: 1 1 auto;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  flex: 1;
+  min-width: 0;
   overflow-y: auto;
 }
 

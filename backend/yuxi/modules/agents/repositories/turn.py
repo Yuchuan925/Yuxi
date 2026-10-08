@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from yuxi.modules.agents.models.messages import MODEL_AUDIT_MESSAGE_TYPE, Message
+from yuxi.modules.agents.models.inputs import AgentInput
 from yuxi.modules.agents.models.runs import AgentRun
+from yuxi.modules.agents.models.sessions import Session
 from yuxi.modules.agents.models.turns import AgentTurn
 from yuxi.shared.datetime import utc_now
 
@@ -28,6 +30,41 @@ class AgentTurnRepository:
     async def get(self, turn_id: str) -> AgentTurn | None:
         """按 ID 读取 Turn。"""
         return await self.db.get(AgentTurn, turn_id)
+
+    async def list_thread_activity(self, *, thread_ids: list[str], uid: str, app_id: str | None) -> list:
+        """批量读取会话当前轮次、执行段与待派发输入，供侧边栏投影。"""
+        latest = (
+            select(
+                AgentTurn.thread_id,
+                AgentTurn.status,
+                AgentTurn.waitpoint,
+                AgentTurn.current_run_id,
+                func.row_number()
+                .over(partition_by=AgentTurn.thread_id, order_by=(AgentTurn.created_at.desc(), AgentTurn.id.desc()))
+                .label("rank"),
+            )
+            .where(AgentTurn.thread_id.in_(thread_ids), AgentTurn.uid == uid, AgentTurn.app_id == app_id)
+            .subquery()
+        )
+        pending = (
+            select(AgentInput.id)
+            .where(
+                AgentInput.thread_id == Session.thread_id,
+                AgentInput.uid == uid,
+                AgentInput.app_id == app_id,
+                AgentInput.status == "pending",
+            )
+            .exists()
+        )
+        result = await self.db.execute(
+            select(
+                Session.thread_id, latest.c.status, latest.c.waitpoint, AgentRun.status, pending, Session.queue_paused
+            )
+            .outerjoin(latest, and_(latest.c.thread_id == Session.thread_id, latest.c.rank == 1))
+            .outerjoin(AgentRun, AgentRun.id == latest.c.current_run_id)
+            .where(Session.thread_id.in_(thread_ids), Session.uid == uid, Session.app_id == app_id)
+        )
+        return list(result.all())
 
     async def get_for_scope(
         self, *, turn_id: str, thread_id: str, uid: str, app_id: str | None, for_update: bool = False

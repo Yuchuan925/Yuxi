@@ -23,7 +23,11 @@
           :is-active="isToolGroupActive(group, itemIndex, displayItemsList[groupIndex])"
         />
       </template>
-      <div v-if="!group.messages.length && group.run" class="thread-message-list-empty">
+      <RunFailureNotice
+        v-if="group.run?.status === 'failed'"
+        :error-message="group.run.error_message"
+      />
+      <div v-else-if="!group.messages.length && group.run" class="thread-message-list-empty">
         {{ formatEmptyRunStatus(group.run.status) }}
       </div>
     </template>
@@ -38,6 +42,7 @@ import {
 } from '@/modules/session/model/runProcessGrouping'
 import { computed } from 'vue'
 import AgentMessageComponent from '@/modules/session/ui/AgentMessageComponent.vue'
+import RunFailureNotice from '@/modules/session/ui/RunFailureNotice.vue'
 import ToolCallsGroupComponent from '@/modules/session/ui/ToolCallsGroupComponent.vue'
 import { MessageProcessor } from '@/modules/session/model/messageProcessor'
 import { getMessageGroupDisplayItems } from '@/modules/session/model/messageGrouping'

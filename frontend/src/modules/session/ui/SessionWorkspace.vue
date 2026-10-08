@@ -86,7 +86,13 @@
           :to="`#${embedded ? workspacePanelId : mainChatPanelId}`"
           :disabled="!isAgentPanelMaximized"
         >
-          <div class="chat-main" ref="chatMainRef">
+          <div
+            class="chat-main"
+            ref="chatMainRef"
+            :class="{
+              'has-embedded-state': statePanelOpen && statePanelPlacement.mode === 'embedded'
+            }"
+          >
             <div class="chat-box">
               <template v-for="row in messageGroupRows" :key="row.key">
                 <div v-if="row.type === 'message-group'" class="group-box">
@@ -112,18 +118,26 @@
                       v-else-if="displayItem.type === 'tool-group'"
                       :tool-calls="displayItem.toolCalls"
                       :entries="displayItem.entries"
+                      :open-task-panel="props.embedded ? null : openTaskStatePanel"
+                      :cooperation-view="props.embedded ? null : cooperationToolView"
                       :is-active="isToolGroupActive(row.group, itemIndex, row.displayItems)"
                     />
                     <RunProcessGroupComponent
                       v-else
                       :items="displayItem.items"
+                      :open-task-panel="props.embedded ? null : openTaskStatePanel"
+                      :cooperation-view="props.embedded ? null : cooperationToolView"
                       :message-count="displayItem.messageCount"
                       :tool-call-count="displayItem.toolCallCount"
                       :duration-ms="displayItem.durationMs"
                       :mention="mentionConfig"
                     />
                   </template>
-                  <div v-if="!row.displayItems.length && row.group.run" class="chat-inline-notice">
+                  <RunFailureNotice
+                    v-if="row.group.run?.status === 'failed'"
+                    :error-message="row.group.run.error_message"
+                  />
+                  <div v-else-if="!row.displayItems.length && row.group.run" class="chat-inline-notice">
                     {{ formatEmptyRunStatus(row.group.run.status) }}
                   </div>
                   <AgentArtifactsCard
@@ -148,8 +162,7 @@
                 </div>
               </template>
 
-              <!-- 生成中的加载状态 - 增强条件支持主聊天和resume流程 -->
-              <div class="generating-status" v-if="isReplyLoading && runGroups.length > 0">
+              <div class="generating-status" v-if="isReplyLoading" role="status">
                 <div class="generating-indicator">
                   <div class="loading-dots">
                     <div></div>
@@ -844,6 +857,7 @@ import ContextUsageRing from '@/modules/session/ui/ContextUsageRing.vue'
 import ToolApprovalModeSelector from '@/modules/session/ui/ToolApprovalModeSelector.vue'
 import ModelSelectorComponent from '@/modules/agents/ui/ModelSelectorComponent.vue'
 import AgentMessageComponent from '@/modules/session/ui/AgentMessageComponent.vue'
+import RunFailureNotice from '@/modules/session/ui/RunFailureNotice.vue'
 import {
   formatEmptyRunStatus,
   groupRunContinuations,
@@ -887,6 +901,7 @@ import { useSessionRuntimeStore } from '@/modules/session/model/sessionRuntime'
 import { useSessionCooperation } from '@/modules/session/model/useSessionCooperation'
 import CooperationTree from '@/modules/session/ui/CooperationTree.vue'
 import { useAgentMentionConfig } from '@/modules/session/model/useAgentMentionConfig'
+import { collectCooperationTasks } from '@/modules/session/model/cooperationToolView'
 import AgentArtifactsCard from '@/modules/session/ui/AgentArtifactsCard.vue'
 import AgentPanel from '@/modules/session/ui/workspace/AgentPanel.vue'
 import AttachmentTmpUploadModal from '@/modules/session/ui/AttachmentTmpUploadModal.vue'
@@ -1042,7 +1057,7 @@ useOutsidePointerdown(
   [statePanelRef, mainStateTriggerRef, panelStateTriggerRef]
 )
 
-/** 状态面板锚定可见按钮下方，保留按钮和输入区的操作空间。 */
+/** 状态面板靠右显示，保留顶部工具栏和输入区的操作空间。 */
 const updateStatePanelPlacement = () => {
   if (!statePanelOpen.value || !stateTriggerRef.value || !workspaceChatRef.value) return
   const trigger = stateTriggerRef.value.getBoundingClientRect()
@@ -1051,13 +1066,18 @@ const updateStatePanelPlacement = () => {
   const visibleInput = [...workspaceChatRef.value.querySelectorAll('.bottom')]
     .map((element) => element.getBoundingClientRect())
     .find((rect) => rect.height > 0 && rect.top > trigger.bottom)
-  const message = chatMainRef.value?.querySelector('.chat-box')?.getBoundingClientRect()
   const main = chatMainRef.value?.getBoundingClientRect()
   const embeddedArea =
-    !isAgentPanelMaximized.value && message && main
-      ? { left: message.right + 16, right: Math.min(main.right, workspace.right) - 8 }
+    !isAgentPanelMaximized.value && main && main.width >= 1000
+      ? {
+          left: Math.min(main.right, workspace.right) - 348,
+          right: Math.min(main.right, workspace.right) - 8
+        }
       : null
-  statePanelPlacement.value = getStatePanelPlacement(workspace, trigger, visibleInput, embeddedArea)
+  statePanelPlacement.value = getStatePanelPlacement(
+    workspace, trigger, visibleInput, embeddedArea,
+    !isAgentPanelMaximized.value && main ? main : workspace
+  )
 }
 
 const sideActive = computed(() => {
@@ -2132,6 +2152,13 @@ function mergeActiveRunOngoingIntoHistory(historyRunGroups, ongoingMessages, act
   return { historyRunGroups: patchedHistoryRunGroups, ongoingMessages: [] }
 }
 
+const cooperationToolView = computed(() => ({
+  sessions: cooperationSessions.value,
+  tasks: collectCooperationTasks([...currentThreadMessages.value, ...ongoingRunMessages.value]),
+  openSession: openCooperationSession,
+  openTree: openCooperationTree
+}))
+
 const runGroups = computed(() => {
   const historyGroups = historyRunGroups.value
   const { historyRunGroups: mergedHistoryRunGroups, ongoingMessages: mergedOngoingMessages } =
@@ -2220,7 +2247,7 @@ const isWaitingForUserAction = computed(() =>
 )
 const queuePausedMessage = '后续队列已暂停，请手动继续。'
 const shouldShowStopButton = computed(
-  () => isStreaming.value && !String(userInput.value || '').trim()
+  () => (isStreaming.value || currentThreadState.value?.cooperationWaiting) && !String(userInput.value || '').trim()
 )
 const canSubmitSteer = computed(
   () =>
@@ -2263,22 +2290,24 @@ const agentPanelFilesystemPollingActive = computed(() =>
 )
 const isProcessing = computed(
   () =>
-    isStreaming.value || (hasQueuedInputs.value && currentQueueSnapshot.value.status !== 'paused')
+    isStreaming.value || currentThreadState.value?.cooperationWaiting ||
+    (hasQueuedInputs.value && currentQueueSnapshot.value.status !== 'paused')
 )
 const isReplyLoading = computed(() => {
-  const threadState = currentThreadState.value
-  return Boolean(threadState?.replyLoadingVisible) && currentQueueSnapshot.value.status !== 'paused'
+  return isProcessing.value && !isWaitingForUserAction.value
 })
 const replyLoadingText = computed(() => {
   const threadState = currentThreadState.value
+  if (threadState?.cooperationWaiting) return '等待协作任务完成...'
   if (threadState?.contextCompressing) return '正在压缩上下文...'
-  if (hasQueuedInputs.value) return `排队中（${queuedInputCount.value} 条）...`
+  if (!isStreaming.value && hasQueuedInputs.value) return `排队中（${queuedInputCount.value} 条）...`
   return '正在生成回复...'
 })
 const replyElapsedSeconds = ref(0)
 let replyElapsedTimer = null
 let replyStartedAt = null
 const replyElapsedLabel = computed(() => {
+  if (!isStreaming.value || currentThreadState.value?.cooperationWaiting || !replyStartedAt) return ''
   const seconds = replyElapsedSeconds.value
   if (!seconds) return ''
   if (seconds < 60) return `${seconds}s`
@@ -2287,13 +2316,11 @@ const replyElapsedLabel = computed(() => {
 })
 const updateReplyElapsedSeconds = () => {
   if (!replyStartedAt) return
-  replyElapsedSeconds.value = Math.floor((Date.now() - replyStartedAt) / 1000)
+  replyElapsedSeconds.value = Math.max(0, Math.floor((Date.now() - replyStartedAt) / 1000))
 }
-const startReplyElapsedTimer = ({ reset = false } = {}) => {
+const startReplyElapsedTimer = () => {
   stopReplyElapsedTimer()
-  if (reset || !replyStartedAt) {
-    replyStartedAt = Date.now()
-  }
+  if (!replyStartedAt) return
   updateReplyElapsedSeconds()
   replyElapsedTimer = window.setInterval(updateReplyElapsedSeconds, 1000)
 }
@@ -2308,16 +2335,37 @@ const stopReplyElapsedTimer = ({ reset = false } = {}) => {
   }
 }
 watch(
-  isReplyLoading,
-  (loading) => {
-    if (loading) {
-      startReplyElapsedTimer({ reset: true })
-    } else {
-      stopReplyElapsedTimer({ reset: true })
+  [
+    currentChatId,
+    () => currentThreadState.value?.activeRunId,
+    () => currentThreadState.value?.runStateVersion,
+    isStreaming,
+    () => currentThreadState.value?.cooperationWaiting
+  ],
+  async ([threadId, runId, , streaming, waiting], _previous, onCleanup) => {
+    let stale = false
+    onCleanup(() => { stale = true })
+    stopReplyElapsedTimer({ reset: true })
+    if (!threadId || !runId || !streaming || waiting) return
+    try {
+      const knownTiming = currentRunById.value.get(runId)?.timing
+      const run = knownTiming?.started_at
+        ? { timing: knownTiming }
+        : await agentApi.getAgentRun(threadId, runId)
+      if (stale) return
+      const startedAt = run.timing?.started_at || run.started_at
+      if (!startedAt) return
+      const timestamp = dayjs.utc(startedAt).valueOf()
+      if (!Number.isFinite(timestamp)) return
+      replyStartedAt = timestamp
+      startReplyElapsedTimer()
+    } catch {
+      // 时间读取失败时隐藏秒数，生成状态仍由 SSE 拥有。
     }
   },
   { immediate: true }
 )
+
 const isSendButtonDisabled = computed(() => {
   return (
     sendCooldownActive.value ||
@@ -3289,7 +3337,7 @@ const handleSendOrStop = async (payload) => {
   const threadId = currentChatId.value
   const threadState = getThreadState(threadId)
   const hasNewInput = Boolean(String(userInput.value || '').trim() || payload?.images?.length)
-  if (threadState?.activeRunId && threadState?.isStreaming && !hasNewInput) {
+  if (threadState?.activeRunId && (threadState.isStreaming || threadState.cooperationWaiting) && !hasNewInput) {
     try {
       await agentApi.cancelThreadTurn(
         threadId,
@@ -3485,6 +3533,13 @@ const handleAgentStateRefresh = async (threadId = null) => {
   } finally {
     isRefreshingState.value = false
   }
+}
+
+/** 从主对话任务入口打开当前状态清单。 */
+const openTaskStatePanel = async () => {
+  statePanelOpen.value = true
+  collapsedStateSections.todos = false
+  if (currentChatId.value) await handleAgentStateRefresh()
 }
 
 const toggleStatePanel = async () => {
@@ -3861,6 +3916,7 @@ watch(currentChatId, (threadId, oldThreadId) => {
   transition:
     flex-basis 0.3s cubic-bezier(0.4, 0, 0.2, 1),
     margin-right 0.3s cubic-bezier(0.4, 0, 0.2, 1),
+    padding-right 0.24s cubic-bezier(0.16, 1, 0.3, 1),
     width 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   min-width: 0; /* Prevent flex item from overflowing */
 
@@ -3869,6 +3925,11 @@ watch(currentChatId, (threadId, oldThreadId) => {
 
 .chat-content-container.has-file-panel .chat-main {
   margin-right: var(--file-panel-width);
+}
+
+.chat-main.has-embedded-state {
+  box-sizing: border-box;
+  padding-right: 364px;
 }
 
 .chat.has-maximized-panel .chat-main {
@@ -3949,14 +4010,7 @@ watch(currentChatId, (threadId, oldThreadId) => {
 }
 
 .side-panel--state.is-embedded {
-  border: none;
-  border-radius: 0;
   box-shadow: none;
-  background: transparent;
-
-  .state-panel {
-    background: transparent;
-  }
 }
 
 .state-panel {
@@ -4849,7 +4903,7 @@ watch(currentChatId, (threadId, oldThreadId) => {
   color: var(--gray-900);
   font-size: 18px;
   font-weight: 600;
-  font-variant-numeric: tabular-nums;
+  font-variant-numeric: proportional-nums;
   line-height: 1.1;
 }
 
@@ -4872,7 +4926,7 @@ watch(currentChatId, (threadId, oldThreadId) => {
   overflow: hidden;
   color: var(--gray-500);
   font-size: 11px;
-  font-variant-numeric: tabular-nums;
+  font-variant-numeric: proportional-nums;
   text-align: right;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -4934,7 +4988,7 @@ watch(currentChatId, (threadId, oldThreadId) => {
   color: var(--gray-900);
   font-size: 12px;
   font-weight: 600;
-  font-variant-numeric: tabular-nums;
+  font-variant-numeric: proportional-nums;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -5028,7 +5082,7 @@ watch(currentChatId, (threadId, oldThreadId) => {
   color: var(--gray-900);
   font-size: 12px;
   font-weight: 600;
-  font-variant-numeric: tabular-nums;
+  font-variant-numeric: proportional-nums;
 }
 
 .token-usage-composition {
@@ -5092,7 +5146,7 @@ watch(currentChatId, (threadId, oldThreadId) => {
 .token-usage-composition-item strong {
   color: var(--gray-800);
   font-weight: 600;
-  font-variant-numeric: tabular-nums;
+  font-variant-numeric: proportional-nums;
 }
 
 .token-usage-composition-item i {
@@ -5171,7 +5225,7 @@ watch(currentChatId, (threadId, oldThreadId) => {
 .token-usage-supplement-row strong {
   color: var(--gray-800);
   font-weight: 600;
-  font-variant-numeric: tabular-nums;
+  font-variant-numeric: proportional-nums;
   text-align: right;
 }
 

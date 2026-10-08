@@ -10,6 +10,11 @@ import {
   resolveToolApprovalMode
 } from '../../src/modules/session/model/toolApproval.js'
 
+test('协作等待继续观察和排队输入，审批等待仍要求用户操作', () => {
+  assert.equal(isThreadWaitingForUserAction({ turnStatus: 'waiting', cooperationWaiting: true }), false)
+  assert.equal(isThreadWaitingForUserAction({ turnStatus: 'waiting', cooperationWaiting: false }), true)
+})
+
 test('tool approval modes and interrupt payloads follow their state contracts', () => {
   assert.equal(isToolApprovalMode('default'), true)
   assert.equal(isToolApprovalMode('always_trust'), true)

@@ -119,6 +119,21 @@ async def test_public_list_maps_run_states_and_enforces_scope(session):
     }
 
 
+@pytest.mark.parametrize("kind", ["cooperation", "approval", "answer"])
+async def test_sidebar_waiting_activity_survives_viewed_interrupted_run(session, kind):
+    """等待状态由 Turn 决定，查看 interrupted Run 不得清除等待标签。"""
+    thread = await _seed_thread(session, "thread-waiting", last_viewed_run_id="run-waiting")
+    run = await _seed_run(session, thread, "run-waiting", "interrupted")
+    turn = await session.get(AgentTurn, run.turn_id)
+    turn.status = "waiting"
+    turn.waitpoint = {"kind": kind, "run_id": run.id}
+    await session.commit()
+    listed = await list_threads(db=session, scope=SCOPE)
+    assert listed[0]["activity_status"] == f"waiting_{kind}"
+    viewed = await mark_thread_viewed(db=session, scope=SCOPE, thread_id=thread.thread_id)
+    assert viewed["activity_status"] == f"waiting_{kind}"
+
+
 async def test_latest_run_wins_and_viewed_mark_tracks_exact_run(session):
     """新 Run 产生后旧已读标记不掩盖未读结果。"""
     thread = await _seed_thread(session, "thread-latest", last_viewed_run_id="run-old")

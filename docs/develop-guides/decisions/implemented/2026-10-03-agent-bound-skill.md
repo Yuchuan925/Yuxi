@@ -26,7 +26,9 @@ Agent definitions service 协调 Agent 与绑定的授权变化和删除：repos
 
 恢复确认覆盖当前内容，后端核对整包修订、历史字节和当前依赖权限；不自动创建备份。删除历史只清理无当前或历史引用的目录，删除当前使用的历史仍保留当前包。
 
-Agent 入口提供不可编辑的 SKILL.md 预览，编辑跳转统一详情页。SkillDetailView 管理一份完整草稿，文件与依赖区域各自提供同一保存操作；历史页提供发版、恢复和删除。未保存草稿阻止发版和恢复，恢复请求及重载期间阻止新输入和离开。Agent 存在未保存配置或进行上传时拒绝跳转。专属包创建或替换的忙碌状态传递到父弹窗，直到内容重新读取结束，期间关闭、保存、打开其他 Agent、分组切换与路由离开均被阻止。前端身份统一使用字符串 agent_id，数字 id 仅作数据库身份；默认头像本地生成，上传图标优先。创建时附带专属包与 Context 的流程见[统一创建与配置决定](./2026-10-05-agent-create-context.md)。
+专属 ZIP 仅用于首次导入。创建发布用例在 Agent 锁内拒绝已有绑定，返回 409，移除上传接口的 `expected_revision` 参数。已有内容通过统一编辑入口保存，避免整包替换意外移除辅助文件。替代方案是继续保留修订保护的覆盖上传，但它重复内容编辑能力并扩大误删范围，因此不采用。
+
+Agent 入口提供不可编辑的 SKILL.md 预览，编辑跳转统一详情页。SkillDetailView 管理一份完整草稿，文件与依赖区域各自提供同一保存操作；历史页提供发版、恢复和删除。未保存草稿阻止发版和恢复，恢复请求及重载期间阻止新输入和离开。Agent 存在未保存配置或进行上传时拒绝跳转。专属包创建或首次导入的忙碌状态传递到父弹窗，直到内容重新读取结束，期间关闭、保存、打开其他 Agent、分组切换与路由离开均被阻止。前端身份统一使用字符串 agent_id，数字 id 仅作数据库身份；默认头像本地生成，上传图标优先。创建时附带专属包与 Context 的流程见[统一创建与配置决定](./2026-10-05-agent-create-context.md)。
 
 ### 运行边界
 
@@ -56,3 +58,5 @@ APP 终端用户读取绑定复用 Key 所属账号的显式 Agent 范围，并�
 | 统一预览、编辑草稿及前端身份 | Vue / DOM | Agent store / SkillDetailView / VersionPanel | 前端 unit 与实际浏览器 | 409 保留、脏草稿禁止恢复和离开、数据库 id 不用于路由 | Passed |
 
 准确命令与本次提交的测试、独立 review 和 CI 结果记录在 PR。商业模型、第三方 MCP 连通性和生产备份恢复为 Not run；运行链路使用独立 deterministic replay 与本地 FastMCP。界面证据保存在仓库外，不将截图纳入提交。
+
+首次 ZIP 导入的相关验证（4 项通过）：真实 HTTP 并发导入只接受一份包，已有绑定即使提交正确修订也返回 409，数据库修订与全部文件字节保持不变；原包替换测试转为通过统一内容编辑入口验证提交失败回滚、提交后清理失败及连续保存。运行入口为 `uv run --no-sync pytest test/integration/api/test_agent_bound_skill.py::test_bound_zip_import_is_create_only test/integration/api/test_agent_bound_skill.py::test_bound_skill_creation_upload_revision_visibility_and_delete test/integration/api/test_agent_bound_skill.py::test_package_compensation_respects_commit_point test/integration/api/test_agent_bound_skill_versions.py::test_committed_response_survives_following_save_prune -q -p no:cacheprovider`。

@@ -3,6 +3,7 @@
     :is="currentRenderer"
     v-if="currentRenderer"
     :tool-call="toolCall"
+    v-bind="toolId === 'write_todos' ? { openTaskPanel } : cooperationView && toolId in COOPERATION_ACTIONS ? { cooperationView } : {}"
     :appearance="appearance"
     :default-expanded="defaultExpanded"
     ref="toolRendererRef"
@@ -19,6 +20,7 @@
 import { computed, defineAsyncComponent, ref } from 'vue'
 import BaseToolCall from './BaseToolCall.vue'
 import ToolRendererUnavailable from './ToolRendererUnavailable.vue'
+import { COOPERATION_ACTIONS } from '@/modules/session/model/cooperationToolView'
 import { getToolCallId, isHiddenToolCall } from './toolRegistry'
 
 const createRenderer = (loader) => defineAsyncComponent({
@@ -30,6 +32,7 @@ const createRenderer = (loader) => defineAsyncComponent({
   suspensible: false
 })
 
+const CooperationTool = createRenderer(() => import('./renderers/CooperationTool.vue'))
 const WebSearchTool = createRenderer(() => import('./renderers/WebSearchTool.vue'))
 const ListKbsTool = createRenderer(() => import('./renderers/ListKbsTool.vue'))
 const QueryKbTool = createRenderer(() => import('./renderers/QueryKbTool.vue'))
@@ -55,6 +58,8 @@ const OcrParseFileTool = createRenderer(() => import('./renderers/OcrParseFileTo
 const RememberMemoryTool = createRenderer(() => import('./renderers/RememberMemoryTool.vue'))
 
 const props = defineProps({
+  cooperationView: { type: Object, default: null },
+  openTaskPanel: { type: Function, default: null },
   toolCall: {
     type: Object,
     required: true
@@ -104,7 +109,11 @@ const TOOL_RENDERERS = {
   write_todos: TodoListTool
 }
 
-const currentRenderer = computed(() => TOOL_RENDERERS[toolId.value] || null)
+const currentRenderer = computed(() =>
+  props.cooperationView && toolId.value in COOPERATION_ACTIONS
+    ? CooperationTool
+    : TOOL_RENDERERS[toolId.value] || null
+)
 const isHidden = computed(() => isHiddenToolCall(props.toolCall))
 
 const toolRendererRef = ref(null)

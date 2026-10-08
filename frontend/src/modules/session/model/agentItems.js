@@ -95,6 +95,7 @@ export function itemsToMessages(items) {
       delivery_status: item.yuxi?.delivery_status, created_at: item.yuxi?.created_at,
       execution_status: item.status, message_type: item.yuxi?.message_type,
       extra_metadata: { input_id: item.yuxi?.input_id, run_id: runId,
+                        waiting_kind: item.yuxi?.waiting_kind,
                         attachments: item.yuxi?.attachments || [] }, tool_calls: []
     }
     if (item.type === 'message') {
@@ -110,7 +111,9 @@ export function itemsToMessages(items) {
       const output = linkedOutputs.get(item.id) || outputs.get(`${runId}:${item.call_id}`)
       message.tool_calls.push({
         id: item.call_id, name: item.name, args: item.arguments,
-        status: item.status === 'failed' ? 'error' : item.status === 'completed' ? 'success' :
+        status: item.status === 'failed' || output?.status === 'failed' ? 'error' :
+          output?.status === 'completed' || item.status === 'completed' ? 'success' :
+          item.yuxi?.waiting_kind === 'cooperation' && item.status === 'incomplete' ? 'waiting' :
           item.status === 'incomplete' ? 'incomplete' : 'pending',
         error_message: output?.error,
         tool_call_result: output && output.status !== 'in_progress'

@@ -8,7 +8,8 @@
       class="tool-header"
       role="button"
       tabindex="0"
-      :aria-expanded="isExpanded"
+      :aria-expanded="headerAction ? undefined : isExpanded"
+      :title="headerAction ? '打开详情面板' : undefined"
       @click="toggleExpand"
       @keydown.enter.self="toggleExpand"
       @keydown.space.self.prevent="toggleExpand"
@@ -18,6 +19,9 @@
         <span v-if="effectiveStatus === 'completed'">
           <component v-if="toolIcon" :is="toolIcon" size="15" class="tool-loader tool-success" />
           <CheckCircle v-else size="15" class="tool-loader tool-success" />
+        </span>
+        <span v-else-if="effectiveStatus === 'waiting'">
+          <Clock size="15" class="tool-loader tool-loading" />
         </span>
         <span v-else-if="['error', 'incomplete'].includes(effectiveStatus)">
           <XCircle size="15" class="tool-loader tool-error" />
@@ -33,6 +37,7 @@
         <template v-if="$slots.header">
           <slot name="header" :tool-call="toolCall" :tool-name="toolName"></slot>
           <span v-if="effectiveStatus === 'incomplete'" class="tool-incomplete-label">已中断</span>
+          <span v-else-if="effectiveStatus === 'waiting'" class="tool-incomplete-label">等待协作</span>
         </template>
 
         <!-- Specific State Slots (Fallback) -->
@@ -56,6 +61,9 @@
             <span v-if="toolCall.error_message">（{{ toolCall.error_message }}）</span>
           </slot>
 
+          <span v-else-if="effectiveStatus === 'waiting'">
+            工具&nbsp; <span class="tool-name">{{ toolName }}</span> &nbsp; 等待协作
+          </span>
           <span v-else-if="effectiveStatus === 'incomplete'">
             工具&nbsp; <span class="tool-name">{{ toolName }}</span> &nbsp; 已中断
           </span>
@@ -68,14 +76,15 @@
 
       <!-- Fixed Expand Icon -->
       <span class="tool-expand-icon">
-        <ChevronsDownUp v-if="isExpanded" size="14" />
+        <ChevronRight v-if="headerAction" size="14" />
+        <ChevronsDownUp v-else-if="isExpanded" size="14" />
         <ChevronsUpDown v-else size="14" />
       </span>
     </div>
 
     <!-- Content Area -->
     <CollapseTransition>
-      <div v-if="isExpanded" class="tool-content">
+      <div v-if="!headerAction && isExpanded" class="tool-content">
         <!-- Params Slot -->
         <div class="tool-params" v-if="hasParams && !hideParams">
           <slot name="params" :tool-call="toolCall" :args="formattedArgs">
@@ -119,7 +128,7 @@
 
 <script setup>
 import { ref, computed } from 'vue'
-import { Loader, ChevronsUpDown, ChevronsDownUp, XCircle, CheckCircle } from '@lucide/vue'
+import { ChevronRight, Clock, Loader, ChevronsUpDown, ChevronsDownUp, XCircle, CheckCircle } from '@lucide/vue'
 import { useAgentStore } from '@/modules/agents/model/agent'
 import { storeToRefs } from 'pinia'
 import CollapseTransition from '@/shared/ui/CollapseTransition.vue'
@@ -132,6 +141,7 @@ import {
 } from './toolRegistry'
 
 const props = defineProps({
+  headerAction: { type: Function, default: null },
   toolCall: {
     type: Object,
     default: () => ({})
@@ -167,6 +177,10 @@ const isExpanded = ref(props.defaultExpanded)
 const isTimeline = computed(() => props.appearance === 'timeline')
 
 const toggleExpand = () => {
+  if (props.headerAction) {
+    props.headerAction()
+    return
+  }
   isExpanded.value = !isExpanded.value
 }
 
@@ -174,6 +188,7 @@ const toolStatus = computed(() => getToolCallStatus(props.toolCall))
 const hasToolError = computed(() => toolStatus.value === 'error')
 const effectiveStatus = computed(() => {
   if (hasToolError.value || props.status === 'failed') return 'error'
+  if (toolStatus.value === 'waiting') return 'waiting'
   if (toolStatus.value === 'incomplete') return 'incomplete'
   return props.status || toolStatus.value
 })

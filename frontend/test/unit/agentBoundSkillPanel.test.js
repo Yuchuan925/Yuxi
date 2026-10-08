@@ -4,7 +4,7 @@ import test from 'node:test'
 import { compileScript, parse } from 'vue/compiler-sfc'
 import { ref } from 'vue'
 
-test('专属 Skill 加载失败可重试，上传传递整包修订且冲突保留当前绑定', async () => {
+test('专属 Skill 加载失败可重试，首次导入不传修订且冲突保留当前绑定', async () => {
   const source = await fs.readFile(
     new URL('../../src/modules/agents/ui/AgentBoundSkillPanel.vue', import.meta.url),
     'utf8'
@@ -29,7 +29,6 @@ test('专属 Skill 加载失败可重试，上传传递整包修订且冲突保�
     },
     onMounted() {},
     message: { error: (value) => errors.push(value), success() {} },
-    Modal: { confirm() {} },
     agentApi: {
       getAgentBoundSkill: async () => {
         if (failLoad) throw new Error('读取失败')
@@ -37,7 +36,7 @@ test('专属 Skill 加载失败可重试，上传传递整包修订且冲突保�
       },
       uploadAgentBoundSkill: async (...args) => {
         uploaded = args
-        throw new Error('Skill 包已修改，请重新加载后上传')
+        throw new Error('已存在专属 Skill，请通过内容编辑入口修改')
       }
     }
   }
@@ -63,10 +62,10 @@ test('专属 Skill 加载失败可重试，上传传递整包修订且冲突保�
   assert.equal(panel.binding.value.revision, 'before')
   const file = { name: 'skill.zip' }
   await panel.upload(file)
-  assert.deepEqual(uploaded, ['current-agent', file, 'before'])
+  assert.deepEqual(uploaded, ['current-agent', file])
   assert.equal(panel.binding.value.revision, 'before')
   assert.equal(panel.saving.value, false)
-  assert.equal(errors[0], 'Skill 包已修改，请重新加载后上传')
+  assert.equal(errors[0], '已存在专属 Skill，请通过内容编辑入口修改')
   panel.openDetail()
   assert.deepEqual(navigations, [
     { name: 'ExtensionSkillDetail', params: { slug: 'bound' }, query: { agent: 'current-agent' } }
@@ -79,8 +78,8 @@ test('专属 Skill 加载失败可重试，上传传递整包修订且冲突保�
   assert.equal(busyStates.at(-1), true)
   await panel.upload(file)
   assert.equal(busyStates.at(-1), true, '重复上传不解除父级忙碌状态')
-  assert.equal(navigations.length, 1, '替换等待期间不能跳转文件页')
-  rejectUpload(new Error('替换失败'))
+  assert.equal(navigations.length, 1, '导入等待期间不能跳转文件页')
+  rejectUpload(new Error('导入失败'))
   await pending
   assert.equal(busyStates.at(-1), false)
   panel.loading.value = true

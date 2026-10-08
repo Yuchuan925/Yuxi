@@ -429,11 +429,10 @@ async def test_committed_response_survives_following_save_prune(
     test_client, admin_headers, bound_version_skill, monkeypatch
 ):
     """暂停首笔提交后，让第二笔保存清理旧包，首笔仍准确返回成功。"""
-    from yuxi.modules.extensions.skills import bound, content
+    from yuxi.modules.extensions.skills import content
     from yuxi.modules.identity.models import User
-    from test.integration.api.test_agent_bound_skill import skill_zip
 
-    agent, slug = bound_version_skill
+    _, slug = bound_version_skill
     data = (await test_client.get(f"/api/system/skills/{slug}/content", headers=admin_headers)).json()["data"]
     me = (await test_client.get("/api/auth/me", headers=admin_headers)).json()
     engine = create_async_engine(os.environ["POSTGRES_URL"])
@@ -450,16 +449,15 @@ async def test_committed_response_survives_following_save_prune(
             await asyncio.wait_for(second_finished.wait(), timeout=20)
         await original_prune(db_to_prune, value)
 
-    async def upload():
-        """通过真实绑定用例写入首笔内容。"""
+    async def save_first():
+        """通过真实编辑用例写入首笔内容。"""
         async with async_sessionmaker(engine, expire_on_commit=False)() as db:
             user = await db.scalar(select(User).where(User.uid == me["uid"]))
-            return await bound.upload_agent_bound_skill(
+            return await content.save_skill_content(
                 db,
-                agent_slug=agent,
+                slug=slug,
                 operator=user,
-                filename="skill.zip",
-                file_bytes=skill_zip(),
+                changes=[{"action": "write", "path": "SKILL.md", "content": data["files"]["SKILL.md"] + " first"}],
                 expected_revision=data["revision"],
             )
 
@@ -486,9 +484,9 @@ async def test_committed_response_survives_following_save_prune(
         # 第二笔由 API 独立进程执行，补丁只暂停首笔用例。
         with monkeypatch.context() as patch:
             patch.setattr(content, "prune_skill_content", pause_first_prune)
-            result, _ = await asyncio.gather(upload(), save_following())
-        assert result["skill"]["slug"] == slug
-        assert result["revision"]
+            result, _ = await asyncio.gather(save_first(), save_following())
+        assert result.skill.slug == slug
+        assert result.revision
         assert not first_path.exists()
         assert (await current_content(slug)).joinpath("SKILL.md").read_text().endswith(" following")
     finally:

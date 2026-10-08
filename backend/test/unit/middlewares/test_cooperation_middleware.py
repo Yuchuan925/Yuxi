@@ -1,11 +1,91 @@
 """协作工具只接受直属成员名称，路径由执行身份生成。"""
 
+from contextlib import asynccontextmanager
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
+
 import pytest
+from langchain_core.messages import SystemMessage
 from pydantic import ValidationError
 
 from yuxi.modules.agents.runtime.middlewares.cooperation import CooperationMiddleware
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.mark.asyncio
+async def test_identity_prompt_uses_persisted_member_and_refreshes_for_new_run(monkeypatch):
+    """身份来自持久成员，同 Run 复用，换 Run 后更新父子身份。"""
+    from yuxi.modules.agents.runtime.middlewares import cooperation
+    from yuxi.modules.agents.services.cooperation import SessionCooperationService
+
+    @asynccontextmanager
+    async def database():
+        yield object()
+
+    root = SimpleNamespace(
+        thread_id="root-id",
+        cooperation_name="root",
+        cooperation_path="/root",
+        parent_thread_id=None,
+        tree_root_thread_id="root-id",
+    )
+    child = SimpleNamespace(
+        thread_id="child-id",
+        cooperation_name="researcher",
+        cooperation_path="/root/researcher",
+        parent_thread_id="root-id",
+        tree_root_thread_id="root-id",
+    )
+    caller = AsyncMock(
+        side_effect=[
+            (SimpleNamespace(id="run-1", turn_id="turn-1", input_id="input-1"), root),
+            (SimpleNamespace(id="run-2", turn_id="turn-2", input_id="input-2"), child),
+        ]
+    )
+    monkeypatch.setattr(cooperation.pg_manager, "get_async_session_context", database)
+    monkeypatch.setattr(SessionCooperationService, "caller", caller)
+    context = SimpleNamespace(run_id="run-1", uid="user-id")
+    request = SimpleNamespace(
+        runtime=SimpleNamespace(context=context),
+        system_message=SystemMessage(content="原始 Agent 指令"),
+        override=lambda **values: SimpleNamespace(**values),
+    )
+    middleware = CooperationMiddleware()
+    handler = AsyncMock()
+    await middleware.awrap_model_call(request, handler)
+    await middleware.awrap_model_call(request, handler)
+    assert caller.await_count == 1
+    first = "\n".join(block["text"] for block in handler.call_args.args[0].system_message.content)
+    assert '"role": "根会话"' in first and '"session_id": "root-id"' in first
+    assert "原始 Agent 指令" in first
+    context.run_id = "run-2"
+    await middleware.awrap_model_call(request, handler)
+    second = "\n".join(block["text"] for block in handler.call_args.args[0].system_message.content)
+    assert caller.await_count == 2
+    assert '"role": "子会话"' in second
+    assert '"name": "researcher"' in second and '"path": "/root/researcher"' in second
+    assert '"parent_session_id": "root-id"' in second and '"run_id": "run-2"' in second
+    assert '"run_id": "run-1"' not in second
+
+
+@pytest.mark.asyncio
+async def test_identity_lookup_failure_does_not_call_model(monkeypatch):
+    """执行身份失效时保留来源错误，不调用模型或缓存伪造身份。"""
+    from yuxi.modules.agents.runtime.middlewares import cooperation
+    from yuxi.modules.agents.services.cooperation import SessionCooperationService
+
+    @asynccontextmanager
+    async def database():
+        yield object()
+
+    monkeypatch.setattr(cooperation.pg_manager, "get_async_session_context", database)
+    monkeypatch.setattr(SessionCooperationService, "caller", AsyncMock(side_effect=ValueError("执行归属已失效")))
+    request = SimpleNamespace(runtime=SimpleNamespace(context=SimpleNamespace(run_id="run-1", uid="user-id")))
+    handler = AsyncMock()
+    with pytest.raises(ValueError, match="执行归属已失效"):
+        await CooperationMiddleware().awrap_model_call(request, handler)
+    handler.assert_not_awaited()
 
 
 def test_list_sessions_schema_has_no_pagination_arguments():

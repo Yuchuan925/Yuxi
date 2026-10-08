@@ -14,7 +14,7 @@ from yuxi.modules.agents.repositories.definitions import user_can_access_agent, 
 from yuxi.modules.extensions.skills.content import commit_skill_content, content_path
 from yuxi.modules.extensions.skills.draft import prepared_uploaded_skill
 from yuxi.modules.extensions.skills.models import Skill
-from yuxi.modules.extensions.skills.package import parse_skill_dir_metadata
+from yuxi.modules.extensions.skills.package import SkillEditConflict, parse_skill_dir_metadata
 from yuxi.modules.extensions.skills.projection import (
     compute_skill_directory_hash,
 )
@@ -71,10 +71,9 @@ async def upload_agent_bound_skill(
     agent_slug: str,
     filename: str,
     file_bytes: bytes,
-    expected_revision: str | None,
     operator: User,
 ) -> dict:
-    """复用包校验，并以整包修订值保护替换时的并发编辑。"""
+    """仅为尚未绑定 Skill 的 Agent 导入 ZIP，持锁拒绝覆盖已有内容。"""
     agent, operator = await lock_manageable_agent(db, agent_slug, operator)
     with prepared_uploaded_skill(filename=filename, file_bytes=file_bytes) as source:
         return await publish_bound_skill(
@@ -83,7 +82,6 @@ async def upload_agent_bound_skill(
             operator=operator,
             source=source,
             source_slug=parse_skill_dir_metadata(source)["slug"],
-            expected_revision=expected_revision,
         )
 
 
@@ -117,25 +115,24 @@ async def publish_bound_skill(
     operator: User,
     source: Path,
     source_slug: str,
-    expected_revision: str | None = None,
 ) -> dict:
-    """校验完整内容后提交稳定绑定的当前内容引用。"""
-    item = await SkillRepository(db).get_by_bound_agent_id(agent.id, for_update=True)
-    if item is None:
-        item = Skill(
-            slug=f"self-{uuid.uuid4().hex[:8]}",
-            bound_agent_id=agent.id,
-            bound_agent=agent,
-            source_type="upload",
-            share_config={},
-            enabled=True,
-            created_by=operator.uid,
-        )
+    """首次发布专属包，已有绑定只能通过统一内容编辑入口修改。"""
+    if await SkillRepository(db).get_by_bound_agent_id(agent.id, for_update=True) is not None:
+        raise SkillEditConflict("已存在专属 Skill，请通过编辑入口修改内容")
+    item = Skill(
+        slug=f"self-{uuid.uuid4().hex[:8]}",
+        bound_agent_id=agent.id,
+        bound_agent=agent,
+        source_type="upload",
+        share_config={},
+        enabled=True,
+        created_by=operator.uid,
+    )
     result = await commit_skill_content(
         db,
         item=item,
         operator=operator,
-        expected_revision=expected_revision,
+        expected_revision=None,
         source=source,
         source_slug=source_slug,
     )

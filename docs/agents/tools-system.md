@@ -35,7 +35,7 @@ def example_tool(text: str) -> str:
 | `install_skill` | 从允许的沙盒路径或 Git 来源安装个人 Skill |
 | `web_search` | 使用已配置的豆包或 Tavily 搜索网页 |
 
-文件读写和命令执行由 Agent 的 Sandbox backend 提供。`present_artifacts` 推荐展示当前 Project 的 `outputs/` 文件；`large_tool_results` 和会话摘要等内部文件不会作为交付物展示。
+文件读写和命令执行由 Agent 的 Sandbox backend 提供。Agent 根据用户要求和项目结构选择合适的产物位置，通过 `present_artifacts` 展示结果文件；`large_tool_results` 和会话摘要等内部文件不会作为交付物展示。
 
 图片生成能力由内置 `image-gen` Skill 提供，不再作为独立的 Python 工具注册。具体依赖和文件位置由该 Skill 说明。
 
