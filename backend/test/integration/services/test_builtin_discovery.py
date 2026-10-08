@@ -24,15 +24,12 @@ async def test_backend_http_contract_rejects_unknown_ids(test_client, admin_head
     response = await test_client.get("/api/agent/backends", headers=admin_headers)
     assert response.status_code == 200, response.text
     backends = {item["backend_id"]: item for item in response.json()["backends"]}
-    assert set(backends) == {"ChatbotAgent", "SubAgentBackend"}
+    assert set(backends) == {"ChatbotAgent"}
     assert backends["ChatbotAgent"]["name"] == "智能助手"
     assert all("capabilities" not in item for item in backends.values())
     assert all("id" not in item for item in backends.values())
     response = await test_client.get("/api/agent/backends/SubAgentBackend", headers=admin_headers)
-    assert response.status_code == 200, response.text
-    assert response.json()["backend_id"] == "SubAgentBackend"
-    assert "configurable_items" in response.json()
-    assert "capabilities" not in response.json()
+    assert response.status_code == 404, response.text
 
     slug = f"pytest-unknown-backend-{uuid.uuid4().hex}"
     engine = create_async_engine(os.environ["POSTGRES_URL"])
@@ -128,7 +125,7 @@ async def test_discovered_content_persists_and_preserves_customization(
     (role_dir / f"{module_name}.py").write_text(
         "from yuxi.modules.agents.presets import AgentPreset\n"
         f'PRESET = AgentPreset(slug="{role_slug}", name="发现测试", description="初始化测试", '
-        'backend_id="SubAgentBackend", context={"system_prompt": "原始提示词"})\n'
+        'backend_id="ChatbotAgent", context={"system_prompt": "原始提示词"})\n'
     )
     monkeypatch.setattr(presets, "__file__", str(role_dir / "__init__.py"))
     monkeypatch.setattr(presets, "__path__", [str(role_dir)])
@@ -153,7 +150,7 @@ async def test_discovered_content_persists_and_preserves_customization(
         async with sessions() as db:
             role = await db.scalar(select(Agent).where(Agent.slug == role_slug))
             skill = await db.scalar(select(Skill).where(Skill.slug == skill_slug))
-            assert role.backend_id == "SubAgentBackend" and role.is_subagent
+            assert role.backend_id == "ChatbotAgent"
             assert role.config_json == {"context": {"system_prompt": "原始提示词"}}
             assert skill.description == "初始描述"
             assert skill.tool_dependencies == ["web_search"]

@@ -20,7 +20,7 @@ Thread B：独立领取自己的优先队头
 
 两类 pending Input 都不绑定 Turn。线程没有活跃 Turn 且队列未暂停时，调度器优先领取 steer，否则领取最早 follow-up，在同一事务创建 Turn 和首个 pending Run，并固定 Input、Receipt 与 Message 的消费归属。steer 在途期间旧 Turn 已结束时，仍以优先输入接收并调度。
 
-普通消息的 `mode` 表达优先级和切入时机，发送方不指定目标 Turn，HTTP/SSE 接收回执不返回有效模式。未指定 mode 时，在 Thread 锁内按运行中 steer、空闲 follow-up 选择；幂等重试先读取原 Receipt，不重新入队。waiting/cancelling 拒绝普通消息。
+普通消息的 `mode` 表达优先级和切入时机，发送方不指定目标 Turn，HTTP/SSE 接收回执不返回有效模式。未指定 mode 时，在 Thread 锁内按运行中 steer、空闲 follow-up 选择；幂等重试先读取原 Receipt，不重新入队。等待用户回答、审批或取消清理时拒绝普通消息；协作等待时默认为 follow-up，只进入 FIFO 队列。
 
 每个新 Input 在接收时冻结新一轮执行配置，领取时不重新解释默认值。steer 不指定模型或审批配置；空闲领取时使用批次创建时冻结的默认值，同 Turn 安全接管时继承当前 Run 的配置。
 
@@ -54,4 +54,4 @@ Public 身份在 HTTP 边界变为包含 `uid`、`app_id` 的作用域；接收�
 
 ## 独立委派
 
-子任务复用持久 Input、Receipt、优先领取、提交后投递和 lease 链路，自身 Turn 拥有 current_run_id、result_run_id、等待与恢复。父完成或失败不取消子任务，pending 补投与等待恢复不要求父 Run 仍 running。父取消按该 Turn 全部执行段的委派关系递归取消相关在途子 Turn；不取消同一子 Thread 中由其他 Turn 创建的后续任务。子单独取消只影响子 Turn。父任务重新委派时，子 Thread 若已暂停或存在待消费输入则返回 busy；既有队列和暂停标记保持不变，解除暂停仍由显式 continue 拥有。
+协作会话复用持久 Input、Receipt、优先领取、提交后投递和 lease 链路，各自 Turn 拥有 current_run_id、result_run_id 和等待点。普通取消只影响指定 Turn，父轮次完成、失败或取消均保留后代独立工作。新工作通过 submit_input 按 FIFO 接收，队列暂停时只排队；用户显式“停止全部”才取消整树在途 Turn 并阻止各队列消费。“继续整树队列”重新调度保留输入，已取消的 Turn 保持终态。协作等待保存目标、游标和截止时间，在同一 Turn 建立下一 Run，等待中的普通 follow-up 只排队，steer 明确拒绝。具体约束见[会话协作](../agents/session-cooperation.md)。

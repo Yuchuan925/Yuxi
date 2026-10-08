@@ -14,12 +14,14 @@
             class="section-tab-main"
             role="tab"
             :aria-selected="section.key === activeSectionKey"
+            :aria-label="section.title"
             :title="section.title"
             @click="emit('activate-section', section.key)"
           >
             <Folders v-if="section.type === 'file-tree'" :size="15" />
             <FileTypeIcon v-else-if="section.type === 'file'" :name="section.path" :size="15" />
             <Bug v-else-if="section.type === 'message-debug'" :size="15" />
+            <Workflow v-else-if="section.type === 'cooperation'" :size="15" />
             <FallbackAvatar
               v-else
               :src="section.avatar"
@@ -32,7 +34,7 @@
             <span>{{ section.title }}</span>
           </button>
           <button
-            v-if="section.type !== 'file-tree'"
+            v-if="section.type !== 'file-tree' && section.type !== 'main-session'"
             type="button"
             class="section-tab-close"
             :aria-label="`关闭 ${section.title}`"
@@ -43,6 +45,7 @@
         </div>
       </div>
       <div class="window-actions">
+        <slot name="window-actions"></slot>
         <button
           class="header-action-btn"
           :title="maximized ? '还原面板' : '最大化面板'"
@@ -65,6 +68,7 @@
     </div>
 
     <div class="tab-content">
+      <slot name="session-content"></slot>
       <div v-show="activeSectionKey === 'file-tree'" class="tree-pane">
         <div class="tree-toolbar">
           <div class="tree-scope-tabs" role="tablist" aria-label="文件树目录">
@@ -207,18 +211,6 @@
         <div v-else class="preview-empty">正在加载文件内容...</div>
       </div>
       <div
-        v-for="section in subagentSections"
-        v-show="activeSectionKey === section.key"
-        :key="section.key"
-        class="subagent-section"
-      >
-        <SubagentThreadView
-          :thread-id="section.threadId"
-          :run-id="section.runId"
-          :active="visible && activeSectionKey === section.key"
-        />
-      </div>
-      <div
         v-if="hasMessageDebugSection"
         v-show="activeSectionKey === 'message-debug'"
         class="message-debug-section"
@@ -266,6 +258,7 @@ import {
   RefreshCw,
   Search,
   Trash2,
+  Workflow,
   X
 } from '@lucide/vue'
 import { Modal, message } from 'ant-design-vue'
@@ -274,7 +267,6 @@ import AgentFilePreview from '@/modules/session/ui/workspace/AgentFilePreview.vu
 import GlobalSearchModal from '@/modules/session/ui/GlobalSearchModal.vue'
 import FileTypeIcon from '@/shared/ui/FileTypeIcon.vue'
 import FallbackAvatar from '@/shared/ui/FallbackAvatar.vue'
-import SubagentThreadView from '@/modules/session/ui/SubagentThreadView.vue'
 import MessageDebugPanel from '@/modules/session/ui/MessageDebugPanel.vue'
 import {
   createFilesystemRefreshGate,
@@ -400,9 +392,7 @@ const sectionTabsRef = ref(null)
 const normalizedSections = computed(() =>
   (props.sections || []).filter((section) => section?.key && section?.type)
 )
-const subagentSections = computed(() =>
-  normalizedSections.value.filter((section) => section.type === 'subagent' && section.threadId)
-)
+
 const hasMessageDebugSection = computed(() =>
   normalizedSections.value.some(
     (section) => section.type === 'message-debug' || section.key === 'message-debug'
@@ -835,7 +825,9 @@ const loadActivePreview = async ({ baseFileOverride = null } = {}) => {
     ...(activePreviewTab.value || {}),
     ...(baseFileOverride || {}),
     path: filePath,
-    resourceBaseUrl: (baseFileOverride?.artifact_url || activePreviewTab.value?.artifact_url) ||
+    resourceBaseUrl:
+      baseFileOverride?.artifact_url ||
+      activePreviewTab.value?.artifact_url ||
       (requestedThreadId ? threadApi.getThreadArtifactUrl(requestedThreadId, filePath, false) : ''),
     name: activePreviewTab.value?.name || getFileName({ path: filePath }),
     type: 'file'
@@ -1472,7 +1464,6 @@ watch(
 }
 
 .file-section,
-.subagent-section,
 .message-debug-section {
   width: 100%;
   height: 100%;

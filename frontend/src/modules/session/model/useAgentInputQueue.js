@@ -11,6 +11,7 @@ const controlKey = () =>
 /** 将持久 Input 队列投影到当前 Thread，并跟踪领取结果。 */
 export function useAgentInputQueue({
   getThreadState,
+  isThreadActive = () => true,
   resetOngoingRunGroup,
   startRunStream,
   onStreamError
@@ -46,6 +47,7 @@ export function useAgentInputQueue({
   }
 
   const startInputMonitor = (threadId, inputId) => {
+    if (!isThreadActive(threadId)) return
     const ts = getThreadState(threadId)
     if (!ts || !inputId || ts.inputMonitors?.[inputId]) return
     ts.inputMonitors ||= {}
@@ -73,7 +75,8 @@ export function useAgentInputQueue({
             delete state.ongoingRunGroup.optimisticMessages[currentInputId]
             state.pendingInputId = currentInputId
             void startRunStream(threadId, input.run_id, null, {
-              turnId: input.turn_id, inputId: currentInputId
+              turnId: input.turn_id,
+              inputId: currentInputId
             })
             continue
           }
@@ -107,10 +110,12 @@ export function useAgentInputQueue({
   }
 
   const syncQueuedInputs = async (threadId) => {
+    if (!isThreadActive(threadId)) return
     const ts = getThreadState(threadId)
     if (!ts) return
     try {
       const snapshot = await agentApi.getThreadQueue(threadId)
+      if (!isThreadActive(threadId) || getThreadState(threadId) !== ts) return
       const inputs = snapshot?.inputs || []
       const knownIds = new Set(inputs.map((input) => input.input_id))
       ts.queuedInputs = [
@@ -122,9 +127,8 @@ export function useAgentInputQueue({
             message: existing?.message
           }
         }),
-        ...(ts.queuedInputs || []).filter((input) =>
-          !knownIds.has(input.input_id) &&
-          input.status === 'sending'
+        ...(ts.queuedInputs || []).filter(
+          (input) => !knownIds.has(input.input_id) && input.status === 'sending'
         )
       ]
       ts.queueSnapshot = snapshot || { ...IDLE_QUEUE_SNAPSHOT }
@@ -140,14 +144,18 @@ export function useAgentInputQueue({
 
   const cancelInput = async (threadId, inputId) => {
     const ts = getThreadState(threadId)
-    if (!ts || !inputId || ts.queuedInputs?.some(
-      (input) => input.input_id === inputId && input.status === 'sending'
-    )) return false
+    if (
+      !ts ||
+      !inputId ||
+      ts.queuedInputs?.some((input) => input.input_id === inputId && input.status === 'sending')
+    )
+      return false
     try {
       await agentApi.cancelThreadInput(threadId, inputId, controlKey())
       stopInputMonitor(threadId, inputId)
       removeInput(ts, inputId)
-      if (ts.ongoingRunGroup?.optimisticMessages) delete ts.ongoingRunGroup.optimisticMessages[inputId]
+      if (ts.ongoingRunGroup?.optimisticMessages)
+        delete ts.ongoingRunGroup.optimisticMessages[inputId]
       return true
     } catch (error) {
       handleChatError(error, 'cancel')

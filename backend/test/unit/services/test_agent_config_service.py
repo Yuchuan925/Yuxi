@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from yuxi.modules.agents.runtime.context import BaseContext, ResourceSelection
+from yuxi.modules.agents.runtime.context import BaseContext
 import yuxi.modules.agents.services.configuration as agent_config_service
 
 pytestmark = pytest.mark.unit
@@ -15,7 +15,7 @@ pytestmark = pytest.mark.unit
 @pytest.mark.asyncio
 async def test_prepare_agent_config_write_resolves_only_submitted_resource_fields(monkeypatch):
     """保存补丁为每个提交资源返回对应的真实权限集合。"""
-    resource_fields = {"tools", "knowledges", "mcps", "skills", "subagents"}
+    resource_fields = {"tools", "knowledges", "mcps", "skills"}
     resolver = AsyncMock(
         return_value={
             field_name: [{"key": f"visible-{field_name}"}, {"key": f"also-visible-{field_name}"}]
@@ -35,7 +35,6 @@ async def test_prepare_agent_config_write_resolves_only_submitted_resource_field
                 "knowledges": ["visible-knowledges"],
                 "mcps": ["visible-mcps"],
                 "skills": ["visible-skills"],
-                "subagents": ["visible-subagents"],
                 "preload_skills": ["visible-skills"],
             }
         },
@@ -50,7 +49,6 @@ async def test_prepare_agent_config_write_resolves_only_submitted_resource_field
         "knowledges": {"visible-knowledges", "also-visible-knowledges"},
         "mcps": {"visible-mcps", "also-visible-mcps"},
         "skills": {"visible-skills", "also-visible-skills"},
-        "subagents": {"visible-subagents", "also-visible-subagents"},
         "preload_skills": {"visible-skills", "also-visible-skills"},
     }
     resolver.assert_awaited_once_with(resource_fields, db=db, user=user)
@@ -102,5 +100,4 @@ async def test_prepare_agent_config_write_does_not_load_resources_for_strategy_s
 class ConfigContext(BaseContext):
     """覆盖保存资源字段的最小测试 Schema。"""
 
-    subagents: ResourceSelection = "all"
     title: str = ""

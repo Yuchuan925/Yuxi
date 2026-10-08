@@ -1,8 +1,10 @@
 # 子智能体派发与等待分离，页面独立观察子 Run
 
-状态：implemented
+状态：archived
 类型：simplification
-Owner：backend/yuxi/modules/agents/runtime/middlewares/subagent_task.py
+Owner：backend/yuxi/modules/agents/services/cooperation.py
+
+该记录由[统一 Session 协作](../implemented/2026-10-03-session-cooperation.md)取代，保留历史取舍。
 
 ## 问题
 
@@ -18,7 +20,7 @@ useSubagentRuns 按 run_id 独立保存观察结果，不被父 checkpoint 的�
 
 工具行按参数或结果的 run_id 定位侧栏运行 Tab，同一线程的不同 Run 不共用 Tab。详情从 history 的 Run 列表与消息加载指定运行，不重复读取 checkpoint；仅当前可见且页面激活的 Tab 订阅 SSE，停用时中止 HTTP/SSE，重新激活沿已有游标续接。加载失败保留已有内容并提供重试，迟到响应不得覆盖停用视图。
 
-历史 task ToolMessage 保留展示，新装配不注册 task。历史 checkpoint 尚未执行的 task 调用由工具执行器明确报错，不隐式重放；升级前完成或取消旧版本活跃 Run。已保存的内置和自定义 Agent 提示词由管理员按[使用子智能体](../../../agents/subagents-management.md)更新，默认值变化不覆盖用户编辑。
+历史 task ToolMessage 保留展示，新装配不注册 task。历史 checkpoint 尚未执行的 task 调用由工具执行器明确报错，不隐式重放；升级前完成或取消旧版本活跃 Run。已保存的内置和自定义 Agent 提示词由管理员按[使用子智能体](../../../agents/session-cooperation.md)更新，默认值变化不覆盖用户编辑。
 
 ## 替代方案
 

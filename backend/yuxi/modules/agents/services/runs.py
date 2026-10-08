@@ -106,6 +106,9 @@ async def settle_checkpoint(
         if terminal is None or not changed:
             raise ValueError("等待终态的 Run 所有权已失效")
         await turn_repo.set_waiting(turn, run_id=run.id, waitpoint=waitpoint)
+        from yuxi.modules.agents.services.cooperation import notify_turn_state
+
+        await notify_turn_state(db, run)
         return RunSettlement(status="interrupted", changed=True)
 
     if status == "completed" and turn.status == "running":
@@ -115,6 +118,9 @@ async def settle_checkpoint(
         if terminal is None or not changed:
             raise ValueError("完成终态的 Run 所有权已失效")
         await turn_repo.set_terminal(turn, status="completed", result_run_id=run.id)
+        from yuxi.modules.agents.services.cooperation import notify_turn_state
+
+        await notify_turn_state(db, run)
         return RunSettlement(status="completed", changed=True)
 
     if status in {"failed", "cancelled"}:
@@ -133,6 +139,9 @@ async def settle_checkpoint(
             await turn_repo.set_terminal(turn, status="failed")
         elif turn.status != "cancelling":
             await turn_repo.set_cancelling(turn)
+        from yuxi.modules.agents.services.cooperation import notify_turn_state
+
+        await notify_turn_state(db, run)
         return RunSettlement(status=status, changed=True)
 
     raise ValueError(f"Turn 状态 {turn.status} 不能接受 Run 终态 {status}")
@@ -148,7 +157,7 @@ async def get_run_snapshot(*, db: AsyncSession, scope: ActorScope, thread_id: st
         raise HTTPException(status_code=404, detail="Run 不存在")
     turn = await AgentTurnRepository(db).get_for_scope(
         turn_id=run.turn_id,
-        thread_id=run.runtime_scope_id,
+        thread_id=run.thread_id,
         uid=scope.uid,
         app_id=scope.app_id,
     )
@@ -215,9 +224,8 @@ async def _consume_steer(
         origin_metadata=pending.origin_metadata or {},
         session_record_id=agent_session.id,
         resume_from_run_id=previous.id,
-        run_type="subagent" if previous.run_type == "subagent" else "chat",
+        run_type="chat",
         created_by_run_id=previous.created_by_run_id,
-        subagent_thread_relation_id=previous.subagent_thread_relation_id,
     )
     await AgentTurnRepository(db).set_current(turn, run_id=run_id)
     await input_repo.consume(input_id=pending.id, turn_id=turn.id, run_id=run_id, cutoff_seq=cutoff_seq)

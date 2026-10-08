@@ -63,20 +63,26 @@ export const threadDraftStore = createThreadDraftStore()
  */
 export const createThreadDraftSession = (store, initialThreadId = '') => {
   let draftKey = initialThreadId || DRAFT_THREAD_ID
+  const drafts = new Map()
 
   return {
     // 输入变化时实时保存当前线程的草稿
     saveInput(text) {
+      drafts.set(draftKey, text)
       store.write(draftKey, text)
     },
     // 切换线程：先保存旧线程草稿，再返回新线程（或新建对话）的草稿
     switchThread(threadId, currentText) {
+      drafts.set(draftKey, currentText)
       store.write(draftKey, currentText)
       draftKey = threadId || DRAFT_THREAD_ID
-      return store.read(draftKey)
+      // 同线程的其他视图可以更新持久草稿，但不能覆盖本视图切换前的编辑。
+      if (!drafts.has(draftKey)) drafts.set(draftKey, store.read(draftKey))
+      return drafts.get(draftKey)
     },
     // 由草稿发送创建新线程后，清理新建对话的临时草稿，避免已发送文本被再次还原
     clearDraftThread() {
+      drafts.delete(DRAFT_THREAD_ID)
       store.remove(DRAFT_THREAD_ID)
     }
   }

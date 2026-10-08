@@ -43,7 +43,6 @@ async def test_reasoning_stream_matches_persisted_history(e2e_client, e2e_header
                     "knowledges": [],
                     "mcps": [],
                     "skills": [],
-                    "subagents": [],
                 }
             },
             "share_config": {

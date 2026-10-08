@@ -11,7 +11,7 @@ import {
 import { normalizePreviewResponse } from '../../src/shared/lib/file_preview.js'
 
 test('同一子线程重复打开时更新已有 Section 而不新增', () => {
-  const section = { key: 'subagent:thread-1', type: 'subagent', threadId: 'thread-1', title: '研究员' }
+  const section = { key: 'session:thread-1', type: 'session', threadId: 'thread-1', title: '研究员' }
   const first = upsertAgentPanelSection([FILE_TREE_SECTION], section)
   const second = upsertAgentPanelSection(first, { ...section, title: '研究助手' })
   assert.equal(second.length, 2)
@@ -21,12 +21,12 @@ test('同一子线程重复打开时更新已有 Section 而不新增', () => {
 test('关闭活动 Tab 后激活相邻项', () => {
   const sections = [
     FILE_TREE_SECTION,
-    { key: 'subagent:a', type: 'subagent', threadId: 'a' },
-    { key: 'subagent:b', type: 'subagent', threadId: 'b' }
+    { key: 'session:a', type: 'session', threadId: 'a' },
+    { key: 'session:b', type: 'session', threadId: 'b' }
   ]
-  assert.deepEqual(closeAgentPanelSection(sections, 'subagent:a', 'subagent:a'), {
+  assert.deepEqual(closeAgentPanelSection(sections, 'session:a', 'session:a'), {
     sections: [sections[0], sections[2]],
-    activeKey: 'subagent:b'
+    activeKey: 'session:b'
   })
 })
 
@@ -111,10 +111,8 @@ test('暂停队列仍有请求时禁用上下文压缩', () => {
     new URL('../../src/modules/session/ui/SessionWorkspace.vue', import.meta.url),
     'utf8'
   )
-  const action = source.slice(
-    source.indexOf('class="context-compression-action"'),
-    source.indexOf('</section>', source.indexOf('class="context-compression-action"'))
-  )
+  const position = source.indexOf('@click="handleContextCompression"')
+  const action = source.slice(source.lastIndexOf('<button', position), source.indexOf('</button>', position))
   const handler = source.slice(
     source.indexOf('const handleContextCompression'),
     source.indexOf('// 发送或中断')

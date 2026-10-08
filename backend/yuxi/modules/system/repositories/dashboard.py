@@ -269,7 +269,7 @@ class DashboardRepository:
             .join(Agent, Session.agent_id == Agent.slug)
             .where(
                 Session.updated_at >= query_now - timedelta(days=1),
-                Session.status.notin_(("deleted", "subagent")),
+                Session.status != "deleted",
                 User.is_deleted == 0,
             )
         )
@@ -280,7 +280,7 @@ class DashboardRepository:
             .join(Agent, Session.agent_id == Agent.slug)
             .where(
                 Session.updated_at >= query_now - timedelta(days=30),
-                Session.status.notin_(("deleted", "subagent")),
+                Session.status != "deleted",
                 User.is_deleted == 0,
             )
         )
@@ -294,7 +294,7 @@ class DashboardRepository:
             .where(
                 Session.updated_at >= query_now - timedelta(days=120),
                 Session.updated_at < query_now,
-                Session.status.notin_(("deleted", "subagent")),
+                Session.status != "deleted",
                 User.is_deleted == 0,
             )
             .group_by(active_date)
@@ -316,7 +316,7 @@ class DashboardRepository:
     async def get_tool_call_stats(self, *, now: datetime | None = None) -> dict[str, Any]:
         """统计有效用户与非删除会话中的工具调用。"""
         query_now = now or utc_now()
-        valid_filters = [Session.status.notin_(("deleted", "subagent")), User.is_deleted == 0]
+        valid_filters = [Session.status != "deleted", User.is_deleted == 0]
         total_result = await self.db_session.execute(
             select(func.count(ToolCall.id))
             .join(Message, ToolCall.message_id == Message.id)
@@ -388,7 +388,7 @@ class DashboardRepository:
     async def get_agent_analytics(self) -> dict[str, Any]:
         """汇总仍存在 Agent 在有效用户与非删除会话中的使用情况。"""
         agents = list((await self.db_session.execute(select(Agent).order_by(Agent.name.asc()))).scalars().all())
-        valid_filters = [Session.status.notin_(("deleted", "subagent")), User.is_deleted == 0]
+        valid_filters = [Session.status != "deleted", User.is_deleted == 0]
 
         session_rows = (
             await self.db_session.execute(
@@ -430,7 +430,7 @@ class DashboardRepository:
 
     async def get_basic_stats(self) -> dict[str, Any]:
         """读取有效用户与非删除会话的 Dashboard 基础计数。"""
-        valid_filters = [Session.status.notin_(("deleted", "subagent")), User.is_deleted == 0]
+        valid_filters = [Session.status != "deleted", User.is_deleted == 0]
         total_sessions_result = await self.db_session.execute(
             select(func.count(Session.id))
             .join(User, Session.uid == User.uid)
@@ -505,7 +505,7 @@ class DashboardRepository:
                     or_(Message.message_type.is_(None), Message.message_type.notin_(AUDIT_MESSAGE_TYPES)),
                     Message.created_at >= query_start_time,
                     Message.extra_metadata.isnot(None),
-                    Session.status.notin_(("deleted", "subagent")),
+                    Session.status != "deleted",
                     User.is_deleted == 0,
                 )
                 .group_by(message_group, category)
@@ -525,7 +525,7 @@ class DashboardRepository:
                 .where(
                     Session.updated_at.isnot(None),
                     Session.updated_at >= query_start_time,
-                    Session.status.notin_(("deleted", "subagent")),
+                    Session.status != "deleted",
                     User.is_deleted == 0,
                 )
                 .group_by(session_group, Session.agent_id)
@@ -554,7 +554,7 @@ class DashboardRepository:
                         or_(Message.message_type.is_(None), Message.message_type.notin_(AUDIT_MESSAGE_TYPES)),
                         Message.extra_metadata.isnot(None),
                         Message.extra_metadata["usage_metadata"].isnot(None),
-                        Session.status.notin_(("deleted", "subagent")),
+                        Session.status != "deleted",
                         User.is_deleted == 0,
                     )
                     .group_by(message_group)
@@ -575,7 +575,7 @@ class DashboardRepository:
                 .join(Agent, Session.agent_id == Agent.slug)
                 .where(
                     ToolCall.created_at >= query_start_time,
-                    Session.status.notin_(("deleted", "subagent")),
+                    Session.status != "deleted",
                     User.is_deleted == 0,
                 )
                 .group_by(tool_group, ToolCall.tool_name)
@@ -642,7 +642,7 @@ class DashboardRepository:
                 .join(Session, Message.session_record_id == Session.id)
                 .join(User, Session.uid == User.uid)
                 .join(Agent, Session.agent_id == Agent.slug)
-                .where(Session.status.notin_(("deleted", "subagent")), User.is_deleted == 0)
+                .where(Session.status != "deleted", User.is_deleted == 0)
             )
             total_count = total_result.scalar() or 0
         else:
@@ -663,7 +663,6 @@ class DashboardRepository:
         *,
         time_range: str = "30days",
         agent_id: str | None = None,
-        include_subagents: bool = False,
         now: datetime | None = None,
     ) -> dict[str, Any]:
         """统计会话（Thread）汇总、每日趋势、消息深度、Agent 与用户分布。"""
@@ -674,9 +673,7 @@ class DashboardRepository:
         local_start_day -= timedelta(days=days - 1)
         query_start_time = local_start_day - timedelta(hours=8)
 
-        status_filter = (
-            Session.status != "deleted" if include_subagents else Session.status.notin_(("deleted", "subagent"))
-        )
+        status_filter = Session.status != "deleted"
         session_filters = [
             Session.created_at.isnot(None),
             status_filter,

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import uuid
 from typing import Any
 
 from fastapi import HTTPException
@@ -52,7 +53,6 @@ async def compress_thread_context(
     agent_item = await AgentRepository(db).get_visible_by_slug(
         slug=agent_slug,
         user=current_user,
-        kind="main",
     )
     if agent_item is None:
         raise HTTPException(status_code=404, detail="智能体不存在")
@@ -62,7 +62,7 @@ async def compress_thread_context(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     context = agent.context_schema()
-    context.update_config((agent_item.config_json or {}).get("context") or {})
+    context.update_config(agent_session.config_snapshot or (agent_item.config_json or {}).get("context") or {})
     model_spec = await resolve_agent_run_model_spec(
         (agent_session.extra_metadata or {}).get("model_spec"),
         context.model,
@@ -73,12 +73,14 @@ async def compress_thread_context(
         uid=uid,
         db=db,
     )
+    # 主动压缩没有 Run lease，使用独立维护沙盒，避免释放协作树的执行环境。
+    runtime_scope_id = str(uuid.uuid4())
     context.update(
         {
             "uid": uid,
             "thread_id": thread_id,
             "model": model_spec,
-            "runtime_scope_id": thread_id,
+            "runtime_scope_id": runtime_scope_id,
             "workdir_relative_path": workdir_path,
             "workdir_path": runtime_workdir_path(workdir_path),
         }
@@ -86,7 +88,7 @@ async def compress_thread_context(
     result = await _compress_agent_checkpoint_in_runtime(
         agent=agent,
         context=context,
-        thread_id=thread_id,
+        runtime_scope_id=runtime_scope_id,
         uid=uid,
         workdir_path=workdir_path,
     )
@@ -119,23 +121,23 @@ async def _compress_agent_checkpoint_in_runtime(
     *,
     agent,
     context: BaseContext,
-    thread_id: str,
+    runtime_scope_id: str,
     uid: str,
     workdir_path: str,
 ) -> dict[str, Any]:
     """在一次性 Sandbox 生命周期内压缩 checkpoint。"""
     try:
         await prepare_agent_runtime_context(context)
-        await _ensure_runtime_available(thread_id=thread_id, uid=uid, workdir_path=workdir_path)
+        await _ensure_runtime_available(thread_id=runtime_scope_id, uid=uid, workdir_path=workdir_path)
         result = await _compress_agent_checkpoint(agent=agent, context=context)
     except BaseException:
         try:
-            await _release_runtime(thread_id=thread_id, uid=uid, workdir_path=workdir_path)
+            await _release_runtime(thread_id=runtime_scope_id, uid=uid, workdir_path=workdir_path)
         except BaseException as release_error:
             logger.error(f"主动压缩失败后释放 Sandbox 失败: {release_error}")
         raise
     else:
-        await _release_runtime(thread_id=thread_id, uid=uid, workdir_path=workdir_path)
+        await _release_runtime(thread_id=runtime_scope_id, uid=uid, workdir_path=workdir_path)
         return result
 
 

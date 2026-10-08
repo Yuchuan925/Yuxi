@@ -56,7 +56,7 @@
 </template>
 
 <script setup>
-import { computed, ref, watch, inject } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { ChevronDown, Atom } from '@lucide/vue'
 import { storeToRefs } from 'pinia'
 import { useAgentStore } from '@/modules/agents/model/agent'
@@ -73,7 +73,6 @@ import {
 const agentStore = useAgentStore()
 const { availableTools, toolMetadata } = storeToRefs(agentStore)
 
-const activeSubagentToolCallIds = inject('activeSubagentToolCallIds', null)
 
 const props = defineProps({
   toolCalls: {
@@ -166,7 +165,7 @@ const toolCallsNamesMeta = computed(() => {
 
 const statusSummary = computed(() => {
   const states = normalizedToolCalls.value.map((toolCall) =>
-    getToolCallDisplayStatus(toolCall, activeSubagentToolCallIds?.value)
+    getToolCallDisplayStatus(toolCall)
   )
   const runningCount = states.filter((state) => state === 'running').length
   const errorCount = states.filter((state) => state === 'error').length

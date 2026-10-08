@@ -36,18 +36,6 @@ async def install_skill(
 ) -> Command:
     """安装新的 Skill 到当前用户私有空间，并返回可直接读取的 Skill 路径。"""
     runtime_context = getattr(runtime, "context", None)
-    if getattr(runtime_context, "is_subagent_runtime", False):
-        return Command(
-            update={
-                "messages": [
-                    ToolMessage(
-                        content="错误：install_skill 只能在主智能体中使用，子智能体无法安装 Skill",
-                        tool_call_id=tool_call_id,
-                    )
-                ]
-            }
-        )
-
     source = str(source or "").strip()
     uid = getattr(runtime_context, "uid", None)
     thread_id = getattr(runtime_context, "thread_id", None)

@@ -1,4 +1,10 @@
 export const TOOL_NAME_MAP = {
+  create_session: '创建协作会话',
+  send_message: '投递协作消息',
+  submit_input: '提交工作',
+  cancel_turn: '取消轮次',
+  wait_sessions: '等待协作更新',
+  list_sessions: '查看协作树',
   bash: '执行命令',
   cmd: '执行命令',
   execute: '执行命令',
@@ -15,12 +21,6 @@ export const TOOL_NAME_MAP = {
   search_file: '搜索知识库文件',
   search_file_content: '搜索文件内容',
   write_todos: '更新任务清单',
-  task: '调用子智能体',
-  subagent_start: '启动子智能体',
-  subagent_status: '查询子智能体',
-  subagent_events: '查看子智能体事件',
-  subagent_cancel: '取消子智能体',
-  subagent_await: '等待子智能体',
   text_to_img_qwen_image: '生成图片',
   query_kb: '搜索知识库',
   list_kbs: '查看知识库列表',
@@ -71,17 +71,6 @@ export const parseToolCallArgs = (toolCall) => {
   }
 }
 
-export const SUBAGENT_TOOL_IDS = [
-  'task',
-  'subagent_start',
-  'subagent_status',
-  'subagent_events',
-  'subagent_cancel',
-  'subagent_await'
-]
-
-export const isSubagentToolCall = (toolCall) => SUBAGENT_TOOL_IDS.includes(getToolCallId(toolCall))
-
 export const parseToolCallResult = (toolCall) => {
   const content = toolCall?.tool_call_result?.content ?? toolCall?.result
   if (content == null || content === '') return null
@@ -112,66 +101,7 @@ export const getToolCallStatus = (toolCall) => {
   return 'running'
 }
 
-/** 子智能体结果与补充运行信息中的状态，供详情和分组共同展示。 */
-export const getSubagentRunStatus = (toolCall) => {
-  if (getToolCallStatus(toolCall) === 'error') return 'error'
-  const result = parseToolCallResult(toolCall)
-  return (
-    toolCall?.subagent_run?.status ||
-    result?.run_status ||
-    result?.active_run_status ||
-    result?.status ||
-    ''
-  )
-}
-
-/** 统一工具行与分组的展示状态，保留子智能体特有的运行态。 */
-export const getToolCallDisplayStatus = (toolCall, activeSubagentToolCallIds) => {
-  const status = getToolCallStatus(toolCall)
-  if (status === 'error' || !isSubagentToolCall(toolCall)) return status
-  const runStatus = getSubagentRunStatus(toolCall)
-  if (['error', 'failed', 'cancelled', 'interrupted'].includes(runStatus)) return 'error'
-  if (getToolCallId(toolCall) === 'task') {
-    if (status === 'completed') return 'completed'
-    return activeSubagentToolCallIds?.has(String(toolCall.id)) ? 'running' : 'completed'
-  }
-  if (['failed', 'cancelled', 'interrupted'].includes(runStatus)) return 'error'
-  if (status === 'completed' || runStatus === 'completed' || parseToolCallResult(toolCall)?.status)
-    return 'completed'
-  return 'running'
-}
-
-export const enrichSubagentToolCall = (
-  toolCall,
-  { subagentRunById, subagentRunByThreadId, subagentOptionBySlug } = {}
-) => {
-  if (!isSubagentToolCall(toolCall)) return toolCall
-
-  const args = parseToolCallArgs(toolCall)
-  const result = parseToolCallResult(toolCall)
-  const subagentRun =
-    (toolCall.id ? subagentRunById?.get?.(String(toolCall.id)) : null) ||
-    (result?.run_id ? subagentRunById?.get?.(String(result.run_id)) : null) ||
-    (args.run_id ? subagentRunById?.get?.(String(args.run_id)) : null) ||
-    (args.thread_id ? subagentRunByThreadId?.get?.(String(args.thread_id)) : null) ||
-    (result?.thread_id ? subagentRunByThreadId?.get?.(String(result.thread_id)) : null)
-  const subagentOption = args.subagent_slug
-    ? subagentOptionBySlug?.get?.(String(args.subagent_slug))
-    : null
-  const displayLabel =
-    result?.subagent_name ||
-    subagentRun?.subagent_name ||
-    subagentOption?.name ||
-    result?.subagent_slug ||
-    subagentRun?.subagent_slug ||
-    undefined
-
-  return {
-    ...toolCall,
-    ...(subagentRun ? { subagent_run: subagentRun } : {}),
-    ...(displayLabel ? { display_label: displayLabel } : {})
-  }
-}
+export const getToolCallDisplayStatus = (toolCall) => getToolCallStatus(toolCall)
 
 export const normalizeToolCalls = (toolCalls, { includeHidden = false, mapToolCall } = {}) => {
   if (!Array.isArray(toolCalls)) return []
@@ -183,8 +113,3 @@ export const normalizeToolCalls = (toolCalls, { includeHidden = false, mapToolCa
     })
     .map((toolCall) => (mapToolCall ? mapToolCall(toolCall) : toolCall))
 }
-
-export const enrichTaskToolCalls = (toolCalls, options = {}) =>
-  normalizeToolCalls(toolCalls, {
-    mapToolCall: (toolCall) => enrichSubagentToolCall(toolCall, options)
-  })

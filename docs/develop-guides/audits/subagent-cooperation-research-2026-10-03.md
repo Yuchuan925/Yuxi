@@ -8,7 +8,7 @@
 
 ### 1.1 实体模型：数据层已经同构
 
-- SubAgent 与主 Agent 共用同一张 `agents` 表，仅以 `is_subagent` 布尔列区分（`backend/yuxi/modules/agents/models/definitions.py:62`）。子智能体是「一级智能体」，有独立 slug、配置与管理入口（`docs/agents/subagents-management.md`）。
+- SubAgent 与主 Agent 共用同一张 `agents` 表，仅以 `is_subagent` 布尔列区分（`backend/yuxi/modules/agents/models/definitions.py:62`）。子智能体是「一级智能体」，有独立 slug、配置与管理入口（`docs/agents/session-cooperation.md`）。
 - 预置子智能体（general-purpose / web-search / research-explorer / fact-verifier）与普通 agent 走同一 preset 机制（`backend/yuxi/modules/agents/presets/subagents/`），全部挂 `SubAgentBackend`。
 - 主 agent 通过 `config_json.context.subagents` 声明可调用的子 agent 白名单（`presets/deep_research.py:24`），候选列表按用户可见性过滤（`runtime/context.py:470-475`）。
 - 子任务拥有**完全独立**的 Thread / Turn / Run / LangGraph checkpoint，通过 `SubagentThread` 委派关系（`parent_session_record_id` / `child_thread_id` / `created_by_run_id` 等，`models/threads.py:78-98`）关联父 Run。子线程 ID 由 `hash(parent_thread:slug:tool_call_id)` 确定性派生（`services/subagents.py:286-291`）。
@@ -42,7 +42,7 @@
    - 子 agent 多一个 `_SubAgentToolFilterMiddleware`；
    - 子 agent 的 `SubAgentContext` 没有 `subagents` 字段（`subagent/context.py:9-15`）。
 2. **禁用工具**：`present_artifacts` 与 `install_skill` 被双层拒绝——模型可见层过滤 + 执行层对显式调用返回错误 ToolMessage（`subagent/graph.py:30,55-74`）。注释明确「工具列表隐藏不构成执行边界」，这与仓库「权限在 executor fail-closed」的原则一致。
-3. **配置不继承**：子 agent 使用自己的 `config_json.context`（工具、知识库、MCP、模型独立选择），不继承主 agent 的选择（`services/input_config.py:28-35`；`docs/agents/subagents-management.md`）。
+3. **配置不继承**：子 agent 使用自己的 `config_json.context`（工具、知识库、MCP、模型独立选择），不继承主 agent 的选择（`services/input_config.py:28-35`；`docs/agents/session-cooperation.md`）。
 
 ### 1.5 递归禁止：三处硬编码，深度恒为 1
 

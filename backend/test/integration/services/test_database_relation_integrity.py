@@ -121,7 +121,7 @@ async def test_unselected_message_and_run_thread_must_match_execution_scope():
             for sql in (
                 "INSERT INTO users (uid,username,password_hash,role,is_deleted,login_failed_count) VALUES ('u','u','fixture','user',0,0)",
                 "INSERT INTO projects (id,uid,selection_status,workdir_path,directory_mode) VALUES ('p','u','implicit','projects/p','managed')",
-                "INSERT INTO sessions (thread_id,uid,agent_id,project_id,status,is_pinned) VALUES ('ta','u','main','p','active',false),('tb','u','main','p','active',false)",
+                "INSERT INTO sessions (thread_id,tree_root_thread_id,uid,agent_id,project_id,status,is_pinned) VALUES ('ta','ta','u','main','p','active',false),('tb','tb','u','main','p','active',false)",
                 "INSERT INTO agent_turns (id,thread_id,uid,status,created_at) VALUES ('turn','ta','u','running',CURRENT_TIMESTAMP)",
                 "INSERT INTO agent_runs (id,thread_id,runtime_scope_id,turn_id,session_record_id,agent_slug,uid,status,source,channel,run_type,origin_metadata,input_payload,token_usage,runtime_cleanup_pending) SELECT 'run','ta','ta','turn',id,'main','u','pending','chat','web','chat','{}','{}','{}',false FROM sessions WHERE thread_id='ta'",
             ):
@@ -133,7 +133,7 @@ async def test_unselected_message_and_run_thread_must_match_execution_scope():
                         "INSERT INTO messages (session_record_id,role,content,run_id,turn_id,delivery_status,message_type) SELECT id,'assistant','audit','run','turn','complete','model_audit' FROM sessions WHERE thread_id='tb'"
                     )
                 )
-        with pytest.raises(IntegrityError, match="fk_agent_runs_session_thread"):
+        with pytest.raises(IntegrityError, match="fk_agent_runs_session_thread|fk_agent_runs_session_runtime_scope"):
             async with engine.begin() as conn:
                 await conn.execute(
                     text(
@@ -157,7 +157,7 @@ async def test_input_consumption_and_receipt_references_stay_in_owning_thread():
             for sql in (
                 "INSERT INTO users (uid,username,password_hash,role,is_deleted,login_failed_count) VALUES ('u','u','fixture','user',0,0)",
                 "INSERT INTO projects (id,uid,selection_status,workdir_path,directory_mode) VALUES ('p','u','implicit','projects/p','managed')",
-                "INSERT INTO sessions (thread_id,uid,agent_id,project_id,status,is_pinned) VALUES ('ta','u','main','p','active',false),('tb','u','main','p','active',false)",
+                "INSERT INTO sessions (thread_id,tree_root_thread_id,uid,agent_id,project_id,status,is_pinned) VALUES ('ta','ta','u','main','p','active',false),('tb','tb','u','main','p','active',false)",
                 "INSERT INTO agent_turns (id,thread_id,uid,status,created_at) VALUES ('turn-a','ta','u','completed',now()),('turn-b','tb','u','completed',now()),('turn-a2','ta','u','completed',now())",
                 "INSERT INTO agent_runs (id,thread_id,runtime_scope_id,turn_id,session_record_id,agent_slug,uid,status,source,channel,run_type,origin_metadata,input_payload,token_usage,runtime_cleanup_pending) SELECT 'run-a','ta','ta','turn-a',id,'main','u','completed','chat','web','chat','{}','{}','{}',false FROM sessions WHERE thread_id='ta'",
                 "INSERT INTO agent_inputs (id,thread_id,uid,agent_slug,kind,status,input_payload,source,channel,origin_metadata,created_at) VALUES ('input-a','ta','u','main','follow_up','pending','{}','chat','web','{}',now()),('input-b','tb','u','main','follow_up','pending','{}','chat','web','{}',now())",

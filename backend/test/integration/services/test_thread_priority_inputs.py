@@ -20,13 +20,13 @@ from yuxi.modules.agents.models.inputs import AgentInput, AgentInputReceipt
 from yuxi.modules.agents.models.messages import Message
 from yuxi.modules.agents.models.runs import AgentRun
 from yuxi.modules.agents.models.turns import AgentTurn
-from yuxi.modules.agents.models.sessions import Session, SubagentThread
+from yuxi.modules.agents.models.sessions import Session
 from yuxi.modules.agents.repositories.input import AgentInputRepository
 from yuxi.modules.agents.repositories.input_receipt import AgentInputReceiptRepository
 from yuxi.modules.agents.repositories.definitions import DEFAULT_SHARE_CONFIG
 from yuxi.modules.agents.repositories.runs import AgentRunRepository
 from yuxi.modules.agents.repositories.sessions import SessionRepository
-from yuxi.modules.agents.services import input_config, inputs, messages, runs, scheduler, subagents, threads, turns
+from yuxi.modules.agents.services import input_config, inputs, messages, runs, scheduler, threads, turns
 from yuxi.modules.agents.services.input_messages import build_chat_input_message
 from yuxi.modules.agents.services.scope import ActorScope
 
@@ -446,94 +446,6 @@ async def test_cancelled_steer_continuation_preserves_wire_ids_and_audit_order(s
         assert turn.result_run_id == run.id and run.status == "completed"
         assert (await db.get(Message, run.output_message_id)).content == "final"
         assert (await db.get(AgentInput, steer["input_id"])).status == "cancelled"
-
-
-@pytest.mark.parametrize("paused", [True, False])
-async def test_parent_delegation_preserves_child_pending_steer_and_pause(sessions, paused):
-    """父重新委派不解除子队列暂停，也不领取既有优先输入。"""
-    parent = await _start(sessions)
-    async with sessions() as db:
-        agent = Agent(
-            slug="helper",
-            backend_id="SubAgentBackend",
-            name="helper",
-            is_subagent=True,
-            visibility="shared",
-            created_by=SCOPE.uid,
-            share_config=DEFAULT_SHARE_CONFIG.copy(),
-            config_json={},
-        )
-        child = Session(
-            thread_id="child-thread",
-            uid=SCOPE.uid,
-            app_id=None,
-            agent_id="helper",
-            project_id="input-project",
-            status="subagent",
-            queue_paused=paused,
-            extra_metadata={"model_spec": "saved:chat"},
-        )
-        db.add_all([agent, child])
-        await db.flush()
-        relation = SubagentThread(
-            uid=SCOPE.uid,
-            parent_session_record_id=parent.session_record_id,
-            child_session_record_id=child.id,
-            child_thread_id=child.thread_id,
-            subagent_slug=agent.slug,
-            created_by_run_id=parent.id,
-        )
-        db.add(relation)
-        await db.flush()
-        input_repo = AgentInputRepository(db)
-        await input_repo.create(
-            input_id="child-steer",
-            thread_id=child.thread_id,
-            uid=SCOPE.uid,
-            app_id=None,
-            agent_slug=agent.slug,
-            kind="steer",
-            input_payload={
-                "model_spec": "saved:chat",
-                "tool_approval_mode": "default",
-                "runtime": {"tool_call_id": "user-steer", "subagent_name": "helper"},
-            },
-            origin_metadata={"subagent_thread_relation_id": relation.id},
-        )
-        receipt = await AgentInputReceiptRepository(db).create(
-            receipt_id="child-steer-receipt",
-            idempotency_key="child-steer-key",
-            uid=SCOPE.uid,
-            app_id=None,
-            thread_id=child.thread_id,
-            event_type="agent.session.input.message",
-            intent_hash="child-steer-intent",
-            input_id="child-steer",
-        )
-        message = Message(session_record_id=child.id, role="user", content="steer", delivery_status="queued")
-        db.add(message)
-        await db.flush()
-        await input_repo.add_messages(input_id="child-steer", receipt_id=receipt.id, message_ids=[message.id])
-        await db.commit()
-    async with sessions() as db:
-        with pytest.raises(subagents.SubagentRunBusy) as exc:
-            await subagents.SubagentRunService(db).start(
-                uid=SCOPE.uid,
-                created_by_run_id=parent.id,
-                agent_item=agent,
-                input_message=build_chat_input_message("delegate"),
-                tool_call_id="delegate-call",
-                requested_thread_id="child-thread",
-            )
-        assert exc.value.active_run_status == ("paused" if paused else "pending")
-        await db.commit()
-    async with sessions() as db:
-        child = await SessionRepository(db).get_session_by_thread_id("child-thread")
-        batch = await db.get(AgentInput, "child-steer")
-        assert child.queue_paused == paused and child.extra_metadata == {"model_spec": "saved:chat"}
-        assert batch.status == "pending" and batch.turn_id is None
-        assert await db.scalar(select(func.count()).select_from(AgentRun)) == 1
-        assert await db.scalar(select(func.count()).select_from(AgentInputReceipt)) == 2
 
 
 async def test_completion_winning_thread_lock_still_accepts_steer(sessions):

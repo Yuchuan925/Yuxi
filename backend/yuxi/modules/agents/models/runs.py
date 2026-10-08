@@ -31,20 +31,8 @@ AGENT_RUN_SHAPE_CONSTRAINT_NAME = "ck_agent_runs_nonterminal_shape"
 
 
 AGENT_RUN_SHAPE_CONSTRAINT_SQL = """
-    runtime_scope_id <> ''
- AND thread_id <> ''
- AND runtime_scope_id = thread_id
- AND ((run_type = 'chat'
-     AND runtime_scope_id = thread_id
-     AND created_by_run_id IS NULL
-     AND subagent_thread_relation_id IS NULL)
- OR (run_type = 'resume'
-     AND runtime_scope_id = thread_id
-     AND created_by_run_id IS NULL
-     AND resume_from_run_id IS NOT NULL
-     AND subagent_thread_relation_id IS NULL)
- OR (run_type = 'subagent'
-     AND subagent_thread_relation_id IS NOT NULL))
+    runtime_scope_id <> '' AND thread_id <> ''
+ AND (run_type = 'chat' OR (run_type = 'resume' AND resume_from_run_id IS NOT NULL))
 """
 
 
@@ -118,18 +106,11 @@ class AgentRun(Base):
         String(64), ForeignKey("agent_runs.id"), nullable=True, index=True, comment="Run that created this run"
     )
     resume_from_run_id = Column(String(64), ForeignKey("agent_runs.id"), nullable=True)
-    subagent_thread_relation_id = Column(
-        Integer,
-        ForeignKey("subagent_threads.id"),
-        nullable=True,
-        index=True,
-        comment="Subagent thread relation record ID",
-    )
     run_type = Column(
         String(32),
         nullable=False,
         default="chat",
-        comment="Run type: chat/resume/subagent",
+        comment="Run type: chat/resume",
     )
     input_message_id = Column(Integer, nullable=True, comment="Input message ID")
     output_message_id = Column(Integer, nullable=True, comment="Output message ID")
@@ -160,6 +141,11 @@ class AgentRun(Base):
     updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, comment="Update time")
 
     __table_args__ = (
+        ForeignKeyConstraint(
+            ["session_record_id", "thread_id", "runtime_scope_id"],
+            ["sessions.id", "sessions.thread_id", "sessions.tree_root_thread_id"],
+            name="fk_agent_runs_session_runtime_scope",
+        ),
         UniqueConstraint("turn_id", "id", name="uq_agent_runs_turn_id_id"),
         ForeignKeyConstraint(
             ["input_id", "thread_id"],
@@ -237,7 +223,6 @@ class AgentRun(Base):
             "session_record_id": self.session_record_id,
             "created_by_run_id": self.created_by_run_id,
             "resume_from_run_id": self.resume_from_run_id,
-            "subagent_thread_relation_id": self.subagent_thread_relation_id,
             "run_type": self.run_type,
             "input_message_id": self.input_message_id,
             "output_message_id": self.output_message_id,

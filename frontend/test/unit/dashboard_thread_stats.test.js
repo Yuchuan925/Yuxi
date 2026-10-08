@@ -83,8 +83,8 @@ test('dashboardApi.getThreadStats 正确拼接时间范围与智能体过滤参�
     assert.equal(requests[1], '/api/dashboard/stats/threads?time_range=30days&agent_id=agent-coder')
     assert.equal(res2.summary.active_threads, 5)
 
-    await dashboardApi.getThreadStats({ timeRange: '90days', includeSubagents: true })
-    assert.equal(requests[2], '/api/dashboard/stats/threads?time_range=90days&include_subagents=true')
+    await dashboardApi.getThreadStats({ timeRange: '90days' })
+    assert.equal(requests[2], '/api/dashboard/stats/threads?time_range=90days')
   })
 })
 
@@ -131,10 +131,6 @@ test('会话分析保持紧凑摘要、彩色排行、刷新 loading 与统一�
   assert.ok(refreshButton.includes(':loading="loading"'))
   assert.match(source, /:seed="record\.agent_id"/)
   assert.match(source, /:seed="record\.uid"/)
-  assert.match(source, /label: '全部', value: true/)
-  assert.match(source, /label: '仅主智能体', value: false/)
-  assert.match(source, /@change="changeSubagentScope"/)
-  assert.doesNotMatch(source, /includeSubagents \? '包含' : '不含'/)
   assert.equal(summarySource.includes('#meta'), false)
   assert.equal((summarySource.match(/<DashboardMetricCard/g) || []).length, 4)
   assert.equal(summarySource.includes('Token'), false)
@@ -157,19 +153,18 @@ test('会话统计源码包含筛选请求代次和 loading 回写守卫', () =>
     new URL('../../src/modules/dashboard/ui/ThreadStatsComponent.vue', import.meta.url),
     'utf8'
   )
-  const statsLoader = source.slice(source.indexOf('const loadData'), source.indexOf('const changeSubagentScope'))
+  const statsLoader = source.slice(
+    source.indexOf('const loadData'),
+    source.indexOf('const loadFilterOptions')
+  )
   const sessionLoader = source.slice(
     source.indexOf('const loadSessions'),
     source.indexOf('const resetFilters')
   )
 
   assert.match(statsLoader, /const requestId = \+\+latestStatsRequest/)
-  assert.match(statsLoader, /includeSubagents: requestedIncludeSubagents/)
   assert.match(statsLoader, /if \(requestId !== latestStatsRequest\) return/)
-  assert.ok(
-    statsLoader.indexOf('includeSubagents.value = requestedIncludeSubagents') >
-      statsLoader.indexOf('await dashboardApi.getThreadStats')
-  )
+
   assert.match(statsLoader, /if \(requestId === latestStatsRequest\) loading\.value = false/)
   assert.match(sessionLoader, /const requestId = \+\+latestSessionRequest/)
   assert.match(sessionLoader, /if \(requestId !== latestSessionRequest\) return/)
@@ -181,7 +176,9 @@ test('会话统计源码包含筛选请求代次和 loading 回写守卫', () =>
 
 test('formatStorageSize 将容量限制为四位有效数字并分离单位', async () => {
   await withServer(async (server) => {
-    const { formatStorageSize } = await server.ssrLoadModule('/src/modules/dashboard/model/dashboard.js')
+    const { formatStorageSize } = await server.ssrLoadModule(
+      '/src/modules/dashboard/model/dashboard.js'
+    )
 
     assert.deepEqual(formatStorageSize(518.2 * 1024), { value: '518.2', unit: 'KB' })
     assert.deepEqual(formatStorageSize(12.345 * 1024 ** 3), { value: '12.35', unit: 'GB' })
@@ -192,7 +189,9 @@ test('formatStorageSize 将容量限制为四位有效数字并分离单位', as
 
 test('buildHeatmapMonthSegments 忽略拥挤的残月并保留完整月份', async () => {
   await withServer(async (server) => {
-    const { buildHeatmapMonthSegments } = await server.ssrLoadModule('/src/modules/dashboard/model/dashboard.js')
+    const { buildHeatmapMonthSegments } = await server.ssrLoadModule(
+      '/src/modules/dashboard/model/dashboard.js'
+    )
     const weeks = [
       [{ date: '2026-04-27' }],
       [{ date: '2026-05-04' }],

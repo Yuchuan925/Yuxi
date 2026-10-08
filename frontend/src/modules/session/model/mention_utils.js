@@ -87,12 +87,6 @@ export const buildMentionDisplayLabels = (mention = {}) => {
     setMentionLabel(labels, 'skill', skill?.slug, label)
     setMentionLabel(labels, 'skill', skill?.name, label)
   })
-  ;(mention.subagents || []).forEach((subagent) => {
-    const label = subagent?.name || ''
-    setMentionLabel(labels, 'subagent', subagent?.id, label)
-    setMentionLabel(labels, 'subagent', subagent?.slug, label)
-    setMentionLabel(labels, 'subagent', subagent?.name, label)
-  })
 
   return labels
 }

@@ -136,7 +136,7 @@ import { MessageProcessor } from '@/modules/session/model/messageProcessor'
 import { inferImageMimeTypeFromBase64, normalizeAttachmentPreviews } from '@/shared/lib/file_utils'
 import { buildMentionDisplayLabels } from '@/modules/session/model/mention_utils'
 import FileTypeIcon from '@/shared/ui/FileTypeIcon.vue'
-import { enrichTaskToolCalls } from '@/modules/session/ui/tools/toolRegistry'
+import { normalizeToolCalls } from '@/modules/session/ui/tools/toolRegistry'
 
 const props = defineProps({
   threadId: { type: String, default: '' },
@@ -310,7 +310,7 @@ const messageSources = computed(() => {
   return { knowledgeChunks: [], webSources: [] }
 })
 
-const validToolCalls = computed(() => enrichTaskToolCalls(props.message.tool_calls))
+const validToolCalls = computed(() => normalizeToolCalls(props.message.tool_calls))
 
 const parsedData = computed(() => {
   const { content, reasoningContent } = MessageProcessor.parseAssistantMessageBody(props.message)

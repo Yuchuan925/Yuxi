@@ -18,7 +18,7 @@ async def list_public_agents(*, user: User, db: AsyncSession) -> list[Agent]:
 
 async def get_public_agent(*, agent_id: str, user: User, db: AsyncSession) -> Agent:
     """按后端可见性读取主 Agent。"""
-    agent = await AgentRepository(db).get_visible_by_slug(slug=agent_id, user=user, kind="main")
+    agent = await AgentRepository(db).get_visible_by_slug(slug=agent_id, user=user)
     if agent is None:
         raise HTTPException(status_code=404, detail="智能体不存在")
     return agent

@@ -471,7 +471,6 @@ async def _agent(client: httpx.AsyncClient, headers: dict[str, str], uid: str, *
                     "mcps": [],
                     "skills": ["image-gen"],
                     "preload_skills": ["image-gen"],
-                    "subagents": [],
                 }
             },
             "share_config": {

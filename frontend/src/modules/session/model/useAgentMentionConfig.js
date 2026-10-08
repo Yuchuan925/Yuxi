@@ -10,8 +10,7 @@ import {
 const MENTION_FIELDS = [
   ['knowledges', 'knowledgeBases'],
   ['mcps', 'mcps'],
-  ['skills', 'skills'],
-  ['subagents', 'subagents']
+  ['skills', 'skills']
 ]
 
 const normalizeMentionResource = (option, kind) => {
@@ -24,15 +23,6 @@ const normalizeMentionResource = (option, kind) => {
   if (kind === 'knowledges') {
     return {
       kb_id: value,
-      name,
-      description
-    }
-  }
-
-  if (kind === 'subagents') {
-    return {
-      id: value,
-      slug: value,
       name,
       description
     }

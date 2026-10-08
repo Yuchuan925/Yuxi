@@ -4,7 +4,7 @@
 
 ## 运行入口
 
-Public Thread 接入把普通消息保存为 Input 与 Message，调度器领取时建立 Turn/Run；审批恢复在同一 Turn 建立下一 Run，子智能体从持久委派输入建立自己的 Thread、Turn、Run，并通过创建者关系关联父执行。worker 只执行已持久化的 Run：
+Public Thread 接入把普通消息保存为 Input 与 Message，调度器领取时建立 Turn/Run；审批恢复在同一 Turn 建立下一 Run，协作会话从持久 Input 建立自己的 Thread、Turn、Run，并通过创建者关系关联父执行。worker 只执行已持久化的 Run：
 
 ```mermaid
 flowchart LR
@@ -21,11 +21,11 @@ worker 在取得 lease 并校验输入后，合并 Agent 可配置字段、Run �
 
 执行流要求明确的 Thread、Turn 和 Run 身份，并检查 Thread 及其 Project 属于当前用户、APP 和 Agent 作用域。缺失身份、归属不一致或资源已归档时显式失败。Thread 创建和用户消息写入由接入用例负责；流中的 init 消息用于展示已经保存的输入。
 
-运行入口读取用户工作区的 `agents/AGENTS.md` 和 `agents/USER.md`，把非空内容追加到系统提示词；文件不存在或不可读不会阻断运行，每个文件最多读取 64 KiB。`prepare_agent_runtime_context` 按当前用户权限过滤工具、知识库、MCP、Skills 和子智能体，并展开 Skill 依赖。准备结果仅属于该 Context 对象，独立执行入口对新 Context 显式准备；`get_graph(context)` 创建模型、工具和中间件。LangGraph state 保存消息、待办、产物、子智能体状态和用量，checkpoint 只使用 PostgreSQL。
+运行入口读取用户工作区的 `agents/AGENTS.md` 和 `agents/USER.md`，把非空内容追加到系统提示词；文件不存在或不可读不会阻断运行，每个文件最多读取 64 KiB。`prepare_agent_runtime_context` 按当前用户权限过滤工具、知识库、MCP、Skills，并展开 Skill 依赖。准备结果仅属于该 Context 对象，独立执行入口对新 Context 显式准备；`get_graph(context)` 创建模型、工具和中间件。LangGraph state 保存消息、待办、产物、协作消息消费位置和用量，checkpoint 只使用 PostgreSQL。
 
 API/worker 不信任浏览器内存中的完整配置。请求可以提供受限的单次覆盖值，例如模型或工具审批模式；配置快照也不能替代实时授权。
 
-状态查询在 Session 与 Workdir 授权后直接读取 PostgreSQL checkpointer 的根 namespace，返回最近完整快照及同批 pending writes 中的中断，仅在最新 Run 为 interrupted 时展示审批。读取不创建 Context 或模型；业务 pending writes 的合并仍由执行图拥有。HTTP 与 SSE 使用同一状态投影，仅返回待办、产物、子 Run 和用量。文件由 Workdir/Sandbox 边界持久化，前端文件面板通过文件系统接口读取当前 Workdir。
+状态查询在 Session 与 Workdir 授权后直接读取 PostgreSQL checkpointer 的根 namespace，返回最近完整快照及同批 pending writes 中的中断，仅在最新 Run 为 interrupted 时展示审批。读取不创建 Context 或模型；业务 pending writes 的合并仍由执行图拥有。HTTP 状态查询返回待办、产物、协作树和用量；Turn SSE 提供执行增量与状态，前端通过 `/api/v1/agents/threads/{thread_id}/cooperation` 轮询完整协作摘要；该入口只读取持久关系，不读取 checkpoint 或结果正文。批量读取全部成员、最新 Turn、执行状态和待处理输入。同一 Thread 在页面与侧栏共享 session runtime 的历史、运行状态、流订阅和恢复请求；最后一个观察视图卸载才释放订阅，视图可见性与浏览器标签可见性共同约束已读和滚动。终态与 resync 请求读取新历史，不复用较早发出的快照。文件由 Workdir/Sandbox 边界持久化，前端文件面板通过文件系统接口读取当前 Workdir。
 
 普通来源调用 `modules/agents/services/inputs.py` 接收用例：作用域校验后保存 Message、Input 与幂等 Receipt，空闲时按优先队头领取并创建 Turn/Run；事务提交后物化 Workdir 并投递 Run。Input 保存来源、优先级、消息成员和接收时冻结的模型/审批配置，消息正文由 Message 拥有，其余 Agent 配置在 worker 准备时读取。调度、引导和控制的完整契约见 [Agent 输入队列与调度](./agent-request-queue.md)。
 
@@ -42,7 +42,7 @@ API/worker 不信任浏览器内存中的完整配置。请求可以提供受限
 
 `_skill_runtime_snapshot` 中的授权 Skill、依赖和预加载内容在 Context 准备时派生；中间件在运行期间维护 token 等状态。身份与运行标记由 worker 注入，持久 Agent 配置通过 `update_config` 仅装载 configurable 字段。接入和执行使用同一装载规则。运行事件的模型、审批与 Workdir 元数据从准备后的 Context 投影。
 
-普通输入模型依次取显式输入值、Thread 保存值、Agent 配置和系统默认；接收时确定并保存在 Input 的配置快照中，Run 消费该快照。SubAgent 创建服务依次取子 Agent 模型配置、父 Run 输入中的模型和系统默认，middleware 只提交调用信息。
+普通输入模型依次取显式输入值、Thread 保存值、Agent 配置和系统默认；接收时确定并保存在 Input 的配置快照中，Run 消费该快照。协作会话继承派发方实际模型和能力配置快照，只接收显式描述；模型历史、checkpoint 和附件上下文各自独立。
 
 manifest v2 的配置摘要来自准备后的可配置字段，包含模型覆盖、schema 默认值和工作区提示词，排除用户、线程、worker 等运行身份。Skill 条目的来源、版本与哈希来自首次授权解析；预加载内容另保存实际读取字节的摘要，manifest 生成不再次查询 Skill。完整提示词和 Skill 正文不持久化到 manifest。MCP 工具发现、Memory 与文件动态读取发生在后续执行边界，manifest 不承诺冻结其实际可用性或字节。
 
@@ -58,9 +58,9 @@ manifest v2 的配置摘要来自准备后的可配置字段，包含模型覆�
 
 ## 文件和 Memory
 
-当前 Project 的 `workdir_path` 决定 Agent 的默认工作目录。普通 Agent 和子 Agent 共享 Project Workdir；每个执行使用自身 Thread 的 runtime scope、checkpoint、lease、heartbeat 和清理。父 runtime 结束不影响子执行，附件通过授权委派输入保存。
+当前 Project 的 `workdir_path` 决定 Agent 的默认工作目录。同树会话共享 Project Workdir 和根 Session 的真实沙盒；各自拥有 Thread checkpoint、Run lease、heartbeat 和清理责任。父轮次结束保留后代工作；环境由整树空闲回收释放，规则见[会话协作](../agents/session-cooperation.md)。
 
-`agents/MEMORY.md` 只有在用户配置 `enable_memory=true`，且该文件存在并包含非空内容时，才由主 Agent 的 Memory middleware 读取并提供受限的记忆工具。它是用户主动维护的参考资料，不是系统指令；子 Agent 不直接使用该 middleware。Memory 读取和更新有独立的用户、Run、worker 和文件大小校验。
+`agents/MEMORY.md` 只有在用户配置 `enable_memory=true`，且该文件存在并包含非空内容时，才由 Memory middleware 读取并提供受限的记忆工具。它是用户主动维护的参考资料，不是系统指令。Memory 读取和更新有独立的用户、Run、worker 和文件大小校验。
 
 Viewer、附件和 artifact API 通过持久化 Workspace/Workdir 读取文件，不连接 Agent execution runtime。沙盒虚拟路径、Viewer scope、对象 URL 和宿主机路径在各自边界中转换，不能互相替代。
 
@@ -74,7 +74,7 @@ Viewer、附件和 artifact API 通过持久化 Workspace/Workdir 读取文件�
 
 审批或用户问题中断时，系统把等待点绑定在 Turn 的当前 interrupted Run 和 PostgreSQL checkpoint。结构化回答或审批只消费该等待点一次，在同一 Turn 创建恢复 Run；worker 再为该 Run 准备 Context 并固化 manifest。
 
-新的普通输入按接入时的规则解析模型和审批模式。每个 Run 的其余 Agent 配置与基础工作区提示词在 worker 准备 Context 时读取，动态文件与权限仍在各自读取或执行边界生效；输出、事件和消息绑定明确的 `input_id`、`turn_id` 与 `run_id`。
+新的普通输入按接入时的规则解析模型和审批模式。根会话的其余 Agent 配置与基础工作区提示词在 worker 准备 Context 时读取；关联会话使用创建时配置快照，并在当前 Run 重新准备工作区提示词与授权资源，动态文件与权限仍在各自读取或执行边界生效；输出、事件和消息绑定明确的 `input_id`、`turn_id` 与 `run_id`。
 
 准备期间收到取消时，worker 使用已提交的取消状态完成取消收尾；manifest 失败不能把取消请求留待 lease 超时。manifest 使用 write-once 指纹，已有旧版 manifest 的 Run 重试若与新准备结果不一致会显式失败；历史 manifest 保留原记录。
 
@@ -83,7 +83,7 @@ Viewer、附件和 artifact API 通过持久化 Workspace/Workdir 读取文件�
 - [Context 与资源归一化](https://github.com/xerrors/Yuxi/blob/main/backend/yuxi/modules/agents/runtime/context.py)
 - [BaseAgent](https://github.com/xerrors/Yuxi/blob/main/backend/yuxi/modules/agents/runtime/base.py)
 - [Chatbot graph](https://github.com/xerrors/Yuxi/blob/main/backend/yuxi/modules/agents/runtime/agent_backends/chatbot/graph.py)
-- [SubAgent graph](https://github.com/xerrors/Yuxi/blob/main/backend/yuxi/modules/agents/runtime/agent_backends/subagent/graph.py)
+- [会话协作 middleware](https://github.com/xerrors/Yuxi/blob/main/backend/yuxi/modules/agents/runtime/middlewares/cooperation.py)
 - [Memory middleware](https://github.com/xerrors/Yuxi/blob/main/backend/yuxi/modules/agents/runtime/middlewares/memory.py)
 - [运行时上下文 unit](https://github.com/xerrors/Yuxi/tree/main/backend/test/unit/agents)
 - [Agent 主链路 E2E](https://github.com/xerrors/Yuxi/tree/main/backend/test/e2e)

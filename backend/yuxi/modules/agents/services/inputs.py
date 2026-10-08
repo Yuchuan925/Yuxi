@@ -18,7 +18,6 @@ from yuxi.modules.agents.models.sessions import Session
 from yuxi.modules.agents.repositories.definitions import AgentRepository
 from yuxi.modules.agents.repositories.input import AgentInputRepository
 from yuxi.modules.agents.repositories.input_receipt import AgentInputReceiptRepository
-from yuxi.modules.agents.repositories.runs import AgentRunRepository
 from yuxi.modules.agents.repositories.sessions import SessionRepository
 from yuxi.modules.agents.repositories.turn import AgentTurnRepository
 from yuxi.modules.agents.runtime.agent_backends import AgentBackendNotFoundError, get_agent_backend
@@ -84,15 +83,13 @@ async def create_thread(
         uid=scope.uid, app_id=scope.app_id, thread_id=thread_id, idempotency_key=idempotency_key
     )
     if existing is not None:
-        _require_replay(existing, "yuxi.session.create", intent_hash)
+        require_input_replay(existing, "yuxi.session.create", intent_hash)
         return _accepted(existing)
 
     user = await db.scalar(select(User).where(User.uid == scope.uid))
     if user is None:
         raise HTTPException(status_code=404, detail="用户不存在")
-    agent_item = await AgentRepository(db).get_visible_by_slug(
-        slug=agent_slug, user=user, kind="main", for_key_share=True
-    )
+    agent_item = await AgentRepository(db).get_visible_by_slug(slug=agent_slug, user=user, for_key_share=True)
     if agent_item is None:
         raise HTTPException(status_code=404, detail="智能体不存在")
 
@@ -102,7 +99,7 @@ async def create_thread(
             uid=scope.uid, app_id=scope.app_id, thread_id=thread_id, idempotency_key=idempotency_key
         )
         if existing is not None:
-            _require_replay(existing, "yuxi.session.create", intent_hash)
+            require_input_replay(existing, "yuxi.session.create", intent_hash)
             return _accepted(existing)
         raise HTTPException(status_code=409, detail="Thread ID 已存在")
     thread_metadata = {"source": source, "channel": channel}
@@ -136,7 +133,7 @@ async def create_thread(
             uid=scope.uid, app_id=scope.app_id, thread_id=thread_id, idempotency_key=idempotency_key
         )
         if existing is not None:
-            _require_replay(existing, "yuxi.session.create", intent_hash)
+            require_input_replay(existing, "yuxi.session.create", intent_hash)
             return _accepted(existing)
         raise HTTPException(status_code=409, detail="Thread 创建冲突") from exc
     binding = await resolve_session_workdir_binding(agent_session=agent_session, uid=scope.uid, db=db, project=project)
@@ -215,7 +212,7 @@ async def accept_message(
         uid=scope.uid, app_id=scope.app_id, thread_id=thread_id, idempotency_key=idempotency_key
     )
     if existing is not None:
-        _require_replay(existing, "agent.session.input.message", intent_hash)
+        require_input_replay(existing, "agent.session.input.message", intent_hash)
         return _accepted(existing)
 
     agent_session = await require_thread(db=db, scope=scope, thread_id=thread_id, lock=True)
@@ -223,7 +220,7 @@ async def accept_message(
         uid=scope.uid, app_id=scope.app_id, thread_id=thread_id, idempotency_key=idempotency_key
     )
     if existing is not None:
-        _require_replay(existing, "agent.session.input.message", intent_hash)
+        require_input_replay(existing, "agent.session.input.message", intent_hash)
         return _accepted(existing)
 
     receipt, dispatch = await accept_locked(
@@ -296,16 +293,25 @@ async def accept_locked(
     frozen_payload: dict | None = None,
 ) -> tuple[AgentInputReceipt, Dispatch | None]:
     """在调用方事务与 Thread 锁内保存回执、消息和 Input。"""
-    if agent_session.status not in {"active", "subagent"}:
+    if agent_session.status != "active":
         raise HTTPException(status_code=409, detail="Thread 已归档")
     turn_repo = AgentTurnRepository(db)
     active_turn = await turn_repo.lock_active_for_thread(
         thread_id=agent_session.thread_id, uid=scope.uid, app_id=scope.app_id
     )
-    if active_turn is not None and active_turn.status in {"waiting", "cancelling"}:
+    cooperation_wait = (
+        active_turn is not None
+        and active_turn.status == "waiting"
+        and (active_turn.waitpoint or {}).get("kind") == "cooperation"
+    )
+    if active_turn is not None and (
+        active_turn.status == "cancelling" or (active_turn.status == "waiting" and not cooperation_wait)
+    ):
         raise HTTPException(status_code=409, detail="当前 Turn 正在等待控制输入或取消清理")
 
-    mode = mode or ("steer" if active_turn is not None else "follow_up")
+    mode = mode or ("follow_up" if cooperation_wait or active_turn is None else "steer")
+    if cooperation_wait and mode == "steer":
+        raise HTTPException(status_code=409, detail="协作等待中请提交排队输入或取消当前 Turn")
     input_repo = AgentInputRepository(db)
     if mode == "steer" and (model_spec is not None or tool_approval_mode is not None):
         raise HTTPException(status_code=422, detail="Steer 不指定模型或审批配置")
@@ -317,9 +323,7 @@ async def accept_locked(
 
     if input_item is None:
         user = await db.scalar(select(User).where(User.uid == scope.uid))
-        agent_item = await AgentRepository(db).get_visible_by_slug(
-            slug=agent_session.agent_id, user=user, kind="subagent" if agent_session.status == "subagent" else "main"
-        )
+        agent_item = await AgentRepository(db).get_visible_by_slug(slug=agent_session.agent_id, user=user)
         if agent_item is None:
             raise HTTPException(status_code=404, detail="智能体不存在")
         try:
@@ -331,17 +335,9 @@ async def accept_locked(
         resolved_model, approval_mode = await resolve_agent_run_config(
             requested_model, requested_approval, agent_item, backend, db
         )
-        input_payload = frozen_payload or {"model_spec": resolved_model, "tool_approval_mode": approval_mode}
-        if agent_session.status == "subagent" and frozen_payload is None:
-            previous = await AgentRunRepository(db).get_latest_subagent_run_by_thread_for_user(
-                agent_session.thread_id, scope.uid
-            )
-            if previous is None:
-                raise ValueError("子 Thread 缺少已授权委派")
-            input_payload["runtime"] = dict(previous.input_payload["runtime"])
-            input_payload["delegated_attachments"] = list(previous.input_payload.get("delegated_attachments", []))
-            # Thread 关系提供执行授权，新用户 Turn 不继承旧 Turn 的委派来源。
-            origin_metadata = {"subagent_thread_relation_id": previous.subagent_thread_relation_id}
+        input_payload = {**(frozen_payload or {}), "model_spec": resolved_model, "tool_approval_mode": approval_mode}
+        if agent_session.config_snapshot is not None:
+            input_payload["context_snapshot"] = agent_session.config_snapshot
 
         input_item = await input_repo.create(
             input_id=str(uuid.uuid4()),
@@ -403,6 +399,10 @@ async def accept_locked(
         dispatch = await claim_next_input(db=db, agent_session=agent_session, binding=binding)
         if dispatch is not None:
             await db.refresh(receipt)
+    if source != "cooperation":
+        from yuxi.modules.agents.services.cooperation import notify_user_intervention
+
+        await notify_user_intervention(db, agent_session, key=receipt.id, action=mode)
     return receipt, dispatch
 
 
@@ -429,7 +429,7 @@ def _intent_hash(*parts) -> str:
     return hashlib.sha256(value.encode()).hexdigest()
 
 
-def _require_replay(receipt: AgentInputReceipt, event_type: str, intent_hash: str) -> None:
+def require_input_replay(receipt: AgentInputReceipt, event_type: str, intent_hash: str) -> None:
     """只允许同一命令与同一规范化意图重放。"""
     if receipt.event_type != event_type or receipt.intent_hash != intent_hash:
         raise HTTPException(status_code=409, detail="Idempotency-Key 已用于其他输入")

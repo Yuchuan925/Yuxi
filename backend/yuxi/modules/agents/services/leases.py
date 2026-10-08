@@ -6,7 +6,7 @@ import asyncio
 import uuid
 from datetime import datetime
 
-from sqlalchemy import select, text
+from sqlalchemy import or_, select, text
 
 from yuxi.infrastructure.observability.logging import logger
 from yuxi.infrastructure.postgres.manager import pg_manager
@@ -20,12 +20,10 @@ from yuxi.modules.agents.runtime.sandbox.provider import get_sandbox_provider
 from yuxi.modules.agents.services.event_writer import publish_run_settlement
 from yuxi.modules.agents.services.scheduler import dispatch_next_input
 from yuxi.modules.agents.services.tracing import finish_turn_observation_if_terminal
-from yuxi.modules.agents.services.transport import (
-    publish_cancel_signals,
-)
 from yuxi.modules.workspace.services.bindings import (
     resolve_session_workdir_path,
 )
+from yuxi.shared.datetime import utc_now
 
 RUN_LEASE_SECONDS = 120
 
@@ -33,48 +31,126 @@ RUN_LEASE_SECONDS = 120
 WORKER_ID = f"worker-{uuid.uuid4().hex}"
 
 
+SANDBOX_IDLE_SECONDS = 300
+
+
 async def release_runtime_if_idle(run: AgentRun) -> bool:
-    """在 PostgreSQL cleanup fence 内串行销毁根 execution runtime。"""
-    runtime_scope_id = str(getattr(run, "runtime_scope_id", None) or run.thread_id)
+    """结束当前执行的清理责任，共享沙盒由独立空闲回收释放。"""
+    from yuxi.modules.agents.models.cooperation import CooperationRuntime
+
     async with pg_manager.get_async_session_context() as db:
-        await db.execute(
-            text("SELECT pg_advisory_xact_lock(hashtext(:lock_key))"),
-            {"lock_key": f"yuxi-runtime-cleanup:{run.uid}:{runtime_scope_id}"},
-        )
-        current = await db.scalar(select(AgentRun).where(AgentRun.id == run.id).with_for_update())
+        current = await db.scalar(select(AgentRun).where(AgentRun.id == run.id).with_for_update(key_share=True))
         if current is None:
-            raise RuntimeError(f"Run {run.id} 不存在，不能确认 runtime cleanup Owner")
+            raise RuntimeError("Run 的 cleanup Owner 不存在")
         if not current.runtime_cleanup_pending:
             return True
-        result = await db.execute(
-            select(AgentRun.id)
-            .where(
-                AgentRun.runtime_scope_id == runtime_scope_id,
-                AgentRun.id != current.id,
-                AgentRun.status.notin_(TERMINAL_RUN_STATUSES),
-            )
-            .limit(1)
-        )
-        if result.scalar_one_or_none() is not None:
-            return False
-        agent_session = await db.scalar(select(Session).where(Session.id == current.session_record_id))
-        if agent_session is None or agent_session.uid != str(current.uid):
-            raise RuntimeError(f"Run {run.id} 的 Session 身份不一致")
-        workdir_path = await resolve_session_workdir_path(
-            agent_session=agent_session,
-            uid=str(current.uid),
-            db=db,
-        )
-        await asyncio.to_thread(
-            get_sandbox_provider().release,
-            runtime_scope_id,
-            uid=str(current.uid),
-            clear_cache_on_delete_failure=True,
-            workdir_path=workdir_path,
+        await db.execute(
+            text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"),
+            {"key": f"cooperation:{current.runtime_scope_id}"},
         )
         current.runtime_cleanup_pending = False
+        active = await db.scalar(
+            select(AgentRun.id)
+            .where(AgentRun.runtime_scope_id == current.runtime_scope_id, AgentRun.status.notin_(TERMINAL_RUN_STATUSES))
+            .limit(1)
+        )
+        if active is None:
+            runtime = await db.get(CooperationRuntime, current.runtime_scope_id)
+            if runtime is not None and runtime.idle_since is None:
+                runtime.idle_since = utc_now()
         await db.flush()
     return True
+
+
+async def release_idle_sandboxes() -> None:
+    """分页回收空闲沙盒，独立记录失败并继续其他树。"""
+    from datetime import timedelta
+
+    from yuxi.modules.agents.models.cooperation import CooperationRuntime
+
+    cutoff = utc_now() - timedelta(seconds=SANDBOX_IDLE_SECONDS)
+    after = ""
+    failures = 0
+    while True:
+        async with pg_manager.get_async_session_context() as db:
+            roots = list(
+                (
+                    await db.scalars(
+                        select(CooperationRuntime.tree_root_thread_id)
+                        .where(
+                            CooperationRuntime.released.is_(False),
+                            or_(CooperationRuntime.idle_since.is_(None), CooperationRuntime.idle_since <= cutoff),
+                            CooperationRuntime.tree_root_thread_id > after,
+                        )
+                        .order_by(CooperationRuntime.tree_root_thread_id)
+                        .limit(100)
+                    )
+                ).all()
+            )
+        if not roots:
+            break
+        for root_id in roots:
+            try:
+                await _release_idle_sandbox(root_id, cutoff)
+            except Exception:
+                failures += 1
+                logger.exception("Sandbox idle release failed: tree_root_id=%s", root_id)
+        after = roots[-1]
+    if failures:
+        raise RuntimeError(f"空闲沙盒回收失败：{failures} 棵树")
+
+
+async def _release_idle_sandbox(root_id: str, cutoff: datetime) -> None:
+    """只锁沙盒生命周期，领取执行与回收互斥，消息仍可提交。"""
+    from yuxi.modules.agents.models.cooperation import CooperationRuntime
+
+    async with pg_manager.get_async_session_context() as db:
+        if not await db.scalar(
+            text("SELECT pg_try_advisory_xact_lock(hashtextextended(:key, 0))"),
+            {"key": f"sandbox-release:{root_id}"},
+        ):
+            return
+        runtime = await db.get(CooperationRuntime, root_id, populate_existing=True)
+        if runtime is None or runtime.released:
+            return
+        if (
+            await db.scalar(
+                select(AgentRun.id)
+                .where(AgentRun.runtime_scope_id == root_id, AgentRun.status.notin_(TERMINAL_RUN_STATUSES))
+                .limit(1)
+            )
+            is not None
+        ):
+            return
+        # pending Run 取消不会经过执行清理，周期扫描补齐这一空闲转换。
+        if runtime.idle_since is None:
+            runtime.idle_since = utc_now()
+            return
+        if runtime.idle_since > cutoff:
+            return
+        root = await db.scalar(select(Session).where(Session.thread_id == root_id))
+        workdir = await resolve_session_workdir_path(agent_session=root, uid=root.uid, db=db)
+        release = asyncio.create_task(
+            asyncio.to_thread(
+                get_sandbox_provider().release,
+                root_id,
+                uid=root.uid,
+                clear_cache_on_delete_failure=True,
+                workdir_path=workdir,
+            )
+        )
+        try:
+            await asyncio.shield(release)
+        except asyncio.CancelledError:
+            # to_thread 不会随协程取消；外部释放结束前不能交出生命周期锁。
+            while not release.done():
+                try:
+                    await asyncio.shield(release)
+                except asyncio.CancelledError:
+                    continue
+            release.result()
+            raise
+        runtime.released = True
 
 
 async def mark_run_running(run_id: str, worker_id: str) -> bool:
@@ -131,39 +207,46 @@ async def reconcile_expired_run_leases(*, now: datetime | None = None) -> list[s
         candidates = await AgentRunRepository(db).list_expired_lease_candidates(now=now)
     reconciled: list[str] = []
     terminal_turn_ids: list[str] = []
-    cancelled_descendants: list[tuple[str, str]] = []
+    failures = 0
     for run_id, root_thread_id, uid, app_id in candidates:
-        async with pg_manager.get_async_session_context() as db:
-            agent_session = await SessionRepository(db).lock_session_by_thread_id(root_thread_id)
-            if agent_session is None or agent_session.uid != uid or agent_session.app_id != app_id:
-                continue
-            repo = AgentRunRepository(db)
-            candidate = await repo.get_run(run_id)
-            if candidate is None:
-                continue
-            turn = await AgentTurnRepository(db).get_for_scope(
-                turn_id=candidate.turn_id,
-                thread_id=root_thread_id,
-                uid=uid,
-                app_id=app_id,
-                for_update=True,
-            )
-            if turn is None:
-                raise ValueError("失联 Run 的根 Turn 不存在")
-            await AgentInputRepository(db).get_pending_steer(thread_id=root_thread_id, uid=uid, app_id=app_id)
-            run, descendants = await repo.reconcile_expired_lease(run_id, now=now)
-            if run is None:
-                continue
-            if turn.current_run_id == run.id:
-                agent_session.queue_paused = True
-                await AgentTurnRepository(db).set_terminal(turn, status="failed")
-                terminal_turn_ids.append(turn.id)
-            reconciled.append(run.id)
-            cancelled_descendants.extend(descendants)
-    await publish_cancel_signals([child_id for child_id, _thread_id in cancelled_descendants])
+        try:
+            async with pg_manager.get_async_session_context() as db:
+                agent_session = await SessionRepository(db).lock_session_by_thread_id(root_thread_id)
+                if agent_session is None or agent_session.uid != uid or agent_session.app_id != app_id:
+                    continue
+                repo = AgentRunRepository(db)
+                candidate = await repo.get_run(run_id)
+                if candidate is None:
+                    continue
+                turn = await AgentTurnRepository(db).get_for_scope(
+                    turn_id=candidate.turn_id,
+                    thread_id=root_thread_id,
+                    uid=uid,
+                    app_id=app_id,
+                    for_update=True,
+                )
+                if turn is None:
+                    raise ValueError("失联 Run 的根 Turn 不存在")
+                await AgentInputRepository(db).get_pending_steer(thread_id=root_thread_id, uid=uid, app_id=app_id)
+                run = await repo.reconcile_expired_lease(run_id, now=now)
+                if run is None:
+                    continue
+                if turn.current_run_id == run.id:
+                    agent_session.queue_paused = True
+                    await AgentTurnRepository(db).set_terminal(turn, status="failed")
+                    from yuxi.modules.agents.services.cooperation import notify_turn_state
+
+                    await notify_turn_state(db, run)
+                    terminal_turn_ids.append(turn.id)
+                reconciled.append(run.id)
+        except Exception:
+            failures += 1
+            logger.exception("Expired lease recovery failed: run_id=%s", run_id)
     for turn_id in terminal_turn_ids:
         await finish_turn_observation_if_terminal(turn_id)
     await reconcile_pending_runtime_cleanups()
+    if failures:
+        raise RuntimeError(f"失联执行恢复失败：{failures} 条")
     return reconciled
 
 
@@ -172,23 +255,26 @@ async def reconcile_pending_runtime_cleanups() -> list[str]:
     async with pg_manager.get_async_session_context() as db:
         pending_runs = await AgentRunRepository(db).list_pending_runtime_cleanups()
     cleaned: list[str] = []
+    failures = 0
     for run in pending_runs:
         try:
             if not await release_runtime_if_idle(run):
                 continue
+            if run.status in TERMINAL_RUN_STATUSES:
+                await publish_run_settlement(run.id, run.status, thread_id=run.thread_id)
+            if run.status == "completed":
+                await dispatch_next_input(
+                    uid=run.uid,
+                    agent_slug=run.agent_slug,
+                    thread_id=run.thread_id,
+                )
+            cleaned.append(run.id)
         except Exception:
-            logger.error("Failed to reconcile execution-tree runtime cleanup: run=%s", run.id, exc_info=True)
-            continue
-        if run.status in TERMINAL_RUN_STATUSES:
-            await publish_run_settlement(run.id, run.status, thread_id=run.thread_id)
-        if run.status == "completed":
-            await dispatch_next_input(
-                uid=run.uid,
-                agent_slug=run.agent_slug,
-                thread_id=run.thread_id,
-            )
-        cleaned.append(run.id)
+            failures += 1
+            logger.exception("Run cleanup recovery failed: run_id=%s", run.id)
     from yuxi.modules.agents.services.turns import reconcile_cancelling_turns
 
     await reconcile_cancelling_turns()
+    if failures:
+        raise RuntimeError(f"执行清理恢复失败：{failures} 条")
     return cleaned

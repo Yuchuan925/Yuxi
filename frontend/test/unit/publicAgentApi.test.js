@@ -106,6 +106,16 @@ test('产品创建、消息、等待恢复和队列控制仅使用 Public Thread
     assert.equal(calls[9].url, '/api/v1/agents/threads/thread-1/archive')
     assert.equal(calls[9].options.method, 'POST')
     assert.ok(calls.every((call) => !call.url.includes('/api/chat/')))
+
+    const longTitle = '协作😀'.repeat(100)
+    await threadApi.createThread('agent-1', longTitle, {}, { requestId: 'long-title' })
+    const sentTitle = JSON.parse(calls[10].options.body).title
+    assert.equal(Array.from(sentTitle).length, 255)
+    assert.equal(sentTitle, '协作😀'.repeat(85))
+
+    await agentApi.getCooperationSummary('thread-1')
+    assert.equal(calls.at(-1).url, '/api/v1/agents/threads/thread-1/cooperation')
+
   } finally {
     await server.close()
     delete globalThis.fetch

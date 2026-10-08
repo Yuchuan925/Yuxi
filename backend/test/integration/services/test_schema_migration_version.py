@@ -192,7 +192,7 @@ async def test_fresh_business_schema_contains_input_lifecycle_without_request_ta
             "thread_id",
         } <= input_columns
         assert "conversation_thread_id" not in input_columns
-        assert BUSINESS_SCHEMA_VERSION == 4
+        assert BUSINESS_SCHEMA_VERSION == 5
         assert KNOWLEDGE_SCHEMA_VERSION == 2
     finally:
         await _drop_isolated_schema(schema, admin_engine, scoped_engine)
@@ -276,8 +276,8 @@ async def test_open_attempt_is_unique_in_fresh_business_schema() -> None:
             await connection.execute(
                 text(
                     "INSERT INTO sessions "
-                    "(thread_id, uid, agent_id, project_id, status, is_pinned) "
-                    "VALUES ('constraint-thread', 'constraint-user', 'default', 'constraint-project', 'active', false)"
+                    "(thread_id, tree_root_thread_id, uid, agent_id, project_id, status, is_pinned) "
+                    "VALUES ('constraint-thread', 'constraint-thread', 'constraint-user', 'default', 'constraint-project', 'active', false)"
                 )
             )
             await connection.execute(

@@ -71,8 +71,8 @@ async def test_validate_agent_rejects_agent_outside_user_visibility(monkeypatch)
         def __init__(self, db):
             del db
 
-        async def get_visible_by_slug(self, *, slug, user, kind):
-            assert (slug, user.uid, kind) == ("private-agent", "user-2", "main")
+        async def get_visible_by_slug(self, *, slug, user):
+            assert (slug, user.uid) == ("private-agent", "user-2")
             return None
 
     monkeypatch.setattr(service, "AgentRepository", AgentRepository)

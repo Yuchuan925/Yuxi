@@ -38,7 +38,7 @@ normalize_agent_context_config = context_module.normalize_agent_context_config
 
 @dataclass(kw_only=True)
 class ChatBotContext(BaseContext):
-    subagents: context_module.ResourceSelection = field(default="all", metadata={"kind": "subagents"})
+    pass
 
 
 @dataclass
@@ -188,17 +188,6 @@ async def test_normalize_agent_context_config_defaults_mcps_off_and_filters_expl
             types.SimpleNamespace(slug="skill-b", name="Skill B", description=""),
         ]
 
-    class FakeAgentRepository:
-        def __init__(self, _db):
-            pass
-
-        async def list_visible_subagents(self, *, user):
-            assert user.uid == "u1"
-            return [
-                types.SimpleNamespace(slug="research-agent", name="Research", description=""),
-                types.SimpleNamespace(slug="critique-agent", name="Critique", description=""),
-            ]
-
     monkeypatch.setitem(
         sys.modules,
         "yuxi.modules.extensions.tools.catalog",
@@ -233,11 +222,6 @@ async def test_normalize_agent_context_config_defaults_mcps_off_and_filters_expl
             )
         ),
     )
-    monkeypatch.setitem(
-        sys.modules,
-        "yuxi.modules.agents.repositories.definitions",
-        types.SimpleNamespace(AgentRepository=FakeAgentRepository),
-    )
 
     normalized = await normalize_agent_context_config(
         {
@@ -246,7 +230,6 @@ async def test_normalize_agent_context_config_defaults_mcps_off_and_filters_expl
             "mcps": [],
             "skills": [],
             "preload_skills": ["skill-a"],
-            "subagents": ["research-agent", "missing"],
             "summary_threshold": 10,
             "summary_keep_messages": 8,
             "summary_prompt": "custom summary",
@@ -264,7 +247,6 @@ async def test_normalize_agent_context_config_defaults_mcps_off_and_filters_expl
     assert normalized["mcps"] == []
     assert normalized["skills"] == []
     assert normalized["preload_skills"] == []
-    assert normalized["subagents"] == ["research-agent"]
     assert normalized["summary_threshold"] == 10
     assert normalized["summary_keep_messages"] == 8
     assert normalized["summary_prompt"] == "custom summary"
@@ -288,15 +270,14 @@ async def test_normalize_agent_context_config_defaults_mcps_off_and_filters_expl
     )
     assert omitted_mcp["mcps"] == []
 
-    empty_subagents_normalized = await normalize_agent_context_config(
-        {"tools": [], "knowledges": [], "mcps": [], "skills": [], "subagents": []},
+    empty_resources_normalized = await normalize_agent_context_config(
+        {"tools": [], "knowledges": [], "mcps": [], "skills": []},
         db=object(),
         user=types.SimpleNamespace(role="user", uid="u1", department_id=None, is_deleted=0),
         context_schema=ChatBotContext,
     )
 
-    assert empty_subagents_normalized["mcps"] == []
-    assert empty_subagents_normalized["subagents"] == []
+    assert empty_resources_normalized["mcps"] == []
 
     preloaded_normalized = await normalize_agent_context_config(
         {
@@ -305,7 +286,6 @@ async def test_normalize_agent_context_config_defaults_mcps_off_and_filters_expl
             "mcps": [],
             "skills": ["skill-a"],
             "preload_skills": ["skill-b", "skill-a", "skill-a", "missing"],
-            "subagents": ["research-agent"],
         },
         db=object(),
         user=types.SimpleNamespace(role="user", uid="u1", department_id=None, is_deleted=0),
@@ -385,14 +365,6 @@ async def test_prepare_agent_runtime_context_filters_resources_and_derives_runti
             assert uid == "u1"
             return types.SimpleNamespace(role="user", uid="u1", department_id=None, is_deleted=0)
 
-    class FakeAgentRepository:
-        def __init__(self, _db):
-            pass
-
-        async def list_visible_subagents(self, *, user):
-            assert user.uid == "u1"
-            return [types.SimpleNamespace(slug="research-agent", name="Research", description="")]
-
     monkeypatch.setitem(
         sys.modules,
         "yuxi.modules.extensions.skills.runtime",
@@ -443,11 +415,6 @@ async def test_prepare_agent_runtime_context_filters_resources_and_derives_runti
             )
         ),
     )
-    monkeypatch.setitem(
-        sys.modules,
-        "yuxi.modules.agents.repositories.definitions",
-        types.SimpleNamespace(AgentRepository=FakeAgentRepository),
-    )
     context = ChatBotContext(
         uid="u1",
         tools=["ask_user_question", "missing"],
@@ -455,7 +422,6 @@ async def test_prepare_agent_runtime_context_filters_resources_and_derives_runti
         mcps=[],
         skills=["skill-a", "missing"],
         preload_skills=["skill-a", "missing"],
-        subagents="all",
     )
 
     prepared = await context_module.prepare_agent_runtime_context(context)
@@ -465,7 +431,6 @@ async def test_prepare_agent_runtime_context_filters_resources_and_derives_runti
     assert prepared.mcps == []
     assert prepared.skills == ["skill-a"]
     assert prepared.preload_skills == ["skill-a"]
-    assert prepared.subagents == ["research-agent"]
     assert not hasattr(prepared, "_visible_knowledge_bases")
     assert prepared._skill_runtime_snapshot.get("effective_skills", []) == ["skill-a", "skill-b"]
     assert prepared._skill_runtime_snapshot.get("runtime_skills", {})["skill-a"]["name"] == "Skill A"
@@ -536,7 +501,6 @@ async def test_prepare_agent_runtime_context_clears_resources_for_missing_user(m
         mcps=["mcp"],
         skills=["skill"],
         preload_skills=["skill"],
-        subagents=["agent"],
     )
 
     with pytest.raises(PermissionError, match="账号已失效"):
@@ -558,7 +522,7 @@ def test_persistent_config_cannot_replace_runtime_identity():
 @pytest.mark.asyncio
 async def test_normalized_persistent_config_drops_subagent_runtime_flags():
     """状态查询与主动压缩的配置归一化不接受运行标记。"""
-    from yuxi.modules.agents.runtime.agent_backends.subagent.context import SubAgentContext
+    from yuxi.modules.agents.runtime.agent_backends.chatbot.context import ChatBotContext
     from yuxi.modules.agents.runtime.context import normalize_agent_context_config
 
     normalized = await normalize_agent_context_config(
@@ -572,7 +536,7 @@ async def test_normalized_persistent_config_drops_subagent_runtime_flags():
         },
         db=None,
         user=None,
-        context_schema=SubAgentContext,
+        context_schema=ChatBotContext,
     )
     assert "parent_thread_id" not in normalized
     assert "is_subagent_runtime" not in normalized
@@ -587,14 +551,13 @@ async def test_all_selection_resolves_new_resources_without_mutating_config(monk
         return {name: [{"key": key} for key in available] for name in names}
 
     monkeypatch.setattr(context_module, "resolve_agent_resource_options", options)
-    config = {"tools": "all", "skills": ["first", "hidden"], "subagents": [], "mcps": "all"}
+    config = {"tools": "all", "skills": ["first", "hidden"], "mcps": "all"}
     first = await normalize_agent_context_config(config, db=None, user=None, context_schema=ChatBotContext)
     assert first["tools"] == ["first"]
     available.append("second")
     second = await normalize_agent_context_config(config, db=None, user=None, context_schema=ChatBotContext)
     assert second["tools"] == second["mcps"] == ["first", "second"]
     assert second["skills"] == ["first"]
-    assert second["subagents"] == []
     assert config["tools"] == "all"
     assert config["skills"] == ["first", "hidden"]
 
@@ -681,34 +644,3 @@ async def test_resource_field_declarations_drive_write_runtime_and_schema(monkey
     assert normalized["selected_tools"] == ["visible"]
     assert normalized["labels"] == ["plain"]
     assert normalized["skills"] == []
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "selection, expected", [(None, ["general-purpose"]), ("all", ["general-purpose", "specialist"]), ([], [])]
-)
-async def test_chatbot_defaults_to_general_purpose_subagent(monkeypatch, selection, expected):
-    """真实 Chatbot 默认仅通用角色，显式全部与空选择保持原意。"""
-    from yuxi.modules.agents.runtime.agent_backends.chatbot.context import ChatBotContext
-
-    async def options(names, **kwargs):
-        return {name: [{"key": slug} for slug in ["general-purpose", "specialist"]] for name in names}
-
-    monkeypatch.setattr(context_module, "resolve_agent_resource_options", options)
-    config = {} if selection is None else {"subagents": selection}
-    normalized = await normalize_agent_context_config(config, db=None, user=None, context_schema=ChatBotContext)
-    assert normalized["subagents"] == expected
-    assert ChatBotContext.get_configurable_items()["subagents"]["default"] == ["general-purpose"]
-
-
-@pytest.mark.asyncio
-async def test_invisible_default_subagent_does_not_enable_other_roles(monkeypatch):
-    """默认通用角色不可见时不扩大选择范围。"""
-    from yuxi.modules.agents.runtime.agent_backends.chatbot.context import ChatBotContext
-
-    async def options(names, **kwargs):
-        return {name: [{"key": "specialist"}] for name in names}
-
-    monkeypatch.setattr(context_module, "resolve_agent_resource_options", options)
-    normalized = await normalize_agent_context_config({}, db=None, user=None, context_schema=ChatBotContext)
-    assert normalized["subagents"] == []

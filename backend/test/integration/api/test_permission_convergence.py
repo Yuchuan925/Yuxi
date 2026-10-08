@@ -253,7 +253,6 @@ async def test_private_definition_sharing_rejects_unauthorized_or_implicit_grant
         {"visibility": "shared"},
         {"share_config": SHARED},
         {"created_by": "forged"},
-        {"backend_id": "SubAgentBackend"},
         {"config_json": {"context": {"max_execution_steps": 999}}},
     ):
         response = await client.post("/api/agent", headers=user["headers"], json={"name": "forged", **payload})

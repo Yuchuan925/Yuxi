@@ -14,6 +14,7 @@ from yuxi.api.routers.public_v1.agents.schemas import (
     ResumeEvent,
     ThreadEvent,
     ThreadEventCreate,
+    TreeControlEvent,
     input_messages_to_domain,
 )
 from yuxi.api.sse import format_sse
@@ -49,7 +50,17 @@ async def submit_thread_event(
     *, db: AsyncSession, scope: ActorScope, thread_id: str, event: ThreadEvent, idempotency_key: str
 ) -> dict:
     """把已规范化事件交给唯一的生命周期用例。"""
-    if isinstance(event, MessageEvent):
+    if isinstance(event, TreeControlEvent):
+        from yuxi.modules.agents.services.cooperation import control_tree
+
+        result = await control_tree(
+            db=db,
+            scope=scope,
+            thread_id=thread_id,
+            idempotency_key=idempotency_key,
+            stopped=event.type == "yuxi.session.tree.stop",
+        )
+    elif isinstance(event, MessageEvent):
         result = await accept_message(
             db=db,
             scope=scope,

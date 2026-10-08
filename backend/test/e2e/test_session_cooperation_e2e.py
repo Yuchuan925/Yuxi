@@ -1,0 +1,403 @@
+"""真实 API、worker、checkpoint 和共享沙盒的 Session 协作链。"""
+
+import asyncio
+import json
+import sys
+import uuid
+
+import asyncpg
+import pytest
+
+from test.e2e.e2e_helpers import archive_public_thread, delete_agent, postgres_dsn
+from test.e2e.test_agent_lifecycle_e2e import _agent, _message, _provider, output_text
+from test.live_api_cleanup import make_test_session_title
+from yuxi.modules.workspace.paths import user_workspace_dir
+from yuxi.modules.agents.runtime.sandbox import get_sandbox_provider, ProvisionerSandboxBackend
+from yuxi.modules.agents.services.leases import release_idle_sandboxes
+from yuxi.infrastructure.postgres.manager import pg_manager
+from yuxi.bootstrap.models import load_models
+
+pytestmark = [pytest.mark.asyncio, pytest.mark.e2e, pytest.mark.slow, pytest.mark.timeout(240)]
+OUTPUT = "DETERMINISTIC_AGENT_E2E_OK"
+MODEL = "cooperation-replay:deterministic-chat"
+SUMMARY_PROMPT = "COOPERATION_SUMMARY_FIXTURE\n{messages}"
+
+
+@pytest.mark.parametrize("parallel_question", [False, True])
+async def test_sessions_use_public_state_and_shared_sandbox(e2e_client, e2e_headers, parallel_question):
+    """根工具创建普通会话，结果通过持久等待返回，文件在同一 Project 中。"""
+    me = await e2e_client.get("/api/auth/me", headers=e2e_headers)
+    uid = me.json()["uid"]
+    await _provider(e2e_client, e2e_headers, base_url="http://api:8766/v1", provider_id="cooperation-replay")
+    slug = await _agent(
+        e2e_client,
+        e2e_headers,
+        uid,
+        model_spec=MODEL,
+        tools=["ask_user_question"] if parallel_question else [],
+        summary_prompt=SUMMARY_PROMPT,
+    )
+    thread_id = turn_id = workdir = None
+    conn = await asyncpg.connect(postgres_dsn())
+    try:
+        created = await e2e_client.post(
+            "/api/v1/agents/threads",
+            headers={**e2e_headers, "Idempotency-Key": str(uuid.uuid4())},
+            json={
+                "agent_id": slug,
+                "title": make_test_session_title("session-cooperation"),
+                "model_spec": MODEL,
+                "tool_approval_mode": "always_trust",
+            },
+        )
+        assert created.status_code == 200, created.text
+        thread_id = created.json()["thread_id"]
+        root = await conn.fetchrow(
+            "SELECT s.project_id, p.workdir_path FROM sessions s "
+            "JOIN projects p ON p.id=s.project_id WHERE s.thread_id=$1",
+            thread_id,
+        )
+        workdir = root["workdir_path"]
+        path = f"/home/gem/user-data/{workdir}/cooperation.txt"
+        runtime_probe = f"/tmp/cooperation-shared-{uuid.uuid4().hex}"
+        question_marker = " PARALLEL_QUESTION" if parallel_question else ""
+        accepted = await e2e_client.post(
+            f"/api/v1/agents/threads/{thread_id}/events",
+            headers={**e2e_headers, "Idempotency-Key": str(uuid.uuid4())},
+            json={
+                "events": [
+                    {
+                        "type": "agent.session.input.message",
+                        "input": [
+                            _message(
+                                f"{OUTPUT} PRIVATE_ROOT_HISTORY COOPERATION_ROOT:{path} "
+                                f"COOP_RUNTIME:{runtime_probe}{question_marker}"
+                            )
+                        ],
+                        "yuxi": {"mode": "follow_up", "tool_approval_mode": "always_trust"},
+                    }
+                ]
+            },
+        )
+        assert accepted.status_code == 202, accepted.text
+        turn_id = accepted.json()["turn_id"]
+        async with asyncio.timeout(90):
+            while True:
+                response = await e2e_client.get(
+                    f"/api/v1/agents/threads/{thread_id}/turns/{turn_id}", headers=e2e_headers
+                )
+                assert response.status_code == 200, response.text
+                turn = response.json()
+                if parallel_question and turn["status"] == "waiting" and turn["waitpoint"]["kind"] == "answer":
+                    resumed = await e2e_client.post(
+                        f"/api/v1/agents/threads/{thread_id}/events",
+                        headers={**e2e_headers, "Idempotency-Key": str(uuid.uuid4())},
+                        json={
+                            "events": [
+                                {
+                                    "type": "yuxi.session.input.resume",
+                                    "turn_id": turn_id,
+                                    "waitpoint_id": turn["waitpoint"]["id"],
+                                    "response": {
+                                        "type": "answer",
+                                        "answers": [{"question_id": "confirm", "answer": "继续"}],
+                                    },
+                                }
+                            ]
+                        },
+                    )
+                    assert resumed.status_code == 202, resumed.text
+                if turn["status"] in {"completed", "failed", "cancelled"}:
+                    break
+                await asyncio.sleep(0.2)
+        assert turn["status"] == "completed", turn
+        assert output_text(turn["output"]) == OUTPUT
+        assert await conn.fetchval("SELECT count(*) FROM sessions WHERE parent_thread_id=$1", thread_id) == 1
+        child = await conn.fetchrow("SELECT * FROM sessions WHERE parent_thread_id=$1", thread_id)
+        assert child and child["status"] == "active"
+        assert child["tree_root_thread_id"] == thread_id and child["project_id"] == root["project_id"]
+        run = await conn.fetchrow(
+            "SELECT * FROM agent_runs WHERE thread_id=$1 ORDER BY created_at DESC LIMIT 1", child["thread_id"]
+        )
+        assert run["run_type"] == "chat" and run["runtime_scope_id"] == thread_id and run["status"] == "completed"
+        state = await e2e_client.get(f"/api/v1/agents/threads/{thread_id}/state", headers=e2e_headers)
+        assert state.status_code == 200, state.text
+        member = next(
+            s for s in state.json()["agent_state"]["cooperation"]["sessions"] if s["session_id"] == child["thread_id"]
+        )
+        assert "output" not in member and member["result_run_id"] == run["id"]
+        assert (
+            user_workspace_dir(uid) / root["workdir_path"] / "cooperation.txt"
+        ).read_text() == "cooperation verified"
+        child_turn = await e2e_client.get(
+            f"/api/v1/agents/threads/{child['thread_id']}/turns/{run['turn_id']}", headers=e2e_headers
+        )
+        assert child_turn.status_code == 200 and output_text(child_turn.json()["output"]) == OUTPUT
+        assert json.loads(child["config_snapshot"])["system_prompt"].count("用户工作区 agents/AGENTS.md") == 0
+        provider = get_sandbox_provider()
+        connection = await asyncio.to_thread(provider.get, thread_id, uid=uid, workdir_path=root["workdir_path"])
+        assert connection is not None
+        assert (
+            await asyncio.to_thread(provider.get, child["thread_id"], uid=uid, workdir_path=root["workdir_path"])
+            is None
+        )
+        backend = ProvisionerSandboxBackend(thread_id=thread_id, uid=uid, workdir_path=root["workdir_path"])
+        temporary = f"/tmp/cooperation-{uuid.uuid4().hex}"
+        assert (await asyncio.to_thread(backend.execute, f"printf transient > {temporary}")).exit_code == 0
+        # 压缩维护不能释放共享环境；根与成员均保留同一 /tmp 事实。
+        for target in (thread_id, child["thread_id"]):
+            compressed = await e2e_client.post(f"/api/v1/agents/threads/{target}/compress", headers=e2e_headers)
+            assert compressed.status_code == 200, compressed.text
+            preserved = await asyncio.to_thread(backend.execute, f"cat {temporary}")
+            assert preserved.exit_code == 0 and preserved.output == "transient"
+            assert (
+                await asyncio.to_thread(provider.get, child["thread_id"], uid=uid, workdir_path=root["workdir_path"])
+                is None
+            )
+        await conn.execute(
+            "UPDATE session_cooperation_runtimes SET idle_since=now()-interval '6 minutes' "
+            "WHERE tree_root_thread_id=$1",
+            thread_id,
+        )
+        load_models()
+        pg_manager.initialize()
+        try:
+            await release_idle_sandboxes()
+        finally:
+            await pg_manager.close()
+        assert await conn.fetchval(
+            "SELECT released FROM session_cooperation_runtimes WHERE tree_root_thread_id=$1", thread_id
+        )
+        assert await asyncio.to_thread(provider.get, thread_id, uid=uid, workdir_path=root["workdir_path"]) is None
+        rebuilt = await asyncio.to_thread(backend.execute, f"cat {path} && test ! -e {temporary}")
+        assert rebuilt.exit_code == 0 and rebuilt.output == "cooperation verified"
+
+    finally:
+        await conn.close()
+        if thread_id:
+            members = await e2e_client.get(f"/api/v1/agents/threads/{thread_id}/state", headers=e2e_headers)
+            assert members.status_code == 200, members.text
+            for member in members.json()["agent_state"]["cooperation"]["sessions"]:
+                if member["session_id"] != thread_id:
+                    await archive_public_thread(
+                        e2e_client, e2e_headers, member["session_id"], turn_id=member["turn_id"]
+                    )
+            await archive_public_thread(e2e_client, e2e_headers, thread_id, turn_id=turn_id)
+            if workdir is not None:
+                await asyncio.to_thread(
+                    get_sandbox_provider().release,
+                    thread_id,
+                    uid=uid,
+                    workdir_path=workdir,
+                    clear_cache_on_delete_failure=True,
+                )
+        await delete_agent(e2e_client, e2e_headers, slug)
+
+
+@pytest.mark.parametrize("stop_tree", [False, True])
+async def test_full_tree_capacity_control_and_sibling_tools(e2e_client, e2e_headers, stop_tree):
+    """真实 worker 满槽等待推进；兄弟工具与持久整树控制不串轮次。"""
+    from yuxi.modules.agents.services.cooperation import reconcile_stopped_trees
+
+    me = await e2e_client.get("/api/auth/me", headers=e2e_headers)
+    await _provider(e2e_client, e2e_headers, base_url="http://api:8766/v1", provider_id="cooperation-replay")
+    slug = await _agent(e2e_client, e2e_headers, me.json()["uid"], model_spec=MODEL, summary_prompt=SUMMARY_PROMPT)
+    conn = await asyncpg.connect(postgres_dsn())
+    root_id = root_turn = gate_file = workdir = None
+
+    async def event(thread_id, payload):
+        """通过真实公开入口提交独立输入或控制。"""
+        result = await e2e_client.post(
+            f"/api/v1/agents/threads/{thread_id}/events",
+            headers={**e2e_headers, "Idempotency-Key": str(uuid.uuid4())},
+            json={"events": [payload]},
+        )
+        assert result.status_code == 202, result.text
+        return result.json()
+
+    try:
+        created = await e2e_client.post(
+            "/api/v1/agents/threads",
+            headers={**e2e_headers, "Idempotency-Key": str(uuid.uuid4())},
+            json={
+                "agent_id": slug,
+                "title": make_test_session_title("cooperation-capacity"),
+                "model_spec": MODEL,
+                "tool_approval_mode": "always_trust",
+            },
+        )
+        assert created.status_code == 200, created.text
+        root_id = created.json()["thread_id"]
+        workdir = await conn.fetchval(
+            "SELECT p.workdir_path FROM sessions s JOIN projects p ON p.id=s.project_id WHERE s.thread_id=$1", root_id
+        )
+        gate_file = user_workspace_dir(me.json()["uid"]) / workdir / "capacity-release"
+        gate_path = f"/home/gem/user-data/{workdir}/capacity-release"
+        accepted = await event(
+            root_id,
+            {
+                "type": "agent.session.input.message",
+                "input": [_message(f"COOP_CAPACITY_ROOT PRIVATE_ROOT_HISTORY CAP_GATE:{gate_path}")],
+                "yuxi": {"mode": "follow_up", "tool_approval_mode": "always_trust"},
+            },
+        )
+        root_turn = accepted["turn_id"]
+        async with asyncio.timeout(90):
+            while True:
+                observed = await conn.fetchrow(
+                    "SELECT (SELECT count(*) FROM agent_runs WHERE runtime_scope_id=$1 "
+                    "AND status IN ('running','cancel_requested') AND worker_id IS NOT NULL) AS active, "
+                    "(SELECT status='waiting' FROM agent_turns WHERE id=$2) AS waiting, "
+                    "(SELECT count(*) FROM agent_runs WHERE runtime_scope_id=$1 AND thread_id<>$1 "
+                    "AND status='running' AND worker_id IS NOT NULL) AS children",
+                    root_id,
+                    root_turn,
+                )
+                assert observed["active"] <= 4
+                if observed["children"] == 4 and observed["waiting"]:
+                    break
+                await asyncio.sleep(0.05)
+        members = await conn.fetch(
+            "SELECT thread_id,cooperation_path FROM sessions WHERE tree_root_thread_id=$1 ORDER BY cooperation_path",
+            root_id,
+        )
+        assert len(members) == 6
+        ready_file = gate_file.with_name(gate_file.name + "-ready")
+        if not stop_tree:
+            ready_file.write_text("released")
+        queued = None
+        if stop_tree:
+            queued = await event(
+                root_id,
+                {
+                    "type": "agent.session.input.message",
+                    "input": [_message("COOP_CAPACITY_FOLLOWUP")],
+                    "yuxi": {"mode": "follow_up", "tool_approval_mode": "always_trust"},
+                },
+            )
+            assert queued["turn_id"] is None
+            await event(root_id, {"type": "yuxi.session.tree.stop"})
+            # 独立测试进程重读持久停止意图，与真实 worker 同时重复执行恢复。
+            load_models()
+            pg_manager.initialize()
+            try:
+                await reconcile_stopped_trees()
+                await reconcile_stopped_trees()
+            finally:
+                await pg_manager.close()
+            gate_file.write_text("released")
+            ready_file.write_text("released")
+        async with asyncio.timeout(90):
+            while True:
+                active = await conn.fetchval(
+                    "SELECT count(*) FROM agent_runs WHERE runtime_scope_id=$1 "
+                    "AND status IN ('running','cancel_requested') AND worker_id IS NOT NULL",
+                    root_id,
+                )
+                assert active <= 4
+                turns = await conn.fetch(
+                    "SELECT id,status,thread_id FROM agent_turns WHERE thread_id=ANY($1::varchar[])",
+                    [m["thread_id"] for m in members],
+                )
+                if turns and all(t["status"] in {"completed", "failed", "cancelled"} for t in turns):
+                    break
+                await asyncio.sleep(0.1)
+        assert not any(t["status"] == "failed" for t in turns), turns
+        if stop_tree:
+            assert all(t["status"] == "cancelled" for t in turns)
+            assert await conn.fetchval(
+                "SELECT stopped FROM session_cooperation_runtimes WHERE tree_root_thread_id=$1", root_id
+            )
+            assert await conn.fetchval(
+                "SELECT bool_and(queue_paused) FROM sessions WHERE tree_root_thread_id=$1", root_id
+            )
+            assert await conn.fetchval("SELECT status FROM agent_inputs WHERE id=$1", queued["input_id"]) == "pending"
+            await event(root_id, {"type": "yuxi.session.tree.continue"})
+            async with asyncio.timeout(60):
+                while True:
+                    resumed = await conn.fetchrow(
+                        "SELECT turn_id,status FROM agent_inputs WHERE id=$1", queued["input_id"]
+                    )
+                    if (
+                        resumed["turn_id"]
+                        and await conn.fetchval("SELECT status FROM agent_turns WHERE id=$1", resumed["turn_id"])
+                        == "completed"
+                    ):
+                        break
+                    await asyncio.sleep(0.1)
+            assert resumed["turn_id"] != root_turn
+            assert await conn.fetchval("SELECT status FROM agent_turns WHERE id=$1", root_turn) == "cancelled"
+        else:
+            victim = next(m for m in members if m["cooperation_path"] == "/root/worker4")
+            recipient = next(m for m in members if m["cooperation_path"] == "/root/worker1")
+            assert next(t for t in turns if t["thread_id"] == victim["thread_id"])["status"] == "cancelled"
+            assert (
+                await conn.fetchval(
+                    "SELECT count(*) FROM session_cooperation_events WHERE recipient_thread_id=$1 "
+                    "AND kind='message' AND content='SIBLING_INFORMATION'",
+                    recipient["thread_id"],
+                )
+                == 1
+            )
+            assert (
+                await conn.fetchval("SELECT count(*) FROM agent_inputs WHERE thread_id=$1", recipient["thread_id"]) == 2
+            )
+            assert all(t["status"] == "completed" for t in turns if t["thread_id"] != victim["thread_id"])
+    finally:
+        body_error = sys.exception()
+        if gate_file is not None:
+            gate_file.write_text("released")
+            gate_file.with_name(gate_file.name + "-ready").write_text("released")
+        await conn.close()
+        try:
+            if root_id:
+                state = await e2e_client.get(f"/api/v1/agents/threads/{root_id}/state", headers=e2e_headers)
+                assert state.status_code == 200, state.text
+                for member in reversed(state.json()["agent_state"]["cooperation"]["sessions"]):
+                    queue = await e2e_client.get(
+                        f"/api/v1/agents/threads/{member['session_id']}/queue", headers=e2e_headers
+                    )
+                    assert queue.status_code == 200, queue.text
+                    for pending in queue.json()["inputs"]:
+                        await event(
+                            member["session_id"],
+                            {"type": "yuxi.session.input.cancel_input", "input_id": pending["input_id"]},
+                        )
+                    try:
+                        await archive_public_thread(
+                            e2e_client, e2e_headers, member["session_id"], turn_id=member["turn_id"]
+                        )
+                    except TimeoutError as error:
+                        diagnostic = await asyncpg.connect(postgres_dsn())
+                        try:
+                            blockers = await diagnostic.fetch(
+                                "SELECT id,status,worker_id,runtime_cleanup_pending FROM agent_runs "
+                                "WHERE thread_id=$1 AND (status NOT IN "
+                                "('completed','failed','cancelled','interrupted') "
+                                "OR runtime_cleanup_pending)",
+                                member["session_id"],
+                            )
+                            pending = await diagnostic.fetch(
+                                "SELECT id,status,turn_id FROM agent_inputs WHERE thread_id=$1 AND status='pending'",
+                                member["session_id"],
+                            )
+                        finally:
+                            await diagnostic.close()
+                        error.add_note(
+                            f"Archive blockers: session={member['session_id']}, runs={blockers}, pending={pending}"
+                        )
+                        raise
+            if root_id and workdir is not None:
+                await asyncio.to_thread(
+                    get_sandbox_provider().release,
+                    root_id,
+                    uid=me.json()["uid"],
+                    workdir_path=workdir,
+                    clear_cache_on_delete_failure=True,
+                )
+            await delete_agent(e2e_client, e2e_headers, slug)
+        except Exception as cleanup_error:
+            if body_error is not None:
+                body_error.add_note(f"测试清理另有失败: {cleanup_error}")
+                raise body_error from cleanup_error
+            raise

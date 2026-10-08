@@ -18,7 +18,7 @@ import yuxi.modules.agents.services.memory as memory_service
 from yuxi.infrastructure.postgres.manager import pg_manager
 from yuxi.modules.agents.models.runs import AgentRun
 from yuxi.modules.agents.models.turns import AgentTurn
-from yuxi.modules.agents.models.sessions import Session, SubagentThread
+from yuxi.modules.agents.models.sessions import Session
 from yuxi.modules.agents.models.messages import Message, ToolCall
 from yuxi.modules.workspace.models import Project
 from yuxi.modules.identity.models import User, UserConfig
@@ -111,7 +111,7 @@ async def memory_database(tmp_path, monkeypatch: pytest.MonkeyPatch):
         async with session_factory() as db:
             await db.execute(delete(AgentRun).where(AgentRun.id == run_id))
             await db.execute(delete(AgentTurn).where(AgentTurn.id == turn_id))
-            await db.execute(delete(SubagentThread).where(SubagentThread.uid == uid))
+
             owned_message_ids = select(Message.id).join(Session).where(Session.uid == uid)
             await db.execute(delete(ToolCall).where(ToolCall.message_id.in_(owned_message_ids)))
             await db.execute(
@@ -193,18 +193,14 @@ async def test_history_query_uses_postgres_visibility_and_field_allowlists(memor
             agent_id="worker",
             status="active",
         )
-        db.add_all([visible, parent, child])
+        db.add_all([visible, parent])
         await db.flush()
-        db.add(
-            SubagentThread(
-                uid=uid,
-                parent_session_record_id=parent.id,
-                child_session_record_id=child.id,
-                child_thread_id=child.thread_id,
-                subagent_slug="worker",
-                created_by_run_id=identity["run_id"],
-            )
-        )
+        child.tree_root_thread_id = parent.thread_id
+        child.parent_thread_id = parent.thread_id
+        child.cooperation_name = "worker"
+        child.cooperation_path = "/root/worker"
+        db.add(child)
+        await db.flush()
         visible_message = Message(
             session_record_id=visible.id,
             role="assistant",
@@ -249,7 +245,7 @@ async def test_history_query_uses_postgres_visibility_and_field_allowlists(memor
             include_tools=True,
         )
 
-    assert [item["thread_id"] for item in search["items"]] == [visible.thread_id]
+    assert {item["thread_id"] for item in search["items"]} == {visible.thread_id, child.thread_id}
     assert [item["content"] for item in default_read["messages"]] == ["needle visible"]
     assert default_read["tool_calls"] == []
     serialized_default = str(default_read)

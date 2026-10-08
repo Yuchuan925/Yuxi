@@ -33,7 +33,7 @@ Yuxi 采用 [Diátaxis](https://diataxis.fr/) 的四类文档思路。现有目�
 
 - `intro/`：第一次使用和产品任务的顺序教程。
 - `advanced/`：部署、配置、外部集成和故障处理参考。
-- `agents/`：Agent、工具、MCP、Skills、子智能体的配置和扩展方法。
+- `agents/`：Agent、工具、MCP、Skills、会话协作的配置和扩展方法。
 - `mechanisms/`：运行链路、状态、权限、文件与失败恢复的解释。
 - `develop-guides/`：贡献、测试、设计和文档治理。
 - `decisions/`：代码和当前文档无法表达的非显然取舍；它不是运行时说明的副本。

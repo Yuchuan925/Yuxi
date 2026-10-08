@@ -82,7 +82,6 @@ test('管理员打开坏配置不写入，明确保存以 slug 修复共享范�
   assert.equal(form.shareConfigNeedsRepair.value, false)
 })
 
-
 test('普通用户的私有智能体不提交共享配置，也不提供共享入口', async () => {
   const { form } = await setupForm({
     id: 91, agent_id: 'private-admin', name: '私有', backend_id: 'ChatbotAgent',
@@ -96,16 +95,10 @@ test('普通用户的私有智能体不提交共享配置，也不提供共享�
   assert.equal('publishing' in form, false)
 })
 
-test('管理员创建主 Agent 默认私有，共享勾选和 SubAgent 类型共用权限范围', async () => {
+test('管理员创建 Agent 默认私有，共享勾选设置权限范围', async () => {
   const { form } = await setupForm({})
   form.openCreate()
-  form.agentForm.name = '限定子 Agent'
-  form.agentForm.backend_id = 'SubAgentBackend'
-  assert.equal(Boolean(form.canEditAgentShareConfig.value), true)
-  const payload = form.buildAgentPayload()
-  assert.equal(payload.visibility, 'shared')
-  assert.deepEqual(payload.share_config.read_scope.user_uids, ['admin'])
-  form.agentForm.backend_id = 'ChatbotAgent'
+  form.agentForm.name = '资料助手'
   assert.equal(Boolean(form.canEditAgentShareConfig.value), true)
   assert.equal(form.buildAgentPayload().visibility, 'private')
   assert.equal('share_config' in form.buildAgentPayload(), false)
@@ -235,7 +228,10 @@ test('等待时不重复创建，未知结果禁止在同一草稿直接重试�
   await request
   assert.equal(form.createOutcomeUnknown.value, false)
   assert.equal(form.showAgentModal.value, true)
-  store.createAgent = async () => { writes.push('sent'); throw new TypeError('connection lost') }
+  store.createAgent = async () => {
+    writes.push('sent')
+    throw new TypeError('connection lost')
+  }
   await form.saveAgent()
   assert.equal(form.createOutcomeUnknown.value, true)
   const advancedBefore = form.createAdvancedOpen.value
@@ -276,13 +272,12 @@ test('基本信息与高级配置共用一份草稿，等待时不能切换，�
   assert.equal(writes[0].payload.config_json.context.system_prompt, '整理资料')
 })
 
-for (const invalid of ['name', 'share', 'subagent-share']) {
+for (const invalid of ['name', 'share']) {
   test(`高级区域的${invalid}校验返回基本区域并聚焦`, async () => {
     const { form, writes } = await setupForm({})
     form.openCreate()
     form.agentForm.name = invalid === 'name' ? ' ' : '资料助手'
     if (invalid === 'share') form.agentForm.visibility = 'shared'
-    if (invalid === 'subagent-share') form.agentForm.backend_id = 'SubAgentBackend'
     await form.toggleCreateAdvanced()
     let focused = false
     const target = { focus() { focused = true } }
@@ -357,7 +352,6 @@ for (const outcome of ['pending', 'unknown', 'invalid']) {
   })
 }
 
-
 test('独立 MCP 创建阻止父提交，成功选择后取消 Agent 不发送创建请求', async () => {
   const { form, writes } = await setupForm({})
   form.openCreate()
@@ -413,7 +407,7 @@ test('切换后端与重新打开后，旧 Schema 响应不能覆盖当前草稿
   form.openCreate()
   const first = form.toggleCreateAdvanced()
   form.runtimeConfig.value = { system_prompt: '旧后端草稿' }
-  form.agentForm.backend_id = 'SubAgentBackend'
+  form.agentForm.backend_id = 'AnotherTestBackend'
   await nextTick()
   assert.deepEqual(form.createContext.value, {})
   assert.equal(reads.length, 2)
@@ -433,7 +427,6 @@ test('切换后端与重新打开后，旧 Schema 响应不能覆盖当前草稿
   assert.deepEqual(form.createConfigItems.value, {})
   assert.deepEqual(form.createContext.value, {})
 })
-
 
 test('专属 Skill mutation 等待时父级不关闭保存切换或打开，结束后恢复', async () => {
   const detail = { agent_id: 'bound-parent', name: '指南', backend_id: 'ChatbotAgent', visibility: 'private', can_manage: true }
@@ -480,7 +473,6 @@ test('专属 Skill mutation 等待时父级不关闭保存切换或打开，结�
   assert.equal(writes[0].payload.name, '修改名称')
   assert.equal(form.showAgentModal.value, false)
 })
-
 
 test('创建请求与独立资源忙碌时路由不能离开，结束后恢复', async () => {
   const { form, routeGuards } = await setupForm(null)

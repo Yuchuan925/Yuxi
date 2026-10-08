@@ -21,6 +21,7 @@ from yuxi.modules.agents.services.attachments import (
     upload_tmp_attachment_view,
 )
 from yuxi.modules.agents.services.compression import compress_thread_context as compress_context
+from yuxi.modules.agents.services.cooperation import get_cooperation_summary
 from yuxi.modules.agents.services.state import get_agent_state_view
 from yuxi.modules.agents.services.threads import get_thread_snapshot
 
@@ -110,10 +111,21 @@ async def upload_image(file: UploadFile = File(...)):
     return result
 
 
+@router.get("/threads/{thread_id}/cooperation")
+async def retrieve_cooperation_summary(
+    thread_id: str,
+    context: PublicAgentContext = Depends(require_public_context),
+    db: AsyncSession = Depends(get_db),
+):
+    """读取不包含 checkpoint 和结果正文的完整协作摘要。"""
+    return await get_cooperation_summary(db=db, scope=context.scope, thread_id=thread_id)
+
+
 @router.get("/threads/{thread_id}/state")
 async def retrieve_thread_state(
     thread_id: str,
     include_messages: bool = Query(default=False),
+    include_relations: bool = Query(default=True),
     context: PublicAgentContext = Depends(require_public_context),
     db: AsyncSession = Depends(get_db),
 ):
@@ -124,6 +136,7 @@ async def retrieve_thread_state(
         current_user=context.user,
         db=db,
         include_messages=include_messages,
+        include_relations=include_relations,
         app_id=context.scope.app_id,
     )
 

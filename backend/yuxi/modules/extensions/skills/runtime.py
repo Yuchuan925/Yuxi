@@ -58,7 +58,7 @@ async def resolve_runtime_skills_for_context(
         from yuxi.modules.agents.repositories.definitions import AgentRepository
         from yuxi.modules.extensions.skills.repository import SkillRepository
 
-        agent = await AgentRepository(db).get_visible_by_slug(slug=agent_slug, user=user, kind="any")
+        agent = await AgentRepository(db).get_visible_by_slug(slug=agent_slug, user=user)
         if agent is None:
             raise PermissionError("智能体不存在或无权限访问")
         bound = await SkillRepository(db).get_by_bound_agent_id(agent.id)

@@ -17,7 +17,7 @@ class _FakeDb:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("run_type", ["resume", "subagent"])
+@pytest.mark.parametrize("run_type", ["resume", "chat"])
 async def test_resume_source_run_ids_follow_full_same_session_ancestry(run_type):
     ancestor = SimpleNamespace(
         id="ancestor",

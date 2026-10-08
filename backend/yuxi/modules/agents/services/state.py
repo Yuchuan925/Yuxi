@@ -6,15 +6,13 @@ from typing import Any
 
 from fastapi import HTTPException
 
-from yuxi.infrastructure.observability.logging import logger
 from yuxi.infrastructure.postgres.checkpointer import get_langgraph_checkpointer
 from yuxi.infrastructure.postgres.manager import pg_manager
 from yuxi.modules.agents.repositories.runs import AgentRunRepository
 from yuxi.modules.agents.repositories.sessions import SessionRepository
-from yuxi.modules.agents.repositories.subagents import SubagentThreadRepository
 from yuxi.modules.agents.repositories.turn import AgentTurnRepository
+from yuxi.modules.agents.services.cooperation import tree_snapshot
 from yuxi.modules.agents.services.execution import build_pending_interrupt_payload, extract_agent_state
-from yuxi.modules.agents.services.subagents import serialize_subagent_run_state
 from yuxi.modules.identity.models import User
 
 
@@ -74,34 +72,8 @@ async def get_agent_state_view(
                     "run_id": latest_run.id,
                 }
         if include_relations:
-            # checkpoint 保存模型上下文；页面加载以持久 Run 的身份与状态为准。
-            child_runs = await run_repo.list_subagent_runs_for_session(agent_session.id, current_uid)
-            response["agent_state"]["subagent_runs"] = [serialize_subagent_run_state(run) for run in child_runs]
-            relation = await SubagentThreadRepository(db).get_by_child_session_for_user(
-                agent_session.id,
-                str(current_uid),
-            )
-            if relation:
-                parent_session = await session_repo.get_session_by_id(relation.parent_session_record_id)
-                if (
-                    not parent_session
-                    or parent_session.uid != str(current_uid)
-                    or parent_session.app_id != app_id
-                    or parent_session.status == "deleted"
-                ):
-                    raise HTTPException(status_code=404, detail="父对话线程不存在")
-                response["parent_thread_id"] = parent_session.thread_id
-                response["subagent_thread"] = relation.to_dict()
-                latest_run = await run_repo.get_latest_subagent_run_by_thread_for_user(
-                    thread_id,
-                    str(current_uid),
-                )
-                if latest_run:
-                    try:
-                        response["subagent_run"] = serialize_subagent_run_state(latest_run)
-                    except ValueError as exc:
-                        logger.error(f"子智能体运行记录格式异常: thread_id={thread_id}, run_id={latest_run.id}, {exc}")
-                        raise HTTPException(status_code=500, detail="子智能体运行记录格式异常") from exc
+            response["agent_state"]["cooperation"] = await tree_snapshot(db, agent_session)
+            response["parent_thread_id"] = agent_session.parent_thread_id
         if include_messages:
             from yuxi.modules.agents.repositories.public_items import PublicItemRepository
             from yuxi.modules.agents.services.public_items import serialize_public_items
@@ -112,6 +84,4 @@ async def get_agent_state_view(
             ]
         return response
 
-    # 子智能体线程在创建时必然同时写入子对话与线程关系（见 SubagentRunService.start），
-    # 由上面的 agent_session 分支统一处理；走到这里说明该 thread 没有对应对话，即线程不存在。
     raise HTTPException(status_code=404, detail="对话线程不存在")

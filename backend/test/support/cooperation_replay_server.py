@@ -1,0 +1,257 @@
+"""统一 Session 协作的确定性模型，检查子会话没有父历史。"""
+
+import json
+import re
+import shlex
+import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+OUTPUT = "DETERMINISTIC_AGENT_E2E_OK"
+
+
+def capacity_calls(messages, results):
+    """重放满槽、兄弟通信和精确取消；工具结果决定下一步。"""
+    users = " ".join(str(m["content"]) for m in messages if m["role"] == "user")
+    gate = re.search(r'CAP_GATE:(/[^\s"\\]+)', users).group(1)
+    if "COOP_CAPACITY_CHILD:" in users:
+        if "capacity-delay" not in results:
+            target_gate = gate if "COOP_CAPACITY_CHILD:4" in users else gate + "-ready"
+            command = "python3 -c " + shlex.quote(
+                f"import pathlib,time; p=pathlib.Path({target_gate!r}); "
+                "[time.sleep(0.1) for _ in range(900) if not p.exists()]; assert p.exists(); print('released')"
+            )
+            return [("capacity-delay", "execute", {"command": command})]
+        if "COOP_CAPACITY_CHILD:0" in users and "capacity-mail" not in results:
+            if "capacity-list" not in results:
+                return [("capacity-list", "list_sessions", {})]
+            members = json.loads(results["capacity-list"])["sessions"]
+            victim = next(member for member in members if member["path"] == "/root/worker4")
+            return [
+                ("capacity-mail", "send_message", {"target": "/root/worker1", "content": "SIBLING_INFORMATION"}),
+                (
+                    "capacity-input",
+                    "submit_input",
+                    {"target": "/root/worker1", "description": "COOP_CAPACITY_FOLLOWUP"},
+                ),
+                ("capacity-cancel", "cancel_turn", {"target": victim["session_id"], "turn_id": victim["turn_id"]}),
+            ]
+        if "COOP_CAPACITY_CHILD:0" in users and "capacity-release" not in results:
+            return [("capacity-release", "write_file", {"file_path": gate, "content": "released"})]
+        return []
+    if "capacity-create-0" not in results:
+        return [
+            (
+                f"capacity-create-{i}",
+                "create_session",
+                {"name": f"worker{i}", "description": f"COOP_CAPACITY_CHILD:{i} CAP_GATE:{gate}"},
+            )
+            for i in range(5)
+        ]
+    if "capacity-wait" not in results:
+        return [
+            (
+                "capacity-wait",
+                "wait_sessions",
+                {
+                    "targets": [json.loads(results[f"capacity-create-{i}"])["session_id"] for i in range(5)],
+                    "after_cursor": 0,
+                    "timeout_seconds": 60,
+                },
+            )
+        ]
+    return []
+
+
+class CooperationReplayHandler(BaseHTTPRequestHandler):
+    """只接受协作测试声明的模型契约。"""
+
+    def do_GET(self):
+        """暴露确定性 fixture 的就绪事实。"""
+        self.send_response(200 if self.path == "/health" else 404)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
+    def do_POST(self):
+        """根据已提交的工具结果推进固定场景。"""
+        request = json.loads(self.rfile.read(int(self.headers["content-length"])))
+        messages = request["messages"]
+        serialized = json.dumps(messages, ensure_ascii=False)
+        child = any(
+            m["role"] == "user"
+            and any(marker in str(m["content"]) for marker in ("COOPERATION_CHILD:", "COOP_CAPACITY_CHILD:"))
+            for m in messages
+        )
+        summary = (
+            request.get("stream") is False
+            and not request.get("tools")
+            and len(messages) == 1
+            and messages[0]["role"] == "user"
+            and str(messages[0]["content"]).startswith("COOPERATION_SUMMARY_FIXTURE\n")
+        )
+        tools = {item["function"]["name"] for item in request.get("tools", [])}
+        error = None
+        if self.headers.get("authorization") != "Bearer ci-replay-key":
+            error = "authorization"
+        elif request["model"] != "deterministic-chat" or (not summary and request.get("stream") is not True):
+            error = "model contract"
+        elif not summary and (
+            not {
+                "create_session",
+                "send_message",
+                "submit_input",
+                "cancel_turn",
+                "wait_sessions",
+                "wait_inputs",
+                "get_result",
+                "list_sessions",
+            }
+            <= tools
+        ):
+            error = "uniform tools missing"
+        elif not summary and child and "PRIVATE_ROOT_HISTORY" in serialized:
+            error = "parent context inherited"
+        if error:
+            body = json.dumps({"error": error}).encode()
+            self.send_response(422)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+        if summary:
+            self.write_summary_completion()
+            return
+        results = {m.get("tool_call_id"): m.get("content") for m in messages if m["role"] == "tool"}
+        calls = []
+        if "COOP_CAPACITY" in serialized:
+            calls = capacity_calls(messages, results)
+        else:
+            calls = self.shared_sandbox_calls(serialized, child, results)
+        self.write_completion(calls)
+
+    def shared_sandbox_calls(self, serialized, child, results):
+        """按父子消息与工具结果验证共享环境。"""
+        calls = []
+        runtime_probe = re.search(r"COOP_RUNTIME:(/tmp/[\w-]+)", serialized).group(1)
+        if child:
+            if "child-write" not in results:
+                path = re.search(r'COOPERATION_CHILD:(/[^\s"\\]+)', serialized).group(1)
+                calls = [
+                    (
+                        "child-probe",
+                        "execute",
+                        {"command": f"test -f {runtime_probe} && printf shared_runtime_verified"},
+                    ),
+                    ("child-write", "write_file", {"file_path": path, "content": "cooperation verified"}),
+                ]
+            elif "shared_runtime_verified" not in str(results.get("child-probe")):
+                raise AssertionError("child did not use the dispatcher's actual sandbox")
+        elif "root-prepare" not in results:
+            calls = [("root-prepare", "execute", {"command": f"printf shared > {runtime_probe}"})]
+        elif "create-worker" not in results:
+            path = re.search(r'COOPERATION_ROOT:(/[^\s"\\]+)', serialized).group(1)
+            calls = [
+                (
+                    "create-worker",
+                    "create_session",
+                    {
+                        "name": "worker",
+                        "description": f"{OUTPUT} COOPERATION_CHILD:{path} COOP_RUNTIME:{runtime_probe}",
+                    },
+                )
+            ]
+            if "PARALLEL_QUESTION" in serialized:
+                calls.append(
+                    (
+                        "parallel-question",
+                        "ask_user_question",
+                        {"questions": [{"question_id": "confirm", "question": "继续验证？"}]},
+                    )
+                )
+        elif "wait-worker" not in results:
+            created = json.loads(results["create-worker"])
+            calls = [
+                (
+                    "wait-worker",
+                    "wait_inputs",
+                    {"input_ids": [created["input_id"]], "timeout_seconds": 60},
+                )
+            ]
+        elif "exact-result" not in results:
+            created = json.loads(results["create-worker"])
+            wait = json.loads(results["wait-worker"])
+            if not all(item["terminal"] for item in wait["results"]):
+                raise AssertionError("task wait resumed before its submitted input finished")
+            calls = [("exact-result", "get_result", {"input_id": created["input_id"]})]
+        elif json.loads(results["exact-result"])["output"] != OUTPUT:
+            raise AssertionError("exact child result was not returned")
+        return calls
+
+    def write_summary_completion(self):
+        """响应明确标记的主动压缩请求，保持非流式 OpenAI completion 格式。"""
+        body = json.dumps(
+            {
+                "id": "chatcmpl-cooperation-summary",
+                "object": "chat.completion",
+                "created": int(time.time()),
+                "model": "deterministic-chat",
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {"role": "assistant", "content": "COOPERATION_SUMMARY_OK"},
+                        "finish_reason": "stop",
+                    }
+                ],
+                "usage": {"prompt_tokens": 8, "completion_tokens": 4, "total_tokens": 12},
+            }
+        ).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def write_completion(self, calls):
+        """返回固定 streaming 模型响应。"""
+        common = {
+            "id": "chatcmpl-cooperation",
+            "object": "chat.completion.chunk",
+            "created": int(time.time()),
+            "model": "deterministic-chat",
+        }
+        delta = {"role": "assistant"}
+        if calls:
+            delta["tool_calls"] = [
+                {
+                    "index": index,
+                    "id": call_id,
+                    "type": "function",
+                    "function": {"name": name, "arguments": json.dumps(args)},
+                }
+                for index, (call_id, name, args) in enumerate(calls)
+            ]
+        else:
+            delta["content"] = OUTPUT
+        payloads = [
+            {**common, "choices": [{"index": 0, "delta": delta, "finish_reason": None}]},
+            {
+                **common,
+                "choices": [{"index": 0, "delta": {}, "finish_reason": "tool_calls" if calls else "stop"}],
+                "usage": {"prompt_tokens": 8, "completion_tokens": 4, "total_tokens": 12},
+            },
+        ]
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Connection", "close")
+        self.end_headers()
+        for payload in payloads:
+            self.wfile.write(f"data: {json.dumps(payload)}\n\n".encode())
+        self.wfile.write(b"data: [DONE]\n\n")
+        self.wfile.flush()
+        self.close_connection = True
+
+    def log_message(self, *_args):
+        """避免测试日志包含模型消息。"""
+
+
+if __name__ == "__main__":
+    ThreadingHTTPServer(("0.0.0.0", 8766), CooperationReplayHandler).serve_forever()

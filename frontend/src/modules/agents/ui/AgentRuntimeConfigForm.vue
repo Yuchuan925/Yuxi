@@ -488,7 +488,7 @@ const segmentOptions = [
   { label: '其他', value: 'other' }
 ]
 const activeSegment = computed(() => (props.showSegmented ? currentSegment.value : props.segment))
-const RESOURCE_CONFIG_KINDS = new Set(['tools', 'knowledges', 'mcps', 'skills', 'subagents'])
+const RESOURCE_CONFIG_KINDS = new Set(['tools', 'knowledges', 'mcps', 'skills'])
 /** 判断配置项是否属于可管理的资源分组。 */
 const isResourceConfigKind = (kind) => RESOURCE_CONFIG_KINDS.has(kind)
 const KNOWLEDGE_BASE_SKILL_SLUG = 'knowledge-base'

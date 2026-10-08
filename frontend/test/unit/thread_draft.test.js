@@ -143,3 +143,22 @@ test('localStorage 不可用时草稿功能静默降级不抛错', () => {
     session.clearDraftThread()
   })
 })
+
+test('同一线程的两个视图切换回来各自恢复编辑内容', () => {
+  const values = new Map()
+  const store = {
+    read: (id) => values.get(id) || '',
+    write: (id, text) => values.set(id, text),
+    remove: (id) => values.delete(id)
+  }
+  const page = createThreadDraftSession(store, 'thread')
+  const panel = createThreadDraftSession(store, 'thread')
+  page.saveInput('page draft')
+  panel.saveInput('panel draft')
+  page.switchThread('other', 'page draft')
+  panel.saveInput('panel revised')
+  assert.equal(page.switchThread('thread', ''), 'page draft')
+  panel.switchThread('another', 'panel revised')
+  page.saveInput('page revised')
+  assert.equal(panel.switchThread('thread', ''), 'panel revised')
+})

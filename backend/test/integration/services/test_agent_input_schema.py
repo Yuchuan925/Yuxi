@@ -14,7 +14,7 @@ from yuxi.infrastructure.postgres.manager import PostgresManager
 from yuxi.migrations.schema import create_business_tables
 from yuxi.modules.agents.models.inputs import AgentInput
 from yuxi.modules.agents.models.messages import Message
-from yuxi.modules.agents.models.sessions import Session, SubagentThread
+from yuxi.modules.agents.models.sessions import Session
 from yuxi.modules.agents.models.turns import AgentTurn
 from yuxi.modules.agents.repositories.input import AgentInputRepository
 from yuxi.modules.agents.repositories.input_receipt import AgentInputReceiptRepository
@@ -72,8 +72,8 @@ async def _create_schema():
         )
         await connection.execute(
             text(
-                "INSERT INTO sessions (thread_id, uid, agent_id, project_id, is_pinned, status) "
-                "VALUES ('input-thread', 'input-user', 'main', 'input-project', false, 'active')"
+                "INSERT INTO sessions (thread_id, tree_root_thread_id, uid, agent_id, project_id, is_pinned, status) "
+                "VALUES ('input-thread', 'input-thread', 'input-user', 'main', 'input-project', false, 'active')"
             )
         )
     return schema, admin_engine, engine
@@ -275,8 +275,8 @@ async def test_product_key_active_turn_and_steer_uniqueness_are_enforced() -> No
         async with engine.begin() as connection:
             await connection.execute(
                 text(
-                    "INSERT INTO sessions (thread_id, uid, agent_id, project_id, is_pinned, status) "
-                    "VALUES ('other-thread', 'input-user', 'main', 'input-project', false, 'active')"
+                    "INSERT INTO sessions (thread_id, tree_root_thread_id, uid, agent_id, project_id, is_pinned, status) "
+                    "VALUES ('other-thread', 'other-thread', 'input-user', 'main', 'input-project', false, 'active')"
                 )
             )
         async with sessions() as db:
@@ -405,19 +405,13 @@ async def test_parent_and_child_usage_stays_in_its_own_turn() -> None:
                 project_id="input-project",
                 uid="input-user",
                 agent_id="helper",
-                status="subagent",
+                tree_root_thread_id=parent_session.thread_id,
+                parent_thread_id=parent_session.thread_id,
+                cooperation_name="helper",
+                cooperation_path="/root/helper",
+                status="active",
             )
             db.add(child_session)
-            await db.flush()
-            relation = SubagentThread(
-                uid="input-user",
-                parent_session_record_id=parent_session.id,
-                child_session_record_id=child_session.id,
-                child_thread_id=child_session.thread_id,
-                subagent_slug="helper",
-                created_by_run_id=parent_run.id,
-            )
-            db.add(relation)
             await db.flush()
             child_turn = await AgentTurnRepository(db).create(
                 turn_id="child-usage-turn", thread_id=child_session.thread_id, uid="input-user", app_id=None
@@ -425,14 +419,13 @@ async def test_parent_and_child_usage_stays_in_its_own_turn() -> None:
             child_run = await runs.create_run(
                 run_id="usage-child",
                 thread_id=child_session.thread_id,
-                runtime_scope_id=child_session.thread_id,
+                runtime_scope_id=parent_session.thread_id,
                 agent_slug="helper",
                 uid="input-user",
                 turn_id=child_turn.id,
                 session_record_id=child_session.id,
-                run_type="subagent",
+                run_type="chat",
                 created_by_run_id=parent_run.id,
-                subagent_thread_relation_id=relation.id,
                 input_payload={},
             )
             parent_run.status = "completed"

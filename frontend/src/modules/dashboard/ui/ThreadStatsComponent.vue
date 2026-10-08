@@ -47,12 +47,7 @@
         </a-button>
       </div>
 
-      <a-segmented
-        :value="includeSubagents"
-        :options="subagentScopeOptions"
-        size="middle"
-        @change="changeSubagentScope"
-      />
+
     </div>
 
     <!-- 2x2 可视化图表区域 -->
@@ -178,7 +173,6 @@
             <a-select-option value="active">未归档</a-select-option>
             <a-select-option value="archived">已归档</a-select-option>
             <a-select-option value="deleted">已删除</a-select-option>
-            <a-select-option value="subagent">子智能体会话</a-select-option>
           </a-select>
 
           <a-select
@@ -317,7 +311,6 @@
               <a-tag v-if="record.status === 'active'" color="default">未归档</a-tag>
               <a-tag v-else-if="record.status === 'archived'" color="default">已归档</a-tag>
               <a-tag v-else-if="record.status === 'deleted'" class="history-tag">已删除</a-tag>
-              <a-tag v-else-if="record.status === 'subagent'" color="blue">子智能体</a-tag>
               <a-tag v-else>{{ record.status }}</a-tag>
             </template>
 
@@ -377,7 +370,6 @@ const themeStore = useThemeStore()
 const loading = ref(false)
 const tableLoading = ref(false)
 const timeRange = ref('30days')
-const includeSubagents = ref(false)
 const searchKeyword = ref('')
 const selectedStatus = ref('all')
 const selectedAgentId = ref(undefined)
@@ -394,10 +386,7 @@ const timeRangeOptions = [
   { label: '近90天', value: '90days' }
 ]
 
-const subagentScopeOptions = [
-  { label: '全部', value: true },
-  { label: '仅主智能体', value: false }
-]
+
 
 const tablePagination = ref({
   current: 1,
@@ -442,17 +431,15 @@ const truncateIdentifier = (value, startLength = 8, endLength = 4) => {
   return `${text.slice(0, startLength)}…${text.slice(-endLength)}`
 }
 
-const loadData = async (requestedIncludeSubagents = includeSubagents.value) => {
+const loadData = async () => {
   const requestId = ++latestStatsRequest
   loading.value = true
   try {
     const res = await dashboardApi.getThreadStats({
       timeRange: timeRange.value,
-      includeSubagents: requestedIncludeSubagents
     })
     if (requestId !== latestStatsRequest) return
 
-    includeSubagents.value = requestedIncludeSubagents
     threadData.value = res
     await nextTick()
     if (requestId === latestStatsRequest) renderAllCharts()
@@ -465,9 +452,6 @@ const loadData = async (requestedIncludeSubagents = includeSubagents.value) => {
   }
 }
 
-const changeSubagentScope = (value) => {
-  void loadData(value)
-}
 
 const loadFilterOptions = async () => {
   try {

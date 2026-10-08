@@ -7,10 +7,12 @@ import asyncio
 from yuxi.infrastructure.observability.logging import logger
 from yuxi.infrastructure.postgres.manager import pg_manager
 from yuxi.infrastructure.postgres.schema import require_current_schema
+from yuxi.modules.agents.services.cooperation import reconcile_stopped_trees, recover_cooperation_waits
 from yuxi.modules.agents.services.leases import (
     WORKER_ID,
     reconcile_expired_run_leases,
     reconcile_pending_runtime_cleanups,
+    release_idle_sandboxes,
 )
 from yuxi.modules.agents.services.scheduler import recover_pending_dispatches
 from yuxi.modules.agents.services.transport import (
@@ -31,6 +33,7 @@ from yuxi.workers.health import (
 )
 
 _RECONCILIATION_TASK_KEY = "agent_run_reconciliation_task"
+_SANDBOX_CLEANUP_TASK_KEY = "sandbox_cleanup_task"
 
 
 _JOB_RECONCILIATION_TASK_KEY = "background_job_reconciliation_task"
@@ -60,16 +63,10 @@ async def _worker_startup(ctx):
         )
     async with pg_manager.get_async_session_context() as session:
         await init_builtin_skills(session)
-    reconciled_ids = await reconcile_expired_run_leases()
-    if reconciled_ids:
-        logger.warning(f"Reconciled expired AgentRun leases at startup: count={len(reconciled_ids)}")
-    await reconcile_pending_runtime_cleanups()
-    await recover_pending_dispatches()
+    await _reconcile_agent_runs_once()
     await reconcile_and_publish_jobs()
     await _publish_job_reconciliation_health()
-    await recover_scheduled_dispatches()
-    await claim_and_dispatch_due_jobs()
-    await _publish_reconciliation_health()
+    ctx[_SANDBOX_CLEANUP_TASK_KEY] = asyncio.create_task(_reconcile_sandboxes_forever())
     ctx[_RECONCILIATION_TASK_KEY] = asyncio.create_task(_reconcile_agent_run_leases_forever())
     ctx[_JOB_RECONCILIATION_TASK_KEY] = asyncio.create_task(_reconcile_background_jobs_forever())
 
@@ -81,6 +78,7 @@ async def _worker_shutdown(ctx):
         reconciliation_tasks = [
             ctx.pop(_RECONCILIATION_TASK_KEY, None),
             ctx.pop(_JOB_RECONCILIATION_TASK_KEY, None),
+            ctx.pop(_SANDBOX_CLEANUP_TASK_KEY, None),
         ]
         reconciliation_tasks = [task for task in reconciliation_tasks if task is not None]
         for task in reconciliation_tasks:
@@ -94,24 +92,44 @@ async def _worker_shutdown(ctx):
 
 
 async def _reconcile_agent_run_leases_forever() -> None:
-    """周期收敛失去 heartbeat 的 Run；多个 worker 并发执行仍由行锁保证单赢家。"""
+    """周期收敛执行状态，各阶段失败不阻断其他调度。"""
     while True:
         await asyncio.sleep(RUN_RECONCILIATION_SECONDS)
+        await _reconcile_agent_runs_once()
+
+
+async def _reconcile_agent_runs_once() -> None:
+    """隔离阶段错误；只有完整成功才续报恢复能力健康。"""
+    healthy = True
+    for phase, operation in (
+        ("expired_leases", reconcile_expired_run_leases),
+        ("runtime_cleanup", reconcile_pending_runtime_cleanups),
+        ("stopped_trees", reconcile_stopped_trees),
+        ("cooperation_waits", recover_cooperation_waits),
+        ("pending_dispatches", recover_pending_dispatches),
+        ("scheduled_dispatches", recover_scheduled_dispatches),
+        ("due_jobs", claim_and_dispatch_due_jobs),
+    ):
         try:
-            reconciled_ids = await reconcile_expired_run_leases()
-            if reconciled_ids:
-                logger.warning(f"Reconciled expired AgentRun leases: count={len(reconciled_ids)}")
-            cleaned_ids = await reconcile_pending_runtime_cleanups()
-            if cleaned_ids:
-                logger.warning(f"Reconciled pending runtime cleanups: count={len(cleaned_ids)}")
-            await recover_pending_dispatches()
-            await recover_scheduled_dispatches()
-            await claim_and_dispatch_due_jobs()
-            await _publish_reconciliation_health()
-        except asyncio.CancelledError:
-            raise
+            await operation()
         except Exception:
-            logger.error("Failed to reconcile expired AgentRun leases", exc_info=True)
+            healthy = False
+            logger.exception("Agent reconciliation failed: phase=%s", phase)
+    if healthy:
+        try:
+            await _publish_reconciliation_health()
+        except Exception:
+            logger.exception("Agent reconciliation health publication failed")
+
+
+async def _reconcile_sandboxes_forever() -> None:
+    """外部沙盒回收独立运行，慢释放不占据调度恢复循环。"""
+    while True:
+        try:
+            await release_idle_sandboxes()
+        except Exception:
+            logger.exception("Sandbox cleanup reconciliation failed")
+        await asyncio.sleep(RUN_RECONCILIATION_SECONDS)
 
 
 async def _reconcile_background_jobs_forever() -> None:

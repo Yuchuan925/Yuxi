@@ -17,7 +17,6 @@ const ARG_PARSER_CONSUMERS = [
   'ReadFileTool.vue',
   'SearchFileContentTool.vue',
   'SearchFileTool.vue',
-  'TaskTool.vue',
   'TodoListTool.vue',
   'WebSearchTool.vue',
   'WriteFileTool.vue'

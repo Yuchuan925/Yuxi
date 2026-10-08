@@ -68,6 +68,7 @@ export const processRunSseResponse = async (response, onEvent) => {
 
 export function useAgentRunStream({
   getThreadState,
+  isThreadActive = () => true,
   currentAgentId,
   handlePublicEvent,
   fetchThreadMessages,
@@ -90,12 +91,17 @@ export function useAgentRunStream({
   }
 
   const settleTurn = (threadId, turnId, status, runId, touchedThreadIds) => {
+    if (!isThreadActive(threadId)) return
     const ts = getThreadState(threadId)
     if (!ts || ts.currentTurnId !== turnId) return
-    const generation = ts.runStreamGeneration
+    ts.runStateVersion = (ts.runStateVersion || 0) + 1
+    const version = ts.runStateVersion
+    ts.cooperationWaiting = status === 'waiting' && !!ts.cooperationWaiting
     streamSmoother?.flushThread(threadId)
-    ts.runStreamAbortController?.abort()
-    ts.runStreamAbortController = null
+    if (!ts.cooperationWaiting) {
+      ts.runStreamAbortController?.abort()
+      ts.runStreamAbortController = null
+    }
     ts.isStreaming = false
     ts.turnStatus = status
     ts.activeRunSteerable = false
@@ -109,50 +115,81 @@ export function useAgentRunStream({
       ts.currentTurnId = null
       ts.pendingInterrupt = null
     }
-    void fetchThreadMessages({ agentId: unref(currentAgentId), threadId, delay: 0 })
-      .finally(() => {
-        if (ts.runStreamGeneration !== generation) return
-        if (status !== 'waiting') resetOngoingRunGroup(threadId, { preserveInputMonitors: true })
-        fetchAgentState(unref(currentAgentId), threadId)
-        if (status === 'waiting') onInterruptDetected?.({ threadId, runId })
-        else onTerminalDetected?.({ threadId, runId, touchedThreadIds: [...touchedThreadIds] })
-        if (status === 'completed') onScrollToBottom?.()
-      })
+    void (async () => {
+      let refreshed = false
+      try {
+        await fetchThreadMessages({ agentId: unref(currentAgentId), threadId, fresh: true })
+        refreshed = true
+      } catch (error) {
+        console.warn('Failed to refresh terminal history; retaining streamed output:', error)
+      }
+      if (
+        !isThreadActive(threadId) ||
+        getThreadState(threadId) !== ts ||
+        ts.runStateVersion !== version
+      )
+        return
+      if (status !== 'waiting' && refreshed)
+        resetOngoingRunGroup(threadId, { preserveInputMonitors: true })
+      void fetchAgentState(unref(currentAgentId), threadId)
+      if (status === 'waiting') onInterruptDetected?.({ threadId, runId })
+      else onTerminalDetected?.({ threadId, runId, touchedThreadIds: [...touchedThreadIds] })
+      if (status === 'completed') onScrollToBottom?.(threadId)
+    })()
   }
 
   const reconcileTurn = async (threadId, turnId, fallbackRunId) => {
-    const turn = await agentApi.getThreadTurn(threadId, turnId)
     const ts = getThreadState(threadId)
-    if (!ts || ts.currentTurnId !== turnId) return true
+    const version = ts?.runStateVersion
+    const turn = await agentApi.getThreadTurn(threadId, turnId)
+    if (!isThreadActive(threadId)) return true
+    if (!ts || getThreadState(threadId) !== ts || ts.currentTurnId !== turnId) return true
+    if (ts.runStateVersion !== version) return false
+    ts.runStateVersion = (ts.runStateVersion || 0) + 1
     const currentRunId = turn.current_run_id || fallbackRunId
     if (['waiting', 'completed', 'failed', 'cancelled'].includes(turn.status)) {
+      ts.cooperationWaiting = turn.status === 'waiting' && turn.waitpoint?.kind === 'cooperation'
       settleTurn(threadId, turnId, turn.status, currentRunId, new Set([threadId]))
-      return true
+      return !ts.cooperationWaiting
     }
     ts.activeRunId = currentRunId
+    ts.cooperationWaiting = false
     ts.turnStatus = 'running'
+    ts.isStreaming = true
     ts.activeRunSteerable = true
     return false
   }
 
   const startRunStream = async (threadId, runId, afterCursor = null, options = {}) => {
-    if (!threadId) return
+    if (!threadId || !isThreadActive(threadId)) return
     const ts = getThreadState(threadId)
     if (!ts) return
-    const turnId = options.turnId || ts.currentTurnId ||
+    const version = ts.runStateVersion
+    const turnId =
+      options.turnId ||
+      ts.currentTurnId ||
       (await agentApi.getPublicThread(threadId)).current_turn?.turn_id
-    if (!turnId) return
+    if (
+      !turnId ||
+      !isThreadActive(threadId) ||
+      getThreadState(threadId) !== ts ||
+      ts.runStateVersion !== version
+    )
+      return
+    if (ts.currentTurnId === turnId && ts.activeRunId === runId && ts.runStreamAbortController)
+      return
 
     stopRunStreamSubscription(threadId)
-    ts.runStreamGeneration = (ts.runStreamGeneration || 0) + 1
+    ts.runStateVersion = (ts.runStateVersion || 0) + 1
     const controller = new AbortController()
     ts.runStreamAbortController = controller
+    ts.cooperationWaiting = ts.currentTurnId === turnId && !!ts.cooperationWaiting
     ts.currentTurnId = turnId
     ts.activeRunId = runId
-    ts.turnStatus = 'running'
+    ts.turnStatus = ts.cooperationWaiting ? 'waiting' : 'running'
     ts.pendingInterrupt = null
-    ts.activeRunSteerable = true
-    ts.isStreaming = true
+    ts.activeRunSteerable = !ts.cooperationWaiting
+    ts.isStreaming = !ts.cooperationWaiting
     if (options.inputId) ts.pendingInputId = options.inputId
     onRunStarted?.({ threadId, runId, inputId: options.inputId })
 
@@ -166,40 +203,60 @@ export function useAgentRunStream({
         if (!data || controller.signal.aborted || ts.currentTurnId !== turnId) return
         ts.runReconnectAttempts = 0
         if (eventId) ts.threadCursor = String(eventId)
-        if (data.type === 'agent.session.subagent.created') {
-          if (data.yuxi?.session_id === threadId && data.yuxi?.turn_id === turnId) handlePublicEvent(data, threadId)
-          return
-        }
         if (data.session_id !== threadId) return
         if (data.type === 'yuxi.session.resync') {
           // 暂停消费，让 ReadableStream 缓冲新事件，快照应用后再继续合并。
-          await fetchThreadMessages({ agentId: unref(currentAgentId), threadId, delay: 0 })
+          await fetchThreadMessages({ agentId: unref(currentAgentId), threadId, fresh: true })
           sawTurnEnd = await reconcileTurn(threadId, turnId, ts.activeRunId)
           return
         }
         if (data.turn_id !== turnId) return
-        const status = data.type === 'yuxi.session.turn.waiting' ? 'waiting'
-          : data.type.startsWith('agent.session.turn.') ? data.type.split('.').at(-1) : null
+        const status =
+          data.type === 'yuxi.session.turn.waiting'
+            ? 'waiting'
+            : data.type.startsWith('agent.session.turn.')
+              ? data.type.split('.').at(-1)
+              : null
         const owner = data.yuxi?.current_run_id || data.current_run_id
-        if (['waiting', 'completed', 'failed', 'cancelled', 'in_progress', 'created'].includes(status)) {
+        if (
+          ['waiting', 'completed', 'failed', 'cancelled', 'in_progress', 'created'].includes(status)
+        ) {
           if (owner && data.yuxi?.run_id !== owner) return
+          // 同一 SSE 会跨协作恢复的多个 Run，事件进展也必须使旧快照失效。
+          ts.runStateVersion = (ts.runStateVersion || 0) + 1
+          const eventVersion = ts.runStateVersion
           if (data.yuxi?.run_id !== ts.activeRunId) {
             const turn = await agentApi.getThreadTurn(threadId, turnId)
+            if (controller.signal.aborted || ts.runStateVersion !== eventVersion) return
             ts.activeRunId = turn.current_run_id
             if (data.yuxi?.run_id !== turn.current_run_id) return
           }
         }
+        if (['in_progress', 'created'].includes(status)) {
+          ts.pendingInterrupt = null
+          ts.cooperationWaiting = false
+          ts.turnStatus = 'running'
+          ts.isStreaming = true
+          ts.activeRunSteerable = true
+        }
         handlePublicEvent(data, threadId)
         if (['waiting', 'completed', 'failed', 'cancelled'].includes(status)) {
-          sawTurnEnd = true
-          settleTurn(threadId, turnId, status, data.yuxi?.run_id || ts.activeRunId, new Set([threadId]))
+          ts.cooperationWaiting = status === 'waiting' && data.waitpoint?.kind === 'cooperation'
+          sawTurnEnd = !ts.cooperationWaiting
+          settleTurn(
+            threadId,
+            turnId,
+            status,
+            data.yuxi?.run_id || ts.activeRunId,
+            new Set([threadId])
+          )
         }
       })
       if (!sawTurnEnd && !controller.signal.aborted) {
         sawTurnEnd = await reconcileTurn(threadId, turnId, runId)
       }
     } catch (error) {
-      if (error?.name !== 'AbortError') {
+      if (error?.name !== 'AbortError' && !controller.signal.aborted) {
         console.error('Thread SSE stream error:', error)
         try {
           sawTurnEnd = await reconcileTurn(threadId, turnId, runId)
@@ -215,7 +272,11 @@ export function useAgentRunStream({
         ts.runReconnectAttempts = reconnectAttempt + 1
         ts.runReconnectTimer = setTimeout(() => {
           ts.runReconnectTimer = null
-          if (!controller.signal.aborted && ts.currentTurnId === turnId && !ts.runStreamAbortController) {
+          if (
+            !controller.signal.aborted &&
+            ts.currentTurnId === turnId &&
+            !ts.runStreamAbortController
+          ) {
             void startRunStream(threadId, ts.activeRunId, ts.threadCursor, { turnId })
           }
         }, getReconnectDelay(reconnectAttempt))
@@ -224,10 +285,17 @@ export function useAgentRunStream({
   }
 
   const resumeActiveRunForThread = async (threadId) => {
-    if (!threadId) return
+    if (!threadId || !isThreadActive(threadId)) return
     const ts = getThreadState(threadId)
     if (!ts) return
+    const version = ts.runStateVersion
     const thread = await agentApi.getPublicThread(threadId)
+    if (
+      !isThreadActive(threadId) ||
+      getThreadState(threadId) !== ts ||
+      ts.runStateVersion !== version
+    )
+      return
     const turnId = thread.current_turn?.turn_id
     if (!turnId) {
       ts.activeRunId = null
@@ -237,14 +305,28 @@ export function useAgentRunStream({
       return
     }
     const turn = await agentApi.getThreadTurn(threadId, turnId)
+    if (
+      !isThreadActive(threadId) ||
+      getThreadState(threadId) !== ts ||
+      ts.runStateVersion !== version
+    )
+      return
+    ts.runStateVersion = (ts.runStateVersion || 0) + 1
     ts.currentTurnId = turnId
     ts.activeRunId = turn.current_run_id
     ts.turnStatus = turn.status
     if (turn.status === 'waiting') {
+      ts.cooperationWaiting = turn.waitpoint?.kind === 'cooperation'
+      if (ts.cooperationWaiting && !ts.runStreamAbortController) {
+        void startRunStream(threadId, turn.current_run_id, ts.threadCursor, { turnId })
+      }
       ts.isStreaming = false
       ts.activeRunSteerable = false
       onInterruptDetected?.({ threadId, runId: turn.current_run_id, turn })
     } else if (turn.status === 'running') {
+      ts.cooperationWaiting = false
+      ts.isStreaming = true
+      ts.activeRunSteerable = true
       if (!ts.runStreamAbortController) {
         void startRunStream(threadId, turn.current_run_id, ts.threadCursor, { turnId })
       }

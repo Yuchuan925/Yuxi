@@ -44,7 +44,6 @@ const agentStore = useAgentStore()
 const router = useRouter()
 
 const DEFAULT_AGENT_BACKEND_ID = 'ChatbotAgent'
-const SUB_AGENT_BACKEND_ID = 'SubAgentBackend'
 const runtimeAgentModalTabs = ['model', 'tools', 'other']
 
 const showAgentModal = ref(false)
@@ -96,7 +95,7 @@ const agentForm = reactive({
 // 基本配置的原始基线，用于在标题栏显示「有修改」状态。slug / backend_id
 // 仅在创建模式可编辑，因此新建时不参与比对。
 const runtimeConfig = computed({
-  get: () => editingAgentId.value ? agentStore.agentConfig : createContext.value,
+  get: () => (editingAgentId.value ? agentStore.agentConfig : createContext.value),
   set: (value) => {
     if (editingAgentId.value) agentStore.updateAgentConfig(value)
     else createContext.value = value
@@ -200,7 +199,6 @@ const runtimeConfigSegment = computed(() =>
 )
 const isRuntimeAgentModalTab = (key) => runtimeAgentModalTabs.includes(key)
 const getDefaultBackendId = () => DEFAULT_AGENT_BACKEND_ID
-const isSubAgentBackend = (backendId) => backendId === SUB_AGENT_BACKEND_ID
 
 const getInitialShareConfig = () => ({
   version: 2,
@@ -228,9 +226,10 @@ const canEditAgentShareConfig = computed(() =>
   editingCapabilities.value.can_share ||
   (!editingAgentId.value && userStore.isAdmin)
 )
-const isAgentShared = computed(() => agentForm.visibility === 'shared' || isSubAgentBackend(agentForm.backend_id))
-const canToggleAgentSharing = computed(() => !isSubAgentBackend(agentForm.backend_id)
-  && (!editingAgentId.value || editingCapabilities.value.visibility === 'private'))
+const isAgentShared = computed(() => agentForm.visibility === 'shared')
+const canToggleAgentSharing = computed(
+  () => !editingAgentId.value || editingCapabilities.value.visibility === 'private'
+)
 const getAgentShareAllowedLevels = () => {
   if (isEditingBuiltinAgent.value) return ['global']
   if (userStore.isAdmin) return ['global', 'department', 'user']
@@ -404,9 +403,7 @@ const manageRuntimeResource = async (kind) => {
     return
   }
   const tabs = { knowledges: 'knowledge', tools: 'tools', mcps: 'mcp', skills: 'skills' }
-  await navigateToSkill(kind === 'subagents'
-    ? { path: '/agent-manage', query: { tab: 'agents' } }
-    : { path: '/extensions', query: { tab: tabs[kind] } })
+  await navigateToSkill({ path: '/extensions', query: { tab: tabs[kind] } })
 }
 
 /** 文件只留在创建草稿中，随一次创建请求上传。 */
@@ -455,16 +452,17 @@ const openEdit = async (agent) => {
       }
     : detail.visibility === 'private'
       ? getInitialShareConfig()
-      : cloneShareConfig(detail.share_config, shareConfigNeedsRepair.value) || getInitialShareConfig()
-  await agentStore.selectAgent(detail.agent_id, { allowSubagent: true })
+      : cloneShareConfig(detail.share_config, shareConfigNeedsRepair.value) ||
+        getInitialShareConfig()
+  await agentStore.selectAgent(detail.agent_id)
   if (revision !== modalOpenRevision || openingBlocked.value) return
   captureProfileBaseline()
   showAgentModal.value = true
 }
 
 const restoreChatAgentSelectionIfNeeded = async () => {
-  if (agentStore.selectedAgent?.can_run && !agentStore.selectedAgent?.is_subagent) return
-  const fallbackAgentId = (agentStore.agents || []).find((agent) => agent.can_run && !agent.is_subagent)?.agent_id
+  if (agentStore.selectedAgent?.can_run) return
+  const fallbackAgentId = (agentStore.agents || []).find((agent) => agent.can_run)?.agent_id
   if (fallbackAgentId) await agentStore.selectAgent(fallbackAgentId)
 }
 
@@ -815,7 +813,6 @@ defineExpose({
               </div>
             </div>
           </div>
-
         </section>
 
         <section v-if="editingAgentId && agentModalActiveTab === 'skill'" class="agent-modal-section">
@@ -1271,7 +1268,6 @@ defineExpose({
   border-radius: 12px;
   background: var(--gray-10);
   color: var(--gray-700);
-
 }
 
 .agent-backend-icon {

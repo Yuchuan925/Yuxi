@@ -48,13 +48,11 @@ class DashboardService:
         *,
         time_range: str = "30days",
         agent_id: str | None = None,
-        include_subagents: bool = False,
     ) -> dict[str, Any]:
         """汇总会话（Thread）多维分析统计。"""
         return await self.repo.get_thread_analytics(
             time_range=time_range,
             agent_id=agent_id,
-            include_subagents=include_subagents,
         )
 
     async def get_session_filter_options(self) -> dict[str, list[dict[str, Any]]]:

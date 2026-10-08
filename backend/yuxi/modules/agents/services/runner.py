@@ -52,7 +52,6 @@ from yuxi.modules.agents.services.state import get_agent_state_view
 from yuxi.modules.agents.services.tracing import finish_turn_observation_if_terminal
 from yuxi.modules.agents.services.transport import (
     clear_cancel_signal,
-    publish_cancel_signals,
     wait_for_cancel_signal,
 )
 from yuxi.modules.identity.models import User
@@ -74,7 +73,7 @@ RUN_DURABLE_CANCEL_POLL_SECONDS = 1.0
 RUN_HEARTBEAT_SECONDS = 30
 
 
-SUPPORTED_RUN_TYPES = {"chat", "resume", "subagent"}
+SUPPORTED_RUN_TYPES = {"chat", "resume"}
 
 
 class RetryableRunError(RetryJob):
@@ -104,31 +103,28 @@ async def _validate_run_workdir_binding(run: AgentRun) -> AuthorizedWorkdir:
         persisted_scope = str(run.runtime_scope_id or "").strip()
         if not persisted_scope:
             raise NonRetryableRunError("AgentRun 缺少 runtime scope")
-        if persisted_scope != str(run.thread_id):
-            raise NonRetryableRunError(f"{str(run.run_type).capitalize()} AgentRun 的 runtime scope 非法")
+        from sqlalchemy import select
 
-        if run.run_type == "subagent":
-            repo = AgentRunRepository(db)
-            execution_pair = await repo.get_subagent_run_with_authorization(
-                uid=str(run.uid),
-                run_id=str(run.id),
-            )
-            if execution_pair is None:
-                raise NonRetryableRunError("SubAgent Run 的线程关系非法")
-            creator_run, _persisted_run = execution_pair
-            if creator_run.run_type not in {"chat", "resume"}:
-                raise NonRetryableRunError("SubAgent Run 的创建者非法")
-            creator_binding = await resolve_authorized_workdir(
-                thread_id=str(creator_run.thread_id),
-                uid=str(run.uid),
-                app_id=creator_run.app_id,
-                db=db,
-            )
-            if (
-                int(creator_binding.session_record_id) != int(creator_run.session_record_id)
-                or creator_binding.project_id != binding.project_id
-            ):
-                raise NonRetryableRunError("SubAgent Run 的 runtime scope 不属于创建者执行树")
+        from yuxi.modules.agents.models.sessions import Session
+
+        member = await db.get(Session, run.session_record_id)
+        root = await db.scalar(select(Session).where(Session.thread_id == persisted_scope))
+        if (
+            member is None
+            or root is None
+            or member.tree_root_thread_id != persisted_scope
+            or root.tree_root_thread_id != root.thread_id
+            or root.parent_thread_id is not None
+            or root.uid != run.uid
+            or root.app_id != run.app_id
+            or root.project_id != member.project_id
+        ):
+            raise NonRetryableRunError("AgentRun 的共享沙盒树归属非法")
+        root_binding = await resolve_authorized_workdir(
+            thread_id=root.thread_id, uid=str(run.uid), app_id=run.app_id, db=db
+        )
+        if root_binding.workdir_path != binding.workdir_path:
+            raise NonRetryableRunError("协作树成员的 Workdir 不一致")
     return binding
 
 
@@ -204,10 +200,9 @@ class RunContext:
                 continue
 
     async def _heartbeat_lease(self) -> None:
-        while not self.cancel_event.is_set():
+        # 取消意图不能终止续租：已开始的工具收尾仍拥有执行名额。
+        while True:
             await asyncio.sleep(RUN_HEARTBEAT_SECONDS)
-            if self.cancel_event.is_set():
-                return
             try:
                 renewed = await renew_run_lease(self.run_id, self.worker_id)
                 if not renewed and await run_attempt_finished(self.run_id, self.worker_id):
@@ -226,7 +221,7 @@ async def _release_runtime_before_terminal_event(run: AgentRun | None) -> None:
     """在终态事件可见前收敛 runtime，避免客户端撞上随后发生的删除。"""
     if run is None:
         return
-    await _require_runtime_cleanup(run, f"Run {run.id} 的 execution tree 尚未完成 runtime cleanup")
+    await _require_runtime_cleanup(run, f"Run {run.id} 尚未完成 runtime cleanup")
 
 
 async def _require_runtime_cleanup(run: AgentRun, message: str) -> None:
@@ -253,7 +248,6 @@ async def mark_run_terminal(
     token_usage: dict | None = None,
     worker_id: str | None = None,
 ):
-    cancelled_descendants: list[tuple[str, str]] = []
     async with pg_manager.get_async_session_context() as db:
         repo = AgentRunRepository(db)
         run = await repo.get_run(run_id)
@@ -298,7 +292,6 @@ async def mark_run_terminal(
                 worker_id=worker_id,
             )
             persisted_status = run.status if run else None
-    await publish_cancel_signals([child_id for child_id, _thread_id in cancelled_descendants])
     return TerminalTransition(status=persisted_status, changed=changed)
 
 
@@ -556,7 +549,7 @@ async def process_agent_run(ctx, run_id: str):
     if run.status in TERMINAL_RUN_STATUSES:
         cleanup_was_pending = bool(getattr(run, "runtime_cleanup_pending", False))
         if cleanup_was_pending:
-            await _require_runtime_cleanup(run, f"Run {run_id} 的 execution tree 尚未完成 runtime cleanup")
+            await _require_runtime_cleanup(run, f"Run {run_id} 尚未完成 runtime cleanup")
             await publish_run_settlement(run_id, run.status, thread_id=run.thread_id)
         if run.status == "completed":
             await dispatch_next_input(
@@ -674,7 +667,7 @@ async def process_agent_run(ctx, run_id: str):
             return
 
         resume_input = None
-        if run_type == "resume" or (run_type == "subagent" and input_metadata.get("resume") is not None):
+        if run_type == "resume":
             resume_input = input_metadata.get("resume")
             if resume_input is None:
                 await mark_run_terminal(
@@ -753,7 +746,6 @@ async def process_agent_run(ctx, run_id: str):
             "uid": user.uid,
             "has_image": bool(image_content),
             "attachment_file_ids": input_metadata.get("attachment_file_ids") or [],
-            "delegated_attachments": run.input_payload.get("delegated_attachments", []),
             "model_spec": context.model,
             "tool_approval_mode": context.tool_approval_mode,
             "run_type": run_type,
@@ -763,8 +755,6 @@ async def process_agent_run(ctx, run_id: str):
             "workdir_relative_path": context.workdir_relative_path,
             "workdir_path": context.workdir_path,
         }
-        if run_type == "subagent":
-            meta["parent_thread_id"] = context.parent_thread_id
         if input_metadata.get("source"):
             meta["source"] = input_metadata.get("source")
 
@@ -779,7 +769,7 @@ async def process_agent_run(ctx, run_id: str):
         terminal_set = False
         first_output_observed = bool(getattr(run, "first_output_at", None))
         async with pg_manager.get_async_session_context() as db:
-            if run_type == "resume" or (run_type == "subagent" and input_metadata.get("resume") is not None):
+            if run_type == "resume":
                 stream = stream_agent_resume(
                     thread_id=thread_id,
                     resume_input=resume_input,
@@ -790,7 +780,7 @@ async def process_agent_run(ctx, run_id: str):
                     on_prepared=record_prepared,
                     model_request_recorder=model_request_recorder,
                 )
-            elif run_type in {"chat", "subagent"}:
+            elif run_type == "chat":
                 stream = stream_agent_chat(
                     agent_slug=agent_slug,
                     thread_id=thread_id,
@@ -808,9 +798,7 @@ async def process_agent_run(ctx, run_id: str):
             async with aclosing(_consume_stream_with_cancel(stream, run_ctx)) as events:
                 async for event in events:
                     if not isinstance(event, RunExecutionResult):
-                        owner = (
-                            event.get("yuxi", {}) if event.get("type") == "agent.session.subagent.created" else event
-                        )
+                        owner = event
                         if (
                             owner.get("session_id") != thread_id
                             or owner.get("turn_id") != turn_id

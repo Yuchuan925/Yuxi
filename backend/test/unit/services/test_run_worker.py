@@ -234,110 +234,65 @@ def _build_run() -> SimpleNamespace:
         runtime_scope_id="thread-1",
         runtime_cleanup_pending=False,
         created_by_run_id=None,
-        subagent_thread_relation_id=None,
     )
 
 
 @pytest.mark.asyncio
-async def test_validate_run_workdir_binding_rejects_top_level_foreign_runtime_scope(
-    monkeypatch: pytest.MonkeyPatch,
-):
+async def test_validate_run_workdir_binding_checks_shared_tree(monkeypatch):
     run = _build_run()
-    run.runtime_scope_id = "other-thread"
-
-    @asynccontextmanager
-    async def fake_session():
-        yield object()
-
-    async def fake_resolve(**_kwargs):
-        return SimpleNamespace(session_record_id=run.session_record_id)
-
-    monkeypatch.setattr(run_worker.pg_manager, "get_async_session_context", fake_session)
-    monkeypatch.setattr(run_worker, "resolve_authorized_workdir", fake_resolve)
-
-    with pytest.raises(run_worker.NonRetryableRunError, match="Chat AgentRun"):
-        await run_worker._validate_run_workdir_binding(run)
-
-
-@pytest.mark.asyncio
-async def test_validate_run_workdir_binding_requires_subagent_creator_tree(
-    monkeypatch: pytest.MonkeyPatch,
-):
-    run = _build_run()
-    run.run_type = "subagent"
     run.thread_id = "child-thread"
-    run.runtime_scope_id = "child-thread"
-    run.created_by_run_id = "creator-run"
-    run.subagent_thread_relation_id = 3
-    creator = SimpleNamespace(
-        id="creator-run",
-        app_id=None,
-        run_type="chat",
+    run.runtime_scope_id = "root-thread"
+    member = SimpleNamespace(tree_root_thread_id="root-thread", project_id="project-1")
+    root = SimpleNamespace(
         thread_id="root-thread",
-        runtime_scope_id="root-thread",
-        session_record_id=2,
-        created_by_run_id=None,
-        subagent_thread_relation_id=None,
+        tree_root_thread_id="root-thread",
+        parent_thread_id=None,
+        uid=run.uid,
+        app_id=None,
+        project_id="project-1",
     )
+    db = SimpleNamespace(get=AsyncMock(return_value=member), scalar=AsyncMock(return_value=root))
 
     @asynccontextmanager
     async def fake_session():
-        yield object()
+        yield db
 
     async def fake_resolve(**kwargs):
-        if kwargs["thread_id"] == "child-thread":
-            return SimpleNamespace(
-                session_record_id=run.session_record_id,
-                workdir_path="projects/shared",
-                project_id="project-1",
-            )
-        assert kwargs["thread_id"] == "root-thread"
-        return SimpleNamespace(
-            session_record_id=creator.session_record_id,
-            workdir_path="projects/shared",
-            project_id="project-1",
-        )
-
-    class RunRepo:
-        def __init__(self, _db):
-            pass
-
-        async def get_subagent_run_with_authorization(self, **kwargs):
-            assert kwargs == {
-                "uid": "user-1",
-                "run_id": "run-1",
-            }
-            return creator, run
+        return SimpleNamespace(session_record_id=run.session_record_id, workdir_path="projects/shared")
 
     monkeypatch.setattr(run_worker.pg_manager, "get_async_session_context", fake_session)
     monkeypatch.setattr(run_worker, "resolve_authorized_workdir", fake_resolve)
-    monkeypatch.setattr(run_worker, "AgentRunRepository", RunRepo)
+    assert (await run_worker._validate_run_workdir_binding(run)).session_record_id == run.session_record_id
+    for field, invalid in (
+        ("uid", "foreign-user"),
+        ("app_id", "foreign-app"),
+        ("project_id", "foreign-project"),
+        ("parent_thread_id", "not-root"),
+    ):
+        original = getattr(root, field)
+        setattr(root, field, invalid)
+        with pytest.raises(run_worker.NonRetryableRunError, match="共享沙盒树归属非法"):
+            await run_worker._validate_run_workdir_binding(run)
+        setattr(root, field, original)
+    member.tree_root_thread_id = "foreign-tree"
+    with pytest.raises(run_worker.NonRetryableRunError, match="共享沙盒树归属非法"):
+        await run_worker._validate_run_workdir_binding(run)
+    member.tree_root_thread_id = "root-thread"
 
-    binding = await run_worker._validate_run_workdir_binding(run)
-    assert binding.session_record_id == run.session_record_id
-
-    original_resolve = fake_resolve
-
-    async def resolve_different_project(**kwargs):
-        binding = await original_resolve(**kwargs)
-        if kwargs["thread_id"] == "child-thread":
-            binding.project_id = "project-2"
+    async def changed_workdir(**kwargs):
+        binding = await fake_resolve(**kwargs)
+        if kwargs["thread_id"] == "root-thread":
+            binding.workdir_path = "projects/foreign"
         return binding
 
-    monkeypatch.setattr(run_worker, "resolve_authorized_workdir", resolve_different_project)
-    with pytest.raises(run_worker.NonRetryableRunError, match="SubAgent Run"):
-        await run_worker._validate_run_workdir_binding(run)
-
-    monkeypatch.setattr(run_worker, "resolve_authorized_workdir", fake_resolve)
-    run.runtime_scope_id = "root-thread"
-    with pytest.raises(run_worker.NonRetryableRunError, match="runtime scope"):
+    monkeypatch.setattr(run_worker, "resolve_authorized_workdir", changed_workdir)
+    with pytest.raises(run_worker.NonRetryableRunError, match="Workdir 不一致"):
         await run_worker._validate_run_workdir_binding(run)
 
 
 @pytest.mark.asyncio
-async def test_cancelling_subagent_releases_its_own_runtime(monkeypatch: pytest.MonkeyPatch):
+async def test_cancelling_member_releases_its_run_cleanup_responsibility(monkeypatch: pytest.MonkeyPatch):
     run = _build_run()
-    run.run_type = "subagent"
     release_runtime = AsyncMock()
 
     async def fake_noop(*args, **kwargs):
@@ -435,17 +390,6 @@ def _patch_common(monkeypatch: pytest.MonkeyPatch, run_obj: SimpleNamespace):
             model=run.input_payload.get("model_spec"),
             runtime_scope_id=run.runtime_scope_id,
         )
-        if run.run_type == "subagent":
-            from dataclasses import asdict, replace
-            from yuxi.modules.agents.runtime.agent_backends.subagent.context import SubAgentContext
-
-            execution = replace(
-                execution,
-                context=SubAgentContext(
-                    **asdict(execution.context),
-                    parent_thread_id=run.input_payload["runtime"]["parent_thread_id"],
-                ),
-            )
         return execution
 
     monkeypatch.setattr(run_worker, "prepare_and_record_run_execution", fake_prepare_execution)
@@ -1072,9 +1016,9 @@ async def test_finish_run_terminal_loser_does_not_append_end_event(monkeypatch: 
 
 
 @pytest.mark.asyncio
-async def test_process_subagent_run_restores_runtime_context(monkeypatch: pytest.MonkeyPatch):
+async def test_process_member_run_uses_own_thread_and_shared_runtime(monkeypatch: pytest.MonkeyPatch):
     run_obj = _build_run()
-    run_obj.run_type = "subagent"
+    run_obj.run_type = "chat"
     run_obj.agent_slug = "worker"
     run_obj.thread_id = "child-thread"
     run_obj.runtime_scope_id = "child-thread"
@@ -1088,8 +1032,6 @@ async def test_process_subagent_run_restores_runtime_context(monkeypatch: pytest
     _patch_common(monkeypatch, run_obj)
 
     from test.unit.agent_context_fixtures import prepared_execution
-    from yuxi.modules.agents.runtime.agent_backends.subagent.context import SubAgentContext
-    from dataclasses import asdict, replace
 
     prepared = prepared_execution(
         model="prepared:model",
@@ -1097,9 +1039,6 @@ async def test_process_subagent_run_restores_runtime_context(monkeypatch: pytest
         runtime_scope_id="prepared-root",
         workdir_relative_path="projects/prepared",
         workdir_path="/home/gem/user-data/projects/prepared",
-    )
-    prepared = replace(
-        prepared, context=SubAgentContext(**asdict(prepared.context), parent_thread_id="prepared-parent")
     )
     monkeypatch.setattr(run_worker, "prepare_and_record_run_execution", AsyncMock(return_value=prepared))
     captured: dict[str, object] = {}
@@ -1125,8 +1064,8 @@ async def test_process_subagent_run_restores_runtime_context(monkeypatch: pytest
     await run_worker.process_agent_run({"job_try": 1}, "run-1")
 
     meta = captured["meta"]
-    assert meta["run_type"] == "subagent"
-    assert meta["parent_thread_id"] == "prepared-parent"
+    assert meta["run_type"] == "chat"
+    assert "parent_thread_id" not in meta
     assert meta["runtime_scope_id"] == "prepared-root"
     assert meta["workdir_relative_path"] == "projects/prepared"
     assert meta["workdir_path"] == "/home/gem/user-data/projects/prepared"
@@ -1257,6 +1196,20 @@ def test_run_owner_token_has_stable_worker_prefix_and_unique_attempt_suffix():
 
 
 @pytest.mark.asyncio
+async def test_cancel_intent_keeps_heartbeat_until_execution_finishes(monkeypatch):
+    """取消后的工具收尾仍续租，避免被失联回收提前释放名额。"""
+    monkeypatch.setattr(run_worker, "RUN_HEARTBEAT_SECONDS", 0)
+    renew = AsyncMock(side_effect=[True, False])
+    monkeypatch.setattr(run_worker, "renew_run_lease", renew)
+    monkeypatch.setattr(run_worker, "run_attempt_finished", AsyncMock(return_value=True))
+    context = run_worker.RunContext(run_id="run-1", worker_id="worker-1")
+    context.cancel_event.set()
+    await context._heartbeat_lease()
+    assert renew.await_count == 2
+    assert not context.lease_lost
+
+
+@pytest.mark.asyncio
 async def test_run_context_stops_when_heartbeat_cannot_renew(monkeypatch: pytest.MonkeyPatch):
     renew = AsyncMock(return_value=False)
     monkeypatch.setattr(run_worker, "RUN_HEARTBEAT_SECONDS", 0)
@@ -1354,6 +1307,8 @@ async def test_worker_startup_ensures_builtin_mcp_servers(monkeypatch: pytest.Mo
     monkeypatch.setattr(config_options, "ensure_options_in_db", fake_ensure_options_in_db)
     monkeypatch.setattr(config_options, "invalidate_option_cache", fake_invalidate_option_cache)
     monkeypatch.setattr(worker_bootstrap, "recover_pending_dispatches", fake_recover_pending_dispatches)
+    for name in ("reconcile_stopped_trees", "recover_cooperation_waits", "release_idle_sandboxes"):
+        monkeypatch.setattr(worker_bootstrap, name, AsyncMock(return_value=[]))
     monkeypatch.setattr(worker_bootstrap, "reconcile_expired_run_leases", fake_reconcile_expired_run_leases)
     monkeypatch.setattr(
         worker_bootstrap,
@@ -1365,6 +1320,7 @@ async def test_worker_startup_ensures_builtin_mcp_servers(monkeypatch: pytest.Mo
     monkeypatch.setattr(worker_bootstrap, "_reconcile_agent_run_leases_forever", fake_reconciliation_loop)
     monkeypatch.setattr(worker_bootstrap, "reconcile_and_publish_jobs", fake_reconcile_and_publish_jobs)
     monkeypatch.setattr(worker_bootstrap, "_reconcile_background_jobs_forever", fake_job_reconciliation_loop)
+    monkeypatch.setattr(worker_bootstrap, "_reconcile_sandboxes_forever", AsyncMock())
     monkeypatch.setattr(worker_bootstrap, "recover_scheduled_dispatches", fake_recover_scheduled_dispatches)
     monkeypatch.setattr(worker_bootstrap, "claim_and_dispatch_due_jobs", fake_claim_and_dispatch_due_jobs)
     options_module = importlib.import_module("yuxi.modules.system.options")
@@ -1385,11 +1341,11 @@ async def test_worker_startup_ensures_builtin_mcp_servers(monkeypatch: pytest.Mo
         "reconcile_expired_run_leases",
         "reconcile_pending_runtime_cleanups",
         "recover_pending_dispatches",
-        "reconcile_and_publish_jobs",
-        "publish_job_reconciliation_health",
         "recover_scheduled_dispatches",
         "claim_and_dispatch_due_jobs",
         "publish_reconciliation_health",
+        "reconcile_and_publish_jobs",
+        "publish_job_reconciliation_health",
         "reconciliation_loop",
         "job_reconciliation_loop",
     ]
@@ -1477,6 +1433,15 @@ async def test_reconciliation_failure_does_not_refresh_success_lease(monkeypatch
         calls["publish"] += 1
 
     monkeypatch.setattr(run_worker.asyncio, "sleep", no_wait)
+    for name in (
+        "reconcile_pending_runtime_cleanups",
+        "reconcile_stopped_trees",
+        "recover_cooperation_waits",
+        "recover_pending_dispatches",
+        "recover_scheduled_dispatches",
+        "claim_and_dispatch_due_jobs",
+    ):
+        monkeypatch.setattr(worker_bootstrap, name, AsyncMock())
     monkeypatch.setattr(worker_bootstrap, "reconcile_expired_run_leases", fail_then_cancel)
     monkeypatch.setattr(worker_bootstrap, "_publish_reconciliation_health", publish)
 
@@ -1751,3 +1716,32 @@ def test_background_job_worker_rejects_invalid_default_timeout_at_configuration(
     )
     assert result.returncode != 0
     assert "positive finite number of seconds" in result.stderr
+
+
+async def test_reconciliation_continues_later_phases_without_publishing_success(monkeypatch):
+    """坏恢复阶段不阻断后续派发，部分成功也不续报完整恢复健康。"""
+    progressed = []
+
+    async def bad_wait():
+        """模拟已记录的恢复失败。"""
+        raise ValueError("broken wait")
+
+    async def dispatch():
+        """观察后续派发阶段仍有机会推进。"""
+        progressed.append("dispatched")
+
+    for name in (
+        "reconcile_expired_run_leases",
+        "reconcile_pending_runtime_cleanups",
+        "reconcile_stopped_trees",
+        "recover_scheduled_dispatches",
+        "claim_and_dispatch_due_jobs",
+    ):
+        monkeypatch.setattr(worker_bootstrap, name, AsyncMock())
+    monkeypatch.setattr(worker_bootstrap, "recover_cooperation_waits", bad_wait)
+    monkeypatch.setattr(worker_bootstrap, "recover_pending_dispatches", dispatch)
+    health = AsyncMock()
+    monkeypatch.setattr(worker_bootstrap, "_publish_reconciliation_health", health)
+    await worker_bootstrap._reconcile_agent_runs_once()
+    assert progressed == ["dispatched"]
+    health.assert_not_awaited()

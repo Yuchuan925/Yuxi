@@ -47,7 +47,6 @@ async def _create_agent(
                     "knowledges": [],
                     "mcps": [],
                     "skills": [],
-                    "subagents": [],
                     "model_retry_times": 0,
                 }
             },

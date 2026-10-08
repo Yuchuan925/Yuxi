@@ -24,7 +24,6 @@ LARGE_TOOL_CALL_ID = "call-large-tool-result"
 BLOCKING_REQUEST_TOKENS: set[str] = set()
 BLOCKING_REQUEST_TOKENS_LOCK = Lock()
 BLOCKING_GATES: dict[str, Event] = {}
-SUBAGENT_GATES: dict[str, Event] = {}
 
 
 def validate_request(authorization: str | None, request: dict) -> str | None:
@@ -56,37 +55,19 @@ def validate_request(authorization: str | None, request: dict) -> str | None:
     tool_messages = [message for message in messages if isinstance(message, dict) and message.get("role") == "tool"]
     if "DETERMINISTIC_CREATE_MCP" in serialized_messages and "effect_probe" not in tool_names:
         return "creation_mcp_tool_missing"
-    subagent_child = "DETERMINISTIC_SUBAGENT_CHILD" in serialized_messages
-    subagent_parent = "DETERMINISTIC_SUBAGENT_PARENT:" in serialized_messages
     if "DETERMINISTIC_CANCEL_FOLLOWUP" in serialized_messages:
         return None
-    question_flow = "DETERMINISTIC_ASK_USER" in serialized_messages or (
-        subagent_child and "SUBAGENT_QUESTION_CHILD" in serialized_messages
-    )
+    question_flow = "DETERMINISTIC_ASK_USER" in serialized_messages
     if question_flow:
         if "ask_user_question" not in tool_names:
             return "ask_user_question_missing"
         if any(message.get("tool_call_id") != "call-ask-user" for message in tool_messages):
             return "ask_user_question_result_mismatch"
         return None
-    if subagent_child:
-        if "write_file" not in tool_names or "task" in tool_names:
-            return "subagent_tool_policy_mismatch"
-    elif EXPECTED_PRELOADED_TOOL not in tool_names:
+    if EXPECTED_PRELOADED_TOOL not in tool_names:
         return "preloaded_tool_missing"
     if LARGE_TOOL_RESULT_MARKER in serialized_messages and "execute" not in tool_names:
         return "execute_tool_missing"
-    if subagent_child or subagent_parent:
-        expected_call = "call-subagent-write" if subagent_child else "call-subagent-start"
-        if (
-            subagent_parent
-            and not subagent_child
-            and ("task" in tool_names or not {"subagent_start", "subagent_await"} <= tool_names)
-        ):
-            return "subagent_lifecycle_tools_missing"
-        if tool_messages and not any(message.get("tool_call_id") == expected_call for message in tool_messages):
-            return "subagent_tool_result_missing"
-        return None
     if tool_messages and not any(
         (
             message.get("tool_call_id") == EXPECTED_TOOL_CALL_ID
@@ -131,16 +112,7 @@ def _stream_payloads(model: str, messages: list[dict]) -> list[dict]:
                 "usage": {"prompt_tokens": 8, "completion_tokens": 4, "total_tokens": 12},
             },
         ]
-    parent = (
-        "DETERMINISTIC_SUBAGENT_PARENT:" in serialized_messages
-        and "DETERMINISTIC_SUBAGENT_CHILD" not in serialized_messages
-    )
-    observation = "SUBAGENT_OBSERVATION_GATE:" in serialized_messages
-    waiting_call = None
-    if parent and tool_results and "SUBAGENT_BACKGROUND" not in serialized_messages:
-        starts = ["call-subagent-slow", "call-subagent-start"] if observation else ["call-subagent-start"]
-        waiting_call = next((call for call in starts if f"await-{call}" not in tool_results), None)
-    if tool_results and waiting_call is None:
+    if tool_results:
         return [
             {
                 **common,
@@ -165,9 +137,7 @@ def _stream_payloads(model: str, messages: list[dict]) -> list[dict]:
     if "DETERMINISTIC_ASK_USER_INVALID" in serialized_messages:
         tool_call_id, tool_name = "call-ask-user", "ask_user_question"
         tool_arguments = json.dumps({"questions": [{"question": "选择风格？", "multi_select": "false"}]})
-    elif "DETERMINISTIC_ASK_USER" in serialized_messages or (
-        "DETERMINISTIC_SUBAGENT_CHILD" in serialized_messages and "SUBAGENT_QUESTION_CHILD" in serialized_messages
-    ):
+    elif "DETERMINISTIC_ASK_USER" in serialized_messages:
         tool_call_id, tool_name = "call-ask-user", "ask_user_question"
         tool_arguments = json.dumps(
             {
@@ -178,22 +148,6 @@ def _stream_payloads(model: str, messages: list[dict]) -> list[dict]:
             },
             ensure_ascii=False,
         )
-    elif waiting_call:
-        started = json.loads(tool_results[waiting_call])
-        tool_call_id, tool_name = f"await-{waiting_call}", "subagent_await"
-        tool_arguments = json.dumps({"run_id": started["run_id"]})
-    elif "DETERMINISTIC_SUBAGENT_CHILD" in serialized_messages and "SUBAGENT_APPROVAL_CHILD" in serialized_messages:
-        tool_call_id, tool_name = "call-subagent-write", "execute"
-        tool_arguments = json.dumps({"command": "printf CHILD_APPROVAL_MUST_NOT_EXECUTE"})
-    elif "DETERMINISTIC_SUBAGENT_CHILD" in serialized_messages:
-        tool_call_id, tool_name = "call-subagent-write", "write_file"
-        path = re.search(r'SUBAGENT_PATH:(/[^\s"\\]+)', serialized_messages).group(1)
-        tool_arguments = json.dumps({"file_path": path, "content": "subagent write verified"})
-    elif "DETERMINISTIC_SUBAGENT_PARENT:" in serialized_messages:
-        tool_call_id, tool_name = "call-subagent-start", "subagent_start"
-        slug = re.search(r"DETERMINISTIC_SUBAGENT_PARENT:([\w-]+)", serialized_messages).group(1)
-        description = next(message["content"] for message in reversed(messages) if message.get("role") == "user")
-        tool_arguments = json.dumps({"subagent_slug": slug, "description": description})
     elif large_result:
         tool_arguments = json.dumps({"command": "yes X | head -c 13000"})
     elif TOOL_ERROR_MARKER in serialized_messages:
@@ -232,17 +186,6 @@ def _stream_payloads(model: str, messages: list[dict]) -> list[dict]:
         },
     ]
 
-    if parent and observation and not tool_results:
-        args = json.loads(tool_arguments)
-        args["description"] += " SUBAGENT_SLOW"
-        payloads[0]["choices"][0]["delta"]["tool_calls"].append(
-            {
-                "index": 1,
-                "id": "call-subagent-slow",
-                "type": "function",
-                "function": {"name": "subagent_start", "arguments": json.dumps(args)},
-            }
-        )
     return payloads
 
 
@@ -253,12 +196,6 @@ class ReplayHandler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
-        if parsed.path == "/release-subagent":
-            token = parse_qs(parsed.query).get("token", [""])[0]
-            with BLOCKING_REQUEST_TOKENS_LOCK:
-                SUBAGENT_GATES.setdefault(token, Event()).set()
-            self._write_json(200, {"released": True})
-            return
         if parsed.path == "/release-blocking":
             token = parse_qs(parsed.query).get("token", [""])[0]
             with BLOCKING_REQUEST_TOKENS_LOCK:
@@ -301,23 +238,12 @@ class ReplayHandler(BaseHTTPRequestHandler):
             messages = [message for message in messages[:last_user] if message.get("role") == "system"] + messages[
                 last_user:
             ]
-            is_parent = (
-                "DETERMINISTIC_SUBAGENT_PARENT:" in serialized_messages
-                and "DETERMINISTIC_SUBAGENT_CHILD" not in serialized_messages
-            )
             has_tool_result = any(message.get("role") == "tool" for message in messages)
-            if not is_parent and (has_tool_result or "RATE_LIMIT_FIRST_CALL" in current_input):
+            if has_tool_result or "RATE_LIMIT_FIRST_CALL" in current_input:
                 self._write_json(
                     429,
                     {"error": {"message": "DETERMINISTIC_RATE_LIMIT exhausted", "type": "rate_limit_error"}},
                 )
-                return
-        gate = re.search(r"SUBAGENT_(?:OBSERVATION|BACKGROUND)_GATE:([0-9a-f-]+)", serialized_messages)
-        if gate and "DETERMINISTIC_SUBAGENT_CHILD" in serialized_messages and "SUBAGENT_SLOW" in serialized_messages:
-            with BLOCKING_REQUEST_TOKENS_LOCK:
-                event = SUBAGENT_GATES.setdefault(gate.group(1), Event())
-            if not event.wait(60):
-                self._write_json(504, {"error": "subagent_gate_timeout"})
                 return
         blocking_match = re.search(rf"{BLOCK_BEFORE_RESPONSE_MARKER}:([0-9a-f-]+)", serialized_messages)
         model = str(request["model"])

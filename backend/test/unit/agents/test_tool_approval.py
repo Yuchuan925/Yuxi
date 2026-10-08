@@ -68,7 +68,7 @@ async def test_chatbot_graph_assembles_approval_with_current_project(monkeypatch
         return None
 
     monkeypatch.setattr(chatbot_graph, "create_memory_middleware", no_optional_middleware)
-    monkeypatch.setattr(chatbot_graph, "create_subagent_task_middleware", no_optional_middleware)
+    monkeypatch.setattr(chatbot_graph, "create_cooperation_middleware", lambda context: None)
     context = SimpleNamespace(
         model="test-provider:test-model",
         tool_approval_mode="default",

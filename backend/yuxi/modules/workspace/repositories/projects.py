@@ -109,7 +109,7 @@ class ProjectRepository:
             select(Session.thread_id)
             .where(Session.uid == project.uid, Session.project_id == project.id)
             .order_by(Session.thread_id)
-            .with_for_update()
+            .with_for_update(key_share=True)
         )
         thread_ids = list(rows.scalars())
         if thread_ids:
@@ -149,7 +149,7 @@ class ProjectRepository:
             .where(
                 Session.uid == project.uid,
                 Session.project_id == project.id,
-                Session.status.in_(("active", "subagent")),
+                Session.status == "active",
             )
             .values(status="archived", updated_at=deleted_at)
         )

@@ -35,7 +35,6 @@ async def _create_agent(client: httpx.AsyncClient, headers: dict[str, str], uid:
         "knowledges": [],
         "mcps": [],
         "skills": [],
-        "subagents": [],
     }
     if default_context.get("model"):
         context["model"] = default_context["model"]

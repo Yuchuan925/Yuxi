@@ -20,6 +20,12 @@ import {
 
 export const TOOL_ICON_MAP = {
   ask_user_question: HelpCircle,
+  create_session: Bot,
+  send_message: Bot,
+  submit_input: Bot,
+  cancel_turn: Bot,
+  wait_sessions: RefreshCw,
+  list_sessions: RefreshCw,
   bash: SquareTerminal,
   calculator: Calculator,
   cmd: SquareTerminal,
@@ -44,12 +50,6 @@ export const TOOL_ICON_MAP = {
   run_shell_command: SquareTerminal,
   search_file: FolderSearch,
   search_file_content: FolderSearch,
-  subagent_await: Bot,
-  subagent_cancel: Bot,
-  subagent_events: RefreshCw,
-  subagent_start: Bot,
-  subagent_status: RefreshCw,
-  task: Bot,
   web_search: Globe,
   tavily_search: Globe,
   doubao_search: Globe,
@@ -67,15 +67,10 @@ export {
   isHiddenToolCall,
   isValidToolCall,
   parseToolCallArgs,
-  SUBAGENT_TOOL_IDS,
-  isSubagentToolCall,
   parseToolCallResult,
   getToolCallStatus,
-  getSubagentRunStatus,
   getToolCallDisplayStatus,
-  enrichSubagentToolCall,
   normalizeToolCalls,
-  enrichTaskToolCalls
 } from '../../model/toolCallProjection.js'
 
 export const getToolIcon = (toolId) => TOOL_ICON_MAP[toolId] || null

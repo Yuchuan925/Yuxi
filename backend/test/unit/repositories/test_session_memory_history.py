@@ -10,7 +10,7 @@ from yuxi.modules.agents.repositories.sessions import MEMORY_HISTORY_READ_RESPON
 from yuxi.modules.agents.models.runs import AgentRun
 from yuxi.modules.agents.models.turns import AgentTurn
 from yuxi.infrastructure.postgres.base import Base
-from yuxi.modules.agents.models.sessions import Session, SubagentThread
+from yuxi.modules.agents.models.sessions import Session
 from yuxi.modules.agents.models.messages import Message, ToolCall
 
 pytestmark = pytest.mark.unit
@@ -47,16 +47,6 @@ async def test_memory_search_includes_public_source_and_excludes_hidden_messages
     public = await _session(session, thread_id="public", metadata={"source": "public_api"})
     parent = await _session(session, thread_id="parent")
     child = await _session(session, thread_id="child")
-    session.add(
-        SubagentThread(
-            uid="user-1",
-            parent_session_record_id=parent.id,
-            child_session_record_id=child.id,
-            child_thread_id="child",
-            subagent_slug="worker",
-            created_by_run_id="run-parent",
-        )
-    )
     session.add_all(
         [
             Message(session_record_id=visible.id, role="user", content="needle visible", message_type="text"),
@@ -76,6 +66,7 @@ async def test_memory_search_includes_public_source_and_excludes_hidden_messages
     assert {item["thread_id"]: item["content"] for item in result["items"]} == {
         "visible": "needle visible",
         "public": "needle public",
+        "child": "needle child",
     }
     assert all("truncated" not in item for item in result["items"])
     assert "truncated" not in result

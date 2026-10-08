@@ -1,14 +1,14 @@
 # 中间件
 
-中间件把文件、Skills、子智能体、上下文压缩、审批和用量统计接到 LangGraph Agent。它们在模型调用、工具调用或 state 更新的边界运行，让不同 Agent 复用同一套能力。
+中间件把文件、Skills、会话协作、上下文压缩、审批和用量统计接到 LangGraph Agent。它们在模型调用、工具调用或 state 更新的边界运行，让不同 Agent 复用同一套能力。
 
-内置 `ChatbotAgent` 和 `SubAgentBackend` 都在 `get_graph()` 中组装中间件。Graph 创建前，系统先完成用户资源和权限的归一化；中间件不应绕过这一步重新决定授权。
+内置 `ChatbotAgent` 在 `get_graph()` 中组装中间件。Graph 创建前，系统先完成用户资源和权限的归一化；中间件不应绕过这一步重新决定授权。
 
 ## Graph 创建前的准备
 
 `prepare_agent_runtime_context` 会根据当前用户和 Agent 配置：
 
-- 过滤内置工具、知识库、MCP、Skills 和子智能体；
+- 过滤内置工具、知识库、MCP 和 Skills；
 - 展开 Skill 依赖，生成 `_effective_skill_slugs` 和 `_runtime_skills`；
 - 使用系统默认模型补齐空的模型配置。
 
@@ -25,7 +25,7 @@
 | 3 | `create_agent_filesystem_middleware` | 提供 Workdir、User Data、Skills 文件后端，并卸载过大的工具结果 |
 | 4 | `SkillsMiddleware` | 注入 Skill 说明，按激活状态开放依赖 |
 | 5 | `YuxiMemoryMiddleware` | Memory 开关开启且 `MEMORY.md` 有内容时，注入用户记忆并提供受限工具 |
-| 6 | `YuxiSubAgentMiddleware` | 主智能体有可见子智能体时提供子智能体生命周期工具 |
+| 6 | `CooperationMiddleware` | 所有持久 Run 提供统一 Session 协作工具 |
 | 7 | `YuxiSummarizationMiddleware` | 先确定性压缩工具结果，仍达到同一阈值时生成摘要 |
 | 8 | `TodoListMiddleware` | 保存待办，供状态面板展示 |
 | 9 | `PatchToolCallsMiddleware` | 修正部分工具调用消息形态 |
@@ -34,11 +34,9 @@
 | 12 | `TokenUsageMiddleware` | 记录近似上下文和主模型实际用量 |
 | 13 | 工具审批 middleware | 默认模式下审批 Project 外的文件写入和命令执行；当前 Project 内的写/编辑自动放行 |
 
-`SubAgentBackend` 复用文件、Skills、Summary、待办、重试和用量等能力，同样以 `ToolErrorGuardMiddleware` 为最外层，但不挂载子智能体 middleware，并过滤不适合子智能体的敏感或交互工具。
-
 模型重试耗尽后，异常进入 Run 失败通道，持久化 `failed` 状态与错误原因；已有部分输出保留错误元数据。
 
-子 Run 的失败通过 `subagent_await` / `subagent_status` 返回给父智能体，由父智能体决定后续处理。最终正常回答仍须满足同 Run 的 model lifecycle 审计关联。
+协作成员的失败进入持久状态通知，等待方读取目标 Turn 的结果，由模型决定后续处理。最终正常回答仍须满足同 Run 的 model lifecycle 审计关联。
 
 ## Skills 和知识库
 
@@ -52,11 +50,11 @@ Skills middleware 将 Skill 说明按模型请求注入：预加载 Skill 从首
 
 普通 Agent 和子 Agent 使用根 Session 的同一个 `runtime_scope_id` 和 Workdir。子 Agent 的 child thread 只隔离 LangGraph checkpoint，不隔离共享文件。Viewer、附件和 artifact API 直接访问 UserWorkspace 的持久文件，不需要创建 file-bridge Sandbox。
 
-## 子智能体
+## 会话协作
 
-主智能体配置了可见子智能体时，middleware 提供 `subagent_start`、`subagent_status`、`subagent_cancel` 和 `subagent_await`。`subagent_start` 立即返回子 Run 身份，`subagent_await` 按需等待；查询和取消均按 `run_id` 执行。子智能体使用自己的 Context 和 checkpoint，但继承发起用户的权限、Workdir 和 execution runtime。
+所有 Session 都有创建、提交、消息、取消、查询与持久等待工具；协作消息在模型调用前消费，消费位置随 checkpoint 保存。等待释放 worker 和树内名额，恢复创建同 Turn 的下一 Run。
 
-详细的调用、busy、结果和文件边界见[子智能体](./subagents-management.md)。
+接口、授权、结果与环境边界见[会话协作](./session-cooperation.md)。
 
 ## Summary 上下文压缩
 

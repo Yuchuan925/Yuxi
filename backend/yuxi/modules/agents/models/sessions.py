@@ -5,6 +5,7 @@ from typing import Any
 from sqlalchemy import (
     JSON,
     Boolean,
+    CheckConstraint,
     Column,
     DateTime,
     ForeignKey,
@@ -27,7 +28,19 @@ class Session(Base):
     __tablename__ = "sessions"
 
     id = Column(Integer, primary_key=True, autoincrement=True, comment="Primary key")
-    thread_id = Column(String(64), unique=True, index=True, nullable=False, comment="Thread ID (UUID)")
+    thread_id = Column(String(64), nullable=False, comment="Thread ID (UUID)")
+    tree_root_thread_id = Column(
+        String(64),
+        ForeignKey("sessions.thread_id"),
+        nullable=False,
+        index=True,
+        default=lambda context: context.get_current_parameters()["thread_id"],
+    )
+    parent_thread_id = Column(String(64), ForeignKey("sessions.thread_id"), nullable=True, index=True)
+    cooperation_name = Column(String(64), nullable=False, default="root", server_default="root")
+    cooperation_path = Column(String(1024), nullable=False, default="/root", server_default="/root")
+    created_by_run_id = Column(String(64), ForeignKey("agent_runs.id", use_alter=True), nullable=True)
+    config_snapshot = Column(JSON, nullable=True)
     creation_request_id = Column(String(64), nullable=True, comment="新建 Session 幂等请求 ID")
     uid = Column(String(64), index=True, nullable=False, comment="UID")
     app_id = Column(String(64), nullable=True, comment="Public API 可信 APP 归属")
@@ -48,6 +61,26 @@ class Session(Base):
     project = relationship("Project", back_populates="sessions")
 
     __table_args__ = (
+        UniqueConstraint("thread_id", name="uq_sessions_thread_id"),
+        UniqueConstraint("id", "thread_id", "tree_root_thread_id", name="uq_sessions_runtime_binding"),
+        UniqueConstraint("thread_id", "tree_root_thread_id", "uid", "project_id", name="uq_sessions_tree_owner"),
+        UniqueConstraint("thread_id", "uid", "project_id", name="uq_sessions_workdir_owner"),
+        ForeignKeyConstraint(
+            ["tree_root_thread_id", "uid", "project_id"],
+            ["sessions.thread_id", "sessions.uid", "sessions.project_id"],
+            name="fk_sessions_tree_owner",
+        ),
+        ForeignKeyConstraint(
+            ["parent_thread_id", "tree_root_thread_id", "uid", "project_id"],
+            ["sessions.thread_id", "sessions.tree_root_thread_id", "sessions.uid", "sessions.project_id"],
+            name="fk_sessions_parent_tree_owner",
+        ),
+        UniqueConstraint("tree_root_thread_id", "cooperation_path", name="uq_sessions_tree_path"),
+        CheckConstraint(
+            "(parent_thread_id IS NULL AND tree_root_thread_id = thread_id AND cooperation_path = '/root') "
+            "OR (parent_thread_id IS NOT NULL AND parent_thread_id <> thread_id)",
+            name="ck_sessions_tree_shape",
+        ),
         ForeignKeyConstraint(
             ["project_id", "uid"],
             ["projects.id", "projects.uid"],
@@ -62,6 +95,11 @@ class Session(Base):
         return {
             "id": self.id,
             "thread_id": self.thread_id,
+            "session_id": self.thread_id,
+            "tree_root_session_id": self.tree_root_thread_id,
+            "parent_session_id": self.parent_thread_id,
+            "name": self.cooperation_name,
+            "path": self.cooperation_path,
             "creation_request_id": self.creation_request_id,
             "uid": self.uid,
             "agent_id": self.agent_id,
@@ -73,42 +111,4 @@ class Session(Base):
             "created_at": format_utc_datetime(self.created_at),
             "updated_at": format_utc_datetime(self.updated_at),
             "metadata": metadata,
-        }
-
-
-class SubagentThread(Base):
-    """SubagentThread table - 子智能体长期线程归属关系表"""
-
-    __tablename__ = "subagent_threads"
-
-    id = Column(Integer, primary_key=True, autoincrement=True, comment="Primary key")
-    uid = Column(String(64), index=True, nullable=False, comment="UID")
-    parent_session_record_id = Column(
-        Integer, ForeignKey("sessions.id"), nullable=False, index=True, comment="Parent agent_session ID"
-    )
-    child_session_record_id = Column(
-        Integer,
-        ForeignKey("sessions.id"),
-        nullable=False,
-        unique=True,
-        index=True,
-        comment="Child agent_session ID",
-    )
-    child_thread_id = Column(String(64), nullable=False, unique=True, index=True, comment="Child thread ID")
-    subagent_slug = Column(String(64), nullable=False, index=True, comment="Subagent slug")
-    created_by_run_id = Column(String(64), nullable=False, index=True, comment="Run that created this subagent thread")
-    created_at = Column(DateTime(timezone=True), default=utc_now, comment="Creation time")
-    updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, comment="Update time")
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "id": self.id,
-            "uid": self.uid,
-            "parent_session_record_id": self.parent_session_record_id,
-            "child_session_record_id": self.child_session_record_id,
-            "child_thread_id": self.child_thread_id,
-            "subagent_slug": self.subagent_slug,
-            "created_by_run_id": self.created_by_run_id,
-            "created_at": format_utc_datetime(self.created_at),
-            "updated_at": format_utc_datetime(self.updated_at),
         }

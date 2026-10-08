@@ -10,8 +10,8 @@ const source = readFileSync(
 )
 const view = readFileSync(new URL('../../src/pages/AgentView.vue', import.meta.url), 'utf8')
 const dock = source.slice(
-  source.indexOf('<div\n            ref="messageInputDockRef"'),
-  source.indexOf('              <section\n                v-if="currentQueuedInputs.length"')
+  source.lastIndexOf('<div', source.indexOf('ref="messageInputDockRef"')),
+  source.indexOf('<section', source.indexOf('ref="messageInputDockRef"'))
 )
 const render = Vue.compile(`${dock}</div></div>`)
 

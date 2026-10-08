@@ -191,7 +191,7 @@ def replay():
         server.server_close()
 
 
-@pytest.mark.parametrize("revocation", ["agent", "account", "skill", "subagent", "mcp"])
+@pytest.mark.parametrize("revocation", ["agent", "account", "skill", "mcp"])
 async def test_tool_boundary_rechecks_current_caller_and_retains_history(actors, replay, remote_tool, revocation):
     """撤销 Agent/账号终结执行，撤销 Skill 拒绝工具但继续可执行部分。"""
     client, db = actors["client"], actors["db"]
@@ -204,7 +204,6 @@ async def test_tool_boundary_rechecks_current_caller_and_retains_history(actors,
     skill_installed = False
     filename = f"permission-proof-{suffix}.txt"
     file = user_workspace_dir(user["uid"]) / filename
-    child = None
     mcp_slug = None
     if revocation == "skill":
         package = (
@@ -241,13 +240,6 @@ async def test_tool_boundary_rechecks_current_caller_and_retains_history(actors,
         )
         assert created.status_code == 200, created.text
         replay["action"].update(name="effect_probe", arguments={})
-    elif revocation == "subagent":
-        child = await create_agent(
-            actors, admin, backend_id="SubAgentBackend", visibility="shared", share_config=SHARED
-        )
-        replay["action"].update(
-            name="subagent_start", arguments={"subagent_slug": child["slug"], "description": "forbidden"}
-        )
     else:
         replay["action"].update(
             name="write_file",
@@ -266,7 +258,6 @@ async def test_tool_boundary_rechecks_current_caller_and_retains_history(actors,
                 "preload_skills": [skill] if skill_installed else [],
                 "mcps": [mcp_slug] if mcp_slug else [],
                 "knowledges": [],
-                "subagents": [child["slug"]] if child else [],
             }
         },
     )
@@ -310,12 +301,6 @@ async def test_tool_boundary_rechecks_current_caller_and_retains_history(actors,
             response = await client.put(
                 f"/api/system/mcp-servers/{mcp_slug}/tools/effect_probe/toggle", headers=actors["root"]
             )
-        elif revocation == "subagent":
-            response = await client.put(
-                f"/api/agent/{child['slug']}",
-                headers=admin["headers"],
-                json={"share_config": {"version": 2, "read_scope": None, "manage_scope": None}},
-            )
         else:
             response = await client.put(
                 f"/api/system/skills/{skill}/share-config",
@@ -331,11 +316,11 @@ async def test_tool_boundary_rechecks_current_caller_and_retains_history(actors,
             await asyncio.sleep(0.1)
         else:
             pytest.fail("撤权后 Run 没有形成终态")
-        assert run["status"] == ("completed" if revocation in {"skill", "subagent", "mcp"} else "failed"), dict(run)
+        assert run["status"] == ("completed" if revocation in {"skill", "mcp"} else "failed"), dict(run)
         assert not file.exists(), "失权后执行了文件副作用"
         assert not remote_tool["effect"].exists(), "停用后执行了真实 MCP 工具"
         assert await db.fetchval("SELECT count(*) FROM sessions WHERE thread_id=$1", accepted["thread_id"]) == 1
-        if revocation in {"skill", "subagent", "mcp"}:
+        if revocation in {"skill", "mcp"}:
             async with AsyncPostgresSaver.from_conn_string(os.environ["POSTGRES_URL"].replace("+asyncpg", "")) as saver:
                 checkpoint = await saver.aget_tuple({"configurable": {"thread_id": accepted["thread_id"]}})
             outputs = [
@@ -346,12 +331,6 @@ async def test_tool_boundary_rechecks_current_caller_and_retains_history(actors,
             assert len(outputs) == 1 and "能力受限" in outputs[0].content
             if revocation in {"skill", "mcp"}:
                 assert outputs[0].status == "error" and skill not in outputs[0].content
-            if child:
-                assert child["name"] not in outputs[0].content
-                assert (
-                    await db.fetchval("SELECT count(*) FROM agent_runs WHERE created_by_run_id=$1", accepted["run_id"])
-                    == 0
-                )
             assert any(
                 "能力受限" in str(message.get("content"))
                 for request in replay["requests"]
@@ -391,7 +370,6 @@ async def prepared_agent(actors, replay, *, tools=None):
                 "preload_skills": [],
                 "mcps": [],
                 "knowledges": [],
-                "subagents": [],
             }
         },
     )
@@ -671,7 +649,6 @@ async def test_failed_model_response_cannot_start_retry_or_summary_after_revocat
                 "tools": [],
                 "mcps": [],
                 "skills": [],
-                "subagents": [],
                 "knowledges": [],
                 "summary_keep_messages": 1,
             }

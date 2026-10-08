@@ -8,7 +8,7 @@ from yuxi.modules.agents.repositories.turn import AgentTurnRepository
 from yuxi.modules.agents.models.runs import AgentRun
 from yuxi.modules.agents.models.turns import AgentTurn
 from yuxi.infrastructure.postgres.base import Base
-from yuxi.modules.agents.models.sessions import Session, SubagentThread
+from yuxi.modules.agents.models.sessions import Session
 from yuxi.modules.agents.models.messages import Message
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.unit]
@@ -141,7 +141,8 @@ async def test_usage_includes_child_run_final_model_output_but_not_child_unbound
         thread_id="parent-thread", project_id="usage-project", uid="user-1", agent_id="main", status="active"
     )
     child_session = Session(
-        thread_id="child-thread", project_id="usage-project", uid="user-1", agent_id="helper", status="subagent"
+        thread_id="child-thread", project_id="usage-project", uid="user-1", agent_id="main", status="active", tree_root_thread_id="parent-thread",
+        parent_thread_id="parent-thread", cooperation_name="child", cooperation_path="/root/child"
     )
     session.add_all([parent_session, child_session])
     await session.flush()
@@ -160,31 +161,20 @@ async def test_usage_includes_child_run_final_model_output_but_not_child_unbound
     )
     session.add_all([turn, parent_run])
     await session.flush()
-    relation = SubagentThread(
-        uid="user-1",
-        parent_session_record_id=parent_session.id,
-        child_session_record_id=child_session.id,
-        child_thread_id="child-thread",
-        subagent_slug="helper",
-        created_by_run_id=parent_run.id,
-    )
-    session.add(relation)
-    await session.flush()
     child_turn = AgentTurn(id="child-turn", thread_id="child-thread", uid="user-1", status="completed")
     session.add(child_turn)
     await session.flush()
     child_run = AgentRun(
         id="child-run",
         thread_id="child-thread",
-        runtime_scope_id="child-thread",
-        agent_slug="helper",
+        runtime_scope_id="parent-thread",
+        agent_slug="main",
         uid="user-1",
         status="completed",
         turn_id=child_turn.id,
         session_record_id=child_session.id,
         created_by_run_id=parent_run.id,
-        subagent_thread_relation_id=relation.id,
-        run_type="subagent",
+        run_type="chat",
         input_payload={},
     )
     session.add(child_run)

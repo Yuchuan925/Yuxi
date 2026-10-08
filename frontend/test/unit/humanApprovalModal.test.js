@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { createRenderer, h, nextTick } from 'vue'
+import { createRenderer, h, nextTick, ref } from 'vue'
 import { createServer } from 'vite'
 import { compileScript, parse } from 'vue/compiler-sfc'
 import { readFileSync } from 'node:fs'
@@ -261,6 +261,41 @@ test('问题弹窗按顺序收集全部答案', async () => {
     assert.equal(multipleSubmit.props.disabled, false)
     multipleSubmit.props.onClick()
     assert.deepEqual(submissions, [{ cities: ['杭州'] }])
+
+    app.unmount()
+    submissions.length = 0
+    const approvalHost = makeNode('root')
+    const processing = ref(false)
+    app = renderer.createApp(() =>
+      h(HumanApprovalModal, {
+        visible: true,
+        kind: 'tool_approval',
+        processing: processing.value,
+        actionRequests: [
+          { name: 'write_file', args: { file_path: 'result.txt', content: 'result' } }
+        ],
+        onSubmit: (decision) => {
+          submissions.push(decision)
+          processing.value = true
+        }
+      })
+    )
+    app.mount(approvalHost)
+    await nextTick()
+    const approve = () =>
+      find(approvalHost, (node) => node.type === 'button' && node.props.class === 'btn btn-approve')
+    approve().props.onClick()
+    await nextTick()
+    assert.equal(approve().props.disabled, true)
+    processing.value = false
+    await nextTick()
+    assert.equal(approve().props.disabled, false, '提交失败后同一卡片可重试，不需要关掉再打开')
+    approve().props.onClick()
+    await nextTick()
+    assert.deepEqual(submissions, [
+      { decisions: [{ type: 'approve' }] },
+      { decisions: [{ type: 'approve' }] }
+    ])
   } finally {
     app?.unmount()
     await server.close()

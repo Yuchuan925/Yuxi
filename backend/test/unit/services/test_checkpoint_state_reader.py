@@ -75,7 +75,6 @@ async def test_state_view_reads_persisted_fields_without_agent_runtime(checkpoin
         todos: list
         files: dict
         artifacts: list
-        subagent_runs: list
         token_usage: dict
         internal_only: str
 
@@ -84,7 +83,7 @@ async def test_state_view_reads_persisted_fields_without_agent_runtime(checkpoin
         "todos": [{"content": "saved todo", "status": "pending"}],
         "files": {"legacy.txt": {"content": ["old checkpoint content"]}},
         "artifacts": ["saved.txt"],
-        "subagent_runs": [{"run_id": "child-run"}],
+        "cooperation": {"sessions": []},
         "token_usage": {"total": 123},
         "internal_only": "not a response field",
     }
@@ -118,7 +117,7 @@ async def test_state_view_reads_persisted_fields_without_agent_runtime(checkpoin
         include_relations=False,
     )
     assert response["agent_state"] == {
-        key: payload[key] for key in ("todos", "artifacts", "subagent_runs", "token_usage")
+        key: payload[key] for key in ("todos", "artifacts", "cooperation", "token_usage")
     }
     assert response["items"] == []
     assert "saved message" not in str(response)

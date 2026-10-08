@@ -3,30 +3,23 @@ import { message } from 'ant-design-vue'
 import { applyAgentEvent } from '@/modules/session/model/agentItems'
 
 /** 主、子 Thread 共用公开事件消费入口。 */
-export function useAgentStreamHandler({ getThreadState, processApprovalInStream, currentAgentId, streamSmoother }) {
+export function useAgentStreamHandler({
+  getThreadState,
+  processApprovalInStream,
+  currentAgentId,
+  streamSmoother
+}) {
   const handlePublicEvent = (event, threadId) => {
-    const subagentCreated = event.type === 'agent.session.subagent.created'
-    if ((subagentCreated ? event.yuxi?.session_id : event.session_id) !== threadId) return false
+    if (event.session_id !== threadId) return false
     const state = getThreadState(threadId)
     if (!state) return false
     const type = event.type
-    if (subagentCreated) {
-      const delegated = event.yuxi
-      const runs = state.agentState?.subagent_runs || []
-      if (!runs.some((run) => run.run_id === delegated.child_run_id)) {
-        state.agentState = { ...state.agentState, subagent_runs: [...runs, {
-          run_id: delegated.child_run_id,
-          child_thread_id: delegated.child_thread_id,
-          turn_id: delegated.child_turn_id,
-          agent_id: delegated.child_agent_id,
-          created_by_run_id: delegated.created_by_run_id,
-          status: 'pending',
-          created_at: new Date(event.subagent.opened_at * 1000).toISOString()
-        }] }
-      }
+    if (
+      type === 'yuxi.session.turn.state' &&
+      state.activeRunId &&
+      event.yuxi?.run_id !== state.activeRunId
+    )
       return false
-    }
-    if (type === 'yuxi.session.turn.state' && state.activeRunId && event.yuxi?.run_id !== state.activeRunId) return false
     applyAgentEvent(state.ongoingRunGroup, event)
     if (type.endsWith('output_text.delta') || type.endsWith('reasoning.delta')) {
       state.replyLoadingVisible = false

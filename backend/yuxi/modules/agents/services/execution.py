@@ -5,7 +5,7 @@ import json
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import aclosing
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any
 
 from langchain.messages import AIMessage, HumanMessage
 from langgraph.types import Command
@@ -113,7 +113,7 @@ async def _persist_agent_run_langfuse_trace(*, db, meta: dict, run_context: Lang
         return
 
     try:
-        root_thread_id = str(meta.get("runtime_scope_id") or meta.get("thread_id") or "")
+        root_thread_id = str(meta.get("thread_id") or "")
         agent_session = await SessionRepository(db).lock_session_by_thread_id(root_thread_id)
         if agent_session is None:
             raise ValueError("Langfuse 根 Thread 不存在")
@@ -128,7 +128,7 @@ async def _persist_agent_run_langfuse_trace(*, db, meta: dict, run_context: Lang
             raise ValueError("Langfuse Turn 不存在")
         run_repo = AgentRunRepository(db)
         run = await run_repo.get_run(str(run_id))
-        if run is None or run.turn_id != turn.id or run.runtime_scope_id != root_thread_id:
+        if run is None or run.turn_id != turn.id or run.thread_id != root_thread_id:
             raise ValueError("Langfuse Run 与 Turn 归属不一致")
         root_id = turn.langfuse_root_observation_id
         if root_id is None:
@@ -161,17 +161,16 @@ async def _persist_agent_run_langfuse_trace(*, db, meta: dict, run_context: Lang
 def extract_agent_state(values: dict) -> AgentStatePayload:
     """从 LangGraph state 中提取 agent 状态"""
     if not isinstance(values, dict):
-        return {"todos": [], "artifacts": [], "subagent_runs": [], "token_usage": None}
+        return {"todos": [], "artifacts": [], "cooperation": {"sessions": []}, "token_usage": None}
 
     # 直接获取，信任 state 的数据结构
     todos = values.get("todos")
     artifacts = values.get("artifacts")
-    subagent_runs = values.get("subagent_runs")
     token_usage = values.get("token_usage")
     result: AgentStatePayload = {
         "todos": list(todos)[:20] if todos else [],
         "artifacts": list(artifacts) if artifacts else [],
-        "subagent_runs": list(subagent_runs) if subagent_runs else [],
+        "cooperation": {"sessions": []},
         "token_usage": dict(token_usage) if isinstance(token_usage, dict) else None,
     }
 
@@ -280,6 +279,8 @@ def _build_tool_approval_payload(payload: dict, thread_id: str) -> dict[str, Any
 def build_pending_interrupt_payload(info: Any, thread_id: str) -> dict[str, Any]:
     """将 checkpoint 中断信息转换为前端可恢复的统一载荷。"""
     coerced = _coerce_interrupt_payload(info)
+    if coerced.get("kind") == "cooperation":
+        return {**coerced, "status": "cooperation_waiting", "thread_id": thread_id}
     approval_payload = _build_tool_approval_payload(coerced, thread_id)
     if approval_payload:
         return {"status": "human_approval_required", **approval_payload}
@@ -293,6 +294,8 @@ def _interrupt_terminal_details(interrupt: dict[str, Any]) -> tuple[str, str]:
     status = str(interrupt.get("status") or "interrupted")
     if status == "human_approval_required":
         return status, "需要用户审批工具操作"
+    if status == "cooperation_waiting":
+        return status, "等待其他 Session 更新"
     questions = interrupt.get("questions")
     if isinstance(questions, list) and questions and isinstance(questions[0], dict):
         question = str(questions[0].get("question") or "").strip()
@@ -303,6 +306,19 @@ def _interrupt_terminal_details(interrupt: dict[str, Any]) -> tuple[str, str]:
 
 def _waitpoint_from_interrupt(interrupt: dict[str, Any], run_id: str) -> dict:
     """为具体 interrupted Run 固定等待点和审批调用身份。"""
+    if interrupt.get("status") == "cooperation_waiting":
+        target = (
+            {"target_inputs": interrupt["target_inputs"]}
+            if "target_inputs" in interrupt
+            else {"target_sessions": interrupt["target_sessions"], "after_cursor": interrupt["after_cursor"]}
+        )
+        return {
+            "id": hash_id("wait_", run_id, length=64),
+            "run_id": run_id,
+            "kind": "cooperation",
+            **target,
+            "deadline": interrupt["deadline"],
+        }
     if interrupt.get("status") == "human_approval_required":
         approval = dict(interrupt.get("approval") or {})
         actions = approval.get("action_requests") or []
@@ -337,19 +353,17 @@ async def _resolve_agent_runtime(
     requested_agent_slug: str | None,
     thread_id: str,
     prepared_execution: PreparedRunExecution,
-    agent_kind: Literal["main", "subagent"] = "main",
 ) -> tuple[Agent, Any, BaseContext, Session]:
     """校验执行时的线程与 Agent 权限，使用 worker 已固化的配置。"""
     agent_session = await SessionRepository(db).get_session_by_thread_id(thread_id)
-    expected_status = "subagent" if agent_kind == "subagent" else "active"
-    if not agent_session or agent_session.uid != str(user.uid) or agent_session.status != expected_status:
+    if not agent_session or agent_session.uid != str(user.uid) or agent_session.status != "active":
         raise ValueError("对话线程不存在")
     # Session.agent_id 是历史字段名，实际保存的是 Agent.slug。
     if requested_agent_slug and requested_agent_slug != agent_session.agent_id:
         raise ValueError("已有线程已绑定智能体，不能切换")
     await resolve_session_workdir_path(agent_session=agent_session, uid=str(user.uid), db=db)
 
-    agent_item = await AgentRepository(db).get_visible_by_slug(slug=agent_session.agent_id, user=user, kind=agent_kind)
+    agent_item = await AgentRepository(db).get_visible_by_slug(slug=agent_session.agent_id, user=user)
     if not agent_item:
         raise ValueError("智能体不存在或无权限访问")
 
@@ -383,7 +397,7 @@ async def stream_agent_chat(
     on_prepared: Callable[[], Awaitable[None]] | None = None,
     model_request_recorder: FirstModelRequestRecorder | None = None,
 ) -> AsyncIterator[dict[str, Any] | RunExecutionResult]:
-    """以持久 Input 执行普通或子智能体 Run。"""
+    """以持久 Input 执行当前会话 Run。"""
     stream = _stream_agent_execution(
         thread_id=thread_id,
         meta=meta,
@@ -461,7 +475,6 @@ async def _stream_agent_execution(
             user=current_user,
             requested_agent_slug=None if is_resume else agent_slug,
             thread_id=thread_id,
-            agent_kind="subagent" if meta.get("run_type") == "subagent" else "main",
             prepared_execution=prepared_execution,
         )
         session_repo = SessionRepository(db)
@@ -472,9 +485,7 @@ async def _stream_agent_execution(
             graph_input = [message.require_langchain_message() for message in input_messages]
             message_type = input_messages[0].message_type
             attachments = await session_repo.get_attachments(agent_session.id)
-            authorized_attachments = list(meta.get("delegated_attachments") or []) + [
-                serialize_attachment(item, thread_id=thread_id) for item in attachments
-            ]
+            authorized_attachments = [serialize_attachment(item, thread_id=thread_id) for item in attachments]
             graph_input[-1] = _with_attachment_context(graph_input[-1], authorized_attachments)
         langfuse_run = _build_langfuse_run_context(
             current_user=current_user,

@@ -40,7 +40,7 @@ class AgentTurnRepository:
             AgentTurn.app_id == app_id,
         )
         if for_update:
-            statement = statement.with_for_update()
+            statement = statement.with_for_update(key_share=True)
         result = await self.db.execute(statement.execution_options(populate_existing=for_update))
         return result.scalar_one_or_none()
 
@@ -54,7 +54,7 @@ class AgentTurnRepository:
                 AgentTurn.app_id == app_id,
                 AgentTurn.status.in_(("running", "waiting", "cancelling")),
             )
-            .with_for_update()
+            .with_for_update(key_share=True)
             .execution_options(populate_existing=True)
         )
         return result.scalar_one_or_none()

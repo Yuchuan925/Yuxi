@@ -79,6 +79,7 @@ async def _agent(
     tools: list[str] | None = None,
     system_prompt_suffix: str = "",
     model_spec: str = MODEL,
+    summary_prompt: str | None = None,
 ) -> str:
     """创建含预加载技能但不访问可选外部服务的主 Agent。"""
     slug = f"ci-lifecycle-{uuid.uuid4().hex[:8]}"
@@ -99,7 +100,7 @@ async def _agent(
                     "mcps": [],
                     "skills": ["image-gen"],
                     "preload_skills": ["image-gen"],
-                    "subagents": [],
+                    **({"summary_prompt": summary_prompt} if summary_prompt else {}),
                 }
             },
             "visibility": "shared",

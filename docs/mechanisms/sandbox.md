@@ -32,17 +32,17 @@ Graph 创建时，Agent backend 取得 `uid`、根运行 scope 和 `workdir_path
 
 ## Identity、Workdir 和生命周期
 
-`runtime_scope_id` 使用执行所属 Session 的 thread ID。主、子 Agent 各自拥有运行时和 checkpoint，子 Agent 的独立 Turn 可在父 Turn 结束后继续运行、等待和恢复。父子共享 Project Workdir 的持久文件，不共享 `/tmp` 或运行时环境；委派附件通过已授权的输入传递。
+`runtime_scope_id` 使用协作树根 Session 的 thread ID。同树各 Session 拥有独立历史、Turn、Run 和 checkpoint，但共享根 Session 的运行时、沙盒环境和 Project Workdir；沙盒内的 `/tmp`、后台进程也由整棵树共享。子 Session 可在派发方 Turn 结束后继续运行、等待和恢复；派发不继承聊天上下文，也不 fork checkpoint。
 
 Session 通过 `project_id` 绑定 Project；Project 拥有这项绑定和 `workdir_path`，UserWorkspace 拥有该路径下的实际文件字节。`workdir_path` 是当前用户 UserWorkspace 下的合法相对 POSIX 路径，不能包含 `..`、反斜杠或符号链接。`linked` Project 只能引用已经存在的目录，目标不存在时请求失败。新 `managed` Project 使用上海时间和 Project ID 前 8 位分配 `projects/YYYY-MM-DD_HH-MM-SS_<project-id-prefix>`；同名条目已经存在时依次追加 `-1`、`-2`，既有 `projects/<uuid>` 保持有效，目录创建失败时请求失败。Workdir 决定当前工作目录和 Viewer 文件范围，但不决定 sandbox identity，也不把同一用户的其他 Project 变成安全隔离边界。两个顶层 Session 即使绑定同一 Workdir，也会创建不同 runtime。
 
 | 运行类型 | checkpoint | runtime scope | Workdir |
 | --- | --- | --- | --- |
-| 普通 Agent | 当前 thread | 当前 thread | 当前 Project 的 Workdir |
-| 子 Agent | child thread | child thread | 委派所在 Project 的 Workdir |
+| 根 Session | 当前 thread | 根 thread | 当前 Project 的 Workdir |
+| 协作后代 Session | 当前 thread | 根 thread | 派发方继承的 Project Workdir |
 | 远程 Skill 安装 | 临时 thread | 临时 thread | 无持久用户目录，`inherit_env=False` |
 
-`uid + runtime_scope_id` 派生稳定 `sandbox_id`。同一 runtime 存活期间不能改绑到另一个 Workdir。各执行 Owner 在自身 Run 收敛后清理自身 runtime，并保留 UserWorkspace 文件；父 Run 结束不会清理仍在运行的子 runtime。
+`uid + runtime_scope_id` 派生稳定 `sandbox_id`。同一 runtime 存活期间不能改绑到另一个 Workdir。协作 Run 收敛后释放自己的执行名额，不立即清理共享 runtime。整棵树没有非终态 Run，且持续空闲五分钟后，由 worker 回收共享沙盒并保留 UserWorkspace 文件；等待中的 Turn 或冻结队列里的 Input 不保证保留沙盒；回收会清空 `/tmp` 并结束后台进程。后续输入重新按同一根 runtime scope 创建沙盒。远程 Skill 安装和主动上下文压缩各使用独立的一次性 runtime，并由自身执行 Owner 清理。主动压缩挂载同一已授权 Workdir，保留原 Session 的 checkpoint 身份，不释放协作树的执行环境。
 
 ## 挂载和文件 Owner
 

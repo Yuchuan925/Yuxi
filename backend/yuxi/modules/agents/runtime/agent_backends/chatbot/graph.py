@@ -18,9 +18,9 @@ from yuxi.modules.agents.runtime.middlewares import (
     create_summary_middleware_from_context,
 )
 from yuxi.modules.agents.runtime.middlewares.authorization import RuntimeAuthorizationMiddleware
+from yuxi.modules.agents.runtime.middlewares.cooperation import create_cooperation_middleware
 from yuxi.modules.agents.runtime.middlewares.filesystem import create_agent_filesystem_middleware
 from yuxi.modules.agents.runtime.middlewares.skills import SkillsMiddleware
-from yuxi.modules.agents.runtime.middlewares.subagent_task import create_subagent_task_middleware
 from yuxi.modules.agents.runtime.sandbox.backend import create_agent_composite_backend
 from yuxi.modules.agents.runtime.sandbox.paths import runtime_workdir_path
 from yuxi.modules.agents.runtime.tool_approval import create_tool_approval_middleware, normalize_tool_approval_mode
@@ -44,9 +44,9 @@ async def _build_middlewares(context, backend, *, cleanup_model=None):
     memory_middleware = None if cleanup_model else await create_memory_middleware(context)
     if memory_middleware:
         middlewares.append(memory_middleware)
-    subagent_middleware = None if cleanup_model else await create_subagent_task_middleware(context)
-    if subagent_middleware:
-        middlewares.append(subagent_middleware)
+    cooperation_middleware = None if cleanup_model else create_cooperation_middleware(context)
+    if cooperation_middleware:
+        middlewares.append(cooperation_middleware)
     middlewares.extend(
         [
             create_summary_middleware_from_context(context, backend=backend, model=cleanup_model)

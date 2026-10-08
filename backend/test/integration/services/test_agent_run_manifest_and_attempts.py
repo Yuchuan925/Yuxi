@@ -8,22 +8,16 @@ from datetime import timedelta
 
 import pytest
 import pytest_asyncio
-from sqlalchemy import delete, select, text, update
+from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from yuxi.bootstrap.models import load_models
 from yuxi.modules.agents.repositories.runs import AgentRunRepository
-from yuxi.modules.agents.models.inputs import AgentInput, AgentInputMessage, AgentInputReceipt
 from yuxi.modules.agents.models.runs import AgentRun, AgentRunAttempt
-from yuxi.modules.agents.models.turns import AgentTurn
-from yuxi.modules.agents.models.sessions import Session
-from yuxi.modules.agents.models.messages import Message
-from yuxi.modules.workspace.models import Project
-from yuxi.modules.identity.models import User
 from yuxi.shared.datetime import utc_now
 
-from agent_run_test_helpers import create_agent_run
+from agent_run_test_helpers import cleanup_agent_run_threads, create_agent_run
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
 
@@ -61,28 +55,6 @@ async def _create_run(session_factory, *, status: str = "pending") -> tuple[str,
         status=status,
     )
     return run_id, thread_id
-
-
-async def _cleanup_runs(session_factory, thread_ids: list[str]) -> None:
-    async with session_factory() as db:
-        rows = (
-            await db.execute(select(Session.project_id, Session.uid).where(Session.thread_id.in_(thread_ids)))
-        ).all()
-        session_record_ids = list((await db.scalars(select(Session.id).where(Session.thread_id.in_(thread_ids)))).all())
-        input_ids = list((await db.scalars(select(AgentInput.id).where(AgentInput.thread_id.in_(thread_ids)))).all())
-        await db.execute(update(AgentRun).where(AgentRun.thread_id.in_(thread_ids)).values(input_id=None))
-        if input_ids:
-            await db.execute(delete(AgentInputMessage).where(AgentInputMessage.input_id.in_(input_ids)))
-            await db.execute(delete(AgentInputReceipt).where(AgentInputReceipt.input_id.in_(input_ids)))
-            await db.execute(delete(AgentInput).where(AgentInput.id.in_(input_ids)))
-        if session_record_ids:
-            await db.execute(delete(Message).where(Message.session_record_id.in_(session_record_ids)))
-        await db.execute(delete(AgentRun).where(AgentRun.thread_id.in_(thread_ids)))
-        await db.execute(delete(AgentTurn).where(AgentTurn.thread_id.in_(thread_ids)))
-        await db.execute(delete(Session).where(Session.thread_id.in_(thread_ids)))
-        await db.execute(delete(Project).where(Project.id.in_([row.project_id for row in rows])))
-        await db.execute(delete(User).where(User.uid.in_([row.uid for row in rows])))
-        await db.commit()
 
 
 async def _persisted_attempts(session_factory, run_id: str) -> list[AgentRunAttempt]:
@@ -180,13 +152,12 @@ async def test_attempt_history_survives_retry_takeover_and_reconciliation(fact_d
         reconciled_at = now + timedelta(seconds=30)
         async with session_factory() as db:
             repository = AgentRunRepository(db)
-            reconciled, cancelled_descendants = await repository.reconcile_expired_lease(run_id, now=reconciled_at)
+            reconciled = await repository.reconcile_expired_lease(run_id, now=reconciled_at)
             await db.commit()
 
         attempts = await _persisted_attempts(session_factory, run_id)
 
         assert reconciled is not None and reconciled.id == run_id
-        assert cancelled_descendants == []
         assert [attempt.attempt_no for attempt in attempts] == [1, 2]
         first, second = attempts
         assert first.worker_id == owner_a
@@ -199,7 +170,7 @@ async def test_attempt_history_survives_retry_takeover_and_reconciliation(fact_d
         assert second.error_type == "worker_lease_expired"
         assert second.finished_at == reconciled_at
     finally:
-        await _cleanup_runs(session_factory, [thread_id])
+        await cleanup_agent_run_threads(session_factory, [thread_id])
 
 
 async def test_concurrent_claims_produce_single_valid_attempt(fact_database):
@@ -229,7 +200,7 @@ async def test_concurrent_claims_produce_single_valid_attempt(fact_database):
         assert attempts[0].worker_id in {"worker-race:token-1", "worker-race:token-2", "worker-race:token-3"}
         assert attempts[0].finished_at is None
     finally:
-        await _cleanup_runs(session_factory, [thread_id])
+        await cleanup_agent_run_threads(session_factory, [thread_id])
 
 
 async def test_duplicate_attempt_no_rejected_by_unique_constraint(fact_database):
@@ -263,7 +234,7 @@ async def test_duplicate_attempt_no_rejected_by_unique_constraint(fact_database)
         attempts = await _persisted_attempts(session_factory, run_id)
         assert [attempt.worker_id for attempt in attempts] == ["worker-uq:token-1"]
     finally:
-        await _cleanup_runs(session_factory, [thread_id])
+        await cleanup_agent_run_threads(session_factory, [thread_id])
 
 
 async def test_manifest_write_once_keeps_original_fingerprint_after_config_change(fact_database):
@@ -312,7 +283,7 @@ async def test_manifest_write_once_keeps_original_fingerprint_after_config_chang
         assert persisted_run.manifest_fingerprint == original_fingerprint
         assert persisted_run.manifest_recorded_at == now + timedelta(seconds=1)
     finally:
-        await _cleanup_runs(session_factory, [thread_id])
+        await cleanup_agent_run_threads(session_factory, [thread_id])
 
 
 async def test_manifest_rejects_stale_owner_and_expired_lease(fact_database):
@@ -363,7 +334,7 @@ async def test_manifest_rejects_stale_owner_and_expired_lease(fact_database):
         assert legacy_run.manifest_recorded_at is None
         assert await _persisted_attempts(session_factory, legacy_run_id) == []
     finally:
-        await _cleanup_runs(session_factory, [thread_id, legacy_thread_id])
+        await cleanup_agent_run_threads(session_factory, [thread_id, legacy_thread_id])
 
 
 async def test_run_timing_is_write_once_under_real_postgres_lease(fact_database):
@@ -436,4 +407,4 @@ async def test_run_timing_is_write_once_under_real_postgres_lease(fact_database)
         assert persisted_run.prepared_at == now + timedelta(seconds=2)
         assert persisted_run.first_output_at == now + timedelta(seconds=7)
     finally:
-        await _cleanup_runs(session_factory, [thread_id])
+        await cleanup_agent_run_threads(session_factory, [thread_id])

@@ -6,12 +6,11 @@ from unittest.mock import AsyncMock
 import pytest
 from yuxi.modules.agents.runtime.agent_backends.chatbot.context import ChatBotContext
 
-from yuxi.modules.agents.presets.subagents.general_purpose import PRESET as GENERAL_PURPOSE
+from yuxi.modules.agents.presets.deep_research import PRESET as GENERAL_PURPOSE
 from yuxi.modules.agents.repositories.definitions import (
     AgentRepository,
     DEFAULT_AGENT_DESCRIPTION,
     DEFAULT_SHARE_CONFIG,
-    SUB_AGENT_BACKEND_ID,
     merge_agent_config_json,
     user_can_access_agent,
     user_can_manage_agent,
@@ -107,14 +106,14 @@ def test_merge_agent_config_json_applies_visible_edits_and_preserves_hidden_refe
 def test_merge_agent_config_json_replaces_resource_list_for_explicit_strategy_switch(strategy):
     """显式空列表或 all 整体切换资源策略。"""
     merged = merge_agent_config_json(
-        {"context": {"skills": ["visible", "hidden"], "subagents": ["visible-subagent", "hidden-subagent"]}},
-        {"context": {"skills": strategy, "subagents": strategy}},
-        resource_access={"skills": {"visible"}, "subagents": {"visible-subagent"}},
+        {"context": {"skills": ["visible", "hidden"], "mcps": ["visible-mcp", "hidden-mcp"]}},
+        {"context": {"skills": strategy, "mcps": strategy}},
+        resource_access={"skills": {"visible"}, "mcps": {"visible-mcp"}},
         context_schema=ChatBotContext,
     )
 
     assert merged["context"]["skills"] == strategy
-    assert merged["context"]["subagents"] == strategy
+    assert merged["context"]["mcps"] == strategy
 
 
 def test_merge_agent_config_json_rejects_new_unauthorized_resource_reference():
@@ -199,30 +198,6 @@ async def test_ensure_default_agent_backfills_missing_description(monkeypatch):
     db.refresh.assert_awaited_once_with(agent)
 
 
-@pytest.mark.asyncio
-async def test_ensure_preset_creates_empty_config_subagent(monkeypatch):
-    db = FakeDb()
-    repo = AgentRepository(db)
-
-    async def get_by_slug(_slug):
-        return None
-
-    monkeypatch.setattr(repo, "get_by_slug", get_by_slug)
-
-    agent = await repo.ensure_preset(GENERAL_PURPOSE, created_by="system")
-
-    assert agent.slug == GENERAL_PURPOSE.slug
-    assert agent.name == GENERAL_PURPOSE.name
-    assert agent.description == GENERAL_PURPOSE.description
-    assert agent.backend_id == SUB_AGENT_BACKEND_ID
-    assert agent.is_subagent is True
-    assert agent.is_default is False
-    assert agent.config_json == {"context": {}}
-    assert agent.share_config == DEFAULT_SHARE_CONFIG
-    assert agent.created_by == "system"
-    assert db.added is agent
-    db.commit.assert_awaited_once()
-    db.refresh.assert_awaited_once_with(agent)
 
 
 @pytest.mark.asyncio
@@ -262,11 +237,10 @@ async def test_create_agent_defaults_to_private_without_grants(monkeypatch):
     [
         ({"visibility": "shared"}, "共享"),
         ({"share_config": DEFAULT_SHARE_CONFIG}, "共享授权"),
-        ({"backend_id": "SubAgentBackend"}, "SubAgent"),
         ({"created_by": "other"}, "所有者"),
     ],
 )
-async def test_normal_user_cannot_write_shared_or_subagent_definition(kwargs, reason):
+async def test_normal_user_cannot_write_shared_definition(kwargs, reason):
     db = FakeDb()
     user = User(uid="user", role="user", user_kind="human", is_deleted=0)
     args = {"name": "Bot", "backend_id": "ChatbotAgent", "created_by": "user", "creator": user, **kwargs}
@@ -365,7 +339,7 @@ async def test_share_private_agent_requires_admin_and_explicit_grants(role, gran
     db.commit.assert_not_awaited()
 
 
-@pytest.mark.parametrize("field", ["tools", "knowledges", "skills", "subagents", "mcps", "preload_skills"])
+@pytest.mark.parametrize("field", ["tools", "knowledges", "skills", "mcps", "preload_skills"])
 @pytest.mark.parametrize("invalid", [None, "full", ["ok", 1], [""], {"mode": "all"}])
 def test_resource_write_rejects_invalid_selection(field, invalid):
     """替代写入路径同样拒绝非法资源配置。"""
@@ -395,16 +369,15 @@ def test_opt_in_resource_selection_preserves_all_intent(field):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("backend_id,is_subagent", [("ChatbotAgent", False), ("SubAgentBackend", True)])
-async def test_serialize_agent_omits_capabilities(backend_id, is_subagent):
+@pytest.mark.parametrize("backend_id", ["ChatbotAgent"])
+async def test_serialize_agent_omits_capabilities(backend_id):
     """主子智能体响应保留权限与元信息且不再声明静态能力。"""
     agent = Agent(
         slug="test-agent",
         name="测试智能体",
         backend_id=backend_id,
-        is_subagent=is_subagent,
         created_by="owner",
-        visibility="shared" if is_subagent else "private",
+        visibility="private",
         config_json={"context": {}},
         share_config=DEFAULT_SHARE_CONFIG.copy(),
     )
@@ -413,8 +386,8 @@ async def test_serialize_agent_omits_capabilities(backend_id, is_subagent):
     result = await AgentRepository(FakeDb()).serialize(agent, user=user)
 
     assert result["backend_id"] == backend_id
-    assert result["is_subagent"] is is_subagent
+    assert "is_subagent" not in result
     assert result["name"] == "测试智能体"
-    assert result["can_manage"] is (not is_subagent)
+    assert result["can_manage"] is True
     assert "metadata" in result
     assert "capabilities" not in result

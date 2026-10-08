@@ -20,6 +20,7 @@ pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
 async def test_mcp_selection_requires_explicit_agent_config(test_client, admin_headers):
     """真实保存与运行边界只启用 Agent 显式选择的 MCP。"""
     from yuxi.infrastructure.postgres.manager import pg_manager
+
     suffix = uuid.uuid4().hex[:10]
     agent_slug = f"pytest-mcp-selection-agent-{suffix}"
     mcp_slug = f"pytest-mcp-selection-{suffix}"
@@ -274,7 +275,6 @@ async def test_delegated_manager_resource_patch_preserves_hidden_config_and_reje
                         "knowledges": [],
                         "mcps": [],
                         "skills": configured,
-                        "subagents": ["missing"],
                     },
                     db=db,
                     user=manager,
@@ -443,7 +443,7 @@ async def test_personal_skills_are_automatic_and_absent_from_agent_options(test_
                 "name": "Personal skills test",
                 "slug": agent_slug,
                 "backend_id": "ChatbotAgent",
-                "config_json": {"context": {"skills": [], "tools": [], "knowledges": [], "subagents": []}},
+                "config_json": {"context": {"skills": [], "tools": [], "knowledges": []}},
             },
         )
         assert created.status_code == 200, created.text
@@ -507,16 +507,16 @@ async def test_resource_selection_protocol_persists_intent_and_rejects_invalid_v
                 "name": "Selection test",
                 "slug": slug,
                 "backend_id": "ChatbotAgent",
-                "config_json": {"context": {"skills": "all", "subagents": [], "mcps": "all", "preload_skills": "all"}},
+                "config_json": {"context": {"skills": "all", "mcps": "all", "preload_skills": "all"}},
             },
         )
         assert response.status_code == 200, response.text
-        expected = {"skills": "all", "subagents": [], "mcps": "all", "preload_skills": "all"}
+        expected = {"skills": "all", "mcps": "all", "preload_skills": "all"}
         assert (await _read_agent_config(conn, slug))["context"] == expected
         response = await test_client.put(path, headers=admin_headers, json={"config_json": {"context": {"model": ""}}})
         assert response.status_code == 200, response.text
         expected["model"] = ""
-        for field in ("tools", "knowledges", "skills", "subagents", "mcps", "preload_skills"):
+        for field in ("tools", "knowledges", "skills", "mcps", "preload_skills"):
             for invalid in (None, "full", ["ok", 1], [""]):
                 response = await test_client.put(
                     path, headers=admin_headers, json={"config_json": {"context": {field: invalid}}}

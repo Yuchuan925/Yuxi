@@ -188,11 +188,11 @@ async def test_create_lookup_uses_shared_key_lock():
 async def test_shared_key_lookup_refreshes_stale_agent_in_same_session(session):
     """锁读刷新先前加载的 Agent，子执行不使用陈旧配置。"""
     _user, agent, _thread = await _seed_agent(session)
-    await session.execute(text("UPDATE agents SET is_subagent = 1 WHERE id = :id"), {"id": agent.id})
+    await session.execute(text("UPDATE agents SET name = '修改名称' WHERE id = :id"), {"id": agent.id})
     await session.commit()
-    assert agent.is_subagent is False
+    assert agent.name != "修改名称"
 
     refreshed = await AgentRepository(session).get_by_slug(agent.slug, for_key_share=True)
 
     assert refreshed is agent
-    assert refreshed.is_subagent is True
+    assert refreshed.name == "修改名称"

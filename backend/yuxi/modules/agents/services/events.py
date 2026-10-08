@@ -163,7 +163,7 @@ async def stream_thread_events(
                 for row in events:
                     cursor.event_seq = row["seq"]
                     event = row["event"]
-                    owner = event["yuxi"] if event["type"] == "agent.session.subagent.created" else event
+                    owner = event
                     if owner["session_id"] != thread_id or owner.get("turn_id") != turn.id:
                         raise ValueError("Redis 公开事件与订阅执行归属不一致")
                     yield cursor.encode(), event
@@ -239,7 +239,8 @@ def _turn_event(adapter: OpenAIEventAdapter, run, turn, name: str, status: str) 
             "object": "agent.session.turn",
             "session_id": run.thread_id,
             "agent_id": run.agent_slug,
-            "subagent_id": run.thread_id if run.run_type == "subagent" else None,
+            # 每个 Session 是独立主会话，官方 Turn 协议仍要求保留 nullable 字段。
+            "subagent_id": None,
             "status": status,
             "created_at": timestamp(turn.created_at),
             "started_at": timestamp(run.started_at),

@@ -18,6 +18,16 @@ export const useChatThreadsStore = defineStore('chatThreads', () => {
   const currentThreadId = ref(null)
   const threadCreationInFlight = ref(false)
   const hasMoreThreads = ref(true)
+  let nonPinnedOffset = 0
+  let pagedThreadIds = new Set()
+  let threadListOperation = Promise.resolve()
+
+  /** offset 页与列表写操作串行，避免在途页跳过边界会话。 */
+  const withThreadListUpdate = (operation) => {
+    const next = threadListOperation.catch(() => {}).then(operation)
+    threadListOperation = next
+    return next
+  }
   const isLoadingMoreThreads = ref(false)
 
   const currentThread = computed(() => {
@@ -80,82 +90,95 @@ export const useChatThreadsStore = defineStore('chatThreads', () => {
     }
   }
 
-  const loadThreads = async (agentId = null) => {
-    try {
-      const fetchedThreads = await threadApi.getThreads(agentId, PAGE_SIZE, 0)
-      threads.value = fetchedThreads || []
-      hasMoreThreads.value = Boolean(fetchedThreads && countNonPinnedThreads(fetchedThreads) >= PAGE_SIZE)
-      if (
-        currentThreadId.value &&
-        !threads.value.find((thread) => thread.id === currentThreadId.value)
-      ) {
-        setCurrentThreadId(null)
+  const loadThreads = async (agentId = null) =>
+    withThreadListUpdate(async () => {
+      try {
+        const fetchedThreads = await threadApi.getThreads(agentId, PAGE_SIZE, 0)
+        pagedThreadIds = new Set((fetchedThreads || []).map((thread) => thread.id))
+        const cachedDetails = threads.value.filter(
+          (thread) =>
+            !pagedThreadIds.has(thread.id) &&
+            (thread.parent_session_id || thread.id === currentThreadId.value)
+        )
+        threads.value = [...(fetchedThreads || []), ...cachedDetails]
+        nonPinnedOffset = countNonPinnedThreads(fetchedThreads || [])
+        hasMoreThreads.value = Boolean(
+          fetchedThreads && countNonPinnedThreads(fetchedThreads) >= PAGE_SIZE
+        )
+        return threads.value
+      } catch (error) {
+        console.error('Failed to fetch threads:', error)
+        handleChatError(error, 'fetch')
+        throw error
       }
-      return threads.value
-    } catch (error) {
-      console.error('Failed to fetch threads:', error)
-      handleChatError(error, 'fetch')
-      throw error
-    }
-  }
+    })
 
   const loadMoreThreads = async (agentId = null) => {
     if (isLoadingMoreThreads.value || !hasMoreThreads.value) return
 
     isLoadingMoreThreads.value = true
-    try {
-      const nonPinnedOffset = countNonPinnedThreads(threads.value)
-      const fetchedThreads = await threadApi.getThreads(agentId, PAGE_SIZE, nonPinnedOffset)
-      if (fetchedThreads && fetchedThreads.length > 0) {
-        // 后端分页会重复返回置顶项，这里只追加列表中尚不存在的线程。
-        const existingIds = new Set(threads.value.map((thread) => thread.id))
-        const newThreads = fetchedThreads.filter((thread) => !existingIds.has(thread.id))
-        threads.value = [...threads.value, ...newThreads]
-        hasMoreThreads.value = countNonPinnedThreads(fetchedThreads) >= PAGE_SIZE
-      } else {
-        hasMoreThreads.value = false
+    return withThreadListUpdate(async () => {
+      try {
+        const fetchedThreads = await threadApi.getThreads(agentId, PAGE_SIZE, nonPinnedOffset)
+        if (fetchedThreads && fetchedThreads.length > 0) {
+          nonPinnedOffset += countNonPinnedThreads(fetchedThreads)
+          fetchedThreads.forEach((thread) => pagedThreadIds.add(thread.id))
+          // 后端分页会重复返回置顶项，这里只追加列表中尚不存在的线程。
+          const existingIds = new Set(threads.value.map((thread) => thread.id))
+          const newThreads = fetchedThreads.filter((thread) => !existingIds.has(thread.id))
+          threads.value = [...threads.value, ...newThreads]
+          hasMoreThreads.value = countNonPinnedThreads(fetchedThreads) >= PAGE_SIZE
+        } else {
+          hasMoreThreads.value = false
+        }
+      } catch (error) {
+        console.error('Failed to load more chats:', error)
+        handleChatError(error, 'fetch')
+      } finally {
+        isLoadingMoreThreads.value = false
       }
-    } catch (error) {
-      console.error('Failed to load more chats:', error)
-      handleChatError(error, 'fetch')
-    } finally {
-      isLoadingMoreThreads.value = false
-    }
+    })
   }
 
-  const createThread = async (agentId, title = '新的对话', metadata = {}, options = {}) => {
-    if (!agentId) return null
+  const createThread = async (agentId, title = '新的对话', metadata = {}, options = {}) =>
+    withThreadListUpdate(async () => {
+      if (!agentId) return null
 
-    try {
-      const thread = await threadApi.createThread(agentId, title, metadata, options)
-      if (thread) {
-        threads.value = [thread, ...threads.value.filter((item) => item.id !== thread.id)]
+      try {
+        const thread = await threadApi.createThread(agentId, title, metadata, options)
+        if (thread) {
+          if (!pagedThreadIds.has(thread.id) && !thread.is_pinned) nonPinnedOffset += 1
+          pagedThreadIds.add(thread.id)
+          threads.value = [thread, ...threads.value.filter((item) => item.id !== thread.id)]
+        }
+        return thread
+      } catch (error) {
+        console.error('Failed to create thread:', error)
+        handleChatError(error, 'create')
+        throw error
       }
-      return thread
-    } catch (error) {
-      console.error('Failed to create thread:', error)
-      handleChatError(error, 'create')
-      throw error
-    }
-  }
+    })
 
-  const archiveThread = async (threadId) => {
-    if (!threadId) return
+  const archiveThread = async (threadId) =>
+    withThreadListUpdate(async () => {
+      if (!threadId) return
 
-    try {
-      await threadApi.archiveThread(threadId)
-      threads.value = threads.value.filter((thread) => thread.id !== threadId)
-      // 归档后清理当前线程的本地草稿。
-      threadDraftStore.remove(threadId)
-      if (currentThreadId.value === threadId) {
-        setCurrentThreadId(null)
+      try {
+        await threadApi.archiveThread(threadId)
+        const archivedThread = threads.value.find((thread) => thread.id === threadId)
+        if (pagedThreadIds.delete(threadId) && !archivedThread?.is_pinned) nonPinnedOffset -= 1
+        threads.value = threads.value.filter((thread) => thread.id !== threadId)
+        // 归档后清理当前线程的本地草稿。
+        threadDraftStore.remove(threadId)
+        if (currentThreadId.value === threadId) {
+          setCurrentThreadId(null)
+        }
+      } catch (error) {
+        console.error('Failed to archive thread:', error)
+        handleChatError(error, 'archive')
+        throw error
       }
-    } catch (error) {
-      console.error('Failed to archive thread:', error)
-      handleChatError(error, 'archive')
-      throw error
-    }
-  }
+    })
 
   const removeThreadsByProject = (projectId) => {
     if (!projectId) return []
@@ -167,6 +190,7 @@ export const useChatThreadsStore = defineStore('chatThreads', () => {
         continue
       }
       removedIds.push(thread.id)
+      if (pagedThreadIds.delete(thread.id) && !thread.is_pinned) nonPinnedOffset -= 1
     }
     if (!removedIds.length) return []
 
@@ -178,30 +202,43 @@ export const useChatThreadsStore = defineStore('chatThreads', () => {
     return removedIds
   }
 
-  const updateThread = async (threadId, title, isPinned, toolApprovalMode, modelSpec) => {
-    if (!threadId) return
+  const updateThread = async (threadId, title, isPinned, toolApprovalMode, modelSpec) =>
+    withThreadListUpdate(async () => {
+      if (!threadId) return
 
-    const normalizedTitle = title ? String(title).replace(/\s+/g, ' ').trim().slice(0, 255) : null
-    if (title && !normalizedTitle) return
-    if (!normalizedTitle && isPinned === undefined && toolApprovalMode === undefined &&
-        modelSpec === undefined) return
-
-    try {
-      const updatedThread = await threadApi.updateThread(
-        threadId,
-        normalizedTitle,
-        isPinned,
-        toolApprovalMode,
-        modelSpec
+      const normalizedTitle = title ? String(title).replace(/\s+/g, ' ').trim().slice(0, 255) : null
+      if (title && !normalizedTitle) return
+      if (
+        !normalizedTitle &&
+        isPinned === undefined &&
+        toolApprovalMode === undefined &&
+        modelSpec === undefined
       )
-      upsertThread(updatedThread)
-      return updatedThread
-    } catch (error) {
-      console.error('Failed to update thread:', error)
-      handleChatError(error, 'update')
-      throw error
-    }
-  }
+        return
+
+      try {
+        const updatedThread = await threadApi.updateThread(
+          threadId,
+          normalizedTitle,
+          isPinned,
+          toolApprovalMode,
+          modelSpec
+        )
+        const previous = threads.value.find((thread) => thread.id === threadId)
+        if (
+          pagedThreadIds.has(threadId) &&
+          Boolean(previous?.is_pinned) !== Boolean(updatedThread.is_pinned)
+        ) {
+          nonPinnedOffset += updatedThread.is_pinned ? -1 : 1
+        }
+        upsertThread(updatedThread)
+        return updatedThread
+      } catch (error) {
+        console.error('Failed to update thread:', error)
+        handleChatError(error, 'update')
+        throw error
+      }
+    })
 
   return {
     threads,
@@ -216,6 +253,7 @@ export const useChatThreadsStore = defineStore('chatThreads', () => {
     setThreadStatus,
     markThreadViewed,
     syncThreadStatuses,
+    withThreadListUpdate,
     loadThreads,
     loadMoreThreads,
     createThread,

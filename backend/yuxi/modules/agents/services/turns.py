@@ -60,14 +60,13 @@ async def resume_turn(
         else await AgentRepository(db).get_visible_by_slug(
             slug=agent_session.agent_id,
             user=user,
-            kind="any",
             for_key_share=True,
         )
     )
     if agent is None:
         raise HTTPException(status_code=404, detail="Agent 不可访问")
     agent_session = await require_thread(db=db, scope=scope, thread_id=thread_id, lock=True)
-    if agent_session.status not in {"active", "subagent"}:
+    if agent_session.status != "active":
         raise HTTPException(status_code=409, detail="Thread 已归档")
     turn_repo = AgentTurnRepository(db)
     turn = await turn_repo.get_for_scope(
@@ -127,9 +126,8 @@ async def resume_turn(
         origin_metadata=previous.origin_metadata or {},
         session_record_id=agent_session.id,
         resume_from_run_id=previous.id,
-        run_type="subagent" if previous.run_type == "subagent" else "resume",
+        run_type="resume",
         created_by_run_id=previous.created_by_run_id,
-        subagent_thread_relation_id=previous.subagent_thread_relation_id,
     )
     await AgentRunRepository(db).set_input_message(run_id, message.id)
     await turn_repo.set_current(turn, run_id=run_id)
@@ -144,6 +142,9 @@ async def resume_turn(
         turn_id=turn.id,
         run_id=run_id,
     )
+    from yuxi.modules.agents.services.cooperation import notify_user_intervention
+
+    await notify_user_intervention(db, agent_session, key=receipt.id, action="resume")
     await db.commit()
     await deliver(Dispatch(run_id=run_id, binding=binding))
     return _accepted(receipt)
@@ -157,8 +158,9 @@ async def cancel_turn(
     turn_id: str | None,
     idempotency_key: str,
     expected_run_id: str | None = None,
+    notify_parent: bool = True,
 ) -> dict:
-    """暂停并保留待消费输入，请求当前执行树收敛。"""
+    """取消指定轮次，保留已产生副作用与待消费输入。"""
     _check_key(idempotency_key)
     event_type = "agent.session.input.cancel"
     intent_hash = _hash_intent(event_type, turn_id, expected_run_id)
@@ -193,7 +195,6 @@ async def cancel_turn(
         raise HTTPException(status_code=409, detail="Turn 已结束，无法取消")
 
     cancelled_run_ids: list[str] = []
-    descendants: list[tuple[str, str]] = []
     waiting_cleanup = False
     terminal_changed = False
     if turn.status != "cancelled":
@@ -205,9 +206,7 @@ async def cancel_turn(
         if run is None:
             raise ValueError("Turn 当前 Run 不存在")
         if run.status in {"pending", "running", "cancel_requested"}:
-            run, cancelled_run_ids = await AgentRunRepository(db).request_cancel_execution_tree(
-                run_id=run.id, uid=scope.uid, cascade_descendants=False
-            )
+            run, cancelled_run_ids = await AgentRunRepository(db).request_cancel_run(run_id=run.id, uid=scope.uid)
             if run.status == "cancelled" and not run.runtime_cleanup_pending:
                 await turn_repo.set_terminal(turn, status="cancelled")
                 terminal_changed = True
@@ -217,10 +216,6 @@ async def cancel_turn(
                 terminal_changed = True
         elif run.status != "interrupted" or not waiting_cleanup:
             raise HTTPException(status_code=409, detail="当前 Run 已结束，取消目标已变化")
-
-    if turn.status != "cancelled" or terminal_changed:
-        descendants = await AgentRunRepository(db).cancel_active_execution_tree_descendants(run)
-        cancelled_run_ids.extend(child_id for child_id, _ in descendants)
 
     receipt = await receipt_repo.create(
         receipt_id=str(uuid.uuid4()),
@@ -233,19 +228,23 @@ async def cancel_turn(
         turn_id=turn.id,
         run_id=turn.current_run_id,
     )
+    from yuxi.modules.agents.services.cooperation import notify_turn_state, notify_user_intervention
+
+    if terminal_changed:
+        await notify_turn_state(db, run)
+    if notify_parent:
+        await notify_user_intervention(db, agent_session, key=receipt.id, action="cancel_turn")
     await db.commit()
     if terminal_changed:
         await finish_turn_observation_if_terminal(turn.id)
     if cancelled_run_ids:
         await publish_cancel_signals(cancelled_run_ids)
     if waiting_cleanup:
-        await settle_waiting_cancel(thread_id=thread_id, turn_id=turn.id, uid=scope.uid, app_id=scope.app_id)
-    for child_id, child_thread_id in descendants:
-        child = await AgentRunRepository(db).get_run(child_id)
-        if child.status == "interrupted":
-            await settle_waiting_cancel(
-                thread_id=child_thread_id, turn_id=child.turn_id, uid=scope.uid, app_id=scope.app_id
-            )
+        try:
+            await settle_waiting_cancel(thread_id=thread_id, turn_id=turn.id, uid=scope.uid, app_id=scope.app_id)
+        except Exception:
+            # 取消已提交；保留 cancelling，由后台重试并报告恢复失败。
+            logger.exception("Failed to settle accepted cancellation: %s", turn.id)
     return _accepted(receipt)
 
 
@@ -355,11 +354,7 @@ async def settle_waiting_cancel(*, thread_id: str, turn_id: str, uid: str, app_i
         run = await AgentRunRepository(db).get_run(turn.current_run_id)
         if run is None or run.status != "interrupted":
             return False
-    try:
-        await _clear_waitpoint_checkpoint(run)
-    except Exception:
-        logger.exception("Failed to clear cancelled Turn waitpoint: %s", turn_id)
-        return False
+    await _clear_waitpoint_checkpoint(run)
 
     async with pg_manager.get_async_session_context() as db:
         agent_session = await require_thread(db=db, scope=scope, thread_id=thread_id, lock=True)
@@ -371,6 +366,9 @@ async def settle_waiting_cancel(*, thread_id: str, turn_id: str, uid: str, app_i
         if not agent_session.queue_paused:
             raise ValueError("等待取消未保持队列暂停")
         await AgentTurnRepository(db).set_terminal(turn, status="cancelled")
+        from yuxi.modules.agents.services.cooperation import notify_turn_state
+
+        await notify_turn_state(db, run)
     await finish_turn_observation_if_terminal(turn_id)
     return True
 
@@ -380,36 +378,46 @@ async def reconcile_cancelling_turns() -> list[str]:
     async with pg_manager.get_async_session_context() as db:
         candidates = list((await db.execute(select(AgentTurn).where(AgentTurn.status == "cancelling"))).scalars())
     settled = []
+    failures = 0
     for candidate in candidates:
-        run_id = candidate.current_run_id
-        async with pg_manager.get_async_session_context() as db:
-            run = await AgentRunRepository(db).get_run(run_id)
-        if run is None:
-            continue
-        if run.status == "interrupted" and candidate.waitpoint:
-            if await settle_waiting_cancel(
-                thread_id=candidate.thread_id,
-                turn_id=candidate.id,
-                uid=candidate.uid,
-                app_id=candidate.app_id,
-            ):
-                settled.append(candidate.id)
-        elif run.status == "cancelled" and not run.runtime_cleanup_pending:
+        try:
+            run_id = candidate.current_run_id
             async with pg_manager.get_async_session_context() as db:
-                scope = ActorScope(uid=candidate.uid, app_id=candidate.app_id)
-                await require_thread(db=db, scope=scope, thread_id=candidate.thread_id, lock=True)
-                turn = await AgentTurnRepository(db).get_for_scope(
-                    turn_id=candidate.id,
+                run = await AgentRunRepository(db).get_run(run_id)
+            if run is None:
+                continue
+            if run.status == "interrupted" and candidate.waitpoint:
+                if await settle_waiting_cancel(
                     thread_id=candidate.thread_id,
+                    turn_id=candidate.id,
                     uid=candidate.uid,
                     app_id=candidate.app_id,
-                    for_update=True,
-                )
-                if turn is not None and turn.status == "cancelling":
-                    await AgentTurnRepository(db).set_terminal(turn, status="cancelled")
+                ):
                     settled.append(candidate.id)
-            if candidate.id in settled:
-                await finish_turn_observation_if_terminal(candidate.id)
+            elif run.status == "cancelled" and not run.runtime_cleanup_pending:
+                async with pg_manager.get_async_session_context() as db:
+                    scope = ActorScope(uid=candidate.uid, app_id=candidate.app_id)
+                    await require_thread(db=db, scope=scope, thread_id=candidate.thread_id, lock=True)
+                    turn = await AgentTurnRepository(db).get_for_scope(
+                        turn_id=candidate.id,
+                        thread_id=candidate.thread_id,
+                        uid=candidate.uid,
+                        app_id=candidate.app_id,
+                        for_update=True,
+                    )
+                    if turn is not None and turn.status == "cancelling":
+                        await AgentTurnRepository(db).set_terminal(turn, status="cancelled")
+                        from yuxi.modules.agents.services.cooperation import notify_turn_state
+
+                        await notify_turn_state(db, run)
+                        settled.append(candidate.id)
+                if candidate.id in settled:
+                    await finish_turn_observation_if_terminal(candidate.id)
+        except Exception:
+            failures += 1
+            logger.exception("Failed to reconcile cancelling Turn: %s", candidate.id)
+    if failures:
+        raise RuntimeError(f"cancelling Turn recovery failed for {failures} records")
     return settled
 
 

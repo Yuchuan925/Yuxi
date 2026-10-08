@@ -26,7 +26,7 @@ Yuxi 是基于 LangGraph、FastAPI、Vue 和多种持久化服务构建的知识
 
 - HTTP 路由保持薄；用例流程属于 各业务域的 `services`，持久化查询属于 各业务域的 `repositories`。
 - 普通输入先在 PostgreSQL 中持久化 Input、Receipt 和 Message；只有 ready 优先队头创建 Turn 与首个 Run，且每次投递 ARQ 前 owning transaction 都已提交。Redis 负责投递、短期事件、取消和缓存，不拥有最终业务状态。
-- 同一用户、APP、Agent、Thread 的 follow-up Input 按 FIFO 串行派发；pending steer 在 Thread 内聚合为唯一优先节点，消费时绑定 Turn/Run，运行中在安全边界接管。等待中的 Turn 禁止普通消息。
+- 同一用户、APP、Agent、Thread 的 follow-up Input 按 FIFO 串行派发；pending steer 在 Thread 内聚合为唯一优先节点，消费时绑定 Turn/Run，运行中在安全边界接管。等待用户回答或审批的 Turn 禁止普通消息；协作等待期间的普通输入只进入 FIFO 队列。
 - Turn 的最终输出必须来自 result_run_id 指向的顶层 Run；Run 的输出、事件、artifact 和错误绑定同一 Turn/Run，禁止从相邻 Run 猜测结果。
 - 非终态 Run 必须有明确执行 Owner、lease/heartbeat 或等价机制，以及崩溃后的可观察结局。
 - `/api/system/health` 只表达进程 liveness；接流量前置条件由 `/api/system/ready` 证明，业务正确性仍由真实链路测试证明。

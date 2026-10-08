@@ -16,12 +16,7 @@ export const agentApi = {
    * 获取智能体列表
    * @returns {Promise} - 智能体列表
    */
-  getAgents: ({ includeSubagents = false } = {}) => {
-    const params = new URLSearchParams()
-    if (includeSubagents) params.set('include_subagents', 'true')
-    const query = params.toString()
-    return apiGet(query ? `/api/agent?${query}` : '/api/agent')
-  },
+  getAgents: () => apiGet('/api/agent'),
 
   getAgentBoundSkill: (slug) => apiGet(`/api/agent/${encodeURIComponent(slug)}/self-skill`),
 
@@ -36,7 +31,8 @@ export const agentApi = {
 
   getAgentBackends: () => apiGet('/api/agent/backends'),
 
-  getAgentBackendDetail: (backendId) => apiGet(`/api/agent/backends/${encodeURIComponent(backendId)}`),
+  getAgentBackendDetail: (backendId) =>
+    apiGet(`/api/agent/backends/${encodeURIComponent(backendId)}`),
 
   /**
    * 获取单个智能体详情
@@ -68,8 +64,19 @@ export const agentApi = {
    * @param {string} threadId - 会话ID
    * @returns {Promise} - AgentState
    */
-  getAgentState: (threadId, { includeMessages = false } = {}) =>
-    apiGet(`/api/v1/agents/threads/${threadId}/state${includeMessages ? '?include_messages=true' : ''}`),
+  controlSessionTree: (threadId, stopped, idempotencyKey) =>
+    apiPost(
+      `/api/v1/agents/threads/${threadId}/events`,
+      { events: [{ type: stopped ? 'yuxi.session.tree.stop' : 'yuxi.session.tree.continue' }] },
+      { headers: { 'Idempotency-Key': idempotencyKey } }
+    ),
+
+  getAgentState: (threadId, { includeMessages = false, includeRelations = true } = {}) =>
+    apiGet(
+      `/api/v1/agents/threads/${threadId}/state?include_messages=${includeMessages}&include_relations=${includeRelations}`
+    ),
+
+  getCooperationSummary: (threadId) => apiGet(`/api/v1/agents/threads/${threadId}/cooperation`),
 
   /**
    * 提交线程级主动上下文压缩
@@ -86,7 +93,6 @@ export const agentApi = {
 
   updateAgent: (agentId, payload) => apiPut(`/api/agent/${agentId}`, payload),
 
-
   deleteAgent: (agentId) => apiDelete(`/api/agent/${agentId}`),
 
   /** 产品对话以明确的 follow-up 或 steer 模式提交 Input。 */
@@ -101,17 +107,22 @@ export const agentApi = {
     return apiPost(
       `/api/v1/agents/threads/${threadId}/events`,
       {
-        events: [{
-          type: 'agent.session.input.message',
-          input: [{ role: 'user', content }],
-          yuxi: {
-            mode: data.mode,
-            ...(data.mode !== 'steer' ? {
-              model_spec: data.model_spec, tool_approval_mode: data.tool_approval_mode
-            } : {}),
-            attachment_file_ids: data.attachment_file_ids || []
+        events: [
+          {
+            type: 'agent.session.input.message',
+            input: [{ role: 'user', content }],
+            yuxi: {
+              mode: data.mode,
+              ...(data.mode !== 'steer'
+                ? {
+                    model_spec: data.model_spec,
+                    tool_approval_mode: data.tool_approval_mode
+                  }
+                : {}),
+              attachment_file_ids: data.attachment_file_ids || []
+            }
           }
-        }]
+        ]
       },
       { headers: { 'Idempotency-Key': data.idempotency_key } }
     )
@@ -120,16 +131,30 @@ export const agentApi = {
   resumeThreadTurn: (threadId, data) =>
     apiPost(
       `/api/v1/agents/threads/${threadId}/events`,
-      { events: [{ type: 'yuxi.session.input.resume', turn_id: data.turn_id,
-        waitpoint_id: data.waitpoint_id, response: data.response }] },
+      {
+        events: [
+          {
+            type: 'yuxi.session.input.resume',
+            turn_id: data.turn_id,
+            waitpoint_id: data.waitpoint_id,
+            response: data.response
+          }
+        ]
+      },
       { headers: { 'Idempotency-Key': data.idempotency_key } }
     ),
 
   cancelThreadTurn: (threadId, turnId, idempotencyKey, expectedRunId = null) =>
     apiPost(
       `/api/v1/agents/threads/${threadId}/events`,
-      { events: [{ type: 'agent.session.input.cancel', yuxi: { turn_id: turnId,
-        ...(expectedRunId ? { expected_run_id: expectedRunId } : {}) } }] },
+      {
+        events: [
+          {
+            type: 'agent.session.input.cancel',
+            yuxi: { turn_id: turnId, ...(expectedRunId ? { expected_run_id: expectedRunId } : {}) }
+          }
+        ]
+      },
       { headers: { 'Idempotency-Key': idempotencyKey } }
     ),
 
@@ -147,7 +172,9 @@ export const agentApi = {
     }
     if (afterCursor) headers['Last-Event-ID'] = afterCursor
     return fetch(`/api/v1/agents/threads/${threadId}/events`, {
-      method: 'GET', headers, signal
+      method: 'GET',
+      headers,
+      signal
     })
   },
 
@@ -156,20 +183,22 @@ export const agentApi = {
   /**
    * 手动继续 failed/cancelled 后暂停的线程队列
    */
-  continueThreadQueue: (threadId, idempotencyKey) => apiPost(
-    `/api/v1/agents/threads/${threadId}/events`,
-    { events: [{ type: 'yuxi.session.input.continue' }] },
-    { headers: { 'Idempotency-Key': idempotencyKey } }
-  ),
+  continueThreadQueue: (threadId, idempotencyKey) =>
+    apiPost(
+      `/api/v1/agents/threads/${threadId}/events`,
+      { events: [{ type: 'yuxi.session.input.continue' }] },
+      { headers: { 'Idempotency-Key': idempotencyKey } }
+    ),
 
   /**
    * 取消排队中的请求
    */
-  cancelThreadInput: (threadId, inputId, idempotencyKey) => apiPost(
-    `/api/v1/agents/threads/${threadId}/events`,
-    { events: [{ type: 'yuxi.session.input.cancel_input', input_id: inputId }] },
-    { headers: { 'Idempotency-Key': idempotencyKey } }
-  ),
+  cancelThreadInput: (threadId, inputId, idempotencyKey) =>
+    apiPost(
+      `/api/v1/agents/threads/${threadId}/events`,
+      { events: [{ type: 'yuxi.session.input.cancel_input', input_id: inputId }] },
+      { headers: { 'Idempotency-Key': idempotencyKey } }
+    ),
 
   /**
    * 获取 Run 状态
@@ -262,7 +291,7 @@ export const threadApi = {
       '/api/v1/agents/threads',
       {
         agent_id: agentId,
-        title: title || '新的对话',
+        title: Array.from(title || '新的对话').slice(0, 255).join(''),
         tool_approval_mode: metadata?.tool_approval_mode,
         ...(projectId ? { project_id: projectId } : {})
       },
@@ -289,8 +318,12 @@ export const threadApi = {
   updateThread: (threadId, title, is_pinned, toolApprovalMode, modelSpec) =>
     apiRequest(`/api/v1/agents/threads/${threadId}`, {
       method: 'PATCH',
-      body: JSON.stringify({ title, is_pinned, tool_approval_mode: toolApprovalMode,
-        model_spec: modelSpec })
+      body: JSON.stringify({
+        title,
+        is_pinned,
+        tool_approval_mode: toolApprovalMode,
+        model_spec: modelSpec
+      })
     }),
 
   /**

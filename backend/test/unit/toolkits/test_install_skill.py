@@ -122,27 +122,6 @@ async def test_install_skill_from_sandbox_installs_as_current_user_private_skill
 
 
 @pytest.mark.asyncio
-async def test_install_skill_rejects_subagent_runtime_before_install(monkeypatch):
-    def fail_install(*args, **kwargs):
-        raise AssertionError("子智能体运行态不应执行安装")
-
-    monkeypatch.setattr(
-        personal_service,
-        "install_personal_skill_dir",
-        fail_install,
-    )
-
-    result = await install_skill_module.install_skill.coroutine(
-        "/home/gem/user-data/demo-skill",
-        runtime=_runtime(uid="user-1", thread_id="child-thread", is_subagent_runtime=True),
-        tool_call_id="tool-1",
-    )
-
-    assert "只能在主智能体中使用" in result.update["messages"][0].content
-    assert "activated_skills" not in result.update
-
-
-@pytest.mark.asyncio
 async def test_install_skill_git_source_requires_skill_names():
     result = await install_skill_module.install_skill.coroutine(
         "owner/repo",

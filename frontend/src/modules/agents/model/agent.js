@@ -18,7 +18,7 @@ function sortAgents(agents) {
 }
 
 function getPreferredAgentId(agents, persistedId) {
-  const chatAgents = agents.filter((agent) => agent.can_run && !agent.is_subagent)
+  const chatAgents = agents.filter((agent) => agent.can_run)
   if (persistedId && chatAgents.some((agent) => agent.agent_id === persistedId)) return persistedId
   return chatAgents.find(isBuiltinAgent)?.agent_id || chatAgents[0]?.agent_id || null
 }
@@ -58,7 +58,9 @@ export const useAgentStore = defineStore(
 
     const agentsList = computed(() => agents.value)
 
-    const configurableItems = computed(() => normalizeAgentConfigurableItems(selectedAgent.value?.configurable_items))
+    const configurableItems = computed(() =>
+      normalizeAgentConfigurableItems(selectedAgent.value?.configurable_items)
+    )
 
     const availableTools = computed(() => configurableItems.value.tools?.options || [])
     const changedAgentConfig = computed(() =>
@@ -129,12 +131,12 @@ export const useAgentStore = defineStore(
       }
     }
 
-    async function fetchAgents({ includeSubagents = false } = {}) {
+    async function fetchAgents() {
       const currentGeneration = generation
       isLoadingAgents.value = true
       error.value = null
       try {
-        const response = await agentApi.getAgents({ includeSubagents })
+        const response = await agentApi.getAgents()
         if (currentGeneration !== generation) return
         agents.value = sortAgents(response.agents || [])
       } catch (err) {
@@ -192,15 +194,9 @@ export const useAgentStore = defineStore(
       }
     }
 
-    async function selectAgent(agentId, { allowSubagent = false } = {}) {
+    async function selectAgent(agentId) {
       const currentGeneration = generation
       if (!agentId) return
-      let knownAgent = agentDetails.value[agentId] || agents.value.find((a) => a.agent_id === agentId)
-      if (!knownAgent) {
-        knownAgent = await fetchAgentDetail(agentId)
-      }
-      if (currentGeneration !== generation) return
-      if (knownAgent?.is_subagent && !allowSubagent) return
       isLoadingConfig.value = true
       try {
         const detail = agentDetails.value[agentId] || (await fetchAgentDetail(agentId))
@@ -241,7 +237,7 @@ export const useAgentStore = defineStore(
           created,
           ...agents.value.filter((item) => item.agent_id !== created.agent_id)
         ])
-        if (!created.is_subagent) await selectAgent(created.agent_id)
+        await selectAgent(created.agent_id)
       }
       return created
     }

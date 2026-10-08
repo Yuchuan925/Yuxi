@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel, ConfigDict, ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -47,7 +47,6 @@ class AgentCreate(BaseModel):
     pics: list[str] | None = None
     config_json: dict | None = None
     share_config: dict | None = None
-    is_subagent: bool | None = None
     set_default: bool = False
 
 
@@ -60,7 +59,6 @@ class AgentUpdate(BaseModel):
     pics: list[str] | None = None
     config_json: dict | None = None
     share_config: dict | None = None
-    is_subagent: bool | None = None
 
 
 def _filter_agent_config_json(backend_id: str, config_json: dict | None) -> dict:
@@ -98,7 +96,7 @@ async def list_agent_backends(current_user: User = Depends(get_required_user)):
             {
                 **info,
                 "type": "agent_backend",
-                "can_create": current_user.role in {"admin", "superadmin"} or info["backend_id"] != "SubAgentBackend",
+                "can_create": True,
             }
             for info in infos
         ]
@@ -121,13 +119,12 @@ async def get_agent_backend_detail(
 
 @agent_router.get("")
 async def list_agents(
-    include_subagents: bool = Query(False),
     current_user: User = Depends(get_required_user),
     db: AsyncSession = Depends(get_db),
 ):
     repo = AgentRepository(db)
     await repo.ensure_default_agent()
-    items = await repo.list_visible(user=current_user, include_subagent_definitions=include_subagents)
+    items = await repo.list_visible(user=current_user)
     backend_info_cache: dict[tuple[str, bool, str], dict] = {}
     agents = [await _serialize_agent(repo, item, current_user, backend_info_cache=backend_info_cache) for item in items]
     return {"agents": agents}
@@ -193,7 +190,7 @@ async def _create_agent_response(db, user, payload, *, skill_upload=None):
 async def get_agent(agent_id: str, current_user: User = Depends(get_required_user), db: AsyncSession = Depends(get_db)):
     repo = AgentRepository(db)
     agent_slug = agent_id  # 兼容既有路径参数名；这里实际是 Agent.slug。
-    item = await repo.get_visible_by_slug(slug=agent_slug, user=current_user, kind="any", for_run=False)
+    item = await repo.get_visible_by_slug(slug=agent_slug, user=current_user, for_run=False)
     if not item:
         raise HTTPException(status_code=404, detail="智能体不存在")
     return {"agent": await _serialize_agent(repo, item, current_user, include_configurable_items=True)}
@@ -208,7 +205,7 @@ async def update_agent(
 ):
     repo = AgentRepository(db)
     agent_slug = agent_id  # 兼容既有路径参数名；这里实际是 Agent.slug。
-    item = await repo.get_visible_by_slug(slug=agent_slug, user=current_user, kind="any", for_run=False)
+    item = await repo.get_visible_by_slug(slug=agent_slug, user=current_user, for_run=False)
     if not item:
         raise HTTPException(status_code=404, detail="智能体不存在")
     if not user_can_manage_agent(current_user, item):
@@ -225,7 +222,6 @@ async def update_agent(
             config_json=payload.config_json,
             share_config=payload.share_config,
             visibility=payload.visibility,
-            is_subagent=payload.is_subagent,
             updated_by=str(current_user.uid),
             updater=current_user,
             fields_set=payload.model_fields_set,
@@ -245,7 +241,7 @@ async def delete_agent(
 ):
     repo = AgentRepository(db)
     agent_slug = agent_id  # 兼容既有路径参数名；这里实际是 Agent.slug。
-    item = await repo.get_visible_by_slug(slug=agent_slug, user=current_user, kind="any", for_run=False)
+    item = await repo.get_visible_by_slug(slug=agent_slug, user=current_user, for_run=False)
     if not item:
         raise HTTPException(status_code=404, detail="智能体不存在")
     if not user_can_manage_agent(current_user, item):

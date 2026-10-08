@@ -64,7 +64,7 @@ async def test_queue_history_and_membership_indexes_remove_baseline_work():
             for sql in (
                 "INSERT INTO users (uid,username,password_hash,role,is_deleted,login_failed_count) VALUES ('u','u','fixture','user',0,0)",
                 "INSERT INTO projects (id,uid,selection_status,workdir_path,directory_mode) VALUES ('p','u','implicit','projects/p','managed')",
-                "INSERT INTO sessions (thread_id,uid,agent_id,project_id,status,is_pinned,updated_at) SELECT 't'||i,'u','main','p','active',false,now() FROM generate_series(0,99) i",
+                "INSERT INTO sessions (thread_id,tree_root_thread_id,uid,agent_id,project_id,status,is_pinned,updated_at) SELECT 't'||i,'t'||i,'u','main','p','active',false,now() FROM generate_series(0,99) i",
                 "INSERT INTO agent_inputs (id,thread_id,uid,agent_slug,kind,status,input_payload,source,channel,origin_metadata,created_at,cancelled_at) SELECT 'i'||i,'t'||(i%100),'u','main','follow_up',CASE WHEN i%2=0 THEN 'pending' ELSE 'cancelled' END,'{}','chat','web','{}',now(),CASE WHEN i%2=1 THEN now() END FROM generate_series(1,20000) i",
                 "INSERT INTO messages (session_record_id,role,content,delivery_status,created_at) SELECT c.id,'user','fixture','queued',now()+i*interval '1 microsecond' FROM generate_series(1,20000) i JOIN sessions c ON c.thread_id='t'||(i%100)",
                 "INSERT INTO agent_input_receipts (id,idempotency_key,uid,thread_id,event_type,intent_hash,input_id,created_at) SELECT 'r'||i,'key'||i,'u','t'||(i%100),'input','fixture','i'||i,now() FROM generate_series(1,20000) i",

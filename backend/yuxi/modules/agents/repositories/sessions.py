@@ -19,7 +19,7 @@ from yuxi.modules.agents.models.messages import (
     ToolCall,
 )
 from yuxi.modules.agents.models.runs import AGENT_RUN_TERMINAL_STATUSES, AgentRun
-from yuxi.modules.agents.models.sessions import UNVIEWED_RUN_MARKER, Session, SubagentThread
+from yuxi.modules.agents.models.sessions import UNVIEWED_RUN_MARKER, Session
 from yuxi.shared.datetime import utc_now
 from yuxi.shared.strings import truncate_utf8
 
@@ -89,18 +89,6 @@ class SessionRepository:
             Message.content.ilike(pattern, escape="\\"),
         ]
 
-    def _exclude_source_conditions(self, sources: tuple[str, ...]):
-        if not sources:
-            return []
-        source = Session.extra_metadata["source"].as_string()
-        return [
-            or_(
-                Session.extra_metadata.is_(None),
-                source.is_(None),
-                source.notin_(sources),
-            )
-        ]
-
     def _build_message_search_snippet(self, content: str, query: str) -> str:
         normalized = " ".join(str(content or "").split())
         if not normalized:
@@ -142,6 +130,7 @@ class SessionRepository:
 
         agent_session = Session(
             thread_id=thread_id,
+            tree_root_thread_id=thread_id,
             creation_request_id=creation_request_id,
             uid=str(uid),
             app_id=app_id,
@@ -189,10 +178,11 @@ class SessionRepository:
 
     async def lock_session_by_thread_id(self, thread_id: str) -> Session | None:
         """锁定线程根记录，串行化同一对话的调度决策。"""
+        # 身份键不变；允许树通知的外键键共享锁，避免 Session → 树锁反向等待。
         result = await self.db.execute(
             select(Session)
             .where(Session.thread_id == thread_id)
-            .with_for_update()
+            .with_for_update(key_share=True)
             .execution_options(populate_existing=True)
         )
         return result.scalar_one_or_none()
@@ -226,7 +216,9 @@ class SessionRepository:
 
     async def _lock_session_by_id(self, session_record_id: int) -> Session | None:
         """锁定会话元数据，串行化同一线程的附件更新。"""
-        result = await self.db.execute(select(Session).where(Session.id == session_record_id).with_for_update())
+        result = await self.db.execute(
+            select(Session).where(Session.id == session_record_id).with_for_update(key_share=True)
+        )
         return result.scalar_one_or_none()
 
     async def add_message(
@@ -456,7 +448,6 @@ class SessionRepository:
         status: str = "active",
         limit: int | None = None,
         offset: int = 0,
-        exclude_sources: tuple[str, ...] = (),
         app_id: str | None | object = ALL_APP_SCOPES,
     ) -> list[Session]:
         """List sessions with pinned sessions always included first.
@@ -472,7 +463,6 @@ class SessionRepository:
             base_conditions.append(Session.agent_id == agent_id)
         if app_id is not ALL_APP_SCOPES:
             base_conditions.append(Session.app_id == app_id)
-        base_conditions.extend(self._exclude_source_conditions(exclude_sources))
 
         # First, get all pinned sessions (no limit)
         pinned_query = (
@@ -509,7 +499,6 @@ class SessionRepository:
         agent_id: str | None = None,
         limit: int = 20,
         offset: int = 0,
-        exclude_sources: tuple[str, ...] = (),
         app_id: str | None | object = ALL_APP_SCOPES,
     ) -> tuple[list[dict], bool]:
         normalized_query = str(query or "").strip()
@@ -524,7 +513,6 @@ class SessionRepository:
             session_conditions.append(Session.agent_id == agent_id)
         if app_id is not ALL_APP_SCOPES:
             session_conditions.append(Session.app_id == app_id)
-        session_conditions.extend(self._exclude_source_conditions(exclude_sources))
 
         message_conditions = self._message_search_conditions(normalized_query)
         summary = (
@@ -724,11 +712,9 @@ class SessionRepository:
 
     def _memory_session_conditions(self, uid: str) -> list:
         """构建用户可见主 Agent Session 条件。"""
-        child_thread_exists = select(SubagentThread.id).where(SubagentThread.child_session_record_id == Session.id)
         return [
             Session.uid == str(uid),
             Session.status == "active",
-            ~child_thread_exists.exists(),
         ]
 
     @staticmethod

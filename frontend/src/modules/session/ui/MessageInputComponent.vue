@@ -204,45 +204,6 @@
           </div>
         </div>
 
-        <!-- Subagents 列表 -->
-        <div v-if="mentionItems.subagents.length > 0" class="mention-group">
-          <div class="mention-group-title">Subagents</div>
-          <div
-            v-for="(item, index) in mentionItems.subagents"
-            :key="'subagent-' + item.value"
-            :class="[
-              'mention-item',
-              'resource-item',
-              { active: isItemSelected('subagent', index) }
-            ]"
-            @click="insertMention(item)"
-          >
-            <div class="resource-name">
-              <span
-                v-for="(part, pIdx) in splitTextByQuery(item.label, mentionQuery)"
-                :key="pIdx"
-                :class="{ 'query-match': part.isMatch }"
-                >{{ part.text }}</span
-              >
-            </div>
-            <div
-              v-if="getMentionDescription(item.description)"
-              class="resource-description"
-              :title="getMentionDescription(item.description)"
-            >
-              <span
-                v-for="(part, pIdx) in splitTextByQuery(
-                  getMentionDescription(item.description),
-                  mentionQuery
-                )"
-                :key="pIdx"
-                :class="{ 'query-match': part.isMatch }"
-                >{{ part.text }}</span
-              >
-            </div>
-          </div>
-        </div>
-
         <!-- 无结果 -->
         <div v-if="!hasAnyItems" class="mention-empty">暂无可引用的项</div>
       </div>
@@ -769,7 +730,7 @@ const updateMentionItems = (query = '') => {
   }
 
   if (!props.mention) {
-    mentionItems.value = { files: [], knowledgeBases: [], mcps: [], skills: [], subagents: [] }
+    mentionItems.value = { files: [], knowledgeBases: [], mcps: [], skills: [] }
     return
   }
 
@@ -812,8 +773,7 @@ const updateMentionItems = (query = '') => {
   const {
     knowledgeBases: knowledgeItems,
     mcps: mcpItems,
-    skills: skillItems,
-    subagents: subagentItems
+    skills: skillItems
   } = mentionResourceItems.value
 
   // 初始化设置 mentionItems 状态（使用前端已有的本地过滤结果，瞬间更新，达到零卡顿）
@@ -821,8 +781,7 @@ const updateMentionItems = (query = '') => {
     files: filteredLocalFiles,
     knowledgeBases: filterItems(knowledgeItems),
     mcps: filterItems(mcpItems),
-    skills: filterItems(skillItems),
-    subagents: filterItems(subagentItems)
+    skills: filterItems(skillItems)
   }
 
   if (normalizedQuery) {
@@ -923,8 +882,7 @@ const hasAnyItems = computed(() => {
     items.files.length > 0 ||
     items.knowledgeBases.length > 0 ||
     items.mcps.length > 0 ||
-    items.skills.length > 0 ||
-    items.subagents.length > 0
+    items.skills.length > 0
   )
 })
 
@@ -989,8 +947,7 @@ const handleMentionNavigation = (e) => {
     ...mentionItems.value.files,
     ...mentionItems.value.knowledgeBases,
     ...mentionItems.value.mcps,
-    ...mentionItems.value.skills,
-    ...mentionItems.value.subagents
+    ...mentionItems.value.skills
   ]
 
   const total = allItems.length
@@ -1223,7 +1180,7 @@ const handleSendOrStop = () => {
 // @ 提及功能状态
 const mentionPopupVisible = ref(false)
 const mentionQuery = ref('')
-const mentionItems = ref({ files: [], knowledgeBases: [], mcps: [], skills: [], subagents: [] })
+const mentionItems = ref({ files: [], knowledgeBases: [], mcps: [], skills: [] })
 const mentionSelectedIndex = ref(0)
 const searchRequestId = ref(0)
 const isComposing = ref(false)

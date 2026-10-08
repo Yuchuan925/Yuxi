@@ -99,16 +99,18 @@ import { normalizeAgentBackendOption } from '@/modules/agents/model/agentConfigU
 
 const AgentEditModal = shallowRef(null)
 const props = defineProps({
+  agentId: { type: String, default: '' },
   hasActiveThread: Boolean,
   isCreatingThread: Boolean,
   startNewSession: { type: Function, required: true }
 })
 const agentStore = useAgentStore()
-const { agents, selectedAgentId, isLoadingConfig } = storeToRefs(agentStore)
+const { agents, selectedAgentId: defaultAgentId, isLoadingConfig } = storeToRefs(agentStore)
+const selectedAgentId = computed(() => props.agentId || defaultAgentId.value)
 const agentEditModalRef = ref(null)
 const agentQuickSwitchOptions = computed(() =>
   (agents.value || [])
-    .filter((agent) => agent.can_run && !agent.is_subagent)
+    .filter((agent) => agent.can_run)
     .map((agent) => ({
       label: agent.name || agent.agent_id,
       value: agent.agent_id,
@@ -170,8 +172,8 @@ const handleAgentSwitch = async (agentId, hasActiveThread, isCreatingThread) => 
   }
 }
 
-const handleAgentSaved = async ({ mode, agent } = {}) => {
-  if (mode === 'create' && !agent?.is_subagent) {
+const handleAgentSaved = async ({ mode } = {}) => {
+  if (mode === 'create') {
     await props.startNewSession()
   }
 

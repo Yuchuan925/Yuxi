@@ -240,8 +240,10 @@ jobs:
       - name: Start deterministic OpenAI-compatible replay
         run: |
           docker compose exec -d api uv run --no-sync --no-dev python test/support/openai_replay_server.py
+          docker compose exec -d api uv run --no-sync --no-dev python -m test.support.cooperation_replay_server
           for attempt in $(seq 1 20); do
-            if docker compose exec -T api curl -fsS http://localhost:8765/health >/dev/null; then
+            if docker compose exec -T api curl -fsS http://localhost:8765/health >/dev/null && \
+               docker compose exec -T api curl -fsS http://localhost:8766/health >/dev/null; then
               exit 0
             fi
             sleep 1
@@ -346,15 +348,15 @@ jobs:
             test/integration/api/test_public_knowledge_key_boundary.py::test_agents_key_cannot_access_public_knowledge_api \
             test/integration/api/test_public_knowledge_key_boundary.py::test_public_knowledge_does_not_expose_management_routes \
             test/integration/api/test_public_knowledge_tools.py::test_knowledge_key_tool_route_boundary_without_kb -q
-      - name: Verify Subagent state recovery and visibility
-        run: docker compose exec -T -e TEST_USERNAME="$E2E_USERNAME" -e TEST_PASSWORD="$E2E_PASSWORD" api uv run --no-sync --no-dev pytest test/integration/api/test_subagent_state_recovery.py -q
+      - name: Verify Session tree recovery and visibility
+        run: docker compose exec -T -e TEST_USERNAME="$E2E_USERNAME" -e TEST_PASSWORD="$E2E_PASSWORD" api uv run --no-sync --no-dev pytest test/integration/api/test_session_cooperation_state_recovery.py -q
       - name: Verify Message audit HTTP contract
         timeout-minutes: 3
         run: docker compose exec -T -e TEST_USERNAME="$E2E_USERNAME" -e TEST_PASSWORD="$E2E_PASSWORD" api uv run --no-sync --no-dev pytest test/integration/api/test_chat_router.py::test_thread_message_audits_return_persisted_facts_without_leaking_into_history -q --setup-show -o faulthandler_timeout=60
       - name: Verify visible tools for ordinary users
         run: docker compose exec -T -e TEST_USERNAME="$E2E_USERNAME" -e TEST_PASSWORD="$E2E_PASSWORD" api uv run --no-sync --no-dev pytest test/integration/api/test_chat_router.py::test_standard_user_restores_visible_function_items_without_internal_audit -q
-      - name: Verify independent delegated Turn cancellation
-        run: docker compose exec -T api uv run --no-sync --no-dev pytest test/integration/services/test_delegated_turn_cancellation.py -q
+      - name: Verify Session cooperation persistence and capacity
+        run: docker compose exec -T api uv run --no-sync --no-dev pytest test/integration/services/test_session_cooperation.py -q
       - name: Verify attachment HTTP and object contract
         timeout-minutes: 3
         run: docker compose exec -T -e TEST_USERNAME="$E2E_USERNAME" -e TEST_PASSWORD="$E2E_PASSWORD" api uv run --no-sync --no-dev pytest test/integration/api/test_chat_router.py::test_thread_artifact_uses_image_signature_for_content_type -q
@@ -364,9 +366,9 @@ jobs:
       - name: Verify scheduled, model and tool lifecycle paths
         timeout-minutes: 12
         run: docker compose exec -T -e E2E_USERNAME -e E2E_PASSWORD api uv run --no-sync --no-dev pytest test/e2e/test_agent_lifecycle_extended_e2e.py -q --durations=10
-      - name: Verify SubAgent and Workdir boundaries
+      - name: Verify Session cooperation and Workdir boundaries
         timeout-minutes: 12
-        run: docker compose exec -T -e E2E_USERNAME -e E2E_PASSWORD api uv run --no-sync --no-dev pytest test/e2e/test_agent_lifecycle_subagent_boundaries_e2e.py -q --durations=10
+        run: docker compose exec -T -e E2E_USERNAME -e E2E_PASSWORD api uv run --no-sync --no-dev pytest test/e2e/test_session_cooperation_e2e.py -q --durations=10
       - name: Verify Agents Key end-user execution scope
         timeout-minutes: 6
         run: docker compose exec -T -e E2E_USERNAME -e E2E_PASSWORD api uv run --no-sync --no-dev pytest test/e2e/test_agent_lifecycle_key_scope_e2e.py -q --durations=10

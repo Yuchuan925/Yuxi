@@ -144,14 +144,13 @@ async def prepare_run_execution(
     agent_item = await AgentRepository(db).get_visible_by_slug(
         slug=run.agent_slug,
         user=user,
-        kind="subagent" if run.run_type == "subagent" else "main",
     )
     if agent_item is None:
         raise ValueError("智能体不存在或无权限访问")
     backend = get_agent_backend(agent_item.backend_id)
 
     context = backend.context_schema()
-    configured = (agent_item.config_json or {}).get("context") or {}
+    configured = run.input_payload.get("context_snapshot") or (agent_item.config_json or {}).get("context") or {}
     configurable_fields = {item.name for item in fields(context) if item.metadata.get("configurable", True)}
     context.update_config(configured)
     payload = run.input_payload
@@ -171,17 +170,15 @@ async def prepare_run_execution(
         context.model = payload["model_spec"]
     if payload.get("tool_approval_mode"):
         context.tool_approval_mode = payload["tool_approval_mode"]
-    if run.run_type == "subagent":
-        parent_thread_id = str((payload.get("runtime") or {}).get("parent_thread_id") or "").strip()
-        if not parent_thread_id:
-            raise ValueError("子智能体运行缺少必需的 parent_thread_id")
-        context.update({"parent_thread_id": parent_thread_id, "is_subagent_runtime": True})
+    configured_prompt = context.system_prompt
     context = await prepare_agent_runtime_context(context)
     if not getattr(context, "_runtime_prepared", False):
         raise ValueError("执行用户不存在，无法准备 Context")
 
     # 身份、租约与路径不属于可配置字段；完整 prompt 仅通过摘要进入 manifest。
     effective_config = {name: getattr(context, name) for name in configurable_fields}
+    # 工作区提示由每个成员准备时加载，配置继承不能重复拼接派发方的展开文本。
+    context._cooperation_config_snapshot = {**effective_config, "system_prompt": configured_prompt}
     manifest = build_manifest_payload(
         run_type=run.run_type,
         agent_slug=run.agent_slug,

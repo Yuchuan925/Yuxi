@@ -26,7 +26,7 @@ async def test_recovery_republishes_owned_child_after_parent_completion(
         uid="user-1",
         app_id=None,
         status="pending",
-        run_type="subagent",
+        run_type="chat",
         thread_id="child-thread",
         runtime_scope_id="child-thread",
         agent_slug="child",
@@ -47,7 +47,7 @@ async def test_recovery_republishes_owned_child_after_parent_completion(
     )
     root = SimpleNamespace(id=1, thread_id="root-thread", uid="user-1", app_id=None, status="active")
     child_thread = SimpleNamespace(
-        thread_id="child-thread", uid="user-1", app_id=None, agent_id="child", status="subagent"
+        thread_id="child-thread", uid="user-1", app_id=None, agent_id="child", status="active"
     )
     delivered = []
     terminal = []
@@ -69,8 +69,7 @@ async def test_recovery_republishes_owned_child_after_parent_completion(
         async def execute(self, statement):
             self.queries += 1
             if self.queries == 1:
-                sql = str(statement.compile(compile_kwargs={"literal_binds": True}))
-                return Result([] if "agent_runs.run_type != 'subagent'" in sql else [candidate])
+                return Result([candidate])
             return Result([])
 
     @asynccontextmanager
@@ -86,9 +85,6 @@ async def test_recovery_republishes_owned_child_after_parent_completion(
 
         async def lock_run_for_user(self, run_id, uid):
             return parent if run_id == "parent-run" else current
-
-        async def get_subagent_run_with_creator(self, **kwargs):
-            return parent, current
 
         async def set_terminal_status(self, run_id, *, status, **kwargs):
             terminal.append((run_id, status))

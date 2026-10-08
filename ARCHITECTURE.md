@@ -6,7 +6,7 @@
 
 ## 鸟瞰
 
-Yuxi 是一个面向 RAG、知识图谱和多智能体工作流的知识库平台。用户通过 Vue 前端管理智能体、知识库、模型、工具、Skills、MCP 与 SubAgents；前端通过 `/api` 调用 FastAPI；后端服务层协调 PostgreSQL、Redis、MinIO、Milvus、Neo4j、LangGraph 和沙盒。
+Yuxi 是一个面向 RAG、知识图谱和多智能体工作流的知识库平台。用户通过 Vue 前端管理智能体、知识库、模型、工具、Skills、MCP 与协作会话；前端通过 `/api` 调用 FastAPI；后端服务层协调 PostgreSQL、Redis、MinIO、Milvus、Neo4j、LangGraph 和沙盒。
 
 普通智能体消息先在 PostgreSQL 中保存为 Input、回执和 Message。线程调度器在空闲时领取优先队头，创建 Turn 与首个 Run；steer 优先于 follow-up，运行中在安全边界接续当前 Turn。人工等待恢复沿用当前 Turn，产生下一段 Run。提交事务后，pending Run 通过 Redis/ARQ 交给独立 worker 执行。Redis Stream 保存短期增量，PostgreSQL 保存执行和业务终态，前端通过 Thread SSE 观察整轮工作。
 
@@ -70,7 +70,7 @@ Yuxi 始终交付完整知识能力。API 注册知识库、图谱、评估、Da
 - `modules` 按 session、agents、projects、workspace、knowledge、extensions、identity、settings、background-jobs、dashboard 组织业务；`ui` 拥有界面，`model` 拥有状态与领域逻辑。会话编排、Input 排队、Thread SSE、审批和提及属于 session；智能体目录、选择与编辑属于 agents。
 - `shared/ui` 与 `shared/lib` 保存通用界面和工具，`shared/model` 保存主题状态；全局样式集中在 `assets/css`，颜色和基础规范复用 `base.css`。
 - `apis` 是集中 HTTP 边界，复用 `base.js` 的请求、鉴权和错误处理。模块不能依赖 app/pages，shared 不能依赖业务模块或 API；ESLint 检查别名、相对路径和动态导入。
-- 新 TypeScript 逻辑经 strict 类型检查，build 先执行 typecheck；现有 JavaScript 逐步迁移。当前 session 的 SessionWorkspace 仍拥有聊天编排，独立 Thread 阅读与统一输入内核见[重构提案](docs/develop-guides/decisions/proposed/2026-09-30-agent-view-frontend-refactor.md)。
+- 新 TypeScript 逻辑经 strict 类型检查，build 先执行 typecheck；现有 JavaScript 逐步迁移。session 的 sessionRuntime 按 Thread 拥有运行状态、历史、流订阅、恢复和队列观察；SessionWorkspace 拥有输入交互、草稿与面板展示。视图存活期间的草稿分别保留，首次进入 Thread 从持久草稿初始化。进一步的独立 Thread 阅读与统一输入内核见[重构提案](docs/develop-guides/decisions/proposed/2026-09-30-agent-view-frontend-refactor.md)。
 
 `/` 是公开首页；登录后的核心工作区是 `/agent`。`/extensions` 对所有登录用户开放，其中 Skills 对普通用户可见，知识库、工具和 MCP 管理能力仅管理员可见；Dashboard 仅超级管理员可访问。后端权限检查始终是最终边界，前端守卫只负责页面体验。
 
@@ -83,11 +83,11 @@ Yuxi 始终交付完整知识能力。API 注册知识库、图谱、评估、Da
 3. `modules/agents/services/scheduler.py` 在线程锁下领取未暂停队列的优先队头，原子创建 Turn 与首个 pending Run。follow-up 彼此 FIFO；每个 Thread 的 pending steer 聚合为唯一优先批次。排队 Input 不绑定 Turn，消费时固定 Turn/Run 归属；等待回答或审批时拒绝普通消息。
 4. owning transaction 提交后才向 ARQ 投递 pending Run。恢复扫描可补投未成功投递的同一个 Run，不自动重试已经失败的工作。
 5. `worker` 中的 `modules/agents/services/runner.py` 使用进程 identity 与 job-attempt token 取得 Run lease；未取得 ownership 的重复任务不会执行。Heartbeat 在独立事务中续租，再加载运行上下文执行 LangGraph。Langfuse 使用 Turn 级 trace 与 Run 级 observation；远端观测不拥有业务终态。
-6. 智能体通过 middleware 组合 UserWorkspace 中的当前 Workdir、只读共享 Skills、MCP、SubAgent、审批、摘要和工具能力。子任务由 `subagent_start` 派发并写入 state，`subagent_await` 按需等待；子任务通过持久输入创建独立 Thread/Turn/Run，自身拥有结果、等待与恢复，并通过委派关系关联父 Run。父子共享 Project Workdir，各自使用自身 Thread 的 runtime scope、lease 和清理；Sandbox 在首次相关文件或命令操作时按 runtime scope 惰性创建。
+6. 所有 Session 通过同一 Agent 后端与 middleware 组合 Workdir、Skills、MCP、审批、摘要及协作能力。协作成员拥有独立上下文、Thread/Input/Turn/Run，以父关系和树内名称关联；不继承父历史。全树共享 Project Workdir、实际 Sandbox 和四个执行名额，等待释放 worker 与执行名额。PostgreSQL 拥有协作消息、等待与终态事实；普通取消只影响指定 Turn，用户明确停止才停止整树。各 Run 的 lease、结果和终态发布独立，沙盒由树级空闲回收负责；具体行为见[会话协作](docs/agents/session-cooperation.md)。
 7. 安全接管点在工具批次及 checkpoint 保存之后，或无工具的模型调用完成之后。pending steer 被固定为消费批次，旧 Run yielded，同一 Turn 创建下一 Run；普通工具循环保持同一 Run。人工等待使 Run interrupted、Turn waiting，并保存绑定该 Run 的等待点；结构化回答或审批消费等待点后，在同一 Turn 创建新 Run。
-8. 完成、失败和取消由当前 owner 在数据库事务中收敛 Run 与 Turn。最终结果指向明确的顶层 result Run 的 output Message；Model/Tool 审计保留独立归属；普通历史只读取已登记的公开 item，不包含内部 prompt 或 checkpoint。父完成或失败不结束子任务，父取消仅沿本 Turn 委派关系递归取消在途子 Turn。取消先持久化状态并暂停待消费输入队列，再发送 Redis 加速信号；失联 Run 由 lease reconciliation 形成可观察失败。外部副作用仍按 at-least-once 语义核对。
+8. 完成、失败和取消由当前 owner 在数据库事务中收敛 Run 与 Turn。最终结果指向明确的顶层 result Run 的 output Message；Model/Tool 审计保留独立归属；普通历史只读取已登记的公开 item，不包含内部 prompt 或 checkpoint。父完成、失败或单轮取消保留后代独立工作；用户显式停止整树才取消所有成员在途 Turn。取消先持久化状态并暂停待消费输入队列，再发送 Redis 加速信号；失联 Run 由 lease reconciliation 形成可观察失败。外部副作用仍按 at-least-once 语义核对。
 9. LangGraph v3 ProtocolEvent 先由 `RunMessageRecorder` 统一记录模型和工具消息事实，工具结果在该入口规整一次，再由公开适配器转换为 OpenAI Agents 事件；消息事实与公开快照各自提交后发布事件，checkpoint 留在独立执行结果。Redis 保存逐条公开事件，SSE data 为事件本身，逻辑 event_id 与恢复 cursor 分开；断线或过期时客户端读取 PostgreSQL 快照恢复，不从相邻 Run 推断结果。
-10. Thread 保存不可变 `project_id`，每个 Project 绑定一个 `workdir_path`，多个 Project 可以共享同一路径。managed Project 使用服务端创建的 `projects/YYYY-MM-DD_HH-MM-SS_<project-id-prefix>[-N]`，linked Project 绑定当前用户 UserWorkspace 内通过 no-follow 校验的已有目录。Thread 只归档；删除 Project 时拒绝仍有活跃 Turn 或待处理 Input 的情况，再软删除 Project 并归档所属 Thread。`yuxi.modules.workspace` 拥有宿主路径和 fd-relative 文件访问，Workdir resolver 为 Viewer、附件、Artifact、Run 和 SubAgent 提供同一持久路径；Run 终态清理 runtime 进程但保留 Workdir。
+10. Thread 保存不可变 `project_id`，每个 Project 绑定一个 `workdir_path`，多个 Project 可以共享同一路径。managed Project 使用服务端创建的 `projects/YYYY-MM-DD_HH-MM-SS_<project-id-prefix>[-N]`，linked Project 绑定当前用户 UserWorkspace 内通过 no-follow 校验的已有目录。Thread 只归档；删除 Project 时拒绝仍有活跃 Turn 或待处理 Input 的情况，再软删除 Project 并归档所属 Thread。`yuxi.modules.workspace` 拥有宿主路径和 fd-relative 文件访问，Workdir resolver 为 Viewer、附件、Artifact、Run 和协作会话提供同一持久路径；Run 终态解除当前执行的清理责任，同树沙盒由空闲回收释放，Workdir 保留。
 
 ## 架构不变量
 
@@ -108,7 +108,7 @@ Yuxi 始终交付完整知识能力。API 注册知识库、图谱、评估、Da
 - Skill 的依赖工具只有在对应 Skill 被显式预加载或动态激活后才对模型开放；基础工具与受 Skill 门控的工具保持边界。
 - Shipping 进程始终装配知识库、图谱和评估能力；解析器等只服务实际动作的重运行时继续保持惰性加载。
 - 文件边界只使用三种跨层路径：数据库中的 Project `workdir_path`、Viewer 当前 scope 相对 `/foo`、Agent/artifact runtime 绝对 `/home/gem/user-data/...`；宿主 `Path` 由 `yuxi.modules.workspace` 持有，普通 Service/Repository 不得取得。
-- 沙盒虚拟路径由当前 Project Workdir、User Data 与共享 Skills 根共同约束；个人 Skill 保存在 UserWorkspace 的 `agents/skills`，共享与内置 Skill 才投影到只读 `/home/gem/skills`。Sandbox 的惰性创建不得绕过 runtime scope、uid、Workdir 或 generation 校验，Run 终态仍清理 runtime 进程并保留 Workdir。用户可见路径、对象存储 URL 与宿主机真实路径不能混用。
+- 沙盒虚拟路径由当前 Project Workdir、User Data 与共享 Skills 根共同约束；个人 Skill 保存在 UserWorkspace 的 `agents/skills`，共享与内置 Skill 才投影到只读 `/home/gem/skills`。Sandbox 的惰性创建不得绕过 runtime scope、uid、Workdir 或 generation 校验。Run 终态解除该执行的清理责任；共享 runtime 由整树空闲五分钟后的回收清理进程，并保留 Workdir。用户可见路径、对象存储 URL 与宿主机真实路径不能混用。
 - 面向用户和外部系统的输入在边界校验；内部服务优先依赖已有类型、事务和仓储约束，避免用静默回退掩盖设计错误。
 
 ## 跨切面关注点

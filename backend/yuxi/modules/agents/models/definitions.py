@@ -65,7 +65,6 @@ class Agent(Base):
     is_builtin = Column(Boolean, nullable=False, default=False)
 
     is_default = Column(Boolean, nullable=False, default=False, index=True)
-    is_subagent = Column(Boolean, nullable=False, default=False, index=True)
 
     created_by = Column(String(64), nullable=True, index=True)
     updated_by = Column(String(64), nullable=True)
@@ -74,7 +73,6 @@ class Agent(Base):
 
     __table_args__ = (
         CheckConstraint("visibility IN ('private', 'shared')", name="ck_agents_visibility"),
-        CheckConstraint("NOT is_subagent OR visibility = 'shared'", name="ck_agents_subagent_shared"),
         CheckConstraint("NOT is_builtin OR visibility = 'shared'", name="ck_agents_builtin_shared"),
         CheckConstraint("visibility <> 'private' OR created_by IS NOT NULL", name="ck_agents_private_owner"),
         Index(
@@ -101,7 +99,6 @@ class Agent(Base):
             "visibility": self.visibility,
             "is_builtin": bool(self.is_builtin),
             "is_default": bool(self.is_default),
-            "is_subagent": bool(self.is_subagent),
             "created_by": self.created_by,
             "updated_by": self.updated_by,
             "created_at": format_utc_datetime(self.created_at),

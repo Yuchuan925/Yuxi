@@ -1,5 +1,5 @@
 <template>
-  <ActionDropdown :upward="upward" v-model:open="open">
+  <ActionDropdown :upward="upward" :width="140" v-model:open="open">
     <template #trigger>
       <ActionTrigger
         :label="currentOption.label"

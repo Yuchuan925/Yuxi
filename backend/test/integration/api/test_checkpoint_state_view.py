@@ -21,7 +21,7 @@ class DisplayState(TypedDict):
     todos: list
     files: dict
     artifacts: list
-    subagent_runs: list
+    cooperation: dict
     token_usage: dict
 
 
@@ -51,10 +51,11 @@ async def test_state_view_reads_postgres_snapshot_and_rejects_other_users(test_c
             url = f"/api/v1/agents/threads/{thread_id}/state"
             empty = await test_client.get(url, headers=admin_headers)
             assert empty.status_code == 200, empty.text
-            assert empty.json()["agent_state"] == {
+            state = empty.json()["agent_state"]
+            assert len(state.pop("cooperation")["sessions"]) == 1
+            assert state == {
                 "todos": [],
                 "artifacts": [],
-                "subagent_runs": [],
                 "token_usage": None,
             }
 
@@ -63,7 +64,7 @@ async def test_state_view_reads_postgres_snapshot_and_rejects_other_users(test_c
                 "todos": [{"content": "persisted todo", "status": "completed"}],
                 "files": {"legacy.txt": {"content": ["old checkpoint content"]}},
                 "artifacts": ["result.txt"],
-                "subagent_runs": [{"run_id": "saved-child"}],
+                "cooperation": {"sessions": [{"session_id": "forged-child"}]},
                 "token_usage": {"total": 17},
             }
             graph = StateGraph(DisplayState)
@@ -74,10 +75,10 @@ async def test_state_view_reads_postgres_snapshot_and_rejects_other_users(test_c
 
             response = await test_client.get(url, params={"include_messages": "true"}, headers=admin_headers)
             assert response.status_code == 200, response.text
-            assert response.json()["agent_state"] == {
-                key: payload[key] for key in ("todos", "artifacts", "token_usage")
-            } | {"subagent_runs": []}
-            assert response.json()["messages"][0]["content"] == "persisted checkpoint message"
+            state = response.json()["agent_state"]
+            assert [member["session_id"] for member in state.pop("cooperation")["sessions"]] == [thread_id]
+            assert state == {key: payload[key] for key in ("todos", "artifacts", "token_usage")}
+            assert response.json()["items"] == []  # 可见消息来自持久Message，不能从checkpoint伪造。
             assert "interrupt" not in response.json()
             assert (await test_client.get(url)).status_code == 401
             assert (await test_client.get(url, headers=standard_user["headers"])).status_code == 404

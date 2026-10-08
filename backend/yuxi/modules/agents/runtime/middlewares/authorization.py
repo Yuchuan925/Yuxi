@@ -90,7 +90,6 @@ async def refresh_execution_authorization(context) -> None:
             agent = await AgentRepository(db).get_visible_by_slug(
                 slug=run.agent_slug,
                 user=user,
-                kind="subagent" if run.run_type == "subagent" else "main",
             )
             if agent is None:
                 raise AgentExecutionRevoked("Agent 使用权限已撤销")
@@ -105,7 +104,7 @@ async def refresh_execution_authorization(context) -> None:
             )
             if thread is None:
                 raise AgentExecutionRevoked("执行对话已失效")
-            agent = await AgentRepository(db).get_visible_by_slug(slug=thread.agent_id, user=user, kind="main")
+            agent = await AgentRepository(db).get_visible_by_slug(slug=thread.agent_id, user=user)
             if agent is None:
                 raise AgentExecutionRevoked("Agent 使用权限已撤销")
         context.agent_slug = agent.slug

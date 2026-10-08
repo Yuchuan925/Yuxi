@@ -73,84 +73,6 @@ def test_context_update_applies_only_declared_runtime_fields() -> None:
     assert callable(context.update)
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "snapshot",
-    [
-        prepared_execution(backend_id="SubAgentBackend"),
-        prepared_execution(backend_id="SubAgentBackend", system_prompt="manifest"),
-    ],
-)
-async def test_resolve_agent_runtime_includes_subagents_only_when_requested(
-    monkeypatch: pytest.MonkeyPatch, snapshot
-) -> None:
-    calls: list[str] = []
-
-    class FakeAgentRepository:
-        def __init__(self, _db):
-            pass
-
-        async def get_visible_by_slug(self, *, slug: str, user, kind="main"):
-            del user
-            assert slug == "worker"
-            calls.append(kind)
-            if kind == "subagent":
-                return SimpleNamespace(slug="worker", backend_id="SubAgentBackend", config_json={"context": {}})
-            return None
-
-    class FakeSessionRepository:
-        def __init__(self, _db):
-            pass
-
-        async def get_session_by_thread_id(self, thread_id: str):
-            return SimpleNamespace(
-                uid="user-1",
-                agent_id="worker",
-                thread_id=thread_id,
-                status="subagent",
-                project_id="11111111-1111-4111-8111-111111111111",
-            )
-
-    monkeypatch.setattr(svc, "AgentRepository", FakeAgentRepository)
-    monkeypatch.setattr(svc, "SessionRepository", FakeSessionRepository)
-    monkeypatch.setattr(svc, "resolve_session_workdir_path", _resolve_test_workdir)
-
-    async def normalize(context, **kwargs):
-        """有 manifest 快照时重复解析应使回归失败。"""
-        pytest.fail("manifest 后不应重新解析配置")
-
-    monkeypatch.setattr(agent_context, "normalize_agent_context_config", normalize)
-    monkeypatch.setattr(
-        svc,
-        "get_agent_backend",
-        lambda backend_id: SimpleNamespace(context_schema=None) if backend_id == "SubAgentBackend" else None,
-    )
-
-    user = SimpleNamespace(uid="user-1")
-
-    with pytest.raises(ValueError, match="对话线程不存在"):
-        await svc._resolve_agent_runtime(
-            db=object(),
-            user=user,
-            requested_agent_slug="worker",
-            thread_id="child-thread",
-            prepared_execution=snapshot,
-        )
-
-    agent_item, backend, agent_config, agent_session = await svc._resolve_agent_runtime(
-        db=object(),
-        user=user,
-        requested_agent_slug="worker",
-        thread_id="child-thread",
-        agent_kind="subagent",
-        prepared_execution=snapshot,
-    )
-
-    assert calls == ["subagent"]
-    assert agent_item.slug == "worker"
-    assert backend.context_schema is None
-    assert agent_config is snapshot.context
-    assert agent_session.thread_id == "child-thread"
 
 
 class _EmptyModelAuditRepo:
@@ -217,9 +139,9 @@ class _FakeDBBase:
 
 class _FakeRunRepoBase:
     async def get_run(self, _run_id: str):
-        """消息重建测试只关注输出归属，使用子执行免除根 Turn 调度。"""
+        """消息重建测试固定当前 Run 与 Turn 的输出归属。"""
         return SimpleNamespace(
-            run_type="subagent", id="run-1", uid="user-1", app_id=None, turn_id="turn-1", input_message_id=None
+            run_type="chat", id="run-1", uid="user-1", app_id=None, turn_id="turn-1", input_message_id=None
         )
 
 
@@ -242,6 +164,7 @@ class _FakeConvRepo:
                 agent_id="test-agent",
                 thread_id=thread_id,
                 status="active",
+                parent_thread_id=None,
                 extra_metadata={},
             ),
         )
@@ -353,7 +276,7 @@ async def test_error_output_and_failed_run_commit_together(monkeypatch):
             pass
 
         async def lock_output_persistence(self, *_args, **_kwargs):
-            return SimpleNamespace(id="run-1", run_type="subagent", input_message_id=None)
+            return SimpleNamespace(id="run-1", run_type="chat", input_message_id=None)
 
         async def set_output_message(self, *_args, **_kwargs):
             steps.append("output")
@@ -404,7 +327,7 @@ async def test_empty_final_checkpoint_cannot_complete_prior_error_output(monkeyp
             pass
 
         async def lock_output_persistence(self, *_args, **_kwargs):
-            return SimpleNamespace(id="run-1", run_type="subagent", output_message_id=99)
+            return SimpleNamespace(id="run-1", run_type="chat", output_message_id=99)
 
     async def forbidden_settlement(**_kwargs):
         pytest.fail("缺少当前 AI 输出时不能结算完成终态")
@@ -656,7 +579,7 @@ async def test_state_reconcile_uses_latest_error_unless_run_is_interrupted(
             pass
 
         async def lock_output_persistence(self, *_args, **_kwargs):
-            return SimpleNamespace(id="run-current", run_type="subagent", session_record_id=1)
+            return SimpleNamespace(id="run-current", run_type="chat", session_record_id=1)
 
         async def set_terminal_status(self, *_args, **_kwargs):
             return SimpleNamespace(status="interrupted"), True
@@ -758,7 +681,7 @@ async def test_model_state_reconcile_uses_latest_message_when_operation_id_is_re
             pass
 
         async def lock_output_persistence(self, *_args, **_kwargs):
-            return SimpleNamespace(id="run-1", run_type="subagent", input_message_id=None)
+            return SimpleNamespace(id="run-1", run_type="chat", input_message_id=None)
 
         async def set_output_message(self, *_args, **_kwargs):
             pass
@@ -832,7 +755,7 @@ async def test_completed_run_rejects_unmatched_final_state_message(monkeypatch: 
             pass
 
         async def lock_output_persistence(self, *_args, **_kwargs):
-            return SimpleNamespace(id="run-1", run_type="subagent", input_message_id=None)
+            return SimpleNamespace(id="run-1", run_type="chat", input_message_id=None)
 
     fake_db = FakeDB()
     monkeypatch.setattr(message_svc, "AgentRunRepository", FakeRunRepo)
@@ -906,7 +829,7 @@ async def test_interrupted_run_does_not_bind_older_reconciled_model_audit(
             pass
 
         async def lock_output_persistence(self, *_args, **_kwargs):
-            return SimpleNamespace(id="run-1", run_type="subagent", input_message_id=None)
+            return SimpleNamespace(id="run-1", run_type="chat", input_message_id=None)
 
         async def set_output_message(self, _run_id, message_id, *, worker_id):
             output_ids.append(message_id)
@@ -993,7 +916,7 @@ async def test_tool_call_interrupt_ignores_historical_same_id_tool_message(monke
             pass
 
         async def lock_output_persistence(self, *_args, **_kwargs):
-            return SimpleNamespace(id="run-1", run_type="subagent", input_message_id=None)
+            return SimpleNamespace(id="run-1", run_type="chat", input_message_id=None)
 
         async def set_output_message(self, _run_id, message_id, *, worker_id):
             output_ids.append(message_id)
@@ -1051,7 +974,7 @@ async def test_interrupt_persists_message_and_terminal_status_in_one_commit(
 
         async def lock_output_persistence(self, *_args, **_kwargs):
             events.append(("lock",))
-            return SimpleNamespace(id="run-1", run_type="subagent", input_message_id=None)
+            return SimpleNamespace(id="run-1", run_type="chat", input_message_id=None)
 
         async def set_output_message(self, run_id, message_id, *, worker_id):
             events.append(("message", run_id, message_id, worker_id))
@@ -1158,7 +1081,7 @@ async def test_manifest_snapshot_prompt_keeps_workspace_agent_context(monkeypatc
 
 
 @pytest.mark.asyncio
-async def test_get_agent_state_view_rejects_async_subagent_without_child_session(
+async def test_get_agent_state_view_rejects_missing_session(
     monkeypatch: pytest.MonkeyPatch,
 ):
     child_thread_id = "missing-child-agent_session"
@@ -1171,30 +1094,7 @@ async def test_get_agent_state_view_rejects_async_subagent_without_child_session
             del thread_id
             return None
 
-    class RunRepo:
-        def __init__(self, _db):
-            pass
-
-        async def get_latest_subagent_run_by_thread_for_user(self, thread_id: str, uid: str):
-            assert thread_id == child_thread_id
-            assert uid == "user-1"
-            return SimpleNamespace(
-                id="child-run",
-                turn_id="child-turn",
-                thread_id=child_thread_id,
-                agent_slug="worker",
-                status="running",
-                created_by_run_id="parent-run",
-                subagent_thread_relation_id=77,
-                input_payload={"runtime": {"tool_call_id": "tool-1"}},
-            )
-
-        async def get_run_for_user(self, run_id: str, uid: str):
-            del run_id, uid
-            raise AssertionError("async subagent state must be loaded through child agent_session relation")
-
     monkeypatch.setattr(state_svc, "SessionRepository", ConvRepo)
-    monkeypatch.setattr(state_svc, "AgentRunRepository", RunRepo)
 
     with pytest.raises(HTTPException) as exc:
         await state_svc.get_agent_state_view(
@@ -1226,23 +1126,12 @@ async def test_get_agent_state_view_returns_interrupt_only_for_waiting_owner(
                 app_id=None,
                 agent_id="main",
                 status="active",
+                parent_thread_id=None,
                 project_id="11111111-1111-4111-8111-111111111111",
                 extra_metadata={"model_spec": "provider:agent_session-model"},
             )
 
-    class ThreadRepo:
-        def __init__(self, _db):
-            pass
-
-        async def get_by_child_session_for_user(self, session_record_id: int, uid: str):
-            assert session_record_id == 20
-            assert uid == "user-1"
-            return None
-
     class RunRepo:
-        async def list_subagent_runs_for_session(self, session_record_id, uid):
-            return []
-
         def __init__(self, _db):
             pass
 
@@ -1275,7 +1164,6 @@ async def test_get_agent_state_view_returns_interrupt_only_for_waiting_owner(
 
     monkeypatch.setattr(state_svc, "AgentTurnRepository", TurnRepo)
     monkeypatch.setattr(state_svc, "SessionRepository", ConvRepo)
-    monkeypatch.setattr(state_svc, "SubagentThreadRepository", ThreadRepo)
     monkeypatch.setattr(state_svc, "AgentRunRepository", RunRepo)
     from yuxi.modules.agents.repositories.public_items import PublicItemRepository
     from unittest.mock import AsyncMock
@@ -1283,6 +1171,7 @@ async def test_get_agent_state_view_returns_interrupt_only_for_waiting_owner(
     monkeypatch.setattr(PublicItemRepository, "list_items", AsyncMock(return_value=[]))
     monkeypatch.setattr(state_svc, "_read_checkpoint_state", read_checkpoint_state)
 
+    monkeypatch.setattr(state_svc, "tree_snapshot", AsyncMock(return_value={"sessions": []}))
     result = await state_svc.get_agent_state_view(
         thread_id=thread_id,
         current_user=SimpleNamespace(uid="user-1"),
@@ -1311,13 +1200,11 @@ async def test_get_agent_state_view_reads_checkpoint_without_workspace_binding(m
                 app_id=None,
                 agent_id="main",
                 status="active",
+                parent_thread_id=None,
                 project_id="missing-project",
             )
 
     class RunRepo:
-        async def list_subagent_runs_for_session(self, session_record_id, uid):
-            return []
-
         def __init__(self, _db):
             pass
 
@@ -1326,235 +1213,29 @@ async def test_get_agent_state_view_reads_checkpoint_without_workspace_binding(m
             assert uid == "user-1"
             return None
 
-    class ThreadRepo:
-        def __init__(self, _db):
-            pass
-
-        async def get_by_child_session_for_user(self, session_record_id, uid):
-            return None
-
     async def read_checkpoint_state(*_args, **_kwargs):
         return {}, None
 
     monkeypatch.setattr(state_svc, "SessionRepository", ConvRepo)
     monkeypatch.setattr(state_svc, "AgentRunRepository", RunRepo)
-    monkeypatch.setattr(state_svc, "SubagentThreadRepository", ThreadRepo)
     from yuxi.modules.agents.repositories.public_items import PublicItemRepository
     from unittest.mock import AsyncMock
 
     monkeypatch.setattr(PublicItemRepository, "list_items", AsyncMock(return_value=[]))
     monkeypatch.setattr(state_svc, "_read_checkpoint_state", read_checkpoint_state)
 
+    monkeypatch.setattr(state_svc, "tree_snapshot", AsyncMock(return_value={"sessions": []}))
     result = await state_svc.get_agent_state_view(
         thread_id="thread-1",
         current_user=SimpleNamespace(uid="user-1"),
         db=object(),
     )
 
-    assert result["agent_state"]["subagent_runs"] == []
+    assert result["agent_state"]["cooperation"] == {"sessions": []}
 
 
-@pytest.mark.asyncio
-async def test_get_agent_state_view_includes_subagent_thread_relation(monkeypatch: pytest.MonkeyPatch):
-    child_thread_id = "child-thread"
-
-    class ConvRepo:
-        def __init__(self, _db):
-            pass
-
-        async def get_session_by_thread_id(self, thread_id: str):
-            if thread_id == child_thread_id:
-                return SimpleNamespace(
-                    id=20,
-                    uid="user-1",
-                    app_id=None,
-                    agent_id="worker",
-                    status="subagent",
-                    project_id="11111111-1111-4111-8111-111111111111",
-                )
-            return None
-
-        async def get_session_by_id(self, session_record_id: int):
-            assert session_record_id == 11
-            return SimpleNamespace(id=11, thread_id="parent-thread", uid="user-1", app_id=None, status="active")
-
-    class ThreadRepo:
-        def __init__(self, _db):
-            pass
-
-        async def get_by_child_session_for_user(self, child_session_record_id: int, uid: str):
-            assert child_session_record_id == 20
-            assert uid == "user-1"
-            return SimpleNamespace(
-                id=77,
-                parent_session_record_id=11,
-                child_session_record_id=20,
-                child_thread_id=child_thread_id,
-                subagent_slug="worker",
-                to_dict=lambda: {
-                    "id": 77,
-                    "parent_session_record_id": 11,
-                    "child_session_record_id": 20,
-                    "child_thread_id": child_thread_id,
-                    "subagent_slug": "worker",
-                },
-            )
-
-    class RunRepo:
-        async def list_subagent_runs_for_session(self, session_record_id, uid):
-            return []
-
-        def __init__(self, _db):
-            pass
-
-        async def get_latest_run_by_thread_for_user(self, thread_id: str, uid: str):
-            assert thread_id == child_thread_id
-            assert uid == "user-1"
-            return SimpleNamespace(
-                status="running",
-                runtime_scope_id="parent-thread",
-                input_payload={"model_spec": "provider:run-model"},
-            )
-
-        async def get_latest_subagent_run_by_thread_for_user(self, thread_id: str, uid: str):
-            assert thread_id == child_thread_id
-            assert uid == "user-1"
-            return SimpleNamespace(
-                id="child-run",
-                turn_id="child-turn",
-                thread_id=child_thread_id,
-                agent_slug="worker",
-                uid="user-1",
-                status="running",
-                created_by_run_id="parent-run",
-                subagent_thread_relation_id=77,
-                input_payload={
-                    "runtime": {
-                        "tool_call_id": "tool-1",
-                        "subagent_name": "Worker",
-                        "description": "do work",
-                    },
-                },
-                error_message=None,
-                created_at=None,
-                finished_at=None,
-                to_dict=lambda: {"created_at": "2026-06-21T01:00:00Z", "finished_at": None},
-            )
-
-    async def read_checkpoint_state(*, uid, thread_id):
-        assert thread_id == child_thread_id
-        assert uid == "user-1"
-        return {
-            "messages": [HumanMessage(content="do work"), AIMessage(content="working")],
-            "artifacts": ["out.txt"],
-        }, None
-
-    from yuxi.modules.agents.repositories.public_items import PublicItemRepository
-    from unittest.mock import AsyncMock
-
-    monkeypatch.setattr(PublicItemRepository, "list_items", AsyncMock(return_value=[]))
-    monkeypatch.setattr(state_svc, "_read_checkpoint_state", read_checkpoint_state)
-    monkeypatch.setattr(state_svc, "SessionRepository", ConvRepo)
-    monkeypatch.setattr(state_svc, "SubagentThreadRepository", ThreadRepo)
-    monkeypatch.setattr(state_svc, "AgentRunRepository", RunRepo)
-
-    result = await state_svc.get_agent_state_view(
-        thread_id=child_thread_id,
-        current_user=SimpleNamespace(uid="user-1"),
-        db=object(),
-        include_messages=True,
-    )
-
-    assert result["parent_thread_id"] == "parent-thread"
-    assert result["subagent_thread"]["id"] == 77
-    assert result["subagent_run"]["run_id"] == "child-run"
-    assert result["agent_state"]["artifacts"] == ["out.txt"]
-    assert result["items"] == []
 
 
-@pytest.mark.asyncio
-async def test_get_agent_state_view_reports_malformed_subagent_run_as_server_error(
-    monkeypatch: pytest.MonkeyPatch,
-):
-    child_thread_id = "child-thread"
-
-    class ConvRepo:
-        def __init__(self, _db):
-            pass
-
-        async def get_session_by_thread_id(self, thread_id: str):
-            assert thread_id == child_thread_id
-            return SimpleNamespace(
-                id=20,
-                uid="user-1",
-                app_id=None,
-                agent_id="worker",
-                status="subagent",
-                project_id="11111111-1111-4111-8111-111111111111",
-            )
-
-        async def get_session_by_id(self, session_record_id: int):
-            assert session_record_id == 11
-            return SimpleNamespace(id=11, thread_id="parent-thread", uid="user-1", app_id=None, status="active")
-
-    class ThreadRepo:
-        def __init__(self, _db):
-            pass
-
-        async def get_by_child_session_for_user(self, child_session_record_id: int, uid: str):
-            assert child_session_record_id == 20
-            assert uid == "user-1"
-            return SimpleNamespace(
-                id=77,
-                parent_session_record_id=11,
-                to_dict=lambda: {"id": 77},
-            )
-
-    class RunRepo:
-        async def list_subagent_runs_for_session(self, session_record_id, uid):
-            return []
-
-        def __init__(self, _db):
-            pass
-
-        async def get_latest_run_by_thread_for_user(self, thread_id: str, uid: str):
-            assert thread_id == child_thread_id
-            assert uid == "user-1"
-            return None
-
-        async def get_latest_subagent_run_by_thread_for_user(self, thread_id: str, uid: str):
-            assert thread_id == child_thread_id
-            assert uid == "user-1"
-            return SimpleNamespace(
-                id="child-run",
-                turn_id="child-turn",
-                thread_id=child_thread_id,
-                agent_slug="worker",
-                status="running",
-                input_payload={"runtime": {}},
-            )
-
-    async def read_checkpoint_state(*, uid, thread_id):
-        return {}, None
-
-    from yuxi.modules.agents.repositories.public_items import PublicItemRepository
-    from unittest.mock import AsyncMock
-
-    monkeypatch.setattr(PublicItemRepository, "list_items", AsyncMock(return_value=[]))
-    monkeypatch.setattr(state_svc, "_read_checkpoint_state", read_checkpoint_state)
-    monkeypatch.setattr(state_svc, "SessionRepository", ConvRepo)
-    monkeypatch.setattr(state_svc, "SubagentThreadRepository", ThreadRepo)
-    monkeypatch.setattr(state_svc, "AgentRunRepository", RunRepo)
-
-    with pytest.raises(HTTPException) as exc:
-        await state_svc.get_agent_state_view(
-            thread_id=child_thread_id,
-            current_user=SimpleNamespace(uid="user-1"),
-            db=object(),
-        )
-
-    assert exc.value.status_code == 500
-    assert exc.value.detail == "子智能体运行记录格式异常"
 
 
 @pytest.mark.asyncio
@@ -1596,7 +1277,7 @@ async def test_execution_requires_existing_authorized_session(monkeypatch, agent
         )
 
 
-async def test_execution_rejects_archived_subagent_thread(monkeypatch):
+async def test_execution_rejects_archived_cooperation_session(monkeypatch):
     """Project 归档后的子线程不能在 worker 中继续执行。"""
     from unittest.mock import AsyncMock
 
@@ -1612,8 +1293,7 @@ async def test_execution_rejects_archived_subagent_thread(monkeypatch):
             user=SimpleNamespace(uid="user-1"),
             requested_agent_slug="worker",
             thread_id="child-thread",
-            agent_kind="subagent",
-            prepared_execution=prepared_execution(backend_id="SubAgentBackend"),
+            prepared_execution=prepared_execution(backend_id="ChatbotAgent"),
         )
 
 

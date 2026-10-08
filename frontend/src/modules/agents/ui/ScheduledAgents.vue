@@ -52,7 +52,7 @@ const RUN_STATUS_LABELS = {
 }
 
 const availableAgents = computed(() =>
-  (agentStore.agents || []).filter((agent) => agent.can_run && !agent.is_subagent)
+  (agentStore.agents || []).filter((agent) => agent.can_run)
 )
 const selectedJob = computed(() => jobs.value.find((job) => job.id === selectedJobId.value) || null)
 const detailOpen = computed(() => creatingDraft.value || Boolean(selectedJob.value))

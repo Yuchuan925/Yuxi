@@ -306,8 +306,8 @@ async def test_cleanup_uses_persisted_discovery_for_archived_threads(tmp_path, m
     assert deleted_row_threads == [{"thread-archived"}]
 
 
-async def test_cleanup_removes_deleted_and_subagent_thread_storage(tmp_path, monkeypatch):
-    """已软删除和 subagent 状态的线程也必须回收本地沙盒目录。"""
+async def test_cleanup_removes_deleted_and_cooperation_thread_storage(tmp_path, monkeypatch):
+    """已软删除和协作成员线程也必须回收本地沙盒目录。"""
 
     deleted_paths: list[str] = []
     deleted_row_threads = await _patch_chat_cleanup_database(
@@ -326,7 +326,7 @@ async def test_cleanup_removes_deleted_and_subagent_thread_storage(tmp_path, mon
                 project_id="project-child",
                 thread_id="thread-child",
                 uid="test-user",
-                status="subagent",
+                status="active",
                 workdir_path=None,
             ),
         },
@@ -336,7 +336,7 @@ async def test_cleanup_removes_deleted_and_subagent_thread_storage(tmp_path, mon
         (tmp_path / "threads" / thread_id).mkdir(parents=True)
 
     def handle_request(request: httpx.Request) -> httpx.Response:
-        """模拟无 active 线程但存在持久化线程的清理 API。"""
+        """模拟归档协作成员后清理持久线程的 API。"""
 
         if request.method in {"DELETE", "POST"}:
             deleted_paths.append(request.url.path)
@@ -352,7 +352,7 @@ async def test_cleanup_removes_deleted_and_subagent_thread_storage(tmp_path, mon
             owner_uid="test-user",
         )
 
-    assert deleted_paths == []
+    assert deleted_paths == ["/api/v1/agents/threads/thread-child/archive"]
     assert deleted_row_threads == [{"thread-child", "thread-deleted"}]
     assert not (tmp_path / "threads" / "thread-deleted").exists()
     assert not (tmp_path / "threads" / "thread-child").exists()

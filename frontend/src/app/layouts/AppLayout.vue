@@ -342,8 +342,10 @@ const handleDeleteProject = async (projectId) => {
   if (!projectId || projectPendingId.value) return
   projectPendingId.value = projectId
   try {
-    await projectApi.deleteProject(projectId)
-    const removedThreadIds = chatThreadsStore.removeThreadsByProject(projectId)
+    const removedThreadIds = await chatThreadsStore.withThreadListUpdate(async () => {
+      await projectApi.deleteProject(projectId)
+      return chatThreadsStore.removeThreadsByProject(projectId)
+    })
     projectsStore.removeProject(projectId)
     if (removedThreadIds.includes(route.params.thread_id)) {
       await router.replace({ name: 'AgentComp' })
@@ -472,7 +474,7 @@ provide('settingsModal', {
           v-if="!sidebarCollapsed"
           class="sidebar-sessions"
           :current-chat-id="activeSessionThreadId"
-          :chats-list="threads"
+          :chats-list="threads.filter((thread) => !thread.parent_session_id)"
           :projects="projects"
           :projects-loading="projectsLoading && !projectsStore.hasLoaded"
           :projects-error="projectsStore.hasLoaded ? '' : projectsError"
@@ -531,17 +533,17 @@ provide('settingsModal', {
       </div>
     </div>
     <router-view v-slot="{ Component, route }" id="app-router-view">
-      <keep-alive v-if="route.meta.keepAlive !== false">
-        <component :is="Component" />
+      <keep-alive>
+        <component :is="Component" v-if="route.meta.keepAlive !== false" :key="route.path" />
       </keep-alive>
-      <component :is="Component" v-else />
+      <component :is="Component" v-if="route.meta.keepAlive === false" />
     </router-view>
 
     <GlobalSearchModal
       v-model:open="sessionSearchOpen"
       :modes="['session', 'file']"
       default-mode="session"
-      :recent-threads="threads"
+      :recent-threads="threads.filter((thread) => !thread.parent_session_id)"
       :file-search="searchWorkspace"
       file-placeholder="搜索个人空间文件..."
       @select-thread="handleSearchSelectThread"
@@ -997,9 +999,15 @@ div.header,
     }
 
     .nav {
-      align-items: stretch;
+      align-items: center;
       width: 100%;
       padding: 0;
+
+      .nav-item {
+        width: @sidebar-item-height;
+        padding: 0;
+        justify-content: center;
+      }
     }
 
     .foo {

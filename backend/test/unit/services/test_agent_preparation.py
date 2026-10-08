@@ -192,14 +192,14 @@ def test_limits_captured_from_context(field, expected):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("run_type", ["chat", "resume", "subagent"])
+@pytest.mark.parametrize("run_type", ["chat", "resume"])
 @pytest.mark.parametrize("empty_config", [False, True])
 async def test_manifest_uses_prepared_context_and_persisted_overrides(monkeypatch, run_type, empty_config):
     """配置覆盖、默认值、工作区提示词与 Skill 摘要来自同一执行对象。"""
     import hashlib
     from types import SimpleNamespace
     from unittest.mock import AsyncMock
-    from yuxi.modules.agents.runtime.agent_backends.subagent.context import SubAgentContext
+    from yuxi.modules.agents.runtime.agent_backends.chatbot.context import ChatBotContext
     import yuxi.modules.agents.services.preparation as service
 
     agent = SimpleNamespace(
@@ -221,7 +221,7 @@ async def test_manifest_uses_prepared_context_and_persisted_overrides(monkeypatc
     monkeypatch.setattr(
         service, "AgentRepository", lambda db: SimpleNamespace(get_visible_by_slug=AsyncMock(return_value=agent))
     )
-    monkeypatch.setattr(service, "get_agent_backend", lambda name: SimpleNamespace(context_schema=SubAgentContext))
+    monkeypatch.setattr(service, "get_agent_backend", lambda name: SimpleNamespace(context_schema=ChatBotContext))
     monkeypatch.setattr(
         "yuxi.modules.agents.runtime.context._load_workspace_agent_context", lambda uid: "workspace policy"
     )
@@ -270,8 +270,8 @@ async def test_manifest_uses_prepared_context_and_persisted_overrides(monkeypatc
     assert (
         result.manifest["resources"]["skills"][0]["preload_content_hash"] == hashlib.sha256(b"frozen skill").hexdigest()
     )
-    assert result.context.is_subagent_runtime is (run_type == "subagent")
-    assert result.context.parent_thread_id == ("parent" if run_type == "subagent" else None)
+    assert not hasattr(result.context, "is_subagent_runtime")
+    assert not hasattr(result.context, "parent_thread_id")
     assert result.context.uid == "user"
     assert (result.context.run_id, result.context.worker_id) == ("run", "owner")
 
@@ -292,16 +292,16 @@ async def test_manifest_uses_prepared_context_and_persisted_overrides(monkeypatc
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("missing", ["agent", "backend", "user", "parent"])
+@pytest.mark.parametrize("missing", ["agent", "backend", "user"])
 async def test_execution_preparation_rejects_missing_dependencies(monkeypatch, missing):
     """缺少执行依赖必须失败，不能固化空配置并进入执行。"""
     from types import SimpleNamespace
     from unittest.mock import AsyncMock
-    from yuxi.modules.agents.runtime.agent_backends.subagent.context import SubAgentContext
+    from yuxi.modules.agents.runtime.agent_backends.chatbot.context import ChatBotContext
     import yuxi.modules.agents.services.preparation as service
 
     agent = None if missing == "agent" else SimpleNamespace(backend_id="backend", config_json={})
-    backend = None if missing == "backend" else SimpleNamespace(context_schema=SubAgentContext)
+    backend = None if missing == "backend" else SimpleNamespace(context_schema=ChatBotContext)
     monkeypatch.setattr(
         service, "AgentRepository", lambda db: SimpleNamespace(get_visible_by_slug=AsyncMock(return_value=agent))
     )
@@ -321,10 +321,10 @@ async def test_execution_preparation_rejects_missing_dependencies(monkeypatch, m
         id="run",
         turn_id="turn",
         agent_slug="agent",
-        run_type="subagent",
+        run_type="chat",
         runtime_scope_id="root",
         thread_id="child",
-        input_payload={"runtime": {} if missing == "parent" else {"parent_thread_id": "parent"}},
+        input_payload={"runtime": {}},
     )
     with pytest.raises(ValueError):
         await service.prepare_run_execution(

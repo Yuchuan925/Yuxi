@@ -4,7 +4,7 @@
 
 ## 新增预置角色
 
-仅改变提示词、模型或能力选择时，在 `backend/yuxi/modules/agents/presets/` 新增一个 Python 文件并导出 `PRESET`；子智能体定义放在其 `subagents/` 子目录。发现逻辑递归读取文件，角色类型仍由 `backend_id` 决定：
+仅改变提示词、模型或能力选择时，在 `backend/yuxi/modules/agents/presets/` 新增一个 Python 文件并导出 `PRESET`。发现逻辑递归读取文件，角色类型仍由 `backend_id` 决定：
 
 ```python
 from yuxi.modules.agents.presets import AgentPreset
@@ -21,11 +21,11 @@ PRESET = AgentPreset(
 )
 ```
 
-子智能体使用 `backend_id="SubAgentBackend"`，其类型由后端推导。`context` 复用[智能体配置](./agents-config.md)字段；长提示词可以直接使用 Python 多行字符串。角色模块不得执行外部操作。
+协作会话使用派发方相同的后端与配置。`context` 复用[智能体配置](./agents-config.md)字段；长提示词可以直接使用 Python 多行字符串。角色模块不得执行外部操作。
 
 API 启动时按文件名发现所有非下划线开头的 Python 模块，校验定义类型、重复 slug 和后端存在性，再统一初始化数据库记录。新增角色无需修改注册清单、repository 或启动调用。模块导入失败、缺少 `PRESET`、重复 slug 或不存在的后端会阻止初始化成功。
 
-预置角色仅在 slug 不存在时创建，已有名称、提示词和能力配置保留；修改源码不会覆盖管理员定制。默认智能助手另行维护原有默认与共享约束。重启 API 后，在智能体管理页核对新增角色的名称、后端和能力配置；子智能体还需在主智能体配置中选用。
+预置角色仅在 slug 不存在时创建，已有名称、提示词和能力配置保留；修改源码不会覆盖管理员定制。默认智能助手另行维护原有默认与共享约束。重启 API 后，在智能体管理页核对新增角色的名称、后端和能力配置。
 
 ## 后端放在哪里
 
@@ -45,7 +45,6 @@ backend/yuxi/modules/agents/runtime/agent_backends/<your_agent>/
 ```python
 AGENT_BACKENDS = {
     "ChatbotAgent": ChatbotAgent,
-    "SubAgentBackend": SubAgentBackend,
 }
 ```
 
@@ -77,7 +76,7 @@ class MyAgent(BaseAgent):
         )
 ```
 
-这个示例展示最小的 Context、模型、提示词和 PostgreSQL checkpoint 装配。真实后端还要根据需要接入文件 backend、工具、Skills、审批、Summary、用量和子智能体 middleware。
+这个示例展示最小的 Context、模型、提示词和 PostgreSQL checkpoint 装配。真实后端还要根据需要接入文件 backend、工具、Skills、审批、Summary、用量和会话协作 middleware。
 
 worker 和主动压缩在执行入口显式调用 `prepare_agent_runtime_context`，为 Context 追加工作区提示词、按当前用户过滤资源，并在模型为空时补齐系统默认模型。`get_graph(context=...)` 只消费准备后的对象。独立调用同样先创建 `context_schema()`，用 `update_config` 装载持久配置、用 `update` 注入已授权身份和运行覆盖，再 await 准备函数；流和 invoke 接口只接受 `context`，不接收配置字典。
 

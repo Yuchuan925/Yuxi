@@ -12,13 +12,13 @@
 | `config_json.context` | 当前 Agent 保存的配置值 |
 | Graph / middleware | 根据 Context 组合模型、工具、文件和扩展能力 |
 
-内置 `ChatbotAgent` 用于普通对话，`SubAgentBackend` 用于被主智能体委派的任务。子智能体的配置入口与普通智能体相同。
+内置 `ChatbotAgent` 供所有会话使用；[协作会话](./session-cooperation.md)沿用派发方的 Agent 配置并独立保存上下文。
 
 ## 创建智能体
 
 在“智能体 → 新增智能体”填写名称和基本信息，可以附带单 Skill ZIP。ZIP 成为这个 Agent 的专属操作指南；省略 ZIP 时不创建空 Skill，之后可以在“专属 Skill”中添加。包限制与编辑方式见 [Skills 管理](./skills-management.md#agent-专属操作指南)。
 
-主 Agent 默认私有。管理员在基本信息中勾选“共享此 Agent”后配置读取和管理范围；取消勾选保留本地权限草稿，创建仍为私有。SubAgent 必须共享，基本信息直接展示共享权限配置。
+Agent 默认私有。管理员在基本信息中勾选“共享此 Agent”后配置读取和管理范围；取消勾选保留本地权限草稿，创建仍为私有。
 
 点击底部的“高级配置”可指定模型、系统提示词、工具、MCP、共享 Skill 与其他 Context 项，使用与编辑智能体相同的表单。高级配置可跳过，两个区域都可直接创建；返回“基本信息”保留配置草稿。未修改的字段沿用后端默认值。刷新候选项保留草稿；切换后端会清除高级配置，请重新选择。
 
@@ -28,7 +28,7 @@ MCP 和共享 Skill 选择旁边提供独立创建入口：MCP 仅超级管理�
 
 ## 私有与共享定义
 
-新建主 Agent 默认 `visibility=private`。普通用户可以建设自己的私有主 Agent，管理员还可显式创建共享主 Agent。普通用户不能建设 SubAgent 定义，私有所有权仍遵循字段角色限制。详情接口返回 `can_manage`、`can_run`、`can_share` 和 `can_transfer`，界面按这些能力提供操作。
+新建 Agent 默认 `visibility=private`。普通用户可以建设自己的私有 Agent，管理员还可显式创建共享 Agent。私有所有权仍遵循字段角色限制。详情接口返回 `can_manage`、`can_run`、`can_share` 和 `can_transfer`，界面按这些能力提供操作。
 
 有管理权限的管理员可在已有私有 Agent 的基本信息中勾选“共享此 Agent”，配置范围后保存。转换保留同一 ID、slug、所有者、Context 和专属 Skill；共享定义继续编辑权限范围。共享转私有不在此入口提供，所有权转移沿用专用接口。完整授权与失败条件见[资源权限](../mechanisms/resource-permissions.md)。
 
@@ -68,16 +68,15 @@ metadata 可以定义展示名称、说明、控件类型、选项和角色权�
 
 ## 资源选择语义
 
-资源字段 `tools`、`knowledges`、`skills`、`subagents`、`mcps` 和 `preload_skills` 接受 `"all"` 或字符串数组，本页是这组契约的唯一 Owner。`"all"` 表示每次运行使用当前用户可访问的全部资源，包括之后新增的资源；`[]` 表示不选择；非空数组表示固定范围。新写入拒绝 `null`、未知字符串和非字符串数组成员。
+资源字段 `tools`、`knowledges`、`skills`、`mcps` 和 `preload_skills` 接受 `"all"` 或字符串数组，本页是这组契约的唯一 Owner。`"all"` 表示每次运行使用当前用户可访问的全部资源，包括之后新增的资源；`[]` 表示不选择；非空数组表示固定范围。新写入拒绝 `null`、未知字符串和非字符串数组成员。
 
-创建时省略字段使用其默认值：工具、知识库和 Skill 为 `"all"`，子智能体为 `["general-purpose"]`（通用任务），MCP 和预加载 Skill 为 `[]`。界面的「选择全部」保存 `"all"`；逐项勾选保存固定数组，即使勾选了当前所有选项也不会自动转换成全部模式。「清空全部」保存 `[]`，子智能体同样可以全部禁用。
+创建时省略字段使用其默认值：工具、知识库和 Skill 为 `"all"`，MCP 和预加载 Skill 为 `[]`。界面的「选择全部」保存 `"all"`；逐项勾选保存固定数组，即使勾选了当前所有选项也不会自动转换成全部模式。「清空全部」保存 `[]`。
 
 各资源的附加规则：
 
 - MCP 选择只控制直接加载的服务器；已激活 Skill 声明的 MCP 依赖仍按需加载。
 - Skill 选择器只列共享和内置 Skill；运行时自动合并当前用户全部个人 Skill，`skills=[]` 只关闭共享选择。Skill 的激活时机见 [Skills 管理](./skills-management.md)。
 - 预加载候选项限于已选且可访问的共享 Skill；`preload_skills="all"` 在每次运行预加载该范围及其授权依赖的完整说明，并从首轮开放依赖工具。`skills=[]` 时预加载全部仍得到空列表，个人 Skill 继续按需读取正文。
-- 子智能体不能继续调用下一层子智能体。
 
 这些字段只会缩小当前用户已经拥有的权限；运行时如何消费解析结果见 [Agent 运行时上下文](../mechanisms/agent-runtime.md)。
 
@@ -123,5 +122,5 @@ class MyAgentContext(BaseContext):
 - [开发智能体后端](./agent-backend-development.md)
 - [中间件](./middleware.md)
 - [Skills 管理](./skills-management.md)
-- [子智能体](./subagents-management.md)
+- [会话协作](./session-cooperation.md)
 - [沙盒机制详解](../mechanisms/sandbox.md)

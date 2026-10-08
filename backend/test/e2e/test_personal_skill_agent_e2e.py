@@ -74,7 +74,6 @@ async def test_main_agent_reads_personal_skill_directly_from_user_workspace(
             "knowledges": [],
             "mcps": [],
             "skills": [],
-            "subagents": [],
         }
         if default_context.get("model"):
             context["model"] = default_context["model"]

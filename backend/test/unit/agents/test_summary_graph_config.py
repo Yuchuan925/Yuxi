@@ -6,7 +6,6 @@ from unittest.mock import AsyncMock
 import pytest
 
 from yuxi.modules.agents.runtime.agent_backends.chatbot import graph as chatbot_graph
-from yuxi.modules.agents.runtime.agent_backends.subagent import graph as subagent_graph
 from yuxi.modules.agents.runtime.middlewares import summary as summary_module
 
 
@@ -40,25 +39,24 @@ def _patch_common_graph_deps(monkeypatch: pytest.MonkeyPatch, graph_module, capt
 
 
 @pytest.mark.parametrize(
-    ("graph_module", "threshold", "build_args", "patch_subagent_task"),
+    ("graph_module", "threshold", "build_args", "patch_cooperation"),
     [
         (chatbot_graph, 123, (object(),), True),
-        (subagent_graph, 64, (object(), "default"), False),
     ],
 )
 @pytest.mark.unit
 @pytest.mark.asyncio
 async def test_graph_uses_shared_summary_middleware_factory(
-    monkeypatch: pytest.MonkeyPatch, graph_module, threshold: int, build_args, patch_subagent_task: bool
+    monkeypatch: pytest.MonkeyPatch, graph_module, threshold: int, build_args, patch_cooperation: bool
 ) -> None:
     captured: dict = {}
     _patch_common_graph_deps(monkeypatch, graph_module, captured)
 
-    async def no_subagent_middleware(_context):
+    def no_cooperation_middleware(_context):
         return None
 
-    if patch_subagent_task:
-        monkeypatch.setattr(graph_module, "create_subagent_task_middleware", no_subagent_middleware)
+    if patch_cooperation:
+        monkeypatch.setattr(graph_module, "create_cooperation_middleware", no_cooperation_middleware)
 
     middlewares = await graph_module._build_middlewares(_context(summary_threshold=threshold), *build_args)
 
@@ -106,12 +104,11 @@ def test_shared_summary_factory_uses_one_threshold(monkeypatch: pytest.MonkeyPat
     "graph_module,agent_class",
     [
         (chatbot_graph, chatbot_graph.ChatbotAgent),
-        (subagent_graph, subagent_graph.SubAgentBackend),
     ],
 )
 @pytest.mark.asyncio
 async def test_graph_passes_session_session_to_model(monkeypatch, graph_module, agent_class):
-    """主 Agent 与子 Agent 构图都使用实际线程的模型会话。"""
+    """统一 Agent 构图使用实际线程的模型会话。"""
     context = _context()
     context.thread_id = "graph-thread"
     context.uid = "graph-uid"
@@ -135,7 +132,7 @@ async def test_graph_passes_session_session_to_model(monkeypatch, graph_module, 
     assert graph["model"] == {"spec": context.model, "session_id": context.thread_id, "uid": context.uid}
 
 
-@pytest.mark.parametrize("agent_class", [chatbot_graph.ChatbotAgent, subagent_graph.SubAgentBackend])
+@pytest.mark.parametrize("agent_class", [chatbot_graph.ChatbotAgent])
 @pytest.mark.asyncio
 async def test_graph_rejects_unprepared_context(agent_class):
     """未经权限资源准备的对象不能构建执行图。"""
@@ -147,7 +144,6 @@ async def test_graph_rejects_unprepared_context(agent_class):
     "graph_module,agent_class",
     [
         (chatbot_graph, chatbot_graph.ChatbotAgent),
-        (subagent_graph, subagent_graph.SubAgentBackend),
     ],
 )
 @pytest.mark.unit
@@ -174,7 +170,7 @@ async def test_checkpoint_cleanup_preserves_original_tasks_and_state(monkeypatch
     monkeypatch.setattr(summary_module, "load_chat_model", lambda **_kwargs: CheckpointCleanupModel())
     if graph_module is chatbot_graph:
         monkeypatch.setattr(graph_module, "create_memory_middleware", AsyncMock(return_value=None))
-        monkeypatch.setattr(graph_module, "create_subagent_task_middleware", AsyncMock(return_value=None))
+        monkeypatch.setattr(graph_module, "create_cooperation_middleware", lambda context: None)
     original = await agent_class().get_graph(context=context)
     config = {"configurable": {"thread_id": context.thread_id}}
     await original.aupdate_state(

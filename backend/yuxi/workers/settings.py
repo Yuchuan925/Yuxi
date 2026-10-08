@@ -26,7 +26,7 @@ class WorkerSettings:
     """为 ARQ 提供 Yuxi 任务、并发和生命周期配置。"""
 
     functions = [
-        process_agent_run,
+        func(process_agent_run, keep_result=0),
         func(process_background_job, timeout=BACKGROUND_JOB_DEFAULT_TIMEOUT_SECONDS + 30),
     ]
     cron_jobs = [cron(process_knowledge_projections, second={15, 45}, run_at_startup=True)]

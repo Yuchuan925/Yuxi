@@ -37,8 +37,6 @@ const FindKbDocumentTool = createRenderer(() => import('./renderers/FindKbDocume
 const OpenKbDocumentTool = createRenderer(() => import('./renderers/OpenKbDocumentTool.vue'))
 const CalculatorTool = createRenderer(() => import('./renderers/CalculatorTool.vue'))
 const TodoListTool = createRenderer(() => import('./renderers/TodoListTool.vue'))
-const TaskTool = createRenderer(() => import('./renderers/TaskTool.vue'))
-const SubagentLifecycleTool = createRenderer(() => import('./renderers/SubagentLifecycleTool.vue'))
 const ImageTool = createRenderer(() => import('./renderers/ImageTool.vue'))
 const WriteFileTool = createRenderer(() => import('./renderers/WriteFileTool.vue'))
 const ReadFileTool = createRenderer(() => import('./renderers/ReadFileTool.vue'))
@@ -98,12 +96,6 @@ const TOOL_RENDERERS = {
   run_shell_command: ExecuteTool,
   search_file: SearchFileTool,
   search_file_content: SearchFileContentTool,
-  subagent_await: SubagentLifecycleTool,
-  subagent_cancel: SubagentLifecycleTool,
-  subagent_events: SubagentLifecycleTool,
-  subagent_start: SubagentLifecycleTool,
-  subagent_status: SubagentLifecycleTool,
-  task: TaskTool,
   web_search: WebSearchTool,
   tavily_search: WebSearchTool,
   doubao_search: WebSearchTool,

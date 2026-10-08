@@ -5,7 +5,6 @@ import os
 import re
 import uuid
 from contextlib import asynccontextmanager
-from types import SimpleNamespace
 
 import asyncpg
 import pytest
@@ -17,10 +16,8 @@ from test.live_api_cleanup import (
     make_test_session_title,
     make_test_resource_id,
 )
-from yuxi.modules.workspace.repositories.projects import ProjectRepository
 from yuxi.modules.workspace.services.projects import delete_project_view
-from yuxi.modules.agents.services.subagents import SubagentRunService
-from yuxi.modules.agents.models.sessions import Session, SubagentThread
+from yuxi.modules.agents.models.sessions import Session
 from yuxi.modules.workspace.models import Project
 from yuxi.modules.identity.models import User
 from yuxi.modules.workspace.paths import user_workdir_host_dir
@@ -90,7 +87,7 @@ async def project_lifecycle_database():
                 Project(
                     id=project_id,
                     uid=uid,
-                    name="SubAgent lifecycle",
+                    name="Session lifecycle",
                     selection_status="selectable",
                     workdir_path=f"projects/{project_id}",
                     directory_mode="managed",
@@ -102,7 +99,6 @@ async def project_lifecycle_database():
             yield session_factory, uid, project_id
         finally:
             async with session_factory() as session:
-                await session.execute(delete(SubagentThread).where(SubagentThread.uid == uid))
                 await session.execute(delete(Session).where(Session.uid == uid))
                 await session.execute(delete(Project).where(Project.uid == uid))
                 await session.execute(delete(User).where(User.uid == uid))
@@ -408,8 +404,8 @@ async def test_project_delete_waits_for_locked_session_creation(
 
         await creator_connection.execute(
             "INSERT INTO sessions "
-            "(thread_id, uid, agent_id, title, status, is_pinned, project_id, extra_metadata) "
-            "VALUES ($1, $2, $3, $4, 'active', FALSE, $5, '{}'::json)",
+            "(thread_id, tree_root_thread_id, uid, agent_id, title, status, is_pinned, project_id, extra_metadata) "
+            "VALUES ($1, $1, $2, $3, $4, 'active', FALSE, $5, '{}'::json)",
             thread_id,
             project["uid"],
             "default-chatbot",
@@ -433,159 +429,3 @@ async def test_project_delete_waits_for_locked_session_creation(
             await creator_transaction.rollback()
         await creator_connection.close()
         await engine.dispose()
-
-
-async def test_project_delete_waits_for_real_subagent_session_creation(
-    monkeypatch: pytest.MonkeyPatch,
-    project_lifecycle_database,
-):
-    """真实 SubAgent 写入边界与 Project 删除使用同一行锁。"""
-    session_factory, uid, project_id = project_lifecycle_database
-    parent_thread_id = f"pytest-subagent-parent-{uuid.uuid4()}"
-    agent_slug = "default-chatbot"
-    child_thread_id = f"pytest-subdel-{uuid.uuid4()}"
-    child_boundary_reached = asyncio.Event()
-    allow_child_creation = asyncio.Event()
-    original_ensure_child = SubagentRunService._ensure_child_session
-
-    parent_session_record_id = await _create_lifecycle_session(
-        session_factory,
-        uid=uid,
-        project_id=project_id,
-        thread_id=parent_thread_id,
-        label="subagent-project-delete-race",
-        status="active",
-    )
-
-    async def pause_before_child_creation(self, **kwargs):
-        child_boundary_reached.set()
-        await allow_child_creation.wait()
-        return await original_ensure_child(self, **kwargs)
-
-    monkeypatch.setattr(SubagentRunService, "_ensure_child_session", pause_before_child_creation)
-
-    async def create_subagent_relation():
-        async with session_factory() as session:
-            relation = await SubagentRunService(session)._ensure_thread_relation(
-                child_thread_id=child_thread_id,
-                uid=uid,
-                agent_item=SimpleNamespace(slug=agent_slug, name="Worker"),
-                creator_run=SimpleNamespace(
-                    id=f"parent-run-{uuid.uuid4()}",
-                    session_record_id=parent_session_record_id,
-                    thread_id=parent_thread_id,
-                    app_id=None,
-                ),
-                continuing=False,
-            )
-            await session.commit()
-            return relation.child_session_record_id
-
-    async def delete_project():
-        async with session_factory() as session:
-            return await delete_project_view(uid=uid, project_id=project_id, db=session)
-
-    creator_task = asyncio.create_task(create_subagent_relation())
-    delete_task = None
-    try:
-        await asyncio.wait_for(child_boundary_reached.wait(), timeout=5)
-        delete_task = asyncio.create_task(delete_project())
-        await asyncio.sleep(0.05)
-        assert not delete_task.done()
-
-        allow_child_creation.set()
-        child_session_record_id = await asyncio.wait_for(creator_task, timeout=5)
-        delete_result = await asyncio.wait_for(delete_task, timeout=5)
-        assert delete_result["archived_threads"] == 2
-
-        async with _database_connection() as database:
-            rows = await database.fetch(
-                "SELECT id, status FROM sessions WHERE project_id = $1 ORDER BY id",
-                project_id,
-            )
-            project_status = await database.fetchval("SELECT status FROM projects WHERE id = $1", project_id)
-
-        assert project_status == "deleted"
-        assert child_session_record_id in {row["id"] for row in rows}
-        assert {row["status"] for row in rows} == {"archived"}
-    finally:
-        allow_child_creation.set()
-        tasks = [task for task in (creator_task, delete_task) if task is not None]
-        for task in tasks:
-            if not task.done():
-                task.cancel()
-        await asyncio.gather(*tasks, return_exceptions=True)
-
-
-async def test_subagent_rejects_parent_thread_archived_after_initial_read(
-    monkeypatch: pytest.MonkeyPatch,
-    project_lifecycle_database,
-):
-    """父 Thread 在首次读取后归档时，锁定复核必须拒绝创建子线程。"""
-    session_factory, uid, project_id = project_lifecycle_database
-    parent_thread_id = f"pytest-subagent-parent-{uuid.uuid4()}"
-    child_thread_id = f"pytest-subdel-{uuid.uuid4()}"
-    project_lookup_reached = asyncio.Event()
-    allow_project_lookup = asyncio.Event()
-    original_lock_active = ProjectRepository.lock_active_for_user
-
-    parent_session_record_id = await _create_lifecycle_session(
-        session_factory,
-        uid=uid,
-        project_id=project_id,
-        thread_id=parent_thread_id,
-        label="archived-parent-race",
-        status="active",
-    )
-
-    async def pause_before_project_lock(self, project_id, uid):
-        project_lookup_reached.set()
-        await allow_project_lookup.wait()
-        return await original_lock_active(self, project_id, uid)
-
-    monkeypatch.setattr(ProjectRepository, "lock_active_for_user", pause_before_project_lock)
-
-    async def create_subagent_relation():
-        async with session_factory() as session:
-            return await SubagentRunService(session)._ensure_thread_relation(
-                child_thread_id=child_thread_id,
-                uid=uid,
-                agent_item=SimpleNamespace(slug="default-chatbot", name="Worker"),
-                creator_run=SimpleNamespace(
-                    id=f"parent-run-{uuid.uuid4()}",
-                    session_record_id=parent_session_record_id,
-                    thread_id=parent_thread_id,
-                    app_id=None,
-                ),
-                continuing=False,
-            )
-
-    creator_task = asyncio.create_task(create_subagent_relation())
-    try:
-        await asyncio.wait_for(project_lookup_reached.wait(), timeout=5)
-        async with _database_connection() as database:
-            await database.execute(
-                "UPDATE sessions SET status = 'archived' WHERE id = $1",
-                parent_session_record_id,
-            )
-        allow_project_lookup.set()
-
-        with pytest.raises(ValueError, match="父运行任务的 Session 不存在"):
-            await asyncio.wait_for(creator_task, timeout=5)
-
-        async with _database_connection() as database:
-            child_count = await database.fetchval(
-                "SELECT COUNT(*) FROM sessions WHERE thread_id = $1",
-                child_thread_id,
-            )
-            relation_count = await database.fetchval(
-                "SELECT COUNT(*) FROM subagent_threads WHERE child_thread_id = $1",
-                child_thread_id,
-            )
-        assert child_count == 0
-        assert relation_count == 0
-    finally:
-        allow_project_lookup.set()
-        if not creator_task.done():
-            creator_task.cancel()
-        await asyncio.gather(creator_task, return_exceptions=True)

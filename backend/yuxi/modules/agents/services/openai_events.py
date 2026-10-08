@@ -365,33 +365,3 @@ class OpenAIEventAdapter:
     def _source_id(event: dict, suffix: str) -> str:
         """使用原生执行序号派生逻辑身份。"""
         return f"{event['seq']}:{suffix}"
-
-
-def subagent_created_event(creator, child, agent_name: str) -> dict:
-    """已提交委派的子 Thread 身份由业务 Owner 发布。"""
-
-    return {
-        "type": "agent.session.subagent.created",
-        "event_id": hash_id("event_", f"{child.id}:subagent-created", length=64),
-        "subagent": {
-            "id": child.thread_id,
-            "object": "agent.session.subagent",
-            "session_id": creator.thread_id,
-            "name": agent_name,
-            "instructions": None,
-            "parent_agent_id": creator.agent_slug,
-            "status": "active",
-            "opened_at": child.created_at.timestamp(),
-            "closed_at": None,
-        },
-        "yuxi": {
-            "run_id": creator.id,
-            "session_id": creator.thread_id,
-            "turn_id": creator.turn_id,
-            "child_thread_id": child.thread_id,
-            "child_turn_id": child.turn_id,
-            "child_run_id": child.id,
-            "child_agent_id": child.agent_slug,
-            "created_by_run_id": creator.id,
-        },
-    }

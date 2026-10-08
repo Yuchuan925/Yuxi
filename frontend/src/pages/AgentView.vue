@@ -7,8 +7,9 @@
       :is-new-session="!threadId"
       @thread-change="handleThreadChange"
     >
-      <template #input-actions-left="{ hasActiveThread, isCreatingThread }">
+      <template #input-actions-left="{ hasActiveThread, isCreatingThread, agentId: sessionAgentId }">
         <SessionAgentPicker
+          :agent-id="sessionAgentId"
           :has-active-thread="hasActiveThread"
           :is-creating-thread="isCreatingThread"
           :start-new-session="startNewSession"
@@ -19,27 +20,31 @@
 </template>
 
 <script setup>
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { computed, onActivated, onBeforeUnmount, onDeactivated, ref, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import SessionWorkspace from '@/modules/session/ui/SessionWorkspace.vue'
 import SessionAgentPicker from '@/modules/agents/ui/SessionAgentPicker.vue'
 import { useAgentStore } from '@/modules/agents/model/agent'
 import { handleChatError } from '@/shared/lib/errorHandler'
 import { createThreadRouteCoordinator } from './agent/threadRouteCoordinator'
 
-const route = useRoute()
+const props = defineProps({
+  threadId: { type: String, default: '' },
+  agentId: { type: String, default: '' },
+  projectId: { type: String, default: '' }
+})
 const router = useRouter()
 const agentStore = useAgentStore()
 const workspaceRef = ref(null)
-const threadId = computed(() =>
-  typeof route.params.thread_id === 'string' ? route.params.thread_id : ''
-)
-const agentId = computed(() =>
-  typeof route.query.agent_id === 'string' ? route.query.agent_id : ''
-)
-const draftProjectId = computed(() => {
-  if (threadId.value) return ''
-  return typeof route.query.project_id === 'string' ? route.query.project_id : ''
+const active = ref(true)
+const draftProjectId = computed(() => (props.threadId ? '' : props.projectId))
+const ownsCurrentRoute = computed(() => {
+  const route = router.currentRoute.value
+  return (
+    active.value &&
+    ['AgentComp', 'AgentCompWithThreadId'].includes(route.name) &&
+    (route.params.thread_id || '') === props.threadId
+  )
 })
 
 const coordinator = createThreadRouteCoordinator({
@@ -49,7 +54,7 @@ const coordinator = createThreadRouteCoordinator({
   selectAgent: (id) => agentStore.selectAgent(id),
   rejectThread: () => router.replace({ name: 'AgentComp' }),
   consumeAgent: () => {
-    const query = { ...route.query }
+    const query = { ...router.currentRoute.value.query }
     delete query.agent_id
     return router.replace({ name: 'AgentComp', query })
   },
@@ -57,24 +62,32 @@ const coordinator = createThreadRouteCoordinator({
 })
 
 watch(
-  [workspaceRef, threadId, agentId],
-  ([selection, threadId, agentId]) => {
-    void coordinator.sync({ threadId, agentId }, selection)
+  [workspaceRef, () => props.threadId, () => props.agentId, ownsCurrentRoute],
+  ([selection, threadId, agentId, ownsRoute]) => {
+    void coordinator.sync({ threadId, agentId }, ownsRoute ? selection : null)
   },
   { immediate: true }
 )
+onActivated(() => {
+  active.value = true
+})
+onDeactivated(() => {
+  active.value = false
+})
 onBeforeUnmount(() => coordinator.dispose())
 
 /** 智能体创建后的新会话准备由页面协调。 */
 async function startNewSession() {
+  if (!ownsCurrentRoute.value) return
+  if (props.threadId) return router.push({ name: 'AgentComp' })
   return workspaceRef.value?.selectThreadFromRoute('')
 }
 
 /** 将工作区的新会话身份同步到路由。 */
 function handleThreadChange(id) {
-  if (coordinator.isSyncing()) return
+  if (!ownsCurrentRoute.value || coordinator.isSyncing()) return
   const nextThreadId = id || ''
-  if (threadId.value === nextThreadId) return
+  if (props.threadId === nextThreadId) return
   const location = nextThreadId
     ? { name: 'AgentCompWithThreadId', params: { thread_id: nextThreadId } }
     : { name: 'AgentComp' }

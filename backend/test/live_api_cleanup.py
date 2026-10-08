@@ -335,11 +335,13 @@ async def list_test_session_resources(owner_uid: str) -> dict[str, CleanupSessio
             child_rows = await conn.fetch(
                 """
                 WITH RECURSIVE descendants(id) AS (
-                    SELECT child_session_record_id FROM subagent_threads
-                    WHERE parent_session_record_id = ANY($1::int[])
+                    SELECT child.id FROM sessions child
+                    JOIN sessions parent ON child.parent_thread_id = parent.thread_id
+                    WHERE parent.id = ANY($1::int[])
                     UNION
-                    SELECT st.child_session_record_id FROM subagent_threads st
-                    JOIN descendants parent ON parent.id = st.parent_session_record_id
+                    SELECT child.id FROM sessions child
+                    JOIN sessions parent ON child.parent_thread_id = parent.thread_id
+                    JOIN descendants ancestor ON ancestor.id = parent.id
                 )
                 SELECT child.id, child.project_id, child.thread_id, child.uid, child.status,
                        project.workdir_path, project.directory_mode, project.selection_status
@@ -580,6 +582,14 @@ async def _delete_test_session_rows(conn: asyncpg.Connection, thread_ids_list: l
     )
     message_ids = [int(row["id"]) for row in message_rows]
 
+    await conn.execute(
+        "DELETE FROM session_cooperation_events WHERE tree_root_thread_id = ANY($1::text[]) OR sender_thread_id = ANY($1::text[]) OR recipient_thread_id = ANY($1::text[])",
+        thread_ids_list,
+    )
+    await conn.execute(
+        "DELETE FROM session_cooperation_runtimes WHERE tree_root_thread_id = ANY($1::text[])", thread_ids_list
+    )
+    await conn.execute("UPDATE sessions SET created_by_run_id = NULL WHERE id = ANY($1::int[])", session_record_ids)
     await conn.execute("DELETE FROM agent_input_messages WHERE input_id = ANY($1::text[])", input_ids)
     await conn.execute(
         "DELETE FROM agent_input_receipts WHERE thread_id = ANY($1::text[])",
@@ -596,12 +606,6 @@ async def _delete_test_session_rows(conn: asyncpg.Connection, thread_ids_list: l
     await conn.execute("DELETE FROM agent_runs WHERE id = ANY($1::text[])", run_ids)
     await conn.execute("DELETE FROM agent_turns WHERE id = ANY($1::text[])", turn_ids)
     await conn.execute("DELETE FROM scheduled_agent_runs WHERE thread_id = ANY($1::text[])", thread_ids_list)
-    await conn.execute(
-        "DELETE FROM subagent_threads "
-        "WHERE parent_session_record_id = ANY($1::int[]) "
-        "OR child_session_record_id = ANY($1::int[])",
-        session_record_ids,
-    )
     await conn.execute("DELETE FROM sessions WHERE id = ANY($1::int[])", session_record_ids)
     await conn.execute(
         "DELETE FROM projects WHERE id = ANY($1::text[]) "
@@ -697,7 +701,6 @@ async def cleanup_test_chat_resources(
     failures: list[str] = []
     agents_response = await client.get(
         "/api/agent",
-        params={"include_subagents": "true"},
         headers=headers,
     )
     if agents_response.status_code != 200:

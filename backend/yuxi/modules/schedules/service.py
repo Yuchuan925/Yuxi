@@ -103,7 +103,7 @@ async def _validate_project(project_id: str, user: User, db: AsyncSession):
 
 async def _validate_agent(agent_slug: str, user: User, db: AsyncSession):
     repo = AgentRepository(db)
-    agent = await repo.get_visible_by_slug(slug=agent_slug, user=user, kind="main")
+    agent = await repo.get_visible_by_slug(slug=agent_slug, user=user)
     if not agent:
         raise HTTPException(status_code=404, detail="智能体不存在或不可访问")
     try:

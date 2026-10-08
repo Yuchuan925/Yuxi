@@ -17,13 +17,13 @@ from test.live_api_cleanup import make_test_session_title
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
 
 
-async def _set_session_statuses(subagent_thread_id: str, deleted_thread_id: str) -> None:
+async def _set_session_statuses(member_thread_id: str, deleted_thread_id: str) -> None:
     """使用绑定当前测试事件循环的一次性引擎写入状态事实。"""
     engine = create_async_engine(os.environ["POSTGRES_URL"])
     try:
         session_factory = async_sessionmaker(bind=engine, expire_on_commit=False)
         async with session_factory() as db:
-            await db.execute(update(Session).where(Session.thread_id == subagent_thread_id).values(status="subagent"))
+            await db.execute(update(Session).where(Session.thread_id == member_thread_id).values(status="active"))
             await db.execute(update(Session).where(Session.thread_id == deleted_thread_id).values(status="deleted"))
             await db.commit()
     finally:
@@ -134,30 +134,23 @@ async def test_admin_can_fetch_thread_analytics(test_client, admin_headers):
     assert data["summary"]["total_threads"] >= 0
 
 
-async def test_dashboard_http_applies_subagent_and_deleted_session_scopes(test_client, admin_headers):
+async def test_dashboard_http_counts_all_sessions_and_excludes_deleted(test_client, admin_headers):
     default_agent = await test_client.get("/api/agent/default", headers=admin_headers)
     assert default_agent.status_code == 200, default_agent.text
     agent = default_agent.json()["agent"]
     agent_id = str(agent.get("slug") or agent["agent_id"])
     marker = f"dashboard-scope-{uuid.uuid4().hex[:10]}"
 
-    async def analytics(*, include_subagents: bool) -> dict:
+    async def analytics():
         response = await test_client.get(
-            "/api/dashboard/stats/threads",
-            params={
-                "time_range": "30days",
-                "agent_id": agent_id,
-                "include_subagents": str(include_subagents).lower(),
-            },
-            headers=admin_headers,
+            "/api/dashboard/stats/threads", params={"time_range": "30days", "agent_id": agent_id}, headers=admin_headers
         )
         assert response.status_code == 200, response.text
         return response.json()
 
-    baseline_default = await analytics(include_subagents=False)
-    baseline_including_subagents = await analytics(include_subagents=True)
+    baseline = await analytics()
     thread_ids = []
-    for status in ("active", "subagent", "deleted"):
+    for status in ("active", "member", "deleted"):
         response = await test_client.post(
             "/api/v1/agents/threads",
             headers={**admin_headers, "Idempotency-Key": f"{marker}-{status}"},
@@ -171,10 +164,8 @@ async def test_dashboard_http_applies_subagent_and_deleted_session_scopes(test_c
 
     await _set_session_statuses(thread_ids[1], thread_ids[2])
 
-    default_scope = await analytics(include_subagents=False)
-    subagent_scope = await analytics(include_subagents=True)
-    assert default_scope["summary"]["total_threads"] == baseline_default["summary"]["total_threads"] + 1
-    assert subagent_scope["summary"]["total_threads"] == baseline_including_subagents["summary"]["total_threads"] + 2
+    all_sessions = await analytics()
+    assert all_sessions["summary"]["total_threads"] == baseline["summary"]["total_threads"] + 2
 
     default_audit = await test_client.get(
         "/api/dashboard/sessions",

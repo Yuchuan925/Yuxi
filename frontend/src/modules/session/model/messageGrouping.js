@@ -1,5 +1,5 @@
 import MessageProcessor from '@/modules/session/model/messageProcessor'
-import { enrichTaskToolCalls } from '@/modules/session/model/toolCallProjection'
+import { normalizeToolCalls } from '@/modules/session/model/toolCallProjection'
 import { collapseRunProcess } from '@/modules/session/model/runProcessGrouping'
 
 const hasVisibleAssistantBody = (message) => {
@@ -11,7 +11,7 @@ const hasVisibleAssistantBody = (message) => {
   )
 }
 
-const defaultEnrichToolCalls = (message) => enrichTaskToolCalls(message?.tool_calls)
+const defaultEnrichToolCalls = (message) => normalizeToolCalls(message?.tool_calls)
 
 /** 将相邻推理和工具调用按顺序归组，正文保持独立。 */
 export const getMessageGroupDisplayItems = (

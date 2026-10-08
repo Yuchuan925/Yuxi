@@ -14,7 +14,7 @@ from yuxi.modules.agents.services.threads import archive_thread
 from yuxi.modules.agents.models.inputs import AgentInput
 from yuxi.modules.agents.models.runs import AgentRun
 from yuxi.modules.agents.models.turns import AgentTurn
-from yuxi.modules.agents.models.sessions import Session, SubagentThread
+from yuxi.modules.agents.models.sessions import Session
 from yuxi.modules.workspace.models import Project
 from yuxi.modules.identity.models import User
 
@@ -150,9 +150,13 @@ async def test_archive_respects_independent_child_and_runtime_cleanup(remaining_
                 child = Session(
                     thread_id=child_thread_id,
                     uid=uid,
+                    tree_root_thread_id=thread_id,
+                    parent_thread_id=thread_id,
+                    cooperation_name="helper",
+                    cooperation_path="/root/helper",
                     agent_id="helper",
                     project_id=project_id,
-                    status="subagent",
+                    status="active",
                 )
                 db.add(child)
                 await db.flush()
@@ -177,28 +181,17 @@ async def test_archive_respects_independent_child_and_runtime_cleanup(remaining_
             if remaining_work == "child_run":
                 db.add(AgentTurn(id=child_turn_id, thread_id=child_thread_id, uid=uid, status="cancelling"))
                 await db.flush()
-                relation = SubagentThread(
-                    uid=uid,
-                    parent_session_record_id=parent.id,
-                    child_session_record_id=child.id,
-                    child_thread_id=child_thread_id,
-                    subagent_slug="helper",
-                    created_by_run_id=root_run_id,
-                )
-                db.add(relation)
-                await db.flush()
                 db.add(
                     AgentRun(
                         id=child_run_id,
                         thread_id=child_thread_id,
-                        runtime_scope_id=child_thread_id,
+                        runtime_scope_id=thread_id,
                         agent_slug="helper",
                         uid=uid,
                         turn_id=child_turn_id,
                         session_record_id=child.id,
-                        run_type="subagent",
+                        run_type="chat",
                         created_by_run_id=root_run_id,
-                        subagent_thread_relation_id=relation.id,
                         status="cancel_requested",
                         input_payload={},
                     )
@@ -237,7 +230,7 @@ async def test_archive_respects_independent_child_and_runtime_cleanup(remaining_
     finally:
         async with sessions() as db:
             await db.execute(delete(AgentRun).where(AgentRun.turn_id.in_([turn_id, child_turn_id])))
-            await db.execute(delete(SubagentThread).where(SubagentThread.uid == uid))
+
             await db.execute(delete(AgentTurn).where(AgentTurn.id.in_([turn_id, child_turn_id])))
             await db.execute(delete(Session).where(Session.uid == uid))
             await db.execute(delete(Project).where(Project.id == project_id))

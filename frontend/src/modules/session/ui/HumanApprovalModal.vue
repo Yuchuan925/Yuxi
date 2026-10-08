@@ -285,6 +285,7 @@ const TOOL_DISPLAY_NAMES = {
 
 const props = defineProps({
   visible: { type: Boolean, default: false },
+  processing: { type: Boolean, default: false },
   questions: { type: Array, default: () => [] },
   kind: { type: String, default: 'question' },
   actionRequests: { type: Array, default: () => [] }
@@ -292,7 +293,7 @@ const props = defineProps({
 
 const emit = defineEmits(['submit', 'cancel'])
 
-const isProcessing = ref(false)
+const isProcessing = computed(() => props.processing)
 const activeQuestionIndex = ref(0)
 const selectedValues = ref({})
 const answerTexts = ref({})
@@ -331,7 +332,6 @@ const questionTypeLabel = computed(() => {
 })
 
 const resetForm = () => {
-  isProcessing.value = false
   activeQuestionIndex.value = 0
   selectedValues.value = {}
   answerTexts.value = {}
@@ -571,7 +571,6 @@ const buildAnswer = () => {
 
 const handleSubmit = () => {
   if (isSubmitDisabled.value) return
-  isProcessing.value = true
   emit('submit', buildAnswer())
 }
 
@@ -603,7 +602,6 @@ const handleToolDecision = (decision) => {
     return
   }
 
-  isProcessing.value = true
   emit('submit', {
     decisions: buildToolApprovalDecisions(nextDecisions, props.actionRequests.length)
   })

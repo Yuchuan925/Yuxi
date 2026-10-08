@@ -118,12 +118,12 @@ test('有效的 0 和 false 结果可见，普通结果文本中的 error 不冒
   }
 })
 
-test('专用子智能体工具保留 0 和 false 结果', async () => {
+test('协作工具保留 0 和 false 结果', async () => {
   for (const [name, content] of [
-    ['task', 0],
-    ['task', false],
-    ['subagent_status', 0],
-    ['subagent_status', false]
+    ['create_session', 0],
+    ['create_session', false],
+    ['list_sessions', 0],
+    ['list_sessions', false]
   ]) {
     const html = await render(ToolCallRenderer, {
       toolCall: { name, tool_call_result: { content } },
@@ -136,10 +136,10 @@ test('专用子智能体工具保留 0 和 false 结果', async () => {
 })
 
 test('明确的 ToolMessage 错误不会被专用工具覆盖为完成', async () => {
-  for (const name of ['task', 'subagent_start']) {
+  for (const name of ['create_session', 'subagent_start']) {
     const html = await render(ToolCallRenderer, {
       toolCall: {
-        id: 'subagent-error',
+        id: 'cooperation-error',
         name,
         args: {},
         tool_call_result: { status: 'error', content: '{"status":"started","message":"启动失败"}' }
@@ -172,55 +172,26 @@ test('思考描述显示最后一行，展开后保留完整内容', async () =>
   const expanded = await render(ReasoningBlock, { content, defaultExpanded: true })
   assert.match(expanded, /<p class="reasoning-content"/)
   assert.match(expanded, /先检查文件。\n再确认结果。/)
-  for (const text of ['先检查文件。\r\n再确认结果。\r\n  ', '再确认结果。', '先检查文件。\r再确认结果。']) {
+  for (const text of [
+    '先检查文件。\r\n再确认结果。\r\n  ',
+    '再确认结果。',
+    '先检查文件。\r再确认结果。'
+  ]) {
     const preview = await render(ReasoningBlock, { content: text, isActive: true })
     assert.match(preview, /再确认结果。/)
     assert.doesNotMatch(preview, /先检查文件。/)
   }
 })
 
-test('子智能体运行失败在专用行和分组摘要中一致展示', async () => {
-  for (const toolCall of [
-    {
-      id: 'task-failed',
-      name: 'task',
-      args: {},
-      subagent_run: { status: 'failed' },
-      tool_call_result: { content: '子任务失败' }
-    },
-    {
-      id: 'task-cancelled',
-      name: 'task',
-      args: {},
-      subagent_run: { status: 'cancelled' },
-      tool_call_result: { content: '子任务已取消' }
-    },
-    {
-      id: 'task-interrupted',
-      name: 'task',
-      args: {},
-      subagent_run: { status: 'interrupted' },
-      tool_call_result: { content: '子任务已中断' }
-    },
-    {
-      id: 'child-failed',
-      name: 'subagent_status',
-      args: {},
-      tool_call_result: { content: { status: 'ok', run_status: 'failed' } }
-    },
-    {
-      id: 'child-interrupted',
-      name: 'subagent_await',
-      args: {},
-      tool_call_result: { content: { status: 'ok', active_run_status: 'interrupted' } }
-    }
-  ]) {
-    const row = await render(ToolCallRenderer, { toolCall })
-    const group = await render(ToolCallsGroup, { toolCalls: [toolCall] })
-    assert.match(row, /tool-error/)
-    assert.match(group, /1 失败/)
-    assert.doesNotMatch(group, /1 进行中/)
+test('派发成功保留工具结果，后续会话失败由协作状态展示', async () => {
+  const toolCall = {
+    name: 'create_session',
+    args: {},
+    tool_call_result: { content: { status: 'accepted', session_id: 'child', turn_id: 'turn' } }
   }
+  const row = await render(ToolCallRenderer, { toolCall })
+  assert.match(row, /tool-success/)
+  assert.doesNotMatch(row, /tool-error/)
 })
 
 test('知识库列表错误不显示暂无知识库', async () => {
@@ -237,16 +208,21 @@ test('知识库列表错误不显示暂无知识库', async () => {
   assert.doesNotMatch(html, /暂无知识库/)
 })
 
-
 test('incomplete 工具显示中断终态而非加载图标', async () => {
   const html = await render(BaseToolCall, {
     toolCall: { id: 'stopped', name: 'execute', args: {}, status: 'incomplete' },
-    defaultExpanded: true, appearance: 'timeline'
+    defaultExpanded: true,
+    appearance: 'timeline'
   })
   assert.match(html, /已中断/)
   assert.doesNotMatch(html, /tool-loading|正在调用工具/)
   const question = await render(ToolCallRenderer, {
-    toolCall: { id: 'question', name: 'ask_user_question', args: { questions: [] }, status: 'incomplete' }
+    toolCall: {
+      id: 'question',
+      name: 'ask_user_question',
+      args: { questions: [] },
+      status: 'incomplete'
+    }
   })
   assert.match(question, /已中断/)
   assert.doesNotMatch(question, /tool-loading/)

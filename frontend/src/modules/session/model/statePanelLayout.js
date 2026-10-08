@@ -1,16 +1,18 @@
-/** 根据容器高度计算固定状态面板扣除上下边距和边框后的内容最大高度。 */
-export const getDockedStatePanelMaxHeight = (containerRect, margin = 8, borderWidth = 1) => {
-  if (!containerRect) return null
-  return Math.max(0, Math.floor(containerRect.height - (margin + borderWidth) * 2))
-}
-
-/** 根据输入区顶边计算悬浮状态面板的可用最大高度。 */
-export const getFloatingStatePanelMaxHeight = (
-  containerRect,
-  inputDockRect,
-  topOffset = 8,
-  gap = 8
-) => {
-  if (!containerRect || !inputDockRect) return null
-  return Math.max(0, Math.floor(inputDockRect.top - containerRect.top - topOffset - gap))
+/** 右侧留白足够时嵌入状态面板，否则在按钮下方悬浮。 */
+export const getStatePanelPlacement = (workspace, trigger, input, embeddedArea) => {
+  const embedded = embeddedArea && embeddedArea.right - embeddedArea.left >= 340
+  const top = trigger.bottom - workspace.top + 8
+  const bottom = Math.min(workspace.bottom, input?.top ?? workspace.bottom)
+  const right = embedded
+    ? workspace.right - embeddedArea.left - 340
+    : Math.max(8, workspace.right - trigger.right)
+  return {
+    mode: embedded ? 'embedded' : 'floating',
+    style: {
+      top: `${top}px`,
+      right: `${right}px`,
+      width: `${embedded ? 340 : Math.min(340, Math.max(0, trigger.right - workspace.left - 8))}px`,
+      maxHeight: `${Math.max(0, bottom - workspace.top - top - 8)}px`
+    }
+  }
 }

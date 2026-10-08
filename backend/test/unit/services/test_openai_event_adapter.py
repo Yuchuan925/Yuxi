@@ -3,6 +3,8 @@
 from copy import deepcopy
 import json
 from pathlib import Path
+from datetime import UTC, datetime
+from types import SimpleNamespace
 
 import jsonschema
 import pytest
@@ -206,3 +208,34 @@ async def test_failure_preserves_completed_commentary_and_only_saves_active_part
         ("completed", "complete"),
         ("incomplete", "partial"),
     ]
+
+
+@pytest.mark.parametrize(
+    "name,status",
+    [
+        ("created", "queued"),
+        ("in_progress", "in_progress"),
+        ("completed", "completed"),
+        ("failed", "failed"),
+        ("cancelled", "cancelled"),
+    ],
+)
+def test_turn_lifecycle_events_keep_required_protocol_fields(name, status):
+    """普通 Session 的标准 Turn 事件保留官方 nullable 字段。"""
+    from yuxi.modules.agents.services import events
+
+    now = datetime(2026, 10, 7, tzinfo=UTC)
+    run = SimpleNamespace(
+        id="run",
+        thread_id="thread",
+        agent_slug="main",
+        started_at=now,
+        error_message=None,
+        input_id="input",
+        created_by_run_id=None,
+        error_type=None,
+    )
+    turn = SimpleNamespace(id="turn", created_at=now, finished_at=now, result_run_id="run", current_run_id="run")
+    event = events._turn_event(None, run, turn, name, status)
+    jsonschema.validate(event, SCHEMA)
+    assert event["turn"]["subagent_id"] is None

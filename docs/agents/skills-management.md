@@ -78,7 +78,7 @@ skill_dependencies: []
 2. **上传**：上传 ZIP 或单个 `SKILL.md`，解析后生成草稿。
 3. **远程安装**：从 GitHub 仓库、ModelScope Skill 或合集拉取一个或多个 Skill。
 4. **在线编辑**：编辑已有且有管理权限的共享 Skill 文件和依赖。
-5. **Agent 内安装**：主智能体使用 `install_skill` 把 Skill 安装到当前用户的个人来源；子智能体不能使用该工具。
+5. **Agent 内安装**：所有获授权会话使用 `install_skill` 把 Skill 安装到当前用户的个人来源。
 
 上传和远程安装都先解析为草稿，再选择个人或共享位置并确认。草稿中的可安装条目只包含已解析的临时包；远程拉取或解析失败会单独显示，不能被确认安装。确认前可以检查名称、说明、文件和依赖；取消草稿不会写入正式 Skill。
 
@@ -133,7 +133,7 @@ API/worker 启动时同步文件、元数据和依赖，保留数据库中的启
 
 ## 依赖和加载时机
 
-Agent 的 `skills` 配置语义（`"all"`、固定数组与默认值）由[资源选择契约](./agents-config.md)拥有，本页描述激活时机。每个 Run 准备 Context 时，系统按权限解析共享选择，合并当前用户全部个人 Skill，再展开 `skill_dependencies`；主智能体和子智能体使用同一规则。`skills=[]` 时个人 Skill 仍进入模型可见的描述列表，只是没有共享选择。个人 Skill 安装不修改 Agent 配置，新增 Skill 在下一次 Run 准备时自动加入，已准备的运行保留快照。
+Agent 的 `skills` 配置语义（`"all"`、固定数组与默认值）由[资源选择契约](./agents-config.md)拥有，本页描述激活时机。每个 Run 准备 Context 时，系统按权限解析共享选择，合并当前用户全部个人 Skill，再展开 `skill_dependencies`；同树会话使用同一规则。`skills=[]` 时个人 Skill 仍进入模型可见的描述列表，只是没有共享选择。个人 Skill 安装不修改 Agent 配置，新增 Skill 在下一次 Run 准备时自动加入，已准备的运行保留快照。
 
 ### 普通渐进加载
 

@@ -237,7 +237,6 @@ async def get_call_timeseries_stats(
 async def get_thread_analytics_stats(
     time_range: Literal["7days", "14days", "30days", "90days"] = "30days",
     agent_id: str | None = None,
-    include_subagents: bool = Query(False, description="是否将子智能体会话纳入统计"),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_superadmin_user),
 ):
@@ -245,7 +244,6 @@ async def get_thread_analytics_stats(
     data = await DashboardService(db).get_thread_analytics(
         time_range=time_range,
         agent_id=agent_id,
-        include_subagents=include_subagents,
     )
     return ThreadAnalyticsResponse(**data)
 
@@ -263,7 +261,7 @@ async def get_session_filter_options(
 async def get_all_sessions(
     uid: str | None = None,
     agent_id: str | None = None,
-    status: Literal["active", "archived", "deleted", "subagent", "all"] = "all",
+    status: Literal["active", "archived", "deleted", "all"] = "all",
     search: Annotated[str | None, Query(max_length=255)] = None,
     limit: Annotated[int, Query(ge=1, le=200)] = 100,
     offset: Annotated[int, Query(ge=0)] = 0,

@@ -152,8 +152,14 @@ class CancelInputEvent(WireModel):
     input_id: str = Field(min_length=1)
 
 
+class TreeControlEvent(WireModel):
+    """用户显式停止或继续整个协作树。"""
+
+    type: Literal["yuxi.session.tree.stop", "yuxi.session.tree.continue"]
+
+
 ThreadEvent = Annotated[
-    MessageEvent | ResumeEvent | CancelEvent | ContinueEvent | CancelInputEvent,
+    MessageEvent | ResumeEvent | CancelEvent | ContinueEvent | CancelInputEvent | TreeControlEvent,
     Field(discriminator="type"),
 ]
 

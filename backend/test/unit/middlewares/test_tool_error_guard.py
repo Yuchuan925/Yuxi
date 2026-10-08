@@ -22,7 +22,6 @@ from langchain_core.tools import tool
 from langgraph.errors import GraphBubbleUp
 from langgraph.types import interrupt
 from yuxi.modules.agents.runtime.agent_backends.chatbot import graph as chatbot_graph
-from yuxi.modules.agents.runtime.agent_backends.subagent import graph as subagent_graph
 from yuxi.modules.agents.runtime.middlewares import ToolErrorGuardMiddleware
 
 pytestmark = [pytest.mark.unit, pytest.mark.asyncio]
@@ -236,8 +235,7 @@ async def test_guard_does_not_expose_exception_details(caplog):
 @pytest.mark.parametrize(
     "module,build_kwargs",
     [
-        (chatbot_graph, {"extra_async_patches": ("create_memory_middleware", "create_subagent_task_middleware")}),
-        (subagent_graph, {"tool_approval_mode": "default", "extra_async_patches": ()}),
+        (chatbot_graph, {"extra_async_patches": ("create_memory_middleware",)}),
     ],
 )
 async def test_graph_mounts_guard_as_outermost_tool_wrapper(monkeypatch, module, build_kwargs):
@@ -298,3 +296,27 @@ async def test_guard_keeps_normal_tool_result_untouched():
 
     tool_messages = [message for message in state["messages"] if message.type == "tool"]
     assert [message.content for message in tool_messages] == ["parsed:/home/gem/user-data/a.pdf"]
+
+
+async def test_cancel_waits_for_tool_effect_before_releasing_execution():
+    """取消 await 不能把仍执行的工具副作用误报为已清理。"""
+    entered = asyncio.Event()
+    finish = asyncio.Event()
+    effects = []
+
+    async def handler(request):
+        entered.set()
+        await finish.wait()
+        effects.append("finished")
+        return ToolMessage(content="done", tool_call_id="call")
+
+    request = SimpleNamespace(tool_call={"id": "call", "name": "execute"})
+    task = asyncio.create_task(ToolErrorGuardMiddleware().awrap_tool_call(request, handler))
+    await entered.wait()
+    task.cancel()
+    await asyncio.sleep(0)
+    assert not task.done() and effects == []
+    finish.set()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert effects == ["finished"]

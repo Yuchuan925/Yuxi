@@ -37,12 +37,15 @@ class _Graph:
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_compress_thread_context_uses_locked_idle_thread(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize("thread_id", ["thread-1", "child-thread"])
+async def test_compress_thread_context_uses_locked_idle_thread(monkeypatch: pytest.MonkeyPatch, thread_id: str) -> None:
     events = []
     agent_session = SimpleNamespace(
         uid="user-1",
         status="active",
         agent_id="assistant",
+        config_snapshot=None,
+        tree_root_thread_id="thread-1",
         extra_metadata={"model_spec": "provider:model"},
     )
     agent = SimpleNamespace(context_schema=_Context)
@@ -75,13 +78,19 @@ async def test_compress_thread_context_uses_locked_idle_thread(monkeypatch: pyte
     async def workdir(**_kwargs):
         return "projects/project-1"
 
-    async def runtime(**_kwargs):
+    runtime_scopes = []
+
+    async def runtime(**kwargs):
+        runtime_scopes.append(kwargs["thread_id"])
         events.append("runtime")
 
-    async def release(**_kwargs):
+    async def release(**kwargs):
+        assert kwargs["thread_id"] == runtime_scopes[0]
         events.append("release")
 
     async def compress(**kwargs):
+        assert kwargs["context"].runtime_scope_id == runtime_scopes[0]
+        assert kwargs["context"].thread_id == thread_id
         events.append(("compress", kwargs["context"].model))
         return {"status": "completed", "after_tokens": 300}
 
@@ -96,14 +105,15 @@ async def test_compress_thread_context_uses_locked_idle_thread(monkeypatch: pyte
     monkeypatch.setattr(service, "get_agent_backend", lambda _backend_id: agent)
 
     result = await service.compress_thread_context(
-        thread_id="thread-1",
+        thread_id=thread_id,
         current_user=SimpleNamespace(uid="user-1", role="user"),
         db=Db(),
     )
 
+    assert runtime_scopes[0] not in {"thread-1", "child-thread"}, "压缩不得复用任何会话的执行沙盒"
     assert result == {"status": "completed", "after_tokens": 300}
     assert events == [
-        ("lock", "thread-1"),
+        ("lock", thread_id),
         "idle",
         "runtime",
         ("compress", "provider:model"),
@@ -157,7 +167,7 @@ async def test_runtime_is_released_when_checkpoint_compression_fails(
         await service._compress_agent_checkpoint_in_runtime(
             agent=object(),
             context=BaseContext(**{}),
-            thread_id="thread-1",
+            runtime_scope_id="compression-runtime",
             uid="user-1",
             workdir_path="projects/project-1",
         )
@@ -187,7 +197,7 @@ async def test_runtime_is_released_when_provisioning_fails_without_masking_error
         await service._compress_agent_checkpoint_in_runtime(
             agent=object(),
             context=BaseContext(**{}),
-            thread_id="thread-1",
+            runtime_scope_id="compression-runtime",
             uid="user-1",
             workdir_path="projects/project-1",
         )

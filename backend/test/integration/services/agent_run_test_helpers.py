@@ -6,12 +6,17 @@ import uuid
 from datetime import datetime
 from typing import Any
 
+from sqlalchemy import delete, select, update
+
+from yuxi.modules.agents.models.cooperation import CooperationEvent, CooperationRuntime
+from yuxi.modules.agents.models.definitions import Agent
+from yuxi.modules.agents.models.inputs import AgentInput, AgentInputMessage, AgentInputReceipt
 from yuxi.modules.agents.repositories.input import AgentInputRepository
 from yuxi.modules.agents.repositories.input_receipt import AgentInputReceiptRepository
 from yuxi.modules.agents.models.runs import AgentRun
 from yuxi.modules.agents.models.turns import AgentTurn
 from yuxi.modules.agents.models.sessions import Session
-from yuxi.modules.agents.models.messages import Message
+from yuxi.modules.agents.models.messages import Message, ToolCall
 from yuxi.modules.workspace.models import Project
 from yuxi.modules.identity.models import User
 from yuxi.shared.datetime import utc_now
@@ -118,3 +123,34 @@ async def create_agent_run(
         )
         await db.commit()
         return run_id, thread_id, message.id
+
+
+async def cleanup_agent_run_threads(session_factory, thread_ids: list[str]) -> None:
+    """按外键顺序清理本测试创建的持久事实。"""
+    async with session_factory() as db:
+        rows = (
+            await db.execute(select(Session.project_id, Session.uid).where(Session.thread_id.in_(thread_ids)))
+        ).all()
+        session_record_ids = list((await db.scalars(select(Session.id).where(Session.thread_id.in_(thread_ids)))).all())
+        input_ids = list((await db.scalars(select(AgentInput.id).where(AgentInput.thread_id.in_(thread_ids)))).all())
+        await db.execute(delete(CooperationEvent).where(CooperationEvent.tree_root_thread_id.in_(thread_ids)))
+        await db.execute(delete(CooperationRuntime).where(CooperationRuntime.tree_root_thread_id.in_(thread_ids)))
+        await db.execute(update(Session).where(Session.thread_id.in_(thread_ids)).values(created_by_run_id=None))
+        await db.execute(update(AgentRun).where(AgentRun.thread_id.in_(thread_ids)).values(input_id=None))
+        if input_ids:
+            await db.execute(delete(AgentInputMessage).where(AgentInputMessage.input_id.in_(input_ids)))
+        await db.execute(delete(AgentInputReceipt).where(AgentInputReceipt.thread_id.in_(thread_ids)))
+        if input_ids:
+            await db.execute(delete(AgentInput).where(AgentInput.id.in_(input_ids)))
+        if session_record_ids:
+            message_ids = select(Message.id).where(Message.session_record_id.in_(session_record_ids))
+            await db.execute(delete(ToolCall).where(ToolCall.message_id.in_(message_ids)))
+            await db.execute(delete(Message).where(Message.session_record_id.in_(session_record_ids)))
+        await db.execute(delete(AgentRun).where(AgentRun.thread_id.in_(thread_ids)))
+        await db.execute(delete(AgentTurn).where(AgentTurn.thread_id.in_(thread_ids)))
+
+        await db.execute(delete(Session).where(Session.thread_id.in_(thread_ids)))
+        await db.execute(delete(Project).where(Project.id.in_([row.project_id for row in rows])))
+        await db.execute(delete(Agent).where(Agent.created_by.in_([row.uid for row in rows])))
+        await db.execute(delete(User).where(User.uid.in_([row.uid for row in rows])))
+        await db.commit()

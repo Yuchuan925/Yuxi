@@ -150,7 +150,7 @@ def run():
         "_build_middlewares",
         "create_agent",
         "create_memory_middleware",
-        "create_subagent_task_middleware",
+        "create_cooperation_middleware",
     ):
         wrap(graph, name)
     wrap(BaseAgent, "_get_checkpointer")

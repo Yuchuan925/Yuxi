@@ -90,7 +90,6 @@ async def test_bound_skill_is_preloaded_without_explicit_selection(
                     "mcps": [],
                     "skills": [],
                     "preload_skills": [],
-                    "subagents": [],
                 }
             },
             "share_config": {

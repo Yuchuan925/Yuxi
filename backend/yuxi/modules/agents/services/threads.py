@@ -37,7 +37,7 @@ async def require_thread(*, db: AsyncSession, scope: ActorScope, thread_id: str,
         agent_session is None
         or agent_session.uid != scope.uid
         or agent_session.app_id != scope.app_id
-        or agent_session.status not in {"active", "archived", "subagent"}
+        or agent_session.status not in {"active", "archived"}
     ):
         raise HTTPException(status_code=404, detail="Thread 不存在")
     return agent_session
@@ -62,7 +62,6 @@ async def list_threads(
         status=status,
         limit=limit,
         offset=offset,
-        exclude_sources=("subagent",),
     )
     latest = await AgentRunRepository(db).get_latest_top_level_runs_for_threads(
         scope.uid, [item.thread_id for item in items]
@@ -180,18 +179,16 @@ async def update_thread(
 
 
 async def archive_thread(*, db: AsyncSession, scope: ActorScope, thread_id: str) -> dict:
-    """执行树、运行时清理和待处理输入全部结束后才归档 Thread。"""
+    """当前会话的运行与待处理输入全部结束后才归档 Thread。"""
     agent_session = await require_thread(db=db, scope=scope, thread_id=thread_id, lock=True)
-    if agent_session.status == "subagent":
-        raise HTTPException(status_code=409, detail="子智能体 Thread 不能单独归档")
     if agent_session.status == "archived":
         return _thread_public(agent_session)
     active_turn = await AgentTurnRepository(db).lock_active_for_thread(
         thread_id=thread_id, uid=scope.uid, app_id=scope.app_id
     )
     inputs = await AgentInputRepository(db).list_pending_inputs(thread_id=thread_id, uid=scope.uid, app_id=scope.app_id)
-    active_run = await AgentRunRepository(db).get_active_run_by_runtime_scope_for_user(
-        runtime_scope_id=thread_id, uid=scope.uid
+    active_run = await AgentRunRepository(db).get_active_run_by_thread_for_user(
+        agent_slug=agent_session.agent_id, thread_id=thread_id, uid=scope.uid
     )
     if active_turn is not None or inputs or active_run is not None:
         raise HTTPException(status_code=409, detail="Thread 仍有活跃执行或待处理输入")
@@ -249,24 +246,24 @@ async def get_queue_snapshot(*, db: AsyncSession, scope: ActorScope, thread_id: 
 
 async def continue_queue(*, db: AsyncSession, scope: ActorScope, thread_id: str, idempotency_key: str) -> dict:
     """显式解除失败或取消后的暂停，并在同一事务领取优先队头。"""
-    _check_key(idempotency_key)
+    check_control_key(idempotency_key)
     event_type = "yuxi.session.input.continue"
-    intent_hash = _hash_intent(event_type)
+    intent_hash = hash_control_intent(event_type)
     receipt_repo = AgentInputReceiptRepository(db)
     existing = await receipt_repo.get_for_scope(
         uid=scope.uid, app_id=scope.app_id, thread_id=thread_id, idempotency_key=idempotency_key
     )
     if existing is not None:
-        _require_replay(existing, event_type, intent_hash)
-        return _control_accepted(existing)
+        require_control_replay(existing, event_type, intent_hash)
+        return control_accepted(existing)
 
     agent_session = await require_thread(db=db, scope=scope, thread_id=thread_id, lock=True)
     existing = await receipt_repo.get_for_scope(
         uid=scope.uid, app_id=scope.app_id, thread_id=thread_id, idempotency_key=idempotency_key
     )
     if existing is not None:
-        _require_replay(existing, event_type, intent_hash)
-        return _control_accepted(existing)
+        require_control_replay(existing, event_type, intent_hash)
+        return control_accepted(existing)
     if not agent_session.queue_paused:
         raise HTTPException(status_code=409, detail="队列未暂停")
     if await AgentTurnRepository(db).lock_active_for_thread(thread_id=thread_id, uid=scope.uid, app_id=scope.app_id):
@@ -289,31 +286,31 @@ async def continue_queue(*, db: AsyncSession, scope: ActorScope, thread_id: str,
     await db.commit()
     if dispatch:
         await deliver(dispatch)
-    return _control_accepted(receipt)
+    return control_accepted(receipt)
 
 
 async def cancel_input(
     *, db: AsyncSession, scope: ActorScope, thread_id: str, input_id: str, idempotency_key: str
 ) -> dict:
     """取消未领取的 Input，不伪造尚未存在的 Turn。"""
-    _check_key(idempotency_key)
+    check_control_key(idempotency_key)
     event_type = "yuxi.session.input.cancel_input"
-    intent_hash = _hash_intent(event_type, input_id)
+    intent_hash = hash_control_intent(event_type, input_id)
     receipt_repo = AgentInputReceiptRepository(db)
     existing = await receipt_repo.get_for_scope(
         uid=scope.uid, app_id=scope.app_id, thread_id=thread_id, idempotency_key=idempotency_key
     )
     if existing is not None:
-        _require_replay(existing, event_type, intent_hash)
-        return _control_accepted(existing)
+        require_control_replay(existing, event_type, intent_hash)
+        return control_accepted(existing)
 
     await require_thread(db=db, scope=scope, thread_id=thread_id, lock=True)
     existing = await receipt_repo.get_for_scope(
         uid=scope.uid, app_id=scope.app_id, thread_id=thread_id, idempotency_key=idempotency_key
     )
     if existing is not None:
-        _require_replay(existing, event_type, intent_hash)
-        return _control_accepted(existing)
+        require_control_replay(existing, event_type, intent_hash)
+        return control_accepted(existing)
     input_repo = AgentInputRepository(db)
     input_item = await input_repo.get_for_scope(
         input_id=input_id, thread_id=thread_id, uid=scope.uid, app_id=scope.app_id, for_update=True
@@ -335,7 +332,7 @@ async def cancel_input(
         turn_id=input_item.turn_id,
     )
     await db.commit()
-    return _control_accepted(receipt)
+    return control_accepted(receipt)
 
 
 def _turn_summary(turn, run) -> dict | None:
@@ -364,6 +361,7 @@ def _thread_public(agent_session: Session, latest_run: tuple[str, str] | None = 
     return {
         "id": agent_session.thread_id,
         "thread_id": agent_session.thread_id,
+        "parent_session_id": agent_session.parent_thread_id,
         "agent_id": agent_session.agent_id,
         "status": agent_session.status,
         "title": agent_session.title,
@@ -376,25 +374,25 @@ def _thread_public(agent_session: Session, latest_run: tuple[str, str] | None = 
     }
 
 
-def _check_key(key: str) -> None:
+def check_control_key(key: str) -> None:
     """校验控制命令的幂等键。"""
     if not isinstance(key, str) or not 1 <= len(key) <= 128:
         raise HTTPException(status_code=422, detail="Idempotency-Key 长度必须为 1 至 128")
 
 
-def _hash_intent(*parts) -> str:
+def hash_control_intent(*parts) -> str:
     """对控制命令建立跨协议别名一致的意图指纹。"""
     encoded = json.dumps(parts, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(encoded.encode()).hexdigest()
 
 
-def _require_replay(receipt, event_type: str, intent_hash: str) -> None:
+def require_control_replay(receipt, event_type: str, intent_hash: str) -> None:
     """拒绝同一键改变控制命令或目标。"""
     if receipt.event_type != event_type or receipt.intent_hash != intent_hash:
         raise HTTPException(status_code=409, detail="Idempotency-Key 已用于其他输入")
 
 
-def _control_accepted(receipt) -> dict:
+def control_accepted(receipt) -> dict:
     """返回控制事件首次固定的目标事实。"""
     return {
         "event_id": receipt.id,

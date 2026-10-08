@@ -82,7 +82,8 @@ export function useApproval({ getThreadState, fetchThreadMessages, getVisibleThr
     actionRequests: [],
     status: '',
     threadId: null,
-    interruptedRunId: null
+    interruptedRunId: null,
+    waitpointId: null
   })
 
   const applyInterruptToApprovalState = (pendingInterrupt, fallbackThreadId) => {
@@ -93,6 +94,7 @@ export function useApproval({ getThreadState, fetchThreadMessages, getVisibleThr
     approvalState.status = pendingInterrupt.status || ''
     approvalState.threadId = pendingInterrupt.threadId || fallbackThreadId
     approvalState.interruptedRunId = pendingInterrupt.interruptedRunId || null
+    approvalState.waitpointId = pendingInterrupt.waitpointId || null
   }
 
   const clearApprovalState = () => {
@@ -103,6 +105,7 @@ export function useApproval({ getThreadState, fetchThreadMessages, getVisibleThr
     approvalState.status = ''
     approvalState.threadId = null
     approvalState.interruptedRunId = null
+    approvalState.waitpointId = null
   }
 
   const processApprovalInStream = (event, threadId, currentAgentId) => {

@@ -138,13 +138,13 @@ async def dashboard_db():
             created_at=yesterday,
             updated_at=now,
         )
-        subagent_session = Session(
-            thread_id="thread-subagent",
-            project_id="p-subagent",
+        cooperation_session = Session(
+            thread_id="thread-cooperation",
+            project_id="p-cooperation",
             uid="uid-alice",
             agent_id="agent-helper",
-            title="Subagent agent_session",
-            status="subagent",
+            title="Cooperation session",
+            status="active",
             created_at=yesterday,
             updated_at=now,
         )
@@ -211,7 +211,7 @@ async def dashboard_db():
                 deleted_session,
                 deleted_user_session,
                 missing_agent_session,
-                subagent_session,
+                cooperation_session,
                 msg1,
                 msg2,
                 msg3,
@@ -232,8 +232,8 @@ async def test_dashboard_service_basic_stats(dashboard_db):
     service = DashboardService(dashboard_db)
     stats = await service.get_basic_stats()
 
-    assert stats["total_sessions"] == 3
-    assert stats["active_sessions"] == 2
+    assert stats["total_sessions"] == 4
+    assert stats["active_sessions"] == 3
     assert stats["total_messages"] == 4
     assert stats["total_users"] == 3
     assert "feedback_stats" not in stats
@@ -268,7 +268,7 @@ async def test_dashboard_service_thread_analytics(dashboard_db):
     analytics = await service.get_thread_analytics(time_range="7days")
 
     summary = analytics["summary"]
-    assert summary["total_threads"] == 3
+    assert summary["total_threads"] == 4
     assert summary["active_threads"] >= 1
     assert summary["pinned_threads"] == 1
     assert summary["total_messages"] == 4
@@ -279,7 +279,7 @@ async def test_dashboard_service_thread_analytics(dashboard_db):
     assert len(analytics["daily_trends"]) == 7
 
     depth = analytics["depth_distribution"]
-    assert depth["0 条"] == 1  # conv3 无消息
+    assert depth["0 条"] == 2  # conv3 无消息
     assert depth["1-2 条"] == 2  # conv1/conv2 各 2 条
     assert depth["3-5 条"] == 0
     assert depth["6-10 条"] == 0
@@ -290,20 +290,13 @@ async def test_dashboard_service_thread_analytics(dashboard_db):
     assert coder_stat["thread_count"] == 2
     assert coder_stat["agent_name"] == "Coder Agent"
 
-    with_subagents = await service.get_thread_analytics(time_range="7days", include_subagents=True)
-    assert with_subagents["summary"]["total_threads"] == 4
-    helper_with_subagent = next(
-        item for item in with_subagents["agent_distribution"] if item["agent_id"] == "agent-helper"
-    )
-    assert helper_with_subagent["thread_count"] == 2
-
     top_users = analytics["top_users"]
     assert len(top_users) >= 2
     alice_stat = next(u for u in top_users if u["uid"] == "uid-alice")
     assert alice_stat["username"] == "Alice"
-    assert alice_stat["thread_count"] == 2
+    assert alice_stat["thread_count"] == 3
 
-    assert analytics["status_distribution"]["active"] == 2
+    assert analytics["status_distribution"]["active"] == 3
     assert analytics["status_distribution"]["archived"] == 1
 
     coder_only = await service.get_thread_analytics(time_range="7days", agent_id="agent-coder")
@@ -393,8 +386,8 @@ async def test_dashboard_service_list_sessions_search(dashboard_db):
     assert search_result["items"][0]["agent_name"] == "Coder Agent"
 
     active_only = await service.list_sessions(status="active")
-    assert active_only["total"] == 4
-    assert len(active_only["items"]) == 4
+    assert active_only["total"] == 5
+    assert len(active_only["items"]) == 5
 
     options = await service.get_session_filter_options()
     assert next(item for item in options["users"] if item["uid"] == "uid-deleted")["is_deleted"] is True

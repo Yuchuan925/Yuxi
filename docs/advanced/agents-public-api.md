@@ -45,7 +45,7 @@ curl --fail "$BASE_URL/api/v1/agents/threads" \
 
 向已有 Thread 提交普通排队消息使用 `yuxi.mode=follow_up`；优先处理使用 `yuxi.mode=steer`。steer 位于所有 follow-up 前面，待领取期间的新 steer 消息合并到同一个 Input。普通消息不接受 `yuxi.turn_id`；Input 在消费时固定 Turn/Run，接收回执不返回 mode。即使发送期间当前 Turn 已结束，steer 仍会优先开启新 Turn。
 
-未指定 mode 时，服务在 Thread 锁内按运行中 steer、空闲 follow-up 选择；waiting/cancelling 拒绝普通消息。一次 POST 只接收一个事件，事件内可有多条有序消息。幂等重试返回同一回执与 Input，不重新入队；已消费后返回实际 Turn/Run 归属。两类 pending Input 的 Turn/Run ID 均为空。
+未指定 mode 时，服务在 Thread 锁内按运行中 steer、空闲 follow-up 选择；等待用户回答、审批或取消清理时拒绝普通消息；协作等待时默认为 follow-up，只进入 FIFO 队列。一次 POST 只接收一个事件，事件内可有多条有序消息。幂等重试返回同一回执与 Input，不重新入队；已消费后返回实际 Turn/Run 归属。两类 pending Input 的 Turn/Run ID 均为空。
 
 新 Input 的模型与审批配置在接收时冻结。steer 不接受显式模型或审批配置；空闲调度使用批次创建时冻结的默认配置，运行中安全接管沿用当前 Run 配置。调度、暂停和取消批次的详细规则见[输入队列机制](../mechanisms/agent-request-queue.md)。
 
@@ -60,7 +60,7 @@ curl --fail -X POST "$BASE_URL/api/v1/agents/threads/$THREAD_ID/events" \
 
 ## 等待、取消与队列
 
-Turn `waiting` 时普通消息被拒绝。Turn 快照的 `waitpoint` 提供 `id`、`kind` 和应回答的问题或应决策的工具调用。恢复事件必须提供 `turn_id`、`waitpoint_id`，并按等待点完整提交 `answer` 或 `approval` 响应；旧等待点或重复改变意图返回 `409`。
+Turn 等待用户回答或审批时普通消息被拒绝，协作等待时 follow-up 只进入 FIFO 队列。Turn 快照的 `waitpoint` 提供 `id`、`kind` 和应回答的问题或应决策的工具调用。恢复事件必须提供 `turn_id`、`waitpoint_id`，并按等待点完整提交 `answer` 或 `approval` 响应；旧等待点或重复改变意图返回 `409`。
 
 ```json
 {"events":[{"type":"yuxi.session.input.resume","turn_id":"<turn-id>","waitpoint_id":"<waitpoint-id>","response":{"type":"answer","answers":[{"question_id":"<question-id>","answer":"确认"}]}}]}
@@ -72,14 +72,13 @@ Turn `waiting` 时普通消息被拒绝。Turn 快照的 `waitpoint` 提供 `id`
 
 `GET /threads/{thread_id}` 返回 Thread 状态、`current_turn`、`queue_paused` 和 `queued_input_count`。Turn 结果只来自 `result_run_id` 指向的当前 Turn Run；模型正文结束、`interrupted` 和 `yielded` 均不表示 Turn 完成。`/history` 返回 `thread`、`runs`、`items`，`/turns/{turn_id}/items` 复用相同公开投影。普通用户可读取已经展示的工具参数、结果和执行状态；内部 prompt、checkpoint 和完整审计不进入普通历史，审计仍仅允许超级管理员 JWT。
 
-`GET /threads/{thread_id}/events` 订阅整个 Thread，每条 SSE `data` 就是一个公开事件，`event` 等于其 `type`，`id` 是订阅 cursor。`event_id` 标识逻辑事件，Redis 重放保持稳定；它与 cursor 分开。`session_id` 是真实 Thread ID，`yuxi.run_id` 是业务执行段。官方 `subagent.created` 仅有 `subagent` 主体，其父业务路由身份位于 `yuxi.session_id/turn_id/run_id`。
+`GET /threads/{thread_id}/events` 订阅整个 Thread，每条 SSE `data` 就是一个公开事件，`event` 等于其 `type`，`id` 是订阅 cursor。`event_id` 标识逻辑事件，Redis 重放保持稳定；它与 cursor 分开。`session_id` 是真实 Thread ID，`yuxi.run_id` 是业务执行段。协作成员通过自己的 Thread 入口读取历史和事件；父页面通过 `/state` 的 `agent_state.cooperation` 读取树内持久状态。
 
 | 内容 | 公开事件 |
 | --- | --- |
 | 正文 | `agent.session.turn.item.added/done`、`content_part.added/done`、`output_text.delta/done` |
 | 实际工具 | `function_call` 与 `function_call_output` item，通过 `call_id` 关联；完整参数和执行完成分别通知 |
 | 业务整轮 | `agent.session.turn.created/in_progress/completed/failed/cancelled`，主体来自已提交 Turn |
-| 子任务创建 | `agent.session.subagent.created`，`yuxi` 保存独立子 Thread/Turn/Run |
 | 能力受限 | `yuxi.session.turn.capability_limited`，只有通用提示，不包含无权资源元信息 |
 | 原始推理 | `yuxi.session.turn.reasoning.delta/done`，关联对应 message item，不表达 reasoning summary |
 | 人工等待 | `yuxi.session.turn.waiting`，等待点绑定真实 Turn/Run |
@@ -91,6 +90,6 @@ Turn `waiting` 时普通消息被拒绝。Turn 快照的 `waitpoint` 提供 `id`
 
 `Last-Event-ID` 使用 v2 cursor 续订。Redis 增量过期时发送 `yuxi.session.resync`，客户端缓冲新事件、重读 items 和快照，再按稳定 ID 合并。已完成正文与工具结果先持久化再发送完成边界；进行中的内容依赖短期 Redis 重放，不承诺逐 token 落库。
 
-子任务拥有独立 Thread、Turn、Run、等待点和结果，主、子 Thread 使用相同公开协议。父完成或失败不终止子任务；父取消沿当前 Turn 的委派关系递归取消相关在途子 Turn，子单独取消不取消父，子 Thread 中无关后续 Turn 不受影响。父子共享 Project Workdir，各自 runtime 和 heartbeat 独立。
+协作成员拥有独立 Thread、Turn、Run、等待点和结果，全部使用相同公开协议。父轮次完成、失败或取消均保留后代工作；普通取消固定指定 Turn。“停止全部”通过 POST `/threads/{thread_id}/events` 提交 `yuxi.session.tree.stop`，停止所有成员在途 Turn 与队列消费；`yuxi.session.tree.continue` 在在途工作收敛后重新消费保留队列，已取消轮次不恢复。这两种控制输入本身不作为 SSE 输出事件发布，结果通过持久树状态和各 Turn 观察。整树共享实际沙盒与 Project Workdir，各 Run 的 lease 和 heartbeat 独立。工具与用户操作见[会话协作](../agents/session-cooperation.md)。
 
-该协议使用 business schema v14、Redis 事件格式 v2 和 cursor v2，只支持全新数据初始化。没有旧数据迁移、旧事件 reader 或双格式消费。
+该协议使用 business schema v5、Redis 事件格式 v2 和 cursor v2，只支持全新数据初始化。没有旧数据迁移、旧事件 reader 或双格式消费。

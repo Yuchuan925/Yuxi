@@ -91,6 +91,28 @@ test('卸载后的操作不报告错误、不重定向、不消费 query', async
   assert.deepEqual(effects, [])
 })
 
+test('失活页面使在途选择失效，重新激活仍可协调本会话', async () => {
+  const { coordinator, effects } = setup()
+  let finish
+  const pending = coordinator.sync(target('cached'), {
+    selectThreadFromRoute: () => new Promise((resolve) => { finish = resolve })
+  })
+  await Promise.resolve()
+  await coordinator.sync(target('cached'), null)
+  finish(false)
+  await pending
+  assert.deepEqual(effects, [])
+  const selections = []
+  await coordinator.sync(target('cached'), {
+    selectThreadFromRoute: async (id) => {
+      selections.push(id)
+      return true
+    }
+  })
+  assert.deepEqual(selections, ['cached'])
+  assert.equal(coordinator.isSyncing(), false)
+})
+
 test('旧选择完成同一微任务窗口加入的新路由仍然被执行', async () => {
   const { coordinator } = setup()
   const selections = []

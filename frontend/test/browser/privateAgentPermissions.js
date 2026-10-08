@@ -10,7 +10,7 @@ async (page) => {
   check(user.role === 'user', '本测试需要真实普通用户身份')
   const backends = await api('/api/agent/backends')
   check(backends.backends.some(item => item.backend_id === 'ChatbotAgent' && item.can_create), '普通用户必须保留主 Agent 建设能力')
-  check(backends.backends.filter(item => item.backend_id === 'SubAgentBackend').every(item => !item.can_create), '不能建设 SubAgent')
+  check(!backends.backends.some(item => item.backend_id === 'SubAgentBackend'), '旧 SubAgent 后端不应暴露')
   await page.goto(`${origin}/agent-manage`)
   await page.getByRole('button', {name:'新增智能体',exact:true}).click()
   const modal = page.getByRole('dialog')

@@ -45,4 +45,4 @@ Owner：frontend/src/components/AgentChatComponent.vue
 | 状态面板在真实历史对话中按内容收缩 | 真实 Compose 页面打开含一个附件的状态面板，面板为 340×131px，body 的 clientHeight 与 scrollHeight 均为 89px，不占满聊天区 | Inspected |
 | hover、超限滚动、键盘焦点、纯触屏、暗色与更多响应式视觉完整 | 未构造全部交互状态 | Not run |
 
-子任务状态来源由[独立子 Run 观察](../../../implemented/2026-09-17-subagent-independent-observation.md)取代；父 state 仍提供子任务身份，历史 task 描述继续展示。
+子任务状态来源由[独立子 Run 观察](../../../archived/2026-09-17-subagent-independent-observation.md)取代；父 state 仍提供子任务身份，历史 task 描述继续展示。

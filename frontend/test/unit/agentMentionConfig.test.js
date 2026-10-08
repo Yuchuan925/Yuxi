@@ -108,29 +108,6 @@ test('资源 mention 按智能体选择生成，不把预加载 Skills 当成可
       { slug: 'skill-b', name: 'Skill B', description: '' }
     ])
 
-    const getMentionSubagents = (agentConfig) => {
-      const { mentionConfig } = useAgentMentionConfig({
-        currentThreadAttachments: ref([]),
-        configurableItems: ref({
-          subagents: {
-            kind: 'subagents',
-            options: [
-              { key: 'sub-a', name: 'Sub A' },
-              { key: 'sub-b', name: 'Sub B' }
-            ]
-          }
-        }),
-        agentConfig: ref(agentConfig)
-      })
-      return mentionConfig.value.subagents
-    }
-    const allSubagents = [
-      { id: 'sub-a', slug: 'sub-a', name: 'Sub A', description: '' },
-      { id: 'sub-b', slug: 'sub-b', name: 'Sub B', description: '' }
-    ]
-    assert.deepEqual(getMentionSubagents({ subagents: 'all' }), allSubagents)
-    assert.deepEqual(getMentionSubagents({ subagents: [] }), [])
-    assert.deepEqual(getMentionSubagents({ subagents: ['sub-b'] }), [allSubagents[1]])
   } finally {
     await server.close()
   }

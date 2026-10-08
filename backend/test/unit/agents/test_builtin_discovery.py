@@ -8,7 +8,6 @@ import pytest
 from yuxi.modules.agents.runtime import agent_backends
 from yuxi.modules.agents import presets
 from yuxi.modules.agents.runtime.agent_backends.chatbot.graph import ChatbotAgent
-from yuxi.modules.agents.runtime.agent_backends.subagent.graph import SubAgentBackend
 from yuxi.modules.extensions.skills import shared as skill_service
 
 
@@ -27,16 +26,9 @@ def test_preset_discovery_includes_shipping_roles():
     found = {preset.slug: preset for preset in presets.discover_agent_presets()}
     assert set(found) == {
         "default-chatbot",
-        "general-purpose",
-        "web-search",
         "deep-research",
-        "research-explorer",
-        "fact-verifier",
     }
-    assert found["deep-research"].context["subagents"] == ["research-explorer", "fact-verifier"]
-    assert found["general-purpose"].context == {}
     assert found["default-chatbot"].backend_id == "ChatbotAgent"
-    assert found["fact-verifier"].backend_id == "SubAgentBackend"
 
 
 def test_new_preset_file_is_discovered_without_registry(tmp_path, monkeypatch):
@@ -88,7 +80,6 @@ def test_explicit_backend_ids_create_independent_instances():
     """后端工厂不共享可变实例状态。"""
     assert agent_backends.AGENT_BACKENDS == {
         "ChatbotAgent": ChatbotAgent,
-        "SubAgentBackend": SubAgentBackend,
     }
     for backend_id, expected_type in agent_backends.AGENT_BACKENDS.items():
         first = agent_backends.get_agent_backend(backend_id)
@@ -132,14 +123,14 @@ import yuxi.modules.agents.runtime.agent_backends as agent_backends
 with patch('pathlib.Path.iterdir', side_effect=AssertionError('directory scan')), \
      patch.object(agent_backends.ChatbotAgent, '__init__', side_effect=AssertionError('eager instance')):
     reload(agent_backends)
-assert set(agent_backends.AGENT_BACKENDS) == {'ChatbotAgent', 'SubAgentBackend'}
+assert set(agent_backends.AGENT_BACKENDS) == {'ChatbotAgent'}
 """
     result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("backend_id", ["ChatbotAgent", "SubAgentBackend"])
+@pytest.mark.parametrize("backend_id", ["ChatbotAgent"])
 async def test_each_graph_uses_its_own_run_context(monkeypatch, backend_id):
     """实际编译并执行两个图，后一个运行不能复用前一个模型或上下文。"""
     from importlib import import_module
@@ -177,7 +168,7 @@ async def test_each_graph_uses_its_own_run_context(monkeypatch, backend_id):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("backend_id", ["ChatbotAgent", "SubAgentBackend"])
+@pytest.mark.parametrize("backend_id", ["ChatbotAgent"])
 async def test_reused_prepared_context_refreshes_skills_before_each_graph(monkeypatch, tmp_path, backend_id):
     """准备后的 Context 复用时，每次构图仍发布最新 Skill 投影。"""
     from importlib import import_module

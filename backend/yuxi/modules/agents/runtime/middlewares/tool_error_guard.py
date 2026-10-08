@@ -45,8 +45,34 @@ class ToolErrorGuardMiddleware(AgentMiddleware):
         request: ToolCallRequest,
         handler: Callable[[ToolCallRequest], Awaitable[Any]],
     ) -> Any:
+        failure = None
+
+        async def execute():
+            """在子任务内捕获控制异常，由原调用任务继续传播。"""
+            nonlocal failure
+            try:
+                return await handler(request)
+            except BaseException as exc:
+                failure = exc
+
+        execution = asyncio.create_task(execute())
         try:
-            return await handler(request)
+            result = await asyncio.shield(execution)
+            if failure is not None:
+                raise failure
+            return result
+        except asyncio.CancelledError:
+            # 线程/远端工具不能因取消 Python await 就算结束；收敛后外层才释放 Run lease。
+            while not execution.done():
+                try:
+                    await asyncio.shield(execution)
+                except asyncio.CancelledError:
+                    continue
+                except BaseException:
+                    break
+            if not execution.cancelled():
+                execution.exception()
+            raise
         except _RETHROW_EXCEPTIONS:
             raise
         except Exception as exc:

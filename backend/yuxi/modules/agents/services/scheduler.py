@@ -33,9 +33,14 @@ async def claim_next_input(
     *, db: AsyncSession, agent_session: Session, binding: WorkdirBinding | None = None
 ) -> Dispatch | None:
     """在已锁 Thread 上领取优先队头，原子建立 Turn 与首段 Run。"""
-    if agent_session.status not in {"active", "subagent"} or agent_session.queue_paused:
+    if agent_session.status != "active" or agent_session.queue_paused:
         return None
 
+    from yuxi.modules.agents.models.cooperation import CooperationRuntime
+
+    runtime = await db.get(CooperationRuntime, agent_session.tree_root_thread_id)
+    if runtime is not None and runtime.stopped:
+        return None
     turn_repo = AgentTurnRepository(db)
     if await turn_repo.lock_active_for_thread(
         thread_id=agent_session.thread_id, uid=agent_session.uid, app_id=agent_session.app_id
@@ -64,7 +69,7 @@ async def claim_next_input(
     await AgentRunRepository(db).create_run(
         run_id=run_id,
         thread_id=agent_session.thread_id,
-        runtime_scope_id=agent_session.thread_id,
+        runtime_scope_id=agent_session.tree_root_thread_id,
         agent_slug=head.agent_slug,
         uid=head.uid,
         turn_id=turn_id,
@@ -77,9 +82,8 @@ async def claim_next_input(
         external_id=head.external_id,
         origin_metadata=head.origin_metadata or {},
         session_record_id=agent_session.id,
-        run_type="subagent" if agent_session.status == "subagent" else "chat",
+        run_type="chat",
         created_by_run_id=(head.origin_metadata or {}).get("created_by_run_id"),
-        subagent_thread_relation_id=(head.origin_metadata or {}).get("subagent_thread_relation_id"),
     )
     await turn_repo.set_current(turn, run_id=run_id)
     await input_repo.consume(input_id=head.id, turn_id=turn_id, run_id=run_id, cutoff_seq=cutoff_seq)
@@ -95,7 +99,7 @@ async def dispatch_next_input(*, uid: str, agent_slug: str, thread_id: str) -> s
             agent_session is None
             or agent_session.uid != uid
             or agent_session.agent_id != agent_slug
-            or agent_session.status not in {"active", "subagent"}
+            or agent_session.status != "active"
         ):
             return None
         dispatch = await claim_next_input(db=db, agent_session=agent_session)
@@ -129,17 +133,17 @@ async def recover_pending_dispatches() -> None:
             ).all()
         )
 
+    failures = 0
     for run in pending:
         try:
             async with pg_manager.get_async_session_context() as db:
                 agent_session = await SessionRepository(db).get_session_by_thread_id(run.thread_id)
-                expected_status = "subagent" if run.run_type == "subagent" else "active"
                 if (
                     agent_session is None
                     or agent_session.uid != run.uid
                     or agent_session.agent_id != run.agent_slug
                     or agent_session.app_id != run.app_id
-                    or agent_session.status != expected_status
+                    or agent_session.status != "active"
                 ):
                     continue
                 current = await AgentRunRepository(db).get_run(run.id)
@@ -151,10 +155,15 @@ async def recover_pending_dispatches() -> None:
                 binding = await resolve_session_workdir_binding(agent_session=agent_session, uid=run.uid, db=db)
             await deliver(Dispatch(run_id=run.id, binding=binding))
         except Exception:
+            failures += 1
             logger.exception("Failed to republish pending AgentRun: %s", run.id)
 
     for uid, agent_slug, thread_id in scopes:
         try:
             await dispatch_next_input(uid=uid, agent_slug=agent_slug, thread_id=thread_id)
         except Exception:
+            failures += 1
             logger.exception("Failed to recover ready AgentInput: %s", thread_id)
+
+    if failures:
+        raise RuntimeError(f"待执行任务补投失败：{failures} 条")

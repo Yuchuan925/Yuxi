@@ -68,7 +68,7 @@ export default defineConfig({
           { text: '中间件', link: '/agents/middleware' },
           { text: 'Skills 管理', link: '/agents/skills-management' },
           { text: 'MCP 集成', link: '/agents/mcp-integration' },
-          { text: '子智能体', link: '/agents/subagents-management' },
+          { text: '会话协作', link: '/agents/session-cooperation' },
           { text: '智能体评估', link: '/agents/agent-evaluation' }
         ]
       },

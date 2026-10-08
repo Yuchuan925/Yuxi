@@ -29,8 +29,3 @@ def hash_id(prefix: str, value: object, length: int = 48) -> str:
     digest_length = max(0, length - len(prefix))
     digest = hashstr(value, length=digest_length) if digest_length else ""
     return f"{prefix}{digest}"
-
-
-def subagent_child_thread_id(parent_thread_id: str, agent_slug: str, tool_call_id: str) -> str:
-    """同步 task 子智能体线程 ID：由父线程、子智能体、工具调用确定性派生（须与事件路由保持一致）。"""
-    return hash_id("subagent_", f"{parent_thread_id}:{agent_slug}:{tool_call_id}", length=64)

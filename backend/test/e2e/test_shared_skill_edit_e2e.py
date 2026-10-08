@@ -107,7 +107,6 @@ async def test_edited_shared_skill_is_loaded_by_next_run(e2e_client: httpx.Async
                         "mcps": [],
                         "skills": [slug],
                         "preload_skills": [slug],
-                        "subagents": [],
                     }
                 },
                 "share_config": {

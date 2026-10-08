@@ -32,7 +32,7 @@ def example_tool(text: str) -> str:
 | `ask_user_question` | 等待用户回答交互式问题 |
 | `ocr_parse_file` | 把工作区中受支持的 PDF、Office 或图片转换为 Markdown |
 | `present_artifacts` | 展示当前用户可见的文件产物 |
-| `install_skill` | 从允许的沙盒路径或 Git 来源安装个人 Skill；子智能体不可用 |
+| `install_skill` | 从允许的沙盒路径或 Git 来源安装个人 Skill |
 | `web_search` | 使用已配置的豆包或 Tavily 搜索网页 |
 
 文件读写和命令执行由 Agent 的 Sandbox backend 提供。`present_artifacts` 推荐展示当前 Project 的 `outputs/` 文件；`large_tool_results` 和会话摘要等内部文件不会作为交付物展示。
@@ -109,7 +109,7 @@ DOUBAO_SEARCH_API_KEY=<your-doubao-key>
 
 内置 Agent 创建 Graph 时执行：
 
-1. `prepare_agent_runtime_context` 按当前用户权限过滤工具、知识库、MCP、Skills 和子智能体。
+1. `prepare_agent_runtime_context` 按当前用户权限过滤工具、知识库、MCP、Skills。
 2. `resolve_configured_runtime_tools(context)` 注册 Agent 配置和可见 Skill 依赖的可执行本地工具，并加载配置的 MCP 工具。
 3. `SkillsMiddleware` 根据当前已预加载或已激活的 Skill，向模型请求开放相应工具 schema。
 4. 工具执行器再次检查具体文件、知识库、MCP 和用户身份。

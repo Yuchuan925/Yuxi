@@ -146,17 +146,17 @@ def _seed_source_filter_sessions() -> tuple[Session, Session, Session, datetime]
         updated_at=now,
         extra_metadata={},
     )
-    subagent = Session(
-        thread_id="thread-subagent",
-        project_id="project-thread-subagent",
+    scheduled = Session(
+        thread_id="thread-scheduled",
+        project_id="project-thread-scheduled",
         uid="user-a",
         agent_id="agent-a",
-        title="Subagent Thread",
+        title="Scheduled Thread",
         status="active",
         is_pinned=True,
         created_at=now,
         updated_at=now + timedelta(minutes=2),
-        extra_metadata={"source": "subagent"},
+        extra_metadata={"source": "scheduled"},
     )
     public_api = Session(
         thread_id="thread-public",
@@ -169,7 +169,7 @@ def _seed_source_filter_sessions() -> tuple[Session, Session, Session, datetime]
         updated_at=now + timedelta(minutes=1),
         extra_metadata={"source": "public_api"},
     )
-    return normal, subagent, public_api, now
+    return normal, scheduled, public_api, now
 
 
 @pytest.mark.asyncio
@@ -337,9 +337,9 @@ async def test_only_state_proven_terminal_model_audit_keeps_tool_call_visible(se
 
 
 @pytest.mark.asyncio
-async def test_list_sessions_excludes_subagent_source(session_session):
-    normal, subagent, public_api, _ = _seed_source_filter_sessions()
-    session_session.add_all([normal, subagent, public_api])
+async def test_list_sessions_includes_different_sources(session_session):
+    normal, scheduled, public_api, _ = _seed_source_filter_sessions()
+    session_session.add_all([normal, scheduled, public_api])
     await session_session.commit()
 
     repo = SessionRepository(session_session)
@@ -347,10 +347,9 @@ async def test_list_sessions_excludes_subagent_source(session_session):
         uid="user-a",
         limit=20,
         offset=0,
-        exclude_sources=("subagent",),
     )
 
-    assert {item.thread_id for item in items} == {"thread-normal", "thread-public"}
+    assert {item.thread_id for item in items} == {"thread-normal", "thread-public", "thread-scheduled"}
 
 
 @pytest.mark.asyncio
@@ -486,15 +485,15 @@ async def test_search_sessions_by_message_content_filters_user_status_and_tool_m
 
 
 @pytest.mark.asyncio
-async def test_search_sessions_by_message_content_excludes_subagent_source(session_session):
-    normal, subagent, public_api, now = _seed_source_filter_sessions()
-    session_session.add_all([normal, subagent, public_api])
+async def test_search_sessions_by_message_content_includes_different_sources(session_session):
+    normal, scheduled, public_api, now = _seed_source_filter_sessions()
+    session_session.add_all([normal, scheduled, public_api])
     await session_session.flush()
     session_session.add_all(
         [
             Message(agent_session=normal, role="user", content="导航隐藏检查", message_type="text", created_at=now),
             Message(
-                agent_session=subagent,
+                agent_session=scheduled,
                 role="user",
                 content="导航隐藏检查 call",
                 message_type="text",
@@ -517,11 +516,10 @@ async def test_search_sessions_by_message_content_excludes_subagent_source(sessi
         query="导航隐藏检查",
         limit=20,
         offset=0,
-        exclude_sources=("subagent",),
     )
 
     assert has_more is False
-    assert {item["agent_session"].thread_id for item in items} == {"thread-normal", "thread-public"}
+    assert {item["agent_session"].thread_id for item in items} == {"thread-normal", "thread-public", "thread-scheduled"}
 
 
 @pytest.mark.asyncio
