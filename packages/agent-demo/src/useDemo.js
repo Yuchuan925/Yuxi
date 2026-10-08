@@ -1,0 +1,557 @@
+import { computed, onMounted, onUnmounted, reactive, watch } from "vue";
+import { createApi, downloadFilename, validateUserId } from "./api.js";
+import {
+  loadConfig,
+  newApp,
+  newId,
+  normalizeBaseUrl,
+  STORAGE_KEY,
+} from "./config.js";
+import {
+  applyEvent,
+  createItems,
+  mergeSnapshot,
+  orderedItems,
+  readEvents,
+} from "./protocol.js";
+
+/** 让重连等待随视图切换一起结束。 */
+function waitForReconnect(signal) {
+  return new Promise((resolve) => {
+    const finish = () => {
+      clearTimeout(timer);
+      signal.removeEventListener("abort", finish);
+      resolve();
+    };
+    const timer = setTimeout(finish, 1500);
+    if (signal.aborted) finish();
+    else signal.addEventListener("abort", finish, { once: true });
+  });
+}
+
+/** 编排独立 Demo 的身份、会话和公开协议。 */
+export function useDemo() {
+  const loaded = loadConfig(localStorage);
+  const config = reactive(loaded.config);
+  const activeApp = computed(() =>
+    config.apps.find((app) => app.id === config.activeAppId),
+  );
+  const state = reactive({
+    connected: false,
+    connecting: false,
+    agents: [],
+    agentId: "",
+    threads: [],
+    hasMore: false,
+    loadingThreads: false,
+    threadId: "",
+    snapshot: null,
+    projection: createItems(),
+    artifacts: [],
+    stream: "idle",
+    error: loaded.error,
+    runError: "",
+    storageError: "",
+    sending: false,
+    pending: null,
+    draft: "",
+    logs: [],
+    downloading: "",
+    answers: {},
+    decisions: {},
+    followScroll: true,
+  });
+  let scope = 0;
+  let view = 0;
+  let listRequest = 0;
+  let historyRequest = 0;
+  let artifactRequest = 0;
+  let identityController;
+  let threadController;
+  let api;
+  let threadApi;
+  const items = computed(() => orderedItems(state.projection));
+  const turn = computed(() => state.snapshot?.current_turn);
+  const waitpoint = computed(() =>
+    turn.value?.status === "waiting" ? turn.value.waitpoint : null,
+  );
+  const waitingForUser = computed(() =>
+    ["answer", "approval"].includes(waitpoint.value?.kind),
+  );
+  const running = computed(() =>
+    ["pending", "running", "waiting", "cancelling"].includes(
+      turn.value?.status,
+    ),
+  );
+  const token = () => ({ scope, view });
+  const current = (owner) => owner.scope === scope && owner.view === view;
+
+  function persist() {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(config));
+      state.storageError = "";
+    } catch {
+      state.storageError = "浏览器无法保存配置，本次修改仅在当前页面有效。";
+    }
+  }
+  watch(config, persist, { deep: true });
+
+  /** 脱敏后只在内存保留最近的公开调试记录。 */
+  function recordLog(entry, key) {
+    const clean = JSON.stringify(entry).replaceAll(key.trim(), "[已隐藏]");
+    state.logs.unshift({
+      ...JSON.parse(clean),
+      time: new Date().toLocaleTimeString("zh-CN"),
+    });
+    state.logs.length = Math.min(state.logs.length, 80);
+  }
+
+  function makeApi(signal) {
+    const ownerScope = scope;
+    const settings = { ...activeApp.value, baseUrl: config.baseUrl };
+    return createApi(settings, {
+      signal,
+      identify: (id) => {
+        if (ownerScope === scope && !activeApp.value.appId)
+          activeApp.value.appId = id;
+      },
+      log: (entry) => {
+        if (ownerScope !== scope) return;
+        recordLog(entry, settings.key);
+      },
+    });
+  }
+
+  function resetThread() {
+    view += 1;
+    threadController?.abort();
+    state.threadId = "";
+    state.snapshot = null;
+    state.runError = "";
+    state.projection = createItems();
+    state.artifacts = [];
+    state.downloading = "";
+    state.stream = "idle";
+    state.pending = null;
+    state.sending = false;
+    state.draft = "";
+    state.answers = {};
+    state.decisions = {};
+    state.followScroll = true;
+  }
+
+  function showError(error, owner) {
+    if (current(owner) && error.name !== "AbortError")
+      state.error = error.message;
+  }
+
+  async function connect() {
+    scope += 1;
+    identityController?.abort();
+    resetThread();
+    identityController = new AbortController();
+    const owner = token();
+    state.connected = false;
+    state.connecting = false;
+    state.agents = [];
+    state.agentId = "";
+    state.threads = [];
+    state.hasMore = false;
+    state.loadingThreads = false;
+    state.logs = [];
+    state.error = "";
+    if (!activeApp.value.key.trim()) return;
+    state.connecting = true;
+    try {
+      api = makeApi(identityController.signal);
+      const result = await api.listAgents();
+      if (!current(owner)) return;
+      state.agents = result.data;
+      state.agentId = result.data[0]?.id || "";
+      state.connected = true;
+      if (state.agentId) await loadThreads();
+    } catch (error) {
+      showError(error, owner);
+    } finally {
+      if (owner.scope === scope) state.connecting = false;
+    }
+  }
+
+  async function loadThreads(more = false) {
+    if (!api || !state.agentId || state.loadingThreads) return;
+    const ownerScope = scope;
+    const agentId = state.agentId;
+    const request = ++listRequest;
+    const stillSelected = () =>
+      ownerScope === scope &&
+      agentId === state.agentId &&
+      request === listRequest;
+    const offset = more ? state.threads.length : 0;
+    state.loadingThreads = true;
+    try {
+      const result = await api.listThreads(agentId, offset);
+      if (!stillSelected()) return;
+      state.threads = more ? [...state.threads, ...result] : result;
+      state.hasMore = result.length === 50;
+    } catch (error) {
+      if (stillSelected() && error.name !== "AbortError")
+        state.error = error.message;
+    } finally {
+      if (stillSelected()) state.loadingThreads = false;
+    }
+  }
+
+  async function selectAgent(id) {
+    resetThread();
+    state.agentId = id;
+    state.error = "";
+    state.threads = [];
+    state.loadingThreads = false;
+    await loadThreads();
+  }
+
+  function syncWaitpoint(previousId) {
+    const point = waitpoint.value;
+    if (point?.id === previousId) return;
+    state.answers = Object.fromEntries(
+      (point?.questions || []).map((question) => [question.question_id, ""]),
+    );
+    state.decisions = Object.fromEntries(
+      (point?.calls || []).map((call) => [call.call_id, ""]),
+    );
+  }
+
+  async function refreshHistory(owner = token()) {
+    if (!current(owner)) return;
+    const request = ++historyRequest;
+    const result = await threadApi.history(state.threadId);
+    if (!current(owner) || request !== historyRequest) return;
+    const previous = waitpoint.value?.id;
+    mergeSnapshot(state.projection, result.items);
+    state.snapshot = result.thread;
+    state.runError =
+      result.runs.find(
+        (run) => run.run_id === result.thread.current_turn?.run_id,
+      )?.error_message || "";
+    syncWaitpoint(previous);
+    const existing = state.threads.findIndex(
+      (thread) => thread.thread_id === state.threadId,
+    );
+    if (existing >= 0) state.threads[existing] = result.thread;
+    else state.threads.unshift(result.thread);
+  }
+
+  async function refreshArtifacts(owner = token()) {
+    if (!current(owner)) return;
+    const request = ++artifactRequest;
+    try {
+      const result = await threadApi.state(state.threadId);
+      if (current(owner) && request === artifactRequest)
+        state.artifacts = result.agent_state.artifacts || [];
+    } catch (error) {
+      showError(error, owner);
+    }
+  }
+
+  async function observe(owner) {
+    const client = threadApi;
+    const id = state.threadId;
+    const signal = threadController.signal;
+    let cursor;
+    while (current(owner) && !signal.aborted) {
+      try {
+        const response = await client.events(id, cursor);
+        if (!current(owner)) {
+          await response.body?.cancel();
+          return;
+        }
+        state.stream = "live";
+        await readEvents(response, async (event, nextCursor) => {
+          if (!current(owner)) return;
+          // 续订 cursor 与逻辑 event_id 分别拥有恢复与去重职责。
+          if (event.session_id && event.session_id !== id)
+            throw new Error("事件流返回了其他 Thread 的事件");
+          recordLog(
+            { kind: "event", type: event.type, data: event },
+            activeApp.value.key,
+          );
+          if (event.type === "yuxi.session.resync") {
+            await refreshHistory(owner);
+          } else {
+            applyEvent(state.projection, event);
+            if (
+              /^agent\.session\.turn\.(created|in_progress|completed|failed|cancelled)$/.test(
+                event.type,
+              ) ||
+              ["yuxi.session.turn.waiting", "yuxi.session.turn.state"].includes(
+                event.type,
+              )
+            ) {
+              await refreshHistory(owner);
+              await refreshArtifacts(owner);
+            }
+          }
+          cursor = nextCursor || cursor;
+        });
+      } catch (error) {
+        if (!current(owner) || signal.aborted) return;
+        if (error.status >= 400 && error.status < 500) {
+          state.stream = "error";
+          state.error = error.message;
+          return;
+        }
+        state.stream = "reconnecting";
+      }
+      if (!current(owner) || signal.aborted) return;
+      state.stream = "reconnecting";
+      await waitForReconnect(signal);
+      try {
+        await refreshHistory(owner);
+      } catch (error) {
+        showError(error, owner);
+      }
+    }
+  }
+
+  async function selectThread(id) {
+    resetThread();
+    state.threadId = id;
+    state.error = "";
+    threadController = new AbortController();
+    threadApi = makeApi(threadController.signal);
+    const owner = token();
+    try {
+      state.stream = "connecting";
+      await refreshHistory(owner);
+      if (!current(owner)) return;
+      await refreshArtifacts(owner);
+      if (current(owner)) void observe(owner);
+    } catch (error) {
+      showError(error, owner);
+      if (current(owner)) state.stream = "error";
+    }
+  }
+
+  async function runCommand(command) {
+    if (state.sending) return;
+    const owner = token();
+    const client = state.threadId ? threadApi : api;
+    state.sending = true;
+    state.error = "";
+    state.pending = command;
+    try {
+      const result = await client.request(command.path, {
+        method: "POST",
+        body: command.body,
+        idempotencyKey: command.key,
+      });
+      if (!current(owner)) return;
+      state.pending = null;
+      if (command.text && state.draft === command.text) state.draft = "";
+      if (command.path === "/threads") {
+        await selectThread(result.thread_id);
+      } else {
+        await refreshHistory(owner);
+        await refreshArtifacts(owner);
+      }
+    } catch (error) {
+      if (!current(owner)) return;
+      // 网络和服务端失败可能已提交；手动重试复用同一意图与幂等键。
+      if (error.status >= 400 && error.status < 500) state.pending = null;
+      showError(error, owner);
+    } finally {
+      if (current(owner)) state.sending = false;
+    }
+  }
+
+  function submitEvent(event) {
+    if (state.pending || !state.threadId || state.sending) return;
+    return runCommand({
+      path: `/threads/${encodeURIComponent(state.threadId)}/events`,
+      body: { events: [event] },
+      key: newId(),
+    });
+  }
+
+  function send() {
+    const text = state.draft.trim();
+    if (
+      !text ||
+      !state.connected ||
+      !state.agentId ||
+      waitingForUser.value ||
+      state.pending ||
+      state.sending ||
+      turn.value?.status === "cancelling" ||
+      state.snapshot?.queue_paused
+    )
+      return;
+    const input = [{ role: "user", content: [{ type: "input_text", text }] }];
+    const command = { text: state.draft, key: newId() };
+    if (state.threadId) {
+      command.path = `/threads/${encodeURIComponent(state.threadId)}/events`;
+      command.body = {
+        events: [
+          {
+            type: "agent.session.input.message",
+            input,
+            yuxi: { mode: "follow_up" },
+          },
+        ],
+      };
+    } else {
+      command.path = "/threads";
+      command.body = {
+        agent_id: state.agentId,
+        title: text.slice(0, 40),
+        input,
+      };
+    }
+    return runCommand(command);
+  }
+
+  function resume() {
+    const point = waitpoint.value;
+    if (!point) return;
+    let response;
+    if (point.kind === "answer") {
+      const answers = point.questions.map((question) => ({
+        question_id: question.question_id,
+        answer: state.answers[question.question_id],
+      }));
+      if (answers.some((answer) => !answer.answer?.trim())) return;
+      response = { type: "answer", answers };
+    } else if (point.kind === "approval") {
+      const decisions = point.calls.map((call) => ({
+        call_id: call.call_id,
+        decision: state.decisions[call.call_id],
+      }));
+      if (decisions.some((decision) => !decision.decision)) return;
+      response = { type: "approval", decisions };
+    } else return;
+    return submitEvent({
+      type: "yuxi.session.input.resume",
+      turn_id: turn.value.turn_id,
+      waitpoint_id: point.id,
+      response,
+    });
+  }
+
+  async function download(path) {
+    if (state.downloading) return;
+    const owner = token();
+    state.downloading = path;
+    try {
+      const response = await threadApi.download(state.threadId, path);
+      const blob = await response.blob();
+      if (!current(owner)) return;
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = downloadFilename(
+        response.headers.get("Content-Disposition"),
+        path,
+      );
+      link.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (error) {
+      showError(error, owner);
+    } finally {
+      if (current(owner)) state.downloading = "";
+    }
+  }
+
+  function saveConnection(form) {
+    try {
+      config.baseUrl = normalizeBaseUrl(form.baseUrl);
+      activeApp.value.name = form.name.trim() || "演示 APP";
+      activeApp.value.key = form.key.trim();
+      activeApp.value.appId = form.appId.trim();
+      persist();
+      void connect();
+    } catch (error) {
+      state.error = error.message;
+    }
+  }
+
+  function addApp() {
+    const app = newApp(config.apps.length + 1);
+    config.apps.push(app);
+    config.activeAppId = app.id;
+  }
+
+  function addUser(name, id) {
+    try {
+      validateUserId(id);
+    } catch (error) {
+      state.error = error.message;
+      return false;
+    }
+    const identity = id.trim();
+    if (!identity || identity.length > 128 || identity === "__default__") {
+      state.error = "用户 ID 需要 1–128 个字符，且不能使用保留 ID __default__";
+      return false;
+    }
+    if (activeApp.value.users.some((user) => user.id === identity)) {
+      state.error = "这个用户 ID 已存在";
+      return false;
+    }
+    activeApp.value.users.push({ id: identity, name: name.trim() || identity });
+    activeApp.value.userId = identity;
+    return true;
+  }
+
+  watch(
+    [() => config.activeAppId, () => activeApp.value.userId],
+    () => void connect(),
+  );
+  onMounted(() => {
+    if (activeApp.value.key) void connect();
+  });
+  onUnmounted(() => {
+    identityController?.abort();
+    threadController?.abort();
+  });
+
+  return {
+    config,
+    activeApp,
+    state,
+    items,
+    turn,
+    waitpoint,
+    running,
+    waitingForUser,
+    connect,
+    saveConnection,
+    addApp,
+    addUser,
+    loadThreads,
+    selectAgent,
+    selectThread,
+    newThread: resetThread,
+    send,
+    resume,
+    download,
+    retry: () => state.pending && runCommand(state.pending),
+    cancel: () =>
+      submitEvent({
+        type: "agent.session.input.cancel",
+        yuxi: {
+          turn_id: turn.value.turn_id,
+          expected_run_id: turn.value.run_id,
+        },
+      }),
+    continueQueue: () => submitEvent({ type: "yuxi.session.input.continue" }),
+    refresh: async () => {
+      const owner = token();
+      if (!state.threadId) return;
+      try {
+        await refreshHistory(owner);
+        await refreshArtifacts(owner);
+      } catch (error) {
+        showError(error, owner);
+      }
+    },
+  };
+}
