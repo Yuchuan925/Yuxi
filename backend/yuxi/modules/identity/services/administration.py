@@ -41,6 +41,7 @@ async def list_managed_users_page(
     department_id: int | None,
     role: str | None,
     search: str | None,
+    user_kind: str | None = "human",
 ) -> dict:
     """返回管理员可见范围内的用户分页。"""
     effective_department_id = department_id if is_superadmin else visible_department_id
@@ -52,11 +53,13 @@ async def list_managed_users_page(
         department_id=effective_department_id,
         role=role,
         search=search,
+        user_kind=user_kind,
     )
     items = []
     for user, department_name in rows:
         item = user.to_dict()
         item["department_name"] = department_name
+        item["app_id"] = user.app_id
         items.append(item)
     return {"items": items, "total": total, "limit": limit, "offset": offset}
 

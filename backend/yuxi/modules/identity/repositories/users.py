@@ -173,9 +173,9 @@ class UserRepository:
     async def list_users(
         self, skip: int = 0, limit: int = 100, department_id: int | None = None, role: str | None = None
     ) -> list[User]:
-        """获取用户列表"""
+        """获取有效系统用户列表，终端用户仅由管理分页显式查询。"""
         async with self._session() as session:
-            query = select(User).where(User.is_deleted == 0)
+            query = select(User).where(User.is_deleted == 0, User.user_kind == "human")
             if department_id is not None:
                 query = query.where(User.department_id == department_id)
             if role is not None:
@@ -187,14 +187,14 @@ class UserRepository:
     async def list_with_department(
         self, skip: int = 0, limit: int = 100, department_id: int | None = None, role: str | None = None
     ) -> Annotated[list[tuple[User, str | None]], "用户列表，包含部门名称"]:
-        """获取用户列表，包含部门名称"""
+        """获取有效系统用户及部门名称。"""
         async with self._session() as session:
             from yuxi.modules.identity.models import Department
 
             query = (
                 select(User, Department.name.label("department_name"))
                 .outerjoin(Department, User.department_id == Department.id)
-                .where(User.is_deleted == 0)
+                .where(User.is_deleted == 0, User.user_kind == "human")
             )
             if department_id is not None:
                 query = query.where(User.department_id == department_id)
@@ -212,12 +212,15 @@ class UserRepository:
         department_id: int | None = None,
         role: str | None = None,
         search: str | None = None,
+        user_kind: str | None = "human",
     ) -> tuple[list[tuple[User, str | None]], int]:
         """分页查询有效用户，并返回过滤后的总数。"""
         async with self._session() as session:
             from yuxi.modules.identity.models import Department
 
             filters = [User.is_deleted == 0]
+            if user_kind is not None:
+                filters.append(User.user_kind == user_kind)
             if department_id is not None:
                 filters.append(User.department_id == department_id)
             if role is not None:
@@ -347,16 +350,16 @@ class UserRepository:
             return result.scalar_one_or_none() is not None
 
     async def count(self, department_id: int | None = None) -> int:
-        """统计用户数量"""
+        """统计有效系统用户数量。"""
         async with self._session() as session:
-            query = select(func.count(User.id)).where(User.is_deleted == 0)
+            query = select(func.count(User.id)).where(User.is_deleted == 0, User.user_kind == "human")
             if department_id is not None:
                 query = query.where(User.department_id == department_id)
             result = await session.execute(query)
             return result.scalar() or 0
 
     async def get_all_uids(self) -> list[str]:
-        """获取所有 uid"""
+        """读取完整身份空间的 UID，供账号创建检查唯一性。"""
         async with self._session() as session:
             result = await session.execute(select(User.uid))
             return [uid for (uid,) in result.all()]

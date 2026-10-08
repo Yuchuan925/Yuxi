@@ -371,7 +371,8 @@ watch(
 
 // Provide settings modal methods to child components
 provide('settingsModal', {
-  openSettingsModal
+  openSettingsModal,
+  closeSettingsModal: () => { showSettingsModal.value = false }
 })
 </script>
 
@@ -642,7 +643,7 @@ div.header,
     height: 100%;
     min-height: 0;
     overflow: hidden;
-    padding-left: @sidebar-padding-x;
+    padding: 0 @sidebar-padding-x;
   }
 
   .sidebar-brand,

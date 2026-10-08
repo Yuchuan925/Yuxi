@@ -182,7 +182,7 @@
     </a-modal>
 
     <a-modal
-      :open="previewModalVisible && !useInlinePreview"
+      :open="workspaceActive && previewModalVisible && !useInlinePreview"
       width="880px"
       :style="{ maxWidth: '92vw', top: '5vh' }"
       :bodyStyle="{ height: '82vh', maxHeight: '90vh', padding: '0', overflow: 'hidden' }"
@@ -210,8 +210,8 @@
 </template>
 
 <script setup>
-import { computed, onActivated, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { computed, onActivated, onDeactivated, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { message, Modal } from 'ant-design-vue'
 import { ChevronLeft, ChevronRight, CircleHelp, LibraryBig, Search } from '@lucide/vue'
 import PageHeader from '@/shared/ui/PageHeader.vue'
@@ -240,6 +240,7 @@ import { parseDownloadFilename } from '@/shared/lib/file_utils'
 
 const userStore = useUserStore()
 const route = useRoute()
+const router = useRouter()
 
 const activeSourceKey = ref('personal')
 const currentPath = ref('/')
@@ -262,7 +263,14 @@ const openFileByPath = async (path) => {
   const parentPath = String(path).replace(/\/[^/]+$/, '') || '/'
   await selectWorkspacePath(parentPath)
   const matched = entries.value.find((item) => item.path === String(path))
-  if (matched) await loadWorkspacePreview(matched)
+  if (!matched) return
+  await loadWorkspacePreview(matched)
+  // 消费本次打开请求，同一路径在预览收起后也可以再次打开。
+  if (route.path === '/workspace' && route.query.open === path) {
+    const query = { ...route.query }
+    delete query.open
+    await router.replace({ query })
+  }
 }
 const knowledgeBreadcrumbItems = ref([])
 const workspaceBreadcrumbItems = ref(null)
@@ -282,6 +290,7 @@ const databases = ref([])
 const selectedDatabase = ref(null)
 const workspaceMainRef = ref(null)
 const workspaceMainWidth = ref(0)
+const workspaceActive = ref(true)
 const createDirectoryModalVisible = ref(false)
 const agentsGuideModalVisible = ref(false)
 const newDirectoryName = ref('')
@@ -933,6 +942,8 @@ onMounted(async () => {
 })
 
 onActivated(async () => {
+  workspaceMainWidth.value = workspaceMainRef.value?.clientWidth || 0
+  workspaceActive.value = true
   if (!workspaceMounted || activeSourceKey.value !== 'personal') return
   await loadWorkspaceEntries(currentPath.value)
   if (!selectedEntry.value?.path) return
@@ -942,6 +953,11 @@ onActivated(async () => {
   } else {
     closePreview()
   }
+})
+
+onDeactivated(() => {
+  workspaceActive.value = false
+  stopPreviewResize()
 })
 
 watch(
@@ -958,7 +974,9 @@ onUnmounted(() => {
   revokePreviewObjectUrl()
 })
 
-watch(useInlinePreview, (isInline, wasInline) => {
+watch([useInlinePreview, workspaceActive], ([isInline, isActive]) => {
+  // KeepAlive 隐藏页面后的零宽度不代表用户切换到窄屏。
+  if (!isActive) return
   if (!previewFile.value) {
     previewModalVisible.value = false
     inlinePreviewVisible.value = false
@@ -971,7 +989,7 @@ watch(useInlinePreview, (isInline, wasInline) => {
     return
   }
 
-  if (wasInline) {
+  if (inlinePreviewVisible.value) {
     previewModalVisible.value = true
     inlinePreviewVisible.value = false
   }
@@ -1120,8 +1138,8 @@ watch(useInlinePreview, (isInline, wasInline) => {
 }
 
 .workspace-preview-resizer {
-  width: 3px;
-  min-width: 3px;
+  width: 1px;
+  min-width: 1px;
   background: var(--gray-100);
   cursor: col-resize;
   flex-shrink: 0;

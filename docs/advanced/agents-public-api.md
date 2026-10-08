@@ -8,6 +8,8 @@
 
 所有 APP 终端用户，包括默认终端用户，都无法发现、读取或运行私有 Agent。JWT 和未绑定 APP 的个人 `full` Key 可使用自己的私有 Agent；系统管理员治理其他人的私有定义使用产品管理接口。完整规则见[资源权限](../mechanisms/resource-permissions.md)。
 
+系统的用户列表和共享候选默认只显示系统用户。管理员在用户管理中通过“用户类型”筛选显式查看 APP 终端用户或全部类型，“所属部门/实例”列显示终端用户的 `app_id`。长用户名和 ID 在列表中缩略，点击用户信息可查看完整值。
+
 ## Thread、Turn、Run 与 Input
 
 Thread 是长期对话，Turn 是一轮工作，Run 是其中一段有执行 owner 的运行。普通消息先保存为 Input，`follow_up` 彼此 FIFO，`steer` 合并为唯一的待消费优先批次。线程空闲且队列未暂停时领取优先队头并创建 Turn/Run；运行中在安全边界消费 steer，在同一 Turn 创建下一 Run。回答或审批消费明确等待点，也在同一 Turn 创建下一 Run。接收响应中的 `event_id`、`input_id` 和状态只证明持久接收；工作结果通过 Turn 查询。

@@ -46,11 +46,11 @@ async def test_user_config_routes_scope_to_current_user(session):
     db, user_a, user_b = session
 
     own_config = await update_user_config(
-        UserConfigSchema(enable_memory=True),
+        UserConfigSchema(enable_memory=False),
         current_user=user_a,
         db=db,
     )
     other_config = await get_user_config(current_user=user_b, db=db)
 
-    assert own_config["enable_memory"] is True
-    assert other_config["enable_memory"] is False
+    assert own_config["enable_memory"] is False
+    assert other_config["enable_memory"] is True

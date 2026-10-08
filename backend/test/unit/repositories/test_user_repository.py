@@ -104,3 +104,40 @@ async def test_soft_delete_tombstones_all_api_keys_without_rewriting_history(use
     assert keys[0].revoked_at is not None
     assert keys[1].is_enabled is False
     assert keys[1].revoked_at == previous_revocation
+
+
+async def test_user_page_defaults_to_humans_and_filters_kind_before_counting(user_session) -> None:
+    """按真实类型筛选，长 ID 前缀不影响系统用户的可见性。"""
+    session, owner, _keys, _revocation = user_session
+    human = User(username="endusr_human", uid="endusr_human", password_hash="!disabled", role="user")
+    end_user = User(
+        username="visitor",
+        uid="endusr_visitor",
+        password_hash="!disabled",
+        role="user",
+        user_kind="end_user",
+        owner_user_id=owner.id,
+        app_id="support-app",
+        end_user_id="visitor",
+    )
+    session.add_all([human, end_user])
+    await session.commit()
+    repo = UserRepository(session)
+    rows, total = await repo.list_page_with_department(offset=0, limit=1, search="endusr_")
+    assert total == 1
+    assert [row[0].id for row in rows] == [human.id]
+    rows, total = await repo.list_page_with_department(offset=0, limit=1, search="endusr_", user_kind="end_user")
+    assert total == 1
+    assert [row[0].id for row in rows] == [end_user.id]
+    rows, total = await repo.list_page_with_department(offset=1, limit=1, search="endusr_", user_kind=None)
+    assert total == 2
+    assert [row[0].id for row in rows] == [end_user.id]
+
+    assert [item.id for item in await repo.list_users(skip=1, limit=1)] == [human.id]
+    assert [item.id for item in await repo.list_users(skip=2, limit=1)] == []
+    assert [row[0].id for row in await repo.list_with_department(skip=1, limit=1)] == [human.id]
+    assert [row[0].id for row in await repo.list_with_department(skip=2, limit=1)] == []
+    assert await repo.count() == 2
+    assert end_user.uid in await repo.get_all_uids()
+    assert (await repo.get_by_uid(end_user.uid)).id == end_user.id
+    assert (await repo.get_by_username(end_user.username)).id == end_user.id

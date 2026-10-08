@@ -2,6 +2,40 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { createItemState, applyAgentEvent, mergeItemSnapshot, itemsToMessages } from '../../src/modules/session/model/agentItems.js'
 
+test('内部恢复输入不显示用户气泡，普通 JSON 输入和协作工具结果保留', () => {
+  const content = '{"results":[{"output":"子任务完成"}]}'
+  const user = { id: 'input-user', type: 'message', role: 'user', status: 'completed',
+    content: [{ type: 'input_text', text: content }], turn_id: 'turn',
+    yuxi: { run_id: 'run', message_id: 1, message_type: 'text' } }
+  const resume = { ...user, id: 'input-resume',
+    yuxi: { ...user.yuxi, message_id: 2, message_type: 'resume' } }
+  const call = { id: 'wait-call', type: 'function_call', call_id: 'wait', name: 'wait_inputs',
+    arguments: {}, status: 'completed', turn_id: 'turn',
+    yuxi: { run_id: 'run', message_id: 3 } }
+  const output = { id: 'wait-output', type: 'function_call_output', call_id: 'wait',
+    output: content, status: 'completed', turn_id: 'turn',
+    yuxi: { run_id: 'run', message_id: 4, call_item_id: call.id } }
+
+  for (const source of ['stream', 'snapshot']) {
+    const state = createItemState()
+    const items = [user, resume, call, output]
+    if (source === 'stream') {
+      for (const item of items) {
+        applyAgentEvent(state, { event_id: `added-${item.id}`,
+          type: 'agent.session.turn.item.added', item })
+      }
+    } else {
+      mergeItemSnapshot(state, items)
+    }
+    const views = itemsToMessages(Object.values(state.items))
+    assert.deepEqual(views.map((view) => view.id), [user.id, call.id], source)
+    assert.equal(views[0].content, content)
+    assert.equal(views[1].tool_calls[0].tool_call_result.content, content)
+    assert.equal(views[1].tool_calls[0].status, 'success')
+    assert.deepEqual(state.items[resume.id], resume)
+  }
+})
+
 const message = (id = 'm', status = 'in_progress') => ({
   id, type: 'message', role: 'assistant', turn_id: 'turn', status, phase: 'commentary',
   content: [{ type: 'output_text', text: '' }, { type: 'output_text', text: '' }],

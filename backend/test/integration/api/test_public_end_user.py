@@ -69,6 +69,53 @@ async def test_public_end_user_identity_is_unique_and_cannot_enter_product_api(t
         assert all(row["role"] == "user" and row["user_kind"] == "end_user" for row in rows)
         assert all(row["department_id"] is None for row in rows)
 
+        expected_uids = await conn.fetch(
+            "SELECT uid FROM users WHERE is_deleted = 0 AND user_kind = 'human' ORDER BY id"
+        )
+        for endpoint in ("/api/auth/users", "/api/auth/users/access-options"):
+            directory_uids = []
+            for skip in range(0, len(expected_uids) + 2, 2):
+                directory = await test_client.get(
+                    endpoint, headers=admin_headers, params={"skip": skip, "limit": 2}
+                )
+                assert directory.status_code == 200, directory.text
+                items = directory.json()
+                directory_uids.extend(item["uid"] for item in items)
+                if len(items) < 2:
+                    break
+            assert directory_uids == [row["uid"] for row in expected_uids]
+
+        occupied_name = f"visitor_{marker[:12]}"
+        await conn.execute("UPDATE users SET username = $1 WHERE id = $2", occupied_name, rows[0]["id"])
+        duplicate = await test_client.post(
+            "/api/auth/users",
+            headers=admin_headers,
+            json={"username": occupied_name, "password": "Duplicate-test-password-123", "role": "user"},
+        )
+        assert duplicate.status_code == 400, duplicate.text
+        assert duplicate.json()["detail"] == "用户名已存在"
+
+        hidden = await test_client.get("/api/auth/users/page", headers=admin_headers, params={"search": rows[0]["uid"]})
+        assert hidden.status_code == 200, hidden.text
+        assert hidden.json()["total"] == 0
+        assert hidden.json()["items"] == []
+        for kind in ("end_user", "all"):
+            visible = await test_client.get(
+                "/api/auth/users/page",
+                headers=admin_headers,
+                params={"search": rows[0]["uid"], "user_kind": kind, "limit": 1},
+            )
+            assert visible.status_code == 200, visible.text
+            page = visible.json()
+            assert page["total"] == 1
+            assert [(item["id"], item["user_kind"], item["app_id"]) for item in page["items"]] == [
+                (rows[0]["id"], "end_user", rows[0]["app_id"])
+            ]
+        invalid_kind = await test_client.get(
+            "/api/auth/users/page", headers=admin_headers, params={"user_kind": "unknown"}
+        )
+        assert invalid_kind.status_code == 422, invalid_kind.text
+
         end_user = rows[0]
         login = await test_client.post(
             "/api/auth/token", data={"username": end_user["uid"], "password": "not-a-password"}

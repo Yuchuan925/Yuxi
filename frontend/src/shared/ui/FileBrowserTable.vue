@@ -56,6 +56,7 @@
       :row-class-name="resolveRowClassName"
       :custom-row="resolveCustomRow"
       class="file-browser-ant-table"
+      :class="{ 'is-empty': !rows.length }"
       size="small"
       @change="handleTableChange"
     >
@@ -442,6 +443,18 @@ const handleTableChange = (pagination, filters, sorter, extra) => {
   min-width: 100%;
 }
 
+.file-browser-ant-table.is-empty :deep(.ant-table-container),
+.file-browser-ant-table.is-empty :deep(.ant-table-content),
+.file-browser-ant-table.is-empty :deep(table) {
+  height: 100%;
+}
+
+.file-browser-ant-table :deep(.ant-table-tbody > tr.ant-table-placeholder > td),
+.file-browser-ant-table :deep(.ant-table-tbody > tr.ant-table-placeholder:hover > td) {
+  background: var(--gray-0);
+  border-bottom: 0;
+}
+
 .file-browser-ant-table :deep(.ant-table-thead > tr > th) {
   position: sticky;
   top: 0;
@@ -471,7 +484,7 @@ const handleTableChange = (pagination, filters, sorter, extra) => {
   cursor: pointer;
 }
 
-.file-browser-ant-table :deep(.ant-table-tbody > tr:hover > td) {
+.file-browser-ant-table :deep(.ant-table-tbody > tr:not(.ant-table-placeholder):hover > td) {
   background: var(--main-20);
   color: var(--gray-1000);
 }

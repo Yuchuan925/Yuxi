@@ -9,7 +9,10 @@
 
     <section v-for="scope in scopeOptions" :key="scope.key" class="permission-scope-section">
       <div class="permission-scope-header" :class="{ 'has-content': Boolean(scopes[scope.key]) }">
-        <h4>{{ scope.title }}</h4>
+        <div class="permission-scope-label">
+          <h4>{{ scope.title }}</h4>
+          <p v-if="scope.description" class="permission-scope-description">{{ scope.description }}</p>
+        </div>
         <a-switch
           size="small"
           v-if="scope.key !== 'read_scope' || !requireReadScope"
@@ -201,7 +204,7 @@ const emit = defineEmits(['update:modelValue'])
 
 const scopeOptions = [
   { key: 'read_scope', title: '读取权限' },
-  { key: 'manage_scope', title: '管理权限（仅管理员生效，包含使用）' }
+  { key: 'manage_scope', title: '管理权限', description: '仅管理员生效，包含使用权限' }
 ]
 
 const baseShareModeOptions = [
@@ -469,6 +472,9 @@ defineExpose({ scopes, validate })
 
 <style lang="less" scoped>
 .share-config-form {
+  container-type: inline-size;
+  container-name: agent-sharing;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   border-top: 1px solid var(--gray-150);
@@ -492,10 +498,28 @@ defineExpose({ scopes, validate })
   }
 }
 
+.permission-scope-label {
+  flex: 1;
+  min-width: 0;
+}
+
+.permission-scope-description {
+  margin: 4px 0 0;
+  color: var(--gray-500);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
 .permission-scope-header h4 {
   margin: 0;
   color: var(--gray-800);
   font-size: 14px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.permission-scope-header :deep(.ant-switch) {
+  flex-shrink: 0;
 }
 
 .share-mode-cards {
@@ -537,7 +561,8 @@ defineExpose({ scopes, validate })
   font-size: 13px;
   font-weight: 600;
   line-height: 20px;
-  height: 20px;
+  min-height: 20px;
+  white-space: nowrap;
   display: flex;
   align-items: center;
 }
@@ -549,6 +574,7 @@ defineExpose({ scopes, validate })
 }
 
 .card-icon-wrapper {
+  flex-shrink: 0;
   display: inline-flex;
   align-items: center;
   color: var(--main-color);
@@ -578,7 +604,7 @@ defineExpose({ scopes, validate })
 }
 
 .selection-dropdown {
-  width: 280px;
+  width: min(280px, calc(100vw - 64px));
   padding: 10px;
   border: 1px solid var(--gray-200);
   border-radius: 8px;
@@ -639,9 +665,82 @@ defineExpose({ scopes, validate })
   white-space: nowrap;
 }
 
-@media (max-width: 768px) {
+@container agent-sharing (max-width: 559px) {
+  .permission-scope-section + .permission-scope-section {
+    border-top: 1px solid var(--gray-150);
+  }
+
+  .permission-scope-section:last-of-type {
+    padding-bottom: 0;
+  }
+
   .share-mode-cards {
-    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+
+  .share-mode-card {
+    position: relative;
+    padding: 12px 6px 10px;
+    border-radius: 8px;
+  }
+
+  .share-mode-card:focus-visible {
+    outline: 2px solid var(--main-color);
+    outline-offset: 2px;
+  }
+
+  .card-main,
+  .card-header {
+    position: static;
+  }
+
+  .card-header {
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .card-title {
+    flex: none;
+    justify-content: center;
+    font-size: 12px;
+  }
+
+  .card-description {
+    display: none;
+  }
+
+  .card-icon-wrapper {
+    color: var(--gray-500);
+  }
+
+  .active .card-icon-wrapper,
+  .active .card-title {
+    color: var(--main-color);
+  }
+
+  .card-action {
+    position: absolute;
+    top: -8px;
+    right: 4px;
+    height: 20px;
+
+    :deep(.ant-btn) {
+      min-width: 22px;
+      height: 20px;
+      padding: 0 4px;
+      border-radius: 6px;
+      color: var(--main-color);
+      font-variant-numeric: tabular-nums;
+      box-shadow: none;
+    }
+  }
+
+  .select-action-icon {
+    display: none;
+  }
+
+  .access-count {
+    margin: 0;
   }
 }
 </style>

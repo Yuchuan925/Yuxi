@@ -712,7 +712,7 @@
             </section>
 
             <CooperationTree
-              v-if="cooperationSessions.length || cooperationError"
+              v-if="cooperationSessions.length > 1 || cooperationError"
               compact
               :sessions="cooperationSessions"
               :current-id="currentChatId"

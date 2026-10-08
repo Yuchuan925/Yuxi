@@ -29,10 +29,11 @@
                 <a-button
                   @click="onQuery"
                   :loading="searchLoading"
-                  class="search-button"
+                  class="search-button lucide-icon-btn"
                   type="primary"
                   :disabled="!queryText.trim()"
-                  :icon="h(SearchOutlined)"
+                  :icon="h(SearchOutlined, { size: 18 })"
+                  aria-label="检索知识库"
                   shape="circle"
                 />
               </div>
@@ -442,6 +443,10 @@ defineExpose({
 }
 
 .search-button {
+  width: 32px;
+  min-width: 32px;
+  height: 32px;
+  padding: 0;
   background-color: var(--main-color);
   border-color: var(--main-color);
   box-shadow: 0 2px 4px var(--shadow-3);

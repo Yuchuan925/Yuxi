@@ -16,7 +16,7 @@ from yuxi.shared.datetime import format_utc_datetime, utc_now
 class UserConfigSchema(BaseModel):
     """用户专属配置 schema。"""
 
-    enable_memory: bool = Field(default=False, description="是否启用 Memory")
+    enable_memory: bool = Field(default=True, description="是否启用 Memory")
 
     model_config = ConfigDict(extra="forbid")
 

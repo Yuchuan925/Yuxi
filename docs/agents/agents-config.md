@@ -56,7 +56,7 @@ metadata 可以定义展示名称、说明、控件类型、选项和角色权�
 | --- | --- |
 | `system_prompt` | 智能体角色和行为说明 |
 | `model` | 主模型；留空时使用系统默认模型 |
-| `tool_approval_mode` | `default` 或 `always_trust`；仅管理员可配置 |
+| `tool_approval_mode` | `default` 或 `always_trust`；保留在 Context 中，配置表单隐藏 |
 | `tools` | 可使用的内置工具 |
 | `knowledges` | 可检索的知识库范围 |
 | `mcps` | 直接添加到 Agent 的已启用 MCP 服务器 |

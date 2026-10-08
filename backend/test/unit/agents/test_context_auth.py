@@ -43,6 +43,17 @@ def test_summary_default_and_schema_preserve_explicit_overrides():
     assert BaseContext(summary_threshold=37).summary_threshold == 37
 
 
+def test_tool_approval_is_hidden_in_form_but_preserved_in_context():
+    """审批字段仅从表单隐藏，仍可保存并用于运行。"""
+    for role in ("user", "admin", "superadmin", None):
+        assert "tool_approval_mode" not in BaseContext.get_configurable_items(user_role=role)
+    saved = {"context": {"tool_approval_mode": "always_trust"}}
+    assert filter_config_by_role(saved, "admin", BaseContext) == saved
+    context = BaseContext()
+    context.update_config(saved["context"])
+    assert context.tool_approval_mode == "always_trust"
+
+
 @dataclass(kw_only=True)
 class ChatBotContext(BaseContext):
     pass

@@ -103,8 +103,15 @@ class UserResponse(BaseModel):
     last_login: str | None = None
 
 
+class ManagedUserResponse(UserResponse):
+    """用户管理列表中的身份类型与 APP 来源。"""
+
+    user_kind: Literal["human", "end_user"]
+    app_id: str | None = None
+
+
 class UserPageResponse(BaseModel):
-    items: list[UserResponse]
+    items: list[ManagedUserResponse]
     total: int
     limit: int
     offset: int
@@ -523,8 +530,7 @@ async def create_user(
         )
 
     # 检查用户名是否已存在
-    users = await user_repo.list_users()
-    if any(u.username == user_data.username for u in users):
+    if await user_repo.get_by_username(user_data.username) is not None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="用户名已存在",
@@ -601,6 +607,7 @@ async def read_users_page(
     search: str | None = Query(None, max_length=100),
     department_id: int | None = Query(None, ge=1),
     role: Literal["superadmin", "admin", "user"] | None = None,
+    user_kind: Literal["human", "end_user", "all"] = "human",
     current_user: User = Depends(get_admin_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -614,6 +621,7 @@ async def read_users_page(
         department_id=department_id,
         role=role,
         search=search.strip() if search else None,
+        user_kind=None if user_kind == "all" else user_kind,
     )
 
 

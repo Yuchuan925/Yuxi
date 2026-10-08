@@ -44,6 +44,11 @@ body {
   }
 }
 
+/* 图标在紧凑的 flex 行中保持比例，避免窄屏横向压扁。 */
+.lucide {
+  flex-shrink: 0;
+}
+
 .lucide-icon-btn {
   display: inline-flex;
   align-items: center;

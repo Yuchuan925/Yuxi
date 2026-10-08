@@ -6,6 +6,7 @@
           <div class="config-meta">
             <div class="config-title-line">
               <span class="config-title">是否启用 Memory</span>
+              <button type="button" class="memory-view-button" @click="viewMemory">查看 Memory</button>
             </div>
           </div>
           <a-switch :checked="draftEnableMemory" @change="handleMemoryChange" />
@@ -16,7 +17,8 @@
 </template>
 
 <script setup>
-import { onMounted, ref } from 'vue'
+import { inject, onMounted, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { message } from 'ant-design-vue'
 import { userConfigApi } from '@/apis/user_config_api'
 
@@ -24,6 +26,14 @@ const loading = ref(false)
 const saving = ref(false)
 const draftEnableMemory = ref(false)
 const savedEnableMemory = ref(false)
+const router = useRouter()
+const settingsModal = inject('settingsModal')
+
+/** 打开个人 Memory 文件并收起账户设置。 */
+const viewMemory = async () => {
+  await router.push({ path: '/workspace', query: { open: '/agents/MEMORY.md' } })
+  settingsModal.closeSettingsModal()
+}
 
 const applyResponse = (res) => {
   draftEnableMemory.value = res.enable_memory
@@ -100,6 +110,28 @@ defineExpose({ refresh: loadUserConfig })
     font-size: 14px;
     font-weight: 500;
     line-height: 1.4;
+  }
+
+  .memory-view-button {
+    border: 1px solid var(--gray-150);
+    border-radius: 999px;
+    background: var(--gray-0);
+    color: var(--color-text-secondary);
+    padding: 3px 10px;
+    font: inherit;
+    font-size: 12px;
+    line-height: 20px;
+    cursor: pointer;
+
+    &:hover {
+      background: var(--gray-50);
+      color: var(--main-color);
+    }
+
+    &:focus-visible {
+      outline: 2px solid var(--main-color);
+      outline-offset: 2px;
+    }
   }
 }
 </style>

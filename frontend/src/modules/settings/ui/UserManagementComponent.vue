@@ -36,6 +36,12 @@
         <template #prefix><Search :size="16" /></template>
       </a-input>
       <div class="filter-actions">
+        <label for="managed-user-kind" class="filter-label">用户类型</label>
+        <a-select id="managed-user-kind" v-model:value="userManagement.userKindFilter" class="filter-select user-kind-select">
+          <a-select-option value="human">系统用户</a-select-option>
+          <a-select-option value="end_user">APP 终端用户</a-select-option>
+          <a-select-option value="all">全部用户类型</a-select-option>
+        </a-select>
         <a-select v-model:value="userManagement.departmentFilter" class="filter-select">
           <a-select-option value="">全部部门</a-select-option>
           <a-select-option
@@ -69,6 +75,8 @@
               :columns="columns"
               :rowKey="(record) => record.id"
               :pagination="false"
+              table-layout="fixed"
+              :scroll="{ x: 760 }"
               class="settings-table"
             >
               <template #bodyCell="{ column, record }">
@@ -84,10 +92,19 @@
                       :alt="record.username"
                       class="user-avatar"
                     />
-                    <div class="user-meta">
-                      <span class="user-name" :title="record.username">{{ record.username }}</span>
-                      <span v-if="record.uid" class="user-uid">ID: {{ record.uid }}</span>
-                    </div>
+                    <a-popover trigger="click" title="用户信息">
+                      <template #content>
+                        <div class="user-identity-details">
+                          <div>用户名：{{ record.username }}</div>
+                          <div>ID：{{ record.uid }}</div>
+                          <div v-if="record.user_kind === 'end_user'">APP 实例：{{ record.app_id }}</div>
+                        </div>
+                      </template>
+                      <button type="button" class="user-meta" aria-label="查看完整用户信息">
+                        <span class="user-name">{{ record.username }}</span>
+                        <span v-if="record.uid" class="user-uid">ID: {{ record.uid }}</span>
+                      </button>
+                    </a-popover>
                   </div>
                 </template>
                 <template v-if="column.key === 'role'">
@@ -99,7 +116,9 @@
                   </span>
                 </template>
                 <template v-if="column.key === 'department'">
-                  <span class="dept-text">{{ record.department_name || '-' }}</span>
+                  <span class="dept-text" :title="record.user_kind === 'end_user' ? record.app_id : record.department_name">
+                    {{ record.user_kind === 'end_user' ? record.app_id : record.department_name || '-' }}
+                  </span>
                 </template>
                 <template v-if="column.key === 'phone'">
                   <span class="phone-text">{{ record.phone_number || '-' }}</span>
@@ -109,12 +128,12 @@
                 </template>
                 <template v-if="column.key === 'action'">
                   <a-space :size="4">
-                    <a-tooltip title="编辑用户">
+                    <a-tooltip :title="record.user_kind === 'end_user' ? 'APP 终端用户不支持编辑' : '编辑用户'">
                       <a-button
                         type="text"
                         size="small"
                         class="action-btn lucide-icon-btn"
-                        :disabled="!userStore.isSuperAdmin && record.role !== 'user'"
+                        :disabled="isUserEditDisabled(record)"
                         @click="showEditUserModal(record)"
                       >
                         <SquarePen :size="14" />
@@ -266,12 +285,12 @@ import FallbackAvatar from '@/shared/ui/FallbackAvatar.vue'
 const userStore = useUserStore()
 
 const columns = [
-  { title: '用户', key: 'user', width: '26%' },
-  { title: '角色', dataIndex: 'role', key: 'role', width: '16%' },
-  { title: '所属部门', dataIndex: 'department_name', key: 'department', width: '18%' },
-  { title: '手机号', dataIndex: 'phone_number', key: 'phone', width: '16%' },
-  { title: '最后登录', dataIndex: 'last_login', key: 'lastLogin', width: '14%' },
-  { title: '操作', key: 'action', width: '10%', align: 'center' }
+  { title: '用户', key: 'user' },
+  { title: '角色', dataIndex: 'role', key: 'role', width: 110 },
+  { title: '所属部门/实例', key: 'department', width: '20%' },
+  { title: '手机号', dataIndex: 'phone_number', key: 'phone', width: 110 },
+  { title: '最后登录', dataIndex: 'last_login', key: 'lastLogin', width: 140 },
+  { title: '操作', key: 'action', width: 70, align: 'center' }
 ]
 
 const getRoleDisplayName = (role) => {
@@ -292,6 +311,7 @@ const userManagement = reactive({
   searchKeyword: '',
   departmentFilter: '',
   roleFilter: '',
+  userKindFilter: 'human',
   currentPage: 1,
   pageSize: 20,
   error: null,
@@ -322,7 +342,8 @@ const hasActiveFilters = computed(
   () =>
     Boolean(userManagement.searchKeyword.trim()) ||
     Boolean(userManagement.departmentFilter) ||
-    Boolean(userManagement.roleFilter)
+    Boolean(userManagement.roleFilter) ||
+    userManagement.userKindFilter !== 'human'
 )
 
 const departmentFilterOptions = computed(() => {
@@ -427,7 +448,7 @@ watch(
 
 let filterRequestTimer = null
 watch(
-  () => [userManagement.searchKeyword, userManagement.departmentFilter, userManagement.roleFilter],
+  () => [userManagement.searchKeyword, userManagement.departmentFilter, userManagement.roleFilter, userManagement.userKindFilter],
   () => {
     userManagement.currentPage = 1
     if (filterRequestTimer) clearTimeout(filterRequestTimer)
@@ -437,6 +458,11 @@ watch(
 
 // 格式化时间显示
 const formatTime = (timeStr) => formatDateTime(timeStr)
+
+/** APP 终端用户不进入产品账号编辑表单。 */
+const isUserEditDisabled = (user) =>
+  user.user_kind === 'end_user' ||
+  (!userStore.isSuperAdmin && user.role !== 'user')
 
 const isUserDeleteDisabled = (user) =>
   user.id === userStore.userId ||
@@ -453,7 +479,8 @@ const fetchUsers = async () => {
       limit: pageSize,
       search: userManagement.searchKeyword.trim(),
       departmentId: userManagement.departmentFilter,
-      role: userManagement.roleFilter
+      role: userManagement.roleFilter,
+      userKind: userManagement.userKindFilter
     })
     if (requestId !== latestUserRequest) return
 
@@ -520,6 +547,8 @@ const showAddUserModal = () => {
 
 // 打开编辑用户模态框
 const showEditUserModal = (user) => {
+  if (isUserEditDisabled(user)) return
+
   userManagement.modalTitle = '编辑用户'
   userManagement.editMode = true
   userManagement.editUserId = user.id
@@ -686,6 +715,11 @@ onUnmounted(() => {
 </script>
 
 <style lang="less" scoped>
+.user-identity-details {
+  max-width: min(320px, 80vw);
+  overflow-wrap: anywhere;
+}
+
 .user-management {
   .header-section {
     display: flex;
@@ -752,7 +786,7 @@ onUnmounted(() => {
     flex-wrap: wrap;
 
     .search-input {
-      width: 300px;
+      width: 240px;
       max-width: 100%;
 
       :deep(.ant-input-prefix) {
@@ -767,10 +801,24 @@ onUnmounted(() => {
       justify-content: flex-end;
       gap: 8px;
       margin-left: auto;
+      flex-wrap: wrap;
     }
 
     .filter-select {
-      width: 150px;
+      width: 120px;
+
+      &.user-kind-select {
+        width: 150px;
+      }
+    }
+
+    .filter-label {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      overflow: hidden;
+      clip-path: inset(50%);
+      white-space: nowrap;
     }
   }
 
@@ -790,6 +838,10 @@ onUnmounted(() => {
       .filter-select {
         flex: 1;
         min-width: 0;
+
+        &.user-kind-select {
+          flex-basis: 100%;
+        }
       }
     }
   }
@@ -847,11 +899,11 @@ onUnmounted(() => {
       }
 
       .user-table-cell {
-        display: inline-flex;
+        display: flex;
         align-items: center;
         gap: 10px;
         min-width: 0;
-        max-width: 100%;
+        width: 100%;
 
         .user-avatar {
           flex-shrink: 0;
@@ -861,6 +913,18 @@ onUnmounted(() => {
           display: flex;
           flex-direction: column;
           min-width: 0;
+          flex: 1;
+          padding: 0;
+          border: 0;
+          background: transparent;
+          text-align: left;
+          cursor: pointer;
+
+          &:focus-visible {
+            outline: 2px solid var(--main-color);
+            outline-offset: 2px;
+            border-radius: 4px;
+          }
 
           .user-name {
             font-weight: 500;
@@ -873,10 +937,14 @@ onUnmounted(() => {
           }
 
           .user-uid {
-            font-size: 11px;
-            color: var(--gray-400);
+            font-size: 12px;
+            color: var(--gray-600);
             line-height: 14px;
             font-family: 'JetBrains Mono', 'Fira Code', 'Menlo', monospace;
+            width: 100%;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
           }
         }
       }
@@ -892,6 +960,11 @@ onUnmounted(() => {
         line-height: 16px;
         background: var(--gray-100);
         color: var(--gray-600);
+        white-space: nowrap;
+
+        svg {
+          flex-shrink: 0;
+        }
 
         &.superadmin {
           background: rgba(217, 119, 6, 0.08);
@@ -908,6 +981,13 @@ onUnmounted(() => {
       .time-text {
         color: var(--gray-600);
         font-size: 12px;
+      }
+
+      .dept-text {
+        display: block;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
       }
 
       .phone-text {

@@ -87,6 +87,8 @@ export function itemsToMessages(items) {
   const messages = new Map()
   for (const item of sorted) {
     if (item.type === 'function_call_output') continue
+    // resume 是内部等待点恢复输入，保留协议状态但不展示为用户发言。
+    if (item.type === 'message' && item.role === 'user' && item.yuxi?.message_type === 'resume') continue
     const key = `${item.yuxi?.run_id || ''}:${item.yuxi?.message_id || item.id}`
     const runId = item.yuxi?.run_id
     const message = messages.get(key) || {
