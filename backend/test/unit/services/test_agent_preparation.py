@@ -194,8 +194,11 @@ def test_limits_captured_from_context(field, expected):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("run_type", ["chat", "resume"])
 @pytest.mark.parametrize("empty_config", [False, True])
-async def test_manifest_uses_prepared_context_and_persisted_overrides(monkeypatch, run_type, empty_config):
-    """配置覆盖、默认值、工作区提示词与 Skill 摘要来自同一执行对象。"""
+@pytest.mark.parametrize("context_snapshot", [None, {}, {"system_prompt": "frozen"}])
+async def test_manifest_uses_prepared_context_and_persisted_overrides(
+    monkeypatch, run_type, empty_config, context_snapshot
+):
+    """配置快照、默认值、工作区提示词与 Skill 摘要来自同一执行对象。"""
     import hashlib
     from types import SimpleNamespace
     from unittest.mock import AsyncMock
@@ -218,6 +221,8 @@ async def test_manifest_uses_prepared_context_and_persisted_overrides(monkeypatc
     if empty_config:
         agent.config_json["context"] = None
     expected_prompt = "You are a helpful assistant." if empty_config else "base"
+    if context_snapshot is not None:
+        expected_prompt = context_snapshot.get("system_prompt", "You are a helpful assistant.")
     monkeypatch.setattr(
         service, "AgentRepository", lambda db: SimpleNamespace(get_visible_by_slug=AsyncMock(return_value=agent))
     )
@@ -258,6 +263,8 @@ async def test_manifest_uses_prepared_context_and_persisted_overrides(monkeypatc
             "runtime": {"parent_thread_id": "parent"},
         },
     )
+    if context_snapshot is not None:
+        run.input_payload["context_snapshot"] = context_snapshot
     binding = SimpleNamespace(workdir_path="projects/project")
     result = await service.prepare_run_execution(
         run=run, user=SimpleNamespace(uid="user"), db=object(), workdir_binding=binding, worker_id="owner"

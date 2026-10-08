@@ -25,7 +25,7 @@ Owner：backend/yuxi/modules/agents/services/cooperation.py
 | Input / Turn / Run | 持久接收的输入 / 一轮工作 / 一轮中的执行段，沿用现有归属与结果规则 |
 | 协作树 | Session 的创建关系；树内成员可互发消息、追加输入、取消指定 Turn |
 
-移除 `is_subagent`、`SubAgentBackend`、子智能体专用目录和白名单配置入口。新会话使用派发方的 Agent 配置，默认继承其实际模型、能力配置与授权约束；不提供另选专业 Agent 配置的协作入口。角色与交付要求写入任务描述。新会话只接收显式描述，不复制父历史、checkpoint 或附件上下文，不提供 fork；共享目录中的文件仍可按权限读取。
+移除 `is_subagent`、`SubAgentBackend`、子智能体专用目录和白名单配置入口。新会话默认使用派发方的 Agent 配置，继承其实际模型、能力配置与授权约束。Agent 目录与显式配置选择由[协作中的 Agent 发现与选择](./2026-10-09-cooperation-agent-directory.md)补充。角色与交付要求写入任务描述。新会话只接收显式描述，不复制父历史、checkpoint 或附件上下文，不提供 fork；共享目录中的文件仍可按权限读取。
 
 使用稳定 `session_id` 做持久身份、路由和授权校验；委派关系保存父 Session、局部唯一名称及创建来源 Run。创建时只接收局部 `name`，父节点绑定实际派发 Run 所属的 Session，路径由系统按父路径与名称生成；`/root` 创建 `aaa` 得到 `/root/aaa`，只有 `aaa` 自己创建 `bbb` 才得到 `/root/aaa/bbb`。工具参数 schema 和服务均拒绝把完整路径或多段路径作为名称，避免创建关系与调用者自定路径形成两份结构。名称路径如 `/root/reviewer` 在当前树内解析到 ID，不能单凭路径授权。名称创建后固定、显示标题可修改，第一版不支持改挂父节点。创建关系为树，通信与控制允许跨兄弟节点及层级，包括向根 Session 提交输入。
 

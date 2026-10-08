@@ -62,7 +62,10 @@ async def compress_thread_context(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     context = agent.context_schema()
-    context.update_config(agent_session.config_snapshot or (agent_item.config_json or {}).get("context") or {})
+    configured = agent_session.config_snapshot
+    if configured is None:
+        configured = (agent_item.config_json or {}).get("context") or {}
+    context.update_config(configured)
     model_spec = await resolve_agent_run_model_spec(
         (agent_session.extra_metadata or {}).get("model_spec"),
         context.model,

@@ -22,10 +22,14 @@ from yuxi.modules.agents.repositories.definitions import AgentRepository
 from yuxi.modules.agents.repositories.runs import AgentRunRepository
 from yuxi.modules.agents.repositories.sessions import SessionRepository
 from yuxi.modules.agents.repositories.turn import AgentTurnRepository
+from yuxi.modules.agents.runtime.agent_backends import get_agent_backend
+from yuxi.modules.agents.services.directory import list_public_agents
+from yuxi.modules.agents.services.input_config import resolve_agent_run_config
 from yuxi.modules.agents.services.input_messages import build_chat_input_message
 from yuxi.modules.agents.services.inputs import accept_locked
 from yuxi.modules.agents.services.scheduler import Dispatch, deliver
 from yuxi.modules.agents.services.scope import ActorScope
+from yuxi.modules.identity.models import User
 from yuxi.modules.workspace.repositories.projects import ProjectRepository
 from yuxi.modules.workspace.services.bindings import resolve_session_workdir_binding
 from yuxi.shared.datetime import format_utc_datetime, utc_now
@@ -42,7 +46,7 @@ class SessionCooperationService:
         self.config_snapshot = config_snapshot
         self.repo = CooperationRepository(db)
 
-    async def create_session(self, *, name: str, description: str, call_id: str) -> dict:
+    async def create_session(self, *, name: str, description: str, call_id: str, agent_id: str | None = None) -> dict:
         """以实际派发方为父节点，用局部名称生成直属子会话路径。"""
         if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", name) or not description.strip():
             raise ValueError("name 只接受 1-64 位字母、数字、下划线或连字符，不接受路径；任务描述不能为空")
@@ -52,10 +56,16 @@ class SessionCooperationService:
         path = f"{caller.cooperation_path}/{name}"
         if len(path) > 1024:
             raise ValueError("Session 路径超过 1024 字符")
-        # 共同锁序沿用 Agent → Project → Session；模型身份沿用已授权运行。
-        agent = await AgentRepository(self.db).get_by_slug(run.agent_slug, for_key_share=True)
+        # 共同锁序沿用 Agent → Project → Session；显式选择仍按持久执行用户授权。
+        selected_agent_id = run.agent_slug if agent_id is None else agent_id
+        user = await self.db.scalar(select(User).where(User.uid == run.uid, User.is_deleted == 0))
+        if user is None:
+            raise ValueError("执行账号已失效")
+        agent = await AgentRepository(self.db).get_visible_by_slug(
+            slug=selected_agent_id, user=user, for_key_share=True
+        )
         if agent is None:
-            raise ValueError("派发方 Agent 已删除")
+            raise ValueError("Agent 不存在或无权限运行")
         project = await ProjectRepository(self.db).lock_active_for_user(caller.project_id, self.uid)
         if project is None:
             raise ValueError("Project 已不可访问")
@@ -65,6 +75,19 @@ class SessionCooperationService:
         if child is None:
             if await self.repo.resolve(caller, path) is not None:
                 raise ValueError("同父 Session 下名称已存在")
+            if agent_id is None:
+                snapshot = (
+                    self.config_snapshot
+                    or caller.config_snapshot
+                    or run.input_payload.get("context_snapshot")
+                    or (agent.config_json or {}).get("context", {})
+                )
+                model = run.input_payload["model_spec"]
+            else:
+                snapshot = (agent.config_json or {}).get("context") or {}
+                model, _ = await resolve_agent_run_config(
+                    None, run.input_payload["tool_approval_mode"], agent, get_agent_backend(agent.backend_id), self.db
+                )
             child = Session(
                 thread_id=child_id,
                 tree_root_thread_id=caller.tree_root_thread_id,
@@ -72,27 +95,22 @@ class SessionCooperationService:
                 cooperation_name=name,
                 cooperation_path=path,
                 created_by_run_id=run.id,
-                agent_id=run.agent_slug,
+                agent_id=selected_agent_id,
                 uid=run.uid,
                 app_id=run.app_id,
                 project_id=caller.project_id,
                 title=name,
                 status="active",
-                config_snapshot=copy.deepcopy(
-                    self.config_snapshot
-                    or caller.config_snapshot
-                    or run.input_payload.get("context_snapshot")
-                    or (agent.config_json or {}).get("context", {})
-                ),
+                config_snapshot=copy.deepcopy(snapshot),
                 extra_metadata={
-                    "model_spec": run.input_payload["model_spec"],
+                    "model_spec": model,
                     "tool_approval_mode": run.input_payload["tool_approval_mode"],
                 },
             )
             self.db.add(child)
             await self.db.flush()
-        elif child.cooperation_path != path:
-            raise ValueError("幂等创建请求的名称已变化")
+        elif child.cooperation_path != path or child.agent_id != selected_agent_id:
+            raise ValueError("幂等创建请求的名称或 Agent 已变化")
         payload = await self._accept(run=run, target=child, description=description, call_id=call_id)
         return {**session_identity(child), **payload}
 
@@ -127,6 +145,17 @@ class SessionCooperationService:
         """返回树内成员及各自当前轮次和输入队列。"""
         _, caller = await self.caller()
         return await tree_snapshot(self.db, caller)
+
+    async def list_agents(self) -> dict:
+        """复用公开目录的可调用范围，只输出最小角色信息。"""
+        run, _ = await self.caller()
+        user = await self.db.scalar(select(User).where(User.uid == run.uid, User.is_deleted == 0))
+        if user is None:
+            raise ValueError("执行账号已失效")
+        agents = await list_public_agents(user=user, db=self.db)
+        return {
+            "agents": [{"id": agent.slug, "name": agent.name, "description": agent.description} for agent in agents]
+        }
 
     async def get_result(self, *, input_id: str | None = None, turn_id: str | None = None) -> dict:
         """读取精确提交或轮次的结果，不随下一轮工作改变。"""

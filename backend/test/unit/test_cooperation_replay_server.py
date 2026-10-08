@@ -1,5 +1,6 @@
 """协作重放器的摘要协议与普通请求拒绝边界。"""
 
+import json
 from http.server import ThreadingHTTPServer
 from threading import Thread
 
@@ -66,3 +67,56 @@ def test_summary_branch_does_not_accept_invalid_normal_requests(replay_url, auth
     )
     assert response.status_code == 422
     assert response.json()["error"] == error
+
+
+@pytest.mark.parametrize("role_prompt", ["", "COOP_PARENT_CONFIG", "COOP_TARGET_CONFIG COOP_PARENT_CONFIG"])
+def test_selected_child_replay_rejects_wrong_agent_configuration(replay_url, role_prompt):
+    """即使协作工具齐全，选择后仍继承父角色也必须让 E2E 重放失败。"""
+    response = httpx.post(
+        replay_url,
+        headers={"Authorization": "Bearer ci-replay-key"},
+        json={
+            "model": "deterministic-chat",
+            "stream": True,
+            "tools": [
+                {"type": "function", "function": {"name": name}}
+                for name in (
+                    "create_session",
+                    "send_message",
+                    "submit_input",
+                    "cancel_turn",
+                    "wait_sessions",
+                    "wait_inputs",
+                    "get_result",
+                    "list_sessions",
+                    "list_agents",
+                )
+            ],
+            "messages": [
+                {"role": "system", "content": role_prompt},
+                {
+                    "role": "user",
+                    "content": "SELECTED_AGENT_CHILD COOPERATION_CHILD:/fixture.txt COOP_RUNTIME:/tmp/fixture",
+                },
+            ],
+        },
+    )
+    assert response.status_code == 422
+    assert response.json()["error"] == "selected agent configuration missing"
+
+
+def test_replay_selects_agent_id_from_directory_result():
+    """选择过程消费真实工具结果，不能把会话名称当成 Agent 身份。"""
+    calls = CooperationReplayHandler.shared_sandbox_calls(
+        None,
+        "SELECT_AGENT COOPERATION_ROOT:/fixture.txt COOP_RUNTIME:/tmp/fixture",
+        False,
+        {
+            "root-prepare": "prepared",
+            "agent-directory": json.dumps({"agents": [{"id": "target-slug", "description": "COOP_TARGET_ROLE"}]}),
+        },
+    )
+    assert calls[0][1] == "create_session"
+    assert calls[0][2]["name"] == "worker"
+    assert calls[0][2]["agent_id"] == "target-slug"
+    assert "SELECTED_AGENT_CHILD" in calls[0][2]["description"]

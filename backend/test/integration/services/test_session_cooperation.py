@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock
 import pytest
 import pytest_asyncio
 from fastapi import HTTPException
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from agent_run_test_helpers import cleanup_agent_run_threads, create_agent_run
@@ -29,6 +29,7 @@ from yuxi.modules.agents.repositories.sessions import SessionRepository
 from yuxi.modules.agents.services.cooperation import SessionCooperationService, recover_cooperation_waits
 from yuxi.modules.agents.services.runs import settle_checkpoint
 from yuxi.modules.agents.services.scope import ActorScope
+from yuxi.modules.identity.models import User
 from yuxi.shared.datetime import utc_now
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
@@ -61,10 +62,14 @@ async def tree(monkeypatch):
 
     monkeypatch.setattr(pg_manager, "get_async_session_context", transaction)
 
-    async def resolve_config(model, approval, *args):
-        return model or "test:mock", approval or "always_trust"
+    async def resolve_config(model, approval, agent, *args):
+        """隔离外部模型目录，保留 Agent 配置与显式模型选择。"""
+        return model or ((agent.config_json or {}).get("context") or {}).get(
+            "model"
+        ) or "test:mock", approval or "always_trust"
 
     monkeypatch.setattr("yuxi.modules.agents.services.inputs.resolve_agent_run_config", resolve_config)
+    monkeypatch.setattr("yuxi.modules.agents.services.cooperation.resolve_agent_run_config", resolve_config)
     monkeypatch.setattr("yuxi.modules.agents.services.cooperation.deliver", AsyncMock())
     run_id, thread_id, _message_id = await create_agent_run(
         factory,
@@ -103,6 +108,9 @@ async def tree(monkeypatch):
             thread_ids = list((await db.scalars(select(Session.thread_id).where(Session.uid == uid))).all())
         try:
             await cleanup_agent_run_threads(factory, thread_ids)
+            async with factory() as db:
+                await db.execute(delete(Agent).where(Agent.slug.like(f"{agent_slug}-%")))
+                await db.commit()
         finally:
             await engine.dispose()
 
@@ -140,6 +148,214 @@ async def test_creation_is_idempotent_and_context_is_independent(tree):
         )
     with pytest.raises(ValueError, match="名称"):
         await child(tree, name="other", call_id="create-reviewer")
+
+
+async def test_agent_directory_returns_only_callable_role_metadata(tree):
+    """目录和直接创建使用同一运行范围，隐藏其他私有及无授权共享角色。"""
+    factory, run_id, root_id, uid = tree
+    allowed = await _define_target_agent(tree)
+    hidden_private = await _define_target_agent(tree, suffix="private", owner="another-user")
+    hidden_shared = await _define_target_agent(tree, suffix="shared", visibility="shared", shared_uid="another-user")
+    async with factory() as db:
+        result = await SessionCooperationService(db, run_id=run_id, uid=uid).list_agents()
+        root = await db.scalar(select(Session).where(Session.thread_id == root_id))
+        roles = {agent["id"]: agent for agent in result["agents"]}
+        assert allowed in roles and root.agent_id in roles
+        assert hidden_private not in roles and hidden_shared not in roles
+        assert roles[allowed] == {"id": allowed, "name": "独立核验角色", "description": "核验并交付证据"}
+        assert all(set(role) == {"id", "name", "description"} for role in roles.values())
+
+
+async def test_agent_directory_does_not_turn_private_governance_into_run_permission(tree, admin_headers):
+    """超级管理员可管理别人的私有配置，但协作目录不能宣称可运行。"""
+    factory, run_id, _, uid = tree
+    hidden = await _define_target_agent(tree, owner="another-user")
+    async with factory() as db:
+        user = await db.scalar(select(User).where(User.uid == uid))
+        user.role = "superadmin"
+        await db.commit()
+        result = await SessionCooperationService(db, run_id=run_id, uid=uid).list_agents()
+        assert hidden not in {role["id"] for role in result["agents"]}
+
+
+async def test_agent_directory_uses_app_key_owner_visibility_for_end_user(tree):
+    """终端用户读取 Key 所有者授权的共享角色，不能使用所有者私有配置。"""
+    factory, run_id, root_id, uid = tree
+    owner_uid = f"owner-{uuid.uuid4().hex}"
+    shared = await _define_target_agent(tree, suffix="app-shared", visibility="shared", shared_uid=owner_uid)
+    private = await _define_target_agent(tree, suffix="app-private", owner=owner_uid)
+    try:
+        async with factory() as db:
+            owner = User(uid=owner_uid, username=owner_uid, password_hash="test", role="admin")
+            db.add(owner)
+            await db.flush()
+            user = await db.scalar(select(User).where(User.uid == uid))
+            user.user_kind = "end_user"
+            user.owner_user_id = owner.id
+            user.app_id = "directory-app"
+            user.end_user_id = "customer"
+            root = await db.scalar(select(Session).where(Session.thread_id == root_id))
+            root.app_id = "directory-app"
+            run = await db.get(AgentRun, run_id)
+            run.app_id = "directory-app"
+            turn = await db.get(AgentTurn, run.turn_id)
+            turn.app_id = "directory-app"
+            root_agent = await db.scalar(select(Agent).where(Agent.slug == root.agent_id))
+            root_agent.visibility = "shared"
+            root_agent.share_config = DEFAULT_SHARE_CONFIG
+            await db.commit()
+            service = SessionCooperationService(db, run_id=run_id, uid=uid)
+            result = await service.list_agents()
+            assert shared in {role["id"] for role in result["agents"]}
+            assert private not in {role["id"] for role in result["agents"]}
+            created = await service.create_session(
+                name="app-worker", description="共享核验", call_id="app", agent_id=shared
+            )
+        async with factory() as db:
+            child = await db.scalar(select(Session).where(Session.thread_id == created["session_id"]))
+            assert child.uid == uid and child.app_id == "directory-app"
+            assert child.agent_id == shared and child.tree_root_thread_id == root_id
+    finally:
+        async with factory() as db:
+            user = await db.scalar(select(User).where(User.uid == uid))
+            user.user_kind = "human"
+            user.owner_user_id = user.app_id = user.end_user_id = None
+            await db.flush()
+            await db.execute(delete(User).where(User.uid == owner_uid))
+            await db.commit()
+
+
+@pytest.mark.parametrize("operation", ["list_agents", "create_session"])
+async def test_agent_selection_rejects_deleted_execution_user(tree, operation):
+    """失效账号直接调用服务也不能发现或派发 Agent。"""
+    factory, run_id, root_id, uid = tree
+    async with factory() as db:
+        user = await db.scalar(select(User).where(User.uid == uid))
+        user.is_deleted = 1
+        await db.commit()
+        service = SessionCooperationService(db, run_id=run_id, uid=uid)
+        with pytest.raises(ValueError, match="账号已失效"):
+            if operation == "list_agents":
+                await service.list_agents()
+            else:
+                await service.create_session(name="invalid", description="拒绝", call_id="invalid")
+    async with factory() as db:
+        assert (
+            await db.scalar(select(func.count()).select_from(Session).where(Session.tree_root_thread_id == root_id))
+            == 1
+        )
+
+
+async def test_selected_agent_freezes_target_config_model_and_parent_approval(tree):
+    """回读持久会话与输入，证明角色配置、模型与审批各自来源。"""
+    factory, run_id, root_id, uid = tree
+    slug = await _define_target_agent(tree)
+    async with factory() as db:
+        service = SessionCooperationService(
+            db, run_id=run_id, uid=uid, config_snapshot={"system_prompt": "PARENT_OVERRIDE"}
+        )
+        created = await service.create_session(name="reviewer", description="独立核验", call_id="choose", agent_id=slug)
+        replay = await service.create_session(name="reviewer", description="独立核验", call_id="choose", agent_id=slug)
+        assert created == replay
+    async with factory() as db:
+        member = await db.scalar(select(Session).where(Session.thread_id == created["session_id"]))
+        run = await db.get(AgentRun, created["run_id"])
+        assert member.agent_id == run.agent_slug == slug
+        assert member.parent_thread_id == member.tree_root_thread_id == root_id
+        assert member.config_snapshot["system_prompt"] == "TARGET_CONFIG"
+        assert member.config_snapshot["tools"] == ["ask_user_question"]
+        assert run.input_payload["context_snapshot"] == member.config_snapshot
+        assert run.input_payload["model_spec"] == member.extra_metadata["model_spec"] == "test:target"
+        assert run.input_payload["tool_approval_mode"] == "always_trust"
+        assert (
+            await db.scalar(
+                select(func.count()).select_from(AgentInput).where(AgentInput.thread_id == member.thread_id)
+            )
+            == 1
+        )
+
+
+@pytest.mark.parametrize("initial_context", [None, {}])
+async def test_empty_selected_config_stays_frozen_when_target_changes(tree, monkeypatch, initial_context):
+    """创建后修改目标配置，执行准备仍读取已持久化的空快照。"""
+    from types import SimpleNamespace
+
+    from yuxi.modules.agents.services.preparation import prepare_run_execution
+
+    factory, run_id, _, uid = tree
+    slug = await _define_target_agent(tree)
+    async with factory() as db:
+        target = await db.scalar(select(Agent).where(Agent.slug == slug))
+        target.config_json = {"context": initial_context}
+        await db.commit()
+        created = await SessionCooperationService(db, run_id=run_id, uid=uid).create_session(
+            name="empty", description="使用空配置", call_id="empty", agent_id=slug
+        )
+    async with factory() as db:
+        target = await db.scalar(select(Agent).where(Agent.slug == slug))
+        target.config_json = {"context": {"system_prompt": "CHANGED_AFTER_CREATION"}}
+        await db.commit()
+
+    async def prepare(context):
+        """隔离工作区和 Skill 解析，保留真实执行配置装配。"""
+        context._runtime_prepared = True
+        context._skill_runtime_snapshot = {"preloaded_skills": [], "preloaded_skill_contents": {}, "skill_metadata": {}}
+        return context
+
+    monkeypatch.setattr("yuxi.modules.agents.services.preparation.prepare_agent_runtime_context", prepare)
+    async with factory() as db:
+        run = await db.get(AgentRun, created["run_id"])
+        member = await db.scalar(select(Session).where(Session.thread_id == created["session_id"]))
+        assert member.config_snapshot == run.input_payload["context_snapshot"] == {}
+        result = await prepare_run_execution(
+            run=run,
+            user=await db.scalar(select(User).where(User.uid == uid)),
+            db=db,
+            workdir_binding=SimpleNamespace(workdir_path="projects/fixture"),
+            worker_id="snapshot-worker",
+        )
+        assert result.context.system_prompt == "You are a helpful assistant."
+        assert result.context._cooperation_config_snapshot["system_prompt"] == "You are a helpful assistant."
+
+
+@pytest.mark.parametrize("target_kind", ["missing", "private", "shared"])
+async def test_selected_agent_rejects_inaccessible_target_before_persisting(tree, target_kind):
+    """直接服务调用不能用已知 slug 绕过目录可见性并产生成员或输入。"""
+    factory, run_id, root_id, uid = tree
+    slug = "missing-agent"
+    if target_kind != "missing":
+        slug = await _define_target_agent(tree, visibility=target_kind, owner="another-user", shared_uid="another-user")
+    async with factory() as db:
+        service = SessionCooperationService(db, run_id=run_id, uid=uid)
+        with pytest.raises(ValueError, match="无权限运行"):
+            await service.create_session(name="forbidden", description="拒绝", call_id="forbidden", agent_id=slug)
+    async with factory() as db:
+        members = list((await db.scalars(select(Session).where(Session.tree_root_thread_id == root_id))).all())
+        assert [member.thread_id for member in members] == [root_id]
+        assert await db.scalar(select(func.count()).select_from(AgentInput).where(AgentInput.thread_id == root_id)) == 1
+
+
+async def test_creation_replay_cannot_change_selected_agent(tree):
+    """相同工具调用不能换 Agent 形成新的会话或重复输入。"""
+    factory, run_id, root_id, uid = tree
+    first = await _define_target_agent(tree, suffix="first")
+    second = await _define_target_agent(tree, suffix="second")
+    async with factory() as db:
+        service = SessionCooperationService(db, run_id=run_id, uid=uid)
+        created = await service.create_session(name="reviewer", description="核验", call_id="same", agent_id=first)
+        with pytest.raises(ValueError, match="Agent 已变化"):
+            await service.create_session(name="reviewer", description="核验", call_id="same", agent_id=second)
+    async with factory() as db:
+        members = list((await db.scalars(select(Session).where(Session.tree_root_thread_id == root_id))).all())
+        assert len(members) == 2
+        member = next(member for member in members if member.thread_id == created["session_id"])
+        assert member.agent_id == first
+        assert (
+            await db.scalar(
+                select(func.count()).select_from(AgentInput).where(AgentInput.thread_id == member.thread_id)
+            )
+            == 1
+        )
 
 
 @pytest.mark.parametrize("name", ["/root/aaa/bbb", "aaa/bbb", "/root/name", "../bbb", r"aaa\bbb", "aaa%2Fbbb"])
@@ -1349,3 +1565,35 @@ async def test_stopped_member_failure_does_not_block_other_members(tree, monkeyp
     async with factory() as db:
         assert (await db.get(AgentTurn, member["turn_id"])).status == "cancelled"
         assert (await db.get(AgentRun, member["run_id"])).status == "cancelled"
+
+
+async def _define_target_agent(tree, *, suffix="target", visibility="private", owner=None, shared_uid=None):
+    """建立提示词、工具与模型均不同的独立配置，由树 fixture 清理。"""
+    factory, run_id, _, uid = tree
+    async with factory() as db:
+        run = await db.get(AgentRun, run_id)
+        slug = f"{run.agent_slug}-{suffix}"
+        db.add(
+            Agent(
+                slug=slug,
+                name="独立核验角色",
+                description="核验并交付证据",
+                backend_id="ChatbotAgent",
+                visibility=visibility,
+                created_by=owner or uid,
+                share_config={
+                    "version": 2,
+                    "read_scope": {"access_level": "user", "department_ids": [], "user_uids": [shared_uid or uid]},
+                    "manage_scope": None,
+                },
+                config_json={
+                    "context": {
+                        "system_prompt": "TARGET_CONFIG",
+                        "tools": ["ask_user_question"],
+                        "model": "test:target",
+                    }
+                },
+            )
+        )
+        await db.commit()
+    return slug

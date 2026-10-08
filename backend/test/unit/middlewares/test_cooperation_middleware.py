@@ -94,11 +94,19 @@ def test_list_sessions_schema_has_no_pagination_arguments():
     assert tool.tool_call_schema.model_json_schema()["properties"] == {}
 
 
+def test_agent_directory_schema_uses_persisted_execution_identity():
+    """目录参数不能由模型指定用户或 APP 扩大范围。"""
+    tool = next(tool for tool in CooperationMiddleware().tools if tool.name == "list_agents")
+    assert tool.tool_call_schema.model_json_schema()["properties"] == {}
+
+
 def test_create_session_schema_exposes_local_name_without_parent_or_path():
     """模型仅看到带局部名称约束的创建参数。"""
     tool = CooperationMiddleware().tools[0]
     schema = tool.tool_call_schema.model_json_schema()
-    assert set(schema["properties"]) == {"name", "description"}
+    assert set(schema["properties"]) == {"name", "description", "agent_id"}
+    assert set(schema["required"]) == {"name", "description"}
+    assert schema["properties"]["agent_id"]["default"] is None
     name = schema["properties"]["name"]
     assert name["pattern"] == "^[A-Za-z0-9_-]+$"
     assert name["minLength"] == 1 and name["maxLength"] == 64

@@ -38,13 +38,17 @@ class _Graph:
 @pytest.mark.unit
 @pytest.mark.asyncio
 @pytest.mark.parametrize("thread_id", ["thread-1", "child-thread"])
-async def test_compress_thread_context_uses_locked_idle_thread(monkeypatch: pytest.MonkeyPatch, thread_id: str) -> None:
+@pytest.mark.parametrize("config_snapshot", [None, {}, {"summary_prompt": "FROZEN_SUMMARY"}])
+async def test_compress_thread_context_uses_locked_idle_thread(
+    monkeypatch: pytest.MonkeyPatch, thread_id: str, config_snapshot: dict | None
+) -> None:
+    """空快照与摘要配置保持冻结，压缩只操作已锁定的空闲会话。"""
     events = []
     agent_session = SimpleNamespace(
         uid="user-1",
         status="active",
         agent_id="assistant",
-        config_snapshot=None,
+        config_snapshot=config_snapshot,
         tree_root_thread_id="thread-1",
         extra_metadata={"model_spec": "provider:model"},
     )
@@ -67,7 +71,9 @@ async def test_compress_thread_context_uses_locked_idle_thread(monkeypatch: pyte
             pass
 
         async def get_visible_by_slug(self, **_kwargs):
-            return SimpleNamespace(backend_id="ChatbotAgent", config_json={"context": {}})
+            return SimpleNamespace(
+                backend_id="ChatbotAgent", config_json={"context": {"summary_prompt": "CHANGED_SUMMARY"}}
+            )
 
     async def idle(**_kwargs):
         events.append("idle")
@@ -91,6 +97,10 @@ async def test_compress_thread_context_uses_locked_idle_thread(monkeypatch: pyte
     async def compress(**kwargs):
         assert kwargs["context"].runtime_scope_id == runtime_scopes[0]
         assert kwargs["context"].thread_id == thread_id
+        expected_prompt = "CHANGED_SUMMARY"
+        if config_snapshot is not None:
+            expected_prompt = config_snapshot.get("summary_prompt", _Context().summary_prompt)
+        assert kwargs["context"].summary_prompt == expected_prompt
         events.append(("compress", kwargs["context"].model))
         return {"status": "completed", "after_tokens": 300}
 

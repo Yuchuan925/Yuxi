@@ -150,7 +150,9 @@ async def prepare_run_execution(
     backend = get_agent_backend(agent_item.backend_id)
 
     context = backend.context_schema()
-    configured = run.input_payload.get("context_snapshot") or (agent_item.config_json or {}).get("context") or {}
+    configured = run.input_payload.get("context_snapshot")
+    if configured is None:
+        configured = (agent_item.config_json or {}).get("context") or {}
     configurable_fields = {item.name for item in fields(context) if item.metadata.get("configurable", True)}
     context.update_config(configured)
     payload = run.input_payload

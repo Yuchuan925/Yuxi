@@ -356,7 +356,7 @@ jobs:
       - name: Verify visible tools for ordinary users
         run: docker compose exec -T -e TEST_USERNAME="$E2E_USERNAME" -e TEST_PASSWORD="$E2E_PASSWORD" api uv run --no-sync --no-dev pytest test/integration/api/test_chat_router.py::test_standard_user_restores_visible_function_items_without_internal_audit -q
       - name: Verify Session cooperation persistence and capacity
-        run: docker compose exec -T api uv run --no-sync --no-dev pytest test/integration/services/test_session_cooperation.py -q
+        run: docker compose exec -T -e TEST_USERNAME="$E2E_USERNAME" -e TEST_PASSWORD="$E2E_PASSWORD" api uv run --no-sync --no-dev pytest test/integration/services/test_session_cooperation.py -q
       - name: Verify attachment HTTP and object contract
         timeout-minutes: 3
         run: docker compose exec -T -e TEST_USERNAME="$E2E_USERNAME" -e TEST_PASSWORD="$E2E_PASSWORD" api uv run --no-sync --no-dev pytest test/integration/api/test_chat_router.py::test_thread_artifact_uses_image_signature_for_content_type -q

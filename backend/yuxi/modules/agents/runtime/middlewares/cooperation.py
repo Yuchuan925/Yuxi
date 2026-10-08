@@ -15,8 +15,10 @@ from yuxi.infrastructure.postgres.manager import pg_manager
 from yuxi.modules.agents.repositories.cooperation import CooperationRepository
 
 PROMPT = """## Session 协作
-所有 Session 独立保存上下文，共享工作目录和沙盒。create_session 创建同配置、同模型的独立 Session，
-不继承对话；description 必须提供目标和必要信息。
+所有 Session 独立保存上下文，共享工作目录和沙盒，不继承对话；description 必须提供目标和必要信息。
+list_agents 列出当前用户可调用的 Agent 配置，返回 id、name、description；list_sessions 查询已存在的协作成员。
+create_session 省略 agent_id 时继承当前配置与实际模型；指定目录中的 id 时使用目标 Agent 的配置和模型。
+审批模式沿用派发方当前运行选择，Agent 配置不会扩大用户授权。
 create_session 只创建当前 Session 的直属子会话，name 只填写单段名称，不能填写路径或指定父节点。
 系统自动生成 path：/root 创建 aaa 得到 /root/aaa；只有 /root/aaa 创建 bbb 才得到 /root/aaa/bbb。
 用返回的稳定 session_id 或完整 path 寻址已有成员。
@@ -71,9 +73,17 @@ class CooperationMiddleware(AgentMiddleware):
             ],
             description: str,
             runtime: ToolRuntime,
+            agent_id: Annotated[
+                str | None, Field(description="list_agents 返回的配置 id（slug）；省略时继承当前配置。")
+            ] = None,
         ) -> dict:
             return await invoke(
-                runtime, "create_session", name=name, description=description, call_id=runtime.tool_call_id
+                runtime,
+                "create_session",
+                name=name,
+                description=description,
+                agent_id=agent_id,
+                call_id=runtime.tool_call_id,
             )
 
         async def submit_input(target: str, description: str, runtime: ToolRuntime) -> dict:
@@ -89,6 +99,10 @@ class CooperationMiddleware(AgentMiddleware):
 
         async def list_sessions(runtime: ToolRuntime) -> dict:
             return await invoke(runtime, "list_sessions")
+
+        async def list_agents(runtime: ToolRuntime) -> dict:
+            """查询当前持久执行身份可调用的配置。"""
+            return await invoke(runtime, "list_agents")
 
         async def get_result(runtime: ToolRuntime, input_id: str | None = None, turn_id: str | None = None) -> dict:
             return await invoke(runtime, "get_result", input_id=input_id, turn_id=turn_id)
@@ -112,12 +126,14 @@ class CooperationMiddleware(AgentMiddleware):
                     "create_session",
                     create_session,
                     "创建当前 Session 的直属子会话并提交初始工作；name 只填局部名称，path 自动生成。"
-                    "继承派发方模型、配置和共享沙盒。",
+                    "可指定 list_agents 返回的 agent_id 使用目标配置和模型；省略时继承派发方配置与模型。"
+                    "共享沙盒，审批模式沿用派发方。",
                 ),
                 ("submit_input", submit_input, "向同树 Session 提交新工作，忙碌时排队，等待用户时拒绝。"),
                 ("send_message", send_message, "向同树 Session 投递信息，不创建 Turn 或唤醒空闲会话。"),
                 ("cancel_turn", cancel_turn, "取消目标 Session 的精确 Turn，保留历史和已产生副作用。"),
                 ("list_sessions", list_sessions, "一次读取整树 Session 状态摘要，不包含结果正文。"),
+                ("list_agents", list_agents, "列出当前执行用户可调用的 Agent 配置，只返回 id、name 和 description。"),
                 ("get_result", get_result, "按 input_id 或 turn_id 读取精确结果，二选一；下一轮不会覆盖结果。"),
                 (
                     "wait_inputs",

@@ -6,11 +6,15 @@
 
 协作 middleware 在每个 Run 首次模型调用时按实际执行归属读取 Session，并在系统提示中注入当前名称、完整路径、会话 ID、父会话 ID、根会话 ID、根或子会话身份，以及 Input、Turn、Run ID。后续模型调用复用该 Run 的固定身份；动态进度通过 `list_sessions` 查询。子会话优先完成收到的任务，继承 Agent 配置不会把根会话的整体编排职责转交给子会话。
 
-`create_session(name, description)` 创建当前 Session 的直属子会话并提交初始输入，返回 `session_id`、自动生成的树内路径和输入回执。`name` 只填写 1–64 位字母、数字、下划线或连字符组成的局部名称；同父节点下唯一，创建后固定。父节点由实际调用的 Run 所属 Session 决定，调用者不能指定父节点或完整路径。
+`list_agents` 返回当前执行用户可调用的 Agent 配置，每项只包含 `id`（配置 slug）、`name` 和 `description`。目录复用公开 Agent API 的运行权限：私有配置仅供所有者运行，APP 终端用户只使用凭据所有者有权访问的共享配置。
+
+`create_session(name, description, agent_id=None)` 创建当前 Session 的直属子会话并提交初始输入，返回 `session_id`、自动生成的树内路径和输入回执。指定 `list_agents` 返回的 `id` 时使用目标 Agent 配置；省略时继承派发方配置。`name` 只填写 1–64 位字母、数字、下划线或连字符组成的局部名称；同父节点下唯一，创建后固定。父节点由实际调用的 Run 所属 Session 决定，调用者不能指定父节点或完整路径。
 
 根会话 `/root` 传入 `name="aaa"`，系统生成 `/root/aaa`；只有 `/root/aaa` 传入 `name="bbb"`，才会生成 `/root/aaa/bbb`。根传入 `name="aaa/bbb"` 或 `name="/root/aaa/bbb"` 会被拒绝。路径用于在当前树内寻址已有成员；持久身份与授权使用 `session_id`。
 
-新会话继承派发方实际模型、配置和授权约束。`description` 提供工作目标、必要资料和交付要求；会话独立保存历史、checkpoint 和附件上下文。共享目录文件可通过统一文件权限边界读取。角色分工写入描述，配置入口见[配置智能体](./agents-config.md)。
+省略 `agent_id` 时，新会话继承派发方实际模型和配置；指定时冻结目标 Agent 的提示词、Skills、工具、MCP、知识库等配置，模型按目标配置及系统默认值解析。审批模式始终沿用派发方当前运行选择。后端在创建前重新校验当前执行用户的目标 Agent 运行权限；目录结果不替代即时授权，同一工具调用重放不得更换 Agent。执行期间继续复查账号、Agent 与依赖权限。
+
+`description` 提供工作目标、必要资料和交付要求；会话独立保存历史、checkpoint 和附件上下文。共享目录文件可通过统一文件权限边界读取。角色分工写入描述，配置入口见[配置智能体](./agents-config.md)。
 
 ## 工具与用户操作
 
@@ -20,6 +24,7 @@
 | `submit_input` | 按 FIFO 提交新工作；等待用户回答或审批时返回拒绝 |
 | `send_message` | 持久投递信息，运行中在模型边界读取，空闲时留待下次运行 |
 | `list_sessions` | 一次读取整树成员、当前 Turn/Run、队列和等待原因，不包含结果正文 |
+| `list_agents` | 列出当前用户可调用的 Agent 配置，用返回的 ID 选择新会话配置 |
 | `get_result` | 用 `input_id` 或 `turn_id` 精确读取任务状态、最终输出和错误；两个参数只能选择一个 |
 | `wait_inputs` | 等待 1–100 个已提交 `input_id` 全部结束；返回精确结果或带当前结果的超时响应，最长等待 1800 秒 |
 | `wait_sessions` | 从 `after_cursor` 等待指定其他成员任一更新，返回新游标或超时结果；空列表与当前会话自身明确拒绝 |

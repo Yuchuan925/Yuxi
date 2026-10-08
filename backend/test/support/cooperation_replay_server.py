@@ -104,12 +104,20 @@ class CooperationReplayHandler(BaseHTTPRequestHandler):
                 "wait_inputs",
                 "get_result",
                 "list_sessions",
+                "list_agents",
             }
             <= tools
         ):
             error = "uniform tools missing"
         elif not summary and child and "PRIVATE_ROOT_HISTORY" in serialized:
             error = "parent context inherited"
+        elif (
+            not summary
+            and child
+            and "SELECTED_AGENT_CHILD" in serialized
+            and ("COOP_TARGET_CONFIG" not in serialized or "COOP_PARENT_CONFIG" in serialized)
+        ):
+            error = "selected agent configuration missing"
         if error:
             body = json.dumps({"error": error}).encode()
             self.send_response(422)
@@ -147,16 +155,24 @@ class CooperationReplayHandler(BaseHTTPRequestHandler):
                 raise AssertionError("child did not use the dispatcher's actual sandbox")
         elif "root-prepare" not in results:
             calls = [("root-prepare", "execute", {"command": f"printf shared > {runtime_probe}"})]
+        elif "SELECT_AGENT" in serialized and "agent-directory" not in results:
+            calls = [("agent-directory", "list_agents", {})]
         elif "create-worker" not in results:
             path = re.search(r'COOPERATION_ROOT:(/[^\s"\\]+)', serialized).group(1)
+            arguments = {
+                "name": "worker",
+                "description": f"{OUTPUT} COOPERATION_CHILD:{path} COOP_RUNTIME:{runtime_probe}",
+            }
+            if "SELECT_AGENT" in serialized:
+                directory = json.loads(results["agent-directory"])["agents"]
+                target = next(role for role in directory if role["description"] == "COOP_TARGET_ROLE")
+                arguments["agent_id"] = target["id"]
+                arguments["description"] += " SELECTED_AGENT_CHILD"
             calls = [
                 (
                     "create-worker",
                     "create_session",
-                    {
-                        "name": "worker",
-                        "description": f"{OUTPUT} COOPERATION_CHILD:{path} COOP_RUNTIME:{runtime_probe}",
-                    },
+                    arguments,
                 )
             ]
             if "PARALLEL_QUESTION" in serialized:

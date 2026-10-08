@@ -20,11 +20,12 @@ from yuxi.bootstrap.models import load_models
 pytestmark = [pytest.mark.asyncio, pytest.mark.e2e, pytest.mark.slow, pytest.mark.timeout(240)]
 OUTPUT = "DETERMINISTIC_AGENT_E2E_OK"
 MODEL = "cooperation-replay:deterministic-chat"
+TARGET_MODEL = "cooperation-target-replay:deterministic-chat"
 SUMMARY_PROMPT = "COOPERATION_SUMMARY_FIXTURE\n{messages}"
 
 
-@pytest.mark.parametrize("parallel_question", [False, True])
-async def test_sessions_use_public_state_and_shared_sandbox(e2e_client, e2e_headers, parallel_question):
+@pytest.mark.parametrize("parallel_question,select_agent", [(False, False), (True, False), (False, True)])
+async def test_sessions_use_public_state_and_shared_sandbox(e2e_client, e2e_headers, parallel_question, select_agent):
     """根工具创建普通会话，结果通过持久等待返回，文件在同一 Project 中。"""
     me = await e2e_client.get("/api/auth/me", headers=e2e_headers)
     uid = me.json()["uid"]
@@ -35,8 +36,25 @@ async def test_sessions_use_public_state_and_shared_sandbox(e2e_client, e2e_head
         uid,
         model_spec=MODEL,
         tools=["ask_user_question"] if parallel_question else [],
+        system_prompt_suffix="COOP_PARENT_CONFIG",
         summary_prompt=SUMMARY_PROMPT,
     )
+    target_slug = None
+    if select_agent:
+        await _provider(e2e_client, e2e_headers, base_url="http://api:8766/v1", provider_id="cooperation-target-replay")
+        target_slug = await _agent(
+            e2e_client,
+            e2e_headers,
+            uid,
+            model_spec=TARGET_MODEL,
+            tools=["ask_user_question"],
+            system_prompt_suffix="COOP_TARGET_CONFIG",
+            summary_prompt=SUMMARY_PROMPT,
+        )
+        updated = await e2e_client.put(
+            f"/api/agent/{target_slug}", headers=e2e_headers, json={"description": "COOP_TARGET_ROLE"}
+        )
+        assert updated.status_code == 200, updated.text
     thread_id = turn_id = workdir = None
     conn = await asyncpg.connect(postgres_dsn())
     try:
@@ -61,6 +79,7 @@ async def test_sessions_use_public_state_and_shared_sandbox(e2e_client, e2e_head
         path = f"/home/gem/user-data/{workdir}/cooperation.txt"
         runtime_probe = f"/tmp/cooperation-shared-{uuid.uuid4().hex}"
         question_marker = " PARALLEL_QUESTION" if parallel_question else ""
+        selection_marker = " SELECT_AGENT" if select_agent else ""
         accepted = await e2e_client.post(
             f"/api/v1/agents/threads/{thread_id}/events",
             headers={**e2e_headers, "Idempotency-Key": str(uuid.uuid4())},
@@ -71,7 +90,7 @@ async def test_sessions_use_public_state_and_shared_sandbox(e2e_client, e2e_head
                         "input": [
                             _message(
                                 f"{OUTPUT} PRIVATE_ROOT_HISTORY COOPERATION_ROOT:{path} "
-                                f"COOP_RUNTIME:{runtime_probe}{question_marker}"
+                                f"COOP_RUNTIME:{runtime_probe}{question_marker}{selection_marker}"
                             )
                         ],
                         "yuxi": {"mode": "follow_up", "tool_approval_mode": "always_trust"},
@@ -122,6 +141,18 @@ async def test_sessions_use_public_state_and_shared_sandbox(e2e_client, e2e_head
             "SELECT * FROM agent_runs WHERE thread_id=$1 ORDER BY created_at DESC LIMIT 1", child["thread_id"]
         )
         assert run["run_type"] == "chat" and run["runtime_scope_id"] == thread_id and run["status"] == "completed"
+        snapshot = json.loads(child["config_snapshot"])
+        payload = json.loads(run["input_payload"])
+        assert json.loads(run["manifest"])["model"]["spec"] == (TARGET_MODEL if select_agent else MODEL)
+        assert child["agent_id"] == run["agent_slug"] == (target_slug if select_agent else slug)
+        assert payload["model_spec"] == (TARGET_MODEL if select_agent else MODEL)
+        assert payload["tool_approval_mode"] == "always_trust"
+        if select_agent:
+            assert "COOP_TARGET_CONFIG" in snapshot["system_prompt"]
+            assert "COOP_PARENT_CONFIG" not in snapshot["system_prompt"]
+            assert snapshot["tools"] == ["ask_user_question"]
+        else:
+            assert "COOP_PARENT_CONFIG" in snapshot["system_prompt"]
         state = await e2e_client.get(f"/api/v1/agents/threads/{thread_id}/state", headers=e2e_headers)
         assert state.status_code == 200, state.text
         member = next(
@@ -194,6 +225,8 @@ async def test_sessions_use_public_state_and_shared_sandbox(e2e_client, e2e_head
                     clear_cache_on_delete_failure=True,
                 )
         await delete_agent(e2e_client, e2e_headers, slug)
+        if target_slug is not None:
+            await delete_agent(e2e_client, e2e_headers, target_slug)
 
 
 @pytest.mark.parametrize("stop_tree", [False, True])
