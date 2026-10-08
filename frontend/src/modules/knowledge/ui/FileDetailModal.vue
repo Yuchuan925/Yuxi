@@ -1,57 +1,57 @@
 <template>
-  <a-modal
-    v-model:open="visible"
-    width="800px"
-    :footer="null"
-    :closable="false"
-    wrap-class-name="file-detail"
+  <component
+    :is="embedded ? 'section' : Modal"
+    v-bind="containerProps"
+    @update:open="visible = $event"
     @after-open-change="afterOpenChange"
-    :bodyStyle="{ height: '80vh', padding: '0' }"
   >
-    <template #title>
-      <div class="modal-title-wrapper">
-        <!-- 左侧：文件名和图标 -->
-        <div class="file-title">
-          <FileTypeIcon :name="file?.filename" :size="18" />
-          <span class="file-name">{{ file?.filename || '文件详情' }}</span>
-        </div>
-
-        <div class="header-controls">
-          <!-- 字符数/片段数显示在 segment 左边 -->
-          <span v-if="viewInfoText" class="view-info">{{ viewInfoText }}</span>
-
-          <!-- 视图模式切换 -->
-          <div class="view-controls" v-if="file && viewModeOptions.length > 1">
-            <a-segmented v-model:value="viewMode" :options="viewModeOptions" />
-          </div>
-
-          <!-- 下载按钮下拉菜单 -->
-          <a-dropdown trigger="click" v-if="file">
-            <a-button type="default" class="download-btn" title="下载" aria-label="下载">
-              <Download :size="16" />
-              <ChevronDown :size="14" />
-            </a-button>
-            <template #overlay>
-              <a-menu @click="handleDownloadMenuClick">
-                <a-menu-item key="original" :disabled="!file.file_id">
-                  <template #icon><Download :size="16" /></template>
-                  下载原文
-                </a-menu-item>
-                <a-menu-item key="markdown" :disabled="contentState.loading || !mergedContent">
-                  <template #icon><FileText :size="16" /></template>
-                  下载 Markdown
-                </a-menu-item>
-              </a-menu>
-            </template>
-          </a-dropdown>
-
-          <!-- 自定义关闭按钮 -->
-          <button class="custom-close-btn" @click="visible = false">
-            <X :size="16" />
-          </button>
-        </div>
+    <div class="modal-title-wrapper">
+      <!-- 左侧：文件名和图标 -->
+      <div class="file-title">
+        <FileTypeIcon :name="file?.filename" :size="18" />
+        <span class="file-name">{{ file?.filename || '文件详情' }}</span>
       </div>
-    </template>
+
+      <div class="header-controls">
+        <!-- 字符数/片段数显示在 segment 左边 -->
+        <span v-if="viewInfoText" class="view-info">{{ viewInfoText }}</span>
+
+        <!-- 视图模式切换 -->
+        <div class="view-controls" v-if="file && viewModeOptions.length > 1">
+          <a-segmented v-model:value="viewMode" :options="viewModeOptions" />
+        </div>
+
+        <!-- 下载按钮下拉菜单 -->
+        <a-dropdown trigger="click" v-if="file">
+          <a-button type="default" class="download-btn" title="下载" aria-label="下载">
+            <Download :size="16" />
+            <ChevronDown :size="14" />
+          </a-button>
+          <template #overlay>
+            <a-menu @click="handleDownloadMenuClick">
+              <a-menu-item key="original" :disabled="!file.file_id">
+                <template #icon><Download :size="16" /></template>
+                下载原文
+              </a-menu-item>
+              <a-menu-item key="markdown" :disabled="contentState.loading || !mergedContent">
+                <template #icon><FileText :size="16" /></template>
+                下载 Markdown
+              </a-menu-item>
+            </a-menu>
+          </template>
+        </a-dropdown>
+
+        <!-- 自定义关闭按钮 -->
+        <button
+          type="button"
+          class="custom-close-btn"
+          aria-label="关闭预览"
+          @click="visible = false"
+        >
+          <X :size="16" />
+        </button>
+      </div>
+    </div>
     <div v-if="basicLoading" class="loading-container">
       <a-spin tip="正在加载文档内容..." />
     </div>
@@ -76,18 +76,38 @@
       </div>
 
       <!-- Markdown 模式 -->
-      <div v-else-if="viewMode === 'markdown'" class="content-panel flat-md-preview">
+      <div
+        v-else-if="['markdown', 'markdown-source'].includes(viewMode)"
+        class="content-panel flat-md-preview"
+      >
         <div v-if="contentState.loading" class="loading-container">
           <a-spin tip="正在加载解析内容..." />
         </div>
-        <MarkdownPreview
-          v-else-if="mergedContent"
-          :content="mergedContent"
-          class="markdown-content"
-        />
-        <div v-else class="empty-content">
-          <p>{{ contentState.error || '暂无文件内容' }}</p>
-        </div>
+        <template v-else>
+          <p v-if="chunkId && contentState.loaded && locationNotice" class="location-notice">
+            {{ locationNotice }}
+          </p>
+          <p v-else-if="chunkId && contentState.loaded && !targetChunk" class="location-notice">
+            文档已重新索引，原片段位置已失效，请重新检索。
+          </p>
+          <p
+            v-else-if="chunkId && contentState.loaded && !targetLines.start"
+            class="location-notice"
+          >
+            此片段尚无入库行号，重新索引后可定位高亮。
+          </p>
+          <MarkdownDocumentPreview
+            v-if="mergedContent"
+            :content="mergedContent"
+            :source="viewMode === 'markdown-source'"
+            :start-line="targetLines.start"
+            :end-line="targetLines.end"
+            class="markdown-content"
+          />
+          <div v-else class="empty-content">
+            <p>{{ contentState.error || '暂无文件内容' }}</p>
+          </div>
+        </template>
       </div>
 
       <!-- Chunks 模式：使用 Grid 布局 -->
@@ -114,12 +134,12 @@
     <div v-else-if="file" class="empty-content">
       <p>暂无文件内容</p>
     </div>
-  </a-modal>
+  </component>
 </template>
 
 <script setup>
 import { computed, h, onBeforeUnmount, ref, watch } from 'vue'
-import { message } from 'ant-design-vue'
+import { message, Modal } from 'ant-design-vue'
 import { documentApi } from '@/apis/knowledge_api'
 import { getWorkspaceKnowledgeFileContent } from '@/apis/workspace_api'
 import { mergeChunks } from '@/modules/knowledge/model/chunkUtils'
@@ -131,12 +151,16 @@ import {
   canPreviewParsed,
   getDefaultDetailView
 } from '@/modules/knowledge/model/knowledge_file_policy'
-import MarkdownPreview from '@/modules/workspace/ui/MarkdownPreview.vue'
+import MarkdownDocumentPreview from '@/modules/workspace/ui/MarkdownDocumentPreview.vue'
 import FileTypeIcon from '@/shared/ui/FileTypeIcon.vue'
 import AgentFilePreview from '@/modules/session/ui/workspace/AgentFilePreview.vue'
-import { Download, ChevronDown, FileSearch, FileText, Rows3, X } from '@lucide/vue'
+import { Download, ChevronDown, FileSearch, FileText, Rows3, Code2, X } from '@lucide/vue'
 
 const props = defineProps({
+  embedded: { type: Boolean, default: false },
+  chunkId: { type: String, default: '' },
+  startLine: { type: Number, default: null },
+  endLine: { type: Number, default: null },
   open: {
     type: Boolean,
     default: false
@@ -158,6 +182,19 @@ const visible = computed({
   set: (value) => emit('update:open', value)
 })
 
+const containerProps = computed(() =>
+  props.embedded
+    ? { class: 'file-detail-embedded' }
+    : {
+        open: visible.value,
+        width: '800px',
+        footer: null,
+        closable: false,
+        wrapClassName: 'file-detail',
+        bodyStyle: { height: '80vh', padding: '0', display: 'flex', flexDirection: 'column' }
+      }
+)
+
 const file = ref(null)
 const basicLoading = ref(false)
 const detailError = ref('')
@@ -168,6 +205,7 @@ const contentState = ref({
   loaded: false,
   lines: [],
   content: '',
+  lineLocation: null,
   error: ''
 })
 const sourcePreview = ref({
@@ -196,6 +234,7 @@ const resetContentState = () => {
     loaded: false,
     lines: [],
     content: '',
+    lineLocation: null,
     error: ''
   }
 }
@@ -248,6 +287,27 @@ const ensureApiSuccess = (data, fallbackMessage) => {
 
 // 视图模式
 const viewMode = ref('markdown')
+const targetChunk = computed(() =>
+  contentState.value.lines.find((chunk) => chunk.id === props.chunkId)
+)
+const locationNotice = computed(() => {
+  if (contentState.value.lineLocation?.available !== false) return ''
+  const reasons = {
+    document_not_indexed: '文档尚未完成入库，完成入库后重新检索可定位高亮。',
+    index_changed: '文档索引已更新，请重新检索以定位原文。',
+    chunks_unavailable: '片段信息加载失败，暂时无法定位原文。',
+    content_unavailable: '完整解析原文不可用，暂时无法定位高亮。'
+  }
+  return reasons[contentState.value.lineLocation.reason] || '暂时无法定位原文。'
+})
+const targetLines = computed(() =>
+  props.chunkId
+    ? {
+        start: locationNotice.value ? null : targetChunk.value?.start_line || null,
+        end: locationNotice.value ? null : targetChunk.value?.end_line || null
+      }
+    : { start: props.startLine, end: props.endLine }
+)
 const hasContent = computed(
   () =>
     (contentState.value.lines && contentState.value.lines.length > 0) || contentState.value.content
@@ -291,7 +351,7 @@ const hasChunkPreview = computed(() => canPreviewChunks(file.value))
 const availableViewModes = computed(() => {
   const modes = []
   if (hasSourcePreview.value) modes.push('source')
-  if (hasMarkdownPreview.value) modes.push('markdown')
+  if (hasMarkdownPreview.value) modes.push('markdown', 'markdown-source')
   if (hasChunkPreview.value) modes.push('chunks')
   return modes
 })
@@ -313,7 +373,8 @@ const makeViewModeOption = (label, value, icon) => ({
 const viewModeOptions = computed(() => {
   const optionMap = {
     source: makeViewModeOption('源文件', 'source', FileSearch),
-    markdown: makeViewModeOption('Markdown', 'markdown', FileText),
+    markdown: makeViewModeOption('Markdown 预览', 'markdown', FileText),
+    'markdown-source': makeViewModeOption('Markdown 源码', 'markdown-source', Code2),
     chunks: makeViewModeOption('Chunks', 'chunks', Rows3)
   }
   return availableViewModes.value.map((mode) => optionMap[mode])
@@ -345,7 +406,10 @@ const loadBasicInfo = async () => {
     }
 
     file.value = nextFile
-    viewMode.value = getDefaultDetailView(nextFile)
+    viewMode.value =
+      (props.startLine || props.chunkId || props.embedded) && canPreviewParsed(nextFile)
+        ? 'markdown'
+        : getDefaultDetailView(nextFile)
   } catch (error) {
     if (requestId !== basicRequestSeq) return
     console.error('加载文件基本信息失败:', error)
@@ -378,6 +442,7 @@ const loadParsedContent = async () => {
       loaded: true,
       lines: data?.lines || [],
       content: data?.content || '',
+      lineLocation: data?.line_location || null,
       error: ''
     }
   } catch (error) {
@@ -389,6 +454,7 @@ const loadParsedContent = async () => {
       loaded: false,
       lines: [],
       content: '',
+      lineLocation: null,
       error: errorMessage
     }
     message.error(errorMessage)
@@ -422,7 +488,8 @@ watch(
   async ([open, currentFile, currentViewMode]) => {
     if (!open || !currentFile) return
     if (
-      (currentViewMode === 'markdown' && canPreviewParsed(currentFile)) ||
+      (['markdown', 'markdown-source'].includes(currentViewMode) &&
+        canPreviewParsed(currentFile)) ||
       (currentViewMode === 'chunks' && canPreviewChunks(currentFile))
     ) {
       await loadParsedContent()
@@ -449,7 +516,12 @@ watch(
 // 统计信息
 const mergeResult = computed(() => mergeChunks(contentState.value.lines || []))
 const mappedChunks = computed(() => mergeResult.value.chunks)
-const mergedContent = computed(() => contentState.value.content || mergeResult.value.content || '')
+const mergedContent = computed(
+  () =>
+    contentState.value.content ||
+    (!props.startLine && !props.chunkId ? mergeResult.value.content : '') ||
+    ''
+)
 const charCount = computed(() => mergedContent.value.length)
 const chunkCount = computed(
   () => mappedChunks.value.length || contentState.value.lines?.length || 0
@@ -606,12 +678,47 @@ const handleDownloadMarkdown = () => {
   }
 }
 
+watch([() => props.startLine, () => props.endLine, () => props.chunkId], () => {
+  if (
+    (props.startLine || props.chunkId) &&
+    !['markdown', 'markdown-source'].includes(viewMode.value)
+  ) {
+    viewMode.value = 'markdown'
+  }
+})
+
 onBeforeUnmount(resetLocalState)
 </script>
 
 <style scoped>
-.file-detail-content {
+.location-notice {
+  margin: 12px 16px;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+}
+.file-detail-embedded {
   height: 100%;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: var(--gray-0);
+  border: 1px solid var(--gray-200);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.file-detail-embedded .modal-title-wrapper {
+  flex-wrap: wrap;
+}
+.modal-title-wrapper {
+  flex-shrink: 0;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--gray-150);
+}
+
+.file-detail-content {
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
   display: flex;
   flex-direction: column;

@@ -69,7 +69,7 @@ stateDiagram-v2
 
 | 存储 | 拥有的事实 | 不拥有的事实 |
 | --- | --- | --- |
-| PostgreSQL | 知识库配置、权限、文件元数据和状态、chunk 正文、图谱处理状态、BackgroundJob 执行意图与 lease | 原文件字节、向量索引 |
+| PostgreSQL | 知识库配置、权限、文件元数据和状态、chunk 正文与原文行号、图谱处理状态、BackgroundJob 执行意图与 lease | 原文件字节、向量索引 |
 | MinIO | 上传原件、解析 Markdown、解析图片 | 文件当前状态、用户权限 |
 | Milvus | chunk 向量、BM25/混合检索字段、图实体和关系向量 | 权限、文件状态 |
 | Neo4j | 可选的实体、关系和 chunk 关联 | 原文件、权限和检索排序 |
@@ -78,6 +78,10 @@ stateDiagram-v2
 知识库解析先生成本地 Markdown 目录，再将图片和 Markdown 写入该文档本次解析的独占 MinIO 前缀。文件记录提交 `parsed` 与新 Markdown 路径后，服务回收旧尝试；失败或 owner 丢失只回收未发布的当前尝试，旧产物保持可读。取消发生在结果发布后的旧资源回收阶段时，已发布结果仍然有效。删除文档按文档前缀回收解析资源，其他文档的资源保留。
 
 Milvus 索引会把 chunk 写入 PostgreSQL 和 Milvus。它不是跨存储事务：任一侧失败时会尝试补偿并把文件置为 `error_indexing`，排查时需要同时查看两侧。
+
+分块时保存 `chunk_index`、`start_line` 和 `end_line`，行号以 MinIO 保存的完整解析文本为基准，从 1 开始且包含首尾行；空行也计数，Markdown 和 TXT 使用同一规则。切片、合并与重叠携带原始字符位置，生成的标题与问答前缀不作为原文行。HTML 表格转键值对后的片段保留原表格块范围，CSV 解码后的问答及其子块保留完整 record 范围。检索从当前 active generation 的 PostgreSQL chunk 补齐行号。Knowledge schema v3 通过空库初始化创建行号列，部署前提见[部署参考](../advanced/deployment.md#3-数据库与文件目录)。
+
+文件内容接口同时返回完整解析文本与片段范围，并以 `line_location` 标明能否定位：完整原文可读、文件快照已完成入库、chunk 与该快照的 active generation 相同才可用。原文缺失、入库尚未完成、片段读取失败或读取期间代次改变时，预览显示原因并禁用高亮；失效的检索结果需重新检索。
 
 ## 后台作业 和恢复
 

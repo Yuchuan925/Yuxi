@@ -92,6 +92,8 @@ Dify 和 Notion 只提供外部检索能力。它们不支持 Yuxi 的文档上�
 
 外部结果的 `metadata.score_type` 标识 `cosine`、`bm25`、`hybrid` 或图谱融合的 `fusion`，`metadata.score` 保存该类型的原始分数；`metadata.rerank_score` 是可选重排分数。纯向量检索使用 `similarity_threshold`，BM25 与融合分数不按余弦阈值过滤。检索测试页面传入的 `meta` 使用相同参数，其原始片段响应在顶层返回这些字段；非法参数返回 `400`，执行失败返回 `500`，不会投影为空结果。
 
+Milvus 片段的 `metadata` 包含 `chunk_index`、`start_line` 和 `end_line`。Agent、Public `query_kb` 与检索测试读取同一份入库行号，可结合 `file_id` 定位完整解析文本。行号从 1 开始且包含首尾行；历史未重新索引的片段为 `null`。行号来源与重写内容的范围规则见[知识库存储机制](../mechanisms/knowledge-base.md#各存储负责什么)。Dify、Notion 的定位字段由提供方返回。
+
 ## CLI
 
 先按[命令行工具](../intro/cli.md)完成登录：

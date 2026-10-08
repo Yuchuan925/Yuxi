@@ -4,20 +4,24 @@ import csv
 import re
 from typing import Any
 
+from yuxi.modules.knowledge.chunking.source_spans import LocatedText, SourceSpanLocator, SourceText, join_source_text
+
 
 def _rm_prefix(text: str) -> str:
-    return re.sub(
+    cleaned = (text or "").strip()
+    match = re.match(
         r"^(问题|答案|回答|user|assistant|Q|A|Question|Answer|问|答)[\t:： ]+",
-        "",
-        (text or "").strip(),
+        cleaned,
         flags=re.IGNORECASE,
     )
+    return cleaned[match.end() :] if match else cleaned
 
 
 def _to_qa_chunk(question: str, answer: str, eng: bool = False) -> str:
     qprefix = "Question: " if eng else "问题："
     aprefix = "Answer: " if eng else "回答："
-    return "\t".join([qprefix + _rm_prefix(question), aprefix + _rm_prefix(answer)])
+    content = join_source_text([qprefix + _rm_prefix(question), aprefix + _rm_prefix(answer)], "\t")
+    return LocatedText(str(content), question.source_range) if isinstance(question, LocatedText) else content
 
 
 def _guess_delimiter(lines: list[str]) -> str:
@@ -59,15 +63,28 @@ def _extract_pairs_from_csv(lines: list[str], delimiter: str) -> list[tuple[str,
     answer = ""
 
     reader = csv.reader(lines, delimiter=delimiter)
-    for row, raw_line in zip(reader, lines, strict=False):
+    first_line = 0
+    for row in reader:
+        record_start = first_line
+        raw_line = join_source_text(lines[first_line : reader.line_num], "\n")
+        first_line = reader.line_num
         if len(row) != 2:
             if question:
                 answer += "\n" + raw_line
+                if isinstance(question, LocatedText):
+                    question.source_range = (question.source_range[0], lines[reader.line_num - 1].source_range[1])
             continue
 
         if question and answer:
             pairs.append((question, answer))
-        question, answer = row
+        if isinstance(raw_line, SourceText):
+            # CSV 解码删除结构引号、合并转义字符，来源属于 reader 消费的完整 record。
+            question = LocatedText(
+                row[0], (lines[record_start].source_range[0], lines[reader.line_num - 1].source_range[1])
+            )
+            answer = row[1]
+        else:
+            question, answer = row
 
     if question:
         pairs.append((question, answer))
@@ -154,11 +171,11 @@ def _extract_pairs_from_markdown_headings(markdown_content: str) -> list[tuple[s
             question_level, question = _md_question_level(line)
 
         if not question_level or question_level > 6:
-            last_answer = f"{last_answer}\n{line}"
+            last_answer = join_source_text([last_answer, line], "\n")
             continue
 
         if last_answer.strip():
-            sum_question = "\n".join(question_stack)
+            sum_question = join_source_text(question_stack, "\n")
             if sum_question:
                 pairs.append((sum_question, last_answer.strip()))
             last_answer = ""
@@ -171,7 +188,7 @@ def _extract_pairs_from_markdown_headings(markdown_content: str) -> list[tuple[s
         level_stack.append(question_level)
 
     if last_answer.strip():
-        sum_question = "\n".join(question_stack)
+        sum_question = join_source_text(question_stack, "\n")
         if sum_question:
             pairs.append((sum_question, last_answer.strip()))
 
@@ -192,7 +209,7 @@ def _extract_pairs_by_prefix(markdown_content: str) -> list[tuple[str, str]]:
     def flush_pair() -> None:
         nonlocal question, answer_lines
         if question:
-            pairs.append((question, "\n".join(answer_lines)))
+            pairs.append((question, join_source_text(answer_lines, "\n")))
             question = ""
             answer_lines = []
 
@@ -212,14 +229,14 @@ def _extract_pairs_by_prefix(markdown_content: str) -> list[tuple[str, str]]:
         q_match = question_re.match(text)
         if q_match:
             flush_pair()
-            question = q_match.group(1).strip()
+            question = text[q_match.start(1) : q_match.end(1)].strip()
             continue
 
         a_match = answer_re.match(text)
         if a_match:
             # 答案必须归属活跃问题：问题尚未出现时的前言 A: 行直接忽略，避免孤儿文本被拼进后续真实问答对
             if question:
-                answer_lines.append(a_match.group(1).strip())
+                answer_lines.append(text[a_match.start(1) : a_match.end(1)].strip())
             continue
 
         if heading_match:
@@ -291,7 +308,7 @@ def _split_answer_by_paragraphs(answer: str, max_chars: int) -> list[str]:
             result.append(current)
             current = p
         else:
-            current = f"{current}\n\n{p}" if current else p
+            current = join_source_text([current, p], "\n\n") if current else p
     if current:
         result.append(current)
     return result
@@ -317,7 +334,7 @@ def _split_answer_by_lines(answer: str, max_chars: int) -> list[str]:
             result.append(current)
             current = line
         else:
-            current = f"{current}\n{line}" if current else line
+            current = join_source_text([current, line], "\n") if current else line
     if current:
         result.append(current)
     return result
@@ -365,7 +382,7 @@ def _split_long_qa_chunks(chunks: list[str], max_chars: int = _QA_CHUNK_MAX_CHAR
         # 预留问题部分 + 前缀 + 制表符占位
         max_answer_chars = max_chars - len(q_prefix) - len(q_body) - len(a_prefix) - 1
         for sub_answer in _split_answer_by_paragraphs(a_body, max_answer_chars):
-            result.append(f"{q_prefix}{q_body}\t{a_prefix}{sub_answer}")
+            result.append(join_source_text([q_prefix, q_body, "\t", a_prefix, sub_answer]))
 
     return result
 
@@ -386,6 +403,7 @@ def chunk_markdown(filename: str, markdown_content: str, parser_config: dict[str
     7. 问题本身超限等无法保留结构时，对超长 chunk 按字符数硬切并过滤空白片段，保证单条不超上限。
     """
     parser_config = parser_config or {}
+    markdown_content = SourceText(markdown_content or "")
     eng = str(parser_config.get("language", "Chinese")).lower() == "english"
 
     suffix = ""
@@ -393,6 +411,10 @@ def chunk_markdown(filename: str, markdown_content: str, parser_config: dict[str
         suffix = "." + filename.lower().split(".")[-1]
 
     lines = [line for line in (markdown_content or "").splitlines() if line.strip()]
+    locator = SourceSpanLocator(markdown_content)
+    for line in lines:
+        _, _, first, last = locator.locate(line)
+        line.source_range = (first - 1, last)
     pairs: list[tuple[str, str]] = []
 
     # 各分支的提取器组合按后缀分发，编号对应 docstring 中的策略步骤
@@ -441,4 +463,10 @@ def chunk_markdown(filename: str, markdown_content: str, parser_config: dict[str
 
     chunks = [_to_qa_chunk(q, a, eng=eng) for q, a in pairs]
     # 6/7. 超长 chunk 限长：保留问题切答案，问题本身超限时整条硬切
-    return _split_long_qa_chunks(chunks)
+    result = []
+    for chunk in chunks:
+        parts = _split_long_qa_chunks([chunk])
+        result.extend(
+            LocatedText(str(part), chunk.source_range) if isinstance(chunk, LocatedText) else part for part in parts
+        )
+    return result

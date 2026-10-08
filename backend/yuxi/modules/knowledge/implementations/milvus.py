@@ -535,6 +535,8 @@ class MilvusKB(KnowledgeBase):
                 "chunk_index": chunk["chunk_index"],
                 "generation": int(chunk.get("generation", 1) or 1),
                 "content": chunk["content"],
+                "start_line": chunk.get("start_line"),
+                "end_line": chunk.get("end_line"),
                 "start_char_pos": chunk.get("start_char_pos"),
                 "end_char_pos": chunk.get("end_char_pos"),
                 "start_token_pos": chunk.get("start_token_pos"),
@@ -670,6 +672,8 @@ class MilvusKB(KnowledgeBase):
             metadata.update(source)
             metadata["generation"] = record.generation
             metadata["chunk_index"] = record.chunk_index
+            metadata["start_line"] = record.start_line
+            metadata["end_line"] = record.end_line
             live_chunks.append(chunk)
         return live_chunks
 
@@ -1377,14 +1381,20 @@ class MilvusKB(KnowledgeBase):
         return {"meta": await self._load_file_meta(kb_id, file_id)}
 
     async def _get_file_content_from_meta(self, file_id: str, file_meta: dict) -> dict:
-        content_info = {"lines": []}
+        """读取完整解析文本，并校验片段行号与文件快照属于同一入库代次。"""
+        content_info = {"lines": [], "line_location": {"available": False, "reason": "content_unavailable"}}
+        location_reason = "document_not_indexed" if file_meta.get("status") not in {"indexed", "done"} else ""
         try:
             chunks = await KnowledgeChunkRepository().list_by_file_id(file_id)
+            if not location_reason and any(chunk.generation != file_meta.get("active_generation") for chunk in chunks):
+                location_reason = "index_changed"
             content_info["lines"] = [
                 {
                     "id": chunk.chunk_id,
                     "content": chunk.content,
                     "chunk_order_index": chunk.chunk_index,
+                    "start_line": chunk.start_line,
+                    "end_line": chunk.end_line,
                     "start_char_pos": chunk.start_char_pos,
                     "end_char_pos": chunk.end_char_pos,
                     "start_token_pos": chunk.start_token_pos,
@@ -1397,6 +1407,7 @@ class MilvusKB(KnowledgeBase):
                 for chunk in chunks
             ]
         except Exception as e:
+            location_reason = "chunks_unavailable"
             logger.error(f"Failed to get file content from PostgreSQL: {e}")
 
         if not content_info["lines"]:
@@ -1410,6 +1421,8 @@ class MilvusKB(KnowledgeBase):
             except Exception as e:
                 logger.error(f"Failed to read markdown file for {file_id}: {e}")
 
+        if content_info.get("content"):
+            content_info["line_location"] = {"available": not location_reason, "reason": location_reason or None}
         return content_info
 
     async def get_file_content(self, kb_id: str, file_id: str) -> dict:

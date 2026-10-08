@@ -33,12 +33,58 @@ const props = defineProps({
   codeCopy: {
     type: Boolean,
     default: false
+  },
+  startLine: {
+    type: Number,
+    default: null
+  },
+  endLine: {
+    type: Number,
+    default: null
+  },
+  sourceLines: {
+    type: Boolean,
+    default: false
   }
 })
 
 const themeStore = useThemeStore()
 const shikiTheme = computed(() => (themeStore.isDark ? 'github-dark' : 'github-light'))
 const previewRef = ref(null)
+
+/** 对命中的 Markdown 块高亮，并滚动到最接近起始行的块。 */
+const highlightSourceLines = async () => {
+  await nextTick()
+  if (!previewRef.value) return
+  const blocks = [...previewRef.value.querySelectorAll('[data-source-start]')]
+  const start = props.startLine
+  const end = props.endLine || start
+  const matches = new Set(
+    blocks.filter(
+      (block) =>
+        start > 0 &&
+        Number(block.dataset.sourceStart) <= end &&
+        Number(block.dataset.sourceEnd) >= start
+    )
+  )
+  // 只标记最内层的命中块，避免给整张表或整个列表的其他内容染色。
+  for (const block of matches) {
+    let parent = block.parentElement
+    while (parent && parent !== previewRef.value) {
+      matches.delete(parent)
+      parent = parent.parentElement
+    }
+  }
+  for (const block of blocks) block.classList.toggle('source-line-highlight', matches.has(block))
+  const target =
+    [...matches].find(
+      (block) =>
+        Number(block.dataset.sourceStart) <= start && Number(block.dataset.sourceEnd) >= start
+    ) || [...matches][0]
+  target?.scrollIntoView({ block: 'center', behavior: 'auto' })
+}
+
+watch([() => props.startLine, () => props.endLine], highlightSourceLines)
 const copiedTimers = new WeakMap()
 const htmlPreviewFrames = new Map()
 const imageBlobUrls = new Set()
@@ -372,7 +418,13 @@ onBeforeUnmount(() => {
 })
 
 watch(
-  [() => props.content, shikiTheme, () => props.codeCopy, () => props.resourceBaseUrl],
+  [
+    () => props.content,
+    shikiTheme,
+    () => props.codeCopy,
+    () => props.resourceBaseUrl,
+    () => props.sourceLines
+  ],
   async ([content, theme, codeCopy], _, onCleanup) => {
     let expired = false
     onCleanup(() => {
@@ -386,11 +438,12 @@ watch(
       return
     }
 
-    const html = await renderMarkdown(content, { theme })
+    const html = await renderMarkdown(content, { theme, sourceLines: props.sourceLines })
     if (!expired) {
       replaceHtmlPreservingPreviews(html)
       revokeImageBlobUrls()
       cleanupHtmlPreviewFrames()
+      await highlightSourceLines()
 
       await nextTick()
       if (expired) return
@@ -553,6 +606,12 @@ const showCopiedFeedback = (btn) => {
 </script>
 
 <style lang="less">
+.yk-markdown-preview .source-line-highlight {
+  background-color: var(--color-warning-50);
+  outline: 1px solid var(--color-warning-100);
+  border-radius: 4px;
+}
+
 .yk-markdown-preview,
 .flat-md-preview.yk-markdown-preview {
   max-width: 100%;

@@ -4,6 +4,8 @@ import random
 import re
 from dataclasses import dataclass, field
 
+from yuxi.modules.knowledge.chunking.source_spans import join_source_text
+
 BULLET_PATTERN = [
     [
         r"第[零一二三四五六七八九十百0-9]+(分?编|部分)",
@@ -287,7 +289,7 @@ def make_colon_as_title(sections: list[str] | list[tuple[str, str]]) -> list[str
         if len(arr) < 2 or len(arr[1]) < 32:
             continue
 
-        sections.insert(i - 1, (arr[0][::-1], "title"))
+        sections.insert(i - 1, (text[len(text) - len(arr[0]) :], "title"))
         i += 1
 
     return sections
@@ -318,7 +320,7 @@ def tree_merge(bull: int, sections: list[str] | list[tuple[str, str]], depth: in
 
     def get_level(section: tuple[str, str]) -> tuple[int, str]:
         text, layout = section
-        text = re.sub(r"\u3000", " ", text).strip()
+        text = join_source_text(text.split("\u3000"), " ").strip()
 
         for i, patt in enumerate(BULLET_PATTERN[bull]):
             if re.match(patt, text) and is_probable_heading_line(text):
@@ -451,7 +453,14 @@ def hierarchical_merge(bull: int, sections: list[str] | list[tuple[str, str]], d
 
 
 def _remove_pdf_tags(text: str) -> str:
-    return re.sub(r"@@[0-9-]+\t[0-9.\t]+##", "", text or "")
+    """移除历史 PDF 布局标签，保留其余字符的来源。"""
+    parts = []
+    start = 0
+    for match in re.finditer(r"@@[0-9-]+\t[0-9.\t]+##", text or ""):
+        parts.append(text[start : match.start()])
+        start = match.end()
+    parts.append(text[start:])
+    return join_source_text(parts)
 
 
 def _extract_custom_delimiters(delimiter: str) -> list[str]:
@@ -482,7 +491,10 @@ def naive_merge(
         pattern = "|".join(re.escape(t) for t in sorted(set(custom_delimiters), key=len, reverse=True))
         chunks: list[str] = []
         for sec, pos in typed_sections:
-            split_sec = re.split(rf"({pattern})", sec, flags=re.DOTALL)
+            boundaries = [(match.start(), match.end()) for match in re.finditer(pattern, sec, flags=re.DOTALL)]
+            starts = [0, *(end for _, end in boundaries)]
+            ends = [*(start for start, _ in boundaries), len(sec)]
+            split_sec = [sec[start:end] for start, end in zip(starts, ends, strict=True)]
             for sub in split_sec:
                 if re.fullmatch(pattern, sub or ""):
                     continue
@@ -495,7 +507,7 @@ def naive_merge(
         return chunks
 
     if chunk_token_num <= 0:
-        merged = "\n".join(sec for sec, _ in typed_sections if sec and sec.strip())
+        merged = join_source_text((sec for sec, _ in typed_sections if sec and sec.strip()), "\n")
         return [merged] if merged.strip() else []
 
     chunks = [""]
@@ -571,14 +583,14 @@ class Node:
         child = node.children
 
         if level == 0 and texts:
-            tree_list.append("\n".join(titles + texts))
+            tree_list.append(join_source_text(titles + texts, "\n"))
 
         path_titles = titles + texts if 1 <= level <= self.depth else titles
 
         if level > self.depth and texts:
-            tree_list.append("\n".join(path_titles + texts))
+            tree_list.append(join_source_text(path_titles + texts, "\n"))
         elif not child and (1 <= level <= self.depth):
-            tree_list.append("\n".join(path_titles))
+            tree_list.append(join_source_text(path_titles, "\n"))
 
         for c in child:
             self._dfs(c, tree_list, path_titles)

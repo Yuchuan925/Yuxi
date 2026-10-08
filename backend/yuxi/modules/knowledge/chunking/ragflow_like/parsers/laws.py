@@ -4,6 +4,7 @@ import re
 from typing import Any
 
 from yuxi.modules.knowledge.chunking.ragflow_like import nlp
+from yuxi.modules.knowledge.chunking.source_spans import SourceText, join_source_text
 
 _ARTICLE_PATTERN = re.compile(r"^(第[零一二三四五六七八九十百千万0-9]+条)[\s　:：]*(.*)$")
 
@@ -19,10 +20,19 @@ def _iter_lines(markdown_content: str) -> list[str]:
 def _normalize_law_line(line: str) -> str:
     # 法规 markdown 常见的 #、-、** 装饰会干扰层级识别，这里先做轻量归一化。
     text = (line or "").strip()
-    text = re.sub(r"^#{1,6}\s+", "", text)
-    text = re.sub(r"^[-*+]\s+", "", text)
-    text = text.replace("**", "").replace("__", "").replace("`", "")
-    text = re.sub(r"[ \t]+", " ", text)
+    for pattern in (r"^#{1,6}\s+", r"^[-*+]\s+"):
+        match = re.match(pattern, text)
+        if match:
+            text = text[match.end() :]
+    for marker in ("**", "__", "`"):
+        text = join_source_text(text.split(marker))
+    parts = []
+    start = 0
+    for match in re.finditer(r"[ \t]+", text):
+        parts.extend([text[start : match.start()], " "])
+        start = match.end()
+    parts.append(text[start:])
+    text = join_source_text(parts)
     return text.strip()
 
 
@@ -35,8 +45,8 @@ def _expand_article_line(line: str) -> list[str]:
     if not matched:
         return [normalized]
 
-    article = matched.group(1).strip()
-    body = matched.group(2).strip()
+    article = normalized[matched.start(1) : matched.end(1)].strip()
+    body = normalized[matched.start(2) : matched.end(2)].strip()
     if not body:
         return [article]
     return [article, body]
@@ -61,7 +71,7 @@ def _docx_heading_tree(markdown_content: str) -> list[str]:
         heading_match = re.match(r"^(#{1,6})\s+(.*)$", text)
         if heading_match:
             level = len(heading_match.group(1))
-            value = heading_match.group(2).strip()
+            value = text[heading_match.start(2) : heading_match.end(2)].strip()
         else:
             level = 99
             value = text
@@ -119,8 +129,10 @@ def _ensure_chunk_token_limit(
             if nlp.count_tokens(cleaned) <= max_tokens:
                 protected.append(cleaned)
             else:
+                ends = [match.end() for match in re.finditer(r"(?<=[。！？；;!?])", cleaned)] + [len(cleaned)]
+                sentences = [cleaned[start:end] for start, end in zip([0, *ends], ends)]
                 sentence_refined = nlp.naive_merge(
-                    [(_sentence, "") for _sentence in re.split(r"(?<=[。！？；;!?])", cleaned) if _sentence.strip()],
+                    [(sentence, "") for sentence in sentences if sentence.strip()],
                     chunk_token_num=max_tokens,
                     delimiter=delimiter,
                     overlapped_percent=overlapped_percent,
@@ -148,6 +160,7 @@ def chunk_markdown(filename: str, markdown_content: str, parser_config: dict[str
     - 最后统一执行超长保护。
     """
     parser_config = parser_config or {}
+    markdown_content = SourceText(markdown_content or "")
 
     delimiter = _unescape_delimiter(str(parser_config.get("delimiter", "\n") or "\n"))
     chunk_token_num = int(parser_config.get("chunk_token_num", 512) or 512)

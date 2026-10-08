@@ -10,6 +10,16 @@ test('无代码高亮器时 Markdown 仍保留结构化渲染', () => {
   assert.match(html, /<pre><code/)
 })
 
+test('定位预览保留空行后的标题、正文与代码块原始行号', () => {
+  const renderer = createMarkdownRenderer({ themeName: 'github-light', highlighter: null })
+  const content = '# 标题\n\n正文\n\n```txt\n代码\n```'
+  const html = renderer.render(content, { sourceLines: true })
+  assert.match(html, /<h1 data-source-start="1" data-source-end="1">/)
+  assert.match(html, /<p data-source-start="3" data-source-end="3">/)
+  assert.match(html, /<div data-source-start="5" data-source-end="7"><pre>/)
+  assert.doesNotMatch(renderer.render(content), /data-source-start/)
+})
+
 test('frontmatter 保留多行字段的 YAML 缩进', () => {
   const renderer = createMarkdownRenderer({ themeName: 'github-light', highlighter: null })
   const html = renderer.render(`---

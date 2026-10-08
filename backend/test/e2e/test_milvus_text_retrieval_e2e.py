@@ -139,9 +139,10 @@ async def test_worker_index_and_all_search_modes_use_text_constraints(e2e_client
             "match.md": "Milvus vector database production reference.",
             "reversed.md": "Milvus database vector production reference.",
             "excluded.md": "Milvus vector database legacy reference.",
-            "unrelated.md": "PostgreSQL transactional storage reference.",
+            "unrelated.md": "PostgreSQL transactional\nstorage reference.",
             "chinese.md": "知识库支持关键词检索以及混合检索。",
         }
+        expected_lines = {name: (1, 2) if name == "unrelated.md" else (1, 1) for name in samples}
         file_ids = {}
         for name, text in samples.items():
             uploaded = await e2e_client.post(
@@ -189,6 +190,15 @@ async def test_worker_index_and_all_search_modes_use_text_constraints(e2e_client
             assert record.status == "indexed", (name, record.status)
             [chunk] = await repository.list_by_file_id(file_id)
             assert chunk.content == samples[name]
+            assert (chunk.start_line, chunk.end_line) == expected_lines[name]
+            content_response = await e2e_client.get(
+                f"/api/knowledge/databases/{kb_id}/documents/{file_id}/content", headers=e2e_headers
+            )
+            assert content_response.status_code == 200, content_response.text
+            [preview_chunk] = content_response.json()["lines"]
+            assert (preview_chunk["start_line"], preview_chunk["end_line"]) == expected_lines[name]
+            assert content_response.json()["line_location"] == {"available": True, "reason": None}
+            assert content_response.json()["content"] == samples[name]
         connections.connect(
             alias=alias,
             uri=os.environ["MILVUS_URI"],
@@ -253,7 +263,14 @@ async def test_worker_index_and_all_search_modes_use_text_constraints(e2e_client
                 },
             )
             assert response.status_code == 200, response.text
-            return response.json()
+            results = response.json()
+            expected_by_file = {file_ids[name]: lines for name, lines in expected_lines.items()}
+            assert all(
+                (row["metadata"]["start_line"], row["metadata"]["end_line"])
+                == expected_by_file[row["metadata"]["file_id"]]
+                for row in results
+            )
+            return results
 
         active_entities = collection.query(
             expr='id != ""',

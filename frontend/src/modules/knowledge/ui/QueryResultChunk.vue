@@ -1,7 +1,20 @@
 <template>
-  <article class="result-item">
+  <article class="result-item" :class="{ selected }" @click="$emit('select', chunk)">
     <div class="result-header">
       <span class="result-index">#{{ index + 1 }}</span>
+      <button
+        v-if="chunk.metadata?.file_id"
+        type="button"
+        class="result-open"
+        :aria-pressed="selected"
+        @click.stop="$emit('select', chunk)"
+      >
+        {{ chunk.metadata.source || '查看原文' }}
+        <span v-if="chunk.metadata.start_line">
+          · 行 {{ chunk.metadata.start_line }}–{{ chunk.metadata.end_line }}
+        </span>
+        <span v-else> · 查看原文</span>
+      </button>
       <span v-if="Number.isFinite(chunk.score)" class="result-score">
         {{ scoreLabel }}: {{ chunk.score.toFixed(4) }}
       </span>
@@ -37,8 +50,11 @@ import { computed } from 'vue'
 
 const props = defineProps({
   chunk: { type: Object, required: true },
-  index: { type: Number, required: true }
+  index: { type: Number, required: true },
+  selected: { type: Boolean, default: false }
 })
+
+defineEmits(['select'])
 
 const scoreLabel = computed(
   () =>
@@ -60,6 +76,26 @@ const scoreLabel = computed(
   border-radius: 8px;
   background: var(--gray-0);
   color: var(--color-text);
+}
+
+.result-item.selected {
+  border-color: var(--main-color);
+}
+.result-open {
+  border: none;
+  background: none;
+  padding: 0;
+  color: var(--main-color);
+  font: inherit;
+  cursor: pointer;
+  text-align: left;
+  &:hover {
+    text-decoration: underline;
+  }
+  &:focus-visible {
+    outline: 2px solid var(--main-color);
+    outline-offset: 3px;
+  }
 }
 
 .result-header,

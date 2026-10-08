@@ -224,7 +224,10 @@ def patch_chunk_records(monkeypatch, records):
     repository = types.SimpleNamespace(
         list_by_chunk_ids=AsyncMock(
             return_value=[
-                types.SimpleNamespace(kb_id="db", generation=1, chunk_index=0, **record) for record in records
+                types.SimpleNamespace(
+                    kb_id="db", generation=1, chunk_index=0, **{"start_line": None, "end_line": None, **record}
+                )
+                for record in records
             ]
         )
     )
@@ -1052,7 +1055,7 @@ async def test_hydrate_chunk_sources_filters_orphaned_file_chunks(monkeypatch, c
     patch_chunk_records(
         monkeypatch,
         [
-            {"chunk_id": "live", "file_id": "file-live", "content": "PG live content"},
+            {"chunk_id": "live", "file_id": "file-live", "content": "PG live content", "start_line": 4, "end_line": 8},
         ],
     )
     chunks = [
@@ -1068,6 +1071,8 @@ async def test_hydrate_chunk_sources_filters_orphaned_file_chunks(monkeypatch, c
     assert result[0]["metadata"]["chunk_count"] == chunk_count
     assert result[0]["metadata"]["chunk_index"] == 0
     assert result[0]["content"] == "PG live content"
+    assert result[0]["metadata"]["start_line"] == 4
+    assert result[0]["metadata"]["end_line"] == 8
 
 
 async def test_hydrate_chunk_sources_returns_all_chunks_when_no_orphans(monkeypatch):
@@ -1098,6 +1103,56 @@ async def test_hydrate_chunk_sources_returns_all_chunks_when_no_orphans(monkeypa
     assert len(result) == 2
     assert result[0]["metadata"]["source"] == "a.md"
     assert result[1]["metadata"]["source"] == "b.md"
+
+
+@pytest.mark.parametrize(
+    "status, generation, content, reason",
+    [
+        ("indexed", 1, "原文", None),
+        ("parsed", 1, "原文", "document_not_indexed"),
+        ("indexed", 2, "原文", "index_changed"),
+        ("indexed", 1, "", "content_unavailable"),
+    ],
+)
+async def test_document_preview_location_requires_matching_index_snapshot(
+    monkeypatch, status, generation, content, reason
+):
+    """完整原文和 Chunk 代次不自洽时，预览不得沿用片段行号高亮。"""
+    kb = MilvusKB.__new__(MilvusKB)
+    chunk = types.SimpleNamespace(
+        chunk_id="chunk",
+        chunk_index=0,
+        generation=generation,
+        content="原文",
+        start_line=1,
+        end_line=1,
+        start_char_pos=0,
+        end_char_pos=2,
+        start_token_pos=None,
+        end_token_pos=None,
+        graph_indexed=False,
+        ent_ids=None,
+        tags=None,
+        extraction_result=None,
+    )
+    monkeypatch.setattr(
+        milvus_module,
+        "KnowledgeChunkRepository",
+        lambda: types.SimpleNamespace(
+            list_by_file_id=AsyncMock(return_value=[chunk]),
+        ),
+    )
+    kb._read_markdown_from_minio = AsyncMock(return_value=content)
+    result = await kb._get_file_content_from_meta(
+        "file",
+        {
+            "status": status,
+            "active_generation": 1,
+            "markdown_file": "minio://parsed/document.md",
+        },
+    )
+    assert result["line_location"] == {"available": reason is None, "reason": reason}
+    assert result["content"] == content
 
 
 @pytest.mark.parametrize("visible_chunks", [0, 1])

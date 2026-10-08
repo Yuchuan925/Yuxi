@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from yuxi.modules.knowledge.chunking.ragflow_like import nlp
+from yuxi.modules.knowledge.chunking.source_spans import SourceText
 
 GENERAL_HARD_LIMIT_RATIO = 1.5
 
@@ -13,7 +14,7 @@ def _unescape_delimiter(delimiter: str) -> str:
 
 def _iter_sections(markdown_content: str, delimiter: str) -> list[tuple[str, str]]:
     sections: list[tuple[str, str]] = []
-    text = markdown_content or ""
+    text = markdown_content if isinstance(markdown_content, SourceText) else SourceText(markdown_content or "")
     if delimiter and delimiter not in {"\n", "\r\n"} and "`" not in delimiter:
         for part in text.split(delimiter):
             block = part.strip()

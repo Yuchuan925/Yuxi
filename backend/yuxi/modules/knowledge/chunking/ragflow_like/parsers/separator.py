@@ -30,7 +30,7 @@ def _slice_text_by_tokens(text: str, max_tokens: int, overlap_tokens: int) -> li
             if current_tokens >= max_tokens:
                 break
 
-        chunk = current.strip()
+        chunk = text[start:end].strip()
         if chunk:
             chunks.append(chunk)
 

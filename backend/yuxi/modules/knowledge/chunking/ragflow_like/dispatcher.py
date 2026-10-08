@@ -4,37 +4,38 @@ from typing import Any
 
 from yuxi.modules.knowledge.chunking.ragflow_like.parsers import book, general, laws, qa, semantic, separator
 from yuxi.modules.knowledge.chunking.ragflow_like.presets import map_to_internal_parser_id, normalize_chunk_preset_id
+from yuxi.modules.knowledge.chunking.source_spans import SourceSpanLocator
 
 
 def _build_chunk_records(
     text_chunks: list[str], file_id: str, filename: str, source_text: str | None = None
 ) -> list[dict[str, Any]]:
+    """将切分正文及其原文范围装配为可持久化的 Chunk。"""
     records: list[dict[str, Any]] = []
-    search_from = 0
+    locator = SourceSpanLocator(source_text) if source_text is not None else None
 
     for idx, chunk_content in enumerate(text_chunks):
         text = (chunk_content or "").strip()
         if not text:
             continue
 
-        start_char_pos = None
-        end_char_pos = None
-        if source_text:
-            found_at = source_text.find(text, search_from)
-            if found_at >= 0:
-                start_char_pos = found_at
-                end_char_pos = found_at + len(text)
-                search_from = end_char_pos
+        start_char_pos = end_char_pos = start_line = end_line = None
+        if locator is not None:
+            start_char_pos, end_char_pos, start_line, end_line = locator.locate(
+                text, source_range=getattr(chunk_content, "source_range", None)
+            )
 
         records.append(
             {
                 "id": f"{file_id}_chunk_{idx}",
-                "content": text,
+                "content": str(text),
                 "file_id": file_id,
                 "filename": filename,
                 "chunk_index": idx,
                 "source": filename,
                 "chunk_id": f"{file_id}_chunk_{idx}",
+                "start_line": start_line,
+                "end_line": end_line,
                 "start_char_pos": start_char_pos,
                 "end_char_pos": end_char_pos,
                 "start_token_pos": None,

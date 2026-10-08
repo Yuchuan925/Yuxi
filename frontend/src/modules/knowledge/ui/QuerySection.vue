@@ -1,6 +1,6 @@
 <template>
   <div class="query-section" :class="{ collapsed: !visible }" :style="style">
-    <div class="query-section-layout">
+    <div class="query-section-layout" :class="{ 'has-preview': selectedChunk }">
       <!-- 主内容区域 -->
       <div class="query-main">
         <div class="query-input-container">
@@ -41,43 +41,6 @@
           </div>
         </div>
 
-        <div v-if="store.database?.kb_type === 'milvus'" class="text-search-options">
-          <div class="text-search-toolbar">
-            <label for="query-search-mode">检索方式</label>
-            <a-select
-              id="query-search-mode"
-              v-model:value="store.meta.search_mode"
-              class="search-mode-select"
-            >
-              <a-select-option value="vector">向量检索</a-select-option>
-              <a-select-option value="keyword">关键词检索</a-select-option>
-              <a-select-option value="hybrid">混合检索</a-select-option>
-            </a-select>
-            <a-button
-              type="text"
-              :aria-expanded="showTextFilters"
-              @click="showTextFilters = !showTextFilters"
-            >
-              {{ showTextFilters ? '收起筛选条件' : '筛选条件' }}
-            </a-button>
-          </div>
-          <div v-if="showTextFilters" class="text-search-filters">
-            <label
-              >必含词<a-input
-                v-model:value="store.meta.required_terms"
-                placeholder="空格分隔，全部匹配"
-            /></label>
-            <label
-              >排除词<a-input
-                v-model:value="store.meta.excluded_terms"
-                placeholder="空格分隔，排除任一词项"
-            /></label>
-            <label
-              >完整短语<a-input v-model:value="store.meta.exact_phrase" placeholder="按词序匹配"
-            /></label>
-          </div>
-        </div>
-
         <div class="query-results" v-if="queryResult">
           <!-- 原始数据显示 -->
           <div v-if="showRawData" class="result-raw">
@@ -93,7 +56,7 @@
             <!-- Milvus 返回列表格式 -->
             <div v-else-if="Array.isArray(queryResult)" class="result-list">
               <div v-if="queryResult.length === 0" class="no-results">
-                <p>未找到相关结果，请尝试更换关键词或放宽筛选条件。</p>
+                <p>未找到相关结果，请尝试更换关键词。</p>
               </div>
               <div v-else>
                 <div class="result-summary">
@@ -112,6 +75,8 @@
                   :key="chunk.metadata?.chunk_id || index"
                   :chunk="chunk"
                   :index="index"
+                  :selected="selectedChunk === chunk"
+                  @select="selectChunk"
                 />
               </div>
             </div>
@@ -164,6 +129,19 @@
           </div>
         </div>
       </div>
+      <aside v-if="selectedChunk" class="query-document-preview" aria-label="命中片段原文">
+        <FileDetailModal
+          :key="`${store.database.kb_id}:${selectedChunk.metadata.file_id}`"
+          embedded
+          :open="true"
+          :kb-id="store.database.kb_id"
+          :file-id="selectedChunk.metadata.file_id"
+          :chunk-id="selectedChunk.metadata.chunk_id || ''"
+          :start-line="selectedChunk.metadata.start_line"
+          :end-line="selectedChunk.metadata.end_line"
+          @update:open="selectedChunk = null"
+        />
+      </aside>
     </div>
   </div>
 </template>
@@ -175,6 +153,7 @@ import { message } from 'ant-design-vue'
 import { queryApi } from '@/apis/knowledge_api'
 import { Braces, RefreshCw, Search as SearchOutlined } from '@lucide/vue'
 import QueryResultChunk from '@/modules/knowledge/ui/QueryResultChunk.vue'
+import FileDetailModal from '@/modules/knowledge/ui/FileDetailModal.vue'
 
 const store = useDatabaseStore()
 const MAX_VISIBLE_EXAMPLES = 10
@@ -195,8 +174,14 @@ defineEmits(['toggleVisible'])
 
 const searchLoading = computed(() => store.state.searchLoading)
 const queryResult = ref('')
+const selectedChunk = ref(null)
+let queryRequest = 0
+
+/** 打开命中片段所属文件，旧 Chunk 仍可打开完整原文。 */
+const selectChunk = (chunk) => {
+  if (chunk.metadata?.file_id) selectedChunk.value = chunk
+}
 const showRawData = ref(false)
-const showTextFilters = ref(false)
 const showQuerySuggestions = computed(() => !searchLoading.value && !queryResult.value)
 
 // 示例问题生成属于写操作，仅对拥有管理权限（非只读权限）的知识库开放
@@ -300,6 +285,9 @@ const useQueryExample = (example) => {
 }
 
 const clearQueryResult = () => {
+  queryRequest += 1
+  store.state.searchLoading = false
+  selectedChunk.value = null
   queryResult.value = ''
 }
 
@@ -309,6 +297,7 @@ watch(
   async (newKbId, oldKbId) => {
     // 如果知识库ID发生变化
     if (newKbId && newKbId !== oldKbId) {
+      clearQueryResult()
       // 清空当前问题列表
       updateQueryExamples()
       // 重新加载新知识库的问题
@@ -324,6 +313,8 @@ const onQuery = async () => {
     return
   }
 
+  clearQueryResult()
+  const requestId = queryRequest
   store.state.searchLoading = true
 
   // 从store中获取配置参数
@@ -331,13 +322,15 @@ const onQuery = async () => {
 
   try {
     const data = await queryApi.queryTest(store.database.kb_id, queryText.value.trim(), queryMeta)
+    if (requestId !== queryRequest) return
     queryResult.value = data
   } catch (error) {
+    if (requestId !== queryRequest) return
     console.error(error)
     message.error(error.message)
     queryResult.value = ''
   } finally {
-    store.state.searchLoading = false
+    if (requestId === queryRequest) store.state.searchLoading = false
   }
 }
 
@@ -374,12 +367,44 @@ defineExpose({
 }
 
 .query-section-layout {
+  display: flex;
+  gap: 20px;
   height: 100%;
+  min-height: 0;
   overflow: hidden;
+  justify-content: center;
+}
+
+.query-document-preview {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+
+.has-preview .query-main {
+  max-width: none;
+}
+
+@media (max-width: 900px) {
+  .query-section-layout.has-preview {
+    flex-direction: column;
+    overflow-y: auto;
+  }
+  .has-preview .query-main {
+    flex: none;
+    max-height: 60vh;
+  }
+  .query-document-preview {
+    flex: none;
+    height: 60vh;
+  }
 }
 
 // 主内容区域
 .query-main {
+  flex: 1;
+  width: 100%;
+  max-width: 800px;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -483,48 +508,6 @@ defineExpose({
   &.active {
     color: var(--main-color);
     background-color: var(--main-50);
-  }
-}
-
-.text-search-options {
-  margin-bottom: 16px;
-}
-
-.text-search-toolbar {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-  font-size: 13px;
-  color: var(--color-text-secondary);
-
-  :deep(.ant-btn) {
-    color: var(--color-text-secondary);
-  }
-}
-
-.search-mode-select {
-  width: 140px;
-}
-
-.text-search-filters {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 12px;
-  margin-top: 12px;
-
-  label {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    font-size: 13px;
-    color: var(--color-text-secondary);
-  }
-}
-
-@media (max-width: 767px) {
-  .text-search-filters {
-    grid-template-columns: 1fr;
   }
 }
 

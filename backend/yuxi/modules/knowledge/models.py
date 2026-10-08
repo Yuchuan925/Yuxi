@@ -143,6 +143,8 @@ class KnowledgeChunk(Base):
     chunk_index = Column(Integer, nullable=False)
     generation = Column(Integer, nullable=False, default=1, server_default=text("1"), index=True)
     content = Column(Text, nullable=False)
+    start_line = Column(Integer)
+    end_line = Column(Integer)
     start_char_pos = Column(Integer)
     end_char_pos = Column(Integer)
     start_token_pos = Column(Integer)

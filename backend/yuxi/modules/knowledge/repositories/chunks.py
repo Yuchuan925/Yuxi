@@ -20,6 +20,8 @@ class KnowledgeChunkRepository:
         "chunk_index",
         "generation",
         "content",
+        "start_line",
+        "end_line",
         "start_char_pos",
         "end_char_pos",
         "start_token_pos",

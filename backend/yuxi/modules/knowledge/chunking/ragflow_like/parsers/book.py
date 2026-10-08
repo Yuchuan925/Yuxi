@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from yuxi.modules.knowledge.chunking.ragflow_like import nlp
+from yuxi.modules.knowledge.chunking.source_spans import SourceText, join_source_text
 
 
 def _unescape_delimiter(delimiter: str) -> str:
@@ -11,6 +12,7 @@ def _unescape_delimiter(delimiter: str) -> str:
 
 def _iter_sections(markdown_content: str) -> list[tuple[str, str]]:
     sections: list[tuple[str, str]] = []
+    markdown_content = SourceText(markdown_content or "")
     for line in (markdown_content or "").splitlines():
         text = line.strip()
         if not text:
@@ -56,7 +58,7 @@ def chunk_markdown(markdown_content: str, parser_config: dict[str, Any] | None =
     bull = nlp.bullets_category([t for t in nlp.random_choices([t for t, _ in sections], k=100)])
 
     if bull >= 0:
-        chunks = ["\n".join(ck) for ck in nlp.hierarchical_merge(bull, sections, depth=5)]
+        chunks = [join_source_text(ck, "\n") for ck in nlp.hierarchical_merge(bull, sections, depth=5)]
     else:
         chunks = nlp.naive_merge(
             sections,

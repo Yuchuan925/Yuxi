@@ -175,6 +175,29 @@ const ensureLanguages = async (highlighter, languages) => {
   )
 }
 
+/** 把 Markdown block 的原始行范围交给预览定位，不改写源文本。 */
+const markdownSourceLines = (md) => {
+  md.core.ruler.push('source_lines', (state) => {
+    if (!state.env.sourceLines) return
+    for (const token of state.tokens) {
+      if (!token.map || token.nesting === -1 || token.type === 'inline') continue
+      token.attrSet('data-source-start', String(token.map[0] + 1))
+      token.attrSet('data-source-end', String(token.map[1]))
+    }
+  })
+  for (const type of ['fence', 'code_block', 'html_block', 'frontmatter_card', 'math_block']) {
+    const render = md.renderer.rules[type]
+    if (!render) continue
+    md.renderer.rules[type] = (tokens, index, options, env, renderer) => {
+      const html = render(tokens, index, options, env, renderer)
+      const map = tokens[index].map
+      return env.sourceLines && map
+        ? `<div data-source-start="${map[0] + 1}" data-source-end="${map[1]}">${html}</div>`
+        : html
+    }
+  }
+}
+
 export const createMarkdownRenderer = ({ themeName, highlighter }) =>
   new MarkdownIt({
     html: true,
@@ -193,6 +216,7 @@ export const createMarkdownRenderer = ({ themeName, highlighter }) =>
     .use(markdownKatexPlugin, { throwOnError: false, errorColor: '#cc0000', trust: false })
     .use(taskLists, { enabled: false, label: false, labelAfter: false })
     .use(markdownItFrontmatterCard)
+    .use(markdownSourceLines)
 
 const getRenderer = async (theme, needsHighlight) => {
   const themeName = normalizeTheme(theme)
@@ -212,16 +236,21 @@ const getRenderer = async (theme, needsHighlight) => {
   return rendererPromise
 }
 
-export const renderMarkdown = async (content, { theme = 'github-light' } = {}) => {
+export const renderMarkdown = async (
+  content,
+  { theme = 'github-light', sourceLines = false } = {}
+) => {
   try {
     const normalizedContent = normalizeHtmlTagQuotes(content)
-    const htmlPreviewContent = renderHtmlPreviewBlocks(normalizedContent, {
-      sanitizeHtml: sanitizeHtmlPreviewSrcdoc
-    })
-    const svgContent = renderSvgBlocks(htmlPreviewContent)
+    const htmlPreviewContent = sourceLines
+      ? normalizedContent
+      : renderHtmlPreviewBlocks(normalizedContent, {
+          sanitizeHtml: sanitizeHtmlPreviewSrcdoc
+        })
+    const svgContent = sourceLines ? htmlPreviewContent : renderSvgBlocks(htmlPreviewContent)
     const themeName = normalizeTheme(theme)
     const needsHighlight = hasCodeFence(svgContent)
-    const cacheKey = `${needsHighlight ? themeName : 'plain'}\u0000${svgContent}`
+    const cacheKey = `${sourceLines ? 'lines' : 'plain'}\u0000${needsHighlight ? themeName : 'plain'}\u0000${svgContent}`
     const cachedHtml = renderedHtmlCache.get(cacheKey)
     if (cachedHtml !== undefined) return cachedHtml
 
@@ -235,7 +264,7 @@ export const renderMarkdown = async (content, { theme = 'github-light' } = {}) =
     }
 
     const md = await getRenderer(themeName, needsHighlight)
-    const html = DOMPurify.sanitize(md.render(svgContent), {
+    const html = DOMPurify.sanitize(md.render(svgContent, { sourceLines }), {
       ADD_TAGS: ['input'],
       ADD_ATTR: [
         'class',
@@ -267,7 +296,8 @@ export const resolveMarkdownImageUrl = (src, resourceBaseUrl, origin) => {
     const base = new URL(resourceBaseUrl || origin, origin)
     const url = new URL(src, base)
     if (url.origin !== origin) return null
-    const allowed = /^\/api\/knowledge\/databases\/[^/]+\/images\//.test(url.pathname) ||
+    const allowed =
+      /^\/api\/knowledge\/databases\/[^/]+\/images\//.test(url.pathname) ||
       /^\/api\/v1\/agents\/threads\/[^/]+\/artifacts\//.test(url.pathname)
     return allowed ? url.pathname + url.search : null
   } catch {
