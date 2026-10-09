@@ -52,42 +52,45 @@
         ><RotateCcw size="12" />
       </span>
 
-      <!-- 来源按钮 - 使用 flex-grow 占据剩余空间并右对齐 -->
-      <button
-        v-if="referenceEntry?.available && showKey('sources')"
-        type="button"
-        class="item btn reference-action"
-        :disabled="referenceEntry.annotating"
-        :aria-pressed="referenceEntry.references ? referenceEntry.visible : undefined"
-        @click="annotateSources"
+      <div
+        v-if="(showKey('sources') && (referenceEntry?.available || hasSources)) || (referenceEntry?.error && !referenceEntry.loaded)"
+        class="source-actions"
       >
-        <LoaderCircle v-if="referenceEntry.annotating" size="12" class="reference-loading" />
-        <Quote v-else size="12" />
-        {{ referenceButtonLabel }}
-      </button>
-      <button
-        v-else-if="referenceEntry?.error && !referenceEntry.loaded"
-        type="button"
-        class="item btn"
-        @click="referenceStore.load(threadId, msg.turn_id)"
-      >来源加载失败，重试</button>
-      <div v-if="hasSources && showKey('sources')" class="sources-spacer"></div>
-      <span
-        v-if="hasSources && showKey('sources')"
-        class="item btn sources-btn"
-        :class="{ expanded: isSourcesExpanded }"
-        @click="toggleSources"
-        :title="isSourcesExpanded ? '收起详情' : '查看来源详情'"
-      >
-        <BookOpen size="12" />
-        <span class="sources-label">
-          来源
-          <template v-if="sourceCount > 0">
-            {{ sourceCount }}
-          </template>
+        <button
+          v-if="referenceEntry?.available && showKey('sources')"
+          type="button"
+          class="item btn reference-action"
+          :disabled="referenceEntry.annotating"
+          :aria-pressed="referenceEntry.references ? referenceEntry.visible : undefined"
+          @click="annotateSources"
+        >
+          <LoaderCircle v-if="referenceEntry.annotating" size="12" class="reference-loading" />
+          <Quote v-else size="12" />
+          {{ referenceButtonLabel }}
+        </button>
+        <button
+          v-else-if="referenceEntry?.error && !referenceEntry.loaded"
+          type="button"
+          class="item btn"
+          @click="referenceStore.load(threadId, msg.turn_id)"
+        >来源加载失败，重试</button>
+        <span
+          v-if="hasSources && showKey('sources')"
+          class="item btn sources-btn"
+          :class="{ expanded: isSourcesExpanded }"
+          @click="toggleSources"
+          :title="isSourcesExpanded ? '收起详情' : '查看来源详情'"
+        >
+          <BookOpen size="12" />
+          <span class="sources-label">
+            来源
+            <template v-if="sourceCount > 0">
+              {{ sourceCount }}
+            </template>
+          </span>
+          <ChevronDown :size="12" class="expand-icon" :class="{ rotated: isSourcesExpanded }" />
         </span>
-        <ChevronDown :size="12" class="expand-icon" :class="{ rotated: isSourcesExpanded }" />
-      </span>
+      </div>
     </div>
 
     <p v-if="referenceEntry?.error && referenceEntry.loaded" class="reference-notice" role="alert">
@@ -358,12 +361,14 @@ const dislikeThisResponse = () => antMessage.info('反馈功能开发中')
     gap: 10px;
     width: 100%;
 
-    .sources-spacer {
-      flex-grow: 1;
+    .source-actions {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-left: auto;
     }
 
     .sources-btn {
-      margin-left: auto;
       background: var(--gray-50);
       border: 1px solid transparent;
       padding: 6px 10px;

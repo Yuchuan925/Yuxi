@@ -152,8 +152,16 @@ defineExpose({ focus, isActive })
   color: var(--gray-1000);
   font-size: 13px;
   line-height: 1.5;
+  animation: reference-source-enter 160ms ease-out;
   button { font-family: inherit; color: inherit; cursor: pointer; }
   button:focus-visible { outline: 2px solid var(--main-500); outline-offset: 3px; }
+}
+@keyframes reference-source-enter {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .reference-source-popover { animation: none; }
 }
 :global(.dark .reference-source-popover) { background: var(--gray-100); }
 .reference-source-pagination {

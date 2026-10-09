@@ -76,6 +76,7 @@ const previewRef = ref(null)
 const referencePreview = ref(null)
 const referencePopover = ref(null)
 const referencePreviewId = `reference-preview-${useId()}`
+let referenceOpenTimer
 let referenceCloseTimer
 
 /** 仅在查看来源时强调命中的正文块。 */
@@ -95,6 +96,7 @@ function cancelReferenceClose() {
 
 /** 关闭预览并清除胶囊状态与临时强调。 */
 function closeReferencePreview() {
+  clearTimeout(referenceOpenTimer)
   cancelReferenceClose()
   const anchor = referencePreview.value?.anchor
   anchor?.setAttribute('aria-expanded', 'false')
@@ -104,7 +106,10 @@ function closeReferencePreview() {
 }
 
 /** 留出跨越卡片间隙的时间，再确认焦点和指针均已离开。 */
-function scheduleReferenceClose() {
+function scheduleReferenceClose(event) {
+  const anchor = event?.target instanceof Element ? event.target.closest('.reference-citation') : null
+  if (anchor?.contains(event.relatedTarget)) return
+  clearTimeout(referenceOpenTimer)
   cancelReferenceClose()
   referenceCloseTimer = setTimeout(() => {
     const anchor = referencePreview.value?.anchor
@@ -120,6 +125,7 @@ function referenceCitations(anchor) {
 
 /** 展示来源组，需要时将键盘焦点移入卡片。 */
 async function showReferencePreview(anchor, focus = false) {
+  clearTimeout(referenceOpenTimer)
   cancelReferenceClose()
   if (referencePreview.value?.anchor !== anchor) closeReferencePreview()
   const citations = referenceCitations(anchor)
@@ -134,10 +140,20 @@ async function showReferencePreview(anchor, focus = false) {
   }
 }
 
-/** 悬浮或聚焦胶囊时展开对应来源。 */
+/** 悬停后展示来源；键盘聚焦直接展示，避免操作等待。 */
 function handleReferenceEnter(event) {
   const anchor = event.target instanceof Element ? event.target.closest('.reference-citation') : null
-  if (anchor) void showReferencePreview(anchor)
+  if (!anchor || anchor.contains(event.relatedTarget)) return
+  clearTimeout(referenceOpenTimer)
+  cancelReferenceClose()
+  if (referencePreview.value?.anchor === anchor) return
+  if (event.type === 'focusin') {
+    void showReferencePreview(anchor)
+    return
+  }
+  referenceOpenTimer = setTimeout(() => {
+    if (anchor.isConnected && anchor.matches(':hover')) void showReferencePreview(anchor)
+  }, 400)
 }
 
 /** 向下键进入来源卡片。 */
@@ -731,15 +747,18 @@ const showCopiedFeedback = (btn) => {
 
 <style lang="less">
 .yk-markdown-preview .reference-answer-active {
-  background: var(--gray-50);
-  border-radius: 3px;
+  text-decoration-line: underline;
+  text-decoration-color: var(--gray-200);
+  text-decoration-thickness: 0.3em;
+  text-underline-offset: -0.15em;
+  text-decoration-skip-ink: none;
 }
 .yk-markdown-preview .reference-citation {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 5px;
-  max-width: min(190px, 100%);
+  max-width: min(95px, 100%);
   height: 21px;
   padding: 0 8px;
   margin-left: 7px;
@@ -752,10 +771,14 @@ const showCopiedFeedback = (btn) => {
   line-height: 1.5;
   vertical-align: middle;
   cursor: pointer;
+  transition: background-color 150ms ease, color 150ms ease;
   &:hover, &[aria-expanded='true'] { background: var(--gray-200); color: var(--gray-1000); }
   &:focus-visible { outline: 2px solid var(--main-500); outline-offset: 2px; }
   .reference-citation-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .reference-citation-count { flex-shrink: 0; color: var(--gray-600); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .yk-markdown-preview .reference-citation { transition: none; }
 }
 .yk-markdown-preview .source-line-highlight {
   background-color: var(--color-warning-50);

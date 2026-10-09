@@ -190,6 +190,7 @@ const toggleToolCallsExpanded = () => {
 <style lang="less" scoped>
 .tool-calls-container {
   width: 100%;
+  margin-block: 8px;
   padding: 0;
   display: flex;
   flex-direction: column;

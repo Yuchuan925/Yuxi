@@ -834,6 +834,10 @@ onBeforeUnmount(resetLocalState)
     top: 20px;
   }
 
+  .ant-modal-content {
+    padding: 12px;
+  }
+
   .ant-modal-header {
     .ant-modal-title {
       width: 100%;
