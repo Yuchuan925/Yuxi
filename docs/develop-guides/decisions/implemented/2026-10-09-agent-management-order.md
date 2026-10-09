@@ -36,4 +36,4 @@ Owner：frontend/src/modules/agents/ui/AgentManagePanel.vue
 - 真实浏览器：回读 API 的创建时间并逐项检查管理页 DOM 顺序，验证搜索保持顺序和无匹配空状态，保存截图。布局与主题样式没有变化。
 - `python3 scripts/verify_engineering_contracts.py`、`python3 -m unittest scripts.test_verify_engineering_contracts` 与 `git diff --check`：通过。
 
-preset 首次初始化按模块文件名顺序执行，因此内置角色创建时间反映初始化顺序；本决定只定义管理页展示顺序，不改变 preset 初始化。
+preset 首次初始化以默认助手优先、其余按模块文件名顺序执行，具体由[内置内容发现](2026-09-17-builtin-discovery.md)拥有；本决定只定义管理页展示顺序。

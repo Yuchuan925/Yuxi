@@ -32,4 +32,6 @@ def discover_agent_presets() -> list[AgentPreset]:
         if preset.slug in presets:
             raise ValueError(f"重复的预置 Agent slug: {preset.slug}")
         presets[preset.slug] = preset
-    return list(presets.values())
+
+    # 默认助手首次入库最早；稳定排序保留其余角色的文件发现顺序。
+    return sorted(presets.values(), key=lambda preset: preset.slug != "default-chatbot")

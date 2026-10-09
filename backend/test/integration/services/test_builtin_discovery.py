@@ -6,7 +6,7 @@ import uuid
 from importlib import invalidate_caches
 
 import pytest
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from yuxi.modules.agents import presets
@@ -17,6 +17,36 @@ from yuxi.modules.agents.models.definitions import Agent
 from yuxi.modules.extensions.skills.models import Skill
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
+
+
+async def test_default_chatbot_is_first_in_fresh_database():
+    """独立空 Schema 中默认助手最先落库，重复初始化保留原记录。"""
+    schema = f"pytest_presets_{uuid.uuid4().hex}"
+    engine = create_async_engine(os.environ["POSTGRES_URL"], execution_options={"schema_translate_map": {None: schema}})
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+    try:
+        async with engine.begin() as conn:
+            await conn.execute(text(f'CREATE SCHEMA "{schema}"'))
+            await conn.run_sync(Agent.__table__.create)
+
+        async with sessions() as db:
+            await initialize_agent_presets(db)
+
+        async with sessions() as db:
+            agents = list(await db.scalars(select(Agent).order_by(Agent.id)))
+            assert [agent.slug for agent in agents] == ["default-chatbot", "deep-research", "knowledge-base-qa"]
+            assert agents[0].id == 1
+            assert agents[0].created_at == min(agent.created_at for agent in agents)
+            original = [(agent.id, agent.slug, agent.created_at) for agent in agents]
+            await initialize_agent_presets(db)
+
+        async with sessions() as db:
+            agents = list(await db.scalars(select(Agent).order_by(Agent.id)))
+            assert [(agent.id, agent.slug, agent.created_at) for agent in agents] == original
+    finally:
+        async with engine.begin() as conn:
+            await conn.execute(text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))
+        await engine.dispose()
 
 
 async def test_backend_http_contract_rejects_unknown_ids(test_client, admin_headers):

@@ -16,12 +16,15 @@ Owner：backend/yuxi/modules/agents/runtime/agent_backends/__init__.py
 
 未知后端抛出 `AgentBackendNotFoundError`。HTTP 接入与配置边界转换为 404；角色更新在任何字段修改或提交前解析后端，未知后端不会产生部分更新。worker 中的配置错误仍进入既有失败收敛流程。
 
-预置 Agent 与子智能体各用一个 Python 模块导出 `AgentPreset`，递归按文件发现，子智能体定义放在 `subagents/`；现有 `agent_config_service.py` 在任何落库前确认全部后端存在，再交给 repository 初始化。已存在的角色保留定制，默认智能助手继续维护既有默认与共享约束。角色类型由 `backend_id` 推导，无需重复声明子智能体标志。初始化用例复用配置 service，不单独创建仅承载一个函数的 `builtin_agent_service.py`。
+### 实现方案
+
+预置 Agent 与子智能体各用一个 Python 模块导出 `AgentPreset`，递归按文件发现，子智能体定义放在 `subagents/`。发现结果以稳定排序把 `default-chatbot` 放到最前，其余角色保持文件顺序；`modules/agents/services/configuration.py` 在任何落库前确认全部后端存在，再交给 repository 依次初始化。因此空库中默认助手最先创建、ID 最小；已有记录的 ID、创建时间与定制不因顺序变化而重写。默认智能助手继续维护既有默认与共享约束。角色类型由 `backend_id` 推导，无需重复声明子智能体标志。初始化用例复用配置 service，不单独创建仅承载一个函数的 `builtin_agent_service.py`。
 
 Skill 通过目录发现，SKILL.md frontmatter 唯一拥有名称、描述、版本和依赖；同步逻辑保留启停状态。发行包包含整个内置 Skill 目录，新增脚本与资源无需逐项登记打包规则。MCP 固定定义由独立 `mcp/builtin.py` 拥有，同步和执行逻辑直接消费同一字典；远程连接的权威在代码中。远程传输限制与 DeepWiki 定义见 [MCP 仅连接远程服务](2026-09-17-remote-only-mcp.md)。
 
 ## 替代方案
 
+- 用文件名前缀控制默认助手顺序会让业务要求依赖模块命名；为所有角色新增 priority 字段没有当前需求。仅对默认助手做稳定排序即可表达本次要求。
 - keep：保留逐角色初始化、手工清单和后端管理器，继续承担重复登记及无效缓存的维护成本。
 - narrow：只替换后端注册表或移动常量，不能消除失效重载与重复 Skill 元数据。
 - replace：内容采用文件发现，执行能力采用显式定义，后端按需创建；不引入依赖或通用插件框架。
@@ -34,6 +37,15 @@ Skill 通过目录发现，SKILL.md frontmatter 唯一拥有名称、描述、�
 既有角色 slug、后端 ID、权限与角色提示词保持不变。Skill frontmatter 合并使用原有效元数据，文件哈希发生变化；MySQL 报表和 MCP 的后续调整由远程 MCP 决策记录拥有。后端类名重命名不改变接口 ID；接口不再把未知后端误报为未捕获 KeyError。页面流程、Schema、执行图装配和配置迁移不在范围内。
 
 ## 验证
+
+默认助手优先注册（2026-10-10）：
+
+| 验收主张 | 失败面 | 语义 Owner | 直接证据 / 命令 | 负向案例 | 当前结果 |
+|---|---|---|---|---|---|
+| 默认助手最先注册，其余保留文件顺序 | deep_research 文件顺序抢先 | presets/discover_agent_presets | `docker compose exec -T api uv run --no-sync --group test pytest test/unit/agents/test_builtin_discovery.py -q -p no:cacheprovider`：13 passed | 恢复原文件排序，默认助手顺序断言失败 | Passed |
+| 空库默认助手 ID 为 1、创建最早，重复初始化保留记录 | 发现顺序未被入库流程消费或重建已有角色 | services/configuration、repositories/definitions | `docker compose exec -T api uv run --no-sync --group test pytest test/integration/services/test_builtin_discovery.py::test_default_chatbot_is_first_in_fresh_database -q -p no:cacheprovider`：1 passed | 隔离 PostgreSQL Schema 以实际 ID 与时间判定顺序 | Passed |
+
+本次 Ruff、工程契约和文档构建通过；不迁移已有数据库中的创建顺序。unit 与 integration 使用同名模块，合并运行产生 import mismatch 后改为分别执行，上述结果来自独立运行。
 
 最终提交前验证：完整 unit 2180 passed、54 skipped；角色/压缩/队列/MCP HTTP integration 19 passed；MCP 安全 E2E 5 passed；主对话与子智能体 worker E2E 3 passed。完整 unit 首轮因旧预设导入路径收集失败，修正后一次运行在异步测试停滞而中断；相关 worker unit 独立运行 52 passed，完整重跑 30 秒全部通过。MCP E2E 首轮与 worker E2E 并行触发共享环境非终态 Run 检查，串行重跑通过。独立 Reviewer 对完整变更复核通过；Ruff、工程契约、62 项验证器单测、文档构建与 diff 检查通过。
 
