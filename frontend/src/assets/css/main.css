@@ -4,6 +4,10 @@
 @import './dashboard.css';
 @import './code-highlight.less';
 @import './extensions.less';
+@import './loading.css';
+@import './antd.less';
+@import './empty.less';
+@import './management-controls.less';
 
 :root {
   --header-height: 45px;
@@ -25,9 +29,7 @@ body {
   color: var(--gray-900);
   background: var(--gray-0);
   line-height: 1.6;
-  font-family:
-    -apple-system, BlinkMacSystemFont, 'Noto Sans SC', 'Roboto', 'HarmonyOS Sans SC', 'Segoe UI',
-    'Helvetica Neue', Arial, sans-serif;
+  font-family: var(--font-family);
   font-size: 15px;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
@@ -138,9 +140,7 @@ body {
   background: var(--gray-0);
   border: 1px solid var(--gray-100);
   border-radius: 8px;
-  box-shadow:
-    0 8px 24px rgba(0, 0, 0, 0.08),
-    0 2px 8px rgba(0, 0, 0, 0.04);
+  box-shadow: var(--shadow-popover);
 }
 
 .config-dropdown-overlay .config-dropdown-item {

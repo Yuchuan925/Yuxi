@@ -1,6 +1,14 @@
 /* color palette from <https://github.com/vuejs/theme> */
 /* https://material-foundation.github.io/material-theme-builder/ */
 :root {
+  --font-family: -apple-system, BlinkMacSystemFont, 'Noto Sans SC', 'Roboto', 'HarmonyOS Sans SC',
+    'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
+  --radius-control: 6px;
+  --radius-dialog: 12px;
+  --color-on-primary: #ffffff;
+  --color-text-inverse: #ffffff;
+  --shadow-popover: 0 6px 20px rgba(0, 0, 0, 0.1), 0 1px 4px rgba(0, 0, 0, 0.06);
+
   --main-1000: #01151f;
   --main-900: #023944;
   --main-800: #035065;

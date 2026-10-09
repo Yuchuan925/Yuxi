@@ -1,0 +1,33 @@
+/* 通用字重、间距和说明文字在此维护；组件皮肤由 theme token 拥有。 */
+button.ant-btn,
+a.ant-btn {
+  font-weight: 500;
+}
+
+.ant-btn > span {
+  font-weight: inherit;
+}
+
+.ant-form-item-label > label {
+  font-weight: 500;
+}
+
+.ant-alert .ant-alert-description {
+  color: var(--gray-600);
+}
+
+.ant-modal .ant-modal-header {
+  margin-bottom: 16px;
+}
+
+.ant-modal .ant-modal-footer,
+.ant-modal .ant-modal-confirm-btns {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+
+  .ant-btn + .ant-btn:not(.ant-dropdown-trigger) {
+    margin-inline-start: 0;
+  }
+}

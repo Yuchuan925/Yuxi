@@ -17,11 +17,14 @@ before(async () => {
     '/src/modules/session/ui/CooperationTree.vue'
   ))
   globalThis.document = { documentElement: { classList: { add() {}, remove() {} } } }
+  // 协作列表的 SSR 断言不涉及颜色，仅提供浏览器样式读取接口。
+  globalThis.getComputedStyle = () => ({ getPropertyValue: () => '' })
 })
 after(async () => {
   await server?.close()
   delete globalThis.localStorage
   delete globalThis.document
+  delete globalThis.getComputedStyle
 })
 const settle = async () => {
   await nextTick()

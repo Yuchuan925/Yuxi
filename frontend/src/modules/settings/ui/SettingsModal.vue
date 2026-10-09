@@ -340,7 +340,6 @@ watch(
 .settings-modal.ant-modal {
   .ant-modal-content {
     border: 1px solid var(--gray-200);
-    border-radius: 12px;
     display: flex;
     flex-direction: column;
     position: relative;

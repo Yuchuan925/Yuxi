@@ -989,20 +989,6 @@ defineExpose({
 
   :deep(.ant-btn) {
     min-width: 56px;
-    border-radius: 6px;
-    font-weight: 500;
-  }
-
-  :deep(.ant-btn-primary) {
-    border-color: var(--main-700);
-    background: var(--main-700);
-    color: var(--gray-0);
-
-    &:hover,
-    &:focus {
-      border-color: var(--main-800);
-      background: var(--main-800);
-    }
   }
 }
 
@@ -1526,14 +1512,12 @@ defineExpose({
 :global(.agent-edit-modal .ant-modal-content) {
   overflow: hidden;
   padding: 0;
-  border-radius: 12px;
 }
 
 :global(.agent-edit-modal .ant-modal-header) {
   margin: 0;
   padding: 10px 24px;
   border-bottom: 1px solid var(--gray-150);
-  background: var(--gray-0);
 }
 
 :global(.agent-edit-modal .ant-modal-title) {

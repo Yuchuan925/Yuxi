@@ -88,7 +88,7 @@ Yuxi 通过 `:root.dark` 覆盖同名 token。新增 UI 必须使用 CSS 变量�
 
 ## 3. 字体与文本层级
 
-全局字体栈定义在 `frontend/src/assets/css/main.css`，新增组件不要私自引入新字体。代码、命令、路径和技术标识可使用 monospace，优先复用现有 `@mono-font` 或系统 monospace 栈。
+全局字体栈由 `frontend/src/assets/css/base.css` 的 `--font-family` 定义，`main.css` 与 Ant Design token 共同消费，新增组件不要私自引入新字体。代码、命令、路径和技术标识可使用 monospace，优先复用现有 `@mono-font` 或系统 monospace 栈。
 
 建议层级：
 
@@ -118,6 +118,18 @@ Yuxi 通过 `:root.dark` 覆盖同名 token。新增 UI 必须使用 CSS 变量�
 - 样式语言：LESS
 - 颜色变量：使用 `base.css` / `base.dark.css` 中的 CSS 变量
 - UI 基础：复用 Ant Design Vue 和项目现有组件模式，避免为单次需求封装新组件体系
+
+### 共享基础外观
+
+CSS 色板拥有颜色、字体和浮层阴影，`shared/model/theme.js` 读取当前主题的实际 CSS 色值并装配 Ant Design token。主题切换先更新根节点的 `dark` 类，再重新装配控件主题；需要参与颜色派生的 token 使用实际色值。按钮、表单、选择器、标签和普通弹窗的通用外观由主题与 `assets/css/antd.less` 统一维护。
+
+当前 Ant Design Vue 4.2.6 将根 Provider 的设计 token 提供给静态 `message`、`notification` 和 `Modal.confirm`，这些反馈沿用同一主题入口。静态调用的其他上下文与组件树分离，不能据此假设它们获取业务注入。调用方保留反馈内容、时长、操作回调和显式定制；基础外观不逐页重复定义，升级组件库时验证静态反馈的主题切换。
+
+`a-alert` 的四种状态共用当前主题的浅中性背景与柔和边框，以语义色图标区分成功、信息、警告和错误。背景、边框、图标颜色和圆角由 Alert 组件 token 维护，说明文字由共享样式维护；保留 banner、关闭按钮、操作与内容 slot 的原有行为。
+
+现有 `a-empty` 标签与 ConfigProvider 的 `renderEmpty` 复用 `shared/ui/AntEmpty.js`，只替换默认图像，保留原有说明、自定义图像、显式隐藏配置及操作 slot。菜单空状态采用紧凑间距；需要标题、解释和下一步操作的业务引导使用 `ResourceEmptyState`。
+
+管理页的行内操作、刷新按钮和旋转状态复用 `assets/css/management-controls.less` 的明确样式类。局部样式继续拥有尺寸、业务布局、自绘标题、定高面板及透明标题选择器等真实差异。共享规则接管外观时同步删除对应局部定义，不以追加全局覆盖保留两个可编辑事实源。
 
 ### 按钮
 

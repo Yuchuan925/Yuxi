@@ -500,9 +500,6 @@ const getLineRange = (chunk) => {
     padding: 0;
     overflow: hidden;
     border: 1px solid var(--gray-150);
-    border-radius: 10px;
-    background: var(--gray-0);
-    box-shadow: 0 18px 48px var(--shadow-3);
   }
 
   .ant-modal-body {

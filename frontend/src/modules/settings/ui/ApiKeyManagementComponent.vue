@@ -13,9 +13,9 @@
           @click="handleRefresh"
           :loading="refreshing"
           title="刷新"
-          class="refresh-btn lucide-icon-btn"
+          class="yuxi-refresh-button lucide-icon-btn"
         >
-          <template #icon><RefreshCw :size="16" :class="{ spin: refreshing }" /></template>
+          <template #icon><RefreshCw :size="16" :class="{ 'yuxi-rotate': refreshing }" /></template>
         </a-button>
         <a-button type="primary" @click="showCreateModal" class="add-btn lucide-icon-btn">
           <Plus :size="14" />
@@ -74,7 +74,7 @@
                 </template>
                 <template v-if="column.key === 'action'">
                   <a-tooltip title="调整权限和来源">
-                    <a-button type="text" size="small" class="action-btn lucide-icon-btn" @click="openEdit(record)">
+                    <a-button type="text" size="small" class="yuxi-table-action lucide-icon-btn" @click="openEdit(record)">
                       <Pencil :size="14" />
                     </a-button>
                   </a-tooltip>
@@ -85,7 +85,7 @@
                     cancel-text="取消"
                   >
                     <a-tooltip title="删除 API Key">
-                      <a-button type="text" size="small" danger class="action-btn lucide-icon-btn">
+                      <a-button type="text" size="small" danger class="yuxi-table-action lucide-icon-btn">
                         <Trash2 :size="14" />
                       </a-button>
                     </a-tooltip>
@@ -442,24 +442,6 @@ onMounted(() => {
       display: flex;
       align-items: center;
       gap: 8px;
-
-      .refresh-btn {
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        width: 32px;
-        height: 32px;
-        border-radius: 6px;
-        transition: all 0.2s ease;
-
-        &:hover {
-          background: var(--gray-25);
-        }
-
-        .spin {
-          animation: spin 1s linear infinite;
-        }
-      }
     }
   }
 
@@ -572,37 +554,7 @@ onMounted(() => {
         color: var(--gray-500);
         font-size: 12px;
       }
-
-      .action-btn {
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        width: 26px;
-        height: 26px;
-        border-radius: 6px;
-        color: var(--gray-400);
-        transition: all 0.15s ease;
-
-        &:hover:not(:disabled) {
-          background: var(--gray-100);
-          color: var(--gray-800);
-        }
-
-        &.ant-btn-dangerous:hover:not(:disabled) {
-          background: var(--color-error-50, #fff2f0);
-          color: var(--color-error-500, #ff4d4f);
-        }
-      }
     }
-  }
-}
-
-@keyframes spin {
-  from {
-    transform: rotate(0deg);
-  }
-  to {
-    transform: rotate(360deg);
   }
 }
 

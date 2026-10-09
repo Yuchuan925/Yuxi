@@ -254,7 +254,7 @@
             :loading="toolsLoading"
             class="lucide-icon-btn"
           >
-            <RotateCw :size="14" />
+            <RotateCw v-if="!toolsLoading" :size="14" />
             <span>刷新</span>
           </a-button>
         </div>

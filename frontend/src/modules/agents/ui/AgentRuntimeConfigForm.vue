@@ -1283,34 +1283,9 @@ defineExpose({ closeSelectionModal })
         gap: 12px;
 
         :deep(.ant-btn) {
-          border-radius: 8px;
           height: 36px;
           font-size: 14px;
-          font-weight: 500;
           padding: 0 16px;
-          transition: all 0.2s ease;
-
-          &.ant-btn-default {
-            border: 1px solid var(--gray-300);
-            color: var(--gray-700);
-            background: var(--gray-0);
-
-            &:hover {
-              border-color: var(--main-color);
-              color: var(--main-color);
-            }
-          }
-
-          &.ant-btn-primary {
-            background: var(--main-color);
-            border: none;
-            color: var(--gray-0);
-
-            &:hover {
-              background: var(--main-color);
-              opacity: 0.9;
-            }
-          }
         }
       }
     }

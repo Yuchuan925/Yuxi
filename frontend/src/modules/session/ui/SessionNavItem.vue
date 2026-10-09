@@ -129,13 +129,9 @@ const renameChat = () => {
 .rename-session-modal {
   .ant-modal-content {
     padding: 22px 24px 20px;
-    border-radius: 12px;
   }
 
   .ant-modal-confirm-title {
-    color: var(--gray-900);
-    font-size: 18px;
-    font-weight: 600;
     line-height: 1.4;
   }
 
@@ -148,14 +144,11 @@ const renameChat = () => {
   .ant-modal-confirm-btns {
     display: flex;
     justify-content: flex-end;
-    gap: 8px;
     margin-top: 18px;
 
     .ant-btn {
       min-width: 68px;
       height: 34px;
-      margin-inline-start: 0;
-      border-radius: 8px;
       font-size: 14px;
     }
   }

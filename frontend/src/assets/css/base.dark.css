@@ -1,5 +1,8 @@
 /* 深色模式 */
 :root.dark {
+  --shadow-popover: 0 8px 24px rgba(0, 0, 0, 0.35), 0 1px 4px rgba(0, 0, 0, 0.2);
+  --color-on-primary: var(--gray-0);
+
   --main-1000: #e1f6fb;
   --main-900: #c4eaf5;
   --main-800: #a3d8e8;

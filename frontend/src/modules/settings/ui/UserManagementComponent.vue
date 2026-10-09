@@ -13,10 +13,10 @@
           @click="handleRefresh"
           :loading="userManagement.refreshing"
           title="刷新"
-          class="refresh-btn lucide-icon-btn"
+          class="yuxi-refresh-button lucide-icon-btn"
         >
           <template #icon>
-            <RefreshCw :size="16" :class="{ spin: userManagement.refreshing }" />
+            <RefreshCw :size="16" :class="{ 'yuxi-rotate': userManagement.refreshing }" />
           </template>
         </a-button>
         <a-button type="primary" @click="showAddUserModal" class="add-btn lucide-icon-btn">
@@ -132,7 +132,7 @@
                       <a-button
                         type="text"
                         size="small"
-                        class="action-btn lucide-icon-btn"
+                        class="yuxi-table-action lucide-icon-btn"
                         :disabled="isUserEditDisabled(record)"
                         @click="showEditUserModal(record)"
                       >
@@ -149,7 +149,7 @@
                         size="small"
                         danger
                         :disabled="isUserDeleteDisabled(record)"
-                        class="action-btn lucide-icon-btn"
+                        class="yuxi-table-action lucide-icon-btn"
                         @click="confirmDeleteUser(record)"
                       >
                         <Trash2 :size="14" />
@@ -199,12 +199,12 @@
             @blur="validateAndGenerateUid"
             :maxlength="20"
           />
-          <div v-if="userManagement.form.usernameError" class="error-text">
+          <div v-if="userManagement.form.usernameError" class="yuxi-form-error">
             {{ userManagement.form.usernameError }}
           </div>
           <div
             v-if="userManagement.form.generatedUid && !userManagement.editMode"
-            class="help-text"
+            class="yuxi-form-help"
           >
             登录ID：{{ userManagement.form.generatedUid }}，此ID将用于登录，根据用户名自动生成
           </div>
@@ -217,7 +217,7 @@
             placeholder="请输入手机号（可选，可用于登录）"
             :maxlength="11"
           />
-          <div v-if="userManagement.form.phoneError" class="error-text">
+          <div v-if="userManagement.form.phoneError" class="yuxi-form-error">
             {{ userManagement.form.phoneError }}
           </div>
         </a-form-item>
@@ -752,28 +752,6 @@ onUnmounted(() => {
       display: flex;
       align-items: center;
       gap: 8px;
-
-      .refresh-btn {
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        width: 32px;
-        height: 32px;
-        border-radius: 6px;
-        transition: all 0.2s ease;
-
-        &:hover {
-          background: var(--gray-25);
-        }
-
-        .spin {
-          animation: spin 1s linear infinite;
-        }
-
-        :deep(.ant-btn-loading-icon) {
-          color: var(--gray-600);
-        }
-      }
     }
   }
 
@@ -995,27 +973,6 @@ onUnmounted(() => {
         color: var(--gray-700);
         font-family: 'JetBrains Mono', 'Fira Code', 'Menlo', monospace;
       }
-
-      .action-btn {
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        width: 26px;
-        height: 26px;
-        border-radius: 6px;
-        color: var(--gray-400);
-        transition: all 0.15s ease;
-
-        &:hover:not(:disabled) {
-          background: var(--gray-100);
-          color: var(--gray-800);
-        }
-
-        &.ant-btn-dangerous:hover:not(:disabled) {
-          background: var(--color-error-50, #fff2f0);
-          color: var(--color-error-500, #ff4d4f);
-        }
-      }
     }
 
     .pagination-section {
@@ -1026,31 +983,7 @@ onUnmounted(() => {
   }
 }
 
-@keyframes spin {
-  from {
-    transform: rotate(0deg);
-  }
-  to {
-    transform: rotate(360deg);
-  }
-}
-
 .user-modal {
-  :deep(.ant-modal-header) {
-    padding: 20px 24px 16px;
-    border-bottom: 1px solid var(--gray-150);
-
-    .ant-modal-title {
-      font-size: 17px;
-      font-weight: 600;
-      color: var(--gray-900);
-    }
-  }
-
-  :deep(.ant-modal-body) {
-    padding: 20px 24px 24px;
-  }
-
   .user-form {
     .form-item {
       margin-bottom: 16px;
@@ -1058,27 +991,10 @@ onUnmounted(() => {
       :deep(.ant-form-item-label) {
         padding-bottom: 6px;
 
-        label {
-          font-weight: 600;
-          font-size: 13px;
-          color: var(--gray-800);
-        }
       }
     }
 
-    .error-text {
-      color: var(--color-error-500);
-      font-size: 12px;
-      margin-top: 4px;
-      line-height: 1.3;
-    }
 
-    .help-text {
-      color: var(--gray-600);
-      font-size: 12px;
-      margin-top: 4px;
-      line-height: 1.3;
-    }
 
     .password-toggle {
       margin-bottom: 16px;

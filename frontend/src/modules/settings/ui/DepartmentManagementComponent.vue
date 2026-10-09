@@ -11,10 +11,10 @@
           @click="handleRefresh"
           :loading="departmentManagement.refreshing"
           title="刷新"
-          class="refresh-btn lucide-icon-btn"
+          class="yuxi-refresh-button lucide-icon-btn"
         >
           <template #icon
-            ><RefreshCw :size="16" :class="{ spin: departmentManagement.refreshing }"
+            ><RefreshCw :size="16" :class="{ 'yuxi-rotate': departmentManagement.refreshing }"
           /></template>
         </a-button>
         <a-button type="primary" @click="showAddDepartmentModal" class="add-btn lucide-icon-btn">
@@ -59,7 +59,7 @@
                       <a-button
                         type="text"
                         size="small"
-                        class="action-btn lucide-icon-btn"
+                        class="yuxi-table-action lucide-icon-btn"
                         @click="showEditDepartmentModal(record)"
                       >
                         <SquarePen :size="14" />
@@ -71,7 +71,7 @@
                         size="small"
                         danger
                         :disabled="record.id === 1"
-                        class="action-btn lucide-icon-btn"
+                        class="yuxi-table-action lucide-icon-btn"
                         @click="confirmDeleteDepartment(record)"
                       >
                         <Trash2 :size="14" />
@@ -138,10 +138,10 @@
               autocomplete="off"
               @blur="checkAdminUid"
             />
-            <div v-if="departmentManagement.form.uidError" class="error-text">
+            <div v-if="departmentManagement.form.uidError" class="yuxi-form-error">
               {{ departmentManagement.form.uidError }}
             </div>
-            <div v-else class="help-text">此 UID 将用于登录</div>
+            <div v-else class="yuxi-form-help">此 UID 将用于登录</div>
           </a-form-item>
 
           <a-form-item label="密码" required class="form-item">
@@ -176,7 +176,7 @@
               name="new-department-admin-phone"
               autocomplete="off"
             />
-            <div v-if="departmentManagement.form.phoneError" class="error-text">
+            <div v-if="departmentManagement.form.phoneError" class="yuxi-form-error">
               {{ departmentManagement.form.phoneError }}
             </div>
           </a-form-item>
@@ -526,24 +526,6 @@ onMounted(() => {
       display: flex;
       align-items: center;
       gap: 8px;
-
-      .refresh-btn {
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        width: 32px;
-        height: 32px;
-        border-radius: 6px;
-        transition: all 0.2s ease;
-
-        &:hover {
-          background: var(--gray-25);
-        }
-
-        .spin {
-          animation: spin 1s linear infinite;
-        }
-      }
     }
   }
 
@@ -640,56 +622,11 @@ onMounted(() => {
         font-size: 12px;
         font-weight: 500;
       }
-
-      .action-btn {
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        width: 26px;
-        height: 26px;
-        border-radius: 6px;
-        color: var(--gray-400);
-        transition: all 0.15s ease;
-
-        &:hover:not(:disabled) {
-          background: var(--gray-100);
-          color: var(--gray-800);
-        }
-
-        &.ant-btn-dangerous:hover:not(:disabled) {
-          background: var(--color-error-50, #fff2f0);
-          color: var(--color-error-500, #ff4d4f);
-        }
-      }
     }
-  }
-}
-
-@keyframes spin {
-  from {
-    transform: rotate(0deg);
-  }
-  to {
-    transform: rotate(360deg);
   }
 }
 
 .department-modal {
-  :deep(.ant-modal-header) {
-    padding: 20px 24px;
-    border-bottom: 1px solid var(--gray-150);
-
-    .ant-modal-title {
-      font-size: 16px;
-      font-weight: 600;
-      color: var(--gray-900);
-    }
-  }
-
-  :deep(.ant-modal-body) {
-    padding: 24px;
-  }
-
   .department-form {
     .form-item {
       margin-bottom: 20px;
@@ -697,26 +634,11 @@ onMounted(() => {
       :deep(.ant-form-item-label) {
         padding-bottom: 4px;
 
-        label {
-          font-weight: 500;
-          color: var(--gray-900);
-        }
       }
     }
   }
 
-  .error-text {
-    color: var(--color-error-500);
-    font-size: 12px;
-    margin-top: 4px;
-    line-height: 1.3;
-  }
 
-  .help-text {
-    color: var(--gray-600);
-    font-size: 12px;
-    margin-top: 4px;
-    line-height: 1.3;
-  }
+
 }
 </style>

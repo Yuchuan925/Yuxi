@@ -164,11 +164,7 @@
 
               <div class="generating-status" v-if="isReplyLoading" role="status">
                 <div class="generating-indicator">
-                  <div class="loading-dots">
-                    <div></div>
-                    <div></div>
-                    <div></div>
-                  </div>
+                  <span class="loading-spark" aria-hidden="true"></span>
                   <span class="generating-text">{{ replyLoadingText }}</span>
                   <span v-if="replyElapsedLabel" class="generating-elapsed">{{
                     replyElapsedLabel
@@ -4452,31 +4448,66 @@ watch(currentChatId, (threadId, oldThreadId) => {
   }
 }
 
-.loading-dots {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 3px;
+.loading-spark {
+  position: relative;
+  display: inline-block;
+  flex: 0 0 22px;
+  width: 22px;
+  height: 22px;
+  color: var(--main-color);
 }
 
-.loading-dots div {
-  width: 6px;
-  height: 6px;
-  background: linear-gradient(135deg, var(--main-color), var(--main-700));
-  border-radius: 50%;
-  animation: dotPulse 1.4s infinite ease-in-out both;
+.loading-spark::before,
+.loading-spark::after {
+  content: '';
+  position: absolute;
+  background: currentColor;
 }
 
-.loading-dots div:nth-child(1) {
-  animation-delay: -0.32s;
+.loading-spark::before {
+  inset: 5%;
+  clip-path: polygon(50% 0, 63% 36%, 100% 50%, 63% 64%, 50% 100%, 37% 64%, 0 50%, 37% 36%);
+  animation: loading-spark-bloom 2.6s ease-in-out infinite;
 }
 
-.loading-dots div:nth-child(2) {
-  animation-delay: -0.16s;
+.loading-spark::after {
+  top: 0;
+  right: 0;
+  width: 24%;
+  height: 24%;
+  clip-path: polygon(50% 0, 65% 35%, 100% 50%, 65% 65%, 50% 100%, 35% 65%, 0 50%, 35% 35%);
+  animation: loading-spark-satellite 2.6s ease-in-out infinite;
 }
 
-.loading-dots div:nth-child(3) {
-  animation-delay: 0s;
+@keyframes loading-spark-bloom {
+  0%,
+  100% {
+    transform: scale(0.65) rotate(-15deg);
+    opacity: 0.6;
+  }
+  50% {
+    transform: scale(1) rotate(75deg);
+    opacity: 1;
+  }
+}
+
+@keyframes loading-spark-satellite {
+  0%,
+  100% {
+    transform: scale(0.3);
+    opacity: 0.2;
+  }
+  50% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .loading-spark::before,
+  .loading-spark::after {
+    animation: none;
+  }
 }
 
 .generating-status {

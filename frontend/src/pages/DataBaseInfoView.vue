@@ -1229,17 +1229,6 @@ onUnmounted(() => {
   overflow-y: auto;
 }
 
-:global(.database-edit-modal .ant-modal-footer) {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 8px;
-}
-
-:global(.database-edit-modal .ant-modal-footer .ant-btn + .ant-btn) {
-  margin-inline-start: 0;
-}
-
 .share-config-readonly {
   display: flex;
   align-items: center;

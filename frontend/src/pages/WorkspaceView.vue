@@ -1231,8 +1231,6 @@ watch([useInlinePreview, workspaceActive], ([isInline, isActive]) => {
       padding: 0;
       overflow: hidden;
       border: 1px solid var(--gray-200);
-      border-radius: 8px;
-      box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
     }
 
     .ant-modal-body {
