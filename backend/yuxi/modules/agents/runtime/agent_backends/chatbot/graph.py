@@ -60,7 +60,6 @@ async def _build_middlewares(context, backend, *, cleanup_model=None):
             NetworkRetryMiddleware(
                 max_retries=getattr(context, "model_retry_times", 2),
             ),
-            ImageInputCompatibilityMiddleware(),
             TokenUsageMiddleware(),
         ]
     )
@@ -72,6 +71,8 @@ async def _build_middlewares(context, backend, *, cleanup_model=None):
         middlewares.append(approval_middleware)
     # after_model 按逆序执行，授权必须先于审批产生等待点。
     middlewares.append(RuntimeAuthorizationMiddleware())
+    # 图片回退读取授权过滤后的工具集，保持与实际模型请求一致。
+    middlewares.append(ImageInputCompatibilityMiddleware())
     return middlewares
 
 

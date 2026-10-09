@@ -8,8 +8,6 @@ from langchain.agents.middleware.types import AgentMiddleware, ModelRequest, Mod
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_openai import ChatOpenAI
 
-from yuxi.modules.extensions.tools.builtin.ocr_parse_file import ocr_parse_file
-
 _TOOL_IMAGE_USER_TEXT = "Images returned by read_file are attached below. Inspect them when answering."
 _IMAGE_ERROR_TERMS = ("image", "vision", "multimodal", "multi-modal")
 _REJECTION_TERMS = (
@@ -24,9 +22,10 @@ _REJECTION_TERMS = (
 
 
 class ImageInputCompatibilityMiddleware(AgentMiddleware[Any, Any, Any]):
-    """Bridge OpenAI tool images and translate explicit image capability errors."""
+    """桥接工具图片，按本次启用的工具决定 OCR 回退。
 
-    tools = [ocr_parse_file]
+    不声明中间件 tools，避免 create_agent 无条件注入 OCR 工具，绕过配置开关。
+    """
 
     def wrap_model_call(
         self,
@@ -39,7 +38,7 @@ class ImageInputCompatibilityMiddleware(AgentMiddleware[Any, Any, Any]):
             return handler(request)
         except Exception as exc:  # noqa: BLE001
             if _has_image(request.messages) and _is_image_input_rejection(exc):
-                return _ocr_fallback_response(image_paths)
+                return _ocr_fallback_response(image_paths, enabled=_ocr_tool_enabled(request))
             raise
 
     async def awrap_model_call(
@@ -53,7 +52,7 @@ class ImageInputCompatibilityMiddleware(AgentMiddleware[Any, Any, Any]):
             return await handler(request)
         except Exception as exc:  # noqa: BLE001
             if _has_image(request.messages) and _is_image_input_rejection(exc):
-                return _ocr_fallback_response(image_paths)
+                return _ocr_fallback_response(image_paths, enabled=_ocr_tool_enabled(request))
             raise
 
 
@@ -133,7 +132,15 @@ def _read_file_image_paths(messages: list[Any]) -> list[str]:
     return paths
 
 
-def _ocr_fallback_response(image_paths: list[str]) -> ModelResponse:
+def _ocr_tool_enabled(request: ModelRequest) -> bool:
+    """以本次模型请求的工具集决定是否允许 OCR 回退。"""
+    return any(getattr(tool, "name", None) == "ocr_parse_file" for tool in request.tools)
+
+
+def _ocr_fallback_response(image_paths: list[str], *, enabled: bool) -> ModelResponse:
+    if not enabled:
+        message = "当前模型不支持图片输入，且 OCR 解析工具未启用，请启用该工具或更换支持图片输入的模型。"
+        return ModelResponse(result=[AIMessage(content=message)])
     if not image_paths:
         return ModelResponse(result=[AIMessage(content="当前模型无法读取图片，且没有可供 OCR 工具解析的文件路径。")])
 

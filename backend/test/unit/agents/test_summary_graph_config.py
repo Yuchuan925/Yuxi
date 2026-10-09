@@ -196,3 +196,60 @@ async def test_checkpoint_cleanup_preserves_original_tasks_and_state(monkeypatch
     assert saved.values["messages"][-1].content == "[已取消]"
     assert saved.values["messages"][-1].tool_call_id == "one"
     assert saved.values["activated_skills"] == ["retained"]
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+@pytest.mark.asyncio
+async def test_image_fallback_uses_authorized_tools_from_shipping_middleware_order(monkeypatch, enabled):
+    """生产装配下，图片回退与实际模型看到的授权工具集一致。"""
+    from langchain.agents.middleware.types import ModelRequest
+    from langchain_core.messages import ToolMessage
+    from yuxi.modules.agents.runtime.middlewares import authorization
+    from yuxi.modules.extensions.tools.builtin.ocr_parse_file import ocr_parse_file
+
+    context = _context()
+    context.tools = ["ocr_parse_file"] if enabled else []
+    context.mcps = []
+    context._registered_builtin_tool_names = {"ocr_parse_file"}
+    context._skill_runtime_snapshot = {"preloaded_skills": [], "effective_skills": [], "runtime_skills": {}}
+    _patch_common_graph_deps(monkeypatch, chatbot_graph, {})
+    monkeypatch.setattr(chatbot_graph, "create_memory_middleware", AsyncMock(return_value=None))
+    monkeypatch.setattr(chatbot_graph, "create_cooperation_middleware", lambda _context: None)
+    monkeypatch.setattr(authorization, "refresh_execution_authorization", AsyncMock())
+    middlewares = await chatbot_graph._build_middlewares(context, object())
+    wrappers = [
+        middleware
+        for middleware in middlewares
+        if isinstance(middleware, (authorization.RuntimeAuthorizationMiddleware, chatbot_graph.ImageInputCompatibilityMiddleware))
+    ]
+    seen_tools = []
+
+    async def reject(request):
+        seen_tools.extend(tool.name for tool in request.tools)
+        error = RuntimeError("This model does not support image input")
+        error.status_code = 400
+        raise error
+
+    handler = reject
+    for middleware in reversed(wrappers):
+        next_handler = handler
+
+        async def handler(request, middleware=middleware, next_handler=next_handler):
+            return await middleware.awrap_model_call(request, next_handler)
+
+    request = ModelRequest(
+        model=SimpleNamespace(),
+        tools=[ocr_parse_file],
+        messages=[
+            ToolMessage(
+                content_blocks=[{"type": "image", "base64": "abc", "mime_type": "image/png"}],
+                tool_call_id="read-image",
+                additional_kwargs={"read_file_path": "/home/gem/user-data/uploads/image.png"},
+            )
+        ],
+        runtime=SimpleNamespace(context=context),
+        state={},
+    )
+    response = await handler(request)
+    assert seen_tools == (["ocr_parse_file"] if enabled else [])
+    assert [call["name"] for call in response.result[0].tool_calls] == seen_tools

@@ -267,7 +267,8 @@ async def test_graph_mounts_guard_as_outermost_tool_wrapper(monkeypatch, module,
 
     from yuxi.modules.agents.runtime.middlewares.authorization import RuntimeAuthorizationMiddleware
 
-    assert isinstance(middlewares[-1], RuntimeAuthorizationMiddleware)
+    assert isinstance(middlewares[-2], RuntimeAuthorizationMiddleware)
+    assert isinstance(middlewares[-1], chatbot_graph.ImageInputCompatibilityMiddleware)
     assert isinstance(middlewares[0], ToolErrorGuardMiddleware), "授权失败必须在异常隔离外传播"
 
 
